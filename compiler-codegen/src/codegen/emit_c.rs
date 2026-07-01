@@ -39422,6 +39422,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if let Some(ret_ty) = self.var_types.get(&ret_key) {
                         return ret_ty.clone();
                     }
+                    // Plan 172.1 D145/D282: prefix-generic receiver methods are annotated by the
+                    // checker via `resolve_prefix_generic_method_return` into `resolved_types`.
+                    // Check the channel before panicking — the annotation exists but legacy has no
+                    // fn_ret_{recv}_{method} entry because the method is registered under the
+                    // typevar name ("T"/"I"), not the concrete receiver type.
+                    if expr.id.is_set() {
+                        if let Some(rt) = self.resolved_types.get(&expr.id) {
+                            if let Ok(ct) = self.resolved_type_to_c(rt) {
+                                return ct;
+                            }
+                        }
+                    }
                     panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0)", method)
                 } else if let ExprKind::Path(parts) = &func.kind {
                     // Plan 11 Ф.4.5: Self.method(...) → <current>.method(...).

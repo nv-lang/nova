@@ -10608,7 +10608,11 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
             _ => return None,
         };
-        let overloads = self.method_overloads(&type_name, method)?;
+        let overloads = match self.method_overloads(&type_name, method) {
+            Some(o) => o,
+            // Plan 172.1 D145/D282: prefix-generic receiver fallback.
+            None => return self.resolve_prefix_generic_method_return(peeled, method),
+        };
         // Single overload only — ≥2 is the multi-overload arg-dispatch slice (step 2).
         let [f] = overloads.as_slice() else { return None; };
         let recv = f.receiver.as_ref()?;
@@ -10679,6 +10683,87 @@ impl<'a> TypeCheckCtx<'a> {
             _ => {}
         }
         Some(out)
+    }
+
+    /// Plan 172.1 D145/D282: prefix-generic receiver fallback for
+    /// [`resolve_instance_method_return`].  Called when no concrete-type overload
+    /// is registered under the caller's `type_name`.  Scans `method_table` for a
+    /// **prefix-generic receiver** declaration:
+    ///
+    /// - Bare typevar: `fn[T] T @method` — recv_key IS the typevar name. Any
+    ///   concrete receiver type matches; T binds to `peeled`.
+    /// - Single-level slice typevar: `fn[T] []T @method` — recv_key == "[]T".
+    ///   Concrete receiver must be `TypeRef::Array`; T binds to the element type.
+    /// - Blanket-protocol: `fn[I Proto[T]] I mut @method` — also matched by the
+    ///   bare-typevar arm (bound checking is deferred to the full type-checker).
+    ///
+    /// Returns `None` if no matching declaration is found or the return type still
+    /// mentions an unbound method-level generic after substitution.
+    fn resolve_prefix_generic_method_return(
+        &self,
+        peeled: &TypeRef,
+        method: &str,
+    ) -> Option<TypeRef> {
+        // Guard: only apply this fallback for CONCRETE NON-PARAMETRIC receivers —
+        // a Named type with NO type-args (e.g. `int`, `str`, `D282IntCount`) or an
+        // Array whose element is concrete (e.g. `[]int` → for slice-typevar receivers).
+        // Generic-instance receivers (`EnumerateIter[VecIter[int], int]`, `Vec[str]`,
+        // etc.) have their own resolution path; matching a blanket `fn[I Iter[T]] I`
+        // on them here would produce half-substituted types (T still in out) that
+        // resolved_type_to_c silently collapses to nova_int, breaking downstream
+        // member accesses.
+        let peeled_ok = match peeled {
+            TypeRef::Named { generics, .. } => generics.is_empty(),
+            TypeRef::Array(inner, _) => matches!(inner.as_ref(), TypeRef::Named { generics, .. } if generics.is_empty()),
+            _ => false,
+        };
+        if !peeled_ok {
+            return None;
+        }
+        for (recv_key, methods) in self.sig.method_table.iter() {
+            let Some(overloads) = methods.get(method) else { continue; };
+            let [f] = overloads.as_slice() else { continue; };
+            let Some(recv) = f.receiver.as_ref() else { continue; };
+            if !matches!(recv.kind, ReceiverKind::Instance) {
+                continue;
+            }
+            // Identify the typevar name and produce the concrete binding.
+            let (typevar_name, t_binding): (String, TypeRef) =
+                if f.generics.iter().any(|g| &g.name == recv_key) {
+                    // Bare typevar receiver (`fn[T] T @m` or `fn[I Bound] I @m`).
+                    (recv_key.clone(), peeled.clone())
+                } else if recv_key.starts_with("[]")
+                    && f.generics.iter().any(|g| g.name == &recv_key[2..])
+                {
+                    // Single-level slice typevar: `fn[T] []T @m`.
+                    match peeled {
+                        TypeRef::Array(inner, _) => {
+                            (recv_key[2..].to_string(), (**inner).clone())
+                        }
+                        _ => continue,
+                    }
+                } else {
+                    continue;
+                };
+            let Some(ret) = f.return_type.as_ref() else { continue; };
+            let mut subst: HashMap<String, TypeRef> = HashMap::new();
+            subst.insert(typevar_name.clone(), t_binding);
+            subst.insert("Self".to_string(), peeled.clone());
+            let out = crate::const_fn_trampoline::subst_type_ref_pub(ret, &subst);
+            // Bail if the substituted return still mentions any unbound method-level
+            // generic (e.g. `fn[T] []T @map[U](…) -> []U` — U is unresolved here).
+            let unbound: HashSet<String> = f
+                .generics
+                .iter()
+                .filter(|g| g.name != typevar_name)
+                .map(|g| g.name.clone())
+                .collect();
+            if !unbound.is_empty() && typeref_mentions_any(&out, &unbound) {
+                continue;
+            }
+            return Some(out);
+        }
+        None
     }
 
     /// Plan 172.1.2 [M-172.1-U4-recv-infer]: CHANNEL-only method-call return inference,
