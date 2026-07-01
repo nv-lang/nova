@@ -1,0 +1,124 @@
+// D40 — Тело функции: `=> expr` для одного выражения, `{ ... }` для блока.
+// Взаимоисключающие формы: `=>` и `{}` не сочетаются.
+// Match-arm исключение: `pattern => expr` или `pattern => { block }`.
+// Closure-light `|x| body` — без `=>` (отдельная грамматика D22).
+// Spec: spec/decisions/03-syntax.md D40. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// --- expression-body: `=> expr` ---
+
+fn d40_expr_body(x int) -> int => x * 2
+fn d40_negate(x int) -> int => -x
+fn d40_is_even(x int) -> bool => x % 2 == 0
+fn d40_greet(name str) -> str => "hello " + name
+
+// Многострочный `match` — это ОДНО выражение, поэтому `=> match { ... }` корректно
+fn d40_match_expr(n int) -> str => match n {
+    0 => "zero",
+    n if n > 0 => "positive",
+    _ => "negative"
+}
+
+// Многострочный `if` — тоже одно выражение
+fn d40_sign(x int) -> int => if x > 0 { 1 } else if x < 0 { -1 } else { 0 }
+
+// --- block-body: `{ ... }` ---
+
+fn d40_block_body(x int) -> int {
+    ro doubled = x * 2
+    doubled + 1
+}
+
+fn d40_next_pow2(n int) -> int {
+    if n <= 1 { return 1 }
+    mut p = 1
+    while p < n { p = p * 2 }
+    p
+}
+
+fn d40_unit_block() {
+    mut _x = 1
+    _x = _x + 1
+}
+
+// --- match-arm с block-form `=> { block }` ---
+
+fn d40_match_block(n int) -> str => match n {
+    0 => { "zero" },
+    n if n > 0 => { "positive" },
+    _ => { "negative" }
+}
+
+fn d40_match_multi_stmt(n int) -> int => match n {
+    0 => { ro base = 100; base },
+    _ => { ro base = n * 2; base + 1 }
+}
+
+// --- instance-method bodies ---
+
+type D40Acc {
+    _v int
+}
+
+fn D40Acc.new(v int) -> D40Acc => { _v: v }
+fn D40Acc @val() -> int => @_v              // expression-body на instance-method
+fn D40Acc mut @double() { @_v = @_v * 2 }  // block-body мутирующий метод
+
+// --- Тесты ---
+
+test "expression-body => expr works (D40)" {
+    assert(d40_expr_body(5) == 10)
+    assert(d40_negate(3) == -3)
+    assert(d40_is_even(4) == true)
+    assert(d40_is_even(7) == false)
+}
+
+test "expression-body => string concat (D40)" {
+    assert(d40_greet("world") == "hello world")
+}
+
+test "expression-body with multi-line match (D40)" {
+    assert(d40_match_expr(0) == "zero")
+    assert(d40_match_expr(10) == "positive")
+    assert(d40_match_expr(-5) == "negative")
+}
+
+test "expression-body with multi-arm if (D40)" {
+    assert(d40_sign(5) == 1)
+    assert(d40_sign(-3) == -1)
+    assert(d40_sign(0) == 0)
+}
+
+test "block-body { ... } works (D40)" {
+    assert(d40_block_body(5) == 11)
+    assert(d40_block_body(0) == 1)
+}
+
+test "block-body with while loop (D40)" {
+    assert(d40_next_pow2(1) == 1)
+    assert(d40_next_pow2(2) == 2)
+    assert(d40_next_pow2(5) == 8)
+    assert(d40_next_pow2(8) == 8)
+}
+
+test "unit block-body returns () implicitly (D40)" {
+    d40_unit_block()
+}
+
+test "match-arm with block-form => { block } (D40)" {
+    assert(d40_match_block(0) == "zero")
+    assert(d40_match_block(10) == "positive")
+    assert(d40_match_block(-5) == "negative")
+}
+
+test "match-arm block with multi-stmt (D40)" {
+    assert(d40_match_multi_stmt(0) == 100)
+    assert(d40_match_multi_stmt(3) == 7)
+}
+
+test "instance method expression-body and block-body (D40)" {
+    mut a = D40Acc.new(5)
+    assert(a.val() == 5)
+    a.double()
+    assert(a.val() == 10)
+}
