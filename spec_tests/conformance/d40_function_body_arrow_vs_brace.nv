@@ -1,0 +1,44 @@
+// D40 — Тело функции: `=>` для одного выражения, `{}` для блока
+// Ядро: `fn f() -> T => expr` ИЛИ `fn f() -> T { ... }`, НЕ комбинируются.
+// match-arm исключение: `pattern => expr` или `pattern => { block }`.
+// Spec: spec/decisions/03-syntax.md:1977 (D40).
+module spec_tests.conformance
+
+fn d40_expr_body(x int) -> int => x * 2
+
+fn d40_block_body(x int) -> int {
+    ro doubled = x * 2
+    doubled + 1
+}
+
+fn d40_match_expr(n int) -> str => match n {
+    0 => "zero",
+    n if n > 0 => "positive",
+    _ => "negative"
+}
+
+fn d40_match_block(n int) -> str => match n {
+    0 => { "zero" },
+    n if n > 0 => { "positive" },
+    _ => { "negative" }
+}
+
+test "expression-body `=> expr` работает (D40)" {
+    assert(d40_expr_body(5) == 10)
+}
+
+test "block-body `{ ... }` работает (D40)" {
+    assert(d40_block_body(5) == 11)
+}
+
+test "match-arm с expr-body (D40)" {
+    assert(d40_match_expr(0) == "zero")
+    assert(d40_match_expr(10) == "positive")
+    assert(d40_match_expr(-5) == "negative")
+}
+
+test "match-arm с block-body `=> { block }` исключение (D40)" {
+    assert(d40_match_block(0) == "zero")
+    assert(d40_match_block(10) == "positive")
+    assert(d40_match_block(-5) == "negative")
+}
