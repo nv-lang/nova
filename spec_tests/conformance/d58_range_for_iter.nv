@@ -1,0 +1,105 @@
+// D58 — Range literals (a..b, a..=b), for x in c через iter(), Iter[T] protocol.
+// `a..b` → Range{start,end} half-open; `a..=b` нормализован к end+1.
+// `for x in c` десугарит в iter() → next() loop.
+// Spec: spec/decisions/03-syntax.md D58. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "range half-open literal: a..b (D58)" {
+    ro r = 1..4
+    assert(r.start == 1)
+    assert(r.end == 4)
+}
+
+test "range inclusive literal a..=b normalized to half-open (D58)" {
+    ro r = 1..=4
+    assert(r.start == 1)
+    assert(r.end == 5)
+}
+
+test "range 0-based half-open (D58)" {
+    ro r = 0..10
+    assert(r.start == 0)
+    assert(r.end == 10)
+}
+
+test "range.len() = end - start (D58)" {
+    ro r = 3..8
+    assert(r.len() == 5)
+}
+
+test "range.contains checks membership (D58)" {
+    ro r = 2..6
+    assert(r.contains(2))
+    assert(r.contains(5))
+    assert(!r.contains(6))
+    assert(!r.contains(1))
+}
+
+fn d58_sum_range(r Range) -> int {
+    mut s = 0
+    for x in r { s = s + x }
+    s
+}
+
+test "range in function argument position (D58)" {
+    assert(d58_sum_range(1..5) == 10)
+    assert(d58_sum_range(0..1) == 0)
+}
+
+test "for-in loop iteration over range (D58)" {
+    mut sum = 0
+    for x in 1..4 {
+        sum = sum + x
+    }
+    assert(sum == 6)
+}
+
+test "for-in with inclusive range (D58)" {
+    mut sum = 0
+    for x in 1..=4 {
+        sum = sum + x
+    }
+    assert(sum == 10)
+}
+
+test "for-in over array (D58)" {
+    ro xs []int = [10, 20, 30, 40]
+    mut sum = 0
+    for x in xs { sum = sum + x }
+    assert(sum == 100)
+}
+
+test "for-in with index via enumerate (D58)" {
+    ro xs []int = [5, 6, 7]
+    mut last = 0
+    for x in xs { last = x }
+    assert(last == 7)
+}
+
+test "range in array literal (D58)" {
+    ro ranges []Range = [0..2, 3..5]
+    assert(ranges.len() == 2)
+    assert(ranges[0].start == 0)
+    assert(ranges[1].start == 3)
+}
+
+test "nested for-in loops (D58)" {
+    mut sum = 0
+    for i in 0..3 {
+        for j in 0..3 {
+            sum = sum + 1
+        }
+    }
+    assert(sum == 9)
+}
+
+test "for-in with break (D58)" {
+    mut first = 0
+    for x in 0..100 {
+        if x > 3 {
+            first = x
+            break
+        }
+    }
+    assert(first == 4)
+}
