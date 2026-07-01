@@ -1,0 +1,15 @@
+// D86b — the `??` fallback coerces to the Ok PAYLOAD type ([literal-coercion channel]).
+// `result ?? (0,0)` with `Result[(uint,uint),_]` must build the fallback tuple as
+// `(uint,uint)` (matching the Ok side via the decoded mono-tuple element types), not
+// collapse to `(int,int)` — a struct mismatch (CC-FAIL incompatible-operand clash).
+// Unsigned 2^63; `> 100` discriminates. Spec: 02-types.md (D55/D86).
+// NOTE: the Option[(uint,uint)] ?? form has a separate NovaOpt-tuple-payload-naming gap
+// (result-type strip) — tracked, not yet locked here.
+module inprogress.d86b_coalesce_fallback_width
+
+fn d86b_res() -> Result[(uint, uint), str] => Ok((0x8000000000000000, 5))
+
+test "coalesce fallback tuple coerces to Ok payload type (Result, D86b channel)" {
+    ro got = d86b_res() ?? (0, 0)
+    assert(got.0 > 100)        // Ok side 2^63 as uint; fallback tuple must match (uint,uint)
+}
