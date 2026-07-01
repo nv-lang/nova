@@ -874,6 +874,11 @@ pub struct CEmitter {
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
+    /// Plan 172.1 D402: unannotated ClosureLight let-bindings whose fn_param_sigs entry
+    /// defaults to nova_int. Maps binding name → (param_names, body_expr). At call sites,
+    /// we re-derive param/return types from the actual argument types + body inference
+    /// instead of using the nova_int defaults — fixing width collapse for `|v| v`.
+    unanno_light_clos: HashMap<String, (Vec<String>, Expr)>,
     /// Plan 55 Ф.1: maps variable name of `[]fn(P...) -> R` type → element closure
     /// signature `(P_c_tys, R_c_ty)`. Used in `emit_for` so that `for f in fns { f() }`
     /// can register the loop binding in `fn_param_sigs` and route `f()` through
@@ -1472,6 +1477,7 @@ impl CEmitter {
             synthesizing_default_methods: HashSet::new(),
             type_impl_protocols: HashMap::new(),
             fn_param_sigs: HashMap::new(),
+            unanno_light_clos: HashMap::new(),
             array_param_fn_sigs: HashMap::new(),
             user_fn_sigs: HashMap::new(),
             hof_param_fn_sigs: HashMap::new(),
@@ -18964,7 +18970,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // аннотация, берём типы оттуда; иначе все params/ret
                 // дефолтятся в nova_int. Это позволяет `let zero = || 0;
                 // zero()` корректно резолвиться через NOVA_CLOS_CALL_*.
-                if let ExprKind::ClosureLight { params, .. } = &decl.value.kind {
+                if let ExprKind::ClosureLight { params, body } = &decl.value.kind {
                     let arity = params.len();
                     let (param_c_tys, ret_c) = if let Some(TypeRef::Func { params: anno_params, return_type: anno_ret, .. }) = decl.ty.as_ref() {
                         // Plan 70 PhaseA1.4: strict — ClosureLight typed via let-annotation.
@@ -18986,6 +18992,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // Без annotation: дефолт nova_int для arity и
                         // ret. Bidirectional inference из first-use —
                         // C6 фаза Plan 19; здесь — bootstrap fallback.
+                        // Plan 172.1 D402: also store param names + body for call-site
+                        // re-derivation when actual arg types are more specific than nova_int.
+                        let param_names: Vec<String> = params.iter()
+                            .map(|p| p.name.clone())
+                            .collect();
+                        let body_expr: Expr = match body {
+                            crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                            crate::ast::ClosureBody::Block(b) => Expr::new(
+                                ExprKind::Block(b.clone()),
+                                b.span,
+                            ),
+                        };
+                        self.unanno_light_clos.insert(binding.clone(), (param_names, body_expr));
                         let ptys: Vec<String> = (0..arity).map(|_| "nova_int".to_string()).collect();
                         (ptys, "nova_int".to_string())
                     };
@@ -23543,7 +23562,32 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // And effect operations: `Counter.next()` → `Nova_Counter_next()`
         // Check if func is a function-typed parameter (closure call via NovaClos_XX macro)
         if let ExprKind::Ident(name) = &func.kind {
-            if let Some((param_tys, ret_ty)) = self.fn_param_sigs.get(name).cloned() {
+            if let Some((mut param_tys, mut ret_ty)) = self.fn_param_sigs.get(name).cloned() {
+                // Plan 172.1 D402: unannotated ClosureLight call-site type re-derivation.
+                // When the stored fn_param_sigs entry has nova_int defaults (bootstrap
+                // fallback), but the actual argument types are more specific (e.g. nova_uint),
+                // re-derive param and return types from the arguments + body inference.
+                // This fixes width collapse: `|v| v` called with `uint` stays `uint`.
+                if let Some((param_names, body)) = self.unanno_light_clos.get(name).cloned() {
+                    if args.len() == param_names.len() {
+                        let actual_ptys: Vec<String> = args.iter()
+                            .map(|a| self.infer_expr_c_type(a.expr()))
+                            .collect();
+                        if actual_ptys.iter().any(|t| t != "nova_int") {
+                            // Temporarily bind param names → actual types for body inference.
+                            for (pname, pty) in param_names.iter().zip(actual_ptys.iter()) {
+                                self.closure_param_type_overrides.borrow_mut()
+                                    .insert(pname.clone(), pty.clone());
+                            }
+                            let actual_ret = self.infer_expr_c_type(&body);
+                            for pname in &param_names {
+                                self.closure_param_type_overrides.borrow_mut().remove(pname);
+                            }
+                            param_tys = actual_ptys;
+                            ret_ty = actual_ret;
+                        }
+                    }
+                }
                 let mut arg_strs = Vec::new();
                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                 // Plan 48 Ф.4 ([M-spawn-closure-capture-mono]): when this
@@ -38470,6 +38514,33 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return format!("{}*", mangled);
                         }
                         return format!("Nova_{}*", type_name);
+                    }
+                    // Plan 172.1 D402: unannotated ClosureLight call-site return-type
+                    // re-derivation. MUST precede clos_struct_ret_type check below:
+                    // an unannotated `|v| v` closure defaults to NovaClos_ii (nova_int
+                    // return), but if called with uint args the real return type is
+                    // nova_uint. Re-infer from actual arg types + body inference to
+                    // avoid signed-collapse. Falls through on all-nova_int args (the
+                    // normal int-only closure path remains unchanged).
+                    if let Some((param_names, body)) = self.unanno_light_clos.get(name).cloned() {
+                        if args.len() == param_names.len() {
+                            let actual_ptys: Vec<String> = args.iter()
+                                .map(|a| self.infer_expr_c_type(a.expr()))
+                                .collect();
+                            if actual_ptys.iter().any(|t| t != "nova_int") {
+                                for (pname, pty) in param_names.iter().zip(actual_ptys.iter()) {
+                                    self.closure_param_type_overrides.borrow_mut()
+                                        .insert(pname.clone(), pty.clone());
+                                }
+                                let ret = self.infer_expr_c_type(&body);
+                                for pname in &param_names {
+                                    self.closure_param_type_overrides.borrow_mut().remove(pname);
+                                }
+                                if !ret.is_empty() && ret != "void*" {
+                                    return ret;
+                                }
+                            }
+                        }
                     }
                     // Calling a closure-typed local variable: `first()` where
                     // `first: NovaClos_vi*` → return type is the closure's return
