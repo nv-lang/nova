@@ -1,0 +1,79 @@
+// D49 — Statement separator: newline — основной разделитель; `;` опционален.
+// Лексер продолжает statement при: висящем бинарном операторе в конце строки,
+// внутри `(`, `[`, `{`, перед `.` (method chain), перед `else`/`else if`,
+// перед `||`/`&&` (leading form допустима).
+// Spec: spec/decisions/03-syntax.md D49. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "newline separates statements — no semicolons needed (D49)" {
+    ro x = 1
+    ro y = 2
+    ro z = x + y
+    assert(z == 3)
+}
+
+test "semicolon allows multiple statements on one line (D49)" {
+    ro a = 3; ro b = 4; ro c = a + b
+    assert(c == 7)
+}
+
+test "continuation: binary op at end of line, rhs on next (D49)" {
+    ro total = 10 +
+               20 +
+               30
+    assert(total == 60)
+}
+
+test "continuation: method chain — dot at start of next line (D49)" {
+    ro s = "hello world"
+    ro n = s
+        .byte_len()
+    assert(n == 11)
+}
+
+test "continuation: logical OR at end of line, rhs on next (D49)" {
+    ro x = 5
+    ro ok = x < 0 ||
+        x > 3
+    assert(ok == true)
+}
+
+test "continuation: logical AND at end of line, rhs on next (D49)" {
+    ro x = 5
+    ro ok = x > 0 &&
+        x < 10
+    assert(ok == true)
+}
+
+test "continuation: else/else if on next line (D49)" {
+    ro n = 5
+    ro label =
+        if n < 0 { "neg" }
+        else if n == 0 { "zero" }
+        else { "pos" }
+    assert(label == "pos")
+}
+
+test "continuation: multi-line method chain (D49)" {
+    ro s = "  hello  "
+    ro trimmed = s
+        .trim_ascii_start()
+        .trim_ascii_end()
+    assert(trimmed == "hello")
+}
+
+test "continuation: array literal spans lines (D49)" {
+    ro xs []int = [
+        1,
+        2,
+        3,
+        4
+    ]
+    assert(xs.len() == 4)
+    assert(xs[3] == 4)
+}
+
+test "multiple ; on one line with mutation (D49)" {
+    mut x = 0; x = x + 1; x = x + 2
+    assert(x == 3)
+}
