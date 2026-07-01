@@ -1739,9 +1739,11 @@ pub fn is_folder_module_peer(path: &Path) -> bool {
             .collect(),
         Err(_) => return false,
     };
-    if entries.len() < 2 {
-        return false;
-    }
+    let folder_name = match parent.file_name().and_then(|s| s.to_str()) {
+        Some(n) => n,
+        None => return false,
+    };
+    // Read all peer declarations.
     let mut decls: Vec<Vec<String>> = Vec::with_capacity(entries.len());
     for entry in &entries {
         let src = match std::fs::read_to_string(entry) {
@@ -1753,8 +1755,16 @@ pub fn is_folder_module_peer(path: &Path) -> bool {
             None => return false,
         }
     }
-    let first = &decls[0];
-    decls.iter().all(|d| d == first)
+    // All files must agree on the same declaration.
+    let first = match decls.first() {
+        Some(d) => d,
+        None => return false,
+    };
+    if !decls.iter().all(|d| d == first) {
+        return false;
+    }
+    // Peer-module: declaration's last segment == folder name (not file name).
+    first.last().map(|s| s.as_str()) == Some(folder_name)
 }
 
 /// Plan 42.09: rename item (Type/Fn/Const) при selective re-import.
