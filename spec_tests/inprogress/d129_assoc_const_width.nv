@@ -1,0 +1,39 @@
+// D129/D128/D130/D126 — numeric associated constants (`int.MAX`, `i64.MAX`, `u8.MAX`,
+// `char.MAX`, `f64.EPSILON`, …) carry their type's PRECISE identity, including when bound to
+// an INFERRED `ro` (Plan 172.1 P67 ФАЗА 2 STEP 1: the const Path channels its primitive
+// ResolvedType, so `i64.MAX` lowers to `int64_t` and `char.MAX` to the codepoint type — NOT
+// collapsed to the signed-int default the legacy `numeric_type_constant` table emitted).
+// Regression guard for the `i64.MAX→nova_int` / `char.MAX→nova_int` legacy collapse.
+// Spec: spec/decisions/02-types.md (D129/D128, D126). Single `spec_tests.conformance` CU.
+module spec_tests.conformance
+
+test "integer MAX/MIN associated constants round-trip their values (D129/D44)" {
+    assert(u8.MAX == 255)
+    assert(u16.MAX == 65535)
+    assert(u32.MAX == 4294967295)
+    assert(i8.MAX == 127)
+    assert(i8.MIN == -128)
+    assert(i16.MAX == 32767)
+    assert(i32.MAX == 2147483647)
+    assert(i32.MIN == -2147483648)
+}
+
+test "char.MAX/MIN are codepoint bounds; inferred binding keeps char identity (D128/D327)" {
+    ro hi = char.MAX           // inferred — channels `char` (codepoint), not collapsed to int
+    ro lo = char.MIN
+    assert(hi == 1114111)      // 0x10FFFF — max Unicode scalar value
+    assert(lo == 0)
+}
+
+test "i64.MAX inferred binding keeps 64-bit signed identity (D129, STEP1)" {
+    ro m = i64.MAX             // inferred — channels `i64` (int64_t), not collapsed nova_int
+    assert(m == 9223372036854775807)
+    assert(m > 0)
+}
+
+test "f64 associated constants are floats, not int (D126)" {
+    assert(f64.MAX > 1.0)
+    ro e = f64.EPSILON         // inferred f64, not int
+    assert(e > 0.0)
+    assert(e < 1.0)
+}

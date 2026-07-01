@@ -20,7 +20,7 @@
 // положительным. Контроль (тест 3): closure-full с явным `-> uint` НЕ коллапсит.
 // Spec: spec/decisions/02-types.md (D130/uint-unsigned). Один folder-module CU
 // `spec_tests.conformance`; все top-level имена D402-prefixed во избежание клэша.
-module inprogress.d402_closure_return_width
+module spec_tests.conformance
 
 // HOF-контроль: declared `fn(uint) -> uint` param даёт правильный контекст
 // (этот путь ширину СОХРАНЯЕТ — используется как позитивный контраст в тесте 3).

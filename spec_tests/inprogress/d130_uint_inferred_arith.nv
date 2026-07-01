@@ -1,0 +1,32 @@
+// D130 — `uint` is UNSIGNED (≠ `int`), and that unsignedness must SURVIVE TYPE INFERENCE.
+// An arithmetic expression whose operands are `uint` (incl. the `literal * uint` /
+// `uint + literal` forms) infers to `uint`, NOT collapsed to the signed `int`/`nova_int`
+// default (Plan 172.1 RANK1: de-collapse in the checker Binary arm → `promote_arith_rt`).
+// Regression guard for the operand/result collapse where `2*a` / `a+b` over `uint` lost
+// their unsigned identity in the resolved-types channel and lowered to `nova_int`.
+// Spec: spec/decisions/02-types.md (D130). Single `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "uint arithmetic result keeps unsigned identity through inference (D130, RANK1)" {
+    ro hi uint = 0x8000000000000000   // 2^63 — high bit set; as SIGNED int64 this is NEGATIVE
+    ro lo uint = 1
+
+    // `hi * 1` exercises the canonical RANK1 `literal * uint` form; the `+ lo - lo`
+    // identity threads the inferred result through more arithmetic without changing value.
+    // The binding `d_hi` has NO declared type — its C type comes purely from inference.
+    ro d_hi = hi * 1 + lo - lo         // inferred; must be `uint` (2^63), not `int` (-2^63)
+    ro d_lo = lo * 1 + lo - lo         // inferred uint; = 1
+
+    // If `d_hi` collapsed to signed `int`, its value reads as -2^63 and this UNSIGNED
+    // comparison flips: signed -2^63 > 1 is FALSE, unsigned 2^63 > 1 is TRUE.
+    assert(d_hi > d_lo)                // unsigned: 2^63 > 1  (signed collapse → false)
+    assert(d_hi == 0x8000000000000000) // round-trips its unsigned bit-pattern
+}
+
+test "uint division stays unsigned through an inferred intermediate (D130, RANK1)" {
+    ro a uint = 0x4000000000000000     // 2^62
+    ro b uint = 0x4000000000000000     // 2^62
+    ro sum = a + b                      // inferred uint = 2^63 (high bit); signed-collapse → overflow/neg
+    ro half = sum / 2                   // unsigned div: 2^63 / 2 = 2^62 ; signed → -2^62
+    assert(half == 0x4000000000000000)  // 2^62 ; signed collapse yields 0xC000.. ≠
+}

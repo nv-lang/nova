@@ -1,0 +1,58 @@
+// D15 — Структурные интерфейсы: совместимость АВТОМАТИЧЕСКАЯ и СТРУКТУРНАЯ.
+// Норма (spec/decisions/02-types.md §D15): отдельной концепции interface/trait
+// нет; контракт = набор сигнатур, и ЛЮБОЙ тип со совпадающими методами
+// автоматически совместим — без `impl`/`for`/declared-relationship. Имя контракту
+// даёт `protocol` (D42/D53). Здесь POS-наблюдаемое ядро D15: два независимых типа,
+// которые НИГДЕ не упоминают протокол, оба удовлетворяют ему ЛИШЬ по совпадению
+// методов, и одна generic-функция диспетчеризует к конкретному методу каждого.
+// (D72 покрывает single-method bound resolution; здесь акцент на declaration-free
+// multi-method структурном соответствии — само ядро D15.)
+module spec_tests.conformance
+
+// Именованный контракт — несколько сигнатур.
+type D15Shape protocol {
+    @area() -> int
+    @sides() -> int
+}
+
+// Реализатор #1 — нигде не называет D15Shape; совместим структурно.
+type D15Square {
+    side int
+}
+
+fn D15Square @area() -> int => @side * @side
+fn D15Square @sides() -> int => 4
+
+// Реализатор #2 — другой тип, тоже совместим лишь по совпадению методов.
+type D15Rect {
+    w int
+    h int
+}
+
+fn D15Rect @area() -> int => @w * @h
+fn D15Rect @sides() -> int => 4
+
+// Generic-функция требует контракт через тип параметра (bound = протокол).
+// Оба метода — часть контракта — диспетчеризуются на конкретный T.
+fn d15_describe[T D15Shape](s T) -> int => s.area() + s.sides()
+
+test "автоматическая структурная совместимость: тип удовлетворяет protocol без declared-relationship (D15)" {
+    ro sq = D15Square { side: 3 }
+    // area=9, sides=4 → 13. Диспетчеризация на D15Square.@area/@sides.
+    assert(d15_describe(sq) == 13)
+}
+
+test "тот же контракт удовлетворяет ВТОРОЙ независимый тип — структурно, не номинально (D15)" {
+    ro r = D15Rect { w: 2, h: 5 }
+    // area=10, sides=4 → 14. Диспетчеризация на D15Rect.@area/@sides.
+    assert(d15_describe(r) == 14)
+}
+
+test "оба метода контракта реально вызываются на конкретном типе (D15)" {
+    ro sq = D15Square { side: 5 }
+    assert(sq.area() == 25)
+    assert(sq.sides() == 4)
+    ro r = D15Rect { w: 3, h: 4 }
+    assert(r.area() == 12)
+    assert(r.sides() == 4)
+}

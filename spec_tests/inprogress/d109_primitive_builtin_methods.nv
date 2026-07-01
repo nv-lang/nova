@@ -1,0 +1,76 @@
+// D109 — компилятор АВТОМАТИЧЕСКИ предоставляет встроенные методы примитивов без
+// явных деклараций в .nv: hash() / eq() / lt() / le() / gt() / ge(). `prim_builtin_method`
+// в emit_c.rs перехватывает вызов до общего resolver'а и эмитит C-операторы (eq/lt/le/gt/ge)
+// или C-функции (hash). Проверяемая НОРМА (spec/decisions/08-runtime.md:3325, D109):
+//   • eq = сравнение по значению (==); lt/le/gt/ge = по значению для int/f64, по codepoint для char.
+//   • bool ПОЛУЧАЕТ eq+hash, но НЕ lt/le/gt/ge (нет естественного порядка — §Семантика).
+//   • hash детерминирован: равные значения → равные хеши (контракт для HashMap[K Hash]).
+//   • f64.eq использует == (IEEE 754); ordering на нормальных значениях монотонен.
+// Покрытие — только пары (тип,метод), которые РЕАЛЬНО резолвятся builtin'ом на текущем
+// компиляторе (int/f64/char: eq+lt/le/gt/ge+hash; bool: eq+hash). u8/str ordering — НЕ здесь
+// (str → @compare/@equal protocol-path; nova_byte НЕ в eq/lt-арме builtin'а).
+module spec_tests.conformance
+
+test "int builtin eq/lt/le/gt/ge — сравнение по значению (D109)" {
+    ro a int = 5
+    ro b int = 7
+    assert(a.eq(a))         // 5 == 5
+    assert(!a.eq(b))        // 5 != 7
+    assert(a.lt(b))         // 5 < 7
+    assert(!b.lt(a))        // 7 < 5 = false
+    assert(a.le(a))         // 5 <= 5
+    assert(a.le(b))         // 5 <= 7
+    assert(b.gt(a))         // 7 > 5
+    assert(!a.gt(b))        // 5 > 7 = false
+    assert(b.ge(b))         // 7 >= 7
+    assert(b.ge(a))         // 7 >= 5
+}
+
+test "f64 builtin eq/ordering — по значению, eq через == (D109)" {
+    ro x f64 = 1.5
+    ro y f64 = 2.5
+    assert(x.eq(x))         // 1.5 == 1.5
+    assert(!x.eq(y))        // 1.5 != 2.5
+    assert(x.lt(y))         // 1.5 < 2.5
+    assert(y.gt(x))         // 2.5 > 1.5
+    assert(x.le(x))         // 1.5 <= 1.5
+    assert(y.ge(y))         // 2.5 >= 2.5
+}
+
+test "char builtin eq/ordering — по codepoint (D109)" {
+    ro a char = 'a'         // U+0061
+    ro c char = 'c'         // U+0063
+    assert(a.eq(a))         // равные codepoint'ы
+    assert(!a.eq(c))        // разные codepoint'ы
+    assert(a.lt(c))         // 0x61 < 0x63
+    assert(c.gt(a))         // 0x63 > 0x61
+    assert(a.le(a))         // 0x61 <= 0x61
+    assert(c.ge(a))         // 0x63 >= 0x61
+}
+
+test "bool builtin eq — равенство по значению (lt/gt НЕ предоставляются) (D109)" {
+    ro t bool = true
+    ro f bool = false
+    assert(t.eq(t))         // true == true
+    assert(f.eq(f))         // false == false
+    assert(!t.eq(f))        // true != false
+}
+
+test "hash детерминирован: равные значения примитивов → равные хеши (D109)" {
+    // Контракт для использования примитивов как ключей HashMap[K Hash].
+    ro i1 int = 42
+    ro i2 int = 42
+    assert(i1.hash() == i2.hash())      // int: nova_int_hash детерминирован
+
+    ro b1 bool = true
+    ro b2 bool = true
+    assert(b1.hash() == b2.hash())      // bool: nova_bool_hash детерминирован
+
+    ro c1 char = 'Z'
+    ro c2 char = 'Z'
+    assert(c1.hash() == c2.hash())      // char: nova_int_hash (widened u32) детерминирован
+
+    ro f1 f64 = 3.25
+    ro f2 f64 = 3.25
+    assert(f1.hash() == f2.hash())      // f64: nova_f64_hash по битам детерминирован
+}

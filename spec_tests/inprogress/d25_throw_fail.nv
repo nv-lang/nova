@@ -1,0 +1,44 @@
+// D25 — `throw` и параметризация `Fail[E]`. Норма (spec/decisions/04-effects.md §D25):
+// `throw expr` — операция эффекта `Fail`, не магия: «та же проверка, что для Db.query».
+// Перехват — ТОЛЬКО через handler `with Fail = effect Fail { fail(msg) { ... interrupt v } }`
+// (try/catch отвергнут). Здесь POS-наблюдаемое ядро D25: throw на error-path ловится
+// handler'ом (msg доступен), а ok-path handler НЕ триггерит. Шаблон сверен с
+// nova_tests/effects/fail_handler.nv.
+// Один folder-module `spec_tests.conformance`; имена D25-prefixed.
+module spec_tests.conformance
+
+fn d25_parse(s str) -> int {
+    if s == "ok" { return 42 }
+    throw "parse failed"
+}
+
+test "throw ловится with-Fail handler, msg доступен (D25)" {
+    mut caught = ""
+    mut handler_ran = false
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            handler_ran = true
+            interrupt ()
+        }
+    } {
+        ro _ = d25_parse("bad")
+    }
+    assert(handler_ran)
+    assert(caught == "parse failed")
+}
+
+test "ok-path НЕ триггерит Fail handler, значение проходит (D25)" {
+    mut handler_ran = false
+    mut got = 0
+    with Fail = effect Fail {
+        fail(_msg) {
+            handler_ran = true
+            interrupt ()
+        }
+    } {
+        got = d25_parse("ok")
+    }
+    assert(!handler_ran)
+    assert(got == 42)
+}
