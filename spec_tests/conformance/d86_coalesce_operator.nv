@@ -1,0 +1,38 @@
+// D86 — `??` coalesce-оператор: `Some(v)`/`Ok(v)` → `v`; `None`/`Err(_)` → fallback.
+// Чистая локальная операция (НЕ требует `Fail[E]`), поглощает ошибку/None заменой на
+// fallback; Err-значение отбрасывается. Семантически сахар над `match`. Fallback —
+// произвольное выражение типа внутреннего `T`. Behavioral: каждый assert различает —
+// если бы `??` не разворачивал Some/Ok или не подставлял fallback на None/Err, значение
+// отличалось бы. Spec: spec/decisions/04-effects.md (D86). Один folder-module CU.
+module spec_tests.conformance
+
+fn d86_lookup(k int) -> Option[int] {
+    if k == 1 { return Some(10) }
+    if k == 2 { return Some(20) }
+    None
+}
+
+fn d86_parse_ok() -> Result[int, str] => Ok(42)
+fn d86_parse_err() -> Result[int, str] => Err("bad input")
+
+test "?? on Option — Some разворачивается, None → fallback (D86)" {
+    ro hit = d86_lookup(1) ?? 0
+    assert(hit == 10)             // Some(10) → 10  (fallback не взят)
+    ro miss = d86_lookup(99) ?? 7
+    assert(miss == 7)             // None → fallback 7
+}
+
+test "?? on Result — Ok разворачивается, Err → fallback, ошибка отброшена (D86)" {
+    ro ok = d86_parse_ok() ?? -1
+    assert(ok == 42)              // Ok(42) → 42  (gap-fix: было /*unsupported*/ → всегда fallback)
+    ro err = d86_parse_err() ?? -1
+    assert(err == -1)             // Err("bad input") → fallback -1 (str-ошибка отброшена)
+}
+
+test "?? fallback — произвольное выражение внутреннего типа (D86)" {
+    ro base = 100
+    ro v = d86_lookup(99) ?? (base + 5)
+    assert(v == 105)              // None → вычислить fallback-выражение
+    ro w = d86_lookup(2) ?? (base + 5)
+    assert(w == 20)               // Some(20) → 20  (fallback-выражение НЕ вычисляется)
+}
