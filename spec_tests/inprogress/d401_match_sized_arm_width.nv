@@ -1,0 +1,80 @@
+﻿// D401 — a `match`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
+// arm results; it must NOT silently collapse to signed `nova_int`. Surface: `ro got = match c
+// { … => <expr> … }` (UNANNOTATED binding). The result binding inherits the match-expr's
+// INFERRED type.
+//
+// DISCRIMINATING form: all arms hold `uint` values (via explicitly typed locals so the
+// arm TYPE is unambiguous to the checker — see D413 notes on IntLit(i64) AST limitation).
+// The common arm type `uint` must propagate to `got`; if the inference collapses to `int`,
+// the unsigned high-bit 2^63 reads negative and `assert(got > 100)` is FALSE under signed
+// semantics.
+// Spec: spec/decisions/02-types.md (named-priority, uint≠int, u8≠i8). Single
+// `spec_tests.conformance` folder-module; all top-level names d401w_-prefixed.
+module inprogress.d401_match_sized_arm_width
+
+// Plain int source so the match scrutinee is a genuine runtime value (not const-folded away).
+fn d401w_sel(n int) -> int => n
+
+// Large uint value — 2^63; as signed int64 this is i64::MIN (NEGATIVE).
+fn d401w_big() -> uint => 0x8000000000000000
+
+test "match-expr value keeps unsigned width: all uint arms propagate to unannotated binding (D401)" {
+    ro big uint = d401w_big()
+    ro one uint = 1
+    ro k = d401w_sel(0)
+    ro got = match k {                       // UNANNOTATED: infers uint from arms
+        0 => big                             // uint: 2^63
+        _ => one                             // uint: 1
+    }
+    assert(got > 100)        // uint: 2^63 > 100 ✓ ; signed collapse → i64::MIN → negative → FAIL
+}
+
+test "match-expr value: wildcard arm uint propagates too (D401)" {
+    ro big uint = d401w_big()
+    ro zero uint = 0
+    ro k = d401w_sel(7)
+    ro got = match k {
+        0 => zero                            // uint: 0
+        _ => big                             // uint: 2^63 reached via `_`
+    }
+    assert(got > 100)        // same discriminator from the wildcard arm
+    assert(!(got < 0))       // unsigned: not negative; signed collapse → < 0 holds → FAIL
+}
+
+test "match-expr value: two uint arms compare EQUAL unsigned (D401)" {
+    ro big uint = d401w_big()
+    ro one uint = 1
+    ro a = match d401w_sel(0) {
+        0 => big
+        _ => one
+    }
+    ro b = match d401w_sel(9) {
+        0 => one
+        _ => big
+    }
+    assert(a == b)           // both are 2^63 — equal regardless of signedness (sanity)
+    assert(a > 100)          // discriminator: positive only if unsigned width preserved
+    assert(b > 100)
+}
+
+test "match-expr value: u8 arm width preserved (D401 §sized)" {
+    ro v u8 = 200            // fits u8 (nova_byte), exceeds i8 max 127
+    ro z u8 = 0
+    ro k = d401w_sel(0)
+    ro got = match k {
+        0 => v
+        _ => z
+    }
+    assert(got == 200)
+    assert(got > 100)
+}
+
+test "match-expr value: signed-int arms still round-trip (control) (D401)" {
+    ro k = d401w_sel(0)
+    ro got = match k {
+        0 => -5                              // genuinely signed int — control case
+        _ => 7
+    }
+    assert(got == -5)
+    assert(got < 0)
+}

@@ -1,0 +1,21 @@
+﻿// D85 (payload-width extension) — `Ok(v)` / `Err(e)` constructors must keep the payload's
+// EXACT primitive width/sign in a typed `Result[T, E]` return, not collapse a context-typed
+// LITERAL to signed `nova_int`. DISCRIMINATING: the `?? `-unwrapped result is UNANNOTATED, so
+// it inherits the inferred inner type; if `Ok(<int-literal>) -> Result[uint, str]` lowers the
+// payload as `nova_int`, the unsigned `2^63` reads NEGATIVE and `got > 100` is false. Parallel
+// to the `Some(literal)` fix [M-172.1-some-target-coerce]; surfaces whether Ok/Err share the
+// same constructor literal-coercion gap. Spec: spec/decisions/04-effects.md (D85/D86).
+module inprogress.d85_result_payload_width
+
+fn d85w_ok_huge() -> Result[uint, str] => Ok(0x8000000000000000)   // 2^63 — high bit
+fn d85w_err() -> Result[uint, str] => Err("boom")
+
+test "Ok(literal) keeps uint payload width in Result[uint,_] (D85)" {
+    ro got = d85w_ok_huge() ?? 0       // Ok(2^63) → 2^63, UNANNOTATED
+    assert(got > 100)                  // uint: positive ; signed collapse → negative → FAIL
+}
+
+test "Err path fallback keeps uint width (D85)" {
+    ro fb = d85w_err() ?? 0x4000000000000000   // Err → fallback 2^62, UNANNOTATED
+    assert(fb > 100)                   // uint fallback stays unsigned-positive
+}

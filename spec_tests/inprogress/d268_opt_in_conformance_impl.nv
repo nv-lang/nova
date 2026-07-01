@@ -1,0 +1,45 @@
+﻿// D268 — Opt-in конформность протоколов: `#impl(P)` на метод-декларации.
+// `#impl(P)` — необязательная пометка: проверяет подпись метода против P + привязывает P к T.
+// Структурная конформность по-прежнему работает без #impl; #impl только ДОБАВЛЯЕТ проверку.
+// Spec: spec/decisions/10-overloading.md D268. Part of the SINGLE `spec_tests.conformance` folder-module.
+module inprogress.d268_opt_in_conformance_impl
+
+type D268Describe protocol { @describe() -> str }
+type D268Measure protocol { @measure() -> int }
+
+type D268Box { label str, size int }
+
+// opt-in #impl(P) на методе — проверяет подпись против протокола
+#impl(D268Describe)
+fn D268Box @describe() -> str => @label
+
+#impl(D268Measure)
+fn D268Box @measure() -> int => @size
+
+// Использование через generic bound — подтверждает конформность
+fn d268_describe_all[T D268Describe](items []T) -> str {
+    mut result = ""
+    for item in items {
+        result = result + item.describe() + " "
+    }
+    result
+}
+
+fn d268_total[T D268Measure](items []T) -> int {
+    mut sum = 0
+    for item in items {
+        sum = sum + item.measure()
+    }
+    sum
+}
+
+test "#impl(P) on method: method works at runtime (D268)" {
+    ro b = D268Box { label: "alpha", size: 42 }
+    assert(b.describe() == "alpha")
+    assert(b.measure() == 42)
+}
+
+test "#impl(P) enables use as generic-bound argument (D268)" {
+    ro items = [D268Box { label: "x", size: 1 }, D268Box { label: "y", size: 2 }]
+    assert(d268_total(items) == 3)
+}

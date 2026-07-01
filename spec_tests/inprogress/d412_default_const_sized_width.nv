@@ -1,0 +1,57 @@
+﻿// D412 — sized/unsigned DEFAULT-ARGUMENT values and unsigned `const` INITIALIZERS
+// must keep their UNSIGNED width; a non-bare initializer expression must NOT collapse
+// its operands to signed `nova_int`. Two collapse sites, both EMPIRICALLY confirmed
+// RUN-FAIL on the current build (inspected emitted C + ran in isolation):
+//
+//  (1) DEFAULT-ARG (callnorm.rs §try_normalize_call, ArgBinding::Default):
+//      a defaulted param is desugared into an UNANNOTATED  `let <param> = <default>`
+//      (`let_stmt` builds `ty: None`). An IntLit-rooted default infers `nova_int`
+//      (emit_c.rs infer_expr_c_type(IntLit)="nova_int"), so
+//      `x uint = 0x8000000000000000 >> 1` emits
+//          `nova_int x = ((nova_int)-9223372036854775808LL) >> ((nova_int)1LL);`
+//      → ARITHMETIC (sign-extending) shift = 0xC000000000000000, NOT the unsigned
+//      logical 0x4000000000000000. (A *bare* `uint = 2^63` default round-trips
+//      correctly through the `nova_uint` param conversion, so it would NOT
+//      discriminate — the `>>` / `/` operators are what expose the signed collapse.)
+//
+//  (2) CONST (emit_c.rs emit_const_expr_typed): only a BARE IntLit/CharLit/Neg gets
+//      the unsigned target-type suffix; a binary `>>` / `/` initializer falls to
+//      `emit_const_expr`, whose IntLit arm emits `((nova_int)<n>LL)` — signed — even
+//      though the const is declared `uint`. Same arithmetic-shift / signed-divide bug.
+//
+// DISCRIMINATING form: result binding is UNANNOTATED (`ro got = ...`) so it inherits
+// the (correctly `nova_uint`) call/const type; the wrong VALUE is what fails. Correct
+// unsigned answer is 0x4000000000000000 (2^62); the signed collapse yields
+// 0xC000000000000000 (≈3·2^62) — `got == 0x4000000000000000` is then false (RUN-FAIL).
+// Spec: spec/decisions/02-types.md (uint is UNSIGNED, ≠ int; D130/D126 family).
+// Single `spec_tests.conformance` folder-module; all top-level names D412W-prefixed.
+module inprogress.d412_default_const_sized_width
+
+// default-arg surface: unsigned-sensitive operator inside the default expression.
+fn d412w_def_shr(x uint = 0x8000000000000000 >> 1) -> uint => x   // unsigned: 0x4000000000000000
+fn d412w_def_div(x uint = 0x8000000000000000 / 2) -> uint => x    // unsigned: 0x4000000000000000
+
+// const surface: same two operators, declared `uint`.
+const D412W_CONST_SHR uint = 0x8000000000000000 >> 1
+const D412W_CONST_DIV uint = 0x8000000000000000 / 2
+
+test "default-arg uint `>>` stays unsigned (logical shift), no signed collapse (D412)" {
+    ro got = d412w_def_shr()              // UNANNOTATED: inherits call's nova_uint type
+    assert(got == 0x4000000000000000)     // unsigned logical >>1 ; signed →0xC000... → FAIL
+    assert(got < 0x8000000000000000)      // logical shift cleared the top bit
+}
+
+test "default-arg uint `/` divides unsigned, no signed collapse (D412)" {
+    ro got = d412w_def_div()              // 2^63 / 2 unsigned = 2^62
+    assert(got == 0x4000000000000000)     // signed-divide of -2^63/2 → 0xC000... → FAIL
+}
+
+test "const uint `>>` initializer stays unsigned (logical shift) (D412)" {
+    ro got = D412W_CONST_SHR              // const declared uint; initializer must be unsigned
+    assert(got == 0x4000000000000000)     // signed operands in emit → arithmetic shift → FAIL
+}
+
+test "const uint `/` initializer divides unsigned (D412)" {
+    ro got = D412W_CONST_DIV
+    assert(got == 0x4000000000000000)     // signed-divide collapse → 0xC000... → FAIL
+}

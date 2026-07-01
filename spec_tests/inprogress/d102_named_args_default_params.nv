@@ -1,0 +1,45 @@
+﻿// D102 — Именованные аргументы и значения параметров по умолчанию.
+// Параметр с дефолтом — keyword-only на месте вызова (нельзя позиционно).
+// Обязательный параметр всегда позиционно.
+//
+// Discriminator: без default params каждый вызов должен передавать все аргументы.
+// Без named args переставить их нельзя. Тесты проверяют что дефолт применяется
+// и именованные аргументы переставимы.
+//
+// Spec: spec/decisions/03-syntax.md D102. Единица: folder-module `spec_tests.conformance`.
+module inprogress.d102_named_args_default_params
+
+fn d102_port(host str, port int = 8080) -> int => port
+
+fn d102_flag(x int, verbose bool = false, debug bool = false) -> int =>
+    if verbose { x + 1000 } else if debug { x + 100 } else { x }
+
+test "default param is used when not provided (D102)" {
+    ro p = d102_port("localhost")
+    assert(p == 8080)
+}
+
+test "named arg overrides default (D102)" {
+    ro p = d102_port("localhost", port: 9000)
+    assert(p == 9000)
+}
+
+test "two defaults — both omitted (D102)" {
+    ro r = d102_flag(5)
+    assert(r == 5)
+}
+
+test "two defaults — first named, second omitted (D102)" {
+    ro r = d102_flag(5, verbose: true)
+    assert(r == 1005)
+}
+
+test "two defaults — second named, first omitted (D102)" {
+    ro r = d102_flag(5, debug: true)
+    assert(r == 105)
+}
+
+test "two defaults — both named out-of-order (D102)" {
+    ro r = d102_flag(5, debug: true, verbose: true)
+    assert(r == 1005)
+}

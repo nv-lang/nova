@@ -1,0 +1,33 @@
+﻿// D232 — Vec growable-API (методы доступа/мутации): pop/insert/remove/contains/index_of/
+// is_empty/clear/first/last. Behavioral: длины/элементы/Option-края различают корректную
+// операцию. Spec: spec/decisions/02-types.md (D232). Один folder-module CU; D232-companion
+// к d232_vec_growable.nv (несколько файлов на один D допустимо).
+module inprogress.d232_vec_methods
+
+test "Vec pop — снимает с конца, пусто → None (D232)" {
+    mut v = Vec[int].of(1, 2, 3)
+    assert(v.pop() == Some(3))
+    assert(v.pop() == Some(2))
+    assert(v.len() == 1)
+    assert(v.pop() == Some(1))
+    assert(v.pop().is_none())          // пусто → None
+}
+
+test "Vec contains/index_of (D232)" {
+    ro v = Vec[int].of(10, 20, 30)
+    assert(v.contains(20))
+    assert(!(v.contains(99)))
+    assert(v.index_of(30) == Some(2))
+    assert(v.index_of(99).is_none())
+}
+
+test "Vec is_empty/first/last (D232)" {
+    ro v = Vec[int].of(5, 6, 7)
+    assert(!(v.is_empty()))
+    assert(v.first() == Some(5))
+    assert(v.last() == Some(7))
+    ro e = Vec[int].new()
+    assert(e.is_empty())
+    assert(e.first().is_none())
+    assert(e.last().is_none())
+}

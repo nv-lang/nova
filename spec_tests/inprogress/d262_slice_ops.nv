@@ -1,0 +1,45 @@
+﻿// D262 — slice-операции на `[]T ≡ Vec[T]`-view модели (без нового Slice[T]-типа):
+// split_at (контракт, len-инвариант), first_n/last_n (CLAMP), as_slice (whole-view),
+// split_first/split_last (Option, пусто→None). Все возвращают view ТОГО ЖЕ типа.
+// Behavioral: длины/элементы различают правильное разбиение от неверного; clamp vs panic.
+// Spec: spec/decisions/03-syntax.md (D262). Один folder-module CU.
+module inprogress.d262_slice_ops
+
+test "split_at делит на (front, back) с len-инвариантом (D262)" {
+    ro v = Vec[int].of(10, 20, 30, 40, 50)
+    ro pair = v.split_at(2)                      // front=[10,20], back=[30,40,50]
+    assert(pair.0.len() == 2)
+    assert(pair.1.len() == 3)
+    assert(pair.0.len() + pair.1.len() == v.len())   // инвариант: левая+правая == целое
+    assert(pair.0[0] == 10)
+    assert(pair.1[0] == 30)
+    assert(pair.1[2] == 50)
+}
+
+test "first_n/last_n КЛАМПЯТ (n>len → весь, n<=0 → пусто) (D262)" {
+    ro v = Vec[int].of(1, 2, 3)
+    assert(v.first_n(2).len() == 2)
+    assert(v.first_n(2)[0] == 1)
+    assert(v.first_n(99).len() == 3)             // clamp к len, не паника
+    assert(v.first_n(0).len() == 0)              // n<=0 → пусто
+    assert(v.last_n(2).len() == 2)
+    assert(v.last_n(2)[0] == 2)                   // последние 2 = [2,3]
+    assert(v.last_n(99).len() == 3)              // clamp
+}
+
+test "as_slice — whole-view того же типа, алиасит элементы (D262)" {
+    ro v = Vec[int].of(7, 8, 9)
+    ro s = v.as_slice()
+    assert(s.len() == 3)
+    assert(s[0] == 7)
+    assert(s[2] == 9)
+}
+
+test "split_first/split_last → Option; пусто → None (D262)" {
+    ro v = Vec[int].of(100, 200, 300)
+    assert(v.split_first().is_some())
+    assert(v.split_last().is_some())
+    ro empty = Vec[int].new()
+    assert(empty.split_first().is_none())
+    assert(empty.split_last().is_none())
+}

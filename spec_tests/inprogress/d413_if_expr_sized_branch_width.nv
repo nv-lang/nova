@@ -1,0 +1,65 @@
+﻿// D413 — an `if`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
+// branches; it must NOT silently collapse to signed `nova_int`. Surface: `ro got = if c { … }
+// else { … }` (UNANNOTATED binding). The result binding inherits the if-expr's INFERRED type.
+//
+// DISCRIMINATING form: branches hold `uint` values (via explicitly typed locals so the
+// branch TYPE is unambiguous to the checker). The common type `uint` must propagate to
+// `got`; if the inference collapses to `int`, the unsigned high-bit 2^63 reads negative
+// and `assert(got > 100)` is FALSE under signed semantics. Using explicit `uint` locals
+// instead of bare `0x8000000000000000` literals avoids the lexer-level i64 saturation
+// (the literal is stored as i64::MIN without a uint hint — see IntLit(i64) AST); the
+// branch TYPE is what is under test here.
+// Spec: spec/decisions/02-types.md (uint≠int, D413/D130).
+// Single `spec_tests.conformance` folder-module; all top-level names d413w_-prefixed.
+module inprogress.d413_if_expr_sized_branch_width
+
+// Plain bool source so the `if`-condition is a genuine runtime branch (not const-folded away).
+fn d413w_pick(b bool) -> bool => b
+
+// Large uint value — 2^63; as signed int64 this is i64::MIN (NEGATIVE).
+// Declared explicitly as uint so the branch type is `uint`, not `int`.
+fn d413w_big() -> uint => 0x8000000000000000
+
+test "if-expr value keeps unsigned width: then-branch uint propagates to unannotated binding (D413)" {
+    ro c = d413w_pick(true)
+    ro big uint = d413w_big()
+    ro zero uint = 0
+    ro got = if c { big } else { zero }   // UNANNOTATED: infers uint from branches
+    assert(got > 100)        // uint: 2^63 > 100 ✓ ; signed collapse → negative → FAIL
+    assert(!(got < 0))       // uint is never negative; signed collapse → 2^63 < 0 holds → FAIL
+}
+
+test "if-expr value: else-branch uint propagates to unannotated binding (D413)" {
+    ro c = d413w_pick(false)
+    ro big uint = d413w_big()
+    ro zero uint = 0
+    ro got = if c { zero } else { big }   // UNANNOTATED; else-branch taken
+    assert(got > 100)        // same unsigned discriminator from the else branch
+    assert(!(got < 0))
+}
+
+test "if-expr value: two uint branches compare EQUAL unsigned (D413)" {
+    ro big uint = d413w_big()
+    ro zero uint = 0
+    ro a = if d413w_pick(true)  { big } else { zero }
+    ro b = if d413w_pick(false) { zero } else { big }
+    assert(a == b)           // both are 2^63 — equal regardless of signedness (sanity)
+    assert(a > 100)          // discriminator: positive only if unsigned width preserved
+    assert(b > 100)
+}
+
+test "if-expr value: u8 branch width preserved (D413 §sized)" {
+    ro c = d413w_pick(true)
+    ro v u8 = 200           // fits u8 (nova_byte), exceeds i8 max 127
+    ro z u8 = 0
+    ro got = if c { v } else { z }  // UNANNOTATED; must infer u8, not int
+    assert(got == 200)
+    assert(got > 100)
+}
+
+test "if-expr value: signed-int branches still round-trip (control) (D413)" {
+    ro c = d413w_pick(true)
+    ro got = if c { -5 } else { 7 }   // genuinely signed int — control case, must stay signed
+    assert(got == -5)
+    assert(got < 0)
+}

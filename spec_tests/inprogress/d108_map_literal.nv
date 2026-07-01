@@ -1,0 +1,38 @@
+﻿// D108 — Map-литерал `[k: v, ...]` конструирует `HashMap[K, V]`.
+// Ключи и значения — выражения, вычисляются в рантайме.
+// Доступ к значениям через `.get(k) -> Option[V]`.
+//
+// Discriminator: без map-литерала нужно явно создавать HashMap и вставлять.
+// Тесты проверяют что созданный map содержит правильные значения.
+//
+// Spec: spec/decisions/03-syntax.md D108. Единица: folder-module `spec_tests.conformance`.
+module inprogress.d108_map_literal
+
+test "map literal with int keys creates HashMap (D108)" {
+    ro m HashMap[int, str] = [1: "one", 2: "two", 3: "three"]
+    assert(m.len() == 3)
+    assert(m.get(1) == Some("one"))
+    assert(m.get(2) == Some("two"))
+    assert(m.get(99) == None)
+}
+
+test "map literal: computed key and value expressions (D108)" {
+    ro base = 10
+    ro m HashMap[int, str] = [base: "ten", base + 1: "eleven"]
+    assert(m.get(10) == Some("ten"))
+    assert(m.get(11) == Some("eleven"))
+}
+
+test "map literal: string keys (D108)" {
+    ro m HashMap[str, str] = ["host": "localhost", "port": "8080"]
+    assert(m.get("host") == Some("localhost"))
+    assert(m.get("port") == Some("8080"))
+    assert(m.get("other") == None)
+}
+
+test "map literal: contains and len (D108)" {
+    ro m HashMap[int, int] = [1: 10, 2: 20, 3: 30]
+    assert(m.len() == 3)
+    assert(m.contains(2))
+    assert(!m.contains(99))
+}

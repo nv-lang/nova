@@ -1,0 +1,52 @@
+﻿// D16 — Дженерики через `[T]`, не `<T>`.
+// Generic-параметры в `[]`, не `<>`. `Имя[T]` = generic-применение.
+// Generic function: `fn f[T](x T) -> T`. Generic type: `type Box[T] { val T }`.
+// Turbofish: `parse[int]("42")` без `::`.
+//
+// Discriminator: без `[T]` нет полиморфизма без дублирования.
+//
+// Spec: spec/decisions/03-syntax.md D16. Единица: folder-module `spec_tests.conformance`.
+module inprogress.d16_generics_brackets
+
+type D16Box[T] { val T }
+
+fn D16Box[T].wrap(val T) -> D16Box[T] => { val }
+
+fn D16Box[T] @get() -> T => @val
+
+fn d16_identity[T](x T) -> T => x
+
+fn d16_first[T](xs []T) -> Option[T] =>
+    if xs.len() > 0 { Some(xs[0]) } else { None }
+
+test "generic function identity: int (D16)" {
+    ro r = d16_identity[int](42)
+    assert(r == 42)
+}
+
+test "generic function identity: str (D16)" {
+    ro r = d16_identity[str]("hello")
+    assert(r == "hello")
+}
+
+test "generic type Box: wrap and get (D16)" {
+    ro b = D16Box[int].wrap(99)
+    assert(b.get() == 99)
+}
+
+test "generic type Box: str (D16)" {
+    ro b = D16Box[str].wrap("world")
+    assert(b.get() == "world")
+}
+
+test "generic function with slice: first element (D16)" {
+    ro xs = [10, 20, 30]
+    ro f = d16_first[int](xs)
+    assert(f == Some(10))
+}
+
+test "generic function with slice: empty returns None (D16)" {
+    ro xs []int = []
+    ro f = d16_first[int](xs)
+    assert(f == None)
+}

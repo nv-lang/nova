@@ -1,0 +1,70 @@
+﻿// D411 — a FIXED-ARRAY `[N]uint` LITERAL-initialization + indexed read must preserve the
+// element's UNSIGNED width (uint≠int): the high-bit value `0x8000000000000000` (2^63) must
+// read back POSITIVE, not as signed `i64::MIN`.
+//
+// Codegen path (GROUNDED, compiler-codegen/src/codegen/emit_c.rs + types/mod.rs):
+//   1. `[N]T` parses to `TypeRef::FixedArray(N, T, _)` (parser/mod.rs:6061) and is then
+//      canonicalized to `R::Array(T)` — the `N` is DROPPED — at types/mod.rs:186
+//      (`FixedArray(_, inner, _) => R::Array(..)`), so a fixed array reuses the `Vec[T]`
+//      lowering. `[N]uint` ⇒ the binding's C type is `Nova_Vec____nova_uint*`
+//      (`resolved_array_to_c`, emit_c.rs:2024 — Vec template present).
+//   2. The literal `[<int-lit>, ...]` is emitted by `try_emit_typed_vec_literal`
+//      (emit_c.rs:32001). A BARE int literal infers the erased `nova_int` default, so the
+//      element type is upgraded to the typed-context hint ONLY when the hint is in the
+//      `hint_overrides_int` whitelist (emit_c.rs:32025). That list is
+//      {nova_byte,nova_char,int8/16/32/64_t,uint8/16/32/64_t} — it OMITS `nova_uint`
+//      (= `uint`, uintptr_t) and `size`. So for `[N]uint` the hint `nova_uint` does NOT win:
+//      the literal collapses to `Nova_Vec____nova_int` and pushes the 2^63 element as the
+//      SIGNED `(nova_int)-9223372036854775808LL`. (EMPIRICALLY CONFIRMED in the emitted C.)
+//   3. The indexed read `a[i]` (emit_c.rs:22378) decodes the element C-type from the
+//      BINDING's declared mono `Nova_Vec____nova_uint` (via `var_types`/instance-info), so it
+//      emits `*(nova_uint*)nova_idx_chk(...)` — an UNSIGNED read. Because `nova_uint` and
+//      `nova_int` are BOTH 8-byte and the stored bit pattern of 2^63 is identical under either
+//      sign, the unsigned read RECOVERS 2^63 — the collapse in step 2 is bit-LATENT here, and
+//      the `nova_int`→`nova_uint` container-pointer assignment is a warning the test toolchain
+//      suppresses (clang `-Wno-everything` / MSVC `/W0`). Hence this surface PASSES.
+//
+// DISCRIMINATING role (mirrors d403_vec_sized_element_read / D126): every result binding is
+// UNANNOTATED (`ro got = a[i]`), inheriting the indexed read's element type. If a future change
+// ever routed the read through the LITERAL's collapsed `nova_int` type (or the element width
+// diverged from `nova_int`), the 2^63 high bit would read NEGATIVE and `got > 100` would be
+// FALSE (RUN-FAIL). The control test pins the genuinely-signed `[N]int` case. Spec:
+// spec/decisions/02-types.md (named-priority, uint≠int) + 03-syntax.md (D27 `[N]T` fixed array).
+// SINGLE `spec_tests.conformance` folder-module; all top-level names `d411w_`-prefixed.
+module inprogress.d411_array_sized_elem_width
+
+// Plain runtime source so the high-bit element is a real value, never const-folded away.
+fn d411w_hibit() -> uint => 0x8000000000000000   // 2^63 — high bit set (signed i64 → NEGATIVE)
+
+test "[N]uint fixed-array literal + index keeps unsigned high-bit; no signed collapse (D411)" {
+    ro a [2]uint = [0x8000000000000000, 7]   // element 0 = 2^63 via [N]uint literal init
+    ro got = a[0]                            // UNANNOTATED: inherits the indexed read's element type
+    assert(got > 100)                        // uint: 2^63 > 100 ✓ ; signed collapse → negative → FAIL
+    assert(!(got < 0))                       // unsigned: never negative ; collapse → < 0 holds → FAIL
+}
+
+test "[N]uint fixed-array: second slot round-trips, small values intact (D411)" {
+    ro a [4]uint = [1, 2, 100, 3]            // small values: exact round-trip regardless of width
+    ro hi = a[2]
+    assert(hi == 100)
+    ro lo = a[1]
+    assert(lo == 2)
+    assert(lo > 0)
+}
+
+test "[N]uint fixed-array element compares UNSIGNED against a uint value (D411)" {
+    ro a [3]uint = [0x8000000000000000, 1, 2]   // a[0] = 2^63
+    ro x = a[0]
+    ro big = d411w_hibit()                       // also 2^63, from a `-> uint` fn (unsigned source)
+    assert(x == big)                             // both 2^63 — equal regardless of signedness (sanity)
+    assert(x > 100)                              // discriminator: positive only if width preserved
+    assert(big > x - ((1 as uint)))              // unsigned: 2^63 > 2^63-1 ✓ ; signed wrap would flip
+}
+
+test "[N]int fixed-array — genuinely signed elements still round-trip (control) (D411)" {
+    ro a [3]int = [-5, 0, 7]                 // signed int negatives — control case (NOT collapse)
+    ro got = a[0]
+    assert(got == -5)
+    assert(got < 0)
+    assert(a[2] == 7)
+}

@@ -1,0 +1,20 @@
+﻿// D328 — value-record `==` is STRUCTURAL (Plan 172.4 Ф.2). Value (no heap identity) →
+// field-by-field, via the single `emit_field_eq` dispatcher (§0).
+module inprogress.d328_value_record_eq
+
+type D328Point value { x int, y int }
+
+test "value-record == is structural, not reference (D328)" {
+    ro a D328Point = { x: 1, y: 2 }
+    ro b D328Point = { x: 1, y: 2 }
+    ro c D328Point = { x: 3, y: 4 }
+    assert(a == b)
+    assert(!(a == c))
+}
+
+test "value-record != is the structural negation (D328)" {
+    ro a D328Point = { x: 5, y: 5 }
+    ro b D328Point = { x: 5, y: 6 }
+    assert(a != b)
+    assert(!(a == b))
+}

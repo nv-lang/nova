@@ -1,0 +1,55 @@
+﻿// D83 — Keywords строго запрещены как identifier'ы (compile error при использовании).
+// Positive-сторона: prelude names (int/str/bool/Option) — это IDENTIFIER'ы, не keywords,
+// и identifier'ы содержащие keyword-подстроки работают нормально.
+// Spec: spec/decisions/03-syntax.md D83. Part of the SINGLE `spec_tests.conformance` folder-module.
+module inprogress.d83_keywords_not_identifiers
+
+// Prelude names в сигнатурах — это identifier'ы, а не keywords
+fn d83_returns_int() -> int => 42
+fn d83_returns_str() -> str => "hello"
+fn d83_returns_bool() -> bool => true
+
+// Identifier'ы с keyword-like подстроками — разрешены (это НЕ keywords)
+fn d83_add_ints(if_val int, for_count int) -> int => if_val + for_count
+
+// Переменные с keyword-like именами (содержащими keyword как подстроку)
+fn d83_keyword_substrings() -> int {
+    ro if_guard = 10
+    ro for_loop = 3
+    ro mut_able = 7
+    ro fn_ptr_count = 2
+    if_guard + for_loop + mut_able + fn_ptr_count
+}
+
+// Тип с именем, напоминающим keyword (но не keyword)
+type D83Mutation { value int }
+fn D83Mutation @d83_apply(delta int) -> D83Mutation => { value: @value + delta }
+
+test "prelude names are identifiers usable in types and bindings (D83)" {
+    ro x int = 5
+    ro s str = "hello"
+    ro b bool = true
+    assert(x == 5)
+    assert(s == "hello")
+    assert(b == true)
+}
+
+test "identifiers containing keyword substrings are valid (D83)" {
+    ro if_val = 10
+    ro for_count = 3
+    ro mut_flag = true
+    assert(if_val == 10)
+    assert(for_count == 3)
+    assert(mut_flag == true)
+}
+
+test "functions with keyword-substring params work (D83)" {
+    assert(d83_add_ints(7, 3) == 10)
+    assert(d83_keyword_substrings() == 22)
+}
+
+test "type with keyword-substring name works (D83)" {
+    ro m = D83Mutation { value: 5 }
+    ro m2 = m.d83_apply(3)
+    assert(m2.value == 8)
+}

@@ -1,0 +1,30 @@
+﻿// D184 — Operator dispatch via protocols: == dispatches @equal, < dispatches @compare.
+// Primitives (int/bool/f64/char) use built-in C dispatch without method call.
+// User types dispatch == via @equal and </<=/>/>=  via @compare (returns int sign).
+// Spec: spec/decisions/03-syntax.md D184. Part of the SINGLE `spec_tests.conformance` folder-module.
+module inprogress.d184_operator_dispatch_protocols
+
+type D184Item { value int }
+
+fn D184Item @equal(other D184Item) -> bool => @value == other.value
+fn D184Item @compare(other D184Item) -> int =>
+    if @value < other.value { -1 } else if @value > other.value { 1 } else { 0 }
+
+test "== and != dispatch through @equal on user type (D184)" {
+    ro a = D184Item { value: 42 }
+    ro b = D184Item { value: 42 }
+    ro c = D184Item { value: 99 }
+    assert(a == b)
+    assert(a != c)
+}
+
+test "< and > dispatch through @compare on user type (D184)" {
+    ro small = D184Item { value: 1 }
+    ro big   = D184Item { value: 9 }
+    assert(small < big)
+    assert(big > small)
+    assert(small <= big)
+    assert(big >= small)
+    assert(small <= small)
+    assert(big >= big)
+}

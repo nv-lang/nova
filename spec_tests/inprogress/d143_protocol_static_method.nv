@@ -1,0 +1,35 @@
+﻿// D143 — Static-метод в protocol через leading-точку `.method()`.
+// В теле protocol: `.name(...)` = static (реализация `fn T.name`),
+// `name(...)` / `@name(...)` = instance (реализация `fn T @name`).
+//
+// Discriminator: без D143 нельзя различить static/instance в protocol syntax.
+//
+// Spec: spec/decisions/03-syntax.md D143. Единица: folder-module `spec_tests.conformance`.
+module inprogress.d143_protocol_static_method
+
+type D143Maker[T] protocol {
+    .make() -> T
+    @label() -> str
+}
+
+type D143Widget { id int }
+
+fn D143Widget.make() -> D143Widget => { id: 99 }
+
+fn D143Widget @label() -> str => "widget"
+
+test "protocol static .make() creates value (D143)" {
+    ro w = D143Widget.make()
+    assert(w.id == 99)
+}
+
+test "protocol instance @label() returns str (D143)" {
+    ro w = D143Widget.make()
+    assert(w.label() == "widget")
+}
+
+test "protocol static + instance together (D143)" {
+    ro w = D143Widget.make()
+    assert(w.label() == "widget")
+    assert(w.id == 99)
+}

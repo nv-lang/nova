@@ -1,0 +1,37 @@
+﻿// D132 — `-> @` fluent-return: метод возвращает сам receiver.
+// `fn T mut @method(...) -> @` — возвращает тот же объект.
+// Используется для builder/fluent chaining.
+//
+// Discriminator: без `-> @` builder pattern требует явно `return self`.
+//
+// Spec: spec/decisions/03-syntax.md D132. Единица: folder-module `spec_tests.conformance`.
+module inprogress.d132_fluent_return
+
+type D132Builder { buf str }
+
+fn D132Builder.new() -> D132Builder => { buf: "" }
+
+fn D132Builder mut @append(s str) -> @ {
+    @buf = @buf + s
+    @
+}
+
+fn D132Builder @result() -> str => @buf
+
+test "fluent-return: single append (D132)" {
+    mut b = D132Builder.new()
+    b.append("hello")
+    assert(b.result() == "hello")
+}
+
+test "fluent-return: chained appends (D132)" {
+    mut b = D132Builder.new()
+    b.append("hello").append(", ").append("world")
+    assert(b.result() == "hello, world")
+}
+
+test "fluent-return: result is same object (D132)" {
+    mut b = D132Builder.new()
+    ro _ = b.append("x")
+    assert(b.result() == "x")
+}
