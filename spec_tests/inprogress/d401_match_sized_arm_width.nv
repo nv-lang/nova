@@ -1,0 +1,69 @@
+// D401 — a `match`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
+// arm results; it must NOT silently collapse to signed `nova_int`. Direct parallel of the
+// If-expr surface (d413_if_expr_sized_branch_width.nv) and the `??` surface (d86_coalesce_width.nv):
+// `ro got = match c { … => <expr> … }` with an UNANNOTATED binding inherits the match-expr's
+// INFERRED type. If that result type collapses to signed `nova_int`, the unsigned high-bit
+// `0x8000000000000000` (2^63) reads NEGATIVE → `assert(got > 100)` is FALSE (RUN-FAIL).
+//
+// Codegen path (compiler-codegen/src/codegen/emit_c.rs::emit_match, ~:30388, +
+// types/mod.rs::infer_match_common_primitive ~:7720): the match-result type is taken from the
+// checker's Match-arm atom (`resolved_types[match_id]`, consumed AUTHORITATIVELY at emit_c.rs
+// :30550) or, absent it, the legacy first/second-pass arm inference. A BARE integer literal in
+// an unannotated arm infers `int` in BOTH the checker (types/mod.rs:9765 `IntLit =>
+// prim_ref("int")`) and legacy codegen (emit_c.rs:36794 `IntLit => nova_int`). All arms agree on
+// `int` ⇒ `infer_match_common_primitive` returns `int` ⇒ `result_ty = nova_int`. No sized/unsigned
+// target flows into the arm bodies for a bare `match`-as-value (the `match` arm of
+// `emit_expr_with_target_type` does NOT exist — emit_c.rs:19978 has only IntLit/Unary/Binary, so a
+// `-> uint` fn-return target is NOT propagated into the arms either), so the 2^63 high-bit literal
+// is stored as wrapping `i64::MIN` and emitted `((nova_int)…LL)`. The match-result is SIGNED →
+// reads negative. This is the int-collapse on the match-expression-as-value surface.
+// Spec: spec/decisions/02-types.md (named-priority, uint≠int, u8≠i8). Single
+// `spec_tests.conformance` folder-module; all top-level names d401w_-prefixed to avoid
+// duplicate-top-level-name collisions with sibling files in the CU.
+module inprogress.d401_match_sized_arm_width
+
+// Plain int source so the match scrutinee is a genuine runtime value (not const-folded away).
+fn d401w_sel(n int) -> int => n
+
+test "match-expr value keeps unsigned high-bit; no signed collapse (D401)" {
+    ro k = d401w_sel(0)
+    ro got = match k {                       // UNANNOTATED: inherits match-expr inferred type
+        0 => 0x8000000000000000              // 2^63 — high bit set
+        _ => 1
+    }
+    assert(got > 100)        // uint: 2^63 > 100 ✓ ; signed collapse → i64::MIN → negative → FAIL
+}
+
+test "match-expr value: high-bit taken via the wildcard arm too (D401)" {
+    ro k = d401w_sel(7)
+    ro got = match k {
+        0 => 1
+        _ => 0x8000000000000000             // high-bit literal reached via `_`
+    }
+    assert(got > 100)        // same discriminator from the other arm
+    assert(!(got < 0))       // unsigned: not negative ; signed collapse → < 0 holds → FAIL
+}
+
+test "match-expr value: two high-bit arms compare EQUAL unsigned (D401)" {
+    ro a = match d401w_sel(0) {
+        0 => 0x8000000000000000
+        _ => 1
+    }
+    ro b = match d401w_sel(9) {
+        0 => 1
+        _ => 0x8000000000000000
+    }
+    assert(a == b)           // both are 2^63 — equal regardless of signedness (sanity)
+    assert(a > 100)          // discriminator: positive only if unsigned width preserved
+    assert(b > 100)
+}
+
+test "match-expr value: signed-int arms still round-trip (control) (D401)" {
+    ro k = d401w_sel(0)
+    ro got = match k {
+        0 => -5                              // genuinely signed int — control case
+        _ => 7
+    }
+    assert(got == -5)
+    assert(got < 0)
+}

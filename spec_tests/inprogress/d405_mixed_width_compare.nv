@@ -1,0 +1,60 @@
+// D405 — MIXED-WIDTH unsigned arithmetic feeding a COMPARISON must NOT silently collapse to the
+// LEFT operand's narrower width. An UNANNOTATED `ro got = a + b` binding inherits the call/expr's
+// INFERRED type; for two sized-but-DIFFERENT-width unsigned operands codegen's arithmetic-result
+// inference returns `lt` — the LEFT operand's C type (compiler-codegen/src/codegen/emit_c.rs:36883,
+// `infer_expr_c_type_legacy` Binary arm: "Если оба typed — берём lt (левый)"). So `u8 + u16` is
+// declared `nova_byte` (uint8_t), TRUNCATING 200+200=400 → 144 before the `>` ever runs. The binary
+// comparison emit (emit_c.rs:20981-20994) is a bare `(l op r)` with NO sign/width logic — signedness
+// and width come ENTIRELY from the operands' C types — so once `got` is narrowed the comparison
+// `got > 300` reads `144 > 300` = FALSE (the actual emitted C; clang flags it
+// "comparison ... always false"). Verified by codegen inspection (`nova_byte got = (a + b);`) and by
+// compiling+running the emitted C with the project's LLVM clang: nl got=144 (got>300)=0, w32
+// got=4464 (got>60000)=0.
+//
+// PURE-SIGNEDNESS is already fixed (Plan 172.1 named-priority de-collapse: `uint`→nova_uint survives
+// inference, so `uint` 2^63 > 100, `u16` 60000 > 40000, `u8` wrap-to-255 all read unsigned-correct).
+// The residual int-collapse is THIS narrow-left width truncation, exposed cleanest as an
+// ORDER-ASYMMETRY: addition is commutative, yet `a + b` (u16+u8 → uint16_t → 400) ≠ `b + a`
+// (u8+u16 → nova_byte → 144) for the SAME operands — the `lt`-wins rule breaks commutativity.
+//
+// Spec: spec/decisions/02-types.md (named-priority; uint≠int, u8≠i8≠i16; sized width preserved).
+// Single `spec_tests.conformance` folder-module; all top-level names d405w_-prefixed to avoid
+// duplicate-top-level-name collisions with sibling files in the CU.
+module inprogress.d405_mixed_width_compare
+
+// Plain pass-throughs so each operand is a genuine sized runtime value (not const-folded to int).
+fn d405w_u8(v u8) -> u8 => v
+fn d405w_u16(v u16) -> u16 => v
+fn d405w_u32(v u32) -> u32 => v
+
+test "mixed-width add narrow-LEFT truncates: u8 + u16 → nova_byte (D405)" {
+    ro a u8 = d405w_u8(200)
+    ro b u16 = d405w_u16(200)
+    ro got = a + b                 // UNANNOTATED: inherits inferred result type; `lt`-wins → nova_byte
+    assert(got > 300)              // correct (uint16) 400 > 300 ✓ ; collapse → 144 > 300 = FALSE (RUN-FAIL)
+}
+
+test "mixed-width add narrow-LEFT truncates: u16 + u32 → uint16_t (D405)" {
+    ro a u16 = d405w_u16(5000)
+    ro b u32 = d405w_u32(65000)
+    ro got = a + b                 // inferred uint16_t (left); truncates 70000 → 4464
+    assert(got > 60000)            // correct 70000 > 60000 ✓ ; collapse → 4464 > 60000 = FALSE (RUN-FAIL)
+}
+
+test "order-asymmetry smoking gun: a+b keeps width, b+a loses it (D405)" {
+    ro a u16 = d405w_u16(200)
+    ro b u8 = d405w_u8(200)
+    ro wl = a + b                  // wide-LEFT  u16+u8 → uint16_t = 400 (correct)
+    ro nl = b + a                  // narrow-LEFT u8+u16 → nova_byte = 144 (truncated)
+    assert(wl > 300)               // 400 > 300 ✓  (control: wide-left path is fine)
+    assert(nl > 300)               // collapse: 144 > 300 = FALSE (RUN-FAIL)
+    assert(wl == nl)               // commutativity: 200+200 must equal 200+200 ; collapse → 400==144 FALSE
+}
+
+test "same-width unsigned add control: no collapse (D405)" {
+    ro a u16 = d405w_u16(200)
+    ro b u16 = d405w_u16(200)
+    ro got = a + b                 // both u16 → uint16_t (no narrowing possible)
+    assert(got == 400)             // round-trips exactly
+    assert(got > 300)              // sanity — passes regardless (proves the others isolate the collapse)
+}
