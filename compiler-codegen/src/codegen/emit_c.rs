@@ -36861,6 +36861,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     }
 
     fn infer_expr_c_type_legacy(&self, expr: &Expr) -> String {
+        // [P67-LEGACY] Этот путь должен быть удалён (ФАЗА 6). Вызов = checker не аннотировал
+        // выражение → нарушение docs/compiler-conventions.md §0. Паника сигналит о пробеле.
+        #[cfg(debug_assertions)]
+        if expr.id.is_set() && std::env::var("NOVA_P67_STRICT").is_ok() {
+            panic!("[P67-LEGACY] infer_expr_c_type_legacy reached for kind={:?} id={:?} — checker must annotate this expr (compiler-conventions.md §0)",
+                std::mem::discriminant(&expr.kind), expr.id);
+        }
         // D38 turbofish: type_args не меняют c-тип; делегируем в base.
         if let ExprKind::TurboFish { base, .. } = &expr.kind {
             return self.infer_expr_c_type(base);
@@ -37209,7 +37216,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                 }
-                "nova_int".into()
+                panic!("[P67-LEGACY] anonymous RecordLit without spread — unknown type (compiler-conventions.md §0)")
             }
             ExprKind::Ident(name) => {
                 // Plan 48 method-param mono: closure-param override (set by
@@ -37249,7 +37256,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         return format!("Nova_{}*", type_name);
                     }
                 }
-                "nova_int".into()
+                panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
             }
             ExprKind::Index { obj, index } => {
                 // Plan 96 Ф.3 — dispatch по типу index:
@@ -37368,7 +37375,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                     }
                 }
-                "nova_int".into()
+                panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty_pre)
             }
             ExprKind::SelfAccess => {
                 // Plan 70 Cat B (intentional erasure, session 2 finding):
@@ -37394,7 +37401,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return format!("NovaTuple_{recv_name}");
                         }
                     }
-                    "nova_int".into()
+                    panic!("[P67-LEGACY] SelfAccess: var_types[\"nova_self\"] not set and no current_receiver_type — unknown type (compiler-conventions.md §0)")
                 });
                 // Plan 152.1 Ф.3: a value-record receiver `nova_self` has C-type
                 // `NovaValue_X*` (by-pointer), but bare `@` denotes the VALUE
@@ -37458,7 +37465,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                 }
                                             }
                                         }
-                                        self.type_ref_to_c(tr).unwrap_or_else(|_| "nova_int".to_string())
+                                        self.type_ref_to_c(tr).unwrap_or_else(|e| panic!("[P67-LEGACY] turbofish type_arg lowering failed: {:?} (compiler-conventions.md §0)", e))
                                     })
                                     .collect();
                                 let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
@@ -38371,12 +38378,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 .filter(|t| !t.is_empty()
                                     && t != "void*"
                                     && !self.is_generic_stub_c(t));
-                            let (ok_c, err_c) = if name == "Ok" {
-                                (arg_c.unwrap_or_else(|| "nova_int".into()),
+                            let (ok_c, err_c): (String, String) = if name == "Ok" {
+                                (arg_c.unwrap_or_else(|| panic!("[P67-LEGACY] Ok(arg) arg type unknown — checker must annotate (compiler-conventions.md §0)")),
                                  "nova_str".to_string())
                             } else {
                                 ("nova_int".to_string(),
-                                 arg_c.unwrap_or_else(|| "nova_str".into()))
+                                 arg_c.unwrap_or_else(|| panic!("[P67-LEGACY] Err(arg) arg type unknown — checker must annotate (compiler-conventions.md §0)")))
                             };
                             return self.result_repr_c_type(&ok_c, &err_c);
                         }
@@ -38608,7 +38615,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return c_ty.clone();
                         }
                     }
-                    "nova_int".into()
+                    panic!("[P67-LEGACY] free-fn call `{}` return type unknown — checker must annotate (compiler-conventions.md §0)", name)
                 } else if let ExprKind::Member { obj, name: method } = &func.kind {
                     // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`
                     // → NovaArray_<T>*. obj — Path(["__array", "<T>"]).
@@ -38991,7 +38998,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if Self::is_result_like(&obj_ty) {
                         // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
                         let (ok_c, err_c) = self.resolve_result_te(obj, &obj_ty)
-                            .unwrap_or_else(|| ("nova_int".into(), "nova_str".into()));
+                            .unwrap_or_else(|| panic!("[P67-LEGACY] Result T/E unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty));
                         let ok_ident = Self::sanitize_c_for_ident(&ok_c);
                         let err_ident = Self::sanitize_c_for_ident(&err_c);
                         // Plan 99.1 Ф.3: для Nova-body методов с
@@ -39323,7 +39330,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if let Some(ret_ty) = self.var_types.get(&ret_key) {
                         return ret_ty.clone();
                     }
-                    "nova_int".into()
+                    panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0)", method)
                 } else if let ExprKind::Path(parts) = &func.kind {
                     // Plan 11 Ф.4.5: Self.method(...) → <current>.method(...).
                     let parts_resolved: Vec<String>;
@@ -39470,12 +39477,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                         }
                         let key = format!("fn_ret_{}", method_name);
-                        self.var_types.get(&key).cloned().unwrap_or_else(|| "nova_int".into())
+                        self.var_types.get(&key).cloned().unwrap_or_else(|| panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name))
                     } else {
-                        "nova_int".into()
+                        panic!("[P67-LEGACY] Path call return type unknown (no method segment) — checker must annotate (compiler-conventions.md §0)")
                     }
                 } else {
-                    "nova_int".into()
+                    panic!("[P67-LEGACY] Path call return type unknown (no parts) — checker must annotate (compiler-conventions.md §0)")
                 }
             }
             ExprKind::ArrayLit(elems) => {
@@ -39872,7 +39879,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // bound vars via tuple_element_types).
                 //
                 // Documented как Cat B12 в codegen-erasure-sites.md.
-                "nova_int".into()
+                // [P67-LEGACY] Неизвестный тип поля — checker должен аннотировать.
+                panic!("[P67-LEGACY] Member field type unknown for obj_ty — checker must annotate (compiler-conventions.md §0)")
             }
             ExprKind::Is(_, _) => "nova_bool".into(),
             ExprKind::As(_, ty) => {
@@ -39992,7 +40000,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     self.novares_ok_err(&inner_ty)
                         .or_else(|| self.infer_result_type_params(inner))
                         .map(|(ok, _)| ok)
-                        .unwrap_or_else(|| "nova_int".into())
+                        .unwrap_or_else(|| panic!("[P67-LEGACY] Try/Bang on Result: Ok type unknown for inner_ty={:?} — checker must annotate (compiler-conventions.md §0)", inner_ty))
                 } else {
                     // Unknown — propagate inner type (strip pointer for consume outer)
                     inner_ty
@@ -40024,22 +40032,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let param_c_tys: Vec<String> = params.iter()
                     .map(|p| p.ty.as_ref()
                         .and_then(|t| self.type_ref_to_c(t).ok())
-                        .unwrap_or_else(|| "nova_int".into()))
+                        .unwrap_or_else(|| panic!("[P67-LEGACY] lambda param type unknown — checker must annotate (compiler-conventions.md §0)")))
                     .collect();
                 let ret_c = match return_type {
-                    Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                    Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|e| panic!("[P67-LEGACY] lambda return type lowering failed: {:?} (compiler-conventions.md §0)", e)),
                     None => self.infer_expr_c_type(body),
                 };
                 let clos_struct = Self::clos_struct_name(&param_c_tys, &ret_c);
                 format!("{}*", clos_struct)
             }
-            // Plan 70 Cat B (intentional erasure, session 2 finding): final wildcard
-            // в infer_expr_c_type. Reached for ExprKind variants which cannot
-            // meaningfully infer a standalone C type — Path-only expressions без
-            // call-context, etc. В этих случаях caller (emit_call, emit_let, etc.)
-            // знает expected type из bidirectional context (fn_param_sigs,
-            // current_fn_return_ty) и delivers правильный type через alternative path.
-            _ => "nova_int".into(),
+            // [P67-LEGACY] финальный wildcard — неизвестный kind выражения.
+            // Checker обязан аннотировать все value-producing expressions.
+            _ => panic!("[P67-LEGACY] infer_expr_c_type_legacy: unhandled ExprKind={:?} — checker must annotate (compiler-conventions.md §0)",
+                std::mem::discriminant(&expr.kind)),
         }
     }
 
