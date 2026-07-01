@@ -1,0 +1,132 @@
+// D35 — методы инстанса объявляются через `fn Type @method(...)` с НЕЯВНЫМ self.
+// Поля self доступны через `@field`. `@` без поля = значение инстанса (copy).
+// Конструкторы и static-методы — через точку `fn Type.name(...)`.
+// Мутирующий метод — `fn Type mut @method(...)`.
+// `@name` в теле = поле; `@name()` = вызов instance-метода (cross-call).
+// Spec: spec/decisions/03-syntax.md D35. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// --- Базовый тип с полями ---
+
+type D35Vec2 {
+    x f64
+    y f64
+}
+
+// Static constructor: fn Type.name(...) — без @
+fn D35Vec2.new(x f64, y f64) -> D35Vec2 => { x, y }
+
+// Instance methods: fn Type @method() — доступ к self через @field
+fn D35Vec2 @x_val() -> f64 => @x
+fn D35Vec2 @y_val() -> f64 => @y
+fn D35Vec2 @sum() -> f64    => @x + @y
+fn D35Vec2 @dot(other D35Vec2) -> f64 => @x * other.x + @y * other.y
+
+// @ без поля = весь инстанс (copy self)
+fn D35Vec2 @copy() -> D35Vec2 => @
+
+// Cross-method call: @method() вызывает другой instance-метод через @ синтаксис
+fn D35Vec2 @sum_from_accessors() -> f64 => @x_val() + @y_val()
+
+// Mutating method: fn Type mut @method(...)
+fn D35Vec2 mut @scale(factor f64) {
+    @x = @x * factor
+    @y = @y * factor
+}
+
+fn D35Vec2 mut @reset() {
+    @x = 0.0
+    @y = 0.0
+}
+
+// --- Тип с приватным полем и именованным конструктором ---
+
+type D35Counter {
+    _count int
+}
+
+fn D35Counter.new(start int) -> D35Counter => { _count: start }
+fn D35Counter.zero() -> D35Counter => D35Counter.new(0)
+
+fn D35Counter @value() -> int => @_count
+
+fn D35Counter mut @increment() {
+    @_count = @_count + 1
+}
+
+fn D35Counter mut @add(n int) {
+    @_count = @_count + n
+}
+
+
+// --- Тесты ---
+
+test "static constructor fn Type.new() creates record with correct fields (D35)" {
+    ro v = D35Vec2.new(3.0, 4.0)
+    assert(v.x == 3.0)
+    assert(v.y == 4.0)
+}
+
+test "instance method @field access returns self field value (D35)" {
+    ro v = D35Vec2.new(1.5, 2.5)
+    assert(v.x_val() == 1.5)
+    assert(v.y_val() == 2.5)
+}
+
+test "instance method using multiple @fields in arithmetic body (D35)" {
+    ro v = D35Vec2.new(3.0, 4.0)
+    assert(v.sum() == 7.0)
+}
+
+test "instance method with external arg + @field: dot product (D35)" {
+    ro a = D35Vec2.new(1.0, 0.0)
+    ro b = D35Vec2.new(0.0, 1.0)
+    assert(a.dot(b) == 0.0)
+    ro c = D35Vec2.new(3.0, 4.0)
+    assert(c.dot(c) == 25.0)
+}
+
+test "mutating instance method fn Type mut @method modifies @fields (D35)" {
+    mut v = D35Vec2.new(2.0, 3.0)
+    v.scale(2.0)
+    assert(v.x_val() == 4.0)
+    assert(v.y_val() == 6.0)
+}
+
+test "@ without field = copy of self value (D35)" {
+    ro original = D35Vec2.new(5.0, 7.0)
+    ro copied = original.copy()
+    assert(copied.x_val() == 5.0)
+    assert(copied.y_val() == 7.0)
+}
+
+test "cross-method call @method() calls other instance method on same self (D35)" {
+    ro v = D35Vec2.new(3.0, 4.0)
+    assert(v.sum_from_accessors() == 7.0)
+}
+
+test "multiple mutating methods chain on same instance (D35)" {
+    mut v = D35Vec2.new(2.0, 3.0)
+    v.scale(3.0)
+    assert(v.x_val() == 6.0)
+    assert(v.y_val() == 9.0)
+    v.reset()
+    assert(v.x_val() == 0.0)
+    assert(v.y_val() == 0.0)
+}
+
+test "static factory with named constructor (D35)" {
+    ro c0 = D35Counter.zero()
+    assert(c0.value() == 0)
+    ro c5 = D35Counter.new(5)
+    assert(c5.value() == 5)
+}
+
+test "mutating methods increment and add on counter (D35)" {
+    mut c = D35Counter.new(10)
+    c.increment()
+    assert(c.value() == 11)
+    c.add(5)
+    assert(c.value() == 16)
+}
+
