@@ -1,4 +1,4 @@
-// D413 — an `if`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
+﻿// D413 — an `if`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
 // branches; it must NOT silently collapse to signed `nova_int`. Surface: `ro got = if c { … }
 // else { … }` (UNANNOTATED binding). The result binding inherits the if-expr's INFERRED type.
 //
@@ -19,7 +19,7 @@
 // if-expression-as-value surface. Spec: spec/decisions/02-types.md (named-priority, uint≠int).
 // Single `spec_tests.conformance` folder-module; all top-level names d413w_-prefixed to avoid
 // duplicate-top-level-name collisions with sibling files in the CU.
-module spec_tests.conformance
+module inprogress.d413_if_expr_sized_branch_width
 
 // Plain bool source so the `if`-condition is a genuine runtime branch (not const-folded away).
 fn d413w_pick(b bool) -> bool => b
@@ -51,3 +51,4 @@ test "if-expr value: signed-int branches still round-trip (control) (D413)" {
     assert(got == -5)
     assert(got < 0)
 }
+

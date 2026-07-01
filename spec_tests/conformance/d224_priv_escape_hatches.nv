@@ -1,0 +1,112 @@
+// D224 — privacy escape hatches: two explicit opt-in relaxations of the strict
+// type-method-only `priv` scope (D220). POS-observable type-system behavior,
+// asserted at runtime:
+//   §2 `#test_access(TypeX[, TypeY...])` — fn-level grant. Body of the marked fn
+//       gets priv-field access (READ + INIT) to all listed types. Asserted via a
+//       free fn (NOT a method of the type) that reads/inits a `priv` field — only
+//       compiles+runs because of the grant; the read returns the real field value.
+//       Multi-type form `#test_access(A, B)` grants access to several types at once.
+//   §3 `#visible_to(OtherType[, ...])` — field-level friend declaration. Methods of
+//       the listed type get priv access to that ONE marked field. Asserted via a
+//       method of the friend type reading the marked priv field of another type.
+// (The forbidden directions — non-friend / no-attr access — are E_PRIV_FIELD_READ
+//  negative diagnostics, not POS-observable, so they are out of scope here.)
+// Spec: spec/decisions/02-types.md:9641 (D224 «Escape hatches — #test_access + #visible_to»),
+//   §2 / §3 / §4 (combined access predicate).
+// One folder-module `spec_tests.conformance`; D-prefixed names are unique.
+module spec_tests.conformance
+
+// ── §2 #test_access target: priv mut field, no public getter ───────────────────
+type D224Account {
+    ro name str
+    priv(type) mut balance f64
+}
+
+fn D224Account.new(n str) -> D224Account =>
+    { name: n, balance: 0.0 }
+
+fn D224Account mut @deposit(amount f64) {
+    @balance = @balance + amount
+}
+
+// ── §2 multi-type target ───────────────────────────────────────────────────────
+type D224Vault {
+    ro id str
+    priv(type) mut amount f64
+}
+
+fn D224Vault.new(i str) -> D224Vault =>
+    { id: i, amount: 0.0 }
+
+fn D224Vault mut @fund(x f64) {
+    @amount = @amount + x
+}
+
+// Free fn (NOT a method of D224Account) — reads the priv `balance`. Compiles+runs
+// ONLY because of the #test_access grant (escape hatch §2). The READ returns the
+// actual current field value.
+#test_access(D224Account)
+fn d224_balance_eq(acc D224Account, expected f64) -> bool =>
+    acc.balance == expected
+
+// Free fn — INITs the priv `balance` via a record literal. Allowed by #test_access
+// (grant covers INIT, §2). Returns a fully-constructed value.
+#test_access(D224Account)
+fn d224_make_account(n str, b f64) -> D224Account =>
+    { name: n, balance: b }
+
+// Multi-type form: one grant covers BOTH D224Account and D224Vault.
+#test_access(D224Account, D224Vault)
+fn d224_both_zero(a D224Account, v D224Vault) -> bool =>
+    a.balance == 0.0 && v.amount == 0.0
+
+// ── §3 #visible_to: per-field friend declaration ───────────────────────────────
+type D224Wallet {
+    ro owner str
+    #visible_to(D224Auditor) priv(type) mut funds f64
+}
+
+fn D224Wallet.new(o str) -> D224Wallet =>
+    { owner: o, funds: 0.0 }
+
+fn D224Wallet mut @add(x f64) {
+    @funds = @funds + x
+}
+
+type D224Auditor {
+    ro tag str
+}
+
+fn D224Auditor.new(t str) -> D224Auditor =>
+    { tag: t }
+
+// D224Auditor is a declared friend of D224Wallet.funds (§3) — its method may read
+// that one priv field of another type. Returns the real field value.
+fn D224Auditor @read_funds(w D224Wallet) -> f64 =>
+    w.funds
+
+test "§2 #test_access free fn READS priv field; returns the real value (D224)" {
+    mut a = D224Account.new("alice")
+    a.deposit(100.0)
+    assert(d224_balance_eq(a, 100.0))   // grant lets the free fn read priv balance
+    assert(!d224_balance_eq(a, 0.0))    // and the value read is the genuine one
+}
+
+test "§2 #test_access free fn INITs priv field via record literal (D224)" {
+    ro a = d224_make_account("zoe", 500.0)
+    assert(a.name == "zoe")             // public field readable everywhere
+    assert(d224_balance_eq(a, 500.0))   // priv balance was INITed to 500 via grant
+}
+
+test "§2 multi-type #test_access(A, B) grants access to both at once (D224)" {
+    ro a = D224Account.new("bob")
+    ro v = D224Vault.new("v1")
+    assert(d224_both_zero(a, v))        // both priv fields readable under one grant
+}
+
+test "§3 #visible_to friend method reads the marked priv field (D224)" {
+    mut w = D224Wallet.new("carol")
+    w.add(42.0)
+    ro au = D224Auditor.new("audit-1")
+    assert(au.read_funds(w) == 42.0)    // friend access to D224Wallet.funds, real value
+}

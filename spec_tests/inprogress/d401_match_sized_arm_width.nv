@@ -1,4 +1,4 @@
-// D401 — a `match`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
+﻿// D401 — a `match`-EXPRESSION used as a VALUE must preserve the unsigned/sized width of its
 // arm results; it must NOT silently collapse to signed `nova_int`. Direct parallel of the
 // If-expr surface (d413_if_expr_sized_branch_width.nv) and the `??` surface (d86_coalesce_width.nv):
 // `ro got = match c { … => <expr> … }` with an UNANNOTATED binding inherits the match-expr's
@@ -20,7 +20,7 @@
 // Spec: spec/decisions/02-types.md (named-priority, uint≠int, u8≠i8). Single
 // `spec_tests.conformance` folder-module; all top-level names d401w_-prefixed to avoid
 // duplicate-top-level-name collisions with sibling files in the CU.
-module spec_tests.conformance
+module inprogress.d401_match_sized_arm_width
 
 // Plain int source so the match scrutinee is a genuine runtime value (not const-folded away).
 fn d401w_sel(n int) -> int => n
@@ -67,3 +67,4 @@ test "match-expr value: signed-int arms still round-trip (control) (D401)" {
     assert(got == -5)
     assert(got < 0)
 }
+

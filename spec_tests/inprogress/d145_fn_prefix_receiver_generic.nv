@@ -1,4 +1,4 @@
-// D145 — `fn[T]` prefix declares receiver-generics for receivers WITHOUT carrier-brackets
+﻿// D145 — `fn[T]` prefix declares receiver-generics for receivers WITHOUT carrier-brackets
 // (bare `T`, slice `[]T`). Distinct from D119 (carrier `Box[T] @m`, T declared by the brackets)
 // and D216 (free `fn[T]` function, no receiver). Here the prefix is REQUIRED — `[]` and a bare
 // typevar are not bracket-declarations — and the method dispatches on the concrete receiver type
@@ -6,7 +6,7 @@
 // independent of the prefix-declared receiver `T`. Spec: spec/decisions/02-types.md §D145
 // (Plan 101.1–101.4). Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed
 // names avoid clashes in the shared module.
-module spec_tests.conformance
+module inprogress.d145_fn_prefix_receiver_generic
 
 // Bare-typevar receiver: `fn[T] T @method` — prefix declares T, receiver IS the typevar.
 // `@` is the receiver value. Same generic dispatches on int and on str.
@@ -46,3 +46,4 @@ test "fn[T] receiver + method-level U: T=int → U=str, independent (D145)" {
     assert(strs[0] == "1")
     assert(strs[2] == "3")
 }
+

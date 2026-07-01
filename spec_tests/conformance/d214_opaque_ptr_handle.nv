@@ -1,0 +1,44 @@
+// D214 — `*()` opaque pointer + opaque handle pattern (Plan 115 FFI; Plan 134
+// retired the `ptr` builtin → `*()` = `void*`). POS, type-system observable:
+//   • `(0 as *())` null literal = bitwise zero; `==` is bitwise pointer equality.
+//   • `*()` ↔ integer casts round-trip losslessly (opaque handle storage).
+//   • tuple newtype `type X(*())` (D52) — transparent zero-overhead wrapper:
+//     constructor `X(p)` + `.0` returns the SAME `*()`; distinct Nova types may
+//     wrap the same underlying pointer. *() values are obtained purely via
+//     integer casts (no extern fn) so the check is self-contained.
+// Spec: spec/decisions/02-types.md (D214 §1 Casts/Equality, §3 opaque handle).
+module spec_tests.conformance
+
+type D214Sq(*())
+type D214Png(*())
+
+test "*() null literal + bitwise equality (D214 §1 Equality)" {
+    ro nothing *() = (0 as *())
+    assert(nothing == (0 as *()))
+    ro raw *() = 0x1000 as *()
+    assert(raw != nothing)
+}
+
+test "*() ↔ integer cast round-trips losslessly (D214 §1 Casts)" {
+    ro raw *() = 0x2000 as *()
+    ro as_u64 u64 = raw as u64
+    assert(as_u64 == 0x2000)
+    ro back *() = as_u64 as *()
+    assert(back == raw)
+}
+
+test "tuple newtype handle — constructor + .0 is identity (D214 §3)" {
+    ro raw *() = 0x3000 as *()
+    ro h = D214Sq(raw)
+    ro back = h.0
+    assert(back == raw)
+    assert((h.0) as int == 0x3000)
+}
+
+test "distinct handle types wrap the SAME *() (D214 §3 distinct type)" {
+    ro raw *() = 0x4000 as *()
+    ro sq = D214Sq(raw)
+    ro png = D214Png(raw)
+    // Nominally distinct Nova types, identical underlying opaque pointer.
+    assert(sq.0 == png.0)
+}

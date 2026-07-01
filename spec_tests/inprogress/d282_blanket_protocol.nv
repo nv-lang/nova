@@ -1,4 +1,4 @@
-// D282 — Blanket protocol-receiver methods: `fn[I Proto[T]] I @name(...) -> R`.
+﻿// D282 — Blanket protocol-receiver methods: `fn[I Proto[T]] I @name(...) -> R`.
 // Norm (spec/decisions/02-types.md §D282, Plan 161): a blanket declaration takes a
 // TYPEVAR receiver `I` bounded by a parametric protocol `Proto[T]`; the bound's type
 // args (`T`) are INFERRED from the protocol, not declared explicitly (§1). At a call
@@ -11,7 +11,7 @@
 // `bool`) — the V1-supported form (§6: parametric returns like `Option[T]` are V2).
 // Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed unique names
 // avoid duplicate-top-level-name clashes in the shared module.
-module spec_tests.conformance
+module inprogress.d282_blanket_protocol
 
 // Custom PARAMETRIC protocol used as the blanket bound. `@pull` yields the next element
 // or `None` when exhausted — same shape as a one-shot iterator, but defined here so the

@@ -1,0 +1,52 @@
+// D176 — `ro T` as a type-modifier (L2 content-view). POS-observable core, asserted at runtime:
+//   (1) Canonical application: `str.as_bytes() -> ro []u8` is a zero-copy READ-ONLY view; reads
+//       through it work — `bytes.len()` == byte length, `bytes[i]` == the exact u8 byte value
+//       (ASCII "ABC" → [65, 66, 67]). The `ro []u8` return-type modifier forbids writes but
+//       permits reads (the whole point: zero-copy view into the immutable UTF-8 buffer).
+//   (2) `T → ro T` auto-coercion at a call site: a plain `[]u8` value flows into an explicit
+//       `ro []u8` param (narrowing of rights, allowed by D176); the callee READS it fine.
+//   (3) Param `ro` by default (Plan 108.1): a param with no modifier is read-only and reads work.
+// (The forbidden directions — `ro T → T` = E_READONLY_COERCE, `view[i] = x` = E_READONLY_CONTENT —
+//  are negative diagnostics, not POS-observable, so they are out of scope for this POS test.)
+// Spec: spec/decisions/02-types.md:2888 (D176 «`ro T` — тип-модификатор»), §«Семантика» / §«Параметры».
+// One folder-module `spec_tests.conformance`; D-prefixed names are unique.
+module spec_tests.conformance
+
+// (2) Explicit `ro []u8` parameter — caller passes a plain `[]u8`; `T → ro T` narrowing is allowed.
+//     The body only READS (sum), proving a ro-content view is fully readable.
+fn d176_sum(b ro []u8) -> int {
+    mut acc = 0
+    mut i = 0
+    while i < b.len() {
+        acc = acc + (b[i] as int)
+        i = i + 1
+    }
+    acc
+}
+
+// (3) Param with NO modifier — read-only by default (Plan 108.1). Reads through it work.
+fn d176_first(b []u8) -> int => b[0] as int
+
+test "str.as_bytes() returns a readable ro []u8 view; bytes match the ASCII codepoints (D176)" {
+    ro s str = "ABC"
+    // Canonical D176 idiom: bind the ro-content view (used throughout std).
+    ro bytes = s.as_bytes()
+    assert(bytes.len() == 3)        // one byte per ASCII char
+    assert(bytes[0] == 65)          // 'A'
+    assert(bytes[1] == 66)          // 'B'
+    assert(bytes[2] == 67)          // 'C'
+}
+
+test "T -> ro T narrowing at a call site: plain []u8 flows into a ro []u8 param, read works (D176)" {
+    mut data []u8 = [10, 20, 30]
+    // `[]u8` value passed to a `ro []u8` param — auto-coerce (narrowing of rights).
+    assert(d176_sum(data) == 60)
+    // A ro view from as_bytes() also satisfies the ro []u8 param (ro -> ro identity).
+    ro s str = "AB"
+    assert(d176_sum(s.as_bytes()) == 131)   // 65 + 66
+}
+
+test "param ro-by-default (Plan 108.1) reads its content fine (D176)" {
+    mut data []u8 = [42, 7, 9]
+    assert(d176_first(data) == 42)
+}

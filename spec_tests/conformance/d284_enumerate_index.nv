@@ -1,0 +1,67 @@
+// D284 — EnumerateIter, zero-cost enumerate adapter (Plan 162). НОРМА (§1/§4):
+//   `.enumerate()` оборачивает источник в value-record `EnumerateIter[I, T]`;
+//   `@next()` отдаёт `Option[(int, T)]` — `Some((i, elem))` на каждый `Some`
+//   источника, `None` транзитивно. Инвариант счётчика (§4): `i` стартует с 0 и
+//   инкрементируется РОВНО на 1 на каждый ДОСТАВЛЕННЫЙ элемент — пропуски на
+//   `None`/отфильтрованные элементы НЕ считаются, индекс непрерывен с 0 (как
+//   enumerate в Rust/Python). EnumerateIter реализует Next[(int, T)] →
+//   совместим с blanket-терминаторами D282 (count) и с collect.
+//
+// POS-наблюдаемые, проверяемые рантайм-assert следствия:
+//   (1) count над enumerate == длине доставленного потока (терминатор драйвит).
+//   (2) collect даёт Vec пар; `.0` == порядковый индекс (0,1,2,…), `.1` == элемент
+//       источника в порядке доставки — типизированный mono'd кортеж (§3), поля
+//       `.0`/`.1` доступны и наблюдаемо корректны.
+//   (3) enumerate ПОСЛЕ filter: индекс перезапускается с 0 над ОТФИЛЬТРОВАННЫМ
+//       потоком — считаются только доставленные элементы, не исходные позиции (§4).
+//   (4) filter на `.0` (индекс пары) и на `.1` (значение пары) — оба поля кортежа
+//       наблюдаемы downstream.
+//
+// Spec: spec/decisions/02-types.md (D284 — EnumerateIter zero-cost adapter), §1
+// синтаксис/семантика @next, §3 tuple parametric mono, §4 инвариант счётчика i.
+// Отдельная грань от D290 (value-record iterator copy-contract) и D260 (boxed lazy).
+// Один folder-module spec_tests.conformance; D-prefixed имена уникальны во
+// избежание duplicate-top-level-name клэша в общем compile-unit.
+module spec_tests.conformance
+
+import std.collections.vec_iter
+
+test "enumerate.count == длина доставленного потока; пустой → 0 (D284 §1 терминатор)" {
+    ro v = Vec[int].of(10, 20, 30, 40)
+    assert(v.iter().enumerate().count() == 4)
+    ro e = Vec[int].new()
+    assert(e.iter().enumerate().count() == 0)   // None транзитивно, 0 пар
+}
+
+test "enumerate.collect: .0 == порядковый индекс с 0, .1 == элемент в порядке (D284 §3/§4)" {
+    ro v = Vec[int].of(10, 20, 30)
+    ro got = v.iter().enumerate().collect()
+    assert(got.len() == 3)
+    ro p0 = got[0]
+    assert(p0.0 == 0 && p0.1 == 10)    // индекс 0 ↔ первый элемент
+    ro p1 = got[1]
+    assert(p1.0 == 1 && p1.1 == 20)    // i инкрементируется ровно на 1
+    ro p2 = got[2]
+    assert(p2.0 == 2 && p2.1 == 30)    // непрерывный счётчик
+}
+
+test "enumerate ПОСЛЕ filter: индекс рестартует с 0 над отфильтрованным потоком (D284 §4)" {
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    // filter оставляет чётные (2,4) → enumerate переиндексирует доставленные: (0,2),(1,4).
+    // Пропущенные элементы НЕ увеличивают i — индекс непрерывен с 0 по потоку.
+    ro got = v.iter().filter(|x| x % 2 == 0).enumerate().collect()
+    assert(got.len() == 2)
+    ro p0 = got[0]
+    assert(p0.0 == 0 && p0.1 == 2)
+    ro p1 = got[1]
+    assert(p1.0 == 1 && p1.1 == 4)
+}
+
+test "filter на .0 (индекс) и на .1 (значение) пары — оба поля кортежа наблюдаемы (D284 §3)" {
+    ro v = Vec[int].of(10, 20, 30, 40, 50)
+    // чётно-индексированные пары: индексы 0,2,4 → 3 пары
+    assert(v.iter().enumerate().filter(|p| p.0 % 2 == 0).count() == 3)
+    ro w = Vec[int].of(1, 2, 3, 4, 5)
+    // пары с нечётным значением .1: (0,1),(2,3),(4,5) → 3 пары
+    assert(w.iter().enumerate().filter(|p| p.1 % 2 == 1).count() == 3)
+}

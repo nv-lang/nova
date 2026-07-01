@@ -1,0 +1,47 @@
+// D135 — type-checker «no silent fallback» (E73xx). POS-наблюдаемый slice: E7310
+// carve-out. Норма: «Опущенные аргументы (`fn f() -> Result { Ok(1) }`) — легальны
+// (выводятся из контекста), это НЕ arity-ошибка». E7310 флагует только когда аргументы
+// УКАЗАНЫ, но их число неверно (`Result[int]`). Bare `Result`/`Option` без скобок —
+// легальная идиома: type-args выводятся из Ok/Err / Some/None в теле. Программа
+// компилируется И выполняется корректно (no silent miscompilation).
+// Spec: spec/decisions/02-types.md §D135 (E7310). NEG-кейсы (E7301/E7320/E7330/арность
+// при УКАЗАННЫХ аргах) — диагностика, вне POS-conformance.
+// Прочие кейсы (E73xx-rejection) — отдельный gap-трек, здесь только POS-норма.
+module spec_tests.conformance
+
+// Bare `Result` — type-args выводятся из Ok/Err в теле (НЕ E7310).
+fn d135_validated(n int) -> Result {
+    if n > 0 { Ok(n) } else { Err("negative") }
+}
+
+// Bare `Option` — type-arg выводится из Some/None в теле (НЕ E7310).
+fn d135_lookup(n int) -> Option {
+    if n > 0 { Some(n) } else { None }
+}
+
+test "E7310 carve-out: bare `-> Result` компилируется + Ok-ветка корректна (D135)" {
+    ro r = d135_validated(5)
+    assert(r.is_ok())
+    ro v = match r {
+        Ok(n)  => n
+        Err(_) => -1
+    }
+    assert(v == 5)
+}
+
+test "E7310 carve-out: bare `-> Result` Err-ветка корректна, no silent fallback (D135)" {
+    ro r = d135_validated(-3)
+    assert(!r.is_ok())
+    ro v = match r {
+        Ok(n)  => n
+        Err(_) => -1
+    }
+    assert(v == -1)
+}
+
+test "E7310 carve-out: bare `-> Option` inferred type-arg, Some/None корректны (D135)" {
+    ro o = d135_lookup(3)
+    assert(o == Some(3))
+    ro miss = d135_lookup(0)
+    assert(miss == None)
+}

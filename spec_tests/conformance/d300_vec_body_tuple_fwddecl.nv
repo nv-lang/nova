@@ -1,0 +1,39 @@
+// D300 — Vec generic forward-decl: body-site scan + tuple-elem fwd-decl (Plan 168).
+// A `Vec[u32]`/`Vec[u8]` that is instantiated ONLY inside a function/test body (local
+// var, TurboFish-constructor) — never in a signature or field — must still get its full
+// `Nova_Vec____<elem>` struct-definition emitted (body-scan), so it compiles and
+// round-trips. Additionally, when such a body-only `Vec[u32]` appears as a TUPLE
+// element, the mono'd tuple typedef references `Nova_Vec____Nova_u32_p*` as an
+// incomplete pointer; D300 emits the tuple-elem forward-decl so the C compiles (no
+// "unknown type name") and positional `.0`/`.1` access on the Vec-bearing tuple is exact.
+// Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed names avoid clashes.
+module spec_tests.conformance
+
+test "Vec[u32] body-only instantiation gets a full struct-def and round-trips (D300)" {
+    mut v = Vec[u32].with_capacity(4)
+    v.push(1 as u32)
+    v.push(2 as u32)
+    assert(v.len() == 2)
+    assert(v[0] == 1 as u32)
+    assert(v[1] == 2 as u32)
+}
+
+test "Vec[u8] body-only instantiation (distinct elem mangle) round-trips (D300)" {
+    mut b = Vec[u8].new()
+    b.push(10 as u8)
+    b.push(255 as u8)
+    assert(b.len() == 2)
+    assert(b[0] == 10 as u8)
+    assert(b[1] == 255 as u8)
+}
+
+test "body-only Vec[u32] as a tuple element: fwd-decl holds, .0/.1 exact (D300)" {
+    mut v = Vec[u32].new()
+    v.push(10 as u32)
+    v.push(20 as u32)
+    ro t = (v, 99)
+    assert(t.0.len() == 2)
+    assert(t.0[0] == 10 as u32)
+    assert(t.0[1] == 20 as u32)
+    assert(t.1 == 99)
+}

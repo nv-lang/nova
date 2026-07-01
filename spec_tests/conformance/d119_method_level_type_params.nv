@@ -1,0 +1,38 @@
+// D119 — Method-level type params in generic methods. A generic method has its OWN
+// type-param `U` independent of receiver-level `T`: `D119Box[T] @map[U](f fn(T)->U) -> D119Box[U]`.
+// Compiler mono's per (T,U); `U` is inferred from closure-return type (no turbofish);
+// `w.map(f).map(g)` chains WITHOUT erasure (each step gets its own Nova_D119Box____<U>* type).
+// Spec: spec/decisions/02-types.md §D119 (Plan 48 Ф.9). Part of the SINGLE
+// `spec_tests.conformance` folder-module. D-prefixed type name avoids clashes.
+module spec_tests.conformance
+
+type D119Box[T] { inner T }
+
+fn D119Box[T].of(v T) -> D119Box[T] => { inner: v }
+
+// Receiver-level T, method-level U. U lives only at method scope, drives a fresh
+// (T,U) mono-instance per call-site.
+fn D119Box[T] @map[U](f fn(T) -> U) -> D119Box[U] {
+    D119Box[U].of(f(@inner))
+}
+
+test "method-level U inferred from closure return; two-level (T,U) mono (D119)" {
+    ro w = D119Box[int].of(5)            // receiver T = int
+    ro s = w.map(|x| str.from(x))        // (T=int, U=str) — U inferred from closure return
+    assert(s.inner == "5")
+}
+
+test "same receiver T, distinct method U → distinct mono instances (D119)" {
+    ro w = D119Box[int].of(5)            // T = int
+    ro a = w.map(|x| x * 2)              // (T=int, U=int)
+    ro s = w.map(|x| str.from(x))        // (T=int, U=str) — does NOT overwrite the int instance
+    assert(a.inner == 10)
+    assert(s.inner == "5")
+}
+
+test "map chain int → str → str without erasure (D119)" {
+    ro w = D119Box[int].of(7)
+    ro s = w.map(|x| str.from(x))        // (T=int,  U=str) → D119Box[str]
+    ro s2 = s.map(|x| x + "!")           // (T=str,  U=str) → receiver T re-resolved from chained value
+    assert(s2.inner == "7!")
+}

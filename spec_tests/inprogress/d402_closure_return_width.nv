@@ -1,4 +1,4 @@
-// D402 — ШИРИНА (знаковость) ВОЗВРАТА ЗАМЫКАНИЯ. Поверхность: closure-return-sized.
+﻿// D402 — ШИРИНА (знаковость) ВОЗВРАТА ЗАМЫКАНИЯ. Поверхность: closure-return-sized.
 // `uint` UNSIGNED (≠ signed `int`, D130). Когда замыкание `|v| <uint-выражение>`
 // сохраняется в UN-аннотированный let-биндинг и затем вызывается, ширина/знаковость
 // его ВОЗВРАТА должна сохраниться (`uint`). РАСПОЗНАЮЩАЯ форма: результат вызова
@@ -20,7 +20,7 @@
 // положительным. Контроль (тест 3): closure-full с явным `-> uint` НЕ коллапсит.
 // Spec: spec/decisions/02-types.md (D130/uint-unsigned). Один folder-module CU
 // `spec_tests.conformance`; все top-level имена D402-prefixed во избежание клэша.
-module spec_tests.conformance
+module inprogress.d402_closure_return_width
 
 // HOF-контроль: declared `fn(uint) -> uint` param даёт правильный контекст
 // (этот путь ширину СОХРАНЯЕТ — используется как позитивный контраст в тесте 3).
@@ -51,3 +51,4 @@ test "control: closure через declared `fn(uint)->uint` HOF сохраняе
     assert(got > 100)                   // должно быть unsigned-положительным
     assert(!(got < 0))
 }
+
