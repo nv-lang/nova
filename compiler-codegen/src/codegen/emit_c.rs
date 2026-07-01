@@ -20895,6 +20895,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     {
                         return Ok(format!("{}_method_plus({}, {})", type_name_sum_full, l, r));
                     }
+                    // D46: dispatch `*` to @times method when both operands are Nova_T*.
+                    // Same guard as @plus: both must be single Nova_T* pointers so we don't
+                    // mis-dispatch pointer arithmetic (e.g. buffer * int) to _method_times.
+                    if matches!(op, BinOp::Mul)
+                        && is_single_nova_ptr(&lty)
+                        && is_single_nova_ptr(&rty)
+                    {
+                        return Ok(format!("{}_method_times({}, {})", type_name_sum_full, l, r));
+                    }
+                    // D46: dispatch `/` to @div method when both operands are Nova_T*.
+                    if matches!(op, BinOp::Div)
+                        && is_single_nova_ptr(&lty)
+                        && is_single_nova_ptr(&rty)
+                    {
+                        return Ok(format!("{}_method_div({}, {})", type_name_sum_full, l, r));
+                    }
+                    // D46: dispatch `%` to @rem method when both operands are Nova_T*.
+                    if matches!(op, BinOp::Mod)
+                        && is_single_nova_ptr(&lty)
+                        && is_single_nova_ptr(&rty)
+                    {
+                        return Ok(format!("{}_method_rem({}, {})", type_name_sum_full, l, r));
+                    }
                     // Plan 65 Ф.12 / D124: dispatch `-` to the receiver's
                     // _method_minus for record types (Duration, Timestamp,
                     // Monotonic). Validate that the receiver has a registered
