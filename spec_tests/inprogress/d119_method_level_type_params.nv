@@ -4,7 +4,7 @@
 // `w.map(f).map(g)` chains WITHOUT erasure (each step gets its own Nova_D119Box____<U>* type).
 // Spec: spec/decisions/02-types.md §D119 (Plan 48 Ф.9). Part of the SINGLE
 // `spec_tests.conformance` folder-module. D-prefixed type name avoids clashes.
-module spec_tests.conformance
+module inprogress.d119_method_level_type_params
 
 type D119Box[T] { inner T }
 
