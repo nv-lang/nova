@@ -1,4 +1,4 @@
-// D264 — `Vec[T]` protocols: content-`Hash` + FromIterator / collect-target (Plan 153.6).
+﻿// D264 — `Vec[T]` protocols: content-`Hash` + FromIterator / collect-target (Plan 153.6).
 // POS-наблюдаемая норма (spec/decisions/02-types.md:12473, D264):
 //   • content-`Hash`: `Vec[T Hash] @hash() -> u64` — order- и length-sensitive FNV-1a;
 //     consistency с `@equal` (контракт Hash+Equal): равные Vec (равная длина + element-wise
@@ -11,7 +11,7 @@
 // Зависит от D260 (lazy-слой / `.lazy()`), D58 (Iter/Next duck-typing), D239 (`[]T ≡ Vec[T]`),
 // D230 amend (conditional-bound протоколы коллекций).
 // Часть единого folder-модуля `spec_tests.conformance` (минимальный CU).
-module spec_tests.conformance
+module inprogress.d264_vec_hash_collect_target
 
 // ── content-Hash (Hash+Equal contract) ──────────────────────────────────────
 
@@ -75,3 +75,4 @@ test "FromIterator из Iter-источника: `Vec.new().extend(src)` (D264 �
     acc.extend([4, 5])         // повторный extend дописывает (FromIterator-аккумуляция)
     assert(acc.equal(Vec[int].of(1, 2, 3, 4, 5)))
 }
+
