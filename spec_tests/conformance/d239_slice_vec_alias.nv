@@ -12,6 +12,10 @@ fn d239_first_slice(xs []int) -> int => xs[0]
 // `Vec[int]` parameter — a `[]int`/inferred-literal value is accepted here (alias equivalence).
 fn d239_first_vec(xs Vec[int]) -> int => xs[0]
 
+// D239 nested: `[][]T ≡ Vec[Vec[T]]` — double-index `xss[i][j]` must work on both syntaxes.
+fn d239_inner0_slice(xss [][]int) -> int => xss[0][0]
+fn d239_inner0_vec(xss Vec[Vec[int]]) -> int => xss[0][0]
+
 test "[]T literal builds a Vec; @index reads typed elements (D239)" {
     mut a []int = [1, 2, 3]
     assert(a.len() == 3)
@@ -36,4 +40,14 @@ test "typed storage round-trips str elements (no int64-erasure) (D239)" {
     mut s []str = ["alpha", "beta"]
     assert(s[0] == "alpha")
     assert(s[1].byte_len() == 4)
+}
+
+test "[][]T ≡ Vec[Vec[T]] — recursive alias interchangeable (D239)" {
+    mut grid [][]int = [[1, 2], [3, 4]]
+    assert(grid.len() == 2)
+    assert(grid[0].len() == 2)
+    assert(grid[1][0] == 3)
+    assert(grid[1][1] == 4)
+    assert(d239_inner0_slice(grid) == 1)
+    assert(d239_inner0_vec(grid) == 1)
 }

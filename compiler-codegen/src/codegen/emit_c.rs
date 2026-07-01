@@ -22568,12 +22568,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let mangled = obj_ty.trim_end_matches('*').trim().to_string();
                     let elem_ty = self.generic_type_instance_info.borrow()
                         .get(&mangled).and_then(|(_, a)| a.first().cloned())
-                        .unwrap_or_else(|| obj_ty
-                            .strip_prefix("Nova_Vec____")
-                            .unwrap_or_else(|| panic!("[P67] nova_int collapse"))
-                            .trim_end_matches('*')
-                            .trim()
-                            .to_string());
+                        .unwrap_or_else(|| {
+                            let suffix = obj_ty
+                                .strip_prefix("Nova_Vec____")
+                                .unwrap_or_else(|| panic!("[P67] nova_int collapse"));
+                            // Strip exactly one trailing `*` (outer Vec pointer) only for
+                            // scalar element types like "nova_int*". For nested Nova_ types
+                            // (Vec[Vec[T]], Vec[Record]) the element IS a pointer — preserve `*`.
+                            if suffix.starts_with("Nova_") {
+                                suffix.to_string()
+                            } else {
+                                suffix.trim_end_matches('*').trim().to_string()
+                            }
+                        });
                     // Plan 140.2 Part B (RB2 fix): emit an lvalue-safe bounds-checked
                     // read via the pointer-deref trick `(*({ ...; &_vd[_i]; }))` —
                     // mirrors `emit_bchk_array_access` (NovaArray). A plain stmt-expr
@@ -22661,6 +22668,41 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // Plan 96 Ф.1 — bounds-check на оба уровня
                             return Ok(Self::emit_bchk_double_array_access(
                                 &inner_ty, &outer_o, &outer_i, &i,
+                            ));
+                        }
+                    }
+                    // D239: Vec[Vec[T]][i][j] — when checker annotates xss[i] as "nova_int"
+                    // (int-collapse fallback), outer obj_ty misses the Nova_Vec____ check and
+                    // falls here. Recover from the outer array's inferred C-type instead.
+                    let outer_arr_ct = self.infer_expr_c_type(outer_arr);
+                    if outer_arr_ct.starts_with("Nova_Vec____") && !outer_arr_ct.trim_end().ends_with("**") {
+                        let outer_mangled = outer_arr_ct.trim_end_matches('*').trim().to_string();
+                        let inner_ty = self.generic_type_instance_info.borrow()
+                            .get(&outer_mangled).and_then(|(_, a)| a.first().cloned())
+                            .unwrap_or_else(|| {
+                                let suffix = outer_arr_ct.strip_prefix("Nova_Vec____").unwrap_or("");
+                                if suffix.starts_with("Nova_") { suffix.to_string() }
+                                else { suffix.trim_end_matches('*').trim().to_string() }
+                            });
+                        if inner_ty.starts_with("Nova_Vec____") && !inner_ty.trim_end().ends_with("**") {
+                            // inner_ty = C-type of xss[outer_idx] e.g. "Nova_Vec____nova_int*"
+                            let inner_mangled = inner_ty.trim_end_matches('*').trim().to_string();
+                            let inner_elem = self.generic_type_instance_info.borrow()
+                                .get(&inner_mangled).and_then(|(_, a)| a.first().cloned())
+                                .unwrap_or_else(|| {
+                                    let suffix = inner_ty.strip_prefix("Nova_Vec____").unwrap_or("");
+                                    if suffix.starts_with("Nova_") { suffix.to_string() }
+                                    else { suffix.trim_end_matches('*').trim().to_string() }
+                                });
+                            let o = self.emit_expr(obj)?; // emits xss[outer_idx] correctly
+                            let helper = if self.index_site_elided(expr.span.start) {
+                                "nova_idx_nochk"
+                            } else {
+                                "nova_idx_chk"
+                            };
+                            return Ok(format!(
+                                "(*({ty}*){h}((void*)({o}), ({i}), sizeof({ty})))",
+                                ty = inner_elem, h = helper, o = o, i = i
                             ));
                         }
                     }
@@ -37595,8 +37637,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return elem;
                         }
                     }
-                    let elem = obj_ty_pre.strip_prefix("Nova_Vec____")
-                        .unwrap_or("").trim_end_matches('*').trim();
+                    let suffix = obj_ty_pre.strip_prefix("Nova_Vec____").unwrap_or("");
+                    // Strip one trailing `*` only for scalar types; nested Nova_ element types
+                    // (Vec[Vec[T]], Vec[Record]) are pointers — preserve their `*`.
+                    let elem = if suffix.starts_with("Nova_") {
+                        suffix
+                    } else {
+                        suffix.trim_end_matches('*').trim()
+                    };
                     if !elem.is_empty() {
                         return elem.to_string();
                     }
