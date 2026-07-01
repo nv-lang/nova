@@ -1,0 +1,77 @@
+// D38 — создание массивов: (1) литерал + annotation, (2) inference из контекста,
+// (3) static-методы на типе массива `[]T` (`[]T.new()` / `[]T.with_capacity(n)`).
+// Turbofish: `[T]` после имени без `::`.
+// Spec: spec/decisions/03-syntax.md D38. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// inference: пустой `[]` выводится из параметра `[]int`.
+fn d38_len(xs []int) -> int => xs.len()
+fn d38_sum(xs []int) -> int {
+    mut s = 0
+    for x in xs { s = s + x }
+    s
+}
+fn d38_first_str(xs []str) -> str => if xs.len() > 0 { xs[0] } else { "" }
+
+test "array literal + annotation — [1,2,3] (D38)" {
+    ro xs []int = [1, 2, 3]
+    assert(xs.len() == 3)
+    assert(xs[0] == 1)
+    assert(xs[2] == 3)
+}
+
+test "empty array literal + annotation, then push (D38)" {
+    mut e []int = []
+    assert(e.len() == 0)
+    e.push(9)
+    assert(e.len() == 1)
+    assert(e[0] == 9)
+}
+
+test "inference of empty [] from parameter type (D38)" {
+    assert(d38_len([]) == 0)
+    assert(d38_len([10, 20]) == 2)
+}
+
+test "inference from str[] parameter (D38)" {
+    assert(d38_first_str([]) == "")
+    assert(d38_first_str(["hello", "world"]) == "hello")
+}
+
+test "static method []int.new() creates empty array (D38)" {
+    ro n = []int.new()
+    assert(n.len() == 0)
+}
+
+test "static method []int.with_capacity(n) creates pre-allocated array (D38)" {
+    mut cap = []int.with_capacity(8)
+    assert(cap.len() == 0)
+    cap.push(1)
+    cap.push(2)
+    assert(cap.len() == 2)
+    assert(cap[0] == 1)
+    assert(cap[1] == 2)
+}
+
+test "[]str.new() and []str.with_capacity work (D38)" {
+    ro empty []str = []
+    assert(empty.len() == 0)
+    mut words = []str.with_capacity(4)
+    words.push("alpha")
+    words.push("beta")
+    assert(words.len() == 2)
+    assert(words[0] == "alpha")
+}
+
+test "array literal used directly in sum function (D38)" {
+    assert(d38_sum([1, 2, 3, 4, 5]) == 15)
+    assert(d38_sum([]) == 0)
+}
+
+test "array literal with bool elements (D38)" {
+    ro flags []bool = [true, false, true]
+    assert(flags.len() == 3)
+    assert(flags[0] == true)
+    assert(flags[1] == false)
+    assert(flags[2] == true)
+}
