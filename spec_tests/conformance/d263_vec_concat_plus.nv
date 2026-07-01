@@ -1,0 +1,61 @@
+// D263 — Vec restructure-ops + operator `+`: `a + b` creates new Vec; operands unchanged.
+// `@concat(other Vec[T]) -> Vec[T]` = one alloc of `a+b` + two bulk-copies.
+// rotate_left / rotate_right / drain / insert_slice.
+// Spec: spec/decisions/10-overloading.md D263. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "Vec[int] + Vec[int] creates new Vec; operands unchanged (D263)" {
+    ro a = [1, 2, 3]
+    ro b = [4, 5, 6]
+    ro c = a + b
+    assert(c.len() == 6)
+    assert(c[0] == 1)
+    assert(c[3] == 4)
+    assert(c[5] == 6)
+    assert(a.len() == 3)   // operand unchanged
+    assert(b.len() == 3)   // operand unchanged
+}
+
+test "Vec[int] += Vec[int] ≡ reassignment through concat (D263)" {
+    mut v = [1, 2]
+    v += [3, 4]
+    assert(v.len() == 4)
+    assert(v[2] == 3)
+    assert(v[3] == 4)
+}
+
+test "Vec[str] concat (D263)" {
+    ro a []str = ["hello", "world"]
+    ro b []str = ["foo", "bar"]
+    ro c = a + b
+    assert(c.len() == 4)
+    assert(c[0] == "hello")
+    assert(c[2] == "foo")
+}
+
+test "Vec concat empty left/right (D263)" {
+    ro empty []int = []
+    ro v = [1, 2, 3]
+    ro left = empty + v
+    assert(left.len() == 3)
+    assert(left[0] == 1)
+    ro right = v + empty
+    assert(right.len() == 3)
+    assert(right[2] == 3)
+}
+
+test "Vec.rotate_left in-place (D263)" {
+    mut v = [1, 2, 3, 4, 5]
+    v.rotate_left(2)
+    assert(v[0] == 3)
+    assert(v[1] == 4)
+    assert(v[4] == 2)
+}
+
+test "Vec.rotate_right in-place (D263)" {
+    mut v = [1, 2, 3, 4, 5]
+    v.rotate_right(1)
+    assert(v[0] == 5)
+    assert(v[1] == 1)
+    assert(v[4] == 4)
+}
