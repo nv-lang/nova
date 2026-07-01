@@ -1,0 +1,22 @@
+// D405 (NEG) — mixed-width integer arithmetic is a compile error (E_MIXED_WIDTH_ARITH).
+// Two sized (non-wide-default) integer operands of DIFFERENT widths may NOT be combined
+// with arithmetic operators: `u8 + u16`, `u16 + u32`, etc. The programmer must use
+// explicit `as` casts to a common width first.
+//
+// Spec: spec/decisions/02-types.md (D405 named-priority: sized ≠ auto-widened).
+// Codegen defect (Plan 172.1 D405): `lt`-wins rule in `promote_arith_rt` — `u8+u16`
+// narrows to u8 (truncation, breaks commutativity). Fixed by making it a compile error
+// instead of silent truncation.
+//
+// EXPECT_COMPILE_ERROR E_MIXED_WIDTH_ARITH
+
+module neg.d405_mixed_width_arith_neg
+
+fn d405n_u8(v u8) -> u8 => v
+fn d405n_u16(v u16) -> u16 => v
+
+fn d405n_violation() -> u16 {
+    ro a u8 = d405n_u8(200)
+    ro b u16 = d405n_u16(200)
+    a + b   // E_MIXED_WIDTH_ARITH: u8 (8-bit) + u16 (16-bit) — mixed width
+}

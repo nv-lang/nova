@@ -12499,6 +12499,42 @@ impl<'a> BoundCtx<'a> {
                         ));
                     }
                 }
+                // Plan 172.1 D405: mixed-width integer arithmetic is a compile error
+                // (E_MIXED_WIDTH_ARITH). Two SIZED (non-wide-default) integer operands
+                // of DIFFERENT widths may not be combined: `u8 + u16` → CC-error; use
+                // explicit `as` casts to a common width first. Permissive: fires only when
+                // BOTH operand types are definitively known (infer_arg_ty non-None).
+                // Does NOT fire for Shl/Shr (shift-amount asymmetry is conventional) or
+                // for relational/equality operators (already handled elsewhere).
+                let is_arith = matches!(
+                    op,
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+                    | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
+                );
+                if is_arith {
+                    use ResolvedType as R;
+                    let sized_width = |x: &Expr| -> Option<u8> {
+                        let tr = Self::infer_arg_ty(x, scope)?;
+                        match ResolvedType::from_type_ref(&tr) {
+                            R::Scalar { width, wide_default: false, .. } => Some(width),
+                            _ => None,
+                        }
+                    };
+                    if let (Some(lw), Some(rw)) = (sized_width(left), sized_width(right)) {
+                        if lw != rw {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_MIXED_WIDTH_ARITH] mixed-width integer arithmetic \
+                                     is not allowed: left operand is {}-bit, right is \
+                                     {}-bit (D405). Use explicit `as` casts to a common \
+                                     width before the operation.",
+                                    lw, rw
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
                 self.walk_expr(left, scope, errors);
                 self.walk_expr(right, scope, errors);
             }
