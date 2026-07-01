@@ -1,0 +1,108 @@
+// D37 — Доступ к полям: `.name` для record, `.N` для кортежей.
+// `obj.name` — именованное поле record; `obj.0`, `obj.1` — позиционный кортеж.
+// `@name` — аналогичный доступ внутри инстанс-методов (неявный self).
+// Mutation: `mut p.field = val` работает при mut-binding и mutable поле.
+// Spec: spec/decisions/03-syntax.md D37. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// --- Named record field access ---
+
+type D37Point {
+    x f64
+    y f64
+}
+
+fn D37Point.mk(x f64, y f64) -> D37Point => { x, y }
+fn D37Point @px() -> f64 => @x
+fn D37Point @py() -> f64 => @y
+fn D37Point @dist_sq() -> f64 => @x * @x + @y * @y
+
+type D37Named {
+    first str
+    second int
+    flag bool
+}
+
+// --- Nested record ---
+
+type D37Outer {
+    inner D37Point
+    label str
+}
+
+fn D37Outer.mk(px f64, py f64, label str) -> D37Outer =>
+    { inner: D37Point.mk(px, py), label }
+
+// --- Тесты named record ---
+
+test "named record field access via obj.name (D37)" {
+    ro p = D37Point.mk(1.0, 2.0)
+    assert(p.x == 1.0)
+    assert(p.y == 2.0)
+}
+
+test "named record field access: multiple fields on same record (D37)" {
+    ro r = D37Named { first: "hello", second: 42, flag: true }
+    assert(r.first == "hello")
+    assert(r.second == 42)
+    assert(r.flag == true)
+}
+
+test "field access after mutation: obj.field reflects updated value (D37)" {
+    mut p = D37Point.mk(0.0, 0.0)
+    p.x = 3.0
+    p.y = 4.0
+    assert(p.x == 3.0)
+    assert(p.y == 4.0)
+}
+
+test "nested record field access via obj.field.subfield (D37)" {
+    ro o = D37Outer.mk(2.5, 3.5, "outer")
+    assert(o.inner.x == 2.5)
+    assert(o.inner.y == 3.5)
+    assert(o.label == "outer")
+}
+
+// --- Instance method @field access ---
+
+test "@field inside instance method accesses self (D37 / D35 link)" {
+    ro p = D37Point.mk(5.0, 7.0)
+    assert(p.px() == 5.0)
+    assert(p.py() == 7.0)
+}
+
+test "@field arithmetic in instance method (D37)" {
+    ro p = D37Point.mk(3.0, 4.0)
+    assert(p.dist_sq() == 25.0)
+}
+
+// --- Tuple positional access (.0, .1, ...) ---
+
+test "positional tuple field access via .0 and .1 (D37)" {
+    ro pair = (10, 20)
+    assert(pair.0 == 10)
+    assert(pair.1 == 20)
+}
+
+test "positional tuple: mixed types accessed by index (D37)" {
+    ro t = (true, 99, "word")
+    assert(t.0 == true)
+    assert(t.1 == 99)
+    assert(t.2 == "word")
+}
+
+test "positional tuple: 4-ary tuple access (D37)" {
+    ro q = (1, 2, 3, 4)
+    assert(q.0 == 1)
+    assert(q.1 == 2)
+    assert(q.2 == 3)
+    assert(q.3 == 4)
+}
+
+// --- Field access on method return value ---
+
+test "field access on value returned by static method (D37)" {
+    ro p = D37Point.mk(6.0, 8.0)
+    assert(D37Point.mk(6.0, 8.0).x == 6.0)
+    assert(D37Point.mk(6.0, 8.0).y == 8.0)
+}
