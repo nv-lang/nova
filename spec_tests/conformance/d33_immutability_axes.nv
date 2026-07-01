@@ -1,0 +1,43 @@
+// D33 — три ОРТОГОНАЛЬНЫЕ оси immutability, все реальные. POS-наблюдаемое ядро двух осей,
+// проверяемое рантайм-`assert(...)`:
+//   Ось 1 (binding mutability): `mut x` — переприсваивание binding'а разрешено и видно
+//     (`mut counter = 0; counter = counter + 1`); `ro x` — immutable binding (значение читается).
+//   Ось 2 (`const X = …` — hard compile-time guarantee, strict constexpr): литерал,
+//     constexpr-арифметика (`60 * 5`), ссылка на другой `const`; работает на module-level
+//     И scope-local; значение используется в рантайм-выражениях.
+// (Ось 3 — per-field freeze — отдельно покрыта D36; здесь не дублируется.)
+// Spec: spec/decisions/03-syntax.md:1066 (D33 «Три оси immutability»), §«Правило».
+// Один folder-module `spec_tests.conformance`; D-prefixed имена уникальны.
+module spec_tests.conformance
+
+// Ось 2 на module-level: literal, constexpr-арифметика, ссылка на другой const.
+const D33_MAX_PAYLOAD = 4096
+const D33_TIMEOUT_SEC int = 60 * 5
+const D33_DOUBLE_TIMEOUT = D33_TIMEOUT_SEC * 2
+
+test "ось 1: mut binding переприсваивается, изменение видно (D33 binding mutability)" {
+    mut counter = 0
+    counter = counter + 1          // OK — mut: переприсваивание разрешено
+    counter = counter + 1
+    assert(counter == 2)
+    // ro binding — immutable; значение просто читается.
+    ro fixed = 7
+    assert(fixed == 7)
+}
+
+test "ось 2: module-level const = literal / constexpr-арифметика / const-ref (D33)" {
+    assert(D33_MAX_PAYLOAD == 4096)          // literal
+    assert(D33_TIMEOUT_SEC == 300)           // 60 * 5 — constexpr arithmetic
+    assert(D33_DOUBLE_TIMEOUT == 600)        // ссылка на другой const, * 2
+}
+
+test "ось 2: scope-local const — literal + constexpr-арифметика, usable в выражении (D33)" {
+    const D33_N = 16
+    const D33_FACTOR = 5 * 2
+    assert(D33_N == 16)
+    assert(D33_FACTOR == 10)
+    // const-значение используется в рантайм-выражении (mut binding оси 1).
+    mut acc = 0
+    acc = acc + D33_N + D33_FACTOR
+    assert(acc == 26)
+}
