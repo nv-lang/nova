@@ -11,7 +11,9 @@
 // Зависит от D260 (lazy-слой / `.lazy()`), D58 (Iter/Next duck-typing), D239 (`[]T ≡ Vec[T]`),
 // D230 amend (conditional-bound протоколы коллекций).
 // Часть единого folder-модуля `spec_tests.conformance` (минимальный CU).
-module inprogress.d264_vec_hash_collect_target
+module spec_tests.conformance
+
+import std.collections.vec_lazy
 
 // ── content-Hash (Hash+Equal contract) ──────────────────────────────────────
 
@@ -75,4 +77,3 @@ test "FromIterator из Iter-источника: `Vec.new().extend(src)` (D264 �
     acc.extend([4, 5])         // повторный extend дописывает (FromIterator-аккумуляция)
     assert(acc.equal(Vec[int].of(1, 2, 3, 4, 5)))
 }
-
