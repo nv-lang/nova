@@ -1,0 +1,66 @@
+// D43 — Trailing: `{ block }` без params и `fn(p) body` с params.
+// Если последний параметр — функционального типа, его выносят за () вызова.
+// trailing-block: `f(args) { block }` — callback без параметров.
+// trailing-fn: `f(args) fn(p) body` — callback с параметрами.
+// `()` всегда обязательны; trailing начинается на той же строке что `)`.
+// Spec: spec/decisions/03-syntax.md D43. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+fn d43_run(body fn() -> int) -> int => body()
+fn d43_apply(x int, f fn(int) -> int) -> int => f(x)
+fn d43_combine(a int, b int, f fn(int, int) -> int) -> int => f(a, b)
+fn d43_twice(x int, f fn(int) -> int) -> int => f(f(x))
+fn d43_filter_count(xs []int, pred fn(int) -> bool) -> int {
+    mut cnt = 0
+    for x in xs { if pred(x) { cnt = cnt + 1 } }
+    cnt
+}
+
+test "trailing block: zero-param callback returns value (D43)" {
+    ro r = d43_run() { 42 }
+    assert(r == 42)
+}
+
+test "trailing block: accesses outer vars (D43)" {
+    ro x = 10
+    ro r = d43_run() { x + 5 }
+    assert(r == 15)
+}
+
+test "trailing block: multi-statement body (D43)" {
+    ro r = d43_run() {
+        ro a = 3
+        ro b = 7
+        a + b
+    }
+    assert(r == 10)
+}
+
+test "trailing fn expr-body: single param (D43)" {
+    ro r = d43_apply(7) fn(x int) => x * 3
+    assert(r == 21)
+}
+
+test "trailing fn block-body: two params (D43)" {
+    ro r = d43_combine(3, 4) fn(a int, b int) { a + b }
+    assert(r == 7)
+}
+
+test "trailing fn: applied twice (D43)" {
+    ro r = d43_twice(2) fn(x int) => x * 2
+    assert(r == 8)
+}
+
+test "trailing form is equivalent to inline arg (D43)" {
+    ro via_trailing = d43_apply(5) fn(x int) => x + 1
+    ro via_inline   = d43_apply(5, |x| x + 1)
+    assert(via_trailing == via_inline)
+}
+
+test "trailing fn for predicate: filter_count (D43)" {
+    ro xs []int = [1, 2, 3, 4, 5, 6]
+    ro evens = d43_filter_count(xs) fn(x int) => x % 2 == 0
+    assert(evens == 3)
+    ro big = d43_filter_count(xs) fn(x int) => x > 3
+    assert(big == 3)
+}
