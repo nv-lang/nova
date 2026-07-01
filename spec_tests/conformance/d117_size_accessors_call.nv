@@ -37,3 +37,15 @@ test "str with unicode .byte_len() vs .len() (D117)" {
     ro s = "abc"
     assert(s.byte_len() == 3)
 }
+
+test "HashMap .len() on empty map (D117)" {
+    ro m = HashMap[str, int].new()
+    assert(m.len() == 0)
+}
+
+test "HashMap .len() after insert (D117)" {
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    assert(m.len() == 2)
+}

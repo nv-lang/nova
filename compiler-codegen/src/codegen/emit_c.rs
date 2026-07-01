@@ -30970,8 +30970,36 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     vec![]
                 }
             }
-            // Array — без bindings extraction (bootstrap covers main cases).
-            Pattern::Array { .. } => vec![],
+            // Array pattern: recover element type from Vec[T] scrutinee and bind each Item.
+            Pattern::Array { elems, .. } => {
+                use crate::ast::ArrayPatternElem;
+                // Recover elem C-type from scrutinee (Nova_Vec____<T>* → <T>).
+                let elem_ty = if scr_ty.starts_with("Nova_Vec____") {
+                    let mangled = scr_ty.trim_end_matches('*').trim().to_string();
+                    this.generic_type_instance_info.borrow()
+                        .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        .unwrap_or_else(|| {
+                            scr_ty.strip_prefix("Nova_Vec____").unwrap_or("nova_int")
+                                .trim_end_matches('*').trim().to_string()
+                        })
+                } else {
+                    "nova_int".to_string()
+                };
+                let mut out = vec![];
+                for el in elems {
+                    match el {
+                        ArrayPatternElem::Item(p) => {
+                            out.extend(Self::collect_pattern_inner_bindings(p, &elem_ty, this));
+                        }
+                        ArrayPatternElem::RestBind(name) => {
+                            // `..rest` captures remaining slice — same type as scrutinee.
+                            out.push((name.clone(), scr_ty.to_string()));
+                        }
+                        ArrayPatternElem::Rest => {}
+                    }
+                }
+                out
+            }
         }
     }
 

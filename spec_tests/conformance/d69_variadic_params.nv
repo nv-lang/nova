@@ -7,6 +7,12 @@
 // Spec: spec/decisions/03-syntax.md D69. Единица: folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
+fn d69_first(...items []int) -> int =>
+    match items {
+        [h, ..] => h
+        _ => -1
+    }
+
 fn d69_sum(...items []int) -> int {
     mut total = 0
     for x in items {
@@ -47,4 +53,16 @@ test "variadic: spread existing slice (D69)" {
 test "variadic: str items byte_len sum (D69)" {
     ro total = d69_join("ab", "cde")
     assert(total == 5)
+}
+
+test "variadic: first of single arg (D69)" {
+    assert(d69_first(42) == 42)
+}
+
+test "variadic: first of multiple args (D69)" {
+    assert(d69_first(10, 20, 30) == 10)
+}
+
+test "variadic: first of empty → -1 (D69)" {
+    assert(d69_first() == -1)
 }
