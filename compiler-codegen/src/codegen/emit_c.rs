@@ -18714,9 +18714,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 } else {
                     self.var_mutable.remove(&binding);
                 }
-                // Propagate tuple element types so pair.0 can be correctly typed
+                // Propagate tuple element types so pair.0 can be correctly typed.
+                // Mirror the result_ok_inner_types pattern: always update (insert or remove)
+                // to prevent stale entries from a prior binding with the same name in a
+                // sibling fn / test body (global maps are not scope-keyed).
                 if let Some(elem_tys) = self.tuple_element_types.get(&val).cloned() {
+                    // RHS is a rebind of another known tuple var — propagate its elements.
                     self.tuple_element_types.insert(binding.clone(), elem_tys);
+                } else if ty_c.starts_with("_NovaTuple_") {
+                    // RHS is a call/expr whose inferred type is a mono tuple — derive
+                    // element types from the mangled name so .0/.1 etc. cast correctly.
+                    if let Some(elems) = Self::parse_mono_tuple_elements(&ty_c) {
+                        self.tuple_element_types.insert(binding.clone(), elems);
+                    } else {
+                        self.tuple_element_types.remove(&binding);
+                    }
+                } else {
+                    // RHS is not a tuple — evict any stale entry for this binding name.
+                    self.tuple_element_types.remove(&binding);
                 }
                 // Propagate array element type so xs[i].field can be correctly typed
                 if let Some(arr_elem_ty) = self.array_element_types.get(&val).cloned() {

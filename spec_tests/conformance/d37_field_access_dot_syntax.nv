@@ -1,0 +1,65 @@
+// D37 — ДОСТУП К ПОЛЯМ через точечный синтаксис.
+// `obj.name` — именованное поле record; `obj.0`, `obj.1` — позиционные поля / кортеж.
+// `@name`, `@0` — аналогичный доступ внутри инстанс-методов (неявный self).
+//
+// Discriminator: без точечного доступа невозможно читать поля record (требует деструктуризации);
+// без `@field` внутри методов — паника или wrong value. Тесты проверяют что все три формы
+// доступа возвращают правильные значения.
+//
+// Spec: spec/decisions/03-syntax.md D37. Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D37Point {
+    x f64
+    y f64
+}
+
+fn D37Point.mk(x f64, y f64) -> D37Point => { x, y }
+fn D37Point @px() -> f64 => @x   // self-field access via @field inside instance method
+fn D37Point @py() -> f64 => @y
+
+type D37Named {
+    first str
+    second int
+    flag bool
+}
+
+test "named record field access via obj.name (D37)" {
+    ro p = D37Point.mk(1.0, 2.0)
+    assert(p.x == 1.0)
+    assert(p.y == 2.0)
+}
+
+test "named record field access: multiple fields on same record (D37)" {
+    ro r = D37Named { first: "hello", second: 42, flag: true }
+    assert(r.first == "hello")
+    assert(r.second == 42)
+    assert(r.flag == true)
+}
+
+test "positional tuple field access via .0 and .1 (D37)" {
+    ro pair = (10, 20)
+    assert(pair.0 == 10)
+    assert(pair.1 == 20)
+}
+
+test "positional tuple: mixed types accessed by index (D37)" {
+    ro t = (true, 99, 3.14)
+    assert(t.0 == true)
+    assert(t.1 == 99)
+    assert(t.2 > 3.0)
+}
+
+test "@field inside instance method accesses self (D37 / D35 link)" {
+    ro p = D37Point.mk(5.0, 7.0)
+    assert(p.px() == 5.0)
+    assert(p.py() == 7.0)
+}
+
+test "field access after mutation: obj.field reflects updated value (D37)" {
+    mut p = D37Point.mk(0.0, 0.0)
+    p.x = 3.0
+    p.y = 4.0
+    assert(p.x == 3.0)
+    assert(p.y == 4.0)
+}

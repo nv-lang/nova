@@ -1,0 +1,62 @@
+// D35 — методы инстанса объявляются через `fn Type @method(...)` с НЕЯВНЫМ self.
+// Поля self доступны через `@field`. Конструкторы и static-методы — через точку
+// `fn Type.name(...)`. Мутирующий метод — `fn Type mut @method(...)`.
+//
+// Discriminator: компилятор НЕ генерирует методы через `self.field`, а через `@field`.
+// Тесты проверяют что `@field` в теле метода возвращает правильные значения self,
+// static-конструктор работает, и мутирующий метод изменяет поле.
+//
+// Spec: spec/decisions/03-syntax.md D35. Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D35Vec2 {
+    x f64
+    y f64
+}
+
+// Static constructor: fn Type.name(...) — без @
+fn D35Vec2.new(x f64, y f64) -> D35Vec2 => { x, y }
+
+// Instance method: fn Type @method() — доступ к self через @field
+fn D35Vec2 @x_val() -> f64 => @x
+fn D35Vec2 @y_val() -> f64 => @y
+fn D35Vec2 @sum() -> f64    => @x + @y
+fn D35Vec2 @dot(other D35Vec2) -> f64 => @x * other.x + @y * other.y
+
+// Mutating method: fn Type mut @method(...)
+fn D35Vec2 mut @scale(factor f64) {
+    @x = @x * factor
+    @y = @y * factor
+}
+
+test "static constructor fn Type.new() creates record with correct fields (D35)" {
+    ro v = D35Vec2.new(3.0, 4.0)
+    assert(v.x == 3.0)
+    assert(v.y == 4.0)
+}
+
+test "instance method @field access returns self field value (D35)" {
+    ro v = D35Vec2.new(1.5, 2.5)
+    assert(v.x_val() == 1.5)
+    assert(v.y_val() == 2.5)
+}
+
+test "instance method using multiple @fields in arithmetic body (D35)" {
+    ro v = D35Vec2.new(3.0, 4.0)
+    assert(v.sum() == 7.0)
+}
+
+test "instance method with external arg + @field: dot product (D35)" {
+    ro a = D35Vec2.new(1.0, 0.0)
+    ro b = D35Vec2.new(0.0, 1.0)
+    assert(a.dot(b) == 0.0)
+    ro c = D35Vec2.new(3.0, 4.0)
+    assert(c.dot(c) == 25.0)
+}
+
+test "mutating instance method fn Type mut @method modifies @fields (D35)" {
+    mut v = D35Vec2.new(2.0, 3.0)
+    v.scale(2.0)
+    assert(v.x_val() == 4.0)
+    assert(v.y_val() == 6.0)
+}
