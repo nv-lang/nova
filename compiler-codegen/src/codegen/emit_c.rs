@@ -37268,7 +37268,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         }
         // Channel 3: var_types for Ident/SelfAccess (reliable per-local codegen state).
-        if expr.id.is_set() {
+        // 172.1.2 (2026-07-04): id-гейт СНЯТ — var_types это codegen-state, id не
+        // нужен; синтетические узлы нормализаций (_chain_root_*, __nova_arg_*)
+        // имеют UNSET id и падали мимо (214 заходов с vt=true в ID-MISS).
+        {
             match &expr.kind {
                 ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
                     let raw = self.var_types.get("nova_self").cloned().unwrap();
@@ -37465,6 +37468,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
         }
+        // 172.1.2 (2026-07-04): NOVA_ID_TRACE — состояние Ident перед legacy.
+        if std::env::var_os("NOVA_ID_TRACE").is_some() {
+            if let ExprKind::Ident(n) = &expr.kind {
+                eprintln!("[ID-MISS] {} vt={} ov={} pb={} ann={}", n,
+                    self.var_types.contains_key(n),
+                    self.closure_param_type_overrides.borrow().contains_key(n),
+                    self.pattern_binding_overrides.borrow().contains_key(n),
+                    expr.id.is_set() && self.resolved_types.contains_key(&expr.id));
+            }
+        }
         // All channels failed → legacy (panics on entry — checker gap, see compiler-conventions.md §0).
         self.infer_expr_c_type_legacy(expr)
     }
@@ -37498,7 +37511,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // legacy их обрабатывает корректно — entry panic только ломала рекурсию.
         // Trace каждого legacy-захода — только под NOVA_P67_TRACE=1 (иначе stderr-шум
         // на тысячи строк при любом debug-прогоне; tally-метрика — отдельно, NOVA_U45_GAP).
-        if cfg!(debug_assertions) && expr.id.is_set() && {
+        if cfg!(debug_assertions) && {
             static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
             *TRACE.get_or_init(|| std::env::var_os("NOVA_P67_TRACE").is_some())
         } {
