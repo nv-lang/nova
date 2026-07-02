@@ -207,6 +207,8 @@
 | `[M-118.1.7-extern-block]` | `extern "C" { unsafe fn … }` block-сахар (gated на multi-ABI); сейчас individual `external unsafe fn`. | plan-118.1 Followups | P3 |
 | `[M-D227-alias-newtype-range]` | D227 range-check НЕ покрывает alias/newtype над sized-int (`assignable()` чекает только direct Named + Readonly/Mut/Unsafe; резолв alias-имени требует `self.types`, недоступного на free-fn coercion-сайте). | plan-142 Scoped open-questions | P3 |
 | `[M-D227-float-range-check]` | D227 Rule 5 (f32 exponent overflow) НЕ реализован; Ф.1 scope был integer-only (8 sized-int). | plan-142 Scoped open-questions | P3 |
+| `[M-labeled-loops]` | Метки циклов + адресный `break outer`/`continue outer` (выход из ВНЕШНЕГО цикла). Единственная survey-находка (2026-07-02) genuinely-absent (`consider`, medium). Форма — identifier (НЕ `'outer` — лексич. конфликт с char-лит; НЕ `:`-форма). Value-carrying `break outer x` — вне scope. Ниша — grid/matrix-сканы. | [spec/open-questions Q-labeled-loops](../../spec/open-questions.md) | P3 |
+| `[M-nested-or-patterns]` | `\|`-альтернативы ВНУТРИ варианта: `Some(1\|2\|3)` / `(0\|1, y)` (top-level `\|` уже есть). Обобщение: hoist `\|`-сбор из parse_match в parse_pattern, тот же `Pattern::Or`. Range-in-arm НЕ добавляем (покрыт guard). `consider`, low (survey 2026-07-02). | [spec/open-questions Q-nested-or-patterns](../../spec/open-questions.md) | P3 |
 
 ## By-design / WON'T-DO (не actionable — кандидаты в dead-markers)
 
@@ -631,6 +633,7 @@
 | Маркер | Статус | Home | Действие |
 |---|---|---|---|
 | `[M-106-if-guard]` | ✅ CLOSED 2026-06-17. && guard в if/while pattern-bind. | Plan 106 | ✅ done |
+| `[M-106-if-let-chain-multi]` | OPEN P3. Множественные let-паттерны через `&&` (Rust let-chains): `if Some(x)=a && Some(y)=f(x) && x+y>10`. Единственный `consider` в этой зоне (survey 2026-07-02); guard уже покрывает ~90%, выигрыш над nested-`if` мал → делать opportunistic. | [spec/open-questions Q-if-let-chain-multi](../../spec/open-questions.md) | P3 |
 
 ## Follow-up: Plan 104.9 (nova-lsp language-sync + close-out)
 

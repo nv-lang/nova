@@ -8300,6 +8300,78 @@ if Some(x) = get_x() && Some(y) = get_y(x) && x + y > 10 { }
 - [D34](decisions/03-syntax.md#d34) — grammar `if-cond`
 - [Plan 106](../docs/plans/106-if-let-chains.md) — реализованный `&&` guard
 - Rust [RFC 2497 let-chains](https://rust-lang.github.io/rfcs/2497-if-let-chains.html) — stable 1.64
+- [Cross-language syntax-gap survey 2026-07-02](../docs/research/2026-07-02-cross-language-syntax-gap-survey.md) — подтверждён как единственный `consider`-кандидат в этой зоне; выигрыш над nested-`if` мал.
+
+## Q-labeled-loops — метки циклов + адресный `break`/`continue` — 🟡 OPEN (2026-07-02)
+
+### Контекст (cross-language syntax-gap survey 2026-07-02)
+
+Единственная из survey-находок со статусом **genuinely absent** (`consider`, medium): выход/continue сразу из ВНЕШНЕГО цикла. Не покрыто ничем — `interrupt` выходит из `with`-блока эффекта, `return`/`throw` — из всей функции, `mut`-флаг + post-loop reconstruction = ровно тот boilerplate, что это убирает.
+
+```nova
+for outer in grid {
+    for cell in outer {
+        if bad(cell)  { break outer }      \ выход из ВНЕШНЕГО цикла
+        if skip(cell) { continue outer }   \ следующая итерация внешнего
+    }
+}
+```
+
+Применимо к `while outer { … }` и `loop outer { … }`. Bare `break`/`continue` целят в ближайший цикл (без изменений).
+
+### Форма (важно)
+
+- **Только identifier** — метка-имя перед ключевым словом цикла, `break`/`continue` берут её операндом.
+- `'outer` (Rust) **невозможен лексически**: `'` — делимитер char-литерала → `'outer` = незакрытый char.
+- `:`-форма (Go/Kotlin `outer:`) чужда грамматике — в Nova нет `:` в биндингах (`ro a i64`, не `a: i64`).
+- Метка живёт в отдельном namespace (loop-label, не value-binding) → не шэдоит переменную `outer`.
+- **Value-carrying `break outer x` — вне scope** (пересекается с block-as-expression и match).
+
+### Реализация
+
+`break`/`continue` сейчас без операнда → добавить identifier-after-break продукцию. Десугарится в существующий `loop { match _it.next() {…} }`, прокидывая exit целевого цикла во внутренний `break`. Новой value-семантики нет — `break outer` даёт `()` как сейчас.
+
+### Открытое
+
+1. **Нужно ли?** Идиома Nova для «глубокий скан» — вынести во вспомогательную функцию с типизированным `return` (лучше для «LLM пишет / человек проверяет»). Метки рискуют поощрять вложенность вместо декомпозиции.
+2. **Приоритет:** низкий. Ниша — hot grid/matrix-сканы, где function boundary мешает `mut`-capture / нельзя `continue` внешний.
+
+### Связь
+- [Cross-language syntax-gap survey 2026-07-02](../docs/research/2026-07-02-cross-language-syntax-gap-survey.md)
+- Прецедент отказа: Go-mistakes audit #34 «Меток циклов нет» — пересматривается этой записью.
+
+## Q-nested-or-patterns — `|`-альтернативы внутри варианта/позиции — 🟡 OPEN (2026-07-02)
+
+### Контекст (cross-language syntax-gap survey 2026-07-02)
+
+`consider`, low. Top-level or-patterns **уже реализованы** (`Pattern::Or`: `Red | Yellow =>`, `0 | 1 | 2 =>`). Брешь — только **вложенная** позиция (AST-комментарий: «не вкладывается внутрь других patterns»):
+
+```nova
+match x {
+    Some(1 | 2 | 3) => "small"     \ сейчас требует дублировать тело или guard
+    Some(n)         => "other"
+    None            => "none"
+}
+match pair {
+    (0 | 1, y) => y                \ и в tuple/array-позициях
+    (x, _)     => x
+}
+```
+
+Сейчас: `Some(1) => b, Some(2) => b` (дублирование тела) либо guard `Some(n) if n == 1 || n == 2 => b` (теряет exhaustiveness-reasoning, хуже читается для литерал-списков).
+
+### Реализация
+
+Крошечная: hoist `|`-сбора из `parse_match` (top-level арм) в `parse_pattern` (вложенные позиции), тот же `Pattern::Or`, тот же инвариант — все альтернативы биндят **одинаковый** набор имён (bootstrap берёт биндинги из первой альтернативы). Nullary-payload альтернативы; guard остаётся на уровне арма. Нет грамматической неоднозначности: в позиции паттерна `|` не конкурирует с bit-or (тот — только в expression).
+
+### Открытое
+
+- Это **обобщение** (снятие top-level-only ограничения), не новая фича → делает язык внутренне консистентнее (почему `|` в арме работает, а на уровень глубже нет?).
+- **Граница:** только вложенный `|`. **Range-in-arm** (`'a'..='z' =>`) — НЕ добавляем (полностью покрыт guard `c if c >= 'a' && c <= 'z'`; настоящий feature-creep).
+
+### Связь
+- [Cross-language syntax-gap survey 2026-07-02](../docs/research/2026-07-02-cross-language-syntax-gap-survey.md)
+- [D34](decisions/03-syntax.md#d34) — pattern-bind grammar; существующий `Pattern::Or` инвариант.
 
 ## Q-resolved-type-c-name — переход на более правильное формирование C-имени типа (после ретайра `type_ref_to_c`) — 🟡 OPEN (2026-06-21, Plan 172.1 U.4.6)
 
