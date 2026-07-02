@@ -11373,16 +11373,16 @@ impl<'a> TypeCheckCtx<'a> {
         // (codegen lowers it without `current_type_subst`); the original guard checked merely the
         // METHOD generics against `subst.keys()`, missing both carrier classes. Carrier names are
         // extracted the SAME way `build_recv_subst` does (bare single-segment, no nested generics).
-        let mut generic_names: HashSet<String> =
+        // 172.1.2 Шаг 3.2: гейт РАСЩЕПЛЁН. (a) METHOD-level generic (`[U]` — биндинг
+        // из аргументов, arg-inference ещё нет) → bail ОСТАВЛЕН: голый Named{U} в
+        // канале лоуэрился бы через bare-name subst ЧУЖОГО контекста (d119-класс).
+        // (b) RECEIVER-carrier residual (`-> T`, `-> *mut T` при vacuous T→T) →
+        // БОЛЬШЕ НЕ bail: имя ∈ gs объемлющего тела → Call-арм пометит его
+        // mark_type_params → TypeParam(T) → лоуэринг receiver-instance-map/subst
+        // или Err→legacy (Шаг 1/2b инфраструктура).
+        let method_names: HashSet<String> =
             f.generics.iter().map(|g| g.name.clone()).collect();
-        for g in &recv.generics {
-            if let TypeRef::Named { path, generics, .. } = g {
-                if path.len() == 1 && generics.is_empty() {
-                    generic_names.insert(path[0].clone());
-                }
-            }
-        }
-        if !generic_names.is_empty() && typeref_mentions_any(&out, &generic_names) {
+        if !method_names.is_empty() && typeref_mentions_any(&out, &method_names) {
             return None;
         }
         // Plan 172.1.2 (plan154 / self_nested / flatten fix): bail when the return lowers to a
