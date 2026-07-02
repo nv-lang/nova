@@ -1,0 +1,42 @@
+// D256 — `@field` / size-аксессоры self-access в контрактах (Plan 140.2 Part A).
+// Норма (spec §D256): requires/ensures метода могут ссылаться на состояние
+// receiver'а (`@field`; `@len()` ≡ `@len` — D117 zero-arg аксессоры); прочие
+// `@method()` в контракте — внятная ошибка (SMT-путь — corpus contracts/ с
+// REQUIRES_SMT_BACKEND; здесь — runtime-enforcement недоказанного requires,
+// happy-path). Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D256Counter {
+    count int
+}
+
+// requires ссылается на @field — парсится и runtime-enforce'ится.
+fn D256Counter @doubled() -> int
+    requires @count >= 0
+{
+    @count + @count
+}
+
+type D256Buf {
+    items []int
+}
+
+// requires с @field в связке с параметром (bounds-стиль D257).
+fn D256Buf @take(i int) -> int
+    requires 0 <= i && i < 3
+{
+    @items[i]
+}
+
+test "requires @field: happy-path проходит runtime-проверку (D256)" {
+    ro d256_c = D256Counter { count: 5 }
+    assert(d256_c.doubled() == 10)
+    ro d256_z = D256Counter { count: 0 }
+    assert(d256_z.doubled() == 0)
+}
+
+test "requires с параметром + @field-состояние: bounds-стиль (D256)" {
+    ro d256_b = D256Buf { items: [10, 20, 30] }
+    assert(d256_b.take(0) == 10)
+    assert(d256_b.take(2) == 30)
+}
