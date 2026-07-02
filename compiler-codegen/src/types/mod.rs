@@ -7266,6 +7266,20 @@ impl<'a> TypeCheckCtx<'a> {
                                 let rt = Self::mark_type_params(
                                     ResolvedType::from_type_ref(elem), gs);
                                 self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                            } else if let TypeRef::Named { path, .. } = &obj_tr {
+                                // 172.1.2 (Index @-слайс generic, 2026-07-03): scope["@"]
+                                // extension-метода на []T — элемент = TypeParam(T),
+                                // ПРЯМО в буфер (минуя TypeRef — урок утечки bare Named).
+                                if path.len() == 1 {
+                                    if let Some(en) = path[0].strip_prefix("[]") {
+                                        if gs.contains(en) {
+                                            self.resolved_types_buf.borrow_mut().insert(
+                                                e.id,
+                                                ResolvedType::TypeParam(en.to_string()),
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else if e.id.is_set() && obj.id.is_set() {
