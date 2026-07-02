@@ -1,0 +1,53 @@
+// D241 — Канонический порядок модификаторов type-декларации (scope-adjacency).
+// Норма (spec/decisions/03-syntax.md §D241, Plan 148 Ф.1): ЕДИНСТВЕННЫЙ канон —
+// по scope от широкого к узкому: `export` (до `type`) → `value` (rank 0,
+// представление типа) → `consume` (rank 1, must-consume типа) → `priv` (rank 2,
+// дефолт видимости полей, вплотную к `{`). Любая инверсия rank'ов →
+// E_MODIFIER_ORDER + machine-applicable fix-it; 0/1 модификатор — всегда канон.
+// Позитив: value priv / consume priv / одиночные. Негативы — neg/d241_*.nv.
+// Шаблоны сверены с nova_tests/plan148/mo_*. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+// Канон: value (rank 0) → priv (rank 2).
+type D241Point value priv {
+    pub ro x f64
+    pub ro y f64
+    tag int
+}
+
+fn D241Point.new(x f64, y f64, tag int) -> D241Point => { x, y, tag }
+
+// Канон: consume (rank 1) → priv (rank 2).
+type D241Resource consume priv {
+    pub ro fd int
+    state int
+}
+
+fn D241Resource consume @close() -> () { () }
+
+fn d241_open(fd int) -> D241Resource => { fd, state: 0 }
+
+// Одиночные модификаторы — всегда канон.
+type D241Val value { a int, b int }
+type D241Priv priv { pub ro n int }
+
+fn D241Priv.new(n int) -> D241Priv => { n }
+
+test "канон value priv: parse + работа полей (D241)" {
+    ro d241_p = D241Point.new(1.0, 2.0, 7)
+    assert(d241_p.x == 1.0)
+    assert(d241_p.y == 2.0)
+}
+
+test "канон consume priv: parse + consume-семантика (D241)" {
+    consume d241_r = d241_open(7)
+    assert(d241_r.fd == 7)
+    d241_r.close()
+}
+
+test "одиночные модификаторы — всегда канон (D241)" {
+    ro d241_v = D241Val { a: 1, b: 2 }
+    assert(d241_v.a + d241_v.b == 3)
+    ro d241_pv = D241Priv.new(9)
+    assert(d241_pv.n == 9)
+}

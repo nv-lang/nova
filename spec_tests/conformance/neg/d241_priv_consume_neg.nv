@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// D241: `priv consume` — инверсия (priv=2 раньше consume=1) → error + fix-it
+// «reorder to `consume priv`».
+#no_prelude
+module neg.d241_priv_consume_neg
+
+type Resource priv consume {
+    pub ro fd int
+}

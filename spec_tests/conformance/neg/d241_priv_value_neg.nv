@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_MODIFIER_ORDER
+// D241: `priv value` — инверсия rank'ов (priv=2 раньше value=0) → error + fix-it.
+#no_prelude
+module neg.d241_priv_value_neg
+
+type Point priv value {
+    pub ro x f64
+}
