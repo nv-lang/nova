@@ -8206,18 +8206,35 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(s)
             };
             let scope: &HashMap<String, TypeRef> = ext_scope.as_ref().unwrap_or(scope);
-            let body_tr = match &arm.body {
-                MatchArmBody::Expr(e) => self.infer_expr_type(e, scope)?,
-                MatchArmBody::Block(b) => {
-                    // A block's value is its trailing expr — only when NO statements
-                    // can shadow `scope` (mirror `infer_expr_type`'s `Block(b)` arm).
-                    if !b.stmts.is_empty() {
-                        return None;
+            // 172.1.2 stmts-relax: канальный фоллбек (buf-аннотация сделана в
+            // правильном scope при f1-рекурсии) — работаем в ResolvedType.
+            let arm_rt = |t: &Expr| -> Option<ResolvedType> {
+                if t.id.is_set() {
+                    if let Some(rt) = self.resolved_types_buf.borrow().get(&t.id).cloned() {
+                        return Some(rt);
                     }
-                    self.infer_expr_type(b.trailing.as_deref()?, scope)?
+                }
+                None
+            };
+            let rt: ResolvedType = match &arm.body {
+                MatchArmBody::Expr(e) => match self.infer_expr_type(e, scope) {
+                    Some(tr) => ResolvedType::from_type_ref(&tr),
+                    None => arm_rt(e)?,
+                },
+                MatchArmBody::Block(b) => {
+                    let t = b.trailing.as_deref()?;
+                    if b.stmts.is_empty() {
+                        if let Some(tr) = self.infer_expr_type(t, scope) {
+                            ResolvedType::from_type_ref(&tr)
+                        } else {
+                            arm_rt(t)?
+                        }
+                    } else {
+                        // stmts-блок: scope-инференс нельзя (блок-локалы), канал — можно.
+                        arm_rt(t)?
+                    }
                 }
             };
-            let rt = ResolvedType::from_type_ref(&body_tr);
             if rt == ResolvedType::Never {
                 continue; // diverging arm contributes no constraint
             }
@@ -8276,12 +8293,15 @@ impl<'a> TypeCheckCtx<'a> {
         // resolved_types_buf, когда infer_expr_type сам не достаёт (паттерн
         // operand_rt Binary-арма). Гейты join не менялись.
         let branch_rt = |blk: &crate::ast::Block| -> Option<ResolvedType> {
-            if !blk.stmts.is_empty() {
-                return None;
-            }
             let t = blk.trailing.as_deref()?;
-            if let Some(tr) = self.infer_expr_type(t, scope) {
-                return Some(ResolvedType::from_type_ref(&tr));
+            // 172.1.2 stmts-relax: для блока СО stmts scope-инференс НЕЛЬЗЯ
+            // (trailing может ссылаться на блок-локалы вне scope), но
+            // buf-аннотация trailing'а сделана в ПРАВИЛЬНОМ scope при
+            // f1-рекурсии → канал разрешён всегда.
+            if blk.stmts.is_empty() {
+                if let Some(tr) = self.infer_expr_type(t, scope) {
+                    return Some(ResolvedType::from_type_ref(&tr));
+                }
             }
             if t.id.is_set() {
                 return self.resolved_types_buf.borrow().get(&t.id).cloned();
