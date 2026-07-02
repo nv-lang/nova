@@ -37334,13 +37334,30 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
             *TRACE.get_or_init(|| std::env::var_os("NOVA_P67_TRACE").is_some())
         } {
-            eprintln!("[P67-LEGACY] kind={} span={:?} id={:?} in_resolved={} src_file={}",
+            // desc: короткий структурный дескриптор для bucket-анализа tally
+            // (какой callee/ident/поле чаще всего падает в legacy).
+            let desc = match &expr.kind {
+                ExprKind::Call { func, .. } => match &func.kind {
+                    ExprKind::Ident(n) => format!("Call:{}", n),
+                    ExprKind::Member { name, .. } => format!("Call:.{}", name),
+                    ExprKind::Path(p) => format!("Call:{}", p.join(".")),
+                    _ => "Call:<expr>".into(),
+                },
+                ExprKind::Member { name, .. } => format!("Member:.{}", name),
+                ExprKind::Ident(n) => format!("Ident:{}", n),
+                ExprKind::Path(p) => format!("Path:{}", p.join(".")),
+                ExprKind::If { .. } => "If".into(),
+                ExprKind::Block(_) => "Block".into(),
+                other => format!("Other:{:?}", std::mem::discriminant(other)),
+            };
+            eprintln!("[P67-LEGACY] kind={} desc={} span={:?} id={:?} in_resolved={} src_file={}",
                 match &expr.kind {
                     ExprKind::Call { .. } => "Call", ExprKind::Member { .. } => "Member",
                     ExprKind::Ident(_) => "Ident", ExprKind::Path(_) => "Path",
                     ExprKind::If { .. } => "If", ExprKind::Block(_) => "Block",
                     _ => "Other",
                 },
+                desc,
                 expr.span, expr.id,
                 self.resolved_types.contains_key(&expr.id),
                 self.source_file_name
