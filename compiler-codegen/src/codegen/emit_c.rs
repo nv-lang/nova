@@ -36979,6 +36979,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ExprKind::Ident(n) if n == "self" => {
                 self.var_types.get("nova_self").cloned()
             }
+            // 2026-07-02 (tally, Path:__array): синтетический `__array.T` —
+            // ресивер = ИМЯ ТИПА (D38 static-ctor `[]T.with_capacity()`),
+            // значения нет, side-channel неприменим → None (отказ канала,
+            // не угаданный тип; паттерн [M-172.1-d174]).
+            ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => None,
             ExprKind::Ident(n) => {
                 // 3-уровневый локал-резолв (ФАЗА 4C precedence: closure-override →
                 // pattern-binding → var_types) + канал чекера. Без override-уровней
@@ -37349,6 +37354,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     || self.sum_schemas.contains_key(name.as_str()))
             {
                 return format!("Nova_{}*", name);
+            }
+        }
+        // Channel 6e (tally 2026-07-02, Path:__array): синтетический путь
+        // `__array.T` (D38 `[]T.with_capacity()` static-ресивер) — имя типа,
+        // не значение. Дословный подъём legacy-ответа: Path-arm falls-through
+        // → "" (потребители name-keyed dispatch; реальный лоуэринг — D38-арм
+        // nova_array_new_<suffix>). Residual: сам Call НЕ аннотируем —
+        // [M-array-vec-unify] (канал канонизировал бы []T→Vec и соврал).
+        if let ExprKind::Path(parts) = &expr.kind {
+            if parts.len() == 2 && parts[0] == "__array" {
+                return String::new();
             }
         }
         // All channels failed → legacy (panics on entry — checker gap, see compiler-conventions.md §0).
