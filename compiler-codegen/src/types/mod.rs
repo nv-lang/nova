@@ -6859,9 +6859,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // bare `Named`) is left to legacy here. The deeper container/carrier guards live in
                 // `resolve_instance_method_return` so the INLINE inference is conservative too.
                 if e.id.is_set() {
-                    if std::env::var_os("NOVA_APPEND_TRACE").is_some() {
+                    if let Some(watch) = std::env::var_os("NOVA_CALL_TRACE") {
                         if let ExprKind::Member { name: mn, .. } = &func.kind {
-                            if mn == "append" {
+                            if *mn == watch.to_string_lossy() {
                                 let r = self.infer_method_call_channel_type(e, scope);
                                 if r.is_none() {
                                     let ExprKind::Member { obj: ao, .. } = &func.kind else { unreachable!() };
@@ -11677,7 +11677,11 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         let type_name: String = match peeled {
-            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            TypeRef::Named { path, .. } if path.len() == 1 => {
+                // 2026-07-03: scope["@"] extension-метода на слайсе хранит имя
+                // "[]T"/"[]int" — D239-нормализация к Vec для method-резолва.
+                if path[0].starts_with("[]") { "Vec".to_string() } else { path[0].clone() }
+            }
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
             _ => return None,
         };
@@ -12023,7 +12027,11 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         let type_name: String = match peeled {
-            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            TypeRef::Named { path, .. } if path.len() == 1 => {
+                // 2026-07-03: scope["@"] extension-метода на слайсе хранит имя
+                // "[]T"/"[]int" — D239-нормализация к Vec для method-резолва.
+                if path[0].starts_with("[]") { "Vec".to_string() } else { path[0].clone() }
+            }
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
             _ => return None,
         };
