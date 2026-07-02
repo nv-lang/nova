@@ -6803,8 +6803,28 @@ impl<'a> TypeCheckCtx<'a> {
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
                 self.in_call_func.set(false);
-                for a in args {
-                    self.f1_expr(a.expr(), gs, scope, errors);
+                // 172.1.2 C6(a): closure-параметры типизируются сигнатурой callee
+                // ДО рекурсии в args — тела замыканий (`x*2`) f1-обходятся с
+                // типизированными параметрами → дети аннотируются каналом.
+                let seeds = self.closure_arg_param_seeds(e, scope);
+                for (i, a) in args.iter().enumerate() {
+                    if let Some((_, binds)) =
+                        seeds.iter().find(|(ix, _)| *ix == i)
+                    {
+                        let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                        for (n, t) in binds {
+                            saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
+                        }
+                        self.f1_expr(a.expr(), gs, scope, errors);
+                        for (n, prev) in saved {
+                            match prev {
+                                Some(t) => { scope.insert(n, t); }
+                                None => { scope.remove(&n); }
+                            }
+                        }
+                    } else {
+                        self.f1_expr(a.expr(), gs, scope, errors);
+                    }
                     self.f4_check_value(a.expr(), scope, errors);
                 }
                 if let Some(t) = trailing {
@@ -11839,6 +11859,81 @@ impl<'a> TypeCheckCtx<'a> {
                 // выводится из closure-аргумента при известном carrier-subst.
                 self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope)
             })
+    }
+
+    /// 172.1.2 C6(a): посев типов closure-параметров из СУБСТИТУИРОВАННОЙ
+    /// сигнатуры callee (тот же путь, что arg-binding): для каждого arg-индекса
+    /// с ClosureLight против Func-параметра — карта (имя → конкретный TypeRef).
+    /// Параметры, требующие невыведенный method-generic, не сеются (честно).
+    fn closure_arg_param_seeds(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Vec<(usize, Vec<(String, TypeRef)>)> {
+        let mut out = Vec::new();
+        let ExprKind::Call { func, args, .. } = &e.kind else { return out };
+        let ExprKind::Member { obj, name } = &func.kind else { return out };
+        if name.starts_with('@') || matches!(&obj.kind, ExprKind::TurboFish { .. }) {
+            return out;
+        }
+        if !args.iter().any(|a| matches!(&a.expr().kind, ExprKind::ClosureLight { .. })) {
+            return out;
+        }
+        let Some(recv_ty) = self
+            .infer_expr_type(obj, scope)
+            .or_else(|| {
+                if !obj.id.is_set() { return None; }
+                let buf = self.resolved_types_buf.borrow();
+                let rt = buf.get(&obj.id)?.clone();
+                drop(buf);
+                Self::resolved_to_typeref_tp(&rt, e.span)
+            })
+        else { return out };
+        let mut peeled = &recv_ty;
+        loop {
+            match peeled {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = i,
+                _ => break,
+            }
+        }
+        let type_name: String = match peeled {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
+            _ => return out,
+        };
+        let Some(overloads) = self.method_overloads(&type_name, name) else { return out };
+        let [f] = overloads.as_slice() else { return out };
+        let Some(recv) = f.receiver.as_ref() else { return out };
+        if !matches!(recv.kind, ReceiverKind::Instance) {
+            return out;
+        }
+        let method_names: HashSet<String> =
+            f.generics.iter().map(|g| g.name.clone()).collect();
+        let mut subst = build_recv_subst(recv, &recv_ty);
+        subst.insert("Self".to_string(), peeled.clone());
+        for (i, (pd, a)) in f.params.iter().zip(args.iter()).enumerate() {
+            let TypeRef::Func { params: fp, .. } = &pd.ty else { continue };
+            let ExprKind::ClosureLight { params: cp, .. } = &a.expr().kind else { continue };
+            if cp.len() != fp.len() {
+                continue;
+            }
+            let mut binds = Vec::new();
+            let mut ok = true;
+            for (cpar, fpt) in cp.iter().zip(fp.iter()) {
+                let t = crate::const_fn_trampoline::subst_type_ref_pub(fpt, &subst);
+                if typeref_mentions_any(&t, &method_names) {
+                    ok = false;
+                    break;
+                }
+                if cpar.name != "_" {
+                    binds.push((cpar.name.clone(), t));
+                }
+            }
+            if ok && !binds.is_empty() {
+                out.push((i, binds));
+            }
+        }
+        out
     }
 
     /// 172.1.2 arg-binding: `v.map(|x| x*2)` при v: Vec[int] — параметр метода
