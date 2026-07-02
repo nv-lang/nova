@@ -12,65 +12,65 @@ module spec_tests.conformance
 
 // ── #realtime: только leaf-операции без scheduler-взаимодействия ──
 
-#realtime fn d172_rt_try_lock(m mut Mutex) -> bool {
-    m.try_lock()
+#realtime fn d172_rt_try_lock(d172_m mut Mutex) -> bool {
+    d172_m.try_lock()
 }
 
-#realtime fn d172_rt_atomic(a mut AtomicI64, delta int) -> int {
-    a.fetch_add(delta)
+#realtime fn d172_rt_atomic(d172_a mut AtomicI64, delta int) -> int {
+    d172_a.fetch_add(delta)
 }
 
-#realtime fn d172_rt_oncecell_get(c OnceCell[int]) -> Option[int] {
-    c.get()
+#realtime fn d172_rt_oncecell_get(d172_c OnceCell[int]) -> Option[int] {
+    d172_c.get()
 }
 
 test "#realtime: Mutex.try_lock разрешён; семантика try (D172)" {
-    mut m = Mutex.new()
-    ro acquired = d172_rt_try_lock(m)
-    assert(acquired == true)
-    m.unlock()
-    m.lock()
-    ro second = d172_rt_try_lock(m)
-    assert(second == false)
-    m.unlock()
+    mut d172_lm = Mutex.new()
+    ro d172_acq = d172_rt_try_lock(d172_lm)
+    assert(d172_acq == true)
+    d172_lm.unlock()
+    d172_lm.lock()
+    ro d172_second = d172_rt_try_lock(d172_lm)
+    assert(d172_second == false)
+    d172_lm.unlock()
 }
 
 test "#realtime: атомики разрешены (D172)" {
-    mut a = AtomicI64.new(100)
-    ro prev = d172_rt_atomic(a, 50)
-    assert(prev == 100)
-    assert(a.load() == 150)
+    mut d172_la = AtomicI64.new(100)
+    ro d172_prev = d172_rt_atomic(d172_la, 50)
+    assert(d172_prev == 100)
+    assert(d172_la.load() == 150)
 }
 
 test "#realtime: OnceCell.get разрешён (D172)" {
-    mut c = OnceCell[int].new()
-    assert(d172_rt_oncecell_get(c) == None)
-    c.set(7)
-    assert(d172_rt_oncecell_get(c) == Some(7))
+    mut d172_lc = OnceCell[int].new()
+    assert(d172_rt_oncecell_get(d172_lc) == None)
+    d172_lc.set(7)
+    assert(d172_rt_oncecell_get(d172_lc) == Some(7))
 }
 
 // ── #blocking: threadpool-offload; #realtime и #wakes операции разрешены ──
 
-#blocking fn d172_blk_fetch_add(a mut AtomicI64, delta int) -> int {
-    a.fetch_add(delta)
+#blocking fn d172_blk_fetch_add(d172_a mut AtomicI64, delta int) -> int {
+    d172_a.fetch_add(delta)
 }
 
-#blocking fn d172_blk_unlock(m mut Mutex) {
-    m.unlock()
+#blocking fn d172_blk_unlock(d172_m mut Mutex) {
+    d172_m.unlock()
 }
 
 test "#blocking: атомики (leaf #realtime) разрешены; offload исполняется (D172)" {
-    mut a = AtomicI64.new(1)
-    ro prev = d172_blk_fetch_add(a, 2)
-    assert(prev == 1)
-    assert(a.load() == 3)
+    mut d172_la = AtomicI64.new(1)
+    ro d172_prev = d172_blk_fetch_add(d172_la, 2)
+    assert(d172_prev == 1)
+    assert(d172_la.load() == 3)
 }
 
 test "#blocking: Mutex.unlock (#wakes) разрешён (D172)" {
-    mut m = Mutex.new()
-    m.lock()
-    d172_blk_unlock(m)
-    ro acquired = m.try_lock()
-    assert(acquired == true)
-    m.unlock()
+    mut d172_lm = Mutex.new()
+    d172_lm.lock()
+    d172_blk_unlock(d172_lm)
+    ro d172_acq = d172_lm.try_lock()
+    assert(d172_acq == true)
+    d172_lm.unlock()
 }
