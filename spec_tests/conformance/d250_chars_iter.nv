@@ -1,0 +1,43 @@
+// D250 — `CharsIter`: codepoint-итератор + конвенция `as_`/`to_` (Plan 152.1 Ф.3,
+// IMPLEMENTED). Норма (spec/decisions/03-syntax.md §D250): `as_chars()` — ленивая
+// decoding-линза (итератор-поток, НЕ коллекция; без Index/at/len — «no hidden
+// O(n)»); mut @next() -> Option[char]; @count() O(n); @nth(i) O(n);
+// @is_empty(); `for c in s` через str @iter() => @as_chars(). Конвенция:
+// `as_<repr>` = zero-copy линза, `to_<repr>` = owned копия. Один folder-module
+// `spec_tests.conformance`.
+module spec_tests.conformance
+
+test "as_chars: next декодит codepoint'ы по порядку (D250)" {
+    mut d250_it = "abc".as_chars()
+    assert(d250_it.next() == Some('a'))
+    assert(d250_it.next() == Some('b'))
+    assert(d250_it.next() == Some('c'))
+    assert(d250_it.next() == None)
+}
+
+test "as_chars: multi-byte UTF-8 codepoint'ы (D250)" {
+    mut d250_u = "ёж".as_chars()
+    assert(d250_u.next() == Some('ё'))
+    assert(d250_u.next() == Some('ж'))
+    assert(d250_u.next() == None)
+}
+
+test "count/nth/is_empty (D250)" {
+    assert("hello".as_chars().count() == 5)
+    assert("ёж".as_chars().count() == 2)
+    assert("hello".as_chars().nth(1) == Some('e'))
+    assert("hi".as_chars().nth(10) == None)
+    assert("".as_chars().is_empty())
+    assert(!"x".as_chars().is_empty())
+}
+
+test "for c in s — итерация через as_chars-линзу (D250)" {
+    mut d250_n = 0
+    mut d250_last = ' '
+    for d250_c in "нова" {
+        d250_n = d250_n + 1
+        d250_last = d250_c
+    }
+    assert(d250_n == 4)
+    assert(d250_last == 'а')
+}
