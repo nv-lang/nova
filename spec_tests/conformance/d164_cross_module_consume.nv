@@ -1,0 +1,73 @@
+// D164 — Cross-module consume: visibility + mangling + package contracts.
+// Норма (spec/decisions/02-types.md §D164, Plan 100.6): consume-маркер типа —
+// часть экспортируемого контракта; propagates через границы пакетов (import /
+// re-export chain), consume-семантика enforced на стороне потребителя.
+// Single-module mock (как nova_tests/plan100_6): «Package A» = export-декларации,
+// «Package B» = использование. Покрытие: (1) export consume-тип + import-binding
+// потребляется; (2) consume-тип satisfies protocol, drain через consume-параметр;
+// (3) export record с consume-полем (двойной маркер) через границу; (4) прямой
+// cross-package dispatch в helper-fn. Негативы D164 в корпусе — класс
+// D133-not-consumed (покрыт neg/d133_*). Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+// «Package A» — экспортирует consume-тип: маркер = часть контракта.
+export type D164Session consume {
+    token int,
+}
+
+export fn D164Session consume @expire() -> () { () }
+export fn D164Session consume @logout() -> () { () }
+export fn d164_session_start(token int) -> D164Session => { token }
+
+// «Package A» — protocol-контракт.
+export type D164Resource protocol {
+    @cleanup() -> ()
+}
+
+// «Package B» — consume-тип, удовлетворяющий протоколу A.
+export type D164DbConn consume {
+    id int,
+}
+
+export fn D164DbConn consume @cleanup() -> () { () }
+export fn d164_db_open(id int) -> D164DbConn => { id }
+
+fn d164_drain(consume conn D164DbConn) -> () {
+    conn.cleanup()
+}
+
+// «Package A» — export record с consume-полем (двойной маркер через границу).
+export type D164Wallet consume {
+    consume session D164Session,
+    balance int,
+}
+
+export fn D164Wallet consume @close() -> () {
+    @session.logout()
+}
+
+// «Package B» — helper с прямым cross-package consume-dispatch.
+fn d164_use_session(token int) -> () {
+    consume sess = d164_session_start(token)
+    sess.expire()
+}
+
+test "export consume-тип: import-binding потребляется на стороне B (D164)" {
+    consume sess = d164_session_start(42)
+    sess.expire()
+}
+
+test "consume-тип satisfies protocol; drain через consume-параметр (D164)" {
+    consume conn = d164_db_open(7)
+    d164_drain(conn)
+}
+
+test "export record с consume-полем через границу — двойной маркер (D164)" {
+    consume w = D164Wallet { session: d164_session_start(1), balance: 100 }
+    w.close()
+}
+
+test "прямой cross-package dispatch в helper-fn (D164)" {
+    d164_use_session(10)
+    d164_use_session(11)
+}
