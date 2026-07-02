@@ -10005,6 +10005,35 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // 2026-07-02 (tally, кластер VariantsMatchClosure АТОМ 1): bare `None`
+            // против expected `Option[T]` → аннотировать САМ Ident типом Option[T].
+            // infer_expr_type не резолвит варианты generic-sum'ов (Option), а legacy
+            // отвечал по function-LEVEL current_fn_return_ty независимо от позиции
+            // (call-arg/let — ложь по построению) с дефолтом NovaOpt_nova_int.
+            // Гейт против лжи (§1): T обязан быть КОНКРЕТНЫМ — primitive_gate ||
+            // concrete_value_named (зеркало f3_check_member); typevar `T` (Named, не
+            // в self.types) отвергается обоими → без аннотации → legacy-навигация.
+            ExprKind::Ident(n) if n == "None" => {
+                if value.id.is_set() {
+                    if let TypeRef::Named { path, generics, .. } = expected {
+                        if path.last().map(|s| s.as_str()) == Some("Option")
+                            && generics.len() == 1
+                        {
+                            let arg_rt = ResolvedType::from_type_ref(&generics[0]);
+                            let concrete_value_named = matches!(&arg_rt,
+                                ResolvedType::Named { name, args, .. }
+                                    if args.is_empty()
+                                        && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                                            TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
+                                            | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
+                            if Self::primitive_gate(&arg_rt) || concrete_value_named {
+                                let rt = ResolvedType::from_type_ref(expected);
+                                self.resolved_types_buf.borrow_mut().insert(value.id, rt);
+                            }
+                        }
+                    }
+                }
+            }
             // `Some(inner)` / `Ok(inner)` / `Err(inner)` against `Option[T]` / `Result[T,E]`.
             ExprKind::Call { func, args, .. } if args.len() == 1 => {
                 if let ExprKind::Ident(ctor) = &func.kind {
