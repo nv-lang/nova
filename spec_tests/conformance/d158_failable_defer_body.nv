@@ -1,0 +1,112 @@
+// D158 — Failable cleanup body: `Fail`-effect РАЗРЕШЁН в defer/errdefer (amend D90 §4).
+// Норма (spec/decisions/03-syntax.md §D158, Plan 100.4.1): defer-body может звать
+// failable cleanup (`tx.commit()`, `file.close()`), НО enclosing fn-sig ОБЯЗАН
+// декларировать Fail[E] (compile-time visibility). Покрытие (позитив):
+// (1) failable call в defer при Fail[E] в сигнатуре — normal exit; (2) explicit
+// `throw` в defer-body; (3) `?`-оператор в defer-body; (4) defer-fail во время
+// error-propagation (composite chain — bootstrap-partial, компилируется и ловится
+// handler'ом); (5) backward-compat: handler-wrap fn суммирует Fail → outer fn без
+// Fail в сигнатуре. Негативы — neg/d158_*.nv (Fail в defer без Fail в sig; D90 §6
+// top-level return в defer НЕ снят D158). Шаблоны сверены с nova_tests/plan100_4_1.
+// Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D158WorkErr { msg str }
+type D158CommitErr { msg str }
+
+// Failable cleanup (декларирует Fail, тело не бросает — normal-exit кейс).
+fn d158_commit_ok() Fail[D158CommitErr] -> () { () }
+
+fn d158_work_fails() Fail[D158WorkErr] -> () {
+    throw D158WorkErr { msg: "operation failed" }
+}
+
+fn d158_cond_failed() -> bool => false
+
+// (1) Failable call в defer; fn-sig декларирует Fail[E].
+fn d158_process_normal() Fail[D158CommitErr] -> () {
+    defer { d158_commit_ok() }
+}
+
+// (2) Explicit throw в defer-body (условный — на happy-path не бросает).
+fn d158_process_throw() Fail[D158CommitErr] -> () {
+    defer {
+        if d158_cond_failed() {
+            throw D158CommitErr { msg: "cleanup-specific failure" }
+        }
+    }
+}
+
+// (3) `?`-оператор в defer-body.
+fn d158_process_try() Fail[D158CommitErr] -> () {
+    defer { d158_commit_ok()? }
+}
+
+// (4) Defer-fail во время error-propagation: primary из do_work, cleanup в defer.
+fn d158_process_propagation() Fail -> () {
+    defer { d158_commit_ok() }
+    d158_work_fails()?
+}
+
+// (5) Backward-compat: handler-wrap суммирует Fail в no-Fail сигнатуру.
+fn d158_risky_cleanup() Fail[D158CommitErr] -> () {
+    throw D158CommitErr { msg: "cleanup failed" }
+}
+
+fn d158_silent_cleanup() -> () {
+    with Fail = effect Fail {
+        fail(_msg) { interrupt () }
+    } {
+        d158_risky_cleanup()
+    }
+}
+
+fn d158_process_silent() -> () {
+    defer { d158_silent_cleanup() }
+}
+
+test "failable call в defer при Fail[E] в sig — normal exit (D158)" {
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        d158_process_normal()
+    }
+}
+
+test "explicit throw в defer-body — компилируется, happy-path чист (D158)" {
+    mut handler_ran = false
+    with Fail = effect Fail {
+        fail(_m) {
+            handler_ran = true
+            interrupt ()
+        }
+    } {
+        d158_process_throw()
+    }
+    assert(!handler_ran)
+}
+
+test "?-оператор в defer-body (D158)" {
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        d158_process_try()
+    }
+}
+
+test "defer-fail во время error-propagation — primary ловится (D158)" {
+    mut caught = false
+    with Fail = effect Fail {
+        fail(_m) {
+            caught = true
+            interrupt ()
+        }
+    } {
+        d158_process_propagation()
+    }
+    assert(caught)
+}
+
+test "handler-wrap fn — backward-compat silent suppress, outer без Fail (D158)" {
+    d158_process_silent()
+}

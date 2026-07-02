@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR D90
+// D158 снимает ТОЛЬКО запрет Fail в defer-body (amend D90 §4);
+// top-level `return` в defer-body остаётся запрещён (D90 §6 unchanged).
+module neg.d158_defer_return_neg
+
+fn process() -> int {
+    defer {
+        return 42
+    }
+    100
+}
+
+test "return в defer-body — D90 §6 error, не снят D158" {
+    ro _ = process()
+}
