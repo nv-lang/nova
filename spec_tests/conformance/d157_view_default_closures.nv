@@ -1,0 +1,64 @@
+// D157 — Implicit view default + closure capture analysis + view-match
+// (Plan 100.3). Норма (spec/decisions/05-memory.md §D157): view — default-mode
+// БЕЗ квалификатора (keyword `view` не существует); closure, зовущая
+// consume-метод на захваченной переменной — consume-closure (FnOnce: ровно
+// один invoke, потребляет и captured, и себя); view-match — deep peek в
+// Option[ConsumeType] без потребления source (arm-binding — view).
+// Негативы — neg/d157_*.nv (consume-метод через view-параметр; двойной invoke
+// consume-closure). Шаблоны сверены с nova_tests/plan100_3.
+// Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D157Tx consume {
+    id int,
+}
+
+fn D157Tx consume @commit() -> () { () }
+
+type D157File consume {
+    fd int,
+}
+
+fn D157File consume @close() -> () { () }
+
+type D157Svc consume {
+    consume file Option[D157File],
+}
+
+fn D157Svc consume @shutdown() -> () {
+    match @file {
+        Some(d157_f) => d157_f.close(),
+        None => (),
+    }
+}
+
+// view-match deep peek: fd без потребления @file.
+fn D157Svc @file_id() -> Option[int] {
+    match @file {
+        Some(d157_f) => Some(d157_f.fd),
+        None => None,
+    }
+}
+
+// view-параметр (default, без квалификатора): чтение полей — OK.
+fn d157_read_id(tx D157Tx) -> int => tx.id
+
+test "view-default параметр: чтение без потребления (D157)" {
+    consume d157_tx = D157Tx { id: 7 }
+    assert(d157_read_id(d157_tx) == 7)
+    assert(d157_read_id(d157_tx) == 7)   // view — можно многократно
+    d157_tx.commit()
+}
+
+test "consume-closure (FnOnce): ровно один invoke (D157)" {
+    consume d157_tx = D157Tx { id: 1 }
+    ro d157_commit_it = || d157_tx.commit()
+    d157_commit_it()
+}
+
+test "view-match: deep peek в Option[consume] без потребления (D157)" {
+    consume d157_svc = D157Svc { file: Some(D157File { fd: 42 }) }
+    assert(d157_svc.file_id() == Some(42))
+    assert(d157_svc.file_id() == Some(42))   // source остался Live
+    d157_svc.shutdown()
+}

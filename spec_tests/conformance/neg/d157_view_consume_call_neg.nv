@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR D157
+// D157: через view-параметр (default, без квалификатора) нельзя вызвать
+// consume-метод — view = read-only borrow.
+module neg.d157_view_consume_call_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+
+fn bad(tx Tx) -> () {
+    tx.commit()
+}
+
+test "consume через view — error" {
+    consume t = Tx { id: 1 }
+    bad(t)
+    t.commit()
+}

@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR D157
+// D157: consume-closure (FnOnce) — повторный invoke запрещён
+// (первый invoke потребляет closure).
+module neg.d157_closure_double_invoke_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+
+test "двойной invoke consume-closure — error" {
+    consume tx = Tx { id: 1 }
+    ro commit_it = || tx.commit()
+    commit_it()
+    commit_it()
+}
