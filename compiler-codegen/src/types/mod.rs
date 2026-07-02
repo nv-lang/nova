@@ -3189,6 +3189,10 @@ struct TypeCheckCtx<'a> {
     /// `infer_expr_c_type` `_=>nova_int` fallback bugs (§0/§1; e.g. a `bool` var legacy typed
     /// as `nova_int`). Verified by full regress (the divergence set is bounded — U.4.4-prep.b audit).
     resolved_types_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, ResolvedType>>,
+    /// 172.1.2 Шаг 2 (same-name fix): f1 Call-арм ставит перед рекурсией в func,
+    /// f1 Member-арм потребляет (replace(false)) — отличает `v.len()` (метод)
+    /// от `@len` (field-read) при same-name field/method (Vec.len, str.len).
+    in_call_func: std::cell::Cell<bool>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -3687,6 +3691,7 @@ impl<'a> TypeCheckCtx<'a> {
             resolved_callees: std::cell::RefCell::new(HashMap::new()),
             // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
+            in_call_func: std::cell::Cell::new(false),
         }
     }
 
@@ -6709,7 +6714,10 @@ impl<'a> TypeCheckCtx<'a> {
         }
         match &e.kind {
             ExprKind::Call { func, args, trailing } => {
+                // 172.1.2 Шаг 2: func-позиция — Member здесь = метод-вызов, не field-read.
+                self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
+                self.in_call_func.set(false);
                 for a in args {
                     self.f1_expr(a.expr(), gs, scope, errors);
                     self.f4_check_value(a.expr(), scope, errors);
@@ -6950,10 +6958,11 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Member { obj, name } => {
+                let is_call_func = self.in_call_func.replace(false);
                 self.f1_expr(obj, gs, scope, errors);
                 // Plan 172.1 U.4.4: thread the Member expr's `ExprId` so the
                 // field-found site can annotate a concrete primitive field type.
-                self.f3_check_member(obj, name, e.span, e.id, scope, errors);
+                self.f3_check_member_ctx(obj, name, e.span, e.id, scope, errors, is_call_func);
                 // 2026-07-02: прежний P67-fallback («f3 и проба промахнулись → int,
                 // byte-identical legacy») УДАЛЁН — это §1-анти-паттерн «авто-выводимый
                 // неверный тип»: он ТРАВИЛ канал (`@map` use-поля generic-ресивера
@@ -8855,7 +8864,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// резолвится в concrete record **без embed'ов** (`use`-поля
     /// проксируют члены — резолв слишком сложен). Метод ИЛИ поле —
     /// обе формы валидны (`obj.field`, `obj.method`, `obj.method()`).
-    fn f3_check_member(
+    fn f3_check_member_ctx(
         &self,
         obj: &Expr,
         name: &str,
@@ -8870,6 +8879,8 @@ impl<'a> TypeCheckCtx<'a> {
         member_id: crate::ast::ExprId,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
+        // 172.1.2 Шаг 2: Member — func-позиция Call (метод-вызов, не field-read).
+        is_call_func: bool,
     ) {
         // Plan 132 Ф.1: bound method value `obj.@method` removed (D-block Plan 11).
         // `Type.@method` (unbound fn-pointer) is still allowed.
@@ -8994,6 +9005,29 @@ impl<'a> TypeCheckCtx<'a> {
                     // Plan 162 Ф.5: extension method policy — check even for
                     // method/field same-name early return (e.g. str.len() case).
                     self.check_extension_method_policy(tname, name, span, errors);
+                    // 172.1.2 Шаг 2 (same-name fix): `@len` как FIELD-READ (не func
+                    // вызова) на типе с одноимённым методом (Vec: поле len + @len())
+                    // раньше возвращался ДО материализации → .len/.cap падали в
+                    // legacy на КАЖДОЙ mono-эмиссии. Для не-call позиции
+                    // материализуем тип ПОЛЯ теми же гейтами, что основной блок
+                    // ниже (subst + primitive/concrete-named). Call-позиция —
+                    // ни в коем случае (аннотация поля на метод-вызове = ложь).
+                    if !is_call_func && member_id.is_set() {
+                        if let Some(field) = fields.iter().find(|f| f.name == name) {
+                            let field_ty = self.subst_receiver_generics(
+                                &field.ty, &td.generics, recv_type_args);
+                            let rt = ResolvedType::from_type_ref(&field_ty);
+                            let concrete_value_named = matches!(&rt,
+                                ResolvedType::Named { name: rn, args, .. }
+                                    if args.is_empty()
+                                        && self.types.get(rn).map_or(false, |td| matches!(&td.kind,
+                                            TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
+                                            | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
+                            if Self::primitive_gate(&rt) || concrete_value_named {
+                                self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                            }
+                        }
+                    }
                     return;
                 }
                 if let Some(field) = fields.iter().find(|f| f.name == name) {
