@@ -7430,7 +7430,10 @@ impl<'a> TypeCheckCtx<'a> {
                 let elem_ty = elem_type.clone()
                     .or_else(|| self.infer_iter_elem_type(iter, scope));
                 self.check_priv_pattern_recursive(pattern, elem_ty.as_ref(), errors);
-                self.f1_for_body(elem_type, pattern, body, gs, scope, errors);
+                // 172.1.2 (for-var в scope, 2026-07-03): loop-переменная типизируется
+                // и БЕЗ явной аннотации — inferred elem_ty (тот же источник, что
+                // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
+                self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
             }
             ExprKind::For { pattern, iter, body, elem_type, .. } => {
                 self.f1_expr(iter, gs, scope, errors);
@@ -7443,7 +7446,10 @@ impl<'a> TypeCheckCtx<'a> {
                 let elem_ty = elem_type.clone()
                     .or_else(|| self.infer_iter_elem_type(iter, scope));
                 self.check_priv_pattern_recursive(pattern, elem_ty.as_ref(), errors);
-                self.f1_for_body(elem_type, pattern, body, gs, scope, errors);
+                // 172.1.2 (for-var в scope, 2026-07-03): loop-переменная типизируется
+                // и БЕЗ явной аннотации — inferred elem_ty (тот же источник, что
+                // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
+                self.f1_for_body(&elem_ty, pattern, body, gs, scope, errors);
             }
             ExprKind::While { cond, body, .. } => {
                 self.f1_expr(cond, gs, scope, errors);
@@ -8036,6 +8042,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// scope). Без аннотации scope не трогаем — поведение 1:1 до Plan 87.
     fn f1_for_body(
         &self,
+        // аннотация ЛИБО inferred elem-тип (172.1.2) — источник вычислен caller'ом
         elem_type: &Option<TypeRef>,
         pattern: &Pattern,
         body: &Block,
