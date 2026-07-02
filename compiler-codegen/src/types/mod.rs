@@ -6458,11 +6458,43 @@ impl<'a> TypeCheckCtx<'a> {
         // авторитетно — whereas legacy re-derives it from codegen `array_element_types` and falls
         // to `nova_int` when absent (§1 bug). Tests whether direct Index annotation sidesteps the
         // SelfAccess-cascade gap #2 (bare `@` → erased schema → nova_int element).
-        if let ExprKind::Index { .. } = &e.kind {
+        if let ExprKind::Index { obj: ix_obj, index: ix_index } = &e.kind {
             if e.id.is_set() {
                 if let Some(tr) = self.infer_expr_type(e, scope) {
                     let rt = ResolvedType::from_type_ref(&tr);
                     self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                } else if ix_obj.id.is_set()
+                    && !matches!(ix_index.kind, ExprKind::Range { .. })
+                {
+                    // 172.1.2 (Index-мост): obj аннотирован каналом (Шаг 2b — `@data`
+                    // TypedPtr(T), `@_buckets` Named{Vec,[Slot..]}), но TypeRef-инференс
+                    // его не видит. СТРУКТУРНЫЕ формы only (урок POISON 6453 — никакого
+                    // user-@index здесь): Vec[E]/[]E → E; *mut E (raw-buffer) → E.
+                    let elem: Option<ResolvedType> = {
+                        let buf = self.resolved_types_buf.borrow();
+                        match buf.get(&ix_obj.id) {
+                            Some(ResolvedType::Named { name, args, .. })
+                                if name == "Vec" && args.len() == 1 =>
+                            {
+                                Some(args[0].clone())
+                            }
+                            Some(ResolvedType::Array(inner)) => Some((**inner).clone()),
+                            Some(ResolvedType::TypedPtr(_, inner)) => Some((**inner).clone()),
+                            Some(ResolvedType::Readonly(inner)) => match inner.as_ref() {
+                                ResolvedType::Named { name, args, .. }
+                                    if name == "Vec" && args.len() == 1 =>
+                                {
+                                    Some(args[0].clone())
+                                }
+                                ResolvedType::Array(i2) => Some((**i2).clone()),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    };
+                    if let Some(rt) = elem {
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
                 }
             }
         }
@@ -7025,11 +7057,45 @@ impl<'a> TypeCheckCtx<'a> {
                                 _ => None,
                             };
                             if let Some(elem) = elem {
-                                let rt = ResolvedType::from_type_ref(elem);
-                                if Self::primitive_gate(&rt) {
-                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
-                                }
+                                // 172.1.2: primitive-гейт снят — residual-параметр
+                                // помечается TypeParam (лоуэринг: instance-map/subst/Err).
+                                let rt = Self::mark_type_params(
+                                    ResolvedType::from_type_ref(elem), gs);
+                                self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                             }
+                        }
+                    } else if e.id.is_set() && obj.id.is_set() {
+                        // 172.1.2 (Index-мост, POST-ORDER — дети уже аннотированы):
+                        // obj виден только КАНАЛУ (Шаг 2b: `@data` TypedPtr(T),
+                        // `@_buckets` Named{Vec,[..]}). СТРУКТУРНЫЕ формы only
+                        // (урок POISON 6453 — никакого user-@index здесь):
+                        // Vec[E]/[]E → E; *mut E (raw-buffer) → E.
+                        let elem: Option<ResolvedType> = {
+                            let buf = self.resolved_types_buf.borrow();
+                            match buf.get(&obj.id) {
+                                Some(ResolvedType::Named { name, args, .. })
+                                    if name == "Vec" && args.len() == 1 =>
+                                {
+                                    Some(args[0].clone())
+                                }
+                                Some(ResolvedType::Array(inner)) => Some((**inner).clone()),
+                                Some(ResolvedType::TypedPtr(_, inner)) => {
+                                    Some((**inner).clone())
+                                }
+                                Some(ResolvedType::Readonly(inner)) => match inner.as_ref() {
+                                    ResolvedType::Named { name, args, .. }
+                                        if name == "Vec" && args.len() == 1 =>
+                                    {
+                                        Some(args[0].clone())
+                                    }
+                                    ResolvedType::Array(i2) => Some((**i2).clone()),
+                                    _ => None,
+                                },
+                                _ => None,
+                            }
+                        };
+                        if let Some(rt) = elem {
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                         }
                     }
                 }
