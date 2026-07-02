@@ -1,0 +1,200 @@
+// D25 — `throw` и параметризация `Fail[E]`. Норма (spec/decisions/04-effects.md §D25):
+// `throw expr` — операция эффекта `Fail`, не магия: «та же проверка, что для Db.query».
+// Перехват — ТОЛЬКО через handler `with Fail = effect Fail { fail(msg) { ... interrupt v } }`
+// (try/catch отвергнут). Покрытие: (1) throw на error-path ловится handler'ом (msg доступен),
+// ok-path handler НЕ триггерит; (2) типизированный `Fail[str]` + `interrupt v` как результат
+// with-блока-выражения; (3) re-throw из-под внутреннего handler'а наружу (форма 2 D25 —
+// проброс с обогащением контекста); (4) `throw` как expression с типом never — match-arm и
+// if/else ветка; (5) `?? throw` — short-circuit (Some-ветка НЕ бросает).
+// Шаблоны сверены с nova_tests/effects/fail_handler.nv, handler_wrappers.nv,
+// nova_tests/syntax/throw_in_expression.nv. Один folder-module `spec_tests.conformance`;
+// имена D25-prefixed.
+module spec_tests.conformance
+
+fn d25_parse(s str) -> int {
+    if s == "ok" { return 42 }
+    throw "parse failed"
+}
+
+// Типизированный эффект в сигнатуре: `Fail[str]` (D25: параметр E — тип бросаемого значения).
+fn d25_use(amount int) Fail[str] -> int {
+    if amount < 0 { throw "negative amount" }
+    amount * 2
+}
+
+// Форма 2 handler'а (D25 «Две формы»): внутренний handler ловит, наружу идёт НОВЫЙ throw
+// с обогащённым контекстом. Форма 1 (`interrupt v`) — результат with-блока.
+fn d25_rethrow(amount int) Fail[str] -> int {
+    mut caught = ""
+    mut had_throw = false
+    ro r = with Fail[str] = effect Fail[str] {
+        fail(msg) {
+            caught = msg
+            had_throw = true
+            interrupt 0
+        }
+    } {
+        d25_use(amount)
+    }
+    if had_throw {
+        throw "wrapped: " + caught
+    }
+    r
+}
+
+// `throw` как expression (тип never) в match-arm body.
+fn d25_check(n int) -> int {
+    match n {
+        0 => 0
+        _ if n > 0 => n * 2
+        _ => throw "negative not allowed"
+    }
+}
+
+// `throw` как expression в if/else-ветке: never совместим с int (Plan 125 divergence-aware).
+fn d25_nonzero(n int) -> int {
+    if n == 0 { throw "zero forbidden" } else { n + 1 }
+}
+
+test "throw ловится with-Fail handler, msg доступен (D25)" {
+    mut caught = ""
+    mut handler_ran = false
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            handler_ran = true
+            interrupt ()
+        }
+    } {
+        ro _ = d25_parse("bad")
+    }
+    assert(handler_ran)
+    assert(caught == "parse failed")
+}
+
+test "ok-path НЕ триггерит Fail handler, значение проходит (D25)" {
+    mut handler_ran = false
+    mut got = 0
+    with Fail = effect Fail {
+        fail(_msg) {
+            handler_ran = true
+            interrupt ()
+        }
+    } {
+        got = d25_parse("ok")
+    }
+    assert(!handler_ran)
+    assert(got == 42)
+}
+
+test "типизированный Fail[str]; interrupt v — результат with-блока (D25)" {
+    ro ok = with Fail[str] = effect Fail[str] {
+        fail(_m) { interrupt -1 }
+    } {
+        d25_use(21)
+    }
+    assert(ok == 42)
+    ro bad = with Fail[str] = effect Fail[str] {
+        fail(_m) { interrupt -1 }
+    } {
+        d25_use(-3)
+    }
+    assert(bad == -1)
+}
+
+test "re-throw из handler'а наружу с обогащением контекста (D25 форма 2)" {
+    mut outer_caught = ""
+    with Fail = effect Fail {
+        fail(msg) {
+            outer_caught = msg
+            interrupt ()
+        }
+    } {
+        ro _ = d25_rethrow(-5)
+    }
+    assert(outer_caught == "wrapped: negative amount")
+}
+
+test "re-throw обёртка: happy-path проходит без throw (D25)" {
+    mut handler_ran = false
+    mut got = 0
+    with Fail = effect Fail {
+        fail(_m) {
+            handler_ran = true
+            interrupt ()
+        }
+    } {
+        got = d25_rethrow(21)
+    }
+    assert(!handler_ran)
+    assert(got == 42)
+}
+
+test "throw как expression в match-arm — never (D25)" {
+    mut caught = ""
+    mut got = -1
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        got = d25_check(-7)
+    }
+    assert(caught == "negative not allowed")
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        got = d25_check(6)
+    }
+    assert(got == 12)
+}
+
+test "throw как expression в if/else-ветке — never совместим с int (D25)" {
+    mut caught = ""
+    mut got = -1
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        got = d25_nonzero(0)
+    }
+    assert(caught == "zero forbidden")
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        got = d25_nonzero(7)
+    }
+    assert(got == 8)
+}
+
+test "?? throw — Some-ветка НЕ бросает (short-circuit, D25)" {
+    mut caught = ""
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        ro opt = Some(42)
+        ro v = opt ?? throw "should not throw"
+        assert(v == 42)
+    }
+    assert(caught == "")
+}
+
+test "?? throw — None-ветка реально бросает (D25)" {
+    mut caught = ""
+    with Fail = effect Fail {
+        fail(msg) {
+            caught = msg
+            interrupt ()
+        }
+    } {
+        ro opt Option[int] = None
+        ro _v = opt ?? throw "expected Some"
+    }
+    assert(caught == "expected Some")
+}
