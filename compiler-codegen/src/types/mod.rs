@@ -11679,6 +11679,17 @@ impl<'a> TypeCheckCtx<'a> {
         let f: &FnDecl = match overloads.as_slice() {
             [one] => one,
             many => {
+                // Унисон-правило (2026-07-03): если ВСЕ перегрузки — fluent `-> @`
+                // (StringBuilder.append(str/int/char/…)), возврат идентичен
+                // независимо от выбора → тип эха = ресивер, дизамбигуация не нужна.
+                if many.iter().all(|f| {
+                    f.returns_receiver
+                        && f.receiver.as_ref().map_or(false, |r| {
+                            matches!(r.kind, ReceiverKind::Instance)
+                        })
+                }) {
+                    return Some(peeled.clone());
+                }
                 let a = arity?;
                 let mut it = many.iter().filter(|f| f.params.len() == a);
                 let first = it.next()?;
