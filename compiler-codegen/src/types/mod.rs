@@ -7071,7 +7071,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // the gated set (consolidates the consumer side onto the channel).
                 if e.id.is_set() {
                     if let Some(rt) =
-                        self.infer_match_common_primitive(arms, scope)
+                        self.infer_match_common_primitive(arms, scope, scrut_ty.as_ref())
                     {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
@@ -7973,13 +7973,84 @@ impl<'a> TypeCheckCtx<'a> {
     /// it is byte-identical to the legacy Match-arm inference (which already computes
     /// the same primitive via authoritative arm-body inference) — it consolidates the
     /// CONSUMER side (`infer_expr_c_type`) onto the channel.
+    /// 2026-07-02 (tally АТОМ 2a): типы pattern-биндингов арма из scrut_ty —
+    /// консервативное подмножество: `Some(x)`/`Ok(x)`/`Err(x)` при конкретных
+    /// generic-args скрутини; одно-payload вариант non-generic user-sum
+    /// (declared TypeRef); catch-all `v =>` (тип = scrut_ty). Всё прочее —
+    /// пустой результат (арм-инференция в наружном scope, как раньше).
+    fn match_arm_bindings(
+        &self,
+        pattern: &Pattern,
+        scrut_ty: Option<&TypeRef>,
+    ) -> Vec<(String, TypeRef)> {
+        let mut out = Vec::new();
+        let Some(st) = scrut_ty else { return out };
+        match pattern {
+            Pattern::Ident { name, .. } => out.push((name.clone(), st.clone())),
+            Pattern::Variant { path, kind: VariantPatternKind::Tuple { patterns, rest }, .. }
+                if !rest && patterns.len() == 1 =>
+            {
+                if let Pattern::Ident { name: bind, .. } = &patterns[0] {
+                    if let TypeRef::Named { path: sp, generics, .. } = st {
+                        let variant = path.last().map(|s| s.as_str()).unwrap_or("");
+                        let sum_name = sp.last().map(|s| s.as_str()).unwrap_or("");
+                        let payload: Option<TypeRef> = match (sum_name, variant) {
+                            ("Option", "Some") if generics.len() == 1 => {
+                                Some(generics[0].clone())
+                            }
+                            ("Result", "Ok") if generics.len() == 2 => {
+                                Some(generics[0].clone())
+                            }
+                            ("Result", "Err") if generics.len() == 2 => {
+                                Some(generics[1].clone())
+                            }
+                            _ if generics.is_empty() => {
+                                self.types.get(sum_name).and_then(|td| {
+                                    if !td.generics.is_empty() { return None; }
+                                    if let TypeDeclKind::Sum(variants) = &td.kind {
+                                        variants.iter().find(|v| v.name == variant).and_then(|v| {
+                                            match &v.kind {
+                                                SumVariantKind::Tuple(tys) if tys.len() == 1 => {
+                                                    Some(tys[0].clone())
+                                                }
+                                                _ => None,
+                                            }
+                                        })
+                                    } else { None }
+                                })
+                            }
+                            _ => None,
+                        };
+                        if let Some(p) = payload {
+                            out.push((bind.clone(), p));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
     fn infer_match_common_primitive(
         &self,
         arms: &[MatchArm],
         scope: &HashMap<String, TypeRef>,
+        scrut_ty: Option<&TypeRef>,
     ) -> Option<ResolvedType> {
         let mut common: Option<ResolvedType> = None;
         for arm in arms {
+            // АТОМ 2a: расширить scope биндингами паттерна (типы из scrut_ty).
+            // Пустой набор биндингов → армы работают в наружном scope как раньше.
+            let binds = self.match_arm_bindings(&arm.pattern, scrut_ty);
+            let ext_scope: Option<HashMap<String, TypeRef>> = if binds.is_empty() {
+                None
+            } else {
+                let mut s = scope.clone();
+                for (k, v) in binds { s.insert(k, v); }
+                Some(s)
+            };
+            let scope: &HashMap<String, TypeRef> = ext_scope.as_ref().unwrap_or(scope);
             let body_tr = match &arm.body {
                 MatchArmBody::Expr(e) => self.infer_expr_type(e, scope)?,
                 MatchArmBody::Block(b) => {
