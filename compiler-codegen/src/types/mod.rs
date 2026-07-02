@@ -6471,6 +6471,29 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 172.1 tally (2026-07-02) — тривиальные каналы:
+        // Range: `a..b` ВСЕГДА имеет тип Range (std value-record) — фундаментальный факт §0.
+        // Лоуэринг — через единый resolved_type_to_c (NovaValue_Range / Nova_Range*).
+        if matches!(&e.kind, ExprKind::Range { .. }) && e.id.is_set() {
+            self.resolved_types_buf.borrow_mut().insert(
+                e.id,
+                ResolvedType::Named { name: "Range".into(), module: vec![], args: vec![] },
+            );
+        }
+        // RecordLit: тип литерала = сам объявленный тип. Гейт: только NON-generic
+        // объявленный тип (generic-инстанс требует mono-подстановку — 172.1.2).
+        if let ExprKind::RecordLit { type_name: Some(rl_name), .. } = &e.kind {
+            if let Some(rl_last) = rl_name.last() {
+                if e.id.is_set()
+                    && self.types.get(rl_last.as_str()).map_or(false, |td| td.generics.is_empty())
+                {
+                    self.resolved_types_buf.borrow_mut().insert(
+                        e.id,
+                        ResolvedType::Named { name: rl_last.clone(), module: vec![], args: vec![] },
+                    );
+                }
+            }
+        }
         // Plan 172.1.1 (U.4.5 — control-flow probe): annotate Block/If/IfLet/Path with the
         // checker's value type (block tail / branch-join / variant). Each propagates an ALREADY-
         // checked inner type — no new re-derive hazard. `infer_expr_type` returns None for
