@@ -5475,6 +5475,11 @@ fn run() -> ExitCode {
             .map(|l| format!("{}:{}", l.file(), l.line()))
             .unwrap_or_else(|| "<unknown>".to_string());
         eprintln!("nova: internal error at {}: {}", loc, msg);
+        // Диагностика P67-LEGACY проб (Plan 172.1): под RUST_BACKTRACE=1 печатаем
+        // callstack — иначе hook его глотает и caller паникующего сайта неизвестен.
+        if std::env::var_os("RUST_BACKTRACE").is_some() {
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
         eprintln!("This is a bug in nova. Please report it.");
         std::process::exit(101);
     }));

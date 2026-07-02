@@ -34,6 +34,15 @@ pub fn builtin_sig_modules() -> &'static Vec<Module> {
             ExternalRegistry::STRING_BUILDER_SRC,
             ExternalRegistry::WRITE_BUFFER_SRC,
             ExternalRegistry::READ_BUFFER_SRC,
+            // Plan 172.1 [M-172.1-d174-sync-consume-registry] (2026-07-02): sync —
+            // чекер обязан знать guard-типы (Mutex/MutexGuard/Permit/…) и их
+            // method-сигнатуры, чтобы (a) типизировать `mut mu = Mutex.new()` /
+            // `consume g = mu.lock()` через КАНАЛ (иначе fail-path эмиссия
+            // defer-тел бьётся в P67-пробы на нетипизированном `g`), (b) guard-
+            // consume кредитовался из .nv-деклараций. sync.nv самодостаточен
+            // (0 import'ов). NET по-прежнему excluded (транзитивный
+            // net_last_error, §10 — отдельный срез).
+            ExternalRegistry::SYNC_SRC,
         ]
         .iter()
         .filter_map(|src| crate::parser::parse(src).ok())
@@ -153,7 +162,21 @@ impl ExternalRegistry {
         // Оставшиеся 8 файлов — БИБЛИОТЕЧНЫЕ; их удаление — продолжение U.1.3b
         // (sync/net требуют Gap A ✅ + Gap B primitive/U.4.3 tuple ПЕРЕД удалением,
         // [M-172.1-U1-lib-import-needs-U4]; net — ещё транзитивный net_last_error).
-        for (name, src) in &[
+        for module in Self::builtin_modules() {
+            reg.merge_from_module(module)?;
+        }
+        Ok(reg)
+    }
+
+    /// Plan 172.1 [M-172.1-d174-sync-consume-registry]: ЕДИНЫЙ список embedded
+    /// builtin `.nv`-источников — тот же, что кормит `load_builtins`. Второй
+    /// потребитель — checker'ские Linearity/ConsumeRegistry (consume-метаданные
+    /// guard-типов D174: `MutexGuard consume` + `fn MutexGuard consume @unlock()`
+    /// обязаны прийти из .nv-деклараций, не из хардкода §3). Один список — одно
+    /// окно; сжимается по мере U.1.3b (файл ушёл на `import` → строка удаляется
+    /// здесь, оба потребителя обновляются синхронно).
+    pub fn builtin_sources() -> &'static [(&'static str, &'static str)] {
+        &[
             ("string_builder.nv", Self::STRING_BUILDER_SRC),
             ("write_buffer.nv",   Self::WRITE_BUFFER_SRC),
             ("read_buffer.nv",    Self::READ_BUFFER_SRC),
@@ -164,12 +187,26 @@ impl ExternalRegistry {
             ("net/addr.nv",       Self::NET_ADDR_SRC),
             ("net/tcp.nv",        Self::NET_TCP_SRC),
             ("net/udp.nv",        Self::NET_UDP_SRC),
-        ] {
-            let module = crate::parser::parse(src)
-                .map_err(|d| format!("failed to parse {}: {}", name, d.message))?;
-            reg.merge_from_module(&module)?;
-        }
-        Ok(reg)
+        ]
+    }
+
+    /// Распарсенные builtin-модули (см. `builtin_sources`) — parse один раз на
+    /// процесс (OnceLock, §2). Ошибка парса embedded-источника = баг сборки —
+    /// паникуем громко (эти файлы компилируются в бинарь и парсятся в
+    /// `load_builtins` тем же парсером).
+    pub fn builtin_modules() -> &'static [crate::ast::Module] {
+        static MODULES: std::sync::OnceLock<Vec<crate::ast::Module>> =
+            std::sync::OnceLock::new();
+        MODULES.get_or_init(|| {
+            Self::builtin_sources()
+                .iter()
+                .map(|(name, src)| {
+                    crate::parser::parse(src).unwrap_or_else(|d| {
+                        panic!("failed to parse embedded builtin {}: {}", name, d.message)
+                    })
+                })
+                .collect()
+        })
     }
 
     /// Merge entries из одного модуля в self. Используется для

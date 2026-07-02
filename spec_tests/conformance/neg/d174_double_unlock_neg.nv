@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR D131
+// D174: double unlock — d174n_g.unlock() потребляет guard; второй вызов =
+// use-after-consume (E_CONSUMED_AFTER_USE, класс D131).
+module neg.d174_double_unlock_neg
+
+test "двойной unlock через guard — compile error" {
+    mut d174n_mu = Mutex.new()
+    consume d174n_g = d174n_mu.lock()
+    d174n_g.unlock()
+    d174n_g.unlock()
+}

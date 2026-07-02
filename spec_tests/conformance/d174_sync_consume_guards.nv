@@ -1,0 +1,73 @@
+// D174 — Sync primitives consume integration (Plan 103.9, final): V2 guard-returning API.
+// Норма (spec/decisions/06-concurrency.md §D174): `lock()/read()/write()/acquire()`
+// возвращают linear guard (`MutexGuard/ReadGuard/WriteGuard/Permit consume`,
+// must-be-consumed D133) — забытый unlock/double-unlock ловятся СТАТИЧЕСКИ;
+// `Once.try_start() -> Option[OnceGuard]` — commit()/abort() потребляют guard;
+// `with_lock(fn)` — thin-wrapper (backward compat). Негативы (guard-leak /
+// double-unlock) — neg/d174_*.nv (класс D133/D131 на guard-типах). Шаблоны сверены
+// с nova_tests/plan103_9. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+test "MutexGuard: lock→guard, unlock потребляет; mutex свободен (D174)" {
+    mut d174_mu = Mutex.new()
+    consume d174_g = d174_mu.lock()
+    d174_g.unlock()
+    ro d174_acquired = d174_mu.try_lock()
+    assert(d174_acquired == true)
+    d174_mu.unlock()
+}
+
+test "MutexGuard: defer d174_g.unlock() закрывает обязательство (D174)" {
+    mut d174_mu = Mutex.new()
+    {
+        consume d174_g = d174_mu.lock()
+        defer d174_g.unlock()
+    }
+    ro d174_acquired = d174_mu.try_lock()
+    assert(d174_acquired == true)
+    d174_mu.unlock()
+}
+
+test "Permit: acquire→release, счётчик семафора восстановлен (D174)" {
+    mut d174_sem = Semaphore.new(2)
+    consume d174_p = d174_sem.acquire()
+    assert(d174_sem.available_permits() == 1)
+    d174_p.release()
+    assert(d174_sem.available_permits() == 2)
+}
+
+test "ReadGuard/WriteGuard: раздельные guard-типы RwLock (D174)" {
+    mut d174_rw = RwLock.new()
+    consume d174_rg = d174_rw.read()
+    d174_rg.unlock()
+    consume d174_wg = d174_rw.write()
+    d174_wg.unlock()
+    ro d174_can_read = d174_rw.try_read()
+    assert(d174_can_read == true)
+    d174_rw.read_unlock()
+}
+
+test "OnceGuard: try_start_won у победителя, commit → DONE (D174)" {
+    mut d174_once = Once.new()
+    mut d174_won = false
+    if d174_once.try_start_won() {
+        consume d174_og = d174_once.make_guard()
+        d174_og.commit()
+        d174_won = true
+    }
+    assert(d174_won)
+    // повторный заход после DONE — false
+    assert(!d174_once.try_start_won())
+}
+
+// GAP [M-172.1-d174-once-try-start-option]: Nova-body обёртка
+// `Once.try_start() -> Option[OnceGuard consume]` (D174-таблица) codegen'ом
+// не эмитится (builtin Nova-body метод; корпус plan103_9 использует только
+// extern-пару try_start_won()+make_guard()). Тест Option-формы — после
+// реализации инлайна builtin Nova-body (U.1.3b sync-inline).
+
+// GAP [M-172.1-d174-with-lock-generic-ret]: `with_lock[R](body fn() -> R) -> R` —
+// method-level generic `R` на builtin Nova-body методе; return-инференс из
+// closure-arg для этой формы не реализован (D119-механика покрывает только
+// mono-receiver'ы `____`). Корпус plan103_9 with_lock НЕ вызывает (тестирует
+// только явные guards). Тест thin-wrapper'а добавить после реализации.

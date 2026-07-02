@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR D133
+// D174: MutexGuard — linear consume-тип; scope-exit без unlock =
+// забытый unlock, ловится статически (E_CONSUME_NOT_CONSUMED, класс D133).
+module neg.d174_mutexguard_leak_neg
+
+test "guard не потреблён на exit — компилятор ловит забытый unlock" {
+    mut d174n_mu = Mutex.new()
+    consume d174n_g = d174n_mu.lock()
+}

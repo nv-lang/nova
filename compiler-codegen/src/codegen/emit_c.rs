@@ -12852,7 +12852,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Instance call `obj.method(...)` — resolve the receiver type
                 // (`Nova_Foo*` → `Foo`) so the key matches the `Type.method`
                 // registration form.
-                let recv_c = self.infer_expr_c_type(obj);
+                // [M-172.1-d174-sync-consume-registry] phase-safety: Ident-ресивер
+                // без типа (модульный путь `runtime.init(2)` — модуль не значение;
+                // либо pre-pass до регистрации локала) → этот protocol-key
+                // side-channel неприменим (None), не re-derive через P67-пробу.
+                let recv_c = match &obj.kind {
+                    ExprKind::Ident(n) => self
+                        .var_types
+                        .get(n)
+                        .cloned()
+                        .or_else(|| {
+                            if obj.id.is_set() {
+                                self.resolved_types
+                                    .get(&obj.id)
+                                    .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                            } else {
+                                None
+                            }
+                        })?,
+                    _ => self.infer_expr_c_type(obj),
+                };
                 let recv = recv_c.trim_end_matches('*').trim()
                     .strip_prefix("Nova_")?;
                 if recv.is_empty() { return None; }
@@ -17900,13 +17919,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 && !self.hoisted_let_vars.contains(name.as_str())
                             {
                                 // Infer C type for the pre-declaration.
+                                // [M-172.1-d174-sync-consume-registry] phase-safety (§0c):
+                                // этот hoist — PRE-PASS на входе в блок, ДО эмиссии
+                                // let-binding'ов; полный re-derive `infer_expr_c_type(value)`
+                                // здесь бьётся в P67-LEGACY пробы на ещё-не-зарегистрированных
+                                // локалах (например `consume g = mu.lock()` при `defer
+                                // g.unlock()`). Потребляем только МАТЕРИАЛИЗОВАННОЕ: канал
+                                // чекера; неизвестно → opaque `void*`-predecl (это C-механизм
+                                // forward-декларации, не «тип» — реальный тип придёт при
+                                // эмиссии Let-присваивания; указатели C конвертирует неявно).
                                 let c_ty = if let Some(ty) = &decl.ty {
                                     self.type_ref_to_c(ty).unwrap_or_else(|_| "void*".to_string())
                                 } else {
-                                    let inf = self.infer_expr_c_type(&decl.value);
-                                    if inf == "__none_ambiguous__" || inf.is_empty() {
-                                        "void*".to_string()
-                                    } else { inf }
+                                    let ch = if decl.value.id.is_set() {
+                                        self.resolved_types
+                                            .get(&decl.value.id)
+                                            .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                                            .filter(|t| !t.is_empty())
+                                    } else {
+                                        None
+                                    };
+                                    ch.unwrap_or_else(|| "void*".to_string())
                                 };
                                 // Null/zero initializer based on type.
                                 let init = if c_ty.ends_with('*') { "NULL" } else { "0" };
@@ -24266,8 +24299,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // D75 (revised, Plan 47): built-in methods on NovaCancelToken*.
                 // Plan 49 Ф.1: `cancel(reason)` принимает optional str reason;
                 // `reason() -> Option[str]` возвращает причину отмены.
+                // [M-172.1-d174] phase-safe: Ident-ресивер без типа (модульный
+                // `runtime.init(2)`) → проба CancelToken неприменима, идём дальше.
                 {
-                    let obj_ty = self.infer_expr_c_type(obj);
+                    let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     if obj_ty == "NovaCancelToken*" {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
@@ -29037,7 +29072,31 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // C-form, stripped-pointer, Nova-form (strip `Nova_`
                         // prefix), плюс fallback — direct ident name для static
                         // calls `Type.method()`.
-                        let obj_c_ty = self.infer_expr_c_type(obj);
+                        // [M-172.1-d174-sync-consume-registry] phase-safety (§0c):
+                        // divergence-скан — PRE-PASS (block_trailing_diverges бежит
+                        // ДО эмиссии стейтментов ветки), полный re-derive Ident-ресивера
+                        // бьётся в P67-пробу на ещё-не-зарегистрированном локале
+                        // (`match once.try_start() { Some(g2) => g2.commit() ... }`).
+                        // Ident: только материализованные источники; неизвестен →
+                        // кандидаты по C-форме пропускаем (ниже остаётся прямой
+                        // static-lookup по имени типа).
+                        let obj_c_ty = match &obj.kind {
+                            ExprKind::Ident(n) => self
+                                .var_types
+                                .get(n)
+                                .cloned()
+                                .or_else(|| {
+                                    if obj.id.is_set() {
+                                        self.resolved_types
+                                            .get(&obj.id)
+                                            .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_default(),
+                            _ => self.infer_expr_c_type(obj),
+                        };
                         let stripped = obj_c_ty.trim_end_matches('*').to_string();
                         let nova_form = stripped
                             .strip_prefix("Nova_")
@@ -35185,6 +35244,33 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             None
                         }
                     }
+                    // [M-172.1-d174-sync-consume-registry] phase-safety: Ident-ресивер
+                    // без типа (модульный путь `runtime.init(2)`; pre-pass до
+                    // регистрации локала) → variadic side-channel неприменим (None),
+                    // не re-derive через P67-пробу. Типизированный Ident — из
+                    // материализованных источников.
+                    ExprKind::Ident(n) => self
+                        .var_types
+                        .get(n)
+                        .cloned()
+                        .or_else(|| {
+                            if obj.id.is_set() {
+                                self.resolved_types
+                                    .get(&obj.id)
+                                    .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(|obj_ty| {
+                            let trimmed = obj_ty.trim_start_matches("Nova_")
+                                .trim_end_matches('*').trim().to_string();
+                            if !trimmed.is_empty() && trimmed != "void" {
+                                Some((trimmed, name.clone()))
+                            } else {
+                                None
+                            }
+                        }),
                     _ => {
                         let obj_ty = self.infer_expr_c_type(obj);
                         let trimmed = obj_ty.trim_start_matches("Nova_")
@@ -36791,8 +36877,57 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// generic types resolve the declared `fn(P..)->R` from the type template
     /// and substitute the active type params (`current_type_subst`) so the
     /// param/return C-types are concrete at the call site.
+    /// [M-172.1-d174-sync-consume-registry] phase-safe типизация РЕСИВЕРА для
+    /// side-channel-проб (CancelToken/protocol-key/variadic/fn-field/…):
+    /// Ident — ТОЛЬКО материализованные источники (var_types / канал чекера);
+    /// None = «ресивер не типизирован здесь» (модульный namespace `runtime.init`,
+    /// pre-pass до регистрации локала) → side-channel неприменим, БЕЗ захода в
+    /// P67-LEGACY Ident-пробу. Не-Ident формы — обычный infer (как раньше).
+    fn recv_c_type_materialized(&self, obj: &Expr) -> Option<String> {
+        match &obj.kind {
+            ExprKind::Ident(n) => {
+                self.var_types.get(n).cloned().or_else(|| {
+                    if obj.id.is_set() {
+                        self.resolved_types
+                            .get(&obj.id)
+                            .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                    } else {
+                        None
+                    }
+                })
+            }
+            _ => Some(self.infer_expr_c_type(obj)),
+        }
+    }
+
     fn fn_field_call_sig(&self, obj: &Expr, field: &str) -> Option<(Vec<String>, String)> {
-        let obj_ty = self.infer_expr_c_type(obj);
+        // [M-172.1-d174-sync-consume-registry] phase-safety: этот SIDE-CHANNEL
+        // (вызов closure-типизированного ПОЛЯ) пробуется и в pre-pass'ах (D166
+        // defer-hoist на входе в блок) — ДО эмиссии let-binding'а ресивера.
+        // Полный re-derive `infer_expr_c_type(Ident)` там бьётся в P67-LEGACY
+        // Ident-пробу (локал ещё не в var_types). Для Ident-ресивера читаем
+        // ТОЛЬКО уже материализованные источники (var_types / канал чекера);
+        // неизвестен → side-channel неприменим → None (это отказ канала, а не
+        // угаданный тип — caller продолжает обычный method-dispatch).
+        let obj_ty = match &obj.kind {
+            ExprKind::Ident(n) => match self.var_types.get(n) {
+                Some(t) => t.clone(),
+                None => {
+                    let ch = if obj.id.is_set() {
+                        self.resolved_types
+                            .get(&obj.id)
+                            .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                    } else {
+                        None
+                    };
+                    match ch {
+                        Some(t) => t,
+                        None => return None,
+                    }
+                }
+            },
+            _ => self.infer_expr_c_type(obj),
+        };
         if obj_ty.is_empty() || obj_ty == "void*" {
             return None;
         }
@@ -37819,7 +37954,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // returns `Option[T]`, а user-defined `protocol Counter
                 // { incr() -> int }` ожидает `int`).
                 if let ExprKind::Member { obj, name: method_name } = &func.kind {
-                    let obj_ty = self.infer_expr_c_type(obj);
+                    // [M-172.1-d174] phase-safe: Ident-ресивер без материализованного
+                    // типа (модульный namespace / pre-pass) → пустая строка; synth- и
+                    // type-keyed пробы ниже не матчатся, name-keyed specials дальше
+                    // по потоку (fibers/runtime/…) отрабатывают.
+                    let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     // Plan 91.8a.2 [M-91.8a.2-default-body-general] 2026-05-29:
                     // generalized synthesis type-inference. Replaces hardcoded
                     // equals/fmt special cases. If `obj.method(...)` would be
@@ -37929,6 +38068,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                                 ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
                                     Some((n.clone(), name.clone(), false, false))
+                                }
+                                // [M-172.1-d174] phase-safe: Ident-ресивер без
+                                // материализованного типа (модульный namespace
+                                // `runtime.init(2)`) → method-overload lookup
+                                // неприменим; name-keyed specials дальше отработают.
+                                ExprKind::Ident(_)
+                                    if self.recv_c_type_materialized(obj).is_none() =>
+                                {
+                                    None
                                 }
                                 _ => {
                                     let obj_ty = self.infer_expr_c_type(obj);
@@ -38982,7 +39130,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return format!("NovaArray_{}*", arr_suffix);
                         }
                     }
-                    let obj_ty = self.infer_expr_c_type(obj);
+                    // [M-172.1-d174] phase-safe: Ident-ресивер без материализованного
+                    // типа (модульный namespace `runtime.init(2)`; pre-pass) → пустая
+                    // строка: type-keyed пробы ниже не матчатся, name-keyed specials
+                    // (`n == "runtime"` и т.п.) дальше по потоку отрабатывают.
+                    let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     // Plan 138.4 Ф.1 G-C: identity `.clone()` on a record/heap type
                     // with no user `@clone` returns the receiver type (mirrors the
                     // emit-side identity fallback ~21215). Without this the mono'd
@@ -39111,7 +39263,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Plan 49 Ф.1 + Ф.6 P0 fix: reason() возвращает Option[T]
                     // где T определяется из cancel_token_t_map (если receiver —
                     // tracked Ident). Backward-compat: Option[str] default.
-                    if self.infer_expr_c_type(obj) == "NovaCancelToken*" {
+                    if self.recv_c_type_materialized(obj).as_deref() == Some("NovaCancelToken*") {
                         match method.as_str() {
                             "is_cancelled" => return "nova_bool".into(),
                             "cancel" | "cancelled_by" => return "nova_unit".into(),
@@ -39667,6 +39819,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if let Some(ret_ty) = self.var_types.get(&ret_key) {
                         return ret_ty.clone();
                     }
+                    // [M-172.1-d174-sync-consume-registry] (Gap B, extern-method return):
+                    // extern "nova"-метод (sync guards: `MutexGuard consume @unlock()` и пр.)
+                    // не имеет `fn_ret_*` var_types-записи (тело — C-рантайм, forward-decl
+                    // не эмитится) — его return берём из РЕЕСТРА .nv-деклараций
+                    // (ExternalRegistry, §3: реестр из деклараций, не хардкод).
+                    {
+                        let bare = obj_ty.trim_end_matches('*');
+                        let recv_tn = bare.strip_prefix("NovaValue_")
+                            .or_else(|| bare.strip_prefix("Nova_"))
+                            .or_else(|| bare.strip_prefix("NovaTuple_"))
+                            .unwrap_or(bare);
+                        if !recv_tn.is_empty() {
+                            if let Some(decls) =
+                                self.external_registry.lookup(recv_tn, method)
+                            {
+                                if let [d] = decls {
+                                    if !d.return_c_type.is_empty() {
+                                        return d.return_c_type.clone();
+                                    }
+                                }
+                            }
+                        }
+                    }
                     // Plan 172.1 D145/D282: prefix-generic receiver methods are annotated by the
                     // checker via `resolve_prefix_generic_method_return` into `resolved_types`.
                     // Check the channel before panicking — the annotation exists but legacy has no
@@ -39679,7 +39854,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                         }
                     }
-                    panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0); expr span={:?}", method, expr.span)
+                    panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0); obj_ty={:?} expr span={:?}", method, obj_ty, expr.span)
                 } else if let ExprKind::Path(parts) = &func.kind {
                     // Plan 11 Ф.4.5: Self.method(...) → <current>.method(...).
                     let parts_resolved: Vec<String>;

@@ -701,3 +701,33 @@ sync-типы (`MutexGuard`/`ReadGuard`/`WriteGuard`/`Permit`/`OnceGuard`) пр�
 (sync Gap B + миграция load_builtins): consume-метаданные sync-типов должны прийти из
 `.nv`-деклараций реестровым путём (§3 — никакого нового хардкода). Тест-драйвер готов:
 `spec_tests/inprogress/d174_sync_consume_guards.nv` (перенести в conformance после фикса).
+
+### [M-172.1-d174-sync-consume-registry] — ✅ РЕАЛИЗОВАН (2026-07-02, тот же день)
+
+Закрыт срезом Gap-B-lite: (1) `builtin_sources()/builtin_modules()` — единый список
+embedded .nv (кормит и load_builtins, и чекер); (2) Linearity/ConsumeRegistry
+`absorb_external()` — consume-типы/методы/method_return_types из builtin-деклараций;
+(3) sync.nv добавлен в `builtin_sig_modules()` (чекер знает Mutex/guards как типы +
+method-сигнатуры); (4) infer_expr_type: static-method return для конкретных типов
+(`Mutex.new()` → Mutex); (5) f1_check_call: `-> Self` субституируется в receiver-тип
+ПЕРЕД материализацией в канал (раньше канал нёс Named{Self} → codegen травился
+name-keyed `fn_ret_new` last-wins → чужой тип); (6) legacy extern-method return из
+ExternalRegistry (реестр .nv-деклараций); (7) phase-safety: `recv_c_type_materialized`
+для Ident-ресиверов в side-channel пробах (D166 defer-hoist, divergence-скан,
+protocol-key, variadic, CancelToken, legacy Call-arm) — модульный namespace/pre-pass
+не заходит в P67-пробы. d174 в conformance (36/36 PASS с plan103_9); регресс чист
+(effects/basic, syntax/anonymous_embed — pre-existing на baseline 69d64b7a).
+
+## [M-172.1-d174-with-lock-generic-ret] — with_lock[R] return-инференс (2026-07-02)
+
+`Mutex.with_lock[R](body fn() -> R) -> R` — method-level generic на builtin
+Nova-body методе; return из closure-arg не инферится (D119-механика покрывает
+только mono-receiver'ы `____`). Корпус plan103_9 with_lock не вызывает. Тест
+thin-wrapper'а — после реализации (кандидат: U.1.3b sync-inline).
+
+## [M-172.1-d174-once-try-start-option] — Once.try_start() Option-обёртка (2026-07-02)
+
+Nova-body `Once.try_start() -> Option[OnceGuard consume]` codegen'ом не эмитится
+(builtin Nova-body метод, эмитился как struct-member-call → CC-FAIL). Корпус
+использует extern-пару try_start_won()+make_guard(). Тест Option-формы — после
+U.1.3b sync-inline.

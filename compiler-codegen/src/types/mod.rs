@@ -8469,6 +8469,30 @@ impl<'a> TypeCheckCtx<'a> {
                 if !typeref_mentions_any(ret_ty, &callee_gs_inner)
                     && !typeref_mentions_any(ret_ty, gs)
                 {
+                    // [M-172.1-d174-sync-consume-registry]: `-> Self` у static-метода
+                    // (`Mutex.new() -> Self`) обязан субституироваться в receiver-тип
+                    // ПЕРЕД материализацией — иначе канал несёт несуществующий
+                    // Named{Self}, а scope-регистрация let-binding'а травится
+                    // (д172_lm: channel=Self → codegen падал в name-keyed
+                    // `fn_ret_new` last-wins → чужой тип). Общий механизм: имя из
+                    // callee.receiver (§3 — декларация, не хардкод).
+                    let ret_owned;
+                    let ret_ty: &TypeRef = if let Some(recv) = &callee.receiver {
+                        let mut m: HashMap<String, TypeRef> = HashMap::new();
+                        m.insert(
+                            "Self".to_string(),
+                            TypeRef::Named {
+                                path: vec![recv.type_name.clone()],
+                                generics: Vec::new(),
+                                span: callee.span,
+                            },
+                        );
+                        ret_owned =
+                            crate::const_fn_trampoline::subst_type_ref_pub(ret_ty, &m);
+                        &ret_owned
+                    } else {
+                        ret_ty
+                    };
                     let rt = ResolvedType::from_type_ref(ret_ty);
                     self.resolved_types_buf.borrow_mut().insert(call_id, rt);
                 }
@@ -10513,6 +10537,54 @@ impl<'a> TypeCheckCtx<'a> {
                                     generics: type_args.clone(),
                                     span: expr.span,
                                 });
+                            }
+                        }
+                    }
+                    // [M-172.1-d174-sync-consume-registry] (Gap B checker-side): STATIC
+                    // method return on a CONCRETE non-generic KNOWN type — `Mutex.new()` →
+                    // `Mutex`, `Once.new()` → `Once` (sync builtin decls merged via
+                    // builtin_sig_modules). Требуется, чтобы `mut mu = Mutex.new()` попал в
+                    // scope → `mu.lock()` резолвится → `consume g` типизирован через КАНАЛ
+                    // (fail-path эмиссия defer-тел читает канал, не var_types-тайминг).
+                    // Консервативно: single-overload static, non-generic тип, конкретный
+                    // Named/Self return без generic-упоминаний.
+                    if let ExprKind::Ident(tyname) = &obj.kind {
+                        if self.types.get(tyname.as_str())
+                            .map_or(false, |td| td.generics.is_empty())
+                        {
+                            if let Some(overloads) = self.method_overloads(tyname, ctor) {
+                                if let [f] = overloads.as_slice() {
+                                    if f.receiver.as_ref()
+                                        .map_or(false, |r| matches!(r.kind, ReceiverKind::Static))
+                                        && f.generics.is_empty()
+                                    {
+                                        if let Some(ret) = &f.return_type {
+                                            let concrete = match ret {
+                                                TypeRef::Named { path, generics, .. }
+                                                    if path.len() == 1 && generics.is_empty() =>
+                                                {
+                                                    if path[0] == "Self" {
+                                                        Some(tyname.clone())
+                                                    } else if self.types.contains_key(&path[0])
+                                                        || Self::is_primitive_type_name(&path[0])
+                                                    {
+                                                        Some(path[0].clone())
+                                                    } else {
+                                                        None
+                                                    }
+                                                }
+                                                _ => None,
+                                            };
+                                            if let Some(n) = concrete {
+                                                return Some(TypeRef::Named {
+                                                    path: vec![n],
+                                                    generics: Vec::new(),
+                                                    span: expr.span,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -17620,6 +17692,34 @@ impl LinearityRegistry {
     fn consume_methods_for(&self, type_name: &str) -> Vec<String> {
         self.consume_methods.get(type_name).cloned().unwrap_or_default()
     }
+
+    /// Plan 172.1 [M-172.1-d174-sync-consume-registry]: влить consume-метаданные
+    /// ВНЕШНЕГО (builtin/registry-supplied) модуля — типы `X consume` +
+    /// consume-receiver методы. `local_type_names` НЕ пополняется: внешние типы
+    /// не «локальные» (W_CONSUME_KEYWORD_UNNECESSARY остаётся выключенным для них).
+    /// Источник — те же .nv-декларации, что кормят load_builtins (§3: реестр из
+    /// деклараций, не хардкод). До этого фикса guard-consume (D174: `MutexGuard
+    /// consume @unlock`) не кредитовался — реестр строился только из module.items
+    /// (хардкод external_sources удалён Plan 169.2 §4 без реестровой замены).
+    fn absorb_external(&mut self, module: &Module) {
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                if td.consume {
+                    self.consume_types.insert(td.name.clone());
+                }
+            }
+            if let Item::Fn(fd) = item {
+                if let Some(recv) = &fd.receiver {
+                    if recv.consume {
+                        self.consume_methods
+                            .entry(recv.type_name.clone())
+                            .or_default()
+                            .push(fd.name.clone());
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Plan 100.1 (D133 / D4): проверка согласованности consume-маркеров
@@ -17933,6 +18033,55 @@ impl ConsumeRegistry {
             fn_view_params, method_return_types, mut_methods, ro_methods,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
+        }
+    }
+
+    /// Plan 172.1 [M-172.1-d174-sync-consume-registry]: влить consume-СУЩЕСТВЕННЫЕ
+    /// метаданные внешнего (builtin) модуля — ровно то, что нужно flow-crediting'у:
+    /// - `methods` — consume-receiver методы (`MutexGuard consume @unlock` →
+    ///   `g.unlock()` кредитует обязательство);
+    /// - `method_return_types` — типизация binding'а (`consume g = mu.lock()` →
+    ///   ("Mutex","lock") → "MutexGuard"), включая `Self`-резолв;
+    /// - `method_params` / `fn_params` — consume-параметры (передача = потребление).
+    /// НАМЕРЕННО НЕ вливаются mut/ro/unsafe/view-карты: включение этих enforcement'ов
+    /// для builtin-поверхности — отдельное изменение с обязательным замером
+    /// blast-radius (§7.2), не попутный груз D174-фикса.
+    fn absorb_external(&mut self, module: &Module) {
+        for item in &module.items {
+            let Item::Fn(fd) = item else { continue };
+            let consume_idx: Vec<usize> = fd.params.iter().enumerate()
+                .filter(|(_, p)| p.consume)
+                .map(|(i, _)| i)
+                .collect();
+            match &fd.receiver {
+                Some(r) => {
+                    if r.consume {
+                        self.methods.insert((r.type_name.clone(), fd.name.clone()));
+                    }
+                    if let Some(TypeRef::Named { path, .. }) = &fd.return_type {
+                        if path.len() == 1 {
+                            let ret = if path[0] == "Self" {
+                                r.type_name.clone()
+                            } else {
+                                path[0].clone()
+                            };
+                            self.method_return_types
+                                .entry((r.type_name.clone(), fd.name.clone()))
+                                .or_insert(ret);
+                        }
+                    }
+                    if !consume_idx.is_empty() {
+                        self.method_params
+                            .entry((r.type_name.clone(), fd.name.clone()))
+                            .or_insert(consume_idx);
+                    }
+                }
+                None => {
+                    if !consume_idx.is_empty() {
+                        self.fn_params.entry(fd.name.clone()).or_insert(consume_idx);
+                    }
+                }
+            }
         }
     }
 }
@@ -19028,9 +19177,17 @@ impl<'a> VrEscapeCtx<'a> {
 }
 
 fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
-    let reg = ConsumeRegistry::build(module);
+    let mut reg = ConsumeRegistry::build(module);
     // Plan 100.1 (D133): LinearityRegistry + marker consistency.
-    let lin_reg = LinearityRegistry::build(module);
+    let mut lin_reg = LinearityRegistry::build(module);
+    // Plan 172.1 [M-172.1-d174-sync-consume-registry]: consume-метаданные
+    // builtin-поверхности (sync guards и пр.) — из ТЕХ ЖЕ embedded .nv-деклараций,
+    // что кормят load_builtins (один список — одно окно, §3). Без этого
+    // `consume g = mu.lock(); g.unlock()` давал ложный D133-not-consumed.
+    for bm in crate::codegen::external_registry::ExternalRegistry::builtin_modules() {
+        lin_reg.absorb_external(bm);
+        reg.absorb_external(bm);
+    }
     check_linearity_markers(module, &lin_reg, errors);
 
     for item in &module.items {
