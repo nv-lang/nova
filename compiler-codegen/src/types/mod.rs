@@ -6863,7 +6863,17 @@ impl<'a> TypeCheckCtx<'a> {
                         if let ExprKind::Member { name: mn, .. } = &func.kind {
                             if mn == "append" {
                                 let r = self.infer_method_call_channel_type(e, scope);
-                                eprintln!("[AP] id={:?} fid={:?} resolved={:?}", e.id, e.span.file_id, r.is_some());
+                                if r.is_none() {
+                                    let ExprKind::Member { obj: ao, .. } = &func.kind else { unreachable!() };
+                                    let ok = match &ao.kind {
+                                        ExprKind::Ident(n) => format!("i:{}({})", n,
+                                            scope.contains_key(n)),
+                                        ExprKind::SelfAccess => "@".into(),
+                                        ExprKind::Member { name, .. } => format!("m:.{}", name),
+                                        _ => "other".into(),
+                                    };
+                                    eprintln!("[AP-MISS] id={:?} fid={:?} obj={}", e.id, e.span.file_id, ok);
+                                }
                             }
                         }
                     }
@@ -11633,6 +11643,17 @@ impl<'a> TypeCheckCtx<'a> {
         recv_ty: &TypeRef,
         method: &str,
     ) -> Option<TypeRef> {
+        self.resolve_instance_method_return_arity(recv_ty, method, None)
+    }
+
+    /// 172.1.2 (2026-07-03): arity-aware вариант — при >1 перегрузке выбирает
+    /// ЕДИНСТВЕННУЮ с совпадающим числом параметров (StringBuilder.append и др.).
+    fn resolve_instance_method_return_arity(
+        &self,
+        recv_ty: &TypeRef,
+        method: &str,
+        arity: Option<usize>,
+    ) -> Option<TypeRef> {
         // Normalize receiver: peel ro/mut views; `[]T`/`[N]T` → "Vec" (D239 slice alias),
         // so a slice receiver resolves Vec's methods (std's pervasive spelling). Mirror of
         // `check_instance_overload`'s normalization.
@@ -11653,8 +11674,18 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 D145/D282: prefix-generic receiver fallback.
             None => return self.resolve_prefix_generic_method_return(peeled, method),
         };
-        // Single overload only — ≥2 is the multi-overload arg-dispatch slice (step 2).
-        let [f] = overloads.as_slice() else { return None; };
+        // Single overload; при >1 — arity-фильтр (172.1.2): единственная
+        // перегрузка с params.len()==arity выбирается однозначно.
+        let f: &FnDecl = match overloads.as_slice() {
+            [one] => one,
+            many => {
+                let a = arity?;
+                let mut it = many.iter().filter(|f| f.params.len() == a);
+                let first = it.next()?;
+                if it.next().is_some() { return None; }
+                first
+            }
+        };
         let recv = f.receiver.as_ref()?;
         if !matches!(recv.kind, ReceiverKind::Instance) {
             return None;
@@ -11864,7 +11895,8 @@ impl<'a> TypeCheckCtx<'a> {
                 drop(buf);
                 Self::resolved_to_typeref_tp(&rt, e.span)
             })?;
-        self.resolve_instance_method_return(&recv_ty, name)
+        let call_arity = call_args.len();
+        self.resolve_instance_method_return_arity(&recv_ty, name, Some(call_arity))
             .or_else(|| {
                 // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
                 // выводится из closure-аргумента при известном carrier-subst.
