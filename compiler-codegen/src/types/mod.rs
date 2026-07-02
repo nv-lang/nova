@@ -10451,6 +10451,32 @@ impl<'a> TypeCheckCtx<'a> {
     /// `Scalar` (NOT the wide-default `int` — a no-op vs the seed; NOT a generic param →
     /// `Named` — left to mono) is annotated; everything else keeps the `number_exprs`
     /// seed (sound fallback). The consumer's `is_typed_integer` gate is the final filter.
+    /// 172.1.2: аннотировать узел expected-типом, если тот КОНКРЕТЕН
+    /// (Named: без args — примитив/объявленный; с args — все args
+    /// primitive/Str/concrete-named). §1-гейт против записи невыведенного.
+    fn annotate_expected_concrete(&self, value: &Expr, expected: &TypeRef) {
+        if !value.id.is_set() { return; }
+        let TypeRef::Named { path, generics, .. } = expected else { return };
+        let Some(last) = path.last() else { return };
+        let concrete = if generics.is_empty() {
+            let rt = ResolvedType::from_type_ref(expected);
+            Self::primitive_gate(&rt)
+                || matches!(&rt, ResolvedType::Str | ResolvedType::Bool)
+                || self.types.contains_key(last)
+        } else {
+            generics.iter().all(|g| {
+                let rt = ResolvedType::from_type_ref(g);
+                Self::primitive_gate(&rt)
+                    || matches!(&rt, ResolvedType::Str)
+                    || matches!(&rt, ResolvedType::Named { args, .. } if args.is_empty())
+            })
+        };
+        if concrete {
+            let rt = ResolvedType::from_type_ref(expected);
+            self.resolved_types_buf.borrow_mut().insert(value.id, rt);
+        }
+    }
+
     fn materialize_literal_coercion(&self, value: &Expr, expected: &TypeRef) {
         // Strip compile-time-only type modifiers — they do not change the C width.
         match expected {
@@ -10573,9 +10599,15 @@ impl<'a> TypeCheckCtx<'a> {
                         ElseBranch::Block(b) => self.materialize_block_tail(b, expected),
                         ElseBranch::If(e) => self.materialize_literal_coercion(e, expected),
                     }
+                    // 172.1.2 (2026-07-03): if-С-else в коэрцируемой позиции —
+                    // тип выражения = expected (гейт annotate_expected_concrete).
+                    self.annotate_expected_concrete(value, expected);
                 }
             }
             ExprKind::Match { arms, .. } => {
+                // 172.1.2 (2026-07-03): match в коэрцируемой позиции — тип =
+                // expected (гейт: конкретный, annotate_expected_concrete).
+                self.annotate_expected_concrete(value, expected);
                 for arm in arms {
                     match &arm.body {
                         MatchArmBody::Expr(e) => self.materialize_literal_coercion(e, expected),
