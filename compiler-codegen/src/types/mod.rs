@@ -11327,6 +11327,31 @@ impl<'a> TypeCheckCtx<'a> {
                         _ => {}
                     },
                     TypeRef::Named { path, .. } => {
+                        // 172.1.2 (Index @-слайс, 2026-07-03): scope["@"] extension-метода
+                        // на `[]int`/`[]T` хранит ИМЯ "[]int" как Named — элемент =
+                        // суффикс имени (Named{elem}); typevar пометит потребитель.
+                        if path.len() == 1 {
+                            if let Some(elem_name) = path[0].strip_prefix("[]") {
+                                // ТОЛЬКО конкретный элемент: примитив или объявленный
+                                // тип; голый typevar ([]T) → None (утекал bare Named{T}
+                                // в TypeRef-потоки → фабрикация Nova_T* в erased-телах).
+                                let concrete = ResolvedType::from_type_ref(&TypeRef::Named {
+                                    path: vec![elem_name.to_string()],
+                                    generics: vec![],
+                                    span: expr.span,
+                                });
+                                let is_concrete = Self::primitive_gate(&concrete)
+                                    || self.types.contains_key(elem_name);
+                                if !elem_name.is_empty() && is_concrete {
+                                    return Some(TypeRef::Named {
+                                        path: vec![elem_name.to_string()],
+                                        generics: vec![],
+                                        span: expr.span,
+                                    });
+                                }
+                                return None;
+                            }
+                        }
                         // User-defined @index(key K) -> V: look up @index method on type.
                         // 2026-07-02 (audit POISON 6453): декларированный return клонировался
                         // ДОСЛОВНО без подстановки generic-аргументов ресивера (`Vec[str][i]`

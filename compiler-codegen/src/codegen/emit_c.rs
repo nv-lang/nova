@@ -37495,6 +37495,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 ExprKind::Path(p) => format!("Path:{}", p.join(".")),
                 ExprKind::If { .. } => "If".into(),
                 ExprKind::Block(_) => "Block".into(),
+                ExprKind::Index { obj, .. } => format!(
+                    "Index:{}",
+                    match &obj.kind {
+                        ExprKind::SelfAccess => "@".into(),
+                        ExprKind::Ident(n) => format!("i:{}", n),
+                        ExprKind::Member { name, .. } => format!("m:.{}", name),
+                        ExprKind::Call { .. } => "call".into(),
+                        ExprKind::Index { .. } => "idx".into(),
+                        _ => "other".into(),
+                    }
+                ),
                 other => format!("Other:{:?}", std::mem::discriminant(other)),
             };
             eprintln!("[P67-LEGACY] kind={} desc={} span={:?} id={:?} in_resolved={} src_file={}",
