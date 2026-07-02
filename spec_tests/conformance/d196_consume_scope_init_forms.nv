@@ -1,0 +1,54 @@
+// D196 — Init type constraints для `consume X = expr { body }` (Plan 110, ACTIVE).
+// Норма (spec §D196): init-выражение обязано statically резолвиться в тип с
+// `Consumable[E]` (on_exit). Формы: (1) прямой Consumable; (2) Result-unwrap
+// через `?`. D197 (re-entrance): вложенный consume-scope внутри тела —
+// корректная вложенность. Негатив — neg/d196_init_not_consumable_neg.nv.
+// Шаблоны сверены с nova_tests/plan110 + d188. Один folder-module
+// `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D196Res {
+    ro id int
+}
+
+fn D196Res.new(id int) -> D196Res => { id }
+fn D196Res.try_new(id int) -> Result[D196Res, str] => Ok(D196Res.new(id))
+
+fn D196Res consume @on_exit(_outcome ScopeOutcome) -> () => ()
+
+// D196 form 2: `consume r = expr? { body }` — Result-unwrap init.
+fn d196_use_unwrap() Fail[str] -> int {
+    mut d196_result = 0
+    consume d196_r = D196Res.try_new(7)? {
+        d196_result = d196_r.id
+    }
+    d196_result
+}
+
+test "D196 form 1: прямой Consumable-init, body исполняется (D196)" {
+    mut d196_seen = 0
+    consume d196_a = D196Res.new(42) {
+        d196_seen = d196_a.id
+    }
+    assert(d196_seen == 42)
+}
+
+test "D196 form 2: Result-unwrap init через ? (D196)" {
+    mut d196_got = 0
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        d196_got = d196_use_unwrap()
+    }
+    assert(d196_got == 7)
+}
+
+test "D197: вложенный consume-scope внутри тела (D196/D197)" {
+    mut d196_sum = 0
+    consume d196_outer = D196Res.new(1) {
+        consume d196_inner = D196Res.new(2) {
+            d196_sum = d196_outer.id + d196_inner.id
+        }
+    }
+    assert(d196_sum == 3)
+}
