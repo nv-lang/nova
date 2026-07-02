@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_PROTO_METHOD_NEEDS_AT
+// D209: instance-метод протокола без `@` (bare ident) — parse error.
+#no_prelude
+module neg.d209_method_needs_at_neg
+
+type BadProto protocol {
+    next() -> int
+}

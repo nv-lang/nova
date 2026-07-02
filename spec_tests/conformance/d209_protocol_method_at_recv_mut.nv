@@ -1,0 +1,79 @@
+// D209 — Protocol method `@` syntax + receiver mutability (Plan 108.4, ACTIVE).
+// Норма (spec/decisions/04-effects.md §D209): instance-методы протокола требуют `@`
+// перед именем; receiver-модификатор (`mut`/`ro`/`consume`) опционален, default = ro;
+// visual distinction protocol (методы с @) vs effect (функции без @). Enforcement:
+// `#impl(P)` сверяет receiver-mutability каждого метода на сайте декларации типа.
+// Покрытие (позитив): (1) `mut @next()` + итерация for-in; (2) `consume @close()`;
+// (3) default-ro `@hash()` (без префикса ≡ ro); (4) `#impl` с несколькими методами
+// разных mutability. Негативы (parse + impl-mismatch) — neg/d209_*.nv. Шаблоны
+// сверены с nova_tests/plan108_4. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+// (1) mut-receiver протокол-метод + итерация.
+type D209CounterIter protocol {
+    mut @next() -> Option[int]
+}
+
+#impl(D209CounterIter)
+type D209Counter { mut cur int, end int }
+
+fn D209Counter mut @next() -> Option[int] {
+    if @cur >= @end {
+        None
+    } else {
+        ro v = @cur
+        @cur = @cur + 1
+        Some(v)
+    }
+}
+
+// (2) consume-receiver протокол-метод.
+type D209Closeable protocol {
+    consume @close() -> int
+}
+
+#impl(D209Closeable)
+type D209Handle { fd int }
+
+fn D209Handle consume @close() -> int {
+    @fd
+}
+
+// (3)+(4) default-ro метод + mixed-mutability протокол.
+type D209Stat protocol {
+    @weight() -> int
+    mut @bump() -> ()
+}
+
+#impl(D209Stat)
+type D209Box2 { mut n int }
+
+fn D209Box2 @weight() -> int => @n
+fn D209Box2 mut @bump() -> () {
+    @n = @n + 1
+}
+
+test "protocol mut @next: impl совпадает, for-in итерирует (D209)" {
+    mut d209_c = D209Counter { cur: 0, end: 3 }
+    mut d209_results = []
+    for d209_x in d209_c {
+        d209_results.push(d209_x)
+    }
+    assert(d209_results.len() == 3)
+    assert(d209_results[0] == 0)
+    assert(d209_results[2] == 2)
+}
+
+test "protocol consume @close: impl совпадает, guard потреблён (D209)" {
+    ro d209_h = D209Handle { fd: 42 }
+    ro d209_r = d209_h.close()
+    assert(d209_r == 42)
+}
+
+test "default-ro @method ≡ ro; mixed mutability в одном протоколе (D209)" {
+    mut d209_b = D209Box2 { n: 10 }
+    assert(d209_b.weight() == 10)
+    d209_b.bump()
+    d209_b.bump()
+    assert(d209_b.weight() == 12)
+}

@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_PROTO_IMPL_RO_FOR_MUT
+// D209: протокол декларирует `mut @next()`, impl — ro-receiver → mismatch.
+#no_prelude
+module neg.d209_ro_for_mut_neg
+
+type Iterable protocol {
+    mut @next() -> int
+}
+
+#impl(Iterable)
+type Counter { cur int }
+
+fn Counter @next() -> int => @cur

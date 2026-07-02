@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_PROTO_METHOD_MOD_CONFLICT
+// D209: `mut consume @foo()` — взаимоисключающие receiver-квалификаторы.
+#no_prelude
+module neg.d209_mod_conflict_neg
+
+type Conflict protocol {
+    mut consume @foo()
+}
