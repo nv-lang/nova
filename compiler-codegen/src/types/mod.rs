@@ -11741,6 +11741,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         // Receiver type: chain-aware (recurse for a Call receiver), else leaf via infer_expr_type.
+        let ExprKind::Call { args: call_args, .. } = &e.kind else { return None; };
         let recv_ty = self
             .infer_method_call_channel_type(obj, scope)
             .or_else(|| self.infer_expr_type(obj, scope))
@@ -11759,6 +11760,100 @@ impl<'a> TypeCheckCtx<'a> {
                 Self::resolved_to_typeref_tp(&rt, e.span)
             })?;
         self.resolve_instance_method_return(&recv_ty, name)
+            .or_else(|| {
+                // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
+                // выводится из closure-аргумента при известном carrier-subst.
+                self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope)
+            })
+    }
+
+    /// 172.1.2 arg-binding: `v.map(|x| x*2)` при v: Vec[int] — параметр метода
+    /// `f (T)->U`: closure-параметры типизируются СУБСТИТУИРОВАННОЙ сигнатурой
+    /// (T→int из ресивера), тело инферится → U связывается результатом. Гейты:
+    /// один overload, Instance-ресивер, U — голый method-generic в return-позиции
+    /// fn-параметра; невыведенный U → None (legacy). Closure: Expr-тело или
+    /// пустой stmts-блок (сложные тела — C6).
+    fn resolve_method_return_with_closure_args(
+        &self,
+        recv_ty: &TypeRef,
+        method: &str,
+        args: &[CallArg],
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let mut peeled = recv_ty;
+        loop {
+            match peeled {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = i,
+                _ => break,
+            }
+        }
+        let type_name: String = match peeled {
+            TypeRef::Named { path, .. } if path.len() == 1 => path[0].clone(),
+            TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
+            _ => return None,
+        };
+        let overloads = self.method_overloads(&type_name, method)?;
+        let [f] = overloads.as_slice() else { return None; };
+        let recv = f.receiver.as_ref()?;
+        if !matches!(recv.kind, ReceiverKind::Instance) {
+            return None;
+        }
+        let ret = f.return_type.as_ref()?;
+        let method_names: HashSet<String> =
+            f.generics.iter().map(|g| g.name.clone()).collect();
+        if method_names.is_empty() {
+            return None; // покрыто базовой resolve_instance_method_return
+        }
+        let mut subst = build_recv_subst(recv, recv_ty);
+        subst.insert("Self".to_string(), peeled.clone());
+        for (pd, a) in f.params.iter().zip(args.iter()) {
+            let arg_expr = a.expr();
+            let TypeRef::Func { params: fp, return_type: Some(fr), .. } = &pd.ty else {
+                continue;
+            };
+            let ExprKind::ClosureLight { params: cp, body } = &arg_expr.kind else {
+                continue;
+            };
+            if cp.len() != fp.len() {
+                continue;
+            }
+            // Типизируем closure-параметры субституированной сигнатурой.
+            let mut cscope = scope.clone();
+            let mut seed_ok = true;
+            for (cpar, fpt) in cp.iter().zip(fp.iter()) {
+                let t = crate::const_fn_trampoline::subst_type_ref_pub(fpt, &subst);
+                if typeref_mentions_any(&t, &method_names) {
+                    seed_ok = false; // параметр сам требует U — не выведем
+                    break;
+                }
+                cscope.insert(cpar.name.clone(), t);
+            }
+            if !seed_ok {
+                continue;
+            }
+            let body_tr: Option<TypeRef> = match body {
+                ClosureBody::Expr(be) => self.infer_expr_type(be, &cscope),
+                ClosureBody::Block(b) => {
+                    if b.stmts.is_empty() {
+                        b.trailing.as_deref().and_then(|t| self.infer_expr_type(t, &cscope))
+                    } else {
+                        None
+                    }
+                }
+            };
+            let Some(body_tr) = body_tr else { continue };
+            // fr должен быть ГОЛЫМ method-generic (Named{U}) → U := тип тела.
+            if let TypeRef::Named { path: rp, generics: rg, .. } = fr.as_ref() {
+                if rp.len() == 1 && rg.is_empty() && method_names.contains(&rp[0]) {
+                    subst.entry(rp[0].clone()).or_insert(body_tr);
+                }
+            }
+        }
+        let out = crate::const_fn_trampoline::subst_type_ref_pub(ret, &subst);
+        if typeref_mentions_any(&out, &method_names) {
+            return None; // U так и не выведен → честный legacy
+        }
+        Some(out)
     }
 
     /// 172.1.2: resolved_to_typeref + TypeParam(n)→Named{n} — ТОЛЬКО для
