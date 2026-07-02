@@ -10617,7 +10617,14 @@ impl<'a> TypeCheckCtx<'a> {
                 // `block_diverges` ловит и stmt-форму (`{ throw "..." }` без trailing),
                 // которую типовой инференс видел бы как Unit.
                 let then_div = block_diverges(then);
-                let then_t = then.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope));
+                // 2026-07-02 (tally, If АТОМ 1a): then без trailing и без divergence =
+                // Unit — точное зеркало else-стороны (ниже, None => Unit); прежняя
+                // асимметрия роняла statement-form цепочки (`if c { v.push(x) }
+                // else { ... }`) в legacy. Join-правила НЕ менялись (D275-mirror).
+                let then_t = match &then.trailing {
+                    Some(t) => self.infer_expr_type(t, scope),
+                    None => Some(TypeRef::Unit(expr.span)),
+                };
                 let (else_div, else_t): (bool, Option<TypeRef>) = match eb {
                     crate::ast::ElseBranch::Block(b) => (
                         block_diverges(b),
