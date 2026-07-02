@@ -209,6 +209,7 @@
 | `[M-D227-float-range-check]` | D227 Rule 5 (f32 exponent overflow) НЕ реализован; Ф.1 scope был integer-only (8 sized-int). | plan-142 Scoped open-questions | P3 |
 | `[M-labeled-loops]` | Метки циклов + адресный `break outer`/`continue outer` (выход из ВНЕШНЕГО цикла). Единственная survey-находка (2026-07-02) genuinely-absent (`consider`, medium). Форма — identifier (НЕ `'outer` — лексич. конфликт с char-лит; НЕ `:`-форма). Value-carrying `break outer x` — вне scope. Ниша — grid/matrix-сканы. | [spec/open-questions Q-labeled-loops](../../spec/open-questions.md) | P3 |
 | `[M-nested-or-patterns]` | `\|`-альтернативы ВНУТРИ варианта: `Some(1\|2\|3)` / `(0\|1, y)` (top-level `\|` уже есть). Обобщение: hoist `\|`-сбор из parse_match в parse_pattern, тот же `Pattern::Or`. Range-in-arm НЕ добавляем (покрыт guard). `consider`, low (survey 2026-07-02). | [spec/open-questions Q-nested-or-patterns](../../spec/open-questions.md) | P3 |
+| `[M-extensible-sum-types]` | `#extensible` на экспортированном sum: тип может расти без breaking change — через границу пакета match обязан иметь `_` (`E_MATCH_EXTENSIBLE_NEEDS_WILDCARD`); внутри пакета exhaustiveness полная. Прецедент боли: D302 (NetError +2 варианта = breaking, прощено pre-release окном). Авто-`_ => panic` отвергнут (compile-гарантия → runtime-краш). **Gated на стабилизацию std / registry (Plan 03.3)** — до внешних потребителей не даёт ничего. | [spec/open-questions Q-extensible-sum-types](../../spec/open-questions.md) | P3 |
 
 ## By-design / WON'T-DO (не actionable — кандидаты в dead-markers)
 
