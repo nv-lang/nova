@@ -37161,19 +37161,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return self.var_types.get(n).cloned().unwrap();
                         }
                     }
-                    // Member{*, field}: prefer legacy schema+subst over checker annotation when
-                    // checker annotated "nova_int" — this is likely generic type-param erasure.
-                    // Legacy resolves via record_schemas/template_subst with proper mono args.
-                    // Same reasoning as SelfAccess guard above (gap #2).
-                    if let ExprKind::Member { .. } = &expr.kind {
-                        if ir_c == "nova_int" {
-                            // Likely checker-erased generic field — fall through to legacy
-                        } else {
-                            return ir_c;
-                        }
-                    } else {
-                        return ir_c;
+                    // Member: channel is AUTHORITATIVE, включая "nova_int". Прежний guard
+                    // («int = вероятно стёртый generic») устарел: оба продюсера Member-аннотаций
+                    // гейтированы — preamble-проба (infer_expr_type Member-arm) пишет ТОЛЬКО
+                    // конкретные поля non-generic record'ов; f3_check_member субститутит
+                    // receiver-generics и гейтит на primitive/concrete-named. Стирания T→int в
+                    // канале больше нет; guard лишь ронял ~1300 честных int-полей в legacy
+                    // (замер P67_TRACE 2026-07-02: все Member-заходы были in_resolved=true).
+                    if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
+                        && matches!(&expr.kind, ExprKind::Member { .. })
+                        && ir_c == "nova_int"
+                    {
+                        eprintln!("[MEMBER-INT ch2-consume] id={:?} span={:?} rt={:?}", expr.id, expr.span, rt);
                     }
+                    return ir_c;
                 }
             }
         }

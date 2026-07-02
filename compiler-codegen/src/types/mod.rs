@@ -6462,6 +6462,11 @@ impl<'a> TypeCheckCtx<'a> {
             if e.id.is_set() {
                 if let Some(tr) = self.infer_expr_type(e, scope) {
                     let rt = ResolvedType::from_type_ref(&tr);
+                    if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
+                        && matches!(&rt, ResolvedType::Scalar { wide_default: true, signed: true, .. })
+                    {
+                        eprintln!("[MEMBER-INT preamble] id={:?} span={:?} tr={:?}", e.id, e.span, tr);
+                    }
                     self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                 }
             }
@@ -6904,15 +6909,13 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 172.1 U.4.4: thread the Member expr's `ExprId` so the
                 // field-found site can annotate a concrete primitive field type.
                 self.f3_check_member(obj, name, e.span, e.id, scope, errors);
-                // P67 fallback: if f3_check_member (field) and probe (infer_expr_type)
-                // both missed (method access / pointer type / unknown) — default to int.
-                // Byte-identical to legacy `_ => nova_int` for these un-resolved cases.
-                if e.id.is_set() && !self.resolved_types_buf.borrow().contains_key(&e.id) {
-                    self.resolved_types_buf.borrow_mut().insert(
-                        e.id,
-                        ResolvedType::Scalar { width: 64, signed: true, wide_default: true },
-                    );
-                }
+                // 2026-07-02: прежний P67-fallback («f3 и проба промахнулись → int,
+                // byte-identical legacy») УДАЛЁН — это §1-анти-паттерн «авто-выводимый
+                // неверный тип»: он ТРАВИЛ канал (`@map` use-поля generic-ресивера
+                // аннотировалось Scalar-int), из-за чего codegen держал парный guard
+                // «Member int = недоверие» и ронял ~1300 ЧЕСТНЫХ int-полей в legacy.
+                // Незарезолвленный Member теперь БЕЗ аннотации → legacy-навигация;
+                // канал содержит только доверенные типы, guard у потребителя снят.
             }
             ExprKind::Index { obj, index } => {
                 self.f1_expr(obj, gs, scope, errors);
@@ -8870,6 +8873,12 @@ impl<'a> TypeCheckCtx<'a> {
                                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
                         if Self::primitive_gate(&rt) || concrete_value_named {
+                            if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
+                                && matches!(&rt, ResolvedType::Scalar { wide_default: true, signed: true, .. })
+                            {
+                                eprintln!("[MEMBER-INT f3-record] id={:?} span={:?} tname={} field={} fty={:?}",
+                                    member_id, span, tname, name, field_ty);
+                            }
                             self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                         }
                     }
@@ -9013,6 +9022,12 @@ impl<'a> TypeCheckCtx<'a> {
                                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
                         if Self::primitive_gate(&rt) || concrete_value_named {
+                            if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
+                                && matches!(&rt, ResolvedType::Scalar { wide_default: true, signed: true, .. })
+                            {
+                                eprintln!("[MEMBER-INT f3-ntuple] id={:?} span={:?} tname={} field={} fty={:?}",
+                                    member_id, span, tname, name, field_ty);
+                            }
                             self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                         }
                     }
