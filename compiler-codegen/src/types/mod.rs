@@ -10635,11 +10635,34 @@ impl<'a> TypeCheckCtx<'a> {
             // registration calls infer_expr_type, so the buf is already populated. This binds
             // `ro a = [1, 2, 3]` as `a: Vec[int]` in the checker scope — required for
             // operator-overload Binary inference (`a + b` → left operand type, D263 `@plus`).
-            // Un-annotated literal (non-primitive / empty / spread-first) → None (legacy).
-            ExprKind::ArrayLit(_) => {
+            //
+            // D185 fallback (2026-07-02): the f1 annotation is primitive-gated (emission-side
+            // byte-compat), so a record-element literal (`[D185Score{…}]`) has NO buf entry —
+            // yet the SCOPE needs the binding type (`mut scores = [Rec{…}]` → `[]Rec`), or the
+            // checker cannot resolve prefix-generic methods on it (`scores.sort_of()`,
+            // `fn[T Compare] []T @sort_of`) and codegen panics [P67-LEGACY]. Infer the element
+            // from the FIRST Item when it resolves to a CONCRETE single-segment non-generic
+            // Named type declared in `self.types` (record/sum/newtype — same conservatism as
+            // `resolve_prefix_generic_method_return`'s receiver guard). Scope-only knowledge:
+            // the literal's own emission stays legacy (no channel write here).
+            // Un-annotated otherwise (empty / spread-first / generic elem) → None (legacy).
+            ExprKind::ArrayLit(elems) => {
                 if expr.id.is_set() {
                     if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
                         return Self::resolved_to_typeref(rt, expr.span);
+                    }
+                }
+                let first_item = elems.iter().find_map(|el| match el {
+                    ArrayElem::Item(x) => Some(x),
+                    _ => None,
+                })?;
+                let elem_tr = self.infer_expr_type(first_item, scope)?;
+                if let TypeRef::Named { path, generics, .. } = &elem_tr {
+                    if path.len() == 1
+                        && generics.is_empty()
+                        && self.types.get(&path[0]).map_or(false, |td| td.generics.is_empty())
+                    {
+                        return Some(TypeRef::Array(Box::new(elem_tr), expr.span));
                     }
                 }
                 None

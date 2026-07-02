@@ -16,14 +16,14 @@ fn[T] []T @my_filter_se(pred fn(T) -> bool) -> []T {
 
 test "T=str filter on string-array" {
     ro names []str = ["a", "bb", "ccc", "dddd"]
-    ro long_ones = names.my_filter_se(|n| n.len() > 1)
+    ro long_ones = names.my_filter_se(|n| n.byte_len() > 1)
     assert(long_ones.len() == 3)
     assert(long_ones.get(0) == Some("bb"))
 }
 
 test "T=str map T → int (len)" {
     ro names []str = ["alice", "bob", "ch"]
-    ro lens = names.my_map_se(|n| n.len())
+    ro lens = names.my_map_se(|n| n.byte_len())
     assert(lens.len() == 3)
     assert(lens.get(0) == Some(5))
     assert(lens.get(2) == Some(2))

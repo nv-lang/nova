@@ -1,0 +1,97 @@
+// D185 — Generic array API: sort/min/max/binary_search + _by variants (Plan 91.8c, ACTIVE).
+// Норма (spec/decisions/02-types.md §D185): bound-based `fn[T Compare] []T @sort_of()/
+// @min_of()/@max_of()/@binary_search_of(T)`; callback-based `@sort_by_of/@min_by_of/
+// @max_by_of` (без bound); utility `@reverse_of/@position_of/@count_of/@find_of`;
+// суффикс `_of` избегает коллизии с concrete `[]int @sort()` (сохранён как fast-path —
+// backward compat, overload по exact-receiver); user-тип с `@compare` (D183) sortable
+// generic-путём; §amend-2: `@sort_unstable` = pdqsort. Шаблоны сверены с
+// nova_tests/plan91_8c. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+import std.sort
+
+// User-тип с @compare (D183 Compare) — generic sort_of должен диспетчиться.
+type D185Score {
+    points int,
+}
+
+fn D185Score @compare(other D185Score) -> int => @points - other.points
+
+test "sort_of: []int и []str через T Compare (D185)" {
+    mut xs []int = [3, 1, 4, 1, 5, 9, 2, 6]
+    xs.sort_of()
+    assert(xs == [1, 1, 2, 3, 4, 5, 6, 9])
+
+    mut ws []str = ["zebra", "apple", "mango"]
+    ws.sort_of()
+    assert(ws[0] == "apple")
+    assert(ws[2] == "zebra")
+}
+
+test "sort_of: пустой и одноэлементный — no-op (D185)" {
+    mut e []int = []
+    e.sort_of()
+    assert(e.len() == 0)
+    mut s []int = [42]
+    s.sort_of()
+    assert(s[0] == 42)
+}
+
+test "sort_of: user-тип с @compare (D183→D185 generic dispatch)" {
+    mut scores = [D185Score { points: 30 }, D185Score { points: 10 }, D185Score { points: 20 }]
+    scores.sort_of()
+    assert(scores[0].points == 10)
+    assert(scores[1].points == 20)
+    assert(scores[2].points == 30)
+}
+
+test "binary_search_of: found/not-found на отсортированном (D185)" {
+    mut xs []int = [1, 3, 5, 7, 9]
+    assert(xs.binary_search_of(5) == Some(2))
+    assert(xs.binary_search_of(4) == None)
+    mut ws []str = ["apple", "mango", "zebra"]
+    assert(ws.binary_search_of("mango") == Some(1))
+}
+
+test "min_of/max_of: значения и None на пустом (D185)" {
+    ro xs []int = [5, 2, 8, 1]
+    assert(xs.min_of() == Some(1))
+    assert(xs.max_of() == Some(8))
+    ro e []int = []
+    assert(e.min_of() == None)
+    assert(e.max_of() == None)
+}
+
+test "sort_by_of: порядок задаёт callback — по убыванию (D185)" {
+    mut xs []int = [3, 1, 4, 1, 5]
+    xs.sort_by_of(|a, b| b - a)
+    assert(xs == [5, 4, 3, 1, 1])
+}
+
+test "min_by_of/max_by_of: по длине строки, без Compare-bound (D185)" {
+    ro words []str = ["apple", "kiwi", "banana"]
+    assert(words.min_by_of(|a, b| a.len() - b.len()) == Some("kiwi"))
+    assert(words.max_by_of(|a, b| a.len() - b.len()) == Some("banana"))
+}
+
+test "utility: reverse_of / position_of / count_of / find_of (D185)" {
+    mut xs []int = [1, 2, 3, 4]
+    xs.reverse_of()
+    assert(xs == [4, 3, 2, 1])
+    assert(xs.position_of(|x| x == 3) == Some(1))
+    assert(xs.count_of(|x| x > 2) == 2)
+    assert(xs.find_of(|x| x < 3) == Some(2))
+    assert(xs.find_of(|x| x > 100) == None)
+}
+
+test "backward compat: concrete []int @sort() сохранён (D185)" {
+    mut xs []int = [9, 7, 8]
+    xs.sort()
+    assert(xs == [7, 8, 9])
+}
+
+test "sort_unstable — pdqsort (D185 §amend-2)" {
+    mut xs = Vec[int].of(5, 3, 9, 1, 7, 2, 8, 4, 6)
+    xs.sort_unstable()
+    assert(xs.equal(Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9)))
+}

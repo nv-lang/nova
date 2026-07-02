@@ -32,8 +32,8 @@ type Tag {
     name str
 }
 
-fn Tag @hash() -> int => @name.len()
-fn Tag @size() -> int => @name.len() + 1
+fn Tag @hash() -> int => @name.byte_len()
+fn Tag @size() -> int => @name.byte_len() + 1
 
 
 // Generic — оба concrete-типа должны проходить bound.
