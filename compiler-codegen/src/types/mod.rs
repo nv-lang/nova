@@ -6752,10 +6752,12 @@ impl<'a> TypeCheckCtx<'a> {
                 // `resolve_instance_method_return` so the INLINE inference is conservative too.
                 if e.id.is_set() {
                     if let Some(tr) = self.infer_method_call_channel_type(e, scope) {
-                        if !typeref_mentions_any(&tr, gs) {
-                            let rt = ResolvedType::from_type_ref(&tr);
-                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
-                        }
+                        // 172.1.2 Шаг 3.1: gs-gate заменён на mark_type_params —
+                        // return с residual-параметром аннотируется ЯВНЫМ TypeParam
+                        // (лоуэринг: receiver-instance map → subst → Err → legacy).
+                        let rt = Self::mark_type_params(
+                            ResolvedType::from_type_ref(&tr), gs);
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     } else if let ExprKind::Ident(fname) = &func.kind {
                         // P67 ФАЗА 2 (variant ctor `Some(x)` — int-collapse-relevant, gap driver):
                         // channel `Option[type-of-x]` so the ctor expr's type PRESERVES payload
