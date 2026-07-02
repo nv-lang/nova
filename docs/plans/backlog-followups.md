@@ -731,3 +731,11 @@ Nova-body `Once.try_start() -> Option[OnceGuard consume]` codegen'ом не эм
 (builtin Nova-body метод, эмитился как struct-member-call → CC-FAIL). Корпус
 использует extern-пару try_start_won()+make_guard(). Тест Option-формы — после
 U.1.3b sync-inline.
+
+## [M-172.1-d48-tagged-template-runtime] — tagged template literals: рантайм-краш (2026-07-02)
+
+`d48_fmt`x=${x}...`` — parser+emit поддерживают TaggedTemplate (emit_c.rs:11841/22408),
+но корпус фичу НИ РАЗУ не вызывал → латентный неисполнявшийся путь (§10-класс).
+Первый реальный вызов крашится в рантайме (обрыв без assert-сообщения). Тест-драйвер:
+spec_tests/inprogress/d48_tagged_template.nv. Расследовать эмиссию parts[]/args[]
+(вероятно: массивы литералов / str.from-конверсия в emit-desugar) перед переносом.

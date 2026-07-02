@@ -1,0 +1,31 @@
+// GAP [M-172.1-d48-tagged-template-runtime]: КРАСНЫЙ — рантайм-краш при вызове
+// tag-функции (фича реализована в parser+emit, но корпус её НИ РАЗУ не вызывал —
+// латентный неисполнявшийся путь, класс §10). Расследовать эмиссию parts/args
+// (emit_c.rs:22408) перед переносом в conformance.
+// D48 — Tagged template literals: `tag`...${e}...`` = сахар над вызовом
+// tag(parts []str, args []T) — сегменты и значения раздельно
+// (spec/decisions/03-syntax.md §D48). parts.len() == args.len() + 1.
+// Один folder-module `spec_tests.conformance`.
+module inprogress.d48_tagged_template
+
+fn d48_fmt(parts []str, args []int) -> str {
+    mut d48_out = parts[0]
+    mut d48_i = 0
+    for d48_a in args {
+        d48_out = d48_out + str.from(d48_a) + parts[d48_i + 1]
+        d48_i = d48_i + 1
+    }
+    d48_out
+}
+
+test "tagged template: desugar в tag(parts, args) (D48)" {
+    ro d48_x = 1
+    ro d48_y = 2
+    ro d48_s = d48_fmt`x=${d48_x}, y=${d48_y}!`
+    assert(d48_s == "x=1, y=2!")
+}
+
+test "tagged template: без интерполяций — один сегмент (D48)" {
+    ro d48_raw = d48_fmt`plain`
+    assert(d48_raw == "plain")
+}
