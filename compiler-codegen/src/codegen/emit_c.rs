@@ -37421,6 +37421,35 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return String::new();
             }
         }
+        // Channel 6f (tally 2026-07-02): module-qualified ИМЯ ТИПА как ресивер
+        // (`raw_mem.RawMem` в `raw_mem.RawMem.copy(...)`) — namespace не значение,
+        // C-типа нет: "" (дословный legacy-ответ; метод резолвится синтаксически
+        // по recv_tn — D289-механика). Гейт: name = известный ТИП (реестры 6c),
+        // obj — чистая ident-цепочка namespace'а (root lowercase, не локал).
+        if let ExprKind::Member { obj, name } = &expr.kind {
+            if self.generic_types.contains(name.as_str())
+                || self.generic_type_templates.contains_key(name.as_str())
+                || self.record_schemas.contains_key(name.as_str())
+                || self.sum_schemas.contains_key(name.as_str())
+            {
+                let mut cur = obj.as_ref();
+                let ns_chain = loop {
+                    match &cur.kind {
+                        ExprKind::Member { obj: o2, .. } => cur = o2.as_ref(),
+                        ExprKind::Ident(root) => {
+                            break !self.var_types.contains_key(root)
+                                && !self.closure_param_type_overrides.borrow().contains_key(root)
+                                && !self.pattern_binding_overrides.borrow().contains_key(root)
+                                && !root.chars().next().map_or(false, |c| c.is_ascii_uppercase());
+                        }
+                        _ => break false,
+                    }
+                };
+                if ns_chain {
+                    return String::new();
+                }
+            }
+        }
         // All channels failed → legacy (panics on entry — checker gap, see compiler-conventions.md §0).
         self.infer_expr_c_type_legacy(expr)
     }
