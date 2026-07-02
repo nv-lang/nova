@@ -1,0 +1,92 @@
+// D275 — Codegen: `if`/`match`-выражение коэрсится в `unit`, когда одна
+// не-расходящаяся ветка `unit` (паритет if↔match; ACTIVE 2026-06-14).
+// Норма (spec/decisions/08-runtime.md §D275): в statement/discard-позиции
+// fluent-хвост (`-> @`, напр. `v.push(x)` → Vec*) в одной ветке + unit-сосед →
+// ВСЁ выражение unit (эффекты выполняются, значение отброшено); расходящийся
+// сосед (`return`) unit НЕ форсит (Plan 125 divergence-aware сохранён);
+// value-typed `if c {1} else {2}` НЕ трогается (гейт chosen != unit);
+// infer↔emit симметрия для match (unit-арм доминирует). Шаблоны сверены с
+// nova_tests/cgfix_fluent_tail_if. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+// then = fluent Vec* хвост, else = unit → if-стейтмент коэрсится в unit.
+fn d275_fill(cond bool) -> Vec[int] {
+    mut v = Vec[int].with_capacity(2)
+    if cond { v.push(1) }
+    else    { v.push(2); () }
+    v
+}
+
+// Зеркало: fluent в else, unit в then (симметрия ветвей).
+fn d275_fill_mirror(cond bool) -> Vec[int] {
+    mut v = Vec[int].with_capacity(2)
+    if cond { v.push(7); () }
+    else    { v.push(9) }
+    v
+}
+
+// else-if chain: fluent-хвосты + расходящаяся финальная ветка (infer↔emit R3).
+fn d275_chain(n int) -> Vec[int] {
+    mut v = Vec[int].with_capacity(4)
+    if n == 2 {
+        v.push(1)
+    } else if n == 3 {
+        v.push(2)
+        v.push(3)
+    } else if n == 1 {
+        return v
+    }
+    v
+}
+
+// match-паритет: fluent-арм + unit-арм в discard-позиции → match = unit.
+fn d275_match_fill(n int) -> Vec[int] {
+    mut v = Vec[int].with_capacity(2)
+    match n {
+        0 => v.push(10)
+        _ => ()
+    }
+    v
+}
+
+// CONTROL: value-typed if остаётся своим типом (не коэрсится).
+fn d275_pick(c bool) -> int {
+    ro x = if c { 1 } else { 2 }
+    x
+}
+
+test "fluent-хвост + unit-сосед: if коэрсится в unit, эффекты выполняются (D275)" {
+    ro d275_a = d275_fill(true)
+    ro d275_b = d275_fill(false)
+    assert(d275_a.len() == 1)
+    assert(d275_a[0] == 1)
+    assert(d275_b.len() == 1)
+    assert(d275_b[0] == 2)
+}
+
+test "зеркало: fluent в else, unit в then (D275)" {
+    ro d275_a = d275_fill_mirror(true)
+    ro d275_b = d275_fill_mirror(false)
+    assert(d275_a[0] == 7)
+    assert(d275_b[0] == 9)
+}
+
+test "else-if chain с расходящейся финальной веткой (D275 infer↔emit)" {
+    assert(d275_chain(2).len() == 1)
+    ro d275_b = d275_chain(3)
+    assert(d275_b.len() == 2)
+    assert(d275_b[1] == 3)
+    assert(d275_chain(1).len() == 0)
+}
+
+test "match-паритет: unit-арм доминирует в discard-позиции (D275)" {
+    ro d275_m = d275_match_fill(0)
+    assert(d275_m.len() == 1)
+    assert(d275_m[0] == 10)
+    assert(d275_match_fill(5).len() == 0)
+}
+
+test "control: value-typed if НЕ коэрсится (D275 гейт)" {
+    assert(d275_pick(true) == 1)
+    assert(d275_pick(false) == 2)
+}

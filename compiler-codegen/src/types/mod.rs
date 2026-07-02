@@ -6485,6 +6485,11 @@ impl<'a> TypeCheckCtx<'a> {
             if e.id.is_set() {
                 if let Some(tr) = self.infer_expr_type(e, scope) {
                     let rt = ResolvedType::from_type_ref(&tr);
+                    if std::env::var("NOVA_DEBUG_IF_INFER").is_ok()
+                        && matches!(&e.kind, ExprKind::If { .. })
+                    {
+                        eprintln!("PREAMBLE-IF id={:?} span={:?} rt={:?}", e.id, e.span, rt);
+                    }
                     self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                 }
             }
@@ -10367,8 +10372,67 @@ impl<'a> TypeCheckCtx<'a> {
             // Conservative: use outer `scope` for trailing infer — if the trailing expr
             // references a let-binding introduced inside the block, infer_expr_type returns
             // None → no annotation → safe legacy fallback. No false annotations possible.
-            ExprKind::If { then, else_: Some(_), .. } => {
-                then.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope))
+            //
+            // D275 unit-domination MIRROR (2026-07-02, infer↔emit симметрия R2/R4):
+            // если then-хвост — реальный value-тип (fluent `-> @` push → Vec*), а
+            // ДРУГАЯ не-расходящаяся ветка даёт unit — ВЕСЬ if коэрсится в unit
+            // (discard-позиция; emit_if_expr так и эмитит). Без зеркала f1-preamble
+            // аннотировал if типом fluent-хвоста → канал перекрывал emit-фоллбек →
+            // `tmp(Vec*) = NOVA_UNIT` CC-FAIL (cgfix_fluent_tail_if/chain — регресс
+            // D275, пойман 2026-07-02). Never (расходящаяся ветка) unit НЕ форсит
+            // (Plan 125 приоритет divergence сохранён); неразрешимый else — старое
+            // поведение (then-тип).
+            ExprKind::If { then, else_: Some(eb), .. } => {
+                // Divergence-aware (Plan 125): расходящаяся ветка исключается из выбора
+                // типа (та же логика, что emit_if_expr / legacy infer_If — R3 симметрия).
+                // `block_diverges` ловит и stmt-форму (`{ throw "..." }` без trailing),
+                // которую типовой инференс видел бы как Unit.
+                let then_div = block_diverges(then);
+                let then_t = then.trailing.as_ref().and_then(|t| self.infer_expr_type(t, scope));
+                let (else_div, else_t): (bool, Option<TypeRef>) = match eb {
+                    crate::ast::ElseBranch::Block(b) => (
+                        block_diverges(b),
+                        match &b.trailing {
+                            Some(t) => self.infer_expr_type(t, scope),
+                            None => Some(TypeRef::Unit(expr.span)),
+                        },
+                    ),
+                    crate::ast::ElseBranch::If(e) => {
+                        (expr_diverges(e), self.infer_expr_type(e, scope))
+                    }
+                };
+                if then_div && !else_div {
+                    return else_t; // тип if = тип не-расходящейся else-ветки
+                }
+                if else_div && !then_div {
+                    return then_t;
+                }
+                if then_div && else_div {
+                    return Some(prim_ref("never", expr.span));
+                }
+                // Обе ветки не расходятся:
+                let is_unit = |t: &TypeRef| matches!(ResolvedType::from_type_ref(t), ResolvedType::Unit);
+                match (&then_t, &else_t) {
+                    // Ровно одна — unit, другая — value: D275 unit-доминирование
+                    // ([M-codegen-fluent-tail-if-unify]) → весь if = unit.
+                    (Some(tt), Some(te))
+                        if (is_unit(tt) && !is_unit(te)) || (is_unit(te) && !is_unit(tt)) =>
+                    {
+                        Some(TypeRef::Unit(expr.span))
+                    }
+                    // Обе разрешились И совпали → этот тип.
+                    (Some(tt), Some(te))
+                        if ResolvedType::from_type_ref(tt) == ResolvedType::from_type_ref(te) =>
+                    {
+                        Some(tt.clone())
+                    }
+                    // Типы разошлись ЛИБО сторона не разрешилась → НЕ аннотировать
+                    // (None → legacy). Прежнее lax-«then-tail побеждает» ядовито: fluent
+                    // Vec*-хвост в then + неразрешимый else-if аннотировал if как Vec*,
+                    // канал перекрывал emit-фоллбек D275 → `tmp(Vec*) = NOVA_UNIT` CC-FAIL
+                    // (cgfix_fluent_tail_if/chain, pre-existing регресс, пойман 2026-07-02).
+                    _ => None,
+                }
             }
             // If without else — always unit (condition may fail, no value produced).
             ExprKind::If { else_: None, .. } => Some(TypeRef::Unit(expr.span)),

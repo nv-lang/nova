@@ -29309,10 +29309,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     self.block_trailing_diverges(b),
                     self.branch_trailing_c_type_with_locals(b),
                 ),
-                Some(ElseBranch::If(e)) => (
-                    self.expr_diverges_125(e),
-                    self.infer_expr_c_type(e),
-                ),
+                Some(ElseBranch::If(e)) => {
+                    let d = self.expr_diverges_125(e);
+                    let t = self.infer_expr_c_type(e);
+                    if std::env::var("NOVA_DEBUG_IF_INFER").is_ok() {
+                        eprintln!("PLAN125 else-if: diverges={} ty={} channel={:?}",
+                            d, t,
+                            if e.id.is_set() { self.resolved_types.get(&e.id).map(|rt| format!("{:?}", rt)) } else { None });
+                    }
+                    (d, t)
+                }
                 None => (false, "nova_unit".into()),
             };
             let chosen = if then_diverges {
@@ -37129,16 +37135,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // annotated by checker and peer_files.items_here iterated by codegen — architectural gap).
         // If without else → unit (statement-form). If with else → try then-block trailing expr.
         // Block → trailing expr. This is NOT legacy: returns correct types without panic.
-        if let ExprKind::If { then, else_, .. } = &expr.kind {
+        if let ExprKind::If { else_, .. } = &expr.kind {
             if else_.is_none() {
                 return "nova_unit".into();
             }
-            // If with else: try to get then-block trailing type.
-            if let Some(e) = &then.trailing {
-                return self.infer_expr_c_type(e);
-            }
-            // No trailing → unit.
-            return "nova_unit".into();
+            // [D275 regression fix 2026-07-02] if-с-else НЕ обрабатываем здесь:
+            // прежний наивный возврат then-trailing типа игнорировал
+            // divergence-aware выбор ветки (Plan 125) и unit-доминирование
+            // (D275, [M-codegen-fluent-tail-if-unify]) — fluent `-> @` хвост в
+            // then при unit/неразрешимом else типизировал весь if как Vec*, а
+            // emit коэрсит его в unit → `tmp(Vec*) = NOVA_UNIT` CC-FAIL
+            // (cgfix_fluent_tail_if/chain). Legacy If-arm ниже несёт ПОЛНОЕ
+            // зеркало emit_if_expr (divergence + unit-domination) — падаем туда.
         }
         if let ExprKind::Block(b) = &expr.kind {
             if let Some(e) = &b.trailing {
