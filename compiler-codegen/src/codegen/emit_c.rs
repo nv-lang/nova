@@ -20435,9 +20435,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // Plan 14 Ф.1: `None` — typed compound literal по
                         // current_fn_return_ty. Иначе — legacy nova_make.
                         if name == "None" {
-                            let opt_ty: String = self.current_fn_return_ty.as_ref()
-                                .filter(|t| t.starts_with("NovaOpt_"))
-                                .cloned()
+                            // 172.1.2 (None-канал, 2026-07-03): КАНАЛ первым — чекер
+                            // аннотирует None expected-типом (literal-coercion) или
+                            // типом другого операнда сравнения; function-level
+                            // current_fn_return_ty — лишь фоллбек (врёт по позиции).
+                            let channel_opt: Option<String> = expr
+                                .id
+                                .is_set()
+                                .then(|| self.resolved_types.get(&expr.id))
+                                .flatten()
+                                .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                                .filter(|t| t.starts_with("NovaOpt_"));
+                            let opt_ty: String = channel_opt
+                                .or_else(|| {
+                                    self.current_fn_return_ty
+                                        .as_ref()
+                                        .filter(|t| t.starts_with("NovaOpt_"))
+                                        .cloned()
+                                })
                                 .unwrap_or_else(|| "NovaOpt_nova_int".into());
                             // Plan 118 Ф.5: NPO-aware None constructor.
                             let sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);

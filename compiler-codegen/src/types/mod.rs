@@ -6882,6 +6882,44 @@ impl<'a> TypeCheckCtx<'a> {
                 //     overload return / mono-substitutes `T` via `current_type_subst`).
                 if e.id.is_set() {
                     use crate::ast::BinOp;
+                    // 172.1.2 (None-операнд сравнения): `x == None` — тип None
+                    // ИЗВЕСТЕН из другого операнда (сравнение требует один тип):
+                    // Option[..] из infer/канала → аннотируем None-Ident.
+                    if matches!(op, BinOp::Eq | BinOp::Neq) {
+                        let none_side = |a: &Expr, b: &Expr| -> Option<()> {
+                            if !matches!(&a.kind, ExprKind::Ident(n) if n == "None") {
+                                return None;
+                            }
+                            if !a.id.is_set() || scope.contains_key("None") {
+                                return None;
+                            }
+                            // ТОЛЬКО канал (buf — прошёл гейты продюсеров; scope-infer
+                            // здесь ловил int-collapse) + гейт payload'а: конкретный
+                            // НЕ-wide-default (Option[int] от литерала — недостоверен).
+                            let other: Option<ResolvedType> = if b.id.is_set() {
+                                self.resolved_types_buf.borrow().get(&b.id).cloned()
+                            } else {
+                                None
+                            };
+                            if let Some(rt) = other {
+                                let payload_ok = matches!(&rt,
+                                    ResolvedType::Named { name, args, .. }
+                                        if name == "Option" && args.len() == 1
+                                            && !matches!(&args[0], ResolvedType::Scalar {
+                                                wide_default: true, .. })
+                                            && (Self::primitive_gate(&args[0])
+                                                || matches!(&args[0], ResolvedType::Str)
+                                                || matches!(&args[0],
+                                                    ResolvedType::Named { args: a2, .. }
+                                                        if a2.is_empty())));
+                                if payload_ok {
+                                    self.resolved_types_buf.borrow_mut().insert(a.id, rt);
+                                }
+                            }
+                            Some(())
+                        };
+                        let _ = none_side(left, right).or_else(|| none_side(right, left));
+                    }
                     let res_rt: Option<ResolvedType> = match op {
                         BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
                         | BinOp::And | BinOp::Or | BinOp::Implies | BinOp::Iff => {
