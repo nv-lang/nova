@@ -37506,6 +37506,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         _ => "other".into(),
                     }
                 ),
+                ExprKind::Binary { op, left, right } => {
+                    let k = |x: &Expr| -> String {
+                        match &x.kind {
+                            ExprKind::Ident(n) => format!("i:{}", n),
+                            ExprKind::Member { name, .. } => format!("m:.{}", name),
+                            ExprKind::Call { .. } => "call".into(),
+                            ExprKind::Index { .. } => "idx".into(),
+                            ExprKind::IntLit(_) => "lit".into(),
+                            ExprKind::Binary { .. } => "bin".into(),
+                            ExprKind::SelfAccess => "@".into(),
+                            _ => "other".into(),
+                        }
+                    };
+                    format!("Bin:{:?}:{}~{}", op, k(left), k(right))
+                }
                 other => format!("Other:{:?}", std::mem::discriminant(other)),
             };
             eprintln!("[P67-LEGACY] kind={} desc={} span={:?} id={:?} in_resolved={} src_file={}",
