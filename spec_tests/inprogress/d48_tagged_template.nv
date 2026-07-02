@@ -1,7 +1,7 @@
-// GAP [M-172.1-d48-tagged-template-runtime]: КРАСНЫЙ — рантайм-краш при вызове
-// tag-функции (фича реализована в parser+emit, но корпус её НИ РАЗУ не вызывал —
-// латентный неисполнявшийся путь, класс §10). Расследовать эмиссию parts/args
-// (emit_c.rs:22408) перед переносом в conformance.
+// GAP [M-172.1-d48-tagged-template-desugar]: КРАСНЫЙ — desugar в tag(parts,args)
+// НЕ реализован: emit-arm (emit_c.rs:22408) игнорирует tag-функцию (bootstrap
+// degrade), parser не сплитит ${} внутри tagged-template → эмитится сырой
+// литерал. Реализовать parser-split + emit-вызов tag перед переносом.
 // D48 — Tagged template literals: `tag`...${e}...`` = сахар над вызовом
 // tag(parts []str, args []T) — сегменты и значения раздельно
 // (spec/decisions/03-syntax.md §D48). parts.len() == args.len() + 1.
