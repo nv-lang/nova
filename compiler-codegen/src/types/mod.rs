@@ -50,6 +50,13 @@ pub enum ResolvedType {
     /// Plan 115 D214 opaque `ptr`.
     Ptr,
     Any,
+    /// 172.1.2 mono-канал (Шаг 1, 2026-07-02): residual generic-ПАРАМЕТР шаблона —
+    /// ЯВНЫЙ носитель (не name-эвристика, §3-чисто). Аннотация generic-тела с
+    /// TypeParam — ПРАВДА о шаблоне, валидная для всех mono-инстансов; подстановка —
+    /// лоуэринг-забота: resolved_type_to_c берёт current_type_subst/overrides,
+    /// промах = Err (channel-miss → legacy-навигация), НИКОГДА не Nova_T*/nova_int.
+    /// Продюсеры помечают через mark_type_params (td.generics ∪ fn.generics ∪ gs).
+    TypeParam(String),
     /// L3 typed pointer: pointee modifier + inner (mirrors `Ty::TypedPtr`).
     TypedPtr(crate::ast::PointerModifier, Box<ResolvedType>),
     /// L2 content-view `readonly T` (D246 axis L2). U.5.5(a): carried LOSSLESSLY (D315 —
@@ -10455,6 +10462,38 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// 172.1.2 Шаг 1: пометить residual generic-параметры ЯВНЫМ носителем.
+    /// `Named{name, module:[], args:[]}` с name ∈ params → `TypeParam(name)`;
+    /// рекурсивно по args/Tuple/Array/TypedPtr/Readonly/Func. Идемпотентно.
+    fn mark_type_params(rt: ResolvedType, params: &std::collections::HashSet<String>) -> ResolvedType {
+        use ResolvedType as R;
+        match rt {
+            R::Named { name, module, args } => {
+                if module.is_empty() && args.is_empty() && params.contains(&name) {
+                    R::TypeParam(name)
+                } else {
+                    R::Named {
+                        name,
+                        module,
+                        args: args.into_iter().map(|a| Self::mark_type_params(a, params)).collect(),
+                    }
+                }
+            }
+            R::Array(inner) => R::Array(Box::new(Self::mark_type_params(*inner, params))),
+            R::Tuple(items) => {
+                R::Tuple(items.into_iter().map(|i| Self::mark_type_params(i, params)).collect())
+            }
+            R::TypedPtr(m, inner) => R::TypedPtr(m, Box::new(Self::mark_type_params(*inner, params))),
+            R::Readonly(inner) => R::Readonly(Box::new(Self::mark_type_params(*inner, params))),
+            R::Func { params: ps, ret, effects } => R::Func {
+                params: ps.into_iter().map(|p| Self::mark_type_params(p, params)).collect(),
+                ret: Box::new(Self::mark_type_params(*ret, params)),
+                effects,
+            },
+            other => other,
+        }
+    }
+
     /// Plan 172.1 §0a helper: convert a ResolvedType back to a TypeRef for use as the
     /// return value of `infer_expr_type`. This is a best-effort conversion — Ptr / Any /
     /// TypedPtr / Func → None (uncommon in field / return-type positions; not needed for
@@ -10462,6 +10501,8 @@ impl<'a> TypeCheckCtx<'a> {
     fn resolved_to_typeref(rt: &ResolvedType, span: Span) -> Option<TypeRef> {
         use ResolvedType as R;
         Some(match rt {
+            // 172.1.2 Шаг 1: residual параметр без subst-контекста невосстановим — None.
+            R::TypeParam(_) => return None,
             R::Scalar { width, signed, wide_default } => {
                 let name = match (width, signed, wide_default) {
                     (8,  true,  _)     => "i8",

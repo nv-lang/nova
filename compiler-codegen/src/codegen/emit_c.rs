@@ -1958,6 +1958,20 @@ impl CEmitter {
             R::Bool => Self::primitive_name_to_c("bool").unwrap().to_string(),
             R::Str => Self::primitive_name_to_c("str").unwrap().to_string(),
             R::Unit => "nova_unit".to_string(),
+            // 172.1.2 Шаг 1: residual generic-параметр — подстановка из mono-контекста
+            // (overrides → current_type_subst); промах = Err → channel-miss → legacy.
+            // НИКОГДА не Nova_T*/nova_int (§1: Err-вместо-лжи). Erased-тела (пустой
+            // subst) автоматически получают Err → erased-поведение сохранено.
+            R::TypeParam(n) => {
+                if let Some(c) = self.type_subst_overrides.borrow().get(n.as_str()) {
+                    return Ok(c.clone());
+                }
+                return self
+                    .current_type_subst
+                    .get(n.as_str())
+                    .cloned()
+                    .ok_or_else(|| format!("unsubstituted type-param `{}`", n));
+            }
             // `never` — bottom-type ABI placeholder (mirrors type_ref_to_c `never` arm).
             R::Never => "nova_int".to_string(),
             // Opaque `ptr` (Plan 115) — only from the NullPtrLit literal seed; not a
@@ -2244,10 +2258,19 @@ impl CEmitter {
                 // (parity-protected recursion), erased (None→"nova_int") EXACTLY like
                 // type_ref_to_c's `unwrap_or(nova_int)` partial-mono tolerance.
                 if !args.is_empty() && self.generic_type_templates.contains_key(&full) {
-                    let type_args_c: Vec<String> = args
-                        .iter()
-                        .map(|a| self.resolved_type_to_c(a).unwrap_or_else(|_| "nova_int".to_string()))
-                        .collect();
+                    // 172.1.2 Шаг 1: TypeParam-Err ПРОПАГИРУЕТСЯ (channel-miss → legacy),
+                    // не стирается в nova_int; для прочих Err — прежняя partial-mono
+                    // толерантность (byte-identical, пока продюсеры не мигрированы).
+                    let mut type_args_c: Vec<String> = Vec::with_capacity(args.len());
+                    for a in args {
+                        let c = if matches!(a, crate::types::ResolvedType::TypeParam(_)) {
+                            self.resolved_type_to_c(a)?
+                        } else {
+                            self.resolved_type_to_c(a)
+                                .unwrap_or_else(|_| "nova_int".to_string())
+                        };
+                        type_args_c.push(c);
+                    }
                     let mangled = Self::compute_generic_type_c_name(&full, &type_args_c);
                     if !self.emitted_generic_type_instances.contains(&mangled) {
                         let mut wl = self.generic_type_worklist.borrow_mut();
