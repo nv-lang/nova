@@ -37318,6 +37318,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return format!("Nova_{}", name);
             }
         }
+        // Channel 6c (tally 2026-07-02): ИМЯ ТИПА как expr — TurboFish/static-ресивер
+        // (`Vec` в `Vec[int].new()`, `HashMap` в `HashMap[K,V].from(...)`). Ident
+        // представляет type-constructor; C-тип = erased heap-pointer `Nova_{name}*`.
+        // Дословный подъём legacy Ident-арма (те же реестры, тот же ответ) — legacy
+        // поверхность сокращается к удалению. Целевая форма: потребители static-вызовов
+        // не должны спрашивать C-тип имени типа вовсе (§1) — снимется с resolved_callees.
+        if let ExprKind::Ident(name) = &expr.kind {
+            if !self.var_types.contains_key(name)
+                && !self.closure_param_type_overrides.borrow().contains_key(name)
+                && !self.pattern_binding_overrides.borrow().contains_key(name)
+                && (self.generic_types.contains(name.as_str())
+                    || self.generic_type_templates.contains_key(name.as_str())
+                    || self.record_schemas.contains_key(name.as_str())
+                    || self.sum_schemas.contains_key(name.as_str()))
+            {
+                return format!("Nova_{}*", name);
+            }
+        }
         // All channels failed → legacy (panics on entry — checker gap, see compiler-conventions.md §0).
         self.infer_expr_c_type_legacy(expr)
     }
