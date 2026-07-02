@@ -6334,6 +6334,34 @@ impl<'a> TypeCheckCtx<'a> {
                         Some(t) => { scope.insert(name, t); }
                         None => { scope.remove(&name); }
                     }
+                } else if let Pattern::Tuple(pats, _) = &d.pattern {
+                    // 172.1.2 (tuple-let регистрация, 2026-07-04): `let (a, b) = rhs`
+                    // — элементы регистрируются из Tuple-типа RHS (аннотация /
+                    // infer / канал); несопоставимое — remove (не наследовать тень).
+                    let rhs_tr = d.ty.clone()
+                        .or_else(|| self.infer_expr_type(&d.value, scope))
+                        .or_else(|| {
+                            if !d.value.id.is_set() { return None; }
+                            let buf = self.resolved_types_buf.borrow();
+                            let rt = buf.get(&d.value.id)?.clone();
+                            drop(buf);
+                            Self::resolved_to_typeref_tp(&rt, d.value.span)
+                        });
+                    if let Some(TypeRef::Tuple(tys, _)) = rhs_tr {
+                        if tys.len() == pats.len() {
+                            for (pp, ty) in pats.iter().zip(tys) {
+                                if let Pattern::Ident { name: pn, .. } = pp {
+                                    scope.insert(pn.clone(), ty);
+                                }
+                            }
+                        }
+                    } else {
+                        for pp in pats {
+                            if let Pattern::Ident { name: pn, .. } = pp {
+                                scope.remove(pn);
+                            }
+                        }
+                    }
                 }
             }
             // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
@@ -7295,6 +7323,18 @@ impl<'a> TypeCheckCtx<'a> {
                     || self.infer_expr_type(index, scope).as_ref()
                         .and_then(Self::typeref_named_base) == Some("Range");
                 if !index_is_range {
+                    if std::env::var_os("NOVA_IDX_TRACE").is_some() {
+                        if let ExprKind::Ident(on) = &obj.kind {
+                            let sc = scope.contains_key(on);
+                            let bufh = obj.id.is_set()
+                                && self.resolved_types_buf.borrow().contains_key(&obj.id);
+                            let inferred = self.infer_expr_type(obj, scope).is_some();
+                            if !inferred {
+                                eprintln!("[IDX-MISS] v={} scope={} buf={} fid={:?}",
+                                    on, sc, bufh, e.span.file_id);
+                            }
+                        }
+                    }
                     if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
                         if Self::typeref_named_base(&obj_tr) == Some("str") {
                             errors.push(Diagnostic::new(
