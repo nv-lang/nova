@@ -7008,6 +7008,25 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 172.1 U.4.4: thread the Member expr's `ExprId` so the
                 // field-found site can annotate a concrete primitive field type.
                 self.f3_check_member_ctx(obj, name, e.span, e.id, scope, errors, is_call_func);
+                // 172.1.2 (Member-мост, POST-ORDER): tuple-поле `.N` на obj,
+                // видимом только КАНАЛУ (buf: Tuple-аннотация) — элемент кортежа.
+                if e.id.is_set()
+                    && obj.id.is_set()
+                    && !self.resolved_types_buf.borrow().contains_key(&e.id)
+                {
+                    if let Ok(ix) = name.parse::<usize>() {
+                        let elem: Option<ResolvedType> = {
+                            let buf = self.resolved_types_buf.borrow();
+                            match buf.get(&obj.id) {
+                                Some(ResolvedType::Tuple(items)) => items.get(ix).cloned(),
+                                _ => None,
+                            }
+                        };
+                        if let Some(rt) = elem {
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        }
+                    }
+                }
                 // 2026-07-02: прежний P67-fallback («f3 и проба промахнулись → int,
                 // byte-identical legacy») УДАЛЁН — это §1-анти-паттерн «авто-выводимый
                 // неверный тип»: он ТРАВИЛ канал (`@map` use-поля generic-ресивера
@@ -10870,6 +10889,12 @@ impl<'a> TypeCheckCtx<'a> {
             // bare Named{name} annotation cannot reproduce without generic mono args.
             ExprKind::Member { obj, name } => {
                 let obj_tr = self.infer_expr_type(obj, scope)?;
+                // 172.1.2: позиционное tuple-поле `t.0` / `t.1` — элемент кортежа.
+                if let TypeRef::Tuple(tys, _) = &obj_tr {
+                    if let Ok(ix) = name.parse::<usize>() {
+                        return tys.get(ix).cloned();
+                    }
+                }
                 if let TypeRef::Named { path, generics, .. } = &obj_tr {
                     if generics.is_empty() {
                         if let Some(type_name) = path.last() {
