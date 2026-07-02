@@ -37135,6 +37135,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
         // Channel 2: resolved_types → resolved_type_to_c (checker-annotated type for any expr)
         if expr.id.is_set() {
+            // 2026-07-02 (tally АТОМ 3, [M-closure-two-reprs]): closure-ЗНАЧЕНИЕ
+            // лоуэрится в NovaClos_X* (load-bearing: clos_struct_ret_type на
+            // call-site), а НЕ в общий R::Func→void* (тот — для declared-позиций
+            // fn-типов). Kind-гейт: только сами closure-выражения.
+            if matches!(&expr.kind, ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)) {
+                if let Some(crate::types::ResolvedType::Func { params, ret, .. }) =
+                    self.resolved_types.get(&expr.id)
+                {
+                    let p_c: Result<Vec<String>, String> =
+                        params.iter().map(|p| self.resolved_type_to_c(p)).collect();
+                    if let (Ok(p_c), Ok(r_c)) = (p_c, self.resolved_type_to_c(ret)) {
+                        return format!("{}*", Self::clos_struct_name(&p_c[..], &r_c));
+                    }
+                }
+            }
             if let Some(rt) = self.resolved_types.get(&expr.id) {
                 if let Ok(ir_c) = self.resolved_type_to_c(rt) {
                     // SelfAccess: prefer var_types["nova_self"] when available (reliable per-scope

@@ -7207,10 +7207,37 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Lambda { body, .. } => {
                 self.f1_expr(body, gs, scope, errors)
             }
-            ExprKind::ClosureLight { body, .. } => match body {
-                ClosureBody::Expr(e) => self.f1_expr(e, gs, scope, errors),
-                ClosureBody::Block(b) => self.f1_block(b, gs, scope, errors),
-            },
+            ExprKind::ClosureLight { params, body, .. } => {
+                match body {
+                    ClosureBody::Expr(be) => self.f1_expr(be, gs, scope, errors),
+                    ClosureBody::Block(b) => self.f1_block(b, gs, scope, errors),
+                }
+                // 2026-07-02 (tally АТОМ 3b): zero-param truthful-подмножество —
+                // `|| body` без параметров: нечего гадать про params, ret = infer
+                // тела. Гейт §1: primitive non-Unit ret + не упоминает gs.
+                // Полный bidirectional-вывод сигнатур — фаза C6; param'ные
+                // замыкания НЕ аннотируются (гадание params=int — ложь).
+                if e.id.is_set() && params.is_empty() {
+                    if let ClosureBody::Expr(be) = body {
+                        if let Some(tr) = self.infer_expr_type(be, scope) {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            if rt != ResolvedType::Unit
+                                && Self::primitive_gate(&rt)
+                                && !typeref_mentions_any(&tr, gs)
+                            {
+                                self.resolved_types_buf.borrow_mut().insert(
+                                    e.id,
+                                    ResolvedType::Func {
+                                        params: vec![],
+                                        ret: Box::new(rt),
+                                        effects: vec![],
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             ExprKind::ClosureFull(sb) => {
                 self.f1_fn_sig_body(sb, gs, scope, errors)
             }
