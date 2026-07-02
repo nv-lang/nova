@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_CONST_FN_NON_CONST_ARG
+// D199: runtime-значение (`ro x`) в позиции const-параметра при
+// комптайм-вызове (`const R = ...`) — args обязаны быть constexpr.
+#no_prelude
+module neg.d199_non_const_arg_neg
+
+fn add(const a int, const b int) -> const int => a + b
+
+fn use_runtime() {
+    ro x = 5
+    const R = add(x, 3)
+}

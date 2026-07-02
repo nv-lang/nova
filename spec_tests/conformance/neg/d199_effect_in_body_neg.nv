@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_CONST_FN_EFFECT_IN_BODY
+// D199: вызов runtime-fn (не const fn) в теле const fn запрещён.
+#no_prelude
+module neg.d199_effect_in_body_neg
+
+fn make(n int) -> int => n + 1
+
+fn bad(const a int) -> const int => make(a)

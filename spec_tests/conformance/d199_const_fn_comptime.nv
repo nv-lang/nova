@@ -1,0 +1,41 @@
+// D199 — `const fn`: comptime-вычисляемые функции (Plan 114.4.2, ACTIVE).
+// Норма (spec/decisions/03-syntax.md §D199): `const`-параметры + `-> const T`
+// (all-or-nothing); компилятор вычисляет тело на компиляции и инлайнит литерал
+// на call-site; тело — V1-whitelist (литералы, арифметика, as-cast примитивов,
+// локальные const, вызовы других const fn); const fn НЕ эмитится в C.
+// Покрытие (позитив): (1) block-body + локальный const + арифметика + char-cast;
+// (2) expr-body `=>`; (3) цепочка const fn → const fn; (4) результат в const;
+// (5) width-дисциплина: as-cast в u8 внутри const fn. Негативы — neg/d199_*.nv
+// (control-flow / non-const arg / effect-in-body). Шаблоны сверены с
+// nova_tests/plan114. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+fn d199_calc(const a int, const b char) -> const int {
+    const d199_c = b as int
+    a + d199_c * 10
+}
+
+fn d199_add(const a int, const b int) -> const int => a + b
+
+fn d199_outer(const x int) -> const int => d199_add(x, 1)
+
+fn d199_byte(const n int) -> const u8 => n as u8
+
+test "const fn: block-body, локальный const, char-cast (D199)" {
+    const D199_R1 = d199_calc(5, 'A')
+    assert(D199_R1 == 655)
+}
+
+test "const fn: expr-body и цепочка const→const (D199)" {
+    const D199_R2 = d199_add(40, 2)
+    assert(D199_R2 == 42)
+    const D199_R3 = d199_outer(41)
+    assert(D199_R3 == 42)
+}
+
+test "const fn: sized-return u8 не схлопывается (D199)" {
+    const D199_B = d199_byte(200)
+    assert(D199_B == 200)
+    ro d199_w u8 = D199_B
+    assert(d199_w == 200)
+}

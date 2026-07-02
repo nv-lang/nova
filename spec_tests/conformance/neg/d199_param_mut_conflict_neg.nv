@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR E_CONST_PARAM_MOD_CONFLICT
+// D199: `const mut a int` — взаимоисключающие модификаторы параметра.
+#no_prelude
+module neg.d199_param_mut_conflict_neg
+
+fn bad(const mut a int) -> const int => a
