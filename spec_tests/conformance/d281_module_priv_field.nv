@@ -1,0 +1,97 @@
+// D281 — module-level field privacy: `type X priv { ... }` where BARE `priv` =
+// MODULE-PRIVATE (the middle visibility level between public D47 and type-private
+// D220 `priv(type)`). POS-observable type-system behavior, asserted at runtime —
+// all asserts live in ONE folder-module `spec_tests.conformance`, so every access
+// site below is SAME-MODULE, which is exactly the positive criterion (§5.1/§5.5/§5.8).
+// The forbidden direction is cross-module `E_FIELD_MODULE_PRIVATE` — a negative
+// diagnostic, not POS-observable, so it is out of scope here.
+//
+//   §5.1 type-level `type T priv { f int }` flips fields to module-private. The
+//        DISTINGUISHING POS behavior vs D220 `priv(type)`: a FREE function (NOT a
+//        method of the type) may READ / WRITE / INIT such a field in the same
+//        module. Under `priv(type)` the same free-fn read would be E_PRIV_FIELD_READ;
+//        under bare `priv` (module-private) it compiles, runs, and returns the real
+//        field value.
+//   §5.5 Layering inside `type T priv { ... }`: a field marked `pub` is public
+//        (readable anywhere), a field marked `priv(type)` stays type-private (read
+//        only via own-type methods), and a bare-default field is module-private
+//        (readable from a same-module free fn). All three coexist in one type and
+//        the genuine values are observed.
+//   §5.8 Positive-pattern: `ro Type { ... } = t` destructure of a module-private field
+//        in the same module works and yields the real field value.
+// Spec: spec/decisions/02-types.md:12721 (D281 «Module-level field privacy —
+//   type X priv { … }»), §1 syntax / §3 access rules / §5 acceptance criteria.
+// One folder-module `spec_tests.conformance`; D-prefixed names are unique.
+module spec_tests.conformance
+
+// ── §5.1 type-level `priv` flip → module-private fields by default ──────────────
+// Plain (non-`value`) record → managed-heap, passed BY REFERENCE (D32): a `mut`
+// record param mutated inside a free fn IS visible to the caller.
+type D281Counter priv {
+    mut value int          // module-private (inherits type-level flip)
+    step int               // module-private
+}
+
+fn D281Counter.new(start int, by int) -> D281Counter =>
+    { value: start, step: by }
+
+// ── §5.1 FREE functions (NOT methods) touch module-private fields ──────────────
+// READ a module-private field from a free fn — allowed because same module (D281).
+fn d281_read_value(c D281Counter) -> int => c.value
+fn d281_read_step(c D281Counter) -> int => c.step
+
+// INIT module-private fields via record literal from a free fn — allowed (D281 §3).
+fn d281_make(start int, by int) -> D281Counter =>
+    { value: start, step: by }
+
+// WRITE a module-private field from a free fn taking `mut` (same module, D281 §3).
+fn d281_bump(mut c D281Counter) {
+    c.value = c.value + c.step
+}
+
+// ── §5.5 Layering: pub / priv(type) / bare-priv coexist in one `priv {}` type ───
+type D281Mixed priv {
+    pub ro label str       // explicit pub override → public anywhere
+    priv(type) seed u64    // stronger: type-private, only own-type methods
+    payload u64            // bare default → module-private
+}
+
+fn D281Mixed.new(l str, s u64, p u64) -> D281Mixed =>
+    { label: l, seed: s, payload: p }
+
+// Own-type method reads the type-private `seed` (the only legal way to reach it).
+fn D281Mixed @seed_val() -> u64 => @seed
+
+// Free fn reads the MODULE-PRIVATE `payload` — distinguishes bare `priv` from
+// `priv(type)` (this would be E_PRIV_FIELD_READ if `payload` were type-private).
+fn d281_payload(m D281Mixed) -> u64 => m.payload
+
+test "§5.1 free fn READS/INITs module-private fields; values are genuine (D281)" {
+    ro c = d281_make(10, 3)             // free-fn INIT of module-private fields
+    assert(d281_read_value(c) == 10)    // free-fn READ returns the real value
+    assert(d281_read_step(c) == 3)
+    ro c2 = D281Counter.new(100, 7)     // static factory also inits them
+    assert(d281_read_value(c2) == 100)
+    assert(d281_read_step(c2) == 7)
+}
+
+test "§5.1 free fn WRITES a module-private field; mutation is observable (D281)" {
+    mut c = d281_make(0, 5)
+    d281_bump(c)                        // free-fn WRITE of module-private `value`
+    d281_bump(c)
+    assert(d281_read_value(c) == 10)    // 0 + 5 + 5, mutation visible afterwards
+}
+
+test "§5.5 layering: pub public, priv(type) via method, bare-priv via free fn (D281)" {
+    ro m = D281Mixed.new("auth", 999, 4242)
+    assert(m.label == "auth")           // explicit pub override → readable directly
+    assert(m.seed_val() == 999)         // priv(type) reachable only via own method
+    assert(d281_payload(m) == 4242)     // bare-priv = module-private → free-fn read OK
+}
+
+test "§5.8 same-module pattern destructure of a module-private field works (D281)" {
+    ro c = d281_make(21, 2)
+    ro D281Counter { value, step } = c  // module-private fields destructured in-module
+    assert(value == 21)
+    assert(step == 2)
+}

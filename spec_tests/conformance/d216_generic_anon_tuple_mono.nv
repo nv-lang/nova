@@ -1,0 +1,36 @@
+// D216 — generic anonymous tuple `(T, U)` is MONOMORPHIZED per instantiation with REAL
+// element types (no nova_int erasure): each turbofish instantiation gets a unique
+// length-prefixed typedef, the tuple is a value-type (no heap-box), positional `.0`/`.1`
+// access and destructure work after mono, and heterogeneous element types (str + int) hold.
+// Extends D123 (positional tuple codegen) with the generic-aware substitution path.
+module spec_tests.conformance
+
+// Single type-param: (T, T) — same element type, two distinct call-site instantiations.
+fn[T] d216_dup(v T) -> (T, T) => (v, v)
+
+// Two type-params: (T, U) — heterogeneous element types per instantiation.
+fn[T, U] d216_pair(x T, y U) -> (T, U) => (x, y)
+
+test "generic (T, T) mono + destructure with REAL int types (D216)" {
+    ro (a, b) = d216_dup[int](42)
+    assert(a == 42)
+    assert(b == 42)
+}
+
+test "same generic fn, second instantiation (str) is an independent mono (D216)" {
+    ro (s, t) = d216_dup[str]("hi")
+    assert(s == "hi")
+    assert(t == "hi")
+}
+
+test "positional .0 / .1 access on mono'd generic tuple (D216)" {
+    ro p = d216_dup[int](100)
+    assert(p.0 == 100)
+    assert(p.1 == 100)
+}
+
+test "heterogeneous (T, U) mono: int + str hold after destructure (D216)" {
+    ro (i, s) = d216_pair[int, str](7, "x")
+    assert(i == 7)
+    assert(s == "x")
+}
