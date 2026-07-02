@@ -1,0 +1,55 @@
+// D168 — Sized atomic types: API contract (Plan 103.2, final).
+// Норма (spec/decisions/06-concurrency.md §D168): 12 sized-атомиков с
+// детерминированной шириной (AtomicI8..I64, AtomicU8..U64, Isize/Usize,
+// AtomicBool, AtomicPtr); операции new/load/store/swap/fetch_add/fetch_sub/
+// compare_exchange; value-типы в Nova. Покрытие: репрезентативные ширины —
+// signed I8/I16/I32/I64, unsigned U8/U64, AtomicBool; ширины НЕ схлопываются
+// (u8-атомик держит 255, i8 — 127). Шаблоны сверены с nova_tests/atomics.
+// Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+test "AtomicI32/I16/I8: new/load/store/fetch_add (D168)" {
+    mut d168_a32 = AtomicI32.new(10)
+    assert(d168_a32.load() == 10)
+    d168_a32.store(20)
+    assert(d168_a32.load() == 20)
+    mut d168_a16 = AtomicI16.new(100)
+    ro d168_p1 = d168_a16.fetch_add(50)
+    ro d168_p2 = d168_a16.fetch_sub(30)
+    assert(d168_p1 == 100)
+    assert(d168_p2 == 150)
+    assert(d168_a16.load() == 120)
+    mut d168_a8 = AtomicI8.new(1)
+    d168_a8.store(127)
+    assert(d168_a8.load() == 127)
+}
+
+test "AtomicI64: compare_exchange semantics (D168)" {
+    mut d168_a = AtomicI64.new(42)
+    ro d168_ok = d168_a.compare_exchange(42, 100)
+    assert(d168_ok)
+    assert(d168_a.load() == 100)
+    ro d168_no = d168_a.compare_exchange(42, 7)
+    assert(!d168_no)
+    assert(d168_a.load() == 100)
+}
+
+test "AtomicU8/U64: unsigned ширины держат диапазон (D168)" {
+    mut d168_u8 = AtomicU8.new(200)
+    ro d168_pu = d168_u8.fetch_add(55)
+    assert(d168_pu == 200)
+    assert(d168_u8.load() == 255)
+    mut d168_u64 = AtomicU64.new(1)
+    d168_u64.store(1000000)
+    assert(d168_u64.load() == 1000000)
+}
+
+test "AtomicBool: load/store/swap (D168)" {
+    mut d168_b = AtomicBool.new(false)
+    assert(!d168_b.load())
+    d168_b.store(true)
+    assert(d168_b.load())
+    ro d168_prev = d168_b.swap(false)
+    assert(d168_prev)
+    assert(!d168_b.load())
+}
