@@ -10517,6 +10517,28 @@ impl<'a> TypeCheckCtx<'a> {
                 if let ExprKind::Ident(ctor) = &func.kind {
                     if let Some(elem) = ctor_payload_expected(ctor, expected) {
                         self.materialize_literal_coercion(args[0].expr(), elem);
+                        // 172.1.2 (контекстная типизация ctor, 2026-07-03): сам
+                        // Call аннотируется expected-типом (армы if/match в
+                        // return-позиции: Ok(x)/Err(e) при известном Result[T,E]).
+                        // Гейт §1: ВСЕ args expected конкретны (как None-арм) —
+                        // иначе без аннотации.
+                        if value.id.is_set() {
+                            if let TypeRef::Named { generics, .. } = expected {
+                                let all_concrete = !generics.is_empty()
+                                    && generics.iter().all(|g| {
+                                        let rt = ResolvedType::from_type_ref(g);
+                                        Self::primitive_gate(&rt)
+                                            || matches!(&rt, ResolvedType::Str)
+                                            || matches!(&rt,
+                                                ResolvedType::Named { args, .. }
+                                                    if args.is_empty())
+                                    });
+                                if all_concrete {
+                                    let rt = ResolvedType::from_type_ref(expected);
+                                    self.resolved_types_buf.borrow_mut().insert(value.id, rt);
+                                }
+                            }
+                        }
                     }
                 }
             }
