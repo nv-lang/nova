@@ -11446,6 +11446,10 @@ impl<'a> TypeCheckCtx<'a> {
         // on them here would produce half-substituted types (T still in out) that
         // resolved_type_to_c silently collapses to nova_int, breaking downstream
         // member accesses.
+        // 172.1.2 Шаг 3.3 ПРОБОВАЛСЯ И ОТКАЧЕН (2026-07-02): снятие запрета
+        // generic-instance ресиверов дало CC-FAIL «member base nova_int»
+        // (blanket-матч на generic-instance подставляет не тот углеродный тип;
+        // yield был всего −11). Residual до arg-binding inference / typed-IR.
         let peeled_ok = match peeled {
             TypeRef::Named { generics, .. } => generics.is_empty(),
             TypeRef::Array(inner, _) => matches!(inner.as_ref(), TypeRef::Named { generics, .. } if generics.is_empty()),
