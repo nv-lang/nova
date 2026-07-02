@@ -1,0 +1,54 @@
+// D186 — `#impl(P1 + P2 + ...)` opt-in annotation для protocols (Plan 91.9/164).
+// Норма (spec/decisions/02-types.md §D186): structural-протоколы получают явный
+// opt-in со стороны type-author'а; принцип симметрии — хотя бы одна сторона
+// (type-author `#impl` ЛИБО use-site bound/coercion/cast) opt-in'ится явно.
+// Покрытие: (1) `#impl(Next[int])` на методе с generic-аргументом протокола —
+// парсится, метод диспетчится (итератор-семантика, plan164 Ф.1); (2) `#impl(P)`
+// на типе + blanket-адаптеры iter().filter().count() — receiver-compatibility
+// (D285) не мис-роутит; (3) use-site opt-in через generic bound `[T P]` работает
+// без `#impl` (симметрия). Шаблоны сверены с nova_tests/plan164 + plan108_4.
+// Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+import std.collections.vec_iter
+
+// (1) #impl на методе с generic protocol-arg.
+type D186Countdown value { mut n int }
+
+#impl(Next[int])
+fn D186Countdown mut @next() -> Option[int] {
+    if @n <= 0 { return None }
+    @n -= 1
+    Some(@n)
+}
+
+// (3) use-site opt-in: bound `[T D186Sized]` без #impl на типе.
+type D186Sized protocol {
+    @size() -> int
+}
+
+type D186BoxA { v int }
+fn D186BoxA @size() -> int => @v
+
+fn d186_sum_sizes[T D186Sized](a T, b T) -> int => a.size() + b.size()
+
+test "#impl(Next[int]) на методе: парс + диспатч итератора (D186)" {
+    mut d186_c = D186Countdown { n: 3 }
+    assert(d186_c.next() == Some(2))
+    assert(d186_c.next() == Some(1))
+    assert(d186_c.next() == Some(0))
+    assert(d186_c.next() == None)
+}
+
+test "blanket-адаптеры через #impl-аннотированные @next: filter+count (D186/D285)" {
+    ro d186_v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
+    assert(d186_v.iter().count() == 8)
+    assert(d186_v.iter().filter(|x| x > 4).count() == 4)
+    assert(d186_v.iter().filter(|x| x > 100).count() == 0)
+}
+
+test "use-site opt-in: generic bound работает без #impl (симметрия D186)" {
+    ro d186_a = D186BoxA { v: 10 }
+    ro d186_b = D186BoxA { v: 32 }
+    assert(d186_sum_sizes(d186_a, d186_b) == 42)
+}
