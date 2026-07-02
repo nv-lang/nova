@@ -3189,6 +3189,12 @@ struct TypeCheckCtx<'a> {
     /// `infer_expr_c_type` `_=>nova_int` fallback bugs (§0/§1; e.g. a `bool` var legacy typed
     /// as `nova_int`). Verified by full regress (the divergence set is bounded — U.4.4-prep.b audit).
     resolved_types_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, ResolvedType>>,
+    /// 172.1.2 Binary-bounds (2026-07-03): generic-параметры ТЕКУЩЕЙ проверяемой fn
+    /// с numeric type-set bound'ом (все члены сета — числовые примитивы). Ставится
+    /// f1_check_fn на вход, очищается на выход. Для правила Binary
+    /// (TypeParam(a),TypeParam(a)) → TypeParam(a): D46-риск снят bound'ом —
+    /// на примитивах type-set operator-overload невозможен, арифметика сохраняет тип.
+    numeric_bounded_params: std::cell::RefCell<HashSet<String>>,
     /// 172.1.2 Шаг 2 (same-name fix): f1 Call-арм ставит перед рекурсией в func,
     /// f1 Member-арм потребляет (replace(false)) — отличает `v.len()` (метод)
     /// от `@len` (field-read) при same-name field/method (Vec.len, str.len).
@@ -3216,6 +3222,17 @@ struct PrivRecvGuard<'a, 'b> {
 impl<'a, 'b> Drop for PrivRecvGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_recv_type.borrow_mut() = self.prev.take();
+    }
+}
+
+/// 172.1.2 Binary-bounds: RAII-восстановление numeric_bounded_params.
+struct NumericBoundGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: HashSet<String>,
+}
+impl<'a, 'b> Drop for NumericBoundGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.numeric_bounded_params.borrow_mut() = std::mem::take(&mut self.prev);
     }
 }
 
@@ -3692,6 +3709,7 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
             in_call_func: std::cell::Cell::new(false),
+            numeric_bounded_params: std::cell::RefCell::new(HashSet::new()),
         }
     }
 
@@ -6092,6 +6110,30 @@ impl<'a> TypeCheckCtx<'a> {
         let _ta_guard = PrivTestAccessGuard { ctx: self, prev: prev_ta };
 
         let gs = fn_generic_scope(fd);
+        // 172.1.2 Binary-bounds: параметры с numeric type-set bound'ом.
+        let prev_nb = std::mem::take(&mut *self.numeric_bounded_params.borrow_mut());
+        let _nb_guard = NumericBoundGuard { ctx: self, prev: prev_nb };
+        {
+            let mut nb = self.numeric_bounded_params.borrow_mut();
+            for g in &fd.generics {
+                let numeric = g.bounds.iter().any(|b| {
+                    let TypeRef::Named { path, generics: bg, .. } = b else { return false };
+                    if !bg.is_empty() || path.len() != 1 { return false; }
+                    self.types.get(&path[0]).map_or(false, |td| {
+                        if let TypeDeclKind::TypeSet(members) = &td.kind {
+                            !members.is_empty() && members.iter().all(|m| {
+                                matches!(m, TypeRef::Named { path: mp, generics: mg, .. }
+                                    if mg.is_empty() && mp.len() == 1
+                                        && ResolvedType::scalar_from_int_name(&mp[0]).is_some())
+                            })
+                        } else { false }
+                    })
+                });
+                if numeric {
+                    nb.insert(g.name.clone());
+                }
+            }
+        }
         let mut scope: HashMap<String, TypeRef> = HashMap::new();
         for p in &fd.params {
             scope.insert(p.name.clone(), p.ty.clone());
@@ -6951,6 +6993,33 @@ impl<'a> TypeCheckCtx<'a> {
                             let numeric = match (operand_rt(left), operand_rt(right)) {
                                 (Some(l), Some(r)) if is_num(&l) && is_num(&r) => {
                                     Some(crate::number_exprs::promote_arith_rt(&l, &r))
+                                }
+                                // 172.1.2 Binary-bounds: ОДИНАКОВЫЙ numeric-bounded
+                                // TypeParam с обеих сторон → тот же TypeParam.
+                                // D46-риск снят bound'ом (примитивы type-set —
+                                // operator-overload невозможен, арифметика сохраняет
+                                // тип операнда; D405 запрещает mixed-width).
+                                (
+                                    Some(ResolvedType::TypeParam(a)),
+                                    Some(ResolvedType::TypeParam(b)),
+                                ) if a == b
+                                    && self.numeric_bounded_params.borrow().contains(&a) =>
+                                {
+                                    Some(ResolvedType::TypeParam(a))
+                                }
+                                // TypeParam + литерал-операнд (литерал коэрсится
+                                // к типу параметра, D55) — тот же TypeParam.
+                                (Some(ResolvedType::TypeParam(a)), _)
+                                    if matches!(&right.kind, ExprKind::IntLit(_))
+                                        && self.numeric_bounded_params.borrow().contains(&a) =>
+                                {
+                                    Some(ResolvedType::TypeParam(a))
+                                }
+                                (_, Some(ResolvedType::TypeParam(b)))
+                                    if matches!(&left.kind, ExprKind::IntLit(_))
+                                        && self.numeric_bounded_params.borrow().contains(&b) =>
+                                {
+                                    Some(ResolvedType::TypeParam(b))
                                 }
                                 _ => None,
                             };
