@@ -1,0 +1,43 @@
+// D280 — Ссылка на heap-тип BY VALUE = pointer-size (8 байт), не inline
+// object-size. Норма (spec §D280, [M-checker-recursive-type-overflow]):
+// heap-record/sum лоуэрится в Nova_X* везде как значение → size_of/align_of
+// heap-типа = 8/8 (reference semantics, emit-accurate); value-типы инлайнятся
+// (size = inline object-size); рекурсивный heap-тип конечен по layout
+// (поле-ссылка — указательный лист, без бесконечного спуска в size-walk).
+// Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+// Heap-record (default alloc) — ссылка = 8 байт.
+type D280Big {
+    a int
+    b int
+    c int
+    d int
+}
+
+// Value-record — инлайн: 2×8 = 16 байт.
+type D280Pair value {
+    x int
+    y int
+}
+
+// Рекурсивный heap-sum: layout конечен (Tree-поле = указатель).
+type D280Tree | D280Leaf | D280Node(int, D280Tree, D280Tree)
+
+test "size_of heap-типа = pointer-size 8, не inline-размер (D280)" {
+    assert(size_of[D280Big]() == 8)
+    assert(align_of[D280Big]() == 8)
+}
+
+test "size_of value-типа = inline object-size (D280)" {
+    assert(size_of[D280Pair]() == 16)
+}
+
+test "рекурсивный heap-тип: size-walk конечен, size = 8 (D280)" {
+    assert(size_of[D280Tree]() == 8)
+    ro d280_t = D280Node(1, D280Leaf, D280Leaf)
+    match d280_t {
+        D280Node(d280_v, _, _) => assert(d280_v == 1)
+        D280Leaf => assert(false)
+    }
+}
