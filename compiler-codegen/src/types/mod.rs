@@ -8552,6 +8552,10 @@ impl<'a> TypeCheckCtx<'a> {
                     && self.types.get(name).map_or(false, |td| matches!(&td.kind,
                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
+        // 172.1.2 (2026-07-04): all-Unit match → Unit (byte-identical legacy).
+        if rt == ResolvedType::Unit {
+            return Some(ResolvedType::Unit);
+        }
         if rt != ResolvedType::Unit && (Self::primitive_gate(&rt) || concrete_value_named) {
             Some(rt)
         } else {
@@ -8608,6 +8612,11 @@ impl<'a> TypeCheckCtx<'a> {
             crate::ast::ElseBranch::Block(b) => branch_rt(b)?,
             crate::ast::ElseBranch::If(_) => return None,
         };
+        // 172.1.2 (2026-07-04): both-Unit разрешён — legacy отвечает то же
+        // nova_unit (statement-position if) → byte-identical.
+        if then_rt == else_rt && then_rt == ResolvedType::Unit {
+            return Some(ResolvedType::Unit);
+        }
         if then_rt == else_rt
             && then_rt != ResolvedType::Unit
             && Self::primitive_gate(&then_rt)
