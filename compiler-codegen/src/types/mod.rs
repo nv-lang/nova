@@ -6681,6 +6681,32 @@ impl<'a> TypeCheckCtx<'a> {
                     // verified atom, not this slice). Shared single-source const (emit_c.rs,
                     // introduced 83ad5c46) — §0, no duplicate list.
                     if !crate::codegen::emit_c::RUNTIME_DEFINED_TYPES.contains(&last.as_str()) {
+                        // 172.1.2 (record-вариант sum'а, 2026-07-03): `Cons{...}` —
+                        // имя ВАРИАНТА (не в self.types) → тип литерала = содержащий
+                        // sum; гейт: единственный non-generic sum с record-вариантом.
+                        if !self.types.contains_key(last.as_str()) && e.id.is_set() {
+                            let mut owner: Option<&String> = None;
+                            let mut ambiguous = false;
+                            for (tn, td2) in self.types.iter() {
+                                if let TypeDeclKind::Sum(vs) = &td2.kind {
+                                    if td2.generics.is_empty()
+                                        && vs.iter().any(|v| v.name == *last
+                                            && matches!(v.kind, SumVariantKind::Record(_)))
+                                    {
+                                        if owner.is_some() { ambiguous = true; break; }
+                                        owner = Some(tn);
+                                    }
+                                }
+                            }
+                            if let (Some(tn), false) = (owner, ambiguous) {
+                                self.resolved_types_buf.borrow_mut().insert(
+                                    e.id,
+                                    ResolvedType::Named {
+                                        name: tn.clone(), module: vec![], args: vec![],
+                                    },
+                                );
+                            }
+                        }
                         if let Some(td) = self.types.get(last) {
                             if let TypeDeclKind::Record(field_decls) = &td.kind {
                                 // Generic args: для каждого generic-параметра тип-аргумент =
@@ -6724,6 +6750,9 @@ impl<'a> TypeCheckCtx<'a> {
                                         span: e.span,
                                     });
                                     self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                } else if std::env::var_os("NOVA_RL_TRACE").is_some() {
+                                    eprintln!("[RL-MISS] {} generics={} span={:?}",
+                                        last, td.generics.len(), e.span);
                                 }
                             }
                         }
