@@ -1,0 +1,173 @@
+// D251 — Полный str-surface поверх координатной модели D249/D250: split-семейство,
+// trim/strip, search-доп (match_indices/matches/is_char_boundary), transform
+// (replace/replacen/repeat/pad_*), безопасная нарезка @get(Range), owned-линзы
+// to_bytes/to_chars. Все позиции — БАЙТОВЫЕ; нарезка/split — zero-copy views.
+// Spec: spec/decisions/03-syntax.md D251.
+// NB: имена по факту std ПОСЛЕ ренейма Plan 91.18 Ф.2 (D251-текст не амендирован):
+// pad_left→pad_start, pad_right→pad_end, split_whitespace→split_ascii_whitespace,
+// trim/trim_start/trim_end→trim_ascii* (unicode-aware trim — opt-in std.unicode).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "split / rsplit: all parts, byte-scan, multibyte-safe (D251)" {
+    ro d251_p = "a,b,c".split(",")
+    assert(d251_p.len() == 3)
+    assert(d251_p[0] == "a" && d251_p[1] == "b" && d251_p[2] == "c")
+    ro d251_r = "a,b,c".rsplit(",")            // справа, обратный порядок
+    assert(d251_r.len() == 3)
+    assert(d251_r[0] == "c" && d251_r[2] == "a")
+    ro d251_g = "α,β,γ".split(",")             // греческие буквы = 2 байта
+    assert(d251_g.len() == 3)
+    assert(d251_g[0] == "α" && d251_g[2] == "γ")
+}
+
+test "splitn / rsplitn: <= n частей, последняя = остаток (D251)" {
+    ro d251_sn = "a,b,c,d".splitn(2, ",")
+    assert(d251_sn.len() == 2)
+    assert(d251_sn[0] == "a" && d251_sn[1] == "b,c,d")
+    assert("a,b,c".splitn(0, ",").len() == 0)
+    assert("a,b,c".splitn(9, ",").len() == 3)
+    ro d251_rn = "a,b,c,d".rsplitn(2, ",")
+    assert(d251_rn.len() == 2)
+    assert(d251_rn[0] == "d" && d251_rn[1] == "a,b,c")
+}
+
+test "split_once / rsplit_once -> Option[(str, str)] (D251)" {
+    match "key=a=b".split_once("=") {
+        Some(d251_kv) => { assert(d251_kv.0 == "key"); assert(d251_kv.1 == "a=b") },
+        None => assert(false),
+    }
+    match "key=a=b".rsplit_once("=") {
+        Some(d251_kv2) => { assert(d251_kv2.0 == "key=a"); assert(d251_kv2.1 == "b") },
+        None => assert(false),
+    }
+    match "nosep".split_once("=") {
+        Some(_) => assert(false),
+        None => assert(true),
+    }
+}
+
+test "split_terminator: без пустого хвоста (D251)" {
+    ro d251_t = "a,b,".split_terminator(",")
+    assert(d251_t.len() == 2)
+    assert(d251_t[0] == "a" && d251_t[1] == "b")
+    assert("a,b".split_terminator(",").len() == 2)
+}
+
+test "split_ascii_whitespace: runs, края отброшены (D251)" {
+    ro d251_w = "  hello   world  ".split_ascii_whitespace()
+    assert(d251_w.len() == 2)
+    assert(d251_w[0] == "hello" && d251_w[1] == "world")
+    assert("\tone\ntwo\r three ".split_ascii_whitespace().len() == 3)
+    assert("".split_ascii_whitespace().len() == 0)
+}
+
+test "lines: \\n и \\r\\n без терминатора, финальная строка без \\n включена (D251)" {
+    ro d251_l = "a\nb\r\nc".lines()
+    assert(d251_l.len() == 3)
+    assert(d251_l[0] == "a" && d251_l[1] == "b" && d251_l[2] == "c")
+    assert("a\n".lines().len() == 1)
+    assert("".lines().len() == 0)
+}
+
+test "trim_ascii / _start / _end: zero-copy views, ASCII-WS <= 0x20 (D251)" {
+    assert("  hi  ".trim_ascii() == "hi")
+    assert("  hi  ".trim_ascii_start() == "hi  ")
+    assert("  hi  ".trim_ascii_end() == "  hi")
+    assert("\t\r\nx\t".trim_ascii() == "x")
+    assert("".trim_ascii() == "")
+}
+
+test "trim_matches / _start / _end: codepoint-pattern, multibyte-safe (D251)" {
+    assert("xxhixx".trim_matches('x') == "hi")
+    assert("xxhixx".trim_start_matches('x') == "hixx")
+    assert("xxhixx".trim_end_matches('x') == "xxhi")
+    assert("··é·".trim_matches('·') == "é")     // '·' = 2 байта
+}
+
+test "strip_prefix / strip_suffix -> Option[str] (D251)" {
+    match "hello".strip_prefix("he") {
+        Some(d251_sp) => assert(d251_sp == "llo"),
+        None => assert(false),
+    }
+    match "hello".strip_suffix("lo") {
+        Some(d251_ss) => assert(d251_ss == "hel"),
+        None => assert(false),
+    }
+    match "hello".strip_prefix("xx") {
+        Some(_) => assert(false),
+        None => assert(true),
+    }
+}
+
+test "match_indices: байтовые offset'ы non-overlapping вхождений (D251)" {
+    ro d251_mi = "abXabXab".match_indices("X")
+    assert(d251_mi.len() == 2)
+    assert(d251_mi[0] == 2 && d251_mi[1] == 5)
+    assert("aaaa".match_indices("aa").len() == 2)   // non-overlapping: 0, 2
+    assert("none".match_indices("z").len() == 0)
+}
+
+test "matches: сматченные подстроки-views (D251)" {
+    ro d251_m = "XaXbX".matches("X")
+    assert(d251_m.len() == 3)
+    assert(d251_m[0] == "X")
+}
+
+test "is_char_boundary: O(1), Rust-parity (D251)" {
+    ro d251_s = "héllo"              // é = байты 1..3; byte_len 6
+    assert(d251_s.is_char_boundary(0))
+    assert(d251_s.is_char_boundary(1))
+    assert(!d251_s.is_char_boundary(2))   // continuation-байт é
+    assert(d251_s.is_char_boundary(3))
+    assert(d251_s.is_char_boundary(6))    // == byte_len
+    assert(!d251_s.is_char_boundary(7))
+    assert(!d251_s.is_char_boundary(-1))
+}
+
+test "replace / replacen (D251)" {
+    assert("a.b.c".replace(".", "-") == "a-b-c")
+    assert("aaa".replace("", "x") == "aaa")          // пустой from → без изменений
+    assert("a.a.a.a".replacen(".", "-", 2) == "a-a-a.a")
+    assert("aaa".replacen("a", "b", 0) == "aaa")
+    assert("aaa".replacen("a", "b", 9) == "bbb")
+}
+
+test "repeat (D251)" {
+    assert("ab".repeat(3) == "ababab")
+    assert("x".repeat(0) == "")
+    assert("é".repeat(2) == "éé")
+}
+
+test "pad_start / pad_end / pad_center: ширина в CODEPOINT'ах (D251)" {
+    assert("é".pad_start(3, '·') == "··é")      // é = 2 байта, 1 codepoint → 2 паддинга
+    assert("hi".pad_end(4, '.') == "hi..")
+    assert("x".pad_center(5, '-') == "--x--")
+    assert("toolong".pad_start(3, ' ') == "toolong")
+}
+
+test "get(Range) -> Option[str]: None при OOB и не-границе codepoint (D251)" {
+    ro d251_gs = "héllo"             // é = байты 1..3
+    match d251_gs.get(1..3) {
+        Some(d251_gv) => assert(d251_gv == "é"),
+        None => assert(false),
+    }
+    match d251_gs.get(2..3) {        // разрез сквозь é
+        Some(_) => assert(false),
+        None => assert(true),
+    }
+    match d251_gs.get(0..99) {       // OOB
+        Some(_) => assert(false),
+        None => assert(true),
+    }
+}
+
+test "to_bytes / to_chars: owned-линзы (D251)" {
+    ro d251_b = "hé".to_bytes()
+    assert(d251_b.len() == 3)
+    assert(d251_b[0] == 104)         // 'h'
+    ro d251_c = "hé".to_chars()
+    assert(d251_c.len() == 2)
+    assert(d251_c[0] == 'h')
+    assert(d251_c[1] == 'é')
+}
