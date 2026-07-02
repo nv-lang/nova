@@ -1,0 +1,49 @@
+// D255 — UTF-16 / code-point interop (Plan 152.6, IMPLEMENTED).
+// Норма (spec §D255): `encode_utf16() -> []u16` (BMP → 1 unit, supplementary →
+// surrogate-пара), `str.from_utf16(units) -> Result[str, Utf16Error]` (checked:
+// lone/усечённые суррогаты → Err), `code_points() -> []int`,
+// surrogate-хелперы; roundtrip-инвариант `from_utf16(encode_utf16(s)) == Ok(s)`.
+// Модуль std.encoding.utf16 — ЯВНЫЙ import (не prelude). Шаблоны сверены с
+// nova_tests/unicode/plan152_6. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+import std.encoding.utf16.{is_high_surrogate, is_low_surrogate}
+
+test "encode_utf16: ASCII/BMP → 1 unit; u16-ширина не схлопывается (D255)" {
+    ro d255_u = "ABÉ".encode_utf16()
+    assert(d255_u.len() == 3)
+    assert(d255_u[0] as int == 0x41)
+    assert(d255_u[2] as int == 0xC9)
+}
+
+test "encode_utf16: supplementary → surrogate-пара (D255)" {
+    ro d255_e = "😀".encode_utf16()
+    assert(d255_e.len() == 2)
+    assert(is_high_surrogate(d255_e[0] as int))
+    assert(is_low_surrogate(d255_e[1] as int))
+}
+
+test "roundtrip-инвариант ASCII/BMP/supplementary (D255)" {
+    ro d255_samples = ["", "ABC", "éλ", "😀", "a😀b"]
+    for d255_s in d255_samples {
+        match str.from_utf16(d255_s.encode_utf16()) {
+            Ok(d255_back) => assert(d255_back == d255_s),
+            Err(_) => assert(false),
+        }
+    }
+}
+
+test "from_utf16: lone high surrogate → Err (D255)" {
+    ro d255_bad = [0xD83D as u16]
+    match str.from_utf16(d255_bad) {
+        Ok(_) => assert(false),
+        Err(_) => assert(true),
+    }
+}
+
+test "to_code_points: сырые int-codepoint'ы (D255, перенесён в runtime.string Plan 91.18)" {
+    ro d255_cp = "aё".to_code_points()
+    assert(d255_cp.len() == 2)
+    assert(d255_cp[0] == 0x61)
+    assert(d255_cp[1] == 0x451)
+}
