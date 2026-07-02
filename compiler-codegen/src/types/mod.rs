@@ -6997,11 +6997,18 @@ impl<'a> TypeCheckCtx<'a> {
                                 None
                             };
                             if let Some(rt) = other {
+                                // wide-default int payload допустим, если операнд —
+                                // НЕ литеральный Some-ctor (тот даёт контекстно-слепой
+                                // Option[int]); resolve-производные (m.get→Option[int])
+                                // достоверны (declared V subst).
+                                let b_is_ctor = matches!(&b.kind,
+                                    ExprKind::Call { func, .. }
+                                        if matches!(&func.kind, ExprKind::Ident(f) if f == "Some"));
                                 let payload_ok = matches!(&rt,
                                     ResolvedType::Named { name, args, .. }
                                         if name == "Option" && args.len() == 1
-                                            && !matches!(&args[0], ResolvedType::Scalar {
-                                                wide_default: true, .. })
+                                            && !(b_is_ctor && matches!(&args[0], ResolvedType::Scalar {
+                                                wide_default: true, .. }))
                                             && (Self::primitive_gate(&args[0])
                                                 || matches!(&args[0], ResolvedType::Str)
                                                 || matches!(&args[0],
