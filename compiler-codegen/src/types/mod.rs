@@ -6098,7 +6098,7 @@ impl<'a> TypeCheckCtx<'a> {
 
     fn f1_check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
         if std::env::var_os("NOVA_F1_TRACE").is_some() {
-            eprintln!("[F1] {}.{}", fd.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("-"), fd.name);
+            eprintln!("[F1] {}.{} fid={:?}", fd.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("-"), fd.name, fd.span.file_id);
         }
         // Plan 124 (D220): set current_recv_type для priv field access scope
         // tracking. Instance + Static methods обa get receiver's type_name.
@@ -6859,6 +6859,14 @@ impl<'a> TypeCheckCtx<'a> {
                 // bare `Named`) is left to legacy here. The deeper container/carrier guards live in
                 // `resolve_instance_method_return` so the INLINE inference is conservative too.
                 if e.id.is_set() {
+                    if std::env::var_os("NOVA_APPEND_TRACE").is_some() {
+                        if let ExprKind::Member { name: mn, .. } = &func.kind {
+                            if mn == "append" {
+                                let r = self.infer_method_call_channel_type(e, scope);
+                                eprintln!("[AP] id={:?} fid={:?} resolved={:?}", e.id, e.span.file_id, r.is_some());
+                            }
+                        }
+                    }
                     if let Some(tr) = self.infer_method_call_channel_type(e, scope) {
                         // 172.1.2 Шаг 3.1: gs-gate заменён на mark_type_params —
                         // return с residual-параметром аннотируется ЯВНЫМ TypeParam
