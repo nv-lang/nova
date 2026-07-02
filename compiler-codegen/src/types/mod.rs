@@ -8142,12 +8142,23 @@ impl<'a> TypeCheckCtx<'a> {
         scope: &HashMap<String, TypeRef>,
     ) -> Option<ResolvedType> {
         let else_ = else_.as_ref()?;
+        // 2026-07-02 (tally, If АТОМ 1b): post-order фоллбек — вызывается из f1
+        // If-арма ПОСЛЕ рекурсии в ветки, так что trailing-дети (Call/Binary/
+        // Some-ctor) уже аннотированы другими продюсерами; берём их из
+        // resolved_types_buf, когда infer_expr_type сам не достаёт (паттерн
+        // operand_rt Binary-арма). Гейты join не менялись.
         let branch_rt = |blk: &crate::ast::Block| -> Option<ResolvedType> {
             if !blk.stmts.is_empty() {
                 return None;
             }
-            let tr = self.infer_expr_type(blk.trailing.as_deref()?, scope)?;
-            Some(ResolvedType::from_type_ref(&tr))
+            let t = blk.trailing.as_deref()?;
+            if let Some(tr) = self.infer_expr_type(t, scope) {
+                return Some(ResolvedType::from_type_ref(&tr));
+            }
+            if t.id.is_set() {
+                return self.resolved_types_buf.borrow().get(&t.id).cloned();
+            }
+            None
         };
         let then_rt = branch_rt(then)?;
         let else_rt = match else_ {
