@@ -8004,7 +8004,17 @@ impl<'a> TypeCheckCtx<'a> {
         let rt = common?;
         // NON-UNIT primitive only (Unit excluded: a statement-position all-unit /
         // unit-dominated match must stay on the legacy path, §0-safe minimal subset).
-        if rt != ResolvedType::Unit && Self::primitive_gate(&rt) {
+        // 2026-07-02 (tally АТОМ 2c): гейт расширен зеркалом f3_check_member —
+        // конкретный NON-generic declared value-тип (record/sum/newtype/named-tuple,
+        // без type-args) детерминированно лоуэрится (Nova_X*/NovaValue_X) без
+        // mono/subst-hazard; строгое равенство всех non-divergent армов сохранено.
+        let concrete_value_named = matches!(&rt,
+            ResolvedType::Named { name, args, .. }
+                if args.is_empty()
+                    && self.types.get(name).map_or(false, |td| matches!(&td.kind,
+                        TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
+                        | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
+        if rt != ResolvedType::Unit && (Self::primitive_gate(&rt) || concrete_value_named) {
             Some(rt)
         } else {
             None
