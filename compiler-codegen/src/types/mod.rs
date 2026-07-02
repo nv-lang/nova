@@ -11537,8 +11537,53 @@ impl<'a> TypeCheckCtx<'a> {
         // Receiver type: chain-aware (recurse for a Call receiver), else leaf via infer_expr_type.
         let recv_ty = self
             .infer_method_call_channel_type(obj, scope)
-            .or_else(|| self.infer_expr_type(obj, scope))?;
+            .or_else(|| self.infer_expr_type(obj, scope))
+            // 172.1.2 (Call:.len closure): третий источник — КАНАЛ: Member-ресиверы
+            // generic-тел (`@_buckets`, `@data`) аннотированы Шагом 2b как
+            // Named/TypeParam, но TypeRef-инференс их не видит. Восстановление
+            // TypeRef — ЛОКАЛЬНОЕ (TypeParam(n) → Named{n} только для
+            // method-резолюции; residual в out заново пометит Call-арм).
+            .or_else(|| {
+                if !obj.id.is_set() {
+                    return None;
+                }
+                let buf = self.resolved_types_buf.borrow();
+                let rt = buf.get(&obj.id)?.clone();
+                drop(buf);
+                Self::resolved_to_typeref_tp(&rt, e.span)
+            })?;
         self.resolve_instance_method_return(&recv_ty, name)
+    }
+
+    /// 172.1.2: resolved_to_typeref + TypeParam(n)→Named{n} — ТОЛЬКО для
+    /// method-резолюции ресивера (см. вызов выше); НЕ для прямого лоуэринга.
+    fn resolved_to_typeref_tp(rt: &ResolvedType, span: Span) -> Option<TypeRef> {
+        use ResolvedType as R;
+        match rt {
+            R::TypeParam(n) => Some(TypeRef::Named {
+                path: vec![n.clone()],
+                generics: vec![],
+                span,
+            }),
+            R::Named { name, module, args } => {
+                let mut path = module.clone();
+                path.push(name.clone());
+                let generics = args
+                    .iter()
+                    .map(|a| Self::resolved_to_typeref_tp(a, span))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypeRef::Named { path, generics, span })
+            }
+            R::Array(inner) => Some(TypeRef::Array(
+                Box::new(Self::resolved_to_typeref_tp(inner, span)?),
+                span,
+            )),
+            R::Readonly(inner) => Some(TypeRef::Readonly(
+                Box::new(Self::resolved_to_typeref_tp(inner, span)?),
+                span,
+            )),
+            other => Self::resolved_to_typeref(other, span),
+        }
     }
 
     /// Plan 172.1 U.4.4 generic-Member: substitute a record's declared generic params
