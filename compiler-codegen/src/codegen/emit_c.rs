@@ -37470,6 +37470,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     }
 
     fn infer_expr_c_type_legacy(&self, expr: &Expr) -> String {
+        // 172.1.2 lift-фаза (2026-07-04): NOVA_LEGACY_ARMS=1 — печать
+        // «desc → результат» для инвентаризации исполняемых legacy-веток.
+        let r = self.infer_expr_c_type_legacy_inner(expr);
+        if cfg!(debug_assertions) && std::env::var_os("NOVA_LEGACY_ARMS").is_some() {
+            let k = match &expr.kind {
+                ExprKind::Call { .. } => "Call", ExprKind::Member { .. } => "Member",
+                ExprKind::Ident(_) => "Ident", ExprKind::Path(_) => "Path",
+                ExprKind::If { .. } => "If", ExprKind::Index { .. } => "Index",
+                ExprKind::Binary { .. } => "Binary", ExprKind::Match { .. } => "Match",
+                ExprKind::RecordLit { .. } => "RecordLit",
+                ExprKind::TupleLit(_) => "TupleLit",
+                ExprKind::ClosureLight { .. } => "ClosL",
+                ExprKind::ClosureFull(_) => "ClosF",
+                _ => "Other",
+            };
+            eprintln!("[LG] {} -> {}", k, if r.is_empty() { "<empty>" } else { r.as_str() });
+        }
+        r
+    }
+
+    fn infer_expr_c_type_legacy_inner(&self, expr: &Expr) -> String {
         // [P67-LEGACY] Этот путь должен быть удалён. Достижение = checker аннотирует ВСЁ.
         // Нарушение docs/compiler-conventions.md §0. Внутренние panic идентифицируют конкретные
         // пробелы (Ident not in var_types, Index element unknown и т.д.). Entry-point guard
