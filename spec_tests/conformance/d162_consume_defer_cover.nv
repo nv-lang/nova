@@ -1,0 +1,47 @@
+// D162 — Consume-integration final: check_consume + defer-family + cancel
+// (Plan 100.4.5). Норма (spec/decisions/03-syntax.md §D162): defer покрывает
+// consume-обязательство на ВСЕХ exit-paths; errdefer/okdefer RETRACTED D189
+// (замена — consume scope-block D188); в infallible fn (без Fail в sig)
+// D162-enforcement не fires — достаточно явного consume. Негатив —
+// neg/d162_no_cover_neg.nv (failable без defer-cover → D162-uncovered-error-path).
+// Шаблоны сверены с nova_tests/plan100_4_5. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D162Tx consume {
+    id int,
+}
+
+fn D162Tx consume @commit() -> () { () }
+fn D162Tx consume @rollback() -> () { () }
+
+fn d162_begin(n int) -> D162Tx => { id: n }
+
+// Infallible: явный commit, D162 не fires.
+fn d162_infallible() -> () {
+    consume d162_tx = d162_begin(1)
+    d162_tx.commit()
+}
+
+// Failable: defer покрывает обязательство на всех путях.
+fn d162_failable_defer() Fail -> () {
+    consume d162_tx = d162_begin(2)
+    defer { d162_tx.commit() }
+}
+
+// NB: errdefer/okdefer RETRACTED by D189 (Plan 110.5.7 hard cutover) — parser
+// эмитит [D189-removed-errdefer]; замена error-path-cover — consume scope-block
+// D188 (`consume X = init() { body }` + match outcome, покрыт d188 в CU).
+// Здесь остаётся defer-cover (все пути) + infallible-случай.
+
+test "infallible + явный commit — D162 не fires (D162)" {
+    d162_infallible()
+}
+
+test "failable + defer-cover — обязательство покрыто на всех путях (D162)" {
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        d162_failable_defer()
+    }
+}
+

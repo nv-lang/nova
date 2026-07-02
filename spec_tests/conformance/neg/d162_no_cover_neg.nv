@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR D162-uncovered-error-path
+// D162: failable fn (Fail в sig) + consume-binding БЕЗ defer/errdefer-cover —
+// throw до commit утёк бы tx → статическая ошибка.
+module neg.d162_no_cover_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+fn Tx consume @rollback() -> () { () }
+
+fn begin() -> Tx => { id: 1 }
+
+fn process() Fail -> () {
+    consume tx = begin()
+    tx.commit()
+}
+
+test "failable без defer-cover — D162 error" {
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        process()
+    }
+}
