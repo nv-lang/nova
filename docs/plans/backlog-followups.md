@@ -718,14 +718,14 @@ protocol-key, variadic, CancelToken, legacy Call-arm) — модульный nam
 не заходит в P67-пробы. d174 в conformance (36/36 PASS с plan103_9); регресс чист
 (effects/basic, syntax/anonymous_embed — pre-existing на baseline 69d64b7a).
 
-## [M-172.1-d174-with-lock-generic-ret] — with_lock[R] return-инференс (2026-07-02)
+## [M-172.1-d174-with-lock-generic-ret] — ✅ РЕАЛИЗОВАН (2026-07-02, U.1.3b sync-inline)
 
 `Mutex.with_lock[R](body fn() -> R) -> R` — method-level generic на builtin
 Nova-body методе; return из closure-arg не инферится (D119-механика покрывает
 только mono-receiver'ы `____`). Корпус plan103_9 with_lock не вызывает. Тест
 thin-wrapper'а — после реализации (кандидат: U.1.3b sync-inline).
 
-## [M-172.1-d174-once-try-start-option] — Once.try_start() Option-обёртка (2026-07-02)
+## [M-172.1-d174-once-try-start-option] — ✅ РЕАЛИЗОВАН (2026-07-02, U.1.3b sync-inline)
 
 Nova-body `Once.try_start() -> Option[OnceGuard consume]` codegen'ом не эмитится
 (builtin Nova-body метод, эмитился как struct-member-call → CC-FAIL). Корпус
@@ -742,3 +742,13 @@ U.1.3b sync-inline.
 (1) parser — интерполяционный split внутри tagged-template (parts/args);
 (2) emit — построение []str parts + []T args + вызов/моно tag-функции.
 Тест-драйвер: spec_tests/inprogress/d48_tagged_template.nv.
+
+
+## [M-172.1-sync-extern-narrowing-migration] — D54-narrowing на extern-API отложен (2026-07-02)
+
+Merge sync-сигнатур в чекер (builtin_sig_modules) включил narrowing-enforcement на
+sized-atomic API (i32/u8-параметры), а корпус atomics/sync (~150 файлов) писался
+ДО enforcement'а (int-вары в sized-параметры). Гейт: E_IMPLICIT_NARROWING НЕ
+эмитится для `callee.is_external` (оба сайта в types/mod.rs, помечены маркером).
+Снять после плановой миграции корпуса (as-касты в тестах) — вместе с полной
+U.1.3b миграцией sync на import.

@@ -8,6 +8,10 @@
 // с nova_tests/plan103_9. Один folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
+// Явный import — Nova-body методы sync (with_lock/try_start) инлайнятся
+// в CU (D289 inline-merge); §3: sync — библиотека, требует import.
+import std.runtime.sync
+
 test "MutexGuard: lock→guard, unlock потребляет; mutex свободен (D174)" {
     mut d174_mu = Mutex.new()
     consume d174_g = d174_mu.lock()
@@ -60,14 +64,27 @@ test "OnceGuard: try_start_won у победителя, commit → DONE (D174)" 
     assert(!d174_once.try_start_won())
 }
 
-// GAP [M-172.1-d174-once-try-start-option]: Nova-body обёртка
-// `Once.try_start() -> Option[OnceGuard consume]` (D174-таблица) codegen'ом
-// не эмитится (builtin Nova-body метод; корпус plan103_9 использует только
-// extern-пару try_start_won()+make_guard()). Тест Option-формы — после
-// реализации инлайна builtin Nova-body (U.1.3b sync-inline).
+test "Once.try_start() -> Option[OnceGuard]: Nova-body обёртка (D174, U.1.3b sync-inline)" {
+    mut d174_once2 = Once.new()
+    match d174_once2.try_start() {
+        Some(d174_og2) => d174_og2.commit()
+        None => assert(false)
+    }
+    assert(d174_once2.is_completed())
+    match d174_once2.try_start() {
+        Some(d174_og3) => {
+            d174_og3.abort()
+            assert(false)
+        }
+        None => assert(true)
+    }
+}
 
-// GAP [M-172.1-d174-with-lock-generic-ret]: `with_lock[R](body fn() -> R) -> R` —
-// method-level generic `R` на builtin Nova-body методе; return-инференс из
-// closure-arg для этой формы не реализован (D119-механика покрывает только
-// mono-receiver'ы `____`). Корпус plan103_9 with_lock НЕ вызывает (тестирует
-// только явные guards). Тест thin-wrapper'а добавить после реализации.
+test "with_lock — thin wrapper, method-level R из closure (D174, U.1.3b sync-inline)" {
+    mut d174_wmu = Mutex.new()
+    ro d174_wr = d174_wmu.with_lock(|| 41 + 1)
+    assert(d174_wr == 42)
+    ro d174_wacq = d174_wmu.try_lock()
+    assert(d174_wacq == true)
+    d174_wmu.unlock()
+}

@@ -1,10 +1,11 @@
 // Plan 103.2 Ф.9 negative — non-existent bitwise op on AtomicU64.
 //
-// EXPECT_CC_ERROR too few arguments to function call
+// EXPECT_COMPILE_ERROR E7320
 //
 // `a.rotate_left()` does not exist in Plan 103.2 atomic API — rotate is not
-// included. rotate_left стал резолвимым bit-op, форма ошибки изменилась — вызов всё равно отвергнут).
-// → clang error: "too few arguments to function call" (был 'no member named rotate_left';
+// included. 2026-07-02 (U.1.3b sync-merge, §6): AtomicU64 sig-complete в
+// чекере → неизвестный метод = чистая [E7320] no field or method (раньше —
+// CC-стадия «too few arguments»). Замысел неизменен: вызов отвергнут.
 
 module neg.plan103_2_atomic_u64_no_such_op_neg
 

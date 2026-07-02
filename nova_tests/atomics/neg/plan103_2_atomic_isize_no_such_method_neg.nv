@@ -1,6 +1,6 @@
 // Plan 103.2 Ф.9 negative — non-existent method on AtomicIsize.
 //
-// EXPECT_CC_ERROR no member named 'count_ones'
+// EXPECT_COMPILE_ERROR E7320
 //
 // `a.count_ones()` (popcount) is not part of the atomic API — it's a
 // pure arithmetic operation, not applicable to atomic types.

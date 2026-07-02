@@ -2658,7 +2658,18 @@ impl CEmitter {
         match super::external_registry::ExternalRegistry::from_module(module) {
             Ok(user_reg) => {
                 for (key, decls) in user_reg.by_key {
-                    self.external_registry.by_key.entry(key).or_default().extend(decls);
+                    // [M-172.1-d174] (U.1.3b sync-inline): дедуп по c_name —
+                    // inline-merge того же .nv через `import` (sync.nv) нёс ТЕ ЖЕ
+                    // декларации, что load_builtins; без дедупа overload-count
+                    // удваивался → call-site манглился param-суффиксом
+                    // (`Nova_AtomicI64_method_fetch_add__int64_t`), которого нет
+                    // в C-рантайме → undefined symbol на линковке.
+                    let slot = self.external_registry.by_key.entry(key).or_default();
+                    for d in decls {
+                        if !slot.iter().any(|e| e.c_name == d.c_name) {
+                            slot.push(d);
+                        }
+                    }
                 }
                 // Plan 172.1 REG-0 (ADDITIVE keystone, §10-предусловие): import-resolved модуль
                 // ТАКЖЕ несёт receiver_types + type_decls (`from_module` их строит, но merge ранее
@@ -3463,14 +3474,37 @@ impl CEmitter {
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if let Some(recv) = &f.receiver {
-                    let is_generic = self.generic_types.contains(&recv.type_name);
+                    // [M-172.1-d174] (U.1.3b sync-inline, 2026-07-02): `!f.is_external`
+                    // и для generic-ветки — extern-методы «stay C-routed» (инвариант
+                    // из комментария выше), фильтр отсутствовал. Merged-через-import
+                    // extern generic-метод (sync.nv OnceCell.new/get/set) попадал в
+                    // mono-канал: call-sites уходили с C-runtime имён
+                    // (`Nova_OnceCell____…`) на mono-имена + эмитились ПУСТЫЕ
+                    // дубль-определения (redefinition/UB). Nova-body методы sync
+                    // (with_lock/try_start) регистрируются как раньше.
+                    let is_generic = !f.is_external
+                        && self.generic_types.contains(&recv.type_name);
                     let is_builtin_mono_sum = !f.is_external
                         && self.builtin_sum_type_params.contains_key(&recv.type_name);
                     if is_generic || is_builtin_mono_sum {
-                        self.generic_type_methods
+                        let entry = self
+                            .generic_type_methods
                             .entry(recv.type_name.clone())
-                            .or_default()
-                            .push(f.clone());
+                            .or_default();
+                        // Дедуп той же декларации (builtin-снабжение + inline-merge
+                        // одного .nv через `import`).
+                        let dup = entry.iter().any(|g| {
+                            g.name == f.name
+                                && g.params.len() == f.params.len()
+                                && g.receiver.as_ref().map(|r| {
+                                    (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
+                                }) == f.receiver.as_ref().map(|r| {
+                                    (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
+                                })
+                        });
+                        if !dup {
+                            entry.push(f.clone());
+                        }
                     }
                 }
             }
@@ -3997,7 +4031,26 @@ impl CEmitter {
                     } else {
                         format!("Nova_{}_static_{}", safe_recv_name, f.name)
                     };
-                    let c_name = if existing_count == 0 {
+                    // [M-172.1-d174] (U.1.3b sync-inline): merged-через-import
+                    // EXTERN-метод — C-имя из РЕЕСТРА деклараций (runtime-схема
+                    // overload-суффиксов, напр. `fetch_add_i64`/`_MemOrdering`),
+                    // НЕ user-мангл `__<c_type>` — иначе call-site бьёт в
+                    // несуществующий символ (undefined at link). Выбор overload'а
+                    // по арности параметров.
+                    let extern_c_name: Option<String> = if f.is_external {
+                        self.external_registry
+                            .lookup(&recv.type_name, &f.name)
+                            .and_then(|ds| {
+                                ds.iter()
+                                    .find(|d| d.param_c_types.len() == param_c_types.len())
+                                    .map(|d| d.c_name.clone())
+                            })
+                    } else {
+                        None
+                    };
+                    let c_name = if let Some(cn) = extern_c_name {
+                        cn
+                    } else if existing_count == 0 {
                         base_c_name
                     } else {
                         // Mangling по param-types. Sanitize: `*` / `[`
@@ -24199,7 +24252,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // (`@step` where `nova_self : NovaValue_BoxIter…*`,
                             // emitted as the value `(*nova_self)`) is accessed with
                             // `.`, not `->`. Heap records (`Nova_X*`) stay `->`.
-                            let obj_field_ty = self.infer_expr_c_type(obj);
+                            let obj_field_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                             let accessor = if Self::is_value_type(&obj_field_ty) {
                                 "."
                             } else {
@@ -25703,7 +25756,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                 }
                 // 2. Array methods: `arr.get(i)` → `nova_array_get_nova_int(arr, i)`
-                let obj_ty = self.infer_expr_c_type(obj);
+                // [M-172.1-d174] phase-safe: Ident-ресивер без материализованного
+                // типа (fail-path эмиссия defer-тела ДО регистрации локала —
+                // `defer { guard.unlock() }` в inline sync-Nova-body) → пустая
+                // строка: array-bridge не матчится, name-keyed dispatch ниже
+                // работает.
+                let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                 // Plan 138.1 Ф.1 (D239) BRIDGE: `[]T` ≡ `Vec[T]`. A handful of
                 // C-runtime-only array helpers (Plan 90/D141 bulk ops + FFI
                 // pointer access) have NO `Vec[T]` Nova-body method (see
@@ -26013,7 +26071,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 // Plan 128 Ф.1: thread recv.mutable from MethodSig
                                 // (registered with AST flag) — Ф.2 consumes it to
                                 // switch immutable receivers к by-value passing.
-                                let obj_ty_local = self.infer_expr_c_type(obj);
+                                let obj_ty_local = self.recv_c_type_materialized(obj).unwrap_or_default();
                                 let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
                                 let mut arg_strs = vec![obj_c];
                                 for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
@@ -26214,7 +26272,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 //     explicit `@into`, but some target T has `T.from(v V)`.
                 //     Emit `Nova_T_static_from(v)` in that case.
                 if method == "into" && args.is_empty() {
-                    let recv_ty = self.infer_expr_c_type(obj);
+                    let recv_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     let recv_type = Self::nova_type_name_from_c(&recv_ty);
                     // Skip if explicit `fn V @into()` is present (handled by method_receivers below).
                     let has_explicit_into = self.method_receivers.get("into")
@@ -26257,7 +26315,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Симметрия для @into. Если есть `T.try_from(v V)` и нет
                 // явного `V.@try_into()`, эмитим как `T.try_from(v)`.
                 if method == "try_into" && args.is_empty() {
-                    let recv_ty = self.infer_expr_c_type(obj);
+                    let recv_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     let recv_type = Self::nova_type_name_from_c(&recv_ty);
                     let has_explicit = self.method_receivers.get("try_into")
                         .map(|(t, _)| t == &recv_type).unwrap_or(false);
@@ -26752,7 +26810,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                         // D226) / NamedTuple-mut needs `&obj` too —
                                         // route through prepare_method_recv (no-op for
                                         // heap/primitive receivers).
-                                        let obj_ty_local = self.infer_expr_c_type(obj);
+                                        let obj_ty_local = self.recv_c_type_materialized(obj).unwrap_or_default();
                                         let obj_c = self.prepare_method_recv(
                                             &obj_c, &obj_ty_local, sig.recv_mutable, Some(obj));
                                         let mut full = vec![obj_c];
@@ -27188,8 +27246,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // collision (e.g. str.compare и char.compare оба registered как
                 // "compare" → last-wins picks str blindly). Fix: route directly
                 // через obj type когда obj is primitive с registered method.
+                // [M-172.1-d174] phase-safe: Ident без типа (fail-path defer,
+                // pre-pass) → пустая строка, primitive-роутинг не матчится.
                 {
-                    let obj_ty = self.infer_expr_c_type(obj);
+                    let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     let primitive_recv: Option<&str> = match obj_ty.as_str() {
                         "nova_char" => Some("char"),
                         "nova_bool" => Some("bool"),
@@ -27237,8 +27297,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // has a default_body; substitutes Self → obj's type, emits
                 // `Nova_<T>_method_<m>` once into mono_fwd_decls, dispatches
                 // through it. Self-typed args lowered to t_c_ty by helper.
+                // [M-172.1-d174] phase-safe: Ident без типа (fail-path defer,
+                // pre-pass) → synthesis-проба не матчится, дальше name-keyed.
                 {
-                    let obj_ty = self.infer_expr_c_type(obj);
+                    let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     let obj_type_name = obj_ty
                         .trim_start_matches("Nova_")
                         .trim_end_matches('*')
@@ -27272,7 +27334,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // protocol (e.g. "Next" from `type_impl_protocols`) AND there is a blanket
                 // mono_method_decls entry for this method, dispatch via the blanket instead.
                 {
-                    let recv_obj_ty = self.infer_expr_c_type(obj);
+                    let recv_obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     // Extract base type name: "FilterIter____..." → "FilterIter"
                     let recv_stripped = Self::strip_recv_c_prefix(&recv_obj_ty);
                     let recv_base: &str = recv_stripped
@@ -27443,7 +27505,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // ~23042 ДО этого guard'а → для них guard не срабатывает; guard
                     // остаётся safety-net для реальных «нет такого метода» случаев.)
                     if is_instance && is_generic_type {
-                        let recv_ty = self.infer_expr_c_type(obj);
+                        let recv_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                         let prim_name = match recv_ty.as_str() {
                             "nova_int" => Some("int"),
                             "nova_char" => Some("char"),
@@ -27474,7 +27536,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     {
                         let key = (type_name.clone(), method.to_string());
                         if let Some(fn_decl) = self.mono_method_decls.get(&key).cloned() {
-                            let obj_ty = self.infer_expr_c_type(obj);
+                            let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                             // Strip pointer; use as concrete T.
                             let concrete_t = obj_ty.trim_end_matches('*').trim().to_string();
                             if !concrete_t.is_empty() && concrete_t != "void" {
@@ -27543,7 +27605,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // closure-aware args). Без этого ветка closure type inference
                     // в `|n| n.method()` defaults to nova_int (wrong для non-int).
                     if type_name.starts_with("[]") && is_instance {
-                        let obj_ty = self.infer_expr_c_type(obj);
+                        let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                         let stripped = obj_ty.trim_end_matches('*').trim().to_string();
                         if let Some(element_c) = stripped.strip_prefix("NovaArray_").map(|s| s.to_string()) {
                             let key = (type_name.clone(), method.to_string());
@@ -27682,7 +27744,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Fallback на legacy dispatch (для int-arrays без mono_method_decls
                     // entry — happens когда vec.nv pre-101.1 без fn[T] migration).
                     let safe_type = if type_name.starts_with("[]") && is_instance {
-                        let obj_ty = self.infer_expr_c_type(obj);
+                        let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                         let stripped = obj_ty.trim_end_matches('*').trim().to_string();
                         if stripped.starts_with("NovaArray_") {
                             stripped
@@ -27699,7 +27761,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // Plan 128 Ф.1: lookup recv.mutable из method_overloads
                         // (registered с AST flag). Fallback false если sig
                         // отсутствует (delegated/synthesized path).
-                        let obj_ty_local = self.infer_expr_c_type(obj);
+                        let obj_ty_local = self.recv_c_type_materialized(obj).unwrap_or_default();
                         // Plan 135 Ф.2: tiebreak recv.mutable by actual receiver
                         // mutability at call-site when multiple overloads are present.
                         let caller_obj_is_mut = self.is_obj_mutable(obj);
@@ -29346,6 +29408,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             } else {
                 chosen
             };
+            // [M-172.1-d174] (U.1.3b, 2026-07-02): ПУСТОЙ inferred-тип выбранной
+            // ветки (RecordLit merged-через-import модуля при эмиссии его же
+            // методов — схема фазово не готова) → тип ДРУГОЙ не-расходящейся
+            // ветки (SelfAccess/var_types обычно знает receiver-тип). Пустой
+            // if_ty ломал C (` _nv_if_N;` + `()(x)`-касты).
+            let chosen = if chosen.is_empty() {
+                if !then_diverges && !then_ty.is_empty() {
+                    then_ty.clone()
+                } else if !else_diverges && !else_ty.is_empty() {
+                    else_ty.clone()
+                } else {
+                    chosen
+                }
+            } else {
+                chosen
+            };
             self.debug_if_infer_125("emit_if_expr", then_diverges, &then_ty, &else_ty, &chosen);
             chosen
         };
@@ -29365,7 +29443,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         if if_id.is_set() {
             if let Some(rt) = self.resolved_types.get(&if_id) {
                 if let Ok(ct) = self.resolved_type_to_c(rt) {
-                    if_ty = ct;
+                    // Non-empty гейт (2026-07-02): resolved_type_to_c может дать
+                    // Ok("") для типа, ещё не зарегистрированного на этой фазе
+                    // (mono-эмиссия тела до схемы) — пустой if_ty ломал C
+                    // (` _nv_if_N;` без типа + `()(x)`-касты). Пусто → legacy.
+                    if !ct.is_empty() {
+                        if_ty = ct;
+                    }
                 }
             }
         }
@@ -36891,16 +36975,30 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// P67-LEGACY Ident-пробу. Не-Ident формы — обычный infer (как раньше).
     fn recv_c_type_materialized(&self, obj: &Expr) -> Option<String> {
         match &obj.kind {
+            // U.1.3b Gap A: explicit `self` — ресивер (C-параметр nova_self).
+            ExprKind::Ident(n) if n == "self" => {
+                self.var_types.get("nova_self").cloned()
+            }
             ExprKind::Ident(n) => {
-                self.var_types.get(n).cloned().or_else(|| {
-                    if obj.id.is_set() {
-                        self.resolved_types
-                            .get(&obj.id)
-                            .and_then(|rt| self.resolved_type_to_c(rt).ok())
-                    } else {
-                        None
-                    }
-                })
+                // 3-уровневый локал-резолв (ФАЗА 4C precedence: closure-override →
+                // pattern-binding → var_types) + канал чекера. Без override-уровней
+                // materialized-lookup терял pattern-bound ресиверы (regression
+                // `.rotate_left` в for-теле, пойман 2026-07-02).
+                self.closure_param_type_overrides
+                    .borrow()
+                    .get(n)
+                    .cloned()
+                    .or_else(|| self.pattern_binding_overrides.borrow().get(n).cloned())
+                    .or_else(|| self.var_types.get(n).cloned())
+                    .or_else(|| {
+                        if obj.id.is_set() {
+                            self.resolved_types
+                                .get(&obj.id)
+                                .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                        } else {
+                            None
+                        }
+                    })
             }
             _ => Some(self.infer_expr_c_type(obj)),
         }
@@ -37649,6 +37747,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     || self.sum_schemas.contains_key(name.as_str())
                 {
                     return format!("Nova_{}*", name);
+                }
+                // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
+                // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
+                // receiver-параметра `nova_self` (зеркало emit-arm'а `self`).
+                // Всплывает при inline sync-Nova-body (`self.try_start_won()`).
+                if name == "self" {
+                    if let Some(t) = self.var_types.get("nova_self") {
+                        return t.clone();
+                    }
                 }
                 // Pattern-bound or checker-annotated ident not yet in var_types
                 // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is

@@ -8115,7 +8115,33 @@ impl<'a> TypeCheckCtx<'a> {
         // external-only). The consumer also requires `fn_ret_by_span` → un-channeled spans fall to
         // legacy regardless. (was: `if is_primitive_recv_name(type_name) { return; }`)
         let Some(methods) = self.sig.method_table.get(type_name) else { return; };
-        let Some(overloads) = methods.get(method_name) else { return; };
+        let Some(overloads) = methods.get(method_name) else {
+            // [M-172.1-sync-extern-narrowing-migration] (U.1.3b, §6): для
+            // SIG-COMPLETE builtin-типа (его ПОЛНЫЙ метод-набор приходит из
+            // builtin_sig_modules — sync.nv externs) неизвестный метод — ЧИСТАЯ
+            // checker-ошибка, а не P67-паника codegen'а глубже (паника in-process
+            // убивает весь прогон раннера; §6 «C — не первичный чекер»).
+            // Для остальных типов — прежний graceful no-op (их метод-набор в
+            // sig-таблицах неполон: C-runtime-only методы, протоколы, blanket'ы).
+            // Полнота = ПОЛНЫЙ метод-набор типа приходит из builtin_sig_modules
+            // (у extern-типов вроде AtomicU64 нет Item::Type — только extern fns
+            // с receiver'ом; свидетель полноты — наличие таких fns).
+            let sig_complete_builtin = crate::codegen::external_registry::builtin_sig_modules()
+                .iter()
+                .flat_map(|m| m.items.iter())
+                .any(|it| matches!(it, Item::Fn(f)
+                    if f.receiver.as_ref().map(|r| r.type_name.as_str()) == Some(type_name)));
+            if sig_complete_builtin {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E7320] no field or method `{}` on type `{}`",
+                        method_name, type_name
+                    ),
+                    span,
+                ));
+            }
+            return;
+        };
         // Plan 172.1 U.4.3 (c1/c2): record the chosen INSTANCE callee into the
         // resolved-callee channel — substrate for codegen consume (§0/§7.7: the checker
         // CHOOSES the overload by arg type, codegen lowers its own view by `FnDecl.span`).
@@ -8208,21 +8234,26 @@ impl<'a> TypeCheckCtx<'a> {
                         if let Compat::Narrowing { from, to } =
                             self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope)
                         {
-                            errors.push(
-                                Diagnostic::new(
-                                    format!(
-                                        "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
-                                         `{}` of narrower type `{}` — implicit int narrowing \
-                                         loses range; use an explicit `{} as {}` cast (D54)",
-                                        from, param.name, to, "<value>", to,
+                            // [M-172.1-sync-extern-narrowing-migration]: extern-callee
+                            // (builtin sync/atomics API) — enforcement отложен до
+                            // миграции корпуса (см. второй сайт + backlog).
+                            if !f.is_external {
+                                errors.push(
+                                    Diagnostic::new(
+                                        format!(
+                                            "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
+                                             `{}` of narrower type `{}` — implicit int narrowing \
+                                             loses range; use an explicit `{} as {}` cast (D54)",
+                                            from, param.name, to, "<value>", to,
+                                        ),
+                                        arg.expr().span,
+                                    )
+                                    .with_note_at(
+                                        format!("parameter `{}` declared here", param.name),
+                                        param.span,
                                     ),
-                                    arg.expr().span,
-                                )
-                                .with_note_at(
-                                    format!("parameter `{}` declared here", param.name),
-                                    param.span,
-                                ),
-                            );
+                                );
+                            }
                         }
                     }
                 }
@@ -8558,21 +8589,29 @@ impl<'a> TypeCheckCtx<'a> {
                     );
                 }
                 Compat::Narrowing { from, to } => {
-                    errors.push(
-                        Diagnostic::new(
-                            format!(
-                                "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
-                                 `{}` of narrower type `{}` — implicit int narrowing \
-                                 loses range; use an explicit `{} as {}` cast (D54)",
-                                from, param.name, to, "<value>", to,
+                    // [M-172.1-sync-extern-narrowing-migration] (2026-07-02):
+                    // narrowing-enforcement для EXTERN-callee отложен — merge
+                    // sync-сигнатур в чекер (U.1.3b) включил D54-проверку на
+                    // sized-atomic API (i32/u8-параметры), а корпус (atomics/
+                    // sync, ~150 файлов) писался ДО enforcement'а с int-варами.
+                    // Снять gate после плановой миграции корпуса (backlog).
+                    if !callee.is_external {
+                        errors.push(
+                            Diagnostic::new(
+                                format!(
+                                    "[E_IMPLICIT_NARROWING] cannot pass `{}` as argument \
+                                     `{}` of narrower type `{}` — implicit int narrowing \
+                                     loses range; use an explicit `{} as {}` cast (D54)",
+                                    from, param.name, to, "<value>", to,
+                                ),
+                                arg.expr().span,
+                            )
+                            .with_note_at(
+                                format!("parameter `{}` declared here", param.name),
+                                param.span,
                             ),
-                            arg.expr().span,
-                        )
-                        .with_note_at(
-                            format!("parameter `{}` declared here", param.name),
-                            param.span,
-                        ),
-                    );
+                        );
+                    }
                 }
                 Compat::Ok | Compat::Unknown => {
                     // [M-generic-arg-type-mismatch-silent] The Ty/TyCat lowering
