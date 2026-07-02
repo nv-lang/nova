@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+// D133: consume-var, не потреблённая до scope-exit — compile error.
+// `consume tx = ...` без consume-метода / consume-параметра / return.
+module neg.d133_not_consumed_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+
+fn begin() -> Tx => { id: 1 }
+
+test "consume-var забыта на exit — D133-not-consumed" {
+    consume tx = begin()
+    ro _sum = tx.id + 1
+}

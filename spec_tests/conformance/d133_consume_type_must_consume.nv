@@ -1,0 +1,85 @@
+// D133 — `type X consume`: обязательная consume-семантика (must-be-consumed).
+// Норма (spec/decisions/02-types.md §D133, Plan 100.1): инстансы consume-типа ОБЯЗАНЫ
+// быть потреблены до выхода из scope'а на КАЖДОМ code-path'е. Покрытие (позитив):
+// (1) consume-метод закрывает обязательство; (2) обе ветки if потребляют → join Consumed;
+// (3) передача в consume-параметр = потребление; (4) record с consume-полем — двойной
+// маркер (type-level + field-level), consume-метод record'а потребляет поле;
+// (5) mut-метод rebind-паттерн: close → rebind, на exit поле снова Live (инвариант);
+// (6) factory: `return tx` = передача обязательства caller'у.
+// Негативы — spec_tests/conformance/neg/d133_*.nv. Шаблоны сверены с
+// nova_tests/plan100_1/consume_ok_*.nv. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D133Tx consume {
+    id int,
+}
+
+fn D133Tx consume @commit() -> () { () }
+fn D133Tx consume @rollback() -> () { () }
+
+fn d133_begin(n int) -> D133Tx => { id: n }
+
+// consume-параметр: передача = потребление на стороне caller'а.
+fn d133_close(consume tx D133Tx) -> () {
+    tx.commit()
+}
+
+type D133File consume {
+    fd int,
+}
+
+fn D133File consume @close() -> () { () }
+
+fn d133_open(path int) -> D133File => { fd: path }
+
+// Record с consume-полем: двойной маркер (consume на type-decl И на поле).
+type D133Service consume {
+    consume file D133File,
+    hits int,
+}
+
+fn D133Service consume @shutdown() -> () {
+    @file.close()
+}
+
+// mut-метод: rebind-паттерн close → assign; на exit @file снова Live (инвариант mut).
+fn D133Service mut @reopen(new_path int) -> () {
+    @file.close()
+    @file = d133_open(new_path)
+}
+
+test "consume-метод закрывает обязательство на прямом пути (D133)" {
+    consume tx = d133_begin(1)
+    tx.commit()
+}
+
+test "обе ветки потребляют → join Consumed, exit чист (D133)" {
+    ro success = true
+    consume tx = d133_begin(2)
+    if success {
+        tx.commit()
+    } else {
+        tx.rollback()
+    }
+}
+
+test "передача в consume-параметр = потребление (D133)" {
+    consume tx = d133_begin(3)
+    d133_close(tx)
+}
+
+test "record с consume-полем: consume-метод потребляет поле (D133)" {
+    consume svc = D133Service { file: d133_open(10), hits: 0 }
+    svc.shutdown()
+}
+
+test "mut rebind: close старого → assign нового, поле Live на exit (D133)" {
+    consume svc = D133Service { file: d133_open(20), hits: 0 }
+    svc.reopen(21)
+    svc.shutdown()
+}
+
+test "factory: return передаёт обязательство caller'у (D133)" {
+    consume tx = d133_begin(30)
+    tx.rollback()
+}

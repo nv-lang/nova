@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR D133-field-marker-missing
+// D133 заразность: поле consume-типа ОБЯЗАНО нести `consume`-маркер
+// (двойной маркер: type-level + field-level). Без него — error.
+module neg.d133_field_marker_missing_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+
+type TxState consume {
+    tx Tx,
+}
+
+fn TxState consume @commit_all() -> () {
+    @tx.commit()
+}
+
+test "consume-поле без маркера — D133-field-marker-missing" {
+    consume state = TxState { tx: Tx { id: 1 } }
+    state.commit_all()
+}

@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+// D133 flow-sensitive: consume только на then-ветке, else — Live.
+// Branch join: Live ⊔ Consumed = MaybeConsumed → error на exit'е.
+module neg.d133_branch_maybe_consumed_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+fn Tx consume @rollback() -> () { () }
+
+fn begin() -> Tx => { id: 1 }
+
+test "consume только на одной ветке — MaybeConsumed на exit" {
+    ro cond = true
+    consume tx = begin()
+    if cond {
+        tx.commit()
+    }
+}
