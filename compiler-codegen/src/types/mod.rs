@@ -11701,8 +11701,36 @@ impl<'a> TypeCheckCtx<'a> {
         };
         let overloads = match self.method_overloads(&type_name, method) {
             Some(o) => o,
-            // Plan 172.1 D145/D282: prefix-generic receiver fallback.
-            None => return self.resolve_prefix_generic_method_return(peeled, method),
+            None => {
+                // 172.1.2 (protocol-ресивер, 2026-07-03): `w Writer` — сигнатура
+                // метода живёт в декларации ПРОТОКОЛА (D53), не в method_table.
+                // Konkretный declared return (без generics/Self) — фундаментальный
+                // факт контракта; residual → None (честно).
+                if let Some(td) = self.types.get(&type_name) {
+                    if let TypeDeclKind::Protocol { methods, .. } = &td.kind {
+                        let mut it = methods.iter().filter(|m| {
+                            m.name == method || m.name.trim_start_matches('@') == method
+                        });
+                        if let (Some(m), None) = (it.next(), it.next()) {
+                            if m.generics.is_empty() {
+                                let ret = match &m.return_type {
+                                    Some(r) => r.clone(),
+                                    None => TypeRef::Unit(m.span),
+                                };
+                                let mentions_self = matches!(&ret,
+                                    TypeRef::Named { path, .. }
+                                        if path.len() == 1 && path[0] == "Self");
+                                if !mentions_self {
+                                    return Some(ret);
+                                }
+                                return Some(peeled.clone());
+                            }
+                        }
+                    }
+                }
+                // Plan 172.1 D145/D282: prefix-generic receiver fallback.
+                return self.resolve_prefix_generic_method_return(peeled, method);
+            }
         };
         // Single overload; при >1 — arity-фильтр (172.1.2): единственная
         // перегрузка с params.len()==arity выбирается однозначно.
