@@ -11559,6 +11559,11 @@ impl<'a> TypeCheckCtx<'a> {
         if !matches!(recv.kind, ReceiverKind::Instance) {
             return None;
         }
+        // 172.1.2 (fluent-return, 2026-07-03): `-> @` (returns_receiver) — тип
+        // эха = тип ресивера (D132/D181-факт); return_type при этом None.
+        if f.returns_receiver {
+            return Some(peeled.clone());
+        }
         let ret = f.return_type.as_ref()?;
         // Subst: receiver carrier generics (`Vec[int]` → T=int) + `Self` → concrete receiver.
         let mut subst = build_recv_subst(recv, recv_ty);
@@ -11797,6 +11802,9 @@ impl<'a> TypeCheckCtx<'a> {
         let recv = f.receiver.as_ref()?;
         if !matches!(recv.kind, ReceiverKind::Instance) {
             return None;
+        }
+        if f.returns_receiver {
+            return Some(peeled.clone());
         }
         let ret = f.return_type.as_ref()?;
         let method_names: HashSet<String> =
