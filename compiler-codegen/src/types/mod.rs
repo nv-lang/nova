@@ -6801,6 +6801,20 @@ impl<'a> TypeCheckCtx<'a> {
                         let rt = Self::mark_type_params(
                             ResolvedType::from_type_ref(&tr), gs);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    } else if let ExprKind::TurboFish { base: tf_base, .. } = &func.kind {
+                        // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
+                        // — ВСЕГДА int (фундаментальный факт; чекер уже знает их
+                        // спец-кейсами :2000/:2271/:16365, codegen — sizeof/_Alignof).
+                        if let ExprKind::Ident(tf_n) = &tf_base.kind {
+                            if tf_n == "size_of" || tf_n == "align_of" {
+                                self.resolved_types_buf.borrow_mut().insert(
+                                    e.id,
+                                    ResolvedType::Scalar {
+                                        width: 64, signed: true, wide_default: true,
+                                    },
+                                );
+                            }
+                        }
                     } else if let ExprKind::Ident(fname) = &func.kind {
                         // P67 ФАЗА 2 (variant ctor `Some(x)` — int-collapse-relevant, gap driver):
                         // channel `Option[type-of-x]` so the ctor expr's type PRESERVES payload
