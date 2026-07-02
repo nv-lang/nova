@@ -6884,6 +6884,18 @@ impl<'a> TypeCheckCtx<'a> {
                         let rt = Self::mark_type_params(
                             ResolvedType::from_type_ref(&tr), gs);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    } else if let ExprKind::Member { obj: mo, .. } = &func.kind {
+                        // 172.1.2 (static-ctor канал, 2026-07-03): TurboFish-статик
+                        // (`Vec[u8].of(...)`) исключён из method-resolve producer'а,
+                        // а infer_expr_type его резолвит (ctor-армы +
+                        // resolve_generic_static_return) — аннотируем Call отсюда.
+                        if matches!(&mo.kind, ExprKind::TurboFish { .. }) {
+                            if let Some(tr) = self.infer_expr_type(e, scope) {
+                                let rt = Self::mark_type_params(
+                                    ResolvedType::from_type_ref(&tr), gs);
+                                self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                            }
+                        }
                     } else if let ExprKind::TurboFish { base: tf_base, .. } = &func.kind {
                         // 172.1.2 (Call:<expr>): интринсики size_of[T]()/align_of[T]()
                         // — ВСЕГДА int (фундаментальный факт; чекер уже знает их
