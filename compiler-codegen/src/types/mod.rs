@@ -6583,51 +6583,48 @@ impl<'a> TypeCheckCtx<'a> {
                     if !crate::codegen::emit_c::RUNTIME_DEFINED_TYPES.contains(&last.as_str()) {
                         if let Some(td) = self.types.get(last) {
                             if let TypeDeclKind::Record(field_decls) = &td.kind {
-                                // Generic args: MIRROR the legacy codegen derivation
-                                // (emit_c.rs:36444-36461) — for each generic param, the type-arg is
-                                // the inferred type of the literal field whose TEMPLATE type is
-                                // exactly that bare param; an unmatched param defaults to `int`
-                                // (legacy `nova_int`). A non-generic record → empty generics →
-                                // `Named{name}`. `resolved_type_to_c` (the SINGLE consumer lowering)
-                                // reproduces the mono name + value-vs-heap from codegen state — the
-                                // SAME sources legacy uses — so the lowering is byte-identical (U.4.8
-                                // identity). Sum-types / sum-variants / `Self`-lit are not `Record`
+                                // Generic args: для каждого generic-параметра тип-аргумент =
+                                // inferred-тип поля литерала, чей шаблонный тип — ровно этот
+                                // bare-параметр. 2026-07-02 (audit POISON 6630, аналог fd3207d6):
+                                // прежний `unwrap_or_else(int)` («byte-identical legacy nova_int»)
+                                // УДАЛЁН — §1-нарушение: несопоставленный/невыводимый параметр
+                                // (`type Wrap[T]{items Vec[T]}`, опущенное поле, method-call
+                                // значение) штамповал ЛОЖНЫЙ `Wrap[int]` в канал как факт.
+                                // Теперь all-or-nothing: ЛЮБОЙ невыведенный параметр → БЕЗ
+                                // аннотации → legacy-навигация (честное отсутствие).
+                                // Non-generic record → empty generics → `Named{name}` как раньше.
+                                // Sum-types / sum-variants / `Self`-lit are not `Record`
                                 // in `self.types` → not annotated → legacy.
-                                let gen_args: Vec<TypeRef> = td
+                                let gen_args: Option<Vec<TypeRef>> = td
                                     .generics
                                     .iter()
                                     .map(|g| {
-                                        field_decls
-                                            .iter()
-                                            .find_map(|fd| {
-                                                if let TypeRef::Named { path, generics: fg, .. } =
-                                                    &fd.ty
-                                                {
-                                                    if fg.is_empty() && path.join("_") == g.name {
-                                                        return fields
-                                                            .iter()
-                                                            .find(|f| f.name == fd.name)
-                                                            .and_then(|f| f.value.as_ref())
-                                                            .and_then(|v| {
-                                                                self.infer_expr_type(v, scope)
-                                                            });
-                                                    }
+                                        field_decls.iter().find_map(|fd| {
+                                            if let TypeRef::Named { path, generics: fg, .. } =
+                                                &fd.ty
+                                            {
+                                                if fg.is_empty() && path.join("_") == g.name {
+                                                    return fields
+                                                        .iter()
+                                                        .find(|f| f.name == fd.name)
+                                                        .and_then(|f| f.value.as_ref())
+                                                        .and_then(|v| {
+                                                            self.infer_expr_type(v, scope)
+                                                        });
                                                 }
-                                                None
-                                            })
-                                            .unwrap_or_else(|| TypeRef::Named {
-                                                path: vec!["int".to_string()],
-                                                generics: Vec::new(),
-                                                span: e.span,
-                                            })
+                                            }
+                                            None
+                                        })
                                     })
                                     .collect();
-                                let rt = ResolvedType::from_type_ref(&TypeRef::Named {
-                                    path: name.clone(),
-                                    generics: gen_args,
-                                    span: e.span,
-                                });
-                                self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                if let Some(gen_args) = gen_args {
+                                    let rt = ResolvedType::from_type_ref(&TypeRef::Named {
+                                        path: name.clone(),
+                                        generics: gen_args,
+                                        span: e.span,
+                                    });
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                }
                             }
                         }
                     }
@@ -6845,8 +6842,14 @@ impl<'a> TypeCheckCtx<'a> {
                                 }
                                 _ => None,
                             };
-                            // ORIGINAL path preserved BYTE-IDENTICAL (both operands infer via
-                            // infer_expr_type): both-numeric → promote; non-numeric → Some(left).
+                            // 2026-07-02 (audit POISON 6875): прежняя non-numeric ветка
+                            // `else { Some(l) }` («тип результата = тип ЛЕВОГО операнда»)
+                            // УДАЛЕНА — §1-нарушение: возврат @-оператора в Nova СВОБОДНЫЙ
+                            // (D46, нормативный пример `fn Vector @times(other Vector) -> f64`),
+                            // штамп Named{Vector} для `v1*v2` — ложь в канале, требующая
+                            // парного недоверия потребителя (анти-паттерн fd3207d6).
+                            // Operator-overload операнды → БЕЗ аннотации → legacy-навигация
+                            // (резолв возврата overload'а — U.1-семейство, не guess).
                             numeric.or_else(|| match (
                                 self.infer_expr_type(left, scope),
                                 self.infer_expr_type(right, scope),
@@ -6857,7 +6860,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     if is_num(&l) && is_num(&r) {
                                         Some(crate::number_exprs::promote_arith_rt(&l, &r))
                                     } else {
-                                        Some(l)
+                                        None
                                     }
                                 }
                                 _ => None,
@@ -6882,10 +6885,20 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 172.1.1 (U.4.5 — Unary arm): materialize the unary expr's resolved type.
                 // `infer_expr_type(e)` dispatches by UnOp: Neg/Not → operand type; Deref →
                 // pointee (strip Pointer wrapper); AddrOf/RawAddrOf → Pointer(operand_type).
-                // Falls back to operand's own channel annotation when scope/records can't resolve.
+                // 2026-07-02 (audit POISON 6897): fallback на channel-аннотацию операнда
+                // (1) стал op-AWARE — тождество «тип результата = тип операнда» верно ТОЛЬКО
+                // для Neg/Not; для AddrOf терялась Pointer-обёртка (`&b.v` : Scalar{int}
+                // вместо TypedPtr), для Deref не снималась; (2) добавлен gs-gate как у
+                // соседних арок (As/Is, Try/Bang, Coalesce) — голый Named{T} в generic-body
+                // остаётся на legacy, не материализуется в канал.
                 if e.id.is_set() {
+                    let op_identity = matches!(
+                        &e.kind,
+                        ExprKind::Unary { op: crate::ast::UnOp::Neg, .. }
+                            | ExprKind::Unary { op: crate::ast::UnOp::Not, .. }
+                    );
                     let tr_opt = self.infer_expr_type(e, scope).or_else(|| {
-                        if operand.id.is_set() {
+                        if op_identity && operand.id.is_set() {
                             self.resolved_types_buf.borrow().get(&operand.id)
                                 .and_then(|rt| Self::resolved_to_typeref(rt, e.span))
                         } else {
@@ -6893,8 +6906,10 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     });
                     if let Some(tr) = tr_opt {
-                        let rt = ResolvedType::from_type_ref(&tr);
-                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        if !typeref_mentions_any(&tr, gs) {
+                            let rt = ResolvedType::from_type_ref(&tr);
+                            self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                        }
                     }
                 }
             }
@@ -10902,9 +10917,27 @@ impl<'a> TypeCheckCtx<'a> {
                     },
                     TypeRef::Named { path, .. } => {
                         // User-defined @index(key K) -> V: look up @index method on type.
+                        // 2026-07-02 (audit POISON 6453): декларированный return клонировался
+                        // ДОСЛОВНО без подстановки generic-аргументов ресивера (`Vec[str][i]`
+                        // аннотировался голым Named{T}) и без учёта overload-произвола
+                        // find_method_decl (fns.first() из трёх @index Vec). Гейт: ТОЛЬКО
+                        // non-generic ресивер И конкретный (не Self, не typevar) return —
+                        // иначе None → legacy-навигация (subst — mono-канал 172.1.2).
                         if let Some(type_name) = path.last() {
+                            let recv_is_generic = self
+                                .types
+                                .get(type_name)
+                                .map_or(true, |td| !td.generics.is_empty());
+                            if recv_is_generic {
+                                return None;
+                            }
                             if let Some(fd) = self.find_method_decl(type_name, "index") {
                                 if let Some(ret) = &fd.return_type {
+                                    if let TypeRef::Named { path: rp, generics: rg, .. } = ret {
+                                        if rp.len() == 1 && rg.is_empty() && rp[0] == "Self" {
+                                            return None;
+                                        }
+                                    }
                                     return Some(ret.clone());
                                 }
                             }
