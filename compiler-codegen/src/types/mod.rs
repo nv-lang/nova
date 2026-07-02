@@ -6848,6 +6848,44 @@ impl<'a> TypeCheckCtx<'a> {
                             saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
                         }
                         self.f1_expr(a.expr(), gs, scope, errors);
+                        // 172.1.2 C6b (2026-07-03): сам closure-arg аннотируется
+                        // R::Func{params: посеянные, ret: infer тела в ext-scope}.
+                        // Источник согласован с emit_lambda (hof_param_fn_sigs —
+                        // та же сигнатура callee по позиции) → рассинхрона нет.
+                        // Потребитель: Channel 2 closure-гейт (clos_struct_name).
+                        let ae = a.expr();
+                        if ae.id.is_set() {
+                            if let ExprKind::ClosureLight { body: cb, .. } = &ae.kind {
+                                let ret_tr: Option<TypeRef> = match cb {
+                                    ClosureBody::Expr(be) => self.infer_expr_type(be, scope)
+                                        .or_else(|| {
+                                            if !be.id.is_set() { return None; }
+                                            let buf = self.resolved_types_buf.borrow();
+                                            let rt = buf.get(&be.id)?.clone();
+                                            drop(buf);
+                                            Self::resolved_to_typeref_tp(&rt, be.span)
+                                        }),
+                                    ClosureBody::Block(_) => None,
+                                };
+                                if let Some(rtr) = ret_tr {
+                                    let ret_rt = Self::mark_type_params(
+                                        ResolvedType::from_type_ref(&rtr), gs);
+                                    let ps: Vec<ResolvedType> = binds
+                                        .iter()
+                                        .map(|(_, t)| Self::mark_type_params(
+                                            ResolvedType::from_type_ref(t), gs))
+                                        .collect();
+                                    self.resolved_types_buf.borrow_mut().insert(
+                                        ae.id,
+                                        ResolvedType::Func {
+                                            params: ps,
+                                            ret: Box::new(ret_rt),
+                                            effects: vec![],
+                                        },
+                                    );
+                                }
+                            }
+                        }
                         for (n, prev) in saved {
                             match prev {
                                 Some(t) => { scope.insert(n, t); }
