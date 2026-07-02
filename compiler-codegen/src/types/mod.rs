@@ -10656,6 +10656,39 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // 172.1.2 АТОМ 3a (2026-07-03): `ro f (int)->int = |x| x+1` —
+            // closure против Func-аннотации: посев параметров + Func-аннотация
+            // самого замыкания (потребитель Channel 2 clos_struct_name готов;
+            // источник = ДЕКЛАРИРОВАННАЯ аннотация — рассинхрона нет).
+            ExprKind::ClosureLight { params: cl_params, .. } => {
+                if value.id.is_set() {
+                    if let TypeRef::Func { params: fp, return_type, .. } = expected {
+                        if cl_params.len() == fp.len() {
+                            let ps: Vec<ResolvedType> =
+                                fp.iter().map(ResolvedType::from_type_ref).collect();
+                            let ret_rt = match return_type {
+                                Some(r) => ResolvedType::from_type_ref(r),
+                                None => ResolvedType::Unit,
+                            };
+                            let concrete = ps.iter().chain(std::iter::once(&ret_rt)).all(|r| {
+                                Self::primitive_gate(r)
+                                    || matches!(r, ResolvedType::Str | ResolvedType::Bool | ResolvedType::Unit)
+                                    || matches!(r, ResolvedType::Named { args, .. } if args.is_empty())
+                            });
+                            if concrete {
+                                self.resolved_types_buf.borrow_mut().insert(
+                                    value.id,
+                                    ResolvedType::Func {
+                                        params: ps,
+                                        ret: Box::new(ret_rt),
+                                        effects: vec![],
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             // `(a, b, …)` against `(Ta, Tb, …)` → coerce element-wise.
             ExprKind::TupleLit(elems) => {
                 if let TypeRef::Tuple(tys, _) = expected {
