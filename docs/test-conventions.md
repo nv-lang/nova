@@ -117,6 +117,11 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
   ОТДЕЛЬНЫЙ файл** `d<NNN>_<кратко>.nv` (все `module spec_tests.conformance`); общие типы — в
   `types_<domain>.nv` пир-файле, объявлены ОДИН раз (folder = один модуль из co-equal файлов).
   **Имена типов domain-prefixed** (один namespace на весь suite → избегаем коллизий между D-файлами).
+  **Префиксуй и функции, и ЛОКАЛЬНЫЕ переменные** (`d263_buf`, не `buf`) · согласовано 2026-07-02:
+  резолвер пока держит один name-keyed namespace на CU (`var_types` last-wins между пир-файлами) —
+  одноимённый локал соседнего D-файла молча перебивает тип твоего, тест падает загадочным
+  type-mismatch. Правило нормативно, пока локалы не заскоупятся per-fn
+  ([M-172.1-var-types-cu-name-leak]).
   Пример: `spec_tests/conformance/types_value_record.nv` (`Point`) + `d328_value_record_eq.nv`
   (**D328** value-record `==` структурное).
 - **Только ПРОХОДЯЩИЕ тесты** коммитим в `spec_tests/`: тест на gated-поведение (правка ещё не

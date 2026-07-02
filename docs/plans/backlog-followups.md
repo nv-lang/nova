@@ -752,3 +752,28 @@ sized-atomic API (i32/u8-параметры), а корпус atomics/sync (~150
 эмитится для `callee.is_external` (оба сайта в types/mod.rs, помечены маркером).
 Снять после плановой миграции корпуса (as-касты в тестах) — вместе с полной
 U.1.3b миграцией sync на import.
+**Носитель: Plan 172.1 FIN-фаза** (снятие гейта = часть удаления legacy-снабжения sync;
+механика миграции — прецедент Plan 172.2 Ф.3: детект-режим → as-касты → включение).
+
+
+## [M-172.1-extern-cname-dedup-overloads] — дедуп extern-деклов по c_name упрощён (2026-07-02)
+
+При inline-merge builtin-модуля (import std.runtime.sync поверх builtin-снабжения)
+дубликаты extern-деклараций схлопываются по `c_name` (external_registry merge).
+Корректно для текущей runtime-схемы (1 c_name = 1 сигнатура), но при появлении
+НАСТОЯЩИХ overload'ов с одинаковым c_name (разные param_c_types) дедуп молча
+съест вторую сигнатуру → неверный резолв перегрузки. Ужесточить: ключ дедупа =
+(c_name, param_c_types), конфликт = ошибка компилятора.
+**Носитель: Plan 174.6 (C-FFI ABI types)**; сайт помечен комментарием в
+external_registry merge.
+
+## [M-172.1-var-types-cu-name-leak] — var_types один namespace на CU, last-wins (2026-07-02)
+
+`var_types` в codegen ключуется голым именем на весь CU: одноимённые локалы из
+разных пир-файлов folder-модуля перезаписывают друг друга (last-wins) — тип локала
+чужого файла протекает в твой (загадочный type-mismatch). Тактическая норма:
+префиксация локалов в conformance-тестах (test-conventions.md, согласовано
+2026-07-02). Правильный фикс: скоупить локалы per-fn/per-file (ключ = (fn_id, name)
+или span). Родственно §21 d-status (user-shadow generic-типа протекает в чужой
+модуль — архитектурная проблема резолвера).
+**Носитель: Plan 172.1 FIN-фаза** (при удалении legacy var_types-путей).
