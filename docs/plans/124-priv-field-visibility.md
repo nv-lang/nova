@@ -412,7 +412,7 @@ tuples).
   (consistent rule regardless of T).
 - Ф.2 Edge case: generic type method calls another generic with
   same T — priv field passes through.
-- Ф.3 Mono'd named tuple priv (Plan 120 D215 + Plan 59.1 D216).
+- Ф.3 Mono'd named tuple priv (Plan 120 D215 + Plan 59.1 D354, ex-D216).
 - Ф.4 Tests (8+ positive, 4+ negative).
 - Ф.5 Spec D220 amend (generic clause).
 - Ф.6 Closure.
@@ -647,7 +647,7 @@ umbrella + sub-plans. Каждый sub-plan:
   non-generic.
 - **A3.3** Generic method calling another generic method on same
   T — priv field passes through correctly.
-- **A3.4** Plan 59.1 mono'd tuple D216 — priv preserved через
+- **A3.4** Plan 59.1 mono'd tuple D354 (ex-D216) — priv preserved через
   monomorphization.
 - **A3.5** plan124_3 fixtures ≥12 (8+ positive, 4+ negative) PASS.
 - **A3.6** Regression — 0 new FAIL.

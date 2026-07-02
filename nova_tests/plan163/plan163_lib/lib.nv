@@ -1,4 +1,4 @@
-// Plan 163 (D282): helper library for re-export glob hygiene tests.
+// Plan 163 (D288): helper library for re-export glob hygiene tests.
 
 module plan163.plan163_lib
 

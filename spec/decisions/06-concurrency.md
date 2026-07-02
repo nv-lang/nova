@@ -2115,7 +2115,7 @@ TLS-globals **без** per-fiber изоляции — handler одного fiber
 > **Plan 59.1 amend (2026-06-01):** signature `fn Channel[T].new(cap int)
 > -> (ChanWriter[T], ChanReader[T])` теперь **буквально implementable** —
 > generic anonymous tuple monomorphization работает для произвольных
-> user fns после Plan 59.1 (см. [D216](../decisions/02-types.md#d216-generic-anonymous-tuple-monomorphization)).
+> user fns после Plan 59.1 (см. [D354](../decisions/02-types.md#d354-generic-anonymous-tuple-monomorphization)).
 > Текущая реализация bootstrap-периода продолжает использовать runtime
 > struct `Nova_ChannelPair` через 3 ad-hoc codegen branches (emit_c.rs
 > 18435/20159/22694) — это implementation detail, не противоречит

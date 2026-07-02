@@ -15,7 +15,7 @@
 > **Lineage:**
 > - **Plan 153.2** lazy-iterator Phase A (D260) — источник `[M-153.2-enumerate-zc]`.
 > - **Plan 153.2-Z** generic-over-source (D277) — основа value-record адаптеров.
-> - **Plan 161** blanket protocol-receiver (D282) — blanket терминаторы на EnumerateIter.
+> - **Plan 161** blanket protocol-receiver (D355, ex-D282) — blanket терминаторы на EnumerateIter.
 > - **D-блок:** D284 (новый; см. `spec/decisions/02-types.md`).
 
 ---
