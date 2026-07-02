@@ -4047,6 +4047,38 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => {}
             }
         }
+        // Plan 172.1 P67: Annotate peer_files.items_here ExprIds for codegen.
+        // Architectural gap: codegen iterates peer_files.items_here (imported modules,
+        // file-private items) with ExprIds distinct from merged module.items ExprIds
+        // that f1_check_fn above annotated. Without this pass, infer_expr_c_type
+        // channel 2 misses these ids → falls to legacy (panics). Errors suppressed
+        // (same functions already checked via module.items — no duplicate diagnostics).
+        {
+            let mut peer_errors: Vec<crate::diag::Diagnostic> = Vec::new();
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    match item {
+                        Item::Fn(fd) => {
+                            if !self.is_shadowed_import_method(fd) {
+                                self.f1_check_fn(fd, &mut peer_errors);
+                            }
+                        }
+                        Item::Test(t) => {
+                            let gs: HashSet<String> = HashSet::new();
+                            let mut scope: HashMap<String, TypeRef> = HashMap::new();
+                            self.f1_block(&t.body, &gs, &mut scope, &mut peer_errors);
+                        }
+                        Item::Const(cd) => {
+                            let gs: HashSet<String> = HashSet::new();
+                            let mut scope: HashMap<String, TypeRef> = HashMap::new();
+                            self.f1_expr(&cd.value, &gs, &mut scope, &mut peer_errors);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // peer_errors intentionally discarded (duplicate of module.items check).
+        }
 
         // Plan 110.1.2 (D188 / D196): Consumable[E] protocol satisfaction check.
         // Для каждого `Stmt::ConsumeScope { init, body, .. }` проверяем что
@@ -10625,6 +10657,48 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 None
             }
+            // Plan 172.1 P67 D45: Match expr type = first arm-body type that resolves.
+            // Pattern bindings are not added to scope here; bodies referencing them get None
+            // and we skip to the next arm. SelfAccess / scope-Ident arms resolve correctly.
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    let ty = match &arm.body {
+                        MatchArmBody::Expr(e) => self.infer_expr_type(e, scope),
+                        MatchArmBody::Block(b) => b.stmts.iter().rev().find_map(|s| {
+                            if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+                        }),
+                    };
+                    if let Some(t) = ty {
+                        return Some(t);
+                    }
+                }
+                None
+            }
+            // Plan 172.1 P67 D45: If expr type.
+            // Without else → Unit (statement-form if). With else → try then-block tail,
+            // then else-branch. Guards against the checker annotating unit-if with a wrong type.
+            ExprKind::If { then, else_, .. } => {
+                if else_.is_none() {
+                    return Some(TypeRef::Unit(expr.span));
+                }
+                // Try then-block tail first.
+                let then_ty = then.stmts.iter().rev().find_map(|s| {
+                    if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+                });
+                if let Some(t) = then_ty { return Some(t); }
+                // Fall through to else branch.
+                match else_ {
+                    Some(ElseBranch::Block(b)) => b.stmts.iter().rev().find_map(|s| {
+                        if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+                    }),
+                    Some(ElseBranch::If(e)) => self.infer_expr_type(e, scope),
+                    None => unreachable!(),
+                }
+            }
+            // Plan 172.1 P67 D45: Block expr type = tail stmt type (last Expr stmt).
+            ExprKind::Block(b) => b.stmts.iter().rev().find_map(|s| {
+                if let Stmt::Expr(e) = s { self.infer_expr_type(e, scope) } else { None }
+            }),
             _ => None,
         }
     }

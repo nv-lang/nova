@@ -77,3 +77,19 @@ test "multiple ; on one line with mutation (D49)" {
     mut x = 0; x = x + 1; x = x + 2
     assert(x == 3)
 }
+
+test "continuation: grouped expr spans lines via ( ) (D49)" {
+    ro x = (
+        1 +
+        2 +
+        3
+    )
+    assert(x == 6)
+}
+
+test "continuation: grouped expr with leading newline after ( (D49)" {
+    ro y = (
+        10
+    )
+    assert(y == 10)
+}

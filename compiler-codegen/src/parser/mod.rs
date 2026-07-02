@@ -7899,6 +7899,8 @@ impl Parser {
                     }
                     Ok(Expr::new(ExprKind::TupleLit(elems), start.merge(end)))
                 } else {
+                    // D49: ignore newlines before closing `)` in grouped expr
+                    self.skip_newlines();
                     self.expect(&TokenKind::RParen)?;
                     if matches!(
                         self.peek().kind,

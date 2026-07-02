@@ -17077,6 +17077,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // would see `cv` as nova_int → method lookup miss → return mistyped
         // nova_int, conflicting with the unit-typed forward decl. Restore after.
         let mut ret_seed_saved: Vec<(String, Option<String>)> = Vec::new();
+        // D43: fn-typed params may have stale fn_param_sigs entries from a previously
+        // emitted function with the same param name (e.g. `d43_run` sets `body →
+        // nova_int`, then `d43_run_unit`'s return_type_c picks up the wrong entry via
+        // legacy fn_param_sigs lookup). Seed the correct signature before return_type_c
+        // and restore after — matches what the params loop computes at line ~17199.
+        let mut fn_sigs_seed_saved: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
         if f.return_type.is_none() {
             for p in &f.params {
                 if let Ok(pc) = self.type_ref_to_c(&p.ty) {
@@ -17085,6 +17091,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         self.var_types.insert(p.name.clone(), pc);
                     }
                 }
+                if let crate::ast::TypeRef::Func { params: fp, return_type: fn_ret, .. } = &p.ty {
+                    let param_c_tys: Vec<String> = fp.iter()
+                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let ret_c = match fn_ret {
+                        Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                        None => "nova_unit".into(),
+                    };
+                    fn_sigs_seed_saved.push((p.name.clone(), self.fn_param_sigs.get(&p.name).cloned()));
+                    self.fn_param_sigs.insert(p.name.clone(), (param_c_tys, ret_c));
+                }
             }
         }
         let mut ret = self.return_type_c(f)?;
@@ -17092,6 +17109,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             match prev {
                 Some(pp) => { self.var_types.insert(n, pp); }
                 None => { self.var_types.remove(&n); }
+            }
+        }
+        for (n, prev) in fn_sigs_seed_saved {
+            match prev {
+                Some(p) => { self.fn_param_sigs.insert(n, p); }
+                None => { self.fn_param_sigs.remove(&n); }
             }
         }
         // Plan 72 P3-B return: protocol return type (`-> Iter[int]`) → the C
@@ -21162,12 +21185,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                 }
                 let v = self.emit_expr(operand)?;
-                // D215 (Plan 120): named tuple unary negation → @neg method.
-                if matches!(op, UnOp::Neg) {
+                // D46/D215: unary `-` → @neg, `!` → @not on custom types.
+                // Dispatch by operand C-type: NovaTuple_T (value ABI) or Nova_T* (ref ABI).
+                if matches!(op, UnOp::Neg | UnOp::Not) {
                     let operand_ty = self.infer_expr_c_type(operand);
-                    if operand_ty.starts_with("NovaTuple_") {
-                        let type_name = operand_ty.strip_prefix("NovaTuple_").unwrap_or("");
-                        let key = (type_name.to_string(), "neg".to_string());
+                    let method_name = if matches!(op, UnOp::Neg) { "neg" } else { "not" };
+                    let type_name_opt: Option<String> = if operand_ty.starts_with("NovaTuple_") {
+                        Some(operand_ty.strip_prefix("NovaTuple_").unwrap_or("").to_string())
+                    } else if let Some(inner) = operand_ty.strip_prefix("Nova_")
+                        .and_then(|s| s.strip_suffix('*'))
+                    {
+                        Some(inner.to_string())
+                    } else {
+                        None
+                    };
+                    if let Some(type_name) = type_name_opt {
+                        let key = (type_name, method_name.to_string());
                         if let Some(c_name) = self.method_overloads.get(&key)
                             .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
                             .map(|s| s.c_name.clone())

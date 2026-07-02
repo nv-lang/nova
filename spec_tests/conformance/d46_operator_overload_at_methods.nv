@@ -5,7 +5,7 @@
 // Spec: spec/decisions/03-syntax.md D46. Part of the SINGLE `spec_tests.conformance` folder-module.
 module spec_tests.conformance
 
-// --- Vec2: +, -, *, / на парах f64 ---
+// --- Vec2: +, -, *, /, unary -, ! на парах f64 ---
 
 type D46Vec2 {
     x f64
@@ -26,8 +26,21 @@ fn D46Vec2 @times(other D46Vec2) -> D46Vec2 =>
 fn D46Vec2 @div(other D46Vec2) -> D46Vec2 =>
     { x: @x / other.x, y: @y / other.y }
 
+fn D46Vec2 @neg() -> D46Vec2 =>
+    { x: -@x, y: -@y }
+
 fn D46Vec2 @equal(other D46Vec2) -> bool =>
     @x == other.x && @y == other.y
+
+// --- Bool wrapper for @not ---
+
+type D46BoolBox {
+    v bool
+}
+
+fn D46BoolBox.mk(v bool) -> D46BoolBox => { v }
+fn D46BoolBox @not() -> D46BoolBox => { v: !@v }
+fn D46BoolBox @equal(other D46BoolBox) -> bool => @v == other.v
 
 // --- Overloaded @times: scalar vs vector ---
 
@@ -102,5 +115,20 @@ test "@times on scalar type (D46)" {
     ro b = D46Scalar.mk(4.0)
     ro c = a * b
     assert(c.v == 12.0)
+}
+
+test "unary - dispatches to @neg (D46)" {
+    ro a = D46Vec2.mk(3.0, -5.0)
+    ro neg = -a
+    assert(neg.x == -3.0)
+    assert(neg.y == 5.0)
+}
+
+test "unary ! dispatches to @not (D46)" {
+    ro t = D46BoolBox.mk(true)
+    ro f = !t
+    assert(f.v == false)
+    ro t2 = !f
+    assert(t2.v == true)
 }
 

@@ -7,6 +7,7 @@
 module spec_tests.conformance
 
 fn d43_run(body fn() -> int) -> int => body()
+fn d43_run_unit(body fn()) { body() }
 fn d43_apply(x int, f fn(int) -> int) -> int => f(x)
 fn d43_combine(a int, b int, f fn(int, int) -> int) -> int => f(a, b)
 fn d43_twice(x int, f fn(int) -> int) -> int => f(f(x))
@@ -63,4 +64,18 @@ test "trailing fn for predicate: filter_count (D43)" {
     assert(evens == 3)
     ro big = d43_filter_count(xs) fn(x int) => x > 3
     assert(big == 3)
+}
+
+test "trailing block: unit callback (D43)" {
+    mut x = 0
+    d43_run_unit() { x = 1 }
+    assert(x == 1)
+}
+
+test "trailing block: unit callback with mutation (D43)" {
+    mut sum = 0
+    mut i = 0
+    d43_run_unit() { sum = sum + i; i = i + 1 }
+    assert(sum == 0)
+    assert(i == 1)
 }
