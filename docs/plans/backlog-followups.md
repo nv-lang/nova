@@ -689,3 +689,15 @@ Open V1 markers (gated on type-checker resolver API in Plan 104.2):
 | `[M-91.8c-pdq-sort]` | ✅ **CLOSED (Plan 153.3.1, 2026-06-18)** | `@sort_unstable*` upgraded from heapsort to pdqsort. `std/sort.nv @sort_of` remains insertion sort (NovaArray path, separate blocker `[M-153.x-array-new-not-vec]`). |
 | `[M-91.8c-int-min-max-dispatch]` | OPEN | Pre-existing CC-FAIL: `[]int @min()/@max()` resolve to `f64.min` (2-arg) in codegen. Needs dispatch fix in emit_c.rs method resolution. See plan91/sort_basic.nv. |
 | `[M-91.8c-direct-index-method]` | ✅ **CLOSED 2026-06-17** | `@[i].method()` now dispatches correctly — `ExprKind::SelfAccess` arm added to `compute_array_elem_type_for_obj` (emit_c.rs ~14248); `emit_monomorphized_method` derives concrete element C type from recv_c and registers under `array_element_types["nova_self"]`. No intermediate binding needed. 5/5 tests PASS; 14/14 regression PASS. |
+
+## [M-172.1-d174-sync-consume-registry] — guard-consume интеграция sync-типов не кредитуется (2026-07-02)
+
+`consume g = mu.lock(); g.unlock()` → ложный `[D133-not-consumed]`: `LinearityRegistry`
+строится из module.items (Plan 169.2 §4 — хардкод external_sources удалён), а external
+sync-типы (`MutexGuard`/`ReadGuard`/`WriteGuard`/`Permit`/`OnceGuard`) приходят через
+`load_builtins` → их consume-методы (`unlock`/`release`/`commit`/`abort`) реестру неизвестны →
+обязательство никогда не закрывается. Pre-existing: `nova_tests/plan103_9/guard_cross_scope_transfer`
+красный на baseline 69d64b7a (проверено temp-worktree 2026-07-02). Закрывается в U.1.3b
+(sync Gap B + миграция load_builtins): consume-метаданные sync-типов должны прийти из
+`.nv`-деклараций реестровым путём (§3 — никакого нового хардкода). Тест-драйвер готов:
+`spec_tests/inprogress/d174_sync_consume_guards.nv` (перенести в conformance после фикса).
