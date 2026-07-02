@@ -1,0 +1,81 @@
+// D156 — Generic `[T consume]` bound + collection-aware iteration.
+// Норма (spec/decisions/02-types.md §D156, Plan 100.2): bound `[T consume]` включает
+// strict mode внутри generic-body (silent-forget T-значения — error; без bound —
+// backward-compat silent-ignore). Итерация — 3 mode'а, unified с D133:
+// `for x in v` (view, vec Live) / `for mut x in v` (mut-view) /
+// `for consume x in v` (каждый элемент обязан быть потреблён; vec → Consumed).
+// Покрытие (позитив): (1) `[T consume]` obligation через trailing-return;
+// (2) два consume-параметра — оба потреблены через concrete consume-sink;
+// (3) for view — plain-тип, vec Live после цикла; (4) for mut — мутабельный
+// loop-var; (5) for consume — inline-литералы, каждый элемент потреблён.
+// Негативы — neg/d156_*.nv. Шаблоны сверены с nova_tests/plan100_2.
+// Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D156Tx consume {
+    id int,
+}
+
+fn D156Tx consume @commit() -> () { () }
+fn D156Tx consume @rollback() -> () { () }
+
+fn d156_begin(n int) -> D156Tx => { id: n }
+
+// Concrete consume-sink (в ConsumeRegistry) — цель передачи из generic-body.
+fn d156_finish(consume t D156Tx) -> () {
+    t.commit()
+}
+
+// Strict mode: obligation удовлетворяется trailing-return (передача caller'у).
+fn d156_box_wrap[T consume](consume x T) -> T {
+    x
+}
+
+// Два consume-bound параметра: оба обязательства закрыты consume-sink'ом.
+fn d156_consume_both[T consume](consume a T, consume b T) -> () {
+    d156_finish(a)
+    d156_finish(b)
+}
+
+// Plain-тип для view/mut итерации (без consume-обязательств).
+type D156Item {
+    weight int,
+}
+
+test "[T consume] obligation через trailing-return (D156)" {
+    consume tx = d156_begin(1)
+    d156_box_wrap(tx)
+}
+
+test "[T consume] два параметра — оба потреблены через consume-sink (D156)" {
+    consume tx1 = d156_begin(2)
+    consume tx2 = d156_begin(3)
+    d156_consume_both(tx1, tx2)
+}
+
+test "for view — vec Live после цикла, loop-var без обязательств (D156)" {
+    ro items = [D156Item { weight: 10 }, D156Item { weight: 20 }]
+    mut total = 0
+    for it in items {
+        total = total + it.weight
+    }
+    assert(total == 30)
+    assert(items.len() == 2)
+}
+
+test "for mut — мутабельный loop-var, элементы не-consume (D156)" {
+    ro nums = [1, 2, 3]
+    mut total = 0
+    for mut n in nums {
+        n = n * 2
+        total = total + n
+    }
+    assert(total == 12)
+}
+
+test "for consume — каждый элемент потреблён в теле цикла (D156)" {
+    ro txs = [D156Tx { id: 1 }, D156Tx { id: 2 }, D156Tx { id: 3 }]
+    for consume tx in txs {
+        tx.commit()
+    }
+}

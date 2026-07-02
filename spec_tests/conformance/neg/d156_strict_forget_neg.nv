@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR D156-strict-forget
+// D156 strict mode: `[T consume]` + consume-param — принять и забыть x
+// внутри generic-body запрещено (silent leak) → error на exit'е fn body.
+module neg.d156_strict_forget_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+
+fn forget_it[T consume](consume x T) -> () {
+    // x не потреблён → D156-strict-forget
+}
+
+test "[T consume] silent forget — error" {
+    consume tx = Tx { id: 1 }
+    forget_it(tx)
+}

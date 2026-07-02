@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR D156-iter-not-consumed
+// D156 consume-итерация: `for consume tx in vec` требует потребления
+// КАЖДОГО элемента в теле цикла; tx Live на выходе arm'а → error.
+module neg.d156_for_consume_skip_neg
+
+type Tx consume {
+    id int,
+}
+
+fn Tx consume @commit() -> () { () }
+
+test "for consume без потребления элемента — error" {
+    ro txs = [Tx { id: 1 }, Tx { id: 2 }]
+    for consume tx in txs {
+        // tx.id читается, consume-метод не вызван → tx Live на arm-exit.
+        ro _w = tx.id
+    }
+}
