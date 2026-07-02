@@ -9375,6 +9375,20 @@ impl<'a> TypeCheckCtx<'a> {
                 // embed (`use`) проксирует поля/методы вложенного типа — резолв
                 // слишком сложен для надёжной проверки, пропускаем такой тип.
                 if fields.iter().any(|f| f.is_embed) {
+                    // 172.1.2 (2026-07-03): САМО embed-поле (`@map` при
+                    // `use map HashMap[T,()]`) — прямое поле с declared-типом;
+                    // аннотируем (subst+mark), валидацию по-прежнему пропускаем.
+                    if member_id.is_set() && !is_call_func {
+                        if let Some(field) = fields.iter().find(|f| f.name == name) {
+                            let field_ty = self.subst_receiver_generics(
+                                &field.ty, &td.generics, recv_type_args);
+                            let tparams: std::collections::HashSet<String> =
+                                td.generics.iter().map(|g| g.name.clone()).collect();
+                            let rt = Self::mark_type_params(
+                                ResolvedType::from_type_ref(&field_ty), &tparams);
+                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                        }
+                    }
                     return;
                 }
                 // Plan 139.1 (lang-item str): same-name field/method resolution.
