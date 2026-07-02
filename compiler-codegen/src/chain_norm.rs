@@ -414,6 +414,8 @@ struct ChainFrame {
     /// исходного Call-звена — переносится в пересозданный вызов, чтобы
     /// канал resolved_types оставался достижим после нормализации.
     orig_id: crate::ast::ExprId,
+    /// id исходного func-Member звена (для Member-обёртки).
+    orig_func_id: crate::ast::ExprId,
 }
 
 /// Plan 123.4.4 (V1): extracted fluent chain — chain depth (≥ 1) +
@@ -463,6 +465,7 @@ fn try_extract_outer_fluent_chain(e: &Expr, registry: &FluentMethodRegistry) -> 
                     trailing: trailing.clone(),
                     span: cur.span,
                     orig_id: cur.id,
+                    orig_func_id: func.id,
                 });
                 cur = obj;
                 continue;
@@ -575,7 +578,7 @@ fn build_chain_block(chain: FluentChain, counter: &mut ChainCounter) -> Expr {
                         obj: Box::new(recv),
                         name: frame.method.clone(),
                     },
-                    span: frame.span, id: crate::ast::ExprId::UNSET,
+                    span: frame.span, id: frame.orig_func_id,
                 }),
                 args: frame.args.clone(),
                 trailing: frame.trailing.clone(),
