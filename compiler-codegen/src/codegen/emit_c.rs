@@ -37086,7 +37086,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // пробелы (Ident not in var_types, Index element unknown и т.д.). Entry-point guard
         // убран: Path/Call/Member используются как sub-exprs при рекурсии из fn_field_call_sig,
         // legacy их обрабатывает корректно — entry panic только ломала рекурсию.
-        if cfg!(debug_assertions) && expr.id.is_set() {
+        // Trace каждого legacy-захода — только под NOVA_P67_TRACE=1 (иначе stderr-шум
+        // на тысячи строк при любом debug-прогоне; tally-метрика — отдельно, NOVA_U45_GAP).
+        if cfg!(debug_assertions) && expr.id.is_set() && {
+            static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *TRACE.get_or_init(|| std::env::var_os("NOVA_P67_TRACE").is_some())
+        } {
             eprintln!("[P67-LEGACY] kind={} span={:?} id={:?} in_resolved={} src_file={}",
                 match &expr.kind {
                     ExprKind::Call { .. } => "Call", ExprKind::Member { .. } => "Member",

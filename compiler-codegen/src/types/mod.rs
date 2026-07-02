@@ -6831,11 +6831,13 @@ impl<'a> TypeCheckCtx<'a> {
                             })
                         }
                     };
-                    // P67 fallback: if neither comparison nor arithmetic promotion resolved,
-                    // default to int (byte-identical to legacy `_ => nova_int` for these cases).
-                    let res_rt = res_rt.or_else(|| {
-                        Some(ResolvedType::Scalar { width: 64, signed: true, wide_default: true })
-                    });
+                    // D263 fix (2026-07-02): NO int-fallback here. The former
+                    // `res_rt.or(Scalar{int})` violated §5 (запрет молчаливого fallback-типа
+                    // в НОВОМ пути) and was NOT byte-identical to legacy: for operator-overload
+                    // operands (`Vec + Vec` → `@plus`) legacy infers the LEFT operand's C-type,
+                    // while the poisoned channel stamped `nova_int` — downstream `ro c = a + b`
+                    // then bound `c: nova_int` and `c[0]` hit the P67 Index panic. Unresolved
+                    // operands now stay UN-annotated → legacy fall-through (tally, not lie).
                     if let Some(rt) = res_rt {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
@@ -10620,6 +10622,21 @@ impl<'a> TypeCheckCtx<'a> {
                 // for the outer expression (the walker visits inner exprs first). Only lookup,
                 // no write; borrow() does not conflict with outer borrow_mut() since the outer
                 // insert is for a DIFFERENT ExprId (the outer expr, not this Call expr).
+                if expr.id.is_set() {
+                    if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
+                        return Self::resolved_to_typeref(rt, expr.span);
+                    }
+                }
+                None
+            }
+            // Plan 172.1 §0a / D263 (2026-07-02): ArrayLit — read BACK the channel annotation
+            // written by f1_expr's ArrayLit arm (single source, §1 «материализуй резолв» — no
+            // re-derive here). f1_expr runs on the let-RHS BEFORE Stmt::Let's scope
+            // registration calls infer_expr_type, so the buf is already populated. This binds
+            // `ro a = [1, 2, 3]` as `a: Vec[int]` in the checker scope — required for
+            // operator-overload Binary inference (`a + b` → left operand type, D263 `@plus`).
+            // Un-annotated literal (non-primitive / empty / spread-first) → None (legacy).
+            ExprKind::ArrayLit(_) => {
                 if expr.id.is_set() {
                     if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
                         return Self::resolved_to_typeref(rt, expr.span);

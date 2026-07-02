@@ -1,8 +1,8 @@
-﻿// D263 — Vec restructure-ops + operator `+`: `a + b` creates new Vec; operands unchanged.
+// D263 — Vec restructure-ops + operator `+`: `a + b` creates new Vec; operands unchanged.
 // `@concat(other Vec[T]) -> Vec[T]` = one alloc of `a+b` + two bulk-copies.
-// rotate_left / rotate_right / drain / insert_slice.
+// rotate_left / rotate_right.
 // Spec: spec/decisions/10-overloading.md D263. Part of the SINGLE `spec_tests.conformance` folder-module.
-module inprogress.d263_vec_concat_plus
+module spec_tests.conformance
 
 test "Vec[int] + Vec[int] creates new Vec; operands unchanged (D263)" {
     ro a = [1, 2, 3]
@@ -12,11 +12,11 @@ test "Vec[int] + Vec[int] creates new Vec; operands unchanged (D263)" {
     assert(c[0] == 1)
     assert(c[3] == 4)
     assert(c[5] == 6)
-    assert(a.len() == 3)   // operand unchanged
-    assert(b.len() == 3)   // operand unchanged
+    assert(a.len() == 3)
+    assert(b.len() == 3)
 }
 
-test "Vec[int] += Vec[int] ≡ reassignment through concat (D263)" {
+test "Vec[int] += Vec[int] reassignment through concat (D263)" {
     mut v = [1, 2]
     v += [3, 4]
     assert(v.len() == 4)
