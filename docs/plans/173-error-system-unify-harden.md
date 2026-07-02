@@ -349,8 +349,8 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    пережить Ф.2-унификацию — regression-guard. (Упала ТОЛЬКО cleanup → primary = cleanup-ошибка.)
 
 **Фундамент typed-errors — type_id-инфра Plan 61 (готова):** compile-time `NOVA_TID_<E>`
-(`type_id_registry`, `emit_c.rs:1139`), typed-throw несёт `(payload, tid)`, матчинг в arm'е handler'а
-(`fail_e_map`, `emit_c.rs:1155`) → `is T` = та же проверка `type_id == NOVA_TID_T`. `any`-boxing/vtable —
+(`type_id_registry`, `emit_c.rs:1241`), typed-throw несёт `(payload, tid)`, матчинг в arm'е handler'а
+(`fail_e_map`, `emit_c.rs:1249`) → `is T` = та же проверка `type_id == NOVA_TID_T`. `any`-boxing/vtable —
 [Plan 174.3](174.3-any-type-and-is-downcast.md) (📋 PROPOSED, не начат — **реализуй ПЕРВЫМ**; Ф.4 полностью
 заблокирована до него). Ф.4 строит на готовом фундаменте, не с нуля.
 - **spec/D/Q/docs:** D158/D193 завершить (materialization); D190 (`ScopeOutcome[E]` остаётся rejected); хаб-верификация.
@@ -567,7 +567,7 @@ effect-set (Fail=Escalate-with-error; suspend в хендлере), `Supervisor[
 `NovaFailFrame` :55-64, throw-семейство :93-131, `rethrow_with_suppressed` :210-218, suppressed-аксессоры
 :269-283, exit-timeout-заглушка :256-260), `compiler-codegen/src/codegen/emit_c.rs` (with-Fail re-dispatch
 :6885-6933, defer/on_exit :17613-19860, `?`/`!!` :21895-22050, parfor :8280-8411, DeferKind :1322,
-type_id :1139/1155), `compiler-codegen/src/parser/mod.rs` (D189-reject :10054-10090, supervised :9764-9800),
+type_id :1241/:1249), `compiler-codegen/src/parser/mod.rs` (D189-reject :10054-10090, supervised :9764-9800),
 `compiler-codegen/src/types/mod.rs` (D133-quickfix :18764+), `ast/mod.rs:1849-1865`,
 `std/prelude/core.nv:147` (ScopeOutcome), `std/prelude/errors.nv:199-250` (MultiError),
 `std/concurrency/cancellation.nv` (with_timeout/race2).
