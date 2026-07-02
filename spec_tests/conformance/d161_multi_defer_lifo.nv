@@ -1,0 +1,76 @@
+// D161 — Multi-defer LIFO error accumulation (Plan 100.4.4, ACTIVE).
+// Норма (spec/decisions/03-syntax.md §D161): несколько defer'ов исполняются LIFO;
+// failable defer (D158) НЕ прерывает цепочку — каждый defer обёрнут per-defer
+// NovaFailFrame, все attempted независимо от частичного фейла; ошибки
+// композируются в suppressed-chain (runtime materialization — Plan 173 Ф.4).
+// Покрытие: (1) наблюдаемый LIFO-порядок инфаллибельных defer'ов;
+// (2) 3 failable defer'а — компилируется и проходит (D161 wrap); (3) смешанный
+// набор (средний failable) — LIFO continues; (4) backward-compat D90.
+// Шаблоны сверены с nova_tests/plan100_4_4. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type D161Err1 { msg str }
+type D161Err2 { msg str }
+
+fn d161_fail_a() Fail[D161Err1] -> () { () }
+fn d161_fail_b() Fail[D161Err2] -> () { () }
+
+fn d161_ok(_n int) -> () { () }
+
+// (1) Наблюдаемый LIFO: defer'ы пишут в Vec через mut-параметр.
+fn d161_order(mut log Vec[int]) -> () {
+    defer { log.push(1) }   // исполнится ПОСЛЕДНИМ
+    defer { log.push(2) }
+    defer { log.push(3) }   // исполнится ПЕРВЫМ
+    log.push(0)             // тело — до defer'ов
+}
+
+// (2) Все defer'ы failable — D161 per-defer wrap, компилируется и проходит.
+fn d161_all_failable() Fail -> () {
+    defer { d161_fail_a() }
+    defer { d161_fail_b() }
+    defer { d161_fail_a() }
+}
+
+// (3) Смешанный: средний failable, LIFO continues.
+fn d161_mixed() Fail -> () {
+    defer { d161_ok(1) }
+    defer { d161_fail_a() }
+    defer { d161_ok(2) }
+}
+
+test "multi-defer: наблюдаемый LIFO-порядок (D161)" {
+    mut d161_log = Vec[int].new()
+    d161_order(d161_log)
+    assert(d161_log.len() == 4)
+    assert(d161_log[0] == 0)
+    assert(d161_log[1] == 3)
+    assert(d161_log[2] == 2)
+    assert(d161_log[3] == 1)
+}
+
+test "multi-defer: все failable — per-defer wrap, LIFO attempted (D161)" {
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        d161_all_failable()
+    }
+}
+
+test "multi-defer: смешанный набор, средний failable (D161)" {
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        d161_mixed()
+    }
+}
+
+test "multi-defer: backward-compat D90 — инфаллибельные (D161)" {
+    mut d161_bc = Vec[int].new()
+    {
+        defer { d161_bc.push(7) }
+        d161_bc.push(1)
+    }
+    assert(d161_bc.len() == 2)
+    assert(d161_bc[1] == 7)
+}
