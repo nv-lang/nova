@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_REALTIME_SYNC_PARK
+// D172: Mutex.lock — #parks; запрещён в #realtime fn (callee guarantee:
+// никакого scheduler-взаимодействия внутри realtime-тела).
+module neg.d172_realtime_park_neg
+
+#realtime fn rt_lock(m mut Mutex) {
+    m.lock()
+}
+
+test "Mutex.lock в #realtime fn — E_REALTIME_SYNC_PARK" {
+    mut m = Mutex.new()
+    rt_lock(m)
+}

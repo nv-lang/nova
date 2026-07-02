@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_REALTIME_NESTED_SYNC_VIA_FN
+// D172: транзитивность через user-fn — вызов fn, аннотированной #parks,
+// из #realtime fn запрещён (sync-class распространяется по аннотациям,
+// не только по прямым вызовам примитивов).
+module neg.d172_realtime_via_fn_neg
+
+#parks
+fn parks_helper() {
+    mut m = Mutex.new()
+    m.lock()
+    m.unlock()
+}
+
+#realtime fn rt_calls_parks() {
+    parks_helper()
+}
+
+test "user-fn с #parks из #realtime — E_REALTIME_NESTED_SYNC_VIA_FN" {
+    rt_calls_parks()
+}

@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_BLOCKING_SYNC_PARK
+// D172: Mutex.lock — #parks; запрещён в #blocking fn (fiber-park на
+// threadpool-worker недопустим — worker не участвует в M:N-планировании).
+module neg.d172_blocking_park_neg
+
+#blocking fn blk_lock(m mut Mutex) {
+    m.lock()
+}
+
+test "Mutex.lock в #blocking fn — E_BLOCKING_SYNC_PARK" {
+    mut m = Mutex.new()
+    blk_lock(m)
+}
