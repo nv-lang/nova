@@ -1,12 +1,8 @@
-// GAP [M-172.1-d48-tagged-template-desugar]: КРАСНЫЙ — desugar в tag(parts,args)
-// НЕ реализован: emit-arm (emit_c.rs:22408) игнорирует tag-функцию (bootstrap
-// degrade), parser не сплитит ${} внутри tagged-template → эмитится сырой
-// литерал. Реализовать parser-split + emit-вызов tag перед переносом.
 // D48 — Tagged template literals: `tag`...${e}...`` = сахар над вызовом
 // tag(parts []str, args []T) — сегменты и значения раздельно
 // (spec/decisions/03-syntax.md §D48). parts.len() == args.len() + 1.
 // Один folder-module `spec_tests.conformance`.
-module inprogress.d48_tagged_template
+module spec_tests.conformance
 
 fn d48_fmt(parts []str, args []int) -> str {
     mut d48_out = parts[0]

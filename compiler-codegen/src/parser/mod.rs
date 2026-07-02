@@ -6595,6 +6595,89 @@ impl Parser {
 
     // ─── expressions ─────────────────────────────────────────────────────
 
+    /// D48 (2026-07-02): split сырого текста tagged template на текстовые
+    /// сегменты (`parts`, с развёрнутыми escape'ами) и интерполяции
+    /// (`args` = (исходник выражения, byte-offset в сыром тексте) — offset
+    /// нужен для абсолютных span'ов sub-парса). Грамматика D48:
+    /// escape-seq = '\\' ('`' | '\\' | '$' | 'n' | 't'); `\$` — литеральный
+    /// `$` (интерполяцию не открывает); скобки внутри `${…}` считаются по
+    /// глубине (вложенные `{}` в выражении допустимы).
+    /// Инвариант: parts.len() == args.len() + 1.
+    fn split_tagged_template(
+        raw: &str,
+        tok_span: crate::diag::Span,
+    ) -> Result<(Vec<String>, Vec<(String, usize)>), Diagnostic> {
+        let bytes = raw.as_bytes();
+        let mut parts: Vec<String> = vec![String::new()];
+        let mut args: Vec<(String, usize)> = Vec::new();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'\\' && i + 1 < bytes.len() {
+                let cur = parts.last_mut().expect("parts non-empty");
+                match bytes[i + 1] {
+                    b'`' => cur.push('`'),
+                    b'\\' => cur.push('\\'),
+                    b'$' => cur.push('$'),
+                    b'n' => cur.push('\n'),
+                    b't' => cur.push('\t'),
+                    // Неизвестный escape — сохраняем как есть (permissive,
+                    // открытый набор в грамматике D48).
+                    other => {
+                        cur.push('\\');
+                        cur.push(other as char);
+                    }
+                }
+                i += 2;
+                continue;
+            }
+            if b == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                let src_start = i + 2;
+                let mut depth = 1usize;
+                let mut j = src_start;
+                while j < bytes.len() {
+                    match bytes[j] {
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                if depth != 0 {
+                    return Err(Diagnostic::new(
+                        "[E_TAGGED_TEMPLATE_ARG] незакрытая интерполяция `${` \
+                         в tagged template"
+                            .to_string(),
+                        tok_span,
+                    ));
+                }
+                let inner = raw[src_start..j].trim();
+                if inner.is_empty() {
+                    return Err(Diagnostic::new(
+                        "[E_TAGGED_TEMPLATE_ARG] пустая интерполяция `${}` \
+                         в tagged template"
+                            .to_string(),
+                        tok_span,
+                    ));
+                }
+                args.push((raw[src_start..j].to_string(), src_start));
+                parts.push(String::new());
+                i = j + 1;
+                continue;
+            }
+            // Обычный символ (UTF-8 — целиком).
+            let ch = raw[i..].chars().next().expect("valid utf8");
+            parts.last_mut().expect("parts non-empty").push(ch);
+            i += ch.len_utf8();
+        }
+        Ok((parts, args))
+    }
+
     pub fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
         self.parse_implication()
     }
@@ -7497,17 +7580,76 @@ impl Parser {
                     );
                 }
                 TokenKind::Backtick(_) => {
-                    // tagged template: `expr` `template` — но в bootstrap
-                    // мы упрощаем: backtick за идентификатором → Call(func, [Str(template)])
-                    let TokenKind::Backtick(tpl) = self.bump().kind else {
+                    // D48 (2026-07-02): tagged template `tag`text${e}text`` —
+                    // ДЕСУГАРИТСЯ в обычный вызов `tag([parts...], [args...])`
+                    // прямо в парсере (§3 «одно окно»: tag-функция резолвится
+                    // как любая fn — чекер/codegen видят ординарный Call, без
+                    // спец-путей). parts.len() == args.len() + 1 (инвариант D48).
+                    let tok = self.bump();
+                    let tok_span = tok.span;
+                    let TokenKind::Backtick(tpl) = tok.kind else {
                         unreachable!()
                     };
-                    let span = expr.span;
+                    // Сырой текст начинается после открывающего бэктика.
+                    let raw_base = tok_span.start + 1;
+                    let file_id = tok_span.file_id;
+                    let (parts, arg_srcs) =
+                        Self::split_tagged_template(&tpl, tok_span)?;
+                    let mut arg_exprs: Vec<Expr> = Vec::with_capacity(arg_srcs.len());
+                    for (src_text, rel_off) in &arg_srcs {
+                        let abs_off = raw_base + rel_off;
+                        let mut toks =
+                            crate::lexer::lex_with_file_id(src_text, file_id)?;
+                        // Сдвиг span'ов токенов на абсолютную позицию
+                        // интерполяции — диагностики указывают в файл.
+                        for t in &mut toks {
+                            t.span.start += abs_off;
+                            t.span.end += abs_off;
+                        }
+                        let mut sub = Parser::with_src(toks, src_text.clone());
+                        let e = sub.parse_expr()?;
+                        if !matches!(sub.peek().kind, TokenKind::Eof | TokenKind::Newline) {
+                            return Err(Diagnostic::new(
+                                "[E_TAGGED_TEMPLATE_ARG] интерполяция `${…}` в tagged \
+                                 template должна содержать РОВНО одно выражение"
+                                    .to_string(),
+                                e.span,
+                            ));
+                        }
+                        arg_exprs.push(e);
+                    }
+                    let span = expr.span.merge(tok_span);
+                    let parts_arr = Expr::new(
+                        ExprKind::ArrayLit(
+                            parts
+                                .into_iter()
+                                .map(|p| {
+                                    crate::ast::ArrayElem::Item(Expr::new(
+                                        ExprKind::StrLit(p),
+                                        tok_span,
+                                    ))
+                                })
+                                .collect(),
+                        ),
+                        tok_span,
+                    );
+                    let args_arr = Expr::new(
+                        ExprKind::ArrayLit(
+                            arg_exprs
+                                .into_iter()
+                                .map(crate::ast::ArrayElem::Item)
+                                .collect(),
+                        ),
+                        tok_span,
+                    );
                     expr = Expr::new(
-                        ExprKind::TaggedTemplate {
-                            tag: Box::new(expr),
-                            parts: vec![tpl],
-                            args: Vec::new(),
+                        ExprKind::Call {
+                            func: Box::new(expr),
+                            args: vec![
+                                crate::ast::CallArg::Item(parts_arr),
+                                crate::ast::CallArg::Item(args_arr),
+                            ],
+                            trailing: None,
                         },
                         span,
                     );

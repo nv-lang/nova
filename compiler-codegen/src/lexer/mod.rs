@@ -942,10 +942,12 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_backtick(&mut self, start: usize) -> Result<Token, Diagnostic> {
-        // `...` — backtick-строка для tagged templates (D48). В bootstrap
-        // лексер выдаёт её как один TokenKind::Backtick(s) — сама
-        // интерполяция и tag-функция в bootstrap не разворачиваются.
-        // Компилятор Nova-on-Nova не использует sql`...` напрямую.
+        // `...` — backtick-строка для tagged templates (D48). Лексер выдаёт
+        // её как один TokenKind::Backtick(s) с СЫРЫМ текстом (включая
+        // escape-последовательности и `${…}`) — interpolation-split и
+        // разворачивание escape'ов делает ПАРСЕР при D48-desugar'е (там
+        // точные byte-offset'ы для span'ов sub-выражений). Здесь только
+        // правило терминации: экранированный `\`` НЕ закрывает литерал.
         self.pos += 1;
         let mut s = String::new();
         loop {
@@ -961,6 +963,13 @@ impl<'a> Lexer<'a> {
                     TokenKind::Backtick(s),
                     self.span(start, self.pos),
                 ));
+            }
+            // D48 (2026-07-02): escape сохраняется сырым (backslash + символ).
+            if b == b'\\' {
+                let esc_end = (self.pos + 2).min(self.bytes.len());
+                s.push_str(&self.src[self.pos..esc_end]);
+                self.pos = esc_end;
+                continue;
             }
             let ch_start = self.pos;
             let ch_len = utf8_char_len(b);

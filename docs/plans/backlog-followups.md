@@ -732,7 +732,7 @@ Nova-body `Once.try_start() -> Option[OnceGuard consume]` codegen'ом не эм
 использует extern-пару try_start_won()+make_guard(). Тест Option-формы — после
 U.1.3b sync-inline.
 
-## [M-172.1-d48-tagged-template-desugar] — tagged templates: desugar в tag(parts,args) НЕ реализован (2026-07-02)
+## [M-172.1-d48-tagged-template-desugar] — ✅ РЕАЛИЗОВАН (2026-07-02, тот же день)
 
 Диагноз (после расследования): не краш — НЕВЕРНЫЙ результат. Emit-arm
 (emit_c.rs:22408) — «Bootstrap: tag function ignored» — тег-функция игнорируется,
