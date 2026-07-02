@@ -6097,6 +6097,9 @@ impl<'a> TypeCheckCtx<'a> {
     // ================================================================
 
     fn f1_check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        if std::env::var_os("NOVA_F1_TRACE").is_some() {
+            eprintln!("[F1] {}.{}", fd.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("-"), fd.name);
+        }
         // Plan 124 (D220): set current_recv_type для priv field access scope
         // tracking. Instance + Static methods обa get receiver's type_name.
         let prev_recv = self.current_recv_type.borrow().clone();
