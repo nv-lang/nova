@@ -1963,6 +1963,37 @@ impl CEmitter {
             // НИКОГДА не Nova_T*/nova_int (§1: Err-вместо-лжи). Erased-тела (пустой
             // subst) автоматически получают Err → erased-поведение сохранено.
             R::TypeParam(n) => {
+                // RECEIVER-instance mapping ПЕРВЫМ: для параметров УРОВНЯ ТИПА
+                // (T у D119Box[T]) источник правды — сам эмитируемый инстанс
+                // (generic_type_instance_info), НЕ fn-level subst: имена могут
+                // коллидировать с method-level параметрами (gap #2, пойман
+                // d119: cast (nova_str)(T-поле) при mono map[U=str]).
+                if let Some(recv) = &self.current_receiver_type {
+                    let bare = recv.trim_start_matches("Nova_").trim_end_matches('*');
+                    let info = {
+                        let m = self.generic_type_instance_info.borrow();
+                        m.get(bare)
+                            .or_else(|| m.get(&format!("Nova_{}", bare)))
+                            .cloned()
+                    };
+                    if let Some((tmpl, args)) = info {
+                        if let Some(td) = self.generic_type_templates.get(&tmpl) {
+                            if let Some(pos) =
+                                td.generics.iter().position(|g| g.name == *n)
+                            {
+                                if let Some(c) = args.get(pos) {
+                                    return Ok(c.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                if std::env::var_os("NOVA_TP_TRACE").is_some() {
+                    eprintln!("[TP] n={} recv={:?} ov={:?} subst={:?}", n,
+                        self.current_receiver_type,
+                        self.type_subst_overrides.borrow().get(n.as_str()),
+                        self.current_type_subst.get(n.as_str()));
+                }
                 if let Some(c) = self.type_subst_overrides.borrow().get(n.as_str()) {
                     return Ok(c.clone());
                 }

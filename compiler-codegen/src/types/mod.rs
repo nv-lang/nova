@@ -9016,16 +9016,11 @@ impl<'a> TypeCheckCtx<'a> {
                         if let Some(field) = fields.iter().find(|f| f.name == name) {
                             let field_ty = self.subst_receiver_generics(
                                 &field.ty, &td.generics, recv_type_args);
-                            let rt = ResolvedType::from_type_ref(&field_ty);
-                            let concrete_value_named = matches!(&rt,
-                                ResolvedType::Named { name: rn, args, .. }
-                                    if args.is_empty()
-                                        && self.types.get(rn).map_or(false, |td| matches!(&td.kind,
-                                            TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
-                                            | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
-                            if Self::primitive_gate(&rt) || concrete_value_named {
-                                self.resolved_types_buf.borrow_mut().insert(member_id, rt);
-                            }
+                            let tparams: std::collections::HashSet<String> =
+                                td.generics.iter().map(|g| g.name.clone()).collect();
+                            let rt = Self::mark_type_params(
+                                ResolvedType::from_type_ref(&field_ty), &tparams);
+                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                         }
                     }
                     return;
@@ -9056,7 +9051,13 @@ impl<'a> TypeCheckCtx<'a> {
                         // (mono-hazard avoided, same as the pre-U.4.3(d) generic-field skip).
                         let field_ty =
                             self.subst_receiver_generics(&field.ty, &td.generics, recv_type_args);
-                        let rt = ResolvedType::from_type_ref(&field_ty);
+                        // 172.1.2 Шаг 2b: residual-параметры → ЯВНЫЙ TypeParam;
+                        // аннотация всегда (правда о шаблоне); лоуэринг подставит
+                        // mono-subst или отдаст Err → legacy (Шаг 1).
+                        let tparams: std::collections::HashSet<String> =
+                            td.generics.iter().map(|g| g.name.clone()).collect();
+                        let rt = Self::mark_type_params(
+                            ResolvedType::from_type_ref(&field_ty), &tparams);
                         // Plan 172.1 U.4.5 P2 (Member widening): annotate a CONCRETE field type.
                         // Primitive (was U.4.4) OR a NON-generic declared value-type (record / sum /
                         // newtype / named-tuple, no type-args) — its C-type is DETERMINISTIC
@@ -9070,15 +9071,14 @@ impl<'a> TypeCheckCtx<'a> {
                                     && self.types.get(name).map_or(false, |td| matches!(&td.kind,
                                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
-                        if Self::primitive_gate(&rt) || concrete_value_named {
-                            if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
-                                && matches!(&rt, ResolvedType::Scalar { wide_default: true, signed: true, .. })
-                            {
-                                eprintln!("[MEMBER-INT f3-record] id={:?} span={:?} tname={} field={} fty={:?}",
-                                    member_id, span, tname, name, field_ty);
-                            }
-                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                        let _ = concrete_value_named; // gate снят Шагом 2b (TypeParam-носитель)
+                        if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
+                            && matches!(&rt, ResolvedType::Scalar { wide_default: true, signed: true, .. })
+                        {
+                            eprintln!("[MEMBER-INT f3-record] id={:?} span={:?} tname={} field={} fty={:?}",
+                                member_id, span, tname, name, field_ty);
                         }
+                        self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                     }
                     // Plan 124 (D220) + 124.6 (D225): priv field READ access check.
                     // Allowed: own type-method, или fn с #test_access(tname),
@@ -9212,22 +9212,27 @@ impl<'a> TypeCheckCtx<'a> {
                     if member_id.is_set() {
                         let field_ty =
                             self.subst_receiver_generics(&field.ty, &td.generics, recv_type_args);
-                        let rt = ResolvedType::from_type_ref(&field_ty);
+                        // 172.1.2 Шаг 2b: residual-параметры → ЯВНЫЙ TypeParam;
+                        // аннотация всегда (правда о шаблоне); лоуэринг подставит
+                        // mono-subst или отдаст Err → legacy (Шаг 1).
+                        let tparams: std::collections::HashSet<String> =
+                            td.generics.iter().map(|g| g.name.clone()).collect();
+                        let rt = Self::mark_type_params(
+                            ResolvedType::from_type_ref(&field_ty), &tparams);
                         let concrete_value_named = matches!(&rt,
                             ResolvedType::Named { name, args, .. }
                                 if args.is_empty()
                                     && self.types.get(name).map_or(false, |td| matches!(&td.kind,
                                         TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                         | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
-                        if Self::primitive_gate(&rt) || concrete_value_named {
-                            if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
-                                && matches!(&rt, ResolvedType::Scalar { wide_default: true, signed: true, .. })
-                            {
-                                eprintln!("[MEMBER-INT f3-ntuple] id={:?} span={:?} tname={} field={} fty={:?}",
-                                    member_id, span, tname, name, field_ty);
-                            }
-                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                        let _ = concrete_value_named; // gate снят Шагом 2b (TypeParam-носитель)
+                        if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
+                            && matches!(&rt, ResolvedType::Scalar { wide_default: true, signed: true, .. })
+                        {
+                            eprintln!("[MEMBER-INT f3-ntuple] id={:?} span={:?} tname={} field={} fty={:?}",
+                                member_id, span, tname, name, field_ty);
                         }
+                        self.resolved_types_buf.borrow_mut().insert(member_id, rt);
                     }
                     // Plan 124.4 (D222) + 124.6 (D225): priv field READ check
                     // для named tuple — uniform allowance с Record.
