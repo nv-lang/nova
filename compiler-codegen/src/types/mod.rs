@@ -6466,16 +6466,20 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
-        // Plan 172.1.1 (U.4.5 — control-flow probe): annotate Block/If/IfLet/Match/Path with the
+        // Plan 172.1.1 (U.4.5 — control-flow probe): annotate Block/If/IfLet/Path with the
         // checker's value type (block tail / branch-join / variant). Each propagates an ALREADY-
         // checked inner type — no new re-derive hazard. `infer_expr_type` returns None for
         // unit/never/unresolved → those fall through to legacy via the consumer's `Ok` guard.
+        // NOTE: Match is intentionally excluded here — `infer_expr_type` for Match uses a
+        // "first-wins" arm scan that skips pattern-binding arms (e.g. `d407V(v) => v`) and
+        // can pick a WRONG later arm (IntLit → nova_int), poisoning the channel. Match
+        // annotation is handled exclusively by `infer_match_common_primitive` (below, in the
+        // main dispatch), which correctly requires ALL non-divergent arms to agree.
         if matches!(
             &e.kind,
             ExprKind::Block(_)
                 | ExprKind::If { .. }
                 | ExprKind::IfLet { .. }
-                | ExprKind::Match { .. }
                 | ExprKind::Path(_)
         ) {
             if e.id.is_set() {

@@ -1,4 +1,4 @@
-﻿// D407 — USER sum-type payload must keep its EXACT primitive width/sign through the full
+// D407 — USER sum-type payload must keep its EXACT primitive width/sign through the full
 // construct→match round-trip, distinct from the built-in Result/Option payload path (d85/d126).
 // Surface: `type d407T | V(uint) | W(u8)` — a non-generic sum whose variant carries a sized,
 // UNSIGNED payload. Codegen path read (compiler-codegen/src/codegen/emit_c.rs):
@@ -15,7 +15,7 @@
 // 8-bit unsigned field likewise. Each assert distinguishes collapse from correctness.
 // Spec: spec/decisions/02-types.md (named-priority uint≠int, u8≠i8≠int). One folder-module
 // `spec_tests.conformance`; all top-level names D407-prefixed to avoid CU collisions.
-module inprogress.d407_enum_payload_width
+module spec_tests.conformance
 
 type d407T
     | d407V(uint)
