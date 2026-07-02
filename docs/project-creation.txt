@@ -38674,3 +38674,5 @@ VERIFICATION: std/encoding/json PASS:1 FAIL:0 -- FULLY GREEN (all ~35 parse test
 [2026-07-03, часть 20 — expected-type волна] ctor-Call (Ok/Err/Some) + If/Match аннотируются expected-типом в коэрцируемых позициях (annotate_expected_concrete, §1-гейт конкретности). Tally 1358→1326→1279. С НАЧАЛА: 6224→1279 (−79%).
 
 [2026-07-03, часть 21] eq-None уточнение (74→55), If/Match expected (76→64/53→32), sum-вариант RecordLit (низкий yield, RL-MISS=2 — блок не бейлит; остаток RecordLit = анонимные/D55). Tally 1279→1259 (−80% с начала). Хвост рассыпан — дальнейшие атомы мельчают (−10..−30); осталось три системных носителя: C6b, arg-type dispatch, mono-повторы.
+
+[2026-07-04, часть 22] Embed-поле declared-типом (f3 пропускал embed-типы целиком; @map 31→5, −26), let-closure Func-канал из аннотации (АТОМ 3a fix-спеки; −9), C6b producer (согласован с hof_param_fn_sigs). Tally 1259→1224 (−80.3% с начала). Хвост мелкий; крупных атомов не осталось — идёт финальный сбор.
