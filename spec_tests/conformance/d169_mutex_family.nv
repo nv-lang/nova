@@ -1,0 +1,43 @@
+// D169 — Mutex / RwLock / ReentrantMutex family (Plan 103.3, final).
+// Норма (spec/decisions/06-concurrency.md §D169): Mutex (V2 guard-API — d174;
+// здесь non-parking поверхность try_lock), RwLock (readers-writer:
+// try_read/try_write, несколько читателей), ReentrantMutex (рекурсивный lock
+// того же fiber'а, lock_count-инвариант). Single-fiber-safe подмножество
+// (parking-семантика между fiber'ами — runtime-корпус plan103_3).
+// Шаблоны сверены с nova_tests/sync. Один folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+test "Mutex: try_lock двоичная семантика (D169)" {
+    mut d169_m = Mutex.new()
+    assert(d169_m.try_lock() == true)
+    assert(d169_m.try_lock() == false)
+    d169_m.unlock()
+    assert(d169_m.try_lock() == true)
+    d169_m.unlock()
+}
+
+test "RwLock: несколько читателей; писатель эксклюзивен (D169)" {
+    mut d169_rw = RwLock.new()
+    assert(d169_rw.try_read() == true)
+    assert(d169_rw.try_read() == true)   // второй читатель — OK
+    assert(d169_rw.try_write() == false) // писатель при читателях — нет
+    d169_rw.read_unlock()
+    d169_rw.read_unlock()
+    assert(d169_rw.try_write() == true)
+    assert(d169_rw.try_read() == false)  // читатель при писателе — нет
+    d169_rw.write_unlock()
+}
+
+test "ReentrantMutex: рекурсивный lock того же fiber'а, lock_count (D169)" {
+    mut d169_rm = ReentrantMutex.new()
+    assert(d169_rm.lock_count() == 0)
+    d169_rm.lock()
+    d169_rm.lock()
+    d169_rm.lock()
+    assert(d169_rm.lock_count() == 3)
+    d169_rm.unlock()
+    d169_rm.unlock()
+    assert(d169_rm.lock_count() == 1)
+    d169_rm.unlock()
+    assert(d169_rm.lock_count() == 0)
+}
