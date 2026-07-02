@@ -1,0 +1,53 @@
+// D117 — Size-like accessors require call syntax: `v.len()`, not `v.len`.
+// `len`, `capacity`, `byte_len`, `is_empty` — вызываются ТОЛЬКО через `()`.
+// `v.len` (без скобок) — field access, ошибка если поля `len` нет.
+//
+// Discriminator: без D117 можно было писать `v.len` как свойство.
+// Теперь метод-call обязателен — единый стиль.
+//
+// Spec: spec/decisions/03-syntax.md D117. Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+import std.collections.hashmap.{HashMap}
+
+test "slice .len() call syntax (D117)" {
+    ro xs = [1, 2, 3, 4, 5]
+    assert(xs.len() == 5)
+}
+
+test "empty slice .len() == 0 (D117)" {
+    ro xs []int = []
+    assert(xs.len() == 0)
+}
+
+test "slice .is_empty() on empty (D117)" {
+    ro xs []int = []
+    assert(xs.is_empty())
+}
+
+test "slice .is_empty() on non-empty (D117)" {
+    ro xs = [1]
+    assert(!xs.is_empty())
+}
+
+test "str .byte_len() call syntax (D117)" {
+    ro s = "hello"
+    assert(s.byte_len() == 5)
+}
+
+test "str with unicode .byte_len() vs .len() (D117)" {
+    ro s = "abc"
+    assert(s.byte_len() == 3)
+}
+
+test "HashMap .len() on empty map (D117)" {
+    ro m = HashMap[str, int].new()
+    assert(m.len() == 0)
+}
+
+test "HashMap .len() after insert (D117)" {
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    assert(m.len() == 2)
+}

@@ -1,0 +1,44 @@
+// D104 — Doc-comment outer/inner syntax: `///` привязывается к следующей декларации,
+// `//!` к модулю. Doc-comments не влияют на runtime поведение — erased в codegen.
+// Spec: spec/decisions/03-syntax.md D104. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+/// Returns double the value of x.
+///
+/// # Examples
+///
+/// assert(d104_double(5) == 10)
+fn d104_double(x int) -> int => x * 2
+
+/// A 2D point with integer coordinates.
+type D104Point { x int, y int }
+
+/// Creates a D104Point from two integers.
+fn D104Point.new(x int, y int) -> Self => { x, y }
+
+/// Computes the taxicab (Manhattan) distance between two points.
+fn d104_manhattan(a D104Point, b D104Point) -> int {
+    mut dx = a.x - b.x
+    mut dy = a.y - b.y
+    if dx < 0 { dx = -dx }
+    if dy < 0 { dy = -dy }
+    dx + dy
+}
+
+test "doc-commented function works at runtime (D104)" {
+    assert(d104_double(5) == 10)
+    assert(d104_double(0) == 0)
+    assert(d104_double(-3) == -6)
+}
+
+test "doc-commented type and constructor work at runtime (D104)" {
+    ro p = D104Point.new(3, 4)
+    assert(p.x == 3)
+    assert(p.y == 4)
+}
+
+test "doc-commented function with multiple params (D104)" {
+    ro a = D104Point.new(0, 0)
+    ro b = D104Point.new(3, 4)
+    assert(d104_manhattan(a, b) == 7)
+}

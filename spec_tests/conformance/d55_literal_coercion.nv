@@ -1,0 +1,16 @@
+// D55 — Literal coercion в позиции с ЯВНЫМ целевым типом T (spec/decisions/02-types.md:947).
+// Покрыто: (2) record-coercion (анонимный {field:val} получает тип T), (4) numeric literal coercion
+// (int-литерал принят без `as` если влезает в диапазон). (1) sum-coercion (D55.1) — КОМПИЛЯТОР-GAP
+// (не реализован даже для single-ctor sum, E7301), см. checklist → отдельный gap-тест с фиксом.
+module spec_tests.conformance
+
+type D55Rec { n int }
+
+test "record-coercion: анонимный { n: 7 } → D55Rec без имени типа (D55.2)" {
+    ro r D55Rec = { n: 7 }
+    assert(r.n == 7)
+}
+test "numeric literal coercion: int-литерал → u8 без `as` (D55.4)" {
+    ro b u8 = 200
+    assert(b == 200)
+}

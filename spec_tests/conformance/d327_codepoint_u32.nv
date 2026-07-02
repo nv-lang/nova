@@ -1,0 +1,35 @@
+// D327 — Unicode codepoint (scalar value 0..0x10FFFF) is `u32`, NOT `int` (Plan 172.2).
+// Codepoint is the VALUE-IDENTIFIER category (intrinsic 32-bit), distinct from the D226
+// index/len/offset/counter category (signed `int`). D327 rule 4: public cp-functions take
+// `u32`; in-range int-literals adapt to a u32-context (Plan 159 / D227 range-check, not
+// narrowing); rule 3: `char` (= u32, D128) is the cp type at the `str` border and delegates
+// via `@ as u32`. POS guard for the u32-codepoint API + literal-coercion + char->u32.
+module spec_tests.conformance
+
+// Public cp-predicate takes a `u32` codepoint (D327 rule 4), expression body.
+fn d327_is_ascii_upper(cp u32) -> bool => cp >= 0x41 && cp <= 0x5A
+
+test "D327: codepoint predicate takes u32; int hex-literal adapts to the u32 param" {
+    // int-literals 0x41 ('A') / 0x61 ('a') adapt to the u32-context (range-check, not narrowing)
+    assert(d327_is_ascii_upper(0x41))    // 'A' = 0x41 in [0x41,0x5A]
+    assert(!d327_is_ascii_upper(0x61))   // 'a' = 0x61 outside the range
+    assert(!d327_is_ascii_upper(0x40))   // '@' just below 'A'
+    assert(d327_is_ascii_upper(0x5A))    // 'Z' = upper bound, inclusive
+}
+
+test "D327: char (= u32, D128) delegates to the u32 cp-API via `as u32`" {
+    ro c char = 'A'
+    assert(d327_is_ascii_upper(c as u32))   // char -> u32 codepoint at the str border
+    ro lower char = 'a'
+    assert(!d327_is_ascii_upper(lower as u32))
+}
+
+test "D327: codepoints stored as Vec[u32], read back into the u32 cp-API" {
+    // Storage of codepoint sequences is Vec[u32] (rule 1), NOT Vec[int].
+    mut cps = Vec[u32].new()
+    cps.push('H' as u32)   // char -> u32 push (no narrowing)
+    cps.push(0x69)         // in-range int-literal 'i' adapts to the u32 element
+    assert(cps.len() == 2)
+    assert(d327_is_ascii_upper(cps[0]))     // 'H' is ASCII-upper
+    assert(!d327_is_ascii_upper(cps[1]))    // 'i' is not
+}

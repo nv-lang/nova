@@ -1,0 +1,37 @@
+// D23 — `return` ТОЛЬКО для раннего выхода. Норма (spec/decisions/03-syntax.md §D23):
+// `return` — statement, встречается лишь в блок-форме `fn name(...) { ... }` для
+// guard-clauses / ранних выходов; последнее выражение тела = автоматический результат
+// (без `return`). В `=>`-теле (одно выражение) guard'ы через return НЕ пишутся.
+// Здесь POS-наблюдаемое ядро D23: early-return по guard'у срабатывает И fall-through
+// до последнего выражения даёт результат.
+// Один folder-module `spec_tests.conformance`; имена D23-prefixed.
+module spec_tests.conformance
+
+// Блок-форма с guard'ами: ранние выходы через return, финал = последнее выражение.
+fn d23_classify(x int) -> str {
+    if x < 0 { return "negative" }
+    if x == 0 { return "zero" }
+    "positive"                          // последнее выражение = результат (без return)
+}
+
+// =>-тело: одно выражение, return не нужен (эквивалент через match).
+fn d23_sign(x int) -> int => match x {
+    n if n < 0 => -1
+    0 => 0
+    _ => 1
+}
+
+test "early-return по guard срабатывает раньше fall-through (D23)" {
+    assert(d23_classify(-5) == "negative")
+    assert(d23_classify(0) == "zero")
+}
+
+test "последнее выражение блок-тела = результат без `return` (D23)" {
+    assert(d23_classify(7) == "positive")
+}
+
+test "=>-тело (одно выражение) даёт результат без return (D23)" {
+    assert(d23_sign(-3) == -1)
+    assert(d23_sign(0) == 0)
+    assert(d23_sign(9) == 1)
+}

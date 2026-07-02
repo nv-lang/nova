@@ -1,0 +1,85 @@
+// D39 — embed/delegation via `use name Type` inside a record. This is DELEGATION (auto-proxy),
+// NOT inheritance: the wrapper is not a subtype of the embedded type. POS-observable norm:
+//   (1) auto-proxy — the embedded type's methods are callable directly on the wrapper
+//       (`aa.balance()` == `aa.account.balance()`), incl. methods with args;
+//   (2) the embedded object is reachable whole through the alias field name (`aa.account`);
+//   (3) own-method override-precedence — a wrapper method of the same name WINS over the
+//       delegated (auto-proxy) one, and the wrapper can reach the base explicitly via
+//       `@<alias>.method()`.
+// Spec: spec/decisions/02-types.md:1880 (D39). Part of the single `spec_tests.conformance`
+// folder-module; D-prefixed unique type names avoid cross-file top-level collisions.
+module spec_tests.conformance
+
+type D39Account {
+    bal int
+}
+
+fn D39Account.d39_acc_new(b int) -> Self =>
+    { bal: b }
+
+fn D39Account @balance() -> int =>
+    @bal
+
+// method with an argument — exercises auto-proxy arg-forwarding.
+fn D39Account @balance_plus(n int) -> int =>
+    @bal + n
+
+
+// ── Named embed: auto-proxy + whole-object access via alias ──
+type D39AuditedAccount {
+    use account D39Account
+    audit_count int
+}
+
+
+test "named embed: methods auto-proxy onto the wrapper (D39)" {
+    ro a = D39Account.d39_acc_new(100)
+    ro aa = D39AuditedAccount { account: a, audit_count: 0 }
+    // auto-proxy: wrapper.balance() delegates to account.balance()
+    assert(aa.balance() == 100)
+    // auto-proxy forwards args
+    assert(aa.balance_plus(5) == 105)
+}
+
+test "named embed: whole embedded object reachable via alias field (D39)" {
+    ro a = D39Account.d39_acc_new(42)
+    ro aa = D39AuditedAccount { account: a, audit_count: 0 }
+    // aa.account is the embedded D39Account as a whole
+    assert(aa.account.balance() == 42)
+    assert(aa.account.bal == 42)
+}
+
+
+// ── Override-precedence: own-method WINS over delegated; base reachable via alias ──
+type D39Storage {
+    cap int
+}
+
+fn D39Storage.d39_stor_new(c int) -> Self =>
+    { cap: c }
+
+fn D39Storage @capacity() -> int =>
+    @cap
+
+fn D39Storage @raw_doubled() -> int =>
+    @cap * 2
+
+
+type D39Cache {
+    use storage D39Storage
+    hits int
+}
+
+// own override: calls the base explicitly through the alias, then adds wrapper state.
+fn D39Cache @capacity() -> int =>
+    @storage.capacity() + @hits
+
+
+test "override-precedence: own-method wins over delegated; delegated still proxied (D39)" {
+    ro s = D39Storage.d39_stor_new(100)
+    ro c = D39Cache { storage: s, hits: 5 }
+    // own @capacity wins (100 + 5), not the delegated 100
+    assert(c.capacity() == 105)
+    // @raw_doubled has no override → delegated auto-proxy (100 * 2)
+    assert(c.raw_doubled() == 200)
+}

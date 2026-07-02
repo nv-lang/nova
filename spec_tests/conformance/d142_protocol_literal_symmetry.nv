@@ -1,0 +1,61 @@
+// D142 — protocol/effect declaration ↔ literal symmetry.
+// Norm (spec/decisions/02-types.md §D142): the protocol KEYWORD that declares a
+// contract ALSO forms the LITERAL that produces a value implementing that contract:
+// `protocol Name { ... }` in expression-position is a value (anonymous impl) whose
+// methods dispatch via runtime vtable. The canonical use-case is the
+// capability-split factory: one factory returns several protocol-literals sharing
+// ONE mutable state, observable end-to-end (read sees writes through the shared
+// capture). Declaration-body methods use `@`-receiver; literal-body methods use
+// bare names (same syntax as named-impl bodies). Conformance: a protocol-literal is
+// a first-class value, its method-dispatch lowers to the literal's body, and two
+// literals over the same state observe each other's mutations.
+module spec_tests.conformance
+
+// Declaration side of the symmetry: protocol keyword declares the contract.
+// Body methods carry the `@`-receiver per D72/D53.
+type D142Reader protocol {
+    @read() -> int
+}
+
+type D142Writer protocol {
+    @write(v int) -> ()
+}
+
+// Shared mutable state captured by both protocol-literals.
+type D142Cell {
+    mut value int
+}
+
+// Factory: the SAME `protocol` keyword that declared the contract above now forms
+// two LITERALS (symmetry). Each literal is a value implementing its contract; both
+// close over `state`, so the Reader observes the Writer's mutation.
+fn D142Cell.new(initial int) -> (D142Reader, D142Writer) {
+    mut state = D142Cell { value: initial }
+    ro r = protocol D142Reader {
+        read() => state.value
+    }
+    ro w = protocol D142Writer {
+        write(v) {
+            state.value = v
+        }
+    }
+    (r, w)
+}
+
+test "protocol-literal is a first-class value with vtable dispatch (D142)" {
+    // Standalone literal: bare-name body, dispatch lowers to the literal's body.
+    ro doubler = protocol D142Reader {
+        read() => 21 + 21
+    }
+    assert(doubler.read() == 42)
+}
+
+test "capability-split factory: two literals share captured state (D142)" {
+    ro (r, w) = D142Cell.new(10)
+    // Reader literal observes the initial captured value.
+    assert(r.read() == 10)
+    // Mutation through the Writer literal is visible to the Reader literal —
+    // both close over the SAME `state` (D142 canonical example).
+    w.write(99)
+    assert(r.read() == 99)
+}

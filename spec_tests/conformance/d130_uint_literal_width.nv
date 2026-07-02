@@ -1,0 +1,12 @@
+// D130 — uint-литералы до u64::MAX выразимы (Plan 172.1-K4: десятичный u64-fallback в лексере,
+// nova_uint-arm в emit_typed_int_literal). Ранее `> i64::MAX` десятичный → «number too large».
+module spec_tests.conformance
+
+test "uint literal up to u64::MAX is expressible and UNSIGNED (D130, K4)" {
+    ro maxv uint = 18446744073709551615   // u64::MAX = 2^64-1 (> i64::MAX, ранее отвергался)
+    ro half uint = 9223372036854775808    // 2^63 (> i64::MAX)
+    ro one uint = 1
+    assert(maxv > half)                    // unsigned: 2^64-1 > 2^63
+    assert(half > one)                     // unsigned: 2^63 > 1
+    assert(maxv == 18446744073709551615)   // round-trip bit-pattern
+}

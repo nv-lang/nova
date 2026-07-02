@@ -1,0 +1,108 @@
+// D232 — `Vec[T]`: Nova-native generic growable array (Plan 131). The CORE mutating
+// API and typed-storage property are POS-observable at runtime (spec/decisions/02-types.md:11889):
+//   • push grows the vec, len tracks live count; pop returns Option[T] (Some on non-empty,
+//     a stable None once empty) and shrinks len.
+//   • get(i) is BOUNDS-CHECKED → Option[T]: in-range → Some(elem), out-of-range → None.
+//   • insert(i, v) shift-inserts; remove(i) shift-removes (preserving order) and returns the elem;
+//     swap_remove(i) is the O(1) order-DISRUPTING remove.
+//   • reverse() flips in place; clear() drops to len 0; is_empty / first / last reflect state.
+//   • Growth: first push into an empty Vec allocates 8 slots, so cap >= len and cap >= 8 after one push.
+//   • Typed storage: a heap-record element round-trips by its real type (pointer-in-slot, no int64-erasure).
+// Sibling Vec D-blocks cover OTHER facets: D239 (`[]T ≡ Vec[T]` alias), D259 (of vs from),
+// D264 (content-hash / collect). This block exercises the D232 mutating method table itself.
+// Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
+module spec_tests.conformance
+
+// Heap record element — proves typed pointer-in-slot storage (no int64-erasure) for record T.
+type D232Pt {
+    x int
+    y int
+}
+
+fn D232Pt.new(a int, b int) -> D232Pt => { x: a, y: b }
+
+test "push grows / pop returns Option and shrinks; empty pop is a stable None (D232)" {
+    mut v = Vec[int].new()
+    assert(v.is_empty())
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    assert(v.len() == 3)
+    assert(!v.is_empty())
+    assert(v.pop() == Some(30))   // last element off the back
+    assert(v.pop() == Some(20))
+    assert(v.len() == 1)
+    assert(v.pop() == Some(10))
+    assert(v.len() == 0)
+    assert(v.pop() == None)       // empty → None
+    assert(v.pop() == None)       // None is stable on a still-empty Vec
+}
+
+test "get(i) is bounds-checked: in-range → Some, out-of-range → None (D232)" {
+    ro v = Vec[int].of(7, 8, 9)
+    assert(v.get(0) == Some(7))
+    assert(v.get(2) == Some(9))
+    assert(v.get(3) == None)      // index == len → out of range
+    assert(v.get(99) == None)     // far out of range
+}
+
+test "insert shift-inserts; remove shift-removes preserving order (D232)" {
+    mut v = Vec[int].of(1, 2, 4)
+    v.insert(2, 3)                // [1, 2, 3, 4]
+    assert(v.len() == 4)
+    assert(v[0] == 1)
+    assert(v[2] == 3)
+    assert(v[3] == 4)
+    ro removed = v.remove(1)      // drop the 2 → [1, 3, 4]
+    assert(removed == 2)
+    assert(v.len() == 3)
+    assert(v[0] == 1)
+    assert(v[1] == 3)             // order preserved by the shift
+    assert(v[2] == 4)
+}
+
+test "swap_remove is O(1) order-disrupting: last fills the hole (D232)" {
+    mut v = Vec[int].of(10, 20, 30, 40)
+    ro got = v.swap_remove(1)     // remove 20; last (40) moves into slot 1
+    assert(got == 20)
+    assert(v.len() == 3)
+    assert(v[0] == 10)
+    assert(v[1] == 40)            // moved-from-end element now sits here
+    assert(v[2] == 30)
+}
+
+test "reverse flips in place; clear drops to empty; first/last track ends (D232)" {
+    mut v = Vec[int].of(1, 2, 3)
+    assert(v.first() == Some(1))
+    assert(v.last() == Some(3))
+    v.reverse()                   // [3, 2, 1]
+    assert(v[0] == 3)
+    assert(v[2] == 1)
+    assert(v.first() == Some(3))
+    assert(v.last() == Some(1))
+    v.clear()
+    assert(v.len() == 0)
+    assert(v.is_empty())
+    assert(v.first() == None)     // no front element after clear
+    assert(v.last() == None)
+}
+
+test "first push into empty Vec allocates 8 slots: cap >= 8 and cap >= len (D232)" {
+    mut v = Vec[int].new()
+    assert(v.cap() == 0)          // no allocation before the first push
+    v.push(1)
+    assert(v.len() == 1)
+    assert(v.cap() >= 8)          // initial capacity is 8 slots on first push
+    assert(v.cap() >= v.len())    // capacity always covers the live length
+}
+
+test "typed storage round-trips heap-record elements (no int64-erasure) (D232)" {
+    mut v = Vec[D232Pt].new()
+    v.push(D232Pt.new(1, 2))
+    v.push(D232Pt.new(3, 4))
+    assert(v.len() == 2)
+    assert(v[0].x == 1)           // record fields survive — stored by real type
+    assert(v[0].y == 2)
+    assert(v[1].x == 3)
+    assert(v[1].y == 4)
+}

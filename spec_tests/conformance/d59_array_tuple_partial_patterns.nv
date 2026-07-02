@@ -1,0 +1,102 @@
+// D59 — Array, tuple и позиционные partial patterns в `match`.
+// `[]` пустой, `[x]` один элемент, `[a, b]` два, `[head, ..]` ≥1 bind первого.
+// `[.., last]` — bind последнего, `[a, .., z]` — bind первого и последнего.
+//
+// Discriminator: без частичных паттернов на массивах нельзя элегантно
+// разобрать структуру без ручного len-check. Тесты проверяют что
+// pattern binding возвращает правильные значения.
+//
+// Spec: spec/decisions/03-syntax.md D59. Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+fn d59_describe(xs []int) -> str =>
+    match xs {
+        []        => "empty"
+        [x]       => "one"
+        [_, _]    => "two"
+        [_, _, _] => "three"
+        _         => "many"
+    }
+
+test "array pattern: empty [] matches empty slice (D59)" {
+    ro xs []int = []
+    assert(d59_describe(xs) == "empty")
+}
+
+test "array pattern: [x] matches single-element slice (D59)" {
+    ro xs = [42]
+    assert(d59_describe(xs) == "one")
+}
+
+test "array pattern: [_, _] matches two-element slice (D59)" {
+    ro xs = [1, 2]
+    assert(d59_describe(xs) == "two")
+}
+
+test "array pattern: wildcard _ matches remaining (D59)" {
+    ro xs = [1, 2, 3, 4, 5]
+    assert(d59_describe(xs) == "many")
+}
+
+test "array pattern: bind [head, ..] captures first element (D59)" {
+    ro xs = [10, 20, 30]
+    ro first = match xs {
+        [h, ..] => h
+        _ => -1
+    }
+    assert(first == 10)
+}
+
+fn d59_last(xs []int) -> int =>
+    match xs {
+        [.., last] => last
+        _ => -1
+    }
+
+fn d59_first_last(xs []int) -> int =>
+    match xs {
+        [a, .., z] => a + z
+        [x] => x
+        _ => -1
+    }
+
+test "array pattern [.., last] captures last element (D59)" {
+    ro xs = [10, 20, 30]
+    assert(d59_last(xs) == 30)
+}
+
+test "array pattern [.., last] single element (D59)" {
+    ro xs = [42]
+    assert(d59_last(xs) == 42)
+}
+
+test "array pattern [.., last] empty → fallthrough (D59)" {
+    ro xs []int = []
+    assert(d59_last(xs) == -1)
+}
+
+test "array pattern [a, .., z] captures first+last (D59)" {
+    ro xs = [10, 20, 30, 40]
+    assert(d59_first_last(xs) == 50)
+}
+
+test "array pattern [a, .., z] two elements (D59)" {
+    ro xs = [5, 15]
+    assert(d59_first_last(xs) == 20)
+}
+
+test "tuple pattern: (a, b) destructures two-element tuple (D59)" {
+    ro pair = (3, 7)
+    ro sum = match pair {
+        (a, b) => a + b
+    }
+    assert(sum == 10)
+}
+
+test "tuple pattern: (a, b, c) three-element tuple (D59)" {
+    ro trip = (1, 2, 3)
+    ro prod = match trip {
+        (a, b, c) => a * b * c
+    }
+    assert(prod == 6)
+}

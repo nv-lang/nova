@@ -1,0 +1,40 @@
+// D72 — Generic bounds via `[T Protocol]`: a protocol-type stands as a BOUND
+// (universal/static-mono position), and the bound's method dispatches on the
+// concrete `T` at the call site. Syntax is the single `name type` rule, no colon:
+// `fn d72_render[T D72Show](x T) -> str`. Spec: spec/decisions/02-types.md §D72.
+// Conformance: the bound resolves to the protocol (D53) and `x.show()` lowers to
+// the concrete implementor's method — structural conformance of the type-arg.
+module spec_tests.conformance
+
+// Protocol used as the bound. Method decl in protocol body: no `fn`, `@`-receiver.
+type D72Show protocol {
+    @show() -> str
+}
+
+// Concrete implementor #1.
+type D72Item {
+    tag str
+}
+
+fn D72Item @show() -> str => @tag
+
+// Concrete implementor #2 — proves the bound is not pinned to one type.
+type D72Num {
+    n int
+}
+
+fn D72Num @show() -> str => "n"
+
+// Generic with a protocol bound. `T D72Show` = `name type` (no `:`).
+// Calls the bound's method on the concrete `T`.
+fn d72_render[T D72Show](x T) -> str => x.show()
+
+test "protocol bound resolves and dispatches to concrete T (D72)" {
+    ro it = D72Item { tag: "item" }
+    assert(d72_render(it) == "item")
+}
+
+test "same protocol-bound generic works for a second concrete T (D72)" {
+    ro num = D72Num { n: 7 }
+    assert(d72_render(num) == "n")
+}

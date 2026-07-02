@@ -1,0 +1,66 @@
+// D30 §2 — `try_*` / failable-pair convention (Plan 108). Норма
+// (spec/decisions/03-syntax.md §D30): для падающей операции определяются ДВЕ формы —
+// `try_op(...) -> Result[T, E]` (результат без эффектов) и `op(...) Fail[E] -> T`
+// (unwrap-обёртка через `!!`). Правило реализации: `op` = Nova-body через `try_op`:
+//     export fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> u8 => @try_read_byte()!!
+// Runtime-наблюдаемое ядро: на Ok-пути `!!` возвращает ВНУТРЕННЕЕ значение (op() == inner),
+// на Err-пути `!!` кидает E через Fail (op() НЕ коллапсирует в default — handler ловит E).
+// Шаблон сверен с nova_tests/plan61/f3_typed_result_err.nv и d25_throw_fail.nv.
+// Сами правила именования (PascalCase/snake_case) — compile-time convention, вне POS-runtime;
+// здесь тестируется try_*/* unwrap-семантика, дающая наблюдаемое значение.
+// Один folder-module `spec_tests.conformance`; имена D30-prefixed.
+module spec_tests.conformance
+
+// Доменная ошибка чтения — sum-type с typed payload.
+type D30ReadError | Empty | BadByte(u8)
+
+// `try_op` — примитив: результат без эффектов, вызывающий сам решает что делать.
+fn d30_try_read() -> Result[u8, D30ReadError] {
+    Ok(7)
+}
+
+fn d30_try_read_fail() -> Result[u8, D30ReadError] {
+    Err(BadByte(255))
+}
+
+// `op` — тонкая Nova-обёртка через `!!` (ровно форма из §D30: `=> @try_read_byte()!!`).
+// Fail[E] в сигнатуре обязателен для throw-стиля.
+fn d30_read() Fail[D30ReadError] -> u8 => d30_try_read()!!
+
+fn d30_read_fail() Fail[D30ReadError] -> u8 => d30_try_read_fail()!!
+
+// Извлечь байт из ошибки — handler возвращает его через interrupt (наблюдаемое значение).
+fn d30_err_byte(e D30ReadError) -> u8 {
+    match e {
+        BadByte(b) => b
+        Empty      => 0
+    }
+}
+
+test "try_op/op: на Ok-пути `!!` возвращает внутреннее значение (D30 §2)" {
+    // try-форма отдаёт Result; op-форма анрапит до inner value.
+    ro r = d30_try_read()
+    assert(r.is_ok())
+    // op() == inner Ok payload — success-path возвращает именно 7, не обёртку/не default.
+    ro v = d30_read()
+    assert(v == 7)
+}
+
+test "try_op/op: на Err-пути `op()` кидает E через Fail, ловится handler'ом (D30 §2)" {
+    // Err-форма видна как Result (без эффекта).
+    ro r = d30_try_read_fail()
+    assert(!r.is_ok())
+    // op-обёртка анрапит Err → throw typed E. with-блок сворачивается к payload через
+    // interrupt: 255 приходит ИЗ throw (handler-ветка BadByte), а НЕ из тела (тело вернуло бы 0).
+    ro thrown = with Fail[D30ReadError] = |e| interrupt d30_err_byte(e) {
+        ro _ = d30_read_fail()
+        0
+    }
+    assert(thrown == 255)
+    // Контраст: success-обёртка НЕ триггерит handler — значение проходит телом без throw.
+    // Если бы `!!` коллапсировал Ok в handler-ветку, пришло бы 1, а не 7.
+    ro ok_observed = with Fail[D30ReadError] = |_e| interrupt 1 {
+        d30_read()
+    }
+    assert(ok_observed == 7)
+}

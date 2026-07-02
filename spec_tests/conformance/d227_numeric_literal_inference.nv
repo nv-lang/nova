@@ -1,0 +1,41 @@
+// D227 — Numeric literal inference: голый литерал без context → int (= i64 per D129).
+// В позиции с явным numeric target: coerce без cast. Range-check compile-time.
+// Spec: spec/decisions/03-syntax.md D227. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// Default inference: untyped literal → int
+fn d227_double(x int) -> int => x * 2
+
+test "bare literal infers int; arithmetic works (D227)" {
+    ro x = 42
+    assert(x == 42)
+    assert(d227_double(x) == 84)
+    ro y = 0xFF
+    assert(y == 255)
+    ro z = 3_000_000_000
+    assert(z == 3000000000)
+}
+
+// Context coercion: literal takes the annotated type
+fn d227_add_u8(a u8, b u8) -> u8 => a + b
+fn d227_add_i32(a i32, b i32) -> i32 => a + b
+
+test "context coercion: literal coerces into annotated numeric type (D227)" {
+    ro a i32 = 100
+    assert(a == 100)
+    ro b u8 = 200
+    assert(b == 200)
+    assert(d227_add_u8(100, 55) == 155)
+    assert(d227_add_i32(1000, 2000) == 3000)
+}
+
+test "hex literal with default int type (D227)" {
+    ro h = 0xDEAD
+    assert(h == 57005)
+}
+
+test "underscore separator in large literal (D227)" {
+    ro big = 1_000_000
+    assert(big == 1000000)
+    assert(d227_double(big) == 2000000)
+}

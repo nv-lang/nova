@@ -1,0 +1,25 @@
+// D226 — Signed indexing convention: len/capacity/index are signed `int` (= i64),
+// NOT uint. Differences are naturally signed: `len() - 1` on an empty collection
+// yields -1 with NO underflow-trap (Rule 4). `usize`/`isize` retired. Part of the
+// SINGLE `spec_tests.conformance` folder-module. D-prefixed names avoid clashes.
+module spec_tests.conformance
+
+test "len() is signed int and basic arithmetic holds (D226 Rule 1+4)" {
+    mut d226v []int = [10, 20, 30]
+    assert(d226v.len() == 3)
+    assert(d226v.len() - 1 == 2)
+}
+
+test "len() - 1 on empty collection is -1, no underflow (D226 Rule 4)" {
+    mut d226e []int = []
+    assert(d226e.len() == 0)
+    // signed: 0 - 1 == -1, NOT a uint underflow to a huge positive value.
+    assert(d226e.len() - 1 == -1)
+}
+
+test "signed len-difference across two collections (D226 Rule 4)" {
+    mut d226a []int = [1, 2]
+    mut d226b []int = [1, 2, 3, 4, 5]
+    // shorter - longer is negative, valid signed result.
+    assert(d226a.len() - d226b.len() == -3)
+}

@@ -1,0 +1,39 @@
+// D19 — Match-arms через `=>`, НЕ `->`. Норма (spec/decisions/03-syntax.md §D19):
+// разделитель «образец → результат» — `=>`; arm имеет две формы тела:
+// `pattern => expr` (одно выражение) ИЛИ `pattern => { block }` (Rust-стиль).
+// `=>` гарантирован как маркер «начало результата» после pattern'а (возможно с
+// `if`-guard'ом). Здесь POS-наблюдаемое ядро D19: оба варианта тела arm и
+// guard-arm дают конкретные runtime-значения через assert.
+// Один folder-module `spec_tests.conformance`; имена D19-prefixed (без клэшей).
+module spec_tests.conformance
+
+type D19Shape
+    | D19Circle(f64)
+    | D19Square(f64)
+
+// expr-форма arm: `pattern => expr`.
+fn d19_area(s D19Shape) -> f64 => match s {
+    D19Circle(r) => 3.0 * r * r
+    D19Square(side) => side * side
+}
+
+// block-форма arm: `pattern => { block }` — несколько statement'ов, последнее = результат.
+fn d19_classify(n int) -> str => match n {
+    0 => "zero"
+    n if n > 0 => {
+        ro tag = "pos"
+        tag
+    }
+    _ => "neg"
+}
+
+test "match-arm expr-форма `pattern => expr` даёт значение (D19)" {
+    assert(d19_area(D19Circle(2.0)) == 12.0)   // 3*2*2
+    assert(d19_area(D19Square(3.0)) == 9.0)
+}
+
+test "match-arm блок-форма `=> { block }` + guard-arm выбираются корректно (D19)" {
+    assert(d19_classify(0) == "zero")
+    assert(d19_classify(5) == "pos")    // guard `n if n > 0` + block-body
+    assert(d19_classify(-2) == "neg")
+}

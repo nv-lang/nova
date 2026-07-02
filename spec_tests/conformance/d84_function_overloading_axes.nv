@@ -1,0 +1,49 @@
+// D84 — Перегрузка функций и методов: 4 оси резолва (receiver-type, arg-types, arity, return-type).
+// Spec: spec/decisions/10-overloading.md D84. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// Ось 1 — по receiver-типу
+fn int @d84_double() -> int => @ * 2
+fn f64 @d84_double() -> f64 => @ * 2.0
+
+test "overload by receiver type: int vs f64 @d84_double (D84)" {
+    ro a = 5
+    assert(a.d84_double() == 10)
+    ro b f64 = 3.5
+    assert(b.d84_double() == 7.0)
+}
+
+// Ось 2 — по типам аргументов
+fn d84_describe_arg(s str) -> str => "str"
+fn d84_describe_arg(n int) -> str => "int"
+fn d84_describe_arg(b bool) -> str => "bool"
+
+test "overload by argument types: str/int/bool variants (D84)" {
+    assert(d84_describe_arg("hello") == "str")
+    assert(d84_describe_arg(42) == "int")
+    assert(d84_describe_arg(true) == "bool")
+}
+
+// Ось 3 — по арности
+fn d84_greet(name str) -> str => "Hello " + name
+fn d84_greet(name str, title str) -> str => "Hello " + title + " " + name
+
+test "overload by arity: 1 vs 2 arguments (D84)" {
+    assert(d84_greet("Alice") == "Hello Alice")
+    assert(d84_greet("Smith", "Dr") == "Hello Dr Smith")
+}
+
+// Combined: receiver-type + arity
+fn str @d84_repeat() -> str => @ + @
+fn str @d84_repeat(n int) -> str {
+    mut r = ""
+    for _ in 0..n {
+        r = r + @
+    }
+    r
+}
+
+test "overload by receiver-type + arity combined (D84)" {
+    assert("ab".d84_repeat() == "abab")
+    assert("x".d84_repeat(3) == "xxx")
+}

@@ -1,0 +1,52 @@
+// D230 — `Clone` protocol: `#impl(Clone)` auto-derives `clone() -> Self` as a
+// DEEP, recursive, memberwise copy. Primitive fields are value-copied (deep == shallow);
+// user-type fields recurse through their own synthesized `@clone()`. The contract:
+// the clone is a FULLY INDEPENDENT copy — mutating the clone never aliases the original
+// (and vice-versa). POS conformance for spec/decisions/02-types.md §D230 (Plan 126 /
+// 126.2 / 138.3). Part of the SINGLE `spec_tests.conformance` folder-module;
+// D-prefixed type names avoid duplicate-top-level-name clashes.
+module spec_tests.conformance
+
+#impl(Clone + Equal)
+type D230Point {
+    mut x int
+    mut y int
+}
+
+#impl(Clone + Equal)
+type D230Box {
+    mut inner D230Point
+    mut tag int
+}
+
+test "clone of a flat record equals original; mutating clone does not alias (D230)" {
+    ro a = D230Point { x: 1, y: 2 }
+    mut c = a.clone()
+    assert(c == a)
+    // Mutate the clone — original must stay intact (deep copy, no shared identity).
+    c.x = 999
+    assert(a.x == 1)
+    assert(c.x == 999)
+    assert(a != c)
+}
+
+test "clone is DEEP — nested user-type field recurses, inner mutation isolated (D230)" {
+    ro a = D230Box { inner: D230Point { x: 10, y: 20 }, tag: 7 }
+    mut c = a.clone()
+    assert(c == a)
+    // Mutate the clone's nested record field; original's inner must remain untouched
+    // because auto-derive recurses via D230Point.@clone() (memberwise deep copy).
+    c.inner.x = 555
+    assert(a.inner.x == 10)
+    assert(c.inner.x == 555)
+    assert(a != c)
+}
+
+test "primitive fields are value-copied: clone carries the same field values (D230)" {
+    ro a = D230Box { inner: D230Point { x: 3, y: 4 }, tag: 42 }
+    ro c = a.clone()
+    // Primitive `tag` and the inner primitives are copied by value (deep == shallow).
+    assert(c.tag == 42)
+    assert(c.inner.x == 3)
+    assert(c.inner.y == 4)
+}

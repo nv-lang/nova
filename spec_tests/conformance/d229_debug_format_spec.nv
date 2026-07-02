@@ -1,0 +1,74 @@
+// D229 — Debug protocol + format spec `${expr:?}` (Plan 91.14, sibling к D183 Display).
+// Норма: `${expr:?}` маршрутизируется к Debug.@debug (НЕ Display.@display);
+//   • str debug = quoted-with-escapes (`"hello"`), display = bare (`hello`) — distinct;
+//   • int/bool debug == display (decimal / "true"/"false");
+//   • `#impl(Debug)` на record → memberwise `TypeName { f1: v1, f2: v2 }` (str-поля quoted);
+//   • Option/Result debug → `Some(v)`/`None`/`Ok(v)`/`Err(e)` (inner через @debug → str quoted).
+// Spec: spec/decisions/02-types.md:11435 (D229).
+module spec_tests.conformance
+
+#impl(Debug)
+type D229Point { x int, y int }
+
+#impl(Debug)
+type D229Named { name str, score int }
+
+// Тип с РАЗНЫМ Display vs Debug — ровно норма "diagnostic ≠ user-facing display".
+type D229Tagged { label str, value int }
+
+fn D229Tagged @display(mut w Write) -> () {
+    w.write(@label)
+    w.write("=")
+    w.write(str.from(@value))
+}
+
+fn D229Tagged @debug(mut w Write) -> () {
+    w.write("D229Tagged { label: ")
+    @label.debug(w)
+    w.write(", value: ")
+    w.write(str.from(@value))
+    w.write(" }")
+}
+
+test "${x:?} routes to Debug, NOT Display: str quoted in debug, bare in display (D229)" {
+    ro s = "hello"
+    assert("${s}" == "hello")          // Display.@display — bare
+    assert("${s:?}" == "\"hello\"")    // Debug.@debug — quoted-with-escapes
+}
+
+test "primitive debug == display: int decimal, bool true/false (D229)" {
+    ro n = 42
+    assert("${n}" == "42")
+    assert("${n:?}" == "42")
+    ro b = false
+    assert("${b}" == "false")
+    assert("${b:?}" == "false")
+}
+
+test "distinct @display vs @debug on same type — :? selects @debug (D229)" {
+    ro t = D229Tagged { label: "x", value: 7 }
+    assert("${t}" == "x=7")                                    // Display
+    assert("${t:?}" == "D229Tagged { label: \"x\", value: 7 }") // Debug
+}
+
+test "#impl(Debug) auto-derive: memberwise `Type { f: v }`, str fields quoted (D229)" {
+    ro p = D229Point { x: 1, y: 2 }
+    assert("${p:?}" == "D229Point { x: 1, y: 2 }")
+    ro z = D229Point { x: 0, y: 0 }
+    assert("${z:?}" == "D229Point { x: 0, y: 0 }")
+    ro nm = D229Named { name: "hi", score: 9 }
+    assert("${nm:?}" == "D229Named { name: \"hi\", score: 9 }")
+}
+
+test "Option/Result debug: Some/None/Ok/Err, inner via @debug (str quoted) (D229)" {
+    ro some = Some(42)
+    assert("${some:?}" == "Some(42)")
+    ro none = None as Option[int]
+    assert("${none:?}" == "None")
+    ro somes = Some("hi")
+    assert("${somes:?}" == "Some(\"hi\")")     // inner str через @debug → quoted
+    ro ok = Ok(1) as Result[int, str]
+    assert("${ok:?}" == "Ok(1)")
+    ro err = Err("oops") as Result[int, str]
+    assert("${err:?}" == "Err(\"oops\")")
+}

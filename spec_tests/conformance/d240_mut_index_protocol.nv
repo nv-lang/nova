@@ -1,0 +1,55 @@
+// D240 — MutIndex[K, V] protocol: `a[key] = val` desugars into write @index(key, val).
+// Vec[T] implements MutIndex[int, T]; `v[i] = val` dispatches via builtin path.
+//
+// Spec: spec/decisions/03-syntax.md D240. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+fn d240_set_first(mut xs []int, val int) {
+    xs[0] = val
+}
+
+fn d240_swap(mut xs []int) {
+    mut tmp = xs[0]
+    xs[0] = xs[1]
+    xs[1] = tmp
+}
+
+test "Vec[T] index-write v[i]=val via MutIndex (D240)" {
+    mut v []int = [1, 2, 3]
+    v[0] = 99
+    assert(v[0] == 99)
+    assert(v[1] == 2)
+    assert(v[2] == 3)
+}
+
+test "Vec[T] index-write in-place mutation round-trips (D240)" {
+    mut v = [10, 20, 30]
+    v[1] = 50
+    v[2] = 70
+    assert(v[0] == 10)
+    assert(v[1] == 50)
+    assert(v[2] == 70)
+}
+
+test "Vec[T] index-write via function param (D240)" {
+    mut v = [1, 2, 3]
+    d240_set_first(v, 42)
+    assert(v[0] == 42)
+}
+
+test "Vec[T] index-write swap via function param (D240)" {
+    mut v = [5, 10, 15]
+    d240_swap(v)
+    assert(v[0] == 10)
+    assert(v[1] == 5)
+    assert(v[2] == 15)
+}
+
+test "Vec[str] index-write str elements (D240)" {
+    mut s []str = ["a", "b", "c"]
+    s[0] = "hello"
+    s[2] = "world"
+    assert(s[0] == "hello")
+    assert(s[1] == "b")
+    assert(s[2] == "world")
+}

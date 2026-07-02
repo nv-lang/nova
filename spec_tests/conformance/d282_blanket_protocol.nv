@@ -1,0 +1,96 @@
+// D282 — Blanket protocol-receiver methods: `fn[I Proto[T]] I @name(...) -> R`.
+// Norm (spec/decisions/02-types.md §D282, Plan 161): a blanket declaration takes a
+// TYPEVAR receiver `I` bounded by a parametric protocol `Proto[T]`; the bound's type
+// args (`T`) are INFERRED from the protocol, not declared explicitly (§1). At a call
+// `expr.name(...)` where `expr` has a concrete type `C` implementing `Proto[…]`, the
+// blanket method is visible on `C`, `I` binds to `C`, and the body's protocol-method
+// calls dispatch to C's OWN implementation (§2 dispatch, §3 mono: `I`=C, `T`=C's impl
+// type-arg). This test exercises the POS, runtime-observable side with a SELF-CONTAINED
+// custom parametric protocol and TWO distinct concrete implementors (one int-typed, one
+// str-typed) sharing a SINGLE blanket terminator whose return type is concrete (`int`/
+// `bool`) — the V1-supported form (§6: parametric returns like `Option[T]` are V2).
+// Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed unique names
+// avoid duplicate-top-level-name clashes in the shared module.
+module spec_tests.conformance
+
+// Custom PARAMETRIC protocol used as the blanket bound. `@pull` yields the next element
+// or `None` when exhausted — same shape as a one-shot iterator, but defined here so the
+// test does not depend on stdlib iterator internals.
+type D282Source[T] protocol {
+    mut @pull() -> Option[T]
+}
+
+// Concrete implementor #1: implements D282Source[int] — `T` = int via the @pull signature.
+// Counts down from `n` to 0, exclusive (n elements: n-1, n-2, …, 0).
+type D282IntCount {
+    mut n int
+}
+
+fn D282IntCount mut @pull() -> Option[int] {
+    if @n <= 0 { None }
+    else { @n = @n - 1; Some(@n) }
+}
+
+// Concrete implementor #2: a DIFFERENT concrete type implementing D282Source[str] —
+// `T` = str here, proving the bound's `T` is inferred per-implementor (not pinned).
+// Emits `rest` strings then None (no element value matters for the count terminator).
+type D282StrFeed {
+    mut rest int
+}
+
+fn D282StrFeed mut @pull() -> Option[str] {
+    if @rest <= 0 { None }
+    else { @rest = @rest - 1; Some("x") }
+}
+
+// BLANKET declaration (§1): typevar receiver `I` bounded by `D282Source[T]`; `T` is
+// inferred from the bound (never written on the receiver). Concrete return type `int`
+// (V1 per §6). Drains the source via the bound method `@pull`, which under §3 dispatches
+// to the concrete receiver's OWN `@pull`. ONE declaration serves EVERY implementor.
+fn[I D282Source[T]] I mut @d282_drain() -> int {
+    mut count = 0
+    while true {
+        match @pull() {
+            Some(_) => { count = count + 1 },
+            None => return count,
+        }
+    }
+    count
+}
+
+// A second blanket terminator with a concrete `bool` return — `T` surfaces only inside
+// the predicate, return type stays concrete (V1). Reports whether the source is empty.
+fn[I D282Source[T]] I mut @d282_is_empty() -> bool {
+    match @pull() {
+        Some(_) => false,
+        None => true,
+    }
+}
+
+test "blanket method dispatches on concrete implementor #1 (I=D282IntCount, T=int) (D282)" {
+    mut src = D282IntCount { n: 4 }
+    // `@d282_drain` is visible on D282IntCount purely because it implements D282Source[int];
+    // body's `@pull` resolves to D282IntCount's own method (mono I=D282IntCount, T=int).
+    assert(src.d282_drain() == 4)
+}
+
+test "SAME blanket method on a DIFFERENT implementor #2 (I=D282StrFeed, T=str) (D282)" {
+    mut feed = D282StrFeed { rest: 3 }
+    // The identical blanket declaration applies; here `I` binds to D282StrFeed and the
+    // bound's `T` is inferred as str — distinct mono-instance, its own `@pull`.
+    assert(feed.d282_drain() == 3)
+    // Empty source: blanket sees None on first @pull.
+    mut empty = D282StrFeed { rest: 0 }
+    assert(empty.d282_is_empty())
+}
+
+test "two distinct blanket mono-instances coexist; each uses its own @pull (D282 §3)" {
+    mut a = D282IntCount { n: 2 }
+    mut b = D282StrFeed { rest: 5 }
+    // The SAME blanket `@d282_drain` is instantiated at both concrete types in one program;
+    // each instance dispatches independently to ITS protocol-impl (int-count vs str-feed).
+    assert(a.d282_drain() == 2)
+    assert(b.d282_drain() == 5)
+    mut c = D282IntCount { n: 0 }
+    assert(c.d282_is_empty())
+}
