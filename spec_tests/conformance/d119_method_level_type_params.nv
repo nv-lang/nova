@@ -1,20 +1,26 @@
-﻿// D119 — Method-level type params in generic methods. A generic method has its OWN
+// D119 — Method-level type params in generic methods. A generic method has its OWN
 // type-param `U` independent of receiver-level `T`: `D119Box[T] @map[U](f fn(T)->U) -> D119Box[U]`.
-// Compiler mono's per (T,U); `U` is inferred from closure-return type (no turbofish);
-// `w.map(f).map(g)` chains WITHOUT erasure (each step gets its own Nova_D119Box____<U>* type).
+// Compiler mono's per (T,U); `U` is inferred bidirectionally from call args (closure
+// return type OR a non-closure arg), no turbofish; `w.map(f).map(g)` chains WITHOUT
+// erasure (each step gets its own Nova_D119Box____<U>* type); sized widths survive
+// (U=u8 stays u8 — no int-collapse).
 // Spec: spec/decisions/02-types.md §D119 (Plan 48 Ф.9). Part of the SINGLE
 // `spec_tests.conformance` folder-module. D-prefixed type name avoids clashes.
-module inprogress.d119_method_level_type_params
+module spec_tests.conformance
 
 type D119Box[T] { inner T }
 
 fn D119Box[T].of(v T) -> D119Box[T] => { inner: v }
 
 // Receiver-level T, method-level U. U lives only at method scope, drives a fresh
-// (T,U) mono-instance per call-site.
+// (T,U) mono-instance per call-site. U inferred from the closure RETURN type.
 fn D119Box[T] @map[U](f fn(T) -> U) -> D119Box[U] {
     D119Box[U].of(f(@inner))
 }
+
+// U bound by a NON-closure arg (bidirectional inference, decision-tree step 2,
+// non-closure branch): the arg's type fixes U directly.
+fn D119Box[T] @replace[U](v U) -> D119Box[U] => D119Box[U].of(v)
 
 test "method-level U inferred from closure return; two-level (T,U) mono (D119)" {
     ro w = D119Box[int].of(5)            // receiver T = int
@@ -35,4 +41,20 @@ test "map chain int → str → str without erasure (D119)" {
     ro s = w.map(|x| str.from(x))        // (T=int,  U=str) → D119Box[str]
     ro s2 = s.map(|x| x + "!")           // (T=str,  U=str) → receiver T re-resolved from chained value
     assert(s2.inner == "7!")
+}
+
+test "U bound by non-closure arg (D119)" {
+    ro w = D119Box[int].of(1)            // T = int
+    ro s = w.replace("swapped")          // (T=int, U=str) — U from the arg type
+    assert(s.inner == "swapped")
+    ro b = s.replace(true)               // (T=str, U=bool)
+    assert(b.inner)
+}
+
+test "method-level U keeps sized width — no int-collapse (D119)" {
+    ro w = D119Box[int].of(200)          // T = int
+    ro u = w.map(|x| x as u8)            // (T=int, U=u8) — width survives the mono
+    assert(u.inner == 200)
+    ro g = w.map(|x| x as uint)          // (T=int, U=uint) — unsigned ≠ int
+    assert(g.inner == 200)
 }
