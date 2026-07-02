@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_REDUNDANT_IMPORT_ALIAS
+// D289: `import a.b.m as m` — alias совпадает с last-segment (default-именем);
+// шумовой alias запрещён, писать `import a.b.m`.
+module neg.d289_redundant_alias_neg
+
+import std.runtime.raw_mem as raw_mem
+
+test "unused" {
+    assert(true)
+}

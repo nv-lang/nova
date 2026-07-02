@@ -39838,13 +39838,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             .or_else(|| bare.strip_prefix("Nova_"))
                             .or_else(|| bare.strip_prefix("NovaTuple_"))
                             .unwrap_or(bare);
+                        // D289 qualified static path `mod.Type.method(...)`: obj =
+                        // Member{Ident(mod ∈ imported_modules), TypeName} — тип
+                        // ресивера берём СИНТАКСИЧЕСКИ (имя типа), не из C-типа
+                        // (module-namespace не значение, obj_ty пуст).
+                        let recv_tn: &str = if recv_tn.is_empty() {
+                            match &obj.kind {
+                                ExprKind::Member { obj: mo, name: tn }
+                                    if matches!(&mo.kind, ExprKind::Ident(m)
+                                        if self.imported_modules.contains(m.as_str())) =>
+                                {
+                                    tn.as_str()
+                                }
+                                _ => recv_tn,
+                            }
+                        } else {
+                            recv_tn
+                        };
                         if !recv_tn.is_empty() {
                             if let Some(decls) =
                                 self.external_registry.lookup(recv_tn, method)
                             {
-                                if let [d] = decls {
-                                    if !d.return_c_type.is_empty() {
-                                        return d.return_c_type.clone();
+                                // ≥1 decl, ВСЕ с одинаковым return — берём его
+                                // (дубль одной декларации возникает легитимно:
+                                // load_builtins + inline-merge того же .nv через
+                                // `import`). Разошедшиеся overload-returns → mimo
+                                // (не угадываем).
+                                if let Some(first) = decls.first() {
+                                    if !first.return_c_type.is_empty()
+                                        && decls.iter().all(|d| {
+                                            d.return_c_type == first.return_c_type
+                                        })
+                                    {
+                                        return first.return_c_type.clone();
                                     }
                                 }
                             }
@@ -39862,7 +39888,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                         }
                     }
-                    panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0); obj_ty={:?} expr span={:?}", method, obj_ty, expr.span)
+                    {
+                        let obj_desc = match &obj.kind {
+                            ExprKind::Ident(n) => format!("Ident({})", n),
+                            ExprKind::Member { obj: mo, name } => format!(
+                                "Member({}.{})",
+                                match &mo.kind {
+                                    ExprKind::Ident(m) => m.clone(),
+                                    _ => "<expr>".into(),
+                                },
+                                name
+                            ),
+                            ExprKind::Call { .. } => "Call".into(),
+                            _ => "Other".into(),
+                        };
+                        panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0); obj_ty={:?} obj={} expr span={:?}", method, obj_ty, obj_desc, expr.span)
+                    }
                 } else if let ExprKind::Path(parts) = &func.kind {
                     // Plan 11 Ф.4.5: Self.method(...) → <current>.method(...).
                     let parts_resolved: Vec<String>;
@@ -40262,7 +40303,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         return format!("Nova_{}*", n);
                     }
                 }
-                let obj_ty = self.infer_expr_c_type(obj);
+                // [M-172.1-d174] phase-safe: Ident-база без материализованного типа
+                // (module-namespace `raw_mem.RawMem.alloc` — D289 qualified path;
+                // pre-pass) → пустая строка, type-keyed ветки ниже не матчатся,
+                // name-keyed продолжают работать.
+                let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                 // Plan 60 / D117: size-accessor field-style — больше не
                 // выводим тип в codegen-path. Field-access валится с
                 // E_SIZE_ACCESSOR_FIELD при попытке emit (см. emit_expr
