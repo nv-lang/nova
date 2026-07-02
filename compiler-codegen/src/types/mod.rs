@@ -6270,10 +6270,21 @@ impl<'a> TypeCheckCtx<'a> {
                     );
                 }
                 // Регистрируем переменную в scope: тип = аннотация, иначе
-                // inferred из RHS.
+                // inferred из RHS. 172.1.2 (let-мост): третий источник — КАНАЛ
+                // (f1_expr выше уже аннотировал RHS: generic-call return / Member
+                // TypeParam-типы, которых TypeRef-инференс не видит); локальное
+                // восстановление TypeRef через resolved_to_typeref_tp (TypeParam(n)
+                // → Named{n} — при потреблении заново пометит mark_type_params).
                 if let Some(name) = pattern_simple_name(&d.pattern) {
                     match d.ty.clone()
                         .or_else(|| self.infer_expr_type(&d.value, scope))
+                        .or_else(|| {
+                            if !d.value.id.is_set() { return None; }
+                            let buf = self.resolved_types_buf.borrow();
+                            let rt = buf.get(&d.value.id)?.clone();
+                            drop(buf);
+                            Self::resolved_to_typeref_tp(&rt, d.value.span)
+                        })
                     {
                         Some(t) => { scope.insert(name, t); }
                         None => { scope.remove(&name); }
