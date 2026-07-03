@@ -8868,7 +8868,7 @@ impl<'a> TypeCheckCtx<'a> {
                             // [M-172.1-sync-extern-narrowing-migration]: extern-callee
                             // (builtin sync/atomics API) — enforcement отложен до
                             // миграции корпуса (см. второй сайт + backlog).
-                            if !f.is_external {
+                            {
                                 errors.push(
                                     Diagnostic::new(
                                         format!(
@@ -9226,7 +9226,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // sized-atomic API (i32/u8-параметры), а корпус (atomics/
                     // sync, ~150 файлов) писался ДО enforcement'а с int-варами.
                     // Снять gate после плановой миграции корпуса (backlog).
-                    if !callee.is_external {
+                    {
                         errors.push(
                             Diagnostic::new(
                                 format!(
