@@ -37596,6 +37596,187 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
         }
+        // Channel 6m (2026-07-04): Member — ДОСЛОВНЫЙ подъём главного
+        // legacy-арма (schema+subst state-ответ). Дети через dispatcher.
+        if let ExprKind::Member { obj, name } = &expr.kind {
+            return {
+                    // Plan 11 Ф.4: method value `@`-prefix → closure (void*).
+                    if name.starts_with('@') {
+                        return "void*".into();
+                    }
+                    // D406: qualified sum-variant access `TypeName.Variant` used as a
+                    // *value* expression (not a call). obj = Ident("TypeName"), name =
+                    // "VariantName". The whole expression has type `Nova_TypeName*` (a
+                    // heap-allocated sum-type pointer), exactly as a regular variant
+                    // constructor call does. Without this check obj_ty falls to "nova_int"
+                    // (Ident lookup finds no local variable named "TypeName") and the
+                    // binding `ro v = TypeName.Variant` gets declared as `nova_int v`,
+                    // which then breaks `v->tag` dereference in the match arm.
+                    if let ExprKind::Ident(n) = &obj.kind {
+                        if self.sum_schemas.contains_key(n.as_str())
+                            || self.sum_schema_registry.lookup_sum_schema(n).is_some()
+                        {
+                            return format!("Nova_{}*", n);
+                        }
+                    }
+                    // [M-172.1-d174] phase-safe: Ident-база без материализованного типа
+                    // (module-namespace `raw_mem.RawMem.alloc` — D289 qualified path;
+                    // pre-pass) → пустая строка, type-keyed ветки ниже не матчатся,
+                    // name-keyed продолжают работать.
+                    let obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
+                    // Plan 60 / D117: size-accessor field-style — больше не
+                    // выводим тип в codegen-path. Field-access валится с
+                    // E_SIZE_ACCESSOR_FIELD при попытке emit (см. emit_expr
+                    // section "Plan 60 / D117"). Для type-inference fallback
+                    // на "void*" — это никогда не должно срабатывать, так как
+                    // emit_expr возвращает Err первым. Защитная сетка.
+                    if (obj_ty == "nova_str" || obj_ty.starts_with("NovaArray_"))
+                        && matches!(name.as_str(), "len" | "is_empty" | "byte_len" | "cap" | "capacity")
+                    {
+                        return "void*".into();
+                    }
+                    // Tuple field access: check element type registry first (works for void* too)
+                    if name.chars().all(|c| c.is_ascii_digit()) {
+                        let idx: usize = name.parse().unwrap_or(0);
+                        // Plan 148 Ф.4 [M-codegen-unify-tuple-repr]: recover the
+                        // element type from the mono'd struct name carried in
+                        // `obj_ty` (self-describing) OR — fallback — from the
+                        // `tuple_element_types` side-table (TupleLit temps, keyed
+                        // by Ident). The mono name is AUTHORITATIVE: it reflects the
+                        // actual C struct, whereas the side-table may carry a stale
+                        // best-effort inference recorded at the let-binding (e.g. a
+                        // tuple of closures bound as `nova_int` slots there while the
+                        // real struct is `_NovaTuple_2_6_void_p_6_void_p`). Decoding
+                        // `obj_ty` first prevents `t.0`/`t.1` collapsing to nova_int.
+                        let elem_tys: Option<Vec<String>> = Self::parse_mono_tuple_elements(&obj_ty)
+                            .or_else(|| match &obj.kind {
+                                ExprKind::Ident(var_name) => self
+                                    .tuple_element_types
+                                    .get(var_name.as_str())
+                                    .cloned(),
+                                _ => None,
+                            });
+                        if let Some(elem_tys) = elem_tys {
+                            if let Some(elem_ty) = elem_tys.get(idx) {
+                                if !elem_ty.is_empty() {
+                                    // Heap-wrapped value types are dereffed when emitted, return base type
+                                    let base = elem_ty.trim_end_matches('*');
+                                    let was_heap_wrapped = elem_ty.ends_with('*') && (
+                                        base.starts_with("_NovaTuple") || base.starts_with("NovaOpt_") || base == "nova_str"
+                                    );
+                                    if was_heap_wrapped {
+                                        return base.to_string();
+                                    }
+                                    return elem_ty.clone();
+                                }
+                            }
+                        }
+                        // Plan 115 D214 [M-115-newtype-constructor]: `.0` on a
+                        // scalar-typed value (newtype value `type X(Y)` where Y
+                        // is scalar) returns Y identity. Mirror emit_expr path:
+                        // если obj_ty — value type (not tuple), `.0` = identity.
+                        if idx == 0
+                            && !obj_ty.is_empty()
+                            && !obj_ty.starts_with("_NovaTuple")
+                            && Self::is_value_type(&obj_ty)
+                        {
+                            return obj_ty;
+                        }
+                    }
+                    // Unknown generic stub (void*): field access returns void*
+                    if obj_ty == "void*" {
+                        return "void*".into();
+                    }
+                    // D91 (Plan 21): Nova_ChannelPair field types.
+                    if obj_ty == "Nova_ChannelPair" {
+                        return match name.as_str() {
+                            "tx" => "Nova_ChanWriter*".into(),
+                            "rx" => "Nova_ChanReader*".into(),
+                            _ => "nova_int".into(),
+                        };
+                    }
+                    // Field type lookup from record schema
+                    // Plan 127.1 Ф.1: strip `const ` qualifier (return-types from
+                    // fn — `const NovaValue_X*` / `const Nova_X*`) и `NovaValue_`
+                    // prefix (D226 value-records — schema registered под bare
+                    // type name `Point`, не `NovaValue_Point`). Без NovaValue_
+                    // strip, ValueHeapPromoted-binding field-access cascaded to
+                    // `nova_int` fallback, breaking type-checked branch dispatch
+                    // (e.g. `(nova_int)(ptr_x)` instead of `(nova_f64)(ptr->x)`).
+                    let stripped_const = obj_ty
+                        .trim_start_matches("const ")
+                        .trim();
+                    let struct_name = stripped_const
+                        .strip_prefix("Nova_")
+                        .or_else(|| stripped_const.strip_prefix("NovaValue_"))
+                        // Plan 120 (D215): named tuple C-type is `NovaTuple_X`; schema
+                        // is registered under bare name "X" (same as records/value-records).
+                        // Without this strip, `obj.field` on a named tuple infers `nova_int`.
+                        .or_else(|| stripped_const.strip_prefix("NovaTuple_"))
+                        .unwrap_or("")
+                        .trim_end_matches('*')
+                        .trim()
+                        .to_string();
+                    // For monomorphized names like "Queue____nova_int": look up concrete schema first.
+                    let base_name: &str = struct_name.split("____").next().unwrap_or(&struct_name);
+                    // 1. Concrete mono schema (registered by drain_generic_type_worklist).
+                    if let Some(schema) = self.record_schemas.get(&struct_name) {
+                        if let Some(field_ty) = schema.get(name.as_str()) {
+                            return field_ty.clone();
+                        }
+                    }
+                    // 2. Plan 48: if mono schema not yet registered (test body runs before drain),
+                    //    compute field type directly from generic_type_templates + type arg substitution.
+                    if base_name.len() < struct_name.len() {
+                        // Plan 153.2 Ф.2 (STAGE 2): depth-AWARE, registry-backed args
+                        // so a nested generic-over-source field type
+                        // (`src FilterIter[VecIter[int],int]`) binds its params
+                        // correctly instead of tearing `Nova_VecIter____nova_int_p`
+                        // into separate fragments at the inner `____`.
+                        let type_args: Vec<String> = self.mono_type_args_of(&struct_name);
+                        if let Some(template) = self.generic_type_templates.get(base_name).cloned() {
+                            if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
+                                if let Some(field_decl) = fields.iter().find(|f| f.name == *name) {
+                                    let subst: Vec<(String, Option<String>)> = template.generics.iter()
+                                        .zip(type_args.iter())
+                                        .map(|(g, c)| (g.name.clone(), Some(c.clone())))
+                                        .collect();
+                                    if let Some(c_ty) = Self::apply_type_subst_to_ref(&field_decl.ty, &subst) {
+                                        return c_ty;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // 3. Erased base schema fallback (void* for type-param fields).
+                    if let Some(schema) = self.record_schemas.get(base_name) {
+                        if let Some(field_ty) = schema.get(name.as_str()) {
+                            return field_ty.clone();
+                        }
+                    }
+                    // Plan 70 Cat B (intentional erasure, session 2 finding):
+                    // Member access fallback. Reached для:
+                    // (a) Tuple field access без обвязки tuple_element_types
+                    //     (call-result tuple, nested member на anon tuple) — типы
+                    //     embedded в mangled name `_NovaTuple_N_lenT_T_...`, но
+                    //     decoder отсутствует на этом code-path.
+                    // (b) Generic-record field access до mono pass (erased schema
+                    //     ещё не зарегистрирован).
+                    // (c) Type-checker-rejected access (поле не существует) —
+                    //     не reach'ит codegen.
+                    //
+                    // Strict-mode здесь требует full tuple-name decoder и pre-mono
+                    // schema registration — отдельный план. Currently low ROI:
+                    // нет observed silent miscompilation в test corpus с этим
+                    // fallback (тесты с int-тuples работают; non-int tuples используют
+                    // bound vars via tuple_element_types).
+                    //
+                    // Documented как Cat B12 в codegen-erasure-sites.md.
+                    // In phase-1c pre-scan context obj_ty may be empty/unresolved —
+                    // return empty so callers degrade to nova_unit.
+                    String::new()
+            };
+        }
         // Channel 6l (2026-07-04): Match — ДОСЛОВНЫЙ подъём legacy-арма
         // (pattern_binding_overrides + divergence + unit-домминация [M-91.13]).
         if let ExprKind::Match { scrutinee, arms } = &expr.kind {
