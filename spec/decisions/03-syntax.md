@@ -10629,6 +10629,26 @@ Composition (`nv_compose_suppressed`, 2-frame: body=primary, cleanup=suppressed)
 helper делает только single-frame terminal transport. grep-guard: `error_kind ==` только внутри
 `nova_scope_exit` + санкционированных outcome/report-сайтов.
 
+**4a. Единое правило composition — panic-dominance (аменд Ф.2, 2026-07-04).** Поскольку `consume` — САХАР
+над `defer(o)` (§3), их compose ОБЯЗАН совпадать (иначе десугар лжёт). Единая таблица (тело упало И
+cleanup упал), выводимая из [D13](08-runtime.md#d13) (panic = abort-class баг, строго СРОЧНЕЕ recoverable
+throw) + [D158](#d158)/[D161](#d161) (throw-composition) + [D196](#d196) R3:
+
+| body \ cleanup | cleanup Success | cleanup **throw** (USER/CANCEL) | cleanup **PANIC** |
+|---|---|---|---|
+| **Success** | — | cleanup throw = primary | cleanup panic propagates |
+| **throw** | body throw = primary | body=primary, cleanup=suppressed ([D158]) | **cleanup PANIC доминирует** (nv_panic, body-throw подавлен) |
+| **panic** ([D196] R3) | body panic доминирует | body panic доминирует, cleanup подавлен | body panic доминирует |
+
+**Ключевой пункт (устраняет расхождение impl):** `body-throw + cleanup-PANIC` → **panic доминирует**
+(D13: баг важнее recoverable-ошибки). Монолит `consume` это УЖЕ делал; defer-kernel же ошибочно клал
+cleanup-panic в suppressed-chain как обычный throw (chain-compose не различал PANIC-kind) — это
+**непреднамеренный гэп defer**, НЕ намеренное поведение. Унификация: defer-kernel тоже даёт
+cleanup-PANIC доминировать. Это делает десугар `consume`→`defer(o)` **behavior-preserving** (обе
+поверхности — одно правило) и разблокирует физическое слияние (B3-merge). Blast-radius: только
+двойной-fault `body-throw + cleanup-panic` (редкий; cleanup-panic сам = баг) — мигрируется в том же
+изменении (§7).
+
 **5. Hot-path (D194 амендмент — ПРЕМИСА ИСПРАВЛЕНА, §3.5):** прежняя формулировка «`Consumable[Never]`
 СЕЙЧАС элидит shield/timeout/outcome (disasm-verified T2.9)» **не соответствует коду** — ConsumeScope
 эмитит полный frame-bearing путь безусловно (§perf-элизия НЕ реализована, Plan 110:695). Поэтому Ф.2
