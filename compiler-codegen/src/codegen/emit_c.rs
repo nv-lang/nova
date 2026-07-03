@@ -13309,6 +13309,50 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // No usable schema → fall through to the fallback identity below.
             }
         }
+        // 172.4 Ф.3 A4: named-tuple `NovaTuple_X` (by-value struct) — зеркало
+        // NovaValue_-арма (D328): (1) user @equal (NT ro-receiver ABI by-value —
+        // прямой вызов с учётом param-ABI); (2) structural field-by-field по
+        // record_schemas (NT-схема регистрируется тем же каналом полей).
+        if let Some(type_name) = cty.strip_prefix("NovaTuple_") {
+            if !cty.ends_with('*') {
+                let key = (type_name.to_string(), "equal".to_string());
+                if let Some(sigs) = self.method_overloads.get(&key) {
+                    if let Some(sig) =
+                        sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1)
+                    {
+                        return format!("{}({}, {})", sig.c_name, l, r);
+                    }
+                }
+                if let Some(schema) = self.record_schemas.get(type_name) {
+                    if !schema.is_empty() {
+                        let schema = schema.clone();
+                        let order: Vec<String> = self
+                            .record_field_order
+                            .get(type_name)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                let mut ks: Vec<String> = schema.keys().cloned().collect();
+                                ks.sort();
+                                ks
+                            });
+                        let conds: Vec<String> = order
+                            .iter()
+                            .filter_map(|fname| {
+                                schema.get(fname).map(|fty| {
+                                    let mfn = Self::mangle_field_name(fname);
+                                    let li = format!("({}).{}", l, mfn);
+                                    let ri = format!("({}).{}", r, mfn);
+                                    self.emit_field_eq(fty, &li, &ri, depth + 1)
+                                })
+                            })
+                            .collect();
+                        if !conds.is_empty() {
+                            return format!("({})", conds.join(" && "));
+                        }
+                    }
+                }
+            }
+        }
         // mono'd tuple — recurse field-by-field over parsed element C-types.
         if let Some(elems) = Self::parse_mono_tuple_elements(cty) {
             if elems.is_empty() {

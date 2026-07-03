@@ -1,0 +1,20 @@
+// D215 (named tuple) × D328 (structural ==) / Plan 172.4 Ф.3 A4:
+// == на named-tuple — структурный field-by-field (включая f64-поле,
+// НЕ memcmp — NaN/padding unsound) + вложенная позиция Option-payload.
+module spec_tests.conformance
+
+type D215Pt (x int, y f64)
+
+test "named-tuple ==: структурный, f64-поле сравнивается по значению (D215/D328)" {
+    ro a = D215Pt(1, 2.5)
+    ro b = D215Pt(1, 2.5)
+    ro c = D215Pt(1, 3.0)
+    assert(a == b)
+    assert(!(a == c))
+}
+
+test "named-tuple == во вложенной позиции (Option-payload)" {
+    ro oa = Some(D215Pt(7, 0.5))
+    ro ob = Some(D215Pt(7, 0.5))
+    assert(oa == ob)
+}
