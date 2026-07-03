@@ -1008,6 +1008,9 @@ pub struct CEmitter {
     /// Unifies sum + record structural eq under one ordering discipline (§0 единый
     /// источник + фаза-корректность).
     novaopt_eq_fns_buf: std::cell::RefCell<String>,
+    /// 172.4 Ф.3 A3: ранние ПРОТОТИПЫ per-type by-value обёрток user-@equal
+    /// (тела — в novaopt_eq_fns_buf; прототип нужен ранним inline opt_eq).
+    vr_ueq_protos_buf: std::cell::RefCell<String>,
     /// Set sanitized-имён NovaOpt_<X> которые уже эмитированы в
     /// `novaopt_typedefs_buf` (для dedup'а). Pre-populated в `new()`
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
@@ -1511,6 +1514,7 @@ impl CEmitter {
             novaopt_early_gen: std::cell::RefCell::new(false),
             novaopt_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
             novaopt_eq_fns_buf: std::cell::RefCell::new(String::new()),
+            vr_ueq_protos_buf: std::cell::RefCell::new(String::new()),
             novaopt_decls_seen: {
                 let mut s = std::collections::HashSet::new();
                 s.insert("nova_int".to_string());
@@ -4360,6 +4364,7 @@ impl CEmitter {
         // The forward `typedef struct NovaRes_<n> NovaRes_<n>;` stays in the early
         // __NOVARES_TYPEDEFS__ marker (pointer use in fn prototypes is fine).
         self.line("/*__NOVARES_VR_TYPEDEFS__*/");
+        self.line("/*__VR_UEQ_PROTOS__*/");
 
         // 1b1-moved. Plan 152.4 (D199 ro-runtime side): module-level
         // `ro NAME = EXPR` — a lazy-static global. The strict const/ro partition
@@ -4697,6 +4702,14 @@ impl CEmitter {
                  NOVA_ARRAY_DECL в runtime. Order: registration */\n{}",
                 typedefs)
         };
+        // 172.4 Ф.3 A3: прототипы vr-ueq обёрток — ПЕРЕД инлайн opt_eq этой зоны
+        // (struct NovaValue_X определён выше, тела обёрток — в NOVAOPT_EQ_FNS).
+        let vr_protos = self.vr_ueq_protos_buf.borrow().clone();
+        let replacement = if vr_protos.is_empty() {
+            replacement
+        } else {
+            format!("{}{}", vr_protos, replacement)
+        };
         self.out = self.out.replace("/*__NOVAOPT_TYPEDEFS__*/", &replacement);
         // Plan 59 Ф.7.5: splice mono'd NovaRes_<ok>_<err> typedefs.
         let novares_typedefs = self.novares_typedefs_buf.borrow().clone();
@@ -4769,6 +4782,8 @@ impl CEmitter {
         // `@equal` call inside them resolves to a visible prototype. Strip the
         // marker AND its trailing newline when empty so zero-impact files stay
         // byte-identical to the clean binary (mirrors __NOVARES_VR_TYPEDEFS__).
+        self.out = self.out.replace("/*__VR_UEQ_PROTOS__*/
+", "");
         let eq_fns = self.novaopt_eq_fns_buf.borrow().clone();
         if eq_fns.is_empty() {
             self.out = self.out.replace("/*__NOVAOPT_EQ_FNS__*/\n", "");
@@ -13232,7 +13247,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if let Some(sig) =
                         sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1)
                     {
-                        return format!("{}({}, {})", sig.c_name, l, r);
+                        // 172.4 Ф.3 A3: user @equal имеет receiver-ABI NovaValue_X*
+                        // (D226), а l/r — by-value выражения (возможны rvalue → &
+                        // напрямую нельзя). Per-type обёртка by-value → & (единый
+                        // источник §0; late-emission через novaopt_eq_fns_buf,
+                        // тот же механизм, что nova_opt_eq_*).
+                        let arg_is_ptr = sig
+                            .param_c_types
+                            .first()
+                            .map(|p| p.ends_with('*'))
+                            .unwrap_or(false);
+                        let wrap = format!("nova_vr_ueq_{}", type_name);
+                        {
+                            let mut buf = self.novaopt_eq_fns_buf.borrow_mut();
+                            let probe = format!("{}(", wrap);
+                            if !buf.contains(&probe) {
+                                self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
+                                    "static nova_bool {w}({t} a, {t} b);
+", w = wrap, t = cty));
+                                buf.push_str(&format!(
+                                    "static nova_bool {w}({t} a, {t} b) {{ return {c}(&a, {arg}); }}\n",
+                                    w = wrap,
+                                    t = cty,
+                                    c = sig.c_name,
+                                    arg = if arg_is_ptr { "&b" } else { "b" },
+                                ));
+                            }
+                        }
+                        return format!("{}({}, {})", wrap, l, r);
                     }
                 }
                 // (2) structural field-by-field over `record_schemas` (BY-VALUE access).

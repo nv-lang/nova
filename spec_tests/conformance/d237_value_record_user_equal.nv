@@ -1,0 +1,21 @@
+// D237 (Equal.equal) × D226 (value-record receiver-ABI) / Plan 172.4 Ф.3 A3:
+// user @equal на value-record зовётся из `==` и из вложенных позиций
+// (Option-payload) через per-type by-value обёртку (receiver NovaValue_X*).
+module spec_tests.conformance
+
+type D237Vp value { a int, b int }
+fn D237Vp @equal(other D237Vp) -> bool => @a == other.a  // b игнорируется намеренно
+
+test "value-record user @equal: == зовёт метод, не структурный (D237/D226)" {
+    ro x = D237Vp { a: 1, b: 10 }
+    ro y = D237Vp { a: 1, b: 99 }
+    ro z = D237Vp { a: 2, b: 10 }
+    assert(x == y)     // b различен, но @equal сравнивает только a
+    assert(!(x == z))
+}
+
+test "value-record user @equal во вложенной позиции (Option-payload)" {
+    ro ox = Some(D237Vp { a: 3, b: 1 })
+    ro oy = Some(D237Vp { a: 3, b: 2 })
+    assert(ox == oy)
+}
