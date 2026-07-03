@@ -781,3 +781,16 @@ external_registry merge.
 или span). Родственно §21 d-status (user-shadow generic-типа протекает в чужой
 модуль — архитектурная проблема резолвера).
 **Носитель: Plan 172.1 FIN-фаза** (при удалении legacy var_types-путей).
+
+
+## [M-172.1-lifted-legacy-arms] — поднятые legacy-армы в dispatcher (2026-07-04)
+
+Финиш tally→0 выполнен ПЕРЕНОСОМ остаточных legacy-армов в dispatcher
+(Channels 6i-6z: None/If/Index/Match/Member/RecordLit/Ident/Call/финальный
+остаток). Это переходная форма: армы = дословные копии state-логики,
+подлежат ЗАМЕЩЕНИЮ чекер-каналами (продолжение линии марафона: ~45%
+исходного tally уже замещено настоящими каналами — TypeParam/mono-map/
+expected-type/arg-binding/resolve-семейство). legacy_inner —
+недостижимая заглушка; удаление мёртвого кода (wrapper+заглушка+прото-армы,
+~3.5k строк) — следующий атом FIN.
+**Носитель: Plan 172.1 FIN.**
