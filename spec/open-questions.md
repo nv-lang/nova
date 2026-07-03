@@ -8517,4 +8517,4 @@ U.4.6 — byte-identical зеркало legacy C-имени (**MVP**); резо�
 - **`defer` completes-by-default + scope-`deadline`/`timeout` + нет force-cleanup-timeout + watchdog** — 173 §3a.
 
 ### Координация
-Plan 173 (umbrella) / 173.0 (рантайм cancel/shield) / 173.1 (parallel/supervised/race) / 173.2 (supervision) / 173.3 (isolation `#share`) / Plan 48 Ф.4 (closures-in-generic-array) / Plan 179 (`Monotonic`/`Duration`).
+Plan 173 (umbrella) / 173.0 (рантайм cancel/shield) / 173.1 (parallel/supervised/race) / 173.2 (supervision) / 173.3 (isolation `#share`) / Plan 48 Ф.4 (closures-in-generic-array) / Plan 175 (`Monotonic`/`Duration`; бывш. 179 до renumber std-блока).
