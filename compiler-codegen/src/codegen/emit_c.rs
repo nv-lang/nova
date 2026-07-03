@@ -35340,9 +35340,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 => Some("nova_byte"),
             "find" | "rfind"
                 => Some("NovaOpt_nova_int"),
-            // Plan 91 Ф.2 / D178: text methods.
-            "parse_int"
-                => Some("NovaOpt_nova_int"),
+            // Plan 177 / D325 Ф.2b: `parse_int` de-hardcoded — it is now the single
+            // Result-form and its `Result[int, ParseIntError]` comes from the checker
+            // channel (`resolved_types` → `resolved_type_to_c`), not this stopgap table
+            // (whose `NovaOpt_nova_int` named the wrong wrapper). None here → the nova_str
+            // match arm below (also de-hardcoded) → loud CC-FAIL on a channel miss.
             "compare"
                 => Some("nova_int"),
             "pad_left" | "pad_right" | "repeat" | "replace"
@@ -39358,36 +39360,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 "position" | "remaining" => "nova_int".into(),
                                 "has_remaining" => "nova_bool".into(),
                                 "remaining_bytes" => "NovaArray_nova_byte*".into(),
-                                // Fail-form read_*: возвращает unboxed T (через
-                                // Fail-throw на error). Тип зависит от method.
-                                "read_byte" | "read_u8" => "nova_byte".into(),
-                                // Plan 172.1 RANK 3: read_i8 declares `-> i8` → int8_t, not nova_int.
-                                "read_i8" => "int8_t".into(),
-                                "read_bytes" => "NovaArray_nova_byte*".into(),
-                                // Plan 13 Ф.9.4: codepoint-уровневые reads.
-                                "read_char" => "nova_int".into(),  // char хранится как nova_int
-                                "read_str"  => "nova_str".into(),
-                                // Plan 172.1 RANK 3 (named-priority): each sized read_* declares a
-                                // narrow return (std/runtime/read_buffer.nv) — emit its width-exact C
-                                // type, not a collapsed nova_int (u16 != u32 != i16 != int). Mirrors the
-                                // always-linked primitive_name_to_c table. 64-bit reads stay nova_int
-                                // (the u64/i64-sign distinction is a separate decision; int64↔nova_int
-                                // are width-equal). The deeper §1 fix routes these through the resolved-
-                                // callees channel (fn_ret_by_span already holds the correct width).
-                                "read_u16_le" | "read_u16_be" => "uint16_t".into(),
-                                "read_u32_le" | "read_u32_be" => "uint32_t".into(),
-                                "read_i16_le" | "read_i16_be" => "int16_t".into(),
-                                "read_i32_le" | "read_i32_be" => "int32_t".into(),
-                                "read_u64_le" | "read_u64_be"
-                                | "read_i64_le" | "read_i64_be" => "nova_int".into(),
-                                "read_f32_le" | "read_f32_be"
-                                | "read_f64_le" | "read_f64_be" => "nova_f64".into(),
-                                // Try-form: Result[T, ReadBufferError]. Plan 59
-                                // Ф.7.5 D3: runtime `try_read_*` физически
-                                // возвращают erased (int,str) инстанс —
-                                // `NovaRes_nova_int_nova_str*`.
-                                m if m.starts_with("try_read_") =>
-                                    "NovaRes_nova_int_nova_str*".into(),
+                                // Plan 177 / D325 Ф.2b (de-hardcode §3/§10): the `read_X`
+                                // reads are now a SINGLE Result-form (`try_read_*`/bare-throw
+                                // twins retracted). Their concrete `Result[T, ReadBufferError]`
+                                // is materialized by the checker
+                                // (`infer_method_call_channel_type` → `resolve_instance_method_
+                                // return`) into `resolved_types` and read by the SINGLE
+                                // `resolved_type_to_c` (Channel 2, BEFORE this legacy). The
+                                // per-width name-keyed table was the pre-channel stopgap
+                                // (its own comment pointed at "the resolved-callees channel");
+                                // with the channel live, these arms are dead-superseded and
+                                // REMOVED. Reaching this legacy for a `read_X` now = channel
+                                // miss → the `nova_int` guess is a loud CC-FAIL that surfaces
+                                // the gap (§1/§10 — no silent mis-type).
                                 _ => "nova_int".into(),
                             };
                         }
@@ -39718,8 +39703,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 "split" => "NovaArray_nova_str*".into(),
                                 // D178: compare → int.
                                 "compare" => "nova_int".into(),
-                                // D178: parse_int(radix) — Nova body.
-                                "parse_int" => "NovaOpt_nova_int".into(),
+                                // Plan 177 / D325 Ф.2b (de-hardcode §3): `str.parse_int` is now
+                                // the SINGLE Result-form (`try_parse_int`/`parse_int_opt` retracted).
+                                // Its `Result[int, ParseIntError]` is materialized by the checker
+                                // (`infer_method_call_channel_type` → `resolve_instance_method_return`)
+                                // into `resolved_types` and read by the single `resolved_type_to_c`
+                                // (Channel 2, BEFORE this legacy). The `NovaOpt_nova_int` stopgap was
+                                // wrong for the Result-form anyway (it named Option) and is REMOVED;
+                                // a legacy hit now = channel miss → loud CC-FAIL, not a silent mis-type.
                                 "pad_left" | "pad_right" | "repeat" | "replace" => "nova_str".into(),
                                 _ => "nova_int".into(),
                             };
@@ -42762,36 +42753,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 "position" | "remaining" => "nova_int".into(),
                                 "has_remaining" => "nova_bool".into(),
                                 "remaining_bytes" => "NovaArray_nova_byte*".into(),
-                                // Fail-form read_*: возвращает unboxed T (через
-                                // Fail-throw на error). Тип зависит от method.
-                                "read_byte" | "read_u8" => "nova_byte".into(),
-                                // Plan 172.1 RANK 3: read_i8 declares `-> i8` → int8_t, not nova_int.
-                                "read_i8" => "int8_t".into(),
-                                "read_bytes" => "NovaArray_nova_byte*".into(),
-                                // Plan 13 Ф.9.4: codepoint-уровневые reads.
-                                "read_char" => "nova_int".into(),  // char хранится как nova_int
-                                "read_str"  => "nova_str".into(),
-                                // Plan 172.1 RANK 3 (named-priority): each sized read_* declares a
-                                // narrow return (std/runtime/read_buffer.nv) — emit its width-exact C
-                                // type, not a collapsed nova_int (u16 != u32 != i16 != int). Mirrors the
-                                // always-linked primitive_name_to_c table. 64-bit reads stay nova_int
-                                // (the u64/i64-sign distinction is a separate decision; int64↔nova_int
-                                // are width-equal). The deeper §1 fix routes these through the resolved-
-                                // callees channel (fn_ret_by_span already holds the correct width).
-                                "read_u16_le" | "read_u16_be" => "uint16_t".into(),
-                                "read_u32_le" | "read_u32_be" => "uint32_t".into(),
-                                "read_i16_le" | "read_i16_be" => "int16_t".into(),
-                                "read_i32_le" | "read_i32_be" => "int32_t".into(),
-                                "read_u64_le" | "read_u64_be"
-                                | "read_i64_le" | "read_i64_be" => "nova_int".into(),
-                                "read_f32_le" | "read_f32_be"
-                                | "read_f64_le" | "read_f64_be" => "nova_f64".into(),
-                                // Try-form: Result[T, ReadBufferError]. Plan 59
-                                // Ф.7.5 D3: runtime `try_read_*` физически
-                                // возвращают erased (int,str) инстанс —
-                                // `NovaRes_nova_int_nova_str*`.
-                                m if m.starts_with("try_read_") =>
-                                    "NovaRes_nova_int_nova_str*".into(),
+                                // Plan 177 / D325 Ф.2b (de-hardcode §3/§10): the `read_X`
+                                // reads are now a SINGLE Result-form (`try_read_*`/bare-throw
+                                // twins retracted). Their concrete `Result[T, ReadBufferError]`
+                                // is materialized by the checker
+                                // (`infer_method_call_channel_type` → `resolve_instance_method_
+                                // return`) into `resolved_types` and read by the SINGLE
+                                // `resolved_type_to_c` (Channel 2, BEFORE this legacy). The
+                                // per-width name-keyed table was the pre-channel stopgap
+                                // (its own comment pointed at "the resolved-callees channel");
+                                // with the channel live, these arms are dead-superseded and
+                                // REMOVED. Reaching this legacy for a `read_X` now = channel
+                                // miss → the `nova_int` guess is a loud CC-FAIL that surfaces
+                                // the gap (§1/§10 — no silent mis-type).
                                 _ => "nova_int".into(),
                             };
                         }
@@ -43122,8 +43096,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 "split" => "NovaArray_nova_str*".into(),
                                 // D178: compare → int.
                                 "compare" => "nova_int".into(),
-                                // D178: parse_int(radix) — Nova body.
-                                "parse_int" => "NovaOpt_nova_int".into(),
+                                // Plan 177 / D325 Ф.2b (de-hardcode §3): `str.parse_int` is now
+                                // the SINGLE Result-form (`try_parse_int`/`parse_int_opt` retracted).
+                                // Its `Result[int, ParseIntError]` is materialized by the checker
+                                // (`infer_method_call_channel_type` → `resolve_instance_method_return`)
+                                // into `resolved_types` and read by the single `resolved_type_to_c`
+                                // (Channel 2, BEFORE this legacy). The `NovaOpt_nova_int` stopgap was
+                                // wrong for the Result-form anyway (it named Option) and is REMOVED;
+                                // a legacy hit now = channel miss → loud CC-FAIL, not a silent mis-type.
                                 "pad_left" | "pad_right" | "repeat" | "replace" => "nova_str".into(),
                                 _ => "nova_int".into(),
                             };
