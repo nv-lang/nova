@@ -47,8 +47,8 @@
 | 172.12 | A | ⏳ | typed-IR mono (фундамент) |
 | 172.13 | A | ⏳ | после 172.12 |
 | 172.5  | A | ⏳ | in-out ref, standalone |
-| 173.0  | B | 🔨 | de-risk запущен (гейт) |
-| 173    | B | ⏳ | после 173.0 |
+| 173.0  | B | 🟡 | Ф.1 drain-race ЗАКРЫТ (deliverable: spec+guard, 58aca50b); Ф.2/Ф.3 supervised-substrate — deep runtime, секвенс с 173.2 (его потребитель) |
+| 173    | B | 🔨 | core Ф.1 (error-transport, P1 panic-swallowing) — независим от 173.0 Ф.2/Ф.3 |
 | 174    | B | ⏳ | после 173 |
 | 176    | B | ⏳ | после 173 |
 | 175    | B | ⏳ | параллельно |
