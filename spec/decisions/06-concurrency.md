@@ -502,15 +502,21 @@ wake с driver-потока, прилетевший до `register_pending`, н�
 `uv_cancel(&st->work)` thread-safe для work-request'ов на обоих loop'ах,
 так что cancel-путь (`_nova_blocking_stop_cb`) работает без изменений.
 
-> **Известное ограничение (НЕ Ф.4-специфичное).** Существует pre-existing
-> M:N race в общей park/wake машинерии: torn-чтение массивов `sched_state`
-> в `nova_sched_grow_state` при росте долгоживущего per-worker scope,
-> гонка с `nova_sched_wake` driver-потока. Воспроизводится на `main`, в
-> т.ч. на чистом `Time.sleep` (без `blocking`) — затрагивает обе
-> driver-routed операции одинаково. Тригер: последовательные
-> `supervised`-блоки с **возрастающим** числом fiber'ов в одном процессе.
-> Трекается как `[M-83.11-grow-vs-wake-race]` (см. plan doc §13.6.1);
-> driver-routing blocking-offload корректен сам по себе.
+> **✅ ЗАКРЫТО (Plan 173.0 Ф.1 / Plan 83.11, 2026-06-11).** Ранее существовавший
+> pre-existing M:N race в общей park/wake машинерии (torn-чтение массивов
+> `sched_state` в `nova_sched_grow_state` при росте scope, гонка с
+> `nova_sched_wake` driver-потока) **структурно устранён**: park/wake storage
+> (`NovaSchedState`) переведён на **chunked stable-address** директории
+> (`fibers.h:398-445` — chunk=64, alloc ровно раз, RELEASE-publish +
+> ACQUIRE-read, `capacity` публикуется ПОСЛЕДНЕЙ; grow = CAS-publish, не
+> realloc), плюс single-winner park_state WAIT→DISPATCHED CAS (`fibers.h:1864`)
+> и nested-cascade cancel-propagation (`fibers.h:893`) — torn-base физически
+> невозможен. **supervised корректен под РЕАЛЬНЫМ M:N: `NOVA_MAXPROCS=1`
+> БОЛЬШЕ НЕ ТРЕБУЕТСЯ** как race-guard (D14/D50/D75). Регресс-гарды:
+> `nova_tests/concurrency/grow_vs_wake_explicit.nv`,
+> `nova_tests/err173_0/supervised_drain_mn_guard.nv` (оба ARMED M:N, без
+> `NOVA_MAXPROCS=1`/`NOVA_AUTOARM=0`). Трекер `[M-83.11-grow-vs-wake-race]` —
+> CLOSED (simplifications.md); driver-routing blocking-offload корректен.
 
 **`blocking { }` — примитив, не handler-эффект.** В отличие от `detach`
 (`with Detach = SyncDetach`), `blocking { }` не диспетчеризуется через
