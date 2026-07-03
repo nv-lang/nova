@@ -19887,23 +19887,19 @@ impl<'a> ConsumeCtx<'a> {
                     };
                     // Plan 100.2 (D156): D156-strict-forget для generic [T consume] vars.
                     let code = if is_strict_generic { "D156-strict-forget" } else { "D133-not-consumed" };
-                    // Plan 100.8 (D166): build machine-applicable suggestion
-                    // for LSP quick-fix. Suggest errdefer + primary commit.
+                    // Plan 173 Ф.1 (D189 cutover fix, дефект #2): errdefer/okdefer
+                    // RETRACTED (D189 hard cutover) — парсер их реджектит, поэтому
+                    // прежний machine-applicable suggestion выдавал НЕкомпилируемый
+                    // код. Замена — surviving `defer` (D162 all-path cover): валидно,
+                    // компилируется, consume'ит на КАЖДОМ выходе. Различие
+                    // success/error путей — через consume-scope (D188), см. message.
                     let suggestion_text = if methods.is_empty() {
                         format!(
                             "// TODO: add consume-method for `{}` then call it here",
                             ty)
                     } else {
-                        // Primary method = first; secondary (cleanup) = last if different.
                         let primary = &methods[0];
-                        let cleanup = if methods.len() > 1 { Some(&methods[methods.len()-1]) } else { None };
-                        if let Some(cl) = cleanup {
-                            format!(
-                                "errdefer {{ {name}.{cl}() }}\n{name}.{primary}()",
-                                name = name, cl = cl, primary = primary)
-                        } else {
-                            format!("{name}.{primary}()", name = name, primary = primary)
-                        }
+                        format!("defer {{ {name}.{primary}() }}", name = name, primary = primary)
                     };
                     let suggestion = Suggestion {
                         message: format!(
@@ -19942,26 +19938,18 @@ impl<'a> ConsumeCtx<'a> {
                     };
                     // Plan 100.2 (D156): D156-strict-forget для generic [T consume] vars.
                     let code = if is_strict_generic { "D156-strict-forget" } else { "D133-not-consumed" };
-                    // Plan 100.8 (D166): multi-path suggestion — both errdefer + okdefer
-                    // (D166 §LSP quick fixes — suggestion lists both errdefer + okdefer).
+                    // Plan 173 Ф.1 (D189 cutover fix, дефект #2): errdefer/okdefer
+                    // RETRACTED — заменяем на surviving `defer` (D162 all-path cover).
+                    // Различие success/error — через consume-scope (D188), см. message.
                     let suggestion_text = if methods.is_empty() {
                         format!("// TODO: consume `{}` on all code paths", name)
                     } else {
                         let primary = &methods[0];
-                        let cleanup = if methods.len() > 1 { Some(&methods[methods.len()-1]) } else { None };
-                        if let Some(cl) = cleanup {
-                            format!(
-                                "errdefer {{ {name}.{cl}() }}\nokdefer {{ {name}.{primary}() }}",
-                                name = name, cl = cl, primary = primary)
-                        } else {
-                            format!(
-                                "errdefer {{ {name}.{primary}() }}\nokdefer {{ {name}.{primary}() }}",
-                                name = name, primary = primary)
-                        }
+                        format!("defer {{ {name}.{primary}() }}", name = name, primary = primary)
                     };
                     let suggestion = Suggestion {
                         message: format!(
-                            "cover `{name}` on all paths: errdefer + okdefer ({code} multi-path)",
+                            "cover `{name}` on all paths: `defer` (D162) или `consume`-scope (D188) ({code})",
                             name = name, code = code),
                         span: exit_span,
                         replacement: suggestion_text,
@@ -20756,23 +20744,28 @@ fn check_d162_coverage(
             } else {
                 methods.first().cloned().unwrap_or_else(|| "cleanup".to_string())
             };
+            // Plan 173 Ф.1 (D189 cutover fix, дефект #2): errdefer RETRACTED —
+            // suggestion переведён на surviving `defer` (D162 all-path cover:
+            // покрывает error- и success-path единообразно). Различие
+            // success/error — через consume-scope (D188), см. message.
             let suggestion = Suggestion {
                 message: format!(
-                    "add `errdefer {{ {name}.{method}() }}` to cover error-path \
-                     (D162-uncovered-error-path quick fix)",
+                    "add `defer {{ {name}.{method}() }}` to cover cleanup on all paths \
+                     (D162 quick fix; success/error различие — consume-scope D188)",
                     name = name, method = cleanup_method),
                 span: block.span,
                 replacement: format!(
-                    "errdefer {{ {name}.{method}() }}",
+                    "defer {{ {name}.{method}() }}",
                     name = name, method = cleanup_method),
                 applicability: Applicability::MachineApplicable,
             };
             errors.push(Diagnostic::new(
                 format!(
                     "[D162-uncovered-error-path] consume binding `{}` (тип `{}`) \
-                     в failable function без `errdefer` покрытия error-path. \
+                     в failable function без cleanup-покрытия error-path. \
                      При throw/panic `{}` не будет cleaned up. \
-                     Добавьте `errdefer {{ {}.{}() }}`.",
+                     Добавьте `defer {{ {}.{}() }}` (all-path cover) либо \
+                     consume-scope (D188).",
                     name, ty, name, name, cleanup_method),
                 block.span,
             ).with_suggestion(suggestion));
