@@ -16766,8 +16766,20 @@ impl NameResCtx {
             // D90 (Plan 20): defer/errdefer body — обычный expr в текущем
             // scope. Bindings внутри body локальны их собственным under-scope’ам;
             // на верхнем уровне defer не вводит новых имён.
-            Stmt::Defer { body, .. } => {
-                self.walk_expr(body, file_id, scope, errors);
+            // Plan 173 Ф.2.B2 (D314): `defer(o ScopeOutcome)` вводит `o` в scope
+            // тела — push frame c binding, walk, pop (зеркалит ConsumeScope).
+            Stmt::Defer { body, outcome_binding, .. } => {
+                if let Some(o) = outcome_binding {
+                    scope.push({
+                        let mut frame = HashSet::new();
+                        frame.insert(o.clone());
+                        frame
+                    });
+                    self.walk_expr(body, file_id, scope, errors);
+                    scope.pop();
+                } else {
+                    self.walk_expr(body, file_id, scope, errors);
+                }
             }
             // Plan 110 D188: walk init + push new scope frame с binding,
             // walk body, pop frame. Binding visible только внутри body

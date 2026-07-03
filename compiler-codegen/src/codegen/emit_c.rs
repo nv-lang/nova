@@ -1336,6 +1336,23 @@ struct DeferEntry {
     /// AST body to re-emit at cleanup point. AST stores defer body as
     /// arbitrary `Expr` (parser wraps `defer { ... }` in ExprKind::Block).
     body: Expr,
+    /// Plan 173 Ф.2.B2 (D314): `defer(o ScopeOutcome) { … }` — имя outcome-
+    /// биндинга. `None` = плейн `defer` (тело эмитится как раньше, byte-identical).
+    /// `Some(name)` = перед телом на каждом exit-path материализуется
+    /// `Nova_ScopeOutcome*` и `#define`'ится как `name` (тело видит исход).
+    outcome_binding: Option<String>,
+}
+
+/// Plan 173 Ф.2.B2 (D314): исход scope-exit для материализации `defer(o ScopeOutcome)`.
+/// Каждый из 4 run-site'ов defer-kernel строит свой вариант.
+enum DeferOutcome<'a> {
+    /// normal end-of-scope / `return v` → `Success`.
+    Success,
+    /// throw / panic / cancel — выбор по `<frame>.error_kind`:
+    /// PANIC→`Panic(msg)`, CANCEL→`Failure("cancel: "+msg)`, else→`Failure(msg)`.
+    FromFrame(&'a str),
+    /// `interrupt v` → `Failure("interrupt")` (спека core.nv:130 «interrupt→Failure»).
+    Interrupt,
 }
 
 /// Plan 20 Ф.4: per-block defer state. One scope per block that contains
@@ -18086,14 +18103,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mut idx = 0usize;
         for s in &block.stmts {
             // Plan 173 Ф.1 (#4): only plain `defer` remains (D189).
-            let body = match s {
-                Stmt::Defer { body, .. } => body,
+            let (body, outcome_binding) = match s {
+                Stmt::Defer { body, outcome_binding, .. } => (body, outcome_binding.clone()),
                 _ => continue,
             };
             let var = format!("_defer_{}_{}_active", block_id, idx);
             entries.push(DeferEntry {
                 active_var: var.clone(),
                 body: body.clone(),
+                outcome_binding,
             });
             self.line(&format!("int {} = 0;", var));
             idx += 1;
@@ -18181,7 +18199,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.line(&format!("{}.error_suppressed = NULL;", df));
             self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
             self.indent += 1;
-            let _ = self.emit_defer_body_void(&entry.body);
+            // Plan 173 Ф.2.B2: throw/panic/cancel-path — outcome из scope fail-frame.
+            let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::FromFrame(&failframe_var));
             self.line("nova_fail_pop();");
             self.indent -= 1;
             self.line("} else {");
@@ -18231,7 +18250,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         for entry in entries.iter().rev() {
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
-            let _ = self.emit_defer_body_void(&entry.body);
+            // Plan 173 Ф.2.B2: interrupt-path → Failure (core.nv:130).
+            let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::Interrupt);
             self.indent -= 1;
             self.line("}");
         }
@@ -18307,7 +18327,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.line(&format!("{}.error_suppressed = NULL;", df));
             self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
             self.indent += 1;
-            let _ = self.emit_defer_body_void(&entry.body);
+            // Plan 173 Ф.2.B2: normal-exit path → Success.
+            let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::Success);
             self.line("nova_fail_pop();");
             self.indent -= 1;
             self.line("} else {");
@@ -18393,7 +18414,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             for entry in scope.entries.iter().rev() {
                 self.line(&format!("if ({}) {{", entry.active_var));
                 self.indent += 1;
-                let _ = self.emit_defer_body_void(&entry.body);
+                // Plan 173 Ф.2.B2: early-exit (return/break/continue) → Success.
+                let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::Success);
                 self.line(&format!("{} = 0;", entry.active_var));
                 self.indent -= 1;
                 self.line("}");
@@ -18645,6 +18667,54 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         }
         Ok(())
+    }
+
+    /// Plan 173 Ф.2.B2 (D314): эмитит тело `defer`'а, материализуя `ScopeOutcome`
+    /// для `defer(o ScopeOutcome) { … }`. Для плейн-defer (`binding == None`) —
+    /// просто `emit_defer_body_void` (path byte-identical). Иначе: объявляет
+    /// per-path `Nova_ScopeOutcome* <tmp>`, `#define`'ит его как имя биндинга и
+    /// регистрирует в `var_types` (тело видит `o: ScopeOutcome`), затем `#undef`.
+    fn emit_defer_body_with_outcome(&mut self, binding: &Option<String>, body: &Expr, outcome: DeferOutcome) -> Result<(), String> {
+        let Some(name) = binding else {
+            return self.emit_defer_body_void(body);
+        };
+        let c_local = self.fresh_tmp();
+        match outcome {
+            DeferOutcome::Success => {
+                self.line(&format!("Nova_ScopeOutcome* {} = nova_make_ScopeOutcome_Success();", c_local));
+            }
+            DeferOutcome::Interrupt => {
+                self.line(&format!(
+                    "Nova_ScopeOutcome* {} = nova_make_ScopeOutcome_Failure(nova_str_from_cstr(\"interrupt\"));",
+                    c_local));
+            }
+            DeferOutcome::FromFrame(frame) => {
+                // Зеркалит consume-арм (per-branch выбор + D90 §7 cancel-marker).
+                self.line(&format!("Nova_ScopeOutcome* {};", c_local));
+                self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", frame));
+                self.indent += 1;
+                self.line(&format!("{} = nova_make_ScopeOutcome_Panic({}.error_msg);", c_local, frame));
+                self.indent -= 1;
+                self.line(&format!("}} else if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame));
+                self.indent += 1;
+                self.line(&format!("{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));", c_local, frame));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!("{} = nova_make_ScopeOutcome_Failure({}.error_msg);", c_local, frame));
+                self.indent -= 1;
+                self.line("}");
+            }
+        }
+        self.line(&format!("#define {} {}", name, c_local));
+        let prev = self.var_types.insert(name.clone(), "Nova_ScopeOutcome*".to_string());
+        let r = self.emit_defer_body_void(body);
+        self.line(&format!("#undef {}", name));
+        match prev {
+            Some(p) => { self.var_types.insert(name.clone(), p); }
+            None => { self.var_types.remove(name); }
+        }
+        r
     }
 
     fn emit_block_stmts(&mut self, block: &Block, ret_ty: &str) -> Result<(), String> {
