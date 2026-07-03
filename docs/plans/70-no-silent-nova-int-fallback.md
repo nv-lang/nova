@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+> ⚠ **RENUMBER 2026-07-03:** D-блок strict-type-propagation **D126 → D368** (коллизия с external-type-D126, Plan 62.D.bis; external-type сохраняет D126). Внутритекстовые «D126» = strict-type = читать как D368.
+
 # Plan 70: Strict type propagation в codegen — no silent `nova_int` fallback
 
 > **Создан 2026-05-18.** **Driver:** реальная боль пользователя — «куча

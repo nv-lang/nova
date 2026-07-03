@@ -788,7 +788,7 @@ fn synth_compare_record_body(fields: &[DerivedField]) -> FnBody {
 
 /// Synthesize `@display(w Write) -> ()` — memberwise format.
 /// D237: renamed from synthesize_fmt (Printable → Display, @fmt → @display).
-/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
+/// Plan 152.7.1 (D374 AMEND): param changed from `sb StringBuilder` to `w Write`.
 ///
 /// Output form: `TypeName { f1: <display_f1>, f2: <display_f2> }`.
 /// Empty type-body → `w.write_str("TypeName")`.
@@ -821,7 +821,7 @@ pub fn synthesize_display<Q: DeriveQuery>(
 
 /// Synthesize `@debug(w Write) -> ()` — memberwise debug format.
 /// D237: renamed from synthesize_debug_fmt (DebugPrintable → Debug, @debug_fmt → @debug).
-/// Plan 152.7.1 (D258 AMEND): param changed from `sb StringBuilder` to `w Write`.
+/// Plan 152.7.1 (D374 AMEND): param changed from `sb StringBuilder` to `w Write`.
 ///
 /// Output form: `TypeName { f1: <debug_f1>, f2: <debug_f2> }`.
 /// Empty type-body → `w.write_str("TypeName")`.

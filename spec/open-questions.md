@@ -2267,7 +2267,7 @@ v1.0).
 > insert_from/copy_within) теперь возвращают `@` (fluent chain, D131).
 > `@slice(from, to)` удалён (Plan 96.1 — `arr[a..b]` единственный путь).
 > `[]T.new()` / `[]T.with_capacity(n)` подтверждены как canonical
-> ([D180](decisions/02-types.md#d180-canonical-new-constructors-convention)).
+> ([D372](decisions/02-types.md#d372-canonical-new-constructors-convention)).
 > Generic `[T Ord] @sort()` / `@min` / `@max` / `@binary_search` —
 > followup `[M-91.7-sort-generic]`.
 >

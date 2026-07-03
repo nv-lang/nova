@@ -1,4 +1,6 @@
-# Plan 107 — Prelude attribute syntax migration
+> ⚠ **RENUMBER 2026-07-03:** D-блок prelude-control-attributes **D174 → D371** (коллизия с sync-primitives-consume-D174, Plan 103.9; sync сохраняет D174). Внутритекстовые «D174» = prelude-attrs = читать как D371.
+
+# Plan 107 — Prelude attribute syntax migration# Plan 107 — Prelude attribute syntax migration
 
 > **Статус:** ✅ CLOSED 2026-05-27
 > **Приоритет:** P1 — quality/consistency (не блокирует фичи, но: неконсистентный

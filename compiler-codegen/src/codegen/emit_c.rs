@@ -5783,7 +5783,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn extract_protocol_type_name(&self, ty: &TypeRef) -> Option<String> {
         if let TypeRef::Named { path, .. } = ty {
             let name = path.last()?;
-            // Plan 152.7.1 (D258 AMEND): `Write` is special-cased in
+            // Plan 152.7.1 (D374 AMEND): `Write` is special-cased in
             // `type_ref_to_c` to map to `Nova_StringBuilder*` (a concrete C
             // type), so it must NOT be treated as an erased protocol variable
             // — doing so would cause E7201 on every `w.write(s)` call.
@@ -12078,7 +12078,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Plan 172.1-K1 (int-de-collapse): a primitive receiver lowers through the SINGLE
             // scalar source `primitive_name_to_c` — the SAME leaf `resolved_type_to_c` uses
             // (§0: `resolved_type_to_c → int_name → primitive_name_to_c`), carrying width+sign.
-            // NO collapse to `nova_int` (§0/§10/D126/D130): `int`/`i64` stay `nova_int` (D129
+            // NO collapse to `nova_int` (§0/§10/D368/D130): `int`/`i64` stay `nova_int` (D129
             // alias), but `uint`→nova_uint, `u8`→nova_byte, `u16`→uint16_t, `u32`→uint32_t,
             // `u64`→uint64_t, `i8`→int8_t, `i16`→int16_t, `i32`→int32_t — now DISTINCT (fixes
             // signed-compare-of-unsigned, e.g. `Nova_uint_method_compare`). `receiver_c_type`
@@ -29834,7 +29834,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 InterpStrPart::Expr { expr: e, spec } => {
                     let arg_ty = self.infer_expr_c_type(e);
                     let v = self.emit_expr(e)?;
-                    // **Plan 152.7-B (D258):** rich Rust-style format spec
+                    // **Plan 152.7-B (D374):** rich Rust-style format spec
                     // (width / precision / align / fill / sign / radix). Handled
                     // by a dedicated lowering that renders a core string then
                     // applies padding/alignment via nova_fmt_* runtime helpers.
@@ -30084,7 +30084,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         Ok(result)
     }
 
-    /// **Plan 152.7-B (D258):** lower a rich format spec `${expr:SPEC}` to a C
+    /// **Plan 152.7-B (D374):** lower a rich format spec `${expr:SPEC}` to a C
     /// expression producing the formatted `nova_str`. Returns the C expression
     /// (the caller appends it to the interp StringBuilder). `sb` is the interp
     /// builder (used only for the user-type fallback path, which renders the
@@ -30142,7 +30142,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     "[E_BAD_FORMAT_SPEC] integer radix format (`x`/`X`/`b`/`o`) \
                      requires an integer value, but `${{...}}` has C-type `{}`. \
                      Radix formatting applies to `int`/sized ints only. \
-                     Plan 152.7-B (D258).",
+                     Plan 152.7-B (D374).",
                     arg_ty
                 ));
             }
@@ -30292,7 +30292,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 format!(
                     "[E_BAD_FORMAT_SPEC] value of type `{}` in `${{...:SPEC}}` does \
                      not implement {} — cannot apply a format spec to it. \
-                     Plan 152.7-B (D258).",
+                     Plan 152.7-B (D374).",
                     arg_type,
                     if is_debug { "Debug" } else { "Display" }
                 )

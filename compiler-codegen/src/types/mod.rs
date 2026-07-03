@@ -11661,8 +11661,8 @@ impl<'a> TypeCheckCtx<'a> {
             // `ro a = [1, 2, 3]` as `a: Vec[int]` in the checker scope — required for
             // operator-overload Binary inference (`a + b` → left operand type, D263 `@plus`).
             //
-            // D185 fallback (2026-07-02): the f1 annotation is primitive-gated (emission-side
-            // byte-compat), so a record-element literal (`[D185Score{…}]`) has NO buf entry —
+            // D373 fallback (ex-D185, 2026-07-02): the f1 annotation is primitive-gated (emission-side
+            // byte-compat), so a record-element literal (`[D373Score{…}]`) has NO buf entry —
             // yet the SCOPE needs the binding type (`mut scores = [Rec{…}]` → `[]Rec`), or the
             // checker cannot resolve prefix-generic methods on it (`scores.sort_of()`,
             // `fn[T Compare] []T @sort_of`) and codegen panics [P67-LEGACY]. Infer the element

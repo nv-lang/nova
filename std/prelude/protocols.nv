@@ -303,11 +303,11 @@ export type Clone protocol {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 152.7.1 (D258 AMEND) — Write sink protocol
+// Plan 152.7.1 (D374 AMEND, ex-D374) — Write sink protocol
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Sink protocol for text output — decouples Display/Debug from concrete
-/// StringBuilder (Plan 152.7.1, D258 AMEND).
+/// StringBuilder (Plan 152.7.1, D374 AMEND, ex-D374).
 ///
 /// Implementors: `StringBuilder` (str sink), `WriteBuffer` (byte sink, via
 /// UTF-8 pass-through). At the C ABI level Write currently lowers to
@@ -337,7 +337,7 @@ export type Write protocol {
 
 /// Форматирование в строку (для println, str.from, etc).
 /// D237 rename: Display → Display, @display → @display.
-/// D258 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
+/// D374 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
 /// to `Write` protocol — decouples Display from concrete string sink.
 ///
 /// Метод `@display(w)` пишет representation в любой `Write` sink.
@@ -369,7 +369,7 @@ export type Display protocol {
 
 /// Protocol для отладочного представления — sibling к Display (D229; D237 rename).
 /// D237 rename: Debug → Debug, @debug → @debug.
-/// D258 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
+/// D374 AMEND (Plan 152.7.1): sink parameter changed from `StringBuilder`
 /// to `Write` protocol.
 ///
 /// **Distinction от Display:**

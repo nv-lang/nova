@@ -1362,7 +1362,7 @@ module collections.range
 **`_module.nv` inheritance:** `#no_prelude` / `#prelude(...)` в `_module.nv`
 наследуются всеми peers folder-module (D174 + D100). Per-file override
 folder-level: если peer сам объявляет `#prelude(core)`, а `_module.nv` — `#no_prelude`,
-peer wins. Полная спецификация — [D174](#d174-prelude-control-attributes).
+peer wins. Полная спецификация — [D371](#d371-prelude-control-attributes).
 
 Без атрибутов — full prelude facade (default, D26).
 
@@ -1825,7 +1825,7 @@ syntax не вводится (bootstrap simplicity).
 
 ---
 
-## D174. Prelude control attributes — `#no_prelude`, `#prelude(...)`, `#allow(shadow)`
+## D371. Prelude control attributes — `#no_prelude`, `#prelude(...)`, `#allow(shadow)`
 
 ### Что
 
@@ -2033,7 +2033,7 @@ Kotlin (`@file:` паттерн аналогичен `#attr` до деклара
 
 ### Что
 
-`std/prelude/core.nv` (группа `core` в [D174](#d174-prelude-control-attributes--no_prelude-prelude-allowshadow))
+`std/prelude/core.nv` (группа `core` в [D371](#d371-prelude-control-attributes--no_prelude-prelude-allowshadow))
 больше **не импортирует** `std.unicode`. Десять char-Unicode @методов
 (`'a'.is_alphabetic()` и сиблинги) перенесены **обратно** в
 `std/unicode/category.nv` ([D253](03-syntax.md#d253)); их доступность «без
@@ -2109,7 +2109,7 @@ Resolver-инъекция различает method-call от free-call (тег 
 
 ### Связь
 
-- [D174](#d174-prelude-control-attributes--no_prelude-prelude-allowshadow) — prelude-атрибуты; D308 чинит частичный `#prelude(core, …)`.
+- [D371](#d371-prelude-control-attributes--no_prelude-prelude-allowshadow) — prelude-атрибуты; D308 чинит частичный `#prelude(core, …)`.
 - [D253](03-syntax.md#d253) — `std/unicode` API; char-@методы возвращены сюда.
 - [D133](05-memory.md#d133) — consume-анализ (type-check, до DCE) — точка падения.
 - [D26](08-runtime.md#d26) — prelude; `core` self-contained «ZERO imports».

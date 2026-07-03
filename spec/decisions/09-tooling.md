@@ -3013,7 +3013,7 @@ vim syntax, Zed/Helix/Neovim tree-sitter queries, кастомный хайла�
 > [D272](#d272-элизия-доказуемо-безопасных-int-overflow-проверок) /
 > [D257](#d257-vec-index-bounds-как-элидируемый-контракт), но здесь — **decl-level**
 > (целые функции/таблицы/методы выкидываются из эмиссии), а не per-site проверка
-> внутри тела. Cross-ref [D174](07-modules.md#d174) (const-shadow gate
+> внутри тела. Cross-ref [D371](07-modules.md#d371-prelude-control-attributes) (const-shadow gate
 > `should_skip_const` — смежный const-эмиссионный путь),
 > [docs/plans/159-reachability-codegen.md](../../docs/plans/159-reachability-codegen.md),
 > research [docs/research/11-stdlib-method-resolution-reachability.md](../../docs/research/11-stdlib-method-resolution-reachability.md).
@@ -3092,7 +3092,7 @@ desugar-селекторов + `@method:`-тег (Ф.4). Все гейты **no-
 
 - [docs/plans/159-reachability-codegen.md](../../docs/plans/159-reachability-codegen.md) — план + замеры + критерии A1-A5/G0.
 - [docs/research/11-stdlib-method-resolution-reachability.md](../../docs/research/11-stdlib-method-resolution-reachability.md) — кросс-языковой research (import ⊥ unused-elimination; вариант A vs B).
-- [D174](07-modules.md#d174) — const-shadow gate (`should_skip_const`), смежный const-эмиссионный путь.
+- [D371](07-modules.md#d371-prelude-control-attributes) — const-shadow gate (`should_skip_const`), смежный const-эмиссионный путь.
 - `[M-reachability-codegen-dce]` (Ф.1 core ✅ DONE), `[M-159-method-pruning]` (P3, coarse-by-name per-kind аудит), `[M-159-lazy-module-resolution]` (P3), `[M-152.3b-char-methods-no-import]` (✅ CLOSED через Ф.4).
 
 

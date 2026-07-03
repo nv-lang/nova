@@ -27,7 +27,7 @@
 | [D123](#d123-tuple-monomorphization) | Tuple monomorphization | active |
 | [D215](#d215-named-tuple-fields--valuereference-allocation-contract) | Named tuple fields + value/reference allocation contract | active |
 | [D119](#d119-method-level-type-parameters-в-generic-methods) | Method-level type parameters в generic methods | active |
-| [D180](#d180-canonical-new-constructors-convention) | Canonical `.new()` constructors (convention) | active |
+| [D372](#d372-canonical-new-constructors-convention) | Canonical `.new()` constructors (convention) | active |
 | [D181](#d181-array-methods----fluent-mut-chain--slice-syntax) | Array methods — `-> @` fluent mut chain + slice syntax | active |
 | [D182](#d182-self-в-return-type-static-methods--required-form-для-parametric-types) | `Self` в return-type static methods — required form для parametric types | active |
 | [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) | Canonical comparison protocols + default method bodies (Plan 91.8a) | active |
@@ -4594,7 +4594,7 @@ template<U> Wrapper<U> map(...) }` — то же. Nova bootstrap теперь п
 
 ---
 
-## D125. Удаление `byte`: каноническое имя — `u8`
+## D367. Удаление `byte`: каноническое имя — `u8`
 
 **Решение:** Тип `byte` удалён из языка. Единственное каноническое имя
 для 8-битного беззнакового целого — `u8`. Срез байт пишется `[]u8`.
@@ -4620,7 +4620,7 @@ codegen — не пользовательская поверхность.
 
 ---
 
-## D126. Strict type propagation в codegen — no silent `nova_int` fallback
+## D368. Strict type propagation в codegen — no silent `nova_int` fallback
 
 **Решение.** Codegen pass (`compiler-codegen/src/codegen/`) **обязан**
 производить deterministic, явный C-type для каждого Nova expression и
@@ -4645,7 +4645,7 @@ type.
 
 **Industry baseline.** Rust / Swift / Go (post-1.18) — все производят
 compile error на любом unresolved type в codegen. Nova до Plan 70 был
-**хуже всех baseline** (silent default). D126 закрывает регрессию.
+**хуже всех baseline** (silent default). D368 закрывает регрессию.
 
 **Категории erasure (Cat A/B/C/D).** Audit разделил 154 fallback sites
 на четыре категории:
@@ -4713,7 +4713,7 @@ CI gate fails если added counts превышают baseline без updates.
 - [x] Cat A1/A2 migration: 90 → 8 (only Cat B holdovers remain)
 - [x] Cat B documentation: 10 sites listed в codegen-erasure-sites.md
 - [x] Internal lint guard `scripts/lint-no-silent-int-fallback.sh`
-- [x] Spec D126 (этот блок)
+- [x] Spec D368 (этот блок)
 - [x] 796+ PASS / 0 FAIL nova test (0 regressions vs baseline 761)
 
 **Реализовано:** [Plan 70](../../docs/plans/70-no-silent-nova-int-fallback.md)
@@ -4907,7 +4907,7 @@ unsigned), а не сырой `uint64_t`. На x86_64-bootstrap (фикс. 64-б
 **AMEND (Plan 172.1-K1, 2026-06-28).** `uint` (и вся РАЗЛИЧНАЯ int-семья) лоуэрится в свой
 точный C-тип во **ВСЕХ** позициях — включая **method-receiver**. Ранее `receiver_c_type`
 **схлопывал** примитивный ресивер (`uint`/`u8`..`u64`/`i8`..`i32`) в `nova_int` (Plan 70.5
-«64-бит слот») — нарушение §0/§10/D126 (второе окно правды) и **soundness-баг**:
+«64-бит слот») — нарушение §0/§10/D368 (второе окно правды) и **soundness-баг**:
 `Nova_uint_method_compare(nova_int, nova_int)` давал **знаковое** сравнение беззнаковых (неверный
 порядок для `uint` с установленным старшим битом). Теперь scalar-arm `receiver_c_type` делегирует
 в единый `primitive_name_to_c` (тот же лист, что `resolved_type_to_c`): `uint`-ресивер = `nova_uint`
@@ -5916,7 +5916,7 @@ type-id alone).
 
 **Статус:** принято, реализовано ([Plan 79](../../docs/plans/79-typecheck-hardening-no-silent-fallback.md)).
 
-**Контекст.** [D126](#d126) закрыл silent-fallback в *кодогене* («no
+**Контекст.** [D368](#d368) закрыл silent-fallback в *кодогене* («no
 silent `nova_int`»). Но bootstrap type-checker (`types/mod.rs`) проверял
 имена, структуру, эффекты, контракты — и **не** базовую совместимость
 типов. Эмпирическая перепроверка 2026-05-21 показала: ряд элементарных
@@ -5971,7 +5971,7 @@ Plan 79 выводит Nova на их уровень для перечислен
 TS: у TS `any` молча гасит ошибки — в Nova такого пути нет.
 
 **Связь:**
-- [D126](#d126) — sibling: «no silent fallback» для кодогена (Plan 70).
+- [D368](#d368) — sibling: «no silent fallback» для кодогена (Plan 70).
 - [D44](03-syntax.md#d44) — полиморфизм числовых литералов.
 - [D72](#d72) — structural bounds (конформность протоколов — там).
 - [D73](08-runtime.md#d73) / [D77](08-runtime.md#d77) — `into`/`try_into` синтез.
@@ -6706,7 +6706,7 @@ binding доказан отдельно (`@count_all`/`@first_row`).
 
 ---
 
-## D180. Canonical `.new()` constructors (convention)
+## D372. Canonical `.new()` constructors (convention)
 
 **Статус:** convention (stdlib provides, compiler does NOT auto-generate).
 
@@ -6888,7 +6888,7 @@ compiler принимает обе формы; canonical форма докуме
 
 - [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols)
   — `Self` универсальный.
-- [D180](#d180-canonical-new-constructors-convention) — `.new()` convention.
+- [D372](#d372-canonical-new-constructors-convention) — `.new()` convention.
 - [Plan 91.7](../../docs/plans/91.7-array-methods-and-default-new.md).
 
 ---
@@ -7017,7 +7017,7 @@ fn int @compare(other int) -> int =>
   расходятся и одна сторона — голый result-ctor, она переэмитится под concrete `NovaRes_<n>` другой
   (`reemit_result_variant_as`). General expected-type propagation для overload-резолва (`@into`)
   остаётся в `Q-overload-result-type`.
-- **Generic sort/min/max (D185, Plan 91.8c):** generic `fn[T Compare]` array methods — реализовано, см. [D185](#d185--generic-array-api-sortminmaxbinary_search--_by-variants-plan-918c-2026-06-17).
+- **Generic sort/min/max (D373, ex-D185, Plan 91.8c):** generic `fn[T Compare]` array methods — реализовано, см. [D373](#d373--generic-array-api-sortminmaxbinary_search--_by-variants-plan-918c-2026-06-17).
 - **D328 — Value-record `==` СТРУКТУРНОЕ (Plan 172.4 Ф.2, 2026-06-28):** value-record
   (`type P value {…}` — C-репрезентация `NovaValue_<Name>` by-value, D228/D277/D290) сравнивается
   **структурно** (field-by-field, как sum/heap-record), а **НЕ** сырым C-`==` на struct (была
@@ -11641,7 +11641,7 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
 #stable(since = "0.1")
 export type Debug protocol {
     @debug(mut w Write) -> ()
-    // D258 AMEND: parameter renamed sb→w, type StringBuilder→Write (decoupled sink).
+    // D374 AMEND: parameter renamed sb→w, type StringBuilder→Write (decoupled sink).
     // NO default body в protocol decl. Compiler synthesizes per-type
     // via inject_synthesized_methods (auto_derive.rs) for #impl(Debug) types.
 }
@@ -12417,7 +12417,7 @@ C-макросы `fmin`/`fmax` (нет специальной NaN-семанти
 
 ---
 
-## D258. Write-sink протокол — декаплинг Display/Debug от StringBuilder (Plan 152.7.1)
+## D374. Write-sink протокол — декаплинг Display/Debug от StringBuilder (Plan 152.7.1)
 
 **Status:** CLOSED 2026-06-16 (Plan 152.7.1, commits `a313926b` + `3d0e30fa`).
 **Depends on:** [D183](#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) (`Display`/`Debug` протоколы),
@@ -13318,7 +13318,7 @@ D300 NEW.
 
 ---
 
-## D185 — Generic array API: sort/min/max/binary_search + _by variants (Plan 91.8c, 2026-06-17)
+## D373 — Generic array API: sort/min/max/binary_search + _by variants (Plan 91.8c, 2026-06-17)
 
 **Статус:** ACTIVE.
 
@@ -13326,7 +13326,7 @@ D300 NEW.
 
 Plan 91.3 давал `[]int @sort()` (concrete), Plan 91.8a закрепил `Compare.compare -> int`.
 После 91.8a `str` и user-types с `@compare` должны быть sortable через generic dispatch.
-D185 добавляет полный generic API поверх Compare.
+D373 добавляет полный generic API поверх Compare.
 
 ### API surface
 
@@ -13387,9 +13387,9 @@ Overload resolution: конкретный receiver (`[]int`) выбирает co
 - D239 — `[]T ≡ Vec[T]` alias.
 - Plan 91.3 — concrete `[]int @sort`.
 
-D185 NEW.
+D373 NEW (ex-D185, renumber 2026-07-03).
 
-### D185 §amend-1 — direct @[i].method() dispatch in generic array methods
+### D373 §amend-1 — direct @[i].method() dispatch in generic array methods
 
 **Дата:** 2026-06-17. **Закрывает:** [M-91.8c-direct-index-method].
 
@@ -13406,7 +13406,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 **Результат:** `@[j].compare(key)` в `fn[T Compare] []T`-телах (sort_of, binary_search_of и т.д.)
 теперь диспетчится корректно без промежуточного binding'а.
 
-### D185 §amend-2 — @sort_unstable* переведены с heapsort на pdqsort (Plan 153.3.1, 2026-06-18)
+### D373 §amend-2 — @sort_unstable* переведены с heapsort на pdqsort (Plan 153.3.1, 2026-06-18)
 
 **Дата:** 2026-06-18. **Закрывает:** [M-153.3-sort-pdqsort] + [M-91.8c-pdq-sort].
 

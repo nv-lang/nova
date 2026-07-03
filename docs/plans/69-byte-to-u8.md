@@ -1,4 +1,6 @@
-# Plan 69 — Remove `byte` type alias, canonicalise `u8`
+> ⚠ **RENUMBER 2026-07-03:** D-блок byte→u8 **D125 → D367** (коллизия с Prelude-shadow-lint-D125, Plan 62.F.bis; shadow сохраняет D125). Внутритекстовые «D125» = byte-removal = читать как D367.
+
+# Plan 69 — Remove# Plan 69 — Remove `byte` type alias, canonicalise `u8`
 
 ## Status: ✅ ЗАКРЫТ 2026-05-22
 
