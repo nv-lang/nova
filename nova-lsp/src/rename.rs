@@ -12,16 +12,49 @@
 //! 3. **Atomic check**: apply edits to in-memory copies, re-typecheck every
 //!    changed file. If any file fails → reject the entire rename.
 //!
-//! # V1 Simplifications
+//! # Scope-aware resolution (Plan 104.10 Ф.7)
 //!
-//! - Occurrence scan is regex-based (word-boundary match), not full symbol-table
-//!   resolution.  Full per-position symbol resolution deferred to V2.
-//! - Generic param scope guard uses a simple brace-depth heuristic: scan forward
-//!   from the `[T]` declaration until the matching `}` closes the declaring scope.
-//! - Doc-comment `[[name]]` links are updated as part of the rename edits.
+//! The occurrence scan is no longer a blind word-boundary regex across every
+//! file. [`compute_rename`] first parses the primary buffer and classifies the
+//! symbol under the cursor **from the AST** ([`classify_scope`]):
+//!
+//! - **Local binding** (a `let`/param/`for`/pattern binding whose name is bound
+//!   inside the enclosing function): the rename is confined to that declaring
+//!   function's byte span in the primary file only. A same-named local in a
+//!   *different* function is never touched — the false-positive the old regex
+//!   produced.
+//! - **Top-level symbol** (free fn / type / const / field): the rename still runs
+//!   cross-file, but every function that *locally shadows* the name (binds a
+//!   local of the same identifier) is skipped, so a shadowing `ro x` in `fn b`
+//!   is not rewritten when renaming a top-level `x`.
+//!
+//! Scope is derived from real AST bindings, not a brace-depth heuristic.
+//!
+//! Doc-comment `[[name]]` links are updated as part of the rename edits.
+//!
+//! # Residual — [M-104.10-rename-full-resolve]
+//!
+//! A full per-*occurrence* symbol resolution (resolve every candidate to its
+//! declaration `Span` and compare) is not performed: it would require a complete
+//! name-resolution pass the bootstrap checker does not expose. Instead the scope
+//! model over-approximates a local binding's scope to the *whole declaring
+//! function* (not the exact block), and a shadow scope to the *whole shadowing
+//! function*. Consequences (all rare, all safe-by-omission): a second same-named
+//! binding in a sibling block of the same function is renamed together; a
+//! top-level reference that appears in a function *before* that function
+//! introduces a local of the same name is conservatively skipped. See
+//! `simplifications.md` / backlog for the marker.
+
+use std::collections::HashSet;
 
 use tower_lsp::jsonrpc::{Error, ErrorCode, Result};
 use tower_lsp::lsp_types::*;
+
+use nova_codegen::ast::{
+    ArrayPatternElem, Block, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
+    Item, MatchArmBody, Module, Pattern, Stmt, VariantPatternKind,
+};
+use nova_codegen::diag::Span;
 
 use crate::compiler::check_source_inner;
 
@@ -142,8 +175,14 @@ pub struct RenameDoc {
     pub version: Option<i32>,
 }
 
-/// Compute a `WorkspaceEdit` that renames `old_name` to `new_name` across all
-/// provided documents.
+/// Compute a `WorkspaceEdit` that renames the symbol `old_name` (found at
+/// `cursor_byte` in the primary document `primary_uri`) to `new_name`.
+///
+/// The set of documents/occurrences rewritten is decided **from the AST**
+/// ([`classify_scope`]), not by a blind cross-file word scan — see the module
+/// docs. A local binding is confined to its declaring function in the primary
+/// file; a top-level symbol renames cross-file while skipping functions that
+/// locally shadow the name.
 ///
 /// # Errors
 ///
@@ -151,6 +190,8 @@ pub struct RenameDoc {
 /// - `-32803 RequestFailed`: post-rename type-check fails in any file.
 pub fn compute_rename(
     docs: &[RenameDoc],
+    primary_uri: &Url,
+    cursor_byte: usize,
     old_name: &str,
     new_name: &str,
 ) -> Result<WorkspaceEdit> {
@@ -177,12 +218,45 @@ pub fn compute_rename(
         });
     }
 
+    // Determine the rename scope from the primary buffer's AST. On any parse
+    // failure we degrade to the previous cross-file behaviour (TopLevel with no
+    // shadow scopes) so rename never becomes *less* capable than V1.
+    let primary_text = docs
+        .iter()
+        .find(|d| &d.uri == primary_uri)
+        .map(|d| d.text.as_str());
+    let scope = match primary_text {
+        Some(text) => classify_scope(text, cursor_byte, old_name),
+        None => RenameScope::TopLevel,
+    };
+
     // Phase 1: collect edits per document.
     let mut text_doc_edits: Vec<TextDocumentEdit> = Vec::new();
     let mut changed_texts: Vec<(Url, String)> = Vec::new();
 
     for doc in docs {
-        let edits = collect_edits_in_text(&doc.text, old_name, new_name);
+        let edits = match &scope {
+            // Local binding: only the primary file, only within the declaring
+            // function's byte range. Every other file is left untouched.
+            RenameScope::LocalInFile { range } => {
+                if &doc.uri != primary_uri {
+                    continue;
+                }
+                let (lo, hi) = *range;
+                collect_edits_filtered(&doc.text, old_name, new_name, &|abs| {
+                    abs >= lo && abs < hi
+                })
+            }
+            // Top-level symbol: cross-file, but skip any occurrence that falls
+            // inside a function that locally shadows the name (semantic filter,
+            // not regex). Shadow scopes are recomputed per document from its AST.
+            RenameScope::TopLevel => {
+                let shadows = shadow_scopes_in_text(&doc.text, old_name);
+                collect_edits_filtered(&doc.text, old_name, new_name, &|abs| {
+                    !shadows.iter().any(|(lo, hi)| abs >= *lo && abs < *hi)
+                })
+            }
+        };
         if edits.is_empty() {
             continue;
         }
@@ -238,7 +312,24 @@ pub fn compute_rename(
 
 /// Collect all rename edits in `text`: replace every word-boundary occurrence
 /// of `old_name` with `new_name`, also updating `[[old_name]]` doc-comment links.
+///
+/// Convenience wrapper over [`collect_edits_filtered`] that accepts every
+/// occurrence — retained for the doc-comment-link / atomic-check unit tests.
+#[cfg(test)]
 fn collect_edits_in_text(text: &str, old_name: &str, new_name: &str) -> Vec<TextEdit> {
+    collect_edits_filtered(text, old_name, new_name, &|_| true)
+}
+
+/// Like [`collect_edits_in_text`], but only keeps an occurrence whose start byte
+/// offset `abs` satisfies `accept`. This is the hook the Ф.7 scope filter uses:
+/// a local binding accepts only offsets within the declaring function; a
+/// top-level rename accepts only offsets outside shadowing functions.
+fn collect_edits_filtered(
+    text: &str,
+    old_name: &str,
+    new_name: &str,
+    accept: &dyn Fn(usize) -> bool,
+) -> Vec<TextEdit> {
     let mut edits = Vec::new();
     let line_starts = compute_line_starts(text);
 
@@ -272,6 +363,7 @@ fn collect_edits_in_text(text: &str, old_name: &str, new_name: &str) -> Vec<Text
                 let left_ok = check_left_boundary(text, abs);
                 let right_ok = check_right_boundary(text, abs + n);
                 if left_ok && right_ok
+                    && accept(abs)
                     && !is_in_string(text, abs)
                     && !is_in_comment(text, abs)
                 {
@@ -284,7 +376,7 @@ fn collect_edits_in_text(text: &str, old_name: &str, new_name: &str) -> Vec<Text
             }
 
             // No word match before the link; process the link.
-            if !is_in_string(text, link_abs) {
+            if accept(name_start) && !is_in_string(text, link_abs) {
                 // In comment or doc-comment: still update the link text.
                 let range = byte_range_to_lsp_range(text, &line_starts, name_start, name_end);
                 edits.push(TextEdit { range, new_text: new_name.to_string() });
@@ -301,6 +393,7 @@ fn collect_edits_in_text(text: &str, old_name: &str, new_name: &str) -> Vec<Text
                 let left_ok = check_left_boundary(text, abs);
                 let right_ok = check_right_boundary(text, abs + n);
                 if left_ok && right_ok
+                    && accept(abs)
                     && !is_in_string(text, abs)
                     && !is_in_comment(text, abs)
                 {
@@ -379,6 +472,389 @@ fn apply_edits_to_text(text: &str, edits: &[TextEdit]) -> String {
 
     result.push_str(&text[last_byte..]);
     result
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scope analysis (Plan 104.10 Ф.7) — AST-derived rename scope
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The rename scope for the symbol under the cursor, decided from the AST.
+enum RenameScope {
+    /// A local binding (`let`/param/`for`/pattern). Rename is confined to the
+    /// half-open byte range `[start, end)` (the declaring function's span) in
+    /// the primary file; no other file is touched.
+    LocalInFile { range: (usize, usize) },
+    /// A top-level symbol (free fn / type / const / field / import). Rename runs
+    /// cross-file; functions that locally shadow the name are skipped per file.
+    TopLevel,
+}
+
+/// Classify the symbol named `old_name` at `cursor_byte` in `text`.
+///
+/// A symbol is **local** when the innermost function (or `test`) whose span
+/// contains the cursor binds `old_name` locally (as a parameter or any nested
+/// pattern binding). Otherwise it is treated as **top-level**.
+///
+/// On a parse failure we return [`RenameScope::TopLevel`] (the safe, V1-compatible
+/// default): rename stays cross-file rather than silently doing nothing.
+fn classify_scope(text: &str, cursor_byte: usize, old_name: &str) -> RenameScope {
+    let Ok(module) = nova_codegen::parser::parse(text) else {
+        return RenameScope::TopLevel;
+    };
+    // Innermost enclosing top-level fn/test whose span contains the cursor.
+    if let Some((span, bound)) = enclosing_fn_bindings(&module, cursor_byte) {
+        if bound.contains(old_name) {
+            return RenameScope::LocalInFile { range: (span.start, span.end) };
+        }
+    }
+    RenameScope::TopLevel
+}
+
+/// Byte ranges of every top-level function/test in `text` that locally binds
+/// `name` — the shadow scopes a top-level rename must skip. Empty on parse
+/// failure (degrade to "no shadows", i.e. the V1 cross-file behaviour).
+fn shadow_scopes_in_text(text: &str, name: &str) -> Vec<(usize, usize)> {
+    let Ok(module) = nova_codegen::parser::parse(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in &module.items {
+        let (span, bound) = match item {
+            Item::Fn(fd) => (fd.span, fn_bound_names(fd)),
+            Item::Test(td) => {
+                let mut b = HashSet::new();
+                collect_block_bindings(&td.body, &mut b);
+                (td.span, b)
+            }
+            _ => continue,
+        };
+        if bound.contains(name) {
+            out.push((span.start, span.end));
+        }
+    }
+    out
+}
+
+/// Find the innermost top-level fn/test containing `cursor_byte` and return its
+/// span together with the set of names it binds locally.
+fn enclosing_fn_bindings(module: &Module, cursor_byte: usize) -> Option<(Span, HashSet<String>)> {
+    // Prefer the narrowest span (a test/fn cannot nest at top level, but keep the
+    // narrowest for robustness against any future nesting).
+    let mut best: Option<(Span, HashSet<String>)> = None;
+    for item in &module.items {
+        let (span, names): (Span, HashSet<String>) = match item {
+            Item::Fn(fd) => {
+                if !span_contains(fd.span, cursor_byte) {
+                    continue;
+                }
+                (fd.span, fn_bound_names(fd))
+            }
+            Item::Test(td) => {
+                if !span_contains(td.span, cursor_byte) {
+                    continue;
+                }
+                let mut b = HashSet::new();
+                collect_block_bindings(&td.body, &mut b);
+                (td.span, b)
+            }
+            _ => continue,
+        };
+        let narrower = best
+            .as_ref()
+            .map_or(true, |(bspan, _)| span_len(span) < span_len(*bspan));
+        if narrower {
+            best = Some((span, names));
+        }
+    }
+    best
+}
+
+fn span_len(s: Span) -> usize {
+    s.end.saturating_sub(s.start)
+}
+
+/// True if `span` covers `offset` (inclusive of both ends, matching `symbol.rs`).
+fn span_contains(span: Span, offset: usize) -> bool {
+    span.start <= offset && offset <= span.end
+}
+
+/// All names bound locally by function `fd`: its parameters plus every pattern
+/// binding introduced anywhere in its body.
+fn fn_bound_names(fd: &FnDecl) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for p in &fd.params {
+        out.insert(p.name.clone());
+    }
+    match &fd.body {
+        FnBody::Block(b) => collect_block_bindings(b, &mut out),
+        FnBody::Expr(e) => collect_expr_bindings(e, &mut out),
+        FnBody::External => {}
+    }
+    out
+}
+
+/// Collect every identifier bound by `pattern` (idents, `as`-bindings, tuple /
+/// record / array / variant / or sub-patterns, slice `..rest` binds).
+fn collect_pattern_names(pattern: &Pattern, out: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Ident { name, .. } => {
+            out.insert(name.clone());
+        }
+        Pattern::Binding { name, inner, .. } => {
+            out.insert(name.clone());
+            collect_pattern_names(inner, out);
+        }
+        Pattern::Tuple(ps, _) => {
+            for p in ps {
+                collect_pattern_names(p, out);
+            }
+        }
+        Pattern::Variant { kind, .. } => {
+            if let VariantPatternKind::Tuple { patterns, .. } = kind {
+                for p in patterns {
+                    collect_pattern_names(p, out);
+                }
+            }
+        }
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(sub) => collect_pattern_names(sub, out),
+                    // Shorthand `{ name, .. }` binds the field name itself.
+                    None => {
+                        out.insert(f.name.clone());
+                    }
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for e in elems {
+                match e {
+                    ArrayPatternElem::Item(p) => collect_pattern_names(p, out),
+                    ArrayPatternElem::RestBind(n) => {
+                        out.insert(n.clone());
+                    }
+                    ArrayPatternElem::Rest => {}
+                }
+            }
+        }
+        Pattern::Or { alternatives, .. } => {
+            for p in alternatives {
+                collect_pattern_names(p, out);
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
+    }
+}
+
+fn collect_block_bindings(block: &Block, out: &mut HashSet<String>) {
+    for stmt in &block.stmts {
+        collect_stmt_bindings(stmt, out);
+    }
+    if let Some(trailing) = &block.trailing {
+        collect_expr_bindings(trailing, out);
+    }
+}
+
+fn collect_stmt_bindings(stmt: &Stmt, out: &mut HashSet<String>) {
+    match stmt {
+        Stmt::Let(ld) => {
+            collect_pattern_names(&ld.pattern, out);
+            collect_expr_bindings(&ld.value, out);
+        }
+        Stmt::Const(cd) => {
+            out.insert(cd.name.clone());
+            collect_expr_bindings(&cd.value, out);
+        }
+        Stmt::Expr(e) => collect_expr_bindings(e, out),
+        Stmt::Assign { target, value, .. } => {
+            collect_expr_bindings(target, out);
+            collect_expr_bindings(value, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs {
+                collect_expr_bindings(e, out);
+            }
+            for e in rhs {
+                collect_expr_bindings(e, out);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(e) = value {
+                collect_expr_bindings(e, out);
+            }
+        }
+        Stmt::Throw { value, .. } => collect_expr_bindings(value, out),
+        Stmt::Defer { body, .. } => collect_expr_bindings(body, out),
+        Stmt::ConsumeScope { binding, init, body, .. } => {
+            out.insert(binding.clone());
+            collect_expr_bindings(init, out);
+            collect_block_bindings(body, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            collect_expr_bindings(expr, out)
+        }
+        Stmt::Apply { args, .. } => {
+            for a in args {
+                collect_expr_bindings(a, out);
+            }
+        }
+        Stmt::Calc { steps, .. } => {
+            for s in steps {
+                collect_expr_bindings(&s.expr, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recurse through `expr` collecting the names introduced by binding constructs
+/// nested inside it (`for`/`while let`/`if let` patterns, `match` arm patterns,
+/// closure parameters, nested blocks). Mirrors the expression coverage of
+/// `symbol.rs::find_ident_in_expr` so no binding-bearing form is missed.
+fn collect_expr_bindings(expr: &Expr, out: &mut HashSet<String>) {
+    match &expr.kind {
+        ExprKind::For { pattern, iter, body, .. }
+        | ExprKind::ParallelFor { pattern, iter, body, .. } => {
+            collect_pattern_names(pattern, out);
+            collect_expr_bindings(iter, out);
+            collect_block_bindings(body, out);
+        }
+        ExprKind::IfLet { pattern, scrutinee, guard, then, else_, .. } => {
+            collect_pattern_names(pattern, out);
+            collect_expr_bindings(scrutinee, out);
+            if let Some(g) = guard {
+                collect_expr_bindings(g, out);
+            }
+            collect_block_bindings(then, out);
+            collect_else(else_, out);
+        }
+        ExprKind::WhileLet { pattern, scrutinee, guard, body, .. } => {
+            collect_pattern_names(pattern, out);
+            collect_expr_bindings(scrutinee, out);
+            if let Some(g) = guard {
+                collect_expr_bindings(g, out);
+            }
+            collect_block_bindings(body, out);
+        }
+        ExprKind::If { cond, then, else_, .. } => {
+            collect_expr_bindings(cond, out);
+            collect_block_bindings(then, out);
+            collect_else(else_, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_expr_bindings(cond, out);
+            collect_block_bindings(body, out);
+        }
+        ExprKind::Loop { body, .. } => collect_block_bindings(body, out),
+        ExprKind::Block(block) => collect_block_bindings(block, out),
+        ExprKind::Match { scrutinee, arms, .. } => {
+            collect_expr_bindings(scrutinee, out);
+            for arm in arms {
+                collect_pattern_names(&arm.pattern, out);
+                if let Some(g) = &arm.guard {
+                    collect_expr_bindings(g, out);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => collect_expr_bindings(e, out),
+                    MatchArmBody::Block(b) => collect_block_bindings(b, out),
+                }
+            }
+        }
+        ExprKind::ClosureLight { params, body, .. } => {
+            for p in params {
+                out.insert(p.name.clone());
+            }
+            match body {
+                ClosureBody::Expr(e) => collect_expr_bindings(e, out),
+                ClosureBody::Block(b) => collect_block_bindings(b, out),
+            }
+        }
+        ExprKind::ClosureFull(sig_body) => {
+            for p in &sig_body.params {
+                out.insert(p.name.clone());
+            }
+            match &sig_body.body {
+                FnBody::Block(b) => collect_block_bindings(b, out),
+                FnBody::Expr(e) => collect_expr_bindings(e, out),
+                FnBody::External => {}
+            }
+        }
+        ExprKind::Call { func, args, .. } => {
+            collect_expr_bindings(func, out);
+            for a in args {
+                collect_expr_bindings(a.expr(), out);
+            }
+        }
+        ExprKind::Member { obj, .. } => collect_expr_bindings(obj, out),
+        ExprKind::Index { obj, index } => {
+            collect_expr_bindings(obj, out);
+            collect_expr_bindings(index, out);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_expr_bindings(left, out);
+            collect_expr_bindings(right, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_expr_bindings(operand, out),
+        ExprKind::TupleLit(elems) => {
+            for e in elems {
+                collect_expr_bindings(e, out);
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for e in elems {
+                match e {
+                    nova_codegen::ast::ArrayElem::Item(x)
+                    | nova_codegen::ast::ArrayElem::Spread(x) => collect_expr_bindings(x, out),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value {
+                    collect_expr_bindings(v, out);
+                }
+            }
+        }
+        ExprKind::TurboFish { base, .. } => collect_expr_bindings(base, out),
+        ExprKind::Forbid { body, .. } | ExprKind::Blocking(body) => {
+            collect_block_bindings(body, out)
+        }
+        ExprKind::Supervised { body, cancel, .. } => {
+            collect_block_bindings(body, out);
+            if let Some(c) = cancel {
+                collect_expr_bindings(c, out);
+            }
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::Spawn(inner)
+        | ExprKind::Throw(inner) => collect_expr_bindings(inner, out),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => collect_expr_bindings(inner, out),
+        ExprKind::Coalesce(a, b) => {
+            collect_expr_bindings(a, out);
+            collect_expr_bindings(b, out);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(e) = start {
+                collect_expr_bindings(e, out);
+            }
+            if let Some(e) = end {
+                collect_expr_bindings(e, out);
+            }
+        }
+        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
+            collect_expr_bindings(range, out);
+            collect_expr_bindings(body, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_else(else_: &Option<ElseBranch>, out: &mut HashSet<String>) {
+    match else_ {
+        Some(ElseBranch::Block(b)) => collect_block_bindings(b, out),
+        Some(ElseBranch::If(e)) => collect_expr_bindings(e, out),
+        None => {}
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -687,6 +1163,25 @@ mod tests {
         Position { line, character: col }
     }
 
+    /// Test convenience: rename the symbol `old` (cursor placed at its first
+    /// textual occurrence in the primary doc) to `new`, driving the real
+    /// scope-aware [`compute_rename`].
+    fn cr(docs: &[RenameDoc], old: &str, new: &str) -> Result<WorkspaceEdit> {
+        let uri = docs[0].uri.clone();
+        let cursor = docs[0].text.find(old).unwrap_or(0);
+        compute_rename(docs, &uri, cursor, old, new)
+    }
+
+    /// Compute the byte offset of the Nth (0-based) occurrence of `needle`.
+    fn nth_occurrence(text: &str, needle: &str, n: usize) -> usize {
+        let mut start = 0;
+        for _ in 0..n {
+            let off = text[start..].find(needle).expect("occurrence exists");
+            start += off + needle.len();
+        }
+        start + text[start..].find(needle).expect("occurrence exists")
+    }
+
     // ── prepareRename pos tests ───────────────────────────────────────────────
 
     #[test]
@@ -787,7 +1282,7 @@ mod tests {
         }];
         // rename may fail atomic check (no full compiler in tests), but should
         // at least compute the edits and attempt the check.
-        let result = compute_rename(&docs, "oldVar", "newVar");
+        let result = cr(&docs, "oldVar", "newVar");
         // Result can be Ok (if compiler not available) or Err (type error post-rename).
         // Key: no panic, and if Ok, all edits replace "oldVar" -> "newVar".
         match result {
@@ -811,7 +1306,7 @@ mod tests {
             text: src.to_string(),
             version: Some(1),
         }];
-        let result = compute_rename(&docs, "add", "sum");
+        let result = cr(&docs, "add", "sum");
         // Verify no panic, accept either Ok or Err(atomic check).
         match result {
             Ok(_) | Err(_) => {}
@@ -826,7 +1321,7 @@ mod tests {
             text: src.to_string(),
             version: Some(1),
         }];
-        let result = compute_rename(&docs, "Point", "Vec2");
+        let result = cr(&docs, "Point", "Vec2");
         match result {
             Ok(edit) => {
                 // Should have changed multiple occurrences.
@@ -854,7 +1349,7 @@ mod tests {
                 version: Some(2),
             },
         ];
-        let result = compute_rename(&docs, "greet", "hello");
+        let result = cr(&docs, "greet", "hello");
         match result {
             Ok(edit) => {
                 // Should touch both files.
@@ -875,7 +1370,7 @@ mod tests {
             text: src.to_string(),
             version: Some(1),
         }];
-        let result = compute_rename(&docs, "T", "U");
+        let result = cr(&docs, "T", "U");
         // Should produce edits replacing T→U in the fn signature.
         match result {
             Ok(edit) => {
@@ -896,7 +1391,7 @@ mod tests {
             text: src.to_string(),
             version: Some(1),
         }];
-        let result = compute_rename(&docs, "oldFn", "newFn");
+        let result = cr(&docs, "oldFn", "newFn");
         match result {
             Ok(edit) => {
                 if let Some(DocumentChanges::Edits(te)) = edit.document_changes {
@@ -917,7 +1412,7 @@ mod tests {
             text: "fn foo() => ()\n".to_string(),
             version: None,
         }];
-        let result = compute_rename(&docs, "foo", "");
+        let result = cr(&docs, "foo", "");
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
@@ -929,7 +1424,7 @@ mod tests {
             text: "fn myFn() => ()\n".to_string(),
             version: None,
         }];
-        let result = compute_rename(&docs, "myFn", "fn");
+        let result = cr(&docs, "myFn", "fn");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.code, ErrorCode::InvalidParams);
@@ -943,7 +1438,7 @@ mod tests {
             text: "fn bar() => ()\n".to_string(),
             version: None,
         }];
-        let result = compute_rename(&docs, "bar", "1invalid");
+        let result = cr(&docs, "bar", "1invalid");
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, ErrorCode::InvalidParams);
     }
@@ -961,7 +1456,7 @@ mod tests {
             text: src.to_string(),
             version: None,
         }];
-        let result = compute_rename(&docs, "foo", "bar");
+        let result = cr(&docs, "foo", "bar");
         // Either rejected by atomic check or Ok (compiler accepts duplicates in single file).
         match result {
             Ok(_) | Err(_) => {} // no panic is the contract
@@ -1047,7 +1542,7 @@ mod tests {
             version: None,
         }];
         let start = std::time::Instant::now();
-        let _result = compute_rename(&docs, "myFunc", "myFunction");
+        let _result = cr(&docs, "myFunc", "myFunction");
         let elapsed = start.elapsed();
         assert!(elapsed.as_secs() < 5, "rename on 10000-line file took too long: {:?}", elapsed);
     }
@@ -1077,5 +1572,126 @@ mod tests {
         let result = apply_edits_to_text(src, &edits);
         assert!(result.contains("bar"), "new name not found in result");
         assert!(!result.contains("foo"), "old name still present in result");
+    }
+
+    // ── Ф.7 scope-aware rename (criterion #4: scope from AST, NOT regex) ───────
+
+    /// Helper: run the exact occurrence filter `compute_rename` applies for a
+    /// given scope, returning the edits (bypassing the atomic type-check so the
+    /// scope semantics can be asserted deterministically).
+    fn scoped_edits(src: &str, old: &str, new: &str, scope: &RenameScope) -> Vec<TextEdit> {
+        match scope {
+            RenameScope::LocalInFile { range } => {
+                let (lo, hi) = *range;
+                collect_edits_filtered(src, old, new, &|abs| abs >= lo && abs < hi)
+            }
+            RenameScope::TopLevel => {
+                let shadows = shadow_scopes_in_text(src, old);
+                collect_edits_filtered(src, old, new, &|abs| {
+                    !shadows.iter().any(|(lo, hi)| abs >= *lo && abs < *hi)
+                })
+            }
+        }
+    }
+
+    /// POS: renaming a local var touches only its declaring function, never a
+    /// same-named local in a sibling function.
+    #[test]
+    fn f7_pos_local_var_scoped_to_declaring_fn() {
+        let src = "fn a() {\n  ro x = 1\n  ro y = x + 1\n}\n\nfn b() {\n  ro x = 2\n  ro z = x + 3\n}\n";
+        let cursor = src.find("x").unwrap(); // first `x` — inside a
+        let scope = classify_scope(src, cursor, "x");
+        let range = match scope {
+            RenameScope::LocalInFile { range } => range,
+            RenameScope::TopLevel => panic!("local var must classify as LocalInFile, not regex-wide"),
+        };
+        let b_start = src.find("fn b").unwrap();
+        assert!(range.1 <= b_start, "local scope must end before fn b begins");
+        let edits = scoped_edits(src, "x", "q", &scope);
+        assert_eq!(edits.len(), 2, "only a's `x` (decl + use) renamed, b's untouched");
+    }
+
+    /// POS: cursor on a *use* of a local (not the binding) still resolves to the
+    /// local's scope — proving AST binding lookup, not just decl-site matching.
+    #[test]
+    fn f7_pos_local_var_use_site_still_scoped() {
+        let src = "fn a() {\n  ro x = 1\n  ro y = x + 1\n}\nfn b() {\n  ro x = 2\n}\n";
+        let cursor = nth_occurrence(src, "x", 1); // the `x` in `x + 1`
+        assert!(
+            matches!(classify_scope(src, cursor, "x"), RenameScope::LocalInFile { .. }),
+            "use-site of a local must classify as LocalInFile"
+        );
+    }
+
+    /// POS: a top-level fn with no shadowing renames its decl + all call sites.
+    #[test]
+    fn f7_pos_top_level_fn_renames_call_sites() {
+        let src = "fn helper() => ()\nfn user() {\n  helper()\n}\n";
+        let cursor = src.find("helper").unwrap();
+        let scope = classify_scope(src, cursor, "helper");
+        assert!(matches!(scope, RenameScope::TopLevel), "free fn is TopLevel");
+        assert!(shadow_scopes_in_text(src, "helper").is_empty());
+        let edits = scoped_edits(src, "helper", "aid", &scope);
+        assert_eq!(edits.len(), 2, "decl + call site");
+    }
+
+    /// POS (shadow-check): a function that locally binds the top-level name is
+    /// skipped — its occurrences refer to the local, not the top-level symbol.
+    #[test]
+    fn f7_pos_shadow_check_skips_shadowing_fn() {
+        let src = "fn helper() => ()\nfn user() {\n  helper()\n}\nfn shad() {\n  ro helper = 5\n  ro y = helper + 1\n}\n";
+        let cursor = src.find("helper").unwrap(); // decl of the top-level fn
+        let scope = classify_scope(src, cursor, "helper");
+        assert!(matches!(scope, RenameScope::TopLevel));
+        let shadows = shadow_scopes_in_text(src, "helper");
+        assert_eq!(shadows.len(), 1, "exactly `shad` shadows `helper`");
+        let edits = scoped_edits(src, "helper", "aid", &scope);
+        assert_eq!(edits.len(), 2, "decl + user() call; shad's two occurrences skipped");
+    }
+
+    /// POS (plan's shadow example): `fn a(){ro x} fn b(){ro x}` renaming x in a
+    /// leaves b's x untouched.
+    #[test]
+    fn f7_pos_shadow_two_functions_same_local() {
+        let src = "fn a() {\n  ro x = 1\n}\nfn b() {\n  ro x = 2\n}\n";
+        let cursor = src.find("x").unwrap();
+        let scope = classify_scope(src, cursor, "x");
+        assert!(matches!(scope, RenameScope::LocalInFile { .. }));
+        let edits = scoped_edits(src, "x", "w", &scope);
+        assert_eq!(edits.len(), 1, "only a's `x` decl renamed");
+    }
+
+    /// EDGE: a type used across files classifies as TopLevel (cross-file rename),
+    /// never scope-limited.
+    #[test]
+    fn f7_edge_type_is_top_level() {
+        let src = "type Point { x int, y int }\nfn origin() Point => Point { x: 0, y: 0 }\n";
+        let cursor = src.find("Point").unwrap();
+        assert!(
+            matches!(classify_scope(src, cursor, "Point"), RenameScope::TopLevel),
+            "a type rename must be cross-file (TopLevel)"
+        );
+        assert!(shadow_scopes_in_text(src, "Point").is_empty());
+    }
+
+    /// NEG: a parse failure degrades to TopLevel (V1-compatible cross-file),
+    /// never a panic or a silent no-op.
+    #[test]
+    fn f7_neg_parse_error_degrades_to_top_level() {
+        let src = "fn broken(@@@ =>";
+        assert!(matches!(classify_scope(src, 3, "broken"), RenameScope::TopLevel));
+        assert!(shadow_scopes_in_text(src, "broken").is_empty());
+    }
+
+    /// NEG (regression): the old regex renamed a same-named local in EVERY
+    /// function. Assert the scope filter does NOT — the classic false positive.
+    #[test]
+    fn f7_neg_no_cross_scope_false_positive() {
+        let src = "fn a() {\n  ro count = 1\n}\nfn b() {\n  ro count = 2\n  ro c = count + count\n}\n";
+        let cursor = src.find("count").unwrap(); // a's count
+        let scope = classify_scope(src, cursor, "count");
+        let edits = scoped_edits(src, "count", "n", &scope);
+        // a has exactly one `count`; b's three occurrences must be untouched.
+        assert_eq!(edits.len(), 1, "regex would have matched all 4; scope matches 1");
     }
 }

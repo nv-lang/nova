@@ -504,8 +504,10 @@ impl LanguageServer for Backend {
             }
         }
 
-        // Find old_name: extract word at cursor in the primary doc.
-        let old_name = {
+        // Find old_name + cursor byte offset in the primary doc. The byte offset
+        // (word start) is fed to `compute_rename` so it can classify the symbol's
+        // scope from the AST (Plan 104.10 Ф.7), not just the bare word text.
+        let (old_name, cursor_byte) = {
             let Some(doc) = self.state.docs.get(&uri) else {
                 return Err(tower_lsp::jsonrpc::Error {
                     code: tower_lsp::jsonrpc::ErrorCode::InvalidParams,
@@ -530,12 +532,15 @@ impl LanguageServer for Backend {
                     data: None,
                 });
             }
-            text[ws..we].to_string()
+            (text[ws..we].to_string(), ws)
         };
 
         tracing::info!(old_name = %old_name, new_name = %new_name, "rename requested");
 
-        let edit = run_with_large_stack(move || compute_rename(&docs, &old_name, &new_name))?;
+        let primary_uri = uri.clone();
+        let edit = run_with_large_stack(move || {
+            compute_rename(&docs, &primary_uri, cursor_byte, &old_name, &new_name)
+        })?;
         Ok(Some(edit))
     }
 
