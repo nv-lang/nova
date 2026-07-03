@@ -37468,6 +37468,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return String::new();
             }
         }
+        // Channel 6i (2026-07-04): bare `None` в flow-позиции (let без аннотации
+        // `mut best = None` — expected отсутствует, чекер честно молчит) —
+        // ДОСЛОВНЫЙ подъём legacy-контракта: fn-return NovaOpt_* эвристика,
+        // иначе NovaOpt_nova_int (факт NONE-WHO: вызов из emit_block_stmts
+        // Let-RHS). Канальная аннотация (expected/eq) идёт Ch2 раньше.
+        if let ExprKind::Ident(n6i) = &expr.kind {
+            if n6i == "None"
+                && !self.var_types.contains_key(n6i)
+                && self
+                    .sum_schema_registry
+                    .find_variant_compat(n6i)
+                    .map_or(false, |(tn, fs)| fs.is_empty()
+                        && (tn == "Option" || tn == "NovaOpt_nova_int"))
+            {
+                if let Some(t) = self.current_fn_return_ty.as_ref() {
+                    if t.starts_with("NovaOpt_") {
+                        return t.clone();
+                    }
+                }
+                return "NovaOpt_nova_int".into();
+            }
+        }
         // Channel 6h (2026-07-04): ClosureLight без канальной Func-аннотации —
         // ДОСЛОВНЫЙ подъём legacy-контракта (params=nova_int дефолт без
         // контекста, ret=infer тела с seeded overrides, clos_struct_name).
