@@ -250,10 +250,18 @@ expr.ok() (->Option), match (ветвление).
 > её регистрирует конкретным `Ok`). **Попытка localized-фикса** (idempotent-регистрация NovaRes возврата
 > на входе emit-fn, зеркало ctor-site 23631) **НЕ помогла** — `ret_c` для generic-mono не конкретен, корень
 > глубже (mono-substitution ядра, зона 172.1: `M-172.1-*`/`M-181-*` markers по всему mono-typedef-пути).
-> **Следствие:** Ф.2c зависит от **foundational mono-фикса** (подставить T/E в mono-тело+return generic-fn,
-> вернуть Result/Tuple-over-array) — high-regression-risk, зона 172.1, база nova-p177 (main) позади активной
-> 172.1-работы → **не соло**. Маркер **`[M-177-result-tuple-over-array-codegen]`**. Чистого .nv-workaround
-> для `Result[[]T,E]` нет. **Перепланировка:** Ф.2c в compiler-gated-волну рядом с Ф.2b (172.1-координация).
+> **Координация СНЯТА (2026-07-03):** `plan-172` = **21 коммит ПОЗАДИ main** (0 ahead) → вся 172.1-работа
+> **уже в main**; nova-p177/p173 (из main) её содержат, а баг ВСЁ РАВНО воспроизводится → это **genuinely
+> OPEN баг в текущем main**, НЕ «активная 172.1-зона». Блокер — не координация, а **глубина+regression-risk**.
+> **2 localized-фикса ПРОВАЛИЛИСЬ (эмпирически, с пересборкой):** (1) register NovaRes на входе emit-fn
+> METHOD-пути (~15767) — не сработал (free-fn `seq_a` идёт не туда); (2) то же в FREE-пути
+> `register_mono_instance` (~15386) — не сработал И **внёс регрессию `Nova_E*`** (было 1 error, стало
+> больше). Оба откачены (net-zero emit_c). **Подтверждённый корень:** mono-ТЕЛО `fn[T[,E]] -> Result[[]T,E]`
+> эмитится с эрейзнутыми типами (`Nova_E*`, generic array-элемент) — worklist body-drain НЕ пере-применяет
+> type-subst для этой формы. Это **foundational mono-instantiation** (не typedef-registration), high-regression-
+> risk (задевает ВСЕ generic-fn), нужен full-regression-гейт. Маркер **`[M-177-result-tuple-over-array-codegen]`**.
+> Чистого .nv-workaround для `Result[[]T,E]` нет. **Итог:** Ф.2c требует dedicated mono-фикс-сессии
+> (deep-investigate worklist body-drain re-subst + broad regression) — не хвост общей сессии.
 
 ---
 
