@@ -1,0 +1,141 @@
+# Plan 173 Ф.2 (defer-kernel) — де-риск-карта (ultracode Workflow, 2026-07-04)
+
+> Источник: de-risk Workflow `w5btxzmse` (4 read-only агента, 490k токенов, 0 ошибок). Карта
+> current-state + blast-radius + сайты + **скорректированная** последовательность под-атомов.
+> Каждый под-атом Ф.2 = отдельный заход + коммит + гейт (conformance 38/38 + затронутые nova_tests
+> baseline-delta 0 + disasm hot-path). Baseline — worktree HEAD~N/commit-reset, **НЕ git stash**.
+
+## 🔴 Критические находки (меняют план)
+
+1. **D194-элизия §3.5 ПРЕМИСА ЛОЖНА** (независимо подтверждено 2 агентами — высокая уверенность).
+   План §3.1/§3.5: «Consumable[Never] СЕЙЧАС элидит shield/timeout/outcome (disasm-verified T2.9)».
+   **Факт кода:** единственная эмитящая ConsumeScope-ветка (emit_c.rs:19746-20031) эмитит ПОЛНЫЙ
+   frame-bearing slow-path БЕЗУСЛОВНО — нет Never/infallible-ветки; grep effect-row inspection в
+   emit_c = 0; Plan 110:695 сам числит отсутствующую элизию как ❌-анти-паттерн. Спека D194
+   (03-syntax:8921 «Статус: ACTIVE») дрейфанула. **Следствие:** §3.5 «пере-ключение элизии» — на
+   деле FIRST-TIME реализация, не сохранение. **РЕШЕНИЕ (Option: PARITY, дефолт — принимаю сам):**
+   Ф.2 = НЕ регрессировать (disasm-parity: lowered consume/defer(o) даёт вывод ≡ текущему
+   frame-bearing). §perf-элизия (никогда не реализованная) — ОТДЕЛЬНЫЙ deferred followup
+   `[M-173-d194-perf-elision]`, НЕ блокирует Ф.2. Причина: §3.5 acceptance буквально «≡ до
+   рефактора» = PARITY; новая элизия — перф-оптимизация вне периметра unification. Спеку D194
+   привести к факту (не «disasm-verified» без живого артефакта). *(Владельцу на ревью: если хочешь
+   ГЕНУИННУЮ элизию как часть Ф.2 — это противоположный acceptance, скажи.)*
+
+2. **`nova_scope_exit(frame, outcome_kind)` НЕДО-СПЕЦИФИЦИРОВАН** (§3.4). Крус — CATCH vs TRANSPARENT
+   политика: with-Fail USER→SWALLOW (handler отработал, result=default, НЕ rethrow) vs defer/consume
+   USER→RETHROW. Единый безпараметрический helper либо глотает ошибки в defer (новая unsoundness),
+   либо двойной-rethrow в with-Fail (ломает #1-фикс). **РЕШЕНИЕ:** helper берёт `NovaScopeExitPolicy
+   policy ∈ {CATCH, TRANSPARENT}` + читает `frame->error_kind` (не redundant outcome_kind). Таблица:
+   PANIC→nv_panic; CANCEL→nova_throw_cancel_reason(msg,reason_ptr); USER|USER_TYPED→(CATCH:
+   return-to-caller / TRANSPARENT: nova_rethrow_with_suppressed); Success: no-op. **7 kind-читающих
+   сайтов**, маркировка IN/OUT: IN = A(with-Fail 6963-7028), B(consume 19877-20024), C1(defer-error
+   18165-18208), C2(defer-normal cleanup-fail — HAND-ROLLED longjmp 18357, ВЫСШИЙ miss-risk); OUT =
+   D(fiber-report 8200-8236 — report-семья, не throw), E(detach 8843-8850 — LogAndDrop), test-frame.
+   Composition (nv_compose_suppressed, 2-frame) остаётся в codegen; helper — только single-frame
+   terminal transport. grep-guard: `error_kind ==` только внутри nova_scope_exit + санкционир. outcome/report.
+
+3. **RENAME collision-ordering ПОДТВЕРЖДЁН** (жёсткий build-breaker). Протокол `Cleanup[E]` и эффект
+   `Cleanup` не сосуществуют в prelude (один type-name namespace, нет arity/kind-overload) →
+   duplicate-def → падает ВЕСЬ prelude → каждая компиляция. **Порядок ОБЯЗАТЕЛЕН:** (a) эффект
+   `Cleanup`→`ResourceTrace` ПЕРВЫМ (освобождает имя) → green → (b) протокол `Consumable`→`Cleanup`
+   + метод `@on_exit`→`@cleanup`. §3.5-relevant: элизия детектится по on_exit method effect-row
+   (types/mod.rs:4359) — rename должен сохранить детект.
+
+4. **defer(o) design-gaps.** (a) **Interrupt-outcome:** код ConsumeScope НЕ пушит interrupt-frame →
+   `interrupt v` в body СЕЙЧАС обходит on_exit; но СПЕКА core.nv:130 уже говорит «Failure(reason) —
+   throw/cancel/**interrupt**». defer-frame ОБОРАЧИВАЕТ interrupt (enter_defer_scope:18227). →
+   desugar на defer-frame ВЫРАВНИВАЕТ impl к спеке: on_exit/defer(o) СРАБОТАЕТ на interrupt с
+   outcome=**Failure** (correctness-фикс, тестируемо). (b) **AST:** добавить ОПЦИОНАЛЬНОЕ ПОЛЕ на
+   `Stmt::Defer` (не новый вариант) → low blast (существующие `{body,..}` армы целы). (c) **Parser:**
+   bounded lookahead `defer (IDENT ScopeOutcome)` vs `defer (expr)` — коллизий в корпусе нет, но
+   грамматика допускает parenthesized-expr body → fallback на parse_expr ОБЯЗАТЕЛЕН. (d) **Panic/throw
+   split:** defer throw-path (18165) сейчас НЕ различает panic; defer(o) читает error_kind как consume
+   (19878-19922). (e) **ScopeOutcome** конструкторы уже эмитятся consume-веткой → defer(o) переиспользует.
+
+## Current-state по измерениям (сжато; полные сайты — ниже)
+
+**LOWERING (агент 1):** `Stmt::ConsumeScope` (ast:1878 {binding,type_annot,init,body,span}) —
+МОНОЛИТ emit_c.rs:19746-20031 (~285 строк), НЕ переиспользует defer-kernel: init+`#define`,
+3-level timeout (19773-19820), cancel-shield enter/leave (19831/19980, БЕЗУСЛОВНО), ResourceTrace
+(Cleanup-эффект) enter/exit (19843/19967), body fail-frame (19850), 4 ScopeOutcome-make-сайта
+(Success 19894 / Cancel→Failure"cancel:" 19906 / Failure 19913 / Panic 19922, kind из error_kind
+19878), on_exit во ВТОРОМ fail-frame (19938, символ HARDCODED `Nova_<T>_consume_on_exit` :19761),
+6-way re-raise ladder (19992-20024). **defer-kernel** (18079 enter / 18271 leave / 18384 early-exit
+/ 18629 emit_defer_body_void / 19691 Stmt::Defer flag; DeferEntry{active_var,body} 1331) материализует
+ScopeOutcome НИГДЕ. Consume НЕ пушит interrupt-frame.
+
+**RE-DISPATCH (агент 2):** effects.h: NovaThrowKind {USER=0,CANCEL=1,USER_TYPED=2,PANIC=3} (30-37),
+error_kind :58; терминалы nv_panic:555 / nova_throw_cancel_reason:126 / nova_rethrow_with_suppressed:210
+/ nv_compose_suppressed:172. 11 setjmp-сайтов в emit_c; 7 читают kind (см. находка 2). `nova_scope_exit`
+НЕ существует (grep=0) — создать `static inline` рядом с триадой в effects.h.
+
+**RENAMES (агент 3):** (a) эффект — effects.nv:210 `type Cleanup effect {on_scope_enter(label,timeout_ms);
+on_scope_exit(label,outcome)}`; codegen dispatch 2 сайта (19843/19967, C-символы HARDCODED
+`Nova_Cleanup_on_scope_enter/exit`); п.8 ДРОПАЕТ timeout_ms из enter (сигнатурное изменение). (b)
+протокол Consumable[E] — protocols.nv:459; satisfaction СТРУКТУРНАЯ (по методу on_exit, types:4316),
+имя «Consumable» в Rust — только error-текст; НО generic-bound `[T Consumable[Never]]` резолвится по
+ИМЕНИ (d194_consumable_never_hot_path:24 — load-bearing). (c) метод @on_exit — def-символ авто-mangle
+из имени метода (emit_c:4093/11433 `Nova_{}_consume_{f.name}`), НО call-site pin HARDCODED :19761;
++ 4 hand-written guard-defs sync_primitives.h:2324/2338/2352/2366; + чекер-литералы «on_exit»
+types:4316/4363/4537 + lints:303. CleanupTimeoutError (errors.nv:306) — SED-HAZARD, не трогать.
+Blast: ~110 файлов, но load-bearing CODE ≈ 6 (emit_c, types, lints, parser, sync_primitives.h,
+protocols/effects/sync.nv); остальное — token-sed tests/spec/docs.
+
+**ELISION+SYNTAX (агент 4):** D194 §perf НЕ реализован (см. находка 1). defer parser :10052; AST :1845;
+ScopeOutcome core.nv:147 `Success|Failure(str)|Panic(str)` (str, не any — any=Ф.4 #5). Плейн `defer`
+~430 сайтов/89 .nv — must byte-identical. `defer(...)`-parenthesized в корпусе НЕТ (только комменты).
+
+## Скорректированная последовательность под-атомов Ф.2 (каждый = заход+коммит+гейт)
+
+- **Ф.2.0 (этот заход):** D314 spec-first (03-syntax.md) + эта де-риск-карта + план-статус. Гейт: spec-review.
+- **Ф.2.A0 BASELINE (executing, small):** release nova.exe на HEAD; dump .c/disasm 2 фикстур —
+  (a) Mutex/Sem/atomic consume-block (Cleanup[Never] hot-path), (b) Fail[E]-цепочка без local
+  handler/defer (frame-free propagation). → `docs/plans/artifacts/173-disasm-baseline/`. Зафиксировать
+  ФАКТ: guard-фикстуры НЕСУТ setjmp-кадры (ожидаемо YES) → §3.5 acceptance = PARITY. Гейт: артефакты
+  закоммичены; conformance 38/38.
+- **Ф.2.R1 rename эффект Cleanup→ResourceTrace (ПЕРВЫМ):** spec D185 (04-effects:5467) → effects.nv:210
+  (ops on_resource_enter(label)/on_resource_exit(label,outcome), DROP timeout_ms) → emit_c 4 dispatch
+  (19843/19967, C-символы + drop timeout arg) → parser:10061 hint → 3 теста plan110
+  (cleanup_effect_dispatch_t7_1, timeout_application_level2_t3_8, application_cross_fiber_t8_7). Гейт:
+  build clean; conformance 38/38; grep `effect Cleanup`/`on_scope_*` = 0 вне historical.
+- **Ф.2.R2 rename Consumable→Cleanup + @on_exit→@cleanup (BUNDLED, после R1):** spec D188/D191/D194/D196/D197
+  (03-syntax) + D195 (04-effects) + все `[T Consumable[...]]` bounds. CODE(care): emit_c:19761 pin→
+  consume_cleanup; sync_primitives.h ×4 defs→_consume_cleanup; types:4316/4363/4537 + lints:303
+  литералы→"cleanup"; error-текст (коды `D188-*` СТАБИЛЬНЫ, меняем только слова). MECHANICAL(token-sed):
+  protocols.nv:459; sync.nv ×4; ~44 nova_tests + spec_tests d188/d194(bound:24)/d196 + neg; examples/bench;
+  neg-EXPECT-маркеры в lockstep. Гейт: build+link (нет undefined `Nova_*_consume_*`); conformance 38/38;
+  plan110/plan125_1/plan140 baseline-delta 0 (default+--panic); disasm hot-path byte-identical.
+- **Ф.2.B1 parser+AST defer(o ScopeOutcome):** опц. поле на Stmt::Defer (parser:10052 bounded-lookahead
+  +fallback; ast:1845); neg-диаги (double-binding, non-ScopeOutcome). Гейт: parser pos/neg; conformance
+  38/38; syntax/defer_* + err173/f1_defer_plain_all_paths baseline-delta 0 (плейн defer byte-identical).
+- **Ф.2.B2 codegen outcome-defer:** binding на DeferEntry (1331); emit_defer_body_void (18629) + 4 splice
+  (normal→Success 18299; throw→Failure/CANCEL-marker/PANIC via error_kind 18173; early-exit→Success 18393;
+  interrupt→Failure 18227). Гейт: err173/f2_defer_outcome_{success,failure_payload,panic,cancel,interrupt}
+  (incl Zig-парность Failure(e)=>use(e) + Panic-ветка-БЕЖИТ + LIFO-with-outcome + panic-in-defer compose);
+  conformance d90/d314; baseline-delta 0.
+- **Ф.2.B3 consume→desugar:** заменить монолит 19746-20031 на `ro X=e` + consume-flavored outcome-defer,
+  RE-HOME cancel-shield(body+cleanup)/timeout/ResourceTrace/exactly-once/partial-init как defer-entry
+  policy (НЕ потерять); on_exit→ordinary X.@cleanup(o) method-dispatch. Гейт: все 8 consume-conformance
+  (d131/d133/d156/d162/d164/d174/d188/d196) через сахар; full std компилится; plan110 baseline-delta 0.
+- **Ф.2.C nova_scope_exit unification (структурный финал #1):** helper в effects.h (policy CATCH/TRANSPARENT,
+  находка 2); reroute SITE A(CATCH)/B/C1/C2(TRANSPARENT); EXCLUDE+document D/E/test + grep-guard. Гейт:
+  rt/f1_with_fail_swallow_panic + composed body+cleanup + d196(in_fail_ctx intact) green; conformance 38/38;
+  нет per-frame kind-dispatch дублирования.
+- **Ф.2.D194 disasm-parity + spec-sync:** disasm re-baseline ≡ A0 (PARITY, находка 1); D194-спека к факту;
+  §perf-элизия → followup `[M-173-d194-perf-elision]`. Гейт: disasm Mutex/Sem/atomic ≡ A0; conformance 38/38.
+- **Ф.2.E hub REWRITE (idiom/error-and-cleanup-model.md) + doc-sweep** ~18 docs (idiom×10, cookbook,
+  tutorial, nova-cli[.ru], nv-coding-style); plans/110.* HISTORICAL не трогать. Гейт: grep Consumable/@on_exit
+  в std/+docs(non-plans)=0 вне historical; docs-only (нет build/test).
+- **Ф.2.multi-binding consume** (D188 R1) — по ходу B3 или отдельным атомом.
+
+## Ключевые сайты (свод; всегда re-grep перед правкой — план-строки дрейфуют, R9)
+
+emit_c.rs: 19746-20031 (consume монолит), 19761 (on_exit call-pin), 19843/19967 (Cleanup-effect dispatch),
+19891-19926 (ScopeOutcome 4 make-сайта), 6963-7028 (with-Fail SITE A), 18165-18208 (defer-error C1),
+18348-18367 (leave cleanup-fail C2 hand-rolled longjmp), 18079/18271/18384/18629/19691 (defer-kernel),
+1331-1377 (DeferEntry/DeferScope), 4093/11433 (consume-method mangle). effects.h: 30-37/58/126/172/210/555
+(kinds+терминалы; nova_scope_exit сюда). types/mod.rs: 4316/4363/4537 (on_exit-литералы), 4332-4362 (D194
+caller-relax). lints.rs:303. parser/mod.rs: 10052 (defer), 10061 (Cleanup-hint). ast/mod.rs: 1845
+(Stmt::Defer), 1878 (ConsumeScope). std: core.nv:147 (ScopeOutcome), protocols.nv:459 (Consumable),
+effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sync_primitives.h:2324/2338/
+2352/2366 (4 hand-C guard-defs). spec: 03-syntax D188/D191/D194/D196/D197/D90/D189, 04-effects D185/D195.

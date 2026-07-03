@@ -360,3 +360,13 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   UnexpectedChar через catch-all'ы (таксономия сохранена). Покрывает scalar+array+object. Token не экспортируется
   → локально. **Verify:** std/encoding/json PASS:1 FAIL:0; plan91_13 (потребители) PASS:1; 0 регрессий. Завершает
   Plan 181 Ф.2a json end-to-end (все eq-блокеры sum/record/Vec/HashMap + parser).
+
+## Plan 173 Ф.2 — D194 §perf-элизия (вскрыто де-риском 2026-07-04)
+
+- **[M-173-d194-perf-elision]** D194 §perf hot-path элизия (`Consumable[Never]`/`Cleanup[Never]` →
+  strip shield/timeout/outcome/frame) **НИКОГДА НЕ БЫЛА РЕАЛИЗОВАНА** — де-риск Ф.2 (2 агента незав.)
+  показал: ConsumeScope-ветка (emit_c.rs:19746-20031) эмитит полный frame-bearing путь БЕЗУСЛОВНО, нет
+  effect-row inspection; спека D194 «Статус: ACTIVE / disasm-verified T2.9» дрейфанула; Plan 110:695
+  сам числит это ❌-анти-паттерном. Ф.2 берёт PARITY (не регрессировать frame-bearing вывод). Генуинная
+  элизия (ключ «sync-тело + cleanup `Fail[Never]` → прямой вызов без кадра») — самостоятельный
+  перф-эффорт ПОСЛЕ Ф.2 (D194-спека уже приведена к факту в Ф.2.D194). Priority: P3 (перф, не корректность).

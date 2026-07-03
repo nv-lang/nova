@@ -10532,3 +10532,109 @@ Breaking (меняет сигнатуры всех `@display`/`@debug`) → от
 
 ---
 
+
+---
+
+## D314. Единое ядро cleanup — `defer` как примитив (defer-kernel)
+
+> **Plan 173 Ф.2 (defer-kernel unification). Статус:** 🔨 SPEC-FIRST (2026-07-04, написан ДО codegen;
+> реализация — под-атомы Ф.2, см. [173-f2-derisk-map.md](../../docs/plans/173-f2-derisk-map.md)).
+> **Закрывает** несведённость трёх cleanup-поверхностей (`defer` / `Consumable.on_exit`+`consume{}` /
+> `with Fail[E]`) из двух непримирённых эпох (Plan 173 §1). **Модель:** MODEL 1 «`defer` — ядро»
+> (sign-off 2026-06-20). **Нормативы:** [§3a](../../docs/plans/173-error-system-unify-harden.md)
+> (completes-by-default, D192-ретракт) + §3b (no-restart-default). **Амендит:** [D90](#d90-defer-и-errdefer--scope-level-cleanup-statement),
+> [D188](#d188-consumablee-protocol--consume-x--expr-body-scope-block), [D189](#d189-прямое-удаление-okdefer--errdefer--defer-result),
+> [D194](#d194-consumablenever--infallible-cleanup--hot-path-elision), [D185](../04-effects.md#d185)
+> (эффект `Cleanup`→`ResourceTrace`). **Хаб:** docs/idiom/error-and-cleanup-model.md (rewrite Ф.2.E).
+
+### Что
+
+Nova имел ТРИ несведённые cleanup-поверхности. D314 сводит их к ОДНОМУ примитиву — `defer` — с
+опциональным outcome-биндингом; протокол `Cleanup[E]` (ex-`Consumable`) / `consume` / `@cleanup`
+(ex-`@on_exit`) низводятся до **сахара** над outcome-defer; весь unwind-ре-диспатч идёт через ОДНУ
+runtime-точку (`nova_scope_exit`).
+
+### Правило
+
+**1. `defer body` (форма без изменений)** — безусловный cleanup на ЛЮБОМ exit из enclosing scope
+(normal / `return` / `throw` / `panic` / `interrupt`), кроме `exit(N)`. LIFO. Добегание — §3a
+(completes-by-default: щит элидится для sync-тел, cancel замаскирован для suspend-тел).
+
+**2. `defer(o ScopeOutcome) { … }` (НОВОЕ)** — outcome-несущий block-defer; тело получает исход
+`ScopeOutcome` ([core.nv](../../std/prelude/core.nv)). Отображение exit-path → outcome:
+
+| Exit-path | `ScopeOutcome` |
+|---|---|
+| normal end-of-scope / `return v` | `Success` |
+| `throw e` / typed-throw | `Failure(reason)` |
+| `cancel` (structural) | `Failure("cancel: " + reason)` (D90 §7 marker) |
+| `panic(msg)` | `Panic(msg)` |
+| `interrupt v` | `Failure(reason)` (спека core.nv:130; выравнивает impl — consume-монолит СЕЙЧАС обходил on_exit на interrupt, defer-frame его оборачивает) |
+
+Субсумирует три ретрактнутые формы (D189): `errdefer{…}` ≡ `defer(o){ match o { Failure(_)|Panic(_) => …, Success => () } }`;
+`okdefer{…}` ≡ `defer(o){ match o { Success => …, _ => () } }`; `defer |r| {…}` ≡ эта форма.
+**Zig-парность:** `errdefer |e| {…}` ≡ `defer(o){ match o { Failure(e) => use(e), _ => () } }` — payload
+`e` типизирован; ветка `Panic` различима И ВЫПОЛНЯЕТСЯ (Zig defer при panic не бежит). **AST:** опц.
+поле на `Stmt::Defer` (не новый вариант — low blast). **Parser:** bounded lookahead `defer (IDENT
+ScopeOutcome)` с fallback на `parse_expr` для `defer (expr)`; double-binding / non-`ScopeOutcome` тип → диаг.
+
+**3. `consume X = e { body }` → САХАР** над outcome-defer:
+`{ ro X = e; defer(o) { X.@cleanup(o) }; body }`. Протокол `Cleanup[E]` (ex-`Consumable`) остаётся как
+protocol-сахар (тип инкапсулирует cleanup через `@cleanup(o ScopeOutcome)`, ex-`@on_exit`). Разница
+`consume` vs bare `defer(o)` — **must-consume (D133) + exactly-once (D188 R2) + partial-init (D188 R1)
++ ResourceTrace-события**, НЕ «добежит/не добежит» (§3a). Consume-специфичная policy (cancel-shield
+поверх body+cleanup, 3-level timeout, ResourceTrace enter/exit) re-home'ится на **consume-flavored
+defer-entry**, не теряется при десугаре.
+
+**4. Централизованный ре-диспатч (`nova_scope_exit`)** — ОДИН runtime-helper
+`nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy policy)`, `policy ∈ {CATCH, TRANSPARENT}`;
+читает `primary->error_kind`. Таблица:
+
+| `error_kind` | Транспорт |
+|---|---|
+| `PANIC` | `nv_panic(msg)` |
+| `CANCEL` | `nova_throw_cancel_reason(msg, reason_ptr)` |
+| `USER` / `USER_TYPED` | `CATCH` → return-to-caller (handler отработал; **with-Fail**); `TRANSPARENT` → `nova_rethrow_with_suppressed` (**defer/consume**) |
+| `Success` | no-op |
+
+Класс бага «кадр забыл kind» (дефект #1) исчезает **по построению** — единственная точка политики.
+**IN** (роутятся через helper): with-Fail (CATCH), consume terminal (TRANSPARENT), defer-error path
+(TRANSPARENT), defer normal-exit cleanup-fail (TRANSPARENT — заменяет hand-rolled `longjmp`). **OUT**
+(report/log-семьи, НЕ throw-транспорт): fiber-report (spawn worker), detach LogAndDrop, test-frame.
+Composition (`nv_compose_suppressed`, 2-frame: body=primary, cleanup=suppressed) остаётся в codegen —
+helper делает только single-frame terminal transport. grep-guard: `error_kind ==` только внутри
+`nova_scope_exit` + санкционированных outcome/report-сайтов.
+
+**5. Hot-path (D194 амендмент — ПРЕМИСА ИСПРАВЛЕНА, §3.5):** прежняя формулировка «`Consumable[Never]`
+СЕЙЧАС элидит shield/timeout/outcome (disasm-verified T2.9)» **не соответствует коду** — ConsumeScope
+эмитит полный frame-bearing путь безусловно (§perf-элизия НЕ реализована, Plan 110:695). Поэтому Ф.2
+acceptance = **PARITY** (lowered consume/defer(o) даёт disasm ≡ текущему; НЕ регрессировать). Генуинная
+§perf-элизия (ключ «sync-тело + cleanup `Fail[Never]` → прямой вызов без кадра») — ОТДЕЛЬНЫЙ followup
+`[M-173-d194-perf-elision]`, вне периметра unification. D194-спека приводится к факту (без «disasm-verified»
+без живого артефакта). Disasm-guard targets (byte-identical): `Mutex`/`Semaphore`/atomic guards.
+
+### Renames (нормативны; порядок ОБЯЗАТЕЛЕН — коллизия имён)
+
+Протокол `Cleanup[E]` и эффект `Cleanup` НЕ сосуществуют в prelude (один type-name namespace) →
+duplicate-def ломает ВЕСЬ prelude. Порядок: **(1) эффект `Cleanup`→`ResourceTrace`** (D185; ops
+`on_resource_enter(label)` / `on_resource_exit(label, outcome)`, `timeout` из enter УБРАН) — ПЕРВЫМ,
+освобождает имя. **(2) протокол `Consumable[E]`→`Cleanup[E]`** + **(3) метод `@on_exit`→`@cleanup(o
+ScopeOutcome)`** — вместе (после 1). ⚠ `CleanupTimeoutError` (errors.nv) — ДРУГОЕ имя (D192-scope, Ф.5),
+НЕ трогать sed'ом.
+
+### Миграция (errdefer/okdefer → defer(o))
+
+| Старое (ретракт D189) | Новое (D314) |
+|---|---|
+| `errdefer { rollback() }` | `defer(o){ match o { Failure(_) \| Panic(_) => rollback(), Success => () } }` |
+| `okdefer { commit() }` | `defer(o){ match o { Success => commit(), _ => () } }` |
+| `errdefer \|e\| { log(e) }` | `defer(o){ match o { Failure(e) => log(e), _ => () } }` |
+| `defer \|r\| { … }` | `defer(o){ … }` |
+
+### НЕ-цели
+
+- call-site try-маркер (видимость эффекта — на уровне сигнатуры); HOF-эффект-полиморфизм (Swift
+  `rethrows`) — вне периметра; `ScopeOutcome.Failure(any)` типизированный payload — **Ф.4** (гейт Plan
+  174.3); в D314 `Failure(str)` остаётся (bootstrap type-erased). Генуинная §perf-элизия — followup
+  `[M-173-d194-perf-elision]`. Идиома `Fail[E]→Result`: `with Fail[E] = |e| interrupt Err(e) { Ok(body) }`
+  (std-сахар D314 не вводит).

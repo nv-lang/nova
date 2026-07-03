@@ -296,7 +296,22 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   disasm hot-path: touched-подсистемы baseline-only (checker-changes не трогают codegen). **Без упрощений**
   (кроме явно-interim #7). **Следующее: Ф.2 (defer-kernel unification, spec-first D314) ИЛИ Track A (172.12/172.13).**
 
-### Ф.2 — Унификация defer-kernel (СЕЙЧАС после Ф.1)
+### Ф.2 — Унификация defer-kernel (В РАБОТЕ; де-риск + D314-spec закрыты 2026-07-04)
+
+> 🔨 **Ф.2.0 ЗАКРЫТ (D314-spec + де-риск-карта):** D314 написан spec-first в
+> [spec/decisions/03-syntax.md](../../spec/decisions/03-syntax.md#d314); полная де-риск-карта
+> (ultracode Workflow, 4 агента) + **скорректированная последовательность под-атомов** —
+> [docs/plans/173-f2-derisk-map.md](173-f2-derisk-map.md). **🔴 КРИТИЧЕСКИЕ НАХОДКИ де-риска:**
+> (1) **D194-элизия §3.5 ПРЕМИСА ЛОЖНА** — код НЕ элидит (полный frame-bearing путь безусловно);
+> Ф.2 acceptance = PARITY (не регрессировать), §perf-элизия → followup `[M-173-d194-perf-elision]`.
+> (2) **`nova_scope_exit` нужен policy-параметр** `{CATCH,TRANSPARENT}` (with-Fail USER→swallow vs
+> defer/consume USER→rethrow); 7 kind-сайтов, C2 hand-rolled-longjmp + fiber-report — miss-risk.
+> (3) **rename collision:** эффект `Cleanup`→`ResourceTrace` ПЕРВЫМ (иначе prelude duplicate-def).
+> (4) **interrupt-outcome** = `Failure` (core.nv:130; desugar выравнивает impl к спеке). Порядок
+> под-атомов (каждый = заход+коммит+гейт): A0-baseline → R1-ResourceTrace → R2-Consumable/Cleanup →
+> B1-parser/AST defer(o) → B2-codegen outcome → B3-consume-desugar → C-nova_scope_exit → D194-parity →
+> E-hub-rewrite. **⚠ План-строки ниже (п.1-10) дрейфанули — верить де-риск-карте, всегда re-grep.**
+
 1. parser+AST: `defer(o ScopeOutcome) { … }` (биндинг + тело).
 2. codegen: outcome-defer на defer-frame; материализация `ScopeOutcome*` и в success-ветке.
 3. `consume`/`@cleanup` → desugar в `defer(o) { X.@cleanup(o) }` (щит имплицитен — §3a); `Cleanup[E]` =
