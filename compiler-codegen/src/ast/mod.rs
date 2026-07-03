@@ -1844,6 +1844,11 @@ pub enum Stmt {
     /// scope (normal/return/throw/panic/interrupt). НЕ на exit(N, msg).
     Defer {
         body: Expr,
+        /// Plan 173 Ф.2 (D314): `defer(o ScopeOutcome) { … }` — опциональный
+        /// outcome-биндинг. `None` = плейн `defer` (byte-identical). `Some(name)`
+        /// = тело получает исход через `name: ScopeOutcome` (Success/Failure/
+        /// Panic). Материализация `ScopeOutcome*` на каждом exit-path — B2 codegen.
+        outcome_binding: Option<String>,
         span: Span,
     },
     // Plan 173 Ф.1 (#4, D189 hard cutover, [M-172-errdefer-okdefer-dead-surface]):

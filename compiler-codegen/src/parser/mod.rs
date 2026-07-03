@@ -10046,9 +10046,8 @@ impl Parser {
             }
             // D90: `defer body` — scope-level cleanup. body — expression
             // (включая block-expression `{ ... }`).
-            // D160 Plan 100.4.3: расширено `defer |result_binding| body` —
-            // reason-aware форма. Если после `defer` идёт `|ident|`, парсим
-            // DeferWithResult; иначе обычный Defer.
+            // Plan 173 Ф.2 (D314): расширено `defer(o ScopeOutcome) { body }` —
+            // outcome-несущая форма (замена ретрактнутых errdefer/okdefer/defer|r|).
             TokenKind::KwDefer => {
                 self.bump();
                 // Plan 110.5.7 (D189): `defer |result_binding|` form removed.
@@ -10063,9 +10062,40 @@ impl Parser {
                         span,
                     ));
                 }
+                // Plan 173 Ф.2 (D314): `defer(o ScopeOutcome) { … }`. Bounded lookahead —
+                // `( IDENT IDENT` (два идента подряд после `(`) НЕДОСТИЖИМ в валидном
+                // выражении, поэтому однозначно сигнализирует intent defer(o); всё
+                // остальное (`defer (expr)`, `defer { }`, `defer foo()`) идёт на parse_expr.
+                if matches!(self.peek().kind, TokenKind::LParen)
+                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at(2).kind, TokenKind::Ident(_))
+                {
+                    let binding = if let TokenKind::Ident(n) = &self.peek_at(1).kind { n.clone() } else { unreachable!() };
+                    let ty_name = if let TokenKind::Ident(n) = &self.peek_at(2).kind { n.clone() } else { unreachable!() };
+                    let ty_span = self.peek_at(2).span;
+                    if ty_name != "ScopeOutcome" {
+                        return Err(Diagnostic::new(format!(
+                            "[E_DEFER_OUTCOME_TYPE] `defer(o {ty})`: outcome-биндинг требует тип \
+                             `ScopeOutcome` (единственный тип исхода, D314), получен `{ty}`.",
+                            ty = ty_name), ty_span));
+                    }
+                    self.bump(); // (
+                    self.bump(); // binding IDENT
+                    self.bump(); // `ScopeOutcome` IDENT
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        return Err(Diagnostic::new(
+                            "[E_DEFER_OUTCOME_ARITY] `defer(o ScopeOutcome) { … }` принимает РОВНО \
+                             один outcome-биндинг (не список); для нескольких значений — вложенные \
+                             `defer` (D314).".to_string(), self.peek().span));
+                    }
+                    self.bump(); // )
+                    let body = self.parse_expr()?;
+                    let span = start.merge(body.span);
+                    return Ok(StmtOrExpr::Stmt(Stmt::Defer { body, outcome_binding: Some(binding), span }));
+                }
                 let body = self.parse_expr()?;
                 let span = start.merge(body.span);
-                Ok(StmtOrExpr::Stmt(Stmt::Defer { body, span }))
+                Ok(StmtOrExpr::Stmt(Stmt::Defer { body, outcome_binding: None, span }))
             }
             // Plan 110.5.7 (D189): `errdefer` retracted. Hard cutover.
             TokenKind::KwErrDefer => {

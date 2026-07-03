@@ -4517,6 +4517,15 @@ Migration: ~10 примеров `Effect[E]` в spec/, где требуется
 ## D90. `defer` и `errdefer` — scope-level cleanup statement
 
 > **Закрывает** [Q20 «Нужен ли defer?»](../open-questions.md#q20).
+>
+> **⚠️ Амендмент (D189 ретракт + D314 defer-kernel):** `errdefer` (и `okdefer`/`defer |result|`)
+> **РЕТРАКТНУТЫ** ([D189](#d189-прямое-удаление-okdefer--errdefer--defer-result)); парсер отвергает их
+> `[D189-removed-*]`. Замена — **outcome-несущая форма `defer(o ScopeOutcome) { … }`** ([D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel),
+> Plan 173 Ф.2): тело получает исход `Success | Failure(reason) | Panic(msg)`; `errdefer{b}` ≡
+> `defer(o){ match o { Failure(_)|Panic(_) => b, Success => () } }`. Bounded lookahead различает
+> `defer(o ScopeOutcome){…}` от `defer (expr)`; `defer(o T)` с `T ≠ ScopeOutcome` → `[E_DEFER_OUTCOME_TYPE]`,
+> лишние токены → `[E_DEFER_OUTCOME_ARITY]`. Секции ниже про `errdefer` — **historical**. Плейн `defer`
+> (п.1) без изменений (byte-identical).
 
 ### Что
 Два keyword-statement'а для **отложенного выполнения** при выходе из
