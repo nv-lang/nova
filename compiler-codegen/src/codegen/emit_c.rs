@@ -37596,6 +37596,120 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
         }
+        // Channel 6l (2026-07-04): Match — ДОСЛОВНЫЙ подъём legacy-арма
+        // (pattern_binding_overrides + divergence + unit-домминация [M-91.13]).
+        if let ExprKind::Match { scrutinee, arms } = &expr.kind {
+            return {
+                    // Plan 62.D bis-1 (2026-05-18): infer arm body type WITH pattern
+                    // bindings installed via `pattern_binding_overrides` RefCell.
+                    // Without this, `match opt { Some(r) => r }` would look up `r` in
+                    // `var_types` and pick up stale entry from a different scope
+                    // (e.g. `let r = Range...` in another test file) instead of the
+                    // correct inner type (`nova_str` for `Option[str]`). Mirrors the
+                    // emit_match `infer_arm` closure (line ~14694) which installs into
+                    // `var_types`; here we use RefCell since `&self`.
+                    let scr_ty = self.infer_expr_c_type(scrutinee);
+                    let infer_arm = |this: &Self, arm: &MatchArm| -> String {
+                        let bindings: Vec<(String, String)> =
+                            Self::collect_pattern_inner_bindings(&arm.pattern, &scr_ty, this);
+                        let saved: Vec<(String, Option<String>)> = {
+                            let mut overrides = this.pattern_binding_overrides.borrow_mut();
+                            bindings.iter()
+                                .map(|(n, t)| {
+                                    let prev = overrides.insert(n.clone(), t.clone());
+                                    (n.clone(), prev)
+                                })
+                                .collect()
+                        };
+                        // Seed block-local `let`s (e.g. `{ mut s = 0; …; s }`) into
+                        // the same override map so the trailing Ident infers from the
+                        // local binding, not a stale `var_types[name]` left by an
+                        // unrelated arm/file in the folder-module. Mirrors the
+                        // emit_match `infer_arm` seed; uses pattern_binding_overrides
+                        // because this path is `&self`.
+                        let block_saved: Vec<(String, Option<String>)> = if let MatchArmBody::Block(b) = &arm.body {
+                            let mut bs = Vec::new();
+                            for stmt in &b.stmts {
+                                if let crate::ast::Stmt::Let(decl) = stmt {
+                                    if let crate::ast::Pattern::Ident { name, .. } = &decl.pattern {
+                                        let vt = this.infer_expr_c_type(&decl.value);
+                                        if !vt.is_empty() {
+                                            let prev = this.pattern_binding_overrides.borrow_mut().insert(name.clone(), vt);
+                                            bs.push((name.clone(), prev));
+                                        }
+                                    }
+                                }
+                            }
+                            bs
+                        } else {
+                            Vec::new()
+                        };
+                        let t = match &arm.body {
+                            MatchArmBody::Expr(e) => this.infer_expr_c_type(e),
+                            MatchArmBody::Block(b) => b.trailing.as_ref()
+                                .map(|e| this.infer_expr_c_type(e))
+                                .unwrap_or_else(|| "nova_unit".into()),
+                        };
+                        let mut overrides = this.pattern_binding_overrides.borrow_mut();
+                        for (n, prev) in block_saved {
+                            match prev {
+                                Some(p) => { overrides.insert(n, p); }
+                                None => { overrides.remove(&n); }
+                            }
+                        }
+                        for (n, prev) in saved {
+                            match prev {
+                                Some(p) => { overrides.insert(n, p); }
+                                None => { overrides.remove(&n); }
+                            }
+                        }
+                        t
+                    };
+                    // Plan 125: divergence-aware arm selection. Skip arms whose
+                    // body is provably divergent — symmetric с emit_match's
+                    // first-pass loop (R3 helper extraction principle).
+                    let arm_diverges = |this: &Self, arm: &MatchArm| -> bool {
+                        match &arm.body {
+                            MatchArmBody::Expr(e) => this.expr_diverges_125(e),
+                            MatchArmBody::Block(b) => this.block_trailing_diverges(b),
+                        }
+                    };
+                    // [M-codegen-fluent-tail-if-unify] (2026-06-14): MUST stay
+                    // symmetric with `emit_match`'s `[M-91.13]` unit-domination
+                    // (lines ~27249-27259): if a non-unit arm type is chosen but
+                    // SOME other non-divergent arm yields nova_unit, the arm types
+                    // are incompatible and the match is used in statement position
+                    // → `emit_match` coerces the whole match to nova_unit. If THIS
+                    // inference disagreed (returned the non-unit arm type) the
+                    // result temp would be declared `nova_unit` by emit yet read as
+                    // `Vec*` by an enclosing `if`/assignment → C type mismatch. So
+                    // detect the any-unit-arm case up front and yield nova_unit too.
+                    let any_unit_arm = arms.iter().any(|arm| {
+                        !arm_diverges(self, arm) && infer_arm(self, arm) == "nova_unit"
+                    });
+                    // First pass: find a non-unit, non-nova_int, non-divergent type.
+                    for arm in arms {
+                        if arm_diverges(self, arm) { continue; }
+                        let t = infer_arm(self, arm);
+                        if t != "nova_unit" && t != "nova_int" {
+                            return if any_unit_arm { "nova_unit".into() } else { t };
+                        }
+                    }
+                    // Second pass: any non-unit, still skipping divergent arms.
+                    let mut all_unit = true;
+                    for arm in arms {
+                        if arm_diverges(self, arm) { continue; }
+                        let t = infer_arm(self, arm);
+                        if t != "nova_unit" {
+                            all_unit = false;
+                            return if any_unit_arm { "nova_unit".into() } else { t };
+                        }
+                    }
+                    // All non-divergent arms are nova_unit → match is unit (statement-position).
+                    // Fall back to nova_int only if there are NO non-divergent arms at all.
+                    if all_unit { "nova_unit".into() } else { "nova_int".into() }
+            };
+        }
         // Channel 6j (2026-07-04): value-form if-с-else — ДОСЛОВНЫЙ подъём
         // legacy If-арма (divergence-aware + D275 unit-домминация; вызывался
         // из emit_if_expr — IF-WHO факт). Byte-identical; sub-вопросы идут
