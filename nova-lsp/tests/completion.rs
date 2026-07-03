@@ -49,6 +49,10 @@ fn ipos2_fn_body_completion() {
 }
 
 /// ipos3: method-dot completion on int variable.
+// Plan 104.10 Ф.5: type-driven method completion. Static method tables were removed
+// in 159f853c; stdlib methods (int/str/…) return via the compiler TypeMethodMap once
+// Ф.5 lands. This test must be un-ignored and pass as part of Ф.5 acceptance.
+#[ignore = "Plan 104.10 Ф.5 restores type-driven method completion (tables removed in 159f853c)"]
 #[test]
 fn ipos3_method_dot_int() {
     let src = "module test.i\nfn f() -> () {\n    ro count int = 5\n    count.";
@@ -148,6 +152,8 @@ fn ranking_full_ordering() {
 }
 
 /// Method completions: str methods appear with detail (byte_len replaces len).
+// Plan 104.10 Ф.5: type-driven method completion (see ipos3_method_dot_int note).
+#[ignore = "Plan 104.10 Ф.5 restores type-driven method completion (tables removed in 159f853c)"]
 #[test]
 fn method_str_detail_present() {
     let src = "module test.m\nfn f() -> () {\n    ro msg str = \"\"\n    msg.";

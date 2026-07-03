@@ -448,6 +448,7 @@ fn type_decl_kind(kind: &TypeDeclKind) -> SymbolKind {
         TypeDeclKind::Protocol { .. } => SymbolKind::INTERFACE,
         TypeDeclKind::Newtype(_) => SymbolKind::CLASS,
         TypeDeclKind::Alias(_) => SymbolKind::CLASS,
+        TypeDeclKind::TypeSet(_) => SymbolKind::INTERFACE,
         TypeDeclKind::Opaque => SymbolKind::CLASS,
     }
 }

@@ -404,6 +404,7 @@ fn resolve_item(item: &Item, byte_offset: usize) -> Option<SymbolInfo> {
                 TypeDeclKind::NamedTuple(fields) => {
                     ("named-tuple", Some(format_named_tuple_sig(&td.name, fields)))
                 }
+                TypeDeclKind::TypeSet(_) => ("type-set", None),
                 TypeDeclKind::Opaque => ("opaque", None),
             };
             Some(SymbolInfo::TypeDecl {
@@ -692,10 +693,7 @@ fn find_ident_in_stmt(stmt: &Stmt, offset: usize) -> Option<String> {
             value.as_ref().and_then(|e| find_ident_in_expr(e, offset))
         }
         Stmt::Throw { value, .. } => find_ident_in_expr(value, offset),
-        Stmt::Defer { body, .. }
-        | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } => find_ident_in_expr(body, offset),
-        Stmt::DeferWithResult { body, .. } => find_ident_in_expr(body, offset),
+        Stmt::Defer { body, .. } => find_ident_in_expr(body, offset),
         Stmt::ConsumeScope { init, body, .. } => {
             find_ident_in_expr(init, offset)
                 .or_else(|| find_ident_in_block(body, offset))
@@ -858,6 +856,7 @@ pub fn lookup_decl_by_name(module: &Module, name: &str) -> Option<SymbolInfo> {
                     TypeDeclKind::Newtype(_) => "newtype",
                     TypeDeclKind::Alias(_) => "alias",
                     TypeDeclKind::NamedTuple(_) => "named-tuple",
+                    TypeDeclKind::TypeSet(_) => "type-set",
                     TypeDeclKind::Opaque => "opaque",
                 };
                 let signature = if let TypeDeclKind::NamedTuple(fields) = &td.kind {
