@@ -593,7 +593,7 @@
 
 ## Plan 91.16 — TCP split: TcpReadHalf + TcpWriteHalf ✅ CLOSED 2026-06-17
 
-По образцу UDP split (Plan 166 / D298). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount (`split_refcount`) на C-handle, оба half — consume value, независимые park-слоты для concurrent r/w. Также добавлен `TcpStream @write_all` + `TcpWriteHalf @write_all` (закрывает `[M-91.15-write-all]`). Spec: D301. Тесты: `nova_tests/plan91_16/` (mock + `_slow` real-network + stream-after-split neg). → маркер `[M-91.16-tcp-split]` CLOSED.
+По образцу UDP split (Plan 166 / D377, ex-D298). `TcpStream consume @split() -> (TcpReadHalf, TcpWriteHalf)`. Atomic refcount (`split_refcount`) на C-handle, оба half — consume value, независимые park-слоты для concurrent r/w. Также добавлен `TcpStream @write_all` + `TcpWriteHalf @write_all` (закрывает `[M-91.15-write-all]`). Spec: D301. Тесты: `nova_tests/plan91_16/` (mock + `_slow` real-network + stream-after-split neg). → маркер `[M-91.16-tcp-split]` CLOSED.
 
 ## Plan 91.15 — std/net API polish ✅ CLOSED 2026-06-17
 

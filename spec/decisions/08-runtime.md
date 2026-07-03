@@ -347,10 +347,10 @@ fn critical(...) -> Result =>
 > codegen bugs (закрыты в bis-1).
 >
 > **Plan 62.F.bis (закрыт 2026-05-18, `PRELUDE_VERSION = 5`):**
-> - **Edition versioning** (D124): `[package].edition = "2026.05"` в
+> - **Edition versioning** (D366): `[package].edition = "2026.05"` в
 >   `nova.toml` → resolver auto-импортирует `std/prelude/e2026_05.nv`
 >   вместо rolling facade. Mirror Rust's `edition = "2021"`. См.
->   [D124](#d124-edition-versioned-prelude-resolver).
+>   [D366](#d366-edition-versioned-prelude-resolver).
 > - **Structured W_PRELUDE_SHADOW lint** (D125): user-declaration
 >   shadowing prelude-imported имени → structured lint warning через
 >   `lints::lint_prelude_shadow`. Suppress: `module X
@@ -3428,7 +3428,7 @@ home plan; [D183](02-types.md#d183) / [D237](02-types.md#d237) — `Equal`/`@equ
 - [Plan 126 — Auto-derive протоколов](../../docs/plans/126-auto-derive-protocols.md)
   — auto-derive для пользовательских типов.
 
-## D124. Edition-versioned prelude resolver
+## D366. Edition-versioned prelude resolver
 
 ### Что
 

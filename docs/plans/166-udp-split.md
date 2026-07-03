@@ -1,7 +1,7 @@
 # Plan 166 — net.c send_to TOCTOU fix + UDP socket split
 
 **Status:** ✅ CLOSED 2026-06-17  
-**D-блоки:** D298  
+**D-блоки:** D377 (ex-D298, renumber 2026-07-03)  
 **Зависит от:** Plan 91.12 ✅ (std/net V2 algebraic effects, UdpSocket)
 
 ---
@@ -127,7 +127,7 @@ C-функции: `split`, `send_half_close`, `recv_half_close`, `send_half_send
 
 ## Spec
 
-**D298** — добавлен в `spec/decisions/04-effects.md`:
+**D377** (ex-D298) — добавлен в `spec/decisions/04-effects.md`:
 UDP Socket Split: UdpSendHalf + UdpRecvHalf consume value types + TOCTOU fix.
 
 ---

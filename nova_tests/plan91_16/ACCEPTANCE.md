@@ -1,7 +1,7 @@
 # Plan 91.16 Acceptance Criteria — TcpReadHalf / TcpWriteHalf
 
 `TcpStream.split() -> (TcpReadHalf, TcpWriteHalf)` — the TCP analogue of the
-UDP split (Plan 166 / D298). Spec: **D301** in `spec/decisions/04-effects.md`.
+UDP split (Plan 166 / D377, ex-D298). Spec: **D301** in `spec/decisions/04-effects.md`.
 
 ## Functional
 - [x] `TcpStream.split()` returns `(TcpReadHalf, TcpWriteHalf)` consume values.

@@ -36,7 +36,7 @@ effect-naming convention). Blocking retraction recorded in D50 banner,
       `NOVA_NET_MSG_CONNECTION_RESET`; distinct from `BrokenPipe`
       (covered by `net_connection_reset`).
 - [x] TCP-split spec documented — **D301** (not D297, which is taken by LSP Rename).
-- [x] API-polish spec documented — **D302** (not D298, which is taken by UDP split).
+- [x] API-polish spec documented — **D302** (not D377, ex-D298, taken by UDP split).
 
 Architecture note: net errors reach Nova as `str` (V1 string-erased), classified
 in `net_error()`. The UV→variant mapping is a string-normalization switch in

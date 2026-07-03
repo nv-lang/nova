@@ -2326,7 +2326,7 @@ Boolean. Любое не-`true` значение трактуется как `fa
 ## D165. Consume-types migration policy — `nova consume-migrate` + editions
 
 > **Plan 100.7.** Принято 2026-05-23 (proposed). Migration playbook
-> для type-level consume (D133-D164). Integrates с D124 edition
+> для type-level consume (D133-D164). Integrates с D366 edition
 > versioning.
 
 ### Что
@@ -2355,7 +2355,7 @@ Apply (y/n/manual)?
 
 Modes: `--dry-run` / `--apply` / `--interactive`.
 
-### Edition-versioning (D124 integration)
+### Edition-versioning (D366 integration)
 
 ```toml
 [package]
@@ -2364,7 +2364,7 @@ edition = "2026"                                # pre-consume era; legacy API
 edition = "2027"                                # post-consume; migrated API
 ```
 
-`std/prelude/<edition>.nv` resolver (Plan 62.F.bis D124) picks correct
+`std/prelude/<edition>.nv` resolver (Plan 62.F.bis D366) picks correct
 stdlib version per package edition.
 
 ### Deprecation cycle
@@ -2390,14 +2390,14 @@ parallel / error / cancel / cross-fiber).
 | Migration scenario | Rust | Kotlin | TS | Go | Nova D165 |
 |---|---|---|---|---|---|
 | Migration tooling automated | ⚠️ `cargo fix` partial | ⚠️ IDE-based | ⚠️ ESLint autofix | ⚠️ `gofmt -r` | ✅ `nova consume-migrate` |
-| Edition-versioning native | ✅ 2015→2018→2021→2024 | ❌ | ❌ | ❌ | ✅ **D124 editions** |
+| Edition-versioning native | ✅ 2015→2018→2021→2024 | ❌ | ❌ | ❌ | ✅ **D366 editions** |
 | Deprecation cycle | ⚠️ warning | ⚠️ @Deprecated | ⚠️ JSDoc | ✅ `// Deprecated:` | ✅ `#[deprecated_since]` + edition |
 | Cross-package contract | ⚠️ semver convention | ⚠️ Maven | ⚠️ semver | ⚠️ go.mod | ✅ **D164** |
 
 ### Связь
 
 - [D133](02-types.md#d133) — type-level consume.
-- [D124](08-runtime.md#d124), [D125](08-runtime.md#d125) — edition
+- [D366](08-runtime.md#d366), [D125](08-runtime.md#d125) — edition
   versioning ✅.
 - [D164](02-types.md#d164) — cross-package contracts.
 - Plan 18 — real stdlib (after pilots).

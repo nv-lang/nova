@@ -5957,7 +5957,7 @@ Vec-array-арме (line 5850) и Option-арме. Result-арм был един
 | [M-91.13-dns-iter-boxing] | ✅ CLOSED 2026-06-16 — is_generic_stub_c fix + DnsNet V2 []SocketAddr |
 | [M-91.13-real-dns-integration-test] | ✅ CLOSED 2026-06-16 — net_v2_dns_real_slow.nv (_slow, opt-in) |
 
-## D298 — UDP Socket Split: `UdpSendHalf` + `UdpRecvHalf` (Plan 166, 2026-06-17)
+## D377 — UDP Socket Split: `UdpSendHalf` + `UdpRecvHalf` (Plan 166, 2026-06-17)
 
 **Source:** Plan 166, 2026-06-17. **Status:** ✅ ACTIVE.
 **Связь:** [D365](04-effects.md#d365), [D364](02-types.md#d364), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md), [Plan 166](../../docs/plans/plan166-udp-split.md).
@@ -6031,7 +6031,7 @@ close_recv_half(handle CUdpSocket) -> ()
 ## D301 — TCP Stream Split: `TcpReadHalf` + `TcpWriteHalf` (Plan 91.16, 2026-06-17)
 
 **Source:** Plan 91.16, 2026-06-17. **Status:** ✅ ACTIVE.
-**Связь:** [D365](04-effects.md#d365), [D364](02-types.md#d364), [D298](04-effects.md#d298), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
+**Связь:** [D365](04-effects.md#d365), [D364](02-types.md#d364), [D377](04-effects.md#d377), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md).
 
 ### Мотивация
 
@@ -6040,9 +6040,9 @@ close_recv_half(handle CUdpSocket) -> ()
 один файбер читает входящий поток, другой одновременно пишет ответы на том
 же соединении. При попытке конкурентного read+write на одной паре slot'ов
 park-bookkeeping одной операции затирался другой (TOCTOU, тот же класс бага,
-что в D298 для UDP `send_to`).
+что в D377 для UDP `send_to`).
 
-Это TCP-аналог UDP split из [D298](04-effects.md#d298): я делю `TcpStream` на
+Это TCP-аналог UDP split из [D377](04-effects.md#d377): я делю `TcpStream` на
 read- и write-половины с НЕЗАВИСИМЫМИ C-side park-слотами.
 
 ### API

@@ -12201,7 +12201,7 @@ int64-erasure.
 
 ### Cross-refs
 
-- [D239](#d239-t--vecialt---синтаксический-псевдоним) — `[]T` = `Vec[T]`; этот D232-тип является backing-типом `[]T`.
+- [D239](#d239-t--синтаксический-псевдоним-vect) — `[]T` = `Vec[T]`; этот D232-тип является backing-типом `[]T`.
 - [D238](03-syntax.md#d238-indexk-v-protocol--akey-magic) — `Index[K,V]` protocol; `v[i]` и `v[a..b]` через `@index`.
 - [D240](03-syntax.md#d240-mutindexk-v-protocol--akey--val-magic) — `MutIndex[K,V]`; `v[i] = val` через `mut @index`.
 - [D231](#d231-rawmem-allocator-api--nova_alloc--nova_alloc_uncollectable--nova_free_uncollectable) — allocator used by Vec[T].
