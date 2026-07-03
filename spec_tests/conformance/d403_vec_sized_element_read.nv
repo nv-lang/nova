@@ -9,12 +9,12 @@
 // maps `uint`→`nova_uint` (= uintptr_t) and `u8`→`nova_byte` (= uint8_t), the element stays
 // UNSIGNED.
 //
-// DISCRIMINATING form (mirrors D126): every result binding is UNANNOTATED (`ro got = v[i]`),
+// DISCRIMINATING form (mirrors D368): every result binding is UNANNOTATED (`ro got = v[i]`),
 // so it inherits the call's INFERRED element type. If that width collapsed to signed
 // `nova_int`, the unsigned high-bit value `0x8000000000000000` (2^63) reads NEGATIVE and
 // `got > 100` is false (RUN-FAIL); a u8 element silently read as signed `i8` would turn 200
 // into -56, failing `got == 200` / `got > 100`. A correct sized/unsigned read keeps both
-// asserts true. Spec: spec/decisions/02-types.md (§0/§10/D126/D130 named-priority, no
+// asserts true. Spec: spec/decisions/02-types.md (§0/§10/D368/D130 named-priority, no
 // int-collapse). SINGLE `spec_tests.conformance` folder-module; all top-level names are
 // `d403w_`-prefixed; depends on D232 (`Vec[T]`), D239 (`[]T ≡ Vec[T]`).
 module spec_tests.conformance

@@ -1,10 +1,10 @@
-// D129/D128/D130/D126 — numeric associated constants (`int.MAX`, `i64.MAX`, `u8.MAX`,
+// D129/D128/D130/D368 — numeric associated constants (`int.MAX`, `i64.MAX`, `u8.MAX`,
 // `char.MAX`, `f64.EPSILON`, …) carry their type's PRECISE identity, including when bound to
 // an INFERRED `ro` (Plan 172.1 P67 ФАЗА 2 STEP 1: the const Path channels its primitive
 // ResolvedType, so `i64.MAX` lowers to `int64_t` and `char.MAX` to the codepoint type — NOT
 // collapsed to the signed-int default the legacy `numeric_type_constant` table emitted).
 // Regression guard for the `i64.MAX→nova_int` / `char.MAX→nova_int` legacy collapse.
-// Spec: spec/decisions/02-types.md (D129/D128, D126). Single `spec_tests.conformance` CU.
+// Spec: spec/decisions/02-types.md (D129/D128, D368). Single `spec_tests.conformance` CU.
 module spec_tests.conformance
 
 test "integer MAX/MIN associated constants round-trip their values (D129/D44)" {
@@ -31,7 +31,7 @@ test "i64.MAX inferred binding keeps 64-bit signed identity (D129, STEP1)" {
     assert(m > 0)
 }
 
-test "f64 associated constants are floats, not int (D126)" {
+test "f64 associated constants are floats, not int (D368)" {
     assert(f64.MAX > 1.0)
     ro e = f64.EPSILON         // inferred f64, not int
     assert(e > 0.0)

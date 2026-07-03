@@ -24,7 +24,7 @@
 //      the `nova_int`→`nova_uint` container-pointer assignment is a warning the test toolchain
 //      suppresses (clang `-Wno-everything` / MSVC `/W0`). Hence this surface PASSES.
 //
-// DISCRIMINATING role (mirrors d403_vec_sized_element_read / D126): every result binding is
+// DISCRIMINATING role (mirrors d403_vec_sized_element_read / D368): every result binding is
 // UNANNOTATED (`ro got = a[i]`), inheriting the indexed read's element type. If a future change
 // ever routed the read through the LITERAL's collapsed `nova_int` type (or the element width
 // diverged from `nova_int`), the 2^63 high bit would read NEGATIVE and `got > 100` would be

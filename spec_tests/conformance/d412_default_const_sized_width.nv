@@ -23,7 +23,7 @@
 // the (correctly `nova_uint`) call/const type; the wrong VALUE is what fails. Correct
 // unsigned answer is 0x4000000000000000 (2^62); the signed collapse yields
 // 0xC000000000000000 (≈3·2^62) — `got == 0x4000000000000000` is then false (RUN-FAIL).
-// Spec: spec/decisions/02-types.md (uint is UNSIGNED, ≠ int; D130/D126 family).
+// Spec: spec/decisions/02-types.md (uint is UNSIGNED, ≠ int; D130/D368 family).
 // Single `spec_tests.conformance` folder-module; all top-level names D412W-prefixed.
 module spec_tests.conformance
 

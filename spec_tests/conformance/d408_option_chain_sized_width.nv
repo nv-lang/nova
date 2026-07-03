@@ -11,7 +11,7 @@
 // Fix (Plan 172.1 D408): bind closure param names from `receiver_subst`-resolved types BEFORE
 // body inference in `infer_method_level_return_for_sum`. This makes `|x| x` with T=nova_uint
 // correctly derive U=nova_uint and propagate `NovaOpt_nova_uint` through the chain.
-// Spec: spec/decisions/02-types.md (D126 named-priority: uint≠int, u8≠i8≠int). Single
+// Spec: spec/decisions/02-types.md (D368 named-priority: uint≠int, u8≠i8≠int). Single
 // `spec_tests.conformance` folder-module; all top-level names D408w-prefixed to avoid CU clashes.
 module spec_tests.conformance
 

@@ -1,12 +1,12 @@
-// D126 — codegen MUST produce the exact C-type for every expression; a silent collapse to
+// D368 — codegen MUST produce the exact C-type for every expression; a silent collapse to
 // `nova_int` (the signed address-sized default) is FORBIDDEN. This is the spec backing for
 // the named-priority invariant "примитивы не схлопываются в int" (uint≠int, f64≠int, …):
 // an inferred expression keeps its precise primitive identity, not the int default, so the
-// engine never produces garbage from a wrong fallback type (D126's silent-miscompilation list).
-// Spec: spec/decisions/02-types.md (D126). Single `spec_tests.conformance` folder-module.
+// engine never produces garbage from a wrong fallback type (D368's silent-miscompilation list).
+// Spec: spec/decisions/02-types.md (D368). Single `spec_tests.conformance` folder-module.
 module spec_tests.conformance
 
-test "f64 division result keeps f64 identity, not collapsed to int (D126)" {
+test "f64 division result keeps f64 identity, not collapsed to int (D368)" {
     ro a = 7.0
     ro b = 2.0
     ro half = a / b               // 3.5 — inferred f64; a nova_int collapse truncates → 3
@@ -15,7 +15,7 @@ test "f64 division result keeps f64 identity, not collapsed to int (D126)" {
     assert(half < 4.0)
 }
 
-test "f64 inference survives a multi-step arithmetic chain (D126)" {
+test "f64 inference survives a multi-step arithmetic chain (D368)" {
     ro x = 1.0
     ro y = x / 4.0                // 0.25 (exact in IEEE754)
     ro z = y + y                  // 0.5 — chain must stay f64, not collapse mid-way
@@ -23,7 +23,7 @@ test "f64 inference survives a multi-step arithmetic chain (D126)" {
     assert(y == 0.25)
 }
 
-test "mixed-width unsigned inference is not collapsed to signed int (D126)" {
+test "mixed-width unsigned inference is not collapsed to signed int (D368)" {
     ro hi uint = 0x8000000000000000   // 2^63 — high bit; signed-collapse reads as NEGATIVE
     ro one uint = 1
     ro derived = hi + one - one        // inferred uint = 2^63, NOT signed int

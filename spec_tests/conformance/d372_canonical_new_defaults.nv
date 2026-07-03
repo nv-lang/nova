@@ -1,12 +1,12 @@
-// D180 — Canonical `.new()` constructors (convention). stdlib provides `.new()`
+// D372 — Canonical `.new()` constructors (convention). stdlib provides `.new()`
 // для типов с единственным очевидным default-значением, возвращая этот default:
 // int/u*/i* → 0, f32/f64 → 0.0, bool → false, str → "", []T → [] (empty).
 // Также []T.with_capacity(n) — empty с pre-allocated capacity; push после new работает.
-// Spec: spec/decisions/02-types.md §D180 (table line ~6526-6535). Декларации:
+// Spec: spec/decisions/02-types.md §D372 (table line ~6526-6535). Декларации:
 // std/runtime/defaults.nv (numeric/bool), std/runtime/string/core.nv (str), builtin []T.
 module spec_tests.conformance
 
-test "primitive .new() возвращает canonical default 0 / false (D180)" {
+test "primitive .new() возвращает canonical default 0 / false (D372)" {
     ro i = int.new()
     assert(i == 0)
     ro u = u8.new()
@@ -19,14 +19,14 @@ test "primitive .new() возвращает canonical default 0 / false (D180)" 
     assert(b == false)
 }
 
-test "str.new() возвращает пустую строку \"\" (D180)" {
+test "str.new() возвращает пустую строку \"\" (D372)" {
     ro s = str.new()
     assert(s == "")
     assert(s.is_empty())
     assert(s.byte_len() == 0)
 }
 
-test "[]T.new() возвращает empty array; push после new работает (D180)" {
+test "[]T.new() возвращает empty array; push после new работает (D372)" {
     mut a = []int.new()
     assert(a.len() == 0)
     a.push(1)
@@ -36,7 +36,7 @@ test "[]T.new() возвращает empty array; push после new работ
     assert(a[1] == 2)
 }
 
-test "[]T.with_capacity(n) — empty (len 0) с pre-allocated capacity (D180)" {
+test "[]T.with_capacity(n) — empty (len 0) с pre-allocated capacity (D372)" {
     mut a = []int.with_capacity(8)
     assert(a.len() == 0)
     a.push(42)
