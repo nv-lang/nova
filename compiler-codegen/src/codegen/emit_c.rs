@@ -20453,7 +20453,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             .map(|t| t != "str" && self.value_record_names.contains(t))
                             .unwrap_or(false);
                     return Ok(if self_by_ptr_value_record {
-                        "(*nova_self)".into()
+                        // 172.4 Ф.3 A1: зеркало SelfAccess-арма — в return-позиции
+                        // `-> @` fluent-метода `return self` эмитится ptr.
+                        if self.in_recv_ptr_return_position.get() {
+                            "nova_self".into()
+                        } else {
+                            "(*nova_self)".into()
+                        }
                     } else {
                         "nova_self".into()
                     });
