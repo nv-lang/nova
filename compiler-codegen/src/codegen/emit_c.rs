@@ -12196,10 +12196,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // propagate to caller; `ro` receiver stays by-value (immutable copy).
                 if let Some(c_ty) = self.type_aliases.get(other) {
                     if c_ty.starts_with("NovaTuple_") {
-                        if recv_mutable {
-                            return format!("{}*", c_ty);
-                        }
-                        return c_ty.clone();
+                        // 172.4 Ф.3 A6: named-tuple receiver — ВСЕГДА pointer
+                        // (D226-модель, как NovaValue_): mut И ro. NT как ЗНАЧЕНИЕ
+                        // (поле/параметр/return/элемент) остаётся by-value через
+                        // type_ref_to_c — меняется ТОЛЬКО receiver-ABI.
+                        return format!("{}*", c_ty);
                     }
                     if c_ty.starts_with("NovaValue_") {
                         // Pointer to stack-slot для in-place mutation (D226 §«method receiver»).
@@ -18688,7 +18689,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.emit_source_annotation_for_expr(trailing);
             // 172.4 Ф.3 блокер-1: trailing `@` fluent-метода — return-позиция ptr.
             let fluent_self_ret = self.var_types.get("nova_self")
-                .map(|sv| sv.starts_with("NovaValue_") && sv.ends_with('*') && sv == ret_ty)
+                .map(|sv| (sv.starts_with("NovaValue_") || sv.starts_with("NovaTuple_")) && sv.ends_with('*') && sv == ret_ty)
                 .unwrap_or(false);
             let prev_recv_ret = self.in_recv_ptr_return_position.replace(fluent_self_ret);
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
@@ -18889,11 +18890,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // возвращает ptr (NovaValue_X*), биндинг к value-локалу требует
                 // deref. Robust EMIT-сигнал (урок реверта 2026-06-28): C-возврат
                 // метода из реестра fn_ret_* (эмит-факт), НЕ context-fragile infer.
-                let val = if ty_c.starts_with("NovaValue_") && !ty_c.ends_with('*') {
+                let val = if (ty_c.starts_with("NovaValue_") || ty_c.starts_with("NovaTuple_"))
+                    && !ty_c.ends_with('*')
+                {
+                    // 172.4 Ф.3 A6: NT fluent `-> @` возвращает NovaTuple_X* (ptr,
+                    // receiver_c_type), биндинг к value-локалу — deref (как VR).
                     let rhs_fluent_ptr = (|| {
                         let ExprKind::Call { func, .. } = &decl.value.kind else { return false };
                         let ExprKind::Member { name: mname, .. } = &func.kind else { return false };
-                        let tn = ty_c.strip_prefix("NovaValue_").unwrap_or("");
+                        let tn = ty_c.strip_prefix("NovaValue_")
+                            .or_else(|| ty_c.strip_prefix("NovaTuple_"))
+                            .unwrap_or("");
                         self.var_types
                             .get(&format!("fn_ret_{}_{}", tn, mname))
                             .map(|r| *r == format!("{}*", ty_c))
@@ -19588,7 +19595,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let ret_ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
                     // 172.4 Ф.3 блокер-1: fluent `-> @` value-record — return-позиция ptr.
                     let fluent_self_ret = self.var_types.get("nova_self")
-                        .map(|sv| sv.starts_with("NovaValue_") && sv.ends_with('*') && *sv == ret_ty)
+                        .map(|sv| (sv.starts_with("NovaValue_") || sv.starts_with("NovaTuple_")) && sv.ends_with('*') && *sv == ret_ty)
                         .unwrap_or(false);
                     let prev_recv_ret = self.in_recv_ptr_return_position.replace(fluent_self_ret);
                     // Plan 153.2: emit the return value with the function's return
@@ -20533,7 +20540,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // value-record-by-pointer deref mirrors the SelfAccess arm exactly.
                 if name == "self" {
                     let self_by_ptr_value_record = self.var_types.get("nova_self")
-                        .map(|c| c.starts_with("NovaValue_") && c.ends_with('*'))
+                        .map(|c| (c.starts_with("NovaValue_") || c.starts_with("NovaTuple_")) && c.ends_with('*'))
                         .unwrap_or(false)
                         || self.current_receiver_type.as_deref()
                             .map(|t| t != "str" && self.value_record_names.contains(t))
@@ -22724,7 +22731,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // special-cases emit `nova_self->…` directly. `str` (and other
                 // by-value receivers) stay `nova_self` (already a value).
                 let self_by_ptr_value_record = self.var_types.get("nova_self")
-                    .map(|c| c.starts_with("NovaValue_") && c.ends_with('*'))
+                    .map(|c| (c.starts_with("NovaValue_") || c.starts_with("NovaTuple_")) && c.ends_with('*'))
                     .unwrap_or(false)
                     || self.current_receiver_type.as_deref()
                         .map(|t| t != "str" && self.value_record_names.contains(t))
@@ -36946,29 +36953,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             .map(|e| Self::is_lvalue_receiver(e))
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
 
-        if obj_ty.starts_with("NovaValue_") && !obj_ty.ends_with('*') {
-            // Plan 124.8 V2 (D226): always-pointer ABI for value records.
-            // Plan 128.1 Ф.1: AST-aware lvalue check — `r.val.mut_m()`
-            // now correctly takes `&(r->val)` instead of hoisting.
+        if (obj_ty.starts_with("NovaValue_") || obj_ty.starts_with("NovaTuple_"))
+            && !obj_ty.ends_with('*')
+        {
+            // 172.4 Ф.3 A6: value-record (D226) И named-tuple (always-pointer
+            // receiver) — единая адаптация: lvalue → &(obj), rvalue → hoist+&tmp.
+            // recv_mutable для receiver-адреса иррелевантен (как у VR): mut/ro
+            // одинаково передают указатель на slot; ro callee просто не мутирует.
             if addressable {
                 format!("&({})", obj_c.trim())
             } else {
-                // Hoist к temp + take address.
-                let tmp = self.fresh_tmp();
-                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
-                format!("&{}", tmp)
-            }
-        } else if recv_mutable && obj_ty.starts_with("NovaTuple_") && !obj_ty.ends_with('*') {
-            // Plan 124.8 §2.7 + Plan 128 Ф.2: NamedTuple `mut` receiver — pass
-            // pointer so callee's @field writes propagate to caller. Mirror
-            // the NovaValue_* adapter shape exactly.
-            // Plan 128.1 Ф.1: AST-aware lvalue check — `b.v.set_x()` /
-            // `arr[0].set_x()` now correctly project через `&(...)`
-            // вместо hoist-to-temp (which lost the mutation).
-            if addressable {
-                format!("&({})", obj_c.trim())
-            } else {
-                // Hoist rvalue to a temp + take address.
                 let tmp = self.fresh_tmp();
                 self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                 format!("&{}", tmp)
@@ -37392,7 +37386,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         && self.var_types.contains_key("nova_self")
                     {
                         let raw = self.var_types.get("nova_self").cloned().unwrap();
-                        return if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                        return if (raw.starts_with("NovaValue_") || raw.starts_with("NovaTuple_")) && raw.ends_with('*') {
                             raw.trim_end_matches('*').trim().to_string()
                         } else {
                             raw
@@ -37435,7 +37429,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             match &expr.kind {
                 ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
                     let raw = self.var_types.get("nova_self").cloned().unwrap();
-                    return if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                    return if (raw.starts_with("NovaValue_") || raw.starts_with("NovaTuple_")) && raw.ends_with('*') {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw
@@ -41195,7 +41189,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // `@field` accessor selection (`.` vs `->`) stays consistent with
                     // the deref'd emission. Heap records (`Nova_X*`) and by-value `str`
                     // (`nova_str`) are unaffected.
-                    if raw.starts_with("NovaValue_") && raw.ends_with('*') {
+                    if (raw.starts_with("NovaValue_") || raw.starts_with("NovaTuple_")) && raw.ends_with('*') {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw
@@ -44969,12 +44963,14 @@ mod named_tuple_mut_recv_abi_tests {
     }
 
     #[test]
-    fn receiver_c_type_named_tuple_ro_returns_value() {
-        // ro receiver — by-value (immutable copy), unchanged ABI.
+    fn receiver_c_type_named_tuple_ro_returns_pointer() {
+        // 172.4 Ф.3 A6: ro receiver — ALSO pointer (always-pointer receiver-ABI,
+        // D226-модель). NT как ЗНАЧЕНИЕ (поле/параметр) остаётся by-value;
+        // меняется только receiver-ABI (mut/ro равны, как у NovaValue_).
         let e = emitter_with_named_tuple("Point", "NovaTuple_Point");
         let got = e.receiver_c_type("Point", /*recv_mutable=*/ false);
-        assert_eq!(got, "NovaTuple_Point",
-            "ro NamedTuple receiver stays by-value (D215 default)");
+        assert_eq!(got, "NovaTuple_Point*",
+            "ro NamedTuple receiver → pointer (A6 always-pointer)");
     }
 
     #[test]
@@ -45012,13 +45008,14 @@ mod named_tuple_mut_recv_abi_tests {
     }
 
     #[test]
-    fn prepare_method_recv_named_tuple_ro_passes_through() {
-        // ro NamedTuple receiver — no adapter; obj_c passes through verbatim.
+    fn prepare_method_recv_named_tuple_ro_takes_address() {
+        // 172.4 Ф.3 A6: ro NamedTuple receiver — &(p) (always-pointer, как VR);
+        // ident-path не эмитит temp.
         let mut e = emitter_with_named_tuple("Point", "NovaTuple_Point");
         let before_out = e.out.clone();
         let got = e.prepare_method_recv("p", "NovaTuple_Point", /*recv_mutable=*/ false, None);
-        assert_eq!(got, "p", "ro NamedTuple receiver: no &-adapter (by-value)");
-        assert_eq!(e.out, before_out, "ro path emits nothing into out");
+        assert_eq!(got, "&(p)", "ro NamedTuple receiver → &(p) (A6 always-pointer)");
+        assert_eq!(e.out, before_out, "ident path emits nothing into out");
     }
 
     #[test]
