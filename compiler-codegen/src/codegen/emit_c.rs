@@ -1970,6 +1970,14 @@ impl CEmitter {
                 // d119: cast (nova_str)(T-поле) при mono map[U=str]).
                 if let Some(recv) = &self.current_receiver_type {
                     let bare = recv.trim_start_matches("Nova_").trim_end_matches('*');
+                    // 172.1.2 (2026-07-04): slice-extension mono (`fn []T @min_of`)
+                    // эмитится с ресивером NovaArray_<elem> — элемент = суффикс
+                    // (slice-extension всегда однопараметрична: синтаксис []T).
+                    if let Some(elem) = bare.strip_prefix("NovaArray_") {
+                        if !elem.is_empty() && !elem.contains("____") {
+                            return Ok(elem.to_string());
+                        }
+                    }
                     let info = {
                         let m = self.generic_type_instance_info.borrow();
                         m.get(bare)
@@ -1997,11 +2005,24 @@ impl CEmitter {
                 if let Some(c) = self.type_subst_overrides.borrow().get(n.as_str()) {
                     return Ok(c.clone());
                 }
-                return self
-                    .current_type_subst
-                    .get(n.as_str())
-                    .cloned()
-                    .ok_or_else(|| format!("unsubstituted type-param `{}`", n));
+                if let Some(c) = self.current_type_subst.get(n.as_str()) {
+                    return Ok(c.clone());
+                }
+                // ERASED-контекст (2026-07-04): ресивер = ШАБЛОННОЕ имя ("[]T",
+                // "Set") при пустом subst — тело эмитится ОДИН раз с int-erasure
+                // (документированный erased-контракт legacy) → nova_int это
+                // ПРАВДА представления erased-тела, не guess.
+                if let Some(recv) = &self.current_receiver_type {
+                    let bare = recv.trim_start_matches("Nova_").trim_end_matches('*');
+                    let erased_ctx = bare == format!("[]{}", n)
+                        || (self.generic_type_templates.contains_key(bare)
+                            && self.generic_type_templates.get(bare).map_or(false,
+                                |td| td.generics.iter().any(|g| g.name == *n)));
+                    if erased_ctx {
+                        return Ok("nova_int".to_string());
+                    }
+                }
+                return Err(format!("unsubstituted type-param `{}`", n));
             }
             // `never` — bottom-type ABI placeholder (mirrors type_ref_to_c `never` arm).
             R::Never => "nova_int".to_string(),
@@ -37208,6 +37229,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         }
         // Channel 2: resolved_types → resolved_type_to_c (checker-annotated type for any expr)
+        if std::env::var_os("NOVA_CH2_TRACE").is_some() {
+            if let ExprKind::Index { .. } = &expr.kind {
+                if let Some(rt) = self.resolved_types.get(&expr.id) {
+                    eprintln!("[CH2-IDX] id={:?} rt={:?} lower={:?}",
+                        expr.id, rt, self.resolved_type_to_c(rt));
+                }
+            }
+        }
         if expr.id.is_set() {
             // 2026-07-02 (tally АТОМ 3, [M-closure-two-reprs]): closure-ЗНАЧЕНИЕ
             // лоуэрится в NovaClos_X* (load-bearing: clos_struct_ret_type на
