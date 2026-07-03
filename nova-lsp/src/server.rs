@@ -465,8 +465,12 @@ impl LanguageServer for Backend {
                         SemanticTokensOptions {
                             work_done_progress_options: Default::default(),
                             legend: SemanticTokensLegend {
-                                token_types: cached_field_semantic_token_types(),
-                                token_modifiers: cached_field_semantic_token_modifiers(),
+                                // Plan 104.10 Ф.10: full legend (superset of the
+                                // Plan 123.5.2 single-PROPERTY legend).
+                                token_types:
+                                    crate::semantic_tokens::semantic_token_legend_types(),
+                                token_modifiers:
+                                    crate::semantic_tokens::semantic_token_legend_modifiers(),
                             },
                             range: Some(false),
                             full: Some(SemanticTokensFullOptions::Delta {
@@ -1646,25 +1650,36 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
         let src = doc.text.to_string();
+        let version = doc.version;
         drop(doc);
 
-        let tokens = run_with_large_stack(move || compute_field_cache_semantic_tokens(&src));
-        // Plan 123.5.5 (V5.5, 2026-06-03): cache snapshot и assign
-        // monotonic `result_id` для последующих delta requests от клиента.
-        Ok(tokens.map(|data| {
-            let result_id = self.state.next_semantic_tokens_result_id();
-            self.state.semantic_tokens_cache.insert(
-                uri.clone(),
-                SemanticTokensSnapshot {
-                    result_id: result_id.clone(),
-                    tokens: data.clone(),
-                },
-            );
-            SemanticTokensResult::Tokens(SemanticTokens {
-                result_id: Some(result_id),
-                data,
+        // Plan 104.10 Ф.10: full semantic pass (keywords, literals, comments,
+        // and per-identifier classification) driven off the Ф.1 resolved cache.
+        let state = Arc::clone(&self.state);
+        let uri_clone = uri.clone();
+        let data = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || {
+                let resolved = state.get_or_build_resolved(&uri_clone, version, &src);
+                crate::semantic_tokens::compute_semantic_tokens(&src, &resolved)
             })
-        }))
+        })) {
+            Ok(d) => d,
+            Err(_) => Vec::new(),
+        };
+        // Plan 123.5.5 (V5.5): cache snapshot и assign monotonic `result_id`
+        // для последующих delta requests от клиента.
+        let result_id = self.state.next_semantic_tokens_result_id();
+        self.state.semantic_tokens_cache.insert(
+            uri.clone(),
+            SemanticTokensSnapshot {
+                result_id: result_id.clone(),
+                tokens: data.clone(),
+            },
+        );
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: Some(result_id),
+            data,
+        })))
     }
 
     /// Plan 123.5.5 (V5.5, 2026-06-03): incremental semantic-tokens delta.
@@ -1680,12 +1695,22 @@ impl LanguageServer for Backend {
         let prev_result_id = params.previous_result_id;
         let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
         let src = doc.text.to_string();
+        let version = doc.version;
         drop(doc);
 
-        let new_tokens = run_with_large_stack(
-            move || compute_field_cache_semantic_tokens(&src),
-        );
-        let Some(new_tokens) = new_tokens else { return Ok(None); };
+        // Plan 104.10 Ф.10: recompute the full token set, then diff against the
+        // cached snapshot to produce a minimal edit script (Plan 123.5.5).
+        let state = Arc::clone(&self.state);
+        let uri_clone = uri.clone();
+        let new_tokens = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || {
+                let resolved = state.get_or_build_resolved(&uri_clone, version, &src);
+                crate::semantic_tokens::compute_semantic_tokens(&src, &resolved)
+            })
+        })) {
+            Ok(t) => t,
+            Err(_) => Vec::new(),
+        };
 
         // Look up the cached snapshot. If `previous_result_id` matches,
         // compute delta; otherwise fallback к polite full response — the
