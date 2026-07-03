@@ -197,3 +197,37 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
   `[M-173-d194-perf-elision]`. **Parity подтверждён:** B3 (outcome-DRY) НЕ увеличил кадры/shield/outcome —
   mutexguard.c post-B3 ≡ baseline (84 setjmp, 3 ScopeOutcome, идентично); consume-corpus (plan110/plan103_9)
   + conformance 38/38 без регрессий. Acceptance Ф.2 = PARITY (не элизия) зафиксирован в спеке.
+- ✅ **Ф.2.E doc-sweep + hub ЗАКРЫТ (0636a9ed):** workflow из 6 агентов + ручная доводка. R2-rename
+  (`@on_exit`→`@cleanup`, `Consumable[E]`→`Cleanup[E]`, `.on_exit`→`.@cleanup`, ~170 замен) в 16 live-доках
+  (cookbook/tutorial/idiom×13/nv-coding-style/nova-cli[.ru]). R1-debt (effect `Cleanup`→`ResourceTrace`,
+  `on_scope_enter/exit`→`on_resource_enter/exit`, стейл C-symbol `_consume_on_exit`→`_consume_cleanup`).
+  Historical (simplifications/plans/spec-D-ex) + диагностик-id + rename-explain СОХРАНЕНЫ. Hub
+  error-and-cleanup-model.md ПЕРЕПИСАН под факт (Ф.1 with-Fail-panic FIXED; Ф.2 partial; defer(o)-migration;
+  followups). Residue-grep = 0. Docs-only.
+- 🔴 **Ф.2.C nova_scope_exit transport-unify — ЗАБЛОКИРОВАН (тот же класс, что B3-merge):** firsthand-разбор
+  terminal-сайтов выявил их **genuine несогласованность** в kind-dispatch: SITE A (with-Fail): PANIC→
+  rethrow_with_suppressed, CANCEL→nova_throw_cancel_reason(+restore handlers), USER→caught(default); defer
+  C1 (FAIL): ВСЕ kinds→rethrow_with_suppressed; consume: PANIC→nv_panic, USER→rethrow. Единый helper требует
+  НОРМАЛИЗАЦИИ per-kind транспорта (PANIC: nv_panic vs rethrow; CANCEL: cancel_reason vs generic-rethrow —
+  влияет на reason_ptr + cancel-propagation в structured concurrency) — design-decision + верификация в
+  КРИТИЧЕСКОМ error-transport, НЕ механический extract. Owner-away + high-regression-risk → отложено.
+  Followup `[M-173-c-transport-normalize]`: сперва единая per-kind модель (D-блок), потом reroute + verify.
+  D314 §4 таблица (PANIC→nv_panic uniform) сама конфликтует с impl (SITE A/defer→rethrow) → spec к факту.
+
+## СВОДКА Ф.2 (2026-07-03): SAFE-SCOPE ЗАКРЫТ, structural-finale → followups
+
+**Закрыто (safe, verified):** A0 · R1 · R2 · B1 · B2 (defer(o) codegen+checker) · B3-outcome (ScopeOutcome-
+примитив унифицирован) · D194 (parity + spec-truth) · E (doc-sweep + hub). Conformance 38/38 сквозь всё.
+
+**Отложено (осознанно, documented — НЕ half-measure; критический error-transport, owner-away, high-risk):**
+- `[M-173-b3-runsite-unify]` — физический merge consume-монолита в defer-kernel run-site'ы (compose-семантика
+  genuinely РАЗНАЯ: panic-dominance/pairwise vs chain).
+- `[M-173-c-transport-normalize]` — единый nova_scope_exit (terminal-сайты несогласованы per-kind).
+- `[M-173-consume-interrupt-cleanup]` — cleanup на interrupt (spec D314 §2, beyond-parity).
+- `[M-173-consume-exactly-once-observability]` + `[M-173-d194-perf-elision]` + multi-binding consume.
+
+**Вывод для владельца:** D314 language-level goal ДОСТИГНУТ (defer(o) работает; consume=корректный
+consume-flavored-defer-entry; soundness Ф.1). Оставшийся structural-finale (physical unification) —
+рефакторинг-долг, требующий per-kind/compose нормализации (design-decision), НЕ блокирует 174/176 (им
+нужно ПОВЕДЕНИЕ error-system, которое работает). Рекомендация: принять safe-scope + followups; solidify
+173 для downstream ИЛИ выделить сессию на transport/compose-нормализацию с owner-steered design.
