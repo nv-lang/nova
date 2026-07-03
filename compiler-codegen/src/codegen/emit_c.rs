@@ -830,6 +830,9 @@ pub struct CEmitter {
     str_box_arrays: HashSet<String>,
     /// C type of the current method receiver (e.g. "Nova_Box"), for resolving `Self`.
     current_receiver_type: Option<String>,
+    /// 172.4 Ф.3 (блокер-1, 2026-07-04): return-позиция `-> @` value-record
+    /// метода — SelfAccess эмитится как `nova_self` (ptr), не `(*nova_self)`.
+    in_recv_ptr_return_position: std::cell::Cell<bool>,
     /// Plan 135 Ф.2: whether the currently-emitting method has a `mut` receiver
     /// (`fn Type mut @method`).  Used at call-sites to tiebreak overloads when
     /// the receiver is `SelfAccess` (i.e. `@other_method()` inside the body).
@@ -1468,6 +1471,7 @@ impl CEmitter {
             fn_result_ok_inner_types: HashMap::new(),
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
+            in_recv_ptr_return_position: std::cell::Cell::new(false),
             current_receiver_is_mut: false,
             expected_record_type: None,
             expected_into_target: None,
@@ -18596,6 +18600,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let post_label = self.contracts_post_label.clone();
         if let Some(trailing) = &block.trailing {
             self.emit_source_annotation_for_expr(trailing);
+            // 172.4 Ф.3 блокер-1: trailing `@` fluent-метода — return-позиция ptr.
+            let fluent_self_ret = self.var_types.get("nova_self")
+                .map(|sv| sv.starts_with("NovaValue_") && sv.ends_with('*') && sv == ret_ty)
+                .unwrap_or(false);
+            let prev_recv_ret = self.in_recv_ptr_return_position.replace(fluent_self_ret);
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
             // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
             // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
@@ -18604,6 +18613,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             } else {
                 self.emit_expr(trailing)?
             };
+            self.in_recv_ptr_return_position.set(prev_recv_ret);
             // Plan 72 P3-B return: box the trailing value for a protocol return type.
             let val = self.wrap_protocol_return(val, trailing);
             if let Some(label) = post_label {
@@ -18789,6 +18799,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
                 self.expected_into_target = saved_into_target;
+                // 172.4 Ф.3 блокер-2 (binding-decay): fluent value-record цепочка
+                // возвращает ptr (NovaValue_X*), биндинг к value-локалу требует
+                // deref. Robust EMIT-сигнал (урок реверта 2026-06-28): C-возврат
+                // метода из реестра fn_ret_* (эмит-факт), НЕ context-fragile infer.
+                let val = if ty_c.starts_with("NovaValue_") && !ty_c.ends_with('*') {
+                    let rhs_fluent_ptr = (|| {
+                        let ExprKind::Call { func, .. } = &decl.value.kind else { return false };
+                        let ExprKind::Member { name: mname, .. } = &func.kind else { return false };
+                        let tn = ty_c.strip_prefix("NovaValue_").unwrap_or("");
+                        self.var_types
+                            .get(&format!("fn_ret_{}_{}", tn, mname))
+                            .map(|r| *r == format!("{}*", ty_c))
+                            .unwrap_or(false)
+                    })();
+                    if rhs_fluent_ptr { format!("(*({}))", val) } else { val }
+                } else {
+                    val
+                };
                 // Plan 127 Ф.3: clear the transient signal на случай если
                 // emit_record_lit не consumed его (defensive — emit_record_lit
                 // должен take() его на entry в value-record path).
@@ -19472,6 +19500,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // If no defers active, this is a no-op.
                 if let Some(v) = value {
                     let ret_ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
+                    // 172.4 Ф.3 блокер-1: fluent `-> @` value-record — return-позиция ptr.
+                    let fluent_self_ret = self.var_types.get("nova_self")
+                        .map(|sv| sv.starts_with("NovaValue_") && sv.ends_with('*') && *sv == ret_ty)
+                        .unwrap_or(false);
+                    let prev_recv_ret = self.in_recv_ptr_return_position.replace(fluent_self_ret);
                     // Plan 153.2: emit the return value with the function's return
                     // type as the target so type-directed literals resolve to the
                     // declared type instead of the erased default. The motivating
@@ -19488,6 +19521,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     } else {
                         self.emit_expr(v)?
                     };
+                    self.in_recv_ptr_return_position.set(prev_recv_ret);
                     // Plan 72 P3-B return: box explicit return value for a protocol return type.
                     let val = self.wrap_protocol_return(val, v);
                     if let Some(label) = post_label {
@@ -22604,7 +22638,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         .map(|t| t != "str" && self.value_record_names.contains(t))
                         .unwrap_or(false);
                 if self_by_ptr_value_record {
-                    Ok("(*nova_self)".into())
+                    // 172.4 Ф.3 блокер-1: в return-позиции `-> @` — ptr.
+                    if self.in_recv_ptr_return_position.get() {
+                        Ok("nova_self".into())
+                    } else {
+                        Ok("(*nova_self)".into())
+                    }
                 } else {
                     Ok("nova_self".into())
                 }

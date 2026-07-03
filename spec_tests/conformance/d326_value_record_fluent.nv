@@ -1,0 +1,13 @@
+// D326 (R7/R8) / Plan 172.4 Ф.1+Ф.3 — value-record fluent `mut @ -> @` цепочка +
+// структурное `==` (D328): acceptance-кейс владельца 2026-06-21 дословно.
+// Spec: spec/decisions/02-types.md D326/D328. Part of the SINGLE conformance module.
+module spec_tests.conformance
+
+type P1724Point value { x int, y int }
+fn P1724Point mut @inc(a int) -> @ { @x += a; @y += a; @ }
+
+test "172.4 acceptance: fluent mut @ -> @ на value-record + структурное ==" {
+    mut p P1724Point = { x: 0, y: 0 }
+    ro p2 = p.inc(10).inc(20)
+    assert(p == p2 && p.x == 30)
+}
