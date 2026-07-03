@@ -109,7 +109,7 @@ type SeekFrom | Start(int) | End(int) | Current(int)   // ВСЁ int (i64) — N
 // default-хелперы (loop + EINTR-retry): read_exact -> UnexpectedEof; write_all -> WriteZero; read_to_end -> []u8; read_to_string -> Result[str]
 ```
 
-## 3.0. Закрытые решения (Q1–Q14 — РЕШЕНЫ; Ред. 2: Q2/Q3/Q6/Q11 обновлены, Q12-Q14 добавлены)
+## 3.0. Закрытые решения (Q1–Q15 — РЕШЕНЫ; Ред. 2: Q2/Q3/Q6/Q11 обновлены, Q12-Q14 добавлены; Q15 — 2026-07-03)
 
 | # | Вопрос | РЕШЕНИЕ | Обоснование |
 |---|---|---|---|
@@ -127,6 +127,7 @@ type SeekFrom | Start(int) | End(int) | Current(int)   // ВСЁ int (i64) — N
 | Q12 | create-mode/umask (Ред. 2, Zig/Swift-аудит) | **Задокументировать**: default create-mode = `0o666 & ~umask` (POSIX-конвенция); `OpenOptions.mode(int)` — unix-qualified escape; Windows — N/A. Unix-тест: `mode(0o600)` применяется. | все peers наследуют POSIX-семантику молча — Nova документирует |
 | Q13 | append-mode (Ред. 2) | **`OpenOptions.append` в скоупе Ф.2** (полный набор: read/write/append/truncate/create/create_new); neg: `append+truncate` → `InvalidInput`; append-семантика = atomic-EOF-write (O_APPEND), `write_at` на append-fd → задокументировать/InvalidInput. | Rust OpenOptions-паритет; без append файл-логгер не написать |
 | Q14 | per-op error sets (Ред. 2) | **Considered/REJECTED** (Zig-модель): точные множества ошибок per-операция требуют error-union-инфраструктуры и дробят обработку; Nova = один открытый `ErrorKind` + `raw_os` + `source`-chain (Rust-модель). Нота в D322. | явное решение вместо молчания; композиция через source важнее точности множества |
+| Q15 | io-протоколы × эффекты конформеров (узел 176↔178; ✅ решён 2026-07-03, исследование spec+checker) | **Протоколы `io.Read`/`io.Write` остаются эффект-агностичными; конформер несёт СВОЙ плумбинг-эффект** (File→`Fs`, TcpStream→`TcpNet`, BodyReader→`Http`) — это УЖЕ легально: **D122-amended** (2026-05-20: эффекты в protocol-методах разрешены; mono-dispatch пробрасывает их как у обычной effectful-fn; **vtable-путь для effectful-bounds запрещён** → generic-вызовы через io-bounds mono-only), **D62** (транзитивный не-Fail эффект = suppressable warning, не ошибка; io-семейство на `Result` → строгое Fail-правило не срабатывает by construction), runtime handler-стек (живой прецедент: nova_tests/plan91_12 зовёт `conn.write()` (TcpNet) из spawn без декларации — нужен лишь активный `with`-handler). **Ф.1-остаток:** (a) амендмент **D42/D15** — «impl не может привнести `Fail` сверх объявленного; НЕ-Fail эффекты конформера допустимы и всплывают транзитивно при мономорфизации (D62)» — узаконивает фактическое поведение чекера (конформанс эффекты сейчас не сверяет молча); (b) правило в **D322**; (c) spec_test `d322`: generic `copy(r,w)` с эффектным (File/mem_fs) И безэффектным (WriteBuffer) конформером. **Honest-дыра v1:** `forbid`/D63 и effect-surface НЕ видят эффекты через generic protocol-bound → `[M-effect-forbid-generic-bound]` (backlog). Отвергнуто: фикс-эффект-носитель `Io` (ломает номинальные handler-ы/forbid/мокабельность); scope-out (убил бы `copy_to`-в-File и BufWriter[File] — главные deliverables); effect-var `effects(W)` (Q6 open-questions, v0.7+ — для v1 не нужен) |
 
 ## 3b. `IoError` (структурный, Rust `ErrorKind`-precedent)
 
@@ -230,7 +231,7 @@ sendfile-специализация; `fs.copy` уже получает copy_file
 
 ## 5. Spec / D / Q / docs
 
-- **NEW D322** — io-core: протоколы (sibling text-sink), `SeekFrom`, EOF/partial/EINTR-контракт (Q9), BufWriter
+- **NEW D322** — io-core: протоколы (sibling text-sink; **эффект-агностичны — эффект конформера всплывает при mono, Q15**; generic-io-bounds = mono-dispatch-only по D122), `SeekFrom`, EOF/partial/EINTR-контракт (Q9), BufWriter
   must-consume (Q10, D133), `IoError`/`ErrorKind` (+ **considered/rejected нота per-op error sets Q14**),
   stdin/stdout/stderr через `Io`, `str.from_bytes`/`Utf8Error`.
 - **NEW D323** — fs: `Fs`-эффект (плумбинг, best-effort-cancel Q4), `File` must-consume (D133 + Cleanup[IoError]-мост
@@ -357,7 +358,7 @@ SocketAddr + AddrNet-retract — НЕ пересекать коммиты; ErrSo
 
 `[M-176-io-fs-os]` (регистрация в OPEN-view — Ф.0). **Process → 176.1** (`[M-176.1-process]`; файл при старте работ;
 гейт после 176 Ф.1-Ф.3). **NEW (Ред. 2):** `[M-176-dir-scoped-ops]` (Zig openat-модель — anti-TOCTOU by design);
-`[M-176-create-temp]` (O_TMPFILE/anonymous temp); conditional `[M-176-tcp-io-conformance]` (Ф.4b при
+`[M-176-create-temp]` (O_TMPFILE/anonymous temp); `[M-effect-forbid-generic-bound]` (Q15-дыра: forbid/effect-surface через generic-bound); conditional `[M-176-tcp-io-conformance]` (Ф.4b при
 отсутствии 178 byte-surface). Прочие: flock, mmap, `walk_dir`-filters, glob-промоут
 (`std/_experimental/path/glob.nv` существует), fs-watch (inotify/FSEvents), write_atomic Windows rename-replace-retry,
 copy fast-path (sendfile). Имена/детали — финал при реализации (после Ф.0).
