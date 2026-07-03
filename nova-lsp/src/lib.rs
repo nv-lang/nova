@@ -10,6 +10,7 @@ pub mod compiler;
 pub mod completion;
 pub mod debouncer;
 pub mod diagnostic_mapping;
+pub mod document_highlight;
 pub mod format;
 pub mod goto_definition;
 pub mod hover;

@@ -23,6 +23,7 @@ use crate::code_actions::compute_code_actions_with_stdlib;
 use crate::compiler::{check_file_with_root, check_workspace, run_with_large_stack};
 use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
+use crate::document_highlight::compute_document_highlights;
 use crate::format::{format_document, format_range, on_type_format};
 use crate::goto_definition::compute_goto_definition_in;
 use crate::hover::compute_hover_in;
@@ -291,6 +292,10 @@ impl LanguageServer for Backend {
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
+                // Plan 104.10 Ф.15: documentHighlight — occurrences of the
+                // symbol under the cursor in the current file (read/write kind),
+                // resolved semantically via the Ф.7 scope resolver.
+                document_highlight_provider: Some(OneOf::Left(true)),
                 // Plan 104.6: rename + format-on-save.
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -811,6 +816,33 @@ impl LanguageServer for Backend {
         tracing::debug!(count = locs.len(), symbol = %symbol_name, "references: found");
 
         Ok(if locs.is_empty() { None } else { Some(locs) })
+    }
+
+    /// `textDocument/documentHighlight` — Plan 104.10 Ф.15.
+    ///
+    /// Highlights every occurrence of the symbol under the cursor **in the
+    /// current file**, tagged read/write. The occurrence set is scoped by the
+    /// same AST resolver the Ф.7 rename uses (`resolve_highlight_scope`), so a
+    /// same-named local in a sibling function is never highlighted — semantic
+    /// resolution, not a word regex.
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let pos = params.text_document_position_params.position;
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        // Contained so a parser panic degrades to no highlights, never a crash.
+        let highlights = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || compute_document_highlights(&src, pos))
+        })) {
+            Ok(h) => h,
+            Err(_) => None,
+        };
+        Ok(highlights)
     }
 
     /// Plan 104.5: code_action — ≥25 quick-fix providers.

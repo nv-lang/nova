@@ -510,6 +510,40 @@ fn classify_scope(text: &str, cursor_byte: usize, old_name: &str) -> RenameScope
     RenameScope::TopLevel
 }
 
+/// The single-file symbol scope for `documentHighlight` (Plan 104.10 Ф.15),
+/// derived from the **same** AST classification the Ф.7 rename uses — never a
+/// blind word regex. See [`resolve_highlight_scope`].
+pub(crate) enum HighlightScope {
+    /// A local binding: its occurrences live only inside the half-open byte
+    /// range `[start, end)` of the declaring function.
+    Local { range: (usize, usize) },
+    /// A top-level symbol: its occurrences span the whole file, except inside
+    /// the functions listed in `shadows` (each locally rebinds the name, so
+    /// their occurrences refer to a different symbol).
+    TopLevel { shadows: Vec<(usize, usize)> },
+}
+
+/// Resolve the scope of the symbol named `name` at `cursor_byte` in `text`, for
+/// `documentHighlight`. This reuses the Ф.7 rename resolver ([`classify_scope`]
+/// + [`shadow_scopes_in_text`]) so highlight and rename agree on what "the same
+/// symbol" means — a same-named local in a sibling function is never conflated
+/// (the semantic scope-correctness the plan requires, not a word regex).
+///
+/// On a parse failure `classify_scope` degrades to `TopLevel` with no shadows,
+/// so highlight stays functional (whole-file occurrences) rather than panicking.
+pub(crate) fn resolve_highlight_scope(
+    text: &str,
+    cursor_byte: usize,
+    name: &str,
+) -> HighlightScope {
+    match classify_scope(text, cursor_byte, name) {
+        RenameScope::LocalInFile { range } => HighlightScope::Local { range },
+        RenameScope::TopLevel => HighlightScope::TopLevel {
+            shadows: shadow_scopes_in_text(text, name),
+        },
+    }
+}
+
 /// Byte ranges of every top-level function/test in `text` that locally binds
 /// `name` — the shadow scopes a top-level rename must skip. Empty on parse
 /// failure (degrade to "no shadows", i.e. the V1 cross-file behaviour).
