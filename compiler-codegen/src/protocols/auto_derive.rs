@@ -53,6 +53,15 @@ pub fn is_builtin_protocol(proto_name: &str) -> bool {
     )
 }
 
+/// Plan 104.10 Ф.5 ([M-104.10-hardcode-lists]): the canonical list of built-in
+/// auto-derivable protocol names, in a stable order, for tooling (nova-lsp
+/// `#derive(...)` quick-fixes). Single source of truth — keeps the LSP from
+/// drifting with a stale, renamed list (the old LSP table still named the
+/// pre-D237 `Printable`/`Hashable`/`Equatable`/`Ordered`/`Cloneable` protocols).
+pub fn builtin_protocol_names() -> &'static [&'static str] {
+    &[EQUAL, HASH, CLONE, COMPARE, DISPLAY, DEBUG]
+}
+
 /// Получить имя метода built-in protocol'а (single-method assumption).
 /// Returns None for unknown protocol.
 pub fn builtin_protocol_method(proto_name: &str) -> Option<&'static str> {

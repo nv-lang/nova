@@ -866,7 +866,8 @@ pub struct ModuleEnv {
 /// для bootstrap'а этого достаточно: интерпретатор ловит ошибки типов в
 /// runtime через match-mismatch и method-not-found.
 pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
-    check_module_impl(module, None, false)
+    let (env, errors) = check_module_impl(module, None, false);
+    if errors.is_empty() { Ok(env) } else { Err(errors) }
 }
 
 /// Plan 104.10 Ф.2 (D379): like [`check_module`], but ALSO records the per-expression type
@@ -877,7 +878,25 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
 /// the semantic `resolved_types_buf`), it never influences type-checking. Returns the env on
 /// success (with `expr_types` populated) or the diagnostics on failure.
 pub fn check_module_with_expr_types(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
-    check_module_impl(module, None, true)
+    let (env, errors) = check_module_impl(module, None, true);
+    if errors.is_empty() { Ok(env) } else { Err(errors) }
+}
+
+/// Plan 104.10 Ф.5: **lenient** IDE variant of [`check_module_with_expr_types`].
+///
+/// Returns the [`ModuleEnv`] (with `expr_types` populated) **regardless of
+/// type-check diagnostics**, discarding the errors. This is exactly what
+/// interactive IDE features (type-driven method completion, hover on member
+/// access) need: the buffer under the cursor is almost always *momentarily
+/// invalid* mid-edit (a dangling `.`, a half-typed call), yet the receiver
+/// expression before the edit point already has a well-defined inferred type.
+///
+/// The recording is a pure side-channel — the checker makes the *same*
+/// decisions as [`check_module`]; only the accept/reject envelope differs. Never
+/// used by the compile pipeline (which must reject invalid programs); only by
+/// nova-lsp, which prefers a best-effort partial `env` over nothing.
+pub fn check_module_with_expr_types_ide(module: &Module) -> ModuleEnv {
+    check_module_impl(module, None, true).0
 }
 
 /// Internal implementation shared by [`check_module`] and
@@ -896,7 +915,7 @@ fn check_module_impl(
     module: &Module,
     sig_table: Option<&crate::imports::ModuleSigTable>,
     record_expr_types: bool,
-) -> Result<ModuleEnv, Vec<Diagnostic>> {
+) -> (ModuleEnv, Vec<Diagnostic>) {
     let mut env = ModuleEnv::default();
     let mut errors = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
@@ -1817,11 +1836,9 @@ fn check_module_impl(
     // guarantee for the normal compile path.
     env.expr_types = type_check_ctx.expr_types_buf.take();
 
-    if errors.is_empty() {
-        Ok(env)
-    } else {
-        Err(errors)
-    }
+    // Return env + errors unconditionally; Result-returning public wrappers
+    // convert (Ok/Err), while the lenient IDE entry point keeps the env.
+    (env, errors)
 }
 
 // Plan 162.1 Step 3: public entry-point that feeds a pre-built
@@ -1844,7 +1861,8 @@ pub fn check_module_with_sig_table(
     module: &Module,
     sig_table: crate::imports::ModuleSigTable,
 ) -> Result<ModuleEnv, Vec<Diagnostic>> {
-    check_module_impl(module, Some(&sig_table), false)
+    let (env, errors) = check_module_impl(module, Some(&sig_table), false);
+    if errors.is_empty() { Ok(env) } else { Err(errors) }
 }
 
 // ─── internal shared core ────────────────────────────────────────────────────

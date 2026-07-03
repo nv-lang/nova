@@ -28,13 +28,19 @@ use crate::compiler::check_source_inner;
 // ─────────────────────────────────────────────────────────────────────────────
 // Nova keywords — must not be accepted as rename targets or new names
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Plan 104.10 Ф.5 ([M-104.10-hardcode-lists]): the keyword set is NOT hardcoded
+// here. The previous static list had drifted from the language (it listed
+// removed/never-real keywords like `let`, `impl`, `blocking`, `suspend`, `and`,
+// `or`, `not`, `mod`). Reserved-keyword status is now decided by the compiler's
+// own lexer — the single source of truth — via `is_nova_keyword`.
 
-static NOVA_KEYWORDS: &[&str] = &[
-    "fn", "type", "let", "mut", "ro", "if", "else", "while", "for", "in",
-    "return", "match", "import", "export", "pub", "priv", "effect", "protocol",
-    "impl", "consume", "defer", "blocking", "suspend", "true", "false",
-    "and", "or", "not", "as", "is", "mod",
-];
+/// True if `word` is a reserved Nova keyword (delegates to the compiler lexer,
+/// so the LSP never drifts from the real language). Contextual keywords that the
+/// lexer keeps as identifiers (e.g. `bench`, `apply`) are correctly renameable.
+fn is_nova_keyword(word: &str) -> bool {
+    nova_codegen::lexer::is_reserved_keyword(word)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // prepareRename
@@ -90,7 +96,7 @@ pub fn prepare_rename(text: &str, pos: Position) -> Result<PrepareRenameResponse
     }
 
     // Must not be a keyword.
-    if NOVA_KEYWORDS.contains(&word) {
+    if is_nova_keyword(word) {
         return Err(Error {
             code: ErrorCode::InvalidParams,
             message: format!("cannot rename keyword `{}`", word).into(),
@@ -163,7 +169,7 @@ pub fn compute_rename(
             data: None,
         });
     }
-    if NOVA_KEYWORDS.contains(&new_name) {
+    if is_nova_keyword(new_name) {
         return Err(Error {
             code: ErrorCode::InvalidParams,
             message: format!("new name `{}` is a reserved keyword", new_name).into(),

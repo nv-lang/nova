@@ -204,7 +204,12 @@ fn resolve_imports_inline_guarded(path: &Path, module: &mut Module) {
 fn check_module_guarded(module: &Module, record_expr_types: bool) -> Option<ModuleEnv> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if record_expr_types {
-            nova_codegen::types::check_module_with_expr_types(module).ok()
+            // Plan 104.10 Ф.5: lenient IDE check — keep the `env` (with
+            // `expr_types`) even when the buffer has type errors. Interactive
+            // completion/hover fire on momentarily-invalid buffers (a dangling
+            // `.`, a half-typed call); the receiver's type is still known and
+            // must remain available. `Some` for any module that parsed.
+            Some(nova_codegen::types::check_module_with_expr_types_ide(module))
         } else {
             nova_codegen::types::check_module(module).ok()
         }

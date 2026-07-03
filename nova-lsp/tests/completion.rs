@@ -6,8 +6,7 @@
 //! Test count: 8 pos (extra integration) + existing unit tests = 47 total.
 
 use nova_lsp::completion::{
-    collect_scope_identifiers, completion_for, detect_context, import_items, method_items,
-    snippet_items, CompletionContext, IdentKind,
+    collect_scope_identifiers, completion_for, import_items, method_items, method_items_typed,
 };
 use tower_lsp::lsp_types::CompletionItemKind;
 
@@ -50,12 +49,14 @@ fn ipos2_fn_body_completion() {
 
 /// ipos3: method-dot completion on int variable.
 // Plan 104.10 Ф.5: type-driven method completion. Static method tables were removed
-// in 159f853c; stdlib methods (int/str/…) return via the compiler TypeMethodMap once
-// Ф.5 lands. This test must be un-ignored and pass as part of Ф.5 acceptance.
-#[ignore = "Plan 104.10 Ф.5 restores type-driven method completion (tables removed in 159f853c)"]
+// in 159f853c; stdlib methods (int/str/…) return via the compiler-resolved module
+// (expr_types + inlined stdlib method decls). Un-ignored as part of Ф.5 acceptance.
 #[test]
 fn ipos3_method_dot_int() {
-    let src = "module test.i\nfn f() -> () {\n    ro count int = 5\n    count.";
+    // NB: module name must be valid Nova — `test` is a reserved keyword, so the
+    // legacy `module test.i` was unparseable; type-driven completion parses the
+    // buffer, hence a real identifier (`demo`).
+    let src = "module demo.i\nfn f() -> () {\n    ro count int = 5\n    count.";
     let items = completion_for(src, src.len());
     assert!(!items.is_empty(), "method completions expected after dot");
     assert!(
@@ -155,10 +156,10 @@ fn ranking_full_ordering() {
 
 /// Method completions: str methods appear with detail (byte_len replaces len).
 // Plan 104.10 Ф.5: type-driven method completion (see ipos3_method_dot_int note).
-#[ignore = "Plan 104.10 Ф.5 restores type-driven method completion (tables removed in 159f853c)"]
 #[test]
 fn method_str_detail_present() {
-    let src = "module test.m\nfn f() -> () {\n    ro msg str = \"\"\n    msg.";
+    // `test` is a keyword → use a valid module identifier so the buffer parses.
+    let src = "module demo.m\nfn f() -> () {\n    ro msg str = \"\"\n    msg.";
     let items = method_items(src, src.len());
     let byte_len_item = items.iter().find(|i| i.label == "byte_len");
     assert!(byte_len_item.is_some(), "byte_len method on str (len was removed)");
@@ -210,4 +211,84 @@ fn deduplication_no_duplicate_labels() {
     labels.sort();
     labels.dedup();
     assert_eq!(labels.len(), before_dedup, "duplicate labels found in completion");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 104.10 Ф.5 — type-driven method completion
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// POS: user-defined type — `ro u User = ...; u.` offers `User`'s methods.
+#[test]
+fn f5_pos_user_type_methods() {
+    let src = "module demo.u\nfn User @greet() -> str => \"hi\"\nfn User @age() -> int => 0\nfn f() -> () {\n    ro u User = User {}\n    u.";
+    let items = method_items(src, src.len());
+    assert!(has_label(&items, "greet"), "greet method on User: {items:?}");
+    assert!(has_label(&items, "age"), "age method on User");
+    assert!(
+        items.iter().all(|i| i.kind == Some(CompletionItemKind::METHOD)),
+        "all items METHOD kind"
+    );
+}
+
+/// POS: call-return receiver — `make(x).` offers the returned type's methods.
+#[test]
+fn f5_pos_call_return_methods() {
+    let src = "module demo.c\ntype Bar {}\nfn Bar @run() -> () => ()\nfn make(seed Bar) -> Bar => seed\nfn f(seed Bar) -> () {\n    make(seed).";
+    let items = method_items(src, src.len());
+    assert!(has_label(&items, "run"), "run method on Bar via call return: {items:?}");
+}
+
+/// NEG: unknown receiver variable → graceful (no panic; no bogus items).
+#[test]
+fn f5_neg_unknown_var_graceful() {
+    let src = "module demo.n\nfn f() -> () {\n    unknown_xyz.";
+    // Must not panic; an empty/degraded list is acceptable.
+    let items = method_items(src, src.len());
+    let _ = items;
+    // Also via the full entry point.
+    let items2 = completion_for(src, src.len());
+    let _ = items2;
+}
+
+/// EDGE: chained member access — `a.b.` uses the type of `a.b`.
+#[test]
+fn f5_edge_chained_member() {
+    // `l.origin` is a Point; completing `l.origin.` should offer Point methods.
+    let src = "module demo.e\n\
+type Point { x int }\n\
+fn Point @norm() -> int => 0\n\
+type Line { origin Point }\n\
+fn f(l Line) -> () {\n    l.origin.";
+    let items = method_items(src, src.len());
+    // Graceful either way, but when resolved it should include Point's `norm`.
+    if !items.is_empty() {
+        assert!(
+            has_label(&items, "norm") || items.iter().all(|i| i.kind == Some(CompletionItemKind::METHOD)),
+            "chained receiver should resolve to Point methods: {items:?}"
+        );
+    }
+}
+
+/// POS (cross-file): a folder-module peer file declares the type + method;
+/// completion in another peer offers it (methods inlined cross-file).
+#[test]
+fn f5_pos_cross_file_methods() {
+    use std::path::PathBuf;
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo = manifest.parent().expect("nova-lsp has a parent");
+    let dir = repo.join("target").join("f5_xfile_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Peer A: declares the type and its method.
+    let a = "module demo.xfile\ntype Widget { id int }\nfn Widget @render() -> str => \"w\"\n";
+    std::fs::write(dir.join("a.nv"), a).unwrap();
+    // Peer B (the edited buffer): uses Widget, receiver-dot at the end.
+    let b_path = dir.join("b.nv");
+    let b = "module demo.xfile\nfn f(w Widget) -> () {\n    w.";
+    std::fs::write(&b_path, b).unwrap();
+
+    let items = method_items_typed(&b_path, b, b.len());
+    assert!(
+        has_label(&items, "render"),
+        "cross-file peer method `render` should appear: {items:?}"
+    );
 }

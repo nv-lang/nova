@@ -13,9 +13,12 @@ use dashmap::DashMap;
 use ropey::Rope;
 use tower_lsp::lsp_types::Url;
 
+use std::path::Path;
+
 use crate::debouncer::Debouncer;
 use crate::provenance::{self, ResolvedModule};
 use crate::semantic_tokens_delta::SemanticTokensSnapshot;
+use crate::stdlib_index::StdlibIndex;
 use crate::symbols::{DocumentSymbolCache, WorkspaceIndex};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +129,13 @@ pub struct WorkspaceState {
     /// cache hits (no rebuild on a repeated same-version request) and rebuilds
     /// (after a version bump). Incremented once per actual build.
     pub resolved_build_count: AtomicU64,
+
+    /// Plan 104.10 Ф.5: per-stdlib-directory cache of the filesystem search-path
+    /// [`StdlibIndex`] (import-completion module tree + type/protocol → module
+    /// resolution for add-import quick-fixes). Keyed by the resolved stdlib dir
+    /// so all documents in one workspace share a single FS walk. Built lazily on
+    /// first use ([`WorkspaceState::stdlib_index`]).
+    pub stdlib_index_cache: DashMap<PathBuf, Arc<StdlibIndex>>,
 }
 
 impl Default for WorkspaceState {
@@ -140,6 +150,7 @@ impl Default for WorkspaceState {
             workspace_index: WorkspaceIndex::default(),
             resolved_cache: DashMap::new(),
             resolved_build_count: AtomicU64::new(0),
+            stdlib_index_cache: DashMap::new(),
         }
     }
 }
@@ -224,6 +235,23 @@ impl WorkspaceState {
     /// (called on `didClose` to bound memory to open documents).
     pub fn invalidate_resolved(&self, uri: &Url) {
         self.resolved_cache.remove(uri);
+    }
+
+    /// Plan 104.10 Ф.5: the filesystem [`StdlibIndex`] for the workspace that
+    /// contains `doc_path`, built once per stdlib directory and shared. Resolves
+    /// the repo root from `doc_path` (nearest `nova.toml` workspace), then the
+    /// stdlib dir (`resolve_std_path`), builds/caches the index. `None` when
+    /// `doc_path` is not inside a Nova workspace.
+    pub fn stdlib_index(&self, doc_path: &Path) -> Option<Arc<StdlibIndex>> {
+        let repo = nova_codegen::test_runner::find_repo_root_from(doc_path)?;
+        let stdlib_dir = nova_codegen::manifest::resolve_std_path(&repo);
+        if let Some(idx) = self.stdlib_index_cache.get(&stdlib_dir) {
+            return Some(idx.clone());
+        }
+        let idx = Arc::new(StdlibIndex::build(&stdlib_dir, "std"));
+        self.stdlib_index_cache
+            .insert(stdlib_dir.clone(), idx.clone());
+        Some(idx)
     }
 
     /// Plan 104.10 Ф.1: number of `ResolvedModule` builds performed so far.

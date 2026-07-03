@@ -23,10 +23,19 @@
 //! - [S-104.3-2] Import path: hardcoded std module tree.
 //! - [S-104.3-3] resolve_provider=false — detail is inline in initial response.
 
+use std::path::{Path, PathBuf};
+
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Documentation, InsertTextFormat, MarkupContent,
     MarkupKind,
 };
+
+use nova_codegen::ast::{Item, Module, TypeRef};
+use nova_codegen::diag::MAIN_FILE_ID;
+use nova_codegen::types::ModuleEnv;
+
+use crate::provenance::{self, ResolvedModule};
+use crate::stdlib_index::StdlibIndex;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sort-text rank prefixes (lower string sorts first in editor dropdown)
@@ -857,22 +866,291 @@ pub fn ident_info_to_item(info: &IdentInfo) -> CompletionItem {
 
 
 
-/// Compute method completions for `expr.│` at the given offset.
-/// Methods come from scan_module_methods (AST scan of current file).
-/// Full type-driven completion is gated on Plan 104.10 Ф.5 (expr_types).
-pub fn method_items(src: &str, offset: usize) -> Vec<CompletionItem> {
-    let before = &src[..offset];
+/// Byte offset of the method-dot `.` immediately before `offset` (after
+/// trimming trailing whitespace), or `None` if the cursor is not a method-dot
+/// position. Rejects a purely-numeric receiver (`3.` is a float, not a call).
+fn method_dot_offset(src: &str, offset: usize) -> Option<usize> {
+    let before = &src[..offset.min(src.len())];
     let trimmed = before.trim_end();
     if !trimmed.ends_with('.') {
-        return vec![];
+        return None;
     }
-    let before_dot = &trimmed[..trimmed.len() - 1];
-    let obj_text = extract_last_expr(before_dot);
-    if obj_text.is_empty() {
-        return vec![];
+    let dot_byte = trimmed.len() - 1; // '.' is ASCII (1 byte)
+    let before_dot = trimmed[..dot_byte].trim_end();
+    // A method dot requires an expression before it. Accept identifiers, call
+    // results (`foo()`), and index results (`a[i]`); reject an empty receiver and
+    // a bare numeric literal (`3.` is a float, not a member access).
+    match before_dot.chars().last() {
+        None => None,
+        Some(')') | Some(']') => Some(dot_byte),
+        Some(c) if c.is_ascii_alphanumeric() || c == '_' => {
+            let obj = extract_last_expr(before_dot);
+            if obj.is_empty() || obj.chars().all(|c| c.is_ascii_digit()) {
+                None
+            } else {
+                Some(dot_byte)
+            }
+        }
+        // Anything else before the dot (operator, `.`, etc.) — not a receiver we
+        // can complete on.
+        Some(_) => None,
     }
-    let ty = extract_binding_type(&obj_text, src).unwrap_or_default();
-    scan_module_methods(src, &obj_text, &ty)
+}
+
+/// Repair a completion buffer so it parses, WITHOUT shifting any byte offset at
+/// or before `dot_byte` (so the receiver expression still ends exactly there):
+///
+/// 1. Overwrite the dangling method-dot at `dot_byte` with a space (`.` and ` `
+///    are both one byte) — turns the unparseable `recv.` into a bare `recv `
+///    expression statement whose inferred type the checker records.
+/// 2. Append the closing brackets needed to balance any still-open `(`/`[`/`{`
+///    (in correct reverse order). Interactive buffers are almost always
+///    truncated mid-block at the cursor, which would otherwise be a hard parse
+///    error and yield no `expr_types`.
+///
+/// All appended text lands strictly AFTER the original bytes, so offsets ≤
+/// `dot_byte` are preserved. Any residual type errors (e.g. a bare `count` in a
+/// `-> ()` function) are tolerated by the lenient IDE checker.
+fn repair_completion_buffer(src: &str, dot_byte: usize) -> String {
+    let mut s = src.to_string();
+    s.replace_range(dot_byte..dot_byte + 1, " ");
+
+    // Balance brackets over the repaired text, skipping string/char literals and
+    // line comments so their contents never miscount.
+    let bytes = s.as_bytes();
+    let mut stack: Vec<u8> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                // Line comment — skip to end of line.
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'"' | b'\'' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if bytes[i] == quote || bytes[i] == b'\n' {
+                        i += 1;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            b'(' | b'[' | b'{' => stack.push(bytes[i]),
+            b')' => {
+                if stack.last() == Some(&b'(') {
+                    stack.pop();
+                }
+            }
+            b']' => {
+                if stack.last() == Some(&b'[') {
+                    stack.pop();
+                }
+            }
+            b'}' => {
+                if stack.last() == Some(&b'{') {
+                    stack.pop();
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // Append closers in reverse (innermost first).
+    for &opener in stack.iter().rev() {
+        s.push(match opener {
+            b'(' => ')',
+            b'[' => ']',
+            _ => '}',
+        });
+    }
+    s
+}
+
+/// Extract the base type NAME from an inferred `TypeRef` (the name we look up in
+/// the method table). `Named{path:[..,"Foo"]}` → `Foo`; slice/array → `Vec`
+/// (the `[]T` sugar aliases `Vec[T]`); modifiers are peeled.
+fn type_ref_base_name(ty: &TypeRef) -> Option<String> {
+    match ty {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        TypeRef::Array(..) | TypeRef::FixedArray(..) => Some("Vec".to_string()),
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Pointer(inner, _) => type_ref_base_name(inner),
+        _ => None,
+    }
+}
+
+/// Find the inferred type-name of the receiver expression that ends exactly at
+/// `dot_byte` in the entry file, via the Ф.2 `expr_types` map. When several
+/// expressions share that end offset (nested), the OUTERMOST (smallest start)
+/// is the full receiver.
+fn receiver_type_name(env: &ModuleEnv, dot_byte: usize) -> Option<String> {
+    let mut best_start = usize::MAX;
+    let mut best_ty: Option<&TypeRef> = None;
+    for (span, ty) in &env.expr_types {
+        if span.file_id == MAIN_FILE_ID && span.end == dot_byte && span.start < best_start {
+            best_start = span.start;
+            best_ty = Some(ty);
+        }
+    }
+    best_ty.and_then(type_ref_base_name)
+}
+
+/// True if `recv`'s receiver type matches the target type name `ty_name`,
+/// accounting for the `[]T`/`Vec[T]` slice-alias equivalence.
+fn receiver_matches(recv: &nova_codegen::ast::Receiver, ty_name: &str) -> bool {
+    if recv.type_name == ty_name {
+        return true;
+    }
+    // `[]T` receivers (`fn []T @m`) are methods on `Vec[T]`.
+    if ty_name == "Vec" && recv.type_name.starts_with("[]") {
+        return true;
+    }
+    if recv.type_name == "Vec" && ty_name.starts_with("[]") {
+        return true;
+    }
+    false
+}
+
+/// Build a METHOD completion item for a receiver method declaration.
+fn method_completion_item(
+    fd: &nova_codegen::ast::FnDecl,
+    recv: &nova_codegen::ast::Receiver,
+) -> CompletionItem {
+    CompletionItem {
+        label: fd.name.clone(),
+        kind: Some(CompletionItemKind::METHOD),
+        detail: Some(crate::symbol::format_method_signature(fd, recv)),
+        documentation: crate::symbol::extract_doc(&fd.doc).map(|d| {
+            Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: d,
+            })
+        }),
+        sort_text: Some(format!("{}{}", RANK_MODULE, fd.name)),
+        ..Default::default()
+    }
+}
+
+/// All instance methods declared on `ty_name` across the resolved module —
+/// includes stdlib methods (imported items are inlined into `module.items`) and
+/// cross-file peer methods. Static (`.`) methods are excluded: a value receiver
+/// `x.` calls instance (`@`) methods only.
+fn methods_for_type_name(module: &Module, ty_name: &str) -> Vec<CompletionItem> {
+    use nova_codegen::ast::ReceiverKind;
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if let Some(recv) = &fd.receiver {
+                if recv.kind == ReceiverKind::Instance
+                    && receiver_matches(recv, ty_name)
+                    && seen.insert(fd.name.clone())
+                {
+                    out.push(method_completion_item(fd, recv));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Type-driven method completions from an already-resolved module. Returns
+/// `None` when the receiver type could not be inferred (so the caller can fall
+/// back to a text scan); `Some(items)` — possibly empty — when it was resolved.
+fn method_items_from_resolved(resolved: &ResolvedModule, dot_byte: usize) -> Option<Vec<CompletionItem>> {
+    let env = resolved.env.as_ref()?;
+    let ty_name = receiver_type_name(env, dot_byte)?;
+    Some(methods_for_type_name(&resolved.module, &ty_name))
+}
+
+/// Text-only fallback method scan (no type resolution available): scan the
+/// current file's own `fn Type @method` declarations. If the receiver's type is
+/// known from a `ro/mut name Type` annotation, filter to it; otherwise show all
+/// declared methods (graceful).
+fn method_items_text_fallback(src: &str, dot_byte: usize) -> Vec<CompletionItem> {
+    let obj = extract_last_expr(&src[..dot_byte]);
+    // A non-identifier receiver (`foo()`, `a[i]`) has no textual binding name to
+    // look up; show all declared methods (graceful) rather than crash.
+    let ty = if obj.is_empty() {
+        String::new()
+    } else {
+        extract_binding_type(&obj, src).unwrap_or_default()
+    };
+    scan_module_methods(src, &obj, &ty)
+}
+
+/// Plan 104.10 Ф.5: type-driven method completion for `expr.│`, given the
+/// on-disk `path` of the document (needed to inline stdlib/peer methods and to
+/// resolve the receiver's type). Builds a repaired, import-resolved module and
+/// looks the receiver type up in `expr_types`; degrades to a text scan when the
+/// type cannot be inferred.
+pub fn method_items_typed(path: &Path, src: &str, offset: usize) -> Vec<CompletionItem> {
+    let Some(dot_byte) = method_dot_offset(src, offset) else {
+        return vec![];
+    };
+    let repaired = repair_completion_buffer(src, dot_byte);
+    let resolved = provenance::resolve_module_for_ide(path, &repaired);
+    method_items_from_resolved(&resolved, dot_byte)
+        .unwrap_or_else(|| method_items_text_fallback(src, dot_byte))
+}
+
+/// Compute method completions for `expr.│` at the given offset.
+///
+/// Path-free convenience wrapper (used by unit/integration tests): discovers the
+/// repo root from the current working directory to resolve stdlib/peer methods,
+/// then delegates to [`method_items_typed`]. In the LSP server the document's
+/// real path is known, so the handler calls [`method_items_typed`] directly —
+/// this wrapper's CWD discovery is a test-only best-effort
+/// ([M-104.10-lsp-cwd-anchor]).
+pub fn method_items(src: &str, offset: usize) -> Vec<CompletionItem> {
+    match discover_anchor_path() {
+        Some(path) => method_items_typed(&path, src, offset),
+        None => match method_dot_offset(src, offset) {
+            Some(dot_byte) => method_items_text_fallback(src, dot_byte),
+            None => vec![],
+        },
+    }
+}
+
+/// [M-104.10-lsp-cwd-anchor] Best-effort discovery of an existing on-disk `.nv`
+/// anchor file inside the current repo, used ONLY by the path-free
+/// `completion_for` / `method_items` convenience wrappers so that tests (and any
+/// caller lacking a document path) can still resolve stdlib symbols. The LSP
+/// server never relies on this — it always has the real document path / a cached
+/// [`StdlibIndex`].
+///
+/// A real *file* (not a directory) is required so `resolve_imports_inline`'s
+/// repo-root / stdlib resolution succeeds; the stdlib `prelude.nv` is a stable
+/// choice that exists in every Nova workspace. The anchor only supplies the
+/// workspace location for import resolution — the completion buffer's own source
+/// is what actually gets parsed and type-checked.
+fn discover_anchor_path() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let repo = nova_codegen::test_runner::find_repo_root_from(&cwd)?;
+    let anchor = nova_codegen::manifest::resolve_std_path(&repo).join("prelude.nv");
+    anchor.exists().then_some(anchor)
+}
+
+/// [M-104.10-lsp-cwd-anchor] Best-effort [`StdlibIndex`] for the path-free
+/// wrappers: discover the repo root from CWD, resolve its stdlib dir, and build
+/// an index. `None` when no workspace is reachable.
+fn discover_stdlib_index() -> Option<StdlibIndex> {
+    let cwd = std::env::current_dir().ok()?;
+    let repo = nova_codegen::test_runner::find_repo_root_from(&cwd)?;
+    let stdlib_dir = nova_codegen::manifest::resolve_std_path(&repo);
+    Some(StdlibIndex::build(&stdlib_dir, "std"))
 }
 
 
@@ -915,140 +1193,65 @@ fn scan_module_methods(src: &str, _obj_text: &str, ty: &str) -> Vec<CompletionIt
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Import path completion (104.3.4)
+// Import path completion (104.3.4 + Ф.5 [M-104.10-hardcode-lists])
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Static std module tree for import completion.
-///
-/// [M-104.10-hardcode-lists] (Ф.0.5, stale-removal step): every entry below is
-/// verified against the real `std/` tree on disk — the previous list advertised
-/// modules that **do not exist** (`std.collections.map`, `std.sync.*`,
-/// `std.io.*`, `std.math`, `std.fmt`, `std.os`, `std.env`,
-/// `std.runtime.memory`, …), which lied in import completion. The full fix —
-/// resolving this list from the actual search-path (FS-scan of the stdlib dir /
-/// manifest) instead of hardcoding — is Ф.5. Until then, keep this list in sync
-/// with `std/` and add nothing that is not a real module file/folder.
-/// Format: `["a.b.c", "a.b.d", ...]` — dot-separated paths.
-const STD_MODULES: &[&str] = &[
-    // Top-level modules (single-file).
-    "std.prelude",
-    "std.text",
-    "std.sort",
-    "std.bench",
-    // Collections.
-    "std.collections",
-    "std.collections.vec",
-    "std.collections.hashmap",
-    "std.collections.set",
-    "std.collections.range",
-    // Concurrency.
-    "std.concurrency",
-    "std.concurrency.cancellation",
-    "std.concurrency.timer",
-    // Encoding.
-    "std.encoding",
-    "std.encoding.base64",
-    "std.encoding.json",
-    "std.encoding.utf16",
-    // Net.
-    "std.net",
-    "std.net.addr",
-    "std.net.dns",
-    "std.net.tcp",
-    "std.net.udp",
-    "std.net.error",
-    // Time.
-    "std.time",
-    "std.time.duration",
-    // Unicode.
-    "std.unicode",
-    "std.unicode.case",
-    "std.unicode.category",
-    "std.unicode.collate",
-    "std.unicode.graphemes",
-    "std.unicode.normalize",
-    "std.unicode.sentences",
-    "std.unicode.words",
-    // Testing.
-    "std.testing",
-    "std.testing.property",
-    "std.testing.handlers",
-    // FFI.
-    "std.ffi",
-    "std.ffi.cstr",
-    // Runtime (public surface).
-    "std.runtime",
-    "std.runtime.string_builder",
-];
+/// Build import-path completions for `path_prefix` from a filesystem-derived
+/// [`StdlibIndex`] (no hardcoded module list — compiler-conventions §3). Each
+/// suggested segment is a module that actually exists on disk under the given
+/// prefix.
+pub fn import_items_from_index(idx: &StdlibIndex, path_prefix: &[String]) -> Vec<CompletionItem> {
+    let prefix_str = path_prefix.join(".");
+    idx.child_segments(path_prefix)
+        .into_iter()
+        .map(|segment| {
+            let full = if prefix_str.is_empty() {
+                segment.clone()
+            } else {
+                format!("{}.{}", prefix_str, segment)
+            };
+            CompletionItem {
+                label: segment.clone(),
+                kind: Some(CompletionItemKind::MODULE),
+                detail: Some(format!("module {}", full)),
+                sort_text: Some(format!("{}{}", RANK_STD, segment)),
+                documentation: Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("**module** `{}`", full),
+                })),
+                ..Default::default()
+            }
+        })
+        .collect()
+}
 
 /// Build import path completions for a given path prefix.
 ///
-/// E.g. `["std", "collections"]` → modules under `std.collections.*`.
+/// Path-free convenience wrapper (tests / callers without a resolved
+/// [`StdlibIndex`]): discovers the stdlib dir from the current working directory
+/// ([M-104.10-lsp-cwd-anchor]) and builds an index on the fly. The LSP server
+/// uses a cached index and calls [`import_items_from_index`] directly.
 pub fn import_items(path_prefix: &[String]) -> Vec<CompletionItem> {
-    let prefix_str = path_prefix.join(".");
-    let mut out = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    for module in STD_MODULES {
-        // Check if this module starts with our prefix.
-        let matches = if prefix_str.is_empty() {
-            true
-        } else if module.starts_with(&prefix_str) {
-            // It must have a `.` after the prefix (i.e. it's a sub-module).
-            let rest = &module[prefix_str.len()..];
-            rest.is_empty() || rest.starts_with('.')
-        } else {
-            false
-        };
-
-        if !matches {
-            continue;
-        }
-
-        // Extract the next segment after the prefix.
-        let rest = if prefix_str.is_empty() {
-            module.to_string()
-        } else if *module == prefix_str.as_str() {
-            // Exact match — no next segment.
-            continue;
-        } else {
-            module[prefix_str.len() + 1..].to_string() // skip leading `.`
-        };
-
-        // Take only the next segment (first component of rest).
-        let segment = rest.split('.').next().unwrap_or("").to_string();
-        if segment.is_empty() || !seen.insert(segment.clone()) {
-            continue;
-        }
-
-        out.push(CompletionItem {
-            label: segment.clone(),
-            kind: Some(CompletionItemKind::MODULE),
-            detail: Some(format!("module {}.{}", prefix_str, segment)),
-            sort_text: Some(format!("{}{}", RANK_STD, segment)),
-            documentation: Some(Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: format!("**std module** `{}.{}`", prefix_str, segment),
-            })),
-            ..Default::default()
-        });
+    match discover_stdlib_index() {
+        Some(idx) => import_items_from_index(&idx, path_prefix),
+        None => vec![],
     }
-    out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute all completion items for cursor at `offset` in `src`.
-///
-/// Returns an empty Vec if:
-/// - cursor is in a comment or string
-/// - no relevant completions found
-///
-/// This is the single entry point called by the LSP server handler.
-/// `offset` is clamped to `src.len()` if past the end.
-pub fn completion_for(src: &str, offset: usize) -> Vec<CompletionItem> {
+/// Core completion computation. `path` (document location) enables type-driven
+/// method completion; `stdlib` (a resolved [`StdlibIndex`]) enables import
+/// completion. Either may be `None`, in which case that context degrades
+/// gracefully (empty / text-only).
+fn completion_core(
+    src: &str,
+    offset: usize,
+    path: Option<&Path>,
+    stdlib: Option<&StdlibIndex>,
+) -> Vec<CompletionItem> {
     let offset = offset.min(src.len());
     let ctx = match detect_context(src, offset) {
         Some(c) => c,
@@ -1059,10 +1262,19 @@ pub fn completion_for(src: &str, offset: usize) -> Vec<CompletionItem> {
 
     match &ctx {
         CompletionContext::MethodDot { .. } => {
-            items.extend(method_items(src, offset));
+            match path {
+                Some(p) => items.extend(method_items_typed(p, src, offset)),
+                None => {
+                    if let Some(dot_byte) = method_dot_offset(src, offset) {
+                        items.extend(method_items_text_fallback(src, dot_byte));
+                    }
+                }
+            }
         }
         CompletionContext::Import { path_prefix } => {
-            items.extend(import_items(path_prefix));
+            if let Some(idx) = stdlib {
+                items.extend(import_items_from_index(idx, path_prefix));
+            }
         }
         CompletionContext::TopLevel | CompletionContext::FnBody | CompletionContext::TypeBody => {
             // Keyword + snippet completions.
@@ -1082,6 +1294,33 @@ pub fn completion_for(src: &str, offset: usize) -> Vec<CompletionItem> {
     items.retain(|i| seen_labels.insert(i.label.clone()));
 
     items
+}
+
+/// Compute all completion items for cursor at `offset` in `src`.
+///
+/// Path-free convenience entry point (unit/integration tests, and any caller
+/// without a document path): stdlib/method resolution is discovered from the
+/// current working directory ([M-104.10-lsp-cwd-anchor]). The LSP server calls
+/// [`completion_for_doc`] with the real document path + a cached index.
+///
+/// Returns an empty Vec if the cursor is in a comment or string, or nothing
+/// applies. `offset` is clamped to `src.len()`.
+pub fn completion_for(src: &str, offset: usize) -> Vec<CompletionItem> {
+    let anchor = discover_anchor_path();
+    let stdlib = discover_stdlib_index();
+    completion_core(src, offset, anchor.as_deref(), stdlib.as_ref())
+}
+
+/// Plan 104.10 Ф.5: LSP-server completion entry point. `path` is the document's
+/// on-disk location (enables type-driven method completion) and `stdlib` is the
+/// workspace's cached [`StdlibIndex`] (enables FS-sourced import completion).
+pub fn completion_for_doc(
+    path: &Path,
+    src: &str,
+    offset: usize,
+    stdlib: Option<&StdlibIndex>,
+) -> Vec<CompletionItem> {
+    completion_core(src, offset, Some(path), stdlib)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

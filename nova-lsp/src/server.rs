@@ -19,7 +19,7 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::code_actions::compute_code_actions;
+use crate::code_actions::compute_code_actions_with_stdlib;
 use crate::compiler::{check_file_with_root, check_workspace, run_with_large_stack};
 use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
@@ -628,10 +628,19 @@ impl LanguageServer for Backend {
 
         tracing::debug!(uri = %uri, line = pos.line, char = pos.character, offset, "completion request");
 
+        // Plan 104.10 Ф.5: type-driven method completion + FS-sourced import
+        // completion. Resolve the document's on-disk path (enables receiver-type
+        // inference) and the workspace stdlib index (enables import completion).
+        let doc_path = uri.to_file_path().ok();
+        let stdlib = doc_path.as_deref().and_then(|p| self.state.stdlib_index(p));
+
         // Run completion synchronously in large-stack thread (compiler API uses recursion).
         let src_clone = src.clone();
-        let items = run_with_large_stack(move || {
-            completion::completion_for(&src_clone, offset)
+        let items = run_with_large_stack(move || match doc_path.as_deref() {
+            Some(path) => {
+                completion::completion_for_doc(path, &src_clone, offset, stdlib.as_deref())
+            }
+            None => completion::completion_for(&src_clone, offset),
         });
 
         if items.is_empty() {
@@ -857,11 +866,18 @@ impl LanguageServer for Backend {
             let src = self.state.docs.get(&uri).map(|d| d.text.to_string())
                 .unwrap_or_default();
             let rope = ropey::Rope::from_str(&src);
-            let ca = compute_code_actions(
+            // Plan 104.10 Ф.5: resolve add-import quick-fixes from the workspace
+            // stdlib search-path index (no hardcoded type/protocol → module).
+            let stdlib = uri
+                .to_file_path()
+                .ok()
+                .and_then(|p| self.state.stdlib_index(&p));
+            let ca = compute_code_actions_with_stdlib(
                 &uri,
                 &src,
                 &rope,
                 &params.context.diagnostics,
+                stdlib.as_deref(),
             );
             actions.extend(ca);
         }

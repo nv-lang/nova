@@ -30,6 +30,7 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::diagnostic_mapping::extract_error_code;
+use crate::stdlib_index::StdlibIndex;
 
 /// LSP Diagnostic — the subset we need for code-action dispatch.
 /// We use the lsp_types::Diagnostic directly.
@@ -51,6 +52,21 @@ pub fn compute_code_actions(
     src: &str,
     rope: &Rope,
     diagnostics: &[Diagnostic],
+) -> Vec<tower_lsp::lsp_types::CodeActionOrCommand> {
+    compute_code_actions_with_stdlib(uri, src, rope, diagnostics, None)
+}
+
+/// Plan 104.10 Ф.5 ([M-104.10-hardcode-lists]): like [`compute_code_actions`],
+/// but with a filesystem-derived [`StdlibIndex`] so add-import quick-fixes
+/// resolve type/protocol → module from the real search-path instead of a
+/// hardcoded table. `stdlib = None` degrades gracefully (import-suggestion
+/// fixes that depend on it simply produce no action).
+pub fn compute_code_actions_with_stdlib(
+    uri: &tower_lsp::lsp_types::Url,
+    src: &str,
+    rope: &Rope,
+    diagnostics: &[Diagnostic],
+    stdlib: Option<&StdlibIndex>,
 ) -> Vec<tower_lsp::lsp_types::CodeActionOrCommand> {
     use tower_lsp::lsp_types::CodeActionOrCommand;
 
@@ -74,9 +90,9 @@ pub fn compute_code_actions(
             "E_DUPLICATE_GENERIC_DECL"         => fix_duplicate_generic(uri, src, rope, diag),
             "E_PREFIX_SHADOWS_NAMED_TYPE"      => fix_prefix_shadows_named_type(uri, src, rope, diag),
             "E_UNUSED_PREFIX_TYPEVAR"          => fix_unused_prefix_typevar(uri, src, rope, diag),
-            "E_BOUND_UNKNOWN"                  => fix_bound_unknown(uri, src, rope, diag),
+            "E_BOUND_UNKNOWN"                  => fix_bound_unknown(uri, src, rope, diag, stdlib),
             "E_BOUND_NOT_PROTOCOL"             => fix_bound_not_protocol(uri, src, rope, diag),
-            "E_PROTOCOL_EMBED_UNKNOWN"         => fix_protocol_embed_unknown(uri, src, rope, diag),
+            "E_PROTOCOL_EMBED_UNKNOWN"         => fix_protocol_embed_unknown(uri, src, rope, diag, stdlib),
             // ── 104.5.3: Plan 100 consume / mutability fixes ─────────────────
             "E_CONSUME_KEYWORD_MISSING"          => fix_consume_keyword_missing(uri, src, rope, diag),
             "E_LOCAL_NOT_MUT"                    => fix_local_not_mut(uri, src, rope, diag),
@@ -91,15 +107,15 @@ pub fn compute_code_actions(
             "E_PROTOCOL_EMBED_CYCLE"         => fix_protocol_embed_cycle(uri, src, rope, diag),
             "E_PROTOCOL_EMBED_DUPLICATE"     => fix_protocol_embed_duplicate(uri, src, rope, diag),
             "E_PROTOCOL_EMBED_NOT_NAMED"     => fix_protocol_embed_not_named(uri, src, rope, diag),
-            "E_EXTENSION_METHOD_NEEDS_IMPORT"=> fix_extension_method_needs_import(uri, src, rope, diag),
+            "E_EXTENSION_METHOD_NEEDS_IMPORT"=> fix_extension_method_needs_import(uri, src, rope, diag, stdlib),
             "E_KW_REMOVED_LET"               => fix_kw_removed_let(uri, src, rope, diag),
             "E_KW_REMOVED_READONLY"          => fix_kw_removed_readonly(uri, src, rope, diag),
             // ── 104.5.5: Auto-import / suggest-import ─────────────────────────
-            "E_TYPE_UNKNOWN"                 => fix_type_unknown(uri, src, rope, diag),
+            "E_TYPE_UNKNOWN"                 => fix_type_unknown(uri, src, rope, diag, stdlib),
             "E_AUTO_DERIVE_UNKNOWN_PROTOCOL" => fix_auto_derive_unknown_protocol(uri, src, rope, diag),
             // ── 104.5.6: Protocol impl fixes ──────────────────────────────────
             "E_METHOD_REDEFINITION"          => fix_method_redefinition(diag),
-            "E_IMPL_UNKNOWN_PROTOCOL"        => fix_impl_unknown_protocol(uri, diag),
+            "E_IMPL_UNKNOWN_PROTOCOL"        => fix_impl_unknown_protocol(uri, diag, stdlib),
             "E_IMPL_NOT_A_PROTOCOL_METHOD"   => fix_impl_not_a_protocol_method(diag),
             "E_IMPL_SIGNATURE_MISMATCH"      => fix_impl_signature_mismatch(diag),
             "E_PRIMITIVE_NO_PROTOCOL_METHOD" => fix_primitive_no_protocol_method(diag),
@@ -485,13 +501,14 @@ fn fix_bound_unknown(
     _src: &str,
     _rope: &Rope,
     diag: &Diagnostic,
+    stdlib: Option<&StdlibIndex>,
 ) -> Option<CodeAction> {
     let bound_name = extract_backtick_token(&diag.message, "unknown type `")?
         .trim_end_matches('`')
         .to_string();
 
     // Look up known stdlib protocols by name.
-    let import_path = known_stdlib_protocol_import(&bound_name)?;
+    let import_path = known_stdlib_protocol_import(stdlib, &bound_name)?;
 
     // We produce a note-action (no edit) pointing to the import line we'd suggest.
     // Actual import insertion is 104.5.5 territory — here we note the suggestion.
@@ -520,11 +537,12 @@ fn fix_protocol_embed_unknown(
     _src: &str,
     _rope: &Rope,
     diag: &Diagnostic,
+    stdlib: Option<&StdlibIndex>,
 ) -> Option<CodeAction> {
     let name = extract_backtick_token(&diag.message, "unknown type `")?
         .trim_end_matches('`')
         .to_string();
-    if let Some(import_path) = known_stdlib_protocol_import(&name) {
+    if let Some(import_path) = known_stdlib_protocol_import(stdlib, &name) {
         Some(make_note_action(
             &format!("Add `import {}.{{{}}}` for unknown protocol `{}`", import_path, name, name),
             diag,
@@ -856,14 +874,15 @@ fn fix_extension_method_needs_import(
     _src: &str,
     _rope: &Rope,
     diag: &Diagnostic,
+    stdlib: Option<&StdlibIndex>,
 ) -> Option<CodeAction> {
     // Extract type name from message: "extension method `Type.method()` requires import"
     let type_name = extract_backtick_token(&diag.message, "extension method `")?;
     let type_name = type_name.split('.').next()?.to_string();
 
-    // Insert import at top of file.
-    let import_module = known_stdlib_type_module(&type_name)
-        .unwrap_or("std.UNKNOWN_MODULE");
+    // Insert import at top of file. Resolve the module from the search-path
+    // index; without it we cannot name a real module, so skip the fix.
+    let import_module = known_stdlib_type_module(stdlib, &type_name)?;
 
     let pos = Position { line: 0, character: 0 };
     let edit = insert_edit(uri, pos,
@@ -937,6 +956,7 @@ fn fix_type_unknown(
     _src: &str,
     _rope: &Rope,
     diag: &Diagnostic,
+    stdlib: Option<&StdlibIndex>,
 ) -> Option<CodeAction> {
     // Extract the unknown type name from the diagnostic message.
     // Typical message: "[E_TYPE_UNKNOWN] type `Foo` is not defined"
@@ -944,7 +964,7 @@ fn fix_type_unknown(
         .trim_end_matches('`')
         .to_string();
 
-    let module = known_stdlib_type_module(&type_name)?;
+    let module = known_stdlib_type_module(stdlib, &type_name)?;
 
     let pos = Position { line: 0, character: 0 };
     let edit = insert_edit(uri, pos, format!("import {}.{{{}}}\n", module, type_name));
@@ -1008,11 +1028,12 @@ fn fix_method_redefinition(diag: &Diagnostic) -> Option<CodeAction> {
 fn fix_impl_unknown_protocol(
     uri: &tower_lsp::lsp_types::Url,
     diag: &Diagnostic,
+    stdlib: Option<&StdlibIndex>,
 ) -> Option<CodeAction> {
     let name = extract_backtick_token(&diag.message, "unknown protocol `")?
         .trim_end_matches('`')
         .to_string();
-    if let Some(import_path) = known_stdlib_protocol_import(&name) {
+    if let Some(import_path) = known_stdlib_protocol_import(stdlib, &name) {
         let pos = Position { line: 0, character: 0 };
         let edit = insert_edit(uri, pos, format!("import {}.{{{}}}\n", import_path, name));
         Some(make_action(
@@ -1168,51 +1189,31 @@ fn fix_relational_operand_not_ordered(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Knowledge tables
+// Search-path resolution ([M-104.10-hardcode-lists])
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// compiler-conventions §3: "what lives in packages is never hardcoded". These
+// helpers resolve type/protocol → import module from a filesystem-derived
+// `StdlibIndex` (the real search-path) rather than a stale literal table — the
+// old hardcoded lists even named pre-D237 protocols (`Printable`/`Hashable`/…)
+// and a non-existent `std.collections.map`.
 
-/// Return the stdlib import module path for a known protocol name.
-fn known_stdlib_protocol_import(name: &str) -> Option<&'static str> {
-    match name {
-        "Printable" | "Display" => Some("std.prelude"),
-        "Debug"     => Some("std.prelude"),
-        "Hashable"  => Some("std.prelude"),
-        "Equatable" => Some("std.prelude"),
-        "Ordered"   => Some("std.prelude"),
-        "Cloneable" => Some("std.prelude"),
-        "Iter"      => Some("std.prelude"),
-        "Index"     => Some("std.prelude"),
-        "MutIndex"  => Some("std.prelude"),
-        "From"      => Some("std.prelude"),
-        "Into"      => Some("std.prelude"),
-        "Default"   => Some("std.prelude"),
-        _ => None,
-    }
+/// The stdlib import module path that declares protocol `name`, per the
+/// filesystem search-path index (`None` if unknown / no index available).
+fn known_stdlib_protocol_import(stdlib: Option<&StdlibIndex>, name: &str) -> Option<String> {
+    stdlib?.protocol_module(name).map(str::to_string)
 }
 
-/// Return the stdlib module path for a known type name.
-fn known_stdlib_type_module(name: &str) -> Option<&'static str> {
-    match name {
-        "Vec"       => Some("std.collections.vec"),
-        "HashMap"   => Some("std.collections.map"),
-        "HashSet"   => Some("std.collections.set"),
-        "Option"    => Some("std.prelude"),
-        "Result"    => Some("std.prelude"),
-        "Duration"  => Some("std.time.duration"),
-        "Timestamp" => Some("std.time.duration"),
-        "Path"      => Some("std.path.path"),
-        "JsonValue" => Some("std.encoding.json"),
-        "StringBuilder" => Some("std.runtime.string_builder"),
-        "TcpStream" | "TcpListener" => Some("std.net.tcp"),
-        "UdpSocket" => Some("std.net.udp"),
-        "SocketAddr"=> Some("std.net.addr"),
-        _ => None,
-    }
+/// The stdlib module path that declares type `name`, per the filesystem
+/// search-path index (`None` if unknown / no index available).
+fn known_stdlib_type_module(stdlib: Option<&StdlibIndex>, name: &str) -> Option<String> {
+    stdlib?.type_module(name).map(str::to_string)
 }
 
-/// List of protocols supported by `#derive(...)`.
+/// Protocols supported by `#derive(...)` — sourced from the compiler's own
+/// built-in list (single source of truth), never a hand-maintained copy.
 fn auto_derivable_protocols() -> Vec<&'static str> {
-    vec!["Printable", "Debug", "Hashable", "Equatable", "Ordered", "Cloneable", "Default"]
+    nova_codegen::protocols::auto_derive::builtin_protocol_names().to_vec()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1270,6 +1271,16 @@ mod tests {
 
     fn uri() -> tower_lsp::lsp_types::Url {
         tower_lsp::lsp_types::Url::parse("file:///test.nv").unwrap()
+    }
+
+    /// Build a real filesystem [`StdlibIndex`] over the repo's `std/` so
+    /// add-import fixes resolve type/protocol → module from the actual
+    /// search-path (Plan 104.10 Ф.5 [M-104.10-hardcode-lists]).
+    fn stdlib_idx() -> StdlibIndex {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo = manifest.parent().expect("nova-lsp has a parent");
+        let dir = nova_codegen::manifest::resolve_std_path(repo);
+        StdlibIndex::build(&dir, "std")
     }
 
     // ── Framework (104.5.1) ────────────────────────────────────────────────
@@ -1400,14 +1411,17 @@ mod tests {
         let _ = actions;
     }
 
-    /// pos_101_5: E_BOUND_UNKNOWN produces note action for known protocol.
+    /// pos_101_5: E_BOUND_UNKNOWN produces note action for a real stdlib
+    /// protocol (`Hash`, D237; the old `Hashable` no longer exists), resolved
+    /// from the filesystem search-path index.
     #[test]
     fn pos_101_5_bound_unknown_known_protocol_suggests_import() {
-        let src = "fn[T Hashable] Foo @bar(self Foo) => ()\n";
+        let src = "fn[T Hash] Foo @bar(self Foo) => ()\n";
         let rope = Rope::from_str(src);
-        let msg = "[E_BOUND_UNKNOWN] unknown type `Hashable` used as generic bound";
-        let diag = make_diag_with_code("E_BOUND_UNKNOWN", msg, 0, 4, 12);
-        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        let msg = "[E_BOUND_UNKNOWN] unknown type `Hash` used as generic bound";
+        let diag = make_diag_with_code("E_BOUND_UNKNOWN", msg, 0, 4, 8);
+        let idx = stdlib_idx();
+        let actions = compute_code_actions_with_stdlib(&uri(), src, &rope, &[diag], Some(&idx));
         assert!(!actions.is_empty());
     }
 
@@ -1660,7 +1674,8 @@ mod tests {
         let rope = Rope::from_str(src);
         let msg = "[E_TYPE_UNKNOWN] type `Vec` is not defined";
         let diag = make_diag_with_code("E_TYPE_UNKNOWN", msg, 0, 5, 8);
-        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        let idx = stdlib_idx();
+        let actions = compute_code_actions_with_stdlib(&uri(), src, &rope, &[diag], Some(&idx));
         assert!(!actions.is_empty());
     }
 
@@ -1675,18 +1690,20 @@ mod tests {
         assert!(actions.is_empty(), "truly unknown type should yield no action");
     }
 
-    /// pos_ai_2: E_AUTO_DERIVE_UNKNOWN_PROTOCOL with close typo → suggests correction.
+    /// pos_ai_2: E_AUTO_DERIVE_UNKNOWN_PROTOCOL with close typo → suggests
+    /// correction. Derivable protocol names come from the compiler's own
+    /// built-in list (D237: `Hash`, not the retired `Hashable`).
     #[test]
     fn pos_ai_2_auto_derive_unknown_close_typo() {
-        let src = "#derive(Hashble)\ntype Foo {}\n";
+        let src = "#derive(Hashh)\ntype Foo {}\n";
         let rope = Rope::from_str(src);
-        let msg = "[E_AUTO_DERIVE_UNKNOWN_PROTOCOL] unknown protocol `Hashble`";
-        let diag = make_diag_with_code("E_AUTO_DERIVE_UNKNOWN_PROTOCOL", msg, 0, 8, 15);
+        let msg = "[E_AUTO_DERIVE_UNKNOWN_PROTOCOL] unknown protocol `Hashh`";
+        let diag = make_diag_with_code("E_AUTO_DERIVE_UNKNOWN_PROTOCOL", msg, 0, 8, 13);
         let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
         assert!(!actions.is_empty());
-        // Action should mention Hashable
+        // Action should mention the real built-in protocol `Hash`.
         if let tower_lsp::lsp_types::CodeActionOrCommand::CodeAction(ca) = &actions[0] {
-            assert!(ca.title.contains("Hashable"), "should suggest Hashable: {}", ca.title);
+            assert!(ca.title.contains("Hash"), "should suggest Hash: {}", ca.title);
         }
     }
 
@@ -1717,15 +1734,21 @@ mod tests {
         assert!(!actions.is_empty(), "should produce a note action");
     }
 
-    /// pos_proto_2: E_IMPL_UNKNOWN_PROTOCOL for known stdlib protocol → suggests import.
+    /// pos_proto_2: E_IMPL_UNKNOWN_PROTOCOL for a real stdlib protocol (`Hash`)
+    /// → suggests import, resolved from the filesystem search-path index.
     #[test]
     fn pos_proto_2_impl_unknown_known_protocol_import() {
-        let src = "impl Hashable for Foo {}\n";
+        let src = "impl Hash for Foo {}\n";
         let rope = Rope::from_str(src);
-        let msg = "[E_IMPL_UNKNOWN_PROTOCOL] unknown protocol `Hashable`";
-        let diag = make_diag_with_code("E_IMPL_UNKNOWN_PROTOCOL", msg, 0, 5, 13);
-        let actions = compute_code_actions(&uri(), src, &rope, &[diag]);
+        let msg = "[E_IMPL_UNKNOWN_PROTOCOL] unknown protocol `Hash`";
+        let diag = make_diag_with_code("E_IMPL_UNKNOWN_PROTOCOL", msg, 0, 5, 9);
+        let idx = stdlib_idx();
+        let actions = compute_code_actions_with_stdlib(&uri(), src, &rope, &[diag], Some(&idx));
         assert!(!actions.is_empty());
+        // The suggestion must name a real import action (not the fallback note).
+        if let tower_lsp::lsp_types::CodeActionOrCommand::CodeAction(ca) = &actions[0] {
+            assert!(ca.title.contains("import"), "should suggest an import: {}", ca.title);
+        }
     }
 
     /// pos_proto_3: E_DUPLICATE_PROTOCOL_IMPL → note action.

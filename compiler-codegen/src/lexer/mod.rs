@@ -1010,6 +1010,46 @@ pub fn lex_with_file_id(src: &str, file_id: FileId) -> Result<Vec<Token>, Diagno
     Lexer::new_with_file_id(src, file_id).lex()
 }
 
+/// Plan 104.10 Ф.5 ([M-104.10-hardcode-lists]): single-source keyword predicate
+/// for external tooling (nova-lsp rename validation). A word is a *reserved*
+/// keyword iff the lexer classifies it as a non-identifier keyword token — i.e.
+/// exactly one significant token whose kind is NOT `Ident`. This makes the
+/// lexer's own `match` (above, `lex_ident`) the single source of truth so tools
+/// never drift with a stale hand-maintained keyword list.
+///
+/// Contextual keywords that the lexer intentionally keeps as identifiers
+/// (`bench`, `measure`, `apply`, `raw`, `null`) are — correctly — reported as
+/// NOT reserved: they are valid identifiers and thus valid rename targets.
+///
+/// Retracted-but-still-lexed lexemes (`let`, `readonly`) are reported as
+/// reserved: they tokenize to `KwLet` / `KwReadonly` (so the parser can emit a
+/// precise "removed keyword" diagnostic), and a tool must not let a user rename
+/// a symbol *to* them.
+pub fn is_reserved_keyword(word: &str) -> bool {
+    // Only alphabetic/underscore words can be keywords; reject anything that
+    // would not lex as a single identifier-shaped token (operators, digits,
+    // whitespace, empty).
+    if word.is_empty()
+        || !word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || word.chars().next().map_or(true, |c| c.is_ascii_digit())
+    {
+        return false;
+    }
+    match lex(word) {
+        Ok(tokens) => {
+            // Skip trailing Newline/Eof; expect exactly one significant token.
+            let mut sig = tokens
+                .iter()
+                .filter(|t| !matches!(t.kind, TokenKind::Newline | TokenKind::Eof));
+            match (sig.next(), sig.next()) {
+                (Some(tok), None) => !matches!(tok.kind, TokenKind::Ident(_)),
+                _ => false,
+            }
+        }
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod doc_comment_tests {
     //! Plan 45 / D104 unit-tests для лексера doc-comment'ов.

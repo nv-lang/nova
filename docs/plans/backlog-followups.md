@@ -153,7 +153,7 @@
 | `[M-104.6-symbol-table-rename]` | Rename через symbol-table/scope (shadow-safe), не regex word-boundary. | plan-104.10 Ф.7 | P2 |
 | `[M-104.2-body-walk-local-var-type]` | ✅ **CLOSED 2026-06-17 (Plan 104.2 Fix B).** body-walk обнаруживает курсор на `LetDecl`-биндинге и возвращает `SymbolInfo::LocalVar` с явной аннотацией типа из `LetDecl.ty`. Также: Fix A — `resolve_item` для `Item::Fn` возвращает `None` внутри тела → body-walk находит фактический callee (fn-body hover priority). | plan-104.2 Followups | ✅ done |
 | `[M-104.2-local-var-type-inference]` | ✅ **CLOSED (Variant B, 2026-06-18).** `infer_rhs_type()` в `symbol.rs`: `ro r = 5` → `int`, `ro r = 0..=5` → `Range`, `ro r = foo()` → return type из `ModuleEnv.fns`. `check_module()` вызывается в `hover.rs` и передаётся в resolver. Вариант A (расширить `ModuleEnv.expr_types`) — followup для полной точности (Plan 104.3+). | plan-104.2 Followups | ✅ done |
-| `[M-104.9-dynamic-method-completion]` | Completion items — статические таблицы в completion.rs; V2: запрашивать методы через compiler API. | plan-104.10 Ф.3 | P1 |
+| `[M-104.9-dynamic-method-completion]` | ✅ **CLOSED Plan 104.10 Ф.5 (2026-07-03).** Статические таблицы методов удалены; type-driven completion резолвит методы из `ResolvedModule` (expr_types → тип ресивера → scan `module.items`, вкл. inline stdlib + cross-file peers) в `completion.rs::method_items_typed`. | plan-104.10 Ф.5 | ✅ done |
 | `[M-104.5-suggestion-field-wiring]` | CodeAction edit range: re-scan источника вместо compiler Suggestion.span. V2: wire напрямую. | plan-104.5 Followups | P3 |
 | `[M-104.5-multi-edit-rename]` | E_PREFIX_SHADOWS_NAMED_TYPE: переименовать все вхождения, не только объявление. | plan-104.5 Followups | P3 |
 | `[M-104.5-organize-imports]` | Sort+deduplicate import list (Source.organizeImports action). | plan-104.10 Ф.6 | P2 |
@@ -656,7 +656,8 @@ pos+neg+parity fixtures in `nova-lsp/tests/diagnostic_pipeline.rs`. Formal close
 | `[M-104.10-degraded-cu-red]` | ✅ RESOLVED (Ф.0.5). Best-effort repo fallback (nova.toml → LSP workspace root → entry-dir) + scratch entry for unsaved buffers → `peer_files` populated (prelude + folder-module peers) → 0 false-red on `print`/`Vec`/peer symbols. | Plan 104.10 Ф.0.5 | close-out Ф.14 |
 | `[M-104.10-lsp-cmd-check-drift]` | ✅ RESOLVED (Ф.0.5). LSP check-вход сведён к `nova check` пайплайну: `resolve_imports` + `number_exprs` + `collect_all_signatures` + `check_module_with_sig_table` (Plan 162.2 suppression). Резолвит Q-104-4. | Plan 104.10 Ф.0.5 | close-out Ф.14 |
 | `[M-104.10-diag-numeric-codes]` | ✅ RESOLVED (Ф.0.5). `extract_error_code` теперь распознаёт legacy числовые `[Ennnn]` (не только symbolic `[E_…]`) → code-action dispatch срабатывает по ним. | Plan 104.10 Ф.0.5 | close-out Ф.14 |
-| `[M-104.10-hardcode-lists]` | 🟡 PARTIAL (Ф.0.5 stale-removal). `STD_MODULES` очищен от несуществующих путей (`std.collections.map`/`std.sync.*`/`std.io.*`/`std.math`/`std.fmt`/`std.os`/`std.env`/`std.runtime.memory`), сверен с реальным `std/`. Полный FS-scan из search-path + `code_actions.rs`/`rename.rs NOVA_KEYWORDS` → Ф.5. | Plan 104.10 Ф.0.5 → Ф.5 | остаток Ф.5 |
+| `[M-104.10-hardcode-lists]` | ✅ RESOLVED (Ф.5, 2026-07-03). Все хардкод-списки удалены: `STD_MODULES` → FS-скан `stdlib_index.rs::StdlibIndex` (кэш в `WorkspaceState::stdlib_index`); `code_actions.rs known_stdlib_type_module/protocol_import` → `StdlibIndex::{type_module,protocol_module}`; `auto_derivable_protocols` → `auto_derive::builtin_protocol_names()` (убраны pre-D237 имена); `rename.rs NOVA_KEYWORDS` → `lexer::is_reserved_keyword`. compiler-conventions §3 удовлетворён. | Plan 104.10 Ф.0.5 → Ф.5 | close-out Ф.14 |
+| `[M-104.10-lsp-cwd-anchor]` | Follow-up P3 (test-only). Path-free обёртки `completion_for`/`method_items`/`import_items` резолвят stdlib через `current_dir()` discovery для тестов; LSP-сервер всегда передаёт реальный путь + кэш `StdlibIndex` (`completion_for_doc`), на CWD не опирается. | Plan 104.10 Ф.5 | P3 |
 
 ## Plan 104.10 Ф.1 — symbol cache (resolved-module cache; impl DONE 2026-07-03)
 
@@ -675,7 +676,7 @@ version; evicted on `didClose` (`server.rs`). pos+neg+edge+perf tests in
 | Маркер | Статус | Home | Действие |
 |---|---|---|---|
 | `[M-104.9-completion-language-sync]` | ✅ CLOSED 2026-06-17. completion.rs/code_actions.rs синхронизированы с языком. | Plan 104.9 | ✅ done |
-| `[M-104.9-dynamic-method-completion]` | OPEN P3. Completion — статические таблицы. V2: запрашивать методы через compiler API. | plan-104.9 Followups | P3 |
+| `[M-104.9-dynamic-method-completion]` | ✅ CLOSED Plan 104.10 Ф.5 (2026-07-03). Type-driven completion из compiler `ResolvedModule` (`method_items_typed`); статические таблицы удалены. | plan-104.9 Followups | ✅ done |
 | `[M-104.5-suggestion-field-wiring]` | OPEN P3. CodeAction edit — re-scan vs compiler Suggestion.span. | plan-104.5 Followups | P3 |
 
 ## Follow-up: Plan 104.4 (documentSymbol + workspaceSymbol + references)
