@@ -17,7 +17,7 @@ type Res6 {
 }
 
 fn Res6.new(id int) -> Res6 => { id }
-fn Res6 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Res6 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (ResourceTrace observes 250ms)" {
     mut observed_timeout = -1

@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR D188-not-consumable
-// D196: init consume-scope-блока обязан резолвиться в Consumable-тип;
-// record БЕЗ on_exit-метода отклоняется ([D188-not-consumable]).
+// D196: init consume-scope-блока обязан резолвиться в Cleanup-тип;
+// record БЕЗ cleanup-метода отклоняется ([D188-not-consumable]).
 module neg.d196_init_not_consumable_neg
 
 type NotConsumable {
@@ -15,6 +15,6 @@ fn bad_use() -> int {
     }
 }
 
-test "не-Consumable init — error" {
+test "не-Cleanup init — error" {
     ro _ = bad_use()
 }

@@ -2,18 +2,18 @@
 //
 // Plan 110.1.1 (D188) + Plan 110.1.4.a: basic `consume X = init() { body }`
 // scope-block parses + type-checks + codegen эмитит init binding +
-// body emit + on_exit placeholder. Acceptance A110.1.1.a / A110.1.4.a.
+// body emit + cleanup placeholder. Acceptance A110.1.1.a / A110.1.4.a.
 
 module nova_tests.plan110
 
-// Минимальный Consumable[never] resource type для scope-block init.
+// Минимальный Cleanup[never] resource type для scope-block init.
 type DummyResource3 {
     ro id int
 }
 
 fn DummyResource3.new(id int) -> DummyResource3 => { id }
 
-fn DummyResource3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn DummyResource3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 // Basic scope-block — parser scaffold + AST variant existence.
 fn use_resource() -> int {

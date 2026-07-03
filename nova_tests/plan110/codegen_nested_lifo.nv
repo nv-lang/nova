@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Plan 110.1.6 (D188 R5 LIFO composition): nested `consume {}` blocks
-// — on_exit calls execute в reverse order (LIFO: inner exits first,
+// — cleanup calls execute в reverse order (LIFO: inner exits first,
 // then outer).
 //
 // Acceptance A110.1.6.a: LIFO order correct для 3+ levels.
@@ -14,7 +14,7 @@ type LayerRes3 {
 
 fn LayerRes3.new(depth int) -> LayerRes3 => { depth }
 
-fn LayerRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn LayerRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 // Three nested consume scopes; each binding accessible from inner.
 fn use_three_nested() -> int {
@@ -26,11 +26,11 @@ fn use_three_nested() -> int {
             consume c = LayerRes3.new(3) {
                 sum = sum + c.depth                  // +3 = 6
             }
-            // c.on_exit fires here (innermost first per LIFO).
+            // c.cleanup fires here (innermost first per LIFO).
         }
-        // b.on_exit fires here.
+        // b.cleanup fires here.
     }
-    // a.on_exit fires here.
+    // a.cleanup fires here.
     sum
 }
 

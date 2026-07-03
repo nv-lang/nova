@@ -1,17 +1,17 @@
-// D194 — `Consumable[Never]` infallible cleanup: caller НЕ нуждается в Fail[E] effect.
+// D194 — `Cleanup[Never]` infallible cleanup: caller НЕ нуждается в Fail[E] effect.
 // Hot-path elision: codegen omits Fail-infrastructure for Never.
-// Generic bound `[T Consumable[Never]]` тоже не требует Fail у caller.
+// Generic bound `[T Cleanup[Never]]` тоже не требует Fail у caller.
 // Spec: spec/decisions/03-syntax.md D194. Part of the SINGLE `spec_tests.conformance` folder-module.
 module spec_tests.conformance
 
 type D194Guard { value int }
 
-// Consumable[Never] — on_exit без Fail[E]
-fn D194Guard consume @on_exit(_outcome ScopeOutcome) -> () { }
+// Cleanup[Never] — cleanup без Fail[E]
+fn D194Guard consume @cleanup(_outcome ScopeOutcome) -> () { }
 
 fn d194_make(v int) -> D194Guard => { value: v }
 
-// Caller без Fail[E] — Consumable[Never] снимает требование
+// Caller без Fail[E] — Cleanup[Never] снимает требование
 fn d194_use_infallible(guard D194Guard) -> int {
     mut result = 0
     consume g = guard {
@@ -20,17 +20,17 @@ fn d194_use_infallible(guard D194Guard) -> int {
     result
 }
 
-// Generic с [T Consumable[Never]] — caller тоже без Fail[E]
-fn d194_generic_use[T Consumable[Never]](r T) -> () {
+// Generic с [T Cleanup[Never]] — caller тоже без Fail[E]
+fn d194_generic_use[T Cleanup[Never]](r T) -> () {
     consume _g = r { }
 }
 
-test "Consumable[Never]: caller needs no Fail effect (D194)" {
+test "Cleanup[Never]: caller needs no Fail effect (D194)" {
     ro g = d194_make(42)
     assert(d194_use_infallible(g) == 42)
 }
 
-test "Consumable[Never]: consume body accesses resource fields (D194)" {
+test "Cleanup[Never]: consume body accesses resource fields (D194)" {
     mut total = 0
     consume g = d194_make(10) {
         total = g.value * 3
@@ -38,7 +38,7 @@ test "Consumable[Never]: consume body accesses resource fields (D194)" {
     assert(total == 30)
 }
 
-test "Consumable[Never]: generic bound [T Consumable[Never]] (D194)" {
+test "Cleanup[Never]: generic bound [T Cleanup[Never]] (D194)" {
     ro g = d194_make(1)
     d194_generic_use(g)  // compiles without Fail[E]
 }

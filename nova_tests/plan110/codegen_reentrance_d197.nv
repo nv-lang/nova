@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Plan 110.1.8 (D197): `consume{}` inside another type's `on_exit`
+// Plan 110.1.8 (D197): `consume{}` inside another type's `cleanup`
 // body — cleanup re-entrance. Outer cleanup acquires inner resource
-// via inner consume scope; inner scope-exit fires inner on_exit;
+// via inner consume scope; inner scope-exit fires inner cleanup;
 // затем outer cleanup completes.
 //
-// Acceptance A110.1.8.a: nested consume{} inside on_exit works correctly.
+// Acceptance A110.1.8.a: nested consume{} inside cleanup works correctly.
 
 module nova_tests.plan110
 
@@ -14,7 +14,7 @@ type Lock3 {
 }
 
 fn Lock3.new(id int) -> Lock3 => { id }
-fn Lock3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Lock3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 type Connection3 {
     ro lock Lock3
@@ -26,11 +26,11 @@ fn Connection3.new(conn_id int, lock_id int) -> Connection3 => {
     conn_id,
 }
 
-// Connection3.on_exit acquires inner Lock3 через nested consume scope —
+// Connection3.cleanup acquires inner Lock3 через nested consume scope —
 // D197 re-entrance.
-fn Connection3 consume @on_exit(_outcome ScopeOutcome) -> () {
+fn Connection3 consume @cleanup(_outcome ScopeOutcome) -> () {
     consume _l = Lock3.new(@lock.id + 100) {
-        // Inner cleanup work; _l fires on_exit at this scope end.
+        // Inner cleanup work; _l fires cleanup at this scope end.
     }
 }
 
@@ -42,6 +42,6 @@ fn use_with_reentrance() -> int {
     result
 }
 
-test "Plan 110.1.8 (D197): nested consume{} inside on_exit body" {
+test "Plan 110.1.8 (D197): nested consume{} inside cleanup body" {
     assert(use_with_reentrance() == 1)
 }

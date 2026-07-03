@@ -18,7 +18,7 @@ type DummyRes {
 
 fn DummyRes.new(id int) -> DummyRes => { id }
 
-fn DummyRes consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn DummyRes consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn bad() -> int {
     // ❌ `consume mut` not valid (consume = full transfer)

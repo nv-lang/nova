@@ -5,7 +5,7 @@
 // fail-frame (leaving error_kind = NOVA_THROW_USER), so a ConsumeScope/supervised
 // catch classified them as a recoverable Failure — NOT Panic — even though spec
 // D13 says "assert failure = panic". Now both tag error_kind = NOVA_THROW_PANIC
-// (like nv_panic), so `@on_exit(outcome ScopeOutcome)` receives `Panic(msg)`.
+// (like nv_panic), so `@cleanup(outcome ScopeOutcome)` receives `Panic(msg)`.
 //
 // Compile+link check (mirrors codegen_consume_panic_caught.nv): the ScopeOutcome
 // discrimination path (`error_kind == NOVA_THROW_PANIC ? Panic : Failure`) is
@@ -22,13 +22,13 @@ type ResZ {
 
 fn ResZ.new(id int) -> ResZ => { id }
 
-fn ResZ consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ResZ consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn checked_pos(x int) -> int
     requires x > 0
 => x
 
-// assert failure inside a consume body → on_exit receives Panic outcome.
+// assert failure inside a consume body → cleanup receives Panic outcome.
 fn use_asserting() -> int {
     consume r = ResZ.new(1) {
         assert(false, "boom")
@@ -36,7 +36,7 @@ fn use_asserting() -> int {
     }
 }
 
-// contract (requires) violation inside a consume body → on_exit receives Panic.
+// contract (requires) violation inside a consume body → cleanup receives Panic.
 fn use_contract_violation() -> int {
     consume r = ResZ.new(1) {
         ro _ = checked_pos(-1)

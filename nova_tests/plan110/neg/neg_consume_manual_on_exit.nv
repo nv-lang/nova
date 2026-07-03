@@ -2,7 +2,7 @@
 // EXPECT_COMPILE_ERROR D188-r2-manual-on-exit
 //
 // Plan 110.1.5 (D188 R2 exactly-once enforcement): manual
-// `binding.on_exit(...)` call inside ConsumeScope body — compile-time
+// `binding.cleanup(...)` call inside ConsumeScope body — compile-time
 // rejection чтобы prevent runtime double-dispatch panic.
 
 module neg.neg_consume_manual_on_exit
@@ -13,11 +13,11 @@ type ManualResource {
 
 fn ManualResource.new(id int) -> ManualResource => { id }
 
-fn ManualResource consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ManualResource consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn bad_manual_call() -> () {
     consume r = ManualResource.new(1) {
-        // ❌ Manual on_exit call в body — D188 R2 violation.
-        r.on_exit(Success)
+        // ❌ Manual cleanup call в body — D188 R2 violation.
+        r.cleanup(Success)
     }
 }

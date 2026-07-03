@@ -11,7 +11,7 @@ type RtRes3 {
 }
 
 fn RtRes3.new(id int) -> RtRes3 => { id }
-fn RtRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn RtRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 // #realtime fn — codegen emits Duration.zero timeout (no suspend).
 #realtime

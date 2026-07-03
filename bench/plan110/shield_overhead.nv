@@ -4,7 +4,7 @@
 // Measures cost of nv_consume_enter_shield + nv_consume_leave_shield
 // (atomic increment + deadline capture + atomic decrement + cleanup).
 //
-// Baseline: empty consume body (Consumable[never]) — `on_exit` элизия
+// Baseline: empty consume body (Cleanup[never]) — `cleanup` элизия
 // per D194 should reduce overhead to bare-minimum atomic ops.
 //
 // Goal: < ~50ns per consume scope entry+exit cycle on хорошей машине.
@@ -16,7 +16,7 @@ type Cheap {
 }
 
 fn Cheap.new(id int) -> Cheap => { id }
-fn Cheap consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Cheap consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 bench "shield enter+leave cycle x10k (default 5000ms timeout)" {
     measure {

@@ -4132,9 +4132,9 @@ impl<'a> TypeCheckCtx<'a> {
             // peer_errors intentionally discarded (duplicate of module.items check).
         }
 
-        // Plan 110.1.2 (D188 / D196): Consumable[E] protocol satisfaction check.
+        // Plan 110.1.2 (D188 / D196): Cleanup[E] protocol satisfaction check.
         // Для каждого `Stmt::ConsumeScope { init, body, .. }` проверяем что
-        // init expr resolves к типу с `on_exit` method. Если нет — emit
+        // init expr resolves к типу с `cleanup` method. Если нет — emit
         // [D188-not-consumable] error. Полный D196 (Result/Option unwrap,
         // conditional, method chain — non-trivial type inference) — staged
         // delivery: дополнительные формы validated в Plan 110.1.3 / 110.1.4.
@@ -4174,7 +4174,7 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::ConsumeScope { binding, init, body, .. } => {
                 self.validate_consume_scope_init(init, errors);
                 // Plan 110.1.5 (D188 R2 enforcement at compile time):
-                // detect manual `binding.on_exit(...)` calls в body.
+                // detect manual `binding.cleanup(...)` calls в body.
                 // Runtime exactly-once guard prevents double dispatch;
                 // здесь — compile-time gate чтобы избегать runtime panic.
                 self.check_no_manual_on_exit_call_in_block(binding, body, errors);
@@ -4263,7 +4263,7 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     /// Plan 110.1.2 (D188 / D196): validate init expression's type implements
-    /// Consumable. Uses простой heuristic для type inference (Type.method() →
+    /// Cleanup. Uses простой heuristic для type inference (Type.method() →
     /// return type; record literal → type; ?/!! → recurse). Полный inference
     /// (method chain, conditional, generic) — staged delivery 110.1.3+.
     fn validate_consume_scope_init(&self, init: &Expr, errors: &mut Vec<Diagnostic>) {
@@ -4286,13 +4286,13 @@ impl<'a> TypeCheckCtx<'a> {
             return;
         }
         // Plan 110.1.3 (D196 form 3 — divergent conditional): if/match init
-        // with branches returning incompatible Consumable types.
+        // with branches returning incompatible Cleanup types.
         if let Some((t1, t2)) = self.detect_divergent_consumable(init) {
             errors.push(Diagnostic::new(
                 format!(
                     "[D196-divergent-consumable] `consume X = if cond {{ ... }} \
                      else {{ ... }} {{ body }}` branches return divergent \
-                     Consumable types: `{t1}` vs `{t2}`. Branches must return \
+                     Cleanup types: `{t1}` vs `{t2}`. Branches must return \
                      compatible type. Extract в polymorphic wrapper type \
                      или unify branches.",
                     t1 = t1, t2 = t2
@@ -4312,23 +4312,23 @@ impl<'a> TypeCheckCtx<'a> {
         if type_name == "never" || type_name == "Never" {
             return;
         }
-        // Look up on_exit method on the type.
-        let has_on_exit = self.method_overloads(&type_name, "on_exit").is_some();
+        // Look up cleanup method on the type.
+        let has_on_exit = self.method_overloads(&type_name, "cleanup").is_some();
         if !has_on_exit {
             // Тип known? Если не known — это либо primitive (`int`/`str`)
             // либо unresolved (caught by name resolution). Skip primitive
             // случаи silently.
             let is_known_type = self.types.contains_key(&type_name)
                 || self.type_has_any_method(&type_name);
-            // Even for primitive types like `int`/`str` — нет on_exit → error.
+            // Even for primitive types like `int`/`str` — нет cleanup → error.
             // Но diagnostic должен быть полезный (suggest implement).
             if is_known_type || self.type_has_any_method(&type_name) {
                 let diag = Diagnostic::new(
                     format!(
-                        "[D188-not-consumable] type `{name}` does not implement `Consumable[E]` \
-                         (method `on_exit` missing). \
+                        "[D188-not-consumable] type `{name}` does not implement `Cleanup[E]` \
+                         (method `cleanup` missing). \
                          To use `consume X = expr {{ body }}` scope-block, type must declare:\n  \
-                         `fn {name} consume @on_exit(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`\n\
+                         `fn {name} consume @cleanup(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`\n\
                          where `E` is the cleanup-error type (or `never` for infallible — D194).\n\
                          Alternative: use raw `consume X = expr` (D180 linear binding) without block.",
                         name = type_name
@@ -4337,13 +4337,13 @@ impl<'a> TypeCheckCtx<'a> {
                 ).with_note(format!(
                     "Plan 110.6.1: see docs/idiom/consume-scope-cleanup.md \
                      Q-consumable-protocol for decision tree + implementation template. \
-                     For infallible cleanup (Mutex/Sem/Lock) use `Consumable[never]` — \
+                     For infallible cleanup (Mutex/Sem/Lock) use `Cleanup[never]` — \
                      no Fail[E] effect (D194 hot-path eligible)."
                 ));
                 errors.push(diag);
             }
         } else {
-            // on_exit existsует — validate signature (Plan 110.1.2 §D188-malformed-on-exit).
+            // cleanup existsует — validate signature (Plan 110.1.2 §D188-malformed-on-exit).
             // Минимальная проверка: первый param должен быть ScopeOutcome.
             // Глубокая validation (Fail[E] check, return type ()) — 110.1.3.
             self.validate_on_exit_signature(&type_name, init.span, errors);
@@ -4351,16 +4351,16 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     /// Plan 110.1.2 / refine (D188-malformed-on-exit) + 110.9.5 V1.1 strict:
-    /// on_exit signature check.
+    /// cleanup signature check.
     /// Verifies:
     /// - Param[0] is `outcome ScopeOutcome`.
     /// - Exactly 1 param (D188 protocol contract).
     /// - Return type is `()` or absent (D188 protocol contract).
-    /// - Effects are either empty (Consumable[never]) or `Fail[E]` only
+    /// - Effects are either empty (Cleanup[never]) or `Fail[E]` only
     ///   (no other effects).
     /// - No generic parameters (cleanup methods on concrete types).
     fn validate_on_exit_signature(&self, type_name: &str, init_span: Span, errors: &mut Vec<Diagnostic>) {
-        let Some(decls) = self.method_overloads(type_name, "on_exit") else { return; };
+        let Some(decls) = self.method_overloads(type_name, "cleanup") else { return; };
         for decl in decls {
             // Param[0] must be `outcome ScopeOutcome`.
             let first_param_ok = decl.params.first()
@@ -4370,10 +4370,10 @@ impl<'a> TypeCheckCtx<'a> {
             if !first_param_ok {
                 errors.push(Diagnostic::new(
                     format!(
-                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` signature invalid: \
+                        "[D188-malformed-on-exit] `fn {tn} @cleanup(...)` signature invalid: \
                          first parameter must be `outcome ScopeOutcome` (D188 protocol contract). \
                          Correct form: \
-                         `fn {tn} consume @on_exit(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`. \
+                         `fn {tn} consume @cleanup(outcome ScopeOutcome) Fail[E] -> () => {{ ... }}`. \
                          (Diagnostic emitted at `consume {{}}` use-site for context.)",
                         tn = type_name
                     ),
@@ -4386,7 +4386,7 @@ impl<'a> TypeCheckCtx<'a> {
             if decl.params.len() != 1 {
                 errors.push(Diagnostic::new(
                     format!(
-                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` has {n} params; \
+                        "[D188-malformed-on-exit] `fn {tn} @cleanup(...)` has {n} params; \
                          protocol requires exactly 1 (`outcome ScopeOutcome`). \
                          Remove extra parameters; resource state available via `@`.",
                         tn = type_name, n = decl.params.len()
@@ -4432,9 +4432,9 @@ impl<'a> TypeCheckCtx<'a> {
             if !ret_ok {
                 errors.push(Diagnostic::new(
                     format!(
-                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` return type \
+                        "[D188-malformed-on-exit] `fn {tn} @cleanup(...)` return type \
                          invalid (Plan 110.9.5 V1.1): protocol requires `()` (Unit) return. \
-                         Got `{rt}`. Correct: `fn {tn} consume @on_exit(outcome ScopeOutcome) \
+                         Got `{rt}`. Correct: `fn {tn} consume @cleanup(outcome ScopeOutcome) \
                          Fail[E] -> () => {{ ... }}` (or omit `-> ()`).",
                         tn = type_name,
                         rt = decl.return_type.as_ref()
@@ -4456,7 +4456,7 @@ impl<'a> TypeCheckCtx<'a> {
             if !effects_ok {
                 errors.push(Diagnostic::new(
                     format!(
-                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` effects list \
+                        "[D188-malformed-on-exit] `fn {tn} @cleanup(...)` effects list \
                          invalid (Plan 110.9.5 V1.1): protocol allows only `Fail[E]` effect \
                          (or no effects). Other effects (handler invocations, `parks`/`wakes`, \
                          capability requirements) violate cleanup contract. Got: {effs:?}.",
@@ -4471,7 +4471,7 @@ impl<'a> TypeCheckCtx<'a> {
             if !decl.generics.is_empty() {
                 errors.push(Diagnostic::new(
                     format!(
-                        "[D188-malformed-on-exit] `fn {tn} @on_exit(...)` declares generic \
+                        "[D188-malformed-on-exit] `fn {tn} @cleanup(...)` declares generic \
                          params `[{gens}]` (Plan 110.9.5 V1.1): protocol forbids generics \
                          on cleanup methods — resource-state types already concrete by \
                          construction.",
@@ -4485,8 +4485,8 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 110.1.5 (D188 R2): detect manual `binding.on_exit(...)` calls
-    /// в ConsumeScope body. Auto on_exit dispatch happens at scope-exit;
+    /// Plan 110.1.5 (D188 R2): detect manual `binding.cleanup(...)` calls
+    /// в ConsumeScope body. Auto cleanup dispatch happens at scope-exit;
     /// manual call → double invocation → runtime panic (R2 exactly-once
     /// violation). Compile-time gate preferred to runtime panic.
     fn check_no_manual_on_exit_call_in_block(&self, binding: &str, b: &Block, errors: &mut Vec<Diagnostic>) {
@@ -4531,20 +4531,20 @@ impl<'a> TypeCheckCtx<'a> {
 
     fn check_no_manual_on_exit_call_in_expr(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
         use crate::ast::ExprKind;
-        // Detect `binding.on_exit(...)` call: Call { func: Member { obj: Ident(binding), name: "on_exit" }, ... }
+        // Detect `binding.cleanup(...)` call: Call { func: Member { obj: Ident(binding), name: "cleanup" }, ... }
         if let ExprKind::Call { func, .. } = &e.kind {
             if let ExprKind::Member { obj, name, .. } = &func.kind {
-                if name == "on_exit" {
+                if name == "cleanup" {
                     if let ExprKind::Ident(obj_name) = &obj.kind {
                         if obj_name == binding {
                             errors.push(Diagnostic::new(
                                 format!(
-                                    "[D188-r2-manual-on-exit] `{binding}.on_exit(...)` cannot be \
+                                    "[D188-r2-manual-on-exit] `{binding}.cleanup(...)` cannot be \
                                      called manually from inside `consume {binding} = ... {{ body }}` \
-                                     scope-block body. Auto on_exit dispatch на scope exit \
+                                     scope-block body. Auto cleanup dispatch на scope exit \
                                      гарантирует exactly-once invariant (D188 R2). Manual call \
                                      → double invocation → runtime panic. \
-                                     Remove the explicit call; scope-exit will dispatch on_exit \
+                                     Remove the explicit call; scope-exit will dispatch cleanup \
                                      с appropriate ScopeOutcome value.",
                                     binding = binding
                                 ),
@@ -4663,7 +4663,7 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     /// Plan 110.1.3 (D196 form 3): detect if/match init with branches
-    /// returning incompatible Consumable types. Returns (t1, t2) pair если
+    /// returning incompatible Cleanup types. Returns (t1, t2) pair если
     /// detected.
     fn detect_divergent_consumable(&self, init: &Expr) -> Option<(String, String)> {
         use crate::ast::ExprKind;
@@ -4685,7 +4685,7 @@ impl<'a> TypeCheckCtx<'a> {
             if then_diverges || else_diverges {
                 return None;
             }
-            // Both branches must end в expression returning Consumable.
+            // Both branches must end в expression returning Cleanup.
             let then_ty = self.infer_block_trailing_typeref(then)?;
             let else_ty = match else_b {
                 crate::ast::ElseBranch::Block(b) => self.infer_block_trailing_typeref(b)?,
@@ -17827,7 +17827,7 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         // отдельную compile error раньше этой проверки.
         Stmt::Defer { .. } => false,
         // Plan 110 D188: consume scope-block body может содержать throw —
-        // D188 R3 cancel-shield масаит throw к caller'у после on_exit;
+        // D188 R3 cancel-shield масаит throw к caller'у после cleanup;
         // для has_throw analysis считаем body как throw-носитель.
         Stmt::ConsumeScope { init, body, .. } => {
             if has_throw_in_expr(init) { return true; }
@@ -21556,7 +21556,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         }
         // Plan 110 D188: consume scope-block. Init expression evaluated +
         // body block walked. Full consume-binding semantics (binding visible
-        // только в body; on_exit dispatch как auto-consume) — Plan 110.1.2.
+        // только в body; cleanup dispatch как auto-consume) — Plan 110.1.2.
         // Здесь walk recursively, не вводим binding в obligations (110.1.2
         // обязанность).
         Stmt::ConsumeScope { init, body, .. } => {

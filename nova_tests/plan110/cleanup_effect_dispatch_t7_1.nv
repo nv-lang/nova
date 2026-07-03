@@ -6,7 +6,7 @@
 // Verifies codegen emit:
 //   • on_resource_enter fires при entry в `consume X = expr { body }` IF
 //     ResourceTrace handler bound. Receives (label="<type-name>", timeout_ms).
-//   • on_resource_exit fires at scope exit (after user on_exit body).
+//   • on_resource_exit fires at scope exit (after user cleanup body).
 //     Receives (label, outcome).
 //   • Without handler bound — silent no-op (verified by existing 28
 //     plan110 fixtures continuing to PASS без any ResourceTrace binding).
@@ -22,7 +22,7 @@ type TracedRes3 {
 }
 
 fn TracedRes3.new(id int) -> TracedRes3 => { id }
-fn TracedRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn TracedRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 test "Plan 110.4.4.a A110.4.4.a.a + A110.4.4.b.a: ResourceTrace handler observes enter+exit" {
     mut enter_calls = 0

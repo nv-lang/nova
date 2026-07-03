@@ -266,7 +266,7 @@ fn MultiError @find_first_panic() -> Option[str] {
 /// # Examples
 ///
 /// ```nova
-/// fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+/// fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
 ///     match outcome {
 ///         Success => @commit()!!
 ///         Failure(err) => {
@@ -287,7 +287,7 @@ export type CancelError {
 }
 
 /// Cleanup timeout exceeded (D192). Выбрасывается runtime'ом из текущего
-/// suspend-point внутри `Consumable.on_exit` body когда cumulative cleanup
+/// suspend-point внутри `Cleanup.cleanup` body когда cumulative cleanup
 /// время превысило resolved `exit_timeout`.
 ///
 /// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; runtime emit

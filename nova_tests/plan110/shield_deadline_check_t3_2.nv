@@ -7,7 +7,7 @@
 //   • ConsumeScope body calls Time.sleep(N), N < default exit_timeout
 //     (5000ms). Suspend entry now calls nv_shield_check_deadline()
 //     which checks mask>0 + deadline > now — passes here.
-//   • Body completes; on_exit runs; outer code observes finalised
+//   • Body completes; cleanup runs; outer code observes finalised
 //     state. No CleanupTimeoutError thrown.
 //
 // Acceptance:
@@ -30,7 +30,7 @@ type ShortLivedRes3 {
 
 fn ShortLivedRes3.new(id int) -> ShortLivedRes3 => { id }
 
-fn ShortLivedRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ShortLivedRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn use_with_short_sleep() -> int {
     mut completed = 0

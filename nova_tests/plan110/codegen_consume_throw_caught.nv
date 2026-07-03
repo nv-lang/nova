@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Plan 110.1.4.d + 110.1.4.f: verify throw в body вызывает on_exit с
+// Plan 110.1.4.d + 110.1.4.f: verify throw в body вызывает cleanup с
 // Failure outcome, затем re-raises throw наружу.
 //
 // Acceptance:
 // - A110.1.4.d: setjmp fail-frame catches body throw.
-// - A110.1.4.e: on_exit called с Failure outcome.
-// - A110.1.4.f: throw re-raised после on_exit completion.
+// - A110.1.4.e: cleanup called с Failure outcome.
+// - A110.1.4.f: throw re-raised после cleanup completion.
 
 module nova_tests.plan110
 
@@ -16,9 +16,9 @@ type ResourceX3 {
 
 fn ResourceX3.new(id int) -> ResourceX3 => { id }
 
-fn ResourceX3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ResourceX3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
-// fn что throws inside body — on_exit должен fire, throw должен re-raise.
+// fn что throws inside body — cleanup должен fire, throw должен re-raise.
 fn use_throwing() Fail[str] -> int {
     consume r = ResourceX3.new(42) {
         throw "body-failure"
@@ -26,8 +26,8 @@ fn use_throwing() Fail[str] -> int {
     }
 }
 
-test "Plan 110.1.4.d/f: throw в body → on_exit(Failure) → re-raise" {
-    // Body throws → caught by fail-frame → on_exit fires →
+test "Plan 110.1.4.d/f: throw в body → cleanup(Failure) → re-raise" {
+    // Body throws → caught by fail-frame → cleanup fires →
     // re-raised → caught by test_frame as expected_throw.
     // Test runner default: any throw → test FAIL unless expected.
     // Здесь — используем typecheck-only assertion (runtime throw

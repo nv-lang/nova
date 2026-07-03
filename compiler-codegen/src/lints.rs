@@ -130,7 +130,7 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
     // Option[Option[*T|ptr]] ambiguous под NPO codegen.
     warnings.extend(lint_option_double_nested(m));
     // Plan 110.9.4 (D188 amend): W_FFI_CANCEL_UNSAFE — non-cancel_safe FFI
-    // call inside on_exit body. Stdlib types implementing Consumable must
+    // call inside cleanup body. Stdlib types implementing Cleanup must
     // annotate native cleanup external fns с `#cancel_safe`.
     warnings.extend(lint_ffi_cancel_unsafe(m));
     // Plan 127 Ф.4: W_VALUE_RECORD_UNNECESSARY_PROMOTE — value-record local
@@ -268,7 +268,7 @@ fn escape_per_fn_iter(escape: &crate::escape_analyze::EscapeResult)
 // Plan 110.9.4 [M-110.9.4-ffi-cancel-unsafe-lint]: W_FFI_CANCEL_UNSAFE.
 //
 // При invoke external fn БЕЗ `#cancel_safe` attribute inside ConsumeScope's
-// `on_exit` method body — warning. Rationale: under cancel-shield deadline
+// `cleanup` method body — warning. Rationale: under cancel-shield deadline
 // model (Plan 110.2 D188 R3), cancellation может deliver inside cleanup
 // body; native fns без attestation могут блок'нуть или crash. `#cancel_safe`
 // attribute attests C-side function is safe to invoke в этом scenario.
@@ -297,10 +297,10 @@ fn lint_ffi_cancel_unsafe(m: &Module) -> Vec<LintWarning> {
         }
     }
     if external_fns.is_empty() { return warnings; }
-    // Step 2: find on_exit methods (Item::Fn with receiver и name == "on_exit"),
+    // Step 2: find cleanup methods (Item::Fn with receiver и name == "cleanup"),
     // walk их body looking for external-fn calls.
     let mut visit_fn = |fd: &FnDecl| {
-        if fd.receiver.is_some() && fd.name == "on_exit" {
+        if fd.receiver.is_some() && fd.name == "cleanup" {
             match &fd.body {
                 FnBody::Expr(e) => walk_expr_for_cancel_unsafe(e, &external_fns, &mut warnings),
                 FnBody::Block(b) => walk_block_for_cancel_unsafe(b, &external_fns, &mut warnings),
@@ -374,7 +374,7 @@ fn walk_expr_for_cancel_unsafe(
                         diag: Diagnostic::new(
                             format!(
                                 "[W_FFI_CANCEL_UNSAFE] call to external fn `{}` from \
-                                 within `on_exit` body without `#cancel_safe` attribute \
+                                 within `cleanup` body without `#cancel_safe` attribute \
                                  (Plan 110.9.4 / D188 R3). Under cancel-shield deadline \
                                  cancellation may be delivered inside cleanup; native \
                                  functions without attestation may block, deadlock, or \
@@ -2777,7 +2777,7 @@ mod cancel_unsafe_tests {
             "module foo\n\
              external fn native_close(h int) -> int\n\
              type Conn { ro h int }\n\
-             fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {\n\
+             fn Conn consume @cleanup(_outcome ScopeOutcome) -> () {\n\
                  ro _r = native_close(@h)\n\
                  return ()\n\
              }\n",
@@ -2797,7 +2797,7 @@ mod cancel_unsafe_tests {
              #cancel_safe\n\
              external fn native_close(h int) -> int\n\
              type Conn { ro h int }\n\
-             fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {\n\
+             fn Conn consume @cleanup(_outcome ScopeOutcome) -> () {\n\
                  ro _r = native_close(@h)\n\
                  return ()\n\
              }\n",
@@ -2820,7 +2820,7 @@ mod cancel_unsafe_tests {
         let ws = lint_module(&m);
         assert!(
             !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
-            "external fn call outside on_exit must be silent"
+            "external fn call outside cleanup must be silent"
         );
     }
 
@@ -2830,7 +2830,7 @@ mod cancel_unsafe_tests {
             "module foo\n\
              fn plain_close(h int) -> int => h\n\
              type Conn { ro h int }\n\
-             fn Conn consume @on_exit(_outcome ScopeOutcome) -> () {\n\
+             fn Conn consume @cleanup(_outcome ScopeOutcome) -> () {\n\
                  ro _r = plain_close(@h)\n\
                  return ()\n\
              }\n",
@@ -2838,7 +2838,7 @@ mod cancel_unsafe_tests {
         let ws = lint_module(&m);
         assert!(
             !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
-            "plain Nova fn call from on_exit must be silent (not FFI)"
+            "plain Nova fn call from cleanup must be silent (not FFI)"
         );
     }
 }

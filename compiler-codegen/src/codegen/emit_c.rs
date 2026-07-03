@@ -19708,7 +19708,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             //
             // 110.1.4.a init binding + body emit ✅.
             // 110.1.4.d setjmp fail-frame для throw catching ✅.
-            // 110.1.4.e on_exit dispatch via *_consume_on_exit symbol ✅.
+            // 110.1.4.e on_exit dispatch via *_consume_cleanup symbol ✅.
             // 110.1.4.f throw re-raise after on_exit на Failure outcome ✅.
             //
             // Pending: 110.1.4.b trailing value capture, 110.1.4.g panic
@@ -19737,7 +19737,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             //         _outcome_<id> = nova_make_ScopeOutcome_Failure(
             //             _consume_frame_<id>.error_msg);
             //     }
-            //     Nova_<Type>_consume_on_exit(_consume_<binding>_<id>, _outcome_<id>);
+            //     Nova_<Type>_consume_cleanup(_consume_<binding>_<id>, _outcome_<id>);
             //     if (_consume_outcome_<id> == 1) {
             //         nova_rethrow_with_suppressed(&_consume_frame_<id>);
             //     }
@@ -19758,7 +19758,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     .trim_end_matches('*')
                     .trim()
                     .to_string();
-                let on_exit_c = format!("Nova_{}_consume_on_exit", type_name);
+                let on_exit_c = format!("Nova_{}_consume_cleanup", type_name);
 
                 self.line(&format!("/* Plan 110.1.4: consume {} = ... {{ ... }} */", binding));
                 self.line("{");
@@ -19935,8 +19935,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // setjmp → on_exit throw skipped leave_shield → shield
                 // mask leaked + deadline never restored (same shadow
                 // class as the R4 bug but через exception path).
-                let on_exit_frame = format!("_consume_on_exit_frame_{}", scope_id);
-                let on_exit_threw = format!("_consume_on_exit_threw_{}", scope_id);
+                let on_exit_frame = format!("_consume_cleanup_frame_{}", scope_id);
+                let on_exit_threw = format!("_consume_cleanup_threw_{}", scope_id);
                 self.line(&format!("NovaFailFrame {};", on_exit_frame));
                 self.line(&format!("nova_fail_push(&{});", on_exit_frame));
                 self.line(&format!("{}.error_suppressed = NULL;", on_exit_frame));

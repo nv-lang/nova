@@ -32,12 +32,12 @@ import std.prelude.errors
 type InnerRes24 { ro id int }
 fn InnerRes24.new(id int) -> InnerRes24 => { id }
 fn InnerRes24 @exit_timeout_ms() -> int => 100
-fn InnerRes24 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn InnerRes24 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 type OuterRes24 { ro id int }
 fn OuterRes24.new(id int) -> OuterRes24 => { id }
 fn OuterRes24 @exit_timeout_ms() -> int => 10
-fn OuterRes24 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn OuterRes24 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 // Fail[CleanupTimeoutError] signature declares typed throw propagates
 // up; codegen emits typed throw infrastructure pour outer deadline fire.

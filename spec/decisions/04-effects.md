@@ -5607,8 +5607,8 @@ fn Application.handler(default_exit_timeout Duration = 5.s()) -> ApplicationHand
 fn ApplicationHandler @register_finalizer(f fn() -> ()) -> () => @finalizers.push(f)
 fn ApplicationHandler @default_exit_timeout() -> Duration => @default_exit_timeout_value
 
-// Handler сам Consumable — finalizers fire при выходе из with-блока:
-fn ApplicationHandler consume @on_exit(_outcome ScopeOutcome) -> () {
+// Handler сам Cleanup — finalizers fire при выходе из with-блока:
+fn ApplicationHandler consume @cleanup(_outcome ScopeOutcome) -> () {
     for f in @finalizers.reverse() { f() }
 }
 ```
@@ -5621,7 +5621,7 @@ fn main() Io -> () {
         run_server()
         // anywhere глубоко: Application.register_finalizer(|| { ... })
     }
-    // handler.on_exit fires finalizers в reverse order
+    // handler.cleanup fires finalizers в reverse order
 }
 ```
 
@@ -5725,7 +5725,7 @@ alive до последнего fiber.
 `Application.handler(...)` constructor должен **полностью завершиться**
 до входа в `with`-блок. Никаких регистраций finalizer'ов во время
 construction — только из body. Если constructor throws — `with` не
-входит, `on_exit` не вызывается ([D188 R1](03-syntax.md#d188) partial-construction
+входит, `cleanup` не вызывается ([D188 R1](03-syntax.md#d188) partial-construction
 safety).
 
 ### R8 — Abort / SIGKILL не fires finalizers
@@ -5733,7 +5733,7 @@ safety).
 Документировано как ограничение всех языков:
 - `abort()` / SIGKILL / SIGSEGV → process killed; OS unmaps memory;
   finalizers NOT run.
-- `exit(code)` — fires handler.on_exit (controlled exit) → finalizers run.
+- `exit(code)` — fires handler.cleanup (controlled exit) → finalizers run.
 
 `#[run_on_abort]` атрибут — follow-up Plan 110.X (если будет нужно).
 
@@ -5859,7 +5859,7 @@ All existing protocol declarations updated (Plan 108.4 Ф.3 sweep):
 | `Clone` | `clone() -> Self` | `@clone() -> Self` |
 | `Display` | `fmt(sb StringBuilder)` | `@display(sb StringBuilder)` |
 | `Debug` | `debug_fmt(sb StringBuilder)` | `@debug(sb StringBuilder)` |
-| `Consumable[E]` | `on_exit(...)` | `consume @on_exit(outcome ScopeOutcome) Fail[E] -> ()` |
+| `Cleanup[E]` | `cleanup(...)` | `consume @cleanup(outcome ScopeOutcome) Fail[E] -> ()` |
 | `WithExitTimeout` | `exit_timeout_ms() -> int` | `@exit_timeout_ms() -> int` |
 | `Into[U]` | `into() -> U` | `@into() -> U` |
 | `TryInto[U,E]` | `try_into() -> Result[U,E]` | `@try_into() -> Result[U, E]` |

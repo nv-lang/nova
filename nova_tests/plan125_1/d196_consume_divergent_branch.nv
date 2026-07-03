@@ -1,6 +1,6 @@
 // Plan 125.1 Ф.4 positive — D196 detector skips divergent branch.
 // `consume X = if c { fresh() } else { throw E }` — раньше падало в
-// "Consumable type conflict between FailableResource и never" / silent abort.
+// "Cleanup type conflict between FailableResource и never" / silent abort.
 // Теперь Ф.4 распознаёт divergent ветку и возвращает None из
 // detect_divergent_consumable — нет fake-conflict.
 
@@ -12,7 +12,7 @@ type GuardR3 {
 
 fn GuardR3.new(id int) -> GuardR3 => { id }
 
-fn GuardR3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn GuardR3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn use_guard(c bool) Fail -> int {
     mut result = 0

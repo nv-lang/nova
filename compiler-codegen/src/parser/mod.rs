@@ -1739,7 +1739,7 @@ impl Parser {
 
     /// Plan 110.7.3.a (D188 §FFI): parse `#cancel_safe` attribute перед
     /// `external fn` (or any fn). Attests на cancel-safety при invocation
-    /// из ConsumeScope on_exit body. `cancel_safe` — обычный identifier
+    /// из ConsumeScope cleanup body. `cancel_safe` — обычный identifier
     /// (не keyword в lexer'е), парсится контекстно после `#`.
     /// Returns true if attribute present.
     fn parse_cancel_safe_attr(&mut self) -> bool {
@@ -5211,7 +5211,7 @@ impl Parser {
 
     /// Plan 100.1 (D133 / D9): `consume tx = expr` — explicit ownership binding.
     /// Plan 110 (D188): `consume tx = expr { body }` — scope-block с
-    /// автоматическим вызовом `Consumable.on_exit` при выходе.
+    /// автоматическим вызовом `Cleanup.cleanup` при выходе.
     ///
     /// Парсится из `parse_stmt_or_expr` при lookahead KwConsume + Ident/KwMut.
     /// Lookahead `{` после init expr (с disabled trailing-block) решает между
@@ -10058,7 +10058,7 @@ impl Parser {
                     return Err(Diagnostic::new(
                         "[D189-removed-defer-result] `defer |result| { ... }` reason-aware \
                          form retracted by Plan 110 D189. Migrate к `consume X = init() { body }` \
-                         scope-block с `match outcome` в `on_exit` method, OR `with ResourceTrace = \
+                         scope-block с `match outcome` в `cleanup` method, OR `with ResourceTrace = \
                          handler { body }` (D185) для observability-only logging pattern.".to_string(),
                         span,
                     ));
@@ -10073,7 +10073,7 @@ impl Parser {
                 return Err(Diagnostic::new(
                     "[D189-removed-errdefer] `errdefer { body }` retracted by Plan 110 D189. \
                      Migrate к `consume X = init() { body }` scope-block с `match outcome \
-                     { Failure(_) => ... }` в `on_exit` method, OR use \
+                     { Failure(_) => ... }` в `cleanup` method, OR use \
                      `mut done = false; defer { if !done { ... } }; ...; done = true` для \
                      bare cleanup-state pattern.".to_string(),
                     span,
@@ -10085,7 +10085,7 @@ impl Parser {
                 return Err(Diagnostic::new(
                     "[D189-removed-okdefer] `okdefer { body }` retracted by Plan 110 D189. \
                      Migrate к `consume X = init() { body }` scope-block с `match outcome \
-                     { Success => ... }` в `on_exit` method.".to_string(),
+                     { Success => ... }` в `cleanup` method.".to_string(),
                     span,
                 ));
             }

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Plan 110.7.3.a: #cancel_safe attribute parses on external fn.
-// Attests on C-side function as callable from ConsumeScope on_exit
+// Attests on C-side function as callable from ConsumeScope cleanup
 // body without firing W_FFI_CANCEL_UNSAFE warning.
 
 module nova_tests.plan110
 
 // Production-like usage: `#cancel_safe` attribute attests that a fn
-// is safe to call from inside a ConsumeScope on_exit body (under
+// is safe to call from inside a ConsumeScope cleanup body (under
 // cancel-shield). Bootstrap: parser recognizes the attribute and
 // stores it on FnDecl. Future lint W_FFI_CANCEL_UNSAFE will fire at
-// FFI call sites без attribute when called from on_exit.
+// FFI call sites без attribute when called from cleanup.
 //
 // `external fn` form is restricted to std.runtime.* per D82; this
 // fixture verifies the attribute parses on plain Nova fns.
@@ -31,7 +31,7 @@ type Conn3 {
 
 fn Conn3.new(h int) -> Conn3 => { h }
 
-fn Conn3 consume @on_exit(_outcome ScopeOutcome) -> () {
+fn Conn3 consume @cleanup(_outcome ScopeOutcome) -> () {
     ro _rc = close_safe1(@h)
     return ()
 }

@@ -1,9 +1,9 @@
 // Plan 125.1 Ф.4 negative — D196 detector skips divergent, requires
-// Consumable в live ветке. Если обе ветки divergent — None (no conflict).
-// Если live ветка возвращает non-Consumable, error elsewhere — но Ф.4
+// Cleanup в live ветке. Если обе ветки divergent — None (no conflict).
+// Если live ветка возвращает non-Cleanup, error elsewhere — но Ф.4
 // skip'нул бы divergent ветку и conflict-check проходит на single side.
 //
-// Этот fixture: live-ветка возвращает Consumable GuardR, divergent-ветка
+// Этот fixture: live-ветка возвращает Cleanup GuardR, divergent-ветка
 // throw'ит. Ф.4 → None → consume init принимается. PASS expected.
 
 module neg.d196_consume_required_in_live_branch
@@ -14,7 +14,7 @@ type GuardR {
 
 fn GuardR.new(id int) -> GuardR => { id }
 
-fn GuardR consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn GuardR consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn drive(c bool, k int) Fail -> int {
     mut out = 0
@@ -30,7 +30,7 @@ fn drive(c bool, k int) Fail -> int {
     out
 }
 
-test "D196 divergent-then + Consumable-else compiles + runs on happy path" {
+test "D196 divergent-then + Cleanup-else compiles + runs on happy path" {
     with Fail = effect Fail {
         fail(_) { interrupt () }
     } {

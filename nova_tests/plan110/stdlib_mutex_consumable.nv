@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Plan 110.3.1 (D194): MutexGuard/ReadGuard/WriteGuard/Permit
-// implement Consumable[never] — `consume g = mu.acquire() { body }`
+// implement Cleanup[never] — `consume g = mu.acquire() { body }`
 // scope-block работает с auto-release on exit.
 
 module nova_tests.plan110
@@ -12,7 +12,7 @@ fn use_mutex() -> int {
     consume g = mu.lock() {
         value = 42
     }
-    // g.on_exit auto-released the mutex.
+    // g.cleanup auto-released the mutex.
     value
 }
 
@@ -25,10 +25,10 @@ fn use_semaphore() -> int {
     value
 }
 
-test "Plan 110.3.1: MutexGuard Consumable[never]" {
+test "Plan 110.3.1: MutexGuard Cleanup[never]" {
     assert(use_mutex() == 42)
 }
 
-test "Plan 110.3.1: Permit Consumable[never]" {
+test "Plan 110.3.1: Permit Cleanup[never]" {
     assert(use_semaphore() == 99)
 }
