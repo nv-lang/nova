@@ -748,7 +748,7 @@ U.1.3b sync-inline.
 Тест-драйвер: spec_tests/inprogress/d48_tagged_template.nv.
 
 
-## [M-172.1-sync-extern-narrowing-migration] — D54-narrowing на extern-API отложен (2026-07-02)
+## [M-172.1-sync-extern-narrowing-migration] — ✅ ЗАКРЫТ 2026-07-04 (гейт снят, корпус мигрирован — blast-radius 2 fn)
 
 Merge sync-сигнатур в чекер (builtin_sig_modules) включил narrowing-enforcement на
 sized-atomic API (i32/u8-параметры), а корпус atomics/sync (~150 файлов) писался
