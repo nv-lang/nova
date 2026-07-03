@@ -594,18 +594,18 @@ serve loop (supervised scope, Plan 173.1)
 export type HttpServer value {
     ro addr           SocketAddr
     ro max_conns      int            // bounded concurrency (Semaphore); default 1024
-    ro read_timeout   Duration       // header+body read deadline; default 30.sec
-    ro header_timeout Duration       // SOLO header-read deadline (slowloris); default 10.sec
-    ro idle_timeout   Duration       // keep-alive простой; default 60.sec
-    ro write_timeout  Duration       // response-write deadline; default 30.sec
+    ro read_timeout   Duration       // header+body read deadline; default 30.seconds()
+    ro header_timeout Duration       // SOLO header-read deadline (slowloris); default 10.seconds()
+    ro idle_timeout   Duration       // keep-alive простой; default 60.seconds()
+    ro write_timeout  Duration       // response-write deadline; default 30.seconds()
     ro max_header_bytes int          // суммарный header-блок; default 64*1024
     ro max_body_bytes Option[int]    // дефолтный лимит тела (None = handler-set)
     ro tls            Option[ServerConfig]   // None = plaintext h1; Some = HTTPS (gate 116)
 }
 
 export fn HttpServer.bind(addr SocketAddr) -> HttpServer
-    => { addr, max_conns: 1024, read_timeout: 30.sec, header_timeout: 10.sec,
-         idle_timeout: 60.sec, write_timeout: 30.sec, max_header_bytes: 64*1024,
+    => { addr, max_conns: 1024, read_timeout: 30.seconds(), header_timeout: 10.seconds(),
+         idle_timeout: 60.seconds(), write_timeout: 30.seconds(), max_header_bytes: 64*1024,
          max_body_bytes: None, tls: None }
 
 export fn HttpServer @max_conns(n int)        -> HttpServer
@@ -814,13 +814,13 @@ fn build_routes() -> ServeMux {
 fn main() Http {
     ro app = chain([ mw_recover(),
                      mw_logging(|req, st, dur| println("${req.method().as_str()} ${req.path()} → ${st.as_u16()} (${dur})")),
-                     mw_request_timeout(15.sec) ], build_routes())
+                     mw_request_timeout(15.seconds()) ], build_routes())
     ro shutdown = CancelToken.new()
     supervised {
         spawn { on_sigint(); shutdown.cancel() }
         spawn {
-            ro srv = HttpServer.bind(SocketAddr.loopback(8080)).max_conns(2048).header_timeout(10.sec).idle_timeout(60.sec)
-            srv.serve_graceful(app, shutdown, 30.sec)!!
+            ro srv = HttpServer.bind(SocketAddr.loopback(8080)).max_conns(2048).header_timeout(10.seconds()).idle_timeout(60.seconds())
+            srv.serve_graceful(app, shutdown, 30.seconds())!!
         }
     }
 }
@@ -925,7 +925,7 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 
 **Dep-chain:** Ф.0 → **Ф.0.5** → Ф.1 → Ф.2 → Ф.3 → **[HARD-GATE Plan 116]** → Ф.4 → **[HARD-GATE Plan 116 ALPN]** → Ф.5 → Ф.6. **«сейчас»:** Ф.0–Ф.3, Ф.6(h1-часть). **«позже/gated»:** Ф.4 (HTTPS), Ф.5 (h2). Коммит после каждой фазы (§10). Server при росте → 178.1; h2 → 178.2.
 
-- **Ф.0 — GATE (без кода). «сейчас».** Закрыть §3.0 (Q1–Q31, готово); написать **D357–D362 spec-first** (§5); подтвердить расписание Plan 116 (гейт Ф.4/Ф.5; параллельно); **решить net `[]u8`-амендмент** (Q5, owner-sign-off под conventions-governance); re-verify D-номера (D357–D362; grep D357-D369 = 0 — снимок Ред.2 2026-07-03); **reconcile Plan 116 forward-refs** (117/122 → 178, §6/§9); **verify** на main: `str.from_bytes` — **ОТСУТСТВУЕТ** (ЛОЖНЫЙ green: jwt.nv лишь call-site в _experimental) → внешний prereq ← **176 Ф.0.5**; `decode_query`-bug-repro; `-> impl Trait`/protocol-bound (Q27 fallback); top-level value-let (Q17); **эффект-полиморфизм протоколов** (176 `io.Read`/`io.Write` объявлены БЕЗ эффектов, конформеры эффектные — `Body.@copy_to(w mut impl io.Write) Http` для File-writer(Fs) не скомпилируется без механизма → координация 176 Ф.1; `BodyReader`↔`io.Read`: adapter `@as_read()` / conformance / явный scope-out — решить); **time-API 175** (`Monotonic.now`/`Duration.from_secs` — типов `Instant`/`Duration.seconds` НЕ существует, Ред.2 исправила примеры; **`.sec`-сахар (`30.sec`) НИГДЕ не спланирован — общая дыра с 173.1** → решение: добавить `.sec/.ms/.min` в 175 Ф.1 ЛИБО заменить на `Duration.from_secs` в §3.server-дефолтах; `Duration.MAX` — ✅ решено 2026-07-03: const в 175 Ф.1c); **174.3-цепочка** (распознавание CancelError в real_http = 173 Ф.4 ← 174.3 — verify, что typed `throw Timeout` из 173.1 достаточен без downcast); **owner sign-off Q-error_for_status** (§13.4 — единственный open-Q плана; рекомендация Ред.2: зашить). **GATE.** DEP: Plan 177, 173, 116-schedule.
+- **Ф.0 — GATE (без кода). «сейчас».** Закрыть §3.0 (Q1–Q31, готово); написать **D357–D362 spec-first** (§5); подтвердить расписание Plan 116 (гейт Ф.4/Ф.5; параллельно); **решить net `[]u8`-амендмент** (Q5, owner-sign-off под conventions-governance); re-verify D-номера (D357–D362; grep D357-D369 = 0 — снимок Ред.2 2026-07-03); **reconcile Plan 116 forward-refs** (117/122 → 178, §6/§9); **verify** на main: `str.from_bytes` — **ОТСУТСТВУЕТ** (ЛОЖНЫЙ green: jwt.nv лишь call-site в _experimental) → внешний prereq ← **176 Ф.0.5**; `decode_query`-bug-repro; `-> impl Trait`/protocol-bound (Q27 fallback); top-level value-let (Q17); **эффект-полиморфизм протоколов** (176 `io.Read`/`io.Write` объявлены БЕЗ эффектов, конформеры эффектные — `Body.@copy_to(w mut impl io.Write) Http` для File-writer(Fs) не скомпилируется без механизма → координация 176 Ф.1; `BodyReader`↔`io.Read`: adapter `@as_read()` / conformance / явный scope-out — решить); **time-API 175** (`Monotonic.now`/`Duration.from_secs` — типов `Instant`/`Duration.seconds` НЕ существует, Ред.2 исправила примеры; **`.sec`-сахар — ✅ закрыт 2026-07-03:** int/f64-extensions **уже существуют** в std (`duration.nv:568+`: `@seconds()`/`@millis()`/`@minutes()` + singular) — примеры плана переписаны на них (`30.seconds()`); короткие алиасы НЕ добавляем (дубль имён на операцию); `Duration.MAX` — ✅ решено 2026-07-03: const в 175 Ф.1c); **174.3-цепочка** (распознавание CancelError в real_http = 173 Ф.4 ← 174.3 — verify, что typed `throw Timeout` из 173.1 достаточен без downcast); Q-error_for_status — ✅ sign-off получен 2026-07-03 (зашить, §13.4). **GATE.** DEP: Plan 177, 173, 116-schedule.
 - **Ф.0.5 — PREREQ: URL-промоут + net byte-surface. «сейчас».** (1) Промоут url.nv → `std/http/url.nv` (Q6); **фикс `decode_query`-bug**; `Url.parse`/Result (D325); **ОБЯЗАТЕЛЬНО (§8): фикс `encode_query` multi-byte + IPv6-bracket + строгий host/SSRF-валидатор** (§3.8 — не «доводка»). (2) net byte-surface (ПОЛНЫЙ список §3.10): `read_bytes`/`write_bytes`/`write_all_bytes` на Stream+ReadHalf+WriteHalf; `real_tcp_net`+`mock_tcp_net`+C-shim; `str`-варианты сохранить. **HARD-BLOCKER для Ф.1.** pos: `Url.parse` round-trip; `decode_query` round-trip (был idle); `encode_query` multi-byte UTF-8 round-trip; `read_bytes` байт-в-байт incl. не-UTF-8. neg: malformed-port→`InvalidUrl` (source `ParseUrlError{InvalidPort}`); truncated-`%X`→`InvalidUrl` (source `InvalidPercentEncoding`); octal/hex-IP-obfuscation→reject. (В `HttpError.ErrorKind` таких kind'ов НЕТ — детали живут в `ParseUrlError` через `ErrSource.Url`, §3.9; форма `ParseUrlError`-kinds фиксируется при промоуте url.nv.) DEP: Ф.0, net.
 - **Ф.1 — message-model. «сейчас».** `Method`(enum+`Other`), `StatusCode`(newtype+классы+`reason`+фабрики), `HeaderMap`(case-insens/ordered/multi-value; reject CRLF/NUL Q14; str↔[]u8 Q18; trailer), `Version`, `Url`(Ф.0.5), `Body`(**must-consume** Q3; in-mem`[]u8`\|stream`BodyReader`; bytes/text/json/drain/copy_to/into_reader/trailers consume; charset Q21; bomb-cap), `Mime`/`ContentType`, `Cookie`/`SetCookie`(RFC 6265bis send-инварианты), `HttpError`/`ErrorKind`(Q2). Чистые value+логика. spec: D358, D359. pos: HeaderMap case-insens/multi/ordered; StatusCode класс/reason; Method round-trip; Body.bytes consume; latin1 text-decode. neg: **body не consume→`EXPECT_COMPILE_ERROR`**(Q3); double-consume; CRLF в header→reject; non-token method→reject. DEP: Ф.0.5.
 - **Ф.2 — HTTP/1.1 client. «сейчас».** `Http`+`real_http()`(TcpNet+DnsNet+Time, h1-парсер .nv)+`mock_http()` (Q1). `HttpClient`(pooled; builder: deadline/timeout (173), RedirectPolicy (Q9), default-headers, cookie_store (Q10), **Proxy+CONNECT-tunnel (Q23)**, decompress (Q12), **ssrf_guard (Q24)**, **retry (Q16)**). reqwest-builder; convenience `http.get` (Q15). pool+keep-alive+**eviction-on-error**+**idempotent-retry**; chunked TE+**trailers**; auto-decompress **🔴 HARD-GATE на Plan 179 Ф.1** (gzip/deflate/br + bomb-cap; dispatch по Content-Encoding + `ErrSource.Compress` — Ф.2-deliverable ЗДЕСЬ) — identity/chunked самодостаточны; auth (Q11); `error_for_status` (Q4); строгий парсинг (Q14); **1xx-interim loop** (103/множественные 100 — RFC 9110 §15.2); **`TE: trailers` auto** (keep-alive h1); **NO_PROXY-матрица** (D360); **`MockResponse` API** (new/header/body + инъекция delay/error для timeout/retry-neg) — deliverable. Request body: `[]u8`\|stream\|form\|multipart\|json(**gate Q20**). **Decompress gate: Plan 179 Ф.1** (inflate/gzip/zlib = pure-Nova, brotli = C-FFI Ф.2 — 179 Q1/Q2) — пока не приземлён, decompress-acceptance §8.3 gated. spec: D357, D360. pos: GET/POST mock; chunked decode+trailers; redirect-follow; pool-reuse; **reused-dead-conn retry**; 404=Ok (Q4); `error_for_status`; CONNECT-tunnel (plaintext-proxy); **1xx-interim** (103→200; 100-без-Expect); **NO_PROXY-матрица** (регистр/`*`/dot-suffix/CIDR/host:port/loopback-bypass); **TE: trailers шлётся**. neg: redirect-loop→`TooManyRedirects`; timeout→`Timeout`; **auth НЕ утекает cross-origin** (Q9); **POST не реплеится** (Q16); **errored-conn НЕ reused**; malformed status-line→`Protocol`; CL+TE→`Protocol` (Q14); bomb→`BodyTooLarge`; **SSRF private-target→`Blocked`** (Q24). DEP: Ф.1, 173, net byte-surface.
@@ -1030,7 +1030,7 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 **Координировать:**
 - **Plan 116 (std/tls)** — 🔴 HARD-GATE Ф.4/Ф.5; `Tls`/`TlsStream consume`/`ClientConfig`/`ServerConfig`/SNI/**ALPN** (D210-D213; **D-promote = 116 Ф.7** → в DEP Ф.4); **mock_tls-триада** — добавить в гейт-требования 116. Параллельно Ф.0-Ф.3. **Reconcile forward-refs** (117/122 → 178, §6).
 - **Plan 173** — supervised scope (server), per-conn spawn+bounded Semaphore, `deadline:`/`timeout:` (client+h2-stream+drain), `defer` always, MultiError, cancel→net-park; **Q29 acquire cancel-aware** verify; **timeout-канал** (Ред.2: `else_timeout` НЕ существует — канал = `supervised(timeout:)` несёт Fail[Timeout] → `!!`/`?`/match, 173.1 §2 п.5; `send()` ловит Timeout → `HttpError{kind: Timeout}`) verify; **cancel-семантика** (§3.9: свой scope-cancel пропагирует, НЕ Err) — 173-модель.
-- **Plan 175 (Time)** — `Timestamp`/`Duration`/`Monotonic` (deadline/cookie-expiry/idle); Ред.2-фикс: `Instant`/`Duration.seconds` НЕ существуют → `Monotonic.now`/`Duration.from_secs`; **`.sec`-сахар** — Ф.0-решение (в 175 Ф.1 либо заменить); **`Duration.MAX`** — ✅ решено 2026-07-03: const в 175 Ф.1c (178 лишь verify).
+- **Plan 175 (Time)** — `Timestamp`/`Duration`/`Monotonic` (deadline/cookie-expiry/idle); Ред.2-фикс: `Instant`/`Duration.seconds` НЕ существуют → `Monotonic.now`/`Duration.from_secs`; **`.sec`-сахар** — ✅ закрыт 2026-07-03: extensions уже в std (`@seconds()` и т.п., duration.nv:568+), примеры переписаны; **`Duration.MAX`** — ✅ решено 2026-07-03: const в 175 Ф.1c (178 лишь verify).
 - **Plan 177 (D325)** — Result-everywhere (conformant by-construction).
 - **net-семейство** — byte-surface-амендмент; triad+layered (как 116 над net).
 - **Plan 103.3/103.4** — Mutex (h2 conn-state/cookie-jar) / Semaphore (server bound + h2 MAX_CONCURRENT_STREAMS).
@@ -1175,7 +1175,7 @@ with Net = real_net() { … }   // ≡ with TcpNet=real_tcp_net(), UdpNet=real_u
 
 **🔴 Открытые (Ф.0-verify / owner sign-off):**
 - **(Q-edition) — ЗАКРЫТ (Ред.2):** fallback принят — дефолт **opt-in** (явный `with Http = real_http()`); edition-механизм (script vs lib/app/test) — Ф.0-verify наличия + followup-маркер **`[M-178-script-edition-root-http]`** (root-install только при появлении edition-гейта; §13.4-инварианты записаны).
-- **(Q-error_for_status)** `get_json` зашивает `error_for_status` (не-2xx → `Err`, теряет error-body — инверсия Q4-семантики `http.get`). **Рекомендация Ред.2: да, зашить** (сахар для happy-path; typed `T` из error-body всё равно не парсится; нужен error-body → первичный путь `http.get(url)?.json[T]()`; doc-fence ✅ §3.5). **Owner sign-off — единственный оставшийся open-Q плана.**
+- **(Q-error_for_status)** `get_json` зашивает `error_for_status` (не-2xx → `Err`, теряет error-body — инверсия Q4-семантики `http.get`). **✅ РЕШЕНО (owner sign-off 2026-07-03): да, зашить** — сахар для happy-path; typed `T` из error-body всё равно не парсится; нужен error-body → первичный путь `http.get(url)?.json[T]()` (doc-fence ✅ §3.5). Открытых Q в плане НЕ осталось.
 - **`*_json` — gate serde (Plan 180 Ф.4)**, landing ТОЛЬКО вместе; до того — динамический `.json()->JsonValue`.
 - **must-consume через early-`?`** (consume-`HttpResponse` уносится в `Err`-возврат = корректный discharge) + **`forbid`×root-default** — **pos+neg-тесты внесены в §7-список явно** (Ред.2; иначе допущение, не доказанный инвариант).
 
