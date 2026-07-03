@@ -13968,12 +13968,105 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// template is itself a `value` record, mirroring `value_aware_generic_
     /// c_type`. All non-generic-user-type forms delegate to the static method
     /// unchanged (primitives, Option/Result, arrays, tuples, pointers).
+    /// [M-177-result-tuple-over-array-codegen]: does `ty` (transitively) contain a
+    /// `[]T` array? Only array-bearing shapes need the value-aware Vec-flip below;
+    /// everything else stays on the byte-identical static-delegate path.
+    fn typeref_contains_array(ty: &crate::ast::TypeRef) -> bool {
+        use crate::ast::TypeRef;
+        match ty {
+            TypeRef::Array(..) => true,
+            TypeRef::FixedArray(_, inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Pointer(inner, _) => Self::typeref_contains_array(inner),
+            TypeRef::Named { generics, .. } =>
+                generics.iter().any(Self::typeref_contains_array),
+            TypeRef::Tuple(elems, _) => elems.iter().any(Self::typeref_contains_array),
+            _ => false,
+        }
+    }
+
+    /// [M-177-result-tuple-over-array-codegen]: D239 `[]T ≡ Vec[T]` — Vec-flip a
+    /// resolved array element C-name into `Nova_Vec____<elem>*`, MIRRORING the
+    /// canonical `resolved_array_to_c` (the `type_ref_to_c` / signature / body
+    /// lowering) INCLUDING its generic-stub → `nova_int` erasure. `&self` is what
+    /// makes this possible: the static `apply_type_subst_to_ref` cannot run
+    /// `is_generic_stub_c` (needs the type registries) and so cannot tell an
+    /// unresolved param stub `Nova_T*` (must erase) from a concrete record
+    /// `Nova_Foo*` (must keep) — hence the array Vec-flip lives here, not there.
+    fn vec_flip_elem_c(&self, elem_c: &str) -> String {
+        let mut e = elem_c.to_string();
+        // Erase an UNRESOLVED type-param stub to the int64 slot (erased-context
+        // invariant) exactly as resolved_array_to_c does — otherwise a
+        // `Nova_Vec____Nova_T_p` instance (undefined struct) leaks.
+        if self.is_generic_stub_c(&e) && !e.contains("____") {
+            e = "nova_int".to_string();
+        }
+        format!("{}*", Self::compute_generic_type_c_name("Vec", &[e]))
+    }
+
     fn value_aware_subst_to_ref(
         &self,
         ty: &crate::ast::TypeRef,
         subst: &[(String, Option<String>)],
     ) -> Option<String> {
         use crate::ast::TypeRef;
+        // [M-177-result-tuple-over-array-codegen] D239 `[]T ≡ Vec[T]`: lower a
+        // `[]T` TYPE (and any `[]T` nested inside Result/Option/tuple) to the Vec
+        // mono `Nova_Vec____<elem>*`, MATCHING the mono signature & body
+        // (`type_ref_to_c` → `resolved_array_to_c`). The static
+        // `apply_type_subst_to_ref` (delegated to below, kept for its other
+        // callers) still emits the pre-D239 raw-array `NovaArray_<elem>*` form —
+        // divergent for a generic fn returning `[]T` / `Result[[]T,E]` /
+        // `([]T,[]E)`: the call-site scrutinee type inferred here was
+        // `NovaRes_NovaArray_nova_int_p_nova_str*` (a never-emitted typedef →
+        // "unknown type name"), and the match binding fell back to the ERASED
+        // generic Result payloads `Nova_T*`/`Nova_E*`. Reusing `is_generic_stub_c`
+        // (needs `&self`) gives the SAME stub→`nova_int` erasure as
+        // `resolved_array_to_c`, so an unresolved element does not leak a
+        // `Nova_Vec____Nova_T_p` instance. Gated on `typeref_contains_array` so
+        // every array-free shape stays byte-identical to the delegate path.
+        if Self::typeref_contains_array(ty) && self.generic_type_templates.contains_key("Vec") {
+            match ty {
+                TypeRef::Array(inner, _) => {
+                    let inner_c = self.value_aware_subst_to_ref(inner, subst)?;
+                    return Some(self.vec_flip_elem_c(&inner_c));
+                }
+                TypeRef::Named { path, generics, .. }
+                    if path.last().map(|s| s.as_str()) == Some("Result")
+                        && generics.len() == 2 =>
+                {
+                    let ok_c = self.value_aware_subst_to_ref(&generics[0], subst)?;
+                    let err_c = self.value_aware_subst_to_ref(&generics[1], subst)?;
+                    return Some(format!(
+                        "NovaRes_{}_{}*",
+                        Self::sanitize_for_novaopt(&ok_c),
+                        Self::sanitize_for_novaopt(&err_c),
+                    ));
+                }
+                TypeRef::Named { path, generics, .. }
+                    if path.last().map(|s| s.as_str()) == Some("Option")
+                        && generics.len() == 1 =>
+                {
+                    let inner_c = self.value_aware_subst_to_ref(&generics[0], subst)?;
+                    return Some(format!(
+                        "NovaOpt_{}",
+                        Self::sanitize_for_novaopt(&inner_c),
+                    ));
+                }
+                TypeRef::Tuple(elems, _) if !elems.is_empty() => {
+                    let mut elem_cs: Vec<String> = Vec::with_capacity(elems.len());
+                    for e in elems {
+                        elem_cs.push(self.value_aware_subst_to_ref(e, subst)?);
+                    }
+                    return Some(Self::compute_mono_tuple_c_name(&elem_cs));
+                }
+                // Other array-bearing shapes (e.g. a user generic `Box[[]T]`) fall
+                // through: the generic-user arm below already recurses value-aware
+                // per arg, so the nested `[]T` reaches the Array arm above.
+                _ => {}
+            }
+        }
         if let TypeRef::Named { path, generics, .. } = ty {
             let base = path.last().cloned().unwrap_or_default();
             if !generics.is_empty()
