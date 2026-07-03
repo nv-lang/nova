@@ -37468,6 +37468,37 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return String::new();
             }
         }
+        // Channel 6h (2026-07-04): ClosureLight без канальной Func-аннотации —
+        // ДОСЛОВНЫЙ подъём legacy-контракта (params=nova_int дефолт без
+        // контекста, ret=infer тела с seeded overrides, clos_struct_name).
+        // Byte-identical; сокращает legacy-поверхность к удалению.
+        if let ExprKind::ClosureLight { params: cl_p, body: cl_b } = &expr.kind {
+            let body_expr = match cl_b {
+                crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                crate::ast::ClosureBody::Block(b) => {
+                    Expr::new(ExprKind::Block(b.clone()), b.span)
+                }
+            };
+            let param_c_tys: Vec<String> =
+                cl_p.iter().map(|_| "nova_int".into()).collect();
+            let mut overrides = self.closure_param_type_overrides.borrow_mut();
+            let saved: Vec<(String, Option<String>)> = cl_p
+                .iter()
+                .zip(param_c_tys.iter())
+                .map(|(pp, ty)| (pp.name.clone(), overrides.insert(pp.name.clone(), ty.clone())))
+                .collect();
+            drop(overrides);
+            let ret_c = self.infer_expr_c_type(&body_expr);
+            let mut overrides = self.closure_param_type_overrides.borrow_mut();
+            for (nm, prev) in saved {
+                match prev {
+                    Some(old) => { overrides.insert(nm, old); }
+                    None => { overrides.remove(&nm); }
+                }
+            }
+            drop(overrides);
+            return format!("{}*", Self::clos_struct_name(&param_c_tys, &ret_c));
+        }
         // Channel 6g (2026-07-04): if БЕЗ else — ВСЕГДА nova_unit (языковой
         // факт: условие может не выполниться, значения нет — D275/infer-арм
         // else:None→Unit); byte-identical legacy.
