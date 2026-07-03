@@ -37468,6 +37468,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return String::new();
             }
         }
+        // Channel 6g (2026-07-04): if БЕЗ else — ВСЕГДА nova_unit (языковой
+        // факт: условие может не выполниться, значения нет — D275/infer-арм
+        // else:None→Unit); byte-identical legacy.
+        if let ExprKind::If { else_: None, .. } = &expr.kind {
+            return "nova_unit".to_string();
+        }
         // Channel 6f (tally 2026-07-02): module-qualified ИМЯ ТИПА как ресивер
         // (`raw_mem.RawMem` в `raw_mem.RawMem.copy(...)`) — namespace не значение,
         // C-типа нет: "" (дословный legacy-ответ; метод резолвится синтаксически
