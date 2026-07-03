@@ -1,9 +1,9 @@
-module neg.try_parse_int_overflow_err
+module neg.parse_int_overflow_err
 
 import std.runtime.string.{ParseIntError}
 
 fn assert_overflow(s str) {
-    match s.try_parse_int() {
+    match s.parse_int() {
         Ok(_) => assert(false, "expected Err(Overflow)")
         Err(e) => match e {
             Overflow => {}
@@ -24,7 +24,7 @@ test "i64 max plus one" {
 
 test "negative overflow" {
     // -9223372036854775809 overflows
-    match "-99999999999999999999".try_parse_int() {
+    match "-99999999999999999999".parse_int() {
         Ok(_) => assert(false, "expected Err(Overflow)")
         Err(e) => match e {
             Overflow => {}

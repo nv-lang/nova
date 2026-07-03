@@ -50,7 +50,7 @@ test "WriteBuffer visible через prelude (no explicit import)" {
 test "ReadBuffer visible через prelude (no explicit import)" {
     ro bs []u8 = [0x12, 0x34, 0x56, 0x78]
     mut rb = ReadBuffer.from(bs)
-    ro v = rb.try_read_u32_be()
+    ro v = rb.read_u32_be()
     match v {
         Ok(n)  => assert(n == 0x12345678)
         Err(_) => assert(false)
