@@ -26,7 +26,7 @@ use std::collections::HashMap;
 /// ResolvedType` for the seeded literals. Mirrors `desugar::desugar_module`'s
 /// reach (`module.items` + `peer_files`).
 pub fn number_exprs(module: &mut Module) -> HashMap<ExprId, crate::types::ResolvedType> {
-    let mut n = Numberer { next: 1, lits: HashMap::new() };
+    let mut n = Numberer { next: 1, lits: HashMap::new(), only_unset: false };
     for item in &mut module.items {
         n.item(item);
     }
@@ -41,6 +41,20 @@ pub fn number_exprs(module: &mut Module) -> HashMap<ExprId, crate::types::Resolv
     n.lits
 }
 
+/// 172.1.2 (post-normalize, 2026-07-04): нумерует ТОЛЬКО UNSET-узлы
+/// (синтетика desugar/callnorm/chain_norm/field_cache), продолжая с
+/// max(existing)+1 — существующие id НЕ трогаются (канал стабилен).
+pub fn number_unset_exprs(module: &mut Module) -> HashMap<ExprId, crate::types::ResolvedType> {
+    // Оффсет 2^30 — гарантированно выше первой нумерации (линейная с 1);
+    // коллизии исключены без скана.
+    let mut n = Numberer { next: 1 << 30, lits: HashMap::new(), only_unset: true };
+    for item in &mut module.items { n.item(item); }
+    for pf in &mut module.peer_files {
+        for item in &mut pf.items_here { n.item(item); }
+    }
+    n.lits
+}
+
 struct Numberer {
     /// Next id to hand out. Starts at 1 — `ExprId::UNSET` (0) is reserved for
     /// post-numbering synthesis (desugar/codegen scaffolding).
@@ -49,12 +63,16 @@ struct Numberer {
     /// primitive-arithmetic arms (ExprId → ResolvedType), consumed by codegen via
     /// `infer_expr_c_type` (equivalence-checked in debug).
     lits: HashMap<ExprId, crate::types::ResolvedType>,
+    /// 172.1.2: true — присваивать id только UNSET-узлам (post-normalize pass).
+    only_unset: bool,
 }
 
 impl Numberer {
     fn expr(&mut self, e: &mut Expr) {
-        e.id = ExprId(self.next);
-        self.next += 1;
+        if !self.only_unset || !e.id.is_set() {
+            e.id = ExprId(self.next);
+            self.next += 1;
+        }
         // children FIRST: arithmetic/Neg seeding (post-order) reads operand types
         // from `lits`; literals/bool-ops are order-independent.
         self.children(e);

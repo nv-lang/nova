@@ -2543,6 +2543,31 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         let cfg = crate::field_cache::FieldCacheConfig::from_env_or_default();
         crate::field_cache::cache_module(&mut module, &cfg);
     }
+    // 172.1.2 post-normalize канал (2026-07-04): нормализации/field_cache
+    // создают синтетические узлы (UNSET id) — канал чекера для них недостижим
+    // по построению. Нумеруем ТОЛЬКО их (оффсет 2^30, существующие id
+    // стабильны) и ПЕРЕ-ЧЕКАЕМ нормализованное дерево (annotate-only: ошибки
+    // подавляются — семантика сохранена нормализациями, повторные диагностики
+    // не нужны); канал заменяется полным (чек на ТОМ ЖЕ дереве, что эмитится —
+    // §0-целевая форма). Err пере-чека → остаёмся на старом канале (degrade).
+    let module_env = {
+        let _t = crate::perf_timer::PerfTimer::new("post-normalize-annotate");
+        let extra_lits = crate::number_exprs::number_unset_exprs(&mut module);
+        match types::check_module(&module) {
+            Ok(mut env2) => {
+                for (k, v) in extra_lits { env2.resolved_types.entry(k).or_insert(v); }
+                for (k, v) in module_env.resolved_types.iter() {
+                    env2.resolved_types.entry(*k).or_insert_with(|| v.clone());
+                }
+                // proven-наборы/callees из ПЕРВОГО чека сохраняем при пустых.
+                if env2.proven_contracts.is_empty() {
+                    env2.proven_contracts = module_env.proven_contracts.clone();
+                }
+                env2
+            }
+            Err(_) => module_env,
+        }
+    };
 
     let (c_code, warnings) = {
         let _t = crate::perf_timer::PerfTimer::new("codegen");
