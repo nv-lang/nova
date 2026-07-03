@@ -424,6 +424,9 @@ impl LanguageServer for Backend {
         self.state.docs.remove(&uri);
         // Plan 104.4: evict from symbol caches.
         self.state.document_symbol_cache.invalidate(&uri);
+        // Plan 104.10 Ф.1: evict the resolved-module cache (bounds memory to
+        // open documents).
+        self.state.invalidate_resolved(&uri);
         // Note: we do NOT remove from workspace_index on close — the file still
         // exists on disk; its symbols remain searchable (consistent with gopls).
         tracing::debug!(uri = %uri, "document closed and evicted from cache");

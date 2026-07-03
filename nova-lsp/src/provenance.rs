@@ -68,7 +68,29 @@ pub struct ResolvedModule {
 ///
 /// `path` is the on-disk location of the entry buffer (used both as the entry
 /// provenance target and to locate the repo root / stdlib for import resolution).
+///
+/// The `env` is built with the plain `check_module` (no per-expression type
+/// recording). For IDE requests that need `expr_types` (hover/type-driven
+/// completion, Ф.2), use [`resolve_module_for_ide`] instead.
 pub fn resolve_module_for(path: &Path, src: &str) -> ResolvedModule {
+    resolve_module_impl(path, src, /* record_expr_types = */ false)
+}
+
+/// Like [`resolve_module_for`], but records per-expression types in the returned
+/// `env` (via `check_module_with_expr_types`, Ф.2). This is the variant the
+/// Ф.1 symbol cache builds, so downstream IDE features (hover, type-driven
+/// completion, typeDefinition) get a populated `ModuleEnv::expr_types`.
+///
+/// The extra recording is opt-in precisely so the plain compile path stays
+/// zero-overhead; here we deliberately pay for it because the result is cached
+/// per open document and reused across many requests.
+pub fn resolve_module_for_ide(path: &Path, src: &str) -> ResolvedModule {
+    resolve_module_impl(path, src, /* record_expr_types = */ true)
+}
+
+/// Shared implementation of [`resolve_module_for`] / [`resolve_module_for_ide`].
+/// `record_expr_types` selects the checker entry point used to build `env`.
+fn resolve_module_impl(path: &Path, src: &str, record_expr_types: bool) -> ResolvedModule {
     // Entry path, canonicalized to match how `peer_files` stores paths.
     let entry_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
@@ -113,8 +135,10 @@ pub fn resolve_module_for(path: &Path, src: &str) -> ResolvedModule {
     file_map.entry(MAIN_FILE_ID).or_insert_with(|| entry_path.clone());
 
     // Type-check the entry module for downstream type resolution (Ф.4/Ф.5).
-    // Contained so a checker panic never takes down the request.
-    let env = check_module_guarded(&module);
+    // Contained so a checker panic never takes down the request. When
+    // `record_expr_types` is set (Ф.1 IDE cache), use the expr-type-recording
+    // entry point so `env.expr_types` is populated (Ф.2).
+    let env = check_module_guarded(&module, record_expr_types);
 
     ResolvedModule { module, items_start, file_map, env }
 }
@@ -173,10 +197,17 @@ fn resolve_imports_inline_guarded(path: &Path, module: &mut Module) {
     }
 }
 
-/// Run `check_module` under `catch_unwind`, returning the env on success.
-fn check_module_guarded(module: &Module) -> Option<ModuleEnv> {
+/// Run the type checker under `catch_unwind`, returning the env on success.
+/// When `record_expr_types` is set, use `check_module_with_expr_types` (Ф.2)
+/// so the returned `ModuleEnv::expr_types` is populated; otherwise the plain
+/// zero-overhead `check_module`.
+fn check_module_guarded(module: &Module, record_expr_types: bool) -> Option<ModuleEnv> {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        nova_codegen::types::check_module(module).ok()
+        if record_expr_types {
+            nova_codegen::types::check_module_with_expr_types(module).ok()
+        } else {
+            nova_codegen::types::check_module(module).ok()
+        }
     }));
     result.ok().flatten()
 }

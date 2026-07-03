@@ -657,6 +657,18 @@ pos+neg+parity fixtures in `nova-lsp/tests/diagnostic_pipeline.rs`. Formal close
 | `[M-104.10-diag-numeric-codes]` | ✅ RESOLVED (Ф.0.5). `extract_error_code` теперь распознаёт legacy числовые `[Ennnn]` (не только symbolic `[E_…]`) → code-action dispatch срабатывает по ним. | Plan 104.10 Ф.0.5 | close-out Ф.14 |
 | `[M-104.10-hardcode-lists]` | 🟡 PARTIAL (Ф.0.5 stale-removal). `STD_MODULES` очищен от несуществующих путей (`std.collections.map`/`std.sync.*`/`std.io.*`/`std.math`/`std.fmt`/`std.os`/`std.env`/`std.runtime.memory`), сверен с реальным `std/`. Полный FS-scan из search-path + `code_actions.rs`/`rename.rs NOVA_KEYWORDS` → Ф.5. | Plan 104.10 Ф.0.5 → Ф.5 | остаток Ф.5 |
 
+## Plan 104.10 Ф.1 — symbol cache (resolved-module cache; impl DONE 2026-07-03)
+
+Per-URI cache of the fully-resolved module (parse + import-inline + type-check
+with `expr_types`) in `WorkspaceState::resolved_cache` (`state.rs`); built via
+`provenance::resolve_module_for_ide` (`provenance.rs`). Cache hit by document
+version; evicted on `didClose` (`server.rs`). pos+neg+edge+perf tests in
+`state.rs` (`f1_*`).
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-104.10-dependent-invalidation]` | 🟡 PARTIAL (Ф.1). Кеш инвалидируется только по СВОЕМУ `uri`+`version`: `didChange` A перестраивает A, но кеши импортёров A остаются до их собственного edit/close. V2-остаток: полная reverse-dep инвалидация из module-graph (урок zls) — при `didChange` A инвалидировать кеши всех файлов, импортирующих A. Дом = Ф.18 (workspace lifecycle / didChangeWatchedFiles) где строится обратный граф зависимостей. | Plan 104.10 Ф.1 → Ф.18 | остаток Ф.18 |
+
 ## Follow-up: Plan 104.9 (nova-lsp language-sync + close-out)
 
 | Маркер | Статус | Home | Действие |

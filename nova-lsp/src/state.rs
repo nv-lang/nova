@@ -5,6 +5,7 @@
 //! Plan 104.1:   adds Debouncer, workspace root, cancellation support.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -13,6 +14,7 @@ use ropey::Rope;
 use tower_lsp::lsp_types::Url;
 
 use crate::debouncer::Debouncer;
+use crate::provenance::{self, ResolvedModule};
 use crate::semantic_tokens_delta::SemanticTokensSnapshot;
 use crate::symbols::{DocumentSymbolCache, WorkspaceIndex};
 
@@ -35,6 +37,31 @@ pub struct ParsedFile {
     /// Client-assigned document version (monotonically increasing per document).
     /// Passed back in `publishDiagnostics` for outdated-suppression.
     pub version: i32,
+}
+
+/// A cached, fully-resolved module for one open document (Plan 104.10 Ф.1).
+///
+/// Holds the parsed + import-inlined + type-checked [`ResolvedModule`] behind an
+/// `Arc` so many concurrent IDE requests (hover/goto/completion) share one build
+/// without cloning the `Module`. `version` is the document version this build
+/// was produced from — a request supplying a newer version forces a rebuild.
+#[derive(Clone)]
+pub struct CachedResolved {
+    /// Shared, immutable resolved module (parse + imports + env).
+    pub resolved: Arc<ResolvedModule>,
+    /// Document version this build corresponds to.
+    pub version: i32,
+}
+
+// `ResolvedModule` (Module + env) is intentionally not `Debug`; a manual impl
+// keeps `WorkspaceState`'s derived `Debug` working while avoiding dumping the
+// whole AST. Only the discriminating `version` is shown.
+impl std::fmt::Debug for CachedResolved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedResolved")
+            .field("version", &self.version)
+            .finish_non_exhaustive()
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +112,20 @@ pub struct WorkspaceState {
     /// Plan 104.4: project-wide symbol index for `workspace/symbol`.
     /// Updated incrementally: per-file re-index on `didChange`/`didOpen`.
     pub workspace_index: WorkspaceIndex,
+
+    /// Plan 104.10 Ф.1: per-URI cache of the fully-resolved module
+    /// (parse + import inlining + type-check with `expr_types`). Populated
+    /// lazily by [`WorkspaceState::get_or_build_resolved`] on the first IDE
+    /// request after each edit and reused (cache hit by version) by every
+    /// subsequent hover/goto/completion on the same document version. Only
+    /// open documents are cached; entries are evicted on `didClose`.
+    pub resolved_cache: DashMap<Url, CachedResolved>,
+
+    /// Plan 104.10 Ф.1: monotonic count of `ResolvedModule` builds performed by
+    /// [`WorkspaceState::get_or_build_resolved`]. Used by tests to assert
+    /// cache hits (no rebuild on a repeated same-version request) and rebuilds
+    /// (after a version bump). Incremented once per actual build.
+    pub resolved_build_count: AtomicU64,
 }
 
 impl Default for WorkspaceState {
@@ -97,6 +138,8 @@ impl Default for WorkspaceState {
             semantic_tokens_counter: AtomicU64::new(0),
             document_symbol_cache: DocumentSymbolCache::default(),
             workspace_index: WorkspaceIndex::default(),
+            resolved_cache: DashMap::new(),
+            resolved_build_count: AtomicU64::new(0),
         }
     }
 }
@@ -117,6 +160,76 @@ impl WorkspaceState {
         if let Ok(path) = uri.to_file_path() {
             *self.workspace_root.lock().unwrap() = Some(path);
         }
+    }
+
+    /// Plan 104.10 Ф.1: return the fully-resolved module for `uri` at document
+    /// `version`, building and caching it on demand.
+    ///
+    /// - **Cache hit:** an existing entry whose `version` matches is returned
+    ///   directly (a cheap `Arc` clone) — no re-parse / re-resolve / re-check.
+    /// - **Cache miss / stale:** build a fresh [`ResolvedModule`] via
+    ///   [`provenance::resolve_module_for_ide`] (which records `expr_types`,
+    ///   Ф.2), store it under the current `version`, and return it.
+    ///
+    /// Every actual build bumps `resolved_build_count` so tests can distinguish
+    /// hits from rebuilds.
+    ///
+    /// # Concurrency
+    ///
+    /// Thread-safe via `DashMap` + `Arc`. Two threads racing on the same
+    /// uncached `(uri, version)` may each build once (both results are valid and
+    /// equivalent); the later `insert` wins and both callers receive a usable
+    /// `Arc`. We deliberately do not hold a shard lock across the (potentially
+    /// slow) build to avoid blocking unrelated URIs on the same shard.
+    ///
+    /// # Dependency invalidation
+    ///
+    /// This keys only on the document's own `uri` + `version`. Editing a file
+    /// `A` does not yet invalidate cached importers of `A`; a stale importer
+    /// entry survives until that importer is itself edited (version bump) or
+    /// closed. See marker `[M-104.10-dependent-invalidation]` — full reverse
+    /// dependency invalidation (module-graph, zls-style) is deferred.
+    pub fn get_or_build_resolved(
+        &self,
+        uri: &Url,
+        version: i32,
+        src: &str,
+    ) -> Arc<ResolvedModule> {
+        // Fast path: a build for this exact version already exists. The read
+        // guard is scoped to this `if let` and dropped before any `insert`,
+        // so we never deadlock by inserting into a shard we still hold read.
+        if let Some(entry) = self.resolved_cache.get(uri) {
+            if entry.version == version {
+                return entry.resolved.clone();
+            }
+        }
+
+        // Miss or stale: build outside any map lock. Unsaved / non-file URIs
+        // (no on-disk path) degrade to the URI's raw path; `resolve_module_for`
+        // canonicalizes best-effort and never panics on a missing file.
+        let path = uri
+            .to_file_path()
+            .unwrap_or_else(|_| PathBuf::from(uri.path()));
+        let resolved = Arc::new(provenance::resolve_module_for_ide(&path, src));
+        self.resolved_build_count.fetch_add(1, Ordering::Relaxed);
+
+        self.resolved_cache.insert(
+            uri.clone(),
+            CachedResolved { resolved: resolved.clone(), version },
+        );
+        resolved
+    }
+
+    /// Plan 104.10 Ф.1: evict the resolved-module cache entry for `uri`
+    /// (called on `didClose` to bound memory to open documents).
+    pub fn invalidate_resolved(&self, uri: &Url) {
+        self.resolved_cache.remove(uri);
+    }
+
+    /// Plan 104.10 Ф.1: number of `ResolvedModule` builds performed so far.
+    /// Used by tests to assert cache hits vs rebuilds.
+    pub fn resolved_build_count(&self) -> u64 {
+        self.resolved_build_count.load(Ordering::Relaxed)
     }
 
     /// Plan 123.5.5 (V5.5): allocate the next monotonic semantic-tokens
@@ -317,5 +430,197 @@ mod tests {
             },
         );
         assert!(state.docs.contains_key(&uri));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Plan 104.10 Ф.1 — resolved-module symbol cache
+    // ─────────────────────────────────────────────────────────────────────────
+
+    use std::sync::Arc;
+
+    /// Locate the repo root so cache tests resolve a real file with real imports
+    /// (mirrors `provenance.rs` test setup). CARGO_MANIFEST_DIR = .../nova-lsp;
+    /// the repo root is its parent.
+    fn repo_root() -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        manifest.parent().expect("nova-lsp has a parent").to_path_buf()
+    }
+
+    /// Write `src` to an isolated per-fixture directory inside the repo (so
+    /// `find_repo_root_from` + stdlib resolution work) and return its `file://`
+    /// URI plus the on-disk path. Each fixture gets its own sub-directory so
+    /// sibling files declaring the same `module` name are not collected as
+    /// folder-module peers of one another.
+    fn write_fixture(stem: &str, src: &str) -> (Url, PathBuf) {
+        let dir = repo_root().join("target").join("f1_cache_test").join(stem);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{stem}.nv"));
+        std::fs::write(&path, src).unwrap();
+        let uri = Url::from_file_path(&path).expect("valid file URI");
+        (uri, path)
+    }
+
+    /// A small valid Nova source that transitively imports the prelude (so the
+    /// build performs real import inlining + type-check, not a trivial parse).
+    const CACHE_SRC: &str = "module basics.lsp\nimport std.collections\nfn f() => ()\n";
+
+    /// POS: two same-version requests → the second is a cache hit (no rebuild),
+    /// and both hand back the very same `Arc` (shared, not re-cloned build).
+    #[test]
+    fn f1_pos_cache_hit_same_version() {
+        let state = WorkspaceState::default();
+        let (uri, _path) = write_fixture("f1_hit", CACHE_SRC);
+
+        let first = state.get_or_build_resolved(&uri, 1, CACHE_SRC);
+        assert_eq!(state.resolved_build_count(), 1, "first request must build once");
+
+        let second = state.get_or_build_resolved(&uri, 1, CACHE_SRC);
+        assert_eq!(
+            state.resolved_build_count(),
+            1,
+            "same-version request must be a cache hit (no rebuild)"
+        );
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "cache hit must return the same shared Arc"
+        );
+        // The cached build is the FULL resolved module (Ф.1 crit #5): entry
+        // provenance present.
+        assert!(
+            first.file_map.contains_key(&nova_codegen::diag::MAIN_FILE_ID),
+            "cached ResolvedModule must carry provenance for the entry file"
+        );
+    }
+
+    /// POS: a version bump invalidates the entry → the next request rebuilds.
+    #[test]
+    fn f1_pos_rebuild_on_version_bump() {
+        let state = WorkspaceState::default();
+        let (uri, _path) = write_fixture("f1_bump", CACHE_SRC);
+
+        let _v1 = state.get_or_build_resolved(&uri, 1, CACHE_SRC);
+        assert_eq!(state.resolved_build_count(), 1);
+
+        // didChange bumps the version; the next request must rebuild.
+        let _v2 = state.get_or_build_resolved(&uri, 2, CACHE_SRC);
+        assert_eq!(
+            state.resolved_build_count(),
+            2,
+            "a newer document version must force a rebuild"
+        );
+
+        // And the fresh version is now the cached one (a repeat is a hit).
+        let _v2b = state.get_or_build_resolved(&uri, 2, CACHE_SRC);
+        assert_eq!(state.resolved_build_count(), 2, "repeat at v2 is a cache hit");
+    }
+
+    /// POS: `didClose` eviction (`invalidate_resolved`) removes the entry.
+    #[test]
+    fn f1_pos_close_evicts_entry() {
+        let state = WorkspaceState::default();
+        let (uri, _path) = write_fixture("f1_close", CACHE_SRC);
+
+        let _ = state.get_or_build_resolved(&uri, 1, CACHE_SRC);
+        assert!(state.resolved_cache.contains_key(&uri), "entry present after build");
+
+        state.invalidate_resolved(&uri);
+        assert!(
+            !state.resolved_cache.contains_key(&uri),
+            "entry must be evicted after didClose"
+        );
+
+        // A request after eviction rebuilds (build_count increments again).
+        let before = state.resolved_build_count();
+        let _ = state.get_or_build_resolved(&uri, 1, CACHE_SRC);
+        assert_eq!(
+            state.resolved_build_count(),
+            before + 1,
+            "post-eviction request must rebuild"
+        );
+    }
+
+    /// NEG: a request on a never-seen URI builds without panicking and yields a
+    /// usable resolved module (entry provenance present).
+    #[test]
+    fn f1_neg_uncached_uri_builds_without_panic() {
+        let state = WorkspaceState::default();
+        let (uri, _path) = write_fixture("f1_uncached", CACHE_SRC);
+
+        let resolved = state.get_or_build_resolved(&uri, 7, CACHE_SRC);
+        assert!(
+            resolved.file_map.contains_key(&nova_codegen::diag::MAIN_FILE_ID),
+            "fresh build must map the entry file"
+        );
+        assert_eq!(state.resolved_build_count(), 1);
+    }
+
+    /// EDGE: two threads racing on the same uncached `(uri, version)` both get a
+    /// valid result with no data-race / panic. At most one build per thread; the
+    /// cache ends with a single coherent entry.
+    #[test]
+    fn f1_edge_concurrent_same_uri() {
+        let state = Arc::new(WorkspaceState::default());
+        let (uri, _path) = write_fixture("f1_concurrent", CACHE_SRC);
+
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let state = Arc::clone(&state);
+                let uri = uri.clone();
+                std::thread::spawn(move || {
+                    let r = state.get_or_build_resolved(&uri, 1, CACHE_SRC);
+                    // Every racer gets a valid, fully-resolved module.
+                    assert!(r.file_map.contains_key(&nova_codegen::diag::MAIN_FILE_ID));
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("no panic / data-race in concurrent build");
+        }
+
+        // Both threads may have raced to build (≤ one build each); the final
+        // cache holds exactly one entry at the requested version.
+        let count = state.resolved_build_count();
+        assert!((1..=2).contains(&count), "build_count in 1..=2, got {count}");
+        let entry = state.resolved_cache.get(&uri).expect("entry cached after race");
+        assert_eq!(entry.version, 1);
+    }
+
+    /// PERF (Ф.1 crit #4): a cache hit is ≤10ms and strictly cheaper than the
+    /// cold build. Uses a large (~1000-line) source so the cold path pays real
+    /// parse + import-inline + type-check cost, while the hit is an `Arc` clone.
+    #[test]
+    fn f1_perf_cache_hit_under_10ms() {
+        // ~1000 lines of trivial functions + a prelude-importing header.
+        let mut src = String::from("module basics.lsp\nimport std.collections\n");
+        for i in 0..1000 {
+            src.push_str(&format!("fn f{i}() => ()\n"));
+        }
+        let (uri, _path) = write_fixture("f1_perf", &src);
+
+        // Cold build.
+        let cold = crate::perf::PerfTimer::start("f1_cold_build");
+        let _first = state_perf_build(&uri, 1, &src);
+        let cold_ms = cold.finish();
+
+        // Warm hit (same version).
+        let warm = crate::perf::PerfTimer::start("f1_warm_hit");
+        let _second = STATE_FOR_PERF.with(|s| s.get_or_build_resolved(&uri, 1, &src));
+        let warm_ms = warm.finish();
+
+        assert!(warm_ms <= 10, "cache hit must be ≤10ms, was {warm_ms}ms");
+        assert!(
+            warm_ms <= cold_ms,
+            "cache hit ({warm_ms}ms) must not exceed cold build ({cold_ms}ms)"
+        );
+    }
+
+    // A thread-local `WorkspaceState` so the cold build and the warm hit in the
+    // perf test share one cache instance.
+    thread_local! {
+        static STATE_FOR_PERF: WorkspaceState = WorkspaceState::default();
+    }
+
+    fn state_perf_build(uri: &Url, version: i32, src: &str) -> Arc<ResolvedModule> {
+        STATE_FOR_PERF.with(|s| s.get_or_build_resolved(uri, version, src))
     }
 }
