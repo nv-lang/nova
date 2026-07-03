@@ -37468,6 +37468,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return String::new();
             }
         }
+        // Channel 6j (2026-07-04): value-form if-с-else — ДОСЛОВНЫЙ подъём
+        // legacy If-арма (divergence-aware + D275 unit-домминация; вызывался
+        // из emit_if_expr — IF-WHO факт). Byte-identical; sub-вопросы идут
+        // через dispatcher (каналы детей работают).
+        if let ExprKind::If { else_: if_else @ Some(_), then: if_then, .. } = &expr.kind {
+            let then_diverges = self.block_trailing_diverges(if_then);
+            let then_ty = if_then.trailing.as_ref()
+                .map(|e| self.infer_expr_c_type(e))
+                .unwrap_or_else(|| "nova_unit".into());
+            let (else_diverges, else_ty): (bool, String) = match if_else {
+                Some(ElseBranch::Block(b)) => (
+                    self.block_trailing_diverges(b),
+                    b.trailing.as_ref()
+                        .map(|e| self.infer_expr_c_type(e))
+                        .unwrap_or_else(|| "nova_unit".into()),
+                ),
+                Some(ElseBranch::If(e)) => (
+                    self.expr_diverges_125(e),
+                    self.infer_expr_c_type(e),
+                ),
+                None => (false, "nova_unit".into()),
+            };
+            let chosen = if then_diverges { else_ty.clone() } else { then_ty.clone() };
+            let chosen = if chosen != "nova_unit" {
+                let then_is_unit = !then_diverges && then_ty == "nova_unit";
+                let else_is_unit = !else_diverges && else_ty == "nova_unit";
+                if then_is_unit || else_is_unit { "nova_unit".into() } else { chosen }
+            } else {
+                chosen
+            };
+            self.debug_if_infer_125("ch6j_If", then_diverges, &then_ty, &else_ty, &chosen);
+            return chosen;
+        }
         // Channel 6i (2026-07-04): bare `None` в flow-позиции (let без аннотации
         // `mut best = None` — expected отсутствует, чекер честно молчит) —
         // ДОСЛОВНЫЙ подъём legacy-контракта: fn-return NovaOpt_* эвристика,
