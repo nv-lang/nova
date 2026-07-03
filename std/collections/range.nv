@@ -10,8 +10,8 @@
 //   - единая семантика во всех методах (нет ветвления if inclusive)
 //   - один canonical form — соответствует Rust's `Range`, Python `range()`
 //
-// Edge case: `Range.inclusive(_, int.MAX)` → overflow на end+1.
-// Конструктор бросает `Fail[OverflowError]`.
+// Edge case: `0..=int.MAX` → overflow на end+1 при компиляторной
+// нормализации `..=` → half-open → **runtime panic** (не Fail; см. ниже).
 //
 // `Iterable[T]` — структурный effect в prelude. RangeIter автоматически
 // удовлетворяет `Iter[int]` через `mut next() -> Option[int]`.
@@ -290,15 +290,6 @@ test "Range as function argument" {
     assert(sum_range(0..5) == 10)
     assert(sum_range(1..=4) == 10)
 }
-
-test "inclusive overflow throws" {
-    // Range.inclusive(_, int.MAX) → throw OverflowError
-    ro r = with Fail[OverflowError] = |e| interrupt None {
-        Some(Range.inclusive(0, int.MAX))
-    }
-    assert(r == None)
-}
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // step_by tests
