@@ -260,8 +260,16 @@ expr.ok() (->Option), match (ветвление).
 > эмитится с эрейзнутыми типами (`Nova_E*`, generic array-элемент) — worklist body-drain НЕ пере-применяет
 > type-subst для этой формы. Это **foundational mono-instantiation** (не typedef-registration), high-regression-
 > risk (задевает ВСЕ generic-fn), нужен full-regression-гейт. Маркер **`[M-177-result-tuple-over-array-codegen]`**.
-> Чистого .nv-workaround для `Result[[]T,E]` нет. **Итог:** Ф.2c требует dedicated mono-фикс-сессии
-> (deep-investigate worklist body-drain re-subst + broad regression) — не хвост общей сессии.
+> Чистого .nv-workaround для `Result[[]T,E]` нет. **ТОЧНЫЙ КОРЕНЬ (найден трассировкой):**
+> `resolved_type_to_c` Result-арм (`emit_c.rs:2232-2251`): если Ok-payload `[]T`'s **ResolvedType** держит
+> `T` generic (`is_generic_stub_c`=true), весь Result **эрейзится в fallback `NovaRes_nova_int_nova_str*`**
+> (:2251) → тело идёт по `__erased__`-worklist-пути (:4561 → `emit_generic_fn_erased`, отсюда `Nova_E*`).
+> А СИГНАТУРА через `type_ref_to_c`+`current_type_subst` даёт КОНКРЕТНЫЙ `NovaRes_NovaArray_nova_int_p_nova_str*`
+> (его юзает caller) → mismatch + неопределённый typedef. **Это `TypeRef`(subst-aware) vs `ResolvedType`
+> (НЕ-subst-aware в этой точке) дуальность** — ровно проблема, которую решает **Plan 172 (unified type
+> engine)**. Фикс = align mono-subst через оба type-представления (или resolved-subst для `[]T` в mono-теле)
+> — **foundational, домен Plan 172**, не solo-патч в 177. **Итог:** Ф.2c зависит от 172-type-engine-unification
+> (либо dedicated фикс `resolved_type_to_c` Result-арма с subst-протяжкой + broad regression).
 
 ---
 
