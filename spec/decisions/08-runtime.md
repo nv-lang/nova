@@ -1659,12 +1659,13 @@ fn main() {
 
 ## D73. `From` / `Into` protocol-пара — инфаллибельные конверсии
 
-> **Ревизия (2026-07-01):** D73 и D77 — **два отдельных иерархии**
-> по модели Rust. `From`/`Into` строго инфаллибельны (возвращают T).
-> `TryFrom`/`TryInto` строго фаллибельны (возвращают Result[T, E]).
+> **Ревизия (2026-07-01, согласовано с [D325](04-effects.md#d325) Plan 177):** D73 и D77 —
+> **две отдельные иерархии** по модели Rust. `From`/`Into` строго инфаллибельны (возвращают T).
+> `TryFrom`/`TryInto` строго фаллибельны (возвращают `Result[T, E]`).
 > Кросс-вывод `From ↔ TryFrom` **запрещён** — семантики различны.
 > Ранее описанное «unified 4-way auto-derive» и `Fail[E]` в
-> `from`/`into` отозваны.
+> `from`/`into` отозваны (D325 amends D77: 4-way → 2-way; bare-throws fallible-форма убрана —
+> синтез в `emit_c.rs` снимается Plan 177 Ф.2b).
 
 ### Что
 Механизм **инфаллибельной** (guaranteed-success) конверсии значения
@@ -4120,6 +4121,12 @@ static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
 
 ## D178. `str` API cleanup и расширения — Plan 91 Ф.2.6
 
+> **⚠ ЧАСТИЧНО RETRACTED ([D325](04-effects.md#d325), Plan 177, 2026-07-03):** нейминг-триада
+> `parse_int`(bare-throw) / `try_parse_int`(Result) / `parse_int_opt`(Option) из V2/V3 **отозвана**
+> в пользу единой Result-формы `parse_int -> Result[int, ParseIntError]` (D325 R1/R2/R4).
+> Остальной str-cleanup D178 (bytes/chars/split/trim renames и т.п.) — в силе. Реализация
+> отзыва (удаление bare + `_opt`, снятие emit_c-хардкода) — Plan 177 Ф.2b.
+
 ### Что
 
 Комплекс из шести взаимосвязанных изменений `str` API, закрывающих Plan 91
@@ -4432,6 +4439,13 @@ unit-typed, возвращается `"nova_unit"` вместо `"nova_int"` fal
 ### Новые str методы (Ф.2/Ф.5)
 - `str @parse_int(radix=10) -> int Fail[ParseIntError]` — bare = throw convention
   (D77/D25); `try_parse_int` = Result; `parse_int_opt` = Option.
+  > **⚠ RETRACTED триада (amend V4, [D325](04-effects.md#d325), Plan 177, 2026-07-03).**
+  > Триплет `parse_int`(bare-throw) / `try_parse_int`(Result) / `parse_int_opt`(Option)
+  > **отозван** D325 (единый fallible-контракт). Каноничная форма: **`parse_int -> Result[int,
+  > ParseIntError]`** (одно имя, Result); `Option` — через `.ok()`; throw на call-site — через
+  > `!!`. Bare-throw `parse_int` и `parse_int_opt` **удаляются** из std (Plan 177 Ф.2b —
+  > compiler-gated: `emit_c.rs` хардкодит return-C-тип). До Ф.2b код может ещё видеть старые
+  > имена; **нормативная форма — D325**.
 - `str @split_at(idx)` / `@split_at_checked(idx)` (Ф.5 П6).
 - `str @to_nfc/nfd/nfkc/nfkd()` — тонкие делегаты к `normalize_*` (Ф.5 П1).
 - `str @fold_case()` / `@to_upper()` / `@to_lower()` / `@to_title()` — тонкие

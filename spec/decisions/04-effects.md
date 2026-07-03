@@ -6235,10 +6235,11 @@ user-visible эффект, высокий churn) — только задокум
 
 ### Правило
 
+- **(R0) Граница panic vs Result ([D13](08-runtime.md#d13)).** «Падающая операция» в R1 = **expected/environmental failure** (пользовательский ввод, I/O, парсинг, ресурсы среды). **Contract-violation / programming error → panic** per D13, НЕ `Result` и НЕ `Fail`. Пары: `v[i]` OOB → panic / `v.get(i)` → `Option`; integer overflow, div/0 → panic; `s[a..b]` mid-codepoint → panic / `parse_int` → `Result`. Прецедент: Rust и Zig держат panic/unreachable **вне** error-канала. Без R0 R1 читалось бы как «Result вместо panic» — это не так.
 - **(R1)** Любая падающая публичная операция std → `Result[T, <Domain>Error]`. Один структурный `XError` на домен. Нет bare-throws-близнецов, нет `try_`-дублей, нет `_opt`.
 - **(R2)** Имя обычное, без префикса: `parse_int -> Result`, `read_u32 -> Result`, `open -> Result` (как Rust `str::parse`).
 - **(R3)** Префикс `try_` — **только** чтобы отличить fallible-вариант одноимённого **infallible** (`from`/`try_from`, `into`/`try_into`). В одиночных fallible-операциях (нет infallible-сиблинга) префикса НЕТ.
-- **(R4)** `Option` — только genuine absence (`find`/`get`/`env`/`parent`), НЕ fallibility. `Result → Option` через `.ok()`. Никаких `_opt`-имён.
+- **(R4)** `Option` — только genuine absence (`find`/`get`/`env`/`parent`), НЕ fallibility. **Критерий-тест:** *>1 причины отказа ИЛИ вызывающему нужна причина → `Result`; единственный нормальный исход «нет» → `Option`.* `Result → Option` через `.ok()`. Никаких `_opt`-имён. Edge `env` (non-unicode путь на Windows → `Result[VarError]` vs документированная lossy-гарантия) — решает Plan 176.
 - **(R5)** Эффект `Fail[E]` в публичной std-сигнатуре запрещён для **собственных** ошибок (→ `Result`), но разрешён для прозрачного **проброса** `Fail[E]` из closure-параметра (effect-polymorphic forwarding: `retry`/`parallel`/`in_transaction` над телом пользователя).
 
 Эргономика throw на call-site сохранена операторами (D85): `expr!!` (throw), `expr?` (проброс), `expr.ok()` (→Option), `match` (ветвление).
@@ -6259,4 +6260,14 @@ user-visible эффект, высокий churn) — только задокум
 
 ### Эталон
 
-`std/net` — Result-everywhere, 0 `Fail[`. Под-паттерны: per-element `DirIter.next -> Result[Item, E]`; absence → `Option`; инфаллибл-аксессор → значение.
+`std/net` — Result-everywhere, 0 `Fail[`. Под-паттерны: **fallible-итерация** `@next() -> Option[Result[Item, E]]` (Rust-модель: exhaustion снаружи как `Option`, ошибка элемента внутри как `Result`); absence → `Option`; инфаллибл-аксессор → значение.
+
+### Amend-пакет (Ред. 2, Plan 177, 2026-07-03 · sign-off владельца)
+
+- **Nesting-канон fallible-итерации:** `@next() -> Option[Result[T, E]]` — exhaustion (`None`) отделён от per-element ошибки (`Err`). Прежняя формулировка «`DirIter.next -> Result[Item, E]`» (первая ред.) **уточнена** — она сливала «поток кончился» и «элемент упал» в один канал.
+- **Explicit exempt-list** (для conformance-guard §8.2 Plan 177 — иначе false-positive на легальных `Fail[`):
+  1. `std/prelude/core.nv` — `extern Option@unwrap` / `Result@unwrap` с `Fail[...]` — это **сам D85-мост `!!`**, by-design.
+  2. `std/prelude/protocols.nv` — protocol-member `@cleanup(...) Fail[E]` (Cleanup-протокол) — user-`E`, R5-forwarding.
+  3. `std/testing/property.nv` — `assert_prop`/`assert_prop_msg`/`property`/`property_with` (4 сигнатуры с `Fail`) — **exempt** (sign-off 2026-07-03): assert/test-DSL-семантика («упади сейчас» = смысл assert'а); миграция в `Result` отвергнута (шум в тестах).
+- **Коллекторы `[]Result`:** работа со списком результатов — `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) и `partition: []Result[T,E] -> ([]T,[]E)` (prelude, Plan 177 Ф.2c; прецеденты: Rust `FromIterator for Result`, Go `errors.Join`).
+- **Cross-domain композиция (trade-off):** авто-`From`-конверсия ошибок при `?` **отклонена** (D85 amend 174.2) → смешение доменов (`IoError` + `ParseIntError` в одной fn) требует `.map_err(...)` на сайте либо явный domain-sum-error. Обратное (обернуть Fail-код в Result) — идиома `with Fail[E] = |e| interrupt Err(e) { … }` (аналог Kotlin `runCatching` / Swift `Result(catching:)`).

@@ -2,7 +2,7 @@
 # Plan 177 — Единый fallible-контракт std: **Result-everywhere** (no bare-throws convention)
 
 > **Top-level план.** Создан 2026-06-25. **Ред. 2 — 2026-07-03** (аудит: ground-truth/7-языков/blast-radius; статусы E-пунктов, R0-граница, spec_tests, агент-правила).
-> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** (`spec/decisions/04-effects.md`, Status ACTIVE, sign-off владельца 2026-06-25); Ф.1 largely done (остатки §5: E3/E6/E10/E11 + amend-пакет §4a); Ф.2a ✅ DONE; Ф.2b/Ф.2c/Ф.3/Ф.4 — pending.
+> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c/Ф.3/Ф.4 — pending (.nv/docs, безопасны); Ф.2b — compiler-gated, координация 172.1×174.1 (не трогать соло)**.
 > **Маркер:** `[M-177-result-everywhere-std]`. **Запуск:** «**выполни план 177**».
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** D325 ✅ уже в спеке
 > (Ф.1-ядро выполнено). Migration-sweep (read_buffer bare-twins, emit_c builtins) — Волна 1 трек G,
@@ -156,7 +156,7 @@ expr.ok() (->Option), match (ветвление).
 
 - **(E1)** ✅ DONE — `nv-coding-style.md` §4 :83-90 = R1-R5 (единое Result-правило); инлайн-дата `· согласовано 2026-06-25` добавлена 2026-07-03.
 - **(E2)** ✅ DONE — net-carve-out удалён.
-- **(E3)** ❌ ОСТАЛОСЬ — пример `read_config` (**теперь** `nv-coding-style.md` §20.4 **:638-645** — line-ref дрейфанул) всё ещё `Fs Fail -> Config`; переписать в Result-форму:
+- **(E3)** ✅ DONE (2026-07-03) — `nv-coding-style.md` §20.4 :640 `read_config` переписан в Result-форму (`Fs -> Result[Config, IoError]`; `Fs.open(path)?` + `defer file.close()` + `read_all()?` + `Ok(Config.parse(raw))`), defer-иллюстрация сохранена. Целевой снимок:
   ```nova
   fn read_config(path str) Fs -> Result[Config, IoError] {
       consume file = Fs.open(path)? {        // ? разворачивает Result; File must-consume → consume-scope
@@ -167,12 +167,12 @@ expr.ok() (->Option), match (ветвление).
   ```
 - **(E4)** ✅ DONE — `module-conventions.md` §3 :92 («Все fallible → Result (R1, D325)»).
 - **(E5)** ✅ DONE — `module-conventions.md` §5 :151-152 (`try_`-дуал убран).
-- **(E6)** 🟡 НАПОЛОВИНУ — `idioms/error-handling.md` :42-51 переписан под D325, но **:28 всё ещё даёт `s.parse_int_opt()` как позитивный пример** — противоречит R4 в том же файле → заменить на genuine-absence пример (`m.get(k)`) или `parse_int().ok()`. Плюс дописать: (a) паттерн **domain-sum-error + `.map_err`** для cross-domain композиции (trade-off #2 §1); (b) канонизировать идиому **wrap Fail→Result** `with Fail[E] = |e| interrupt Err(e) { … }` (аналог Kotlin `runCatching` / Swift `Result(catching:)`). `strings.md` :368-371 — ✅ уже переписан.
+- **(E6)** ✅ DONE (2026-07-03) — `idioms/error-handling.md` :28 `s.parse_int_opt()` заменён на genuine-absence `m.get(key) -> Option[V]` + пояснение (fallible-с-причиной → Result+`.ok()`, `_opt`-близнеца нет, R4). Дописаны идиомы: (a) **cross-domain композиция** — `.map_err` per-site + domain-sum-error `enum ConfigError Io | Parse`; (b) **wrap Fail→Result** `with Fail[E] = |e| interrupt Err(e) { … }` (runCatching-style). `strings.md` — ✅ ранее.
 - **(E7)** ✅ DONE — `std/prelude/protocols.nv` :126-143 (текст-конвенция D77 2-way).
 - **(E8)** ✅ MOOT — claim «Plan 173 унифицирует net-нейминг» в 173 уже отсутствует (grep = 0); 173 Ф.1 делает `?` строго return-only — примеры/конвенции 177 уже совместимы.
 - **(E9)** ✅ RESOLVED (переформулирован Ред.2) — «дата-запись в conventions-governance.md» невыполнима как написано (там changelog не ведут); правильная форма = **инлайн-даты** у изменённых пунктов. Дата у D325-булета nv-coding-style:83 проставлена (E1).
-- **(E10)** ❌ NEW — **retract-баннер D178**: в `08-runtime.md` проставить RETRACTED-ноту (amend-V4) на D178 V1/V2/V3 (V3 :4433-4434 всё ещё «bare = throw convention; try_parse_int = Result; parse_int_opt = Option») + строка в индексе файла (:22-23). Без этого спека противоречит D325.
-- **(E11)** ❌ NEW (малый) — cross-ref D325 в ревизию-баннер D77 (`08-runtime.md:1662-1667`, внесён 2026-07-01 без ссылки на D325).
+- **(E10)** ✅ DONE (2026-07-03) — retract-баннер D178: `08-runtime.md` D178 V1-хедер (⚠ ЧАСТИЧНО RETRACTED — parse_int-триада отозвана D325, остальной str-cleanup в силе) + врезка на V3 :4433-4434 (amend V4: `parse_int -> Result`, `.ok()`, `!!`; удаление bare+`_opt` = Ф.2b). Спека больше не противоречит D325.
+- **(E11)** ✅ DONE (2026-07-03) — D77 ревизия-баннер (`08-runtime.md:1662`) теперь ссылается на D325 (amends D77 4-way→2-way; синтез в emit_c → Ф.2b).
 
 ---
 
@@ -224,7 +224,7 @@ expr.ok() (->Option), match (ветвление).
 | Фаза | Объём | DEP (что должно быть закрыто ДО) | Статус |
 |---|---|---|---|
 | **Ф.0 Discovery** | grep-скоуп: call-sites bare-`parse_int`/`read_X`/`_opt` + все `Fail[` в публичных std-сигнатурах (минус R5-forwarded) | — | ✅ DONE (workflow 2026-06-25; blast-radius-цифры уточнены аудитом Ред.2 2026-07-03 — §6) |
-| **Ф.1 D325 + конвенции** | D325 в спеку + E1-E11 | sign-off (✅ 2026-06-25) | 🟡 largely DONE — **остаток:** E3, E6-половина, E10, E11 + **amend-пакет §4a** (R0/R4-критерий/nesting/exempt/коллекторы-фраза) |
+| **Ф.1 D325 + конвенции** | D325 в спеку + E1-E11 | sign-off (✅ 2026-06-25) | ✅ **DONE 2026-07-03** — E1-E11 все закрыты (E3/E6/E10/E11 добиты) + amend-пакет §4a внесён в D325 (R0/R4-критерий/nesting/exempt-list/коллекторы). Спека самосогласована с D325 (D178/D77 баннеры). |
 | **Ф.2a `.nv`-only миграция** | base64 → complex → json | Ф.1-ядро | ✅ DONE 2026-06-26 (все 3 файла green end-to-end) |
 | **Ф.2b compiler-gated sweep** | parse.nv + read_buffer.nv rename + emit_c хардкоды + builtins + D77-emit_c + sweep 15+9 тест-файлов (§6) | разрешение на компилятор; координация **172.1** (emit_c-зона) и **174.1** (новые поверхности сразу под D325) — Волна 3 | ⏳ |
 | **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | Ф.1; независим от Ф.2b (.nv-only) | ⏳ |
