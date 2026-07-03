@@ -828,3 +828,35 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 план не создаётся сознательно. Пересмотреть, когда (а) полный чек+кодоген
 крупного проекта станет узким местом UX, (б) появится typed-IR (172.12) —
 естественная граница мемоизации. НЕ носитель ближайших зонтов.
+
+
+## [M-177-d77-codegen-4way-retract] — D77 4-way→2-way codegen (Plan 177 Ф.2b, отложено 2026-07-04)
+
+D325 ретрактирует bare-throws auto-derive конверсий: из `try_from`(Result) компилятор
+больше НЕ должен синтезировать bare `from`(throws) fallible-форму (остаются `from`
+infallible + `try_from` Result — «4-way»→«2-way»). **Spec-часть уже внесена** (2026-07-01,
+`08-runtime.md:1662`). Остался **codegen** — `from_targets`/`try_from_targets`-синтез в
+`emit_c.rs` (регистрация ~4174-4224; использование в `.into()`/`.try_into()` codegen
+~26467-26524). Декларации TryFrom/TryInto НЕ трогать. Отложено из Ф.2b: сложно/отдельно
+(задевает всю conversion-auto-derive машинерию), separable от parse/read-триад. Требует
+own regression-гейта. Домен Plan 177 Ф.3 или dedicated.
+
+## [M-checker-unknown-method-stackoverflow] — чекер stack-overflow на неизвестном методе (pre-existing, 2026-07-04)
+
+`nova check` файла, вызывающего НЕизвестный метод на str/ReadBuffer-ресивере
+(`"x".zzz_bogus()`, `rb.try_read_u32_le()` после ретракта), даёт **stack overflow** в
+чекере (`thread has overflowed its stack`), НЕ чистый `[E7320]`/`E_UNKNOWN_METHOD`.
+**Pre-existing** — воспроизводится на baseline `19b9c756` тем же bogus-методом (НЕ
+регрессия Plan 177). **Блокирует** `spec_tests/conformance/neg/d325_*` (removed-имена →
+compile-error): чистый `EXPECT_COMPILE_ERROR`-фикстур невозможен (крашит раннер). Пока
+отсутствие старых имён доказано source-level negative-grep. Спец-неги d325 — после фикса
+этого overflow (рекурсия в method-resolution-fallback). Домен: чекер / Plan 177 Ф.3.
+
+## [M-parse-int-overflow-returns-invaliddigit] — parse_int overflow → InvalidDigit (pre-existing, 2026-07-04)
+
+`str.parse_int` на 20-значном числе (`"99999999999999999999"`) возвращает
+`Err(InvalidDigit)` вместо `Err(Overflow)` (neg-фикстур `parse_int_overflow_err` RUN-FAIL).
+**Pre-existing** — тело `@parse_int` byte-identical со старым `@try_parse_int`, тот же
+результат на baseline `19b9c756` (НЕ регрессия D325-rename). Баг в арифметике overflow-
+check `parse.nv` (либо signed-overflow UB до проверки, либо порядок check/accumulate).
+Домен Plan 174.1 (primitive parse), вне D325-rename-scope Ф.2b.

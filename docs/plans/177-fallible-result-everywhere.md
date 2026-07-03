@@ -2,7 +2,7 @@
 # Plan 177 — Единый fallible-контракт std: **Result-everywhere** (no bare-throws convention)
 
 > **Top-level план.** Создан 2026-06-25. **Ред. 2 — 2026-07-03** (аудит: ground-truth/7-языков/blast-radius; статусы E-пунктов, R0-граница, spec_tests, агент-правила).
-> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c ✅ DONE 2026-07-04 — ЦЕЛЕВОЙ ФОРМОЙ (`[M-172.1-U4-freefn-generic-return]`, `3ef1acb8`+`b8fb952d`): `sequence`/`partition` в `std/prelude/core.nv`, оба cross-module; codegen снят ЕДИНЫМ каналом — `f1_check_call` материализует конкретный generic-free-fn call-return через `unify_type`+subst → codegen читает `resolved_type_to_c` (D315); interim-зеркало `4e4e7c34` откачено net-zero; conformance 38/38 + zero-regression 23 папки); Ф.2b — compiler-gated (172.1×174.1); Ф.3 pos-часть (D85-каналы/R0-panic на уже-мигрированных API) + Ф.4 — docs, безопасны; всё соло-компиляторное отложено**.
+> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c ✅ DONE 2026-07-04 — ЦЕЛЕВОЙ ФОРМОЙ (`[M-172.1-U4-freefn-generic-return]`, `3ef1acb8`+`b8fb952d`): `sequence`/`partition` в `std/prelude/core.nv`, оба cross-module; codegen снят ЕДИНЫМ каналом — `f1_check_call` материализует конкретный generic-free-fn call-return через `unify_type`+subst → codegen читает `resolved_type_to_c` (D315); interim-зеркало `4e4e7c34` откачено net-zero; conformance 38/38 + zero-regression 23 папки); **Ф.2b ✅ DONE 2026-07-04 (`[M-177-Ф2b-parse-read-dehardcode]`): parse.nv/read_buffer.nv → единая Result-форма + де-хардкод их return-типов (§3/§10, резолв из .nv) + sweep; zero-regression vs `19b9c756`; де-хардкод доказан звучным ДО удаления (Channel-2 конкретный NovaRes). Отложено: D77-codegen (`[M-177-d77-codegen-4way-retract]`), builtins→174.1, spec-neg блок. на pre-existing `[M-checker-unknown-method-stackoverflow]`)**; Ф.3 pos-часть (D85-каналы/R0-panic на уже-мигрированных API) + Ф.4 — docs, безопасны; всё соло-компиляторное отложено**.
 > **Маркер:** `[M-177-result-everywhere-std]`. **Запуск:** «**выполни план 177**».
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** D325 ✅ уже в спеке
 > (Ф.1-ядро выполнено). Migration-sweep (read_buffer bare-twins, emit_c builtins) — Волна 1 трек G,
@@ -198,9 +198,56 @@ expr.ok() (->Option), match (ветвление).
 >
 > **Урок для плана (важно):** «`.nv`-only» (не трогает compiler-source) ≠ «codegen-clean». Все **3** проверенных Ф.2a-файла упёрлись в codegen-баги. **Регрессия только у complex** (зелёный→красный, откачен); **base64 и json — пре-существующе-красные** (закоммичены: D325-корректны + `nova check`-чисты, `nova test`-статус не ухудшен). **Разблокировка Ф.2a требовала codegen-фиксов** — **ВСЕ 4 закрыты 2026-06-26** (Plan 172.1, ветка plan-172): `[M-177-ifexpr-value-materialize-codegen]` (`836befcb`), `[M-177-result-over-named-tuple-codegen]` (`b022919a`), `[M-177-anon-record-in-ctor-arg-codegen]` (`c724de7a`), `[M-172.1-self-ref-slice-variant-erasure]` (`98fa5c56`, бывш. erasure `[M-91.13]`). **Статус Ф.2a: ✅ все 3 файла green end-to-end** (json добит 2026-06-26, см. json-строку).
 
-### 🔴 Ф.2b — compiler-gated, **ОТЛОЖЕНО** (нужен `emit_c.rs`; Волна 3, координация 172.1×174.1)
+### 🟢 Ф.2b — parse/read-триады SHIPPED + де-хардкод ✅ DONE (2026-07-04); D77-codegen + builtins отложены
 
-> ⚠ **Line-refs ниже = снимок 2026-07-03; `emit_c.rs` дрейфует ежедневно (172.1.2)** — исполнителю искать **по символу/паттерну**, номера строк только ориентир.
+> **✅ DONE 2026-07-04 (`[M-177-Ф2b-parse-read-dehardcode]`):** parse.nv + read_buffer.nv
+> переименованы в **единую Result-форму** (D325) с **де-хардкодом их return-типов** (§3/§10 —
+> резолв из `.nv`, НЕ «поправить хардкод»). Ключевая проверка звучности (§10-порядок): доказано
+> ЭМПИРИЧЕСКИ до удаления, что чекер материализует конкретный Result в канал, а codegen читает
+> его ЕДИНЫМ `resolved_type_to_c` — сгенерированный C для `try_read_u16_le`/`try_parse_int`
+> (ДО правок) уже даёт **конкретный** `NovaRes_uint16_t_Nova_ReadBufferError_p*` /
+> `NovaRes_nova_int_Nova_ParseIntError_p*` на call-site (Channel-2 через
+> `infer_method_call_channel_type`→`resolve_instance_method_return`), а НЕ erased-хардкод
+> `NovaRes_nova_int_nova_str*`. Хардкоды были **dead-superseded** каналом (Ф.2c/172.1.2-механизм).
+>
+> **ЧТО СДЕЛАНО:**
+> - **parse.nv:** `@try_parse_int`→`@parse_int` (Result-форма), удалены bare `@parse_int`(throws) +
+>   `@parse_int_opt`(Option). Result→Option на call-site = `.ok()`.
+> - **read_buffer.nv:** `@try_read_X`→`@read_X` (22 Result-primaries), удалены **22 bare-twin**
+>   Fail-обёртки (`_decode_utf8_at` не тронут).
+> - **де-хардкод emit_c.rs (оба зеркала):** удалены `"parse_int" => "NovaOpt_nova_int"` +
+>   ReadBuffer read_X/try_read_ width-таблица + `str_method_ret_type` parse_int-арм. Infallible
+>   аксессоры (position/remaining/…) оставлены (вне D325-scope). NET: name-keyed return-хардкод
+>   для parse/read СНЯТ; canal-miss → loud CC-FAIL (§1), не тихий mis-type.
+> - **sweep call-sites:** parse (text_methods_test → `.ok()`; fe2 10 файлов try_→parse + git mv
+>   `try_parse_int_*`→`parse_int_*`; fe5; unicode-golden parse-часть; convention переписан на D325
+>   D85-каналы; cp_utils.nv), read (buffers/* bare→`!!` + try_→read; plan62; read_text; runtime).
+> - **ГЕЙТЫ:** std компилится (nova-cli пересобран); negative-grep старых имён = 0 (кроме
+>   rename-explain комментов); **zero-regression** vs baseline `19b9c756` (собран baseline-бинарь в
+>   `nova-p177-base`): regression-сэмпл (generics/plan153_2/plan161/plan100_4_1) 3/1==3/1, broad
+>   (plan59/72/148/138_2) 10/0==10/0, все affected-провалы доказаны **pre-existing** (overflow-neg
+>   RUN-FAIL, golden-split HashMap CC-FAIL, auto_derive D249 — идентичны на baseline); pos-
+>   conformance CU PASS. де-хардкод доказан: read_integers/read_oob/parse PASS с УДАЛЁННЫМИ
+>   хардкодами.
+>
+> **ОТЛОЖЕНО (маркеры + backlog):**
+> - **D77 4-way→2-way codegen** (`from_targets`/`try_from_targets` bare-throws-синтез в emit_c):
+>   `[M-177-d77-codegen-4way-retract]` — сложно/отдельно (задевает всю conversion-auto-derive
+>   машинерию), separable от parse/read; spec-часть уже внесена. Декларации TryFrom/TryInto не
+>   тронуты. НЕ в этой задаче (task-разрешение).
+> - **spec_tests/conformance/neg/d325_*** (removed-имена → compile-error): **БЛОКИРОВАНО
+>   pre-existing чекер-багом** `[M-checker-unknown-method-stackoverflow]` — резолв неизвестного
+>   метода на str/ReadBuffer-ресивере даёт **stack overflow** в чекере (воспроизводится на baseline
+>   `19b9c756` тоже, НЕ регрессия) → чистый `EXPECT_COMPILE_ERROR`-фикстур невозможен (крашит
+>   раннер). Negative-grep на уровне исходников доказывает отсутствие старых имён. Спец-неги —
+>   после фикса stack-overflow (Ф.3).
+> - **builtins `int.try_parse`/`f64.try_parse`/`char.try_from`** — цель Plan 174.1 (не Ф.2b).
+> - **parse_int overflow-detection баг** (`[M-parse-int-overflow-returns-invaliddigit]`): 20-значные
+>   числа → `Err(InvalidDigit)` вместо `Err(Overflow)` (neg `parse_int_overflow_err` RUN-FAIL,
+>   **pre-existing** идентично на baseline; тело @parse_int byte-identical со старым @try_parse_int)
+>   — арифметика parse.nv, домен Plan 174.1, вне D325-rename-scope.
+
+> ⚠ **Line-refs ниже = снимок 2026-07-03 (исторический); Ф.2b выполнен по символу/паттерну.**
 
 | Файл | Блокер | Sweep-скоуп (аудит 2026-07-03) |
 |---|---|---|
@@ -226,7 +273,7 @@ expr.ok() (->Option), match (ветвление).
 | **Ф.0 Discovery** | grep-скоуп: call-sites bare-`parse_int`/`read_X`/`_opt` + все `Fail[` в публичных std-сигнатурах (минус R5-forwarded) | — | ✅ DONE (workflow 2026-06-25; blast-radius-цифры уточнены аудитом Ред.2 2026-07-03 — §6) |
 | **Ф.1 D325 + конвенции** | D325 в спеку + E1-E11 | sign-off (✅ 2026-06-25) | ✅ **DONE 2026-07-03** — E1-E11 все закрыты (E3/E6/E10/E11 добиты) + amend-пакет §4a внесён в D325 (R0/R4-критерий/nesting/exempt-list/коллекторы). Спека самосогласована с D325 (D178/D77 баннеры). |
 | **Ф.2a `.nv`-only миграция** | base64 → complex → json | Ф.1-ядро | ✅ DONE 2026-06-26 (все 3 файла green end-to-end) |
-| **Ф.2b compiler-gated sweep** | parse.nv + read_buffer.nv rename + emit_c хардкоды + builtins + D77-emit_c + sweep 15+9 тест-файлов (§6) | разрешение на компилятор; координация **172.1** (emit_c-зона) и **174.1** (новые поверхности сразу под D325) — Волна 3 | ⏳ |
+| **Ф.2b compiler-gated sweep** | parse.nv + read_buffer.nv rename + emit_c хардкоды + builtins + D77-emit_c + sweep 15+9 тест-файлов (§6) | разрешение на компилятор; координация **172.1** (emit_c-зона) и **174.1** (новые поверхности сразу под D325) — Волна 3 | 🟢 **DONE 2026-07-04** (parse/read rename + де-хардкод return-типов §3/§10 + sweep; zero-regression vs `19b9c756`; де-хардкод доказан). **Отложено:** D77-codegen `[M-177-d77-codegen-4way-retract]`; builtins→174.1; spec-neg блок. на `[M-checker-unknown-method-stackoverflow]` (pre-existing); parse_int-overflow-баг (pre-existing, 174.1). |
 | **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | ~~Ф.1; независим от Ф.2b (.nv-only)~~ ~~codegen-gated~~ | ✅ DONE 2026-07-04 (`sequence`+`partition` в `std/prelude/core.nv`, оба cross-module; codegen-блокер снят ЦЕЛЕВОЙ ФОРМОЙ `[M-172.1-U4-freefn-generic-return]` `3ef1acb8` — см. ниже) |
 | **Ф.3 Guard + spec_tests** | conformance-guard (R5-дискриминатор + exempt-list §2) + нейм-линт (A2) + spec_tests d325/d77 (§8) | Ф.1 (полный D325-текст); neg-фикстуры на удалённые имена — после Ф.2b | ⏳ |
 | **Ф.4 Docs/log/закрытие** | `project-creation.txt` + `discussion-log.md` (nova-private) + `simplifications.md`; cross-ref из 174.1/173/176; Q-sweep §9 | все предыдущие | ⏳ |
