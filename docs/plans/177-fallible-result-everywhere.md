@@ -241,12 +241,19 @@ expr.ok() (->Option), match (ветвление).
 > для Result/Tuple над Array-payload при fresh mono-инстанциации** — wrapper-typedef эмитится ДО
 > element-typedef. Подтверждение: `Result[[]u8,...]` из base64 (Ф.2a) РАБОТАЕТ (typedef эмитится под
 > конкретный byte-инстанс: «did you mean nova_byte_p_nova_str»), а `Result[[]int,str]`/tuple — нет.
-> **Тот же класс, что `[M-177-result-over-named-tuple-codegen]` (b022919a, Ф.2a) — но для ARRAY-
-> payload, НЕ покрыт** тем фиксом (он late-VR-typedef'ил named-tuple/record; array-элемент wrapper'а —
-> отдельная ветка). **Следствие:** Ф.2c зависит от codegen-фикса (emit_c.rs VR-typedef late-emit для
-> Array-payload) — это зона 172.1 (координация, не соло). Маркер **`[M-177-result-tuple-over-array-codegen]`**.
-> Чистого .nv-workaround для `sequence -> Result[[]T,E]` нет (Result-over-array — суть коллектора).
-> **Перепланировка:** Ф.2c переносится в compiler-gated-волну рядом с Ф.2b.
+> **Тот же класс, что `[M-181-result-over-named-tuple-codegen]` (b022919a, Ф.2a) — но для ARRAY-
+> payload.** **УТОЧНЁННЫЙ КОРЕНЬ (после попытки фикса 2026-07-03):** это НЕ просто late-VR-typedef
+> ordering, а **неполная mono-подстановка для формы `fn[T,E] … -> Result[[]T,E]`**: тело generic-mono
+> инстанса эмитится с **эрейзнутым `E` (`Nova_E*` вместо `nova_str`)** — `Err(e) => return Err(e)` даёт
+> `initializing 'Nova_E*' with 'nova_str'` — и **конкретный `NovaRes_NovaArray_nova_int_p_nova_str` typedef
+> НЕ регистрируется** (caller юзает его, он нигде не определён; byte-версия есть только потому, что base64
+> её регистрирует конкретным `Ok`). **Попытка localized-фикса** (idempotent-регистрация NovaRes возврата
+> на входе emit-fn, зеркало ctor-site 23631) **НЕ помогла** — `ret_c` для generic-mono не конкретен, корень
+> глубже (mono-substitution ядра, зона 172.1: `M-172.1-*`/`M-181-*` markers по всему mono-typedef-пути).
+> **Следствие:** Ф.2c зависит от **foundational mono-фикса** (подставить T/E в mono-тело+return generic-fn,
+> вернуть Result/Tuple-over-array) — high-regression-risk, зона 172.1, база nova-p177 (main) позади активной
+> 172.1-работы → **не соло**. Маркер **`[M-177-result-tuple-over-array-codegen]`**. Чистого .nv-workaround
+> для `Result[[]T,E]` нет. **Перепланировка:** Ф.2c в compiler-gated-волну рядом с Ф.2b (172.1-координация).
 
 ---
 
