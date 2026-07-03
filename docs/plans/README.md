@@ -53,7 +53,7 @@ Renumber D216/D282 ✅ уже выполнен (2026-07-03) — гейты 174.5
 | **C: time** | 175 Ф.1 → Ф.1b → {Ф.1c ∥ Ф.2} → Ф.3 → Ф.4 | самодостаточен (коорд. 172.1-канал только на Ф.1) |
 | **D: io-core** | 176 Ф.0.5 (from_bytes) → 176 Ф.1 (io.Read/Write/Seek, IoError, BufWriter) | io-core не трогает fs/время; Ф.0.5 = переоформление интринзика |
 | **E: compress** | **179 Ф.1 (inflate/gzip/zlib — pure-Nova)** | алгоритмика на str/Vec — ни одного гейта; 🔴 гейт-опенер для 178 Ф.2 |
-| **F: net byte-surface** | **178 Ф.0.5** (additive read_bytes/write_bytes + SocketAddr→value + AddrNet-retract) | после 178 Ф.0-сверки; разблокирует 176 Ф.4(b); НЕ ждёт остального 178 |
+| **F: net byte-surface** | **178 Ф.0.5** (additive read_bytes/write_bytes + SocketAddr→value + AddrNet-retract + **TcpNet/UdpNet/DnsNet→единый Net**, owner 2026-07-03) | после 178 Ф.0-сверки; разблокирует 176 Ф.4(b); НЕ ждёт остального 178 |
 | **G: Result-sweep** | 177-миграция (read_buffer 22 bare-twins, emit_c builtins) | конвенция D325 в спеке; sweep независим (Ф.2b parse-rename — координация 174.1, Волна 3) |
 
 **Волна 2 — стыковки (каждая ждёт конкретный вход):**
