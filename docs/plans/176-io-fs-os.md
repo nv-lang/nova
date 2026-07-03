@@ -1,95 +1,128 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Plan 176 — I/O + Filesystem + OS: `io`-core (Read/Write/Seek) + `Fs`-эффект + `Os` (env/args/cwd)
 
-> **Top-level umbrella-план.** Создан 2026-06-22; production-hardened 2026-06-22 (cross-lang Go/Rust/TS/Kotlin/Java +
-> adversarial-критика, workflow `plan180-harden`). **Статус:** 📋 READY (все Q закрыты §3.0).
-> **Маркер:** `[M-176-io-fs-os]`. **Запуск:** «**выполни план 176**».
-> **Эталон:** **Go / Rust / TS / Kotlin / Java**. **Архитектура — по net-семейству** ([std/net/effect.nv](../../std/net/effect.nv)):
-> эффект = внутренний плумбинг (libuv-backed, async, park/wake как [net.c:1-24](../../compiler-codegen/nova_rt/net.c#L1)),
-> юзер — через type-методы; ошибки — `Result[T, IoError]`.
-> **D-блоки (NEW):** D322 (io-core), D323 (fs), D324 (os). ⚠ **D316–D321 (Plan 175/179.1) ещё НЕ в `spec/decisions/`** (committed
-> только до D315) → Ф.0 verify/merge/renumber до присвоения D322+.
-> **🔴 HARD-GATES:** (1) **Plan 80 must-consume** (Ф.3 consume-checker scope-exit) — **НЕ начат**; линейный `File`/`BufWriter`/`DirIter`
-> требуют его → **гейтит Ф.2** (fallback: affine `consume` + runtime-checked close, если 80 слипнется). (2) **`str.from_bytes`→`Result`**
-> отсутствует (91.18 deferred) → **Ф.0.5 prereq** для `read_to_string`. (3) **`uv_fs_*` C-wrappers** не написаны (net.c их не имеет) → новый `fs.c`.
-> **Координация:** Plan 175 `Timestamp` (READY), 83.3 `Blocking` D50 (только CPU-bound-обёртки, не дефолт fs-путь), 172.4 value-ABI (READY), 91.18 str.
-> **Закрывает** fs-часть `[M-91.10-fs-net-effects-formal]`. **Process → отдельный под-план 176.1** (Q5). **Фоновые агенты:** §10.
+> **Top-level umbrella-план.** Создан 2026-06-22; production-hardened 2026-06-22 (cross-lang Go/Rust/TS/Kotlin/Java,
+> workflow `plan180-harden` — план авторингался под №180, переномерован в 176 при сдвиге std-блока).
+> **Ред. 2 — 2026-07-03** (5-агентный аудит + верификация): планка расширена до **7 языков (+Zig/Swift)**;
+> **🎉 ГЛАВНОЕ: HARD-GATE «Plan 80» СНЯТ — must-consume УЖЕ реализован** (D133, Plan 100.1 ✅ 2026-05-25:
+> `type X consume {}` + `D133-not-consumed` на scope-exit, `compiler-codegen/src/types/mod.rs:18864+/:19746-19908`; боевой пример —
+> `WriteGuard`/Mutex; `File`-пример прямо в спеке D133) → affine-fallback-ветка УДАЛЕНА; stale-номера
+> 180/179 вычищены; двойное владение net-миграций разведено со 178; mem_fs получил носителя; введена Ф.4.
+> **Статус:** 📋 READY (все Q закрыты §3.0). **Маркер:** `[M-176-io-fs-os]` (регистрация в OPEN-view — Ф.0).
+> **Запуск:** «**выполни план 176**».
+> **Эталон:** **Go / Rust / TS / Kotlin / Java / Zig / Swift**. **Архитектура — по net-семейству**
+> ([std/net/effect.nv](../../std/net/effect.nv)): эффект = внутренний плумбинг (libuv-backed, async, park/wake как
+> [net.c:1-24](../../compiler-codegen/nova_rt/net.c#L1)), юзер — через type-методы; ошибки — `Result[T, IoError]`.
+> **D-блоки (NEW):** D322 (io-core), D323 (fs), D324 (os) — резерв подтверждён 2026-07-03
+> (`spec/decisions/README.md:140`: D316-D324 за 175/175.1/176; в спеке committed D315/D325-D328; внесение
+> D316-D321 = задача Ф.0 планов 175/175.1, для 176 — dep-verify).
+> **Оставшиеся гейты:** (1) **`str.from_bytes`→`Result[str, Utf8Error]`** отсутствует; НО fallible-декод УЖЕ
+> есть как интринзик `str.try_from([]u8) -> Result[str, str]` (emit_c.rs:28166+, тесты nova_tests/str/utf8_invalid.nv)
+> → Ф.0.5 = ПЕРЕОФОРМЛЕНИЕ (typed Utf8Error + канон-имя), не работа с нуля; (2) **`uv_fs_*` C-wrappers** не написаны (подтверждено:
+> в nova_rt только комментарии) → новый `fs.c`.
+> **Координация:** Plan 175 `Timestamp` (READY, Ред. 2); **Plan 178** (владелец net str→[]u8 + SocketAddr —
+> §3.0-Q6); **Plan 173** (Cleanup[E]/@cleanup — канон scope-exit, §3.0-Q2); **Plan 174.6** (CWStr в C_ABI-грамматику);
+> 83.3 `Blocking` (✅ закрыт; только CPU-bound-обёртки); 172.4 (design-lock, Ф.2-срез D328 реализован).
+> **Закрывает** fs-часть `[M-91.10-fs-net-effects-formal]`. **Process → под-план 176.1** (файл НЕ создаётся до
+> старта работ; `[M-176.1-process]` в OPEN-view — Ф.0). **Фоновые агенты:** §10.
 > **Сквозной критерий (обязательный):** «**без упрощений, как для прода**» (крит §8.0).
 
 ---
 
 ## 1. Зачем
 
-В Nova **нет `std/io`, `std/fs`, `std/os`** — только консольный `print`/`println` (D69), `Write`-протокол (text-sink для `@display`),
-`ReadBuffer`/`WriteBuffer` (in-memory). Нельзя открыть файл, прочитать директорию, узнать env. Это закрывает backend/CLI-нишу
-языка (Plan 18: fs/os P0-для-0.2; `[M-91.10-fs-net-effects-formal]`). Net сделан (91.12/83.12) — fs/io/os по той же модели и инфре.
+В Nova **нет `std/io`, `std/fs`, `std/os`** — только консольный `print`/`println`, `Write`-протокол (text-sink для
+`@display`, D258), `ReadBuffer`/`WriteBuffer` (in-memory). Нельзя открыть файл, прочитать директорию, узнать env.
+Это закрывает backend/CLI-нишу языка (Plan 18: fs/os P0-для-0.2; `[M-91.10-fs-net-effects-formal]`). Net сделан
+(91.12/83.12) — fs/io/os по той же модели и инфре.
 
-## 1a. Где Nova ЛУЧШЕ peers (differentiators — в доку)
+## 1a. Где Nova ЛУЧШЕ peers — планка 7 языков (differentiators — в доку)
 
-- **🏆 must-consume `File`/`BufWriter` (Plan 80): `@close(self) -> Result` — ЕДИНСТВЕННЫЙ способ разрядить обязательство; незакрытый
-  файл = compile-error, ошибка close (ENOSPC/EIO/quota — часто видна ТОЛЬКО на close) НЕ-игнорируема.** Это превращает **главный Go-footgun**
-  (`defer f.Close()` глотает ошибку → тихая потеря данных) в compile-time-гарантию; бьёт Rust (`Drop` глотает), Java/Kotlin (suppressed на
-  error-path), Node (await-using глотает). Самый крупный differentiator.
-- **Мокабельные `Fs`/`Os`/`Io` эффекты:** `with Fs = mem_fs() { … }` → детерм. тест без диска и без DI. Go (нужен afero), Rust (trait-abstraction),
-  Java/Node (global monkey-patch) — слабее.
-- **byte-first by-necessity done RIGHT:** `str` UTF-8-validated → `read_to_string` **fallible** (`Result`, не Node-`U+FFFD`-порча, не скрытый decode).
-- **Typed `Timestamp`** (179) для mtime/atime/ctime (каждый `Option[Timestamp]` — платформа может не записать); бьёт Node Date/ms/ns-триплет, Go `Sys() any`.
-- **Структурный `IoError{kind,raw_os,op,path,source}`** с exhaustive (wildcard-forced) `ErrorKind` — бьёт Go/Node stringly-typed `err.code` (опечатка компилится) и Java checked-exception-шум.
-- **Корректный `write_atomic`** (temp-в-той-же-директории + fsync-file + atomic-rename + fsync-parent-dir) одним примитивом — пробел, который Go/Rust/Node/Kotlin/Java оставляют (все хэндролят, обычно с багами).
-- **byte-backed `Path`** — несёт реальные не-UTF-8 Unix / WTF-8 Windows имена, которые JVM не может назвать (`InvalidPathException`), а TS/Deno не представить.
+- **🏆 must-consume `File`/`BufWriter` (D133 — УЖЕ в языке): `@close(self) -> Result` — единственная ЯВНАЯ разрядка;
+  незакрытый файл = compile-error, ошибка close (ENOSPC/EIO/quota — часто видна ТОЛЬКО на close) НЕ-игнорируема.**
+  Бьёт **все 7**: Go `defer f.Close()` глотает (тихая потеря данных); Rust `Drop` глотает; Java/Kotlin — suppressed
+  на error-path; Node `await-using` глотает; **Zig `close()` возвращает `void`** (ошибку физически некуда деть) и
+  новый `Io.Writer` требует ручной `flush()` (дисциплина, не компилятор); **Swift** `FileHandle.close()` throws, но
+  забыть можно. Самый крупный differentiator.
+- **Мокабельные `Fs`/`Os`/`Io` эффекты:** `with Fs = mem_fs() { … }` → детерм. тест без диска и без DI. Go (afero),
+  Rust (trait-abstraction), Java/Node (monkey-patch), **Zig (НЕТ вообще — ручной DI)**, **Swift (FileManager-mock
+  через протокол — виральный DI)** — слабее.
+- **byte-first by-necessity done RIGHT:** `str` UTF-8-validated → `read_to_string` **fallible** (`Result`, не
+  Node-`U+FFFD`-порча). Zig-паритет (byte-slices везде), но Zig не имеет валидированного str-типа.
+- **Typed `Timestamp`** (Plan 175) для mtime/atime/ctime (каждый `Option[Timestamp]`); бьёт Node Date/ms/ns-триплет,
+  Go `Sys() any`, Zig голые `i128`-наносекунды.
+- **Структурный `IoError{kind,raw_os,op,path,source}`** с exhaustive (wildcard-forced) `ErrorKind` — бьёт Go/Node
+  stringly-typed `err.code`, Java checked-exception-шум; паритет Rust `ErrorKind` и Swift-system `Errno` (typed).
+  **Zig per-op error sets** (точное множество ошибок на операцию) — сильная альтернатива: considered/rejected-нота
+  в D322 (per-op sets требуют error-union-инфраструктуры и дробят обработку; один открытый `ErrorKind` + `raw_os` —
+  Rust-модель, проще композируется через `source`-chain).
+- **Корректный `write_atomic`** (5 шагов §3c) одним примитивом — пробел ВСЕХ peers: Go/Rust/Node/Kotlin/Java
+  хэндролят; **Swift `.atomic` и Zig `AtomicFile` — tmp+rename БЕЗ fsync** (не durable после power-loss —
+  антипример в доку: «атомарно против читателей ≠ durable»).
+- **byte-backed `Path`** — несёт реальные не-UTF-8 Unix / WTF-8 Windows имена, которые JVM не может назвать
+  (`InvalidPathException`), TS/Deno не представить; паритет Rust `Path`/`OsStr` и **Swift-system `FilePath`**
+  (байтовый — прецедент Q1), Zig (байтовый `[]const u8`).
 
-## 2. Эталон (cross-lang io/fs/os)
+## 2. Эталон (cross-lang io/fs/os — 7 языков)
 
-| Аспект | Go | Rust | TS/Node | Kotlin | Java |
-|---|---|---|---|---|---|
-| io-абстракция | `io.Reader/Writer/Seeker` (всё `[]byte`), `bufio` | `Read/Write/Seek/BufRead`+`BufReader` | `stream.Readable/Writable` | okio/java | `InputStream`/`Reader`/nio |
-| close | `defer f.Close()` (**err игнор**) | `Drop` (**err глотается**) | `await close()` | `use{}` (suppressed) | try-with-res (suppressed) |
-| path | `string` (Unix=любые байты OK; Win=WTF-8) | `Path`/`OsStr` (non-UTF8) | string | nio.Path | nio.Path (**InvalidPathException** на non-UTF8) |
-| error | `error`+sentinels `errors.Is(os.ErrNotExist)` | **`io::Error{ErrorKind}`** | `err.code==='ENOENT'` | `IOException` | `IOException`-иерархия |
-| EOF/partial | `(n>0, io.EOF)` одновременно (**footgun**) | `Ok(0)`=EOF, partial→loop, `read_exact` | promise resolve | — | partial-read |
-| atomic write | вручную | вручную (`tempfile` crate) | вручную | вручную | **`Files.move(ATOMIC_MOVE)`** |
-| async | goroutine+blocking | sync / `tokio::fs` (threadpool) | promises (libuv) | suspend | NIO async |
-| process | `os/exec` (`ErrDot`-fix) | `Command/Stdio` | `child_process` | `ProcessBuilder` | `ProcessBuilder` |
+| Аспект | Go | Rust | TS/Node | Kotlin | Java | Zig | Swift |
+|---|---|---|---|---|---|---|---|
+| io-абстракция | `io.Reader/Writer` | `Read/Write/Seek`+`BufReader` | `stream.*` | okio/java | `InputStream`/nio | `std.Io` Reader/Writer (0.14+) | `FileHandle`/swift-system `FileDescriptor` |
+| close | `defer Close()` (**err игнор**) | `Drop` (**глотает**) | `await close()` | `use{}` (suppressed) | try-with-res (suppressed) | `close()->void` (**некуда деть err**) | `close() throws` (можно забыть) |
+| path | `string` | `Path`/`OsStr` (bytes) | string | nio.Path | nio.Path (**InvalidPathException**) | `[]const u8` (bytes) | `FilePath` (bytes, swift-system) |
+| error | sentinels | **`io::Error{ErrorKind}`** | `err.code` string | `IOException` | иерархия | **per-op error sets** | typed `Errno` |
+| EOF/partial | `(n>0, io.EOF)` (**footgun**) | `Ok(0)`=EOF, `read_exact` | promise | — | partial-read | `0`=EOF / error sets | Data-based |
+| atomic write | вручную | вручную | вручную | вручную | `ATOMIC_MOVE` | `AtomicFile` (**без fsync**) | `.atomic` (**без fsync**) |
+| TOCTOU | — | — | — | — | — | **🏆 Dir-scoped ops (openat by design)** | — |
+| async | goroutine | sync/`tokio::fs` (pool) | libuv | suspend | NIO | sync/evented | actors |
 
 **Взять:** Rust `ErrorKind`/`OpenOptions`/`create_new`/`Path`/`read_at`-`write_at`/`Ok(0)=EOF`; Go `ReadFile`/`WriteFile`-эргономика +
-portable `filepath`; Java `ATOMIC_MOVE`. **Избегать:** Go silent-close + `(n>0,EOF)` + path-as-string; Rust `Drop`-swallow; Node silent-`U+FFFD` + env-replace-drops-PATH; Java `InvalidPathException`.
+portable `filepath`; Java `ATOMIC_MOVE`; **Zig Dir-scoped/openat-семантика (followup `[M-176-dir-scoped-ops]`)**;
+**Swift-system FilePath-прецедент**. **Избегать:** Go silent-close + `(n>0,EOF)`; Rust `Drop`-swallow; Node
+silent-`U+FFFD`; Java `InvalidPathException`; **Swift/Zig atomic-без-fsync**; Zig close-void.
 
 ## 3. Архитектура
 
-**Принцип (net-precedent):** `Fs`/`Os` — **плумбинг-эффекты** (юзер не зовёт; libuv-backed, park/wake через `nova_sched_park`/libuv-cb/`nova_sched_wake`,
-как [net.c](../../compiler-codegen/nova_rt/net.c)), user-API — type-методы + free-fns. `Io` (консоль) расширяем (stdin).
+**Принцип (net-precedent):** `Fs`/`Os` — **плумбинг-эффекты** (юзер не зовёт; libuv-backed, park/wake через
+`nova_sched_park`/libuv-cb/`nova_sched_wake`, как [net.c](../../compiler-codegen/nova_rt/net.c)), user-API —
+type-методы + free-fns. `Io` (консоль) расширяем (stdin).
 
-**🔑 Byte-first.** `str` = **UTF-8-validated immutable** → НЕ байтовый буфер. Весь raw-I/O — **`[]u8`**. `str` только через **fallible
-UTF-8-декод** (`str.from_bytes(bytes) -> Result[str, Utf8Error]` — **fallible-валидированный; сейчас ОТСУТСТВУЕТ → Ф.0.5**;
-невалид → ошибка с byte-offset, не паника/не lossy). `str.from_bytes_lossy` (U+FFFD) и `str.from_bytes_unchecked` **уже есть**
-([core.nv:176/167](../../std/runtime/string/core.nv#L167)). Как Rust (`read`→bytes / `from_utf8`→validated / `_lossy` / `_unchecked`) / Go (`[]byte`).
+**🔑 Byte-first.** `str` = **UTF-8-validated immutable** → НЕ байтовый буфер. Весь raw-I/O — **`[]u8`**. `str` только
+через **fallible UTF-8-декод** (`str.from_bytes(bytes) -> Result[str, Utf8Error]` — **ОТСУТСТВУЕТ → Ф.0.5**;
+невалид → ошибка с byte-offset). `str.from_bytes_lossy`/`from_bytes_unchecked` **уже есть**
+([core.nv:176/167](../../std/runtime/string/core.nv#L167)). Как Rust / Go / Zig.
 
-**io-core протоколы — в модуле `std.io`, имена `io.Read`/`io.Write`/`io.Seek`** (⚠ **отдельны** от prelude-`Write` text-sink `@display`:
-коллизия имён, Q6/critique; byte-`Write` не prelude-export, ссылка квалифицированная; если W_PRELUDE_SHADOW мешает — Ф.0 переименует text-sink). Мост — явный `write_str`.
+**io-core протоколы — в модуле `std.io`, имена `io.Read`/`io.Write`/`io.Seek`** (⚠ **отдельны** от prelude-`Write`
+text-sink `@display` D258: коллизия имён = `W_PRELUDE_SHADOW` — это **warning с suppress-механизмом** (`#allow(shadow)`),
+не блокер (verified `lints.rs:1549+`); byte-`Write` не prelude-export, ссылка квалифицированная; если шум мешает —
+Ф.0 решает rename text-sink с amend D258). Мост — явный `write_str`.
 
 ```nova
 type io.Read  protocol { @read(buf mut []u8) -> Result[int, IoError] }     // Ok(0)=EOF (только при len(buf)>0); partial — норма
 type io.Write protocol { @write(data []u8) -> Result[int, IoError]; @flush() -> Result[(), IoError] }  // partial-write легален
-type io.Seek  protocol { @seek(pos SeekFrom) -> Result[int, IoError] }   // позиция = int (i64), как Vec.len/ReadBuffer.position
-type SeekFrom | Start(int) | End(int) | Current(int)   // ВСЁ int (i64) — Nova-конвенция (индексы/offset/позиции = int, не u64; ср. Vec.len/str.byte_len). Start<0 → InvalidInput на seek
+type io.Seek  protocol { @seek(pos SeekFrom) -> Result[int, IoError] }   // позиция = int (i64)
+type SeekFrom | Start(int) | End(int) | Current(int)   // ВСЁ int (i64) — Nova-конвенция. Start<0 → InvalidInput на seek
 // default-хелперы (loop + EINTR-retry): read_exact -> UnexpectedEof; write_all -> WriteZero; read_to_end -> []u8; read_to_string -> Result[str]
 ```
 
-## 3.0. Закрытые решения (Q1–Q11 — РЕШЕНЫ)
+## 3.0. Закрытые решения (Q1–Q14 — РЕШЕНЫ; Ред. 2: Q2/Q3/Q6/Q11 обновлены, Q12-Q14 добавлены)
 
 | # | Вопрос | РЕШЕНИЕ | Обоснование |
 |---|---|---|---|
-| Q1 | non-UTF8 Path | **`type Path value { ro bytes []u8 }`** (НЕ str, НЕ текущий experimental). Кодировка: raw OS-байты Unix / **WTF-8 Windows** (лосслесс round-trip UTF-16 incl. lone surrogates). `Path.from_str(str)->Path` (инфаллибельно), `@to_str()->Option[str]` (lossless), `@display()->str` (lossy U+FFFD, **print-only**), `@as_os_bytes()->[]u8`; lexical join/parent/file_name/extension/components/is_absolute на байтах, platform-separators; **reject NUL** → `InvalidInput`. `std/_experimental/path` — **ПЕРЕПИСАТЬ** (он str-based Unix-only). | str не несёт non-UTF8; одна задокументированная кодировка (WTF-8 Win) избегает Rust `as_encoded_bytes`-hazard |
-| Q2 | File close | **must-consume линейный `File` (Plan 80)**: `@close(self) -> Result[(), IoError]` (финальный flush + ошибка) — единств. разрядка; незакрытый = **compile-error**; double-close невозможен (linearity). Сахар `with_file(path, opts) \|f\| { … }` — close-Result **сворачивается в Result блока** (не теряется). **HARD DEP Plan 80 Ф.3** (НЕ начат) → гейтит Ф.2; fallback affine `consume`+runtime-check. | главный differentiator; Go `defer Close` глотает (тихая потеря на ENOSPC), Rust Drop глотает, Kotlin/Java suppressed |
-| Q3 | IoError единый | **ОДИН `IoError {kind ErrorKind, raw_os int, op str, path Option[Path], source Option[*IoError]}`** для io+fs+os(+process). net: `NetError` → alias/projection на `ErrorKind` (или deprecate), **отдельным byte-baseline-guarded коммитом ПОСЛЕ io-core**. Сохранить `NetError.@to_str()`-строки или обновить фикстуры. | Rust один `io::Error` доказан; текущий `NetError` (flat sum, без kind/errno/path) слабее |
-| Q4 | async fs | **libuv `uv_fs_*` threadpool + fiber-park/wake** (точно net-паттерн); API blocking-looking `file.read(buf)->Result`. **Cancel — ЧЕСТНО best-effort:** queued → `uv_cancel` (чисто); in-flight syscall **не прерывается** (как Go/tokio/Java) → abandon-result + well-defined fd-state. `Blocking` (83.3) — только CPU-bound-обёртки. | консистентность с net (та же инфра); врать про mid-syscall-cancel — некорректно (все 5 peers честны) |
-| Q5 | process | **отдельный под-план 176.1**, гейт ПОСЛЕ 180 Ф.1-Ф.3. 180 = io-core+fs+os(env/args/cwd/exit). `os.cwd/env` остаются в 180 (fs зависит от cwd для relative-paths). | subprocess огромен и ортогонален (pipes/PATH/PATHEXT/signals/cwd-trojan/deadlock) — не блокировать fs/os |
-| Q6 | byte Write vs `@display` sink | **byte `io.Write` — SIBLING, отдельный** от text-sink `Write` (`@display`); module-qualified `io.Write`. Мост — явный `write_str(s)->encode-utf8->write`. | слияние навязало бы text-семантику на байт-стримы (Java InputStream-vs-Writer путаница) |
-| Q7 | lines/CRLF | `lines()` — split `\n` + **strip trailing `\r`** (`\r\n`/`\n` → чистые), terminator не включён; `byte_lines()` — raw `[]u8`, без strip. Финальная строка без `\n` — yield. Embedded lone `\r` (old-Mac) — НЕ сепаратор. | Rust `BufRead::lines` (ожидаемо) / Go bufio; byte_lines верен для binary |
-| Q8 | permissions | портабельный `Permissions{readonly bool}` (`@readonly()/@set_readonly`) cross-platform; Unix-mode через **unix-qualified** `@mode()->int`/`from_mode(int)` (mode-биты в `int`/i64 как везде в Nova; Option/Unsupported на non-POSIX); `is_file/dir/symlink` — прямые предикаты (cheap, без extra stat); **нет portable ACL**. Windows: только readonly (0o200). | Rust Permissions + PermissionsExt::mode / Java Posix-vs-Dos-view; Unix-octal не универсален |
-| Q9 | EOF/partial/EINTR | `read()` → `Ok(0)` EOF **только** при len(buf)>0; partial-read норма (loop / `read_exact`→`UnexpectedEof`); partial-write → `write_all` loop, `Ok(0)` mid → `WriteZero`; `Interrupted`(EINTR) — retry в std-хелперах. **НЕ Go `(n>0,EOF)`-одновременность.** | самый баг-генный контракт; Rust `Ok(0)`=EOF чище и матчит `read(buf)->Result[int]` |
-| Q10 | BufWriter flush | **`BufWriter[W]` — must-consume линейный** (Plan 80); `@close(self)->Result` flush+ошибка; незакрытый = compile-error; **нет silent flush-on-drop**. Unbuffered `File.flush()` = no-op; durability — `sync_all`/`sync_data`. | убирает Go `bufio.Flush`-footgun + Rust BufWriter-drop-swallow на compile-time |
-| Q11 | fallible byte→str (частично есть) | `str.from_bytes_lossy`/`from_bytes_unchecked` **уже есть** (core.nv:176/167). **Добавить только fallible-валидированный `str.from_bytes(bytes []u8) -> Result[str, Utf8Error]` + тип `Utf8Error{byte_offset}` (91.18/prelude) — Ф.0.5, HARD PREREQ Ф.1.** Нейминг **`from_bytes`** (Nova), не `from_utf8` (Rust-изм). `read_to_string`/`lines` → through `from_bytes`, `Utf8Error`→`IoError{kind: InvalidData}`. | без fallible-варианта `read_to_string` не звучен (только lossy/unchecked) |
+| Q1 | non-UTF8 Path | **`type Path value { ro bytes []u8 }`** (НЕ str). Кодировка: raw OS-байты Unix / **WTF-8 Windows** (лосслесс round-trip UTF-16 incl. lone surrogates). `Path.from_str(str)->Path` (инфаллибельно), `@to_str()->Option[str]` (lossless), `@display()->str` (lossy U+FFFD, print-only), `@as_os_bytes()->[]u8`; lexical join/parent/file_name/extension/components/is_absolute на байтах; **reject NUL** → `InvalidInput`. `std/_experimental/path` — **ПЕРЕПИСАТЬ** (str-based Unix-only, подтверждено). | Прецеденты: Rust `OsStr`, **Swift-system `FilePath`**, Zig `[]const u8`; одна задокументированная кодировка (WTF-8 Win) |
+| Q2 | File close | **must-consume линейный `File` через D133 (`type File consume {}`) — УЖЕ В ЯЗЫКЕ (Ред. 2: гейт Plan 80 снят, fallback удалён)**: `@close(self) -> Result[(), IoError]` — единственная **ЯВНАЯ** разрядка; незакрытый = compile-error `D133-not-consumed`; double-close невозможен. **Канон scope-exit — 173/D188:** `consume f = open(...) { body }` разряжает через `@cleanup(o)` (= `self.close()`, ошибка → suppressed-chain, НЕ теряется — 173 Ф.4 MultiError); explicit `@close()` — Result-путь, когда ошибка close нужна в happy-path. `File impl Cleanup[IoError]` — координация 173 Ф.2. Сахар `with_file(path, opts) \|f\| { … }` — Result-flavored: close-Result сворачивается в Result блока (оставлен с rationale: отличие от consume-блока = ошибка close в `Result`, не в suppressed). | главный differentiator (§1a: бьёт все 7); машинерия shipped (Plan 100.1, боевой пример WriteGuard) |
+| Q3 | IoError единый | **ОДИН `IoError {kind, raw_os, op, path, source}`** для io+fs+os(+process). net: `NetError` → alias/projection на `ErrorKind` — **Ф.4 (Ред. 2: получил фазу-владельца)**, byte-baseline-guarded, ПОСЛЕ io-core. Сохранить `NetError.@to_str()`-строки или обновить фикстуры. **Координация 178 (ноты при его сверке):** (i) `HttpError.ErrSource.Net(NetError)` обновляется ЭТИМ коммитом; (ii) D327-D332 в 178 коллидируют с committed D327/D328 → перенумеровать (174 §6-прецедент); (iii) ложный from_bytes-green (Q11). | Rust один `io::Error` доказан; текущий NetError (flat sum, подтверждено) слабее |
+| Q4 | async fs | **libuv `uv_fs_*` threadpool + fiber-park/wake** (точно net-паттерн); API blocking-looking. **Cancel — ЧЕСТНО best-effort:** queued → `uv_cancel`; in-flight syscall не прерывается (как Go/tokio/Java) → abandon-result + well-defined fd-state. | консистентность с net; врать про mid-syscall-cancel некорректно |
+| Q5 | process | **отдельный под-план 176.1**, гейт ПОСЛЕ **176 Ф.1-Ф.3** (Ред. 2: stale «180» исправлен). 176 = io-core+fs+os; `os.cwd/env` остаются в 176. Файл 176.1 не создаётся до старта; `[M-176.1-process]` в OPEN-view. | subprocess огромен и ортогонален |
+| Q6 | byte Write vs `@display` sink | **byte `io.Write` — SIBLING** (module-qualified). Мост — явный `write_str`. **net str→[]u8: ВЛАДЕЛЕЦ = Plan 178** (owner-sign-off 2026-06-26: additive byte-surface Ф.0.5 178-го + демоут str после HTTP byte-path); **176 добавляет ТОЛЬКО conformance-коммит: `impl io.Read/io.Write` на TcpStream поверх 178-byte-surface** (Ф.4). Правило: кто приземляется вторым — делает адаптацию. | слияние навязало бы text-семантику (Java-путаница); двойное владение с 178 разведено Ред. 2 |
+| Q7 | lines/CRLF | `lines()` — split `\n` + strip trailing `\r`; terminator не включён; `byte_lines()` — raw. Финальная строка без `\n` — yield. Embedded lone `\r` — НЕ сепаратор. | Rust `BufRead::lines` / Go bufio |
+| Q8 | permissions | портабельный `Permissions{readonly bool}`; Unix-mode через unix-qualified `@mode()->int`/`from_mode(int)` (Option/Unsupported на non-POSIX); `is_file/dir/symlink` — прямые предикаты; нет portable ACL. Windows: только readonly. | Rust Permissions + PermissionsExt / Java Posix-vs-Dos |
+| Q9 | EOF/partial/EINTR | `read()` → `Ok(0)` EOF **только** при len(buf)>0; partial-read норма; partial-write → `write_all` loop, `Ok(0)` mid → `WriteZero`; `Interrupted`(EINTR) — retry в std-хелперах. НЕ Go `(n>0,EOF)`. | самый баг-генный контракт; Rust-модель чище |
+| Q10 | BufWriter flush | **`BufWriter[W]` — must-consume (D133)**; `@close(self)->Result` flush+ошибка; **нет silent flush-on-drop**. Consume-поля выразимы (`consume field` в AST — подтверждено) → `BufWriter[File]` ок. Unbuffered `File.flush()` = no-op; durability — `sync_all`/`sync_data`. | убирает Go `bufio.Flush`-footgun + Rust drop-swallow + Zig ручной flush |
+| Q11 | fallible byte→str | `from_bytes_lossy`/`from_bytes_unchecked` есть (core.nv:176/167). **Добавить fallible `str.from_bytes(bytes []u8) -> Result[str, Utf8Error]` + тип `Utf8Error{byte_offset}` — Ф.0.5, HARD PREREQ Ф.1.** Ред. 2 (verify-фактчек): fallible-декод УЖЕ существует как интринзик `str.try_from([]u8) -> Result[str, str]` (Err = строка БЕЗ byte_offset; emit_c.rs:28166-28176, string_builder.h:185, тесты nova_tests/str/utf8_invalid.nv) → **Ф.0.5 = переоформление**: канон-имя `from_bytes` (D325: обычное имя = Result; `try_from` без infallible-пары `from` нарушает D77-симметрию) + typed `Utf8Error{byte_offset}` (дом — рядом с Utf16Error, utf16.nv:23) + миграция utf8_invalid.nv-фикстур; судьба `str.try_from([]u8)` — deprecate/удалить тем же коммитом (НЕ дубль-API). **NB: 178 утверждает «from_bytes уже есть» по call-site в std/_experimental/crypto/jwt.nv:75/109 — ЛОЖНЫЙ green, определения нет (проверено); владелец = 176 Ф.0.5** (нота в 178 при его сверке). | без fallible-варианта `read_to_string` не звучен |
+| Q12 | create-mode/umask (Ред. 2, Zig/Swift-аудит) | **Задокументировать**: default create-mode = `0o666 & ~umask` (POSIX-конвенция); `OpenOptions.mode(int)` — unix-qualified escape; Windows — N/A. Unix-тест: `mode(0o600)` применяется. | все peers наследуют POSIX-семантику молча — Nova документирует |
+| Q13 | append-mode (Ред. 2) | **`OpenOptions.append` в скоупе Ф.2** (полный набор: read/write/append/truncate/create/create_new); neg: `append+truncate` → `InvalidInput`; append-семантика = atomic-EOF-write (O_APPEND), `write_at` на append-fd → задокументировать/InvalidInput. | Rust OpenOptions-паритет; без append файл-логгер не написать |
+| Q14 | per-op error sets (Ред. 2) | **Considered/REJECTED** (Zig-модель): точные множества ошибок per-операция требуют error-union-инфраструктуры и дробят обработку; Nova = один открытый `ErrorKind` + `raw_os` + `source`-chain (Rust-модель). Нота в D322. | явное решение вместо молчания; композиция через source важнее точности множества |
 
 ## 3b. `IoError` (структурный, Rust `ErrorKind`-precedent)
 
@@ -101,102 +134,226 @@ type ErrorKind | NotFound | PermissionDenied | AlreadyExists | NotADirectory | I
     | ConnectionRefused | ConnectionReset | ConnectionAborted | NotConnected | AddrInUse | AddrNotAvailable  // для net-унификации Q3
     | Unsupported | Other(int)                                                                // OPEN enum → wildcard-arm обязателен
 fn IoError @to_str() -> str
+// ENAMETOOLONG и прочие редкие errno → Other(raw_os) — приемлемо, задокументировать в error-index
 ```
 
 ## 3c. Семантика I/O (D322) + durability (D323)
 
-- **EOF/partial (Q9):** см. таблицу. `read_exact`/`write_all`/`read_to_end` — loop + EINTR-retry в std; `Ok(0)`=EOF только при непустом буфере.
-- **`write_atomic` (полный 5-шаговый рецепт, durable):** (1) temp **в ТОЙ ЖЕ директории** (избежать `EXDEV`/`CrossesDevices`), имя через `O_EXCL`;
-  (2) `write_all`; (3) `fsync` файла (`sync_all`); (4) atomic `rename`/replace; (5) **best-effort `fsync` родительской директории** (no-op на Windows).
-  Возврат-`Ok` обычной `write` **НЕ durable** без `sync_*`. Windows: rename-replace через `MoveFileEx`/`ReplaceFile` (может EPERM/EBUSY → retry).
-- **TOCTOU:** `OpenOptions.create_new` (`O_EXCL`) → `AlreadyExists`; в доке «prefer open-and-match-NotFound над `exists()`-then-open»; `exists()` помечен racy.
-- **SIGPIPE:** рантайм-init **игнорирует SIGPIPE** process-wide → запись в закрытый pipe → `BrokenPipe` (`EPIPE`/`WSAECONNRESET`), не убивает процесс.
-- **symlink-races:** `remove_dir_all` — `openat`/`unlinkat` + NOFOLLOW где есть (Linux, anti-CVE); `metadata`(stat, follows) vs `symlink_metadata`(lstat, no-follow).
-- **async-cancel (Q4):** park/wake; cancel best-effort (queued→`uv_cancel`; in-flight завершается, fd-state well-defined).
-- **exit-flush:** `Os.exit(code)` **flush'ит** stdout/stderr (или документировать что НЕ — тогда требовать explicit flush; избежать exit-truncates-buffer footgun). `set_env`/`set_cwd` — process-global, racy с конкурентными relative-open (Rust сделал `set_var` unsafe в 1.84) → задокументировать / single-thread-контракт.
-- **🔑 FFI-граница — разделять путь и данные (как Rust/Go), `str` НЕ передавать.** `str` UTF-8-only+immutable; пути (Q1 byte-`Path`: non-UTF8 Unix/WTF-8 Win), env-ключи, файл-данные — **произвольные байты**. **(1) Путь/env-ключ → `CStr`** (NUL-terminated; OS `open`/`getenv`/`uv_fs_open` берут `const char*` **БЕЗ длины**): Nova строит `CStr.from_bytes(Path.@as_os_bytes()) -> Result` с **reject interior-NUL → `InvalidInput`** (ровно `CString::new` в Rust / `BytePtrFromString` в Go — NUL-терминация и проверка делаются **в языке**, в syscall уходит один указатель). extern = `fs_open(path CStr, flags int, mode int)`; лайфтайм через async — `CStr` GC-rooted на стеке фибры до resume. Использует существующий `std/ffi/cstr.nv` (D282). **Кодировка `pathname` (почему byte-`Path`):** POSIX `open(const char*)` — `pathname` это **непрозрачные байты БЕЗ кодировки** (ядро трактует только `/` и NUL; UTF-8 — лишь locale-соглашение для отображения), поэтому `str`(UTF-8) не представит произвольный Unix-путь. **Unix:** байты идут в `uv_fs_open` **verbatim**. **macOS:** VFS требует валидный UTF-8 (HFS+ NFD-нормализует). **Windows:** нативно UTF-16; libuv-`char*`-путь (UTF-8→UTF-16) не round-trip'ит **WTF-8 lone-surrogate** → **WTF-8→UTF-16 делается в Nova** (переиспользуя `std/encoding/utf16.nv`: `is_high/low_surrogate`/`decode_surrogate_pair`/`@encode_utf16`; WTF-8 surrogate-permissive codec поверх них в path-слое — **не в C, nv-sourcing**), Windows-extern принимает `[]u16`/`CWStr` (wide-API), C-шим тривиально форвардит в `_wopen`/`CreateFileW`. **Прецедент:** ровно так делают **Rust** (`OsStr::encode_wide`/`to_u16s` в std → `CreateFileW`) и **Zig** (`std.unicode.wtf8ToWtf16Le` → wide-API) — конверсия WTF-8→WTF-16 **в языке**, лосслесс на lone-surrogate; **строго лучше Node/libuv** (конвертит в C через `CP_UTF8` → теряет lone-surrogate). **FFI-слой разнесён по ОС** через **Plan 42.12 / D99** (filename-suffix `_posix.nv`/`_windows.nv` или `#cfg(target_os)`) — **как Go `_windows.go`/`_linux.go`** и Rust `sys/windows`-vs-`sys/unix`: POSIX `extern "C" fn fs_open(path CStr, …)` (байты verbatim) vs Windows `extern "C" fn fs_open_w(path *u16, len int, …)`. Нужен wide-`CWStr`(`*u16`) — добавить рядом с `CStr` (`std/ffi/cstr.nv`). byte-`Path`+WTF-8 (Q1) закрывают это. **(2) Данные (read/write payload) → `(*u8, int len)`** — **тут как у всех пиров**, совпадает с syscall `read(fd, buf, count)`/`write`/`uv_buf_t{base,len}` (НЕ NUL-terminated, длина явная, NUL внутри допустим). Прямой биндинг libc `getenv(str)` запрещён.
-- **stdin/stdout/stderr — fd-based байтовые хуки:** единые `io_read_fd(fd int, buf *mut u8, len int) -> int` (fd 0 = stdin) и `io_write_fd(fd int, buf *u8, len int) -> int` (fd 1 = stdout, 2 = stderr), byte-first; `Io`-эффект (`read_in`/`write_out`/`write_err`) оборачивает их в `[]u8`-API и мокабелен. (Не спец-`io_read_stdin` — симметричный fd-набор.)
+- **EOF/partial (Q9):** см. таблицу. `read_exact`/`write_all`/`read_to_end` — loop + EINTR-retry; `Ok(0)`=EOF только при непустом буфере.
+- **`write_atomic` (5-шаговый рецепт, durable):** (1) temp **в ТОЙ ЖЕ директории** (`O_EXCL`); (2) `write_all`;
+  (3) `fsync` файла (`sync_all`); (4) atomic `rename`/replace; (5) **best-effort `fsync` родительской директории**
+  (no-op на Windows). Возврат-`Ok` обычной `write` НЕ durable без `sync_*`. Windows: rename-replace через
+  `MoveFileEx`/`ReplaceFile` (может EPERM/EBUSY → retry). **Anti-precedent (в доку): Swift `.atomic` и Zig
+  `AtomicFile` делают tmp+rename БЕЗ шагов 3+5 — «атомарно», но НЕ durable после power-loss.**
+- **TOCTOU:** `OpenOptions.create_new` (`O_EXCL`) → `AlreadyExists`; в доке «prefer open-and-match-NotFound над
+  `exists()`-then-open»; `exists()` помечен racy. **Dir-scoped ops (Zig openat-модель — anti-TOCTOU by design) —
+  followup `[M-176-dir-scoped-ops]`.**
+- **SIGPIPE:** рантайм-init игнорирует SIGPIPE process-wide → запись в закрытый pipe → `BrokenPipe`, не убивает процесс.
+- **symlink-races:** `remove_dir_all` — `openat`/`unlinkat` + NOFOLLOW где есть (anti-CVE); `metadata`(follows) vs `symlink_metadata`(lstat).
+- **async-cancel (Q4):** park/wake; cancel best-effort.
+- **exit-flush:** `Os.exit(code)` **flush'ит** stdout/stderr. `set_env`/`set_cwd` — process-global, racy (Rust сделал
+  `set_var` unsafe в 1.84) → задокументировать/single-thread-контракт.
+- **🔑 FFI-граница — разделять путь и данные, `str` НЕ передавать.** **(1) Путь/env-ключ → `CStr`** (NUL-terminated):
+  **НОВЫЙ API `CStr.from_bytes(Path.@as_os_bytes()) -> Result[CStr, IoError]`** с reject interior-NUL → `InvalidInput`
+  (Ред. 2: в cstr.nv сейчас ТОЛЬКО паникующий `str.as_cstr()` — from_bytes добавляет Ф.2, форма = D325 Result;
+  NB cstr.nv — от Plan 118.1/D26, не D282). Лайфтайм через async — `CStr` GC-rooted на стеке фибры до resume.
+  **Кодировка pathname:** POSIX `open(const char*)` — непрозрачные байты; **Unix** — verbatim в `uv_fs_open`;
+  **macOS** — VFS требует UTF-8; **Windows** — нативно UTF-16, **WTF-8→UTF-16 в Nova** (переиспользуя
+  `std/encoding/utf16.nv` — все нужные функции подтверждены: is_high/low_surrogate :31/:34,
+  decode_surrogate_pair :38, encode_utf16 :49, Utf16Error :23), Windows-extern принимает **`(*u16, int len)` /
+  `CWStr`** (Ред. 2: НЕ `[]u16` — Vec не C-ABI по 174.6-грамматике!), C-шим форвардит в `_wopen`/`CreateFileW`.
+  **CWStr** (newtype над `*u16`) — вводит 176 Ф.2 рядом с CStr; **координация: ВНЕСТИ CWStr в C_ABI-грамматику 174.6 §2** (сейчас там ни CWStr, ни newtype-правила НЕТ — проверено; правило «positional newtype над C_ABI-типом = C-ABI» покроет CStr+CWStr единообразно; фазы M0-M3 в 174.6 вносятся его же реконсиляцией — 174 §3.6). Прецедент: Rust
+  `OsStr::encode_wide`→`CreateFileW`, Zig `wtf8ToWtf16Le`→wide-API. Long-path: авто-префикс `\\?\` на абсолютных
+  >260 (Rust-прецедент) — строка в D323. FFI-слой platform-split (Plan 42.12/D99 `_posix.nv`/`_windows.nv`+`#cfg`).
+  **(2) Данные (read/write payload) → `(*u8, int len)`** — как у всех peers. Прямой биндинг libc `getenv(str)` запрещён.
+- **stdin/stdout/stderr — fd-based байтовые хуки:** `io_read_fd(fd int, buf *mut u8, len int) -> int` (fd 0 = stdin) и
+  `io_write_fd(fd int, buf *u8, len int) -> int` (1 = stdout, 2 = stderr); `Io`-эффект (`read_in`/`write_out`/`write_err`)
+  оборачивает в `[]u8`-API, мокабелен.
 
 ## 4. Фазы
 
-**Dep-chain:** Ф.0 → **Ф.0.5** → Ф.1 → **Ф.2 (гейт Plan 80 + `uv_fs_*`)** → Ф.3 → Ф.5. Process → **180.1**. net-миграции — отдельные коммиты. **Коммит после фазы** (§10).
+**Dep-chain:** Ф.0 → **Ф.0.5** → Ф.1 → {**Ф.2** ∥ Ф.3} → **Ф.4 (net-миграции)** → Ф.5. Process → **176.1**.
+**Коммит после фазы** (§10). *(Ред. 2: дыра «Ф.4» в нумерации заполнена net-миграциями — раньше они висели
+«отдельными коммитами» без фазы-владельца.)*
 
-- **Ф.0 — gate (без кода).** Закрыть §3.0 (готово); написать D322/D323/D324 (spec-first); **verify/merge/renumber D316–D321** (179/179.1 ещё не в `spec/decisions/`);
-  подтвердить расписание Plan 80 Ф.3 (иначе affine-fallback). **GATE.**
-- **Ф.0.5 — PREREQ fallible byte→str (Q11).** Добавить `str.from_bytes(bytes)->Result[str, Utf8Error]` + тип `Utf8Error{byte_offset}` в 91.18/prelude (`from_bytes_lossy`/`from_bytes_unchecked` **уже есть**, core.nv:176/167). **HARD-BLOCKER для `read_to_string`.**
-- **Ф.1 — io-core.** `io.Read`/`io.Write`/`io.Seek` (sibling text-sink, Q6); `SeekFrom`; структурный `IoError`/`ErrorKind` (§3b); `BufReader`; **`BufWriter` must-consume** (Q10);
-  `read_to_end`/`read_to_string`/`byte_lines`/`lines`/`read_exact`/`write_all`/`copy`; EOF/partial/EINTR-семантика (§3c/Q9); `stdin`/`stdout`/`stderr` через `Io`-эффект (мокабельны). DEP: Ф.0.5.
-- **Ф.2 — fs.** `Fs`-эффект (новый `fs.c`: `uv_fs_open/read/write/close/stat/lstat/scandir/mkdir/unlink/rename/realpath/symlink/chmod/fsync/copyfile` + park/wake reuse net.c-паттерна);
-  **`File` must-consume** + Read/Write/Seek + `create_new` + `read_at`/`write_at` + `sync_all`/`sync_data`; `OpenOptions`; **byte-backed `Path` ПЕРЕПИСАТЬ** (Q1);
-  `Metadata`(→`Timestamp`, каждый `Option`); `DirEntry`/`read_dir`(lazy must-consume `DirIter`, cheap d_type)/`walk_dir`(per-entry-error + SkipDir);
-  convenience incl. **`write_atomic`** (5-шаг §3c); portable `Permissions` + unix-mode-escape (Q8). **FFI-слой platform-split** (Plan 42.12/D99 `_posix.nv`/`_windows.nv`+`#cfg`): POSIX `fs_open(path CStr)` vs Windows `fs_open_w(path *u16)`; **WTF-8↔UTF-16 в Nova** через `std/encoding/utf16.nv` (152.6), wide-`CWStr` рядом с `CStr`. **🔴 HARD-GATE: Plan 80 Ф.3** (иначе affine-fallback). **Закрывает fs-часть `[M-91.10-…]`.** DEP: Ф.1, 179.
-- **Ф.3 — os.** `Os`-эффект: `args`/`env`/`set_env`/`vars`/`cwd`/`set_cwd`/`exit`(flush)/`temp_dir`/`home_dir`/`pid`/`hostname`; мокабельно; set_env/set_cwd — concurrency-контракт (§3c). DEP: Ф.1.
-- **Ф.5 — тесты + spec/docs.** §7 pos+neg; D322-324; новый `docs/io-fs.md` (модель + «Nova↔Go/Rust/…» + §1a). DEP: all.
+- **Ф.0 — gate (без кода).** (a) написать D322/D323/D324 (spec-first; содержание §3/§3.0/§3b/§3c, вкл. Q12-Q14-ноты);
+  (b) **verify D-резерва**: README:140 держит D316-D324; D316-D321 вносят 175/175.1 (их Ф.0) — для 176 dep-verify,
+  НЕ merge/renumber (high-water D328+); NB: README-индекс решений отстаёт от 02-types.md (D327/D328 committed,
+  но в индексе нет) — дописать строки при verify; (c) **координация 173**: `File impl Cleanup[IoError]`
+  (`@cleanup` = `self.close()`, ошибка → suppressed-chain) — согласовать с 173 Ф.2 rename-волной; (d) **координация
+  174.6**: ВНЕСТИ CWStr/newtype-правило в C_ABI-грамматику 174.6 §2 (сейчас отсутствуют — проверено; «M0» в 174.6 ещё не существует, фазы вносит 174 §3.6); (e) решить Q6-rename text-sink `Write` (если
+  W_PRELUDE_SHADOW-шум неприемлем — amend D258 + обновить существующий `spec_tests/conformance/d258_write_sink_decouple.nv`
+  В ТОМ ЖЕ изменении); (f) зарегистрировать `[M-176-io-fs-os]`, `[M-176.1-process]`, `[M-176-dir-scoped-ops]`,
+  `[M-176-create-temp]` в `docs/plans/backlog-followups.md` (OPEN-view); conditional `[M-176-tcp-io-conformance]`
+  — только если 178 byte-surface не приземлится к Ф.4; (g) пометить Plan 80 в README планов как
+  superseded-by-D133 (Plan 100.1) + **amend статус-ноту D133 в 02-types.md** (:4978 всё ещё «proposed;
+  implementation pending» — stale, реализация shipped Plan 100.1 ✅ 2026-05-25) + **обновить строку 176 в README
+  планов под Ред. 2** (там остались 179/Plan 80/affine-fallback/from_utf8 — выполнено 2026-07-03 в этой сверке). **GATE.**
+- **Ф.0.5 — PREREQ fallible byte→str (Q11).** `str.from_bytes(bytes)->Result[str, Utf8Error]` + `type Utf8Error{byte_offset}`
+  — **переоформление существующего интринзика `str.try_from([]u8)`** (typed-ошибка + канон-имя + миграция
+  utf8_invalid.nv + deprecate try_from — Q11). **HARD-BLOCKER для `read_to_string`.** DEP: Ф.0.
+- **Ф.1 — io-core.** `io.Read`/`io.Write`/`io.Seek` (sibling text-sink, Q6); `SeekFrom`; структурный `IoError`/`ErrorKind`
+  (§3b); `BufReader`; **`BufWriter` must-consume (D133)** (Q10); `read_to_end`/`read_to_string`/`byte_lines`/`lines`/
+  `read_exact`/`write_all`/`copy`; EOF/partial/EINTR (§3c/Q9); `stdin`/`stdout`/`stderr` через `Io`-эффект;
+  **Io-mock deliverable** (capture stdout/stderr, scripted stdin — без него §8.4 не имеет носителя). DEP: Ф.0.5.
+- **Ф.2 — fs.** `Fs`-эффект (новый `fs.c`: `uv_fs_open/read/write/close/stat/lstat/scandir/mkdir/unlink/rename/realpath/
+  symlink/chmod/fsync/copyfile` + park/wake reuse net.c); **`File` must-consume (D133)** + Read/Write/Seek +
+  **OpenOptions полный набор** (read/write/**append**/truncate/create/create_new — Q13) + `read_at`/`write_at` +
+  `sync_all`/`sync_data`; **byte-backed `Path` ПЕРЕПИСАТЬ** (Q1); `Metadata`(→`Timestamp`, каждый `Option`);
+  `DirEntry`/`read_dir`(lazy must-consume `DirIter`)/`walk_dir`(per-entry-error + SkipDir); convenience incl.
+  **`write_atomic`** (5-шаг §3c) и **`with_file`** (Q2 Result-flavored сахар); portable `Permissions` + unix-mode (Q8/Q12); **`CStr.from_bytes` + `CWStr`** (§3c);
+  FFI platform-split (`_posix.nv`/`_windows.nv`); **mem_fs deliverable**: `export fn mem_fs() -> Effect[Fs]`
+  (module-conventions-канон; in-memory byte-Path-дерево, metadata, read_dir, OpenOptions-семантика, **инъекция
+  ошибок ENOSPC/EIO** для close-error/torn-write тестов; дом — `std/testing/handlers.nv`, прецедент 175
+  fixed/mut_clock). Тесты Ф.2 используют относительные пути worktree (temp_dir приходит в Ф.3 — задокументировать).
+  DEP: Ф.1, 175. **Закрывает fs-часть `[M-91.10-…]`.**
+- **Ф.3 — os.** `Os`-эффект: `args`/`env`/`set_env`/`vars`/`cwd`/`set_cwd`/`exit`(flush)/`temp_dir`/`home_dir`/`pid`/
+  `hostname`; **mock Os deliverable**: `export fn mock_os() -> Effect[Os]` (env/args/cwd map; дом — std/testing/handlers.nv, тот же канон, что mem_fs); set_env/set_cwd — concurrency-контракт (§3c). DEP: Ф.1.
+- **Ф.4 — net-миграции (Ред. 2: новая фаза; byte-baseline-guarded).** (a) `NetError`→`IoError`-унификация (Q3):
+  projection на ErrorKind, `@to_str()`-строки сохранить/обновить фикстуры; координация 178 ErrSource; (b) conformance:
+  `impl io.Read/io.Write` на `TcpStream` поверх byte-surface 178 (**полный str→[]u8 демоут — владелец 178**, Q6).
+  DEP: **Ф.2, Ф.3** (rationale: byte-baseline-guarded миграции идут ПОСЛЕ основной работы — NetError-фикстуры
+  не гоняются параллельно fs-коммитам); для (b) дополнительно byte-surface 178 Ф.0.5 — если 178 ещё не приземлил,
+  (b) откладывается под `[M-176-tcp-io-conformance]` (conditional-маркер), НЕ блокируя Ф.5.
+- **Ф.5 — тесты + spec/docs + Q-sweep.** §7 pos+neg+rt+spec_tests; D322-324 финал; новый `docs/io-fs.md` (модель +
+  7-языковая таблица §2 + §1a + write_atomic-антипример Swift/Zig); **Q-sweep** (§5). DEP: all.
 
-**Отдельные коммиты (byte-baseline-guarded, ПОСЛЕ io-core):** net `NetError`→`IoError` унификация (Q3); net `read`/`write` `str`→`[]u8` (Q6/gap-11, чтобы `io.Read`/`io.Write` единообразно покрывали File И TcpStream).
-**DEFERRABLE → под-план 176.1:** process (`Command`/`Child`/`Output`/`ExitStatus`/`Stdio`, `uv_spawn`, pipe-drain на отд. фиберах, PATH-resolve incl. Windows PATHEXT/`ErrDot`, env-inherit-by-default, cancel/kill/wait, Windows arg-quoting). **Followups:** flock, mmap, `walk_dir`-filters, glob-промоут, fs-watch (+ write_atomic Windows rename-replace caveat).
+**DEFERRABLE → под-план 176.1:** process (`Command`/`Child`/`Output`/`ExitStatus`/`Stdio`, `uv_spawn`, pipe-drain,
+PATH-resolve incl. PATHEXT/`ErrDot`, env-inherit, cancel/kill/wait, Windows arg-quoting) — гейт после 176 Ф.1-Ф.3.
+**Followups (§11):** flock, mmap, `walk_dir`-filters, glob-промоут, fs-watch, write_atomic Windows retry,
+**dir-scoped ops (openat, Zig-модель)**, **create_temp/O_TMPFILE**, **copy fast-path** (`io.copy` File→File
+sendfile-специализация; `fs.copy` уже получает copy_file_range бесплатно через uv_fs_copyfile).
 
 ## 5. Spec / D / Q / docs
 
-- **Ф.0 prereq:** **смёржить/верифицировать D316–D321** (Plan 175/179.1) в `spec/decisions/` (сейчас только до D315) ИЛИ перенумеровать; затем D322+.
-- **NEW D322** — io-core: `io.Read`/`io.Write`/`io.Seek` (sibling text-sink), `SeekFrom`, EOF/partial/EINTR-контракт (Q9), буферизация (BufWriter must-consume Q10), `IoError`/`ErrorKind`, stdin/stdout/stderr через `Io`, `str.from_bytes`/`Utf8Error`.
-- **NEW D323** — fs: `Fs`-эффект (плумбинг libuv, best-effort-cancel Q4), `File` must-consume (Plan 80), byte-backed `Path` (Q1: WTF-8 Win), `Metadata`(→Timestamp), `write_atomic` 5-шаг + sync_all/sync_data, symlink/permissions (Q8), create_new/read_at/write_at.
-- **NEW D324** — os: `Os`-эффект (args/env/cwd/exit-flush, set_env/set_cwd race-контракт). Process-модель → 180.1 D.
-- error-index: `IoError`/`ErrorKind`-варианты + коды (`E_*`) для compile-проверок (must-consume leak/double-close); верифицировать при реализации.
-- `docs/io-fs.md` — новый guide. Q-файл: §3.0 закрыть как RESOLVED.
+- **NEW D322** — io-core: протоколы (sibling text-sink), `SeekFrom`, EOF/partial/EINTR-контракт (Q9), BufWriter
+  must-consume (Q10, D133), `IoError`/`ErrorKind` (+ **considered/rejected нота per-op error sets Q14**),
+  stdin/stdout/stderr через `Io`, `str.from_bytes`/`Utf8Error`.
+- **NEW D323** — fs: `Fs`-эффект (плумбинг, best-effort-cancel Q4), `File` must-consume (D133 + Cleanup[IoError]-мост
+  173), byte-backed `Path` (Q1: WTF-8 Win; long-path `\\?\`), `Metadata`(→Timestamp), `write_atomic` 5-шаг (+
+  антипример Swift/Zig), symlink/permissions (Q8) + create-mode/umask (Q12), OpenOptions (Q13), create_new/read_at/write_at.
+- **NEW D324** — os: `Os`-эффект (args/env/cwd/exit-flush, set_env/set_cwd race-контракт). Process → 176.1-D.
+- **amend prelude `Io`-decl** (расширение stdin/read_in/write_err); **amend D302** (NetError-унификация Q3/Ф.4);
+  **amend D258** — только если Ф.0 решит rename text-sink.
+- **spec_tests/conformance — ОБЯЗАТЕЛЬНОЕ D-покрытие (методология 2026-06-28; Ред. 2):** NEW
+  `d322_io_read_write_seek.nv` (протоколы, SeekFrom, EOF/partial/EINTR, IoError/ErrorKind),
+  `d323_file_must_consume.nv` + `d323_write_atomic.nv` + `d323_path_bytes.nv`, `d324_os_env_args_cwd.nv`;
+  compile-error-сторона (must-consume leak/double-close/use-after) → `spec_tests/conformance/neg/`;
+  amend D258 (если rename) → обновить существующий `d258_write_sink_decouple.nv` в том же изменении; amend D302
+  (Ф.4) → `d302_neterror_iokind.nv`. Все `module spec_tests.conformance`, локалы с префиксами d322_/d323_/d324_;
+  прогон `nova test spec_tests`.
+- error-index: `IoError`/`ErrorKind`-варианты + E-коды must-consume (уже D133-семейство); ENAMETOOLONG→Other-нота.
+- `docs/io-fs.md` — новый guide (7-языковая таблица). **Q-sweep (Ред. 2, конкретизирован):** (1) open-questions
+  **Q9** («стандартные эффекты не определены») — добавить/закрыть строки **Fs/Os/Io = D322-D324** (симметрично 175
+  Ф.6 Time-строке); (2) **Q-stdlib-minimal-api:5551** — устаревшая форма `str.from_bytes Fail[Utf8Error]` → обновить
+  на D325-канон `-> Result` тем же коммитом Ф.0.5. *(Q1-Q14 живут в этом плане — в open-questions их нет.)*
 
 ## 6. Миграция
 
-Аддитивно (`std/io`/`std/fs`/`std/os`). Отдельные byte-baseline-guarded коммиты: net `NetError`→`IoError`, net `str`→`[]u8` (mass compile-errors → per-file loop §10).
-`std/_experimental/path` — **переписать** (не промоут — он str-based). Верификация против чистого бинаря; пересобрать `nova-cli` после `.nv` (`include_str!`).
+Аддитивно (`std/io`/`std/fs`/`std/os`). Ф.4 — byte-baseline-guarded (NetError→IoError; conformance TcpStream).
+`std/_experimental/path` — **переписать** (str-based, подтверждено). Верификация против чистого бинаря (temp-worktree
+baseline §10); пересобрать `nova-cli` после `.nv` (`include_str!`); mass compile-errors → per-file loop §10.
 
-## 7. Тесты (pos + neg; `nova_tests/io180/`, `fs180/`, `os180/`)
+## 7. Тесты (pos + neg + rt + spec_tests; раскладка по test-conventions — Ред. 2)
 
-Раскладка как net/179 (pos standalone; neg `module neg.<name>` + `EXPECT_COMPILE_ERROR`); классификация по маркеру.
+**Раскладка — ТРИ темы** (три std-модуля, durable; os-тесты (racy set_env) не смешивать в один CU с fs):
+- **`nova_tests/io/`**, **`nova_tests/fs/`**, **`nova_tests/os/`** — folder-module `module nova_tests.io|fs|os`;
+  **позитивы = peer-файлы с test-блоками** (описательные имена: `d322_read_exact_eintr.nv`, `plan176_write_atomic_exdev.nv`);
+  **NB (Ред. 2): проверки «open несуществующего → Err(NotFound)» и т.п. — это ПОЗИТИВНЫЕ test-блоки с assert на
+  Result, НЕ neg/-файлы**;
+- **`fs/rt/`, `io/rt/`** — standalone `fn main` для runtime-фикстур: BrokenPipe («процесс не падает», EXPECT_STDERR/
+  EXPECT_EXIT_CODE), ENOSPC-close сценарий;
+- **`neg/`** — ТОЛЬКО `EXPECT_COMPILE_ERROR` (без двоеточия после маркера): must-consume leak, double-close,
+  use-after-consume;
+- **big-tests** — **`_slow.nv`-суффикс** (D277/D298: default-прогон пропускает, `--include-slow`; коммитятся —
+  нерегенерируемые; fast-variant с малым N — peer-файл): большие dir-обходы, large-file copy;
+- **spec_tests/conformance** — файлы §5.
 
-- **pos / контрактные (обязательные):**
-  - **byte-roundtrip**: `write []u8` → `read` **байт-в-байт идентично**, включая **невалидный-UTF-8** контент;
-  - **must-consume positive**: `File`/`BufWriter` `@close()` разряжает обязательство, его `Result` **наблюдается**; **close-error visible** (симул. ENOSPC → `close()` = `Err`, caller обязан обработать);
-  - **non-UTF8 Path roundtrip** через `mem_fs`: `read_dir` отдаёт имя, которым **тот же файл переоткрывается** (лосслесс);
-  - `read_to_string` на невалидном UTF-8 → `IoError{InvalidData}` (не паника/не lossy);
-  - `read_exact`/`write_all` (partial+EINTR loop); `lines()` strip `\r\n`, `byte_lines()` raw; `copy(r,w)`;
-  - `write_atomic` durability (fsync-file + same-dir-temp + fsync-dir; **torn-write neg — mandatory**); `EXDEV`→`CrossesDevices`;
-  - `read_dir`/`walk_dir`(per-entry-error+SkipDir); `Metadata.len/modified`(`Timestamp`); `create_dir_all`/`remove_dir_all`(symlink-safe); `copy`/`rename`; symlink;
-  - env get/set; args; cwd; **`with Fs = mem_fs()` детерминизм без диска** (одинаков между прогонами);
-  - **cancellable-fs**: cancel in-flight → **не висит** + fd-state well-defined (НЕ mid-syscall-interrupt — best-effort, Q4).
-- **neg (`EXPECT_COMPILE_ERROR`):** забыл `File.close()` → must-consume leak; double-close; use-after-consume (`File` после `close()`); `io.Write` без wildcard-арма на `ErrorKind` (если требуется).
-- **neg (`IoError`/runtime):** open несуществующего → `NotFound`; permission → `PermissionDenied`; `create_new` существующего → `AlreadyExists`; `remove_dir` непустой → `DirectoryNotEmpty`; read после close; write в read-only → `ReadOnlyFilesystem`; NUL в Path → `InvalidInput`; `BrokenPipe` на закрытый pipe (процесс не падает).
-- **big-tests** (вне дефолт-сэмпла): большие dir-обходы, large-file copy.
+**pos / контрактные (обязательные):**
+- **byte-roundtrip**: `write []u8` → `read` байт-в-байт, включая невалидный-UTF-8;
+- **must-consume positive**: `File`/`BufWriter` `@close()` разряжает, Result наблюдается; **close-error visible**
+  (mem_fs ENOSPC-инъекция → `close()` = `Err`); **consume-блок**: `consume f = open(...) { … }` → `@cleanup`-разрядка
+  (координация 173); **`with_file`**: close-Err (ENOSPC-инъекция) виден как Err результата блока при Ok-body (Q2);
+- **non-UTF8 Path roundtrip** через mem_fs; `read_to_string` на невалидном UTF-8 → `IoError{InvalidData}`;
+- **`str.from_bytes` unit**: точность `Utf8Error{byte_offset}` (Ред. 2 — прямой тест, не только косвенный);
+- `read_exact`/`write_all` (partial+EINTR; **`Ok(0)` на пустом буфере НЕ EOF; WriteZero**); `lines()` edge-кейсы
+  (финальная строка без `\n` — yield; embedded lone `\r` НЕ сепаратор); `byte_lines()` raw; `copy(r,w)`;
+- **`write_str`-мост** io.Write ↔ text (Q6) + отсутствие коллизии io.Write/prelude-Write (компилируется без suppress
+  или с задокументированным `#allow(shadow)`);
+- `write_atomic` durability (fsync-file + same-dir-temp + fsync-dir; **torn-write neg через mem_fs-инъекцию —
+  mandatory**); `EXDEV`→`CrossesDevices`;
+- `read_dir`/`walk_dir`(per-entry-error+SkipDir); `Metadata.len/modified`(`Timestamp`); `create_dir_all`/
+  `remove_dir_all`(symlink-safe); `copy`/`rename`; symlink;
+- **Permissions API** (Ред. 2): `@readonly`/`@set_readonly` портабельно; unix `@mode()`/`from_mode` (`mode(0o600)`
+  применяется — Q12); `Unsupported` на non-POSIX; **append-mode** (Q13): append-после-seek пишет в EOF;
+- env get/set; args; cwd; `with Fs = mem_fs()` детерминизм; `with Os = mock_os()`; Io-mock (stdin scripted);
+- **cancellable-fs**: cancel in-flight → не висит + fd-state defined;
+- **NetError-строки** после Ф.4 (`@to_str()` сохранены / фикстуры обновлены осознанно).
+
+**neg (`EXPECT_COMPILE_ERROR`):** забыл `File.close()` → `D133-not-consumed`; double-close; use-after-consume;
+`append+truncate` → InvalidInput (если compile-time; иначе runtime-pos).
+
+**rt:** BrokenPipe (процесс не падает); NUL в Path → `InvalidInput` (runtime-pos если не compile-time).
 
 ## 8. Критерии приёмки
 
-0. **🔴 ОБЯЗАТЕЛЬНО: «без упрощений, как для прода».** Ни одного «решим потом» на критич. пути; каждая behavior-change — pos+neg + аргумент звучности.
-1. io-core: `io.Read`/`io.Write`/`io.Seek` (sibling text-sink, без коллизии) + `BufReader` + **`BufWriter` must-consume** + `read_to_end`/`read_to_string`/`byte_lines`/`lines`/`read_exact`/`write_all`/`copy`; структурный `IoError`/`ErrorKind`; **EOF/partial/EINTR-контракт** реализован; stdin/stdout/stderr мокабельны; `str.from_bytes`→`Result` (Ф.0.5).
-2. **byte-roundtrip** (incl non-UTF8) проходит; **close-error наблюдаема** (тест ENOSPC); **must-consume**: незакрытый `File`/`BufWriter` → compile-error, use-after-consume → compile-error.
-3. fs: `File` must-consume (close→`Result`) + `OpenOptions`+`create_new`+`read_at`/`write_at`+`sync_all`/`sync_data`; **byte-backed `Path`** (non-UTF8 lossless roundtrip); `Metadata`(→`Timestamp`); `read_dir`/`walk_dir`; **`write_atomic`** (durability-тест: fsync-file+same-dir+fsync-dir, EXDEV→`CrossesDevices`); portable `Permissions`+unix-escape; best-effort-cancel (не висит, fd-state defined).
-4. os: `args`/`env`/`cwd`/`exit`(flush)/`temp_dir`/… ; `Fs`/`Os`/`Io` **мокабельны** (`mem_fs` детерм. без диска).
-5. Закрывает fs-часть `[M-91.10-fs-net-effects-formal]`. net `NetError`→`IoError` + net `str`→`[]u8` — отдельные коммиты (по Q3/Q6, byte-baseline-guarded).
-6. **HARD-DEP-статусы честны:** Plan 80 (must-consume) — если не готов, `File`/`BufWriter` на affine-fallback с runtime-check, и это **явно** в плане/доке; D316–D321 в spec до D322+.
-7. Полный регресс зелёный (батчами <10мин); большие fs-тесты вне дефолт-сэмпла.
-8. spec: D322/323/324 (+ D316-321 смёржены); `docs/io-fs.md`; §1a differentiators.
+0. **🔴 ОБЯЗАТЕЛЬНО: «без упрощений, как для прода».** Ни одного «решим потом» на критич. пути; каждая
+   behavior-change — pos+neg + аргумент звучности.
+1. io-core: протоколы + `BufReader` + **`BufWriter` must-consume (D133)** + хелперы; структурный `IoError`/`ErrorKind`;
+   EOF/partial/EINTR-контракт; stdin/stdout/stderr мокабельны (**Io-mock существует**); `str.from_bytes`→`Result` (Ф.0.5).
+2. byte-roundtrip (incl non-UTF8); close-error наблюдаема (mem_fs ENOSPC); must-consume: незакрытый → compile-error,
+   use-after → compile-error; **consume-блок работает через Cleanup[IoError] (координация 173)**.
+3. fs: `File` must-consume + **OpenOptions полный (incl. append Q13)** + `read_at`/`write_at` + `sync_*`; byte-`Path`
+   (non-UTF8 roundtrip); `Metadata`(→`Timestamp`); `read_dir`/`walk_dir`; `write_atomic` (durability-тест);
+   Permissions + mode/umask (Q8/Q12); best-effort-cancel; **`mem_fs()` deliverable с ошибко-инъекцией**;
+   `CStr.from_bytes` + `CWStr` (координация 174.6).
+4. os: `args`/`env`/`cwd`/`exit`(flush)/…; `Fs`/`Os`/`Io` мокабельны (носители — Ф.1/Ф.2/Ф.3 deliverables).
+5. **Ф.4**: `NetError`→`IoError`-projection (координация 178 ErrSource); conformance `io.Read/Write` на TcpStream
+   (поверх 178 byte-surface; при отсутствии — отложено с маркером, НЕ блокер).
+6. **Гейт-статусы честны (Ред. 2):** must-consume = D133 (shipped) — БЕЗ affine-fallback; D322-D324 присвоены в
+   рамках README-резерва (D316-D321 — критерий 175/175.1, для 176 dep-verify).
+7. **Гейт корректности:** spec_tests/conformance зелёный (d322/d323/d324 + amended d258/d302) + **nova_tests
+   baseline-delta = 0** (baseline = parent-коммит, тот же бинарь, temp-worktree/commit+reset — §10); батчи <10мин
+   с `--results-file`/`--rerun-failed`; big-tests = `_slow.nv` вне дефолт-прогона.
+8. spec: D322/323/324 + амендменты §5 + **spec_tests-файлы**; `docs/io-fs.md` (7-языковая таблица, антипример
+   Swift/Zig atomic); §1a differentiators; Q-sweep выполнен; followup-маркеры зарегистрированы в OPEN-view;
+   Plan 80 помечен superseded-by-D133 + статус-нота D133 амендирована (Ф.0g).
 
 ## 9. Конвенции + координация
 
-§1 (чекер), §3 (типы/эффекты из `.nv`), §5 spec-first (D-блоки до кода), §6 (коды + error-index), §7 (blast-radius + чистый бинарь), §8 (pos+neg, C-codegen).
-**Координировать:** net-семейство (паттерн+инфра, миграция NetError/str), **Plan 80** (must-consume — HARD-GATE Ф.2), **179** (`Timestamp`), **83.3** (`Blocking` D50 — только CPU-обёртки), **172.4** (value-ABI), **91.18** (str+from_bytes — Ф.0.5), **Plan 42.12/D99** (platform-split FFI через `_posix.nv`/`_windows.nv`+`#cfg`), **Plan 152.6/D255** (`std/encoding/utf16.nv` — WTF-8↔UTF-16 в Nova для Windows-путей). После большой задачи — `project-creation.txt` + discussion-log + `simplifications.md`.
+§1 (чекер), §3 (типы/эффекты из `.nv`), §5 spec-first, §6 (коды + error-index), §7 (blast-radius + чистый бинарь),
+§8 (pos+neg, C-codegen). **Координировать:** net-семейство (паттерн+инфра); **Plan 178** (владелец net byte-surface +
+SocketAddr + AddrNet-retract — НЕ пересекать коммиты; ErrSource-нота; ложный from_bytes-green — поправить при сверке
+178); **Plan 173** (Cleanup[IoError]-мост, suppressed-chain); **Plan 175** (`Timestamp`); **Plan 174.6** (внести CWStr в C_ABI-грамматику §2); 83.3 (`Blocking` ✅ — только CPU-обёртки); 172.4 (design-lock; Ф.2-срез D328 реализован);
+**Plan 42.12/D99** (platform-split FFI); **Plan 152.6/D255** (`utf16.nv` — подтверждён полный набор функций).
+После большой задачи — `project-creation.txt` + discussion-log + `simplifications.md`.
 
 ## 10. Фоновые агенты (если используются)
 
-- **НЕ `git stash`** (worktree делят `.git` → repo-global коллизия, [[feedback-worktree-shared-stash]]); baseline — temp-worktree / commit+reset.
-  Постоянный worktree `nova-p180` (naming `nova-pNN`) первой командой, самозарегистрироваться; cwd сбрасывается в main → **префикс абсолютным путём в каждой команде** ([[feedback_worktree_cwd_clarity]]).
-- **Идемпотентность под rate-limit:** коммит после каждой фазы, без amend ([[feedback-commit-per-task]]); `git add` только конкретные файлы ([[feedback_git_add_specific]]);
-  `git diff --cached --stat` перед commit ([[feedback-verify-index-before-commit]]); без `Co-Authored-By`; filter null перед действием.
-- **Тесты:** `nova test` — не гейт корректности (byte-baseline), гейт = targeted pos+neg ([[feedback-nova-tests-not-correctness-gate]]); full `nova test` ~60-90мин > 10-мин cap → батчи <10мин ([[project-bash-timeout-10min-max]]);
-  mass compile-errors (net str→[]u8) → **per-file loop** (`nova check FILE` → fix → re-check, [[feedback-test-fix-per-file-loop]]).
-- **Worktree nova test:** env `NOVA_GC_LIB_DIR`/`INCLUDE_DIR` → main; libuv-submodule из main + удалить `libuv/.git` ([[project-worktree-nova-test-setup]]);
-  **net/fs-тесты ОБЯЗАТЕЛЬНО с cwd=worktree** (libuv `repo_root=current_dir` — иначе fs-пути резолвятся неверно). **Пересобрать `nova-cli` после правок `.nv`** (`include_str!`). C-codegen only ([[feedback-no-interpreter]]). Не выдумывать синтаксис — `spec/decisions/` + `examples/` ([[feedback_nova_syntax]]).
+- **НЕ `git stash`** (worktree делят `.git` → repo-global, [[feedback-worktree-shared-stash]]); baseline —
+  **temp-worktree** (`git worktree add ../nova-176-base <parent>`) / commit+reset. Постоянный worktree **`nova-p176`**
+  (naming nova-pNN) первой командой, самозарегистрироваться; cwd дрейфует → **префикс абсолютным путём в каждой
+  команде** ([[feedback_worktree_cwd_clarity]]).
+- **Git:** add только конкретные файлы; `git diff --cached --stat` перед commit; **DCO `git commit -s`** (CI-гейт);
+  без `Co-Authored-By`; коммит после каждой фазы, без amend; **bidirectional sync в main после фазы**.
+- **Идемпотентность под rate-limit** (workflow-агенты падают mid-run): шаги идемпотентны + checkpoint (commit per
+  task); скрипты `.filter(Boolean)`, `resumeFromRunId`; не зависеть от успеха каждого агента.
+- **Тесты:** только C-codegen ([[feedback-no-interpreter]]); **`nova test` требует ЯВНЫЙ путь**. **Батч-канон:**
+  циклом `nova test nova_tests/<dir1> nova_tests/<dir2> … --results-file rN.json` (<10мин/батч,
+  [[project-bash-timeout-10min-max]]), хвост `--rerun-failed`; ОТДЕЛЬНО `nova test spec_tests` и `nova test std`;
+  флака ≠ регрессия (тот же бинарь). **Гейт корректности = spec_tests + pos+neg фикстуры + baseline-delta**
+  ([[feedback-nova-tests-not-correctness-gate]]). Mass compile-errors (Ф.4) → per-file loop
+  ([[feedback-test-fix-per-file-loop]]).
+- **Worktree setup:** env `NOVA_GC_LIB_DIR`/`INCLUDE_DIR` → main; libuv-submodule из main + удалить `libuv/.git`
+  ([[project-worktree-nova-test-setup]]); **net/fs-тесты ОБЯЗАТЕЛЬНО с cwd=worktree**; **mtime-touch `.rs`** перед
+  cargo build; **пересобрать `nova-cli` после правок `.nv`** (`include_str!`). Не выдумывать синтаксис —
+  `spec/decisions/` + `examples/` ([[feedback_nova_syntax]]).
 
 ## 11. Followup
 
-`[M-176-io-fs-os]`. **Process → под-план 176.1** (Command/Child/Stdio/uv_spawn; гейт после 180 Ф.1-3). Отдельные коммиты: net `NetError`→`IoError`, net `str`→`[]u8`.
-Followups: file-locking (advisory flock), mmap, `walk_dir`-filters, glob-промоут (`std/_experimental/path/glob.nv`), fs-watch (inotify/FSEvents), write_atomic Windows rename-replace-retry. Имена/детали — финал при реализации (после Ф.0).
+`[M-176-io-fs-os]` (регистрация в OPEN-view — Ф.0). **Process → 176.1** (`[M-176.1-process]`; файл при старте работ;
+гейт после 176 Ф.1-Ф.3). **NEW (Ред. 2):** `[M-176-dir-scoped-ops]` (Zig openat-модель — anti-TOCTOU by design);
+`[M-176-create-temp]` (O_TMPFILE/anonymous temp); conditional `[M-176-tcp-io-conformance]` (Ф.4b при
+отсутствии 178 byte-surface). Прочие: flock, mmap, `walk_dir`-filters, glob-промоут
+(`std/_experimental/path/glob.nv` существует), fs-watch (inotify/FSEvents), write_atomic Windows rename-replace-retry,
+copy fast-path (sendfile). Имена/детали — финал при реализации (после Ф.0).
