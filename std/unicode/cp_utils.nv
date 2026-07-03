@@ -14,7 +14,7 @@ import std.collections.vec.{Vec}
 // fallible parse returns `Option`). The generated tables are always well-formed,
 // so `None` is a safety net, not a hot path.
 fn hex(s str) -> Option[u32] {
-    match s.try_parse_int(radix: 16) { Ok(v) => Some(v as u32), Err(_) => None }
+    match s.parse_int(radix: 16) { Ok(v) => Some(v as u32), Err(_) => None }
 }
 
 // "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].

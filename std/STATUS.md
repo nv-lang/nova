@@ -86,7 +86,7 @@ post-Plan 83.10.4 merge `7b5b2fec8e0`).
 | `Duration` (`std/time/duration.nv`) | ✅ | ✅ | ✅ | `from_secs/from_millis/plus/as_nanos/as_millis` |
 | `math` (`std/runtime/math.nv`) | ✅ | ✅ | ✅ | `f64.sqrt/.pow/.ln` через runtime stubs |
 | `text` basic (`std/runtime/string.nv`) | ✅ | ✅ | ✅ | `split/trim/to_upper/starts_with` + `for-in []str` |
-| `text` extended | ✅ | ✅ | ✅ | `parse_int(radix=10)` ✅ (Option), `try_parse_int(radix=10)` ✅ (Result+ParseIntError, 2026-06-08); `split` ✅ external; join/trim/pad deferred |
+| `text` extended | ✅ | ✅ | ✅ | `parse_int(radix=10) -> Result[int, ParseIntError]` ✅ (D325 единая Result-форма, Plan 177 Ф.2b); `split` ✅ external; join/trim/pad deferred |
 | `json` (`std/encoding/json.nv`) | ✅ | ✅ | ✅ | Plan 91.13 V2 (2026-06-05): 8 conformance fixtures PASS |
 | `sort` (`std/sort.nv`) | ✅ | ✅ | ✅ | `[]int @sort/@binary_search/@min/@max` — Ф.4 2026-05-27 |
 
@@ -130,8 +130,9 @@ end-to-end на realistic smoke-программах.** Plan 95/99/101/103 за�
 
 **Ф.2 — Text (2026-06-08 update):**
 
-✅ `parse_int(radix int = 10) -> Option[int]` — merged (D178, Plan 91 Ф.2.5/2.6)
-✅ `try_parse_int(radix int = 10) -> Result[int, ParseIntError]` — NEW (Plan 91 Ф.2, 2026-06-08)
+✅ `parse_int(radix int = 10) -> Result[int, ParseIntError]` — единая Result-форма
+   (D325 / Plan 177 Ф.2b; bare-throws + `try_parse_int` + `parse_int_opt` ретрактированы,
+   Result→Option через `.ok()`)
 ✅ `split(sep) -> ro []str` — external (Plan 83.12 era)
 ✅ `pad_left`, `pad_right`, `repeat`, `replace` — Nova-body (Plan 91 Ф.2.5)
 - `parse_f64() -> Option[f64]` — followup `[M-91.fe2-parse-f64]`

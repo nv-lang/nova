@@ -153,7 +153,7 @@ export import std.runtime.string_builder.{StringBuilder}
 //   - ReadBuffer  (cursor record `{ ro data []u8, mut pos int }`) — std/runtime/read_buffer.nv
 // Старые `external type WriteBuffer` / `external type ReadBuffer` declarations
 // удалены вместе с C runtime headers (`nova_rt/{write,read}_buffer.h`).
-// API surface неизменён: те же `@write_*`/`@read_*`/`@try_read_*` методы,
-// та же семантика. См. Plan 91.12 для migration details.
+// API surface: `@write_*` методы + `@read_*` (Result-форма, D325 — единый
+// fallible-контракт, Plan 177). См. Plan 91.12 для migration details.
 export import std.runtime.write_buffer.{WriteBuffer}
 export import std.runtime.read_buffer.{ReadBuffer}
