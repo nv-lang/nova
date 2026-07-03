@@ -8929,9 +8929,11 @@ type MultiErrorTruncated { depth int }
 
 ## D194. `Cleanup[Never]` — infallible cleanup + hot-path elision
 
-> **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE** (codegen recognizes
-> `Cleanup[Never]` для hot-path elision, 2026-05-31). Special-case для resource'ов которые
-> гарантированно не fail в cleanup (Mutex, Sem, Lock).
+> **Plan 110.** Принято 2026-05-31. **Статус: ACTIVE — с оговоркой (Plan 173 Ф.2.D194,
+> 2026-07-03).** Реализована **caller-relaxation** (type-checker снимает требование `Fail[E]`
+> для `Cleanup[Never]`-биндинга — см. §Caller relaxation, живо). §perf **hot-path elision**
+> (§Hot-path optimization ниже) **НЕ реализована** — см. врезку в конце секции. Special-case
+> для resource'ов которые гарантированно не fail в cleanup (Mutex, Sem, Lock).
 
 ### Что
 
@@ -8972,31 +8974,44 @@ fn use_any[T Cleanup[Never]](r T) -> () {     // нет Fail[E]
 Generic с `[T Cleanup[Never]]` тоже не требует `Fail[E]` у caller'а
 (см. [D188](#d188) generic constraint).
 
-### Hot-path optimization (D194 §perf)
+### Hot-path optimization (D194 §perf) — ⚠ НЕ РЕАЛИЗОВАНА (аспирационно)
 
-Codegen detect'ит case когда:
+> **⚠ Статус (Plan 173 Ф.2.D194, 2026-07-03): эта оптимизация НЕ реализована в codegen.**
+> Де-риск Ф.2 (2 агента независимо + firsthand-разбор) установил: единственная эмитящая
+> `ConsumeScope`-ветка (`emit_c.rs`, ~19816-20101) эмитит ПОЛНЫЙ frame-bearing путь
+> **БЕЗУСЛОВНО** для ВСЕХ resource-типов (вкл. `Cleanup[Never]`): shield-пара
+> (`nv_consume_enter_shield`/`nv_consume_leave_shield`), 3-level timeout, ≥2 setjmp-кадра
+> (body + on_exit), полный outcome. Effect-row-inspection для Never-элизии в codegen = 0.
+> Прежний текст «Disasm-verified в T2.9» — **артефакт отсутствует** (`docs/plans/artifacts/
+> 173-disasm-baseline/`), премиса дрейфанула. **Ф.2 (defer-kernel unification) acceptance =
+> PARITY** (lowered consume/defer(o) НЕ увеличивает кадры/shield/outcome vs дорефакторный
+> frame-bearing вывод), а НЕ «сохранить существующую элизию» (её нет). Генуинная §perf-элизия —
+> отдельный deferred followup **`[M-173-d194-perf-elision]`** (перф-оптимизация вне периметра
+> unification; требует own disasm-guard artifact).
+
+Целевая (будущая) форма — codegen detect'ит case когда:
 1. Binding имеет тип `Cleanup[Never]` И
 2. Type не satisfies `WithExitTimeout` (нет custom `exit_timeout()` method).
 
-В этом случае codegen **eliminates**:
+Тогда codegen мог бы **eliminate**:
 - Cancel-shield setup/teardown (на throw на cleanup-path → нет MultiError compose).
 - Timeout resolution (5s hardcoded не нужен — release инстант).
 - `outcome` construction (Mutex не различает Success/Failure/Panic).
 
 ```c
-// regular case:
-nv_consume_enter(timeout);
-... body ...
-nv_call_on_exit(tx, outcome);
-nv_consume_leave();
+// regular case (СЕЙЧАС — для ВСЕХ типов, вкл. Never):
+nv_consume_enter_shield(timeout);
+... body (fail-frame) ...
+nv_call_on_exit(tx, outcome);   // on_exit-frame
+nv_consume_leave_shield(prev);
 
-// elided case (Cleanup[Never] + no WithExitTimeout):
+// elided case (Cleanup[Never] + no WithExitTimeout) — ЦЕЛЬ [M-173-d194-perf-elision], НЕ реализовано:
 ... body ...
 nv_call_release(mu);
 ```
 
 **Critical для hot-paths**: lock contention, high-frequency permits, fast
-mutex/atomic patterns. Disasm-verified в T2.9.
+mutex/atomic patterns — мотивация для будущего `[M-173-d194-perf-elision]`.
 
 ### Когда elision НЕ применяется
 

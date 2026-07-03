@@ -189,3 +189,11 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
     D314 §2 предписывает interrupt→cleanup(Failure). Beyond-parity correctness-fix, свой тестируемый атом.
   • `[M-173-consume-exactly-once-observability]` — conformance d188/d196 наблюдают ТОЛЬКО body-exec+binding
     (RISK #208), НЕ exactly-once/shield/timeout — добавить trail-observability тесты.
+- ✅ **Ф.2.D194 disasm-parity + spec-sync ЗАКРЫТ (spec-truth):** D194-спека (03-syntax:8930) приведена к
+  ФАКТУ: caller-relaxation (`Cleanup[Never]` снимает `Fail[E]` у caller'а) — РЕАЛИЗОВАНА (живо); §perf
+  hot-path elision (§Hot-path optimization) — **НЕ реализована** (единственная ConsumeScope-ветка эмитит
+  полный frame-bearing путь БЕЗУСЛОВНО; effect-row-inspection в codegen = 0). Убран ложный «Disasm-verified
+  в T2.9» (артефакт отсутствует). Статус-хедер + врезка помечают элизию как аспирационную → followup
+  `[M-173-d194-perf-elision]`. **Parity подтверждён:** B3 (outcome-DRY) НЕ увеличил кадры/shield/outcome —
+  mutexguard.c post-B3 ≡ baseline (84 setjmp, 3 ScopeOutcome, идентично); consume-corpus (plan110/plan103_9)
+  + conformance 38/38 без регрессий. Acceptance Ф.2 = PARITY (не элизия) зафиксирован в спеке.
