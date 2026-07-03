@@ -847,13 +847,37 @@ pub struct ModuleEnv {
     /// byte-identical, mirrors U.4.1); U.4.3 wires the codegen consumption + equivalence
     /// assert.
     pub resolved_callees: HashMap<crate::ast::ExprId, Span>,
+    /// Plan 104.10 Ф.2 (D379): OPT-IN per-expression type map for the IDE — expression
+    /// source `Span` → its inferred `TypeRef` (the checker's real expression type, e.g.
+    /// `int`, `str`, `Named{Rec}`, `Range`, `(int, str)`). Populated ONLY by
+    /// [`check_module_with_expr_types`] (flag `TypeCheckCtx::record_expr_types`); the normal
+    /// [`check_module`] leaves it EMPTY — zero cost for `nova check`/`build`/`test`. The IDE
+    /// keys by cursor→span (hover, type-driven completion, signature help, inlay hints).
+    ///
+    /// SEMANTICS: absence of a span in the map means "unknown" — the IDE degrades
+    /// gracefully. Synthetic (default / zero-width) spans and un-inferrable types (bare
+    /// generic `T`, unit/never as a value) are intentionally NOT recorded, so the map never
+    /// carries garbage. This is REAL inference lifted from the checker (`infer_expr_type` +
+    /// the semantic `resolved_types_buf` channel), never a textual heuristic.
+    pub expr_types: HashMap<Span, crate::ast::TypeRef>,
 }
 
 /// Минимальная проверка модуля. Регистрирует имена и базовую структуру —
 /// для bootstrap'а этого достаточно: интерпретатор ловит ошибки типов в
 /// runtime через match-mismatch и method-not-found.
 pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
-    check_module_impl(module, None)
+    check_module_impl(module, None, false)
+}
+
+/// Plan 104.10 Ф.2 (D379): like [`check_module`], but ALSO records the per-expression type
+/// map (`ModuleEnv.expr_types`: expr `Span` → inferred `TypeRef`) for the IDE. This is the
+/// ONLY entry-point that fills `expr_types`; the plain [`check_module`] leaves it empty so the
+/// hot `nova check`/`build`/`test` path pays ZERO overhead. Same diagnostics / same checker
+/// decisions as [`check_module`] — the recording is a pure side-channel (`infer_expr_type` +
+/// the semantic `resolved_types_buf`), it never influences type-checking. Returns the env on
+/// success (with `expr_types` populated) or the diagnostics on failure.
+pub fn check_module_with_expr_types(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
+    check_module_impl(module, None, true)
 }
 
 /// Internal implementation shared by [`check_module`] and
@@ -871,6 +895,7 @@ pub fn check_module(module: &Module) -> Result<ModuleEnv, Vec<Diagnostic>> {
 fn check_module_impl(
     module: &Module,
     sig_table: Option<&crate::imports::ModuleSigTable>,
+    record_expr_types: bool,
 ) -> Result<ModuleEnv, Vec<Diagnostic>> {
     let mut env = ModuleEnv::default();
     let mut errors = Vec::new();
@@ -1606,10 +1631,13 @@ fn check_module_impl(
     // Plan 162.1 Step 3: when a sig_table is available, use
     // build_with_sig_table so that is_known_type / is_known_fn
     // can consult cross-module signatures during type-checking.
-    let type_check_ctx = match sig_table {
+    let mut type_check_ctx = match sig_table {
         Some(st) => TypeCheckCtx::build_with_sig_table(module, &synth_arena, st.clone(), &sig),
         None => TypeCheckCtx::build(module, &synth_arena, &sig),
     };
+    // Plan 104.10 Ф.2: opt-in per-expression type recording (IDE). Default path leaves this
+    // false → the f1_expr walk never records → zero overhead for nova check/build/test.
+    type_check_ctx.record_expr_types = record_expr_types;
     type_check_ctx.check_module(module, &mut errors);
 
     // **Plan 118.5 V3 Ф.2 / D216 V3 §V3.1 (2026-06-04):** ro+mut conflict
@@ -1784,6 +1812,10 @@ fn check_module_impl(
     // Plan 172.1 U.4.4(b): lift the checker-side resolved-type channel; the pipeline merges
     // it OVER the number_exprs seed (main.rs / test_runner).
     env.resolved_types = type_check_ctx.resolved_types_buf.take();
+    // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
+    // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
+    // guarantee for the normal compile path.
+    env.expr_types = type_check_ctx.expr_types_buf.take();
 
     if errors.is_empty() {
         Ok(env)
@@ -1812,7 +1844,7 @@ pub fn check_module_with_sig_table(
     module: &Module,
     sig_table: crate::imports::ModuleSigTable,
 ) -> Result<ModuleEnv, Vec<Diagnostic>> {
-    check_module_impl(module, Some(&sig_table))
+    check_module_impl(module, Some(&sig_table), false)
 }
 
 // ─── internal shared core ────────────────────────────────────────────────────
@@ -3198,6 +3230,19 @@ struct TypeCheckCtx<'a> {
     /// f1 Member-арм потребляет (replace(false)) — отличает `v.len()` (метод)
     /// от `@len` (field-read) при same-name field/method (Vec.len, str.len).
     in_call_func: std::cell::Cell<bool>,
+    /// Plan 104.10 Ф.2 (D379): OPT-IN flag — when `true` the `f1_expr` walk records each
+    /// expression's inferred type into `expr_types_buf` (lifted into `ModuleEnv.expr_types`
+    /// for the IDE). `false` in the normal `check_module` path → ZERO overhead (the map
+    /// stays empty, no per-node inference). Set ONLY by `check_module_with_expr_types`. Plain
+    /// `bool` (not interior-mutable): fixed at build time, never mutated during the walk.
+    record_expr_types: bool,
+    /// Plan 104.10 Ф.2 (D379): write-buffer for the opt-in IDE per-expression type map
+    /// (expr `Span` → inferred `TypeRef`). Filled by `record_expr_type_ide` during the
+    /// scope-aware `f1_expr` walk ONLY when `record_expr_types` is set; extracted into
+    /// `ModuleEnv.expr_types` after the check pass. Interior-mutable because the walk is
+    /// `&self` (mirrors `resolved_types_buf` / `resolved_callees`). Empty (untouched) in the
+    /// default compile path.
+    expr_types_buf: std::cell::RefCell<HashMap<Span, TypeRef>>,
 }
 
 /// Plan 114.4.2 D199: RAII guard для in_const_fn flag.
@@ -3709,6 +3754,10 @@ impl<'a> TypeCheckCtx<'a> {
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
             in_call_func: std::cell::Cell::new(false),
             numeric_bounded_params: std::cell::RefCell::new(HashSet::new()),
+            // Plan 104.10 Ф.2: OFF by default (zero-overhead). check_module_with_expr_types
+            // flips it AFTER build; the empty buffer stays empty on the normal compile path.
+            record_expr_types: false,
+            expr_types_buf: std::cell::RefCell::new(HashMap::new()),
         }
     }
 
@@ -6705,6 +6754,87 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     fn f1_expr(
+        &self,
+        e: &Expr,
+        gs: &HashSet<String>,
+        scope: &mut HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Run the full checker walk first (unchanged behavior).
+        self.f1_expr_inner(e, gs, scope, errors);
+        // Plan 104.10 Ф.2 (D379): opt-in IDE per-expression type recording. ZERO overhead
+        // when off (single predictable branch, no per-node inference). POST-ORDER — the inner
+        // walk has finished, so the semantic `resolved_types_buf` channel this node depends on
+        // (Call return, Range, RecordLit, Tuple, …) is fully populated. Every recursion goes
+        // through this wrapper (the inner arms call `self.f1_expr`), so nested `a.b.c` records
+        // all three levels. Pure side-channel: it reads inference, never changes it.
+        if self.record_expr_types {
+            self.record_expr_type_ide(e, gs, scope);
+        }
+    }
+
+    /// Plan 104.10 Ф.2 (D379): record `e`'s inferred type into the opt-in IDE map
+    /// (`expr_types_buf` → `ModuleEnv.expr_types`). Called ONLY when `record_expr_types` is
+    /// set. The type comes from the REAL checker inference — the syntactic `infer_expr_type`
+    /// (rich `TypeRef` with qualified path + generics, ideal for hover) with a fallback to the
+    /// semantic `resolved_types_buf` channel (covers `Range`, tuples, literals and record-lits
+    /// the syntactic pass leaves to the checker). Never a textual heuristic.
+    ///
+    /// Skips (absence = "unknown", IDE degrades gracefully):
+    /// - synthetic / zero-width spans (`start >= end`, includes `Span::default()`) — no source
+    ///   range to anchor a cursor to;
+    /// - un-inferrable types: `resolved_to_typeref` returns `None` for a bare generic
+    ///   type-param (`T`) coming from the semantic channel, and the `gs`-gate below drops a
+    ///   generic-param type reached via scope (`fn g[T](x T)` → `x` is `T`), plus unit / any /
+    ///   raw-ptr / fn types → no garbage / no unsubstituted type-vars in the map.
+    ///
+    /// `gs` = the set of generic type-parameter names in scope for the enclosing fn/impl (the
+    /// same set `f1_expr` threads for its channel gating) — a type MENTIONING any of them is
+    /// not a concrete, IDE-displayable type, so it is skipped (D379 "absence = unknown").
+    ///
+    /// [M-104.10-expr-types-coverage] COVERAGE REMAINDER (production, not a simplification —
+    /// this reuses the checker's REAL inference, `infer_expr_type` + the semantic
+    /// `resolved_types_buf` channel, NOT a textual heuristic). The plan-required set is fully
+    /// covered (literals, Ident, Member obj+result, Index, Call return, Binary, Range, As,
+    /// Tuple / Array / Record literals). NOT yet recorded (bounded by what those channels
+    /// annotate today): (a) GENERIC instance method-chain returns — `infer_expr_type`'s Call
+    /// arm is intentionally decoupled from general instance-method return inference (172.1
+    /// perturbation lesson), so `v.map(f).filter(g)` mid-chain types are absent unless the
+    /// buf already holds them; (b) NON-primitive `TupleLit` (the buf annotates only
+    /// all-primitive tuples; `infer_expr_type` has no `TupleLit` arm); (c) GENERIC-instance
+    /// `RecordLit` / container-element types carrying an unbound type-param (gated out by
+    /// design). These degrade gracefully (absence = unknown) and are the follow-up remainder.
+    fn record_expr_type_ide(
+        &self,
+        e: &Expr,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+    ) {
+        // Synthetic / compiler-generated expressions carry a default (zero-width) span.
+        if e.span.start >= e.span.end {
+            return;
+        }
+        let ty = self.infer_expr_type(e, scope).or_else(|| {
+            if e.id.is_set() {
+                self.resolved_types_buf
+                    .borrow()
+                    .get(&e.id)
+                    .and_then(|rt| Self::resolved_to_typeref(rt, e.span))
+            } else {
+                None
+            }
+        });
+        if let Some(tr) = ty {
+            // Skip un-substituted generic-param types (`T`, `Vec[T]`, `[]T`, …) — not a
+            // concrete IDE type. Mirrors the checker channel's own `gs`-gating.
+            if typeref_mentions_any(&tr, gs) {
+                return;
+            }
+            self.expr_types_buf.borrow_mut().insert(e.span, tr);
+        }
+    }
+
+    fn f1_expr_inner(
         &self,
         e: &Expr,
         gs: &HashSet<String>,
@@ -27709,3 +27839,185 @@ fn run() {
     }
 }
 
+
+#[cfg(test)]
+mod expr_types_ide_tests {
+    //! Plan 104.10 Ф.2 (D379): `ModuleEnv.expr_types` — opt-in per-expression type map
+    //! for the IDE (`check_module_with_expr_types`). Verifies REAL checker inference is
+    //! captured span-keyed (literals, Ident, Member obj+result, Index, Call, Range,
+    //! nested `a.b.c`), the zero-overhead guarantee (plain `check_module` → empty), and
+    //! the graceful-degradation guards (bare generic `T` and synthetic spans → NOT in map).
+    use super::*;
+
+    /// Parse -> number_exprs (assigns `ExprId`s + seeds the resolved-type channel) ->
+    /// `check_module_with_expr_types`. Panics with the diagnostics if the source does
+    /// not type-check (all fixtures here are valid Nova).
+    fn expr_types_of(src: &str) -> HashMap<Span, TypeRef> {
+        let mut module = crate::parser::parse(src)
+            .unwrap_or_else(|d| panic!("parse failed: {}", d.message));
+        let _seed = crate::number_exprs::number_exprs(&mut module);
+        match check_module_with_expr_types(&module) {
+            Ok(env) => env.expr_types,
+            Err(diags) => panic!(
+                "check_module_with_expr_types failed: {:?}",
+                diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+            ),
+        }
+    }
+
+    /// Look up the recorded type of the expression whose source text is the LAST
+    /// occurrence of `needle` (usage sites come after declarations, so `rfind` targets
+    /// the call/read site, not a `fn`-signature token of the same spelling).
+    fn ty_at<'x>(
+        m: &'x HashMap<Span, TypeRef>,
+        src: &str,
+        needle: &str,
+    ) -> Option<&'x TypeRef> {
+        let start = src.rfind(needle)?;
+        let end = start + needle.len();
+        m.iter()
+            .find(|(s, _)| s.start == start && s.end == end)
+            .map(|(_, t)| t)
+    }
+
+    /// Look up by explicit byte range (for sub-expressions that are a prefix of a larger
+    /// expression, e.g. `a` / `a.b` inside `a.b.c`).
+    fn ty_span<'x>(
+        m: &'x HashMap<Span, TypeRef>,
+        start: usize,
+        end: usize,
+    ) -> Option<&'x TypeRef> {
+        m.iter()
+            .find(|(s, _)| s.start == start && s.end == end)
+            .map(|(_, t)| t)
+    }
+
+    fn is_named(t: &TypeRef, name: &str) -> bool {
+        matches!(t, TypeRef::Named { path, .. }
+            if path.last().map(String::as_str) == Some(name))
+    }
+
+    // POS: literal
+    #[test]
+    fn pos_int_literal() {
+        let src = "module t\nfn f() -> int {\n    ro x = 5\n    return x\n}\n";
+        let m = expr_types_of(src);
+        let t = ty_at(&m, src, "5").expect("literal 5 recorded");
+        assert!(is_named(t, "int"), "expected int, got {:?}", t);
+    }
+
+    // POS: Range (via the semantic resolved_types_buf channel)
+    #[test]
+    fn pos_range() {
+        let src = "module t\nfn f() {\n    ro r = 0..=5\n    for i in r {\n    }\n}\n";
+        let m = expr_types_of(src);
+        let t = ty_at(&m, src, "0..=5").expect("range 0..=5 recorded");
+        assert!(is_named(t, "Range"), "expected Range, got {:?}", t);
+    }
+
+    // POS: Call return type
+    #[test]
+    fn pos_call_returns_str() {
+        let src = "module t\nfn mkstr() -> str {\n    return \"hi\"\n}\n\
+                   fn g() -> str {\n    ro s = mkstr()\n    return s\n}\n";
+        let m = expr_types_of(src);
+        let t = ty_at(&m, src, "mkstr()").expect("call mkstr() recorded");
+        assert!(is_named(t, "str"), "expected str, got {:?}", t);
+    }
+
+    // POS: Member — result field type AND object type (needed for Ф.6)
+    #[test]
+    fn pos_member_result_and_object() {
+        let src = "module t\ntype Rec {\n    f int\n}\n\
+                   fn g(r Rec) -> int {\n    ro v = r.f\n    return v\n}\n";
+        let m = expr_types_of(src);
+        // result: r.f : int
+        let res = ty_at(&m, src, "r.f").expect("member r.f recorded");
+        assert!(is_named(res, "int"), "expected int for r.f, got {:?}", res);
+        // object: r : Rec (obj span = same start as `r.f`, length 1)
+        let start = src.rfind("r.f").unwrap();
+        let obj = ty_span(&m, start, start + 1).expect("member obj r recorded");
+        assert!(is_named(obj, "Rec"), "expected Rec for obj r, got {:?}", obj);
+    }
+
+    // POS: Index element type
+    #[test]
+    fn pos_index_element() {
+        let src = "module t\nfn g(arr []int, i int) -> int {\n    ro v = arr[i]\n    return v\n}\n";
+        let m = expr_types_of(src);
+        let t = ty_at(&m, src, "arr[i]").expect("index arr[i] recorded");
+        assert!(is_named(t, "int"), "expected int, got {:?}", t);
+    }
+
+    // ZERO-overhead: plain check_module leaves expr_types empty
+    #[test]
+    fn zero_overhead_plain_check_module_empty() {
+        let src = "module t\nfn f() -> int {\n    ro x = 5\n    return x\n}\n";
+        let mut module = crate::parser::parse(src).expect("parse");
+        let _seed = crate::number_exprs::number_exprs(&mut module);
+        let env = check_module(&module).expect("check ok");
+        assert!(
+            env.expr_types.is_empty(),
+            "check_module (flag off) must NOT populate expr_types; got {} entries",
+            env.expr_types.len()
+        );
+    }
+
+    // NEG: bare generic-param type is never recorded (graceful)
+    #[test]
+    fn neg_generic_param_not_recorded() {
+        let src = "module t\nfn g[T](x T) -> T {\n    ro y = x\n    return y\n}\n";
+        let m = expr_types_of(src);
+        // No recorded type may be (or mention) the generic parameter `T`.
+        let mut only_t = std::collections::HashSet::new();
+        only_t.insert("T".to_string());
+        for (span, ty) in &m {
+            assert!(
+                !typeref_mentions_any(ty, &only_t),
+                "generic-param type must NOT be recorded: span={:?} ty={:?}",
+                span, ty
+            );
+        }
+    }
+
+    // NEG: no synthetic / zero-width span is ever recorded
+    #[test]
+    fn neg_no_synthetic_spans() {
+        // Exercise a rich body; assert every key has a real (non-empty) source range.
+        let src = "module t\ntype Rec {\n    f int\n}\n\
+                   fn g(r Rec) -> int {\n    ro a = 1 + 2\n    ro b = r.f\n    return b\n}\n";
+        let m = expr_types_of(src);
+        assert!(!m.is_empty(), "expected some recorded types");
+        for span in m.keys() {
+            assert!(
+                span.start < span.end,
+                "synthetic / zero-width span recorded: {:?}",
+                span
+            );
+        }
+    }
+
+    // EDGE: nested a.b.c.z — every level recorded with correct type
+    #[test]
+    fn edge_nested_member_all_levels() {
+        let src = "module t\n\
+                   type Cee {\n    z int\n}\n\
+                   type Bee {\n    c Cee\n}\n\
+                   type Ayy {\n    b Bee\n}\n\
+                   fn g(a Ayy) -> int {\n    ro v = a.b.c.z\n    return v\n}\n";
+        let m = expr_types_of(src);
+        let s = src.rfind("a.b.c.z").expect("chain present");
+        // a       = [s, s+1] : Ayy
+        let ta = ty_span(&m, s, s + 1).expect("obj a recorded");
+        assert!(is_named(ta, "Ayy"), "expected Ayy for `a`, got {:?}", ta);
+        // a.b     = [s, s+3] : Bee
+        let tab = ty_span(&m, s, s + 3).expect("a.b recorded");
+        assert!(is_named(tab, "Bee"), "expected Bee for `a.b`, got {:?}", tab);
+        // a.b.c   = [s, s+5] : Cee
+        let tabc = ty_span(&m, s, s + 5).expect("a.b.c recorded");
+        assert!(is_named(tabc, "Cee"), "expected Cee for `a.b.c`, got {:?}", tabc);
+        // a.b.c.z = [s, s+7] : int
+        let tabcz = ty_span(&m, s, s + 7).expect("a.b.c.z recorded");
+        assert!(is_named(tabcz, "int"), "expected int for `a.b.c.z`, got {:?}", tabcz);
+    }
+}

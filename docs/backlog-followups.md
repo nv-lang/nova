@@ -370,3 +370,7 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   сам числит это ❌-анти-паттерном. Ф.2 берёт PARITY (не регрессировать frame-bearing вывод). Генуинная
   элизия (ключ «sync-тело + cleanup `Fail[Never]` → прямой вызов без кадра») — самостоятельный
   перф-эффорт ПОСЛЕ Ф.2 (D194-спека уже приведена к факту в Ф.2.D194). Priority: P3 (перф, не корректность).
+
+## Plan 104.10 Ф.2 — expr_types coverage remainder (2026-07-03)
+
+- **[M-104.10-expr-types-coverage]** `ModuleEnv.expr_types` (opt-in per-expression type map, `check_module_with_expr_types`) реализована на РЕАЛЬНОЙ инференции чекера (`infer_expr_type` + семантический канал `resolved_types_buf`), покрывает весь plan-required набор. Остаток НЕ записываемого (bounded, degrade-gracefully): (a) generic instance method-chain returns (`v.map(f).filter(g)` mid-chain) — Call-арм `infer_expr_type` расцеплён с общей instance-return-инференцией (172.1); (b) non-primitive `TupleLit` — buf аннотирует лишь all-primitive кортежи, у `infer_expr_type` нет `TupleLit`-арма; (c) generic-instance `RecordLit` / element-типы с несвязанным type-param — gated by design. Follow-up: полный независимый expr-type walker (Ф.2b) при реальной IDE-потребности; расширить buf/`infer_expr_type` на (a)/(b) точечно. Файл: `compiler-codegen/src/types/mod.rs` (`record_expr_type_ide`). Priority: P3 (IDE-качество, не корректность компилятора).
