@@ -48,7 +48,7 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 ### Развилка: коммитить большой набор или регенерить? (для авторов/агентов)
 
 Любой большой/медленный тест помечается суффиксом **`_slow.nv`** (default `nova test`
-его пропускает; прогон `--include-slow`/`--slow-only`; нормировано [D277](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+его пропускает; прогон `--include-slow`/`--slow-only`; нормировано [D376](../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
 А вот **хранить полный набор в git или нет** — зависит от того, регенерируем ли он:
 
 - **Регенерируемый** детерминированным генератором (напр. Unicode conformance из UCD):
@@ -65,7 +65,7 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 
 > **Механизм** (lane для больших тестов вне дефолт-прогона) — **РЕАЛИЗОВАН**
 > ([Plan 156](plans/156-test-runner-slow-lane.md), `[M-test-runner-large-test-lane]`;
-> нормирован [D277](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+> нормирован [D376](../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
 > Конвенция (rev-2 suffix-only) — **per-file суффикс `_slow.nv`** (зеркало семейства
 > `_windows.nv`/`_test`; skip на этапе discovery в `walk_nv` → файл-корпус **не
 > читается**, нулевой per-file I/O). **Дефолтный `nova test`
@@ -931,7 +931,7 @@ Backward-compat: `--include-slow` = `--slow`; `--slow-only` deprecated (use `--f
 ## Fixture directories (Plan 55 Ф.8, 2026-05-16)
 
 > Нормативная спецификация discovery-конвенций (skip-каталоги + per-file суффиксы) —
-> [D277 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv).
+> [D376 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv).
 
 Не каждый `.nv` файл в `nova_tests/` — это runnable test. Иногда нужны
 **input fixtures** для tooling (Plan 45 `nova doc` ingestion samples,

@@ -1,4 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+> ⚠ **RENUMBER 2026-07-03:** D-блок test-discovery-конвенций **D277 → D376** (тройная коллизия D277; by-value-mono сохраняет D277). «D277» здесь = test-discovery = читать как D376.
 # Plan 156 — Slow-test lane: большие тесты в репо, вне дефолт-регресса (`[M-test-runner-large-test-lane]`)
 
 > **Создан:** 2026-06-14. **Ревизия:** 2026-06-14 (rev-2: ужато до **suffix-only** —
@@ -11,7 +12,7 @@
 > генератор → коммит ~23 МБ не даёт ничего сверх него, но навсегда утяжеляет историю
 > (collation 15.5 МБ + ~16 МБ/Unicode-bump); решение пользователя.
 > **Статус:** ✅ IMPLEMENTED (suffix-only механизм `_slow.nv` + флаги
-> `--include-slow`/`--slow-only`; нормировано [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+> `--include-slow`/`--slow-only`; нормировано [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
 > Отложен только каталог-вариант `[M-156-slow-subtree-dir]`. P2.
 > **Владеет:** `[M-test-runner-large-test-lane]`. **Зависит от:** Plan 24/26 (test-runner).
 > **Триггер:** ТРЕБОВАНИЕ — дефолтный `nova test`/CI быстрый по компиляции И выполнению
@@ -43,7 +44,7 @@
   иначе `include_slow → Include`, иначе `Exclude`).
 - **Ф.4 — unit-тесты discovery:** модуль `plan156_slow_lane_tests` в `test_runner.rs`
   (`is_slow_file_stem`-классификация + `walk_nv_filtered` по каждому `SlowLane`).
-- **Ф.5 — спека + доки:** [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
+- **Ф.5 — спека + доки:** [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
   нормирует все discovery-конвенции (`fixtures/`/`_fixture.toml`, OS-суффикс,
   `_module.nv`, `_slow.nv` + порядок снятия); `docs/test-conventions.md` флипнут на
   IMPLEMENTED.
@@ -138,7 +139,7 @@ Populate-коммита — ДО мержа в main, чтобы блобы не 
 --conformance-full --ucd-dir <UCD>` → gitignored-кэш → `nova test --slow-only`.
 
 ## Спека (нормирование runner-конвенций)
-✅ **СДЕЛАНО** — нормировано в [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
+✅ **СДЕЛАНО** — нормировано в [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
 (09-tooling.md, sibling к D89). Дизайн-обоснование ниже сохранено как rationale.
 
 Пробел: `fixtures/` + `_fixture.toml` (Plan 55 Ф.8) и per-file суффиксы
@@ -214,7 +215,7 @@ Go `-short`/build-tags; Rust `#[ignore]`+`--ignored`, двухуровневый
 - **Ф.3 CLI:** clap-флаги `--include-slow` / `--slow-only` → схлопнуты в `slow_lane`.
 - **Ф.4 unit-тесты discovery:** `plan156_slow_lane_tests` в `test_runner.rs`
   (`is_slow_file_stem`-классификация + `walk_nv_filtered` по каждому `SlowLane`).
-- **Ф.5 спека + доки:** [D277](../../spec/decisions/09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
+- **Ф.5 спека + доки:** [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
   нормирует все discovery-конвенции; `docs/test-conventions.md` флипнут на IMPLEMENTED.
 - **Генератор:** `nova-codegen unicode --conformance-full` пишет `*_conformance_slow.nv`
   (limit=usize::MAX → весь корпус, renderers чанкуют по 500). Файлы **gitignored** (rev-3).

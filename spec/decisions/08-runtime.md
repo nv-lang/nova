@@ -8011,7 +8011,7 @@ D275 чинит именно codegen-mismatch в statement-позиции.
 
 ---
 
-## D277 (NEW) — Per-type GC pointer-offset bitmaps (Plan 144.1, аналитическая половина Ф.1; emit-nothing)
+## D375 (ex-D277, renumber 2026-07-03) — Per-type GC pointer-offset bitmaps (Plan 144.1, аналитическая половина Ф.1; emit-nothing)
 
 > **Создан:** 2026-06-15 ([Plan 144.1](../../docs/plans/144.1-heap-layout-bitmaps.md), ветка
 > `plan-144.1-heap-bitmaps`). **Compile-time, EMIT-NOTHING** анализ: вычисляет для каждого
@@ -8109,7 +8109,7 @@ sum с per-variant bitmap'ами; nested value-record рекурсия; scalar-o
 > **Создан:** 2026-06-15 (branch `fix-checker-recursive-type-overflow`, commits `219be59a`+`1245ef68`,
 > маркер `[M-checker-recursive-type-overflow]`). Фиксирует **layout-семантику, которую `emit_c` уже
 > эмитит**, но которую type-size-калькулятор раньше игнорировал → stack-overflow на рекурсивных типах.
-> Уточняет/амендит layout-инвариант, на который опирается [D277 §3](#d277-new--per-type-gc-pointer-offset-bitmaps-plan-1441-аналитическая-половина-ф1-emit-nothing)
+> Уточняет/амендит layout-инвариант, на который опирается [D277 §3](#d375-ex-d277-renumber-2026-07-03--per-type-gc-pointer-offset-bitmaps-plan-1441-аналитическая-половина-ф1-emit-nothing)
 > (канонический size-walk `const_fn_eval::type_size_or_align_resolved`); пойнтер-инвариант — [D216 §1](02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo).
 
 ### 1. Правило
@@ -8118,7 +8118,7 @@ sum с per-variant bitmap'ами; nested value-record рекурсия; scalar-o
 в указатель `Nova_X*` **везде, где он встречается как значение / поле / переменная** (поле, аргумент,
 локал, элемент). Поэтому **ссылка** на такой тип занимает **pointer-size = 8 байт** (align 8, x64 ABI),
 а **НЕ** inline-размер объекта. Inline object-size (байты ВНУТРИ heap-аллокации) релевантен лишь как
-**top-level subject** layout'а (что и считает GC-bitmap [D277]).
+**top-level subject** layout'а (что и считает GC-bitmap [D375]).
 
 `size_of[heapT]()` / `align_of[heapT]()` теперь возвращают **8 / 8** — это **корректное
 reference-semantics-значение** (переменная heap-типа есть `Nova_X*`), emit-accurate. Для **value**-типов

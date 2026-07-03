@@ -689,7 +689,7 @@ implementation detail (preemption после v1.0 делает их
 ### Открытые вопросы
 
 - `Channel[T]` API — формализован в [D79](#d79).
-- `Mutex`/`Atomic` — stdlib (D167-D173), не prelude; owner-actor pattern
+- `Mutex`/`Atomic` — stdlib (D167-D172 + D370 (ex-D370)), не prelude; owner-actor pattern
   предпочтителен, escape hatch через `import runtime.sync.{...}`.
 - Размер blocking-pool по умолчанию — детали реализации runtime'а.
 - Поведение при отмене detached-задачи — отдельный handler-сахар или
@@ -1578,7 +1578,7 @@ spawn {
 - Wait queues для blocked senders/receivers
 - Channel — единственный гарантированно-safe primitive
 
-#### `runtime.sync` — stdlib, не prelude (D167-D173)
+#### `runtime.sync` — stdlib, не prelude (D167-D172 + D370 (ex-D370))
 
 Channel — **предпочтительный** primitive для координации fiber'ов (owner-actor
 pattern, Erlang-стиль). Однако Mutex, RwLock, Atomic и другие sync-примитивы
@@ -1610,7 +1610,7 @@ fn counter_actor(input Channel[CounterMsg], output Channel[int]) {
 
 ```nova
 import runtime.sync.{Mutex, AtomicI64, RwLock, Semaphore, Once}
-// см. D173 decision tree — «когда что выбрать»
+// см. D370 decision tree — «когда что выбрать»
 ```
 
 Детальное описание всех sync-примитивов:
@@ -1620,7 +1620,7 @@ import runtime.sync.{Mutex, AtomicI64, RwLock, Semaphore, Once}
 - D170 — `Semaphore` / `Barrier` / `CountDownLatch` / `Condvar`
 - D171 — `Once` / `OnceCell` / `Lazy`
 - D172 — `realtime { }` / `blocking { }` interaction matrix
-- D173 — AI-first guidance: decision tree + canonical patterns
+- D370 — AI-first guidance: decision tree + canonical patterns
 
 ### Почему
 
@@ -1664,7 +1664,7 @@ import runtime.sync.{Mutex, AtomicI64, RwLock, Semaphore, Once}
 - **Mutex / Atomic в prelude.** Низкоуровневые, легко misuse,
   deadlock-prone. Owner-actor pattern закрывает 99% use case'ов.
   Escape hatch доступен через `import runtime.sync.{...}` — stdlib,
-  не prelude (D167-D173).
+  не prelude (D167-D172 + D370 (ex-D370)).
 
 - **`<-` как recv-оператор в select.** Отвергнут в D94 — заменён
   на `Some(v) = rx.recv() =>`. Причина: `<-` вводил новый оператор
@@ -2581,7 +2581,7 @@ if (_nova_active_scope && _nova_active_scope->cancel_requested) {
 Воспроизводится для:
 - **Plan 22 Ф.4**: `Time.sleep` → `uv_timer_t` + `uv_timer_stop` stop_cb.
 - **Plan 21 Ф.1+**: `Channel.recv`/`send` → waitlist node + waitlist-remove stop_cb.
-- **Plan 83.12 `std/net`** ✅: `TcpStream.read_bytes` → `uv_read_start` + wake из `_tcp_read_cb`. See [D173](08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv).
+- **Plan 83.12 `std/net`** ✅: `TcpStream.read_bytes` → `uv_read_start` + wake из `_tcp_read_cb`. See [D370](08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv).
 - **Plan 44+ `std.fs`**: `File.read` → `uv_fs_t` + `uv_cancel` stop_cb.
 
 ### Почему
@@ -2657,7 +2657,7 @@ unifies сейчас раздроблённые blocking-mechanism'ы.
   (ждёт backend wake).
 - ✅ **Time.sleep** через D93 (Ф.4 register/park; Ф.8 ASYNC close_cb wake).
 - 🟡 **Channel waitlist** (Plan 21) — SYNC stop_cb, ждёт реализации.
-- ✅ **std/net IO** (Plan 83.12) — ASYNC stop_cb, реализован [D173](08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv).
+- ✅ **std/net IO** (Plan 83.12) — ASYNC stop_cb, реализован [D370](08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv).
 - 🟡 **std/fs IO** (Plan 18+) — ASYNC stop_cb, ждёт реализации.
 
 ---
@@ -3930,8 +3930,8 @@ ARM64 — более explicit барьеры (DMB LD/ST/ISH); Relaxed vs Acquire
 - D138 (Default-on M:N) — производительность зависит от корректного ordering
 - Plan 103.1 — реализация MemOrdering enum + fence(MemOrdering) + codegen helper
 - Plan 103.2 — AtomicX.load(MemOrdering) / .store(v, MemOrdering) / RMW overloads
-- Plan 103.7 — финальная редакция D167; D173 AI-first guidance для паттернов ordering
-- D173 — decision tree: когда нужен explicit ordering vs SeqCst-default
+- Plan 103.7 — финальная редакция D167; D370 AI-first guidance для паттернов ordering
+- D370 — decision tree: когда нужен explicit ordering vs SeqCst-default
 
 ---
 
@@ -4152,7 +4152,7 @@ LL/SC — no spurious fails). На ARM различие значительно.
   — production M:N runtime; атомарные операции используются внутри scheduler'а.
 - Plan 103.1 — MemOrdering enum + fence(MemOrdering) + nova_mo_c() codegen helper.
 - Plan 103.7 — D168 финальная редакция (это plan).
-- D173 — AI-first guidance: counter/swap/CAS паттерны выбора atomic типа.
+- D370 — AI-first guidance: counter/swap/CAS паттерны выбора atomic типа.
 - Plan 103.9+ — AtomicPtr[T] typed generic с GC-root integration (deferred).
 
 ### Реализация (Plan 103.2, 2026-05-25)
@@ -4417,7 +4417,7 @@ codegen). `get()`, `set()`, `is_completed()`, `is_forced()`, `take()`,
 - [D168](#d168-sized-atomic-types--api-contract-plan-1032) — sized atomics;
   внутренние state-поля Once/OnceCell/Lazy реализованы через `__atomic_*`.
 - Plan 103.5 — реализация Once hardening + OnceCell + Lazy.
-- D173 — AI-first guidance: выбор Once/OnceCell/Lazy по паттерну; decision tree.
+- D370 — AI-first guidance: выбор Once/OnceCell/Lazy по паттерну; decision tree.
 - Plan 103.9 — V2 API hygiene pass: возможно удаление `run`/`done`,
   пересмотр OnceCell poison semantics.
 
@@ -4454,7 +4454,7 @@ codegen). `get()`, `set()`, `is_completed()`, `is_forced()`, `take()`,
 
 D171 введён как draft (Plan 103.5, 2026-05-26). Финализирован в Plan 103.7.
 
-D173 (этот plan) содержит AI-first guidance для init-pattern выбора (Once vs
+D370 (этот plan) содержит AI-first guidance для init-pattern выбора (Once vs
 OnceCell vs Lazy) — см. decision tree «exactly-once init» branch.
 
 Отложено в Plan 103.9 (API hygiene pass):
@@ -4714,7 +4714,7 @@ defense-in-depth. **Инвариант (M:N):** каждый root-bearing native
 
 D169 введён как draft (Plan 103.3, 2026-05-26). Финализирован в Plan 103.7.
 
-D173 (этот plan) содержит AI-first guidance: выбор Mutex vs RwLock vs
+D370 (этот plan) содержит AI-first guidance: выбор Mutex vs RwLock vs
 ReentrantMutex по паттерну — см. decision tree «exclusive access» branch +
 canonical patterns 3 (producer-consumer) и 4 (read-heavy snapshot).
 
@@ -4932,7 +4932,7 @@ fn Condvar mut @notify_all()        /* wake all FIFO order */
 
 D170 введён как draft (Plan 103.4, 2026-05-27). Финализирован в Plan 103.7.
 
-D173 (этот plan) содержит AI-first guidance: rate-limited workers (Semaphore),
+D370 (этот plan) содержит AI-first guidance: rate-limited workers (Semaphore),
 N-party rendezvous (Barrier/CountDownLatch), wait-until-predicate (Condvar) —
 см. canonical patterns 3 и 5 + decision tree lower branches.
 
@@ -5160,7 +5160,7 @@ D172 введён как draft (Plan 103.6, 2026-05-27). Финализиров�
 
 ---
 
-## D173. AI-first guidance — sync-primitive decision tree (Plan 103.7)
+## D370. AI-first guidance — sync-primitive decision tree (Plan 103.7)
 
 > **Статус:** ✅ final (Plan 103.7, 2026-05-27). Новый D-блок; нет предшествующего draft.
 
@@ -5168,7 +5168,7 @@ D172 введён как draft (Plan 103.6, 2026-05-27). Финализиров�
 
 Nova `runtime.sync` содержит 12+ sync-примитивов. Выбор правильного примитива
 для конкретной задачи — типичный вопрос разработчика (и AI-агента, генерирующего
-код). D173 формализует **decision tree** и **canonical patterns** — официальный
+код). D370 формализует **decision tree** и **canonical patterns** — официальный
 ответ Nova на вопрос «что использовать для X». Это Nova edge: ни один другой
 язык не имеет in-spec guidance на этом уровне детализации.
 
@@ -5460,7 +5460,7 @@ fn handle_request(req Request) {
 
 ### Эволюция
 
-D173 введён в Plan 103.7 как новый D-блок (нет предшествующего draft).
+D370 введён в Plan 103.7 как новый D-блок (нет предшествующего draft).
 Контент разработан для AI-readability: decision tree структурирован для
 LLM-навигации (иерархические ветви с explicit mapping). Canonical patterns
 содержат Nova-код с комментариями и anti-pattern сравнением.
@@ -5622,7 +5622,7 @@ defer g.unlock()
 - [D169](#d169-mutex--rwlock--reentrantmutex-family-plan-1033) — V1 Mutex/RwLock contract (updated).
 - [D170](#d170-coordination-primitives--semaphore--barrier--countdownlatch--condvar-plan-1034) — V1 Semaphore (updated).
 - [D171](#d171-once--oncecell--lazy--single-initialization-primitives-plan-1035) — V1 Once (updated).
-- [D173](#d173-ai-first-guidance--sync-primitive-decision-tree-plan-1037) — Decision tree updated to reference D174.
+- [D370](#d370-ai-first-guidance--sync-primitive-decision-tree-plan-1037) — Decision tree updated to reference D174.
 
 ### Эволюция
 

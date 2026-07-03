@@ -655,7 +655,7 @@ cross-module / clone / interpolation-сайты доминируют в упущ
 
 ## Q-gc-layout-precision. Точность per-type GC layout bitmaps (residual после Plan 144.1)
 
-**Контекст.** [D277](decisions/08-runtime.md#d277) ([Plan 144.1](../docs/plans/144.1-heap-layout-bitmaps.md))
+**Контекст.** [D375](decisions/08-runtime.md#d375-ex-d277-renumber-2026-07-03) ([Plan 144.1](../docs/plans/144.1-heap-layout-bitmaps.md))
 зафиксировал per-type pointer-offset bitmap'ы с дефолтом **«неизвестно → указатель»** (over-approximate)
 и пометкой `unresolved=true` для нерезолвящихся типов. Соундность закрыта (никогда не пропустить
 реальный GC-указатель). Остаётся **точность** — где консервативный анализ помечает слот как указатель
@@ -688,7 +688,7 @@ cross-module / clone / interpolation-сайты доминируют в упущ
 **Когда вернуться.** Вместе с Plan 144.5 (потребление bitmap'ов точным tracer'ом), если профиль
 покажет, что closures / generic-erased / FFI-границы доминируют в лишней mark-работе.
 
-**Связь.** [D277](decisions/08-runtime.md#d277), [D273](decisions/06-concurrency.md#d273) (sibling
+**Связь.** [D375](decisions/08-runtime.md#d375-ex-d277-renumber-2026-07-03), [D273](decisions/06-concurrency.md#d273) (sibling
 emit-nothing may-GC, [Q-may-gc-precision]), Plan 144 §7 (heap-сторона) / §7.6 (Q8/Q10/H1),
 [M-144.1-heap-bitmaps].
 

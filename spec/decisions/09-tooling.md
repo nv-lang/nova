@@ -18,7 +18,7 @@
 | [D121](#d121-benchmark-dsl--bench---measure--) | Benchmark DSL — `bench "..." { measure { ... } }` + `bench.*` namespace |
 | [D256](#d256-field--method-self-access-в-контрактах) | `@field` / `@method()` self-access в контрактах (SMT-encoder) |
 | [D257](#d257-vec-index-bounds-как-элидируемый-контракт) | Vec `@index` bounds как элидируемый контракт |
-| [D277](#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) | Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` |
+| [D376](#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) | Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` |
 | [D278](#d278-editor-syntax-highlighting-keyword-set-must-track-the-lexer) | Editor syntax-highlighting keyword set MUST track the lexer (conformance-тест) |
 | [D296](#d296--lsp-rename-atomicity-contract-plan-1046-2026-06-16) | LSP Rename Atomicity Contract — prepare/collect/atomic-check, WorkspaceEdit.documentChanges |
 | [D298](#d298--test-suite-time-budget) | Test-suite time budget — бюджет `nova test` + пороги переноса в `_slow` |
@@ -2763,7 +2763,7 @@ Binary-выражения `int` `+`/`-`/`*`. Compound-assign (`x += y`) отло
 
 ---
 
-## D277. Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv`
+## D376. Test-discovery skip/route-конвенции — `fixtures/`, OS-суффикс, `_slow.nv` (ex-D277, renumber 2026-07-03)
 
 > **Plan 156** (`[M-test-runner-large-test-lane]`) — нормирует **все**
 > discovery-конвенции test-runner'а (`compiler-codegen/src/test_runner.rs`),
@@ -2864,7 +2864,7 @@ slow-gate-прогоном (CI merge/nightly), а не наличием файл
 ### Связь
 
 - [D89](#d89-test-tooling-конвенции--expect-маркеры-для-negative-тестов) — sibling:
-  per-file content-маркеры (после чтения); D277 — per-path/per-name discovery
+  per-file content-маркеры (после чтения); D376 — per-path/per-name discovery
   (до чтения).
 - [D99](07-modules.md#d99-conditional-compilation-filename-suffix--cfg) — OS-суффикс
   семейство (`_windows`/`_linux`/`_macos`/`_unix`/`_posix`), единый source of truth.
@@ -2945,7 +2945,7 @@ folder-module peer layout — reduce compile units пропорциональн�
 Конфликты имён в folder-module (одна `fn foo` в двух файлах) — **ошибка**; устраняются
 переименованием (`fn <file>_foo`) или разделением в отдельный standalone-файл.
 
-**Ссылки:** D277 (discovery-конвенции `_slow.nv`);
+**Ссылки:** D376 (discovery-конвенции `_slow.nv`);
 [Plan 156](../plans/156-test-runner-slow-lane.md);
 [Plan 169.1](../plans/169.1-test-suite-profiling-and-speedup.md).
 
@@ -3409,7 +3409,7 @@ GitHub CI не запускал полный регресс (только contra
 | `--slow`       | включить `*_slow.nv` (любой тип) |
 | `--full`       | все типы + slow                    |
 
-`--include-slow` (D277) сохранён как backward-compat алиас для `--slow`.
+`--include-slow` (D376) сохранён как backward-compat алиас для `--slow`.
 `--slow-only` deprecated (hidden), эквивалентен `--full` для legacy.
 
 **Реализация.**
@@ -3426,4 +3426,4 @@ GitHub CI не запускал полный регресс (только contra
 - PR/push: `nova test nova_tests` + `nova test std` (positive-fast, 60 мин).
 - Nightly 03:00 UTC: `nova test --full nova_tests` + artifact upload (360 мин).
 
-**Связь.** [D277](09-tooling.md#d277-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) (slow-lane), [D298](09-tooling.md#d298--test-suite-time-budget) (time budget), [Plan 169.1.1](../../docs/plans/169.1.1-test-lane-flags-and-ci.md).
+**Связь.** [D376](09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) (slow-lane), [D298](09-tooling.md#d298--test-suite-time-budget) (time budget), [Plan 169.1.1](../../docs/plans/169.1.1-test-lane-flags-and-ci.md).
