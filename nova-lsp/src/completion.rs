@@ -18,10 +18,28 @@
 //! All work is synchronous and runs inside `run_with_large_stack` in the server
 //! handler. Must complete in ≤200ms for a typical file.
 //!
+//! # Lazy completion resolve (Plan 104.10 Ф.13)
+//!
+//! The initial completion list is kept lightweight: verbose `detail` /
+//! `documentation` for the static families (keyword, snippet, prelude) and the
+//! `documentation` markdown for methods/imports are OMITTED from the initial
+//! response. Each such item carries a compact `data` descriptor (family tag +
+//! lookup key). The client re-requests the heavy fields per item via
+//! `completionItem/resolve`, dispatched to [`resolve_completion_item`], which
+//! re-derives them from the static tables (keyword/snippet/prelude/import) with
+//! zero extra allocation in the initial list, or reads a stashed doc string
+//! (methods). `resolve_provider=true` is advertised in the server capabilities.
+//!
 //! # V1 simplifications (documented in simplifications.md)
 //! - [S-104.3-1] Method dot: type inference via text pattern match, not full TypeCheckCtx.
 //! - [S-104.3-2] Import path: hardcoded std module tree.
-//! - [S-104.3-3] resolve_provider=false — detail is inline in initial response.
+//! - [M-104.10-lsp-resolve-method-doc] Method-completion documentation is stashed
+//!   in the item's `data` (already computed while resolving the module for the
+//!   list) rather than re-resolved on demand — the wire payload is unchanged for
+//!   the (few) method items, but rendering is still deferred to resolve. The
+//!   static families (keyword/snippet/prelude/import), which dominate the list,
+//!   are genuinely re-derived from tables so their heavy text never ships in the
+//!   initial response.
 
 use std::path::{Path, PathBuf};
 
@@ -404,7 +422,21 @@ const TYPE_BODY_KEYWORDS: &[(&str, &str)] = &[
     ("value", "Mark type as stack-allocated value type"),
 ];
 
+/// Context tag stored in a keyword item's `data` so [`resolve_completion_item`]
+/// can look the exact doc back up (the same label carries a different doc in the
+/// top-level vs fn-body vs type-body table).
+fn keyword_ctx_tag(ctx: &CompletionContext) -> &'static str {
+    match ctx {
+        CompletionContext::TopLevel => "top",
+        CompletionContext::TypeBody => "type",
+        _ => "fn",
+    }
+}
+
 /// Build keyword completion items for the given context.
+///
+/// Ф.13: `detail` and `documentation` are DEFERRED — they are re-derived from
+/// the keyword tables in [`resolve_completion_item`] via the `data` descriptor.
 pub fn keyword_items(ctx: &CompletionContext) -> Vec<CompletionItem> {
     let kws: &[(&str, &str)] = match ctx {
         CompletionContext::TopLevel => TOP_LEVEL_KEYWORDS,
@@ -412,17 +444,14 @@ pub fn keyword_items(ctx: &CompletionContext) -> Vec<CompletionItem> {
         CompletionContext::TypeBody => TYPE_BODY_KEYWORDS,
         CompletionContext::Import { .. } | CompletionContext::MethodDot { .. } => return vec![],
     };
+    let tag = keyword_ctx_tag(ctx);
 
     kws.iter()
-        .map(|(kw, doc)| CompletionItem {
+        .map(|(kw, _doc)| CompletionItem {
             label: kw.to_string(),
             kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some(doc.to_string()),
-            documentation: Some(Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: format!("**Nova keyword** — {}", doc),
-            })),
             sort_text: Some(format!("{}{}", RANK_KEYWORD, kw)),
+            data: Some(serde_json::json!({ "f": "kw", "k": kw, "c": tag })),
             ..Default::default()
         })
         .collect()
@@ -525,17 +554,16 @@ pub fn snippet_items(ctx: &CompletionContext) -> Vec<CompletionItem> {
             SnippetContext::FnBody => is_fn,
             SnippetContext::Both => is_top || is_fn,
         })
+        // Ф.13: `detail`/`documentation` deferred to resolve (re-derived from
+        // `SNIPPETS` by label). `insert_text` is kept inline — it is required to
+        // apply the snippet even if the client commits without resolving.
         .map(|s| CompletionItem {
             label: s.label.to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
-            detail: Some(s.detail.to_string()),
             insert_text: Some(s.insert_text.to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             sort_text: Some(format!("{}{}", RANK_SNIPPET, s.label)),
-            documentation: Some(Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: format!("**Snippet** — `{}`", s.detail),
-            })),
+            data: Some(serde_json::json!({ "f": "snip", "k": s.label })),
             ..Default::default()
         })
         .collect()
@@ -792,9 +820,10 @@ fn collect_top_level_decls(src: &str) -> Vec<IdentInfo> {
     out
 }
 
-/// Hardcoded Nova prelude items.
-fn prelude_items() -> Vec<IdentInfo> {
-    const PRELUDE: &[(&str, &str, IdentKind)] = &[
+/// Hardcoded Nova prelude items — lifted to module scope so both
+/// [`prelude_items`] (initial list) and [`resolve_completion_item`] (lazy doc)
+/// share one source of truth (Ф.13).
+const PRELUDE_TABLE: &[(&str, &str, IdentKind)] = &[
         // Primitive types (Plan 133: usize/isize removed; float literal infers f64).
         ("int", "64-bit signed integer (Nova's universal integer type)", IdentKind::Type),
         ("f64", "64-bit floating-point number", IdentKind::Type),
@@ -831,7 +860,10 @@ fn prelude_items() -> Vec<IdentInfo> {
         ("true", "boolean true", IdentKind::Const),
         ("false", "boolean false", IdentKind::Const),
     ];
-    PRELUDE
+
+/// Hardcoded Nova prelude items surfaced as identifier completions.
+fn prelude_items() -> Vec<IdentInfo> {
+    PRELUDE_TABLE
         .iter()
         .map(|(name, doc, kind)| IdentInfo {
             name: name.to_string(),
@@ -843,6 +875,11 @@ fn prelude_items() -> Vec<IdentInfo> {
 }
 
 /// Convert `IdentInfo` to a `CompletionItem`.
+///
+/// Ф.13: prelude entries carry a verbose one-line doc in `type_hint`; that
+/// `detail` is DEFERRED and re-derived from the prelude table on resolve. Local
+/// / module identifiers keep their short type-name `detail` inline (cheap, and
+/// useful when the client does not resolve).
 pub fn ident_info_to_item(info: &IdentInfo) -> CompletionItem {
     let kind = match info.kind {
         IdentKind::Local => CompletionItemKind::VARIABLE,
@@ -851,6 +888,16 @@ pub fn ident_info_to_item(info: &IdentInfo) -> CompletionItem {
         IdentKind::Const => CompletionItemKind::CONSTANT,
         IdentKind::Prelude => CompletionItemKind::KEYWORD,
     };
+    // Prelude items are recognised by their rank; their doc is deferred.
+    if info.rank == RANK_PRELUDE {
+        return CompletionItem {
+            label: info.name.clone(),
+            kind: Some(kind),
+            sort_text: Some(format!("{}{}", info.rank, info.name)),
+            data: Some(serde_json::json!({ "f": "prelude", "k": info.name })),
+            ..Default::default()
+        };
+    }
     CompletionItem {
         label: info.name.clone(),
         kind: Some(kind),
@@ -1028,17 +1075,18 @@ fn method_completion_item(
     fd: &nova_codegen::ast::FnDecl,
     recv: &nova_codegen::ast::Receiver,
 ) -> CompletionItem {
+    // Ф.13: the signature `detail` stays inline (cheap, shown in the list); the
+    // doc-comment `documentation` is deferred — stashed in `data` and moved into
+    // `documentation` on resolve ([M-104.10-lsp-resolve-method-doc]).
+    let data = crate::symbol::extract_doc(&fd.doc).map(|d| {
+        serde_json::json!({ "f": "method", "doc": d })
+    });
     CompletionItem {
         label: fd.name.clone(),
         kind: Some(CompletionItemKind::METHOD),
         detail: Some(crate::symbol::format_method_signature(fd, recv)),
-        documentation: crate::symbol::extract_doc(&fd.doc).map(|d| {
-            Documentation::MarkupContent(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: d,
-            })
-        }),
         sort_text: Some(format!("{}{}", RANK_MODULE, fd.name)),
+        data,
         ..Default::default()
     }
 }
@@ -1210,15 +1258,14 @@ pub fn import_items_from_index(idx: &StdlibIndex, path_prefix: &[String]) -> Vec
             } else {
                 format!("{}.{}", prefix_str, segment)
             };
+            // Ф.13: `documentation` deferred — re-derived from the full path in
+            // `data` on resolve. `detail` stays inline (short, useful).
             CompletionItem {
                 label: segment.clone(),
                 kind: Some(CompletionItemKind::MODULE),
                 detail: Some(format!("module {}", full)),
                 sort_text: Some(format!("{}{}", RANK_STD, segment)),
-                documentation: Some(Documentation::MarkupContent(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("**module** `{}`", full),
-                })),
+                data: Some(serde_json::json!({ "f": "import", "k": full })),
                 ..Default::default()
             }
         })
@@ -1321,6 +1368,99 @@ pub fn completion_for_doc(
     stdlib: Option<&StdlibIndex>,
 ) -> Vec<CompletionItem> {
     completion_core(src, offset, Some(path), stdlib)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lazy resolve (Plan 104.10 Ф.13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Look up a keyword's short doc for the given context tag (`"top"`/`"fn"`/
+/// `"type"`), matching the table [`keyword_items`] built the item from.
+fn keyword_doc(label: &str, ctx_tag: &str) -> Option<&'static str> {
+    let table: &[(&str, &str)] = match ctx_tag {
+        "top" => TOP_LEVEL_KEYWORDS,
+        "type" => TYPE_BODY_KEYWORDS,
+        _ => FN_BODY_KEYWORDS,
+    };
+    table.iter().find(|(kw, _)| *kw == label).map(|(_, d)| *d)
+}
+
+/// Look up a snippet's `detail` by label.
+fn snippet_detail(label: &str) -> Option<&'static str> {
+    SNIPPETS.iter().find(|s| s.label == label).map(|s| s.detail)
+}
+
+/// Look up a prelude entry's one-line doc by name.
+fn prelude_doc(name: &str) -> Option<&'static str> {
+    PRELUDE_TABLE.iter().find(|(n, _, _)| *n == name).map(|(_, d, _)| *d)
+}
+
+/// `completionItem/resolve` — lazily attach the heavy `detail`/`documentation`
+/// that the initial list omitted (Ф.13).
+///
+/// The item's `data` descriptor (`{"f": <family>, ...}`) tells us how to
+/// re-derive the fields:
+/// - `"kw"`   → keyword table (`k` = label, `c` = context tag)
+/// - `"snip"` → snippet table (`k` = label)
+/// - `"prelude"` → prelude table (`k` = name)
+/// - `"method"` → stashed markdown in `doc`
+/// - `"import"` → module path in `k`
+///
+/// Any item without a recognised `data` payload (locals, text-fallback methods,
+/// an already-resolved item, or a malformed/unknown descriptor) is returned
+/// unchanged — resolve is always graceful and idempotent.
+pub fn resolve_completion_item(mut item: CompletionItem) -> CompletionItem {
+    let Some(data) = item.data.clone() else {
+        return item;
+    };
+    let get = |key: &str| data.get(key).and_then(|v| v.as_str());
+    match get("f") {
+        Some("kw") => {
+            if let Some(doc) = get("k").and_then(|k| keyword_doc(k, get("c").unwrap_or("fn"))) {
+                item.detail = Some(doc.to_string());
+                item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("**Nova keyword** — {}", doc),
+                }));
+            }
+        }
+        Some("snip") => {
+            if let Some(detail) = get("k").and_then(snippet_detail) {
+                item.detail = Some(detail.to_string());
+                item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("**Snippet** — `{}`", detail),
+                }));
+            }
+        }
+        Some("prelude") => {
+            if let Some(doc) = get("k").and_then(prelude_doc) {
+                item.detail = Some(doc.to_string());
+                item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: doc.to_string(),
+                }));
+            }
+        }
+        Some("method") => {
+            if let Some(doc) = get("doc") {
+                item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: doc.to_string(),
+                }));
+            }
+        }
+        Some("import") => {
+            if let Some(full) = get("k") {
+                item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("**module** `{}`", full),
+                }));
+            }
+        }
+        _ => {}
+    }
+    item
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1772,5 +1912,165 @@ fn main() -> () {
         let src = r#"ro s str = "hello"#;
         assert!(is_in_string(src, src.len()), "cursor inside string literal");
         assert!(!is_in_string(src, 5), "cursor before string is not in string");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Ф.13 — Lazy completion resolve (5 pos + 3 neg)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fn find_item<'a>(items: &'a [CompletionItem], label: &str) -> &'a CompletionItem {
+        items
+            .iter()
+            .find(|i| i.label == label)
+            .unwrap_or_else(|| panic!("no completion item labelled {label:?}"))
+    }
+
+    /// resolve_pos1: a keyword item ships with NO detail/documentation in the
+    /// initial list; resolve fills both.
+    #[test]
+    fn resolve_pos1_keyword_lazy_doc() {
+        let items = completion_for("module t\n", "module t\n".len());
+        let fn_kw = find_item(&items, "fn");
+        assert_eq!(fn_kw.kind, Some(CompletionItemKind::KEYWORD));
+        assert!(fn_kw.detail.is_none(), "initial keyword must have no detail");
+        assert!(
+            fn_kw.documentation.is_none(),
+            "initial keyword must have no documentation (deferred)"
+        );
+        assert!(fn_kw.data.is_some(), "keyword must carry a resolve descriptor");
+
+        let resolved = resolve_completion_item(fn_kw.clone());
+        assert!(resolved.detail.is_some(), "resolve must add detail");
+        match resolved.documentation {
+            Some(Documentation::MarkupContent(m)) => {
+                assert!(m.value.contains("keyword"), "doc should mention keyword: {}", m.value)
+            }
+            other => panic!("resolve must add markdown documentation, got {other:?}"),
+        }
+    }
+
+    /// resolve_pos2: a prelude identifier ships without its verbose one-line doc;
+    /// resolve re-derives it from the prelude table.
+    #[test]
+    fn resolve_pos2_prelude_lazy_doc() {
+        let src = "module t\nfn f() -> () {\n    ";
+        let items = completion_for(src, src.len());
+        let int_item = find_item(&items, "int");
+        assert!(int_item.detail.is_none(), "initial prelude item must have no detail");
+        assert!(int_item.documentation.is_none(), "initial prelude item must have no doc");
+
+        let resolved = resolve_completion_item(int_item.clone());
+        assert_eq!(
+            resolved.detail.as_deref(),
+            Some("64-bit signed integer (Nova's universal integer type)")
+        );
+        assert!(resolved.documentation.is_some(), "resolve must add prelude doc");
+    }
+
+    /// resolve_pos3: a snippet ships with its `insert_text` (needed to apply) but
+    /// no detail/documentation; resolve fills the descriptive fields.
+    #[test]
+    fn resolve_pos3_snippet_lazy_doc() {
+        let src = "module t\nfn f() -> () {\n    ";
+        let items = completion_for(src, src.len());
+        // `if-let` is a snippet-only label (not also a keyword), so dedup keeps it.
+        let snip = find_item(&items, "if-let");
+        assert_eq!(snip.kind, Some(CompletionItemKind::SNIPPET));
+        assert!(snip.insert_text.is_some(), "snippet must keep insert_text inline");
+        assert!(snip.detail.is_none(), "initial snippet must have no detail");
+        assert!(snip.documentation.is_none(), "initial snippet must have no doc");
+
+        let resolved = resolve_completion_item(snip.clone());
+        assert!(resolved.detail.is_some(), "resolve must add snippet detail");
+        assert!(resolved.documentation.is_some(), "resolve must add snippet doc");
+        // insert_text must survive resolve untouched.
+        assert_eq!(resolved.insert_text, snip.insert_text);
+    }
+
+    /// resolve_pos4: method documentation is deferred — the initial method item
+    /// has no `documentation`; resolve attaches the stashed doc comment.
+    #[test]
+    fn resolve_pos4_method_lazy_doc() {
+        let src = "module t\nfn Foo @greet() -> str => \"hi\"\n/// Greets loudly.\nfn Foo @shout() -> str => \"HI\"\nfn f() -> () {\n    ro x Foo = Foo {}\n    x.";
+        let items = method_items(src, src.len());
+        let shout = find_item(&items, "shout");
+        assert!(
+            shout.documentation.is_none(),
+            "initial method item must not ship documentation"
+        );
+        assert!(shout.detail.is_some(), "method signature detail stays inline");
+
+        let resolved = resolve_completion_item(shout.clone());
+        match resolved.documentation {
+            Some(Documentation::MarkupContent(m)) => {
+                assert!(m.value.contains("Greets loudly"), "doc mismatch: {}", m.value)
+            }
+            other => panic!("resolve must attach the method doc, got {other:?}"),
+        }
+    }
+
+    /// resolve_pos5: the initial list is genuinely lighter — NO keyword / snippet
+    /// / prelude item carries documentation before resolve.
+    #[test]
+    fn resolve_pos5_initial_list_has_no_heavy_docs() {
+        let src = "module t\nfn f() -> () {\n    ";
+        let items = completion_for(src, src.len());
+        for item in &items {
+            let is_static_family = matches!(
+                item.kind,
+                Some(CompletionItemKind::KEYWORD) | Some(CompletionItemKind::SNIPPET)
+            );
+            if is_static_family {
+                assert!(
+                    item.documentation.is_none(),
+                    "initial list must not ship documentation for {:?}",
+                    item.label
+                );
+            }
+        }
+    }
+
+    /// resolve_neg1: an item without `data` (e.g. a local variable) resolves to
+    /// itself, unchanged and without panic.
+    #[test]
+    fn resolve_neg1_no_data_graceful() {
+        let item = CompletionItem {
+            label: "myLocal".to_string(),
+            kind: Some(CompletionItemKind::VARIABLE),
+            detail: Some("int".to_string()),
+            ..Default::default()
+        };
+        let resolved = resolve_completion_item(item.clone());
+        assert_eq!(resolved.label, "myLocal");
+        assert!(resolved.documentation.is_none(), "no data → no doc added");
+        assert_eq!(resolved.detail, item.detail, "existing detail preserved");
+    }
+
+    /// resolve_neg2: a malformed / unknown `data` family is ignored gracefully.
+    #[test]
+    fn resolve_neg2_unknown_family_graceful() {
+        let item = CompletionItem {
+            label: "weird".to_string(),
+            data: Some(serde_json::json!({ "f": "totally-unknown", "k": "x" })),
+            ..Default::default()
+        };
+        let resolved = resolve_completion_item(item);
+        assert!(resolved.documentation.is_none(), "unknown family adds nothing");
+        assert!(resolved.detail.is_none());
+    }
+
+    /// resolve_neg3: a `data` descriptor whose key does not exist in its table
+    /// resolves gracefully (no doc, no panic).
+    #[test]
+    fn resolve_neg3_unknown_key_graceful() {
+        let item = CompletionItem {
+            label: "notakeyword".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            data: Some(serde_json::json!({ "f": "kw", "k": "notakeyword", "c": "top" })),
+            ..Default::default()
+        };
+        let resolved = resolve_completion_item(item);
+        assert!(resolved.documentation.is_none(), "unknown keyword key adds no doc");
+        assert!(resolved.detail.is_none());
     }
 }

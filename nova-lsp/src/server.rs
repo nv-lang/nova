@@ -470,7 +470,10 @@ impl LanguageServer for Backend {
                         " ".to_string(),
                         ":".to_string(),
                     ]),
-                    resolve_provider: Some(false), // [S-104.3-3] lazy resolve deferred V2
+                    // Plan 104.10 Ф.13: lazy resolve — the initial list omits
+                    // heavy detail/documentation; the client fetches them per
+                    // item via completionItem/resolve.
+                    resolve_provider: Some(true),
                     work_done_progress_options: Default::default(),
                     completion_item: None,
                     all_commit_characters: None,
@@ -1044,6 +1047,20 @@ impl LanguageServer for Backend {
 
         tracing::debug!(uri = %uri, count = items.len(), "completion: returning items");
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    /// `completionItem/resolve` — Plan 104.10 Ф.13.
+    ///
+    /// The initial completion list is kept lightweight: keyword/snippet/prelude
+    /// items ship without `detail`/`documentation`, and method/import items ship
+    /// without `documentation`. When the client focuses an item it sends it back
+    /// here; [`completion::resolve_completion_item`] re-derives the heavy fields
+    /// from the `data` descriptor. Pure and cheap (no recompile, no I/O), so it
+    /// runs directly. An item lacking a recognised `data` payload is returned
+    /// unchanged (graceful).
+    async fn completion_resolve(&self, params: CompletionItem) -> Result<CompletionItem> {
+        tracing::debug!(label = %params.label, "completionItem/resolve request");
+        Ok(completion::resolve_completion_item(params))
     }
 
     // ── Plan 104.4: symbols + references ─────────────────────────────────────
