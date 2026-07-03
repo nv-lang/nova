@@ -43,7 +43,7 @@
 |---|--------|-----|-----|
 | 1 | `with Fail[E]` **глотает panic** (D13 violation): catch-ветка проверяет только `error_kind == NOVA_THROW_CANCEL` (:6896), PANIC проваливается в USER-path «handler already ran» (:6916-6929) → result=default, выполнение продолжается | `emit_c.rs:6885-6933` | **P1 soundness** |
 | 2 | Диагностика `D133-not-consumed` строит quick-fix (Applicability::MaybeIncorrect) с retracted `errdefer`/`okdefer` → код, который парсер реджектит (`parser/mod.rs:10070-10090`) | `types/mod.rs:18764-18798, 18819-18854` + D162-quickfix `:19636-19641` | **P1 user-facing** |
-| 3 | `?` Fail-context throw-mode (D165) ещё живёт в codegen (`in_fail_ctx` :21901-21903 → `nova_throw_typed`); `[E_TRY_IN_FAIL_FN]` не существует (grep=0). Plan 174.2 = 📋 PLANNED, не начат | `emit_c.rs:21895-21958` | **P1** |
+| 3 | ✅ **FIXED (Ф.1, ea55bee7)** `?` строго return-only: чекер отвергает free `?` в fn с return ≠ Result/Option → `[E_TRY_IN_FAIL_FN]` (per-fn walker в `check_fn`). EXEMPT: consume-init `?` (D196 form 2 — codegen `in_fail_ctx`-ветка СОХРАНЕНА, её носит D196), defer-body `?` (D158), closure. Завершает codegen-часть 174.2 | `types/mod.rs check_fn` | ✅ |
 | 4 | ✅ **FIXED (Ф.1, 84e6e709)** Мёртвый `errdefer`/`okdefer`/`defer\|result\|` surface: удалены `Stmt::ErrDefer/OkDefer/DeferWithResult` + ~90 match-arm сайтов (18 файлов), `DeferKind` enum + path-selective skip-логика (emit_c: все defer'ы плейн), D189-deprecation lint subsystem (lints). Сохранён tombstone (lexer `KwErrDefer/KwOkDefer` + parser `[D189-removed-*]`) | см. слева | ~~P3~~ ✅ |
 | 5 | `ScopeOutcome.Failure` = `str` в коде vs `any` в спеке → типизированный error-dispatch в `on_exit` невозможен (`nova_make_ScopeOutcome_Failure` берёт только error_msg, payload/type_id дропаются) | `core.nv:147` vs `D188`, `emit_c.rs:19736,19743` | P2 |
 | 6 | `MultiError` **никогда не материализуется**: chain write-only (`nv_compose_suppressed` :19839, `nova_rethrow_with_suppressed` :18063/19842/19847/19852); read-аксессоры `nova_failframe_suppressed_count/at` (`effects.h:269-283`) codegen'ом НЕ используются (grep=0); `MultiError` объявлен в `std/prelude/errors.nv:199` с методами `@primary/@suppressed/@walk/@find_first_panic` (:207-250), но никто его не конструирует — D158/D193 обещание не выполнено | `emit_c.rs`, `effects.h`, `errors.nv` | P2 |
@@ -244,8 +244,12 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
 Багфиксы, не зависящие от деталей Model 1:
 1. **#1 fix:** `with Fail` ре-throw'ит PANIC (ветка перед CANCEL/USER, `emit_c.rs:6885+`); сразу ввести
    общий helper `nova_scope_exit` (предшественник Ф.2 п.4). Закрывает `[M-172-with-fail-swallows-panic]`.
-2. **#3 fix (🔬 ДЕ-РИСК ГОТОВ 2026-07-04 — премиса плана СТАЛА, переопределён; готов к impl):**
-   `?` строго return-only + `[E_TRY_IN_FAIL_FN]`. Завершает codegen-часть [174.2](174.2-question-mark-return-only.md).
+2. ✅ **#3 fix РЕАЛИЗОВАН (ea55bee7, 2026-07-04) по Option A — премиса плана СТАЛА, переопределена:**
+   `?` строго return-only + `[E_TRY_IN_FAIL_FN]` (per-fn walker `check_try_return_only_*` в `check_fn`;
+   consume-init/defer-body/closure exempt; 2 free no-op-`?` сайта мигрированы; D196 in_fail_ctx-ветка
+   СОХРАНЕНА). Завершает codegen-часть [174.2](174.2-question-mark-return-only.md). Гейт: conformance 38/38
+   (D196/d158 не сломаны), pos/neg err173/f3_*, spec D85 amend + D4/дубль banners + `@commit()?`→`!!`.
+   *(Ниже — исходная де-риск-запись, оставлена как обоснование Option A.)*
    **НАХОДКА де-риска (blast-radius по всему корпусу — 15 сайтов postfix-`?`, из них релевантны 5):**
    174.2-премиса «throw-режим не задействован, codegen-ветку убрать как недостижимую» — **СТАЛА**.
    Категории: **(KEEP)** free `?` на Result/Option-возвращающих fn (return-mode): `effects/throws.nv`,
