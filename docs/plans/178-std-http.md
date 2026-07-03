@@ -2,19 +2,19 @@
 # Plan 178 — std/http: message-model + URL + HTTP/1.1 (client+server) + HTTPS + HTTP/2
 
 > **Top-level umbrella** (как Plan 176 = io+fs+os): полный HTTP-стек Nova в ОДНОМ плане — message-model, URL, HTTP/1.1 client+server, HTTPS, HTTP/2 (client+server).
-> Создан 2026-06-26. Статус **proposed**.
+> Создан 2026-06-26. Статус **📋 READY** (**Ред. 2 — 2026-07-03**: renumber → D357–D362 выполнен; стейл-номера сняты; siblings-дыры закрыты: Monotonic/from_secs, cancel-семантика, ErrSource-export, write-backpressure, 1xx-loop, NO_PROXY-матрица, TE-trailers).
 > Маркер **[M-178-std-http]**. Запуск: «выполни план 178».
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** 178 — **точка
-> схождения пяти стрелок**; Ред. 2-сверку НЕ проходил — перед запуском выполнить Ф.0-сверку (⚠ известные
-> коллизии: **D327-D332 заняты в спеке** → renumber на D356+; «from_bytes уже есть» — ЛОЖНЫЙ green
-> (владелец = 176 Ф.0.5); ссылки Plan 80 → D133 ✅ shipped). **Ф.0.5 (net byte-surface) — Волна 1 трек F**:
+> схождения пяти стрелок**; **Ред. 2 пройдена 2026-07-03**: D-блоки renumber'нуты в **D357–D362**
+> (ex-D327–D332: D327/D328 заняты 172.2/172.4; D356 — резерв 174); «from_bytes уже есть» был ЛОЖНЫМ green
+> (владелец = **176 Ф.0.5**); Plan 80 → D133 ✅ shipped (Plan 100.1). **Ф.0.5 (net byte-surface) — Волна 1 трек F**:
 > НЕ ждёт остального 178, разблокирует 176 Ф.4(b). Ф.1 ← 176 Ф.0.5 (from_bytes для Body.text()).
 > **Ф.2 (client) ← 179 Ф.1 (decompress) + 175/173 (deadline-by-default)**; Ф.3 (server) ← 173-семейство;
 > **Ф.4/Ф.5 ← Plan 116 TLS (внешний 🔴 HARD-GATE)**; typed `.json[T]` ← 180 Ф.4.
 > Эталон: **Go `net/http`** (архитектура: синхронный API над фибрами; client/server-симметрия; `Handler`/`ServeMux`; io.Reader-тела; context-style cancel) + **reqwest/requests** (builder-эргономика клиента) + **WHATWG / http-crate** (data-model: Method/StatusCode/HeaderMap/Body). Nova **чинит Go-footguns типами**: must-consume `Body` (compile-time force-close), deadline/timeout-by-default (Plan 173), Result-everywhere typed-errors (D325).
-> **D-блоки (NEW): D327** (`Http`/`HttpServer` effect-контракт + net byte-surface) · **D328** (message-model) · **D329** (`Body` must-consume + stream + bomb-cap) · **D330** (redirect/cookie/auth-strip/retry/proxy/pool-eviction) · **D331** (server contract) · **D332** (HTTP-over-TLS + HTTP/2).
-> **🔴 HARD-GATES:** Ф.4 (HTTPS) и Ф.5 (HTTP/2) жёстко гейтятся на **Plan 116** (`std/tls`, сейчас `PLANNED`, backend rustls; даёт `Tls`-effect / `TlsStream consume` / `ClientConfig` / `ServerConfig` / SNI / **ALPN** — D210-D213). **Auto-decompress** (gzip/deflate/br) жёстко гейтится на **NEW sub-plan `std/encoding/compress`** (RFC 1950/1951/1952 + brotli; ДОЛЖЕН быть создан отдельно — НЕ в этом плане; owner 2026-06-26). **Typed `.json[T]()`** жёстко гейтится на **NEW serde-sub-plan** (auto-derive `Serialize`/`Deserialize`; owner 2026-06-26); **dynamic `.json()->JsonValue`** приземляется СЕЙЧАС над существующим `std/encoding/json`. Plan 116 толкается параллельно Ф.0-Ф.3; plaintext HTTP/1.1 (Ф.1-Ф.3) + `identity`/`chunked` transfer + dynamic-`JsonValue` — **самодостаточный deliverable**, приземляется независимо.
-> **Координация:** Plan 116 (TLS), Plan 173 (structured concurrency/errors), Plan 175 (Time), Plan 177 (D325), std/net-семейство (**ПОЛНАЯ byte-surface migration `str`→`[]u8`** — owner-approved governance amendment 2026-06-26, §9), Plan 103.3/103.4 (Mutex/Semaphore), **`std/encoding/json`** (dynamic JSON, существует), **NEW `std/encoding/compress`** (decompress gate), **NEW serde-sub-plan** (typed json gate).
+> **D-блоки (NEW): D357** (`Http`/`HttpServer` effect-контракт + net byte-surface) · **D358** (message-model) · **D359** (`Body` must-consume + stream + bomb-cap) · **D360** (redirect/cookie/auth-strip/retry/proxy/pool-eviction) · **D361** (server contract) · **D362** (HTTP-over-TLS + HTTP/2).
+> **🔴 HARD-GATES:** Ф.4 (HTTPS) и Ф.5 (HTTP/2) жёстко гейтятся на **Plan 116** (`std/tls`, сейчас `PLANNED`, backend rustls; даёт `Tls`-effect / `TlsStream consume` / `ClientConfig` / `ServerConfig` / SNI / **ALPN** — D210-D213). **Auto-decompress** (gzip/deflate/br) жёстко гейтится на **Plan 179 Ф.1** (существует; pure-Nova inflate/gzip/zlib = гейт-опенер; br — 179 Ф.2 C-FFI). **Typed `.json[T]()`** жёстко гейтится на **Plan 180 Ф.4** (существует; serde record-DTO); **dynamic `.json()->JsonValue`** приземляется СЕЙЧАС над существующим `std/encoding/json`. Plan 116 толкается параллельно Ф.0-Ф.3; plaintext HTTP/1.1 (Ф.1-Ф.3) + `identity`/`chunked` transfer + dynamic-`JsonValue` — **самодостаточный deliverable**, приземляется независимо.
+> **Координация:** Plan 116 (TLS), Plan 173 (structured concurrency/errors), Plan 175 (Time), Plan 177 (D325), std/net-семейство (**ПОЛНАЯ byte-surface migration `str`→`[]u8`** — owner-approved governance amendment 2026-06-26, §9), Plan 103.3/103.4 (Mutex/Semaphore), **`std/encoding/json`** (dynamic JSON, существует), **Plan 179** (decompress gate = Ф.1), **Plan 180** (typed json gate = Ф.4).
 > **Сквозной критерий (§8.0):** **ОБЯЗАТЕЛЬНО: без упрощений, как для прода** — ни одного «решим потом» на критическом пути; каждая behavior-change несёт pos+neg-тесты + аргумент звучности, на КАЖДОЙ приземлённой фазе.
 
 ---
@@ -27,8 +27,8 @@
 
 ## 1a. Где Nova ЛУЧШЕ peers (differentiators — в доку)
 
-- **🏆 must-consume `HttpResponse.body` (Plan 80/D133): `consume @close()`/`consume @bytes()`/`consume @text()` — ЕДИНСТВЕННЫЙ способ разрядить тело; незакрытый body = compile-error.** Это превращает **самый известный Go-footgun** (`resp.Body` не закрыт → leak соединения из пула, exhaustion под нагрузкой; `defer resp.Body.Close()` глотает ошибку чтения) в **compile-time-гарантию**. reqwest/hyper полагаются на `Drop` (молча роняет недочитанное тело, ломает keep-alive-reuse), Node `fetch` требует ручного `.body.cancel()` (никто не зовёт), Java `HttpResponse` буферизует всё в память. **Никакой peer не может это enforce'ить статически.** Самый крупный differentiator — прямой аналог must-consume `File` из Plan 176 ([176:29-32](176-io-fs-os.md)).
-- **🏆 deadline/timeout-by-default (Plan 173): запрос ограничен deadline supervised-scope ПО УМОЛЧАНИЮ; timeout → `throw Timeout`, cancel пропагирует в net-park.** Чинит **главный Go-footgun** — `http.DefaultClient` БЕЗ таймаута (зависший сервер вешает горутину навечно; классический prod-инцидент; нужно вручную городить `context.WithTimeout`). У Nova таймаут — свойство scope, не опциональный городок; cancel cancel-safe доходит до libuv-park ([net/effect.nv:10-15](../../std/net/effect.nv)). reqwest имеет таймаут опционально, Node `fetch` — только через `AbortController` (ручной), java.net.http — `.timeout()` опционально.
+- **🏆 must-consume `HttpResponse.body` (D133 ✅ shipped, Plan 100.1; ex-Plan 80): `consume @close()`/`consume @bytes()`/`consume @text()` — ЕДИНСТВЕННЫЙ способ разрядить тело; незакрытый body = compile-error.** Это превращает **самый известный Go-footgun** (`resp.Body` не закрыт → leak соединения из пула, exhaustion под нагрузкой; `defer resp.Body.Close()` глотает ошибку чтения) в **compile-time-гарантию**. reqwest/hyper полагаются на `Drop` (молча роняет недочитанное тело, ломает keep-alive-reuse), Node `fetch` требует ручного `.body.cancel()` (никто не зовёт), Java `HttpResponse` буферизует всё в память. **Никакой peer не может это enforce'ить статически.** Самый крупный differentiator — прямой аналог must-consume `File` из Plan 176 ([176:29-32](176-io-fs-os.md)).
+- **🏆 deadline/timeout-by-default (Plan 173): запрос ограничен deadline supervised-scope ПО УМОЛЧАНИЮ; timeout → `throw Timeout`, cancel пропагирует в net-park.** Чинит **главный Go-footgun** — `http.DefaultClient` БЕЗ таймаута (зависший сервер вешает горутину навечно; классический prod-инцидент; нужно вручную городить `context.WithTimeout`). У Nova таймаут — свойство scope, не опциональный городок; cancel cancel-safe доходит до libuv-park ([net/effect.nv:10-15](../../std/net/effect.nv)). reqwest имеет таймаут опционально, Node `fetch` — только через `AbortController` (ручной), java.net.http — `.timeout()` опционально. **Closest-peer (честно):** Swift URLSession — единственный peer с timeout-by-default (`timeoutIntervalForRequest` = 60s + resource 7d), а AsyncHTTPClient `execute(deadline:)` — единственный peer-клиент с per-request deadline-параметром (прямой прецедент `@deadline`); Nova-🏆 сохраняется: scope-deadline + cancel→park строже.
 - **🏆 h2-stream = fiber (Nova differentiator): каждый HTTP/2 stream = отдельный fiber под supervised-scope.** Мультиплексирование укладывается на M:N-планировщик **естественно** — flow-control/backpressure = park/wake, отмена stream = cancel фибры, без ручной callback-машины (hyper h2 — futures+poll, Go — горутина-на-stream но без structured-cancel). Прямой выигрыш от 83.x M:N.
 - **🏆 SSRF/smuggling/injection-устойчивость by-construction:** строгий URL/host-валидатор (reject control/NUL/whitespace в host, canonical IP-literal, bracket-IPv6, reject decimal/octal/hex-IP-obfuscation), opt-in **SSRF-guard** (`deny_private_ranges` — блок link-local/loopback/`169.254.169.254`-metadata), reject двойной `Content-Length`/`Transfer-Encoding` (CL.TE/TE.CL-smuggling), reject CR/LF/NUL в header-name/value (response-splitting), cross-origin auth/cookie-strip. **Это упущенная пирами differentiator-ось** (никто не делает SSRF-guard в std из коробки) — Nova берёт её.
 - **Result-everywhere typed `HttpError` (D325, [177:6-9](177-fallible-result-everywhere.md)):** единый структурный `HttpError{kind, url, source}` с OPEN `ErrorKind` (Connect/Dns/Tls/Timeout/Protocol/TooManyRedirects/InvalidUrl/Closed/Canceled/BodyTooLarge/Status/Io) и source-chaining `NetError`/`TlsError`/`ParseUrlError`; wildcard-arm forced. Бьёт Go stringly-typed (`err.Error()`-substring-match, опечатка компилится), Node reject-`any`, Java checked-exception-шум. **4xx/5xx = ВАЛИДНЫЙ `Response`, НЕ ошибка**; reqwest-style opt-in `.error_for_status()` конвертирует — корректнее Java (бросает на не-2xx некоторыми клиентами) и понятнее Go.
@@ -45,26 +45,26 @@
 |---|---|---|---|---|---|---|---|---|
 | client builder | **🏆 `client.get(url).header().query().json().send()->Result`** (reqwest-эрг + typed err) | reqwest builder (эталон эрг) | `http.NewRequest`+manual | `fetch(url,{...})` вербозно | Ktor DSL / OkHttp builder | `HttpRequest.newBuilder()` | manual `Client.open` | `URLRequest` + delegate |
 | **body-close-safety** | **🏆 must-consume `body`: незакрытый = COMPILE-ERROR** | `Drop` (молча роняет, ломает reuse) | `defer Body.Close()` (**leak-footgun**, err игнор) | ручной `.cancel()` (никто не зовёт) | `use{}`/`.close()` (runtime) | авто-буфер в память | manual `deinit` | авто (managed) |
-| **timeout-default** | **🏆 deadline-by-default (173 scope), cancel→net-park** | opt `.timeout()` | **DefaultClient = NO timeout** (footgun) | `AbortController` (ручной) | opt config | opt `.timeout()` | manual | opt `.timeoutInterval` |
-| conn pool / keep-alive | **🏆 pooled + structured-lifetime + cancel-safe + retry-idempotent** | pool (hyper) = | transport pool (mature) = | undici pool / fetch=no-pool | OkHttp pool (эталон) = | HTTP/2 conn pool = | **отсутствует** (no pool) | URLSession pool = |
-| redirects | **= policy (limit + `TooManyRedirects` typed + cross-origin auth-strip)** | reqwest policy = | follows (configurable) | follows (no count-cap) | OkHttp follows = | `.followRedirects()` | manual | follows = |
-| decompression | **= auto gzip/deflate/br (opt-out) + bomb-cap** | reqwest auto = | gzip auto (transport) | auto (browser) / undici | auto (OkHttp) = | manual | **отсутствует** | auto = |
+| **timeout-default** | **🏆 deadline-by-default (173 scope), cancel→net-park** | opt `.timeout()` | **DefaultClient = NO timeout** (footgun) | `AbortController` (ручной) | opt config | opt `.timeout()` | **НЕТ вообще** (хуже Go) | **default 60s**/request (+resource 7d) |
+| conn pool / keep-alive | **🏆 pooled + structured-lifetime + cancel-safe + retry-idempotent** | pool (hyper) = | transport pool (mature) = | undici pool / fetch=no-pool | OkHttp pool (эталон) = | HTTP/2 conn pool = | basic pool (0.11+), no eviction | URLSession pool = |
+| redirects | **= policy (limit + `TooManyRedirects` typed + cross-origin auth-strip)** | reqwest policy = | follows (configurable) | follows (no count-cap) | OkHttp follows = | `.followRedirects()` | follows (cap ~3) | follows = |
+| decompression | **= auto gzip/deflate/br (opt-out) + bomb-cap** | reqwest auto = | gzip auto (transport) | auto (browser) / undici | auto (OkHttp) = | manual | auto gzip/deflate/**zstd** (единств. peer с zstd в std) | auto = |
 | cookies jar | **= typed `CookieJar` (per-client, RFC 6265bis: Secure/__Host-/SameSite/PSL)** | reqwest jar = | `http.CookieJar` = | browser jar / undici=no | OkHttp `CookieJar` = | `CookieManager` = | **отсутствует** | `HTTPCookieStorage` = |
 | multipart | **= `multipart/form-data` builder** | reqwest multipart = | `mime/multipart` (manual-ish) | `FormData` = | Ktor/OkHttp = | manual | **отсутствует** | manual |
-| streaming bodies | **🏆 must-consume streaming `Body` (reader, backpressure=park) + trailers** | `Stream`/`Body` (Drop-roняет) | `io.Reader` Body (leak-risk) | `ReadableStream` (manual cancel) | `ByteReadChannel` (Ktor) = | reactive `Flow.Subscriber` (verbose) | reader (manual) | `bytes`/delegate = |
-| HTTP/2 | **= h2 (gate 116 ALPN), stream=fiber** 🏆*архитектура* | hyper h2 (futures) = | h2 built-in (transparent) = | undici h2 / fetch=auto | OkHttp h2 = | h2 built-in = | **отсутствует** (h1 only) | h2 auto = |
-| **server** | **🏆 supervised-scope, per-conn fiber, h1+h2** | hyper (manual wiring) / axum | `net/http` Server (эталон простоты) | undici / node:http | Ktor server = | `com.sun.net.httpserver` (basic) / Netty | **basic** (experimental) | **отсутствует** (client-only) |
+| streaming bodies | **🏆 must-consume streaming `Body` (reader, backpressure=park) + trailers** | `Stream`/`Body` (Drop-roняет) | `io.Reader` Body (leak-risk) | `ReadableStream` (manual cancel) | `ByteReadChannel` (Ktor) = | reactive `Flow.Subscriber` (verbose) | reader (manual) | AsyncBytes (AsyncSequence, pull-backpressure) = |
+| HTTP/2 | **= h2 (gate 116 ALPN), stream=fiber** 🏆*архитектура* | hyper h2 (futures) = | h2 built-in (transparent) = | undici h2 / fetch=auto | OkHttp h2 = | h2 built-in = | **отсутствует** (h1 only) | h2 + **h3 auto из ОС** (iOS15+, Alt-Svc — единств. peer с h3) = |
+| **server** | **🏆 supervised-scope, per-conn fiber, h1+h2** | hyper (manual wiring) / axum | `net/http` Server (эталон простоты) | undici / node:http | Ktor server = | `com.sun.net.httpserver` (basic) / Netty | low-level receiveHead-loop (без router/graceful/TLS; thread-per-conn DIY) | client-only; server = swift-nio/Vapor (вне std; Linux-URLSession=libcurl, inconsistent) |
 | routing | **= `ServeMux` (path-params + method, Go-1.22 precedence)** | axum/actix (3rd-party) | `ServeMux` (1.22 path-params) = | express/router (3rd-party) | Ktor routing DSL = | manual / 3rd-party | manual | n/a |
 | middleware | **= interceptor chain (client+server, onion)** | tower (3rd-party) | `http.Handler`-wrap | express middleware | Ktor plugins / OkHttp interceptors = | manual | manual | URLProtocol/delegate |
-| TLS / mTLS | **= over Plan 116 (rustls; SNI/ALPN/mTLS)** gate | rustls/native-tls = | crypto/tls (built-in) = | OpenSSL (node) | Conscrypt/JSSE = | JSSE = | **есть** (std.crypto.tls client) | SecureTransport = |
-| proxy | **= `Proxy`{http/https/socks5} + CONNECT-tunnel + NO_PROXY env** | reqwest proxy = | `ProxyFromEnvironment` = | undici `ProxyAgent` | OkHttp proxy = | `ProxySelector` = | **отсутствует** | `connectionProxyDictionary` |
-| **cancellation** | **🏆 structured cancel → net-park (cancel-safe, MultiError)** | `tokio` cancel (drop-future, not structured) | `context.Context` (manual plumbing) | `AbortController` (manual) | coroutine cancel (structured) = | reactive cancel (verbose) | manual | `URLSessionTask.cancel()` |
+| TLS / mTLS | **= over Plan 116 (rustls; SNI/ALPN/mTLS)** gate | rustls/native-tls = | crypto/tls (built-in) = | OpenSSL (node) | Conscrypt/JSSE = | JSSE = | client-only, **TLS 1.3 ONLY** (1.2-серверы = connect-fail; server-TLS в std нет) | SecureTransport = |
+| proxy | **= `Proxy`{http/https/socks5} + CONNECT-tunnel + NO_PROXY env** | reqwest proxy = | `ProxyFromEnvironment` = | undici `ProxyAgent` | OkHttp proxy = | `ProxySelector` = | env-basic + CONNECT (0.12+) | `connectionProxyDictionary` |
+| **cancellation** | **🏆 structured cancel → net-park (cancel-safe, MultiError)** | `tokio` cancel (drop-future, not structured) | `context.Context` (manual plumbing) | `AbortController` (manual) | coroutine cancel (structured) = | reactive cancel (verbose) | manual | Task-cancel структурно пропагирует (URLError.cancelled) = |
 | **graceful-shutdown** | **🏆 scope-cancel + bounded deadline-drain (built-in)** | manual (axum `with_graceful_shutdown`) | `Server.Shutdown(ctx)` (manual ctx) = | manual | Ktor `stop(grace)` = | manual | n/a |
-| **SSRF/smuggling defense** | **🏆 strict host-validate + opt-in SSRF-guard + CL/TE reject + CRLF reject** | partial (host-reject) | строг (CL/TE) | partial | partial | partial | minimal | partial |
+| **SSRF/smuggling defense** | **🏆 strict host-validate + opt-in SSRF-guard + CL/TE reject + CRLF reject** | partial (host-reject) | строг (CL/TE) | partial | partial | partial | minimal | ATS: plaintext `http://` запрещён by default (app-gate) |
 | error model | **🏆 typed `HttpError`+OPEN kind+source-chain; 4xx=Response** | typed `reqwest::Error` (source-chain) = | stringly `err.Error()` (опечатка компилится) | reject `any` | typed sealed (Ktor) = | checked `IOException`-шум | error-union (typed) = | typed `URLError` = |
 | mock/test transport | **🏆 `with Http=mock_http()` — статически-проверяемый effect-seam** | `RoundTripper`-trait / wiremock | `httptest`/`RoundTripper`-DI | `nock`-monkeypatch | OkHttp `MockWebServer` | `HttpClient`-mock (3rd-party) | manual | `URLProtocol`-stub |
 
-**Взять:** reqwest **builder-эргономику** (`.get().header().query().json().send()`) + `.error_for_status()` opt-in + idempotent-retry; Go **`ServeMux` path-params** (1.22) + `Server.Shutdown(ctx)` + `ProxyFromEnvironment` + server-простоту; hyper/h2 **stream-multiplexing** модель (но через fiber-на-stream, не futures); OkHttp **interceptor-chain** + connection-pool-зрелость; WHATWG/http-crate **data-model**; Zig **allocation-transparency**-дух (нет скрытого глобального клиента для prod-кода — §3.0 Q15). **Избегать:** Go silent-`Body`-leak + `DefaultClient`-no-timeout + stringly-errors; reqwest/hyper `Drop`-роняет-body; Node ручной-`AbortController` + silent-lossy-decode + `cancel()`-который-никто-не-зовёт; Java checked-exception-шум + eager-буфер-в-память; Zig **отсутствие pool/cookies/decompression/proxy** (не prod). **Доказательство ≥ best-peer построчно:** строки **body-close-safety / timeout-default / streaming / cancellation / graceful-shutdown / error-model / mock-transport / server / SSRF-defense / pool-retry** помечены 🏆; остальные — **=** (паритет с лучшим peer'ом).
+**Взять:** reqwest **builder-эргономику** (`.get().header().query().json().send()`) + `.error_for_status()` opt-in + idempotent-retry; Go **`ServeMux` path-params** (1.22) + `Server.Shutdown(ctx)` + `ProxyFromEnvironment` + server-простоту; hyper/h2 **stream-multiplexing** модель (но через fiber-на-stream, не futures); OkHttp **interceptor-chain** + connection-pool-зрелость; WHATWG/http-crate **data-model**; Zig **allocation-transparency**-дух (нет скрытого глобального клиента для prod-кода — §3.0 Q15). **Избегать:** Go silent-`Body`-leak + `DefaultClient`-no-timeout + stringly-errors; reqwest/hyper `Drop`-роняет-body; Node ручной-`AbortController` + silent-lossy-decode + `cancel()`-который-никто-не-зовёт; Java checked-exception-шум + eager-буфер-в-память; Zig **TLS1.3-only DIY-TLS + zero-timeout + API-churn** (0.12→0.15 переписан каждый релиз; cookies/multipart всё ещё нет). **Доказательство ≥ best-peer построчно:** строки **body-close-safety / timeout-default / streaming / cancellation / graceful-shutdown / error-model / mock-transport / server / SSRF-defense / pool-retry** помечены 🏆; остальные — **=** (паритет с лучшим peer'ом).
 
 ---
 
@@ -144,7 +144,8 @@ export fn StatusCode.internal_error() -> StatusCode   // 500   ... (полный
 ### 3.3. `Version`
 
 ```nova
-export type Version | Http10 | Http11 | Http2     // Http3 — followup §11
+export type Version | Http10 | Http11 | Http2     // OPEN (wildcard-arm обязателен, как ErrorKind):
+                                                  // добавление Http3 (§11) НЕ ломает exhaustive-match (D358)
 export fn Version @as_str(self) -> str            // "HTTP/1.0" | "HTTP/1.1" | "HTTP/2"
 export fn Version @supports_keepalive(self) -> bool   // h10: только при Connection: keep-alive
 ```
@@ -209,7 +210,9 @@ priv type BodyRepr
 
 /// Источник потокового тела: yield-ит []u8-чанки до EOF. Чистая Nova-логика над
 /// транспортом (chunked/CL/h2-DATA-декодер композится над TcpReadHalf/TlsStream/h2-stream).
-/// Сам must-consume.
+/// Сам must-consume. PULL-контракт (D359): транспорт читается ТОЛЬКО по @next_chunk,
+/// буферизация ≤1 chunk (иначе имплементация вправе prefetch'ить unbounded) — естественный
+/// backpressure; прецеденты Swift AsyncBytes / nio read()-demand.
 export type BodyReader consume value { priv repr ReaderRepr }   // НЕ C-handle — Nova-декодер над byte-source (§3.0 Q19)
 
 // ── Конструкторы (Request-side) ──
@@ -275,7 +278,7 @@ export type SetCookie value {
     ro value     str
     ro domain    Option[str]
     ro path      Option[str]
-    ro expires   Option[Timestamp]      // 179 Timestamp (не str-дата)
+    ro expires   Option[Timestamp]      // 175 Timestamp (не str-дата)
     ro max_age   Option[int]            // секунды
     ro secure    bool
     ro http_only bool
@@ -287,7 +290,7 @@ export fn SetCookie @serialize(self) -> str
 export fn SetCookie @to_cookie(self) -> Cookie
 ```
 
-`expires` — типизированный `Timestamp` (Plan 175), не строка-дата (бьёт Go/Node). **Send-side инварианты (RFC 6265bis, закрыто §3.0 Q10 / D330):** `Secure`-cookie **НЕ** отправляется по plaintext `http://`; `__Secure-`/`__Host-`-префиксы enforce'ятся (Host: без Domain + Path=/ + Secure); `SameSite=None` требует `Secure`; domain-match через public-suffix-list (минимум — reject `domain`=TLD, supercookie-защита). `CookieJar` (хранилище клиента) — §3.client.
+`expires` — типизированный `Timestamp` (Plan 175), не строка-дата (бьёт Go/Node). **Send-side инварианты (RFC 6265bis, закрыто §3.0 Q10 / D360):** `Secure`-cookie **НЕ** отправляется по plaintext `http://`; `__Secure-`/`__Host-`-префиксы enforce'ятся (Host: без Domain + Path=/ + Secure); `SameSite=None` требует `Secure`; domain-match через public-suffix-list (минимум — reject `domain`=TLD, supercookie-защита). `CookieJar` (хранилище клиента) — §3.client.
 
 ### 3.8. `Url` — промоут из `_experimental`
 
@@ -325,18 +328,22 @@ export type ErrorKind
     | InvalidUrl | InvalidHeader
     | Status(StatusCode)                             // от error_for_status (opt-in, Q4)
     | TooManyRedirects(int) | BodyTooLarge
-    | Closed | Canceled                              // 173 cancel → Canceled
+    | Closed | Canceled                              // Canceled = наблюдаемая ВНЕШНЯЯ отмена (peer/RST_STREAM); свой scope-cancel ПРОПАГИРУЕТ (см. ниже)
     | Blocked(str)                                   // SSRF-guard deny (private-range target)
     | Other(str)                                     // OPEN → wildcard-arm обязателен
-priv type ErrSource | Net(NetError) | Url(ParseUrlError) | Utf8(Utf8Error)   // + Tls(TlsError) когда 116 готов
+export type ErrSource                              // EXPORT + OPEN (Ред.2: priv при публичном `ro source` делал матчинг невозможным; wildcard → расширение НЕ breaking)
+    | Net(NetError) | Url(ParseUrlError) | Utf8(Utf8Error)
+    | Io(IoError)                                  // ошибка writer'а в copy_to (176)
+    | Compress(CompressError)                      // причина decompress-fail (179: Bomb/Checksum/InvalidData)
+    | OtherSource(str)                             // + Tls(TlsError) когда 116 готов
 export fn HttpError @to_str(self) -> str
 ```
 
-`Timeout` (deadline/timeout 173) и `Canceled` (cancel propagation 173) — first-class. `Status` — **только** через явный `error_for_status()`. `Io(NetError)` НЕ дублируется в `kind` — транспортная ошибка несётся как `kind: Connect/Closed/Timeout` + `source: Net(NetError)` (унификация с другими секциями, §3.0 Q2).
+`Timeout` (deadline/timeout 173) — first-class. **`Canceled` — семантика (Ред.2, 173-модель):** cancel СОБСТВЕННОГО scope **НЕ конвертируется в `Err`** — структурная отмена ПРОПАГИРУЕТ (глотание cancel = анти-паттерн 173; распознавание `e is CancelError` = 173 Ф.4 ← 174.3); `Canceled` — только **наблюдаемая внешняя** отмена (peer-abort, RST_STREAM одного h2-stream). `Status` — **только** через явный `error_for_status()`. `Io(NetError)` НЕ дублируется в `kind` — транспортная ошибка несётся как `kind: Connect/Closed/Timeout` + `source: Net(NetError)` (унификация с другими секциями, §3.0 Q2).
 
 ### 3.10. ⚠ Требуемая правка net: `[]u8` read/write surface
 
-Сейчас `TcpStream.@read(max) -> Result[str, NetError]` / `@write(data str)` ([tcp.nv:146/155]), `TcpReadHalf.@read`/`TcpWriteHalf.@write`/`@write_all` — все **`str`-payload** ([tcp.nv:236/277/283]) — нарушает byte-first. **Необходима координированная правка net** (Q5, объём как Plan 176 Q6). **ПОЛНАЯ byte-surface-дельта** (закреплена в D327; критик-gap «under-scoped»):
+Сейчас `TcpStream.@read(max) -> Result[str, NetError]` / `@write(data str)` ([tcp.nv:146/155]), `TcpReadHalf.@read`/`TcpWriteHalf.@write`/`@write_all` — все **`str`-payload** ([tcp.nv:236/277/283]) — нарушает byte-first. **Необходима координированная правка net** (Q5, объём как Plan 176 Q6). **ПОЛНАЯ byte-surface-дельта** (закреплена в D357; критик-gap «under-scoped»):
 
 ```nova
 export fn TcpStream    mut @read_bytes(self, max int) TcpNet -> Result[[]u8, NetError]
@@ -347,7 +354,7 @@ export fn TcpWriteHalf mut @write_bytes(self, data []u8) TcpNet -> Result[int, N
 export fn TcpWriteHalf mut @write_all_bytes(self, data []u8) TcpNet -> Result[(), NetError]
 ```
 
-C-backing уже байтовый (`tcp_stream_read_bytes`/`tcp_stream_write` берут длину) — правка на Nova-сигнатурах + erasure. **Plan 116 `Tls` уже `[]u8`** (116:104-106), так что HTTP-кодек над Tls единообразен; только TcpNet отстаёт. **`str`-варианты сохраняются**; полная миграция net `str`→`[]u8` — **отдельный byte-baseline-guarded коммит ПОСЛЕ HTTP** (не блокирует 182), per-file loop для callers. Без byte-surface HTTP-парсер гонит всё через `str` (lossy/паника на бинарных телах) — **неприемлемо (§8.0)**.
+C-backing уже байтовый (`tcp_stream_read_bytes`/`tcp_stream_write` берут длину) — правка на Nova-сигнатурах + erasure. **Plan 116 `Tls` уже `[]u8`** (116:104-106), так что HTTP-кодек над Tls единообразен; только TcpNet отстаёт. **`str`-варианты сохраняются**; полная миграция net `str`→`[]u8` — **отдельный byte-baseline-guarded коммит ПОСЛЕ HTTP** (не блокирует 178), per-file loop для callers. Без byte-surface HTTP-парсер гонит всё через `str` (lossy/паника на бинарных телах) — **неприемлемо (§8.0)**.
 
 **Связанная net-правка — `SocketAddr` rep + `AddrNet`-retract (логика §13.2).** Сейчас `SocketAddr value { priv handle CSocketAddr }` ([addr.nv:34]) — C-handle, и pure-операции (`loopback`/`v4`/`from_str`/`@port`/`@ip`/`@to_str`/`@is_v4`/`@is_v6`) висят на эффекте `AddrNet`, хотя **I/O не делают**. Правка: `SocketAddr` → **Nova value-record** `{family, addr-bytes []u8, port u16}` (как Rust `std::net::SocketAddr`); эти операции → **pure `.nv`** (без эффекта, без FFI); **`AddrNet` ретрактируется**; DNS `lookup` остаётся в `DnsNet` (I/O). Конверсия Nova↔C `sockaddr` — внутри `connect`/`bind`/`recv_from` на FFI-границе. **НЕ HARD-blocker HTTP** (HTTP берёт `SocketAddr` как данные — работает при любом rep); едет с byte-surface-амендментом, byte-baseline-guarded.
 
@@ -371,7 +378,7 @@ export fn HttpClient.new() -> HttpClient => HttpClient.builder().build().unwrap(
 
 export fn HttpClientBuilder @timeout(d Duration) -> HttpClientBuilder              // per-request wall-clock (173); дефолт 30s
 export fn HttpClientBuilder @connect_timeout(d Duration) -> HttpClientBuilder      // TCP+TLS connect; дефолт 10s
-export fn HttpClientBuilder @deadline(at Instant) -> HttpClientBuilder             // абсолютный (173) — приоритетнее timeout
+export fn HttpClientBuilder @deadline(at Monotonic) -> HttpClientBuilder           // абсолютный (173/175 Monotonic) — приоритетнее timeout
 export fn HttpClientBuilder @default_header(name str, value str) -> HttpClientBuilder
 export fn HttpClientBuilder @default_headers(h HeaderMap) -> HttpClientBuilder
 export fn HttpClientBuilder @redirect(policy RedirectPolicy) -> HttpClientBuilder  // дефолт .limited(10)
@@ -398,7 +405,7 @@ export type RedirectPolicy | None | Limited(int) | Custom(fn(Url, []Url) -> Redi
 export type RedirectAction | Follow | Stop | Error
 ```
 
-**Differentiator vs Go.** Go `&http.Client{}` = **нет таймаута** (висящий запрос держит conn вечно). `HttpClient.new()` несёт **30s `timeout` + 10s `connect_timeout`** (173); снять — явный `@timeout(Duration.MAX)`. `send()` обёрнут в `supervised` с `deadline:` → cancel пропагирует в park `TcpNet`/`Tls`.
+**Differentiator vs Go.** Go `&http.Client{}` = **нет таймаута** (висящий запрос держит conn вечно). `HttpClient.new()` несёт **30s `timeout` + 10s `connect_timeout`** (173); снять — явный `@timeout(Duration.MAX)` (⚠ `Duration.MAX` не заявлен в 175: Ф.0-verify — добавить const в 175 Ф.1c либо дать `@no_timeout()`). `send()` обёрнут в `supervised` с `deadline:` → cancel пропагирует в park `TcpNet`/`Tls`.
 
 #### Proxy (Q23 — РЕАЛЬНАЯ Ф.2-задача, не followup)
 
@@ -408,7 +415,10 @@ export type ProxyScheme | Http | Https | Socks5
 export fn Proxy.from_env() -> Result[Option[Proxy], HttpError]   // HTTP_PROXY/HTTPS_PROXY/NO_PROXY precedence (Go-семантика)
 export fn Proxy.http(url str)   -> Result[Proxy, HttpError]
 export fn Proxy.socks5(url str) -> Result[Proxy, HttpError]
-export fn Proxy @bypass(self, target Url) -> bool                 // NO_PROXY-match (suffix/CIDR)
+export fn Proxy @bypass(self, target Url) -> bool                 // NO_PROXY-match — ПОЛНАЯ матрица в D360 (Ред.2):
+// обе формы регистра env (lowercase wins — Go httpproxy); `*` = bypass-all; dot-suffix ± ведущая точка
+// (+поддомены); IP exact; CIDR; host:port-entry; bypass решается ДО DNS-resolve (не резолвить ради
+// bypass — perf/SSRF); loopback/localhost НИКОГДА не проксируется. httpoxy/CGI-guard — N/A для Nova.
 ```
 
 `@proxy()` — **полноценный механизм Ф.2** (критик «contradiction»-gap): для `https://`-через-proxy — **HTTP `CONNECT`-tunnel** (`CONNECT host:port` → 200 → TLS поверх туннеля), для `http://`-через-http-proxy — absolute-form request-target, для SOCKS5 — handshake. `Proxy-Authorization: Basic` при `auth`. CONNECT-tunnel приземляется в Ф.2 (plaintext-proxy) + Ф.4 (TLS-over-CONNECT). **Не followup.**
@@ -442,7 +452,7 @@ export fn RequestBuilder @body_stream(reader consume BodyReader) -> RequestBuild
 export fn RequestBuilder @bearer_auth(token str) -> RequestBuilder                 // Authorization: Bearer …
 export fn RequestBuilder @basic_auth(user str, pass Option[str]) -> RequestBuilder // base64(user:pass)
 export fn RequestBuilder @timeout(d Duration) -> RequestBuilder                    // per-request override
-export fn RequestBuilder @deadline(at Instant) -> RequestBuilder
+export fn RequestBuilder @deadline(at Monotonic) -> RequestBuilder
 export fn RequestBuilder @version(v Version) -> RequestBuilder                     // форсировать Http11/Http2 (иначе ALPN)
 export fn RequestBuilder consume @send() Http -> Result[HttpResponse, HttpError]   // RoundTrip; consume builder (one-shot)
 export fn RequestBuilder @build() -> Result[Request, HttpError]                    // материализовать без отправки
@@ -490,7 +500,7 @@ export fn http.delete(url IntoUrl)           Http -> Result[HttpResponse, HttpEr
 export fn http.post(url IntoUrl, body []u8)  Http -> Result[HttpResponse, HttpError]
 export fn http.put(url IntoUrl, body []u8)   Http -> Result[HttpResponse, HttpError]
 export fn http.patch(url IntoUrl, body []u8) Http -> Result[HttpResponse, HttpError]
-// САХАР (convenience-обёртка, НЕ примитив; тонкий .nv-фасад, ноль транспорт-логики; gate serde Plan 184):
+// САХАР (convenience-обёртка, НЕ примитив; тонкий .nv-фасад, ноль транспорт-логики; gate serde Plan 180 Ф.4):
 //   get_json[T](url)       ≡ get(url)? .error_for_status()? .json[T]()
 //   post_json[T,B](url, b) ≡ post(url, json_encode(b)?)? .error_for_status()? .json[T]()   (+ CT application/json; B→тело, T←ответ)
 // DOC-FENCE (§13.4): зашитый error_for_status → не-2xx = Err (теряет error-body, инверсия Q4);
@@ -502,14 +512,16 @@ export fn http.post_json[T, B](url IntoUrl, body B) Http -> Result[T, HttpError]
 #### Транспорт-семантика (всё внутри `real_http()`, Nova-logic над байтами)
 
 - **Connection pool + keep-alive.** Per-`(scheme, host, port, alpn)` пул idle-conn (`pool_max_idle_per_host=32`, `pool_idle_timeout=90s`). **Pool-ключ включает ALPN-результат** (h1-conn НЕ переиспользуется как h2, §3.0 Q26). Body-дренаж/`@drain()` возвращает conn в пул (если keep-alive и тело полностью прочитано); иначе закрывается.
-- **Pool-eviction-on-error (D330, критик-gap).** Соединение, ошибшееся mid-response (read/write/parse error) — **EVICT'ится, не возвращается** в пул. Только happy-path `drain→return` возвращает.
-- **Idempotent-retry (D330, Q16 — критик-gap).** При сбое **reused-from-pool** conn (stale: сервер закрыл idle) ДО получения первого байта ответа — **авто-retry на свежем conn, max 1, ТОЛЬКО для idempotent-методов** (`Method.@is_idempotent`). **Свежие conn и не-idempotent (POST) — НИКОГДА не реплеятся.** pos-тест (reused-dead-conn retry) + neg-тест (POST не реплеится).
+- **Pool-eviction-on-error (D360, критик-gap).** Соединение, ошибшееся mid-response (read/write/parse error) — **EVICT'ится, не возвращается** в пул. Только happy-path `drain→return` возвращает.
+- **Idempotent-retry (D360, Q16 — критик-gap).** При сбое **reused-from-pool** conn (stale: сервер закрыл idle) ДО получения первого байта ответа — **авто-retry на свежем conn, max 1, ТОЛЬКО для idempotent-методов** (`Method.@is_idempotent`). **Свежие conn и не-idempotent (POST) — НИКОГДА не реплеятся.** pos-тест (reused-dead-conn retry) + neg-тест (POST не реплеится).
 - **Redirect following.** `RedirectPolicy.Limited(10)` дефолт. **303 → GET-ify** (метод→GET, тело сброшено); **301/302 на не-GET/HEAD → GET-ify** (browser-совместимость); **307/308 сохраняют метод+тело** (тело replayable: in-memory; `@body_stream` non-replayable → `HttpError.Protocol("non-replayable body on 307/308")`). **Cross-origin hop → strip `Authorization`/`Cookie`** (anti-leak security-инвариант, Q9). `TooManyRedirects` при превышении.
-- **Auto-decompress (Q12, кодек-gate — критик/simplification-gap).** **Дефолтное поведение Ф.2 = identity + chunked** (всегда работает). **gzip/deflate/br — 🔴 HARD-GATE на NEW под-план `std/encoding/compress`** (НЕ существует; owner 2026-06-26 — отдельный под-план RFC 1950/1951/1952 + brotli, создаётся ВНЕ 182). Если кодеки не приземлены к Ф.2-close — `@gzip/@brotli/@deflate` остаются объявлены, но **acceptance §8.4 для decompress помечен gated**; identity-путь — самодостаточный landed-deliverable. Bomb-cap `max_decompressed=100 MiB` → `BodyTooLarge`. Кодеки (Plan 179): inflate/gzip/zlib = **pure-Nova** (прецедент Zig/Go, nv-sourcing; 183 Q1); C-FFI — **только brotli** (179 Q2).
+- **Auto-decompress (Q12, кодек-gate).** **Дефолтное поведение Ф.2 = identity + chunked** (всегда работает). **gzip/deflate/br — 🔴 HARD-GATE на Plan 179 Ф.1** (существует; Ф.1 = gzip/deflate/zlib гейт-опенер; br — 179 Ф.2). Если кодеки не приземлены к Ф.2-close — `@gzip/@brotli/@deflate` остаются объявлены, но **acceptance §8.3 для decompress помечен gated**; identity-путь — самодостаточный landed-deliverable. Bomb-cap `max_decompressed=100 MiB` → `BodyTooLarge` (`ErrSource.Compress` сохраняет причину Bomb/Checksum/InvalidData). Кодеки (Plan 179): inflate/gzip/zlib = **pure-Nova** (прецедент Zig/Go, nv-sourcing; 179 Q1); C-FFI — **только brotli** (179 Q2). **Dispatch по `Content-Encoding`** (выбор Inflater/GzipReader/BrotliReader над `BodyReader`; glue в `real_http` — 179 §3.4 назначает задачу сюда) — Ф.2-deliverable.
 - **Chunked transfer + trailers.** Ответ: `Transfer-Encoding: chunked` декодируется стримово; trailing-header-блок → `Body.@trailers()`. Запрос: `@body_stream` без длины → chunked; `@body([]u8)`/`@json`/`@form` → `Content-Length`.
 - **Expect: 100-continue.** Для request-body выше порога (1 KiB) или явного стрима — `Expect: 100-continue`, ждать `100 Continue` (таймаут 1s); на `417`/таймаут — лить тело сразу (Go-совместимо).
+- **1xx-interim loop (RFC 9110 §15.2, Ред.2).** Клиент-парсер обязан пропускать ПРОИЗВОЛЬНЫЕ 1xx до финального статуса: множественные `100`, `103 Early Hints` (Cloudflare/Fastly шлют реально). pos-тесты: «103→200», «100 без Expect».
+- **`TE: trailers` (Ред.2).** Клиент шлёт `TE: trailers` автоматически при keep-alive h1 — иначе сервер вправе не слать trailers (request-side trailers — §11 followup).
 - **Cookie jar (RFC 6265bis, Q10).** Opt-in (`@cookie_store(true)`). Парс/хранение per-(domain,path), отправка matching `Cookie:` (send-инварианты §3.7: Secure→https-only, PSL-match, `__Host-`/`__Secure-`). `CookieJar` — shared value, внутренний `Mutex` (Plan 103.3) для конкурентной записи из фибр.
-- **Cancel/deadline.** `send()` под `deadline:`/`timeout:` (173); срабатывание → `Err(HttpError.Timeout/Canceled)`, cancel доходит до park'нутого `TcpNet.read`/`Tls`-handshake. Соединение при отмене закрывается (не в пул).
+- **Cancel/deadline.** `send()` под `deadline:`/`timeout:` (173); timeout → `Err(HttpError.Timeout)`; **cancel собственного scope НЕ конвертируется в Err** (пропагация, §3.9 — Ред.2-семантика); cancel доходит до park'нутого `TcpNet.read`/`Tls`-handshake. Соединение при отмене закрывается (не в пул).
 - **SSRF-guard (Q24).** При `@ssrf_guard(true)`: после `DnsNet.lookup` — резолвленный адрес проверяется против private-range deny-list (loopback/link-local/RFC1918/`169.254.169.254`-metadata) **до** connect → `Err(HttpError.Blocked)`. Default OFF (не ломает internal-service-вызовы), но доступен из коробки — differentiator.
 - **HTTPS/h2 (gate Plan 116).** version-transparent; ALPN (`["h2","http/1.1"]`) авто-выбирает; `https://` → `Tls`-handshake (SNI=host). h2: каждый стрим = фибра (детально §3.https-h2).
 
@@ -519,7 +531,7 @@ export fn http.post_json[T, B](url IntoUrl, body B) Http -> Result[T, HttpError]
 // (1) GET с дедлайном, JSON, must-consume body разряжается через .json().
 fn fetch_user(id int) Http -> Result[User, HttpError] {
     ro client = HttpClient.builder()
-        .timeout(Duration.seconds(5))
+        .timeout(Duration.from_secs(5))
         .default_header("Accept", "application/json")
         .build()?
     ro resp = client
@@ -533,7 +545,7 @@ fn fetch_user(id int) Http -> Result[User, HttpError] {
 
 fn main() {
     with Http = real_http() {
-        supervised deadline: Instant.now() + Duration.seconds(10) {
+        supervised(deadline: Monotonic.now() + Duration.from_secs(10)) {
             match fetch_user(42) {
                 Ok(u)  => println("user: ${u.name}")
                 Err(e) => println("http error: ${e.to_str()}")
@@ -717,7 +729,9 @@ export fn ResponseWriter mut @write_trailers(t HeaderMap) Http -> Result[(), Htt
 export fn ResponseWriter consume @finish() Http -> Result[(), HttpError]   // chunked-terminator — единств. разрядка
 ```
 
-**Content-Length vs chunked (закрыто §3.0).** in-memory `Body` → точный **`Content-Length`**; `ResponseWriter` без CL → **chunked** (h1) / DATA (h2). `HEAD`/`204`/`304` → тело не пишется. Конфликт user-`Content-Length`+chunked → драйвер игнорирует user-CL (chunked wins). **Smuggling defense:** дублированные/конфликтующие `Content-Length` или `CL`+`TE` во входящем → `400` (RFC 9112 §6.1).
+**Content-Length vs chunked (закрыто §3.0).** in-memory `Body` → точный **`Content-Length`**; `ResponseWriter` без CL → **chunked** (h1) / DATA (h2). `HEAD`/`204`/`304` → тело не пишется. Конфликт user-`Content-Length`+chunked → драйвер игнорирует user-CL (chunked wins). **`@write_trailers` на CL-framed ответе → `Protocol`-error** (НЕ silent-drop — Ред.2, D361). **Smuggling defense:** дублированные/конфликтующие `Content-Length` или `CL`+`TE` во входящем → `400` (RFC 9112 §6.1).
+
+**Write-side backpressure h1 (Ред.2, D361; nio WriteBufferWaterMark-прецедент):** `@write`/`@flush` **ПАРКУЮТ** фибру при полном socket-buffer — НИКАКОГО unbounded internal buffering; client-upload симметрично. pos-тест slow-reader: writer паркуется, RSS bounded, cancel во время write-park работает.
 
 #### Middleware — onion-композиция
 
@@ -834,9 +848,11 @@ fn Conn consume @close()                TcpNet Tls -> Result[(), HttpError]    /
 
 **Сервер (HTTPS):** тот же `Handler`/`ServeMux`, отличие — `@tls(ServerConfig)`/`bind_tls`: per-conn accept → `Tls.handshake_server` → `alpn_negotiated()` → h2/h1. cert/key ← `ServerConfig.from_pem` (in-memory ИЛИ file-path — file gate Plan 176 fs); mTLS ← `ServerConfig.client_cert`: `None`/`Optional`/`Required`; peer-cert → `Request.@peer_cert()`.
 
-**🔴 HARD-GATE — Plan 116 ДОЛЖЕН дать:** `TlsStream consume`+`@close()` (D213); `ClientConfig`(SNI/ALPN/verification/roots/timeout)+`ServerConfig`(cert/key/ALPN/client_cert); `Tls`-effect ops (`handshake_client/server`, byte-first `read/write/close`, `peer_cert`, **`alpn_negotiated()`**, `cipher_suite`, `protocol_version`); SNI+ALPN (D212); cert-verify+root-store (D211); D210-D213 в spec.
+**🔴 HARD-GATE — Plan 116 ДОЛЖЕН дать:** `TlsStream consume`+`@close()` (D213); `ClientConfig`(SNI/ALPN/verification/roots/timeout)+`ServerConfig`(cert/key/ALPN/client_cert); `Tls`-effect ops (`handshake_client/server`, byte-first `read/write/close`, `peer_cert`, **`alpn_negotiated()`**, `cipher_suite`, `protocol_version`); SNI+ALPN (D212); cert-verify+root-store (D211); D210-D213 в spec (**= 116 Ф.7** → DEP Ф.4 включает Ф.7); **mock_tls-триада** (Ф.4-тесты требуют mock-Tls — добавить в гейт-требования/координацию 116).
 
 **Error-mapping:** `TlsError` → `HttpError{kind: Tls, source: ErrSource.Tls(TlsError)}` (`CertificateInvalid`/`HostnameMismatch`/`HandshakeTimeout`/`AlpnNoCommonProtocol` сохраняются как source).
+
+**Vendored-rustls rationale (Ред.2, к 116-координации):** прецедент двусторонний — Apple-платформы = system-TLS, но СЕРВЕРНЫЙ Swift-стек сам вендорит BoringSSL (swift-nio-ssl) → «vendored для server-language» = отраслевая практика; Zig-контрпример (DIY-TLS → TLS1.3-only interop-провалы) — аргумент ЗА зрелый vendored rustls, ПРОТИВ самописного. `SystemRoots`-default покрывает enterprise/MDM-roots. Followups (§11): OS-keystore client-cert (mTLS V1 = PEM-only) + позиция по revocation (CRL/OCSP).
 
 #### HTTP/2 (Ф.5 — двойной гейт: Plan 116 ALPN-`h2` + после Ф.4)
 
@@ -872,17 +888,17 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 | # | Вопрос | РЕШЕНИЕ | Обоснование |
 |---|---|---|---|
 | Q1 | `Http`-seam vs pure-code | **`Http` effect = высокоуровневый client-seam (request→response) + `real_http()` (over `TcpNet`+`Tls`+`DnsNet`+`Time`) + `mock_http()`.** h1/h2 framing/parsing = **Nova-логика (.nv)** ВНУТРИ `real_http`-слоя над byte-транспортом. Server — `HttpServer`-seam. Seam тонкий (~5 ops); 95% HTTP = value-типы+логика. | Триада (как `TcpNet`) → мокабельность без сети — недостижимо в Go (`RoundTripper`-DI вручную)/reqwest/fetch. Парсинг в .nv = nv-sourcing-максимум. Закрывает **Q9** (core .nv vs C-транспорт) |
-| Q2 | `HttpError` taxonomy | **ОДИН `HttpError{kind, url Option[Url], source}`; `ErrorKind` OPEN** (wildcard обязателен). Транспортная ошибка = `kind: Connect/Closed/Timeout` + `source: Net(NetError)` (НЕ дублируется как `kind.Io`). `ErrSource = Net\|Url\|Utf8(\|Tls когда 116)`. | Rust `reqwest::Error{kind,url,source}`. Source-chain через typed `NetError`/`TlsError`/`ParseUrlError`. OPEN = forward-compat h2/h3 |
+| Q2 | `HttpError` taxonomy | **ОДИН `HttpError{kind, url Option[Url], source}`; `ErrorKind` OPEN** (wildcard обязателен). Транспортная ошибка = `kind: Connect/Closed/Timeout` + `source: Net(NetError)` (НЕ дублируется как `kind.Io`). `ErrSource = Net\|Url\|Utf8\|Io\|Compress(\|Tls когда 116)` — **export + OPEN** (Ред.2). | Rust `reqwest::Error{kind,url,source}`. Source-chain через typed `NetError`/`TlsError`/`ParseUrlError`. OPEN = forward-compat h2/h3 |
 | Q3 | must-consume `Body` | **Response `Body` must-consume (D133): `consume @close/bytes/text/json/discard/copy_to/into_reader`.** Незакрытый = **compile-error**. | Чинит главный Go-footgun `resp.Body`-leak на compile-time; бьёт reqwest(`Drop`)/fetch/OkHttp(runtime) |
 | Q4 | 4xx/5xx как value | **4xx/5xx — ВАЛИДНЫЙ `HttpResponse`.** `send()` падает только на transport/protocol. `error_for_status()` opt-in → `Err(Status)`; **non-consuming** (на Err Body жив, caller обязан разрядить). | reqwest-модель. 404 — успешный обмен. error_for_status ДО взятия Body |
-| Q5 | byte-first + net amendment | **Body/headers byte-first (`[]u8`); `str` через fallible.** net amendment (**owner 2026-06-26 — ПОЛНАЯ миграция `str`→`[]u8`, НЕ minimal-additive**): весь byte-surface std/net мигрирует на `[]u8` — `TcpNet` read/write/write_all, accept()-стримы, **split-half** (read_half_read/write_half_write/write_half_write_all), `UdpNet` send_to/recv_from (если используется HTTP). Тонкий `str`-convenience может лежать сверху. Sequencing: byte-surface (additive `[]u8`) = **prereq Ф.0.5** (HTTP строится на нём, `str` транзитом); **полный демоут `str` + миграция всех net-callers** = **committed deliverable 182** (owner-approved, НЕ optional/droppable), guarded byte-baseline-commit ПОСЛЕ доказанного HTTP byte-path — старт HTTP не блокирует (§3.10/§4 Ф.0.5/§6/§9, D327). | HTTP-тело — байты; `str`(UTF-8) lossy на gzip/binary. Go/Rust/undici byte-first. Governance-amendment одобрен владельцем (тот же owner std/net) |
+| Q5 | byte-first + net amendment | **Body/headers byte-first (`[]u8`); `str` через fallible.** net amendment (**owner 2026-06-26 — ПОЛНАЯ миграция `str`→`[]u8`, НЕ minimal-additive**): весь byte-surface std/net мигрирует на `[]u8` — `TcpNet` read/write/write_all, accept()-стримы, **split-half** (read_half_read/write_half_write/write_half_write_all), `UdpNet` send_to/recv_from (если используется HTTP). Тонкий `str`-convenience может лежать сверху. Sequencing: byte-surface (additive `[]u8`) = **prereq Ф.0.5** (HTTP строится на нём, `str` транзитом); **полный демоут `str` + миграция всех net-callers** = **committed deliverable 182** (owner-approved, НЕ optional/droppable), guarded byte-baseline-commit ПОСЛЕ доказанного HTTP byte-path — старт HTTP не блокирует (§3.10/§4 Ф.0.5/§6/§9, D357). | HTTP-тело — байты; `str`(UTF-8) lossy на gzip/binary. Go/Rust/undici byte-first. Governance-amendment одобрен владельцем (тот же owner std/net) |
 | Q6 | URL промоут | **`_experimental/encoding/url.nv` → `std/http/url.nv` (`module std.http`).** Фикс `decode_query`-bug + `encode_query` multi-byte + IPv6-bracket + host-валидатор (§3.8). `Url.parse`→Result (D325). | URL — часть message-model; one-folder-module. Rust `url`/Go `net/url` рядом с http |
 | Q7 | version-transparency | **Один `HttpClient`/`Handler` для h1/h2/h3.** `Version` exposed, НЕ ветвит API; ALPN авто. | reqwest/Go/Java. Версия — деталь транспорта. Бьёт Node (раздельные `http`/`http2`) |
 | Q8 | h2-stream = fiber | **Каждый h2-stream = фибра.** Conn-state (HPACK/flow-window) под Mutex/atomics (103.3); HPACK-encode сериализован на conn-фибре (Q31). | Go (goroutine-per-stream) + Nova structured-concurrency first-class. Бьёт hyper(poll)/Node(callback) |
 | Q9 | redirect default | **Follow по умолчанию (limit=10 → `TooManyRedirects`).** `RedirectPolicy{Follow(max)\|None\|Custom}`. **Cross-origin → STRIP `Authorization`/`Cookie`.** 303→GET; 307/308 preserve. | reqwest+Go (оба auth-strip; CVE-класс). Soundness: auth-strip — security-инвариант |
 | Q10 | cookie default | **Jar OPT-IN per-client (default OFF).** RFC 6265bis: domain/path/Secure/HttpOnly/SameSite/PSL/`__Host-`/`__Secure-`; **Secure→https-only send, SameSite=None требует Secure**. | reqwest(default off)+Go. No-surprise-state. Send-side инварианты — security |
 | Q11 | auth | **`.basic_auth(u,p)`/`.bearer(t)` + cross-origin strip (Q9).** | reqwest/requests. Typed > ручной header |
-| Q12 | auto-decompress | **gzip/deflate/br ON по умолчанию (opt-out), bomb-cap 100 MiB → `BodyTooLarge`** — но **🔴 HARD-GATE на NEW sub-plan `std/encoding/compress`** (RFC 1950 zlib/1951 deflate/1952 gzip + brotli; owner 2026-06-26, точно как HTTPS гейтится на 116). **`identity`+`chunked` transfer приземляются СЕЙЧАС без него**; decompress — НЕ в plaintext-core landed-acceptance (§8), приземляется когда compress-sub-plan приземлится. | reqwest+undici. Cap — zip-bomb DoS. compress-sub-plan ДОЛЖЕН быть создан отдельно (НЕ в 182) |
+| Q12 | auto-decompress | **gzip/deflate/br ON по умолчанию (opt-out), bomb-cap 100 MiB → `BodyTooLarge`** — но **🔴 HARD-GATE на Plan 179 Ф.1** (pure-Nova inflate/gzip/zlib; br — 179 Ф.2; точно как HTTPS гейтится на 116). **`identity`+`chunked` transfer приземляются СЕЙЧАС без него**; decompress — НЕ в plaintext-core landed-acceptance (§8), приземляется когда 179 Ф.1 приземлится. | reqwest+undici. Cap — zip-bomb DoS. Plan 179 существует; его Ф.1 = 🔴 гейт-опенер этого Q |
 | Q13 | graceful shutdown | **supervised scope (173); per-conn фибра, bounded Semaphore (103.4); drain под `deadline:`.** | Go `Shutdown(ctx)` + Nova structured = drain+bound бесплатно |
 | Q14 | smuggling/injection | **СТРОГО: reject CL-vs-TE conflict (TE-приоритет); reject CR/LF/NUL в header; reject non-token method/name; `Host` обязателен (h1).** | CVE «request smuggling»/«header injection». §8.0 — НЕ опционально |
 | Q15 | hidden global client | **`http.get()` — global lazy `Once`, ТОЛЬКО скрипты/one-shot; prod → явный `HttpClient`** (документировано). | Zig-дух allocation/state-transparency; критика `requests.Session`-неявности учтена — но удобство для скриптов оставлено явно-фенсед |
@@ -890,7 +906,7 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 | Q17 | named constants | **zero-arg фабрики (`StatusCode.ok()`/`Mime.text_plain()`), НЕ top-level `let`** (top-level value-let не подтверждён в std). | Верифицировано: код использует фабрики, не export-let-value-константы |
 | Q18 | header str↔[]u8 | **NAME ASCII-only tchar; VALUE `[]u8`; `str`-API latin1 fast-path; `@to_str()` fallible на non-ASCII.** | reqwest `HeaderValue` (bytes, to_str fallible). Эргономика+корректность |
 | Q19 | BodyReader backing | **Чисто-Nova-декодер (chunked/CL/h2-DATA композится над byte-source TcpReadHalf/TlsStream/h2-stream), НЕ C-handle.** | nv-sourcing-максимум; декодинг — логика, не транспорт |
-| Q20 | json (де)сериализация | **`@json[T]` GATED на `std/encoding/json` + reflective/derive (НЕ существует).** До него — ручной `to_json/from_json`-протокол ИЛИ под-план. Из §8-acceptance landed-фаз `json()` ИСКЛЮЧ�ён пока gate открыт. | Нет reflective serde в Nova; honest-gate, не «available» |
+| Q20 | json (де)сериализация | **`@json[T]` GATED на Plan 180 Ф.4 (serde record-DTO; план существует).** dynamic `.json()->JsonValue` — СЕЙЧАС над существующим `std/encoding/json`. Из §8-acceptance landed-фаз `json()` ИСКЛЮЧ�ён пока gate открыт. | Нет reflective serde в Nova; honest-gate, не «available» |
 | Q21 | charset decode | **UTF-8 + ISO-8859-1/latin1 декодируются ВСЕГДА; прочие charset → `Protocol("unsupported charset")` + совет `.bytes()`.** Scoped-out с rationale, НЕ followup. | latin1-тело должно читаться корректно; экзотика — явный scope-out + pos-тест latin1 |
 | Q22 | mock форма | **Единая `mock_http()`/`mock_http_server()`: билдер `.on(method, path, \|req\|→MockResponse)`** для client+server. | Унификация триады между секциями |
 | Q23 | proxy | **`Proxy{http/https/socks5, no_proxy, auth}` + CONNECT-tunnel (HTTPS-via-proxy) = РЕАЛЬНАЯ Ф.2/Ф.4-задача**, НЕ followup. `from_env` (HTTP(S)_PROXY/NO_PROXY precedence). | Go `ProxyFromEnvironment`/reqwest/undici. Builder-метод без deferred-механизма = §8.0-violation → закрыт |
@@ -909,28 +925,29 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 
 **Dep-chain:** Ф.0 → **Ф.0.5** → Ф.1 → Ф.2 → Ф.3 → **[HARD-GATE Plan 116]** → Ф.4 → **[HARD-GATE Plan 116 ALPN]** → Ф.5 → Ф.6. **«сейчас»:** Ф.0–Ф.3, Ф.6(h1-часть). **«позже/gated»:** Ф.4 (HTTPS), Ф.5 (h2). Коммит после каждой фазы (§10). Server при росте → 178.1; h2 → 178.2.
 
-- **Ф.0 — GATE (без кода). «сейчас».** Закрыть §3.0 (Q1–Q31, готово); написать **D327–D332 spec-first** (§5); подтвердить расписание Plan 116 (гейт Ф.4/Ф.5; параллельно); **решить net `[]u8`-амендмент** (Q5, owner-sign-off под conventions-governance); зарезервировать D-номера (D327 старт); **reconcile Plan 116 forward-refs** (117/122 → 182, §6/§9); **verify** на main: `str.from_bytes` (есть — jwt.nv:75; убрать из HARD-PREREQ, оставить confirm-step), `decode_query`-bug-repro, `-> impl Trait`/protocol-bound (Q27 fallback), top-level value-let (Q17). **GATE.** DEP: Plan 177, 173, 116-schedule.
+- **Ф.0 — GATE (без кода). «сейчас».** Закрыть §3.0 (Q1–Q31, готово); написать **D357–D362 spec-first** (§5); подтвердить расписание Plan 116 (гейт Ф.4/Ф.5; параллельно); **решить net `[]u8`-амендмент** (Q5, owner-sign-off под conventions-governance); re-verify D-номера (D357–D362; grep D357-D369 = 0 — снимок Ред.2 2026-07-03); **reconcile Plan 116 forward-refs** (117/122 → 178, §6/§9); **verify** на main: `str.from_bytes` — **ОТСУТСТВУЕТ** (ЛОЖНЫЙ green: jwt.nv лишь call-site в _experimental) → внешний prereq ← **176 Ф.0.5**; `decode_query`-bug-repro; `-> impl Trait`/protocol-bound (Q27 fallback); top-level value-let (Q17); **эффект-полиморфизм протоколов** (176 `io.Read`/`io.Write` объявлены БЕЗ эффектов, конформеры эффектные — `Body.@copy_to(w mut impl io.Write) Http` для File-writer(Fs) не скомпилируется без механизма → координация 176 Ф.1; `BodyReader`↔`io.Read`: adapter `@as_read()` / conformance / явный scope-out — решить); **time-API 175** (`Monotonic.now`/`Duration.from_secs` — типов `Instant`/`Duration.seconds` НЕ существует, Ред.2 исправила примеры; **`.sec`-сахар (`30.sec`) НИГДЕ не спланирован — общая дыра с 173.1** → решение: добавить `.sec/.ms/.min` в 175 Ф.1 ЛИБО заменить на `Duration.from_secs` в §3.server-дефолтах; `Duration.MAX` → verify/добавить в 175 либо `@no_timeout()`); **174.3-цепочка** (распознавание CancelError в real_http = 173 Ф.4 ← 174.3 — verify, что typed `throw Timeout` из 173.1 достаточен без downcast). **GATE.** DEP: Plan 177, 173, 116-schedule.
 - **Ф.0.5 — PREREQ: URL-промоут + net byte-surface. «сейчас».** (1) Промоут url.nv → `std/http/url.nv` (Q6); **фикс `decode_query`-bug**; `Url.parse`/Result (D325); **ОБЯЗАТЕЛЬНО (§8): фикс `encode_query` multi-byte + IPv6-bracket + строгий host/SSRF-валидатор** (§3.8 — не «доводка»). (2) net byte-surface (ПОЛНЫЙ список §3.10): `read_bytes`/`write_bytes`/`write_all_bytes` на Stream+ReadHalf+WriteHalf; `real_tcp_net`+`mock_tcp_net`+C-shim; `str`-варианты сохранить. **HARD-BLOCKER для Ф.1.** pos: `Url.parse` round-trip; `decode_query` round-trip (был idle); `encode_query` multi-byte UTF-8 round-trip; `read_bytes` байт-в-байт incl. не-UTF-8. neg: malformed-port→`InvalidPort`; truncated-`%X`→`InvalidPercentEncoding`; octal/hex-IP-obfuscation→reject. DEP: Ф.0, net.
-- **Ф.1 — message-model. «сейчас».** `Method`(enum+`Other`), `StatusCode`(newtype+классы+`reason`+фабрики), `HeaderMap`(case-insens/ordered/multi-value; reject CRLF/NUL Q14; str↔[]u8 Q18; trailer), `Version`, `Url`(Ф.0.5), `Body`(**must-consume** Q3; in-mem`[]u8`\|stream`BodyReader`; bytes/text/json/discard/copy_to/into_reader/trailers consume; charset Q21; bomb-cap), `Mime`/`ContentType`, `Cookie`/`SetCookie`(RFC 6265bis send-инварианты), `HttpError`/`ErrorKind`(Q2). Чистые value+логика. spec: D328, D329. pos: HeaderMap case-insens/multi/ordered; StatusCode класс/reason; Method round-trip; Body.bytes consume; latin1 text-decode. neg: **body не consume→`EXPECT_COMPILE_ERROR`**(Q3); double-consume; CRLF в header→reject; non-token method→reject. DEP: Ф.0.5.
-- **Ф.2 — HTTP/1.1 client. «сейчас».** `Http`+`real_http()`(TcpNet+DnsNet+Time, h1-парсер .nv)+`mock_http()` (Q1). `HttpClient`(pooled; builder: deadline/timeout (173), RedirectPolicy (Q9), default-headers, cookie_store (Q10), **Proxy+CONNECT-tunnel (Q23)**, decompress (Q12), **ssrf_guard (Q24)**, **retry (Q16)**). reqwest-builder; convenience `http.get` (Q15). pool+keep-alive+**eviction-on-error**+**idempotent-retry**; chunked TE+**trailers**; auto-decompress **🔴 HARD-GATE на NEW под-план `std/encoding/compress`** (gzip/deflate/br + bomb-cap) — identity/chunked самодостаточны; auth (Q11); `error_for_status` (Q4); строгий парсинг (Q14). Request body: `[]u8`\|stream\|form\|multipart\|json(**gate Q20**). **Decompress gate:** NEW под-план `std/encoding/compress` (inflate/gzip/zlib = pure-Nova, brotli = C-FFI — 183 Q1/Q2; owner 2026-06-26 — отдельный, НЕ в 182) — пока не приземлён, decompress-acceptance §8.4 gated. spec: D327, D330. pos: GET/POST mock; chunked decode+trailers; redirect-follow; pool-reuse; **reused-dead-conn retry**; 404=Ok (Q4); `error_for_status`; CONNECT-tunnel (plaintext-proxy). neg: redirect-loop→`TooManyRedirects`; timeout→`Timeout`; **auth НЕ утекает cross-origin** (Q9); **POST не реплеится** (Q16); **errored-conn НЕ reused**; malformed status-line→`Protocol`; CL+TE→`Protocol` (Q14); bomb→`BodyTooLarge`; **SSRF private-target→`Blocked`** (Q24). DEP: Ф.1, 173, net byte-surface.
-- **Ф.3 — HTTP/1.1 server. «сейчас».** `HttpServer.bind/serve`; `Handler`(+streaming `ResponseWriter`+trailers); `ServeMux`(Go-1.22 patterns/params/methods/405+Allow/trailing-slash-301/path-normalize Q28); middleware-chain (onion); graceful shutdown (Q13); per-conn фибра bounded Semaphore (Q13/Q29); body-streaming; keep-alive; `100-continue`; строгий request-парсинг+`Host`-mandatory+CL/TE-reject (Q14); slowloris (header_timeout). spec: D331. pos: echo через `mock_http_server`; routing+params; middleware-order; keep-alive; graceful-drain. neg: malformed request-line→400; `..`-traversal→400; header-injection reject; CL+TE→400; slow-loris bounded; shutdown-deadline→force-close. DEP: Ф.1, 173, 103.4.
-- **Ф.4 — HTTPS client+server. «позже/gated». 🔴 HARD-GATE Plan 116.** `Conn`-seam (Plain\|Secure) под `real_http*`; client SNI+cert-verify+`ClientConfig`; server cert/key+`ServerConfig`+optional mTLS; CONNECT-tunnel-over-TLS. Version-transparent (Q7/Q30: Tls инкапсулирован). ALPN `["http/1.1"]` (h2 — Ф.5). spec: D332 (HTTP-over-TLS+ALPN→Version). pos: HTTPS GET (mock-Tls); SNI; server-cert round-trip (self-signed CustomRoots); mTLS Required; peer_cert. neg: cert-invalid→`Tls`; hostname-mismatch; HTTPS-on-plain-port→`Connect`. DEP: **Plan 116 Ф.1-Ф.5 closed**, Ф.2/Ф.3.
-- **Ф.5 — HTTP/2 (client+server). «позже/gated». 🔴 HARD-GATE Plan 116 ALPN (D212).** h2 framing+HPACK (.nv)+**stream=fiber** (Q8/Q31)+flow-control+SETTINGS/GOAWAY/PING+anti-DoS (rapid-reset/CONTINUATION-flood/caps)+push-OFF+PRIORITY-drop. Version-transparent. opt-in h2c. spec: D332 §h2. pos: multiplexing (N stream=N фибр); HPACK round-trip (Huffman+dynamic-evict); flow-control backpressure (park/wake); GOAWAY graceful; SETTINGS exchange; RST_STREAM cancel-one-stream. neg: HPACK-bomb→`Protocol` (не OOM); flow-violation→`Protocol`; rapid-reset→GOAWAY; push-opt-out соблюдается. DEP: **Plan 116 ALPN**, Ф.4.
-- **Ф.6 — тесты+docs+polish. «сейчас» (h1); h2-тесты после Ф.5.** §7 pos+neg полный; D327–D332 финал; `docs/http.md`(модель+cross-lang+§1a+https/h2)+`idioms/http-client.md`+`http-server.md`; **`Body.copy_to`/download-to-file** (Java/Swift-паритет, fs-gate Plan 176); slow real-socket (`*_slow.nv`). DEP: all (h2-блок gated Ф.5).
+- **Ф.1 — message-model. «сейчас».** `Method`(enum+`Other`), `StatusCode`(newtype+классы+`reason`+фабрики), `HeaderMap`(case-insens/ordered/multi-value; reject CRLF/NUL Q14; str↔[]u8 Q18; trailer), `Version`, `Url`(Ф.0.5), `Body`(**must-consume** Q3; in-mem`[]u8`\|stream`BodyReader`; bytes/text/json/discard/copy_to/into_reader/trailers consume; charset Q21; bomb-cap), `Mime`/`ContentType`, `Cookie`/`SetCookie`(RFC 6265bis send-инварианты), `HttpError`/`ErrorKind`(Q2). Чистые value+логика. spec: D358, D359. pos: HeaderMap case-insens/multi/ordered; StatusCode класс/reason; Method round-trip; Body.bytes consume; latin1 text-decode. neg: **body не consume→`EXPECT_COMPILE_ERROR`**(Q3); double-consume; CRLF в header→reject; non-token method→reject. DEP: Ф.0.5.
+- **Ф.2 — HTTP/1.1 client. «сейчас».** `Http`+`real_http()`(TcpNet+DnsNet+Time, h1-парсер .nv)+`mock_http()` (Q1). `HttpClient`(pooled; builder: deadline/timeout (173), RedirectPolicy (Q9), default-headers, cookie_store (Q10), **Proxy+CONNECT-tunnel (Q23)**, decompress (Q12), **ssrf_guard (Q24)**, **retry (Q16)**). reqwest-builder; convenience `http.get` (Q15). pool+keep-alive+**eviction-on-error**+**idempotent-retry**; chunked TE+**trailers**; auto-decompress **🔴 HARD-GATE на Plan 179 Ф.1** (gzip/deflate/br + bomb-cap; dispatch по Content-Encoding + `ErrSource.Compress` — Ф.2-deliverable ЗДЕСЬ) — identity/chunked самодостаточны; auth (Q11); `error_for_status` (Q4); строгий парсинг (Q14); **1xx-interim loop** (103/множественные 100 — RFC 9110 §15.2); **`TE: trailers` auto** (keep-alive h1); **NO_PROXY-матрица** (D360); **`MockResponse` API** (new/header/body + инъекция delay/error для timeout/retry-neg) — deliverable. Request body: `[]u8`\|stream\|form\|multipart\|json(**gate Q20**). **Decompress gate: Plan 179 Ф.1** (inflate/gzip/zlib = pure-Nova, brotli = C-FFI Ф.2 — 179 Q1/Q2) — пока не приземлён, decompress-acceptance §8.3 gated. spec: D357, D360. pos: GET/POST mock; chunked decode+trailers; redirect-follow; pool-reuse; **reused-dead-conn retry**; 404=Ok (Q4); `error_for_status`; CONNECT-tunnel (plaintext-proxy); **1xx-interim** (103→200; 100-без-Expect); **NO_PROXY-матрица** (регистр/`*`/dot-suffix/CIDR/host:port/loopback-bypass); **TE: trailers шлётся**. neg: redirect-loop→`TooManyRedirects`; timeout→`Timeout`; **auth НЕ утекает cross-origin** (Q9); **POST не реплеится** (Q16); **errored-conn НЕ reused**; malformed status-line→`Protocol`; CL+TE→`Protocol` (Q14); bomb→`BodyTooLarge`; **SSRF private-target→`Blocked`** (Q24). DEP: Ф.1, 173, net byte-surface.
+- **Ф.3 — HTTP/1.1 server. «сейчас».** `HttpServer.bind/serve`; `Handler`(+streaming `ResponseWriter`+trailers); `ServeMux`(Go-1.22 patterns/params/methods/405+Allow/trailing-slash-301/path-normalize Q28); middleware-chain (onion); graceful shutdown (Q13); per-conn фибра bounded Semaphore (Q13/Q29); body-streaming; keep-alive; `100-continue`; строгий request-парсинг+`Host`-mandatory+CL/TE-reject (Q14); slowloris (header_timeout); **write-side backpressure** (D361: @write/@flush паркуют при полном socket-buffer); **`real_http_server()`/`mock_http_server()`** — явные deliverables. spec: D361. pos: echo через `mock_http_server`; routing+params; middleware-order; keep-alive; graceful-drain; **slow-reader backpressure** (writer park, bounded RSS, cancel-safe); neg: **write_trailers-on-CL → `Protocol`**. neg: malformed request-line→400; `..`-traversal→400; header-injection reject; CL+TE→400; slow-loris bounded; shutdown-deadline→force-close. DEP: Ф.1, 173, 103.4.
+- **Ф.4 — HTTPS client+server. «позже/gated». 🔴 HARD-GATE Plan 116.** `Conn`-seam (Plain\|Secure) под `real_http*`; client SNI+cert-verify+`ClientConfig`; server cert/key+`ServerConfig`+optional mTLS; CONNECT-tunnel-over-TLS. Version-transparent (Q7/Q30: Tls инкапсулирован). ALPN `["http/1.1"]` (h2 — Ф.5). spec: D362 (HTTP-over-TLS+ALPN→Version). pos: HTTPS GET (mock-Tls); SNI; server-cert round-trip (self-signed CustomRoots); mTLS Required; peer_cert. neg: cert-invalid→`Tls`; hostname-mismatch; HTTPS-on-plain-port→`Connect`. DEP: **Plan 116 Ф.1-Ф.5 + Ф.7 (D210-D213 promote) closed** + mock_tls-триада (координация 116), Ф.2/Ф.3.
+- **Ф.5 — HTTP/2 (client+server). «позже/gated». 🔴 HARD-GATE Plan 116 ALPN (D212).** h2 framing+HPACK (.nv)+**stream=fiber** (Q8/Q31)+flow-control+SETTINGS/GOAWAY/PING+anti-DoS (rapid-reset/CONTINUATION-flood/caps)+push-OFF+PRIORITY-drop. Version-transparent. opt-in h2c. spec: D362 §h2. pos: multiplexing (N stream=N фибр); HPACK round-trip (Huffman+dynamic-evict); flow-control backpressure (park/wake); GOAWAY graceful; SETTINGS exchange; RST_STREAM cancel-one-stream. neg: HPACK-bomb→`Protocol` (не OOM); flow-violation→`Protocol`; rapid-reset→GOAWAY; push-opt-out соблюдается. DEP: **Plan 116 ALPN**, Ф.4.
+- **Ф.6 — тесты+docs+polish. «сейчас» (h1); h2-тесты после Ф.5.** §7 pos+neg полный; D357–D362 финал; `docs/http.md`(модель+cross-lang+§1a+https/h2)+`idioms/http-client.md`+`http-server.md`; **`Body.copy_to`/download-to-file** (Java/Swift-паритет, fs-gate Plan 176); slow real-socket (`*_slow.nv`). DEP: all (h2-блок gated Ф.5).
 
 ---
 
 ## 5. Spec / D / Q / docs
 
-**D-номера:** D325=Result-everywhere (181), D326=ref-param-mode (эта сессия) → HTTP старт **D327**. ⚠ verify D316–D324 (175/176) уже в `spec/decisions/` к присвоению; иначе зафиксировать gap (как Plan 177 §«D316–D324 зарезервированы»). Если 180 не приземлится первым — гейтить присвоение или взять D327+ безусловно с нотой gap (решение в Ф.0).
+**D-номера (Ред.2 2026-07-03):** D325=Result-everywhere (**177**) ✅, D326=ref-param-mode (**172.5**) ✅, D327=Codepoint (172.2) ✅, D328=value-record-== (172.4) ✅ — прежний старт «D327» коллидировал → **renumber выполнен: HTTP = D357–D362** (первый чистый блок из 6; D329–D332 формально свободны, но частично занимать нельзя: дальше D333–D339 = 179+буфер, D340–D346 = 180, D347 = 181, D348–D349 = 173, D350–D356 = 174; **D357–D399 свободны**, grep=0). Ф.0 — re-verify grep перед присвоением.
 
-- **NEW D327** — `Http`/`HttpServer` effect-контракт (`spec/decisions/04-effects.md`, рядом с D281/D295 net, D210 Tls): client-seam ops (`send`/`connect_pool`); server-seam; `real_http()` requires `TcpNet`+`DnsNet`+`Time` (+`Tls` для https, **инкапсулировано** Q30); h1/h2-framing = .nv (НЕ effect-op); mock-контракт; **net byte-surface-амендмент** (полный список §3.10, Q5).
-- **NEW D328** — message-model: `Method`(token+`Other`), `StatusCode`(u16+классы+reason), `HeaderMap`(case-insens/ordered/multi; CRLF/NUL-reject Q14; str↔[]u8 Q18; trailer), `Version`, `Cookie`/`SetCookie`(RFC 6265bis send-инварианты), `Mime`/`ContentType`; request-target нормализация; **строгий host/URL-валидатор+IPv6-bracket+multi-byte-encode** (Q6, SSRF).
-- **NEW D329** — `Body` must-consume (D133/D131/D180): Response-Body линейный, `consume @close/bytes/text/json/discard/copy_to/into_reader/trailers`; незакрытый = compile-error; **чисто-Nova `BodyReader`** (Q19); charset UTF-8/latin1 (Q21); decompression-bomb-cap (Q12); chunked-trailers.
-- **NEW D330** — redirect+cookie+auth+retry+proxy+pool: 10-default, `RedirectPolicy`, 303→GET/307-308 preserve, **cross-origin auth/cookie-strip** (Q9); cookie-jar opt-in RFC 6265bis (Q10); auth (Q11); **idempotent-retry+POST-never-replay+pool-eviction-on-error** (Q16); **Proxy+CONNECT-tunnel** (Q23); **SSRF-guard** (Q24); pool-key+alpn (Q26).
-- **NEW D331** — server: `Handler`/`ResponseWriter`(+trailers)/`ServeMux`(Q28)/middleware(onion); graceful shutdown (Q13); bounded Semaphore (Q29); `100-continue`; строгий request-парсинг (`Host`-mandatory, CL/TE, `..`-reject Q14/Q28).
-- **NEW D332** — HTTP-over-TLS + HTTP/2: ALPN→`Version` (Q7); Tls-инкапсуляция (Q30); h2 frame/HPACK/**stream=fiber** (Q8)/HPACK-serialized-on-conn (Q31)/flow-control/SETTINGS/GOAWAY/anti-DoS(rapid-reset/CONTINUATION)/push-OFF/PRIORITY-drop; version-transparency-инвариант.
+- **NEW D357** — `Http`/`HttpServer` effect-контракт (`spec/decisions/04-effects.md`, рядом с D281/D295 net, D210 Tls): client-seam ops (`send`/`connect_pool`); server-seam; `real_http()` requires `TcpNet`+`DnsNet`+`Time` (+`Tls` для https, **инкапсулировано** Q30); h1/h2-framing = .nv (НЕ effect-op); mock-контракт; **net byte-surface-амендмент** (полный список §3.10, Q5).
+- **NEW D358** — message-model: `Method`(token+`Other`), `StatusCode`(u16+классы+reason), `HeaderMap`(case-insens/ordered/multi; CRLF/NUL-reject Q14; str↔[]u8 Q18; trailer), `Version` (**OPEN — Http3-extension non-breaking**, Ред.2), `Cookie`/`SetCookie`(RFC 6265bis send-инварианты), `Mime`/`ContentType`; request-target нормализация; **строгий host/URL-валидатор+IPv6-bracket+multi-byte-encode** (Q6, SSRF).
+- **NEW D359** — `Body` must-consume (D133/D131/D180): Response-Body линейный, `consume @close/bytes/text/json/drain/copy_to/into_reader/trailers`; незакрытый = compile-error; **чисто-Nova `BodyReader`** (Q19) + **pull-контракт** (producer читает транспорт только по pull, буферизация ≤1 chunk — Ред.2); charset UTF-8/latin1 (Q21); decompression-bomb-cap (Q12); chunked-trailers.
+- **NEW D360** — redirect+cookie+auth+retry+proxy+pool: 10-default, `RedirectPolicy`, 303→GET/307-308 preserve, **cross-origin auth/cookie-strip** (Q9); cookie-jar opt-in RFC 6265bis (Q10); auth (Q11); **idempotent-retry+POST-never-replay+pool-eviction-on-error** (Q16); **Proxy+CONNECT-tunnel** (Q23) + **NO_PROXY-матрица** (регистр/`*`/dot-suffix/CIDR/host:port/резолв-ПОСЛЕ-bypass/loopback-never-proxied — Ред.2); **SSRF-guard** (Q24); pool-key+alpn (Q26).
+- **NEW D361** — server: `Handler`/`ResponseWriter`(+trailers; **write_trailers-on-CL → Protocol**)/`ServeMux`(Q28)/middleware(onion); graceful shutdown (Q13); bounded Semaphore (Q29); `100-continue` + 1xx-interim; **write-side backpressure** (park при полном socket-buffer, no unbounded buffering — Ред.2); строгий request-парсинг (`Host`-mandatory, CL/TE, `..`-reject Q14/Q28).
+- **NEW D362** — HTTP-over-TLS + HTTP/2: ALPN→`Version` (Q7); Tls-инкапсуляция (Q30); h2 frame/HPACK/**stream=fiber** (Q8)/HPACK-serialized-on-conn (Q31)/flow-control/SETTINGS/GOAWAY/anti-DoS(rapid-reset/CONTINUATION)/push-OFF/PRIORITY-drop; version-transparency-инвариант.
 - **Q9 closure** — RESOLVED §3.0/Q1: HTTP-логика core .nv; byte-транспорт C-routed; compress (Plan 179): inflate/gzip/zlib pure-Nova + brotli C-FFI.
+- **spec_tests/conformance:** файлы §7 (d357–d362 + amend d281/d295) — ОБЯЗАТЕЛЬНОЕ D-покрытие.
 - **docs/* (новые):** `docs/http.md`, `docs/idioms/http-client.md`, `docs/idioms/http-server.md`.
 
 ---
@@ -943,24 +960,26 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 
 **net `SocketAddr` rep (§13.2 / §3.10):** `value { priv handle CSocketAddr }` → Nova value-record `{family, []u8, port}`; `AddrNet`-операции → pure `.nv` (**retract `AddrNet`**); `connect`/`bind`/`recv_from` конвертят Nova↔C `sockaddr` внутри. Rep-change shipped-кода (91.12) → **byte-baseline-guarded коммит** (как `str`→`[]u8`); НЕ блокирует HTTP; callers `SocketAddr.*` — per-file loop.
 
-**Reconcile Plan 116 forward-refs:** [116:74-76]/[116:753-755] «Plan 117=HttpClient / Plan 122=HttpServer» → **консолидировать в 182** (HttpClient=Ф.2, HttpServer=Ф.3). Обновить layered-диаграмму 116 + §«Cross-references». Нота §9.
+**Reconcile Plan 116 forward-refs:** [116:74-76]/[116:753-755] «Plan 117=HttpClient / Plan 122=HttpServer» → **консолидировать в 178** (HttpClient=Ф.2, HttpServer=Ф.3). Обновить layered-диаграмму 116 + §«Cross-references». Нота §9.
 
-**`str.from_bytes` — НЕ HARD-PREREQ** (критик/accuracy): валидирующий Result-returning `str.from_bytes` уже в активном использовании ([_experimental/crypto/jwt.nv:75/109]); `Body.text()` опирается на него напрямую. В Ф.0 — confirm-step (verify сигнатуру на main), не блокирующий unknown.
+**`str.from_bytes` — ВНЕШНИЙ PREREQ ← 176 Ф.0.5** (Ред.2, fact-check 176 Q11): определения НЕТ нигде в std (grep: только from_bytes_unchecked/lossy); [_experimental/crypto/jwt.nv:75/109] лишь **ВЫЗЫВАЕТ** его (ложный green, файл не компилится); интринзик = `str.try_from([]u8)` без byte_offset — канон-`from_bytes`+`Utf8Error` оформляет **176 Ф.0.5**. `Body.text()` (Ф.1) гейтится на него; при независимом старте 178 — внести по форме 176.
 
 **`_experimental` cleanup:** после промоута — удалить url.nv; пересобрать `nova-cli` после `.nv` (`include_str!`); верификация против чистого бинаря.
 
 ---
 
-## 7. Тесты (pos + neg; `nova_tests/http182/`, neg `neg/`)
+## 7. Тесты (pos + neg; `nova_tests/http/` — тема, НЕ per-plan папка)
 
-Раскладка как net/180: pos = folder-module (`module nova_tests.http182`); neg = `neg/` subdir (`module neg.<name>` + `EXPECT_*`, один маркер/файл); классификация по маркеру. **mock-handler-тест MANDATORY** (`mock_http`/`mock_http_server`). slow/real-socket = `*_slow.nv` (skipped by default).
+Раскладка по test-conventions Ред.2 (тема http, как 175/176 §7): pos = folder-module (`module nova_tests.http`), обычные test-блоки; **Err-Result-проверки (TooManyRedirects/Timeout/Protocol/BodyTooLarge/Blocked/…) = ПОЗИТИВНЫЕ test-блоки с assert на Err-kind** (НЕ neg/); `rt/` = standalone `fn main` только для настоящих `EXPECT_RUNTIME_PANIC`/`EXPECT_STDERR`-фикстур; `neg/` = **ТОЛЬКО** `EXPECT_COMPILE_ERROR` (`module neg.<name>`, маркер `// EXPECT_COMPILE_ERROR <substr>` **без двоеточия**, один маркер/файл). **mock-handler-тест MANDATORY** (`mock_http`/`mock_http_server`). slow/real-socket = `*_slow.nv` (D277/D298: opt-in `--include-slow`, коммитятся).
+
+**spec_tests/conformance — ОБЯЗАТЕЛЬНОЕ D-покрытие (Ред.2):** `spec_tests/conformance/d357_http_effect_contract.nv` (seam-опы, `real_http`-инкапсуляция Q30, mock-контракт) · `d358_http_message_model.nv` (Method/StatusCode/HeaderMap+CRLF-reject/host-валидатор/Cookie-инварианты/Version-OPEN) · `d359_body_must_consume.nv` + `neg/d359_body_not_consumed.nv`/`neg/d359_double_consume.nv` · `d360_client_policies.nv` (redirect/auth-strip/idempotent-retry+POST-never/pool-eviction/proxy-CONNECT/NO_PROXY/SSRF) · `d361_server_contract.nv` (404/405+Allow/path-normalize/Host-mandatory/CL-TE-reject/limits/backpressure) · `d362_http_tls_h2.nv` (gated Ф.4/Ф.5). **Amend-правило:** net byte-surface амендит D281/D295 ⇒ **обновить существующие d281_*/d295_*-файлы В ТОМ ЖЕ изменении**; локалы с префиксом `dNNN_`; прогон `nova test spec_tests` отдельной командой.
 
 **pos / контрактные:**
 - **message-model:** HeaderMap case-insens+multi+ordered; StatusCode класс/reason; Method round-trip incl. `Other`; Cookie/SetCookie RFC 6265bis; Mime/ContentType; **latin1 text-decode** (Q21).
 - **must-consume Body (pos):** `bytes()`/`text()`/`json()`(gate) разряжают; `into_reader()` дренирует; `copy_to(writer)`; chunked-**trailers**.
 - **URL (Ф.0.5):** `Url.parse` round-trip (userinfo/port/query/fragment); **`decode_query` round-trip** (bug-fix-regression-guard); **`encode_query` multi-byte UTF-8** (regression-guard); IPv6-bracket.
 - **client (`mock_http`):** GET/POST; query-builder; default-headers merge; chunked decode+trailers; redirect-follow (301/302/303→GET / 307-308 preserve); pool-reuse+keep-alive; **reused-dead-conn idempotent-retry** (Q16); `404=Ok` (Q4); `error_for_status`; **CONNECT-tunnel** (plaintext-proxy Q23).
-- **server (`mock_http_server`):** echo; ServeMux params+method+405-Allow; trailing-slash-301; middleware-order; keep-alive; graceful-shutdown (in-flight завершается, новые reject); `100-continue`; streaming.
+- **server (`mock_http_server`):** echo; ServeMux params+method+405-Allow; trailing-slash-301; middleware-order; keep-alive; graceful-shutdown (in-flight завершается, новые reject); `100-continue`; streaming; **slow-reader write-backpressure** (writer паркуется, RSS bounded, cancel-safe во время write-park).
 - **byte-roundtrip:** body `[]u8` write→read **байт-в-байт** incl. не-UTF-8.
 - **decompress (gated codec):** gzip/deflate/br round-trip (если codec-subtask landed).
 - **HTTPS (Ф.4, mock-Tls):** SNI; cert round-trip; mTLS; version-transparent.
@@ -969,7 +988,7 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 **neg (`EXPECT_COMPILE_ERROR`):**
 - **body не consume** (главный, Q3); double-consume; use-after-consume; `ErrorKind`-match без wildcard.
 
-**neg (`EXPECT_RUNTIME_PANIC`/`EXPECT_STDERR`-substring):**
+**Err-Result-проверки (ПОЗИТИВНЫЕ test-блоки с assert на Err-kind; настоящие panic/stderr-фикстуры → `rt/`):**
 - malformed request/status-line→`Protocol`/400; gigantic header→`431`/`HeaderTooLarge`; chunked edge (bad size/missing CRLF/premature EOF)→`Protocol`.
 - redirect-loop→`TooManyRedirects`; timeout→`Timeout`.
 - graceful-shutdown под нагрузкой.
@@ -980,6 +999,8 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 - **POST НЕ реплеится** на reused-conn-fail; **errored-conn НЕ reused** (Q16).
 - **SSRF:** private-target → `Blocked` (Q24); octal/hex-IP-obfuscation reject; userinfo-confusion.
 - **cookie:** Secure-cookie НЕ отправляется по `http://` (Q10).
+- **`@write_trailers` на CL-framed h1 → `Protocol`** (НЕ silent-drop, Ред.2).
+- **must-consume через early-`?`** (consume-`HttpResponse` уносится в `Err`-возврат = корректный discharge) — pos; **`forbid Http` × root-default непреодолим** — neg (§13.4, Ред.2 — внесены явно).
 - `..`-path-traversal→400 (Q28).
 - HTTPS-on-plain-port→`Connect`; cert-invalid→`Tls` (Ф.4); HPACK-bomb/flow-violation→`Protocol`; rapid-reset→GOAWAY (Ф.5).
 
@@ -989,15 +1010,15 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 
 ## 8. Критерии приёмки
 
-0. **🔴 ОБЯЗАТЕЛЬНО: «без упрощений, как для прода».** Ни одного «решим потом» на критическом пути (парсинг, security: smuggling/injection/auth-strip/bomb-cap/SSRF/cookie-send-инварианты, must-consume, timeout-by-default, retry-idempotency, proxy-CONNECT) — на КАЖДОЙ приземлённой фазе (Ф.0–Ф.6). Каждая behavior-change — **pos+neg + аргумент звучности**; «звучность по построению»/корпус НЕ заменяют edge-тесты. 0 regressions vs **чистый бинарь** (kill-switch на ТОМ ЖЕ бинаре); полный регресс зелёный (батчами <10мин). **Явно gated, НЕ «решим потом»:** `json()` (Q20, нет serde), gzip/br-decompress (Q12, нет codec) — исключены из landed-acceptance пока их зависимость открыта; identity/chunked-путь самодостаточен. **Явно scoped-out с rationale (НЕ violation):** non-UTF-8/latin1 charset (Q21), HTTP/3/WebSocket/server-push/h2-PRIORITY/h2c-Upgrade/zstd (§11).
+0. **🔴 ОБЯЗАТЕЛЬНО: «без упрощений, как для прода».** Ни одного «решим потом» на критическом пути (парсинг, security: smuggling/injection/auth-strip/bomb-cap/SSRF/cookie-send-инварианты, must-consume, timeout-by-default, retry-idempotency, proxy-CONNECT) — на КАЖДОЙ приземлённой фазе (Ф.0–Ф.6). Каждая behavior-change — **pos+neg + аргумент звучности**; «звучность по построению»/корпус НЕ заменяют edge-тесты. **Гейт корректности (Ред.2):** `spec_tests/conformance` зелёный (d357–d362 + amended d281/d295) + pos/neg-фикстуры фазы + **nova_tests baseline-delta = 0** (baseline = parent-коммит через temp-worktree/commit+reset, ТОТ ЖЕ бинарь; nova_tests сам по себе НЕ гейт; флака ≠ регрессия; батчами <10мин). **Явно gated, НЕ «решим потом»:** `json()` (Q20, нет serde), gzip/br-decompress (Q12, нет codec) — исключены из landed-acceptance пока их зависимость открыта; identity/chunked-путь самодостаточен. **Явно scoped-out с rationale (НЕ violation):** non-UTF-8/latin1 charset (Q21), HTTP/3/WebSocket/server-push/h2-PRIORITY/h2c-Upgrade/zstd (§11).
 1. **message-model (Ф.1):** `Method`/`StatusCode`/`HeaderMap`/`Version`/`Url`/`Body`(must-consume)/`Cookie`/`Mime`/`HttpError`(OPEN `ErrorKind`); CRLF/NUL-reject; latin1-decode. **must-consume:** непрочитанный/незакрытый/double-consume body → compile-error.
 2. **URL (Ф.0.5):** промоут; **`decode_query`-bug fixed** + **`encode_query` multi-byte fixed** + **IPv6-bracket + host/SSRF-валидатор** (round-trip+neg зелёные); `Url.parse`→Result.
-3. **client (Ф.2):** `Http`-seam+`real_http`/`mock_http`; reqwest-builder+convenience; pool+keep-alive+**eviction**+**idempotent-retry** (POST-never); chunked+trailers; redirect+**cross-origin auth-strip**; auth; **Proxy+CONNECT**; **SSRF-guard**; deadline/timeout (173) by-default; `error_for_status`; smuggling/injection-reject; bomb-cap. (decompress gated codec; json gated serde.) `mock_http` детерм.
-4. **server (Ф.3):** `HttpServer`/`Handler`/`ServeMux`(Q28)/middleware; per-conn bounded (Semaphore); **graceful shutdown**; keep-alive; `100-continue`; `Host`-mandatory+строгий парсинг+`..`-reject. `mock_http_server` детерм.
+3. **client (Ф.2):** `Http`-seam+`real_http`/`mock_http`; reqwest-builder+convenience; pool+keep-alive+**eviction**+**idempotent-retry** (POST-never); chunked+trailers; redirect+**cross-origin auth-strip**; auth; **Proxy+CONNECT**; **SSRF-guard**; deadline/timeout (173) by-default; `error_for_status`; smuggling/injection-reject; bomb-cap; **1xx-interim loop (103) pos; NO_PROXY-матрица pos+neg; `TE: trailers` шлётся**. (decompress gated **179 Ф.1**; json gated **180 Ф.4**.) `mock_http` детерм.
+4. **server (Ф.3):** `HttpServer`/`Handler`/`ServeMux`(Q28)/middleware; per-conn bounded (Semaphore); **graceful shutdown**; keep-alive; `100-continue`; `Host`-mandatory+строгий парсинг+`..`-reject; **slow-reader write-backpressure** (writer park, bounded RSS, cancel-safe); **write_trailers-on-CL → `Protocol`** neg. `mock_http_server` детерм.
 5. **HTTPS (Ф.4) — 🔴 HARD-GATE 116:** SNI+cert-verify, server cert/key+optional mTLS+peer_cert; **version-transparent** (Tls инкапсулирован); honest-gate (116 не готов → Ф.4 не стартует, явно).
 6. **h2 (Ф.5) — 🔴 HARD-GATE 116 ALPN:** framing+HPACK+**stream=fiber**+flow-control+SETTINGS/GOAWAY+anti-DoS(rapid-reset/CONTINUATION)+push-OFF; version-transparent; HPACK/flow neg.
 7. **byte-first:** body/headers `[]u8`; `str` через fallible; net byte-surface (полный §3.10) приземлён.
-8. **spec:** D327–D332 в `spec/decisions/`; Q9 закрыт; docs; §1a; Plan 116 forward-refs reconciled → 182.
+8. **spec:** D357–D362 в `spec/decisions/` + spec_tests d357–d362 зелёные (amend d281/d295); Q9 закрыт; docs; §1a; Plan 116 forward-refs reconciled → 178; **Version-OPEN-extensibility в D358; BodyReader-pull в D359; NO_PROXY-матрица + loopback-bypass в D360** (Ред.2).
 9. **net `str`→`[]u8` ПОЛНАЯ миграция** (owner-approved, committed/в-scope) — byte-baseline-guarded коммит ПОСЛЕ доказанного HTTP byte-path; старт HTTP не блокирует. Большие/h2-stress тесты вне дефолт-сэмпла (`*_slow.nv`).
 
 ---
@@ -1007,20 +1028,23 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 **Конвенции (refs):** module-conventions (folder=один модуль `std.http`; effect-ТРИАДА effect+`real_http`+`mock_http`; scalars=value-record D215; resources=must-consume D133 — `Body`; **byte-first** `[]u8`, `str` via fallible; FFI в `ffi.nv` extern "C" path→CStr / data→(*u8,len); логика парсинга/кодеков в .nv не C — nv-sourcing). **D325** (R1 fallible→`Result[T,HttpError]`; R2 bare-имя; R3 `try_` только для from-сиблинга; R4 `Option`=genuine absence; R5 `Fail[E]` запрещён для своих, ок forwarding). **consume** D131/D133/D180. **test-conventions** (EXPECT_*; pos folder-module / neg `neg/`; mock-тест mandatory). conventions-governance: изменения только по согласованию.
 
 **Координировать:**
-- **Plan 116 (std/tls)** — 🔴 HARD-GATE Ф.4/Ф.5; `Tls`/`TlsStream consume`/`ClientConfig`/`ServerConfig`/SNI/**ALPN** (D210-D213). Параллельно Ф.0-Ф.3. **Reconcile forward-refs** (117/122 → 182, §6).
-- **Plan 173** — supervised scope (server), per-conn spawn+bounded Semaphore, `deadline:`/`timeout:` (client+h2-stream+drain), `defer` always, MultiError, cancel→net-park; **Q29 acquire cancel-aware** verify; **Q25 else_timeout/match** на пойманном Timeout verify.
-- **Plan 175 (Time)** — `Timestamp`/`Duration`/`Instant` (deadline/cookie-expiry/idle); verify конструкторы (`Duration.seconds`/`Instant.now`).
+- **Plan 116 (std/tls)** — 🔴 HARD-GATE Ф.4/Ф.5; `Tls`/`TlsStream consume`/`ClientConfig`/`ServerConfig`/SNI/**ALPN** (D210-D213; **D-promote = 116 Ф.7** → в DEP Ф.4); **mock_tls-триада** — добавить в гейт-требования 116. Параллельно Ф.0-Ф.3. **Reconcile forward-refs** (117/122 → 178, §6).
+- **Plan 173** — supervised scope (server), per-conn spawn+bounded Semaphore, `deadline:`/`timeout:` (client+h2-stream+drain), `defer` always, MultiError, cancel→net-park; **Q29 acquire cancel-aware** verify; **timeout-канал** (Ред.2: `else_timeout` НЕ существует — канал = `supervised(timeout:)` несёт Fail[Timeout] → `!!`/`?`/match, 173.1 §2 п.5; `send()` ловит Timeout → `HttpError{kind: Timeout}`) verify; **cancel-семантика** (§3.9: свой scope-cancel пропагирует, НЕ Err) — 173-модель.
+- **Plan 175 (Time)** — `Timestamp`/`Duration`/`Monotonic` (deadline/cookie-expiry/idle); Ред.2-фикс: `Instant`/`Duration.seconds` НЕ существуют → `Monotonic.now`/`Duration.from_secs`; **`.sec`-сахар** — Ф.0-решение (в 175 Ф.1 либо заменить); **`Duration.MAX`** — verify/добавить в 175 Ф.1c либо `@no_timeout()`.
 - **Plan 177 (D325)** — Result-everywhere (conformant by-construction).
 - **net-семейство** — byte-surface-амендмент; triad+layered (как 116 над net).
 - **Plan 103.3/103.4** — Mutex (h2 conn-state/cookie-jar) / Semaphore (server bound + h2 MAX_CONCURRENT_STREAMS).
-- **Plan 176 (fs/io)** — `Body.copy_to`/download-to-file + multipart-File-part + cert-from-file гейтят на fs; `impl io.Write`/`io.Read` для `Conn` — координация.
+- **Plan 176 (fs/io)** — `Body.copy_to`/download-to-file + multipart-File-part + cert-from-file гейтят на fs; `impl io.Write`/`io.Read` для `Conn` — координация; **эффект-полиморфизм протоколов** (io.Read/Write без эффектов vs эффектные конформеры — Ф.0-verify + координация 176 Ф.1; `BodyReader`↔`io.Read` — решение Ф.0); **176 Ф.4a NetError→IoError-projection трогает `ErrSource.Net`** — НЕ пересекать коммиты (176:330); `str.from_bytes` ← **176 Ф.0.5** (внешний prereq Ф.1).
+- **Plan 179 (compress)** — decompress-gate = **Ф.1** (gzip/deflate/zlib; br — Ф.2); dispatch по Content-Encoding + `ErrSource.Compress(CompressError)` — Ф.2-задачи ЗДЕСЬ (179 §3.4); bomb→`BodyTooLarge`-маппинг.
+- **Plan 180 (serde)** — typed `.json[T]` gate = **Ф.4** (record-DTO достаточно; sum-DTO — sub-gate 180.2); dynamic `.json()->JsonValue` — сейчас.
+- **Plan 174.3 (any)** — НЕ зависимость (typed ErrSource выбран сознательно); único-касание: распознавание CancelError (173 Ф.4 ← 174.3) — Ф.0-verify, что typed `throw Timeout` достаточен.
 
 **⚠ Конвенции/std, МОГУТ потребовать амендмента (owner-sign-off, conventions-governance):**
 - **net `str`→`[]u8` surface (Q5)** — `TcpNet.read/write` сейчас `str` ([effect.nv:52-54], half-варианты [tcp.nv:236/277/283]). Необходимость: HTTP-тело — байты; `str` ломается на gzip/binary (нарушает byte-first + §8.0). **Амендмент ОДОБРЕН владельцем 2026-06-26 (ПОЛНАЯ миграция).** Sequencing: byte-surface additive (Ф.0.5, `str` транзитом) → полная миграция `str`→`[]u8` (committed, guarded commit после HTTP byte-path). Governance: тот же owner std/net.
 - **`SocketAddr` rep → value-record + `AddrNet`-retract + umbrella `real_net()` (§13.2 / §3.10 / §6)** — сейчас C-handle ([addr.nv:34]) + pure-операции на эффекте `AddrNet`. Необходимость: nv-sourcing (address-логика в `.nv`) + убрать лишнюю effect-церемонию (H2-долг §12). Owner-decision 2026-06-27; тот же owner std/net; едет с byte-surface, **НЕ блокирует HTTP**.
-- **`std/encoding/json` + reflective serde (Q20)** — НЕ существует; `json()` gated. Решить: под-план или ручной `to_json/from_json`-протокол MVP.
-- **NEW под-план `std/encoding/compress` (Q12, owner 2026-06-26)** — gzip/deflate/brotli НЕ существуют; decompress 🔴 HARD-GATE на этот отдельный под-план (создать ВНЕ 182).
-- **`str.from_bytes`** — УЖЕ есть (jwt.nv:75), НЕ HARD-PREREQ — только confirm-step Ф.0.
+- **serde (Q20)** — **Plan 180 существует**; typed `json()` gated на 180 Ф.4 (record-DTO); dynamic `.json()->JsonValue` — сейчас над `std/encoding/json`.
+- **compress (Q12)** — **Plan 179 существует**; decompress 🔴 HARD-GATE на 179 Ф.1 (gzip/deflate/zlib pure-Nova; br — 179 Ф.2 C-FFI).
+- **`str.from_bytes`** — **НЕ существует** (jwt.nv — лишь call-site, ложный green); внешний prereq ← **176 Ф.0.5** (Ф.1 `Body.text()` ждёт его).
 
 После большой задачи — обновить `project-creation.txt` + `nova-private/discussion-log.md` + `simplifications.md`.
 
@@ -1028,9 +1052,9 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 
 ## 10. Фоновые агенты
 
-- **НЕ `git stash`** (worktree делят `.git` → repo-global коллизия/потеря); baseline — **temp-worktree / commit+reset**. Постоянный worktree `nova-p182` (naming `nova-pNN`) первой командой, самозарегистрироваться; cwd сбрасывается в main → **префикс абсолютным путём в каждой команде**; ссылки на файлы worktree — полный абсолютный путь.
-- **Rate-limit-устойчивость (фазы resumable/идемпотентны):** коммит после каждой фазы, без amend; малые батчи; `agent()`-null-tolerant — фильтровать выживших, ре-ран упавших; `git add` только конкретные файлы (никогда `-A`/`.`); `git diff --cached --stat` перед commit; без `Co-Authored-By`. Подтверждение перед background-`Agent`.
-- **Тесты:** `nova test` — не гейт корректности (byte-baseline), гейт = targeted pos+neg + soundness; полный `nova test` >10мин-cap → батчи <10мин; mass compile-errors (net `[]u8`) → per-file loop. **net/http-тесты с cwd=worktree** (libuv `repo_root=current_dir`); env `NOVA_GC_LIB_DIR`/`INCLUDE_DIR`→main, libuv-submodule из main + удалить `libuv/.git`. **Пересобрать `nova-cli` после правок `.nv`** (`include_str!`). Не выдумывать синтаксис — `spec/decisions/`+`examples/`.
+- **НЕ `git stash`** (worktree делят `.git` → repo-global коллизия/потеря); baseline — **temp-worktree** (`git worktree add ../nova-178-base <parent>`) / commit+reset, **ТОТ ЖЕ бинарь**. Постоянный worktree `nova-p178` (naming `nova-pNN`) первой командой, самозарегистрироваться; cwd сбрасывается/дрейфует → **префикс абсолютным путём в каждой команде**; ссылки на файлы worktree — полный абсолютный путь.
+- **Rate-limit-устойчивость (фазы resumable/идемпотентны):** коммит после каждой фазы, без amend; малые батчи; `agent()`-null-tolerant — фильтровать выживших, ре-ран упавших; `git add` только конкретные файлы (никогда `-A`/`.`); `git diff --cached --stat` перед commit; **DCO `git commit -s`** (CI-гейт); без `Co-Authored-By`; после фазы — **bidirectional sync с main**. Подтверждение перед background-`Agent`.
+- **Тесты:** `nova test` требует **ЯВНЫЙ путь**; батч-канон: `nova test nova_tests/<dirs> --results-file rN.json` батчами <10мин + хвост `--rerun-failed`; **ОТДЕЛЬНО** `nova test spec_tests` и `nova test std`. Гейт = §8.0 (spec_tests d357–d362 + pos/neg + baseline-delta=0; nova_tests сам по себе НЕ гейт; флака ≠ регрессия); mass compile-errors (net `[]u8`) → per-file loop. **net/http-тесты с cwd=worktree** (libuv `repo_root=current_dir`); env `NOVA_GC_LIB_DIR`/`INCLUDE_DIR`→main, libuv-submodule из main + удалить `libuv/.git`. **Пересобрать `nova-cli` после правок `.nv`** (`include_str!`); **mtime-touch `.rs` перед `cargo build`** (stale-build). Не выдумывать синтаксис — `spec/decisions/`+`examples/`.
 
 ---
 
@@ -1038,10 +1062,13 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 
 `[M-178-std-http]`. **Под-планы при росте:** **178.1** (server), **178.2** (h2). Deferred (с rationale, НЕ на критпути h1+https+h2-core):
 - **WebSocket upgrade** (`ws://`/`wss://`, RFC 6455 — h1-Upgrade + frame-protocol; java.net.http-паритет-gap).
-- **HTTP/3 / QUIC** (gate DTLS/QUIC-транспорт; `[M-116-quic]`/`[M-116-dtls]`; нужен UDP+TLS1.3-в-транспорте).
+- **HTTP/3 / QUIC** (gate DTLS/QUIC-транспорт; `[M-116-quic]`/`[M-116-dtls]`; нужен UDP+TLS1.3-в-транспорте) + **Alt-Svc parse** (h3-discovery). Peer-фон: h3 в std нет НИ У КОГО (Swift получает из ОС; Go — quic-go 3rd-party; Zig — нет).
 - **gRPC** (h2 + protobuf + service-codegen) — поверх Ф.5.
 - **forward/reverse proxy** (полный CONNECT-tunneling-сервер, header-forwarding; **trusted X-Forwarded-For opt-in** — `peer_addr` за прокси).
 - **response caching + conditional** (`If-None-Match`/`If-Modified-Since`/304, RFC 9111).
+- **resumable download** (Range + If-Range/ETag для `Body.copy_to` — аналог Swift resume-data).
+- **request-side trailers** (Go `Request.Trailer`-паритет; response-side `@trailers`/`@write_trailers` — уже в scope; URLSession trailers вообще не экспонирует → Nova first-class = differentiator).
+- **OS-keystore client-cert** (Windows CNG / macOS Keychain; mTLS V1 = PEM-only) + **revocation-позиция** (CRL/OCSP) — координация 116.
 - **server-push opt-in** (мёртв в браузерах — только если возникнет нужда; V1 = `ENABLE_PUSH=0`).
 - **Brotli server-side encode** (client-decode есть; server-encode followup).
 - **connection coalescing** (h2: один conn для нескольких origin при cert-match).
@@ -1147,9 +1174,9 @@ with Net = real_net() { … }   // ≡ with TcpNet=real_tcp_net(), UdpNet=real_u
 **Инварианты целы (adversarial-verify):** mock через R1-шэдоуинг (`with Http = mock_http()` побеждает root-дефолт по inner-wins); `Http` в сигнатуре; must-consume body не трогается install'ом; **`forbid Http {}` непреодолим** (sentinel `FORBID(Http)` push'ится ВЫШЕ корневого дефолта + D63 смотрит на сигнатуры, не на стек — дефолт даже **усиливает** требование явности песочницы).
 
 **🔴 Открытые (Ф.0-verify / owner sign-off):**
-- **(Q-edition)** есть ли в компиляторе понятие **edition** (script vs lib/app/test) для conditional root-install? `main() Io` даёт *безусловный* root-Io — нужен hook «ставить Http-handler только в script». Если edition нет → **ввести** ИЛИ дефолт держать opt-in (явный `with Http = real_http()` остаётся как fallback).
-- **(Q-error_for_status)** `get_json` зашивает `error_for_status` (не-2xx → `Err`, теряет error-body — инверсия Q4-семантики `http.get`). **owner sign-off:** правильный ли это дефолт? + doc-fence (✅ §3.5) + escape-hatch `http.get(url)?.json[T]()`.
-- **`*_json` — gate serde (Plan 184)**, landing ТОЛЬКО вместе; до того — динамический `.json()->JsonValue`.
-- **must-consume через early-`?`** (consume-`HttpResponse` уносится в `Err`-возврат = корректный discharge) + **`forbid`×root-default** — **pos+neg-тесты §8.0** (иначе допущение, не доказанный инвариант).
+- **(Q-edition) — ЗАКРЫТ (Ред.2):** fallback принят — дефолт **opt-in** (явный `with Http = real_http()`); edition-механизм (script vs lib/app/test) — Ф.0-verify наличия + followup-маркер **`[M-178-script-edition-root-http]`** (root-install только при появлении edition-гейта; §13.4-инварианты записаны).
+- **(Q-error_for_status)** `get_json` зашивает `error_for_status` (не-2xx → `Err`, теряет error-body — инверсия Q4-семантики `http.get`). **Рекомендация Ред.2: да, зашить** (сахар для happy-path; typed `T` из error-body всё равно не парсится; нужен error-body → первичный путь `http.get(url)?.json[T]()`; doc-fence ✅ §3.5). **Owner sign-off — единственный оставшийся open-Q плана.**
+- **`*_json` — gate serde (Plan 180 Ф.4)**, landing ТОЛЬКО вместе; до того — динамический `.json()->JsonValue`.
+- **must-consume через early-`?`** (consume-`HttpResponse` уносится в `Err`-возврат = корректный discharge) + **`forbid`×root-default** — **pos+neg-тесты внесены в §7-список явно** (Ред.2; иначе допущение, не доказанный инвариант).
 
-**Записать при реализации:** §8/§8.0 — MANDATORY mock-тест + pos+neg must-consume на `?`-discharge + serde-gate; **D327** — дополнить root-install-семантикой `Http` (= как root-`Io`).
+**Записать при реализации:** §8/§8.0 — MANDATORY mock-тест + pos+neg must-consume на `?`-discharge + serde-gate; **D357** — дополнить root-install-семантикой `Http` (= как root-`Io`).
