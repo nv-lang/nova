@@ -1320,6 +1320,26 @@ impl LanguageServer for Backend {
             }
         }
 
+        // ── Plan 104.10 Ф.11: source.organizeImports (diagnostic-independent) ──
+        // Offer only when the client's `only` filter admits the
+        // `source.organizeImports` kind (hierarchical prefix match).
+        if code_action_only_admits(
+            params.context.only.as_deref(),
+            &CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+        ) {
+            if let Some(doc) = self.state.docs.get(&uri) {
+                let src = doc.text.to_string();
+                drop(doc);
+                let uri_clone = uri.clone();
+                let organize = run_with_large_stack(move || {
+                    crate::organize_imports::compute_organize_imports(&uri_clone, &src)
+                });
+                if let Some(action) = organize {
+                    actions.push(CodeActionOrCommand::CodeAction(action));
+                }
+            }
+        }
+
         // ── Plan 104.5: compute_code_actions for all diagnostics ──────────────
         if !params.context.diagnostics.is_empty() {
             let src = self.state.docs.get(&uri).map(|d| d.text.to_string())
@@ -1589,6 +1609,23 @@ impl LanguageServer for Backend {
         );
         self.state.semantic_tokens_cache.insert(uri, updated_snap);
         Ok(Some(response))
+    }
+}
+
+/// Plan 104.10 Ф.11: does the client's `only` code-action filter admit `kind`?
+///
+/// Per the LSP spec, `CodeActionContext.only` matching is **hierarchical by
+/// prefix**: a requested kind `"source"` admits `"source.organizeImports"`, and
+/// an exact `"source.organizeImports"` admits it too. `None` (no filter) admits
+/// everything. An empty list admits nothing.
+fn code_action_only_admits(only: Option<&[CodeActionKind]>, kind: &CodeActionKind) -> bool {
+    match only {
+        None => true,
+        Some(kinds) => kinds.iter().any(|requested| {
+            let req = requested.as_str();
+            let k = kind.as_str();
+            k == req || k.starts_with(&format!("{req}."))
+        }),
     }
 }
 
