@@ -11912,7 +11912,7 @@ impl<'a> TypeCheckCtx<'a> {
         recv_ty: &TypeRef,
         method: &str,
     ) -> Option<TypeRef> {
-        self.resolve_instance_method_return_arity(recv_ty, method, None)
+        self.resolve_instance_method_return_arity(recv_ty, method, None, None)
     }
 
     /// 172.1.2 (2026-07-03): arity-aware вариант — при >1 перегрузке выбирает
@@ -11922,6 +11922,9 @@ impl<'a> TypeCheckCtx<'a> {
         recv_ty: &TypeRef,
         method: &str,
         arity: Option<usize>,
+        // 172.1.2 arg-type dispatch (2026-07-04): (args, scope) для
+        // дизамбигуации same-arity перегрузок по типу первого аргумента.
+        args_scope: Option<(&[CallArg], &HashMap<String, TypeRef>)>,
     ) -> Option<TypeRef> {
         // Normalize receiver: peel ro/mut views; `[]T`/`[N]T` → "Vec" (D239 slice alias),
         // so a slice receiver resolves Vec's methods (std's pervasive spelling). Mirror of
@@ -11992,10 +11995,42 @@ impl<'a> TypeCheckCtx<'a> {
                     return Some(peeled.clone());
                 }
                 let a = arity?;
-                let mut it = many.iter().filter(|f| f.params.len() == a);
-                let first = it.next()?;
-                if it.next().is_some() { return None; }
-                first
+                let cands: Vec<&&FnDecl> =
+                    many.iter().filter(|f| f.params.len() == a).collect();
+                match cands.as_slice() {
+                    [] => return None,
+                    [one] => *one,
+                    same_arity => {
+                        // 172.1.2 arg-type dispatch: тип ПЕРВОГО аргумента против
+                        // КОНКРЕТНОГО param0 кандидатов — ровно одно совпадение.
+                        let (cargs, cscope) = args_scope?;
+                        let a0 = cargs.first()?.expr();
+                        let a0_rt = self
+                            .infer_expr_type(a0, cscope)
+                            .map(|t| ResolvedType::from_type_ref(&t))
+                            .or_else(|| {
+                                if !a0.id.is_set() { return None; }
+                                self.resolved_types_buf.borrow().get(&a0.id).cloned()
+                            })?;
+                        let mut hit: Option<&FnDecl> = None;
+                        for f in same_arity {
+                            let Some(p0) = f.params.first() else { continue };
+                            let p0_rt = ResolvedType::from_type_ref(&p0.ty);
+                            // только КОНКРЕТНЫЙ param0 (примитив/Str/Bool/Named
+                            // без args) — generic-кандидаты не участвуют.
+                            let concrete = Self::primitive_gate(&p0_rt)
+                                || matches!(&p0_rt, ResolvedType::Str | ResolvedType::Bool)
+                                || matches!(&p0_rt,
+                                    ResolvedType::Named { args, .. } if args.is_empty());
+                            if !concrete { continue; }
+                            if p0_rt == a0_rt {
+                                if hit.is_some() { return None; } // неоднозначно
+                                hit = Some(f);
+                            }
+                        }
+                        hit?
+                    }
+                }
             }
         };
         let recv = f.receiver.as_ref()?;
@@ -12208,7 +12243,8 @@ impl<'a> TypeCheckCtx<'a> {
                 Self::resolved_to_typeref_tp(&rt, e.span)
             })?;
         let call_arity = call_args.len();
-        self.resolve_instance_method_return_arity(&recv_ty, name, Some(call_arity))
+        self.resolve_instance_method_return_arity(
+            &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)))
             .or_else(|| {
                 // 172.1.2 arg-binding (2026-07-03): method-level generic (`map[U]`)
                 // выводится из closure-аргумента при известном carrier-subst.
