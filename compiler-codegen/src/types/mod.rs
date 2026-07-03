@@ -4788,6 +4788,20 @@ impl<'a> TypeCheckCtx<'a> {
     // --- Ф.2: walk сигнатур ---------------------------------------------
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // Plan 173 Ф.1 (#3 / Plan 174.2): `?` строго return-only. Свободный `?`
+        // осмыслен лишь в fn, возвращающей Result/Option (проброс значением);
+        // в Fail-эффект-fn → `[E_TRY_IN_FAIL_FN]` (там `!!`/`throw`). Consume-init
+        // `?` (D196 form 2) и `?` в defer-body/closure — exempt (см. walker).
+        {
+            let ret_ok = fd.return_type.as_ref()
+                .map(type_ref_is_result_or_option)
+                .unwrap_or(false);
+            match &fd.body {
+                FnBody::Block(b) => check_try_return_only_block(b, ret_ok, errors),
+                FnBody::Expr(e) => check_try_return_only_expr(e, ret_ok, errors),
+                FnBody::External => {}
+            }
+        }
         // Plan 114.4.2 (D199): set flag для scope-local const skip
         // когда мы внутри const fn body. Body checker
         // (check_const_fn_decl) точнее покрывает validation.
@@ -22788,6 +22802,192 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, cu
             }
         }
         // Простые узлы без вложенных блоков.
+        _ => {}
+    }
+}
+
+// ── Plan 173 Ф.1 (#3 / Plan 174.2): `?` строго return-only ─────────────────
+//
+// `?` (postfix Try) пробрасывает ошибку ЗНАЧЕНИЕМ (`return Err`/`return None`),
+// поэтому осмыслен ТОЛЬКО в функции, возвращающей `Result[T,E]` / `Option[T]`.
+// В Fail-эффект-функции (return-type ≠ Result/Option) `?` запрещён —
+// пробрасывай через `!!` или `throw` (D85, «один оператор — одна семантика»).
+// Свободно стоящий `?` в таком контексте → `[E_TRY_IN_FAIL_FN]`.
+//
+// EXEMPT (не флагаем):
+// - top-level `?` у `consume X = expr? { body }` — это D196 form 2 (unwrap-init
+//   маркер, НЕ свободный проброс; codegen эмитит throw через enclosing Fail);
+// - `?` внутри closure/lambda — свой return-контекст (skip = safe false-neg);
+// - `?` внутри `defer`-body — governed by D158 (check_defer_body), не наша зона.
+
+/// `Result[..]` / `Option[..]` в return-позиции разрешают return-only `?`.
+fn type_ref_is_result_or_option(t: &TypeRef) -> bool {
+    if let TypeRef::Named { path, .. } = t {
+        matches!(path.last().map(|s| s.as_str()), Some("Result") | Some("Option"))
+    } else {
+        false
+    }
+}
+
+fn check_try_return_only_block(b: &Block, ret_ok: bool, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            // D196 form 2 exempt: top-level `?` у consume-init — unwrap-маркер.
+            // Внутренность init (nested `?`) + body — проверяем нормально.
+            Stmt::ConsumeScope { init, body, .. } => {
+                if let ExprKind::Try(inner) = &init.kind {
+                    check_try_return_only_expr(inner, ret_ok, errors);
+                } else {
+                    check_try_return_only_expr(init, ret_ok, errors);
+                }
+                check_try_return_only_block(body, ret_ok, errors);
+            }
+            // defer body governed by D158 (check_defer_body) — не рекурсим.
+            Stmt::Defer { .. } => {}
+            Stmt::Let(decl) => check_try_return_only_expr(&decl.value, ret_ok, errors),
+            Stmt::Const(_) => {}
+            Stmt::Expr(e) => check_try_return_only_expr(e, ret_ok, errors),
+            Stmt::Assign { target, value, .. } => {
+                check_try_return_only_expr(target, ret_ok, errors);
+                check_try_return_only_expr(value, ret_ok, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { check_try_return_only_expr(v, ret_ok, errors); }
+            }
+            Stmt::Throw { value, .. } => check_try_return_only_expr(value, ret_ok, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_try_return_only_expr(expr, ret_ok, errors),
+            Stmt::Apply { args, .. } => {
+                for a in args { check_try_return_only_expr(a, ret_ok, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { check_try_return_only_expr(&step.expr, ret_ok, errors); }
+            }
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { check_try_return_only_expr(e, ret_ok, errors); }
+                for e in rhs { check_try_return_only_expr(e, ret_ok, errors); }
+            }
+            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
+        }
+    }
+    if let Some(t) = &b.trailing {
+        check_try_return_only_expr(t, ret_ok, errors);
+    }
+}
+
+fn check_try_return_only_expr(e: &Expr, ret_ok: bool, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        ExprKind::Try(inner) => {
+            if !ret_ok {
+                errors.push(Diagnostic::new(
+                    "[E_TRY_IN_FAIL_FN] `?` разрешён только в функции, возвращающей \
+                     `Result[T,E]` / `Option[T]` (проброс значением, return-only — Plan 174.2 / D85). \
+                     В Fail-эффект-функции пробрасывай ошибку через `!!` или `throw` (или используй \
+                     `consume X = expr? { body }` для Result-unwrap-init, D196 form 2).".to_string(),
+                    e.span,
+                ));
+            }
+            check_try_return_only_expr(inner, ret_ok, errors);
+        }
+        ExprKind::Bang(inner) | ExprKind::Throw(inner) => check_try_return_only_expr(inner, ret_ok, errors),
+        ExprKind::Block(b) => check_try_return_only_block(b, ret_ok, errors),
+        ExprKind::If { cond, then, else_ } => {
+            check_try_return_only_expr(cond, ret_ok, errors);
+            check_try_return_only_block(then, ret_ok, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { check_try_return_only_block(b, ret_ok, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { check_try_return_only_expr(e2, ret_ok, errors); }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            check_try_return_only_expr(scrutinee, ret_ok, errors);
+            check_try_return_only_block(then, ret_ok, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { check_try_return_only_block(b, ret_ok, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { check_try_return_only_expr(e2, ret_ok, errors); }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            check_try_return_only_expr(scrutinee, ret_ok, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(e2) => check_try_return_only_expr(e2, ret_ok, errors),
+                    MatchArmBody::Block(b) => check_try_return_only_block(b, ret_ok, errors),
+                }
+                if let Some(g) = &a.guard { check_try_return_only_expr(g, ret_ok, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            check_try_return_only_expr(iter, ret_ok, errors);
+            check_try_return_only_block(body, ret_ok, errors);
+        }
+        ExprKind::While { cond, body, .. } => {
+            check_try_return_only_expr(cond, ret_ok, errors);
+            check_try_return_only_block(body, ret_ok, errors);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            check_try_return_only_expr(scrutinee, ret_ok, errors);
+            check_try_return_only_block(body, ret_ok, errors);
+        }
+        ExprKind::Loop { body, .. } => check_try_return_only_block(body, ret_ok, errors),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => check_try_return_only_expr(chan, ret_ok, errors),
+                    SelectOp::Send { chan, value } => {
+                        check_try_return_only_expr(chan, ret_ok, errors);
+                        check_try_return_only_expr(value, ret_ok, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { check_try_return_only_expr(g, ret_ok, errors); }
+                check_try_return_only_block(&arm.body, ret_ok, errors);
+            }
+        }
+        ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
+        | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            check_try_return_only_block(body, ret_ok, errors);
+        }
+        ExprKind::Supervised { body, cancel } => {
+            if let Some(c) = cancel { check_try_return_only_expr(c, ret_ok, errors); }
+            check_try_return_only_block(body, ret_ok, errors);
+        }
+        ExprKind::Call { func, args, .. } => {
+            // Trailing block/fn — closure-like (own scope) → skip (как closures).
+            check_try_return_only_expr(func, ret_ok, errors);
+            for a in args { check_try_return_only_expr(a.expr(), ret_ok, errors); }
+        }
+        ExprKind::Spawn(body) => check_try_return_only_expr(body, ret_ok, errors),
+        ExprKind::Binary { left, right, .. } => {
+            check_try_return_only_expr(left, ret_ok, errors);
+            check_try_return_only_expr(right, ret_ok, errors);
+        }
+        ExprKind::Unary { operand, .. } => check_try_return_only_expr(operand, ret_ok, errors),
+        ExprKind::Coalesce(a, b) => {
+            check_try_return_only_expr(a, ret_ok, errors);
+            check_try_return_only_expr(b, ret_ok, errors);
+        }
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => check_try_return_only_expr(e2, ret_ok, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_try_return_only_expr(obj, ret_ok, errors),
+        ExprKind::TurboFish { base, .. } => check_try_return_only_expr(base, ret_ok, errors),
+        ExprKind::Interrupt(Some(body)) => check_try_return_only_expr(body, ret_ok, errors),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { check_try_return_only_expr(s, ret_ok, errors); }
+            if let Some(en) = end { check_try_return_only_expr(en, ret_ok, errors); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => check_try_return_only_expr(e2, ret_ok, errors),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { check_try_return_only_expr(el, ret_ok, errors); }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { check_try_return_only_expr(v, ret_ok, errors); }
+            }
+        }
+        // Closures/lambdas — свой return-контекст; skip (safe false-negative).
+        // Прочие простые узлы (Ident/Lit/…) без вложенных `?`.
         _ => {}
     }
 }

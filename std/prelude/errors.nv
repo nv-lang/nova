@@ -268,7 +268,7 @@ fn MultiError @find_first_panic() -> Option[str] {
 /// ```nova
 /// fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
 ///     match outcome {
-///         Success => @commit()?
+///         Success => @commit()!!
 ///         Failure(err) => {
 ///             if err is CancelError {
 ///                 // explicit cancel — rollback w/o full retry logic

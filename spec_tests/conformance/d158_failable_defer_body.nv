@@ -45,7 +45,9 @@ fn d158_process_try() Fail[D158CommitErr] -> () {
 // (4) Defer-fail во время error-propagation: primary из do_work, cleanup в defer.
 fn d158_process_propagation() Fail -> () {
     defer { d158_commit_ok() }
-    d158_work_fails()?
+    // Plan 173 Ф.1 (#3 / 174.2): `?` return-only. `d158_work_fails()` → unit +
+    // throw через Fail — `?` был no-op; дропнут (проброс идёт эффектом).
+    d158_work_fails()
 }
 
 // (5) Backward-compat: handler-wrap суммирует Fail в no-Fail сигнатуру.

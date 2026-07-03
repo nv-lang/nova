@@ -8342,7 +8342,7 @@ Resource решает что делать с body error через D85 auto-narr
 ```nova
 fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
-        Success => @commit()?
+        Success => @commit()!!
         Failure(err) => {
             if err is DbError.Deadlock {
                 @retry_friendly_rollback()?     // err narrow'нут до DbError.Deadlock

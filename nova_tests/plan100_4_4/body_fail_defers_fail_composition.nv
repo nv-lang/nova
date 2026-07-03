@@ -18,7 +18,9 @@ fn do_work_fails() Fail[WorkErr] -> () {
 fn process2() Fail -> () {
     defer { defer_a1() }
     defer { defer_b1() }
-    do_work_fails()?
+    // Plan 173 Ф.1 (#3 / 174.2): `?` return-only. `do_work_fails()` возвращает
+    // unit (не Result) + throw'ит через Fail-эффект — `?` тут был no-op; дропнут.
+    do_work_fails()
 }
 
 test "body fail + multi-defer Fail bodies — D161 composition" {

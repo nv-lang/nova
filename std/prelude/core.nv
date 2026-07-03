@@ -137,7 +137,7 @@ export type Result[T, E] enum Ok(T) | Err(E)
 /// ```nova
 /// fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
 ///     match outcome {
-///         Success      => @commit()?
+///         Success      => @commit()!!
 ///         Failure(_)   => @rollback()?
 ///         Panic(_)     => @rollback_emergency()
 ///     }
