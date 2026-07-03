@@ -17,6 +17,7 @@ use std::time::Duration;
 use ropey::Rope;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{notification, request};
 use tower_lsp::{Client, LanguageServer};
 
 use crate::code_actions::compute_code_actions_with_stdlib;
@@ -35,6 +36,10 @@ use crate::state::{ParsedFile, WorkspaceState};
 use crate::symbols::{
     collect_nv_files, compute_document_symbols, entries_to_workspace_symbols,
     find_references, symbol_at_position,
+};
+use crate::workspace_lifecycle::{
+    apply_watched_event, classify_watch_uri, compute_rename_import_edits, RenamedFile,
+    WatchTarget,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,6 +187,181 @@ impl Backend {
             .publish_diagnostics(uri, vec![], None)
             .await;
     }
+
+    // ── Plan 104.10 Ф.18: workspace-lifecycle helpers ───────────────────────
+
+    /// Collect every candidate importer file: open documents (unsaved overlay)
+    /// plus workspace `.nv` files on disk not currently open. Used by
+    /// `willRenameFiles` to find dependents.
+    fn collect_workspace_files(&self) -> Vec<(Url, String)> {
+        let mut files: Vec<(Url, String)> = Vec::new();
+        for entry in self.state.docs.iter() {
+            files.push((entry.key().clone(), entry.value().text.to_string()));
+        }
+        if let Some(root) = self.state.workspace_root() {
+            let open: std::collections::HashSet<Url> =
+                files.iter().map(|(u, _)| u.clone()).collect();
+            for (uri, text) in collect_nv_files(&root) {
+                if !open.contains(&uri) {
+                    files.push((uri, text));
+                }
+            }
+        }
+        files
+    }
+
+    /// Recompute diagnostics for currently-open documents (used after an external
+    /// change / rename so results refresh without the user editing the buffer).
+    /// When a workspace root is set, one recheck republishes the whole workspace,
+    /// so a single open document suffices as the trigger.
+    async fn recheck_open_documents(&self) {
+        // Prefer a single workspace-wide recheck when a root is known.
+        if self.state.workspace_root().is_some() {
+            if let Some(entry) = self.state.docs.iter().next() {
+                let uri = entry.key().clone();
+                let version = entry.value().version;
+                drop(entry);
+                self.schedule_recheck(uri, version);
+            }
+            return;
+        }
+        // No root: recheck each open document individually.
+        let open: Vec<(Url, i32)> = self
+            .state
+            .docs
+            .iter()
+            .map(|e| (e.key().clone(), e.value().version))
+            .collect();
+        for (uri, version) in open {
+            self.schedule_recheck(uri, version);
+        }
+    }
+
+    /// Push server→client refresh notifications so already-rendered semantic
+    /// tokens / code lenses re-pull after a background reindex (Ф.18 sub-feature
+    /// 4). `inlayHint/refresh` is intentionally omitted: nova-lsp does not yet
+    /// advertise an inlay-hint provider (that is BLOCK-C Ф.9) — refreshing a
+    /// capability we never advertised would draw a client error. Restore it when
+    /// Ф.9 lands. Errors are swallowed (a client lacking the capability is fine).
+    async fn refresh_client_hints(&self) {
+        // Both are server→client *requests*; a non-responsive client must not
+        // stall us, so each is bounded by a short timeout (a real client answers
+        // in milliseconds).
+        let st = self.client.semantic_tokens_refresh();
+        if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), st).await {
+            tracing::debug!(err = %e, "semanticTokens/refresh not honoured");
+        }
+        let cl = self.client.code_lens_refresh();
+        if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), cl).await {
+            tracing::debug!(err = %e, "codeLens/refresh not honoured");
+        }
+    }
+
+    /// Run the cold initial workspace scan wrapped in a `$/progress` token so the
+    /// IDE shows a determinate spinner (begin → report → end) instead of looking
+    /// hung. Indexes every `.nv` file for `workspace/symbol`, publishes initial
+    /// diagnostics, and refreshes push-based hints on completion.
+    async fn run_initial_scan_with_progress(&self) {
+        let Some(root) = self.state.workspace_root() else { return };
+
+        // A unique progress token (server-initiated). Per LSP the server must ask
+        // the client to create it first; we do so but do not hard-block on the
+        // acknowledgement (a naive client may not answer — after a short grace we
+        // proceed so the scan is never gated on the client).
+        let token = NumberOrString::String(format!(
+            "nova-lsp/initial-scan/{}",
+            self.state.next_semantic_tokens_result_id()
+        ));
+        let create = self
+            .client
+            .send_request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
+                token: token.clone(),
+            });
+        let _ = tokio::time::timeout(Duration::from_millis(500), create).await;
+
+        // begin
+        self.send_progress(
+            &token,
+            WorkDoneProgress::Begin(WorkDoneProgressBegin {
+                title: "Nova: indexing workspace".to_string(),
+                cancellable: Some(false),
+                message: Some("scanning files".to_string()),
+                percentage: Some(0),
+            }),
+        )
+        .await;
+
+        // Index all .nv files for workspace/symbol (report progress midway).
+        let files = collect_nv_files(&root);
+        let total = files.len().max(1);
+        for (i, (uri, src)) in files.iter().enumerate() {
+            self.state.workspace_index.index_file(uri.clone(), src);
+            if i % 16 == 0 {
+                let pct = ((i * 100) / total) as u32;
+                self.send_progress(
+                    &token,
+                    WorkDoneProgress::Report(WorkDoneProgressReport {
+                        cancellable: Some(false),
+                        message: Some(format!("indexed {}/{} files", i, total)),
+                        percentage: Some(pct.min(90)),
+                    }),
+                )
+                .await;
+            }
+        }
+
+        // Cold type-check pass → publish initial diagnostics.
+        self.send_progress(
+            &token,
+            WorkDoneProgress::Report(WorkDoneProgressReport {
+                cancellable: Some(false),
+                message: Some("type-checking".to_string()),
+                percentage: Some(92),
+            }),
+        )
+        .await;
+
+        let root_clone = root.clone();
+        let results = tokio::task::spawn_blocking(move || {
+            run_with_large_stack(move || check_workspace(&root_clone))
+        })
+        .await;
+        if let Ok(check_results) = results {
+            for cr in check_results {
+                let rope = Rope::from_str(&cr.source);
+                let lsp_diags: Vec<Diagnostic> = cr
+                    .diagnostics
+                    .iter()
+                    .map(|d| to_lsp(d, &rope, &cr.file_uri))
+                    .collect();
+                self.client
+                    .publish_diagnostics(cr.file_uri, lsp_diags, None)
+                    .await;
+            }
+        }
+
+        // end
+        self.send_progress(
+            &token,
+            WorkDoneProgress::End(WorkDoneProgressEnd {
+                message: Some("workspace ready".to_string()),
+            }),
+        )
+        .await;
+
+        // Fresh index/expr-types → refresh push-based hints.
+        self.refresh_client_hints().await;
+    }
+
+    /// Send one `$/progress` notification for `token`.
+    async fn send_progress(&self, token: &NumberOrString, value: WorkDoneProgress) {
+        self.client
+            .send_notification::<notification::Progress>(ProgressParams {
+                token: token.clone(),
+                value: ProgressParamsValue::WorkDone(value),
+            })
+            .await;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,6 +487,20 @@ impl LanguageServer for Backend {
                     first_trigger_character: "\n".to_string(),
                     more_trigger_character: Some(vec!["}".to_string()]),
                 }),
+                // Plan 104.10 Ф.18: workspace lifecycle — advertise
+                // willRenameFiles / didRenameFiles for `*.nv` so the editor asks
+                // us for an import-fixup WorkspaceEdit on rename. File *watching*
+                // is registered dynamically in `initialized()` (needs the client
+                // to support dynamic registration; static advertisement here is
+                // insufficient for didChangeWatchedFiles).
+                workspace: Some(WorkspaceServerCapabilities {
+                    workspace_folders: None,
+                    file_operations: Some(WorkspaceFileOperationsServerCapabilities {
+                        will_rename: Some(nv_file_operation_registration()),
+                        did_rename: Some(nv_file_operation_registration()),
+                        ..Default::default()
+                    }),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -316,9 +510,50 @@ impl LanguageServer for Backend {
         })
     }
 
+    /// Plan 104.10 Ф.18: on `initialized`, (1) dynamically register file
+    /// watchers so the client forwards external `*.nv` / `nova.toml` changes via
+    /// `workspace/didChangeWatchedFiles`, and (2) run the cold initial workspace
+    /// scan under a `$/progress` token (spinner instead of an apparent hang),
+    /// then push semanticTokens/codeLens refreshes so already-rendered hints
+    /// re-pull the freshly-indexed data.
     async fn initialized(&self, _params: InitializedParams) {
         tracing::info!("nova-lsp ready");
-        // TODO: trigger initial workspace file scan here (Plan 104.1.Ф.6).
+
+        // (1) Dynamic watcher registration — `**/*.nv` and `**/nova.toml`.
+        let registration = Registration {
+            id: "nova-lsp-watch-nv".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                watchers: vec![
+                    FileSystemWatcher {
+                        glob_pattern: GlobPattern::String("**/*.nv".to_string()),
+                        kind: None, // create | change | delete (default 7)
+                    },
+                    FileSystemWatcher {
+                        glob_pattern: GlobPattern::String("**/nova.toml".to_string()),
+                        kind: None,
+                    },
+                ],
+            })
+            .ok(),
+        };
+        // Register in the background: a client without dynamic-registration
+        // support (or a slow one) must never block the initial scan below. The
+        // server still functions if registration is rejected (just no
+        // external-change reaction). Log, never fail.
+        {
+            let client = self.client.clone();
+            tokio::spawn(async move {
+                if let Err(e) = client.register_capability(vec![registration]).await {
+                    tracing::warn!(err = %e, "didChangeWatchedFiles dynamic registration rejected");
+                }
+            });
+        }
+
+        // (2) Cold initial workspace scan with progress + refresh.
+        if self.state.workspace_root().is_some() {
+            self.run_initial_scan_with_progress().await;
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -438,6 +673,128 @@ impl LanguageServer for Backend {
 
         // Clear diagnostics in the editor (LSP convention: empty list on close).
         self.publish_empty_diagnostics(uri).await;
+    }
+
+    // ── Plan 104.10 Ф.18: Workspace lifecycle ───────────────────────────────
+
+    /// `workspace/didChangeWatchedFiles` — react to *external* file changes
+    /// (git checkout/pull, edits outside the editor, codegen output).
+    ///
+    /// Each event is classified + applied to the caches by
+    /// [`apply_watched_event`] (real invalidation of the Ф.1 resolved cache and
+    /// the Ф.12 symbol index — not a server restart). A `.nv` change additionally
+    /// invalidates every open document's resolved build (reverse-dependency
+    /// superset, `[M-104.10-watch-reverse-deps]`). If anything relevant changed,
+    /// diagnostics for open documents are recomputed and semanticTokens/codeLens
+    /// refreshes are pushed so stale hints re-pull.
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let mut any_relevant = false;
+        let mut any_nv = false;
+        for event in &params.changes {
+            let target = classify_watch_uri(&event.uri);
+            if target == WatchTarget::Ignore {
+                // NEG: a watch event on a non-.nv / non-manifest file is ignored.
+                tracing::trace!(uri = %event.uri, "watched-file event ignored (not .nv/nova.toml)");
+                continue;
+            }
+            if target == WatchTarget::Nv {
+                any_nv = true;
+            }
+            let outcome = apply_watched_event(&self.state, event);
+            any_relevant |= outcome.relevant;
+            tracing::debug!(uri = %event.uri, ?target, "watched-file event applied");
+        }
+
+        if !any_relevant {
+            return;
+        }
+
+        // A changed peer file may invalidate any open importer's cached build.
+        // Clear the whole resolved cache (correct superset; rebuilt lazily).
+        if any_nv {
+            self.state.invalidate_all_resolved();
+        }
+
+        // Recompute diagnostics for open documents so external changes surface
+        // without the user touching the buffer, then refresh push-based hints.
+        self.recheck_open_documents().await;
+        self.refresh_client_hints().await;
+    }
+
+    /// `workspace/willRenameFiles` — return a `WorkspaceEdit` that rewrites the
+    /// `import` paths of every dependent file so they keep resolving to the
+    /// renamed `.nv` file (Nova imports are path-based).
+    ///
+    /// Only `.nv` renames are considered. The pre-rename text is taken from the
+    /// open buffer if present, else read from disk (the old path still exists —
+    /// willRename fires *before* the rename). See `[M-104.10-file-rename-imports]`
+    /// for the precise scope boundary.
+    async fn will_rename_files(&self, params: RenameFilesParams) -> Result<Option<WorkspaceEdit>> {
+        // Build the RenamedFile set (only .nv, only where we can read old text).
+        let mut renames: Vec<RenamedFile> = Vec::new();
+        for f in &params.files {
+            let (Ok(old_uri), Ok(new_uri)) = (Url::parse(&f.old_uri), Url::parse(&f.new_uri))
+            else {
+                continue;
+            };
+            if classify_watch_uri(&old_uri) != WatchTarget::Nv {
+                continue;
+            }
+            // Old text: prefer the open buffer overlay, else disk.
+            let old_text = if let Some(doc) = self.state.docs.get(&old_uri) {
+                doc.text.to_string()
+            } else if let Ok(path) = old_uri.to_file_path() {
+                match std::fs::read_to_string(&path) {
+                    Ok(t) => t,
+                    Err(_) => String::new(),
+                }
+            } else {
+                String::new()
+            };
+            renames.push(RenamedFile { old_uri, new_uri, old_text });
+        }
+        if renames.is_empty() {
+            return Ok(None);
+        }
+
+        // Candidate importers: all open documents + all workspace .nv files.
+        let files = self.collect_workspace_files();
+
+        let edit = run_with_large_stack(move || compute_rename_import_edits(&renames, &files));
+        Ok(edit)
+    }
+
+    /// `workspace/didRenameFiles` — the rename has now happened. Purge the old
+    /// URI from every cache and index the file at its new URI, then invalidate
+    /// dependent resolved builds and refresh. Complements `willRenameFiles`
+    /// (which only produced the import-path edit).
+    async fn did_rename_files(&self, params: RenameFilesParams) {
+        let mut any_nv = false;
+        for f in &params.files {
+            let (Ok(old_uri), Ok(new_uri)) = (Url::parse(&f.old_uri), Url::parse(&f.new_uri))
+            else {
+                continue;
+            };
+            if classify_watch_uri(&old_uri) != WatchTarget::Nv {
+                continue;
+            }
+            any_nv = true;
+            // Old location is gone: evict its caches/index entries.
+            self.state.workspace_index.remove_file(&old_uri);
+            self.state.invalidate_resolved(&old_uri);
+            self.state.document_symbol_cache.invalidate(&old_uri);
+            // Index the file at its new location from disk (if present).
+            if let Ok(path) = new_uri.to_file_path() {
+                if let Ok(src) = std::fs::read_to_string(&path) {
+                    self.state.workspace_index.index_file(new_uri.clone(), &src);
+                }
+            }
+        }
+        if any_nv {
+            self.state.invalidate_all_resolved();
+            self.recheck_open_documents().await;
+            self.refresh_client_hints().await;
+        }
     }
 
     // ── Plan 104.6: Rename + Format-on-save ─────────────────────────────────
@@ -1112,6 +1469,22 @@ impl LanguageServer for Backend {
         );
         self.state.semantic_tokens_cache.insert(uri, updated_snap);
         Ok(Some(response))
+    }
+}
+
+/// Plan 104.10 Ф.18: file-operation registration options matching every `.nv`
+/// file — used for the `willRenameFiles` / `didRenameFiles` server capability so
+/// the client only asks us about Nova-source renames.
+fn nv_file_operation_registration() -> FileOperationRegistrationOptions {
+    FileOperationRegistrationOptions {
+        filters: vec![FileOperationFilter {
+            scheme: Some("file".to_string()),
+            pattern: FileOperationPattern {
+                glob: "**/*.nv".to_string(),
+                matches: Some(FileOperationPatternKind::File),
+                options: None,
+            },
+        }],
     }
 }
 

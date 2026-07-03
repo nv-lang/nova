@@ -237,6 +237,18 @@ impl WorkspaceState {
         self.resolved_cache.remove(uri);
     }
 
+    /// Plan 104.10 Ф.18: evict **every** resolved-module cache entry.
+    ///
+    /// Used on external file changes (`workspace/didChangeWatchedFiles`) and
+    /// manifest edits: because nova-lsp does not (yet) maintain a precise
+    /// module-graph reverse-dependency map, a changed peer file could invalidate
+    /// any importer's cached build. Clearing the whole cache is the correct
+    /// (never-stale) superset — entries are cheap, bounded to open documents, and
+    /// rebuilt lazily on the next request. See `[M-104.10-watch-reverse-deps]`.
+    pub fn invalidate_all_resolved(&self) {
+        self.resolved_cache.clear();
+    }
+
     /// Plan 104.10 Ф.5: the filesystem [`StdlibIndex`] for the workspace that
     /// contains `doc_path`, built once per stdlib directory and shared. Resolves
     /// the repo root from `doc_path` (nearest `nova.toml` workspace), then the

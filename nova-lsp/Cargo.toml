@@ -46,6 +46,10 @@ nova_codegen = { path = "../compiler-codegen", package = "nova-codegen" }
 # CancellationToken for per-uri debounce cancellation (Plan 104.1.Ф.3).
 tokio-util = { version = "0.7", features = ["rt"] }
 
+# JSON value construction for dynamic capability registration options
+# (Plan 104.10 Ф.18: didChangeWatchedFiles register_options).
+serde_json = "1"
+
 [dev-dependencies]
 # Needed in integration tests that spawn child processes with async helpers
 tokio = { version = "1", features = ["full"] }

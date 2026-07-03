@@ -799,3 +799,95 @@ fn pos11_definition_cross_file_prelude() {
 
     lsp.shutdown_and_exit();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 104.10 Ф.18 — workspace lifecycle e2e
+// ─────────────────────────────────────────────────────────────────────────────
+
+impl LspProcess {
+    /// initialize with an explicit workspace `rootUri` (needed to trigger the
+    /// cold initial scan + `$/progress`).
+    fn initialize_with_root(&mut self, root_uri: &str) -> serde_json::Value {
+        self.request(
+            "initialize",
+            serde_json::json!({
+                "processId": null,
+                "rootUri": root_uri,
+                "capabilities": {
+                    "workspace": {
+                        "didChangeWatchedFiles": { "dynamicRegistration": true },
+                        "fileOperations": { "willRename": true, "didRename": true },
+                    },
+                    "window": { "workDoneProgress": true },
+                },
+            }),
+        )
+    }
+}
+
+/// Ф.18 pos: initialize advertises workspace.fileOperations.willRename for `*.nv`.
+#[test]
+fn f18_pos_initialize_advertises_will_rename() {
+    let mut lsp = LspProcess::spawn();
+    let resp = lsp.initialize();
+    assert!(resp.get("error").is_none(), "initialize error: {resp}");
+    let will = &resp["result"]["capabilities"]["workspace"]["fileOperations"]["willRename"];
+    assert!(
+        !will.is_null(),
+        "workspace.fileOperations.willRename must be advertised, got: {will}"
+    );
+    let glob = will["filters"][0]["pattern"]["glob"].as_str().unwrap_or("");
+    assert!(glob.contains(".nv"), "willRename filter must target .nv, got {glob}");
+    lsp.shutdown_and_exit();
+}
+
+/// Ф.18 pos: a workspace with `.nv` files triggers a `$/progress` sequence
+/// (begin → … → end) on `initialized`, so the IDE shows a spinner for the cold
+/// initial scan instead of appearing hung.
+#[test]
+fn f18_pos_initial_scan_emits_progress() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("a.nv"),
+        "module wsprog.a\nfn f() -> int => 1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("b.nv"),
+        "module wsprog.b\nfn g() -> int => 2\n",
+    )
+    .unwrap();
+    let root_uri = tower_lsp::lsp_types::Url::from_file_path(dir.path())
+        .unwrap()
+        .to_string();
+
+    let mut lsp = LspProcess::spawn();
+    let resp = lsp.initialize_with_root(&root_uri);
+    assert!(resp.get("error").is_none(), "initialize error: {resp}");
+    lsp.send_notification("initialized", serde_json::json!({}));
+
+    // Collect $/progress notifications until we see the `end` kind (or timeout).
+    let mut saw_begin = false;
+    let mut saw_end = false;
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while Instant::now() < deadline && !saw_end {
+        let msg = match lsp.read_until(
+            |m| m.get("method").and_then(|v| v.as_str()) == Some("$/progress"),
+            Duration::from_secs(45),
+        ) {
+            Some(m) => m,
+            None => break,
+        };
+        let kind = msg["params"]["value"]["kind"].as_str().unwrap_or("");
+        if kind == "begin" {
+            saw_begin = true;
+        }
+        if kind == "end" {
+            saw_end = true;
+        }
+    }
+    assert!(saw_begin, "expected a $/progress begin notification");
+    assert!(saw_end, "expected a $/progress end notification");
+
+    lsp.shutdown_and_exit();
+}

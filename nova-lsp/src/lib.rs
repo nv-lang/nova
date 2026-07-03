@@ -25,3 +25,4 @@ pub mod state;
 pub mod stdlib_index;
 pub mod symbol;
 pub mod symbols;
+pub mod workspace_lifecycle;
