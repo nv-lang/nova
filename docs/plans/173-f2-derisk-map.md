@@ -152,3 +152,15 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
   (парсится+бежит LIFO), neg f2_{bad_type,arity}. Гейт: build clean, conformance 38/38, plain defer
   byte-identical. **Попутно:** доукомплектовал дефект #3 (e3fce6f3) — пропущенный `?`-в-Fail-fn сайт
   plan100_4_1:19 (тогдашний grep исключал `//`-строки; свип подтвердил — единственный пропуск).
+- ✅ **Ф.2.B2 codegen+checker outcome-материализация ЗАКРЫТ (23f512d8):** `DeferEntry.outcome_binding`
+  + `enum DeferOutcome{Success,FromFrame,Interrupt}` + helper `emit_defer_body_with_outcome`
+  (`#define`-binding + `var_types["o"]="Nova_ScopeOutcome*"`, зеркалит consume-arm); 4 splice-сайта:
+  normal-exit+early-exit→Success, throw/panic/cancel→FromFrame (Panic по PANIC / Failure("cancel: ") по
+  CANCEL / Failure(msg) иначе), interrupt→Failure("interrupt"). **Гэп найден эмпирически:** резолвер имён
+  (types/mod.rs:16769) не биндил `o` → "undefined identifier o" в folder-module; фикс: push/pop scope-frame
+  с binding при `outcome_binding=Some` (зеркалит ConsumeScope), для None — дословный no-op. Тест
+  f2_defer_outcome_matched (Success на normal exit, Failure на throw через `match o`). Гейт: conformance
+  38/38; plain defer + consume (plan100_4_*/plan110/plan103_9 mutex) без регрессий; плейн byte-identical
+  конструктивно (None → тот же emit_defer_body_void). **Отложено на B2-хвост (runtime-наблюдение):** Panic-
+  ветка-БЕЖИТ + cancel-Failure — panic убивает процесс (pre-existing D158-segfault-риск), cancel =
+  supervised-сценарий; сейчас compile-покрыты (exhaustive match). Zig-парность payload — B3 (consume-desugar).
