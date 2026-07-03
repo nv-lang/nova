@@ -12195,15 +12195,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // pointer (NovaTuple_X*) so @field mutations через `mut` методы
                 // propagate to caller; `ro` receiver stays by-value (immutable copy).
                 if let Some(c_ty) = self.type_aliases.get(other) {
-                    if c_ty.starts_with("NovaTuple_") {
-                        // 172.4 Ф.3 A6: named-tuple receiver — ВСЕГДА pointer
-                        // (D226-модель, как NovaValue_): mut И ro. NT как ЗНАЧЕНИЕ
-                        // (поле/параметр/return/элемент) остаётся by-value через
-                        // type_ref_to_c — меняется ТОЛЬКО receiver-ABI.
-                        return format!("{}*", c_ty);
-                    }
-                    if c_ty.starts_with("NovaValue_") {
-                        // Pointer to stack-slot для in-place mutation (D226 §«method receiver»).
+                    // 172.4 A6 (§0 ЕДИНЫЙ путь): value-record И named-tuple —
+                    // pointer-carrier receiver-ABI ВСЕГДА (mut И ro, D226-модель).
+                    // NT как ЗНАЧЕНИЕ (поле/параметр/return-не-Self/элемент)
+                    // остаётся by-value через type_ref_to_c — меняется ТОЛЬКО
+                    // receiver-ABI. Один предикат вместо двух параллельных веток.
+                    if Self::is_value_struct(c_ty) {
                         return format!("{}*", c_ty);
                     }
                 }
@@ -18689,7 +18686,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.emit_source_annotation_for_expr(trailing);
             // 172.4 Ф.3 блокер-1: trailing `@` fluent-метода — return-позиция ptr.
             let fluent_self_ret = self.var_types.get("nova_self")
-                .map(|sv| (sv.starts_with("NovaValue_") || sv.starts_with("NovaTuple_")) && sv.ends_with('*') && sv == ret_ty)
+                .map(|sv| Self::is_value_struct_ptr(sv) && sv == ret_ty)
                 .unwrap_or(false);
             let prev_recv_ret = self.in_recv_ptr_return_position.replace(fluent_self_ret);
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
@@ -18890,9 +18887,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // возвращает ptr (NovaValue_X*), биндинг к value-локалу требует
                 // deref. Robust EMIT-сигнал (урок реверта 2026-06-28): C-возврат
                 // метода из реестра fn_ret_* (эмит-факт), НЕ context-fragile infer.
-                let val = if (ty_c.starts_with("NovaValue_") || ty_c.starts_with("NovaTuple_"))
-                    && !ty_c.ends_with('*')
-                {
+                let val = if Self::is_value_struct_val(&ty_c) {
                     // 172.4 Ф.3 A6: NT fluent `-> @` возвращает NovaTuple_X* (ptr,
                     // receiver_c_type), биндинг к value-локалу — deref (как VR).
                     let rhs_fluent_ptr = (|| {
@@ -19595,7 +19590,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let ret_ty = self.current_fn_return_ty.clone().unwrap_or_else(|| "nova_int".to_string());
                     // 172.4 Ф.3 блокер-1: fluent `-> @` value-record — return-позиция ptr.
                     let fluent_self_ret = self.var_types.get("nova_self")
-                        .map(|sv| (sv.starts_with("NovaValue_") || sv.starts_with("NovaTuple_")) && sv.ends_with('*') && *sv == ret_ty)
+                        .map(|sv| Self::is_value_struct_ptr(sv) && *sv == ret_ty)
                         .unwrap_or(false);
                     let prev_recv_ret = self.in_recv_ptr_return_position.replace(fluent_self_ret);
                     // Plan 153.2: emit the return value with the function's return
@@ -20540,7 +20535,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // value-record-by-pointer deref mirrors the SelfAccess arm exactly.
                 if name == "self" {
                     let self_by_ptr_value_record = self.var_types.get("nova_self")
-                        .map(|c| (c.starts_with("NovaValue_") || c.starts_with("NovaTuple_")) && c.ends_with('*'))
+                        .map(|c| Self::is_value_struct_ptr(c))
                         .unwrap_or(false)
                         || self.current_receiver_type.as_deref()
                             .map(|t| t != "str" && self.value_record_names.contains(t))
@@ -22731,7 +22726,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // special-cases emit `nova_self->…` directly. `str` (and other
                 // by-value receivers) stay `nova_self` (already a value).
                 let self_by_ptr_value_record = self.var_types.get("nova_self")
-                    .map(|c| (c.starts_with("NovaValue_") || c.starts_with("NovaTuple_")) && c.ends_with('*'))
+                    .map(|c| Self::is_value_struct_ptr(c))
                     .unwrap_or(false)
                     || self.current_receiver_type.as_deref()
                         .map(|t| t != "str" && self.value_record_names.contains(t))
@@ -36953,9 +36948,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             .map(|e| Self::is_lvalue_receiver(e))
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
 
-        if (obj_ty.starts_with("NovaValue_") || obj_ty.starts_with("NovaTuple_"))
-            && !obj_ty.ends_with('*')
-        {
+        if Self::is_value_struct_val(obj_ty) {
             // 172.4 Ф.3 A6: value-record (D226) И named-tuple (always-pointer
             // receiver) — единая адаптация: lvalue → &(obj), rvalue → hoist+&tmp.
             // recv_mutable для receiver-адреса иррелевантен (как у VR): mut/ro
@@ -36970,6 +36963,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         } else {
             obj_c.to_string()
         }
+    }
+
+    /// 172.4 A6 (§0 единый источник): C-тип — ИМЕНОВАННЫЙ value-struct
+    /// (value-record `NovaValue_X` ИЛИ named-tuple `NovaTuple_X`) — семейство с
+    /// pointer-carrier receiver-ABI (D226). ОДНА точка правды о prefix-наборе:
+    /// обе категории имеют ИДЕНТИЧНОЕ receiver-поведение (A6), поэтому все
+    /// receiver/decay/return-сайты идут через эти хелперы, а не россыпь
+    /// `starts_with`-пар (§10 «параллельные пути под одно»). NB: анонимный
+    /// `_NovaTuple` НЕ входит — у него нет методов (receiver-ABI неприменим).
+    fn is_value_struct(c: &str) -> bool {
+        c.starts_with("NovaValue_") || c.starts_with("NovaTuple_")
+    }
+    /// pointer-carrier форма (`NovaValue_X*` / `NovaTuple_X*`) — receiver/return.
+    fn is_value_struct_ptr(c: &str) -> bool {
+        Self::is_value_struct(c) && c.ends_with('*')
+    }
+    /// by-value форма (`NovaValue_X` / `NovaTuple_X`) — local/binding value-позиция.
+    fn is_value_struct_val(c: &str) -> bool {
+        Self::is_value_struct(c) && !c.ends_with('*')
     }
 
     fn is_value_type(ty: &str) -> bool {
@@ -37386,7 +37398,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         && self.var_types.contains_key("nova_self")
                     {
                         let raw = self.var_types.get("nova_self").cloned().unwrap();
-                        return if (raw.starts_with("NovaValue_") || raw.starts_with("NovaTuple_")) && raw.ends_with('*') {
+                        return if Self::is_value_struct_ptr(&raw) {
                             raw.trim_end_matches('*').trim().to_string()
                         } else {
                             raw
@@ -37429,7 +37441,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             match &expr.kind {
                 ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
                     let raw = self.var_types.get("nova_self").cloned().unwrap();
-                    return if (raw.starts_with("NovaValue_") || raw.starts_with("NovaTuple_")) && raw.ends_with('*') {
+                    return if Self::is_value_struct_ptr(&raw) {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw
@@ -41189,7 +41201,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // `@field` accessor selection (`.` vs `->`) stays consistent with
                     // the deref'd emission. Heap records (`Nova_X*`) and by-value `str`
                     // (`nova_str`) are unaffected.
-                    if (raw.starts_with("NovaValue_") || raw.starts_with("NovaTuple_")) && raw.ends_with('*') {
+                    if Self::is_value_struct_ptr(&raw) {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw
