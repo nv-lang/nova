@@ -797,7 +797,7 @@ expected-type/arg-binding/resolve-семейство). legacy_inner —
 **Носитель: Plan 172.1 FIN.**
 
 
-## [IDEA-172-typed-ir-mono] — Typed-IR mono path (2026-07-04, из финализации 172.1)
+## [IDEA-172-typed-ir-mono] — ✅ ОФОРМЛЕН ПЛАНОМ [172.12](172.12-typed-ir-mono.md) (2026-07-04)
 
 Главный структурный разрыв с эталонами (rustc HIR/MIR, Zig ZIR/AIR, Swift SIL,
 Go typed-AST+SSA): AST→C-текст напрямую, mono-identity на C-строках
@@ -808,9 +808,18 @@ Go typed-AST+SSA): AST→C-текст напрямую, mono-identity на C-с�
 переиспользовать), порядок: ПОСЛЕ 172.4 (value-ABI упростит representation).
 Оценка: крупный (уровень 172.1).
 
-## [IDEA-172-constraint-inference] — Constraint-based inference core (2026-07-04)
+## [IDEA-172-constraint-inference] — ✅ ОФОРМЛЕН ПЛАНОМ [172.13](172.13-constraint-inference.md) (2026-07-04)
 
 Ad-hoc продюсеры канала (симптом марафона: каждый контекст — отдельный
 продюсер) → унификационное ядро (Go types2/K2-класс) поверх готового канала.
 Закрывает C6-полный (closures bidirectional), anon-RecordLit-expected,
 flow-None классом. Порядок: после typed-IR (структурные типы повсюду).
+
+
+## [IDEA-172-incremental-queries] — Инкрементальность/query-система (2026-07-04) — ДАЛЁКИЙ ГОРИЗОНТ
+
+Rustc salsa-класс (мемоизация/инвалидация по запросам) / Zig incremental.
+Для текущего размера компилятора и однопроходной скорости НЕ критично —
+план не создаётся сознательно. Пересмотреть, когда (а) полный чек+кодоген
+крупного проекта станет узким местом UX, (б) появится typed-IR (172.12) —
+естественная граница мемоизации. НЕ носитель ближайших зонтов.
