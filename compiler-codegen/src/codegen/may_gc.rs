@@ -292,10 +292,7 @@ impl<'a> Analyzer<'a> {
                 self.flag_mut(cur).allocates = true;
                 self.walk_expr(cur, recv, scope, value);
             }
-            Stmt::Defer { body, .. }
-            | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. }
-            | Stmt::DeferWithResult { body, .. } => self.walk_expr(cur, recv, scope, body),
+            Stmt::Defer { body, .. } => self.walk_expr(cur, recv, scope, body),
             Stmt::ConsumeScope { init, body, .. } => {
                 self.walk_expr(cur, recv, scope, init);
                 self.walk_block(cur, recv, scope, body);

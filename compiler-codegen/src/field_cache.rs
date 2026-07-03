@@ -887,8 +887,7 @@ fn explain_walk_stmt(
             if let Some(v) = value { explain_walk_expr(v, type_fields, info); }
         }
         Stmt::Throw { value, .. } => explain_walk_expr(value, type_fields, info),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             explain_walk_expr(body, type_fields, info);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -1622,8 +1621,7 @@ fn collect_writes_stmt(
             if let Some(v) = value { collect_writes_expr(v, recv_type, writes, callees); }
         }
         Stmt::Throw { value, .. } => collect_writes_expr(value, recv_type, writes, callees),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             collect_writes_expr(body, recv_type, writes, callees);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -1847,8 +1845,7 @@ fn collect_reads_stmt(s: &Stmt, recv_type: &str, reads: &mut HashSet<String>, ca
             if let Some(v) = value { collect_reads_expr(v, recv_type, reads, callees); }
         }
         Stmt::Throw { value, .. } => collect_reads_expr(value, recv_type, reads, callees),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             collect_reads_expr(body, recv_type, reads, callees);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -2916,8 +2913,7 @@ fn count_field_reads_in_stmt_weighted(s: &Stmt, fname: &str, loop_mult: usize) -
         }
         Stmt::Return { value, .. } => value.as_ref().map_or(0, |v| count_field_reads_in_expr_weighted(v, fname, loop_mult)),
         Stmt::Throw { value, .. } => count_field_reads_in_expr_weighted(value, fname, loop_mult),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             count_field_reads_in_expr_weighted(body, fname, loop_mult)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -3048,8 +3044,7 @@ fn stmt_span(s: &Stmt) -> Option<crate::diag::Span> {
         Stmt::Return { span, .. } => *span,
         Stmt::Throw { span, .. } => *span,
         Stmt::Break(span) | Stmt::Continue(span) => *span,
-        Stmt::Defer { span, .. } | Stmt::ErrDefer { span, .. }
-        | Stmt::OkDefer { span, .. } | Stmt::DeferWithResult { span, .. } => *span,
+        Stmt::Defer { span, .. } => *span,
         Stmt::ConsumeScope { span, .. } => *span,
         Stmt::AssertStatic { span, .. } => *span,
         Stmt::Assume { span, .. } => *span,
@@ -3102,8 +3097,7 @@ fn stmt_contains_invalidating_call_for(
             value.as_ref().map_or(false, |v| expr_contains_invalidating_call_for(v, fname, ipa))
         }
         Stmt::Throw { value, .. } => expr_contains_invalidating_call_for(value, fname, ipa),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             expr_contains_invalidating_call_for(body, fname, ipa)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -3419,8 +3413,7 @@ fn stmt_contains_write_to(s: &Stmt, fname: &str) -> bool {
         Stmt::Expr(e) => expr_contains_write_to(e, fname),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_contains_write_to(v, fname)),
         Stmt::Throw { value, .. } => expr_contains_write_to(value, fname),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             expr_contains_write_to(body, fname)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -3587,8 +3580,7 @@ fn stmt_contains_call(s: &Stmt) -> bool {
         }
         Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_contains_call(v)),
         Stmt::Throw { value, .. } => expr_contains_call(value),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             expr_contains_call(body)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -3720,8 +3712,7 @@ fn count_field_reads_in_stmt(s: &Stmt, fname: &str) -> usize {
         }
         Stmt::Return { value, .. } => value.as_ref().map_or(0, |v| count_field_reads_in_expr(v, fname)),
         Stmt::Throw { value, .. } => count_field_reads_in_expr(value, fname),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             count_field_reads_in_expr(body, fname)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -3968,10 +3959,7 @@ fn analyze_stmt(s: &Stmt, fields: &HashMap<String, FieldKind>, a: &mut FnAnalysi
         }
         Stmt::Throw { value, .. } => analyze_expr(value, fields, a),
         Stmt::Break(_) | Stmt::Continue(_) => {}
-        Stmt::Defer { body, .. }
-        | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. }
-        | Stmt::DeferWithResult { body, .. } => analyze_expr(body, fields, a),
+        Stmt::Defer { body, .. } => analyze_expr(body, fields, a),
         Stmt::ConsumeScope { init, body, .. } => {
             analyze_expr(init, fields, a);
             analyze_block(body, fields, a);
@@ -4303,8 +4291,7 @@ fn scan_stmt(s: &Stmt, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
             }
         }
         Stmt::Throw { value, .. } => scan_expr(value, fields, out),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             scan_expr(body, fields, out);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -4615,8 +4602,7 @@ fn collect_locals_stmt(s: &Stmt, out: &mut HashSet<String>) {
         Stmt::Throw { value, .. } => collect_locals_expr(value, out),
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             collect_locals_expr(body, out);
         }
         Stmt::ConsumeScope { binding, init, body, .. } => {
@@ -5278,8 +5264,7 @@ fn descend_stmt_for_nested(
         }
         Stmt::Throw { value, .. } => descend_expr_for_nested(value, fname, cfg, ipa,
             local_names, seq, budget_left),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             descend_expr_for_nested(body, fname, cfg, ipa, local_names, seq, budget_left);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -5565,8 +5550,7 @@ fn rewrite_stmt(s: &mut Stmt, replace_map: &HashMap<String, String>) {
         Stmt::Throw { value, .. } => rewrite_expr(value, replace_map),
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             rewrite_expr(body, replace_map);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -6081,10 +6065,7 @@ fn licm_stmt(
         Stmt::Throw { value, .. } => {
             licm_expr(value, fields, cfg, local_names, hoist_count, ipa);
         }
-        Stmt::Defer { body, .. }
-        | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. }
-        | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             licm_expr(body, fields, cfg, local_names, hoist_count, ipa);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -6416,8 +6397,7 @@ fn collect_closures_captures_in_stmt(
         Stmt::Throw { value, .. } => {
             collect_closures_captures_in_expr(value, fields, out);
         }
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             collect_closures_captures_in_expr(body, fields, out);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -6658,8 +6638,7 @@ fn stmt_contains_spawn(s: &Stmt) -> bool {
         }
         Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_contains_spawn(v)),
         Stmt::Throw { value, .. } => expr_contains_spawn(value),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             expr_contains_spawn(body)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -6807,8 +6786,7 @@ fn first_field_span_in_stmt(s: &Stmt, fname: &str) -> Option<crate::diag::Span> 
         }
         Stmt::Return { value, .. } => value.as_ref().and_then(|v| first_field_span_in_expr(v, fname)),
         Stmt::Throw { value, .. } => first_field_span_in_expr(value, fname),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             first_field_span_in_expr(body, fname)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -7232,8 +7210,7 @@ fn capture_sample_args_in_stmt(
             if let Some(v) = value { capture_sample_args_in_expr(v, pure_methods, recv_type, name_map, out); }
         }
         Stmt::Throw { value, .. } => capture_sample_args_in_expr(value, pure_methods, recv_type, name_map, out),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             capture_sample_args_in_expr(body, pure_methods, recv_type, name_map, out);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -7409,8 +7386,7 @@ fn rewrite_pure_calls_in_stmt_v31(
             if let Some(v) = value { rewrite_pure_calls_in_expr_v31(v, pure_methods, recv_type, renames); }
         }
         Stmt::Throw { value, .. } => rewrite_pure_calls_in_expr_v31(value, pure_methods, recv_type, renames),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             rewrite_pure_calls_in_expr_v31(body, pure_methods, recv_type, renames);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -7615,8 +7591,7 @@ fn collect_body_writes_stmt(s: &Stmt, out: &mut HashSet<String>) {
             if let Some(v) = value { collect_body_writes_expr(v, out); }
         }
         Stmt::Throw { value, .. } => collect_body_writes_expr(value, out),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             collect_body_writes_expr(body, out);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -7800,8 +7775,7 @@ fn stmt_has_any_self_field_write(s: &Stmt) -> bool {
         Stmt::Expr(e) => expr_has_any_self_field_write(e),
         Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_has_any_self_field_write(v)),
         Stmt::Throw { value, .. } => expr_has_any_self_field_write(value),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             expr_has_any_self_field_write(body)
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -7949,8 +7923,7 @@ fn count_pure_in_stmt(
             }
         }
         Stmt::Throw { value, .. } => count_pure_in_expr(value, pure_methods, recv_type, counts, first_spans, captured, in_closure),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             count_pure_in_expr(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -8363,8 +8336,7 @@ fn rewrite_pure_calls_in_stmt(s: &mut Stmt, renames: &HashMap<String, String>) {
             }
         }
         Stmt::Throw { value, .. } => rewrite_pure_calls_in_expr(value, renames),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             rewrite_pure_calls_in_expr(body, renames);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -9050,8 +9022,7 @@ fn count_chains_in_stmt(
             }
         }
         Stmt::Throw { value, .. } => count_chains_in_expr(value, counts, first_spans, captured, max_depth, in_closure),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             count_chains_in_expr(body, counts, first_spans, captured, max_depth, in_closure);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -9312,8 +9283,7 @@ fn rewrite_chains_in_stmt(s: &mut Stmt, name_map: &HashMap<Vec<String>, String>)
             if let Some(v) = value { rewrite_chains_in_expr(v, name_map); }
         }
         Stmt::Throw { value, .. } => rewrite_chains_in_expr(value, name_map),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             rewrite_chains_in_expr(body, name_map);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -9813,8 +9783,7 @@ fn C mut @do() -> int {
                     if let Some(v) = value { walk_expr(v, out); }
                 }
                 Stmt::Throw { value, .. } => walk_expr(value, out),
-                Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-                | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+                Stmt::Defer { body, .. } => {
                     walk_expr(body, out);
                 }
                 Stmt::ConsumeScope { init, body, .. } => {

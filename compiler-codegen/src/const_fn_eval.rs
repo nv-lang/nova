@@ -2399,8 +2399,7 @@ fn walk_stmt(
         }
         Stmt::Throw { value, .. } => walk_expr(value, ev, errors),
         Stmt::Break(_) | Stmt::Continue(_) => {}
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             walk_expr(body, ev, errors);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -2852,8 +2851,7 @@ impl<'a, 'b> ValidateCtx<'a, 'b> {
             }
             Stmt::Throw { value, .. } => self.visit_expr(value),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.visit_expr(body);
             }
             Stmt::ConsumeScope { init, body, .. } => {

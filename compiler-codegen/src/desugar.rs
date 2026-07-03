@@ -120,8 +120,7 @@ impl DesugarCtx {
             }
             Stmt::Throw { value, .. } => self.desugar_expr(value),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => self.desugar_expr(body),
+            Stmt::Defer { body, .. } => self.desugar_expr(body),
             // Plan 110 D188: desugar init + body block.
             Stmt::ConsumeScope { init, body, .. } => {
                 self.desugar_expr(init);

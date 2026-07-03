@@ -361,8 +361,7 @@ fn subst_type_refs_in_stmt(s: &mut Stmt, subst: &HashMap<String, TypeRef>) {
         }
         Stmt::Return { value: Some(v), .. } => subst_type_refs_in_expr(v, subst),
         Stmt::Throw { value, .. } => subst_type_refs_in_expr(value, subst),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             subst_type_refs_in_expr(body, subst);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -574,8 +573,7 @@ impl<'a> CollectCtx<'a> {
             Stmt::Return { value: None, .. } => {}
             Stmt::Throw { value, .. } => self.visit_expr(value),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.visit_expr(body);
             }
             Stmt::ConsumeScope { init, body, .. } => {
@@ -847,8 +845,7 @@ impl<'a> GenericMutateCtx<'a> {
             }
             Stmt::Return { value: Some(v), .. } => self.visit_expr_mut(v),
             Stmt::Throw { value, .. } => self.visit_expr_mut(value),
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.visit_expr_mut(body);
             }
             Stmt::ConsumeScope { init, body, .. } => {
@@ -1357,8 +1354,7 @@ fn collect_call_targets_in_stmt(
         }
         Stmt::Return { value: Some(v), .. } => collect_call_targets_in_expr(v, const_fns, aliases, out),
         Stmt::Throw { value, .. } => collect_call_targets_in_expr(value, const_fns, aliases, out),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             collect_call_targets_in_expr(body, const_fns, aliases, out);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -1439,8 +1435,7 @@ fn rewrite_body_stmt(s: &mut Stmt, ts: &HashSet<String>, errs: &mut Vec<Diagnost
         }
         Stmt::Return { value: Some(v), .. } => rewrite_body_expr(v, ts, errs),
         Stmt::Throw { value, .. } => rewrite_body_expr(value, ts, errs),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             rewrite_body_expr(body, ts, errs);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -1693,8 +1688,7 @@ impl<'a> RewriteCtx<'a> {
             }
             Stmt::Return { value: None, .. } => {}
             Stmt::Throw { value, .. } => self.rewrite_expr(value),
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.rewrite_expr(body);
             }
             Stmt::ConsumeScope { init, body, .. } => {

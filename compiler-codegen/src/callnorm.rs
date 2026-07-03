@@ -154,8 +154,7 @@ fn normalize_stmt(s: &mut Stmt, sigs: &Sigs) {
             if let Some(v) = value { normalize_expr(v, sigs); }
         }
         Stmt::Throw { value, .. } => normalize_expr(value, sigs),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => normalize_expr(body, sigs),
+        Stmt::Defer { body, .. } => normalize_expr(body, sigs),
         // Plan 110 D188: consume X = init() { body } — walk init expr +
         // body block (stmts + trailing).
         Stmt::ConsumeScope { init, body, .. } => {

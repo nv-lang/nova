@@ -114,8 +114,7 @@ fn subst_stmt(s: &mut Stmt, subst: &HashMap<String, ConstValue>) {
         }
         Stmt::Return { value: Some(v), .. } => subst_expr(v, subst),
         Stmt::Throw { value, .. } => subst_expr(value, subst),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             subst_expr(body, subst);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -288,8 +287,7 @@ fn rewrite_in_stmt(
         }
         Stmt::Return { value: Some(v), .. } => rewrite_in_expr(v, mixed_decls, specs, spec_counter, errors),
         Stmt::Throw { value, .. } => rewrite_in_expr(value, mixed_decls, specs, spec_counter, errors),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             rewrite_in_expr(body, mixed_decls, specs, spec_counter, errors);
         }
         Stmt::ConsumeScope { init, body, .. } => {

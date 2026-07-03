@@ -206,8 +206,7 @@ fn normalize_chains_stmt(s: &mut Stmt, counter: &mut ChainCounter, registry: &Fl
             if let Some(v) = value { normalize_chains_expr(v, counter, registry); }
         }
         Stmt::Throw { value, .. } => normalize_chains_expr(value, counter, registry),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             normalize_chains_expr(body, counter, registry);
         }
         Stmt::ConsumeScope { init, body, .. } => {

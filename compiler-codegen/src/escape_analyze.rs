@@ -368,10 +368,7 @@ impl<'a> EscapeCtx<'a> {
             Stmt::Expr(e) => self.walk_expr(e),
             Stmt::Const(_) => {}
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. }
-            | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. }
-            | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 // Defer body executes on scope exit. Treat as normal walk —
                 // `&v` ставшее escape через capture inside defer body will
                 // still be detected via the inner ClosureLight/RecordLit

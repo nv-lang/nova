@@ -1958,24 +1958,9 @@ impl Interpreter {
             // запоминается, но не выполняется до exit'а. Аргументы
             // body — closure-captures из текущего env (lazy при invoke).
             match stmt {
+                // Plan 173 Ф.1 (#4): only plain `defer` remains (errdefer/okdefer/
+                // defer|result| retracted, D189) — runs on every exit.
                 Stmt::Defer { body, .. } => {
-                    defers.push((body.clone(), false));
-                    continue;
-                }
-                Stmt::ErrDefer { body, .. } => {
-                    defers.push((body.clone(), true));
-                    continue;
-                }
-                // D160 Plan 100.4.3: OkDefer — runs only on success (is_error=false),
-                // so in the interpreter, register as success-only defer (is_error flag=false,
-                // but semantics: skip if is_error_exit=true). For simplicity in the interpreter
-                // bootstrap, treat same as defer for now.
-                Stmt::OkDefer { body, .. } => {
-                    defers.push((body.clone(), false));
-                    continue;
-                }
-                // DeferWithResult — treat as plain defer in interpreter (result binding TBD).
-                Stmt::DeferWithResult { body, .. } => {
                     defers.push((body.clone(), false));
                     continue;
                 }
@@ -2105,8 +2090,7 @@ impl Interpreter {
             // TODO Ф.5: per-scope Vec<DeferEntry>, invoke LIFO на exit
             //          (Flow::Return / Flow::Throw / Flow::Break / normal).
             //          ErrDefer — флаг is_error_exit, invoke только если true.
-            Stmt::Defer { .. } | Stmt::ErrDefer { .. }
-            | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => {
+            Stmt::Defer { .. } => {
                 Ok(Flow::Value(Value::Unit))
             }
             // Plan 110 D188 / Plan 110.1.4: `consume X = expr { body }` —

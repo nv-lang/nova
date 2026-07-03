@@ -187,10 +187,7 @@ impl<'a> Analyzer<'a> {
             Stmt::Return { value: Some(v), .. } => self.walk_expr(cur, recv, v),
             Stmt::Return { value: None, .. } => {}
             Stmt::Throw { value, .. } => self.walk_expr(cur, recv, value),
-            Stmt::Defer { body, .. }
-            | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. }
-            | Stmt::DeferWithResult { body, .. } => self.walk_expr(cur, recv, body),
+            Stmt::Defer { body, .. } => self.walk_expr(cur, recv, body),
             Stmt::ConsumeScope { init, body, .. } => {
                 self.walk_expr(cur, recv, init);
                 self.walk_block(cur, recv, body);

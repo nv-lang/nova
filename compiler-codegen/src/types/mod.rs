@@ -2680,8 +2680,7 @@ fn check_const_fn_block(
                     *span,
                 ));
             }
-            Stmt::Defer { span, .. } | Stmt::ErrDefer { span, .. }
-            | Stmt::OkDefer { span, .. } | Stmt::DeferWithResult { span, .. }
+            Stmt::Defer { span, .. }
             | Stmt::ConsumeScope { span, .. } => {
                 return Err(Diagnostic::new(
                     "[E_CONST_FN_EFFECT_IN_BODY] defer / consume-scope не разрешены \
@@ -4171,8 +4170,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(v) = value { self.check_consume_scopes_in_expr(v, errors); }
             }
             Stmt::Throw { value, .. } => self.check_consume_scopes_in_expr(value, errors),
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.check_consume_scopes_in_expr(body, errors);
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
@@ -4489,8 +4487,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(binding, v, errors); }
             }
             Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(binding, value, errors),
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.check_no_manual_on_exit_call_in_expr(binding, body, errors);
             }
             Stmt::ConsumeScope { init, body, binding: inner_binding, .. } => {
@@ -5681,8 +5678,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, gs, errors),
             Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.walk_expr(body, gs, errors);
             }
             // Plan 110 D188: walk init + body.
@@ -6446,8 +6442,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f4_check_value(value, scope, errors);
             }
             Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.f1_expr(body, gs, scope, errors);
             }
             // Plan 110 D188: walk init + body (full D188 R1-R6 check лежит
@@ -10838,10 +10833,7 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Expr(e) => self.materialize_returns_in_expr(e, ret),
             Stmt::Let(d) => self.materialize_returns_in_expr(&d.value, ret),
             Stmt::Const(d) => self.materialize_returns_in_expr(&d.value, ret),
-            Stmt::Defer { body, .. }
-            | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. }
-            | Stmt::DeferWithResult { body, .. } => self.materialize_returns_in_expr(body, ret),
+            Stmt::Defer { body, .. } => self.materialize_returns_in_expr(body, ret),
             Stmt::ConsumeScope { body, .. } => self.materialize_returns_in_block(body, ret),
             _ => {}
         }
@@ -14025,8 +14017,7 @@ impl<'a> BoundCtx<'a> {
             // D90 Plan 20 Ф.2: body парсится, walk'аем — bound-checker
             // получит call'ы внутри body. Body-constraint проверки
             // (no Fail, no suspend, no exit-control) добавляются в Ф.3.
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.walk_expr(body, scope, errors);
             }
             // Plan 110 D188: walk init + body (scaffold).
@@ -15568,8 +15559,7 @@ impl<'a> CapabilityCtx<'a> {
             // D90 Plan 20 Ф.2: проверяем capability'и внутри body
             // defer'а. Полные constraints (no Fail/suspend/exit-control)
             // — Ф.3.
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.walk_expr(body, state, errors);
             }
             // Plan 110 D188: walk init + body (scaffold).
@@ -16563,8 +16553,7 @@ impl NameResCtx {
             // D90 (Plan 20): defer/errdefer body — обычный expr в текущем
             // scope. Bindings внутри body локальны их собственным under-scope’ам;
             // на верхнем уровне defer не вводит новых имён.
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.walk_expr(body, file_id, scope, errors);
             }
             // Plan 110 D188: walk init + push new scope frame с binding,
@@ -17623,8 +17612,7 @@ fn has_throw_in_stmt(s: &Stmt) -> bool {
         // body не считается throw-носителем — он отдельный scope с
         // ограничением. Если в body throw обнаружен — Ф.3 даст
         // отдельную compile error раньше этой проверки.
-        Stmt::Defer { .. } | Stmt::ErrDefer { .. }
-        | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => false,
+        Stmt::Defer { .. } => false,
         // Plan 110 D188: consume scope-block body может содержать throw —
         // D188 R3 cancel-shield масаит throw к caller'у после on_exit;
         // для has_throw analysis считаем body как throw-носитель.
@@ -18491,8 +18479,7 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
                 if let Some(v) = value { walk_expr_for_handler_lits(v, never_ops, errors); }
             }
             Stmt::Throw { value, .. } => walk_expr_for_handler_lits(value, never_ops, errors),
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 walk_expr_for_handler_lits(body, never_ops, errors);
             }
             // Plan 110 D188: walk init + body block recursively.
@@ -18832,8 +18819,7 @@ fn stmt_has_throw(s: &Stmt) -> bool {
         Stmt::Expr(e) => expr_has_throw(e),
         Stmt::Let(d) => expr_has_throw(&d.value),
         Stmt::Const(_) => false,
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. } | Stmt::OkDefer { body, .. }
-        | Stmt::DeferWithResult { body, .. }
+        Stmt::Defer { body, .. }
             => expr_has_throw(body),
         _ => false,
     }
@@ -20405,10 +20391,7 @@ impl<'a> VrEscapeCtx<'a> {
             }
             crate::ast::Stmt::Return { value: Some(v), .. } => self.walk_expr(v, errors),
             crate::ast::Stmt::Throw { value, .. } => self.walk_expr(value, errors),
-            crate::ast::Stmt::Defer { body, .. }
-            | crate::ast::Stmt::ErrDefer { body, .. }
-            | crate::ast::Stmt::OkDefer { body, .. }
-            | crate::ast::Stmt::DeferWithResult { body, .. } => self.walk_expr(body, errors),
+            crate::ast::Stmt::Defer { body, .. } => self.walk_expr(body, errors),
             crate::ast::Stmt::ConsumeScope { init, body, .. } => {
                 self.walk_expr(init, errors);
                 self.walk_block(body, errors);
@@ -20671,14 +20654,9 @@ fn scan_defer_coverage(b: &Block) -> (bool, bool) {
     let mut has_okdefer = false;
     for s in &b.stmts {
         match s {
-            Stmt::ErrDefer { .. } | Stmt::DeferWithResult { .. } => {
-                has_errdefer = true;
-            }
-            Stmt::OkDefer { .. } => {
-                has_okdefer = true;
-            }
-            // Plain `defer` runs on ALL exits (success + error + cancel).
-            // Counts as both errdefer and okdefer coverage for D162.
+            // Plan 173 Ф.1 (#4): errdefer/okdefer ретрактнуты (D189). Плейн
+            // `defer` бежит на ВСЕХ exits (success + error + cancel) → покрывает
+            // и error-, и success-path для D162.
             Stmt::Defer { .. } => {
                 has_errdefer = true;
                 has_okdefer = true;
@@ -21355,8 +21333,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         // Side-effect: explicit `tx.commit()` AFTER `defer { tx.commit() }` →
         // use-after-consume error (D162-double-cover from check_d162_coverage
         // tooling layer also captures this).
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             // Collect outer consume-vars consumed inside body (pre-walk snapshot).
             let pre_obligations: HashSet<String> = ctx.consume_obligations.clone();
             consume_walk_isolated_expr(ctx, &[], body, errors);
@@ -22637,16 +22614,6 @@ fn walk_block_for_defers(b: &Block, fn_effects: &HashMap<String, Vec<TypeRef>>, 
             Stmt::Defer { body, .. } => {
                 check_defer_body(body, "defer", fn_effects, current_fn_effects, errors);
             }
-            Stmt::ErrDefer { body, .. } => {
-                check_defer_body(body, "errdefer", fn_effects, current_fn_effects, errors);
-            }
-            // D160 Plan 100.4.3: OkDefer/DeferWithResult — same body constraints.
-            Stmt::OkDefer { body, .. } => {
-                check_defer_body(body, "okdefer", fn_effects, current_fn_effects, errors);
-            }
-            Stmt::DeferWithResult { body, .. } => {
-                check_defer_body(body, "defer |result|", fn_effects, current_fn_effects, errors);
-            }
             Stmt::Let(decl) => walk_expr_for_defers(&decl.value, fn_effects, current_fn_effects, errors),
             Stmt::Const(_) => {}
             Stmt::Expr(e) => walk_expr_for_defers(e, fn_effects, current_fn_effects, errors),
@@ -23158,10 +23125,6 @@ fn check_defer_body_block(b: &Block, kw: &str, fn_effects: &HashMap<String, Vec<
             // не для родительского. Рх body тоже проверяется — но через
             // основной walk (check_defer_bodies проходит по всем bodies).
             Stmt::Defer { body, .. } => check_defer_body(body, "defer", fn_effects, current_fn_effects, errors),
-            Stmt::ErrDefer { body, .. } => check_defer_body(body, "errdefer", fn_effects, current_fn_effects, errors),
-            // D160 Plan 100.4.3: OkDefer / DeferWithResult body — same constraints as defer.
-            Stmt::OkDefer { body, .. } => check_defer_body(body, "okdefer", fn_effects, current_fn_effects, errors),
-            Stmt::DeferWithResult { body, .. } => check_defer_body(body, "defer |result|", fn_effects, current_fn_effects, errors),
             // Plan 33.2 Ф.8: assert_static в defer body — walk expr.
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_defer_body_inner(expr, kw, fn_effects, current_fn_effects, ctx, errors),
             // Ф.4.1: apply — ghost, args walk.
@@ -23737,8 +23700,7 @@ fn check_ghost_in_stmt(s: &Stmt, ghosts: &HashSet<String>, errors: &mut Vec<Diag
         }
         Stmt::Return { value: Some(v), .. } => check_ghost_in_expr(v, ghosts, errors),
         Stmt::Throw { value, .. } => check_ghost_in_expr(value, ghosts, errors),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => check_ghost_in_expr(body, ghosts, errors),
+        Stmt::Defer { body, .. } => check_ghost_in_expr(body, ghosts, errors),
         // assert_static/assume — это spec-уровень, ghost-vars там OK.
         // Skip walk через них чтобы не выдавать false-positives.
         Stmt::AssertStatic { .. } | Stmt::Assume { .. } => {}
@@ -24122,8 +24084,7 @@ impl MapLitCtx {
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, None, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.walk_expr(body, None, errors);
             }
             // Plan 110 D188: walk init + body block recursively.
@@ -24989,8 +24950,7 @@ impl MapLitAnnotator {
             }
             Stmt::Throw { value, .. } => self.walk_expr(value, None),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.walk_expr(body, None);
             }
             // Plan 110 D188: walk init + body block recursively.

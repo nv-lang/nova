@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR D189-removed-defer-result
+//
+// Plan 173 Ф.1 (#4, [M-172-errdefer-okdefer-dead-surface]): reason-aware
+// `defer |result| { ... }` ретрактнут (D189 hard cutover). AST-вариант
+// `Stmt::DeferWithResult` удалён; парсер отвергает форму на месте хинтом
+// `[D189-removed-defer-result]`. Замена: `defer(o ScopeOutcome)` (Ф.2) /
+// `consume X = e { body }` с `match outcome` (D188).
+
+module neg.f1_defer_result_removed
+
+fn cleanup_with_reason() -> () {
+    defer |result| { () }                        // ❌ [D189-removed-defer-result]
+}

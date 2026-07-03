@@ -240,10 +240,7 @@ impl Numberer {
             }
             Stmt::Throw { value, .. } => self.expr(value),
             Stmt::Break(_) | Stmt::Continue(_) => {}
-            Stmt::Defer { body, .. }
-            | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. }
-            | Stmt::DeferWithResult { body, .. } => self.expr(body),
+            Stmt::Defer { body, .. } => self.expr(body),
             Stmt::ConsumeScope { init, body, .. } => {
                 self.expr(init);
                 self.block(body);

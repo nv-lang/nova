@@ -1323,30 +1323,16 @@ pub struct CEmitter {
     preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet,
 }
 
-/// D160 Plan 100.4.3: kind of a defer entry — determines which exit paths trigger it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DeferKind {
-    /// Plain `defer` — runs on ALL exit paths (normal/return/throw/panic/interrupt).
-    Plain,
-    /// `errdefer` — runs ONLY on error exit (throw/panic). Skip on normal/return/interrupt.
-    ErrDefer,
-    /// `okdefer` — runs ONLY on success exit (normal end-of-scope/return).
-    /// Skip on throw/panic/interrupt. Complement to ErrDefer (D160).
-    OkDefer,
-    /// `defer |result| { ... }` — runs on ALL exit paths like `defer`,
-    /// but result-binding is available in the body (D160).
-    WithResult,
-}
-
-/// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }`,
-/// `errdefer { ... }`, `okdefer { ... }`, or `defer |result| { ... }` statement.
+/// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` statement.
+///
+/// Plan 173 Ф.1 (#4): `errdefer`/`okdefer`/`defer |result|` ретрактнуты (D189);
+/// все defer'ы теперь плейн — бегут на ВСЕХ exit-paths. `DeferKind` и
+/// path-selective skip-логика удалены как мёртвая поверхность.
 struct DeferEntry {
     /// C variable name of the `int` activation flag. Initialized to 0
     /// at block start; set to 1 inline at the defer's textual position
     /// (so partial-init exits run only defers that already executed).
     active_var: String,
-    /// Kind of this defer entry — determines which exit paths it fires on.
-    kind: DeferKind,
     /// AST body to re-emit at cleanup point. AST stores defer body as
     /// arbitrary `Expr` (parser wraps `defer { ... }` in ExprKind::Block).
     body: Expr,
@@ -1363,14 +1349,14 @@ struct DeferEntry {
 struct DeferScope {
     /// Unique block ID for naming.
     block_id: usize,
-    /// All defer/errdefer entries registered in this block, in textual order.
+    /// All `defer` entries registered in this block, in textual order.
     /// Cleanup walks this in reverse for LIFO semantics.
     entries: Vec<DeferEntry>,
     /// Running index into `entries` — incremented each time emit_stmt
-    /// reaches a Defer/ErrDefer and activates its flag.
+    /// reaches a `defer` and activates its flag.
     next_idx: usize,
-    /// `true` if the scope has at least one `errdefer` — triggers
-    /// NovaFailFrame setjmp wrapper so throw-path can detect error exit.
+    /// Diagnostic-only (Plan 173 Ф.1 #4): fail-frame теперь ставится всегда
+    /// при наличии defer, не по path-selective признаку (коего больше нет).
     needs_failframe: bool,
     /// Name of the C NovaFailFrame variable when `needs_failframe`.
     failframe_var: String,
@@ -2459,9 +2445,6 @@ impl CEmitter {
             | Stmt::Return { span, .. }
             | Stmt::Throw { span, .. }
             | Stmt::Defer { span, .. }
-            | Stmt::ErrDefer { span, .. }
-            | Stmt::OkDefer { span, .. }
-            | Stmt::DeferWithResult { span, .. }
             | Stmt::AssertStatic { span, .. }
             | Stmt::Assume { span, .. }
             | Stmt::Apply { span, .. }
@@ -11814,10 +11797,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
             Stmt::Return { value: Some(e), .. }
             | Stmt::Throw { value: e, .. }
-            | Stmt::Defer { body: e, .. }
-            | Stmt::ErrDefer { body: e, .. }
-            | Stmt::OkDefer { body: e, .. }
-            | Stmt::DeferWithResult { body: e, .. } => {
+            | Stmt::Defer { body: e, .. } => {
                 Self::collect_array_elem_typerefs_in_expr(e, out);
             }
             Stmt::ConsumeScope { type_annot, init, body, .. } => {
@@ -18080,33 +18060,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     // ---- Plan 20 Ф.4: defer/errdefer codegen helpers ----
 
-    /// Scan a block for any defer-family stmts (non-recursive — defers
-    /// in nested blocks have their own scope). Used to decide whether to set
-    /// up defer-state for this block at all (fast-path otherwise).
-    /// Returns (has_any_defer, has_path_selective_defer) where the second
-    /// flag means there is at least one errdefer or okdefer — requiring the
-    /// fail-frame setjmp to distinguish error vs success paths.
-    fn block_has_defers(block: &Block) -> (bool, bool) {
-        let mut has_defer = false;
-        let mut has_path_selective = false;
-        for s in &block.stmts {
-            match s {
-                Stmt::Defer { .. } | Stmt::DeferWithResult { .. } => has_defer = true,
-                Stmt::ErrDefer { .. } => { has_defer = true; has_path_selective = true; }
-                // D160 Plan 100.4.3: okdefer also needs fail-frame to track success/error.
-                Stmt::OkDefer { .. } => { has_defer = true; has_path_selective = true; }
-                _ => {}
-            }
-        }
-        (has_defer, has_path_selective)
+    /// Scan a block for any `defer` stmt (non-recursive — defers in nested
+    /// blocks have their own scope). Used to decide whether to set up
+    /// defer-state for this block at all (fast-path otherwise). Plan 173 Ф.1
+    /// (#4): only plain `defer` exists now (errdefer/okdefer retracted, D189),
+    /// so there is no path-selective flag — all defers fire on every exit.
+    fn block_has_defers(block: &Block) -> bool {
+        block.stmts.iter().any(|s| matches!(s, Stmt::Defer { .. }))
     }
 
     /// Push a new defer scope onto the stack and emit its prologue:
     /// declaration of activation flags (zero-init), and the NovaFailFrame
     /// setjmp wrapper for errdefer-bearing blocks. Returns block_id.
     fn enter_defer_scope(&mut self, block: &Block, is_loop_body: bool) -> usize {
-        let (has_defer, has_path_selective) = Self::block_has_defers(block);
-        if !has_defer {
+        if !Self::block_has_defers(block) {
             return 0;
         }
         self.defer_block_counter += 1;
@@ -18114,19 +18081,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mut entries: Vec<DeferEntry> = Vec::new();
         let mut idx = 0usize;
         for s in &block.stmts {
-            let (body, kind) = match s {
-                Stmt::Defer { body, .. } => (body, DeferKind::Plain),
-                Stmt::ErrDefer { body, .. } => (body, DeferKind::ErrDefer),
-                // D160 Plan 100.4.3: okdefer = success-only cleanup.
-                Stmt::OkDefer { body, .. } => (body, DeferKind::OkDefer),
-                // D160 Plan 100.4.3: defer |result| = all-paths (result binding).
-                Stmt::DeferWithResult { body, .. } => (body, DeferKind::WithResult),
+            // Plan 173 Ф.1 (#4): only plain `defer` remains (D189).
+            let body = match s {
+                Stmt::Defer { body, .. } => body,
                 _ => continue,
             };
             let var = format!("_defer_{}_{}_active", block_id, idx);
             entries.push(DeferEntry {
                 active_var: var.clone(),
-                kind,
                 body: body.clone(),
             });
             self.line(&format!("int {} = 0;", var));
@@ -18190,11 +18152,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let failframe_var = format!("_defer_{}_ff", block_id);
         let failframe_popped_var = format!("_defer_{}_ff_popped", block_id);
         // Plan 20 Ф.8 follow-up (3): fail-frame нужен ВСЕГДА когда есть
-        // defer (любой), не только когда есть errdefer. Spec D90 п.8:
-        // defer fires on throw. Без local fail-frame'а throw скипает
-        // scope с longjmp'ом, defer cleanup пропускается.
-        // На fail-path: invoke defer + errdefer (LIFO); skip okdefer.
-        let _has_path_selective = has_path_selective; // suppress unused warning
+        // defer. Spec D90 п.8: defer fires on throw. Без local fail-frame'а
+        // throw скипает scope с longjmp'ом, defer cleanup пропускается.
+        // Plan 173 Ф.1 (#4): все defer'ы плейн — бегут на fail-path (LIFO).
         self.line(&format!("int {} = 0;", failframe_popped_var));
         self.line(&format!("NovaFailFrame {};", failframe_var));
         self.line(&format!("nova_fail_push(&{});", failframe_var));
@@ -18207,9 +18167,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let comp_chain_t = format!("_defer_{}_throw_chain", block_id);
         self.line(&format!("NovaErrorChain* {} = {}.error_suppressed;", comp_chain_t, failframe_var));
         for (i, entry) in entries.iter().enumerate().rev() {
-            if entry.kind == DeferKind::OkDefer {
-                continue; // D160: okdefer skipped on error-path
-            }
+            // Plan 173 Ф.1 (#4): все defer'ы плейн — бегут на error-path.
             let df = format!("_defer_{}_{}_tdf", block_id, i);
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
@@ -18264,12 +18222,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line(&format!("nova_interrupt_push_defer(&{});", intframe_var));
         self.line(&format!("if (setjmp({}.jmp) != 0) {{", intframe_var));
         self.indent += 1;
-        // Interrupt path: invoke only Plain/WithResult defer (skip errdefer and okdefer).
-        // D160: okdefer skipped on interrupt (same as errdefer — handled exit, not success).
+        // Interrupt path: invoke defer (Plan 173 Ф.1 #4 — все defer'ы плейн,
+        // бегут на interrupt так же как на normal/error exit).
         for entry in entries.iter().rev() {
-            if entry.kind == DeferKind::ErrDefer || entry.kind == DeferKind::OkDefer {
-                continue;
-            }
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
             let _ = self.emit_defer_body_void(&entry.body);
@@ -18293,7 +18248,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             block_id,
             entries,
             next_idx: 0,
-            needs_failframe: has_path_selective,
+            // Plan 173 Ф.1 (#4): fail-frame ставится всегда при наличии defer
+            // (не только при path-selective, коих больше нет); поле diagnostic-only.
+            needs_failframe: false,
             failframe_var,
             failframe_popped_var,
             intframe_var,
@@ -18317,8 +18274,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // в своём setjmp envelope. LIFO continues despite individual failures;
         // failures accumulate в local compose-state, re-throw at end если any.
         //
-        // Normal exit: run Plain, OkDefer, WithResult; skip ErrDefer (error-only).
-        // D160 Plan 100.4.3: okdefer fires on success-path (normal exit/return).
+        // Normal exit: run all defers (Plan 173 Ф.1 #4 — plain-only, D189).
         //
         // Composition rules (D161):
         // - 1st fail → primary; 2nd+ fails → appended to suppressed chain (LIFO order).
@@ -18337,9 +18293,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line(&format!("NovaErrorChain* {} = NULL;", comp_chain));
         self.line(&format!("int {} = 0;", comp_has));
         for (i, entry) in scope.entries.iter().enumerate().rev() {
-            if entry.kind == DeferKind::ErrDefer {
-                continue; // skip errdefer on success-path
-            }
+            // Plan 173 Ф.1 (#4): все defer'ы плейн — бегут на success-path.
             let df = format!("_defer_{}_{}_df", scope.block_id, i);
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
@@ -18431,12 +18385,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // внутри loop'а без borrow conflict.
         let scopes = std::mem::take(&mut self.defer_scopes);
         'outer: for scope in scopes.iter().rev() {
-            // Early exit via return (success) — run Plain, OkDefer, WithResult; skip ErrDefer.
-            // D160 Plan 100.4.3: okdefer fires on return (success path).
+            // Early exit via return — run all defers (Plan 173 Ф.1 #4: plain-only).
             for entry in scope.entries.iter().rev() {
-                if entry.kind == DeferKind::ErrDefer {
-                    continue; // skip errdefer on success-path return
-                }
                 self.line(&format!("if ({}) {{", entry.active_var));
                 self.indent += 1;
                 let _ = self.emit_defer_body_void(&entry.body);
@@ -19734,10 +19684,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // (для normal-exit) и в setjmp-fail-handler (для throw-path).
             // enter_defer_scope уже декларировал `int _defer_BID_N_active = 0`.
             // Здесь — просто переключаем флаг и инкрементим next_idx.
-            Stmt::Defer { .. } | Stmt::ErrDefer { .. }
-            | Stmt::OkDefer { .. } | Stmt::DeferWithResult { .. } => {
+            Stmt::Defer { .. } => {
                 let scope = self.defer_scopes.last_mut()
-                    .expect("defer/errdefer/okdefer outside defer scope (enter_defer_scope missed?)");
+                    .expect("defer outside defer scope (enter_defer_scope missed?)");
                 let idx = scope.next_idx;
                 let var = scope.entries[idx].active_var.clone();
                 scope.next_idx += 1;
@@ -29195,9 +29144,6 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             Stmt::Expr(e)
             | Stmt::Throw { value: e, .. }
             | Stmt::Defer { body: e, .. }
-            | Stmt::ErrDefer { body: e, .. }
-            | Stmt::OkDefer { body: e, .. }
-            | Stmt::DeferWithResult { body: e, .. }
             | Stmt::AssertStatic { expr: e, .. }
             | Stmt::Assume { expr: e, .. } => Self::expr_has_break_in_scope(e),
             Stmt::Let(l) => Self::expr_has_break_in_scope(&l.value),

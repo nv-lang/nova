@@ -209,8 +209,7 @@ impl<'a> GenericClosureHofCtx<'a> {
             }
             Stmt::Return { value: Some(v), .. } => self.visit_expr_mut(v),
             Stmt::Throw { value, .. } => self.visit_expr_mut(value),
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.visit_expr_mut(body);
             }
             Stmt::ConsumeScope { init, body, .. } => {
@@ -771,8 +770,7 @@ fn subst_stmt(s: &mut Stmt, subst: &HashMap<String, ConstValue>) {
         }
         Stmt::Return { value: Some(v), .. } => subst_expr(v, subst),
         Stmt::Throw { value, .. } => subst_expr(value, subst),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             subst_expr(body, subst);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -956,8 +954,7 @@ fn rewrite_stmt(
         }
         Stmt::Return { value: Some(v), .. } => rewrite_expr(v, closure_fns, specs, spec_counter, errors),
         Stmt::Throw { value, .. } => rewrite_expr(value, closure_fns, specs, spec_counter, errors),
-        Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-        | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+        Stmt::Defer { body, .. } => {
             rewrite_expr(body, closure_fns, specs, spec_counter, errors);
         }
         Stmt::ConsumeScope { init, body, .. } => {
@@ -1218,8 +1215,7 @@ impl<'a, 'b> FirstClassRejectCtx<'a, 'b> {
             Stmt::Return { value: Some(v), .. } => { self.check(v); self.visit_expr(v); }
             Stmt::Return { value: None, .. } => {}
             Stmt::Throw { value, .. } => self.visit_expr(value),
-            Stmt::Defer { body, .. } | Stmt::ErrDefer { body, .. }
-            | Stmt::OkDefer { body, .. } | Stmt::DeferWithResult { body, .. } => {
+            Stmt::Defer { body, .. } => {
                 self.visit_expr(body);
             }
             Stmt::ConsumeScope { init, body, .. } => {

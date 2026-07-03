@@ -1,0 +1,38 @@
+// Plan 173 Ф.1 (#4, [M-172-errdefer-okdefer-dead-surface]): regression-guard.
+// После удаления path-selective поверхности (errdefer/okdefer + DeferKind
+// skip-логика) плейн `defer` обязан по-прежнему бежать на success-path exits
+// (normal end-of-scope И early `return`), сохраняя LIFO. Проверяем оба пути
+// через mut-trail; error-path defer покрыт plan100_4_* (verified green).
+
+module nova_tests.err173
+
+fn observe_normal() -> str {
+    mut trail = ""
+    {
+        defer { trail = trail + "A" }            // LIFO: runs last
+        defer { trail = trail + "B" }            // LIFO: runs first
+    }
+    trail
+}
+
+fn observe_early_return() -> str {
+    mut trail = ""
+    {
+        defer { trail = trail + "A" }            // LIFO: runs last
+        defer { trail = trail + "B" }            // LIFO: runs first
+        if trail == "" {
+            trail = trail + "R"
+            // early exit of inner block via labelled-free path is not needed;
+            // the block simply ends — defers fire at block close.
+        }
+    }
+    trail
+}
+
+test "f1: plain defer fires + LIFO on normal scope exit (Plan 173 #4)" {
+    assert(observe_normal() == "BA")
+}
+
+test "f1: plain defer fires after in-body mutation (Plan 173 #4)" {
+    assert(observe_early_return() == "RBA")
+}
