@@ -1,5 +1,7 @@
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Plan 181 — Same-scope re-binding (`ro x = ...` повторно, тип может меняться)
 
+> **Маркер:** `[M-181-same-scope-rebinding]`. **Запуск:** «**выполни план 181**».
 > **Статус:** 📋 proposed 2026-07-02 (Ф.0 = owner sign-off gate). **Ред. 2 — 2026-07-03** (аудит: D-карта, symbol-якоря, spec_tests, пины p03/p08, EXPECT_WARNING-gap, §9/§10).
 > **D-блок (NEW):** **D347**. **D-карта (Ред.2 2026-07-03):** committed high-water 3xx = D355 (D354/D355 в спеке);
 > резервы: 178=D357–D362 · 179=D333–D337 (+D338–D339 буфер) · 180=D340–D346 · **181=D347** · 173=D348–D349 ·

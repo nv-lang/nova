@@ -21,23 +21,23 @@
 | parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) *(зонт 174 — impl-coupled к 172.1; 172.3 ✅ CLOSED — generic-вариант B развязан)* | 📋 proposed |
 | time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) | 📋 READY |
 | io / fs / os | [176](176-io-fs-os.md) (umbrella) | 📋 READY |
-| http (client+server, HTTPS, h2) | [178](178-std-http.md) (umbrella) | 📋 proposed |
-| encoding/compress (gzip/deflate/brotli) | [179](179-std-encoding-compress.md) — гейт 178 decompress | 📋 proposed |
-| serde / typed-json | [180](180-serde-derive.md) — гейт 178 `.json[T]` | 📋 proposed |
+| http (client+server, HTTPS, h2) | [178](178-std-http.md) (umbrella) | 📋 READY (Ред.2) |
+| encoding/compress (gzip/deflate/brotli) | [179](179-std-encoding-compress.md) — гейт 178 decompress | 📋 READY (Ред.2) |
+| serde / typed-json | [180](180-serde-derive.md) — гейт 178 `.json[T]` | 📋 READY (Ред.2) |
 | encoding/json · base64 · url | существующие / `_experimental` (url → промоут в 178) | — |
 
 **Сквозная конвенция:** [177](177-fallible-result-everywhere.md) (Result-everywhere) — применяется ко ВСЕМ модулям выше.
 
 ## Очередность исполнения 173-181 (граф зависимостей; зафиксировано 2026-07-03)
 
-> 173/174/175/176 прошли полную сверку (Ред. 2, 2026-07-03) и READY; 181 — свежий (Ф.0 = sign-off);
-> **177/178/179/180 Ред. 2-сверку НЕ проходили** — их гейты по авторингу + коллизии, найденные извне
-> (178: renumber D327-D332, ложный from_bytes-green, Plan-80→D133). Рекомендация: сверка 178 перед запуском.
+> **Все девять (173-181) прошли полную сверку (Ред. 2, 2026-07-03)**: 173-176 и 178-180 READY; 177 — IN PROGRESS
+> (D325 ✅ в спеке, Ф.1 largely done); 181 — proposed (Ф.0 = owner sign-off). Бывшие внешние коллизии СНЯТЫ:
+> 178 renumber D327-D332 → **D357-D362 ✅ выполнен**; from_bytes = prereq 176 Ф.0.5; Plan-80 → D133 ✅ shipped.
 > Очередность выводится из гейтов; стрелки продублированы в шапках планов. Слабосвязанные треки — параллелятся.
 
 **Волна 0 — реконсиляции и gate-верификации (без кода; параллельно):**
-`173 Ф.0R` ∥ `174 Ф.0R` ∥ `175 Ф.0` (D316-D318 в спеку) ∥ `176 Ф.0`+`Ф.0.5` ∥ `178 Ф.0-сверка`
-(renumber D327-D332 → приёмники **D357-D362** (D356 — резерв 174); ноты: from_bytes = 176 Ф.0.5, Body must-consume = D133 ✅ shipped)
+`173 Ф.0R` ∥ `174 Ф.0R` ∥ `175 Ф.0` (D316-D318 в спеку) ∥ `176 Ф.0`+`Ф.0.5` ∥ `178 Ф.0`
+(обычный GATE: spec-first D357-D362 + verify-list; Ред.2-сверка ✅ выполнена 2026-07-03 — renumber сделан, from_bytes = prereq 176 Ф.0.5, D133 ✅ shipped)
 ∥ `180 Ф.0-verify` (🔴 компилятор-гейты: `[M-126-sum-*-rich]` OPEN; `[M-161]` ✅ CLOSED — re-verify D355 typevar-receiver; #serde-attr
 AST — честная оценка объёма до старта) ∥ `181 Ф.0` (owner sign-off R1-R7; fallback = E_DUPLICATE_LOCAL).
 177: D325 ✅ уже в спеке — Ф.0-часть фактически выполнена.
@@ -93,7 +93,7 @@ Renumber D216/D282 ✅ уже выполнен (2026-07-03) — гейты 174.5
 
 **Кратчайший старт «прямо сейчас» (после Волны 0):** до **шести** параллельных агентов в своих worktree
 (nova-pNNN, непересекающиеся файлы): 174.3 + 173 Ф.1 + 175 Ф.1 + 176 Ф.0.5/Ф.1 + **179 Ф.1** + **177-sweep**;
-седьмым слотом — 178 Ф.0-сверка (doc-only).
+седьмым слотом — 178 Ф.0-GATE (spec-first D357-D362; Ред.2-сверка ✅ уже выполнена).
 
 ## Текущие планы
 
