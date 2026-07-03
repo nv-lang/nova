@@ -66,10 +66,19 @@ pub fn to_lsp(d: &NovaDiag, rope: &Rope, file_uri: &Url) -> Diagnostic {
 
 /// Extract an LSP diagnostic code from a Nova diagnostic message.
 ///
-/// Nova diagnostic messages follow the pattern `[E_SOME_CODE] human readable ...`.
-/// This function parses the `[E_...]` prefix and returns it as an LSP
-/// `NumberOrString::String`.  Returns `None` if the message does not start
-/// with a `[E_` prefix.
+/// Nova diagnostic messages follow two code conventions:
+/// - **symbolic** `[E_SOME_CODE] human readable ...` (current style);
+/// - **legacy numeric** `[Ennnn] human readable ...` (e.g. `[E7301]`,
+///   call-arg / type errors — Plan 79 series).
+///
+/// This function parses the leading `[...]` prefix and returns the code as an
+/// LSP `NumberOrString::String` for **both** forms.  Returns `None` if the
+/// message does not open with a recognized code.
+///
+/// Accepting the numeric form is required so code-action dispatch (lightbulb
+/// filtering keyed on `Diagnostic.code`) fires for numeric diagnostics too
+/// ([M-104.10-diag-numeric-codes]); before, `[Ennnn]` codes were silently
+/// dropped and their quick-fixes never appeared.
 ///
 /// # Examples
 ///
@@ -80,6 +89,9 @@ pub fn to_lsp(d: &NovaDiag, rope: &Rope, file_uri: &Url) -> Diagnostic {
 /// let code = extract_error_code("[E_LOCAL_NOT_MUT] binding `x` is not mutable");
 /// assert_eq!(code, Some(NumberOrString::String("E_LOCAL_NOT_MUT".to_string())));
 ///
+/// let numeric = extract_error_code("[E7301] wrong number of arguments");
+/// assert_eq!(numeric, Some(NumberOrString::String("E7301".to_string())));
+///
 /// let none = extract_error_code("some error without code");
 /// assert_eq!(none, None);
 /// ```
@@ -89,8 +101,19 @@ pub fn extract_error_code(message: &str) -> Option<NumberOrString> {
     // Find closing ']'
     let end = rest.find(']')?;
     let code = &rest[..end];
-    // Must start with 'E_' and contain only uppercase letters, digits, underscores
-    if code.starts_with("E_") && code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+
+    // Symbolic form: `E_...` — uppercase letters, digits, underscores.
+    let is_symbolic = code.starts_with("E_")
+        && code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+
+    // Legacy numeric form: `E` followed by one or more ASCII digits (`E7301`).
+    // [M-104.10-diag-numeric-codes].
+    let is_numeric = matches!(
+        code.strip_prefix('E'),
+        Some(digits) if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+    );
+
+    if is_symbolic || is_numeric {
         Some(NumberOrString::String(code.to_string()))
     } else {
         None
@@ -439,6 +462,33 @@ mod tests {
         let msg = "[NOTE] something happened";
         let code = extract_error_code(msg);
         assert_eq!(code, None, "non-E_ prefix should not be extracted");
+    }
+
+    #[test]
+    fn ec_pos5_extracts_legacy_numeric_code() {
+        // [M-104.10-diag-numeric-codes]: `[Ennnn]` must flow through so the
+        // lightbulb / code-action dispatch keyed on Diagnostic.code fires.
+        let msg = "[E7301] wrong number of arguments in call to `foo`";
+        let code = extract_error_code(msg);
+        assert_eq!(code, Some(NumberOrString::String("E7301".to_string())));
+    }
+
+    #[test]
+    fn ec_neg3_bare_e_without_digits_is_none() {
+        // `[E]` and `[EFOO]` (letters after E, not underscore) must not be
+        // mistaken for a numeric code.
+        assert_eq!(extract_error_code("[E] nope"), None);
+        assert_eq!(extract_error_code("[EFOO] nope"), None);
+    }
+
+    #[test]
+    fn ec_pos6_to_lsp_sets_numeric_code_field() {
+        use nova_codegen::diag::{Diagnostic as NovaDiag, Span};
+        let d = NovaDiag::new("[E7401] unknown bound", Span::new(0, 5));
+        let rope = Rope::from_str("fn f() => ()");
+        let uri = Url::parse("file:///test.nv").unwrap();
+        let lsp = to_lsp(&d, &rope, &uri);
+        assert_eq!(lsp.code, Some(NumberOrString::String("E7401".to_string())));
     }
 
     #[test]

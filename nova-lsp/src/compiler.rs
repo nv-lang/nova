@@ -19,7 +19,10 @@
 
 use std::path::{Path, PathBuf};
 
+use nova_codegen::ast::Module;
 use nova_codegen::diag::{Diagnostic, Span};
+use nova_codegen::imports::ModuleSigTable;
+use nova_codegen::manifest::resolve_std_path;
 use nova_codegen::test_runner::find_repo_root_from;
 use tower_lsp::lsp_types::Url;
 
@@ -50,11 +53,27 @@ pub struct CheckResult {
 /// Panics inside the compiler are caught and returned as a single
 /// `InternalError` diagnostic so the server stays up.
 pub fn check_file(uri: &Url, text: &str) -> CheckResult {
+    check_file_with_root(uri, text, None)
+}
+
+/// Like [`check_file`], but with an explicit LSP workspace root (from
+/// `initialize`).
+///
+/// The root is used as a **degraded-mode fallback** ([M-104.10-degraded-cu-red]):
+/// when the file has no ancestor `nova.toml` (or is an unsaved/untitled buffer
+/// with no path at all), the resolver still needs *somewhere* to find the
+/// stdlib for prelude injection and sibling folder-module peers. Passing the
+/// workspace root lets `print`/`Vec` and peer symbols resolve instead of
+/// false-reddening.
+pub fn check_file_with_root(uri: &Url, text: &str, workspace_root: Option<&Path>) -> CheckResult {
     let source = text.to_string();
     let source_clone = source.clone();
     let path = uri.to_file_path().ok();
+    let root = workspace_root.map(|p| p.to_path_buf());
     let t = PerfTimer::start("check_file");
-    let diagnostics = run_with_large_stack(move || check_source(&source_clone, path.as_deref()));
+    let diagnostics = run_with_large_stack(move || {
+        check_source(&source_clone, path.as_deref(), root.as_deref())
+    });
     t.finish();
     CheckResult { file_uri: uri.clone(), diagnostics, source }
 }
@@ -92,7 +111,10 @@ pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
 
         let source_clone = source.clone();
         let path_clone = path.clone();
-        let diagnostics = run_with_large_stack(move || check_source(&source_clone, Some(&path_clone)));
+        let root_clone = workspace_root.to_path_buf();
+        let diagnostics = run_with_large_stack(move || {
+            check_source(&source_clone, Some(&path_clone), Some(&root_clone))
+        });
         results.push(CheckResult { file_uri: uri, diagnostics, source });
     }
 
@@ -108,14 +130,15 @@ pub fn check_workspace(workspace_root: &Path) -> Vec<CheckResult> {
 ///
 /// Wraps the whole pipeline in `catch_unwind`; on panic returns a synthetic
 /// `InternalError` diagnostic.
-fn check_source(src: &str, path: Option<&Path>) -> Vec<Diagnostic> {
+fn check_source(src: &str, path: Option<&Path>, workspace_root: Option<&Path>) -> Vec<Diagnostic> {
     // Wrap in AssertUnwindSafe because Diagnostic / Module are not UnwindSafe.
     // This is acceptable: we only read the panic value (discarded) and return
     // a fixed synthetic diagnostic — we never re-use any poisoned state.
     let src_owned = src.to_string();
     let path_owned = path.map(|p| p.to_path_buf());
+    let root_owned = workspace_root.map(|p| p.to_path_buf());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        check_source_inner(&src_owned, path_owned.as_deref())
+        check_source_inner(&src_owned, path_owned.as_deref(), root_owned.as_deref())
     }));
 
     match result {
@@ -134,28 +157,125 @@ fn check_source(src: &str, path: Option<&Path>) -> Vec<Diagnostic> {
 /// The actual parse + type-check pipeline (no panic catching).
 ///
 /// Public so that `rename.rs` can use it for the atomic post-rename check.
-pub fn check_source_inner(src: &str, path: Option<&Path>) -> Vec<Diagnostic> {
+///
+/// The pipeline mirrors `nova check` (`cmd_check`) exactly so LSP diagnostics
+/// are byte-parity with the CLI ([M-104.10-lsp-cmd-check-drift]):
+///
+/// 1. parse
+/// 2. resolve imports (prelude + folder-module peers merged into the module)
+///    **and** collect the cross-module signature table (Plan 162.2); import
+///    errors are surfaced, not swallowed ([M-104.10-import-diag-swallowed]),
+///    and degraded contexts fall back to a best-effort root
+///    ([M-104.10-degraded-cu-red])
+/// 3. `number_exprs` over the fully-assembled module (post-inline, pre-check)
+/// 4. `check_module_with_sig_table` (162.2 suppression) — identical to
+///    `nova check`, so transitively-imported symbols do not false-red.
+pub fn check_source_inner(
+    src: &str,
+    path: Option<&Path>,
+    workspace_root: Option<&Path>,
+) -> Vec<Diagnostic> {
     // Step 1: parse
     let mut module = match nova_codegen::parser::parse(src) {
         Ok(m) => m,
         Err(diag) => return vec![diag],
     };
 
-    // Step 2: resolve imports (prelude + cross-file), same as cmd_check.
-    if let Some(p) = path {
-        if let Some(repo) = find_repo_root_from(p) {
-            let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
-            let _ = nova_codegen::imports::resolve_imports_inline(
-                p, &mut module, &repo, &stdlib_dir,
-            );
+    // Step 2: resolve imports + collect the signature table. Import errors go
+    // into `import_diags` (surfaced first as the real root cause).
+    let mut import_diags: Vec<Diagnostic> = Vec::new();
+    let sig_table = resolve_for_check(path, workspace_root, &mut module, &mut import_diags);
+
+    // Step 3: number every expr of the fully-assembled module (post-inline,
+    // pre-check) — parity with `cmd_check` / `test_runner` so the checker sees
+    // the same ExprId-stamped AST.
+    let _ = nova_codegen::number_exprs::number_exprs(&mut module);
+
+    // Step 4: type-check. Use the signature table when available (Plan 162.2)
+    // so symbols from transitively-imported modules are not reported as unknown.
+    let check_result = match sig_table {
+        Some(st) => nova_codegen::types::check_module_with_sig_table(&module, st),
+        None => nova_codegen::types::check_module(&module),
+    };
+    let mut type_diags = check_result.err().unwrap_or_default();
+
+    // Import errors (real root cause) precede type errors so the user sees the
+    // actual reason instead of downstream "unknown type" noise.
+    import_diags.append(&mut type_diags);
+    import_diags
+}
+
+/// Resolve imports and collect the Plan 162.2 signature table for `module`,
+/// pushing any import-resolution error into `import_diags`.
+///
+/// Returns the signature table when a resolution context could be established
+/// (so the caller uses `check_module_with_sig_table`), or `None` for a truly
+/// context-less single-file check (untitled buffer with no workspace root).
+///
+/// # Degraded-mode fallback ([M-104.10-degraded-cu-red])
+///
+/// The repo root is chosen best-effort:
+///  1. nearest ancestor `nova.toml` (authoritative — identical to `cmd_check`);
+///  2. the LSP workspace root (from `initialize`);
+///  3. the entry file's own directory (folder-module fallback — resolves
+///     sibling peers even for a file outside any repo).
+///
+/// This guarantees `module.peer_files` is populated (prelude + peers) instead
+/// of leaving the checker to see only the entry file, which previously made
+/// prelude symbols (`print`/`Vec`) and peer symbols false-red.
+fn resolve_for_check(
+    path: Option<&Path>,
+    workspace_root: Option<&Path>,
+    module: &mut Module,
+    import_diags: &mut Vec<Diagnostic>,
+) -> Option<ModuleSigTable> {
+    // The entry path we resolve peers/prelude against. For an unsaved/untitled
+    // buffer (no path), use a scratch path inside the workspace root so the
+    // resolver can still locate the stdlib for prelude injection.
+    let entry: PathBuf = match path {
+        Some(p) => p.to_path_buf(),
+        None => workspace_root?.join("__nova_lsp_unsaved__.nv"),
+    };
+
+    let repo: PathBuf = find_repo_root_from(&entry)
+        .or_else(|| workspace_root.map(|r| r.to_path_buf()))
+        .or_else(|| entry.parent().map(|p| p.to_path_buf()))?;
+    let stdlib_dir = resolve_std_path(&repo);
+
+    // Merge prelude + folder-module peers into `module` (populates peer_files).
+    // Guarded so a malformed peer cannot crash the whole check (matches the
+    // resolve guard in `provenance.rs`).
+    let resolve_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        nova_codegen::imports::resolve_imports_inline(&entry, module, &repo, &stdlib_dir)
+    }));
+    match resolve_res {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            // [M-104.10-import-diag-swallowed]: surface the real import cause
+            // (cycle / missing / unreadable peer) instead of discarding it, so
+            // the user sees why — not downstream "unknown type" noise.
+            import_diags.push(Diagnostic::new(
+                format!("import resolution: {e}"),
+                Span::new(0, 0),
+            ));
+        }
+        Err(_) => {
+            import_diags.push(Diagnostic::new(
+                "import resolution panicked".to_string(),
+                Span::new(0, 0),
+            ));
         }
     }
 
-    // Step 3: type-check
-    match nova_codegen::types::check_module(&module) {
-        Ok(_) => vec![],
-        Err(diags) => diags,
-    }
+    // Plan 162.2: cross-module signature table, collected AFTER imports are
+    // merged so it sees all imported items. Non-fatal on failure (empty table).
+    let sig_table = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        nova_codegen::imports::collect_all_signatures(&entry, module, &repo, &stdlib_dir)
+            .unwrap_or_else(|_| ModuleSigTable::new())
+    }))
+    .unwrap_or_else(|_| ModuleSigTable::new());
+
+    Some(sig_table)
 }
 
 /// Collect all `.nv` files recursively under `root`.

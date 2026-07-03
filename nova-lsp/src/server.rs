@@ -20,7 +20,7 @@ use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
 use crate::code_actions::compute_code_actions;
-use crate::compiler::{check_file, check_workspace, run_with_large_stack};
+use crate::compiler::{check_file_with_root, check_workspace, run_with_large_stack};
 use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
 use crate::format::{format_document, format_range, on_type_format};
@@ -137,8 +137,11 @@ impl Backend {
                 }
 
                 let uri_clone = uri.clone();
+                // This branch runs only when no workspace root is set, so the
+                // check falls back to path-based resolution (nearest nova.toml /
+                // folder-module peers) inside `check_source_inner`.
                 let result = tokio::task::spawn_blocking(move || {
-                    run_with_large_stack(move || check_file(&uri_clone, &text))
+                    run_with_large_stack(move || check_file_with_root(&uri_clone, &text, None))
                 })
                 .await;
 

@@ -918,47 +918,67 @@ fn scan_module_methods(src: &str, _obj_text: &str, ty: &str) -> Vec<CompletionIt
 // Import path completion (104.3.4)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Hardcoded std module tree for V1 import completion.
+/// Static std module tree for import completion.
+///
+/// [M-104.10-hardcode-lists] (Ф.0.5, stale-removal step): every entry below is
+/// verified against the real `std/` tree on disk — the previous list advertised
+/// modules that **do not exist** (`std.collections.map`, `std.sync.*`,
+/// `std.io.*`, `std.math`, `std.fmt`, `std.os`, `std.env`,
+/// `std.runtime.memory`, …), which lied in import completion. The full fix —
+/// resolving this list from the actual search-path (FS-scan of the stdlib dir /
+/// manifest) instead of hardcoding — is Ф.5. Until then, keep this list in sync
+/// with `std/` and add nothing that is not a real module file/folder.
 /// Format: `["a.b.c", "a.b.d", ...]` — dot-separated paths.
 const STD_MODULES: &[&str] = &[
-    // Collections
+    // Top-level modules (single-file).
+    "std.prelude",
+    "std.text",
+    "std.sort",
+    "std.bench",
+    // Collections.
     "std.collections",
     "std.collections.vec",
-    "std.collections.map",
+    "std.collections.hashmap",
     "std.collections.set",
-    "std.collections.deque",
-    "std.collections.linked_list",
-    "std.collections.priority_queue",
-    // Concurrency
-    "std.sync",
-    "std.sync.mutex",
-    "std.sync.rwlock",
-    "std.sync.semaphore",
-    "std.sync.condvar",
-    "std.sync.barrier",
-    "std.sync.countdown_latch",
-    "std.sync.channel",
-    "std.sync.once",
-    "std.sync.atomic",
-    // IO / net
+    "std.collections.range",
+    // Concurrency.
+    "std.concurrency",
+    "std.concurrency.cancellation",
+    "std.concurrency.timer",
+    // Encoding.
+    "std.encoding",
+    "std.encoding.base64",
+    "std.encoding.json",
+    "std.encoding.utf16",
+    // Net.
     "std.net",
+    "std.net.addr",
+    "std.net.dns",
     "std.net.tcp",
     "std.net.udp",
-    "std.net.addr",
-    "std.io",
-    "std.io.file",
-    "std.io.path",
-    // Runtime
+    "std.net.error",
+    // Time.
+    "std.time",
+    "std.time.duration",
+    // Unicode.
+    "std.unicode",
+    "std.unicode.case",
+    "std.unicode.category",
+    "std.unicode.collate",
+    "std.unicode.graphemes",
+    "std.unicode.normalize",
+    "std.unicode.sentences",
+    "std.unicode.words",
+    // Testing.
+    "std.testing",
+    "std.testing.property",
+    "std.testing.handlers",
+    // FFI.
+    "std.ffi",
+    "std.ffi.cstr",
+    // Runtime (public surface).
     "std.runtime",
     "std.runtime.string_builder",
-    "std.runtime.memory",
-    // Misc
-    "std.math",
-    "std.fmt",
-    "std.time",
-    "std.os",
-    "std.env",
-    "std.prelude",
 ];
 
 /// Build import path completions for a given path prefix.
@@ -1361,18 +1381,24 @@ fn main() -> () {
             has_label(&items, "collections"),
             "collections should appear under std.*"
         );
-        assert!(has_label(&items, "sync"), "sync under std");
+        assert!(has_label(&items, "encoding"), "encoding under std");
         assert!(has_label(&items, "net"), "net under std");
+        // [M-104.10-hardcode-lists]: stale modules must NOT be advertised.
+        assert!(!has_label(&items, "sync"), "std.sync does not exist");
+        assert!(!has_label(&items, "io"), "std.io does not exist");
+        assert!(!has_label(&items, "math"), "std.math does not exist");
     }
 
-    /// imp_pos3: `["std", "collections"]` prefix returns vec, map, set.
+    /// imp_pos3: `["std", "collections"]` prefix returns vec, hashmap, set.
     #[test]
     fn imp_pos3_collections_returns_submodules() {
         let prefix = vec!["std".to_string(), "collections".to_string()];
         let items = import_items(&prefix);
         assert!(has_label(&items, "vec"), "vec under std.collections");
-        assert!(has_label(&items, "map"), "map under std.collections");
+        assert!(has_label(&items, "hashmap"), "hashmap under std.collections");
         assert!(has_label(&items, "set"), "set under std.collections");
+        // [M-104.10-hardcode-lists]: `map` never existed (it is `hashmap`).
+        assert!(!has_label(&items, "map"), "std.collections.map does not exist");
     }
 
     /// imp_pos4: import_items returns MODULE kind items with sort_text.

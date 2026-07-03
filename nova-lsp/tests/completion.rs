@@ -74,7 +74,9 @@ fn ipos4_import_std_path() {
     let items = completion_for(src, src.len());
     assert!(!items.is_empty(), "std submodules expected");
     assert!(has_label(&items, "collections"), "std.collections");
-    assert!(has_label(&items, "sync"), "std.sync");
+    assert!(has_label(&items, "encoding"), "std.encoding");
+    // Plan 104.10 Ф.0.5 [M-104.10-hardcode-lists]: stale modules removed.
+    assert!(!has_label(&items, "sync"), "std.sync does not exist");
 }
 
 /// ipos5: cursor in comment → no completions.
@@ -165,14 +167,18 @@ fn method_str_detail_present() {
     assert!(!items.iter().any(|i| i.label == "len"), "len removed — use byte_len()");
 }
 
-/// Import items: std.sync returns mutex, rwlock, semaphore.
+/// Import items: std.encoding returns base64, json, utf16.
+///
+/// Plan 104.10 Ф.0.5 [M-104.10-hardcode-lists]: the previous `std.sync.*`
+/// assertions were stale (that package does not exist); this now checks a real
+/// folder-module's submodules.
 #[test]
-fn import_sync_submodules() {
-    let prefix = vec!["std".to_string(), "sync".to_string()];
+fn import_encoding_submodules() {
+    let prefix = vec!["std".to_string(), "encoding".to_string()];
     let items = import_items(&prefix);
-    assert!(has_label(&items, "mutex"), "std.sync.mutex");
-    assert!(has_label(&items, "rwlock"), "std.sync.rwlock");
-    assert!(has_label(&items, "channel"), "std.sync.channel");
+    assert!(has_label(&items, "base64"), "std.encoding.base64");
+    assert!(has_label(&items, "json"), "std.encoding.json");
+    assert!(has_label(&items, "utf16"), "std.encoding.utf16");
 }
 
 /// Scope identifiers: param from fn sig, ro binding, type decl — all present.

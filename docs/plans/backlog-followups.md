@@ -642,6 +642,21 @@
 | `[M-106-if-guard]` | ✅ CLOSED 2026-06-17. && guard в if/while pattern-bind. | Plan 106 | ✅ done |
 | `[M-106-if-let-chain-multi]` | OPEN P3. Множественные let-паттерны через `&&` (Rust let-chains): `if Some(x)=a && Some(y)=f(x) && x+y>10`. Единственный `consider` в этой зоне (survey 2026-07-02); guard уже покрывает ~90%, выигрыш над nested-`if` мал → делать opportunistic. | [spec/open-questions Q-if-let-chain-multi](../../spec/open-questions.md) | P3 |
 
+## Plan 104.10 Ф.0.5 — diagnostic pipeline correctness (impl RESOLVED 2026-07-03; spec close-out Ф.14)
+
+Sub-markers of `[M-104.10-diag-pipeline-correctness]` / `[M-spec-nova-lsp-conformance-audit]`.
+Fixes landed in `nova-lsp` (`compiler.rs`, `diagnostic_mapping.rs`, `completion.rs`);
+pos+neg+parity fixtures in `nova-lsp/tests/diagnostic_pipeline.rs`. Formal close-out
+(spec D-blocks / plan status) deferred to Ф.14.
+
+| Маркер | Статус | Home | Действие |
+|---|---|---|---|
+| `[M-104.10-import-diag-swallowed]` | ✅ RESOLVED (Ф.0.5). `check_source_inner` surfaces import-resolution errors as diagnostics (`import resolution: …`) instead of `let _ = …`; real cause shown, not downstream «unknown type». | Plan 104.10 Ф.0.5 | close-out Ф.14 |
+| `[M-104.10-degraded-cu-red]` | ✅ RESOLVED (Ф.0.5). Best-effort repo fallback (nova.toml → LSP workspace root → entry-dir) + scratch entry for unsaved buffers → `peer_files` populated (prelude + folder-module peers) → 0 false-red on `print`/`Vec`/peer symbols. | Plan 104.10 Ф.0.5 | close-out Ф.14 |
+| `[M-104.10-lsp-cmd-check-drift]` | ✅ RESOLVED (Ф.0.5). LSP check-вход сведён к `nova check` пайплайну: `resolve_imports` + `number_exprs` + `collect_all_signatures` + `check_module_with_sig_table` (Plan 162.2 suppression). Резолвит Q-104-4. | Plan 104.10 Ф.0.5 | close-out Ф.14 |
+| `[M-104.10-diag-numeric-codes]` | ✅ RESOLVED (Ф.0.5). `extract_error_code` теперь распознаёт legacy числовые `[Ennnn]` (не только symbolic `[E_…]`) → code-action dispatch срабатывает по ним. | Plan 104.10 Ф.0.5 | close-out Ф.14 |
+| `[M-104.10-hardcode-lists]` | 🟡 PARTIAL (Ф.0.5 stale-removal). `STD_MODULES` очищен от несуществующих путей (`std.collections.map`/`std.sync.*`/`std.io.*`/`std.math`/`std.fmt`/`std.os`/`std.env`/`std.runtime.memory`), сверен с реальным `std/`. Полный FS-scan из search-path + `code_actions.rs`/`rename.rs NOVA_KEYWORDS` → Ф.5. | Plan 104.10 Ф.0.5 → Ф.5 | остаток Ф.5 |
+
 ## Follow-up: Plan 104.9 (nova-lsp language-sync + close-out)
 
 | Маркер | Статус | Home | Действие |
