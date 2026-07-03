@@ -1,0 +1,13 @@
+// [A6-BLOCKED до keystone NT-always-pointer] D215 named-tuple × D181 fluent `mut @ -> @` / Plan 172.4 Ф.3 A5:
+// mut-NT метод возвращает receiver-ptr; binding к value-локалу — decay.
+module inprogress.d215_named_tuple_fluent
+
+type D215Fl (n int)
+fn D215Fl mut @bump(a int) -> @ { @n += a; @ }
+
+test "named-tuple fluent mut @ -> @ цепочка + binding-decay (D215/D181)" {
+    mut t = D215Fl(0)
+    ro t2 = t.bump(2).bump(3)
+    assert(t2.n == 5)
+    assert(t.n == 5)
+}
