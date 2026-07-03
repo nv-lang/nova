@@ -423,7 +423,10 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    **watchdog-варн** «fiber застрял в cleanup» при превышении порога (порог: 3-level resolution
    `WithExitTimeout` vtable → Application → default — сохранить как источник ПОРОГА варна, не прерывания);
    превышение наблюдаемо в ResourceTrace exit-событии (duration/overrun-флаг). `CleanupTimeoutError` как
-   outcome НЕ существует (D192-ретракт).
+   outcome НЕ существует (D192-ретракт). **⟵ СЮДА перенесён из Ф.2.R1 дроп `timeout` из
+   `ResourceTrace.on_resource_enter`** (§3a/п.8 «timeout из enter убран»): в Ф.2.R1 (rename-only, 43f9ee5b)
+   timeout СОХРАНЁН, т.к. его дроп ретайрит D195-Application-override-тесты (`timeout_application_level2_t3_8`,
+   `application_cross_fiber_t8_7`) — делать вместе с этим timeout-rework (порог мигрирует в watchdog/scope-дедлайн).
 3. **#9:** `nv_resume_panic` → `nv_panic` в D188/D197 спек-тексте (`03-syntax.md:8161`) — или ввести
    реальный primitive (решение: спек-фикс, primitive не нужен).
 4. **#11 sweep:** D90 §errdefer / **D158 (errdefer-канон в тексте; materialization-часть — Ф.4)** /

@@ -93,11 +93,12 @@ ScopeOutcome core.nv:147 `Success|Failure(str)|Panic(str)` (str, не any — an
   handler/defer (frame-free propagation). → `docs/plans/artifacts/173-disasm-baseline/`. Зафиксировать
   ФАКТ: guard-фикстуры НЕСУТ setjmp-кадры (ожидаемо YES) → §3.5 acceptance = PARITY. Гейт: артефакты
   закоммичены; conformance 38/38.
-- **Ф.2.R1 rename эффект Cleanup→ResourceTrace (ПЕРВЫМ):** spec D185 (04-effects:5467) → effects.nv:210
-  (ops on_resource_enter(label)/on_resource_exit(label,outcome), DROP timeout_ms) → emit_c 4 dispatch
-  (19843/19967, C-символы + drop timeout arg) → parser:10061 hint → 3 теста plan110
-  (cleanup_effect_dispatch_t7_1, timeout_application_level2_t3_8, application_cross_fiber_t8_7). Гейт:
-  build clean; conformance 38/38; grep `effect Cleanup`/`on_scope_*` = 0 вне historical.
+- ✅ **Ф.2.R1 rename эффект Cleanup→ResourceTrace ЗАКРЫТ (43f9ee5b, RENAME-only):** spec D185 (04-effects)
+  → effects.nv → emit_c 2 dispatch (Nova_ResourceTrace_on_resource_enter/exit, _nova_handler_ResourceTrace)
+  → parser hint → 03-syntax effect-рефы → 3 теста plan110. Гейты: build clean; conformance 38/38; 3
+  ResourceTrace-теста + plan110 + plan110/neg(9) + plan103_9 PASS; grep `effect Cleanup`/`on_scope_*` в
+  source = 0. **⚠ DROP timeout из enter (§3a/п.8) ОТЛОЖЕН → Plan 173 Ф.5 timeout-rework** (семантическая
+  правка + ретайр D195-override-тестов, не ренейм; timeout пока сохранён — покрытие цело).
 - **Ф.2.R2 rename Consumable→Cleanup + @on_exit→@cleanup (BUNDLED, после R1):** spec D188/D191/D194/D196/D197
   (03-syntax) + D195 (04-effects) + все `[T Consumable[...]]` bounds. CODE(care): emit_c:19761 pin→
   consume_cleanup; sync_primitives.h ×4 defs→_consume_cleanup; types:4316/4363/4537 + lints:303
