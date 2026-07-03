@@ -37468,6 +37468,134 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return String::new();
             }
         }
+        // Channel 6k (2026-07-04): Index — ДОСЛОВНЫЙ подъём legacy-арма
+        // (IDXL-WHO: вопросы из emit_expr Index-эмиссии; state-ответ
+        // array_element_types/схемы). Byte-identical; дети через dispatcher.
+        if let ExprKind::Index { obj, index } = &expr.kind {
+                    // Plan 96 Ф.3 — dispatch по типу index:
+                    //   arr[Range] → []T (тот же NovaArray-pointer тип что у obj)
+                    //   str[Range] → str
+                    //   arr[int]   → T (element)
+                    //   str[int]   → char (если char-indexing уже есть, иначе caller-side error)
+                    let obj_ty_pre = self.infer_expr_c_type(obj);
+                    if matches!(index.kind, ExprKind::Range { .. }) {
+                        // Slice path — result type совпадает с obj (single-type design,
+                        // D-single-type). Для str — тот же "nova_str", для []T —
+                        // тот же "NovaArray_T*".
+                        return obj_ty_pre;
+                    }
+                    // arr[i] → element type of arr.
+                    // Check array_element_types first (pointer-stomped elements override)
+                    // — BUT only when `obj_ty_pre` is NOT a self-describing mono Vec/
+                    // array name. The side-table is keyed by bare var name and is
+                    // last-wins across peer files of a folder-module: a `v` declared
+                    // `[]byte` in one test poisons the entry for a `v` declared
+                    // `[]str` in another → wrong element type (nova_byte vs nova_str)
+                    // → e.g. `v[0] == v[2]` mis-emits a raw struct `==`. The mono name
+                    // `Nova_Vec____nova_str*` is authoritative; prefer decoding it
+                    // (handled below) and consult the side-table only for non-self-
+                    // describing obj types (pointer-stomped raw buffers).
+                    let obj_ty_self_describing = obj_ty_pre.starts_with("Nova_Vec____")
+                        || obj_ty_pre.starts_with("NovaArray_");
+                    if obj_ty_self_describing {
+                        // Decode element type DIRECTLY from the authoritative mono name,
+                        // bypassing every name-keyed side-table (array_element_types,
+                        // compute_array_elem_type_for_obj) — all of which are last-wins
+                        // across folder-module peers and can be poisoned by a same-named
+                        // var of a different element type in another file.
+                        if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
+                            let elem = elem.trim_end_matches('*').trim();
+                            if !elem.is_empty() { return elem.to_string(); }
+                        }
+                        if obj_ty_pre.starts_with("Nova_Vec____") && !obj_ty_pre.trim_end().ends_with("**") {
+                            let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
+                            if let Some(elem) = self.generic_type_instance_info.borrow()
+                                .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                            {
+                                if !elem.is_empty() { return elem; }
+                            }
+                            let elem = obj_ty_pre.strip_prefix("Nova_Vec____")
+                                .unwrap_or("").trim_end_matches('*').trim();
+                            if !elem.is_empty() { return elem.to_string(); }
+                        }
+                    } else if let ExprKind::Ident(name) = &obj.kind {
+                        if let Some(et) = self.array_element_types.get(name) {
+                            return et.clone();
+                        }
+                    }
+                    // @field access (nova_self->field) — check by synthesized C-expression key.
+                    if let ExprKind::Member { obj: inner, name: field } = &obj.kind {
+                        if matches!(inner.kind, ExprKind::SelfAccess) {
+                            let key = format!("(nova_self->{})", Self::mangle_field_name(field));
+                            if let Some(et) = self.array_element_types.get(&key) {
+                                return et.clone();
+                            }
+                        }
+                    }
+                    // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
+                    // Compute real element type from record schema / template + subst.
+                    if let Some(elem) = self.compute_array_elem_type_for_obj(obj) {
+                        if !elem.is_empty() && elem != "nova_int" {
+                            return elem;
+                        }
+                    }
+                    // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
+                    if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
+                        let elem = elem.trim_end_matches('*').trim();
+                        return elem.to_string();
+                    }
+                    // Plan 138 Ф.3 (D238): str[i] → char.
+                    if obj_ty_pre == "nova_str" {
+                        return "nova_char".to_string();
+                    }
+                    // Plan 138 Ф.2 (D238): Vec[T] indexing — `Nova_Vec____<T>*[i]` → element type T.
+                    // `Nova_Vec____nova_int*` → `nova_int`
+                    // `Nova_Vec____Nova_Foo__*` → `Nova_Foo__*`
+                    // Pattern: `Nova_Vec____<T>*` where `<T>` is the monomorphized element type.
+                    // Plan 138.1 Ф.3: exclude `Nova_Vec____<T>**` (a `*mut Vec[T]`
+                    // raw buffer, e.g. the `data` field of `Vec[Vec[T]]`) — that is
+                    // a typed pointer, so indexing yields a `Vec[T]` value
+                    // (`Nova_Vec____<T>*`), handled by the raw-pointer-deref arm
+                    // below. Recover the precise element C type from the registry.
+                    if obj_ty_pre.starts_with("Nova_Vec____")
+                        && !obj_ty_pre.trim_end().ends_with("**")
+                    {
+                        let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
+                        if let Some(elem) = self.generic_type_instance_info.borrow()
+                            .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        {
+                            if !elem.is_empty() {
+                                return elem;
+                            }
+                        }
+                        let suffix = obj_ty_pre.strip_prefix("Nova_Vec____").unwrap_or("");
+                        // Strip one trailing `*` only for scalar types; nested Nova_ element types
+                        // (Vec[Vec[T]], Vec[Record]) are pointers — preserve their `*`.
+                        let elem = if suffix.starts_with("Nova_") {
+                            suffix
+                        } else {
+                            suffix.trim_end_matches('*').trim()
+                        };
+                        if !elem.is_empty() {
+                            return elem.to_string();
+                        }
+                    }
+                    // [M-118-ptr-index-unsafe] Plan 118 D216 §8: typed pointer
+                    // `*mut T` / `*T` — ptr[i] ≡ *(ptr+i). Element type = pointee
+                    // (C type obtained by stripping trailing `*` from pointer type).
+                    // Mirror exact logic as UnOp::Deref inference (line ~29113).
+                    // Must come AFTER NovaArray_ check to avoid false-firing on
+                    // `NovaArray_nova_int*` (those use the NovaArray_ path above).
+                    if obj_ty_pre.ends_with('*') && !obj_ty_pre.starts_with("NovaArray_") {
+                        if let Some(pointee) = obj_ty_pre.strip_suffix('*') {
+                            let pointee = pointee.trim();
+                            if !pointee.is_empty() {
+                                return pointee.to_string();
+                            }
+                        }
+                    }
+                    panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
+        }
         // Channel 6j (2026-07-04): value-form if-с-else — ДОСЛОВНЫЙ подъём
         // legacy If-арма (divergence-aware + D275 unit-домминация; вызывался
         // из emit_if_expr — IF-WHO факт). Byte-identical; sub-вопросы идут
