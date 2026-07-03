@@ -10058,7 +10058,7 @@ impl Parser {
                     return Err(Diagnostic::new(
                         "[D189-removed-defer-result] `defer |result| { ... }` reason-aware \
                          form retracted by Plan 110 D189. Migrate к `consume X = init() { body }` \
-                         scope-block с `match outcome` в `on_exit` method, OR `with Cleanup = \
+                         scope-block с `match outcome` в `on_exit` method, OR `with ResourceTrace = \
                          handler { body }` (D185) для observability-only logging pattern.".to_string(),
                         span,
                     ));

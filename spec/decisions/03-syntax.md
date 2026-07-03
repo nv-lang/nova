@@ -8381,7 +8381,7 @@ type-checker автоматически снимает требование `Fai
 | Старая форма | Новая форма |
 |---|---|
 | `consume tx = begin(); errdefer { rollback }; okdefer { commit }` | `consume tx = begin() { body }` (Transaction impl Consumable) |
-| `defer \|result\| match { ... }` | `consume X = ... { }` или `with Cleanup = h { ... }` (D185) |
+| `defer \|result\| match { ... }` | `consume X = ... { }` или `with ResourceTrace = h { ... }` (D185) |
 | `consume X = ...; defer { X.close() }` | `consume X = ... { body }` (если X impl Consumable) |
 
 См. [D189](#d189) для прямого удаления.
@@ -8497,7 +8497,7 @@ suggestion на новую форму:
    }
 
    // after (using Cleanup effect — D185):
-   with Cleanup = LogHandler.new(label: "operation") {
+   with ResourceTrace = LogHandler.new(label: "operation") {
        body
    }
    ```
@@ -9150,7 +9150,7 @@ fn Connection consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
    - only body throw → `nova_rethrow_with_suppressed(&body_frame)`.
    - only on_exit throw → `nova_rethrow_with_suppressed(&on_exit_frame)`.
    - both clean → fall through.
-   Cleanup observability hook (`Nova_Cleanup_on_scope_exit`) fires only
+   ResourceTrace observability hook (`Nova_ResourceTrace_on_resource_exit`) fires only
    когда on_exit succeeded — preserves existing post-fix behavior.
 
 3. **Inner `on_exit` ошибки compose в локальный MultiError**. Если он

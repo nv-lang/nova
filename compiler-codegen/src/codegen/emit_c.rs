@@ -19833,16 +19833,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     prev_deadline_var, timeout_var
                 ));
 
-                // Plan 110.4.4.a (D185): Cleanup effect on_scope_enter
-                // dispatch. Observability-only — invoked если user handler
-                // bound, else silent no-op. Guard by NULL-check; the
-                // `_nova_handler_Cleanup` TLS slot is emitted by
-                // emit_effect_type when Cleanup decl is in scope (via
-                // std/prelude/effects.nv import-by-default). Label = type
-                // name; timeout_ms = resolved exit deadline.
-                if self.effect_schemas.contains_key("Cleanup") {
+                // Plan 110.4.4.a (D185, rename Plan 173 Ф.2.R1): ResourceTrace effect
+                // on_resource_enter dispatch. Observability-only — invoked если user
+                // handler bound, else silent no-op. Guard by NULL-check; the
+                // `_nova_handler_ResourceTrace` TLS slot is emitted by emit_effect_type
+                // when ResourceTrace decl is in scope (std/prelude/effects.nv import-by-
+                // default). Label = type name; timeout_ms = resolved exit deadline.
+                // (Ф.2.R1 = rename-only; дроп timeout — Ф.5 §3a timeout-rework.)
+                if self.effect_schemas.contains_key("ResourceTrace") {
                     self.line(&format!(
-                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
+                        "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
                         type_name, timeout_var
                     ));
                 }
@@ -19959,14 +19959,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.indent -= 1;
                 self.line("}");
 
-                // Plan 110.4.4.b (D185): Cleanup effect on_scope_exit
-                // dispatch. Pairs with on_scope_enter — fires after the
-                // user on_exit body has run (so observability sees the
-                // final outcome). Plan 110.x R4b amend: skip когда on_exit
-                // threw — observability sees only successful cleanup.
-                if self.effect_schemas.contains_key("Cleanup") {
+                // Plan 110.4.4.b (D185, rename Plan 173 Ф.2.R1): ResourceTrace effect
+                // on_resource_exit dispatch. Pairs with on_resource_enter — fires after
+                // the user @cleanup body has run (so observability sees the final
+                // outcome). Plan 110.x R4b amend: skip когда cleanup threw —
+                // observability sees only successful cleanup.
+                if self.effect_schemas.contains_key("ResourceTrace") {
                     self.line(&format!(
-                        "if ({} == 0 && _nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_exit(nova_str_from_cstr(\"{}\"), {}); }}",
+                        "if ({} == 0 && _nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_exit(nova_str_from_cstr(\"{}\"), {}); }}",
                         on_exit_threw, type_name, outcome_val
                     ));
                 }
