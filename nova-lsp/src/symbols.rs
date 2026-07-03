@@ -18,7 +18,9 @@
 //!   matching.  Incremental index is V2 ([M-104.4-refs-incremental-index]).
 //! - Fuzzy matching deferred ([M-104.4-workspace-symbol-fuzzy]).
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -119,6 +121,206 @@ impl WorkspaceIndex {
     pub fn file_count(&self) -> usize {
         self.entries.len()
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Incremental references index — Plan 104.10 Ф.12
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One recorded occurrence of an identifier token in the workspace.
+#[derive(Debug, Clone)]
+pub struct RefOccurrence {
+    pub uri: Url,
+    pub range: Range,
+}
+
+/// Plan 104.10 Ф.12: **incremental** references index.
+///
+/// Replaces the V1 per-request full-filesystem scan (`collect_nv_files` +
+/// word-boundary scan of every `.nv` file on every `textDocument/references`
+/// request — `[M-104.4-refs-incremental-index]`) with an in-memory index
+/// mapping every identifier token to its occurrence locations, updated
+/// incrementally as documents change.
+///
+/// Two `DashMap`s keep it incremental **and** correct:
+/// - `by_name`: `name → [(uri, range)]` — the answer set queried by
+///   [`ReferencesIndex::find`] in one hash lookup (no I/O, no re-scan).
+/// - `by_file`: `uri → [distinct names it contributes]` — the reverse map that
+///   makes removal on change/delete/rename `O(names-in-file)` rather than a
+///   full sweep of `by_name`.
+///
+/// # Correctness vs. the V1 scan
+///
+/// [`index_file`](Self::index_file) tokenises a file into **maximal
+/// identifier-runs** — exactly the word-boundary tokens that
+/// [`find_word_occurrences`] matched per request — so the index answers
+/// references identically to the V1 scan, just without re-reading and
+/// re-scanning the file each time.
+///
+/// # Freshness
+///
+/// Updated on `didOpen`/`didChange` (open-buffer overlay is the source of truth
+/// for open files), on external watched-file create/change/delete
+/// ([`crate::workspace_lifecycle::apply_watched_event`]), and on file rename.
+/// The cold workspace is indexed once in the background (`initialized` scan);
+/// `find` lazily primes on first use if that scan has not run (`is_primed`).
+///
+/// # Scope-out
+///
+/// Purely in-memory (V2). On-disk persistence across server restarts
+/// (sourcekit-lsp `indexstore-db`) is `[M-104.10-persistent-index]` (V2.1).
+#[derive(Debug, Default)]
+pub struct ReferencesIndex {
+    by_name: DashMap<String, Vec<RefOccurrence>>,
+    by_file: DashMap<Url, Vec<String>>,
+    /// Whether the one-shot cold workspace scan has populated the index. Set by
+    /// the background `initialized` scan (or the lazy prime in the references
+    /// handler) so the full-FS scan happens at most once, not per request.
+    primed: AtomicBool,
+}
+
+impl ReferencesIndex {
+    /// (Re)index all identifier occurrences in `src` for `uri`.
+    ///
+    /// Removes any prior contribution from `uri` first, so calling this on every
+    /// `didChange` keeps the index exact with no duplicate or stale entries.
+    pub fn index_file(&self, uri: Url, src: &str) {
+        // Drop this file's previous contribution before re-adding.
+        self.remove_file(&uri);
+
+        let occ = tokenize_ref_occurrences(src);
+        let mut names: Vec<String> = Vec::with_capacity(occ.len());
+        for (name, ranges) in occ {
+            let mut entry = self.by_name.entry(name.clone()).or_default();
+            for range in ranges {
+                entry.value_mut().push(RefOccurrence { uri: uri.clone(), range });
+            }
+            names.push(name);
+        }
+        self.by_file.insert(uri, names);
+    }
+
+    /// Remove every occurrence contributed by `uri` (on delete/rename/close).
+    ///
+    /// EDGE (deleted file → entries gone): after this call no `find` can return a
+    /// location in `uri`, and empty name buckets are pruned to bound memory.
+    pub fn remove_file(&self, uri: &Url) {
+        let Some((_, names)) = self.by_file.remove(uri) else {
+            return;
+        };
+        for name in names {
+            // Filter out this uri's occurrences under the entry lock, then release
+            // it *before* touching the map again (remove_if re-locks the shard —
+            // holding the guard across it could deadlock on a shared shard).
+            let now_empty = if let Some(mut entry) = self.by_name.get_mut(&name) {
+                entry.value_mut().retain(|o| &o.uri != uri);
+                entry.value().is_empty()
+            } else {
+                false
+            };
+            if now_empty {
+                // Guard against a concurrent re-add between the drop and here.
+                self.by_name.remove_if(&name, |_, v| v.is_empty());
+            }
+        }
+    }
+
+    /// Find all occurrences of `name` across the indexed workspace.
+    ///
+    /// When `include_declaration` is false and `declaration_location` is given,
+    /// the occurrence overlapping the declaration is dropped (mirrors
+    /// [`find_references`]). Results are sorted `(uri, line, character)` for a
+    /// deterministic response independent of hash-map iteration order.
+    pub fn find(
+        &self,
+        name: &str,
+        declaration_location: Option<&Location>,
+        include_declaration: bool,
+    ) -> Vec<Location> {
+        if name.is_empty() {
+            return Vec::new();
+        }
+        let mut out: Vec<Location> = Vec::new();
+        if let Some(entry) = self.by_name.get(name) {
+            for occ in entry.value() {
+                let loc = Location { uri: occ.uri.clone(), range: occ.range };
+                if !include_declaration {
+                    if let Some(decl) = declaration_location {
+                        if loc.uri == decl.uri && ranges_overlap(loc.range, decl.range) {
+                            continue;
+                        }
+                    }
+                }
+                out.push(loc);
+            }
+        }
+        out.sort_by(|a, b| {
+            a.uri
+                .as_str()
+                .cmp(b.uri.as_str())
+                .then(a.range.start.line.cmp(&b.range.start.line))
+                .then(a.range.start.character.cmp(&b.range.start.character))
+        });
+        out
+    }
+
+    /// Number of files currently represented in the index.
+    pub fn file_count(&self) -> usize {
+        self.by_file.len()
+    }
+
+    /// Whether `uri` currently contributes to the index.
+    pub fn contains(&self, uri: &Url) -> bool {
+        self.by_file.contains_key(uri)
+    }
+
+    /// Whether the one-shot cold workspace scan has run.
+    pub fn is_primed(&self) -> bool {
+        self.primed.load(Ordering::Acquire)
+    }
+
+    /// Mark the cold workspace scan as complete (idempotent).
+    pub fn mark_primed(&self) {
+        self.primed.store(true, Ordering::Release);
+    }
+}
+
+/// Tokenise `src` into maximal identifier-runs, grouping each run's text to its
+/// LSP [`Range`]s.
+///
+/// A maximal run of `is_ident_char` bytes is word-boundary-delimited on both
+/// sides, so the set of ranges recorded for any given name equals exactly what
+/// [`find_word_occurrences`] would return for that name — the property that lets
+/// the index reproduce the V1 scan's answers.
+///
+/// Runs not beginning with a letter or `_` (numeric literals such as `123`) are
+/// skipped: a Nova identifier never starts with a digit, so such a run can never
+/// equal a queried symbol name — omitting them trims the index without dropping
+/// a match. Identifier bytes are ASCII, so byte offsets land on UTF-8 char
+/// boundaries (safe slicing); `span_to_range` handles any multi-byte content
+/// earlier in the file for accurate UTF-16 columns.
+fn tokenize_ref_occurrences(src: &str) -> HashMap<String, Vec<Range>> {
+    let rope = Rope::from_str(src);
+    let bytes = src.as_bytes();
+    let mut map: HashMap<String, Vec<Range>> = HashMap::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if is_ident_char(bytes[i]) {
+            let start = i;
+            while i < bytes.len() && is_ident_char(bytes[i]) {
+                i += 1;
+            }
+            // Keep only runs that could be an identifier (letter/`_` first byte).
+            if bytes[start].is_ascii_alphabetic() || bytes[start] == b'_' {
+                let token = &src[start..i];
+                let range = span_to_range(&rope, start, i);
+                map.entry(token.to_string()).or_default().push(range);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    map
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1102,6 +1304,141 @@ mod tests {
                 "'foo' matched inside 'foobar' on line 0 — word boundary broken");
         }
         assert!(!locs.is_empty(), "'foo' should appear at least once");
+    }
+
+    // ── ReferencesIndex tests (Plan 104.10 Ф.12) ─────────────────────────────
+
+    // pos: references answered from the in-memory index (no FS scan), across
+    // multiple files, matching the same occurrence set as the V1 scan.
+    #[test]
+    fn refidx_pos_cross_file_no_scan() {
+        let index = ReferencesIndex::default();
+        let a = make_uri("a.nv");
+        let b = make_uri("b.nv");
+        // `helper` used in both files.
+        index.index_file(a.clone(), "fn helper() => ()\nfn a() => helper()\n");
+        index.index_file(b.clone(), "fn b() => helper()\n");
+
+        let locs = index.find("helper", None, true);
+        assert_eq!(locs.len(), 3, "3 occurrences of `helper`: {locs:?}");
+        // Both files represented.
+        assert!(locs.iter().any(|l| l.uri == a));
+        assert!(locs.iter().any(|l| l.uri == b));
+
+        // Parity with the V1 word-boundary scan over the same files.
+        let files = vec![
+            (a.clone(), "fn helper() => ()\nfn a() => helper()\n".to_string()),
+            (b.clone(), "fn b() => helper()\n".to_string()),
+        ];
+        let scan = find_references("helper", &files, None, true);
+        assert_eq!(locs.len(), scan.len(), "index count must equal V1 scan count");
+    }
+
+    // pos: word-boundary correctness — `foo` is not matched inside `foobar`.
+    #[test]
+    fn refidx_pos_word_boundary() {
+        let index = ReferencesIndex::default();
+        let uri = make_uri("f.nv");
+        index.index_file(uri.clone(), "fn foobar() => ()\nfn foo() => foobar()\n");
+        let locs = index.find("foo", None, true);
+        assert_eq!(locs.len(), 1, "only the standalone `foo`: {locs:?}");
+        assert_eq!(locs[0].range.start.line, 1);
+    }
+
+    // pos: includeDeclaration=false drops the occurrence overlapping the decl.
+    #[test]
+    fn refidx_pos_exclude_declaration() {
+        let index = ReferencesIndex::default();
+        let uri = make_uri("f.nv");
+        let src = "fn foo() => ()\nfn bar() => foo()\n";
+        index.index_file(uri.clone(), src);
+        let decl = find_decl_location_test(&uri, src, "foo");
+        let locs = index.find("foo", Some(&decl), false);
+        assert_eq!(locs.len(), 1, "declaration excluded, only the call remains");
+        assert_eq!(locs[0].range.start.line, 1);
+    }
+
+    // pos: didChange re-index updates the answer set (add + remove).
+    #[test]
+    fn refidx_pos_updates_on_change() {
+        let index = ReferencesIndex::default();
+        let uri = make_uri("f.nv");
+        index.index_file(uri.clone(), "fn foo() => foo()\n");
+        assert_eq!(index.find("foo", None, true).len(), 2);
+        // Edit: rename the symbol to `bar` — `foo` must disappear, `bar` appear.
+        index.index_file(uri.clone(), "fn bar() => bar()\n");
+        assert!(index.find("foo", None, true).is_empty(), "stale `foo` not purged");
+        assert_eq!(index.find("bar", None, true).len(), 2, "new `bar` indexed");
+    }
+
+    // edge: removing a file purges its entries (deleted file → no dangling refs).
+    #[test]
+    fn refidx_edge_remove_file() {
+        let index = ReferencesIndex::default();
+        let a = make_uri("a.nv");
+        let b = make_uri("b.nv");
+        index.index_file(a.clone(), "fn shared() => ()\n");
+        index.index_file(b.clone(), "fn use_it() => shared()\n");
+        assert_eq!(index.find("shared", None, true).len(), 2);
+
+        index.remove_file(&a);
+        let locs = index.find("shared", None, true);
+        assert_eq!(locs.len(), 1, "only file b's occurrence remains");
+        assert!(locs.iter().all(|l| l.uri == b), "no dangling ref to a.nv");
+        assert!(!index.contains(&a), "a.nv no longer in the index");
+
+        // Removing the last contributor empties the name bucket entirely.
+        index.remove_file(&b);
+        assert!(index.find("shared", None, true).is_empty());
+    }
+
+    // perf: a warm index lookup over 100 files is faster than the V1 full scan
+    // (read + Rope build + word-boundary scan of every file) over the same set.
+    #[test]
+    fn refidx_perf_faster_than_full_scan() {
+        // Build 100 in-memory files; `target` appears once per file plus noise.
+        let mut files: Vec<(Url, String)> = Vec::with_capacity(100);
+        for i in 0..100 {
+            let uri = make_uri(&format!("file{i}.nv"));
+            // Realistic-ish body with many other identifiers to make the scan work.
+            let body = format!(
+                "module m{i}\nfn compute_{i}(alpha int, beta int) => alpha + beta + target\n\
+                 fn helper_{i}() => compute_{i}(1, 2)\nfn other_{i}() => helper_{i}()\n"
+            );
+            files.push((uri, body));
+        }
+
+        // Warm the incremental index (this is the one-time indexing cost, paid in
+        // the background at startup — NOT per request).
+        let index = ReferencesIndex::default();
+        for (uri, src) in &files {
+            index.index_file(uri.clone(), src);
+        }
+
+        // Baseline: the V1 per-request full scan over all 100 files.
+        let t0 = std::time::Instant::now();
+        let scan = find_references("target", &files, None, true);
+        let scan_dur = t0.elapsed();
+
+        // New path: a single index lookup (what each request now costs).
+        let t1 = std::time::Instant::now();
+        let idx = index.find("target", None, true);
+        let idx_dur = t1.elapsed();
+
+        assert_eq!(idx.len(), scan.len(), "index and scan must agree ({} vs {})", idx.len(), scan.len());
+        assert_eq!(idx.len(), 100, "one `target` per file");
+        assert!(
+            idx_dur < scan_dur,
+            "index lookup ({idx_dur:?}) should beat the full scan ({scan_dur:?})"
+        );
+    }
+
+    /// Test helper: first-occurrence declaration location (mirrors the server's
+    /// `find_decl_location`, kept local so the index tests are self-contained).
+    fn find_decl_location_test(uri: &Url, src: &str, name: &str) -> Location {
+        let rope = Rope::from_str(src);
+        let (s, e) = find_word_occurrences(src, name).into_iter().next().unwrap();
+        Location { uri: uri.clone(), range: span_to_range(&rope, s, e) }
     }
 
     // ── find_word_occurrences unit tests ─────────────────────────────────────

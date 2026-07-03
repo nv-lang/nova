@@ -690,7 +690,8 @@ version; evicted on `didClose` (`server.rs`). pos+neg+edge+perf tests in
 ✅ **CLOSED 2026-06-16** — branch `plan-104-4`, commit `8b3e1903`; 86+15 PASS.
 
 Open V1 markers (gated on type-checker resolver API in Plan 104.2):
-- **`[M-104.4-refs-incremental-index]`** — references scan is full filesystem per-request (V2: incremental index). Гейт: type-checker integration (Plan 104.2).
+- **`[M-104.4-refs-incremental-index]`** — ✅ RESOLVED (Plan 104.10 Ф.12, 2026-07-04). Полноценный инкрементальный in-memory индекс `name → [(uri, span)]` (`symbols.rs::ReferencesIndex`) заменил per-request full-FS-скан; обновление на didOpen/didChange/watch/rename, фон-индекс всего workspace + ленивый cold-prime. On-disk persistence — новый `[M-104.10-persistent-index]`.
+- **`[M-104.10-persistent-index]`** 🟡 OPEN (V2.1, Ф.12). Индекс ссылок in-memory, перестраивается фон-сканом при каждом старте сервера. On-disk persistence (аналог sourcekit-lsp `indexstore-db`: сериализация на диск + инкрементальная валидация по mtime/хешам при старте → мгновенный первый refs без холодного скана) — follow-up при потребности (крупные монорепо). Файл: `nova-lsp/src/symbols.rs`. Priority: P3.
 - **`[M-104.4-workspace-symbol-fuzzy]`** — workspace/symbol uses substring V1 (V2: fuzzy ranking / prefix scoring). Independent of type-checker.
 - **`[M-104.4-cross-file-method-nesting]`** — documentSymbol nests methods under type only within same file via receiver name match (V2: cross-file resolver needs Plan 104.2 symbol resolution API).
 

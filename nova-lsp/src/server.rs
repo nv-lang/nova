@@ -35,7 +35,7 @@ use crate::signature_help::compute_signature_help_in;
 use crate::state::{ParsedFile, WorkspaceState};
 use crate::symbols::{
     collect_nv_files, compute_document_symbols, entries_to_workspace_symbols,
-    find_references, symbol_at_position,
+    symbol_at_position,
 };
 use crate::workspace_lifecycle::{
     apply_watched_event, classify_watch_uri, compute_rename_import_edits, RenamedFile,
@@ -291,11 +291,15 @@ impl Backend {
         )
         .await;
 
-        // Index all .nv files for workspace/symbol (report progress midway).
+        // Index all .nv files for workspace/symbol + references (Ф.12). This is
+        // the background cold-scan of the WHOLE workspace (not just open docs) so
+        // the first references/workspace-symbol on a cold project never blocks on
+        // a full-FS scan (sourcekit-lsp lesson).
         let files = collect_nv_files(&root);
         let total = files.len().max(1);
         for (i, (uri, src)) in files.iter().enumerate() {
             self.state.workspace_index.index_file(uri.clone(), src);
+            self.state.references_index.index_file(uri.clone(), src);
             if i % 16 == 0 {
                 let pct = ((i * 100) / total) as u32;
                 self.send_progress(
@@ -309,6 +313,9 @@ impl Backend {
                 .await;
             }
         }
+        // The whole workspace is now in the references index — subsequent
+        // requests answer from memory, never re-scanning the filesystem.
+        self.state.references_index.mark_primed();
 
         // Cold type-check pass → publish initial diagnostics.
         self.send_progress(
@@ -602,10 +609,13 @@ impl LanguageServer for Backend {
         tracing::debug!(uri = %uri, version, "document opened and cached");
 
         // Plan 104.4: invalidate document symbol cache + update workspace index.
+        // Plan 104.10 Ф.12: refresh the incremental references index from the
+        // open-buffer text (source of truth for open files).
         self.state.document_symbol_cache.invalidate(&uri);
         {
             let src = text.to_string();
             self.state.workspace_index.index_file(uri.clone(), &src);
+            self.state.references_index.index_file(uri.clone(), &src);
         }
 
         // Immediate recheck on open (no debounce — user just opened the file).
@@ -652,11 +662,13 @@ impl LanguageServer for Backend {
         }
 
         // Plan 104.4: invalidate document symbol cache + re-index workspace symbols.
+        // Plan 104.10 Ф.12: re-index the references occurrences incrementally.
         self.state.document_symbol_cache.invalidate(&uri);
         if let Some(doc) = self.state.docs.get(&uri) {
             let src = doc.text.to_string();
             drop(doc);
             self.state.workspace_index.index_file(uri.clone(), &src);
+            self.state.references_index.index_file(uri.clone(), &src);
         }
 
         // Debounced recheck — coalesces rapid edits.
@@ -795,12 +807,14 @@ impl LanguageServer for Backend {
             any_nv = true;
             // Old location is gone: evict its caches/index entries.
             self.state.workspace_index.remove_file(&old_uri);
+            self.state.references_index.remove_file(&old_uri);
             self.state.invalidate_resolved(&old_uri);
             self.state.document_symbol_cache.invalidate(&old_uri);
             // Index the file at its new location from disk (if present).
             if let Ok(path) = new_uri.to_file_path() {
                 if let Ok(src) = std::fs::read_to_string(&path) {
                     self.state.workspace_index.index_file(new_uri.clone(), &src);
+                    self.state.references_index.index_file(new_uri.clone(), &src);
                 }
             }
         }
@@ -1115,13 +1129,12 @@ impl LanguageServer for Backend {
 
     /// `textDocument/references` — Shift+F12 find all usages.
     ///
-    /// V1 strategy: extract symbol name at cursor position via word-boundary
-    /// scan, then scan all `.nv` files in the workspace for that name.
-    /// `includeDeclaration` is honoured by comparing each match against the
-    /// cursor position's span.
-    ///
-    /// Performance: full workspace scan per-request, ≤1s for typical projects
-    /// (<100 files).  Incremental index is V2.
+    /// Plan 104.10 Ф.12: answered from the **incremental references index**
+    /// (`name → [(uri, span)]`) instead of the V1 per-request full-filesystem
+    /// scan. The index is kept current on `didOpen`/`didChange` (open-buffer
+    /// overlay), external watched-file events, and rename; the whole workspace
+    /// is cold-scanned once in the background (`initialized`). `includeDeclaration`
+    /// is honoured by dropping the occurrence overlapping the declaration span.
     async fn references(
         &self,
         params: ReferenceParams,
@@ -1142,47 +1155,40 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
 
-        tracing::debug!(symbol = %symbol_name, "references: scanning workspace");
-
-        // Collect all .nv files to scan.
-        let mut files: Vec<(Url, String)> = Vec::new();
-
-        // Add all open documents (may have unsaved edits).
-        for entry in self.state.docs.iter() {
-            files.push((entry.key().clone(), entry.value().text.to_string()));
-        }
-
-        // If workspace root is set, also scan disk files not in open docs.
-        if let Some(root) = self.state.workspace_root() {
-            let disk_files = collect_nv_files(&root);
-            let open_uris: std::collections::HashSet<Url> =
-                files.iter().map(|(u, _)| u.clone()).collect();
-            for (file_uri, text) in disk_files {
-                if !open_uris.contains(&file_uri) {
-                    files.push((file_uri, text));
+        // Lazy cold-prime: if the background `initialized` scan has not run
+        // (client sent no `initialized`, or none-workspace-root edge), fill the
+        // index from disk ONCE. Open documents are already indexed with their
+        // buffer text, so we skip them to avoid clobbering unsaved edits with a
+        // stale disk read. After this, all requests answer from memory.
+        if !self.state.references_index.is_primed() {
+            if let Some(root) = self.state.workspace_root() {
+                for (file_uri, text) in collect_nv_files(&root) {
+                    if !self.state.docs.contains_key(&file_uri) {
+                        self.state.references_index.index_file(file_uri, &text);
+                    }
                 }
             }
+            self.state.references_index.mark_primed();
         }
 
-        // Compute declaration location (heuristic: first occurrence in source file).
-        let declaration_loc = {
+        tracing::debug!(symbol = %symbol_name, "references: querying incremental index");
+
+        // Declaration location (first occurrence in the cursor file) — only
+        // needed to honour `includeDeclaration = false`.
+        let declaration_loc = if include_decl {
+            None
+        } else {
             let decl_src = src.clone();
             let decl_uri = uri.clone();
             let decl_name = symbol_name.clone();
-            run_with_large_stack(move || {
-                find_decl_location(&decl_uri, &decl_src, &decl_name)
-            })
+            run_with_large_stack(move || find_decl_location(&decl_uri, &decl_src, &decl_name))
         };
 
-        let symbol_name_clone = symbol_name.clone();
-        let locs = run_with_large_stack(move || {
-            find_references(
-                &symbol_name_clone,
-                &files,
-                declaration_loc.as_ref(),
-                include_decl,
-            )
-        });
+        let locs = self.state.references_index.find(
+            &symbol_name,
+            declaration_loc.as_ref(),
+            include_decl,
+        );
 
         tracing::debug!(count = locs.len(), symbol = %symbol_name, "references: found");
 

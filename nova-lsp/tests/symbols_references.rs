@@ -149,6 +149,17 @@ impl LspProcess {
         );
     }
 
+    /// Full-document change (no `range` → server replaces the whole buffer).
+    fn did_change_full(&mut self, uri: &str, version: i64, text: &str) {
+        self.send_notification(
+            "textDocument/didChange",
+            serde_json::json!({
+                "textDocument": { "uri": uri, "version": version },
+                "contentChanges": [ { "text": text } ],
+            }),
+        );
+    }
+
     fn shutdown_and_exit(mut self) {
         let id = self.next_id;
         self.next_id += 1;
@@ -610,6 +621,52 @@ fn refs_edge1_word_boundary() {
             );
         }
     }
+
+    lsp.shutdown_and_exit();
+}
+
+/// refs_pos4 (Plan 104.10 Ф.12): the incremental index updates on `didChange`
+/// — a symbol renamed away yields no references; the new symbol is found. No
+/// filesystem scan is involved (rootUri is null; the index is driven purely by
+/// didOpen/didChange), so this exercises the incremental path end-to-end.
+#[test]
+fn refs_pos4_incremental_update_on_didchange() {
+    let mut lsp = LspProcess::spawn();
+    lsp.initialize();
+    lsp.initialized();
+
+    let uri = "file:///workspace/refs_incr.nv";
+    // `alpha` declared and used → 2 occurrences.
+    lsp.did_open(uri, "fn alpha() => alpha()\n");
+    brief_pause();
+
+    let before = lsp.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 0, "character": 3 }, // on `alpha`
+            "context": { "includeDeclaration": true },
+        }),
+    );
+    let before_n = before["result"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert_eq!(before_n, 2, "expected 2 refs to `alpha` initially: {before}");
+
+    // Edit: rename `alpha` → `beta` across the buffer.
+    lsp.did_change_full(uri, 2, "fn beta() => beta()\n");
+    brief_pause();
+
+    // `alpha` must now be gone from the index (stale entries purged).
+    let after_alpha = lsp.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 0, "character": 3 }, // now on `beta`, not `alpha`
+            "context": { "includeDeclaration": true },
+        }),
+    );
+    // The identifier at that position is now `beta`; querying it returns beta refs.
+    let after_n = after_alpha["result"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert_eq!(after_n, 2, "expected 2 refs to `beta` after edit: {after_alpha}");
 
     lsp.shutdown_and_exit();
 }

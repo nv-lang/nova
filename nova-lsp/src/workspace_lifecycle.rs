@@ -132,8 +132,10 @@ pub fn apply_watched_event(state: &WorkspaceState, event: &FileEvent) -> WatchAp
         WatchTarget::Nv => {
             let is_open = state.docs.contains_key(&event.uri);
             if event.typ == FileChangeType::DELETED {
-                // Purge every trace of the deleted file.
+                // Purge every trace of the deleted file (Ф.12: references
+                // occurrences too — EDGE deleted file → entries removed).
                 state.workspace_index.remove_file(&event.uri);
+                state.references_index.remove_file(&event.uri);
                 state.invalidate_resolved(&event.uri);
                 state.document_symbol_cache.invalidate(&event.uri);
                 return WatchApplyOutcome { relevant: true, manifest_changed: false };
@@ -146,6 +148,8 @@ pub fn apply_watched_event(state: &WorkspaceState, event: &FileEvent) -> WatchAp
                 if let Ok(path) = event.uri.to_file_path() {
                     if let Ok(src) = std::fs::read_to_string(&path) {
                         state.workspace_index.index_file(event.uri.clone(), &src);
+                        // Ф.12: keep the references index fresh on external edits.
+                        state.references_index.index_file(event.uri.clone(), &src);
                     }
                 }
             }

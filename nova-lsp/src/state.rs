@@ -19,7 +19,7 @@ use crate::debouncer::Debouncer;
 use crate::provenance::{self, ResolvedModule};
 use crate::semantic_tokens_delta::SemanticTokensSnapshot;
 use crate::stdlib_index::StdlibIndex;
-use crate::symbols::{DocumentSymbolCache, WorkspaceIndex};
+use crate::symbols::{DocumentSymbolCache, ReferencesIndex, WorkspaceIndex};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data model
@@ -116,6 +116,12 @@ pub struct WorkspaceState {
     /// Updated incrementally: per-file re-index on `didChange`/`didOpen`.
     pub workspace_index: WorkspaceIndex,
 
+    /// Plan 104.10 Ф.12: incremental references index (`name → [(uri, span)]`).
+    /// Replaces the V1 per-request full-filesystem scan for
+    /// `textDocument/references`. Updated on `didOpen`/`didChange`, external
+    /// watched-file events, and rename; cold-scanned once in the background.
+    pub references_index: ReferencesIndex,
+
     /// Plan 104.10 Ф.1: per-URI cache of the fully-resolved module
     /// (parse + import inlining + type-check with `expr_types`). Populated
     /// lazily by [`WorkspaceState::get_or_build_resolved`] on the first IDE
@@ -148,6 +154,7 @@ impl Default for WorkspaceState {
             semantic_tokens_counter: AtomicU64::new(0),
             document_symbol_cache: DocumentSymbolCache::default(),
             workspace_index: WorkspaceIndex::default(),
+            references_index: ReferencesIndex::default(),
             resolved_cache: DashMap::new(),
             resolved_build_count: AtomicU64::new(0),
             stdlib_index_cache: DashMap::new(),
