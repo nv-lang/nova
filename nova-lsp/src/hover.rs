@@ -1,4 +1,4 @@
-//! Hover handler — Plan 104.2.Ф.2.
+//! Hover handler — Plan 104.2.Ф.2 / Plan 104.10 Ф.4 (cross-file).
 //!
 //! Given a source text and cursor position, resolves the symbol under the
 //! cursor and renders a markdown hover response.
@@ -9,13 +9,31 @@
 //! - Variable/const: fenced ```nova``` code block with `let name: Ty` + doc.
 //! - Import: fenced ```nova``` code block with `import path`.
 //!
+//! # Cross-file hover (Plan 104.10 Ф.4)
+//!
+//! Symbol resolution runs against a [`ResolvedModule`] (parse + import inlining +
+//! type-check), exactly as goto-definition (Ф.3) does. Because import inlining
+//! parses each peer / prelude file **from disk** and `lookup_decl_by_name`
+//! searches those inlined items, the signature **and doc-comment** a hover shows
+//! for a cross-file symbol come from that symbol's *real* declaration in the
+//! source file — never a re-synthesized or name-only stub (criterion #3).
+//!
+//! When the resolved declaration lives in a foreign file (its `Span.file_id` is
+//! not the entry's `MAIN_FILE_ID` and maps to a different path via the resolved
+//! module's provenance `file_map`), the hover additionally surfaces that source
+//! path as a footer — so the reader knows *where* the symbol is defined.
+//!
 //! UTF-16 position handling: delegates to `diagnostic_mapping::position_to_byte_offset`.
 
-use nova_codegen::ast::Module;
+use std::path::{Path, PathBuf};
+
+use nova_codegen::diag::{FileId, Span, MAIN_FILE_ID};
 use ropey::Rope;
+use std::collections::HashMap;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position, Url};
 
 use crate::diagnostic_mapping::position_to_byte_offset;
+use crate::provenance::{self, ResolvedModule};
 use crate::symbol::{resolve_symbol_at_with_limit, SymbolInfo};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,12 +42,61 @@ use crate::symbol::{resolve_symbol_at_with_limit, SymbolInfo};
 
 /// Compute a hover response for the given source text and cursor position.
 ///
+/// This is the self-contained entry point (used by unit tests and any caller
+/// without a [`WorkspaceState`](crate::state::WorkspaceState)). It resolves the
+/// module fresh from `src` via provenance. The server handler uses
+/// [`compute_hover_in`] so it can reuse the Ф.1 resolved-module cache.
+///
+/// `uri` locates the entry buffer on disk (needed to resolve imports / provenance
+/// so cross-file symbols carry the right source). When `None` (unit tests with no
+/// backing file), the entry is resolved against a synthetic out-of-repo path, so
+/// no imports are inlined — resolution is purely local, matching V1 behaviour.
+///
 /// Returns `None` if:
 /// - The source cannot be parsed.
 /// - No symbol is found at the cursor position.
 /// - The cursor is on whitespace, a comment, or outside any item span.
 pub fn compute_hover(src: &str, pos: Position, uri: Option<&Url>) -> Option<Hover> {
-    // Convert LSP UTF-16 position to byte offset.
+    // Derive an entry path + URI. With a real `uri` we resolve provenance
+    // against it (cross-file works). Without one, we use a synthetic path in the
+    // OS temp dir: `find_repo_root_from` yields no repo there, so imports are not
+    // inlined and hover resolves only local symbols — the pre-Ф.4 behaviour.
+    let (path, u_owned) = match uri {
+        Some(u) => (
+            u.to_file_path().unwrap_or_else(|_| PathBuf::from(u.path())),
+            u.clone(),
+        ),
+        None => {
+            let p = std::env::temp_dir().join("_nova_hover_local.nv");
+            let u = Url::from_file_path(&p)
+                .unwrap_or_else(|_| Url::parse("file:///_nova_hover_local.nv").unwrap());
+            (p, u)
+        }
+    };
+
+    let resolved = provenance::resolve_module_for(&path, src);
+    compute_hover_in(&resolved, src, pos, &u_owned)
+}
+
+/// Compute a hover response against an already-resolved module.
+///
+/// `resolved` supplies the import-inlined module, `items_start` (to distinguish
+/// the entry file's own items from prepended imports), the `file_id → path`
+/// provenance `file_map`, and the type-checker `env`. The server passes the
+/// Ф.1-cached [`ResolvedModule`] here so hover reuses the same parse/resolve as
+/// goto/completion on the same document version.
+///
+/// The signature and doc are rendered from the resolved [`SymbolInfo`], whose
+/// fields were extracted from the symbol's real declaration (in the entry file
+/// or — for an imported/prelude symbol — in the peer file parsed from disk during
+/// inlining). For a cross-file declaration a source-path footer is appended.
+pub fn compute_hover_in(
+    resolved: &ResolvedModule,
+    src: &str,
+    pos: Position,
+    uri: &Url,
+) -> Option<Hover> {
+    // Convert LSP UTF-16 position to byte offset in the current document.
     let rope = Rope::from_str(src);
     let byte_offset = position_to_byte_offset(&rope, pos.line, pos.character);
 
@@ -38,38 +105,29 @@ pub fn compute_hover(src: &str, pos: Position, uri: Option<&Url>) -> Option<Hove
         return None;
     }
 
-    // Parse the module.
-    let mut module = match nova_codegen::parser::parse(src) {
-        Ok(m) => m,
-        Err(_) => return None,
-    };
+    // Resolve symbol at cursor. `items_start` skips prepended imports for
+    // span-matching; name-lookup still searches all items so a prelude/imported
+    // symbol resolves to its real (foreign-`file_id`) declaration.
+    let symbol = resolve_symbol_at_with_limit(
+        &resolved.module,
+        byte_offset,
+        resolved.items_start,
+        resolved.env.as_ref(),
+    )?;
 
-    // Remember how many items the file itself declares (before inlining imports).
-    let items_before_inline = module.items.len();
+    // Cross-file provenance: if the declaration lives in a foreign file, surface
+    // its source path. The signature+doc themselves already come from that real
+    // declaration (inlining parsed it from disk).
+    let source = cross_file_source(symbol.span(), &resolved.file_map, uri);
 
-    // Inline imports so body-walk can find prelude symbols (assert, println, etc.)
-    // by name. After inlining, imported items are PREPENDED to module.items,
-    // so original file items start at index (total_after - items_before_inline).
-    if let Some(u) = uri {
-        if let Ok(path) = u.to_file_path() {
-            resolve_imports_for_hover(&path, &mut module);
-        }
+    // Render to markdown, appending the source footer for cross-file symbols.
+    let mut md = render_hover_markdown(&symbol);
+    if let Some(display) = source {
+        md.push_str("\n\n---\n\n*Defined in `");
+        md.push_str(&display);
+        md.push_str("`*");
     }
 
-    // items_start = how many imported items were prepended.
-    let items_start = module.items.len().saturating_sub(items_before_inline);
-
-    // Variant B: run type-checker to get ModuleEnv (fn return types, etc.)
-    // for local variable type inference when no explicit annotation is present.
-    // The checker was already called in check_source_inner for diagnostics;
-    // here we capture its output for hover type resolution.
-    let env = nova_codegen::types::check_module(&module).ok();
-
-    // Resolve symbol at cursor.
-    let symbol = resolve_symbol_at_with_limit(&module, byte_offset, items_start, env.as_ref())?;
-
-    // Render to markdown.
-    let md = render_hover_markdown(&symbol);
     Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
@@ -79,22 +137,49 @@ pub fn compute_hover(src: &str, pos: Position, uri: Option<&Url>) -> Option<Hove
     })
 }
 
-/// Inline-resolve imports into `module` so body-walk can find prelude symbols.
-/// Uses catch_unwind so import resolution errors don't crash the LSP.
-fn resolve_imports_for_hover(path: &std::path::Path, module: &mut Module) {
-    use nova_codegen::test_runner::find_repo_root_from;
-    let Some(repo) = find_repo_root_from(path) else {
-        tracing::warn!("hover: no repo root found for {:?}", path);
-        return;
-    };
-    let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
-    let items_before = module.items.len();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = nova_codegen::imports::resolve_imports_inline(path, module, &repo, &stdlib_dir);
-    }));
-    if result.is_err() {
-        tracing::warn!("hover: resolve_imports_inline panicked for {:?}", path);
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-file source attribution (Ф.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// If `decl_span` was declared in a foreign file, return a human-readable
+/// display path for it (repo-relative when determinable, else the file name).
+/// Returns `None` for a local declaration (entry buffer) so single-file hover is
+/// byte-identical to before.
+///
+/// Robust to the entry-`file_id` duality (see `provenance` module docs): a span
+/// stamped `MAIN_FILE_ID` — or one whose mapped path canonically equals the
+/// current document — is treated as local and yields `None`.
+fn cross_file_source(decl_span: Span, file_map: &HashMap<FileId, PathBuf>, uri: &Url) -> Option<String> {
+    if decl_span.file_id == MAIN_FILE_ID {
+        return None;
     }
+    let path = file_map.get(&decl_span.file_id)?;
+
+    // Guard against the entry being registered under a non-MAIN id too: if the
+    // mapped path is the current document, this is not a cross-file symbol.
+    if let Ok(cur) = uri.to_file_path() {
+        let cur_c = cur.canonicalize().unwrap_or(cur);
+        let path_c = path.canonicalize().unwrap_or_else(|_| path.clone());
+        if cur_c == path_c {
+            return None;
+        }
+    }
+
+    Some(display_source_path(path))
+}
+
+/// Render a declaration file path for display: relative to the repo root when it
+/// lies under one (stable, machine-independent), else the bare file name.
+fn display_source_path(path: &Path) -> String {
+    use nova_codegen::test_runner::find_repo_root_from;
+    if let Some(root) = find_repo_root_from(path) {
+        if let Ok(rel) = path.strip_prefix(&root) {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
+    }
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().replace('\\', "/"))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -288,5 +373,115 @@ mod tests {
     fn edge2_empty_file_returns_none() {
         let h = compute_hover("", pos(0, 0), None);
         assert!(h.is_none() || h.is_some());
+    }
+
+    // ── Plan 104.10 Ф.4: cross-file hover ─────────────────────────────────────
+
+    use std::path::PathBuf;
+
+    /// Repo root (CARGO_MANIFEST_DIR = .../nova-lsp; root is its parent).
+    fn repo_root() -> PathBuf {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        manifest.parent().expect("nova-lsp has a parent").to_path_buf()
+    }
+
+    /// Write `src` to an isolated per-fixture directory inside the repo and
+    /// return its `file://` URI + path (mirrors goto_definition's `write_fixture`).
+    /// A per-fixture sub-dir keeps sibling `module` declarations from being
+    /// collected as folder-module peers of one another.
+    fn write_fixture(dir_stem: &str, file: &str, src: &str) -> (Url, PathBuf) {
+        let dir = repo_root().join("target").join("f4_hover_test").join(dir_stem);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(file);
+        std::fs::write(&path, src).unwrap();
+        let uri = Url::from_file_path(&path).expect("valid file URI");
+        (uri, path)
+    }
+
+    fn hover_md(h: Option<Hover>) -> String {
+        match h.expect("expected a hover").contents {
+            HoverContents::Markup(m) => m.value,
+            _ => panic!("expected Markup"),
+        }
+    }
+
+    /// POS: hover on a call to a fn declared in a sibling peer file shows the
+    /// signature AND doc-comment taken from the *sibling's* real declaration,
+    /// plus a cross-file source footer. Exercises criteria #1 and #3.
+    #[test]
+    fn pos_cross_file_fn_signature_and_doc() {
+        let dir = "pos_cross_fn";
+        // Sibling declares `helper` with a doc-comment. Same module → peers.
+        write_fixture(
+            dir,
+            "helper.nv",
+            "module app.mod\n/// Compute the answer to everything.\nfn helper() -> int => 42\n",
+        );
+        let entry_src = "module app.mod\nfn main() {\n  helper()\n}\n";
+        let (entry_uri, entry_path) = write_fixture(dir, "app.nv", entry_src);
+
+        let resolved = provenance::resolve_module_for(&entry_path, entry_src);
+        // Cursor on `helper` inside main's body (line 2, col 2).
+        let md = hover_md(compute_hover_in(&resolved, entry_src, pos(2, 2), &entry_uri));
+
+        assert!(md.contains("fn helper"), "must show the real signature, got:\n{md}");
+        assert!(md.contains("-> int"), "signature must include return type, got:\n{md}");
+        assert!(
+            md.contains("Compute the answer to everything."),
+            "must show the doc from the sibling's real declaration, got:\n{md}"
+        );
+        assert!(
+            md.contains("Defined in") && md.contains("helper.nv"),
+            "cross-file hover must surface the source path, got:\n{md}"
+        );
+    }
+
+    /// POS: hover on a local symbol shows no cross-file footer (0 regressions,
+    /// criterion #2). The signature + doc still render.
+    #[test]
+    fn pos_local_symbol_no_source_footer() {
+        let src = "module basics.lsp\n/// Add two numbers.\nfn add(a int, b int) -> int => a + b\nfn main() {\n  add(1, 2)\n}\n";
+        let (uri, path) = write_fixture("pos_local", "app.nv", src);
+        let resolved = provenance::resolve_module_for(&path, src);
+        // Cursor on the `add` call inside main's body (line 4, col 2).
+        let md = hover_md(compute_hover_in(&resolved, src, pos(4, 2), &uri));
+        assert!(md.contains("fn add"), "must resolve local fn, got:\n{md}");
+        assert!(md.contains("Add two numbers."), "must show local doc, got:\n{md}");
+        assert!(
+            !md.contains("Defined in"),
+            "a same-file symbol must NOT get a cross-file footer, got:\n{md}"
+        );
+    }
+
+    /// NEG: hover on an unknown identifier resolves to no symbol → None.
+    #[test]
+    fn neg_cross_file_unknown_symbol_none() {
+        let src = "module app.mod\nfn main() {\n  no_such_symbol_xyz()\n}\n";
+        let (uri, path) = write_fixture("neg_unknown", "app.nv", src);
+        let resolved = provenance::resolve_module_for(&path, src);
+        let h = compute_hover_in(&resolved, src, pos(2, 2), &uri);
+        assert!(h.is_none(), "unknown symbol must yield no hover");
+    }
+
+    /// EDGE: a symbol used in the entry file whose doc lives entirely in another
+    /// file (the prelude) — hover must still surface that doc, proving the doc is
+    /// pulled from the real cross-file declaration, not the use site.
+    #[test]
+    fn edge_doc_from_another_file_shown() {
+        // `assert` is a prelude symbol; its declaration + doc live in the stdlib
+        // prelude, a different file than the entry.
+        let src = "module app.mod\nfn main() {\n  assert(true)\n}\n";
+        let (uri, path) = write_fixture("edge_prelude_doc", "app.nv", src);
+        let resolved = provenance::resolve_module_for(&path, src);
+        // Cursor on `assert` (line 2, col 2).
+        let h = compute_hover_in(&resolved, src, pos(2, 2), &uri);
+        let md = hover_md(h);
+        // Signature comes from the prelude declaration; the source footer points
+        // into the stdlib prelude file (a foreign file).
+        assert!(md.contains("assert"), "must resolve the prelude `assert`, got:\n{md}");
+        assert!(
+            md.contains("Defined in") && md.contains("prelude"),
+            "doc/signature must be attributed to the prelude source file, got:\n{md}"
+        );
     }
 }

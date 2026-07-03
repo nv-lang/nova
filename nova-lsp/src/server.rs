@@ -25,7 +25,7 @@ use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
 use crate::format::{format_document, format_range, on_type_format};
 use crate::goto_definition::compute_goto_definition_in;
-use crate::hover::compute_hover;
+use crate::hover::compute_hover_in;
 use crate::incremental::apply_changes;
 use crate::rename::{prepare_rename, RenameDoc, compute_rename};
 use crate::semantic_tokens_delta::{build_delta_response, SemanticTokensSnapshot};
@@ -895,13 +895,21 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri.clone();
         let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
         let src = doc.text.to_string();
+        let version = doc.version;
         drop(doc);
 
-        // Plan 104.2: primary symbol hover.
+        // Plan 104.2 / 104.10 Ф.4: primary symbol hover, resolved cross-file via
+        // the Ф.1 resolved-module cache (built once per doc version, shared with
+        // goto/completion). A foreign-file symbol shows the real signature+doc
+        // from its source declaration plus a source-path footer.
         let src2 = src.clone();
         let uri2 = uri.clone();
+        let state = Arc::clone(&self.state);
         let symbol_hover = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            run_with_large_stack(move || compute_hover(&src2, pos, Some(&uri2)))
+            run_with_large_stack(move || {
+                let resolved = state.get_or_build_resolved(&uri2, version, &src2);
+                compute_hover_in(&resolved, &src2, pos, &uri2)
+            })
         })) {
             Ok(h) => h,
             Err(e) => {

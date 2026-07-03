@@ -11,7 +11,7 @@ use nova_codegen::ast::{
     Module, NamedTupleField, Param, Pattern, Receiver, ReceiverKind,
     Stmt, TypeDeclKind, TypeRef,
 };
-use nova_codegen::diag::Span;
+use nova_codegen::diag::{Span, MAIN_FILE_ID};
 use nova_codegen::types::ModuleEnv;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,24 +298,56 @@ pub fn resolve_symbol_at(module: &Module, byte_offset: usize) -> Option<SymbolIn
     resolve_symbol_at_with_limit(module, byte_offset, 0, None)
 }
 
+/// Does `item` belong to the **entry** file (the open buffer) rather than an
+/// inlined import / folder-module peer?
+///
+/// `parse(src)` stamps every entry span with [`MAIN_FILE_ID`]; `resolve_imports_inline`
+/// parses each imported / peer file with its *own* `file_id`. So an item's
+/// declaration-span `file_id` is the authoritative provenance signal:
+/// `== MAIN_FILE_ID` means entry. Items without a natural declaration span
+/// (bench/lemma) are treated as
+/// entry — harmless, since they are ignored by span-match and body-walk anyway.
+fn item_belongs_to_entry(item: &Item) -> bool {
+    let file_id = match item {
+        Item::Fn(fd) => fd.span.file_id,
+        Item::Type(td) => td.span.file_id,
+        Item::Let(ld) => ld.span.file_id,
+        Item::Const(cd) => cd.span.file_id,
+        Item::Test(td) => td.span.file_id,
+        Item::Bench(_) | Item::Lemma(_) => MAIN_FILE_ID,
+    };
+    file_id == MAIN_FILE_ID
+}
+
 /// Resolve a symbol at `byte_offset` in `module`.
 ///
 /// After `resolve_imports_inline`, imported items are **prepended** to
-/// `module.items` (see imports.rs line ~829: `new_items.append(&mut module.items)`).
-/// So the original file's items start at index `items_start` (= number of
-/// imported items inserted), not at 0.
+/// `module.items` and — for folder-module peers — the entry's sibling files'
+/// items are **merged in** as well. So the entry file's own items are *not* a
+/// clean suffix of `module.items`: neither a prepend-count nor an index slice
+/// reliably isolates them (a peer item can sort after the entry's).
 ///
-/// - Span-match is restricted to `module.items[items_start..]` (original items
-///   only — inlined items have spans from other files).
-/// - Body-walk is also restricted to `items[items_start..]`.
-/// - Name lookup (to resolve the found ident) searches ALL items so prelude
-///   symbols like `assert` are found.
+/// Entry membership is therefore decided by **provenance**, not position: an item
+/// is the entry's iff its declaration-span `file_id == MAIN_FILE_ID`
+/// ([`item_belongs_to_entry`]). This is byte-collision-proof — a peer item whose
+/// foreign-file offsets happen to overlap the cursor no longer mis-matches.
+///
+/// - Span-match and body-walk are restricted to entry items (foreign spans are
+///   meaningless against the entry buffer's byte offsets).
+/// - Name lookup (to resolve a found ident) searches ALL items so prelude / peer
+///   symbols like `assert` — or a fn declared in a sibling file — are found and
+///   carry their real (foreign-`file_id`) declaration span.
+///
+/// `items_start` is retained for API stability (callers pass the prepend count);
+/// entry membership no longer depends on it.
 pub fn resolve_symbol_at_with_limit(
     module: &Module,
     byte_offset: usize,
     items_start: usize,
     env: Option<&ModuleEnv>,
 ) -> Option<SymbolInfo> {
+    let _ = items_start; // provenance (file_id) now decides entry membership.
+
     // Check imports first (they appear early in the file).
     for import in &module.imports {
         if span_contains(import.span, byte_offset) {
@@ -327,8 +359,8 @@ pub fn resolve_symbol_at_with_limit(
         }
     }
 
-    // Span-match only original items (not inlined ones that have foreign spans).
-    for item in module.items.iter().skip(items_start) {
+    // Span-match only entry items (inlined / peer items have foreign spans).
+    for item in module.items.iter().filter(|it| item_belongs_to_entry(it)) {
         if let Some(info) = resolve_item(item, byte_offset) {
             return Some(info);
         }
@@ -337,13 +369,13 @@ pub fn resolve_symbol_at_with_limit(
     // First fallback: check if cursor is on a local variable binding pattern.
     // This must run before the ident-name lookup because pattern names are not
     // in module.items and cannot be found by lookup_decl_by_name.
-    if let Some(info) = find_local_var_at(module, byte_offset, items_start, env) {
+    if let Some(info) = find_local_var_at(module, byte_offset, env) {
         return Some(info);
     }
 
-    // Second fallback: body-walk original items to find ident name at cursor,
-    // then look it up by name across ALL items (including inlined prelude).
-    if let Some(ident_name) = find_ident_in_bodies_from(module, byte_offset, items_start) {
+    // Second fallback: body-walk entry items to find ident name at cursor,
+    // then look it up by name across ALL items (including inlined prelude/peers).
+    if let Some(ident_name) = find_ident_in_bodies_entry(module, byte_offset) {
         if let Some(info) = lookup_decl_by_name(module, &ident_name) {
             return Some(info);
         }
@@ -452,34 +484,46 @@ fn resolve_item(item: &Item, byte_offset: usize) -> Option<SymbolInfo> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Try to find the ident/Path name at `offset` inside any fn/test body in `module`.
-/// Returns the name string if found, or None.
+/// Returns the name string if found, or None. Walks all items (used on
+/// non-inlined modules where every item is the entry's).
 pub fn find_ident_in_bodies(module: &Module, offset: usize) -> Option<String> {
-    find_ident_in_bodies_from(module, offset, 0)
-}
-
-/// Walk only `module.items[items_start..]` (original file items, skipping inlined imports).
-pub fn find_ident_in_bodies_from(module: &Module, offset: usize, items_start: usize) -> Option<String> {
-    for item in module.items.iter().skip(items_start) {
-        match item {
-            Item::Fn(fd) => {
-                if !span_contains(fd.span, offset) {
-                    continue;
-                }
-                if let Some(name) = find_ident_in_fn_body(fd, offset) {
-                    return Some(name);
-                }
-            }
-            Item::Test(td) => {
-                if span_contains(td.span, offset) {
-                    if let Some(name) = find_ident_in_block(&td.body, offset) {
-                        return Some(name);
-                    }
-                }
-            }
-            _ => {}
+    for item in &module.items {
+        if let Some(name) = find_ident_in_item(item, offset) {
+            return Some(name);
         }
     }
     None
+}
+
+/// Walk only the **entry** file's items (provenance `file_id == MAIN_FILE_ID`),
+/// skipping inlined imports and folder-module peers whose spans are foreign.
+pub fn find_ident_in_bodies_entry(module: &Module, offset: usize) -> Option<String> {
+    for item in module.items.iter().filter(|it| item_belongs_to_entry(it)) {
+        if let Some(name) = find_ident_in_item(item, offset) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Find an ident at `offset` inside a single item's fn/test body.
+fn find_ident_in_item(item: &Item, offset: usize) -> Option<String> {
+    match item {
+        Item::Fn(fd) => {
+            if !span_contains(fd.span, offset) {
+                return None;
+            }
+            find_ident_in_fn_body(fd, offset)
+        }
+        Item::Test(td) => {
+            if span_contains(td.span, offset) {
+                find_ident_in_block(&td.body, offset)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -489,8 +533,8 @@ pub fn find_ident_in_bodies_from(module: &Module, offset: usize, items_start: us
 /// Walk fn/test bodies looking for a `Stmt::Let` binding whose pattern span
 /// covers `offset`. Returns a `SymbolInfo::LocalVar` if found.
 /// This handles hover on the binding name of a local variable.
-fn find_local_var_at(module: &Module, offset: usize, items_start: usize, env: Option<&ModuleEnv>) -> Option<SymbolInfo> {
-    for item in module.items.iter().skip(items_start) {
+fn find_local_var_at(module: &Module, offset: usize, env: Option<&ModuleEnv>) -> Option<SymbolInfo> {
+    for item in module.items.iter().filter(|it| item_belongs_to_entry(it)) {
         match item {
             Item::Fn(fd) => {
                 if !span_contains(fd.span, offset) {
