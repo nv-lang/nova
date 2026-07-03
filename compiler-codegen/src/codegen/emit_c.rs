@@ -37558,6 +37558,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 ExprKind::Path(p) => format!("Path:{}", p.join(".")),
                 ExprKind::If { .. } => "If".into(),
                 ExprKind::Block(_) => "Block".into(),
+                ExprKind::RecordLit { type_name, .. } => format!(
+                    "RecLit:{}",
+                    type_name.as_ref().and_then(|p| p.last().cloned())
+                        .unwrap_or_else(|| "<anon>".into())
+                ),
                 ExprKind::Index { obj, .. } => format!(
                     "Index:{}",
                     match &obj.kind {

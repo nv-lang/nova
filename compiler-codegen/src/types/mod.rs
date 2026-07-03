@@ -6709,6 +6709,25 @@ impl<'a> TypeCheckCtx<'a> {
                     // verified atom, not this slice). Shared single-source const (emit_c.rs,
                     // introduced 83ad5c46) — §0, no duplicate list.
                     if !crate::codegen::emit_c::RUNTIME_DEFINED_TYPES.contains(&last.as_str()) {
+                        // 172.1.2 (Self-литерал, 2026-07-04): `Self{...}` в методе —
+                        // тип = ресивер; гейт: non-generic recv (self.types).
+                        if last == "Self" && e.id.is_set() {
+                            if let Some(recv) = self.current_recv_type.borrow().clone() {
+                                // ТОЛЬКО non-generic recv: generic Self{...} в mono
+                                // требует инстанс-имени (bare сломал бы mono —
+                                // поймано гейтом 2026-07-04, расширение откачено).
+                                if self.types.get(&recv)
+                                    .map_or(false, |td| td.generics.is_empty())
+                                {
+                                    self.resolved_types_buf.borrow_mut().insert(
+                                        e.id,
+                                        ResolvedType::Named {
+                                            name: recv, module: vec![], args: vec![],
+                                        },
+                                    );
+                                }
+                            }
+                        }
                         // 172.1.2 (record-вариант sum'а, 2026-07-03): `Cons{...}` —
                         // имя ВАРИАНТА (не в self.types) → тип литерала = содержащий
                         // sum; гейт: единственный non-generic sum с record-вариантом.
