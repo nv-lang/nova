@@ -16,7 +16,7 @@ fn do_work_that_fails() Fail[WorkErr] -> () {
 // fn-sig объявляет generic Fail (union для WorkErr | CommitErr1).
 fn process1() Fail -> () {
     defer { commit1() }                          // failable cleanup (D158)
-    do_work_that_fails()?                        // throws WorkErr
+    do_work_that_fails()                         // throws WorkErr (Plan 173 #3: `?` на unit no-op, дропнут)
 }
 
 test "do_work fails + failable-defer compile pass" {
