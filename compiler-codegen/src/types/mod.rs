@@ -9370,6 +9370,46 @@ impl<'a> TypeCheckCtx<'a> {
                     };
                     let rt = ResolvedType::from_type_ref(ret_ty);
                     self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                } else if callee.receiver.is_none() && !callee_gs_inner.is_empty() {
+                    // [M-172.1-U4-freefn-generic-return] (Plan 177 Ф.2c): the callee's
+                    // return MENTIONS its own type-params — e.g. `sequence(items
+                    // []Result[T,E]) -> Result[[]T,E]`, `partition(...) -> ([]T,[]E)`.
+                    // The guard above DISCARDS such a return (§1 violation: the checker
+                    // knows the callee + args, yet leaves the concrete return un-
+                    // materialized → codegen Channel-2 miss → the divergent legacy
+                    // `value_aware_subst_to_ref` subst-mirror / an `fn_ret_<name>`
+                    // hijack). Instead INFER the type-args from the ARGUMENTS (structural
+                    // `unify_type` of each param TypeRef against the arg's inferred type —
+                    // the SAME unifier `build_recv_subst` uses for receivers) and
+                    // SUBSTITUTE, so the CONCRETE return (`Result[[]int,str]` /
+                    // `([]int,[]str)`) is materialized and codegen lowers it through the
+                    // SINGLE `resolved_type_to_c` (D315), not a subst-mirror. Only for a
+                    // FREE fn (no receiver — receiver-carrier generics are the method
+                    // channel's job, 7202) and only when FULLY resolved for THIS caller
+                    // (no residual type-param after subst): an erased generic body caller
+                    // (unbound `T` in scope) leaves a residual → skip → legacy (mirrors
+                    // the concrete-caller invariant of the method-channel gs-gate).
+                    let mut subst: HashMap<String, TypeRef> = HashMap::new();
+                    for (p, a) in callee.params.iter().zip(args.iter()) {
+                        if p.is_variadic {
+                            break;
+                        }
+                        if let Some(a_ty) = self.infer_expr_type(a.expr(), scope) {
+                            let _ = crate::const_fn_trampoline::unify_type(
+                                &p.ty, &a_ty, &callee_gs_inner, &mut subst,
+                            );
+                        }
+                    }
+                    if !subst.is_empty() {
+                        let concrete =
+                            crate::const_fn_trampoline::subst_type_ref_pub(ret_ty, &subst);
+                        if !typeref_mentions_any(&concrete, &callee_gs_inner)
+                            && !typeref_mentions_any(&concrete, gs)
+                        {
+                            let rt = ResolvedType::from_type_ref(&concrete);
+                            self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                        }
+                    }
                 }
             }
         }
