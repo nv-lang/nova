@@ -2,14 +2,14 @@
 # Plan 181 — Same-scope re-binding (`ro x = ...` повторно, тип может меняться)
 
 > **Маркер:** `[M-181-same-scope-rebinding]`. **Запуск:** «**выполни план 181**».
-> **Статус:** 📋 proposed 2026-07-02 (Ф.0 = owner sign-off gate). **Ред. 2 — 2026-07-03** (аудит: D-карта, symbol-якоря, spec_tests, пины p03/p08, EXPECT_WARNING-gap, §9/§10).
+> **Статус:** ✅ **APPROVED — owner sign-off R1–R7 получен 2026-07-03**; Ф.0-остаток = verify D-нумерации + fixtures-пины (sign-off-gate снят). **Ред. 2 — 2026-07-03** (аудит: D-карта, symbol-якоря, spec_tests, пины p03/p08, EXPECT_WARNING-gap, §9/§10).
 > **D-блок (NEW):** **D347**. **D-карта (Ред.2 2026-07-03):** committed high-water 3xx = D355 (D354/D355 в спеке);
 > резервы: 178=D357–D362 · 179=D333–D337 (+D338–D339 буфер) · 180=D340–D346 · **181=D347** · 173=D348–D349 ·
 > 174=D350–D353+D356 · 172.1=D400+. D347 свободен (grep=0; cross-подтверждён 173:232) — verify в Ф.0.
 > **Источник:** [research 2026-07-02](../research/2026-07-02-same-scope-rebinding.md) — эмпирика (11 проб) + 13 языков + 9 точек взаимодействия по коду. Сводка прецедента: **Rust/OCaml/F#/Elixir = да; Erlang/Swift/Kotlin/Java/C#/TS/Zig = нет**; уроки №1-5 (Rust guard-футган → R2; Haskell `<<loop>>` → R3; Go `:=` → отличие D34) — research §2.
 > **Носитель:** main (компиляторная фича; координация с [172.1](172.1-unified-type-engine.md) — alpha-pass не трогает канал resolved_types, работает ДО него; §9).
-> **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** Волна 0 = Ф.0
-> (owner sign-off R1-R7; fallback = `E_DUPLICATE_LOCAL` + фиксы B1/B3). Реализация — Волна 2+, **вне
+> **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** Волна 0 = Ф.0-остаток
+> (verify + пины; **sign-off R1–R7 ✅ 2026-07-03** — fallback `E_DUPLICATE_LOCAL` не понадобился). Реализация — Волна 2+, **вне
 > критических путей** (не гейтит и не гейтится 173-180): любой свободный слот агента; единственная
 > координация — 172.1 (parser/checker-зона, alpha-pass до канала).
 
@@ -73,7 +73,7 @@ mut work = work                   \ «разморозка» (Rust: let mut x = 
    - `p08b_consumed_then_rebind` — сейчас false-positive D133 → после Ф.2 POS;
    - `p08c_double_consume_leak` — B2: сейчас тихо (утечка) → после Ф.2 NEG `E_REBIND_LIVE_CONSUME`;
    - `p05_nested` / `p07_loop` — POS уже сейчас (guard против регрессий).
-3. **Owner sign-off на R1–R7.** Fallback при отказе: Ф.1′ = `E_DUPLICATE_LOCAL` в чекере + фикс B1/B3 — и план закрывается.
+3. **Owner sign-off на R1–R7 — ✅ ПОЛУЧЕН 2026-07-03** (по рекомендации Ред.2: фича, не запрет — alpha-pass дёшев и попутно чинит B1/B2/B3). Fallback (`E_DUPLICATE_LOCAL`) не понадобился; Ф.0-остаток = пп.1-2.
 
 ### Ф.1 — Alpha-renaming pass + codegen — core (medium)
 1. Новый модуль `compiler-codegen/src/alpha_rename.rs`: scope-stack walker по AST (fn-body/block/loop/match-arm/if-let scopes), same-scope дубли → `__sN`, original-map в side-channel. (Peer-прецедент структуры pass'а — `field_cache.rs` там же.)

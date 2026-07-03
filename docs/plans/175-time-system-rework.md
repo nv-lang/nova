@@ -203,6 +203,7 @@ fn sleep_until(deadline Monotonic) Time     // монотонный дедлай
 | `@plus`/`@minus`/`@neg`/`@times(i64\|f64)`/`@div(i64\|f64)`/`@abs` | **unchecked i64 wrap** 🔴 | **trap-on-overflow** (Ф.1c) |
 | `checked_add/sub/mul/div(...)->Option[Duration]` | — | **NEW** (Ф.1c) |
 | `saturating_add/sub/mul(...)->Duration` | — | **NEW** (Ф.1c, clamp к ±MAX) |
+| const `Duration.MAX` (граница saturating; 178 снимает таймаут `@timeout(Duration.MAX)`) | — | **NEW** (Ф.1c; sign-off 2026-07-03 — запрос Plan 178) |
 | `try_from_secs_f64`/`@times(f64)`/`@div(f64)` NaN/inf | сырой cast → мусор | **NEW try_*** → `Option`/trap на NaN/inf/overflow (Ф.1c) |
 | `@compare` | работает | без изменений |
 | `@display`/`@debug` (sink `mut w Write`) | — | **NEW** D237; `@display` = ASCII auto-scale (`"2s"`/`"500ns"`/`"us"`); `@debug` диагностика; машинная ISO-8601 форма отдельно |

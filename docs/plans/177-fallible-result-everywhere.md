@@ -86,7 +86,7 @@ fn Db.query(q Sql) Db Fail[DbError] -> []DbRow      // → Result[[]DbRow, DbErr
 **Explicit exempt-list (для guard'а §8 и текста D325, — иначе false-positive):**
 - `std/prelude/core.nv` — `extern Option@unwrap` / `Result@unwrap` c `Fail[...]` (:255, :354) — это **сам D85-мост `!!`**, by-design;
 - `std/prelude/protocols.nv` — protocol-member `on_exit(...) Fail[E]` (:460) — user-`E`, R5-forwarding;
-- `std/testing/property.nv` — 4 export-сигнатуры с `Fail` (§9 Q5: assert-семантика vs миграция).
+- `std/testing/property.nv` — 4 export-сигнатуры с `Fail` (Q5 ✅ **exempt**, sign-off 2026-07-03: assert/test-DSL-семантика — «упади сейчас» и есть смысл assert'а).
 
 **Эталон:** [std/net](../../std/net/tcp.nv) — Result-everywhere, 0 `Fail[`. **Под-паттерны (conformant):** per-element итерация → `Option[Result[T,E]]`; absence → `Option`; инфаллибл-аксессоры → чистое значение.
 
@@ -208,7 +208,7 @@ expr.ok() (->Option), match (ветвление).
 | `std/runtime/read_buffer.nv` (`try_read_X`→`read_X`, удалить **22** bare-twin) | `emit_c.rs` хардкодит `read_X`→unboxed C-типы + `try_read_*`→Result (таблица; снимок ~:40012-40040, try-арм ~:40026-40030). Переименование без правки → mis-type на каждом call-site. | **22 пары** (byte, bytes, u8, i8, u16/i16/u32/i32/u64/i64 le+be, f32/f64 le+be, char, str; try_-primaries :66-421, bare-обёртки :428-449; приватный `_decode_utf8_at` — без пары, не трогать). **Call-sites: ~146 в 9 файлах nova_tests** — `buffers/*` 126 (read_integers 31, roundtrip 29, read_char_str 19, read_oob 14, read_floats 14, read_nav 12, write_floats 6, neg/neg_read_oob 1) + `runtime/read_buffer.nv` 20. ⚠ Ложные grep-совпадения (tcp_*, rwlock_try_write_for, read_text.nv, builder_chaining) — другие API, отфильтровать. |
 | `std/prelude/protocols.nv` (ретракт bare auto-derive) | D77 4-way в `emit_c.rs` (`from_targets`/`try_from_targets`-синтез; снимок ~:675-678, ~:4184-4218). Декларации `TryFrom`/`TryInto` **не трогаем**. ⚠ Spec-часть D77-ретракта УЖЕ внесена 2026-07-01 (§3) — здесь только codegen. | — |
 | builtins `int.try_parse`/`f64.try_parse`(→Result), `char.try_from` | `emit_c.rs` builtins (снимок: try_parse ~:28087-28110, try_from-арм ~:28206). Цель Plan 174.1 (+ баг truncation `i8.try_from("999")→-25`). | — |
-| `std/testing/property.nv` — **4 неучтённых ранее** export-сигнатуры с `Fail` | `assert_prop`(:72), `assert_prop_msg`(:80) — собственный `throw PropertyFailed`; `property`(:345), `property_with`(:353) — mixed forwarded+own. Решение = §9 **Q5** (мигрировать в Result vs явный exempt как assert/test-семантика). | — |
+| `std/testing/property.nv` — **4 неучтённых ранее** export-сигнатуры с `Fail` | `assert_prop`(:72), `assert_prop_msg`(:80) — собственный `throw PropertyFailed`; `property`(:345), `property_with`(:353) — mixed forwarded+own. Q5 ✅ решён 2026-07-03: **exempt** (assert/test-DSL) — в Ф.2b только вписать в guard-exempt (§8.2), НЕ мигрировать. | — |
 | `std/_experimental/encoding/hex.nv` | механически .nv-only, но `_experimental` → отложить (§9 Q3). | — |
 
 ### ✅ Уже conformant (без изменений)
@@ -265,7 +265,7 @@ expr.ok() (->Option), match (ветвление).
 - **Q2 — governance (live vs staged).** ✅ **ЗАКРЫТ де-факто**: E-правки внесены live (E1/E2/E4/E5/E7 уже в доках); остатки — §5.
 - **Q3 — `_experimental`.** ✅ **ЗАКРЫТ**: отложить с TODO (выбрано ранее, подтверждено).
 - **Q4 — Plan 174.1.** ✅ **ЗАКРЫТ**: 177 задаёт D325, 174.1 реализует per-type; 174.1 Ред.2 полностью переписан под D325 (174.1:30,37-45,90,108-141) — синхронизация выполнена.
-- **Q5 (NEW) — `std/testing/property.nv`.** 4 export-сигнатуры с `Fail` (§6): `assert_prop`/`assert_prop_msg` (собственный `throw PropertyFailed`) + `property`/`property_with` (mixed). Решение владельца: (a) мигрировать в Result (но assert-семантика в тестах = «упади сейчас» — Result там шум), или (b) **явный exempt как assert/test-семантика** (рек.: exempt — это тестовый DSL, аналог `assert` самого языка; вписать в exempt-list §2 + guard).
+- **Q5 — `std/testing/property.nv`.** ✅ **ЗАКРЫТ (sign-off 2026-07-03): exempt** — тестовый DSL (assert-семантика, аналог `assert` самого языка); 4 сигнатуры (`assert_prop`:72/`assert_prop_msg`:80/`property`:345/`property_with`:353) вписаны в exempt-list §2 + guard §8.2. Миграция в Result отвергнута (шум в тестах).
 
 ---
 
