@@ -37596,6 +37596,81 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
         }
+        // Channel 6n (2026-07-04): RecordLit — ДОСЛОВНЫЙ подъём legacy-арма.
+        if let ExprKind::RecordLit { type_name: Some(name), fields, .. } = &expr.kind {
+            return {
+                    let raw_name = name.join("_");
+                    let struct_name = if raw_name == "Self" {
+                        self.current_receiver_type.clone().unwrap_or(raw_name)
+                    } else { raw_name };
+                    // D406: qualified `TypeName.Variant { fields }` — path ["TypeName", "Variant"].
+                    // join("_") gives "TypeName_Variant" which find_variant_compat won't find.
+                    // Detect and look up the sum type directly.
+                    if name.len() == 2 {
+                        let (sum_part, _var_part) = (&name[0], &name[1]);
+                        if self.sum_schemas.contains_key(sum_part.as_str())
+                            || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
+                        {
+                            return format!("Nova_{}*", sum_part);
+                        }
+                    }
+                    // Check if this is a sum-type record variant.
+                    // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
+                    if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
+                        format!("Nova_{}*", sum_type_name)
+                    } else if self.generic_types.contains(&struct_name) {
+                        // Generic type: compute concrete mono name from field values.
+                        // Check BEFORE record_schemas because record_schemas has the erased form
+                        // (with void* fields) for generic types — we want the concrete mono form.
+                        if let Some(template) = self.generic_type_templates.get(&struct_name) {
+                            use crate::ast::TypeDeclKind;
+                            let mut type_args_c: Vec<String> = template.generics.iter()
+                                .map(|_| "nova_int".to_string())
+                                .collect();
+                            if let TypeDeclKind::Record(field_decls) = &template.kind {
+                                for (i, g) in template.generics.iter().enumerate() {
+                                    for f_decl in field_decls {
+                                        if let crate::ast::TypeRef::Named { path, generics: fgens, .. } = &f_decl.ty {
+                                            if fgens.is_empty() && path.join("_") == g.name {
+                                                if let Some(field) = fields.iter().find(|f| f.name == f_decl.name) {
+                                                    if let Some(v) = &field.value {
+                                                        let c_ty = self.infer_expr_c_type(v);
+                                                        if !c_ty.is_empty() && c_ty != "void*" {
+                                                            type_args_c[i] = c_ty;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
+                            // Plan 153.2 Ф.1 (STAGE 1): a `value` generic record
+                            // literal has the by-value C-type `NovaValue_<short>`
+                            // (no `*`), matching what `type_ref_to_c` returns and
+                            // what the record-lit emitter produces.
+                            if self.is_value_generic_template(&struct_name) {
+                                format!("NovaValue_{}", Self::mono_short_name(&mangled))
+                            } else {
+                                format!("{}*", mangled)
+                            }
+                        } else {
+                            "void*".into()
+                        }
+                    } else if self.record_schemas.contains_key(&struct_name) {
+                        // Plan 124.8 V2 / Plan 127: value-records use stack-typedef
+                        // `NovaValue_<X>` (no pointer); heap records use `Nova_<X>*`.
+                        if self.value_record_names.contains(&struct_name) {
+                            format!("NovaValue_{}", struct_name)
+                        } else {
+                            format!("Nova_{}*", struct_name)
+                        }
+                    } else {
+                        "void*".into()
+                    }
+            };
+        }
         // Channel 6m (2026-07-04): Member — ДОСЛОВНЫЙ подъём главного
         // legacy-арма (schema+subst state-ответ). Дети через dispatcher.
         if let ExprKind::Member { obj, name } = &expr.kind {
