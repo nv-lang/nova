@@ -2,7 +2,7 @@
 # Plan 177 — Единый fallible-контракт std: **Result-everywhere** (no bare-throws convention)
 
 > **Top-level план.** Создан 2026-06-25. **Ред. 2 — 2026-07-03** (аудит: ground-truth/7-языков/blast-radius; статусы E-пунктов, R0-граница, spec_tests, агент-правила).
-> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c — 🟢 codegen-блокер СНЯТ 2026-07-04 (`[M-177-result-tuple-over-array-codegen]` ✅ RESOLVED, commit `4e4e7c34`: caller-side call-return inference Vec-flip'ит `Result`/`Option`/tuple-over-`[]T` в `value_aware_subst_to_ref`; conformance 38/38 + zero-regression); осталась .nv prelude-реализация `sequence`/`partition`); Ф.2b — compiler-gated (172.1×174.1); Ф.3 pos-часть (D85-каналы/R0-panic на уже-мигрированных API) + Ф.4 — docs, безопасны; всё соло-компиляторное отложено**.
+> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c ✅ DONE 2026-07-04 — ЦЕЛЕВОЙ ФОРМОЙ (`[M-172.1-U4-freefn-generic-return]`, `3ef1acb8`+`b8fb952d`): `sequence`/`partition` в `std/prelude/core.nv`, оба cross-module; codegen снят ЕДИНЫМ каналом — `f1_check_call` материализует конкретный generic-free-fn call-return через `unify_type`+subst → codegen читает `resolved_type_to_c` (D315); interim-зеркало `4e4e7c34` откачено net-zero; conformance 38/38 + zero-regression 23 папки); Ф.2b — compiler-gated (172.1×174.1); Ф.3 pos-часть (D85-каналы/R0-panic на уже-мигрированных API) + Ф.4 — docs, безопасны; всё соло-компиляторное отложено**.
 > **Маркер:** `[M-177-result-everywhere-std]`. **Запуск:** «**выполни план 177**».
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** D325 ✅ уже в спеке
 > (Ф.1-ядро выполнено). Migration-sweep (read_buffer bare-twins, emit_c builtins) — Волна 1 трек G,
@@ -227,37 +227,58 @@ expr.ok() (->Option), match (ветвление).
 | **Ф.1 D325 + конвенции** | D325 в спеку + E1-E11 | sign-off (✅ 2026-06-25) | ✅ **DONE 2026-07-03** — E1-E11 все закрыты (E3/E6/E10/E11 добиты) + amend-пакет §4a внесён в D325 (R0/R4-критерий/nesting/exempt-list/коллекторы). Спека самосогласована с D325 (D178/D77 баннеры). |
 | **Ф.2a `.nv`-only миграция** | base64 → complex → json | Ф.1-ядро | ✅ DONE 2026-06-26 (все 3 файла green end-to-end) |
 | **Ф.2b compiler-gated sweep** | parse.nv + read_buffer.nv rename + emit_c хардкоды + builtins + D77-emit_c + sweep 15+9 тест-файлов (§6) | разрешение на компилятор; координация **172.1** (emit_c-зона) и **174.1** (новые поверхности сразу под D325) — Волна 3 | ⏳ |
-| **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | ~~Ф.1; независим от Ф.2b (.nv-only)~~ ~~codegen-gated~~ **codegen-блокер СНЯТ 2026-07-04 (`[M-177-result-tuple-over-array-codegen]` ✅ RESOLVED — см. ниже); осталась .nv-only prelude-реализация** | 🟢 UNBLOCKED (codegen ✅) — prelude-функции TODO |
+| **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | ~~Ф.1; независим от Ф.2b (.nv-only)~~ ~~codegen-gated~~ | ✅ DONE 2026-07-04 (`sequence`+`partition` в `std/prelude/core.nv`, оба cross-module; codegen-блокер снят ЦЕЛЕВОЙ ФОРМОЙ `[M-172.1-U4-freefn-generic-return]` `3ef1acb8` — см. ниже) |
 | **Ф.3 Guard + spec_tests** | conformance-guard (R5-дискриминатор + exempt-list §2) + нейм-линт (A2) + spec_tests d325/d77 (§8) | Ф.1 (полный D325-текст); neg-фикстуры на удалённые имена — после Ф.2b | ⏳ |
 | **Ф.4 Docs/log/закрытие** | `project-creation.txt` + `discussion-log.md` (nova-private) + `simplifications.md`; cross-ref из 174.1/173/176; Q-sweep §9 | все предыдущие | ⏳ |
 
 **Гейт каждой фазы (Ред.2-канон):** spec_tests/conformance зелёный (d325 + amended d-файлы) + pos/neg-фикстуры фазы + **nova_tests baseline-delta = 0** (baseline = parent-коммит, ТОТ ЖЕ бинарь, temp-worktree/commit+reset; nova_tests сам по себе НЕ гейт корректности; флака ≠ регрессия). Для Ф.2b дополнительно: 0 вхождений старых имён по sweep-спискам §6 (negative grep).
 
-> **✅ RESOLVED 2026-07-04 (`[M-177-result-tuple-over-array-codegen]`, commit `4e4e7c34`):**
-> Фикс достигнут чисто. **ФАКТИЧЕСКИЙ корень (трассировкой сгенерированного `_probe.c`, а не по
-> симптому) ОТЛИЧАЕТСЯ от гипотезы ниже:** mono-СИГНАТУРА (fwd-decl) И ТЕЛО generic-fn на текущем
-> HEAD **уже корректны** — оба идут через `type_ref_to_c → resolved_array_to_c` и Vec-flip'ят `[]T`
-> в `Nova_Vec____nova_int*` (→ `NovaRes_Nova_Vec____nova_int_p_nova_str*`, typedef ЭМИТИТСЯ). Тело
-> **НЕ** эрейзилось (гипотеза «`Nova_E*` из `emit_generic_fn_erased`» неверна для HEAD — `Nova_E*`
-> был в CALLER-e). Расходилась **caller-side инференс типа вызова**: `emit_match → infer_expr_c_type
-> → value_aware_subst_to_ref → static apply_type_subst_to_ref` (Array-арм) выдавал **pre-D239 raw-array**
-> `NovaArray_nova_int*` → `NovaRes_NovaArray_nova_int_p_nova_str*` — typedef, который НИКОГДА не
-> эмитится (CC-FAIL «unknown type name»); а match-биндинги scrutinee, не найдя этот незарегистрированный
-> Result, фолбечили на erased payload'ы шаблона Result (`Nova_T*`/`Nova_E*`). Т.е. дуальность
-> `type_ref_to_c` (subst/D239-aware) vs `apply_type_subst_to_ref` (**static mirror, застрял на pre-D239
-> `NovaArray_<elem>*`**) — домен Plan 172, но фикс локален. **ЧТО СДЕЛАНО:** Vec-flip `[]T` (и вложенных
-> в `Result`/`Option`/tuple массивов) перенесён в **`&self`-путь `value_aware_subst_to_ref`** (`emit_c.rs`),
-> зеркаля `resolved_array_to_c` ВКЛЮЧАЯ её `is_generic_stub_c → nova_int` erasure (реестры типов нужны →
-> `&self`; статический `apply_type_subst_to_ref` её сделать не может и потому leaked бы `Nova_Vec____Nova_T_p`
-> в erased-контексте — это и была регрессия первой, статической попытки, снятая relocate'ом). Интерсепт
-> гейтится `typeref_contains_array` → все array-free формы **byte-identical** delegate-пути; static
-> `apply_type_subst_to_ref` НЕ тронут (его ~30 прочих callers без изменений). Покрыт и tuple-over-array
-> `([]T,[]E)`. **ГЕЙТ:** probe seq/seq_a/part + `nova_tests/err177_collectors` PASS; conformance 38/38;
-> **zero-regression** дельта против parent-бинаря на generics/basics/plan91/plan153_2/plan161/plan100_4_1/
-> plan103_9/plan110/plan114/plan172*/plan138_2/plan145/concurrency/plan153_3 (все зелёные — зелёные;
-> pre-existing red идентичны baseline). **Осталось для Ф.2c:** написать сами prelude-функции
-> `sequence`/`partition` в `.nv` (теперь компилируются) + позитивный spec-тест (§8.1 A4). Историческая
-> (частично ошибочная) диагностика — ниже, оставлена для контекста.
+> **✅ DONE 2026-07-04 — ЦЕЛЕВОЙ ФОРМОЙ (`[M-172.1-U4-freefn-generic-return]`, commit `3ef1acb8`;
+> коллекторы `b8fb952d`):** codegen-блокер снят через ЕДИНЫЙ канал (D315), НЕ зеркало.
+>
+> **ИСТОРИЯ (2 захода):** Заход 1 (`4e4e7c34`) — codegen-side subst-mirror: Vec-flip `[]T` в
+> `value_aware_subst_to_ref` (зеркаля `resolved_array_to_c`). Работал + zero-regression, НО был
+> §10 «два окна правды» / §0-интерим на расходящемся пути (`apply_type_subst_to_ref` — static
+> subst-mirror, ретайрится в пользу `resolved_type_to_c`). Плюс он чинил только Result/Option
+> (sequence), а **tuple-over-array cross-module (`partition`) НЕ покрывал**: `pr.0` эрейзился в
+> `int` через `fn_ret_<name>` hijack ДО зеркала. **Заход 2 (целевая форма, откатил зеркало
+> net-zero):** нашёл истинный корень — §1 «резолвит, но discard». `f1_check_call` (checker)
+> резолвит callee + знает args, но gate `!typeref_mentions_any(ret, callee_gs)` **ВЫБРАСЫВАЛ**
+> generic-return (тот, что упоминает `T`/`E`) вместо субституции → канал `resolved_types` пуст →
+> codegen Channel-2 miss → legacy (mirror для Result / `fn_ret` hijack для tuple).
+>
+> **ЧТО СДЕЛАНО (целевая форма):** в `f1_check_call` (`types/mod.rs` ~9384) вместо discard —
+> ВЫВЕСТИ type-args из АРГУМЕНТОВ (структурный `crate::const_fn_trampoline::unify_type` каждого
+> param-TypeRef против inferred-типа арг — тот же унификатор, что `build_recv_subst`) и
+> СУБСТИТУИРОВАТЬ return → материализовать КОНКРЕТНЫЙ тип (`Result[[]int,str]` / `([]int,[]str)`)
+> в `resolved_types`. Codegen читает его ЕДИНЫМ `resolved_type_to_c` (Channel-2, до legacy) →
+> Vec-flip + mono-tuple из ОДНОГО источника. Гейты: FREE fn (no receiver — receiver-carrier =
+> метод-канал `infer_method_call_channel_type`), FULLY resolved для ЭТОГО caller'а (residual
+> type-param → skip → legacy; эрейзнутое generic-тело не трогаем). **Зеркало `4e4e7c34`
+> УДАЛЕНО** (`value_aware_subst_to_ref` Array/Result/Option/Tuple-арм + `vec_flip_elem_c` +
+> `typeref_contains_array`) — `emit_c.rs` NET-ZERO vs parent `12d30695`. Ни зеркала, ни дубля.
+> **ГЕЙТ:** cross-module `sequence`+`partition` (`pr.0.len()`, `ro (a,b)=`, `pr.0.get()==Some`) +
+> local `nova_tests/err177_collectors` PASS БЕЗ зеркала; conformance 38/38; **zero-regression** vs
+> baseline `12d30695` на 23 папках вкл. tuple-heavy `plan59`/`plan148`/`plan115`/net(`plan91_12`):
+> все SAME (pre-existing red идентичны — basics `apply`, plan172_showcase, plan114/net P67-panic,
+> concurrency). Ниже — исходная (частично ошибочная) диагностика Заход-0, оставлена для контекста.
+>
+> <details><summary>Заход-1 диагностика (mirror, 4e4e7c34 — superseded)</summary>
+>
+> mono-СИГНАТУРА (fwd-decl) И ТЕЛО generic-fn на HEAD **уже корректны** — оба через
+> `type_ref_to_c → resolved_array_to_c` Vec-flip'ят `[]T` в `Nova_Vec____nova_int*`. Расходилась
+> **caller-side инференс типа вызова**: `value_aware_subst_to_ref → static apply_type_subst_to_ref`
+> (Array-арм) выдавал pre-D239 raw-array `NovaArray_nova_int*` → `NovaRes_NovaArray_nova_int_p_nova_str*`
+> (typedef никогда не эмитится → CC-FAIL); match-биндинги фолбечили на erased `Nova_T*`/`Nova_E*`.
+> Заход-1 фиксил это зеркалом в `value_aware_subst_to_ref`. Заход-2 устранил и зеркало, и первопричину
+> (checker discard) — см. выше. **zero-regression** заход-1 был на generics/basics/plan91/plan153_2/
+> plan161/plan100_4_1/plan103_9/plan110/plan114/plan172*/plan138_2/plan145/concurrency/plan153_3 (все
+> зелёные — зелёные;
+> pre-existing red идентичны baseline).
+>
+> </details>
+>
+> <details><summary>Заход-0 диагностика (2026-07-03, гипотеза «mono-body-erasure» — ОКАЗАЛАСЬ ОШИБОЧНОЙ)</summary>
 >
 > **🔬 Находка 2026-07-03 (Ф.2c НЕ .nv-only — codegen-gated):** прототип коллекторов
 > (`export fn[T,E] sequence(items []Result[T,E]) -> Result[[]T,E]` / `partition -> ([]T,[]E)`)
@@ -296,6 +317,12 @@ expr.ok() (->Option), match (ветвление).
 > engine)**. Фикс = align mono-subst через оба type-представления (или resolved-subst для `[]T` в mono-теле)
 > — **foundational, домен Plan 172**, не solo-патч в 177. **Итог:** Ф.2c зависит от 172-type-engine-unification
 > (либо dedicated фикс `resolved_type_to_c` Result-арма с subst-протяжкой + broad regression).
+>
+> **[РЕТРОСПЕКТИВА]** Гипотеза «mono-body-erasure» (тело эмитится с `Nova_E*`) была НЕВЕРНА для HEAD:
+> тело+сигнатура уже корректны, `Nova_E*` был в CALLER-e. Истинный корень — checker-discard
+> generic-return (см. Заход-2 выше). Оставлено как урок: диагностировать по СГЕНЕРИРОВАННОМУ C, не по симптому.
+>
+> </details>
 
 ---
 
