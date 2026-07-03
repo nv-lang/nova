@@ -315,6 +315,16 @@ ro r = spawn fetch_a()
 | Гомогенный fan-out с массивом результатов | `let xs = parallel for url in urls { fetch(url) }` |
 | Гетерогенная параллельность с разными типами | `mut`-захваты внутри `supervised` |
 
+> **⚠️ V1-ограничение `parallel for → []T` (Plan 173 Ф.1 interim-guard #7, 2026-07-04;
+> `[M-parfor-record-result-miscompile]`):** в текущем bootstrap-codegen сбор результата
+> в `[]T` реализован ТОЛЬКО для примитивного элемента `T ∈ {int, bool, f64, str}`. Для
+> непримитива (record / tuple / sum / вложенный `[]T`) в VALUE-позиции codegen раньше молча
+> деградировал в `unit` → сырой C-mismatch. Теперь чекер отвергает это ЧИСТО:
+> **`[E_PARFOR_RESULT_UNSUPPORTED]`**. Statement-mode `parallel for` (результат
+> отбрасывается) не затронут. **Полная поддержка любого `T`** (через channel+consume
+> десугар) — **[Plan 173.1](../../docs/plans/173.1-parallel-collect-and-supervised-value.md) Ф.2**;
+> после неё guard становится unreachable-защитой.
+
 Пример mut-захватов:
 ```nova
 mut a = 0

@@ -4076,6 +4076,29 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => {}
             }
         }
+        // Plan 173 Ф.1 (interim-guard #7 / D71 / [M-parfor-record-result-miscompile]):
+        // отдельный проход ПОСЛЕ f1-assignability — resolved_types_buf уже заполнен, так
+        // что infer_expr_type для Call-trailing `parallel for` резолвит element-тип.
+        // Отвергает value-mode `parallel for → []T` с непримитивным T (codegen молча
+        // деградирует в unit → сырой C-mismatch) чисто `[E_PARFOR_RESULT_UNSUPPORTED]`.
+        {
+            let empty_scope: HashMap<String, TypeRef> = HashMap::new();
+            for item in &module.items {
+                match item {
+                    Item::Fn(fd) => {
+                        if self.is_shadowed_import_method(fd) { continue; }
+                        let ret_consumed = !matches!(&fd.return_type, None | Some(TypeRef::Unit(_)));
+                        match &fd.body {
+                            FnBody::Block(b) => self.check_parfor_result_block(b, &empty_scope, ret_consumed, errors),
+                            FnBody::Expr(e) => self.check_parfor_result_expr(e, &empty_scope, ret_consumed, errors),
+                            FnBody::External => {}
+                        }
+                    }
+                    Item::Test(t) => self.check_parfor_result_block(&t.body, &empty_scope, false, errors),
+                    _ => {}
+                }
+            }
+        }
         // Plan 172.1 P67: Annotate peer_files.items_here ExprIds for codegen.
         // Architectural gap: codegen iterates peer_files.items_here (imported modules,
         // file-private items) with ExprIds distinct from merged module.items ExprIds
@@ -4786,6 +4809,182 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     // --- Ф.2: walk сигнатур ---------------------------------------------
+
+    // ── Plan 173 Ф.1 (interim-guard #7 / D71 / [M-parfor-record-result-miscompile]) ──
+    //
+    // `parallel for → []T` в VALUE-позиции: codegen v1 собирает результат только для
+    // элемента T ∈ {int,bool,f64,str} (whitelist emit_c.rs `emit_parallel_for`). Для
+    // непримитива codegen МОЛЧА деградирует в `unit` → downstream сырой C-mismatch
+    // (`Nova_Vec_X* = nova_unit`). Interim-guard отвергает это ЧИСТО на этапе чекера
+    // диагностикой `[E_PARFOR_RESULT_UNSUPPORTED]`. Снимается Plan 173.1 Ф.2 (полная
+    // поддержка любого T через channel+consume); guard остаётся unreachable-защитой.
+    //
+    // Только value-позиция: statement-mode `parallel for` (результат отбрасывается)
+    // деградирует КОРРЕКТНО — не флагаем. `consumed` протягивается по value-контекстам.
+    fn parfor_elem_supported(t: &TypeRef) -> bool {
+        // §0 coupling: единый список примитивов, которые codegen v1 умеет собирать в
+        // `parallel for → []T`. ⚠ ДОЛЖЕН держаться в синхроне с codegen-whitelist в
+        // `codegen/emit_c.rs` `emit_parallel_for` (там C-имена nova_int/nova_bool/
+        // nova_f64/nova_str). Оба списка и этот guard удаляются в Plan 173.1 Ф.2
+        // (полная поддержка любого T через channel+consume).
+        const PARFOR_V1_PRIMITIVE_ELEMS: [&str; 4] = ["int", "bool", "f64", "str"];
+        let t = match t {
+            TypeRef::Readonly(inner, _) => inner.as_ref(),
+            other => other,
+        };
+        if let TypeRef::Named { path, generics, .. } = t {
+            generics.is_empty()
+                && path.last().map(|s| PARFOR_V1_PRIMITIVE_ELEMS.contains(&s.as_str())).unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    fn check_parfor_result_block(&self, b: &Block, scope: &HashMap<String, TypeRef>, trailing_consumed: bool, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            match s {
+                Stmt::Expr(e) => self.check_parfor_result_expr(e, scope, false, errors),
+                Stmt::Let(decl) => self.check_parfor_result_expr(&decl.value, scope, true, errors),
+                Stmt::Const(decl) => self.check_parfor_result_expr(&decl.value, scope, true, errors),
+                Stmt::Assign { target, value, .. } => {
+                    self.check_parfor_result_expr(target, scope, false, errors);
+                    self.check_parfor_result_expr(value, scope, true, errors);
+                }
+                Stmt::Return { value: Some(v), .. } => self.check_parfor_result_expr(v, scope, true, errors),
+                Stmt::Throw { value, .. } => self.check_parfor_result_expr(value, scope, true, errors),
+                Stmt::ConsumeScope { init, body, .. } => {
+                    self.check_parfor_result_expr(init, scope, true, errors);
+                    self.check_parfor_result_block(body, scope, false, errors);
+                }
+                Stmt::TupleAssign { rhs, .. } => {
+                    for e in rhs { self.check_parfor_result_expr(e, scope, true, errors); }
+                }
+                _ => {}
+            }
+        }
+        if let Some(t) = &b.trailing {
+            self.check_parfor_result_expr(t, scope, trailing_consumed, errors);
+        }
+    }
+
+    fn check_parfor_result_expr(&self, e: &Expr, scope: &HashMap<String, TypeRef>, consumed: bool, errors: &mut Vec<Diagnostic>) {
+        match &e.kind {
+            ExprKind::ParallelFor { iter, body, .. } => {
+                if consumed {
+                    if let Some(trailing) = &body.trailing {
+                        // Uninferrable → НЕ флагаем (без false-positive); примитивы обычно
+                        // тривиально инферятся, непримитив-Call резолвится через реестр.
+                        let supported = self.infer_expr_type(trailing, scope)
+                            .map(|t| Self::parfor_elem_supported(&t))
+                            .unwrap_or(true);
+                        if !supported {
+                            errors.push(Diagnostic::new(
+                                "[E_PARFOR_RESULT_UNSUPPORTED] `parallel for → []T` в value-позиции в v1 \
+                                 поддерживает элемент T ∈ {int,bool,f64,str} (codegen whitelist). Непримитивный \
+                                 результат (record / tuple / sum / вложенный []T) пока не собирается — codegen \
+                                 молча деградирует в unit. Полная поддержка любого T — Plan 173.1 Ф.2. Обход: \
+                                 верни примитив и построй агрегат после, ИЛИ statement-mode `parallel for` \
+                                 (без trailing-выражения) + внешний сбор.".to_string(),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
+                self.check_parfor_result_expr(iter, scope, true, errors);
+                self.check_parfor_result_block(body, scope, false, errors);
+            }
+            ExprKind::Block(b) => self.check_parfor_result_block(b, scope, consumed, errors),
+            ExprKind::If { cond, then, else_ } => {
+                self.check_parfor_result_expr(cond, scope, false, errors);
+                self.check_parfor_result_block(then, scope, consumed, errors);
+                match else_ {
+                    Some(ElseBranch::Block(b)) => self.check_parfor_result_block(b, scope, consumed, errors),
+                    Some(ElseBranch::If(e2)) => self.check_parfor_result_expr(e2, scope, consumed, errors),
+                    None => {}
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                self.check_parfor_result_expr(scrutinee, scope, false, errors);
+                self.check_parfor_result_block(then, scope, consumed, errors);
+                match else_ {
+                    Some(ElseBranch::Block(b)) => self.check_parfor_result_block(b, scope, consumed, errors),
+                    Some(ElseBranch::If(e2)) => self.check_parfor_result_expr(e2, scope, consumed, errors),
+                    None => {}
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.check_parfor_result_expr(scrutinee, scope, false, errors);
+                for a in arms {
+                    match &a.body {
+                        MatchArmBody::Expr(e2) => self.check_parfor_result_expr(e2, scope, consumed, errors),
+                        MatchArmBody::Block(b) => self.check_parfor_result_block(b, scope, consumed, errors),
+                    }
+                    if let Some(g) = &a.guard { self.check_parfor_result_expr(g, scope, false, errors); }
+                }
+            }
+            ExprKind::For { iter, body, .. } => {
+                self.check_parfor_result_expr(iter, scope, true, errors);
+                self.check_parfor_result_block(body, scope, false, errors);
+            }
+            ExprKind::While { cond, body, .. } => {
+                self.check_parfor_result_expr(cond, scope, false, errors);
+                self.check_parfor_result_block(body, scope, false, errors);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                self.check_parfor_result_expr(scrutinee, scope, false, errors);
+                self.check_parfor_result_block(body, scope, false, errors);
+            }
+            ExprKind::Loop { body, .. } => self.check_parfor_result_block(body, scope, false, errors),
+            ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
+            | ExprKind::Realtime { body, .. } | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+                self.check_parfor_result_block(body, scope, consumed, errors);
+            }
+            ExprKind::Supervised { body, cancel } => {
+                if let Some(c) = cancel { self.check_parfor_result_expr(c, scope, false, errors); }
+                self.check_parfor_result_block(body, scope, consumed, errors);
+            }
+            ExprKind::Call { func, args, .. } => {
+                self.check_parfor_result_expr(func, scope, false, errors);
+                for a in args { self.check_parfor_result_expr(a.expr(), scope, true, errors); }
+            }
+            ExprKind::Spawn(body) => self.check_parfor_result_expr(body, scope, false, errors),
+            ExprKind::Binary { left, right, .. } => {
+                self.check_parfor_result_expr(left, scope, true, errors);
+                self.check_parfor_result_expr(right, scope, true, errors);
+            }
+            ExprKind::Unary { operand, .. } => self.check_parfor_result_expr(operand, scope, true, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::Throw(inner) => self.check_parfor_result_expr(inner, scope, consumed, errors),
+            ExprKind::Coalesce(a, b) => {
+                self.check_parfor_result_expr(a, scope, consumed, errors);
+                self.check_parfor_result_expr(b, scope, consumed, errors);
+            }
+            ExprKind::As(e2, _) | ExprKind::Is(e2, _) => self.check_parfor_result_expr(e2, scope, true, errors),
+            ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => self.check_parfor_result_expr(obj, scope, true, errors),
+            ExprKind::TurboFish { base, .. } => self.check_parfor_result_expr(base, scope, consumed, errors),
+            ExprKind::Interrupt(Some(body)) => self.check_parfor_result_expr(body, scope, true, errors),
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start { self.check_parfor_result_expr(s, scope, true, errors); }
+                if let Some(en) = end { self.check_parfor_result_expr(en, scope, true, errors); }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for el in elems {
+                    match el {
+                        ArrayElem::Item(e2) | ArrayElem::Spread(e2) => self.check_parfor_result_expr(e2, scope, true, errors),
+                    }
+                }
+            }
+            ExprKind::TupleLit(elems) => {
+                for el in elems { self.check_parfor_result_expr(el, scope, true, errors); }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value { self.check_parfor_result_expr(v, scope, true, errors); }
+                }
+            }
+            // Closures/lambdas — свой контекст; прочие простые узлы без вложенных parallel-for.
+            _ => {}
+        }
+    }
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
         // Plan 173 Ф.1 (#3 / Plan 174.2): `?` строго return-only. Свободный `?`

@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_PARFOR_RESULT_UNSUPPORTED
+//
+// Plan 173 Ф.1 (interim-guard #7 / D71 / [M-parfor-record-result-miscompile]):
+// `parallel for → []T` в value-позиции (результат = return-значение fn) с
+// НЕПРИМИТИВНЫМ элементом (record `HStatus`) в v1 не собирается — codegen молча
+// деградирует в unit → сырой C-mismatch. Interim-guard отвергает чисто
+// `[E_PARFOR_RESULT_UNSUPPORTED]` (снимается Plan 173.1 Ф.2).
+
+module neg.f7_parfor_record_result
+
+type HStatus { code int }
+
+fn check(i int) -> HStatus => { code: i }
+
+fn run() -> []HStatus {
+    parallel for i in 0..3 { check(i) }          // ❌ [E_PARFOR_RESULT_UNSUPPORTED]
+}

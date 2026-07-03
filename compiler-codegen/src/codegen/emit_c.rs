@@ -8488,6 +8488,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Element type names used in NovaArray_T are restricted to a few primitives.
         // For pointer types or unsupported forms, conservatively bail out by pretending
         // the body has no trailing — caller ends up with a unit `parallel for`.
+        // §0 coupling (Plan 173 Ф.1 #7): этот whitelist ДОЛЖЕН держаться в синхроне с
+        // checker-guard `types/mod.rs` `parfor_elem_supported` (там TypeRef-имена
+        // int/bool/f64/str), который отвергает непримитив value-mode ЧИСТО
+        // `[E_PARFOR_RESULT_UNSUPPORTED]` ДО этой деградации. Оба уйдут в Plan 173.1 Ф.2.
         let elem_ty_name = match elem_ty.as_str() {
             "nova_int" | "nova_bool" | "nova_f64" | "nova_str" => elem_ty.clone(),
             _ => {
