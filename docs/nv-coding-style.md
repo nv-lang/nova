@@ -80,14 +80,14 @@
   `CharsIter @nth -> Option[char]`, `@split_once -> Option[(str,str)]`, `env`/`parent`. **`Result → Option` через `.ok()`** — никаких `_opt`-имён.
 - **Result = любая падающая операция (D325).** `str.parse_int -> Result[int, ParseIntError]`,
   `str.from_utf16 -> Result[str, Utf16Error]`, `str.try_from_codepoint`. Один структурный `XError` на домен.
-- **🎯 Единый fallible-контракт std (D325, Plan 181) — Result-everywhere.** Любая падающая публичная операция → `Result`:
+- **🎯 Единый fallible-контракт std (D325, Plan 177 · согласовано 2026-06-25) — Result-everywhere.** Любая падающая публичная операция → `Result`:
   - **(R1)** → `Result[T, <Domain>Error]`. Нет bare-throws-близнецов, нет `try_`-дублей, нет `_opt`.
   - **(R2)** Имя обычное, без префикса: `parse_int -> Result`, `read_u32 -> Result`, `open -> Result` (как Rust `str::parse`).
   - **(R3)** Префикс `try_` — **только** чтобы отличить fallible-вариант одноимённого **infallible**: `from`/`try_from`, `into`/`try_into` (D77). В одиночных fallible-операциях (нет infallible-сиблинга) префикса НЕТ.
   - **(R4)** `Option` — только genuine absence (`find`/`get`/`env`/`parent`), НЕ fallibility; `Result → Option` через `.ok()`.
   - **(R5)** Эффект `Fail[E]` в публичной std-сигнатуре запрещён для **собственных** ошибок (→ `Result`), но разрешён для прозрачного **проброса** `Fail[E]` из closure-параметра (effect-polymorphic forwarding: `retry`/`parallel`/`in_transaction` над телом пользователя).
   - Throw сохранён операторами (D85): `expr!!` (throw), `expr?` (проброс), `expr.ok()` (→Option), `match`. Эффект `Fail[E]` остаётся в языке (D25) — для пользовательского кода и внутренних хелперов; std им свои ошибки наружу не отдаёт. **Эталон:** `std/net` (Result-everywhere, 0 `Fail[`) — норма, не исключение.
-  - **Миграция SHIPPED-форм** (`@try_parse_int`→`@parse_int`, удаление bare `@parse_int`/`@parse_int_opt`, ~20 `read_X`/`try_read_X` пар) — Plan 181 Ф.2 (compiler-gated части — Ф.2b).
+  - **Миграция SHIPPED-форм** (`@try_parse_int`→`@parse_int`, удаление bare `@parse_int`/`@parse_int_opt`, 22 `read_X`/`try_read_X` пары) — Plan 177 Ф.2 (compiler-gated части — Ф.2b).
 - **lossy-FFFD (четвёртая категория) — ТОЛЬКО для функций, чьё имя это говорит** (`*_lossy`)
   или чей контракт best-effort (`cps_to_str`): подставляют U+FFFD. **Никогда не подставляйте
   пустую строку** как «успех» при невалидном входе — это потеря данных под видом успеха.

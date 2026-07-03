@@ -365,7 +365,7 @@ string ops):
 | Recoverable, external input error | **`Result`** | `str.parse_int() -> Result[int, ParseIntError]`; `str.from_utf16() -> Result[str, _]` |
 | Best-effort decode of untrusted bytes | **lossy U+FFFD** | `str.from_bytes_lossy`; `cps_to_str` (invalid cp → `\u{FFFD}`) |
 
-Rules (source: protocols.nv, D325/Plan 181, D25):
+Rules (source: protocols.nv, D325/Plan 177, D25):
 - **`parse_int(s)` returns `Result[int, ParseIntError]`** — every fallible op is `Result` (D325). Throw at the call site with `!!`, get `Option` with `.ok()`. No bare-throws twin, no `_opt`.
 - **Never** return an empty string on failure — that is indistinguishable from an empty input. Use `Option`/`Result` instead.
 - `*_lossy` functions always return valid UTF-8; they substitute `U+FFFD` for every invalid byte sequence, never silently drop bytes.

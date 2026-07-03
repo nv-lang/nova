@@ -39,7 +39,7 @@ str.parse_int()  -> Result[int, ParseIntError]   // Empty / InvalidDigit / Overf
 str.from_utf16() -> Result[str, Utf16Error]       // malformed surrogate pair
 ```
 
-Convention (D325 / Plan 181 — Result-everywhere):
+Convention (D325 / Plan 177 — Result-everywhere):
 - **Plain name** (`parse_int`, `open`, `read_u32`) returns `Result[T, XError]` — every
   fallible public operation. No bare-throws twin, no `try_` duplicate, no `_opt`.
 - **`try_` prefix** = ONLY to distinguish the fallible variant of a same-named *infallible*

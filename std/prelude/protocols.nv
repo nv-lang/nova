@@ -125,7 +125,7 @@ export type Into[U] protocol {
 
 // TryFrom / TryInto — Result-форма по `try_`-prefix convention.
 //
-// Конвенция Nova (D325, Plan 181 — Result-everywhere): `try_` — ТОЛЬКО для
+// Конвенция Nova (D325, Plan 177 — Result-everywhere): `try_` — ТОЛЬКО для
 // дизамбигуации fallible-варианта одноимённого INFALLIBLE (`from`/`try_from`,
 // `into`/`try_into`). Все прочие падающие операции носят обычное имя и
 // возвращают `Result` (без bare-throws-близнецов, без `_opt`).
@@ -134,7 +134,7 @@ export type Into[U] protocol {
 // D77 amend (D325): 4-way → **2-way**. Бросковая Fail-форма (`from`/`into` с
 // `Fail[E]`) БОЛЬШЕ НЕ auto-derive'ится; остаются `try_from`/`try_into` (Result)
 // + инфаллибл `from`/`into`. throw на call-site = `try_from(s)!!` (D85).
-// Снятие компиляторного 4-way (`from_targets` в emit_c.rs) — Plan 181 Ф.2b
+// Снятие компиляторного 4-way (`from_targets` в emit_c.rs) — Plan 177 Ф.2b
 // (до него codegen ещё эмитит bare-форму, но она deprecated).
 //
 // Note: Plan 56 Ф.2.7 (запрет эффектов в protocol-методах) **снят**
