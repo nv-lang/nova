@@ -7007,6 +7007,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 ff = ff));
             self.indent -= 1;
             self.line("}");
+            // Plan 173 Ф.1 (D13 soundness fix, [M-172-with-fail-swallows-panic]):
+            // PANIC пойман этим fail-frame'ом, но `with Fail[E]` ловит ТОЛЬКО
+            // USER/USER_TYPED (recoverable errors) — panic (bug/abort-class) НЕ
+            // должен глотаться (D13). Ранее PANIC проваливался в USER-path ниже
+            // → result=default, выполнение продолжалось. Теперь re-throw нагору
+            // (зеркало CANCEL): pop frame + restore handlers/interrupt, затем
+            // nova_rethrow_with_suppressed — сохраняет kind=PANIC + msg + payload
+            // + suppressed-chain (и корректно abort'ит с dump если нет outer-frame).
+            self.line(&format!("if ({ff}.error_kind == NOVA_THROW_PANIC) {{",
+                ff = ff));
+            self.indent += 1;
+            self.line("nova_fail_pop();");
+            self.line("nova_interrupt_pop();");
+            for (effect_name, prev_var, _hv) in saves.iter().rev() {
+                self.line(&format!("_nova_handler_{eff} = {prev};",
+                    eff = effect_name, prev = prev_var));
+            }
+            self.line(&format!("nova_rethrow_with_suppressed(&{ff});", ff = ff));
+            self.indent -= 1;
+            self.line("}");
             // USER path: handler already ran; result is unit/zero. (Existing
             // semantics: D65 Fail-handler сам decide'ит результат через
             // interrupt v ИЛИ throw; если throw — мы здесь, результат default).

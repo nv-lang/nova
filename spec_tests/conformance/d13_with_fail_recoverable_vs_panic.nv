@@ -1,0 +1,34 @@
+// D13 (panic — fiber-уровень) × Plan 173 Ф.1: `with Fail[E]` перехватывает
+// ТОЛЬКО recoverable USER-ошибки (throw E); panic пробрасывается сквозь
+// (runtime neg-тест expected_runtime/with_fail_panic_not_swallowed.nv).
+// Здесь — позитив recoverable-стороны: USER throw пойман handler'ом, результат
+// из interrupt; выполнение продолжается штатно (регресс-гард к panic-fix).
+// Spec: spec/decisions/08-runtime.md D13. Part of the SINGLE conformance module.
+module spec_tests.conformance
+
+type D13FailErr { code int }
+
+fn d13_may_fail(trip bool) Fail[D13FailErr] -> int {
+    if trip {
+        throw D13FailErr { code: 7 }
+    }
+    100
+}
+
+test "with Fail: recoverable USER throw пойман → handler result (D13/173)" {
+    ro caught = with Fail = effect Fail {
+        fail(_e) { interrupt (-1) }
+    } {
+        d13_may_fail(true)
+    }
+    assert(caught == -1)   // handler отработал, вернул -1
+}
+
+test "with Fail: no-throw путь → нормальный результат (регресс-гард)" {
+    ro ok = with Fail = effect Fail {
+        fail(_e) { interrupt (-1) }
+    } {
+        d13_may_fail(false)
+    }
+    assert(ok == 100)      // тело не бросило → его значение
+}
