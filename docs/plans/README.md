@@ -18,7 +18,7 @@
 
 | Модуль | План | Статус |
 |---|---|---|
-| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) *(зонт 174 — impl-coupled к 172.1/172.3)* | 📋 proposed |
+| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) *(зонт 174 — impl-coupled к 172.1; 172.3 ✅ CLOSED — generic-вариант B развязан)* | 📋 proposed |
 | time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) | 📋 READY |
 | io / fs / os | [176](176-io-fs-os.md) (umbrella) | 📋 READY |
 | http (client+server, HTTPS, h2) | [178](178-std-http.md) (umbrella) | 📋 proposed |
@@ -27,6 +27,73 @@
 | encoding/json · base64 · url | существующие / `_experimental` (url → промоут в 178) | — |
 
 **Сквозная конвенция:** [177](177-fallible-result-everywhere.md) (Result-everywhere) — применяется ко ВСЕМ модулям выше.
+
+## Очередность исполнения 173-181 (граф зависимостей; зафиксировано 2026-07-03)
+
+> 173/174/175/176 прошли полную сверку (Ред. 2, 2026-07-03) и READY; 181 — свежий (Ф.0 = sign-off);
+> **177/178/179/180 Ред. 2-сверку НЕ проходили** — их гейты по авторингу + коллизии, найденные извне
+> (178: renumber D327-D332, ложный from_bytes-green, Plan-80→D133). Рекомендация: сверка 178 перед запуском.
+> Очередность выводится из гейтов; стрелки продублированы в шапках планов. Слабосвязанные треки — параллелятся.
+
+**Волна 0 — реконсиляции и gate-верификации (без кода; параллельно):**
+`173 Ф.0R` ∥ `174 Ф.0R` ∥ `175 Ф.0` (D316-D318 в спеку) ∥ `176 Ф.0`+`Ф.0.5` ∥ `178 Ф.0-сверка`
+(renumber D327-D332 → приёмники D356+; ноты: from_bytes = 176 Ф.0.5, Body must-consume = D133 ✅ shipped)
+∥ `180 Ф.0-verify` (🔴 компилятор-гейты OPEN: `[M-126-sum-*-rich]`, `[M-161-parametric-return]`, #serde-attr
+AST — честная оценка объёма до старта) ∥ `181 Ф.0` (owner sign-off R1-R7; fallback = E_DUPLICATE_LOCAL).
+177: D325 ✅ уже в спеке — Ф.0-часть фактически выполнена.
+Координация: 174 Ф.0R и 176 Ф.0(d) оба правят 174.6 (§2 CWStr) — согласованно, не параллельно по файлу.
+Renumber D216/D282 ✅ уже выполнен (2026-07-03) — гейты 174.5/174.6-M0 сняты.
+
+**Волна 1 — четыре параллельных трека:**
+
+| Трек | Последовательность | Почему не ждёт других |
+|---|---|---|
+| **A: lang/FFI** | **174.3 (🔴 P1 — критический путь!)** ∥ 174.4 ∥ 174.6-M0 | 174.3 сидит на готовой type_id-инфре Plan 61, НЕ ждёт 172.1; 174.4 carrier-независим |
+| **B: errors** | 173 Ф.1 (soundness, risk-0) → 173 Ф.2 (defer-kernel + renames Cleanup[E]/@cleanup) | багфиксы + унификация не зависят от 174/175/176 |
+| **C: time** | 175 Ф.1 → Ф.1b → {Ф.1c ∥ Ф.2} → Ф.3 → Ф.4 | самодостаточен (коорд. 172.1-канал только на Ф.1) |
+| **D: io-core** | 176 Ф.0.5 (from_bytes) → 176 Ф.1 (io.Read/Write/Seek, IoError, BufWriter) | io-core не трогает fs/время; Ф.0.5 = переоформление интринзика |
+| **E: compress** | **179 Ф.1 (inflate/gzip/zlib — pure-Nova)** | алгоритмика на str/Vec — ни одного гейта; 🔴 гейт-опенер для 178 Ф.2 |
+| **F: net byte-surface** | **178 Ф.0.5** (additive read_bytes/write_bytes + SocketAddr→value + AddrNet-retract) | после 178 Ф.0-сверки; разблокирует 176 Ф.4(b); НЕ ждёт остального 178 |
+| **G: Result-sweep** | 177-миграция (read_buffer 24 bare-twins, emit_c builtins) | конвенция D325 в спеке; sweep независим (Ф.2b parse-rename — координация 174.1, Волна 3) |
+
+**Волна 2 — стыковки (каждая ждёт конкретный вход):**
+
+| Что | Ждёт | Источник гейта |
+|---|---|---|
+| **174.2-остаток** (spec-closure + cross-carrier `?`-диагностики) | 173 Ф.1 (ядро кода `?` там) | 174 §3.2 / 173 Ф.1 п.2 |
+| **173 Ф.3-семейство**: 173.0 → 173.3 → 173.1 → 173.2 + Ф.3-остаток | 173 Ф.2; `deadline:`/`timeout:`-параметры и удаление `with_timeout` — **после 175** (Monotonic/Duration + мокабельность) | 173 §3a п.3-4, 173.1 §2 п.5 |
+| **173 Ф.4** (MultiError e2e, typed ScopeOutcome) | **174.3 done** («реализуй первым») | 173 Ф.4-гейт |
+| **176 Ф.2 (fs)** ∥ **176 Ф.3 (os)** | Ф.2 ← **175** (Timestamp в Metadata) + координация 173 Ф.2 (`File impl Cleanup[IoError]`) + CWStr в 174.6 §2 | 176 Ф.2-DEP |
+| **174.6 M1→M3** (checker/тег/тесты) | 174.6-M0 | 174 §2 п.5 |
+| **176 Ф.4** (NetError→IoError + TcpStream io-conformance) | 176 Ф.2+Ф.3; (b)-часть — 178 byte-surface (при отсутствии → `[M-176-tcp-io-conformance]`, не блокер) | 176 Ф.4-DEP |
+| **173 Ф.6** (panics-клаузула, −78 CU) | 173 Ф.1 + Ф.5-`nova_runtime_reset` | 173 Ф.6-гейт |
+| **178 Ф.1** (message-model: Method/HeaderMap/Body/Url) | 178 Ф.0.5 + **176 Ф.0.5** (`from_bytes` для `Body.text()`) + D133 (✅) | 178 §6/§9 |
+| **180 Ф.1-Ф.3** (data-model, record-derive, атрибуты) | 180 Ф.0-verify: закрытие `[M-126-sum-*-rich]`/`[M-161]`/attr-AST (компиляторная работа — возможно слот 172.1-владельца) | 180 §4 Ф.0 |
+| **181-реализация** (alpha-rename pass, Ф.1-Ф.5) | 181 Ф.0 sign-off; координация 172.1 (parser/checker-зона) | 181 §Ф.0; вне критического пути — любой свободный слот |
+
+**Волна 3 — за внешними/поздними гейтами:**
+- 174.1 + 174.5 ← D-трек 172.1 (+ координация владельца); **177 Ф.2b** (rename SHIPPED parse-триады) ↔ 174.1 —
+  тройная координация 172.1×174.1×177;
+- 175.1 civil-time ← 175; 176.1 process ← 176 Ф.1-Ф.3;
+- **178 Ф.2 (client)** ← **179 Ф.1** (decompress) + 175/173 (deadline-by-default) → **178 Ф.3 (server)** ←
+  173-семейство (per-conn-fiber, graceful-shutdown) → **178 Ф.4 (HTTPS) / Ф.5 (h2)** ← **Plan 116 TLS — внешний
+  🔴 HARD-GATE**;
+- **180 Ф.4 (JSON-backend)** → разблокирует 178 typed `.json[T]` (Q20);
+- 173 Ф.5 — сквозная. Хвосты: mock-clock ↔ scope-deadline единый реестр (175 Ф.5c ↔ 173 §3a).
+
+**Критические пути (в порядке важности):**
+1. `174.3 → 173 Ф.4 → MultiError-агрегация` (ядро ошибок).
+2. `175 → 173 §3a/173.1 (deadline) → 178 Ф.2 (deadline-by-default client)`.
+3. **178 — точка схождения пяти стрелок:** ← 179 Ф.1 (decompress), ← 180 Ф.4 (.json[T]), ← 175/173 (deadline),
+   ← 176 Ф.0.5 (from_bytes), ← Plan 116 (TLS — единственный внешний hard-gate волны). Всё, что можно сделать
+   ДО 178 — треки E/F Волны 1.
+4. `180 Ф.0-гейты (компилятор) → 180 Ф.1-Ф.4` — самый рискованный по объёму скрытой компиляторной работы.
+
+**Вне критических путей:** 181 (rebinding), 174.4 (registry), 177-sweep — заполняют свободные слоты агентов.
+
+**Кратчайший старт «прямо сейчас» (после Волны 0):** до **шести** параллельных агентов в своих worktree
+(nova-pNNN, непересекающиеся файлы): 174.3 + 173 Ф.1 + 175 Ф.1 + 176 Ф.0.5/Ф.1 + **179 Ф.1** + **177-sweep**;
+седьмым слотом — 178 Ф.0-сверка (doc-only).
 
 ## Текущие планы
 
@@ -391,7 +458,7 @@
 | 174.6 | [174.6-ffi-abi-types.md](174.6-ffi-abi-types.md) | **C-FFI ABI: типы `extern "C"` + ABI fn-указателей.** D282 rule 2 (C-ABI-тип-лист) занижен/неверен vs `std/net`: **туплы** (анон/имен) + `str` + value-records + `Option[*T]` C-ABI-совместимы и **уже используются** (`ffi.nv:32 → (int, CSocketAddr)`), но не в спеке / числятся mismatch. Переписать rule 2: скаляры + raw-ptr (`*T`/`*()`/`CStr`) + `Option[*T]` + **value-records/туплы рекурсивно** (by-value, params+возврат); исключения GC/closure/tagged-union → `E_FFI_NON_C_ABI_TYPE`. + ABI-тег у `*fn`-типа (Nova-ABI `*fn` vs C-ABI `*extern "C" fn`). Поглощает `[M-D282-ffi-abi-type-list]`. Координация 91.12/172/138.5. | 📋 PROPOSED |
 | 175 | [175-time-system-rework.md](175-time-system-rework.md) | **Переработка системы времени** (production-hardened; **Ред. 2 2026-07-03**: планка 7 языков Go/Rust/TS/Kotlin/Java/**Zig/Swift**, Q1-Q16 закрыты, D316/317/318; +контракты: suspend-семантика Monotonic per-OS (Q14), infallibility (Q15), Timestamp-окно 1677..2262 (Q16); spec_tests-покрытие d316/d317/d318+d124+d237; followups `[M-sleep-tolerance]`/`[M-monotonic-boottime]`). `Time` = внутренний плумбинг-эффект (как `TcpNet`/`AddrNet`): опы `timestamp()->Timestamp`/`monotonic()->Monotonic`/`sleep(d Duration)`, retire int-провода (closes `[M-time-now-schema-mismatch]`); 5 timer-счётчиков → отдельный `TimerMetrics`. User-facing: сахар `Timestamp.now()`/`Monotonic.now()` (ВСЕ 4 builtin-сайта удалены — 2 dispatch + 2 inference, символьный норматив grep `nova_monotonic_now_record`=0; мокабелен, closes `[M-monotonic-mock-support]`) + free `sleep`/`sleep_until(Monotonic)`; `@display`(ASCII `us` не `µs`)/`@debug` (D237) + machine ISO-форма; `@elapsed_since`→`@minus(Monotonic)`+`checked_duration_since`; `Monotonic` opaque (без `from_*`, non-serializable). **🔴 Ф.1c overflow-safe Duration** (D317: trap-операторы + `checked_*`/`saturating_*`, boundary-saturate, ±292y — паритет Rust/Java/Swift, бьёт Go silent-wrap и Zig UB-в-ReleaseFast). **Monotonic non-regression** (D318: saturate-to-zero, без global-lock). Ф.1b: heap→`value` (stack/zero-GC, прецедент 165) → узкий single-i64 scalar-bridge (НЕ блокируемся на 172.4). Ф.5 auto-advance virtual-clock (tokio/Kotlin-паритет) + миграция ≈9 сайтов→`Monotonic` (closes `[M-monotonic-migration-deferred]`). Diff: effect-handler clock-injection строго лучше Clock-DI/fake-timers. Вне scope: civil time (→175.1), `tick_every` (→Plan 66). | 📋 READY |
 | 175.1 | [175.1-civil-time.md](175.1-civil-time.md) | **Гражданское (календарное) время** (production-hardened cross-lang java.time/Temporal/kotlinx/chrono/Go; все Q закрыты; D319/320/321). Под-план 175 (зависит: Ф.1b value-паттерн, Ф.1c trap-overflow, Ф.2 typed-провод; оп `Time.local_offset()` добавляет САМ 175.1 Ф.3). **Type-ladder** (нормативно): Plain `Date`(epoch_day i64)/`TimeOfDay`(nanos_of_day i64)/`DateTime` → `Offset` → `ZonedDateTime` — нет неявного Plain→Timestamp. value-records; `Weekday`/`Month` 1-based enums (D52); +`YearMonth`/`MonthDay`; `TimeZone=\|Utc\|Fixed(Offset)\|Iana(IanaZone)`. **Полная реализация, без MVP-gating: именованные IANA-зоны + DST в scope** (Ф.4: `ZoneRules` + `TimeZone.try_from("Europe/Moscow")`, загрузка OS-tzdata-first + opt-in embedded versioned snapshot + Windows CLDR-map + raw-TZif + `$ZONEINFO`). **`Period`≠`Duration`** + DateBased/TimeBased → `date.plus(Duration)` = **compile-error** (бьёт Temporal). validate-by-default→структурный `DateError` (Feb30→Err, не normalize); month-add **clamp** biggest-unit-first + trap-overflow; **4-way DST `Disambiguation`** (Compatible default) как Result-значение + `OffsetConflict` (бьёт java/Go/chrono) — на реальных IANA-зонах; ISO-8601/RFC-3339 + **RFC-9557 `[zone]`** round-trip, strict-parse + **кастомный pattern-формат** (type-safe builder, Go-layout НЕ брать, Ф.5); civil↔Timestamp вне ±292y→`Err`; proleptic-Gregorian + Hinnant; leap-seconds игнор (:60→clamp). full-datetime `@display` (**закрывает full-datetime-зависимость Plan 175**). Вне scope (ортогональные оси): локализация (i18n/CLDR), non-Gregorian (design-reject Q10), cron-bridge. Координация 172.4/91.18/D52. | 📋 READY |
-| 176 | [176-io-fs-os.md](176-io-fs-os.md) | **I/O + Filesystem + OS** (umbrella; production-hardened cross-lang Go/Rust/TS/Kotlin/Java; все Q закрыты §3.0; D322/323/324). Закрывает пробел: нет std/io/fs/os (только print). Архитектура по net-семейству (Fs/Os = плумбинг-эффекты, libuv-backed, park/wake как net.c, best-effort-cancel). **io-core:** io.Read/io.Write/io.Seek протоколы (sibling к prelude Write text-sink — без коллизии) + BufReader + **BufWriter must-consume** + read_to_string/lines/copy/read_exact/write_all + EOF/partial/EINTR-контракт + stdin/stdout/stderr через мокабельный Io. **byte-first:** raw-I/O=[]u8; str(UTF-8 validated) только через fallible str.from_utf8 (Ф.0.5 — сейчас ОТСУТСТВУЕТ); FFI-хуки берут байт-буферы, не str. **fs:** File must-consume (Plan 80 — close()->Result, ошибка видна; HARD-GATE Ф.2) + OpenOptions+create_new+read_at/write_at+sync_all/data; **byte-backed Path** (non-UTF8: WTF-8 Win, переписать experimental); Metadata(->Timestamp 179); read_dir/walk_dir; **write_atomic** (5-шаг durable: same-dir-temp+fsync-file+atomic-rename+fsync-dir); портабельный Permissions. **os:** args/env/cwd/exit(flush)/temp_dir. Структурный IoError{kind,raw_os,op,path,source}+ErrorKind (Rust-precedent, +net-kinds для унификации NetError). Diff: must-consume File (close-err видна — бьёт Go defer/Rust Drop), мокабельные Fs/Os, byte-first, write_atomic. HARD-deps: Plan 80 (must-consume, не начат → affine-fallback), str.from_utf8 (Ф.0.5), uv_fs_* wrappers (новый fs.c), D316-321 merge в spec. **Process → под-план 176.1.** net NetError->IoError + str->[]u8 = отдельные коммиты. | 📋 READY |
+| 176 | [176-io-fs-os.md](176-io-fs-os.md) | **I/O + Filesystem + OS** (umbrella; **Ред. 2 2026-07-03**: планка 7 языков Go/Rust/TS/Kotlin/Java/**Zig/Swift**; Q1-Q14 закрыты; **🎉 HARD-GATE Plan 80 СНЯТ — must-consume = D133 shipped** (Plan 100.1 ✅ 2026-05-25), affine-fallback удалён). Архитектура по net-семейству (Fs/Os = плумбинг-эффекты, libuv, park/wake). **io-core:** io.Read/io.Write/io.Seek (sibling text-sink D258) + BufReader + **BufWriter must-consume** + read_to_string (fallible) + EOF/partial/EINTR-контракт + Io-эффект мокабелен (Io-mock deliverable). **byte-first:** raw-I/O=[]u8; **`str.from_bytes -> Result[str, Utf8Error]`** (Ф.0.5 = переоформление существующего интринзика str.try_from); FFI: CStr.from_bytes (reject-NUL→Result) + **CWStr** (→174.6 §2); WTF-8↔UTF-16 в Nova (utf16.nv подтверждён). **fs:** File must-consume (D133 + Cleanup[IoError]-мост 173) + OpenOptions (incl. append Q13) + byte-backed Path (WTF-8 Win; long-path `\?\`) + Metadata(→Timestamp 175) + **write_atomic 5-шаг** (антипример: Swift .atomic/Zig AtomicFile без fsync) + **mem_fs() deliverable с ошибко-инъекцией**. **os:** args/env/cwd/exit(flush) + mock_os(). **Ф.4 (новая):** NetError→IoError projection + TcpStream io-conformance (владелец str→[]u8 = 178). Diff: must-consume бьёт все 7; Zig openat/per-op-error-sets отработаны (D322-нота + followups). D322-D324 (резерв подтверждён); spec_tests d322/d323/d324. Followups: dir-scoped ops, create_temp, flock, mmap, fs-watch. Process → 176.1. | 📋 READY Ред.2 2026-07-03 |
 | 177 | [177-fallible-result-everywhere.md](177-fallible-result-everywhere.md) | **Единый fallible-контракт std: Result-everywhere (Вариант 1).** Решение 2026-06-25 (после развилки A→B1→Вариант 1, adversarial-критика): **вся публичная std → `Result[T, E]`** на любой падающей операции; дуал `bare`(throw)/`try_`(Result)/`_opt`(Option) **ретрактируется** из std (throw=`!!`, проброс=`?`, →Option=`.ok()`). Эффект `Fail[E]` **остаётся в языке** для user-кода/внутр.хелперов, но публичный std-API его для своих ошибок не несёт (R5: forwarded `Fail[E]` из closure — ок). Нейминг: обычное имя = Result (`parse_int -> Result`); `try_` только для пары infallible/fallible (`from`/`try_from`). Объективная причина (не sunk-cost): Result универсален (bare-throws небезопасен для must-consume close), нет границы=нет вечного «куда это?», ошибка-как-значение фундаментальнее. **D325** (amends D77 4-way, retracts D178 bare/`_opt`); правки nv-coding-style §4/§20.4 + module-conventions §3/§5 + protocols.nv. Миграция: parse.nv (`try_parse_int`→`parse_int`), read_buffer.nv (24 bare-twin удалить), emit_c.rs builtins; net/Plan 176 уже conformant; `_experimental` — TODO. Координация Plan 174.1 (§10). | 📋 PROPOSED 2026-06-25 |
 | 178 | [178-std-http.md](178-std-http.md) | **std/http: message-model + URL + HTTP/1.1 (client+server) + HTTPS + HTTP/2** (umbrella, как 180; эталон Go `net/http` + reqwest builder + WHATWG data-model; Nova чинит Go-footguns типами). **message-model:** `Method`/`StatusCode`/`HeaderMap`(case-insens, CRLF/NUL-reject)/`Body`(**must-consume** — незакрытое тело=compile-error, фикс Go body-leak)/`Url`(промоут из `_experimental`)/`Cookie`(6265bis)/`Mime`/`HttpError`(OPEN kind+source-chain). **client (Ф.2):** pooled+reqwest-builder, redirect+cross-origin-auth-strip, **idempotent-retry**+pool-eviction, **Proxy+CONNECT-tunnel**, decompress, cookie-jar, **SSRF-guard**, **deadline-by-default** (173). **server (Ф.3):** `Handler`/`ServeMux`(Go-1.22)/middleware-onion/**graceful-shutdown**/per-conn-fiber-bounded (173). **HTTPS (Ф.4)** + **HTTP/2 (Ф.5, stream=fiber)** — 🔴 HARD-GATE Plan 116 (TLS/ALPN). 🏆-дифференциаторы ≥ всех 7 peer: must-consume body, deadline-default, h2-stream=fiber, SSRF-guard, structured-server, effect-mock. **D327–D332**; Q1–Q31 закрыты §3.0; §8.0 «без упрощений» (gated: json/gzip vs scoped-out: charset/h3/ws). **Gated на NEW под-планы:** `std/encoding/compress` (decompress) + serde/derive (typed `.json[T]`); net `str→[]u8` полная миграция (governance owner-approved 2026-06-26). Консолидирует dangling Plan 116 refs (117=client/122=server). Авторинг: 8-агентный workflow (draft→adversarial-critic vs 7 языков+security-footguns→synthesize). | 📋 proposed 2026-06-26 |
 | 179 | [179-std-encoding-compress.md](179-std-encoding-compress.md) | **std/encoding/compress (DEFLATE / zlib / gzip / brotli).** Декомпрессия (inflate) + компрессия. **inflate/gzip/zlib = pure-Nova** (прецедент Zig/Go, nv-sourcing); **brotli = C-FFI** (`libbrotlidec`). 🏆-дифференциатор: **bomb-cap-by-DEFAULT** (`max_output` — обязательный параметр сигнатуры; decompression-DoS by construction — никто из peer не делает cap дефолтом) + streaming-cap-on-the-fly + bounded-per-call (`feed`/`read(max_emit)`/`finish`, интегрируется с 178 `BodyReader`). Typed `CompressError`{Bomb/InvalidData/Checksum/…}; CRC-32/Adler-32/ISIZE(mod 2³²)-verify by-default. **Ф.1 (inflate raw-DEFLATE+zlib+gzip) = 🔴 HARD-GATE-OPENER для [Plan 178](178-std-http.md) Q12** (auto-decompress); brotli (Ф.2, C-FFI), encode (Ф.3), zstd→followup. D333–D337; §8.0 bomb-cap не опционально. Reconcile 178: «C-zlib»→pure-Nova. Авторинг: workflow (draft→critic→synthesize, resume после rate-limit). | 📋 proposed 2026-06-26 |

@@ -3,6 +3,10 @@
 
 > **Top-level** под-план. Создан 2026-06-26. Статус **proposed**. Маркер **[M-179-std-compress]**.
 > **Запуск:** «выполни план 179».
+> **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** **Волна 1 трек E —
+> стартует сразу**: Ф.1 (inflate/gzip/zlib pure-Nova) — алгоритмика на str/Vec, ни одного входящего гейта.
+> **Исходящие: Ф.1 = 🔴 гейт-опенер для 178 Ф.2** (auto-decompress). brotli (Ф.2, C-FFI) — координация
+> 174.6 (FFI-тип-лист). NB: Ред. 2-сверку не проходил — при запуске re-verify D333-D337 резерв.
 > **Эталон (peers):** Go `compress/{flate,gzip,zlib}` (чистый Go) + 3rd-party brotli · Rust `flate2` (miniz_oxide pure / zlib) + `brotli` crate · Node `zlib` (built-in C, incl. brotli/zstd) · Java `Deflater`/`Inflater`+`GZIPStream` · Python `zlib`/`gzip`/`brotli` · **Zig `std.compress`** (чистый Zig flate/gzip/zlib/zstd, **нет brotli**) · Swift `Compression` (zlib/lzfse/lz4/lzma). Nova берёт **pure-implementation-дух Go/Zig** (nv-sourcing) и **чинит универсальную дыру**: bomb-cap by-construction + streaming-cap-on-the-fly + typed `CompressError`.
 > **D-блоки (NEW):** **D333** (codec-контракт: PURE-codec без effect + byte-first + `CompressError`) · **D334** (bomb-cap DoS-инвариант — обязательный `max_output`) · **D335** (streaming incremental coder `feed`/`read`/`finish` + Plan 178 `BodyReader`-мост) · **D336** (checksum-контракт CRC-32/Adler-32/ISIZE-verify) · **D337** (brotli C-FFI-контракт + bomb-over-FFI). ⚠ **D316–D324** (175/176), **D327–D332** (178) ещё **НЕ внесены** в `spec/decisions/` (committed до D326) → берём **D333+** безусловно, gap фиксируем в индексе **как Plan 177 §«D316–D324 зарезервированы»** (Ф.0).
 > **HARD-GATES/DEPS:** **этот план Ф.1 = 🔴 HARD-GATE-OPENER для Plan 178 Q12** (auto-decompress gzip/deflate **сейчас**; br — после Ф.2). DEP: Plan 177 (D325 Result-everywhere), Plan 176 (byte-first / must-consume / `io.Write` для followup copy_to), Plan 178 (consumer; schedule-coord). Brotli Ф.2 — gated на vendor `libbrotlidec` (build-infra verify Ф.0).

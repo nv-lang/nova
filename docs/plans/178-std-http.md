@@ -4,6 +4,13 @@
 > **Top-level umbrella** (как Plan 176 = io+fs+os): полный HTTP-стек Nova в ОДНОМ плане — message-model, URL, HTTP/1.1 client+server, HTTPS, HTTP/2 (client+server).
 > Создан 2026-06-26. Статус **proposed**.
 > Маркер **[M-178-std-http]**. Запуск: «выполни план 178».
+> **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** 178 — **точка
+> схождения пяти стрелок**; Ред. 2-сверку НЕ проходил — перед запуском выполнить Ф.0-сверку (⚠ известные
+> коллизии: **D327-D332 заняты в спеке** → renumber на D356+; «from_bytes уже есть» — ЛОЖНЫЙ green
+> (владелец = 176 Ф.0.5); ссылки Plan 80 → D133 ✅ shipped). **Ф.0.5 (net byte-surface) — Волна 1 трек F**:
+> НЕ ждёт остального 178, разблокирует 176 Ф.4(b). Ф.1 ← 176 Ф.0.5 (from_bytes для Body.text()).
+> **Ф.2 (client) ← 179 Ф.1 (decompress) + 175/173 (deadline-by-default)**; Ф.3 (server) ← 173-семейство;
+> **Ф.4/Ф.5 ← Plan 116 TLS (внешний 🔴 HARD-GATE)**; typed `.json[T]` ← 180 Ф.4.
 > Эталон: **Go `net/http`** (архитектура: синхронный API над фибрами; client/server-симметрия; `Handler`/`ServeMux`; io.Reader-тела; context-style cancel) + **reqwest/requests** (builder-эргономика клиента) + **WHATWG / http-crate** (data-model: Method/StatusCode/HeaderMap/Body). Nova **чинит Go-footguns типами**: must-consume `Body` (compile-time force-close), deadline/timeout-by-default (Plan 173), Result-everywhere typed-errors (D325).
 > **D-блоки (NEW): D327** (`Http`/`HttpServer` effect-контракт + net byte-surface) · **D328** (message-model) · **D329** (`Body` must-consume + stream + bomb-cap) · **D330** (redirect/cookie/auth-strip/retry/proxy/pool-eviction) · **D331** (server contract) · **D332** (HTTP-over-TLS + HTTP/2).
 > **🔴 HARD-GATES:** Ф.4 (HTTPS) и Ф.5 (HTTP/2) жёстко гейтятся на **Plan 116** (`std/tls`, сейчас `PLANNED`, backend rustls; даёт `Tls`-effect / `TlsStream consume` / `ClientConfig` / `ServerConfig` / SNI / **ALPN** — D210-D213). **Auto-decompress** (gzip/deflate/br) жёстко гейтится на **NEW sub-plan `std/encoding/compress`** (RFC 1950/1951/1952 + brotli; ДОЛЖЕН быть создан отдельно — НЕ в этом плане; owner 2026-06-26). **Typed `.json[T]()`** жёстко гейтится на **NEW serde-sub-plan** (auto-derive `Serialize`/`Deserialize`; owner 2026-06-26); **dynamic `.json()->JsonValue`** приземляется СЕЙЧАС над существующим `std/encoding/json`. Plan 116 толкается параллельно Ф.0-Ф.3; plaintext HTTP/1.1 (Ф.1-Ф.3) + `identity`/`chunked` transfer + dynamic-`JsonValue` — **самодостаточный deliverable**, приземляется независимо.

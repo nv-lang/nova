@@ -5,6 +5,11 @@
 > **Создан:** 2026-06-26. **Статус:** `proposed`.
 > **Маркер:** `[M-180-serde-derive]`.
 > **Запуск:** «выполни план 180».
+> **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** **Волна 0 = Ф.0-verify
+> компилятор-гейтов** (🔴 `[M-126-sum-*-rich]`, `[M-161-parametric-return]`, #serde-attr AST — все OPEN;
+> честная оценка объёма ДО старта; возможно — слот владельца 172.1). Ф.1-Ф.3 — Волна 2 (после закрытия
+> гейтов). **Ф.4 (JSON-backend) — Волна 3: 🔴 гейт-опенер для 178 typed `.json[T]` (Q20)**. Самый
+> рискованный план по объёму скрытой компиляторной работы. NB: Ред. 2-сверку не проходил.
 > **Эталон:** Rust **serde** (GOLD STANDARD — data-model, Serializer/Deserializer/Visitor, enum-tagging-matrix, attribute-набор) + Swift **Codable** (ближайший к Nova: compiler-synth, container-абстракция, `CodingKeys`) + Kotlin kotlinx.serialization (plugin-synth, format-pluggability) + zod (path-rich validation-ошибки). Анти-эталон: Go `encoding/json` / Java Jackson (runtime-рефлексия, silent tag-typo, JSON-привязка).
 > **D-блоки (NEW):** D340–D346 (data-model+протоколы / record-auto-derive-контракт / data-model↔synth-mapping / атрибуты+валидация / JSON-backend / enum-tagging / numeric+depth-soundness). **D-high-water = D332 (Plan 178).** Старт **D340** (gap D333–D339 зарезервированы под Plan 179 compress + резерв — фиксируется как Plan 177 §«зарезервированы»; verify/renumber в Ф.0).
 > **HARD-PREREQ / GATES (честно, см. §4 Ф.0):**
