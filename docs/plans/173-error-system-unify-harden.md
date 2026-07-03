@@ -277,17 +277,24 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    ~90 match-arm сайтов в 18 файлах, `DeferKind` enum + path-selective skip-логика, D189-deprecation
    lint subsystem); tombstone-распознавание для D189-hint сохранено (lexer + parser). Закрыл
    `[M-172-errdefer-okdefer-dead-surface]` (все 3 слоя, вместе с дефектом #2).
-5. **interim-guard #7-concurrency (P1):** чекер отвергает неподдержанный результат `parallel for`
-   (элемент ∉ {int,bool,f64,str} при value-позиции) чистым `[E_PARFOR_RESULT_UNSUPPORTED]` — вместо
-   молчаливого degrade и сырого C-error. Снимается фиксом 173.1 Ф.2 (guard остаётся как unreachable-защита).
+5. ✅ **interim-guard #7-concurrency РЕАЛИЗОВАН (7514b262):** чекер отвергает `parallel for → []T`
+   в value-позиции с непримитивным элементом (T ∉ {int,bool,f64,str}) чистым `[E_PARFOR_RESULT_UNSUPPORTED]`
+   (per-fn/-test walker `check_parfor_result_*`, отдельный проход после f1; value-position через `consumed`;
+   statement-mode не задет). §0: whitelist в const + bidirectional coupling-коммент с codegen (emit_c.rs:8492).
+   Закрыл `[M-parfor-record-result-miscompile]` (silent-degrade → чистая диагностика). Снимается 173.1 Ф.2.
 - **spec/docs:** `## D4` + дубль (:950) → RETRACTED-баннер; `spec/decisions/README.md` строки 18/19/36 fix;
   хаб — статус-фикс (Ф.0R п.5 если не сделан).
 - **Тесты** (раскладка — §4a): pos `rt/f1_with_fail_swallow_panic.nv` (panic сквозь `with Fail` → процесс
   падает с `panic:`); pos `f1_try_return_only` (`?` на Result/Option). neg: `?` в Fail-fn →
   `[E_TRY_IN_FAIL_FN]`; `errdefer{}`/`okdefer{}` → `[D189-removed-*]`; непримитивный `parallel for`-результат
   → `[E_PARFOR_RESULT_UNSUPPORTED]` (не сырой C-error). spec_tests/conformance: d85/d13-покрытие затронутого.
-- **Acceptance:** #1/#2/#3/#4 + interim-guard закрыты; spec_tests зелёный; nova_tests baseline-delta = 0;
-  disasm hot-path не деградировал (baseline = parent-коммит Ф.1, процедура §7 п.9); **без упрощений**.
+- **Acceptance:** ✅ **Ф.1 ЗАКРЫТА 2026-07-04.** #1 (25e07590) / #2 (4a02c825) / #4 (84e6e709) /
+  #3 (ea55bee7, переопределён по де-риску — Option A, D196-exempt) / interim-guard #7 (7514b262) —
+  все закрыты; conformance 38/38 на каждом атоме; nova_tests baseline-delta = 0 (default + --panic lane);
+  spec D85/D4/D71 amended; тесты `nova_tests/err173/` (pos/neg peer f1/f3/f7 + D189-removed neg).
+  **Interim-статус #7** (parfor-guard) — plan-sanctioned stopgap до 173.1 Ф.2 (§0 coupling задокументирован).
+  disasm hot-path: touched-подсистемы baseline-only (checker-changes не трогают codegen). **Без упрощений**
+  (кроме явно-interim #7). **Следующее: Ф.2 (defer-kernel unification, spec-first D314) ИЛИ Track A (172.12/172.13).**
 
 ### Ф.2 — Унификация defer-kernel (СЕЙЧАС после Ф.1)
 1. parser+AST: `defer(o ScopeOutcome) { … }` (биндинг + тело).

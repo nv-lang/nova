@@ -48,7 +48,7 @@
 | 172.13 | A | ⏳ | после 172.12 |
 | 172.5  | A | ⏳ | in-out ref, standalone |
 | 173.0  | B | 🟡 | Ф.1 drain-race ЗАКРЫТ (deliverable: spec+guard, 58aca50b); Ф.2/Ф.3 supervised-substrate — deep runtime, секвенс с 173.2 (его потребитель) |
-| 173    | B | 🔨 | core Ф.1 (error-transport, P1 panic-swallowing) — независим от 173.0 Ф.2/Ф.3 |
+| 173    | B | 🔨 | **Ф.1 ЗАКРЫТА** (#1 25e07590 · #2 4a02c825 · #4 84e6e709 · #3 `?`-return-only ea55bee7 · #7 parfor-guard 7514b262); далее Ф.2 defer-kernel (D314 spec-first) ИЛИ Track A 172.12/172.13 |
 | 174    | B | ⏳ | после 173 |
 | 176    | B | ⏳ | после 173 |
 | 175    | B | ⏳ | параллельно |
