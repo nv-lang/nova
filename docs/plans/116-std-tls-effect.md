@@ -81,6 +81,8 @@ libuv                                                 ← private external fn
 
 **Tls wraps только `TcpNet`** (не UdpNet/UnixNet — TLS over UDP = DTLS,
 отдельный standard, future plan; TLS over Unix sockets — exotic, не V1).
+> ⚠ **RECONCILE (owner-decision 2026-07-03):** net-эффекты TcpNet/UdpNet/DnsNet **сливаются в единый `Net`** (реконсиляция к спеке D62; Plan 178 §13.2). → `real_tls()` будет требовать **`Net`** (не `TcpNet`); ~15 perform-сайтов `TcpNet.connect/read/write/close` → `Net.*`. Описательная точность «TLS только TCP, не DTLS» уходит из строки эффектов (не гарантия — DTLS-over-UDP = отдельный future-concern §11). Едет с net-sweep 178, `[M-net-merge-to-single-effect]`.
+
 **Layered handler:** `real_tls()` requires `TcpNet` capability для
 underlying transport.
 

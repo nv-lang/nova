@@ -5858,6 +5858,8 @@ has been removed — parser now fully supports `@`-prefix.
 
 ## D295 (AMENDED V2) — `DnsNet` effect — async DNS resolution (Plan 91.12 Ф.9 + Plan 91.13, 2026-06-16)
 
+> ⚠ **RECONCILE-PENDING (owner-decision 2026-07-03):** `TcpNet`/`UdpNet`/`DnsNet` — дробление, отклоняющееся от канона D62 (ОДИН `Net`). Принято решение **консолидировать обратно в единый `Net`**; миграция кода едет с net byte-surface sweep Plan 178 §13.2 (`[M-net-merge-to-single-effect]`). До миграции этот D-блок описывает transitional split; после — амендится на `Net`. AddrNet ретрактируется в pure независимо (Plan 178 §13.2).
+
 **Source:** Plan 91.12 Ф.9, 2026-06-16. **Amended:** Plan 91.13, 2026-06-16. **Status:** ✅ ACTIVE (V2).
 **Связь:** [D291](04-effects.md#d291), [D292](02-types.md#d292), [D294](08-runtime.md#d294), [Plan 91.12](../../docs/plans/91.12-net-effect-and-hardening.md), [Plan 91.13](../../docs/plans/91.13-dns-multi-address.md).
 
