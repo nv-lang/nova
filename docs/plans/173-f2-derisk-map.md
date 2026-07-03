@@ -142,3 +142,13 @@ caller-relax). lints.rs:303. parser/mod.rs: 10052 (defer), 10061 (Cleanup-hint).
 (Stmt::Defer), 1878 (ConsumeScope). std: core.nv:147 (ScopeOutcome), protocols.nv:459 (Consumable),
 effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sync_primitives.h:2324/2338/
 2352/2366 (4 hand-C guard-defs). spec: 03-syntax D188/D191/D194/D196/D197/D90/D189, 04-effects D185/D195.
+
+## Прогресс B-атомов
+
+- ✅ **Ф.2.B1 parser/AST defer(o ScopeOutcome) ЗАКРЫТ (e0d95a31):** AST опц. поле `outcome_binding:
+  Option<String>` на `Stmt::Defer` (~30 traversal-армов целы через `..`); parser bounded lookahead
+  (`( IDENT IDENT` → defer(o), иначе fallback parse_expr); neg `[E_DEFER_OUTCOME_TYPE]`/`[E_DEFER_OUTCOME_ARITY]`;
+  D189-Pipe цел. Codegen пока IGNORE поля (плейн-path). Spec D90 amend. Тесты: pos f2_defer_outcome_parse
+  (парсится+бежит LIFO), neg f2_{bad_type,arity}. Гейт: build clean, conformance 38/38, plain defer
+  byte-identical. **Попутно:** доукомплектовал дефект #3 (e3fce6f3) — пропущенный `?`-в-Fail-fn сайт
+  plan100_4_1:19 (тогдашний grep исключал `//`-строки; свип подтвердил — единственный пропуск).
