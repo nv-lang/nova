@@ -18674,11 +18674,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// просто `emit_defer_body_void` (path byte-identical). Иначе: объявляет
     /// per-path `Nova_ScopeOutcome* <tmp>`, `#define`'ит его как имя биндинга и
     /// регистрирует в `var_types` (тело видит `o: ScopeOutcome`), затем `#undef`.
-    fn emit_defer_body_with_outcome(&mut self, binding: &Option<String>, body: &Expr, outcome: DeferOutcome) -> Result<(), String> {
-        let Some(name) = binding else {
-            return self.emit_defer_body_void(body);
-        };
-        let c_local = self.fresh_tmp();
+    /// Plan 173 Ф.2.B3 (D314): материализует `Nova_ScopeOutcome* <c_local>` для
+    /// заданного exit-path (Success / Interrupt / FromFrame). Единый примитив,
+    /// переиспользуемый телом `defer(o)` И consume-cleanup'ом (десугар D314 §3).
+    /// Объявляет + инициализирует `c_local`; вызывающий уже сгенерил имя.
+    fn materialize_scope_outcome(&mut self, c_local: &str, outcome: DeferOutcome) {
         match outcome {
             DeferOutcome::Success => {
                 self.line(&format!("Nova_ScopeOutcome* {} = nova_make_ScopeOutcome_Success();", c_local));
@@ -18689,23 +18689,39 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     c_local));
             }
             DeferOutcome::FromFrame(frame) => {
-                // Зеркалит consume-арм (per-branch выбор + D90 §7 cancel-marker).
                 self.line(&format!("Nova_ScopeOutcome* {};", c_local));
-                self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", frame));
-                self.indent += 1;
-                self.line(&format!("{} = nova_make_ScopeOutcome_Panic({}.error_msg);", c_local, frame));
-                self.indent -= 1;
-                self.line(&format!("}} else if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame));
-                self.indent += 1;
-                self.line(&format!("{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));", c_local, frame));
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
-                self.line(&format!("{} = nova_make_ScopeOutcome_Failure({}.error_msg);", c_local, frame));
-                self.indent -= 1;
-                self.line("}");
+                self.assign_scope_outcome_from_frame(c_local, frame);
             }
         }
+    }
+
+    /// Plan 173 Ф.2.B3 (D314): присваивает уже-объявленному `var
+    /// Nova_ScopeOutcome*` исход из fail-frame по `<frame>.error_kind`:
+    /// PANIC→`Panic(msg)`, CANCEL→`Failure("cancel: "+msg)` (D90 §7 marker),
+    /// иначе→`Failure(msg)`. Единый источник для defer(o)-FromFrame И
+    /// consume-cleanup (десугар D314: обе поверхности строят исход одинаково).
+    fn assign_scope_outcome_from_frame(&mut self, var: &str, frame: &str) {
+        self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", frame));
+        self.indent += 1;
+        self.line(&format!("{} = nova_make_ScopeOutcome_Panic({}.error_msg);", var, frame));
+        self.indent -= 1;
+        self.line(&format!("}} else if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame));
+        self.indent += 1;
+        self.line(&format!("{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));", var, frame));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!("{} = nova_make_ScopeOutcome_Failure({}.error_msg);", var, frame));
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    fn emit_defer_body_with_outcome(&mut self, binding: &Option<String>, body: &Expr, outcome: DeferOutcome) -> Result<(), String> {
+        let Some(name) = binding else {
+            return self.emit_defer_body_void(body);
+        };
+        let c_local = self.fresh_tmp();
+        self.materialize_scope_outcome(&c_local, outcome);
         self.line(&format!("#define {} {}", name, c_local));
         let prev = self.var_types.insert(name.clone(), "Nova_ScopeOutcome*".to_string());
         let r = self.emit_defer_body_void(body);
@@ -19958,40 +19974,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // resource discrimination через ScopeOutcome::Failure variant.
                 // Full typed CancelError construction после MultiError payload
                 // any migration ([M-110-multierror-any]).
+                // Plan 173 Ф.2.B3 (D314): исход строится ЕДИНЫМ примитивом,
+                // общим с defer(o)-FromFrame (assign_scope_outcome_from_frame).
+                // На success-path (outcome_kind==0) frame.error_kind stale →
+                // Success явно; иначе — из frame (PANIC/CANCEL/Failure).
                 self.line(&format!("Nova_ScopeOutcome* {};", outcome_val));
                 self.line(&format!("if ({} == 0) {{", outcome_kind));
                 self.indent += 1;
                 self.line(&format!("{} = nova_make_ScopeOutcome_Success();", outcome_val));
                 self.indent -= 1;
-                self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
-                self.indent += 1;
-                self.line(&format!(
-                    "/* D90 §7 amend (Plan 110.5.6): cancel marker prepended */"
-                ));
-                self.line(&format!(
-                    "if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame
-                ));
-                self.indent += 1;
-                self.line(&format!(
-                    "{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));",
-                    outcome_val, frame
-                ));
-                self.indent -= 1;
                 self.line("} else {");
                 self.indent += 1;
-                self.line(&format!(
-                    "{} = nova_make_ScopeOutcome_Failure({}.error_msg);",
-                    outcome_val, frame
-                ));
-                self.indent -= 1;
-                self.line("}");
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
-                self.line(&format!(
-                    "{} = nova_make_ScopeOutcome_Panic({}.error_msg);",
-                    outcome_val, frame
-                ));
+                self.assign_scope_outcome_from_frame(&outcome_val, &frame);
                 self.indent -= 1;
                 self.line("}");
                 // Plan 110.x [M-110.x-on-exit-throws-leaks-shield] fix

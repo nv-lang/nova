@@ -164,3 +164,28 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
   конструктивно (None → тот же emit_defer_body_void). **Отложено на B2-хвост (runtime-наблюдение):** Panic-
   ветка-БЕЖИТ + cancel-Failure — panic убивает процесс (pre-existing D158-segfault-риск), cancel =
   supervised-сценарий; сейчас compile-покрыты (exhaustive match). Zig-парность payload — B3 (consume-desugar).
+- 🟡 **Ф.2.B3 consume→desugar — ЧАСТИЧНО (outcome-примитив унифицирован; полный run-site merge ЗАБЛОКИРОВАН):**
+  Understand-workflow (5 ридеров, wf_67a1d385) + firsthand-разбор монолита (emit_c.rs:19816-20101) + всех
+  4 defer run-site'ов выявили **архитектурное препятствие** (класс «D194-премиса-ложна»): **compose-семантика
+  consume и user-defer genuinely РАЗНЫЕ** и несовместимы с физическим слиянием run-site'ов:
+  • consume: panic-dominance (D196 R3 — cleanup-panic ДОМИНИРУЕТ) + pairwise body-primary/cleanup-suppressed
+    + immediate rethrow/nv_panic per-path.
+  • user-defer (D161): chain-suppressed (first-fail primary, rest в suppressed-chain), НЕТ panic-dominance,
+    loop-then-rethrow-once структура (pop в конце).
+  Маршрутизация consume через defer-kernel run-sites потребовала бы либо (а) регресс user-defer, либо
+  (б) реплику монолит-compose в каждом run-site (борьба со структурой pop-в-конце + rethrow-before-pop).
+  ТАКЖЕ: checker-инвариант (RISK #146) — consume-body свободно допускает throw/return/break/panic, а
+  defer-body их ЗАПРЕЩАЕТ (check_defer_body: D158/D90/D159) → AST-десугар ConsumeScope→Block{Stmt::Defer}
+  дал бы массовый регресс. **Вывод: монолит ЕСТЬ корректная реализация consume-flavored-defer-entry (D314 §3);
+  full physical merge — не clean-refactor, а semantic-hazard.**
+  **ДОСТАВЛЕНО (safe, behavior-identical, verified):** единый ScopeOutcome-примитив — `materialize_scope_outcome`
+  + `assign_scope_outcome_from_frame` (emit_c.rs) — общий для defer(o)-FromFrame И consume-cleanup (step-7
+  монолита теперь зовёт shared helper). core.nv:131 doc-fix cancel-marker "cancelled:"→"cancel:" (рассинхрон
+  spec/impl). Гейт: conformance 38/38; plan110/plan103_9/plan100_4_* + err173 defer(o) — 0 регрессий.
+  **FOLLOWUP'ы (осознанно отложено, не half-measure):**
+  • `[M-173-b3-runsite-unify]` — физическое слияние consume↔defer-kernel run-site'ов ТРЕБУЕТ сперва
+    унифицировать compose-модель (chain vs pairwise+panic-dominance) — отдельный дизайн-вопрос (D-блок).
+  • `[M-173-consume-interrupt-cleanup]` — монолит НЕ бежит cleanup на `interrupt` (defer-kernel бежит);
+    D314 §2 предписывает interrupt→cleanup(Failure). Beyond-parity correctness-fix, свой тестируемый атом.
+  • `[M-173-consume-exactly-once-observability]` — conformance d188/d196 наблюдают ТОЛЬКО body-exec+binding
+    (RISK #208), НЕ exactly-once/shield/timeout — добавить trail-observability тесты.

@@ -128,7 +128,9 @@ export type Result[T, E] enum Ok(T) | Err(E)
 /// **Variants:**
 /// - `Success` — body завершился нормально (включая `return v`).
 /// - `Failure(reason)` — body throw'нул / cancel / interrupt
-///   (D90 §7 amend: cancel приходит как `Failure("cancelled: <reason>")`).
+///   (D90 §7 amend: cancel приходит как `Failure("cancel: <reason>")` —
+///   префикс синхронизирован с codegen `assign_scope_outcome_from_frame`;
+///   interrupt — как `Failure("interrupt")`, Plan 173 Ф.2.B2/B3 D314).
 /// - `Panic(msg)` — body panic'нул; resource НЕ должен throw в этом
 ///   случае (это bug), но может выполнить emergency cleanup.
 ///
