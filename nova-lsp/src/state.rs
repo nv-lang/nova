@@ -142,6 +142,11 @@ pub struct WorkspaceState {
     /// so all documents in one workspace share a single FS walk. Built lazily on
     /// first use ([`WorkspaceState::stdlib_index`]).
     pub stdlib_index_cache: DashMap<PathBuf, Arc<StdlibIndex>>,
+
+    /// Plan 104.10 Ф.9: inlay-hint toggles (type hints / parameter-name hints),
+    /// both default **on**. Set from the client's `initializationOptions` at
+    /// `initialize` and updated on `workspace/didChangeConfiguration`.
+    pub inlay_config: Mutex<crate::inlay_hints::InlayHintConfig>,
 }
 
 impl Default for WorkspaceState {
@@ -158,6 +163,7 @@ impl Default for WorkspaceState {
             resolved_cache: DashMap::new(),
             resolved_build_count: AtomicU64::new(0),
             stdlib_index_cache: DashMap::new(),
+            inlay_config: Mutex::new(crate::inlay_hints::InlayHintConfig::default()),
         }
     }
 }
@@ -178,6 +184,17 @@ impl WorkspaceState {
         if let Ok(path) = uri.to_file_path() {
             *self.workspace_root.lock().unwrap() = Some(path);
         }
+    }
+
+    /// Plan 104.10 Ф.9: current inlay-hint configuration (cheap `Copy`).
+    pub fn inlay_config(&self) -> crate::inlay_hints::InlayHintConfig {
+        *self.inlay_config.lock().unwrap()
+    }
+
+    /// Plan 104.10 Ф.9: replace the inlay-hint configuration (from
+    /// `initializationOptions` / `didChangeConfiguration`).
+    pub fn set_inlay_config(&self, cfg: crate::inlay_hints::InlayHintConfig) {
+        *self.inlay_config.lock().unwrap() = cfg;
     }
 
     /// Plan 104.10 Ф.1: return the fully-resolved module for `uri` at document

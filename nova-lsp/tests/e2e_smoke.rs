@@ -891,3 +891,157 @@ fn f18_pos_initial_scan_emits_progress() {
 
     lsp.shutdown_and_exit();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 104.10 Ф.9 — inlay hints (integration / spawn)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Ф.9 pos: initialize advertises `inlayHintProvider`.
+#[test]
+fn f9_pos_initialize_advertises_inlay_hint() {
+    let mut lsp = LspProcess::spawn();
+    let resp = lsp.initialize();
+    assert!(resp.get("error").is_none(), "initialize error: {resp}");
+    let ih = &resp["result"]["capabilities"]["inlayHintProvider"];
+    assert!(
+        !ih.is_null() && *ih != serde_json::Value::Bool(false),
+        "inlayHintProvider must be advertised, got: {ih}"
+    );
+    lsp.shutdown_and_exit();
+}
+
+/// Ф.9 pos: `textDocument/inlayHint` over the full JSON-RPC transport returns a
+/// type hint (`: int` for `ro x = 5`) and parameter-name hints (`a:`/`b:` before
+/// the arguments of `add(1, 2)`). The file is rooted inside the repo so prelude
+/// import resolution (and thus the Ф.2 `expr_types` used for the type hint)
+/// succeeds.
+#[test]
+fn f9_pos_inlay_hints_type_and_params() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo = manifest.parent().expect("nova-lsp has a parent").to_path_buf();
+    let dir = repo.join("target").join("f9_e2e_inlay");
+    std::fs::create_dir_all(&dir).expect("create fixture dir");
+    let path = dir.join("main.nv");
+    let src = concat!(
+        "module f9.e2e\n",
+        "fn add(a int, b int) -> int => a + b\n",
+        "fn main() -> () {\n",
+        "    ro x = 5\n",
+        "    ro _ = add(1, 2)\n",
+        "}\n",
+    );
+    std::fs::write(&path, src).expect("write fixture file");
+    let uri = file_uri(&path);
+
+    let mut lsp = LspProcess::spawn();
+    lsp.initialize_full();
+    lsp.send_notification("textDocument/didOpen", did_open_params(&uri, src));
+    std::thread::sleep(Duration::from_millis(400));
+
+    let resp = lsp.request(
+        "textDocument/inlayHint",
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 6, "character": 0 },
+            },
+        }),
+    );
+    assert!(resp.get("error").is_none(), "inlayHint returned error: {resp}");
+
+    let hints = resp["result"].as_array().expect("inlayHint result must be an array");
+    assert!(!hints.is_empty(), "expected ≥1 inlay hint, got empty: {resp}");
+
+    let label_of = |h: &serde_json::Value| -> String {
+        match &h["label"] {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(parts) => parts
+                .iter()
+                .filter_map(|p| p["value"].as_str())
+                .collect::<String>(),
+            _ => String::new(),
+        }
+    };
+
+    // Type hint `: int` for `ro x = 5` (kind 1 = Type).
+    let has_type = hints.iter().any(|h| {
+        h["kind"].as_i64() == Some(1) && label_of(h).trim() == ": int"
+    });
+    assert!(has_type, "expected a `: int` type hint, got: {hints:?}");
+
+    // Parameter hints `a:` and `b:` (kind 2 = Parameter).
+    let params: Vec<String> = hints
+        .iter()
+        .filter(|h| h["kind"].as_i64() == Some(2))
+        .map(|h| label_of(h).trim().to_string())
+        .collect();
+    assert!(params.contains(&"a:".to_string()), "expected `a:` param hint, got: {params:?}");
+    assert!(params.contains(&"b:".to_string()), "expected `b:` param hint, got: {params:?}");
+
+    lsp.shutdown_and_exit();
+}
+
+/// Ф.9 neg: with type hints disabled via `initializationOptions`, an
+/// un-annotated binding produces **no** type hint (parameter hints stay on).
+#[test]
+fn f9_neg_type_hints_disabled_by_config() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo = manifest.parent().expect("nova-lsp has a parent").to_path_buf();
+    let dir = repo.join("target").join("f9_e2e_inlay_off");
+    std::fs::create_dir_all(&dir).expect("create fixture dir");
+    let path = dir.join("main.nv");
+    let src = concat!(
+        "module f9.e2eoff\n",
+        "fn add(a int, b int) -> int => a + b\n",
+        "fn main() -> () {\n",
+        "    ro x = 5\n",
+        "    ro _ = add(1, 2)\n",
+        "}\n",
+    );
+    std::fs::write(&path, src).expect("write fixture file");
+    let uri = file_uri(&path);
+
+    let mut lsp = LspProcess::spawn();
+    // Disable type hints through initializationOptions.
+    let resp = lsp.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": null,
+            "initializationOptions": {
+                "nova": { "inlayHints": { "typeHints": false } }
+            },
+            "capabilities": {},
+        }),
+    );
+    assert!(resp.get("error").is_none(), "initialize error: {resp}");
+    lsp.send_notification("initialized", serde_json::json!({}));
+    lsp.send_notification("textDocument/didOpen", did_open_params(&uri, src));
+    std::thread::sleep(Duration::from_millis(400));
+
+    let resp = lsp.request(
+        "textDocument/inlayHint",
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 6, "character": 0 },
+            },
+        }),
+    );
+    assert!(resp.get("error").is_none(), "inlayHint returned error: {resp}");
+    let hints = resp["result"].as_array().expect("inlayHint result must be an array");
+
+    // No Type-kind (1) hints; Parameter-kind (2) hints still present.
+    assert!(
+        hints.iter().all(|h| h["kind"].as_i64() != Some(1)),
+        "type hints disabled → no Type hint, got: {hints:?}"
+    );
+    assert!(
+        hints.iter().any(|h| h["kind"].as_i64() == Some(2)),
+        "parameter hints remain on, got: {hints:?}"
+    );
+
+    lsp.shutdown_and_exit();
+}

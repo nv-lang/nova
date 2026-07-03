@@ -238,13 +238,14 @@ impl Backend {
     }
 
     /// Push server→client refresh notifications so already-rendered semantic
-    /// tokens / code lenses re-pull after a background reindex (Ф.18 sub-feature
-    /// 4). `inlayHint/refresh` is intentionally omitted: nova-lsp does not yet
-    /// advertise an inlay-hint provider (that is BLOCK-C Ф.9) — refreshing a
-    /// capability we never advertised would draw a client error. Restore it when
-    /// Ф.9 lands. Errors are swallowed (a client lacking the capability is fine).
+    /// tokens / code lenses / inlay hints re-pull after a background reindex
+    /// (Ф.18 sub-feature 4). `inlayHint/refresh` is included now that Ф.9
+    /// advertises an inlay-hint provider — the freshly-built `expr_types` can
+    /// change the hint set, so cold hints rendered before the index completed
+    /// must re-request. Errors are swallowed (a client lacking the capability is
+    /// fine).
     async fn refresh_client_hints(&self) {
-        // Both are server→client *requests*; a non-responsive client must not
+        // Each is a server→client *request*; a non-responsive client must not
         // stall us, so each is bounded by a short timeout (a real client answers
         // in milliseconds).
         let st = self.client.semantic_tokens_refresh();
@@ -254,6 +255,10 @@ impl Backend {
         let cl = self.client.code_lens_refresh();
         if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), cl).await {
             tracing::debug!(err = %e, "codeLens/refresh not honoured");
+        }
+        let ih = self.client.inlay_hint_refresh();
+        if let Ok(Err(e)) = tokio::time::timeout(Duration::from_secs(2), ih).await {
+            tracing::debug!(err = %e, "inlayHint/refresh not honoured");
         }
     }
 
@@ -395,6 +400,14 @@ impl LanguageServer for Backend {
             }
         }
 
+        // Plan 104.10 Ф.9: seed inlay-hint config from initializationOptions
+        // (both kinds default on; the client may disable either).
+        if let Some(opts) = &params.initialization_options {
+            let cfg = crate::inlay_hints::InlayHintConfig::from_settings(opts);
+            self.state.set_inlay_config(cfg);
+            tracing::info!(?cfg, "inlay-hint config from initializationOptions");
+        }
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 position_encoding: Some(PositionEncodingKind::UTF16),
@@ -500,6 +513,17 @@ impl LanguageServer for Backend {
                 // from the AST node hierarchy (ident → expr → stmt → block → fn),
                 // each range a strict superset of the previous. Parse-only.
                 selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
+                // Plan 104.10 Ф.9: inlay hints — type hints for un-annotated
+                // `ro x = expr` bindings (`: T` from Ф.2 expr_types) and
+                // parameter-name hints before call arguments (`a:`/`b:` from the
+                // resolved callee). Both toggleable via config (default on);
+                // `resolve_provider=false` — labels are computed eagerly.
+                inlay_hint_provider: Some(OneOf::Right(
+                    InlayHintServerCapabilities::Options(InlayHintOptions {
+                        work_done_progress_options: Default::default(),
+                        resolve_provider: Some(false),
+                    }),
+                )),
                 // Plan 104.6: rename + format-on-save.
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -1288,6 +1312,51 @@ impl LanguageServer for Backend {
             Err(_) => Vec::new(),
         };
         Ok(Some(ranges))
+    }
+
+    /// Plan 104.10 Ф.9: `textDocument/inlayHint` — type hints for un-annotated
+    /// `ro x = expr` bindings (`: T` from the Ф.2 `expr_types` map) and
+    /// parameter-name hints before call arguments (`a:`/`b:` from the resolved
+    /// callee). Uses the Ф.1 resolved-module cache (build once per doc version).
+    /// Both kinds are individually toggleable via config (default on); a disabled
+    /// kind is skipped in the compute. A parser/checker panic degrades to no
+    /// hints, never a crash.
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri.clone();
+        let range = params.range;
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        let version = doc.version;
+        drop(doc);
+
+        let cfg = self.state.inlay_config();
+        if !cfg.type_hints && !cfg.parameter_hints {
+            return Ok(Some(Vec::new()));
+        }
+
+        let state = Arc::clone(&self.state);
+        let uri_clone = uri.clone();
+        let hints = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || {
+                let resolved = state.get_or_build_resolved(&uri_clone, version, &src);
+                crate::inlay_hints::compute_inlay_hints_in(&resolved, &src, range, cfg)
+            })
+        })) {
+            Ok(h) => h,
+            Err(_) => Vec::new(),
+        };
+        Ok(Some(hints))
+    }
+
+    /// Plan 104.10 Ф.9: `workspace/didChangeConfiguration` — re-read the inlay-hint
+    /// toggles and push an `inlayHint/refresh` so already-rendered hints re-pull
+    /// with the new setting (no edit required).
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        let cfg = crate::inlay_hints::InlayHintConfig::from_settings(&params.settings);
+        self.state.set_inlay_config(cfg);
+        tracing::info!(?cfg, "inlay-hint config updated via didChangeConfiguration");
+        // Ask the client to re-request inlay hints for visible editors.
+        let _ = self.client.inlay_hint_refresh().await;
     }
 
     /// Plan 104.5: code_action — ≥25 quick-fix providers.
