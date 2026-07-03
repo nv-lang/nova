@@ -14,7 +14,7 @@
 //   • Record с priv-полями; protocol-метод реализован как TYPE-METHOD (`fn T @m(...)`),
 //     тело которого ЧИТАЕТ priv-поля (`@field`) — допустимо (receiver-scope матчит).
 //   • Этот type-method impl satisfies prelude-протокол `Equal` (per D237): `fn T @equal`
-//     напрямую драйвит ==/!= (D183/D184) — БЕЗ объявления пользовательского протокола,
+//     напрямую драйвит ==/!= (D183/D363) — БЕЗ объявления пользовательского протокола,
 //     как в d237/d230. Тело решает равенство по priv-полям → observable end-to-end.
 //   • Дополнительные type-method'ы (`@magnitude_sq`/`@dot`) — §2-сторона: priv-read
 //     ВНУТРИ receiver-scope (`current_recv_type = Some(T)`). Возвращают значения,

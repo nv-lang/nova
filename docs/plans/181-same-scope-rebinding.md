@@ -46,7 +46,7 @@ mut work = work                   \ «разморозка» (Rust: let mut x = 
 - **R6 Параметры.** Затенять параметр можно (`fn f(x int) { ro x = x + 1 }`) — Rust-прецедент, alpha-pass делает тривиальным.
 - **R7 Cross-scope без изменений.** Блочное затенение работает сегодня и не трогается; политика линтов на него — вне scope плана.
 
-**Связь со спекой:** D347 амендит **D184-binding** (binding-грамматика, Plan 114 keyword refresh — `03-syntax.md:6958`; ⚠ **в спеке ДВА блока «## D184»**: :2648 = operator dispatch, :6958 = binding — **дубль номера разрулить в Ф.0/Ф.5**, прецедент — резолв коллизии D109/D110/D111; ссылаться всегда «D184-binding») и обязан явно проговорить отличие от отвергнутого `:=` (D34 «shadowing-баги Go»): у `:=` проблема — *случайное* затенение из-за смешанного decl/assign-оператора и cross-scope протечек; здесь — явное `ro/mut` + same-scope + R2/R5. Cross-ref: D22 (R4), D90 §3 (R4), D131/D133/D180 (R2), D274 (interp уже соответствует).
+**Связь со спекой:** D347 амендит **D184-binding** (binding-грамматика, Plan 114 keyword refresh — `03-syntax.md:6958`; ✅ **D184-дубль РАЗРЕШЁН 2026-07-03**: operator-dispatch-D184 → D363 (renumber); D184 = ТОЛЬКО binding (Plan 114). Ссылаться «D184-binding») и обязан явно проговорить отличие от отвергнутого `:=` (D34 «shadowing-баги Go»): у `:=` проблема — *случайное* затенение из-за смешанного decl/assign-оператора и cross-scope протечек; здесь — явное `ro/mut` + same-scope + R2/R5. Cross-ref: D22 (R4), D90 §3 (R4), D131/D133/D180 (R2), D274 (interp уже соответствует).
 
 ## §2 Стратегия реализации — один alpha-renaming pass
 
@@ -65,7 +65,7 @@ mut work = work                   \ «разморозка» (Rust: let mut x = 
 ## §3 Фазы
 
 ### Ф.0 — Sign-off + пин статус-кво (gate) — small
-1. Verify D-нумерация: D347 свободен (grep «## D347» + inline по spec/) и не задевает резервы D348–D349 (173) / D350+ (174); **разрулить дубль «## D184»** (см. §1 — нота в spec-индексе, прецедент D109/D110/D111).
+1. Verify D-нумерация: D347 свободен (grep «## D347» + inline по spec/) и не задевает резервы D348–D349 (173) / D350+ (174); (D184-дубль РАЗРЕШЁН 2026-07-03 — operator→D363; §1).
 2. Fixtures-пин текущей дыры (до реализации, как detect-набор) — **все 11 проб** research-матрицы:
    - `p01_same_type` / `p02_type_change` / **`p03_ro_of_mut`** (mut x=1; ro x=2 — симметрия p04) / `p04_mut_of_ro` / `p09_param_shadow` / `p10_self_ref` — сейчас CC-FAIL → после Ф.1 станут POS;
    - **`p06_closure_captures_old`** — CC-FAIL-пин снять уже в Ф.0 (runtime-POS f()==1 — гейт Ф.3);
@@ -110,7 +110,7 @@ mut work = work                   \ «разморозка» (Rust: let mut x = 
 
 - **nova_tests/rebind/** — folder-module `module nova_tests.rebind` (тема, НЕ per-plan папка): POS = peer-файлы с обычными test-блоками, runtime-asserts (p06 `f()==1`, p10 `x==2`) — обычные test-блоки, `rt/` не нужен; `_slow` не требуется.
 - **nova_tests/rebind/neg/** — ТОЛЬКО compile-error: standalone `module neg.<name>`, маркер `// EXPECT_COMPILE_ERROR <substr>` **без двоеточия**, один маркер/файл (`E_REBIND_LIVE_CONSUME`: p08/p08c; `W_SHADOW_UNRELATED` — по решению Ф.4.3: EXPECT_WARNING-маркер либо CLI-тест).
-- **spec_tests/conformance (ОБЯЗАТЕЛЬНОЕ D-покрытие):** NEW `spec_tests/conformance/d347_same_scope_rebinding.nv` (kinds R1-R7, включая param-shadow R6 и pipeline R5-тихий); **amend ⇒ ОБНОВИТЬ существующие d-файлы В ТОМ ЖЕ изменении:** `d90_defer_cleanup.nv` (R4-defer), `d133_consume_type_must_consume.nv` + `d131_consume_qualifier.nv` (R2), `d22_closures.nv` (R4-capture), `d34_pattern_bind_conditions.nv` (отличие от `:=`) — все пять существуют (verified ls). Binding-примеры класть в d347-файл — **НЕ создавать второй d184-файл** (существующий `d184_operator_dispatch_protocols.nv` покрывает ДРУГОЙ D184 — коллизия §1). Прогон `nova test spec_tests` отдельной командой.
+- **spec_tests/conformance (ОБЯЗАТЕЛЬНОЕ D-покрытие):** NEW `spec_tests/conformance/d347_same_scope_rebinding.nv` (kinds R1-R7, включая param-shadow R6 и pipeline R5-тихий); **amend ⇒ ОБНОВИТЬ существующие d-файлы В ТОМ ЖЕ изменении:** `d90_defer_cleanup.nv` (R4-defer), `d133_consume_type_must_consume.nv` + `d131_consume_qualifier.nv` (R2), `d22_closures.nv` (R4-capture), `d34_pattern_bind_conditions.nv` (отличие от `:=`) — все пять существуют (verified ls). Binding-примеры класть в d347-файл — **НЕ создавать второй d184-файл** (существующий `d363_operator_dispatch_protocols.nv` = D363, ex-D184; дубль-D184 разрешён 2026-07-03). Прогон `nova test spec_tests` отдельной командой.
 
 ## §5 Вне scope / followups
 

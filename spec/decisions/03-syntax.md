@@ -2609,7 +2609,7 @@ fn Vector @times(other Vector) -> f64 => // dot product
 ```
 
 > **Примечание (Plan 91.8b, 2026-06-17):** `@eq`/`@lt`/`@le`/`@gt`/`@ge` — УДАЛЕНЫ как operator-dispatch имена.
-> Используй `Equal.@equal` / `Compare.@compare`. Подробнее: [D184](#d184-operator-dispatch-via-protocols--замена-magic-methods-plan-918b).
+> Используй `Equal.@equal` / `Compare.@compare`. Подробнее: [D363](#d363-operator-dispatch-via-protocols--замена-magic-methods-plan-918b).
 
 ### Почему
 
@@ -2631,7 +2631,7 @@ fn Vector @times(other Vector) -> f64 => // dot product
   receiver-методам (`@plus`/`@times`) однозначнее: компилятор знает,
   где искать реализацию.
 - **Перегрузка `&&`/`||`** — нарушает short-circuit.
-- **Auto-derive `@equal`/`@compare`** — отдельный механизм, не часть D46 (см. D184).
+- **Auto-derive `@equal`/`@compare`** — отдельный механизм, не часть D46 (см. D363).
 
 ### Связь
 - [D35](#d35-методы-инстанса-через--self-отменён) — те же `@`-методы.
@@ -2645,7 +2645,7 @@ fn Vector @times(other Vector) -> f64 => // dot product
 
 ---
 
-## D184. Operator dispatch via protocols — замена magic methods (Plan 91.8b)
+## D363. Operator dispatch via protocols — замена magic methods (Plan 91.8b)
 
 > Status: active (2026-06-17, Plan 91.8b).
 

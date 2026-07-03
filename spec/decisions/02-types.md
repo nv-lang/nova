@@ -7002,7 +7002,7 @@ fn int @compare(other int) -> int =>
 ### Известные ограничения / followups
 
 - **Codegen synthesis (`[M-91.8a.2-default-codegen]`):** type T который имеет `@compare` но не `@equal` пока компилируется только если `@equal` объявлен явно. Eager synthesis из default body — отдельный codegen pass.
-- **Operator dispatch (D184, Plan 91.8b):** `==` всё ещё dispatches к `@eq` (D46). Renaming `@eq` → `@equal` в operator dispatch — задача Plan 91.8b. До 91.8b implementer пишет оба: `@equal` (protocol) + `@eq` (operator).
+- **Operator dispatch (D363, Plan 91.8b):** `==` всё ещё dispatches к `@eq` (D46). Renaming `@eq` → `@equal` в operator dispatch — задача Plan 91.8b. До 91.8b implementer пишет оба: `@equal` (protocol) + `@eq` (operator).
 - **Structural `==` для mono'd generic-sum + Result ✅ (Plan 153.3, commit `1cc82de5`):** дефолтное
   структурное `==` (tag + payload, без user `@equal`/`@compare`) теперь покрывает
   **мономорфизированные generic-sum** (`Foo[int].A(1) == A(1)`) и **Result** (`NovaRes_*`). Раньше
@@ -13182,10 +13182,10 @@ export fn SkipIter[I, T]      @zenumerate() -> EnumerateIter[Self, T]         =>
 
 ---
 
-## D292 — Net C FFI pattern: opaque handles + value-record wrapping (Plan 91.12)
+## D364 — Net C FFI pattern: opaque handles + value-record wrapping (Plan 91.12)
 
 **Source:** Plan 91.12 Ф.0–Ф.4, 2026-06-16. **Status:** ✅ ACTIVE.
-**Связь:** [D214](02-types.md#d214), [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1) (`extern "C" fn`), [D291](04-effects.md#d291--tcpnetupdpnetdnsnet-effect-family-plan-9112).
+**Связь:** [D214](02-types.md#d214), [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1) (`extern "C" fn`), [D365](04-effects.md#d365).
 
 ### Паттерн
 
@@ -13215,7 +13215,7 @@ export fn TcpListener.bind(addr SocketAddr) TcpNet -> Result[TcpListener, NetErr
 }
 ```
 
-**Шаг 4. Эффект-handler**: `real_tcp_net()` — конкретный `Effect[TcpNet]` (D291), содержит прямые вызовы C FFI. Тесты заменяют handler на mock без изменения кода пользователя.
+**Шаг 4. Эффект-handler**: `real_tcp_net()` — конкретный `Effect[TcpNet]` (D365), содержит прямые вызовы C FFI. Тесты заменяют handler на mock без изменения кода пользователя.
 
 ### Инварианты
 
@@ -13226,7 +13226,7 @@ export fn TcpListener.bind(addr SocketAddr) TcpNet -> Result[TcpListener, NetErr
 
 ### Реализовано в
 
-`std/net/ffi.nv` (Ф.1), `std/net/tcp.nv` (Ф.3), `std/net/udp.nv` (Ф.4). Тесты: `nova_tests/plan91_12/` (19/19 PASS). D292 NEW.
+`std/net/ffi.nv` (Ф.1), `std/net/tcp.nv` (Ф.3), `std/net/udp.nv` (Ф.4). Тесты: `nova_tests/plan91_12/` (19/19 PASS). D364 NEW (ex-D292 — renumber 2026-07-03, коллизия с ModuleSigTable-D292 07-modules).
 
 ---
 

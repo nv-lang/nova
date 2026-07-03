@@ -23,7 +23,7 @@
 //   - D35 instance-методы через `fn Type @method`.
 //   - D45 для простых геттеров `-> T` опускаем; для арифметики оставляем
 //     явно (документация stdlib API).
-//   - D46/D184 operator overloading через `@plus`, `@times`, `@neg`, `@equal`.
+//   - D46/D363 operator overloading через `@plus`, `@times`, `@neg`, `@equal`.
 //     `!=` выводится из `@equal` автоматически.
 //   - D66 `Self` в return type — DRY, без повтора имени Complex.
 //   - D73 From/Into: `Complex.from(f64)` даёт авто-выведенный

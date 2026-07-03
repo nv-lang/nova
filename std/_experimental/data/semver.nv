@@ -30,7 +30,7 @@
 //       v.into()                         // сериализация
 //   - D74 instance-методы числовых операций (не используется напрямую,
 //     но `len`, comparisons на u64 — стандартные методы).
-//   - D46/D184 operator overloading: @equal, @compare — для естественного сравнения.
+//   - D46/D363 operator overloading: @equal, @compare — для естественного сравнения.
 //
 // Pending language features (используются ниже):
 //   - `str.split(sep str) -> []str` — стандартный split
