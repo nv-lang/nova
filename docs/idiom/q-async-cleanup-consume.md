@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Q-async-cleanup — Suspend в `consume{}` on_exit (D191)
+# Q-async-cleanup — Suspend в `consume{}` @cleanup (D191)
 
 > **Plan 110 Ф.14.2 Q-block.** Q-async-cleanup в контексте Plan 110
 > `consume X = ... { body }` scope-block: suspend operations в
-> Consumable.on_exit body — TCP grace-close, DB commit round-trip,
+> Cleanup.@cleanup body — TCP grace-close, DB commit round-trip,
 > distributed-lock release.
 >
 > Sister Q-block: [async-cleanup.md](async-cleanup.md) (Plan 100.4
@@ -14,10 +14,10 @@
 
 ## TL;DR
 
-`Consumable.on_exit` body **may** suspend (`await`, network/db I/O).
+`Cleanup.@cleanup` body **may** suspend (`await`, network/db I/O).
 Cancel-shield (D188 R3) prevents cancel storm during cleanup. Timeout
 enforced via `CleanupTimeoutError` injection (Plan 110.2). Realtime
-contexts (`#realtime` fn) forbid suspend в `on_exit` (D198).
+contexts (`#realtime` fn) forbid suspend в `@cleanup` (D198).
 
 ## When Suspend Is Required
 
@@ -34,7 +34,7 @@ contexts (`#realtime` fn) forbid suspend в `on_exit` (D198).
 ```nova
 type TcpStream { /* opaque */ }
 
-fn TcpStream consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
+fn TcpStream consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     match outcome {
         Success | Failure(_) => {
             await @send_eof()?
@@ -56,17 +56,17 @@ fn TcpStream @exit_timeout_ms() -> int => 5000   // D192 Level-1
 **With cancel-shield (D188 R3, Plan 110.2):**
 - Cancel delivery suspended until `exit_timeout_ms` exceeded.
 - Cleanup `await` completes naturally → `close()` runs.
-- Cancel propagates после `on_exit` returns.
+- Cancel propagates после `@cleanup` returns.
 
 **Timeout exceedance:** `CleanupTimeoutError` injected into ongoing
 `await`. Cleanup propagates через `?`. MultiError composed (D193):
 - primary: original outcome (`Failure(...)` or `Success`).
 - suppressed: `CleanupTimeoutError`.
 
-## Forbidden Operations в `on_exit`
+## Forbidden Operations в `@cleanup`
 
 ```nova
-fn Resource consume @on_exit(_outcome ScopeOutcome) Fail[E] -> () {
+fn Resource consume @cleanup(_outcome ScopeOutcome) Fail[E] -> () {
     // ❌ spawn { ... }                  // D159 — async cleanup невозможен
     // ❌ parallel for x in xs { ... }   // same — concurrent cleanup
     // ❌ supervised { ... }             // same — supervisor cleanup
@@ -85,15 +85,15 @@ Concurrent cleanup tasks unobserved → resource leaks.
 fn rt_use() -> () {
     consume g = mu.lock() { do_work() }
     //          ^^^^^^^^^^ exit_timeout = 0 enforced
-    // g.on_exit (MutexGuard.unlock) — sync, instant. OK в #realtime.
+    // g.@cleanup (MutexGuard.unlock) — sync, instant. OK в #realtime.
 
     consume tcp = TcpStream.connect(addr)? { send_data() }
-    //          ^^^^^^^^^^^^^^^^^^^^^^^^^ tcp.on_exit awaits → D192-zero-
+    //          ^^^^^^^^^^^^^^^^^^^^^^^^^ tcp.@cleanup awaits → D192-zero-
     //          timeout-suspend runtime error в #realtime context.
 }
 ```
 
-D198: `#realtime` forces `exit_timeout = 0`; suspend в `on_exit` during
+D198: `#realtime` forces `exit_timeout = 0`; suspend в `@cleanup` during
 scope → runtime error. Resources requiring async cleanup NOT usable
 в `#realtime` context.
 

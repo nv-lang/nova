@@ -1115,7 +1115,7 @@ nova bench dashboard [--history-branch BRANCH] [--out DIR] [--max-entries N] [--
 Анализатор покрытия consume-типов ([Plan 100.8](plans/100.8-performance-ide-tooling.md) / D7).
 Сканирует файл или директорию, собирает все consume-типизированные
 биндинги и сообщает, сколько из них покрыто через consume-методы
-(`Consumable.on_exit`, D188) или `defer`. Полезно как CI-проверка гигиены.
+(`Cleanup.@cleanup`, D188) или `defer`. Полезно как CI-проверка гигиены.
 
 ```
 nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]

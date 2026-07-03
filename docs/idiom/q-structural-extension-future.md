@@ -8,7 +8,7 @@
 
 ## Direction
 
-Allow augmenting existing Consumable types with additional behavior
+Allow augmenting existing Cleanup types with additional behavior
 without inheritance OR modification:
 
 ```nova
@@ -22,7 +22,7 @@ consume tx_augmented = tx {
     do_work()?
 }
 // On exit: Metricized.record + Loggable.flush + Retryable.cleanup +
-// Consumable.on_exit (LIFO composition).
+// Cleanup.@cleanup (LIFO composition).
 ```
 
 ## Why Not в Plan 110
@@ -49,7 +49,7 @@ intersection types simultaneously would:
    limited to protocol-protocol combinations?
 2. How does method dispatch resolve when multiple components have
    same method name?
-3. How does Consumable.on_exit order interact with composed protocols?
+3. How does Cleanup.@cleanup order interact with composed protocols?
 4. Should hot-path elision (D194) still work для augmented types?
 
 ## See also

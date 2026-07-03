@@ -1,17 +1,25 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Error & cleanup runtime model — panic / fail / defer / on_exit
+# Error & cleanup runtime model — panic / fail / defer / @cleanup
 
 > Сводный reference: как взаимодействуют `throw`/`Fail[E]`, `panic`, `exit`, `defer`
-> и `Consumable.on_exit` в рантайме. Модель была разбросана по
-> D13/D90/D158/D161/D188/D189/D194/D196 (4+ файла спеки) + код — этот документ сводит
+> и `Cleanup.@cleanup` в рантайме. Модель была разбросана по
+> D13/D90/D158/D161/D188/D189/D194/D196/D314 (4+ файла спеки) + код — этот документ сводит
 > её в одну карту. Авторитет — спека (D-ссылки) и реализация
 > (`compiler-codegen/nova_rt/effects.h`, `compiler-codegen/src/codegen/emit_c.rs`).
-> Создан 2026-06-20.
+> Создан 2026-06-20. Обновлён под Plan 173 Ф.1/Ф.2 (2026-07-03).
 >
-> **⚠️ Описывает ТЕКУЩУЮ (частично противоречивую) модель. Идёт редизайн —
-> [Plan 173](../plans/173-error-system-unify-harden.md)** (унификация в «defer-kernel»:
-> `defer(o ScopeOutcome)`, consume=сахар, единый re-dispatch; устранение 11 дефектов вкл.
-> with-Fail-глотает-panic; structured-concurrency error API). После Ф.2 хаб переписывается под единую модель.
+> **Статус редизайна ([Plan 173](../plans/173-error-system-unify-harden.md), D314 defer-kernel):**
+> - **Ф.1 (soundness+hygiene) — ЗАКРЫТА:** with-Fail-глотает-panic ИСПРАВЛЕН (D13, см. ниже);
+>   errdefer/okdefer/`defer |r|` ретрактнуты (D189); renames Consumable→`Cleanup[E]`, `@on_exit`→`@cleanup`,
+>   effect Cleanup→`ResourceTrace` (R1/R2).
+> - **Ф.2 (defer-kernel) — ЧАСТИЧНО:** `defer(o ScopeOutcome) { … }` — РЕАЛИЗОВАН (B1/B2): тело видит
+>   исход scope; errdefer/okdefer субсумированы. `consume` — реализован как **consume-flavored defer-entry**
+>   (D314 §3): sharing единый `ScopeOutcome`-примитив с `defer(o)`, но со своей consume-policy
+>   (cancel-shield/timeout/ResourceTrace/exactly-once/partial-init/compose). **Полное физическое слияние
+>   consume-монолита с defer-kernel run-site'ами + единый `nova_scope_exit` transport — ОТЛОЖЕНЫ**
+>   (compose-семантика consume(panic-dominance/pairwise) vs user-defer(chain) genuinely РАЗНЫЕ; terminal-
+>   транспорт-сайты несогласованы — требуют behavior-normalization design → followups
+>   `[M-173-b3-runsite-unify]`, `[M-173-consume-interrupt-cleanup]`).
 
 ## Три уровня катастрофы ([D13](../../spec/decisions/08-runtime.md#d13))
 
@@ -45,37 +53,45 @@
   defer'ы (LIFO) и ре-throw'ит наверх (`emit_c.rs:17615`). `defer` срабатывает на
   ЛЮБОМ exit, включая panic ([D90](../../spec/decisions/03-syntax.md#d90),
   `03-syntax.md:4509`).
-- `consume X = … { }` ловит исход и зовёт `on_exit(Panic(msg))` (`emit_c.rs:19273`,
-  [D188](../../spec/decisions/03-syntax.md#d188)); при двойной панике body-panic
-  доминирует над on_exit-panic ([D196](../../spec/decisions/03-syntax.md#d196) R4b).
+- `consume X = … { }` ловит исход и зовёт `@cleanup(Panic(msg))` (consume-монолит
+  `emit_c.rs` `Stmt::ConsumeScope`, [D188](../../spec/decisions/03-syntax.md#d188)); при двойной
+  панике body-panic доминирует над cleanup-panic ([D196](../../spec/decisions/03-syntax.md#d196) R4b).
+  Исход строится единым примитивом `assign_scope_outcome_from_frame` (общий с `defer(o)`, D314).
 - `panic` в defer-body НЕ даёт Rust-style double-panic-abort — композируется в
-  `MultiError` как suppressed ([D161](../../spec/decisions/03-syntax.md#d161),
-  `emit_c.rs:17651`); все N cleanup'ов выполняются.
-- `exit(code)` — единственный, кто НЕ разворачивает стек: `defer`/`on_exit` пропускаются.
+  `MultiError` как suppressed ([D161](../../spec/decisions/03-syntax.md#d161), defer-kernel
+  FAIL/LEAVE run-site'ы); все N cleanup'ов выполняются.
+- `exit(code)` — единственный, кто НЕ разворачивает стек: `defer`/`@cleanup` пропускаются.
 
-## panic НЕ ловится `Fail`-handler'ом (но есть баг)
+## panic НЕ ловится `Fail`-handler'ом (баг ИСПРАВЛЕН)
 
 По [D13](../../spec/decisions/08-runtime.md#d13) `panic` должен пройти СКВОЗЬ
 `with Fail[E]`-handler до границы fiber'а — handler ловит только `throw` (USER).
 
-> ⚠️ **БАГ `[M-172-with-fail-swallows-panic]` (открыт, P1).** На практике `with Fail[E]`
-> ГЛОТАЕТ панику: re-dispatch (`emit_c.rs:6650-6692`) ре-throw'ит только
-> `NOVA_THROW_CANCEL`, а `NOVA_THROW_PANIC` проваливается в «USER path» → паника
-> проглочена, выполнение продолжается (эмпирически подтверждено 2026-06-20, C-codegen).
-> Нарушение D13. Фикс — симметричная PANIC-ветка перед USER-path. NB: `supervised{}`
-> ловить panic ДОЛЖЕН (для рестарта) — это отдельная корректная граница.
+> ✅ **`[M-172-with-fail-swallows-panic]` — ИСПРАВЛЕН (Plan 173 Ф.1, D13 soundness).** Ранее
+> `with Fail[E]` ГЛОТАЛ панику: re-dispatch ре-throw'ил только `NOVA_THROW_CANCEL`, а
+> `NOVA_THROW_PANIC` проваливался в «USER path». Теперь SITE A (with-Fail terminal,
+> `emit_c.rs` `emit_with`) имеет симметричную PANIC-ветку ПЕРЕД USER-path: pop frame +
+> restore handlers/interrupt + `nova_rethrow_with_suppressed` (сохраняет kind=PANIC + msg +
+> suppressed-chain). CANCEL — тоже re-throw (`nova_throw_cancel_reason`). Гейт:
+> `nova_tests/err173_0/rt/f1_with_fail_swallow_panic`. NB: `supervised{}` ловить panic
+> ДОЛЖЕН (для рестарта) — отдельная корректная граница.
+>
+> **Планируемая унификация transport** (`nova_scope_exit(primary, {CATCH,TRANSPARENT})`, D314 §4) —
+> ОТЛОЖЕНА: terminal-сайты (with-Fail CATCH / defer+consume TRANSPARENT) несогласованы в
+> kind-dispatch (SITE A: PANIC→rethrow, CANCEL→cancel_reason; defer C1: все→rethrow; consume:
+> PANIC→nv_panic) → единый helper требует behavior-normalization design (followup).
 
 ## errdefer / okdefer / defer |result| — УДАЛЕНЫ ([D189](../../spec/decisions/03-syntax.md#d189))
 
 Ретракнуты hard-cutover (D189, Plan 110.5.7); парсер реджектит (`parser/mod.rs:9835`).
 Миграция:
 
-| Было (ретракнуто) | Стало |
+| Было (ретракнуто) | Стало ([D314](../../spec/decisions/03-syntax.md#d314) `defer(o)` — РЕАЛИЗОВАН) |
 |---|---|
-| `errdefer { rollback }` | `on_exit(o) match { Failure(_) / Panic(_) => rollback }`, либо флаг-паттерн `mut done=false; defer { if !done { rollback } }; …; done=true` |
-| `okdefer { commit }` | `on_exit(o) match { Success => commit }` |
-| `defer \|result\| { … }` | `on_exit(outcome ScopeOutcome)` |
-| `defer { close }` (безусловный) | **остаётся** — `defer` жив |
+| `errdefer { rollback }` | `defer(o ScopeOutcome) { match o { Failure(_) \| Panic(_) => rollback, Success => () } }` |
+| `okdefer { commit }` | `defer(o ScopeOutcome) { match o { Success => commit, _ => () } }` |
+| `defer \|result\| { … }` | `defer(o ScopeOutcome) { … }` (Zig-парность: `Failure(e)` payload типизирован) |
+| `defer { close }` (безусловный) | **остаётся** — плейн `defer` жив |
 
 Идиома cleanup'а ресурса — [consume-scope-cleanup.md](consume-scope-cleanup.md)
 (Plan 110 / D188). Стиль написания — [nv-coding-style.md](../nv-coding-style.md) §20.4.
@@ -86,8 +102,9 @@
 - **[D90](../../spec/decisions/03-syntax.md#d90)** — `defer` на любом exit (кроме `exit()`).
 - **[D158](../../spec/decisions/03-syntax.md#d158)** — failable cleanup + `MultiError`.
 - **[D161](../../spec/decisions/03-syntax.md#d161)** — panic-in-defer composition (нет double-abort).
-- **[D188](../../spec/decisions/03-syntax.md#d188)** — `Consumable.on_exit(ScopeOutcome: Success/Failure/Panic)`.
+- **[D188](../../spec/decisions/03-syntax.md#d188)** — `Cleanup.@cleanup(ScopeOutcome: Success/Failure/Panic)`.
 - **[D189](../../spec/decisions/03-syntax.md#d189)** — `errdefer`/`okdefer`/`defer |result|` удалены.
-- **[D194](../../spec/decisions/03-syntax.md#d194)** — `Consumable[Never]` infallible cleanup.
-- **[D196](../../spec/decisions/03-syntax.md#d196)** R4b — body-panic доминирует, exactly-once on_exit.
-- Код: `effects.h` (`nv_panic`, `NovaFailFrame`), `emit_c.rs` (defer/on_exit codegen, Fail-handler re-dispatch).
+- **[D194](../../spec/decisions/03-syntax.md#d194)** — `Cleanup[Never]` infallible cleanup (caller-relax жив; §perf-элизия НЕ реализована → followup).
+- **[D196](../../spec/decisions/03-syntax.md#d196)** R4b — body-panic доминирует, exactly-once `@cleanup`.
+- **[D314](../../spec/decisions/03-syntax.md#d314)** — defer-kernel: `defer(o ScopeOutcome)` примитив; `consume`/`@cleanup` = сахар над outcome-defer; единый `nova_scope_exit` (transport-унификация отложена).
+- Код: `effects.h` (`nv_panic`, `NovaFailFrame`), `emit_c.rs` (defer(o)/consume codegen, `assign_scope_outcome_from_frame`, Fail-handler re-dispatch SITE A).

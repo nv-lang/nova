@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Q-hot-path-performance — Consumable[never] + No WithExitTimeout (D194)
+# Q-hot-path-performance — Cleanup[never] + No WithExitTimeout (D194)
 
 > **Plan 110 Ф.14.2 Q-block.** Q-hot-path-performance: minimizing
 > ConsumeScope overhead для tight loops, lock contention, high-frequency
@@ -8,7 +8,7 @@
 
 ## TL;DR
 
-For `Consumable[never]` resources without `WithExitTimeout` impl:
+For `Cleanup[never]` resources without `WithExitTimeout` impl:
 codegen elidet cancel-shield setup + timeout resolution + outcome
 construction (Plan 110.1.7). Critical для:
 - Lock acquisition в tight loops.
@@ -22,12 +22,12 @@ Expected overhead: **`consume X = mu.lock() { body }` compiles to
 ## When Hot-Path Optimization Applies
 
 **Eligibility:**
-1. Type implements `Consumable[never]` (on_exit has no `Fail` effect).
+1. Type implements `Cleanup[never]` (@cleanup has no `Fail` effect).
 2. Type does NOT satisfy `WithExitTimeout` protocol (no
    `exit_timeout_ms()` method).
 
 **What gets elided:**
-- Cancel-shield setup/teardown (on_exit guaranteed not throws → no
+- Cancel-shield setup/teardown (@cleanup guaranteed not throws → no
   MultiError compose path needed).
 - Timeout resolution `nv_resolve_exit_timeout` call (not needed —
   release instant).
@@ -38,7 +38,7 @@ Expected overhead: **`consume X = mu.lock() { body }` compiles to
 ```c
 Nova_MutexGuard* g = Nova_Mutex_consume_lock(m);
 /* body */
-Nova_MutexGuard_consume_on_exit(g, NULL /* outcome ignored */);
+Nova_MutexGuard_consume_cleanup(g, NULL /* outcome ignored */);
 ```
 
 vs full version:
@@ -60,7 +60,7 @@ Nova_ScopeOutcome* outcome_val;
 if (_outcome_kind == 0) { outcome_val = nova_make_ScopeOutcome_Success(); }
 else if (_outcome_kind == 1) { /* construct Failure */ }
 else { /* construct Panic */ }
-Nova_MutexGuard_consume_on_exit(g, outcome_val);
+Nova_MutexGuard_consume_cleanup(g, outcome_val);
 if (_outcome_kind == 1) { nova_rethrow_with_suppressed(&_frame); }
 else if (_outcome_kind == 2) { nv_panic(_frame.error_msg); }
 #undef <binding>
@@ -71,7 +71,7 @@ for ~1M/s lock acquisition loops.
 
 ## Examples of Hot-Path-Eligible Resources
 
-| Type | Consumable[never] | WithExitTimeout | Hot-path? |
+| Type | Cleanup[never] | WithExitTimeout | Hot-path? |
 |---|---|---|---|
 | `MutexGuard` | ✅ | ❌ | ✅ |
 | `ReadGuard` | ✅ | ❌ | ✅ |
@@ -87,7 +87,7 @@ for ~1M/s lock acquisition loops.
 **Hot-path elision sacrifices throw handling в body.** If body throws,
 control flow longjmps к outer fail-frame **without calling on_exit**.
 
-**Implication for Consumable[never] resources:**
+**Implication for Cleanup[never] resources:**
 
 ```nova
 fn use_mutex(mu Mutex) Fail[E] -> () {
@@ -96,7 +96,7 @@ fn use_mutex(mu Mutex) Fail[E] -> () {
         @do_work()
     }
     // If risky_op throws:
-    //   - g.on_exit NOT called.
+    //   - g.@cleanup NOT called.
     //   - Mutex stays LOCKED! Deadlock potential.
 }
 ```
@@ -151,7 +151,7 @@ For hot-path-eligible code, expect:
 - ❌ NO `nova_fail_push` / `nova_fail_pop` pair.
 - ❌ NO `setjmp` / `longjmp`.
 - ❌ NO `nova_make_ScopeOutcome_*` calls.
-- ✅ Direct `Nova_<T>_consume_lock` + body + `Nova_<T>_consume_on_exit(g, NULL)`.
+- ✅ Direct `Nova_<T>_consume_lock` + body + `Nova_<T>_consume_cleanup(g, NULL)`.
 
 ### Profiling
 
@@ -181,7 +181,7 @@ take seconds.
 ```nova
 // ❌ DEADLOCK RISK:
 consume g = mu.lock() {
-    risky_op()?       // body throws → g.on_exit NOT called → Mutex stuck
+    risky_op()?       // body throws → g.@cleanup NOT called → Mutex stuck
 }
 ```
 
@@ -214,7 +214,7 @@ overhead unconditionally.
 
 ## See also
 
-- [D194 Consumable[never] + hot-path](../../spec/decisions/03-syntax.md#d194).
+- [D194 Cleanup[never] + hot-path](../../spec/decisions/03-syntax.md#d194).
 - [Plan 110.1.7 hot-path elision codegen](../plans/decomposition.md).
 - [Q-perf-considerations](q-perf-considerations.md).
 - [cleanup-cookbook.md §7 Performance](../cleanup-cookbook.md).

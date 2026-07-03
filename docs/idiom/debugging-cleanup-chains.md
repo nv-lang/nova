@@ -9,12 +9,12 @@
 
 | Symptom | Likely cause | Investigation tool |
 |---|---|---|
-| Cleanup fired multiple times | D188 R2 violation OR manual on_exit call | Compile-time D188-r2-manual-on-exit error (Plan 110.1.5) |
-| Cleanup skipped on throw | Resource not Consumable, OR codegen incorrect | nova consume-analyze + manual codegen inspect |
+| Cleanup fired multiple times | D188 R2 violation OR manual @cleanup call | Compile-time D188-r2-manual-on-exit error (Plan 110.1.5) |
+| Cleanup skipped on throw | Resource not Cleanup, OR codegen incorrect | nova consume-analyze + manual codegen inspect |
 | Cancel storm during cleanup | Cancel-shield не active | Verify Plan 110.2 cancel-shield landing; trace via OTel |
-| MultiError chain depth > 256 | Recursive defer/on_exit cycle | D193 depth-limit truncates; check MultiError.walk() for `truncated` marker |
+| MultiError chain depth > 256 | Recursive defer/@cleanup cycle | D193 depth-limit truncates; check MultiError.walk() for `truncated` marker |
 | `panic:` in unexpected places | NOVA_THROW_PANIC longjmp through cleanup | MultiError.find_first_panic() locates origin |
-| Memory leak post-cleanup | on_exit не finalizing resource | nova consume-analyze + valgrind |
+| Memory leak post-cleanup | @cleanup не finalizing resource | nova consume-analyze + valgrind |
 
 ## Investigation Recipes
 
@@ -80,7 +80,7 @@ if msg.starts_with("cancel: ") {
 ### Recipe 4: OpenTelemetry tracing (D185)
 
 ```nova
-with Cleanup = OtelCleanupHandler.new(exporter: my_otel_exporter) {
+with ResourceTrace = OtelCleanupHandler.new(exporter: my_otel_exporter) {
     with Application = Application.handler() {
         run_app()
     }
@@ -88,11 +88,11 @@ with Cleanup = OtelCleanupHandler.new(exporter: my_otel_exporter) {
 ```
 
 Each `consume X = ... { body }` emit OTel spans:
-- `on_scope_enter` → span open with attributes:
+- `on_resource_enter` → span open with attributes:
   - `cleanup.label` = type name (e.g., "Transaction").
   - `cleanup.timeout_ms` = resolved deadline.
   - `cleanup.start_time_ns` = nanos.
-- `on_scope_exit` → span close with status:
+- `on_resource_exit` → span close with status:
   - OK / ERROR_failed / ERROR_panic.
   - `duration_ms` attribute.
 
@@ -106,11 +106,11 @@ nova consume-analyze src/db.nv
 ```
 
 Reports:
-- Types implementing `Consumable[E]` per file.
-- Coverage: which paths trigger on_exit (success / throw / cancel / panic).
-- Hot-path elision applicable (Consumable[never] + no WithExitTimeout).
+- Types implementing `Cleanup[E]` per file.
+- Coverage: which paths trigger @cleanup (success / throw / cancel / panic).
+- Hot-path elision applicable (Cleanup[never] + no WithExitTimeout).
 - D198-realtime-application-override warnings.
-- Suspected D188 R2 violations (manual on_exit calls).
+- Suspected D188 R2 violations (manual @cleanup calls).
 
 (Plan 110.6.x integration with LSP for in-editor diagnostics.)
 
@@ -118,12 +118,12 @@ Reports:
 
 | Error code | Cause | Fix |
 |---|---|---|
-| `D188-not-consumable` | Init returns type без `on_exit` method | Implement `fn T consume @on_exit(outcome) -> ()` |
-| `D188-malformed-on-exit` | `on_exit` first param не `ScopeOutcome` | Fix signature: `(outcome ScopeOutcome)` |
-| `D188-r2-manual-on-exit` | Manual `binding.on_exit(...)` в body | Remove manual call (auto-dispatch at scope-exit) |
+| `D188-not-consumable` | Init returns type без `@cleanup` method | Implement `fn T consume @cleanup(outcome) -> ()` |
+| `D188-malformed-on-exit` | `@cleanup` first param не `ScopeOutcome` | Fix signature: `(outcome ScopeOutcome)` |
+| `D188-r2-manual-on-exit` | Manual `binding.@cleanup(...)` в body | Remove manual call (auto-dispatch at scope-exit) |
 | `D196-wrapped-init-needs-unwrap` | Init returns Option/Result без `?`/`!!` | Add `?` или `!!` |
-| `D196-divergent-consumable` | if/else branches return different Consumable types | Unify branch types |
-| `D192-zero-timeout-suspend` | `await` in `#realtime` `on_exit` | Remove suspend OR move to non-realtime context |
+| `D196-divergent-consumable` | if/else branches return different Cleanup types | Unify branch types |
+| `D192-zero-timeout-suspend` | `await` in `#realtime` `@cleanup` | Remove suspend OR move to non-realtime context |
 | `D198-realtime-application-override` | Application timeout ignored in `#realtime` context | Restructure to use Level 1 (WithExitTimeout) or Level 3 (hardcoded) |
 | `D189-deprecated-okdefer/errdefer/defer-result` | Old cleanup syntax | Migrate via `nova fix --simplify-cleanup` |
 
@@ -131,10 +131,10 @@ Reports:
 
 | Issue | Likely cause | Resolution |
 |---|---|---|
-| Cleanup hung | Deadlock в `on_exit` body (e.g., trying to acquire already-held lock) | Check `consume re-entrance` (D197); use try-lock fallback |
+| Cleanup hung | Deadlock в `@cleanup` body (e.g., trying to acquire already-held lock) | Check `consume re-entrance` (D197); use try-lock fallback |
 | OOM в cleanup | MultiError chain grows unboundedly | D193 depth-limit kicks in at 256; redesign defer cycle |
 | Cleanup never reached | Init throws (D188 R1 partial-construction) — expected behavior | Confirm via partial-init test fixture; OR fix init |
-| `CleanupTimeoutError` | Cleanup exceeded `exit_timeout_ms` | Increase WithExitTimeout impl, OR set Application.default_exit_timeout_ms, OR optimize on_exit |
+| `CleanupTimeoutError` | Cleanup exceeded `exit_timeout_ms` | Increase WithExitTimeout impl, OR set Application.default_exit_timeout_ms, OR optimize @cleanup |
 
 ## See also
 

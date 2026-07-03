@@ -110,7 +110,7 @@ capability declaration tracks privilege.
 ## `#cancel_safe` — аттестация для cleanup-вызовов (Plan 110.7.3.a)
 
 Когда FFI-функция вызывается **из `consume X = ... { body }` cleanup
-path** — то есть из `on_exit` метода consume-типа — она исполняется
+path** — то есть из `@cleanup` метода consume-типа — она исполняется
 под активным cancel-shield'ом (D188 R3). Внешние cancel'ы откладываются
 до выхода из scope'а; C-функция должна терпеть это игнорирование.
 
@@ -140,7 +140,7 @@ int good_close(int fd) {
 
 ### 2. Идемпотентность для cleanup семантики
 
-D188 R2 гарантирует exactly-once вызов `on_exit`, но компилятор
+D188 R2 гарантирует exactly-once вызов `@cleanup`, но компилятор
 не дублирует. Однако partial-effect cleanup от прошлой попытки
 (если что-то fanned-out до panic) должен быть safe для повтора —
 например, `sqlite3_close(NULL)` no-op, не SEGV.
@@ -162,7 +162,7 @@ C-код таких допущений делать **не должен**. Patte
 #cancel_safe
 external fn sqlite3_close_v2(handle int) -> int  // С-функция возвращает rc
 
-fn SqliteConn consume @on_exit(_outcome ScopeOutcome) Fail[IoError] -> () {
+fn SqliteConn consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () {
     ro rc = sqlite3_close_v2(@handle)
     if rc != 0 {
         throw IoError { reason: "sqlite close rc=${rc}" }
@@ -173,7 +173,7 @@ fn SqliteConn consume @on_exit(_outcome ScopeOutcome) Fail[IoError] -> () {
 
 ### Lint W_FFI_CANCEL_UNSAFE
 
-Compile-time: вызов FFI без `#cancel_safe` из `on_exit` body → warning
+Compile-time: вызов FFI без `#cancel_safe` из `@cleanup` body → warning
 `W_FFI_CANCEL_UNSAFE` с suggestion «либо добавь аттестацию, либо оберни
 в sync wrapper». Status: [M-110.7.3-w-ffi-cancel-unsafe-lint] followup —
 attribute parses в bootstrap'е, lint enforcement landing в follow-up

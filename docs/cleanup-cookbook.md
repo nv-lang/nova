@@ -27,17 +27,17 @@ fn read(path: &str) -> Result<String, IoError> {
 // Nova:
 type File { fd int }
 
-fn File consume @on_exit(_outcome ScopeOutcome) -> () => @do_close()
+fn File consume @cleanup(_outcome ScopeOutcome) -> () => @do_close()
 
 fn read(path str) Fail[IoError] -> str {
     consume f = File.open(path)? {
-        f.read_all()?    // on_exit fires explicitly
+        f.read_all()?    // @cleanup fires explicitly
     }
 }
 ```
 
 **Difference**: Nova `consume {}` makes cleanup **visible** at call-site
-(no implicit drop magic). Async cleanup via `suspend` в `on_exit` (D191)
+(no implicit drop magic). Async cleanup via `suspend` в `@cleanup` (D191)
 работает «из коробки» — Rust async-Drop unresolved.
 
 ### 1.2 Из Go `defer`
@@ -63,7 +63,7 @@ func process(db *DB) error {
 
 ```nova
 // Nova:
-fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
         Success   => @commit()?
         Failure(_) => @rollback()?
@@ -96,7 +96,7 @@ try (Transaction tx = db.begin()) {
 consume tx = db.begin()? {
     do_work()?
 }
-// outcome routing встроено в Consumable.on_exit
+// outcome routing встроено в Cleanup.@cleanup
 ```
 
 **Difference**: Java `AutoCloseable.close()` не distinguishes success vs
@@ -149,7 +149,7 @@ consume f = file {
 ```nova
 type Transaction { conn Connection, id int }
 
-fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
         Success      => @conn.commit(@id)?
         Failure(err) => {
@@ -180,7 +180,7 @@ fn process_order(db Db, order Order) Fail[OrderError] Db -> Receipt {
 ```nova
 type File { fd int }
 
-fn File consume @on_exit(_outcome ScopeOutcome) Fail[IoError] -> () =>
+fn File consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () =>
     @do_close()?
 
 fn read_config(path str) Fail[IoError] -> Config {
@@ -191,23 +191,23 @@ fn read_config(path str) Fail[IoError] -> Config {
 }
 ```
 
-### 2.3 Mutex / locks — Consumable[never] hot-path
+### 2.3 Mutex / locks — Cleanup[never] hot-path
 
 ```nova
 // stdlib:
 type MutexGuard { /* runtime opaque */ }
-fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> () => @release()
+fn MutexGuard consume @cleanup(_outcome ScopeOutcome) -> () => @release()
 
 // usage:
 fn increment_counter(state State) -> () {        // no Fail[E]!
-    consume _l = state.mutex.acquire() {         // Consumable[never]
+    consume _l = state.mutex.acquire() {         // Cleanup[never]
         state.value += 1
     }
 }
 ```
 
 **Hot-path optimization** (D194 §perf): codegen elidet'ит shield/timeout/
-outcome для `Consumable[never]` без `WithExitTimeout` — компилируется в
+outcome для `Cleanup[never]` без `WithExitTimeout` — компилируется в
 `state.value += 1; state.mutex.release()`. Zero overhead vs raw lock+
 release pair.
 
@@ -216,7 +216,7 @@ release pair.
 ```nova
 type TcpStream { /* opaque */ }
 
-fn TcpStream consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
+fn TcpStream consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     match outcome {
         Success => {
             @send_eof()?
@@ -243,7 +243,7 @@ fn handle_request(addr str) Fail[IoError] Net -> () {
 ```nova
 type PooledConn { pool ConnPool, conn Conn }
 
-fn PooledConn consume @on_exit(_outcome ScopeOutcome) -> () => {
+fn PooledConn consume @cleanup(_outcome ScopeOutcome) -> () => {
     @pool.release(@conn)             // return to pool, не close
 }
 
@@ -254,7 +254,7 @@ fn query(pool ConnPool, sql str) Fail[DbError] -> Rows {
 }
 ```
 
-`Consumable[never]` — release in pool never fails (atomic pool op).
+`Cleanup[never]` — release in pool never fails (atomic pool op).
 
 ### 2.6 Builder pattern (raw `consume`, не scope-block)
 
@@ -322,8 +322,8 @@ external type SqliteConn
 external fn sqlite_open(path str) -> SqliteConn
 external fn sqlite_close(conn SqliteConn) Fail[IoError] -> ()
 
-// Wrap external resource в Consumable:
-fn SqliteConn consume @on_exit(_outcome ScopeOutcome) Fail[IoError] -> () =>
+// Wrap external resource в Cleanup:
+fn SqliteConn consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () =>
     sqlite_close(@)?
 
 fn query_users(db_path str) Fail[IoError] -> []User {
@@ -343,7 +343,7 @@ external fn curl_init() -> CurlHandle
 external fn curl_perform(h CurlHandle) Fail[NetError] -> []byte
 external fn curl_cleanup(h CurlHandle) -> ()
 
-fn CurlHandle consume @on_exit(_outcome ScopeOutcome) -> () => curl_cleanup(@)
+fn CurlHandle consume @cleanup(_outcome ScopeOutcome) -> () => curl_cleanup(@)
 
 fn fetch(url str) Fail[NetError] -> []byte {
     consume h = curl_init() {
@@ -355,7 +355,7 @@ fn fetch(url str) Fail[NetError] -> []byte {
 
 ## Раздел 5 — Anti-patterns
 
-### 5.1 Forgetting `Consumable` impl на новом resource type
+### 5.1 Forgetting `Cleanup` impl на новом resource type
 
 ```nova
 type MyResource { handle int }
@@ -366,8 +366,8 @@ fn use_it() -> () {
 }
 ```
 
-Suggestion: implement `Consumable[E]` для resource type. Quick-fix
-LSP code-action «implement Consumable» (Plan 110.6 Ф.10.6).
+Suggestion: implement `Cleanup[E]` для resource type. Quick-fix
+LSP code-action «implement Cleanup» (Plan 110.6 Ф.10.6).
 
 ### 5.2 Wrapped init без unwrap
 
@@ -379,7 +379,7 @@ consume tx = db.maybe_begin() { ... }    // maybe_begin() : Option[Tx]
 
 Suggestion: `consume tx = db.maybe_begin()!! { ... }` или check first.
 
-### 5.3 Divergent Consumable types в conditional
+### 5.3 Divergent Cleanup types в conditional
 
 ```nova
 // ❌ DON'T:
@@ -389,13 +389,13 @@ consume r = if cond { File.open(path)? } else { TcpStream.connect(addr)? } {
 // → D196-divergent-consumable
 ```
 
-Suggestion: extract в polymorphic wrapper type или use `Box[Consumable[E]]`.
+Suggestion: extract в polymorphic wrapper type или use `Box[Cleanup[E]]`.
 
-### 5.4 spawn / parallel / supervised в `on_exit`
+### 5.4 spawn / parallel / supervised в `@cleanup`
 
 ```nova
 // ❌ DON'T:
-fn Resource consume @on_exit(_o ScopeOutcome) -> () {
+fn Resource consume @cleanup(_o ScopeOutcome) -> () {
     spawn { @async_flush() }         // → E_CLEANUP_FORBIDDEN_OPERATION
 }
 ```
@@ -405,7 +405,7 @@ off-thread queue с persistent worker fiber.
 
 ### 5.5 Cancel-shield opt-out attempts
 
-Cancel-shield always on в `on_exit` body. Невозможно отключить — это
+Cancel-shield always on в `@cleanup` body. Невозможно отключить — это
 deliberate (Rust scopeguard / C++23 lessons показывают: opt-in shield
 большинство забывает).
 
@@ -437,7 +437,7 @@ match process() {
 
 ```nova
 fn main() Io -> () {
-    with Cleanup = OtelCleanupHandler.new(exporter: otel_exporter) {
+    with ResourceTrace = OtelCleanupHandler.new(exporter: otel_exporter) {
         with Application = Application.handler() {
             run_app()
         }
@@ -457,14 +457,14 @@ nova consume-analyze src/db.nv
 ```
 
 Показывает:
-- Какие типы implement Consumable[E];
+- Какие типы implement Cleanup[E];
 - Coverage (всё ли cleanup path covered);
-- Hot-path opt применён ли (Consumable[never] + no WithExitTimeout);
+- Hot-path opt применён ли (Cleanup[never] + no WithExitTimeout);
 - Potential `D198-realtime-application-override` warnings.
 
 ## Раздел 7 — Performance considerations
 
-### 7.1 Когда использовать `Consumable[never]`
+### 7.1 Когда использовать `Cleanup[never]`
 
 Use when cleanup действительно cannot fail:
 - Lock release (no I/O).
@@ -483,7 +483,7 @@ Use when cleanup действительно cannot fail:
 nova build --release --asm-dump src/lock_path.nv
 ```
 
-Грепни `nv_consume_enter` / `nv_resolve_exit_timeout` — для `Consumable[never]`
+Грепни `nv_consume_enter` / `nv_resolve_exit_timeout` — для `Cleanup[never]`
 + no `WithExitTimeout` они должны быть **отсутствующими** в hot-path asm.
 
 ### 7.3 Cancel-shield overhead
@@ -492,7 +492,7 @@ Per benchmark (Plan 110.6 Ф.11.5 target): cancel-shield + 3-level resolution
 overhead ≤ Plan 100.4 baseline + 5%. Typical: < 100ns на cleanup entry.
 
 Если профиль показывает cleanup overhead > 5%:
-- Check `Consumable[never]` opportunity (hot-path elision).
+- Check `Cleanup[never]` opportunity (hot-path elision).
 - Hoist `consume{}` outside hot loop (acquire lock once vs per-iteration).
 - Profile actual bottleneck — cleanup rarely dominates.
 
