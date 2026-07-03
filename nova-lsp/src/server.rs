@@ -482,6 +482,10 @@ impl LanguageServer for Backend {
                 // implementations, via the AST #impl / method registry).
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
                 implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+                // Plan 104.10 Ф.16: foldingRange — syntactic AST-walk yielding
+                // regions for fn/type bodies, nested `{ }` blocks, import groups
+                // and multi-line doc-comments (not an indentation heuristic).
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 // Plan 104.6: rename + format-on-save.
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -1206,6 +1210,28 @@ impl LanguageServer for Backend {
             Err(_) => None,
         };
         Ok(highlights)
+    }
+
+    /// Plan 104.10 Ф.16: `textDocument/foldingRange` — syntactic folding regions
+    /// derived from AST node spans (fn/type bodies, nested `{ }` blocks, import
+    /// groups, multi-line doc-comments). Parse-only; no type-check.
+    async fn folding_range(
+        &self,
+        params: FoldingRangeParams,
+    ) -> Result<Option<Vec<FoldingRange>>> {
+        let uri = params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+
+        // Contained so a parser panic degrades to no folds, never a crash.
+        let ranges = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || crate::folding_range::compute_folding_ranges(&src))
+        })) {
+            Ok(r) => r,
+            Err(_) => Vec::new(),
+        };
+        Ok(Some(ranges))
     }
 
     /// Plan 104.5: code_action — ≥25 quick-fix providers.
