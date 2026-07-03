@@ -453,7 +453,7 @@ C-handle освобождается через `consume @finish` (или drop-pa
 **⚠ Конвенции/std, заметки (owner-sign-off, conventions-governance):**
 - **PURE-codec-исключение из effect-триады** — конвенция сама говорит «PURE codec/serde need NO effect» → **D333 = явное исключение, НЕ violation**.
 - **brotli C-FFI by-necessity** — nv-sourcing требует .nv где feasible; brotli=heavy native → C-FFI (как net/libuv). **Necessity-аргумент D337**; pure-Nova-brotli=followup §11.
-- **crc32 промоут** `_experimental`→stable — owner-sign-off.
+- **crc32 промоут** `_experimental`→stable — ✅ owner-sign-off получен 2026-07-03 (реюз as-is free-function-формы, Q15).
 
 После большой задачи — обновить `project-creation.txt` + `nova-private/discussion-log.md` + `simplifications.md`.
 
