@@ -144,7 +144,8 @@
 | `[M-116-openssl-backend]` | Опц. OpenSSL TLS 1.0/1.1 handler (rustls = default); Plan 116 не начат (PLANNED). | plan-116 Followups | P2 |
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
 | `[M-ide-integration-deferred]` | ✅ **CLOSED 2026-06-17 (Plan 104 ВСЕ sub-plans 104.0–104.9).** Production LSP полностью построен: completion/refs/rename/format/code-actions/symbols/tree-sitter/editor-packaging/close-out. 268 tests PASS. | plan-104 Followups | ✅ done |
-| `[M-104.2-cross-file-goto]` | goto-definition V1 single-file; cross-file через provenance file_id→path (peer_files). | plan-104.10 Ф.3 | P1 |
+| `[M-104.2-cross-file-goto]` | ✅ RESOLVED (Plan 104.10 Ф.3, 2026-07-03). `goto_definition.rs` → cross-file через provenance: `span.file_id` → `file_map` (из реальных `peer_files`, НЕ grep) → `Location` в файле-цели; range disk-authoritative для peer'ов, in-memory для entry. Server использует Ф.1-кеш. 16 unit + `e2e_smoke::pos11` (JSON-RPC cross-file → prelude). | plan-104.10 Ф.3 | ✅ done |
+| `[M-104.10-vfs-overlay-imports]` | 🟡 PARTIAL (Ф.3). Range peer-цели считается по диску (span'ы disk-relative из `resolve_imports_inline`/`parse_with_file_id`). Единый VFS-overlay открытых буферов поверх import-резолва И позиционирования (несохранённая правка peer'а сдвигает goto live, zls-стиль) отложен — требует чтения открытых буферов в `resolve_imports_inline`. Дом = Ф.18. | plan-104.10 Ф.3 → Ф.18 | остаток Ф.18 |
 | `[M-104.2-symbol-cache]` | Каждый hover/goto re-parses файл; per-URI ResolvedModule cache (Module+file_map+env). | plan-104.10 Ф.1 | P1 |
 | `[M-104.2-protocol-method-hover]` | Hover на protocol-method bodies не отдельно резолвится; cross-file hover + member-access. | plan-104.10 Ф.4/Ф.6 | P2 |
 | `[M-104.2-signature-type-dispatch]` | Signature help: overload по имени, не типу receiver; type-driven через expr_types. | plan-104.10 Ф.8 | P2 |

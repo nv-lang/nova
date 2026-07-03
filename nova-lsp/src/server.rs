@@ -24,7 +24,7 @@ use crate::compiler::{check_file_with_root, check_workspace, run_with_large_stac
 use crate::completion;
 use crate::diagnostic_mapping::to_lsp;
 use crate::format::{format_document, format_range, on_type_format};
-use crate::goto_definition::compute_goto_definition;
+use crate::goto_definition::compute_goto_definition_in;
 use crate::hover::compute_hover;
 use crate::incremental::apply_changes;
 use crate::rename::{prepare_rename, RenameDoc, compute_rename};
@@ -923,10 +923,15 @@ impl LanguageServer for Backend {
         Ok(field_hover)
     }
 
-    /// Plan 104.2: goto-definition handler.
+    /// Plan 104.10 Ф.3: cross-file goto-definition.
     ///
-    /// V1 scope: single-file only. Cross-file via workspace graph — V2
-    /// ([M-104.2-cross-file-goto]).
+    /// Resolves the symbol under the cursor and returns the [`Location`] of its
+    /// declaration in the *right* file — the declaration `Span`'s `file_id` is
+    /// mapped back to its source file via the resolved module's provenance
+    /// `file_map` (built from real `peer_files`, never a textual re-scan). The
+    /// target range is computed in that file's own UTF-16 coordinates: from the
+    /// in-memory buffer for the current document, and from disk for a peer file
+    /// (whose spans were parsed from disk during import inlining).
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
@@ -935,11 +940,15 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri.clone();
         let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
         let src = doc.text.to_string();
+        let version = doc.version;
         drop(doc);
 
+        let state = Arc::clone(&self.state);
         let uri_clone = uri.clone();
         let location = run_with_large_stack(move || {
-            compute_goto_definition(&src, pos, &uri_clone)
+            // Reuse the Ф.1 resolved-module cache (build once per doc version).
+            let resolved = state.get_or_build_resolved(&uri_clone, version, &src);
+            compute_goto_definition_in(&resolved, &src, pos, &uri_clone)
         });
         Ok(location.map(GotoDefinitionResponse::Scalar))
     }

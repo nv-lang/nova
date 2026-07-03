@@ -725,3 +725,77 @@ fn neg2_unknown_method_returns_method_not_found() {
     // Server must still be alive — perform clean shutdown.
     lsp.shutdown_and_exit();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan 104.10 Ф.3 — cross-file goto-definition (integration / spawn)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Build a `file://` URI for a real on-disk path (forward-slash normalized).
+fn file_uri(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        // Windows drive path: file:///D:/...
+        format!("file:///{s}")
+    }
+}
+
+/// pos11 (Plan 104.10 Ф.3): cross-file `textDocument/definition`.
+///
+/// Opens a real Nova file (rooted inside the repo so stdlib import resolution
+/// works) that calls the prelude symbol `assert`, then requests a definition at
+/// the call site. The response must be a concrete `Location` whose URI is a
+/// DIFFERENT file — the stdlib prelude — proving true cross-file resolution over
+/// the full JSON-RPC transport, not a same-file fallback.
+#[test]
+fn pos11_definition_cross_file_prelude() {
+    // Root a fixture inside the repo: CARGO_MANIFEST_DIR = .../nova-lsp; parent
+    // is the repo root, where std/ lives.
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo = manifest.parent().expect("nova-lsp has a parent").to_path_buf();
+    let dir = repo.join("target").join("f3_e2e_def");
+    std::fs::create_dir_all(&dir).expect("create fixture dir");
+    let path = dir.join("main.nv");
+    let src = "module f3.e2e\nfn f() {\n  assert(true)\n}\n";
+    std::fs::write(&path, src).expect("write fixture file");
+    let uri = file_uri(&path);
+
+    let mut lsp = LspProcess::spawn();
+    lsp.initialize_full();
+    lsp.send_notification("textDocument/didOpen", did_open_params(&uri, src));
+    std::thread::sleep(Duration::from_millis(400));
+
+    // Cursor on `assert` (line 2, column 2).
+    let resp = lsp.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 2 },
+        }),
+    );
+    assert!(resp.get("error").is_none(), "definition returned error: {resp}");
+
+    let result = &resp["result"];
+    // Result may be a single Location object or an array; normalize to one.
+    let loc = if result.is_array() {
+        result.get(0).cloned().unwrap_or(serde_json::Value::Null)
+    } else {
+        result.clone()
+    };
+    assert!(!loc.is_null(), "cross-file definition must return a Location, got null: {resp}");
+
+    let target_uri = loc["uri"].as_str().expect("Location.uri is a string");
+    assert_ne!(target_uri, uri, "definition must resolve to a DIFFERENT file (cross-file)");
+    let norm = target_uri.replace('\\', "/");
+    assert!(
+        norm.contains("/std/") && norm.contains("prelude"),
+        "prelude `assert` must resolve into stdlib prelude, got {target_uri}"
+    );
+    // Range must be non-degenerate (points at the real declaration).
+    let start_line = loc["range"]["start"]["line"].as_u64().expect("range.start.line");
+    let end_line = loc["range"]["end"]["line"].as_u64().expect("range.end.line");
+    assert!(end_line >= start_line, "range end must not precede start");
+
+    lsp.shutdown_and_exit();
+}
