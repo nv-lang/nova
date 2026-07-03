@@ -8373,6 +8373,40 @@ match pair {
 - [Cross-language syntax-gap survey 2026-07-02](../docs/research/2026-07-02-cross-language-syntax-gap-survey.md)
 - [D34](decisions/03-syntax.md#d34) — pattern-bind grammar; существующий `Pattern::Or` инвариант.
 
+## Q-extensible-sum-types — `#extensible`: sum-тип может расти без breaking change — 🟡 OPEN (2026-07-03)
+
+### Проблема (semver на границе пакетов)
+
+Exhaustive match (ядро Nova) × растущая библиотека = конфликт: добавление варианта в экспортированный sum ломает **каждый** downstream-match. **Прецедент уже был:** [D302](decisions/04-effects.md#d302) добавил `PermissionDenied`/`ConnectionReset` в `NetError` — honest breaking change, проглочен только «pre-release окном». После стабилизации std каждый error-enum (`NetError`, `HttpError`, `IoError.kind`, `ParseIntError`) встанет перед выбором: заморозить варианты навсегда / ломать всех / `#extensible`.
+
+### Дизайн-набросок
+
+```nova
+#extensible
+export type NetError | Timeout | Refused | ...
+```
+
+- Через границу пакета match по `#extensible`-типу **обязан** иметь `_`-арм → `E_MATCH_EXTENSIBLE_NEEDS_WILDCARD`; потребитель сам выбирает поведение ветки (panic / generic-error / лог).
+- **Внутри своего пакета** exhaustiveness остаётся полной (как Rust `#[non_exhaustive]`) — refactoring-workflow «добавил вариант → компилятор дал список мест» не страдает.
+- Будущее расширение на records: поля могут добавляться → запрет литерал-конструирования/полной деструктуризации извне.
+
+### Нейминг (решено в обсуждении 2026-07-03)
+
+**`#extensible`** — называет обещание автора («тип будет расти»), консистентно с рядом `#pure`/`#realtime`/`#deprecated`/`#share` (свойство декларации, не поведение чекера). Отвергнуты: `#non_exhaustive` (механизм вместо намерения, двойное отрицание — известная критика Rust-имени), `#open` (перегружено), инверсия дефолта `#frozen`/`#sealed` Swift-style (расширяемость по умолчанию убивает ценность exhaustive-match).
+
+### Отвергнутая альтернатива: авто-`_ => panic`
+
+«Всегда добавлять `_` автоматом с паникой» — превращает compile-time гарантию в runtime-краш: добавил вариант в СВОЙ тип → 15 match'ей молча скомпилировались → узнаёшь паникой в проде. Ровно тот класс багов, ради которого sum-типы существуют (C-`switch`; Kotlin в 1.7 сделал `when`-exhaustiveness обязательной по той же причине). Платит цену везде ради проблемы, существующей только на границе пакетов.
+
+### Когда делать
+
+**Не сейчас**: пока весь код в одном репо и нет внешних потребителей — атрибут ничего не даёт (чисто межпакетный контракт). Гейт: стабилизация std / central registry ([Plan 03.3](../docs/plans/03-package-manager.md)). До того — фиксировать breaking-добавления вариантов честно (как D302).
+
+### Связь
+- [D302](decisions/04-effects.md#d302) — прецедент боли (NetError варианты)
+- [D139](decisions/07-modules.md#d139) — version-диапазоны; [D105](decisions/09-tooling.md#d105) — `#deprecated`-семейство (соседний API-evolution инструмент)
+- Rust RFC 2008 `#[non_exhaustive]`, Swift `@frozen`/`@unknown default` — прецеденты обеих полярностей
+
 ## Q-resolved-type-c-name — переход на более правильное формирование C-имени типа (после ретайра `type_ref_to_c`) — 🟡 OPEN (2026-06-21, Plan 172.1 U.4.6)
 
 ### Контекст ([D315](decisions/02-types.md#d315-resolvedtype--единый-канонический-носитель-типа-plan-1721-2026-06-21), Plan 172.1 U.4.6)

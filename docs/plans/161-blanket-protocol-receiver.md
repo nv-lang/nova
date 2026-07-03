@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 161 — Blanket protocol-receiver methods (`fn[I Next[T]] I @m`)
 
+> **NB (2026-07-03):** D-блок плана перенумерован **D282 → D355** (коллизия номера с extern-ABI D282, Plan 91.12; решение владельца, Plan 174 §6). Упоминания «D282» ниже читать как D355.
+
 > **Создан:** 2026-06-15.  **Статус:** ✅ CLOSED Ф.0-Ф.4 2026-06-15 (branch plan-161).
 > **Model:** Sonnet 4.6 (Ф.0–Ф.4 выполнены).
 > **Worktree:** `nova-p161`.

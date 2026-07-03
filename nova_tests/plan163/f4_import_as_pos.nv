@@ -1,4 +1,4 @@
-// Plan 163 Ф.2 (D282): positive — `import m as alias` is allowed (qualified namespace).
+// Plan 163 Ф.2 (D288): positive — `import m as alias` is allowed (qualified namespace).
 // Qualified access via alias.func() is the idiomatic form.
 
 module plan163.f4_import_as_pos

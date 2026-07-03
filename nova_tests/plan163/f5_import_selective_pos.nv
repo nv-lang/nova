@@ -1,4 +1,4 @@
-// Plan 163 Ф.2 (D282): positive — `import m.{name}` is allowed (selective import).
+// Plan 163 Ф.2 (D288): positive — `import m.{name}` is allowed (selective import).
 
 module plan163.f5_import_selective_pos
 

@@ -34,7 +34,7 @@
 | ~~flip-scan-draft~~ | Pointer mutability — running-current flip-scan (Plan 147; **RETRACTED 2026-06-12** → D246) | retracted |
 | [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) | Три оси мутабельности (L1 binding / L2 view / L3 pointee); restores `*T ≡ *ro T` universally; `E_REDUNDANT_POINTER_RO` (Plan 147) | active |
 | [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) | Module-level field privacy `type X priv { … }` — bare `priv` = module-private (Plan 160, D281) | active |
-| [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) | Blanket protocol-receiver methods `fn[I Next[T]] I @m` — typevar-ресивер + bound-dispatch (Plan 161, G-F) | active |
+| [D355](#d355--blanket-protocol-receiver-methods-plan-161-2026-06-15) | Blanket protocol-receiver methods (ex-D282, renumber 2026-07-03) `fn[I Next[T]] I @m` — typevar-ресивер + bound-dispatch (Plan 161, G-F) | active |
 | [D284](#d284-enumerateiter--zero-cost-enumerate-adapter-plan-162) | `EnumerateIter[I, T]` — zero-cost enumerate adapter; per-type `@zenumerate()` dispatch; tuple parametric return (Plan 162) | active |
 | [D290](#d290--value-record-iterator-types-plan-165-2026-06-16) | Iterator value-records: `VecIter[T] value` (GC-pointer fields covered by fiber arena) + `Range`/`RangeIter`/`StepRangeIter`/`ReverseRangeIter value` (int-only, pure stack) — zero malloc in adapter chain (Plan 165) | active |
 | [D307](#d307-file-private-visibility--privfile-plan-170) | File-private visibility `priv(file) fn`/`type`/`const` — лесенка `priv(file)` ⊂ module ⊂ export; `E_FILE_PRIV_LEAK`; file-discriminated codegen; dedup одноимённых в peer-файлах (Plan 170) | active |
@@ -3956,7 +3956,7 @@ Codegen (Plan 56 Ф.1 + Ф.2):
 > Plan 59 Ф.7.5. Schema `_NovaTuple_<arity>_<L1>_<T1>_..._<LN>_<TN>`
 > (length-prefixed) теперь применяется не только к Result, но к любому
 > generic anonymous tuple в return position. См.
-> [D216](#d216-generic-anonymous-tuple-monomorphization) для full spec.
+> [D354](#d354-generic-anonymous-tuple-monomorphization) для full spec.
 >
 > **Plan 148 Ф.4 amend (2026-06-12, `[M-codegen-unify-tuple-repr]`):**
 > typed representation унифицирован, legacy all-int путь сжат до on-demand.
@@ -4311,8 +4311,9 @@ characteristics = different syntactic forms **justified**. Plan 120
 
 ---
 
-## D216. Generic anonymous tuple monomorphization
+## D354. Generic anonymous tuple monomorphization
 
+> **Renumber 2026-07-03:** блок был **D216** — номер коллидировал с [D216 Typed pointer family](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo); anon-tuple-mono перенумерован в D354 (решение владельца; приёмник из резерва Plan 174 §6, прецедент D109/D110/D111).
 > **Status:** active (spec, 2026-06-01). Реализация — [Plan 59.1](../../docs/plans/59.1-generic-anon-tuple-mono.md).
 > Extends [D123](#d123-tuple-monomorphization) с generic-aware substitution path.
 > Closes gap в Plan 59 Ф.7.5 (Result mono landed; general generic anonymous
@@ -4473,7 +4474,7 @@ heap-allocated независимо.
 
 - [D52](#d52-объявление-типов-revised-newtype-alias-sum-через-leading-) — anonymous tuple type syntax.
 - [D123](#d123-tuple-monomorphization) — positional tuple codegen baseline (Plan 59 Ф.7.5).
-- [D215](#d215-named-tuple-fields--valuereference-allocation-contract) — named tuple types (Plan 120 D215, ortho к D216).
+- [D215](#d215-named-tuple-fields--valuereference-allocation-contract) — named tuple types (Plan 120 D215, ortho к D354).
 - [D91](06-concurrency.md#d91-channel-revision--capability-split-на-chanwriter--chanreader) — Channel.new signature now буквально implementable; cleanup ad-hoc paths — [M-59.1-channel-new-cleanup].
 - [D141](08-runtime.md#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) — bulk slice-операции (orthogonal к tuple mono).
 - [Plan 59.1](../../docs/plans/59.1-generic-anon-tuple-mono.md) — implementation plan.
@@ -7892,6 +7893,7 @@ deref, arithmetic banned by default).
 
 ## D216. Typed pointer family + unsafe model + null-safety через NPO
 
+> **Коллизия номера разрешена 2026-07-03:** второй блок «D216 Generic anonymous tuple monomorphization» перенумерован в [D354](#d354-generic-anonymous-tuple-monomorphization); typed-pointers сохраняет D216 (несёт цепочку V2/V3-амендментов и сеть ссылок D246/118.x/174.5).
 > **Plan 118** (typed pointers + unsafe model). **Status:** 🟢 ACTIVE 2026-06-02
 > (Ф.0 + Ф.1.5 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.3.3 + Ф.3.5 + Ф.4 partial +
 > Ф.5 partial + Ф.6 partial — 13 acceptance criteria closed).
@@ -12738,7 +12740,7 @@ Cost-transparency сохраняется: ленивый путь без про�
 [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
 (lazy-итератор — добавлен allocation-free sibling-слой). **Зависит от:**
 [D226](#d226) (always-pointer receiver ABI), [D123](#d123-tuple-monomorphization)/
-[D216](#d216-generic-anonymous-tuple-monomorphization) (mono-инфраструктура).
+[D354](#d354-generic-anonymous-tuple-monomorphization) (mono-инфраструктура).
 **Маркеры:** `[M-153.2-generic-over-source-zerocost]` → 🟡 PARTIAL (Stage 2 done),
 `[M-153.2-Z-closure-devirt]` → 🟡 PARTIAL (Stage 3 alloc-elimination done),
 `[M-153.2-Z-noalloc-terminator]` → ✅ DONE (Stage 4),
@@ -12903,7 +12905,7 @@ Stage 4 verify: все четыре мономорфизованных `…metho
 - [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent lazy (0 wrapper-allocs via Stage 1; zero-cost sibling via Stage 2; capture-free closure devirt via Stage 3; alloc-free терминаторы + `collect_into` via Stage 4).
 - [D226](#d226) — always-pointer receiver ABI (mono value-receiver).
 - Plan 153.2 — план; `vec_lazy.nv` / `vec_iter_zc.nv` — реализация; `emit_c.rs::emit_lambda` — Stage 3 singleton.
-- Cross-ref: [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) — blanket methods on `Next[T]` implementors (терминаторы blanket).
+- Cross-ref: [D355](#d355--blanket-protocol-receiver-methods-plan-161-2026-06-15) — blanket methods on `Next[T]` implementors (терминаторы blanket).
 
 ---
 
@@ -13096,9 +13098,11 @@ export     fn api() …           // публичный (как сейчас)
 
 ---
 
-## D282 — Blanket protocol-receiver methods (Plan 161, 2026-06-15)
+## D355 — Blanket protocol-receiver methods (Plan 161, 2026-06-15)
 
-**Status:** ACTIVE (Plan 161 Ф.0-Ф.4, 2026-06-15). **Amends:** [D241](03-syntax.md#d241) (добавлен §3 «≤1 impl, cross-ref D282»). **Зависит от:** [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) (generic bounds), [D119](#d119-method-level-type-parameters-в-generic-methods) (method-level type params), [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (D277/vec_iter_zc). **Маркеры:** `[M-161-blanket-receiver]` → ✅ Ф.0-Ф.4 CLOSED; `[M-161-parametric-return]` (V2 followup).
+> **Renumber 2026-07-03:** блок был **D282** — номер коллидировал с [D282 extern "nova"/"C" fn](08-runtime.md#d282) (двух-ABI FFI, Plan 91.12; тот сохраняет D282 — канон README-индекса, амендится Plan 174.6). Перенумерован в D355 (Plan 174 §6).
+
+**Status:** ACTIVE (Plan 161 Ф.0-Ф.4, 2026-06-15). **Amends:** [D241](03-syntax.md#d241) (добавлен §3 «≤1 impl, cross-ref D355 (ex-D282)»). **Зависит от:** [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) (generic bounds), [D119](#d119-method-level-type-parameters-в-generic-methods) (method-level type params), [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (D277/vec_iter_zc). **Маркеры:** `[M-161-blanket-receiver]` → ✅ Ф.0-Ф.4 CLOSED; `[M-161-parametric-return]` (V2 followup).
 
 **§1 Синтаксис.** `fn[I Proto[T₁,…,Tₙ]] I @name[U₁,…](params) -> R { body }` — blanket-объявление: `I` — typevar-ресивер, `Proto[…]` — bound. `T₁,…,Tₙ` выводятся из bound (не нужно объявлять явно). Запись `fn[…]` (glued, без пробела) = prefixed-generic header (уже разобрана парсером).
 
@@ -13116,15 +13120,15 @@ export     fn api() …           // публичный (как сейчас)
 
 ## D284 — EnumerateIter — zero-cost enumerate adapter (Plan 162)
 
-**Status:** ACTIVE (Plan 162 Ф.0-Ф.5, 2026-06-16). **Зависит от:** [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (value-record mono / generic-over-source), [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket protocol-receiver для терминаторов), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) (lazy-iterator layer). **Маркер:** `[M-153.2-enumerate-zc]` → ✅ CLOSED Plan 162; `[M-153.2-tuple-elem-adapter]` OPEN (chained adapter сразу после enumerate гейтнут на closure-type propagation). **Было:** `[M-153.2-enumerate-zc]` (enumerate deferred из Plan 153.2, было в boxed `vec_lazy`).
+**Status:** ACTIVE (Plan 162 Ф.0-Ф.5, 2026-06-16). **Зависит от:** [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (value-record mono / generic-over-source), [D355](#d355--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket protocol-receiver для терминаторов, ex-D282), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) (lazy-iterator layer). **Маркер:** `[M-153.2-enumerate-zc]` → ✅ CLOSED Plan 162; `[M-153.2-tuple-elem-adapter]` OPEN (chained adapter сразу после enumerate гейтнут на closure-type propagation). **Было:** `[M-153.2-enumerate-zc]` (enumerate deferred из Plan 153.2, было в boxed `vec_lazy`).
 
 **§1 Синтаксис.** `EnumerateIter[I, T]` — zero-cost value-record adapter:
 ```nova
 export type EnumerateIter[I, T] value { mut src I, mut i int }
 ```
-Поля: `src I` — источник (inline by-value, статически диспетчится), `i int` — текущий индекс (стартует с 0). Результат `@next()` — `Option[(int, T)]`; `Some((i, elem))` на каждый `Some` у источника, `None` транзитивно. Реализует `Next[(int, T)]` → совместим с blanket-терминаторами D282 (`@zcount`, `@zfold`, `@zfor_each`, `@zany`, `@zall`, `@zfind`, `@zsum`).
+Поля: `src I` — источник (inline by-value, статически диспетчится), `i int` — текущий индекс (стартует с 0). Результат `@next()` — `Option[(int, T)]`; `Some((i, elem))` на каждый `Some` у источника, `None` транзитивно. Реализует `Next[(int, T)]` → совместим с blanket-терминаторами D355 (`@zcount`, `@zfold`, `@zfor_each`, `@zany`, `@zall`, `@zfind`, `@zsum`).
 
-**§2 Диспетч (`@zenumerate`).** Метод `@zenumerate()` объявлен **per-type** (не blanket), потому что возвращаемый тип явно называет `EnumerateIter` (не параметрический конкретный тип в смысле D282 §6):
+**§2 Диспетч (`@zenumerate`).** Метод `@zenumerate()` объявлен **per-type** (не blanket), потому что возвращаемый тип явно называет `EnumerateIter` (не параметрический конкретный тип в смысле D355 §6):
 ```nova
 export fn VecIter[T]          @zenumerate() -> EnumerateIter[Self, T]         => { src: @, i: 0 }
 export fn MapIter[I, T, U]    @zenumerate() -> EnumerateIter[Self, U]         => { src: @, i: 0 }
@@ -13139,9 +13143,9 @@ export fn SkipIter[I, T]      @zenumerate() -> EnumerateIter[Self, T]         =>
 
 **§4 Инвариант (счётчик i).** `i` стартует с 0. Инкрементируется ровно на 1 при каждом `Some`-ответе источника (пропуски на `None` не считаются — `EnumerateIter.@next()` прозрачно прокидывает `None`, не инкрементируя). Это соответствует `enumerate()` в Rust/Python: индекс = порядковый номер доставленного элемента, непрерывно с 0.
 
-**§5 Ограничения V1.** (a) Нет blanket `@zenumerate` — return-тип называет `EnumerateIter` конкретно (contra D282 §6). Добавление нового adapter-типа требует явного `@zenumerate`. (b) Tuple-PRESERVING chained adapter сразу после `enumerate` (`enumerate().filter(..)` когда элемент остаётся `(int,T)`) гейтнут на closure-type-propagation codegen fix → `[M-153.2-tuple-elem-adapter]`; workaround: `enumerate().map(|p| ...)` (Map схлопывает кортеж). (c) `EnumerateIter` был deferred из Plan 153.2 (маркер `[M-153.2-enumerate-zc]` в boxed `vec_lazy`) — зашиплен в Plan 162.
+**§5 Ограничения V1.** (a) Нет blanket `@zenumerate` — return-тип называет `EnumerateIter` конкретно (contra D355 §6). Добавление нового adapter-типа требует явного `@zenumerate`. (b) Tuple-PRESERVING chained adapter сразу после `enumerate` (`enumerate().filter(..)` когда элемент остаётся `(int,T)`) гейтнут на closure-type-propagation codegen fix → `[M-153.2-tuple-elem-adapter]`; workaround: `enumerate().map(|p| ...)` (Map схлопывает кортеж). (c) `EnumerateIter` был deferred из Plan 153.2 (маркер `[M-153.2-enumerate-zc]` в boxed `vec_lazy`) — зашиплен в Plan 162.
 
-**Кросс-ссылки:** [D282](#d282--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket-receiver, гейтирует терминаторы на EnumerateIter), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) (boxed lazy layer — предшественник), [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (generic-over-source model — база для EnumerateIter).
+**Кросс-ссылки:** [D355](#d355--blanket-protocol-receiver-methods-plan-161-2026-06-15) (blanket-receiver, гейтирует терминаторы на EnumerateIter), [D260](#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) (boxed lazy layer — предшественник), [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) (generic-over-source model — база для EnumerateIter).
 
 **Реализовано в.** `std/collections/vec_iter_zc.nv`: `EnumerateIter[I,T]` value-record + `@next()` + chaining methods + 6 per-type `@zenumerate()` adapters. `compiler-codegen/src/codegen/emit_c.rs`: tuple parametric T-subst fix в blanket `infer_type_refs_for_blanket`. Тесты: `nova_tests/plan162/` (9 basic + 8 chain + neg). D284 NEW.
 

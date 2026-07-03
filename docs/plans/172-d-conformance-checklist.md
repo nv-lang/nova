@@ -19,7 +19,7 @@
 | D130 | ✅ | pos | `uint` — unsigned 64-bit (alias u64), маппится в nova_uint во ВСЕХ позициях включая method … → ПОКРЫТО: d130_uint_method_compare.nv (метод-ресивер unsigned compare, K1) + d130_uint_lite |
 | D156 | ⬜ gap | both | Generic `[T consume]` bound — opt-in strict mode: внутри generic-body silent-forget T → co … → POS: type D156Tx consume { id int } + fn D156Tx consume @done() -> (); fn[T consume] d156_ |
 | D215 | ⬜ gap | both | Named tuple — stack-allocated VALUE type с именованным доступом (`.x`,`.y`); конструируетс … → type D215Vec3(x f64, y f64, z f64); `ro v = D215Vec3(x: 1.0, y: 2.0, z: 3.0)`; assert(v.x  |
-| D216 | ⬜ gap | pos | Generic anonymous tuple `(T,U)` мономорфизируется per instantiation с REAL element types ( … → fn[T] d216_dup(v T) -> (T, T) => (v, v); `ro (a, b) = d216_dup[int](42)`; assert(a == 42 & |
+| D354 (ex-D216) | ⬜ gap | pos | Generic anonymous tuple `(T,U)` мономорфизируется per instantiation с REAL element types ( … → fn[T] d354_dup(v T) -> (T, T) => (v, v); `ro (a, b) = d354_dup[int](42)`; assert(a == 42 & |
 | D226 | ⬜ gap | pos | Signed indexing convention: все API len/capacity/index — signed `int` (= i64), не uint. Ра … → `mut v []int = [10, 20, 30]`; assert(v.len() == 3); assert(v.len() - 1 == 2); `mut e []int |
 | D239 | ⬜ gap | pos | `[]T` — синтаксический псевдоним `Vec[T]`; компилятор разворачивает `[]T`→`Vec[T]` на type … → `mut a []int = [1, 2, 3]`; assert(a[0] == 1); assert(a[2] == 3); fn d239_first(xs []int) - |
 | D310 | ⬜ gap | both | Type-set bounds: `type Name set M1 / M2 / ...` — именованное множество конкретных типов (п … → type D310Ints set i32 / i64 / int; fn[T D310Ints] d310_twice(x T) -> T => x + x; assert(d3 |
@@ -157,7 +157,7 @@ expected_sum_coercion-хинт по образцу expected_record_type). ПЛЮ
 **Salvaged+committed (e92a3a1a): 36 новых D** → suite 20→56. **8 rejected (isolated-триаж):**
 - DRAFT-BUGS (CC-FAIL в изоляции, invented/invalid синтаксис — discard/re-author): d42, d53, d222, d284.
 - ПОТЕНЦИАЛЬНЫЕ КОМПИЛЯТОР-GAPS (валидный parse, codegen/runtime не тянет — investigate per-draft):
-  • d232 vec_growable_array (CODEGEN-FAIL) • d282 blanket_protocol_receiver (CODEGEN-FAIL)
+  • d232 vec_growable_array (CODEGEN-FAIL) • d355 blanket_protocol_receiver (CODEGEN-FAIL)
   • d299 as_slice_append (CODEGEN-FAIL) • d281 module_priv_field (RUN-FAIL).
   Next: прочитать draft + D-норму → correct-per-D? → фикс компилятора (driver) / draft-bug.
 **Остаток uncovered (75−56 в 02-types): ~D17/D110/D126/D133/D156(gap)/D163/D164/D181-186(refs/172.5)/
@@ -168,7 +168,7 @@ D277/D326(Ф.3)** — refs-семейство = 172.5 (не реализован
 - ✅ **8 KEEP (готовы к merge в conformance после ARM 3+4 + folder-module clash-check):**
   d17 (type-decls/record/punning/partial-match), d42 (structural protocol satisfaction),
   d222 (priv record-protocol boundary), d232 (vec growable array), d281 (module priv field),
-  d282 (blanket protocol receiver), d284 (enumerate index invariant), d299 (as_slice append).
+  d355 (blanket protocol receiver), d284 (enumerate index invariant), d299 (as_slice append).
 - ❌ **2 КОМПИЛЯТОР-GAP (V-трек driver-находки → base-фиксы):**
   • **D53** anon-protocol-тип в позиции параметра (`fn f(x protocol { @sig })`) — CC-FAIL в 2
     независимых авторингах (batch1+batch2) → компилятор не поддерживает anon-protocol-param.
