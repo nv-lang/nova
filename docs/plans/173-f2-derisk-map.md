@@ -164,31 +164,32 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
   конструктивно (None → тот же emit_defer_body_void). **Отложено на B2-хвост (runtime-наблюдение):** Panic-
   ветка-БЕЖИТ + cancel-Failure — panic убивает процесс (pre-existing D158-segfault-риск), cancel =
   supervised-сценарий; сейчас compile-покрыты (exhaustive match). Zig-парность payload — B3 (consume-desugar).
-- 🟡 **Ф.2.B3 consume→desugar — ЧАСТИЧНО (outcome-примитив унифицирован; полный run-site merge ЗАБЛОКИРОВАН):**
-  Understand-workflow (5 ридеров, wf_67a1d385) + firsthand-разбор монолита (emit_c.rs:19816-20101) + всех
-  4 defer run-site'ов выявили **архитектурное препятствие** (класс «D194-премиса-ложна»): **compose-семантика
-  consume и user-defer genuinely РАЗНЫЕ** и несовместимы с физическим слиянием run-site'ов:
-  • consume: panic-dominance (D196 R3 — cleanup-panic ДОМИНИРУЕТ) + pairwise body-primary/cleanup-suppressed
-    + immediate rethrow/nv_panic per-path.
-  • user-defer (D161): chain-suppressed (first-fail primary, rest в suppressed-chain), НЕТ panic-dominance,
-    loop-then-rethrow-once структура (pop в конце).
-  Маршрутизация consume через defer-kernel run-sites потребовала бы либо (а) регресс user-defer, либо
-  (б) реплику монолит-compose в каждом run-site (борьба со структурой pop-в-конце + rethrow-before-pop).
-  ТАКЖЕ: checker-инвариант (RISK #146) — consume-body свободно допускает throw/return/break/panic, а
-  defer-body их ЗАПРЕЩАЕТ (check_defer_body: D158/D90/D159) → AST-десугар ConsumeScope→Block{Stmt::Defer}
-  дал бы массовый регресс. **Вывод: монолит ЕСТЬ корректная реализация consume-flavored-defer-entry (D314 §3);
-  full physical merge — не clean-refactor, а semantic-hazard.**
-  **ДОСТАВЛЕНО (safe, behavior-identical, verified):** единый ScopeOutcome-примитив — `materialize_scope_outcome`
-  + `assign_scope_outcome_from_frame` (emit_c.rs) — общий для defer(o)-FromFrame И consume-cleanup (step-7
-  монолита теперь зовёт shared helper). core.nv:131 doc-fix cancel-marker "cancelled:"→"cancel:" (рассинхрон
-  spec/impl). Гейт: conformance 38/38; plan110/plan103_9/plan100_4_* + err173 defer(o) — 0 регрессий.
-  **FOLLOWUP'ы (осознанно отложено, не half-measure):**
-  • `[M-173-b3-runsite-unify]` — физическое слияние consume↔defer-kernel run-site'ов ТРЕБУЕТ сперва
-    унифицировать compose-модель (chain vs pairwise+panic-dominance) — отдельный дизайн-вопрос (D-блок).
-  • `[M-173-consume-interrupt-cleanup]` — монолит НЕ бежит cleanup на `interrupt` (defer-kernel бежит);
-    D314 §2 предписывает interrupt→cleanup(Failure). Beyond-parity correctness-fix, свой тестируемый атом.
-  • `[M-173-consume-exactly-once-observability]` — conformance d188/d196 наблюдают ТОЛЬКО body-exec+binding
-    (RISK #208), НЕ exactly-once/shield/timeout — добавить trail-observability тесты.
+- ✅ **Ф.2.B3-merge consume ФИЗИЧЕСКИ СЛИТ в defer-kernel — ЗАКРЫТ (монолит удалён, 285→~101 строк):**
+  Ранее числился заблокированным (compose-расхождение chain vs pairwise+panic-dominance). **Разблокировано
+  D314 §4a** (коммит `501adb50`): единое panic-compose правило — cleanup-PANIC ДОМИНИРУЕТ в ОБЕИХ поверхностях
+  (defer-kernel тоже, не только consume). Это сделало десугар `consume`→`defer(o)` behavior-preserving.
+  **Шаг 1 (defer-kernel panic-dominance §4a):** FAIL run-site — cleanup-PANIC промоутит scope-fail-frame в
+  PANIC (доминирует над body-throw), body-panic остаётся primary; LEAVE run-site — cleanup-PANIC override'ит
+  compose-слот. Helper `emit_fail_cleanup_compose`. Плейн-defer throw-path byte-identical (диф = только
+  panic-guard'ы + non-det typedef-order). **Шаг 2 (route + delete):** `DeferEntry.consume_policy:
+  Option<ConsumePolicy{type_name, c_binding, prev_deadline_var, has_resource_trace}>`; dedicated
+  `enter_consume_defer_scope` (FAIL+INTERRUPT run-sites, консьюм-flavored) + branch в LEAVE/EARLY
+  (`emit_consume_entry_cleanup` с per-path outcome + `ConsumeTail`); ConsumeScope-арм = wrapper-пролог
+  (capture+#define+timeout+shield-enter+RT-enter) → enter_consume → active=1 → body(вложенный defer-scope) →
+  leave. cancel-shield/timeout/ResourceTrace/exactly-once/partial-init re-home'нуты как consume-policy (НЕ
+  потеряны). `@cleanup` = pinned `Nova_<T>_consume_cleanup` (R2, §0 из type_name). Монолит (`_consume_frame_`/
+  `on_exit_frame`/6-case ladder) физически удалён — 0 остаточных символов.
+  **ПОБОЧНЫЕ correctness-фиксы (spec-aligned, routing даёт бесплатно):** `[M-173-consume-interrupt-cleanup]`
+  ЗАКРЫТ — cleanup теперь бежит на `interrupt` с outcome=Failure("interrupt") (D314 §2; монолит его обходил).
+  Также cleanup бежит на early `return`/`break`/`continue` (монолит эмитил raw `return`, скипая cleanup —
+  теперь EARLY run-site, return-value стешится ДО cleanup). **Гейт (все зелёные):** conformance 38/38;
+  весь consume/defer-корпус (plan110/plan103_9/plan100_4_*/err173/err173_0); plain-defer byte-identical;
+  zero-regression vs baseline (parent-worktree binary, 20 dirs pos+neg — все совпадают, incl pre-existing red);
+  targeted runtime-observation тест (normal-exit/throw/return/nested — cleanup наблюдаемо бежит). build clean.
+  **Оставшийся followup:** `[M-173-consume-exactly-once-observability]` — conformance наблюдает body-exec+
+  binding, НЕ shield/timeout trail; `[M-173-d194-perf-elision]` — genuine hot-path элизия (вне периметра).
+  `[M-173-consume-unwind-cleanup-throw]` — cleanup-throw во время interrupt/early-exit дропается (Swallow);
+  редчайший двойной-fault, за пределами monolith-parity.
 - ✅ **Ф.2.D194 disasm-parity + spec-sync ЗАКРЫТ (spec-truth):** D194-спека (03-syntax:8930) приведена к
   ФАКТУ: caller-relaxation (`Cleanup[Never]` снимает `Fail[E]` у caller'а) — РЕАЛИЗОВАНА (живо); §perf
   hot-path elision (§Hot-path optimization) — **НЕ реализована** (единственная ConsumeScope-ветка эмитит
@@ -204,7 +205,8 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
   Historical (simplifications/plans/spec-D-ex) + диагностик-id + rename-explain СОХРАНЕНЫ. Hub
   error-and-cleanup-model.md ПЕРЕПИСАН под факт (Ф.1 with-Fail-panic FIXED; Ф.2 partial; defer(o)-migration;
   followups). Residue-grep = 0. Docs-only.
-- 🔴 **Ф.2.C nova_scope_exit transport-unify — ЗАБЛОКИРОВАН (тот же класс, что B3-merge):** firsthand-разбор
+- 🔴 **Ф.2.C nova_scope_exit transport-unify — ЗАБЛОКИРОВАН (единственный оставшийся structural-finale; B3-merge
+  ЗАКРЫТ 2026-07-04 через §4a):** firsthand-разбор
   terminal-сайтов выявил их **genuine несогласованность** в kind-dispatch: SITE A (with-Fail): PANIC→
   rethrow_with_suppressed, CANCEL→nova_throw_cancel_reason(+restore handlers), USER→caught(default); defer
   C1 (FAIL): ВСЕ kinds→rethrow_with_suppressed; consume: PANIC→nv_panic, USER→rethrow. Единый helper требует
@@ -214,20 +216,24 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
   Followup `[M-173-c-transport-normalize]`: сперва единая per-kind модель (D-блок), потом reroute + verify.
   D314 §4 таблица (PANIC→nv_panic uniform) сама конфликтует с impl (SITE A/defer→rethrow) → spec к факту.
 
-## СВОДКА Ф.2 (2026-07-03): SAFE-SCOPE ЗАКРЫТ, structural-finale → followups
+## СВОДКА Ф.2 (2026-07-04): SAFE-SCOPE + B3-MERGE ЗАКРЫТЫ; остался только C-transport
 
 **Закрыто (safe, verified):** A0 · R1 · R2 · B1 · B2 (defer(o) codegen+checker) · B3-outcome (ScopeOutcome-
-примитив унифицирован) · D194 (parity + spec-truth) · E (doc-sweep + hub). Conformance 38/38 сквозь всё.
+примитив) · **B3-merge (consume ФИЗИЧЕСКИ слит в defer-kernel, монолит удалён — §4a panic-dominance
+разблокировал)** · D194 (parity + spec-truth) · E (doc-sweep + hub). Conformance 38/38 сквозь всё.
+
+**Разблокировка B3-merge:** D314 §4a (единое panic-compose: cleanup-PANIC доминирует в defer-kernel ТОЖЕ) убрал
+семантическое расхождение → десугар `consume`→`defer(o)` стал behavior-preserving. Попутно закрыты
+`[M-173-b3-runsite-unify]` (сам merge) и `[M-173-consume-interrupt-cleanup]` (cleanup на interrupt = spec D314
+§2, routing даёт бесплатно) + фикс early-return/break/continue-skip монолита.
 
 **Отложено (осознанно, documented — НЕ half-measure; критический error-transport, owner-away, high-risk):**
-- `[M-173-b3-runsite-unify]` — физический merge consume-монолита в defer-kernel run-site'ы (compose-семантика
-  genuinely РАЗНАЯ: panic-dominance/pairwise vs chain).
 - `[M-173-c-transport-normalize]` — единый nova_scope_exit (terminal-сайты несогласованы per-kind).
-- `[M-173-consume-interrupt-cleanup]` — cleanup на interrupt (spec D314 §2, beyond-parity).
-- `[M-173-consume-exactly-once-observability]` + `[M-173-d194-perf-elision]` + multi-binding consume.
+- `[M-173-consume-exactly-once-observability]` + `[M-173-d194-perf-elision]` + multi-binding consume +
+  `[M-173-consume-unwind-cleanup-throw]` (cleanup-throw во время interrupt/early-exit дропается — редчайший).
 
-**Вывод для владельца:** D314 language-level goal ДОСТИГНУТ (defer(o) работает; consume=корректный
-consume-flavored-defer-entry; soundness Ф.1). Оставшийся structural-finale (physical unification) —
-рефакторинг-долг, требующий per-kind/compose нормализации (design-decision), НЕ блокирует 174/176 (им
-нужно ПОВЕДЕНИЕ error-system, которое работает). Рекомендация: принять safe-scope + followups; solidify
-173 для downstream ИЛИ выделить сессию на transport/compose-нормализацию с owner-steered design.
+**Вывод для владельца:** D314 language-level goal + physical unification consume-defer ДОСТИГНУТЫ (defer(o)
+работает; consume = сахар над consume-flavored-defer-entry, ОДИН run-site-набор; soundness Ф.1). Остался
+только structural-finale `[M-173-c-transport-normalize]` (единый nova_scope_exit — terminal-сайты per-kind
+несогласованы), НЕ блокирует 174/176. Рекомендация: принять B3-merge; выделить сессию на C-transport с
+owner-steered design ИЛИ solidify 173 для downstream.
