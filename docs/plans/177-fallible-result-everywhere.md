@@ -2,7 +2,7 @@
 # Plan 177 — Единый fallible-контракт std: **Result-everywhere** (no bare-throws convention)
 
 > **Top-level план.** Создан 2026-06-25. **Ред. 2 — 2026-07-03** (аудит: ground-truth/7-языков/blast-radius; статусы E-пунктов, R0-граница, spec_tests, агент-правила).
-> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c/Ф.3/Ф.4 — pending (.nv/docs, безопасны); Ф.2b — compiler-gated, координация 172.1×174.1 (не трогать соло)**.
+> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c — 🔴 codegen-gated (находка 2026-07-03: коллекторы `Result[[]T,E]`/`([]T,[]E)` проходят чекер, но падают в codegen — VR-typedef-ordering для Array-payload, `[M-177-result-tuple-over-array-codegen]`; НЕ .nv-only, зона 172.1); Ф.2b — compiler-gated (172.1×174.1); Ф.3 pos-часть (D85-каналы/R0-panic на уже-мигрированных API) + Ф.4 — docs, безопасны; всё соло-компиляторное отложено**.
 > **Маркер:** `[M-177-result-everywhere-std]`. **Запуск:** «**выполни план 177**».
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** D325 ✅ уже в спеке
 > (Ф.1-ядро выполнено). Migration-sweep (read_buffer bare-twins, emit_c builtins) — Волна 1 трек G,
@@ -227,11 +227,26 @@ expr.ok() (->Option), match (ветвление).
 | **Ф.1 D325 + конвенции** | D325 в спеку + E1-E11 | sign-off (✅ 2026-06-25) | ✅ **DONE 2026-07-03** — E1-E11 все закрыты (E3/E6/E10/E11 добиты) + amend-пакет §4a внесён в D325 (R0/R4-критерий/nesting/exempt-list/коллекторы). Спека самосогласована с D325 (D178/D77 баннеры). |
 | **Ф.2a `.nv`-only миграция** | base64 → complex → json | Ф.1-ядро | ✅ DONE 2026-06-26 (все 3 файла green end-to-end) |
 | **Ф.2b compiler-gated sweep** | parse.nv + read_buffer.nv rename + emit_c хардкоды + builtins + D77-emit_c + sweep 15+9 тест-файлов (§6) | разрешение на компилятор; координация **172.1** (emit_c-зона) и **174.1** (новые поверхности сразу под D325) — Волна 3 | ⏳ |
-| **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | Ф.1; независим от Ф.2b (.nv-only) | ⏳ |
+| **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | ~~Ф.1; независим от Ф.2b (.nv-only)~~ **ПЕРЕСМОТРЕНО 2026-07-03: НЕ .nv-only — codegen-gated** | 🔴 BLOCKED codegen |
 | **Ф.3 Guard + spec_tests** | conformance-guard (R5-дискриминатор + exempt-list §2) + нейм-линт (A2) + spec_tests d325/d77 (§8) | Ф.1 (полный D325-текст); neg-фикстуры на удалённые имена — после Ф.2b | ⏳ |
 | **Ф.4 Docs/log/закрытие** | `project-creation.txt` + `discussion-log.md` (nova-private) + `simplifications.md`; cross-ref из 174.1/173/176; Q-sweep §9 | все предыдущие | ⏳ |
 
 **Гейт каждой фазы (Ред.2-канон):** spec_tests/conformance зелёный (d325 + amended d-файлы) + pos/neg-фикстуры фазы + **nova_tests baseline-delta = 0** (baseline = parent-коммит, ТОТ ЖЕ бинарь, temp-worktree/commit+reset; nova_tests сам по себе НЕ гейт корректности; флака ≠ регрессия). Для Ф.2b дополнительно: 0 вхождений старых имён по sweep-спискам §6 (negative grep).
+
+> **🔬 Находка 2026-07-03 (Ф.2c НЕ .nv-only — codegen-gated):** прототип коллекторов
+> (`export fn[T,E] sequence(items []Result[T,E]) -> Result[[]T,E]` / `partition -> ([]T,[]E)`)
+> **проходит чекер** (синтаксис/типы валидны — generic-free-fn + `[]T`-build + Result/tuple-payload
+> подтверждены), но **падает в codegen (CC-FAIL)**: `unknown type name 'NovaRes_NovaArray_nova_int_p_nova_str'`
+> (sequence) и `_NovaTuple_2_..._NovaArray_..._NovaArray_...` (partition). Это **VR-typedef-ordering баг
+> для Result/Tuple над Array-payload при fresh mono-инстанциации** — wrapper-typedef эмитится ДО
+> element-typedef. Подтверждение: `Result[[]u8,...]` из base64 (Ф.2a) РАБОТАЕТ (typedef эмитится под
+> конкретный byte-инстанс: «did you mean nova_byte_p_nova_str»), а `Result[[]int,str]`/tuple — нет.
+> **Тот же класс, что `[M-177-result-over-named-tuple-codegen]` (b022919a, Ф.2a) — но для ARRAY-
+> payload, НЕ покрыт** тем фиксом (он late-VR-typedef'ил named-tuple/record; array-элемент wrapper'а —
+> отдельная ветка). **Следствие:** Ф.2c зависит от codegen-фикса (emit_c.rs VR-typedef late-emit для
+> Array-payload) — это зона 172.1 (координация, не соло). Маркер **`[M-177-result-tuple-over-array-codegen]`**.
+> Чистого .nv-workaround для `sequence -> Result[[]T,E]` нет (Result-over-array — суть коллектора).
+> **Перепланировка:** Ф.2c переносится в compiler-gated-волну рядом с Ф.2b.
 
 ---
 
