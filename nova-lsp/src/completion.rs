@@ -995,7 +995,7 @@ fn type_ref_base_name(ty: &TypeRef) -> Option<String> {
 /// `dot_byte` in the entry file, via the Ф.2 `expr_types` map. When several
 /// expressions share that end offset (nested), the OUTERMOST (smallest start)
 /// is the full receiver.
-fn receiver_type_name(env: &ModuleEnv, dot_byte: usize) -> Option<String> {
+pub(crate) fn receiver_type_name(env: &ModuleEnv, dot_byte: usize) -> Option<String> {
     let mut best_start = usize::MAX;
     let mut best_ty: Option<&TypeRef> = None;
     for (span, ty) in &env.expr_types {
@@ -1009,7 +1009,7 @@ fn receiver_type_name(env: &ModuleEnv, dot_byte: usize) -> Option<String> {
 
 /// True if `recv`'s receiver type matches the target type name `ty_name`,
 /// accounting for the `[]T`/`Vec[T]` slice-alias equivalence.
-fn receiver_matches(recv: &nova_codegen::ast::Receiver, ty_name: &str) -> bool {
+pub(crate) fn receiver_matches(recv: &nova_codegen::ast::Receiver, ty_name: &str) -> bool {
     if recv.type_name == ty_name {
         return true;
     }

@@ -29,7 +29,7 @@ use crate::hover::compute_hover_in;
 use crate::incremental::apply_changes;
 use crate::rename::{prepare_rename, RenameDoc, compute_rename};
 use crate::semantic_tokens_delta::{build_delta_response, SemanticTokensSnapshot};
-use crate::signature_help::compute_signature_help;
+use crate::signature_help::compute_signature_help_in;
 use crate::state::{ParsedFile, WorkspaceState};
 use crate::symbols::{
     collect_nv_files, compute_document_symbols, entries_to_workspace_symbols,
@@ -988,9 +988,24 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri.clone();
         let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
         let src = doc.text.to_string();
+        let version = doc.version;
         drop(doc);
 
-        let help = run_with_large_stack(move || compute_signature_help(&src, pos));
+        // Plan 104.10 Ф.8: dispatch the active overload by the receiver's real
+        // type via the Ф.1 resolved-module cache (imports inlined) + Ф.2
+        // `expr_types`. Contained so a checker/resolver panic degrades to no
+        // signature rather than crashing the request.
+        let state = Arc::clone(&self.state);
+        let uri_clone = uri.clone();
+        let help = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || {
+                let resolved = state.get_or_build_resolved(&uri_clone, version, &src);
+                compute_signature_help_in(&resolved, &src, pos)
+            })
+        })) {
+            Ok(h) => h,
+            Err(_) => None,
+        };
         Ok(help)
     }
 
