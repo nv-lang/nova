@@ -244,8 +244,29 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
 Багфиксы, не зависящие от деталей Model 1:
 1. **#1 fix:** `with Fail` ре-throw'ит PANIC (ветка перед CANCEL/USER, `emit_c.rs:6885+`); сразу ввести
    общий helper `nova_scope_exit` (предшественник Ф.2 п.4). Закрывает `[M-172-with-fail-swallows-panic]`.
-2. **#3 fix:** удалить `?` Fail-context throw-mode (`emit_c.rs:21895-21958`) → `[E_TRY_IN_FAIL_FN]`;
-   `?` строго return-only. Завершает codegen-часть [174.2](174.2-question-mark-return-only.md).
+2. **#3 fix (🔬 ДЕ-РИСК ГОТОВ 2026-07-04 — премиса плана СТАЛА, переопределён; готов к impl):**
+   `?` строго return-only + `[E_TRY_IN_FAIL_FN]`. Завершает codegen-часть [174.2](174.2-question-mark-return-only.md).
+   **НАХОДКА де-риска (blast-radius по всему корпусу — 15 сайтов postfix-`?`, из них релевантны 5):**
+   174.2-премиса «throw-режим не задействован, codegen-ветку убрать как недостижимую» — **СТАЛА**.
+   Категории: **(KEEP)** free `?` на Result/Option-возвращающих fn (return-mode): `effects/throws.nv`,
+   `effects/error_chains.nv` — НЕ трогать. **(MIGRATE, 3 сайта)** free `?` на **unit** внутри Fail-fn
+   (`process2() Fail -> ()` + два `d158_*`): `?` на unit хитит codegen no-op-ветку `/* ? */` — бессмыслен;
+   миграция = **дропнуть `?`** (Fail пробрасывается эффектом сам). **(EXEMPT, 2 сайта)** `consume X = expr? {}`
+   — **D196 form 2** (Result-unwrap init, `check_consume_unwrap_form.nv`, conformance `d196_consume_scope_init_forms.nv`):
+   `?` на Result внутри Fail-fn → это ЕДИНСТВЕННЫЙ реальный носитель `in_fail_ctx` throw-ветки
+   (`emit_c.rs:22092-22145`). **РЕШЕНИЕ (Option A, консервативно — уважает D196-дизайн владельца):
+   EXEMPT consume-init `?`; codegen throw-ветку СОХРАНИТЬ (D196 её использует — план «убрать ветку»
+   АННУЛИРОВАН находкой); чекер отвергает только FREE-standing `?` в fn с return-type ≠ Result/Option.**
+   Причина против Option B (мигрировать D196 form 2 `?`→`!!`): владелец выбрал `?` для consume-init
+   намеренно; смена канона D196 — его spec-решение, не рефактор в хвосте 173.
+   **Impl-план (next):** (a) helper `return_is_result_or_option(fd.return_type)`; (b) per-fn walker в
+   `check_fn` (`types/mod.rs:4790`, есть `fd.return_type`) — рекурс по stmt/expr, для `ExprKind::Try`
+   (кроме top-level `init` у `ConsumeScope` — D196-exempt) при !Result/Option → `[E_TRY_IN_FAIL_FN]`
+   (hint «используй `!!`/`throw`»); закрытие closure-контекста если у lambda свой ret; (c) мигрировать
+   3 no-op сайта (дроп `?`); (d) тесты `nova_tests/err173/` (pos `?` на Result→return Err + на Option→
+   return None; neg free `?` в Fail-fn → `[E_TRY_IN_FAIL_FN]`; pos D196 consume-init `?` не задет); spec:
+   amend **D85** (`?` return-only + note consume-init-exempt), stale `## D4`/дубль `####` (04-effects:290/950),
+   doc-примеры `@commit()?`→`!!`. **NB codegen throw-ветку 22092-22145 НЕ удалять** (D196 form 2 её носит).
 3. **#2 fix:** диагностика D133 — quick-fix на `defer`/`@cleanup` вместо errdefer/okdefer
    (`types/mod.rs:18764+, 18819+`, D162-quickfix `:19636+`).
 4. ✅ **#4 fix (84e6e709):** удалён мёртвый errdefer/okdefer/defer|result| surface (AST-варианты +
