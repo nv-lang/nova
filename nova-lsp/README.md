@@ -2,10 +2,17 @@
 
 **nova-lsp** is the official Language Server Protocol (LSP) server for the [Nova programming language](https://nv-lang.org).
 
-It powers IDE features — diagnostics, hover, go-to-definition, completion, quick-fixes, rename — for any editor that speaks LSP (VSCode, Cursor, Neovim, Helix, Zed, and more).
+It powers IDE features — diagnostics, hover, go-to-definition, completion, document/workspace symbols, find-references, quick-fixes, rename, and format — for any editor that speaks LSP (VSCode, Cursor, Neovim, Helix, Zed, and more).
 
-> **Status:** Plan 104.0 — foundation skeleton (JSON-RPC transport, lifecycle handlers, document cache).
-> Features land in Plans 104.1 – 104.6. See [docs/plans/104-ide-integration.md](../docs/plans/104-ide-integration.md).
+> **Status:** **V1 complete** — [Plan 104](../docs/plans/104-ide-integration.md) (IDE integration) closed 2026-06-17; all sub-plans 104.0–104.9 landed
+> (diagnostics, hover + goto + signature-help, completion, symbols + references, ≥25 code-actions, rename + format, tree-sitter grammar,
+> editor packaging, keyword sync). **V2** — [Plan 104.10](../docs/plans/104.10-lsp-v2-production.md) (production parity with
+> rust-analyzer / gopls / tsserver / IntelliJ) is proposed / in progress.
+>
+> ⚠ **Conventions:** the server reuses `compiler-codegen` as a library and must follow
+> [docs/compiler-conventions.md](../docs/compiler-conventions.md) — no hardcoded type/method/keyword lists (§3: "LSP обязан резолвить
+> методы из `.nv`"), single source of truth for types (§0/`ResolvedType`), no silent holes (§4). Known gaps are tracked as `[M-104.10-*]`
+> markers and in Plan 104.10.
 
 ---
 
@@ -33,16 +40,14 @@ cargo build --release --manifest-path nova-lsp/Cargo.toml
 
 ### VSCode / Cursor / VSCodium
 
-Add to your workspace `.vscode/settings.json`:
+A full TypeScript extension (LanguageClient with auto-restart + configurable binary path) lives in
+[`editors/vscode`](../editors/vscode). Point it at your built binary via workspace `.vscode/settings.json`:
 
 ```json
 {
   "nova-lsp.serverPath": "/path/to/nova-lsp/target/release/nova-lsp"
 }
 ```
-
-> Full VSCode extension (TypeScript client) lands in Plan 104.8.  
-> In the meantime you can use the generic [LSP client extension](https://marketplace.visualstudio.com/items?itemName=mads-hartmann.bash-language-server) or point [Vim LSP](https://github.com/prabirshrestha/vim-lsp) at the binary.
 
 ### Neovim (nvim-lspconfig)
 
@@ -54,8 +59,6 @@ require("lspconfig").nova_lsp.setup({
   root_dir = require("lspconfig.util").root_pattern("nova.toml", ".git"),
 })
 ```
-
-> Official nvim-lspconfig PR lands in Plan 104.8.
 
 ### Helix
 
@@ -73,9 +76,9 @@ language-servers = ["nova-lsp"]
 command = "/path/to/nova-lsp/target/release/nova-lsp"
 ```
 
-### Zed
+### Zed / Sublime / Emacs / Vim
 
-> Zed extension configuration lands in Plan 104.8.
+Per-editor packaging lives under [`editors/`](../editors) (Plan 104.8). See each editor's directory for setup.
 
 ---
 
@@ -107,11 +110,10 @@ cd nova-lsp && cargo clippy -- -D warnings
 cd nova-lsp && cargo build --release
 ```
 
-Tests are in `nova-lsp/tests/`:
-- `build_smoke.rs` — binary exists, `--version`, graceful exit on closed stdin
-- `lifecycle.rs`   — initialize/initialized/shutdown (Plan 104.0.2)
-- `document_cache.rs` — didOpen/didChange/didClose state (Plan 104.0.3)
-- `integration.rs` — end-to-end JSON-RPC handshake (Plan 104.0.4)
+Integration tests live in `nova-lsp/tests/` — build/lifecycle/document-cache smoke tests plus
+per-feature suites (`completion.rs`, `symbols_references.rs`, `compiler_adapter.rs`,
+`field_cache_lens.rs`, `workspace.rs`, `perf.rs`, `publish_workflow.rs`, `e2e_smoke.rs`,
+`lifecycle_memory.rs`, …).
 
 ---
 
@@ -122,14 +124,18 @@ Editor (VSCode / Helix / Neovim / Zed)
    │
    │  JSON-RPC over stdio
    ▼
-nova-lsp  (this crate)
+nova-lsp  (this crate)  — tower-lsp + tokio; per-feature modules:
+   │        compiler.rs · diagnostic_mapping.rs · hover.rs · goto_definition.rs
+   │        completion.rs · symbols.rs · signature_help.rs · code_actions.rs
+   │        rename.rs · format.rs · incremental.rs · semantic_tokens_delta.rs
    │
-   │  Rust API  [Plan 104.1+]
+   │  Rust library API (reuse, not fork)
    ▼
 nova_codegen (compiler-codegen crate)
    ├── lexer/parser
-   ├── types/  ← type-check incremental
+   ├── types/  ← ResolvedType single source of truth (compiler-conventions §0)
    └── ast/    ← spans for hover + goto-def
 ```
 
-See [Plan 104 architecture](../docs/plans/104-ide-integration.md#архитектура) for the full design rationale.
+See [Plan 104 architecture](../docs/plans/104-ide-integration.md#архитектура) for the full V1 design and
+[Plan 104.10](../docs/plans/104.10-lsp-v2-production.md) for the V2 production-parity roadmap.
