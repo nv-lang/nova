@@ -44,7 +44,7 @@
 | 1 | `with Fail[E]` **глотает panic** (D13 violation): catch-ветка проверяет только `error_kind == NOVA_THROW_CANCEL` (:6896), PANIC проваливается в USER-path «handler already ran» (:6916-6929) → result=default, выполнение продолжается | `emit_c.rs:6885-6933` | **P1 soundness** |
 | 2 | Диагностика `D133-not-consumed` строит quick-fix (Applicability::MaybeIncorrect) с retracted `errdefer`/`okdefer` → код, который парсер реджектит (`parser/mod.rs:10070-10090`) | `types/mod.rs:18764-18798, 18819-18854` + D162-quickfix `:19636-19641` | **P1 user-facing** |
 | 3 | `?` Fail-context throw-mode (D165) ещё живёт в codegen (`in_fail_ctx` :21901-21903 → `nova_throw_typed`); `[E_TRY_IN_FAIL_FN]` не существует (grep=0). Plan 174.2 = 📋 PLANNED, не начат | `emit_c.rs:21895-21958` | **P1** |
-| 4 | Мёртвый `errdefer`/`okdefer`/`defer\|result\|` surface: `Stmt::ErrDefer/OkDefer` (`ast/mod.rs:1849-1865`), лексер-токены (`lexer/mod.rs:687-688`, `token.rs:145/149/287-288`), `DeferKind` (`emit_c.rs:1322-1343`), недостижимые ветки `emit_c.rs:17912-18280` + `2379-2380, 11704-11705, 19520-19521, 28955-28956` | см. слева | P3 hygiene |
+| 4 | ✅ **FIXED (Ф.1, 84e6e709)** Мёртвый `errdefer`/`okdefer`/`defer\|result\|` surface: удалены `Stmt::ErrDefer/OkDefer/DeferWithResult` + ~90 match-arm сайтов (18 файлов), `DeferKind` enum + path-selective skip-логика (emit_c: все defer'ы плейн), D189-deprecation lint subsystem (lints). Сохранён tombstone (lexer `KwErrDefer/KwOkDefer` + parser `[D189-removed-*]`) | см. слева | ~~P3~~ ✅ |
 | 5 | `ScopeOutcome.Failure` = `str` в коде vs `any` в спеке → типизированный error-dispatch в `on_exit` невозможен (`nova_make_ScopeOutcome_Failure` берёт только error_msg, payload/type_id дропаются) | `core.nv:147` vs `D188`, `emit_c.rs:19736,19743` | P2 |
 | 6 | `MultiError` **никогда не материализуется**: chain write-only (`nv_compose_suppressed` :19839, `nova_rethrow_with_suppressed` :18063/19842/19847/19852); read-аксессоры `nova_failframe_suppressed_count/at` (`effects.h:269-283`) codegen'ом НЕ используются (grep=0); `MultiError` объявлен в `std/prelude/errors.nv:199` с методами `@primary/@suppressed/@walk/@find_first_panic` (:207-250), но никто его не конструирует — D158/D193 обещание не выполнено | `emit_c.rs`, `effects.h`, `errors.nv` | P2 |
 | 7 | Suppressed-chain **теряется** на голом `throw`/cancel/typed во время unwind: безусловный `error_suppressed = NULL` | `effects.h:93,114,131,801` + NOVA_TRY `:285` | P2 |
@@ -248,9 +248,10 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    `?` строго return-only. Завершает codegen-часть [174.2](174.2-question-mark-return-only.md).
 3. **#2 fix:** диагностика D133 — quick-fix на `defer`/`@cleanup` вместо errdefer/okdefer
    (`types/mod.rs:18764+, 18819+`, D162-quickfix `:19636+`).
-4. **#4 fix:** удалить мёртвый errdefer/okdefer/defer|result| surface (AST/lexer/DeferKind/codegen-ветки —
-   полный список в §1 #4); оставить лишь tombstone-распознавание для D189-hint. Закрывает
-   `[M-172-errdefer-okdefer-dead-surface]`.
+4. ✅ **#4 fix (84e6e709):** удалён мёртвый errdefer/okdefer/defer|result| surface (AST-варианты +
+   ~90 match-arm сайтов в 18 файлах, `DeferKind` enum + path-selective skip-логика, D189-deprecation
+   lint subsystem); tombstone-распознавание для D189-hint сохранено (lexer + parser). Закрыл
+   `[M-172-errdefer-okdefer-dead-surface]` (все 3 слоя, вместе с дефектом #2).
 5. **interim-guard #7-concurrency (P1):** чекер отвергает неподдержанный результат `parallel for`
    (элемент ∉ {int,bool,f64,str} при value-позиции) чистым `[E_PARFOR_RESULT_UNSUPPORTED]` — вместо
    молчаливого degrade и сырого C-error. Снимается фиксом 173.1 Ф.2 (guard остаётся как unreachable-защита).

@@ -166,19 +166,18 @@ referenced from plan docs and simplifications.md.
 
 ## Plan 110.5.7 / D189 — errdefer/okdefer retraction cleanup
 
-- **[M-172-errdefer-okdefer-dead-surface]** `errdefer`/`okdefer` ретракнуты (D189, Plan 110.5.7,
-  hard cutover): парсер реджектит их диагностикой (`parser/mod.rs:9835-9850`). Остаточный мусор в
-  трёх слоях. **(1) USER-FACING БАГ (P1):** диагностика `D133-not-consumed` строит
-  machine-applicable suggestion с `errdefer` (`types/mod.rs:15306-15318`:
-  `"errdefer {{ {name}.{cl}() }}\n{name}.{primary}()"`) — применение quick-fix даёт код, который
-  парсер реджектит. Заменить на `defer`. **(2) Мёртвый AST+codegen (P3):** узлы `ErrDefer`/`OkDefer`
-  (`ast/mod.rs:1842-1853`) недостижимы (парсер реджектит до их конструирования); keyword'ы
-  `KwErrDefer`/`KwOkDefer` (`token.rs:143-149`) нужны ТОЛЬКО как tombstone для дружелюбной ошибки —
-  оставить; но большой dead-codegen в `emit_c.rs` ~17518-18093 (DeferScope.is_error,
-  error-path/success-path dispatch, okdefer-skip, hoist-for-errdefer) + ветки в
-  may_gc/escape_analyze/interp — выпилить. **(3) Внутренние error-строки (P3):** `emit_c.rs:16462`
-  + `:19092` ("defer/errdefer[/okdefer] outside defer scope") → убрать errdefer/okdefer из текста.
-  Test-rot (stale-комменты про errdefer/okdefer в тестах) уже подметён осью 169.2.
+- ✅ **FIXED [M-172-errdefer-okdefer-dead-surface]** (Plan 173 Ф.1, 2026-07-03) — все три слоя закрыты.
+  `errdefer`/`okdefer`/`defer |result|` ретракнуты (D189, hard cutover); парсер реджектит их
+  tombstone-хинтом `[D189-removed-*]` (`parser/mod.rs:10052-10090`). **(1) USER-FACING БАГ (P1) —
+  дефект #2, commit 4a02c825:** `D133-not-consumed`/`D162` quick-fix'ы теперь предлагают `defer`
+  (D162) / `consume`-scope (D188), не retracted errdefer/okdefer. **(2) Мёртвый AST+codegen (P3) —
+  дефект #4, commit 84e6e709:** удалены `Stmt::ErrDefer/OkDefer/DeferWithResult` (ast) + ~90
+  match-arm сайтов в 18 файлах; `DeferKind` enum + path-selective skip-логика (emit_c: все defer'ы
+  плейн); D189-deprecation lint subsystem (lints). Сохранено tombstone-распознавание: keyword'ы
+  `KwErrDefer`/`KwOkDefer` (`token.rs`) + parser-хинт. **(3) Внутренние error-строки (P3) — дефект #4:**
+  "defer/errdefer/okdefer outside defer scope" → "defer outside defer scope". Тесты:
+  `nova_tests/err173/neg/f1_{errdefer,okdefer,defer_result}_removed` (tombstone) +
+  `err173/f1_defer_plain_all_paths` (plain-defer LIFO regression-guard).
 
 ## D13 — panic catchability (soundness)
 
