@@ -43964,33 +43964,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     }
 
 
-    fn infer_expr_c_type_legacy(&self, expr: &Expr) -> String {
-        // 172.1.2 lift-фаза (2026-07-04): NOVA_LEGACY_ARMS=1 — печать
-        // «desc → результат» для инвентаризации исполняемых legacy-веток.
-        let r = self.infer_expr_c_type_legacy_inner(expr);
-        if cfg!(debug_assertions) && std::env::var_os("NOVA_LEGACY_ARMS").is_some() {
-            let k = match &expr.kind {
-                ExprKind::Call { .. } => "Call", ExprKind::Member { .. } => "Member",
-                ExprKind::Ident(_) => "Ident", ExprKind::Path(_) => "Path",
-                ExprKind::If { .. } => "If", ExprKind::Index { .. } => "Index",
-                ExprKind::Binary { .. } => "Binary", ExprKind::Match { .. } => "Match",
-                ExprKind::RecordLit { .. } => "RecordLit",
-                ExprKind::TupleLit(_) => "TupleLit",
-                ExprKind::ClosureLight { .. } => "ClosL",
-                ExprKind::ClosureFull(_) => "ClosF",
-                _ => "Other",
-            };
-            eprintln!("[LG] {} -> {}", k, if r.is_empty() { "<empty>" } else { r.as_str() });
-        }
-        r
-    }
 
-    fn infer_expr_c_type_legacy_inner(&self, expr: &Expr) -> String {
-        // 172.1.2 ФИНАЛ: тело перенесено в dispatcher (Channel 6z).
-        // Заглушка — достижение сюда невозможно (wrapper зовёт только её).
-        panic!("[P67-LEGACY-DEAD] legacy_inner вызван после переноса: span={:?} kind-дискриминант={:?}",
-            expr.span, std::mem::discriminant(&expr.kind));
-    }
 
     /// Produce a short human-readable description of an expression for assert messages.
     fn expr_to_display(expr: &Expr) -> String {
