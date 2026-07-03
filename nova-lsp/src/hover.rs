@@ -214,6 +214,12 @@ fn render_hover_markdown(sym: &SymbolInfo) -> String {
             let code = format!("import {}", module_path);
             render_code_and_doc(&code, None)
         }
+        SymbolInfo::FieldDecl { owner, name, ty_text, .. } => {
+            // Member-access field hover (Ф.6): render `Owner.field type` so the
+            // reader sees both the owning type and the field's real type.
+            let code = format!("{}.{} {}", owner, name, ty_text);
+            render_code_and_doc(&code, None)
+        }
     }
 }
 
@@ -483,5 +489,89 @@ mod tests {
             md.contains("Defined in") && md.contains("prelude"),
             "doc/signature must be attributed to the prelude source file, got:\n{md}"
         );
+    }
+
+    // ── Plan 104.10 Ф.6: member-access hover (obj.field) ──────────────────────
+
+    /// Position of `&src[idx+sub_off..]` where `idx` is the first occurrence of
+    /// `needle`. All Ф.6 fixtures are ASCII so byte column == UTF-16 column.
+    fn locate(src: &str, needle: &str, sub_off: usize) -> Position {
+        let idx = src.find(needle).expect("needle present") + sub_off;
+        let before = &src[..idx];
+        let line = before.matches('\n').count() as u32;
+        let col = before.rsplit('\n').next().unwrap().len() as u32;
+        Position { line, character: col }
+    }
+
+    /// Resolve the fixture with the IDE entry point (records `expr_types`, Ф.2),
+    /// then compute a hover — the member path needs the per-expression types.
+    fn hover_ide(dir: &str, src: &str, pos: Position) -> Option<Hover> {
+        let (uri, path) = write_fixture(dir, "app.nv", src);
+        let resolved = provenance::resolve_module_for_ide(&path, src);
+        compute_hover_in(&resolved, src, pos, &uri)
+    }
+
+    /// POS: hover on `r.start` where `r: Range` — the object's type comes from
+    /// `expr_types`, the field type from Range's real declaration (criterion #4).
+    /// `r` is a `Range` parameter (a range-literal local `ro r = 0..=5` is not yet
+    /// covered by the checker's `expr_types` — [M-104.10-expr-types-coverage]).
+    #[test]
+    fn pos_member_range_field_start() {
+        let src = "module app.mod\nfn use_range(r Range) -> int {\n  r.start\n}\n";
+        let md = hover_md(hover_ide("f6_range_start", src, locate(src, "r.start", 2)));
+        assert!(md.contains("start"), "must name the field, got:\n{md}");
+        assert!(md.contains("int"), "must show the field's real type, got:\n{md}");
+        assert!(md.contains("Range"), "must attribute the field to its owner type, got:\n{md}");
+    }
+
+    /// POS: hover on a user record field — type of the object from `expr_types`,
+    /// field type from the record's real declaration.
+    #[test]
+    fn pos_member_user_record_field() {
+        let src = concat!(
+            "module app.mod\n",
+            "type Rec {\n  ro a int\n  ro b str\n}\n",
+            "fn main() {\n  ro x = Rec { a: 1, b: \"hi\" }\n  ro y = x.a\n}\n",
+        );
+        let md = hover_md(hover_ide("f6_user_field", src, locate(src, "x.a", 2)));
+        assert!(md.contains("Rec.a"), "must show owner.field, got:\n{md}");
+        assert!(md.contains("int"), "must show the field's real type, got:\n{md}");
+    }
+
+    /// POS: hover on `r.len` (a method call receiver) resolves the *method*
+    /// declaration on the object's type and shows its signature.
+    #[test]
+    fn pos_member_method_signature() {
+        let src = "module app.mod\nfn use_range(r Range) -> int {\n  r.len()\n}\n";
+        let md = hover_md(hover_ide("f6_method", src, locate(src, "r.len", 2)));
+        assert!(md.contains("len"), "must name the method, got:\n{md}");
+        assert!(md.contains("fn Range"), "must show the method signature on Range, got:\n{md}");
+    }
+
+    /// NEG: hover on a non-existent field of a known type → no symbol → None.
+    #[test]
+    fn neg_member_unknown_field_none() {
+        // `r` has a KNOWN type (Range) so this genuinely tests "no such field on a
+        // resolved owner type", not an expr_types coverage miss.
+        let src = "module app.mod\nfn use_range(r Range) -> int {\n  r.nonexistent\n}\n";
+        let h = hover_ide("f6_unknown", src, locate(src, "r.nonexistent", 2));
+        assert!(h.is_none(), "unknown member must yield no hover");
+    }
+
+    /// EDGE: chained access `o.b.c` — hover on the trailing `c` must resolve
+    /// through the chain (type of `o.b` from `expr_types`, field `c` from its
+    /// real decl), NOT against the outer receiver `o`.
+    #[test]
+    fn edge_member_chain_trailing_field() {
+        let src = concat!(
+            "module app.mod\n",
+            "type Inner {\n  ro c int\n}\n",
+            "type Outer {\n  ro b Inner\n}\n",
+            "fn main() {\n  ro o = Outer { b: Inner { c: 5 } }\n  ro v = o.b.c\n}\n",
+        );
+        // Cursor on the trailing `c` (index of "o.b.c" + 4).
+        let md = hover_md(hover_ide("f6_chain", src, locate(src, "o.b.c", 4)));
+        assert!(md.contains("Inner.c"), "trailing field must resolve on Inner, got:\n{md}");
+        assert!(md.contains("int"), "must show the field's real type, got:\n{md}");
     }
 }

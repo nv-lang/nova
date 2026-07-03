@@ -68,6 +68,19 @@ pub enum SymbolInfo {
         span: Span,
         doc: Option<String>,
     },
+    /// A field of a record / named-tuple type, resolved through member access
+    /// (`obj.field`) — Plan 104.10 Ф.6.
+    ///
+    /// The `owner` type is taken from the object's inferred type (`expr_types`,
+    /// Ф.2); the field `name` + `ty_text` come from the owner type's **real**
+    /// declaration (criterion #4). `span` is the field's declaration span (so
+    /// goto-definition on a member access lands on the field decl).
+    FieldDecl {
+        owner: String,
+        name: String,
+        ty_text: String,
+        span: Span,
+    },
 }
 
 impl SymbolInfo {
@@ -80,6 +93,7 @@ impl SymbolInfo {
             SymbolInfo::MethodDecl { span, .. } => *span,
             SymbolInfo::ImportRef { span, .. } => *span,
             SymbolInfo::ConstDecl { span, .. } => *span,
+            SymbolInfo::FieldDecl { span, .. } => *span,
         }
     }
 }
@@ -379,6 +393,15 @@ pub fn resolve_symbol_at_with_limit(
         if let Some(info) = lookup_decl_by_name(module, &ident_name) {
             return Some(info);
         }
+    }
+
+    // Final fallback (Plan 104.10 Ф.6): member-access `obj.field`. When the
+    // cursor sits on the *field* part, the ident/name fallbacks above find
+    // nothing (the field is not a top-level name and not a binding). Resolve it
+    // through the object's inferred type (`expr_types`, Ф.2) → the owner type's
+    // real field/method declaration.
+    if let Some(info) = resolve_member_at(module, byte_offset, env) {
+        return Some(info);
     }
 
     None
@@ -862,6 +885,318 @@ fn find_ident_in_expr(expr: &Expr, offset: usize) -> Option<String> {
             find_ident_in_expr(range, offset).or_else(|| find_ident_in_expr(body, offset))
         }
         _ => None,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Member-access resolution (Plan 104.10 Ф.6) — `obj.field` hover / goto
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Resolve `obj.field` when the cursor is on the `field` part.
+///
+/// Ф.6 pipeline (criterion #4 — *object type from `expr_types`, field from the
+/// real decl*):
+/// 1. Locate the innermost member-access whose field-name region covers `offset`.
+/// 2. Look the **object's** type up in `expr_types` (Ф.2) and reduce it to a base
+///    type name (peeling `ro/mut/*` modifiers; `[]T` → `Vec`).
+/// 3. Find the field (record / named-tuple) or instance method of that owner
+///    type in its **real** declaration and return a [`SymbolInfo`].
+///
+/// Returns `None` (graceful degrade) when there is no `expr_types` map, the
+/// cursor is not on a member field, the object's type is unknown, or the owner
+/// type declares no such field/method.
+fn resolve_member_at(
+    module: &Module,
+    offset: usize,
+    env: Option<&ModuleEnv>,
+) -> Option<SymbolInfo> {
+    let env = env?;
+    if env.expr_types.is_empty() {
+        return None;
+    }
+    let (obj_span, field_name) = find_member_field_entry(module, offset)?;
+    let obj_ty = expr_type_for_span(env, obj_span)?;
+    let owner = type_ref_base_name(obj_ty)?;
+    resolve_field_or_method(module, &owner, &field_name)
+}
+
+/// Look a recorded expression type up by its byte span.
+///
+/// Direct `HashMap` hit first; then a byte-range fallback that is robust to the
+/// entry-file `file_id` duality (a span may be stamped `MAIN_FILE_ID` in the AST
+/// but recorded under the entry's on-disk `file_id`, or vice-versa).
+fn expr_type_for_span(env: &ModuleEnv, span: Span) -> Option<&TypeRef> {
+    if let Some(t) = env.expr_types.get(&span) {
+        return Some(t);
+    }
+    env.expr_types
+        .iter()
+        .find(|(s, _)| s.start == span.start && s.end == span.end)
+        .map(|(_, t)| t)
+}
+
+/// Reduce a `TypeRef` to the base type NAME used to look up a declaration.
+/// `Named{path:[..,"Foo"]}` → `Foo`; slice/array → `Vec` (`[]T` aliases
+/// `Vec[T]`); `ro/mut/*/unsafe T` peel to the base of `T`.
+fn type_ref_base_name(ty: &TypeRef) -> Option<String> {
+    match ty {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        TypeRef::Array(..) | TypeRef::FixedArray(..) => Some("Vec".to_string()),
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Pointer(inner, _) => type_ref_base_name(inner),
+        _ => None,
+    }
+}
+
+/// True if receiver `recv`'s type matches `ty_name`, honouring the `[]T`/`Vec[T]`
+/// slice-alias equivalence (a `fn []T @m` receiver is a method on `Vec`).
+fn receiver_matches_name(recv: &Receiver, ty_name: &str) -> bool {
+    if recv.type_name == ty_name {
+        return true;
+    }
+    if ty_name == "Vec" && recv.type_name.starts_with("[]") {
+        return true;
+    }
+    if recv.type_name == "Vec" && ty_name.starts_with("[]") {
+        return true;
+    }
+    false
+}
+
+/// Find a field (record / named-tuple) or instance method named `field_name` on
+/// the type `owner`, reading from that type's **real** declaration in `module`
+/// (fields take precedence over methods, as at a value member access).
+fn resolve_field_or_method(module: &Module, owner: &str, field_name: &str) -> Option<SymbolInfo> {
+    // 1) Field of a record / named-tuple declaration.
+    for item in &module.items {
+        if let Item::Type(td) = item {
+            if td.name != owner {
+                continue;
+            }
+            let field = match &td.kind {
+                TypeDeclKind::Record(fields) => fields
+                    .iter()
+                    .find(|f| f.name == field_name)
+                    .map(|f| (f.name.clone(), format_type_ref(&f.ty), f.span)),
+                TypeDeclKind::NamedTuple(fields) => fields
+                    .iter()
+                    .find(|f| f.name == field_name)
+                    .map(|f| (f.name.clone(), format_type_ref(&f.ty), f.span)),
+                _ => None,
+            };
+            if let Some((name, ty_text, span)) = field {
+                return Some(SymbolInfo::FieldDecl {
+                    owner: owner.to_string(),
+                    name,
+                    ty_text,
+                    span,
+                });
+            }
+        }
+    }
+    // 2) Instance method on the owner type.
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if fd.name != field_name {
+                continue;
+            }
+            if let Some(recv) = &fd.receiver {
+                if receiver_matches_name(recv, owner) {
+                    return Some(SymbolInfo::MethodDecl {
+                        receiver_type: format_receiver_type(recv),
+                        name: fd.name.clone(),
+                        signature: format_method_signature(fd, recv),
+                        doc: extract_doc(&fd.doc),
+                        span: fd.span,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+// ── Member-access AST walker (find the field region under the cursor) ─────────
+
+/// Walk the **entry** file's fn/test bodies for a member access `obj.field`
+/// whose *field-name region* covers `offset`. Returns `(obj_span, field_name)`.
+fn find_member_field_entry(module: &Module, offset: usize) -> Option<(Span, String)> {
+    for item in module.items.iter().filter(|it| item_belongs_to_entry(it)) {
+        match item {
+            Item::Fn(fd) => {
+                if !span_contains(fd.span, offset) {
+                    continue;
+                }
+                let r = match &fd.body {
+                    FnBody::Block(b) => find_member_field_in_block(b, offset),
+                    FnBody::Expr(e) => find_member_field_in_expr(e, offset),
+                    FnBody::External => None,
+                };
+                if r.is_some() {
+                    return r;
+                }
+            }
+            Item::Test(td) => {
+                if span_contains(td.span, offset) {
+                    if let Some(r) = find_member_field_in_block(&td.body, offset) {
+                        return Some(r);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_member_field_in_block(block: &Block, offset: usize) -> Option<(Span, String)> {
+    for stmt in &block.stmts {
+        if let Some(r) = find_member_field_in_stmt(stmt, offset) {
+            return Some(r);
+        }
+    }
+    block
+        .trailing
+        .as_ref()
+        .and_then(|t| find_member_field_in_expr(t.as_ref(), offset))
+}
+
+fn find_member_field_in_stmt(stmt: &Stmt, offset: usize) -> Option<(Span, String)> {
+    match stmt {
+        Stmt::Let(ld) => find_member_field_in_expr(&ld.value, offset),
+        Stmt::Const(cd) => find_member_field_in_expr(&cd.value, offset),
+        Stmt::Expr(e) => find_member_field_in_expr(e, offset),
+        Stmt::Assign { target, value, .. } => find_member_field_in_expr(target, offset)
+            .or_else(|| find_member_field_in_expr(value, offset)),
+        Stmt::TupleAssign { lhs, rhs, .. } => lhs
+            .iter()
+            .find_map(|e| find_member_field_in_expr(e, offset))
+            .or_else(|| rhs.iter().find_map(|e| find_member_field_in_expr(e, offset))),
+        Stmt::Return { value, .. } => {
+            value.as_ref().and_then(|e| find_member_field_in_expr(e, offset))
+        }
+        Stmt::Throw { value, .. } => find_member_field_in_expr(value, offset),
+        Stmt::Defer { body, .. } => find_member_field_in_expr(body, offset),
+        Stmt::ConsumeScope { init, body, .. } => find_member_field_in_expr(init, offset)
+            .or_else(|| find_member_field_in_block(body, offset)),
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            find_member_field_in_expr(expr, offset)
+        }
+        Stmt::Apply { args, .. } => args.iter().find_map(|a| find_member_field_in_expr(a, offset)),
+        Stmt::Calc { steps, .. } => {
+            steps.iter().find_map(|s| find_member_field_in_expr(&s.expr, offset))
+        }
+        _ => None,
+    }
+}
+
+fn find_member_field_in_expr(expr: &Expr, offset: usize) -> Option<(Span, String)> {
+    if !span_contains(expr.span, offset) {
+        return None;
+    }
+    match &expr.kind {
+        ExprKind::Member { obj, name } => {
+            // Innermost first: for a chain `a.b.c`, recurse into `obj` so hover
+            // on an inner field (`b`) resolves against `a`, not the outer expr.
+            if let Some(r) = find_member_field_in_expr(obj, offset) {
+                return Some(r);
+            }
+            // Cursor on the field-name region (past the object, within this
+            // member expression) — this is the field being hovered.
+            if offset > obj.span.end && offset <= expr.span.end {
+                return Some((obj.span, name.clone()));
+            }
+            None
+        }
+        ExprKind::Call { func, args, .. } => find_member_field_in_expr(func, offset)
+            .or_else(|| args.iter().find_map(|a| find_member_field_in_expr(a.expr(), offset))),
+        ExprKind::Index { obj, index } => find_member_field_in_expr(obj, offset)
+            .or_else(|| find_member_field_in_expr(index, offset)),
+        ExprKind::Binary { left, right, .. } => find_member_field_in_expr(left, offset)
+            .or_else(|| find_member_field_in_expr(right, offset)),
+        ExprKind::Unary { operand, .. } => find_member_field_in_expr(operand, offset),
+        ExprKind::If { cond, then, else_, .. } => find_member_field_in_expr(cond, offset)
+            .or_else(|| find_member_field_in_block(then, offset))
+            .or_else(|| else_.as_ref().and_then(|e| find_member_field_in_else(e, offset))),
+        ExprKind::IfLet { scrutinee, then, else_, guard, .. } => {
+            find_member_field_in_expr(scrutinee, offset)
+                .or_else(|| guard.as_ref().and_then(|g| find_member_field_in_expr(g, offset)))
+                .or_else(|| find_member_field_in_block(then, offset))
+                .or_else(|| else_.as_ref().and_then(|e| find_member_field_in_else(e, offset)))
+        }
+        ExprKind::While { cond, body, .. } => find_member_field_in_expr(cond, offset)
+            .or_else(|| find_member_field_in_block(body, offset)),
+        ExprKind::For { iter, body, .. } => find_member_field_in_expr(iter, offset)
+            .or_else(|| find_member_field_in_block(body, offset)),
+        ExprKind::Block(block) => find_member_field_in_block(block, offset),
+        ExprKind::Match { scrutinee, arms, .. } => find_member_field_in_expr(scrutinee, offset)
+            .or_else(|| {
+                arms.iter().find_map(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .and_then(|g| find_member_field_in_expr(g, offset))
+                        .or_else(|| match &arm.body {
+                            MatchArmBody::Expr(e) => find_member_field_in_expr(e, offset),
+                            MatchArmBody::Block(b) => find_member_field_in_block(b, offset),
+                        })
+                })
+            }),
+        ExprKind::RecordLit { fields, .. } => fields
+            .iter()
+            .find_map(|f| f.value.as_ref().and_then(|v| find_member_field_in_expr(v, offset))),
+        ExprKind::ArrayLit(elems) => elems.iter().find_map(|e| match e {
+            nova_codegen::ast::ArrayElem::Item(expr) => find_member_field_in_expr(expr, offset),
+            nova_codegen::ast::ArrayElem::Spread(expr) => find_member_field_in_expr(expr, offset),
+        }),
+        ExprKind::TupleLit(elems) => {
+            elems.iter().find_map(|e| find_member_field_in_expr(e, offset))
+        }
+        ExprKind::ClosureLight { body, .. } => match body {
+            nova_codegen::ast::ClosureBody::Expr(e) => find_member_field_in_expr(e, offset),
+            nova_codegen::ast::ClosureBody::Block(b) => find_member_field_in_block(b, offset),
+        },
+        ExprKind::ClosureFull(sig_body) => match &sig_body.body {
+            FnBody::Block(b) => find_member_field_in_block(b, offset),
+            FnBody::Expr(e) => find_member_field_in_expr(e, offset),
+            FnBody::External => None,
+        },
+        ExprKind::TurboFish { base, .. } => find_member_field_in_expr(base, offset),
+        ExprKind::WhileLet { scrutinee, body, guard, .. } => {
+            find_member_field_in_expr(scrutinee, offset)
+                .or_else(|| guard.as_ref().and_then(|g| find_member_field_in_expr(g, offset)))
+                .or_else(|| find_member_field_in_block(body, offset))
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Blocking(body) => {
+            find_member_field_in_block(body, offset)
+        }
+        ExprKind::Supervised { body, cancel, .. } => find_member_field_in_block(body, offset)
+            .or_else(|| cancel.as_ref().and_then(|c| find_member_field_in_expr(c, offset))),
+        ExprKind::Forall { range, body, .. } => find_member_field_in_expr(range, offset)
+            .or_else(|| find_member_field_in_expr(body, offset)),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => find_member_field_in_expr(inner, offset),
+        ExprKind::Spawn(inner) | ExprKind::Throw(inner) => find_member_field_in_expr(inner, offset),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => find_member_field_in_expr(inner, offset),
+        ExprKind::Coalesce(a, b) => find_member_field_in_expr(a, offset)
+            .or_else(|| find_member_field_in_expr(b, offset)),
+        ExprKind::Range { start, end, .. } => start
+            .as_ref()
+            .and_then(|e| find_member_field_in_expr(e, offset))
+            .or_else(|| end.as_ref().and_then(|e| find_member_field_in_expr(e, offset))),
+        ExprKind::Exists { range, body, .. } => find_member_field_in_expr(range, offset)
+            .or_else(|| find_member_field_in_expr(body, offset)),
+        _ => None,
+    }
+}
+
+fn find_member_field_in_else(
+    e: &nova_codegen::ast::ElseBranch,
+    offset: usize,
+) -> Option<(Span, String)> {
+    match e {
+        nova_codegen::ast::ElseBranch::Block(b) => find_member_field_in_block(b, offset),
+        nova_codegen::ast::ElseBranch::If(expr) => find_member_field_in_expr(expr, offset),
     }
 }
 
