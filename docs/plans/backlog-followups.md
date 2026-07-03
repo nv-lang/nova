@@ -795,3 +795,22 @@ expected-type/arg-binding/resolve-семейство). legacy_inner —
 недостижимая заглушка; удаление мёртвого кода (wrapper+заглушка+прото-армы,
 ~3.5k строк) — следующий атом FIN.
 **Носитель: Plan 172.1 FIN.**
+
+
+## [IDEA-172-typed-ir-mono] — Typed-IR mono path (2026-07-04, из финализации 172.1)
+
+Главный структурный разрыв с эталонами (rustc HIR/MIR, Zig ZIR/AIR, Swift SIL,
+Go typed-AST+SSA): AST→C-текст напрямую, mono-identity на C-строках
+(`Nova_Vec____nova_str*`), часть типовой правды в codegen-state. Typed-IR mono
+убивает C-строковую identity, закрывает [M-172.1-lifted-legacy-arms] классом
+и даёт базу constraint-инференсу. Рекомендация: НОВЫЙ под-план зонта 172
+(следующий свободный номер; 172.6-172.11 исторически вынесены в 174 — не
+переиспользовать), порядок: ПОСЛЕ 172.4 (value-ABI упростит representation).
+Оценка: крупный (уровень 172.1).
+
+## [IDEA-172-constraint-inference] — Constraint-based inference core (2026-07-04)
+
+Ad-hoc продюсеры канала (симптом марафона: каждый контекст — отдельный
+продюсер) → унификационное ядро (Go types2/K2-класс) поверх готового канала.
+Закрывает C6-полный (closures bidirectional), anon-RecordLit-expected,
+flow-None классом. Порядок: после typed-IR (структурные типы повсюду).
