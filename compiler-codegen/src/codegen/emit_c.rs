@@ -37671,6 +37671,88 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     }
             };
         }
+        // Channel 6o (2026-07-04): Ident — ДОСЛОВНЫЙ подъём legacy-арма
+        // (unit-варианты, empty-sum, self, buf-фоллбеки).
+        if let ExprKind::Ident(name) = &expr.kind {
+            return {
+                    // Plan 48 method-param mono: closure-param override (set by
+                    // `infer_mono_method_ret_with_args` before recursing into closure body).
+                    if let Some(ty) = self.closure_param_type_overrides.borrow().get(name) {
+                        return ty.clone();
+                    }
+                    // Plan 62.D bis-1 (2026-05-18): match-arm pattern binding
+                    // override — set by `infer_expr_c_type(ExprKind::Match)` before
+                    // recursing into arm body. Must be checked BEFORE `var_types` to
+                    // avoid leaked stale entry from a different scope (e.g. `let r =
+                    // Range...` in another test file would otherwise return
+                    // `Nova_Range*` for `r` in `match opt { Some(r) => r }`).
+                    if let Some(ty) = self.pattern_binding_overrides.borrow().get(name) {
+                        return ty.clone();
+                    }
+                    if let Some(ty) = self.var_types.get(name) {
+                        return ty.clone();
+                    }
+                    // Check if it's a unit variant (e.g. None, Err, Ok used as value).
+                    // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+                    if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
+                        if fields.is_empty() {
+                            if type_name == "Option" || type_name == "NovaOpt_nova_int" {
+                                // Plan 14 Ф.1: None infer'ится по контексту
+                                // current_fn_return_ty (если NovaOpt_<X>),
+                                // иначе legacy NovaOpt_nova_int.
+                                if name == "None" {
+                                    if let Some(t) = self.current_fn_return_ty.as_ref() {
+                                        if t.starts_with("NovaOpt_") {
+                                            return t.clone();
+                                        }
+                                    }
+                                }
+                                return "NovaOpt_nova_int".into();
+                            }
+                            return format!("Nova_{}*", type_name);
+                        }
+                    }
+                    // Empty-sum type name used as a value (e.g. `CharTryFromError` in
+                    // `Err(CharTryFromError)`). Empty sums emit `typedef int64_t Nova_X` — the
+                    // Ident IS the type constructor; C type = Nova_X (= int64_t).
+                    if self.sum_schemas.get(name.as_str()).map_or(false, |v| v.is_empty()) {
+                        return format!("Nova_{}", name);
+                    }
+                    // Generic type or record type used as a TurboFish base (e.g. `Vec` in
+                    // `Vec[int].new()`). The Ident itself represents the type constructor;
+                    // return `Nova_{name}*` as the erased heap-pointer C type.
+                    if self.generic_types.contains(name.as_str())
+                        || self.generic_type_templates.contains_key(name.as_str())
+                        || self.record_schemas.contains_key(name.as_str())
+                        || self.sum_schemas.contains_key(name.as_str())
+                    {
+                        return format!("Nova_{}*", name);
+                    }
+                    // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
+                    // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
+                    // receiver-параметра `nova_self` (зеркало emit-arm'а `self`).
+                    // Всплывает при inline sync-Nova-body (`self.try_start_won()`).
+                    if name == "self" {
+                        if let Some(t) = self.var_types.get("nova_self") {
+                            return t.clone();
+                        }
+                    }
+                    // Pattern-bound or checker-annotated ident not yet in var_types
+                    // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is
+                    // computed before pattern_bind_typed runs). Fall back to the
+                    // checker's resolved_types annotation for this expression.
+                    if expr.id.is_set() {
+                        if let Some(rt) = self.resolved_types.get(&expr.id) {
+                            if let Ok(c_ty) = self.resolved_type_to_c(rt) {
+                                if !c_ty.is_empty() {
+                                    return c_ty;
+                                }
+                            }
+                        }
+                    }
+                    panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
+            };
+        }
         // Channel 6m (2026-07-04): Member — ДОСЛОВНЫЙ подъём главного
         // legacy-арма (schema+subst state-ответ). Дети через dispatcher.
         if let ExprKind::Member { obj, name } = &expr.kind {
