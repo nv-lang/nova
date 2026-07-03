@@ -19,6 +19,7 @@ pub mod incremental;
 pub mod perf;
 pub mod provenance;
 pub mod rename;
+pub mod selection_range;
 pub mod semantic_tokens_delta;
 pub mod server;
 pub mod signature_help;

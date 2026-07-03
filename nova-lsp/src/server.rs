@@ -486,6 +486,10 @@ impl LanguageServer for Backend {
                 // regions for fn/type bodies, nested `{ }` blocks, import groups
                 // and multi-line doc-comments (not an indentation heuristic).
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+                // Plan 104.10 Ф.17: selectionRange — smart-expand chains derived
+                // from the AST node hierarchy (ident → expr → stmt → block → fn),
+                // each range a strict superset of the previous. Parse-only.
+                selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
                 // Plan 104.6: rename + format-on-save.
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -1227,6 +1231,35 @@ impl LanguageServer for Backend {
         // Contained so a parser panic degrades to no folds, never a crash.
         let ranges = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             run_with_large_stack(move || crate::folding_range::compute_folding_ranges(&src))
+        })) {
+            Ok(r) => r,
+            Err(_) => Vec::new(),
+        };
+        Ok(Some(ranges))
+    }
+
+    /// Plan 104.10 Ф.17: `textDocument/selectionRange` — smart-expand.
+    ///
+    /// For each requested position returns a chain of expanding ranges derived
+    /// from the AST hierarchy (identifier → enclosing expression → statement →
+    /// block → declaration); each `parent` is a strict superset of its child.
+    /// Parse-only; no type-check. A position outside code (or a parse failure)
+    /// degrades to a minimal empty range at the cursor.
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> Result<Option<Vec<SelectionRange>>> {
+        let uri = params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        drop(doc);
+        let positions = params.positions;
+
+        // Contained so a parser panic degrades to minimal ranges, never a crash.
+        let ranges = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || {
+                crate::selection_range::compute_selection_ranges(&src, &positions)
+            })
         })) {
             Ok(r) => r,
             Err(_) => Vec::new(),
