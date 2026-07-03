@@ -476,6 +476,12 @@ impl LanguageServer for Backend {
                 // symbol under the cursor in the current file (read/write kind),
                 // resolved semantically via the Ф.7 scope resolver.
                 document_highlight_provider: Some(OneOf::Left(true)),
+                // Plan 104.10 Ф.19: typeDefinition (type of the expression under
+                // the cursor → its `type` declaration, via Ф.2 expr_types) and
+                // implementation (protocol → implementing types; method → its
+                // implementations, via the AST #impl / method registry).
+                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 // Plan 104.6: rename + format-on-save.
                 rename_provider: Some(OneOf::Right(RenameOptions {
                     prepare_provider: Some(true),
@@ -1369,6 +1375,61 @@ impl LanguageServer for Backend {
             compute_goto_definition_in(&resolved, &src, pos, &uri_clone)
         });
         Ok(location.map(GotoDefinitionResponse::Scalar))
+    }
+
+    /// Plan 104.10 Ф.19: `textDocument/typeDefinition` — jump to the declaration
+    /// of the *type* of the expression under the cursor (via Ф.2 `expr_types`).
+    async fn goto_type_definition(
+        &self,
+        params: request::GotoTypeDefinitionParams,
+    ) -> Result<Option<request::GotoTypeDefinitionResponse>> {
+        let pos = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        let version = doc.version;
+        drop(doc);
+
+        let state = Arc::clone(&self.state);
+        let uri_clone = uri.clone();
+        let location = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || {
+                let resolved = state.get_or_build_resolved(&uri_clone, version, &src);
+                crate::type_definition::compute_type_definition_in(&resolved, &src, pos, &uri_clone)
+            })
+        })) {
+            Ok(l) => l,
+            Err(_) => None,
+        };
+        Ok(location.map(GotoDefinitionResponse::Scalar))
+    }
+
+    /// Plan 104.10 Ф.19: `textDocument/implementation` — for a protocol under the
+    /// cursor, all implementing types; for a method, all its implementations.
+    /// Driven by the AST `#impl` / method registry (not a hardcoded table).
+    async fn goto_implementation(
+        &self,
+        params: request::GotoImplementationParams,
+    ) -> Result<Option<request::GotoImplementationResponse>> {
+        let pos = params.text_document_position_params.position;
+        let uri = params.text_document_position_params.text_document.uri.clone();
+        let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
+        let src = doc.text.to_string();
+        let version = doc.version;
+        drop(doc);
+
+        let state = Arc::clone(&self.state);
+        let uri_clone = uri.clone();
+        let locations = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_with_large_stack(move || {
+                let resolved = state.get_or_build_resolved(&uri_clone, version, &src);
+                crate::type_definition::compute_implementation_in(&resolved, &src, pos, &uri_clone)
+            })
+        })) {
+            Ok(l) => l,
+            Err(_) => None,
+        };
+        Ok(locations.map(GotoDefinitionResponse::Array))
     }
 
     /// Plan 104.2: signature-help handler.
