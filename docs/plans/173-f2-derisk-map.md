@@ -99,13 +99,15 @@ ScopeOutcome core.nv:147 `Success|Failure(str)|Panic(str)` (str, не any — an
   ResourceTrace-теста + plan110 + plan110/neg(9) + plan103_9 PASS; grep `effect Cleanup`/`on_scope_*` в
   source = 0. **⚠ DROP timeout из enter (§3a/п.8) ОТЛОЖЕН → Plan 173 Ф.5 timeout-rework** (семантическая
   правка + ретайр D195-override-тестов, не ренейм; timeout пока сохранён — покрытие цело).
-- **Ф.2.R2 rename Consumable→Cleanup + @on_exit→@cleanup (BUNDLED, после R1):** spec D188/D191/D194/D196/D197
-  (03-syntax) + D195 (04-effects) + все `[T Consumable[...]]` bounds. CODE(care): emit_c:19761 pin→
-  consume_cleanup; sync_primitives.h ×4 defs→_consume_cleanup; types:4316/4363/4537 + lints:303
-  литералы→"cleanup"; error-текст (коды `D188-*` СТАБИЛЬНЫ, меняем только слова). MECHANICAL(token-sed):
-  protocols.nv:459; sync.nv ×4; ~44 nova_tests + spec_tests d188/d194(bound:24)/d196 + neg; examples/bench;
-  neg-EXPECT-маркеры в lockstep. Гейт: build+link (нет undefined `Nova_*_consume_*`); conformance 38/38;
-  plan110/plan125_1/plan140 baseline-delta 0 (default+--panic); disasm hot-path byte-identical.
+- ✅ **Ф.2.R2 rename Consumable→Cleanup + @on_exit→@cleanup ЗАКРЫТ (ffb76506, BUNDLED):** CODE(care):
+  emit_c pin→consume_cleanup (def-side авто-mangle из f.name); sync_primitives.h ×4 hand-C defs→
+  _consume_cleanup; types 3 литерала + lints→"cleanup"; коды `D188-*` (дефис on-exit) СТАБИЛЬНЫ, только
+  слова в тексте. MECHANICAL(token-sed \bon_exit\b не задел `_consume_on_exit`): protocols.nv + sync.nv
+  ×4 + 53 .nv (nova_tests/spec_tests/examples/bench) + prelude core/errors + ast/parser комменты. Spec:
+  03-syntax pre-D314 + 04-effects D195; D314 + D185 «ex-Consumable» ЗАЩИЩЕНЫ. Гейты: build+LINK clean;
+  conformance 38/38; plan103_9 (mutex Cleanup[never] hot-path LINK) + plan110 + plan110/neg(9) + plan140 +
+  plan125_1-consume PASS; grep Consumable/@on_exit в source=0 вне D314-ex. plan125_1/neg/let_never
+  CC-FAIL=pre-existing.
 - **Ф.2.B1 parser+AST defer(o ScopeOutcome):** опц. поле на Stmt::Defer (parser:10052 bounded-lookahead
   +fallback; ast:1845); neg-диаги (double-binding, non-ScopeOutcome). Гейт: parser pos/neg; conformance
   38/38; syntax/defer_* + err173/f1_defer_plain_all_paths baseline-delta 0 (плейн defer byte-identical).

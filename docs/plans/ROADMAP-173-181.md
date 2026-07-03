@@ -48,7 +48,7 @@
 | 172.13 | A | ⏳ | после 172.12 |
 | 172.5  | A | ⏳ | in-out ref, standalone |
 | 173.0  | B | 🟡 | Ф.1 drain-race ЗАКРЫТ (deliverable: spec+guard, 58aca50b); Ф.2/Ф.3 supervised-substrate — deep runtime, секвенс с 173.2 (его потребитель) |
-| 173    | B | 🔨 | **Ф.1 ЗАКРЫТА** (#1/#2/#4/#3/#7). **Ф.2 defer-kernel В РАБОТЕ:** Ф.2.0 D314-spec + де-риск-карта закрыты (c625808e; 🔴 D194-премиса ложна→parity+followup, nova_scope_exit policy, rename-collision, interrupt→Failure). Реализация: ✅A0(7ba9d98c)→✅R1-ResourceTrace(43f9ee5b, rename-only, timeout→Ф.5)→**R2-Consumable/Cleanup(next)**→B1/B2 defer(o)→B3 consume-desugar→C nova_scope_exit→D194→E-hub |
+| 173    | B | 🔨 | **Ф.1 ЗАКРЫТА** (#1/#2/#4/#3/#7). **Ф.2 defer-kernel В РАБОТЕ:** Ф.2.0 D314-spec + де-риск-карта закрыты (c625808e; 🔴 D194-премиса ложна→parity+followup, nova_scope_exit policy, rename-collision, interrupt→Failure). Реализация: ✅A0→✅R1-ResourceTrace(43f9ee5b)→✅R2-Consumable→Cleanup+@on_exit→@cleanup(ffb76506)→**B1/B2 defer(o ScopeOutcome)(next)**→B3 consume-desugar→C nova_scope_exit→D194→E-hub |
 | 174    | B | ⏳ | после 173 |
 | 176    | B | ⏳ | после 173 |
 | 175    | B | ⏳ | параллельно |
