@@ -1,0 +1,50 @@
+// Plan 177 Ф.2c [M-172.1-U4-freefn-generic-return]: the PRELUDE collectors
+// `sequence` / `partition` (std/prelude/core.nv) called CROSS-MODULE from a user
+// module. Their generic returns — `Result[[]T,E]` (sequence) and `([]T,[]E)`
+// (partition) — are materialized CONCRETELY into the checker channel at the call
+// site (f1_check_call infers T=int/E=str from the argument via `unify_type` and
+// substitutes the return), so codegen lowers them through the SINGLE
+// `resolved_type_to_c` (D315). Without that, the call-return erased to a
+// never-emitted `NovaRes_NovaArray_nova_int_p_nova_str` / an `fn_ret_partition`
+// hijack → `pr.0` mistyped `int` (E_PRIMITIVE_NO_PROTOCOL_METHOD `int`.len).
+
+module nova_tests.err177_collectors
+
+test "prelude sequence collects all-Ok" {
+    ro xs []Result[int, str] = [Ok(1), Ok(2), Ok(3)]
+    match sequence(xs) {
+        Ok(v) => assert(v.len() == 3),
+        Err(_) => assert(false),
+    }
+}
+
+test "prelude sequence short-circuits on Err" {
+    ro xs []Result[int, str] = [Ok(1), Err("bad"), Ok(3)]
+    match sequence(xs) {
+        Ok(_) => assert(false),
+        Err(e) => assert(e == "bad"),
+    }
+}
+
+test "prelude partition — field access pr.0/pr.1" {
+    ro xs []Result[int, str] = [Ok(1), Err("a"), Ok(2), Err("b")]
+    ro pr = partition(xs)
+    assert(pr.0.len() == 2)
+    assert(pr.1.len() == 2)
+}
+
+test "prelude partition — tuple destructure" {
+    ro xs []Result[int, str] = [Ok(1), Err("a"), Ok(2), Err("b")]
+    ro (oks, errs) = partition(xs)
+    assert(oks.len() == 2)
+    assert(errs.len() == 2)
+}
+
+test "prelude partition — element-wise value check" {
+    ro xs []Result[int, str] = [Ok(10), Err("x"), Ok(20)]
+    ro pr = partition(xs)
+    assert(pr.0.len() == 2)
+    assert(pr.0.get(0) == Some(10))
+    assert(pr.0.get(1) == Some(20))
+    assert(pr.1.get(0) == Some("x"))
+}
