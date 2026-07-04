@@ -288,6 +288,37 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   (dispatch-сайты п.2 §1) → stack-init; (6) cross-module handler'ы
   [handlers.nv](../../std/testing/handlers.nv); инфра `AllocKind::Value` ([emit_c.rs:2443-2447](../../compiler-codegen/src/codegen/emit_c.rs#L2443))/
   `emit_value_record_type` (:10571)/`NovaValue_` (:10669). DEP: Ф.1. GATE для scalar-bridge.
+  - **⚠ Эмпирика 2026-07-04 (заход Ф.2+Ф.1b+Ф.3, ветка `plan-175-time`; код ОТКАЧЕН к parent f4ffe68a — net-zero,
+    гейт НЕ пройден): наивный атом (a) `self_value_position_c_type` РЕГРЕССИРУЕТ conformance.** Реализация:
+    helper строит по-value C-тип `Self` в return/param-позиции = `receiver_c_type` минус trailing `*` для
+    value-структур (`is_value_struct_ptr`), подключён в `resolved_type_to_c("Self")` (:2256) + registration
+    return-type (:4017). **Провал:** blanket-стрип `*` для ВСЕХ value-структур ломает установленную семантику
+    «value-struct/NamedTuple `-> Self` возвращает POINTER» (Plan 128 mut-receiver fluent-chaining `.push(1).push(2)`
+    мутирует ОДИН stack-slot; by-value копия рвёт цепочку). Rust build clean, но `nova test spec_tests/conformance`
+    = **37/1** (baseline parent = 38/0): `d102_named_args_default_params` **RUN-FAIL** (baseline PASS, new RUN-FAIL,
+    единственный дифф = helper — детерминированно, НЕ флак; сам d102 не содержит `Self`, регресс в prelude/runtime
+    value-struct с `-> Self`). **Гоча для следующего захода:** атом (a) обязан быть УЖЕ (gated) — by-value ТОЛЬКО
+    для non-mut static value-record конструкторов (`Duration.from_nanos -> Self`), НО СОХРАНЯТЬ pointer-return для
+    mut-receiver/fluent-chaining `-> Self`; и верифицировать ПОЛНЫМ conformance, НЕ одной time-фикстурой (single-
+    fixture byte-identical ⇏ corpus byte-identical — этот урок стоил ложного «✅ landed»).
+  - **🔑 ВАЛИДИРОВАННЫЙ ДИЗАЙН scalar-bridge (эмпирика include-ordering — НЕ затронут откатом, остаётся в силе):**
+    generated-C: `#include "nova_rt/nova_rt.h"` (emit_c.rs:5322) идёт ПЕРЕД splice `/*__VALUE_RECORD_DEFS__*/`
+    (:5351) → **effects.h НЕ может именовать `NovaValue_Timestamp`** → `NovaVtable_Time` слоты ОБЯЗАНЫ остаться i64.
+    Единственно чистый путь = плановый узкий single-i64 bridge в двух сайтах codegen: (i) **call-site** (Member
+    :25852 `if effect_schemas.contains_key` + Path :28492) — wrap `((NovaValue_Timestamp){.nanos = Nova_Time_now(...)})`
+    для value-struct-ret, unwrap `(<arg>).nanos` для value-struct-арга; (ii) **handler-impl** (`emit_handler_lit`
+    :7160) — schema хранит surface-тип (call-site-инференс :39530/:40008), но impl-сигнатура+forward-decl (:7300/:7330)+
+    vtable-слот-ассайн (:7280) используют WIRE i64, return-bridge `return (<body>).nanos`, param-bridge для value-struct
+    = `NovaValue_Duration d = {.nanos = d_wire};` (существующий annotation-bridge :7458 `(annot)(intptr_t)` —
+    pointer-pun, для value-struct НЕ годится). Нужен helper `effect_wire_c_type(schema_c)` (single-i64 value-struct →
+    `("nova_int", true, "nanos")`, детект по record-schema, НЕ хардкод §3). effects.h/fibers.h остаются i64
+    (rename `now→timestamp` + add `monotonic`-слот + retire `now_ms`/`now_ns`).
+  - **Blast-radius реальность (zero-regression гейт):** rename `now()→timestamp()` ломает **277** `Time.now(` сайтов
+    в 165 nova_tests-файлах + `now_ms`/`now_ns`-сайты → миграция на `Timestamp.now()`/`.as_unix_*` обязательна В ТОМ ЖЕ
+    изменении. Core-codegen (bridge, 2 атома b/c/d, Monotonic-builtin-removal) + runtime + handlers + 277-сайт-миграция +
+    тесты = многосессионный объём; НЕ закрыт одной сессией. **Ключевой урок:** Ф.1b/Ф.2 неотделимы (подтверждено §7.7)
+    И атом (a) неотделим от полной value-миграции + должен быть gated (иначе conformance-регресс) — весь заход = один
+    interlocking commit, промежуточных зелёных нет.
 - **Ф.1c — overflow-safe арифметика (NEW, mandatory).** Реализовать §3b/D317: trap-операторы + `checked_*`/`saturating_*`
   на Duration; boundary-saturate + `checked_*` на Timestamp/Monotonic±Duration; `@abs(i64::MIN)`; `@div(0)`; f64 NaN/inf-policy;
   фикс μs U+03BC в `@into()` (Q12). Unit-тесты арифметики — **inline test-блоки в std/time/** (конвенция: inline =
