@@ -883,3 +883,18 @@ vs parent `714f0f43`), Rust build clean. Домен: чекер / Plan 177 Ф.3.
 результат на baseline `19b9c756` (НЕ регрессия D325-rename). Баг в арифметике overflow-
 check `parse.nv` (либо signed-overflow UB до проверки, либо порядок check/accumulate).
 Домен Plan 174.1 (primitive parse), вне D325-rename-scope Ф.2b.
+
+## [M-172.1-opt-result-over-userenum-typedef-order] — Option[Result[int, UserEnum]] typedef-ordering (Plan 177 Ф.3, обнаружен 2026-07-04)
+
+`sequence`/`partition` (prelude-коллекторы Ф.2c) над `[]Result[int, <UserEnum>]` (напр.
+`ParseIntError`) → **CC-FAIL** `unknown type name 'NovaRes_nova_int_Nova_ParseIntError_p'`:
+тело коллектора итерирует Vec (`for r in items`), итератор даёт
+`Option[Result[int, ParseIntError]]`, и typedef Option-обёртки
+(`NovaOpt_NovaRes_nova_int_Nova_ParseIntError_p_p`) эмитится ДО inner-Result typedef
+(`NovaRes_nova_int_Nova_ParseIntError_p`), который под user-enum payload не регистрируется.
+`Result[int, **str**]` (тот же коллектор) — **зелёный** (`err177_collectors` PASS): str-payload
+Result регистрируется. Тот же класс VR-typedef-ordering, что чинили в Ф.2a
+(`[M-177-result-over-named-tuple-codegen]`) / Ф.2c (`[M-172.1-U4-freefn-generic-return]`),
+но для `Option[Result[T, UserEnum]]` из тела generic-коллектора. **Workaround в фикстуре**
+(`d325_result_everywhere.nv` A4): parse_int → `Result[int, str]` через domain-str `match`-
+канал. Домен Plan 172.1 (mono-typedef-registration). Вне scope Ф.3 (тесты/guards).
