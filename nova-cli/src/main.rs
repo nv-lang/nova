@@ -2119,6 +2119,11 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
         // (single-file mode без cross-file context).
     }
 
+    // Plan 181 (D347): same-scope re-binding alpha-rename before type-check so
+    // `nova check` reports the same result as `nova build`/`nova test`
+    // (populates `module.rebind_shadows` for R2). No-op without a rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
+
     // 3. types::check_module
     if let Err(errs) = nova_codegen::types::check_module(&module) {
         // Plan 81 Ф.8.1: cross-file рендер — ошибка из импортированного
@@ -4132,6 +4137,16 @@ fn cmd_build(
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("imports-resolve");
         nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
+    }
+
+    // Plan 181 (D347): same-scope re-binding alpha-rename on the fully-assembled
+    // module (post import-inline), BEFORE the build cache key / type-check /
+    // codegen — so cached `.c` and the checked module agree on unique C-names
+    // and the consume-checker can read `module.rebind_shadows` for R2. No-op
+    // (byte-identical) for modules without a same-scope rebind.
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("alpha-rename");
+        nova_codegen::alpha_rename::alpha_rename(&mut module);
     }
 
     // Plan 81 Ф.9: content-addressed build cache. После резолва импортов

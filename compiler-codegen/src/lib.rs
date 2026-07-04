@@ -2,6 +2,7 @@
 //!
 //! Точка входа для интеграционных тестов. CLI находится в `main.rs`.
 
+pub mod alpha_rename;
 pub mod argbind;
 pub mod ast;
 pub mod callnorm;

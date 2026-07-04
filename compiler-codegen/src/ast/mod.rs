@@ -53,6 +53,13 @@ pub struct Module {
     /// до первого item'а). Объединяется с `#doc "..."` module-attr
     /// (D101) на этапе collector'а (Plan 45 Ф.4).
     pub doc: Option<DocBlock>,
+    /// Plan 181 (D347): same-scope re-binding side-table produced by
+    /// `alpha_rename`. Maps a uniquified rebind name (`x__s1`) → the unique
+    /// name it shadows in the same scope. The consume-checker reads this to
+    /// fire `E_REBIND_LIVE_CONSUME` (R2) when a rebind hides an unmet consume
+    /// obligation. Empty (`Default`) until the pass runs; harmless for any
+    /// module with no same-scope rebind.
+    pub rebind_shadows: std::collections::HashMap<String, String>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.

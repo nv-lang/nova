@@ -2426,6 +2426,14 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             None
         };
 
+    // Plan 181 (D347): same-scope re-binding alpha-rename. Runs on the
+    // FULLY-ASSEMBLED module (post import-inline) so every function body — incl.
+    // folder-module peers — is uniquified before numbering / check / codegen
+    // (§2). No-op for modules without a same-scope rebind (zero-regression).
+    {
+        let _t = crate::perf_timer::PerfTimer::new("alpha-rename");
+        crate::alpha_rename::alpha_rename(&mut module);
+    }
     // Plan 172.1 U.4.1: number every expr of the FULLY-ASSEMBLED module
     // (after import inlining via resolve_imports_inline_ex above, before
     // type-check) so check_module can annotate ModuleEnv.resolved_types and

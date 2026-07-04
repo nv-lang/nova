@@ -218,7 +218,11 @@ impl Diagnostic {
         let resolver = SrcResolver::Single { source, file };
         let (src, path) = resolver.resolve(&self.span);
         let (line, col) = byte_to_line_col(src, self.span.start);
-        let mut out = format!("{}:{}:{}: error: {}", path, line, col, self.message);
+        let mut out = format!(
+            "{}:{}:{}: error: {}",
+            path, line, col,
+            crate::alpha_rename::demangle_rebind_names(&self.message)
+        );
         // Plan 45 Ф.23.18: source-snippet with caret highlighting.
         append_snippet(&mut out, src, &self.span, line, col);
         self.render_extras(&mut out, &resolver);
@@ -235,7 +239,11 @@ impl Diagnostic {
         let resolver = SrcResolver::Map(map);
         let (src, path) = resolver.resolve(&self.span);
         let (line, col) = byte_to_line_col(src, self.span.start);
-        let mut out = format!("{}:{}:{}: error: {}", path, line, col, self.message);
+        let mut out = format!(
+            "{}:{}:{}: error: {}",
+            path, line, col,
+            crate::alpha_rename::demangle_rebind_names(&self.message)
+        );
         // Plan 81 Ф.8.1: source-snippet с caret — как в single-file `render`.
         append_snippet(&mut out, src, &self.span, line, col);
         self.render_extras(&mut out, &resolver);
@@ -246,14 +254,17 @@ impl Diagnostic {
     /// `(source, path)` для произвольного span'а — единая точка для
     /// single-file и cross-file путей.
     fn render_extras(&self, out: &mut String, resolver: &SrcResolver<'_>) {
+        // Plan 181 (D347): strip the reserved `__sN` same-scope-rebind suffix
+        // so notes/suggestions show the original user name.
+        let dm = crate::alpha_rename::demangle_rebind_names;
         for note in &self.notes {
             match &note.span {
                 Some(s) => {
                     let (src, path) = resolver.resolve(s);
                     let (l, c) = byte_to_line_col(src, s.start);
-                    out.push_str(&format!("\n  note: {} --> {}:{}:{}", note.message, path, l, c));
+                    out.push_str(&format!("\n  note: {} --> {}:{}:{}", dm(&note.message), path, l, c));
                 }
-                None => out.push_str(&format!("\n  note: {}", note.message)),
+                None => out.push_str(&format!("\n  note: {}", dm(&note.message))),
             }
         }
         if let Some(sg) = &self.suggestion {
@@ -261,7 +272,7 @@ impl Diagnostic {
             let (l, c) = byte_to_line_col(src, sg.span.start);
             out.push_str(&format!(
                 "\n  help: {} --> {}:{}:{} [{}]",
-                sg.message, path, l, c, applicability_tag(sg.applicability),
+                dm(&sg.message), path, l, c, applicability_tag(sg.applicability),
             ));
         }
     }
