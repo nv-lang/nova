@@ -28258,28 +28258,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if let Some(arg) = args.first() {
                         let arg_ty = self.infer_expr_c_type(arg.expr());
                         let v = self.emit_expr(arg.expr())?;
-                        // Plan 04 Этап 6: str.try_from([]byte) → Result[str, _].
-                        // Validates UTF-8 + конвертирует в nova_str. Используется
-                        // для финализации mixed text+binary в WriteBuffer.
-                        // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
-                        // `Vec[T]` flip, `s.to_bytes()` now yields a
-                        // `Nova_Vec____nova_byte*` rather than the legacy
-                        // `NovaArray_nova_byte*`. The two structs are
-                        // layout-identical (`{ T* data; int64_t len; int64_t
-                        // cap; }`), so the runtime helper reading `arr->data`/
-                        // `arr->len` works on either; cast the Vec pointer to
-                        // the helper's `NovaArray_nova_byte*` param type.
-                        if parts[0] == "str"
-                            && (arg_ty == "NovaArray_nova_byte*"
-                                || arg_ty == "Nova_Vec____nova_byte*")
-                        {
-                            if arg_ty == "Nova_Vec____nova_byte*" {
-                                return Ok(format!(
-                                    "Nova_str_static_try_from_bytes((NovaArray_nova_byte*)({}))",
-                                    v));
-                            }
-                            return Ok(format!("Nova_str_static_try_from_bytes({})", v));
-                        }
+                        // Plan 176 Ф.0.5: the `str.try_from([]u8)` byte-array
+                        // overload was RETIRED. Fallible byte→str decode is now
+                        // the canonical Nova-body `str.from_bytes(bytes) ->
+                        // Result[str, Utf8Error]` (typed byte-offset error,
+                        // D325). No dual API — callers migrated to `from_bytes`.
+                        // The `try_from` interception below stays ONLY for the
+                        // scalar parsers (`int.try_from(str)`, `bool.try_from`,…).
                         // str → numeric / bool: используем парсеры.
                         if arg_ty == "nova_str" {
                             let target = parts[0].as_str();
