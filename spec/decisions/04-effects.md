@@ -566,10 +566,19 @@ Handler-литерал начинается с keyword'а `handler` (по [D61](
 (`NovaEffectRegistry` / `NovaEffectSnapshot`, `nova_rt/effects.h`). Её размер
 **`NOVA_MAX_EFFECT_STORAGES`** больше не хардкод-32, а **compile-time N** — точное
 число distinct-эффектов в программе (built-in `Fail`/`Time`/`Mem` + user-defined),
-которое компилятор знает из реестра `effect_schemas`. Codegen эмитит
-`#define NOVA_MAX_EFFECT_STORAGES <N>` в сгенерированный `.c` до include
-`effects.h` (хедерный `#ifndef`-fallback 32 остаётся только для hand-written
-bootstrap-кода). Следствия: (1) прежний тихий дроп 33-го эффекта — при котором
+которое компилятор знает из реестра `effect_schemas`. Проброс N (ФАКТИЧЕСКИЙ
+механизм, НЕ `#define` в теле `.c`): codegen эмитит на строке 1 сгенерированного
+`.c` comment-МАРКЕР `/* nova-effect-count: N */`; build-слой
+(`test_runner.rs::effect_count_define_arg`) читает N из маркера и передаёт
+`-DNOVA_MAX_EFFECT_STORAGES=N` (`/D` для MSVC) на **весь** cc-вызов — во все TU
+разом. Почему НЕ `#define` внутри самого `.c`: генерируемый TU и рантайм-TU
+(`effects.c`/`runtime.c`/`fibers.c`) компилируются как **отдельные** translation
+units в одном cc-вызове — `#define` только в `.c` дал бы `NovaEffectRegistry`/
+`NovaEffectSnapshot` разного размера в разных TU → OOB-запись в TLS-registry →
+segfault (тот самый ABI-раскол, что реализация **сознательно отвергла**). `-D` на
+весь вызов держит размер массива идентичным во всех TU (ABI-uniformity); хедерный
+`#ifndef`-fallback 32 остаётся только для hand-written bootstrap-кода без маркера.
+Следствия: (1) прежний тихий дроп 33-го эффекта — при котором
 handler молча не наследовался через фибер — устранён по построению (размер = точный
 N, переполнение теперь — hard-fail с диагностикой, т.е. индикатор бага codegen'а);
 (2) per-fiber snapshot занимает ровно N указателей, без фиксированных 256 байт на

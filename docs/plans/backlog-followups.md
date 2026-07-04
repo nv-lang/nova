@@ -822,6 +822,16 @@ U.1.3b миграцией sync на import.
 D216 cross-amend. Ужесточение ключа дедупа `(c_name, param_c_types)` = чекер-часть
 **Plan 174.6 M1** (вместе с `E_FFI_NON_C_ABI_TYPE`); сайт помечен комментарием в
 external_registry merge.
+**Adversarial-аудит M0 (2026-07-04, spec-doc-фиксы):** в D282 rule 2 добавлены `uint`
+(=`nova_uint`, D130), C-ABI fn-ptr base-case (`*extern "C" fn` как параметр/поле —
+закрыл D282↔D353 gap), `Option[RawPtr]` (было узко `Option[*T]`), исправлен пример
+циклического value-record (`type Node value {…}` — было без `value` → self-contradiction
+с heap-record negative-list); в D353 коэрция получила условие (3) **effect-free/total**
+(soundness: captureless-fn с любым эффектом, не только `Fail`, звался бы из C без
+handler-фрейма → unsound). **Error-index-долг (deferred → M1, debt-нота в D353 Scope):**
+`E_FFI_NON_C_ABI_TYPE`/`E_CALLBACK_THROWS_OVER_C_ABI`/`E_CLOSURE_HAS_ENV` заносятся в
+09-tooling error-index **вместе с чекером M1**, который их эмитит (message-text уже в
+Plan 174.6 §4).
 
 ## [M-172.1-var-types-cu-name-leak] — var_types один namespace на CU, last-wins (2026-07-02)
 

@@ -8479,9 +8479,11 @@ Rust precedent: fn() ≠ unsafe fn() — same model.
 Nova-функции как настоящего **C-callback** введён C-ABI-тегированный fn-ptr тип
 **`*extern "C" fn(...)`** — параллель к объявлению `extern "C" fn` ([08-runtime.md#d282](08-runtime.md#d282)).
 Типы его сигнатуры (параметры + возврат) обязаны быть **C-ABI-совместимы** (рекурсивный тип-лист,
-[D282 rule 2](08-runtime.md#d282)); коэрция `fn → *extern "C" fn` проверяет C-ABI + captureless.
-Полная спецификация ABI-тега — [D353](08-runtime.md#d353). Реализация (парсер/чекер/тесты) — Plan 174.6
-M1–M3; M0 = только спека.
+[D282 rule 2](08-runtime.md#d282)); коэрция `fn → *extern "C" fn` проверяет C-ABI + captureless +
+**effect-free/total** (callback не должен объявлять **никакого** эффекта — C зовёт его без Nova-handler-фрейма
+на стеке, поэтому любая effect-операция unsound; это **обобщает** `Fail`-специфичный гейт §20 /
+`E_CALLBACK_THROWS_OVER_C_ABI` на все эффекты). Полная спецификация ABI-тега и обоснование условия (3) —
+[D353](08-runtime.md#d353). Реализация (парсер/чекер/тесты) — Plan 174.6 M1–M3; M0 = только спека.
 
 ### §11. `ptr` redefine (D214 amend cross-ref)
 

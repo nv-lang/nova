@@ -965,10 +965,19 @@ static inline void nova_finalizer_fire_lifo(NovaFinalizerStack* s) {
  *   5. Restore prev_snapshot in globals.
  *
  * Размер таблицы (Plan 174.4): compile-time N — точное число зарегистрированных
- * эффектов (built-in Fail/Time/Mem + user-defined). Генерируемый `.c` эмитит
- * `#define NOVA_MAX_EFFECT_STORAGES <N>` ДО include этого хедера (источник — реестр
- * `effect_schemas` в codegen). Значение 32 ниже — только fallback для hand-written /
- * bootstrap-хедеров, собираемых без codegen-driven define. Так silent-drop 33-го
+ * эффектов (built-in Fail/Time/Mem + user-defined; источник — реестр
+ * `effect_schemas` в codegen). Механизм проброса N (ФАКТИЧЕСКИЙ, НЕ `#define` в
+ * теле `.c`): генерируемый `.c` эмитит на строке 1 comment-МАРКЕР вида
+ * `nova-effect-count: N` (в C-комментарии); build-слой
+ * (`test_runner.rs::effect_count_define_arg`)
+ * читает N из маркера и передаёт `-DNOVA_MAX_EFFECT_STORAGES=N` (`/D` для MSVC) на
+ * ВЕСЬ cc-вызов — во все translation units разом. Почему НЕ `#define` внутри самого
+ * `.c`: генерируемый TU и рантайм-TU (`effects.c`/`runtime.c`/`fibers.c`)
+ * компилируются как ОТДЕЛЬНЫЕ TU в одном cc-вызове; `#define` только в `.c` дал бы
+ * `NovaEffectRegistry`/`NovaEffectSnapshot` РАЗНОГО размера в разных TU → OOB-запись
+ * в TLS-registry → segfault. `-D` на весь вызов держит размер массива идентичным во
+ * всех TU (ABI-uniformity). Значение 32 ниже (`#ifndef`) — только fallback для
+ * hand-written / bootstrap-хедеров, собираемых без маркера. Так silent-drop 33-го
  * эффекта (наследование handler'а через фиберы) больше невозможен, а per-fiber
  * snapshot занимает ровно N указателей, не фикс-256B.
  */
