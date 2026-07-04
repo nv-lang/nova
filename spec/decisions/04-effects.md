@@ -6260,3 +6260,27 @@ user-visible эффект, высокий churn) — только задокум
 ### Эталон
 
 `std/net` — Result-everywhere, 0 `Fail[`. Под-паттерны: per-element `DirIter.next -> Result[Item, E]`; absence → `Option`; инфаллибл-аксессор → значение.
+
+## D357 — `Http` client transport seam (Plan 178 Ф.2, 2026-07-04)
+
+**Решение.** HTTP-client — value-types + Nova-логика над тонким байт-seam'ом `Http`.
+Триада (module-conventions): `type Http effect { send(host str, port int, secure bool, request str) -> Result[str, HttpError] }` + `real_http()` (над `Net`, `std.http.transport`) + `mock_http()` (in-memory, `std.http.client`).
+
+- **Один hop = один `send`.** `request` — полностью сериализованные wire-байты (несомы как byte-`str` через `str.from_bytes_unchecked`, НЕ `[]u8` — `[]u8`-effect-op erasure, то же обоснование что net byte-surface Ф.0.5); возврат — сырые response-байты. Redirect-loop, auth-strip, keep-alive-решение, chunked-decode, парсинг — **Nova-логика клиента** (`std.http.client/wire.nv`,`client.nv`), НЕ в seam.
+- **`real_http` — effect-over-effect:** handler-op body выполняет `Net` (resolve/connect/write/read); допустимо (эффект перформится при вызове op под активным `with Net`). CORE = `Connection: close` + read-to-EOF; `secure=true` (https) → `Err(Tls)` (🔴 gate Plan 116).
+- **`mock_http` — data-driven** (`MockResponse` = raw-wire ИЛИ status+headers+body; `MockHttp.on(method,path,resp)`); диспатч через ТОТ ЖЕ `parse_response` → chunked/malformed покрыты без сокетов. `MockResponse.echo_request_header(name)` — детерминированная проверка отправленного (auth-strip).
+- **Структура (ревизия §3 плана):** nested submodules `std.http.client`/`std.http.transport` вместо flat `std.http` — изолирует `std.net`+`json`-зависимости от lean message-model core (и обходит два pre-existing codegen-бага: forward-decl-return-type unit-closure-call в single-CU + handler-closure-env GC-root).
+- **Установка mock:** канон = inline-handler `with Http = effect Http { send(..){ m.reply(request) } }` (frame-capture, conservative-GC-safe); `MockHttp.build()->Effect[Http]` объявлен, но heap-closure-env НЕ GC-rooted (`[M-178-mock-handler-gc-trace]`).
+
+**Амендмент net byte-surface** — D173/D301 (см. Ф.0.5). **Gated:** timeout←173, decompress←179, typed json[T]←180, https/h2←116.
+
+## D360 — HTTP client policies: redirect / auth-strip / status / transfer (Plan 178 Ф.2, 2026-07-04)
+
+**Решение (CORE-приземлённое подмножество).**
+- **Redirect:** `RedirectPolicy | NoFollow | Limited(int)` (default `Limited(10)`); превышение → `Err(HttpError{kind: TooManyRedirects(n)})`. GET-ify: 303 и (301/302 на не-GET/HEAD) → метод GET + тело/body-headers сброшены; 307/308 сохраняют метод+тело.
+- **Cross-origin auth-strip (Q9, security-инвариант):** при hop в другой origin (`Url.@origin` (scheme,host,port) отличается) — `Authorization` и `Cookie` удаляются. pos-тест (cross→strip) + control (same-origin→preserve).
+- **Status:** 4xx/5xx — **валидный `Response`, НЕ ошибка**; конверсия opt-in `Response.consume @error_for_status() -> Result[Response, HttpError]` (`Err(Status(code))` для не-2xx/3xx; CORE материализует+пересобирает Response, error-body дренится).
+- **Transfer:** `Content-Length` (identity) + `Transfer-Encoding: chunked` (decode) — оба; двойной CL / CL+TE → `Err(Protocol)` (smuggling, RFC 9112 §6.1, через `HeaderMap.@content_length`). CR/LF/NUL/non-tchar в headers → reject (Ф.1).
+- **Body:** must-consume (D133/D359); `.bytes()`/`.text()`/`.drain()`/`.json()`(dynamic JsonValue).
+
+**Gated за CORE (маркеры, НЕ упрощения — `[M-178-client-policy-surface]`):** Proxy+CONNECT-tunnel / NO_PROXY-матрица (Q23), SSRF-guard (Q24), cookie-jar (Q10), idempotent-retry + pool-eviction (Q16), live keep-alive-reuse, 1xx-interim loop, TE:trailers, Expect:100-continue, auto-decompress (←179). Conformance-фикстуры d357/d360 отложены (compiler forward-decl баг `[M-178-conformance-d357-d360-forwarddecl-bug]`) → покрыто `nova_tests/http*`.

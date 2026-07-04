@@ -145,6 +145,16 @@ export fn HeaderMap mut @append(name str, value str) -> Result[(), HttpError] {
     Ok(())
 }
 
+/// ДОБАВИТЬ значение из СЫРЫХ байт (multi-value append; byte-correct для
+/// obs-text/latin1 при разборе ответа — Ф.2). CR/LF/NUL / не-tchar → reject.
+#stable(since = "0.1")
+export fn HeaderMap mut @append_bytes(name str, value []u8) -> Result[(), HttpError] {
+    ro hn = HeaderName.parse(name)?
+    ro hv = HeaderValue.from_bytes(value)?
+    @entries.push(HeaderEntry { name: hn, value: hv })
+    Ok(())
+}
+
 /// Удалить все значения имени; вернуть удалённые.
 #stable(since = "0.1")
 export fn HeaderMap mut @remove(name str) -> []HeaderValue {

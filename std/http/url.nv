@@ -48,7 +48,7 @@ export type ParseUrlError
     | EmptyInput
     | MissingScheme
     | InvalidScheme(str)                      // невалидный scheme-токен
-    | InvalidPort(str)                        // порт не число / вне 0..65535
+    | MalformedPort(str)                        // порт не число / вне 0..65535
     | InvalidPercentEncoding(int)             // позиция malformed `%XX`
     | InvalidHost(str)                        // control/NUL/whitespace/non-ASCII/malformed
     | ObfuscatedIp(str)                       // decimal/octal/hex IP-обфускация (SSRF)
@@ -61,7 +61,7 @@ export fn ParseUrlError @to_str() -> str {
         EmptyInput                     => "empty input"
         MissingScheme                  => "missing scheme"
         InvalidScheme(value)           => "invalid scheme '${value}'"
-        InvalidPort(value)             => "invalid port '${value}'"
+        MalformedPort(value)           => "invalid port '${value}'"
         InvalidPercentEncoding(position) => "invalid percent-encoding at ${str.from(position)}"
         InvalidHost(reason)            => "invalid host: ${reason}"
         ObfuscatedIp(value)            => "obfuscated IP literal '${value}' rejected"
@@ -206,13 +206,13 @@ fn parse_host_port(hp str) -> Result[(str, Option[int]), ParseUrlError] {
 }
 
 fn parse_port(port_str str) -> Result[int, ParseUrlError] {
-    if port_str.byte_len() == 0 { return Err(InvalidPort(port_str)) }
+    if port_str.byte_len() == 0 { return Err(MalformedPort(port_str)) }
     for c in port_str.as_chars() {
-        if !c.is_ascii_digit() { return Err(InvalidPort(port_str)) }
+        if !c.is_ascii_digit() { return Err(MalformedPort(port_str)) }
     }
     match port_str.parse_int_opt() {
-        Some(n) => if n >= 0 && n <= 65535 { Ok(n) } else { Err(InvalidPort(port_str)) }
-        None    => Err(InvalidPort(port_str))
+        Some(n) => if n >= 0 && n <= 65535 { Ok(n) } else { Err(MalformedPort(port_str)) }
+        None    => Err(MalformedPort(port_str))
     }
 }
 

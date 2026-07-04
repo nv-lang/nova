@@ -92,6 +92,12 @@ export fn HttpError.invalid_header(msg str) -> HttpError =>
 export fn HttpError.invalid_url(e ParseUrlError) -> HttpError =>
     { kind: InvalidUrl, url: None, source: Some(UrlParse(e)) }
 
+/// Транспортная ошибка (`Connect`/`Dns`/`Closed`/`Timeout`) с текстовой деталью в
+/// `source` (типизированный `Net(NetError)` гейтнут — [M-178-errsource-net]). Ф.2.
+#stable(since = "0.1")
+export fn HttpError.transport(kind ErrorKind, detail str) -> HttpError =>
+    { kind, url: None, source: Some(OtherSource(detail)) }
+
 /// `BodyTooLarge` — превышен cap тела/decompress (DoS-guard).
 #stable(since = "0.1")
 export fn HttpError.body_too_large() -> HttpError =>

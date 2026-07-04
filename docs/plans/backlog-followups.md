@@ -893,3 +893,19 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 - `[P67-LEGACY] Enum.UnitVariant.method()` (напр. `NetError.Eof.to_str()`) и `x == Enum.Variant` (bare unit/payload-variant в `==` RHS) → ICE / mis-type в `nova_int` (infer_expr_c_type fallback). Обход: bind-first / `match`. Кандидат в checker-annotation gap.
 - `!!` на `Result[(), E]` (unit-Ok) mis-infer'ит тип (HttpError* = nova_unit). Обход: `match`/`?`-in-fn.
 - Индексация `[]T`-ПАРАМЕТРА `params[i]` теряет индекс в codegen (вызывает метод на всём Vec). Обход: `.get(i)`.
+
+## Plan 178 Ф.2 — HTTP/1.1 client CORE followups (2026-07-04)
+
+Приземлён plaintext HTTP/1.1 client-core (см. simplifications.md). Nested submodules `std.http.client` (client/wire/mock) + `std.http.transport` (real_http). Отложено/gated:
+- **[M-178-client-live-pool]** — keep-alive DECISION-logic + pool-config есть; live socket-reuse отложен (нужен framed-read через kept-open socket + fix [M-net-payload-variant-static-lowering]). CORE = `Connection: close` + read-to-EOF.
+- **[M-178-timeout-needs-173]** — timeout/deadline-by-default ← Plan 173 supervised-scope (wire на call-site).
+- **[M-178-autodecompress-needs-179]** — gzip/deflate/br + bomb-cap ← Plan 179 Ф.1; dispatch по Content-Encoding + `ErrSource.Compress`. CORE = identity+chunked.
+- **[M-178-typed-json-needs-180]** — typed `@json[T]()` (serde) ← Plan 180 Ф.4; dynamic `@json()->JsonValue` приземлён.
+- **[M-178-https-needs-116]** — https/h2 ← Plan 116 (real_http: secure→`Err(Tls)`).
+- **[M-178-client-policy-surface]** — Proxy/CONNECT-tunnel, SSRF-guard, cookie-jar, idempotent-retry+pool-eviction, 1xx-interim loop, NO_PROXY-матрица, TE:trailers, Expect:100 — за CORE.
+
+**Pre-existing compiler-баги (обнаружены при Ф.2, блокируют части плана — кандидаты на fix):**
+- **[M-178-mock-handler-gc-trace]** (P2): handler-closure-env (`effect X {..}` из fn, captured heap-state) не GC-rooted → conservative Boehm собирает mid-run → segfault. Обход: inline-handler (frame-capture). Fix = root-registration closure-env в runtime/codegen.
+- **[M-178-conformance-d357-d360-forwarddecl-bug]** (P2): forward-decl return-тип unit-возвращающего closure-call-fn (`fn f(b fn()){b()}`) мис-выводится в value-тип при наличии value-типов в CU → `conflicting types` CC-FAIL. Блокирует d357_*/d360_* single-CU conformance (покрыто nova_tests/http*). Fix = `return_type_c`/`infer_expr_c_type` для unit-closure-call.
+- **[M-178-with-tail-bang-codegen]** (P3): `with{ ... X!! }` (tail unit-`!!`) → interrupt-ret-тип vs block-value-тип CC-FAIL. Обход: tail = `assert`/`()`.
+- **[M-178-effect-op-result-monomorph]** (P3): прямой `Eff.op()->Result[A,B]` (A≠B) мис-типит Err-payload. Обход: fn-обёртка.

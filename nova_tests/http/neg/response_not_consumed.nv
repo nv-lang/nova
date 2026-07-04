@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+// Plan 178 Ф.2 / D359 — a client Response is must-consume: a Response obtained
+// from send() that is never discharged (bytes/text/drain/error_for_status) is a
+// compile error (fixes the Go resp.Body leak at compile time).
+module neg.response_not_consumed
+
+import std.http.client.{HttpClient, mock_http, MockResponse}
+import std.http.{Http}
+
+test "response from send() never consumed → compile error" {
+    ro m = mock_http().on("GET", "/x", MockResponse.new(200).text("y"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://h.example/x").send()!!
+        // resp is NEVER discharged (no bytes()/text()/drain()) → D133-not-consumed
+    }
+}
