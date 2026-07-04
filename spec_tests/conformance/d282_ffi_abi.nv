@@ -1,0 +1,85 @@
+// D282 rule 2 (C-ABI type-list) + D353 (`*extern "C" fn` ABI-tag) — POS.
+// Plan 174.6 M1/M2. Canonical spec-conformance for the FFI C-ABI checker.
+//
+// The normative signal on the POSITIVE side is that the CHECKER ACCEPTS every
+// C-ABI signature: this whole compile unit type-checks with NO
+// `E_FFI_NON_C_ABI_TYPE`. Covered (D282 rule 2 grammar, params AND return):
+//   • all scalars incl. `uint` (= nova_uint, address-sized, distinct from u64)
+//   • raw pointers `*T` / `*()` / CStr (any pointee; recursion stops at address)
+//   • `str` (= {ptr,len} value-record), in param and return
+//   • value-record / named-tuple / anon-tuple with all-C-ABI fields (by-value)
+//   • cyclic value-record `Node value { next *Node }` (`value` mandatory)
+//   • `Option[*T]` via NPO (None = NULL); `-> ()` = C `void`
+//   • `*extern "C" fn(...)` C-callback (D353) as param AND return
+// Plus D353/M2 — the `*extern "C" fn` tag is a legal TYPE in NON-extern-"C"
+// positions, with its signature still validated as C-ABI:
+//   • a Nova wrapper-fn parameter holding a C-callback
+//   • a value-record FIELD holding a C-callback (libuv-handler-in-a-handle)
+//
+// Declarations are bodyless + uncalled (no C shim / linker symbol needed); the
+// point is signature acceptance. The runtime `test` exercises `Option[*()]` NPO
+// (None vs Some distinguishable), a self-contained observable of the pointer-
+// option that D282 rule 2 admits.
+//
+// Spec: spec/decisions/08-runtime.md (D282 rule 2, D353). Neg side:
+// spec_tests/conformance/neg/d282_*_neg.nv + d353_*_neg.nv.
+module spec_tests.conformance
+
+// C-ABI value-record (all fields C-ABI) — passed by-value as a C struct.
+type D282Rect value { w int, h int }
+
+// Named tuple (stack value type) — C-ABI iff all fields C-ABI.
+type D282Point(x f64, y f64)
+
+// Cyclic value-record: `next *Node` is a raw pointer → recursion stops there.
+type D282Node value { val int, next *D282Node }
+
+// D353/M2 — a value-record FIELD typed `*extern "C" fn` (a stored C-callback,
+// e.g. a libuv handler kept in a handle). Its signature is validated as C-ABI.
+type D282Handler value { cb *extern "C" fn(*(), i32) -> () }
+
+// ─── Scalars (incl. uint, the address-sized unsigned, ≠ u64) ───────────────
+extern "C" fn d282_scalars(a int, b uint, c i8, d i16, e i32, f i64) -> int
+extern "C" fn d282_scalars_u(a u8, b u16, c u32, d u64) -> uint
+extern "C" fn d282_float_bool_char(a f32, b f64, c bool, d char) -> f64
+
+// ─── Raw pointers (any pointee) + `*()` ────────────────────────────────────
+extern "C" fn d282_ptrs(p *u8, q *(), r *int) -> *u8
+
+// ─── str (value-record {ptr,len}) in param AND return ──────────────────────
+extern "C" fn d282_str_roundtrip(s str) -> str
+
+// ─── value-record / named-tuple / anon-tuple, param + return ───────────────
+extern "C" fn d282_rect_area(r D282Rect) -> int
+extern "C" fn d282_make_point(x f64, y f64) -> D282Point
+extern "C" fn d282_pair(a int, b *u8) -> (int, *u8)
+
+// ─── cyclic value-record ───────────────────────────────────────────────────
+extern "C" fn d282_node_sum(n *D282Node) -> int
+
+// ─── Option[*T] via NPO (None = NULL) ──────────────────────────────────────
+extern "C" fn d282_opt_ptr(p Option[*u8]) -> Option[*int]
+
+// ─── C-ABI fn-pointer parameter + return (D353) — a real C callback ────────
+extern "C" fn d282_register(cb *extern "C" fn(*(), *()) -> i32) -> int
+extern "C" fn d282_get_cmp() -> *extern "C" fn(i64, i64) -> i32
+
+// ─── `-> ()` top-level return = C `void` (allowed) ─────────────────────────
+extern "C" fn d282_void_ret(x int) -> ()
+
+// ─── D353/M2 — `*extern "C" fn` in a NON-extern-"C" (Nova) fn signature ────
+// A Nova wrapper that receives a C-callback; the callback signature is C-ABI.
+fn d282_nova_wrapper(cb *extern "C" fn(i64) -> i64) -> int => 0
+
+test "D282/D353 C-ABI signatures type-check + Option[*()] NPO is observable" {
+    // Uncalled externs above prove the checker accepts every C-ABI signature.
+    // Runtime-observable: pointer-Option (D282-admitted) distinguishes None/Some.
+    ro d282_none Option[*()] = None
+    ro d282_some Option[*()] = Some(0x1000 as *())
+    assert(d282_none == None)
+    assert(d282_some != None)
+    match d282_some {
+        Some(p) => assert((p as int) == 0x1000),
+        None => assert(false),
+    }
+}

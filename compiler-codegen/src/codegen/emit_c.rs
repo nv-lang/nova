@@ -584,6 +584,12 @@ pub struct CEmitter {
     /// lowered to `NovaBox_*`) or `None`. Lets a call site box concrete
     /// arguments passed where a protocol parameter is expected.
     fn_protocol_params: HashMap<String, Vec<Option<(String, Vec<String>)>>>,
+    /// Plan 174.3 (D53): callees with `any`-typed parameters. Maps the callee key
+    /// (same scheme as `fn_protocol_params`: `fn_name` / `Type.method`) → per-param
+    /// `true` when the param type is the `any` top-type. Lets a call site box a
+    /// concrete argument (implicit upcast `T → any`) into a `NovaAny` before the
+    /// call, exactly like the protocol-param pre-box hook.
+    fn_any_params: HashMap<String, Vec<bool>>,
     /// Plan 72 P3-B: protocol method registry.
     /// Maps protocol_name → (type_param_names, method_signatures).
     /// Populated when a Protocol TypeDecl is processed.
@@ -715,6 +721,10 @@ pub struct CEmitter {
     /// [concrete C type args])`. Return values are wrapped into a `NovaBox_*`
     /// fat pointer. `None` for ordinary functions.
     current_fn_returns_protocol: Option<(String, Vec<String>)>,
+    /// Plan 174.3 (D53): `true` when the currently-emitting function declares an
+    /// `any` return type — concrete return values are boxed (implicit upcast
+    /// `T → any`) via `wrap_any_return`, mirroring the protocol-return wrap.
+    current_fn_returns_any: bool,
     /// Plan 33.3 Ф.9.2 (D24): record-invariants per-type. Map struct_name →
     /// list of (invariant-expr, span). Используется emit_record_lit'ом для
     /// wrap'а конструкции в runtime-check (`if (!Inv(tmp)) violation; tmp`).
@@ -1251,6 +1261,14 @@ pub struct CEmitter {
     /// Plan 61 Ф.1: next free TID (counter); starts at USER_BASE.
     next_type_id: u32,
 
+    /// Plan 174.3 (D53/D54 v1): per-type `NovaTypeInfo` statics required by
+    /// `any`-boxing (`v as any` → `nova_any_box(&NOVA_TYPEINFO_<sani>, …)`).
+    /// Key = sanitized ident used in the `NOVA_TYPEINFO_<key>` static name;
+    /// value = (tid-macro, display-name). Emitted at the `__TYPEID_DEFINES__`
+    /// splice (right after the `NOVA_TID_*` `#define`s the statics reference).
+    /// `BTreeMap` for deterministic emit order.
+    any_typeinfos: std::collections::BTreeMap<String, (String, String)>,
+
     /// Plan 61 Ф.2: per-handler-binding `with Fail[E] = |e| ...` mapping
     /// from binding-var-name to E's C-type. Используется emit_throw для
     /// корректной dispatch precedence (per-E typed → erased → unwind).
@@ -1410,6 +1428,7 @@ impl CEmitter {
             result_type_params: HashMap::new(),
             fn_result_type_params: HashMap::new(),
             fn_protocol_params: HashMap::new(),
+            fn_any_params: HashMap::new(),
             protocol_method_registry: HashMap::new(),
             protocol_var_vtable: HashMap::new(),
             emitted_vtable_types: HashSet::new(),
@@ -1441,6 +1460,7 @@ impl CEmitter {
             container_eq_requested: std::cell::RefCell::new(HashSet::new()),
             current_fn_return_ty: None,
             current_fn_returns_protocol: None,
+            current_fn_returns_any: false,
             contracts_post_label: None,
             ghost_vars: std::collections::HashSet::new(),
             proven_contracts: std::collections::HashSet::new(),
@@ -1584,6 +1604,7 @@ impl CEmitter {
              * (1..16 reserved для primitives). */
             type_id_registry: HashMap::new(),
             next_type_id: 17,
+            any_typeinfos: std::collections::BTreeMap::new(),
             fail_e_map: HashMap::new(),
             per_e_fail_types: HashSet::new(),
             // Plan 62.A.bis Ф.1: registry populated через
@@ -1744,6 +1765,34 @@ impl CEmitter {
         let sanitized = Self::sanitize_c_for_ident(nova_name);
         self.register_type_id(&sanitized);
         format!("NOVA_TID_USER_{}", sanitized)
+    }
+
+    /// Plan 174.3 (D53/D54 v1): register (idempotent) a per-type `NovaTypeInfo`
+    /// static for boxing `T → any`. Ensures `T`'s TID is registered (Plan 61
+    /// reuse — NOT a hardcode per type) and records the static so finalize emits
+    /// `static const NovaTypeInfo NOVA_TYPEINFO_<sani> = { NOVA_TID_…, "<name>" };`
+    /// at the `__TYPEID_DEFINES__` splice. Returns the static's C identifier.
+    fn register_any_typeinfo(&mut self, c_type: &str) -> String {
+        let base = c_type.trim_end_matches('*').trim();
+        let tid_macro = self.typeid_macro_for(c_type);
+        let nova_name = base.strip_prefix("Nova_").unwrap_or(base);
+        let sani = Self::sanitize_c_for_ident(nova_name);
+        self.any_typeinfos
+            .entry(sani.clone())
+            .or_insert_with(|| (tid_macro, nova_name.to_string()));
+        format!("NOVA_TYPEINFO_{}", sani)
+    }
+
+    /// Plan 174.3: box a concrete value `value_c` (of C-type `inner_c`) into
+    /// `any` — emits a payload temp then a `nova_any_box(&NOVA_TYPEINFO_…, &tmp,
+    /// sizeof(tmp))` expression (the temp gives an addressable, correctly-aligned
+    /// payload for the memcpy the runtime does). Works uniformly for scalars,
+    /// value-structs (nova_str) and pointers (Nova_X*).
+    fn emit_any_box(&mut self, inner_c: &str, value_c: &str) -> String {
+        let tinfo = self.register_any_typeinfo(inner_c);
+        let tmp = self.fresh_tmp();
+        self.line(&format!("{} {} = {};", inner_c, tmp, value_c));
+        format!("nova_any_box(&{}, &{}, sizeof({}))", tinfo, tmp, tmp)
     }
 
     /// Plan 57: enable bench-mode. Activated by `nova bench` CLI.
@@ -2208,6 +2257,12 @@ impl CEmitter {
             "isize" => return Err("type `isize` is removed — use `int` (Plan 133)".to_string()),
             "ptr" => return Err("type `ptr` is removed — use `*()` (Plan 134)".to_string()),
             "never" => "nova_int".to_string(),
+            // Plan 174.3 (D53): `any` top-type — type-erased `void*` pointing at a
+            // heap `NovaAny` box (see typeid.h). Single C-lowering source, so both
+            // `type_ref_to_c(any)` and the resolved-types channel agree. Was the
+            // `_ =>` fallthrough → bogus `Nova_any*` (undeclared struct) — `any`
+            // never had a working value representation before this plan.
+            "any" => "void*".to_string(),
             "Option" => {
                 if let Some(inner) = args.first() {
                     let inner_c = self.resolved_type_to_c(inner)?;
@@ -2733,9 +2788,31 @@ impl CEmitter {
                     // удваивался → call-site манглился param-суффиксом
                     // (`Nova_AtomicI64_method_fetch_add__int64_t`), которого нет
                     // в C-рантайме → undefined symbol на линковке.
+                    // [M-172.1-extern-cname-dedup-overloads] (Plan 174.6 M1):
+                    // dedup key is (c_name, param_c_types), NOT c_name alone. A
+                    // TRUE duplicate — same C symbol AND same signature, from the
+                    // builtin-supply vs `import` double-feed — is silently
+                    // collapsed (byte-identical to the prior behaviour). But two
+                    // decls sharing a c_name with DIFFERENT param_c_types are a
+                    // genuine FFI overload collision: one C symbol cannot carry
+                    // two ABIs, and the prior `c_name`-only dedup would silently
+                    // drop the second signature → mis-resolved overload at the
+                    // call site. Reject with a compile error instead of swallowing.
                     let slot = self.external_registry.by_key.entry(key).or_default();
                     for d in decls {
-                        if !slot.iter().any(|e| e.c_name == d.c_name) {
+                        if let Some(existing) = slot.iter().find(|e| e.c_name == d.c_name) {
+                            if existing.param_c_types != d.param_c_types {
+                                return Err(format!(
+                                    "[E_FFI_C_NAME_OVERLOAD_CONFLICT] external fn `{}` maps \
+                                     two different signatures onto one C symbol `{}` \
+                                     (param C-types {:?} vs {:?}) — a C symbol has exactly \
+                                     one ABI. Give the overloads distinct C names, or unify \
+                                     them to a single signature.",
+                                    d.name, d.c_name, existing.param_c_types, d.param_c_types,
+                                ));
+                            }
+                            // identical signature → true duplicate, skip.
+                        } else {
                             slot.push(d);
                         }
                     }
@@ -4931,7 +5008,35 @@ impl CEmitter {
             tid_defines.push_str("    }\n");
             tid_defines.push_str("}\n");
         }
+        // Plan 174.3 (D53/D54 v1): per-type NovaTypeInfo statics for any-boxing.
+        // Emitted after the NOVA_TID_* #defines they reference (user-type TIDs
+        // are in the block above; primitives come from typeid.h). Independent of
+        // `type_id_registry` emptiness — a program that only boxes primitives has
+        // an empty user-TID registry but still needs these statics.
+        if !self.any_typeinfos.is_empty() {
+            tid_defines.push_str(
+                "\n/* Plan 174.3: per-type NovaTypeInfo statics (any-boxing). */\n",
+            );
+            for (sani, (tid_macro, name)) in &self.any_typeinfos {
+                tid_defines.push_str(&format!(
+                    "static const NovaTypeInfo NOVA_TYPEINFO_{} = {{ {}, \"{}\" }};\n",
+                    sani, tid_macro, name
+                ));
+            }
+        }
         self.out = self.out.replace("/*__TYPEID_DEFINES__*/", &tid_defines);
+
+        // Plan 174.4: effect-registry compile-time размер marker. N = число
+        // distinct-эффектов в реестре (built-in Fail/Time/Mem + user-defined).
+        // Клампим к >=1 (C запрещает массив [0]; на практике built-in гарантируют
+        // N>=3). Build-слой читает это число и прокидывает -DNOVA_MAX_EFFECT_STORAGES=N
+        // во ВСЕ TU → silent-drop 33-го эффекта невозможен, snapshot = ровно N
+        // указателей вместо фикс-256B, и generated/runtime TU согласованы по ABI.
+        let effect_count = self.effect_schemas.len().max(1);
+        self.out = self.out.replace(
+            "/*__EFFECT_COUNT_MARKER__*/",
+            &format!("/* nova-effect-count: {} */", effect_count),
+        );
 
         // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: typed throw
         // codegen для CleanupTimeoutError. Emitted ТОЛЬКО if
@@ -5310,6 +5415,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     // ---- preamble ----
 
     fn emit_preamble(&mut self) {
+        // Plan 174.4: effect-registry compile-time size marker. MUST be line 1.
+        // The build layer reads `nova-effect-count: N` from here and passes
+        // `-DNOVA_MAX_EFFECT_STORAGES=N` to EVERY translation unit (this generated
+        // .c AND the separately-listed runtime .c files — all compiled in one cc
+        // invocation), so NovaEffectRegistry/NovaEffectSnapshot have an identical
+        // array size across TUs (ABI safety — a per-.c `#define` would size the
+        // generated TU differently from runtime effects.c and corrupt the TLS
+        // registry). N = distinct effects (built-in Fail/Time/Mem + user) from the
+        // effect_schemas registry (§0/§3, not hardcoded). Spliced in finalize; if
+        // absent (hand-written .c), effects.h `#ifndef` falls back to 32 uniformly.
+        self.line("/*__EFFECT_COUNT_MARKER__*/");
         self.line("/* Generated by nova-codegen. Do not edit. */");
         self.line("#include \"nova_rt/nova_rt.h\"");
         self.line("");
@@ -6569,6 +6685,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         };
         let concrete_c = self.infer_expr_c_type(val_expr);
         self.box_value_for_protocol(val, &concrete_c, &proto, &type_args)
+    }
+
+    /// Plan 174.3 (D53): if the current function returns `any`, box a concrete
+    /// return value (implicit upcast `T → any`). No-op for ordinary returns and
+    /// for values already erased to `any` (void*). Mirrors `wrap_protocol_return`.
+    fn wrap_any_return(&mut self, val: String, val_expr: &Expr) -> String {
+        if !self.current_fn_returns_any {
+            return val;
+        }
+        let concrete_c = self.infer_expr_c_type(val_expr);
+        if concrete_c == "void*" || concrete_c.is_empty() {
+            return val;
+        }
+        self.emit_any_box(&concrete_c, &val)
     }
 
     // **Plan 147 Ф.3 (D246, 3-axis L3):** the D33 §2 / D216 V2 binding-mut
@@ -10167,6 +10297,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     None => f.name.clone(),
                 };
                 self.fn_protocol_params.insert(key, param_protos);
+            }
+        }
+        // Plan 174.3 (D53): register `any`-typed parameters so call sites can
+        // implicitly box concrete arguments (upcast `T → any`). Keyed like
+        // `fn_protocol_params`.
+        {
+            let any_flags: Vec<bool> = f.params.iter()
+                .map(|p| matches!(&p.ty,
+                    TypeRef::Named { path, generics, .. }
+                        if generics.is_empty() && path.len() == 1 && path[0] == "any"))
+                .collect();
+            if any_flags.iter().any(|&b| b) {
+                let key = match &f.receiver {
+                    Some(recv) => format!("{}.{}", recv.type_name, f.name),
+                    None => f.name.clone(),
+                };
+                self.fn_any_params.insert(key, any_flags);
             }
         }
         // Register fn-typed return signature for closure binding propagation
@@ -17477,6 +17624,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.current_fn_returns_protocol = Some((proto, type_args));
             }
         }
+        // Plan 174.3 (D53): `any` return type — concrete return values are boxed
+        // (implicit upcast). `ret` is already `void*` via `return_type_c`.
+        let saved_fn_returns_any = self.current_fn_returns_any;
+        self.current_fn_returns_any = matches!(&f.return_type,
+            Some(TypeRef::Named { path, generics, .. })
+                if generics.is_empty() && path.len() == 1 && path[0] == "any");
         // Plan 55 Ф.4: save/restore current_fn_return_ty чтобы прошлый
         // ret не leak'ал при recursive emit (e.g. mono pass запускает
         // emit_fn для transitively'd dependencies из тела generic).
@@ -17758,6 +17911,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 };
                 // Plan 72 P3-B return: box the trailing value for a protocol return type.
                 let val = self.wrap_protocol_return(val, e);
+                let val = self.wrap_any_return(val, e);
                 if ret == "nova_unit" {
                     self.line(&format!("{};", val));
                     if has_ensures {
@@ -17831,6 +17985,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.protocol_var_vtable = saved_protocol_var_vtable_fn;
         // Plan 72 P3-B return: restore protocol-return state.
         self.current_fn_returns_protocol = saved_fn_returns_protocol;
+        // Plan 174.3: restore any-return state.
+        self.current_fn_returns_any = saved_fn_returns_any;
         // Plan 55 Ф.4: restore prior current_fn_return_ty (mono-pass leak fix).
         self.current_fn_return_ty = saved_ret_ty;
         // Plan 63 Fix F+ [M-result-erased-no-mono]: restore pending state.
@@ -18787,6 +18943,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.in_recv_ptr_return_position.set(prev_recv_ret);
             // Plan 72 P3-B return: box the trailing value for a protocol return type.
             let val = self.wrap_protocol_return(val, trailing);
+            let val = self.wrap_any_return(val, trailing);
             if let Some(label) = post_label {
                 // Contracts mode: trailing → _nova_result; goto post.
                 if ret_ty == "nova_unit" {
@@ -18880,6 +19037,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         inferred
                     }
                 };
+                // Plan 174.3 (D53): implicit upcast for `ro x any = <concrete>` —
+                // box the value into a `NovaAny` (void*). Explicit `<v> as any`
+                // already yields a void* (boxed by the As arm), so this only fires
+                // for a genuinely non-`any` RHS. Bypasses the array/value-record
+                // promotion paths below (irrelevant to an `any` binding).
+                if matches!(&decl.ty, Some(TypeRef::Named { path, generics, .. })
+                    if generics.is_empty() && path.len() == 1 && path[0] == "any")
+                {
+                    let val_c = self.infer_expr_c_type(&decl.value);
+                    if val_c != "void*" && !val_c.is_empty() {
+                        let v = self.emit_expr(&decl.value)?;
+                        let boxed = self.emit_any_box(&val_c, &v);
+                        self.line(&format!("void* {} = {};", binding, boxed));
+                        self.var_types.insert(binding.clone(), "void*".to_string());
+                        return Ok(());
+                    }
+                }
                 // Plan 91.8a.2 followup 2026-05-29: heterogeneous []Protocol.
                 // Detect annotation `[]Protocol` (TypeRef::Array(inner)
                 // where inner is protocol type). Override storage к
@@ -19699,6 +19873,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     self.in_recv_ptr_return_position.set(prev_recv_ret);
                     // Plan 72 P3-B return: box explicit return value for a protocol return type.
                     let val = self.wrap_protocol_return(val, v);
+                    let val = self.wrap_any_return(val, v);
                     if let Some(label) = post_label {
                         // Contracts mode: stash в _nova_result, defer cleanup,
                         // потом goto. Если defers пустой — просто assign + goto.
@@ -22586,6 +22761,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let inner_c_ty = inner_c_ty_for_check;
                 let v = self.emit_expr(inner)?;
 
+                // Plan 174.3 (D53/D54 v1): `v as any` — upcast/boxing into the
+                // type-erased `any` top-type. Box the concrete value with a
+                // per-type NovaTypeInfo (type_id from the Plan 61 registry).
+                // An already-`any` operand (void*) is identity — no double-box.
+                if target_nova.as_deref() == Some("any") {
+                    if inner_c_ty == "void*" {
+                        return Ok(v);
+                    }
+                    return Ok(self.emit_any_box(&inner_c_ty, &v));
+                }
+
                 // Plan 70.5 Q2: int → uint saturation (neg → 0).
                 // Only for explicit `uint` target (not u64 — that bit-casts).
                 if inner_c_ty == "nova_int" && target_nova.as_deref() == Some("uint") {
@@ -22629,6 +22815,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
 
             ExprKind::Is(inner, ty) => {
+                // Plan 174.3 (D54 v1): `x is T` where `x: any` — runtime type_id
+                // compare on the boxed value. The type-erased `any` operand is a
+                // `void*` to a `NovaAny` box; the RHS is a concrete TYPE (int / str
+                // / record / whole sum), not a variant. `void*` operand ⟹ `any`
+                // (sums are `Nova_X*` / value-structs — never `void*`), so this
+                // path never shadows the D54 v2 sum-variant path below.
+                let inner_ty_is = self.infer_expr_c_type(inner);
+                if inner_ty_is == "void*" {
+                    let target_c = self.type_ref_to_c(ty)
+                        .map_err(|e| format!("`is` target type error: {}", e))?;
+                    let tid = self.typeid_macro_for(&target_c);
+                    let x = self.emit_expr(inner)?;
+                    return Ok(format!("nova_any_is({}, {})", x, tid));
+                }
                 // D54 v2: `expr is Variant` for sum-types — runtime tag check.
                 // Get the variant name from the TypeRef (must be Named with len 1 or 2).
                 let variant_name = match ty {
@@ -23810,6 +24010,36 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     }
 
     fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
+        // Plan 174.3 (D54 v1): `x.try_as[T]()` — optional downcast of a boxed
+        // `any` to `Option[T]`. Runtime type_id check on the erased value: match
+        // → `Some(*(T*)payload)`, mismatch → `None`. Intercepted here (before the
+        // turbofish→Member recursion) because `try_as` is a builtin on `any`, not
+        // a user/prelude method. Gated on a `void*` (any) receiver.
+        if let ExprKind::TurboFish { base, type_args } = &func.kind {
+            if let ExprKind::Member { obj, name } = &base.kind {
+                if name == "try_as" && type_args.len() == 1 && args.is_empty()
+                    && self.infer_expr_c_type(obj) == "void*"
+                {
+                    let target_c = self.type_ref_to_c(&type_args[0])
+                        .map_err(|e| format!("`try_as` target type error: {}", e))?;
+                    let tid = self.typeid_macro_for(&target_c);
+                    let sani = Self::sanitize_for_novaopt(&target_c);
+                    self.register_novaopt_decl(&sani, &target_c);
+                    let x = self.emit_expr(obj)?;
+                    let tmp = self.fresh_tmp();
+                    self.line(&format!("void* {} = {};", tmp, x));
+                    let some = self.option_some_expr(
+                        &sani,
+                        &format!("(*({}*)nova_any_data({}))", target_c, tmp),
+                    );
+                    let none = self.option_none_expr(&sani);
+                    return Ok(format!(
+                        "(nova_any_is({}, {}) ? {} : {})",
+                        tmp, tid, some, none
+                    ));
+                }
+            }
+        }
         // [M-91.1-method-turbofish-dispatch] Plan 91 Ф.1: method-level turbofish.
         // `obj.method[U,...](args)` parses as Call{func:TurboFish{base:Member,..}}.
         // The func_c match below has no TurboFish{base:Member} arm, so it falls to
@@ -23949,6 +24179,42 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 self.line(&format!(
                                     "{} {} = {};", box_ty, tmp, boxed));
                                 self.var_types.insert(tmp.clone(), box_ty);
+                                new_args.push(CallArg::Item(Expr {
+                                    kind: ExprKind::Ident(tmp),
+                                    span: arg_expr.span, id: crate::ast::ExprId::UNSET,
+                                }));
+                                rewrote = true;
+                                continue;
+                            }
+                        }
+                    }
+                    new_args.push(a.clone());
+                }
+                if rewrote {
+                    return self.emit_call(func, &new_args, call_id);
+                }
+            }
+        }
+
+        // Plan 174.3 (D53): implicit upcast — pre-box concrete arguments passed to
+        // `any`-typed parameters into a `NovaAny` (void*) temporary, then re-dispatch
+        // with the temp. Mirrors the protocol-param pre-box hook above; one hook
+        // covers free fns, static methods and instance methods. An arg that is
+        // ALREADY `any` (void*) passes through unchanged (no double-box).
+        if let Some(key) = self.call_protocol_params_key(func) {
+            if let Some(any_flags) = self.fn_any_params.get(&key).cloned() {
+                let mut new_args: Vec<CallArg> = Vec::with_capacity(args.len());
+                let mut rewrote = false;
+                for (i, a) in args.iter().enumerate() {
+                    if let CallArg::Item(arg_expr) = a {
+                        if any_flags.get(i).copied().unwrap_or(false) {
+                            let concrete_c = self.infer_expr_c_type(arg_expr);
+                            if concrete_c != "void*" && !concrete_c.is_empty() {
+                                let v = self.emit_expr(arg_expr)?;
+                                let boxed = self.emit_any_box(&concrete_c, &v);
+                                let tmp = self.fresh_tmp();
+                                self.line(&format!("void* {} = {};", tmp, boxed));
+                                self.var_types.insert(tmp.clone(), "void*".to_string());
                                 new_args.push(CallArg::Item(Expr {
                                     kind: ExprKind::Ident(tmp),
                                     span: arg_expr.span, id: crate::ast::ExprId::UNSET,
@@ -29911,13 +30177,51 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
         }
+        // Plan 174.3 (D54 v1): smart-cast narrowing. `if x is T { … }` where `x`
+        // is a type-erased `any` (void*) refines `x` to `T` inside the then-block
+        // (Kotlin smart cast). Detected on the bare `Ident is Type` cond; the
+        // narrowed view is a payload-deref local aliased over `x` via `#define`
+        // (mirrors the closure mut-capture box rewrite), and `var_types[x]` is set
+        // to `T` for the block so type-inference sees the refined type. Restored on
+        // block exit. Only the simple `x is T` shape (not `x is T && …`) narrows.
+        let narrow: Option<(String, String)> = match &cond.kind {
+            ExprKind::Is(inner, ty) => match &inner.kind {
+                ExprKind::Ident(name)
+                    if self.var_types.get(name).map(|s| s.as_str()) == Some("void*") =>
+                {
+                    self.type_ref_to_c(ty).ok().map(|tc| (name.clone(), tc))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
         let cond_val = self.emit_expr(cond)?;
         let tmp = self.fresh_tmp_named("if");
         self.line(&format!("{} {};", if_ty, tmp));
         self.var_types.insert(tmp.clone(), if_ty.clone());
         self.line(&format!("if ({}) {{", cond_val));
         self.indent += 1;
+        let narrow_saved: Option<(String, Option<String>)> =
+            if let Some((name, tc)) = &narrow {
+                let nvar = self.fresh_tmp();
+                self.line(&format!(
+                    "{tc} {nvar} = *({tc}*)nova_any_data({name});",
+                    tc = tc, nvar = nvar, name = name
+                ));
+                self.line(&format!("#define {} {}", name, nvar));
+                let old = self.var_types.insert(name.clone(), tc.clone());
+                Some((name.clone(), old))
+            } else {
+                None
+            };
         self.emit_block_into(&tmp, &if_ty, then)?;
+        if let Some((name, old)) = narrow_saved {
+            self.line(&format!("#undef {}", name));
+            match old {
+                Some(o) => { self.var_types.insert(name, o); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
         self.indent -= 1;
         match else_ {
             None => {
@@ -37590,6 +37894,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // emit-pass. infer_expr_c_type_legacy panics unconditionally on entry — reaching it
         // means the checker failed to annotate this expr (compiler-conventions.md §0).
 
+        // Plan 174.3 (D54 v1): `x.try_as[T]()` types as `Option[T]` (→ NovaOpt_<T>).
+        // Builtin on `any` — not a resolved callee, so channels below would miss it.
+        if let ExprKind::Call { func, args, .. } = &expr.kind {
+            if let ExprKind::TurboFish { base, type_args } = &func.kind {
+                if let ExprKind::Member { obj, name } = &base.kind {
+                    if name == "try_as" && type_args.len() == 1 && args.is_empty()
+                        && self.infer_expr_c_type(obj) == "void*"
+                    {
+                        if let Ok(target_c) = self.type_ref_to_c(&type_args[0]) {
+                            return format!("NovaOpt_{}", Self::sanitize_for_novaopt(&target_c));
+                        }
+                    }
+                }
+            }
+        }
         // Channel 1: resolved_callees → fn_ret_by_span (Call return type from checker-chosen callee)
         if expr.id.is_set() {
             if matches!(&expr.kind, ExprKind::Call { .. }) {

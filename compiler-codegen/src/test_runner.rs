@@ -784,6 +784,33 @@ fn runtime_define_args(runtime: Option<&crate::manifest::RuntimeConfig>,
     args
 }
 
+/// Plan 174.4: effect-registry compile-time size. Codegen emits a
+/// `/* nova-effect-count: N */` marker on line 1 of the generated `.c`
+/// (N = distinct effects: built-in Fail/Time/Mem + user, from `effect_schemas`).
+/// The `.c` and every runtime `.c` are compiled together in ONE cc invocation, so
+/// we pass `-DNOVA_MAX_EFFECT_STORAGES=N` (prefix `-D` clang/gcc, `/D` MSVC) to the
+/// whole command → `NovaEffectRegistry`/`NovaEffectSnapshot` get an identical array
+/// size in every TU (a per-.c `#define` would size the generated TU differently from
+/// runtime `effects.c` and corrupt the TLS registry). Reads only the first line.
+/// Returns `None` (→ effects.h `#ifndef` fallback 32, uniform) if the marker is
+/// absent or unparseable — never passes garbage to the compiler.
+fn effect_count_define_arg(c_file: &Path, prefix: &str) -> Option<String> {
+    use std::io::BufRead;
+    let f = std::fs::File::open(c_file).ok()?;
+    let mut first = String::new();
+    std::io::BufReader::new(f).read_line(&mut first).ok()?;
+    let n: u32 = first
+        .split("nova-effect-count:")
+        .nth(1)?
+        .trim()
+        .trim_end_matches("*/")
+        .trim()
+        .parse()
+        .ok()?;
+    if n == 0 { return None; }
+    Some(format!("{}NOVA_MAX_EFFECT_STORAGES={}", prefix, n))
+}
+
 /// Возвращает command, готовую к запуску. Для Clang/MSVC на Windows
 /// инкапсулирует cmd /c "vcvars && actual-cmd" — иначе headers/libs
 /// MSVC SDK недоступны.
@@ -929,6 +956,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // Plan 149 D233: nova.toml [runtime] → -DNOVA_FIBER_STACK_DEFAULT /
             // -DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
             for da in runtime_define_args(opts.runtime, "-D") {
+                flags.push(da);
+            }
+            // Plan 174.4: effect-registry size (all TUs, ABI-uniform).
+            if let Some(da) = effect_count_define_arg(opts.c_file, "-D") {
                 flags.push(da);
             }
 
@@ -1109,6 +1140,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             for da in runtime_define_args(opts.runtime, "/D") {
                 c.arg(da);
             }
+            // Plan 174.4: effect-registry size (all TUs, ABI-uniform).
+            if let Some(da) = effect_count_define_arg(opts.c_file, "/D") {
+                c.arg(da);
+            }
             c.arg(format!("/I{}", opts.cg_include.display()));
             // /Fo с завершающим '\' → cl.exe трактует как директорию
             // (каждый .obj по имени исходника); без '\' — как имя файла,
@@ -1209,6 +1244,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             // Plan 149 D233: nova.toml [runtime] → -DNOVA_FIBER_STACK_DEFAULT /
             // -DNOVA_MAX_FIBERS_DEFAULT (raw ints). After GC, before libuv.
             for da in runtime_define_args(opts.runtime, "-D") {
+                c.arg(da);
+            }
+            // Plan 174.4: effect-registry size (all TUs, ABI-uniform).
+            if let Some(da) = effect_count_define_arg(opts.c_file, "-D") {
                 c.arg(da);
             }
             c.arg("-I").arg(opts.cg_include);

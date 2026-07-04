@@ -1204,11 +1204,13 @@ fn subst_type_ref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
         TR::FixedArray(n, inner, span) => {
             TR::FixedArray(*n, Box::new(subst_type_ref(inner, subst)), *span)
         }
-        TR::Func { params, effects, return_type, span } => {
+        TR::Func { params, effects, return_type, extern_abi, span } => {
             TR::Func {
                 params: params.iter().map(|p| subst_type_ref(p, subst)).collect(),
                 effects: effects.clone(),
                 return_type: return_type.as_ref().map(|r| Box::new(subst_type_ref(r, subst))),
+                // D353: preserve the ABI-tag through generic substitution.
+                extern_abi: extern_abi.clone(),
                 span: *span,
             }
         }

@@ -74,6 +74,9 @@
 | `[M-177-anon-record-in-ctor-arg-codegen]` | ✅ **RESOLVED 2026-06-26** (`c724de7a`, Plan 172.1): contextual Ok/Err-арм `emit_call` ставит `expected_record_type` вокруг emit аргумента (зеркало D55). json разблокирован; workaround не нужен. | Plan 177 §6 (codegen) | ✅ |
 | `[M-spec-dnum-collisions-audit]` | ✅ **DONE 2026-07-03** (все 14 разрешены: D184/291/292→D363-365; D124/125/126/138/173/174/180/185/258/298→D366-377; D277-тройная→D375/376; D239=дубль-зеркало demote). Было обнаружено: sort|uniq-d по `^## D` в spec/decisions вскрыл ~12 НАСТОЯЩИХ кросс-файловых коллизий D-номеров сверх уже-исправленной тройки: **D124, D125, D126, D138, D173, D174, D180, D185, D239, D258, D277 (×3!), D298** (напр. D298 = UDP-split 04-effects ∥ test-budget 09-tooling; D174 = sync-primitives 06-concurrency ∥ prelude-attrs 07-modules). Часть `uniq-d` — легитимные amend/legacy (D216 V2/V3, D33-LEGACY) — отфильтровать. Каждая настоящая = per-collision анализ (хронология+корневость+приёмник D366+) как для D184/D291/D292. Прецедент разрешения: этой сессии D184→D363/D292→D364/D291→D365. | spec-hygiene / owner sign-off | P2 |
 | `[M-104.10-diag-pipeline-correctness]` | **OPEN (Ред.2 2026-07-03, Plan 104.10 Ф.0.5):** root ложной красной IDE-диагностики — 3 бага `compiler.rs`: import-ошибки молча отброшены (import-diag-swallowed §4), degraded-CU → пустой peer_files → ложная краснота prelude/peer (degraded-cu-red), LSP↔cmd_check дрейф (нет 162.2-sig-table). + `[Ennnn]`-коды (diag-numeric-codes), STD_MODULES стейл-пути (hardcode-lists). Дом = 104.10 Ф.0.5; закрытие в Ф.14. | Plan 104.10 Ф.0.5 | P1 |
+| `[M-174.6-ffi-struct-layout]` | **OPEN (переоценка 2026-07-04, Plan 174.6 M2/M3).** S8 layout-guard `_Static_assert(sizeof(NovaValue_X)==<expected>)` для by-value FFI value-record'ов НЕ закрыт: корректный `<expected>` требует независимой C-ABI layout-модели (паддинг/выравнивание), которой у Nova нет. `sizeof==sum-полей` неверно (отвергает паддинг); `sizeof==sizeof` тавтология (для СВОЕЙ структуры C даёт тот же размер; дрейф — только против ВНЕШНЕЙ C-либы). Значит static-assert **coupled** к полной layout-спеке → закрывается вместе с ней. Обоснование — 174.6 §11. | Plan 174.6 §11 | P2 |
+| `[M-174.6-ffi-abi]` | **OPEN-остаток (Plan 174.6 M2/M3, 2026-07-04).** M0/M1/M2-additive закрыты (тип-лист D282 rule 2, `*extern "C" fn` D353, checker+коэрция+conformance `d282_ffi_abi` pos+9neg+cookbook+cast-матрица D353+non-extern-C позиции M2). Остаток: полная D216 §10 ретракция строки «default C ABI» у bare `*fn` (= Nova-ABI; отложено — меняет дефолтный ABI `*fn`, reconcile-риск) + реинтерпрет `*fn`↔`*extern "C" fn` (unsafe-hatch) + codegen `fn→fn-ptr` value (P67-LEGACY). | Plan 174.6 §11 | P2 |
+| `[M-174.6-varargs]` | C-varargs (`...`) в `extern "C" fn` сигнатурах не поддержаны (`printf`-семейство). Маркер из зонта 174 §3.6. | Plan 174.6 | P3 |
 | `[M-spec-nova-lsp-conformance-audit]` | **OPEN (3-агентный аудит 2026-07-03):** nova-lsp не соответствует compiler-conventions — 26 находок. Критические (root красной IDE-диагностики, БЕЗ маркеров): `compiler.rs:148` молча глотает import-ошибки (§4); `compiler.rs:137` degraded-CU → пустой `peer_files` → ложная краснота prelude/peer-символов; LSP↔cmd_check дрейф (нет `collect_all_signatures`/sig_table — Plan 162.2). + §3 хардкод-списки (`prelude_items`/`STD_MODULES` со стейл-путями/`known_stdlib_*`); `diagnostic_mapping` теряет числовые `[Ennnn]`; `symbol.rs` тип `"float"`. Детали+суб-маркеры → [Plan 104.10 §0.4](104.10-lsp-v2-production.md). Бóльшая часть type-channel/rename/method-dot уже в 104.10 (Ф.2/Ф.5/Ф.7). | Plan 104.10 §0.4 | P2 |
 | `[M-net-merge-to-single-effect]` | **OPEN (owner-decision 2026-07-03):** слить `TcpNet`/`UdpNet`/`DnsNet` → единый `Net` (реконсиляция к спеке D62-канону; дробление 91.12/D291 было отклонением). ~43 файла (std/net 6 .nv, nova_tests 24, docs 15, spec D291/D295/D301) — 100% `.nv`+docs (grep net-эффектов по `**/*.rs`=0, ноль codegen-риска). **Едет с net byte-surface sweep Plan 178 §13.2** (`str`→`[]u8` + SocketAddr-rep) — не отдельным заходом. Цена: 116 `real_tls()`→`Net`; единый `mock_net`; AddrNet-retract ортогонален. | Plan 178 §13.2 / spec D62 | P2 |
 | `[M-effect-forbid-generic-bound]` | **OPEN (зарегистрировано 2026-07-03, исследование 176 Q15):** `check_callee_effects` (types/mod.rs ~:15960, снимок) ищет callee по имени в method_table — для generic-ресивера `[W io.Write]` записи нет → **`forbid`/D63, realtime/D64 и effect-surface НЕ видят эффекты через generic protocol-bound** (`forbid Fs { body.copy_to(file_writer) }` не ловится статически). Плюс: vtable-dispatch effectful protocol-методов запрещён D122 (mono-only) — на erased-пути нужна диагностика. | 176 Q15 / spec Q6 (effect-polymorphism) | P2 |
@@ -825,7 +828,7 @@ U.1.3b миграцией sync на import.
 механика миграции — прецедент Plan 172.2 Ф.3: детект-режим → as-касты → включение).
 
 
-## [M-172.1-extern-cname-dedup-overloads] — дедуп extern-деклов по c_name упрощён (2026-07-02)
+## [M-172.1-extern-cname-dedup-overloads] — дедуп extern-деклов по c_name упрощён (2026-07-02) → ✅ ЗАКРЫТ Plan 174.6 M1 (2026-07-04)
 
 При inline-merge builtin-модуля (import std.runtime.sync поверх builtin-снабжения)
 дубликаты extern-деклараций схлопываются по `c_name` (external_registry merge).
@@ -833,8 +836,27 @@ U.1.3b миграцией sync на import.
 НАСТОЯЩИХ overload'ов с одинаковым c_name (разные param_c_types) дедуп молча
 съест вторую сигнатуру → неверный резолв перегрузки. Ужесточить: ключ дедупа =
 (c_name, param_c_types), конфликт = ошибка компилятора.
-**Носитель: Plan 174.6 (C-FFI ABI types)**; сайт помечен комментарием в
+**ПОГЛОЩЁН Plan 174.6 (C-FFI ABI types).** M0 (spec, 2026-07-04) — amend D282 rule 2
+(рекурсивный C-ABI тип-лист, params+return) + D353 (fn-ptr ABI-тег `*extern "C" fn`) +
+D216 cross-amend. Ужесточение ключа дедупа `(c_name, param_c_types)` = чекер-часть
+**Plan 174.6 M1** (вместе с `E_FFI_NON_C_ABI_TYPE`); сайт помечен комментарием в
 external_registry merge.
+**✅ ЗАКРЫТ Plan 174.6 M1 (2026-07-04):** ключ дедупа в `emit_c.rs` (user-external merge)
+изменён `c_name` → `(c_name, param_c_types)`. True-duplicate (builtin-supply ↔ `import`
+double-feed, тот же c_name + та же сигнатура) молча схлопывается (byte-identical). Genuine
+overload-collision (один C-символ, РАЗНЫЕ `param_c_types`) → `E_FFI_C_NAME_OVERLOAD_CONFLICT`
+(compile error) вместо тихого проглатывания второй сигнатуры. Zero-regression: atomics
+(import std.runtime.sync — двойное снабжение) PASS 6/0 без конфликта.
+**Adversarial-аудит M0 (2026-07-04, spec-doc-фиксы):** в D282 rule 2 добавлены `uint`
+(=`nova_uint`, D130), C-ABI fn-ptr base-case (`*extern "C" fn` как параметр/поле —
+закрыл D282↔D353 gap), `Option[RawPtr]` (было узко `Option[*T]`), исправлен пример
+циклического value-record (`type Node value {…}` — было без `value` → self-contradiction
+с heap-record negative-list); в D353 коэрция получила условие (3) **effect-free/total**
+(soundness: captureless-fn с любым эффектом, не только `Fail`, звался бы из C без
+handler-фрейма → unsound). **Error-index-долг (deferred → M1, debt-нота в D353 Scope):**
+`E_FFI_NON_C_ABI_TYPE`/`E_CALLBACK_THROWS_OVER_C_ABI`/`E_CLOSURE_HAS_ENV` заносятся в
+09-tooling error-index **вместе с чекером M1**, который их эмитит (message-text уже в
+Plan 174.6 §4).
 
 ## [M-172.1-var-types-cu-name-leak] — var_types один namespace на CU, last-wins (2026-07-02)
 
@@ -887,3 +909,21 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 план не создаётся сознательно. Пересмотреть, когда (а) полный чек+кодоген
 крупного проекта станет узким местом UX, (б) появится typed-IR (172.12) —
 естественная граница мемоизации. НЕ носитель ближайших зонтов.
+
+
+## [M-174.3-any-is] — `any`-тип + `is`/`try_as`-downcast: остатки (2026-07-04)
+
+Plan 174.3 Ф.1+Ф.2 ВЫПОЛНЕНЫ (`any` = boxed `void*`→`NovaAny`, `v as any` явный+неявный
+upcast, `x is T`/`try_as[T]`/flow-narrowing на type_id-реестре Plan 61, `[E_IS_NON_ANY]`).
+Разблокирован Plan 173 Ф.4 (`Failure(any)`, `e is CancelError` строятся поверх). Остатки:
+
+- **[M-174.3-any-as-fail-method]** — форма `x.as[T]?` (Fail-downcast, комплемент `try_as`).
+  Парсер не принимает `.as` в member-позиции (`as` — ключевое слово); нужен либо
+  контекстный allow `as` после `.`, либо переименование. `try_as[T]()` + narrowing
+  покрывают извлечение — форма опциональна.
+- **[M-174.3-match-pattern-is]** — `match { n is T => … }` / `is T =>` pattern-форма на
+  `any` (D54 §«Pattern в match»). Реализованы операторная/`if`-форма + `try_as`; match-arm
+  `is`-паттерн (binding + smart-cast) — отдельная работа в emit_match.
+- **[M-174.3-heterogeneous-any]** — Ф.3: гетерогенные `[]any` (boxing элементов) +
+  `Eq`/`Hash`/`Clone`/`Display`-thunks в `NovaTypeInfo` → `any` в `HashSet`/`HashMap`,
+  сравнение/печать стёртых значений.

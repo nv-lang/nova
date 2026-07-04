@@ -1,0 +1,22 @@
+// D353 coercion NEG (clause 3 — soundness) — coercing a fn that declares ANY
+// effect (here a custom algebraic effect, not `Fail`) into a C-ABI
+// `*extern "C" fn` is forbidden. C invokes the callback with no Nova handler-
+// frame on the stack, so any effect-operation has nowhere to resolve. This
+// generalises the `Fail`-specific gate to all effects.
+//
+// EXPECT_COMPILE_ERROR E_CALLBACK_THROWS_OVER_C_ABI
+
+module neg.d353_callback_effect_neg
+
+type D353Logger effect {
+    log(msg str) -> ()
+}
+
+fn d353_effectful_cb(x i64) D353Logger -> i64 {
+    x
+}
+
+test "rejects effect-declaring fn coerced to *extern \"C\" fn" {
+    ro d353_cb = d353_effectful_cb as *extern "C" fn(i64) -> i64
+    assert(1 == 1)
+}

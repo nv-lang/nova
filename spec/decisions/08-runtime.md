@@ -1098,6 +1098,18 @@ naming convention, по аналогии с примитивами. Исполь
 `fn dump(x any) Io -> ()`, `Logger.log_event(level, fields []any)`
 для гетерогенных структурных логов.
 
+**Runtime-представление (Plan 174.3, 2026-07-04).** `any` — тип-стёртый
+`void*`, указывающий на heap-boxed `NovaAny { const NovaTypeInfo* info;
+void* data; }`, где `NovaTypeInfo { NovaTypeId type_id; const char* name; }`
+несёт `type_id` из реестра Plan 61. Boxing (`v as any`, а также неявный
+upcast по supertype-правилу к `any`-параметру / `-> any` / `ro x any =`)
+копирует значение в GC-allocation и ставит per-type `info`. Downcast и
+проверка — через `type_id`-сравнение (`x is T`, `x.try_as[T]() -> Option[T]`,
+flow-narrowing `if x is T`). Детали `is`/`try_as`/ABI — см.
+[03-syntax.md → D54](03-syntax.md#d54-операторы-as-и-is). Сосуществует с
+мономорфизацией: `any` fat-pointer — когда тип стёрт в рантайме; скрытые
+vtable-параметры — когда тип статичен.
+
 **`Iter[T]`** — структурный protocol для итераторов (D58). Любой
 тип с методом `mut next() -> Option[T]` автоматически удовлетворяет.
 `for x in collection`-синтаксис вызывает `collection.iter().next()` в
@@ -8181,8 +8193,49 @@ AbiStr       ::= '"nova"' | '"C"'
 ### Правила
 
 1. Обе формы — bodyless declaration (как `external fn`). Тело запрещено.
-2. Типы параметров должны быть C-нативными для `extern "C" fn`: `int`, `u8`-`u64`,
-   `bool`, `*T`, `*()`, `CStr` (`*u8`). Nova-generic типы (Option, Result, str) — ABI mismatch.
+2. **Типы параметров И возврата** `extern "C" fn` должны быть **C-ABI-совместимы**
+   (Plan 174.6 M0 amend, 2026-07-04 — прежний список был занижен и местами неверен: `str`, туплы и
+   value-records **уже** использует `std/net/ffi.nv`, а `str` ошибочно числился ABI-mismatch).
+   Формальное **рекурсивное** определение:
+   ```
+   C_ABI  ::= Scalar | RawPtr | FnPtr | Option[RawPtr] | Tuple[C_ABI…] | ValueRecord{ C_ABI… }
+   Scalar ::= int | uint | i8..i64 | u8..u64 | f32 | f64 | bool | char
+   RawPtr ::= *T | *() | CStr
+   FnPtr  ::= *extern "C" fn(C_ABI…) -> C_ABI    // C-ABI fn-указатель, D353
+   ```
+   - **Scalars:** `int`, `uint`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, `char`.
+     `uint` = address-sized unsigned, C-тип `nova_uint` (`= uintptr_t`, size_t-аналог,
+     [D130](02-types.md#d130)) — **не** `uint64_t`; отделён от `u64` так же, как `int`
+     (address-sized signed, C-тип `nova_int`) отделён от `i64`.
+   - **Raw-указатели:** `*T` (любой pointee), `*()`, `CStr` (= `*u8`).
+   - **C-ABI fn-указатели:** `*extern "C" fn(C_ABI…) -> C_ABI` — базовый C-ABI случай
+     (для передачи Nova-функции как настоящего C-callback: `qsort`-компаратор,
+     libuv-хендлер и т.п.). Позволяет fn-указателю быть **параметром/полем** другого
+     `extern "C" fn` / value-record. Типы сигнатуры сами рекурсивно C-ABI; ABI-тег,
+     коэрция и обоснование — [D353](#d353). Nova-ABI `*fn` (без тега `extern "C"`) —
+     **НЕ** C-ABI (Nova-типы в сигнатуре; передаётся Nova-ABI'ем).
+   - **value-records и туплы** (анонимные + именованные) — C-ABI **iff ВСЕ поля C-ABI**; передаются
+     **by-value** как C-struct. `str` = value-record `{ptr,len}` (D139) → C-ABI. **Циклический**
+     value-record (`type Node value { val int, next *Node }`) — C-ABI: поле `*Node` = raw-ptr
+     (базовый случай, рекурсия обрывается на указателе). Ключевое слово `value` **обязательно** —
+     без него (`type Node { … }`) это **heap** GC-record (`Nova_Node*`, by-reference,
+     [02-types.md](02-types.md)), исключённый negative-list ниже как non-C-ABI.
+   - **`Option[X]`** — C-ABI **iff `X` — RawPtr** (любой указательный тип: `*T`/`*()`/`CStr`; NPO
+     применим к любому указателю: `None`=0, `Some(p)`=p). `Option[non-ptr]` и
+     `Option[Option[*T]]` — **НЕ** C-ABI (нет NPO).
+   - **Края:** `()` / unit / zero-field tuple как тип **параметра/элемента** — запрещено (в C нет unit).
+     Top-level `-> ()` = `void` в C-сигнатуре — допустимо.
+   - **НЕ C-ABI** (M1 — `E_FFI_NON_C_ABI_TYPE`): GC-типы (`Vec`, heap-record-ссылки), closures-with-env,
+     generic tagged unions (`Option[non-ptr]`, `Result`, прочие sum — теговый layout не C-ABI).
+   - Примеры ✅: `(int, CSocketAddr)` · `str` · `Node value {val int, next *Node}` · `Option[*u8]` ·
+     `uint`/`f64`/`char` · `*extern "C" fn(*u8, int) -> int` (C-callback-параметр).
+     ❌: `Vec[int]` · `Result[int,str]` · `Option[int]` · `()`/zero-field tuple · fn-с-env ·
+     Nova-ABI `*fn` (нетегированный) как C-callback.
+   - **Layout-допущение (S8):** value-record/тупл by-value предполагает Nova-layout == C-layout
+     (порядок полей/padding). Несовпадение → follow-up `[M-174.6-ffi-struct-layout]` (вне scope M0).
+   - **Проверка — в ЧЕКЕРЕ** на сигнатуре `extern "C" fn` (не в codegen/C), диагностика
+     `E_FFI_NON_C_ABI_TYPE` — **Plan 174.6 M1** (rule 3 — fn-ptr ABI-тег, [D353](#d353) — тоже M1).
+     M0 (это изменение) = только спека тип-листа.
 3. `extern "C" fn` НЕ регистрируется в `ExternalRegistry` (не добавляет `nova_fn_` prefix
    даже при module-mangling). Регистрируется в `CEmitter.c_literal_extern_fns`.
 4. `export extern "C" fn` — допустимо (экспортирует C-fn в Nova-модуль). Без `export` —
@@ -8202,6 +8255,93 @@ AbiStr       ::= '"nova"' | '"C"'
 | `editors/*/` | `extern` добавлен в грамматики и syntax highlight |
 | `tests/syntax_highlight_conformance.rs` | `extern` добавлен в ACTIVE |
 | `std/**/*.nv` (136 файлов) | `external fn` → `extern "nova" fn` |
+
+---
+
+## D353 (NEW) — ABI-тег fn-указательного типа: `*extern "C" fn` (Plan 174.6 M0)
+
+**Source:** Plan 174.6 M0, 2026-07-04. **Status:** ✅ ACTIVE (spec); парсер/чекер — Plan 174.6 M1.
+**Связь:** [D282](#d282) (C-ABI тип-лист + `extern "C" fn`), [D216 §10](02-types.md#d216) (fn-ptr типы
+`*fn`/`*unsafe fn`), [Plan 174.6](../../docs/plans/174.6-ffi-abi-types.md).
+
+### Мотивация
+
+У fn-указательного **типа** (`*fn(...)`, D216 §10) не было ABI-тега — по типу неясно, Nova-ABI это
+(Nova-типы в сигнатуре допустимы) или C-ABI (для настоящего C-callback нужны строго C-ABI типы). Для
+передачи Nova-функции как C-callback (`qsort`-компаратор, libuv-хендлеры и т.п.) нужен различимый
+C-ABI fn-ptr тип.
+
+### Решение
+
+- **`*fn(...)` / `*unsafe fn(...)`** (без тега) — **Nova-ABI** captureless fn-ptr: Nova-типы в сигнатуре
+  допустимы (Nova ABI их передаёт). «Captureless» — про отсутствие env, не про типы.
+- **`*extern "C" fn(...)`** — **C-ABI** captureless fn-ptr; синтаксически параллельно объявлению
+  `extern "C" fn` (D282). Тег живёт на уровне **типа**. Типы сигнатуры (параметры + возврат) — C-ABI
+  по [D282 rule 2](#d282) (рекурсивный тип-лист). Nova-ABI (`*fn`, без тега) и C-ABI
+  (`*extern "C" fn`) визуально различимы.
+- **`*extern "C" unsafe fn(...)`** — комбинируется с `unsafe` (постфиксный pointee-модификатор, D216 §10).
+
+### Коэрция `fn → *extern "C" fn` (чекер — M1)
+
+Nova `fn[A]->R` коэрцится в `*extern "C" fn[A]->R` **iff**: (1) каждый `A`/`R` — C-ABI ([D282 rule 2](#d282)),
+(2) функция captureless (нет env), **и** (3) функция **effect-free / total** — не объявляет **никакого**
+эффекта (пустая effect-row: ни `Fail`, ни `IO`/`Async`/`Time`, ни custom algebraic). Нарушения → соответственно
+`E_FFI_NON_C_ABI_TYPE` (Nova-only тип в C-callback) / `E_CLOSURE_HAS_ENV` / эффект-гейт (ниже).
+Nova-ABI `*fn` (с Nova-типами), переданный как C-callback, → `E_FFI_NON_C_ABI_TYPE`.
+
+**Почему (3) — soundness (не только `Fail`):** C зовёт callback как обычный C-указатель — на стеке **нет**
+Nova-handler-фрейма. Любая effect-операция внутри callback'а (`perform Fail`, `IO`, custom algebraic effect)
+ищет handler вверх по стеку → его там нет → **unsound** (UB / паника без хендлера). Поэтому коэрция требует
+**полного** отсутствия эффектов, а не только no-`Fail`. Это **обобщает** `Fail`-специфичный гейт
+[D216 §10/§20](02-types.md#d216) (C ABI не пробрасывает Nova-исключения): частный случай `Fail`-эффекта
+диагностируется существующим `E_CALLBACK_THROWS_OVER_C_ABI`; любой **иной** объявленный эффект отвергается по
+тому же правилу «no effect over C ABI» (конкретная диагностика non-`Fail`-эффектов — чекер M1, см.
+error-index-долг в Scope).
+
+### Cast/коэрция-матрица `fn` / `*fn` / `*extern "C" fn` (Plan 174.6 M2)
+
+Три fn-указательных мира различимы **на уровне типа**: Nova-closure `fn(A)->R` (fat, может нести env),
+Nova-ABI указатель `*fn(A)->R` (captureless, Nova-типы + Nova handler-стек), C-ABI указатель
+`*extern "C" fn(A)->R` (captureless, строго C-ABI типы, **без** эффектов). Матрица коэрции источника
+`expr as <target>` (поведение чекера M1; исходник — свободная fn по имени, если не указано иначе):
+
+| Источник (`expr`) | `as *fn` (Nova-ABI) | `as *extern "C" fn` (C-ABI) |
+|---|---|---|
+| free fn: captureless, **effect-free**, C-ABI сигнатура | ✅ | ✅ |
+| free fn: captureless, effect-free, **сигнатура с Nova-типом** (`Vec`/`Result`/…) | ✅ (Nova ABI несёт Nova-типы) | ❌ `E_FFI_NON_C_ABI_TYPE` |
+| free fn с эффектом **`Fail`** | ❌ `E_CALLBACK_THROWS_OVER_C_ABI` (§20 / D216 §10) | ❌ `E_CALLBACK_THROWS_OVER_C_ABI` |
+| free fn с **non-`Fail`** эффектом (`IO`/`Async`/custom) | ✅ (Nova handler-стек на месте) | ❌ `E_CALLBACK_THROWS_OVER_C_ABI` (clause 3) |
+| closure-**литерал** с env / bound-method `obj.@m` | ❌ `E_CLOSURE_HAS_ENV` | ❌ `E_CLOSURE_HAS_ENV` |
+
+**Тип↔тип (не coercion).** `*fn` и `*extern "C" fn` — **разные типы** (различный ABI-тег): **нет
+неявной** конверсии ни в одну сторону — `*fn`-значение в позиции, ожидающей `*extern "C" fn` (и
+наоборот), = type-mismatch. Явный reinterpret между ABI-тегами не поддержан M1 (design: возможен лишь
+как unsafe-hatch — вне scope; маркер `[M-174.6-ffi-abi]`). Композиция с `unsafe` — `*extern "C" unsafe fn`
+(зеркалит `*unsafe fn`, D216 §10a); covariance `*fn → *unsafe fn` действует ортогонально ABI-тегу.
+
+**Позиция тега.** `*extern "C" fn` — легальный **тип** в любой type-position, не только как параметр
+`extern "C" fn`: сигнатура C-callback валидируется как C-ABI и когда тег стоит на **параметре/возврате
+Nova-функции-обёртки** или **поле value-record** (libuv-handler-в-handle) — Plan 174.6 M2
+(`ffi_validate_c_fnptr_occurrences`). Аннотации локальных переменных внутри тела fn пока не обходятся
+(остаток §10 плана).
+
+**Runtime-materialization.** Матрица описывает **чекер/тип-слой**. Фактическая эмиссия значения
+`fn → fn-ptr` (для любого тега) упирается в pre-existing codegen-gap P67-LEGACY (Plan 118 Ф.6 follow-on) —
+acceptance проверяется на checker-слое; runtime-materialization — вне 174.6 M2/M3.
+
+### Scope
+
+M0 (это изменение) = только спека: тип `*extern "C" fn` + правила коэрции + C-ABI тип-лист ([D282 rule 2](#d282)).
+Парсер (`*extern "C" fn` синтаксис), чекер (`E_FFI_NON_C_ABI_TYPE`, `E_CLOSURE_HAS_ENV`, эффект-гейт коэрции,
+тег на типе, проверка C-ABI сигнатуры и коэрции) и тесты — **Plan 174.6 M1–M3** (D282 rule 3).
+Followup-маркер: `[M-174.6-ffi-abi]`.
+
+**Error-index-долг (deferred → M1) — ✅ DISCHARGED Plan 174.6 M1 (2026-07-04):** нормативные коды
+`E_FFI_NON_C_ABI_TYPE` (новый), `E_CALLBACK_THROWS_OVER_C_ABI` и `E_CLOSURE_HAS_ENV`, на которые ссылаются
+D282/D353, занесены в error-index `09-tooling.md` (D296 §4, подсекция 104.5.10, guidance-note) **вместе** с
+чекером Plan 174.6 M1 (`check_ffi_c_abi_signatures` + коэрция-гейт), который их эмитит — message-text из
+[Plan 174.6 §4](../../docs/plans/174.6-ffi-abi-types.md). Парсер `*extern "C" fn` (поле `TypeRef::Func.extern_abi`),
+рекурсивный C-ABI-классификатор (D282 rule 2) и коэрция-гейт (D353, вкл. clause 3 — любой эффект) реализованы.
 
 ---
 

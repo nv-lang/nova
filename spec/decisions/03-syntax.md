@@ -3459,6 +3459,46 @@ D44, D52). D54 фиксирует семантику явно: `as` — compile-
 конвертация; `is` — runtime type-check. Закрывает Q-any-extract
 (извлечение типа из `any`-значения).
 
+### Реализация `is`/`try_as` на `any` (Plan 174.3, 2026-07-04)
+
+**v1 `any`-downcast** (был спроектирован, но не реализован в codegen —
+`any` не имел рабочего value-представления) теперь реализован поверх
+type_id-реестра Plan 61.
+
+**Runtime-представление `any`** (D53). `any` — тип-стёртый `void*`,
+указывающий на heap-boxed `NovaAny`:
+
+```c
+typedef struct { NovaTypeId type_id; const char* name; } NovaTypeInfo;
+typedef struct { const NovaTypeInfo* info; void* data; } NovaAny;
+```
+
+`info` — per-type статический `NovaTypeInfo` (несёт `type_id` из реестра
+Plan 61 + имя для Display/диагностик); `data` — отдельная GC-allocation с
+копией payload. И box, и payload сканируются консервативным GC. `any`
+остаётся `void*` в ABI (нулевой blast-radius на erased-void*-код:
+`print`/`println`, generic-параметры).
+
+**Операции:**
+
+- **upcast `T → any`** (boxing): `nova_any_box(&NOVA_TYPEINFO_<T>, &v, sizeof(T))`.
+  Явный `v as any` **и** неявный по D53-supertype — аргумент к `any`-параметру,
+  `ro x any = <concrete>`, `fn … -> any => <concrete>` — боксируются автоматически.
+- **`x is T`** (`x: any`): `nova_any_is(x, NOVA_TID_<T>)` — сравнение `type_id`.
+- **`x.try_as[T]() -> Option[T]`**: при совпадении `type_id` — `Some(*(T*)nova_any_data(x))`,
+  иначе `None`.
+- **flow-narrowing** `if x is T { … }`: внутри блока `x` уточняется до `T`
+  (Kotlin smart-cast) — payload-deref, aliased через `#define`.
+
+**Диагностика `[E_IS_NON_ANY]`** (чекер): `is` на операнде, чей тип статически
+известен как **не-`any` и не-sum** (record / примитив) — ошибка компиляции
+(проверка бессмысленна). Чистый span+код, не CC-FAIL.
+
+**Отложено** (followup `[M-174.3-*]`): форма `x.as[T]?` (Fail-downcast —
+парсер не принимает `.as` member, `as` — ключевое слово); `match { n is T => … }`
+pattern-форма (реализована операторная/`if`-форма + `try_as`); гетерогенные
+`[]any` + Display (Ф.3).
+
 ---
 
 ## D58. Range-литерал, `Iter[T]` protocol, `for x in c` implicit iter

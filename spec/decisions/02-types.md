@@ -8472,6 +8472,27 @@ Rust precedent: fn() ≠ unsafe fn() — same model.
 
 Закрывает [M-118.1.5-unsafe-fn-pointer-type].
 
+#### ABI-тег fn-ptr: `*extern "C" fn` (Plan 174.6 M0 cross-amend, 2026-07-04)
+
+`*fn(...)` / `*unsafe fn(...)` (выше) — **Nova-ABI** captureless fn-ptr: Nova-типы в сигнатуре
+допустимы (Nova ABI их передаёт; «captureless» — про отсутствие env, не про типы). Для передачи
+Nova-функции как настоящего **C-callback** введён C-ABI-тегированный fn-ptr тип
+**`*extern "C" fn(...)`** — параллель к объявлению `extern "C" fn` ([08-runtime.md#d282](08-runtime.md#d282)).
+Типы его сигнатуры (параметры + возврат) обязаны быть **C-ABI-совместимы** (рекурсивный тип-лист,
+[D282 rule 2](08-runtime.md#d282)); коэрция `fn → *extern "C" fn` проверяет C-ABI + captureless +
+**effect-free/total** (callback не должен объявлять **никакого** эффекта — C зовёт его без Nova-handler-фрейма
+на стеке, поэтому любая effect-операция unsound; это **обобщает** `Fail`-специфичный гейт §20 /
+`E_CALLBACK_THROWS_OVER_C_ABI` на все эффекты). Полная спецификация ABI-тега и обоснование условия (3) —
+[D353](08-runtime.md#d353). Реализация (парсер/чекер/тесты) — Plan 174.6 M1–M3; M0 = только спека.
+
+Полная **cast/коэрция-матрица** `fn` / `*fn` / `*extern "C" fn` (какой источник во что коэрцится и с какой
+диагностикой) + правило «`*fn` и `*extern "C" fn` — разные типы, нет неявной конверсии» + легальность тега
+в non-`extern "C" fn` позициях (Nova-fn-параметр / поле value-record) — [D353 «Cast/коэрция-матрица»](08-runtime.md#d353)
+(Plan 174.6 M2). Строка «Calling convention: default C ABI» выше (§10 список) относится к **эмиссии** fn-ptr
+на платформе; ABI-**тег** на ТИПЕ (`*fn` = Nova-ABI против `*extern "C" fn` = C-ABI) — ортогональное
+измерение, введённое здесь (полная ретракция формулировки §10 про «default C ABI» у bare `*fn` — остаток
+`[M-174.6-ffi-abi]`, семантически связан с дефолтным ABI `*fn`).
+
 ### §11. `ptr` redefine (D214 amend cross-ref)
 
 > ⚠️ **RETIRED by Plan 134 (2026-06-09)** — the `ptr` built-in name is fully
