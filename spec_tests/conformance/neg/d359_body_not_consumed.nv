@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+// D359: must-consume Body — незакрытое тело = compile-error (фикс Go body-leak).
+module neg.d359_body_not_consumed
+
+import std.http.{Body}
+
+test "body created but never consumed → compile error" {
+    consume b = Body.from_bytes("x".to_bytes())
+}

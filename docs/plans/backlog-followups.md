@@ -874,3 +874,22 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 план не создаётся сознательно. Пересмотреть, когда (а) полный чек+кодоген
 крупного проекта станет узким местом UX, (б) появится typed-IR (172.12) —
 естественная граница мемоизации. НЕ носитель ближайших зонтов.
+
+## Plan 178 Ф.1 — std/http message-model followups (2026-07-04)
+
+Приземлён `std/http/` message-model + URL + валидаторы (см. simplifications.md, D358/D359). Отложено в Ф.2+ (маркеры, гейтнуто НЕ упрощено):
+- **[M-178-body-http-effect-surface]** — `Http`-effect на потребляющих методах `Body` (park над транспортом при стрим-чтении); Ф.1 InMemory-путь I/O не делает → метод чист.
+- **[M-178-body-transport-reader]** — transport-backed `BodyReader` (chunked/CL/h2-DATA декодер над сокетом, holds socket → станет `consume`); Ф.1 = in-memory pull.
+- **[M-178-body-copy-json-trailers]** — `Body.@copy_to` (fs-gate 176) / `@json[T]` (serde-gate 180 Ф.4) / `@trailers` (Ф.2).
+- **[M-178-body-text-charset]** — charset-aware `@text` (latin1-fallback по Content-Type) — Response-контекст Ф.2; Ф.1 = строгий UTF-8.
+- **[M-178-bodyreader-option-eof-eq-ordering]** — план-форма `@next_chunk -> Result[Option[[]u8]]` (None=EOF) упирается в codegen forward-decl-ordering-баг eq `Option[Option[[]u8]]`; Ф.1 = `@at_eof()` + `Result[[]u8]`.
+- **[M-178-consume-field-ctor-from-var]** — checker не распознаёт move consume-переменной/параметра в record-поле (только свежее inline-выражение) → Request/Response-конструкторы принимают сырьё тела. Кандидат на fix в consume-analysis.
+- **[M-178-errsource-net/utf8/io/compress/tls]** — payload-типизированные `ErrSource`-варианты добавляются при приземлении зависимостей (Ф.2 / 176 Ф.0.5 / 179 / 116); enum OPEN → non-breaking.
+- **[M-178-setcookie-expires-timestamp]** — typed `expires Option[Timestamp]` (IMF-fixdate→epoch, Plan 175); Ф.1 несёт `max_age`.
+- **[M-178-message-builders]** — RequestBuilder/ResponseBuilder/verb one-shots/`error_for_status` — Ф.2.
+- **[M-178-url-decode-canonical-from-bytes]** — `decode_query` UTF-8-валидация self-contained; при landing canonical `str.from_bytes`+`Utf8Error` (176 Ф.0.5) — делегировать + `ErrSource.Utf8`.
+
+**Pre-existing compiler-баги (обнаружены при Ф.1, НЕ 178-specific — воспроизводятся на std.net):**
+- `[P67-LEGACY] Enum.UnitVariant.method()` (напр. `NetError.Eof.to_str()`) и `x == Enum.Variant` (bare unit/payload-variant в `==` RHS) → ICE / mis-type в `nova_int` (infer_expr_c_type fallback). Обход: bind-first / `match`. Кандидат в checker-annotation gap.
+- `!!` на `Result[(), E]` (unit-Ok) mis-infer'ит тип (HttpError* = nova_unit). Обход: `match`/`?`-in-fn.
+- Индексация `[]T`-ПАРАМЕТРА `params[i]` теряет индекс в codegen (вызывает метод на всём Vec). Обход: `.get(i)`.

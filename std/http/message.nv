@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.1 / D358: std/http/message.nv — Request / Response value-модель.
+//
+// `Request`/`Response` несут must-consume `Body` (D359) → сами линейны (`consume`):
+// незакрытый Request/Response = compile-error (обязательство «тело должно быть
+// разряжено» распространяется на всю запись). Метаданные (method/url/version/
+// status/headers) читаются borrow-методами; ТЕЛО разряжается ДЕЛЕГИРУЮЩИМИ
+// consume-методами (`resp.text()` → `@body.text()`, reqwest-эргономика; consume-
+// поле дренируется in-place — D133-модель `@file.close()`).
+//
+// КОНСТРУИРОВАНИЕ (ограничение D133, verified): запись с consume-полем строится
+// ТОЛЬКО с полем-значением как СВЕЖИМ inline-выражением (не переменной/параметром)
+// → конструкторы принимают СЫРЬЁ тела (`[]u8` / `BodyReader`) и собирают `Body`
+// внутри (`Body.from_bytes(..)` inline). Pre-built `Body` в конструктор передать
+// нельзя (move consume-переменной в поле не распознаётся). `[M-178-consume-field-ctor-from-var]`
+//
+// Builder-эргономика (RequestBuilder / ResponseBuilder / verb one-shots) и
+// `error_for_status` — Ф.2 (client). `[M-178-message-builders]`
+
+module std.http
+
+/// HTTP-запрос: метод + URL + версия + заголовки + must-consume тело.
+#stable(since = "0.1")
+export type Request consume {
+    ro method   Method
+    ro url      Url
+    ro version  Version
+    ro headers  HeaderMap
+    consume body Body
+}
+
+/// Построить запрос с in-memory телом (HTTP/1.1). `body_bytes` — сырьё тела.
+#stable(since = "0.1")
+export fn Request.new(method Method, url Url, headers HeaderMap, body_bytes []u8) -> Request =>
+    { method, url, version: Version.Http11, headers, body: Body.from_bytes(body_bytes) }
+
+/// Построить запрос без тела (GET/HEAD).
+#stable(since = "0.1")
+export fn Request.empty(method Method, url Url, headers HeaderMap) -> Request =>
+    { method, url, version: Version.Http11, headers, body: Body.empty() }
+
+/// Построить запрос с потоковым телом (Ф.1: in-memory reader).
+#stable(since = "0.1")
+export fn Request.streaming(method Method, url Url, headers HeaderMap, reader BodyReader) -> Request =>
+    { method, url, version: Version.Http11, headers, body: Body.from_reader(reader) }
+
+/// Метод (borrow).
+#stable(since = "0.1")
+export fn Request @method() -> Method => @method
+/// URL (borrow).
+#stable(since = "0.1")
+export fn Request @url() -> Url => @url
+/// Версия (borrow).
+#stable(since = "0.1")
+export fn Request @version() -> Version => @version
+/// Заголовки (borrow).
+#stable(since = "0.1")
+export fn Request @headers() -> HeaderMap => @headers
+
+/// Разрядить тело → байты (потребляет Request).
+#stable(since = "0.1")
+export fn Request consume @body_bytes() -> Result[[]u8, HttpError] { @body.bytes() }
+/// Дочитать и отбросить тело (потребляет Request).
+#stable(since = "0.1")
+export fn Request consume @drain() -> Result[(), HttpError] { @body.drain() }
+/// Взять потоковый ридер тела (потребляет Request).
+#stable(since = "0.1")
+export fn Request consume @into_reader() -> BodyReader { @body.into_reader() }
+
+/// HTTP-ответ: версия + статус + заголовки + must-consume тело.
+#stable(since = "0.1")
+export type Response consume {
+    ro version  Version
+    ro status   StatusCode
+    ro headers  HeaderMap
+    consume body Body
+}
+
+/// Построить ответ с in-memory телом (HTTP/1.1). `body_bytes` — сырьё тела.
+#stable(since = "0.1")
+export fn Response.new(status StatusCode, headers HeaderMap, body_bytes []u8) -> Response =>
+    { version: Version.Http11, status, headers, body: Body.from_bytes(body_bytes) }
+
+/// Построить ответ без тела (204/304).
+#stable(since = "0.1")
+export fn Response.empty(status StatusCode, headers HeaderMap) -> Response =>
+    { version: Version.Http11, status, headers, body: Body.empty() }
+
+/// Построить ответ с потоковым телом (Ф.1: in-memory reader; Ф.2: transport).
+#stable(since = "0.1")
+export fn Response.streaming(status StatusCode, headers HeaderMap, reader BodyReader) -> Response =>
+    { version: Version.Http11, status, headers, body: Body.from_reader(reader) }
+
+/// Статус (borrow).
+#stable(since = "0.1")
+export fn Response @status() -> StatusCode => @status
+/// Версия (borrow).
+#stable(since = "0.1")
+export fn Response @version() -> Version => @version
+/// Заголовки (borrow).
+#stable(since = "0.1")
+export fn Response @headers() -> HeaderMap => @headers
+/// 2xx? (borrow).
+#stable(since = "0.1")
+export fn Response @is_success() -> bool => @status.is_success()
+
+/// Разрядить тело → байты (с max-guard; потребляет Response). Единственный способ
+/// достать тело — must-consume.
+#stable(since = "0.1")
+export fn Response consume @bytes() -> Result[[]u8, HttpError] { @body.bytes() }
+/// Разрядить тело → UTF-8 строка (потребляет Response).
+#stable(since = "0.1")
+export fn Response consume @text() -> Result[str, HttpError] { @body.text() }
+/// Дочитать и отбросить тело → conn в пул (потребляет Response).
+#stable(since = "0.1")
+export fn Response consume @drain() -> Result[(), HttpError] { @body.drain() }
+/// Взять потоковый ридер тела (потребляет Response; ручной pull).
+#stable(since = "0.1")
+export fn Response consume @into_reader() -> BodyReader { @body.into_reader() }

@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.1 — URL parse/serialize + СТРОГИЙ host/SSRF-валидатор.
+// Err-Result-проверки = позитивные test-блоки с assert на Err (test-conventions §7).
+
+module nova_tests.http
+
+import std.http.{Url}
+
+test "url parse: full round-trip (userinfo/port/query/fragment)" {
+    ro s = "https://alice:s3cret@api.example.com:8443/v1/users?id=42&x=y#sec"
+    ro u = Url.parse(s)!!
+    assert(u.scheme == "https")
+    assert(u.user == Some("alice"))
+    assert(u.password == Some("s3cret"))
+    assert(u.host == Some("api.example.com"))
+    assert(u.port == Some(8443))
+    assert(u.path == "/v1/users")
+    assert(u.query == Some("id=42&x=y"))
+    assert(u.fragment == Some("sec"))
+    assert(u.to_str() == s)
+}
+
+test "url parse: scheme lowercased, default origin port" {
+    ro u = Url.parse("HTTP://example.com/")!!
+    assert(u.scheme == "http")
+    ro (sch, host, port) = u.origin()
+    assert(sch == "http")
+    assert(host == "example.com")
+    assert(port == 80)
+}
+
+test "url parse: file:// empty host round-trip" {
+    ro u = Url.parse("file:///etc/hosts")!!
+    assert(u.host == Some(""))
+    assert(u.path == "/etc/hosts")
+    assert(u.to_str() == "file:///etc/hosts")
+}
+
+test "url parse: IPv6 bracket host + port, re-bracketed on serialize" {
+    ro u = Url.parse("http://[::1]:8080/x")!!
+    assert(u.host == Some("::1"))
+    assert(u.port == Some(8080))
+    assert(u.to_str() == "http://[::1]:8080/x")
+    assert(u.is_private_target())
+}
+
+test "url parse: canonical IPv4 loopback flagged private" {
+    ro u = Url.parse("http://127.0.0.1/")!!
+    assert(u.is_private_target())
+    ro ext = Url.parse("http://93.184.216.34/")!!
+    assert(!ext.is_private_target())
+}
+
+test "encode_query: multi-byte UTF-8 percent-encodes each byte" {
+    // 'é' = U+00E9 = UTF-8 C3 A9 → %C3%A9 (regression-guard: НЕ один байт)
+    assert(Url.encode_query("é") == "%C3%A9")
+    assert(Url.encode_query("a b&c") == "a+b%26c")
+    assert(Url.encode_query("a-b.c_d~e") == "a-b.c_d~e")
+}
+
+test "decode_query: round-trip incl. multi-byte + space + reserved" {
+    ro cases = Vec[str].of("hello", "hello world", "a&b=c", "100%", "café")
+    for s in cases {
+        ro enc = Url.encode_query(s)
+        assert(Url.decode_query(enc)!! == s)
+    }
+}
+
+// ── neg (Err-Result asserts) — malformed + SSRF obfuscation reject ────────────
+
+test "url neg: missing scheme → Err" {
+    assert(match Url.parse("example.com/path") { Ok(_) => false, Err(_) => true })
+}
+
+test "url neg: malformed port → Err" {
+    assert(match Url.parse("http://example.com:abc/") { Ok(_) => false, Err(_) => true })
+    assert(match Url.parse("http://example.com:99999/") { Ok(_) => false, Err(_) => true })
+}
+
+test "url neg: unterminated IPv6 literal → Err" {
+    assert(match Url.parse("http://[::1/") { Ok(_) => false, Err(_) => true })
+}
+
+test "ssrf neg: hex IP obfuscation rejected" {
+    assert(match Url.parse("http://0x7f.0.0.1/") { Ok(_) => false, Err(_) => true })
+}
+
+test "ssrf neg: octal IP obfuscation rejected" {
+    assert(match Url.parse("http://0177.0.0.1/") { Ok(_) => false, Err(_) => true })
+}
+
+test "ssrf neg: decimal-integer IP obfuscation rejected" {
+    assert(match Url.parse("http://2130706433/") { Ok(_) => false, Err(_) => true })
+}
+
+test "ssrf neg: short-form IP rejected" {
+    assert(match Url.parse("http://127.1/") { Ok(_) => false, Err(_) => true })
+}
+
+test "ssrf neg: whitespace/control in host rejected" {
+    assert(match Url.parse("http://exa mple.com/") { Ok(_) => false, Err(_) => true })
+}
+
+test "decode_query neg: truncated %X → Err" {
+    assert(match Url.decode_query("abc%2") { Ok(_) => false, Err(_) => true })
+}
