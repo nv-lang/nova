@@ -40,3 +40,13 @@ test "closure-full `fn(x int) -> int => ...` — типизированная ф
     ro adder fn(int, int) -> int = fn(a int, b int) -> int { ro s = a + b; s }
     assert(adder(3, 5) == 8)
 }
+
+// D347 amend (Plan 181): замыкание захватывает биндинг на МОМЕНТ создания;
+// same-scope rebind ниже по тексту не меняет захваченное (R4, env-снапшот).
+test "D347: замыкание держит биндинг до rebind (D22×D347)" {
+    ro base = 100
+    ro get = || base
+    ro base = 200
+    assert(get() == 100)
+    assert(base == 200)
+}

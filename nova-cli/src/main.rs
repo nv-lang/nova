@@ -2134,6 +2134,11 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
         // (single-file mode без cross-file context).
     }
 
+    // Plan 181 (D347): same-scope re-binding alpha-rename before type-check so
+    // `nova check` reports the same result as `nova build`/`nova test`
+    // (populates `module.rebind_shadows` for R2). No-op without a rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
+
     // 3. types::check_module
     if let Err(errs) = nova_codegen::types::check_module(&module) {
         // Plan 81 Ф.8.1: cross-file рендер — ошибка из импортированного
@@ -2158,7 +2163,10 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
         .into_iter()
         .map(|w| {
             let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-            format!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule)
+            // Plan 181 (D347): demangle synthesized `__sN` rebind names so a lint
+            // on a rebound variable shows the original user name, not `x__s1`.
+            let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
+            format!("{}:{}:{}: {} [{}]", path.display(), line, col, msg, w.rule)
         })
         .collect();
 
@@ -4149,6 +4157,16 @@ fn cmd_build(
         nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
     }
 
+    // Plan 181 (D347): same-scope re-binding alpha-rename on the fully-assembled
+    // module (post import-inline), BEFORE the build cache key / type-check /
+    // codegen — so cached `.c` and the checked module agree on unique C-names
+    // and the consume-checker can read `module.rebind_shadows` for R2. No-op
+    // (byte-identical) for modules without a same-scope rebind.
+    {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("alpha-rename");
+        nova_codegen::alpha_rename::alpha_rename(&mut module);
+    }
+
     // Plan 81 Ф.9: content-addressed build cache. После резолва импортов
     // (выше) известен полный набор исходных файлов сборки. При
     // байт-идентичных входах переиспользуем сгенерированный `.c`, минуя
@@ -4204,7 +4222,9 @@ fn cmd_build(
                 let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
                 for w in nova_codegen::lints::lint_module(&module) {
                     let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-                    eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+                    // Plan 181 (D347): demangle synthesized `__sN` rebind names.
+                    let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
+                    eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, msg, w.rule);
                 }
             }
             // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expr.

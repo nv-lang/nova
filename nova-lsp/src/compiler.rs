@@ -167,8 +167,12 @@ fn check_source(src: &str, path: Option<&Path>, workspace_root: Option<&Path>) -
 ///    errors are surfaced, not swallowed ([M-104.10-import-diag-swallowed]),
 ///    and degraded contexts fall back to a best-effort root
 ///    ([M-104.10-degraded-cu-red])
-/// 3. `number_exprs` over the fully-assembled module (post-inline, pre-check)
-/// 4. `check_module_with_sig_table` (162.2 suppression) — identical to
+/// 3. `alpha_rename` (Plan 181/D347) over the fully-assembled module — same as
+///    `nova check`, so `module.rebind_shadows` is populated and R2
+///    `E_REBIND_LIVE_CONSUME` fires in the IDE (without it R2 early-returns →
+///    the diagnostic would never appear in the editor)
+/// 4. `number_exprs` over the fully-assembled module (post-inline, pre-check)
+/// 5. `check_module_with_sig_table` (162.2 suppression) — identical to
 ///    `nova check`, so transitively-imported symbols do not false-red.
 pub fn check_source_inner(
     src: &str,
@@ -186,7 +190,14 @@ pub fn check_source_inner(
     let mut import_diags: Vec<Diagnostic> = Vec::new();
     let sig_table = resolve_for_check(path, workspace_root, &mut module, &mut import_diags);
 
-    // Step 3: number every expr of the fully-assembled module (post-inline,
+    // Step 3: same-scope re-binding alpha-rename (Plan 181/D347) — parity with
+    // `cmd_check` (nova-cli/src/main.rs:2125). Populates `module.rebind_shadows`
+    // so the consume-checker fires R2 `E_REBIND_LIVE_CONSUME` in the IDE (it
+    // early-returns on an empty map) and B1's distinct obligation keys agree
+    // with the CLI. No-op for a module without a same-scope rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
+
+    // Step 4: number every expr of the fully-assembled module (post-inline,
     // pre-check) — parity with `cmd_check` / `test_runner` so the checker sees
     // the same ExprId-stamped AST.
     let _ = nova_codegen::number_exprs::number_exprs(&mut module);

@@ -1690,6 +1690,7 @@ mod tests {
             span: Span::dummy(),
             peer_files: vec![],
             doc: None,
+            rebind_shadows: std::collections::HashMap::new(),
         }
     }
 

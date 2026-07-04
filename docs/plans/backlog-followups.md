@@ -1061,3 +1061,41 @@ failure** → должны возвращать `Result[T, <Timeout/RaceError>]`
 - **[M-178-conformance-d357-d360-forwarddecl-bug]** (P2): forward-decl return-тип unit-возвращающего closure-call-fn (`fn f(b fn()){b()}`) мис-выводится в value-тип при наличии value-типов в CU → `conflicting types` CC-FAIL. Блокирует d357_*/d360_* single-CU conformance (покрыто nova_tests/http*). Fix = `return_type_c`/`infer_expr_c_type` для unit-closure-call.
 - **[M-178-with-tail-bang-codegen]** (P3): `with{ ... X!! }` (tail unit-`!!`) → interrupt-ret-тип vs block-value-тип CC-FAIL. Обход: tail = `assert`/`()`.
 - **[M-178-effect-op-result-monomorph]** (P3): прямой `Eff.op()->Result[A,B]` (A≠B) мис-типит Err-payload. Обход: fn-обёртка.
+## [M-181-pattern-var-rebind] — Rebind pattern-bound var внутри matching-ветки (2026-07-04) — P3
+
+`if Some(u) = e { ro u = … }` (аналогично while-let/match/for-loop var) не поддержан:
+чекер уходит в stack-overflow (pre-existing — воспроизводится на baseline d97c0dbe,
+независимо от Plan 181). Alpha-rename (Plan 181) СПЕЦИАЛЬНО не уникализирует такой rebind
+(`Scope::pattern_origin`), чтобы форма давала legacy `redefinition` CC-error, а не
+codegen-panic. Честный фикс — в чекере (172.1-зона): устранить overflow + аннотировать
+канал resolved_types для rebind в pattern-scope. Home: 172.1 / отдельный заход.
+
+## [M-consume-nested-scope-shadow-leak] — Nested-scope double-consume-shadow leak (2026-07-04) — P3
+
+`consume tx = begin(); { consume tx = begin() } tx.commit()` (и то же в теле
+if/for/match/while-let) — первый `tx` утекает МОЛЧА: consume-obligations ключуются по
+имени, один `commit` гасит оба обязательства. Plan 181 R2 (`E_REBIND_LIVE_CONSUME`) ловит
+ТОЛЬКО **same-scope** double-consume (alpha-rename по R7 НЕ уникализирует cross-scope →
+`Module.rebind_shadows` для block-shadow пуст → `check_rebind_live_consume` early-return).
+**Pre-existing** — воспроизводится ИДЕНТИЧНО на baseline d97c0dbe, независимо от Plan 181
+(no-op-путь), НЕ регрессия 181; заголовок Plan 181 «catches B2 double-consume-shadow leak»
+корректен для same-scope, но не покрывает nested. Честный фикс — в consume-чекере
+(`types/mod.rs`): scope-aware obligation-tracking для block-shadow (D131/D133-территория),
+НЕ alpha-rename (cross-scope затенение легально по R7, уникализировать его нельзя). Home:
+D131/D133 consume-checker / отдельный заход.
+
+## [M-181-lsp-rename-symbol-table] — LSP rename over same-scope rebind (2026-07-04) — P3
+
+LSP rename (D297 V1, word-boundary scan) переименует ОБА одноимённых same-scope биндинга.
+Pre-existing долг (уже сломан для nested shadow); D347-rebind учащает. Честный фикс = V2
+symbol table. Home: plan-104.6 followups.
+
+## [M-181-w-shadow-unrelated-lint] — R5 warn W_SHADOW_UNRELATED (2026-07-04) — P3
+
+Plan 181 Ф.4 R5: warn, когда rebind НЕ использует старое значение И старый биндинг жив/не
+потреблён (`ro x = user; … ro x = socket`). Отложен как проектное решение: R2 (hard-error
+`E_REBIND_LIVE_CONSUME`) закрывает soundness-критичный consume-случай; R5 — чистый style-warn,
+который сам план флагует как спорный (Go-урок «shadow-линтер слишком шумный для дефолта»).
+Реализация: детект в lints.rs (RHS не упоминает shadowed-имя из `Module.rebind_shadows` И
+old не Consumed) + решение Ф.4.3 (маркер `EXPECT_WARNING <substr>` в test_runner ЛИБО
+CLI-тест stderr). Подавление `#allow(shadow)`. Не гейтит корректность. Home: отдельный заход.

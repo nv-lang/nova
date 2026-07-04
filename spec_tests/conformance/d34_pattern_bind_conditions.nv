@@ -65,3 +65,17 @@ test "if Some(u) = cache.get(k) — связывает и использует u
 // NOTE: тест guard-`&&` (`if Pat = expr && bool`) удалён из salvage — на текущем компиляторе
 // false-guard НЕ уходит в else (берётся then, v==20 вместо -7): вероятный gap D34 amend
 // 2026-06-17. Покрытие guard-семантики — отдельным заходом после проверки фичи.
+
+// D347 amend (Plan 181): D347 отличается от ОТВЕРГНУТОГО `:=` (D34: у `:=` дефект —
+// СЛУЧАЙНОЕ затенение из-за смешанного decl/assign-оператора; у D347 — ЯВНОЕ
+// `ro`/`mut` + same-scope). Явный same-scope rebind ключа перед pattern-bind
+// lookup — новая переменная того же имени (не мутация, не `:=`-сахар).
+// NB: rebind САМОГО pattern-bound имени внутри ветки (`if Some(u)={ ro u=... }`)
+// — вне scope: pre-existing checker-overflow на такой форме (есть и на baseline
+// d97c0dbe), см. [M-181-pattern-var-rebind] в docs/simplifications.md.
+test "D347: явный same-scope rebind перед pattern-bind lookup (D34×D347)" {
+    ro key = 1
+    ro key = key + 1
+    ro out = if Some(u) = d34_cache_get(key) { u } else { -1 }
+    assert(out == 20)
+}

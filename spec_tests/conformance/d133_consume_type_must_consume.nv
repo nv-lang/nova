@@ -83,3 +83,13 @@ test "factory: return передаёт обязательство caller'у (D13
     consume tx = d133_begin(30)
     tx.rollback()
 }
+
+// D347 amend (Plan 181): rebind ПОТРЕБЛЁННого consume-имени в новый тип —
+// НЕ ложный D133 (B1). obligation старого `tx` закрыт `commit()`; `ro tx = 7`
+// — новая (int) переменная того же имени.
+test "D347: rebind consumed consume-binding в int, obligation закрыт (D133×D347)" {
+    consume tx = d133_begin(40)
+    tx.commit()
+    ro tx = 7
+    assert(tx == 7)
+}

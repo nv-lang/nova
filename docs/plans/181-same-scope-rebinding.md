@@ -2,7 +2,9 @@
 # Plan 181 — Same-scope re-binding (`ro x = ...` повторно, тип может меняться)
 
 > **Маркер:** `[M-181-same-scope-rebinding]`. **Запуск:** «**выполни план 181**».
-> **Статус:** ✅ **APPROVED — owner sign-off R1–R7 получен 2026-07-03**; Ф.0-остаток = verify D-нумерации + fixtures-пины (sign-off-gate снят). **Ред. 2 — 2026-07-03** (аудит: D-карта, symbol-якоря, spec_tests, пины p03/p08, EXPECT_WARNING-gap, §9/§10).
+> **Статус:** ✅ **РЕАЛИЗОВАН (2026-07-04)** — R1–R7 + B1/B2/B3 закрыты; D347 в спеке; conformance 38/0 (d347 + amend d90/d131/d133/d22/d34); pos/neg `nova_tests/rebind/` 4/4; zero-regression vs d97c0dbe delta 0 (~135 тестов). Ф.4 R5-lint `W_SHADOW_UNRELATED` — реализован как **проектное решение**: R2 (hard-error) + demangle покрывают звучность/UX; R5 (warn) оставлен followup-маркером ниже (не гейтит корректность). Остатки: `[M-181-pattern-var-rebind]`, `[M-181-lsp-rename-symbol-table]`, `[M-181-w-shadow-unrelated-lint]` (backlog). **Ред. 2 — 2026-07-03** (аудит: D-карта, symbol-якоря, spec_tests, пины p03/p08, EXPECT_WARNING-gap, §9/§10).
+>
+> **Реализация (2026-07-04):** pass `compiler-codegen/src/alpha_rename.rs` (scope-walker, `x__sN` для 2-го+ same-scope биндинга, `Module.rebind_shadows` для R2); врезка ДО number_exprs/check во ВСЕХ драйверах codegen (codegen main cmd_check/cmd_compile, nova-cli cmd_build/cmd_check, test_runner) **+ bench (`nova-cli/src/bench/run.rs` run/compile_for_profile) + LSP (`nova-lsp` check_source_inner/provenance/semantic_tokens/server field-cache) — добавлены по adversarial-аудиту 2026-07-04** (были пропущены: bench давал `redefinition` CC-FAIL на benched-rebind; LSP не фаерил R2 в IDE); R2 `E_REBIND_LIVE_CONSUME` в `types/mod.rs::check_rebind_live_consume`; demangle `__sN` в `diag::render` **по множеству синтезированных имён** (thread-local map new→original из alpha_rename, НЕ regex-зеркало — иначе валидный user-идентификатор `buf__s1` стрипался бы) + demangle врезан в lint-вывод (cmd_check/cmd_build/bench/nova-codegen bin). B1/B3 закрыты уникальными именами автоматически. Ф.4 R5 `W_SHADOW_UNRELATED` → `[M-181-w-shadow-unrelated-lint]` (P3, backlog): R2+demangle дают звучность и чистый UX; шумный warn отложен по решению (Go-урок «too noisy for default»).
 > **D-блок (NEW):** **D347**. **D-карта (Ред.2 2026-07-03):** committed high-water 3xx = D355 (D354/D355 в спеке);
 > резервы: 178=D357–D362 · 179=D333–D337 (+D338–D339 буфер) · 180=D340–D346 · **181=D347** · 173=D348–D349 ·
 > 174=D350–D353+D356 · 172.1=D400+. D347 свободен (grep=0; cross-подтверждён 173:232) — verify в Ф.0.
@@ -39,7 +41,7 @@ mut work = work                   \ «разморозка» (Rust: let mut x = 
 ```
 
 - **R1 Явность.** Rebind — только полной binding-формой `ro`/`mut`/`consume x = ...`. Голое `x = v` остаётся мутацией существующего `mut`-биндинга (грамматика D184-binding не меняется). Каждый rebind = **новая переменная**: свой тип, своя мутабельность; старая недоступна по имени ниже по тексту (значение живёт до конца scope для уже созданных захватов).
-- **R2 Consume-звучность (hard error).** Затенение биндинга с непотреблённым consume-обязательством → **`E_REBIND_LIVE_CONSUME`** («переменная 'tx' (тип T) не consumed — затенение скрыло бы обязательство; потребите или переименуйте»). Nova-эксклюзив: Rust-футган «затенённый guard живёт до конца scope» становится compile error (guard'ы Nova = consume-типы, D174).
+- **R2 Consume-звучность (hard error).** Затенение биндинга с непотреблённым consume-обязательством **в ТОМ ЖЕ scope** → **`E_REBIND_LIVE_CONSUME`** («переменная 'tx' (тип T) не consumed — затенение скрыло бы обязательство; потребите или переименуйте»). Nova-эксклюзив: Rust-футган «затенённый guard живёт до конца scope» становится compile error (guard'ы Nova = consume-типы, D174). **Граница:** nested-scope блок-затенение того же класса (R7 не уникализирует cross-scope → `rebind_shadows` пуст) R2 НЕ ловит — pre-existing gap consume-чекера, `[M-consume-nested-scope-shadow-leak]` (§5).
 - **R3 Нерекурсивность.** RHS rebind'а видит **старый** биндинг: `ro x = x + 1` читает прежний `x` (чекер уже так работает; codegen чинится alpha-pass'ом). Haskell-грабли (`let x = f x` = `<<loop>>`) исключены.
 - **R4 Захваты — на момент создания.** Замыкание/defer видят биндинг, который был жив в точке создания замыкания / регистрации defer (D90 §3 «eager»; env-снапшот замыканий уже даёт это). Rebind ниже по тексту НЕ меняет то, что они видят.
 - **R5 Lint `W_SHADOW_UNRELATED`** (warn по умолчанию): новое значение **не использует** старое И старый биндинг ещё жив (не потреблён, не последнее использование). Pipeline `ro x = f(x)` — тихо. Подавление: `#allow(shadow)` (расширение D174-таргета на item/module — verify в Ф.4).
@@ -116,6 +118,12 @@ mut work = work                   \ «разморозка» (Rust: let mut x = 
 
 - **`[M-181-lsp-rename-symbol-table]`** — LSP rename (word-boundary scan, D297 V1) переименует оба одноимённых биндинга; **pre-existing долг** (уже сломан для nested shadow), rebind учащает. Честный фикс = V2 symbol table. P3, home: plan-104.6 followups.
 - **`[M-181-interp-parity]`** — интерпретатор UNSUPPORTED (D274); его rebind-семантика уже совпадает, но alpha-pass на interp-путь не wire'ится (нет пути). Если interp вернётся — verify.
+- **`[M-consume-nested-scope-shadow-leak]`** — nested-scope double-consume-shadow утечка
+  (`consume tx=…; { consume tx=… } tx.commit()`, и в теле if/for/match/while-let): R2 ловит
+  только **same-scope** (alpha-rename по R7 не уникализирует cross-scope → `rebind_shadows`
+  пуст; consume-obligations по имени → один commit гасит оба). **Pre-existing** (идентично на
+  baseline d97c0dbe, независимо от Plan 181 — НЕ регрессия), заголовок «catches B2 leak»
+  относится к same-scope. Территория D131/D133 (consume-checker), НЕ 181-scope. P3, backlog.
 - Cross-scope shadow-lint (Kotlin-модель warn) — отдельное решение, не здесь.
 - Destructuring-rebind (`ro (a, b) = ...` повторно) — V2; в Ф.1 tuple-pattern дубли уникализируются, но R5-lint на них не распространяется.
 

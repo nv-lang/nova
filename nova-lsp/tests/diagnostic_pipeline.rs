@@ -225,6 +225,48 @@ fn parity_lsp_matches_nova_check_pipeline() {
     );
 }
 
+/// PARITY (Plan 181 / D347): the LSP check pipeline runs `alpha_rename`, so the
+/// consume-checker sees a populated `module.rebind_shadows` and R2
+/// `E_REBIND_LIVE_CONSUME` fires in the IDE exactly as in `nova check`. Without
+/// the pass the shadow-map is empty and `check_rebind_live_consume`
+/// early-returns, so this diagnostic would never reach the editor.
+#[test]
+fn parity_lsp_fires_r2_rebind_live_consume() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    write_workspace_toml(dir.path());
+    let main = dir.path().join("main.nv");
+    // Mirrors nova_tests/rebind/neg/rebind_ro_over_live_consume_neg.nv: a live
+    // consume obligation on `b` is hidden by a same-scope `ro b = 5` rebind.
+    let src = "module m\n\n\
+type NRbBox consume {\n    v int,\n}\n\
+fn NRbBox consume @close() -> () { () }\n\
+fn NRbBox @touch() -> () { () }\n\n\
+test \"r2\" {\n\
+    consume b = NRbBox { v: 1 }\n\
+    b.touch()\n\
+    ro b = 5\n\
+    assert(b == 5)\n\
+}\n";
+    std::fs::write(&main, src).unwrap();
+
+    // The full check pipeline (prelude-inlined) is deep — run it on a large
+    // stack like the production LSP (`run_with_large_stack`) so the test does
+    // not depend on `RUST_MIN_STACK` being set on the harness thread.
+    let src_owned = src.to_string();
+    let main_owned = main.clone();
+    let diags = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || check_source_inner(&src_owned, Some(&main_owned), None))
+        .expect("spawn large-stack thread")
+        .join()
+        .expect("check thread");
+    assert!(
+        diags.iter().any(|d| d.message.contains("E_REBIND_LIVE_CONSUME")),
+        "R2 must fire in the LSP pipeline (alpha_rename wired); got: {:?}",
+        diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+    );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NEG — the fix must not silence genuine diagnostics.
 // ─────────────────────────────────────────────────────────────────────────────

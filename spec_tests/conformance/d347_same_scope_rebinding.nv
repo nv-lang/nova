@@ -1,0 +1,99 @@
+// D347 — Same-scope re-binding (`ro`/`mut`/`consume x = ...` повторно; тип может меняться).
+// Норма (spec/decisions/03-syntax.md §D347, Plan 181): второе и последующие связывания
+// того же имени в ОДНОМ scope — новая переменная (свой тип/мутабельность); RHS видит
+// СТАРЫЙ биндинг (R3, нерекурсивно); старое значение недоступно по имени ниже (R1);
+// `mut x = x` — «разморозка» (R1); параметр можно затенять (R6); замыкания/defer
+// захватывают биндинг на момент создания/регистрации (R4); pipeline `ro x = f(x)` — тихо (R5).
+// Behavioral-distinction: каждый assert ЛОЖЕН, если rebind схлопнуть в один слот —
+//   R3-self-ref дал бы неинициализированное значение; type-change не сменил бы тип;
+//   R4-capture вернул бы новое значение вместо старого.
+// Негатив (R2 hard-error E_REBIND_LIVE_CONSUME) — nova_tests/rebind/neg/.
+// Один folder-module `spec_tests.conformance`; все top-level имена D347-префиксны.
+module spec_tests.conformance
+
+// R6: затенение параметра телом функции (`ro x = x + 1` над параметром `x`).
+fn d347_param_shadow(x int) -> int {
+    ro x = x + 1     // rebind параметра: новый `x` = старый + 1
+    ro x = x * 10    // rebind снова: видит предыдущий `x` (R3)
+    x
+}
+
+// R5 pipeline: цепочка трансформаций одного значения — идиоматично, тихо.
+fn d347_pipeline(raw str) -> str {
+    ro raw = "${raw}!"           // str → str, использует старый (R5-тихо)
+    ro raw = "[${raw}]"          // str → str
+    raw
+}
+
+// R3 + R1 same-type: `ro n = n + 1` читает прежний `n`.
+test "R3/R1: self-reference RHS видит старый биндинг (D347)" {
+    ro n = 1
+    ro n = n + 1
+    ro n = n + 1
+    assert(n == 3)
+}
+
+// R1 type-change: str-версия недоступна ниже; assert типизируется от новой.
+test "R1: смена типа при rebind — int → str (D347)" {
+    ro v = 42
+    ro v = "changed"
+    assert(v == "changed")
+}
+
+// R1 `mut x = x` — «разморозка» readonly в mutable (Rust `let mut x = x`).
+test "R1: `mut x = x` разморозка, затем мутация (D347)" {
+    ro y = 10
+    mut y = y
+    y = y + 5
+    assert(y == 15)
+}
+
+test "R6: rebind параметра в теле функции (D347)" {
+    assert(d347_param_shadow(4) == 50)   // (4+1)*10
+}
+
+test "R5: pipeline-трансформация значения, тихо (D347)" {
+    assert(d347_pipeline("hi") == "[hi!]")
+}
+
+// R4: замыкание захватывает биндинг на МОМЕНТ создания; rebind ниже его не меняет.
+test "R4: замыкание держит старый биндинг после rebind (D347)" {
+    ro x = 1
+    ro f = || x           // capture x == 1
+    ro x = 99             // rebind — f НЕ видит это
+    assert(x == 99)
+    assert(f() == 1)
+}
+
+// R4: defer резолвится на момент РЕГИСТРАЦИИ — видит старый биндинг, не rebind.
+test "R4: defer видит биндинг на момент регистрации (D347)" {
+    mut log = 0
+    {
+        ro k = 5
+        defer { log = log + k }   // регистрация при k == 5
+        ro k = 50                 // same-scope rebind → defer его не видит
+        assert(k == 50)
+    }
+    assert(log == 5)              // defer выполнился со старым k == 5
+}
+
+// p05 guard: вложенное затенение работает как прежде (inner != outer).
+test "cross-scope: вложенный блок затеняет, outer восстанавливается (D347)" {
+    ro w = 1
+    {
+        ro w = 2
+        assert(w == 2)
+    }
+    assert(w == 1)
+}
+
+// p07 guard: fresh binding на итерацию цикла + same-scope rebind в теле.
+test "loop: per-iteration rebind в теле цикла (D347)" {
+    mut total = 0
+    for i in 0..3 {
+        ro z = i
+        ro z = z + 1     // same-scope rebind внутри тела цикла
+        total = total + z
+    }
+    assert(total == 1 + 2 + 3)   // (0+1)+(1+1)+(2+1) = 6
+}

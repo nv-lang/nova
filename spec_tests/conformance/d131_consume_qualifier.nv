@@ -29,3 +29,12 @@ test "consume method chaining (D131)" {
     ro b = d131_make("chain")
     assert(b.finish() == "chain")
 }
+
+// D347 amend (Plan 181): same-scope rebind consume-family имени после
+// потребления — pipeline, тихо (R5). `d131_extract` потребляет `b`; затем имя
+// `b` переопределяется str-результатом.
+test "D347: rebind consume-binding имени после потребления (D131×D347)" {
+    ro b = d131_make("re")
+    ro b = d131_extract(b)
+    assert(b == "re")
+}

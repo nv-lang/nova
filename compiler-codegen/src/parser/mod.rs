@@ -492,6 +492,7 @@ impl Parser {
             span,
             peer_files: Vec::new(),
             doc: module_doc,
+            rebind_shadows: std::collections::HashMap::new(),
         })
     }
 

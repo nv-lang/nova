@@ -20127,13 +20127,23 @@ struct ConsumeCtx<'a> {
     /// Передача такого binding'а в non-unsafe param outside unsafe context
     /// → E_UNSAFE_ARG_REQUIRES_WRAP.
     unsafe_t_locals: HashSet<String>,
+    /// Plan 181 (D347) R2: same-scope re-binding shadow map from
+    /// `alpha_rename` — uniquified rebind name (`tx__s1`) → the unique name it
+    /// shadows (`tx`). Used to fire `E_REBIND_LIVE_CONSUME` when a rebind hides
+    /// an unmet consume obligation. Empty for modules without a rebind.
+    rebind_shadows: &'a HashMap<String, String>,
 }
 
 impl<'a> ConsumeCtx<'a> {
-    fn new(reg: &'a ConsumeRegistry, lin_reg: &'a LinearityRegistry) -> Self {
+    fn new(
+        reg: &'a ConsumeRegistry,
+        lin_reg: &'a LinearityRegistry,
+        rebind_shadows: &'a HashMap<String, String>,
+    ) -> Self {
         ConsumeCtx {
             reg,
             lin_reg,
+            rebind_shadows,
             states: HashMap::new(),
             var_types: HashMap::new(),
             aliases: HashMap::new(),
@@ -20347,6 +20357,69 @@ impl<'a> ConsumeCtx<'a> {
         self.consume_obligations.insert(name.to_string());
         // Plan 100.8 (D166): also track in all_declared_consume (never cleared).
         self.all_declared_consume.insert(name.to_string());
+    }
+
+    /// Plan 181 (D347) R2 [M-181-same-scope-rebinding]: a same-scope re-binding
+    /// (`names` are the freshly-declared, already-uniquified binding names of
+    /// this `let`/`consume`) must not silently hide an unmet consume obligation
+    /// of the binding it shadows. Fires `E_REBIND_LIVE_CONSUME` and clears the
+    /// hidden obligation (so the scope-exit check does not ALSO emit a
+    /// `D133-not-consumed` for it — the diagnostic MOVES to the rebind site, per
+    /// plan Ф.0 p08/p08c). Caller passes `moved_shadowed` = the shadowed name a
+    /// consume-move legitimately transfers ownership of (exempt).
+    ///
+    /// Soundness note: the RHS is walked BEFORE this runs, so a consuming RHS
+    /// (`ro x = x.into_str()`) has already flipped the shadowed var to
+    /// `Consumed` → not flagged (fixes B1 false-positive together with the
+    /// alpha-rename giving distinct obligation keys).
+    fn check_rebind_live_consume(
+        &mut self,
+        names: &[String],
+        moved_shadowed: Option<&str>,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if self.rebind_shadows.is_empty() { return; }
+        for n in names {
+            let sh = match self.rebind_shadows.get(n) {
+                Some(s) => s.clone(),
+                None => continue,
+            };
+            if moved_shadowed == Some(sh.as_str()) {
+                continue; // consume-move transfers the obligation — not hidden.
+            }
+            if !self.consume_obligations.contains(&sh) {
+                continue;
+            }
+            let canon = self.canonical(&sh);
+            let state = self.states.get(&canon).or_else(|| self.states.get(&sh));
+            let live = matches!(
+                state,
+                Some(VarState::Live) | Some(VarState::MaybeConsumed(_))
+            );
+            if !live {
+                continue;
+            }
+            let ty = self.var_types.get(&sh)
+                .or_else(|| self.var_types.get(&canon))
+                .cloned()
+                .unwrap_or_default();
+            let ty_disp = if ty.is_empty() { "?".to_string() } else { ty };
+            errors.push(crate::diag::Diagnostic::new(
+                format!(
+                    "[E_REBIND_LIVE_CONSUME] переменная `{sh}` (тип `{ty}`) имеет \
+                     непотреблённое consume-обязательство — повторное связывание того \
+                     же имени скрыло бы его (D347 R2). Потребите переменную \
+                     (consume-метод / `return` / передача в consume-param) до \
+                     re-binding, либо дайте новой переменной другое имя.",
+                    sh = sh, ty = ty_disp
+                ),
+                span,
+            ));
+            // Diagnostic MOVES here — suppress the duplicate exit-time D133.
+            self.consume_obligations.remove(&sh);
+            self.mark_consumed(&sh, span);
+        }
     }
 
     // ── Plan 100.3 (D157): view-param and consume-closure helpers ─────────
@@ -21064,7 +21137,7 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
     for item in &module.items {
         match item {
             Item::Fn(f) => {
-                let mut ctx = ConsumeCtx::new(&reg, &lin_reg);
+                let mut ctx = ConsumeCtx::new(&reg, &lin_reg, &module.rebind_shadows);
 
                 // Plan 100.2 (D156): collect `[T consume]` bound generics.
                 // Внутри тела функции параметры с такими типами —
@@ -21190,7 +21263,7 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                 }
             }
             Item::Test(t) => {
-                let mut ctx = ConsumeCtx::new(&reg, &lin_reg);
+                let mut ctx = ConsumeCtx::new(&reg, &lin_reg, &module.rebind_shadows);
                 consume_walk_block(&mut ctx, &t.body, errors);
                 // Plan 100.1 (D133): exit-point checks for test scope.
                 ctx.check_obligations_at_exit(t.body.span, errors);
@@ -21678,6 +21751,18 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                         .map(|ty| ctx.lin_reg.consume_types.contains(ty))
                         .unwrap_or(false)
             } else { false };
+
+            // Plan 181 (D347) R2 [M-181-same-scope-rebinding]: a same-scope
+            // rebind must not silently hide a still-live consume obligation of
+            // the binding it shadows (else B2's double-consume leak). RHS was
+            // already walked above, so a consuming RHS (`ro x = x.into_str()`)
+            // has already flipped the shadowed var to Consumed → exempt. A
+            // consume-move alias (`consume x = x`) transfers the obligation →
+            // exempt via `moved_shadowed`.
+            let moved_shadowed: Option<String> =
+                if decl.consume { alias_src.clone() } else { None };
+            ctx.check_rebind_live_consume(
+                &names, moved_shadowed.as_deref(), decl.span, errors);
 
             // `let` keyword span — replace with `consume` (3 chars → 7 chars, but
             // span-based replacement just covers the keyword position).
@@ -27732,6 +27817,7 @@ mod primitive_mut_method_tests {
             span: dummy_span(),
             peer_files: Vec::new(),
             doc: None,
+            rebind_shadows: std::collections::HashMap::new(),
         }
     }
 
@@ -28002,6 +28088,7 @@ mod named_tuple_ctor_infer_tests {
             span: dummy_span(),
             peer_files: Vec::new(),
             doc: None,
+            rebind_shadows: std::collections::HashMap::new(),
         }
     }
 
@@ -28282,6 +28369,7 @@ mod named_tuple_ctor_infer_tests {
             span: dummy_span(),
             peer_files: Vec::new(),
             doc: None,
+            rebind_shadows: std::collections::HashMap::new(),
         };
         let arena = FnDeclArena::new();
         let sig = crate::sig_registry::SigRegistry::build_base(&m);

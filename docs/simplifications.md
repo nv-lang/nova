@@ -37713,3 +37713,74 @@ D185 §amend-2 added.
 - **[M-178-with-tail-bang-codegen]** (P3, compiler-bug): `with`-блок, чей tail-expr = `X!!` (unit-Result) конфликтует interrupt-return-тип (HttpError*) с block-value-тип (unit) → CC-FAIL `assigning nova_unit to HttpError*`. Обход: закрывать with-блок `assert(...)`/`()`, не голым `!!`.
 - **[M-178-effect-op-result-monomorph]** (P3, compiler-bug): прямой `Effect.op(...)` возвращающий `Result[A,B]` (A≠B) мис-монеморфит Err-payload как A. Обход: тонкая fn-обёртка `fn seam(...) Eff -> Result[A,B] { Eff.op(...) }` даёт конкретный монеморфный тип (зеркалит net-wrap TcpStream-методов).
 - **[M-178-client-live-pool / timeout-needs-173 / autodecompress-needs-179 / typed-json-needs-180 / https-needs-116 / client-policy-surface]** — честно gated за CORE (см. план Ф.2): timeout-by-default←173, decompress←179, typed json[T]←180, https/h2←116, live-pool/proxy/CONNECT/SSRF/cookie-jar/retry/1xx/trailers/Expect100 — surface объявлен, реализация отложена.
+## Plan 181 — Same-scope re-binding (D347) (2026-07-04)
+
+- **[production, НЕ упрощение] D347 R1–R7 + B1/B2/B3 (2026-07-04).** Новый чистый pass
+  `compiler-codegen/src/alpha_rename.rs` (`alpha_rename(&mut Module) -> RebindTables`):
+  scope-stack walker после parse (ДО `number_exprs`/check/codegen — врезан во все codegen-драйверы:
+  `main.rs` cmd_check/cmd_compile, `nova-cli` cmd_build/cmd_check, `test_runner::codegen_to_c`;
+  **+ bench + LSP добавлены по adversarial-аудиту — см. ниже**),
+  уникализирует 2-й+ same-scope биндинг имени в `x__s1`/`x__s2`/… (первый — без суффикса →
+  для кода БЕЗ rebind pass = byte-identical no-op, zero-regression). RHS rebind'а резолвится
+  в предыдущий биндинг (R3); замыкания/defer — env-снапшот на момент создания (R4);
+  per-fn pre-scan резервирует все user-идентификаторы (генерируемый `__sN` не коллизирует).
+  Shadow-map (`Module.rebind_shadows: unique→shadowed`) публикуется для consume-checker.
+  **R2** (`E_REBIND_LIVE_CONSUME`, `types/mod.rs::check_rebind_live_consume`): затенение
+  живого consume-обязательства → hard error на месте rebind (ловит B2 double-consume leak);
+  **B1** (false-positive D133 при rebind ПОТРЕБЛЁННого consume) и **B3** (`ro x=1; ro x=x+1`)
+  закрыты автоматически уникальными именами. Диагностики демангл'ят `__sN` в
+  `diag::render`/`render_extras` (`demangle_rebind_names`) — ни одного `__sN` в user-facing
+  выводе. Спека: D347 (03-syntax.md) + amend-врезка D184. Тесты: conformance
+  `d347_same_scope_rebinding.nv` + amend d90/d131/d133/d22/d34 (conformance 38/0); pos/neg
+  `nova_tests/rebind/` (pos B1/B3/type-change/mut-разморозка/closure + 3 neg
+  E_REBIND_LIVE_CONSUME×2/type-change-stale) — 4/4; 5 rust-unit `alpha_rename::tests`.
+  Zero-regression: baseline d97c0dbe (temp-worktree), ~135 тестов (basics/generics/consume×6/
+  effects/narrowing/syntax/defer/patterns) — delta 0 (те же fail на обоих = pre-existing).
+
+- **[production, НЕ упрощение] Adversarial-аудит close-out (2026-07-04).** Аудит подтвердил
+  core-фичу корректной (no-op-путь byte-identical), нашёл 4 driver-coverage/cosmetic-дефекта —
+  все исправлены: **(1 bench)** `nova-cli/src/bench/run.rs` (`run` + `compile_for_profile`)
+  прогонял codegen БЕЗ `alpha_rename` → benched-файл с same-scope rebind давал clang
+  `redefinition` CC-FAIL (тогда как build/test/check ок); alpha-rename врезан ДО check в оба
+  bench-пайплайна (зеркалит cmd_build — number_exprs cmd_build НЕ зовёт, resolved_types —
+  test_runner-only канал). Verify: bench `ro x=1; ro x=x+1` компилится+бежит. **(2 LSP)**
+  `nova-lsp` check_source_inner/provenance/semantic_tokens/server (field-cache) звали
+  check_module БЕЗ alpha_rename → `module.rebind_shadows` пуст → R2 `E_REBIND_LIVE_CONSUME`
+  НИКОГДА не фаерил в IDE (`check_rebind_live_consume` early-return) + B1 parity break vs CLI;
+  alpha-rename врезан в LSP-check-пайплайн, восстановлена документированная byte-parity с
+  `nova check`. Verify: rust-тест `parity_lsp_fires_r2_rebind_live_consume` (large-stack thread).
+  Побочно: `empty_module()` в provenance.rs не имел поля `rebind_shadows` (Module-struct вырос в
+  181, литерал не обновлён) → nova-lsp не компилился на ветке — дополнено. **(3 demangle)**
+  `demangle_rebind_names` стрипил ЛЮБОЙ `__sN`-паттерн regex'ом → over-strip валидного user
+  `buf__s1` (lexer допускает) → показывал `buf`; under-cover: lint-вывод (cmd_check/cmd_build/
+  bench/nova-codegen bin) форматировал RAW `w.diag.message` МИМО demangle → `x__s1` протекал.
+  Фикс §0/§1: demangle работает по **множеству реально синтезированных имён** (thread-local
+  map new→original, публикуется `alpha_rename` через `set_demangle_map`; пустой map → no-op),
+  НЕ regex-зеркало; UTF-8-safe token-scan (не корраптит русскую прозу диагностик); demangle
+  врезан во все 4 lint-вывода. Verify: `nova check` — user `buf__s1` показан как есть (даже при
+  непустом map с `v__s1`), rebound `v__s1` → `v`, ноль `__s` в user-выводе; 2 rust-unit
+  (`demangle_strips_only_synthesized_names` + `demangle_noop_without_synthesized_map`).
+  **(4 spec-overclaim)** R2 покрывает ТОЛЬКО same-scope double-consume; nested-scope
+  блок-затенение (`consume tx=…; { consume tx=… }`) — та же тихая утечка, но pre-existing gap
+  consume-чекера (R7 не уникализирует cross-scope; obligations по имени), идентична на baseline
+  d97c0dbe → НЕ регрессия 181. Формулировка D347/plan-181 сужена до same-scope; заведён
+  `[M-consume-nested-scope-shadow-leak]` (backlog, D131/D133-территория).
+
+- **[M-181-pattern-var-rebind]** **Остаток (bounded followup — pre-existing, вне scope D347).**
+  Rebind САМОГО pattern-bound имени внутри matching-ветки (`if Some(u) = e { ro u = … }`,
+  аналогично while-let/match/for-loop var) — **не поддержан**: на такой форме чекер уходит в
+  stack-overflow (воспроизводится ИДЕНТИЧНО на baseline d97c0dbe — pre-existing, независимо
+  от Plan 181; на baseline codegen даёт `redefinition`). Alpha-rename СПЕЦИАЛЬНО НЕ
+  уникализирует rebind над matching-pattern-биндингом (`Scope::pattern_origin`) — чтобы форма
+  лоуэрилась в тот же legacy `redefinition` CC-error, а не в новый codegen-panic (zero-
+  regression на failure-mode). Честный фикс — в чекере (172.1-зона: аннотация канала
+  resolved_types для rebind в pattern-scope + устранение overflow). Plain-`let` destructure-
+  rebind (`ro (a,b)=…` повторно) уникализируется штатно (plan §5). Priority: P3.
+
+- **[M-181-opty-in-let-preexisting]** **Наблюдение (НЕ дефект Plan 181).** `ro q = expr?`
+  (`?`-в-let) mis-типизирует биндинг как wrapper-тип (`Option`/`Result`) в codegen →
+  CC-FAIL/RUN-FAIL. Подтверждён ИДЕНТИЧНО на baseline d97c0dbe для distinct-имени И для
+  rebind (`error_chains.nv`, plain passthrough) — pre-existing дефект in-flight 172.1-канала,
+  rebind-независим. Поэтому round-trip pos-тест «rebind с `?`» НЕ включён (rebind композирует
+  с `?` на уровне type-check/lowering; runtime-assert заблокирован pre-existing багом).
+  Устранение — в 172.1 (канал resolved_types для Try-unwrap-биндингов). Priority: не-181.

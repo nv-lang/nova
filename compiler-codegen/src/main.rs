@@ -151,7 +151,10 @@ fn run_lints(module: &nova_codegen::ast::Module, src: &str, file: &str) {
     let warnings = nova_codegen::lints::lint_module(module);
     for w in warnings {
         let (line, col) = nova_codegen::diag::byte_to_line_col(src, w.diag.span.start);
-        eprintln!("{}:{}:{}: {} [{}]", file, line, col, w.diag.message, w.rule);
+        // Plan 181 (D347): demangle synthesized `__sN` rebind names so a lint on
+        // a rebound variable shows the original user name, not `x__s1`.
+        let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
+        eprintln!("{}:{}:{}: {} [{}]", file, line, col, msg, w.rule);
     }
 }
 
@@ -229,6 +232,11 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
         )
     })?;
     check_module_path(path, &module)?;
+    // Plan 181 (D347): same-scope re-binding alpha-rename. Runs BEFORE
+    // number_exprs / check so every downstream pass (checker, consume-check,
+    // codegen) sees unique C-names for rebound locals (§2). No-op for modules
+    // without a same-scope rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     // Plan 172.1 U.4.1: stable ExprId for every expr (post-parse, pre-check)
     // so check_module can annotate ModuleEnv.resolved_types (§0/§1).
     nova_codegen::number_exprs::number_exprs(&mut module);
@@ -344,6 +352,10 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
     check_module_path(path, &module)?;
+    // Plan 181 (D347): same-scope re-binding alpha-rename (before number_exprs
+    // / check / codegen — §2). Uniquifies 2nd+ same-scope bindings; no-op
+    // otherwise.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     // Plan 172.1 U.4.1: assign a stable ExprId to every expr (post-parse,
     // pre-check) and seed the literal resolved-type table; stored into
     // ModuleEnv.resolved_types below so codegen reads it instead of re-deriving
