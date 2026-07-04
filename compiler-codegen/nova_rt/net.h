@@ -250,21 +250,15 @@ nova_unit        NovaRt_UdpSocket_method_close(NovaRt_UdpSocket* sock);
  * immediately after (no intervening Blocking call → cooperative-safe).
  */
 
-/* Tuple return type for socket_addr_parse: Nova (int, CSocketAddr).
- * CSocketAddr is a newtype over *() — codegen erases it to nova_int.
- * So the ABI tuple is { nova_int f0 (code); nova_int f1 (handle as intptr) }.
- * This matches the codegen-emitted _NovaTuple2 typedef exactly. */
-#ifndef NOVA_TUPLE_TYPEDEF__NovaTuple2
-#define NOVA_TUPLE_TYPEDEF__NovaTuple2
-typedef struct { nova_int f0; nova_int f1; } _NovaTuple2;
-#endif
-
 NovaRt_SocketAddr*  socket_addr_loopback(uint16_t port);
 NovaRt_SocketAddr*  socket_addr_loopback_v6(uint16_t port);
 NovaRt_SocketAddr*  socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
-/* Parse "host:port". Returns (code, handle-as-intptr):
- * f0=code (0=OK, 1=INVALID_ADDR, 2=INVALID_PORT), f1=NovaRt_SocketAddr* cast to nova_int. */
-_NovaTuple2         socket_addr_parse(nova_str s);
+/* Plan 178 Ф.0.5: parse "host:port". Returns the NetAddrResult code
+ * (0=OK, 1=INVALID_ADDR, 2=INVALID_PORT); on OK the parsed address is stashed in
+ * a thread-local slot, read immediately after via socket_addr_parse_result()
+ * (cooperative-safe TLS accessor, like tcp_stream_read_data). */
+nova_int            socket_addr_parse(nova_str s);
+NovaRt_SocketAddr*  socket_addr_parse_result(void);
 uint16_t            socket_addr_port(NovaRt_SocketAddr* addr);
 nova_str            socket_addr_ip(NovaRt_SocketAddr* addr);
 nova_bool           socket_addr_is_v4(NovaRt_SocketAddr* addr);

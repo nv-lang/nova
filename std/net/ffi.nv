@@ -27,9 +27,11 @@ type CUdpSocket(*())
 extern "C" fn socket_addr_loopback(port u16) -> CSocketAddr
 extern "C" fn socket_addr_loopback_v6(port u16) -> CSocketAddr
 extern "C" fn socket_addr_v4(a u8, b u8, c u8, d u8, port u16) -> CSocketAddr
-// Returns (code, handle): code=0 OK, 1=INVALID_ADDR, 2=INVALID_PORT.
-// handle is valid CSocketAddr on success, null on error.
-extern "C" fn socket_addr_parse(s str) -> (int, CSocketAddr)
+// Plan 178 Ф.0.5: returns the code (0=OK, 1=INVALID_ADDR, 2=INVALID_PORT); on
+// OK the parsed address is stashed in a TLS slot, read immediately after via
+// socket_addr_parse_result() (cooperative-safe accessor, like tcp_stream_read_data).
+extern "C" fn socket_addr_parse(s str) -> int
+extern "C" fn socket_addr_parse_result() -> CSocketAddr
 extern "C" fn socket_addr_port(addr CSocketAddr) -> u16
 extern "C" fn socket_addr_ip(addr CSocketAddr) -> str
 extern "C" fn socket_addr_is_v4(addr CSocketAddr) -> bool
