@@ -15,7 +15,7 @@
 
 module plan91_12.net_v2_udp_echo_slow
 
-import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
+import std.net.{SocketAddr, UdpSocket, real_net}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test 1: Bidirectional exchange — A sends to B, then B sends to A.
@@ -25,7 +25,7 @@ import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "UDP loopback: bidirectional — A→B then B→A" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         supervised {
             spawn {
                 mut a = match UdpSocket.bind(SocketAddr.loopback(0)) {
@@ -68,7 +68,7 @@ test "UDP loopback: bidirectional — A→B then B→A" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "UDP loopback: datagram boundary — 3 sends = 3 distinct recvs" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         supervised {
             spawn {
                 mut sender = match UdpSocket.bind(SocketAddr.loopback(0)) {
@@ -90,19 +90,19 @@ test "UDP loopback: datagram boundary — 3 sends = 3 distinct recvs" {
                 assert(r1.is_ok())
                 ro (d1, _) = match r1 { Ok(t) => t, Err(_) => panic("recv1") }
                 assert(d1 == "X")
-                assert(d1.len() == 1)
+                assert(d1.byte_len() == 1)
 
                 ro r2 = receiver.recv_from(512)
                 assert(r2.is_ok())
                 ro (d2, _) = match r2 { Ok(t) => t, Err(_) => panic("recv2") }
                 assert(d2 == "YY")
-                assert(d2.len() == 2)
+                assert(d2.byte_len() == 2)
 
                 ro r3 = receiver.recv_from(512)
                 assert(r3.is_ok())
                 ro (d3, _) = match r3 { Ok(t) => t, Err(_) => panic("recv3") }
                 assert(d3 == "ZZZ")
-                assert(d3.len() == 3)
+                assert(d3.byte_len() == 3)
 
                 sender.close()
                 receiver.close()
@@ -119,7 +119,7 @@ test "UDP loopback: datagram boundary — 3 sends = 3 distinct recvs" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "UDP loopback: multi-round sequential send-recv" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         supervised {
             spawn {
                 mut a = match UdpSocket.bind(SocketAddr.loopback(0)) {

@@ -17,7 +17,7 @@
 
 module plan91_12.net_v2_dns_tcp_integration_slow
 
-import std.net.{SocketAddr, TcpListener, TcpStream, DnsNet, real_dns_net, real_tcp_net, real_addr_net}
+import std.net.{SocketAddr, TcpListener, TcpStream, real_net}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test 1: Resolve "localhost" via DNS, then connect via TCP to the result.
@@ -26,7 +26,7 @@ import std.net.{SocketAddr, TcpListener, TcpStream, DnsNet, real_dns_net, real_t
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "DNS + TCP: resolve localhost then connect to loopback server" {
-    with AddrNet = real_addr_net(), TcpNet = real_tcp_net(), DnsNet = real_dns_net() {
+    with Net = real_net() {
         // Bind server first to get the port.
         mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
             Ok(l) => l
@@ -86,7 +86,7 @@ test "DNS + TCP: resolve localhost then connect to loopback server" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "DNS: multi-effect with block — three effects simultaneously" {
-    with AddrNet = real_addr_net(), TcpNet = real_tcp_net(), DnsNet = real_dns_net() {
+    with Net = real_net() {
         supervised {
             spawn {
                 // Use AddrNet: construct an address.
@@ -123,7 +123,7 @@ test "DNS: multi-effect with block — three effects simultaneously" {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test "DNS: iterate all returned addresses — each has port from lookup call" {
-    with AddrNet = real_addr_net(), DnsNet = real_dns_net() {
+    with Net = real_net() {
         supervised {
             spawn {
                 ro r = SocketAddr.lookup("localhost", 0)

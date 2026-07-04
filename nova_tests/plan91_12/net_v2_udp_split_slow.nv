@@ -13,10 +13,10 @@
 
 module plan91_12.net_v2_udp_split_slow
 
-import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
+import std.net.{SocketAddr, UdpSocket, real_net}
 
 test "UDP local_port: stable across multiple send_to calls" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         supervised {
             spawn {
                 mut sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
@@ -53,7 +53,7 @@ test "UDP local_port: stable across multiple send_to calls" {
 }
 
 test "UDP send-only pattern: socket never calls recv_from" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         supervised {
             spawn {
                 mut sink = match UdpSocket.bind(SocketAddr.loopback(0)) {
@@ -93,7 +93,7 @@ test "UDP send-only pattern: socket never calls recv_from" {
 }
 
 test "UDP fan-out: sender → two receivers in separate fibers" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         mut recv_a = match UdpSocket.bind(SocketAddr.loopback(0)) {
             Ok(s) => s, Err(_) => panic("recv_a bind")
         }

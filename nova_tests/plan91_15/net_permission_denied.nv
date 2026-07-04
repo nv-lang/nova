@@ -18,7 +18,7 @@
 
 module plan91_15.net_permission_denied
 
-import std.net.{SocketAddr, TcpListener, NetError, real_tcp_net, real_addr_net}
+import std.net.{SocketAddr, TcpListener, NetError, real_net}
 
 test "PermissionDenied — variant renders" {
     ro e = NetError.PermissionDenied
@@ -26,7 +26,7 @@ test "PermissionDenied — variant renders" {
 }
 
 test "bind result is always classified (no panic, typed error) _slow" {
-    with AddrNet = real_addr_net(), TcpNet = real_tcp_net() {
+    with Net = real_net() {
         // Port 1 is privileged on Unix (would yield PermissionDenied as non-root);
         // on Windows the bind typically succeeds. Either way the Result must be a
         // well-formed Ok/Err with a typed NetError — never a panic or raw string.
