@@ -559,6 +559,24 @@ Handler-литерал начинается с keyword'а `handler` (по [D61](
 явную форму подмены `EffectName = expr`. Lowercase имена эффектов
 (`throws`, `io`) отброшены в пользу PascalCase.
 
+### Q-note (Plan 174.4) — размер effect-handler-registry вычисляется на компиляции
+
+Наследование handler'ов через фиберы (per-fiber snapshot save/restore, Plan
+83.10.4 Ф.3) держится на таблице зарегистрированных handler-storage адресов
+(`NovaEffectRegistry` / `NovaEffectSnapshot`, `nova_rt/effects.h`). Её размер
+**`NOVA_MAX_EFFECT_STORAGES`** больше не хардкод-32, а **compile-time N** — точное
+число distinct-эффектов в программе (built-in `Fail`/`Time`/`Mem` + user-defined),
+которое компилятор знает из реестра `effect_schemas`. Codegen эмитит
+`#define NOVA_MAX_EFFECT_STORAGES <N>` в сгенерированный `.c` до include
+`effects.h` (хедерный `#ifndef`-fallback 32 остаётся только для hand-written
+bootstrap-кода). Следствия: (1) прежний тихий дроп 33-го эффекта — при котором
+handler молча не наследовался через фибер — устранён по построению (размер = точный
+N, переполнение теперь — hard-fail с диагностикой, т.е. индикатор бага codegen'а);
+(2) per-fiber snapshot занимает ровно N указателей, без фиксированных 256 байт на
+каждый фибер. Это внутренняя codegen/runtime-деталь (не влияет на язык), поэтому
+отдельного D-блока нет — только эта заметка. Follow-up `[M-174.4-effect-registry-size]`
+Ф.2 (статические индексы эффектов, удаление рантайм-registry) — отдельным заходом.
+
 ---
 
 ## D12. Effect erasure и dynamic effects

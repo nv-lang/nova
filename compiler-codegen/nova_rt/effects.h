@@ -964,11 +964,18 @@ static inline void nova_finalizer_fire_lifo(NovaFinalizerStack* s) {
  *   4. После return: save globals back в fiber's snapshot.
  *   5. Restore prev_snapshot in globals.
  *
- * Limit: 32 effect-storages — достаточно для bootstrap'а (built-in 3 +
- * user-defined обычно <10). Production-runtime — динамический rezize.
+ * Размер таблицы (Plan 174.4): compile-time N — точное число зарегистрированных
+ * эффектов (built-in Fail/Time/Mem + user-defined). Генерируемый `.c` эмитит
+ * `#define NOVA_MAX_EFFECT_STORAGES <N>` ДО include этого хедера (источник — реестр
+ * `effect_schemas` в codegen). Значение 32 ниже — только fallback для hand-written /
+ * bootstrap-хедеров, собираемых без codegen-driven define. Так silent-drop 33-го
+ * эффекта (наследование handler'а через фиберы) больше невозможен, а per-fiber
+ * snapshot занимает ровно N указателей, не фикс-256B.
  */
 
+#ifndef NOVA_MAX_EFFECT_STORAGES
 #define NOVA_MAX_EFFECT_STORAGES 32
+#endif
 
 typedef struct {
     void** slots[NOVA_MAX_EFFECT_STORAGES];   /* registered TLS addresses */
@@ -995,11 +1002,19 @@ static inline void nova_register_effect_storage(void** slot_addr) {
     for (int i = 0; i < _nova_effect_registry.count; i++) {
         if (_nova_effect_registry.slots[i] == slot_addr) return;
     }
-    if (_nova_effect_registry.count < NOVA_MAX_EFFECT_STORAGES) {
-        _nova_effect_registry.slots[_nova_effect_registry.count++] = slot_addr;
+    /* Plan 174.4: NOVA_MAX_EFFECT_STORAGES = точный compile-time N (число
+     * distinct-эффектов из реестра codegen'а). Переполнение теперь означает
+     * баг codegen'а (define не покрыл фактическое число эффектов), а не
+     * нормальный путь → hard-fail с диагностикой вместо прежнего молчаливого
+     * дропа, который ронял наследование handler'а через фиберы. */
+    if (_nova_effect_registry.count >= NOVA_MAX_EFFECT_STORAGES) {
+        fprintf(stderr,
+            "nova: effect-registry overflow (count=%d, max=%d) — codegen bug: "
+            "NOVA_MAX_EFFECT_STORAGES не покрывает число зарегистрированных эффектов\n",
+            _nova_effect_registry.count, NOVA_MAX_EFFECT_STORAGES);
+        abort();
     }
-    /* Silent overflow: бутстрап не дотянется до 32 эффектов. Production
-     * должен использовать dynamic-resize либо assert. */
+    _nova_effect_registry.slots[_nova_effect_registry.count++] = slot_addr;
 }
 
 /* Snapshot — массив значений pointer-ов. Размер фиксированный, индексы
