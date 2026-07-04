@@ -809,7 +809,7 @@ U.1.3b миграцией sync на import.
 механика миграции — прецедент Plan 172.2 Ф.3: детект-режим → as-касты → включение).
 
 
-## [M-172.1-extern-cname-dedup-overloads] — дедуп extern-деклов по c_name упрощён (2026-07-02)
+## [M-172.1-extern-cname-dedup-overloads] — дедуп extern-деклов по c_name упрощён (2026-07-02) → ПОГЛОЩЁН Plan 174.6
 
 При inline-merge builtin-модуля (import std.runtime.sync поверх builtin-снабжения)
 дубликаты extern-деклараций схлопываются по `c_name` (external_registry merge).
@@ -817,7 +817,10 @@ U.1.3b миграцией sync на import.
 НАСТОЯЩИХ overload'ов с одинаковым c_name (разные param_c_types) дедуп молча
 съест вторую сигнатуру → неверный резолв перегрузки. Ужесточить: ключ дедупа =
 (c_name, param_c_types), конфликт = ошибка компилятора.
-**Носитель: Plan 174.6 (C-FFI ABI types)**; сайт помечен комментарием в
+**ПОГЛОЩЁН Plan 174.6 (C-FFI ABI types).** M0 (spec, 2026-07-04) — amend D282 rule 2
+(рекурсивный C-ABI тип-лист, params+return) + D353 (fn-ptr ABI-тег `*extern "C" fn`) +
+D216 cross-amend. Ужесточение ключа дедупа `(c_name, param_c_types)` = чекер-часть
+**Plan 174.6 M1** (вместе с `E_FFI_NON_C_ABI_TYPE`); сайт помечен комментарием в
 external_registry merge.
 
 ## [M-172.1-var-types-cu-name-leak] — var_types один namespace на CU, last-wins (2026-07-02)

@@ -8472,6 +8472,17 @@ Rust precedent: fn() ≠ unsafe fn() — same model.
 
 Закрывает [M-118.1.5-unsafe-fn-pointer-type].
 
+#### ABI-тег fn-ptr: `*extern "C" fn` (Plan 174.6 M0 cross-amend, 2026-07-04)
+
+`*fn(...)` / `*unsafe fn(...)` (выше) — **Nova-ABI** captureless fn-ptr: Nova-типы в сигнатуре
+допустимы (Nova ABI их передаёт; «captureless» — про отсутствие env, не про типы). Для передачи
+Nova-функции как настоящего **C-callback** введён C-ABI-тегированный fn-ptr тип
+**`*extern "C" fn(...)`** — параллель к объявлению `extern "C" fn` ([08-runtime.md#d282](08-runtime.md#d282)).
+Типы его сигнатуры (параметры + возврат) обязаны быть **C-ABI-совместимы** (рекурсивный тип-лист,
+[D282 rule 2](08-runtime.md#d282)); коэрция `fn → *extern "C" fn` проверяет C-ABI + captureless.
+Полная спецификация ABI-тега — [D353](08-runtime.md#d353). Реализация (парсер/чекер/тесты) — Plan 174.6
+M1–M3; M0 = только спека.
+
 ### §11. `ptr` redefine (D214 amend cross-ref)
 
 > ⚠️ **RETIRED by Plan 134 (2026-06-09)** — the `ptr` built-in name is fully
