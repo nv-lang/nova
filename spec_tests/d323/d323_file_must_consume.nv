@@ -1,0 +1,47 @@
+// d323_file_must_consume.nv — D323 File must-consume (D133) + mock_fs round-trip
+// + close-error visibility (Plan 176 Ф.2). The §1a #1 differentiator.
+module spec_tests.d323
+
+import std.fs.{Path, MemFs, mock_fs, Fs, File, write, read, metadata}
+import std.io.{ErrorKind}
+
+test "d323: File @close discharges (must-consume) and its close-error is visible" {
+    mut d323_mc = MemFs.new()
+    with Fs = mock_fs(d323_mc) {
+        // happy path: @close returns Ok
+        match File.create(Path.posix("/f")) {
+            Err(_) => assert(false)
+            Ok(f0) => {
+                mut f = f0
+                match f.write("hi".to_bytes()) { Ok(n) => assert(n == 2), Err(_) => assert(false) }
+                match f.close() { Ok(()) => assert(true), Err(_) => assert(false) }
+            }
+        }
+        // injected ENOSPC on close surfaces as Err (not swallowed on drop)
+        match File.create(Path.posix("/g")) {
+            Err(_) => assert(false)
+            Ok(g0) => {
+                mut g = g0
+                d323_mc.fail_closes()
+                match g.close() {
+                    Ok(())  => assert(false)
+                    Err(e) => match e.kind { ErrorKind.StorageFull => assert(true), _ => assert(false) }
+                }
+            }
+        }
+    }
+}
+
+test "d323: mock_fs write/read/metadata round-trip; open missing -> NotFound" {
+    mut d323_rt = MemFs.new()
+    ro d323_p = Path.posix("/data.bin")
+    with Fs = mock_fs(d323_rt) {
+        match write(d323_p, "abcd".to_bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match read(d323_p) { Ok(b) => assert(b.len() == 4), Err(_) => assert(false) }
+        match metadata(d323_p) { Ok(m) => assert(m.len() == 4 && m.is_file()), Err(_) => assert(false) }
+        match File.open(Path.posix("/missing")) {
+            Ok(f)  => { mut fh = f; ro _ = fh.close(); assert(false) }
+            Err(e) => match e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
+        }
+    }
+}

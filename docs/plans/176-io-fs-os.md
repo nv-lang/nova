@@ -8,7 +8,24 @@
 > `type X consume {}` + `D133-not-consumed` на scope-exit, `compiler-codegen/src/types/mod.rs:18864+/:19746-19908`; боевой пример —
 > `WriteGuard`/Mutex; `File`-пример прямо в спеке D133) → affine-fallback-ветка УДАЛЕНА; stale-номера
 > 180/179 вычищены; двойное владение net-миграций разведено со 178; mem_fs получил носителя; введена Ф.4.
-> **Статус:** 📋 READY (все Q закрыты §3.0). **Маркер:** `[M-176-io-fs-os]` (регистрация в OPEN-view — Ф.0).
+> **Статус:** 🟢 Ф.0.5 + Ф.1 + **Ф.2 (fs+Path) DONE (2026-07-04)**; остаток Ф.3/Ф.4/Ф.5 READY (все Q закрыты §3.0). **Маркер:** `[M-176-io-fs-os]` (OPEN-view).
+> **Прогресс Ф.2 (2026-07-04):** byte-backed `Path` value (POSIX+Windows/UNC/drive, lexical join/parent/file_name/extension/stem/components/normalize/with_extension, non-UTF-8 round-trip, Q1); **`Fs` effect как тонкий int-primitive слой** (rich `IoError`/`Metadata`/`DirEntry` строятся в .nv-обёртках ВНЕ effect-vtable — vtable стирает value-`IoError`-error в `nova_str`, поэтому эффект несёт только int/str-коды, зеркалящие fs.c-хуки; §3/§0 «логика в .nv над тонким C-hook»); **`File` must-consume (D133)** + `OpenOptions`(read/write/append/truncate/create/create_new, Q13) + positioned read_at/write_at + seek + sync_all/sync_data; `Metadata`(→`Timestamp`)/`DirEntry`/`FileType`/`Permissions`(Q8/Q12); **`real_fs()`** над libuv (`nova_rt/fs.c` uv_fs_* park/wake как net.c, best-effort-cancel Q4) + **`mock_fs()`/`MemFs`** (in-memory byte-Path-дерево, ENOSPC-инъекция для close-error/torn-write); convenience read/write/read_text/write_atomic(5-шаг durable §3c)/create_dir_all/remove_dir_all/copy_file/rename/read_dir/canonicalize/symlink/set_permissions/try_exists; `c_path` interior-NUL-reject (§3c(1); libuv сам конвертит UTF-8→UTF-16 на Windows → CWStr не нужен на этом бэкенде, `[M-176-cwstr-direct-winapi]`). Тесты: nova_tests/fs pos (path POSIX+Windows, mock_fs round-trip/metadata/seek/OpenOptions/dir/write_atomic/torn-write, real_fs temp-dir через spawn) + neg (D133 leak/double-close/use-after — через consume-param; match-extract tracking = `[M-176-consume-through-result-match]`) — ALL PASS; D-покрытие в **`spec_tests/d323`** (ОТДЕЛЬНЫЙ module, НЕ в `spec_tests/conformance`) — path_bytes/file_must_consume/write_atomic + neg, PASS. Main conformance = **38/0** чист. **Codegen-находки:** (1) value-record литералы требуют typed-форму в блок-позиции / anon в `=>`; (2) effect-op с rich `Result` стирается в `nova_int`/`nova_str` → int-primitive-эффект; (3) free-fn имена std.fs не должны коллидить с std.io generic-хелперами (read_text/write_text/copy_file, не read_to_string/write_str/copy); (4) **добавление std.fs-файла в folder-module `spec_tests.conformance` (один большой CU) ломает codegen map-closure в d102 (`undeclared 'f'`) — pre-existing CU-content-dependent closure-env баг, `[M-176-conformance-cu-map-closure]`** → d323 conformance вынесены в свой module; (5) mock_fs 10-тестовый binary flaky под GC-давлением → тесты разбиты ≤3/файл, `[M-176-memfs-gc-pressure]`.
+> **Прогресс (2026-07-04):** **Ф.0.5** — `str.from_bytes -> Result[str, Utf8Error]` (Nova-body, D325-канон; ретайр
+> интринзика `str.try_from([]u8)`; миграция всех потребителей + byte_offset-тест). **Ф.1 io-core** — `io.Read`/`io.Write`/
+> `io.Seek` + `SeekFrom`; структурный `IoError`/`ErrorKind` (heap record); хелперы `read_exact`/`read_to_end`/
+> `read_to_string`/`write_all`/`write_str`/`copy`/`lines`/`byte_lines`; конформеры `BytesReader`/`BytesWriter`;
+> **`BufWriter` must-consume (D133, pos+neg)** + `BufReader`; `Io` effect + `stdin`/`stdout`/`stderr` + `mock_io`
+> (capture/scripted) + `real_io` (C fd-хуки `nova_rt/io_console.h`). Спека D322 (04-effects.md); conformance
+> `d322_io_read_write_seek.nv` (38/38); `nova_tests/io` pos+neg. **`IoError` = `value` (D322 §3b канон, 2026-07-04):**
+> heap-обход снят — закрыт codegen keystone-gap «value-record в error-позиции generic `Result` / protocol-vtable»
+> (protocol-vtable теперь forward-declare'ит референсимый `NovaRes_<ok>_NovaValue_<E>` mono до своей struct'ы;
+> `emit_c.rs::emit_protocol_box_typedef`). **Оставшиеся codegen-обходы (followup-маркеры, НЕ упрощения семантики):**
+> инлайн циклов в хелперах (форвард bounded-generic не проносит bound — checker `[M-176-io-forward-bounded-generic]`);
+> `BufReader`/`BufWriter` с ЯВНЫМИ type-args (`BufWriter[BytesWriter].new` — inference-конструкция generic-wrapper'а
+> = **отдельный** от value-record корень, эмпирически подтверждён value-record-независимым: NULL-stub падает и на
+> heap-error; `[M-176-generic-wrapper-mono-inference]`); статические `SeekFrom.start/end/current` (cross-module
+> payload-variant-литерал — checker-gap `[M-176-xmod-payload-variant-ctor]`) — backlog. Zero-regression подтверждён
+> (baseline=parent-бинарь e50fcc6d, value-record/generic/io/str sample).
 > **Запуск:** «**выполни план 176**».
 > **Эталон:** **Go / Rust / TS / Kotlin / Java / Zig / Swift**. **Архитектура — по net-семейству**
 > ([std/net/effect.nv](../../std/net/effect.nv)): эффект = внутренний плумбинг (libuv-backed, async, park/wake как

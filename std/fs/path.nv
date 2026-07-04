@@ -1,0 +1,417 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/fs/path.nv — byte-backed, platform-aware Path (Plan 176 Ф.2, D323, Q1).
+//
+// `Path` is a **`value` record over `[]u8`** (Q1), NOT `str`: it carries the raw
+// OS bytes so non-UTF-8 Unix names and WTF-8 Windows names round-trip losslessly
+// (a name the JVM cannot even represent). Prior art: Rust `OsStr`/`Path`,
+// Swift-system `FilePath`, Zig `[]const u8`. All manipulation is **lexical**
+// (pure, no I/O, no effect): it never touches the filesystem — `normalize` is a
+// text operation that does NOT resolve symlinks (that needs `Fs.realpath`).
+//
+// **Platform awareness (Q1).** A `Path` carries a `PathStyle` (Posix | Windows).
+//   - Posix: `/` is the only separator; `\` is an ordinary filename byte.
+//   - Windows: both `/` and `\` separate; `C:` drive prefixes and `\\srv\share`
+//     UNC prefixes are recognised; `\` is the canonical separator on output.
+// `Path.from_str` uses the HOST style (`nova_fs_is_windows` hook); `Path.posix`
+// / `Path.windows` pin a style explicitly, so a single test run can exercise
+// BOTH platforms' semantics (the Ф.2 gate). Pinning the style — rather than a
+// compile-time `#cfg` split — is what makes cross-platform path logic testable.
+//
+// **Encoding across the FFI (§3c).** `as_os_bytes()` yields the raw bytes; the
+// fs layer wraps them NUL-terminated (`CStr`) and hands them to libuv, which
+// converts UTF-8/WTF-8 → UTF-16 internally on Windows. That subsumes the planned
+// CWStr marshalling at THIS backend — CWStr is only needed for a direct
+// `CreateFileW` binding, which libuv replaces (`[M-176-cwstr-direct-winapi]`).
+
+module std.fs
+
+// ─── Byte constants ──
+const B_SLASH     u8 = 47   // '/'
+const B_BACKSLASH u8 = 92   // '\'
+const B_DOT       u8 = 46   // '.'
+const B_COLON     u8 = 58   // ':'
+
+/// Which platform's lexical rules a `Path` follows.
+#stable(since = "0.1")
+export type PathStyle
+    | Posix
+    | Windows
+
+// Host default style, resolved once from the platform predicate.
+fn host_style() -> PathStyle {
+    if nova_fs_is_windows() != 0 { Windows } else { Posix }
+}
+
+// Is `b` a separator under `style`?
+fn byte_is_sep(b u8, style PathStyle) -> bool {
+    match style {
+        Posix   => b == B_SLASH
+        Windows => b == B_SLASH || b == B_BACKSLASH
+    }
+}
+
+// Canonical separator to emit under `style`.
+fn canonical_sep(style PathStyle) -> u8 {
+    match style {
+        Posix   => B_SLASH
+        Windows => B_BACKSLASH
+    }
+}
+
+fn is_ascii_letter(b u8) -> bool {
+    (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+}
+
+// ─── Path value type ──
+
+/// A filesystem path as raw OS bytes plus a lexical `style`. Cheap to copy.
+#stable(since = "0.1")
+export type Path value {
+    ro bytes []u8
+    ro style PathStyle
+}
+
+// ─── Constructors ──
+
+/// Path from a `str`, using the HOST platform's lexical style.
+#stable(since = "0.1")
+export fn Path.from_str(s str) -> Path => { bytes: s.to_bytes(), style: host_style() }
+
+/// Path from raw OS bytes, HOST style (preserves non-UTF-8 bytes verbatim).
+#stable(since = "0.1")
+export fn Path.from_bytes(b []u8) -> Path => { bytes: b, style: host_style() }
+
+/// Path with an explicitly pinned style (for cross-platform lexical logic/tests).
+#stable(since = "0.1")
+export fn Path.styled(s str, style PathStyle) -> Path => { bytes: s.to_bytes(), style }
+
+/// POSIX-style path (`/` separators, `\` is an ordinary byte).
+#stable(since = "0.1")
+export fn Path.posix(s str) -> Path => { bytes: s.to_bytes(), style: Posix }
+
+/// Windows-style path (`/`+`\` separators, drive/UNC prefixes).
+#stable(since = "0.1")
+export fn Path.windows(s str) -> Path => { bytes: s.to_bytes(), style: Windows }
+
+// ─── Byte / string views ──
+
+/// The raw OS bytes (lossless; the FFI path surface).
+#stable(since = "0.1")
+export fn Path @as_os_bytes() -> []u8 => @bytes
+
+/// The lexical style of this path.
+#stable(since = "0.1")
+export fn Path @path_style() -> PathStyle => @style
+
+/// Lossless UTF-8 decode. `None` when the bytes are not valid UTF-8 (e.g. a
+/// non-UTF-8 Unix name or a WTF-8 lone surrogate) — never lossy corruption.
+#stable(since = "0.1")
+export fn Path @to_str() -> Option[str] {
+    match str.from_bytes(@bytes) {
+        Ok(s)  => Some(s)
+        Err(_) => None
+    }
+}
+
+/// Lossy display string (invalid bytes → U+FFFD). **Print-only** — never feed
+/// this back to the filesystem (round-trip would corrupt non-UTF-8 names).
+#stable(since = "0.1")
+export fn Path @display() -> str => str.from_bytes_lossy(@bytes)
+
+/// Number of bytes in the path.
+#stable(since = "0.1")
+export fn Path @len() -> int => @bytes.len()
+
+/// True when the path is empty.
+#stable(since = "0.1")
+export fn Path @is_empty() -> bool => @bytes.len() == 0
+
+/// Byte-exact equality (same bytes AND same style).
+#stable(since = "0.1")
+export fn Path @equals(other Path) -> bool {
+    if @bytes.len() != other.bytes.len() { return false }
+    mut i = 0
+    while i < @bytes.len() {
+        if @bytes[i] != other.bytes[i] { return false }
+        i += 1
+    }
+    true
+}
+
+// ─── Decomposition (prefix / root / components) ──
+
+// Result of splitting a path into its Windows/UNC/drive prefix, a root flag, and
+// the sequence of non-empty path components (each a byte slice).
+type Decomp {
+    mut prefix []u8
+    mut root bool
+    mut comps [][]u8
+}
+
+fn decompose(b []u8, style PathStyle) -> Decomp {
+    ro n = b.len()
+    mut prefix []u8 = []u8.new()
+    mut i = 0
+    // Windows prefix: UNC `\\server\share` or drive `C:`.
+    match style {
+        Windows => {
+            if n >= 2 && byte_is_sep(b[0], Windows) && byte_is_sep(b[1], Windows) {
+                // UNC: consume `\\` server `\` share into the prefix.
+                prefix.push(b[0]); prefix.push(b[1]); i = 2
+                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 }
+                if i < n { prefix.push(b[i]); i += 1 }  // sep between server and share
+                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 }
+            } else if n >= 2 && is_ascii_letter(b[0]) && b[1] == B_COLON {
+                prefix.push(b[0]); prefix.push(b[1]); i = 2
+            }
+        }
+        Posix => {}
+    }
+    // Root: one-or-more leading separators after the prefix.
+    mut root = false
+    while i < n && byte_is_sep(b[i], style) { root = true; i += 1 }
+    // Components.
+    mut comps [][]u8 = []
+    mut cur []u8 = []u8.new()
+    while i < n {
+        if byte_is_sep(b[i], style) {
+            if cur.len() > 0 { comps.push(cur); cur = []u8.new() }
+        } else {
+            cur.push(b[i])
+        }
+        i += 1
+    }
+    if cur.len() > 0 { comps.push(cur) }
+    { prefix, root, comps }
+}
+
+// Reassemble a Decomp into bytes under `style`.
+fn recompose(d Decomp, style PathStyle) -> []u8 {
+    ro sep = canonical_sep(style)
+    mut out []u8 = []u8.new()
+    out.append(d.prefix)
+    if d.root { out.push(sep) }
+    mut first = true
+    for c in d.comps {
+        if !first { out.push(sep) }
+        out.append(c)
+        first = false
+    }
+    if out.len() == 0 { out.push(B_DOT) }   // empty → "."
+    out
+}
+
+fn bytes_to_str_opt(b []u8) -> Option[str] {
+    match str.from_bytes(b) {
+        Ok(s)  => Some(s)
+        Err(_) => None
+    }
+}
+
+// ─── Predicates ──
+
+/// True when the path is absolute (roots at a fixed base, not the CWD).
+///   - Posix: begins with `/`.
+///   - Windows: `C:\…` (drive + root) or `\\server\share…` (UNC). NOTE `C:foo`
+///     (drive-relative) and `\foo` (rooted on the current drive) are NOT
+///     absolute — they still depend on ambient state.
+#stable(since = "0.1")
+export fn Path @is_absolute() -> bool {
+    ro n = @bytes.len()
+    match @style {
+        Posix   => n > 0 && @bytes[0] == B_SLASH
+        Windows => {
+            if n >= 2 && byte_is_sep(@bytes[0], Windows) && byte_is_sep(@bytes[1], Windows) {
+                true
+            } else if n >= 3 && is_ascii_letter(@bytes[0]) && @bytes[1] == B_COLON
+                      && byte_is_sep(@bytes[2], Windows) {
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
+/// True when the path is not absolute.
+#stable(since = "0.1")
+export fn Path @is_relative() -> bool => !@is_absolute()
+
+// ─── Component queries ──
+
+/// The final component (file or directory name), or `None` for a path that
+/// ends in a root/prefix or has no normal final component. Non-UTF-8 names
+/// decode to `None` — use `file_name_bytes()` to keep them faithfully.
+#stable(since = "0.1")
+export fn Path @file_name() -> Option[str] {
+    match @file_name_bytes() {
+        Some(b) => bytes_to_str_opt(b)
+        None    => None
+    }
+}
+
+/// The final component as raw bytes (byte-faithful; never lossy).
+#stable(since = "0.1")
+export fn Path @file_name_bytes() -> Option[[]u8] {
+    ro d = decompose(@bytes, @style)
+    if d.comps.len() == 0 { return None }
+    ro last = d.comps[d.comps.len() - 1]
+    // `.`/`..` are not file names (Rust semantics).
+    if is_dot(last) || is_dotdot(last) { return None }
+    Some(last)
+}
+
+fn is_dot(b []u8) -> bool => b.len() == 1 && b[0] == B_DOT
+fn is_dotdot(b []u8) -> bool => b.len() == 2 && b[0] == B_DOT && b[1] == B_DOT
+
+/// The parent path (everything but the final component). `None` for a bare root
+/// (`/`, `C:\`) or an empty path. Purely lexical (no `..` resolution).
+#stable(since = "0.1")
+export fn Path @parent() -> Option[Path] {
+    mut d = decompose(@bytes, @style)
+    if d.comps.len() == 0 {
+        // No components: parent of a bare root/prefix is None.
+        return None
+    }
+    ro _ = d.comps.pop()   // drop the final component
+    Some(Path { bytes: recompose(d, @style), @style })
+}
+
+/// The file extension (after the final `.` of the file name), without the dot.
+/// `None` for no extension, a dotfile (`.bashrc`), or `.`/`..`. Multi-dot names
+/// yield only the last extension (`archive.tar.gz` → `gz`).
+#stable(since = "0.1")
+export fn Path @extension() -> Option[str] {
+    match @file_name_bytes() {
+        None    => None
+        Some(name) => {
+            match last_dot(name) {
+                None    => None
+                Some(0) => None   // dotfile: leading dot is not an extension
+                Some(i) => bytes_to_str_opt(slice_from(name, i + 1))
+            }
+        }
+    }
+}
+
+/// The file stem — the file name without its final extension (`foo.tar.gz` →
+/// `foo.tar`, `.bashrc` → `.bashrc`). `None` when there is no file name.
+#stable(since = "0.1")
+export fn Path @stem() -> Option[str] {
+    match @file_name_bytes() {
+        None    => None
+        Some(name) => {
+            match last_dot(name) {
+                None    => bytes_to_str_opt(name)
+                Some(0) => bytes_to_str_opt(name)          // dotfile: whole name is the stem
+                Some(i) => bytes_to_str_opt(slice_to(name, i))
+            }
+        }
+    }
+}
+
+// Index of the last `.` in `b`, or None.
+fn last_dot(b []u8) -> Option[int] {
+    mut i = b.len() - 1
+    while i >= 0 {
+        if b[i] == B_DOT { return Some(i) }
+        i -= 1
+    }
+    None
+}
+
+fn slice_from(b []u8, start int) -> []u8 {
+    mut out []u8 = []u8.new()
+    mut i = start
+    while i < b.len() { out.push(b[i]); i += 1 }
+    out
+}
+
+fn slice_to(b []u8, end int) -> []u8 {
+    mut out []u8 = []u8.new()
+    mut i = 0
+    while i < end { out.push(b[i]); i += 1 }
+    out
+}
+
+/// The path's normal components, decoded lossily for inspection (root/prefix
+/// excluded). For byte-faithful iteration use `decompose` internally.
+#stable(since = "0.1")
+export fn Path @components() -> []str {
+    ro d = decompose(@bytes, @style)
+    mut out []str = []
+    for c in d.comps {
+        out.push(str.from_bytes_lossy(c))
+    }
+    out
+}
+
+// ─── Building ──
+
+/// Append a single component. If `name` is absolute it replaces `self`
+/// (Rust `Path::join` semantics); otherwise a separator is inserted as needed.
+#stable(since = "0.1")
+export fn Path @join(name str) -> Path => @join_path(Path.styled(name, @style))
+
+/// Append another path (Rust `Path::join`). Absolute `other` replaces `self`.
+#stable(since = "0.1")
+export fn Path @join_path(other Path) -> Path {
+    ro tail = Path { bytes: other.bytes, @style }
+    if tail.is_absolute() { return tail }
+    if tail.bytes.len() == 0 { return Path { @bytes, @style } }
+    mut out []u8 = []u8.new()
+    out.append(@bytes)
+    if out.len() > 0 && !byte_is_sep(out[out.len() - 1], @style) {
+        out.push(canonical_sep(@style))
+    }
+    out.append(tail.bytes)
+    Path { bytes: out, @style }
+}
+
+/// Return a copy with the file extension set to `ext` (no leading dot). Replaces
+/// an existing extension; appends one when absent.
+#stable(since = "0.1")
+export fn Path @with_extension(ext str) -> Path {
+    mut d = decompose(@bytes, @style)
+    if d.comps.len() == 0 { return Path { @bytes, @style } }
+    ro idx = d.comps.len() - 1
+    ro name = d.comps[idx]
+    mut base = match last_dot(name) {
+        Some(0) => name           // dotfile — keep whole name, append
+        Some(i) => slice_to(name, i)
+        None    => name
+    }
+    if ext.byte_len() > 0 {
+        base.push(B_DOT)
+        base.append(ext.to_bytes())
+    }
+    d.comps[idx] = base
+    Path { bytes: recompose(d, @style), @style }
+}
+
+// ─── Normalisation (lexical; does NOT resolve symlinks) ──
+
+/// Lexically normalise: collapse `.`, resolve `..` against prior components
+/// (never above a root), and use the canonical separator. Purely textual — for
+/// symlink-aware resolution use `Fs.realpath` (§3c TOCTOU note).
+#stable(since = "0.1")
+export fn Path @normalize() -> Path {
+    ro d = decompose(@bytes, @style)
+    mut stack [][]u8 = []
+    for part in d.comps {
+        if is_dot(part) {
+            // skip
+        } else if is_dotdot(part) {
+            if stack.len() > 0 && !is_dotdot(stack[stack.len() - 1]) {
+                ro _ = stack.pop()
+            } else if !d.root {
+                stack.push(part)   // relative path may keep leading `..`
+            }
+            // absolute: `..` at/above root is dropped
+        } else {
+            stack.push(part)
+        }
+    }
+    ro out = Decomp { prefix: d.prefix, root: d.root, comps: stack }
+    Path { bytes: recompose(out, @style), @style }
+}

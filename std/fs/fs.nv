@@ -1,0 +1,619 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/fs/fs.nv — File (must-consume), OpenOptions, real_fs handler, convenience
+// (Plan 176 Ф.2, D323).
+//
+// 🏆 `File` is **must-consume (D133)** — the §1a #1 differentiator: a `File` that
+// is never `@close`d is a **compile error** (`D133-not-consumed`), and `@close`
+// returns the `Result` so a close error (ENOSPC/EIO/quota — often visible ONLY on
+// close) is **not ignorable** and cannot be silently dropped. Beats every peer:
+// Go `defer Close()` swallows, Rust `Drop` swallows, Java/Kotlin suppress, Zig
+// `close()->void` has nowhere to put the error. `@close` is the single EXPLICIT
+// discharge; double-close is impossible (consume). File conforms to io.Read /
+// io.Write / io.Seek — its `@read`/`@write` carry the `Fs` effect, which surfaces
+// transitively when a generic io helper is monomorphised over it (Q15, D122).
+//
+// `IoError`/`Metadata`/`DirEntry` are all built HERE, in the pure-Nova wrapper
+// layer, from the `Fs` effect's primitive `int`/`str` codes — never across the
+// effect vtable (which would erase the value `IoError` to `nova_str`). The public
+// byte surface (`read`/`write`/`write_atomic`) inlines its own read/write loop
+// over `File` directly, so it never depends on the effectful-generic io-core
+// forwarding path (`[M-176-io-forward-bounded-generic]`).
+
+module std.fs
+
+import std.io.{IoError, ErrorKind, SeekFrom}
+
+// EINVAL — returned by the real_fs handler when a path is rejected before the FFI
+// (interior NUL), mapping to ErrorKind.InvalidInput in the wrapper.
+const E_INVAL int = 22
+
+// ─── int-code → Result helpers (the effect boundary is int-only) ──
+
+fn wrap_unit(rc int, op str) -> Result[(), IoError] {
+    if rc < 0 { Err(IoError.from_os(0 - rc, op)) } else { Ok(()) }
+}
+fn wrap_int(rc int, op str) -> Result[int, IoError] {
+    if rc < 0 { Err(IoError.from_os(0 - rc, op)) } else { Ok(rc) }
+}
+
+// Build a Metadata from the ambient Fs stat cache (valid immediately after a
+// successful stat/lstat/fstat).
+fn read_meta() Fs -> Metadata =>
+    Metadata.of(Fs.stat_kind(), Fs.stat_size(), Fs.stat_mode(),
+                Fs.stat_mtime_ns(), Fs.stat_atime_ns(), Fs.stat_ctime_ns())
+
+// ─── c_path: validate + NUL-terminate a path for the FFI (§3c(1)) ──
+//
+// libuv takes a NUL-terminated UTF-8/WTF-8 `const char*` and converts to UTF-16
+// on Windows itself, so the whole path→CStr→wide story reduces to: reject an
+// interior NUL (a classic truncation bug → `InvalidInput`) and append a
+// terminator. Returns bytes whose `.as_ptr()` is a valid C string. (This is the
+// []u8-native shape of §3c's `CStr.from_bytes`; the str-buffer `CStr` in
+// std/ffi/cstr is a different primitive — `[M-176-cstr-from-bytes-canonical]`.)
+fn c_path(path []u8) -> Result[[]u8, IoError] {
+    mut i = 0
+    while i < path.len() {
+        if path[i] == (0 as u8) {
+            return Err(IoError.of(ErrorKind.InvalidInput, "path contains NUL"))
+        }
+        i += 1
+    }
+    mut out []u8 = []u8.new()
+    out.append(path)
+    out.push(0 as u8)
+    Ok(out)
+}
+
+// ─── OpenOptions (Q13 — full read/write/append/truncate/create/create_new) ──
+
+/// Builder for opening a `File` with a precise access/creation policy (Rust
+/// `OpenOptions`). A `value` — each setter returns a modified copy.
+#stable(since = "0.1")
+export type OpenOptions value {
+    ro rd bool
+    ro wr bool
+    ro ap bool
+    ro tr bool
+    ro cr bool
+    ro cn bool
+    ro md int
+}
+
+fn oo(rd bool, wr bool, ap bool, tr bool, cr bool, cn bool, md int) -> OpenOptions =>
+    { rd, wr, ap, tr, cr, cn, md }
+
+/// Fresh options: nothing enabled, default create-mode `0o666` (`& ~umask` at the
+/// OS, Q12).
+#stable(since = "0.1")
+export fn OpenOptions.new() -> OpenOptions => oo(false, false, false, false, false, false, 0o666)
+
+/// Open for reading.
+#stable(since = "0.1")
+export fn OpenOptions @read(v bool) -> OpenOptions => oo(v, @wr, @ap, @tr, @cr, @cn, @md)
+/// Open for writing.
+#stable(since = "0.1")
+export fn OpenOptions @write(v bool) -> OpenOptions => oo(@rd, v, @ap, @tr, @cr, @cn, @md)
+/// Append: every write goes to end-of-file (implies write).
+#stable(since = "0.1")
+export fn OpenOptions @append(v bool) -> OpenOptions => oo(@rd, @wr, v, @tr, @cr, @cn, @md)
+/// Truncate to zero length on open (requires write).
+#stable(since = "0.1")
+export fn OpenOptions @truncate(v bool) -> OpenOptions => oo(@rd, @wr, @ap, v, @cr, @cn, @md)
+/// Create the file if it does not exist.
+#stable(since = "0.1")
+export fn OpenOptions @create(v bool) -> OpenOptions => oo(@rd, @wr, @ap, @tr, v, @cn, @md)
+/// Create the file, failing if it already exists (`O_EXCL`, anti-TOCTOU).
+#stable(since = "0.1")
+export fn OpenOptions @create_new(v bool) -> OpenOptions => oo(@rd, @wr, @ap, @tr, @cr, v, @md)
+/// Unix create-mode escape hatch (`0o600`, …); ignored on Windows (Q12).
+#stable(since = "0.1")
+export fn OpenOptions @mode(v int) -> OpenOptions => oo(@rd, @wr, @ap, @tr, @cr, @cn, v)
+
+/// Open `path` under these options. Validates the combination, computes the
+/// portable flag set, and dispatches to the ambient `Fs`.
+///   - `append + truncate` → `InvalidInput` (Q13).
+///   - `create`/`create_new` without any write access → `InvalidInput`.
+#stable(since = "0.1")
+export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
+    if @ap && @tr {
+        return Err(IoError.of(ErrorKind.InvalidInput, "open: append conflicts with truncate"))
+    }
+    if (@cr || @cn) && !(@wr || @ap) {
+        return Err(IoError.of(ErrorKind.InvalidInput, "open: create requires write or append"))
+    }
+    mut flags = 0
+    if @rd { flags = flags | OPEN_READ }
+    if @wr { flags = flags | OPEN_WRITE }
+    if @ap { flags = flags | OPEN_WRITE | OPEN_APPEND }
+    if @tr { flags = flags | OPEN_TRUNC }
+    if @cr { flags = flags | OPEN_CREATE }
+    if @cn { flags = flags | OPEN_CREATE | OPEN_EXCL }
+    ro readable = @rd
+    ro writable = @wr || @ap
+    ro fd = Fs.open(path.as_os_bytes(), flags, @md)
+    if fd < 0 { return Err(IoError.from_os(0 - fd, "open")) }
+    // Append starts the cursor at end-of-file (File tracks its own position and
+    // uses positioned pread/pwrite — portable, avoids the non-portable OS
+    // offset=-1 "current position" mode).
+    mut start = 0
+    if @ap {
+        ro rc = Fs.fstat(fd)
+        if rc >= 0 { start = Fs.stat_size() }
+    }
+    Ok(File._of(fd, readable, writable, start))
+}
+
+// ─── File (must-consume, D133) ──
+
+/// An open file handle. **Must be `@close`d** (D133): a `File` that leaves scope
+/// un-closed is a compile error. Conforms to io.Read / io.Write / io.Seek (its
+/// methods carry the `Fs` effect, surfaced transitively at monomorphisation, Q15).
+#stable(since = "0.1")
+export type File consume {
+    priv fd int
+    priv readable bool
+    priv writable bool
+    priv pos int
+}
+
+// Package-private constructor from a raw fd + initial cursor position.
+fn File._of(fd int, readable bool, writable bool, pos int) -> File => { fd, readable, writable, pos }
+
+/// Open `path` read-only.
+#stable(since = "0.1")
+export fn File.open(path Path) Fs -> Result[File, IoError] =>
+    OpenOptions.new().read(true).open(path)
+
+/// Create (or truncate) `path` for writing.
+#stable(since = "0.1")
+export fn File.create(path Path) Fs -> Result[File, IoError] =>
+    OpenOptions.new().write(true).create(true).truncate(true).open(path)
+
+/// Create `path` for writing, failing if it already exists (`O_EXCL`).
+#stable(since = "0.1")
+export fn File.create_new(path Path) Fs -> Result[File, IoError] =>
+    OpenOptions.new().write(true).create_new(true).open(path)
+
+/// Open `path` for appending (creating it if needed).
+#stable(since = "0.1")
+export fn File.append(path Path) Fs -> Result[File, IoError] =>
+    OpenOptions.new().append(true).create(true).open(path)
+
+/// A fresh `OpenOptions` builder.
+#stable(since = "0.1")
+export fn File.options() -> OpenOptions => OpenOptions.new()
+
+/// io.Read: read into `buf` at the file's tracked position, advancing it. Uses
+/// positioned reads (portable — no reliance on the OS "current offset" mode).
+#stable(since = "0.1")
+export fn File mut @read(buf mut []u8) Fs -> Result[int, IoError] {
+    ro rc = Fs.read_at(@fd, buf, @pos)
+    if rc < 0 { Err(IoError.from_os(0 - rc, "read")) } else { @pos = @pos + rc; Ok(rc) }
+}
+
+/// io.Write: write `data` at the file's tracked position, advancing it.
+#stable(since = "0.1")
+export fn File mut @write(data []u8) Fs -> Result[int, IoError] {
+    ro rc = Fs.write_at(@fd, data, @pos)
+    if rc < 0 { Err(IoError.from_os(0 - rc, "write")) } else { @pos = @pos + rc; Ok(rc) }
+}
+
+/// io.Write: no-op — a `File` is unbuffered on the Nova side (wrap in `BufWriter`
+/// to batch). Durability is `sync_all`/`sync_data`, NOT flush.
+#stable(since = "0.1")
+export fn File mut @flush() Fs -> Result[(), IoError] => Ok(())
+
+/// io.Seek: reposition the file cursor. `Start(neg)`/any negative resolved
+/// position → `InvalidInput`. `End(n)` resolves against the current size.
+/// Returns the new absolute offset.
+#stable(since = "0.1")
+export fn File mut @seek(pos SeekFrom) Fs -> Result[int, IoError] {
+    ro newpos = match pos {
+        SeekFrom.Start(n)   => n
+        SeekFrom.Current(n) => @pos + n
+        SeekFrom.End(n)     => {
+            ro rc = Fs.fstat(@fd)
+            if rc < 0 { return Err(IoError.from_os(0 - rc, "seek")) }
+            Fs.stat_size() + n
+        }
+    }
+    if newpos < 0 { Err(IoError.of(ErrorKind.InvalidInput, "seek")) }
+    else { @pos = newpos; Ok(newpos) }
+}
+
+/// Positioned read at `offset` — does NOT move the file cursor (Rust `read_at`,
+/// POSIX `pread`).
+#stable(since = "0.1")
+export fn File @read_at(buf mut []u8, offset int) Fs -> Result[int, IoError] =>
+    wrap_int(Fs.read_at(@fd, buf, offset), "read_at")
+
+/// Positioned write at `offset` — does NOT move the file cursor (`pwrite`).
+#stable(since = "0.1")
+export fn File @write_at(data []u8, offset int) Fs -> Result[int, IoError] =>
+    wrap_int(Fs.write_at(@fd, data, offset), "write_at")
+
+/// Flush all data AND metadata to disk (`fsync`) — the durability primitive.
+#stable(since = "0.1")
+export fn File @sync_all() Fs -> Result[(), IoError] => wrap_unit(Fs.sync_all(@fd), "sync_all")
+
+/// Flush file data (not necessarily metadata) to disk (`fdatasync`).
+#stable(since = "0.1")
+export fn File @sync_data() Fs -> Result[(), IoError] => wrap_unit(Fs.sync_data(@fd), "sync_data")
+
+/// Metadata for the open file (`fstat`).
+#stable(since = "0.1")
+export fn File @metadata() Fs -> Result[Metadata, IoError] {
+    ro rc = Fs.fstat(@fd)
+    if rc < 0 { Err(IoError.from_os(0 - rc, "fstat")) } else { Ok(read_meta()) }
+}
+
+/// Discharge (D133): close the fd and consume the handle — the **only** explicit
+/// release. The close error is returned (never swallowed on drop). Double-close
+/// is a compile error.
+#stable(since = "0.1")
+export fn File consume @close() Fs -> Result[(), IoError] => wrap_unit(Fs.close(@fd), "close")
+
+// ─── real_fs — the production Fs handler over libuv (nova_rt/fs.c) ──
+//
+// Thin: each op forwards to the matching fs.c hook (which already returns the
+// int/str code the effect declares). Paths are NUL-validated via c_path; a
+// rejected path yields -EINVAL (→ InvalidInput in the wrapper).
+
+/// Concrete `Fs` handler dispatching to libuv `uv_fs_*` (park/wake). Install at
+/// the root of an async program: `with Fs = real_fs() { … }`.
+#stable(since = "0.1")
+export fn real_fs() -> Effect[Fs] {
+    effect Fs {
+        open(path []u8, flags int, mode int) {
+            match c_path(path) { Ok(cp) => unsafe { fs_open(cp.as_ptr(), flags, mode) }, Err(_) => 0 - 22 }
+        }
+        close(fd int) => fs_close(fd)
+        read(fd int, buf mut []u8) {
+            if buf.len() == 0 { return 0 }
+            unsafe { fs_read(fd, buf.as_ptr(), buf.len()) }
+        }
+        write(fd int, data []u8) {
+            if data.len() == 0 { return 0 }
+            unsafe { fs_write(fd, data.as_ptr(), data.len()) }
+        }
+        read_at(fd int, buf mut []u8, offset int) {
+            if buf.len() == 0 { return 0 }
+            unsafe { fs_read_at(fd, buf.as_ptr(), buf.len(), offset) }
+        }
+        write_at(fd int, data []u8, offset int) {
+            if data.len() == 0 { return 0 }
+            unsafe { fs_write_at(fd, data.as_ptr(), data.len(), offset) }
+        }
+        seek(fd int, offset i64, whence int) => fs_seek(fd, offset, whence)
+        sync_all(fd int) => fs_fsync(fd)
+        sync_data(fd int) => fs_fdatasync(fd)
+        stat(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_stat(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        lstat(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_lstat(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        fstat(fd int) => fs_fstat(fd)
+        stat_size() => fs_stat_size()
+        stat_mode() => fs_stat_mode()
+        stat_kind() => fs_stat_kind()
+        stat_mtime_ns() => fs_stat_mtime_ns()
+        stat_atime_ns() => fs_stat_atime_ns()
+        stat_ctime_ns() => fs_stat_ctime_ns()
+        mkdir(path []u8, mode int) {
+            match c_path(path) { Ok(cp) => unsafe { fs_mkdir(cp.as_ptr(), mode) }, Err(_) => 0 - 22 }
+        }
+        remove_file(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_unlink(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        remove_dir(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_rmdir(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        rename(src []u8, dst []u8) {
+            match c_path(src) {
+                Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { fs_rename(cs.as_ptr(), cd.as_ptr()) }, Err(_) => 0 - 22 }
+                Err(_) => 0 - 22
+            }
+        }
+        symlink(target []u8, link []u8) {
+            match c_path(target) {
+                Ok(ct) => match c_path(link) { Ok(cl) => unsafe { fs_symlink(ct.as_ptr(), cl.as_ptr()) }, Err(_) => 0 - 22 }
+                Err(_) => 0 - 22
+            }
+        }
+        chmod(path []u8, mode int) {
+            match c_path(path) { Ok(cp) => unsafe { fs_chmod(cp.as_ptr(), mode) }, Err(_) => 0 - 22 }
+        }
+        copy_file(src []u8, dst []u8) {
+            match c_path(src) {
+                Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { fs_copyfile(cs.as_ptr(), cd.as_ptr()) }, Err(_) => 0 - 22 }
+                Err(_) => 0 - 22
+            }
+        }
+        fsync_dir(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_fsync_dir(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        scandir(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_scandir(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        scandir_next() => fs_scandir_next()
+        scandir_name() => fs_scandir_name()
+        scandir_kind() => fs_scandir_kind()
+        realpath(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_realpath(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        realpath_data() => fs_realpath_data()
+    }
+}
+
+// ─── Convenience free functions (all carry Fs) ──
+
+/// Read the whole file at `path` into a `[]u8` (Go `os.ReadFile`). Opens,
+/// reads to EOF, and always closes; a close error surfaces if the read was OK.
+/// (Read loop inlined over `File` — avoids the effectful-generic forward path.)
+#stable(since = "0.1")
+export fn read(path Path) Fs -> Result[[]u8, IoError] {
+    mut f = match File.open(path) { Ok(x) => x, Err(e) => return Err(e) }
+    mut out []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(8192, 0 as u8)
+    mut rerr Option[IoError] = None
+    loop {
+        match f.read(chunk) {
+            Ok(0)  => break
+            Ok(n)  => { mut i = 0; while i < n { out.push(chunk[i]); i += 1 } }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                rerr = Some(e)
+                break
+            }
+        }
+    }
+    ro closed = f.close()
+    match rerr {
+        Some(e) => Err(e)
+        None    => match closed { Ok(()) => Ok(out), Err(e) => Err(e) }
+    }
+}
+
+/// Read the whole file at `path` and decode as UTF-8. Invalid UTF-8 →
+/// `IoError{InvalidData}` (Q11 — fallible, no silent replacement).
+#stable(since = "0.1")
+export fn read_text(path Path) Fs -> Result[str, IoError] {
+    match read(path) {
+        Err(e) => Err(e)
+        Ok(bytes) => match str.from_bytes(bytes) {
+            Ok(s)  => Ok(s)
+            Err(_) => Err(IoError.of(ErrorKind.InvalidData, "read_to_string"))
+        }
+    }
+}
+
+/// Write `data` to `path`, creating/truncating it (Go `os.WriteFile`). Always
+/// closes; a close error surfaces if the write was OK.
+#stable(since = "0.1")
+export fn write(path Path, data []u8) Fs -> Result[(), IoError] {
+    mut f = match File.create(path) { Ok(x) => x, Err(e) => return Err(e) }
+    mut werr Option[IoError] = None
+    ro total = data.len()
+    mut done = 0
+    while done < total {
+        mut rest []u8 = []u8.new()
+        mut i = done
+        while i < total { rest.push(data[i]); i += 1 }
+        match f.write(rest) {
+            Ok(0)  => { werr = Some(IoError.of(ErrorKind.WriteZero, "write")); done = total }
+            Ok(n)  => { done += n }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                werr = Some(e)
+                done = total
+            }
+        }
+    }
+    ro closed = f.close()
+    match werr {
+        Some(e) => Err(e)
+        None    => match closed { Ok(()) => Ok(()), Err(e) => Err(e) }
+    }
+}
+
+/// Write `s` (UTF-8) to `path`, creating/truncating it.
+#stable(since = "0.1")
+export fn write_text(path Path, s str) Fs -> Result[(), IoError] => write(path, s.to_bytes())
+
+/// Metadata for `path`, following symlinks (`stat`).
+#stable(since = "0.1")
+export fn metadata(path Path) Fs -> Result[Metadata, IoError] {
+    ro rc = Fs.stat(path.as_os_bytes())
+    if rc < 0 { Err(IoError.from_os(0 - rc, "stat")) } else { Ok(read_meta()) }
+}
+
+/// Metadata for `path` WITHOUT following symlinks (`lstat`).
+#stable(since = "0.1")
+export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
+    ro rc = Fs.lstat(path.as_os_bytes())
+    if rc < 0 { Err(IoError.from_os(0 - rc, "lstat")) } else { Ok(read_meta()) }
+}
+
+/// Whether `path` exists — `Ok(true)`/`Ok(false)`, or `Err` for a non-`NotFound`
+/// failure (Rust `try_exists`). **Racy** (§3c TOCTOU): prefer open-and-match-
+/// `NotFound` over `try_exists`-then-open. (`exists`/`forall` are reserved
+/// quantifier keywords, so this cannot be named `exists`.)
+#stable(since = "0.1")
+export fn try_exists(path Path) Fs -> Result[bool, IoError] {
+    ro rc = Fs.stat(path.as_os_bytes())
+    if rc >= 0 { return Ok(true) }
+    ro e = IoError.from_os(0 - rc, "stat")
+    match e.kind { ErrorKind.NotFound => Ok(false), _ => Err(e) }
+}
+
+/// Create a single directory (Unix mode `0o777 & ~umask`).
+#stable(since = "0.1")
+export fn create_dir(path Path) Fs -> Result[(), IoError] =>
+    wrap_unit(Fs.mkdir(path.as_os_bytes(), 0o777), "create_dir")
+
+/// Create `path` and every missing parent (Rust `create_dir_all`). Already-exists
+/// is not an error.
+#stable(since = "0.1")
+export fn create_dir_all(path Path) Fs -> Result[(), IoError] {
+    ro rc = Fs.mkdir(path.as_os_bytes(), 0o777)
+    if rc >= 0 { return Ok(()) }
+    ro e = IoError.from_os(0 - rc, "mkdir")
+    match e.kind {
+        ErrorKind.AlreadyExists => Ok(())
+        ErrorKind.NotFound => match path.parent() {
+            None      => Err(e)
+            Some(par) => match create_dir_all(par) {
+                Err(e2) => Err(e2)
+                Ok(())  => {
+                    ro rc2 = Fs.mkdir(path.as_os_bytes(), 0o777)
+                    if rc2 >= 0 { Ok(()) }
+                    else {
+                        ro e3 = IoError.from_os(0 - rc2, "mkdir")
+                        match e3.kind { ErrorKind.AlreadyExists => Ok(()), _ => Err(e3) }
+                    }
+                }
+            }
+        }
+        _ => Err(e)
+    }
+}
+
+/// Remove a file (`unlink`).
+#stable(since = "0.1")
+export fn remove_file(path Path) Fs -> Result[(), IoError] =>
+    wrap_unit(Fs.remove_file(path.as_os_bytes()), "remove_file")
+
+/// Remove an empty directory (`rmdir`).
+#stable(since = "0.1")
+export fn remove_dir(path Path) Fs -> Result[(), IoError] =>
+    wrap_unit(Fs.remove_dir(path.as_os_bytes()), "remove_dir")
+
+/// Recursively remove a directory and all of its contents (Rust
+/// `remove_dir_all`). (Symlink-hardened `openat`/`unlinkat` traversal is a
+/// followup — `[M-176-dir-scoped-ops]`.)
+#stable(since = "0.1")
+export fn remove_dir_all(path Path) Fs -> Result[(), IoError] {
+    ro entries = match read_dir(path) { Ok(es) => es, Err(e) => return Err(e) }
+    for e in entries {
+        ro child = path.join_path(e.file_name())
+        if e.is_dir() {
+            match remove_dir_all(child) { Err(er) => return Err(er), Ok(()) => {} }
+        } else {
+            match remove_file(child) { Err(er) => return Err(er), Ok(()) => {} }
+        }
+    }
+    remove_dir(path)
+}
+
+/// Rename/move `src` to `dst` (atomic where the platform supports it). `EXDEV`
+/// (cross-device) surfaces as `CrossesDevices`.
+#stable(since = "0.1")
+export fn rename(src Path, dst Path) Fs -> Result[(), IoError] =>
+    wrap_unit(Fs.rename(src.as_os_bytes(), dst.as_os_bytes()), "rename")
+
+/// Copy the file `src` to `dst`, returning the byte count (uv_fs_copyfile —
+/// gets copy_file_range/CopyFileEx acceleration for free).
+#stable(since = "0.1")
+export fn copy_file(src Path, dst Path) Fs -> Result[int, IoError] =>
+    wrap_int(Fs.copy_file(src.as_os_bytes(), dst.as_os_bytes()), "copy")
+
+/// List the entries of a directory (`.`/`..` excluded).
+#stable(since = "0.1")
+export fn read_dir(path Path) Fs -> Result[[]DirEntry, IoError] {
+    ro rc = Fs.scandir(path.as_os_bytes())
+    if rc < 0 { return Err(IoError.from_os(0 - rc, "read_dir")) }
+    mut out []DirEntry = []
+    loop {
+        ro more = Fs.scandir_next()
+        if more == 0 { break }
+        out.push(DirEntry.of(Fs.scandir_name().to_bytes(), Fs.scandir_kind()))
+    }
+    Ok(out)
+}
+
+/// Canonicalise `path` to an absolute, symlink-resolved path (`realpath`).
+#stable(since = "0.1")
+export fn canonicalize(path Path) Fs -> Result[Path, IoError] {
+    ro rc = Fs.realpath(path.as_os_bytes())
+    if rc < 0 { Err(IoError.from_os(0 - rc, "realpath")) }
+    else { Ok(Path.from_bytes(Fs.realpath_data().to_bytes())) }
+}
+
+/// Create a symbolic link at `link` pointing to `target`.
+#stable(since = "0.1")
+export fn symlink(target Path, link Path) Fs -> Result[(), IoError] =>
+    wrap_unit(Fs.symlink(target.as_os_bytes(), link.as_os_bytes()), "symlink")
+
+/// Apply portable permissions to `path` (Unix mode via chmod; on Windows only
+/// the readonly bit is honoured).
+#stable(since = "0.1")
+export fn set_permissions(path Path, perms Permissions) Fs -> Result[(), IoError] =>
+    wrap_unit(Fs.chmod(path.as_os_bytes(), perms.mode()), "chmod")
+
+// ─── write_atomic (durable, 5-step §3c) ──
+
+// Sibling temp path in the SAME directory as `path` (rename must stay
+// intra-directory to be atomic). Name derived from the target's file name.
+fn temp_sibling(path Path) -> Path {
+    match path.parent() {
+        Some(par) => par.join(temp_name(path))
+        None      => Path.styled(temp_name(path), path.path_style())
+    }
+}
+
+fn temp_name(path Path) -> str {
+    ro base = match path.file_name() { Some(n) => n, None => "out" }
+    ".${base}.novatmp"
+}
+
+/// Atomically and **durably** replace `path` with `data` (§3c 5-step recipe):
+/// (1) create a temp file in the SAME directory (`O_EXCL`); (2) write all;
+/// (3) `fsync` the file; (4) atomic `rename` over `path`; (5) best-effort `fsync`
+/// of the parent directory. Unlike Swift `.atomic` / Zig `AtomicFile` (tmp+rename
+/// WITHOUT fsync), this survives power loss, not just concurrent readers.
+/// (Unique temp names — `[M-176-create-temp]`; the sibling name collides only
+/// under concurrent atomic writes of the same target.)
+#stable(since = "0.1")
+export fn write_atomic(path Path, data []u8) Fs -> Result[(), IoError] {
+    ro tmp = temp_sibling(path)
+    mut f = match OpenOptions.new().write(true).create_new(true).open(tmp) {
+        Ok(x)  => x
+        Err(e) => return Err(e)
+    }
+    // (2) write all + (3) fsync — bail (removing temp) on any error.
+    mut err Option[IoError] = None
+    ro total = data.len()
+    mut done = 0
+    while done < total {
+        mut rest []u8 = []u8.new()
+        mut i = done
+        while i < total { rest.push(data[i]); i += 1 }
+        match f.write(rest) {
+            Ok(0)  => { err = Some(IoError.of(ErrorKind.WriteZero, "write_atomic")); done = total }
+            Ok(n)  => { done += n }
+            Err(e) => { if e.is_interrupted() { continue }; err = Some(e); done = total }
+        }
+    }
+    match err {
+        Some(_) => {}
+        None    => match f.sync_all() { Err(e) => { err = Some(e) }, Ok(()) => {} }
+    }
+    ro closed = f.close()
+    match err {
+        Some(e) => { ro _ = remove_file(tmp); return Err(e) }
+        None    => match closed { Err(e) => { ro _ = remove_file(tmp); return Err(e) }, Ok(()) => {} }
+    }
+    // (4) atomic rename.
+    match rename(tmp, path) {
+        Err(e) => { ro _ = remove_file(tmp); return Err(e) }
+        Ok(()) => {}
+    }
+    // (5) best-effort parent-dir fsync (no-op on Windows).
+    match path.parent() {
+        Some(par) => { ro _ = Fs.fsync_dir(par.as_os_bytes()) }
+        None      => {}
+    }
+    Ok(())
+}

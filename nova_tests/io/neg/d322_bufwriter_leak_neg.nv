@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR D133
+// BufWriter is must-consume (D133, Q10): never calling @close is a compile error
+// — the flush error cannot be silently dropped (the §1a #1 differentiator).
+
+module neg.d322_bufwriter_leak_neg
+
+import std.io.{BytesWriter, BufWriter}
+
+test "BufWriter never closed -> D133-not-consumed" {
+    mut sink = BytesWriter.new()
+    consume bw = BufWriter[BytesWriter].new(sink)
+    mut d []u8 = []u8.new(); d.push(0x41 as u8)
+    ro _ = bw.write(d)
+    // bw never closed
+}

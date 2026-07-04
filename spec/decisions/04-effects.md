@@ -6260,3 +6260,159 @@ user-visible эффект, высокий churn) — только задокум
 ### Эталон
 
 `std/net` — Result-everywhere, 0 `Fail[`. Под-паттерны: per-element `DirIter.next -> Result[Item, E]`; absence → `Option`; инфаллибл-аксессор → значение.
+
+## D322 — io-core: `io.Read`/`io.Write`/`io.Seek`, `IoError`, `Io` effect (Plan 176 Ф.1, 2026-07-04)
+
+**Статус:** IMPLEMENTED (Ф.1 — io-core; fs=D323/os=D324 — последующие фазы). Модуль `std/io`.
+
+### Протоколы (byte I/O)
+
+```nova
+type io.Read  protocol { mut @read(buf mut []u8) -> Result[int, IoError] }
+type io.Write protocol { mut @write(data []u8) -> Result[int, IoError]; mut @flush() -> Result[(), IoError] }
+type io.Seek  protocol { mut @seek(pos SeekFrom) -> Result[int, IoError] }
+type SeekFrom | Start(int) | End(int) | Current(int)   // всё int (i64); Start(<0) → InvalidInput
+```
+
+- **Эффект-агностичны (Q15, D122-amended):** конформер несёт СВОЙ плумбинг-эффект
+  (`File`→`Fs`, `TcpStream`→`TcpNet`, консоль→`Io`), всплывающий транзитивно при
+  мономорфизации. Generic-вызовы через io-bound — **mono-dispatch only** (vtable для
+  effectful-bounds запрещён).
+- **Sibling prelude text-sink `Write`** (D374): байтовый `io.Write` ссылается квалифицированно
+  (`io.Write`); мост text→bytes — явный `write_str`.
+- **EOF/partial/EINTR-контракт (Q9):** `read` → `Ok(0)` = EOF **только при непустом буфере**;
+  short-read — норма; partial-write легален (`write_all` loop); `Ok(0)` mid-write → `WriteZero`;
+  `Interrupted`(EINTR) — retry в std-хелперах. НЕ Go `(n>0, EOF)`.
+
+### Хелперы (free generic fns, mono-dispatch)
+
+`read_exact`(→UnexpectedEof) / `read_to_end` / `read_to_string`(→InvalidData на невалидном UTF-8, Q11) /
+`write_all`(→WriteZero) / `write_str` / `copy` / `lines`(Q7: strip trailing `\r`, финал без `\n` — yield,
+embedded lone `\r` НЕ сепаратор — делегат `str.@lines`) / `byte_lines`(raw `\n`-split).
+In-memory конформеры: `BytesReader` (Read+Seek, cursor), `BytesWriter` (Write, growable sink).
+
+### `IoError` (структурный, Rust `ErrorKind`-precedent)
+
+```nova
+type IoError { ro kind ErrorKind, ro raw_os int, ro op str }   // Ф.2 добавит path Option[Path] + boxed source
+type ErrorKind | NotFound | PermissionDenied | AlreadyExists | ... | Unsupported | Other(int)   // OPEN → wildcard-arm обязателен
+```
+
+- **Heap record** (НЕ `value`): как Rust `io::Error` (внутренне boxed) — pointer-sized, дёшево течёт через
+  `Result[T, IoError]` в generic-хелперах (by-value record ловит `Result[T, ValueRecord]`-mono-gap).
+- `raw_os` **authoritative**; `kind = kind_from_errno(raw_os)` — best-effort projection (общие POSIX errno;
+  редкие → `Other(raw)`, §3b). **Per-op error sets (Zig) — considered/REJECTED (Q14):** один открытый `ErrorKind`
+  + `raw_os` + (Ф.2) `source`-chain композируется, а не дробит обработку.
+- `Utf8Error{byte_offset}` + `str.from_bytes(bytes)->Result[str, Utf8Error]` — Ф.0.5 (D325-канон; ретайр
+  интринзика `str.try_from([]u8)`).
+
+### `BufReader` / `BufWriter` (Q10, D133)
+
+- **`BufWriter[W] consume`** — **must-consume (D133)**: `@close()` (flush + Result); незакрытый = compile-error
+  `D133-not-consumed`; double-close = use-after-consume. Нет silent flush-on-drop. Бьёт Go `bufio.Flush` /
+  Rust `Drop`-swallow / Zig ручной flush (§1a #1). `@write`/`@flush`/`@write_str` — io.Write.
+- **`BufReader[R]`** — буферизует чтения chunk'ами; сам io.Read.
+
+### `Io` effect (консоль, мокабельна, §3c)
+
+```nova
+type Io effect {
+    read_in(buf mut []u8) -> Result[int, IoError]    // buffer-fill (Result[[]u8] Ok-payload эрейзится vtable'ом)
+    write_out(data []u8) -> Result[int, IoError]
+    write_err(data []u8) -> Result[int, IoError]
+}
+```
+
+- Хендлы `stdin()`/`stdout()`/`stderr()` конформят io.Read/io.Write поверх `Io`.
+- **`real_io()`** — fd-хуки `io_read_fd`/`io_write_fd` (`nova_rt/io_console.h`, C stdio FILE*; return `-errno` на
+  ошибке → `IoError.from_os`).
+- **`mock_io(cap IoCapture)`** — capture stdout/stderr + scripted stdin; детерм. консоль-тесты без терминала
+  (мокабельность, §1a; носитель §8.4).
+
+### Реализационные ноты (обход codegen-ограничений; НЕ упрощения семантики)
+
+1. **Heap `IoError`** (см. выше) — by-value record не мономорфизируется в generic-`Result`.
+2. **Хелперы инлайнят циклы** (не форвардят один bounded-generic в другой generic-fn — чекер не проносит bound
+   через такой форвард).
+3. **`BufReader`/`BufWriter` строятся с ЯВНЫМИ type-args** (`BufWriter[BytesWriter].new(...)`): inference-only
+   конструкция generic-wrapper'а не материализует мономорфизированные методы (иначе — NULL-stub → крах).
+   Followup `[M-176-generic-wrapper-mono-inference]`.
+4. **`SeekFrom.start/end/current`** — статические конструкторы (cross-module литерал payload-варианта
+   `SeekFrom.Start(n)` ловит checker-gap на возвратном типе конструктора; pattern-match не затронут).
+   Followup `[M-176-xmod-payload-variant-ctor]`.
+
+## D323 — fs: byte-backed `Path`, `Fs` effect, `File` must-consume, `Metadata` (Plan 176 Ф.2, 2026-07-04)
+
+**Статус:** IMPLEMENTED (Ф.2). Модуль `std/fs`. Строится над io-core (D322): `File impl io.Read/io.Write/io.Seek`.
+
+### byte-backed `Path` (Q1)
+
+```nova
+type Path value { ro bytes []u8, ro style PathStyle }   // НЕ str — несёт raw OS-байты
+type PathStyle | Posix | Windows
+```
+
+- **`value`-record над `[]u8`** (Rust `OsStr`/`Path`, Swift-system `FilePath`, Zig `[]const u8`): non-UTF-8 Unix /
+  WTF-8 Windows имена round-trip'ят лосслесс. `from_str`/`from_bytes` (host-style), `posix`/`windows` (pinned
+  style — один тест-прогон проверяет ОБЕ платформы), `styled`.
+- **Lexical (pure, без effect):** `is_absolute` (Posix `/`; Windows drive `C:\` + UNC `\srv\share`; `C:foo`/`\foo`
+  НЕ absolute), `parent`/`file_name`/`extension`/`stem`/`components`/`normalize`(collapse `.`/`..`, canonical
+  separator; НЕ резолвит symlinks)/`join`/`with_extension`. `to_str`→`Option[str]` (lossless), `display`→`str`
+  (lossy U+FFFD, print-only), `as_os_bytes`→`[]u8`, `equals` (byte+style exact).
+- **Windows separator:** и `/` и `\` разделяют; canonical output — `\`. Drive/UNC-префиксы распознаются.
+
+### `Fs` effect — ТОНКИЙ int-primitive слой (§3/§0)
+
+Операции возвращают **сырые `int`/`i64`/`str`-коды** (не `Result`/`Metadata`/`DirEntry`): effect-vtable **стирает**
+rich `Result[T, IoError]`-возврат в canonical `nova_int`/`nova_str` пару (теряя value-`IoError` и Ok-record), поэтому
+всё построение `IoError`/`Metadata`/`DirEntry` — в pure-Nova обёртках ВНЕ effect-границы (там закрытый value-record
+keystone работает). Коды зеркалят fs.c-хуки 1:1: `>= 0` успех (fd/байты/0), НЕГАТИВНЫЙ POSIX errno на ошибке.
+`stat`/`lstat`/`fstat` → 0/-errno + кэш; `stat_size`/`stat_kind`/`stat_mtime_ns`/... читают кэш (cooperative-safe).
+
+**Триада:** `real_fs()` (libuv `uv_fs_open/read/write/close/stat/lstat/scandir/mkdir/unlink/rename/realpath/symlink/
+chmod/fsync/copyfile`, park/wake ТОЧНО как net.c; best-effort-cancel Q4: `uv_cancel` на queued, in-flight
+дорабатывает) + `mock_fs(MemFs)` (in-memory byte-Path-дерево, ENOSPC-инъекция для close-error/torn-write тестов —
+детерминизм без диска, §1a-differentiator).
+
+### `File` must-consume (D133) — §1a #1 differentiator
+
+```nova
+type File consume { priv fd int, priv readable bool, priv writable bool, priv pos int }
+fn File consume @close() Fs -> Result[(), IoError]   // ЕДИНСТВЕННАЯ явная разрядка; незакрытый = compile-error
+```
+
+- Незакрытый `File` = `D133-not-consumed`; double-close/use-after = use-after-consume. Ошибка close (ENOSPC/EIO/
+  quota — часто видна ТОЛЬКО на close) НЕ-игнорируема. Бьёт Go `defer Close()`/Rust `Drop`/Java suppressed/Zig
+  `close()->void`. **NB:** enforcement работает для consume-**параметров** + прямых `consume x = Ctor()`; tracking
+  через `Result`/match-extract (`match File.open(p){Ok(f)=>…}`) — checker-gap `[M-176-consume-through-result-match]`
+  (общий с net `TcpStream`).
+- `File` несёт СВОЙ `pos` и использует **positioned** read_at/write_at (portable — без непортируемого OS-`offset=-1`
+  «current position»). `OpenOptions` (read/write/append/truncate/create/create_new, Q13; `append+truncate` →
+  `InvalidInput`; append стартует cursor на EOF). `read_at`/`write_at`/`seek`/`sync_all`(fsync)/`sync_data`
+  (fdatasync)/`metadata`(fstat).
+
+### `Metadata` / `DirEntry` / `Permissions`
+
+`Metadata` (heap): `len`/`file_type`/`is_file`/`is_dir`/`is_symlink`/`permissions`/`modified`/`accessed`/`created`
+(каждый timestamp → `Option[Timestamp]`, Plan 175; birth-time отсутствует → `None`). `DirEntry`: `file_name`(Path)/
+`file_type`/`path(dir)`. `Permissions value { read_only bool, mode int }` — портабельный readonly + unix-mode (Q8/Q12).
+
+### Durability + FFI (§3c)
+
+- **`write_atomic` (5-шаг durable):** (1) temp в ТОЙ ЖЕ директории `O_EXCL` → (2) write_all → (3) fsync файла →
+  (4) atomic rename → (5) best-effort fsync родительской директории (no-op на Windows). Бьёт Swift `.atomic`/Zig
+  `AtomicFile` (tmp+rename БЕЗ fsync — не durable). Torn-write через mock-ENOSPC → rollback + удаление temp.
+- **FFI-граница:** путь → NUL-terminated `*u8` (`c_path` reject interior-NUL → `InvalidInput`); libuv сам конвертит
+  UTF-8/WTF-8 → UTF-16 на Windows → **CWStr не нужен на libuv-бэкенде** (`[M-176-cwstr-direct-winapi]`). Данные →
+  `(*u8, int)`. Non-blocking `fs_seek` (lseek) + platform-predicate — в `io_console.h` (без libuv).
+
+### Реализационные ноты (обход codegen-ограничений; НЕ упрощения семантики)
+
+1. **`Fs` effect — int-primitive** (не rich `Result`): effect-vtable стирает value-`IoError`-error в `nova_str`;
+   обёртки строят `IoError`/`Metadata`/`DirEntry` вне effect-границы.
+2. **value-record литералы** (`Path`/`OpenOptions`/`Permissions`/`FileType`): typed-форма (`Path { … }`) в
+   блок-позиции; anonymous (`{ … }`) в `=>`-теле с объявленным возвратным типом (checker: typed-prefix redundant в `=>`).
+3. **std.fs free-fn имена** не коллидят с std.io generic-хелперами (coarse-by-name резолв): `read_text`/`write_text`/
+   `copy_file` (не `read_to_string`/`write_str`/`copy` — те резолвятся в `std.io.*[Path]` mono).
+4. **`IoError.path`/`source`** (§3b full-shape) — отложены: io↔path module-cycle + value-`Option[Path]`-mono
+   blast-radius на io-core baseline; `kind`(NotFound/…) сохранён (все тесты/§8.3 на нём). Followup.

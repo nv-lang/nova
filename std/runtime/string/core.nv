@@ -98,11 +98,14 @@ export fn str @as_ptr() -> *u8 => @ptr
 // Module-private: is the byte at `b` a UTF-8 continuation byte (0b10xxxxxx)?
 fn is_cont(b int) -> bool => (b & 0xC0) == 0x80
 
-// Module-private: validate that `bytes[0..n]` is well-formed UTF-8. Mirrors the
-// C `_nova_validate_utf8` used by the retired nova_str_from_bytes_lossy fast
-// path — overlong / surrogate / out-of-range sequences are rejected. Used by
-// @from_bytes_lossy to pick the copy-only fast path vs the FFFD-replace path.
-fn validate_utf8(bytes ro []u8, n int) -> bool {
+// Module-private: return the byte offset of the FIRST ill-formed UTF-8 sequence
+// in `bytes[0..n]`, or `-1` if the whole range is well-formed UTF-8. The offset
+// points at the lead byte of the bad sequence (or, for an incomplete trailing
+// sequence, at its lead byte). Overlong / surrogate / out-of-range sequences are
+// rejected (mirrors the retired C `_nova_validate_utf8`). Powers both the bool
+// `validate_utf8` predicate (lossy fast-path pick) and the typed
+// `str.from_bytes` decode (`Utf8Error{byte_offset}`).
+fn first_invalid_utf8(bytes ro []u8, n int) -> int {
     mut i = 0
     while i < n {
         ro c = bytes[i] as int
@@ -111,26 +114,31 @@ fn validate_utf8(bytes ro []u8, n int) -> bool {
         else if (c & 0xE0) == 0xC0 && c >= 0xC2 { seq = 2 }
         else if (c & 0xF0) == 0xE0 { seq = 3 }
         else if (c & 0xF8) == 0xF0 && c <= 0xF4 { seq = 4 }
-        else { return false }
+        else { return i }
         // Continuation bytes present + well-formed.
         mut k = 1
         while k < seq {
-            if i + k >= n || !is_cont(bytes[i + k] as int) { return false }
+            if i + k >= n || !is_cont(bytes[i + k] as int) { return i }
             k += 1
         }
         // Overlong / surrogate / range guards (mirror C lossy validator).
         if seq == 3 {
-            if c == 0xE0 && (bytes[i+1] as int) < 0xA0 { return false }
-            if c == 0xED && (bytes[i+1] as int) >= 0xA0 { return false }
+            if c == 0xE0 && (bytes[i+1] as int) < 0xA0 { return i }
+            if c == 0xED && (bytes[i+1] as int) >= 0xA0 { return i }
         }
         if seq == 4 {
-            if c == 0xF0 && (bytes[i+1] as int) < 0x90 { return false }
-            if c == 0xF4 && (bytes[i+1] as int) >= 0x90 { return false }
+            if c == 0xF0 && (bytes[i+1] as int) < 0x90 { return i }
+            if c == 0xF4 && (bytes[i+1] as int) >= 0x90 { return i }
         }
         i += seq
     }
-    true
+    -1
 }
+
+// Module-private: is `bytes[0..n]` well-formed UTF-8? Thin predicate over
+// `first_invalid_utf8` (single source of truth for the validation rules). Used
+// by @from_bytes_lossy to pick the copy-only fast path vs the FFFD-replace path.
+fn validate_utf8(bytes ro []u8, n int) -> bool => first_invalid_utf8(bytes, n) < 0
 
 // Module-private str static method: build a freshly-allocated str by copying
 // `n` bytes from the raw source pointer `src` (`*u8`), NUL-terminating at
@@ -246,6 +254,41 @@ export fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str {
     }
     // No room for the NUL terminator — copy into a fresh owned buffer.
     str.alloc_copy(buf, n)
+}
+
+// Plan 176 Ф.0.5 (D322, D325): fallible byte→str decode.
+//
+/// UTF-8 decode error for `str.from_bytes`: the input `[]u8` was not well-formed
+/// UTF-8. `byte_offset` is the index of the first byte where decoding failed —
+/// the lead byte of the ill-formed sequence, or the lead byte of an incomplete
+/// trailing sequence. Sibling of `encoding.utf16.Utf16Error` (D255); homed here
+/// in `runtime.string` next to the `from_bytes_*` family and `InvalidCodepoint`,
+/// so the `#no_prelude` core needs no cross-module `encoding` import (mirrors the
+/// `InvalidCodepoint` precedent — str-conversion errors live with `str`).
+export type Utf8Error value {
+    ro byte_offset int
+}
+
+/// Checked `[]u8` → `str` (fallible UTF-8 decode). Returns `Ok(str)` when the
+/// bytes are well-formed UTF-8, else `Err(Utf8Error{byte_offset})` locating the
+/// first ill-formed byte — the `str` is NOT constructed on the error path
+/// (R-UTF8 invariant: every `str` is valid UTF-8).
+///
+/// Canonical D325 form: the ordinary name `from_bytes` returns `Result` and
+/// pairs, per D77 symmetry, with the infallible `from_bytes_unchecked` and the
+/// always-succeeding `from_bytes_lossy`. Backs `io.read_to_string`. Precedents:
+/// Rust `str::from_utf8`, Go `utf8.Valid` + cast, Zig `utf8ValidateSlice`.
+///
+/// (Plan 176 Ф.0.5 — reformulation of the retired `str.try_from([]u8)` intrinsic:
+/// canonical name + typed byte-offset error; the old string-only `try_from`
+/// byte-array overload is removed — no dual API.)
+export fn str.from_bytes(ro bytes []u8) -> Result[str, Utf8Error] {
+    ro n = bytes.len()
+    ro off = first_invalid_utf8(bytes, n)
+    if off < 0 {
+        return Ok(str.alloc_copy(bytes.as_ptr(), n))
+    }
+    Err(Utf8Error { byte_offset: off })
 }
 
 // Codepoints как []char (allocating). D178: renamed from @chars().

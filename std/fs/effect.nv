@@ -1,0 +1,228 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/fs/effect.nv — the Fs plumbing effect + metadata types (Plan 176 Ф.2, D323).
+//
+// `Fs` is a **plumbing effect** (net/io precedent): user code never calls its
+// operations directly — it uses `File`/`OpenOptions` methods and the free
+// convenience functions (fs.nv), which dispatch to the ambient `Fs` handler.
+// Production installs `real_fs()` (libuv `uv_fs_*`, park/wake); tests install
+// `mock_fs()` (in-memory tree) — the same code under test, no disk, no DI. This
+// mockability is a §1a differentiator (Go needs afero, Zig has nothing).
+//
+// Q4: every blocking op is libuv-threadpool-backed and parks the calling fiber;
+// cancel is honest best-effort (queued → uv_cancel; an in-flight syscall runs to
+// completion, then the result is discarded — a mid-syscall interrupt would be a
+// lie, exactly as Go/tokio/Java).
+//
+// D325: every fallible op returns `Result[T, IoError]` (the io-core `value`
+// `IoError`, reused whole — Q3 one error for io+fs+os).
+
+module std.fs
+
+import std.io.{IoError}
+import std.time.duration.{Timestamp}
+
+// ─── Fs effect ──
+//
+// **Thin primitive layer (§3/§0).** Operations return raw `int`/`i64`/`str` codes,
+// NOT `Result`/`Metadata`/`DirEntry`: an effect vtable erases a rich `Result[T,
+// IoError]` return to the canonical `nova_int`/`nova_str` pair (losing the value
+// `IoError` and any Ok record), so all `IoError`/`Metadata`/`DirEntry`
+// construction happens in the pure-Nova wrapper layer (fs.nv) OUTSIDE the effect
+// boundary — where the closed value-record keystone handles it. This also matches
+// the "logic in .nv over a thin C hook" principle: the ops mirror the fs.c hook
+// shapes 1:1 (fd/byte-count/0 on success, NEGATIVE POSIX errno on failure).
+//
+// A path is a `[]u8` (NUL-wrapped to a CStr by the handler, §3c); a file is an OS
+// `int` fd. `read`/`read_at` fill a caller buffer and return the count. `stat`
+// caches its result in the handler; `stat_size`/`stat_kind`/... read it back
+// immediately after (cooperative-safe — no blocking op interleaves, the C TLS
+// contract).
+#stable(since = "0.1")
+export type Fs effect {
+    // File lifecycle + positioned/sequential I/O (n / fd / 0, or -errno).
+    open(path []u8, flags int, mode int) -> int
+    close(fd int) -> int
+    read(fd int, buf mut []u8) -> int
+    write(fd int, data []u8) -> int
+    read_at(fd int, buf mut []u8, offset int) -> int
+    write_at(fd int, data []u8, offset int) -> int
+    seek(fd int, offset i64, whence int) -> i64
+    sync_all(fd int) -> int
+    sync_data(fd int) -> int
+    // Metadata: stat/lstat/fstat return 0 or -errno and cache the result; the
+    // stat_* accessors read the cached fields.
+    stat(path []u8) -> int
+    lstat(path []u8) -> int
+    fstat(fd int) -> int
+    stat_size() -> int
+    stat_mode() -> int
+    stat_kind() -> int
+    stat_mtime_ns() -> i64
+    stat_atime_ns() -> i64
+    stat_ctime_ns() -> i64
+    // Path-addressed directory / link ops (0 or -errno; copy → byte count).
+    mkdir(path []u8, mode int) -> int
+    remove_file(path []u8) -> int
+    remove_dir(path []u8) -> int
+    rename(src []u8, dst []u8) -> int
+    symlink(target []u8, link []u8) -> int
+    chmod(path []u8, mode int) -> int
+    copy_file(src []u8, dst []u8) -> int
+    fsync_dir(path []u8) -> int
+    // Directory iteration: scandir returns the count (or -errno); then loop
+    // scandir_next (1 = entry cached, 0 = done) reading scandir_name/kind.
+    scandir(path []u8) -> int
+    scandir_next() -> int
+    scandir_name() -> str
+    scandir_kind() -> int
+    // realpath: 0 or -errno, canonical bytes via realpath_data.
+    realpath(path []u8) -> int
+    realpath_data() -> str
+}
+
+// ─── FileType ──
+
+/// The kind of a filesystem entry (from `stat`/`lstat`). A `value` wrapper over
+/// the raw kind code rather than an enum — an enum `File` variant would collide
+/// with the `File` type in this module. `symlink` is only observed via
+/// `lstat`/`symlink_metadata` (plain `stat` follows links).
+#stable(since = "0.1")
+export type FileType value {
+    ro k int
+}
+
+// Map the raw kind code (fs.c KIND_*) to a FileType.
+fn file_type_of(kind int) -> FileType => { k: kind }
+
+/// True for a regular file.
+#stable(since = "0.1")
+export fn FileType @is_file() -> bool => @k == KIND_FILE
+/// True for a directory.
+#stable(since = "0.1")
+export fn FileType @is_dir() -> bool => @k == KIND_DIR
+/// True for a symbolic link.
+#stable(since = "0.1")
+export fn FileType @is_symlink() -> bool => @k == KIND_SYMLINK
+
+// ─── Permissions (Q8/Q12) ──
+
+/// Portable file permissions. Everywhere: a `readonly` bit. On Unix additionally
+/// the raw `mode` bits (`@mode()`); on Windows only `readonly` is meaningful.
+#stable(since = "0.1")
+export type Permissions value {
+    ro read_only bool
+    ro mode int
+}
+
+/// Build permissions from a Unix mode (`0o644`, …). Read-only is derived from
+/// the absence of any owner-write bit. (`readonly` is a reserved keyword — the
+/// field is `read_only`.)
+#stable(since = "0.1")
+export fn Permissions.from_mode(mode int) -> Permissions =>
+    { read_only: (mode & 0o200) == 0, mode }
+
+/// True when the file cannot be written without a permission change.
+#stable(since = "0.1")
+export fn Permissions @is_readonly() -> bool => @read_only
+
+/// The raw Unix mode bits (meaningful on POSIX; on Windows only the write bit is
+/// synthesised from the read-only flag).
+#stable(since = "0.1")
+export fn Permissions @mode() -> int => @mode
+
+/// A copy with the read-only flag set/cleared (toggles the owner-write bits).
+#stable(since = "0.1")
+export fn Permissions @with_readonly(ro_flag bool) -> Permissions {
+    ro newmode = if ro_flag { @mode & 0o577 } else { @mode | 0o200 }
+    Permissions { read_only: ro_flag, mode: newmode }
+}
+
+// ─── Metadata ──
+
+/// File metadata (`stat`). A heap record so it flows through the `Fs` vtable as a
+/// pointer. Timestamps are `Option[Timestamp]` (Plan 175) — `None` on platforms
+/// that do not record a given stamp (e.g. no birth time).
+#stable(since = "0.1")
+export type Metadata {
+    ro kind FileType
+    ro size int
+    ro mode int
+    ro mtime_ns i64
+    ro atime_ns i64
+    ro ctime_ns i64
+}
+
+/// Build metadata from raw stat fields (fs.c accessors / mock node).
+#stable(since = "0.1")
+export fn Metadata.of(kind int, size int, mode int, mtime_ns i64, atime_ns i64, ctime_ns i64) -> Metadata =>
+    { kind: file_type_of(kind), size, mode, mtime_ns, atime_ns, ctime_ns }
+
+/// The file kind.
+#stable(since = "0.1")
+export fn Metadata @file_type() -> FileType => @kind
+/// True for a regular file.
+#stable(since = "0.1")
+export fn Metadata @is_file() -> bool => @kind.is_file()
+/// True for a directory.
+#stable(since = "0.1")
+export fn Metadata @is_dir() -> bool => @kind.is_dir()
+/// True for a symbolic link (only via `symlink_metadata`).
+#stable(since = "0.1")
+export fn Metadata @is_symlink() -> bool => @kind.is_symlink()
+/// File size in bytes.
+#stable(since = "0.1")
+export fn Metadata @len() -> int => @size
+/// Portable permissions view.
+#stable(since = "0.1")
+export fn Metadata @permissions() -> Permissions => Permissions.from_mode(@mode)
+
+/// Last-modification time, or `None` when unavailable.
+#stable(since = "0.1")
+export fn Metadata @modified() -> Option[Timestamp] => Some(Timestamp.from_unix_nanos(@mtime_ns))
+/// Last-access time, or `None` when unavailable.
+#stable(since = "0.1")
+export fn Metadata @accessed() -> Option[Timestamp] => Some(Timestamp.from_unix_nanos(@atime_ns))
+/// Creation/birth time, or `None` when the platform does not record it.
+#stable(since = "0.1")
+export fn Metadata @created() -> Option[Timestamp] {
+    if @ctime_ns > (0 as i64) { Some(Timestamp.from_unix_nanos(@ctime_ns)) } else { None }
+}
+
+// ─── DirEntry ──
+
+/// One entry yielded by `read_dir`. Carries the entry `name` (a `Path` relative
+/// to the scanned directory) and its `file_type` (from the dirent, no extra
+/// `stat` — like Rust `DirEntry::file_type`).
+#stable(since = "0.1")
+export type DirEntry {
+    ro name Path
+    ro kind FileType
+}
+
+/// Build a DirEntry from a raw scandir name + kind code.
+#stable(since = "0.1")
+export fn DirEntry.of(name []u8, kind int) -> DirEntry =>
+    { name: Path.from_bytes(name), kind: file_type_of(kind) }
+
+/// The bare entry name (no directory prefix).
+#stable(since = "0.1")
+export fn DirEntry @file_name() -> Path => @name
+/// The entry name as a string, or `None` if it is not valid UTF-8.
+#stable(since = "0.1")
+export fn DirEntry @name_str() -> Option[str] => @name.to_str()
+/// The entry kind.
+#stable(since = "0.1")
+export fn DirEntry @file_type() -> FileType => @kind
+/// True for a directory entry.
+#stable(since = "0.1")
+export fn DirEntry @is_dir() -> bool => @kind.is_dir()
+/// True for a regular-file entry.
+#stable(since = "0.1")
+export fn DirEntry @is_file() -> bool => @kind.is_file()
+/// True for a symlink entry.
+#stable(since = "0.1")
+export fn DirEntry @is_symlink() -> bool => @kind.is_symlink()
+
+/// The entry's full path, joining its name onto `dir`.
+#stable(since = "0.1")
+export fn DirEntry @path(dir Path) -> Path => dir.join_path(@name)

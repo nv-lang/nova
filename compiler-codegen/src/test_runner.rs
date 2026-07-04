@@ -815,6 +815,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // Plan 83.12: net.c — compiled only when libuv is available (conditional
     // on libuv presence, added inside the libuv if-let blocks per toolchain).
     let rt_net = opts.rt_dir.join("net.c");
+    // Plan 176 Ф.2: fs.c — std/fs async uv_fs_* backend, same libuv gating as net.c.
+    let rt_fs = opts.rt_dir.join("fs.c");
     let march = march_flag();
 
     // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
@@ -953,6 +955,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("-I").arg(inc_path);
                 // Plan 83.12: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
+                // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                c.arg(&rt_fs);
                 // Windows: libuv link via -L/-l flags (env has LIB set by vcvars).
                 #[cfg(target_os = "windows")]
                 {
@@ -1135,6 +1139,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg(format!("/I{}", inc_path.display()));
                 // Plan 83.12: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
+                // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                c.arg(&rt_fs);
                 c.arg(evloop);
                 c.arg(lib_path);
                 #[cfg(target_os = "windows")]
@@ -1214,6 +1220,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("-I").arg(inc_path);
                 // Plan 83.12: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
+                // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
+                c.arg(&rt_fs);
                 c.arg(lib_path);
                 c.arg(evloop);
                 #[cfg(any(target_os = "linux", target_os = "macos"))]

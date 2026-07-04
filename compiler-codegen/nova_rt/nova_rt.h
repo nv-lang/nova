@@ -484,6 +484,7 @@ typedef struct { char _dummy; } nova_unit;
  * is available. */
 #ifdef NOVA_USE_LIBUV
 #  include "net.h"
+#  include "fs.h"   /* Plan 176 Ф.2: std/fs — async uv_fs_* via libuv */
 #endif
 
 /* ---- Plan 33.1 Ф.4 (D24): contracts runtime helper ----
@@ -515,6 +516,10 @@ typedef struct { char _dummy; } nova_unit;
 /* Plan 57: bench DSL runtime (header-only). Подключается после alloc.h
  * (uses nova_gc_alloc_count) и eventloop.h (optional uv_hrtime). */
 #include "bench.h"
+
+/* Plan 176 Ф.1 (D322 §3c): std/io console byte hooks (io_read_fd / io_write_fd)
+ * for the `Io` effect real handler. Header-only (C stdio FILE*). */
+#include "io_console.h"
 
 /* Plan 115 D214 Ф.2: tuple-return FFI test shim. Header-only inline
  * helpers used by `nova_tests/plan115/t2_external_fn_tuple_ok.nv`.

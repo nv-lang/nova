@@ -1,0 +1,40 @@
+// mock_options.nv — OpenOptions semantics over mock_fs (Plan 176 Ф.2, D323 Q13).
+module nova_tests.fs
+
+import std.fs.{Path, MemFs, mock_fs, Fs, File, OpenOptions, write, read_text}
+import std.io.{ErrorKind}
+
+test "mock_fs: OpenOptions create_new on existing -> AlreadyExists" {
+    mut fs = MemFs.new()
+    ro p = Path.posix("/exists.txt")
+    with Fs = mock_fs(fs) {
+        ro _ = write(p, "x".to_bytes())
+        match OpenOptions.new().write(true).create_new(true).open(p) {
+            Ok(f)  => { mut fh = f; ro _ = fh.close(); assert(false) }
+            Err(e) => match e.kind { ErrorKind.AlreadyExists => assert(true), _ => assert(false) }
+        }
+    }
+}
+
+test "mock_fs: OpenOptions append writes at EOF" {
+    mut fs = MemFs.new()
+    ro p = Path.posix("/log.txt")
+    with Fs = mock_fs(fs) {
+        ro _ = write(p, "aa".to_bytes())
+        match File.append(p) {
+            Err(_) => assert(false)
+            Ok(f0) => { mut f = f0; ro _ = f.write("bb".to_bytes()); ro _ = f.close() }
+        }
+        match read_text(p) { Ok(s) => assert(s == "aabb"), Err(_) => assert(false) }
+    }
+}
+
+test "mock_fs: append + truncate -> InvalidInput (Q13)" {
+    mut fs = MemFs.new()
+    with Fs = mock_fs(fs) {
+        match OpenOptions.new().append(true).truncate(true).open(Path.posix("/x")) {
+            Ok(f)  => { mut fh = f; ro _ = fh.close(); assert(false) }
+            Err(e) => match e.kind { ErrorKind.InvalidInput => assert(true), _ => assert(false) }
+        }
+    }
+}

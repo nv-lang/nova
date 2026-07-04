@@ -1,0 +1,52 @@
+// d322_io_read_write_seek.nv — D322 io-core conformance (Plan 176 Ф.1).
+// Protocols + SeekFrom + EOF/partial contract (Q9) + IoError/ErrorKind + the
+// effect-agnostic generic `copy` (Q15) over in-memory conformers.
+
+module spec_tests.conformance
+
+import std.io.{BytesReader, BytesWriter, read_to_end, read_exact, copy, SeekFrom, IoError, ErrorKind}
+
+test "d322: copy is generic over Read+Write (effect-free conformers, Q15)" {
+    mut d322_r = BytesReader.new("payload".to_bytes())
+    mut d322_w = BytesWriter.new()
+    match copy(d322_r, d322_w) {
+        Ok(n)  => assert(n == 7)
+        Err(_) => assert(false)
+    }
+    assert(d322_w.len() == 7)
+}
+
+test "d322: read Ok(0) is EOF only with a non-empty buffer (Q9)" {
+    mut d322_r = BytesReader.new("ab".to_bytes())
+    mut d322_buf []u8 = []u8.new()
+    d322_buf.resize(8, 0 as u8)
+    match d322_r.read(d322_buf) { Ok(n) => assert(n == 2), Err(_) => assert(false) }
+    match d322_r.read(d322_buf) { Ok(n) => assert(n == 0), Err(_) => assert(false) }   // EOF
+}
+
+test "d322: read_exact past EOF -> UnexpectedEof" {
+    mut d322_r = BytesReader.new("z".to_bytes())
+    mut d322_two []u8 = []u8.new()
+    d322_two.resize(2, 0 as u8)
+    match read_exact(d322_r, d322_two) {
+        Ok(())  => assert(false)
+        Err(e) => match e.kind { ErrorKind.UnexpectedEof => assert(true), _ => assert(false) }
+    }
+}
+
+test "d322: SeekFrom origins; negative Start -> InvalidInput" {
+    mut d322_r = BytesReader.new("0123456789".to_bytes())
+    match d322_r.seek(SeekFrom.end(-1)) { Ok(p) => assert(p == 9), Err(_) => assert(false) }
+    match d322_r.seek(SeekFrom.start(-1)) {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind { ErrorKind.InvalidInput => assert(true), _ => assert(false) }
+    }
+}
+
+test "d322: IoError.from_os projects errno; unknown -> Other(raw)" {
+    ro d322_e = IoError.from_os(2, "open")
+    match d322_e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
+    assert(d322_e.raw_os == 2)
+    ro d322_o = IoError.from_os(4242, "x")
+    match d322_o.kind { ErrorKind.Other(c) => assert(c == 4242), _ => assert(false) }
+}

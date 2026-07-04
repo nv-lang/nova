@@ -1,0 +1,347 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/io/core.nv — byte I/O protocols + std loop helpers (Plan 176 Ф.1, D322).
+//
+// The three protocols are the byte-I/O abstraction (Rust `Read`/`Write`/`Seek`,
+// Go `io.Reader`/`io.Writer`, Zig `std.Io`). They are **effect-agnostic**: a
+// conformer carries its OWN plumbing effect (`File`→`Fs`, `TcpStream`→`TcpNet`,
+// console→`Io`) which surfaces transitively at monomorphisation (Q15, D122
+// amended). Generic calls through an io-bound are **mono-dispatch only** (no
+// vtable for effectful bounds).
+//
+// The loop helpers (`read_exact`/`read_to_end`/`read_to_string`/`write_all`/
+// `write_str`/`copy`) are free generic functions over the protocol bounds
+// (mono-dispatch, Q15). Each drives the conformer's `@read`/`@write` **directly**
+// (they do not forward one bounded generic into another — the checker does not
+// yet carry a bound through such a forward, so the shared loop is inlined).
+// `Interrupted` (EINTR) is retried inside every loop.
+//
+// **Sibling of the prelude text-sink `Write`** (D258/D374, `mut @write(s str)`):
+// that one is the `@display`/`Debug` formatting sink; THIS `io.Write` is the byte
+// sink. Reference this one module-qualified as `io.Write` (`import std.io`); the
+// text→bytes bridge is the explicit `write_str`.
+//
+// EOF / partial / EINTR contract (§3c / Q9):
+//   - `read` returns `Ok(0)` for EOF **only when the buffer is non-empty**;
+//     a short read (`0 < n < len`) is normal, not EOF.
+//   - `write` may write fewer bytes than asked (partial write is legal);
+//     `write_all` loops. `Ok(0)` mid-write → `WriteZero`.
+//   - `Interrupted` (EINTR) is retried inside the loop helpers.
+
+module std.io
+
+// 8 KiB read chunk — matches Rust's `DEFAULT_BUF_SIZE`. Large enough to amortise
+// per-call overhead, small enough to bound transient memory.
+const DEFAULT_CHUNK int = 8192
+
+// ─── Protocols ───
+
+/// Byte source. `@read(buf)` fills `buf[0..n]` and returns `n`. `Ok(0)` signals
+/// EOF **only** when `buf` is non-empty (Q9 — never the Go `(n>0, EOF)` footgun).
+/// The buffer must already have length (e.g. `buf.resize(cap, 0)`); `n <= buf.len()`.
+#stable(since = "0.1")
+export type Read protocol {
+    mut @read(buf mut []u8) -> Result[int, IoError]
+}
+
+/// Byte sink. `@write(data)` writes some prefix of `data` and returns the count
+/// written (a partial write is legal — `write_all` loops). `@flush()` pushes any
+/// buffered bytes to the underlying device.
+#stable(since = "0.1")
+export type Write protocol {
+    mut @write(data []u8) -> Result[int, IoError]
+    mut @flush() -> Result[(), IoError]
+}
+
+/// Random access. `@seek(pos)` moves the cursor and returns the new absolute
+/// position (a non-negative `int`, i64). `Start(neg)` → `InvalidInput`.
+#stable(since = "0.1")
+export type Seek protocol {
+    mut @seek(pos SeekFrom) -> Result[int, IoError]
+}
+
+/// Seek origin. All offsets are `int` (i64, Nova convention). `Start(n)` is
+/// absolute (from the beginning); `End(n)`/`Current(n)` are relative (may be
+/// negative). `Start(<0)` (or any resolved negative position) → `InvalidInput`.
+#stable(since = "0.1")
+export type SeekFrom
+    | Start(int)
+    | End(int)
+    | Current(int)
+
+// Static constructors. A payload-variant literal (`SeekFrom.Start(n)`) built in a
+// DIFFERENT module currently trips a checker gap on the constructor's return
+// type; these thin static methods build the variant HERE (same module) and are
+// plain cross-module-callable static functions, so callers write
+// `io.SeekFrom.start(5)` etc. Pattern-matching on the variants is unaffected.
+
+/// Seek to an absolute offset from the start (`n >= 0`).
+#stable(since = "0.1")
+export fn SeekFrom.start(n int) -> SeekFrom => Start(n)
+
+/// Seek relative to the end (`n` is usually `<= 0`).
+#stable(since = "0.1")
+export fn SeekFrom.end(n int) -> SeekFrom => End(n)
+
+/// Seek relative to the current position (`n` may be negative).
+#stable(since = "0.1")
+export fn SeekFrom.current(n int) -> SeekFrom => Current(n)
+
+// ─── Read loop helpers ───
+
+/// Read exactly `buf.len()` bytes into `buf`, looping over short reads and
+/// retrying `Interrupted`. `Ok(0)` before the buffer is full → `UnexpectedEof`.
+/// Rust `Read::read_exact`.
+#stable(since = "0.1")
+export fn read_exact[R Read](r mut R, buf mut []u8) -> Result[(), IoError] {
+    ro total = buf.len()
+    mut filled = 0
+    mut chunk []u8 = []u8.new()
+    chunk.resize(total, 0 as u8)
+    while filled < total {
+        match r.read(chunk) {
+            Ok(0)  => return Err(IoError.of(ErrorKind.UnexpectedEof, "read_exact"))
+            Ok(n)  => {
+                mut i = 0
+                while i < n {
+                    buf[filled + i] = chunk[i]
+                    i += 1
+                }
+                filled += n
+                chunk.resize(total - filled, 0 as u8)
+            }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Read to EOF, returning all bytes. Grows a `[]u8`; retries `Interrupted`.
+/// Rust `Read::read_to_end`.
+#stable(since = "0.1")
+export fn read_to_end[R Read](r mut R) -> Result[[]u8, IoError] {
+    mut out []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(DEFAULT_CHUNK, 0 as u8)
+    loop {
+        match r.read(chunk) {
+            Ok(0)  => return Ok(out)
+            Ok(n)  => {
+                mut i = 0
+                while i < n {
+                    out.push(chunk[i])
+                    i += 1
+                }
+            }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+}
+
+/// Read to EOF and decode as UTF-8. Invalid UTF-8 → `IoError{InvalidData}`
+/// (Q11 — fallible, no silent `U+FFFD` like Node). Uses Ф.0.5 `str.from_bytes`.
+/// (Loop inlined rather than calling `read_to_end` — see the forward-bound note.)
+#stable(since = "0.1")
+export fn read_to_string[R Read](r mut R) -> Result[str, IoError] {
+    mut out []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(DEFAULT_CHUNK, 0 as u8)
+    loop {
+        match r.read(chunk) {
+            Ok(0)  => {
+                match str.from_bytes(out) {
+                    Ok(s)  => return Ok(s)
+                    Err(_) => return Err(IoError.of(ErrorKind.InvalidData, "read_to_string"))
+                }
+            }
+            Ok(n)  => {
+                mut i = 0
+                while i < n {
+                    out.push(chunk[i])
+                    i += 1
+                }
+            }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+}
+
+// ─── Write loop helpers ───
+
+/// Write the whole of `data`, looping over partial writes and retrying
+/// `Interrupted`. `Ok(0)` mid-write → `WriteZero`. Rust `Write::write_all`.
+#stable(since = "0.1")
+export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
+    ro total = data.len()
+    mut done = 0
+    while done < total {
+        mut rest []u8 = []u8.new()
+        mut i = done
+        while i < total {
+            rest.push(data[i])
+            i += 1
+        }
+        match w.write(rest) {
+            Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "write_all"))
+            Ok(n)  => { done += n }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Write a `str` to a byte sink as UTF-8 — the explicit bridge from text to the
+/// byte world (Q6, no implicit coupling with the `@display` text-sink). (Loop
+/// inlined rather than calling `write_all` — see the forward-bound note.)
+#stable(since = "0.1")
+export fn write_str[W Write](w mut W, s str) -> Result[(), IoError] {
+    ro data = s.to_bytes()
+    ro total = data.len()
+    mut done = 0
+    while done < total {
+        mut rest []u8 = []u8.new()
+        mut i = done
+        while i < total {
+            rest.push(data[i])
+            i += 1
+        }
+        match w.write(rest) {
+            Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "write_str"))
+            Ok(n)  => { done += n }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+    Ok(())
+}
+
+// ─── Read → Write ───
+
+/// Copy the whole reader into the writer, returning the total bytes moved.
+/// Reads a chunk, writes it fully, repeats (both loops inlined). Rust `io::copy`.
+#stable(since = "0.1")
+export fn copy[R Read, W Write](r mut R, w mut W) -> Result[int, IoError] {
+    mut moved = 0
+    mut chunk []u8 = []u8.new()
+    chunk.resize(DEFAULT_CHUNK, 0 as u8)
+    loop {
+        match r.read(chunk) {
+            Ok(0)  => return Ok(moved)
+            Ok(rn) => {
+                // Write exactly the rn bytes just read, handling partial writes.
+                mut done = 0
+                while done < rn {
+                    mut rest []u8 = []u8.new()
+                    mut i = done
+                    while i < rn {
+                        rest.push(chunk[i])
+                        i += 1
+                    }
+                    match w.write(rest) {
+                        Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "copy"))
+                        Ok(wn) => { done += wn }
+                        Err(e) => {
+                            if e.is_interrupted() { continue }
+                            return Err(e)
+                        }
+                    }
+                }
+                moved += rn
+            }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+}
+
+// ─── Line splitting (Q7) ───
+
+/// Read to EOF, decode as UTF-8, and split into lines (Rust `BufRead::lines`).
+/// Each line excludes its terminator; a trailing `\r` (of `\r\n`) is stripped; a
+/// final line without a newline is yielded; an embedded lone `\r` is NOT a
+/// separator (Q7 — delegates to `str.@lines`). Invalid UTF-8 →
+/// `IoError{InvalidData}`. (Read loop inlined — see the forward-bound note.)
+#stable(since = "0.1")
+export fn lines[R Read](r mut R) -> Result[[]str, IoError] {
+    mut out []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(DEFAULT_CHUNK, 0 as u8)
+    loop {
+        match r.read(chunk) {
+            Ok(0)  => {
+                match str.from_bytes(out) {
+                    Ok(s)  => return Ok(s.lines())
+                    Err(_) => return Err(IoError.of(ErrorKind.InvalidData, "lines"))
+                }
+            }
+            Ok(n)  => {
+                mut i = 0
+                while i < n {
+                    out.push(chunk[i])
+                    i += 1
+                }
+            }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+}
+
+/// Read to EOF and split the RAW bytes on `\n` (0x0A) — no UTF-8 decode, no `\r`
+/// stripping (Q7 `byte_lines`). The terminator is not included; a final segment
+/// without a trailing `\n` is yielded. (Read loop inlined — see the forward-bound
+/// note.)
+#stable(since = "0.1")
+export fn byte_lines[R Read](r mut R) -> Result[[][]u8, IoError] {
+    mut data []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(DEFAULT_CHUNK, 0 as u8)
+    loop {
+        match r.read(chunk) {
+            Ok(0)  => {
+                mut out [][]u8 = []
+                mut cur []u8 = []u8.new()
+                mut i = 0
+                while i < data.len() {
+                    if (data[i] as int) == 10 {
+                        out.push(cur)
+                        cur = []u8.new()
+                    } else {
+                        cur.push(data[i])
+                    }
+                    i += 1
+                }
+                if cur.len() > 0 { out.push(cur) }
+                return Ok(out)
+            }
+            Ok(n)  => {
+                mut i = 0
+                while i < n {
+                    data.push(chunk[i])
+                    i += 1
+                }
+            }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+}
