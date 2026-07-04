@@ -1,0 +1,1036 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/compress/deflate.nv — RFC 1951 DEFLATE encoder (pure Nova).
+//
+// Plan 179 Ф.3 (D333 §encode). LZ77-матчинг (hash-chain, greedy/lazy) + Huffman-
+// кодирование (fixed / dynamic) над `[]u8`, БЕЗ C (precedent: Zig `flate.compress`,
+// Go `compress/flate`). Обратное к `inflate.nv`: `inflate(deflate(x, lvl)) == x`.
+//
+// Level-честность (Q7, §3.5): ≥3 различимых режима —
+//   none()   → stored-блоки (без Huffman);
+//   1..6     → fixed-Huffman + greedy-LZ77;
+//   7..9     → dynamic-Huffman + lazy-LZ77 (ratio < fixed).
+// optimal-parse level-9 = followup §11 (V1 «good-enough», НЕ optimal).
+//
+// Encode НЕ несёт bomb-cap (выход < входа; §3.5): decompression-bomb невозможен
+// на компрессии. Канонические Huffman-коды строятся тем же RFC-правилом, что и
+// декодер (build_huffman в inflate.nv), поэтому round-trip by-construction.
+
+module encoding.compress
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Уровень компрессии (CompressLevel) — value-record (§3.5)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Уровень компрессии. Raw 0..11; интерпретация PER-CODEC (deflate 0..9,
+/// brotli 0..11). `best()` — сентинел, резолвится per-codec (deflate→9).
+#stable(since = "0.1")
+export type CompressLevel value { priv n u8 }
+
+// Сентинел «лучший для кодека» (резолвится при вызове кодека).
+fn cl_best_sentinel() -> int => 255
+
+// Сырой уровень как int. Метод (НЕ free-fn чтение priv-поля) — иначе cross-module
+// потребитель (Plan 178) ловит E_FIELD_MODULE_PRIVATE при re-check импортируемого
+// модуля: own-type-method доступ к `priv` разрешён в любом контексте (D220/D281).
+fn CompressLevel @raw() -> int => @n as int
+
+/// Быстрейший режим (level 1) — fixed-Huffman + greedy-LZ77.
+#stable(since = "0.1")
+export fn CompressLevel.fastest() -> CompressLevel => { n: 1 }
+
+/// Дефолтный баланс (level 6) — fixed-Huffman + greedy-LZ77.
+#stable(since = "0.1")
+export fn CompressLevel.default() -> CompressLevel => { n: 6 }
+
+/// Максимальное сжатие — СЕНТИНЕЛ (резолвится per-codec: deflate→9, brotli→11).
+#stable(since = "0.1")
+export fn CompressLevel.best() -> CompressLevel => { n: 255 }
+
+/// Без сжатия (level 0) — stored-блоки.
+#stable(since = "0.1")
+export fn CompressLevel.none() -> CompressLevel => { n: 0 }
+
+/// Явный уровень 0..11. `n > 11` → InvalidData. Per-codec range-валидация — НА
+/// ВЫЗОВЕ кодека (deflate(level 10..11) → InvalidData).
+#stable(since = "0.1")
+export fn CompressLevel.new(n u8) -> Result[CompressLevel, CompressError] {
+    if (n as int) > 11 {
+        return Err(CompressError.invalid("compression level must be 0..11"))
+    }
+    Ok({ n })
+}
+
+// Резолвит уровень для deflate (0..9). sentinel→9; 10..11 → InvalidData
+// (brotli-only quality). Прочие >9 отсекаются new(); double-guard здесь.
+fn resolve_deflate_level(lvl CompressLevel) -> Result[int, CompressError] {
+    ro raw = lvl.raw()
+    if raw == cl_best_sentinel() {
+        return Ok(9)
+    }
+    if raw > 9 {
+        return Err(CompressError.invalid("deflate level must be 0..9 (10..11 are brotli-only)"))
+    }
+    Ok(raw)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// LZ77-токен: литерал или back-reference (length, distance)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Внутренний токен LZ77-потока. Lit = байт-литерал; Backref = (длина 3..258,
+// дистанция 1..32768) — back-reference на окно.
+type Tok
+    | Lit(int)
+    | Backref(int, int)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Bit-writer + Huffman-эмиттер (DeflateEnc, internal)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Накопитель битстрима. Биты пакуются LSB-first (RFC 1951 §3.1.1); Huffman-коды
+// эмитятся MSB-first через предварительный bit-reverse (assign_codes). Кэширует
+// length/dist base+extra таблицы (построены один раз в new).
+type DeflateEnc {
+    mut bytes []u8          // готовые (byte-aligned) байты
+    mut bitbuf int          // накопитель незавершённого байта
+    mut bitcnt int          // бит в накопителе (0..7 между операциями)
+
+    mut lbase []int
+    mut lext []int
+    mut dbase []int
+    mut dext []int
+}
+
+fn DeflateEnc.new() -> DeflateEnc =>
+    {
+        bytes: []u8.with_capacity(64),
+        bitbuf: 0,
+        bitcnt: 0,
+        lbase: build_length_base(),
+        lext: build_length_extra(),
+        dbase: build_dist_base(),
+        dext: build_dist_extra(),
+    }
+
+// Записать `n` младших бит `value` (LSB-first).
+fn DeflateEnc mut @put_bits(value int, n int) -> () {
+    if n <= 0 {
+        return
+    }
+    ro masked = value & ((1 << n) - 1)
+    @bitbuf = @bitbuf | (masked << @bitcnt)
+    @bitcnt = @bitcnt + n
+    while @bitcnt >= 8 {
+        @bytes.push((@bitbuf & 0xFF) as u8)
+        @bitbuf = @bitbuf >> 8
+        @bitcnt = @bitcnt - 8
+    }
+}
+
+// Дополнить нулями до границы байта (только для FINAL-блока или перед stored/sync).
+fn DeflateEnc mut @align() -> () {
+    if @bitcnt > 0 {
+        @bytes.push((@bitbuf & 0xFF) as u8)
+        @bitbuf = 0
+        @bitcnt = 0
+    }
+}
+
+// Записать байт напрямую (предполагает byte-aligned состояние).
+fn DeflateEnc mut @put_byte(b u8) -> () {
+    @bytes.push(b)
+}
+
+// Забрать накопленные byte-aligned байты; остаточные биты (bitbuf) сохраняются
+// для следующего блока (streaming-continuity).
+fn DeflateEnc mut @take_bytes() -> []u8 {
+    ro out = @bytes
+    @bytes = []u8.with_capacity(16)
+    out
+}
+
+// Индекс length-символа (257..285) + extra-bits-count + extra-value.
+fn DeflateEnc @length_code(length int) -> (int, int, int) {
+    mut i = 0
+    for k in 0..29 {
+        if @lbase[k] <= length {
+            i = k
+        }
+    }
+    (257 + i, @lext[i], length - @lbase[i])
+}
+
+// Индекс distance-символа (0..29) + extra-bits-count + extra-value.
+fn DeflateEnc @dist_code(dist int) -> (int, int, int) {
+    mut i = 0
+    for k in 0..30 {
+        if @dbase[k] <= dist {
+            i = k
+        }
+    }
+    (i, @dext[i], dist - @dbase[i])
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Эмиссия блоков
+// ──────────────────────────────────────────────────────────────────────────
+
+// Stored-блок(и): вход разбивается на куски ≤ 65535. Последний кусок — final,
+// если is_final. Пустой вход → один stored-блок LEN=0.
+fn DeflateEnc mut @emit_stored(data []u8, is_final bool) -> () {
+    ro n = data.len()
+    if n == 0 {
+        @put_bits(if is_final { 1 } else { 0 }, 1)
+        @put_bits(0, 2)
+        @align()
+        @put_byte(0x00)
+        @put_byte(0x00)
+        @put_byte(0xFF)
+        @put_byte(0xFF)
+        return
+    }
+    mut pos = 0
+    while pos < n {
+        ro remain = n - pos
+        ro chunk = if remain < 65535 { remain } else { 65535 }
+        ro final = is_final && (pos + chunk >= n)
+        @put_bits(if final { 1 } else { 0 }, 1)
+        @put_bits(0, 2)
+        @align()
+        @put_byte((chunk & 0xFF) as u8)
+        @put_byte(((chunk >> 8) & 0xFF) as u8)
+        ro nlen = (chunk ^ 0xFFFF) & 0xFFFF
+        @put_byte((nlen & 0xFF) as u8)
+        @put_byte(((nlen >> 8) & 0xFF) as u8)
+        for k in 0..chunk {
+            @put_byte(data[pos + k])
+        }
+        pos = pos + chunk
+    }
+}
+
+// SYNC-FLUSH (Z_SYNC_FLUSH): пустой non-final stored-блок → byte-align, весь
+// предшествующий выход становится decodable-префиксом (D335).
+fn DeflateEnc mut @emit_sync() -> () {
+    @put_bits(0, 1)     // BFINAL=0
+    @put_bits(0, 2)     // BTYPE=00
+    @align()
+    @put_byte(0x00)
+    @put_byte(0x00)
+    @put_byte(0xFF)
+    @put_byte(0xFF)
+}
+
+// Эмитить поток токенов через таблицы кодов (без header, без EOB).
+fn DeflateEnc mut @emit_tokens(tokens []Tok, lit_codes []int, lit_lens []int, dist_codes []int, dist_lens []int) -> () {
+    for tok in tokens {
+        match tok {
+            Lit(b) => @put_bits(lit_codes[b], lit_lens[b])
+            Backref(length, dist) => {
+                ro lc = @length_code(length)
+                @put_bits(lit_codes[lc.0], lit_lens[lc.0])
+                if lc.1 > 0 {
+                    @put_bits(lc.2, lc.1)
+                }
+                ro dc = @dist_code(dist)
+                @put_bits(dist_codes[dc.0], dist_lens[dc.0])
+                if dc.1 > 0 {
+                    @put_bits(dc.2, dc.1)
+                }
+            }
+        }
+    }
+}
+
+// Fixed-Huffman блок (BTYPE=01): без header, EOB в конце.
+fn DeflateEnc mut @emit_fixed_block(tokens []Tok, is_final bool) -> () {
+    ro fl = fixed_lit_lens()
+    ro fd = fixed_dist_lens()
+    ro lit_codes = assign_codes(fl, 288)
+    ro dist_codes = assign_codes(fd, 30)
+    @put_bits(if is_final { 1 } else { 0 }, 1)
+    @put_bits(1, 2)     // BTYPE=01 fixed
+    @emit_tokens(tokens, lit_codes, fl, dist_codes, fd)
+    @put_bits(lit_codes[256], fl[256])      // EOB
+}
+
+// Dynamic-Huffman блок (BTYPE=10): частотный Huffman + RLE code-length header.
+// Деградирует на fixed при вырожденном (<2 CL-символа) code-length-наборе.
+fn DeflateEnc mut @emit_dynamic_block(tokens []Tok, is_final bool) -> () {
+    // 1. Частоты lit/len (+EOB) и distance
+    mut lit_freq = []int.with_capacity(288)
+    for _ in 0..288 { lit_freq.push(0) }
+    mut dist_freq = []int.with_capacity(30)
+    for _ in 0..30 { dist_freq.push(0) }
+    lit_freq[256] = 1       // EOB всегда присутствует
+    for tok in tokens {
+        match tok {
+            Lit(b) => { lit_freq[b] = lit_freq[b] + 1 }
+            Backref(length, dist) => {
+                ro lc = @length_code(length)
+                lit_freq[lc.0] = lit_freq[lc.0] + 1
+                ro dc = @dist_code(dist)
+                dist_freq[dc.0] = dist_freq[dc.0] + 1
+            }
+        }
+    }
+
+    // 2. Код-длины lit/dist (max 15 бит)
+    mut lit_lens = build_code_lengths(lit_freq, 288, 15)
+    mut dist_lens = build_code_lengths(dist_freq, 30, 15)
+    // HDIST ≥ 1: если distance-кодов нет, один incomplete distance-код (Q13).
+    mut any_dist = false
+    for k in 0..30 { if dist_lens[k] > 0 { any_dist = true } }
+    if !any_dist {
+        dist_lens[0] = 1
+    }
+
+    // 3. HLIT (257..286) / HDIST (1..30)
+    mut hlit = 286
+    while hlit > 257 && lit_lens[hlit - 1] == 0 { hlit = hlit - 1 }
+    mut hdist = 30
+    while hdist > 1 && dist_lens[hdist - 1] == 0 { hdist = hdist - 1 }
+
+    // 4. Объединённый массив длин + RLE (символы 0..18)
+    mut all = []int.with_capacity(hlit + hdist)
+    for k in 0..hlit { all.push(lit_lens[k]) }
+    for k in 0..hdist { all.push(dist_lens[k]) }
+    ro rle = rle_lengths(all, hlit + hdist)
+    ro cl_sym = rle.0
+    ro cl_ext = rle.1
+
+    // 5. Код-длины code-length-кодов (max 7 бит)
+    mut cl_freq = []int.with_capacity(19)
+    for _ in 0..19 { cl_freq.push(0) }
+    for t in 0..cl_sym.len() { cl_freq[cl_sym[t]] = cl_freq[cl_sym[t]] + 1 }
+    ro cl_lens = build_code_lengths(cl_freq, 19, 7)
+    // Guard: complete CL-код требует ≥2 символа. Вырожденный → fixed-fallback.
+    mut cl_used = 0
+    for k in 0..19 { if cl_lens[k] > 0 { cl_used = cl_used + 1 } }
+    if cl_used < 2 {
+        @emit_fixed_block(tokens, is_final)
+        return
+    }
+
+    // 6. HCLEN (4..19) в спец-порядке
+    ro order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+    mut hclen = 19
+    while hclen > 4 && cl_lens[order[hclen - 1]] == 0 { hclen = hclen - 1 }
+
+    // 7. Канонические коды
+    ro lit_codes = assign_codes(lit_lens, 288)
+    ro dist_codes = assign_codes(dist_lens, 30)
+    ro cl_codes = assign_codes(cl_lens, 19)
+
+    // 8. Header
+    @put_bits(if is_final { 1 } else { 0 }, 1)
+    @put_bits(2, 2)         // BTYPE=10 dynamic
+    @put_bits(hlit - 257, 5)
+    @put_bits(hdist - 1, 5)
+    @put_bits(hclen - 4, 4)
+    for i in 0..hclen {
+        @put_bits(cl_lens[order[i]], 3)
+    }
+
+    // 9. RLE-последовательность code-length-кодами
+    for t in 0..cl_sym.len() {
+        ro s = cl_sym[t]
+        @put_bits(cl_codes[s], cl_lens[s])
+        if s == 16 {
+            @put_bits(cl_ext[t], 2)
+        } else if s == 17 {
+            @put_bits(cl_ext[t], 3)
+        } else if s == 18 {
+            @put_bits(cl_ext[t], 7)
+        }
+    }
+
+    // 10. Токены + EOB
+    @emit_tokens(tokens, lit_codes, lit_lens, dist_codes, dist_lens)
+    @put_bits(lit_codes[256], lit_lens[256])
+}
+
+// Скомпилировать один сегмент данных в блок(и) выбранного уровня. НЕ выравнивает
+// (residual биты сохраняются для стриминга); is_final помечает финальный блок.
+fn DeflateEnc mut @compress_segment(data []u8, level int, is_final bool) -> () {
+    if data.len() == 0 {
+        @emit_fixed_block([]Tok.with_capacity(0), is_final)
+        return
+    }
+    if level == 0 {
+        @emit_stored(data, is_final)
+        return
+    }
+    ro lazy = level >= 7
+    ro max_chain = if level >= 7 { 1024 } else if level >= 4 { 256 } else { 64 }
+    ro toks = lz77_tokens(data, lazy, max_chain)
+    if level >= 7 {
+        @emit_dynamic_block(toks, is_final)
+    } else {
+        @emit_fixed_block(toks, is_final)
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fixed-Huffman таблицы (RFC 1951 §3.2.6) — те же длины, что читает декодер
+// ──────────────────────────────────────────────────────────────────────────
+
+fn fixed_lit_lens() -> []int {
+    mut ll = []int.with_capacity(288)
+    for i in 0..288 {
+        ll.push(if i < 144 { 8 } else if i < 256 { 9 } else if i < 280 { 7 } else { 8 })
+    }
+    ll
+}
+
+fn fixed_dist_lens() -> []int {
+    mut dl = []int.with_capacity(30)
+    for _ in 0..30 { dl.push(5) }
+    dl
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Канонические коды из код-длин (RFC 1951 §3.2.2) — bit-reversed для LSB-writer
+// ──────────────────────────────────────────────────────────────────────────
+
+// Реверс младших `len` бит `code` (Huffman-код передаётся MSB-first, а writer
+// пакует LSB-first → предварительный реверс).
+fn reverse_bits(code int, len int) -> int {
+    mut r = 0
+    mut c = code
+    for _ in 0..len {
+        r = (r << 1) | (c & 1)
+        c = c >> 1
+    }
+    r
+}
+
+// Назначить канонические коды по код-длинам; вернуть массив уже bit-reversed
+// кодов (0 для неиспользуемых символов). Правило совпадает с декодером
+// (build_huffman): короче длина → меньший код; в пределах длины — по индексу.
+fn assign_codes(lens []int, n int) -> []int {
+    mut bl_count = []int.with_capacity(16)
+    for _ in 0..16 { bl_count.push(0) }
+    for i in 0..n {
+        ro l = lens[i]
+        if l > 0 { bl_count[l] = bl_count[l] + 1 }
+    }
+    mut next_code = []int.with_capacity(16)
+    for _ in 0..16 { next_code.push(0) }
+    mut code = 0
+    for bits in 1..16 {
+        code = (code + bl_count[bits - 1]) << 1
+        next_code[bits] = code
+    }
+    mut codes = []int.with_capacity(n)
+    for _ in 0..n { codes.push(0) }
+    for i in 0..n {
+        ro l = lens[i]
+        if l > 0 {
+            ro c = next_code[l]
+            next_code[l] = next_code[l] + 1
+            codes[i] = reverse_bits(c, l)
+        }
+    }
+    codes
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Код-длины из частот (length-limited Huffman) — порт miniz tdefl
+// ──────────────────────────────────────────────────────────────────────────
+
+// In-place minimum-redundancy code-length (Moffat/Katajainen). `a[0..n]` —
+// частоты, отсортированные по возрастанию; на выходе a[i] = код-длина позиции i.
+fn calc_min_redundancy(a mut []int, n int) -> () {
+    if n == 0 {
+        return
+    }
+    if n == 1 {
+        a[0] = 1
+        return
+    }
+    a[0] = a[0] + a[1]
+    mut root = 0
+    mut leaf = 2
+    mut next = 1
+    while next < n - 1 {
+        if leaf >= n || a[root] < a[leaf] {
+            a[next] = a[root]
+            a[root] = next
+            root = root + 1
+        } else {
+            a[next] = a[leaf]
+            leaf = leaf + 1
+        }
+        if leaf >= n || (root < next && a[root] < a[leaf]) {
+            a[next] = a[next] + a[root]
+            a[root] = next
+            root = root + 1
+        } else {
+            a[next] = a[next] + a[leaf]
+            leaf = leaf + 1
+        }
+        next = next + 1
+    }
+    a[n - 2] = 0
+    mut k = n - 3
+    while k >= 0 {
+        a[k] = a[a[k]] + 1
+        k = k - 1
+    }
+    mut avbl = 1
+    mut used = 0
+    mut dpth = 0
+    mut root2 = n - 2
+    mut next2 = n - 1
+    while avbl > 0 {
+        while root2 >= 0 && a[root2] == dpth {
+            used = used + 1
+            root2 = root2 - 1
+        }
+        while avbl > used {
+            a[next2] = dpth
+            next2 = next2 - 1
+            avbl = avbl - 1
+        }
+        avbl = 2 * used
+        dpth = dpth + 1
+        used = 0
+    }
+}
+
+// Ограничить макс. код-длину до maxbits, сохраняя полноту кода (Kraft==1).
+// num_codes[len] = число кодов длины len; всё >maxbits уже свёрнуто в maxbits.
+fn enforce_max_code_size(num_codes mut []int, code_list_len int, maxbits int) -> () {
+    if code_list_len <= 1 {
+        return
+    }
+    mut total = 0
+    mut i = maxbits
+    while i > 0 {
+        total = total + (num_codes[i] << (maxbits - i))
+        i = i - 1
+    }
+    ro target = 1 << maxbits
+    while total != target {
+        num_codes[maxbits] = num_codes[maxbits] - 1
+        mut j = maxbits - 1
+        loop {
+            if j <= 0 {
+                break
+            }
+            if num_codes[j] > 0 {
+                num_codes[j] = num_codes[j] - 1
+                num_codes[j + 1] = num_codes[j + 1] + 2
+                break
+            }
+            j = j - 1
+        }
+        total = total - 1
+    }
+}
+
+// Построить код-длины (0..maxbits) по частотам символов. Возвращает массив длины
+// n (0 = символ не используется). Полный префиксный код для ≥2 символов.
+fn build_code_lengths(freq []int, n int, maxbits int) -> []int {
+    mut lens = []int.with_capacity(n)
+    for _ in 0..n { lens.push(0) }
+
+    mut syms = []int.with_capacity(n)
+    mut keys = []int.with_capacity(n)
+    for s in 0..n {
+        if freq[s] > 0 {
+            syms.push(s)
+            keys.push(freq[s])
+        }
+    }
+    ro m = syms.len()
+    if m == 0 {
+        return lens
+    }
+    if m == 1 {
+        lens[syms[0]] = 1
+        return lens
+    }
+
+    // Insertion-sort (keys, syms) по возрастанию частоты (m ≤ 288).
+    mut i = 1
+    while i < m {
+        ro k = keys[i]
+        ro sv = syms[i]
+        mut j = i - 1
+        while j >= 0 && keys[j] > k {
+            keys[j + 1] = keys[j]
+            syms[j + 1] = syms[j]
+            j = j - 1
+        }
+        keys[j + 1] = k
+        syms[j + 1] = sv
+        i = i + 1
+    }
+
+    calc_min_redundancy(keys, m)        // keys[i] → код-длина позиции i
+
+    // Гистограмма длин; свернуть >maxbits в maxbits.
+    mut wide = []int.with_capacity(64)
+    for _ in 0..64 { wide.push(0) }
+    for t in 0..m {
+        ro l = if keys[t] < 63 { keys[t] } else { 63 }
+        wide[l] = wide[l] + 1
+    }
+    mut num_codes = []int.with_capacity(maxbits + 1)
+    for _ in 0..(maxbits + 1) { num_codes.push(0) }
+    for b in 0..(maxbits + 1) { num_codes[b] = wide[b] }
+    for b in (maxbits + 1)..64 { num_codes[maxbits] = num_codes[maxbits] + wide[b] }
+
+    enforce_max_code_size(num_codes, m, maxbits)
+
+    // Назначить длины: короткие коды — высокочастотным (syms отсортирован по
+    // возрастанию частоты → берём с конца).
+    mut jj = m
+    for len in 1..(maxbits + 1) {
+        mut c = num_codes[len]
+        while c > 0 {
+            jj = jj - 1
+            lens[syms[jj]] = len
+            c = c - 1
+        }
+    }
+    lens
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// RLE код-длин для dynamic-header (RFC 1951 §3.2.7)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Кодирует массив код-длин символами 0..18. Возвращает (symbols, extra-values);
+// число extra-бит определяется символом (16→2, 17→3, 18→7, иначе 0).
+fn rle_lengths(lens []int, count int) -> ([]int, []int) {
+    mut sym = []int.with_capacity(count)
+    mut ext = []int.with_capacity(count)
+    mut i = 0
+    while i < count {
+        ro cur = lens[i]
+        mut run = 1
+        while i + run < count && lens[i + run] == cur { run = run + 1 }
+        if cur == 0 {
+            mut r = run
+            while r >= 11 {
+                ro take = if r < 138 { r } else { 138 }
+                sym.push(18)
+                ext.push(take - 11)
+                r = r - take
+            }
+            while r >= 3 {
+                ro take = if r < 10 { r } else { 10 }
+                sym.push(17)
+                ext.push(take - 3)
+                r = r - take
+            }
+            while r > 0 {
+                sym.push(0)
+                ext.push(0)
+                r = r - 1
+            }
+        } else {
+            sym.push(cur)
+            ext.push(0)
+            mut r = run - 1
+            while r >= 3 {
+                ro take = if r < 6 { r } else { 6 }
+                sym.push(16)
+                ext.push(take - 3)
+                r = r - take
+            }
+            while r > 0 {
+                sym.push(cur)
+                ext.push(0)
+                r = r - 1
+            }
+        }
+        i = i + run
+    }
+    (sym, ext)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// LZ77-матчинг (hash-chain) — greedy / lazy
+// ──────────────────────────────────────────────────────────────────────────
+
+fn hash3(a u8, b u8, c u8, mask int) -> int =>
+    (((a as int) << 10) ^ ((b as int) << 5) ^ (c as int)) & mask
+
+// Токенизировать вход в LZ77-поток. `lazy` — one-step lazy matching (лучший
+// ratio); `max_chain` — предел длины hash-цепочки (speed/ratio).
+fn lz77_tokens(data []u8, lazy bool, max_chain int) -> []Tok {
+    ro n = data.len()
+    mut toks = []Tok.with_capacity(n / 2 + 4)
+    if n == 0 {
+        return toks
+    }
+    ro hbits = 15
+    ro hsize = 1 << hbits
+    ro hmask = hsize - 1
+    ro wsize = window_size()
+    mut head = []int.with_capacity(hsize)
+    for _ in 0..hsize { head.push(-1) }
+    mut prev = []int.with_capacity(n)
+    for _ in 0..n { prev.push(-1) }
+
+    mut i = 0
+    mut match_avail = false
+    mut prev_len = 0
+    mut prev_dist = 0
+
+    while i < n {
+        // Найти лучший матч в позиции i (по hash-цепочке, до вставки i).
+        mut best_len = 0
+        mut best_dist = 0
+        mut h = -1
+        if i + 2 < n {
+            h = hash3(data[i], data[i + 1], data[i + 2], hmask)
+            mut cur = head[h]
+            mut chain = max_chain
+            ro maxl = if n - i < 258 { n - i } else { 258 }
+            while cur >= 0 && chain > 0 {
+                if i - cur > wsize {
+                    break
+                }
+                if data[cur + best_len] == data[i + best_len] {
+                    mut l = 0
+                    while l < maxl && data[cur + l] == data[i + l] { l = l + 1 }
+                    if l > best_len {
+                        best_len = l
+                        best_dist = i - cur
+                        if l >= maxl {
+                            break
+                        }
+                    }
+                }
+                cur = prev[cur]
+                chain = chain - 1
+            }
+        }
+        // Вставить позицию i в hash.
+        if h >= 0 {
+            prev[i] = head[h]
+            head[h] = i
+        }
+
+        if match_avail {
+            if best_len > prev_len {
+                // Текущий матч лучше — эмитим литерал за отложенную позицию i-1.
+                toks.push(Lit(data[i - 1] as int))
+                prev_len = best_len
+                prev_dist = best_dist
+                i = i + 1
+            } else {
+                // Эмитим отложенный матч [i-1 .. i-1+prev_len).
+                toks.push(Backref(prev_len, prev_dist))
+                ro end = (i - 1) + prev_len
+                mut kk = i + 1
+                while kk < end {
+                    if kk + 2 < n {
+                        ro hk = hash3(data[kk], data[kk + 1], data[kk + 2], hmask)
+                        prev[kk] = head[hk]
+                        head[hk] = kk
+                    }
+                    kk = kk + 1
+                }
+                i = end
+                match_avail = false
+                prev_len = 0
+            }
+        } else {
+            if best_len >= 3 {
+                if lazy {
+                    match_avail = true
+                    prev_len = best_len
+                    prev_dist = best_dist
+                    i = i + 1
+                } else {
+                    toks.push(Backref(best_len, best_dist))
+                    ro end = i + best_len
+                    mut kk = i + 1
+                    while kk < end {
+                        if kk + 2 < n {
+                            ro hk = hash3(data[kk], data[kk + 1], data[kk + 2], hmask)
+                            prev[kk] = head[hk]
+                            head[hk] = kk
+                        }
+                        kk = kk + 1
+                    }
+                    i = end
+                }
+            } else {
+                toks.push(Lit(data[i] as int))
+                i = i + 1
+            }
+        }
+    }
+    // Хвостовой отложенный матч.
+    if match_avail {
+        toks.push(Backref(prev_len, prev_dist))
+    }
+    toks
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// One-shot encode
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Raw DEFLATE-компрессия (RFC 1951): голый битстрим без фрейма/чексуммы.
+/// `level` — режим (0=stored, 1..6=fixed+greedy, 7..9=dynamic+lazy; best→9).
+/// `inflate(deflate(x, level)) == x` для любого валидного `x`/`level`.
+#stable(since = "0.1")
+export fn deflate(data []u8, level CompressLevel) -> Result[[]u8, CompressError] {
+    ro lvl = resolve_deflate_level(level)?
+    mut enc = DeflateEnc.new()
+    enc.compress_segment(data, lvl, true)
+    enc.align()
+    Ok(enc.take_bytes())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Streaming encode — инкрементальный Deflater (value, НЕ consume; D335)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Инкрементальный DEFLATE-энкодер. `feed` буферизует вход и отдаёт готовый
+/// сжатый выход (auto-flush при накоплении ≥64 KiB); `flush` — SYNC-FLUSH
+/// (decodable-префикс); `finish` — финальный блок (+ padding). value-машина
+/// (НЕ consume): нет внешнего ресурса. V1 — self-contained блоки на flush
+/// (cross-block matches = followup §11).
+#stable(since = "0.1")
+export type Deflater value {
+    mut enc DeflateEnc
+    mut pending []u8
+    mut level int
+    mut bad bool
+    mut finished bool
+}
+
+#stable(since = "0.1")
+export fn Deflater.new(level CompressLevel) -> Deflater {
+    ro raw = level.raw()
+    mut lv = 0
+    mut bad = false
+    if raw == cl_best_sentinel() {
+        lv = 9
+    } else if raw <= 9 {
+        lv = raw
+    } else {
+        bad = true
+    }
+    {
+        enc: DeflateEnc.new(),
+        pending: []u8.with_capacity(0),
+        level: lv,
+        bad,
+        finished: false,
+    }
+}
+
+/// Подать вход (буферизуется). Отдаёт готовый сжатый выход (auto-flush ≥64 KiB).
+#stable(since = "0.1")
+export fn Deflater mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
+    if @bad {
+        return Err(CompressError.invalid("deflate level must be 0..9 (10..11 are brotli-only)"))
+    }
+    if @finished {
+        return Err(CompressError.invalid("deflater already finished"))
+    }
+    @pending.append(chunk)
+    if @pending.len() >= 65536 {
+        @enc.compress_segment(@pending, @level, false)
+        @pending = []u8.with_capacity(0)
+        return Ok(@enc.take_bytes())
+    }
+    Ok([]u8.with_capacity(0))
+}
+
+/// SYNC-FLUSH: сжать буфер как non-final блок + sync-маркер (byte-align).
+/// Накопленный выход становится decodable-префиксом (D335: SSE/chunked).
+#stable(since = "0.1")
+export fn Deflater mut @flush() -> Result[[]u8, CompressError] {
+    if @bad {
+        return Err(CompressError.invalid("deflate level must be 0..9 (10..11 are brotli-only)"))
+    }
+    if @finished {
+        return Err(CompressError.invalid("deflater already finished"))
+    }
+    @enc.compress_segment(@pending, @level, false)
+    @pending = []u8.with_capacity(0)
+    @enc.emit_sync()
+    Ok(@enc.take_bytes())
+}
+
+/// Финализация: сжать остаток как FINAL-блок + padding. После finish поток полон.
+#stable(since = "0.1")
+export fn Deflater mut @finish() -> Result[[]u8, CompressError] {
+    if @bad {
+        return Err(CompressError.invalid("deflate level must be 0..9 (10..11 are brotli-only)"))
+    }
+    if @finished {
+        return Err(CompressError.invalid("deflater already finished"))
+    }
+    @enc.compress_segment(@pending, @level, true)
+    @pending = []u8.with_capacity(0)
+    @enc.align()
+    @finished = true
+    Ok(@enc.take_bytes())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — round-trip через собственный inflate (главный acceptance Ф.3)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Повторить unit `times` раз в []u8.
+fn rep_bytes(unit []u8, times int) -> []u8 {
+    mut o = []u8.with_capacity(unit.len() * times)
+    for _ in 0..times { o.append(unit) }
+    o
+}
+
+// Псевдослучайный []u8 (детерминированный LCG) — incompressible corpus.
+fn prng_bytes(n int, seed int) -> []u8 {
+    mut o = []u8.with_capacity(n)
+    mut s = seed
+    for _ in 0..n {
+        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
+        o.push(((s >> 16) & 0xFF) as u8)
+    }
+    o
+}
+
+fn roundtrip_ok(data []u8, level CompressLevel) -> bool {
+    ro comp = match deflate(data, level) {
+        Ok(c) => c
+        Err(_) => return false
+    }
+    ro back = match inflate(comp, 0) {
+        Ok(b) => b
+        Err(_) => return false
+    }
+    back == data
+}
+
+test "deflate: round-trip all levels — repetitive corpus" {
+    ro data = rep_bytes("the quick brown fox jumps over the lazy dog. ".to_bytes(), 40)
+    assert(roundtrip_ok(data, CompressLevel.none()))
+    assert(roundtrip_ok(data, CompressLevel.fastest()))
+    assert(roundtrip_ok(data, CompressLevel.default()))
+    assert(roundtrip_ok(data, CompressLevel.best()))
+}
+
+test "deflate: round-trip — empty + single byte" {
+    ro empty []u8 = []
+    assert(roundtrip_ok(empty, CompressLevel.none()))
+    assert(roundtrip_ok(empty, CompressLevel.fastest()))
+    assert(roundtrip_ok(empty, CompressLevel.best()))
+    ro one = "Z".to_bytes()
+    assert(roundtrip_ok(one, CompressLevel.fastest()))
+    assert(roundtrip_ok(one, CompressLevel.best()))
+}
+
+test "deflate: round-trip — RLE overlap (300× 'a')" {
+    ro data = rep_bytes("a".to_bytes(), 300)
+    assert(roundtrip_ok(data, CompressLevel.fastest()))
+    assert(roundtrip_ok(data, CompressLevel.best()))
+}
+
+test "deflate: round-trip — incompressible (random)" {
+    ro data = prng_bytes(2000, 12345)
+    assert(roundtrip_ok(data, CompressLevel.none()))
+    assert(roundtrip_ok(data, CompressLevel.fastest()))
+    assert(roundtrip_ok(data, CompressLevel.best()))
+}
+
+test "deflate: level-distinguishability — best < fastest < stored" {
+    // Скошенный, НЕ тривиально-сжимаемый корпус (случайные 'a'..'z'): LZ77
+    // оставляет много литералов → dynamic-Huffman явно бьёт fixed. Single
+    // repeated sentence сюда НЕ годится (схлопывается в считанные токены, где
+    // dynamic-header-overhead может превысить выигрыш).
+    ro data = prng_bytes(3000, 987654)
+    mut letters = []u8.with_capacity(3000)
+    for b in data { letters.push((97 + (b as int) % 26) as u8) }
+    ro stored = deflate(letters, CompressLevel.none())!!
+    ro fast = deflate(letters, CompressLevel.fastest())!!
+    ro best = deflate(letters, CompressLevel.best())!!
+    assert(stored.len() > fast.len())      // Huffman < stored
+    assert(best.len() < fast.len())        // dynamic < fixed (реально различимо)
+    assert(best.len() < letters.len())     // сжатие произошло
+}
+
+test "deflate: per-codec level range — deflate(10/11) → InvalidData" {
+    ro data = "hello".to_bytes()
+    ro l10 = CompressLevel.new(10)!!
+    ro l11 = CompressLevel.new(11)!!
+    assert(match deflate(data, l10) {
+        Err(e) => match e.kind { InvalidData(_) => true, _ => false }
+        Ok(_) => false
+    })
+    assert(match deflate(data, l11) {
+        Err(e) => match e.kind { InvalidData(_) => true, _ => false }
+        Ok(_) => false
+    })
+    assert(CompressLevel.new(12).is_err())     // >11 → InvalidData
+}
+
+test "deflate: stored block (level 0) has no back-refs" {
+    ro data = rep_bytes("a".to_bytes(), 300)
+    ro stored = deflate(data, CompressLevel.none())!!
+    assert(stored.len() >= 300)                // stored не сжимает
+    assert(inflate(stored, 0)!! == data)
+}
+
+test "deflate streaming: feed + finish == one-shot round-trip" {
+    ro data = rep_bytes("streaming deflate test payload. ".to_bytes(), 50)
+    mut df = Deflater.new(CompressLevel.best())
+    mut comp = []u8.with_capacity(64)
+    // Кормим по 7 байт.
+    mut i = 0
+    while i < data.len() {
+        ro end = if i + 7 < data.len() { i + 7 } else { data.len() }
+        mut piece = []u8.with_capacity(7)
+        piece.append(data[i..end])
+        comp.append(df.feed(piece)!!)
+        i = end
+    }
+    comp.append(df.finish()!!)
+    assert(inflate(comp, 0)!! == data)
+}
+
+test "deflate streaming: flush produces decodable prefix (D335)" {
+    ro part1 = "first half before flush. ".to_bytes()
+    ro part2 = "second half after flush.".to_bytes()
+    mut df = Deflater.new(CompressLevel.fastest())
+    mut prefix = []u8.with_capacity(64)
+    prefix.append(df.feed(part1)!!)
+    prefix.append(df.flush()!!)
+    // Префикс декодится в ровно part1 через streaming Inflater (без finish —
+    // поток не завершён, но sync-flush сделал part1 decodable).
+    mut inf = Inflater.new(0)
+    inf.feed(prefix)!!
+    mut got = []u8.with_capacity(32)
+    loop {
+        ro c = inf.read(64)!!
+        if c.len() > 0 { got.append(c) } else { break }
+    }
+    assert(got == part1)
+    // Скормить вторую половину и дожать; проверить полный round-trip.
+    prefix.append(df.feed(part2)!!)
+    prefix.append(df.finish()!!)
+    assert(inflate(prefix, 0)!! == "first half before flush. second half after flush.".to_bytes())
+}

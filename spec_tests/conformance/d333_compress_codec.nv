@@ -6,6 +6,7 @@
 module spec_tests.conformance
 
 import std.encoding.compress.{inflate, zlib_decode, gzip_decode, ErrorKind}
+import std.encoding.compress.{deflate, gzip_encode, zlib_encode, CompressLevel}
 
 fn d333_hex(s str) -> []u8 {
     ro chars = s.to_bytes()
@@ -47,6 +48,28 @@ test "D333: gzip decode round-trip (RFC 1952 framing)" {
 test "D333: malformed input returns typed Err (not panic)" {
     // reserved block type 11 → InvalidData
     ro r = inflate(d333_hex("07"), 16)
+    assert(match r {
+        Err(e) => match e.kind { ErrorKind.InvalidData(_) => true, _ => false }
+        Ok(_) => false
+    })
+}
+
+test "D333: deflate encode round-trips through inflate (byte-first, all levels)" {
+    ro data = d333_hex("48656c6c6f2c20444546c4154452120726f756e642d747269702e")
+    assert(inflate(deflate(data, CompressLevel.none())!!, 0)!! == data)
+    assert(inflate(deflate(data, CompressLevel.fastest())!!, 0)!! == data)
+    assert(inflate(deflate(data, CompressLevel.best())!!, 0)!! == data)
+}
+
+test "D333: gzip_encode/zlib_encode framing round-trip (RFC 1950/1952)" {
+    ro data = "conformance encode framing payload — RFC 1950 & 1952.".to_bytes()
+    assert(gzip_decode(gzip_encode(data, CompressLevel.best())!!, 1048576)!! == data)
+    assert(zlib_decode(zlib_encode(data, CompressLevel.default())!!, 1048576)!! == data)
+}
+
+test "D333: per-codec level validation — deflate(10) → typed InvalidData" {
+    ro data = "x".to_bytes()
+    ro r = deflate(data, CompressLevel.new(10)!!)
     assert(match r {
         Err(e) => match e.kind { ErrorKind.InvalidData(_) => true, _ => false }
         Ok(_) => false

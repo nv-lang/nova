@@ -292,6 +292,120 @@ export fn GzipReader mut @finish() -> Result[(), CompressError] {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// One-shot gzip encode (RFC 1952 framing + CRC-32 + ISIZE) — Ф.3
+// ──────────────────────────────────────────────────────────────────────────
+
+// Минимальный 10-байтный gzip-header: magic, CM=8, FLG=0, MTIME=0, XFL=0, OS=255.
+fn gzip_header_bytes() -> []u8 {
+    mut h = []u8.with_capacity(10)
+    h.push(0x1f)
+    h.push(0x8b)
+    h.push(0x08)        // CM = deflate
+    h.push(0x00)        // FLG
+    h.push(0x00)
+    h.push(0x00)
+    h.push(0x00)
+    h.push(0x00)        // MTIME = 0
+    h.push(0x00)        // XFL
+    h.push(0xff)        // OS = unknown
+    h
+}
+
+/// gzip-компрессия (RFC 1952): header + DEFLATE + CRC-32 + ISIZE (little-endian).
+/// Выход читается `gzip_decode` (round-trip) и системным `gzip -d`.
+#stable(since = "0.1")
+export fn gzip_encode(data []u8, level CompressLevel) -> Result[[]u8, CompressError] {
+    ro body = deflate(data, level)?
+    mut out = []u8.with_capacity(body.len() + 18)
+    out.append(gzip_header_bytes())
+    out.append(body)
+    ro crc = crc32(data)
+    out.push((crc & 0xFF) as u8)
+    out.push(((crc >> 8) & 0xFF) as u8)
+    out.push(((crc >> 16) & 0xFF) as u8)
+    out.push(((crc >> 24) & 0xFF) as u8)
+    ro isize = data.len() as u32       // ISIZE mod 2^32 (u32-усечение)
+    out.push((isize & 0xFF) as u8)
+    out.push(((isize >> 8) & 0xFF) as u8)
+    out.push(((isize >> 16) & 0xFF) as u8)
+    out.push(((isize >> 24) & 0xFF) as u8)
+    Ok(out)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Streaming gzip encode (framing + CRC-32/ISIZE поверх Deflater) — Ф.3
+// ──────────────────────────────────────────────────────────────────────────
+
+/// gzip-стрим-энкодер: header + CRC-32/ISIZE-trailer поверх Deflater. value
+/// (НЕ consume). `feed`/`flush` (SYNC-FLUSH)/`finish` (дописывает CRC-32 + ISIZE).
+#stable(since = "0.1")
+export type GzipWriter value {
+    mut inner Deflater
+    mut crc u32
+    mut isize int
+    mut header_sent bool
+    mut finished bool
+}
+
+#stable(since = "0.1")
+export fn GzipWriter.new(level CompressLevel) -> GzipWriter =>
+    {
+        inner: Deflater.new(level),
+        crc: crc32_init(),
+        isize: 0,
+        header_sent: false,
+        finished: false,
+    }
+
+#stable(since = "0.1")
+export fn GzipWriter mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
+    mut out = []u8.with_capacity(chunk.len())
+    if !@header_sent {
+        out.append(gzip_header_bytes())
+        @header_sent = true
+    }
+    @crc = crc32_update(@crc, chunk)
+    @isize = @isize + chunk.len()
+    out.append(@inner.feed(chunk)?)
+    Ok(out)
+}
+
+#stable(since = "0.1")
+export fn GzipWriter mut @flush() -> Result[[]u8, CompressError] {
+    mut out = []u8.with_capacity(16)
+    if !@header_sent {
+        out.append(gzip_header_bytes())
+        @header_sent = true
+    }
+    out.append(@inner.flush()?)
+    Ok(out)
+}
+
+#stable(since = "0.1")
+export fn GzipWriter mut @finish() -> Result[[]u8, CompressError] {
+    mut out = []u8.with_capacity(16)
+    if !@header_sent {
+        out.append(gzip_header_bytes())
+        @header_sent = true
+    }
+    out.append(@inner.finish()?)
+    ro crc = crc32_finalize(@crc)
+    out.push((crc & 0xFF) as u8)
+    out.push(((crc >> 8) & 0xFF) as u8)
+    out.push(((crc >> 16) & 0xFF) as u8)
+    out.push(((crc >> 24) & 0xFF) as u8)
+    ro isz = @isize as u32
+    out.push((isz & 0xFF) as u8)
+    out.push(((isz >> 8) & 0xFF) as u8)
+    out.push(((isz >> 16) & 0xFF) as u8)
+    out.push(((isz >> 24) & 0xFF) as u8)
+    @finished = true
+    Ok(out)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Тесты — реальные gzip-векторы (эталон: python gzip / system gzip)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -360,4 +474,34 @@ test "gzip streaming: feed-по-1-байту == one-shot" {
     }
     assert(out == oneshot)
     assert(out == "Hello, DEFLATE!".to_bytes())
+}
+
+test "gzip_encode: round-trip via gzip_decode (all levels)" {
+    ro data = "gzip framing round-trip payload — repeated. gzip framing round-trip payload.".to_bytes()
+    assert(gzip_decode(gzip_encode(data, CompressLevel.none())!!, 65536)!! == data)
+    assert(gzip_decode(gzip_encode(data, CompressLevel.fastest())!!, 65536)!! == data)
+    assert(gzip_decode(gzip_encode(data, CompressLevel.best())!!, 65536)!! == data)
+}
+
+test "gzip_encode: header magic + CRC-32/ISIZE trailer verify" {
+    ro data = "verify trailer".to_bytes()
+    ro comp = gzip_encode(data, CompressLevel.fastest())!!
+    assert(comp[0] == 0x1f && comp[1] == 0x8b && comp[2] == 0x08)   // magic + CM=8
+    ro n = comp.len()
+    ro isize = (comp[n - 4] as u32)
+        | ((comp[n - 3] as u32) << 8)
+        | ((comp[n - 2] as u32) << 16)
+        | ((comp[n - 1] as u32) << 24)
+    assert(isize == data.len() as u32)                              // ISIZE == input len
+    // gzip_decode уже верифицирует CRC-32 внутри — успех => CRC совпал.
+    assert(gzip_decode(comp, 65536)!! == data)
+}
+
+test "gzip streaming: GzipWriter feed+finish round-trip" {
+    ro data = "streamed gzip content that repeats a lot. streamed gzip content repeats.".to_bytes()
+    mut gw = GzipWriter.new(CompressLevel.default())
+    mut comp = []u8.with_capacity(64)
+    comp.append(gw.feed(data)!!)
+    comp.append(gw.finish()!!)
+    assert(gzip_decode(comp, 65536)!! == data)
 }

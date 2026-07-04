@@ -7,6 +7,7 @@
 module nova_tests.compress
 
 import std.encoding.compress.{inflate, zlib_decode, gzip_decode, crc32, adler32, Inflater, GzipReader, ZlibReader}
+import std.encoding.compress.{deflate, zlib_encode, gzip_encode, CompressLevel, Deflater, GzipWriter}
 
 // hex-строка → []u8
 fn hx(s str) -> []u8 {
