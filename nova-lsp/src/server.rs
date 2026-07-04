@@ -68,6 +68,77 @@ impl Backend {
         }
     }
 
+    /// Plan 104.10 Ф.20: run `nova test <file> [--filter <test>]` for the
+    /// run-test lens and report the outcome to the user.
+    ///
+    /// Real execution (no stub): spawns the `nova` binary (`NOVA_BIN`, else a
+    /// sibling of the running `nova-lsp` executable, else `nova` on `PATH`),
+    /// working from the workspace root so relative test resolution matches the
+    /// CLI. `--quiet` keeps the captured output focused on the failure/summary
+    /// lines; the full stdout/stderr is logged via `window/logMessage` and a
+    /// one-line pass/fail summary is surfaced via `window/showMessage`.
+    async fn run_nova_test(&self, file: &str, test: Option<&str>) {
+        let bin = nova_binary();
+        let label = match test {
+            Some(t) => format!("{file} (filter: {t})"),
+            None => file.to_string(),
+        };
+        self.client
+            .show_message(MessageType::INFO, format!("Running nova test — {label}…"))
+            .await;
+
+        let mut cmd = tokio::process::Command::new(&bin);
+        cmd.arg("test").arg(file);
+        if let Some(t) = test {
+            cmd.arg("--filter").arg(t);
+        }
+        cmd.arg("--quiet");
+        if let Some(root) = self.state.workspace_root() {
+            cmd.current_dir(root);
+        }
+
+        match cmd.output().await {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!(
+                            "nova test `{label}` exited {}\n── stdout ──\n{stdout}\n── stderr ──\n{stderr}",
+                            out.status
+                        ),
+                    )
+                    .await;
+                let summary = last_meaningful_line(&stdout)
+                    .or_else(|| last_meaningful_line(&stderr))
+                    .unwrap_or_else(|| match out.status.code() {
+                        Some(c) => format!("exited with code {c}"),
+                        None => "terminated by signal".to_string(),
+                    });
+                let ty = if out.status.success() {
+                    MessageType::INFO
+                } else {
+                    MessageType::ERROR
+                };
+                self.client
+                    .show_message(ty, format!("nova test — {summary}"))
+                    .await;
+            }
+            Err(e) => {
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        format!(
+                            "nova test failed to launch ({}): {e}. Set NOVA_BIN to the `nova` binary if it is not on PATH.",
+                            bin.display()
+                        ),
+                    )
+                    .await;
+            }
+        }
+    }
+
     /// Schedule a debounced recompile for `uri`.
     ///
     /// Strategy (V1):
@@ -439,8 +510,22 @@ impl LanguageServer for Backend {
                 // Plan 123.5.1 (V5.1): field-cache code-lens над method
                 // headers ("N caches inserted") + hover provider over
                 // `@field` showing cache info.
+                // Plan 104.10 Ф.20: navigation lenses (run-test / references /
+                // implementations) in addition to the Plan 123.5.1 field-cache
+                // lens. `resolve_provider = false` — titles/counts are computed
+                // eagerly from the real indexes (Ф.12 refs, Ф.19 impl scan).
                 code_lens_provider: Some(CodeLensOptions {
                     resolve_provider: Some(false),
+                }),
+                // Plan 104.10 Ф.20: server-side commands. `nova.runTest` is the
+                // executeCommand target of the run-test lens — it shells out to
+                // `nova test <file> --filter <name>` and reports the outcome via
+                // `window/showMessage`. The references/implementations lenses use
+                // the client-side `editor.action.showReferences` (no server
+                // round-trip) so they are not listed here.
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![crate::code_lens::CMD_RUN_TEST.to_string()],
+                    work_done_progress_options: Default::default(),
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 // Plan 104.2: goto-definition handler.
@@ -1460,16 +1545,109 @@ impl LanguageServer for Backend {
         Ok(if actions.is_empty() { None } else { Some(actions) })
     }
 
-    /// Plan 123.5.1 (V5.1): code-lens над method headers showing
-    /// "N caches inserted" — uses field_cache::analyze_module API.
+    /// Plan 104.10 Ф.20 + Plan 123.5.1: code lenses.
+    ///
+    /// Combines the Ф.20 navigation lenses — `▶ Run test` over `test` blocks,
+    /// `N references` over every `fn`/`type` (Ф.12 index), `N implementations`
+    /// over every `protocol` (Ф.19 scan) — with the Plan 123.5.1 field-cache
+    /// lens ("N cache(s)" over method headers).
     async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
         let uri = params.text_document.uri.clone();
         let Some(doc) = self.state.docs.get(&uri) else { return Ok(None); };
         let src = doc.text.to_string();
+        let version = doc.version;
         drop(doc);
 
-        let lenses = run_with_large_stack(move || compute_field_cache_lenses(&src));
-        Ok(lenses)
+        // Ф.20: prime the references index once on a cold workspace so cross-file
+        // reference counts are correct (mirrors the `references` handler). Open
+        // documents are already indexed with their buffer text, so skip them.
+        if !self.state.references_index.is_primed() {
+            if let Some(root) = self.state.workspace_root() {
+                for (file_uri, text) in collect_nv_files(&root) {
+                    if !self.state.docs.contains_key(&file_uri) {
+                        self.state.references_index.index_file(file_uri, &text);
+                    }
+                }
+            }
+            self.state.references_index.mark_primed();
+        }
+
+        // Ф.20 navigation lenses — computed off the Ф.1 resolved cache (imports
+        // inlined, so cross-file implementers resolve) + the Ф.12 references
+        // index. Contained so a resolver/scan panic degrades to just the
+        // field-cache lenses rather than failing the request.
+        let file_path = uri.to_file_path().ok();
+        let state = Arc::clone(&self.state);
+        let uri_nav = uri.clone();
+        let src_nav = src.clone();
+        let mut lenses: Vec<CodeLens> =
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_with_large_stack(move || {
+                    let resolved = state.get_or_build_resolved(&uri_nav, version, &src_nav);
+                    crate::code_lens::compute_navigation_lenses(
+                        &src_nav,
+                        &uri_nav,
+                        file_path.as_deref(),
+                        &resolved,
+                        &state.references_index,
+                    )
+                })
+            })) {
+                Ok(v) => v,
+                Err(_) => {
+                    tracing::warn!("code_lens: navigation-lens computation panicked");
+                    Vec::new()
+                }
+            };
+
+        // Plan 123.5.1: append the field-cache lenses (best-effort; skipped when
+        // the file does not type-check).
+        if let Some(fc) = run_with_large_stack(move || compute_field_cache_lenses(&src)) {
+            lenses.extend(fc);
+        }
+
+        Ok(if lenses.is_empty() { None } else { Some(lenses) })
+    }
+
+    /// Plan 104.10 Ф.20: `workspace/executeCommand`.
+    ///
+    /// Currently the enabler for the run-test lens: `nova.runTest` receives
+    /// `[file_path, test_name]` and shells out to `nova test <file> --filter
+    /// <name>`, reporting the outcome to the user via `window/showMessage` (full
+    /// output goes to the trace log). Unknown commands degrade to `Ok(None)`.
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        match params.command.as_str() {
+            crate::code_lens::CMD_RUN_TEST => {
+                let file = params
+                    .arguments
+                    .first()
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let test = params
+                    .arguments
+                    .get(1)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let Some(file) = file else {
+                    self.client
+                        .show_message(
+                            MessageType::ERROR,
+                            "nova.runTest: missing file-path argument",
+                        )
+                        .await;
+                    return Ok(None);
+                };
+                self.run_nova_test(&file, test.as_deref()).await;
+                Ok(None)
+            }
+            other => {
+                tracing::warn!(command = %other, "executeCommand: unknown command");
+                Ok(None)
+            }
+        }
     }
 
     /// Plan 104.2: hover handler — symbol type + doc-comment.
@@ -1971,6 +2149,40 @@ fn byte_to_line_col(line_starts: &[usize], byte: usize) -> (usize, usize) {
     };
     let line_start = line_starts.get(line).copied().unwrap_or(0);
     (line, byte - line_start)
+}
+
+/// Plan 104.10 Ф.20: locate the `nova` CLI binary for the run-test lens.
+///
+/// Resolution order: `NOVA_BIN` env override → a sibling of the running
+/// `nova-lsp` executable (the normal `cargo build` layout puts `nova` and
+/// `nova-lsp` in the same `target/<profile>/` dir) → bare `nova` (resolved via
+/// `PATH` by the OS at spawn time).
+fn nova_binary() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("NOVA_BIN") {
+        if !p.is_empty() {
+            return std::path::PathBuf::from(p);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let name = if cfg!(windows) { "nova.exe" } else { "nova" };
+            let cand = dir.join(name);
+            if cand.exists() {
+                return cand;
+            }
+        }
+    }
+    std::path::PathBuf::from("nova")
+}
+
+/// Last non-blank line of `s`, trimmed — used to surface a `nova test` run's
+/// summary/failure line in a `window/showMessage`. `None` if `s` is all blank.
+fn last_meaningful_line(s: &str) -> Option<String> {
+    s.lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
 }
 
 /// Plan 123.5.1: compute code-lens list для source text.

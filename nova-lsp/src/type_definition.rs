@@ -313,6 +313,25 @@ pub fn compute_implementation_in(
     if locs.is_empty() { None } else { Some(locs) }
 }
 
+/// Plan 104.10 Ф.20 (codeLens): all implementer locations of the protocol
+/// **named** `name` (name-driven, not cursor-driven — the lens already knows the
+/// declaration it sits over). Returns `Some(locations)` (possibly empty) when
+/// `name` is a protocol in the (import-inlined) module, `None` otherwise. The
+/// empty-but-`Some` case lets the lens render "0 implementations" rather than
+/// hiding — the count comes from the same AST scan `implementation` uses, so the
+/// lens count and a `textDocument/implementation` query never disagree.
+pub fn protocol_implementations_by_name(
+    resolved: &ResolvedModule,
+    src: &str,
+    uri: &Url,
+    name: &str,
+) -> Option<Vec<Location>> {
+    let module = &resolved.module;
+    let method_names = protocol_method_names(module, name)?;
+    let spans = protocol_implementers(module, name, &method_names);
+    Some(spans_to_locations(&spans, resolved, src, uri))
+}
+
 /// If `name` is a `protocol` type declaration in the module, return the set of
 /// its method names (used for structural-conformance matching). `None` when the
 /// name is not a protocol.
