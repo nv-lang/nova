@@ -516,6 +516,10 @@ typedef struct { char _dummy; } nova_unit;
  * (uses nova_gc_alloc_count) и eventloop.h (optional uv_hrtime). */
 #include "bench.h"
 
+/* Plan 176 Ф.1 (D322 §3c): std/io console byte hooks (io_read_fd / io_write_fd)
+ * for the `Io` effect real handler. Header-only (C stdio FILE*). */
+#include "io_console.h"
+
 /* Plan 115 D214 Ф.2: tuple-return FFI test shim. Header-only inline
  * helpers used by `nova_tests/plan115/t2_external_fn_tuple_ok.nv`.
  * Plan 115 v1 ships minimum FFI scaffolding here; full user-side shim

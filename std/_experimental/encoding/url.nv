@@ -334,7 +334,7 @@ export fn Url.encode_query(s str) -> str {
 // multi-byte UTF-8 sequence — нужен byte-buffer с финализацией через
 // UTF-8 validation. StringBuilder text-only, не подходит. WriteBuffer
 // + write_char/write_str/write_byte накапливает UTF-8 bytes; финал
-// через `str.try_from([]u8)?` (D77) валидирует и конвертирует.
+// через `str.from_bytes([]u8)?` (D325) валидирует и конвертирует.
 //
 // На невалидный UTF-8 после decode'а — throw InvalidPercentEncoding
 // (consistent с тем что percent-encoding должен давать valid UTF-8;
@@ -378,7 +378,7 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
             None => {
                 // Out-of-bounds char_at — закрываем early.
                 ro bytes = buf.into()
-                match str.try_from(bytes) {
+                match str.from_bytes(bytes) {
                     Ok(t)  => return t
                     Err(_) => throw InvalidPercentEncoding { position: i }
                 }
@@ -386,7 +386,7 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
         }
     }
     ro bytes = buf.into()
-    match str.try_from(bytes) {
+    match str.from_bytes(bytes) {
         Ok(t)  => t
         Err(_) => throw InvalidPercentEncoding { position: i }
     }

@@ -21,7 +21,7 @@
 #include <string.h>
 
 /* Validate UTF-8 bytes. Returns 1 if valid, 0 otherwise.
- * Used by str.from_bytes_lossy and Nova_str_static_try_from_bytes. */
+ * Used by str.from_bytes_lossy (nova_str_from_bytes_lossy fast path). */
 static inline nova_bool _nova_validate_utf8(const nova_byte* data, int64_t len) {
     int64_t i = 0;
     while (i < len) {
@@ -174,27 +174,11 @@ static inline nova_str nova_str_from_bytes_lossy(NovaArray_nova_byte* arr) {
     return (nova_str){.ptr = out, .len = (size_t)w};
 }
 
-/* Helper: box nova_str into heap-allocated nova_str* for Result.Ok payload. */
-static inline void* nova_box_str(nova_str s) {
-    nova_str* p = (nova_str*)nova_alloc(sizeof(nova_str));
-    *p = s;
-    return (void*)p;
-}
-
-/* str.try_from([]byte) -> Result[str, ParseStrError]. */
-static inline Nova_Result* Nova_str_static_try_from_bytes(NovaArray_nova_byte* arr) {
-    if (!_nova_validate_utf8(arr->data, arr->len)) {
-        return nova_make_Result_Err((nova_str){
-            .ptr = "invalid UTF-8 byte sequence",
-            .len = 26,
-        });
-    }
-    char* buf = (char*)nova_alloc((size_t)arr->len + 1);
-    if (arr->len > 0) memcpy(buf, arr->data, (size_t)arr->len);
-    buf[arr->len] = '\0';
-    nova_str s = (nova_str){.ptr = buf, .len = (size_t)arr->len};
-    return nova_make_Result_Ok((nova_int)(intptr_t)nova_box_str(s));
-}
+/* Plan 176 Ф.0.5: `Nova_str_static_try_from_bytes` (the C backing of the retired
+ * `str.try_from([]u8)` intrinsic) + its `nova_box_str` helper were removed.
+ * Fallible byte→str decode is now the Nova-body `str.from_bytes(bytes) ->
+ * Result[str, Utf8Error]` (std/runtime/string/core.nv), which reuses the same
+ * `_nova_validate_utf8` well-formedness rules on the Nova side. */
 
 /* nova_str_replace — pure C helper for str.replace bootstrap.
  * Used only when Nova-body dispatch is unavailable (fallback). */

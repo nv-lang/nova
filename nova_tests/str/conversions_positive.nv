@@ -63,12 +63,12 @@ test "bool.try_from false" {
 
 test "round-trip ASCII str through bytes" {
     ro s = "hello"
-    ro r = str.try_from(s.to_bytes())
+    ro r = str.from_bytes(s.to_bytes())
     assert(r.is_ok())
 }
 
 test "round-trip Cyrillic str through bytes" {
     ro s = "Привет"
-    ro r = str.try_from(s.to_bytes())
+    ro r = str.from_bytes(s.to_bytes())
     assert(r.is_ok())
 }

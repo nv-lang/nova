@@ -8,7 +8,23 @@
 > `type X consume {}` + `D133-not-consumed` на scope-exit, `compiler-codegen/src/types/mod.rs:18864+/:19746-19908`; боевой пример —
 > `WriteGuard`/Mutex; `File`-пример прямо в спеке D133) → affine-fallback-ветка УДАЛЕНА; stale-номера
 > 180/179 вычищены; двойное владение net-миграций разведено со 178; mem_fs получил носителя; введена Ф.4.
-> **Статус:** 📋 READY (все Q закрыты §3.0). **Маркер:** `[M-176-io-fs-os]` (регистрация в OPEN-view — Ф.0).
+> **Статус:** 🟢 Ф.0.5 + Ф.1 DONE (2026-07-04); остаток READY (все Q закрыты §3.0). **Маркер:** `[M-176-io-fs-os]` (OPEN-view).
+> **Прогресс (2026-07-04):** **Ф.0.5** — `str.from_bytes -> Result[str, Utf8Error]` (Nova-body, D325-канон; ретайр
+> интринзика `str.try_from([]u8)`; миграция всех потребителей + byte_offset-тест). **Ф.1 io-core** — `io.Read`/`io.Write`/
+> `io.Seek` + `SeekFrom`; структурный `IoError`/`ErrorKind` (heap record); хелперы `read_exact`/`read_to_end`/
+> `read_to_string`/`write_all`/`write_str`/`copy`/`lines`/`byte_lines`; конформеры `BytesReader`/`BytesWriter`;
+> **`BufWriter` must-consume (D133, pos+neg)** + `BufReader`; `Io` effect + `stdin`/`stdout`/`stderr` + `mock_io`
+> (capture/scripted) + `real_io` (C fd-хуки `nova_rt/io_console.h`). Спека D322 (04-effects.md); conformance
+> `d322_io_read_write_seek.nv` (38/38); `nova_tests/io` pos+neg. **`IoError` = `value` (D322 §3b канон, 2026-07-04):**
+> heap-обход снят — закрыт codegen keystone-gap «value-record в error-позиции generic `Result` / protocol-vtable»
+> (protocol-vtable теперь forward-declare'ит референсимый `NovaRes_<ok>_NovaValue_<E>` mono до своей struct'ы;
+> `emit_c.rs::emit_protocol_box_typedef`). **Оставшиеся codegen-обходы (followup-маркеры, НЕ упрощения семантики):**
+> инлайн циклов в хелперах (форвард bounded-generic не проносит bound — checker `[M-176-io-forward-bounded-generic]`);
+> `BufReader`/`BufWriter` с ЯВНЫМИ type-args (`BufWriter[BytesWriter].new` — inference-конструкция generic-wrapper'а
+> = **отдельный** от value-record корень, эмпирически подтверждён value-record-независимым: NULL-stub падает и на
+> heap-error; `[M-176-generic-wrapper-mono-inference]`); статические `SeekFrom.start/end/current` (cross-module
+> payload-variant-литерал — checker-gap `[M-176-xmod-payload-variant-ctor]`) — backlog. Zero-regression подтверждён
+> (baseline=parent-бинарь e50fcc6d, value-record/generic/io/str sample).
 > **Запуск:** «**выполни план 176**».
 > **Эталон:** **Go / Rust / TS / Kotlin / Java / Zig / Swift**. **Архитектура — по net-семейству**
 > ([std/net/effect.nv](../../std/net/effect.nv)): эффект = внутренний плумбинг (libuv-backed, async, park/wake как

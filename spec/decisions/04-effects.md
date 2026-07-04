@@ -6284,3 +6284,82 @@ user-visible эффект, высокий churn) — только задокум
 1. Пять расходящихся зеркал одной схемы (prelude-decl / codegen-hardcode / C-vtable / handler-литералы / закомментированная decl) — правка требовала синхронного изменения 5 мест; единый `.nv`-источник убирает дрейф ([feedback-maximize-nv-sourcing] §3; прецедент RuntimeError 78 Ф.2, 172.1 U.1).
 2. `TimerMetrics` — интроспекция timer-runtime (Plan 66 territory), не «время»: держать её в `Time` раздувало плумбинг-эффект и заставляло каждый mock-clock-handler стабить read-only счётчики (Q1).
 3. Ф.1 — refactor без смены поведения (int-провод неизменен) → низший риск; типизация и overflow-безопасность идут отдельными фазами поверх стабильного единого источника.
+## D322 — io-core: `io.Read`/`io.Write`/`io.Seek`, `IoError`, `Io` effect (Plan 176 Ф.1, 2026-07-04)
+
+**Статус:** IMPLEMENTED (Ф.1 — io-core; fs=D323/os=D324 — последующие фазы). Модуль `std/io`.
+
+### Протоколы (byte I/O)
+
+```nova
+type io.Read  protocol { mut @read(buf mut []u8) -> Result[int, IoError] }
+type io.Write protocol { mut @write(data []u8) -> Result[int, IoError]; mut @flush() -> Result[(), IoError] }
+type io.Seek  protocol { mut @seek(pos SeekFrom) -> Result[int, IoError] }
+type SeekFrom | Start(int) | End(int) | Current(int)   // всё int (i64); Start(<0) → InvalidInput
+```
+
+- **Эффект-агностичны (Q15, D122-amended):** конформер несёт СВОЙ плумбинг-эффект
+  (`File`→`Fs`, `TcpStream`→`TcpNet`, консоль→`Io`), всплывающий транзитивно при
+  мономорфизации. Generic-вызовы через io-bound — **mono-dispatch only** (vtable для
+  effectful-bounds запрещён).
+- **Sibling prelude text-sink `Write`** (D374): байтовый `io.Write` ссылается квалифицированно
+  (`io.Write`); мост text→bytes — явный `write_str`.
+- **EOF/partial/EINTR-контракт (Q9):** `read` → `Ok(0)` = EOF **только при непустом буфере**;
+  short-read — норма; partial-write легален (`write_all` loop); `Ok(0)` mid-write → `WriteZero`;
+  `Interrupted`(EINTR) — retry в std-хелперах. НЕ Go `(n>0, EOF)`.
+
+### Хелперы (free generic fns, mono-dispatch)
+
+`read_exact`(→UnexpectedEof) / `read_to_end` / `read_to_string`(→InvalidData на невалидном UTF-8, Q11) /
+`write_all`(→WriteZero) / `write_str` / `copy` / `lines`(Q7: strip trailing `\r`, финал без `\n` — yield,
+embedded lone `\r` НЕ сепаратор — делегат `str.@lines`) / `byte_lines`(raw `\n`-split).
+In-memory конформеры: `BytesReader` (Read+Seek, cursor), `BytesWriter` (Write, growable sink).
+
+### `IoError` (структурный, Rust `ErrorKind`-precedent)
+
+```nova
+type IoError { ro kind ErrorKind, ro raw_os int, ro op str }   // Ф.2 добавит path Option[Path] + boxed source
+type ErrorKind | NotFound | PermissionDenied | AlreadyExists | ... | Unsupported | Other(int)   // OPEN → wildcard-arm обязателен
+```
+
+- **Heap record** (НЕ `value`): как Rust `io::Error` (внутренне boxed) — pointer-sized, дёшево течёт через
+  `Result[T, IoError]` в generic-хелперах (by-value record ловит `Result[T, ValueRecord]`-mono-gap).
+- `raw_os` **authoritative**; `kind = kind_from_errno(raw_os)` — best-effort projection (общие POSIX errno;
+  редкие → `Other(raw)`, §3b). **Per-op error sets (Zig) — considered/REJECTED (Q14):** один открытый `ErrorKind`
+  + `raw_os` + (Ф.2) `source`-chain композируется, а не дробит обработку.
+- `Utf8Error{byte_offset}` + `str.from_bytes(bytes)->Result[str, Utf8Error]` — Ф.0.5 (D325-канон; ретайр
+  интринзика `str.try_from([]u8)`).
+
+### `BufReader` / `BufWriter` (Q10, D133)
+
+- **`BufWriter[W] consume`** — **must-consume (D133)**: `@close()` (flush + Result); незакрытый = compile-error
+  `D133-not-consumed`; double-close = use-after-consume. Нет silent flush-on-drop. Бьёт Go `bufio.Flush` /
+  Rust `Drop`-swallow / Zig ручной flush (§1a #1). `@write`/`@flush`/`@write_str` — io.Write.
+- **`BufReader[R]`** — буферизует чтения chunk'ами; сам io.Read.
+
+### `Io` effect (консоль, мокабельна, §3c)
+
+```nova
+type Io effect {
+    read_in(buf mut []u8) -> Result[int, IoError]    // buffer-fill (Result[[]u8] Ok-payload эрейзится vtable'ом)
+    write_out(data []u8) -> Result[int, IoError]
+    write_err(data []u8) -> Result[int, IoError]
+}
+```
+
+- Хендлы `stdin()`/`stdout()`/`stderr()` конформят io.Read/io.Write поверх `Io`.
+- **`real_io()`** — fd-хуки `io_read_fd`/`io_write_fd` (`nova_rt/io_console.h`, C stdio FILE*; return `-errno` на
+  ошибке → `IoError.from_os`).
+- **`mock_io(cap IoCapture)`** — capture stdout/stderr + scripted stdin; детерм. консоль-тесты без терминала
+  (мокабельность, §1a; носитель §8.4).
+
+### Реализационные ноты (обход codegen-ограничений; НЕ упрощения семантики)
+
+1. **Heap `IoError`** (см. выше) — by-value record не мономорфизируется в generic-`Result`.
+2. **Хелперы инлайнят циклы** (не форвардят один bounded-generic в другой generic-fn — чекер не проносит bound
+   через такой форвард).
+3. **`BufReader`/`BufWriter` строятся с ЯВНЫМИ type-args** (`BufWriter[BytesWriter].new(...)`): inference-only
+   конструкция generic-wrapper'а не материализует мономорфизированные методы (иначе — NULL-stub → крах).
+   Followup `[M-176-generic-wrapper-mono-inference]`.
+4. **`SeekFrom.start/end/current`** — статические конструкторы (cross-module литерал payload-варианта
+   `SeekFrom.Start(n)` ловит checker-gap на возвратном типе конструктора; pattern-match не затронут).
+   Followup `[M-176-xmod-payload-variant-ctor]`.

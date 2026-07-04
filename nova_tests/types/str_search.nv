@@ -357,18 +357,18 @@ test "split: trailing separator" {
 // ================================================================
 // Codegen-маппинг `[]u8` → `NovaArray_nova_byte*` с реальным uint8_t[]
 // (не nova_int слотами). Тест проверяет что round-trip через
-// bytes() / for-in / WriteBuffer + str.try_from работает.
+// bytes() / for-in / WriteBuffer + str.from_bytes работает.
 //
 // Plan 04 Этап 6: Buffer удалён. Replaces:
-//   - Buffer.from(bs).into_str_unchecked() → str.try_from(bs)? (D77)
+//   - Buffer.from(bs).into_str_unchecked() → str.from_bytes(bs)? (D325)
 //   - Buffer.with_capacity + add_byte       → WriteBuffer + write_byte
 
-test "bytes: round-trip через str.try_from" {
+test "bytes: round-trip через str.from_bytes" {
     ro original = "Hello, мир!"
     ro bs = original.to_bytes()
-    // Восстановим строку: bs → str.try_from(bs) → str. UTF-8 валидный
+    // Восстановим строку: bs → str.from_bytes(bs) → str. UTF-8 валидный
     // (исходник был str), поэтому Ok.
-    ro recon = match str.try_from(bs) {
+    ro recon = match str.from_bytes(bs) {
         Ok(s)  => s
         Err(_) => ""    // unreachable — original was valid UTF-8
     }

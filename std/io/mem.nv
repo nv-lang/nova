@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/io/mem.nv — in-memory io.Read / io.Write / io.Seek conformers
+// (Plan 176 Ф.1, D322).
+//
+// `BytesReader` is a cursor over a `[]u8` (Rust `io::Cursor`, Go
+// `bytes.Reader`); `BytesWriter` is a growable byte sink (Rust `Vec<u8>` as
+// `Write`). Together they let the whole io-core layer — the loop helpers,
+// `BufReader`/`BufWriter`, `copy` — be exercised deterministically without a
+// disk or a socket (the pure-Nova, effect-free conformers for Q15's `copy`
+// spec_test). They are also genuinely useful stdlib types.
+
+module std.io
+
+// ─── BytesReader — a read cursor over an owned byte buffer ───
+
+/// Read/Seek cursor over an in-memory `[]u8`. EOF when the cursor reaches the
+/// end. `pos` may be seeked past the end (reads then yield EOF), never negative.
+#stable(since = "0.1")
+export type BytesReader {
+    ro data []u8
+    mut pos int
+}
+
+/// Wrap a byte buffer as a reader positioned at the start.
+#stable(since = "0.1")
+export fn BytesReader.new(data []u8) -> Self => { data, pos: 0 }
+
+/// Current cursor position (absolute byte offset).
+#stable(since = "0.1")
+export fn BytesReader @position() -> int => @pos
+
+/// Bytes remaining before EOF (never negative).
+#stable(since = "0.1")
+export fn BytesReader @remaining() -> int {
+    ro rem = @data.len() - @pos
+    if rem > 0 { rem } else { 0 }
+}
+
+/// io.Read: copy up to `buf.len()` bytes into `buf`, advancing the cursor.
+/// `Ok(0)` (with a non-empty `buf`) means EOF.
+#stable(since = "0.1")
+export fn BytesReader mut @read(buf mut []u8) -> Result[int, IoError] {
+    ro cap = buf.len()
+    if cap == 0 { return Ok(0) }
+    ro rem = @data.len() - @pos
+    if rem <= 0 { return Ok(0) }
+    ro n = if cap < rem { cap } else { rem }
+    mut i = 0
+    while i < n {
+        buf[i] = @data[@pos + i]
+        i += 1
+    }
+    @pos = @pos + n
+    Ok(n)
+}
+
+/// io.Seek: reposition the cursor. `Start(neg)` (or any resolved negative
+/// position) → `InvalidInput`. Returns the new absolute position.
+#stable(since = "0.1")
+export fn BytesReader mut @seek(pos SeekFrom) -> Result[int, IoError] {
+    ro newpos = match pos {
+        SeekFrom.Start(n)   => n
+        SeekFrom.End(n)     => @data.len() + n
+        SeekFrom.Current(n) => @pos + n
+    }
+    if newpos < 0 {
+        return Err(IoError.of(ErrorKind.InvalidInput, "seek"))
+    }
+    @pos = newpos
+    Ok(newpos)
+}
+
+// ─── BytesWriter — a growable in-memory byte sink ───
+
+/// io.Write backed by a growable `[]u8`. Never short-writes (accepts the whole
+/// slice) and `@flush` is a no-op. Recover the written bytes with `@into()`.
+#stable(since = "0.1")
+export type BytesWriter {
+    mut buf []u8
+}
+
+/// Empty sink.
+#stable(since = "0.1")
+export fn BytesWriter.new() -> Self => { buf: []u8.new() }
+
+/// Number of bytes written so far.
+#stable(since = "0.1")
+export fn BytesWriter @len() -> int => @buf.len()
+
+/// Read-only view of the bytes written so far (no copy).
+#stable(since = "0.1")
+export fn BytesWriter @bytes() -> ro []u8 => @buf
+
+/// io.Write: append the whole slice. Always returns `Ok(data.len())`.
+#stable(since = "0.1")
+export fn BytesWriter mut @write(data []u8) -> Result[int, IoError] {
+    @buf.append(data)
+    Ok(data.len())
+}
+
+/// io.Write: no-op (nothing is buffered downstream).
+#stable(since = "0.1")
+export fn BytesWriter mut @flush() -> Result[(), IoError] => Ok(())
