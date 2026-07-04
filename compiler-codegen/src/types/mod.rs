@@ -8913,6 +8913,41 @@ impl<'a> TypeCheckCtx<'a> {
     /// codegen's `ExternalRegistry`, not the checker's `method_table`, so the checker's
     /// set is incomplete → would false-positive. De-risked in detect-mode (§7): 0
     /// false-positives across 707K corpus calls (62K resolved-ok).
+    /// Plan 177 Ф.3 [E_UNKNOWN_METHOD]: EXISTENCE-only mirror of the receiver-matching
+    /// half of [`resolve_prefix_generic_method_return`] — does ANY prefix-generic /
+    /// blanket receiver method named `method` apply to the concrete (peeled) receiver
+    /// `peeled`? Covers `fn[T] T @method` / `fn[I Bound] I @method` (bare-typevar recv,
+    /// matches any receiver) and `fn[T] []T @method` (slice-typevar recv, matches an
+    /// Array/FixedArray receiver only). Used to KEEP such a call legitimate before the
+    /// primitive unknown-method rejection (a blanket method is a real method on the
+    /// primitive, even though it is registered under the typevar receiver key, not the
+    /// primitive's name). Return-type resolvability is irrelevant here — pure existence.
+    fn prefix_generic_method_exists(&self, peeled: &TypeRef, method: &str) -> bool {
+        for (recv_key, methods) in self.sig.method_table.iter() {
+            let Some(overloads) = methods.get(method) else { continue; };
+            for f in overloads {
+                let Some(recv) = f.receiver.as_ref() else { continue; };
+                if !matches!(recv.kind, ReceiverKind::Instance) {
+                    continue;
+                }
+                // Bare typevar receiver (`fn[T] T @m` / blanket `fn[I Bound] I @m`):
+                // recv_key IS a method-level generic param name → matches any receiver.
+                if f.generics.iter().any(|g| &g.name == recv_key) {
+                    return true;
+                }
+                // Single-level slice typevar (`fn[T] []T @m`): matches only an array
+                // receiver (element binds T).
+                if recv_key.starts_with("[]")
+                    && f.generics.iter().any(|g| g.name == recv_key[2..])
+                    && matches!(peeled, TypeRef::Array(..) | TypeRef::FixedArray(..))
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn check_instance_overload(
         &self,
         obj: &Expr,
@@ -8947,6 +8982,52 @@ impl<'a> TypeCheckCtx<'a> {
             _ => return,
         };
         let type_name = type_name.as_str();
+        // Plan 177 Ф.3 [E_UNKNOWN_METHOD] (§0/§1/§6): a PRIMITIVE receiver whose method
+        // resolves in NO channel — not a user/prelude method (`method_overloads`), not a
+        // codegen builtin-intrinsic (`primitive_instance_method_known`: D109/D74/str/
+        // whitelist), and not a prefix-generic/blanket receiver (`fn[T] T @m`) — is a
+        // genuine unknown-method call. Reject it HERE with a clean checker diagnostic
+        // instead of letting it leak to codegen, which panics `[P67-LEGACY]` on an `int`
+        // receiver (`emit_c.rs:39841` — «checker must annotate») and mis-types a `str`
+        // receiver to `nova_int` → CC-FAIL; this leak also blocked the Plan 177 Ф.3
+        // `spec_tests/conformance/neg/` fixtures for the D325-retracted names.
+        //
+        // SCOPED to primitives (§7.3 permissive calibration): user / opaque / generic-
+        // instance receivers keep their EXISTING resolution (`sig_complete_builtin` →
+        // E7320 just below for extern builtins; user types stay codegen-resolved), where
+        // the checker does NOT hold the full C-runtime method set and a rule here would
+        // false-positive. For a REAL primitive the checker's knowledge IS complete once the
+        // three channels above are consulted, so a miss is authoritative.
+        //
+        // `never` / `any` / `unit` are EXCLUDED (they are in `is_primitive_recv_name` but
+        // are NOT method-bearing value primitives): a `never`-typed receiver means the
+        // checker could NOT infer a concrete type (a divergent expression, or — the bulk
+        // of the blast-radius survey — an opaque runtime type whose methods live outside
+        // the checker's tables, e.g. a net `TcpListener`/`UdpSocket` receiver seen as
+        // `never`). Flagging `never.close()` / `never.send_to()` would be a false positive;
+        // `never`/`any`/`unit` therefore stay permissive (defer to codegen). §7.3.
+        if is_primitive_recv_name(type_name)
+            && !matches!(type_name, "never" | "any" | "unit")
+            && self.method_overloads(type_name, method_name).is_none()
+            && !crate::codegen::emit_c::CEmitter::primitive_instance_method_known(
+                type_name, method_name,
+            )
+            && !self.prefix_generic_method_exists(rt, method_name)
+        {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_UNKNOWN_METHOD] no method `{}` on primitive type `{}` — the \
+                     receiver has no such instance method (checked: built-in primitive \
+                     methods, prelude/protocol methods, and any generic `fn[T] T @{}` \
+                     blanket).\n  \
+                     fix: check the method name for a typo, or `import` the stdlib module \
+                     that provides it (e.g. `std.unicode` for char methods).",
+                    method_name, type_name, method_name,
+                ),
+                span,
+            ));
+            return;
+        }
         // Plan 172.1.1 (U.3.2 probe): lift the primitive gate — `method_table.get` below returns
         // None for receivers absent from the checker's table (graceful no-op), so this is SAFE; it
         // RECORDS a callee only when the primitive's method sig IS present. Measures empirically

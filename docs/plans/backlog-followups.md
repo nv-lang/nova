@@ -841,16 +841,39 @@ infallible + `try_from` Result — «4-way»→«2-way»). **Spec-часть у�
 (задевает всю conversion-auto-derive машинерию), separable от parse/read-триад. Требует
 own regression-гейта. Домен Plan 177 Ф.3 или dedicated.
 
-## [M-checker-unknown-method-stackoverflow] — чекер stack-overflow на неизвестном методе (pre-existing, 2026-07-04)
+## [M-checker-unknown-method-stackoverflow] — чекер не отвергал неизвестный метод + `nova check` overflow (Plan 177 Ф.3, ✅ DONE 2026-07-04)
 
-`nova check` файла, вызывающего НЕизвестный метод на str/ReadBuffer-ресивере
-(`"x".zzz_bogus()`, `rb.try_read_u32_le()` после ретракта), даёт **stack overflow** в
-чекере (`thread has overflowed its stack`), НЕ чистый `[E7320]`/`E_UNKNOWN_METHOD`.
-**Pre-existing** — воспроизводится на baseline `19b9c756` тем же bogus-методом (НЕ
-регрессия Plan 177). **Блокирует** `spec_tests/conformance/neg/d325_*` (removed-имена →
-compile-error): чистый `EXPECT_COMPILE_ERROR`-фикстур невозможен (крашит раннер). Пока
-отсутствие старых имён доказано source-level negative-grep. Спец-неги d325 — после фикса
-этого overflow (рекурсия в method-resolution-fallback). Домен: чекер / Plan 177 Ф.3.
+✅ **CLOSED (Plan 177 Ф.3, 2026-07-04).** Диагноз «рекурсия в method-resolution-
+fallback» оказался **мисдиагнозом** — под капотом ДВА независимых бага:
+
+**(1) §0/§1-дыра (первичный):** чекер НЕ отвергал вызов несуществующего метода на
+**примитивном** ресивере (int/str/char/…). `is_primitive_recv_name` DEFER-гейт
+(U.3.2/U.3.3) пропускал их — и вызов утекал в codegen: `int.nonexistent()` → **паника
+`[P67-LEGACY]`** (`emit_c.rs:39841` «method call return type unknown — checker must
+annotate»), `str.zzz()` → мис-тип `nova_int` → **CC-FAIL**. **Фикс** (`check_instance_overload`,
+types/mod.rs): для REAL-примитива, если метод не резолвится НИ через `method_overloads`
+(user/prelude/protocol), НИ через builtin-интринсики (новый `CEmitter::
+primitive_instance_method_known` — единый источник имён D109/D74/f64/str/whitelist +
+D73/D84 into/try_into), НИ через prefix-generic/blanket (`fn[T] T @m`) → чистая
+**`[E_UNKNOWN_METHOD]`** (§6, с fix-hint). §7.3-калибровка: `never`/`any`/`unit`
+ИСКЛЮЧЕНЫ (bottom/top/unit — `never`-ресивер = чекер не вывел конкретный тип, напр.
+opaque net `TcpListener`); user/opaque/generic-ресиверы не тронуты (их набор в
+method_table неполон). Blast-radius в detect-режиме: 464→0 ложных на nova_tests под
+`nova test` (все остаточные под `nova check` — per-file cross-module/sibling-import
+артефакты folder-модулей, резолвятся при реальной компиляции).
+
+**(2) `nova check` overflow (вторичный, orthogonal):** worker-нити `cmd_check`
+(main.rs) имели дефолтный **2 MiB** стек — `types::check_module` на prelude-merged
+модуле переполнял его для ЛЮБОГО файла (даже `fn f()->int{5}` — проверено), НЕ только
+unknown-method. **Фикс:** worker-стек → 64 MiB (как весь остальной компилятор —
+`main.rs`/`test_runner.rs`). Теперь `nova check` завершается; unknown-метод = чистая
+`[E_UNKNOWN_METHOD]`.
+
+**Разблокировало** `spec_tests/conformance/neg/d325_*`: добавлен
+`neg/d325_retracted_str_parse_method_neg.nv` (retracted `try_parse_int` →
+`E_UNKNOWN_METHOD`), раннер НЕ крашит. Гейты: repro clean, conformance 39/39
+(neg 38/38), baseline-delta 0 (strings/basics/generics/plan91/plan110/buffers/plan103_9
+vs parent `714f0f43`), Rust build clean. Домен: чекер / Plan 177 Ф.3.
 
 ## [M-parse-int-overflow-returns-invaliddigit] — parse_int overflow → InvalidDigit (pre-existing, 2026-07-04)
 

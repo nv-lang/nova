@@ -1921,12 +1921,27 @@ fn cmd_check(
             }
             let files = files_arc.clone();
             let tx = tx.clone();
-            s.spawn(move || {
-                for f in &files[start..end] {
-                    let res = check_one_file(f, verbose);
-                    let _ = tx.send(res);
-                }
-            });
+            // Plan 177 Ф.3 [M-checker-unknown-method-stackoverflow]: give each check
+            // worker a 64 MiB stack — the SAME size the compile driver uses
+            // (`compiler-codegen/src/main.rs` / `test_runner.rs`). The default worker
+            // stack (2 MiB) overflows `types::check_module` on a prelude-merged module
+            // for ANY input (even a trivial `fn f() -> int { 5 }` — verified), so the
+            // earlier "stack overflow on unknown method" was a MISDIAGNOSIS (worker
+            // stack size, not a method-resolution recursion): `nova check` overflowed on
+            // every file, unknown-method or not. Sizing the worker to match the rest of
+            // the compiler makes `nova check` terminate; unknown methods now surface as
+            // the clean `[E_UNKNOWN_METHOD]` diagnostic added in this change.
+            let builder = std::thread::Builder::new()
+                .name(format!("nova-check-{}", i))
+                .stack_size(64 * 1024 * 1024);
+            builder
+                .spawn_scoped(s, move || {
+                    for f in &files[start..end] {
+                        let res = check_one_file(f, verbose);
+                        let _ = tx.send(res);
+                    }
+                })
+                .expect("spawn check worker");
         }
         drop(tx);
     });
