@@ -871,3 +871,21 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 план не создаётся сознательно. Пересмотреть, когда (а) полный чек+кодоген
 крупного проекта станет узким местом UX, (б) появится typed-IR (172.12) —
 естественная граница мемоизации. НЕ носитель ближайших зонтов.
+
+
+## [M-174.3-any-is] — `any`-тип + `is`/`try_as`-downcast: остатки (2026-07-04)
+
+Plan 174.3 Ф.1+Ф.2 ВЫПОЛНЕНЫ (`any` = boxed `void*`→`NovaAny`, `v as any` явный+неявный
+upcast, `x is T`/`try_as[T]`/flow-narrowing на type_id-реестре Plan 61, `[E_IS_NON_ANY]`).
+Разблокирован Plan 173 Ф.4 (`Failure(any)`, `e is CancelError` строятся поверх). Остатки:
+
+- **[M-174.3-any-as-fail-method]** — форма `x.as[T]?` (Fail-downcast, комплемент `try_as`).
+  Парсер не принимает `.as` в member-позиции (`as` — ключевое слово); нужен либо
+  контекстный allow `as` после `.`, либо переименование. `try_as[T]()` + narrowing
+  покрывают извлечение — форма опциональна.
+- **[M-174.3-match-pattern-is]** — `match { n is T => … }` / `is T =>` pattern-форма на
+  `any` (D54 §«Pattern в match»). Реализованы операторная/`if`-форма + `try_as`; match-arm
+  `is`-паттерн (binding + smart-cast) — отдельная работа в emit_match.
+- **[M-174.3-heterogeneous-any]** — Ф.3: гетерогенные `[]any` (boxing элементов) +
+  `Eq`/`Hash`/`Clone`/`Display`-thunks в `NovaTypeInfo` → `any` в `HashSet`/`HashMap`,
+  сравнение/печать стёртых значений.

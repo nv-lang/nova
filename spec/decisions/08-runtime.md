@@ -1098,6 +1098,18 @@ naming convention, по аналогии с примитивами. Исполь
 `fn dump(x any) Io -> ()`, `Logger.log_event(level, fields []any)`
 для гетерогенных структурных логов.
 
+**Runtime-представление (Plan 174.3, 2026-07-04).** `any` — тип-стёртый
+`void*`, указывающий на heap-boxed `NovaAny { const NovaTypeInfo* info;
+void* data; }`, где `NovaTypeInfo { NovaTypeId type_id; const char* name; }`
+несёт `type_id` из реестра Plan 61. Boxing (`v as any`, а также неявный
+upcast по supertype-правилу к `any`-параметру / `-> any` / `ro x any =`)
+копирует значение в GC-allocation и ставит per-type `info`. Downcast и
+проверка — через `type_id`-сравнение (`x is T`, `x.try_as[T]() -> Option[T]`,
+flow-narrowing `if x is T`). Детали `is`/`try_as`/ABI — см.
+[03-syntax.md → D54](03-syntax.md#d54-операторы-as-и-is). Сосуществует с
+мономорфизацией: `any` fat-pointer — когда тип стёрт в рантайме; скрытые
+vtable-параметры — когда тип статичен.
+
 **`Iter[T]`** — структурный protocol для итераторов (D58). Любой
 тип с методом `mut next() -> Option[T]` автоматически удовлетворяет.
 `for x in collection`-синтаксис вызывает `collection.iter().next()` в
