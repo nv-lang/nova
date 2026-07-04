@@ -1,0 +1,13 @@
+// Plan 179 Ф.1 NEG — bomb-cap `max_output` is a REQUIRED signature parameter
+// (D334 "see-it-in-the-signature"): calling inflate() without it must not compile.
+//
+// EXPECT_COMPILE_ERROR обязател
+
+module neg.inflate_requires_max_output
+
+import std.encoding.compress.{inflate}
+
+fn violation() -> () {
+    ro data []u8 = [0x03, 0x00]
+    ro _ = inflate(data)        // missing required `max_output` → compile error
+}

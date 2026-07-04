@@ -82,6 +82,8 @@ export type ZlibReader value {
     mut header_done bool
     mut adler u32
     mut max_output int
+    mut tail []u8           // остаток выхода, слитый в finish() (drain-order-independent)
+    mut tpos int
 }
 
 #stable(since = "0.1")
@@ -92,6 +94,8 @@ export fn ZlibReader.new(max_output int) -> ZlibReader =>
         header_done: false,
         adler: adler32_init(),
         max_output,
+        tail: []u8.with_capacity(0),
+        tpos: 0,
     }
 
 #stable(since = "0.1")
@@ -126,7 +130,18 @@ export fn ZlibReader mut @feed(chunk []u8) -> Result[(), CompressError] {
 
 #stable(since = "0.1")
 export fn ZlibReader mut @read(max_emit int) -> Result[[]u8, CompressError] {
-    ro c = @inner.read(max_emit)?
+    ro me = if max_emit < 0 { 0 } else { max_emit }
+    // Сначала отдаём остаток, слитый в finish()
+    if @tpos < @tail.len() {
+        ro avail = @tail.len() - @tpos
+        ro n = if avail < me { avail } else { me }
+        if n <= 0 { return Ok([]u8.with_capacity(0)) }
+        mut chunk = []u8.with_capacity(n)
+        chunk.append(@tail[@tpos..(@tpos + n)])
+        @tpos = @tpos + n
+        return Ok(chunk)
+    }
+    ro c = @inner.read(me)?
     if c.len() > 0 {
         @adler = adler32_update(@adler, c)
     }
@@ -134,7 +149,7 @@ export fn ZlibReader mut @read(max_emit int) -> Result[[]u8, CompressError] {
 }
 
 #stable(since = "0.1")
-export fn ZlibReader @is_done() -> bool => @inner.is_done()
+export fn ZlibReader @is_done() -> bool => @inner.is_done() && @tpos >= @tail.len()
 
 #stable(since = "0.1")
 export fn ZlibReader mut @finish() -> Result[(), CompressError] {
@@ -144,7 +159,12 @@ export fn ZlibReader mut @finish() -> Result[(), CompressError] {
     @inner.mark_done()
     loop {
         ro c = @inner.read(1048576)?
-        if c.len() > 0 { @adler = adler32_update(@adler, c) } else { break }
+        if c.len() > 0 {
+            @adler = adler32_update(@adler, c)
+            @tail.append(c)
+        } else {
+            break
+        }
     }
     if !@inner.is_done() {
         return Err(CompressError.eof())
