@@ -42,7 +42,7 @@ fn window_size() -> int => 32768
 /// Хаффман-стейт и bit-leftover сохраняются между вызовами. `max_output` = 0 —
 /// без лимита (caller-trust low-level; Plan 178 всегда передаёт реальный cap).
 #stable(since = "0.1")
-export type Inflater value {
+export type Inflater {
     mut input []u8          // буферизованный сжатый вход (consumed-префикс дропается)
     mut bitpos int          // абсолютная бит-позиция в `input`
     mut dropped int         // сколько байт входа уже сброшено (для абсолютного консюма)
@@ -195,6 +195,18 @@ fn Inflater @input_end_byte() -> int => (@bitpos + 7) >> 3
 
 // Есть ли неконсюмнутые байты после byte-aligned конца потока.
 fn Inflater @has_trailing() -> bool => ((@bitpos + 7) >> 3) < @input.len()
+
+// Неконсюмнутый (byte-aligned) хвост входа — трейлер для gzip/zlib framing.
+fn Inflater @leftover_bytes() -> []u8 {
+    ro start = (@bitpos + 7) >> 3
+    if start >= @input.len() {
+        []u8.with_capacity(0)
+    } else {
+        mut o = []u8.with_capacity(@input.len() - start)
+        o.append(@input[start..@input.len()])
+        o
+    }
+}
 
 // Всего байт входа фактически сконсюмлено (для anti-flood).
 fn Inflater @consumed_bytes() -> int => @dropped + (@bitpos >> 3)
