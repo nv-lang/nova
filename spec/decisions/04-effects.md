@@ -6223,7 +6223,7 @@ user-visible эффект, высокий churn) — только задокум
 ## D325 — Единый fallible-контракт: публичный std возвращает `Result` (Plan 177, 2026-06-25)
 
 **Source:** Plan 177, 2026-06-25 (после развилки A→B1→Вариант 1 + adversarial-критика).
-**Status:** ✅ ACTIVE как нейминг-канон (sign-off владельца 2026-06-25); миграция std-кода + компилятора — Plan 177 Ф.2a/Ф.2b (staged).
+**Status:** ✅ ACTIVE как нейминг-канон (sign-off владельца 2026-06-25). **Миграция завершена (Plan 177 ЗАКРЫТ 2026-07-04):** stable-std public-fallible = Result-everywhere (Ф.2a base64/json/complex, Ф.2b parse/read_buffer + де-хардкод, Ф.2c коллекторы `sequence`/`partition`); guard + conformance (41/0) зелёные. **Остаток честно маркирован** (Plan 177 §14): (a) `std/concurrency` `race2`/`with_timeout` throw bare-`str` = Plan 173-домен `[M-177-concurrency-throw-fallibility]`; (b) весь `std/_experimental` = defer до стабилизации `[M-177-experimental-fallible-migration]`; (c) codegen-хвост `[M-177-d77-codegen-4way-retract]` (D77 4-way→2-way emit_c) + `[M-172.1-opt-result-over-userenum-typedef-order]`.
 **Amends:** D77 (08-runtime.md) — 4-way auto-derive → **2-way** (убрать bare-throws Fail-форму).
 **Retracts:** D178 (08-runtime.md) — `str.parse_int` bare + `parse_int_opt`.
 **Связь:** [D25](#d25) (Fail остаётся в языке), [D85](#d85) (`?`/`!!`), [D86](#d86) (`??`), D73 (From/Into), D77 (TryFrom), D178.

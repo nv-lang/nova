@@ -898,3 +898,32 @@ Result регистрируется. Тот же класс VR-typedef-ordering,
 но для `Option[Result[T, UserEnum]]` из тела generic-коллектора. **Workaround в фикстуре**
 (`d325_result_everywhere.nv` A4): parse_int → `Result[int, str]` через domain-str `match`-
 канал. Домен Plan 172.1 (mono-typedef-registration). Вне scope Ф.3 (тесты/guards).
+
+## [M-177-experimental-fallible-migration] — `std/_experimental` throw→Result (defer §9 Q3, Plan 177 Ф.4-аудит 2026-07-04)
+
+Весь `std/_experimental/**` (**17 файлов**) ещё возвращает падающие операции через own-`Fail`
+(throw), НЕ `Result[T,E]` — вне D325-конформности. **Отложено by-design** (Plan 177 §9 Q3):
+`_experimental` = pre-prod поверхность, миграция под D325 едет с **стабилизацией каждого модуля**,
+не в scope 177. Список: `encoding/{csv,hex,ini,toml,url}.nv`, `data/{semver,semver_range,sql}.nv`,
+`crypto/{jwt,bcrypt}.nv`, `identifiers/{snowflake,ulid,uuid}.nv`, `math/statistics.nv`,
+`text/regex.nv`, `time/cron.nv`, `concurrency/retry.nv`. **NB (R5):** `retry.@execute` /
+`sql.in_transaction` несут `Fail[E]` **forwarded** из closure-параметра — легально даже после
+стабилизации; мигрировать только intrinsic-ошибки (`Db`, retry own). Механика: throw→Err/return Err
++ Result-return-тип + call-sites `!!`/`?`/`.ok()` (тот же паттерн, что Ф.2a base64/json). Guard §8.2
+исключает `_experimental` явно (`stable_std_files` retain). Консолидирует бывш. Plan 177 §6-список
+(sql/jwt/snowflake/ulid/bcrypt/retry — был неполон). Home: per-module stabilization / Plan 177 §9 Q3.
+
+## [M-177-concurrency-throw-fallibility] — `std/concurrency` race2/with_timeout throw bare-str (Plan 177 Ф.4-аудит 2026-07-04; home Plan 173)
+
+`std/concurrency/cancellation.nv` — `race2[T](a,b) -> T` (both-failed) и
+`with_timeout[T](ms, body) -> T` (timeout) **`throw` bare `str`** через *inferred* Fail-эффект
+(сигнатура написана `-> T` без литерала `Fail[` → conformance-guard §8.2, сканирующий `Fail[` в
+сигнатуре, их **не ловит** — §14.3 плана 177). По D325 R1 timeout/both-failed = **expected
+failure** → должны возвращать `Result[T, <Timeout/RaceError>]` (или `with_timeout` схлопнуть в
+`within(...).ok()` — это throw-twin Option-формы `within`, ровно дуал, который D325 ретрактирует).
+**НЕ конвертировано в Ф.4** (осознанно): structured-concurrency error-семантика = **Plan 173-домен**
+(§10/§13 плана 177, вне scope 177) — нужен error-домен-тип + coordination с MultiError / 173 Ф.4
+(typed errors) + смена 2 `#stable(since="0.1")` публичных сигнатур + sweep call-sites. Whole-subsystem
+→ маркер, не тихий solo-fix (§7.7: не выдавать частичное за полное). **Home: Plan 173** (error-machinery
+для concurrency). Смежно: усиление guard §8.2 до эффект-инференса закрыло бы blind-spot, но = компилятор-
+в-тесте (дорого) — держим явный маркер вместо.
