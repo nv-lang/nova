@@ -1,0 +1,60 @@
+// Plan 181 (D347) — same-scope re-binding, позитивные раунд-трип тесты.
+// Покрывает B1 (false-positive D133 при rebind ПОТРЕБЛЁННого consume — устранён),
+// B3 (`ro x=1; ro x=x+1` → x==2), разморозку `mut x=x`, смену типа, захват
+// старого биндинга замыканием.
+//
+// NB (rebind + `?`): rebind КОМПОЗИРУЕТ с `?` на уровне type-check/lowering
+// (alpha-rename переименовывает биндинг через Try-узел, R3). Раунд-трип тест
+// НЕ включён: `ro q = expr?` (`?`-в-let) сейчас mis-типизирует биндинг как
+// wrapper-тип в codegen (Option/Result) — PRE-EXISTING дефект 172.1-канала,
+// подтверждён идентично на baseline d97c0dbe для distinct-имени И для rebind
+// (см. docs/simplifications.md). Дефект rebind-независим и вне scope Plan 181.
+module nova_tests.rebind
+
+// consume-тип с into-методом (потребляет receiver, возвращает значение).
+type RbBox consume {
+    v int,
+}
+fn RbBox consume @into_val() -> int => @v
+
+test "B3: `ro x = 1; ro x = x + 1` → x == 2 (D347)" {
+    ro x = 1
+    ro x = x + 1
+    assert(x == 2)
+}
+
+test "same-type pipeline rebind (D347)" {
+    ro s = 5
+    ro s = s * 2
+    ro s = s + 3
+    assert(s == 13)
+}
+
+test "type-change rebind: int → str (D347)" {
+    ro t = 100
+    ro t = "done"
+    assert(t == "done")
+}
+
+test "разморозка `mut x = x` затем мутация (D347)" {
+    ro c = 3
+    mut c = c
+    c = c * 4
+    assert(c == 12)
+}
+
+test "B1: rebind ПОТРЕБЛЁННого consume-имени — НЕ ложный D133 (D347)" {
+    consume b = RbBox { v: 7 }
+    ro n = b.into_val()    // потребляет b
+    ro b = 5               // rebind того же имени в int — obligation старого b уже закрыт
+    assert(n == 7)
+    assert(b == 5)
+}
+
+test "R4: замыкание держит старый биндинг после rebind (D347)" {
+    ro k = 11
+    ro get = || k
+    ro k = 22
+    assert(get() == 11)
+    assert(k == 22)
+}

@@ -51,3 +51,16 @@ test "defer: runs on normal return path (D90)" {
     d90_early_return(c, false)
     assert(c.val == 199)
 }
+
+// D347 amend (Plan 181): defer резолвится на момент РЕГИСТРАЦИИ (D90 §3 eager);
+// same-scope rebind ниже его не меняет (R4).
+test "D347: defer видит биндинг на момент регистрации при rebind (D90×D347)" {
+    mut log = 0
+    {
+        ro step = 3
+        defer { log = log + step }
+        ro step = 30
+        assert(step == 30)
+    }
+    assert(log == 3)
+}
