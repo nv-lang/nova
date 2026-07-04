@@ -1,0 +1,138 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.1 / D358: std/http/mime.nv — Mime / ContentType.
+//
+// Mime = type/subtype (RFC 6838, нормализован lowercase). ContentType = Mime +
+// параметры (charset/boundary). Парсинг `Content-Type: text/html; charset=utf-8`.
+
+module std.http
+
+/// MIME-тип `type/subtype` (RFC 6838), нормализован lowercase.
+#stable(since = "0.1")
+export type Mime value { priv mtype str, priv msub str }
+
+/// Разобрать `type/subtype`. Отсутствие `/` / пустые части → `Protocol`.
+#stable(since = "0.1")
+export fn Mime.parse(s str) -> Result[Mime, HttpError] {
+    match s.split_once("/") {
+        Some((t, sub)) => {
+            ro tt = t.trim_ascii()
+            ro ss = sub.trim_ascii()
+            if tt.byte_len() == 0 || ss.byte_len() == 0 {
+                return Err(HttpError.protocol_error("empty MIME type or subtype"))
+            }
+            Ok({ mtype: tt.to_ascii_lower(), msub: ss.to_ascii_lower() })
+        }
+        None => Err(HttpError.protocol_error("MIME type missing '/'"))
+    }
+}
+
+/// Полная essence-строка `type/subtype`.
+#stable(since = "0.1")
+export fn Mime @essence() -> str => "${@mtype}/${@msub}"
+/// Тип-часть (`text`).
+#stable(since = "0.1")
+export fn Mime @type_() -> str => @mtype
+/// Subtype-часть (`html`).
+#stable(since = "0.1")
+export fn Mime @subtype() -> str => @msub
+
+/// `text/plain`.
+#stable(since = "0.1")
+export fn Mime.text_plain() -> Mime => { mtype: "text", msub: "plain" }
+/// `application/json`.
+#stable(since = "0.1")
+export fn Mime.application_json() -> Mime => { mtype: "application", msub: "json" }
+/// `application/octet-stream`.
+#stable(since = "0.1")
+export fn Mime.application_octet() -> Mime => { mtype: "application", msub: "octet-stream" }
+/// `text/html`.
+#stable(since = "0.1")
+export fn Mime.text_html() -> Mime => { mtype: "text", msub: "html" }
+/// `application/x-www-form-urlencoded`.
+#stable(since = "0.1")
+export fn Mime.form_urlencoded() -> Mime => { mtype: "application", msub: "x-www-form-urlencoded" }
+
+/// Один параметр `key=value`.
+type Param value { ro key str, ro value str }
+
+/// `Content-Type` — Mime + параметры (charset/boundary).
+#stable(since = "0.1")
+export type ContentType value { ro mime Mime, priv params []Param }
+
+/// Разобрать `type/subtype; k=v; k2=v2`.
+#stable(since = "0.1")
+export fn ContentType.parse(s str) -> Result[ContentType, HttpError] {
+    ro parts = s.split(";")
+    if parts.len() == 0 {
+        return Err(HttpError.protocol_error("empty Content-Type"))
+    }
+    ro mime = Mime.parse(mime_head(parts))?
+    mut params = Vec[Param].of()
+    mut i = 1
+    while i < parts.len() {
+        match nth_str(parts, i).split_once("=") {
+            Some((k, v)) => {
+                ro key = k.trim_ascii().to_ascii_lower()
+                ro value = unquote(v.trim_ascii())
+                if key.byte_len() > 0 { params.push(Param { key, value }) }
+            }
+            None => ()
+        }
+        i += 1
+    }
+    Ok({ mime, params })
+}
+
+fn mime_head(parts []str) -> str {
+    match parts.get(0) {
+        Some(s) => s
+        None    => ""
+    }
+}
+
+fn nth_str(parts []str, i int) -> str {
+    match parts.get(i) {
+        Some(s) => s
+        None    => ""
+    }
+}
+
+fn unquote(s str) -> str {
+    if s.byte_len() >= 2 && s.starts_with("\"") && s.ends_with("\"") {
+        s[1..s.byte_len() - 1]
+    } else {
+        s
+    }
+}
+
+/// `charset`-параметр (для decode тела).
+#stable(since = "0.1")
+export fn ContentType @charset() -> Option[str] => @param("charset")
+/// `boundary`-параметр (для multipart).
+#stable(since = "0.1")
+export fn ContentType @boundary() -> Option[str] => @param("boundary")
+
+fn ContentType @param(name str) -> Option[str] {
+    for p in @params {
+        if p.key == name { return Some(p.value) }
+    }
+    None
+}
+
+/// Сериализовать в header-значение (`type/subtype; k=v`).
+#stable(since = "0.1")
+export fn ContentType @to_header() -> str {
+    consume buf = StringBuilder.with_capacity(32)
+    buf.append(@mime.essence())
+    for p in @params {
+        buf.append("; ")
+        buf.append(p.key)
+        buf.append("=")
+        buf.append(p.value)
+    }
+    buf.into_str()
+}
+
+/// Построить из Mime без параметров.
+#stable(since = "0.1")
+export fn ContentType.of(mime Mime) -> ContentType => { mime, params: Vec[Param].of() }

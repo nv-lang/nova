@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.1 / D358: std/http/version.nv — HTTP-версия.
+//
+// Версия НАБЛЮДАЕТСЯ на Request/Response, но выбирается транспортом (ALPN, gate
+// 116, или явный h2c). HTTP/0.9 не поддерживается (устарел, source of smuggling).
+//
+// OPEN (D358): добавление `Http3` (§11) не должно ломать exhaustive-match —
+// пользовательский код ДОЛЖЕН нести wildcard-arm при разборе версии. (Языкового
+// #open-атрибута нет — свойство конвенциональное; wildcard рекомендуется в доке.)
+
+module std.http
+
+/// HTTP-версия. OPEN — при разборе крыть wildcard-arm (forward-compat h3).
+#stable(since = "0.1")
+export type Version | Http10 | Http11 | Http2
+
+/// Версия на проводе (request-/status-line).
+#stable(since = "0.1")
+export fn Version @as_str() -> str {
+    match @ {
+        Http10 => "HTTP/1.0"
+        Http11 => "HTTP/1.1"
+        Http2  => "HTTP/2"
+    }
+}
+
+/// Поддерживает ли keep-alive по умолчанию. HTTP/1.0 — только при явном
+/// `Connection: keep-alive`; HTTP/1.1 и HTTP/2 — да по умолчанию.
+#stable(since = "0.1")
+export fn Version @supports_keepalive() -> bool {
+    match @ {
+        Http10 => false
+        Http11 => true
+        Http2  => true
+    }
+}

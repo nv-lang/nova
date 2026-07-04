@@ -13701,3 +13701,76 @@ Nova не имеет implicit numeric coercion нигде (D54 — `as` для �
 ### Связь
 
 [D54](#d54-as-cast) (`as` явный cast) · [D55](#d55) (literal coercion — исключение для нетипизированных литералов) · [D315](#d315) (ResolvedType несёт ширину/знак — необходим для этой проверки) · [D310](#d310-type-set-bounds-plan-1723) (`SignedInt`/`UnsignedInt` type-sets — generic-альтернатива per-width обёрткам).
+
+---
+
+## D358 — HTTP message-model (`std/http`, Plan 178 Ф.1) {#d358}
+
+**Статус:** ✅ landed (Ф.1, 2026-07-04) — message-model + URL + валидаторы. `Http`/`HttpServer`
+effect-контракт (D357) и client/server-политики (D360/D361) — Ф.2+.
+
+Pure value-типы поверх net byte-surface (Ф.0.5). Всё fallible → `Result[T, HttpError]`
+(D325). Формы:
+
+- **`Method`** — `| Get | Head | Post | Put | Delete | Connect | Options | Trace | Patch | Other(str)`;
+  `parse` валидирует RFC 7230 tchar; сравнение case-sensitive; `@is_safe`/`@is_idempotent`/`@allows_body`.
+- **`StatusCode`** — value-newtype над `u16` (100..599); `@class -> StatusClass`; `@reason` (RFC 9110);
+  zero-arg-фабрики (`ok()`/`not_found()`/…, Q17). 4xx/5xx = валидный Response, НЕ ошибка (Q4).
+- **`Version`** — `| Http10 | Http11 | Http2`; OPEN (forward-compat Http3 — wildcard рекомендуется;
+  языкового `#open`-атрибута нет, свойство конвенциональное).
+- **`HeaderName`/`HeaderValue`/`HeaderMap`** — case-insensitive по имени, ordered, multi-value.
+  Имя = ASCII tchar (lowercase-канон); значение = `[]u8` (latin1 fast-path `from_str`, fallible
+  `@to_str` на non-ASCII, Q18). **Безопасность (by construction):** `insert`/`append`/`from_*`
+  ОТВЕРГАЮТ CR/LF/NUL → response-splitting невозможен; `@content_length` ловит CL+TE-конфликт
+  (request-smuggling, RFC 7230 §3.3.3). `@insert` = replace, `@append` = add (§13.1).
+- **`Url`** (промоут `_experimental/encoding/url.nv`) — `parse -> Result[Url, HttpError]` (было
+  `from`/`Fail`, D325 R2), `@to_str`. **Строгий host/SSRF-валидатор:** bracket-IPv6, canonical
+  dotted-quad IPv4, REJECT control/NUL/whitespace/non-ASCII, REJECT decimal/octal/hex IP-обфускации
+  (`0x7f.1`/`0177.0.0.1`/`2130706433`/`127.1`); `@is_private_target` (loopback/link-local/RFC1918/
+  metadata). `encode_query` percent-encodit КАЖДЫЙ UTF-8-байт (был баг: один байт для >127);
+  `decode_query` — self-contained UTF-8-валидация. Байт-корректный парсер (byte-offsets, срезы по
+  ASCII-делимитерам). Детали ошибок — `ParseUrlError` (tuple-варианты) через `ErrSource.UrlParse`.
+- **`Mime`/`ContentType`** — `type/subtype` (lowercase-канон) + параметры (charset/boundary).
+- **`Cookie`/`SetCookie`/`SameSite`** — RFC 6265bis SEND-инварианты enforce'ятся на `parse`:
+  `Secure`-cookie не по `http://` (`@is_sendable`); `__Host-`/`__Secure-`-префиксы; `SameSite=None ⇒ Secure`.
+- **`Request`/`Response`** — несут must-consume `Body` (D359) → сами `consume`; метаданные —
+  borrow-методы; тело разряжается делегирующими consume-методами (`resp.text()`).
+
+### Амендменты по факту реализации (Ф.1)
+
+- **`SameSite.None` → `SameSite.Cross`** (wire-value «None» сохранён): вариант `None` в public-enum
+  коллидирует с `Option.None` в namespace любого импортёра std.http → переименован.
+- **`ErrSource.Url(ParseUrlError)` → `ErrSource.UrlParse(...)`**: имя-вариант == имя-тип `Url` ломает
+  codegen (cast вместо wrap).
+- **`ParseUrlError` — tuple-варианты** (`InvalidScheme(str)` …), НЕ record-варианты: auto-eq для
+  record-вариантов внутри `Option[sum]` mis-lower'ит (`_0` на named-fields).
+- **`HttpError` — non-`value` record**: `value` + `Option[Url]`/`Option[ErrSource]`-поля → codegen
+  emit'ит Option-typedef ПОСЛЕ struct-а (forward-ref «unknown type»).
+
+## D359 — must-consume `Body` (`std/http`, Plan 178 Ф.1) {#d359}
+
+`Body` — линейный **must-consume** (D133): единственный способ «разрядить» — потребляющий метод
+(`@bytes`/`@text`/`@drain`/`@into_reader`). Незакрытое тело = **compile-error** — чинит главный
+Go-footgun (`resp.Body`-leak) на compile-time. `Response`/`Request` держат `Body` как `consume`-поле
+(двойной D133-маркер), разряжают делегированием in-place.
+
+Repr = `InMemory([]u8) | Stream(BodyReader)`; `BodyReader` — чистый Nova-декодер над byte-source
+(Q19), НЕ C-handle. `@with_limit` → `BodyTooLarge` (DoS-guard). `@text` = строгий UTF-8 (Ф.1).
+
+### Амендменты / гейты по факту (Ф.1)
+
+- **`Body` — `consume` (НЕ `consume value`)**: value-копия оставила бы consume-поле владельца
+  (Request/Response) неразряженным (`@body` копировался, не move'ился).
+- **Конструктор из СЫРЬЯ, не из pre-built `Body`**: запись с consume-полем строится ТОЛЬКО с
+  полем-значением как СВЕЖИМ inline-выражением (`Body.from_bytes(..)` внутри конструктора); move
+  consume-переменной/параметра в поле НЕ распознаётся checker'ом → конструкторы принимают `[]u8`/
+  `BodyReader`. `[M-178-consume-field-ctor-from-var]`
+- **`BodyReader` — non-`consume` в Ф.1** (in-memory, ресурса нет; transport-backed reader держит
+  socket → станет `consume` в Ф.2). `@next_chunk -> Result[[]u8]` + `@at_eof` (план-форма
+  `Result[Option[[]u8]]` (None=EOF) упирается в codegen-ordering-баг eq `Option[Option[[]u8]]` →
+  `[M-178-bodyreader-option-eof-eq-ordering]`).
+- **ОТЛОЖЕНО в Ф.2 (гейты, НЕ упрощения):** `Http`-effect на потребляющих методах (park над
+  транспортом) `[M-178-body-http-effect-surface]`; `@copy_to` (fs-gate 176) / `@json[T]` (serde-gate
+  180 Ф.4) / `@trailers` (Ф.2) `[M-178-body-copy-json-trailers]`; charset-aware `@text`
+  (latin1-fallback по Content-Type) `[M-178-body-text-charset]`; typed `expires Timestamp` в SetCookie
+  (date→epoch, Plan 175) `[M-178-setcookie-expires-timestamp]`.

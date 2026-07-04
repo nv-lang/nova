@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.2 / D357: std/http/effect.nv — the `Http` client transport seam.
+//
+// `Http` is the THIN mockable seam between the pure-Nova HTTP/1.1 client logic
+// (client.nv: builder, redirect-loop, auth-strip, error_for_status) and the byte
+// transport. All HTTP semantics (serialize request, parse response, chunked/CL
+// framing) live in Nova (wire.nv) — NOT behind the effect; the seam carries only
+// a single request→response round-trip over already-serialized bytes.
+//
+// Convention triad (module-conventions §9):
+//   · `Http`         — this effect (one op: `send`).
+//   · `real_http()`  — real.nv, over `Net` (connect / write / read).
+//   · `mock_http()`  — mock.nv, in-memory: request bytes → programmed response
+//                      bytes, no sockets. Makes client tests deterministic (Q9).
+//
+// Byte-surface note (Plan 178 Ф.0.5 rationale): the request/response payload
+// crosses the seam as `str` (byte-carrying, via `str.from_bytes_unchecked` /
+// `.to_bytes()`), NOT as `[]u8` — same reason the net byte-surface used str-ops
+// and thin wrappers (a `[]u8` effect-op parameter erases through the handler
+// vtable). The transport is length/framing-delimited so the round-trip is
+// byte-clean incl. non-UTF-8. [M-178-http-seam-str-payload]
+
+module std.http
+
+/// Client transport seam — one round-trip over the byte transport.
+///
+/// `send(host, port, secure, request)` connects to `host:port`, writes the raw
+/// serialized HTTP/1.1 `request` bytes (carried as a byte-string) and returns the
+/// raw response bytes. `secure = true` (https) is a HARD-GATE on Plan 116 (TLS);
+/// `real_http` returns `Err(Tls)` for it in Ф.2. Redirect-following, keep-alive
+/// decisions, auth-strip and response parsing are the client's job (Nova logic),
+/// so a single `send` is exactly one hop.
+#stable(since = "0.1")
+export type Http effect {
+    send(host str, port int, secure bool, request str) -> Result[str, HttpError]
+}

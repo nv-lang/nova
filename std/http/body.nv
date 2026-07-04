@@ -1,0 +1,172 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.1 / D359: std/http/body.nv — MUST-CONSUME Body (+ BodyReader).
+//
+// `Body` — линейный must-consume ресурс (D133): единственный способ «разрядить» —
+// потребляющий метод (`@bytes`/`@text`/`@drain`/`@into_reader`). Незакрытое тело =
+// COMPILE-ERROR (чинит главный Go-footgun `resp.Body`-leak на compile-time).
+//
+// GATE — Ф.1 self-contained (транспорта нет): реализована ЧИСТАЯ модель:
+//   · `InMemory([]u8)` — тело целиком в памяти (полностью функционально);
+//   · `Stream(BodyReader)` — pull-ридер над IN-MEMORY чанками (pure Nova, Q19).
+// ОТЛОЖЕНО в Ф.2 (нужен `Http`-effect + `Net`-транспорт) — честный маркер, НЕ
+// упрощение:
+//   · `Http`-effect на потребляющих методах (park над транспортом при стрим-чтении);
+//     в Ф.1 InMemory-путь I/O не делает → метод чист (placement-rule §13.2).
+//     `[M-178-body-http-effect-surface]`
+//   · **transport-backed `BodyReader` (holds socket → станет `consume`)** — chunked/CL/
+//     h2-DATA декодер над сокетом — Ф.2. Ф.1-ридер держит IN-MEMORY чанки (ресурса
+//     нет → non-consume). Обязательство must-consume несёт САМ `Body`.
+//     `[M-178-body-transport-reader]`
+//   · `@copy_to(writer)` (fs-gate 176), `@json[T]` (serde-gate 180 Ф.4),
+//     `@trailers` (chunked/h2 после дренажа — Ф.2). `[M-178-body-copy-json-trailers]`
+//   · charset-aware `@text` (latin1-fallback по Content-Type) — Response-контекст Ф.2;
+//     Ф.1 `@text` = строгий UTF-8. `[M-178-body-text-charset]`
+
+module std.http
+
+/// Тело запроса/ответа: буфер в памяти ИЛИ потоковый ридер чанков.
+/// **MUST-CONSUME** (D133) — разряжается ТОЛЬКО потребляющим методом. Линейный
+/// (`consume`, НЕ `consume value`): value-копия оставила бы consume-поле владельца
+/// (Request/Response) неразряженным.
+#stable(since = "0.1")
+export type Body consume { priv repr BodyRepr, priv limit int }
+
+// Внутреннее представление тела.
+type BodyRepr
+    | InMemory([]u8)                 // тело целиком в памяти (replayable на 307/308)
+    | Stream(BodyReader)             // ленивый источник чанков (Ф.1: in-memory pull)
+
+/// Источник потокового тела: yield-ит `[]u8`-чанки до EOF по PULL-контракту
+/// (D359: чанки берутся ТОЛЬКО по `@next_chunk` → backpressure). Ф.1 — чистый
+/// in-memory-декодер (Q19); transport-backed (consume, holds socket) — Ф.2.
+#stable(since = "0.1")
+export type BodyReader value { priv chunks [][]u8, priv pos int }
+
+// ── Конструкторы (Request-side) ──────────────────────────────────────────────
+
+/// Пустое тело.
+#stable(since = "0.1")
+export fn Body.empty() -> Body => { repr: InMemory(Vec[u8].of()), limit: -1 }
+
+/// Тело из байт (InMemory; replayable).
+#stable(since = "0.1")
+export fn Body.from_bytes(b []u8) -> Body => { repr: InMemory(b), limit: -1 }
+
+/// Тело из строки (UTF-8-байты).
+#stable(since = "0.1")
+export fn Body.from_str(s str) -> Body => { repr: InMemory(s.to_bytes()), limit: -1 }
+
+/// Тело из потокового ридера (Ф.1: in-memory; Ф.2 reader станет `consume`).
+#stable(since = "0.1")
+export fn Body.from_reader(r BodyReader) -> Body => { repr: Stream(r), limit: -1 }
+
+/// In-memory ридер над списком чанков (для тестов/прокси; pure Nova).
+#stable(since = "0.1")
+export fn BodyReader.from_chunks(chunks [][]u8) -> BodyReader => { chunks, pos: 0 }
+
+// ── Max-size guard (DoS/OOM-защита) ──────────────────────────────────────────
+
+/// Ограничить материализацию: `bytes`/`text` → `BodyTooLarge` при превышении.
+#stable(since = "0.1")
+export fn Body consume @with_limit(max_bytes int) -> Body => { @repr, limit: max_bytes }
+
+// ── Потребляющие методы (Response-side; разряжают must-consume) ───────────────
+
+/// Дочитать всё → `[]u8` (с max-guard). Разряжает тело.
+#stable(since = "0.1")
+export fn Body consume @bytes() -> Result[[]u8, HttpError] {
+    ro lim = @limit
+    match @repr {
+        InMemory(b) => guard_limit(b, lim)
+        Stream(r)   => guard_limit(drain_reader(r), lim)
+    }
+}
+
+/// Дочитать всё + декодировать как **UTF-8** (строго; charset-aware latin1-fallback
+/// = Ф.2 Response-контекст, `[M-178-body-text-charset]`). Невалидный UTF-8 → `Protocol`.
+#stable(since = "0.1")
+export fn Body consume @text() -> Result[str, HttpError] {
+    ro bytes = @bytes()?
+    match utf8_to_str(bytes) {
+        Ok(s)  => Ok(s)
+        Err(_) => Err(HttpError.protocol_error("body is not valid UTF-8; use bytes()"))
+    }
+}
+
+/// Дочитать остаток и release БЕЗ материализации (conn reusable → пул, Ф.2). Разряжает.
+#stable(since = "0.1")
+export fn Body consume @drain() -> Result[(), HttpError] {
+    match @repr {
+        InMemory(_) => Ok(())
+        Stream(r)   => {
+            ro _ = drain_reader(r)
+            Ok(())
+        }
+    }
+}
+
+/// Взять потоковый ридер напрямую (ручной pull). Разряжает Body, отдаёт reader.
+#stable(since = "0.1")
+export fn Body consume @into_reader() -> BodyReader {
+    match @repr {
+        InMemory(b) => BodyReader.from_chunks(single_chunk(b))
+        Stream(r)   => r
+    }
+}
+
+// ── Стримовое чтение (на BodyReader) ─────────────────────────────────────────
+
+/// EOF-предикат: проверять ПЕРЕД `@next_chunk`.
+///
+/// NOTE (codegen-gate): план-форма `@next_chunk -> Result[Option[[]u8]]` (None=EOF)
+/// упирается в codegen-ordering-баг eq для `Option[Option[[]u8]]` (forward-decl
+/// пропущен) → Ф.1 использует `@at_eof()` + `Result[[]u8]`; Option-EOF-форму несёт
+/// Ф.2-ридер. `[M-178-bodyreader-option-eof-eq-ordering]`
+#stable(since = "0.1")
+export fn BodyReader @at_eof() -> bool => @pos >= @chunks.len()
+
+/// Следующий чанк (пустой `[]u8` если `@at_eof()`). Ф.1 — in-memory pull; Ф.2 park.
+#stable(since = "0.1")
+export fn BodyReader mut @next_chunk() -> Result[[]u8, HttpError] {
+    if @pos >= @chunks.len() {
+        return Ok(Vec[u8].of())
+    }
+    ro chunk = match @chunks.get(@pos) {
+        Some(c) => c
+        None    => Vec[u8].of()
+    }
+    @pos = @pos + 1
+    Ok(chunk)
+}
+
+/// Явный release ридера (Ф.1 no-op; Ф.2 закроет транспорт).
+#stable(since = "0.1")
+export fn BodyReader @close() -> Result[(), HttpError] => Ok(())
+
+// ── Внутренние хелперы ───────────────────────────────────────────────────────
+
+fn drain_reader(r BodyReader) -> []u8 {
+    mut out = Vec[u8].of()
+    mut rd = r
+    mut running = true
+    while running && !rd.at_eof() {
+        match rd.next_chunk() {
+            Ok(chunk) => { out.append(chunk); () }
+            Err(_)    => { running = false }
+        }
+    }
+    out
+}
+
+fn guard_limit(b []u8, lim int) -> Result[[]u8, HttpError] {
+    if lim >= 0 && b.len > lim {
+        return Err(HttpError.body_too_large())
+    }
+    Ok(b)
+}
+
+fn single_chunk(b []u8) -> [][]u8 {
+    mut v = Vec[[]u8].of()
+    v.push(b)
+    v
+}

@@ -1,52 +1,70 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 91.12 Ф.2: std/net effect family — TcpNet / UdpNet / DnsNet.
+// Plan 91.12 Ф.2 / Plan 178 Ф.0.5: std/net effect — single unified `Net` effect.
 //
 // Effects provide a mockable dispatch point for network operations.
-// Concrete handlers: real_tcp_net() / real_udp_net()
-// (defined in tcp.nv / udp.nv respectively).
+// Concrete handlers: real_net() (tcp.nv) / mock_net() (mock.nv).
 //
 // Effect operations take/return public Nova value types (SocketAddr, etc.),
 // not raw C handles. Handlers unwrap/wrap .handle internally.
 //
 // All fallible operations return Result[T, NetError] so error handling is
 // explicit and uniform at the call site. Operations that wait on I/O park the
-// calling fiber inside the effect handler (real_tcp_net / real_udp_net),
-// resuming it when the libuv event loop completes the request; the caller sees
-// a plain synchronous-looking call carrying only the TcpNet / UdpNet effect.
+// calling fiber inside the effect handler (real_net), resuming it when the
+// libuv event loop completes the request; the caller sees a plain
+// synchronous-looking call carrying only the `Net` effect.
 //
-// D281: TcpNet/UdpNet/DnsNet effect family spec.
+// D173/D301: std/net effect family spec (amended Plan 178 Ф.0.5 — TCP-split
+// byte-surface). D365: net effect family (ex-D291 TcpNet/UdpNet/DnsNet)
+// reconciled to spec D62's single canonical `Net` (04-effects.md:2990) —
+// [M-net-merge-to-single-effect].
 
 module std.net
 
+// ─── Plan 178 Ф.0.5: TcpNet + UdpNet + DnsNet merged into one `Net` effect ────
+//
+// Spec D62 (04-effects.md:2990) canonises ONE `Net` effect for "сетевые
+// запросы". Plan 91.12 had split it into TcpNet/UdpNet/DnsNet (ex-D291); that
+// granularity was an unblessed divergence from the canon. The merge returns the
+// code to spec: one effect, one `real_net()` handler (~37 ops: tcp+udp+dns), one
+// `mock_net()`. AddrNet retracted separately — its ops do no I/O, so they are
+// pure `.nv` calling the `extern "C"` address FFI directly (FFI ≠ effect); see
+// addr.nv.
+//
 // ─── Effect-operation naming convention (Plan 91.15 P2) ──────────────────────
 //
 // These effect operations are internal dispatch points; user code never calls
-// them directly (it uses the @method() API on TcpListener/TcpStream/etc.). The
-// operation names follow a per-handle prefix so the receiver type is obvious at
+// them directly (it uses the @method() API on TcpListener/TcpStream/UdpSocket).
+// Operation names follow a per-handle prefix so the receiver type is obvious at
 // the dispatch site:
 //
-//   TcpNet
-//     listener_*    — operations on a TcpListener   (listener_local_port, …)
-//     stream_*      — operations on a TcpStream      (stream_local_addr, …)
-//     read_half_*   — operations on a TcpReadHalf    (Plan 91.16 split)
-//     write_half_*  — operations on a TcpWriteHalf   (Plan 91.16 split)
-//   UdpNet
-//     socket_*      — operations on a UdpSocket       (socket_local_port, …)
+//   listener_*    — operations on a TcpListener   (listener_local_port, …)
+//   stream_*      — operations on a TcpStream      (stream_local_addr, …)
+//   read_half_*   — operations on a TcpReadHalf    (Plan 91.16 split)
+//   write_half_*  — operations on a TcpWriteHalf   (Plan 91.16 split)
+//   socket_*      — operations on a UdpSocket       (socket_local_port, …)
 //
-// Exceptions (intentional, no prefix): the verb already implies the receiver —
-//   bind / accept / connect / write / write_all / read / send_to / recv_from —
-// and the close_<kind> family (close_stream / close_listener / close_socket /
-// split_stream) names the receiver kind as a suffix for symmetry with close.
-// New operations MUST follow the matching prefix for their receiver type.
+// Exceptions (intentional, verb implies receiver): accept / connect / write /
+// write_all / read / send_to / recv_from / lookup and the close_<kind> family
+// (close_stream / close_listener / close_socket / split_stream). The two
+// constructors that would otherwise collide after the merge are disambiguated
+// by protocol prefix: `tcp_bind` (→ TcpListener) and `udp_bind` (→ UdpSocket).
+//
+// Byte-surface note (Plan 178 Ф.0.5): the `[]u8` read/write/send/recv methods
+// (TcpStream.@read_bytes / @write_bytes / …, UdpSocket.@send_to_bytes / …) are
+// NOT effect operations — they are thin public wrappers over the `str`-carrying
+// ops below (str↔[]u8 conversion in the public method; the C transport is
+// already length-delimited so the round-trip is byte-clean). See tcp.nv/udp.nv.
 
-// TcpNet -- TCP transport operations.
+// Net -- unified TCP + UDP + DNS transport operations.
 //
 // All fallible operations return Result[T, NetError].
-// Operations that wait on I/O (accept, connect, write, read) park the calling
-// fiber inside the handler and resume it from the libuv event loop.
+// Operations that wait on I/O (accept, connect, write, read, send_to,
+// recv_from, lookup) park the calling fiber inside the handler and resume it
+// from the libuv event loop.
 #stable(since = "0.1")
-export type TcpNet effect {
-    bind(addr SocketAddr) -> Result[TcpListener, NetError]
+export type Net effect {
+    // ── TCP ──────────────────────────────────────────────────────────────────
+    tcp_bind(addr SocketAddr) -> Result[TcpListener, NetError]
     accept(listener TcpListener) -> Result[TcpStream, NetError]
     connect(addr SocketAddr) -> Result[TcpStream, NetError]
     write(stream TcpStream, data str) -> Result[int, NetError]
@@ -60,7 +78,7 @@ export type TcpNet effect {
     stream_peer_port(stream TcpStream) -> u16
     stream_local_addr(stream TcpStream) -> SocketAddr
     stream_peer_addr(stream TcpStream) -> SocketAddr
-    // Socket options — stubs in real_tcp_net for now (Ф.6).
+    // Socket options — stubs in real_net for now (Ф.6).
     set_nodelay(stream TcpStream, on bool) -> ()
     set_keepalive(stream TcpStream, on bool) -> ()
     set_reuse_address(listener TcpListener, on bool) -> ()
@@ -82,47 +100,17 @@ export type TcpNet effect {
     write_half_peer_port(half TcpWriteHalf) -> u16
     write_half_local_addr(half TcpWriteHalf) -> SocketAddr
     write_half_peer_addr(half TcpWriteHalf) -> SocketAddr
-}
 
-// UdpNet -- UDP datagram transport.
-//
-// recv_from returns Result[(data, sender), NetError] atomically.
-#stable(since = "0.1")
-export type UdpNet effect {
-    bind(addr SocketAddr) -> Result[UdpSocket, NetError]
+    // ── UDP ──────────────────────────────────────────────────────────────────
+    udp_bind(addr SocketAddr) -> Result[UdpSocket, NetError]
     send_to(sock UdpSocket, data str, addr SocketAddr) -> Result[int, NetError]
     recv_from(sock UdpSocket, max int) -> Result[(str, SocketAddr), NetError]
     close_socket(sock UdpSocket) -> ()
     socket_local_port(sock UdpSocket) -> u16
     socket_local_addr(sock UdpSocket) -> SocketAddr
-}
 
-// AddrNet -- socket address construction and inspection.
-//
-// Pure operations (no I/O, no parking). Mockable for testing without a real
-// network stack. real_addr_net() delegates to C FFI (net.h socket_addr_*).
-#stable(since = "0.1")
-export type AddrNet effect {
-    loopback(port u16) -> SocketAddr
-    loopback_v6(port u16) -> SocketAddr
-    v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr
-    from_str(s str) -> Result[SocketAddr, NetError]
-    port(addr SocketAddr) -> u16
-    ip(addr SocketAddr) -> str
-    is_v4(addr SocketAddr) -> bool
-    is_v6(addr SocketAddr) -> bool
-    to_str(addr SocketAddr) -> str
-}
-
-// DnsNet -- async DNS resolution. Implemented in dns.nv.
-// Parking via uv_getaddrinfo callback (nova_rt/net.c dns_lookup).
-// D295: DnsNet effect family spec.
-//
-// V2 API: lookup returns ALL resolved addresses as []SocketAddr.
-// The vtable Ok-type erasure fix (Plan 91.13, emit_c.rs is_generic_stub_c)
-// enables Result[[]SocketAddr, NetError] to flow through the vtable without
-// being erased to nova_int. V1 single-address limitation is resolved.
-#stable(since = "0.1")
-export type DnsNet effect {
+    // ── DNS ──────────────────────────────────────────────────────────────────
+    // Async DNS resolution (uv_getaddrinfo). Parks via callback (net.c).
+    // V2: returns ALL resolved addresses as []SocketAddr.
     lookup(host str, port u16) -> Result[[]SocketAddr, NetError]
 }

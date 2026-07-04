@@ -1,0 +1,491 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.2 / D360: std/http/client.nv — HttpClient + reqwest-style builder.
+//
+// Pure-Nova client logic over the thin `Http` seam (effect.nv): request build,
+// redirect-loop with cross-origin auth/cookie-strip, 4xx/5xx-as-valid-Response,
+// verb shortcuts and script convenience fns. Transport (connect/write/read) is
+// real_http (real.nv); tests use mock_http (mock.nv) — deterministic, no sockets.
+//
+// Landed (CORE, plaintext HTTP/1.1):
+//   · HttpClient + HttpClientBuilder (default headers, redirect policy, UA).
+//   · RequestBuilder: get/post/put/delete/patch/head + request; header/append_header,
+//     query, body/text/json(dynamic)/form, bearer_auth/basic_auth; send/build.
+//   · Redirect following (limit + TooManyRedirects; 303/301/302→GET-ify;
+//     307/308 preserve; cross-origin Authorization+Cookie strip).
+//   · Content-Length (identity) + Transfer-Encoding: chunked (wire.nv).
+//   · 4xx/5xx = valid Response; opt-in error_for_status (response_ext.nv).
+//
+// Honest gates (markers, not silent simplifications):
+//   · timeout/deadline-by-default ← Plan 173 supervised scope. [M-178-timeout-needs-173]
+//   · auto-decompress gzip/deflate/br ← Plan 179. [M-178-autodecompress-needs-179]
+//   · typed .json[T]() ← Plan 180 Ф.4. [M-178-typed-json-needs-180]
+//   · https/h2 ← Plan 116 (real_http returns Err(Tls) for https). [M-178-https-needs-116]
+//   · live keep-alive/pool reuse — decision logic + config here; live socket reuse
+//     deferred (real.nv). [M-178-client-live-pool]
+//   · Proxy/CONNECT-tunnel, SSRF-guard, cookie-jar, idempotent-retry — client
+//     policy surface deferred beyond CORE. [M-178-client-policy-surface]
+
+module std.http.client
+import std.http.{Method, Url, HeaderMap, Response, Request, Http, HttpError, ErrorKind}
+
+import std.encoding.base64.{Base64}
+import std.encoding.json.{JsonValue, Json}
+
+// ── RedirectPolicy ───────────────────────────────────────────────────────────
+
+/// Redirect-follow policy. `NoFollow` returns 3xx as-is; `Limited(n)` follows up
+/// to `n` hops then `Err(TooManyRedirects)`. (`None` avoided — collides with
+/// `Option.None` in importer namespace, Ф.1 convention.)
+#stable(since = "0.1")
+export type RedirectPolicy | NoFollow | Limited(int)
+
+// ── HttpClient / builder ─────────────────────────────────────────────────────
+
+type HeaderKV value { ro name str, ro value str }
+
+/// Pooled HTTP client (cheap value; shares config). Build via `.builder()` or
+/// `.new()` for production defaults.
+#stable(since = "0.1")
+export type HttpClient value {
+    priv default_headers []HeaderKV
+    priv follow_redirects bool
+    priv max_redirects    int
+    priv user_agent       str
+}
+
+/// Fluent client builder.
+#stable(since = "0.1")
+export type HttpClientBuilder value {
+    priv default_headers []HeaderKV
+    priv follow_redirects bool
+    priv max_redirects    int
+    priv user_agent       str
+}
+
+/// Start a client builder with production defaults (10 redirects, UA set).
+#stable(since = "0.1")
+export fn HttpClient.builder() -> HttpClientBuilder =>
+    { default_headers: Vec[HeaderKV].of(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
+
+/// Client with production defaults.
+#stable(since = "0.1")
+export fn HttpClient.new() -> HttpClient =>
+    { default_headers: Vec[HeaderKV].of(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
+
+// Internal self-accessors (field privacy is enforced at the call-site module,
+// so cross-type reads of these `priv` fields go through owner methods, D281).
+fn HttpClient @cfg_follow() -> bool => @follow_redirects
+fn HttpClient @cfg_max() -> int => @max_redirects
+fn HttpClient @cfg_ua() -> str => @user_agent
+fn HttpClient @cfg_defaults() -> []HeaderKV => @default_headers
+
+/// Add a default header sent on every request (append).
+#stable(since = "0.1")
+export fn HttpClientBuilder @default_header(name str, value str) -> HttpClientBuilder {
+    mut hs = @default_headers
+    hs.push(HeaderKV { name, value })
+    { default_headers: hs, @follow_redirects, @max_redirects, @user_agent }
+}
+
+/// Set the redirect policy (default `Limited(10)`).
+#stable(since = "0.1")
+export fn HttpClientBuilder @redirect(policy RedirectPolicy) -> HttpClientBuilder {
+    match policy {
+        NoFollow    => { @default_headers, follow_redirects: false, max_redirects: 0, @user_agent }
+        Limited(n)  => { @default_headers, follow_redirects: true, max_redirects: n, @user_agent }
+    }
+}
+
+/// Override the User-Agent.
+#stable(since = "0.1")
+export fn HttpClientBuilder @user_agent(ua str) -> HttpClientBuilder =>
+    { @default_headers, @follow_redirects, @max_redirects, user_agent: ua }
+
+/// Finalize the client. Fallible for parity with the full builder (tls/proxy);
+/// CORE construction never fails.
+#stable(since = "0.1")
+export fn HttpClientBuilder consume @build() -> Result[HttpClient, HttpError] =>
+    Ok({ @default_headers, @follow_redirects, @max_redirects, @user_agent })
+
+// ── verb shortcuts ───────────────────────────────────────────────────────────
+
+/// GET request builder.
+#stable(since = "0.1")
+export fn HttpClient @get(url str) -> RequestBuilder => new_rb(@, Get, url)
+/// POST request builder.
+#stable(since = "0.1")
+export fn HttpClient @post(url str) -> RequestBuilder => new_rb(@, Post, url)
+/// PUT request builder.
+#stable(since = "0.1")
+export fn HttpClient @put(url str) -> RequestBuilder => new_rb(@, Put, url)
+/// DELETE request builder.
+#stable(since = "0.1")
+export fn HttpClient @delete(url str) -> RequestBuilder => new_rb(@, Delete, url)
+/// PATCH request builder.
+#stable(since = "0.1")
+export fn HttpClient @patch(url str) -> RequestBuilder => new_rb(@, Patch, url)
+/// HEAD request builder.
+#stable(since = "0.1")
+export fn HttpClient @head(url str) -> RequestBuilder => new_rb(@, Head, url)
+/// Arbitrary-method request builder (extension methods).
+#stable(since = "0.1")
+export fn HttpClient @request(method Method, url str) -> RequestBuilder => new_rb(@, method, url)
+
+fn new_rb(c HttpClient, m Method, url str) -> RequestBuilder =>
+    { client: c, method: m, url_input: url,
+      header_ops: Vec[HeaderOp].of(), query: Vec[(str, str)].of(),
+      body_bytes: Vec[u8].of(), has_body: false, content_type: None }
+
+// ── RequestBuilder ───────────────────────────────────────────────────────────
+
+type HeaderOp value { ro replace bool, ro name str, ro value str }
+
+/// Fluent per-request builder. Terminal `@send()` performs the round-trip.
+#stable(since = "0.1")
+export type RequestBuilder value {
+    priv client       HttpClient
+    priv method       Method
+    priv url_input    str
+    priv header_ops   []HeaderOp
+    priv query        [](str, str)
+    priv body_bytes   []u8
+    priv has_body     bool
+    priv content_type Option[str]
+}
+
+/// Set a header (replace all prior values of this name).
+#stable(since = "0.1")
+export fn RequestBuilder @header(name str, value str) -> RequestBuilder {
+    mut ops = @header_ops
+    ops.push(HeaderOp { replace: true, name, value })
+    { @client, @method, @url_input, header_ops: ops, @query, @body_bytes, @has_body, @content_type }
+}
+
+/// Append a header (multi-value).
+#stable(since = "0.1")
+export fn RequestBuilder @append_header(name str, value str) -> RequestBuilder {
+    mut ops = @header_ops
+    ops.push(HeaderOp { replace: false, name, value })
+    { @client, @method, @url_input, header_ops: ops, @query, @body_bytes, @has_body, @content_type }
+}
+
+/// Append query parameters (percent-encoded).
+#stable(since = "0.1")
+export fn RequestBuilder @query(params [](str, str)) -> RequestBuilder {
+    mut q = @query
+    for p in params { q.push(p) }
+    { @client, @method, @url_input, @header_ops, query: q, @body_bytes, @has_body, @content_type }
+}
+
+/// Set a raw byte body (replayable).
+#stable(since = "0.1")
+export fn RequestBuilder @body(bytes []u8) -> RequestBuilder =>
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: bytes, has_body: true, @content_type }
+
+/// Set a text body (text/plain; charset=utf-8).
+#stable(since = "0.1")
+export fn RequestBuilder @text(s str) -> RequestBuilder =>
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: s.to_bytes(), has_body: true, content_type: Some("text/plain; charset=utf-8") }
+
+/// Set a dynamic JSON body (application/json). Typed json[T] gates on Plan 180
+/// Ф.4 [M-178-typed-json-needs-180]; the dynamic `JsonValue` form lands now.
+#stable(since = "0.1")
+export fn RequestBuilder @json(value JsonValue) -> RequestBuilder =>
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: value.into().to_bytes(), has_body: true, content_type: Some("application/json") }
+
+/// Set a form body (application/x-www-form-urlencoded).
+#stable(since = "0.1")
+export fn RequestBuilder @form(fields [](str, str)) -> RequestBuilder =>
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: form_encode(fields).to_bytes(), has_body: true, content_type: Some("application/x-www-form-urlencoded") }
+
+/// `Authorization: Bearer <token>`.
+#stable(since = "0.1")
+export fn RequestBuilder @bearer_auth(token str) -> RequestBuilder =>
+    @header("Authorization", "Bearer ${token}")
+
+/// `Authorization: Basic base64(user:pass)`.
+#stable(since = "0.1")
+export fn RequestBuilder @basic_auth(user str, pass str) -> RequestBuilder {
+    ro raw = "${user}:${pass}"
+    ro enc = Base64.encode(raw.to_bytes())
+    @header("Authorization", "Basic ${enc}")
+}
+
+/// Materialize a `Request` without sending.
+#stable(since = "0.1")
+export fn RequestBuilder @build() -> Result[Request, HttpError] {
+    ro url0 = Url.parse(@url_input)?
+    ro url1 = apply_query(url0, @query)
+    ro headers = build_headers(@client, @header_ops, @content_type)?
+    Ok(Request.new(@method, url1, headers, @body_bytes))
+}
+
+/// Send the request (round-trip through the `Http` seam), following redirects.
+/// Returns a must-consume `Response` (4xx/5xx included — use `error_for_status`).
+#stable(since = "0.1")
+export fn RequestBuilder consume @send() Http -> Result[Response, HttpError] {
+    ro url0 = Url.parse(@url_input)?
+    ro url1 = apply_query(url0, @query)
+    ro scheme = url1.scheme
+    if scheme != "http" && scheme != "https" {
+        return Err(HttpError.new(InvalidUrl).with_url(url1))
+    }
+    ro headers = build_headers(@client, @header_ops, @content_type)?
+    run_request(@method, url1, headers, @body_bytes, @client.cfg_follow(), @client.cfg_max())
+}
+
+// ── convenience (script / one-shot) — uses a fresh default client ────────────
+// Prod code should use an explicit HttpClient (no hidden global state, §3 Q15).
+
+/// One-shot GET (script convenience).
+#stable(since = "0.1")
+export fn get(url str) Http -> Result[Response, HttpError] => HttpClient.new().get(url).send()
+/// One-shot HEAD.
+#stable(since = "0.1")
+export fn head(url str) Http -> Result[Response, HttpError] => HttpClient.new().head(url).send()
+/// One-shot DELETE.
+#stable(since = "0.1")
+export fn delete(url str) Http -> Result[Response, HttpError] => HttpClient.new().delete(url).send()
+/// One-shot POST with a byte body.
+#stable(since = "0.1")
+export fn post(url str, body []u8) Http -> Result[Response, HttpError] => HttpClient.new().post(url).body(body).send()
+/// One-shot PUT with a byte body.
+#stable(since = "0.1")
+export fn put(url str, body []u8) Http -> Result[Response, HttpError] => HttpClient.new().put(url).body(body).send()
+/// One-shot PATCH with a byte body.
+#stable(since = "0.1")
+export fn patch(url str, body []u8) Http -> Result[Response, HttpError] => HttpClient.new().patch(url).body(body).send()
+
+// ── request execution + redirect loop ───────────────────────────────────────
+
+// Thin wrapper over the `Http.send` seam op — gives codegen a concrete
+// monomorphized `Result[str, HttpError]` (mirrors how net wraps its effect ops in
+// TcpStream methods; calling the raw op inline mis-typed the Err payload).
+fn http_seam_send(host str, port int, secure bool, request str) Http -> Result[str, HttpError] {
+    Http.send(host, port, secure, request)
+}
+
+fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow bool, max int) Http -> Result[Response, HttpError] {
+    mut method = method0
+    mut url = url0
+    mut headers = headers0
+    mut body = body0
+    mut remaining = max
+    mut i = 0
+    while i <= max {
+        i += 1
+        ro (scheme, host, port) = url.origin()
+        ro secure = scheme == "https"
+        ro target = request_target(url)
+        ro host_header = host_header_of(url)
+        ro req = serialize_request(method.as_str(), target, host_header, headers, body)
+        ro raw = match http_seam_send(host, port, secure, req) {
+            Ok(r)  => r
+            Err(e) => return Err(e)
+        }
+        ro parsed = parse_response(raw)?
+        ro st = parsed.status
+        ro code = st.as_u16() as int
+        if follow && st.is_redirect() && code != 304 {
+            match location_of(parsed.headers) {
+                Some(loc) => {
+                    if remaining <= 0 {
+                        return Err(HttpError.new(TooManyRedirects(max)).with_url(url))
+                    }
+                    ro next = resolve_url(url, loc)
+                    ro (ns, nh, np) = next.origin()
+                    ro cross = ns != scheme || nh != host || np != port
+                    if code == 303 || ((code == 301 || code == 302) && !method_is_get_head(method)) {
+                        method = Get
+                        body = Vec[u8].of()
+                        headers = drop_body_headers(headers)
+                    }
+                    if cross {
+                        headers = strip_sensitive(headers)
+                    }
+                    url = next
+                    remaining -= 1
+                }
+                None => {
+                    return Ok(Response.of(parsed.version, st, parsed.headers, parsed.body))
+                }
+            }
+        } else {
+            return Ok(Response.of(parsed.version, st, parsed.headers, parsed.body))
+        }
+    }
+    Err(HttpError.new(TooManyRedirects(max)).with_url(url))
+}
+
+fn build_headers(client HttpClient, ops []HeaderOp, content_type Option[str]) -> Result[HeaderMap, HttpError] {
+    mut hm = HeaderMap.new()
+    for kv in client.cfg_defaults() {
+        hm.insert(kv.name, kv.value)?
+    }
+    ro ua = client.cfg_ua()
+    if !hm.contains("user-agent") && ua.byte_len() > 0 {
+        hm.insert("User-Agent", ua)?
+    }
+    match content_type {
+        Some(ct) => { hm.insert("Content-Type", ct)?; () }
+        None     => ()
+    }
+    for op in ops {
+        ro r = if op.replace { hm.insert(op.name, op.value) } else { hm.append(op.name, op.value) }
+        r?
+    }
+    Ok(hm)
+}
+
+fn apply_query(u Url, params [](str, str)) -> Url {
+    if params.len() == 0 { return u }
+    consume sb = StringBuilder.with_capacity(64)
+    mut first = true
+    match u.query {
+        Some(q) => {
+            sb.append(q)
+            first = q.byte_len() == 0
+        }
+        None => ()
+    }
+    for (k, v) in params {
+        if !first { sb.append("&") }
+        sb.append(Url.encode_query(k))
+        sb.append("=")
+        sb.append(Url.encode_query(v))
+        first = false
+    }
+    { scheme: u.scheme, user: u.user, password: u.password, host: u.host, port: u.port,
+      path: u.path, query: Some(sb.into_str()), fragment: u.fragment }
+}
+
+fn request_target(u Url) -> str {
+    ro p = if u.path.byte_len() == 0 { "/" } else { u.path }
+    match u.query {
+        Some(q) => "${p}?${q}"
+        None    => p
+    }
+}
+
+fn host_header_of(u Url) -> str {
+    match u.host {
+        Some(h) => {
+            ro hb = if h.contains(":") { "[${h}]" } else { h }
+            match u.port {
+                Some(p) => "${hb}:${str.from(p)}"
+                None    => hb
+            }
+        }
+        None => ""
+    }
+}
+
+fn location_of(h HeaderMap) -> Option[str] {
+    match h.get("location") {
+        Some(hv) => match hv.to_str() { Ok(s) => Some(s), Err(_) => None }
+        None     => None
+    }
+}
+
+fn method_is_get_head(m Method) -> bool {
+    match m {
+        Get | Head => true
+        _          => false
+    }
+}
+
+// Strip credentials on a cross-origin redirect hop (anti-leak, Q9).
+fn strip_sensitive(h HeaderMap) -> HeaderMap {
+    mut hm = h
+    ro _ = hm.remove("authorization")
+    ro _ = hm.remove("cookie")
+    hm
+}
+
+// Drop body-framing headers when a redirect GET-ifies the request.
+fn drop_body_headers(h HeaderMap) -> HeaderMap {
+    mut hm = h
+    ro _ = hm.remove("content-length")
+    ro _ = hm.remove("content-type")
+    ro _ = hm.remove("transfer-encoding")
+    hm
+}
+
+// Resolve a Location value against the current URL (absolute / absolute-path /
+// relative). Unparseable → falls back to the base URL (redirect stops there).
+fn resolve_url(base Url, loc str) -> Url {
+    if loc.starts_with("http://") || loc.starts_with("https://") {
+        match Url.parse(loc) { Ok(u) => u, Err(_) => base }
+    } else if loc.starts_with("//") {
+        match Url.parse("${base.scheme}:${loc}") { Ok(u) => u, Err(_) => base }
+    } else if loc.starts_with("/") {
+        url_with_target(base, loc)
+    } else {
+        url_with_target(base, merge_rel_path(base.path, loc))
+    }
+}
+
+fn url_with_target(base Url, target str) -> Url {
+    consume sb = StringBuilder.with_capacity(64)
+    sb.append(base.scheme)
+    sb.append("://")
+    match base.host {
+        Some(h) => {
+            if h.contains(":") { sb.append("[${h}]") } else { sb.append(h) }
+        }
+        None => ()
+    }
+    match base.port {
+        Some(p) => { sb.append(":"); sb.append(str.from(p)); () }
+        None    => ()
+    }
+    if !target.starts_with("/") { sb.append("/") }
+    sb.append(target)
+    match Url.parse(sb.into_str()) { Ok(u) => u, Err(_) => base }
+}
+
+fn merge_rel_path(base_path str, rel str) -> str {
+    ro dir = match last_slash(base_path) {
+        Some(i) => base_path[0..i + 1]
+        None    => "/"
+    }
+    "${dir}${rel}"
+}
+
+fn last_slash(s str) -> Option[int] {
+    ro b = s.to_bytes()
+    mut i = b.len - 1
+    mut found = -1
+    mut scanning = true
+    while scanning && i >= 0 {
+        if (b[i] as int) == 0x2F { found = i; scanning = false }
+        i -= 1
+    }
+    if found >= 0 { Some(found) } else { None }
+}
+
+fn form_encode(fields [](str, str)) -> str {
+    consume sb = StringBuilder.with_capacity(64)
+    mut first = true
+    for (k, v) in fields {
+        if !first { sb.append("&") }
+        sb.append(Url.encode_query(k))
+        sb.append("=")
+        sb.append(Url.encode_query(v))
+        first = false
+    }
+    sb.into_str()
+}
+
+// ── dynamic JSON body (Response extension; keeps the json dep out of core) ────
+
+/// Consume the response body and parse it as dynamic JSON (`JsonValue`). Typed
+/// `@json[T]()` (serde) gates on Plan 180 Ф.4 [M-178-typed-json-needs-180].
+#stable(since = "0.1")
+export fn Response consume @json() -> Result[JsonValue, HttpError] {
+    ro text = @text()?
+    match Json.parse(text) {
+        Ok(v)  => Ok(v)
+        Err(_) => Err(HttpError.protocol_error("response body is not valid JSON"))
+    }
+}

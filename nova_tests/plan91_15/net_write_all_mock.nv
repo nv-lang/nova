@@ -6,10 +6,10 @@
 
 module plan91_15.net_write_all_mock
 
-import std.net.{SocketAddr, TcpStream, mock_tcp_net, mock_addr_net}
+import std.net.{SocketAddr, TcpStream, mock_net}
 
 test "write_all — full buffer through mock stream" {
-    with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+    with Net = mock_net() {
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {

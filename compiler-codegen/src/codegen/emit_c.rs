@@ -40819,7 +40819,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                             }
                             let key = format!("fn_ret_{}", method_name);
-                            self.var_types.get(&key).cloned().unwrap_or_else(|| panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name))
+                            if let Some(t) = self.var_types.get(&key).cloned() {
+                                return t;
+                            }
+                            // Plan 178 Ф.0.5: sum-variant constructor in Path form —
+                            // `SumType.Variant(args)` returns `Nova_SumType*`. The checker
+                            // sometimes fails to annotate the return type of a payload-variant
+                            // constructor reached through an embedded/imported stdlib module
+                            // (e.g. `NetError.IoError(msg)` in std/net); this restores the
+                            // resolution exactly as the `.from` branch above does for
+                            // sum/record types. Guarded on variant membership so genuine
+                            // static methods (resolved via `fn_ret_*` above) are unaffected.
+                            if self
+                                .sum_schemas
+                                .get(eff.as_str())
+                                .map_or(false, |variants| variants.contains_key(method_name.as_str()))
+                            {
+                                return format!("Nova_{}*", eff);
+                            }
+                            panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name)
                         } else {
                             panic!("[P67-LEGACY] Path call return type unknown (no method segment) — checker must annotate (compiler-conventions.md §0)")
                         }
@@ -44259,7 +44277,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                             }
                             let key = format!("fn_ret_{}", method_name);
-                            self.var_types.get(&key).cloned().unwrap_or_else(|| panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name))
+                            if let Some(t) = self.var_types.get(&key).cloned() {
+                                return t;
+                            }
+                            // Plan 178 Ф.0.5: sum-variant constructor in Path form —
+                            // `SumType.Variant(args)` returns `Nova_SumType*`. The checker
+                            // sometimes fails to annotate the return type of a payload-variant
+                            // constructor reached through an embedded/imported stdlib module
+                            // (e.g. `NetError.IoError(msg)` in std/net); this restores the
+                            // resolution exactly as the `.from` branch above does for
+                            // sum/record types. Guarded on variant membership so genuine
+                            // static methods (resolved via `fn_ret_*` above) are unaffected.
+                            if self
+                                .sum_schemas
+                                .get(eff.as_str())
+                                .map_or(false, |variants| variants.contains_key(method_name.as_str()))
+                            {
+                                return format!("Nova_{}*", eff);
+                            }
+                            panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name)
                         } else {
                             panic!("[P67-LEGACY] Path call return type unknown (no method segment) — checker must annotate (compiler-conventions.md §0)")
                         }

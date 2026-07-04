@@ -20,14 +20,14 @@
 
 module plan91_12.net_v2_dns_real_slow
 
-import std.net.{SocketAddr, DnsNet, AddrNet, real_dns_net, real_addr_net}
+import std.net.{SocketAddr, real_net}
 
 // ─── positive ────────────────────────────────────────────────────────────────
 
 test "dns real: localhost resolves to at least one address" {
     supervised {
         spawn {
-            with AddrNet = real_addr_net(), DnsNet = real_dns_net() {
+            with Net = real_net() {
                 ro r = SocketAddr.lookup("localhost", 80)
                 assert(r.is_ok())
                 ro addrs = match r {
@@ -45,7 +45,7 @@ test "dns real: localhost resolves to at least one address" {
 test "dns real: localhost resolves — two sequential lookups both succeed" {
     supervised {
         spawn {
-            with AddrNet = real_addr_net(), DnsNet = real_dns_net() {
+            with Net = real_net() {
                 // Call lookup twice in the same fiber. Both must succeed.
                 // This exercises the libuv DNS fiber-park-wake path across
                 // consecutive parked calls without an extra scope boundary.

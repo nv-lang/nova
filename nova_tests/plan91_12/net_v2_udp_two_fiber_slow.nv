@@ -11,10 +11,10 @@
 
 module plan91_12.net_v2_udp_two_fiber_slow
 
-import std.net.{SocketAddr, UdpSocket, real_udp_net, real_addr_net}
+import std.net.{SocketAddr, UdpSocket, real_net}
 
 test "UDP two fibers: server recv+reply, client send+recv" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         mut server = match UdpSocket.bind(SocketAddr.loopback(0)) {
             Ok(s) => s, Err(_) => panic("server bind")
         }
@@ -46,7 +46,7 @@ test "UDP two fibers: server recv+reply, client send+recv" {
 }
 
 test "UDP two fibers: multi-round — client sends 3, server recvs 3" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         mut server = match UdpSocket.bind(SocketAddr.loopback(0)) {
             Ok(s) => s, Err(_) => panic("server bind")
         }
@@ -89,7 +89,7 @@ test "UDP two fibers: multi-round — client sends 3, server recvs 3" {
 }
 
 test "UDP two fibers: recv parks before send" {
-    with AddrNet = real_addr_net(), UdpNet = real_udp_net() {
+    with Net = real_net() {
         mut receiver = match UdpSocket.bind(SocketAddr.loopback(0)) {
             Ok(s) => s, Err(_) => panic("recv bind")
         }

@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.0.5 — positive (mock): byte-first net surface API.
+//
+// Exercises the additive `[]u8` methods (read_bytes / write_bytes /
+// write_all_bytes on TcpStream + halves, send_to_bytes / recv_from_bytes on
+// UdpSocket) over mock_net(). The mock does not echo, so this validates the
+// wrapper contract (byte counts, []u8 materialisation); the real byte-in =
+// byte-out round-trip incl. non-UTF-8 is in net_byte_surface_slow.nv.
+
+module plan178.net_byte_surface_mock
+
+import std.net.{SocketAddr, TcpStream, UdpSocket, mock_net}
+
+test "TcpStream.write_bytes / write_all_bytes return byte count" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c, Err(_) => panic("connect")
+                }
+                // Payload incl. embedded NUL + non-UTF-8 lead byte.
+                ro n = match s.write_bytes(Vec[u8].of(0x48, 0x69, 0x00, 0xFF)) {
+                    Ok(n) => n, Err(_) => panic("write_bytes")
+                }
+                assert(n == 4)
+                assert(s.write_all_bytes(Vec[u8].of(1, 2, 3)).is_ok())
+                s.close()
+            }
+        }
+    }
+}
+
+test "TcpStream.read_bytes materialises []u8" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c, Err(_) => panic("connect")
+                }
+                ro bytes = match s.read_bytes(64) { Ok(b) => b, Err(_) => panic("read_bytes") }
+                // mock read returns "mock-reply" (10 bytes).
+                assert(bytes.len() == 10)
+                assert(str.from_bytes_unchecked(bytes) == "mock-reply")
+                s.close()
+            }
+        }
+    }
+}
+
+test "TcpReadHalf.read_bytes / TcpWriteHalf.write_bytes over split" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c, Err(_) => panic("connect")
+                }
+                mut (rdh, wrh) = s.split()
+                ro n = match wrh.write_bytes(Vec[u8].of(9, 8, 7, 6, 5)) {
+                    Ok(n) => n, Err(_) => panic("write_bytes")
+                }
+                assert(n == 5)
+                assert(wrh.write_all_bytes(Vec[u8].of(0xFF, 0x00)).is_ok())
+                ro got = match rdh.read_bytes(64) { Ok(b) => b, Err(_) => panic("read_bytes") }
+                assert(got.len() == 10)
+                rdh.close()
+                wrh.close()
+            }
+        }
+    }
+}
+
+test "UdpSocket.send_to_bytes / recv_from_bytes (mock)" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind")
+                }
+                ro n = match sock.send_to_bytes(Vec[u8].of(0xDE, 0xAD, 0xBE, 0xEF), SocketAddr.loopback(9999)) {
+                    Ok(n) => n, Err(_) => panic("send_to_bytes")
+                }
+                assert(n == 4)
+                ro (data, _sender) = match sock.recv_from_bytes(64) {
+                    Ok(t) => t, Err(_) => panic("recv_from_bytes")
+                }
+                // mock recv returns "" → 0 bytes.
+                assert(data.len() == 0)
+                sock.close()
+            }
+        }
+    }
+}

@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.2 / D357: std/http/transport/real.nv — real_http() over `Net`.
+//
+// `real_http()` is the production `Http` handler: resolve host, open a TCP
+// connection (Plan 91.12 / 178 Ф.0.5 byte-surface), write the serialized request,
+// read the full response. All HTTP semantics stay in Nova (std.http wire/client);
+// this handler is the thin byte-transport seam.
+//
+// WHY A SEPARATE MODULE (`std.http.transport`): importing `std.net` pulls
+// `NetError` into the importing module's constructor namespace, where
+// `NetError.InvalidPort` shadows `ParseUrlError.InvalidPort` (std.http/url.nv).
+// Isolating the std.net dependency here keeps std.http's namespace clean.
+// [M-178-transport-submodule-net-isolation]
+//
+// CORE scope (Ф.2, plaintext HTTP/1.1): one hop per connection, `Connection:
+// close`, read-to-EOF. HARD-GATES / honest deferrals:
+//   · https (`secure = true`) — Plan 116 TLS → `Err(Tls)`. [M-178-https-needs-116]
+//   · keep-alive live conn reuse / pool — decision logic + config in client.nv
+//     (pure, tested); live socket reuse deferred. [M-178-client-live-pool]
+//   · timeout/deadline-by-default — Plan 173 supervised scope, at the call site.
+//     [M-178-timeout-needs-173]
+//   · typed `ErrSource.Net(NetError)` — gated; detail carried as OtherSource by
+//     `HttpError.transport` (error.nv). [M-178-errsource-net]
+
+module std.http.transport
+
+import std.net.{SocketAddr, TcpStream}
+import std.http.{Http, HttpError, ErrorKind}
+
+/// Production `Http` handler over the `Net` effect (TCP + DNS via libuv).
+///
+/// Install alongside `Net`:
+/// ```nova
+/// with Net = real_net() {
+///     with Http = real_http() {
+///         ro resp = HttpClient.new().get("http://example.com/").send()!!
+///         resp.drain()!!
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export fn real_http() -> Effect[Http] => effect Http {
+    send(host, port, secure, request) {
+        if secure {
+            // https/TLS is a hard gate on Plan 116. [M-178-https-needs-116]
+            Err(HttpError.new(ErrorKind.Tls))
+        } else {
+            http_send_over_net(host, port, request)
+        }
+    }
+}
+
+// One plaintext HTTP/1.1 round-trip over Net: resolve → connect → write → read.
+fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpError] {
+    ro addrs = match SocketAddr.lookup(host, port as u16) {
+        Ok(a)  => a
+        Err(_) => return Err(HttpError.transport(ErrorKind.Dns, "dns resolution failed"))
+    }
+    ro addr = match addrs.get(0) {
+        Some(a) => a
+        None    => return Err(HttpError.transport(ErrorKind.Dns, "no addresses resolved"))
+    }
+    mut stream = match TcpStream.connect(addr) {
+        Ok(s)  => s
+        Err(_) => return Err(HttpError.transport(ErrorKind.Connect, "connect failed"))
+    }
+    match stream.write_all(request) {
+        Ok(_)  => ()
+        Err(_) => {
+            stream.close()
+            return Err(HttpError.transport(ErrorKind.Connect, "write failed"))
+        }
+    }
+    // Read to EOF (Connection: close). A mid-stream error stops the read; the wire
+    // parser (client.nv) then validates framing (short body → Protocol).
+    mut acc = WriteBuffer.with_capacity(4096)
+    mut reading = true
+    while reading {
+        match stream.read(65536) {
+            Ok(chunk) => {
+                acc.write_str(chunk)
+                ()
+            }
+            Err(_) => { reading = false }
+        }
+    }
+    stream.close()
+    Ok(str.from_bytes_unchecked(acc.into()))
+}

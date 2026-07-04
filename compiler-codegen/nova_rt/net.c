@@ -1234,17 +1234,26 @@ NovaRt_SocketAddr* socket_addr_loopback_v6(uint16_t port) {
 NovaRt_SocketAddr* socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port) {
     return NovaRt_SocketAddr_static_v4(a, b, c, d, port);
 }
-_NovaTuple2 socket_addr_parse(nova_str s) {
+/* Plan 178 Ф.0.5: socket_addr_parse returns just the NetAddrResult code and
+ * stashes the parsed address in a thread-local slot, retrieved immediately after
+ * via socket_addr_parse_result(). This replaces the earlier `(int, CSocketAddr)`
+ * tuple return — the tuple ABI relied on CSocketAddr being erased to nova_int
+ * (legacy `_NovaTuple2`), which the type-encoded tuple naming no longer does.
+ * The TLS-accessor idiom mirrors tcp_stream_read_data / dns_addr_at and is
+ * cooperative-safe (no Blocking call between parse and the accessor read). */
+static __thread NovaRt_SocketAddr* _net_parse_result;
+nova_int socket_addr_parse(nova_str s) {
     char* buf = (char*)alloca(s.len + 1);
     memcpy(buf, s.ptr, s.len);
     buf[s.len] = '\0';
 
-    _NovaTuple2 r;
     NovaRt_SocketAddr* addr = _nova_alloc_addr();
     NetAddrResult code = NovaRt_SocketAddr_static_parse(buf, addr);
-    r.f0 = (nova_int)code;
-    r.f1 = (nova_int)(intptr_t)((code == NET_ADDR_OK) ? addr : NULL);
-    return r;
+    _net_parse_result = (code == NET_ADDR_OK) ? addr : NULL;
+    return (nova_int)code;
+}
+NovaRt_SocketAddr* socket_addr_parse_result(void) {
+    return _net_parse_result;
 }
 uint16_t socket_addr_port(NovaRt_SocketAddr* addr) {
     return NovaRt_SocketAddr_method_port(addr);

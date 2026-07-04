@@ -1,0 +1,180 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.1 / D358: std/http/cookie.nv — Cookie / SetCookie (RFC 6265bis).
+//
+// `Cookie` — из request-заголовка `Cookie: k=v; k2=v2`. `SetCookie` — из response
+// `Set-Cookie` с полными атрибутами + SEND-ИНВАРИАНТАМИ (differentiator, security):
+//   · `Secure`-cookie НЕ отправляется по plaintext `http://`;
+//   · `__Host-`/`__Secure-`-префиксы enforce'ятся (RFC 6265bis §4.1.3);
+//   · `SameSite=None` требует `Secure`.
+//
+// GATE — `expires Option[Timestamp]` (типизированная дата, §3.7): парсинг IMF-fixdate
+// в `Timestamp` (Plan 175) требует date→epoch wiring → Ф.1 несёт `max_age`
+// (RFC 6265bis-предпочтителен над Expires); типизированный `expires` — followup.
+// `[M-178-setcookie-expires-timestamp]`
+
+module std.http
+
+/// Cookie из запроса (`Cookie: name=value`).
+#stable(since = "0.1")
+export type Cookie value { ro name str, ro value str }
+
+/// Разобрать заголовок `Cookie: k=v; k2=v2` → список пар (RFC 6265 §5.4).
+#stable(since = "0.1")
+export fn Cookie.parse_header(s str) -> Result[[]Cookie, HttpError] {
+    mut out = Vec[Cookie].of()
+    for pair in s.split(";") {
+        ro p = pair.trim_ascii()
+        if p.byte_len() == 0 { continue }
+        match p.split_once("=") {
+            Some((k, v)) => {
+                ro name = k.trim_ascii()
+                if name.byte_len() == 0 {
+                    return Err(HttpError.protocol_error("empty cookie name"))
+                }
+                out.push(Cookie { name, value: v.trim_ascii() })
+            }
+            None => return Err(HttpError.protocol_error("malformed cookie pair (no '=')"))
+        }
+    }
+    Ok(out)
+}
+
+/// Сериализовать в `name=value` (для заголовка `Cookie`).
+#stable(since = "0.1")
+export fn Cookie @to_header_pair() -> str => "${@name}=${@value}"
+
+/// SameSite-политика (RFC 6265bis §5.4.7).
+#stable(since = "0.1")
+export type SameSite | Strict | Lax | Cross  // Cross = wire-value "None" (Option.None-collision avoided)
+
+/// Set-Cookie из ответа (полные атрибуты, RFC 6265bis §4.1).
+#stable(since = "0.1")
+export type SetCookie value {
+    ro name      str
+    ro value     str
+    ro domain    Option[str]
+    ro path      Option[str]
+    ro max_age   Option[int]        // секунды (RFC 6265bis-предпочтителен над Expires)
+    ro secure    bool
+    ro http_only bool
+    ro same_site SameSite
+}
+
+/// Разобрать заголовок `Set-Cookie`. Валидирует `__Host-`/`__Secure-`-префиксы и
+/// `SameSite=None ⇒ Secure` (send-инварианты enforce'ятся by construction).
+#stable(since = "0.1")
+export fn SetCookie.parse(s str) -> Result[SetCookie, HttpError] {
+    ro parts = s.split(";")
+    ro head = match parts.get(0) { Some(h) => h.trim_ascii(), None => "" }
+    ro (name, value) = match head.split_once("=") {
+        Some((k, v)) => (k.trim_ascii(), v.trim_ascii())
+        None         => return Err(HttpError.protocol_error("Set-Cookie missing name=value"))
+    }
+    if name.byte_len() == 0 {
+        return Err(HttpError.protocol_error("empty Set-Cookie name"))
+    }
+
+    mut domain = none_cookie_str()
+    mut path = none_cookie_str()
+    mut max_age = none_cookie_int()
+    mut secure = false
+    mut http_only = false
+    mut same_site = SameSite.Lax          // RFC 6265bis default = Lax
+
+    mut i = 1
+    while i < parts.len() {
+        ro attr = match parts.get(i) { Some(a) => a.trim_ascii(), None => "" }
+        ro lower = attr.to_ascii_lower()
+        if lower == "secure" {
+            secure = true
+        } else if lower == "httponly" {
+            http_only = true
+        } else {
+            match attr.split_once("=") {
+                Some((k, v)) => {
+                    ro key = k.trim_ascii().to_ascii_lower()
+                    ro av = v.trim_ascii()
+                    if key == "domain" { domain = Some(av) }
+                    else if key == "path" { path = Some(av) }
+                    else if key == "max-age" {
+                        match av.parse_int_opt() { Some(n) => { max_age = Some(n); () }, None => () }
+                    }
+                    else if key == "samesite" {
+                        ro sv = av.to_ascii_lower()
+                        if sv == "strict" { same_site = SameSite.Strict }
+                        else if sv == "lax" { same_site = SameSite.Lax }
+                        else if sv == "none" { same_site = SameSite.Cross }
+                    }
+                }
+                None => ()
+            }
+        }
+        i += 1
+    }
+
+    // RFC 6265bis §5.4.7: SameSite=None ⇒ Secure обязателен.
+    ro is_none = match same_site { Cross => true, _ => false }
+    if is_none && !secure {
+        return Err(HttpError.protocol_error("SameSite=None requires Secure attribute"))
+    }
+    // RFC 6265bis §4.1.3: __Secure- ⇒ Secure; __Host- ⇒ Secure + Path=/ + без Domain.
+    if name.starts_with("__Secure-") && !secure {
+        return Err(HttpError.protocol_error("__Secure- cookie requires Secure attribute"))
+    }
+    if name.starts_with("__Host-") {
+        if !secure {
+            return Err(HttpError.protocol_error("__Host- cookie requires Secure attribute"))
+        }
+        ro path_ok = match path { Some(p) => p == "/", None => false }
+        if !path_ok {
+            return Err(HttpError.protocol_error("__Host- cookie requires Path=/"))
+        }
+        ro has_domain = match domain { Some(_) => true, None => false }
+        if has_domain {
+            return Err(HttpError.protocol_error("__Host- cookie must not set Domain"))
+        }
+    }
+
+    Ok(SetCookie { name, value, domain, path, max_age, secure, http_only, same_site })
+}
+
+/// Может ли cookie быть отправлена в данном контексте безопасности:
+/// `Secure`-cookie — только по `https` (RFC 6265bis §8.3). Send-инвариант.
+#stable(since = "0.1")
+export fn SetCookie @is_sendable(is_https bool) -> bool {
+    if @secure && !is_https { return false }
+    true
+}
+
+/// Персистентная (есть `max_age`) vs session-cookie.
+#stable(since = "0.1")
+export fn SetCookie @is_persistent() -> bool =>
+    match @max_age { Some(_) => true, None => false }
+
+/// Сериализовать обратно в значение заголовка `Set-Cookie`.
+#stable(since = "0.1")
+export fn SetCookie @serialize() -> str {
+    consume buf = StringBuilder.with_capacity(64)
+    buf.append(@name)
+    buf.append("=")
+    buf.append(@value)
+    match @domain { Some(d) => { buf.append("; Domain="); buf.append(d); () }, None => () }
+    match @path   { Some(p) => { buf.append("; Path="); buf.append(p); () }, None => () }
+    match @max_age { Some(m) => { buf.append("; Max-Age="); buf.append(str.from(m)); () }, None => () }
+    if @secure { buf.append("; Secure") }
+    if @http_only { buf.append("; HttpOnly") }
+    buf.append("; SameSite=")
+    match @same_site {
+        Strict => buf.append("Strict")
+        Lax    => buf.append("Lax")
+        Cross  => buf.append("None")
+    }
+    buf.into_str()
+}
+
+/// Проекция в request-`Cookie` (только name=value).
+#stable(since = "0.1")
+export fn SetCookie @to_cookie() -> Cookie => { @name, @value }
+
+fn none_cookie_str() -> Option[str] => None
+fn none_cookie_int() -> Option[int] => None

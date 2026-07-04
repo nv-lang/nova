@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.1 / D358: std/http/method.nv — HTTP-метод.
+//
+// Стандартные методы — варианты-константы; нестандартные (RFC 7231 §4.1
+// extension-method, напр. "PROPFIND") — `Other(str)` с УЖЕ-провалидированным
+// tchar-токеном (сконструировать минуя `parse` нельзя — фабрика). Сравнение
+// case-sensitive (метод регистрозависим, RFC 7230 §3.1.1). Бьёт Go (`string`,
+// опечатка компилится).
+
+module std.http
+
+/// HTTP-метод (RFC 7231 §4). `@is_idempotent` — load-bearing для retry-policy.
+#stable(since = "0.1")
+export type Method
+    | Get | Head | Post | Put | Delete | Connect | Options | Trace | Patch
+    | Other(str)                            // валидированный tchar-токен (uppercase-конвенция)
+
+/// Разобрать/валидировать метод-токен. Пустой / не-token → `Protocol`.
+///
+/// Известные методы отображаются в константу-вариант; прочий валидный tchar-токен
+/// → `Other`.
+///
+/// # Examples
+/// ```nova
+/// assert(Method.parse("GET")!! == Method.Get)
+/// assert(Method.parse("PROPFIND")!! == Method.Other("PROPFIND"))
+/// ```
+#stable(since = "0.1")
+export fn Method.parse(s str) -> Result[Method, HttpError] {
+    if s.byte_len() == 0 {
+        return Err(HttpError.protocol_error("empty method token"))
+    }
+    for c in s.as_chars() {
+        if !is_tchar(c) {
+            return Err(HttpError.protocol_error("invalid method token"))
+        }
+    }
+    Ok(match s {
+        "GET"     => Get
+        "HEAD"    => Head
+        "POST"    => Post
+        "PUT"     => Put
+        "DELETE"  => Delete
+        "CONNECT" => Connect
+        "OPTIONS" => Options
+        "TRACE"   => Trace
+        "PATCH"   => Patch
+        _         => Other(s)
+    })
+}
+
+/// Токен метода на проводе. `Other` → as-is.
+#stable(since = "0.1")
+export fn Method @as_str() -> str {
+    match @ {
+        Get     => "GET"
+        Head    => "HEAD"
+        Post    => "POST"
+        Put     => "PUT"
+        Delete  => "DELETE"
+        Connect => "CONNECT"
+        Options => "OPTIONS"
+        Trace   => "TRACE"
+        Patch   => "PATCH"
+        Other(s) => s
+    }
+}
+
+/// Safe-метод (RFC 7231 §4.2.1): GET/HEAD/OPTIONS/TRACE — без side-effects.
+#stable(since = "0.1")
+export fn Method @is_safe() -> bool {
+    match @ {
+        Get | Head | Options | Trace => true
+        _                            => false
+    }
+}
+
+/// Идемпотентный метод (RFC 7231 §4.2.2): safe + PUT/DELETE. Load-bearing для
+/// auto-retry (только идемпотентные реплеятся, Q16).
+#stable(since = "0.1")
+export fn Method @is_idempotent() -> bool {
+    match @ {
+        Put | Delete => true
+        _            => @is_safe()
+    }
+}
+
+/// По умолчанию несёт тело запроса (POST/PUT/PATCH). GET/HEAD/DELETE — нет.
+#stable(since = "0.1")
+export fn Method @allows_body() -> bool {
+    match @ {
+        Post | Put | Patch => true
+        Other(_)           => true
+        _                  => false
+    }
+}
+
+// RFC 7230 §3.2.6 tchar: "!#$%&'*+-.^_`|~" / DIGIT / ALPHA.
+fn is_tchar(c char) -> bool {
+    if c.is_ascii_alphanumeric() { return true }
+    c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' ||
+    c == '*' || c == '+' || c == '-' || c == '.' || c == '^' || c == '_' ||
+    c == '`' || c == '|' || c == '~'
+}

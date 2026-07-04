@@ -7,10 +7,10 @@
 
 module plan91_16.tcp_split_mock
 
-import std.net.{SocketAddr, TcpStream, mock_tcp_net, mock_addr_net}
+import std.net.{SocketAddr, TcpStream, mock_net}
 
 test "split mock stream → read half + write half" {
-    with AddrNet = mock_addr_net(), TcpNet = mock_tcp_net() {
+    with Net = mock_net() {
         supervised {
             spawn {
                 mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
