@@ -881,6 +881,20 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 codegen-panic. Честный фикс — в чекере (172.1-зона): устранить overflow + аннотировать
 канал resolved_types для rebind в pattern-scope. Home: 172.1 / отдельный заход.
 
+## [M-consume-nested-scope-shadow-leak] — Nested-scope double-consume-shadow leak (2026-07-04) — P3
+
+`consume tx = begin(); { consume tx = begin() } tx.commit()` (и то же в теле
+if/for/match/while-let) — первый `tx` утекает МОЛЧА: consume-obligations ключуются по
+имени, один `commit` гасит оба обязательства. Plan 181 R2 (`E_REBIND_LIVE_CONSUME`) ловит
+ТОЛЬКО **same-scope** double-consume (alpha-rename по R7 НЕ уникализирует cross-scope →
+`Module.rebind_shadows` для block-shadow пуст → `check_rebind_live_consume` early-return).
+**Pre-existing** — воспроизводится ИДЕНТИЧНО на baseline d97c0dbe, независимо от Plan 181
+(no-op-путь), НЕ регрессия 181; заголовок Plan 181 «catches B2 double-consume-shadow leak»
+корректен для same-scope, но не покрывает nested. Честный фикс — в consume-чекере
+(`types/mod.rs`): scope-aware obligation-tracking для block-shadow (D131/D133-территория),
+НЕ alpha-rename (cross-scope затенение легально по R7, уникализировать его нельзя). Home:
+D131/D133 consume-checker / отдельный заход.
+
 ## [M-181-lsp-rename-symbol-table] — LSP rename over same-scope rebind (2026-07-04) — P3
 
 LSP rename (D297 V1, word-boundary scan) переименует ОБА одноимённых same-scope биндинга.

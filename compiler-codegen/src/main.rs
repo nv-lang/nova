@@ -151,7 +151,10 @@ fn run_lints(module: &nova_codegen::ast::Module, src: &str, file: &str) {
     let warnings = nova_codegen::lints::lint_module(module);
     for w in warnings {
         let (line, col) = nova_codegen::diag::byte_to_line_col(src, w.diag.span.start);
-        eprintln!("{}:{}:{}: {} [{}]", file, line, col, w.diag.message, w.rule);
+        // Plan 181 (D347): demangle synthesized `__sN` rebind names so a lint on
+        // a rebound variable shows the original user name, not `x__s1`.
+        let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
+        eprintln!("{}:{}:{}: {} [{}]", file, line, col, msg, w.rule);
     }
 }
 

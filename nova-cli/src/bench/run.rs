@@ -87,6 +87,12 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     // с `let n = <value>;` prepended к setup, так что name-resolution видит
     // `n` как regular let.
     expand_bench_sweeps(&mut module);
+    // Plan 181 (D347): same-scope re-binding alpha-rename on the fully-assembled
+    // module (post import-inline + bench-sweep expansion), BEFORE check/codegen —
+    // so a benched .nv with a same-scope rebind (`ro x = …; ro x = …`) emits the
+    // two bindings under DISTINCT C-names instead of a `redefinition` CC-FAIL.
+    // Mirrors cmd_build (nova-cli/src/main.rs:4149). No-op without a rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     // Plan 140 Ф.3 (D24 amend): capture env for proven-contract elision so
     // bench perf reflects zero-cost proven contracts (Ф.5: proven-elided vs
     // all-checked vs off).
@@ -100,8 +106,11 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     // Plan 57.C.7: run lints (включая bench-specific warnings).
     for w in nova_codegen::lints::lint_module(&module) {
         let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+        // Plan 181 (D347): demangle any synthesized `__sN` rebind name so a lint
+        // on a rebound variable shows the user's original name, not `x__s1`.
+        let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
         eprintln!("warning: {}:{}:{}: {} [{}]",
-            bench_path.display(), line, col, w.diag.message, w.rule);
+            bench_path.display(), line, col, msg, w.rule);
     }
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
@@ -372,6 +381,10 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
         &bench_path, &mut module, opts.repo, opts.stdlib_dir,
     )?;
     expand_bench_sweeps(&mut module);
+    // Plan 181 (D347): same-scope re-binding alpha-rename before check/codegen —
+    // mirrors the measurement pipeline (`run`) and cmd_build so a same-scope
+    // rebind compiles instead of a `redefinition` CC-FAIL. No-op without rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     // Plan 140 Ф.3 (D24 amend): capture env for proven-contract elision.
     let bench_env = nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()

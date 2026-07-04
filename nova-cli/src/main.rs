@@ -2148,7 +2148,10 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
         .into_iter()
         .map(|w| {
             let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-            format!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule)
+            // Plan 181 (D347): demangle synthesized `__sN` rebind names so a lint
+            // on a rebound variable shows the original user name, not `x__s1`.
+            let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
+            format!("{}:{}:{}: {} [{}]", path.display(), line, col, msg, w.rule)
         })
         .collect();
 
@@ -4204,7 +4207,9 @@ fn cmd_build(
                 let _t = nova_codegen::perf_timer::PerfTimer::new("lints");
                 for w in nova_codegen::lints::lint_module(&module) {
                     let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-                    eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, w.diag.message, w.rule);
+                    // Plan 181 (D347): demangle synthesized `__sN` rebind names.
+                    let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
+                    eprintln!("{} {}:{}:{}: {} [{}]", bold(&yellow("warning:")), path.display(), line, col, msg, w.rule);
                 }
             }
             // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expr.

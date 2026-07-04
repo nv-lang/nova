@@ -1975,6 +1975,9 @@ const CACHED_MOD_BIT: u32 = (1 << 0) | (1 << 1); // readonly + cached
 /// errors).
 pub fn compute_field_cache_semantic_tokens(src: &str) -> Option<Vec<SemanticToken>> {
     let mut module = nova_codegen::parser::parse(src).ok()?;
+    // Plan 181 (D347): alpha-rename before the pipeline so field-cache analysis
+    // sees the same unique-named AST as the real build. No-op without a rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     if nova_codegen::types::check_module(&module).is_err() { return None; }
     let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
@@ -2074,6 +2077,9 @@ pub fn compute_pure_annotation_actions(
     range: Range,
 ) -> Option<Vec<(Range, String)>> {
     let mut module = nova_codegen::parser::parse(src).ok()?;
+    // Plan 181 (D347): alpha-rename before the pipeline so field-cache analysis
+    // sees the same unique-named AST as the real build. No-op without a rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     if nova_codegen::types::check_module(&module).is_err() { return None; }
     let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
@@ -2189,6 +2195,9 @@ fn last_meaningful_line(s: &str) -> Option<String> {
 pub fn compute_field_cache_lenses(src: &str) -> Option<Vec<CodeLens>> {
     let mut module = nova_codegen::parser::parse(src).ok()?;
     // Best-effort pipeline (skip if type-check fails).
+    // Plan 181 (D347): alpha-rename first so field-cache analysis sees the same
+    // unique-named AST as the real build. No-op without a rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     if nova_codegen::types::check_module(&module).is_err() { return None; }
     let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
@@ -2254,6 +2263,9 @@ pub fn compute_field_cache_hover(src: &str, pos: Position) -> Option<Hover> {
 
     // Parse module + analyze.
     let mut module = nova_codegen::parser::parse(src).ok()?;
+    // Plan 181 (D347): alpha-rename before the pipeline so field-cache analysis
+    // sees the same unique-named AST as the real build. No-op without a rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
     if nova_codegen::types::check_module(&module).is_err() { return None; }
     let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);

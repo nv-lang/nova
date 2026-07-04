@@ -37598,8 +37598,9 @@ D185 §amend-2 added.
 
 - **[production, НЕ упрощение] D347 R1–R7 + B1/B2/B3 (2026-07-04).** Новый чистый pass
   `compiler-codegen/src/alpha_rename.rs` (`alpha_rename(&mut Module) -> RebindTables`):
-  scope-stack walker после parse (ДО `number_exprs`/check/codegen — врезан во ВСЕ 4 драйвера:
-  `main.rs` cmd_check/cmd_compile, `nova-cli` cmd_build/cmd_check, `test_runner::codegen_to_c`),
+  scope-stack walker после parse (ДО `number_exprs`/check/codegen — врезан во все codegen-драйверы:
+  `main.rs` cmd_check/cmd_compile, `nova-cli` cmd_build/cmd_check, `test_runner::codegen_to_c`;
+  **+ bench + LSP добавлены по adversarial-аудиту — см. ниже**),
   уникализирует 2-й+ same-scope биндинг имени в `x__s1`/`x__s2`/… (первый — без суффикса →
   для кода БЕЗ rebind pass = byte-identical no-op, zero-regression). RHS rebind'а резолвится
   в предыдущий биндинг (R3); замыкания/defer — env-снапшот на момент создания (R4);
@@ -37616,6 +37617,35 @@ D185 §amend-2 added.
   E_REBIND_LIVE_CONSUME×2/type-change-stale) — 4/4; 5 rust-unit `alpha_rename::tests`.
   Zero-regression: baseline d97c0dbe (temp-worktree), ~135 тестов (basics/generics/consume×6/
   effects/narrowing/syntax/defer/patterns) — delta 0 (те же fail на обоих = pre-existing).
+
+- **[production, НЕ упрощение] Adversarial-аудит close-out (2026-07-04).** Аудит подтвердил
+  core-фичу корректной (no-op-путь byte-identical), нашёл 4 driver-coverage/cosmetic-дефекта —
+  все исправлены: **(1 bench)** `nova-cli/src/bench/run.rs` (`run` + `compile_for_profile`)
+  прогонял codegen БЕЗ `alpha_rename` → benched-файл с same-scope rebind давал clang
+  `redefinition` CC-FAIL (тогда как build/test/check ок); alpha-rename врезан ДО check в оба
+  bench-пайплайна (зеркалит cmd_build — number_exprs cmd_build НЕ зовёт, resolved_types —
+  test_runner-only канал). Verify: bench `ro x=1; ro x=x+1` компилится+бежит. **(2 LSP)**
+  `nova-lsp` check_source_inner/provenance/semantic_tokens/server (field-cache) звали
+  check_module БЕЗ alpha_rename → `module.rebind_shadows` пуст → R2 `E_REBIND_LIVE_CONSUME`
+  НИКОГДА не фаерил в IDE (`check_rebind_live_consume` early-return) + B1 parity break vs CLI;
+  alpha-rename врезан в LSP-check-пайплайн, восстановлена документированная byte-parity с
+  `nova check`. Verify: rust-тест `parity_lsp_fires_r2_rebind_live_consume` (large-stack thread).
+  Побочно: `empty_module()` в provenance.rs не имел поля `rebind_shadows` (Module-struct вырос в
+  181, литерал не обновлён) → nova-lsp не компилился на ветке — дополнено. **(3 demangle)**
+  `demangle_rebind_names` стрипил ЛЮБОЙ `__sN`-паттерн regex'ом → over-strip валидного user
+  `buf__s1` (lexer допускает) → показывал `buf`; under-cover: lint-вывод (cmd_check/cmd_build/
+  bench/nova-codegen bin) форматировал RAW `w.diag.message` МИМО demangle → `x__s1` протекал.
+  Фикс §0/§1: demangle работает по **множеству реально синтезированных имён** (thread-local
+  map new→original, публикуется `alpha_rename` через `set_demangle_map`; пустой map → no-op),
+  НЕ regex-зеркало; UTF-8-safe token-scan (не корраптит русскую прозу диагностик); demangle
+  врезан во все 4 lint-вывода. Verify: `nova check` — user `buf__s1` показан как есть (даже при
+  непустом map с `v__s1`), rebound `v__s1` → `v`, ноль `__s` в user-выводе; 2 rust-unit
+  (`demangle_strips_only_synthesized_names` + `demangle_noop_without_synthesized_map`).
+  **(4 spec-overclaim)** R2 покрывает ТОЛЬКО same-scope double-consume; nested-scope
+  блок-затенение (`consume tx=…; { consume tx=… }`) — та же тихая утечка, но pre-existing gap
+  consume-чекера (R7 не уникализирует cross-scope; obligations по имени), идентична на baseline
+  d97c0dbe → НЕ регрессия 181. Формулировка D347/plan-181 сужена до same-scope; заведён
+  `[M-consume-nested-scope-shadow-leak]` (backlog, D131/D133-территория).
 
 - **[M-181-pattern-var-rebind]** **Остаток (bounded followup — pre-existing, вне scope D347).**
   Rebind САМОГО pattern-bound имени внутри matching-ветки (`if Some(u) = e { ro u = … }`,

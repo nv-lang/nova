@@ -134,6 +134,13 @@ fn resolve_module_impl(path: &Path, src: &str, record_expr_types: bool) -> Resol
     // different id (or never ran at all).
     file_map.entry(MAIN_FILE_ID).or_insert_with(|| entry_path.clone());
 
+    // Plan 181 (D347): same-scope re-binding alpha-rename before the check —
+    // parity with `nova check` so the checker sees the same unique-named AST
+    // (`module.rebind_shadows` populated; R2/B1 consistent with the CLI). Renames
+    // identifiers only — item count and spans are unchanged, so the provenance
+    // `file_map` / span mapping built above still resolves. No-op without rebind.
+    nova_codegen::alpha_rename::alpha_rename(&mut module);
+
     // Type-check the entry module for downstream type resolution (Ф.4/Ф.5).
     // Contained so a checker panic never takes down the request. When
     // `record_expr_types` is set (Ф.1 IDE cache), use the expr-type-recording
@@ -245,6 +252,8 @@ fn empty_module() -> Module {
         span: Span::default(),
         peer_files: Vec::new(),
         doc: None,
+        // Plan 181 (D347): empty until `alpha_rename` runs — no rebind here.
+        rebind_shadows: Default::default(),
     }
 }
 

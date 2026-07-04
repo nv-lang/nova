@@ -8083,10 +8083,15 @@ mut work = work                   \ «разморозка» readonly→mut (Rus
   остаётся мутацией существующего `mut`-биндинга (грамматика D184 не меняется). Тип и
   мутабельность новой переменной независимы от старой.
 - **R2 Consume-звучность (hard error `E_REBIND_LIVE_CONSUME`).** Затенение биндинга с
-  непотреблённым consume-обязательством (D131/D133/D180) — ошибка на месте rebind
-  («потребите/переименуйте»). Nova-эксклюзив: Rust-футган «затенённый guard живёт до конца
-  scope» становится compile error (guard'ы Nova = consume-типы, D174). Ловит и тихую
-  double-consume-shadow утечку.
+  непотреблённым consume-обязательством (D131/D133/D180) **в ТОМ ЖЕ scope** — ошибка на
+  месте rebind («потребите/переименуйте»). Nova-эксклюзив: Rust-футган «затенённый guard
+  живёт до конца scope» становится compile error (guard'ы Nova = consume-типы, D174). Ловит
+  тихую **same-scope** double-consume-shadow утечку (B2). **Граница:** *nested-scope*
+  блок-затенение того же класса (`consume tx=…; { consume tx=… } tx.commit()` — и в
+  теле if/for/match/while-let) R2 НЕ ловит: alpha-rename по R7 не уникализирует cross-scope,
+  `rebind_shadows` для него пуст, а consume-obligations ключуются по имени → один commit
+  гасит оба. Это **pre-existing** дыра consume-чекера (идентична на baseline до Plan 181,
+  НЕ регрессия), см. `[M-consume-nested-scope-shadow-leak]` — территория D131/D133.
 - **R3 Нерекурсивность.** RHS rebind'а видит **старый** биндинг: `ro x = x + 1` читает
   прежний `x`. Haskell-грабли (`let x = f x` = `<<loop>>`) исключены.
 - **R4 Захваты на момент создания.** Замыкание/`defer` видят биндинг, живой в точке
@@ -8129,7 +8134,7 @@ same-scope (старое имя недоступно ниже) + R2/R5 guard'ы.
 | p07 | `for i { ro x=i }` | POS (fresh на итерацию) |
 | p08 | `consume sb=…; sb.append(); ro sb=5` | NEG `E_REBIND_LIVE_CONSUME` (R2) |
 | p08b | consume ПОТРЕБЛЁН `into_str()` → `ro sb=5` | POS (B1 fixed) |
-| p08c | `consume tx=…; consume tx=…` | NEG `E_REBIND_LIVE_CONSUME` (B2 leak caught) |
+| p08c | `consume tx=…; consume tx=…` (**same** scope) | NEG `E_REBIND_LIVE_CONSUME` (B2 same-scope leak; nested-scope — pre-existing gap) |
 | p09 | `fn f(x){ ro x=x+1 }` param-shadow | POS (R6) |
 | p10 | `ro x=1; ro x=x+1` | POS x==2 (R3, B3 fixed) |
 
@@ -8139,7 +8144,9 @@ rename (D297 V1) переименует оба одноимённых бинди
 nested shadow), честный фикс = V2 symbol table. Destructuring-rebind (`ro (a,b)=…`
 повторно) — tuple-дубли уникализируются, R5-lint на них V2. Rebind САМОГО pattern-bound
 имени внутри matching-ветки (`if Some(u)={ ro u=… }`) — вне scope (pre-existing
-checker-overflow), см. `[M-181-pattern-var-rebind]`.
+checker-overflow), см. `[M-181-pattern-var-rebind]`. Nested-scope double-consume-shadow
+утечка (R2 ловит только same-scope) — pre-existing gap consume-чекера, см.
+`[M-consume-nested-scope-shadow-leak]`.
 
 ---
 

@@ -27,10 +27,14 @@
 //!   consume-checker reads this to fire `E_REBIND_LIVE_CONSUME` (R2) when a
 //!   rebind hides an unmet consume obligation.
 //! - `originals`: unique-name → original user-written base name (diagnostics /
-//!   hover). Diagnostics also strip `__sN` at render time (`diag::render`), so
+//!   hover). The pass publishes this map (thread-local, via `set_demangle_map`)
+//!   so `demangle_rebind_names` (called by `diag::render`) rewrites a rendered
+//!   `x__s1` back to `x` by EXACT set membership — never by a blind `__sN`
+//!   pattern that would also mangle a valid user identifier like `buf__s1`. So
 //!   `__sN` never reaches user-facing output (acceptance criterion #4).
 
 use crate::ast::*;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 /// Side-tables produced by [`alpha_rename`].
@@ -62,6 +66,11 @@ pub fn alpha_rename(module: &mut Module) -> RebindTables {
     // it without a separate threading channel (§2). `module.items` and the
     // `peer_files` copies rename identically, so their entries coincide.
     module.rebind_shadows = tables.shadows.clone();
+    // Publish the synthesized-name → original-name map for `demangle_rebind_names`
+    // so diagnostics strip ONLY names this pass actually minted — never a
+    // look-alike user identifier such as `buf__s1` (§0). Replaces any prior
+    // module's map (one compilation per thread).
+    set_demangle_map(&tables.originals);
     tables
 }
 
@@ -1139,42 +1148,84 @@ fn collect_names_trailing(t: &Trailing, out: &mut HashSet<String>) {
     }
 }
 
-/// Strip the reserved same-scope-rebind suffix `__sN` from a rendered
-/// diagnostic message so user-facing output shows the original name (plan
-/// acceptance criterion #4). The suffix is compiler-reserved (never present in
-/// user identifiers — [`alpha_rename`] uniquifies deeper if it were), so this is
-/// unambiguous. Only a trailing `__s<digits>` at an identifier boundary is
-/// stripped.
+thread_local! {
+    /// Current module's synthesized-rebind map (unique renamed name → original
+    /// user base name), published by [`alpha_rename`] via [`set_demangle_map`].
+    /// [`demangle_rebind_names`] consults it so it rewrites ONLY names this pass
+    /// actually minted — a blind `__sN` regex would also strip a *valid* user
+    /// identifier like `buf__s1` (the lexer permits it), showing the wrong name.
+    static REBIND_ORIGINALS: RefCell<HashMap<String, String>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Publish the synthesized-name → original-name map for the current module so
+/// [`demangle_rebind_names`] can demangle by exact set membership rather than a
+/// name pattern (§0). Called by [`alpha_rename`] at the end of the pass;
+/// **replaces** any map left by a prior compilation on this thread (one
+/// compilation per thread). An empty map (no rebind) makes demangle a no-op.
+pub fn set_demangle_map(originals: &HashMap<String, String>) {
+    REBIND_ORIGINALS.with(|cell| {
+        let mut m = cell.borrow_mut();
+        m.clear();
+        for (unique, orig) in originals {
+            m.insert(unique.clone(), orig.clone());
+        }
+    });
+}
+
+/// Rewrite a rendered diagnostic message so any synthesized same-scope-rebind
+/// name (`x__s1`) is shown as its original user name (`x`) — plan acceptance
+/// criterion #4. Only identifiers the current [`alpha_rename`] pass actually
+/// minted (present in the thread-local [`REBIND_ORIGINALS`] map) are rewritten;
+/// a user identifier that merely *looks* synthesized (`buf__s1`, never minted)
+/// is left intact. With no rebind in the module the map is empty and this is a
+/// no-op.
 pub fn demangle_rebind_names(msg: &str) -> String {
+    // Cheap early-out: the reserved marker cannot be present.
     if !msg.contains("__s") {
         return msg.to_string();
     }
-    let bytes = msg.as_bytes();
-    let mut out = String::with_capacity(msg.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'_'
-            && i + 3 < bytes.len()
-            && bytes[i + 1] == b'_'
-            && bytes[i + 2] == b's'
-            && bytes[i + 3].is_ascii_digit()
-        {
-            // consume the digit run.
-            let mut j = i + 3;
-            while j < bytes.len() && bytes[j].is_ascii_digit() {
-                j += 1;
-            }
-            // Only strip at an identifier boundary (next char is not an
-            // identifier continuation) — protects against `__s3x`-like text.
-            let boundary = j >= bytes.len()
-                || !(bytes[j] == b'_' || (bytes[j] as char).is_ascii_alphanumeric());
-            if boundary {
-                i = j;
-                continue;
-            }
+    REBIND_ORIGINALS.with(|cell| {
+        let map = cell.borrow();
+        if map.is_empty() {
+            // No synthesized names for the current module → nothing was mangled;
+            // leave every user identifier untouched (over-strip fix).
+            return msg.to_string();
         }
-        out.push(bytes[i] as char);
-        i += 1;
+        demangle_with_map(msg, &map)
+    })
+}
+
+/// Replace every maximal identifier token of `msg` that is a key of `map` with
+/// its mapped original name. Identifier tokens are ASCII (`[A-Za-z_][A-Za-z0-9_]*`);
+/// non-identifier text (incl. multi-byte UTF-8, e.g. Russian diagnostic prose)
+/// is copied verbatim by whole `char` so it is never corrupted.
+fn demangle_with_map(msg: &str, map: &HashMap<String, String>) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let mut rest = msg;
+    while !rest.is_empty() {
+        let bytes = rest.as_bytes();
+        let first = bytes[0];
+        if first == b'_' || first.is_ascii_alphabetic() {
+            // Maximal ASCII identifier run.
+            let mut end = 1;
+            while end < bytes.len()
+                && (bytes[end] == b'_' || bytes[end].is_ascii_alphanumeric())
+            {
+                end += 1;
+            }
+            let ident = &rest[..end];
+            match map.get(ident) {
+                Some(orig) => out.push_str(orig),
+                None => out.push_str(ident),
+            }
+            rest = &rest[end..];
+        } else {
+            // Non-identifier char — copy one whole `char` (may be multi-byte).
+            let ch = rest.chars().next().expect("non-empty rest");
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
     }
     out
 }
@@ -1220,11 +1271,33 @@ mod tests {
     }
 
     #[test]
-    fn demangle_strips_reserved_suffix() {
+    fn demangle_strips_only_synthesized_names() {
+        // Only names the pass actually minted are in the map.
+        let mut map = HashMap::new();
+        map.insert("x__s1".to_string(), "x".to_string());
+        map.insert("tx__s12".to_string(), "tx".to_string());
+        set_demangle_map(&map);
+
         assert_eq!(demangle_rebind_names("var `x__s1` bad"), "var `x` bad");
         assert_eq!(demangle_rebind_names("tx__s12 leaked"), "tx leaked");
         assert_eq!(demangle_rebind_names("no suffix here"), "no suffix here");
-        // Not at an identifier boundary — left intact (defensive).
+        // Over-strip fix: a valid user identifier that merely LOOKS synthesized
+        // but was never minted (not in the map) is left intact.
+        assert_eq!(demangle_rebind_names("buf__s1 fine"), "buf__s1 fine");
+        // `a__s3x` is one identifier token, not in the map → intact.
         assert_eq!(demangle_rebind_names("a__s3x"), "a__s3x");
+        // Multi-byte UTF-8 prose is copied verbatim, only the mapped token flips.
+        assert_eq!(
+            demangle_rebind_names("переменная `x__s1` жива"),
+            "переменная `x` жива"
+        );
+    }
+
+    #[test]
+    fn demangle_noop_without_synthesized_map() {
+        // No rebind in the module → empty map → nothing is stripped, even a
+        // user identifier that pattern-matches the reserved suffix.
+        set_demangle_map(&HashMap::new());
+        assert_eq!(demangle_rebind_names("var `buf__s1` here"), "var `buf__s1` here");
     }
 }
