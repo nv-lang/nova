@@ -4341,14 +4341,15 @@ expressive (Erlang/Elixir опыт показывает что Atoms полез�
 > - `nova_tests/runtime/buffer.nv` удалён.
 > - `nova_rt/nova_rt.h` — `#include "buffer.h"` удалён.
 > - 14 std/ файлов мигрированы на StringBuilder (text-only sweep);
->   url.nv decode_query — на WriteBuffer + `str.try_from([]byte)?`.
+>   url.nv decode_query — на WriteBuffer + `str.from_bytes([]u8)?`
+>   (Plan 176 Ф.0.5: было `str.try_from([]byte)?`, интринзик ретайрнут).
 >
 > **Замены:**
 > - text accumulation → `StringBuilder` (Q-string-builder)
 > - binary accumulation → `WriteBuffer` (Q-write-buffer)
 > - binary reading → `ReadBuffer` (Q-read-buffer)
-> - mixed text+binary → `WriteBuffer` + `str.try_from([]byte)?`
->   (D77 — UTF-8 validate + конверсия). `WriteBuffer @write_char(c)` /
+> - mixed text+binary → `WriteBuffer` + `str.from_bytes([]u8)?`
+>   (D325 — UTF-8 validate + конверсия; Plan 176 Ф.0.5). `WriteBuffer @write_char(c)` /
 >   `@write_str(s)` добавлены для UTF-8 encode chars/strings в byte
 >   buffer (Plan 04 Этап 6.1).
 >
@@ -5548,8 +5549,11 @@ fn str.from(n int) -> str                   // через D74 conversion
 fn str.from(b bool) -> str                  // "true" / "false"
 fn str.from(f f64) -> str                   // лучше через format spec
 fn str.from_codepoint(code int) Fail[InvalidCodepoint] -> str  // 1 codepoint → str
-fn str.from_bytes(b []byte) Fail[Utf8Error] -> str             // UTF-8 validate
-fn str.from_bytes_unchecked(b []byte) -> str                    // escape hatch
+// Plan 176 Ф.0.5 (D325-канон): from_bytes возвращает Result, не Fail — падающий
+// декод открывается через match/`?`, тип ошибки несёт byte_offset.
+fn str.from_bytes(b []u8) -> Result[str, Utf8Error]            // checked UTF-8 decode
+fn str.from_bytes_unchecked(b []u8) -> str                     // escape hatch (no validation)
+fn str.from_bytes_lossy(b []u8) -> str                         // U+FFFD replacement
 ```
 
 ### `[]T` API

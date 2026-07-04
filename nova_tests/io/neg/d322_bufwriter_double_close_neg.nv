@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR
+// Double @close on a consume BufWriter is a use-after-consume error.
+
+module neg.d322_bufwriter_double_close_neg
+
+import std.io.{BytesWriter, BufWriter}
+
+test "BufWriter double close -> use-after-consume" {
+    mut sink = BytesWriter.new()
+    consume bw = BufWriter[BytesWriter].new(sink)
+    ro _ = bw.close()
+    ro _ = bw.close()
+}

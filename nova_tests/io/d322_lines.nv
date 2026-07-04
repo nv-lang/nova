@@ -1,0 +1,44 @@
+// d322_lines.nv — lines() / byte_lines() edge cases (Plan 176 Ф.1, Q7).
+
+module nova_tests.io
+
+import std.io.{BytesReader, lines, byte_lines}
+
+test "lines strips trailing CR (CRLF), yields final line without newline" {
+    mut r = BytesReader.new("a\r\nbb\nccc".to_bytes())
+    match lines(r) {
+        Ok(ls) => {
+            assert(ls.len() == 3)
+            assert(ls[0] == "a")     // \r stripped
+            assert(ls[1] == "bb")
+            assert(ls[2] == "ccc")   // no trailing \n → still yielded
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "lines: embedded lone CR is NOT a separator" {
+    mut r = BytesReader.new("x\ry\n".to_bytes())
+    match lines(r) {
+        Ok(ls) => { assert(ls.len() == 1); assert(ls[0] == "x\ry") }
+        Err(_) => assert(false)
+    }
+}
+
+test "lines: empty input yields no lines" {
+    mut r = BytesReader.new([]u8.new())
+    match lines(r) { Ok(ls) => assert(ls.len() == 0), Err(_) => assert(false) }
+}
+
+test "byte_lines: raw LF split, no CR stripping" {
+    mut r = BytesReader.new("a\r\nb\n".to_bytes())
+    match byte_lines(r) {
+        Ok(ls) => {
+            assert(ls.len() == 2)
+            assert(ls[0].len() == 2)          // "a\r" — CR preserved (raw)
+            assert(ls[0][1] == 0x0D as u8)
+            assert(ls[1][0] == 0x62 as u8)
+        }
+        Err(_) => assert(false)
+    }
+}
