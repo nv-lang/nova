@@ -319,6 +319,38 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
     тесты = многосессионный объём; НЕ закрыт одной сессией. **Ключевой урок:** Ф.1b/Ф.2 неотделимы (подтверждено §7.7)
     И атом (a) неотделим от полной value-миграции + должен быть gated (иначе conformance-регресс) — весь заход = один
     interlocking commit, промежуточных зелёных нет.
+  - **⚠ Эмпирика 2026-07-04 (ТРЕТИЙ заход, ветка `plan-175-time`, код net-zero @ f8cc2d9e — гейт НЕ начат: блокер на
+    УРОВНЕ ДИЗАЙНА, до build-циклов). Два новых факта, разведанных этим заходом:**
+    1. **Атом (a) self_value_position НЕ НУЖЕН — trap обходится на уровне `.nv`-source.** Установленный рабочий прецедент
+       в корпусе: `fn VVec4.new(a,b) -> VVec4` (nova_tests/plan128/t15_value_record_in_named_tuple_ok.nv) — static-конструктор
+       value-record'а возвращает по ИМЕНИ типа, НЕ `-> Self`. `-> Self` роутится через `receiver_c_type` (emit_c.rs:12224-12233)
+       → `NovaValue_X*` (POINTER, для mut-fluent-chaining Plan 128) → для STATIC-конструктора = указатель на локал = dangling;
+       `-> ИмяТипа` роутится через `type_ref_to_c` → `NovaValue_X` by-value (корректно). У Duration/Timestamp/Monotonic
+       ВСЕ instance-методы уже возвращают по имени (`-> Duration`/`-> Timestamp`/`-> Monotonic`); `-> Self` только у
+       static-конструкторов (`from_nanos`/`from_unix_*`). ⇒ достаточно заменить `-> Self` → `-> Duration` в этих
+       конструкторах (+ `value`-keyword в 3 type-decl) — БЕЗ правки codegen, БЕЗ 37/1-регресса. (gate emit_c.rs:4016-4020
+       на `is_instance` — доп. страховка, но не требуется.) Проверено чтением codegen; value+explicit-name = уже зелёный паттерн.
+    2. **🔴 НАСТОЯЩИЙ блокер (не value, не bridge) — АРХИТЕКТУРНОЕ противоречие prelude ⟷ std.time.** Typed-схема `Time`
+       (`timestamp()->Timestamp`/…) требует `Timestamp`/`Duration`/`Monotonic` в scope при schema-build
+       (emit_c.rs:10344-10369 зовёт `type_ref_to_c(Timestamp)`, резолв только если тип зарегистрирован value-record'ом
+       fwd-decl-препассом emit_c.rs:3031-3041 — т.е. ТОЛЬКО когда `std.time` в CU). НО `Time`-decl живёт в
+       `std/prelude/effects.nv`, которая по собственному инварианту = «**ZERO imports, self-contained на primitives**»
+       (effects.nv:14) — сослаться на не-примитивные типы там НЕЛЬЗЯ. **Эмпирика корпуса: 85 из 96 файлов, зовущих
+       `Time.now`/`Time.sleep`, НЕ импортируют `std.time`** — опираются на prelude-level int-wire `Time`
+       (`Time.sleep(5_000)`/`Time.sleep(0)` — bare int ms, 278 вхождений `Time.sleep([0-9]`; `Time.now() - t0` — int-арифметика
+       в concurrency-тестах). ⇒ typed-surface НЕ drop-in: требует АРХИТЕКТУРНОГО решения ПЕРЕД миграцией:
+       (a) сделать `std.time` prelude-loaded → риск import-cycle (`duration.nv`→`std.testing.handlers`→`duration.nv`) И всё
+       равно ломает 85 файлов (bare-int `Time.sleep(N)`); ИЛИ (b) перенести `Time` в `std.time` + добавить `import std.time`
+       в ~85 файлов + конвертировать их bare-int sleep/now-арифметику в `Duration`/`Timestamp`. Плановая посылка «единый
+       источник схемы в prelude/effects.nv» (Ф.1, D316) для typed-surface **инфизибл** — Ф.1 работала лишь потому, что
+       int-wire self-contained на примитивах. Это, вероятно, корень net-zero всех трёх заходов.
+    3. **Альтернатива дизайна (для решения владельца): int-wire эффект в prelude + typed-сахар в std.time.** Оставить
+       `Time`-эффект int-wire self-contained (`sleep(ns int)`/`timestamp_ns()->int`/`monotonic_ns()->int` — примитивы,
+       prelude-ок), а ТИПИЗАЦИЮ вынести чисто в `.nv`-обёртки std.time (`Timestamp.now() => Timestamp.from_unix_nanos(Time.timestamp_ns())`,
+       `fn sleep(d Duration) => Time.sleep_ns(d.as_nanos())`). Сносит СРАЗУ и scalar-bridge-codegen (Q2), и prelude-coupling.
+       Цена: schema эффекта остаётся int (mock оперирует int ns, не typed-record'ами) — отклонение от Q2/Q8 плана. **Требует
+       sign-off: «typed effect surface» (с prelude-архитектурной ценой) vs «typed sugar над int-эффектом» (проще, но mock
+       на int).** До этого решения Ф.2 не стартовать — иначе 4-й net-zero.
 - **Ф.1c — overflow-safe арифметика (NEW, mandatory).** Реализовать §3b/D317: trap-операторы + `checked_*`/`saturating_*`
   на Duration; boundary-saturate + `checked_*` на Timestamp/Monotonic±Duration; `@abs(i64::MIN)`; `@div(0)`; f64 NaN/inf-policy;
   фикс μs U+03BC в `@into()` (Q12). Unit-тесты арифметики — **inline test-блоки в std/time/** (конвенция: inline =
