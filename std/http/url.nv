@@ -210,7 +210,7 @@ fn parse_port(port_str str) -> Result[int, ParseUrlError] {
     for c in port_str.as_chars() {
         if !c.is_ascii_digit() { return Err(MalformedPort(port_str)) }
     }
-    match port_str.parse_int_opt() {
+    match port_str.parse_int().ok() {
         Some(n) => if n >= 0 && n <= 65535 { Ok(n) } else { Err(MalformedPort(port_str)) }
         None    => Err(MalformedPort(port_str))
     }
@@ -291,7 +291,7 @@ fn validate_ipv4_canonical(host str) -> Result[(), ParseUrlError] {
             if !c.is_ascii_digit() { return Err(ObfuscatedIp(host)) }
         }
         if p.byte_len() > 1 && p.starts_with("0") { return Err(ObfuscatedIp(host)) }
-        match p.parse_int_opt() {
+        match p.parse_int().ok() {
             Some(v) => if v > 255 { return Err(ObfuscatedIp(host)) }
             None    => return Err(ObfuscatedIp(host))
         }
@@ -345,7 +345,7 @@ fn is_dotted_quad(s str) -> bool {
     for p in parts {
         if p.byte_len() == 0 || p.byte_len() > 3 { return false }
         for c in p.as_chars() { if !c.is_ascii_digit() { return false } }
-        match p.parse_int_opt() {
+        match p.parse_int().ok() {
             Some(v) => if v > 255 { return false }
             None    => return false
         }
@@ -410,7 +410,7 @@ fn is_private_ipv4(h str) -> bool {
 
 fn octet(o Option[str]) -> int {
     match o {
-        Some(s) => match s.parse_int_opt() { Some(v) => v, None => -1 }
+        Some(s) => match s.parse_int().ok() { Some(v) => v, None => -1 }
         None    => -1
     }
 }

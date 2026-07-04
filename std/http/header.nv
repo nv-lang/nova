@@ -231,7 +231,7 @@ export fn HeaderMap @content_length() -> Result[Option[int], HttpError] {
                 return Err(HttpError.protocol_error("non-digit in Content-Length"))
             }
         }
-        ro n = match s.parse_int_opt() {
+        ro n = match s.parse_int().ok() {
             Some(x) => x
             None    => return Err(HttpError.protocol_error("malformed Content-Length"))
         }

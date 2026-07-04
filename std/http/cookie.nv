@@ -97,7 +97,7 @@ export fn SetCookie.parse(s str) -> Result[SetCookie, HttpError] {
                     if key == "domain" { domain = Some(av) }
                     else if key == "path" { path = Some(av) }
                     else if key == "max-age" {
-                        match av.parse_int_opt() { Some(n) => { max_age = Some(n); () }, None => () }
+                        match av.parse_int().ok() { Some(n) => { max_age = Some(n); () }, None => () }
                     }
                     else if key == "samesite" {
                         ro sv = av.to_ascii_lower()
