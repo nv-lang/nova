@@ -10612,22 +10612,32 @@ defer-entry**, не теряется при десугаре.
 
 **4. Централизованный ре-диспатч (`nova_scope_exit`)** — ОДИН runtime-helper
 `nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy policy)`, `policy ∈ {CATCH, TRANSPARENT}`;
-читает `primary->error_kind`. Таблица:
+читает `primary->error_kind`. **РЕАЛИЗОВАН (Ф.2.C, effects.h `static inline` рядом с триадой).** Таблица
+**приведена к факту** (прежняя `PANIC→nv_panic` / `CANCEL→nova_throw_cancel_reason` устарела — оба сайта
+фактически несли suppressed-chain через `nova_rethrow_with_suppressed`, а голый `nv_panic` его теряет;
+§5-согласование выбрало канон, СОХРАНЯЮЩИЙ chain + reason):
 
 | `error_kind` | Транспорт |
 |---|---|
-| `PANIC` | `nv_panic(msg)` |
-| `CANCEL` | `nova_throw_cancel_reason(msg, reason_ptr)` |
-| `USER` / `USER_TYPED` | `CATCH` → return-to-caller (handler отработал; **with-Fail**); `TRANSPARENT` → `nova_rethrow_with_suppressed` (**defer/consume**) |
-| `Success` | no-op |
+| `PANIC` | `nova_rethrow_with_suppressed(primary)` — kind=PANIC, suppressed-chain СОХРАНЁН (матчит post-B3-merge defer-kernel; голый `nv_panic` терял бы chain) |
+| `CANCEL` | `nova_rethrow_with_suppressed(primary)` — `error_reason_ptr` И chain СОХРАНЕНЫ (rethrow копирует `frame->error_reason_ptr`; эмпирически подтверждено §5, унифицирует с PANIC) |
+| `USER` / `USER_TYPED` | `CATCH` → return-to-caller (handler отработал; вызывающий ставит result=default; **with-Fail**); `TRANSPARENT` → `nova_rethrow_with_suppressed` (**defer/consume**) |
+| `Success` | no-op (sentinel; недостижим — frame инспектируется только после throw, у `NovaThrowKind` нет success-значения) |
 
 Класс бага «кадр забыл kind» (дефект #1) исчезает **по построению** — единственная точка политики.
-**IN** (роутятся через helper): with-Fail (CATCH), consume terminal (TRANSPARENT), defer-error path
-(TRANSPARENT), defer normal-exit cleanup-fail (TRANSPARENT — заменяет hand-rolled `longjmp`). **OUT**
-(report/log-семьи, НЕ throw-транспорт): fiber-report (spawn worker), detach LogAndDrop, test-frame.
-Composition (`nv_compose_suppressed`, 2-frame: body=primary, cleanup=suppressed) остаётся в codegen —
-helper делает только single-frame terminal transport. grep-guard: `error_kind ==` только внутри
-`nova_scope_exit` + санкционированных outcome/report-сайтов.
+**IN** (роутятся через helper): with-Fail terminal (CATCH; site-пролог `pop(fail)+restore(handlers)+
+pop(interrupt)` ПЕРЕД helper, флаг `caught` заменил per-kind dispatch), defer-kernel FAIL run-site
+(TRANSPARENT), consume-flavored FAIL run-site (TRANSPARENT; consume физически слит в defer-kernel —
+B3-merge, отдельного consume-терминала НЕТ). **OUT** (report/log-семьи, НЕ throw-транспорт; читают
+`error_kind` как ПАРАМЕТР, не как policy-диспатч): fiber-report spawn-worker (`nova_fiber_report_*_kinded`
+— форвардит kind в parent-scope queue; ре-диспатч на main flow через `supervised_run` first_error_kind),
+detach LogAndDrop (D50 — log-to-stderr, не throw), test-frame. **Compose ОСТАЁТСЯ в codegen** (helper —
+только single-frame transport): `nv_compose_suppressed`/suppressed-chain build (D158), panic-dominance
+`emit_fail_cleanup_compose` (§4a), defer normal-exit cleanup-fail hand-rolled `longjmp` (переносит
+compose-state `comp_msg/comp_kind/...` — НЕ single frame, поэтому helper к нему НЕ применим), а также
+outcome-материализация `ScopeOutcome` из frame (`assign_scope_outcome_from_frame` — строит user-visible
+`o`, не transport). grep-guard (пройден): `error_kind ==` только внутри `nova_scope_exit` +
+санкционированных compose/outcome-сайтов.
 
 **4a. Единое правило composition — panic-dominance (аменд Ф.2, 2026-07-04).** Поскольку `consume` — САХАР
 над `defer(o)` (§3), их compose ОБЯЗАН совпадать (иначе десугар лжёт). Единая таблица (тело упало И

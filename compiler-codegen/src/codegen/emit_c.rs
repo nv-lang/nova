@@ -6880,9 +6880,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // handler runs (state captured), then nova_throw → fail-frame catches.
         // (D65 «Fail strict»: fail() is never from caller's perspective.)
         let fframe = if has_fail { Some(self.fresh_tmp()) } else { None };
+        // Plan 173 Ф.2.C: `caught` flag distinguishes «fail-frame caught a throw»
+        // from normal/interrupt completion, so the unified terminal transport
+        // (nova_scope_exit) can run AFTER the common pop/restore epilogue instead
+        // of duplicating per-kind dispatch inside the catch-branch. Declared
+        // before the setjmp (не modified between setjmp/longjmp — set only in the
+        // caught-branch that runs after longjmp returns → well-defined).
+        let caught_var = if has_fail { Some(self.fresh_tmp()) } else { None };
         if let Some(ff) = &fframe {
             self.line(&format!("NovaFailFrame {};", ff));
             self.line(&format!("nova_fail_push(&{});", ff));
+        }
+        if let Some(cv) = &caught_var {
+            self.line(&format!("int {} = 0;", cv));
         }
 
         // Plan 39 Issue A: infer T_body to pick correct result slot.
@@ -7029,55 +7039,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
-            // Plan 49 Ф.3: kind-aware re-dispatch.
-            // CANCEL throw НЕ обработан этим Fail-handler'ом (отмена
-            // структурна, не ошибка) — re-throw нагору с тем же reason.
-            // Pop fail-frame ПЕРЕД re-throw чтобы next-outer-frame
-            // получил throw, не наш собственный (защита от двойного unwind,
-            // см. Plan 49 Риск R3).
-            self.line(&format!("if ({ff}.error_kind == NOVA_THROW_CANCEL) {{",
-                ff = ff));
-            self.indent += 1;
-            self.line("nova_fail_pop();");
-            // Также pop interrupt frame чтобы инвариант stack discipline
-            // сохранился (open/close симметрично с normal path).
-            self.line("nova_interrupt_pop();");
-            // Restore handlers — отмена не должна оставить scope handlers
-            // активным; emit_with normal-path делает то же ниже.
-            for (effect_name, prev_var, _hv) in saves.iter().rev() {
-                // Plan 61 followup #4: per-E slot имя — `_nova_handler_Fail_<E>`,
-                // saves хранит key `Fail_<E_mangled>` именно с этим суффиксом.
-                self.line(&format!("_nova_handler_{eff} = {prev};",
-                    eff = effect_name, prev = prev_var));
-            }
-            self.line(&format!(
-                "nova_throw_cancel_reason({ff}.error_msg, {ff}.error_reason_ptr);",
-                ff = ff));
-            self.indent -= 1;
-            self.line("}");
-            // Plan 173 Ф.1 (D13 soundness fix, [M-172-with-fail-swallows-panic]):
-            // PANIC пойман этим fail-frame'ом, но `with Fail[E]` ловит ТОЛЬКО
-            // USER/USER_TYPED (recoverable errors) — panic (bug/abort-class) НЕ
-            // должен глотаться (D13). Ранее PANIC проваливался в USER-path ниже
-            // → result=default, выполнение продолжалось. Теперь re-throw нагору
-            // (зеркало CANCEL): pop frame + restore handlers/interrupt, затем
-            // nova_rethrow_with_suppressed — сохраняет kind=PANIC + msg + payload
-            // + suppressed-chain (и корректно abort'ит с dump если нет outer-frame).
-            self.line(&format!("if ({ff}.error_kind == NOVA_THROW_PANIC) {{",
-                ff = ff));
-            self.indent += 1;
-            self.line("nova_fail_pop();");
-            self.line("nova_interrupt_pop();");
-            for (effect_name, prev_var, _hv) in saves.iter().rev() {
-                self.line(&format!("_nova_handler_{eff} = {prev};",
-                    eff = effect_name, prev = prev_var));
-            }
-            self.line(&format!("nova_rethrow_with_suppressed(&{ff});", ff = ff));
-            self.indent -= 1;
-            self.line("}");
-            // USER path: handler already ran; result is unit/zero. (Existing
-            // semantics: D65 Fail-handler сам decide'ит результат через
-            // interrupt v ИЛИ throw; если throw — мы здесь, результат default).
+            // Plan 173 Ф.2.C: fail-frame caught a throw. Раньше здесь был
+            // дублированный per-kind dispatch (if CANCEL {…throw_cancel…} /
+            // if PANIC {…rethrow…} / USER default) — класс дефекта «кадр забыл
+            // kind» ([M-172-with-fail-swallows-panic]). Теперь: пометить `caught`
+            // + result=default; ЕДИНЫЙ terminal-transport (nova_scope_exit,
+            // policy=CATCH) выполняется ПОСЛЕ общего pop/restore epilogue ниже.
+            // USER/USER_TYPED — handler отработал, result=default (helper вернётся);
+            // PANIC/CANCEL — helper re-throw'ит нагору (longjmp), result не важен.
+            let cv = caught_var.as_ref().expect("caught_var present when fframe is");
+            self.line(&format!("{} = 1;", cv));
             match category {
                 WithResultCategory::IntLike | WithResultCategory::UnitVoid => {
                     self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
@@ -7100,6 +7071,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 eff = effect_name, prev = prev_var));
         }
         self.line("nova_interrupt_pop();");
+
+        // Plan 173 Ф.2.C: ЕДИНАЯ точка терминальной политики (CATCH). Выполняется
+        // ПОСЛЕ pop(fail) + restore(handlers) + pop(interrupt) — site-специфичный
+        // пролог сделан (контракт nova_scope_exit). Для USER/USER_TYPED helper
+        // возвращается (result уже = default); для PANIC/CANCEL — re-throw нагору
+        // (longjmp), минуя finalizer-fire ниже (сохраняет прежний порядок:
+        // CANCEL/PANIC re-throw НЕ запускал Application-finalizer'ы). Порядок
+        // restore-vs-interrupt_pop vs прежним (pop→intpop→restore) не наблюдаем —
+        // независимые TLS-слоты.
+        if let Some(ff) = &fframe {
+            let cv = caught_var.as_ref().expect("caught_var present when fframe is");
+            self.line(&format!("if ({}) {{ nova_scope_exit(&{}, NOVA_SCOPE_EXIT_CATCH); }}", cv, ff));
+        }
 
         // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: fire
         // finalizers LIFO + restore prev TLS. Runs unconditionally на
@@ -18265,9 +18249,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line("nova_fail_pop();");
         self.line(&format!("{} = 1;", failframe_popped_var));
         // Plan 100.4.4: re-throw к outer fail-frame preserving primary +
-        // composed suppressed chain (typed payload preserved через nova_rethrow_with_suppressed).
+        // composed suppressed chain (typed payload preserved).
+        // Plan 173 Ф.2.C: TRANSPARENT terminal — единый nova_scope_exit (любой
+        // не-Success kind проброшен через nova_rethrow_with_suppressed; ≡ прежнему
+        // безусловному rethrow, т.к. FAIL run-site достижим только через throw).
         self.line(&format!("{}.error_suppressed = {};", failframe_var, comp_chain_t));
-        self.line(&format!("nova_rethrow_with_suppressed(&{});", failframe_var));
+        self.line(&format!("nova_scope_exit(&{}, NOVA_SCOPE_EXIT_TRANSPARENT);", failframe_var));
         self.indent -= 1;
         self.line("}");
         // Plan 20 Ф.8 (2): interrupt-path cleanup для `defer`.
@@ -18980,7 +18967,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line("nova_fail_pop();");
         self.line(&format!("{} = 1;", failframe_popped_var));
         self.line(&format!("{}.error_suppressed = {};", failframe_var, comp_chain_t));
-        self.line(&format!("nova_rethrow_with_suppressed(&{});", failframe_var));
+        // Plan 173 Ф.2.C: TRANSPARENT terminal (consume FAIL run-site) — единый
+        // nova_scope_exit; body-throw (или cleanup-panic, промотнутый §4a в PANIC)
+        // проброшен нагору. ≡ прежнему безусловному nova_rethrow_with_suppressed.
+        self.line(&format!("nova_scope_exit(&{}, NOVA_SCOPE_EXIT_TRANSPARENT);", failframe_var));
         self.indent -= 1;
         self.line("}");
         // INTERRUPT run-site: `interrupt v` unwinds through here (D314 §2 aligns

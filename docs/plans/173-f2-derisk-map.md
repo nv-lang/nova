@@ -120,10 +120,21 @@ ScopeOutcome core.nv:147 `Success|Failure(str)|Panic(str)` (str, не any — an
   RE-HOME cancel-shield(body+cleanup)/timeout/ResourceTrace/exactly-once/partial-init как defer-entry
   policy (НЕ потерять); on_exit→ordinary X.@cleanup(o) method-dispatch. Гейт: все 8 consume-conformance
   (d131/d133/d156/d162/d164/d174/d188/d196) через сахар; full std компилится; plan110 baseline-delta 0.
-- **Ф.2.C nova_scope_exit unification (структурный финал #1):** helper в effects.h (policy CATCH/TRANSPARENT,
-  находка 2); reroute SITE A(CATCH)/B/C1/C2(TRANSPARENT); EXCLUDE+document D/E/test + grep-guard. Гейт:
-  rt/f1_with_fail_swallow_panic + composed body+cleanup + d196(in_fail_ctx intact) green; conformance 38/38;
-  нет per-frame kind-dispatch дублирования.
+- ✅ **Ф.2.C nova_scope_exit unification (структурный финал #1) ЗАКРЫТ:** helper `static inline` в effects.h
+  (policy CATCH/TRANSPARENT, читает `error_kind`); §5-согласование свело фактически-несогласованные per-kind
+  сайты к ОДНОМУ канону — PANIC/CANCEL → `nova_rethrow_with_suppressed` (СОХРАНЯЕТ suppressed-chain + reason;
+  эмпирически подтверждено: rethrow копирует `error_reason_ptr`). Reroute: SITE A with-Fail (CATCH; `caught`-флаг
+  устранил `if CANCEL/if PANIC` per-kind dispatch — helper вызывается ПОСЛЕ общего pop/restore epilogue),
+  defer-kernel FAIL + consume-flavored FAIL (TRANSPARENT; consume слит B3-merge — отдельного терминала нет).
+  EXCLUDE (documented): fiber-report/detach-LogAndDrop/test-frame (report/log-семьи); compose (panic-dominance
+  `emit_fail_cleanup_compose`, suppressed-chain, LEAVE hand-rolled longjmp = compose-state не single-frame) +
+  outcome-материализация (`assign_scope_outcome_from_frame`) остаются в codegen. Гейт (все зелёные):
+  rt/f1_with_fail_swallow_panic PASS (D13 #1-фикс цел); composed body+cleanup (plan100_4_1) + d196 (conformance +
+  plan125_1) green (compose не тронут); conformance 38/38; весь consume/defer/with-Fail корпус
+  (plan110/plan103_9/plan100_4_*/err173/err173_0/plan125_1) baseline-delta 0; широкий сэмпл
+  (effects/plan61/plan83_10/basics/strings) baseline-identical (pre-existing fails те же); grep-guard passed
+  (`error_kind ==` только в helper + compose/outcome). Zero-regression vs baseline-бинарь (parent a23579f3,
+  temp-worktree) подтверждён. **`[M-173-c-transport-normalize]` ЗАКРЫТ.**
 - **Ф.2.D194 disasm-parity + spec-sync:** disasm re-baseline ≡ A0 (PARITY, находка 1); D194-спека к факту;
   §perf-элизия → followup `[M-173-d194-perf-elision]`. Гейт: disasm Mutex/Sem/atomic ≡ A0; conformance 38/38.
 - **Ф.2.E hub REWRITE (idiom/error-and-cleanup-model.md) + doc-sweep** ~18 docs (idiom×10, cookbook,
@@ -205,35 +216,42 @@ effects.nv:210 (Cleanup-effect), sync.nv:1390/1402/1414/1428 (4 guard-decls), sy
   Historical (simplifications/plans/spec-D-ex) + диагностик-id + rename-explain СОХРАНЕНЫ. Hub
   error-and-cleanup-model.md ПЕРЕПИСАН под факт (Ф.1 with-Fail-panic FIXED; Ф.2 partial; defer(o)-migration;
   followups). Residue-grep = 0. Docs-only.
-- 🔴 **Ф.2.C nova_scope_exit transport-unify — ЗАБЛОКИРОВАН (единственный оставшийся structural-finale; B3-merge
-  ЗАКРЫТ 2026-07-04 через §4a):** firsthand-разбор
-  terminal-сайтов выявил их **genuine несогласованность** в kind-dispatch: SITE A (with-Fail): PANIC→
+- ✅ **Ф.2.C nova_scope_exit transport-unify — ЗАКРЫТ (structural-finale достигнут, 2026-07-04):** firsthand-разбор
+  terminal-сайтов подтвердил их фактическую несогласованность per-kind: SITE A (with-Fail): PANIC→
   rethrow_with_suppressed, CANCEL→nova_throw_cancel_reason(+restore handlers), USER→caught(default); defer
-  C1 (FAIL): ВСЕ kinds→rethrow_with_suppressed; consume: PANIC→nv_panic, USER→rethrow. Единый helper требует
-  НОРМАЛИЗАЦИИ per-kind транспорта (PANIC: nv_panic vs rethrow; CANCEL: cancel_reason vs generic-rethrow —
-  влияет на reason_ptr + cancel-propagation в structured concurrency) — design-decision + верификация в
-  КРИТИЧЕСКОМ error-transport, НЕ механический extract. Owner-away + high-regression-risk → отложено.
-  Followup `[M-173-c-transport-normalize]`: сперва единая per-kind модель (D-блок), потом reroute + verify.
-  D314 §4 таблица (PANIC→nv_panic uniform) сама конфликтует с impl (SITE A/defer→rethrow) → spec к факту.
+  FAIL + consume FAIL: ВСЕ kinds→rethrow_with_suppressed. §5-согласование выбрало **канон, сохраняющий больше
+  информации**: PANIC/CANCEL → `nova_rethrow_with_suppressed(primary)` (chain + `error_reason_ptr` сохраняются —
+  rethrow копирует reason из frame, эмпирически подтверждено; голый `nv_panic`/`nova_throw_cancel_reason` терял бы
+  chain/payload). SITE A CANCEL получил chain-preservation (было null) — строгий superset, консистентно с PANIC-веткой;
+  defer/consume уже несли rethrow (byte-identical). Helper `nova_scope_exit(NovaFailFrame*, {CATCH,TRANSPARENT})`
+  в effects.h; SITE A `caught`-флаг (transport ПОСЛЕ общего pop/restore) устранил per-kind `if`-dispatch; compose +
+  outcome-материализация остались в codegen (helper = single-frame only). **Гейты все зелёные, zero-regression vs
+  baseline-бинарь (parent a23579f3, НЕ git stash), grep-guard passed** (детали — в under-atom списке выше).
+  D314 §4-таблица приведена к факту (PANIC/CANCEL → rethrow). `[M-173-c-transport-normalize]` ЗАКРЫТ.
 
-## СВОДКА Ф.2 (2026-07-04): SAFE-SCOPE + B3-MERGE ЗАКРЫТЫ; остался только C-transport
+## СВОДКА Ф.2 (2026-07-04): ПОЛНОСТЬЮ ЗАКРЫТА (SAFE-SCOPE + B3-MERGE + C-transport)
 
 **Закрыто (safe, verified):** A0 · R1 · R2 · B1 · B2 (defer(o) codegen+checker) · B3-outcome (ScopeOutcome-
 примитив) · **B3-merge (consume ФИЗИЧЕСКИ слит в defer-kernel, монолит удалён — §4a panic-dominance
-разблокировал)** · D194 (parity + spec-truth) · E (doc-sweep + hub). Conformance 38/38 сквозь всё.
+разблокировал)** · D194 (parity + spec-truth) · E (doc-sweep + hub) · **C (единый nova_scope_exit terminal-
+transport — structural-finale)**. Conformance 38/38 сквозь всё.
 
 **Разблокировка B3-merge:** D314 §4a (единое panic-compose: cleanup-PANIC доминирует в defer-kernel ТОЖЕ) убрал
 семантическое расхождение → десугар `consume`→`defer(o)` стал behavior-preserving. Попутно закрыты
 `[M-173-b3-runsite-unify]` (сам merge) и `[M-173-consume-interrupt-cleanup]` (cleanup на interrupt = spec D314
 §2, routing даёт бесплатно) + фикс early-return/break/continue-skip монолита.
 
-**Отложено (осознанно, documented — НЕ half-measure; критический error-transport, owner-away, high-risk):**
-- `[M-173-c-transport-normalize]` — единый nova_scope_exit (terminal-сайты несогласованы per-kind).
+**Закрытие C-transport:** §5-согласование доказало эмпирически, что `nova_rethrow_with_suppressed` СОХРАНЯЕТ
+`error_reason_ptr` (копирует из frame) → канон PANIC/CANCEL → rethrow_with_suppressed (сохраняет chain+reason;
+голый `nv_panic`/`throw_cancel_reason` терял бы chain). Единый helper `nova_scope_exit(frame, {CATCH,TRANSPARENT})`;
+SITE A `caught`-флаг устранил per-kind dispatch; compose/outcome остались в codegen. `[M-173-c-transport-normalize]`
+ЗАКРЫТ. Zero-regression vs baseline-бинарь + grep-guard passed.
+
+**Отложено (осознанно, documented — НЕ half-measure; вне периметра unification):**
 - `[M-173-consume-exactly-once-observability]` + `[M-173-d194-perf-elision]` + multi-binding consume +
   `[M-173-consume-unwind-cleanup-throw]` (cleanup-throw во время interrupt/early-exit дропается — редчайший).
 
-**Вывод для владельца:** D314 language-level goal + physical unification consume-defer ДОСТИГНУТЫ (defer(o)
-работает; consume = сахар над consume-flavored-defer-entry, ОДИН run-site-набор; soundness Ф.1). Остался
-только structural-finale `[M-173-c-transport-normalize]` (единый nova_scope_exit — terminal-сайты per-kind
-несогласованы), НЕ блокирует 174/176. Рекомендация: принять B3-merge; выделить сессию на C-transport с
-owner-steered design ИЛИ solidify 173 для downstream.
+**Вывод для владельца:** Ф.2 ПОЛНОСТЬЮ закрыта. D314 language-level goal + physical unification consume-defer +
+**единая точка терминальной политики (nova_scope_exit)** ДОСТИГНУТЫ (defer(o) работает; consume = сахар над
+consume-flavored-defer-entry, ОДИН run-site-набор; класс бага «кадр забыл kind» устранён по построению; soundness
+Ф.1 цел). 174/176 разблокированы; остались только perf/observability followups вне периметра.
