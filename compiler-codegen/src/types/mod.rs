@@ -5711,6 +5711,56 @@ impl<'a> TypeCheckCtx<'a> {
         )
     }
 
+    /// Plan 174.3 (D54 §6): validate the operand of `x is T`. `is` is legal on
+    /// `any` (v1 — runtime type_id downcast) and on sum-values (v2 — variant
+    /// check). On a record or primitive operand it is a compile error: the type
+    /// is statically known, so the check is meaningless. Conservative — the
+    /// diagnostic fires ONLY when the operand type is confidently a concrete
+    /// non-`any`, non-sum type (unknown / generic-param / newtype / protocol /
+    /// tuple / func → permissive, so no false positive on legal code, §7).
+    fn check_is_operand(
+        &self,
+        inner: &Expr,
+        _ty: &TypeRef,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(op_tr) = self.infer_expr_type(inner, scope) else { return };
+        // `any` (empty-protocol top-type) → OK (v1).
+        if is_unknown_type(&op_tr) { return; }
+        let TypeRef::Named { path, .. } = &op_tr else { return };
+        let Some(base) = path.last() else { return };
+        // Generic type-parameter → unknown at this site → permissive.
+        if gs.contains(base) { return; }
+        // Prelude sum-types (variant check, v2) → OK.
+        if base == "Option" || base == "Result" || base == "any" { return; }
+        let is_record = match self.types.get(base) {
+            Some(td) => match &td.kind {
+                // Sum-typed operand (incl. enums) → OK (v2 variant check).
+                TypeDeclKind::Sum(_) => return,
+                TypeDeclKind::Record(_) | TypeDeclKind::NamedTuple(_) => true,
+                // newtype / protocol / alias / typeset / opaque / effect —
+                // conservatively skip (avoid false positives).
+                _ => false,
+            },
+            None => false,
+        };
+        if is_record || Self::is_primitive_type_name(base) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_IS_NON_ANY] `is` работает только на `any` (runtime type-check, \
+                     D54 v1) и на sum-значениях (variant-check, D54 v2). Операнд типа \
+                     `{}` — не sum и не `any`: его тип известен статически, проверка \
+                     `is` бессмысленна. Уберите `is` или сравнивайте значение через \
+                     `==` / `match`.",
+                    typeref_render(&op_tr)
+                ),
+                inner.span,
+            ));
+        }
+    }
+
     /// Q-infinite-value-type: compact display of a `TypeRef` for the diagnostic
     /// message (`Option[Node]`, `*Node`, `[]Node`, `Node`). Best-effort — only
     /// the common shapes; falls back to the leading segment name.
@@ -7408,9 +7458,9 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::TurboFish { base, .. } => {
                 self.f1_expr(base, gs, scope, errors)
             }
-            ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+            ExprKind::As(inner, _) => {
                 self.f1_expr(inner, gs, scope, errors);
-                // Plan 172.1 §0a (As/Is): materialize the cast target type into the channel.
+                // Plan 172.1 §0a (As): materialize the cast target type into the channel.
                 // `infer_expr_type` already returns the `ty` for `As` — wire it into
                 // `resolved_types_buf` so codegen reads the CAST TYPE, not a re-derive.
                 // gs-gated: a `T as U` where U mentions a type-param stays on legacy
@@ -7423,6 +7473,18 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+            }
+            ExprKind::Is(inner, ty) => {
+                self.f1_expr(inner, gs, scope, errors);
+                // Plan 174.3 (D54 §6): `is` is defined only on `any` (v1 runtime
+                // type_id downcast) and on sum-values (v2 variant check). On a
+                // record / primitive operand it is a compile error — the type is
+                // statically known, so the check is meaningless. Clean diagnostic
+                // with code+span (not a downstream CC-FAIL). The `is` result stays
+                // `bool` (seeded by number_exprs). Conservative: fire ONLY when the
+                // operand type is confidently a concrete non-`any`, non-sum type
+                // (§7 — zero false positives on legal code).
+                self.check_is_operand(inner, ty, gs, scope, errors);
             }
             ExprKind::Binary { left, right, op } => {
                 self.f1_expr(left, gs, scope, errors);
