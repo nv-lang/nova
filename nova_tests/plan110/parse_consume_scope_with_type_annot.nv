@@ -11,7 +11,7 @@ type DummyRes3 {
 
 fn DummyRes3.new(id int) -> DummyRes3 => { id }
 
-fn DummyRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn DummyRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn use_with_annot() -> int {
     mut result = 0

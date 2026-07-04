@@ -9,20 +9,20 @@
 
 | Было (ретракнуто) | Стало (D188, Plan 110) |
 |---|---|
-| `errdefer { rollback }` | `on_exit(o) match { Failure(_) / Panic(_) => rollback }` |
-| `okdefer { commit }` | `on_exit(o) match { Success => commit }` |
-| `errdefer` + `okdefer` пара | `consume X = … { body }` + `Consumable.@on_exit(outcome)` (exactly-once) |
-| `defer \|result\| { … }` | `on_exit(outcome ScopeOutcome)` |
+| `errdefer { rollback }` | `@cleanup(o) match { Failure(_) / Panic(_) => rollback }` |
+| `okdefer { commit }` | `@cleanup(o) match { Success => commit }` |
+| `errdefer` + `okdefer` пара | `consume X = … { body }` + `Cleanup.@cleanup(outcome)` (exactly-once) |
+| `defer \|result\| { … }` | `@cleanup(outcome ScopeOutcome)` |
 | `defer { close }` (безусловный) | **остаётся** — `defer` жив (D90) |
 
-Error-only откат без Consumable-ресурса — флаг-паттерн:
+Error-only откат без Cleanup-ресурса — флаг-паттерн:
 `mut done = false; defer { if !done { rollback } }; …; done = true`.
 
 ## Куда идти
 
 - **Идиома cleanup'а** → [consume-scope-cleanup.md](consume-scope-cleanup.md) (Plan 110 / D188).
-- **Модель panic/fail/defer/on_exit** → [error-and-cleanup-model.md](error-and-cleanup-model.md).
+- **Модель panic/fail/defer/@cleanup** → [error-and-cleanup-model.md](error-and-cleanup-model.md).
 - **Стиль написания** → [nv-coding-style.md](../nv-coding-style.md) §20.4.
 - Спека: [D189](../../spec/decisions/03-syntax.md#d189) (retraction) ·
-  [D188](../../spec/decisions/03-syntax.md#d188) (Consumable.on_exit) ·
+  [D188](../../spec/decisions/03-syntax.md#d188) (Cleanup.@cleanup) ·
   [D90](../../spec/decisions/03-syntax.md#d90) (defer).

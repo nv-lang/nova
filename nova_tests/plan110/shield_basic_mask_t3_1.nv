@@ -32,7 +32,7 @@ type Counter3 {
 
 fn Counter3.new(id int) -> Counter3 => { id }
 
-fn Counter3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Counter3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn use_single() -> int {
     mut sum = 0

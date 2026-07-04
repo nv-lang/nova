@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Plan 110.1.9 T2.5 (D188 R5 LIFO): defer inside consume body fires
-// BEFORE on_exit. LIFO exit order verification.
+// BEFORE cleanup. LIFO exit order verification.
 
 module nova_tests.plan110
 
@@ -10,7 +10,7 @@ type ResZ3 {
 }
 
 fn ResZ3.new(id int) -> ResZ3 => { id }
-fn ResZ3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ResZ3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn use_mixed() -> int {
     mut counter = 0
@@ -18,7 +18,7 @@ fn use_mixed() -> int {
         defer { counter = counter + 100 }
         counter = counter + r.id
         // Exit order: defer body runs (counter += 100),
-        // then on_exit (no observable side effect here).
+        // then cleanup (no observable side effect here).
     }
     counter
 }

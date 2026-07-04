@@ -14,7 +14,7 @@ fn FailableResource4.try_new(id int) -> Result[FailableResource4, str] => Ok(Fai
 
 fn FailableResource4.new(id int) -> FailableResource4 => { id }
 
-fn FailableResource4 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn FailableResource4 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 // `consume r = try_new()? { body }` — `?` unwrap inferred via recurse.
 fn use_unwrap() Fail[str] -> int {

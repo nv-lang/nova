@@ -5491,38 +5491,42 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 
 ---
 
-## D185. `Cleanup` effect — observability-only handler dispatch
+## D185. `ResourceTrace` effect — observability-only handler dispatch
 
 > **Plan 110 Ф.7.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.4.4.a/b
-> codegen emits on_scope_enter/exit dispatch, 2026-06-01). Observability-only effect
-> для tracing cleanup-scope entry/exit. Default handler — no-op,
-> zero-overhead если не использован. Не дублирует `Consumable.on_exit` —
-> orthogonal layer для metrics/tracing.
+> codegen emits enter/exit dispatch, 2026-06-01). **Амендмент Plan 173 Ф.2.R1 (2026-07-04, RENAME-only):**
+> эффект переименован `Cleanup`→**`ResourceTrace`** (освобождает имя `Cleanup` для протокола
+> `Cleanup[E]`, ex-`Consumable`, D314), операции `on_scope_enter/exit`→**`on_resource_enter/exit`**.
+> (Параметр `timeout` в enter пока СОХРАНЁН — его дроп §3a/п.8 отложен в **Plan 173 Ф.5** timeout-rework,
+> т.к. это семантическая правка с ретайром D195-override-тестов, не часть ренейма.)
+> Observability-only effect для tracing resource-scope entry/exit. Default handler — no-op,
+> zero-overhead если не использован. Orthogonal к `Cleanup[E].@cleanup` (ex-`Consumable.on_exit`,
+> resource lifecycle) — слой для metrics/tracing.
 
 ### Что
 
 ```nova
-effect Cleanup {
-    fn on_scope_enter(label str, timeout Duration) -> ()
-    fn on_scope_exit(label str, outcome ScopeOutcome) -> ()
+effect ResourceTrace {
+    on_resource_enter(label str, timeout Duration) -> ()
+    on_resource_exit(label str, outcome ScopeOutcome) -> ()
 }
 ```
 
 Default handler — no-op:
 
 ```nova
-fn Cleanup.default() -> CleanupHandler => CleanupHandler { /* no-op */ }
+fn ResourceTrace.default() -> ResourceTraceHandler => ResourceTraceHandler { /* no-op */ }
 ```
 
 ### Codegen integration
 
-При входе в `consume X = init() { body }` codegen эмитит (если Cleanup
+При входе в `consume X = init() { body }` codegen эмитит (если `ResourceTrace`
 effect handler активен):
 
 ```c
-perform_Cleanup_on_scope_enter(type_label(X), _timeout);
+perform_ResourceTrace_on_resource_enter(type_label(X), _timeout);
 // ... body ...
-perform_Cleanup_on_scope_exit(type_label(X), _outcome);
+perform_ResourceTrace_on_resource_exit(type_label(X), _outcome);
 ```
 
 Если handler === default no-op (compile-time check) — calls elided через
@@ -5531,11 +5535,11 @@ perform_Cleanup_on_scope_exit(type_label(X), _outcome);
 ### Handler restrictions
 
 1. **Handler не может `throw`** — observability должна быть idempotent.
-   Compile error `D185-cleanup-handler-throw` если signature handler'а
+   Compile error `D185-resourcetrace-handler-throw` если signature handler'а
    `throw`'ит.
 
 2. **Return type должен быть `()`** — observability-only. Compile error
-   `D185-cleanup-handler-non-unit-return`.
+   `D185-resourcetrace-handler-non-unit-return`.
 
 3. **Handler не может `suspend`** — observability должна быть sync
    relative to scope-entry/exit. Async export через off-thread queue в
@@ -5545,19 +5549,19 @@ perform_Cleanup_on_scope_exit(type_label(X), _outcome);
 
 Reference implementation `CleanupHandler.to_otel(exporter)`:
 
-#### on_scope_enter — создаёт span
+#### on_resource_enter — создаёт span
 
 ```
 attributes = {
-    "cleanup.label":         label,
-    "cleanup.timeout_ms":    timeout.ms(),
-    "cleanup.start_time_ns": now_ns(),
+    "resource.label":         label,
+    "resource.timeout_ms":    timeout.ms(),
+    "resource.start_time_ns": now_ns(),
 }
 span_kind = INTERNAL
 parent = active_span()
 ```
 
-#### on_scope_exit — закрывает span
+#### on_resource_exit — закрывает span
 
 ```
 status = match outcome {
@@ -5587,11 +5591,11 @@ Compatible с std OpenTelemetry SDK через FFI bridge (cross-ref [Plan
 - Audit — какие resource'ы cleanup'или в каком порядке.
 - Performance regression detection — baseline cleanup performance.
 
-### Что НЕ Cleanup effect
+### Что НЕ ResourceTrace effect
 
-- ❌ Не resource lifecycle — это `Consumable.on_exit`.
+- ❌ Не resource lifecycle — это `Cleanup[E].@cleanup` (ex-`Consumable.on_exit`, D314).
 - ❌ Не для cancel control — это shield (D188 R3).
-- ❌ Не для timeout adjustment — это `WithExitTimeout` / Application (D192).
+- ❌ Не для timeout adjustment — это scope-дедлайн `supervised(deadline:/timeout:)` (§3a; D192-ретракт).
 
 ### Связь
 
@@ -5630,8 +5634,8 @@ fn Application.handler(default_exit_timeout Duration = 5.s()) -> ApplicationHand
 fn ApplicationHandler @register_finalizer(f fn() -> ()) -> () => @finalizers.push(f)
 fn ApplicationHandler @default_exit_timeout() -> Duration => @default_exit_timeout_value
 
-// Handler сам Consumable — finalizers fire при выходе из with-блока:
-fn ApplicationHandler consume @on_exit(_outcome ScopeOutcome) -> () {
+// Handler сам Cleanup — finalizers fire при выходе из with-блока:
+fn ApplicationHandler consume @cleanup(_outcome ScopeOutcome) -> () {
     for f in @finalizers.reverse() { f() }
 }
 ```
@@ -5644,7 +5648,7 @@ fn main() Io -> () {
         run_server()
         // anywhere глубоко: Application.register_finalizer(|| { ... })
     }
-    // handler.on_exit fires finalizers в reverse order
+    // handler.cleanup fires finalizers в reverse order
 }
 ```
 
@@ -5748,7 +5752,7 @@ alive до последнего fiber.
 `Application.handler(...)` constructor должен **полностью завершиться**
 до входа в `with`-блок. Никаких регистраций finalizer'ов во время
 construction — только из body. Если constructor throws — `with` не
-входит, `on_exit` не вызывается ([D188 R1](03-syntax.md#d188) partial-construction
+входит, `cleanup` не вызывается ([D188 R1](03-syntax.md#d188) partial-construction
 safety).
 
 ### R8 — Abort / SIGKILL не fires finalizers
@@ -5756,7 +5760,7 @@ safety).
 Документировано как ограничение всех языков:
 - `abort()` / SIGKILL / SIGSEGV → process killed; OS unmaps memory;
   finalizers NOT run.
-- `exit(code)` — fires handler.on_exit (controlled exit) → finalizers run.
+- `exit(code)` — fires handler.cleanup (controlled exit) → finalizers run.
 
 `#[run_on_abort]` атрибут — follow-up Plan 110.X (если будет нужно).
 
@@ -5882,7 +5886,7 @@ All existing protocol declarations updated (Plan 108.4 Ф.3 sweep):
 | `Clone` | `clone() -> Self` | `@clone() -> Self` |
 | `Display` | `fmt(sb StringBuilder)` | `@display(sb StringBuilder)` |
 | `Debug` | `debug_fmt(sb StringBuilder)` | `@debug(sb StringBuilder)` |
-| `Consumable[E]` | `on_exit(...)` | `consume @on_exit(outcome ScopeOutcome) Fail[E] -> ()` |
+| `Cleanup[E]` | `cleanup(...)` | `consume @cleanup(outcome ScopeOutcome) Fail[E] -> ()` |
 | `WithExitTimeout` | `exit_timeout_ms() -> int` | `@exit_timeout_ms() -> int` |
 | `Into[U]` | `into() -> U` | `@into() -> U` |
 | `TryInto[U,E]` | `try_into() -> Result[U,E]` | `@try_into() -> Result[U, E]` |

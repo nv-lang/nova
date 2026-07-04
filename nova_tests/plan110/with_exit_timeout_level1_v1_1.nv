@@ -18,7 +18,7 @@ fn Conn10.new(h int) -> Conn10 => { h }
 // Plan 110.9.2 V1.1: per-type exit_timeout_ms — overrides Level 2/3 fallback.
 fn Conn10 @exit_timeout_ms() -> int => 250
 
-fn Conn10 consume @on_exit(_outcome ScopeOutcome) -> () {
+fn Conn10 consume @cleanup(_outcome ScopeOutcome) -> () {
     return ()
 }
 

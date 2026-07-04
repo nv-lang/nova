@@ -621,9 +621,9 @@ ro v = opt ?? panic("expected Some")   // краш ТОЛЬКО явно — for
   (D90, `03-syntax.md`; тест `nova_tests/syntax/defer_basic.nv`). Аргументы вычисляются на
   месте, тело — отложенно; `mut` захватываются по ссылке. Тело `defer` МОЖЕТ иметь
   `Fail[E]`/suspend (D158/D159 amend D90 §4/§5) — тогда enclosing fn-sig обязан declare его.
-- **Exactly-once cleanup ресурса — `consume X = expr { body }`** (Consumable[E].on_exit,
+- **Exactly-once cleanup ресурса — `consume X = expr { body }`** (Cleanup[E].@cleanup,
   D188 — официальная замена errdefer; status active, Plan 110; тесты `nova_tests/plan110/`).
-  Для error-only-отката без Consumable-ресурса — паттерн escape hatch:
+  Для error-only-отката без Cleanup-ресурса — паттерн escape hatch:
   `mut done = false; defer { if !done { rollback } }; …; done = true`.
 - **Discharge-глаголы ресурса — единая таксономия · согласовано 2026-06-27.** Не плодить
   синонимы для «освободить ресурс»: `@cleanup(o ScopeOutcome)` — **АВТО**-хук протокола
@@ -644,7 +644,7 @@ fn read_config(path str) Fs Fail -> Config {
     Config.parse(raw)
 }
 
-// 2) error-only-откат без Consumable — паттерн-флаг (официальная замена errdefer, D189):
+// 2) error-only-откат без Cleanup — паттерн-флаг (официальная замена errdefer, D189):
 fn create_user(req UserReq) Db Fail -> User {
     ro user = Db.insert_user(req)
     mut ok = false
@@ -654,10 +654,10 @@ fn create_user(req UserReq) Db Fail -> User {
     user
 }
 
-// 3) exactly-once cleanup ресурса — consume-scope (Consumable.on_exit, D188):
+// 3) exactly-once cleanup ресурса — consume-scope (Cleanup.@cleanup, D188):
 consume tx = Db.begin() {
     Db.insert(tx, data)?
-}   // выход из блока → on_exit (commit при успехе, rollback при throw) — exactly-once
+}   // выход из блока → @cleanup (commit при успехе, rollback при throw) — exactly-once
 
 // УДАЛЕНО (D189, parser отклоняет): errdefer { … }, okdefer { … }, defer |result| { … }
 ```

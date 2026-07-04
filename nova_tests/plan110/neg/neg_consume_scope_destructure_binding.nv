@@ -16,7 +16,7 @@ type Pair {
 
 fn Pair.new(a int, b int) -> Pair => { a: a, b: b }
 
-fn Pair consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Pair consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn bad() -> int {
     // ❌ destructure pattern в consume scope-block — invalid.

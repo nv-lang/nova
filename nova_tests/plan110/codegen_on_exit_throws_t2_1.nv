@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Plan 110.1.4.h T2.1 (D193 MultiError composition): on_exit throws
+// Plan 110.1.4.h T2.1 (D193 MultiError composition): cleanup throws
 // → composed как secondary в MultiError chain (primary stays = body's
 // throw). Verifies cleanup-fail-during-propagation flow.
 
@@ -12,20 +12,20 @@ type FailingResource3 {
 
 fn FailingResource3.new(id int) -> FailingResource3 => { id }
 
-// on_exit может throw — composes в MultiError when body throws.
-fn FailingResource3 consume @on_exit(_outcome ScopeOutcome) Fail[str] -> () {
+// cleanup может throw — composes в MultiError when body throws.
+fn FailingResource3 consume @cleanup(_outcome ScopeOutcome) Fail[str] -> () {
     throw "cleanup-failure"
 }
 
-// Caller uses consume scope; on_exit throws after body completes.
-// Caller must declare Fail[str] чтобы accept on_exit's throw.
+// Caller uses consume scope; cleanup throws after body completes.
+// Caller must declare Fail[str] чтобы accept cleanup's throw.
 fn use_failing_cleanup() Fail[str] -> int {
     consume r = FailingResource3.new(42) {
         r.id
     }
 }
 
-test "Plan 110.1.4.h T2.1: on_exit throws composes в MultiError" {
+test "Plan 110.1.4.h T2.1: cleanup throws composes в MultiError" {
     // Runtime verification of MultiError composition requires Fail
     // handler в test block. Здесь — compile + link verification.
     assert(true)

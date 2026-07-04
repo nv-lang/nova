@@ -25,7 +25,7 @@ fn read_config(path str) Fail[IoError] -> Config {
         ro raw = f.read_all()?
         Config.parse(raw)?
     }
-    // f.on_exit (File.close) automatically called here.
+    // f.@cleanup (File.close) automatically called here.
 }
 ```
 
@@ -33,18 +33,18 @@ What happens:
 1. `File.open(path)?` opens the file. If it fails, `?` propagates
    the error — `f` never bound, no cleanup needed.
 2. `f` accessible inside `{ ... }` body.
-3. After body completes (success OR error), `f.on_exit(outcome)`
+3. After body completes (success OR error), `f.@cleanup(outcome)`
    is called automatically — closes the file.
 4. If body errors, error re-propagates AFTER cleanup.
 
-## The `Consumable[E]` Protocol
+## The `Cleanup[E]` Protocol
 
 Any type can be used in `consume X = ... { body }` by implementing
-the `Consumable[E]` protocol:
+the `Cleanup[E]` protocol:
 
 ```nova
-type Consumable[E] protocol {
-    on_exit(outcome ScopeOutcome) Fail[E] -> ()
+type Cleanup[E] protocol {
+    @cleanup(outcome ScopeOutcome) Fail[E] -> ()
 }
 
 type ScopeOutcome
@@ -53,20 +53,20 @@ type ScopeOutcome
     | Panic(str)
 ```
 
-- `E` is the type of errors `on_exit` itself can throw
+- `E` is the type of errors `@cleanup` itself can throw
   (e.g., `IoError` if close can fail).
 - `Success` — body completed normally.
 - `Failure(msg)` — body threw an error (including cancel).
 - `Panic(msg)` — body panicked (programming bug).
 
-## Implementing Consumable for Your Type
+## Implementing Cleanup for Your Type
 
 ### Example: Database Transaction
 
 ```nova
 type Transaction { conn DbConn, id int }
 
-fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
         Success      => @conn.commit(@id)?
         Failure(_)   => @conn.rollback(@id)?
@@ -88,17 +88,17 @@ fn process_order(db Db, order Order) Fail[DbError] -> () {
 
 ### Example: Infallible Cleanup (Mutex Lock)
 
-For resources where cleanup CAN'T fail, use `Consumable[never]`:
+For resources where cleanup CAN'T fail, use `Cleanup[never]`:
 
 ```nova
-fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> () => @unlock()
+fn MutexGuard consume @cleanup(_outcome ScopeOutcome) -> () => @unlock()
 //                                                       ^^^^ no Fail[E]
 ```
 
 Caller doesn't need `Fail[E]`:
 ```nova
 fn increment_counter(state State) -> () {        // no Fail!
-    consume _l = state.mutex.lock() {             // Consumable[never]
+    consume _l = state.mutex.lock() {             // Cleanup[never]
         state.value += 1
     }
 }
@@ -106,10 +106,10 @@ fn increment_counter(state State) -> () {        // no Fail!
 
 ## Outcome Discrimination
 
-`on_exit` body can branch on outcome:
+`@cleanup` body can branch on outcome:
 
 ```nova
-fn HttpRequest consume @on_exit(outcome ScopeOutcome) -> () {
+fn HttpRequest consume @cleanup(outcome ScopeOutcome) -> () {
     match outcome {
         Success      => @metrics.inc("http.success")
         Failure(msg) => {
@@ -136,17 +136,17 @@ fn deep_work(addr str) Fail[NetError] -> () {
             consume stmt = tx.prepare(sql)? {
                 stmt.execute(args)?
             }
-            // stmt.on_exit fires first.
+            // stmt.@cleanup fires first.
         }
-        // tx.on_exit fires (commit or rollback).
+        // tx.@cleanup fires (commit or rollback).
     }
-    // conn.on_exit fires last (release to pool).
+    // conn.@cleanup fires last (release to pool).
 }
 ```
 
 ## Mixed `consume{}` + `defer`
 
-Both work together. `defer` fires within its scope BEFORE `on_exit`:
+Both work together. `defer` fires within its scope BEFORE `@cleanup`:
 
 ```nova
 fn process() -> int {
@@ -155,7 +155,7 @@ fn process() -> int {
         defer { counter += 100 }    // fires when body ends
         counter += r.id
     }
-    // Order: defer body (counter += 100) → r.on_exit
+    // Order: defer body (counter += 100) → r.@cleanup
     counter
 }
 ```
@@ -215,7 +215,7 @@ Nova advantages:
 - **Visible**: cleanup explicit, не magic Drop.
 - **Cancel-shield**: cleanup protected from cancel storm (D188 R3).
 - **Outcome-aware**: resource discriminates success/failure/panic.
-- **Async-capable**: can `await` в `on_exit` (D191).
+- **Async-capable**: can `await` в `@cleanup` (D191).
 
 ## What's Next
 
@@ -229,6 +229,6 @@ Nova advantages:
 
 ## See also
 
-- [D188 — Consumable + scope-block](../spec/decisions/03-syntax.md#d188).
+- [D188 — Cleanup + scope-block](../spec/decisions/03-syntax.md#d188).
 - [Plan 110](plans/110-scoped-resources-radical-simplification.md).
 - All Q-blocks under [docs/idiom/](idiom/).

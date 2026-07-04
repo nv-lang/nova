@@ -3,7 +3,7 @@
 
 > **Plan 110 Ф.14.2 Q-block.** Q-perf-considerations: overhead analysis
 > для `consume X = ... { body }` scope-block — cancel-shield, timeout
-> resolution, outcome construction, on_exit dispatch costs +
+> resolution, outcome construction, @cleanup dispatch costs +
 > mitigation strategies.
 
 ## Overhead Per ConsumeScope (Plan 110.1 / 110.2 estimated)
@@ -21,7 +21,7 @@
 | `nova_fail_pop` | ~5 ns | always |
 | `nv_resolve_exit_timeout` (3-level) | ~20 ns | always (Plan 110.2) |
 | `nova_make_ScopeOutcome_*` heap alloc | ~50 ns | always |
-| `Nova_<T>_consume_on_exit` dispatch | varies | always |
+| `Nova_<T>_consume_cleanup` dispatch | varies | always |
 | `nova_rethrow_with_suppressed` (on Failure) | ~30 ns | conditional |
 | `nv_panic` (on Panic) | ~30 ns + abort | conditional |
 | Cancel-shield enter/leave (Plan 110.2) | ~10 ns | always |
@@ -30,7 +30,7 @@
 ConsumeScope** в current Plan 110.1.4 + 110.1.6 implementation
 (without 110.1.7 hot-path elision, without 110.2 cancel-shield).
 
-**With 110.1.7 hot-path elision** (Consumable[never] + no
+**With 110.1.7 hot-path elision** (Cleanup[never] + no
 WithExitTimeout): **~15-30 ns** — Compare to raw lock+unlock.
 
 **With 110.2 cancel-shield**: +5-15 ns shield enter/leave +
@@ -111,7 +111,7 @@ Total: ~3-15 ns per scope. Cached в local after entry — body re-uses.
 
 ## Hot-Path Elision Effectiveness (Plan 110.1.7)
 
-For `Consumable[never]` + no WithExitTimeout:
+For `Cleanup[never]` + no WithExitTimeout:
 
 | Construct | Without elision | With elision |
 |---|---|---|
@@ -125,8 +125,8 @@ Order of magnitude: **3-4x speedup** для elidable resources.
 ## OpenTelemetry Tracing Cost (D185)
 
 `Cleanup` effect handler emit OTel spans for each ConsumeScope:
-1. Span open at `on_scope_enter`: ~500-1000 ns (depends on SDK).
-2. Span close at `on_scope_exit`: ~500-1000 ns.
+1. Span open at `on_resource_enter`: ~500-1000 ns (depends on SDK).
+2. Span close at `on_resource_exit`: ~500-1000 ns.
 
 **Total OTel overhead:** ~1-2 μs per scope. Critical для:
 - Avoid в hot loops (sample rate, e.g., 1/1000 scopes).

@@ -17,11 +17,11 @@ type Res6 {
 }
 
 fn Res6.new(id int) -> Res6 => { id }
-fn Res6 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Res6 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
-test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (Cleanup observes 250ms)" {
+test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (ResourceTrace observes 250ms)" {
     mut observed_timeout = -1
-    // Inner with Cleanup → observes timeout passed to on_scope_enter.
+    // Inner with ResourceTrace → observes timeout passed to on_resource_enter.
     // Outer with Application → sets default_exit_timeout_ms to 250.
     with Application = effect Application {
         register_finalizer(_f) {
@@ -31,12 +31,12 @@ test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (Cleanu
             return 250
         }
     } {
-        with Cleanup = effect Cleanup {
-            on_scope_enter(_label, timeout_ms) {
+        with ResourceTrace = effect ResourceTrace {
+            on_resource_enter(_label, timeout_ms) {
                 observed_timeout = timeout_ms
                 return ()
             }
-            on_scope_exit(_label, _outcome) {
+            on_resource_exit(_label, _outcome) {
                 return ()
             }
         } {
@@ -50,12 +50,12 @@ test "Plan 110.4.6.a A110.4.6.a.a: Application handler overrides Level 3 (Cleanu
 
 test "Plan 110.4.6.a A110.4.6.a.a: no Application handler → Level 3 fallback (5000ms)" {
     mut observed_timeout = -1
-    with Cleanup = effect Cleanup {
-        on_scope_enter(_label, timeout_ms) {
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label, timeout_ms) {
             observed_timeout = timeout_ms
             return ()
         }
-        on_scope_exit(_label, _outcome) {
+        on_resource_exit(_label, _outcome) {
             return ()
         }
     } {

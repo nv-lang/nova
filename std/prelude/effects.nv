@@ -216,20 +216,20 @@ export type Mem effect {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110.4.3 (D185) — Cleanup observability effect
+// Plan 110.4.3 (D185) — ResourceTrace observability effect (Plan 173 Ф.2.R1 rename)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Plan 110 D185: Cleanup effect — observability-only handler dispatch
-/// для tracing cleanup-scope entry/exit. Default handler — no-op,
-/// zero-overhead если не использован. Не дублирует Consumable.on_exit —
-/// orthogonal layer для metrics/tracing.
+/// Plan 110 D185 (rename Plan 173 Ф.2.R1): `ResourceTrace` effect — observability-only
+/// handler dispatch для tracing resource-scope entry/exit. Default handler — no-op,
+/// zero-overhead если не использован. Orthogonal к Cleanup[E].@cleanup (resource
+/// lifecycle) — слой для metrics/tracing.
 ///
 /// **Operations:**
-///   - `on_scope_enter(label str, timeout_ms int)` — invoked при входе
-///     в `consume X = ... { body }` scope-block. timeout_ms — resolved
-///     deadline.
-///   - `on_scope_exit(label str, outcome ScopeOutcome)` — invoked при
-///     выходе из scope с финальным outcome.
+///   - `on_resource_enter(label str, timeout_ms int)` — invoked при входе в
+///     `consume X = ... { body }` scope-block. timeout_ms — resolved deadline.
+///     (Дроп timeout — §3a/п.8, отложено в Plan 173 Ф.5 timeout-rework.)
+///   - `on_resource_exit(label str, outcome ScopeOutcome)` — invoked при выходе из
+///     scope с финальным outcome.
 ///
 /// **Handler restrictions (D185):**
 ///   - Handler не может `throw` (observability должна быть idempotent).
@@ -237,10 +237,10 @@ export type Mem effect {
 ///   - Return type `()` (observability-only, not value-returning).
 ///
 /// **OpenTelemetry integration (D185 §otel):** reference impl
-/// `CleanupHandler.to_otel(exporter)` маппит operations в OTel spans:
-///   - on_scope_enter → create span с attributes (cleanup.label,
-///     cleanup.timeout_ms, cleanup.start_time_ns).
-///   - on_scope_exit → close span с status (OK/ERROR_failed/
+/// `ResourceTraceHandler.to_otel(exporter)` маппит operations в OTel spans:
+///   - on_resource_enter → create span с attributes (resource.label,
+///     resource.start_time_ns).
+///   - on_resource_exit → close span с status (OK/ERROR_failed/
 ///     ERROR_panic) + duration_ms.
 ///
 /// **Bootstrap status (Plan 110.4.3):** declaration here; runtime
@@ -248,9 +248,9 @@ export type Mem effect {
 /// (effect emit when handler active). Default handler — silent no-op
 /// (codegen elides calls when no handler bound).
 #stable(since = "0.1")
-export type Cleanup effect {
-    on_scope_enter(label str, timeout_ms int) -> ()
-    on_scope_exit(label str, outcome ScopeOutcome) -> ()
+export type ResourceTrace effect {
+    on_resource_enter(label str, timeout_ms int) -> ()
+    on_resource_exit(label str, outcome ScopeOutcome) -> ()
 }
 
 

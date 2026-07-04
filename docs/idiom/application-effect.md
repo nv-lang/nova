@@ -117,13 +117,13 @@ parent's handler.
 
 Handler constructor runs to completion BEFORE `with` body enters.
 Registration calls during construction are prohibited (handler not yet
-active). Constructor throws → `with` не enters; `on_exit` не called
+active). Constructor throws → `with` не enters; `@cleanup` не called
 (D188 R1 partial-construction safety).
 
 ### R8 — Abort / SIGKILL не fires finalizers
 
 Per OS-level limitation (NOT a bug). Finalizers run на normal exit
-(handler.on_exit) или panic. `abort()` / SIGKILL / SIGSEGV bypass
+(handler.@cleanup) или panic. `abort()` / SIGKILL / SIGSEGV bypass
 runtime — no chance to run finalizers.
 
 **Mitigation:** для critical state, use:

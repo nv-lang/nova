@@ -10,11 +10,11 @@
 ## TL;DR
 
 1. **Cancel в body** → arrives как `ScopeOutcome::Failure(CancelError)`
-   в `on_exit`. Resource decides graceful vs aggressive cleanup.
+   в `@cleanup`. Resource decides graceful vs aggressive cleanup.
 2. **Cancel-shield by default**: cancel-delivery suspended во время
-   `on_exit` execution до `exit_timeout`. Prevents cleanup-cancel
+   `@cleanup` execution до `exit_timeout`. Prevents cleanup-cancel
    storm (Plan 110.2 implementation).
-3. **Cancel after on_exit completion** → continues propagation
+3. **Cancel after @cleanup completion** → continues propagation
    normally; outer fail-frame catches.
 
 ## D90 §7 amend — Cancel as `Failure(CancelError)` (Plan 110.5.6)
@@ -26,7 +26,7 @@ variant с `CancelError` payload.
 ```nova
 type Connection { /* fields */ }
 
-fn Connection consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
+fn Connection consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     match outcome {
         Success      => @flush()?
         Failure(msg) => {
@@ -54,12 +54,12 @@ payload migration.
 ## D188 R3 — Cancel-shield by default (Plan 110.2)
 
 **Problem без shield:** programmer writes `consume tx = db.begin() {
-do_work() }`. User cancels mid-`on_exit` (e.g., rollback). Half-rolled
+do_work() }`. User cancels mid-`@cleanup` (e.g., rollback). Half-rolled
 transaction leaves DB в inconsistent state.
 
-**Solution (D188 R3):** cancel-delivery suspended during `on_exit`
+**Solution (D188 R3):** cancel-delivery suspended during `@cleanup`
 body execution до `exit_timeout` resolution (D192 3-level fallback).
-Cancel continues после `on_exit` completes OR timeout exceeded
+Cancel continues после `@cleanup` completes OR timeout exceeded
 (`CleanupTimeoutError`).
 
 ```nova
@@ -69,10 +69,10 @@ fn process() Fail[DbError] -> () {
         await long_op()              // cancel arrives here
         // Body never resumes; longjmp → outcome=Failure(CancelError).
     }
-    // tx.on_exit fires WITH SHIELD:
+    // tx.@cleanup fires WITH SHIELD:
     //   - rollback executes без cancel interruption
     //   - tx.commit() (если success path) — runs to completion
-    //   - cancel re-delivered после on_exit return.
+    //   - cancel re-delivered после @cleanup return.
 }
 ```
 
@@ -84,13 +84,13 @@ fn process() Fail[DbError] -> () {
 Cleanup exceeding timeout → `CleanupTimeoutError` injected into
 ongoing suspend; cleanup truncates; cancel re-raised.
 
-## D191 — Async cleanup (suspend в `on_exit`)
+## D191 — Async cleanup (suspend в `@cleanup`)
 
-`on_exit` body может contain `await` / suspend operations (TCP
+`@cleanup` body может contain `await` / suspend operations (TCP
 grace-close, DB commit с network round-trip):
 
 ```nova
-fn TcpStream consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
+fn TcpStream consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     match outcome {
         Success | Failure(_) => {
             await @send_eof()?         // suspend OK; shield active
@@ -102,22 +102,22 @@ fn TcpStream consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
 }
 ```
 
-**Cancel during await в `on_exit`:** cancel delivery deferred до
+**Cancel during await в `@cleanup`:** cancel delivery deferred до
 timeout exceedance (D192). При exceedance → `CleanupTimeoutError`
 injected into current suspend; propagates через `?`.
 
 ## Realtime contexts (D198)
 
 Inside `#realtime` fn, `exit_timeout` forced to `Duration.zero`.
-`await` в `on_exit` → `D192-zero-timeout-suspend` runtime error.
+`await` в `@cleanup` → `D192-zero-timeout-suspend` runtime error.
 
 ```nova
 #realtime
 fn rt_use_lock() -> () {
-    consume g = mu.lock() {     // MutexGuard: Consumable[never], realtime-OK
+    consume g = mu.lock() {     // MutexGuard: Cleanup[never], realtime-OK
         do_realtime_work()       // no suspend allowed
     }
-    // g.on_exit (unlock) — sync, instant.
+    // g.@cleanup (unlock) — sync, instant.
 }
 ```
 
@@ -126,11 +126,11 @@ require `await` в cleanup (TCP, DB) — NOT usable в `#realtime`.
 
 ## Cancel-shield error composition (D193)
 
-If cleanup `on_exit` itself throws while body was cancel-routed:
+If cleanup `@cleanup` itself throws while body was cancel-routed:
 
 ```
 body cancel → outcome = Failure(CancelError("user-cancelled"))
-on_exit throws CleanupError("rollback failed")
+@cleanup throws CleanupError("rollback failed")
 ↓
 MultiError composed:
   primary:    CancelError("user-cancelled")  [original cause]
@@ -144,7 +144,7 @@ Caller обходит chain через `MultiError.walk()` / `find_first_panic()
 ### Pattern 1: Graceful cancel cleanup
 
 ```nova
-fn Connection consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
+fn Connection consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     match outcome {
         Success => @close()?
         Failure(msg) => {
@@ -160,10 +160,10 @@ fn Connection consume @on_exit(outcome ScopeOutcome) Fail[IoError] -> () {
 }
 ```
 
-### Pattern 2: Infallible cleanup (`Consumable[never]`)
+### Pattern 2: Infallible cleanup (`Cleanup[never]`)
 
 ```nova
-fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> () => @unlock()
+fn MutexGuard consume @cleanup(_outcome ScopeOutcome) -> () => @unlock()
 ```
 
 `Fail[never]` ≡ infallible. Caller не declares `Fail[E]`. Hot-path
@@ -172,7 +172,7 @@ optimization eligible (Plan 110.1.7).
 ### Pattern 3: Outcome-aware metric emission
 
 ```nova
-fn HttpRequest consume @on_exit(outcome ScopeOutcome) -> () {
+fn HttpRequest consume @cleanup(outcome ScopeOutcome) -> () {
     match outcome {
         Success      => @metrics.inc("http.success")
         Failure(msg) => {

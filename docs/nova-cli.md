@@ -1116,7 +1116,7 @@ Generates `index.html` + `bench-<safe>.html` per bench + `data.json`.
 
 Consume-type coverage analyzer ([Plan 100.8](plans/100.8-performance-ide-tooling.md) / D7).
 Scans a file or directory, collects all consume-typed bindings, and
-reports how many are covered via consume-methods (`Consumable.on_exit`, D188)
+reports how many are covered via consume-methods (`Cleanup.@cleanup`, D188)
 or `defer`. Useful as a CI hygiene check.
 
 ```

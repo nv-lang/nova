@@ -18,7 +18,7 @@
 1. `consume X = expr { body }` — scope-block для типизированного cleanup
    (~95% случаев).
 2. `defer { ... }` — escape hatch для logging/instrumentation (~5%).
-3. `protocol Consumable[E]` — контракт ресурса с одним методом `on_exit`.
+3. `protocol Cleanup[E]` — контракт ресурса с одним методом `@cleanup`.
 4. `consume self` modifier — builder/transfer (`StringBuilder.into()`).
 5. `Fail[E]` + `?` + `!!` + `throw` + `panic` + `exit` + `interrupt` —
    control flow (как сейчас).
@@ -29,27 +29,27 @@
 
 | Старое | Новое |
 |---|---|
-| `errdefer { rollback }` | `match outcome { Failure(_) => rollback }` в `on_exit` |
-| `okdefer { commit }` | `match outcome { Success => commit }` в `on_exit` |
-| `defer \|result\| { ... }` | `match outcome` в `on_exit` (или `with Cleanup = h`) |
+| `errdefer { rollback }` | `match outcome { Failure(_) => rollback }` в `@cleanup` |
+| `okdefer { commit }` | `match outcome { Success => commit }` в `@cleanup` |
+| `defer \|result\| { ... }` | `match outcome` в `@cleanup` (или `with ResourceTrace = h`) |
 | `DeferResult[T,E]` | `ScopeOutcome` sum-type |
 | `ErrorKind` enum | type-erased `Failure(any)` + D85 `if err is T` narrowing |
 | Половина D162 coverage rules | `consume {}` exhaustive by construction |
 | Effect-aware cleanup-deadline | метод `exit_timeout_ms()` (D192) |
-| `module_finalizer` keyword | паттерн `Consumable[Application]` (D195) |
+| `module_finalizer` keyword | паттерн `Cleanup[Application]` (D195) |
 
-## Q-consumable-protocol — как написать `on_exit`
+## Q-consumable-protocol — как написать `@cleanup`
 
 ### Decision tree
 
 ```
 Может ли cleanup throw?
-├─ Нет (Mutex/Sem/Lock/Permit) → Consumable[never]   (D194 hot-path)
+├─ Нет (Mutex/Sem/Lock/Permit) → Cleanup[never]   (D194 hot-path)
 └─ Да
-   ├─ Один error type (Transaction → DbError) → Consumable[DbError]
-   ├─ Несколько (TcpStream → IoError/ProtocolError) → Consumable[IoError]
+   ├─ Один error type (Transaction → DbError) → Cleanup[DbError]
+   ├─ Несколько (TcpStream → IoError/ProtocolError) → Cleanup[IoError]
    │   + routing через match err.kind
-   └─ Generic resource → Consumable[E] с unbound E
+   └─ Generic resource → Cleanup[E] с unbound E
 ```
 
 ### Шаблон implementation
@@ -57,7 +57,7 @@
 ```nova
 type Transaction { /* fields */ }
 
-fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
+fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
         Success => @commit()?
 
@@ -78,10 +78,10 @@ fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[DbError] -> () {
 }
 ```
 
-### Хочу infallible — `Consumable[never]`
+### Хочу infallible — `Cleanup[never]`
 
 ```nova
-fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> () => @release()
+fn MutexGuard consume @cleanup(_outcome ScopeOutcome) -> () => @release()
 //                                                       ^^^^^ no Fail[E]
 ```
 
@@ -89,13 +89,13 @@ fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> () => @release()
 
 ```nova
 fn use_mutex() -> () {              // no Fail[E]
-    consume _l = mu.acquire() {     // MutexGuard: Consumable[never] — OK
+    consume _l = mu.acquire() {     // MutexGuard: Cleanup[never] — OK
         do_work()
     }
 }
 ```
 
-**Hot-path optimization** (D194 §perf): codegen detect'ит `Consumable[never]` +
+**Hot-path optimization** (D194 §perf): codegen detect'ит `Cleanup[never]` +
 no `WithExitTimeout` impl → strip shield/timeout/outcome. Результат:
 `consume _l = mu.acquire() { body }` компилируется в `body; mu.release()` —
 zero overhead.
@@ -120,9 +120,9 @@ resolution (D192):
 └─ Да
    ├─ Resource'ом владею (open file, begin tx, acquire lock) → consume X = ... { body }
    ├─ Cleanup logging / instrumentation only → defer { log_metric() }
-   ├─ Tracing entry/exit cleanup-scope → with Cleanup = OtelHandler.new() { ... }
+   ├─ Tracing entry/exit cleanup-scope → with ResourceTrace = OtelHandler.new() { ... }
    ├─ App-level finalizer (run at exit) → Application.register_finalizer(|| ...)
-   └─ FFI-resource (C-side) → wrap в Consumable type (Plan 100.5 FFI bridge)
+   └─ FFI-resource (C-side) → wrap в Cleanup type (Plan 100.5 FFI bridge)
 ```
 
 ### `consume X = ... { body }` vs raw `consume X = ...` (D180)
@@ -155,7 +155,7 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
     return Receipt { id: order.id }
 }
 
-// After (предполагается Transaction impl Consumable[DbError]):
+// After (предполагается Transaction impl Cleanup[DbError]):
 fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
     consume tx = db.begin() {
         ro order = db.insert(data)?
@@ -165,8 +165,8 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
 ```
 
 Auto-fix tool вычисляет: `errdefer{tx.rollback()}` + `okdefer{tx.commit()}`
-↔ Consumable.on_exit с `Failure→rollback / Success→commit`. Если Transaction
-ещё **не** implement Consumable — генерируется stub impl с TODO comment.
+↔ Cleanup.@cleanup с `Failure→rollback / Success→commit`. Если Transaction
+ещё **не** implement Cleanup — генерируется stub impl с TODO comment.
 
 ### Pattern 2 — bare `errdefer` без ресурса (cleanup state)
 
@@ -207,7 +207,7 @@ fn report() -> () {
 
 // After (using Cleanup effect — D185 OpenTelemetry-style):
 fn report() -> () {
-    with Cleanup = LogHandler.new(label: "report") {
+    with ResourceTrace = LogHandler.new(label: "report") {
         do_work()
     }
 }
@@ -243,24 +243,24 @@ consume tx = db.begin() {
 
 Linear types prevent (compile error). Используйте distinct binding names.
 
-### Anti-2: manual `tx.on_exit(...)` из body
+### Anti-2: manual `tx.@cleanup(...)` из body
 
 ```nova
 // ❌ DON'T:
 consume tx = db.begin() {
-    tx.on_exit(Success)   // R2 exactly-once violation — runtime panic
+    tx.@cleanup(Success)   // R2 exactly-once violation — runtime panic
     do_work()
 }
 ```
 
-Doc-comment в Consumable: `on_exit` вызывается **только** runtime'ом scope-
+Doc-comment в Cleanup: `@cleanup` вызывается **только** runtime'ом scope-
 block'а. Manual call → `D188-on-exit-double-invocation` runtime error.
 
-### Anti-3: spawn в `on_exit`
+### Anti-3: spawn в `@cleanup`
 
 ```nova
 // ❌ DON'T:
-fn Connection consume @on_exit(_outcome ScopeOutcome) -> () {
+fn Connection consume @cleanup(_outcome ScopeOutcome) -> () {
     spawn { @flush_async() }    // D191 forbidden — fire-and-forget cleanup
 }
 ```
@@ -270,8 +270,8 @@ Compile error `E_CLEANUP_FORBIDDEN_OPERATION`. Используйте sequential
 
 ## See also
 
-- [D188](../../spec/decisions/03-syntax.md#d188) — Consumable + consume scope-block.
-- [D194](../../spec/decisions/03-syntax.md#d194) — `Consumable[never]` hot-path.
+- [D188](../../spec/decisions/03-syntax.md#d188) — Cleanup + consume scope-block.
+- [D194](../../spec/decisions/03-syntax.md#d194) — `Cleanup[never]` hot-path.
 - [Plan 110](../plans/110-scoped-resources-radical-simplification.md) — umbrella.
 - [cleanup-cookbook.md](../cleanup-cookbook.md) — production-recipe book.
 - [cleanup-on-failure.md](cleanup-on-failure.md) — pre-Plan 110 idioms (legacy).

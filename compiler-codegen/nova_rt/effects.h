@@ -233,6 +233,69 @@ static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
     abort();
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.2.C (D314 §4): nova_scope_exit — ЕДИНАЯ точка терминальной
+ * политики для scope-exit re-dispatch.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * До Ф.2.C каждый scope-terminal сайт (with-Fail / defer-error / consume)
+ * САМ решал `error_kind → transport` (PANIC→rethrow, CANCEL→cancel_reason,
+ * USER→…). Дублированный per-frame kind-dispatch → класс дефекта «кадр забыл
+ * kind» (напр. [M-172-with-fail-swallows-panic]: with-Fail проверял только
+ * CANCEL, PANIC проваливался в USER-path и глотался — нарушение D13). Теперь
+ * ОДИН helper владеет таблицей — ни один сайт не может «забыть» kind.
+ *
+ * `policy`:
+ *   CATCH       — with-Fail terminal. Recoverable (USER/USER_TYPED) ловятся
+ *                 handler'ом (helper возвращается, вызывающий ставит
+ *                 result=default); PANIC (bug/abort-class D13) и CANCEL
+ *                 (структурная отмена) НЕ ловятся — re-throw нагору.
+ *   TRANSPARENT — defer/consume terminal. Любой не-Success kind проброшен.
+ *
+ * Таблица (D314 §4, приведена к факту Ф.2.C):
+ *   error_kind        | transport
+ *   ------------------|------------------------------------------------------
+ *   PANIC             | nova_rethrow_with_suppressed(primary)  — kind=PANIC,
+ *                     |   suppressed-chain СОХРАНЁН (не голый nv_panic, который
+ *                     |   потерял бы chain; матчит post-B3-merge defer-kernel)
+ *   CANCEL            | nova_rethrow_with_suppressed(primary)  — reason_ptr И
+ *                     |   chain СОХРАНЕНЫ (rethrow копирует frame->error_reason_ptr,
+ *                     |   строка ~214; эмпирически подтверждено §5)
+ *   USER / USER_TYPED | CATCH → return (handler поймал; вызывающий → result=default)
+ *                     | TRANSPARENT → nova_rethrow_with_suppressed(primary)
+ *   Success           | no-op (sentinel; недостижим — frame инспектируется только
+ *                     |   после throw, у NovaThrowKind нет success-значения)
+ *
+ * КОНТРАКТ: `primary` уже popped (nova_fail_pop сделан, _nova_fail_top → outer);
+ * site-специфичный пролог (with-Fail: restore handlers/interrupt) выполнен ДО
+ * вызова. Compose (nv_compose_suppressed / panic-dominance) остаётся в codegen —
+ * helper делает ТОЛЬКО single-frame terminal transport. Для re-thrown kind НЕ
+ * возвращается (longjmp через nova_rethrow_with_suppressed, либо abort с dump
+ * если нет outer-frame). */
+typedef enum {
+    NOVA_SCOPE_EXIT_CATCH       = 0,  /* with-Fail: USER/USER_TYPED caught, PANIC/CANCEL re-thrown */
+    NOVA_SCOPE_EXIT_TRANSPARENT = 1,  /* defer/consume: любой не-Success kind re-thrown */
+} NovaScopeExitPolicy;
+
+static inline void nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy policy) {
+    if (primary->error_kind == NOVA_THROW_PANIC) {
+        /* D13: panic = bug/abort-class — всегда пробрасывается (chain сохранён). */
+        nova_rethrow_with_suppressed(primary);
+        return;  /* unreachable */
+    }
+    if (primary->error_kind == NOVA_THROW_CANCEL) {
+        /* Структурная отмена — reason_ptr сохраняется копией из frame (§5). */
+        nova_rethrow_with_suppressed(primary);
+        return;  /* unreachable */
+    }
+    /* USER / USER_TYPED — recoverable throw. */
+    if (policy == NOVA_SCOPE_EXIT_TRANSPARENT) {
+        nova_rethrow_with_suppressed(primary);
+        return;  /* unreachable */
+    }
+    /* CATCH: handler отработал — вызывающий сам ставит result=default. */
+}
+
 /* Accessors для MultiError prelude — count + indexed access на chain.
  * Caller (codegen MultiError @suppressed()) uses этих для materialize'а
  * Nova-side []Err array. */

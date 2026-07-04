@@ -4,7 +4,7 @@
 // (не Failure) через NOVA_THROW_PANIC error_kind.
 //
 // Acceptance:
-// - A110.1.4.g: panic → outcome=Panic(msg), on_exit fires, panic re-raises.
+// - A110.1.4.g: panic → outcome=Panic(msg), cleanup fires, panic re-raises.
 
 module nova_tests.plan110
 
@@ -14,7 +14,7 @@ type ResY3 {
 
 fn ResY3.new(id int) -> ResY3 => { id }
 
-fn ResY3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn ResY3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn use_panicking() -> int {
     consume r = ResY3.new(99) {
@@ -23,7 +23,7 @@ fn use_panicking() -> int {
     }
 }
 
-test "Plan 110.1.4.g: panic в body → on_exit(Panic) → re-panic" {
+test "Plan 110.1.4.g: panic в body → cleanup(Panic) → re-panic" {
     // Panic propagation требует test_frame handler;
     // здесь верифицируем что compile + link works (на runtime
     // panic пробрасывается до test_frame и реально test FAILED).

@@ -11,7 +11,7 @@ type StressRes3 {
 }
 
 fn StressRes3.new(depth int) -> StressRes3 => { depth }
-fn StressRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn StressRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 // 10 nested consume scopes; accumulates each binding's depth into sum.
 fn use_deep_nested() -> int {

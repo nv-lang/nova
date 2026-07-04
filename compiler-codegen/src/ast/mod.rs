@@ -395,9 +395,9 @@ pub struct FnDecl {
     pub impl_protocols: Vec<String>,
     /// Plan 110.7.3.a (D188 §FFI): `#cancel_safe` attribute на `external fn`.
     /// Attests что C-side function is cancel-safe — can be invoked from inside
-    /// ConsumeScope on_exit body (under cancel-shield). Without this attribute,
+    /// ConsumeScope cleanup body (under cancel-shield). Without this attribute,
     /// the cancel-unsafe lint (W_FFI_CANCEL_UNSAFE) fires at the call site
-    /// when the call appears inside an on_exit body. Default `false`.
+    /// when the call appears inside an cleanup body. Default `false`.
     pub cancel_safe_attr: bool,
     /// Plan 33.1 (D24): контракты после сигнатуры, до тела.
     /// Пустой вектор у функций без контрактов (backward-compat).
@@ -1859,6 +1859,11 @@ pub enum Stmt {
     /// scope (normal/return/throw/panic/interrupt). НЕ на exit(N, msg).
     Defer {
         body: Expr,
+        /// Plan 173 Ф.2 (D314): `defer(o ScopeOutcome) { … }` — опциональный
+        /// outcome-биндинг. `None` = плейн `defer` (byte-identical). `Some(name)`
+        /// = тело получает исход через `name: ScopeOutcome` (Success/Failure/
+        /// Panic). Материализация `ScopeOutcome*` на каждом exit-path — B2 codegen.
+        outcome_binding: Option<String>,
         span: Span,
     },
     // Plan 173 Ф.1 (#4, D189 hard cutover, [M-172-errdefer-okdefer-dead-surface]):
@@ -1868,7 +1873,7 @@ pub enum Stmt {
     // они никогда не конструировались. Замена: `defer(o ScopeOutcome)` (Ф.2)
     // / `consume X = e { body }` (D188). Плейн `defer` (выше) остаётся.
     /// Plan 110 (D188): `consume IDENT (':' TYPE)? '=' EXPR '{' BODY '}'`
-    /// — scope-block с автоматическим вызовом `Consumable.on_exit` при
+    /// — scope-block с автоматическим вызовом `Cleanup.cleanup` при
     /// выходе из BODY (success/throw/panic/cancel).
     ///
     /// Parser detect block-form через lookahead `{` после init EXPR
@@ -1879,7 +1884,7 @@ pub enum Stmt {
     /// block).
     /// `type_annot`: optional type annotation (parallel с `LetDecl`).
     /// `init`: expression — должна resolve к типу implementing
-    /// `Consumable[E]` (D196 init type constraints; D188 R1 partial-
+    /// `Cleanup[E]` (D196 init type constraints; D188 R1 partial-
     /// construction safety).
     /// `body`: scope body — sequence of statements + optional trailing
     /// expression.
@@ -1887,7 +1892,7 @@ pub enum Stmt {
     /// Codegen pipeline:
     /// - Plan 110.1.4: basic desugaring (sync, no shield/timeout).
     /// - Plan 110.2: cancel-shield + 3-level timeout resolution.
-    /// - Plan 110.1.7: D194 hot-path elision для `Consumable[never]`.
+    /// - Plan 110.1.7: D194 hot-path elision для `Cleanup[never]`.
     ///
     /// См. spec/decisions/03-syntax.md D188.
     ConsumeScope {

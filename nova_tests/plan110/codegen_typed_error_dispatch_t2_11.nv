@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Plan 110.1.4.h T2.11 (D85 + D188 R3 cancel-shield): typed error
-// dispatch в on_exit body через ScopeOutcome match → outcome message
+// dispatch в cleanup body через ScopeOutcome match → outcome message
 // inspection. Bootstrap version (str-prefix discrimination); full
 // `if err is T` narrowing после payload `any` migration.
 
@@ -13,9 +13,9 @@ type TxRes3 {
 
 fn TxRes3.new(id int) -> TxRes3 => { id }
 
-// on_exit inspects outcome variant + (bootstrap) message prefix
+// cleanup inspects outcome variant + (bootstrap) message prefix
 // для cancel-vs-throw discrimination.
-fn TxRes3 consume @on_exit(outcome ScopeOutcome) -> () {
+fn TxRes3 consume @cleanup(outcome ScopeOutcome) -> () {
     match outcome {
         Success => ()
         Failure(msg) => {

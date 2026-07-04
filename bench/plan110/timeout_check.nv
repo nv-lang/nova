@@ -25,7 +25,7 @@ type R {
 }
 
 fn R.new(id int) -> R => { id }
-fn R consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn R consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 bench "Time.sleep(0) x100k под shield (deadline check + mask-defer cancel)" {
     measure {

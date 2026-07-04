@@ -1382,12 +1382,12 @@ export type OnceGuard consume { ptr int }
 #stable(since = "0.1")
 export extern "nova" fn MutexGuard consume @unlock()
 
-/// Plan 110 D194 (Consumable[never]): on_exit calls unlock. Used by
+/// Plan 110 D194 (Cleanup[never]): cleanup calls unlock. Used by
 /// `consume g = mu.acquire() { body }` scope-block automatic cleanup.
 /// Infallible (never throws); same C impl as unlock.
 #wakes
 #stable(since = "0.1")
-export extern "nova" fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn MutexGuard consume @cleanup(_outcome ScopeOutcome) -> ()
 
 // ─── ReadGuard methods ───────────────────────────────────────────
 
@@ -1396,10 +1396,10 @@ export extern "nova" fn MutexGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 #stable(since = "0.1")
 export extern "nova" fn ReadGuard consume @unlock()
 
-/// Plan 110 D194 (Consumable[never]): on_exit calls unlock.
+/// Plan 110 D194 (Cleanup[never]): cleanup calls unlock.
 #wakes
 #stable(since = "0.1")
-export extern "nova" fn ReadGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn ReadGuard consume @cleanup(_outcome ScopeOutcome) -> ()
 
 // ─── WriteGuard methods ──────────────────────────────────────────
 
@@ -1408,10 +1408,10 @@ export extern "nova" fn ReadGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 #stable(since = "0.1")
 export extern "nova" fn WriteGuard consume @unlock()
 
-/// Plan 110 D194 (Consumable[never]): on_exit calls unlock.
+/// Plan 110 D194 (Cleanup[never]): cleanup calls unlock.
 #wakes
 #stable(since = "0.1")
-export extern "nova" fn WriteGuard consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn WriteGuard consume @cleanup(_outcome ScopeOutcome) -> ()
 
 // ─── Permit methods ──────────────────────────────────────────────
 
@@ -1422,10 +1422,10 @@ export extern "nova" fn WriteGuard consume @on_exit(_outcome ScopeOutcome) -> ()
 #stable(since = "0.1")
 export extern "nova" fn Permit consume @release()
 
-/// Plan 110 D194 (Consumable[never]): on_exit calls release.
+/// Plan 110 D194 (Cleanup[never]): cleanup calls release.
 #wakes
 #stable(since = "0.1")
-export extern "nova" fn Permit consume @on_exit(_outcome ScopeOutcome) -> ()
+export extern "nova" fn Permit consume @cleanup(_outcome ScopeOutcome) -> ()
 
 // ─── OnceGuard methods ───────────────────────────────────────────
 

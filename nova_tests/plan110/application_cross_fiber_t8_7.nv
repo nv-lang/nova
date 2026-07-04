@@ -17,7 +17,7 @@ type Res3 {
 }
 
 fn Res3.new(id int) -> Res3 => { id }
-fn Res3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Res3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot" {
     mut child_observed = -1
@@ -29,12 +29,12 @@ test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot
             return 750
         }
     } {
-        with Cleanup = effect Cleanup {
-            on_scope_enter(_label, timeout_ms) {
+        with ResourceTrace = effect ResourceTrace {
+            on_resource_enter(_label, timeout_ms) {
                 child_observed = timeout_ms
                 return ()
             }
-            on_scope_exit(_label, _outcome) {
+            on_resource_exit(_label, _outcome) {
                 return ()
             }
         } {

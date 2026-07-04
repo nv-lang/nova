@@ -23,12 +23,12 @@ type Worker3 {
 
 fn Worker3.new(id int) -> Worker3 => { id }
 
-fn Worker3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn Worker3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 test "Plan 110.6.5 A110.6.5.a: many fibers entering consume scope under cancel pressure" {
     // Goal: verify shield runtime does not crash / deadlock when many
     // fibers traverse ConsumeScope concurrently. Each body increments
-    // cancel_mask_count atomically (D188 R3), runs on_exit, decrements.
+    // cancel_mask_count atomically (D188 R3), runs cleanup, decrements.
     // No cross-fiber data race (each worker owns its local Worker3).
     //
     // NOTE: explicit `Time.sleep(0)` inside body removed после

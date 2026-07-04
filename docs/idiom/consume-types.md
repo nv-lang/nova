@@ -25,17 +25,17 @@ Heuristic: «**забыть → leak / inconsistency**».
 
 ## Canonical lifecycle
 
-### Cover через `Consumable.on_exit` (D188)
+### Cover через `Cleanup.@cleanup` (D188)
 
 > `errdefer`/`okdefer` УДАЛЕНЫ ([D189](../../spec/decisions/03-syntax.md#d189)) —
-> success/error/panic-пути consume-ресурса покрывает `on_exit(outcome)`. Подробно →
-> [consume-scope-cleanup.md](consume-scope-cleanup.md); модель panic/fail/defer/on_exit →
+> success/error/panic-пути consume-ресурса покрывает `@cleanup(outcome)`. Подробно →
+> [consume-scope-cleanup.md](consume-scope-cleanup.md); модель panic/fail/defer/@cleanup →
 > [error-and-cleanup-model.md](error-and-cleanup-model.md).
 
 ```nova
 type Transaction consume { /* ... */ }
 
-fn Transaction consume @on_exit(outcome ScopeOutcome) Fail[OrderErr] -> () {
+fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[OrderErr] -> () {
     match outcome {
         Success    => @commit()?      // success → commit
         Failure(_) => @rollback()?    // error   → rollback
@@ -48,14 +48,14 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
         ro order = db.insert(data)?
         db.notify(order)?
         Receipt { id: order.id }
-    }   // выход из блока → on_exit(outcome), exactly-once
+    }   // выход из блока → @cleanup(outcome), exactly-once
 }
 ```
 
-`on_exit` вызывается ровно один раз на любом exit-path (success / throw / panic / cancel);
+`@cleanup` вызывается ровно один раз на любом exit-path (success / throw / panic / cancel);
 failable cleanup композируется через [D158](../../spec/decisions/03-syntax.md#d158) (MultiError).
 
-### Альтернатива — explicit commit + флаг-паттерн (без Consumable)
+### Альтернатива — explicit commit + флаг-паттерн (без Cleanup)
 
 ```nova
 fn process() Fail[Err] -> () {
@@ -242,7 +242,7 @@ commit/rollback choice важен.
 - [D156](../../spec/decisions/02-types.md#d156) — generic `[T consume]`.
 - [D157](../../spec/decisions/05-memory.md#d157) — implicit view default + closure capture + match consume.
 - [D158-D162](../../spec/decisions/03-syntax.md#d158) — defer + cleanup family
-  (errdefer/okdefer ретракнуты [D189](../../spec/decisions/03-syntax.md#d189) → D188 on_exit).
+  (errdefer/okdefer ретракнуты [D189](../../spec/decisions/03-syntax.md#d189) → D188 @cleanup).
 - [D163](../../spec/decisions/02-types.md#d163) — FFI `external fn`.
 - [D164](../../spec/decisions/02-types.md#d164) — cross-module.
 

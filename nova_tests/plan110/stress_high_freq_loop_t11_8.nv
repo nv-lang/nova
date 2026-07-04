@@ -2,7 +2,7 @@
 //
 // Plan 110.6.11 T11.8 (D188 R2 exactly-once verification at scale):
 // 100-iteration loop с consume scope (fast: reduced from 1000).
-// Verifies no resource leak, no double-dispatch, on_exit fires exactly once per iteration.
+// Verifies no resource leak, no double-dispatch, cleanup fires exactly once per iteration.
 
 module nova_tests.plan110
 
@@ -11,7 +11,7 @@ type LoopRes3 {
 }
 
 fn LoopRes3.new(id int) -> LoopRes3 => { id }
-fn LoopRes3 consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn LoopRes3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 fn run_loop_iterations1(n int) -> int {
     mut sum = 0
@@ -20,7 +20,7 @@ fn run_loop_iterations1(n int) -> int {
             // Body counts iterations via outer accumulation.
             sum = sum + 1
         }
-        // r.on_exit fires per iteration (R2 exactly-once).
+        // r.cleanup fires per iteration (R2 exactly-once).
     }
     sum
 }

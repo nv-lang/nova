@@ -1356,7 +1356,72 @@ struct DeferEntry {
     active_var: String,
     /// AST body to re-emit at cleanup point. AST stores defer body as
     /// arbitrary `Expr` (parser wraps `defer { ... }` in ExprKind::Block).
+    /// Unused (placeholder `UnitLit`) for a consume-flavored entry — its
+    /// cleanup is the synthetic `_consume_cleanup` call driven by `consume_policy`.
     body: Expr,
+    /// Plan 173 Ф.2.B2 (D314): `defer(o ScopeOutcome) { … }` — имя outcome-
+    /// биндинга. `None` = плейн `defer` (тело эмитится как раньше, byte-identical).
+    /// `Some(name)` = перед телом на каждом exit-path материализуется
+    /// `Nova_ScopeOutcome*` и `#define`'ится как `name` (тело видит исход).
+    outcome_binding: Option<String>,
+    /// Plan 173 Ф.2.B3-merge (D314 §3): `Some` marks this entry as the
+    /// consume-cleanup of a `consume X = e { … }` scope — its cleanup runs
+    /// `Nova_<T>_consume_cleanup(binding, o)` (not a user defer body) plus the
+    /// consume-only policy (cancel-shield leave, ResourceTrace on_resource_exit).
+    /// `None` for every plain `defer` / `defer(o)` entry (unchanged path).
+    consume_policy: Option<ConsumePolicy>,
+}
+
+/// Plan 173 Ф.2.B3-merge (D314 §3): consume-specific policy re-homed onto a
+/// consume-flavored defer-entry. Carries the data the four defer run-sites need
+/// to emit the `@cleanup` dispatch + cancel-shield leave + ResourceTrace exit.
+#[derive(Clone)]
+struct ConsumePolicy {
+    /// Stripped type name (`Nova_` prefix + trailing `*` removed) — drives the
+    /// pinned cleanup symbol `Nova_<type_name>_consume_cleanup` (R2) and the
+    /// ResourceTrace label. `[§0]` symbol comes from the type name, never hardcoded.
+    type_name: String,
+    /// C variable holding the captured resource (`_consume_<binding>_<id>`),
+    /// passed as the receiver of the cleanup call.
+    c_binding: String,
+    /// C `int64_t` local holding the shield's previous deadline (returned by
+    /// `nv_consume_enter_shield`) — restored by `nv_consume_leave_shield`.
+    prev_deadline_var: String,
+    /// Whether the `ResourceTrace` effect is in scope (emit on_resource_exit).
+    has_resource_trace: bool,
+}
+
+/// Plan 173 Ф.2.B3-merge (D314 §4a): how a consume-cleanup that itself fails
+/// composes into the enclosing run-site's error transport.
+enum ConsumeTail {
+    /// FAIL run-site: promote scope fail-frame to PANIC (dominance) or append to
+    /// the suppressed chain (D158) — via `emit_fail_cleanup_compose`.
+    FailChain { failframe: String, chain: String },
+    /// LEAVE run-site: cleanup-PANIC dominates, else fill the leave-compose slot.
+    LeaveComp {
+        comp_has: String,
+        comp_msg: String,
+        comp_kind: String,
+        comp_payload: String,
+        comp_tid: String,
+        comp_chain: String,
+    },
+    /// INTERRUPT / early-exit: a cleanup-failure during unwind is dropped (the
+    /// interrupt value / early-exit control-flow must reach its target); the
+    /// cancel-shield has already been left. [M-173-consume-unwind-cleanup-throw]
+    Swallow,
+}
+
+/// Plan 173 Ф.2.B2 (D314): исход scope-exit для материализации `defer(o ScopeOutcome)`.
+/// Каждый из 4 run-site'ов defer-kernel строит свой вариант.
+enum DeferOutcome<'a> {
+    /// normal end-of-scope / `return v` → `Success`.
+    Success,
+    /// throw / panic / cancel — выбор по `<frame>.error_kind`:
+    /// PANIC→`Panic(msg)`, CANCEL→`Failure("cancel: "+msg)`, else→`Failure(msg)`.
+    FromFrame(&'a str),
+    /// `interrupt v` → `Failure("interrupt")` (спека core.nv:130 «interrupt→Failure»).
+    Interrupt,
 }
 
 /// Plan 20 Ф.4: per-block defer state. One scope per block that contains
@@ -6965,9 +7030,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // handler runs (state captured), then nova_throw → fail-frame catches.
         // (D65 «Fail strict»: fail() is never from caller's perspective.)
         let fframe = if has_fail { Some(self.fresh_tmp()) } else { None };
+        // Plan 173 Ф.2.C: `caught` flag distinguishes «fail-frame caught a throw»
+        // from normal/interrupt completion, so the unified terminal transport
+        // (nova_scope_exit) can run AFTER the common pop/restore epilogue instead
+        // of duplicating per-kind dispatch inside the catch-branch. Declared
+        // before the setjmp (не modified between setjmp/longjmp — set only in the
+        // caught-branch that runs after longjmp returns → well-defined).
+        let caught_var = if has_fail { Some(self.fresh_tmp()) } else { None };
         if let Some(ff) = &fframe {
             self.line(&format!("NovaFailFrame {};", ff));
             self.line(&format!("nova_fail_push(&{});", ff));
+        }
+        if let Some(cv) = &caught_var {
+            self.line(&format!("int {} = 0;", cv));
         }
 
         // Plan 39 Issue A: infer T_body to pick correct result slot.
@@ -7114,55 +7189,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
-            // Plan 49 Ф.3: kind-aware re-dispatch.
-            // CANCEL throw НЕ обработан этим Fail-handler'ом (отмена
-            // структурна, не ошибка) — re-throw нагору с тем же reason.
-            // Pop fail-frame ПЕРЕД re-throw чтобы next-outer-frame
-            // получил throw, не наш собственный (защита от двойного unwind,
-            // см. Plan 49 Риск R3).
-            self.line(&format!("if ({ff}.error_kind == NOVA_THROW_CANCEL) {{",
-                ff = ff));
-            self.indent += 1;
-            self.line("nova_fail_pop();");
-            // Также pop interrupt frame чтобы инвариант stack discipline
-            // сохранился (open/close симметрично с normal path).
-            self.line("nova_interrupt_pop();");
-            // Restore handlers — отмена не должна оставить scope handlers
-            // активным; emit_with normal-path делает то же ниже.
-            for (effect_name, prev_var, _hv) in saves.iter().rev() {
-                // Plan 61 followup #4: per-E slot имя — `_nova_handler_Fail_<E>`,
-                // saves хранит key `Fail_<E_mangled>` именно с этим суффиксом.
-                self.line(&format!("_nova_handler_{eff} = {prev};",
-                    eff = effect_name, prev = prev_var));
-            }
-            self.line(&format!(
-                "nova_throw_cancel_reason({ff}.error_msg, {ff}.error_reason_ptr);",
-                ff = ff));
-            self.indent -= 1;
-            self.line("}");
-            // Plan 173 Ф.1 (D13 soundness fix, [M-172-with-fail-swallows-panic]):
-            // PANIC пойман этим fail-frame'ом, но `with Fail[E]` ловит ТОЛЬКО
-            // USER/USER_TYPED (recoverable errors) — panic (bug/abort-class) НЕ
-            // должен глотаться (D13). Ранее PANIC проваливался в USER-path ниже
-            // → result=default, выполнение продолжалось. Теперь re-throw нагору
-            // (зеркало CANCEL): pop frame + restore handlers/interrupt, затем
-            // nova_rethrow_with_suppressed — сохраняет kind=PANIC + msg + payload
-            // + suppressed-chain (и корректно abort'ит с dump если нет outer-frame).
-            self.line(&format!("if ({ff}.error_kind == NOVA_THROW_PANIC) {{",
-                ff = ff));
-            self.indent += 1;
-            self.line("nova_fail_pop();");
-            self.line("nova_interrupt_pop();");
-            for (effect_name, prev_var, _hv) in saves.iter().rev() {
-                self.line(&format!("_nova_handler_{eff} = {prev};",
-                    eff = effect_name, prev = prev_var));
-            }
-            self.line(&format!("nova_rethrow_with_suppressed(&{ff});", ff = ff));
-            self.indent -= 1;
-            self.line("}");
-            // USER path: handler already ran; result is unit/zero. (Existing
-            // semantics: D65 Fail-handler сам decide'ит результат через
-            // interrupt v ИЛИ throw; если throw — мы здесь, результат default).
+            // Plan 173 Ф.2.C: fail-frame caught a throw. Раньше здесь был
+            // дублированный per-kind dispatch (if CANCEL {…throw_cancel…} /
+            // if PANIC {…rethrow…} / USER default) — класс дефекта «кадр забыл
+            // kind» ([M-172-with-fail-swallows-panic]). Теперь: пометить `caught`
+            // + result=default; ЕДИНЫЙ terminal-transport (nova_scope_exit,
+            // policy=CATCH) выполняется ПОСЛЕ общего pop/restore epilogue ниже.
+            // USER/USER_TYPED — handler отработал, result=default (helper вернётся);
+            // PANIC/CANCEL — helper re-throw'ит нагору (longjmp), result не важен.
+            let cv = caught_var.as_ref().expect("caught_var present when fframe is");
+            self.line(&format!("{} = 1;", cv));
             match category {
                 WithResultCategory::IntLike | WithResultCategory::UnitVoid => {
                     self.line(&format!("{} = ((nova_int)0LL);", result_tmp));
@@ -7185,6 +7221,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 eff = effect_name, prev = prev_var));
         }
         self.line("nova_interrupt_pop();");
+
+        // Plan 173 Ф.2.C: ЕДИНАЯ точка терминальной политики (CATCH). Выполняется
+        // ПОСЛЕ pop(fail) + restore(handlers) + pop(interrupt) — site-специфичный
+        // пролог сделан (контракт nova_scope_exit). Для USER/USER_TYPED helper
+        // возвращается (result уже = default); для PANIC/CANCEL — re-throw нагору
+        // (longjmp), минуя finalizer-fire ниже (сохраняет прежний порядок:
+        // CANCEL/PANIC re-throw НЕ запускал Application-finalizer'ы). Порядок
+        // restore-vs-interrupt_pop vs прежним (pop→intpop→restore) не наблюдаем —
+        // независимые TLS-слоты.
+        if let Some(ff) = &fframe {
+            let cv = caught_var.as_ref().expect("caught_var present when fframe is");
+            self.line(&format!("if ({}) {{ nova_scope_exit(&{}, NOVA_SCOPE_EXIT_CATCH); }}", cv, ff));
+        }
 
         // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: fire
         // finalizers LIFO + restore prev TLS. Runs unconditionally на
@@ -18355,14 +18404,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mut idx = 0usize;
         for s in &block.stmts {
             // Plan 173 Ф.1 (#4): only plain `defer` remains (D189).
-            let body = match s {
-                Stmt::Defer { body, .. } => body,
+            let (body, outcome_binding) = match s {
+                Stmt::Defer { body, outcome_binding, .. } => (body, outcome_binding.clone()),
                 _ => continue,
             };
             let var = format!("_defer_{}_{}_active", block_id, idx);
             entries.push(DeferEntry {
                 active_var: var.clone(),
                 body: body.clone(),
+                outcome_binding,
+                consume_policy: None,
             });
             self.line(&format!("int {} = 0;", var));
             idx += 1;
@@ -18450,20 +18501,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.line(&format!("{}.error_suppressed = NULL;", df));
             self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
             self.indent += 1;
-            let _ = self.emit_defer_body_void(&entry.body);
+            // Plan 173 Ф.2.B2: throw/panic/cancel-path — outcome из scope fail-frame.
+            let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::FromFrame(&failframe_var));
             self.line("nova_fail_pop();");
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
             self.line("nova_fail_pop();");
-            // Append к suppressed chain (primary stays = original throw).
-            self.line("NovaErrorChain* _node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));");
-            self.line(&format!("_node->msg = {}.error_msg;", df));
-            self.line(&format!("_node->kind = {}.error_kind;", df));
-            self.line(&format!("_node->user_payload = {}.error_user_payload;", df));
-            self.line(&format!("_node->user_type_id = {}.error_user_type_id;", df));
-            self.line(&format!("_node->next = {};", comp_chain_t));
-            self.line(&format!("{} = _node;", comp_chain_t));
+            // Plan 173 Ф.2.B3-merge (D314 §4a): panic-dominance compose.
+            self.emit_fail_cleanup_compose(&df, &failframe_var, &comp_chain_t);
             self.indent -= 1;
             self.line("}");
             self.indent -= 1;
@@ -18472,9 +18518,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line("nova_fail_pop();");
         self.line(&format!("{} = 1;", failframe_popped_var));
         // Plan 100.4.4: re-throw к outer fail-frame preserving primary +
-        // composed suppressed chain (typed payload preserved через nova_rethrow_with_suppressed).
+        // composed suppressed chain (typed payload preserved).
+        // Plan 173 Ф.2.C: TRANSPARENT terminal — единый nova_scope_exit (любой
+        // не-Success kind проброшен через nova_rethrow_with_suppressed; ≡ прежнему
+        // безусловному rethrow, т.к. FAIL run-site достижим только через throw).
         self.line(&format!("{}.error_suppressed = {};", failframe_var, comp_chain_t));
-        self.line(&format!("nova_rethrow_with_suppressed(&{});", failframe_var));
+        self.line(&format!("nova_scope_exit(&{}, NOVA_SCOPE_EXIT_TRANSPARENT);", failframe_var));
         self.indent -= 1;
         self.line("}");
         // Plan 20 Ф.8 (2): interrupt-path cleanup для `defer`.
@@ -18500,7 +18549,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         for entry in entries.iter().rev() {
             self.line(&format!("if ({}) {{", entry.active_var));
             self.indent += 1;
-            let _ = self.emit_defer_body_void(&entry.body);
+            // Plan 173 Ф.2.B2: interrupt-path → Failure (core.nv:130).
+            let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::Interrupt);
             self.indent -= 1;
             self.line("}");
         }
@@ -18566,6 +18616,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line(&format!("NovaErrorChain* {} = NULL;", comp_chain));
         self.line(&format!("int {} = 0;", comp_has));
         for (i, entry) in scope.entries.iter().enumerate().rev() {
+            // Plan 173 Ф.2.B3-merge (D314 §3): consume-flavored entry → normal
+            // scope exit runs `@cleanup(Success)` + policy (shield-leave, RT-exit),
+            // composing a failing cleanup into the leave-compose slot (§4a).
+            if let Some(policy) = &entry.consume_policy {
+                self.line(&format!("if ({}) {{", entry.active_var));
+                self.indent += 1;
+                self.line(&format!("{} = 0;", entry.active_var));
+                let df = format!("_defer_{}_{}_cdf", scope.block_id, i);
+                self.emit_consume_entry_cleanup(policy, DeferOutcome::Success, &df, ConsumeTail::LeaveComp {
+                    comp_has: comp_has.clone(),
+                    comp_msg: comp_msg.clone(),
+                    comp_kind: comp_kind.clone(),
+                    comp_payload: comp_payload.clone(),
+                    comp_tid: comp_tid.clone(),
+                    comp_chain: comp_chain.clone(),
+                });
+                self.indent -= 1;
+                self.line("}");
+                continue;
+            }
             // Plan 173 Ф.1 (#4): все defer'ы плейн — бегут на success-path.
             let df = format!("_defer_{}_{}_df", scope.block_id, i);
             self.line(&format!("if ({}) {{", entry.active_var));
@@ -18576,14 +18646,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.line(&format!("{}.error_suppressed = NULL;", df));
             self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
             self.indent += 1;
-            let _ = self.emit_defer_body_void(&entry.body);
+            // Plan 173 Ф.2.B2: normal-exit path → Success.
+            let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::Success);
             self.line("nova_fail_pop();");
             self.indent -= 1;
             self.line("} else {");
             self.indent += 1;
             self.line("nova_fail_pop();");
-            // Compose: first fail → primary; later fails → suppressed LIFO chain.
-            self.line(&format!("if (!{}) {{", comp_has));
+            // Plan 173 Ф.2.B3-merge (D314 §4a): panic-dominance. A cleanup that
+            // PANICs dominates any prior cleanup-throw-primary (D13: panic =
+            // abort-class bug > recoverable throw) — override the compose slot to
+            // PANIC. Otherwise: first fail → primary; later fails → suppressed
+            // LIFO chain (D158).
+            self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", df));
+            self.indent += 1;
+            self.line(&format!("{} = 1;", comp_has));
+            self.line(&format!("{} = {}.error_msg;", comp_msg, df));
+            self.line(&format!("{} = NOVA_THROW_PANIC;", comp_kind));
+            self.line(&format!("{} = {}.error_user_payload;", comp_payload, df));
+            self.line(&format!("{} = {}.error_user_type_id;", comp_tid, df));
+            self.indent -= 1;
+            self.line(&format!("}} else if (!{}) {{", comp_has));
             self.indent += 1;
             self.line(&format!("{} = 1;", comp_has));
             self.line(&format!("{} = {}.error_msg;", comp_msg, df));
@@ -18659,10 +18742,26 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let scopes = std::mem::take(&mut self.defer_scopes);
         'outer: for scope in scopes.iter().rev() {
             // Early exit via return — run all defers (Plan 173 Ф.1 #4: plain-only).
-            for entry in scope.entries.iter().rev() {
+            for (i, entry) in scope.entries.iter().enumerate().rev() {
+                // Plan 173 Ф.2.B3-merge (D314 §3): consume-flavored entry → run
+                // `@cleanup(Success)` + policy on the early exit (return/break/
+                // continue). The `Return` handler stashes the value BEFORE this,
+                // so the cleanup cannot invalidate it. Cleanup-failure during the
+                // exit is dropped (Swallow) — the control-flow must reach its target.
+                if let Some(policy) = &entry.consume_policy {
+                    self.line(&format!("if ({}) {{", entry.active_var));
+                    self.indent += 1;
+                    self.line(&format!("{} = 0;", entry.active_var));
+                    let df = format!("_defer_{}_{}_ecdf", scope.block_id, i);
+                    self.emit_consume_entry_cleanup(policy, DeferOutcome::Success, &df, ConsumeTail::Swallow);
+                    self.indent -= 1;
+                    self.line("}");
+                    continue;
+                }
                 self.line(&format!("if ({}) {{", entry.active_var));
                 self.indent += 1;
-                let _ = self.emit_defer_body_void(&entry.body);
+                // Plan 173 Ф.2.B2: early-exit (return/break/continue) → Success.
+                let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::Success);
                 self.line(&format!("{} = 0;", entry.active_var));
                 self.indent -= 1;
                 self.line("}");
@@ -18914,6 +19013,276 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
         }
         Ok(())
+    }
+
+    /// Plan 173 Ф.2.B2 (D314): эмитит тело `defer`'а, материализуя `ScopeOutcome`
+    /// для `defer(o ScopeOutcome) { … }`. Для плейн-defer (`binding == None`) —
+    /// просто `emit_defer_body_void` (path byte-identical). Иначе: объявляет
+    /// per-path `Nova_ScopeOutcome* <tmp>`, `#define`'ит его как имя биндинга и
+    /// регистрирует в `var_types` (тело видит `o: ScopeOutcome`), затем `#undef`.
+    /// Plan 173 Ф.2.B3 (D314): материализует `Nova_ScopeOutcome* <c_local>` для
+    /// заданного exit-path (Success / Interrupt / FromFrame). Единый примитив,
+    /// переиспользуемый телом `defer(o)` И consume-cleanup'ом (десугар D314 §3).
+    /// Объявляет + инициализирует `c_local`; вызывающий уже сгенерил имя.
+    fn materialize_scope_outcome(&mut self, c_local: &str, outcome: DeferOutcome) {
+        match outcome {
+            DeferOutcome::Success => {
+                self.line(&format!("Nova_ScopeOutcome* {} = nova_make_ScopeOutcome_Success();", c_local));
+            }
+            DeferOutcome::Interrupt => {
+                self.line(&format!(
+                    "Nova_ScopeOutcome* {} = nova_make_ScopeOutcome_Failure(nova_str_from_cstr(\"interrupt\"));",
+                    c_local));
+            }
+            DeferOutcome::FromFrame(frame) => {
+                self.line(&format!("Nova_ScopeOutcome* {};", c_local));
+                self.assign_scope_outcome_from_frame(c_local, frame);
+            }
+        }
+    }
+
+    /// Plan 173 Ф.2.B3 (D314): присваивает уже-объявленному `var
+    /// Nova_ScopeOutcome*` исход из fail-frame по `<frame>.error_kind`:
+    /// PANIC→`Panic(msg)`, CANCEL→`Failure("cancel: "+msg)` (D90 §7 marker),
+    /// иначе→`Failure(msg)`. Единый источник для defer(o)-FromFrame И
+    /// consume-cleanup (десугар D314: обе поверхности строят исход одинаково).
+    fn assign_scope_outcome_from_frame(&mut self, var: &str, frame: &str) {
+        self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", frame));
+        self.indent += 1;
+        self.line(&format!("{} = nova_make_ScopeOutcome_Panic({}.error_msg);", var, frame));
+        self.indent -= 1;
+        self.line(&format!("}} else if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame));
+        self.indent += 1;
+        self.line(&format!("{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));", var, frame));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!("{} = nova_make_ScopeOutcome_Failure({}.error_msg);", var, frame));
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    fn emit_defer_body_with_outcome(&mut self, binding: &Option<String>, body: &Expr, outcome: DeferOutcome) -> Result<(), String> {
+        let Some(name) = binding else {
+            return self.emit_defer_body_void(body);
+        };
+        let c_local = self.fresh_tmp();
+        self.materialize_scope_outcome(&c_local, outcome);
+        self.line(&format!("#define {} {}", name, c_local));
+        let prev = self.var_types.insert(name.clone(), "Nova_ScopeOutcome*".to_string());
+        let r = self.emit_defer_body_void(body);
+        self.line(&format!("#undef {}", name));
+        match prev {
+            Some(p) => { self.var_types.insert(name.clone(), p); }
+            None => { self.var_types.remove(name); }
+        }
+        r
+    }
+
+    /// Plan 173 Ф.2.B3-merge (D314 §4a): FAIL-path cleanup-error composition with
+    /// **panic-dominance**. When a cleanup body (defer / consume-cleanup) itself
+    /// fails while the scope is already unwinding a body-throw, compose per the
+    /// unified table (D13: `panic` = abort-class bug, strictly more urgent than a
+    /// recoverable `throw`):
+    ///   * cleanup **PANIC** + body **throw** → cleanup panic DOMINATES: promote
+    ///     the scope fail-frame to `PANIC` so the generic `nova_rethrow_with_suppressed`
+    ///     propagates it (body-throw suppressed, matching monolith `nv_panic`).
+    ///   * cleanup PANIC + body **panic** (failframe already PANIC) → body-panic
+    ///     stays primary; cleanup appended to the suppressed chain.
+    ///   * cleanup **throw** (USER/CANCEL) → append to suppressed chain (D158).
+    /// `df` = per-cleanup NovaFailFrame (already popped); `failframe_var` = scope
+    /// fail-frame (primary); `comp_chain_t` = running suppressed-chain local.
+    fn emit_fail_cleanup_compose(&mut self, df: &str, failframe_var: &str, comp_chain_t: &str) {
+        self.line(&format!(
+            "if ({df}.error_kind == NOVA_THROW_PANIC && {ff}.error_kind != NOVA_THROW_PANIC) {{",
+            df = df, ff = failframe_var));
+        self.indent += 1;
+        // §4a: cleanup-panic dominates body-throw — promote primary to PANIC.
+        self.line(&format!("{}.error_msg = {}.error_msg;", failframe_var, df));
+        self.line(&format!("{}.error_kind = NOVA_THROW_PANIC;", failframe_var));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        // Append к suppressed chain (primary stays = original throw).
+        self.line("NovaErrorChain* _node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));");
+        self.line(&format!("_node->msg = {}.error_msg;", df));
+        self.line(&format!("_node->kind = {}.error_kind;", df));
+        self.line(&format!("_node->user_payload = {}.error_user_payload;", df));
+        self.line(&format!("_node->user_type_id = {}.error_user_type_id;", df));
+        self.line(&format!("_node->next = {};", comp_chain_t));
+        self.line(&format!("{} = _node;", comp_chain_t));
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    /// Plan 173 Ф.2.B3-merge (D314 §3): emit ONE consume-flavored cleanup entry —
+    /// the desugar of `X.@cleanup(o)` as a defer-entry. Called from all four
+    /// defer run-sites (FAIL / LEAVE / EARLY / INTERRUPT), each supplying the
+    /// exit-path `outcome` + a `tail` describing how a failing cleanup composes.
+    ///
+    /// Structure (mirrors the ex-monolith on_exit-frame, R4b): materialize the
+    /// `ScopeOutcome`, invoke `Nova_<T>_consume_cleanup(binding, o)` inside its OWN
+    /// `NovaFailFrame` (so a throwing/panicking cleanup returns here rather than
+    /// jumping straight to the caller — `nv_consume_leave_shield` ALWAYS runs),
+    /// fire `ResourceTrace.on_resource_exit` only on a clean cleanup, leave the
+    /// cancel-shield unconditionally, and compose per §4a via `tail`.
+    fn emit_consume_entry_cleanup(&mut self, policy: &ConsumePolicy, outcome: DeferOutcome, df: &str, tail: ConsumeTail) {
+        // §0: cleanup symbol derived from the type name (pinned R2), never hardcoded.
+        let cleanup_sym = format!("Nova_{}_consume_cleanup", policy.type_name);
+        let o_local = self.fresh_tmp();
+        self.materialize_scope_outcome(&o_local, outcome);
+        self.line(&format!("NovaFailFrame {};", df));
+        self.line(&format!("nova_fail_push(&{});", df));
+        self.line(&format!("{}.error_suppressed = NULL;", df));
+        self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
+        self.indent += 1;
+        self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
+        self.line("nova_fail_pop();");
+        // Clean cleanup → observability sees the final outcome (skip on throw,
+        // R4b), then leave the shield.
+        if policy.has_resource_trace {
+            self.line(&format!(
+                "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_exit(nova_str_from_cstr(\"{}\"), {}); }}",
+                policy.type_name, o_local));
+        }
+        self.line(&format!("nv_consume_leave_shield({});", policy.prev_deadline_var));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("nova_fail_pop();");
+        // R4b: leave-shield UNCONDITIONAL even when cleanup threw/panicked.
+        self.line(&format!("nv_consume_leave_shield({});", policy.prev_deadline_var));
+        match tail {
+            ConsumeTail::FailChain { failframe, chain } => {
+                self.emit_fail_cleanup_compose(df, &failframe, &chain);
+            }
+            ConsumeTail::LeaveComp { comp_has, comp_msg, comp_kind, comp_payload, comp_tid, comp_chain } => {
+                // §4a: cleanup-PANIC dominates; else fill compose slot (single
+                // consume-entry ⇒ first-fail == primary; chain arm is defensive).
+                self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", df));
+                self.indent += 1;
+                self.line(&format!("{} = 1;", comp_has));
+                self.line(&format!("{} = {}.error_msg;", comp_msg, df));
+                self.line(&format!("{} = NOVA_THROW_PANIC;", comp_kind));
+                self.line(&format!("{} = {}.error_user_payload;", comp_payload, df));
+                self.line(&format!("{} = {}.error_user_type_id;", comp_tid, df));
+                self.indent -= 1;
+                self.line(&format!("}} else if (!{}) {{", comp_has));
+                self.indent += 1;
+                self.line(&format!("{} = 1;", comp_has));
+                self.line(&format!("{} = {}.error_msg;", comp_msg, df));
+                self.line(&format!("{} = {}.error_kind;", comp_kind, df));
+                self.line(&format!("{} = {}.error_user_payload;", comp_payload, df));
+                self.line(&format!("{} = {}.error_user_type_id;", comp_tid, df));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line("NovaErrorChain* _node = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));");
+                self.line(&format!("_node->msg = {}.error_msg;", df));
+                self.line(&format!("_node->kind = {}.error_kind;", df));
+                self.line(&format!("_node->user_payload = {}.error_user_payload;", df));
+                self.line(&format!("_node->user_type_id = {}.error_user_type_id;", df));
+                self.line(&format!("_node->next = {};", comp_chain));
+                self.line(&format!("{} = _node;", comp_chain));
+                self.indent -= 1;
+                self.line("}");
+            }
+            ConsumeTail::Swallow => {
+                // interrupt / early-exit: cleanup-failure during unwind is dropped.
+            }
+        }
+        self.indent -= 1;
+        self.line("}");
+    }
+
+    /// Plan 173 Ф.2.B3-merge (D314 §3): register a `consume X = e { … }` scope as a
+    /// defer-scope carrying exactly ONE consume-flavored entry. Mirrors
+    /// `enter_defer_scope`'s frame set-up (fail-frame + interrupt-frame with their
+    /// setjmp run-sites) but the per-entry cleanup is the consume `@cleanup`
+    /// dispatch (via `emit_consume_entry_cleanup`) rather than a user defer body.
+    /// The caller emits the wrapper prologue (capture + shield-enter + RT-enter)
+    /// BEFORE this, sets the entry active AFTER it, emits the body, then calls
+    /// `leave_defer_scope` (LEAVE run-site handles the consume-entry via its branch).
+    fn enter_consume_defer_scope(&mut self, policy: ConsumePolicy, is_loop_body: bool) -> usize {
+        self.defer_block_counter += 1;
+        let block_id = self.defer_block_counter;
+        let active = format!("_defer_{}_0_active", block_id);
+        // Exactly-once + partial-init: 0 until the caller captures the resource.
+        self.line(&format!("int {} = 0;", active));
+        let failframe_var = format!("_defer_{}_ff", block_id);
+        let failframe_popped_var = format!("_defer_{}_ff_popped", block_id);
+        self.line(&format!("int {} = 0;", failframe_popped_var));
+        self.line(&format!("NovaFailFrame {};", failframe_var));
+        self.line(&format!("nova_fail_push(&{});", failframe_var));
+        self.line(&format!("if (setjmp({}.jmp) != 0) {{", failframe_var));
+        self.indent += 1;
+        // FAIL run-site: body threw/panicked/cancelled. Run the consume-cleanup
+        // with the outcome derived from the fail-frame, compose per §4a; the
+        // generic pop + rethrow below carries the primary (body-throw, or a
+        // cleanup-panic promoted to dominate). Do NOT rethrow before the pop.
+        let comp_chain_t = format!("_defer_{}_throw_chain", block_id);
+        self.line(&format!("NovaErrorChain* {} = {}.error_suppressed;", comp_chain_t, failframe_var));
+        self.line(&format!("if ({}) {{", active));
+        self.indent += 1;
+        self.line(&format!("{} = 0;", active));
+        let df_fail = format!("_defer_{}_0_tcdf", block_id);
+        self.emit_consume_entry_cleanup(
+            &policy,
+            DeferOutcome::FromFrame(&failframe_var),
+            &df_fail,
+            ConsumeTail::FailChain { failframe: failframe_var.clone(), chain: comp_chain_t.clone() });
+        self.indent -= 1;
+        self.line("}");
+        self.line("nova_fail_pop();");
+        self.line(&format!("{} = 1;", failframe_popped_var));
+        self.line(&format!("{}.error_suppressed = {};", failframe_var, comp_chain_t));
+        // Plan 173 Ф.2.C: TRANSPARENT terminal (consume FAIL run-site) — единый
+        // nova_scope_exit; body-throw (или cleanup-panic, промотнутый §4a в PANIC)
+        // проброшен нагору. ≡ прежнему безусловному nova_rethrow_with_suppressed.
+        self.line(&format!("nova_scope_exit(&{}, NOVA_SCOPE_EXIT_TRANSPARENT);", failframe_var));
+        self.indent -= 1;
+        self.line("}");
+        // INTERRUPT run-site: `interrupt v` unwinds through here (D314 §2 aligns
+        // impl to spec — the ex-monolith skipped cleanup on interrupt). Run the
+        // consume-cleanup with a Failure("interrupt") outcome, then re-interrupt.
+        let intframe_var = format!("_defer_{}_if", block_id);
+        let intframe_popped_var = format!("_defer_{}_if_popped", block_id);
+        self.line(&format!("int {} = 0;", intframe_popped_var));
+        self.line(&format!("NovaInterruptFrame {};", intframe_var));
+        self.line(&format!("nova_interrupt_push_defer(&{});", intframe_var));
+        self.line(&format!("if (setjmp({}.jmp) != 0) {{", intframe_var));
+        self.indent += 1;
+        self.line(&format!("if ({}) {{", active));
+        self.indent += 1;
+        self.line(&format!("{} = 0;", active));
+        let df_int = format!("_defer_{}_0_icdf", block_id);
+        self.emit_consume_entry_cleanup(&policy, DeferOutcome::Interrupt, &df_int, ConsumeTail::Swallow);
+        self.indent -= 1;
+        self.line("}");
+        self.line("nova_interrupt_pop();");
+        self.line(&format!("{} = 1;", intframe_popped_var));
+        self.line(&format!(
+            "if ({}.value_ptr) {{ nova_interrupt_ptr({}.value_ptr); }} else {{ nova_interrupt({}.value); }}",
+            intframe_var, intframe_var, intframe_var));
+        self.indent -= 1;
+        self.line("}");
+        self.defer_scopes.push(DeferScope {
+            block_id,
+            entries: vec![DeferEntry {
+                active_var: active,
+                body: Expr::new(ExprKind::UnitLit, Span::default()),
+                outcome_binding: None,
+                consume_policy: Some(policy),
+            }],
+            next_idx: 0,
+            needs_failframe: false,
+            failframe_var,
+            failframe_popped_var,
+            intframe_var,
+            intframe_popped_var,
+            is_loop_body,
+        });
+        block_id
     }
 
     fn emit_block_stmts(&mut self, block: &Block, ret_ty: &str) -> Result<(), String> {
@@ -19984,119 +20353,67 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 scope.next_idx += 1;
                 self.line(&format!("{} = 1;", var));
             }
-            // Plan 110 D188: `consume X = expr { body }` — codegen
-            // (desugaring + on_exit dispatch + cancel-shield + 3-level
-            // timeout resolution + LIFO scope-stack) lands в Plan 110.1.4-
-            // 110.1.8 поэтапно. Здесь — deliberate compile-time gate:
-            // user видит чёткий error code "D188 codegen not yet impl"
-            // вместо silent unsoundness. Это production-grade staged
-            // delivery (не unimplemented!/todo! шорткат).
-            // Plan 110.1.4 ConsumeScope codegen — full D188 desugaring
-            // (success + failure paths, on_exit dispatch + re-raise).
-            //
-            // 110.1.4.a init binding + body emit ✅.
-            // 110.1.4.d setjmp fail-frame для throw catching ✅.
-            // 110.1.4.e on_exit dispatch via *_consume_on_exit symbol ✅.
-            // 110.1.4.f throw re-raise after on_exit на Failure outcome ✅.
-            //
-            // Pending: 110.1.4.b trailing value capture, 110.1.4.g panic
-            // propagation distinct из throw, 110.2 cancel-shield + timeout.
-            //
-            // Desugared C:
-            // {
-            //     <C_type> _consume_<binding>_<id> = <init expr>;
-            //     #define <binding> _consume_<binding>_<id>
-            //     NovaFailFrame _consume_frame_<id>;
-            //     nova_fail_push(&_consume_frame_<id>);
-            //     _consume_frame_<id>.error_suppressed = NULL;
-            //     int _consume_outcome_<id> = 0;
-            //     if (setjmp(_consume_frame_<id>.jmp) == 0) {
-            //         // body stmts
-            //         // body trailing (discarded)
-            //         nova_fail_pop();
-            //     } else {
-            //         nova_fail_pop();
-            //         _consume_outcome_<id> = 1;
-            //     }
-            //     Nova_ScopeOutcome* _outcome_<id>;
-            //     if (_consume_outcome_<id> == 0) {
-            //         _outcome_<id> = nova_make_ScopeOutcome_Success();
-            //     } else {
-            //         _outcome_<id> = nova_make_ScopeOutcome_Failure(
-            //             _consume_frame_<id>.error_msg);
-            //     }
-            //     Nova_<Type>_consume_on_exit(_consume_<binding>_<id>, _outcome_<id>);
-            //     if (_consume_outcome_<id> == 1) {
-            //         nova_rethrow_with_suppressed(&_consume_frame_<id>);
-            //     }
-            //     #undef <binding>
-            // }
-            Stmt::ConsumeScope { binding, type_annot: _, init, body, span } => {
+            // Plan 173 Ф.2.B3-merge (D314 §3): `consume X = e { body }` = sugar over
+            // an outcome-defer. The consume-specific policy (capture + must-consume
+            // exactly-once + partial-init + cancel-shield over body+cleanup + 3-level
+            // timeout + ResourceTrace enter/exit) is re-homed onto a CONSUME-flavored
+            // defer-entry — it is NOT lost by the desugar. `@cleanup` dispatch = the
+            // pinned `Nova_<T>_consume_cleanup` symbol (R2). Structure:
+            //   { <capture>; <#define>; <timeout>; nv_consume_enter_shield → prev;
+            //     on_resource_enter;
+            //     enter_consume_defer_scope  (fail-frame + interrupt-frame run-sites);
+            //     _defer_<id>_0_active = 1;   (resource captured → cleanup armed)
+            //     <body, in its own nested defer-scope>  (LIFO: body-defers < cleanup)
+            //     leave_defer_scope          (normal-exit run-site → @cleanup(Success));
+            //     #undef }
+            // The four run-sites (FAIL/LEAVE/EARLY/INTERRUPT) each drive the cleanup
+            // via `emit_consume_entry_cleanup` with the exit-path outcome, composing a
+            // failing cleanup per §4a (cleanup-PANIC dominates). Routing through the
+            // defer-kernel also aligns impl to spec: `@cleanup` now runs on `interrupt`
+            // (D314 §2) and on early `return`/`break`/`continue` — the ex-monolith
+            // skipped both (raw `return`/no interrupt-frame).
+            Stmt::ConsumeScope { binding, type_annot: _, init, body, .. } => {
                 let init_c_type = self.infer_expr_c_type(init);
                 let init_c_code = self.emit_expr(init)?;
                 let scope_id = self.defer_block_counter;
                 self.defer_block_counter += 1;
                 let c_binding = format!("_consume_{}_{}", binding, scope_id);
-                let frame = format!("_consume_frame_{}", scope_id);
-                let outcome_kind = format!("_consume_outcome_{}", scope_id);
-                let outcome_val = format!("_consume_outcome_val_{}", scope_id);
-                // Strip Nova_ prefix + pointer star для symbol resolution.
+                // Strip Nova_ prefix + pointer star for symbol/label resolution.
                 let type_name = init_c_type
                     .trim_start_matches("Nova_")
                     .trim_end_matches('*')
                     .trim()
                     .to_string();
-                let on_exit_c = format!("Nova_{}_consume_on_exit", type_name);
 
-                self.line(&format!("/* Plan 110.1.4: consume {} = ... {{ ... }} */", binding));
+                self.line(&format!("/* Plan 173 Ф.2.B3-merge: consume {} = ... {{ ... }} */", binding));
                 self.line("{");
                 self.indent += 1;
                 self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
                 self.line(&format!("#define {} {}", binding, c_binding));
-                // Register binding's C type для downstream member/method
-                // dispatch (codegen uses var_types для `r.field` → `r->field`
-                // detection на pointer types).
+                // Register binding's C type for downstream member/method dispatch
+                // (var_types drives `r.field` → `r->field` on pointer types).
                 self.var_types.insert(binding.clone(), init_c_type.clone());
 
-                // Plan 110.2.3 (D192): resolve exit_timeout via 3-level
-                // fallback.
-                //   - Level 1: WithExitTimeout per-type impl (vtable lookup,
-                //     gated on Plan 110.2.5 stdlib protocol impl).
-                //   - Level 2: Application effect handler (Plan 110.4.6.a) —
-                //     check `_nova_handler_Application` and dispatch
-                //     `default_exit_timeout_ms()`.
-                //   - Level 3: hardcoded 5000ms via nv_resolve_exit_timeout_ms().
-                // Plan 110.2.4 (D198): #realtime fn bypasses 3-level resolution,
-                // emits hardcoded 0 (no timeout = realtime-incompatible suspend).
+                // Plan 110.2.3 (D192): resolve exit_timeout via 3-level fallback —
+                //   L1 per-type WithExitTimeout (exit_timeout_ms method),
+                //   L2 Application handler (default_exit_timeout_ms),
+                //   L3 hardcoded (nv_resolve_exit_timeout_ms). #realtime → 0 (D198).
                 let timeout_var = format!("_consume_timeout_{}", scope_id);
-                // Plan 110.9.2 V1.1 [M-110.9.2-with-exit-timeout-level1]:
-                // Level 1 WithExitTimeout per-type protocol lookup. If type
-                // implements `exit_timeout_ms()` method — use it (beats
-                // Application + hardcoded fallback). Symbol pattern
-                // `Nova_<TypeName>_method_exit_timeout_ms`.
                 let level1_key = (type_name.clone(), "exit_timeout_ms".to_string());
                 let has_level1 = self.method_overloads.contains_key(&level1_key);
                 if self.in_realtime {
                     self.line(&format!(
                         "int {} = 0;  /* Plan 110.2.4 (D198): #realtime bypass — no timeout */",
-                        timeout_var
-                    ));
+                        timeout_var));
                 } else if has_level1 {
-                    // Plan 110.9.2 V1.1: per-type WithExitTimeout beats Application + Level 3.
                     self.line(&format!(
                         "int {} = (int)Nova_{}_method_exit_timeout_ms({});  /* Plan 110.9.2 V1.1 Level 1 */",
-                        timeout_var, type_name, c_binding
-                    ));
+                        timeout_var, type_name, c_binding));
                 } else if self.effect_schemas.contains_key("Application") {
-                    // Plan 110.4.6.a (D192 Level 2 + D195): consult Application
-                    // handler если bound; else Level 3 fallback.
                     self.line(&format!("int {};", timeout_var));
-                    self.line(&format!("if (_nova_handler_Application) {{"));
+                    self.line("if (_nova_handler_Application) {");
                     self.indent += 1;
-                    self.line(&format!(
-                        "{} = (int)Nova_Application_default_exit_timeout_ms();",
-                        timeout_var
-                    ));
+                    self.line(&format!("{} = (int)Nova_Application_default_exit_timeout_ms();", timeout_var));
                     self.indent -= 1;
                     self.line("} else {");
                     self.indent += 1;
@@ -20107,46 +20424,37 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
                 }
 
-                // Plan 110.2.1 (D188 R3): enter cancel-shield для body
-                // execution + cleanup. Runtime: nova_cancel_mask_inc +
-                // deadline_ns capture (Plan 110.2.1.a + 110.2.2.a).
-                //
-                // Plan 110.x [M-110.x-cleanup-shield-deadline-underflow]
-                // fix (2026-06-05): enter теперь возвращает prev deadline;
-                // codegen saves в local var per consume-block; leave принимает
-                // его back для restore (fixes nested-shield deadline shadowing).
+                // Plan 110.2.1 (D188 R3): cancel-shield over body + cleanup. enter
+                // returns the previous deadline (nested-shield safety); leave restores
+                // it. Both re-home into the consume-policy so all four run-sites leave.
                 let prev_deadline_var = self.fresh_tmp();
                 self.line(&format!(
                     "int64_t {} = nv_consume_enter_shield({});",
-                    prev_deadline_var, timeout_var
-                ));
+                    prev_deadline_var, timeout_var));
 
-                // Plan 110.4.4.a (D185): Cleanup effect on_scope_enter
-                // dispatch. Observability-only — invoked если user handler
-                // bound, else silent no-op. Guard by NULL-check; the
-                // `_nova_handler_Cleanup` TLS slot is emitted by
-                // emit_effect_type when Cleanup decl is in scope (via
-                // std/prelude/effects.nv import-by-default). Label = type
-                // name; timeout_ms = resolved exit deadline.
-                if self.effect_schemas.contains_key("Cleanup") {
+                // Plan 110.4.4.a (D185, R1): ResourceTrace.on_resource_enter —
+                // observability only (NULL-guarded). Label = type name; arg = timeout.
+                let has_resource_trace = self.effect_schemas.contains_key("ResourceTrace");
+                if has_resource_trace {
                     self.line(&format!(
-                        "if (_nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
-                        type_name, timeout_var
-                    ));
+                        "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
+                        type_name, timeout_var));
                 }
 
-                // 110.1.4.d: setup fail-frame for throw catching.
-                self.line(&format!("NovaFailFrame {};", frame));
-                self.line(&format!("nova_fail_push(&{});", frame));
-                self.line(&format!("{}.error_suppressed = NULL;", frame));
-                self.line(&format!("int {} = 0;  /* 0=Success, 1=Failure, 2=Panic */", outcome_kind));
+                // Register the consume-scope as a defer-scope with ONE consume-entry.
+                let policy = ConsumePolicy {
+                    type_name,
+                    c_binding,
+                    prev_deadline_var,
+                    has_resource_trace,
+                };
+                let consume_block_id = self.enter_consume_defer_scope(policy, false);
+                // Partial-init + exactly-once: arm the cleanup only now that the
+                // resource is captured (init above cannot have thrown past here).
+                self.line(&format!("_defer_{}_0_active = 1;", consume_block_id));
 
-                // setjmp wrap around body.
-                self.line(&format!("if (setjmp({}.jmp) == 0) {{", frame));
-                self.indent += 1;
-                // Plan 110.1.9 T2.5: enter defer scope для body block.
-                // Defer inside body должен fire BEFORE on_exit (LIFO),
-                // используя стандартный defer mechanism.
+                // Body in its OWN nested defer-scope so body-defers run BEFORE the
+                // consume-cleanup (LIFO). enter/leave are no-ops when body has none.
                 let body_defer_id = self.enter_defer_scope(body, false);
                 for s in &body.stmts {
                     self.emit_stmt(s)?;
@@ -20155,167 +20463,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let v = self.emit_expr(t)?;
                     self.line(&format!("(void)({});", v));
                 }
-                // Leave defer scope перед nova_fail_pop — runs defers в LIFO.
                 self.leave_defer_scope(body_defer_id);
-                self.line("nova_fail_pop();");
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
-                self.line("nova_fail_pop();");
-                // 110.1.4.g: distinguish panic (NOVA_THROW_PANIC) vs throw.
-                self.line(&format!(
-                    "{} = ({}.error_kind == NOVA_THROW_PANIC) ? 2 : 1;",
-                    outcome_kind, frame
-                ));
-                self.indent -= 1;
-                self.line("}");
 
-                // 110.1.4.e + 110.1.4.g + 110.5.6: construct outcome + dispatch
-                // on_exit. D90 §7 amend (Plan 110.5.6): cancel-routed throws
-                // (NOVA_THROW_CANCEL) prefixed with "cancel: " marker для
-                // resource discrimination через ScopeOutcome::Failure variant.
-                // Full typed CancelError construction после MultiError payload
-                // any migration ([M-110-multierror-any]).
-                self.line(&format!("Nova_ScopeOutcome* {};", outcome_val));
-                self.line(&format!("if ({} == 0) {{", outcome_kind));
-                self.indent += 1;
-                self.line(&format!("{} = nova_make_ScopeOutcome_Success();", outcome_val));
-                self.indent -= 1;
-                self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
-                self.indent += 1;
-                self.line(&format!(
-                    "/* D90 §7 amend (Plan 110.5.6): cancel marker prepended */"
-                ));
-                self.line(&format!(
-                    "if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame
-                ));
-                self.indent += 1;
-                self.line(&format!(
-                    "{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));",
-                    outcome_val, frame
-                ));
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
-                self.line(&format!(
-                    "{} = nova_make_ScopeOutcome_Failure({}.error_msg);",
-                    outcome_val, frame
-                ));
-                self.indent -= 1;
-                self.line("}");
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
-                self.line(&format!(
-                    "{} = nova_make_ScopeOutcome_Panic({}.error_msg);",
-                    outcome_val, frame
-                ));
-                self.indent -= 1;
-                self.line("}");
-                // Plan 110.x [M-110.x-on-exit-throws-leaks-shield] fix
-                // (2026-06-05): wrap on_exit C-call в own NovaFailFrame
-                // setjmp. If on_exit throws/panics, control returns here
-                // instead of jumping straight to caller's frame — that
-                // way nv_consume_leave_shield ALWAYS runs (deadline
-                // restored, mask decremented), and re-throw composition
-                // follows D193 R5 + D197 R3 (body=primary, on_exit=
-                // suppressed). Pre-fix bug: on_exit ran outside any local
-                // setjmp → on_exit throw skipped leave_shield → shield
-                // mask leaked + deadline never restored (same shadow
-                // class as the R4 bug but через exception path).
-                let on_exit_frame = format!("_consume_on_exit_frame_{}", scope_id);
-                let on_exit_threw = format!("_consume_on_exit_threw_{}", scope_id);
-                self.line(&format!("NovaFailFrame {};", on_exit_frame));
-                self.line(&format!("nova_fail_push(&{});", on_exit_frame));
-                self.line(&format!("{}.error_suppressed = NULL;", on_exit_frame));
-                self.line(&format!(
-                    "int {} = 0;  /* 0=ok, 1=throw, 2=panic */",
-                    on_exit_threw
-                ));
-                self.line(&format!("if (setjmp({}.jmp) == 0) {{", on_exit_frame));
-                self.indent += 1;
-                self.line(&format!("{}({}, {});", on_exit_c, c_binding, outcome_val));
-                self.line("nova_fail_pop();");
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
-                self.line("nova_fail_pop();");
-                self.line(&format!(
-                    "{} = ({}.error_kind == NOVA_THROW_PANIC) ? 2 : 1;",
-                    on_exit_threw, on_exit_frame
-                ));
-                self.indent -= 1;
-                self.line("}");
-
-                // Plan 110.4.4.b (D185): Cleanup effect on_scope_exit
-                // dispatch. Pairs with on_scope_enter — fires after the
-                // user on_exit body has run (so observability sees the
-                // final outcome). Plan 110.x R4b amend: skip когда on_exit
-                // threw — observability sees only successful cleanup.
-                if self.effect_schemas.contains_key("Cleanup") {
-                    self.line(&format!(
-                        "if ({} == 0 && _nova_handler_Cleanup) {{ Nova_Cleanup_on_scope_exit(nova_str_from_cstr(\"{}\"), {}); }}",
-                        on_exit_threw, type_name, outcome_val
-                    ));
-                }
-
-                // Plan 110.2.1: leave cancel-shield before re-propagation.
-                // Pending cancel (if any) delivered после leave_shield.
-                // Plan 110.x deadline-underflow fix (R4): pass prev_deadline
-                // для restoration outer's shield deadline (nested-shield
-                // safety). Plan 110.x R4b: UNCONDITIONAL — runs even if
-                // on_exit threw, ensuring mask/deadline always restored.
-                self.line(&format!(
-                    "nv_consume_leave_shield({});",
-                    prev_deadline_var
-                ));
-
-                // Plan 110.x R4b re-throw composition (D193 R5 + D197 R3):
-                //   1. body panic dominates: nv_panic body's msg, suppress all else.
-                //   2. on_exit panic dominates (если body не panicked).
-                //   3. both throw → body=primary, on_exit=suppressed (compose).
-                //   4. only body throw → rethrow body's frame.
-                //   5. only on_exit throw → rethrow on_exit's frame.
-                //   6. both clean → fall through.
-                self.line(&format!("if ({} == 2) {{", outcome_kind));
-                self.indent += 1;
-                self.line("/* body panic dominates per D196 R3 — on_exit error/panic suppressed */");
-                self.line(&format!("nv_panic({}.error_msg);", frame));
-                self.indent -= 1;
-                self.line(&format!("}} else if ({} == 2) {{", on_exit_threw));
-                self.indent += 1;
-                self.line("/* on_exit panicked; body either OK or threw — panic propagates */");
-                self.line(&format!("nv_panic({}.error_msg);", on_exit_frame));
-                self.indent -= 1;
-                self.line(&format!(
-                    "}} else if ({} == 1 && {} == 1) {{",
-                    outcome_kind, on_exit_threw
-                ));
-                self.indent += 1;
-                self.line("/* D193 + D197 R3: body throw primary, on_exit throw composed как suppressed */");
-                self.line(&format!(
-                    "nv_compose_suppressed(&{}, {}.error_msg, {}.error_kind, {}.error_user_payload, {}.error_user_type_id);",
-                    frame, on_exit_frame, on_exit_frame, on_exit_frame, on_exit_frame
-                ));
-                self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
-                self.indent -= 1;
-                self.line(&format!("}} else if ({} == 1) {{", outcome_kind));
-                self.indent += 1;
-                self.line("/* body throw only; on_exit succeeded */");
-                self.line(&format!("nova_rethrow_with_suppressed(&{});", frame));
-                self.indent -= 1;
-                self.line(&format!("}} else if ({} == 1) {{", on_exit_threw));
-                self.indent += 1;
-                self.line("/* body succeeded; on_exit threw → propagate on_exit's error */");
-                self.line(&format!("nova_rethrow_with_suppressed(&{});", on_exit_frame));
-                self.indent -= 1;
-                self.line("}");
+                // Normal-exit run-site: @cleanup(Success) + policy; a failing cleanup
+                // re-throws to the caller (leave-compose longjmp).
+                self.leave_defer_scope(consume_block_id);
 
                 self.line(&format!("#undef {}", binding));
                 self.var_types.remove(binding);
                 self.indent -= 1;
                 self.line("}");
-                let _ = span;
             }
             // Plan 33.2 Ф.8 (D24): `assert_static <expr>` — intermediate
             // proof obligation. Сейчас (без full SMT body-encoding)

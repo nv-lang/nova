@@ -1739,7 +1739,7 @@ impl Parser {
 
     /// Plan 110.7.3.a (D188 §FFI): parse `#cancel_safe` attribute перед
     /// `external fn` (or any fn). Attests на cancel-safety при invocation
-    /// из ConsumeScope on_exit body. `cancel_safe` — обычный identifier
+    /// из ConsumeScope cleanup body. `cancel_safe` — обычный identifier
     /// (не keyword в lexer'е), парсится контекстно после `#`.
     /// Returns true if attribute present.
     fn parse_cancel_safe_attr(&mut self) -> bool {
@@ -5211,7 +5211,7 @@ impl Parser {
 
     /// Plan 100.1 (D133 / D9): `consume tx = expr` — explicit ownership binding.
     /// Plan 110 (D188): `consume tx = expr { body }` — scope-block с
-    /// автоматическим вызовом `Consumable.on_exit` при выходе.
+    /// автоматическим вызовом `Cleanup.cleanup` при выходе.
     ///
     /// Парсится из `parse_stmt_or_expr` при lookahead KwConsume + Ident/KwMut.
     /// Lookahead `{` после init expr (с disabled trailing-block) решает между
@@ -10119,9 +10119,8 @@ impl Parser {
             }
             // D90: `defer body` — scope-level cleanup. body — expression
             // (включая block-expression `{ ... }`).
-            // D160 Plan 100.4.3: расширено `defer |result_binding| body` —
-            // reason-aware форма. Если после `defer` идёт `|ident|`, парсим
-            // DeferWithResult; иначе обычный Defer.
+            // Plan 173 Ф.2 (D314): расширено `defer(o ScopeOutcome) { body }` —
+            // outcome-несущая форма (замена ретрактнутых errdefer/okdefer/defer|r|).
             TokenKind::KwDefer => {
                 self.bump();
                 // Plan 110.5.7 (D189): `defer |result_binding|` form removed.
@@ -10131,14 +10130,45 @@ impl Parser {
                     return Err(Diagnostic::new(
                         "[D189-removed-defer-result] `defer |result| { ... }` reason-aware \
                          form retracted by Plan 110 D189. Migrate к `consume X = init() { body }` \
-                         scope-block с `match outcome` в `on_exit` method, OR `with Cleanup = \
+                         scope-block с `match outcome` в `cleanup` method, OR `with ResourceTrace = \
                          handler { body }` (D185) для observability-only logging pattern.".to_string(),
                         span,
                     ));
                 }
+                // Plan 173 Ф.2 (D314): `defer(o ScopeOutcome) { … }`. Bounded lookahead —
+                // `( IDENT IDENT` (два идента подряд после `(`) НЕДОСТИЖИМ в валидном
+                // выражении, поэтому однозначно сигнализирует intent defer(o); всё
+                // остальное (`defer (expr)`, `defer { }`, `defer foo()`) идёт на parse_expr.
+                if matches!(self.peek().kind, TokenKind::LParen)
+                    && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at(2).kind, TokenKind::Ident(_))
+                {
+                    let binding = if let TokenKind::Ident(n) = &self.peek_at(1).kind { n.clone() } else { unreachable!() };
+                    let ty_name = if let TokenKind::Ident(n) = &self.peek_at(2).kind { n.clone() } else { unreachable!() };
+                    let ty_span = self.peek_at(2).span;
+                    if ty_name != "ScopeOutcome" {
+                        return Err(Diagnostic::new(format!(
+                            "[E_DEFER_OUTCOME_TYPE] `defer(o {ty})`: outcome-биндинг требует тип \
+                             `ScopeOutcome` (единственный тип исхода, D314), получен `{ty}`.",
+                            ty = ty_name), ty_span));
+                    }
+                    self.bump(); // (
+                    self.bump(); // binding IDENT
+                    self.bump(); // `ScopeOutcome` IDENT
+                    if !matches!(self.peek().kind, TokenKind::RParen) {
+                        return Err(Diagnostic::new(
+                            "[E_DEFER_OUTCOME_ARITY] `defer(o ScopeOutcome) { … }` принимает РОВНО \
+                             один outcome-биндинг (не список); для нескольких значений — вложенные \
+                             `defer` (D314).".to_string(), self.peek().span));
+                    }
+                    self.bump(); // )
+                    let body = self.parse_expr()?;
+                    let span = start.merge(body.span);
+                    return Ok(StmtOrExpr::Stmt(Stmt::Defer { body, outcome_binding: Some(binding), span }));
+                }
                 let body = self.parse_expr()?;
                 let span = start.merge(body.span);
-                Ok(StmtOrExpr::Stmt(Stmt::Defer { body, span }))
+                Ok(StmtOrExpr::Stmt(Stmt::Defer { body, outcome_binding: None, span }))
             }
             // Plan 110.5.7 (D189): `errdefer` retracted. Hard cutover.
             TokenKind::KwErrDefer => {
@@ -10146,7 +10176,7 @@ impl Parser {
                 return Err(Diagnostic::new(
                     "[D189-removed-errdefer] `errdefer { body }` retracted by Plan 110 D189. \
                      Migrate к `consume X = init() { body }` scope-block с `match outcome \
-                     { Failure(_) => ... }` в `on_exit` method, OR use \
+                     { Failure(_) => ... }` в `cleanup` method, OR use \
                      `mut done = false; defer { if !done { ... } }; ...; done = true` для \
                      bare cleanup-state pattern.".to_string(),
                     span,
@@ -10158,7 +10188,7 @@ impl Parser {
                 return Err(Diagnostic::new(
                     "[D189-removed-okdefer] `okdefer { body }` retracted by Plan 110 D189. \
                      Migrate к `consume X = init() { body }` scope-block с `match outcome \
-                     { Success => ... }` в `on_exit` method.".to_string(),
+                     { Success => ... }` в `cleanup` method.".to_string(),
                     span,
                 ));
             }

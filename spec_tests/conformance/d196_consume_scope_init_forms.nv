@@ -1,6 +1,6 @@
 // D196 — Init type constraints для `consume X = expr { body }` (Plan 110, ACTIVE).
 // Норма (spec §D196): init-выражение обязано statically резолвиться в тип с
-// `Consumable[E]` (on_exit). Формы: (1) прямой Consumable; (2) Result-unwrap
+// `Cleanup[E]` (cleanup). Формы: (1) прямой Cleanup; (2) Result-unwrap
 // через `?`. D197 (re-entrance): вложенный consume-scope внутри тела —
 // корректная вложенность. Негатив — neg/d196_init_not_consumable_neg.nv.
 // Шаблоны сверены с nova_tests/plan110 + d188. Один folder-module
@@ -14,7 +14,7 @@ type D196Res {
 fn D196Res.new(id int) -> D196Res => { id }
 fn D196Res.try_new(id int) -> Result[D196Res, str] => Ok(D196Res.new(id))
 
-fn D196Res consume @on_exit(_outcome ScopeOutcome) -> () => ()
+fn D196Res consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
 // D196 form 2: `consume r = expr? { body }` — Result-unwrap init.
 fn d196_use_unwrap() Fail[str] -> int {
@@ -25,7 +25,7 @@ fn d196_use_unwrap() Fail[str] -> int {
     d196_result
 }
 
-test "D196 form 1: прямой Consumable-init, body исполняется (D196)" {
+test "D196 form 1: прямой Cleanup-init, body исполняется (D196)" {
     mut d196_seen = 0
     consume d196_a = D196Res.new(42) {
         d196_seen = d196_a.id

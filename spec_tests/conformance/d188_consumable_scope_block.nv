@@ -1,12 +1,12 @@
-// D188 — `Consumable[E]` protocol + `consume X = expr { body }` scope-block.
-// on_exit() вызывается exactly-once при выходе из body (success/throw/panic/cancel).
+// D188 — `Cleanup[E]` protocol + `consume X = expr { body }` scope-block.
+// cleanup() вызывается exactly-once при выходе из body (success/throw/panic/cancel).
 // E = Never для infallible cleanup (нет Fail[E] в сигнатуре).
 // Spec: spec/decisions/03-syntax.md D188. Part of the SINGLE `spec_tests.conformance` folder-module.
 module spec_tests.conformance
 
 type D188Log { label str }
 
-fn D188Log consume @on_exit(_outcome ScopeOutcome) -> () { }
+fn D188Log consume @cleanup(_outcome ScopeOutcome) -> () { }
 
 fn d188_make(label str) -> D188Log => { label }
 
