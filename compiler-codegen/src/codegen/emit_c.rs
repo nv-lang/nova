@@ -7248,11 +7248,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // This goes directly into out (inside the function body) before the vtable.
         // MSVC supports local typedefs in function scope.
         let ctx_struct = format!("NovaCtx_{}", handler_id);
-        // For each capture: pointer types stored directly (heap object already by-ref),
-        // scalar/struct types stored as pointer-to (so mutations are visible in caller).
-        let capture_ptr_tys: Vec<String> = all_captures.iter().map(|(_, cap_ty)| {
-            if cap_ty.ends_with('*') { cap_ty.clone() } else { format!("{}*", cap_ty) }
+        // Plan 175 Ф.1b (dangling-capture fix): pointer captures store the
+        // pointer directly; MUTABLE scalar captures store `&local` (mutation
+        // must be visible to the caller for INLINE handlers); IMMUTABLE scalar
+        // captures store a BY-VALUE snapshot (copy). The old code stored EVERY
+        // scalar by `&local` — for a FACTORY handler (`fn fixed_ms(ms) ->
+        // Effect[Time] { handler … }`) the literal escapes and `&ms` dangled
+        // (mock clock read freed stack → garbage). Immutable-by-value is sound
+        // both inline (value unchanged) and escaping (copy survives return).
+        // `needs_deref[i]` == field is `T*` (by-pointer) ⇒ body access derefs.
+        let capture_by_ptr: Vec<bool> = all_captures.iter().map(|(name, cap_ty)| {
+            cap_ty.ends_with('*') || self.var_mutable.contains(name)
         }).collect();
+        let capture_ptr_tys: Vec<String> = all_captures.iter()
+            .zip(capture_by_ptr.iter())
+            .map(|((_, cap_ty), &by_ptr)| {
+                if !by_ptr { cap_ty.clone() }
+                else if cap_ty.ends_with('*') { cap_ty.clone() }
+                else { format!("{}*", cap_ty) }
+            }).collect();
         self.line(&format!("typedef struct {{"));
         for ((cap_name, _), ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
             self.line(&format!("    {} {};", ptr_ty, cap_name));
@@ -7285,13 +7299,45 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             "{ctx_ty}* {ctx} = ({ctx_ty}*)nova_alloc(sizeof({ctx_ty}));",
             ctx_ty = ctx_struct, ctx = ctx_var
         ));
-        for ((cap_name, cap_ty), _ptr_ty) in all_captures.iter().zip(capture_ptr_tys.iter()) {
-            if cap_ty.ends_with('*') {
+        for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_by_ptr.iter()) {
+            if !by_ptr {
+                // Immutable scalar/struct: by-value snapshot (copy survives escape).
+                self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
+            } else if cap_ty.ends_with('*') {
                 // Pointer type: store the pointer value directly (heap object, no indirection)
                 self.line(&format!("{ctx}->{cap} = {cap};", ctx = ctx_var, cap = cap_name));
             } else {
-                // Scalar/struct: store address so mutations are visible to caller
-                self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
+                // Mutable scalar/struct capture. Two cases (Plan 175 Ф.1b):
+                //
+                // (a) ESCAPING handler — the literal is the value of a factory fn
+                //     returning `Effect[X]` (C ret `NovaVtable_X*`), e.g.
+                //     `fn mut_clock() -> Effect[Time] { mut current_ms … }`. A
+                //     `&stack_local` would dangle after the fn returns, and the
+                //     handler's own writes (`sleep` mutates `current_ms`) would
+                //     scribble freed stack → HEAP-PROMOTE: alloc a cell, copy the
+                //     current value, store the cell pointer.
+                //
+                // (b) INLINE handler (`with X = effect X {…} { body }` in a
+                //     non-Effect fn) — captures point at still-live enclosing
+                //     locals, and callers may read those locals back after the
+                //     block (`mut n=0; …handler mutates n…; assert(n==…)`). Keep
+                //     `&local` so mutations remain visible to the caller.
+                //
+                // Body access stays `(*_c->cap)` in both cases.
+                let handler_escapes = self.current_fn_return_ty.as_deref()
+                    .map_or(false, |t| t.starts_with("NovaVtable_"));
+                if handler_escapes {
+                    let cap_ty = cap_ty.clone();
+                    let cell = self.fresh_tmp();
+                    self.line(&format!(
+                        "{ty}* {cell} = ({ty}*)nova_alloc(sizeof({ty}));",
+                        ty = cap_ty, cell = cell));
+                    self.line(&format!("*{cell} = {cap};", cell = cell, cap = cap_name));
+                    self.line(&format!(
+                        "{ctx}->{cap} = {cell};", ctx = ctx_var, cap = cap_name, cell = cell));
+                } else {
+                    self.line(&format!("{ctx}->{cap} = &{cap};", ctx = ctx_var, cap = cap_name));
+                }
             }
         }
         // Patch vtable at runtime — use mangled field name for overloaded ops
@@ -7462,13 +7508,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
             // Unpack context: expose captured variables so body code can use them directly
             self.line(&format!("{ctx}* _c = ({ctx}*)_ctx;", ctx = ctx_struct));
-            for (cap_name, cap_ty) in &all_captures {
-                if cap_ty.ends_with('*') {
-                    // Pointer-typed capture stored directly: `#define cap (_c->cap)` (no deref)
-                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
-                } else {
-                    // Scalar capture stored as pointer: `#define cap (*_c->cap)` (deref)
+            for ((cap_name, cap_ty), &by_ptr) in all_captures.iter().zip(capture_by_ptr.iter()) {
+                if by_ptr && !cap_ty.ends_with('*') {
+                    // Mutable scalar capture stored as `T*`: deref `(*_c->cap)`.
                     self.line(&format!("#define {cap} (*_c->{cap})", cap = cap_name));
+                } else {
+                    // By-value snapshot OR pointer-typed capture: `(_c->cap)` (no deref).
+                    self.line(&format!("#define {cap} (_c->{cap})", cap = cap_name));
                 }
             }
             // Plan 65 Ф.1: rebind annotation-bridged handler params from the
@@ -13269,6 +13315,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
                 | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
                 | "nova_f32" | "nova_f64"
+                // Plan 175 Ф.1b: value-record field schemas store RAW C scalar
+                // types (`int64_t` etc), not the `nova_*` aliases heap records
+                // use — recognise them so value-record structural `==` emits a
+                // scalar `(l).f == (r).f` (not `memcmp(&rvalue.f, …)` → address-
+                // of-rvalue CC-FAIL). `==` on scalars is sound (IEEE for floats).
+                | "int64_t" | "int32_t" | "int16_t" | "int8_t"
+                | "uint64_t" | "uint32_t" | "uint16_t" | "uint8_t"
+                | "intptr_t" | "uintptr_t" | "int" | "unsigned"
+                | "size_t" | "ptrdiff_t" | "double" | "float" | "char"
         ) {
             return format!("(({}) == ({}))", l, r);
         }
@@ -21173,6 +21228,123 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         _ => unreachable!(),
                     });
                 }
+                // Plan 175 Ф.1b/Ф.3: value-record ARITHMETIC operators (@plus/
+                // @minus/@times/@div/@rem). A value-record `NovaValue_X` is a
+                // by-value struct — C has no struct operator overloading, and
+                // the instance-method receiver ABI is `NovaValue_X*` (pointer),
+                // so a raw `l OP r` is a CC-FAIL ("invalid operands"). Route to
+                // the user method via a late-emitted BY-VALUE wrapper (mirror of
+                // `nova_vr_ueq_`): the wrapper takes the receiver by value so
+                // `&a` is a legal lvalue even when `l` is an rvalue
+                // (`Timestamp.now() + d`). Receiver = LEFT operand. D124
+                // cross-clock safety is preserved by requiring an @minus
+                // overload whose param matches the RHS (exact for record args;
+                // numeric-class match for int/f64 scalar coercion).
+                if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod)
+                    && lty.starts_with("NovaValue_") && !lty.ends_with('*')
+                {
+                    let type_name = lty.strip_prefix("NovaValue_").unwrap_or("").to_string();
+                    let method_name = match op {
+                        BinOp::Add => "plus",
+                        BinOp::Sub => "minus",
+                        BinOp::Mul => "times",
+                        BinOp::Div => "div",
+                        BinOp::Mod => "rem",
+                        _ => unreachable!(),
+                    };
+                    let key = (type_name.clone(), method_name.to_string());
+                    if let Some(sigs) = self.method_overloads.get(&key) {
+                        let is_float = |t: &str| matches!(
+                            t, "nova_f32" | "nova_f64" | "double" | "float");
+                        let is_int_scalar = |t: &str| matches!(
+                            t, "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+                                | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64"
+                                | "nova_byte" | "nova_char" | "int64_t" | "int32_t"
+                                | "int16_t" | "int8_t" | "uint64_t" | "uint32_t"
+                                | "uint16_t" | "uint8_t" | "int" | "intptr_t");
+                        // Prefer exact param match (record args, exact overload);
+                        // else numeric-class (int↔int / float↔float) for scalar
+                        // literal coercion (`Duration * 3` → @times(i64)).
+                        let sig = sigs.iter()
+                            .find(|s| s.is_instance && s.param_c_types.len() == 1
+                                && s.param_c_types[0] == rty)
+                            .or_else(|| {
+                                if is_float(&rty) || is_int_scalar(&rty) {
+                                    sigs.iter().find(|s| s.is_instance
+                                        && s.param_c_types.len() == 1 && {
+                                            let p = &s.param_c_types[0];
+                                            (is_float(&rty) && is_float(p))
+                                                || (is_int_scalar(&rty) && is_int_scalar(p))
+                                        })
+                                } else { None }
+                            });
+                        if let Some(sig) = sig {
+                            let ret = sig.return_c_type.clone();
+                            let c_name = sig.c_name.clone();
+                            let arg_ty = sig.param_c_types[0].clone();
+                            let wrap = format!("nova_vr_binop_{}", c_name);
+                            {
+                                let mut buf = self.novaopt_eq_fns_buf.borrow_mut();
+                                let probe = format!("{}(", wrap);
+                                if !buf.contains(&probe) {
+                                    self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
+                                        "static {ret} {w}({recv} a, {arg} b);\n",
+                                        ret = ret, w = wrap, recv = lty, arg = arg_ty));
+                                    buf.push_str(&format!(
+                                        "static {ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
+                                        ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
+                                }
+                            }
+                            return Ok(format!("{}({}, {})", wrap, l, r));
+                        }
+                        // Overloads exist but none match the operand — D124-style
+                        // rejection (e.g. `Timestamp - Monotonic`).
+                        if matches!(op, BinOp::Sub) {
+                            return Err(format!(
+                                "binop `-`: no @minus overload on {} taking {} \
+                                 (Plan 65 / D124: prevents silent cross-clock arithmetic)",
+                                type_name, rty));
+                        }
+                    }
+                }
+                // Plan 175 Ф.1b/Ф.3: value-record ordering operators (`<`/`<=`/
+                // `>`/`>=`) synthesise from `@compare` (D183), same by-value
+                // wrapper (receiver ABI is `NovaValue_X*`). Mirrors the `Nova_X*`
+                // heap arm below.
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+                    && lty.starts_with("NovaValue_") && !lty.ends_with('*')
+                {
+                    let type_name = lty.strip_prefix("NovaValue_").unwrap_or("").to_string();
+                    let key = (type_name.clone(), "compare".to_string());
+                    if let Some(sig) = self.method_overloads.get(&key).and_then(|sigs|
+                        sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1))
+                    {
+                        let c_name = sig.c_name.clone();
+                        let arg_ty = sig.param_c_types[0].clone();
+                        let ret = sig.return_c_type.clone();
+                        let wrap = format!("nova_vr_binop_{}", c_name);
+                        {
+                            let mut buf = self.novaopt_eq_fns_buf.borrow_mut();
+                            let probe = format!("{}(", wrap);
+                            if !buf.contains(&probe) {
+                                self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
+                                    "static {ret} {w}({recv} a, {arg} b);\n",
+                                    ret = ret, w = wrap, recv = lty, arg = arg_ty));
+                                buf.push_str(&format!(
+                                    "static {ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
+                                    ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
+                            }
+                        }
+                        let call = format!("{}({}, {})", wrap, l, r);
+                        return Ok(match op {
+                            BinOp::Lt => format!("(({}) < 0)", call),
+                            BinOp::Le => format!("(({}) <= 0)", call),
+                            BinOp::Gt => format!("(({}) > 0)", call),
+                            BinOp::Ge => format!("(({}) >= 0)", call),
+                            _ => unreachable!(),
+                        });
+                    }
+                }
                 // Plan 153.3: Result `NovaRes_<n>*` structural `==`/`!=`. Result
                 // is a special heap-pointer ABI (not a `Nova_X*` sum), so it
                 // bypasses the sum branch below and previously compared as raw
@@ -21525,6 +21697,34 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if matches!(op, UnOp::Neg | UnOp::Not) {
                     let operand_ty = self.infer_expr_c_type(operand);
                     let method_name = if matches!(op, UnOp::Neg) { "neg" } else { "not" };
+                    // Plan 175 Ф.1b/Ф.3: value-record (`NovaValue_X`) unary `@neg`/
+                    // `@not` — receiver ABI is `NovaValue_X*`, so route through a
+                    // by-value wrapper (rvalue-safe), mirror of the binary case.
+                    if operand_ty.starts_with("NovaValue_") && !operand_ty.ends_with('*') {
+                        let type_name = operand_ty.strip_prefix("NovaValue_")
+                            .unwrap_or("").to_string();
+                        let key = (type_name, method_name.to_string());
+                        if let Some(sig) = self.method_overloads.get(&key).and_then(|sigs|
+                            sigs.iter().find(|s| s.is_instance && s.param_c_types.is_empty()))
+                        {
+                            let c_name = sig.c_name.clone();
+                            let ret = sig.return_c_type.clone();
+                            let wrap = format!("nova_vr_unop_{}", c_name);
+                            {
+                                let mut buf = self.novaopt_eq_fns_buf.borrow_mut();
+                                let probe = format!("{}(", wrap);
+                                if !buf.contains(&probe) {
+                                    self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
+                                        "static {ret} {w}({recv} a);\n",
+                                        ret = ret, w = wrap, recv = operand_ty));
+                                    buf.push_str(&format!(
+                                        "static {ret} {w}({recv} a) {{ return {c}(&a); }}\n",
+                                        ret = ret, w = wrap, recv = operand_ty, c = c_name));
+                                }
+                            }
+                            return Ok(format!("{}({})", wrap, v));
+                        }
+                    }
                     let type_name_opt: Option<String> = if operand_ty.starts_with("NovaTuple_") {
                         Some(operand_ty.strip_prefix("NovaTuple_").unwrap_or("").to_string())
                     } else if let Some(inner) = operand_ty.strip_prefix("Nova_")
@@ -25536,7 +25736,29 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     }
                                     let obj_c = self.emit_expr(obj)?;
                                     let mut full = vec![obj_c];
-                                    full.extend(arg_strs);
+                                    // Plan 175 Ф.1b: a value-record arg (`NovaValue_X`,
+                                    // by-value struct) to an extern "nova" method is
+                                    // passed BY ADDRESS — the C runtime fns were written
+                                    // against the heap-record ABI (e.g. sync
+                                    // `wait_for(void* timeout)` reads `*(int64_t*)timeout`,
+                                    // `close_after` derefs the first field). Materialize
+                                    // the (possibly rvalue) arg into a temp so `&temp` is a
+                                    // valid lvalue, then pass `(void*)&temp`. Only value-
+                                    // record args are affected (scalars/pointers untouched).
+                                    for (i, a) in arg_strs.iter().enumerate() {
+                                        let is_value_rec = arg_types.get(i)
+                                            .map(|t| t.starts_with("NovaValue_")
+                                                && !t.ends_with('*'))
+                                            .unwrap_or(false);
+                                        if is_value_rec {
+                                            let tmp = self.fresh_tmp();
+                                            self.line(&format!(
+                                                "{} {} = {};", arg_types[i], tmp, a));
+                                            full.push(format!("(void*)(&{})", tmp));
+                                        } else {
+                                            full.push(a.clone());
+                                        }
+                                    }
                                     return Ok(format!("{}({})", decl.c_name, full.join(", ")));
                                 }
                             }
@@ -25569,13 +25791,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // Plan 65 Ф.1: Duration argument type-check is
                             // enforced via the inferred C type — if user passes
                             // bare int, infer returns "nova_int" not
-                            // "Nova_Duration*", so the .nanos access below
+                            // "NovaValue_Duration", so the .nanos access below
                             // generates a C type error (caught at compile).
                             // Future improvement (R2 + E5101): emit a
                             // structured Nova diagnostic before reaching C.
                             let arg_c = self.infer_expr_c_type(arg.expr());
                             let v = self.emit_expr(arg.expr())?;
-                            if arg_c != "Nova_Duration*" {
+                            if arg_c != "NovaValue_Duration" {
                                 return Err(format!(
                                     "ChanReader.close_after(): expected Duration argument, got {} \
                                      — use Duration.from_millis(N) / Duration.from_secs(N) \
@@ -25584,7 +25806,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 ));
                             }
                             return Ok(format!(
-                                "nova_chan_reader_close_after_ns(({})->nanos)",
+                                "nova_chan_reader_close_after_ns(({}).nanos)",
                                 v
                             ));
                         }
@@ -25592,7 +25814,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // Plan 65 Ф.12.1 / D124: Monotonic.now() — compiler builtin.
                     // Bypasses Time-effect schema (latent record-return mismatch).
                     if name == "Monotonic" && method == "now" {
-                        return Ok("((Nova_Monotonic*)nova_monotonic_now_record())".to_string());
+                        return Ok("((NovaValue_Monotonic){.nanos = (int64_t)_nova_monotonic_ns()})".to_string());
                     }
                     // Plan 65 Ф.12.4 / D124: ChanReader.close_at(deadline Monotonic).
                     // Type-system enforces Monotonic — bare int / Timestamp →
@@ -25602,7 +25824,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         if let Some(arg) = args.first() {
                             let arg_c = self.infer_expr_c_type(arg.expr());
                             let v = self.emit_expr(arg.expr())?;
-                            if arg_c != "Nova_Monotonic*" {
+                            if arg_c != "NovaValue_Monotonic" {
                                 return Err(format!(
                                     "ChanReader.close_at(): expected Monotonic argument, got {} \
                                      — use Monotonic.now() + Duration (Plan 65 Ф.12 / D124). \
@@ -25612,7 +25834,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 ));
                             }
                             return Ok(format!(
-                                "nova_chan_reader_close_at_mono_ns(({})->nanos)",
+                                "nova_chan_reader_close_at_mono_ns(({}).nanos)",
                                 v
                             ));
                         }
@@ -28204,7 +28426,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     if let Some(arg) = args.first() {
                         let arg_c = self.infer_expr_c_type(arg.expr());
                         let v = self.emit_expr(arg.expr())?;
-                        if arg_c != "Nova_Duration*" {
+                        if arg_c != "NovaValue_Duration" {
                             return Err(format!(
                                 "ChanReader.close_after(): expected Duration argument, got {} \
                                  — use Duration.from_millis(N) / Duration.from_secs(N) \
@@ -28213,21 +28435,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             ));
                         }
                         return Ok(format!(
-                            "nova_chan_reader_close_after_ns(({})->nanos)",
+                            "nova_chan_reader_close_after_ns(({}).nanos)",
                             v
                         ));
                     }
                 }
                 // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form builtin.
                 if parts.len() == 2 && parts[0] == "Monotonic" && parts[1] == "now" {
-                    return Ok("((Nova_Monotonic*)nova_monotonic_now_record())".to_string());
+                    return Ok("((NovaValue_Monotonic){.nanos = (int64_t)_nova_monotonic_ns()})".to_string());
                 }
                 // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic) — Path-form.
                 if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_at" {
                     if let Some(arg) = args.first() {
                         let arg_c = self.infer_expr_c_type(arg.expr());
                         let v = self.emit_expr(arg.expr())?;
-                        if arg_c != "Nova_Monotonic*" {
+                        if arg_c != "NovaValue_Monotonic" {
                             return Err(format!(
                                 "ChanReader.close_at(): expected Monotonic argument, got {} \
                                  — use Monotonic.now() + Duration (Plan 65 Ф.12 / D124). \
@@ -28237,7 +28459,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             ));
                         }
                         return Ok(format!(
-                            "nova_chan_reader_close_at_mono_ns(({})->nanos)",
+                            "nova_chan_reader_close_at_mono_ns(({}).nanos)",
                             v
                         ));
                     }
@@ -39240,7 +39462,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             // Plan 65 Ф.12.1 / D124: Monotonic.now() returns Monotonic.
                             if n == "Monotonic" && method == "now" {
-                                return "Nova_Monotonic*".into();
+                                return "NovaValue_Monotonic".into();
                             }
                             // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                             if n == "CancelToken" && method == "new" {
@@ -39926,7 +40148,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form.
                             if eff == "Monotonic" && method_name == "now" {
-                                return "Nova_Monotonic*".into();
+                                return "NovaValue_Monotonic".into();
                             }
                             // D75 (revised, Plan 47): CancelToken.new() — Path-form.
                             if eff == "CancelToken" && method_name == "new" {
@@ -40756,6 +40978,53 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     _ => {
                         let lt = self.infer_expr_c_type(left);
                         let rt = self.infer_expr_c_type(right);
+                        // Plan 175 Ф.1b/Ф.3: value-record arithmetic operator → the
+                        // dispatched @method's RETURN C-type (e.g. `Timestamp -
+                        // Timestamp` → `NovaValue_Duration`, NOT `NovaValue_Timestamp`).
+                        // MUST mirror the emission-side overload selection (same
+                        // exact-then-numeric-class match) so the LET slot type
+                        // matches the emitted wrapper's return.
+                        if lt.starts_with("NovaValue_") && !lt.ends_with('*') {
+                            let mn = match op {
+                                BinOp::Add => Some("plus"),
+                                BinOp::Sub => Some("minus"),
+                                BinOp::Mul => Some("times"),
+                                BinOp::Div => Some("div"),
+                                BinOp::Mod => Some("rem"),
+                                _ => None,
+                            };
+                            if let Some(mn) = mn {
+                                let type_name = lt.strip_prefix("NovaValue_").unwrap_or("");
+                                let key = (type_name.to_string(), mn.to_string());
+                                if let Some(sigs) = self.method_overloads.get(&key) {
+                                    let is_float = |t: &str| matches!(
+                                        t, "nova_f32" | "nova_f64" | "double" | "float");
+                                    let is_int_scalar = |t: &str| matches!(
+                                        t, "nova_int" | "nova_i8" | "nova_i16" | "nova_i32"
+                                            | "nova_i64" | "nova_u8" | "nova_u16" | "nova_u32"
+                                            | "nova_u64" | "nova_byte" | "nova_char" | "int64_t"
+                                            | "int32_t" | "int16_t" | "int8_t" | "uint64_t"
+                                            | "uint32_t" | "uint16_t" | "uint8_t" | "int"
+                                            | "intptr_t");
+                                    let sig = sigs.iter()
+                                        .find(|s| s.is_instance && s.param_c_types.len() == 1
+                                            && s.param_c_types[0] == rt)
+                                        .or_else(|| {
+                                            if is_float(&rt) || is_int_scalar(&rt) {
+                                                sigs.iter().find(|s| s.is_instance
+                                                    && s.param_c_types.len() == 1 && {
+                                                        let p = &s.param_c_types[0];
+                                                        (is_float(&rt) && is_float(p))
+                                                            || (is_int_scalar(&rt) && is_int_scalar(p))
+                                                    })
+                                            } else { None }
+                                        });
+                                    if let Some(sig) = sig {
+                                        return sig.return_c_type.clone();
+                                    }
+                                }
+                            }
+                        }
                         // Plan 131 Ф.2: pointer - pointer → ptrdiff_t (isize-equivalent).
                         // C pointer subtraction yields ptrdiff_t (element count), not
                         // a pointer. Without this fix, `let d = p - q` declared `uint8_t* d`
@@ -42644,7 +42913,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             // Plan 65 Ф.12.1 / D124: Monotonic.now() returns Monotonic.
                             if n == "Monotonic" && method == "now" {
-                                return "Nova_Monotonic*".into();
+                                return "NovaValue_Monotonic".into();
                             }
                             // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                             if n == "CancelToken" && method == "new" {
@@ -43330,7 +43599,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form.
                             if eff == "Monotonic" && method_name == "now" {
-                                return "Nova_Monotonic*".into();
+                                return "NovaValue_Monotonic".into();
                             }
                             // D75 (revised, Plan 47): CancelToken.new() — Path-form.
                             if eff == "CancelToken" && method_name == "new" {

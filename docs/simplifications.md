@@ -10465,7 +10465,18 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
   для investigation; миллион timers с no stack info лучше чем ноль.
 
-### [M-time-now-schema-mismatch] (DEFER — known since Plan 65 Ф.0; affects Ф.12.3)
+### [M-time-now-schema-mismatch] (PARTIAL-CLOSE 2026-07-04 Plan 175 Ф.1b/Ф.3 option C; typed-effect-ops остаток OWNER-GATED)
+- **UPDATE 2026-07-04 (Plan 175 Ф.1b/Ф.3, option C — SHIPPED):** user-facing surface БОЛЬШЕ не ломается. Схема эффекта
+  `Time` осталась int-wire (`now()->int` ms), НО `Duration`/`Timestamp`/`Monotonic` мигрированы в `value`-records и
+  typed API доставлен на `.nv`-обёртках поверх int-провода: `Timestamp.now()` = `from_unix_millis(Time.now())`;
+  `@is_past`/`@time_until`/`@elapsed` — int-based (`@nanos` vs `Timestamp.now().nanos`) — теперь РАБОТАЮТ; арифметика
+  value-records через codegen `nova_vr_binop_/unop_`-обёртки. `Time.now().minus(other)` (метод на int-receiver) больше
+  НЕ используется (заменён сахаром). **Остаток (typed effect-ops в СХЕМЕ, mock на typed-record'ах, retire int-wire —
+  Ф.2) = OWNER-GATED:** `Time`-decl в prelude/effects.nv (ZERO-imports) не может ссылаться на `Timestamp`; 85/96 файлов
+  bare-int `Time.sleep(N)`; 3 net-zero. См. plan-175 §4 Ф.2-блок + spec D316-amend. Handler mock (fixed_ms/mut_clock)
+  теперь оперирует int ms (не typed-record через annotation-bridge). Побочно закрыт latent escaping-handler-capture
+  dangling (mock-часы читали garbage): immutable→by-value, mutable-в-factory→heap-promote, inline→by-pointer.
+- **(исходная запись, для истории:)**
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs:1048` (time_schema)
   + `compiler-codegen/nova_rt/fibers.h::Nova_Time_now`.
 - **Что упрощено:** `Time.now()` wired через effect schema returns
@@ -23979,7 +23990,18 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
   для investigation; миллион timers с no stack info лучше чем ноль.
 
-### [M-time-now-schema-mismatch] (DEFER — known since Plan 65 Ф.0; affects Ф.12.3)
+### [M-time-now-schema-mismatch] (PARTIAL-CLOSE 2026-07-04 Plan 175 Ф.1b/Ф.3 option C; typed-effect-ops остаток OWNER-GATED)
+- **UPDATE 2026-07-04 (Plan 175 Ф.1b/Ф.3, option C — SHIPPED):** user-facing surface БОЛЬШЕ не ломается. Схема эффекта
+  `Time` осталась int-wire (`now()->int` ms), НО `Duration`/`Timestamp`/`Monotonic` мигрированы в `value`-records и
+  typed API доставлен на `.nv`-обёртках поверх int-провода: `Timestamp.now()` = `from_unix_millis(Time.now())`;
+  `@is_past`/`@time_until`/`@elapsed` — int-based (`@nanos` vs `Timestamp.now().nanos`) — теперь РАБОТАЮТ; арифметика
+  value-records через codegen `nova_vr_binop_/unop_`-обёртки. `Time.now().minus(other)` (метод на int-receiver) больше
+  НЕ используется (заменён сахаром). **Остаток (typed effect-ops в СХЕМЕ, mock на typed-record'ах, retire int-wire —
+  Ф.2) = OWNER-GATED:** `Time`-decl в prelude/effects.nv (ZERO-imports) не может ссылаться на `Timestamp`; 85/96 файлов
+  bare-int `Time.sleep(N)`; 3 net-zero. См. plan-175 §4 Ф.2-блок + spec D316-amend. Handler mock (fixed_ms/mut_clock)
+  теперь оперирует int ms (не typed-record через annotation-bridge). Побочно закрыт latent escaping-handler-capture
+  dangling (mock-часы читали garbage): immutable→by-value, mutable-в-factory→heap-promote, inline→by-pointer.
+- **(исходная запись, для истории:)**
 - **Где:** `compiler-codegen/src/codegen/emit_c.rs:1048` (time_schema)
   + `compiler-codegen/nova_rt/fibers.h::Nova_Time_now`.
 - **Что упрощено:** `Time.now()` wired через effect schema returns
