@@ -37603,3 +37603,17 @@ D185 §amend-2 added.
 - **[M-180-valuerecord-err-protocol-method-mono]** **codegen-баг (Ф.0).** `Result[T, <value-record>]` как return-тип PROTOCOL-метода → missing-mono-struct CC-FAIL; heap-record error → PASS. `SerError`/`DeError` specced `value` (§3.7) упрутся (каждый Serializer/Deserializer-метод возвращает `Result[_, *Error]`). Обход: heap-record errors. Backlog P2.
 - **[M-180-valuerecord-receiver-generic-method]** **codegen-баг (Ф.0).** `value`-record RECEIVER + method-level-generic метод → receiver by-value туда, где mono ждёт `*T` → CC-FAIL; heap-record receiver → PASS. Задевает Ф.2 synth `@serialize[S]` на scalar/value-record DTO. Backlog P2.
 - **Вывод.** Ф.1-shape язык-уровнем разблокирован; ПОЛНЫЙ Ф.1–Ф.4 без упрощений упирается в f64-formatter RED + 2 codegen-бага для specced `value`-типов + объём auto-derive-synth (companion `UserVisitor`-ТИП — синтез типа, не только метода) + 8-протокольная сеть/JSON-backend — плана-масштаб «Волна 2/3», не один заход. Заход = Ф.0-VERIFY (net-zero код; статус в 180-serde-derive.md §0 + backlog).
+
+## Plan 180 (serde) — реализованные упрощения / отклонения от плана (2026-07-04)
+
+Record-path (Ф.1/Ф.2-record/Ф.4) приземлён БЕЗ функциональных упрощений round-trip'а, но с отклонениями формы от §3 плана (каждое — обоснованная realized-form, не cut; spec D340/D341/D344):
+
+- **Serializer = единый stack-machine, НЕ consume-sub-serializers** (§3.2). В value-семантике Nova sub-serializer, мутирующий shared parent state, не имеет чистого владения; stack-machine — sound realization (matched begin/end через синтезатор). Все 12 data-model кейсов + round-trip работают.
+- **Deserializer = keyed-access (Swift KeyedDecodingContainer), БЕЗ Visitor-типа** (§3.3). Синтез companion-`UserVisitor`-типа не нужен (план допускал «если требует»). Sub-cursor'ы только читают → нет write-back.
+- **Публичный API = free-функции** `json_encode`/`json_decode[T]`, НЕ `Json.decode[T]` namespace-static (§3.8). Причина: turbofish на namespace/type-static generic-методе не мономорфизируется (Ф.0-эмпирика). Followup [M-180-namespace-static-generic-mono].
+- **SerErrorKind варианты уникально названы** (`SerDepthLimit`/`SerOther`, не `DepthLimitExceeded`/`Other`): bare-variant construction не диспетчит по expected-type при коллизии имён между SerErrorKind/DeErrorKind.
+- **DeError = `{kind, path}`** (location/source-chain — упрощены до текста в `Syntax(msg)`, line/col сохранены). Structured `Location`/`*DeSource` — followup.
+- **Ф.3 (атрибуты `#serde`) НЕ landed** — record-DTO round-trip'ится на каноничных именах. Followup [M-180-serde-attributes]. **Ф.2-sum/Ф.5 GATED** (честный named-prereq [M-126-sum-*-rich], не «решим потом»).
+- **`[]u8`→base64 НЕ auto-wired** — идёт через generic seq (массив int). Followup [M-180-bytes-base64].
+
+Сверх этого: реализация Ф.2 потребовала **11 компилятор-фиксов** в emit_c.rs/types/mod.rs (§0 ожидал 2). Все — реальные codegen-фиксы generic/static/primitive-method-dispatch + инференса, НЕ упрощения. Регрессия-сэмпл clean.

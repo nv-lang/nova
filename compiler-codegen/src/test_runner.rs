@@ -2426,6 +2426,14 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             None
         };
 
+    // Plan 180: inject SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
+    // BEFORE numbering + type-check so their bodies are type-checked + annotated
+    // (codegen's annotation-free infer cannot resolve serde's cross-method return
+    // types). Non-serde protocols (Equal/…/Display/Debug) inject AFTER check
+    // (below) — some of their bodies are intentionally not type-checkable.
+    crate::protocols::auto_derive::inject_synthesized_methods_filtered(
+        &mut module, |p| p == "Serialize" || p == "Deserialize");
+
     // Plan 172.1 U.4.1: number every expr of the FULLY-ASSEMBLED module
     // (after import inlining via resolve_imports_inline_ex above, before
     // type-check) so check_module can annotate ModuleEnv.resolved_types and
@@ -2505,12 +2513,11 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         }
     }
     {
-        // Plan 126.2 Ф.2: synthesize built-in protocol methods (Equatable/
-        // Hashable/Cloneable/Comparable/Printable) for `#impl(P)` types and
-        // inject them into module.items as Item::Fn, so codegen emits C bodies
-        // and operator dispatch (`==`/`<`/`.clone()`/...) resolves them.
-        // Runs AFTER check_module (impl_protocols validated), BEFORE desugar/
-        // codegen. User-explicit methods always win (never overwritten).
+        // Plan 126.2 Ф.2: inject the NON-serde synthesized built-in protocol
+        // methods (Equal/Hash/Clone/Compare/Display/Debug) into module.items so
+        // codegen emits C bodies and operator dispatch (`==`/`<`/`.clone()`/…)
+        // resolves them. After check_module; serde was already injected pre-check
+        // (this pass skips it — already provided). User-explicit methods win.
         let _t = crate::perf_timer::PerfTimer::new("auto-derive-inject");
         crate::protocols::auto_derive::inject_synthesized_methods(&mut module);
     }

@@ -344,6 +344,13 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
     check_module_path(path, &module)?;
+    // Plan 180: inject SERDE synthesized methods BEFORE numbering + type-check,
+    // so their bodies are type-checked and annotated (codegen's annotation-free
+    // infer cannot resolve serde's cross-method return types). Other auto-derive
+    // protocols (Equal/Clone/…/Display/Debug) inject AFTER check (below) — some
+    // of their bodies are intentionally not type-checkable.
+    nova_codegen::protocols::auto_derive::inject_synthesized_methods_filtered(
+        &mut module, |p| p == "Serialize" || p == "Deserialize");
     // Plan 172.1 U.4.1: assign a stable ExprId to every expr (post-parse,
     // pre-check) and seed the literal resolved-type table; stored into
     // ModuleEnv.resolved_types below so codegen reads it instead of re-deriving
@@ -405,10 +412,12 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
             .collect();
         return Err(anyhow!("{}", messages.join("\n")));
     }
-    // Plan 126.2 Ф.2: inject synthesized built-in protocol methods (Equatable/
-    // Hashable/Cloneable/Comparable/Printable) into module.items so codegen
-    // emits C bodies + operator dispatch resolves them. After check_module,
-    // before desugar/codegen. User-explicit methods always win.
+    // Plan 126.2 Ф.2: inject the NON-serde synthesized built-in protocol methods
+    // (Equal/Hash/Clone/Compare/Display/Debug) into module.items so codegen emits
+    // C bodies + operator dispatch resolves them. After check_module, before
+    // desugar/codegen. Serde was already injected (+ type-checked) pre-check
+    // (above); this pass skips it (the method is already provided). User-explicit
+    // methods always win.
     nova_codegen::protocols::auto_derive::inject_synthesized_methods(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);

@@ -880,3 +880,15 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 план не создаётся сознательно. Пересмотреть, когда (а) полный чек+кодоген
 крупного проекта станет узким местом UX, (б) появится typed-IR (172.12) —
 естественная граница мемоизации. НЕ носитель ближайших зонтов.
+
+## Plan 180 (serde) followups — 2026-07-04
+
+Record-path landed (Ф.1/Ф.2-record/Ф.4). Open:
+
+- **[M-126-sum-equal-rich]/-clone-rich/-hash-rich** — sum rich auto-derive infra (OPEN on main; auto_derive.rs sum-arms = placeholders). GATES **Ф.2-sum + Ф.5 (enum-tagging)** = sub-plan 180.2 (D345). NOT on Plan 178 critical path (record-DTO suffices).
+- **[M-180-serde-attributes]** — `#serde(rename/rename_all/skip/default/flatten/deny_unknown_fields/tag/content/untagged)` (Ф.3a parser+AST+validation → Ф.3b synth-consume). Record-DTO round-trips on canonical field names without it.
+- **[M-180-bytes-base64]** — `[]u8` → base64 string (Q9). Currently `[]u8` routes through the generic seq path (array of ints); a `Vec[u8]` specialization over generic `Vec[T]` is non-trivial (needs specialization). `serialize_bytes`/`deser_bytes` protocol methods + base64 impl exist but are not auto-wired.
+- **[M-180-namespace-static-generic-mono]** — turbofish on a namespace/type-static GENERIC method (`Serde.decode[T]`) does not monomorphize (emits erased symbol); realized public API is FREE functions (`json_encode`/`json_decode`). Fixing would allow the `Json.decode[T]`-style namespace API.
+- **[M-180-streaming]** / **[M-180-arbitrary-precision-numbers]** / **[M-180-zero-copy-borrow]** / **[M-180-runtime-cycle-detection]** / **[M-180-nonstring-map-keys]** / **[M-180-backends-toml-yaml-binary]** / **[M-180-schema-gen]** — §11 "потом" (unchanged from plan).
+
+Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): value-record-receiver+generic-method (`[M-180-valuerecord-receiver-generic-method]` CLOSED), static-method return-type inference for Path/Member/typevar receivers (`[M-180-static-method-path-ret-infer]` CLOSED), primitive-instance-generic-method mono (`[M-180-primitive-instance-generic-method-mono]` CLOSED), turbofish free-fn Result/Option return-resolve.

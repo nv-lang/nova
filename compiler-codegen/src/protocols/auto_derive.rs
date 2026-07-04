@@ -32,8 +32,9 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, NamedTupleField, Param, RecordField,
-    RecordLitField, Receiver, ReceiverKind, Stmt, SumVariant, TypeDecl, TypeDeclKind, TypeRef,
+    BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, GenericParam, NamedTupleField, Param,
+    RecordField, RecordLitField, Receiver, ReceiverKind, Stmt, SumVariant, TypeDecl, TypeDeclKind,
+    TypeRef,
 };
 use crate::diag::Span;
 
@@ -44,12 +45,18 @@ pub const CLONE:   &str = "Clone";
 pub const COMPARE: &str = "Compare";
 pub const DISPLAY: &str = "Display";
 pub const DEBUG:   &str = "Debug";
+/// Plan 180: serde protocols — 7th/8th members of the auto-derive family.
+/// `Serialize` synth = uniform memberwise push (`@field.serialize(s)`, like
+/// `Debug`); `Deserialize` synth = type-directed pull (scalar → `deser_X`,
+/// record/container → static `.deserialize`, `Option` → inline null-check).
+pub const SERIALIZE:   &str = "Serialize";
+pub const DESERIALIZE: &str = "Deserialize";
 
 /// True если `proto_name` — один из known built-in protocols.
 pub fn is_builtin_protocol(proto_name: &str) -> bool {
     matches!(
         proto_name,
-        EQUAL | HASH | CLONE | COMPARE | DISPLAY | DEBUG
+        EQUAL | HASH | CLONE | COMPARE | DISPLAY | DEBUG | SERIALIZE | DESERIALIZE
     )
 }
 
@@ -59,7 +66,7 @@ pub fn is_builtin_protocol(proto_name: &str) -> bool {
 /// drifting with a stale, renamed list (the old LSP table still named the
 /// pre-D237 `Printable`/`Hashable`/`Equatable`/`Ordered`/`Cloneable` protocols).
 pub fn builtin_protocol_names() -> &'static [&'static str] {
-    &[EQUAL, HASH, CLONE, COMPARE, DISPLAY, DEBUG]
+    &[EQUAL, HASH, CLONE, COMPARE, DISPLAY, DEBUG, SERIALIZE, DESERIALIZE]
 }
 
 /// Получить имя метода built-in protocol'а (single-method assumption).
@@ -72,6 +79,8 @@ pub fn builtin_protocol_method(proto_name: &str) -> Option<&'static str> {
         COMPARE => Some("compare"),
         DISPLAY => Some("display"),
         DEBUG   => Some("debug"),
+        SERIALIZE   => Some("serialize"),
+        DESERIALIZE => Some("deserialize"),
         _ => None,
     }
 }
@@ -381,10 +390,16 @@ fn synthesize_method_inner<Q: DeriveQuery>(
     protocol: &str,
     method_name: &str,
 ) -> Result<FnDecl, DeriveError> {
+    let is_serde = protocol == SERIALIZE || protocol == DESERIALIZE;
     // Validate field eligibility (kind-dependent).
     if let Some(fields) = iter_fields(type_decl) {
         for f in &fields {
-            if !check_field_eligibility(_ctx.query, &f.ty, protocol, method_name) {
+            let eligible = if is_serde {
+                check_field_eligibility_serde(_ctx.query, &f.ty, protocol, method_name)
+            } else {
+                check_field_eligibility(_ctx.query, &f.ty, protocol, method_name)
+            };
+            if !eligible {
                 return Err(DeriveError::FieldLacksProtocol {
                     type_name: type_decl.name.clone(),
                     field_name: f.name.clone(),
@@ -400,16 +415,27 @@ fn synthesize_method_inner<Q: DeriveQuery>(
             kind: kind_name.to_string(),
             protocol: protocol.to_string(),
         });
+    } else if is_serde {
+        // Plan 180: SUM auto-derive for serde is GATED ([M-126-sum-*-rich] /
+        // 180.2). Record-path only. Fail cleanly so `#impl(Serialize)` on a sum
+        // surfaces `E_AUTO_DERIVE_UNSUPPORTED_KIND` instead of a bad synth.
+        return Err(DeriveError::UnsupportedTypeKind {
+            type_name: type_decl.name.clone(),
+            kind: "sum".to_string(),
+            protocol: protocol.to_string(),
+        });
     }
 
     // Ф.3: dispatch к per-protocol synthesizer body builders.
     match protocol {
-        EQUAL   => synthesize_equal(_ctx, type_decl),
-        HASH    => synthesize_hash(_ctx, type_decl),
-        CLONE   => synthesize_clone(_ctx, type_decl),
-        COMPARE => synthesize_compare(_ctx, type_decl),
-        DISPLAY => synthesize_display(_ctx, type_decl),
-        DEBUG   => synthesize_debug(_ctx, type_decl),
+        EQUAL       => synthesize_equal(_ctx, type_decl),
+        HASH        => synthesize_hash(_ctx, type_decl),
+        CLONE       => synthesize_clone(_ctx, type_decl),
+        COMPARE     => synthesize_compare(_ctx, type_decl),
+        DISPLAY     => synthesize_display(_ctx, type_decl),
+        DEBUG       => synthesize_debug(_ctx, type_decl),
+        SERIALIZE   => synthesize_serialize(_ctx, type_decl),
+        DESERIALIZE => synthesize_deserialize(_ctx, type_decl),
         _ => unreachable!("is_builtin_protocol guarded earlier"),
     }
 }
@@ -978,6 +1004,330 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Plan 180 — serde auto-derive synthesizers (Serialize / Deserialize).
+// Record-path only (SUM gated: [M-126-sum-*-rich] / 180.2). Emitted shapes are
+// exactly those validated by the manual-impl round-trip (nova_tests/serde/):
+//   @serialize:  s.begin_struct(name, N)?; per field s.struct_field("k")?;
+//                @field.serialize(s)?; s.end_struct()  — UNIFORM (like @debug).
+//   .deserialize: per field  mut sub = d.enter_field[_or_null]("k")?;
+//                then TYPE-DIRECTED read (scalar → sub.deser_X()?; record/
+//                container → <T>.deserialize(sub)?; Option → inline null-check);
+//                Ok(Type{ f1, f2, … }).
+// ────────────────────────────────────────────────────────────────────────
+
+fn str_lit(s: &str) -> Expr { ex(ExprKind::StrLit(s.to_string())) }
+fn int_lit(n: i64) -> Expr { ex(ExprKind::IntLit(n)) }
+fn try_(e: Expr) -> Expr { ex(ExprKind::Try(Box::new(e))) }
+
+fn let_stmt(name: &str, mutable: bool, ty: Option<TypeRef>, value: Expr) -> Stmt {
+    Stmt::Let(crate::ast::LetDecl {
+        mutable,
+        pattern: crate::ast::Pattern::Ident {
+            name: name.to_string(), span: span_dummy(), is_mut: mutable,
+        },
+        ty,
+        value,
+        span: span_dummy(),
+        is_ghost: false,
+        consume: false,
+    })
+}
+
+fn block_trailing(e: Expr) -> Block {
+    Block { stmts: vec![], trailing: Some(Box::new(e)), span: span_dummy(), is_unsafe: false }
+}
+
+/// `Result[ok, err]` type-ref.
+fn result_ty(ok: TypeRef, err: &str) -> TypeRef {
+    TypeRef::Named {
+        path: vec!["Result".to_string()],
+        generics: vec![ok, type_ref_named(err)],
+        span: span_dummy(),
+    }
+}
+
+/// `Some(inner)`.
+fn some_call(inner: Expr) -> Expr { call(ident("Some"), vec![inner]) }
+
+/// Map a scalar field type → the `Deserializer` instance method that reads it.
+/// `None` ⇒ not a directly-supported scalar (routed through static `.deserialize`).
+fn scalar_deser_method(ty: &TypeRef) -> Option<&'static str> {
+    match type_ref_name(ty)? {
+        "int"        => Some("deser_int"),
+        "str"        => Some("deser_str"),
+        "f64"        => Some("deser_float"),
+        "bool"       => Some("deser_bool"),
+        "u64" | "uint" => Some("deser_uint"),
+        _ => None,
+    }
+}
+
+fn is_option_ty(ty: &TypeRef) -> bool { type_ref_name(ty) == Some("Option") }
+
+/// Inner type of `Option[T]`.
+fn option_inner(ty: &TypeRef) -> Option<TypeRef> {
+    match ty.strip_modifiers() {
+        TypeRef::Named { path, generics, .. }
+            if path.last().map(|s| s.as_str()) == Some("Option") && generics.len() == 1 =>
+            Some(generics[0].clone()),
+        _ => None,
+    }
+}
+
+/// Build the type-expression used as the static receiver of `<T>.deserialize`.
+/// `Named{path, generics}` → `path` (+ turbofish); `[]T` → `Vec[T]`.
+fn type_static_expr(ty: &TypeRef) -> Expr {
+    match ty.strip_modifiers() {
+        TypeRef::Named { path, generics, .. } => {
+            let base = if path.len() == 1 {
+                ident(&path[0])
+            } else {
+                ex(ExprKind::Path(path.clone()))
+            };
+            if generics.is_empty() {
+                base
+            } else {
+                ex(ExprKind::TurboFish { base: Box::new(base), type_args: generics.clone() })
+            }
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            ex(ExprKind::TurboFish {
+                base: Box::new(ident("Vec")),
+                type_args: vec![(**inner).clone()],
+            })
+        }
+        _ => ident("__nv_unsupported"),
+    }
+}
+
+/// Deserialize expression for a field of type `ty` from sub-deserializer `sub`
+/// (already `?`-wrapped): scalar → `sub.deser_X()?`; else static
+/// `<T>.deserialize(sub)?`.
+fn deser_field_expr(ty: &TypeRef, sub: &str) -> Expr {
+    if let Some(m) = scalar_deser_method(ty) {
+        try_(member_call(ident(sub), m, vec![]))
+    } else {
+        // Static `<Type>.deserialize(sub)`. For a SIMPLE named type the parser
+        // emits `Path([Type, "deserialize"])` (a static call); the `Member{
+        // Ident(Type), …}` form we'd otherwise build dispatches as an INSTANCE
+        // method (`Nova_T_method_…` — wrong). Generic/array receivers keep the
+        // `Member{TurboFish{…}, …}` shape (matching the parser for `Vec[str]…`).
+        let func = match ty.strip_modifiers() {
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let mut p = path.clone();
+                p.push("deserialize".to_string());
+                ex(ExprKind::Path(p))
+            }
+            _ => ex(ExprKind::Member {
+                obj: Box::new(type_static_expr(ty)),
+                name: "deserialize".to_string(),
+            }),
+        };
+        try_(call(func, vec![ident(sub)]))
+    }
+}
+
+/// Serde-aware field eligibility: primitives, `Option`/`Vec`/`HashMap[str,_]`
+/// (recurse into element types), `[]T`/tuple (recurse), types that provide the
+/// method or declare `#impl(P)`. Q16: `HashMap` key must be `str`.
+pub fn check_field_eligibility_serde<Q: DeriveQuery>(
+    query: &Q,
+    field_type: &TypeRef,
+    protocol: &str,
+    method_name: &str,
+) -> bool {
+    match field_type.strip_modifiers() {
+        TypeRef::Named { path, generics, .. } => {
+            let name = match path.last() { Some(n) => n.as_str(), None => return false };
+            if is_primitive_type(name) {
+                return true;
+            }
+            match name {
+                "Option" | "Vec" | "Set" | "HashSet" => generics.iter()
+                    .all(|g| check_field_eligibility_serde(query, g, protocol, method_name)),
+                "HashMap" | "Map" => {
+                    // Q16: only `str` keys are serializable (E_SERDE_NONSTRING_MAP_KEY).
+                    if generics.len() == 2
+                        && type_ref_name(&generics[0]) == Some("str")
+                    {
+                        check_field_eligibility_serde(query, &generics[1], protocol, method_name)
+                    } else {
+                        false
+                    }
+                }
+                _ => {
+                    if query.type_provides_method(name, method_name) {
+                        return true;
+                    }
+                    if let Some(td) = query.lookup_type(name) {
+                        if td.impl_protocols.iter().any(|p| p == protocol) {
+                            return true;
+                        }
+                    }
+                    false
+                }
+            }
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) =>
+            check_field_eligibility_serde(query, inner, protocol, method_name),
+        TypeRef::Tuple(elems, _) => elems.iter()
+            .all(|t| check_field_eligibility_serde(query, t, protocol, method_name)),
+        TypeRef::Unit(_) => true,
+        _ => false,
+    }
+}
+
+/// Build a serde FnDecl shell (generic `[G Bound]` method, `mut param G`,
+/// static or instance receiver, `Result[..]` return, `compiler_generated`).
+fn make_serde_method(
+    type_name: &str,
+    method_name: &str,
+    is_static: bool,
+    generic_name: &str,
+    bound_name: &str,
+    param_name: &str,
+    return_type: TypeRef,
+    body: FnBody,
+) -> FnDecl {
+    FnDecl {
+        name: method_name.to_string(),
+        receiver: Some(Receiver {
+            type_name: type_name.to_string(),
+            generics: vec![],
+            carrier_bounds: vec![],
+            receiver_ty: None,
+            kind: if is_static { ReceiverKind::Static } else { ReceiverKind::Instance },
+            mutable: false,
+            consume: false,
+            span: span_dummy(),
+        }),
+        generics: vec![GenericParam {
+            name: generic_name.to_string(),
+            bounds: vec![type_ref_named(bound_name)],
+            default: None,
+            span: span_dummy(),
+            consume_bound: false,
+        }],
+        params: vec![Param {
+            name: param_name.to_string(),
+            ty: type_ref_named(generic_name),
+            span: span_dummy(),
+            is_variadic: false,
+            default: None,
+            consume: false,
+            is_mut: true,
+            is_const: false,
+        }],
+        effects: vec![],
+        return_type: Some(return_type),
+        return_is_const: false,
+        returns_receiver: false,
+        body,
+        span: span_dummy(),
+        is_export: false,
+        is_external: false,
+        compiler_generated: true,
+        ..FnDecl::default()
+    }
+}
+
+/// Synthesize `@serialize[S Serializer](mut s S) -> Result[(), SerError]`.
+/// UNIFORM memberwise push (`@field.serialize(s)`), like `@debug`.
+pub fn synthesize_serialize<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let fields = iter_fields(type_decl).ok_or_else(|| DeriveError::UnsupportedTypeKind {
+        type_name: type_decl.name.clone(),
+        kind: type_decl_kind_name(type_decl).to_string(),
+        protocol: SERIALIZE.to_string(),
+    })?;
+    let mut stmts: Vec<Stmt> = Vec::new();
+    // s.begin_struct("Type", N)?
+    stmts.push(Stmt::Expr(try_(member_call(
+        ident("s"), "begin_struct",
+        vec![str_lit(&type_decl.name), int_lit(fields.len() as i64)],
+    ))));
+    for f in &fields {
+        // s.struct_field("f")?
+        stmts.push(Stmt::Expr(try_(member_call(
+            ident("s"), "struct_field", vec![str_lit(&f.name)]))));
+        // @f.serialize(s)?
+        stmts.push(Stmt::Expr(try_(member_call(
+            self_field(&f.name), "serialize", vec![ident("s")]))));
+    }
+    let body = FnBody::Block(block_with_trailing(
+        stmts, member_call(ident("s"), "end_struct", vec![])));
+    Ok(make_serde_method(
+        &type_decl.name, "serialize", false, "S", "Serializer", "s",
+        result_ty(TypeRef::Unit(span_dummy()), "SerError"), body))
+}
+
+/// Synthesize `.deserialize[D Deserializer](mut d D) -> Result[Self, DeError]`.
+/// Type-directed pull (see module header). `Option` fields use an inline
+/// null-check (built-in `Option` static dispatch does not route to a user impl).
+pub fn synthesize_deserialize<Q: DeriveQuery>(
+    _ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let fields = iter_fields(type_decl).ok_or_else(|| DeriveError::UnsupportedTypeKind {
+        type_name: type_decl.name.clone(),
+        kind: type_decl_kind_name(type_decl).to_string(),
+        protocol: DESERIALIZE.to_string(),
+    })?;
+    let mut stmts: Vec<Stmt> = Vec::new();
+    let mut lit_fields: Vec<RecordLitField> = Vec::new();
+    for f in &fields {
+        let sub = format!("__nv_de_{}", f.name);
+        if let Some(inner) = option_inner(&f.ty) {
+            // mut sub = d.enter_field_or_null("f")?
+            stmts.push(let_stmt(&sub, true, None, try_(member_call(
+                ident("d"), "enter_field_or_null", vec![str_lit(&f.name)]))));
+            // ro f: Option[inner] = if sub.is_null()? { None } else { Some(<inner deser>) }
+            let inner_de = deser_field_expr(&inner, &sub);
+            let if_expr = ex(ExprKind::If {
+                cond: Box::new(try_(member_call(ident(&sub), "is_null", vec![]))),
+                then: block_trailing(ident("None")),
+                else_: Some(crate::ast::ElseBranch::Block(block_trailing(some_call(inner_de)))),
+            });
+            stmts.push(let_stmt(&f.name, false, Some(f.ty.clone()), if_expr));
+        } else {
+            // mut sub = d.enter_field("f")?
+            stmts.push(let_stmt(&sub, true, None, try_(member_call(
+                ident("d"), "enter_field", vec![str_lit(&f.name)]))));
+            // ro f = <deser_expr>
+            stmts.push(let_stmt(&f.name, false, None, deser_field_expr(&f.ty, &sub)));
+        }
+        lit_fields.push(RecordLitField {
+            name: f.name.clone(),
+            // Shorthand `{ f }` (D52 §2): the field is bound by the local of the
+            // same name; the explicit `f: f` form is rejected by the type checker.
+            value: None,
+            is_spread: false,
+            at_shorthand: false,
+            span: span_dummy(),
+        });
+    }
+    // Ok(Type{ f1, f2, … })
+    let record_lit = ex(ExprKind::RecordLit {
+        type_name: Some(vec![type_decl.name.clone()]),
+        fields: lit_fields,
+        inferred_map_v: None,
+    });
+    let ok = call(ident("Ok"), vec![record_lit]);
+    let body = FnBody::Block(block_with_trailing(stmts, ok));
+    // Return the CONCRETE receiver type (`Result[Type, DeError]`), not
+    // `Result[Self, DeError]`: `Self` inside a `Result` generic resolves to a
+    // POINTER ABI (`NovaValue_Type*`) which mismatches the by-value record
+    // literal returned in the body. The concrete form yields the value ABI; the
+    // protocol's `Result[Self, DeError]` still matches via the (now recursive)
+    // `type_refs_equiv_modulo_self` Self↔receiver check.
+    Ok(make_serde_method(
+        &type_decl.name, "deserialize", true, "D", "Deserializer", "d",
+        result_ty(type_ref_named(&type_decl.name), "DeError"), body))
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Plan 126.2 Ф.2 — codegen-bound AST injection pass.
 //
 // Ф.1 registered synthesized `FnDecl`s в TypeCheckCtx.method_table — но это
@@ -1062,6 +1412,21 @@ impl DeriveQuery for ModuleDeriveQuery {
 /// (guarded by `compiler_generated` already present in `methods` exclusion +
 /// per-run dedup set). Returns count of injected methods (for diagnostics/tests).
 pub fn inject_synthesized_methods(module: &mut Module) -> usize {
+    inject_synthesized_methods_filtered(module, |_| true)
+}
+
+/// Plan 180: filtered injection. Serde (`Serialize`/`Deserialize`) is injected
+/// BEFORE type-check (its bodies call other methods whose return types codegen's
+/// annotation-free infer cannot resolve, so they must be type-checked +
+/// annotated). The other auto-derive protocols (`Equal`/`Clone`/…/`Display`/
+/// `Debug`) are injected AFTER type-check as before — some of their emitted
+/// bodies (e.g. `@display` uses `w.write_str`, not a `Write` protocol method)
+/// are intentionally NOT type-checkable and would be rejected if checked. The
+/// `accept` predicate selects which protocols this pass injects.
+pub fn inject_synthesized_methods_filtered<F: Fn(&str) -> bool>(
+    module: &mut Module,
+    accept: F,
+) -> usize {
     let query = ModuleDeriveQuery::build(module);
 
     // Collect target (type_decl, protocol) pairs first — borrow of module
@@ -1082,6 +1447,9 @@ pub fn inject_synthesized_methods(module: &mut Module) -> usize {
         }
         for proto_name in &td.impl_protocols {
             if !is_builtin_protocol(proto_name) {
+                continue;
+            }
+            if !accept(proto_name) {
                 continue;
             }
             let Some(method_name) = builtin_protocol_method(proto_name) else {

@@ -1,0 +1,378 @@
+// std/encoding/serde/json.nv — JSON-backend для serde (Plan 180 Ф.4, D344).
+//
+// JsonSerializer / JsonDeserializer реализуют Serializer / Deserializer
+// (serde.nv) ПОВЕРХ существующего std/encoding/json (JsonValue/Json.parse/
+// @into) — reuse RFC 8259-логики, escape, format_num, strict-DuplicateKey
+// (Q11). НЕ дублируем парсер. PURE codec (без I/O-эффекта).
+//
+// Публичный API — то, что зовёт Plan 178 (typed .json[T]) для record-DTO:
+//   Serde.encode[T]/decode[T]/encode_pretty/to_value/from_value/
+//   decode_bytes/decode_with (§3.8).
+//
+// Soundness (D346): depth-guard (Q14 default 128), numeric точное-целое-check
+// (Q15 -> LossyInteger/OutOfRange, no silent-lossy). Map-детерминизм: encode
+// сортирует ключи (serde.nv HashMap-impl).
+
+module encoding.serde
+
+import std.encoding.json.{JsonValue, Json, ParseJsonError, pretty}
+import std.collections.hashmap.{HashMap}
+import std.encoding.base64.{Base64}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JsonSerializer — единый mutable stack-machine (§3.2 realization). Собирает
+// JsonValue-дерево через begin/key/end; scalars — терминалы. `put` присоединяет
+// готовое значение к текущему frame (obj с pending-key / arr / root).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Frame стека сериализации: obj (с pending-ключом) или arr.
+type SerFrame { is_obj bool, obj HashMap[str, JsonValue], arr []JsonValue, pending str }
+fn SerFrame.obj_frame() -> SerFrame =>
+    { is_obj: true, obj: HashMap[str, JsonValue].new(), arr: [], pending: "" }
+fn SerFrame.arr_frame() -> SerFrame =>
+    { is_obj: false, obj: HashMap[str, JsonValue].new(), arr: [], pending: "" }
+
+/// Сериализатор: drive Serialize -> строит JsonValue -> @into() компактный JSON.
+/// Несёт depth-counter (Q14).
+#unstable
+export type JsonSerializer {
+    root JsonValue
+    has_root bool
+    stack []SerFrame
+    depth int
+    max_depth int
+}
+
+#unstable
+export fn JsonSerializer.new() -> JsonSerializer =>
+    { root: JsonValue.null(), has_root: false, stack: [], depth: 0, max_depth: 128 }
+
+/// Присоединить готовое значение к текущему контексту (top frame / root).
+fn JsonSerializer mut @put(v JsonValue) -> Result[(), SerError] {
+    match @stack.pop() {
+        None => {
+            @root = v
+            @has_root = true
+            Ok(())
+        }
+        Some(mut fr) => {
+            if fr.is_obj {
+                fr.obj.insert(fr.pending, v)
+                fr.pending = ""
+            } else {
+                fr.arr.push(v)
+            }
+            @stack.push(fr)
+            Ok(())
+        }
+    }
+}
+
+fn JsonSerializer mut @set_pending(key str) -> Result[(), SerError] {
+    match @stack.pop() {
+        None => Err(SerError.of(SerOther("field key outside container")))
+        Some(mut fr) => {
+            fr.pending = key
+            @stack.push(fr)
+            Ok(())
+        }
+    }
+}
+
+fn JsonSerializer mut @finish_obj() -> Result[(), SerError] {
+    @depth = @depth - 1
+    match @stack.pop() {
+        None    => Err(SerError.of(SerOther("end without begin")))
+        Some(fr) => @put(JsonValue.object(fr.obj))
+    }
+}
+
+// ── Serializer-протокол ──
+
+fn JsonSerializer mut @serialize_bool(v bool) -> Result[(), SerError] => @put(JsonValue.bool(v))
+fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] => @put(JsonValue.num(v as f64))
+fn JsonSerializer mut @serialize_uint(v u64) -> Result[(), SerError] => @put(JsonValue.num(v as f64))
+fn JsonSerializer mut @serialize_float(v f64) -> Result[(), SerError] {
+    if v.is_nan() || v.is_infinite() {
+        return Err(SerError.of(NonFiniteFloat))
+    }
+    @put(JsonValue.num(v))
+}
+fn JsonSerializer mut @serialize_str(v str) -> Result[(), SerError] => @put(JsonValue.str(v))
+fn JsonSerializer mut @serialize_bytes(v []u8) -> Result[(), SerError] =>
+    @put(JsonValue.str(Base64.encode(v)))
+fn JsonSerializer mut @serialize_unit() -> Result[(), SerError] => @put(JsonValue.null())
+fn JsonSerializer mut @serialize_none() -> Result[(), SerError] => @put(JsonValue.null())
+
+fn JsonSerializer mut @begin_struct(name str, len int) -> Result[(), SerError] {
+    @depth = @depth + 1
+    if @depth > @max_depth { return Err(SerError.of(SerDepthLimit)) }
+    @stack.push(SerFrame.obj_frame())
+    Ok(())
+}
+fn JsonSerializer mut @struct_field(key str) -> Result[(), SerError] => @set_pending(key)
+fn JsonSerializer mut @end_struct() -> Result[(), SerError] => @finish_obj()
+
+fn JsonSerializer mut @begin_map(len int) -> Result[(), SerError] {
+    @depth = @depth + 1
+    if @depth > @max_depth { return Err(SerError.of(SerDepthLimit)) }
+    @stack.push(SerFrame.obj_frame())
+    Ok(())
+}
+fn JsonSerializer mut @map_key(key str) -> Result[(), SerError] => @set_pending(key)
+fn JsonSerializer mut @end_map() -> Result[(), SerError] => @finish_obj()
+
+fn JsonSerializer mut @begin_seq(len int) -> Result[(), SerError] {
+    @depth = @depth + 1
+    if @depth > @max_depth { return Err(SerError.of(SerDepthLimit)) }
+    @stack.push(SerFrame.arr_frame())
+    Ok(())
+}
+fn JsonSerializer mut @end_seq() -> Result[(), SerError] {
+    @depth = @depth - 1
+    match @stack.pop() {
+        None     => Err(SerError.of(SerOther("end_seq without begin")))
+        Some(fr) => @put(JsonValue.array(fr.arr))
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JsonDeserializer — cursor по JsonValue-дереву. Скаляры — прямой pull; составные
+// — под-cursor через enter_* (sub-deserializer только читает, нет write-back).
+// depth-counter (Q14). numeric-fidelity (Q15).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Десериализатор: Json.parse -> JsonValue -> drive Deserialize.
+#unstable
+export type JsonDeserializer { cur JsonValue, depth int, max_depth int }
+
+#unstable
+export fn JsonDeserializer.at(v JsonValue, depth int, max_depth int) -> JsonDeserializer =>
+    { cur: v, depth, max_depth }
+
+/// Имя JSON-типа текущего значения (для сообщений об ошибке).
+fn json_kind(v JsonValue) -> str {
+    if v.is_null() { "null" }
+    else if v.is_bool() { "bool" }
+    else if v.is_num() { "number" }
+    else if v.is_str() { "string" }
+    else if v.is_array() { "array" }
+    else { "object" }
+}
+
+/// f64 — точное целое в безопасном диапазоне [-2^53, 2^53]? (Q15)
+fn is_exact_int(n f64) -> bool =>
+    n.is_finite() && n == n.floor() && n.abs() < 9007199254740992.0
+
+// ── Deserializer-протокол ──
+
+fn JsonDeserializer mut @deser_bool() -> Result[bool, DeError] {
+    match @cur.as_bool() {
+        Some(b) => Ok(b)
+        None    => Err(DeError.unexpected("bool", json_kind(@cur)))
+    }
+}
+fn JsonDeserializer mut @deser_str() -> Result[str, DeError] {
+    match @cur.as_str() {
+        Some(s) => Ok(s)
+        None    => Err(DeError.unexpected("string", json_kind(@cur)))
+    }
+}
+fn JsonDeserializer mut @deser_float() -> Result[f64, DeError] {
+    match @cur.as_num() {
+        Some(n) => Ok(n)
+        None    => Err(DeError.unexpected("number", json_kind(@cur)))
+    }
+}
+fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
+    match @cur.as_num() {
+        None => Err(DeError.unexpected("int", json_kind(@cur)))
+        Some(n) => {
+            if !is_exact_int(n) {
+                Err(DeError.of(LossyInteger(str.from(n))))
+            } else {
+                Ok(n as int)
+            }
+        }
+    }
+}
+fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
+    match @cur.as_num() {
+        None => Err(DeError.unexpected("uint", json_kind(@cur)))
+        Some(n) => {
+            if n < 0.0 {
+                Err(DeError.of(OutOfRange(str.from(n))))
+            } else if !is_exact_int(n) {
+                Err(DeError.of(LossyInteger(str.from(n))))
+            } else {
+                Ok(n as u64)
+            }
+        }
+    }
+}
+fn JsonDeserializer mut @deser_bytes() -> Result[[]u8, DeError] {
+    match @cur.as_str() {
+        None => Err(DeError.unexpected("base64 string", json_kind(@cur)))
+        Some(s) => match Base64.decode(s) {
+            Ok(b)  => Ok(b)
+            Err(_e) => Err(DeError.of(Syntax("invalid base64 data")))
+        }
+    }
+}
+fn JsonDeserializer mut @is_null() -> Result[bool, DeError] => Ok(@cur.is_null())
+
+fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeError] {
+    if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
+    match @cur.as_object() {
+        None => Err(DeError.unexpected("object", json_kind(@cur)))
+        Some(m) => match m.get(key) {
+            None    => Err(DeError.at(MissingField(key), "$.${key}"))
+            Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
+        }
+    }
+}
+fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer, DeError] {
+    if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
+    match @cur.as_object() {
+        None => Err(DeError.unexpected("object", json_kind(@cur)))
+        Some(m) => match m.get(key) {
+            None    => Ok(JsonDeserializer.at(JsonValue.null(), @depth + 1, @max_depth))
+            Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
+        }
+    }
+}
+fn JsonDeserializer mut @seq_len() -> Result[int, DeError] {
+    match @cur.as_array() {
+        None    => Err(DeError.unexpected("array", json_kind(@cur)))
+        Some(a) => Ok(a.len())
+    }
+}
+fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError] {
+    if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
+    match @cur.as_array() {
+        None    => Err(DeError.unexpected("array", json_kind(@cur)))
+        Some(a) => match a.get(i) {
+            Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
+            None    => Err(DeError.of(Other("sequence index out of range")))
+        }
+    }
+}
+fn JsonDeserializer mut @map_keys() -> Result[[]str, DeError] {
+    match @cur.as_object() {
+        None => Err(DeError.unexpected("object", json_kind(@cur)))
+        Some(m) => {
+            mut ks []str = []
+            for k in m.keys() {
+                ks.push(k)
+            }
+            Ok(ks)
+        }
+    }
+}
+fn JsonDeserializer mut @enter_key(key str) -> Result[JsonDeserializer, DeError] => @enter_field(key)
+
+// ── error-rendering (line/col из ParseJsonError сохраняются в тексте) ──
+
+/// ParseJsonError -> сообщение с line/col (source-chain в тексте, §8.0.3).
+fn parse_err_msg(e ParseJsonError) -> str {
+    match e {
+        UnexpectedChar { line, col, found } =>
+            "unexpected character '${str.from(found)}' at line ${str.from(line)}, col ${str.from(col)}"
+        UnexpectedEof { line, col } =>
+            "unexpected end of input at line ${str.from(line)}, col ${str.from(col)}"
+        InvalidEscape { line, col, seq } =>
+            "invalid escape '${seq}' at line ${str.from(line)}, col ${str.from(col)}"
+        InvalidUnicode { line, col, hex } =>
+            "invalid unicode '${hex}' at line ${str.from(line)}, col ${str.from(col)}"
+        InvalidNumber { line, col, text } =>
+            "invalid number '${text}' at line ${str.from(line)}, col ${str.from(col)}"
+        DuplicateKey { line, col, key } =>
+            "duplicate key '${key}' at line ${str.from(line)}, col ${str.from(col)}"
+        TrailingContent { line, col } =>
+            "trailing content at line ${str.from(line)}, col ${str.from(col)}"
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Публичный API (§3.8) — record-DTO, разблокировка Plan 178 typed .json[T].
+// ──────────────────────────────────────────────────────────────────────────
+
+// NB (D344 realized-form): публичный API — FREE-функции, НЕ namespace-static
+// методы. Причина (Ф.0-verify-эмпирика): turbofish на namespace/type-static
+// generic-методе (`Ns.decode[T]`) НЕ мономорфизируется (erased-symbol);
+// free-fn turbofish — мономорфизируется. Каждая делает работу ИНЛАЙН через
+// `v.serialize`/`T.deserialize` (proven-working generic-dispatch), без
+// вложенных generic-обёрток. Followup `[M-180-namespace-static-generic-mono]`.
+
+/// T -> JsonValue (DOM, без строкования). #impl(Serialize)-derived.
+#unstable
+export fn json_to_value[T Serialize](v T) -> Result[JsonValue, SerError] {
+    mut s = JsonSerializer.new()
+    v.serialize(s)?
+    if s.has_root { Ok(s.root) } else { Ok(JsonValue.null()) }
+}
+
+/// T -> компактный JSON. Result (R1/D325).
+#unstable
+export fn json_encode[T Serialize](v T) -> Result[str, SerError] {
+    mut s = JsonSerializer.new()
+    v.serialize(s)?
+    if s.has_root { Ok(s.root.into()) } else { Ok(JsonValue.null().into()) }
+}
+
+/// T -> pretty JSON (2-space отступ).
+#unstable
+export fn json_encode_pretty[T Serialize](v T) -> Result[str, SerError] {
+    mut s = JsonSerializer.new()
+    v.serialize(s)?
+    if s.has_root { Ok(pretty(s.root)) } else { Ok(pretty(JsonValue.null())) }
+}
+
+/// JsonValue (уже распарсенный DOM) -> T.
+#unstable
+export fn json_from_value[T Deserialize](v JsonValue) -> Result[T, DeError] {
+    mut d = JsonDeserializer.at(v, 0, 128)
+    T.deserialize(d)
+}
+
+/// JSON-строка -> T. Json.parse + drive Deserialize. Path/location в DeError.
+#unstable
+export fn json_decode[T Deserialize](s str) -> Result[T, DeError] {
+    match Json.parse(s) {
+        Ok(v)  => {
+            mut d = JsonDeserializer.at(v, 0, 128)
+            T.deserialize(d)
+        }
+        Err(e) => Err(DeError.of(Syntax(parse_err_msg(e))))
+    }
+}
+
+/// Конфигурируемый max-depth (Q14); default 128 в decode.
+#unstable
+export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeError] {
+    match Json.parse(s) {
+        Ok(v)  => {
+            mut d = JsonDeserializer.at(v, 0, max_depth)
+            T.deserialize(d)
+        }
+        Err(e) => Err(DeError.of(Syntax(parse_err_msg(e))))
+    }
+}
+
+/// []u8 (UTF-8) -> T (байт-first вход; Plan 178 Body.@json).
+#unstable
+export fn json_decode_bytes[T Deserialize](b []u8) -> Result[T, DeError] {
+    match str.from_bytes(b) {
+        Ok(s)  => {
+            match Json.parse(s) {
+                Ok(v)  => {
+                    mut d = JsonDeserializer.at(v, 0, 128)
+                    T.deserialize(d)
+                }
+                Err(e) => Err(DeError.of(Syntax(parse_err_msg(e))))
+            }
+        }
+        Err(e) => Err(DeError.of(Syntax("invalid utf-8 at byte ${str.from(e.byte_offset)}")))
+    }
+}
