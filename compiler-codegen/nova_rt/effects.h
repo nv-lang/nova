@@ -854,12 +854,20 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
 
 /* Layout matches codegen-generated layout for user effects.
  *
- * Plan 48 Ф.5: now_ms / now_ns добавлены чтобы handlers.nv (fixed_ms,
- * mut_clock — std/testing/handlers.nv:171-201) могли регистрировать
- * полный набор Time-методов. Default-импл (Nova_Time_now_ms / _now_ns)
- * — wrapper'ы вокруг now() (которая возвращает monotonic ms). Field
- * order MUST совпадать с codegen-emitted layout: ctx, sleep, now,
- * now_ms, now_ns (см. emit_handler_decl / fixed_ms vtable init). */
+ * Plan 175 Ф.1 (D316 — единый источник схемы): op-schema эффекта `Time`
+ * теперь читается codegen'ом ИЗ std/prelude/effects.nv (int-провод
+ * `sleep(ms int)`, `now()->int`, `now_monotonic()->int`), а не из хардкода.
+ * Этот hand-written vtable = HANDLER-интерфейс (не codegen-schema): его
+ * слоты — только те опы, что реализуются `with Time = handler {...}`.
+ * `now_monotonic` и 5 timer-счётчиков (→ TimerMetrics, Ф.1/Q1) дispatch'атся
+ * direct-C (fibers.h / channels.h), НЕ через этот vtable.
+ *
+ * Plan 48 Ф.5: now_ms / now_ns — handler-extension слоты, чтобы handlers.nv
+ * (fixed_ms, mut_clock — std/testing/handlers.nv) могли регистрировать
+ * полный набор. Default-импл (Nova_Time_now_ms / _now_ns) — wrapper'ы
+ * вокруг now(). Field order MUST совпадать с codegen-emitted handler layout:
+ * ctx, sleep, now, now_ms, now_ns (см. emit_handler_decl / fixed_ms vtable
+ * init). Ретайр now_ms/now_ns — Plan 175 Ф.2 (не в Ф.1). */
 typedef struct {
     void*     ctx;
     nova_unit (*sleep)(void* _ctx, nova_int ms);

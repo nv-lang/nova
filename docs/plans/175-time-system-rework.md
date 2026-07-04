@@ -257,11 +257,27 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   **Ревью = автор** (соло-проект), чеклист: соответствие §3.0-решениям + D-нумерация свободна (D316-318; high-water
   движется — D328 уже занят 172.4) + отсутствие коллизий с 172.x; зарегистрировать `[M-sleep-tolerance]`/
   `[M-monotonic-boottime]` в `docs/plans/backlog-followups.md` (OPEN-view). **GATE:** D-блоки до кода (§5 spec-first).
-- **Ф.1 — единый источник схемы (без смены поведения).** Механизм: codegen **читает** схему `Time` из `.nv`-decl
+- **Ф.1 — единый источник схемы (без смены поведения). ✅ ВЫПОЛНЕНО (2026-07-04, ветка `plan-175-time`).** Механизм: codegen **читает** схему `Time` из `.nv`-decl
   (коорд. 172.1 U.1/U.2) вместо хардкода [emit_c.rs:2870+](../../compiler-codegen/src/codegen/emit_c.rs#L2870) (`effect_schemas.insert("Time"`); вынести 5
   счётчиков в `TimerMetrics`; удалить закомментированный 5-й источник [duration.nv:541-546](../../std/time/duration.nv#L541);
   выровнять vtable [effects.h:863](../../compiler-codegen/nova_rt/effects.h#L863). **Содержимое схемы пока НЕ меняем**
   (int-провод остаётся) → поведение не меняется. DEP: Ф.0 (spec-gate); кодовых зависимостей нет (низший риск).
+  - **Сделано:** (1) `emit_type_decl`/RUNTIME_DEFINED_TYPES-ветка строит `effect_schemas["Time"]` из `.nv`-decl
+    (симметрично RuntimeError/MemOrdering sum-schema); хардкод `effect_schemas.insert("Time")` удалён. (2) `Time`-decl
+    в `std/prelude/effects.nv` = единый источник; добавлен `now_monotonic()->int` (был только в хардкоде). (3) **NEW**
+    `type TimerMetrics effect { timer_alloc_total/…() -> int }` в effects.nv; C-акцессоры channels.h переименованы
+    `Nova_Time_timer_* → Nova_TimerMetrics_timer_*`; `TimerMetrics` добавлен в RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES
+    + skip в `emit_user_effect_registrations` (direct-C, нет handler-slot'а, как `Mem`). (4) закомментированный 5-й
+    источник в duration.nv удалён; vtable-комментарий effects.h выровнен (struct не тронут — now_ms/now_ns ретайр = Ф.2).
+    (5) call-сайты `Time.timer_*()` → `TimerMetrics.timer_*()` (nova_tests/plan65 f11/f11a).
+  - **Спека:** D316 внесён (04-effects.md) — плумбинг-эффект + единый источник + `TimerMetrics`-split + ns-канон;
+    typed-surface/Q15/overflow(D317)/non-regression(D318) — последующие фазы (amend D316). README-нумерация обновлена.
+  - **Гейт:** conformance 38/38 (new binary); pos-фикстура `nova_tests/time/plan175_f1_timer_metrics_split.nv` PASS
+    (TimerMetrics dispatch + int-провод + Monotonic non-regress); zero-regression **delta = 0** vs parent-бинарь на
+    12 dir-сэмпле (temp-worktree `../nova-175-base`, identical pre-existing FAILs); Rust build clean.
+  - **NB (pre-existing долг, НЕ Ф.1):** `nova test nova_tests/plan65` целиком не C-компилится из-за
+    spawn-closure-captures-module-const дефекта в f10/f7 (bare `TIMEOUT_MS1`/`TIMERS_PER_FIBER` вместо мангл-имени) —
+    baseline-delta=0 (тот же CC-FAIL на parent-бинаре); занесён в backlog. Ф.0 (D316-318 полные) + typed-surface — не в scope Ф.1.
 - **Ф.1b — value-migration (enumerated checklist, НЕ «проще»).** `Duration`/`Timestamp`/`Monotonic` `{}`→`value`. По каждому
   риск-сайту аудита — шаг + верификация: (1) 3 типа stack-alloc в 26 методах (ABI); (2) **value-const** ZERO/SECOND/MINUTE/HOUR
   [duration.nv:58-70](../../std/time/duration.nv#L58) + EPOCH [:430](../../std/time/duration.nv#L430) — const-evaluable; (3)

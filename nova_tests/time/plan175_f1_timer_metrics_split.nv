@@ -1,0 +1,57 @@
+// Plan 175 Ф.1 — единый источник схемы Time + вынос TimerMetrics.
+//
+// Позитив-фикстура behavior-change'а Ф.1 (§8.0 «каждое изменение поведения
+// закрыто pos-фикстурой»):
+//   1. 5 timer-observability-счётчиков вынесены из эффекта `Time` в
+//      отдельный read-only `TimerMetrics`-эффект (Q1) — они диспатчатся в
+//      `Nova_TimerMetrics_timer_*` (nova_rt/channels.h) и остаются рабочими.
+//   2. int-провод `Time` сохранён (Ф.1 не меняет поведение): `now()->int`,
+//      `sleep(ms int)` работают как прежде.
+//   3. Схема `Time` теперь читается codegen'ом ИЗ std/prelude/effects.nv
+//      (единый источник) — компиляция этого файла = smoke-проверка, что
+//      единый источник даёт ту же схему.
+//
+// Single-file folder-module — нет cross-file const-capture (обходит
+// pre-existing spawn-const-capture дефект в nova_tests/plan65).
+
+module nova_tests.time
+
+import std.time.duration
+
+test "TimerMetrics.timer_alloc_total increments on close_after alloc" {
+    ro before = TimerMetrics.timer_alloc_total()
+    supervised {
+        spawn {
+            ro t = ChanReader.close_after(Duration.from_millis(1))
+            ro _ = t.recv()
+        }
+    }
+    ro after = TimerMetrics.timer_alloc_total()
+    assert(after - before >= 1)
+}
+
+test "TimerMetrics — все пять read-only опов диспатчатся" {
+    ro alloc_total = TimerMetrics.timer_alloc_total()
+    ro alloc_active = TimerMetrics.timer_alloc_active()
+    ro fired = TimerMetrics.timer_fired()
+    ro cancelled = TimerMetrics.timer_cancelled()
+    ro longest = TimerMetrics.timer_longest_pending_ms()
+    assert(alloc_total >= 0)
+    assert(alloc_active >= 0)
+    assert(fired >= 0)
+    assert(cancelled >= 0)
+    assert(longest >= 0)
+}
+
+test "Time int-провод сохранён: now() -> int, sleep(0) немедленно" {
+    ro t0 = Time.now()
+    Time.sleep(0)
+    ro t1 = Time.now()
+    assert(t1 >= t0)
+}
+
+test "Monotonic.now() (builtin) не задет Ф.1 — non-regression" {
+    ro m0 = Monotonic.now()
+    ro m1 = Monotonic.now()
+    assert(m1.as_nanos() >= m0.as_nanos())
+}

@@ -1,8 +1,12 @@
-// Plan 65 R24 / Ф.11: Time.timer_*() observability counters.
+// Plan 65 R24 / Ф.11: TimerMetrics.timer_*() observability counters.
+//
+// Plan 175 Ф.1 (Q1): these read-only introspection counters были вынесены
+// из эффекта `Time` в отдельный `TimerMetrics`-эффект (см.
+// std/prelude/effects.nv). API-форма: `TimerMetrics.timer_*()`.
 //
 // Validates that NOVA_TIMER_METRICS counters are always live (not
 // gated on the env var, which only controls atexit dump). The counters
-// returned by Time.timer_alloc_total / _alloc_active / _fired /
+// returned by TimerMetrics.timer_alloc_total / _alloc_active / _fired /
 // _cancelled / _longest_pending_ms are maintained per close_after
 // allocation and per fire/cancel cleanup path.
 
@@ -13,8 +17,8 @@ module nova_tests.plan65
 
 import std.time.duration
 
-test "Time.timer_alloc_total increments on each close_after alloc" {
-    ro before = Time.timer_alloc_total()
+test "TimerMetrics.timer_alloc_total increments on each close_after alloc" {
+    ro before = TimerMetrics.timer_alloc_total()
     supervised {
         spawn {
             // 5 separate alloc calls.
@@ -31,14 +35,14 @@ test "Time.timer_alloc_total increments on each close_after alloc" {
             ro _ = _t5.recv()
         }
     }
-    ro after = Time.timer_alloc_total()
+    ro after = TimerMetrics.timer_alloc_total()
     // Zero-duration fast-path doesn't increment; only real alloc counts.
     // 5 timers actually allocated.
     assert(after - before == 5)
 }
 
-test "Time.timer_alloc_active returns to baseline after natural fire" {
-    ro baseline = Time.timer_alloc_active()
+test "TimerMetrics.timer_alloc_active returns to baseline after natural fire" {
+    ro baseline = TimerMetrics.timer_alloc_active()
     supervised {
         spawn {
             ro t = ChanReader.close_after(Duration.from_millis(10))
@@ -46,24 +50,24 @@ test "Time.timer_alloc_active returns to baseline after natural fire" {
         }
     }
     // After scope exit, all timers fired naturally → alloc_active back to baseline.
-    ro after = Time.timer_alloc_active()
+    ro after = TimerMetrics.timer_alloc_active()
     assert(after == baseline)
 }
 
-test "Time.timer_fired increments on natural fire" {
-    ro before = Time.timer_fired()
+test "TimerMetrics.timer_fired increments on natural fire" {
+    ro before = TimerMetrics.timer_fired()
     supervised {
         spawn {
             ro t = ChanReader.close_after(Duration.from_millis(5))
             ro _ = t.recv()
         }
     }
-    ro after = Time.timer_fired()
+    ro after = TimerMetrics.timer_fired()
     assert(after - before >= 1)
 }
 
-test "Time.timer_cancelled increments on cancel-token cleanup" {
-    ro before = Time.timer_cancelled()
+test "TimerMetrics.timer_cancelled increments on cancel-token cleanup" {
+    ro before = TimerMetrics.timer_cancelled()
     ro tok = CancelToken.new()
     with Fail = effect Fail {
         fail(_msg) => interrupt ()
@@ -79,12 +83,12 @@ test "Time.timer_cancelled increments on cancel-token cleanup" {
             }
         }
     }
-    ro after = Time.timer_cancelled()
+    ro after = TimerMetrics.timer_cancelled()
     assert(after - before >= 1)
 }
 
-test "Time.timer_longest_pending_ms is rolling max" {
-    ro before = Time.timer_longest_pending_ms()
+test "TimerMetrics.timer_longest_pending_ms is rolling max" {
+    ro before = TimerMetrics.timer_longest_pending_ms()
     supervised {
         spawn {
             // Allocate a 7-second timer (but cancel immediately) — the
@@ -93,7 +97,7 @@ test "Time.timer_longest_pending_ms is rolling max" {
             // Don't wait for it; let scope-exit cleanup close it via on_select_lost-like path.
         }
     }
-    ro after = Time.timer_longest_pending_ms()
+    ro after = TimerMetrics.timer_longest_pending_ms()
     assert(after >= 7_000)
     // Rolling: it never decreases.
     assert(after >= before)

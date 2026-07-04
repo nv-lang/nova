@@ -532,18 +532,14 @@ export fn Timestamp @elapsed() Time -> Duration =>
 // Time effect — главный AI-first момент
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Time — ambient effect (как Random, ne fail). В тестах подменяется
+// Time — ambient effect (как Random, не fail). В тестах подменяется
 // handler'ом → код становится детерминированным без mock-библиотек.
 //
-// Декларация type ниже — для documentation; пред-зарегистрирован
-// в prelude (D26).
-
-// type Time effect {
-//     now() -> Timestamp
-//     now_ms() -> u64
-//     now_ns() -> u64
-//     sleep(d Duration) -> ()
-// }
+// Plan 175 Ф.1 (D316 — единый источник схемы): декларация `type Time effect`
+// живёт ТОЛЬКО в std/prelude/effects.nv (codegen читает её оттуда). Ранее
+// здесь дублировался закомментированный 5-й источник схемы — УДАЛЁН, чтобы
+// не плодить расходящиеся зеркала. int-провод (`now()->int`) сохраняется в
+// Ф.1; типизация (`timestamp()->Timestamp`, `sleep(Duration)`) — Ф.2/Ф.3.
 
 
 // ──────────────────────────────────────────────────────────────────────────

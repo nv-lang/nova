@@ -28,7 +28,10 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     // core prelude (C structs/constructors в nova_rt/array.h)
     "Option", "Result", "Error", "RuntimeError",
     // effect vtables (nova_rt/effects.h)
-    "Fail", "Time", "Mem",
+    // Plan 175 Ф.1: TimerMetrics — read-only introspection effect split out
+    // of Time (Q1). Direct-C dispatch (Nova_TimerMetrics_timer_*, no vtable),
+    // like Mem. Schema built from its .nv decl (single source).
+    "Fail", "Time", "Mem", "TimerMetrics",
     // sync (sync_primitives.h): MemOrdering + sized atomics + AtomicPtr
     "MemOrdering",
     "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
@@ -2879,39 +2882,23 @@ impl CEmitter {
             self.effect_schemas.insert("Fail".to_string(), fail_schema);
         }
 
-        // Pre-register Time as a built-in effect (D11 / D14 / D62).
-        // Operations: `now() -> int` (monotonic ms), `sleep(ms int) -> unit`
-        // (yields/sleeps depending on context — see fibers.h). User override
-        // via `with Time = handler Time { sleep(ms) {...} now() {...} } { body }`.
+        // Plan 175 Ф.1 (D316 — единый источник схемы): хардкод
+        // `effect_schemas["Time"]` УДАЛЁН. `Time` (D11/D14/D62) объявлен в
+        // `std/prelude/effects.nv` — `emit_type_decl` (RUNTIME_DEFINED_TYPES
+        // ветка, TypeDeclKind::Effect) строит `effect_schemas["Time"]` из
+        // этой декларации (симметрично RuntimeError/MemOrdering sum-schema,
+        // 172.1 U.1). Единственный источник правды — `.nv`, без хардкод-
+        // зеркала. Int-провод сохранён (Ф.1 не меняет поведение):
+        // `sleep(ms int)->()`, `now()->int`, `now_monotonic()->int`
+        // (wire raw i64; Nova-side оборачивается в Monotonic — см.
+        // std/time/duration.nv). Типизация опов — Ф.2/Ф.3.
         //
-        // Plan 65 Ф.5: `Time.after(ms)` REMOVED. Replaced by
-        // `ChanReader.close_after(Duration)` (D94 revision). Usage of the
-        // legacy form triggers diagnostic E5101 (see emit_call dispatch).
-        {
-            let mut time_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
-            time_schema.insert("sleep".to_string(), (vec!["nova_int".into()],    "nova_unit".into()));
-            time_schema.insert("now".to_string(),   (vec![],                      "nova_int".into()));
-            // Plan 65 Ф.12.3 / D124: monotonic clock — раздельный от wall-clock.
-            // Returns Monotonic.nanos (i64) — runtime использует
-            // clock_gettime(CLOCK_MONOTONIC) / QueryPerformanceCounter.
-            // Schema-wire returns nova_int (raw nanos); Nova-side wrapped в
-            // Monotonic record через std/time/duration.nv Monotonic.now().
-            //
-            // NOTE: latent Time.now() → Timestamp schema mismatch ([M-time-now-schema-mismatch])
-            // is documented and intentionally deferred — it requires a record-typed
-            // return through the effect schema layer, which has no precedent in
-            // the schema-wire convention. Plan 65 introduces now_monotonic via
-            // the same wire layer for parity (returns raw i64; Nova-side wraps
-            // it in Monotonic, same as fixed_ms returns int wrapped in Timestamp).
-            time_schema.insert("now_monotonic".to_string(), (vec![], "nova_int".into()));
-            // Plan 65 Ф.11: NOVA_TIMER_METRICS observability counters.
-            time_schema.insert("timer_alloc_total".to_string(),       (vec![], "nova_int".into()));
-            time_schema.insert("timer_alloc_active".to_string(),      (vec![], "nova_int".into()));
-            time_schema.insert("timer_fired".to_string(),             (vec![], "nova_int".into()));
-            time_schema.insert("timer_cancelled".to_string(),         (vec![], "nova_int".into()));
-            time_schema.insert("timer_longest_pending_ms".to_string(), (vec![], "nova_int".into()));
-            self.effect_schemas.insert("Time".to_string(), time_schema);
-        }
+        // Plan 65 Ф.5: `Time.after(ms)` REMOVED — заменён
+        // `ChanReader.close_after(Duration)` (D94); legacy-форма → E5101.
+        //
+        // Plan 175 Ф.1 / Q1: 5 timer-observability-счётчиков вынесены из
+        // `Time` в отдельный `TimerMetrics`-эффект (тоже из .nv, direct-C
+        // dispatch `Nova_TimerMetrics_timer_*` в nova_rt/channels.h).
 
         // Pre-register Mem as a built-in effect for runtime introspection.
         // Operations:
@@ -3174,7 +3161,7 @@ impl CEmitter {
             // pre-registered effect_schemas + codegen helpers (no
             // runtime/effects.h dedicated struct, but emit-skip required
             // чтобы избежать conflict с declaration).
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time", "Mem"];
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Time", "Mem", "TimerMetrics"];
             for name in vtable_names {
                 if BUILTIN_VTABLE_NAMES.contains(&name.as_str()) { continue; }
                 // Local effects — emit_effect_type generates an anonymous typedef
@@ -10343,6 +10330,42 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         &variant_order,
                     );
                     self.sum_schemas.insert(t.name.clone(), schema);
+                }
+            }
+            // Plan 175 Ф.1 (D316 — единый источник схемы): built-in effect
+            // vtables (Time / TimerMetrics) объявлены в .nv, а их C-vtable/
+            // dispatch живут в nova_rt/*.h (direct-C, RUNTIME_DEFINED_TYPES +
+            // BUILTIN_VTABLE_NAMES skip). Здесь строим `effect_schemas[name]`
+            // ИЗ ДЕКЛАРАЦИИ (симметрично sum-schema выше) — убирает хардкод-
+            // зеркало в emit_module. НЕ вызываем emit_effect_type (он бы
+            // сгенерировал конфликтующий typedef + dispatcher'ы). Guard
+            // `!contains_key` сохраняет ранее pre-registered эффекты
+            // (Fail/Mem — их хардкод остаётся источником в Ф.1).
+            if let TypeDeclKind::Effect(methods) = &t.kind {
+                if !self.effect_schemas.contains_key(&t.name) {
+                    // Param C-types per method (нужны для mangle_op — как в
+                    // emit_effect_type; для уникальных опов mangle == имя).
+                    let mut method_param_c: Vec<(String, Vec<String>)> = Vec::new();
+                    for m in methods {
+                        let mut ptypes: Vec<String> = Vec::new();
+                        for p in &m.params {
+                            ptypes.push(self.type_ref_to_c(&p.ty)?);
+                        }
+                        method_param_c.push((m.name.clone(), ptypes));
+                    }
+                    let all_method_pairs: Vec<(&str, &[String])> = method_param_c.iter()
+                        .map(|(n, p)| (n.as_str(), p.as_slice()))
+                        .collect();
+                    let mut schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
+                    for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
+                        let ret = match &m.return_type {
+                            None => "nova_unit".to_string(),
+                            Some(tr) => self.type_ref_to_c(tr)?,
+                        };
+                        let mangled = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
+                        schema.insert(mangled, (param_c_types.clone(), ret));
+                    }
+                    self.effect_schemas.insert(t.name.clone(), schema);
                 }
             }
             return Ok(());
@@ -18053,8 +18076,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mut names: Vec<String> = self.effect_schemas.keys().cloned().collect();
         names.sort();  // deterministic order
         for name in names {
-            // Skip built-ins (зарегистрированы явно).
-            if name == "Fail" || name == "Time" || name == "Mem" { continue; }
+            // Skip built-ins (зарегистрированы явно ИЛИ direct-C без handler-slot'а).
+            // Plan 175 Ф.1: TimerMetrics — direct-C introspection (как Mem), нет
+            // `_nova_handler_TimerMetrics`-слота → регистрировать нечего.
+            if name == "Fail" || name == "Time" || name == "Mem" || name == "TimerMetrics" { continue; }
             self.line(&format!(
                 "nova_register_effect_storage((void**)&_nova_handler_{});", name));
         }
