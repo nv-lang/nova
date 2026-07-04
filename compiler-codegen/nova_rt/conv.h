@@ -135,20 +135,33 @@ static inline nova_str nova_bool_to_str(nova_bool b) {
     else   return (nova_str){ "false", 5 };
 }
 
-/* === f64/i64 → str === */
-/* nova_int_to_str уже определён в nova_rt.h; здесь — f64. */
+/* === f64/f32 → str === */
+/* nova_int_to_str уже определён в nova_rt.h; здесь — f64/f32.
+ *
+ * Plan 180 [M-180-f64-shortest-roundtrip]: SHORTEST ROUND-TRIP. These are thin
+ * GC-allocating wrappers over the single-source-of-truth core in nova_rt.h
+ * (`nova_f64_shortest`/`nova_f32_shortest`) — the SAME formatter that backs
+ * direct `println(float)`, `@display`/`@debug`, `${x}` interpolation, and
+ * `StringBuilder.append`. Contract: the MINIMAL decimal string `s` such that
+ * `strtod(s) == v` (f64) / `strtof(s) == v` (f32) bit-for-bit. Prior
+ * `snprintf("%g")` (6 sig-figs) was lossy for arbitrary values and broke
+ * `decode(encode(v)) == v` on float-bearing JSON.
+ *
+ * Buffer: worst case `%.17g` == "-1.2345678901234567e-308" (24 chars) + NUL;
+ * 32 bytes is sufficient. */
 static inline nova_str nova_f64_to_str(double v) {
     char* buf = (char*)nova_alloc(32);
-    int n = snprintf(buf, 32, "%g", v);
-    if (n < 0) n = 0;
+    int n = nova_f64_shortest(v, buf);
     return (nova_str){ buf, (size_t)n };
 }
 
-/* Plan 154.1 [M-154.1-f32-display-debug]: f32 → str via widening to double +
- * f64 formatter. `%g` default 6-sig-fig precision hides the f32→f64 mantissa
- * tail for typical values (0.1f → "0.1"). */
+/* Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 round-trip at FLOAT
+ * precision via `strtof` (NOT the widened f64 round-trip) — `0.1f` stays "0.1"
+ * rather than exposing the widened-double tail "0.10000000149011612". */
 static inline nova_str nova_f32_to_str(nova_f32 v) {
-    return nova_f64_to_str((double)v);
+    char* buf = (char*)nova_alloc(32);
+    int n = nova_f32_shortest(v, buf);
+    return (nova_str){ buf, (size_t)n };
 }
 
 /* === char (codepoint) → str (UTF-8 encode) === */

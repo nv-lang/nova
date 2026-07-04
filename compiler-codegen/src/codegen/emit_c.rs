@@ -28416,6 +28416,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 "nova_char" => return Ok(format!("nova_char_to_str({})", v)),
                                 "nova_bool" => return Ok(format!("nova_bool_to_str({})", v)),
                                 "nova_f64"  => return Ok(format!("nova_f64_to_str({})", v)),
+                                // Plan 180: str.from(f32) must route to the f32
+                                // shortest-round-trip formatter (mirror of the
+                                // interpolation/display path). Без этой ветки
+                                // f32-аргумент проваливался в целочисленный
+                                // fallback и ТРУНКИРОВАЛСЯ (0.1f → "0").
+                                "nova_f32"  => return Ok(format!("nova_f32_to_str({})", v)),
                                 "nova_int"  => return Ok(format!("nova_int_to_str({})", v)),
                                 _ => {}
                             }
@@ -29046,7 +29052,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         match c_ty.as_str() {
             "nova_str"                                      => "nova_print_str",
             "nova_bool"                                     => "nova_print_bool",
-            "nova_f32" | "nova_f64"                         => "nova_print_f64",
+            // Plan 180: f32 prints via its OWN f32-precise formatter — lumping
+            // it with f64 widened to double, which the now-faithful
+            // nova_print_f64 would render with the f32→f64 mantissa tail
+            // (3.14159f → "3.141590118408203" instead of "3.14159").
+            "nova_f32"                                      => "nova_print_f32",
+            "nova_f64"                                      => "nova_print_f64",
             // Signed/unsigned integer widths — все cast'ятся в long long
             // через nova_print_int signature.
             "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"

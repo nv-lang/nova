@@ -134,9 +134,11 @@ export fn StringBuilder mut @append(ro arr []u8) -> @ { @buf.append(arr); @ }
 export fn StringBuilder mut @append(n int) -> @ { @append(str.from(n)) }
 export fn StringBuilder mut @append(x f64) -> @ { @append(str.from(x)) }
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
-// Plan 154.1 [M-154.1-f32-display-debug]: f32 widens to f64 (lossless), reuses
-// the f64 path → nova_f64_to_str.
-export fn StringBuilder mut @append(x f32) -> @ { @append(x as f64) }
+// Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `str.from(x)` →
+// the f32-precise shortest-round-trip formatter (nova_f32_to_str). Widening to
+// f64 first would surface the f32→f64 mantissa tail now that str.from(f64) is
+// faithful (0.1f → "0.10000000149011612"); the direct f32 path keeps "0.1".
+export fn StringBuilder mut @append(x f32) -> @ { @append(str.from(x)) }
 
 // Append строку s ровно n раз. n <= 0 → no-op.
 // Single reserve(total) → один realloc вместо n× амортизированного doubling.
