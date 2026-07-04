@@ -1,0 +1,92 @@
+// Plan 179 Ф.3 — external-consumer encode tests for std/encoding/compress.
+//
+// Проверяет публичный encode API (deflate/zlib_encode/gzip_encode + streaming
+// Deflater/GzipWriter) через собственный inflate/decode: round-trip на всех
+// уровнях + level-различимость + streaming. (Cross-check с внешним gzip -d /
+// python zlib выполнен отдельно на этапе GATE — anti-circular.)
+
+module nova_tests.compress
+
+import std.encoding.compress.{inflate, zlib_decode, gzip_decode, deflate, zlib_encode, gzip_encode, CompressLevel, Deflater, GzipWriter}
+
+fn corpus() -> []u8 {
+    mut o = []u8.with_capacity(2048)
+    ro unit = "The quick brown fox jumps over the lazy dog. ".to_bytes()
+    for _ in 0..40 { o.append(unit) }
+    o
+}
+
+// Скошенный, но НЕ тривиально-сжимаемый корпус (случайные 'a'..'z'): LZ77
+// оставляет много литералов, дистрибуция скошена → dynamic-Huffman явно бьёт
+// fixed. Single-repeated-sentence НЕ годится для level-различимости: LZ77
+// схлопывает его в считанные токены, где header-overhead dynamic > выигрыш.
+fn diverse_corpus(n int, seed int) -> []u8 {
+    mut o = []u8.with_capacity(n)
+    mut s = seed
+    for _ in 0..n {
+        s = (s * 1103515245 + 12345) & 0x7FFFFFFF
+        o.push((97 + (s >> 16) % 26) as u8)
+    }
+    o
+}
+
+test "deflate round-trip: all levels via inflate" {
+    ro data = corpus()
+    assert(inflate(deflate(data, CompressLevel.none())!!, 0)!! == data)
+    assert(inflate(deflate(data, CompressLevel.fastest())!!, 0)!! == data)
+    assert(inflate(deflate(data, CompressLevel.default())!!, 0)!! == data)
+    assert(inflate(deflate(data, CompressLevel.best())!!, 0)!! == data)
+}
+
+test "gzip_encode round-trip: gzip_decode == original" {
+    ro data = corpus()
+    assert(gzip_decode(gzip_encode(data, CompressLevel.best())!!, 1048576)!! == data)
+}
+
+test "zlib_encode round-trip: zlib_decode == original" {
+    ro data = corpus()
+    assert(zlib_decode(zlib_encode(data, CompressLevel.default())!!, 1048576)!! == data)
+}
+
+test "level distinguishability: best < fastest < stored (skewed-alphabet corpus)" {
+    ro data = diverse_corpus(3000, 987654)
+    ro stored = deflate(data, CompressLevel.none())!!
+    ro fast = deflate(data, CompressLevel.fastest())!!
+    ro best = deflate(data, CompressLevel.best())!!
+    assert(stored.len() > fast.len())          // Huffman < stored
+    assert(best.len() < fast.len())            // dynamic < fixed (реально различимо)
+    assert(best.len() < data.len())            // сжатие произошло
+    // Round-trip diverse corpus на всех уровнях.
+    assert(inflate(fast, 0)!! == data)
+    assert(inflate(best, 0)!! == data)
+}
+
+test "encode edge: empty + single byte round-trip" {
+    ro empty []u8 = []
+    assert(gzip_decode(gzip_encode(empty, CompressLevel.best())!!, 16)!! == empty)
+    ro one = "Q".to_bytes()
+    assert(zlib_decode(zlib_encode(one, CompressLevel.fastest())!!, 16)!! == one)
+}
+
+test "streaming GzipWriter: feed + finish → gzip_decode" {
+    ro data = corpus()
+    mut gw = GzipWriter.new(CompressLevel.default())
+    mut comp = []u8.with_capacity(256)
+    mut i = 0
+    while i < data.len() {
+        ro end = if i + 13 < data.len() { i + 13 } else { data.len() }
+        mut piece = []u8.with_capacity(13)
+        piece.append(data[i..end])
+        comp.append(gw.feed(piece)!!)
+        i = end
+    }
+    comp.append(gw.finish()!!)
+    assert(gzip_decode(comp, 1048576)!! == data)
+}
+
+test "level range: deflate level 10/11 → Err (brotli-only)" {
+    ro data = "x".to_bytes()
+    assert(deflate(data, CompressLevel.new(10)!!).is_err())
+    assert(deflate(data, CompressLevel.new(11)!!).is_err())
+    assert(CompressLevel.new(12).is_err())
+}

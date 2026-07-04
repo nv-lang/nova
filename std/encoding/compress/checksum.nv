@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/compress/checksum.nv — CRC-32 (gzip) + Adler-32 (zlib).
+//
+// Plan 179 Ф.1 (D336). CRC-32 промоут из `std/_experimental/checksums/crc32.nv`
+// (free-function-форма as-is, test-vector 0xCBF43926 PASS). Adler-32 — NEW
+// (RFC 1950 §9). Обе — pure-функции (no-effect, no-resource), экспортируются
+// самостоятельно (integrity, PNG, ETag).
+//
+// Спецификации:
+//   - CRC-32 IEEE 802.3, poly 0xEDB88320 (reversed 0x04C11DB7) — RFC 1952 (gzip).
+//   - Adler-32 mod 65521 — RFC 1950 (zlib) §9.
+//
+// Codec-таблицы CRC — runtime-lazy (comptime-const-array = followup §11).
+
+module encoding.compress
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// CRC-32 (IEEE 802.3, poly 0xEDB88320) — gzip trailer
+// ──────────────────────────────────────────────────────────────────────────
+
+// Значение CRC-таблицы для индекса `i`. В production tooling — comptime-const
+// массив 256×u32; здесь runtime-функция (реюз формы crc32.nv `table_value`).
+fn crc32_table_value(i u8) -> u32 {
+    mut c = i as u32
+    for _ in 0..8 {
+        c = if c & 1 == 1 {
+            0xEDB88320 ^ (c >> 1)
+        } else {
+            c >> 1
+        }
+    }
+    c
+}
+
+/// CRC-32 checksum (IEEE 802.3) для последовательности байт.
+///
+/// # Examples
+/// ```nova
+/// assert(crc32("123456789".to_bytes()) == 0xCBF43926)
+/// ```
+#stable(since = "0.1")
+export fn crc32(data []u8) -> u32 =>
+    crc32_finalize(crc32_update(crc32_init(), data))
+
+/// Init incremental CRC-32 state (0xFFFFFFFF) — для streamed input.
+#stable(since = "0.1")
+export fn crc32_init() -> u32 => 0xFFFFFFFF
+
+/// Update CRC-32 state с новыми байтами (без финализации).
+#stable(since = "0.1")
+export fn crc32_update(state u32, data []u8) -> u32 {
+    mut crc = state
+    for b in data {
+        ro idx = (crc ^ (b as u32)) as u8
+        crc = crc32_table_value(idx) ^ (crc >> 8)
+    }
+    crc
+}
+
+/// Финализирует CRC-32 state — XOR с 0xFFFFFFFF (IEEE 802.3 convention).
+#stable(since = "0.1")
+export fn crc32_finalize(state u32) -> u32 =>
+    state ^ 0xFFFFFFFF
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Adler-32 (RFC 1950 §9, mod 65521) — zlib trailer
+// ──────────────────────────────────────────────────────────────────────────
+
+// Наибольший простой < 65536.
+fn adler_base() -> u32 => 65521
+
+/// Adler-32 checksum (RFC 1950 §9) для последовательности байт.
+///
+/// # Examples
+/// ```nova
+/// assert(adler32("Wikipedia".to_bytes()) == 0x11E60398)
+/// ```
+#stable(since = "0.1")
+export fn adler32(data []u8) -> u32 =>
+    adler32_finalize(adler32_update(adler32_init(), data))
+
+/// Init incremental Adler-32 state: a=1, b=0, упаковано (b<<16)|a = 0x00000001.
+#stable(since = "0.1")
+export fn adler32_init() -> u32 => 1
+
+/// Update Adler-32 state с новыми байтами (packed (b<<16)|a in/out).
+#stable(since = "0.1")
+export fn adler32_update(state u32, data []u8) -> u32 {
+    ro m = adler_base()
+    mut a = state & 0xFFFF
+    mut b = (state >> 16) & 0xFFFF
+    for byte in data {
+        a = (a + (byte as u32)) % m
+        b = (b + a) % m
+    }
+    (b << 16) | a
+}
+
+/// Финализирует Adler-32 state — identity (значение уже в финальной форме).
+#stable(since = "0.1")
+export fn adler32_finalize(state u32) -> u32 => state
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — известные test vectors
+// ──────────────────────────────────────────────────────────────────────────
+
+test "crc32: пустой ввод → 0" {
+    ro empty []u8 = []
+    assert(crc32(empty) == 0)
+}
+
+test "crc32: '123456789' → 0xCBF43926 (классический вектор)" {
+    assert(crc32("123456789".to_bytes()) == 0xCBF43926)
+}
+
+test "crc32: 'hello world' → 0x0D4A1185" {
+    assert(crc32("hello world".to_bytes()) == 0x0D4A1185)
+}
+
+test "crc32: incremental == монолитный" {
+    ro full = "The quick brown fox jumps over the lazy dog".to_bytes()
+    mut state = crc32_init()
+    state = crc32_update(state, "The quick brown ".to_bytes())
+    state = crc32_update(state, "fox jumps over ".to_bytes())
+    state = crc32_update(state, "the lazy dog".to_bytes())
+    assert(crc32(full) == crc32_finalize(state))
+}
+
+test "adler32: пустой ввод → 1" {
+    ro empty []u8 = []
+    assert(adler32(empty) == 1)
+}
+
+test "adler32: 'Wikipedia' → 0x11E60398 (RFC 1950 пример)" {
+    assert(adler32("Wikipedia".to_bytes()) == 0x11E60398)
+}
+
+test "adler32: '123456789' → 0x091E01DE" {
+    assert(adler32("123456789".to_bytes()) == 0x091E01DE)
+}
+
+test "adler32: incremental == монолитный" {
+    ro full = "The quick brown fox jumps over the lazy dog".to_bytes()
+    mut state = adler32_init()
+    state = adler32_update(state, "The quick brown ".to_bytes())
+    state = adler32_update(state, "fox jumps over ".to_bytes())
+    state = adler32_update(state, "the lazy dog".to_bytes())
+    assert(adler32(full) == adler32_finalize(state))
+}

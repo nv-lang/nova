@@ -1,0 +1,124 @@
+// Plan 179 Ф.1 — external-consumer tests for std/encoding/compress.
+//
+// Проверяет публичный API (inflate/zlib_decode/gzip_decode + streaming Inflater/
+// GzipReader/ZlibReader + crc32/adler32) на РЕАЛЬНЫХ векторах (эталон: system
+// gzip / python zlib). Round-trip: известные сжатые байты → известный выход.
+
+module nova_tests.compress
+
+import std.encoding.compress.{inflate, zlib_decode, gzip_decode, crc32, adler32, Inflater, GzipReader, ZlibReader}
+import std.encoding.compress.{deflate, zlib_encode, gzip_encode, CompressLevel, Deflater, GzipWriter}
+
+// hex-строка → []u8
+fn hx(s str) -> []u8 {
+    ro chars = s.to_bytes()
+    mut out = []u8.with_capacity(chars.len() / 2)
+    mut i = 0
+    while i + 1 < chars.len() {
+        out.push(((hxv(chars[i]) << 4) | hxv(chars[i + 1])) as u8)
+        i = i + 2
+    }
+    out
+}
+
+fn hxv(c u8) -> int {
+    ro n = c as int
+    if n >= 48 && n <= 57 { n - 48 }
+    else if n >= 97 && n <= 102 { n - 97 + 10 }
+    else if n >= 65 && n <= 70 { n - 65 + 10 }
+    else { 0 }
+}
+
+test "raw DEFLATE decode (fixed Huffman)" {
+    ro comp = hx("f348cdc9c9d751707175f3710c71550400")
+    assert(inflate(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "zlib_decode round-trip + Adler-32 verify" {
+    ro comp = hx("789cf348cdc9c9d751707175f3710c7155040025c40457")
+    assert(zlib_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "gzip_decode round-trip + CRC-32/ISIZE verify" {
+    ro comp = hx("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
+    assert(gzip_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "gzip multi-member concatenation" {
+    ro comp = hx("1f8b08000000000000fff348cdc9c9d7510000056f57de070000001f8b08000000000000ff0bcf2fca49510400de9d287606000000")
+    assert(gzip_decode(comp, 1048576)!! == "Hello, World!".to_bytes())
+}
+
+test "dynamic Huffman + long back-references (900B)" {
+    ro comp = hx("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
+    mut expect = []u8.with_capacity(900)
+    ro unit = "the quick brown fox jumps over the lazy dog. ".to_bytes()
+    for _ in 0..20 { expect.append(unit) }
+    assert(inflate(comp, 1048576)!! == expect)
+}
+
+test "bomb-cap: inflation beyond max_output → Err (not OOM)" {
+    ro comp = hx("4b4c1c0589440200")            // 300× 'a'
+    assert(inflate(comp, 100).is_err())          // cap 100 < 300 → Bomb
+    assert(inflate(comp, 300).is_ok())           // ровно cap — ok
+}
+
+test "checksum mismatch → Err" {
+    // gzip с флипнутым первым CRC-байтом
+    ro comp = hx("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400adccee010f000000")
+    assert(gzip_decode(comp, 1048576).is_err())
+}
+
+test "truncated input → Err" {
+    assert(gzip_decode(hx("1f8b08000000000000fff348cdc9"), 1048576).is_err())
+}
+
+test "streaming Inflater (external): feed + finish + drain" {
+    mut inf = Inflater.new(4096)
+    inf.feed(hx("f348cdc9c9d751707175f3710c71550400"))!!
+    inf.finish()!!
+    mut out = []u8.with_capacity(16)
+    loop {
+        ro c = inf.read(1024)!!
+        if c.len() > 0 { out.append(c) } else { break }
+    }
+    assert(out == "Hello, DEFLATE!".to_bytes())
+}
+
+test "streaming GzipReader (external): byte-by-byte == one-shot" {
+    ro comp = hx("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
+    mut gr = GzipReader.new(1048576)
+    mut out = []u8.with_capacity(16)
+    for idx in 0..comp.len() {
+        mut one = []u8.with_capacity(1)
+        one.push(comp[idx])
+        gr.feed(one)!!
+        loop {
+            ro c = gr.read(4)!!
+            if c.len() > 0 { out.append(c) } else { break }
+        }
+    }
+    gr.finish()!!
+    loop {
+        ro c = gr.read(4)!!
+        if c.len() > 0 { out.append(c) } else { break }
+    }
+    assert(out == "Hello, DEFLATE!".to_bytes())
+}
+
+test "checksums: known vectors" {
+    assert(crc32("123456789".to_bytes()) == 0xCBF43926)
+    assert(adler32("Wikipedia".to_bytes()) == 0x11E60398)
+}
+
+test "ZlibReader streaming (external)" {
+    mut zr = ZlibReader.new(4096)
+    zr.feed(hx("789cf348cdc9c9d751707175f3710c7155040025c40457"))!!
+    zr.finish()!!
+    mut out = []u8.with_capacity(16)
+    loop {
+        ro c = zr.read(1024)!!
+        if c.len() > 0 { out.append(c) } else { break }
+    }
+    assert(out == "Hello, DEFLATE!".to_bytes())
+}

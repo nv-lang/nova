@@ -1,0 +1,77 @@
+// D333 — codec-контракт std/encoding/compress: PURE-codec над `[]u8` (нет effect),
+// byte-first, Result-everywhere (R1/R5/D325), единый `fn(data, max) -> Result`.
+// Проверяет round-trip раскодировки реальных raw-DEFLATE / zlib / gzip векторов.
+// Spec: spec/decisions/05-stdlib.md (D333).
+
+module spec_tests.conformance
+
+import std.encoding.compress.{inflate, zlib_decode, gzip_decode, ErrorKind}
+import std.encoding.compress.{deflate, gzip_encode, zlib_encode, CompressLevel}
+
+fn d333_hex(s str) -> []u8 {
+    ro chars = s.to_bytes()
+    mut out = []u8.with_capacity(chars.len() / 2)
+    mut i = 0
+    while i + 1 < chars.len() {
+        ro hi = d333_hv(chars[i])
+        ro lo = d333_hv(chars[i + 1])
+        out.push(((hi << 4) | lo) as u8)
+        i = i + 2
+    }
+    out
+}
+
+fn d333_hv(c u8) -> int {
+    ro n = c as int
+    if n >= 48 && n <= 57 { n - 48 }
+    else if n >= 97 && n <= 102 { n - 97 + 10 }
+    else { 0 }
+}
+
+test "D333: raw DEFLATE decode is byte-first Result (fixed Huffman)" {
+    ro comp = d333_hex("f348cdc9c9d751707175f3710c71550400")
+    ro r = inflate(comp, 1048576)
+    assert(match r { Ok(_) => true, Err(_) => false })
+    assert(r!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "D333: zlib decode round-trip (RFC 1950 framing)" {
+    ro comp = d333_hex("789cf348cdc9c9d751707175f3710c7155040025c40457")
+    assert(zlib_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "D333: gzip decode round-trip (RFC 1952 framing)" {
+    ro comp = d333_hex("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
+    assert(gzip_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "D333: malformed input returns typed Err (not panic)" {
+    // reserved block type 11 → InvalidData
+    ro r = inflate(d333_hex("07"), 16)
+    assert(match r {
+        Err(e) => match e.kind { ErrorKind.InvalidData(_) => true, _ => false }
+        Ok(_) => false
+    })
+}
+
+test "D333: deflate encode round-trips through inflate (byte-first, all levels)" {
+    ro data = d333_hex("48656c6c6f2c20444546c4154452120726f756e642d747269702e")
+    assert(inflate(deflate(data, CompressLevel.none())!!, 0)!! == data)
+    assert(inflate(deflate(data, CompressLevel.fastest())!!, 0)!! == data)
+    assert(inflate(deflate(data, CompressLevel.best())!!, 0)!! == data)
+}
+
+test "D333: gzip_encode/zlib_encode framing round-trip (RFC 1950/1952)" {
+    ro data = "conformance encode framing payload — RFC 1950 & 1952.".to_bytes()
+    assert(gzip_decode(gzip_encode(data, CompressLevel.best())!!, 1048576)!! == data)
+    assert(zlib_decode(zlib_encode(data, CompressLevel.default())!!, 1048576)!! == data)
+}
+
+test "D333: per-codec level validation — deflate(10) → typed InvalidData" {
+    ro data = "x".to_bytes()
+    ro r = deflate(data, CompressLevel.new(10)!!)
+    assert(match r {
+        Err(e) => match e.kind { ErrorKind.InvalidData(_) => true, _ => false }
+        Ok(_) => false
+    })
+}

@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/compress/error.nv — единая структурная ошибка домена compress.
+//
+// Plan 179 Ф.1 (D333/D325). `std/encoding/compress` — PURE-codec над `[]u8`
+// (нет I/O-эффекта): все fallible-операции возвращают `Result[T, CompressError]`
+// (R1/R5 — никакого `Fail[E]` наружу). `ErrorKind` — OPEN sum-type (wildcard-arm
+// обязателен у потребителя). `Checksum` НЕСЁТ фактические значения expected/got.
+//
+// Spec: spec/decisions/05-stdlib.md (D333 codec-контракт, D336 checksum-контракт).
+
+module encoding.compress
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Единственная структурная ошибка домена compress (R1/R5/D325).
+///
+/// `kind` — OPEN `ErrorKind` (у потребителя wildcard-арм обязателен).
+/// `offset` — байт-позиция во входном буфере (диагностика); `None` для
+/// framing/checksum-ошибок, где точная позиция не значима.
+#stable(since = "0.1")
+export type CompressError value {
+    ro kind ErrorKind
+    ro offset Option[int]
+}
+
+/// OPEN дискриминатор ошибок compress. Wildcard-арм обязателен при match.
+///
+/// - `InvalidData(str)` — битый битстрим / неверный Хаффман / bad block-type.
+/// - `UnexpectedEof` — вход кончился посреди блока/фрейма/trailer'а.
+/// - `Checksum{kind,expected,got}` — CRC-32/Adler-32/ISIZE не сошёлся (несёт значения).
+/// - `BadHeader(str)` — gzip magic 0x1f8b / zlib CMF·FLG %31≠0.
+/// - `Bomb(int)` — выход (или прогресс-вход) превысил `max_output`; int = лимит.
+/// - `UnsupportedMethod(str)` — CM≠8; FDICT=1 (preset-dict V1); brotli без C-фичи.
+/// - `TrailingData` — мусор после валидного потока (strict-режим raw/zlib).
+/// - `Other(str)` — OPEN → wildcard обязателен.
+#stable(since = "0.1")
+export type ErrorKind
+    | InvalidData(str)
+    | UnexpectedEof
+    | Checksum { ro kind ChecksumKind, ro expected u32, ro got u32 }
+    | BadHeader(str)
+    | Bomb(int)
+    | UnsupportedMethod(str)
+    | TrailingData
+    | Other(str)
+
+/// Какая контрольная сумма не сошлась.
+#stable(since = "0.1")
+export type ChecksumKind
+    | Crc32
+    | Adler32
+    | Isize
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Диагностика
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Человекочитаемое описание ошибки (без trailing newline).
+#stable(since = "0.1")
+export fn CompressError @to_str() -> str {
+    match @kind {
+        InvalidData(msg)     => "invalid compressed data: ${msg}"
+        UnexpectedEof        => "unexpected end of input"
+        Checksum { kind, expected, got } =>
+            "${checksum_kind_name(kind)} mismatch: expected ${expected}, got ${got}"
+        BadHeader(msg)       => "bad header: ${msg}"
+        Bomb(limit)          => "output exceeded limit of ${limit} bytes (decompression bomb)"
+        UnsupportedMethod(m) => "unsupported method: ${m}"
+        TrailingData         => "trailing data after end of stream"
+        Other(msg)           => msg
+    }
+}
+
+fn checksum_kind_name(k ChecksumKind) -> str {
+    match k {
+        Crc32   => "CRC-32"
+        Adler32 => "Adler-32"
+        Isize   => "ISIZE"
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Module-private конструкторы (реюз в inflate/gzip/zlib — меньше boilerplate)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn CompressError.invalid(msg str) -> CompressError =>
+    { kind: InvalidData(msg), offset: None }
+
+fn CompressError.invalid_at(msg str, off int) -> CompressError =>
+    { kind: InvalidData(msg), offset: Some(off) }
+
+fn CompressError.eof() -> CompressError =>
+    { kind: UnexpectedEof, offset: None }
+
+fn CompressError.bomb(limit int) -> CompressError =>
+    { kind: Bomb(limit), offset: None }
+
+fn CompressError.bad_header(msg str) -> CompressError =>
+    { kind: BadHeader(msg), offset: None }
+
+fn CompressError.unsupported(msg str) -> CompressError =>
+    { kind: UnsupportedMethod(msg), offset: None }
+
+fn CompressError.trailing() -> CompressError =>
+    { kind: TrailingData, offset: None }
+
+fn CompressError.checksum_err(kind ChecksumKind, expected u32, got u32) -> CompressError =>
+    { kind: Checksum { kind, expected, got }, offset: None }

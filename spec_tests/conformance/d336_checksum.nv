@@ -1,0 +1,64 @@
+// D336 — checksum-контракт: CRC-32 (gzip) + Adler-32 (zlib) test-vectors;
+// trailer-verify обязателен; mismatch → Checksum{kind,expected,got} (несёт
+// значения); ISIZE = (len mod 2^32). Spec: spec/decisions/05-stdlib.md (D336).
+
+module spec_tests.conformance
+
+import std.encoding.compress.{gzip_decode, zlib_decode, crc32, adler32, ErrorKind, ChecksumKind}
+
+fn d336_hex(s str) -> []u8 {
+    ro chars = s.to_bytes()
+    mut out = []u8.with_capacity(chars.len() / 2)
+    mut i = 0
+    while i + 1 < chars.len() {
+        ro hi = d336_hv(chars[i])
+        ro lo = d336_hv(chars[i + 1])
+        out.push(((hi << 4) | lo) as u8)
+        i = i + 2
+    }
+    out
+}
+
+fn d336_hv(c u8) -> int {
+    ro n = c as int
+    if n >= 48 && n <= 57 { n - 48 }
+    else if n >= 97 && n <= 102 { n - 97 + 10 }
+    else { 0 }
+}
+
+test "D336: CRC-32 and Adler-32 known vectors" {
+    assert(crc32("123456789".to_bytes()) == 0xCBF43926)
+    assert(adler32("Wikipedia".to_bytes()) == 0x11E60398)
+    assert(adler32([]) == 1)
+}
+
+test "D336: gzip trailer verified (valid CRC-32 + ISIZE)" {
+    ro comp = d336_hex("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
+    assert(gzip_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "D336: gzip CRC-32 mismatch → Checksum{Crc32}" {
+    // Флипнутый первый CRC-байт (ac→ad)
+    ro comp = d336_hex("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400adccee010f000000")
+    ro r = gzip_decode(comp, 1048576)
+    assert(match r {
+        Err(e) => match e.kind {
+            ErrorKind.Checksum { kind, .. } => match kind { ChecksumKind.Crc32 => true, _ => false }
+            _ => false
+        }
+        Ok(_) => false
+    })
+}
+
+test "D336: zlib Adler-32 mismatch → Checksum{Adler32}" {
+    // Флипнутый последний Adler-байт (57→56)
+    ro comp = d336_hex("789cf348cdc9c9d751707175f3710c7155040025c40456")
+    ro r = zlib_decode(comp, 1048576)
+    assert(match r {
+        Err(e) => match e.kind {
+            ErrorKind.Checksum { kind, .. } => match kind { ChecksumKind.Adler32 => true, _ => false }
+            _ => false
+        }
+        Ok(_) => false
+    })
+}

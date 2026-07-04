@@ -1,0 +1,384 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/compress/zlib.nv — RFC 1950 zlib framing (pure Nova).
+//
+// Plan 179 Ф.1. 2-байт CMF/FLG-заголовок + DEFLATE + Adler-32-trailer поверх
+// `inflate.nv`. CM=8, CINFO≤7, (CMF·256+FLG)%31==0, FDICT=1 → UnsupportedMethod
+// (preset-dict = followup §11). Adler-32-verify обязателен (D336); trailing-data
+// после трейлера → TrailingData (strict, Q14).
+
+module encoding.compress
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// One-shot zlib decode
+// ──────────────────────────────────────────────────────────────────────────
+
+/// zlib (RFC 1950): CMF/FLG-заголовок + DEFLATE + Adler-32-trailer. `max_output` —
+/// bomb-cap. Adler-32 верифицируется; несовпадение → Checksum{Adler32,exp,got}.
+#stable(since = "0.1")
+export fn zlib_decode(data []u8, max_output int) -> Result[[]u8, CompressError] {
+    if data.len() < 2 {
+        return Err(CompressError.bad_header("zlib: header too short"))
+    }
+    ro cmf = data[0] as int
+    ro flg = data[1] as int
+    ro cm = cmf & 0x0F
+    ro cinfo = (cmf >> 4) & 0x0F
+    if cm != 8 {
+        return Err(CompressError.unsupported("zlib: compression method != 8"))
+    }
+    if cinfo > 7 {
+        return Err(CompressError.unsupported("zlib: window size (CINFO) > 7"))
+    }
+    if (cmf * 256 + flg) % 31 != 0 {
+        return Err(CompressError.bad_header("zlib: header checksum (%31) failed"))
+    }
+    if ((flg >> 5) & 1) == 1 {
+        return Err(CompressError.unsupported("zlib: preset dictionary (FDICT=1)"))
+    }
+
+    mut inf = Inflater.new(max_output)
+    inf.feed(data[2..data.len()])?
+    inf.mark_done()
+    mut out = []u8.with_capacity(0)
+    loop {
+        ro c = inf.read(1048576)?
+        if c.len() > 0 { out.append(c) } else { break }
+    }
+    if !inf.is_done() {
+        return Err(CompressError.eof())
+    }
+
+    ro dend = 2 + inf.input_end_byte()
+    if data.len() - dend < 4 {
+        return Err(CompressError.eof())
+    }
+    ro stored = ((data[dend] as u32) << 24)
+        | ((data[dend + 1] as u32) << 16)
+        | ((data[dend + 2] as u32) << 8)
+        | (data[dend + 3] as u32)
+    ro got = adler32(out)
+    if got != stored {
+        return Err(CompressError.checksum_err(Adler32, stored, got))
+    }
+    if dend + 4 < data.len() {
+        return Err(CompressError.trailing())
+    }
+    Ok(out)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Streaming zlib decode (Adler-32-trailer поверх Inflater, single-member)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// zlib-стрим-декодер: Adler-32-trailer-верификация поверх Inflater. НЕ consume
+/// (Q6). Контракт feed/read/finish; `finish` верифицирует Adler-32. `read`
+/// возвращает пустой срез когда нечего отдать (см. `Inflater.read` + `is_done`).
+#stable(since = "0.1")
+export type ZlibReader value {
+    mut inner Inflater
+    mut header_buf []u8
+    mut header_done bool
+    mut adler u32
+    mut max_output int
+    mut tail []u8           // остаток выхода, слитый в finish() (drain-order-independent)
+    mut tpos int
+}
+
+#stable(since = "0.1")
+export fn ZlibReader.new(max_output int) -> ZlibReader =>
+    {
+        inner: Inflater.new(max_output),
+        header_buf: []u8.with_capacity(2),
+        header_done: false,
+        adler: adler32_init(),
+        max_output,
+        tail: []u8.with_capacity(0),
+        tpos: 0,
+    }
+
+#stable(since = "0.1")
+export fn ZlibReader mut @feed(chunk []u8) -> Result[(), CompressError] {
+    if @header_done {
+        return @inner.feed(chunk)
+    }
+    @header_buf.append(chunk)
+    if @header_buf.len() < 2 {
+        return Ok(())
+    }
+    ro cmf = @header_buf[0] as int
+    ro flg = @header_buf[1] as int
+    if (cmf & 0x0F) != 8 {
+        return Err(CompressError.unsupported("zlib: compression method != 8"))
+    }
+    if ((cmf >> 4) & 0x0F) > 7 {
+        return Err(CompressError.unsupported("zlib: window size (CINFO) > 7"))
+    }
+    if (cmf * 256 + flg) % 31 != 0 {
+        return Err(CompressError.bad_header("zlib: header checksum (%31) failed"))
+    }
+    if ((flg >> 5) & 1) == 1 {
+        return Err(CompressError.unsupported("zlib: preset dictionary (FDICT=1)"))
+    }
+    @header_done = true
+    if @header_buf.len() > 2 {
+        @inner.feed(@header_buf[2..@header_buf.len()])?
+    }
+    Ok(())
+}
+
+#stable(since = "0.1")
+export fn ZlibReader mut @read(max_emit int) -> Result[[]u8, CompressError] {
+    ro me = if max_emit < 0 { 0 } else { max_emit }
+    // Сначала отдаём остаток, слитый в finish()
+    if @tpos < @tail.len() {
+        ro avail = @tail.len() - @tpos
+        ro n = if avail < me { avail } else { me }
+        if n <= 0 { return Ok([]u8.with_capacity(0)) }
+        mut chunk = []u8.with_capacity(n)
+        chunk.append(@tail[@tpos..(@tpos + n)])
+        @tpos = @tpos + n
+        return Ok(chunk)
+    }
+    ro c = @inner.read(me)?
+    if c.len() > 0 {
+        @adler = adler32_update(@adler, c)
+    }
+    Ok(c)
+}
+
+#stable(since = "0.1")
+export fn ZlibReader @is_done() -> bool => @inner.is_done() && @tpos >= @tail.len()
+
+#stable(since = "0.1")
+export fn ZlibReader mut @finish() -> Result[(), CompressError] {
+    if !@header_done {
+        return Err(CompressError.eof())
+    }
+    @inner.mark_done()
+    loop {
+        ro c = @inner.read(1048576)?
+        if c.len() > 0 {
+            @adler = adler32_update(@adler, c)
+            @tail.append(c)
+        } else {
+            break
+        }
+    }
+    if !@inner.is_done() {
+        return Err(CompressError.eof())
+    }
+    ro trailer = @inner.leftover_bytes()
+    if trailer.len() < 4 {
+        return Err(CompressError.eof())
+    }
+    ro stored = ((trailer[0] as u32) << 24)
+        | ((trailer[1] as u32) << 16)
+        | ((trailer[2] as u32) << 8)
+        | (trailer[3] as u32)
+    ro got = adler32_finalize(@adler)
+    if got != stored {
+        return Err(CompressError.checksum_err(Adler32, stored, got))
+    }
+    Ok(())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// One-shot zlib encode (RFC 1950 framing + Adler-32) — Ф.3
+// ──────────────────────────────────────────────────────────────────────────
+
+// CMF: CM=8 (deflate), CINFO=7 (32 KiB окно) → 0x78.
+fn zlib_cmf() -> int => 0x78
+
+// FLG с корректным FCHECK ((CMF·256+FLG)%31==0), FLEVEL=0, FDICT=0.
+fn zlib_flg() -> int {
+    ro cmf = zlib_cmf()
+    mut flg = 0
+    ro rem = (cmf * 256 + flg) % 31
+    if rem != 0 {
+        flg = flg + (31 - rem)
+    }
+    flg
+}
+
+/// zlib-компрессия (RFC 1950): CMF/FLG + DEFLATE + Adler-32-trailer (big-endian).
+/// Выход читается `zlib_decode` (round-trip) и системным zlib.
+#stable(since = "0.1")
+export fn zlib_encode(data []u8, level CompressLevel) -> Result[[]u8, CompressError] {
+    ro body = deflate(data, level)?
+    mut out = []u8.with_capacity(body.len() + 6)
+    out.push(zlib_cmf() as u8)
+    out.push(zlib_flg() as u8)
+    out.append(body)
+    ro ad = adler32(data)
+    out.push(((ad >> 24) & 0xFF) as u8)
+    out.push(((ad >> 16) & 0xFF) as u8)
+    out.push(((ad >> 8) & 0xFF) as u8)
+    out.push((ad & 0xFF) as u8)
+    Ok(out)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Streaming zlib encode (framing + Adler-32 поверх Deflater) — Ф.3
+// ──────────────────────────────────────────────────────────────────────────
+
+/// zlib-стрим-энкодер: CMF/FLG-header + Adler-32-trailer поверх Deflater.
+/// value (НЕ consume). `feed`/`flush` (SYNC-FLUSH)/`finish` (дописывает Adler-32).
+#stable(since = "0.1")
+export type ZlibWriter value {
+    mut inner Deflater
+    mut adler u32
+    mut header_sent bool
+    mut finished bool
+}
+
+#stable(since = "0.1")
+export fn ZlibWriter.new(level CompressLevel) -> ZlibWriter =>
+    {
+        inner: Deflater.new(level),
+        adler: adler32_init(),
+        header_sent: false,
+        finished: false,
+    }
+
+fn zlib_header() -> []u8 {
+    mut h = []u8.with_capacity(2)
+    h.push(zlib_cmf() as u8)
+    h.push(zlib_flg() as u8)
+    h
+}
+
+#stable(since = "0.1")
+export fn ZlibWriter mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
+    mut out = []u8.with_capacity(chunk.len())
+    if !@header_sent {
+        out.append(zlib_header())
+        @header_sent = true
+    }
+    @adler = adler32_update(@adler, chunk)
+    out.append(@inner.feed(chunk)?)
+    Ok(out)
+}
+
+#stable(since = "0.1")
+export fn ZlibWriter mut @flush() -> Result[[]u8, CompressError] {
+    mut out = []u8.with_capacity(16)
+    if !@header_sent {
+        out.append(zlib_header())
+        @header_sent = true
+    }
+    out.append(@inner.flush()?)
+    Ok(out)
+}
+
+#stable(since = "0.1")
+export fn ZlibWriter mut @finish() -> Result[[]u8, CompressError] {
+    mut out = []u8.with_capacity(16)
+    if !@header_sent {
+        out.append(zlib_header())
+        @header_sent = true
+    }
+    out.append(@inner.finish()?)
+    ro ad = adler32_finalize(@adler)
+    out.push(((ad >> 24) & 0xFF) as u8)
+    out.push(((ad >> 16) & 0xFF) as u8)
+    out.push(((ad >> 8) & 0xFF) as u8)
+    out.push((ad & 0xFF) as u8)
+    @finished = true
+    Ok(out)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — реальные zlib-векторы (эталон: python zlib.compress)
+// ──────────────────────────────────────────────────────────────────────────
+
+test "zlib_decode: 'Hello, DEFLATE!' + Adler-32 verify" {
+    ro comp = hexbytes("789cf348cdc9c9d751707175f3710c7155040025c40457")
+    assert(zlib_decode(comp, 1024)!! == "Hello, DEFLATE!".to_bytes())
+}
+
+test "zlib_decode: empty input" {
+    ro comp = hexbytes("789c030000000001")
+    assert(zlib_decode(comp, 16)!! == [])
+}
+
+test "zlib_decode: 300× 'a'" {
+    ro comp = hexbytes("789c4b4c1c0589440200d8a871ad")
+    mut expect = []u8.with_capacity(300)
+    for _ in 0..300 { expect.push(97) }
+    assert(zlib_decode(comp, 4096)!! == expect)
+}
+
+test "zlib_decode: bad header (%31) → BadHeader" {
+    ro comp = hexbytes("7800030000000001")     // 0x7800 % 31 != 0
+    ro r = zlib_decode(comp, 16)
+    assert(match r { Err(e) => match e.kind { BadHeader(_) => true, _ => false }, Ok(_) => false })
+}
+
+test "zlib_decode: Adler-32 mismatch → Checksum" {
+    // Флипнутый последний байт трейлера
+    ro comp = hexbytes("789cf348cdc9c9d751707175f3710c7155040025c40456")
+    ro r = zlib_decode(comp, 1024)
+    assert(match r {
+        Err(e) => match e.kind { Checksum { kind, .. } => match kind { Adler32 => true, _ => false }, _ => false }
+        Ok(_) => false
+    })
+}
+
+test "zlib_decode: FDICT=1 → UnsupportedMethod" {
+    // CMF=0x78, FLG с FDICT-битом (bit5) и корректным %31: 0x78,0xBB → 0x78BB%31==0
+    ro comp = hexbytes("78bb0000000000000001")
+    ro r = zlib_decode(comp, 16)
+    assert(match r { Err(e) => match e.kind { UnsupportedMethod(_) => true, _ => false }, Ok(_) => false })
+}
+
+test "zlib streaming: feed-по-1-байту == one-shot" {
+    ro comp = hexbytes("789c4b4c1c0589440200d8a871ad")
+    ro oneshot = zlib_decode(comp, 4096)!!
+    mut zr = ZlibReader.new(4096)
+    mut out = []u8.with_capacity(300)
+    for idx in 0..comp.len() {
+        mut one = []u8.with_capacity(1)
+        one.push(comp[idx])
+        zr.feed(one)!!
+        loop {
+            ro c = zr.read(8)!!
+            if c.len() > 0 { out.append(c) } else { break }
+        }
+    }
+    zr.finish()!!
+    loop {
+        ro c = zr.read(8)!!
+        if c.len() > 0 { out.append(c) } else { break }
+    }
+    assert(out == oneshot)
+}
+
+test "zlib_encode: round-trip via zlib_decode (all levels)" {
+    ro data = "zlib framing round-trip payload — repeated. zlib framing round-trip payload.".to_bytes()
+    assert(zlib_decode(zlib_encode(data, CompressLevel.none())!!, 65536)!! == data)
+    assert(zlib_decode(zlib_encode(data, CompressLevel.fastest())!!, 65536)!! == data)
+    assert(zlib_decode(zlib_encode(data, CompressLevel.best())!!, 65536)!! == data)
+}
+
+test "zlib_encode: header CMF/FLG valid (%31==0, CM=8)" {
+    ro comp = zlib_encode("hello".to_bytes(), CompressLevel.fastest())!!
+    ro cmf = comp[0] as int
+    ro flg = comp[1] as int
+    assert((cmf & 0x0F) == 8)                  // CM=8
+    assert((cmf * 256 + flg) % 31 == 0)        // FCHECK
+    assert(((flg >> 5) & 1) == 0)              // FDICT=0
+}
+
+test "zlib streaming: ZlibWriter feed+finish round-trip" {
+    ro data = "streamed zlib content that repeats. streamed zlib content that repeats.".to_bytes()
+    mut zw = ZlibWriter.new(CompressLevel.best())
+    mut comp = []u8.with_capacity(64)
+    comp.append(zw.feed(data)!!)
+    comp.append(zw.finish()!!)
+    assert(zlib_decode(comp, 65536)!! == data)
+}
