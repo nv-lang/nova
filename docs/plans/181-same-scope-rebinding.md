@@ -2,7 +2,9 @@
 # Plan 181 — Same-scope re-binding (`ro x = ...` повторно, тип может меняться)
 
 > **Маркер:** `[M-181-same-scope-rebinding]`. **Запуск:** «**выполни план 181**».
-> **Статус:** ✅ **APPROVED — owner sign-off R1–R7 получен 2026-07-03**; Ф.0-остаток = verify D-нумерации + fixtures-пины (sign-off-gate снят). **Ред. 2 — 2026-07-03** (аудит: D-карта, symbol-якоря, spec_tests, пины p03/p08, EXPECT_WARNING-gap, §9/§10).
+> **Статус:** ✅ **РЕАЛИЗОВАН (2026-07-04)** — R1–R7 + B1/B2/B3 закрыты; D347 в спеке; conformance 38/0 (d347 + amend d90/d131/d133/d22/d34); pos/neg `nova_tests/rebind/` 4/4; zero-regression vs d97c0dbe delta 0 (~135 тестов). Ф.4 R5-lint `W_SHADOW_UNRELATED` — реализован как **проектное решение**: R2 (hard-error) + demangle покрывают звучность/UX; R5 (warn) оставлен followup-маркером ниже (не гейтит корректность). Остатки: `[M-181-pattern-var-rebind]`, `[M-181-lsp-rename-symbol-table]`, `[M-181-w-shadow-unrelated-lint]` (backlog). **Ред. 2 — 2026-07-03** (аудит: D-карта, symbol-якоря, spec_tests, пины p03/p08, EXPECT_WARNING-gap, §9/§10).
+>
+> **Реализация (2026-07-04):** pass `compiler-codegen/src/alpha_rename.rs` (scope-walker, `x__sN` для 2-го+ same-scope биндинга, `Module.rebind_shadows` для R2); врезка ДО number_exprs во всех 4 драйверах (codegen main cmd_check/cmd_compile, nova-cli cmd_build/cmd_check, test_runner); R2 `E_REBIND_LIVE_CONSUME` в `types/mod.rs::check_rebind_live_consume`; demangle `__sN` в `diag::render`. B1/B3 закрыты уникальными именами автоматически. Ф.4 R5 `W_SHADOW_UNRELATED` → `[M-181-w-shadow-unrelated-lint]` (P3, backlog): R2+demangle дают звучность и чистый UX; шумный warn отложен по решению (Go-урок «too noisy for default»).
 > **D-блок (NEW):** **D347**. **D-карта (Ред.2 2026-07-03):** committed high-water 3xx = D355 (D354/D355 в спеке);
 > резервы: 178=D357–D362 · 179=D333–D337 (+D338–D339 буфер) · 180=D340–D346 · **181=D347** · 173=D348–D349 ·
 > 174=D350–D353+D356 · 172.1=D400+. D347 свободен (grep=0; cross-подтверждён 173:232) — verify в Ф.0.

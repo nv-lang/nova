@@ -37593,3 +37593,45 @@ D185 §amend-2 added.
 - **[M-104.10-runtest-filter-substring]** **Остаток (bounded, follow-up — НЕ упрощение headline, Ф.20):** run-test линза передаёт `nova test --filter <name>` (подстрочный матч по display-name), а не точный. Тест, чьё имя — подстрока имени другого теста в том же файле, при запуске потянет и «надмножество». CLI имеет `--filter-from <file>` (точный display-name матч, по строке на тест), но требует temp-файла и знания полного display-name (может включать path-префикс). Для реального устранения — либо exact-name флаг в `nova test`, либо генерация temp filter-файла. Деградация безопасна (запуск надмножества, не пропуск). Файл: `nova-lsp/src/code_lens.rs` (`run_test_lens`) + `server.rs` (`run_nova_test`). Priority: P3.
 
 [2026-07-04 Plan 104.10 LSP V2 — ЗАКРЫТ] nova-lsp доведён до production-паритета с 7 LSP-пирами (24 фазы, 3 Workflow, 0 rate-limit). Сводка упрощений/остатков (все bounded, P3, plan-санкционированные маркеры — НЕ молчаливые): [M-104.10-expr-types-coverage] (generic instance method-chain returns / non-primitive TupleLit не в expr_types → completion деградирует gracefully text-fallback); [M-104.10-vfs-overlay-imports] (peer-ranges disk-authoritative, unified VFS-overlay открытых буферов отложен); [M-104.10-folding-plain-comments] (плоские //-комменты не сворачиваются — лексер их отбрасывает); [M-104.10-organize-imports-namescan] (unused-import через текстовый name-scan, консервативный false-keep); [M-104.10-persistent-index] (refs-индекс in-memory, on-disk persistence V2.1); [M-104.10-dependent-invalidation] (reverse-dep инвалидация кеша, урок zls); [M-104.10-rename-full-resolve] (scope-aware rename, полный per-occurrence resolve — followup); [M-104.10-lsp-cwd-anchor], [M-104.10-inlay-config-granularity], [M-104.10-highlight-lexical-occurrences], [M-104.10-semantic-tokens-scope], [M-104.10-runtest-filter-substring]; scope-out (маркеры): call-hierarchy / type-hierarchy (фундамент готов, дельта ~2d/1.5d), pull-diagnostics, declaration-alias, document-link, multi-root. Convention-compliance verified (no-hardcode, degraded-mode, diag-parity, тесты на реальном движке). Rust-тесты (не spec_tests/.nv) — LSP-internal/opt-in expr_types не наблюдается через nova test (D378/D379). Финал: nova-lsp 408 lib pass/0 fail. Ветка plan-104-10.
+
+## Plan 181 — Same-scope re-binding (D347) (2026-07-04)
+
+- **[production, НЕ упрощение] D347 R1–R7 + B1/B2/B3 (2026-07-04).** Новый чистый pass
+  `compiler-codegen/src/alpha_rename.rs` (`alpha_rename(&mut Module) -> RebindTables`):
+  scope-stack walker после parse (ДО `number_exprs`/check/codegen — врезан во ВСЕ 4 драйвера:
+  `main.rs` cmd_check/cmd_compile, `nova-cli` cmd_build/cmd_check, `test_runner::codegen_to_c`),
+  уникализирует 2-й+ same-scope биндинг имени в `x__s1`/`x__s2`/… (первый — без суффикса →
+  для кода БЕЗ rebind pass = byte-identical no-op, zero-regression). RHS rebind'а резолвится
+  в предыдущий биндинг (R3); замыкания/defer — env-снапшот на момент создания (R4);
+  per-fn pre-scan резервирует все user-идентификаторы (генерируемый `__sN` не коллизирует).
+  Shadow-map (`Module.rebind_shadows: unique→shadowed`) публикуется для consume-checker.
+  **R2** (`E_REBIND_LIVE_CONSUME`, `types/mod.rs::check_rebind_live_consume`): затенение
+  живого consume-обязательства → hard error на месте rebind (ловит B2 double-consume leak);
+  **B1** (false-positive D133 при rebind ПОТРЕБЛЁННого consume) и **B3** (`ro x=1; ro x=x+1`)
+  закрыты автоматически уникальными именами. Диагностики демангл'ят `__sN` в
+  `diag::render`/`render_extras` (`demangle_rebind_names`) — ни одного `__sN` в user-facing
+  выводе. Спека: D347 (03-syntax.md) + amend-врезка D184. Тесты: conformance
+  `d347_same_scope_rebinding.nv` + amend d90/d131/d133/d22/d34 (conformance 38/0); pos/neg
+  `nova_tests/rebind/` (pos B1/B3/type-change/mut-разморозка/closure + 3 neg
+  E_REBIND_LIVE_CONSUME×2/type-change-stale) — 4/4; 5 rust-unit `alpha_rename::tests`.
+  Zero-regression: baseline d97c0dbe (temp-worktree), ~135 тестов (basics/generics/consume×6/
+  effects/narrowing/syntax/defer/patterns) — delta 0 (те же fail на обоих = pre-existing).
+
+- **[M-181-pattern-var-rebind]** **Остаток (bounded followup — pre-existing, вне scope D347).**
+  Rebind САМОГО pattern-bound имени внутри matching-ветки (`if Some(u) = e { ro u = … }`,
+  аналогично while-let/match/for-loop var) — **не поддержан**: на такой форме чекер уходит в
+  stack-overflow (воспроизводится ИДЕНТИЧНО на baseline d97c0dbe — pre-existing, независимо
+  от Plan 181; на baseline codegen даёт `redefinition`). Alpha-rename СПЕЦИАЛЬНО НЕ
+  уникализирует rebind над matching-pattern-биндингом (`Scope::pattern_origin`) — чтобы форма
+  лоуэрилась в тот же legacy `redefinition` CC-error, а не в новый codegen-panic (zero-
+  regression на failure-mode). Честный фикс — в чекере (172.1-зона: аннотация канала
+  resolved_types для rebind в pattern-scope + устранение overflow). Plain-`let` destructure-
+  rebind (`ro (a,b)=…` повторно) уникализируется штатно (plan §5). Priority: P3.
+
+- **[M-181-opty-in-let-preexisting]** **Наблюдение (НЕ дефект Plan 181).** `ro q = expr?`
+  (`?`-в-let) mis-типизирует биндинг как wrapper-тип (`Option`/`Result`) в codegen →
+  CC-FAIL/RUN-FAIL. Подтверждён ИДЕНТИЧНО на baseline d97c0dbe для distinct-имени И для
+  rebind (`error_chains.nv`, plain passthrough) — pre-existing дефект in-flight 172.1-канала,
+  rebind-независим. Поэтому round-trip pos-тест «rebind с `?`» НЕ включён (rebind композирует
+  с `?` на уровне type-check/lowering; runtime-assert заблокирован pre-existing багом).
+  Устранение — в 172.1 (канал resolved_types для Try-unwrap-биндингов). Priority: не-181.

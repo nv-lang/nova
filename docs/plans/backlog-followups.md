@@ -871,3 +871,28 @@ Rustc salsa-класс (мемоизация/инвалидация по зап�
 план не создаётся сознательно. Пересмотреть, когда (а) полный чек+кодоген
 крупного проекта станет узким местом UX, (б) появится typed-IR (172.12) —
 естественная граница мемоизации. НЕ носитель ближайших зонтов.
+
+## [M-181-pattern-var-rebind] — Rebind pattern-bound var внутри matching-ветки (2026-07-04) — P3
+
+`if Some(u) = e { ro u = … }` (аналогично while-let/match/for-loop var) не поддержан:
+чекер уходит в stack-overflow (pre-existing — воспроизводится на baseline d97c0dbe,
+независимо от Plan 181). Alpha-rename (Plan 181) СПЕЦИАЛЬНО не уникализирует такой rebind
+(`Scope::pattern_origin`), чтобы форма давала legacy `redefinition` CC-error, а не
+codegen-panic. Честный фикс — в чекере (172.1-зона): устранить overflow + аннотировать
+канал resolved_types для rebind в pattern-scope. Home: 172.1 / отдельный заход.
+
+## [M-181-lsp-rename-symbol-table] — LSP rename over same-scope rebind (2026-07-04) — P3
+
+LSP rename (D297 V1, word-boundary scan) переименует ОБА одноимённых same-scope биндинга.
+Pre-existing долг (уже сломан для nested shadow); D347-rebind учащает. Честный фикс = V2
+symbol table. Home: plan-104.6 followups.
+
+## [M-181-w-shadow-unrelated-lint] — R5 warn W_SHADOW_UNRELATED (2026-07-04) — P3
+
+Plan 181 Ф.4 R5: warn, когда rebind НЕ использует старое значение И старый биндинг жив/не
+потреблён (`ro x = user; … ro x = socket`). Отложен как проектное решение: R2 (hard-error
+`E_REBIND_LIVE_CONSUME`) закрывает soundness-критичный consume-случай; R5 — чистый style-warn,
+который сам план флагует как спорный (Go-урок «shadow-линтер слишком шумный для дефолта»).
+Реализация: детект в lints.rs (RHS не упоминает shadowed-имя из `Module.rebind_shadows` И
+old не Consumed) + решение Ф.4.3 (маркер `EXPECT_WARNING <substr>` в test_runner ЛИБО
+CLI-тест stderr). Подавление `#allow(shadow)`. Не гейтит корректность. Home: отдельный заход.

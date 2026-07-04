@@ -6959,6 +6959,8 @@ fn process_order(data Data) Fail[OrderErr] Db -> Receipt {
 
 > 📌 **Полная модель мутабельности — [D246](02-types.md#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee)** (3 оси: L1 binding / L2 content-view / L3 pointee). Этот D-блок описывает только **синтаксис binding-ключевых слов (`ro`/`mut`/`consume`) и переименование `readonly` → `ro`**. Для семантики, дефолтов и error-кодов читай D246.
 
+> 🔗 **Amend — [D347](#d347-same-scope-re-binding-romutconsume-x---повторно-тип-может-меняться)** (Plan 181): повторное `ro`/`mut`/`consume x = …` в ОДНОМ scope легально (new binding; тип может меняться). Правила R1–R7 — см. D347.
+
 > **Статус:** 🆕 draft (Plan 114 Ф.0; финализируется в Ф.8).
 
 ### Что
@@ -8053,6 +8055,91 @@ test {
 | A26 | First-class alias resolution + drop из codegen | T4.5 |
 
 См. Plan 114.4.3 closure для full T4 series listing.
+
+---
+
+## D347. Same-scope re-binding (`ro`/`mut`/`consume x = ...` повторно; тип может меняться)
+
+> **Plan 181.** Амендит [D184](#d184) (binding-грамматика). Cross-ref: D34 (отличие от
+> отвергнутого `:=`), D90 §3 (defer eager), D131/D133/D180 (consume), D22 (замыкания),
+> D217 (field-cache порядок), D274 (interp), D297 (LSP rename — followup).
+
+**Что.** Повторное объявление того же имени в ОДНОМ scope полной binding-формой
+(`ro`/`mut`/`consume x = ...`) — легально. Каждый rebind = **новая переменная**: свой
+тип (может отличаться), своя мутабельность. Старое значение недоступно по имени ниже по
+тексту (живёт до конца scope только для уже созданных захватов). Статус-кво до Plan 181
+был дырой: фронтенд принимал (shadowing-типизация), бэкенд эмитил оба под ОДНИМ C-именем →
+clang `redefinition` (ошибка в `.c`, не в `.nv`).
+
+```nova
+ro input = read_line()
+ro input = input.trim()           \ тот же тип — pipeline (R5-тихо)
+ro input = parse_request(input)?  \ str → Request; str-версия НЕДОСТУПНА ниже (R1)
+mut work = work                   \ «разморозка» readonly→mut (Rust: let mut x = x)
+```
+
+**Правило (R1–R7).**
+- **R1 Явность.** Rebind — только полной формой `ro`/`mut`/`consume x = ...`. Голое `x = v`
+  остаётся мутацией существующего `mut`-биндинга (грамматика D184 не меняется). Тип и
+  мутабельность новой переменной независимы от старой.
+- **R2 Consume-звучность (hard error `E_REBIND_LIVE_CONSUME`).** Затенение биндинга с
+  непотреблённым consume-обязательством (D131/D133/D180) — ошибка на месте rebind
+  («потребите/переименуйте»). Nova-эксклюзив: Rust-футган «затенённый guard живёт до конца
+  scope» становится compile error (guard'ы Nova = consume-типы, D174). Ловит и тихую
+  double-consume-shadow утечку.
+- **R3 Нерекурсивность.** RHS rebind'а видит **старый** биндинг: `ro x = x + 1` читает
+  прежний `x`. Haskell-грабли (`let x = f x` = `<<loop>>`) исключены.
+- **R4 Захваты на момент создания.** Замыкание/`defer` видят биндинг, живой в точке
+  создания замыкания / регистрации defer (D22 env-снапшот, D90 §3 eager). Rebind ниже по
+  тексту НЕ меняет захваченное.
+- **R5 Lint `W_SHADOW_UNRELATED`** (warn): новое значение не использует старое И старый
+  биндинг ещё жив. Pipeline `ro x = f(x)` — тихо. Подавление `#allow(shadow)`.
+- **R6 Параметры.** Затенять параметр можно (`fn f(x int) { ro x = x + 1 }`).
+- **R7 Cross-scope без изменений.** Блочное затенение работает как прежде.
+
+**Почему.** (1) Pipeline-идиома (unwrap/transform/validate под одним именем) убирает
+`input2`/`input3`-мусор; давление в сторону immutable `ro`. (2) Прецедент: Rust / OCaml /
+F# (в функциях) / Elixir — rebind идиоматичен десятилетиями; ФП-норма. (3) Реализация
+дешёвая — один alpha-renaming pass после parse уникализирует 2-й+ same-scope биндинг в
+`x__s1`, `x__s2`, …, original-имя в side-channel для диагностик; весь остальной компилятор
+(consume-checker, codegen, замыкания, verify) видит уже уникальные имена. Pass попутно
+чинит 3 смежных бага: false-positive D133 при rebind ПОТРЕБЛЁННого consume; тихую
+double-consume утечку (obligations по имени); расхождение чекер↔codegen на `ro x = x + 1`.
+
+**Отвергнуто.** (a) **Source-SSA / `:=` (Go-модель)** — D34 отверг `:=` за «shadowing-баги
+Go»: у `:=` дефект — *СЛУЧАЙНОЕ* затенение из-за смешанного decl/assign-оператора + cross-
+scope протечки (класс `err`-багов). У D347 иначе: *ЯВНОЕ* `ro`/`mut`/`consume` +
+same-scope (старое имя недоступно ниже) + R2/R5 guard'ы. Инверсия мейнстрима (Java/C#/TS
+запретили *безопасное* same-scope, разрешили *опасное* cross-scope): Nova — same-scope
+свободно с правилами, cross-scope как есть. (b) **Запрет (`E_DUPLICATE_LOCAL`)** —
+рассмотрен как fallback; отвергнут: фича обоснована, а alpha-pass дёшев и чинит B1/B2/B3
+попутно. (c) **Erlang/Zig-строгость** («имя = одна вещь») — порождает `State1/State2`-класс
+багов, отвергнута. (d) **flow-narrowing вместо rebind** (TS/Kotlin/Swift) — покрывает
+«тот же объект, уточнённый тип», но НЕ «трансформация с потерей старого» (`ro s = parse(s)`).
+
+**Таблица проб (эмпирика 2026-07-02, 11 проб) — целевое поведение после Plan 181.**
+
+| Проба | Форма | Поведение |
+|---|---|---|
+| p01 | `ro x=1; ro x=2` same type | POS |
+| p02 | `ro x=1; ro x="s"` смена типа | POS (str-версия ниже) |
+| p03/p04 | `mut x=1; ro x=2` / `ro x=1; mut x=x` | POS (разморозка) |
+| p05 | вложенный блок `{ ro x=2 }` | POS (inner≠outer, R7) |
+| p06 | closure + rebind | POS runtime (f()==старое, R4) |
+| p07 | `for i { ro x=i }` | POS (fresh на итерацию) |
+| p08 | `consume sb=…; sb.append(); ro sb=5` | NEG `E_REBIND_LIVE_CONSUME` (R2) |
+| p08b | consume ПОТРЕБЛЁН `into_str()` → `ro sb=5` | POS (B1 fixed) |
+| p08c | `consume tx=…; consume tx=…` | NEG `E_REBIND_LIVE_CONSUME` (B2 leak caught) |
+| p09 | `fn f(x){ ro x=x+1 }` param-shadow | POS (R6) |
+| p10 | `ro x=1; ro x=x+1` | POS x==2 (R3, B3 fixed) |
+
+**Связь / границы.** Amend D184 (binding), D90 §3 (defer), D131/D133/D180 (R2), D22/D90
+(R4), D34 (отличие от `:=`). Alpha-pass врезан ДО канала resolved_types (172.1 M0). LSP
+rename (D297 V1) переименует оба одноимённых биндинга — pre-existing долг (уже сломан для
+nested shadow), честный фикс = V2 symbol table. Destructuring-rebind (`ro (a,b)=…`
+повторно) — tuple-дубли уникализируются, R5-lint на них V2. Rebind САМОГО pattern-bound
+имени внутри matching-ветки (`if Some(u)={ ro u=… }`) — вне scope (pre-existing
+checker-overflow), см. `[M-181-pattern-var-rebind]`.
 
 ---
 
