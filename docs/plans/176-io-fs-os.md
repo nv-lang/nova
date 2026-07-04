@@ -15,12 +15,16 @@
 > `read_to_string`/`write_all`/`write_str`/`copy`/`lines`/`byte_lines`; конформеры `BytesReader`/`BytesWriter`;
 > **`BufWriter` must-consume (D133, pos+neg)** + `BufReader`; `Io` effect + `stdin`/`stdout`/`stderr` + `mock_io`
 > (capture/scripted) + `real_io` (C fd-хуки `nova_rt/io_console.h`). Спека D322 (04-effects.md); conformance
-> `d322_io_read_write_seek.nv` (38/38); `nova_tests/io` pos+neg. **Codegen-обходы (followup-маркеры, НЕ упрощения
-> семантики):** heap `IoError` (by-value не мономорфизируется в generic-`Result`); инлайн циклов в хелперах
-> (форвард bounded-generic не проносит bound); `BufReader`/`BufWriter` с ЯВНЫМИ type-args
-> (`BufWriter[BytesWriter].new`); статические `SeekFrom.start/end/current` (cross-module payload-variant-литерал —
-> checker-gap). `[M-176-generic-wrapper-mono-inference]` / `[M-176-xmod-payload-variant-ctor]` /
-> `[M-176-io-forward-bounded-generic]` — backlog. Zero-regression подтверждён (baseline=parent-бинарь, ~19 dirs).
+> `d322_io_read_write_seek.nv` (38/38); `nova_tests/io` pos+neg. **`IoError` = `value` (D322 §3b канон, 2026-07-04):**
+> heap-обход снят — закрыт codegen keystone-gap «value-record в error-позиции generic `Result` / protocol-vtable»
+> (protocol-vtable теперь forward-declare'ит референсимый `NovaRes_<ok>_NovaValue_<E>` mono до своей struct'ы;
+> `emit_c.rs::emit_protocol_box_typedef`). **Оставшиеся codegen-обходы (followup-маркеры, НЕ упрощения семантики):**
+> инлайн циклов в хелперах (форвард bounded-generic не проносит bound — checker `[M-176-io-forward-bounded-generic]`);
+> `BufReader`/`BufWriter` с ЯВНЫМИ type-args (`BufWriter[BytesWriter].new` — inference-конструкция generic-wrapper'а
+> = **отдельный** от value-record корень, эмпирически подтверждён value-record-независимым: NULL-stub падает и на
+> heap-error; `[M-176-generic-wrapper-mono-inference]`); статические `SeekFrom.start/end/current` (cross-module
+> payload-variant-литерал — checker-gap `[M-176-xmod-payload-variant-ctor]`) — backlog. Zero-regression подтверждён
+> (baseline=parent-бинарь e50fcc6d, value-record/generic/io/str sample).
 > **Запуск:** «**выполни план 176**».
 > **Эталон:** **Go / Rust / TS / Kotlin / Java / Zig / Swift**. **Архитектура — по net-семейству**
 > ([std/net/effect.nv](../../std/net/effect.nv)): эффект = внутренний плумбинг (libuv-backed, async, park/wake как

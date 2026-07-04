@@ -47,12 +47,14 @@ export type ErrorKind
 ///     `kind` projection is best-effort, `raw_os` is exact.
 ///   - `op`     — the failed operation name for diagnostics (`"read"`, `"write"`).
 ///
-/// A **heap record** (not `value`): like Rust's `io::Error` (internally boxed),
-/// it stays pointer-sized so it flows cheaply through `Result[T, IoError]`,
-/// including the generic mono-dispatched loop helpers (a by-value record trips a
-/// `Result[T, ValueRecord]` monomorphisation gap in generic protocol contexts).
+/// A **`value` record** (D322 §3b canon): a small, copyable structural error that
+/// flows by value through `Result[T, IoError]`, including the generic
+/// mono-dispatched loop helpers and protocol vtables. (The earlier heap-record
+/// form was a codegen workaround for the value-record-in-`Result`-error mono gap;
+/// that gap is now closed — the protocol vtable forward-declares the referenced
+/// `NovaRes_<ok>_NovaValue_IoError` mono, so the canonical `value` form compiles.)
 #stable(since = "0.1")
-export type IoError {
+export type IoError value {
     ro kind ErrorKind
     ro raw_os int
     ro op str

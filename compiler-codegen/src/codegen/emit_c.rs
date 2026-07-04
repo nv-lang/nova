@@ -6132,10 +6132,35 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             .map(|(n, p)| (n.as_str(), p.as_slice()))
             .collect();
         let mut fields = String::new();
+        // [M-176-generic-wrapper-mono-inference] / [M-180-valuerecord-err-protocol-method-mono]:
+        // a protocol method returning `Result[T, <value-record E>]` lowers its
+        // return C-type to the CONCRETE `NovaRes_<ok>_NovaValue_<E>*` (unlike a heap
+        // error, which `type_ref_to_c` erases to the runtime-provided
+        // `NovaRes_nova_int_nova_str`). The vtable struct is spliced into an EARLY
+        // buffer (`user_type_fwd_decls` for non-generic, `generic_type_defs_buf` for
+        // generic) — BEFORE the `__NOVARES_TYPEDEFS__` marker where that mono's
+        // typedef lands — so the concrete name is otherwise "unknown type name" at
+        // the vtable (CC-FAIL). A pointer field only needs the struct TAG declared,
+        // so forward `typedef struct NovaRes_<n> NovaRes_<n>;` into the SAME early
+        // buffer, ahead of the struct; the full body is still emitted (once) by
+        // `register_novares_decl` at its phase-correct splice (C11 6.7/3: redundant
+        // typedef to the same type). §0 phase-correctness (declare before reference).
+        let mut novares_fwds = String::new();
+        let mut novares_fwds_seen: HashSet<String> = HashSet::new();
         for (m, (_, param_c_types)) in methods.iter().zip(method_param_c.iter()) {
             let ret_c = m.return_type.as_ref()
                 .and_then(|rt| self.type_ref_to_c(rt).ok())
                 .unwrap_or_else(|| "nova_unit".to_string());
+            for c in std::iter::once(&ret_c).chain(param_c_types.iter()) {
+                if let Some(n) = c.strip_prefix("NovaRes_").and_then(|s| s.strip_suffix('*')) {
+                    // `NovaRes_nova_int_nova_str` lives in nova_rt/array.h — never re-declare.
+                    if n == "nova_int_nova_str" { continue; }
+                    if novares_fwds_seen.insert(n.to_string()) {
+                        novares_fwds.push_str(&format!(
+                            "typedef struct NovaRes_{n} NovaRes_{n};\n", n = n));
+                    }
+                }
+            }
             let params_str = std::iter::once("void*".to_string())
                 .chain(param_c_types.iter().cloned())
                 .collect::<Vec<_>>()
@@ -6163,6 +6188,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             &mut self.generic_type_defs_buf
         };
         if !rt_has_vtable {
+            // Forward-decl referenced value-record `NovaRes_<n>` monos ahead of the
+            // vtable struct (same early buffer) — see the accumulation comment above.
+            for fwd in novares_fwds.lines() {
+                let line = format!("{}\n", fwd);
+                if !target_buf.contains(&line) {
+                    target_buf.push_str(&line);
+                }
+            }
             target_buf.push_str(&format!(
                 "/* Plan 72 P3-B / Plan 97.1: vtable for {} instantiated with {} */\n\
                  typedef struct {vts} {{\n{fields}}} {vts};\n",
