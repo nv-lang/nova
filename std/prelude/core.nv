@@ -405,6 +405,48 @@ fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None
 #stable(since = "0.1")
 fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e) }
 
+/// Plan 177 Ф.2c (D325): fail-fast коллектор списка результатов. Первая `Err`
+/// обрывает и возвращается (short-circuit); иначе `Ok` со ВСЕМИ значениями в
+/// порядке. Прецедент: Rust `Result: FromIterator` (`collect::<Result<Vec<_>,_>>`).
+///
+/// ```nova
+/// assert(sequence([Ok(1), Ok(2), Ok(3)]) == Ok([1, 2, 3]))
+/// assert(sequence([Ok(1), Err("x"), Ok(3)]) == Err("x"))
+/// ```
+#stable(since = "0.1")
+export fn[T, E] sequence(items []Result[T, E]) -> Result[[]T, E] {
+    mut out []T = []
+    for r in items {
+        match r {
+            Ok(v)  => out.push(v),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(out)
+}
+
+/// Plan 177 Ф.2c (D325): разделяет список результатов на успехи и ошибки —
+/// ОБЕ стороны сохранены (в отличие от `sequence`, который обрывается на первой
+/// `Err`). Прецедент: Go `errors.Join`-стиль сбора, Rust `partition_result`.
+///
+/// ```nova
+/// ro (oks, errs) = partition([Ok(1), Err("a"), Ok(2), Err("b")])
+/// assert(oks == [1, 2])
+/// assert(errs == ["a", "b"])
+/// ```
+#stable(since = "0.1")
+export fn[T, E] partition(items []Result[T, E]) -> ([]T, []E) {
+    mut oks  []T = []
+    mut errs []E = []
+    for r in items {
+        match r {
+            Ok(v)  => oks.push(v),
+            Err(e) => errs.push(e),
+        }
+    }
+    (oks, errs)
+}
+
 // Plan 169.2.1 (D303): the `Option[T] @debug` / `Result[T,E] @debug`
 // `#impl(Debug)` methods (Plan 91.15 Ф.2) moved OUT of `core` into
 // `std/prelude/protocols.nv`. They reference the `Debug` protocol and the

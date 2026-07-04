@@ -48,7 +48,7 @@ module std.prelude
 // примитив (Plan 76), известен компилятору напрямую — как `int`/`bool`,
 // примитивы не объявляются и не re-export'ятся через prelude.
 // Plan 91.8a (D183): Ordering/Less/Equal/Greater удалены (Compare.compare -> int).
-export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error}
+export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, sequence, partition}
 
 // Plan 62.B: re-export runtime functions из std.prelude.runtime.
 // panic / exit / assert / debug_assert / print / println — selective

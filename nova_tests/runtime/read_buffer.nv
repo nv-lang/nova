@@ -1,13 +1,13 @@
 // read_buffer.nv — Plan 04: ReadBuffer cursor-style binary reader.
 //
-// ReadBuffer — view над []u8 с position-cursor. Pair @read_* (Fail-form)
-// и @try_read_* (Result-form). Endianness explicit (LE/BE).
+// ReadBuffer — view над []u8 с position-cursor. @read_* — D325 Result-form
+// (значение через !!, либо Result-инспекция). Endianness explicit (LE/BE).
 //
 // API:
 //   ReadBuffer.from(b []u8)
 //   rb.position(), rb.remaining(), rb.has_remaining(n), rb.remaining_bytes()
 //   rb.read_byte/u8/i8/u16_le/be/... (18 fail-form methods)
-//   rb.try_read_byte/u8/i8/u16_le/be/... (18 result-form methods)
+//   rb.read_byte/u8/i8/u16_le/be/... (18 result-form methods)
 //
 // Round-trip с WriteBuffer: write → into → from → read.
 
@@ -32,7 +32,7 @@ test "ReadBuffer.from() — initial state" {
 
 
 // ================================================================
-// SECTION 2: read_byte / read_u8 (Fail-form)
+// SECTION 2: read_byte / read_u8 через !!
 // ================================================================
 
 test "read_byte advances position" {
@@ -41,10 +41,10 @@ test "read_byte advances position" {
     wb.write_byte(0xBB)
     ro bs = wb.into()
     mut rb = ReadBuffer.from(bs)
-    ro b1 = rb.read_byte()
+    ro b1 = rb.read_byte()!!
     assert(b1 == 0xAA)
     assert(rb.position() == 1)
-    ro b2 = rb.read_byte()
+    ro b2 = rb.read_byte()!!
     assert(b2 == 0xBB)
     assert(rb.position() == 2)
     assert(rb.remaining() == 0)
@@ -60,7 +60,7 @@ test "round-trip u32_le" {
     wb.write_u32_le(0xCAFEBABE)
     ro bs = wb.into()
     mut rb = ReadBuffer.from(bs)
-    ro v = rb.read_u32_le()
+    ro v = rb.read_u32_le()!!
     assert(v == 0xCAFEBABE)
 }
 
@@ -69,7 +69,7 @@ test "round-trip u32_be" {
     wb.write_u32_be(0xDEADBEEF)
     ro bs = wb.into()
     mut rb = ReadBuffer.from(bs)
-    ro v = rb.read_u32_be()
+    ro v = rb.read_u32_be()!!
     assert(v == 0xDEADBEEF)
 }
 
@@ -77,19 +77,19 @@ test "round-trip u16_le / be" {
     mut wb1 = WriteBuffer.new()
     wb1.write_u16_le(0x1234)
     mut rb1 = ReadBuffer.from(wb1.into())
-    assert(rb1.read_u16_le() == 0x1234)
+    assert(rb1.read_u16_le()!! == 0x1234)
 
     mut wb2 = WriteBuffer.new()
     wb2.write_u16_be(0x1234)
     mut rb2 = ReadBuffer.from(wb2.into())
-    assert(rb2.read_u16_be() == 0x1234)
+    assert(rb2.read_u16_be()!! == 0x1234)
 }
 
 test "round-trip i32_le — negative" {
     mut wb = WriteBuffer.new()
     wb.write_i32_le(-42)
     mut rb = ReadBuffer.from(wb.into())
-    ro v = rb.read_i32_le()
+    ro v = rb.read_i32_le()!!
     assert(v == -42)
 }
 
@@ -102,69 +102,69 @@ test "multi-value round-trip" {
     assert(bs.len() == 7)
 
     mut rb = ReadBuffer.from(bs)
-    assert(rb.read_u32_be() == 0x11223344)
-    assert(rb.read_u16_be() == 0xAABB)
-    assert(rb.read_byte() == 0xCC)
+    assert(rb.read_u32_be()!! == 0x11223344)
+    assert(rb.read_u16_be()!! == 0xAABB)
+    assert(rb.read_byte()!! == 0xCC)
     assert(rb.remaining() == 0)
 }
 
 
 // ================================================================
-// SECTION 4: try_read_* — Result-form
+// SECTION 4: read_* — Result-инспекция
 // ================================================================
 
-test "try_read_byte Ok на достаточных данных" {
+test "read_byte Ok на достаточных данных" {
     mut wb = WriteBuffer.new()
     wb.write_byte(0x42)
     mut rb = ReadBuffer.from(wb.into())
-    ro r = rb.try_read_byte()
+    ro r = rb.read_byte()
     assert(r.is_ok())
     ro v = r.unwrap_or(0)
     assert(v == 0x42)
 }
 
-test "try_read_u32_le Ok" {
+test "read_u32_le Ok" {
     mut wb = WriteBuffer.new()
     wb.write_u32_le(0x12345678)
     mut rb = ReadBuffer.from(wb.into())
-    ro r = rb.try_read_u32_le()
+    ro r = rb.read_u32_le()
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 0x12345678)
 }
 
-test "try_read_u32_le Err на коротком буфере" {
+test "read_u32_le Err на коротком буфере" {
     mut wb = WriteBuffer.new()
     wb.write_byte(0xFF)             // только 1 u8, нужно 4
     mut rb = ReadBuffer.from(wb.into())
-    ro r = rb.try_read_u32_le()
+    ro r = rb.read_u32_le()
     assert(r.is_err())
 }
 
 
 // ================================================================
-// SECTION 4b: f64 round-trip через try_read_f64_* + f64.from_bits
+// SECTION 4b: f64 round-trip через read_f64_* + f64.from_bits
 // ================================================================
 //
-// try_read_f64_* возвращает Result[int_bits, str] (bootstrap-payload —
+// read_f64_* возвращает Result[int_bits, str] (bootstrap-payload —
 // nova_int bits double'а). Для распаковки → f64.from_bits(bits).
 // Pair: int.to_bits(d) для упаковки в обратную сторону.
 
-test "f64 round-trip read_f64_le через Fail-form" {
+test "f64 round-trip read_f64_le через !!" {
     mut wb = WriteBuffer.new()
     wb.write_f64_le(3.14159)
     ro bs = wb.into()
     assert(bs.len() == 8)
     mut rb = ReadBuffer.from(bs)
-    ro d = rb.read_f64_le()
+    ro d = rb.read_f64_le()!!
     // IEEE 754 bit-perfect round-trip → точное равенство.
     assert(d == 3.14159)
 }
 
-test "f64.from_bits + try_read_f64_le round-trip" {
+test "f64.from_bits + read_f64_le round-trip" {
     mut wb = WriteBuffer.new()
     wb.write_f64_be(2.71828)
     mut rb = ReadBuffer.from(wb.into())
-    ro r = rb.try_read_f64_be()
+    ro r = rb.read_f64_be()
     assert(r.is_ok())
     ro bits = r.unwrap_or(0)
     ro d = f64.from_bits(bits)
@@ -196,7 +196,7 @@ test "read_bytes — slice copy" {
     wb.write_byte(0x04)
     ro bs = wb.into()
     mut rb = ReadBuffer.from(bs)
-    ro chunk = rb.read_bytes(3)
+    ro chunk = rb.read_bytes(3)!!
     assert(chunk.len() == 3)
     assert(chunk[0] == 0x01)
     assert(chunk[2] == 0x03)
@@ -215,7 +215,7 @@ test "remaining_bytes после частичного чтения" {
     wb.write_byte(0x33)
     ro bs = wb.into()
     mut rb = ReadBuffer.from(bs)
-    ro _ = rb.read_byte()           // потребили 1
+    ro _ = rb.read_byte()!!           // потребили 1
     ro rest = rb.remaining_bytes()
     assert(rest.len() == 2)
     assert(rest[0] == 0x22)

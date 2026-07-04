@@ -1,39 +1,39 @@
 // Plan 85.2 Ф.3 — ReadBuffer чтение char и str.
 //
-// read_char / try_read_char / read_str(n) / try_read_str(n).
+// read_char / read_str(n) — D325 Result-form (throw via !!, или Result-инспекция).
 // n у read_str — количество codepoint'ов. Невалидный UTF-8 → Err.
 
 module nova_tests.buffers
 
 
-// ── read_char (Fail-form) ──────────────────────────────────────────
+// ── read_char через !! (throw-on-error) ───────────────────────────────────────────
 
 test "read_char ASCII" {
     mut wb = WriteBuffer.new()
     wb.write_char('A')
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_char() == 'A')
+    assert(rb.read_char()!! == 'A')
 }
 
 test "read_char Cyrillic — 2-байтовый codepoint" {
     mut wb = WriteBuffer.new()
     wb.write_char('Я')
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_char() == 'Я')
+    assert(rb.read_char()!! == 'Я')
 }
 
 test "read_char CJK — 3-байтовый codepoint" {
     mut wb = WriteBuffer.new()
     wb.write_char('中')
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_char() == '中')
+    assert(rb.read_char()!! == '中')
 }
 
 test "read_char emoji — 4-байтовый codepoint" {
     mut wb = WriteBuffer.new()
     wb.write_char('😀')
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_char() == '😀')
+    assert(rb.read_char()!! == '😀')
 }
 
 test "read_char — несколько подряд, разная ширина" {
@@ -42,93 +42,93 @@ test "read_char — несколько подряд, разная ширина" 
     wb.write_char('Я')
     wb.write_char('中')
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_char() == 'A')
-    assert(rb.read_char() == 'Я')
-    assert(rb.read_char() == '中')
+    assert(rb.read_char()!! == 'A')
+    assert(rb.read_char()!! == 'Я')
+    assert(rb.read_char()!! == '中')
     assert(rb.remaining() == 0)
 }
 
 
-// ── try_read_char (Result-form) ────────────────────────────────────
+// ── read_char Result-инспекция (is_ok/unwrap_or) ─────────────────────────────────────
 
-test "try_read_char Ok" {
+test "read_char Ok" {
     mut wb = WriteBuffer.new()
     wb.write_char('Z')
     mut rb = ReadBuffer.from(wb.into())
-    ro r = rb.try_read_char()
+    ro r = rb.read_char()
     assert(r.is_ok())
 }
 
-test "try_read_char Err — пустой буфер" {
+test "read_char Err — пустой буфер" {
     ro bytes []u8 = []
     mut rb = ReadBuffer.from(bytes)
-    assert(rb.try_read_char().is_err())
+    assert(rb.read_char().is_err())
 }
 
-test "try_read_char Err — невалидный UTF-8 lead-байт" {
+test "read_char Err — невалидный UTF-8 lead-байт" {
     ro bytes []u8 = [0xFF]
     mut rb = ReadBuffer.from(bytes)
-    assert(rb.try_read_char().is_err())
+    assert(rb.read_char().is_err())
 }
 
-test "try_read_char Err — оборванный многобайтный codepoint" {
+test "read_char Err — оборванный многобайтный codepoint" {
     ro bytes []u8 = [0xD0]          // lead 2-байтового, без continuation
     mut rb = ReadBuffer.from(bytes)
-    assert(rb.try_read_char().is_err())
+    assert(rb.read_char().is_err())
 }
 
 
-// ── read_str (Fail-form) ───────────────────────────────────────────
+// ── read_str через !! (throw-on-error) ────────────────────────────────────────────
 
 test "read_str ASCII — n codepoint'ов" {
     mut wb = WriteBuffer.new()
     wb.write_str("Hello")
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_str(5) == "Hello")
+    assert(rb.read_str(5)!! == "Hello")
 }
 
 test "read_str Unicode — n codepoint'ов (не байт)" {
     mut wb = WriteBuffer.new()
     wb.write_str("Привет")
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_str(6) == "Привет")
+    assert(rb.read_str(6)!! == "Привет")
 }
 
 test "read_str — пустая строка n=0" {
     mut wb = WriteBuffer.new()
     wb.write_str("data")
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_str(0) == "")
+    assert(rb.read_str(0)!! == "")
 }
 
 test "read_str — частичное чтение" {
     mut wb = WriteBuffer.new()
     wb.write_str("abcdef")
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_str(3) == "abc")
-    assert(rb.read_str(3) == "def")
+    assert(rb.read_str(3)!! == "abc")
+    assert(rb.read_str(3)!! == "def")
 }
 
 
-// ── try_read_str (Result-form) ─────────────────────────────────────
+// ── read_str Result-инспекция ──────────────────────────────────────
 
-test "try_read_str Ok" {
+test "read_str Ok" {
     mut wb = WriteBuffer.new()
     wb.write_str("ok")
     mut rb = ReadBuffer.from(wb.into())
-    ro r = rb.try_read_str(2)
+    ro r = rb.read_str(2)
     assert(r.is_ok())
 }
 
-test "try_read_str Err — запрошено больше чем есть" {
+test "read_str Err — запрошено больше чем есть" {
     mut wb = WriteBuffer.new()
     wb.write_str("ab")
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.try_read_str(10).is_err())
+    assert(rb.read_str(10).is_err())
 }
 
-test "try_read_str Err — невалидный UTF-8" {
+test "read_str Err — невалидный UTF-8" {
     ro bytes []u8 = [0xFF, 0xFE]
     mut rb = ReadBuffer.from(bytes)
-    assert(rb.try_read_str(1).is_err())
+    assert(rb.read_str(1).is_err())
 }

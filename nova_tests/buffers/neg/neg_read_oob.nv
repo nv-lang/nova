@@ -1,6 +1,6 @@
 // EXPECT_RUNTIME_PANIC unhandled typed Fail
 //
-// Plan 85.2 Ф.3 — негатив: Fail-form чтение за границей буфера.
+// Plan 85.2 Ф.3 / D325 — негатив: read_X()!! за границей буфера бросает.
 //
 // `read_byte()` (Fail[ReadBufferError]) на пустом буфере бросает
 // ReadBufferError. Без user-handler'а throw из `main` доходит до
@@ -17,5 +17,5 @@ module neg.neg_read_oob
 fn main() Io Fail[ReadBufferError] -> () {
     ro bytes []u8 = []
     mut rb = ReadBuffer.from(bytes)
-    ro _ = rb.read_byte()            // ← throw: буфер пуст
+    ro _ = rb.read_byte()!!            // ← throw: буфер пуст
 }

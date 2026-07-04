@@ -4,16 +4,17 @@
 // с per-width macros).
 // Теперь: Nova record; все методы на Nova-body над []u8 primitives.
 //
-// API contract (paritет с предыдущим C-runtime):
+// API contract (Plan 177 / D325 — единый fallible-контракт):
 //   ReadBuffer.from(b []u8) -> Self
 //   @position, @remaining, @has_remaining, @remaining_bytes
-//   @read_X / @try_read_X — pair Fail-form / Result-form, X ∈
+//   @read_X -> Result[T, ReadBufferError], X ∈
 //     { byte, bytes, u8, i8, u16_le, u16_be, u32_le, u32_be, u64_le, u64_be,
 //       i16_le, i16_be, i32_le, i32_be, i64_le, i64_be,
 //       f32_le, f32_be, f64_le, f64_be, char, str }
 //
-// Pattern: try_read_X — primary impl; read_X = `=> @try_read_X(...)!!` thin
-// wrapper (паритет с runtime_registry D30 §2 pattern для C-backed reads).
+// D325: одна Result-форма на операцию — bare Fail-form близнецы
+// (`try_read_X`/bare `read_X`-throws) РЕТРАКТИРОВАНЫ. throw на call-site =
+// `!!`, проброс = `?`, Result→Option = `.ok()`.
 
 #no_prelude
 module runtime.read_buffer
@@ -56,14 +57,14 @@ export fn ReadBuffer @remaining_bytes() -> []u8 {
     out
 }
 
-// ─── Try-form (Result-returning) primitives ───
+// ─── Result-returning read primitives (D325) ───
 //
-// Все try_read_X — primary implementation. Каждый сначала проверяет
+// Все @read_X — Result-форма. Каждый сначала проверяет
 // `@remaining() >= N`, читает N байт, advance'ит cursor, возвращает Ok.
 // При недостатке байт — Err(UnexpectedEnd { wanted, available }).
 
 // 1 byte. Result-форма.
-export fn ReadBuffer mut @try_read_byte() -> Result[u8, ReadBufferError] {
+export fn ReadBuffer mut @read_byte() -> Result[u8, ReadBufferError] {
     if @data.len() - @pos < 1 {
         return Err(UnexpectedEnd { wanted: 1, available: @data.len() - @pos })
     }
@@ -73,7 +74,7 @@ export fn ReadBuffer mut @try_read_byte() -> Result[u8, ReadBufferError] {
 }
 
 // n байт. Result-форма (Ok(bytes-copy) или Err).
-export fn ReadBuffer mut @try_read_bytes(n int) -> Result[[]u8, ReadBufferError] {
+export fn ReadBuffer mut @read_bytes(n int) -> Result[[]u8, ReadBufferError] {
     if n < 0 || @data.len() - @pos < n {
         return Err(UnexpectedEnd { wanted: n, available: @data.len() - @pos })
     }
@@ -88,7 +89,7 @@ export fn ReadBuffer mut @try_read_bytes(n int) -> Result[[]u8, ReadBufferError]
 }
 
 // 1 byte unsigned.
-export fn ReadBuffer mut @try_read_u8() -> Result[u8, ReadBufferError] {
+export fn ReadBuffer mut @read_u8() -> Result[u8, ReadBufferError] {
     if @data.len() - @pos < 1 {
         return Err(UnexpectedEnd { wanted: 1, available: @data.len() - @pos })
     }
@@ -98,7 +99,7 @@ export fn ReadBuffer mut @try_read_u8() -> Result[u8, ReadBufferError] {
 }
 
 // 1 byte signed (bit-pattern preserved через u8→i8 cast).
-export fn ReadBuffer mut @try_read_i8() -> Result[i8, ReadBufferError] {
+export fn ReadBuffer mut @read_i8() -> Result[i8, ReadBufferError] {
     if @data.len() - @pos < 1 {
         return Err(UnexpectedEnd { wanted: 1, available: @data.len() - @pos })
     }
@@ -110,7 +111,7 @@ export fn ReadBuffer mut @try_read_i8() -> Result[i8, ReadBufferError] {
 // ── 16-bit ──
 
 // u16 little-endian.
-export fn ReadBuffer mut @try_read_u16_le() -> Result[u16, ReadBufferError] {
+export fn ReadBuffer mut @read_u16_le() -> Result[u16, ReadBufferError] {
     if @data.len() - @pos < 2 {
         return Err(UnexpectedEnd { wanted: 2, available: @data.len() - @pos })
     }
@@ -122,7 +123,7 @@ export fn ReadBuffer mut @try_read_u16_le() -> Result[u16, ReadBufferError] {
 }
 
 // u16 big-endian.
-export fn ReadBuffer mut @try_read_u16_be() -> Result[u16, ReadBufferError] {
+export fn ReadBuffer mut @read_u16_be() -> Result[u16, ReadBufferError] {
     if @data.len() - @pos < 2 {
         return Err(UnexpectedEnd { wanted: 2, available: @data.len() - @pos })
     }
@@ -134,7 +135,7 @@ export fn ReadBuffer mut @try_read_u16_be() -> Result[u16, ReadBufferError] {
 }
 
 // i16 little-endian (sign-extended).
-export fn ReadBuffer mut @try_read_i16_le() -> Result[i16, ReadBufferError] {
+export fn ReadBuffer mut @read_i16_le() -> Result[i16, ReadBufferError] {
     if @data.len() - @pos < 2 {
         return Err(UnexpectedEnd { wanted: 2, available: @data.len() - @pos })
     }
@@ -148,7 +149,7 @@ export fn ReadBuffer mut @try_read_i16_le() -> Result[i16, ReadBufferError] {
 }
 
 // i16 big-endian (sign-extended).
-export fn ReadBuffer mut @try_read_i16_be() -> Result[i16, ReadBufferError] {
+export fn ReadBuffer mut @read_i16_be() -> Result[i16, ReadBufferError] {
     if @data.len() - @pos < 2 {
         return Err(UnexpectedEnd { wanted: 2, available: @data.len() - @pos })
     }
@@ -164,7 +165,7 @@ export fn ReadBuffer mut @try_read_i16_be() -> Result[i16, ReadBufferError] {
 // ── 32-bit ──
 
 // u32 little-endian.
-export fn ReadBuffer mut @try_read_u32_le() -> Result[u32, ReadBufferError] {
+export fn ReadBuffer mut @read_u32_le() -> Result[u32, ReadBufferError] {
     if @data.len() - @pos < 4 {
         return Err(UnexpectedEnd { wanted: 4, available: @data.len() - @pos })
     }
@@ -178,7 +179,7 @@ export fn ReadBuffer mut @try_read_u32_le() -> Result[u32, ReadBufferError] {
 }
 
 // u32 big-endian.
-export fn ReadBuffer mut @try_read_u32_be() -> Result[u32, ReadBufferError] {
+export fn ReadBuffer mut @read_u32_be() -> Result[u32, ReadBufferError] {
     if @data.len() - @pos < 4 {
         return Err(UnexpectedEnd { wanted: 4, available: @data.len() - @pos })
     }
@@ -192,7 +193,7 @@ export fn ReadBuffer mut @try_read_u32_be() -> Result[u32, ReadBufferError] {
 }
 
 // i32 little-endian (sign-extended).
-export fn ReadBuffer mut @try_read_i32_le() -> Result[i32, ReadBufferError] {
+export fn ReadBuffer mut @read_i32_le() -> Result[i32, ReadBufferError] {
     if @data.len() - @pos < 4 {
         return Err(UnexpectedEnd { wanted: 4, available: @data.len() - @pos })
     }
@@ -208,7 +209,7 @@ export fn ReadBuffer mut @try_read_i32_le() -> Result[i32, ReadBufferError] {
 }
 
 // i32 big-endian (sign-extended).
-export fn ReadBuffer mut @try_read_i32_be() -> Result[i32, ReadBufferError] {
+export fn ReadBuffer mut @read_i32_be() -> Result[i32, ReadBufferError] {
     if @data.len() - @pos < 4 {
         return Err(UnexpectedEnd { wanted: 4, available: @data.len() - @pos })
     }
@@ -229,7 +230,7 @@ export fn ReadBuffer mut @try_read_i32_be() -> Result[i32, ReadBufferError] {
 // 64-bit signed; u64 cast from i64 preserves bit-pattern.
 
 // u64 little-endian.
-export fn ReadBuffer mut @try_read_u64_le() -> Result[u64, ReadBufferError] {
+export fn ReadBuffer mut @read_u64_le() -> Result[u64, ReadBufferError] {
     if @data.len() - @pos < 8 {
         return Err(UnexpectedEnd { wanted: 8, available: @data.len() - @pos })
     }
@@ -248,7 +249,7 @@ export fn ReadBuffer mut @try_read_u64_le() -> Result[u64, ReadBufferError] {
 }
 
 // u64 big-endian.
-export fn ReadBuffer mut @try_read_u64_be() -> Result[u64, ReadBufferError] {
+export fn ReadBuffer mut @read_u64_be() -> Result[u64, ReadBufferError] {
     if @data.len() - @pos < 8 {
         return Err(UnexpectedEnd { wanted: 8, available: @data.len() - @pos })
     }
@@ -267,7 +268,7 @@ export fn ReadBuffer mut @try_read_u64_be() -> Result[u64, ReadBufferError] {
 }
 
 // i64 little-endian — без sign-extension (int = i64 native).
-export fn ReadBuffer mut @try_read_i64_le() -> Result[i64, ReadBufferError] {
+export fn ReadBuffer mut @read_i64_le() -> Result[i64, ReadBufferError] {
     if @data.len() - @pos < 8 {
         return Err(UnexpectedEnd { wanted: 8, available: @data.len() - @pos })
     }
@@ -286,7 +287,7 @@ export fn ReadBuffer mut @try_read_i64_le() -> Result[i64, ReadBufferError] {
 }
 
 // i64 big-endian.
-export fn ReadBuffer mut @try_read_i64_be() -> Result[i64, ReadBufferError] {
+export fn ReadBuffer mut @read_i64_be() -> Result[i64, ReadBufferError] {
     if @data.len() - @pos < 8 {
         return Err(UnexpectedEnd { wanted: 8, available: @data.len() - @pos })
     }
@@ -309,36 +310,36 @@ export fn ReadBuffer mut @try_read_i64_be() -> Result[i64, ReadBufferError] {
 // Все float reads делегируют в unsigned int того же размера + f{32,64}.from_bits.
 
 // f32 little-endian IEEE 754.
-export fn ReadBuffer mut @try_read_f32_le() -> Result[f32, ReadBufferError] =>
-    match @try_read_u32_le() {
+export fn ReadBuffer mut @read_f32_le() -> Result[f32, ReadBufferError] =>
+    match @read_u32_le() {
         Ok(u) => Ok(f32.from_bits(u))
         Err(e) => Err(e)
     }
 
 // f32 big-endian IEEE 754.
-export fn ReadBuffer mut @try_read_f32_be() -> Result[f32, ReadBufferError] =>
-    match @try_read_u32_be() {
+export fn ReadBuffer mut @read_f32_be() -> Result[f32, ReadBufferError] =>
+    match @read_u32_be() {
         Ok(u) => Ok(f32.from_bits(u))
         Err(e) => Err(e)
     }
 
 // f64 little-endian IEEE 754.
-export fn ReadBuffer mut @try_read_f64_le() -> Result[f64, ReadBufferError] =>
-    match @try_read_u64_le() {
+export fn ReadBuffer mut @read_f64_le() -> Result[f64, ReadBufferError] =>
+    match @read_u64_le() {
         Ok(u) => Ok(f64.from_bits(u))
         Err(e) => Err(e)
     }
 
 // f64 big-endian IEEE 754.
-export fn ReadBuffer mut @try_read_f64_be() -> Result[f64, ReadBufferError] =>
-    match @try_read_u64_be() {
+export fn ReadBuffer mut @read_f64_be() -> Result[f64, ReadBufferError] =>
+    match @read_u64_be() {
         Ok(u) => Ok(f64.from_bits(u))
         Err(e) => Err(e)
     }
 
 // ─── UTF-8 codepoint reads ───
 //
-// `try_read_char` / `try_read_str` — same UTF-8 walk pattern что
+// `read_char` / `read_str` — same UTF-8 walk pattern что
 // _nova_rb_decode_utf8_one в C runtime (read_buffer.h:376-396).
 //
 // Возможные ошибки:
@@ -388,7 +389,7 @@ fn ReadBuffer @_decode_utf8_at(p int) -> Result[(int, int), ReadBufferError] {
 // Plan 34 Ф.5.2 / D54: `int as char` запрещён; используем char.try_from(n).
 // UTF-8 decoder уже валидирует range — try_from.Err() unreachable, но
 // нужно для well-typedness; surface как UnexpectedEnd для consistency.
-export fn ReadBuffer mut @try_read_char() -> Result[char, ReadBufferError] =>
+export fn ReadBuffer mut @read_char() -> Result[char, ReadBufferError] =>
     match @_decode_utf8_at(@pos) {
         Ok(tup) => match char.try_from(tup.0) {
             Ok(c) => {
@@ -401,7 +402,7 @@ export fn ReadBuffer mut @try_read_char() -> Result[char, ReadBufferError] =>
     }
 
 // n codepoint'ов как str. Result-форма (Ok(str) или Err(UnexpectedEnd)).
-export fn ReadBuffer mut @try_read_str(n int) -> Result[str, ReadBufferError] {
+export fn ReadBuffer mut @read_str(n int) -> Result[str, ReadBufferError] {
     if n < 0 {
         return Err(UnexpectedEnd { wanted: 0, available: @data.len() - @pos })
     }
@@ -419,31 +420,3 @@ export fn ReadBuffer mut @try_read_str(n int) -> Result[str, ReadBufferError] {
     @pos = walked
     Ok(str.from_bytes_unchecked(bytes_slice))
 }
-
-// ─── Fail-form (Throw-on-error) ───
-//
-// Все Fail-форма читы — thin Nova-обёртки `@try_X(...)!!`. !! unwraps
-// Ok(v) -> v; Err(e) -> Fail.throw(e).
-
-export fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> u8 => @try_read_byte()!!
-export fn ReadBuffer mut @read_bytes(n int) Fail[ReadBufferError] -> []u8 => @try_read_bytes(n)!!
-export fn ReadBuffer mut @read_u8() Fail[ReadBufferError] -> u8 => @try_read_u8()!!
-export fn ReadBuffer mut @read_i8() Fail[ReadBufferError] -> i8 => @try_read_i8()!!
-export fn ReadBuffer mut @read_u16_le() Fail[ReadBufferError] -> u16 => @try_read_u16_le()!!
-export fn ReadBuffer mut @read_u16_be() Fail[ReadBufferError] -> u16 => @try_read_u16_be()!!
-export fn ReadBuffer mut @read_i16_le() Fail[ReadBufferError] -> i16 => @try_read_i16_le()!!
-export fn ReadBuffer mut @read_i16_be() Fail[ReadBufferError] -> i16 => @try_read_i16_be()!!
-export fn ReadBuffer mut @read_u32_le() Fail[ReadBufferError] -> u32 => @try_read_u32_le()!!
-export fn ReadBuffer mut @read_u32_be() Fail[ReadBufferError] -> u32 => @try_read_u32_be()!!
-export fn ReadBuffer mut @read_i32_le() Fail[ReadBufferError] -> i32 => @try_read_i32_le()!!
-export fn ReadBuffer mut @read_i32_be() Fail[ReadBufferError] -> i32 => @try_read_i32_be()!!
-export fn ReadBuffer mut @read_u64_le() Fail[ReadBufferError] -> u64 => @try_read_u64_le()!!
-export fn ReadBuffer mut @read_u64_be() Fail[ReadBufferError] -> u64 => @try_read_u64_be()!!
-export fn ReadBuffer mut @read_i64_le() Fail[ReadBufferError] -> i64 => @try_read_i64_le()!!
-export fn ReadBuffer mut @read_i64_be() Fail[ReadBufferError] -> i64 => @try_read_i64_be()!!
-export fn ReadBuffer mut @read_f32_le() Fail[ReadBufferError] -> f32 => @try_read_f32_le()!!
-export fn ReadBuffer mut @read_f32_be() Fail[ReadBufferError] -> f32 => @try_read_f32_be()!!
-export fn ReadBuffer mut @read_f64_le() Fail[ReadBufferError] -> f64 => @try_read_f64_le()!!
-export fn ReadBuffer mut @read_f64_be() Fail[ReadBufferError] -> f64 => @try_read_f64_be()!!
-export fn ReadBuffer mut @read_char() Fail[ReadBufferError] -> char => @try_read_char()!!
-export fn ReadBuffer mut @read_str(n int) Fail[ReadBufferError] -> str => @try_read_str(n)!!

@@ -1,6 +1,6 @@
 // AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
 // Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
-// Role: parse_int / try_parse_int.
+// Role: parse_int (Result-form, D325).
 //
 // Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
 // prelude->string->prelude import cycle.
@@ -11,28 +11,21 @@ module runtime.string
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 
 
-/// Error variants for @try_parse_int. Exported so callers can match on them.
+/// Error variants for @parse_int. Exported so callers can match on them.
 export type ParseIntError | Empty | InvalidDigit | Overflow | InvalidRadix
 
-// Plan 91.18 Ф.2 (D77/D25 convention): bare=throw; try_*=Result; _opt=Option.
-// @parse_int  → throws ParseIntError on failure (Fail[ParseIntError] effect).
-// @try_parse_int → Result[int, ParseIntError] (unchanged body).
-// @parse_int_opt → Option[int] (delegates to try_parse_int).
+// Plan 177 (D325): единый fallible-контракт — публичная std возвращает
+// Result. Дуальная тройка `parse_int`(throws)/`try_parse_int`(Result)/
+// `parse_int_opt`(Option) РЕТРАКТИРОВАНА (D178 amend): одна форма
+// @parse_int → Result[int, ParseIntError]. throw на call-site = `!!`,
+// проброс = `?`, Result→Option = `.ok()`.
 
-/// Parse integer, throw ParseIntError on failure. Default radix=10.
+/// Strict parse — returns Result with explicit error. Default radix=10.
 /// `radix` valid range: 2..=36.
-export fn str @parse_int(radix int = 10) Fail[ParseIntError] -> int {
-    match @try_parse_int(radix: radix) {
-        Ok(v) => v
-        Err(e) => throw e
-    }
-}
-
-/// Strict parse — returns Result with explicit error. `radix` valid range: 2..=36.
 /// Empty / `-` / `+` without digits → Err(Empty). Invalid digit → Err(InvalidDigit).
 /// i64 overflow → Err(Overflow). radix out of range → Err(InvalidRadix).
 #stable(since = "0.1")
-export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] {
+export fn str @parse_int(radix int = 10) -> Result[int, ParseIntError] {
     if radix < 2 || radix > 36 { return Err(InvalidRadix) }
     ro bytes = @as_bytes()
     ro n = @byte_len()
@@ -58,8 +51,3 @@ export fn str @try_parse_int(radix int = 10) -> Result[int, ParseIntError] {
     }
     Ok(if neg { -acc } else { acc })
 }
-
-/// Option variant: Some(n) on success, None on any error. Default radix=10.
-export fn str @parse_int_opt(radix int = 10) -> Option[int]
-    requires radix >= 2 && radix <= 36
-=> match @try_parse_int(radix: radix) { Ok(v) => Some(v), Err(_) => None }

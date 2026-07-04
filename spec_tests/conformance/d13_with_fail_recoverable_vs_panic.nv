@@ -32,3 +32,24 @@ test "with Fail: no-throw путь → нормальный результат (
     }
     assert(ok == 100)      // тело не бросило → его значение
 }
+
+// ── Plan 177 D325 A1 — R0/D13-граница: R1 (Result-everywhere) НЕ поглощает
+// panic-категорию. «Падающая» операция в D325 R1 = EXPECTED/ENVIRONMENTAL
+// (ввод, I/O, парсинг) → Result/Option (recoverable, ниже). CONTRACT-
+// VIOLATION / programming error (OOB-index, integer overflow, div/0,
+// mid-codepoint slice) → PANIC, НЕ Err и НЕ Fail (D13, 08-runtime.md:124-140).
+// Здесь позитивно проверяется RECOVERABLE-сторона; panic-сторона доказана
+// существующими EXPECT_RUNTIME_PANIC фикстурами (amend, не дублируем):
+//   • v[oob]  → nova_tests/plan138/neg/t_neg_vec_index_oob.nv  ("array: index")
+//   • overflow→ nova_tests/contracts/neg/int_overflow_{add,mul,compound}_panic.nv
+//   • panic сквозь `with Fail` → nova_tests/expected_runtime/with_fail_panic_not_swallowed.nv
+test "D325 A1/R0: expected-failure = Result/Option; panic-категория не съедена (D13)" {
+    ro v []int = [10, 20, 30]
+    assert(v.get(3) == None)              // OOB как ABSENCE → Option (safe, R4)
+    assert(v.get(0) == Some(10))
+    assert("x".parse_int().ok() == None)  // bad input → Result → .ok() → None (R1)
+    assert("7".parse_int().ok() == Some(7))
+    // Контраст (НЕ здесь — они panic'ают, аварийно завершая процесс):
+    //   v[3] / (a + очень_большое) / (n / 0) → panic по D13, вне Result/Fail.
+    // Их пруф — EXPECT_RUNTIME_PANIC фикстуры, перечисленные в шапке выше.
+}

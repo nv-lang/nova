@@ -1,0 +1,35 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD
+//
+// Plan 177 Ф.3 / D325 (NEG) — [E_UNKNOWN_METHOD] / closes the pre-existing
+// [M-checker-unknown-method-stackoverflow] blocker.
+//
+// D325 / Plan 177 Ф.2b RETRACTED the `try_parse_int` (Result) and `parse_int_opt`
+// (Option) spellings: `str.parse_int()` is now the SINGLE Result-returning form
+// (std/runtime/string/parse.nv). A call to a RETRACTED (or any nonexistent) method
+// on a PRIMITIVE receiver must be rejected by the CHECKER with a clean
+// `[E_UNKNOWN_METHOD]` diagnostic (§0/§1/§6) — it must NOT leak to codegen, which
+// previously PANICKED `[P67-LEGACY]` (emit_c.rs "method call return type unknown —
+// checker must annotate") on an `int` receiver and mis-typed a `str` receiver to
+// `nova_int` → CC-FAIL. That leak is exactly what blocked this fixture from being a
+// clean `EXPECT_COMPILE_ERROR` (the panic aborted the whole runner process).
+//
+// The checker consults every legitimate resolution channel first — built-in
+// primitive methods (D109/D74), prelude/protocol methods (`method_table`), the
+// D73/D84 `into`/`try_into` conversions, and any generic `fn[T] T @method` blanket —
+// so a REAL method (`s.parse_int()`, `x.abs()`, `c.is_alphabetic()`) is never flagged;
+// only a genuinely-missing name reaches this diagnostic.
+
+module neg.d325_retracted_str_parse_method_neg
+
+fn d325_retracted() -> int {
+    ro s = "42"
+    // ✗ E_UNKNOWN_METHOD — `try_parse_int` was retracted (D325); use `parse_int`.
+    match s.try_parse_int() {
+        Ok(v) => v,
+        Err(_) => 0,
+    }
+}
+
+test "D325: retracted `str.try_parse_int` is rejected as an unknown method" {
+    ro _ = d325_retracted()
+}

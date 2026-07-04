@@ -2,7 +2,7 @@
 # Plan 177 — Единый fallible-контракт std: **Result-everywhere** (no bare-throws convention)
 
 > **Top-level план.** Создан 2026-06-25. **Ред. 2 — 2026-07-03** (аудит: ground-truth/7-языков/blast-radius; статусы E-пунктов, R0-граница, spec_tests, агент-правила).
-> **Статус:** 🔨 IN PROGRESS — **D325 ✅ committed** (`spec/decisions/04-effects.md`, Status ACTIVE, sign-off владельца 2026-06-25); Ф.1 largely done (остатки §5: E3/E6/E10/E11 + amend-пакет §4a); Ф.2a ✅ DONE; Ф.2b/Ф.2c/Ф.3/Ф.4 — pending.
+> **Статус:** ✅ **CLOSED 2026-07-04** (D325-конвенция полностью в спеке + guard + conformance 41/0; stable-std in-scope мигрирована; остаток — явные маркеры, см. §14) — **D325 ✅ committed** + **amend-пакет §4a ✅ внесён** (`04-effects.md`: R0/R4-критерий/nesting-канон/exempt-list/коллекторы, 2026-07-03); **Ф.1 ✅ DONE** (E1-E11 закрыты: E3/E6/E10/E11 добиты 2026-07-03 — read_config→Result, parse_int_opt→genuine-absence+cross-domain/wrap-Fail идиомы, D178 retract-баннер, D77 cross-ref); Ф.2a ✅ DONE; **Ф.2c ✅ DONE 2026-07-04 — ЦЕЛЕВОЙ ФОРМОЙ (`[M-172.1-U4-freefn-generic-return]`, `3ef1acb8`+`b8fb952d`): `sequence`/`partition` в `std/prelude/core.nv`, оба cross-module; codegen снят ЕДИНЫМ каналом — `f1_check_call` материализует конкретный generic-free-fn call-return через `unify_type`+subst → codegen читает `resolved_type_to_c` (D315); interim-зеркало `4e4e7c34` откачено net-zero; conformance 38/38 + zero-regression 23 папки); **Ф.2b ✅ DONE 2026-07-04 (`[M-177-Ф2b-parse-read-dehardcode]`): parse.nv/read_buffer.nv → единая Result-форма + де-хардкод их return-типов (§3/§10, резолв из .nv) + sweep; zero-regression vs `19b9c756`; де-хардкод доказан звучным ДО удаления (Channel-2 конкретный NovaRes). Отложено: D77-codegen (`[M-177-d77-codegen-4way-retract]`), builtins→174.1, spec-neg блок. на pre-existing `[M-checker-unknown-method-stackoverflow]` — **разблокирован fix'ом `d0208346`**)**; **Ф.3 ✅ DONE 2026-07-04**: conformance PASS 41/0 (pos `d325_result_everywhere` + 3 neg `d325_*`), guard+нейм-линт (`compiler-codegen/tests/d325_result_everywhere_guard.rs`) 3 passed / 0 нарушений stable std, A1-A4 покрыты, zero-regression by construction; отложено `d77`-spec-fixture + `[M-172.1-opt-result-over-userenum-typedef-order]`; **Ф.4 ✅ DONE 2026-07-04** — docs close-out + честный аудит полноты D325 (карта §14): stable-std public-fallible = **Result-everywhere** (мигрировано base64/json/complex/parse/read_buffer; conformant net/176/utf16/string-core; exempt-list §2 — unwrap-мост/on_exit/testing по-дизайну); **остаток честно маркирован** — (a) `std/concurrency` `race2`/`with_timeout` throw bare-`str` (inferred-Fail, вне guard-скана `Fail[`) = Plan 173-домен `[M-177-concurrency-throw-fallibility]`; (b) весь `std/_experimental` (17 файлов) = §9 Q3 defer до стабилизации `[M-177-experimental-fallible-migration]`; (c) codegen-хвост `[M-177-d77-codegen-4way-retract]` / `[M-172.1-opt-result-over-userenum-typedef-order]`. **ПЛАН 177 ЗАКРЫТ** (D325-конвенция достигнута полностью; несделанное — только явные followup-маркеры/делегации, §12.1).
 > **Маркер:** `[M-177-result-everywhere-std]`. **Запуск:** «**выполни план 177**».
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** D325 ✅ уже в спеке
 > (Ф.1-ядро выполнено). Migration-sweep (read_buffer bare-twins, emit_c builtins) — Волна 1 трек G,
@@ -156,7 +156,7 @@ expr.ok() (->Option), match (ветвление).
 
 - **(E1)** ✅ DONE — `nv-coding-style.md` §4 :83-90 = R1-R5 (единое Result-правило); инлайн-дата `· согласовано 2026-06-25` добавлена 2026-07-03.
 - **(E2)** ✅ DONE — net-carve-out удалён.
-- **(E3)** ❌ ОСТАЛОСЬ — пример `read_config` (**теперь** `nv-coding-style.md` §20.4 **:638-645** — line-ref дрейфанул) всё ещё `Fs Fail -> Config`; переписать в Result-форму:
+- **(E3)** ✅ DONE (2026-07-03) — `nv-coding-style.md` §20.4 :640 `read_config` переписан в Result-форму (`Fs -> Result[Config, IoError]`; `Fs.open(path)?` + `defer file.close()` + `read_all()?` + `Ok(Config.parse(raw))`), defer-иллюстрация сохранена. Целевой снимок:
   ```nova
   fn read_config(path str) Fs -> Result[Config, IoError] {
       consume file = Fs.open(path)? {        // ? разворачивает Result; File must-consume → consume-scope
@@ -167,12 +167,12 @@ expr.ok() (->Option), match (ветвление).
   ```
 - **(E4)** ✅ DONE — `module-conventions.md` §3 :92 («Все fallible → Result (R1, D325)»).
 - **(E5)** ✅ DONE — `module-conventions.md` §5 :151-152 (`try_`-дуал убран).
-- **(E6)** 🟡 НАПОЛОВИНУ — `idioms/error-handling.md` :42-51 переписан под D325, но **:28 всё ещё даёт `s.parse_int_opt()` как позитивный пример** — противоречит R4 в том же файле → заменить на genuine-absence пример (`m.get(k)`) или `parse_int().ok()`. Плюс дописать: (a) паттерн **domain-sum-error + `.map_err`** для cross-domain композиции (trade-off #2 §1); (b) канонизировать идиому **wrap Fail→Result** `with Fail[E] = |e| interrupt Err(e) { … }` (аналог Kotlin `runCatching` / Swift `Result(catching:)`). `strings.md` :368-371 — ✅ уже переписан.
+- **(E6)** ✅ DONE (2026-07-03) — `idioms/error-handling.md` :28 `s.parse_int_opt()` заменён на genuine-absence `m.get(key) -> Option[V]` + пояснение (fallible-с-причиной → Result+`.ok()`, `_opt`-близнеца нет, R4). Дописаны идиомы: (a) **cross-domain композиция** — `.map_err` per-site + domain-sum-error `enum ConfigError Io | Parse`; (b) **wrap Fail→Result** `with Fail[E] = |e| interrupt Err(e) { … }` (runCatching-style). `strings.md` — ✅ ранее.
 - **(E7)** ✅ DONE — `std/prelude/protocols.nv` :126-143 (текст-конвенция D77 2-way).
 - **(E8)** ✅ MOOT — claim «Plan 173 унифицирует net-нейминг» в 173 уже отсутствует (grep = 0); 173 Ф.1 делает `?` строго return-only — примеры/конвенции 177 уже совместимы.
 - **(E9)** ✅ RESOLVED (переформулирован Ред.2) — «дата-запись в conventions-governance.md» невыполнима как написано (там changelog не ведут); правильная форма = **инлайн-даты** у изменённых пунктов. Дата у D325-булета nv-coding-style:83 проставлена (E1).
-- **(E10)** ❌ NEW — **retract-баннер D178**: в `08-runtime.md` проставить RETRACTED-ноту (amend-V4) на D178 V1/V2/V3 (V3 :4433-4434 всё ещё «bare = throw convention; try_parse_int = Result; parse_int_opt = Option») + строка в индексе файла (:22-23). Без этого спека противоречит D325.
-- **(E11)** ❌ NEW (малый) — cross-ref D325 в ревизию-баннер D77 (`08-runtime.md:1662-1667`, внесён 2026-07-01 без ссылки на D325).
+- **(E10)** ✅ DONE (2026-07-03) — retract-баннер D178: `08-runtime.md` D178 V1-хедер (⚠ ЧАСТИЧНО RETRACTED — parse_int-триада отозвана D325, остальной str-cleanup в силе) + врезка на V3 :4433-4434 (amend V4: `parse_int -> Result`, `.ok()`, `!!`; удаление bare+`_opt` = Ф.2b). Спека больше не противоречит D325.
+- **(E11)** ✅ DONE (2026-07-03) — D77 ревизия-баннер (`08-runtime.md:1662`) теперь ссылается на D325 (amends D77 4-way→2-way; синтез в emit_c → Ф.2b).
 
 ---
 
@@ -198,9 +198,56 @@ expr.ok() (->Option), match (ветвление).
 >
 > **Урок для плана (важно):** «`.nv`-only» (не трогает compiler-source) ≠ «codegen-clean». Все **3** проверенных Ф.2a-файла упёрлись в codegen-баги. **Регрессия только у complex** (зелёный→красный, откачен); **base64 и json — пре-существующе-красные** (закоммичены: D325-корректны + `nova check`-чисты, `nova test`-статус не ухудшен). **Разблокировка Ф.2a требовала codegen-фиксов** — **ВСЕ 4 закрыты 2026-06-26** (Plan 172.1, ветка plan-172): `[M-177-ifexpr-value-materialize-codegen]` (`836befcb`), `[M-177-result-over-named-tuple-codegen]` (`b022919a`), `[M-177-anon-record-in-ctor-arg-codegen]` (`c724de7a`), `[M-172.1-self-ref-slice-variant-erasure]` (`98fa5c56`, бывш. erasure `[M-91.13]`). **Статус Ф.2a: ✅ все 3 файла green end-to-end** (json добит 2026-06-26, см. json-строку).
 
-### 🔴 Ф.2b — compiler-gated, **ОТЛОЖЕНО** (нужен `emit_c.rs`; Волна 3, координация 172.1×174.1)
+### 🟢 Ф.2b — parse/read-триады SHIPPED + де-хардкод ✅ DONE (2026-07-04); D77-codegen + builtins отложены
 
-> ⚠ **Line-refs ниже = снимок 2026-07-03; `emit_c.rs` дрейфует ежедневно (172.1.2)** — исполнителю искать **по символу/паттерну**, номера строк только ориентир.
+> **✅ DONE 2026-07-04 (`[M-177-Ф2b-parse-read-dehardcode]`):** parse.nv + read_buffer.nv
+> переименованы в **единую Result-форму** (D325) с **де-хардкодом их return-типов** (§3/§10 —
+> резолв из `.nv`, НЕ «поправить хардкод»). Ключевая проверка звучности (§10-порядок): доказано
+> ЭМПИРИЧЕСКИ до удаления, что чекер материализует конкретный Result в канал, а codegen читает
+> его ЕДИНЫМ `resolved_type_to_c` — сгенерированный C для `try_read_u16_le`/`try_parse_int`
+> (ДО правок) уже даёт **конкретный** `NovaRes_uint16_t_Nova_ReadBufferError_p*` /
+> `NovaRes_nova_int_Nova_ParseIntError_p*` на call-site (Channel-2 через
+> `infer_method_call_channel_type`→`resolve_instance_method_return`), а НЕ erased-хардкод
+> `NovaRes_nova_int_nova_str*`. Хардкоды были **dead-superseded** каналом (Ф.2c/172.1.2-механизм).
+>
+> **ЧТО СДЕЛАНО:**
+> - **parse.nv:** `@try_parse_int`→`@parse_int` (Result-форма), удалены bare `@parse_int`(throws) +
+>   `@parse_int_opt`(Option). Result→Option на call-site = `.ok()`.
+> - **read_buffer.nv:** `@try_read_X`→`@read_X` (22 Result-primaries), удалены **22 bare-twin**
+>   Fail-обёртки (`_decode_utf8_at` не тронут).
+> - **де-хардкод emit_c.rs (оба зеркала):** удалены `"parse_int" => "NovaOpt_nova_int"` +
+>   ReadBuffer read_X/try_read_ width-таблица + `str_method_ret_type` parse_int-арм. Infallible
+>   аксессоры (position/remaining/…) оставлены (вне D325-scope). NET: name-keyed return-хардкод
+>   для parse/read СНЯТ; canal-miss → loud CC-FAIL (§1), не тихий mis-type.
+> - **sweep call-sites:** parse (text_methods_test → `.ok()`; fe2 10 файлов try_→parse + git mv
+>   `try_parse_int_*`→`parse_int_*`; fe5; unicode-golden parse-часть; convention переписан на D325
+>   D85-каналы; cp_utils.nv), read (buffers/* bare→`!!` + try_→read; plan62; read_text; runtime).
+> - **ГЕЙТЫ:** std компилится (nova-cli пересобран); negative-grep старых имён = 0 (кроме
+>   rename-explain комментов); **zero-regression** vs baseline `19b9c756` (собран baseline-бинарь в
+>   `nova-p177-base`): regression-сэмпл (generics/plan153_2/plan161/plan100_4_1) 3/1==3/1, broad
+>   (plan59/72/148/138_2) 10/0==10/0, все affected-провалы доказаны **pre-existing** (overflow-neg
+>   RUN-FAIL, golden-split HashMap CC-FAIL, auto_derive D249 — идентичны на baseline); pos-
+>   conformance CU PASS. де-хардкод доказан: read_integers/read_oob/parse PASS с УДАЛЁННЫМИ
+>   хардкодами.
+>
+> **ОТЛОЖЕНО (маркеры + backlog):**
+> - **D77 4-way→2-way codegen** (`from_targets`/`try_from_targets` bare-throws-синтез в emit_c):
+>   `[M-177-d77-codegen-4way-retract]` — сложно/отдельно (задевает всю conversion-auto-derive
+>   машинерию), separable от parse/read; spec-часть уже внесена. Декларации TryFrom/TryInto не
+>   тронуты. НЕ в этой задаче (task-разрешение).
+> - **spec_tests/conformance/neg/d325_*** (removed-имена → compile-error): **БЛОКИРОВАНО
+>   pre-existing чекер-багом** `[M-checker-unknown-method-stackoverflow]` — резолв неизвестного
+>   метода на str/ReadBuffer-ресивере даёт **stack overflow** в чекере (воспроизводится на baseline
+>   `19b9c756` тоже, НЕ регрессия) → чистый `EXPECT_COMPILE_ERROR`-фикстур невозможен (крашит
+>   раннер). Negative-grep на уровне исходников доказывает отсутствие старых имён. Спец-неги —
+>   после фикса stack-overflow (Ф.3).
+> - **builtins `int.try_parse`/`f64.try_parse`/`char.try_from`** — цель Plan 174.1 (не Ф.2b).
+> - **parse_int overflow-detection баг** (`[M-parse-int-overflow-returns-invaliddigit]`): 20-значные
+>   числа → `Err(InvalidDigit)` вместо `Err(Overflow)` (neg `parse_int_overflow_err` RUN-FAIL,
+>   **pre-existing** идентично на baseline; тело @parse_int byte-identical со старым @try_parse_int)
+>   — арифметика parse.nv, домен Plan 174.1, вне D325-rename-scope.
+
+> ⚠ **Line-refs ниже = снимок 2026-07-03 (исторический); Ф.2b выполнен по символу/паттерну.**
 
 | Файл | Блокер | Sweep-скоуп (аудит 2026-07-03) |
 |---|---|---|
@@ -214,8 +261,11 @@ expr.ok() (->Option), match (ветвление).
 ### ✅ Уже conformant (без изменений)
 `std/net/*`, Plan 176, `std/encoding/utf16.nv` (`from_utf16 -> Result` — эталон целевой формы), `std/runtime/string/core.nv` (`try_from_codepoint` уже Result; `from_bytes_*` намеренно инфаллибл — не fallible, не трогать). `examples/effect_density/http.nv` и `examples/real_world/oxsar_port.nv` — user-code style `Fail` (легально под D325), std-triaду не зовут → **вне blast-radius**, правок не нужно. Дрейф-чек 2026-07-03: 0 новых bare-throw API в stable std после 2026-06-25.
 
-### Отложенный `_experimental` (§9 Q3)
-`sql.nv`(Db), `jwt`/`snowflake`/`ulid`/`bcrypt`/`retry` — TODO. Прим.: `retry.execute`/`in_transaction` внешний `Fail[E]` = forwarded (R5, легально); чинить только intrinsic `Db`-ошибки.
+### Отложенный `_experimental` (§9 Q3) — **полный список (Ф.4-аудит 2026-07-04)**
+**17 файлов** ещё throw own-`Fail` (defer до стабилизации модуля; вне scope 177): `encoding/{csv,hex,ini,toml,url}.nv`, `data/{semver,semver_range,sql}.nv`, `crypto/{jwt,bcrypt}.nv`, `identifiers/{snowflake,ulid,uuid}.nv`, `math/statistics.nv`, `text/regex.nv`, `time/cron.nv`, `concurrency/retry.nv`. Прим.: `retry.@execute`/`sql.in_transaction` внешний `Fail[E]` = forwarded (R5, легально даже после стабилизации); чинить только intrinsic `Db`/retry-ошибки. **Маркер:** `[M-177-experimental-fallible-migration]` (см. §14.2).
+
+### 🟡 Остаток stable-std вне scope 177 → Plan 173 (Ф.4-аудит 2026-07-04)
+`std/concurrency/cancellation.nv` — `race2` (both-failed) и `with_timeout` (timeout) `throw` bare `str` через *inferred* Fail (сигнатура `-> T` без `Fail[` → guard §8.2 их не сканирует, §14.3). По R1 = expected failure → должны быть `Result`, НО structured-concurrency error-семантика = **Plan 173-домен** (§10/§13). **НЕ конвертировано** (нужен error-домен-тип + coordination 173 + смена 2 `#stable` сигнатур; whole-subsystem). **Маркер:** `[M-177-concurrency-throw-fallibility]` (home Plan 173; см. §14.1).
 
 ---
 
@@ -224,32 +274,123 @@ expr.ok() (->Option), match (ветвление).
 | Фаза | Объём | DEP (что должно быть закрыто ДО) | Статус |
 |---|---|---|---|
 | **Ф.0 Discovery** | grep-скоуп: call-sites bare-`parse_int`/`read_X`/`_opt` + все `Fail[` в публичных std-сигнатурах (минус R5-forwarded) | — | ✅ DONE (workflow 2026-06-25; blast-radius-цифры уточнены аудитом Ред.2 2026-07-03 — §6) |
-| **Ф.1 D325 + конвенции** | D325 в спеку + E1-E11 | sign-off (✅ 2026-06-25) | 🟡 largely DONE — **остаток:** E3, E6-половина, E10, E11 + **amend-пакет §4a** (R0/R4-критерий/nesting/exempt/коллекторы-фраза) |
+| **Ф.1 D325 + конвенции** | D325 в спеку + E1-E11 | sign-off (✅ 2026-06-25) | ✅ **DONE 2026-07-03** — E1-E11 все закрыты (E3/E6/E10/E11 добиты) + amend-пакет §4a внесён в D325 (R0/R4-критерий/nesting/exempt-list/коллекторы). Спека самосогласована с D325 (D178/D77 баннеры). |
 | **Ф.2a `.nv`-only миграция** | base64 → complex → json | Ф.1-ядро | ✅ DONE 2026-06-26 (все 3 файла green end-to-end) |
-| **Ф.2b compiler-gated sweep** | parse.nv + read_buffer.nv rename + emit_c хардкоды + builtins + D77-emit_c + sweep 15+9 тест-файлов (§6) | разрешение на компилятор; координация **172.1** (emit_c-зона) и **174.1** (новые поверхности сразу под D325) — Волна 3 | ⏳ |
-| **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | Ф.1; независим от Ф.2b (.nv-only) | ⏳ |
-| **Ф.3 Guard + spec_tests** | conformance-guard (R5-дискриминатор + exempt-list §2) + нейм-линт (A2) + spec_tests d325/d77 (§8) | Ф.1 (полный D325-текст); neg-фикстуры на удалённые имена — после Ф.2b | ⏳ |
-| **Ф.4 Docs/log/закрытие** | `project-creation.txt` + `discussion-log.md` (nova-private) + `simplifications.md`; cross-ref из 174.1/173/176; Q-sweep §9 | все предыдущие | ⏳ |
+| **Ф.2b compiler-gated sweep** | parse.nv + read_buffer.nv rename + emit_c хардкоды + builtins + D77-emit_c + sweep 15+9 тест-файлов (§6) | разрешение на компилятор; координация **172.1** (emit_c-зона) и **174.1** (новые поверхности сразу под D325) — Волна 3 | 🟢 **DONE 2026-07-04** (parse/read rename + де-хардкод return-типов §3/§10 + sweep; zero-regression vs `19b9c756`; де-хардкод доказан). **Отложено:** D77-codegen `[M-177-d77-codegen-4way-retract]`; builtins→174.1; spec-neg блок. на `[M-checker-unknown-method-stackoverflow]` (pre-existing); parse_int-overflow-баг (pre-existing, 174.1). |
+| **Ф.2c std-коллекторы** | `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) + `partition: []Result[T,E] -> ([]T,[]E)` в prelude (прецеденты: Rust `FromIterator for Result`, Go `errors.Join`); без них аргумент §1.3 — обещание, не API | ~~Ф.1; независим от Ф.2b (.nv-only)~~ ~~codegen-gated~~ | ✅ DONE 2026-07-04 (`sequence`+`partition` в `std/prelude/core.nv`, оба cross-module; codegen-блокер снят ЦЕЛЕВОЙ ФОРМОЙ `[M-172.1-U4-freefn-generic-return]` `3ef1acb8` — см. ниже) |
+| **Ф.3 Guard + spec_tests** | conformance-guard (R5-дискриминатор + exempt-list §2) + нейм-линт (A2) + spec_tests d325/d77 (§8) | Ф.1 (полный D325-текст); neg-фикстуры на удалённые имена — после Ф.2b | ✅ **DONE 2026-07-04** — conformance `nova test --positive --compile-error spec_tests/conformance` = **PASS 41/0** (pos `d325_result_everywhere.nv` + 3 neg `d325_*`); guard+нейм-линт (`compiler-codegen/tests/d325_result_everywhere_guard.rs`, cargo, hermetic) = **3 passed, 0 нарушений в stable std** (own-Fail R1/R5 + `_opt`/orphan-`try_` R3/R4 + net-zero-Fail; exempt-list §2 явный + non-vacuity-ассерты); A1-A4 покрыты (A1 amend d13 R0/R1-контраст; A3 R5-forward HOF; A4 sequence/partition). Zero-regression by construction (0 правок compiler/std). **Отложено:** `d77_two_way_conversions` spec-fixture → `[M-177-d77-codegen-4way-retract]` (codegen-часть D77 не в scope Ф.3); `[M-172.1-opt-result-over-userenum-typedef-order]` (Option[Result[int,UserEnum]] typedef-ordering). |
+| **Ф.4 Docs/log/закрытие** | `project-creation.txt` + `discussion-log.md` (nova-private) + `simplifications.md`; cross-ref из 174.1/173/176; Q-sweep §9; **аудит полноты D325 (§14)** | все предыдущие | ✅ **DONE 2026-07-04** — карта полноты D325 (§14): stable-std public-fallible = Result-everywhere; остаток честно маркирован (concurrency→173, `_experimental`→§9 Q3, codegen-хвост); spec D325 Status→migration-complete; README/backlog/simplifications/project-creation обновлены; conformance 41/0 (net-zero-код, docs-only). **План 177 ЗАКРЫТ.** |
 
 **Гейт каждой фазы (Ред.2-канон):** spec_tests/conformance зелёный (d325 + amended d-файлы) + pos/neg-фикстуры фазы + **nova_tests baseline-delta = 0** (baseline = parent-коммит, ТОТ ЖЕ бинарь, temp-worktree/commit+reset; nova_tests сам по себе НЕ гейт корректности; флака ≠ регрессия). Для Ф.2b дополнительно: 0 вхождений старых имён по sweep-спискам §6 (negative grep).
+
+> **✅ DONE 2026-07-04 — ЦЕЛЕВОЙ ФОРМОЙ (`[M-172.1-U4-freefn-generic-return]`, commit `3ef1acb8`;
+> коллекторы `b8fb952d`):** codegen-блокер снят через ЕДИНЫЙ канал (D315), НЕ зеркало.
+>
+> **ИСТОРИЯ (2 захода):** Заход 1 (`4e4e7c34`) — codegen-side subst-mirror: Vec-flip `[]T` в
+> `value_aware_subst_to_ref` (зеркаля `resolved_array_to_c`). Работал + zero-regression, НО был
+> §10 «два окна правды» / §0-интерим на расходящемся пути (`apply_type_subst_to_ref` — static
+> subst-mirror, ретайрится в пользу `resolved_type_to_c`). Плюс он чинил только Result/Option
+> (sequence), а **tuple-over-array cross-module (`partition`) НЕ покрывал**: `pr.0` эрейзился в
+> `int` через `fn_ret_<name>` hijack ДО зеркала. **Заход 2 (целевая форма, откатил зеркало
+> net-zero):** нашёл истинный корень — §1 «резолвит, но discard». `f1_check_call` (checker)
+> резолвит callee + знает args, но gate `!typeref_mentions_any(ret, callee_gs)` **ВЫБРАСЫВАЛ**
+> generic-return (тот, что упоминает `T`/`E`) вместо субституции → канал `resolved_types` пуст →
+> codegen Channel-2 miss → legacy (mirror для Result / `fn_ret` hijack для tuple).
+>
+> **ЧТО СДЕЛАНО (целевая форма):** в `f1_check_call` (`types/mod.rs` ~9384) вместо discard —
+> ВЫВЕСТИ type-args из АРГУМЕНТОВ (структурный `crate::const_fn_trampoline::unify_type` каждого
+> param-TypeRef против inferred-типа арг — тот же унификатор, что `build_recv_subst`) и
+> СУБСТИТУИРОВАТЬ return → материализовать КОНКРЕТНЫЙ тип (`Result[[]int,str]` / `([]int,[]str)`)
+> в `resolved_types`. Codegen читает его ЕДИНЫМ `resolved_type_to_c` (Channel-2, до legacy) →
+> Vec-flip + mono-tuple из ОДНОГО источника. Гейты: FREE fn (no receiver — receiver-carrier =
+> метод-канал `infer_method_call_channel_type`), FULLY resolved для ЭТОГО caller'а (residual
+> type-param → skip → legacy; эрейзнутое generic-тело не трогаем). **Зеркало `4e4e7c34`
+> УДАЛЕНО** (`value_aware_subst_to_ref` Array/Result/Option/Tuple-арм + `vec_flip_elem_c` +
+> `typeref_contains_array`) — `emit_c.rs` NET-ZERO vs parent `12d30695`. Ни зеркала, ни дубля.
+> **ГЕЙТ:** cross-module `sequence`+`partition` (`pr.0.len()`, `ro (a,b)=`, `pr.0.get()==Some`) +
+> local `nova_tests/err177_collectors` PASS БЕЗ зеркала; conformance 38/38; **zero-regression** vs
+> baseline `12d30695` на 23 папках вкл. tuple-heavy `plan59`/`plan148`/`plan115`/net(`plan91_12`):
+> все SAME (pre-existing red идентичны — basics `apply`, plan172_showcase, plan114/net P67-panic,
+> concurrency). Ниже — исходная (частично ошибочная) диагностика Заход-0, оставлена для контекста.
+>
+> <details><summary>Заход-1 диагностика (mirror, 4e4e7c34 — superseded)</summary>
+>
+> mono-СИГНАТУРА (fwd-decl) И ТЕЛО generic-fn на HEAD **уже корректны** — оба через
+> `type_ref_to_c → resolved_array_to_c` Vec-flip'ят `[]T` в `Nova_Vec____nova_int*`. Расходилась
+> **caller-side инференс типа вызова**: `value_aware_subst_to_ref → static apply_type_subst_to_ref`
+> (Array-арм) выдавал pre-D239 raw-array `NovaArray_nova_int*` → `NovaRes_NovaArray_nova_int_p_nova_str*`
+> (typedef никогда не эмитится → CC-FAIL); match-биндинги фолбечили на erased `Nova_T*`/`Nova_E*`.
+> Заход-1 фиксил это зеркалом в `value_aware_subst_to_ref`. Заход-2 устранил и зеркало, и первопричину
+> (checker discard) — см. выше. **zero-regression** заход-1 был на generics/basics/plan91/plan153_2/
+> plan161/plan100_4_1/plan103_9/plan110/plan114/plan172*/plan138_2/plan145/concurrency/plan153_3 (все
+> зелёные — зелёные;
+> pre-existing red идентичны baseline).
+>
+> </details>
+>
+> <details><summary>Заход-0 диагностика (2026-07-03, гипотеза «mono-body-erasure» — ОКАЗАЛАСЬ ОШИБОЧНОЙ)</summary>
+>
+> **🔬 Находка 2026-07-03 (Ф.2c НЕ .nv-only — codegen-gated):** прототип коллекторов
+> (`export fn[T,E] sequence(items []Result[T,E]) -> Result[[]T,E]` / `partition -> ([]T,[]E)`)
+> **проходит чекер** (синтаксис/типы валидны — generic-free-fn + `[]T`-build + Result/tuple-payload
+> подтверждены), но **падает в codegen (CC-FAIL)**: `unknown type name 'NovaRes_NovaArray_nova_int_p_nova_str'`
+> (sequence) и `_NovaTuple_2_..._NovaArray_..._NovaArray_...` (partition). Это **VR-typedef-ordering баг
+> для Result/Tuple над Array-payload при fresh mono-инстанциации** — wrapper-typedef эмитится ДО
+> element-typedef. Подтверждение: `Result[[]u8,...]` из base64 (Ф.2a) РАБОТАЕТ (typedef эмитится под
+> конкретный byte-инстанс: «did you mean nova_byte_p_nova_str»), а `Result[[]int,str]`/tuple — нет.
+> **Тот же класс, что `[M-181-result-over-named-tuple-codegen]` (b022919a, Ф.2a) — но для ARRAY-
+> payload.** **УТОЧНЁННЫЙ КОРЕНЬ (после попытки фикса 2026-07-03):** это НЕ просто late-VR-typedef
+> ordering, а **неполная mono-подстановка для формы `fn[T,E] … -> Result[[]T,E]`**: тело generic-mono
+> инстанса эмитится с **эрейзнутым `E` (`Nova_E*` вместо `nova_str`)** — `Err(e) => return Err(e)` даёт
+> `initializing 'Nova_E*' with 'nova_str'` — и **конкретный `NovaRes_NovaArray_nova_int_p_nova_str` typedef
+> НЕ регистрируется** (caller юзает его, он нигде не определён; byte-версия есть только потому, что base64
+> её регистрирует конкретным `Ok`). **Попытка localized-фикса** (idempotent-регистрация NovaRes возврата
+> на входе emit-fn, зеркало ctor-site 23631) **НЕ помогла** — `ret_c` для generic-mono не конкретен, корень
+> глубже (mono-substitution ядра, зона 172.1: `M-172.1-*`/`M-181-*` markers по всему mono-typedef-пути).
+> **Координация СНЯТА (2026-07-03):** `plan-172` = **21 коммит ПОЗАДИ main** (0 ahead) → вся 172.1-работа
+> **уже в main**; nova-p177/p173 (из main) её содержат, а баг ВСЁ РАВНО воспроизводится → это **genuinely
+> OPEN баг в текущем main**, НЕ «активная 172.1-зона». Блокер — не координация, а **глубина+regression-risk**.
+> **2 localized-фикса ПРОВАЛИЛИСЬ (эмпирически, с пересборкой):** (1) register NovaRes на входе emit-fn
+> METHOD-пути (~15767) — не сработал (free-fn `seq_a` идёт не туда); (2) то же в FREE-пути
+> `register_mono_instance` (~15386) — не сработал И **внёс регрессию `Nova_E*`** (было 1 error, стало
+> больше). Оба откачены (net-zero emit_c). **Подтверждённый корень:** mono-ТЕЛО `fn[T[,E]] -> Result[[]T,E]`
+> эмитится с эрейзнутыми типами (`Nova_E*`, generic array-элемент) — worklist body-drain НЕ пере-применяет
+> type-subst для этой формы. Это **foundational mono-instantiation** (не typedef-registration), high-regression-
+> risk (задевает ВСЕ generic-fn), нужен full-regression-гейт. Маркер **`[M-177-result-tuple-over-array-codegen]`**.
+> Чистого .nv-workaround для `Result[[]T,E]` нет. **ТОЧНЫЙ КОРЕНЬ (найден трассировкой):**
+> `resolved_type_to_c` Result-арм (`emit_c.rs:2232-2251`): если Ok-payload `[]T`'s **ResolvedType** держит
+> `T` generic (`is_generic_stub_c`=true), весь Result **эрейзится в fallback `NovaRes_nova_int_nova_str*`**
+> (:2251) → тело идёт по `__erased__`-worklist-пути (:4561 → `emit_generic_fn_erased`, отсюда `Nova_E*`).
+> А СИГНАТУРА через `type_ref_to_c`+`current_type_subst` даёт КОНКРЕТНЫЙ `NovaRes_NovaArray_nova_int_p_nova_str*`
+> (его юзает caller) → mismatch + неопределённый typedef. **Это `TypeRef`(subst-aware) vs `ResolvedType`
+> (НЕ-subst-aware в этой точке) дуальность** — ровно проблема, которую решает **Plan 172 (unified type
+> engine)**. Фикс = align mono-subst через оба type-представления (или resolved-subst для `[]T` в mono-теле)
+> — **foundational, домен Plan 172**, не solo-патч в 177. **Итог:** Ф.2c зависит от 172-type-engine-unification
+> (либо dedicated фикс `resolved_type_to_c` Result-арма с subst-протяжкой + broad regression).
+>
+> **[РЕТРОСПЕКТИВА]** Гипотеза «mono-body-erasure» (тело эмитится с `Nova_E*`) была НЕВЕРНА для HEAD:
+> тело+сигнатура уже корректны, `Nova_E*` был в CALLER-e. Истинный корень — checker-discard
+> generic-return (см. Заход-2 выше). Оставлено как урок: диагностировать по СГЕНЕРИРОВАННОМУ C, не по симптому.
+>
+> </details>
 
 ---
 
 ## 8. Тесты / guards
 
-### 8.1 spec_tests/conformance — ОБЯЗАТЕЛЬНОЕ D-покрытие (Ред.2-канон; сейчас 0 файлов)
+### 8.1 spec_tests/conformance — ОБЯЗАТЕЛЬНОЕ D-покрытие (Ред.2-канон) — ✅ DONE 2026-07-04
 
-- **NEW `spec_tests/conformance/d325_result_everywhere.nv`** — pos: Result-форма (`parse_int("42")` → `Ok`), все каналы D85 (`!!` → значение, `?`-проброс, `.ok()` → Option, `match`); R5-positive fixture (**A3**): HOF с forwarded `Fail[E]` из closure-параметра компилируется и проходит guard; после Ф.2c — коллекторы (**A4**): `["1","2","x"].map(parse_int)` → `sequence` = `Err(первый)`, `partition` = `([1,2],[e])`.
-- **NEW `spec_tests/conformance/neg/d325_*.nv`** (после Ф.2b): `try_parse_int` / `parse_int_opt` / bare-`read_u32` → `E_UNKNOWN_METHOD` (имена удалены). Формат: standalone `module neg.<имя>`, маркер `// EXPECT_COMPILE_ERROR <substr>` **без двоеточия**.
-- **Amend d77-файла** (существующий d-файл конверсий, если есть; иначе NEW `d77_two_way_conversions.nv`): bare `T.from(s str)` fallible-форма НЕ генерится (neg), `try_from` → Result (pos).
-- **R0/D13-граница (A1):** rt-фикстуры `EXPECT_RUNTIME_PANIC` — `v[oob]`, div/0 → **panic**, НЕ `Err` и НЕ `Fail` (доказывает, что R1 не съел panic-категорию). Если d13-покрытие уже существует — amend, не дублировать.
-- Прогон: `nova test spec_tests` (отдельной командой, не в общем батче).
+- ✅ **`spec_tests/conformance/d325_result_everywhere.nv`** (часть CU) — pos: Result-форма (`"42".parse_int()` → `Ok`, `rb.read_u32_le()`), все каналы D85 (`!!` → значение, `?`-проброс, `.ok()` → Option, `match`); R5-positive (**A3**): HOF `d325_forward` прокидывает `Fail[E]` из closure-параметра (turbofish `[T,E]` — `E` только в эффект-позиции; typed lambda-handler `with Fail[E] = |e| …`); коллекторы (**A4**): `sequence` = `Err(первый)` / `partition` = `([1,2],[e])` над `Result[int,str]` (parse_int + domain-str `match`-канал — прямой `Result[int,ParseIntError]` упирается в codegen-баг `[M-172.1-opt-result-over-userenum-typedef-order]`).
+- ✅ **`spec_tests/conformance/neg/d325_*.nv`**: `try_parse_int` (str) + `parse_int_opt` (str) → `[E_UNKNOWN_METHOD]` (primitive-receiver — новый канал, разблокирован `d0208346`); `try_read_u32_le` (ReadBuffer = user-struct) → `[E7320] no field or method` (существующий struct-канал). Формат: standalone `module neg.<имя>`, маркер `// EXPECT_COMPILE_ERROR <substr>` **без двоеточия**.
+- ⏳ **Amend d77-файла** (`d77_two_way_conversions.nv`, bare `T.from` fallible НЕ генерится / `try_from` → Result) — **отложено**: codegen-часть D77 4-way→2-way = `[M-177-d77-codegen-4way-retract]` (не в scope Ф.3; spec-часть уже внесена §3/E11). Нейм-линт покрывает R3-сторону (`try_from` требует infallible `from`).
+- ✅ **R0/D13-граница (A1):** amend `d13_with_fail_recoverable_vs_panic.nv` — recoverable-сторона (`v.get(oob)` → `None`, `"x".parse_int().ok()` → `None`) проверена позитивно; panic-категория (`v[oob]`, overflow) не съедена R1 — cross-ref на существующие `EXPECT_RUNTIME_PANIC` фикстуры (amend, не дублируем; runtime div0 clean-panic отсутствует — UB без guard, фикстуру не добавляли).
+- Прогон: `nova test --positive --compile-error spec_tests/conformance` → **PASS 41 / FAIL 0**.
 
-### 8.2 Guards / линты
+### 8.2 Guards / линты — ✅ DONE 2026-07-04 (`compiler-codegen/tests/d325_result_everywhere_guard.rs`, cargo, 3 passed)
 
-- **Conformance-guard:** скрипт по `std/**.nv` — публичная сигнатура с `Fail[E]` для собственной ошибки = FAIL; `Fail[E]` из `fn() … Fail[E]`-параметра (R5 forwarding) = OK; **exempt-list из §2** (unwrap-мост, on_exit, property.nv по Q5) — явным списком в скрипте, не молчаливым скипом. Ожидаемо после Ф.2b: 0 нарушений в stable; известные — в `_experimental` (TODO).
-- **Нейм-линт (A2):** FAIL на суффикс `_opt$` и на `try_`-префикс **без** infallible-сиблинга (R3/R4 negative) — ловит регрессию конвенции в новых API, а не только `Fail[`.
-- **Net regression:** `grep -L 'Fail\[' std/net/*.nv` — все без `Fail[`.
+- ✅ **Conformance-guard** (`guard_no_own_fail_in_public_std_signatures`): скан исходника `std/**.nv` (hermetic) — публичная сигнатура с `Fail[E]` для собственной ошибки = FAIL; `Fail[E]` из `fn(…) … Fail[E]`-параметра (R5 forwarding) = OK (name-set дискриминатор param-регион vs return-регион). **exempt-list из §2** (Option@unwrap/Result@unwrap, on_exit, property.nv по Q5) — явным списком. `_experimental` исключён (§9 Q3). **0 нарушений в stable**; non-vacuity-ассерт `exempted_own_fail ≥ 3`.
+- ✅ **Нейм-линт (A2)** (`naming_lint_no_opt_suffix_or_orphan_try_prefix`): FAIL на суффикс `_opt$` (0 в stable) и на `try_`-префикс **без** infallible-сиблинга (progressive base-strip, global set — `from`/`into` = builtin D73/D77; exempt `try_start`/`try_start_won` = Once non-blocking init, R4-absence). non-vacuity `try_seen ≥ 8`.
+- ✅ **Net regression** (`net_family_has_zero_fail`): `std/net/**` = 0 `Fail[` в публичных сигнатурах.
 
 ### 8.3 Behavior (nova_tests; Ф.2b переписывает существующие фикстуры in-place — §6 sweep-списки, новых папок не требуется)
 
@@ -302,3 +443,48 @@ expr.ok() (->Option), match (ветвление).
 - Реализация Fs/Io/Os (**Plan 176**); defer-kernel/MultiError (**Plan 173**); операторы `!!`/`?`/`??` (**D85**, стабильны).
 - **Удаление эффекта `Fail` из языка** — НЕ делаем; он остаётся для пользовательского кода и внутренних хелперов.
 - Стабилизация `_experimental` сверх fallible-контракта.
+
+---
+
+## 14. Аудит полноты D325 (Ф.4 close-out, 2026-07-04) — честная карта
+
+> **Метод.** `grep 'Fail\['` + `grep '\bthrow\b'` по всей `std/**.nv`, фильтр не-комментов, разбор сигнатур
+> vs тело. Cross-check с conformance-guard (`compiler-codegen/tests/d325_result_everywhere_guard.rs`, 3
+> passed, 0 нарушений в stable) и conformance CU (41/0). **Вывод: D325-конвенция достигнута полностью для
+> in-scope stable-std; остаток вне scope честно маркирован — не выдаём частичное за полное (§12.1, §7.7).**
+
+### 14.1 Stable std (не-`_experimental`) — public fallible ops
+
+| Категория | Файлы / API | Статус D325 |
+|---|---|---|
+| **Мигрировано (Ф.2a/2b/2c)** | `encoding/base64.nv` (decode* → `Result[[]u8, Base64Error]`); `encoding/json.nv` (parse/Parser/Lexer → `Result[…, ParseJsonError]`); `runtime/string/parse.nv` (`parse_int → Result[int, ParseIntError]`, bare+`_opt` удалены); `runtime/read_buffer.nv` (22 `read_X → Result[…, ReadBufferError]`, 22 bare-twin удалены); `prelude/core.nv` (коллекторы `sequence`/`partition`); `_experimental/math/complex.nv` (`try_from → Result`) | ✅ **Result-everywhere** |
+| **Уже conformant (pre-177)** | `net/*` (0 `Fail[`, эталон); Plan 176 io/fs/os (Result by-design); `encoding/utf16.nv` (`from_utf16 → Result`); `runtime/string/core.nv` (`try_from_codepoint → Result`; `from_bytes_*` намеренно инфаллибл) | ✅ conformant |
+| **Exempt-list §2 (by-design — несут `Fail[`, легально)** | `prelude/core.nv` `Option@unwrap`/`Result@unwrap` (мост D85 `!!`); `prelude/protocols.nv` `on_exit`/`@cleanup` (R5 forwarding, user-`E`); `prelude/effects.nv` `type Fail[E] effect` (сам механизм); `testing/property.nv` `assert_prop`/`assert_prop_msg`/`property`/`property_with` (Q5 test-DSL) | ✅ exempt (guard non-vacuity `≥3`) |
+| **🟡 ОСТАТОК (маркирован)** | `concurrency/cancellation.nv` — `race2` (both-failed) и `with_timeout` (timeout) **throw bare `str`** через *inferred* Fail (в сигнатуре `-> T` НЕТ `Fail[` → **вне guard-скана**, §14.3). По R1 timeout/both-failed = expected failure → должны быть `Result`. НО structured-concurrency error-семантика = **Plan 173-домен** (§10/§13, вне scope 177): нужен error-домен-тип + coordination с MultiError/173 Ф.4 + смена 2 `#stable` сигнатур. **НЕ конвертировано** (не тривиально; whole-subsystem → маркер). | ⏳ `[M-177-concurrency-throw-fallibility]` (home Plan 173) |
+
+### 14.2 `std/_experimental/**` — полный остаток (defer §9 Q3)
+
+Все fallible-API `_experimental` **ещё throw own-`Fail`** (не Result). Отложено до **стабилизации каждого модуля**
+(§9 Q3 — pre-prod поверхность, вне scope 177). **17 файлов:**
+`encoding/{csv,hex,ini,toml,url}.nv`, `data/{semver,semver_range,sql}.nv`, `crypto/{jwt,bcrypt}.nv`,
+`identifiers/{snowflake,ulid,uuid}.nv`, `math/statistics.nv`, `text/regex.nv`, `time/cron.nv`,
+`concurrency/retry.nv`. **NB:** `retry.@execute` / `sql.in_transaction` несут `Fail[E]` **forwarded** из
+closure-параметра (R5, легально даже после стабилизации — чинить только intrinsic-ошибки `Db`/retry).
+**Маркер:** `[M-177-experimental-fallible-migration]` (консолидирует бывш. §6-список sql/jwt/snowflake/ulid/bcrypt/retry — теперь полный).
+
+### 14.3 Известное ограничение guard'а (честно)
+
+Conformance-guard §8.2 сканирует **литерал `Fail[`** в return/effect-регионе сигнатуры. Функция, которая
+`throw`-ит через **inferred** Fail-эффект (сигнатура написана `-> T` без `Fail[`), guard'ом **не ловится**
+(`race2`/`with_timeout` — единственные такие в stable). Это by-design для дешёвого hermetic-скана источника;
+throw-based fallibility ловится отдельным аудитом (§14, grep `\bthrow\b`). Усиление guard'а до эффект-инференса
+= компилятор-в-тесте (дорого) — не делаем; §14.1-остаток покрывает пробел явным маркером.
+
+### 14.4 Прочие OPEN-маркеры 177 (codegen-хвост, уже зарегистрированы)
+
+- `[M-177-d77-codegen-4way-retract]` — D77 4-way→2-way **codegen** (spec-часть внесена; `from_targets`-синтез в `emit_c.rs` отложен, separable, own regression-гейт).
+- `[M-172.1-opt-result-over-userenum-typedef-order]` — `Option[Result[int, UserEnum]]` typedef-ordering в теле generic-коллектора (домен Plan 172.1 mono-typedef-registration).
+- `[M-parse-int-overflow-returns-invaliddigit]` — pre-existing overflow-детект `parse_int` (домен Plan 174.1, вне D325-rename-scope).
+
+**Итог:** D325 (правило + spec + guard + conformance + миграция in-scope stable-std) — **закрыт полностью**.
+Остаток = (a) 2 concurrency-throw'а (Plan 173), (b) `_experimental` (стабилизация/§9 Q3), (c) 3 codegen/арифметика-маркера — **все с явным home**. **План 177 ЗАКРЫТ.**

@@ -101,7 +101,7 @@
   < @byte_len()` (только `&&`, никогда chain `0 <= i < n` → `E_CMP_CHAIN_UNSUPPORTED`). В
   методах ссылайтесь на состояние receiver через `@field`/`@byte_len()`.
 - **Параметр-only `requires` особенно ценны** — Z3 снимает их на литеральных аргументах
-  (`requires radix>=2 && radix<=36` исчезает на `parse_int_opt(16)`, `parse.nv:63-64`).
+  (`requires radix>=2 && radix<=36` исчезает на `parse_int(s, 16)`, `parse.nv`; форма D325).
   `requires len>=0` на `@truncate(len)`/`@append_repeat(s,n)`.
 - **НЕ добавляйте `ensures result >= 0` на size-accessors** (`byte_len`/`len`/`cap`/`count`) —
   non-negativity уже встроена в SMT-бэкенд как аксиома (`z3.rs:547-558`, План 33.6); это
@@ -637,11 +637,12 @@ ro v = opt ?? panic("expected Some")   // краш ТОЛЬКО явно — for
 
 ```nv
 // 1) defer — безусловное освобождение, LIFO, любой exit-путь (D90):
-fn read_config(path str) Fs Fail -> Config {
-    consume file = Fs.open(path)  // File линейный (must-consume, D133) → consume; `ro` = E_CONSUME_KEYWORD_MISSING (D180 Rule 1)
-    defer file.close()            // consume @close — разряжает обязательство на любом выходе
-    ro raw = file.read_all()
-    Config.parse(raw)
+//    std fallible → Result (D325); `?` разворачивает/пробрасывает на call-site (D85).
+fn read_config(path str) Fs -> Result[Config, IoError] {
+    consume file = Fs.open(path)?  // Fs.open -> Result[File,IoError]; `?` разворачивает; File линейный (must-consume, D133) → consume; `ro` = E_CONSUME_KEYWORD_MISSING (D180 Rule 1)
+    defer file.close()             // consume @close — разряжает обязательство на любом выходе
+    ro raw = file.read_all()?      // read_all -> Result; `?` пробрасывает IoError
+    Ok(Config.parse(raw))          // Config.parse инфаллибл → обернуть в Ok
 }
 
 // 2) error-only-откат без Cleanup — паттерн-флаг (официальная замена errdefer, D189):

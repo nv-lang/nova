@@ -30,18 +30,18 @@ test "position продвигается после read_byte" {
     ro bytes []u8 = [0xAA, 0xBB, 0xCC]
     mut rb = ReadBuffer.from(bytes)
     assert(rb.position() == 0)
-    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()!!
     assert(rb.position() == 1)
-    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()!!
     assert(rb.position() == 2)
 }
 
 test "position продвигается на ширину типа" {
     ro bytes []u8 = [0, 0, 0, 0, 0, 0]
     mut rb = ReadBuffer.from(bytes)
-    ro _ = rb.read_u16_le()
+    ro _ = rb.read_u16_le()!!
     assert(rb.position() == 2)
-    ro _ = rb.read_u32_le()
+    ro _ = rb.read_u32_le()!!
     assert(rb.position() == 6)
 }
 
@@ -52,19 +52,19 @@ test "remaining уменьшается по мере чтения" {
     ro bytes []u8 = [1, 2, 3, 4]
     mut rb = ReadBuffer.from(bytes)
     assert(rb.remaining() == 4)
-    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()!!
     assert(rb.remaining() == 3)
-    ro _ = rb.read_u16_le()
+    ro _ = rb.read_u16_le()!!
     assert(rb.remaining() == 1)
-    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()!!
     assert(rb.remaining() == 0)
 }
 
 test "position + remaining = общая длина" {
     ro bytes []u8 = [1, 2, 3, 4, 5]
     mut rb = ReadBuffer.from(bytes)
-    ro _ = rb.read_byte()
-    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()!!
+    ro _ = rb.read_byte()!!
     assert(rb.position() + rb.remaining() == 5)
 }
 
@@ -83,7 +83,7 @@ test "has_remaining — точная граница" {
 test "has_remaining — после чтения" {
     ro bytes []u8 = [1, 2, 3, 4]
     mut rb = ReadBuffer.from(bytes)
-    ro _ = rb.read_u16_le()
+    ro _ = rb.read_u16_le()!!
     assert(rb.has_remaining(2))
     assert(!rb.has_remaining(3))
 }
@@ -103,7 +103,7 @@ test "remaining_bytes — весь буфер до чтения" {
 test "remaining_bytes — после частичного чтения" {
     ro bytes []u8 = [0x11, 0x22, 0x33]
     mut rb = ReadBuffer.from(bytes)
-    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()!!
     ro rest = rb.remaining_bytes()
     assert(rest.len() == 2)
     assert(rest[0] == 0x22)
@@ -113,7 +113,7 @@ test "remaining_bytes — после частичного чтения" {
 test "remaining_bytes — после полного чтения пуст" {
     ro bytes []u8 = [0x99]
     mut rb = ReadBuffer.from(bytes)
-    ro _ = rb.read_byte()
+    ro _ = rb.read_byte()!!
     ro rest = rb.remaining_bytes()
     assert(rest.len() == 0)
 }

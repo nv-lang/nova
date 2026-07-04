@@ -927,3 +927,100 @@ upcast, `x is T`/`try_as[T]`/flow-narrowing на type_id-реестре Plan 61,
 - **[M-174.3-heterogeneous-any]** — Ф.3: гетерогенные `[]any` (boxing элементов) +
   `Eq`/`Hash`/`Clone`/`Display`-thunks в `NovaTypeInfo` → `any` в `HashSet`/`HashMap`,
   сравнение/печать стёртых значений.
+## [M-177-d77-codegen-4way-retract] — D77 4-way→2-way codegen (Plan 177 Ф.2b, отложено 2026-07-04)
+
+D325 ретрактирует bare-throws auto-derive конверсий: из `try_from`(Result) компилятор
+больше НЕ должен синтезировать bare `from`(throws) fallible-форму (остаются `from`
+infallible + `try_from` Result — «4-way»→«2-way»). **Spec-часть уже внесена** (2026-07-01,
+`08-runtime.md:1662`). Остался **codegen** — `from_targets`/`try_from_targets`-синтез в
+`emit_c.rs` (регистрация ~4174-4224; использование в `.into()`/`.try_into()` codegen
+~26467-26524). Декларации TryFrom/TryInto НЕ трогать. Отложено из Ф.2b: сложно/отдельно
+(задевает всю conversion-auto-derive машинерию), separable от parse/read-триад. Требует
+own regression-гейта. Домен Plan 177 Ф.3 или dedicated.
+
+## [M-checker-unknown-method-stackoverflow] — чекер не отвергал неизвестный метод + `nova check` overflow (Plan 177 Ф.3, ✅ DONE 2026-07-04)
+
+✅ **CLOSED (Plan 177 Ф.3, 2026-07-04).** Диагноз «рекурсия в method-resolution-
+fallback» оказался **мисдиагнозом** — под капотом ДВА независимых бага:
+
+**(1) §0/§1-дыра (первичный):** чекер НЕ отвергал вызов несуществующего метода на
+**примитивном** ресивере (int/str/char/…). `is_primitive_recv_name` DEFER-гейт
+(U.3.2/U.3.3) пропускал их — и вызов утекал в codegen: `int.nonexistent()` → **паника
+`[P67-LEGACY]`** (`emit_c.rs:39841` «method call return type unknown — checker must
+annotate»), `str.zzz()` → мис-тип `nova_int` → **CC-FAIL**. **Фикс** (`check_instance_overload`,
+types/mod.rs): для REAL-примитива, если метод не резолвится НИ через `method_overloads`
+(user/prelude/protocol), НИ через builtin-интринсики (новый `CEmitter::
+primitive_instance_method_known` — единый источник имён D109/D74/f64/str/whitelist +
+D73/D84 into/try_into), НИ через prefix-generic/blanket (`fn[T] T @m`) → чистая
+**`[E_UNKNOWN_METHOD]`** (§6, с fix-hint). §7.3-калибровка: `never`/`any`/`unit`
+ИСКЛЮЧЕНЫ (bottom/top/unit — `never`-ресивер = чекер не вывел конкретный тип, напр.
+opaque net `TcpListener`); user/opaque/generic-ресиверы не тронуты (их набор в
+method_table неполон). Blast-radius в detect-режиме: 464→0 ложных на nova_tests под
+`nova test` (все остаточные под `nova check` — per-file cross-module/sibling-import
+артефакты folder-модулей, резолвятся при реальной компиляции).
+
+**(2) `nova check` overflow (вторичный, orthogonal):** worker-нити `cmd_check`
+(main.rs) имели дефолтный **2 MiB** стек — `types::check_module` на prelude-merged
+модуле переполнял его для ЛЮБОГО файла (даже `fn f()->int{5}` — проверено), НЕ только
+unknown-method. **Фикс:** worker-стек → 64 MiB (как весь остальной компилятор —
+`main.rs`/`test_runner.rs`). Теперь `nova check` завершается; unknown-метод = чистая
+`[E_UNKNOWN_METHOD]`.
+
+**Разблокировало** `spec_tests/conformance/neg/d325_*`: добавлен
+`neg/d325_retracted_str_parse_method_neg.nv` (retracted `try_parse_int` →
+`E_UNKNOWN_METHOD`), раннер НЕ крашит. Гейты: repro clean, conformance 39/39
+(neg 38/38), baseline-delta 0 (strings/basics/generics/plan91/plan110/buffers/plan103_9
+vs parent `714f0f43`), Rust build clean. Домен: чекер / Plan 177 Ф.3.
+
+## [M-parse-int-overflow-returns-invaliddigit] — parse_int overflow → InvalidDigit (pre-existing, 2026-07-04)
+
+`str.parse_int` на 20-значном числе (`"99999999999999999999"`) возвращает
+`Err(InvalidDigit)` вместо `Err(Overflow)` (neg-фикстур `parse_int_overflow_err` RUN-FAIL).
+**Pre-existing** — тело `@parse_int` byte-identical со старым `@try_parse_int`, тот же
+результат на baseline `19b9c756` (НЕ регрессия D325-rename). Баг в арифметике overflow-
+check `parse.nv` (либо signed-overflow UB до проверки, либо порядок check/accumulate).
+Домен Plan 174.1 (primitive parse), вне D325-rename-scope Ф.2b.
+
+## [M-172.1-opt-result-over-userenum-typedef-order] — Option[Result[int, UserEnum]] typedef-ordering (Plan 177 Ф.3, обнаружен 2026-07-04)
+
+`sequence`/`partition` (prelude-коллекторы Ф.2c) над `[]Result[int, <UserEnum>]` (напр.
+`ParseIntError`) → **CC-FAIL** `unknown type name 'NovaRes_nova_int_Nova_ParseIntError_p'`:
+тело коллектора итерирует Vec (`for r in items`), итератор даёт
+`Option[Result[int, ParseIntError]]`, и typedef Option-обёртки
+(`NovaOpt_NovaRes_nova_int_Nova_ParseIntError_p_p`) эмитится ДО inner-Result typedef
+(`NovaRes_nova_int_Nova_ParseIntError_p`), который под user-enum payload не регистрируется.
+`Result[int, **str**]` (тот же коллектор) — **зелёный** (`err177_collectors` PASS): str-payload
+Result регистрируется. Тот же класс VR-typedef-ordering, что чинили в Ф.2a
+(`[M-177-result-over-named-tuple-codegen]`) / Ф.2c (`[M-172.1-U4-freefn-generic-return]`),
+но для `Option[Result[T, UserEnum]]` из тела generic-коллектора. **Workaround в фикстуре**
+(`d325_result_everywhere.nv` A4): parse_int → `Result[int, str]` через domain-str `match`-
+канал. Домен Plan 172.1 (mono-typedef-registration). Вне scope Ф.3 (тесты/guards).
+
+## [M-177-experimental-fallible-migration] — `std/_experimental` throw→Result (defer §9 Q3, Plan 177 Ф.4-аудит 2026-07-04)
+
+Весь `std/_experimental/**` (**17 файлов**) ещё возвращает падающие операции через own-`Fail`
+(throw), НЕ `Result[T,E]` — вне D325-конформности. **Отложено by-design** (Plan 177 §9 Q3):
+`_experimental` = pre-prod поверхность, миграция под D325 едет с **стабилизацией каждого модуля**,
+не в scope 177. Список: `encoding/{csv,hex,ini,toml,url}.nv`, `data/{semver,semver_range,sql}.nv`,
+`crypto/{jwt,bcrypt}.nv`, `identifiers/{snowflake,ulid,uuid}.nv`, `math/statistics.nv`,
+`text/regex.nv`, `time/cron.nv`, `concurrency/retry.nv`. **NB (R5):** `retry.@execute` /
+`sql.in_transaction` несут `Fail[E]` **forwarded** из closure-параметра — легально даже после
+стабилизации; мигрировать только intrinsic-ошибки (`Db`, retry own). Механика: throw→Err/return Err
++ Result-return-тип + call-sites `!!`/`?`/`.ok()` (тот же паттерн, что Ф.2a base64/json). Guard §8.2
+исключает `_experimental` явно (`stable_std_files` retain). Консолидирует бывш. Plan 177 §6-список
+(sql/jwt/snowflake/ulid/bcrypt/retry — был неполон). Home: per-module stabilization / Plan 177 §9 Q3.
+
+## [M-177-concurrency-throw-fallibility] — `std/concurrency` race2/with_timeout throw bare-str (Plan 177 Ф.4-аудит 2026-07-04; home Plan 173)
+
+`std/concurrency/cancellation.nv` — `race2[T](a,b) -> T` (both-failed) и
+`with_timeout[T](ms, body) -> T` (timeout) **`throw` bare `str`** через *inferred* Fail-эффект
+(сигнатура написана `-> T` без литерала `Fail[` → conformance-guard §8.2, сканирующий `Fail[` в
+сигнатуре, их **не ловит** — §14.3 плана 177). По D325 R1 timeout/both-failed = **expected
+failure** → должны возвращать `Result[T, <Timeout/RaceError>]` (или `with_timeout` схлопнуть в
+`within(...).ok()` — это throw-twin Option-формы `within`, ровно дуал, который D325 ретрактирует).
+**НЕ конвертировано в Ф.4** (осознанно): structured-concurrency error-семантика = **Plan 173-домен**
+(§10/§13 плана 177, вне scope 177) — нужен error-домен-тип + coordination с MultiError / 173 Ф.4
+(typed errors) + смена 2 `#stable(since="0.1")` публичных сигнатур + sweep call-sites. Whole-subsystem
+→ маркер, не тихий solo-fix (§7.7: не выдавать частичное за полное). **Home: Plan 173** (error-machinery
+для concurrency). Смежно: усиление guard §8.2 до эффект-инференса закрыло бы blind-spot, но = компилятор-
+в-тесте (дорого) — держим явный маркер вместо.
