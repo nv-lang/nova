@@ -1,0 +1,862 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/compress/inflate.nv — RFC 1951 DEFLATE decoder (pure Nova).
+//
+// Plan 179 Ф.1 (D333/D334/D335). Битстрим-декодер Хаффмана + LZ77-back-reference
+// над `[]u8`, БЕЗ C (precedent: Zig `std.compress.flate`, Go `compress/flate`).
+//
+// Ядро — резюмируемый инкрементальный кодер `Inflater` (feed/read/finish):
+// вход буферизуется, символы декодируются по одному, при нехватке бит операция
+// откатывается (bitpos не коммитится) до следующего feed. One-shot `inflate`
+// строится поверх того же ядра, поэтому streaming-по-1-байту == one-shot
+// байт-в-байт by-construction.
+//
+// bomb-cap (D334): `max_output` капит выход (первый байт сверх лимита → Bomb) и
+// прогресс-вход (anti-flood backstop). 32 KiB sliding-window; distance>window →
+// InvalidData (bounds-checked). Incomplete-Huffman: единственный distance-code
+// принимается (RFC 1951 §3.2.7, Q13).
+
+module encoding.compress
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Состояния конечного автомата блочного декодера
+// ──────────────────────────────────────────────────────────────────────────
+
+fn st_header() -> int => 0      // ожидаем 3-битный заголовок блока (BFINAL+BTYPE)
+fn st_stored_hdr() -> int => 1  // читаем LEN/NLEN stored-блока
+fn st_stored() -> int => 2      // копируем тело stored-блока
+fn st_dyn_hdr() -> int => 3     // разбираем dynamic-Huffman заголовок
+fn st_huff() -> int => 4        // декодируем символы (fixed/dynamic)
+fn st_done() -> int => 5        // встречен BFINAL + конец блока
+fn st_error() -> int => 6       // терминальная ошибка
+
+fn window_size() -> int => 32768
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Инкрементальный DEFLATE-декодер (value-машина, НЕ consume — Q6)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Инкрементальный RFC 1951 DEFLATE-декодер. Кормится `[]u8`-чанками (`feed`),
+/// выход тянется порциями (`read(max_emit)`). LZ77-окно 32 KiB, частичный
+/// Хаффман-стейт и bit-leftover сохраняются между вызовами. `max_output` = 0 —
+/// без лимита (caller-trust low-level; Plan 178 всегда передаёт реальный cap).
+#stable(since = "0.1")
+export type Inflater value {
+    mut input []u8          // буферизованный сжатый вход (consumed-префикс дропается)
+    mut bitpos int          // абсолютная бит-позиция в `input`
+    mut dropped int         // сколько байт входа уже сброшено (для абсолютного консюма)
+    mut input_done bool     // finish/mark_done вызван — вход больше не придёт
+    mut max_output int      // bomb-cap (0 = без лимита)
+
+    mut window []u8         // 32768-байтный ring-буфер (окно back-reference)
+    mut wpos int            // следующая позиция записи в окно (0..32767)
+    mut wcount int          // всего байт записано в окно (валидность distance)
+
+    mut out []u8            // готовый выход, ещё не отданный read()
+    mut total_out int       // всего произведено байт (bomb-cap)
+
+    mut state int           // st_*()
+    mut final_block bool    // текущий блок — BFINAL
+    mut stored_left int     // остаток тела stored-блока
+
+    // Активные канонические таблицы Хаффмана (counts[len 0..15], symbols)
+    mut lit_counts []int
+    mut lit_symbols []int
+    mut dist_counts []int
+    mut dist_symbols []int
+
+    // Константные таблицы length/distance base+extra (построены один раз в new)
+    mut lbase []int
+    mut lext []int
+    mut dbase []int
+    mut dext []int
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Создать DEFLATE-декодер с bomb-cap `max_output` (0 = без лимита).
+#stable(since = "0.1")
+export fn Inflater.new(max_output int) -> Inflater =>
+    Inflater.new_at(max_output, 0)
+
+// Внутренний конструктор с уже-произведённым счётчиком `already` (multi-member
+// gzip: общий bomb-cap across членов через единый total_out).
+fn Inflater.new_at(max_output int, already int) -> Inflater {
+    mut w = []u8.with_capacity(window_size())
+    w.append_zero(window_size())
+    Self {
+        input: []u8.with_capacity(0),
+        bitpos: 0,
+        dropped: 0,
+        input_done: false,
+        max_output,
+        window: w,
+        wpos: 0,
+        wcount: 0,
+        out: []u8.with_capacity(0),
+        total_out: already,
+        state: st_header(),
+        final_block: false,
+        stored_left: 0,
+        lit_counts: []int.with_capacity(0),
+        lit_symbols: []int.with_capacity(0),
+        dist_counts: []int.with_capacity(0),
+        dist_symbols: []int.with_capacity(0),
+        lbase: build_length_base(),
+        lext: build_length_extra(),
+        dbase: build_dist_base(),
+        dext: build_dist_extra(),
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Публичный streaming-контракт (Plan 178 BodyReader-мост, D335)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Подать сжатый вход (буферизуется). Выход тянется через read().
+#stable(since = "0.1")
+export fn Inflater mut @feed(chunk []u8) -> Result[(), CompressError] {
+    if @state == st_error() {
+        return Err(CompressError.invalid("inflater in error state"))
+    }
+    @compact()
+    @input.append(chunk)
+    Ok(())
+}
+
+/// Вытянуть ДО `max_emit` раскодированных байт. **Пустой** результат = «пока
+/// нечего отдать»: `is_done()` == true → поток завершён (clean EOF), иначе нужен
+/// ещё вход (feed). `max_emit` гарантирует bounded-per-call аллокацию. Внутри —
+/// bomb-cap.
+///
+/// (Форма `Result[[]u8,_]` + `is_done()` вместо `Result[Option[[]u8],_]` —
+/// обход текущего codegen-ограничения по `Option[Vec[u8]]`; семантика D335
+/// сохранена: EOF отличается от need-more через `is_done()`.)
+#stable(since = "0.1")
+export fn Inflater mut @read(max_emit int) -> Result[[]u8, CompressError] {
+    if @state == st_error() {
+        return Err(CompressError.invalid("inflater in error state"))
+    }
+    ro me = if max_emit < 0 { 0 } else { max_emit }
+    ro target = if me < 1 { 1 } else { me }
+    @pump(target)?
+    if @out.len() > 0 && me > 0 {
+        ro n = if @out.len() < me { @out.len() } else { me }
+        mut chunk = []u8.with_capacity(n)
+        chunk.append(@out[0..n])
+        @drain_out(n)
+        Ok(chunk)
+    } else {
+        Ok([]u8.with_capacity(0))
+    }
+}
+
+/// Сигнал «вход кончился»: пампит до конца, валидирует завершённость.
+/// Незавершённый битстрим (нет BFINAL) → UnexpectedEof; мусор после BFINAL
+/// (raw strict) → TrailingData. Остаток выхода тянется последующими read().
+#stable(since = "0.1")
+export fn Inflater mut @finish() -> Result[(), CompressError] {
+    @input_done = true
+    @pump(max_int())?
+    if @state != st_done() {
+        @state = st_error()
+        return Err(CompressError.eof())
+    }
+    if @has_trailing() {
+        return Err(CompressError.trailing())
+    }
+    Ok(())
+}
+
+/// True если встречен BFINAL и блок завершён.
+#stable(since = "0.1")
+export fn Inflater @is_done() -> bool => @state == st_done()
+
+/// Всего раскодировано байт (диагностика bomb-cap).
+#stable(since = "0.1")
+export fn Inflater @bytes_written() -> int => @total_out
+
+
+// ── Внутренние помощники для one-shot / framing (тот же модуль) ──
+
+fn max_int() -> int => 4611686018427387904   // 2^62 — «бесконечный» target
+
+fn Inflater mut @mark_done() -> () {
+    @input_done = true
+}
+
+// Байт-позиция сразу за (byte-aligned) концом DEFLATE в ТЕКУЩЕМ буфере входа.
+fn Inflater @input_end_byte() -> int => (@bitpos + 7) >> 3
+
+// Есть ли неконсюмнутые байты после byte-aligned конца потока.
+fn Inflater @has_trailing() -> bool => ((@bitpos + 7) >> 3) < @input.len()
+
+// Всего байт входа фактически сконсюмлено (для anti-flood).
+fn Inflater @consumed_bytes() -> int => @dropped + (@bitpos >> 3)
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Буфер входа / выхода
+// ──────────────────────────────────────────────────────────────────────────
+
+// Сбросить полностью сконсюмленный префикс входа (bounded-memory streaming).
+fn Inflater mut @compact() -> () {
+    ro drop = @bitpos >> 3
+    if drop > 0 {
+        ro keep = @input.len() - drop
+        mut ni = []u8.with_capacity(if keep > 0 { keep } else { 0 })
+        if keep > 0 {
+            ni.append(@input[drop..@input.len()])
+        }
+        @input = ni
+        @dropped = @dropped + drop
+        @bitpos = @bitpos - (drop << 3)
+    }
+}
+
+// Убрать первые `n` байт из @out.
+fn Inflater mut @drain_out(n int) -> () {
+    if n >= @out.len() {
+        @out = []u8.with_capacity(0)
+    } else {
+        mut no = []u8.with_capacity(@out.len() - n)
+        no.append(@out[n..@out.len()])
+        @out = no
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Окно back-reference (32 KiB ring)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn Inflater mut @window_put(b u8) -> () {
+    @window[@wpos] = b
+    @wpos = @wpos + 1
+    if @wpos == window_size() {
+        @wpos = 0
+    }
+    @wcount = @wcount + 1
+}
+
+fn Inflater @window_get(dist int) -> u8 {
+    mut idx = @wpos - dist
+    if idx < 0 {
+        idx = idx + window_size()
+    }
+    @window[idx]
+}
+
+// Произвести один выходной байт (литерал или скопированный). bomb-cap здесь.
+fn Inflater mut @emit(b u8) -> Result[(), CompressError] {
+    if @max_output > 0 && @total_out >= @max_output {
+        @state = st_error()
+        return Err(CompressError.bomb(@max_output))
+    }
+    @out.push(b)
+    @window_put(b)
+    @total_out = @total_out + 1
+    Ok(())
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Bit-reader (LSB-first) — читает из @input по локальному курсору, НЕ мутирует
+// ──────────────────────────────────────────────────────────────────────────
+
+// Прочитать `n` бит LSB-first начиная с бит-позиции `p`. None = не хватает бит
+// в буфере (need-more). Возвращает (value, new_p).
+fn Inflater @get_bits(p int, n int) -> Option[(int, int)] {
+    ro tb = @input.len() * 8
+    mut val = 0
+    mut pp = p
+    for i in 0..n {
+        if pp >= tb {
+            return None
+        }
+        ro bit = ((@input[pp >> 3] as int) >> (pp & 7)) & 1
+        val = val | (bit << i)
+        pp = pp + 1
+    }
+    Some((val, pp))
+}
+
+// Декодировать один канонический Хаффман-символ (puff-алгоритм).
+// Ok(None) = need-more; Ok(Some((sym, new_p))) = символ; Err = невалидный код.
+fn Inflater @decode_symbol(counts []int, symbols []int, p int) -> Result[Option[(int, int)], CompressError] {
+    ro tb = @input.len() * 8
+    mut code = 0
+    mut first = 0
+    mut index = 0
+    mut pp = p
+    for len in 1..16 {
+        if pp >= tb {
+            ro nm Option[(int, int)] = None
+            return Ok(nm)
+        }
+        ro bit = ((@input[pp >> 3] as int) >> (pp & 7)) & 1
+        pp = pp + 1
+        code = code | bit
+        ro count = counts[len]
+        if code - count < first {
+            return Ok(Some((symbols[index + (code - first)], pp)))
+        }
+        index = index + count
+        first = first + count
+        first = first << 1
+        code = code << 1
+    }
+    Err(CompressError.invalid("invalid huffman code (over 15 bits)"))
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Построение канонической Хаффман-таблицы (counts/symbols/left) — puff construct
+// ──────────────────────────────────────────────────────────────────────────
+
+// Возвращает (counts[0..15], symbols, left): left<0 → over-subscribed;
+// left>0 → incomplete; left==0 → complete.
+fn build_huffman(lengths []int, n int) -> ([]int, []int, int) {
+    mut counts = []int.with_capacity(16)
+    for _ in 0..16 { counts.push(0) }
+    for i in 0..n {
+        ro l = lengths[i]
+        counts[l] = counts[l] + 1
+    }
+    // over/under-subscription
+    mut left = 1
+    mut over = false
+    for len in 1..16 {
+        left = left << 1
+        left = left - counts[len]
+        if left < 0 {
+            over = true
+        }
+    }
+    if over {
+        return (counts, []int.with_capacity(0), -1)
+    }
+    // offsets по длинам
+    mut offs = []int.with_capacity(16)
+    for _ in 0..16 { offs.push(0) }
+    for len in 1..15 {
+        offs[len + 1] = offs[len] + counts[len]
+    }
+    mut symbols = []int.with_capacity(n)
+    for _ in 0..n { symbols.push(0) }
+    for sym in 0..n {
+        ro l = lengths[sym]
+        if l != 0 {
+            symbols[offs[l]] = sym
+            offs[l] = offs[l] + 1
+        }
+    }
+    (counts, symbols, left)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Пампинг конечного автомата
+// ──────────────────────────────────────────────────────────────────────────
+
+fn Inflater mut @pump(target int) -> Result[(), CompressError] {
+    mut result Result[(), CompressError] = Ok(())
+    loop {
+        if @state == st_done() || @state == st_error() {
+            break
+        }
+        if @out.len() >= target {
+            break
+        }
+        // anti-flood backstop: сконсюмлено входа сильно больше выхода
+        if @max_output > 0 && @consumed_bytes() > @max_output * 2 + 4096 {
+            @state = st_error()
+            result = Err(CompressError.bomb(@max_output))
+            break
+        }
+        match @step() {
+            Err(e) => {
+                @state = st_error()
+                result = Err(e)
+                break
+            }
+            Ok(progressed) => {
+                if !progressed {
+                    if @input_done {
+                        @state = st_error()
+                        result = Err(CompressError.eof())
+                    }
+                    break
+                }
+            }
+        }
+    }
+    result
+}
+
+fn Inflater mut @step() -> Result[bool, CompressError] {
+    ro s = @state
+    if s == st_header() {
+        @step_header()
+    } else if s == st_stored_hdr() {
+        @step_stored_header()
+    } else if s == st_stored() {
+        @step_stored()
+    } else if s == st_dyn_hdr() {
+        @step_dynamic_header()
+    } else if s == st_huff() {
+        @step_huffman()
+    } else {
+        Ok(false)
+    }
+}
+
+// 3-битный заголовок блока: BFINAL(1) + BTYPE(2).
+fn Inflater mut @step_header() -> Result[bool, CompressError] {
+    match @get_bits(@bitpos, 3) {
+        None => Ok(false)
+        Some(t) => {
+            ro bits = t.0
+            @bitpos = t.1
+            @final_block = (bits & 1) == 1
+            ro btype = (bits >> 1) & 3
+            if btype == 0 {
+                @state = st_stored_hdr()
+                Ok(true)
+            } else if btype == 1 {
+                @setup_fixed()
+                @state = st_huff()
+                Ok(true)
+            } else if btype == 2 {
+                @state = st_dyn_hdr()
+                Ok(true)
+            } else {
+                Err(CompressError.invalid("reserved block type (11)"))
+            }
+        }
+    }
+}
+
+// Fixed-Huffman таблицы (RFC 1951 §3.2.6).
+fn Inflater mut @setup_fixed() -> () {
+    mut ll = []int.with_capacity(288)
+    for i in 0..288 {
+        ro l = if i < 144 { 8 } else if i < 256 { 9 } else if i < 280 { 7 } else { 8 }
+        ll.push(l)
+    }
+    ro lt = build_huffman(ll, 288)
+    @lit_counts = lt.0
+    @lit_symbols = lt.1
+    mut dl = []int.with_capacity(30)
+    for _ in 0..30 { dl.push(5) }
+    ro dt = build_huffman(dl, 30)
+    @dist_counts = dt.0
+    @dist_symbols = dt.1
+}
+
+// LEN/NLEN stored-блока (byte-aligned). Атомарно с откатом.
+fn Inflater mut @step_stored_header() -> Result[bool, CompressError] {
+    ro aligned = ((@bitpos + 7) >> 3) << 3
+    ro bytepos = aligned >> 3
+    if @input.len() - bytepos < 4 {
+        return Ok(false)
+    }
+    ro len = (@input[bytepos] as int) | ((@input[bytepos + 1] as int) << 8)
+    ro nlen = (@input[bytepos + 2] as int) | ((@input[bytepos + 3] as int) << 8)
+    if len != (nlen ^ 0xFFFF) {
+        return Err(CompressError.invalid("stored block length check failed"))
+    }
+    @bitpos = (bytepos + 4) << 3
+    @stored_left = len
+    @state = st_stored()
+    Ok(true)
+}
+
+fn Inflater mut @step_stored() -> Result[bool, CompressError] {
+    if @stored_left == 0 {
+        @state = if @final_block { st_done() } else { st_header() }
+        return Ok(true)
+    }
+    ro bytepos = @bitpos >> 3
+    ro avail = @input.len() - bytepos
+    if avail <= 0 {
+        return Ok(false)
+    }
+    ro ncopy = if @stored_left < avail { @stored_left } else { avail }
+    for k in 0..ncopy {
+        @emit(@input[bytepos + k])?
+    }
+    @bitpos = (bytepos + ncopy) << 3
+    @stored_left = @stored_left - ncopy
+    Ok(true)
+}
+
+// Dynamic-Huffman заголовок (RFC 1951 §3.2.7). Атомарно с откатом: локальный
+// курсор `p`, коммит @bitpos только при успехе.
+fn Inflater mut @step_dynamic_header() -> Result[bool, CompressError] {
+    mut p = @bitpos
+    ro hv = match @get_bits(p, 14) {
+        None => return Ok(false)
+        Some(t) => { p = t.1; t.0 }
+    }
+    ro hlit = (hv & 0x1F) + 257
+    ro hdist = ((hv >> 5) & 0x1F) + 1
+    ro hclen = ((hv >> 10) & 0xF) + 4
+
+    // Длины code-length-кодов в спец-порядке
+    ro order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+    mut cl = []int.with_capacity(19)
+    for _ in 0..19 { cl.push(0) }
+    for i in 0..hclen {
+        ro c = match @get_bits(p, 3) {
+            None => return Ok(false)
+            Some(t) => { p = t.1; t.0 }
+        }
+        cl[order[i]] = c
+    }
+    ro clt = build_huffman(cl, 19)
+    if clt.2 != 0 {
+        return Err(CompressError.invalid("incomplete code-length code"))
+    }
+    ro cl_counts = clt.0
+    ro cl_symbols = clt.1
+
+    // Декодируем hlit+hdist длин кодов с repeat-символами 16/17/18
+    ro total = hlit + hdist
+    mut lengths = []int.with_capacity(total)
+    for _ in 0..total { lengths.push(0) }
+    mut i = 0
+    while i < total {
+        ro sym = match @decode_symbol(cl_counts, cl_symbols, p)? {
+            None => return Ok(false)
+            Some(t) => { p = t.1; t.0 }
+        }
+        if sym < 16 {
+            lengths[i] = sym
+            i = i + 1
+        } else if sym == 16 {
+            if i == 0 {
+                return Err(CompressError.invalid("repeat with no previous code length"))
+            }
+            ro rep = 3 + match @get_bits(p, 2) {
+                None => return Ok(false)
+                Some(t) => { p = t.1; t.0 }
+            }
+            ro prev = lengths[i - 1]
+            for _ in 0..rep {
+                if i >= total {
+                    return Err(CompressError.invalid("code-length repeat overflow"))
+                }
+                lengths[i] = prev
+                i = i + 1
+            }
+        } else if sym == 17 {
+            ro rep = 3 + match @get_bits(p, 3) {
+                None => return Ok(false)
+                Some(t) => { p = t.1; t.0 }
+            }
+            for _ in 0..rep {
+                if i >= total {
+                    return Err(CompressError.invalid("code-length repeat overflow"))
+                }
+                lengths[i] = 0
+                i = i + 1
+            }
+        } else if sym == 18 {
+            ro rep = 11 + match @get_bits(p, 7) {
+                None => return Ok(false)
+                Some(t) => { p = t.1; t.0 }
+            }
+            for _ in 0..rep {
+                if i >= total {
+                    return Err(CompressError.invalid("code-length repeat overflow"))
+                }
+                lengths[i] = 0
+                i = i + 1
+            }
+        } else {
+            return Err(CompressError.invalid("bad code-length symbol"))
+        }
+    }
+
+    // Разбиваем на lit/len и distance, строим таблицы
+    mut litlen = []int.with_capacity(hlit)
+    for k in 0..hlit { litlen.push(lengths[k]) }
+    mut distl = []int.with_capacity(hdist)
+    for k in 0..hdist { distl.push(lengths[hlit + k]) }
+
+    if litlen[256] == 0 {
+        return Err(CompressError.invalid("missing end-of-block code"))
+    }
+    ro lt = build_huffman(litlen, hlit)
+    if lt.2 != 0 && (lt.2 < 0 || hlit != lt.0[0] + lt.0[1]) {
+        return Err(CompressError.invalid("bad literal/length code"))
+    }
+    ro dtt = build_huffman(distl, hdist)
+    if dtt.2 != 0 && (dtt.2 < 0 || hdist != dtt.0[0] + dtt.0[1]) {
+        return Err(CompressError.invalid("bad distance code"))
+    }
+
+    @lit_counts = lt.0
+    @lit_symbols = lt.1
+    @dist_counts = dtt.0
+    @dist_symbols = dtt.1
+    @bitpos = p
+    @state = st_huff()
+    Ok(true)
+}
+
+// Один символ Хаффман-блока: литерал / EOB / (length,distance)-копия.
+// Все под-чтения атомарны: коммит @bitpos только когда весь match разрешён.
+fn Inflater mut @step_huffman() -> Result[bool, CompressError] {
+    ro sym0 = @decode_symbol(@lit_counts, @lit_symbols, @bitpos)?
+    match sym0 {
+        None => Ok(false)
+        Some(t0) => {
+            ro sym = t0.0
+            mut p = t0.1
+            if sym < 256 {
+                @bitpos = p
+                @emit(sym as u8)?
+                Ok(true)
+            } else if sym == 256 {
+                @bitpos = p
+                @state = if @final_block { st_done() } else { st_header() }
+                Ok(true)
+            } else {
+                if sym > 285 {
+                    return Err(CompressError.invalid("bad length symbol"))
+                }
+                ro li = sym - 257
+                mut length = @lbase[li]
+                ro lextra = @lext[li]
+                if lextra > 0 {
+                    length = length + match @get_bits(p, lextra) {
+                        None => return Ok(false)
+                        Some(e) => { p = e.1; e.0 }
+                    }
+                }
+                ro dsym = match @decode_symbol(@dist_counts, @dist_symbols, p)? {
+                    None => return Ok(false)
+                    Some(dt) => { p = dt.1; dt.0 }
+                }
+                if dsym > 29 {
+                    return Err(CompressError.invalid("bad distance symbol"))
+                }
+                mut distance = @dbase[dsym]
+                ro dextra = @dext[dsym]
+                if dextra > 0 {
+                    distance = distance + match @get_bits(p, dextra) {
+                        None => return Ok(false)
+                        Some(e) => { p = e.1; e.0 }
+                    }
+                }
+                if distance > @wcount {
+                    return Err(CompressError.invalid("distance too far back"))
+                }
+                if distance > window_size() {
+                    return Err(CompressError.invalid("distance exceeds 32 KiB window"))
+                }
+                @bitpos = p
+                for _ in 0..length {
+                    ro b = @window_get(distance)
+                    @emit(b)?
+                }
+                Ok(true)
+            }
+        }
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// One-shot raw DEFLATE
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Raw DEFLATE (RFC 1951): голый битстрим без фрейма/чексуммы. `max_output` —
+/// bomb-cap (выход > лимита → CompressError{Bomb}). 0 = без лимита. Trailing-data
+/// после BFINAL → TrailingData (strict).
+#stable(since = "0.1")
+export fn inflate(data []u8, max_output int) -> Result[[]u8, CompressError] {
+    mut inf = Inflater.new(max_output)
+    inf.feed(data)?
+    inf.mark_done()
+    mut out = []u8.with_capacity(0)
+    loop {
+        ro c = inf.read(1048576)?
+        if c.len() > 0 {
+            out.append(c)
+        } else {
+            break
+        }
+    }
+    if !inf.is_done() {
+        return Err(CompressError.eof())
+    }
+    if inf.has_trailing() {
+        return Err(CompressError.trailing())
+    }
+    Ok(out)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Константные таблицы length/distance (RFC 1951 §3.2.5)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn build_length_base() -> []int =>
+    [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+
+fn build_length_extra() -> []int =>
+    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+
+fn build_dist_base() -> []int =>
+    [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+
+fn build_dist_extra() -> []int =>
+    [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тесты — реальные RFC-векторы (эталон: системный zlib/gzip)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Хелпер: hex-строка → []u8 (для эталонных векторов).
+fn hexbytes(s str) -> []u8 {
+    ro chars = s.to_bytes()
+    mut out = []u8.with_capacity(chars.len() / 2)
+    mut i = 0
+    while i + 1 < chars.len() {
+        ro hi = hexval(chars[i])
+        ro lo = hexval(chars[i + 1])
+        out.push(((hi << 4) | lo) as u8)
+        i = i + 2
+    }
+    out
+}
+
+fn hexval(c u8) -> int {
+    ro n = c as int
+    if n >= 48 && n <= 57 { n - 48 }
+    else if n >= 97 && n <= 102 { n - 97 + 10 }
+    else if n >= 65 && n <= 70 { n - 65 + 10 }
+    else { 0 }
+}
+
+test "inflate: fixed-Huffman raw DEFLATE 'Hello, DEFLATE!'" {
+    // printf 'Hello, DEFLATE!' | pigz/zlib -9 raw
+    ro comp = hexbytes("f348cdc9c9d751707175f3710c71550400")
+    ro got = inflate(comp, 1024)!!
+    assert(got == "Hello, DEFLATE!".to_bytes())
+}
+
+test "inflate: stored block (level 0) 'abcdefghij'" {
+    ro comp = hexbytes("010a00f5ff6162636465666768696a")
+    ro got = inflate(comp, 1024)!!
+    assert(got == "abcdefghij".to_bytes())
+}
+
+test "inflate: empty stored + empty fixed block" {
+    assert(inflate(hexbytes("010000ffff"), 16)!! == [])
+    assert(inflate(hexbytes("0300"), 16)!! == [])
+}
+
+test "inflate: long back-reference / RLE overlap (300× 'a')" {
+    ro comp = hexbytes("4b4c1c0589440200")
+    ro got = inflate(comp, 4096)!!
+    mut expect = []u8.with_capacity(300)
+    for _ in 0..300 { expect.push(97) }   // 'a'
+    assert(got == expect)
+}
+
+test "inflate: dynamic Huffman (repetitive 900B)" {
+    ro comp = hexbytes("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
+    mut expect = []u8.with_capacity(900)
+    ro unit = "the quick brown fox jumps over the lazy dog. ".to_bytes()
+    for _ in 0..20 { expect.append(unit) }
+    ro got = inflate(comp, 4096)!!
+    assert(got == expect)
+}
+
+test "inflate: bomb-cap — раздутие > max_output → Bomb" {
+    ro comp = hexbytes("4b4c1c0589440200")     // 300× 'a'
+    ro r = inflate(comp, 100)                    // cap 100 < 300
+    assert(match r {
+        Err(e) => match e.kind { Bomb(_) => true, _ => false }
+        Ok(_)  => false
+    })
+}
+
+test "inflate: cap-граница output == max_output → ok" {
+    ro comp = hexbytes("4b4c1c0589440200")     // 300× 'a'
+    assert(inflate(comp, 300)!!.len() == 300)   // ровно cap — ok
+    ro r = inflate(comp, 299)                    // cap+1-й байт → Bomb
+    assert(match r { Err(e) => match e.kind { Bomb(_) => true, _ => false }, Ok(_) => false })
+}
+
+test "inflate: max_output=0 → без лимита (escape-hatch)" {
+    ro comp = hexbytes("4b4c1c0589440200")
+    assert(inflate(comp, 0)!!.len() == 300)
+}
+
+test "inflate: reserved block type (11) → InvalidData" {
+    // BFINAL=1, BTYPE=11 → байт 0b00000111 = 0x07
+    ro r = inflate(hexbytes("07"), 16)
+    assert(match r { Err(e) => match e.kind { InvalidData(_) => true, _ => false }, Ok(_) => false })
+}
+
+test "inflate: truncated stream → UnexpectedEof" {
+    ro comp = hexbytes("f348cdc9")               // обрезанный fixed-блок
+    ro r = inflate(comp, 1024)
+    assert(match r { Err(e) => match e.kind { UnexpectedEof => true, _ => false }, Ok(_) => false })
+}
+
+test "inflate: trailing data после BFINAL → TrailingData (raw strict)" {
+    ro comp = hexbytes("f348cdc9c9d751707175f3710c71550400" + "ff")
+    ro r = inflate(comp, 1024)
+    assert(match r { Err(e) => match e.kind { TrailingData => true, _ => false }, Ok(_) => false })
+}
+
+test "inflate: streaming feed-по-1-байту с read(8) == one-shot" {
+    ro comp = hexbytes("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
+    ro oneshot = inflate(comp, 4096)!!
+    mut inf = Inflater.new(4096)
+    mut out = []u8.with_capacity(900)
+    for idx in 0..comp.len() {
+        mut one = []u8.with_capacity(1)
+        one.push(comp[idx])
+        inf.feed(one)!!
+        loop {
+            ro c = inf.read(8)!!
+            if c.len() > 0 { out.append(c) } else { break }
+        }
+    }
+    inf.finish()!!
+    loop {
+        ro c = inf.read(8)!!
+        if c.len() > 0 { out.append(c) } else { break }
+    }
+    assert(out == oneshot)
+    assert(out.len() == 900)
+}
+
+test "inflate: streaming read bounded-per-call ≤ max_emit" {
+    ro comp = hexbytes("4b4c1c0589440200")       // 300× 'a'
+    mut inf = Inflater.new(4096)
+    inf.feed(comp)!!
+    inf.finish()!!
+    mut total = 0
+    loop {
+        ro c = inf.read(8)!!
+        if c.len() > 0 {
+            assert(c.len() <= 8)                 // bounded-per-call
+            total = total + c.len()
+        } else { break }
+    }
+    assert(total == 300)
+}
