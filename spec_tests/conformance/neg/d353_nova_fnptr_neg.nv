@@ -1,0 +1,13 @@
+// D353 NEG — a Nova-ABI fn-pointer (`*fn`, untagged) passed where a C-callback
+// is required is not C-ABI: the Nova ABI carries Nova-typed args + a handler
+// stack. A real C callback must be tagged `*extern "C" fn(...)`.
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.d353_nova_fnptr_neg
+
+extern "C" fn d353_register_nova(cb *fn(i64) -> i64) -> int
+
+test "rejects untagged Nova *fn as a C callback" {
+    assert(1 == 1)
+}

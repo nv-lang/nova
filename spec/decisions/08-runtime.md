@@ -8298,6 +8298,37 @@ Nova-handler-фрейма. Любая effect-операция внутри callb
 тому же правилу «no effect over C ABI» (конкретная диагностика non-`Fail`-эффектов — чекер M1, см.
 error-index-долг в Scope).
 
+### Cast/коэрция-матрица `fn` / `*fn` / `*extern "C" fn` (Plan 174.6 M2)
+
+Три fn-указательных мира различимы **на уровне типа**: Nova-closure `fn(A)->R` (fat, может нести env),
+Nova-ABI указатель `*fn(A)->R` (captureless, Nova-типы + Nova handler-стек), C-ABI указатель
+`*extern "C" fn(A)->R` (captureless, строго C-ABI типы, **без** эффектов). Матрица коэрции источника
+`expr as <target>` (поведение чекера M1; исходник — свободная fn по имени, если не указано иначе):
+
+| Источник (`expr`) | `as *fn` (Nova-ABI) | `as *extern "C" fn` (C-ABI) |
+|---|---|---|
+| free fn: captureless, **effect-free**, C-ABI сигнатура | ✅ | ✅ |
+| free fn: captureless, effect-free, **сигнатура с Nova-типом** (`Vec`/`Result`/…) | ✅ (Nova ABI несёт Nova-типы) | ❌ `E_FFI_NON_C_ABI_TYPE` |
+| free fn с эффектом **`Fail`** | ❌ `E_CALLBACK_THROWS_OVER_C_ABI` (§20 / D216 §10) | ❌ `E_CALLBACK_THROWS_OVER_C_ABI` |
+| free fn с **non-`Fail`** эффектом (`IO`/`Async`/custom) | ✅ (Nova handler-стек на месте) | ❌ `E_CALLBACK_THROWS_OVER_C_ABI` (clause 3) |
+| closure-**литерал** с env / bound-method `obj.@m` | ❌ `E_CLOSURE_HAS_ENV` | ❌ `E_CLOSURE_HAS_ENV` |
+
+**Тип↔тип (не coercion).** `*fn` и `*extern "C" fn` — **разные типы** (различный ABI-тег): **нет
+неявной** конверсии ни в одну сторону — `*fn`-значение в позиции, ожидающей `*extern "C" fn` (и
+наоборот), = type-mismatch. Явный reinterpret между ABI-тегами не поддержан M1 (design: возможен лишь
+как unsafe-hatch — вне scope; маркер `[M-174.6-ffi-abi]`). Композиция с `unsafe` — `*extern "C" unsafe fn`
+(зеркалит `*unsafe fn`, D216 §10a); covariance `*fn → *unsafe fn` действует ортогонально ABI-тегу.
+
+**Позиция тега.** `*extern "C" fn` — легальный **тип** в любой type-position, не только как параметр
+`extern "C" fn`: сигнатура C-callback валидируется как C-ABI и когда тег стоит на **параметре/возврате
+Nova-функции-обёртки** или **поле value-record** (libuv-handler-в-handle) — Plan 174.6 M2
+(`ffi_validate_c_fnptr_occurrences`). Аннотации локальных переменных внутри тела fn пока не обходятся
+(остаток §10 плана).
+
+**Runtime-materialization.** Матрица описывает **чекер/тип-слой**. Фактическая эмиссия значения
+`fn → fn-ptr` (для любого тега) упирается в pre-existing codegen-gap P67-LEGACY (Plan 118 Ф.6 follow-on) —
+acceptance проверяется на checker-слое; runtime-materialization — вне 174.6 M2/M3.
+
 ### Scope
 
 M0 (это изменение) = только спека: тип `*extern "C" fn` + правила коэрции + C-ABI тип-лист ([D282 rule 2](#d282)).

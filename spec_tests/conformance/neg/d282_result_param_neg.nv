@@ -1,0 +1,12 @@
+// D282 rule 2 NEG — a tagged union (`Result[T, E]`, and sum types generally)
+// has a tag+payload layout that is not C-ABI-compatible.
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.d282_result_param_neg
+
+extern "C" fn d282_take_result(r Result[int, str]) -> int
+
+test "rejects Result param over C ABI" {
+    assert(1 == 1)
+}

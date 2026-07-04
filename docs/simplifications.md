@@ -37625,3 +37625,40 @@ D185 §amend-2 added.
   (unit-test проверяет). Полная D216 §10 ретракция = M2 (иначе regress `t6_neg_callback_throws_over_c_abi`
   на bare `*fn`). Файлы: `compiler-codegen/src/{ast/mod.rs,parser/mod.rs,types/mod.rs,codegen/emit_c.rs,
   const_fn_trampoline.rs}`, `spec/decisions/{08-runtime.md,09-tooling.md}`, `nova_tests/ffi/`.
+
+## Plan 174.6 M2/M3 — additive completeness (cast-матрица + conformance + cookbook + non-extern-C позиции) (2026-07-04)
+
+- **[additive, не упрощение]** **`*extern "C" fn` в non-extern-C позициях — checker M2 (закрывает M1-остаток).**
+  Тег `*extern "C" fn` — легальный ТИП в любой декларативной позиции; его C-callback-сигнатура теперь
+  валидируется как C-ABI **вне** `extern "C" fn`: в параметрах/возврате **Nova-функций** (не-extern-C) и в
+  **полях value-record/named-tuple** + underlying newtype/alias (`ffi_validate_c_fnptr_occurrences`,
+  types/mod.rs). Валидируется ТОЛЬКО C-callback-подсигнатура — объемлющий Nova-тип не флагается (Nova-fn
+  волен брать `Vec[int]`; guard-unit-test). Span-dedup (`ffi_push_deduped`) убирает двойной репорт, где
+  offender достижим двумя обходами. **Strictly additive → zero-regression:** grep подтвердил, что ни один
+  существующий проходящий тест не пишет `*extern "C" fn` в non-extern-C позиции (тег M1-новый, только
+  ffi-тесты, все внутри `extern "C" fn`); delta 0 эмпирически (basics/generics/plan118/atomics/ffi
+  идентичны на parent-бинаре 3424405e). Codegen НЕ трогался (checker-only) → 0 blast-radius на не-FFI.
+- **[spec-doc]** **Cast/коэрция-матрица D353 + ffi-cookbook C-ABI-раздел.** D353 (`08-runtime.md`): таблица
+  `expr as *fn|*extern "C" fn` (effect-free C-ABI → оба ✅; Nova-тип-сигнатура → `*fn` ✅/C-ABI ❌
+  `E_FFI_NON_C_ABI_TYPE`; `Fail` → оба ❌; non-`Fail` эффект → `*fn` ✅/C-ABI ❌ clause 3; closure/bound →
+  `E_CLOSURE_HAS_ENV`) + правило «`*fn`≠`*extern "C" fn`, нет неявной конверсии» + P67-LEGACY-заметка.
+  D216 §10 — cross-ref (строку «default C ABI» НЕ ретрачу — отложенный риск-пункт). Cookbook: тип-таблица
+  (что C-ABI и почему), qsort/libuv callbacks через `*extern "C" fn`, 3 условия коэрции + soundness,
+  reject-кейсы с кодами, ownership/pinning-декрет (Boehm не сканирует C-malloc → retained ptr = UAF).
+- **[тесты]** **Conformance `d282_ffi_abi.nv` pos (peer-файл, +0 CU) + 9 neg + 3 Rust unit-теста.**
+  Conformance-baseline **38/0 → 47/0** (все PASS). 11 Rust FFI unit-тестов (8 M1 + 3 M2). Neg покрывают
+  каждое нормативное правило/код: Vec/Result/Option[non-ptr]/`()`/heap-record/Nova-`*fn` →
+  `E_FFI_NON_C_ABI_TYPE`; closure → `E_CLOSURE_HAS_ENV`; effect → `E_CALLBACK_THROWS_OVER_C_ABI`;
+  malformed C-callback в Nova-fn-параметре → `E_FFI_NON_C_ABI_TYPE` (M2).
+- **[обоснованный defer, НЕ упрощение]** **`_Static_assert(sizeof==<expected>)` layout-guard отложен**
+  (`[M-174.6-ffi-struct-layout]`), вопреки зонт-174 §3.6 «закрыть СЕЙЧАС». Причина: корректный `<expected>`
+  = C-ABI размер структуры С паддингом/выравниванием по платформенному ABI — независимая layout-модель,
+  которой у Nova НЕТ (полагается на C-`sizeof`; `gc_layout.rs` считает GC-bitmap-offsets heap-record'ов,
+  не C-ABI byte-size value-record'ов числ. литералом). `sizeof==sum-полей` **неверно** (отвергает
+  легально-паддинговые `{i8,int}`=16≠9); `sizeof(X)==sizeof(X)` **тавтология** (для СВОЕЙ эмитированной
+  структуры C даёт тот же размер — реальный S8-дрейф возможен только против ВНЕШНЕЙ C-либы, чей layout Nova
+  не знает); newtype→nova_int erasure = platform-инвариант, не per-user-record. Значит осмысленный per-type
+  static-assert **coupled** к отложенной полной layout-спеке → тавтологичный/неверный guard был бы
+  упрощением; честный маркер вместо него. Зонт §3.6/§4.6/§9 переоценены. Файлы:
+  `spec/decisions/{08-runtime.md,02-types.md}`, `docs/ffi-cookbook.md`, `docs/plans/{174.6-*.md,174-*.md}`,
+  `compiler-codegen/src/types/mod.rs`, `spec_tests/conformance/{d282_ffi_abi.nv,neg/d282_*,neg/d353_*}`.

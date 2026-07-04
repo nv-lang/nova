@@ -1,0 +1,12 @@
+// D282 rule 2 NEG — a GC container (`Vec[T]`) is not C-ABI-compatible as an
+// `extern "C" fn` parameter (heap-managed, not a POD C value).
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.d282_vec_param_neg
+
+extern "C" fn d282_take_vec(v Vec[int]) -> int
+
+test "rejects Vec param over C ABI" {
+    assert(1 == 1)
+}

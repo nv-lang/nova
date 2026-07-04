@@ -1,0 +1,13 @@
+// D282 rule 2 NEG — `()` / unit as a parameter (or element) type is forbidden:
+// C has no unit type. (Only a top-level `-> ()` is allowed, lowering to C
+// `void`.)
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.d282_unit_param_neg
+
+extern "C" fn d282_take_unit(x ()) -> int
+
+test "rejects () unit param over C ABI" {
+    assert(1 == 1)
+}

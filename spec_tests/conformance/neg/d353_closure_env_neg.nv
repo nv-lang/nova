@@ -1,0 +1,12 @@
+// D353 coercion NEG (clause 2) — coercing an environment-capturing closure into
+// a C-ABI `*extern "C" fn` is forbidden: a C callback must be captureless (no
+// env pointer to smuggle across the boundary).
+//
+// EXPECT_COMPILE_ERROR E_CLOSURE_HAS_ENV
+
+module neg.d353_closure_env_neg
+
+test "rejects closure-with-env coerced to *extern \"C\" fn" {
+    ro d353_cb = (fn(x i64) -> i64 => x * 2) as *extern "C" fn(i64) -> i64
+    assert(1 == 1)
+}

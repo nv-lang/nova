@@ -200,11 +200,17 @@ snapshot ~:7877-8039, 8698. Зонт-исключение: 174.4 НЕ завис
 - **Ownership/pinning**: декрет «Nova-указатели через FFI — borrowed на время вызова; retain →
   pinning-API (`GC_malloc_uncollectable`/keep-alive registry)» — в D282 + ffi-cookbook (Boehm не
   сканирует C-malloc память → сохранённый C-кодом указатель = use-after-free).
-- **Layout — закрыть СЕЙЧАС (S8 не откладывать)**: эмитить в сгенерённый `.c`
-  `_Static_assert(sizeof/offsetof)` для каждого value-record/тупла через FFI-границу — дрейф ловится
-  C-компилятором (почти-бесплатный аналог repr(C)); ground-truth в план: codegen УЖЕ стирает
-  newtype-over-`*()` до nova_int (net.h:253-259 — ручной контракт, не гипотеза). NB Rust-прецедент:
-  анонимные туплы у Rust НЕ FFI-safe — Nova идёт дальше, что легально ТОЛЬКО при static-assert-гарантии.
+- **Layout — S8** (**ПЕРЕОЦЕНКА 2026-07-04, 174.6 M2/M3 — НЕ закрыт сейчас, обоснованный defer**):
+  замысел был эмитить в `.c` `_Static_assert(sizeof/offsetof)` для каждого value-record/тупла через
+  FFI-границу (аналог repr(C)). При реализации выяснилось: корректный `<expected>` = C-ABI размер
+  структуры С паддингом/выравниванием — независимая layout-модель, которой у Nova нет (полагается на
+  C-`sizeof`). `sizeof==sum-полей` **неверно** (отвергает легальный паддинг `{i8,int}`=16≠9);
+  `sizeof(NovaValue_X)==sizeof(NovaValue_X)` **тавтология** (для СВОЕЙ эмитированной структуры C считает тот
+  же размер — реальный S8-дрейф возможен только против ВНЕШНЕЙ C-либы, чей layout Nova не знает).
+  newtype-over-`*()`→nova_int erasure (net.h:253-259) — это **platform-инвариант** (`sizeof(void*)==sizeof(nova_int)`),
+  не per-user-value-record. Итог: осмысленный per-type static-assert **coupled** к отложенной полной
+  layout-спеке → закрывается ВМЕСТЕ с ней (`[M-174.6-ffi-struct-layout]`), а тавтологичный/неверный guard
+  = запрещённое упрощение. Детальное обоснование — 174.6 §11.
 - Прочее: fixed-array поля `[N]u8` — добавить в C_ABI грамматику (D228 «fully inline» уже требует);
   char в Scalar-листе — оговорка (uint32_t с инвариантом валидности; Rust improper_ctypes флагает);
   str = `{ptr,len}` НЕ NUL-terminated — в cookbook; varargs → маркер `[M-174.6-varargs]`;
@@ -256,8 +262,10 @@ Swift/Go/Java — метод/функция-стиль ЗА план; Zig-кон
 (§3.5); `uninit T` сверка: Rust MaybeUninit / Zig undefined — усиливает rename.
 
 **4.6 FFI (174.6).** `E_FFI_NON_C_ABI_TYPE` hard-error = строже Rust-lint (Zig-класс); тег
-`*extern "C" fn` = Swift-класс. Обязательное: callbacks×фиберы/GC (3 требования §3.6), pinning-декрет,
-`_Static_assert` layout СЕЙЧАС, char-оговорка (§3.6). Прецеденты в план: Rust improper_ctypes /
+`*extern "C" fn` = Swift-класс. Обязательное: callbacks×фиберы/GC (3 требования §3.6), pinning-декрет
+(✅ ffi-cookbook 174.6 M3), char-оговорка (✅ ffi-cookbook тип-таблица), `_Static_assert` layout
+(**defer с обоснованием** — coupled к полной layout-модели, см. §3.6-переоценку + 174.6 §11; тавтологичный
+guard = упрощение). Прецеденты в план: Rust improper_ctypes /
 Go cgo pointer-rules / Zig extern struct / Swift @convention(c) / Java Panama.
 
 ## 5. Тест-раскладка семейства (конвенции; выверено 2026-07-03)
@@ -362,5 +370,10 @@ Go cgo pointer-rules / Zig extern struct / Swift @convention(c) / Java Panama.
 
 `[M-174-lang-ffi]` (зонт; регистрация в OPEN-view — Ф.0R §3.7) + per-план маркеры (§8 п.6) +
 `[M-174.1-parse-api]` (создать) + отложенные: `[M-174.5-wrapping-offset-deferred]`,
-`[M-174.6-ffi-struct-layout]` (сужен: static-assert-часть закрывается СЕЙЧАС §3.6; остаток —
-полная layout-спека), `[M-174.6-varargs]` (новый), hex-float parse (174.1, новый при реализации).
+`[M-174.6-ffi-struct-layout]` (**ПЕРЕОЦЕНКА 2026-07-04, 174.6 M2/M3:** static-assert-часть §3.6 НЕ
+закрывается сейчас — корректный `_Static_assert(sizeof==<expected>)` требует независимой C-ABI
+layout-модели [паддинг/выравнивание], которой у Nova нет; `sizeof==sum-полей` неверно [отвергает
+паддинг], `sizeof==sizeof` тавтология [для СВОЕЙ структуры C даёт тот же размер; S8-дрейф — только против
+ВНЕШНЕЙ C-либы]. Значит static-assert **coupled** к «полной layout-спеке», а не отделим от неё; закрытие
+требует сначала layout-модели. Детальное обоснование — 174.6 §11. Остаток = полная layout-спека +
+static-assert поверх неё), `[M-174.6-varargs]` (новый), hex-float parse (174.1, новый при реализации).

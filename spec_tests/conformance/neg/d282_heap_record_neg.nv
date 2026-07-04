@@ -1,0 +1,16 @@
+// D282 rule 2 NEG — a record WITHOUT the `value` keyword is a heap GC-record
+// (passed by-reference as `Nova_X*`, GC-managed), not a by-value C struct, so it
+// is not C-ABI-compatible. The `value` keyword is mandatory for a by-value FFI
+// struct (contrast: the same fields with `value` ARE accepted).
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.d282_heap_record_neg
+
+type D282HeapRec { w int, h int }
+
+extern "C" fn d282_take_heap(r D282HeapRec) -> int
+
+test "rejects heap (non-value) record over C ABI" {
+    assert(1 == 1)
+}

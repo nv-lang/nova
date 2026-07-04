@@ -1,0 +1,13 @@
+// D282 rule 2 NEG — `Option[X]` is C-ABI ONLY when `X` is a raw-pointer type
+// (NPO: None = 0, Some(p) = p). `Option[int]` has no null-pointer niche, so its
+// tagged layout is not C-ABI.
+//
+// EXPECT_COMPILE_ERROR E_FFI_NON_C_ABI_TYPE
+
+module neg.d282_option_nonptr_neg
+
+extern "C" fn d282_take_opt_int(x Option[int]) -> int
+
+test "rejects Option[non-ptr] param over C ABI (no NPO)" {
+    assert(1 == 1)
+}

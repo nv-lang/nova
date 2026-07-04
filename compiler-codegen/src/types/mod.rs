@@ -26382,10 +26382,110 @@ fn ffi_subst_apply(ty: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
     }
 }
 
+/// Push an `E_FFI_NON_C_ABI_TYPE` diagnostic for `span`, deduped: at most one
+/// per source location. Because a single offender type can be reached by more
+/// than one walk (an `extern "C" fn` param that is a value-record whose field is
+/// the offender is validated both by the signature recursion AND by the
+/// type-declaration field walk, Plan 174.6 M2), span-dedup keeps the diagnostic
+/// set clean without changing which offenders are reported.
+fn ffi_push_deduped(
+    errors: &mut Vec<Diagnostic>,
+    reported: &mut HashSet<Span>,
+    span: Span,
+    disp: &str,
+) {
+    if reported.insert(span) {
+        errors.push(ffi_non_c_abi_diag(span, disp));
+    }
+}
+
+/// **Plan 174.6 M2 (D282 rule 2 / D353):** validate the signature of every
+/// `*extern "C" fn(...)` C-callback TYPE that occurs anywhere within `ty` —
+/// **including non-`extern "C" fn` positions**: a Nova wrapper-fn parameter or
+/// return, a value-record/tuple field, a nested callback signature. A C-callback
+/// type must carry a C-ABI signature regardless of where it is written —
+/// `*extern "C" fn(Vec[int])` is meaningless whether it tags an `extern "C" fn`
+/// parameter, a Nova fn parameter, or a record field. The walk validates ONLY
+/// the C-callback sub-signatures it finds; it never flags the enclosing Nova
+/// type (a Nova fn may legitimately take a `Vec[int]` — only the C-callback it
+/// forwards must be C-ABI).
+fn ffi_validate_c_fnptr_occurrences(
+    ty: &TypeRef,
+    types: &HashMap<String, &crate::ast::TypeDecl>,
+    errors: &mut Vec<Diagnostic>,
+    reported: &mut HashSet<Span>,
+) {
+    use crate::ast::TypeRef as TR;
+    match ty {
+        TR::Pointer(inner, _) => {
+            if let TR::Func { params, return_type, extern_abi, .. } = inner.strip_modifiers() {
+                if extern_abi.as_deref() == Some("C") {
+                    // This is a C-callback type — validate its signature.
+                    for p in params {
+                        if let Some((sp, disp)) =
+                            ffi_c_abi_violation(p, types, false, &mut HashSet::new())
+                        {
+                            ffi_push_deduped(errors, reported, sp, &disp);
+                        }
+                        ffi_validate_c_fnptr_occurrences(p, types, errors, reported);
+                    }
+                    if let Some(rt) = return_type {
+                        if let Some((sp, disp)) =
+                            ffi_c_abi_violation(rt, types, true, &mut HashSet::new())
+                        {
+                            ffi_push_deduped(errors, reported, sp, &disp);
+                        }
+                        ffi_validate_c_fnptr_occurrences(rt, types, errors, reported);
+                    }
+                    return;
+                }
+            }
+            ffi_validate_c_fnptr_occurrences(inner, types, errors, reported);
+        }
+        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _) => {
+            ffi_validate_c_fnptr_occurrences(inner, types, errors, reported)
+        }
+        TR::Tuple(elems, _) => {
+            for e in elems {
+                ffi_validate_c_fnptr_occurrences(e, types, errors, reported);
+            }
+        }
+        TR::FixedArray(_, inner, _) | TR::Array(inner, _) => {
+            ffi_validate_c_fnptr_occurrences(inner, types, errors, reported)
+        }
+        TR::Named { generics, .. } => {
+            for g in generics {
+                ffi_validate_c_fnptr_occurrences(g, types, errors, reported);
+            }
+        }
+        // A Nova-ABI `*fn`/bare-`fn` type: not a C-callback itself, but its
+        // signature may still nest a `*extern "C" fn` (e.g. a Nova closure that
+        // forwards a C-callback) — recurse to catch those.
+        TR::Func { params, return_type, .. } => {
+            for p in params {
+                ffi_validate_c_fnptr_occurrences(p, types, errors, reported);
+            }
+            if let Some(rt) = return_type {
+                ffi_validate_c_fnptr_occurrences(rt, types, errors, reported);
+            }
+        }
+        TR::Unit(_) | TR::Protocol { .. } => {}
+    }
+}
+
 /// **Plan 174.6 M1 (D282 rule 2 / D353):** validate every `extern "C" fn`
 /// declaration signature (parameters + return) — and, recursively, every
 /// `*extern "C" fn` fn-pointer signature nested within — against the C-ABI
 /// grammar. Non-C-ABI types → `E_FFI_NON_C_ABI_TYPE`.
+///
+/// **M2 extension:** the tag `*extern "C" fn` is a legal TYPE in any type
+/// position (a C-callback value can be held by a Nova wrapper-fn parameter or a
+/// value-record field, e.g. a libuv handler stored in a handle record). Wherever
+/// it appears its signature must still be C-ABI, so `*extern "C" fn` occurrences
+/// in **non-`extern "C" fn` fn signatures and in type-declaration fields** are
+/// validated too (`ffi_validate_c_fnptr_occurrences`). Local-variable type
+/// annotations inside fn bodies are not yet walked — remaining item, see
+/// Plan 174.6 §10.
 pub(crate) fn check_ffi_c_abi_signatures(
     module: &crate::ast::Module,
     errors: &mut Vec<Diagnostic>,
@@ -26408,36 +26508,73 @@ pub(crate) fn check_ffi_c_abi_signatures(
         }
     }
 
-    let mut check_fn = |fd: &crate::ast::FnDecl, errors: &mut Vec<Diagnostic>| {
-        if fd.extern_abi.as_deref() != Some("C") {
-            return;
-        }
+    let mut reported: HashSet<Span> = HashSet::new();
+
+    // A fn signature: an `extern "C" fn` has its full param+return types
+    // validated as C-ABI; any other fn only has its nested `*extern "C" fn`
+    // C-callback types validated (its own Nova-typed params are unrestricted).
+    let mut check_fn = |fd: &crate::ast::FnDecl,
+                        errors: &mut Vec<Diagnostic>,
+                        reported: &mut HashSet<Span>| {
+        let is_c_extern = fd.extern_abi.as_deref() == Some("C");
         for p in &fd.params {
-            if let Some((span, disp)) =
-                ffi_c_abi_violation(&p.ty, &types, false, &mut HashSet::new())
-            {
-                errors.push(ffi_non_c_abi_diag(span, &disp));
+            if is_c_extern {
+                if let Some((span, disp)) =
+                    ffi_c_abi_violation(&p.ty, &types, false, &mut HashSet::new())
+                {
+                    ffi_push_deduped(errors, reported, span, &disp);
+                }
+            } else {
+                ffi_validate_c_fnptr_occurrences(&p.ty, &types, errors, reported);
             }
         }
         if let Some(rt) = &fd.return_type {
-            if let Some((span, disp)) =
-                ffi_c_abi_violation(rt, &types, true, &mut HashSet::new())
-            {
-                errors.push(ffi_non_c_abi_diag(span, &disp));
+            if is_c_extern {
+                if let Some((span, disp)) =
+                    ffi_c_abi_violation(rt, &types, true, &mut HashSet::new())
+                {
+                    ffi_push_deduped(errors, reported, span, &disp);
+                }
+            } else {
+                ffi_validate_c_fnptr_occurrences(rt, &types, errors, reported);
             }
         }
     };
 
     for it in &module.items {
         if let Item::Fn(fd) = it {
-            check_fn(fd, errors);
+            check_fn(fd, errors, &mut reported);
         }
     }
     for pf in &module.peer_files {
         for it in &pf.items_here {
             if let Item::Fn(fd) = it {
-                check_fn(fd, errors);
+                check_fn(fd, errors, &mut reported);
             }
+        }
+    }
+
+    // Type-declaration fields: a `*extern "C" fn` C-callback held as a record /
+    // named-tuple field (the libuv-handler-in-a-handle pattern) or wrapped by a
+    // newtype/alias must have a C-ABI signature even if the enclosing record is
+    // never itself passed across an `extern "C" fn` boundary.
+    use crate::ast::TypeDeclKind;
+    for td in types.values() {
+        match &td.kind {
+            TypeDeclKind::Record(fields) => {
+                for f in fields {
+                    ffi_validate_c_fnptr_occurrences(&f.ty, &types, errors, &mut reported);
+                }
+            }
+            TypeDeclKind::NamedTuple(fields) => {
+                for f in fields {
+                    ffi_validate_c_fnptr_occurrences(&f.ty, &types, errors, &mut reported);
+                }
+            }
+            TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+                ffi_validate_c_fnptr_occurrences(inner, &types, errors, &mut reported);
+            }
+            _ => {}
         }
     }
 }
@@ -28378,6 +28515,71 @@ fn run() {
             has_diag_tag(&bad, "E_FFI_NON_C_ABI_TYPE"),
             "*extern \"rust\" fn tag must be rejected: {:#?}",
             bad.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    // ─── Plan 174.6 M2 — `*extern "C" fn` in non-`extern "C" fn` positions ──
+
+    #[test]
+    fn ffi_c_fnptr_in_nova_fn_signature_validated() {
+        // A `*extern "C" fn` C-callback held by a *Nova* fn parameter is a legal
+        // type — its SIGNATURE must still be C-ABI. A valid one is accepted; a
+        // malformed one (`Vec[int]` param) is rejected wherever it is written.
+        let ok = check_src(
+            "module m\nfn register(cb *extern \"C\" fn(i64) -> i64) -> int { 0 }\n",
+        );
+        assert!(
+            !has_diag_tag(&ok, "E_FFI_NON_C_ABI_TYPE"),
+            "valid C-callback in a Nova fn signature must be accepted: {:#?}",
+            ok.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        let bad = check_src(
+            "module m\nfn register(cb *extern \"C\" fn(Vec[int]) -> i64) -> int { 0 }\n",
+        );
+        assert!(
+            has_diag_tag(&bad, "E_FFI_NON_C_ABI_TYPE"),
+            "malformed C-callback in a Nova fn signature must be rejected \
+             (non-extern-C position, M2): {:#?}",
+            bad.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ffi_c_fnptr_in_record_field_validated() {
+        // The libuv-handler-in-a-handle pattern: a value-record field typed
+        // `*extern "C" fn(...)`. Valid sig accepted; malformed sig rejected even
+        // though the record is never itself passed across an extern "C" fn.
+        let ok = check_src(
+            "module m\ntype Handler value { cb *extern \"C\" fn(*(), i32) -> () }\n",
+        );
+        assert!(
+            !has_diag_tag(&ok, "E_FFI_NON_C_ABI_TYPE"),
+            "valid C-callback record field must be accepted: {:#?}",
+            ok.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        let bad = check_src(
+            "module m\ntype Handler value { cb *extern \"C\" fn(Result[int, str]) -> () }\n",
+        );
+        assert!(
+            has_diag_tag(&bad, "E_FFI_NON_C_ABI_TYPE"),
+            "malformed C-callback record field must be rejected (M2): {:#?}",
+            bad.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ffi_nova_fn_with_novacabi_param_not_flagged() {
+        // A Nova fn taking a `Vec[int]` alongside a valid C-callback must NOT be
+        // flagged — the M2 walk validates ONLY the C-callback sub-signature, not
+        // the enclosing Nova type. Guards against over-eager rejection.
+        let diags = check_src(
+            "module m\nfn f(v Vec[int], cb *extern \"C\" fn(i64) -> i64) -> int { 0 }\n",
+        );
+        assert!(
+            !has_diag_tag(&diags, "E_FFI_NON_C_ABI_TYPE"),
+            "Nova fn's own Vec[int] param must not be flagged; only the \
+             C-callback sub-sig is checked: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
         );
     }
 

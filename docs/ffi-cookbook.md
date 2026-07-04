@@ -514,6 +514,120 @@ unsafe { fn_ptr(some_ptr) }
 - D2 (unsafe effect model, Plan 118.1.7 amend) — `spec/decisions/04-effects.md`
 - Plan-doc — `docs/plans/118.1.7-unsafe-fn-keyword-syntax.md`
 
+## C-ABI types for `extern "C" fn` (Plan 174.6 / D282 rule 2 + D353)
+
+> **Status:** Plan 174.6 M1/M2 (2026-07-04). The checker validates every
+> `extern "C" fn` signature (params **and** return) against a recursive C-ABI
+> type-list; non-C-ABI types → `E_FFI_NON_C_ABI_TYPE`. Spec:
+> [D282 rule 2](../spec/decisions/08-runtime.md#d282) + [D353](../spec/decisions/08-runtime.md#d353).
+
+### What may cross an `extern "C" fn` boundary
+
+The set is defined recursively:
+
+```
+C_ABI  ::= Scalar | RawPtr | FnPtr | Option[RawPtr] | Tuple[C_ABI…] | ValueRecord{ C_ABI… }
+Scalar ::= int | uint | i8..i64 | u8..u64 | f32 | f64 | bool | char
+RawPtr ::= *T | *() | CStr
+FnPtr  ::= *extern "C" fn(C_ABI…) -> C_ABI
+```
+
+| Category | C-ABI? | Notes |
+|---|---|---|
+| `int` / `uint` | ✅ | address-sized (`nova_int` = `intptr_t`, `nova_uint` = `uintptr_t`); **≠** `i64`/`u64` |
+| `i8`..`i64`, `u8`..`u64`, `f32`, `f64`, `bool` | ✅ | fixed-width scalars |
+| `char` | ✅ | `uint32_t` codepoint (validity is a Nova invariant; Rust `improper_ctypes` flags the analogue) |
+| `*T`, `*()`, `CStr` | ✅ | any pointee; recursion stops at the address. `*()` = `void*`, `CStr` = `const char*`/`*u8` |
+| `str` | ✅ | value-record `{ptr,len}` (D139) — POD struct. **NOT NUL-terminated**; use `s.as_ptr()`/`s.byte_len()` or `s.as_cstr()` for C strings |
+| value-record `type X value {…}` | ✅ iff all fields C-ABI | by-value C struct; the `value` keyword is **mandatory** (without it → heap GC-record, by-reference, **not** C-ABI) |
+| named-tuple `type X(a T, b U)` / anon tuple `(T, U)` | ✅ iff all elements C-ABI | by-value; multi-value returns |
+| cyclic value-record `type Node value {val int, next *Node}` | ✅ | `*Node` is a raw pointer → recursion terminates |
+| `Option[*T]` (any pointer) | ✅ | NPO: `None` = 0, `Some(p)` = `p` (zero-cost nullable pointer) |
+| `*extern "C" fn(…) -> …` | ✅ | C callback (see below); signature types themselves C-ABI |
+| `-> ()` (top-level return) | ✅ | lowers to C `void` |
+| `()` as a **param/element** | ❌ | C has no unit type |
+| `Vec[T]`, heap-record refs | ❌ | GC-managed, not POD |
+| `Result[T,E]`, `Option[non-ptr]`, other sums | ❌ | tag+payload layout is not C-ABI |
+| bare `fn(…)` closure, Nova-ABI `*fn(…)` | ❌ | fat/handler-carrying; a real C callback must be tagged `*extern "C" fn` |
+
+**Layout assumption (S8).** A value-record/tuple passed by-value assumes
+Nova-layout == C-layout (field order + padding). Nova emits the struct in
+declaration order; matching an **external** C library's struct is the author's
+contract (a mismatch is not yet compiler-caught — follow-up
+`[M-174.6-ffi-struct-layout]`).
+
+### Callbacks — `*extern "C" fn` (qsort comparator, libuv handler)
+
+A Nova function passed to C as a callback must be tagged `*extern "C" fn(...)`.
+The coercion `fn → *extern "C" fn` is accepted **iff** the fn is (1) C-ABI in
+every arg/return, (2) captureless (no env), and (3) **effect-free** (declares no
+effect at all). Reason for (3): C invokes the callback with **no Nova
+handler-frame on the stack**, so any effect-operation (`Fail`, `IO`, a custom
+algebraic effect) has nowhere to resolve → unsound. Violations →
+`E_FFI_NON_C_ABI_TYPE` / `E_CLOSURE_HAS_ENV` / `E_CALLBACK_THROWS_OVER_C_ABI`.
+
+```nova
+module my_app.sortdemo
+
+// C: void qsort(void* base, size_t n, size_t sz,
+//               int (*cmp)(const void*, const void*));
+extern "C" fn qsort(base *(), n uint, size uint,
+                    cmp *extern "C" fn(*(), *()) -> i32) -> ()
+
+// A captureless, effect-free free fn — coerces to the C callback type.
+fn cmp_i32(a *(), b *()) -> i32 {
+    // read both operands via typed pointers (unsafe), compare … (elided)
+    0
+}
+
+fn sort_it(buf *(), n uint) {
+    // `cmp_i32 as *extern "C" fn(...)` — accepted (captureless + effect-free + C-ABI)
+    qsort(buf, n, 4 as uint, cmp_i32 as *extern "C" fn(*(), *()) -> i32)
+}
+```
+
+libuv-style handler stored in a handle record (D353/M2 — the tag is legal as a
+value-record **field**, and its signature is still validated as C-ABI):
+
+```nova
+module my_app.uvdemo
+
+// A handle that carries a C-ABI callback pointer (validated by the checker).
+type UvTimer value {
+    handle *()
+    on_tick *extern "C" fn(*()) -> ()
+}
+
+extern "C" fn uv_timer_start(t *(), cb *extern "C" fn(*()) -> (),
+                             timeout u64, repeat u64) -> i32
+
+fn on_tick(h *()) -> () { /* … effect-free … */ }
+```
+
+**What is rejected** (each a distinct `extern "C" fn` neg case):
+
+```nova
+extern "C" fn bad1(v Vec[int]) -> int              // E_FFI_NON_C_ABI_TYPE (GC)
+extern "C" fn bad2(r Result[int, str]) -> int      // E_FFI_NON_C_ABI_TYPE (tagged union)
+extern "C" fn bad3(x Option[int]) -> int           // E_FFI_NON_C_ABI_TYPE (no NPO)
+extern "C" fn bad4(x ()) -> int                    // E_FFI_NON_C_ABI_TYPE (unit param)
+extern "C" fn bad5(cb *fn(i64) -> i64) -> int      // E_FFI_NON_C_ABI_TYPE (Nova-ABI *fn)
+// coercions:
+//   (fn(x i64) => x*2) as *extern "C" fn(i64)->i64  → E_CLOSURE_HAS_ENV  (env)
+//   throwing_fn as *extern "C" fn(...)              → E_CALLBACK_THROWS_OVER_C_ABI (Fail)
+//   effectful_fn as *extern "C" fn(...)             → E_CALLBACK_THROWS_OVER_C_ABI (any effect)
+```
+
+### Ownership / pinning across the boundary
+
+Nova pointers handed to C are **borrowed for the duration of the call** only.
+The Boehm GC does not scan C-`malloc`'d memory, so a Nova pointer **retained**
+by C past the call (stored in a C struct, captured by a callback registration)
+can be collected → use-after-free. To keep a Nova object alive across calls,
+pin it (keep a live Nova reference for the object's C-visible lifetime; a
+dedicated pinning API is a follow-up). This mirrors the `str.as_ptr()` lifetime
+rule (D294): the pointer is valid only while the `str` is live.
+
 ---
 
 ## Followups
