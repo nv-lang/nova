@@ -13013,7 +13013,7 @@ Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` defa
 
 ## D307. File-private visibility — `priv(file)` (Plan 170)
 
-> **Status:** ACTIVE (2026-06-19, Plan 170). **Зависит от:** [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) / [D220](#d220-per-field-visibility--priv-keyword--type-level-default-flip) (инфраструктура `priv`/`priv(type)`), [D29](07-modules.md#d29) (folder-module model), [D78](07-modules.md#d78) (module-path). **Нумерация:** план назвал блок «D304», но к моменту реализации D304 уже был занят (Test Category Selectors, 09-tooling.md, Plan 169.1.1, 2026-06-19); D305/D306 зарезервированы proposed-планом 104.10 (LSP) → этому блоку присвоен свободный номер **D307**.
+> **Status:** ACTIVE (2026-06-19, Plan 170). **Зависит от:** [D281](#d281-module-level-field-privacy--type-x-priv---plan-160) / [D220](#d220-per-field-visibility--priv-keyword--type-level-default-flip) (инфраструктура `priv`/`priv(type)`), [D29](07-modules.md#d29) (folder-module model), [D78](07-modules.md#d78) (module-path). **Нумерация:** план назвал блок «D304», но к моменту реализации D304 уже был занят (Test Category Selectors, 09-tooling.md, Plan 169.1.1, 2026-06-19); D305/D306 были временно зарезервированы за proposed-планом 104.10 (LSP), но при реализации 104.10 получил **D378-D380** (09-tooling.md) → **D305/D306 СВОБОДНЫ**; этому блоку присвоен **D307**.
 
 ### Мотивация
 

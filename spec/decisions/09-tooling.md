@@ -24,6 +24,9 @@
 | [D298](#d298--test-suite-time-budget) | Test-suite time budget — бюджет `nova test` + пороги переноса в `_slow` |
 | [D303](#d303--lsp-hover-inside-fn--test-bodies-items_start-pattern) | LSP hover inside fn/test bodies — `items_start` pattern, prepend semantics |
 | [D304](#d304--test-category-selectors-testselection----positive---compile-error---panic---timeout---exit---slow---full-plan-16911-2026-06-19) | Test Category Selectors — `TestSelection` + category flags (Plan 169.1.1) |
+| [D378](#d378--lsp-source-provenance-via-peer_files-file_id--path-plan-10410-ф0) | LSP source provenance via `peer_files` (file_id → path) — cross-file goto/hover (Plan 104.10 Ф.0) |
+| [D379](#d379--moduleenvexpr_types-opt-in-per-expression-type-map-для-ide-plan-10410-ф2) | `ModuleEnv.expr_types` — opt-in per-expression type map для IDE (Plan 104.10 Ф.2) |
+| [D380](#d380--lsp-v2-capability-surface--diagnostic-parity-contract-plan-10410) | LSP V2 capability surface + diagnostic-parity contract (Plan 104.10) |
 
 ---
 
@@ -3427,3 +3430,166 @@ GitHub CI не запускал полный регресс (только contra
 - Nightly 03:00 UTC: `nova test --full nova_tests` + artifact upload (360 мин).
 
 **Связь.** [D376](09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv) (slow-lane), [D298](09-tooling.md#d298--test-suite-time-budget) (time budget), [Plan 169.1.1](../../docs/plans/169.1.1-test-lane-flags-and-ci.md).
+
+---
+
+## D378 — LSP source provenance via `peer_files` (file_id → path); Plan 104.10 Ф.0
+
+> **NEW (Plan 104.10 Ф.0, 2026-07-04).** Нумерация: план назвал блок «D304», но D304 занят
+> Test Category Selectors (см. выше); свободные номера — D378-D380 (D305/D306 остаются свободны).
+
+### Проблема
+
+nova-lsp резолвил символы **в рамках одного файла**: `hover`/`goto` использовали
+`nova_codegen::parser::parse(src)` (single-string), присваивающий всем спанам входного файла
+`MAIN_FILE_ID = 0`. После `resolve_imports_inline` инлайненные items парсятся с distinct
+`file_id`, но nova-lsp нигде не строил `SourceMap` → не мог отобразить `file_id → path`.
+Cross-file goto-definition/hover были невозможны (всегда возвращали текущий URI).
+
+### Решение: реконструкция из `module.peer_files` (без рефактора компилятора)
+
+`resolve_imports_inline` уже заполняет `module.peer_files: Vec<PeerFile>` (каждый несёт
+`(file_id, path)`). nova-lsp строит `file_map: HashMap<FileId, PathBuf>` обходом **реальных**
+`peer_files` — НЕ текстовым поиском объявлений по имени. Компилятор менять не потребовалось.
+
+```rust
+// nova-lsp/src/provenance.rs
+pub struct ResolvedModule { pub module: Module, pub items_start: usize,
+                            pub file_map: HashMap<FileId, PathBuf>, pub env: Option<ModuleEnv> }
+pub fn resolve_module_for(path: &Path, src: &str) -> ResolvedModule;
+pub fn span_to_location(span: Span, file_map: &HashMap<FileId, PathBuf>, fallback_uri: &Url) -> Location;
+```
+
+- `span_to_location`: `span.file_id` в `file_map` → `Url::from_file_path(target)` + UTF-16 range
+  из исходника цели (открытый буфер, иначе диск); неизвестный file_id → `fallback_uri`, без паники.
+
+### Entry-duality инвариант (закрывает Q-104-5)
+
+`parse(src)` ставит entry-спанам `file_id = MAIN_FILE_ID (0)`, а `peer_files` для entry — `N ≠ 0`.
+Решение: `file_map.entry(MAIN_FILE_ID).or_insert(entry_path)` → entry всегда резолвится, **даже когда
+`resolve_imports_inline` вернул Err/паникнул и `peer_files` пуст** (degraded-CU).
+
+### Entry-item isolation: provenance вместо items_start (Ф.4 correctness fix)
+
+`items_start`-слайс (D303) для отделения entry-items от инлайненных imports **некорректен для
+folder-module peers** (merged peer-item может отсортироваться ПОСЛЕ item entry → item выпадает из
+скана). Ф.4 заменил слайс на provenance-предикат `item_belongs_to_entry` (`span.file_id ==
+MAIN_FILE_ID`), byte-collision-proof; `items_start` сохранён для API-стабильности (`let _`).
+
+### Почему Rust-тесты, а не `spec_tests/.nv`
+
+D378 — LSP-internal (provenance-слой nova-lsp), **не наблюдается через `nova test`** (не меняет
+codegen). Гейт — Rust unit/integration в `nova-lsp/` (компилятор-как-библиотека, lsp-conventions §3).
+
+### Связь
+
+- `nova-lsp/src/provenance.rs`, `nova-lsp/src/symbol.rs` (item_belongs_to_entry)
+- Plan 35 Ф.0 (`Span.file_id` + `SourceMap`); D303 (items_start pattern, заменён provenance-предикатом)
+- Потребители: Ф.3 goto, Ф.4 hover, Ф.7 rename, Ф.19 typeDefinition
+
+---
+
+## D379 — `ModuleEnv.expr_types`: opt-in per-expression type map для IDE; Plan 104.10 Ф.2
+
+> **NEW (Plan 104.10 Ф.2, 2026-07-04).**
+
+### Проблема
+
+Type-checker вычислял типы выражений при обходе, но **выбрасывал** их: `ModuleEnv` хранил только
+top-level (`types`/`fns`/`consts`). IDE не могло узнать тип произвольного выражения (`r.start`,
+`foo().bar`, receiver в `x.method()`) → type-driven completion/member-hover/signature-dispatch/
+inlay/semantic-tokens были невозможны.
+
+### Решение: карта `Span → TypeRef`, opt-in (zero-overhead для обычной компиляции)
+
+```rust
+// compiler-codegen/src/types/mod.rs — ModuleEnv
+pub expr_types: HashMap<Span, TypeRef>,   // заполняется ТОЛЬКО при record_expr_types = true
+```
+
+- **Тип значения — `TypeRef`** (не отдельный enum `Ty` — его в модуле нет; `TypeRef` — то, что
+  реально возвращает `infer_expr_type`, богат: path + generics; рендер `format_type_ref`).
+- **Opt-in флаг** `record_expr_types` в `TypeCheckCtx`. `check_module` → `false` (**zero-overhead**,
+  доказан тестом: карта пуста). `check_module_with_expr_types` → `true`. Критично: НЕ замедляет
+  `nova check`/`build`/`test`.
+- **Точки записи** (POST-ORDER над `infer_expr`, чтобы канал `resolved_types_buf` из Plan 172.1 был
+  заполнен): литералы, Ident, Member (тип объекта И результата — для Ф.6), Index, Call-return,
+  Binary, Range, As, Tuple/Array/Record lit.
+- **Границы**: синтетические/zero-width спаны (`start >= end`) НЕ пишутся; невыводимое (generic
+  type-param `T`) НЕ пишется. **Semantics: отсутствие в карте = «тип неизвестен»** → IDE graceful.
+
+### Дизайн: переиспользование, не дублирование
+
+НЕ построен отдельный expr-type walker — переиспользована **существующая инференция чекера**
+(`infer_expr_type` + `resolved_types_buf`). Production-подход: не текстовая эвристика, не дублирование.
+Остаток непокрытого (bounded, graceful) — `[M-104.10-expr-types-coverage]` (generic instance
+method-chain returns; non-primitive TupleLit; generic-instance RecordLit) — P3.
+
+### Lenient IDE variant (Ф.5)
+
+`check_module_with_expr_types_ide` — возвращает `ModuleEnv` (с `expr_types`) **даже при type-ошибках**
+(обычный `check_module` вернул бы `Err`). Нужно для completion/hover на полу-написанном буфере (IDE
+запрашивает тип, пока код ещё не компилируется). Пара к `repair_completion_buffer` (LSP чинит
+висячую `.` + баланс скобок).
+
+### Почему Rust-тесты, а не `spec_tests/.nv`
+
+D379 — **opt-in** compiler API (off by default, zero-overhead, **не меняет codegen** → не наблюдается
+через `nova test`). Гейт — Rust unit в `compiler-codegen/types` (9 тестов: pos/neg/edge + zero-overhead).
+
+### Связь
+
+- `compiler-codegen/src/types/mod.rs` (`check_module_with_expr_types`, `_ide`)
+- `nova-lsp/src/stdlib_index.rs` (Ф.5 — stdlib методы/модули из search-path, не хардкод)
+- `D303 §C` — Variant B (hover local-var inference); D379 = Variant A, надмножество
+- Потребители: Ф.5 completion, Ф.6 member-hover, Ф.8 sig-dispatch, Ф.9 inlay, Ф.10 semantic-tokens, Ф.19 typeDef
+
+---
+
+## D380 — LSP V2 capability surface + diagnostic-parity contract; Plan 104.10
+
+> **NEW (Plan 104.10, 2026-07-04).** Итоговая capability-поверхность nova-lsp V2 (паритет с 7
+> LSP-пирами: rust-analyzer/gopls/tsserver/kotlin-lsp/jdtls/zls/sourcekit).
+
+### Diagnostic-parity контракт (Ф.0.5) — 🏆 differentiator
+
+LSP diagnostic-вход сведён к тому же пайплайну, что `nova check` (cmd_check):
+`number_exprs + collect_all_signatures + check_module_with_sig_table` (Plan 162.2 подавляет
+false-positive на транзитивно-импортированных символах). Гарантия: **LSP-диагностики ≡ `nova check`**
+(byte-parity набора кодов/спанов) — ни один из 7 пиров не даёт формальной LSP↔CLI-parity.
+Закрывает Q-104-4. Degraded-CU (unsaved buffer / вне-repo / Err резолва): fallback-скан peers по
+module-имени → **0 ложных red** на prelude/peer-символах. Import-ошибки **surface** (не swallowed).
+Числовые `[Ennnn]` коды → code-action dispatch работает.
+
+### Capability-поверхность (advertised в `ServerCapabilities`)
+
+| Возможность | Метод | Фаза |
+|---|---|---|
+| Cross-file goto / typeDefinition / implementation | `definition`/`typeDefinition`/`implementation` | Ф.3/Ф.19 |
+| Cross-file hover (+member-access) | `hover` | Ф.4/Ф.6 |
+| Type-driven completion (+lazy resolve) | `completion`+`completionItem/resolve` | Ф.5/Ф.13 |
+| Signature help по типу receiver | `signatureHelp` | Ф.8 |
+| Scope-aware rename | `rename`/`prepareRename` | Ф.7 |
+| documentHighlight | `documentHighlight` | Ф.15 |
+| Inlay hints (type + param-name) | `inlayHint` | Ф.9 |
+| Full semantic tokens (+delta) | `semanticTokens/full+delta` | Ф.10 |
+| foldingRange / selectionRange | `foldingRange`/`selectionRange` | Ф.16/Ф.17 |
+| organize imports | `codeAction` (source.organizeImports) | Ф.11 |
+| codeLens (run-test/refs/impl) + executeCommand | `codeLens`/`executeCommand` | Ф.20 |
+| Incremental references index | `references` (in-mem index) | Ф.12 |
+| Workspace lifecycle (watch/willRename/progress/refresh) | `didChangeWatchedFiles`/`willRenameFiles`/`$/progress` | Ф.18 |
+
+### Governance
+
+- **no-hardcode (lsp-conventions §1/§2):** методы/типы/пакеты/протоколы — из резолва компилятора
+  (`expr_types`, `StdlibIndex` search-path, `builtin_protocol_names`), НЕ хардкод-таблицы (удалены Ф.5).
+- **degraded-mode (§2.2):** completion/hover graceful на неполном буфере (lenient env + repair-buffer).
+- **Тесты — Rust** (nova-lsp/compiler-codegen), т.к. LSP-поведение не наблюдается через `nova test`
+  (см. D378/D379 «почему Rust-тесты»). Scope-out'ы (call/type-hierarchy, persistent-index, …) —
+  явные `[M-104.10-*]` маркеры, не молча.
+
+### Связь
+
+- `nova-lsp/src/*` (все хендлеры + capabilities в `server.rs`)
+- D378 (provenance), D379 (expr_types), D296 (rename atomicity), D303 (hover items_start)
+- [Plan 104.10](../../docs/plans/104.10-lsp-v2-production.md), [lsp-conventions.md](../../docs/lsp-conventions.md)
