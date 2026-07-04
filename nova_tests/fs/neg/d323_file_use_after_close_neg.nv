@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR
+// Using a File after @close (which consumes it) is a use-after-consume error.
+module neg.d323_file_use_after_close_neg
+
+import std.fs.{File, Fs}
+import std.io.{IoError}
+
+fn use_after(consume f File) Fs -> Result[int, IoError] {
+    ro _ = f.close()
+    mut d []u8 = []u8.new(); d.push(0x41 as u8)
+    f.write(d)   // f was consumed by @close → use-after-consume
+}

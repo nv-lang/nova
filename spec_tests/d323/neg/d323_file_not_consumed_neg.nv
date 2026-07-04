@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+// D323: File is must-consume (D133) — a File handed to a function that never
+// @close's it is a compile error, so the close error (ENOSPC/EIO/quota) cannot be
+// silently lost. (The checker enforces consume on params + direct bindings;
+// tracking through a Result/match extraction is [M-176-consume-through-result-match].)
+module neg.d323_file_not_consumed_neg
+
+import std.fs.{File, Fs}
+
+fn d323n_discard(consume f File) Fs -> () {
+    ()   // f is never @close'd → D133-not-consumed
+}

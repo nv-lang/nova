@@ -1,0 +1,491 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/fs/mock.nv — mock_fs: in-memory Fs handler for deterministic tests
+// (Plan 176 Ф.2, D323). The §1a mockability differentiator.
+//
+// `with Fs = mock_fs(fs) { … }` runs the SAME code under test against an
+// in-memory byte-Path tree — no disk, no DI, fully deterministic (prior art:
+// Go's afero MemMapFs; Zig has nothing, Swift needs a viral protocol). The
+// backing `MemFs` also injects `StorageFull` on write/close so the must-consume
+// close-error path (`close()` = `Err`) and torn-write `write_atomic` rollback are
+// testable without a real full disk.
+//
+// The handler ops return the SAME primitive int/str codes as real_fs (the effect
+// is a thin int layer — `IoError`/`Metadata` are built in the fs.nv wrappers), so
+// mock and real are byte-for-byte substitutable. Codes: >= 0 success, negative
+// POSIX errno on failure. The tree is keyed by POSIX-normalised path strings.
+// Parent-existence is NOT enforced (lenient virtual FS); OpenOptions
+// create/create_new/truncate semantics ARE honoured.
+//
+// Named `mock_fs` (not the plan's `mem_fs`) for symmetry with `mock_io` /
+// `mock_tcp_net` — the codebase-wide `mock_*` handler-factory convention.
+
+module std.fs
+
+// POSIX errno codes returned (negated) by the mock; kind_from_errno maps them.
+const EN_NOTFOUND      int = 2
+const EN_ISDIR         int = 21
+const EN_NOTDIR        int = 20
+const EN_ALREADYEXISTS int = 17
+const EN_NOTEMPTY      int = 39
+const EN_INVAL         int = 22
+const EN_NOSPC         int = 28
+
+// ─── MemFs — the in-memory tree + fd table + stat cache + error injection ──
+
+/// In-memory filesystem state backing `mock_fs`. Hand one to `mock_fs`, install
+/// it with `with Fs = mock_fs(fs)`, and (optionally) inspect it afterwards.
+#stable(since = "0.1")
+export type MemFs {
+    // Node storage (parallel arrays keyed by a normalised path string).
+    // Removal is a tombstone (`alive[i] = false`) rather than a Vec.remove, so
+    // node indices never shift — the parallel arrays and any in-flight index stay
+    // consistent (Vec.remove-under-GC on the handler-captured state was flaky).
+    mut paths []str
+    mut kinds []int
+    mut datas [][]u8
+    mut modes []int
+    mut mtimes []i64
+    mut alive []bool
+    // Open-fd table (parallel arrays; fd is the stored value, not the index).
+    mut fds []int
+    mut fd_keys []str
+    mut fd_pos []int
+    mut fd_write []bool
+    mut fd_live []bool
+    mut next_fd int
+    // Last-stat cache (read by the stat_* accessor ops).
+    mut last_kind int
+    mut last_size int
+    mut last_mode int
+    mut last_mtime i64
+    // scandir iterator state.
+    mut scan_names []str
+    mut scan_kinds []int
+    mut scan_pos int
+    // realpath cache (read by realpath_data).
+    mut last_realpath str
+    // Error injection (§7 close-error / torn-write tests).
+    mut inject_write_err bool
+    mut inject_close_err bool
+    // Virtual monotonic mtime source.
+    mut clock i64
+}
+
+/// A fresh, empty in-memory filesystem.
+#stable(since = "0.1")
+export fn MemFs.new() -> MemFs => {
+    paths: [], kinds: [], datas: [], modes: [], mtimes: [], alive: [],
+    fds: [], fd_keys: [], fd_pos: [], fd_write: [], fd_live: [], next_fd: 3,
+    last_kind: 0, last_size: 0, last_mode: 0, last_mtime: 0,
+    scan_names: [], scan_kinds: [], scan_pos: 0, last_realpath: "",
+    inject_write_err: false, inject_close_err: false, clock: 1,
+}
+
+/// Arm the next `write` to fail with `StorageFull` (ENOSPC) — for torn-write /
+/// close-error tests.
+#stable(since = "0.1")
+export fn MemFs mut @fail_writes() -> () { @inject_write_err = true }
+
+/// Arm the next `close` to fail with `StorageFull` (ENOSPC).
+#stable(since = "0.1")
+export fn MemFs mut @fail_closes() -> () { @inject_close_err = true }
+
+/// Number of live nodes currently in the tree (for test assertions).
+#stable(since = "0.1")
+export fn MemFs @node_count() -> int {
+    mut c = 0
+    mut i = 0
+    while i < @alive.len() { if @alive[i] { c += 1 }; i += 1 }
+    c
+}
+
+// POSIX-normalised key for a raw path (host-independent, deterministic).
+fn mem_key(path []u8) -> str {
+    ro p = Path { bytes: path, style: Posix }
+    p.normalize().display()
+}
+
+// ─── Node table helpers ──
+
+fn MemFs @find(key str) -> Option[int] {
+    mut i = 0
+    while i < @paths.len() {
+        if @alive[i] && @paths[i] == key { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+fn MemFs mut @tick() -> i64 {
+    @clock = @clock + (1 as i64)
+    @clock
+}
+
+fn MemFs mut @add_node(key str, kind int, mode int) -> int {
+    ro t = @tick()
+    @paths.push(key)
+    @kinds.push(kind)
+    @datas.push([]u8.new())
+    @modes.push(mode)
+    @mtimes.push(t)
+    @alive.push(true)
+    @paths.len() - 1
+}
+
+fn MemFs mut @drop_node(idx int) -> () {
+    @alive[idx] = false   // tombstone; indices stay stable
+}
+
+fn MemFs @fd_index(fd int) -> Option[int] {
+    mut i = 0
+    while i < @fds.len() {
+        if @fd_live[i] && @fds[i] == fd { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+// Cache node i's stat fields for the stat_* accessors.
+fn MemFs mut @cache_stat(i int) -> () {
+    @last_kind = @kinds[i]
+    @last_size = @datas[i].len()
+    @last_mode = @modes[i]
+    @last_mtime = @mtimes[i]
+}
+
+// ─── Operations (return int codes: >= 0 ok, negative errno on failure) ──
+
+fn MemFs mut @mem_open(path []u8, flags int, mode int) -> int {
+    ro key = mem_key(path)
+    ro existing = @find(key)
+    ro creating = (flags & OPEN_CREATE) != 0
+    ro exclusive = (flags & OPEN_EXCL) != 0
+    ro appending = (flags & OPEN_APPEND) != 0
+    ro writable = (flags & OPEN_WRITE) != 0 || appending
+    mut idx = match existing {
+        Some(i) => {
+            if creating && exclusive { return 0 - EN_ALREADYEXISTS }
+            if @kinds[i] == KIND_DIR { return 0 - EN_ISDIR }
+            i
+        }
+        None => {
+            if !creating { return 0 - EN_NOTFOUND }
+            @add_node(key, KIND_FILE, mode)
+        }
+    }
+    if (flags & OPEN_TRUNC) != 0 { @datas[idx] = []u8.new() }
+    ro start = if appending { @datas[idx].len() } else { 0 }
+    ro fd = @next_fd
+    @next_fd = @next_fd + 1
+    @fds.push(fd)
+    @fd_keys.push(key)
+    @fd_pos.push(start)
+    @fd_write.push(writable)
+    @fd_live.push(true)
+    fd
+}
+
+fn MemFs mut @mem_close(fd int) -> int {
+    if @inject_close_err {
+        @inject_close_err = false
+        match @fd_index(fd) { Some(i) => @drop_fd(i), None => {} }
+        return 0 - EN_NOSPC
+    }
+    match @fd_index(fd) {
+        Some(i) => { @drop_fd(i); 0 }
+        None    => 0 - EN_INVAL
+    }
+}
+
+fn MemFs mut @drop_fd(i int) -> () {
+    @fd_live[i] = false   // tombstone; indices stay stable
+}
+
+fn MemFs mut @mem_read(fd int, buf mut []u8) -> int {
+    match @fd_index(fd) {
+        None => 0 - EN_INVAL
+        Some(i) => {
+            ro pos = @fd_pos[i]
+            ro n = @read_common(@fd_keys[i], buf, pos)
+            @fd_pos[i] = pos + n
+            n
+        }
+    }
+}
+
+fn MemFs @read_common(key str, buf mut []u8, pos int) -> int {
+    ro cap = buf.len()
+    if cap == 0 { return 0 }
+    match @find(key) {
+        None => 0
+        Some(ni) => {
+            ro data = @datas[ni]
+            ro rem = data.len() - pos
+            if rem <= 0 { return 0 }
+            ro n = if cap < rem { cap } else { rem }
+            mut j = 0
+            while j < n { buf[j] = data[pos + j]; j += 1 }
+            n
+        }
+    }
+}
+
+fn MemFs mut @mem_read_at(fd int, buf mut []u8, offset int) -> int {
+    match @fd_index(fd) {
+        None    => 0 - EN_INVAL
+        Some(i) => @read_common(@fd_keys[i], buf, offset)
+    }
+}
+
+fn MemFs mut @mem_write(fd int, data []u8) -> int {
+    if @inject_write_err { @inject_write_err = false; return 0 - EN_NOSPC }
+    match @fd_index(fd) {
+        None => 0 - EN_INVAL
+        Some(i) => {
+            if !@fd_write[i] { return 0 - EN_INVAL }
+            ro pos = @fd_pos[i]
+            @fd_pos[i] = @write_common(@fd_keys[i], data, pos)
+            data.len()
+        }
+    }
+}
+
+fn MemFs mut @mem_write_at(fd int, data []u8, offset int) -> int {
+    if @inject_write_err { @inject_write_err = false; return 0 - EN_NOSPC }
+    match @fd_index(fd) {
+        None    => 0 - EN_INVAL
+        Some(i) => { ro _ = @write_common(@fd_keys[i], data, offset); data.len() }
+    }
+}
+
+// Overwrite/extend the node's bytes at `pos` IN PLACE (no fresh Vec per write —
+// keeps allocation churn low), returning the new end position.
+fn MemFs mut @write_common(key str, chunk []u8, pos int) -> int {
+    ro idx = match @find(key) { Some(i) => i, None => @add_node(key, KIND_FILE, 0o644) }
+    while @datas[idx].len() < pos { @datas[idx].push(0 as u8) }
+    mut j = 0
+    while j < chunk.len() {
+        ro at = pos + j
+        if at < @datas[idx].len() { @datas[idx][at] = chunk[j] } else { @datas[idx].push(chunk[j]) }
+        j += 1
+    }
+    @mtimes[idx] = @tick()
+    pos + chunk.len()
+}
+
+fn MemFs mut @mem_seek(fd int, offset i64, whence int) -> i64 {
+    match @fd_index(fd) {
+        None => (0 - EN_INVAL) as i64
+        Some(i) => {
+            ro len = match @find(@fd_keys[i]) { Some(ni) => @datas[ni].len(), None => 0 }
+            ro base = if whence == SEEK_SET { 0 } else if whence == SEEK_END { len } else { @fd_pos[i] }
+            ro newpos = base + (offset as int)
+            if newpos < 0 { return (0 - EN_INVAL) as i64 }
+            @fd_pos[i] = newpos
+            newpos as i64
+        }
+    }
+}
+
+fn MemFs mut @mem_fstat(fd int) -> int {
+    match @fd_index(fd) {
+        None    => 0 - EN_INVAL
+        Some(i) => @stat_key(@fd_keys[i])
+    }
+}
+
+fn MemFs mut @mem_stat(path []u8) -> int => @stat_key(mem_key(path))
+
+fn MemFs mut @stat_key(key str) -> int {
+    match @find(key) {
+        None    => 0 - EN_NOTFOUND
+        Some(i) => { @cache_stat(i); 0 }
+    }
+}
+
+fn MemFs mut @mem_mkdir(path []u8, mode int) -> int {
+    ro key = mem_key(path)
+    match @find(key) {
+        Some(_) => 0 - EN_ALREADYEXISTS
+        None    => { ro _ = @add_node(key, KIND_DIR, mode); 0 }
+    }
+}
+
+fn MemFs mut @mem_remove_file(path []u8) -> int {
+    ro key = mem_key(path)
+    match @find(key) {
+        None    => 0 - EN_NOTFOUND
+        Some(i) => {
+            if @kinds[i] == KIND_DIR { return 0 - EN_ISDIR }
+            @drop_node(i)
+            0
+        }
+    }
+}
+
+fn MemFs mut @mem_remove_dir(path []u8) -> int {
+    ro key = mem_key(path)
+    match @find(key) {
+        None    => 0 - EN_NOTFOUND
+        Some(i) => {
+            if @kinds[i] != KIND_DIR { return 0 - EN_NOTDIR }
+            if @has_children(key) { return 0 - EN_NOTEMPTY }
+            @drop_node(i)
+            0
+        }
+    }
+}
+
+fn MemFs @has_children(dirkey str) -> bool {
+    mut i = 0
+    while i < @paths.len() {
+        if @alive[i] && is_child_of(@paths[i], dirkey) { return true }
+        i += 1
+    }
+    false
+}
+
+fn MemFs mut @mem_rename(src []u8, dst []u8) -> int {
+    ro fkey = mem_key(src)
+    ro tkey = mem_key(dst)
+    match @find(fkey) {
+        None    => 0 - EN_NOTFOUND
+        Some(_) => {
+            match @find(tkey) { Some(d) => @drop_node(d), None => {} }
+            ro fi = match @find(fkey) { Some(x) => x, None => 0 }
+            @paths[fi] = tkey
+            @mtimes[fi] = @tick()
+            0
+        }
+    }
+}
+
+fn MemFs mut @mem_scandir(path []u8) -> int {
+    ro dirkey = mem_key(path)
+    mut names []str = []
+    mut kinds []int = []
+    mut i = 0
+    while i < @paths.len() {
+        if @alive[i] && is_child_of(@paths[i], dirkey) {
+            names.push(child_name(@paths[i], dirkey))
+            kinds.push(@kinds[i])
+        }
+        i += 1
+    }
+    @scan_names = names
+    @scan_kinds = kinds
+    @scan_pos = 0
+    @scan_names.len()
+}
+
+fn MemFs mut @mem_scandir_next() -> int {
+    if @scan_pos < @scan_names.len() { @scan_pos = @scan_pos + 1; 1 } else { 0 }
+}
+
+fn MemFs @mem_scandir_name() -> str {
+    if @scan_pos >= 1 && @scan_pos <= @scan_names.len() { @scan_names[@scan_pos - 1] } else { "" }
+}
+
+fn MemFs @mem_scandir_kind() -> int {
+    if @scan_pos >= 1 && @scan_pos <= @scan_kinds.len() { @scan_kinds[@scan_pos - 1] } else { KIND_OTHER }
+}
+
+fn MemFs mut @mem_realpath(path []u8) -> int {
+    ro key = mem_key(path)
+    match @find(key) {
+        None    => 0 - EN_NOTFOUND
+        Some(_) => { @last_realpath = key; 0 }
+    }
+}
+
+fn MemFs mut @mem_symlink(target []u8, link []u8) -> int {
+    ro key = mem_key(link)
+    match @find(key) {
+        Some(_) => 0 - EN_ALREADYEXISTS
+        None    => {
+            ro idx = @add_node(key, KIND_SYMLINK, 0o777)
+            @datas[idx] = target
+            0
+        }
+    }
+}
+
+fn MemFs mut @mem_chmod(path []u8, mode int) -> int {
+    match @find(mem_key(path)) {
+        None    => 0 - EN_NOTFOUND
+        Some(i) => { @modes[i] = mode; 0 }
+    }
+}
+
+fn MemFs mut @mem_copy(src []u8, dst []u8) -> int {
+    ro fkey = mem_key(src)
+    ro tkey = mem_key(dst)
+    match @find(fkey) {
+        None    => 0 - EN_NOTFOUND
+        Some(fi) => {
+            ro data = @datas[fi]
+            ro ti = match @find(tkey) { Some(x) => x, None => @add_node(tkey, KIND_FILE, @modes[fi]) }
+            mut dup []u8 = []u8.new()
+            dup.append(data)
+            @datas[ti] = dup
+            @mtimes[ti] = @tick()
+            data.len()
+        }
+    }
+}
+
+// Is `childkey` a DIRECT child of `dirkey` (one level down)?
+fn is_child_of(childkey str, dirkey str) -> bool {
+    ro prefix = if dirkey == "/" { "/" } else { "${dirkey}/" }
+    if childkey == dirkey { return false }
+    if !childkey.starts_with(prefix) { return false }
+    ro rest = childkey[prefix.byte_len()..childkey.byte_len()]
+    !rest.contains("/")
+}
+
+fn child_name(childkey str, dirkey str) -> str {
+    ro prefix = if dirkey == "/" { "/" } else { "${dirkey}/" }
+    childkey[prefix.byte_len()..childkey.byte_len()]
+}
+
+// ─── mock_fs handler ──
+
+/// In-memory `Fs` handler bound to `fs`. Install with `with Fs = mock_fs(fs)`.
+/// All operations run against the `MemFs` tree — no disk, deterministic.
+#stable(since = "0.1")
+export fn mock_fs(mut fs MemFs) -> Effect[Fs] {
+    effect Fs {
+        open(path []u8, flags int, mode int)      => fs.mem_open(path, flags, mode)
+        close(fd int)                             => fs.mem_close(fd)
+        read(fd int, buf mut []u8)                => fs.mem_read(fd, buf)
+        write(fd int, data []u8)                  => fs.mem_write(fd, data)
+        read_at(fd int, buf mut []u8, offset int) => fs.mem_read_at(fd, buf, offset)
+        write_at(fd int, data []u8, offset int)   => fs.mem_write_at(fd, data, offset)
+        seek(fd int, offset i64, whence int)      => fs.mem_seek(fd, offset, whence)
+        sync_all(fd int)                          => 0
+        sync_data(fd int)                         => 0
+        stat(path []u8)                           => fs.mem_stat(path)
+        lstat(path []u8)                          => fs.mem_stat(path)
+        fstat(fd int)                             => fs.mem_fstat(fd)
+        stat_size()                               => fs.last_size
+        stat_mode()                               => fs.last_mode
+        stat_kind()                               => fs.last_kind
+        stat_mtime_ns()                           => fs.last_mtime
+        stat_atime_ns()                           => fs.last_mtime
+        stat_ctime_ns()                           => fs.last_mtime
+        mkdir(path []u8, mode int)                => fs.mem_mkdir(path, mode)
+        remove_file(path []u8)                    => fs.mem_remove_file(path)
+        remove_dir(path []u8)                     => fs.mem_remove_dir(path)
+        rename(src []u8, dst []u8)                => fs.mem_rename(src, dst)
+        symlink(target []u8, link []u8)           => fs.mem_symlink(target, link)
+        chmod(path []u8, mode int)                => fs.mem_chmod(path, mode)
+        copy_file(src []u8, dst []u8)             => fs.mem_copy(src, dst)
+        fsync_dir(path []u8)                      => 0
+        scandir(path []u8)                        => fs.mem_scandir(path)
+        scandir_next()                            => fs.mem_scandir_next()
+        scandir_name()                            => fs.mem_scandir_name()
+        scandir_kind()                            => fs.mem_scandir_kind()
+        realpath(path []u8)                       => fs.mem_realpath(path)
+        realpath_data()                           => fs.last_realpath
+    }
+}

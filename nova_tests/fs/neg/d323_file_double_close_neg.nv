@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR
+// Double @close on a consume File is a use-after-consume error (D133 makes
+// double-close impossible — the fd cannot be released twice).
+module neg.d323_file_double_close_neg
+
+import std.fs.{File, Fs}
+import std.io.{IoError}
+
+fn double(consume f File) Fs -> Result[(), IoError] {
+    ro _ = f.close()
+    f.close()   // f already consumed by the first @close → use-after-consume
+}

@@ -484,6 +484,7 @@ typedef struct { char _dummy; } nova_unit;
  * is available. */
 #ifdef NOVA_USE_LIBUV
 #  include "net.h"
+#  include "fs.h"   /* Plan 176 Ф.2: std/fs — async uv_fs_* via libuv */
 #endif
 
 /* ---- Plan 33.1 Ф.4 (D24): contracts runtime helper ----
