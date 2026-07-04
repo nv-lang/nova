@@ -6227,7 +6227,7 @@ user-visible эффект, высокий churn) — только задокум
 **Amends:** D77 (08-runtime.md) — 4-way auto-derive → **2-way** (убрать bare-throws Fail-форму).
 **Retracts:** D178 (08-runtime.md) — `str.parse_int` bare + `parse_int_opt`.
 **Связь:** [D25](#d25) (Fail остаётся в языке), [D85](#d85) (`?`/`!!`), [D86](#d86) (`??`), D73 (From/Into), D77 (TryFrom), D178.
-**Гигиена нумерации:** D316–D324 зарезервированы планами 175/175.1/176 (в spec ещё не внесены) → взят D325; gap отмечен в `spec/decisions/README.md`.
+**Гигиена нумерации:** D316–D324 зарезервированы планами 175/175.1/176 → взят D325; gap отмечен в `spec/decisions/README.md`. (2026-07-04: D316 внесён — Plan 175 Ф.1, единый источник схемы `Time` + `TimerMetrics`-split; D317–D324 остаются reserved.)
 
 ### Что
 
@@ -6261,6 +6261,34 @@ user-visible эффект, высокий churn) — только задокум
 
 `std/net` — Result-everywhere, 0 `Fail[`. Под-паттерны: per-element `DirIter.next -> Result[Item, E]`; absence → `Option`; инфаллибл-аксессор → значение.
 
+## D316 — `Time`: плумбинг-эффект, единый источник схемы + `TimerMetrics`-split (Plan 175 Ф.1, 2026-07-04)
+
+**Source:** Plan 175 (time-system-rework), Ф.1. **Amends:** [D11](#d11)/[D14](#d14)/[D62](#d62) (prelude `Time`-decl), [D124](#d124) (wall/monotonic-разделение).
+**Status:** ✅ ACTIVE (Ф.1 — единый источник + split; **Ф.1b/Ф.3 SHIPPED 2026-07-04 — amend ниже**). Overflow-политика (→ D317) и monotonic non-regression (→ D318) — TODO (Ф.1c). Typed **effect-ops** (`timestamp()->Timestamp` в схеме, mock на typed-record'ах) — **🚩 OWNER-GATED** (retire int-wire, Ф.2; см. amend).
+
+**AMEND (Plan 175 Ф.1b/Ф.3, 2026-07-04 — option C: typed `.nv`-слой поверх НЕизменённого int-wire-эффекта):**
+- `Duration`/`Timestamp`/`Monotonic` — теперь **`value`-records** (single-i64 `nanos`, stack, zero-GC). Static-конструкторы возвращают **по имени типа** (`-> Duration`), не `-> Self` (self_value-trap). `Monotonic.now()` — value-builtin (эффектонезависим → допустим в `realtime{}`).
+- **User-facing typed surface** доставлен на `.nv`-обёртках, БЕЗ смены схемы эффекта: `Timestamp.now()` = `Timestamp.from_unix_millis(Time.now())` (int-wire ms → value Timestamp); `@is_past`/`@time_until`/`@elapsed` — **int-based** (`@nanos` vs `Timestamp.now().nanos`), теперь РАБОТАЮТ; value-record арифметика `@plus/@minus/@times/@div/@neg/@compare`/`==`. `wait_for(Duration)`/`close_after(Duration)`/`close_at(Monotonic)` — value-`Duration`/`Monotonic` пересекают C-границу by-address (extern) / `.nanos` (dispatch). Mock (`fixed_ms`/`mut_clock`) оперирует **int ms** (wire), не typed-record'ами.
+- **Ф.2 (retire int-wire → typed effect-ops в схеме) остаётся OWNER-GATED:** `Time`-decl в prelude/effects.nv (ZERO-imports-на-примитивах) не может ссылаться на `Timestamp`/`Duration`; 85/96 файлов зовут bare-int `Time.sleep(N)`. Sign-off: «typed effect surface» (prelude⟷std.time coupling, 3 net-zero) vs «typed sugar над int-эффектом» (SHIPPED). `[M-time-now-schema-mismatch]` закрыт **частично** (user-surface typed; wire int).
+**Связь:** [D25](#d25) (Fail — пред-регистрируемый эффект), [D64](#d64) (Time — suspend-эффект, запрещён в `realtime {}`), [feedback-maximize-nv-sourcing] §3 (типы/схемы из `.nv`), 172.1 U.1 (codegen читает декларацию — прецедент RuntimeError/MemOrdering sum-schema).
+**Нумерация:** D316 из reserved-диапазона D316–D324 (README §gap; 175 = D316–318). Ф.1 занимает D316-slot механикой единого источника; typed-surface — amend этого же D316 в Ф.2.
+
+### Что (Ф.1)
+
+`Time` — **внутренний плумбинг-эффект** (как `TcpNet`/`AddrNet`): user-код ходит через type-методы (`Timestamp.now()` / `Monotonic.now()` / free `sleep`), не зовёт `Time.op()` напрямую. Схема эффекта имеет **ОДИН источник** — декларацию `type Time effect { … }` в `std/prelude/effects.nv`; codegen **читает** её оттуда (ветка RUNTIME_DEFINED_TYPES / `TypeDeclKind::Effect` в `emit_type_decl` строит `effect_schemas["Time"]` из методов), а не из хардкод-зеркала. 5 timer-observability-счётчиков **вынесены** из `Time` в отдельный read-only эффект `TimerMetrics`.
+
+### Правило (Ф.1)
+
+- **(R1)** Единый источник схемы `Time`: только `.nv`-декларация. Хардкод `effect_schemas.insert("Time", …)` в codegen удалён; закомментированное 5-е зеркало в `std/time/duration.nv` удалено. (Fail/Mem пока сохраняют pre-register — вне scope Ф.1.)
+- **(R2)** Int-провод сохранён **без смены поведения** в Ф.1: `sleep(ms int) -> ()`, `now() -> int`, `now_monotonic() -> int` (wire raw i64; `Monotonic`-record оборачивается на Nova-стороне). Типизация опов — Ф.2/Ф.3 (amend).
+- **(R3)** `TimerMetrics` (**NEW**) — read-only introspection timer-runtime: `timer_alloc_total`/`timer_alloc_active`/`timer_fired`/`timer_cancelled`/`timer_longest_pending_ms`, все `() -> int`. Дispatch — direct-C (`Nova_TimerMetrics_timer_*`, nova_rt/channels.h), без vtable, симметрично `Mem`. **НЕ** suspend-эффект → разрешён в `realtime {}` (в отличие от `Time`). Тест-handler'ам `Time` больше не нужно стабить 5 бессмысленных опов (Q1).
+- **(R4)** ns — канонная единица storage+wire (уточняется в Ф.2/D317).
+
+### Почему
+
+1. Пять расходящихся зеркал одной схемы (prelude-decl / codegen-hardcode / C-vtable / handler-литералы / закомментированная decl) — правка требовала синхронного изменения 5 мест; единый `.nv`-источник убирает дрейф ([feedback-maximize-nv-sourcing] §3; прецедент RuntimeError 78 Ф.2, 172.1 U.1).
+2. `TimerMetrics` — интроспекция timer-runtime (Plan 66 territory), не «время»: держать её в `Time` раздувало плумбинг-эффект и заставляло каждый mock-clock-handler стабить read-only счётчики (Q1).
+3. Ф.1 — refactor без смены поведения (int-провод неизменен) → низший риск; типизация и overflow-безопасность идут отдельными фазами поверх стабильного единого источника.
 ## D322 — io-core: `io.Read`/`io.Write`/`io.Seek`, `IoError`, `Io` effect (Plan 176 Ф.1, 2026-07-04)
 
 **Статус:** IMPLEMENTED (Ф.1 — io-core; fs=D323/os=D324 — последующие фазы). Модуль `std/io`.

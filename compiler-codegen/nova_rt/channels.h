@@ -1172,9 +1172,9 @@ typedef struct NovaAfterState {
  * when timer is cancelled by both on_select_lost and on cancel_resource_cb.
  *
  * Counters are ALWAYS maintained (cost = 1 incr/decr per alloc/fire/cancel)
- * so that Time.timer_*() queries return valid values regardless of
- * NOVA_TIMER_METRICS env. The env only controls the atexit dump + leak
- * warning. */
+ * so that TimerMetrics.timer_*() queries (Plan 175 Ф.1; ex-Time.timer_*())
+ * return valid values regardless of NOVA_TIMER_METRICS env. The env only
+ * controls the atexit dump + leak warning. */
 static inline void _nova_after_metrics_dec(NovaAfterState* st, bool counted_as_cancel) {
     if (!st || !st->metrics_alive) return;
     st->metrics_alive = false;
@@ -1493,22 +1493,25 @@ static inline Nova_TimerStats nova_time_timer_stats(void) {
     return r;
 }
 
-/* Plan 65 Ф.11: Nova-level accessors for `Time.timer_*()` methods. The
- * compiler dispatches `Time.timer_alloc_total()` etc. to these via the
- * effect_schemas registration in emit_c.rs. */
-static inline nova_int Nova_Time_timer_alloc_total(void) {
+/* Plan 65 Ф.11 / Plan 175 Ф.1 (D316, Q1): Nova-level accessors for the
+ * `TimerMetrics.timer_*()` read-only introspection effect. Split out of
+ * `Time` (Plan 175 Ф.1) — the compiler dispatches
+ * `TimerMetrics.timer_alloc_total()` etc. to these via the
+ * effect_schemas["TimerMetrics"] registration (built from the .nv decl in
+ * std/prelude/effects.nv). Direct-C dispatch (no vtable), like Nova_Mem_*. */
+static inline nova_int Nova_TimerMetrics_timer_alloc_total(void) {
     return (nova_int)_nova_timer_stats.alloc_total;
 }
-static inline nova_int Nova_Time_timer_alloc_active(void) {
+static inline nova_int Nova_TimerMetrics_timer_alloc_active(void) {
     return (nova_int)_nova_timer_stats.alloc_active;
 }
-static inline nova_int Nova_Time_timer_fired(void) {
+static inline nova_int Nova_TimerMetrics_timer_fired(void) {
     return (nova_int)_nova_timer_stats.fired;
 }
-static inline nova_int Nova_Time_timer_cancelled(void) {
+static inline nova_int Nova_TimerMetrics_timer_cancelled(void) {
     return (nova_int)_nova_timer_stats.cancelled;
 }
-static inline nova_int Nova_Time_timer_longest_pending_ms(void) {
+static inline nova_int Nova_TimerMetrics_timer_longest_pending_ms(void) {
     return (nova_int)_nova_timer_stats.longest_pending_ms;
 }
 

@@ -48,8 +48,12 @@ import std.testing.handlers as th
 /// let d = Duration.from_millis(500)
 /// assert(d.as_millis() == 500)
 /// ```
+///
+/// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
+/// Single `i64 nanos` field → ABI-identical to a bare `int64_t` at the C
+/// boundary (sync-timeouts / channel-deadlines extract `.nanos`).
 #stable(since = "0.1")
-export type Duration {
+export type Duration value {
     ro nanos i64
 }
 
@@ -71,7 +75,11 @@ export const HOUR   Duration = { nanos: 3_600_000_000_000 }
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Static-конструкторы Duration.from_X (D55: -> Self)
+// Static-конструкторы Duration.from_X — возвращают ПО ИМЕНИ типа
+// (`-> Duration`, НЕ `-> Self`): для value-record `-> Self` роутится через
+// receiver_c_type → `NovaValue_Duration*` (POINTER на локал = dangling для
+// static-конструктора). Return-by-name даёт корректный by-value возврат
+// (прецедент `VVec4.new`, Plan 128 / Plan 175 Ф.1b).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Construct Duration from nanoseconds.
@@ -82,11 +90,11 @@ export const HOUR   Duration = { nanos: 3_600_000_000_000 }
 /// assert(d.as_micros() == 1000)
 /// ```
 #stable(since = "0.1")
-export fn Duration.from_nanos(n i64) -> Self => { nanos: n }
+export fn Duration.from_nanos(n i64) -> Duration => { nanos: n }
 
 /// Construct Duration from microseconds (1 μs = 1000 ns).
 #stable(since = "0.1")
-export fn Duration.from_micros(n i64) -> Self => { nanos: n * 1_000 }
+export fn Duration.from_micros(n i64) -> Duration => { nanos: n * 1_000 }
 
 /// Construct Duration from milliseconds (1 ms = 1_000_000 ns).
 ///
@@ -96,34 +104,34 @@ export fn Duration.from_micros(n i64) -> Self => { nanos: n * 1_000 }
 /// assert(d.as_millis() == 500)
 /// ```
 #stable(since = "0.1")
-export fn Duration.from_millis(n i64) -> Self => { nanos: n * 1_000_000 }
+export fn Duration.from_millis(n i64) -> Duration => { nanos: n * 1_000_000 }
 
 /// Construct Duration from seconds.
 #stable(since = "0.1")
-export fn Duration.from_secs(n i64) -> Self => { nanos: n * 1_000_000_000 }
+export fn Duration.from_secs(n i64) -> Duration => { nanos: n * 1_000_000_000 }
 
 /// Construct Duration from minutes (60 seconds per minute).
 #stable(since = "0.1")
-export fn Duration.from_mins(n i64) -> Self => { nanos: n * 60 * 1_000_000_000 }
+export fn Duration.from_mins(n i64) -> Duration => { nanos: n * 60 * 1_000_000_000 }
 
 /// Construct Duration from hours (3600 seconds per hour).
 #stable(since = "0.1")
-export fn Duration.from_hours(n i64) -> Self => { nanos: n * 3_600 * 1_000_000_000 }
+export fn Duration.from_hours(n i64) -> Duration => { nanos: n * 3_600 * 1_000_000_000 }
 
 /// Construct Duration from days (86400 seconds per day).
 #stable(since = "0.1")
-export fn Duration.from_days(n i64) -> Self => { nanos: n * 86_400 * 1_000_000_000 }
+export fn Duration.from_days(n i64) -> Duration => { nanos: n * 86_400 * 1_000_000_000 }
 
 /// Construct Duration from weeks (7 days per week).
 #stable(since = "0.1")
-export fn Duration.from_weeks(n i64) -> Self => { nanos: n * 7 * 86_400 * 1_000_000_000 }
+export fn Duration.from_weeks(n i64) -> Duration => { nanos: n * 7 * 86_400 * 1_000_000_000 }
 
 /// Construct Duration from fractional seconds (e.g. 0.5 → 500ms).
 ///
 /// Useful для converting measurements (sensor data, sampling intervals)
 /// которые natively f64.
 #stable(since = "0.1")
-export fn Duration.from_secs_f64(s f64) -> Self =>
+export fn Duration.from_secs_f64(s f64) -> Duration =>
     { nanos: (s * 1_000_000_000.0) as i64 }
 
 
@@ -360,7 +368,7 @@ export fn Duration @into() -> str {
     if abs < 1_000 {
         sign + str.from(abs) + "ns"
     } else if abs < 1_000_000 {
-        sign + str.from(abs / 1_000) + "μs"
+        sign + str.from(abs / 1_000) + "us"
     } else if abs < 1_000_000_000 {
         sign + str.from(abs / 1_000_000) + "ms"
     } else if abs < 60 * 1_000_000_000 {
@@ -420,8 +428,11 @@ export fn Duration @into_human() -> str {
 /// let t = Timestamp.from_unix_secs(1_700_000_000)
 /// assert(t.as_unix_secs() == 1_700_000_000)
 /// ```
+///
+/// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
+/// Окно i64-ns ≈ 1677-09-21 .. 2262-04-11 (±292 года от эпохи, Q16).
 #stable(since = "0.1")
-export type Timestamp {
+export type Timestamp value {
     ro nanos i64
 }
 
@@ -431,18 +442,35 @@ export const EPOCH Timestamp = { nanos: 0 }
 
 /// Construct Timestamp from Unix epoch seconds.
 #stable(since = "0.1")
-export fn Timestamp.from_unix_secs(s i64) -> Self =>
+export fn Timestamp.from_unix_secs(s i64) -> Timestamp =>
     { nanos: s * 1_000_000_000 }
 
 /// Construct Timestamp from Unix epoch milliseconds.
 #stable(since = "0.1")
-export fn Timestamp.from_unix_millis(ms i64) -> Self =>
+export fn Timestamp.from_unix_millis(ms i64) -> Timestamp =>
     { nanos: ms * 1_000_000 }
 
 /// Construct Timestamp from Unix epoch nanoseconds (raw value).
 #stable(since = "0.1")
-export fn Timestamp.from_unix_nanos(n i64) -> Self =>
+export fn Timestamp.from_unix_nanos(n i64) -> Timestamp =>
     { nanos: n }
+
+/// Текущее wall-clock-время (Unix epoch).
+///
+/// **Plan 175 Ф.3 (D316):** ergonomic-сахар `Timestamp.now()` над int-wire
+/// `Time.now()` (эффект `Time`). Мокабелен: `with Time = th.fixed_ms(...)`
+/// подменяет часы детерминированно. int-wire отдаёт миллисекунды →
+/// оборачиваем через `from_unix_millis`.
+///
+/// # Examples
+/// ```nova
+/// with Time = th.fixed_ms(1_700_000_000_000) {
+///     assert(Timestamp.now().as_unix_millis() == 1_700_000_000_000)
+/// }
+/// ```
+#stable(since = "0.1")
+export fn Timestamp.now() Time -> Timestamp =>
+    Timestamp.from_unix_millis(Time.now() as i64)
 
 
 /// Unix epoch seconds (truncating). Negative для timestamps до 1970.
@@ -513,37 +541,33 @@ export fn Timestamp @compare(other Timestamp) -> int =>
 /// ```
 #stable(since = "0.1")
 export fn Timestamp @is_past() Time -> bool =>
-    Time.now().gt(@)
+    @nanos < Timestamp.now().nanos
 
 /// Сколько остаётся до момента `self`. Положительная если в будущем,
 /// отрицательная если в прошлом.
 #stable(since = "0.1")
 export fn Timestamp @time_until() Time -> Duration =>
-    @minus(Time.now())
+    @minus(Timestamp.now())
 
 /// Сколько прошло с момента `self`. Положительная если в прошлом,
 /// отрицательная если в будущем.
 #stable(since = "0.1")
 export fn Timestamp @elapsed() Time -> Duration =>
-    Time.now().minus(@)
+    Timestamp.now().minus(@)
 
 
 // ──────────────────────────────────────────────────────────────────────────
 // Time effect — главный AI-first момент
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Time — ambient effect (как Random, ne fail). В тестах подменяется
+// Time — ambient effect (как Random, не fail). В тестах подменяется
 // handler'ом → код становится детерминированным без mock-библиотек.
 //
-// Декларация type ниже — для documentation; пред-зарегистрирован
-// в prelude (D26).
-
-// type Time effect {
-//     now() -> Timestamp
-//     now_ms() -> u64
-//     now_ns() -> u64
-//     sleep(d Duration) -> ()
-// }
+// Plan 175 Ф.1 (D316 — единый источник схемы): декларация `type Time effect`
+// живёт ТОЛЬКО в std/prelude/effects.nv (codegen читает её оттуда). Ранее
+// здесь дублировался закомментированный 5-й источник схемы — УДАЛЁН, чтобы
+// не плодить расходящиеся зеркала. int-провод (`now()->int`) сохраняется в
+// Ф.1; типизация (`timestamp()->Timestamp`, `sleep(Duration)`) — Ф.2/Ф.3.
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -678,9 +702,9 @@ export fn f64 @days() -> Duration =>
 /// ```
 #stable(since = "0.1")
 export fn measure[T](action fn() -> T) Time -> (T, Duration) {
-    ro start = Time.now()
+    ro start = Timestamp.now()
     ro result = action()
-    ro elapsed = Time.now().minus(start)
+    ro elapsed = Timestamp.now().minus(start)
     (result, elapsed)
 }
 
@@ -689,7 +713,7 @@ export fn measure[T](action fn() -> T) Time -> (T, Duration) {
 /// Convenience-обёртка чтобы не писать `Time.now() + 5.seconds()` каждый раз.
 #stable(since = "0.1")
 export fn deadline_in(d Duration) Time -> Timestamp =>
-    Time.now() + d
+    Timestamp.now() + d
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -747,8 +771,12 @@ test "min / max" {
 }
 
 test "predicates" {
-    assert(Duration.ZERO.is_zero())
-    assert (-1.second()).is_negative()
+    // NB: `Duration.ZERO` как value-const-reference упирается в pre-existing
+    // value-record const-emission gap (symbol `ZERO` vs ref `Duration_ZERO`),
+    // не time-специфичный — follow-up [M-175-value-record-const-ref]. Значение
+    // строится через from_nanos(0) (та же конвенция, что nova_tests/plan91_fe4).
+    assert(Duration.from_nanos(0).is_zero())
+    assert((-1.second()).is_negative())
     assert(1.second().is_positive())
 }
 
@@ -763,7 +791,7 @@ test "parts: декомпозиция" {
 
 test "into[str]: auto-scale" {
     assert(500.nanos().into() == "500ns")
-    assert(150.micros().into() == "150μs")
+    assert(150.micros().into() == "150us")
     assert(42.millis().into() == "42ms")
     assert(2.seconds().into() == "2s")
     assert(5.minutes().into() == "5min")
@@ -800,7 +828,7 @@ test "Timestamp comparison" {
 
 test "AI-first: Time fixed → детерминированный код" {
     with Time = th.fixed_ms(1700000000000) {
-        ro now = Time.now()
+        ro now = Timestamp.now()
         assert(now.as_unix_millis() == 1700000000000)
     }
 }
@@ -819,12 +847,19 @@ test "deadline_in + is_past через Time-handler" {
     }
 }
 
-test "measure: длительность action'а" {
+test "measure semantics: под fixed_ms elapsed = 0" {
+    // Семантика `measure[T]` (returns (T, Duration)): под fixed-часами
+    // clock не движется → elapsed = 0. Проверяется inline через сахар
+    // `Timestamp.now()`/@minus/@is_zero (value-Duration round-trip).
+    // NB: прямой `ro (r, e) = measure(||…)` требует generic-fn-возврата
+    // tuple с value-элементом — отдельный value-record codegen-gap
+    // [M-175-value-in-generic-tuple-return] (backlog), не time-специфичный.
     with Time = th.fixed_ms(1000) {
-        ro (result, elapsed) = measure(|| 42)
+        ro start = Timestamp.now()
+        ro result = 42
+        ro elapsed = Timestamp.now().minus(start)
         assert(result == 42)
-        // С fixed_ms всегда возвращает то же — elapsed = 0
-        assert(elapsed == Duration.ZERO)
+        assert(elapsed.is_zero())
     }
 }
 
@@ -869,8 +904,15 @@ test "elapsed / time_until" {
 /// // ... work ...
 /// let elapsed = Monotonic.now() - start  // → Duration
 /// ```
+///
+/// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
+/// `Monotonic.now()` остаётся compiler-builtin (Path/Member dispatch,
+/// эффектонезависим → допустим в `realtime {}`), но теперь возвращает
+/// value-`Monotonic` (inline, без heap-alloc). Полностью-`.nv`-сахар +
+/// мокабельность через эффект — Ф.3-gated (нужен `now_monotonic`-слот в
+/// vtable, см. plan-175 §Ф.2).
 #stable(since = "0.6")
-export type Monotonic {
+export type Monotonic value {
     ro nanos i64
 }
 

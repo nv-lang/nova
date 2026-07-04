@@ -7,7 +7,7 @@
 //
 // Acceptance:
 //   - All timers fire OR are cancelled (none leak).
-//   - Time.timer_alloc_active returns to baseline after the scope exits.
+//   - TimerMetrics.timer_alloc_active returns to baseline after the scope exits.
 //   - Test completes in < 5 seconds (no deadlock).
 //
 // Cross-toolchain: ASan/TSan/UBSan clean validation is done in Linux
@@ -22,7 +22,7 @@ const N_FIBERS int = 10
 const TIMEOUT_BUDGET_MS i64 = 5000
 
 test "1000 concurrent close_after allocs, no leak, no crash" {
-    ro baseline = Time.timer_alloc_active()
+    ro baseline = TimerMetrics.timer_alloc_active()
     ro t0 = Time.now()
     supervised {
         mut f int = 0
@@ -48,6 +48,6 @@ test "1000 concurrent close_after allocs, no leak, no crash" {
     assert(elapsed < TIMEOUT_BUDGET_MS)
     // All allocated timers must have fired naturally — alloc_active
     // returns to baseline.
-    ro after = Time.timer_alloc_active()
+    ro after = TimerMetrics.timer_alloc_active()
     assert(after == baseline)
 }

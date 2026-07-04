@@ -8,7 +8,11 @@
 > активного 172.1.2 — пере-grep symbol-якорями перед каждой фазой**), stale-номера старой нумерации вычищены,
 > spec_tests-покрытие добавлено (методология 2026-06-28), тест-раскладка приведена к конвенциям, кросс-рефы
 > 173-семьи, новые контракты (suspend-семантика Monotonic, infallibility, 2262-горизонт Timestamp).
-> **Статус:** 📋 READY (все Q закрыты, см. §3.0).
+> **Статус:** 🚧 IN PROGRESS — **Ф.0/Ф.1 ✅; Ф.1b ✅ + Ф.3 ✅ SHIPPED (option C, 2026-07-04): value-records
+> Duration/Timestamp/Monotonic + полный typed user-surface (арифметика/==/compare/neg, `Timestamp.now()`-сахар,
+> `@is_past`/`@time_until`/`@elapsed` int-based, `wait_for(Duration)`) поверх НЕизменённого int-wire-эффекта**;
+> **Ф.2 (typed-effect-ops / retire int-wire) 🚩 OWNER-GATED** (3 net-zero; prelude⟷std.time coupling — см. Ф.2-блок §4);
+> Ф.1c/Ф.4/Ф.5/Ф.6 — TODO. Все Q закрыты (§3.0).
 > **Маркер:** `[M-175-time-system-rework]`. **Запуск:** «**выполни план 175**» (план самодостаточен — вся информация ниже).
 > **D-блоки (NEW):** D316 (typed Time-surface + единый источник), D317 (Duration/instant overflow-policy), D318
 > (Monotonic non-regression + clock-source contract). Amend: D124, D237, prelude-`Time`-decl. (Резерв подтверждён
@@ -257,12 +261,47 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   **Ревью = автор** (соло-проект), чеклист: соответствие §3.0-решениям + D-нумерация свободна (D316-318; high-water
   движется — D328 уже занят 172.4) + отсутствие коллизий с 172.x; зарегистрировать `[M-sleep-tolerance]`/
   `[M-monotonic-boottime]` в `docs/plans/backlog-followups.md` (OPEN-view). **GATE:** D-блоки до кода (§5 spec-first).
-- **Ф.1 — единый источник схемы (без смены поведения).** Механизм: codegen **читает** схему `Time` из `.nv`-decl
+- **Ф.1 — единый источник схемы (без смены поведения). ✅ ВЫПОЛНЕНО (2026-07-04, ветка `plan-175-time`).** Механизм: codegen **читает** схему `Time` из `.nv`-decl
   (коорд. 172.1 U.1/U.2) вместо хардкода [emit_c.rs:2870+](../../compiler-codegen/src/codegen/emit_c.rs#L2870) (`effect_schemas.insert("Time"`); вынести 5
   счётчиков в `TimerMetrics`; удалить закомментированный 5-й источник [duration.nv:541-546](../../std/time/duration.nv#L541);
   выровнять vtable [effects.h:863](../../compiler-codegen/nova_rt/effects.h#L863). **Содержимое схемы пока НЕ меняем**
   (int-провод остаётся) → поведение не меняется. DEP: Ф.0 (spec-gate); кодовых зависимостей нет (низший риск).
-- **Ф.1b — value-migration (enumerated checklist, НЕ «проще»).** `Duration`/`Timestamp`/`Monotonic` `{}`→`value`. По каждому
+  - **Сделано:** (1) `emit_type_decl`/RUNTIME_DEFINED_TYPES-ветка строит `effect_schemas["Time"]` из `.nv`-decl
+    (симметрично RuntimeError/MemOrdering sum-schema); хардкод `effect_schemas.insert("Time")` удалён. (2) `Time`-decl
+    в `std/prelude/effects.nv` = единый источник; добавлен `now_monotonic()->int` (был только в хардкоде). (3) **NEW**
+    `type TimerMetrics effect { timer_alloc_total/…() -> int }` в effects.nv; C-акцессоры channels.h переименованы
+    `Nova_Time_timer_* → Nova_TimerMetrics_timer_*`; `TimerMetrics` добавлен в RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES
+    + skip в `emit_user_effect_registrations` (direct-C, нет handler-slot'а, как `Mem`). (4) закомментированный 5-й
+    источник в duration.nv удалён; vtable-комментарий effects.h выровнен (struct не тронут — now_ms/now_ns ретайр = Ф.2).
+    (5) call-сайты `Time.timer_*()` → `TimerMetrics.timer_*()` (nova_tests/plan65 f11/f11a).
+  - **Спека:** D316 внесён (04-effects.md) — плумбинг-эффект + единый источник + `TimerMetrics`-split + ns-канон;
+    typed-surface/Q15/overflow(D317)/non-regression(D318) — последующие фазы (amend D316). README-нумерация обновлена.
+  - **Гейт:** conformance 38/38 (new binary); pos-фикстура `nova_tests/time/plan175_f1_timer_metrics_split.nv` PASS
+    (TimerMetrics dispatch + int-провод + Monotonic non-regress); zero-regression **delta = 0** vs parent-бинарь на
+    12 dir-сэмпле (temp-worktree `../nova-175-base`, identical pre-existing FAILs); Rust build clean.
+  - **NB (pre-existing долг, НЕ Ф.1):** `nova test nova_tests/plan65` целиком не C-компилится из-за
+    spawn-closure-captures-module-const дефекта в f10/f7 (bare `TIMEOUT_MS1`/`TIMERS_PER_FIBER` вместо мангл-имени) —
+    baseline-delta=0 (тот же CC-FAIL на parent-бинаре); занесён в backlog. Ф.0 (D316-318 полные) + typed-surface — не в scope Ф.1.
+- **Ф.1b — value-migration. ✅ SHIPPED (option C, 2026-07-04, ветка `plan-175-time`).** `Duration`/`Timestamp`/`Monotonic`
+  `{}`→`value` (single-i64 `nanos`). Конструкторы возвращают ПО ИМЕНИ типа (`-> Duration`/`-> Timestamp`, НЕ `-> Self`)
+  — обходит self_value-trap (прецедент VVec4), БЕЗ codegen-зеркала. `DurationParts` остаётся heap. `Monotonic.now()`
+  остаётся compiler-builtin, но переведён на **value**-возврат (`(NovaValue_Monotonic){.nanos=_nova_monotonic_ns()}`,
+  inline, zero-heap; 6 codegen-сайтов + close_at-проверки обновлены `Nova_Monotonic*`→`NovaValue_Monotonic`).
+  **Codegen, потребовавшийся для value-operators (были deferred «Ф.3»):** (a) value-record `@plus/@minus/@times/@div/@rem`
+  + `<`/`>`/`<=`/`>=`(@compare) + унарный `@neg` — через by-value wrapper `nova_vr_binop_/unop_` (rvalue-safe, receiver
+  ABI `NovaValue_X*`); (b) `infer_expr_c_type` binary-arm возвращает @method return-type (`Timestamp-Timestamp`→Duration);
+  (c) `emit_field_eq` scalar-list дополнен raw-C типами (`int64_t` etc) — value-record structural `==` даёт scalar-eq,
+  не `memcmp(&rvalue.f,…)`. **C-граница:** value-`Duration` в extern «nova» sync-методы (`wait_for`/`try_*_for`) —
+  by-address (materialize temp → `(void*)&tmp`; C читает `*(int64_t*)timeout`); `close_after`/`close_at` — `.nanos`.
+  **Handler-capture fix (побочный, был latent-баг):** escaping-фабрики (`fn fixed_ms/mut_clock -> Effect[Time]`)
+  капчурили `&stack_local` (dangling после return) → mock-часы читали garbage. Теперь: immutable-scalar → by-value
+  snapshot; mutable-scalar в ESCAPING-handler (fn возвращает `NovaVtable_*`) → heap-promote (`nova_alloc` cell); inline
+  (fn НЕ возвращает Effect) → by-pointer (сохраняет direct-read-back enclosing-mut, напр. `Counter4.value()=>n`).
+  **Гейт:** duration.nv inline-tests PASS; `nova_tests/time/plan175_f1b_value_typed_surface.nv` PASS; handlers.nv PASS
+  (fixed_ms+mut_clock); repro `v2_condvar` PASS; conformance-CU компилится + d102 PASS. **Follow-ups (не time-специфичны,
+  pre-existing value-record codegen-gaps):** `[M-175-value-record-const-ref]` (value-const-as-value: symbol `ZERO` vs
+  ref `Duration_ZERO`), `[M-175-value-in-generic-tuple-return]` (`measure[T]->(T,Duration)` call-site tuple-инференс).
+- **Ф.1b — value-migration (исходный enumerated checklist, НЕ «проще»).** `Duration`/`Timestamp`/`Monotonic` `{}`→`value`. По каждому
   риск-сайту аудита — шаг + верификация: (1) 3 типа stack-alloc в 26 методах (ABI); (2) **value-const** ZERO/SECOND/MINUTE/HOUR
   [duration.nv:58-70](../../std/time/duration.nv#L58) + EPOCH [:430](../../std/time/duration.nv#L430) — const-evaluable; (3)
   `DurationParts` (7 полей) **остаётся heap** (display-helper); (4) **D290 generic-forward-decl**: `Option[Duration]`/`Vec[Timestamp]`/
@@ -272,16 +311,102 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   (dispatch-сайты п.2 §1) → stack-init; (6) cross-module handler'ы
   [handlers.nv](../../std/testing/handlers.nv); инфра `AllocKind::Value` ([emit_c.rs:2443-2447](../../compiler-codegen/src/codegen/emit_c.rs#L2443))/
   `emit_value_record_type` (:10571)/`NovaValue_` (:10669). DEP: Ф.1. GATE для scalar-bridge.
+  - **⚠ Эмпирика 2026-07-04 (заход Ф.2+Ф.1b+Ф.3, ветка `plan-175-time`; код ОТКАЧЕН к parent f4ffe68a — net-zero,
+    гейт НЕ пройден): наивный атом (a) `self_value_position_c_type` РЕГРЕССИРУЕТ conformance.** Реализация:
+    helper строит по-value C-тип `Self` в return/param-позиции = `receiver_c_type` минус trailing `*` для
+    value-структур (`is_value_struct_ptr`), подключён в `resolved_type_to_c("Self")` (:2256) + registration
+    return-type (:4017). **Провал:** blanket-стрип `*` для ВСЕХ value-структур ломает установленную семантику
+    «value-struct/NamedTuple `-> Self` возвращает POINTER» (Plan 128 mut-receiver fluent-chaining `.push(1).push(2)`
+    мутирует ОДИН stack-slot; by-value копия рвёт цепочку). Rust build clean, но `nova test spec_tests/conformance`
+    = **37/1** (baseline parent = 38/0): `d102_named_args_default_params` **RUN-FAIL** (baseline PASS, new RUN-FAIL,
+    единственный дифф = helper — детерминированно, НЕ флак; сам d102 не содержит `Self`, регресс в prelude/runtime
+    value-struct с `-> Self`). **Гоча для следующего захода:** атом (a) обязан быть УЖЕ (gated) — by-value ТОЛЬКО
+    для non-mut static value-record конструкторов (`Duration.from_nanos -> Self`), НО СОХРАНЯТЬ pointer-return для
+    mut-receiver/fluent-chaining `-> Self`; и верифицировать ПОЛНЫМ conformance, НЕ одной time-фикстурой (single-
+    fixture byte-identical ⇏ corpus byte-identical — этот урок стоил ложного «✅ landed»).
+  - **🔑 ВАЛИДИРОВАННЫЙ ДИЗАЙН scalar-bridge (эмпирика include-ordering — НЕ затронут откатом, остаётся в силе):**
+    generated-C: `#include "nova_rt/nova_rt.h"` (emit_c.rs:5322) идёт ПЕРЕД splice `/*__VALUE_RECORD_DEFS__*/`
+    (:5351) → **effects.h НЕ может именовать `NovaValue_Timestamp`** → `NovaVtable_Time` слоты ОБЯЗАНЫ остаться i64.
+    Единственно чистый путь = плановый узкий single-i64 bridge в двух сайтах codegen: (i) **call-site** (Member
+    :25852 `if effect_schemas.contains_key` + Path :28492) — wrap `((NovaValue_Timestamp){.nanos = Nova_Time_now(...)})`
+    для value-struct-ret, unwrap `(<arg>).nanos` для value-struct-арга; (ii) **handler-impl** (`emit_handler_lit`
+    :7160) — schema хранит surface-тип (call-site-инференс :39530/:40008), но impl-сигнатура+forward-decl (:7300/:7330)+
+    vtable-слот-ассайн (:7280) используют WIRE i64, return-bridge `return (<body>).nanos`, param-bridge для value-struct
+    = `NovaValue_Duration d = {.nanos = d_wire};` (существующий annotation-bridge :7458 `(annot)(intptr_t)` —
+    pointer-pun, для value-struct НЕ годится). Нужен helper `effect_wire_c_type(schema_c)` (single-i64 value-struct →
+    `("nova_int", true, "nanos")`, детект по record-schema, НЕ хардкод §3). effects.h/fibers.h остаются i64
+    (rename `now→timestamp` + add `monotonic`-слот + retire `now_ms`/`now_ns`).
+  - **Blast-radius реальность (zero-regression гейт):** rename `now()→timestamp()` ломает **277** `Time.now(` сайтов
+    в 165 nova_tests-файлах + `now_ms`/`now_ns`-сайты → миграция на `Timestamp.now()`/`.as_unix_*` обязательна В ТОМ ЖЕ
+    изменении. Core-codegen (bridge, 2 атома b/c/d, Monotonic-builtin-removal) + runtime + handlers + 277-сайт-миграция +
+    тесты = многосессионный объём; НЕ закрыт одной сессией. **Ключевой урок:** Ф.1b/Ф.2 неотделимы (подтверждено §7.7)
+    И атом (a) неотделим от полной value-миграции + должен быть gated (иначе conformance-регресс) — весь заход = один
+    interlocking commit, промежуточных зелёных нет.
+  - **⚠ Эмпирика 2026-07-04 (ТРЕТИЙ заход, ветка `plan-175-time`, код net-zero @ f8cc2d9e — гейт НЕ начат: блокер на
+    УРОВНЕ ДИЗАЙНА, до build-циклов). Два новых факта, разведанных этим заходом:**
+    1. **Атом (a) self_value_position НЕ НУЖЕН — trap обходится на уровне `.nv`-source.** Установленный рабочий прецедент
+       в корпусе: `fn VVec4.new(a,b) -> VVec4` (nova_tests/plan128/t15_value_record_in_named_tuple_ok.nv) — static-конструктор
+       value-record'а возвращает по ИМЕНИ типа, НЕ `-> Self`. `-> Self` роутится через `receiver_c_type` (emit_c.rs:12224-12233)
+       → `NovaValue_X*` (POINTER, для mut-fluent-chaining Plan 128) → для STATIC-конструктора = указатель на локал = dangling;
+       `-> ИмяТипа` роутится через `type_ref_to_c` → `NovaValue_X` by-value (корректно). У Duration/Timestamp/Monotonic
+       ВСЕ instance-методы уже возвращают по имени (`-> Duration`/`-> Timestamp`/`-> Monotonic`); `-> Self` только у
+       static-конструкторов (`from_nanos`/`from_unix_*`). ⇒ достаточно заменить `-> Self` → `-> Duration` в этих
+       конструкторах (+ `value`-keyword в 3 type-decl) — БЕЗ правки codegen, БЕЗ 37/1-регресса. (gate emit_c.rs:4016-4020
+       на `is_instance` — доп. страховка, но не требуется.) Проверено чтением codegen; value+explicit-name = уже зелёный паттерн.
+    2. **🔴 НАСТОЯЩИЙ блокер (не value, не bridge) — АРХИТЕКТУРНОЕ противоречие prelude ⟷ std.time.** Typed-схема `Time`
+       (`timestamp()->Timestamp`/…) требует `Timestamp`/`Duration`/`Monotonic` в scope при schema-build
+       (emit_c.rs:10344-10369 зовёт `type_ref_to_c(Timestamp)`, резолв только если тип зарегистрирован value-record'ом
+       fwd-decl-препассом emit_c.rs:3031-3041 — т.е. ТОЛЬКО когда `std.time` в CU). НО `Time`-decl живёт в
+       `std/prelude/effects.nv`, которая по собственному инварианту = «**ZERO imports, self-contained на primitives**»
+       (effects.nv:14) — сослаться на не-примитивные типы там НЕЛЬЗЯ. **Эмпирика корпуса: 85 из 96 файлов, зовущих
+       `Time.now`/`Time.sleep`, НЕ импортируют `std.time`** — опираются на prelude-level int-wire `Time`
+       (`Time.sleep(5_000)`/`Time.sleep(0)` — bare int ms, 278 вхождений `Time.sleep([0-9]`; `Time.now() - t0` — int-арифметика
+       в concurrency-тестах). ⇒ typed-surface НЕ drop-in: требует АРХИТЕКТУРНОГО решения ПЕРЕД миграцией:
+       (a) сделать `std.time` prelude-loaded → риск import-cycle (`duration.nv`→`std.testing.handlers`→`duration.nv`) И всё
+       равно ломает 85 файлов (bare-int `Time.sleep(N)`); ИЛИ (b) перенести `Time` в `std.time` + добавить `import std.time`
+       в ~85 файлов + конвертировать их bare-int sleep/now-арифметику в `Duration`/`Timestamp`. Плановая посылка «единый
+       источник схемы в prelude/effects.nv» (Ф.1, D316) для typed-surface **инфизибл** — Ф.1 работала лишь потому, что
+       int-wire self-contained на примитивах. Это, вероятно, корень net-zero всех трёх заходов.
+    3. **Альтернатива дизайна (для решения владельца): int-wire эффект в prelude + typed-сахар в std.time.** Оставить
+       `Time`-эффект int-wire self-contained (`sleep(ns int)`/`timestamp_ns()->int`/`monotonic_ns()->int` — примитивы,
+       prelude-ок), а ТИПИЗАЦИЮ вынести чисто в `.nv`-обёртки std.time (`Timestamp.now() => Timestamp.from_unix_nanos(Time.timestamp_ns())`,
+       `fn sleep(d Duration) => Time.sleep_ns(d.as_nanos())`). Сносит СРАЗУ и scalar-bridge-codegen (Q2), и prelude-coupling.
+       Цена: schema эффекта остаётся int (mock оперирует int ns, не typed-record'ами) — отклонение от Q2/Q8 плана. **Требует
+       sign-off: «typed effect surface» (с prelude-архитектурной ценой) vs «typed sugar над int-эффектом» (проще, но mock
+       на int).** До этого решения Ф.2 не стартовать — иначе 4-й net-zero.
 - **Ф.1c — overflow-safe арифметика (NEW, mandatory).** Реализовать §3b/D317: trap-операторы + `checked_*`/`saturating_*`
   на Duration; boundary-saturate + `checked_*` на Timestamp/Monotonic±Duration; `@abs(i64::MIN)`; `@div(0)`; f64 NaN/inf-policy;
   фикс μs U+03BC в `@into()` (Q12). Unit-тесты арифметики — **inline test-блоки в std/time/** (конвенция: inline =
   предпочтительно для unit-тестов модуля; в duration.nv уже 18 inline-тестов). DEP: Ф.1b. **Здесь Nova достигает
   паритета Rust/Java/Swift и обходит Go/Zig.**
-- **Ф.2 — типизированный провод (retire int-wire).** Изменить `.nv`-decl `Time` на typed-surface (`timestamp()->Timestamp`/
+- **Ф.2 — типизированный провод (retire int-wire). 🚩 OWNER-GATED design-fork (НЕ реализован; 3 net-zero).** Замена
+  int-wire-эффекта на typed-опы (`timestamp()->Timestamp`/`monotonic()->Monotonic`/`sleep(Duration)`) в схеме `Time`
+  **архитектурно инфизибл** без разрешения owner'ом связки **prelude ⟷ std.time**: `Time`-decl живёт в
+  `std/prelude/effects.nv` (инвариант «ZERO imports, self-contained на примитивах») → не может ссылаться на
+  `Timestamp`/`Duration`/`Monotonic`; при schema-build codegen (`type_ref_to_c(Timestamp)`) резолвит их только когда
+  `std.time` в CU, а **85 из 96** `Time.*`-файлов НЕ импортируют `std.time` (bare-int `Time.sleep(5_000)`). Опции:
+  **(A)** prelude-load `std.time` — риск import-cycle (`duration.nv→std.testing.handlers→duration.nv`) + всё равно
+  ломает 85 файлов; **(B)** перенести `Time` в `std.time` + `import std.time` в 85 файлов + конвертировать их bare-int
+  sleep/now-арифметику в Duration/Timestamp + scalar-bridge codegen; **(C) SHIPPED (Ф.1b/Ф.3):** int-wire эффект
+  (schema без изменений) + typed `.nv`-сахар/методы поверх (`Timestamp.now()=>from_unix_millis(Time.now())`,
+  `@is_past = @nanos < Timestamp.now().nanos`), mock оперирует **int ms**. **Рекомендация:** C-as-shipped доставляет
+  ПОЛНЫЙ user-facing typed API (value-records + арифметика + is_past/elapsed/time_until + sugar + wait_for(Duration));
+  typed-effect-ops (Q2/Q8: mock на typed-record'ах, а не int) — future enhancement ЕСЛИ owner предпочтёт цену
+  prelude-разъединения. **До sign-off Ф.2 не стартовать** — иначе 4-й net-zero. Закрытие `[M-time-now-schema-mismatch]`
+  — частичное (user-surface typed; wire остаётся int).
+- **Ф.2 — типизированный провод — исходный план (superseded by owner-gate выше).** Изменить `.nv`-decl `Time` на typed-surface (`timestamp()->Timestamp`/
   `monotonic()->Monotonic`/**`sleep(d Duration)`** — смена sleep-decl ЗДЕСЬ, Ф.4 остаётся семантика); единый источник (Ф.1)
   пропагирует во все места; узкий scalar-bridge (Q2). Убрать `now()->int`/`now_ms`/`now_ns`. **Закрывает
   `[M-time-now-schema-mismatch]`.** DEP: Ф.1b.
-- **Ф.3 — user-facing surface.** (a) сахар `Timestamp.now()=>Time.timestamp()`, `Monotonic.now()=>Time.monotonic()` —
+- **Ф.3 — user-facing surface. ✅ SHIPPED (option C, 2026-07-04) — typed `.nv`-слой поверх int-wire (см. Ф.1b-блок).**
+  Доставлено: сахар `Timestamp.now()` (обёртка int-wire `Time.now()` ms → value Timestamp, мокабелен через
+  fixed_ms/mut_clock); `@is_past`/`@time_until`/`@elapsed` РАБОТАЮТ (int-based: `@nanos` vs `Timestamp.now().nanos`);
+  `@plus(Duration)`/`@minus(Duration)`/`@minus(Timestamp)` value; `measure`/`deadline_in` через `Timestamp.now()`;
+  μs U+03BC→ASCII `"us"` в `@into()` (Q12). `Monotonic.now()` — value-builtin (эффектонезависим → допустим в
+  `realtime{}`; `.nv`-сахар + мокабельность = future, нужен `now_monotonic`-vtable-слот). `@display`/`@debug` (D237),
+  `checked_*`/`saturating_*`/trap-overflow (Ф.1c), `sleep_until`/free `sleep`, `@minus(Monotonic)`-overload —
+  НЕ в option-C-минимуме (typed-effect-ops-семья / Ф.1c / Ф.4). **Исходный план ниже (typed-effect-based) superseded.**
+- **Ф.3 — user-facing surface (исходный typed-effect план; superseded).** (a) сахар `Timestamp.now()=>Time.timestamp()`, `Monotonic.now()=>Time.monotonic()` —
   **удалить ВСЕ ЧЕТЫРЕ builtin-сайта** (норматив — СИМВОЛЬНО: grep `nova_monotonic_now_record` по dispatch-путям
   emit_c.rs = 0; обе inference-ветки `"Nova_Monotonic*"` удалены; снимок строк: dispatch :25409/:28037, inference
   :39586/:40272 — пере-grep перед фазой) (НЕ schema-reg `effect_schemas.insert("Time"` — та уходит в Ф.2),
