@@ -809,7 +809,7 @@ U.1.3b миграцией sync на import.
 механика миграции — прецедент Plan 172.2 Ф.3: детект-режим → as-касты → включение).
 
 
-## [M-172.1-extern-cname-dedup-overloads] — дедуп extern-деклов по c_name упрощён (2026-07-02) → ПОГЛОЩЁН Plan 174.6
+## [M-172.1-extern-cname-dedup-overloads] — дедуп extern-деклов по c_name упрощён (2026-07-02) → ✅ ЗАКРЫТ Plan 174.6 M1 (2026-07-04)
 
 При inline-merge builtin-модуля (import std.runtime.sync поверх builtin-снабжения)
 дубликаты extern-деклараций схлопываются по `c_name` (external_registry merge).
@@ -822,6 +822,12 @@ U.1.3b миграцией sync на import.
 D216 cross-amend. Ужесточение ключа дедупа `(c_name, param_c_types)` = чекер-часть
 **Plan 174.6 M1** (вместе с `E_FFI_NON_C_ABI_TYPE`); сайт помечен комментарием в
 external_registry merge.
+**✅ ЗАКРЫТ Plan 174.6 M1 (2026-07-04):** ключ дедупа в `emit_c.rs` (user-external merge)
+изменён `c_name` → `(c_name, param_c_types)`. True-duplicate (builtin-supply ↔ `import`
+double-feed, тот же c_name + та же сигнатура) молча схлопывается (byte-identical). Genuine
+overload-collision (один C-символ, РАЗНЫЕ `param_c_types`) → `E_FFI_C_NAME_OVERLOAD_CONFLICT`
+(compile error) вместо тихого проглатывания второй сигнатуры. Zero-regression: atomics
+(import std.runtime.sync — двойное снабжение) PASS 6/0 без конфликта.
 **Adversarial-аудит M0 (2026-07-04, spec-doc-фиксы):** в D282 rule 2 добавлены `uint`
 (=`nova_uint`, D130), C-ABI fn-ptr base-case (`*extern "C" fn` как параметр/поле —
 закрыл D282↔D353 gap), `Option[RawPtr]` (было узко `Option[*T]`), исправлен пример

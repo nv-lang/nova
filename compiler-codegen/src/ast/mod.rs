@@ -1485,10 +1485,25 @@ pub enum TypeRef {
     /// `(A, B, C)` кортеж
     Tuple(Vec<TypeRef>, Span),
     /// `fn(A, B) E1 E2 -> R` — функциональный тип. Эффекты опциональны.
+    ///
+    /// **Plan 174.6 M1 / D353 (2026-07-04):** `extern_abi` — ABI-тег
+    /// fn-указательного ТИПА, параллельный `FnDecl.extern_abi`:
+    ///   - `None`      → `*fn(...)` / `*unsafe fn(...)` — Nova-ABI captureless
+    ///                   fn-ptr (Nova-типы в сигнатуре допустимы, D216 §10).
+    ///   - `Some("C")` → `*extern "C" fn(...)` — C-ABI fn-ptr (для настоящего
+    ///                   C-callback: `qsort`-компаратор, libuv-хендлер). Типы
+    ///                   сигнатуры обязаны быть C-ABI (D282 rule 2), проверка —
+    ///                   `check_ffi_c_abi_signatures`. Коэрция
+    ///                   `fn → *extern "C" fn` iff captureless ∧ C-ABI ∧
+    ///                   effect-free (D353).
+    /// C-representation обоих тегов идентична (function pointer) → codegen
+    /// не различает; тег живёт только на уровне типа для checker-валидации.
     Func {
         params: Vec<TypeRef>,
         effects: Vec<TypeRef>,
         return_type: Option<Box<TypeRef>>,
+        /// D353: `Some("C")` для `*extern "C" fn`, `None` для Nova-ABI `*fn`.
+        extern_abi: Option<String>,
         span: Span,
     },
     /// Plan 97 Ф.2 (D53 §628, D142): анонимный protocol-тип в позиции
@@ -3016,6 +3031,7 @@ mod typeref_uses_any_type_param_tests {
             params: vec![named(&["int"]), named(&["T"])],
             return_type: Some(Box::new(named(&["bool"]))),
             effects: vec![],
+            extern_abi: None,
             span: sp(),
         };
         assert!(ty.uses_any_type_param(&params));
@@ -3028,6 +3044,7 @@ mod typeref_uses_any_type_param_tests {
             params: vec![named(&["int"])],
             return_type: Some(Box::new(named(&["U"]))),
             effects: vec![],
+            extern_abi: None,
             span: sp(),
         };
         assert!(ty.uses_any_type_param(&params));
@@ -3104,6 +3121,7 @@ mod typeref_uses_any_type_param_tests {
             params: vec![named(&["int"]), named(&["str"])],
             return_type: Some(Box::new(named(&["bool"]))),
             effects: vec![],
+            extern_abi: None,
             span: sp(),
         };
         assert!(!ty.uses_any_type_param(&params));

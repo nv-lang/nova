@@ -2785,9 +2785,31 @@ impl CEmitter {
                     // удваивался → call-site манглился param-суффиксом
                     // (`Nova_AtomicI64_method_fetch_add__int64_t`), которого нет
                     // в C-рантайме → undefined symbol на линковке.
+                    // [M-172.1-extern-cname-dedup-overloads] (Plan 174.6 M1):
+                    // dedup key is (c_name, param_c_types), NOT c_name alone. A
+                    // TRUE duplicate — same C symbol AND same signature, from the
+                    // builtin-supply vs `import` double-feed — is silently
+                    // collapsed (byte-identical to the prior behaviour). But two
+                    // decls sharing a c_name with DIFFERENT param_c_types are a
+                    // genuine FFI overload collision: one C symbol cannot carry
+                    // two ABIs, and the prior `c_name`-only dedup would silently
+                    // drop the second signature → mis-resolved overload at the
+                    // call site. Reject with a compile error instead of swallowing.
                     let slot = self.external_registry.by_key.entry(key).or_default();
                     for d in decls {
-                        if !slot.iter().any(|e| e.c_name == d.c_name) {
+                        if let Some(existing) = slot.iter().find(|e| e.c_name == d.c_name) {
+                            if existing.param_c_types != d.param_c_types {
+                                return Err(format!(
+                                    "[E_FFI_C_NAME_OVERLOAD_CONFLICT] external fn `{}` maps \
+                                     two different signatures onto one C symbol `{}` \
+                                     (param C-types {:?} vs {:?}) — a C symbol has exactly \
+                                     one ABI. Give the overloads distinct C names, or unify \
+                                     them to a single signature.",
+                                    d.name, d.c_name, existing.param_c_types, d.param_c_types,
+                                ));
+                            }
+                            // identical signature → true duplicate, skip.
+                        } else {
                             slot.push(d);
                         }
                     }

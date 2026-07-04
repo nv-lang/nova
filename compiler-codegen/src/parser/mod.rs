@@ -6149,30 +6149,66 @@ impl Parser {
                 }
             }
             TokenKind::KwFn => {
-                // fn(A, B) E1 E2 -> R
-                self.bump();
-                self.expect(&TokenKind::LParen)?;
-                let mut params = Vec::new();
-                while !matches!(self.peek().kind, TokenKind::RParen) {
-                    params.push(self.parse_type()?);
-                    if self.eat(&TokenKind::Comma).is_none() {
-                        break;
+                // fn(A, B) E1 E2 -> R — Nova-ABI fn-type (extern_abi = None).
+                self.parse_fn_type_signature(start, None)
+            }
+            // **Plan 174.6 M1 / D353 (2026-07-04):** `extern "C" fn(...)` /
+            // `extern "C" unsafe fn(...)` — C-ABI fn-указательный тип-тег,
+            // синтаксически параллельный объявлению `extern "C" fn` (D282).
+            // Обычно под указателем (`*extern "C" fn(...)`, canonical), но arm
+            // здесь ловит тег в любой type-position. Только ABI `"C"` валиден на
+            // fn-указательном типе (Nova-ABI пишется без тега — просто `fn`);
+            // `extern "nova" fn`-ТИП бессмыслен (= `fn`), отвергается.
+            // `*extern "C" unsafe fn` = `Pointer(Unsafe(Func{extern_abi:C}))` —
+            // тег на Func, `unsafe` — постфиксный pointee-модификатор (D216 §10),
+            // зеркалит `*unsafe fn` = `Pointer(Unsafe(Func))`.
+            TokenKind::KwExtern => {
+                self.bump(); // extern
+                let abi_span = self.peek().span;
+                match &self.peek().kind.clone() {
+                    TokenKind::Str(s) if s == "C" => { self.bump(); }
+                    TokenKind::Str(other) => {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "[E_FFI_NON_C_ABI_TYPE] fn-указательный ABI-тег `extern \"{}\"` \
+                                 не поддержан — на fn-указательном ТИПЕ допустим только \
+                                 `extern \"C\" fn(...)` (C-ABI callback, D353). Nova-ABI \
+                                 fn-указатель пишется без тега: `*fn(...)`.",
+                                other
+                            ),
+                            abi_span,
+                        ));
+                    }
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "expected ABI string `\"C\"` after `extern` in fn-pointer type \
+                             (`*extern \"C\" fn(...)`, D353)".to_string(),
+                            abi_span,
+                        ));
                     }
                 }
-                self.expect(&TokenKind::RParen)?;
-                let effects = self.parse_effects_until_arrow_or_body()?;
-                let return_type = if self.eat(&TokenKind::Arrow).is_some() {
-                    Some(Box::new(self.parse_type()?))
+                // Optional `unsafe` between `extern "C"` and `fn` (D216 §10
+                // composition: `*extern "C" unsafe fn`). Wrap the Func in an
+                // `Unsafe` value-wrapper, mirroring the `*unsafe fn` shape.
+                let unsafe_kw = self.eat(&TokenKind::KwUnsafe).is_some();
+                if !matches!(self.peek().kind, TokenKind::KwFn) {
+                    let span = self.peek().span;
+                    return Err(Diagnostic::new(
+                        format!(
+                            "expected `fn` after `extern \"C\"`{} in fn-pointer type, got {}",
+                            if unsafe_kw { " unsafe" } else { "" },
+                            self.peek().kind.name()
+                        ),
+                        span,
+                    ));
+                }
+                let func = self.parse_fn_type_signature(start, Some("C".to_string()))?;
+                if unsafe_kw {
+                    let span = func.span();
+                    Ok(TypeRef::Unsafe(Box::new(func), span))
                 } else {
-                    None
-                };
-                let end = self.tokens[self.pos.saturating_sub(1)].span;
-                Ok(TypeRef::Func {
-                    params,
-                    effects,
-                    return_type,
-                    span: start.merge(end),
-                })
+                    Ok(func)
+                }
             }
             TokenKind::Ident(_) => {
                 let mut path = vec![self.parse_ident()?.0];
@@ -6215,6 +6251,43 @@ impl Parser {
                 start,
             )),
         }
+    }
+
+    /// **Plan 174.6 M1 / D353:** parse the `fn(A, B) E1 E2 -> R` signature of
+    /// a fn-pointer TYPE, assuming the `fn` keyword is the current token.
+    /// `start` = span of the leading `fn`/`extern` token; `extern_abi` carries
+    /// the D353 ABI-tag (`None` = Nova-ABI `*fn`, `Some("C")` = C-ABI
+    /// `*extern "C" fn`). Shared by the `KwFn` and `KwExtern` arms of
+    /// `parse_type`.
+    fn parse_fn_type_signature(
+        &mut self,
+        start: crate::diag::Span,
+        extern_abi: Option<String>,
+    ) -> Result<TypeRef, Diagnostic> {
+        self.expect(&TokenKind::KwFn)?;
+        self.expect(&TokenKind::LParen)?;
+        let mut params = Vec::new();
+        while !matches!(self.peek().kind, TokenKind::RParen) {
+            params.push(self.parse_type()?);
+            if self.eat(&TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        self.expect(&TokenKind::RParen)?;
+        let effects = self.parse_effects_until_arrow_or_body()?;
+        let return_type = if self.eat(&TokenKind::Arrow).is_some() {
+            Some(Box::new(self.parse_type()?))
+        } else {
+            None
+        };
+        let end = self.tokens[self.pos.saturating_sub(1)].span;
+        Ok(TypeRef::Func {
+            params,
+            effects,
+            return_type,
+            extern_abi,
+            span: start.merge(end),
+        })
     }
 
     fn parse_type_args(&mut self) -> Result<Vec<TypeRef>, Diagnostic> {

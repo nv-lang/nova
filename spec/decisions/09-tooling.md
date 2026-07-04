@@ -3177,7 +3177,26 @@ Non-matching prefixes (e.g., `[NOTE]`) produce `code = None`.
 `E_CMP_CHAIN_UNSUPPORTED` (guidance note — use `&&`),
 `E_RELATIONAL_OPERAND_NOT_ORDERED` (suggest import `Ordered` protocol).
 
-**Total: 39 fixes** (initial ≥25 met; extended to 39 across all nova-lsp language-sync work).
+**104.5.10 — FFI C-ABI diagnostics (3 codes, added 2026-07-04, Plan 174.6 M1):**
+These codes are emitted by the Plan 174.6 M1 checker (`check_ffi_c_abi_signatures`
++ the `*extern "C" fn` coercion gate). Their message-text is normative (fixed in
+[Plan 174.6 §4](../../docs/plans/174.6-ffi-abi-types.md); the M0 error-index debt in
+[08-runtime.md D353](08-runtime.md#d353) is discharged here). Registered as
+**guidance-note** quick-fixes (`HasPlaceholders`, `edit = null`) — the fix directs the
+author to convert at the FFI boundary; no single machine-applicable rewrite exists.
+- `E_FFI_NON_C_ABI_TYPE` — a parameter/return/field of an `extern "C" fn` (or of a
+  `*extern "C" fn` fn-pointer signature) is not C-ABI-compatible (D282 rule 2).
+  Message: ``type `%T` in `extern "C" fn` is not C-ABI-compatible; allowed: scalar,
+  raw-ptr, `str`, `Option[*T]`, `*extern "C" fn(...)`, value-record/tuple with all-C-ABI
+  fields`` + fix-it (convert at the boundary).
+- `E_CALLBACK_THROWS_OVER_C_ABI` — coercing a fn that declares `Fail` (or, per D353
+  clause 3, ANY effect) into a C-ABI fn-pointer: C invokes the callback with no Nova
+  handler-frame on the stack. Guidance: `catch`/handle inside the fn, return a sentinel.
+- `E_CLOSURE_HAS_ENV` — coercing an environment-capturing closure (or a bound method
+  value) into a captureless C-ABI fn-pointer. Guidance: extract to a top-level free fn.
+
+**Total: 42 fixes** (initial ≥25 met; extended to 42 across all nova-lsp language-sync work
+plus the Plan 174.6 M1 FFI C-ABI diagnostics).
 
 **Note on `E_STR_NO_LEN` fix applicability:**
 The `fix_str_no_len` handler scans the diagnostic range for the pattern `.len` and replaces

@@ -627,6 +627,7 @@ mod resolved_type_tests {
             params: vec![],
             return_type: None,
             effects: vec![named(&["Fail"], vec![named(&["MyErr"], vec![])])],
+            extern_abi: None,
             span: Span::dummy(),
         };
         match ResolvedType::from_type_ref(&func) {
@@ -652,6 +653,7 @@ mod resolved_type_tests {
             params: vec![],
             return_type: None,
             effects: vec![named(&["Db"], vec![named(&["std", "Conn"], vec![])])],
+            extern_abi: None,
             span: Span::dummy(),
         };
         if let ResolvedType::Func { effects, .. } = ResolvedType::from_type_ref(&func2) {
@@ -1822,6 +1824,14 @@ fn check_module_impl(
     // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
     // depth counter, emits diagnostic при depth == 0.
     check_unsafe_context_in_module(module, &mut errors);
+
+    // Plan 174.6 M1 (D282 rule 2 / D353): validate that `extern "C" fn`
+    // signatures (params + return) — and every `*extern "C" fn` fn-pointer
+    // signature — use only C-ABI-compatible types. Non-C-ABI types (GC
+    // records, `Vec`, `Result`, `Option[non-ptr]`, Nova-ABI `*fn`, …) →
+    // `E_FFI_NON_C_ABI_TYPE`. Pure checker-channel diagnostic (§1/§6): the
+    // C-ABI grammar is read off the TYPE structure, never off type names.
+    check_ffi_c_abi_signatures(module, &mut errors);
 
     // Plan 172.1 U.3.4: lift the per-call resolved-callee channel (call-site `ExprId` →
     // chosen callee `FnDecl` span) out of the checker into the `ModuleEnv` so the pipeline
@@ -17916,10 +17926,16 @@ fn render_type_ref(t: &TypeRef) -> String {
             let s: Vec<String> = items.iter().map(render_type_ref).collect();
             format!("({})", s.join(", "))
         }
-        TypeRef::Func { params, return_type, .. } => {
+        TypeRef::Func { params, return_type, extern_abi, .. } => {
             let p: Vec<String> = params.iter().map(render_type_ref).collect();
             let r = return_type.as_ref().map(|t| format!(" -> {}", render_type_ref(t))).unwrap_or_default();
-            format!("fn({}){}", p.join(", "), r)
+            // D353: surface the ABI-tag so diagnostics distinguish Nova-ABI
+            // `*fn` from C-ABI `*extern "C" fn`.
+            let abi = match extern_abi.as_deref() {
+                Some("C") => "extern \"C\" ",
+                _ => "",
+            };
+            format!("{}fn({}){}", abi, p.join(", "), r)
         }
         // Plan 97 Ф.2 (D142): анонимный protocol-тип — пишется через
         // render_method_sig, чтобы R5.3 diagnostic'и видели полную
@@ -26056,6 +26072,377 @@ pub fn check_atomic_store_ordering(
 }
 
 // =============================================================================
+// Plan 174.6 M1 — E_FFI_NON_C_ABI_TYPE enforcement (D282 rule 2 / D353)
+// =============================================================================
+
+/// The C-ABI scalar family (D282 rule 2): `int`/`uint` (address-sized, distinct
+/// from `i64`/`u64`), fixed-width ints, floats, `bool`, `char`. Read off the
+/// TYPE name only for these known built-in primitives (§3: the grammar drives
+/// classification, not user names — these are language primitives, not user
+/// types).
+fn ffi_is_c_abi_scalar(name: &str) -> bool {
+    matches!(
+        name,
+        "int" | "uint" | "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" | "bool" | "char"
+    )
+}
+
+/// Build the `E_FFI_NON_C_ABI_TYPE` diagnostic (Plan 174.6 §4 message-text,
+/// registered in `spec/decisions/09-tooling.md`).
+fn ffi_non_c_abi_diag(span: Span, offender: &str) -> Diagnostic {
+    Diagnostic::new(
+        format!(
+            "[E_FFI_NON_C_ABI_TYPE] type `{}` in `extern \"C\" fn` is not \
+             C-ABI-compatible; allowed: scalar, raw-ptr, `str`, `Option[*T]`, \
+             `*extern \"C\" fn(...)`, value-record/tuple with all-C-ABI fields. \
+             Convert to a C-ABI type at the FFI boundary (D282 rule 2).",
+            offender
+        ),
+        span,
+    )
+}
+
+/// **Plan 174.6 M1:** three-valued pointer-ness test used by the `Option[X]`
+/// NPO rule (D282: `Option[X]` is C-ABI iff `X` is a raw-pointer type — `None`
+/// = 0, `Some(p)` = p). `Some(true)` = definitely a pointer (`*T`/`*()`/`CStr`/
+/// newtype-over-ptr/`*extern "C" fn`); `Some(false)` = definitely NOT a pointer
+/// (scalar, `str`, record, `Vec`, tuple, …); `None` = unresolved (a generic
+/// param or a cross-module type absent from this CU) → the caller stays
+/// conservative (does NOT flag, so the defining module owns the verdict).
+fn ffi_ptr_ness(
+    ty: &TypeRef,
+    types: &HashMap<String, &crate::ast::TypeDecl>,
+    depth: u32,
+) -> Option<bool> {
+    use crate::ast::{TypeDeclKind, TypeRef as TR};
+    if depth > 32 {
+        return None;
+    }
+    match ty.strip_modifiers() {
+        TR::Pointer(..) => Some(true),
+        TR::Named { path, generics, .. } => {
+            let name = path.last().map(|s| s.as_str()).unwrap_or("");
+            if generics.is_empty() && name == "CStr" {
+                return Some(true); // CStr = *u8
+            }
+            if generics.is_empty() && (ffi_is_c_abi_scalar(name) || name == "str") {
+                return Some(false);
+            }
+            match types.get(name) {
+                Some(td) => match &td.kind {
+                    TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+                        ffi_ptr_ness(inner, types, depth + 1)
+                    }
+                    // Opaque external handle (`external type X`) lowers to
+                    // `Nova_X*` (a pointer) → NPO-eligible.
+                    TypeDeclKind::Opaque => Some(true),
+                    _ => Some(false),
+                },
+                None => None, // unresolved → unknown
+            }
+        }
+        // Anything else (unit / tuple / array / fn-type / protocol) is a value,
+        // never a bare pointer.
+        _ => Some(false),
+    }
+}
+
+/// **Plan 174.6 M1 (D282 rule 2):** recursive C-ABI classifier. Returns the
+/// first non-C-ABI offender `(span, rendered-type)`, or `None` if `ty` is
+/// C-ABI-compatible. `is_top_return` marks the top-level return position where
+/// `()` lowers to C `void` (allowed); as a parameter/element/field type `()` is
+/// forbidden (no C unit). `visited` guards value-record cycles (recursion also
+/// terminates naturally at raw pointers — `Node value {next *Node}`).
+fn ffi_c_abi_violation(
+    ty: &TypeRef,
+    types: &HashMap<String, &crate::ast::TypeDecl>,
+    is_top_return: bool,
+    visited: &mut HashSet<String>,
+) -> Option<(Span, String)> {
+    use crate::ast::{AllocKind, TypeDeclKind, TypeRef as TR};
+    match ty {
+        // Value-level modifier wrappers (`ro T` / `mut T` / `unsafe T`) are
+        // transparent to the ABI. (`*ro T` / `*mut T` / `*unsafe T` carry the
+        // modifier on the pointee INSIDE the Pointer arm below.)
+        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _) => {
+            ffi_c_abi_violation(inner, types, is_top_return, visited)
+        }
+        // Raw pointers: `*T` (any pointee) is C-ABI, recursion stops at the
+        // address — EXCEPT a pointer to a fn (fn-pointer), where the D353
+        // ABI-tag decides: `*extern "C" fn` is C-ABI (signature types must be
+        // C-ABI, recurse); Nova-ABI `*fn` is NOT C-ABI.
+        TR::Pointer(inner, _) => {
+            if let TR::Func { params, return_type, extern_abi, .. } = inner.strip_modifiers() {
+                if extern_abi.as_deref() == Some("C") {
+                    for p in params {
+                        if let Some(v) = ffi_c_abi_violation(p, types, false, visited) {
+                            return Some(v);
+                        }
+                    }
+                    if let Some(rt) = return_type {
+                        if let Some(v) = ffi_c_abi_violation(rt, types, true, visited) {
+                            return Some(v);
+                        }
+                    }
+                    None
+                } else {
+                    // Nova-ABI `*fn(...)` used where C-ABI is required.
+                    Some((ty.span(), render_type_ref(ty)))
+                }
+            } else {
+                None // raw pointer to any non-fn pointee → C-ABI
+            }
+        }
+        TR::Named { path, generics, span } => {
+            let name = path.last().map(|s| s.as_str()).unwrap_or("");
+            // Scalars / `str` (= `{ptr,len}` value-record) / `CStr` (= `*u8`).
+            if generics.is_empty() && (ffi_is_c_abi_scalar(name) || name == "str" || name == "CStr")
+            {
+                return None;
+            }
+            // `Option[X]` — C-ABI iff `X` is a raw-pointer type (NPO).
+            if name == "Option" && generics.len() == 1 {
+                return if matches!(ffi_ptr_ness(&generics[0], types, 0), Some(false)) {
+                    Some((*span, render_type_ref(ty)))
+                } else {
+                    None
+                };
+            }
+            // Known non-C-ABI generic built-ins: `Vec`/slice (GC) and tagged
+            // unions (`Result` and friends) — tagged layout is not C-ABI.
+            if matches!(name, "Vec" | "Result") {
+                return Some((*span, render_type_ref(ty)));
+            }
+            // User-declared type: resolve its allocation/kind.
+            if let Some(td) = types.get(name) {
+                // Cycle guard: a value-record reachable through non-pointer
+                // fields would be infinite-size (rejected elsewhere); guard
+                // anyway so a malformed input cannot loop.
+                if !visited.insert(name.to_string()) {
+                    return None;
+                }
+                let subst = ffi_build_subst(&td.generics, generics);
+                let r = match &td.kind {
+                    // Heap GC-record → by-reference `Nova_X*` → NOT C-ABI.
+                    // Value-record → by-value C-struct iff ALL fields C-ABI.
+                    TypeDeclKind::Record(fields) => {
+                        if td.allocation != AllocKind::Value {
+                            Some((*span, render_type_ref(ty)))
+                        } else {
+                            ffi_fields_violation(
+                                fields.iter().map(|f| &f.ty),
+                                types,
+                                &subst,
+                                visited,
+                            )
+                        }
+                    }
+                    // Named tuple = stack value type → C-ABI iff all fields C-ABI.
+                    TypeDeclKind::NamedTuple(fields) => ffi_fields_violation(
+                        fields.iter().map(|f| &f.ty),
+                        types,
+                        &subst,
+                        visited,
+                    ),
+                    // Newtype / alias — transparent wrapper; check the underlying.
+                    TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+                        let applied = ffi_subst_apply(inner, &subst);
+                        ffi_c_abi_violation(&applied, types, false, visited)
+                    }
+                    // Opaque external handle → `Nova_X*` (pointer) → C-ABI.
+                    TypeDeclKind::Opaque => None,
+                    // Tagged unions / protocols / effects / type-sets — not C-ABI.
+                    TypeDeclKind::Sum(_)
+                    | TypeDeclKind::Protocol { .. }
+                    | TypeDeclKind::Effect(_)
+                    | TypeDeclKind::TypeSet(_) => Some((*span, render_type_ref(ty))),
+                };
+                visited.remove(name);
+                return r;
+            }
+            // Unresolved (generic param / cross-module type absent from this
+            // CU) → conservative C-ABI; the defining module owns the verdict.
+            None
+        }
+        // Anonymous tuple — C-ABI iff non-empty and every element C-ABI.
+        TR::Tuple(elems, span) => {
+            if elems.is_empty() {
+                return Some((*span, "()".to_string()));
+            }
+            for e in elems {
+                if let Some(v) = ffi_c_abi_violation(e, types, false, visited) {
+                    return Some(v);
+                }
+            }
+            None
+        }
+        // `()` — top-level return is C `void` (OK); elsewhere forbidden.
+        TR::Unit(span) => {
+            if is_top_return {
+                None
+            } else {
+                Some((*span, "()".to_string()))
+            }
+        }
+        // `[N]T` fixed-array — inline C array; C-ABI iff element is C-ABI (D228).
+        TR::FixedArray(_, inner, _) => ffi_c_abi_violation(inner, types, false, visited),
+        // `[]T` = `Vec[T]` (GC), a bare `fn(...)` type (Nova closure, fat), or a
+        // protocol existential — none are C-ABI.
+        TR::Array(_, span) | TR::Func { span, .. } | TR::Protocol { span, .. } => {
+            Some((*span, render_type_ref(ty)))
+        }
+    }
+}
+
+/// Check every field type against the C-ABI grammar (after generic
+/// substitution). Returns the first offender, or `None` if all fields C-ABI.
+fn ffi_fields_violation<'a, I>(
+    fields: I,
+    types: &HashMap<String, &crate::ast::TypeDecl>,
+    subst: &HashMap<String, TypeRef>,
+    visited: &mut HashSet<String>,
+) -> Option<(Span, String)>
+where
+    I: Iterator<Item = &'a TypeRef>,
+{
+    for fty in fields {
+        let applied = ffi_subst_apply(fty, subst);
+        if let Some(v) = ffi_c_abi_violation(&applied, types, false, visited) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Build a generic-parameter → concrete-argument substitution map from a type
+/// declaration's `generics` and a use-site's actual type-args. Missing/extra
+/// args are ignored (arity errors are reported elsewhere).
+fn ffi_build_subst(
+    params: &[crate::ast::GenericParam],
+    args: &[TypeRef],
+) -> HashMap<String, TypeRef> {
+    let mut m = HashMap::new();
+    for (p, a) in params.iter().zip(args.iter()) {
+        m.insert(p.name.clone(), a.clone());
+    }
+    m
+}
+
+/// Apply a generic substitution to a `TypeRef` (structural rewrite). Only the
+/// variants that can appear in a field/signature type are rewritten; others are
+/// cloned as-is. A bare single-segment `Named` matching a substitution key is
+/// replaced by its argument (recursively re-substituted is unnecessary — args
+/// are already concrete at the use site).
+fn ffi_subst_apply(ty: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
+    use crate::ast::TypeRef as TR;
+    if subst.is_empty() {
+        return ty.clone();
+    }
+    match ty {
+        TR::Named { path, generics, span } => {
+            if path.len() == 1 {
+                if let Some(rep) = subst.get(&path[0]) {
+                    if generics.is_empty() {
+                        return rep.clone();
+                    }
+                }
+            }
+            TR::Named {
+                path: path.clone(),
+                generics: generics.iter().map(|g| ffi_subst_apply(g, subst)).collect(),
+                span: *span,
+            }
+        }
+        TR::Array(inner, span) => {
+            TR::Array(Box::new(ffi_subst_apply(inner, subst)), *span)
+        }
+        TR::FixedArray(n, inner, span) => {
+            TR::FixedArray(*n, Box::new(ffi_subst_apply(inner, subst)), *span)
+        }
+        TR::Tuple(elems, span) => {
+            TR::Tuple(elems.iter().map(|e| ffi_subst_apply(e, subst)).collect(), *span)
+        }
+        TR::Pointer(inner, span) => {
+            TR::Pointer(Box::new(ffi_subst_apply(inner, subst)), *span)
+        }
+        TR::Readonly(inner, span) => {
+            TR::Readonly(Box::new(ffi_subst_apply(inner, subst)), *span)
+        }
+        TR::Mut(inner, span) => TR::Mut(Box::new(ffi_subst_apply(inner, subst)), *span),
+        TR::Unsafe(inner, span) => TR::Unsafe(Box::new(ffi_subst_apply(inner, subst)), *span),
+        TR::Func { params, effects, return_type, extern_abi, span } => TR::Func {
+            params: params.iter().map(|p| ffi_subst_apply(p, subst)).collect(),
+            effects: effects.clone(),
+            return_type: return_type.as_ref().map(|r| Box::new(ffi_subst_apply(r, subst))),
+            extern_abi: extern_abi.clone(),
+            span: *span,
+        },
+        other => other.clone(),
+    }
+}
+
+/// **Plan 174.6 M1 (D282 rule 2 / D353):** validate every `extern "C" fn`
+/// declaration signature (parameters + return) — and, recursively, every
+/// `*extern "C" fn` fn-pointer signature nested within — against the C-ABI
+/// grammar. Non-C-ABI types → `E_FFI_NON_C_ABI_TYPE`.
+pub(crate) fn check_ffi_c_abi_signatures(
+    module: &crate::ast::Module,
+    errors: &mut Vec<Diagnostic>,
+) {
+    use crate::ast::Item;
+    // Name → TypeDecl map over the whole CU (entry items + peer files). In a
+    // single CU, imported types are inlined into `module.items`; cross-module
+    // types still absent resolve conservatively (see `ffi_c_abi_violation`).
+    let mut types: HashMap<String, &crate::ast::TypeDecl> = HashMap::new();
+    for it in &module.items {
+        if let Item::Type(td) = it {
+            types.entry(td.name.clone()).or_insert(td);
+        }
+    }
+    for pf in &module.peer_files {
+        for it in &pf.items_here {
+            if let Item::Type(td) = it {
+                types.entry(td.name.clone()).or_insert(td);
+            }
+        }
+    }
+
+    let mut check_fn = |fd: &crate::ast::FnDecl, errors: &mut Vec<Diagnostic>| {
+        if fd.extern_abi.as_deref() != Some("C") {
+            return;
+        }
+        for p in &fd.params {
+            if let Some((span, disp)) =
+                ffi_c_abi_violation(&p.ty, &types, false, &mut HashSet::new())
+            {
+                errors.push(ffi_non_c_abi_diag(span, &disp));
+            }
+        }
+        if let Some(rt) = &fd.return_type {
+            if let Some((span, disp)) =
+                ffi_c_abi_violation(rt, &types, true, &mut HashSet::new())
+            {
+                errors.push(ffi_non_c_abi_diag(span, &disp));
+            }
+        }
+    };
+
+    for it in &module.items {
+        if let Item::Fn(fd) = it {
+            check_fn(fd, errors);
+        }
+    }
+    for pf in &module.peer_files {
+        for it in &pf.items_here {
+            if let Item::Fn(fd) = it {
+                check_fn(fd, errors);
+            }
+        }
+    }
+}
+
+// =============================================================================
 // Plan 118 Ф.3.5 — E_UNSAFE_REQUIRED enforcement
 // =============================================================================
 
@@ -26090,10 +26477,20 @@ pub(crate) fn check_unsafe_context_in_module(
     // no false negatives.
     let mut unsafe_static_methods: HashSet<(String, String)> = HashSet::new();
     let mut fail_fns: HashSet<String> = HashSet::new();
+    // Plan 174.6 M1 / D353 clause 3: fns declaring ANY non-`Fail` effect
+    // (`IO`/`Async`/`Time`/custom algebraic). Coercing such a fn into a C-ABI
+    // `*extern "C" fn` is unsound — C invokes the callback with no Nova
+    // handler-frame on the stack, so any effect-operation has nowhere to
+    // resolve. Maps fn-name → the first offending effect's display text (for
+    // the diagnostic). `Fail` is tracked separately in `fail_fns` (its own
+    // `E_CALLBACK_THROWS_OVER_C_ABI` path fires for BOTH `*fn` and
+    // `*extern "C" fn`, unchanged from Plan 118).
+    let mut effect_fns: HashMap<String, String> = HashMap::new();
     let collect_from = |item: &Item,
                         unsafe_fns: &mut HashSet<String>,
                         unsafe_static_methods: &mut HashSet<(String, String)>,
-                        fail_fns: &mut HashSet<String>| {
+                        fail_fns: &mut HashSet<String>,
+                        effect_fns: &mut HashMap<String, String>| {
         if let Item::Fn(fd) = item {
             if fd.unsafe_attr {
                 match &fd.receiver {
@@ -26109,22 +26506,27 @@ pub(crate) fn check_unsafe_context_in_module(
             // Plan 118 A25: detect Fail effect через TypeRef::Named { path }
             // где last segment == "Fail". Fn с Fail effect = throwable —
             // cast к *fn forbidden.
+            // Plan 174.6 M1: also record ANY non-Fail declared effect for the
+            // C-ABI coercion soundness gate (D353 clause 3).
             for eff in &fd.effects {
                 if let crate::ast::TypeRef::Named { path, .. } = eff {
                     if path.last().map_or(false, |n| n == "Fail") {
                         fail_fns.insert(fd.name.clone());
-                        break;
+                    } else {
+                        effect_fns
+                            .entry(fd.name.clone())
+                            .or_insert_with(|| render_type_ref(eff));
                     }
                 }
             }
         }
     };
     for item in &module.items {
-        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns);
+        collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns);
     }
     for pf in &module.peer_files {
         for item in &pf.items_here {
-            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns);
+            collect_from(item, &mut unsafe_fns, &mut unsafe_static_methods, &mut fail_fns, &mut effect_fns);
         }
     }
     let mut state = UnsafeCtx {
@@ -26132,6 +26534,7 @@ pub(crate) fn check_unsafe_context_in_module(
         unsafe_fns,
         unsafe_static_methods,
         fail_fns,
+        effect_fns,
         in_realtime: false,
         ptr_vars: vec![HashSet::new()],
         unsafe_t_vars: vec![HashSet::new()],
@@ -26211,6 +26614,13 @@ struct UnsafeCtx {
     /// Plan 118 A25 enforcement: names of fns с Fail effect — cast к *fn
     /// → E_CALLBACK_THROWS_OVER_C_ABI (Nova exceptions cannot cross C ABI).
     fail_fns: HashSet<String>,
+    /// **Plan 174.6 M1 / D353 clause 3:** fns declaring a non-`Fail` effect,
+    /// mapped to that effect's display text. Coercing one into a C-ABI
+    /// `*extern "C" fn` → `E_CALLBACK_THROWS_OVER_C_ABI` (no Nova handler-frame
+    /// under a C call). Gated to `*extern "C" fn` targets only — bare Nova-ABI
+    /// `*fn` still carries the handler stack, so non-`Fail` effects are allowed
+    /// there (matches the un-retracted Plan 118 `*fn` behaviour).
+    effect_fns: HashMap<String, String>,
     /// Plan 118 A33 enforcement: currently walking body #realtime fn.
     /// Pointer ops (AddrOf, Deref) inside #realtime fn → E_REALTIME_POINTER_OP
     /// — deref может GC trigger (allocation), violates realtime guarantee
@@ -26823,6 +27233,39 @@ impl UnsafeCtx {
                                     ),
                                     e.span,
                                 ));
+                            } else if let crate::ast::TypeRef::Func {
+                                extern_abi: Some(abi), ..
+                            } = inner_ty.as_ref()
+                            {
+                                // Plan 174.6 M1 / D353 clause 3: coercing a fn
+                                // that declares a non-`Fail` effect into a C-ABI
+                                // `*extern "C" fn` is unsound — C invokes the
+                                // callback with no Nova handler-frame on the
+                                // stack, so `perform`-ing the effect has nowhere
+                                // to resolve. Gated to `*extern "C" fn` targets
+                                // (bare Nova-ABI `*fn` still carries the handler
+                                // stack — non-`Fail` effects allowed there). This
+                                // generalises the `Fail`-specific §10/§20 gate to
+                                // ALL effects, per D353.
+                                if abi == "C" {
+                                    if let Some(eff) = self.effect_fns.get(fname) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_CALLBACK_THROWS_OVER_C_ABI] cast \
+                                                 `{} as *extern \"C\" fn(...)` \
+                                                 forbidden — source fn declares \
+                                                 effect `{}` (D353 clause 3). C \
+                                                 invokes the callback with no Nova \
+                                                 handler-frame on the stack, so any \
+                                                 effect-operation is unsound. Only \
+                                                 effect-free (total) captureless \
+                                                 fns coerce to `*extern \"C\" fn`.",
+                                                fname, eff,
+                                            ),
+                                            e.span,
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }
@@ -27764,6 +28207,178 @@ mod chain_root_mut_check_tests {
 
     fn has_diag_tag(diags: &[Diagnostic], tag: &str) -> bool {
         diags.iter().any(|d| d.message.contains(tag))
+    }
+
+    // ─── Plan 174.6 M1 — FFI C-ABI checker (D282 rule 2 / D353) ────────────
+
+    /// The three FFI C-ABI gate codes; a valid signature/coercion must emit
+    /// NONE of them.
+    fn has_any_ffi_gate(diags: &[Diagnostic]) -> bool {
+        has_diag_tag(diags, "E_FFI_NON_C_ABI_TYPE")
+            || has_diag_tag(diags, "E_CALLBACK_THROWS_OVER_C_ABI")
+            || has_diag_tag(diags, "E_CLOSURE_HAS_ENV")
+    }
+
+    #[test]
+    fn ffi_c_abi_accepts_full_type_list() {
+        // Every C-ABI type-list case (D282 rule 2) in param + return position:
+        // scalars incl. `uint`, raw ptrs / `*()`, `str`, value-record,
+        // named-tuple, anon tuple, cyclic value-record, `Option[*T]`,
+        // `*extern "C" fn` callback, `-> ()` void.
+        let src = r#"
+module m
+
+type Rect value { w int, h int }
+type Point(x f64, y f64)
+type Node value { val int, next *Node }
+
+extern "C" fn s(a int, b uint, c i64, d u8, e f64, f bool, g char) -> uint
+extern "C" fn p(x *u8, y *(), z *int) -> *u8
+extern "C" fn t(s str, r Rect, pt Point, pr (int, *u8)) -> (int, Rect)
+extern "C" fn n(nd *Node) -> int
+extern "C" fn o(p Option[*u8]) -> Option[*int]
+extern "C" fn cb(f *extern "C" fn(*(), *()) -> i32) -> int
+extern "C" fn v(x int) -> ()
+"#;
+        let diags = check_src(src);
+        assert!(
+            !has_diag_tag(&diags, "E_FFI_NON_C_ABI_TYPE"),
+            "full C-ABI type-list must be accepted; diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ffi_c_abi_rejects_noncabi_param_and_return() {
+        for sig in [
+            "extern \"C\" fn f(v Vec[int]) -> int",
+            "extern \"C\" fn f(r Result[int, str]) -> int",
+            "extern \"C\" fn f(x Option[int]) -> int",
+            "extern \"C\" fn f(x ()) -> int",
+            "extern \"C\" fn f(cb *fn(i64) -> i64) -> int",
+            "extern \"C\" fn f(x int) -> Vec[int]",
+        ] {
+            let src = format!("module m\n{sig}\n");
+            let diags = check_src(&src);
+            assert!(
+                has_diag_tag(&diags, "E_FFI_NON_C_ABI_TYPE"),
+                "`{sig}` must be rejected as non-C-ABI; diagnostics: {:#?}",
+                diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn ffi_c_abi_rejects_heap_record_but_accepts_value_record() {
+        let heap = check_src(
+            "module m\ntype R { a int }\nextern \"C\" fn f(r R) -> int\n",
+        );
+        assert!(
+            has_diag_tag(&heap, "E_FFI_NON_C_ABI_TYPE"),
+            "heap record over C ABI must be rejected: {:#?}",
+            heap.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        let value = check_src(
+            "module m\ntype R value { a int }\nextern \"C\" fn f(r R) -> int\n",
+        );
+        assert!(
+            !has_diag_tag(&value, "E_FFI_NON_C_ABI_TYPE"),
+            "value record over C ABI must be accepted: {:#?}",
+            value.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ffi_coercion_accepts_captureless_effect_free_fn() {
+        // D353: a captureless, effect-free (total) free fn with a C-ABI
+        // signature coerces into `*extern "C" fn` — NO gate fires.
+        let src = r#"
+module m
+fn cb_ok(x i64) -> i64 => x * 2
+fn run() {
+    ro c = cb_ok as *extern "C" fn(i64) -> i64
+}
+"#;
+        let diags = check_src(src);
+        assert!(
+            !has_any_ffi_gate(&diags),
+            "captureless effect-free fn must coerce to *extern \"C\" fn; \
+             diagnostics: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ffi_coercion_rejects_closure_env() {
+        let src = r#"
+module m
+fn run() {
+    ro c = (fn(x i64) -> i64 => x * 2) as *extern "C" fn(i64) -> i64
+}
+"#;
+        let diags = check_src(src);
+        assert!(
+            has_diag_tag(&diags, "E_CLOSURE_HAS_ENV"),
+            "closure coerced to *extern \"C\" fn must fire E_CLOSURE_HAS_ENV: {:#?}",
+            diags.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ffi_coercion_rejects_fail_and_other_effects() {
+        let fail = check_src(
+            "module m\nfn cb(x i64) Fail -> i64 { x }\n\
+             fn run() {\n  ro c = cb as *extern \"C\" fn(i64) -> i64\n}\n",
+        );
+        assert!(
+            has_diag_tag(&fail, "E_CALLBACK_THROWS_OVER_C_ABI"),
+            "Fail-fn coerced to *extern \"C\" fn must fire E_CALLBACK_THROWS_OVER_C_ABI: {:#?}",
+            fail.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        // D353 clause 3: any OTHER declared effect is rejected too.
+        let eff = check_src(
+            "module m\ntype Logger effect { log(m str) -> () }\n\
+             fn cb(x i64) Logger -> i64 { x }\n\
+             fn run() {\n  ro c = cb as *extern \"C\" fn(i64) -> i64\n}\n",
+        );
+        assert!(
+            has_diag_tag(&eff, "E_CALLBACK_THROWS_OVER_C_ABI"),
+            "effect-declaring fn coerced to *extern \"C\" fn must be rejected (clause 3): {:#?}",
+            eff.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        // The SAME effectful fn coerced to a bare Nova-ABI `*fn` is allowed
+        // (Nova ABI carries the handler stack) — the effect-gate is C-ABI-only.
+        let nova = check_src(
+            "module m\ntype Logger effect { log(m str) -> () }\n\
+             fn cb(x i64) Logger -> i64 { x }\n\
+             fn run() {\n  ro c = cb as *fn(i64) -> i64\n}\n",
+        );
+        assert!(
+            !has_diag_tag(&nova, "E_CALLBACK_THROWS_OVER_C_ABI"),
+            "non-Fail effect over bare Nova *fn must NOT fire the C-ABI effect-gate: {:#?}",
+            nova.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ffi_parser_extern_c_fn_ptr_type() {
+        // `*extern "C" fn(...)` parses (D353); a bogus ABI on the tag errors.
+        let ok = check_src(
+            "module m\nextern \"C\" fn f(cb *extern \"C\" fn(i64) -> i64) -> int\n",
+        );
+        assert!(
+            !has_diag_tag(&ok, "E_FFI_NON_C_ABI_TYPE"),
+            "*extern \"C\" fn C-ABI callback param must be accepted: {:#?}",
+            ok.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+        let bad = check_src(
+            "module m\nextern \"C\" fn f(cb *extern \"rust\" fn(i64) -> i64) -> int\n",
+        );
+        assert!(
+            has_diag_tag(&bad, "E_FFI_NON_C_ABI_TYPE"),
+            "*extern \"rust\" fn tag must be rejected: {:#?}",
+            bad.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
     }
 
     /// Stable test-only type registration trick: define a type with a

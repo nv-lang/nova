@@ -8305,12 +8305,12 @@ M0 (это изменение) = только спека: тип `*extern "C" fn
 тег на типе, проверка C-ABI сигнатуры и коэрции) и тесты — **Plan 174.6 M1–M3** (D282 rule 3).
 Followup-маркер: `[M-174.6-ffi-abi]`.
 
-**Error-index-долг (deferred → M1, debt-нота):** нормативные коды `E_FFI_NON_C_ABI_TYPE` (новый),
-`E_CALLBACK_THROWS_OVER_C_ABI` и `E_CLOSURE_HAS_ENV`, на которые ссылаются D282/D353, **пока не занесены** в
-error-index `09-tooling.md` — потому что единственный catalogue кодов там (D296 §4) = registry **реализованных**
-LSP CodeAction-quick-fix'ов, а перечисленные коды эмитит **чекер M0-фичи в M1** (кода ещё нет). Message-text для
-`E_FFI_NON_C_ABI_TYPE` уже зафиксирован в [Plan 174.6 §4](../../docs/plans/174.6-ffi-abi-types.md). Занесение
-записей (с message-text) выполняется **вместе** с чекером, который их эмитит — Plan 174.6 M1.
+**Error-index-долг (deferred → M1) — ✅ DISCHARGED Plan 174.6 M1 (2026-07-04):** нормативные коды
+`E_FFI_NON_C_ABI_TYPE` (новый), `E_CALLBACK_THROWS_OVER_C_ABI` и `E_CLOSURE_HAS_ENV`, на которые ссылаются
+D282/D353, занесены в error-index `09-tooling.md` (D296 §4, подсекция 104.5.10, guidance-note) **вместе** с
+чекером Plan 174.6 M1 (`check_ffi_c_abi_signatures` + коэрция-гейт), который их эмитит — message-text из
+[Plan 174.6 §4](../../docs/plans/174.6-ffi-abi-types.md). Парсер `*extern "C" fn` (поле `TypeRef::Func.extern_abi`),
+рекурсивный C-ABI-классификатор (D282 rule 2) и коэрция-гейт (D353, вкл. clause 3 — любой эффект) реализованы.
 
 ---
 
