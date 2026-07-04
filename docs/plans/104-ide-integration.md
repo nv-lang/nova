@@ -65,13 +65,24 @@ Reference: `rust-analyzer` (Rust), `gopls` (Go), `pyright` (Python), `tsserver` 
 | Document symbols | ✅ | ✅ | ✅ 104.4 |
 | Workspace symbols | ✅ | ✅ | ✅ 104.4 |
 | Format-on-save | ✅ rustfmt | ✅ gofmt | ✅ 104.6 (`nova fmt`) |
-| Inlay hints | ✅ types | ✅ params | 🟡 V2 (deferred) |
-| Semantic tokens | ✅ | ✅ | 🟡 V2 (deferred) |
-| Call hierarchy | ✅ | ✅ | 🟡 V2 (deferred) |
+| Inlay hints | ✅ types | ✅ params | ✅ **104.10 Ф.9** (type + param-name) |
+| Semantic tokens | ✅ | ✅ | ✅ **104.10 Ф.10** (full pass + delta) |
+| documentHighlight / folding / selection | ✅ | ✅ | ✅ **104.10 Ф.15/Ф.16/Ф.17** |
+| typeDefinition / implementation | ✅ | ✅ | ✅ **104.10 Ф.19** |
+| codeLens (run-test / refs / impl) | ✅ | ✅/P | ✅ **104.10 Ф.20** (🏆 run-test via `nova test`) |
+| Workspace watching / willRename / progress | ✅ | ✅ | ✅ **104.10 Ф.18** |
+| Incremental references index | ✅ | ✅ | ✅ **104.10 Ф.12** |
+| Diagnostic-parity LSP ≡ CLI | — | — | 🏆 **104.10 Ф.0.5** (byte-parity — уникально) |
+| Call hierarchy | ✅ | ✅ | 🟡 scope-out `[M-104.10-call-hierarchy]` (фундамент готов) |
 | Debug adapter (DAP) | ✅ | ✅ (delve) | 🔴 separate plan (post-LLVM, requires native codegen) |
 
-**Что НЕ входит в V1 (отложено на V2 или separate plan):**
-- Inlay hints, semantic tokens, call hierarchy — nice-to-have, не блокеры.
+> **Планка V2 (Plan 104.10, 2026-07-04):** паритет с **7 LSP-пирами** (rust-analyzer/gopls/tsserver/
+> kotlin-lsp/jdtls/zls/sourcekit) по всем table-stakes; сознательный scope-out (с маркером) только
+> call/type-hierarchy (как zls). Goto/hover/completion/rename/signature — теперь **cross-file +
+> type-driven** (не single-file/hardcode V1). Детали — [Plan 104.10 §0.1a](104.10-lsp-v2-production.md).
+
+**Что НЕ входит в V1 (закрыто в V2/104.10 или отдельный план):**
+- ~~Inlay hints, semantic tokens~~ — ✅ доставлены в 104.10 (Ф.9/Ф.10). Call hierarchy — scope-out V2.1.
 - Debug Adapter Protocol (DAP) — требует native codegen (Plan 38 LLVM) или mature interp-debugger, отдельный план.
 - JetBrains native plugin — Kotlin/Java + IntelliJ SDK, отдельный план (либо 3rd-party LSP plugin).
 - Refactorings (extract function/extract type) — V2 (rename — самое нужное в V1).
@@ -502,11 +513,22 @@ from the language across 50+ language changes since Plans 114/133/139/147/152/16
    - `[M-104.9-completion-language-sync]` ✅
 7. ✅ **«Без упрощений как для прода»** — completion items match actual stdlib; quick-fixes handle real compiler error codes; `nova_tests/plan104_9/` 10/10 PASS via release binary.
 
-## Open questions (to resolve during work)
+## Open questions — ВСЕ ЗАКРЫТЫ (Plan 104.10 Ф.14, 2026-07-04)
 
-- **Q-104-1** Incremental compilation strategy V2 — separate sub-plan или absorb в 104.6? (Решить при profiling в 104.1.)
-- **Q-104-2** Should LSP support `nova run`/`nova test` task integration (test runner UI)? Possibly 104.10 (V2).
-- **Q-104-3** AI-completion hook (Copilot/Cursor) — special LSP extension method or vanilla completion sufficient? Defer.
+- **Q-104-1** Incremental compilation strategy V2 — ✅ **РЕЗОЛЮЦИЯ:** per-URI `ResolvedModule` cache
+  (104.10 Ф.1, `get_or_build_resolved`) + `expr_types` opt-in (Ф.2). Полный intra-module incremental
+  re-check — отложен маркером `[M-104.10-dependent-invalidation]` (reverse-dep инвалидация, урок zls).
+- **Q-104-2** Task runner UI (`nova run`/`nova test`) — ✅ **РЕЗОЛЮЦИЯ:** частично покрыто codeLens
+  run-test (104.10 Ф.20, «▶ Run test» → `executeCommand` → `nova test <path>`); полноценный
+  test-runner UI (tree/status) — out of scope LSP V2, отдельный план.
+- **Q-104-3** AI-completion hook — ✅ **РЕЗОЛЮЦИЯ:** vanilla completion + lazy `completionItem/resolve`
+  (104.10 Ф.13) достаточно; спец-LSP-метод не нужен.
+- **Q-104-4** LSP check-вход ≡ cmd_check pipeline (162.2)? — ✅ **РЕЗОЛЮЦИЯ (NEW):** ДА, сведён
+  (104.10 Ф.0.5): `number_exprs + collect_all_signatures + check_module_with_sig_table` → byte-parity
+  LSP-диаг ≡ `nova check` (D380).
+- **Q-104-5** Entry-file file_id консистентность (parse=0 vs peer_files=N)? — ✅ **РЕЗОЛЮЦИЯ (NEW):**
+  entry-duality инвариант (104.10 Ф.0, D378): `file_map.entry(MAIN_FILE_ID).or_insert(entry_path)` —
+  entry всегда резолвится, даже при пустом `peer_files` (degraded-CU).
 
 ## Lineage / related plans
 
