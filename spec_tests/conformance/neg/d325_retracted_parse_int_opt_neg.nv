@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD
+//
+// Plan 177 Ф.3 / D325 (NEG) — retracted `_opt` spelling.
+//
+// D325 (R4): `Option` — только для genuine absence, НЕ для fallibility;
+// `_opt`-близнецов НЕТ. Plan 177 Ф.2b удалил `str.parse_int_opt()` (Option-
+// форма): единственная форма — `str.parse_int() -> Result`, а Option
+// получают каналом `.ok()` (`"5".parse_int().ok()`), не отдельным именем.
+// Вызов удалённого `parse_int_opt` на примитивном receiver отвергается
+// чекером чистой диагностикой `[E_UNKNOWN_METHOD]` (§0/§1/§6) — без утечки
+// в codegen (устранённый P67/stackoverflow-мост).
+
+module neg.d325_retracted_parse_int_opt_neg
+
+fn d325_retracted_opt() -> int {
+    ro s = "5"
+    // ✗ E_UNKNOWN_METHOD — `parse_int_opt` ретрактирован (D325 R4);
+    //   используйте `s.parse_int().ok()`.
+    match s.parse_int_opt() {
+        Some(v) => v,
+        None    => 0,
+    }
+}
+
+test "D325: retracted `str.parse_int_opt` is rejected as an unknown method" {
+    ro _ = d325_retracted_opt()
+}

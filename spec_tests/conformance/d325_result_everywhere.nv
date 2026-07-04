@@ -1,0 +1,152 @@
+// D325 (Plan 177) — POSITIVE conformance: единый fallible-контракт std =
+// Result-everywhere. Проверяет ЦЕЛЕВУЮ форму на УЖЕ-мигрированных API и все
+// каналы D85, плюс R5-forwarding (A3) и коллекторы (A4).
+//
+// Норма (spec/decisions/04-effects.md D325):
+//   (R1/R2) любая падающая публичная операция std = Result[T, <Domain>Error]
+//           под ОБЫЧНЫМ именем (parse_int, read_u32_le) — без bare-throws-
+//           близнеца, без try_-дубля, без _opt (те имена ретрактированы —
+//           см. neg/d325_*.nv).
+//   (D85)   эргономика throw сохранена операторами: `!!` (throw из Result),
+//           `?` (проброс), `.ok()` (Result->Option), `match` (ветвление).
+//   (R5)    эффект Fail[E] в публичном std-API запрещён для СОБСТВЕННЫХ ошибок,
+//           но ЛЕГАЛЕН для прозрачного проброса Fail[E] из closure-параметра
+//           (effect-polymorphic forwarding) — A3.
+//   (Ф.2c)  работа с []Result — `sequence` (fail-fast) / `partition` (обе
+//           стороны) из prelude — A4.
+// Один folder-module CU `spec_tests.conformance`. Идиомы сверены с
+// nova_tests/plan91_fe2 (parse_int) и nova_tests/err177_collectors.
+module spec_tests.conformance
+
+import std.runtime.string.{ParseIntError}
+
+// ── Result-форма + все каналы D85 на УЖЕ-мигрированном str.parse_int ─────────
+
+// `?`-проброс (D85): первая Err обрывает и возвращается наружу как Err.
+fn d325_sum_two(a str, b str) -> Result[int, ParseIntError] {
+    ro x = a.parse_int()?
+    ro y = b.parse_int()?
+    Ok(x + y)
+}
+
+test "D325: parse_int — единственная Result-форма; match разбирает Ok/Err (R1/R2)" {
+    match "42".parse_int() {
+        Ok(v)  => assert(v == 42),
+        Err(_) => assert(false, "42 должно парситься"),
+    }
+    match "zz".parse_int() {
+        Ok(_)  => assert(false, "zz не число"),
+        Err(e) => match e {
+            InvalidDigit => {}
+            _            => assert(false, "ожидался InvalidDigit"),
+        },
+    }
+}
+
+test "D325: канал `!!` — throw из Result разворачивает значение (D85)" {
+    ro v = "42".parse_int()!!            // Ok(42) → 42 (в test-блоке throw ловит harness)
+    assert(v == 42)
+    ro hex = "ff".parse_int(radix: 16)!! // 255
+    assert(hex == 255)
+}
+
+test "D325: канал `?` — Ok разворачивается, Err → ранний return Err (D85)" {
+    assert((d325_sum_two("40", "2") ?? -1) == 42)   // оба Ok → 42
+    assert((d325_sum_two("40", "x") ?? -1) == -1)   // 2-й Err → return Err → ?? → -1
+    assert((d325_sum_two("q", "2") ?? -1) == -1)    // 1-й Err → return Err
+}
+
+test "D325: канал `.ok()` — Result -> Option (genuine absence, R4/D85)" {
+    assert("42".parse_int().ok() == Some(42))       // Ok → Some
+    assert("x".parse_int().ok() == None)            // Err → None (причина отброшена)
+}
+
+// ── Result-форма на УЖЕ-мигрированном ReadBuffer.read_u32_le (prelude) ───────
+
+test "D325: read_u32_le — обычное имя, Result-форма; `!!` и `.ok()` (R1/R2/D85)" {
+    ro bytes []u8 = [0x78, 0x56, 0x34, 0x12]        // little-endian → 0x12345678
+    mut rb = ReadBuffer.from(bytes)
+    ro n = rb.read_u32_le()!!
+    assert(n == 305419896)                          // 0x12345678
+
+    mut empty = ReadBuffer.from([])
+    assert(empty.read_u32_le().ok() == None)        // за границей → Err → None
+}
+
+// ── A3: R5-forwarding — HOF прокидывает Fail[E] из closure-параметра ─────────
+// Легально под D325 (не СОБСТВЕННАЯ ошибка std): эффект-полиморфный forward.
+// Guard §8.2 такую сигнатуру НЕ флагует (Fail[E] из `fn() … Fail[E]`-параметра).
+
+type D325HofErr { code int }
+
+fn d325_forward[T, E](body fn() Fail[E] -> T) Fail[E] -> T => body()
+
+// NB: `E` живёт ТОЛЬКО в эффект-позиции (`fn() Fail[E]` / return-`Fail[E]`),
+// не в value-параметре → инференс эффект-типа через HOF не пробрасывает его;
+// компилятор требует turbofish `[T, E]` (эргономика forwarding'а, не барьер
+// легальности — сама R5-сигнатура валидна и guard §8.2 её не флагует).
+test "D325/A3: HOF forwards closure's Fail[E] — no-throw и throw-путь (R5)" {
+    // no-throw путь: тело возвращает значение, E задан turbofish'ом.
+    ro ok = with Fail[D325HofErr] = |e| interrupt e.code {
+        d325_forward[int, D325HofErr](|| {
+            ro trip = false
+            if trip { throw D325HofErr { code: 7 } }
+            42
+        })
+    }
+    assert(ok == 42)
+
+    // throw-путь: closure бросает, HOF прозрачно пробрасывает, handler ловит.
+    ro caught = with Fail[D325HofErr] = |e| interrupt e.code {
+        d325_forward[int, D325HofErr](|| {
+            ro trip = true
+            if trip { throw D325HofErr { code: 7 } }
+            42
+        })
+    }
+    assert(caught == 7)
+}
+
+// ── A4: коллекторы []Result — sequence (fail-fast) / partition (обе стороны) ─
+// Драйвер — parse_int (мигрированный API), но ошибку сворачиваем в domain-str
+// каналом `match` (D85): токен-виновник как str. Коллекторы работают над
+// каноничным `[]Result[int, str]` (форма err177_collectors).
+//
+// NB: прямой `[]Result[int, ParseIntError]` в коллектор упирается в
+// ПРЕ-СУЩЕСТВУЮЩИЙ codegen typedef-ordering баг — Vec-итератор в теле
+// sequence/partition даёт `Option[Result[int, ParseIntError]]`, чей inner
+// `NovaRes_nova_int_Nova_ParseIntError_p` не регистрируется до Option-обёртки
+// (`NovaOpt_..._p`) → CC-FAIL. Класс `[M-172.1-opt-result-over-userenum-typedef-order]`
+// (домен 172.1, зеркало VR-typedef-ordering из Ф.2a/Ф.2c), вне scope Ф.3.
+
+// parse_int → Result[int, str]: при Err отдаём токен-виновник (domain-str).
+fn d325_pi(s str) -> Result[int, str] {
+    match s.parse_int() {
+        Ok(v)  => Ok(v),
+        Err(_) => Err(s),
+    }
+}
+
+test "D325/A4: sequence — все Ok собираются по порядку; первая Err обрывает" {
+    ro good []Result[int, str] = [d325_pi("1"), d325_pi("2"), d325_pi("3")]
+    match sequence(good) {
+        Ok(v)  => assert(v.len() == 3),
+        Err(_) => assert(false, "все элементы Ok"),
+    }
+
+    ro mixed []Result[int, str] = [d325_pi("1"), d325_pi("2"), d325_pi("x")]
+    match sequence(mixed) {
+        Ok(_)  => assert(false, "есть Err → должен оборваться"),
+        Err(e) => assert(e == "x"),                 // short-circuit на "x"
+    }
+}
+
+test "D325/A4: partition — успехи и ошибки сохранены обе стороны" {
+    ro mixed []Result[int, str] = [d325_pi("1"), d325_pi("2"), d325_pi("x")]
+    ro (oks, errs) = partition(mixed)
+    assert(oks.len() == 2)
+    assert(errs.len() == 1)
+    assert(oks.get(0) == Some(1))
+    assert(oks.get(1) == Some(2))
+    assert(errs.get(0) == Some("x"))
+}

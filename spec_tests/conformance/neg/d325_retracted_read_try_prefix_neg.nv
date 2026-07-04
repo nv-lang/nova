@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR E7320
+//
+// Plan 177 Ф.3 / D325 (NEG) — retracted `try_read_*` spelling (ReadBuffer).
+//
+// D325 (R1/R2): падающая публичная операция std = Result под ОБЫЧНЫМ именем.
+// Plan 177 Ф.2b переименовал `ReadBuffer.@try_read_X` → `@read_X` (Result-
+// форма) и удалил 22 bare-twin throws-обёртки. Значит `try_read_u32_le`
+// (и bare-`read_u32` без le/be — которого никогда не было) больше не
+// существуют: единственная форма — `rb.read_u32_le() -> Result`.
+//
+// Receiver здесь — user-STRUCT `ReadBuffer` (не примитив), поэтому удалённое
+// имя отвергается диагностикой method-resolution `[E7320] no field or method`
+// (стабильный существующий канал для struct-receiver'ов) — параллель к
+// str/примитивным negs (`d325_retracted_str_parse_method_neg`,
+// `d325_retracted_parse_int_opt_neg`), которые идут по `[E_UNKNOWN_METHOD]`.
+// Оба — чистые compile-error'ы: retracted-имя не резолвится ни одним каналом.
+
+module neg.d325_retracted_read_try_prefix_neg
+
+fn d325_retracted_read() -> u32 {
+    ro bytes []u8 = [0x78, 0x56, 0x34, 0x12]
+    mut rb = ReadBuffer.from(bytes)
+    // ✗ E_UNKNOWN_METHOD — `try_read_u32_le` ретрактирован (D325); используйте
+    //   `rb.read_u32_le()`.
+    match rb.try_read_u32_le() {
+        Ok(v)  => v,
+        Err(_) => 0,
+    }
+}
+
+test "D325: retracted `ReadBuffer.try_read_u32_le` is rejected as unknown method" {
+    ro _ = d325_retracted_read()
+}
