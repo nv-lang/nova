@@ -6,7 +6,7 @@
 // (R1/R5 — никакого `Fail[E]` наружу). `ErrorKind` — OPEN sum-type (wildcard-arm
 // обязателен у потребителя). `Checksum` НЕСЁТ фактические значения expected/got.
 //
-// Spec: spec/decisions/05-stdlib.md (D333 codec-контракт, D336 checksum-контракт).
+// Spec: spec/decisions/04-effects.md (D333 codec-контракт, D336 checksum-контракт).
 
 module encoding.compress
 

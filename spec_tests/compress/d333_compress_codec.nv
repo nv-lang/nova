@@ -1,7 +1,7 @@
 // D333 — codec-контракт std/encoding/compress: PURE-codec над `[]u8` (нет effect),
 // byte-first, Result-everywhere (R1/R5/D325), единый `fn(data, max) -> Result`.
 // Проверяет round-trip раскодировки реальных raw-DEFLATE / zlib / gzip векторов.
-// Spec: spec/decisions/05-stdlib.md (D333).
+// Spec: spec/decisions/04-effects.md (D333).
 
 module spec_tests.compress
 

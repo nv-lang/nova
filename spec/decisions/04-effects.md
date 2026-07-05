@@ -6510,3 +6510,181 @@ fn File consume @close() Fs -> Result[(), IoError]   // ЕДИНСТВЕННАЯ
 - **Body:** must-consume (D133/D359); `.bytes()`/`.text()`/`.drain()`/`.json()`(dynamic JsonValue).
 
 **Gated за CORE (маркеры, НЕ упрощения — `[M-178-client-policy-surface]`):** Proxy+CONNECT-tunnel / NO_PROXY-матрица (Q23), SSRF-guard (Q24), cookie-jar (Q10), idempotent-retry + pool-eviction (Q16), live keep-alive-reuse, 1xx-interim loop, TE:trailers, Expect:100-continue, auto-decompress (←179). Conformance-фикстуры d357/d360 отложены (compiler forward-decl баг `[M-178-conformance-d357-d360-forwarddecl-bug]`) → покрыто `nova_tests/http*`.
+
+## D333 — codec-контракт `std/encoding/compress`: PURE-codec, byte-first, Result (Plan 179 Ф.1/Ф.3, 2026-07-04)
+
+**Статус:** IMPLEMENTED (Ф.1 inflate + Ф.3 encode — pure Nova, БЕЗ C; brotli=D337 gated). Модуль-декларация — `module encoding.compress` (folder-module `std/encoding/compress`, рядом с `json`/`base64`/`utf16`).
+**Класс-соседи:** io-core D322 / fs D323 (byte-surface stdlib) + fallible-канон D325.
+**Нумерация:** D333 из reserved-диапазона D333–D339 (Plan 179; `README.md` §reservation; grep-verify коллизий=0). *Прежний план/код-комментарии указывали файл `spec/decisions/05-stdlib.md` — такого файла нет (аспирация; `05` занят `05-memory.md`); блок приземлён к классу-соседям в `04-effects.md`, ссылки в коде/тестах синхронизированы (§5).*
+
+### Что
+
+`std/encoding/compress` — **PURE-codec без эффекта**: ни I/O, ни effect-триады (нет `real_*`/`mock_*` — нечего мокать). Все fallible-операции возвращают `Result[T, CompressError]`; вход и выход — байты (`[]u8`), `str` в кодеке НЕ участвует. Единая форма сигнатур: decode = `fn(data, max_output)`, encode = `fn(data, level)`.
+
+### Правило
+
+- **(R1) PURE, no-effect (явное conventions-исключение).** Кодек — plain fallible-функции + coder-value, НЕ триада (module-conventions «PURE codec/serde need NO effect»). mock-тест НЕ обязателен. Зеркалит `json`/`base64`. Это **исключение, а НЕ violation** effect-триады (owner sign-off, §9 плана).
+- **(R2) Byte-first.** Вход/выход строго `[]u8`; `str` не пересекает границу кодека (вызывающий делает `.to_bytes()`/`str.from_bytes(...)` сам). Соответствует net/io byte-surface (D302/D322).
+- **(R3) D325-нейминг.** Bare-имена без `try_`: `inflate`/`zlib_decode`/`gzip_decode`/`deflate`/`zlib_encode`/`gzip_encode`. Fallible → `Result[T, CompressError]` (R1/R2 D325); `Fail[E]` наружу запрещён (R5 D325). `Option` — только genuine absence (streaming-EOF через `is_done()`, см. D335).
+- **(R4) Единый структурный `CompressError`** (value-record) + **OPEN** `ErrorKind` (sum-type — wildcard-арм обязателен у потребителя):
+
+  ```nova
+  export type CompressError value { ro kind ErrorKind, ro offset Option[int] }
+  export type ErrorKind
+      | InvalidData(str) | UnexpectedEof
+      | Checksum { ro kind ChecksumKind, ro expected u32, ro got u32 }
+      | BadHeader(str) | Bomb(int) | UnsupportedMethod(str) | TrailingData | Other(str)
+  export type ChecksumKind | Crc32 | Adler32 | Isize
+  ```
+  `Checksum` несёт фактические `expected`/`got` (диагностика); `@to_str()` — человекочитаемое описание. `offset` = байт-позиция во входе (`None` для framing/checksum).
+- **(R5) Одна форма на направление.** Decode one-shot: `inflate(data []u8, max_output int)` / `zlib_decode(...)` / `gzip_decode(...)` → `Result[[]u8, CompressError]`. Encode one-shot: `deflate(data []u8, level CompressLevel)` / `zlib_encode(...)` / `gzip_encode(...)` → `Result[[]u8, CompressError]`.
+- **(R6) `CompressLevel`** — `value`-record `{ priv n u8 }`, raw 0..11, интерпретация **per-codec**: `fastest()`=1 / `default()`=6 / `best()`=sentinel→9 / `none()`=0 / `new(n u8) -> Result[...]` (n>11 → `InvalidData`); **deflate 0..9** (`10..11` → `InvalidData`, «brotli-only» — D337). `priv`-поле читается только own-методом `@raw()` (cross-module `priv`-read через свободную функцию ловит `E_FIELD_MODULE_PRIVATE` на disk-loaded std-модуле — D220/D281).
+- **(R7) Целочисленность.** Размеры — `int`; checksums/ISIZE — `u32`; ISIZE = `(uncompressed_len mod 2^32)` (D336). Bit-reader bounds-checked; distance>window → `InvalidData`. Incomplete-Huffman: единственный distance-code принимается (RFC 1951 §3.2.7, Q13). Trailing-data после BFINAL: raw/zlib strict → `TrailingData`; gzip lenient (multi-member).
+
+### Почему
+
+1. Кодек не касается среды — навязывать effect-триаду/mock значило бы фиктивный boilerplate; конвенция сама выводит PURE codec из-под mock-mandatory (§9).
+2. Byte-first убирает вопрос «а где кодировка» и совместим с net/io/http-байтовым слоем (потребитель Plan 178 передаёт wire-байты напрямую).
+3. Один `CompressError` + OPEN `ErrorKind` композируется (кладётся в `Result`, мапится), а не дробит обработку по под-форматам; wildcard-арм держит форму расширяемой.
+
+### Что отвергнуто
+
+- **effect-триада для кодека** (`Compress` effect + `real/mock`) — нечего мокать, чистая функция; отвергнуто как фиктивный слой.
+- **`str`-API поверх байт** — лишняя кодировочная неоднозначность; отвергнуто в пользу `[]u8`.
+- **per-формат отдельные error-типы** — раздувают match; отвергнуто в пользу единого OPEN `ErrorKind`.
+
+### Связь
+
+- [D325](#d325) (fallible Result-everywhere — нейминг/форма), [D322](#d322)/[D323](#d323) (byte-surface stdlib соседи), [D302](#d302) (net byte-surface).
+- [D334](#d334) (bomb-cap decode-инвариант), [D335](#d335) (streaming coder), [D336](#d336) (checksum), [D337](#d337) (brotli C-FFI).
+- [D133](02-types.md#d133) (must-consume — только `BrotliReader`), [D215](02-types.md#d215)/[D228](02-types.md#d228) (`value`-record `CompressLevel`), [D220](02-types.md#d220)/[D307](02-types.md#d307) (`priv`-поле).
+
+### Эволюция
+
+- 2026-07-04: приземлён по факту Ф.1 (inflate/gzip/zlib decode) + Ф.3 (deflate/gzip/zlib encode). **Landed-отклонения от плана:** (1) module-декларация `encoding.compress`, не `std.encoding.compress`; (2) файл-адрес D-блока = `04-effects.md`, не аспирационный `05-stdlib.md`; (3) encode БЕЗ `max_output` (§3.5 плана — «выход<входа», bomb на компрессии невозможен), несмотря на упоминание в task-prompt.
+
+## D334 — bomb-cap: обязательный `max_output` decode-инвариант против decompression-DoS (Plan 179 Ф.1, 2026-07-04)
+
+**Статус:** IMPLEMENTED (Ф.1). §8.0-critical. Инвариант — не опция.
+
+### Что
+
+Каждый **decode**-путь (one-shot + streaming + будущий brotli-FFI) обязан нести `max_output`. Превышение выхода **ИЛИ** прогресс-входа (anti-flood) → `Err(CompressError{kind: Bomb(limit)})` инкрементально — ДО аллокации сверх лимита, НЕ post-factum. Encode `max_output` НЕ несёт (см. Почему).
+
+### Правило
+
+- **(R1) See-it-in-the-signature.** `max_output` — обязательный параметр каждой decode-сигнатуры (`inflate(data, max_output)`, `Inflater.new(max_output)`, …). Вызов decode без него — **compile-error** (neg-фикстура `inflate(data)` без `max_output`), а не runtime-сюрприз.
+- **(R2) Инкрементальная проверка.** Cap проверяется на КАЖДЫЙ выходной байт (`@emit`: `if max_output > 0 && total_out >= max_output → Bomb`), не после материализации всего выхода. Никакого OOM/hang до отказа.
+- **(R3) Граница.** `output == max_output` → ok; **первый байт сверх** cap → `Bomb(limit)`. `total_out` — общий счётчик, разделяемый членами multi-member gzip (общий cap across членов).
+- **(R4) Anti-flood.** Прогресс-вход (100k пустых gzip-членов, гигантский `FNAME`) капится тем же инвариантом / header-field-длиной → `Bomb`/`InvalidData`, а не unbounded-skip.
+- **(R5) Escape-hatch.** `max_output == 0` = «без лимита» (low-level caller-trust). Plan 178 всегда передаёт реальный cap (`max_decompressed`, 100 MiB) — 0 не используется на HTTP-пути.
+- **(R6) Encode без cap.** Encode-сигнатура строго `fn(data, level)` без `max_output`: выход компрессии ограничен ~размером входа (вход уже в памяти → амплификации/бомбы нет). Осознанное решение §3.5, НЕ пропуск.
+
+### Почему
+
+1. Decompression-bomb (малый вход → гигантский выход) — реальный DoS-вектор; cap в **сигнатуре** делает защиту невозможной к забыванию (прецедент: Zig `window_size_max`, Node `maxOutputLength`, zstd `window_size_max`).
+2. Инкрементальность (не post-factum) — единственный способ не аллоцировать бомбу до отказа.
+3. Encode симметрии cap не требует by-construction — навязывать его значило бы шум в API без инварианта.
+
+### Связь
+
+- [D333](#d333) (форма кодека), [D335](#d335) (streaming — `read(max_emit)` bounded-per-call как второй bound), [D325](#d325) (`Bomb` — вариант `CompressError`).
+- Plan 178 `max_decompressed` → `max_output` (потребитель gate Q12).
+
+## D335 — streaming incremental coder: `feed`/`read`/`finish` + SYNC-FLUSH + Plan 178 BodyReader-мост (Plan 179 Ф.1/Ф.3, 2026-07-04)
+
+**Статус:** IMPLEMENTED (Ф.1 decode-readers + Ф.3 writers). Pure-Nova-кодеры — plain `value` (НЕ consume); consume только у `BrotliReader` (D337).
+
+### Что
+
+Инкрементальные кодеры-значения поверх того же ядра, что one-shot (→ streaming-по-1-байту == one-shot байт-в-байт by-construction). Decode: `Inflater`/`ZlibReader`/`GzipReader`. Encode: `Deflater`/`ZlibWriter`/`GzipWriter`. Контракт `feed`/`read`|`flush`/`finish`; окно/bit-leftover/checksum-state сохраняются между вызовами.
+
+### Правило
+
+- **(R1) Decode-reader** (`Inflater` образец; ZlibReader/GzipReader оборачивают его + framing):
+  ```nova
+  export fn Inflater.new(max_output int) -> Inflater          // plain value, НЕ consume (Q6)
+  export fn Inflater mut @feed(chunk []u8) -> Result[(), CompressError]
+  export fn Inflater mut @read(max_emit int) -> Result[[]u8, CompressError]   // bounded-per-call
+  export fn Inflater @is_done() -> bool
+  export fn Inflater mut @finish() -> Result[(), CompressError]
+  ```
+  - **Bounded-per-call:** `read` отдаёт ≤ `max_emit` байт (anti-single-huge-alloc — второй bound поверх bomb-cap D334).
+  - **EOF-семантика:** пустой результат `read` = «пока нечего»: `is_done()==true` → поток завершён (clean EOF); иначе нужен ещё `feed`. `finish` пампит до конца, валидирует: незавершённый битстрим (нет BFINAL) → `UnexpectedEof`; мусор после BFINAL (raw strict) → `TrailingData`; финальный checksum/ISIZE — здесь.
+  - **Landed-отклонение (амонд):** форма `read -> Result[[]u8, _]` + `is_done()` вместо планового `read -> Result[Option[[]u8], _]` — обход codegen-ограничения по `Option[Vec[u8]]`; семантика D335 (EOF ≠ need-more) сохранена через `is_done()`.
+- **(R2) Encode-writer** (`Deflater` образец):
+  ```nova
+  export fn Deflater.new(level CompressLevel) -> Deflater      // value, НЕ consume
+  export fn Deflater mut @feed(chunk []u8) -> Result[[]u8, CompressError]
+  export fn Deflater mut @flush() -> Result[[]u8, CompressError]
+  export fn Deflater mut @finish() -> Result[[]u8, CompressError]
+  ```
+- **(R3) SYNC-FLUSH.** `@flush` = byte-align + пустой stored-блок (маркер `00 00 FF FF`); после flush накопленный выход — **decodable-префикс** (декодится в ровно скормленный вход). Основа SSE/chunked поверх gzip/deflate (прецеденты Go `Writer.Flush`, Node `Z_SYNC_FLUSH`). В decode такие interleaved-маркеры прозрачно глотаются (interop с Go/Node-стриминг-серверами).
+- **(R4) Multi-member (gzip).** `is_done`/read→пусто = конец ВСЕХ членов; граница члена в V1 не наблюдаема (single-member opt-out — followup §11). Общий bomb-cap across членов (D334 R3).
+- **(R5) Plan 178 BodyReader-мост.** `BodyReader.@next_chunk` → `feed` → `read(max_emit)` — фиксируется здесь как контракт auto-decompress (`Content-Encoding` gzip/deflate). Compress НЕ импортирует `std.http` (glue живёт в `real_http`, §3.4 плана).
+
+### Почему
+
+1. One-shot строится поверх streaming-ядра → нет двух реализаций и «== one-shot» гарантируется конструктивно.
+2. `read(max_emit)` — единственный способ обслужить bounded-memory-стриминг (feed 32 KB → распухание под cap с ограниченной резидентной памятью).
+3. SYNC-FLUSH — обязателен для интерактивных потоков (SSE); без него gzip-стриминг буферизует до `finish`.
+4. Pure-Nova-кодеры не держат внешний ресурс (GC-окно) → plain value, без must-consume долга; только brotli держит C-instance → consume (D337).
+
+### Связь
+
+- [D333](#d333) (кодек-форма), [D334](#d334) (bomb-cap — `read` bounded-per-call второй bound), [D337](#d337) (`BrotliReader` consume).
+- [D133](02-types.md#d133) (must-consume — контраст: pure-кодеры НЕ consume), [D228](02-types.md#d228) (`value`-record coder), Plan 178 D357/D360 (BodyReader-потребитель).
+
+## D336 — checksum-контракт: CRC-32 (gzip) / Adler-32 (zlib) / ISIZE verify-by-default (Plan 179 Ф.1, 2026-07-04)
+
+**Статус:** IMPLEMENTED (Ф.1). Модуль `encoding.compress`, файл `checksum.nv`. CRC-32 промоут из `std/_experimental/checksums/crc32.nv` (free-function-форма as-is, Q15, owner sign-off 2026-07-03); Adler-32 — NEW.
+
+### Что
+
+Целостность декодированного потока проверяется **по умолчанию**: gzip несёт CRC-32 + ISIZE, zlib — Adler-32. Несовпадение → `Err(CompressError{kind: Checksum{kind, expected, got}})`. Checksum-функции экспортируются самостоятельно (integrity, PNG, ETag).
+
+### Правило
+
+- **(R1) CRC-32** (IEEE 802.3, reversed poly `0xEDB88320`) — gzip trailer. `crc32(data []u8) -> u32` + incremental `crc32_init`/`crc32_update`/`crc32_finalize` (init `0xFFFFFFFF`, finalize XOR `0xFFFFFFFF`). Вектор: `crc32("123456789".to_bytes()) == 0xCBF43926`.
+- **(R2) Adler-32** (RFC 1950 §9, mod `65521`) — zlib trailer. `adler32(data []u8) -> u32` + incremental `adler32_init`(=1)/`adler32_update`/`adler32_finalize`(identity). Вектор: `adler32("Wikipedia".to_bytes()) == 0x11E60398`.
+- **(R3) ISIZE** — gzip: `(uncompressed_len mod 2^32) == ISIZE` (НЕ raw-длина; >4 GiB честно wrap'ается mod 2^32 и НЕ ложно-Checksum).
+- **(R4) Verify-by-default.** Trailer сверяется при `finish`/one-shot; mismatch → `Checksum{kind: Crc32|Adler32|Isize, expected, got}` (несёт фактические значения). `ChecksumKind` различает источник.
+- **(R5) Таблицы CRC — runtime-lazy** (`crc32_table_value`); comptime-const-array — followup §11 (обход, НЕ упрощение семантики).
+
+### Почему
+
+1. Silent-truncate без checksum-verify — реальный класс багов (bit-flip/усечение проходят молча); verify-by-default бьёт «декодировали мусор как валидное».
+2. `Checksum{expected, got}` несёт значения — диагностируемо (какой байт/сумма разошлись), а не «просто ошибка».
+3. ISIZE mod 2^32 — точная семантика RFC 1952 (иначе >4 GiB ложно-fail).
+
+### Связь
+
+- [D333](#d333) (`Checksum` — вариант `CompressError`), [D334](#d334) (verify на том же decode-пути).
+- Промоут `_experimental/checksums/crc32.nv` (Q15); Adler-32 NEW.
+
+## D337 — brotli C-FFI-контракт (forward-spec, gated `[M-179-brotli-vendor-lib]`) (Plan 179 Ф.2)
+
+> ⚠️ **FORWARD-SPEC, НЕ landed.** Ф.2 не приземлена — честный build-gate `[M-179-brotli-vendor-lib]`: `libbrotlidec` в проекте отсутствует (`find -iname '*brotli*'`=0; vcpkg-lib gate-env содержит только gc/z3; единственный vendored native = libuv). C-FFI без библиотеки НЕ фейкается (§0/§7.7). Этот блок фиксирует контракт **вперёд** — материализуется вместе с vendor-коммитом google/brotli.
+
+### Что
+
+brotli-decode — **C-FFI к `libbrotlidec`** (НЕ pure-Nova V1: 120 KB встроенный словарь + нет в Zig-std → nv-sourcing не feasible; C-FFI by-necessity, как net/libuv). Тонкий Nova-API `brotli_decode(data, max_output)` + streaming `BrotliReader` поверх C-instance.
+
+### Правило (контракт при материализации)
+
+- **(R1) FFI в `ffi.nv`, `extern "C"`.** Extern-сигнатуры — **C-ABI без `[]u8`/GC-типов** (raw-ptr+len / out-буфер), per D355 (ex-D282) + координация Plan 174.6 M1 (`E_FFI_NON_C_ABI_TYPE`; в std нет ни одного extern с `[]u8` — grep=0).
+- **(R2) `BrotliReader` — `consume value`** (D133): держит C-instance, `@finish`/consume освобождает его. **Единственный consume-кодер** в модуле (pure-Nova-кодеры D335 — plain value). Не-consume `BrotliReader` → `EXPECT_COMPILE_ERROR`; double-consume/use-after-consume — тоже compile-error.
+- **(R3) Bomb-cap-over-FFI** (D334): output-cap инкрементально поверх C-стрима (`max_emit`-капинг per read). Window ≤16 MiB (lgwin ≤24, фикс-bounded) — **output-cap ≠ window-cap** (документируется отдельно; критик-gap).
+- **(R4) Error-маппинг.** `brotli_dec_error` → `CompressError`: truncated → `UnexpectedEof`; malformed → `InvalidData(str)`; превышение cap → `Bomb`; `UnsupportedMethod` при отсутствии C-фичи.
+- **(R5) Level-резерв.** `CompressLevel` 10..11 зарезервированы за brotli (deflate их отвергает, D333 R6). Encode-brotli — followup §11 (asymmetric, vendor `enc/` не тащится в V1).
+
+### Почему
+
+1. brotli requires 120 KB dictionary + сложный decoder — pure-Nova V1 не feasible; C-FFI by-necessity (nv-sourcing даёт .nv где возможно, тяжёлый native → FFI, прецедент libuv).
+2. C-instance — внешний ресурс → `consume` (D133) обязателен: release-долг виден в типе, no silent leak.
+3. Output-cap ≠ window-cap: lgwin ограничивает окно, но выход всё равно надо капить инкрементально (иначе DoS через большой валидный выход).
+
+### Связь
+
+- [D333](#d333) (кодек-форма), [D334](#d334) (bomb-cap-over-FFI), [D335](#d335) (streaming — контраст consume vs plain value), [D282](#d282)/D355 (ex-D282, extern "C" C-ABI FFI), [D133](02-types.md#d133) (must-consume).
+- Plan 174.6 M1 (`E_FFI_NON_C_ABI_TYPE`), Plan 178 (закрывает `br`-ветку auto-decompress).
