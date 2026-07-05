@@ -1,7 +1,7 @@
 // D334 — bomb-cap (decompression-DoS инвариант): каждый decode-путь несёт
 // `max_output`; превышение выхода → Bomb(limit) инкрементально (НЕ OOM/hang).
 // Граница: output == max_output → ok; первый байт сверх → Bomb.
-// Spec: spec/decisions/05-stdlib.md (D334). §8.0-critical.
+// Spec: spec/decisions/04-effects.md (D334). §8.0-critical.
 
 module spec_tests.compress
 

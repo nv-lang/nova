@@ -1,7 +1,7 @@
 // D335 — streaming incremental coder: feed(chunk) + read(max_emit) + finish;
 // window/bit-leftover/checksum-state сохраняются между вызовами; bounded-per-call;
 // EOF-семантика (is_done). Ключевой инвариант: streaming feed-по-1-байту ==
-// one-shot байт-в-байт. Spec: spec/decisions/05-stdlib.md (D335).
+// one-shot байт-в-байт. Spec: spec/decisions/04-effects.md (D335).
 
 module spec_tests.compress
 
