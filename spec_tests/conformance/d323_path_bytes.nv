@@ -1,0 +1,32 @@
+// d323_path_bytes.nv — D323 byte-backed, platform-aware Path (Plan 176 Ф.2, Q1).
+// POSIX + Windows lexical manipulation; non-UTF-8 bytes round-trip losslessly.
+module spec_tests.conformance
+
+import std.fs.{Path, PathStyle}
+
+test "d323: posix Path join/parent/extension; is_absolute" {
+    ro d323_p = Path.posix("/usr/local/bin")
+    assert(d323_p.is_absolute())
+    match d323_p.parent() { Some(par) => assert(par.display() == "/usr/local"), None => assert(false) }
+    ro d323_j = Path.posix("/a").join("f.tar.gz")
+    assert(d323_j.display() == "/a/f.tar.gz")
+    match d323_j.extension() { Some(e) => assert(e == "gz"), None => assert(false) }
+}
+
+test "d323: Windows drive/UNC absolute; normalize resolves .. with backslash" {
+    assert(Path.windows("C:\\a\\b").is_absolute())
+    assert(Path.windows("\\\\srv\\share\\x").is_absolute())
+    assert(!Path.windows("C:temp").is_absolute())          // drive-relative
+    assert(Path.windows("C:\\a\\b\\..\\c").normalize().display() == "C:\\a\\c")
+    match Path.windows("C:/a/b.txt").file_name() { Some(n) => assert(n == "b.txt"), None => assert(false) }
+}
+
+test "d323: non-UTF-8 path bytes round-trip; to_str is None (Q1)" {
+    mut d323_raw []u8 = []u8.new()
+    d323_raw.push(47 as u8)          // '/'
+    d323_raw.push(0xFF as u8)        // invalid UTF-8 lead
+    ro d323_bp = Path.from_bytes(d323_raw)
+    assert(d323_bp.as_os_bytes().len() == 2)
+    assert(d323_bp.as_os_bytes()[1] == (0xFF as u8))
+    match d323_bp.to_str() { Some(_) => assert(false), None => assert(true) }
+}

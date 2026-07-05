@@ -3,7 +3,7 @@
 // Граница: output == max_output → ok; первый байт сверх → Bomb.
 // Spec: spec/decisions/05-stdlib.md (D334). §8.0-critical.
 
-module spec_tests.conformance
+module spec_tests.compress
 
 import std.encoding.compress.{inflate, ErrorKind}
 
