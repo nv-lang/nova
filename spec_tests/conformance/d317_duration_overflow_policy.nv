@@ -1,0 +1,63 @@
+// d317_duration_overflow_policy.nv — D317: Duration/instant overflow-policy.
+// 3-tier дисциплина (Rust/Swift-паритет; бьёт Go silent-wrap и Zig build-mode-UB):
+//   (1) операторы траппят (rt-фикстуры nova_tests/time/rt/); (2) checked_* → Option;
+//   (3) saturating_* → clamp к ±MAX. Плюс @abs(i64::MIN), @div(0), f64-NaN/inf,
+//   boundary-saturate инстантов, Timestamp-окно 1677..2262 (Q16).
+module spec_tests.conformance
+
+import std.time.duration
+
+const d317_MAX = 9_223_372_036_854_775_807
+const d317_MIN = -9_223_372_036_854_775_807 - 1
+
+test "d317: checked_* — None on overflow, Some in range" {
+    // add/sub at boundary
+    assert(Duration.from_nanos(d317_MAX).checked_add(1.nanos()).is_none())
+    assert(Duration.from_nanos(d317_MIN).checked_sub(1.nanos()).is_none())
+    // mul: i64::MAX*2 overflows; i64::MIN*-1 overflows (two's-complement)
+    assert(Duration.from_nanos(d317_MAX).checked_mul(2).is_none())
+    assert(Duration.from_nanos(d317_MIN).checked_mul(-1).is_none())
+    // div: /0 и i64::MIN/-1
+    assert(Duration.from_nanos(10).checked_div(0).is_none())
+    assert(Duration.from_nanos(d317_MIN).checked_div(-1).is_none())
+    // in-range → Some(exact)
+    match (1.hour()).checked_add(30.minutes()) {
+        Some(r) => assert(r == 90.minutes()),
+        None => assert(false),
+    }
+}
+
+test "d317: saturating_* clamps to ±MAX (never wraps)" {
+    ro top = Duration.from_nanos(d317_MAX)
+    assert(top.saturating_add(1.seconds()).as_nanos() == d317_MAX)
+    assert(top.saturating_mul(2).as_nanos() == d317_MAX)
+    assert(top.saturating_mul(-2).as_nanos() == -d317_MAX)
+    assert(Duration.from_nanos(-d317_MAX).saturating_sub(1.seconds()).as_nanos() == -d317_MAX)
+}
+
+test "d317: @abs(i64::MIN) saturates to MAX (asymmetry, no UB)" {
+    assert(Duration.from_nanos(d317_MIN).abs().as_nanos() == d317_MAX)
+    assert((-7.seconds()).abs() == 7.seconds())
+}
+
+test "d317: f64 conversions reject NaN/inf/out-of-range (try_* → None)" {
+    ro g = 1_000_000_000.0
+    assert(Duration.try_from_secs_f64(g * g).is_none())        // 1e27 ns ≫ i64
+    assert(Duration.from_nanos(d317_MAX).try_mul_f64(g).is_none())
+    match Duration.try_from_secs_f64(1.5) {
+        Some(r) => assert(r.as_millis() == 1500),
+        None => assert(false),
+    }
+}
+
+test "d317: Timestamp boundary-saturate + 2262-horizon (Q16)" {
+    ro tmax = Timestamp.from_unix_nanos(d317_MAX)
+    // checked over horizon → None; @plus saturates (НЕ wrap в 1677)
+    assert(tmax.checked_add(1.seconds()).is_none())
+    assert((tmax + 1.seconds()).as_unix_nanos() == d317_MAX)
+    ro tmin = Timestamp.from_unix_nanos(d317_MIN)
+    assert(tmin.checked_sub(1.nanos()).is_none())
+    assert((tmin - 1.seconds()).as_unix_nanos() == d317_MIN)
+    // Timestamp - Timestamp → saturating Duration diff
+    assert((Timestamp.from_unix_secs(1042) - Timestamp.from_unix_secs(1000)) == 42.seconds())
+}

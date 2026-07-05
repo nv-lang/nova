@@ -32,6 +32,12 @@ module time.duration
 
 import std.testing.handlers as th
 
+// Overflow-trap primitive (Plan 175 Ф.1c / D317). Module-private extern —
+// same pattern as std/collections/vec/core.nv. Trap fires in debug AND release
+// (never a build-mode-dependent UB — Zig-antipattern; never a silent wrap —
+// Go-trap). See §3b/D317.
+extern "nova" fn panic(msg str) -> never
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Duration — длительность (signed, ±292 года)
@@ -72,6 +78,20 @@ export const MINUTE Duration = { nanos: 60_000_000_000 }
 /// One hour (3600 seconds).
 #stable(since = "0.1")
 export const HOUR   Duration = { nanos: 3_600_000_000_000 }
+
+// Saturation boundaries are ±(2⁶³−1) ns ≈ ±292 years (symmetric; the
+// two's-complement `i64::MIN` = -2⁶³ is deliberately excluded so `@neg`/`@abs`
+// are total). The `saturating_*` methods clamp to these edges via the internal
+// `i64_max()`/`i64_min()` helpers below.
+//
+// **Deferred:** public consts `Duration.MAX`/`Duration.MIN` (Plan 178 wants
+// `@timeout(Duration.MAX)`) are NOT declared here yet — a user type-const named
+// `MAX`/`MIN` currently shadows the builtin numeric `.MAX`/`.MIN` in type-set-
+// bound generics (`fn[T Ints] f(x T) => x == T.MAX`, spec_tests d310), mis-
+// typing `T.MAX` as the record and CC-FAILing. Fix lives in the checker's
+// member-const resolution (172-zone, owner-gated). Follow-up
+// `[M-175-type-const-max-shadows-builtin]` (docs/plans/backlog-followups.md).
+
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -130,9 +150,22 @@ export fn Duration.from_weeks(n i64) -> Duration => { nanos: n * 7 * 86_400 * 1_
 ///
 /// Useful для converting measurements (sensor data, sampling intervals)
 /// которые natively f64.
+///
+/// **Plan 175 Ф.1c (D317):** traps on `NaN`/`±inf`/out-of-`i64`-range input
+/// (Rust `Duration::from_secs_f64` panics; никогда silent мусор-cast). For a
+/// non-trapping variant use [`try_from_secs_f64`].
 #stable(since = "0.1")
 export fn Duration.from_secs_f64(s f64) -> Duration =>
-    { nanos: (s * 1_000_000_000.0) as i64 }
+    Duration.from_nanos(f64_nanos_or_trap(s * 1_000_000_000.0))
+
+/// Fallible construction from fractional seconds — `None` on `NaN`/`±inf`/
+/// out-of-`i64`-range (Plan 175 Ф.1c / D317).
+#stable(since = "0.1")
+export fn Duration.try_from_secs_f64(s f64) -> Option[Duration] =>
+    match f64_nanos_checked(s * 1_000_000_000.0) {
+        Some(n) => Some(Duration.from_nanos(n)),
+        None => None,
+    }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -259,10 +292,136 @@ export fn Duration @parts() -> DurationParts {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Арифметика (D46)
+// Overflow-safe i64 primitives (Plan 175 Ф.1c / D317) — module-private.
+//
+// 3-tier discipline (Rust/Swift-паритет; бьёт Go silent-wrap и Zig
+// build-mode-UB): operators trap; `checked_*` → Option; `saturating_*` → clamp.
+// Все helpers работают на raw i64 (bare `+`/`-`/`*` wrap by design — именно
+// поэтому overflow детектируется ЯВНО, а не полагается на trap примитива).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Сложение durations (operator `+`).
+/// `i64::MAX` = 2⁶³−1. Fn-form (не const) — избегает value-const-ref gap
+/// (`[M-175-value-record-const-ref]`) и const-eval арифметики для MIN.
+fn i64_max() -> i64 => 9_223_372_036_854_775_807
+
+/// `i64::MIN` = −2⁶³, выраженное как `-(2⁶³−1) − 1` (литерал `2⁶³` не
+/// представим в i64 — считаем во runtime).
+fn i64_min() -> i64 => -9_223_372_036_854_775_807 - 1
+
+/// Clamp `x` в `[lo, hi]`.
+fn clamp_i64(x i64, lo i64, hi i64) -> i64 =>
+    if x < lo { lo } else if x > hi { hi } else { x }
+
+fn checked_add_i64(a i64, b i64) -> Option[i64] {
+    if b > 0 && a > i64_max() - b { return None }
+    if b < 0 && a < i64_min() - b { return None }
+    Some(a + b)
+}
+
+fn checked_sub_i64(a i64, b i64) -> Option[i64] {
+    if b < 0 && a > i64_max() + b { return None }
+    if b > 0 && a < i64_min() + b { return None }
+    Some(a - b)
+}
+
+fn checked_neg_i64(a i64) -> Option[i64] =>
+    if a == i64_min() { None } else { Some(-a) }
+
+fn checked_mul_i64(a i64, b i64) -> Option[i64] {
+    if a == 0 || b == 0 { return Some(0) }
+    // -1 special-cases first: они дают overflow ровно на i64::MIN и делают
+    // divide-back-проверку ниже валидной (a ∉ {0, -1}).
+    if a == -1 { return checked_neg_i64(b) }
+    if b == -1 { return checked_neg_i64(a) }
+    ro r = a * b
+    if r / a != b { return None }
+    Some(r)
+}
+
+fn checked_div_i64(a i64, b i64) -> Option[i64] {
+    if b == 0 { return None }
+    if b == -1 && a == i64_min() { return None }
+    Some(a / b)
+}
+
+/// Saturating add clamped to `[lo, hi]`.
+fn sat_add_i64(a i64, b i64, lo i64, hi i64) -> i64 =>
+    match checked_add_i64(a, b) {
+        Some(r) => clamp_i64(r, lo, hi),
+        None => if b > 0 { hi } else { lo },
+    }
+
+/// Saturating sub clamped to `[lo, hi]`.
+fn sat_sub_i64(a i64, b i64, lo i64, hi i64) -> i64 =>
+    match checked_sub_i64(a, b) {
+        Some(r) => clamp_i64(r, lo, hi),
+        None => if b < 0 { hi } else { lo },
+    }
+
+/// Saturating mul clamped to `[lo, hi]` (overflow ⇒ sign-directed boundary).
+fn sat_mul_i64(a i64, b i64, lo i64, hi i64) -> i64 =>
+    match checked_mul_i64(a, b) {
+        Some(r) => clamp_i64(r, lo, hi),
+        None => if (a > 0) == (b > 0) { hi } else { lo },
+    }
+
+// ── trap-wrappers (operators route here) ──
+
+fn add_or_trap(a i64, b i64) -> i64 =>
+    match checked_add_i64(a, b) {
+        Some(r) => r,
+        None => panic("Duration arithmetic overflow: add"),
+    }
+
+fn sub_or_trap(a i64, b i64) -> i64 =>
+    match checked_sub_i64(a, b) {
+        Some(r) => r,
+        None => panic("Duration arithmetic overflow: sub"),
+    }
+
+fn neg_or_trap(a i64) -> i64 =>
+    match checked_neg_i64(a) {
+        Some(r) => r,
+        None => panic("Duration arithmetic overflow: neg(i64::MIN)"),
+    }
+
+fn mul_or_trap(a i64, b i64) -> i64 =>
+    match checked_mul_i64(a, b) {
+        Some(r) => r,
+        None => panic("Duration arithmetic overflow: mul"),
+    }
+
+fn div_or_trap(a i64, b i64) -> i64 {
+    if b == 0 { panic("Duration arithmetic error: division by zero") }
+    if b == -1 && a == i64_min() { panic("Duration arithmetic overflow: div(i64::MIN, -1)") }
+    a / b
+}
+
+/// f64 → i64 nanos с проверкой финитности и диапазона (`None` вне области).
+/// `2⁶³` = 9223372036854775808.0 (первое f64-значение вне i64) — граница.
+fn f64_nanos_checked(x f64) -> Option[i64] {
+    if x.is_nan() || x.is_infinite() { return None }
+    if x >= 9223372036854775808.0 { return None }
+    if x < -9223372036854775808.0 { return None }
+    Some(x as i64)
+}
+
+fn f64_nanos_or_trap(x f64) -> i64 =>
+    match f64_nanos_checked(x) {
+        Some(r) => r,
+        None => panic("Duration arithmetic error: non-finite or out-of-range f64"),
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика (D46) — overflow-safe (Plan 175 Ф.1c / D317).
+//
+// Операторы `+`/`-`/унарный `-`/`*`/`/` ТРАПАЮТ на overflow (в debug И release).
+// Non-trapping эскейпы: `checked_*` (→ Option) и `saturating_*` (→ clamp к
+// ±Duration.MAX). Границей Duration является ±(2⁶³−1) ns ≈ ±292 года.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Сложение durations (operator `+`). **Traps on overflow** (D317).
 ///
 /// # Examples
 /// ```nova
@@ -270,40 +429,112 @@ export fn Duration @parts() -> DurationParts {
 /// ```
 #stable(since = "0.1")
 export fn Duration @plus(other Duration) -> Duration =>
-    { nanos: @nanos + other.nanos }
+    Duration.from_nanos(add_or_trap(@nanos, other.nanos))
 
 /// Вычитание durations (operator `-`). Может дать negative result.
+/// **Traps on overflow** (D317).
 #stable(since = "0.1")
 export fn Duration @minus(other Duration) -> Duration =>
-    { nanos: @nanos - other.nanos }
+    Duration.from_nanos(sub_or_trap(@nanos, other.nanos))
 
 /// Унарный минус (operator `-`). Эквивалент `0 - self`.
+/// **Traps on `i64::MIN`** (two's-complement asymmetry, D317).
 #stable(since = "0.1")
 export fn Duration @neg() -> Duration =>
-    { nanos: -@nanos }
+    Duration.from_nanos(neg_or_trap(@nanos))
 
-/// Scalar multiplication by integer (`Duration * i64`).
+/// Scalar multiplication by integer (`Duration * i64`). **Traps on overflow** (D317).
 #stable(since = "0.1")
 export fn Duration @times(n i64) -> Duration =>
-    { nanos: @nanos * n }
+    Duration.from_nanos(mul_or_trap(@nanos, n))
 
 /// Scalar multiplication by float (`Duration * f64`).
 ///
-/// Truncation на cast `f64 → i64` — для финансовых расчётов считай в i64
-/// nanoseconds вручную чтобы избежать FP-rounding.
+/// **Traps on `NaN`/`±inf`/out-of-range** (D317) — никогда silent мусор-cast.
+/// Для non-trapping варианта — [`try_mul_f64`]. Для финансовых расчётов считай
+/// в i64 nanoseconds вручную чтобы избежать FP-rounding.
 #stable(since = "0.1")
 export fn Duration @times(n f64) -> Duration =>
-    { nanos: ((@nanos as f64) * n) as i64 }
+    Duration.from_nanos(f64_nanos_or_trap((@nanos as f64) * n))
 
 /// Integer division (`Duration / i64`). Truncating.
+/// **Traps on `/0` и на `i64::MIN / -1`** (D317).
 #stable(since = "0.1")
 export fn Duration @div(n i64) -> Duration =>
-    { nanos: @nanos / n }
+    Duration.from_nanos(div_or_trap(@nanos, n))
 
 /// Float division (`Duration / f64`).
+/// **Traps on `NaN`/`±inf`/out-of-range** (в т.ч. `/0.0` → `±inf`, D317).
 #stable(since = "0.1")
 export fn Duration @div(n f64) -> Duration =>
-    { nanos: ((@nanos as f64) / n) as i64 }
+    Duration.from_nanos(f64_nanos_or_trap((@nanos as f64) / n))
+
+// ── checked_* → Option[Duration] (None on overflow) ──
+
+/// Checked add — `None` on overflow (D317).
+#stable(since = "0.1")
+export fn Duration @checked_add(other Duration) -> Option[Duration] =>
+    match checked_add_i64(@nanos, other.nanos) {
+        Some(r) => Some(Duration.from_nanos(r)),
+        None => None,
+    }
+
+/// Checked sub — `None` on overflow (D317).
+#stable(since = "0.1")
+export fn Duration @checked_sub(other Duration) -> Option[Duration] =>
+    match checked_sub_i64(@nanos, other.nanos) {
+        Some(r) => Some(Duration.from_nanos(r)),
+        None => None,
+    }
+
+/// Checked scalar multiply — `None` on overflow (D317).
+#stable(since = "0.1")
+export fn Duration @checked_mul(n i64) -> Option[Duration] =>
+    match checked_mul_i64(@nanos, n) {
+        Some(r) => Some(Duration.from_nanos(r)),
+        None => None,
+    }
+
+/// Checked integer divide — `None` on `/0` or `i64::MIN / -1` (D317).
+#stable(since = "0.1")
+export fn Duration @checked_div(n i64) -> Option[Duration] =>
+    match checked_div_i64(@nanos, n) {
+        Some(r) => Some(Duration.from_nanos(r)),
+        None => None,
+    }
+
+/// Checked float multiply — `None` on `NaN`/`±inf`/out-of-range (D317).
+#stable(since = "0.1")
+export fn Duration @try_mul_f64(n f64) -> Option[Duration] =>
+    match f64_nanos_checked((@nanos as f64) * n) {
+        Some(r) => Some(Duration.from_nanos(r)),
+        None => None,
+    }
+
+/// Checked float divide — `None` on `NaN`/`±inf`/out-of-range (D317).
+#stable(since = "0.1")
+export fn Duration @try_div_f64(n f64) -> Option[Duration] =>
+    match f64_nanos_checked((@nanos as f64) / n) {
+        Some(r) => Some(Duration.from_nanos(r)),
+        None => None,
+    }
+
+// ── saturating_* → Duration (clamp к ±Duration.MAX = ±(2⁶³−1)) ──
+
+/// Saturating add — clamps to `±Duration.MAX` (D317).
+#stable(since = "0.1")
+export fn Duration @saturating_add(other Duration) -> Duration =>
+    Duration.from_nanos(sat_add_i64(@nanos, other.nanos, -i64_max(), i64_max()))
+
+/// Saturating sub — clamps to `±Duration.MAX` (D317).
+#stable(since = "0.1")
+export fn Duration @saturating_sub(other Duration) -> Duration =>
+    Duration.from_nanos(sat_sub_i64(@nanos, other.nanos, -i64_max(), i64_max()))
+
+/// Saturating scalar multiply — clamps to `±Duration.MAX` (D317).
+#stable(since = "0.1")
+export fn Duration @saturating_mul(n i64) -> Duration =>
+    Duration.from_nanos(sat_mul_i64(@nanos, n, -i64_max(), i64_max()))
 
 /// Ratio between two durations — dimensionless `f64`.
 ///
@@ -316,9 +547,14 @@ export fn Duration @ratio(other Duration) -> f64 =>
     (@nanos as f64) / (other.nanos as f64)
 
 /// Абсолютное значение duration (отбрасывает sign).
+///
+/// **Plan 175 Ф.1c (D317):** `@abs(i64::MIN)` НЕ является UB/wrap — saturate к
+/// `i64::MAX`; two's-complement asymmetry (`|i64::MIN| > i64::MAX`).
 #stable(since = "0.1")
 export fn Duration @abs() -> Duration =>
-    if @nanos < 0 { { nanos: -@nanos } } else { @ }
+    if @nanos == i64_min() { Duration.from_nanos(i64_max()) }
+    else if @nanos < 0 { Duration.from_nanos(-@nanos) }
+    else { @ }
 
 /// Минимум двух durations.
 #stable(since = "0.1")
@@ -494,14 +730,33 @@ export fn Timestamp @as_unix_nanos() => @nanos
 /// let deadline = start + 30.seconds()
 /// assert(deadline.as_unix_secs() == 1030)
 /// ```
+/// **Plan 175 Ф.1c (D317):** saturates at the i64 boundary (окно 1677..2262 —
+/// mirror Go `addSec`-clamp). For explicit overflow-detection use [`checked_add`].
 #stable(since = "0.1")
 export fn Timestamp @plus(d Duration) -> Timestamp =>
-    { nanos: @nanos + d.nanos }
+    Timestamp.from_unix_nanos(sat_add_i64(@nanos, d.nanos, i64_min(), i64_max()))
 
 /// `Timestamp - Duration → Timestamp` — сдвинуть момент назад.
+/// **Saturates at boundary** (D317).
 #stable(since = "0.1")
 export fn Timestamp @minus(d Duration) -> Timestamp =>
-    { nanos: @nanos - d.nanos }
+    Timestamp.from_unix_nanos(sat_sub_i64(@nanos, d.nanos, i64_min(), i64_max()))
+
+/// Checked `Timestamp + Duration` — `None` если результат вне i64-окна (D317).
+#stable(since = "0.1")
+export fn Timestamp @checked_add(d Duration) -> Option[Timestamp] =>
+    match checked_add_i64(@nanos, d.nanos) {
+        Some(r) => Some(Timestamp.from_unix_nanos(r)),
+        None => None,
+    }
+
+/// Checked `Timestamp - Duration` — `None` если результат вне i64-окна (D317).
+#stable(since = "0.1")
+export fn Timestamp @checked_sub(d Duration) -> Option[Timestamp] =>
+    match checked_sub_i64(@nanos, d.nanos) {
+        Some(r) => Some(Timestamp.from_unix_nanos(r)),
+        None => None,
+    }
 
 /// `Timestamp - Timestamp → Duration` — elapsed time между двумя моментами.
 ///
@@ -515,7 +770,7 @@ export fn Timestamp @minus(d Duration) -> Timestamp =>
 /// ```
 #stable(since = "0.1")
 export fn Timestamp @minus(other Timestamp) -> Duration =>
-    { nanos: @nanos - other.nanos }
+    Duration.from_nanos(sat_sub_i64(@nanos, other.nanos, i64_min(), i64_max()))
 
 
 /// Compare.compare — memcmp-style int return (D183 amendment, Plan 91.8a.2).
@@ -875,6 +1130,117 @@ test "elapsed / time_until" {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// Plan 175 Ф.1c (D317/D318) — overflow-safe arithmetic (inline unit-tests).
+// Trap-фикстуры (panic на overflow/div0/NaN) — nova_tests/time/rt/ (EXPECT_RUNTIME_PANIC).
+// ──────────────────────────────────────────────────────────────────────────
+
+test "Ф.1c: normal arithmetic unchanged (no false traps)" {
+    assert((1.hour() + 30.minutes()) == 90.minutes())
+    assert((1.hour() - 15.minutes()) == 45.minutes())
+    assert((5.seconds() * 3) == 15.seconds())
+    assert((1.minute() / 4) == 15.seconds())
+    assert((10.seconds() * 1.5) == 15.seconds())
+    assert((30.seconds() / 1.5) == 20.seconds())
+    assert((-(5.seconds())).is_negative())
+}
+
+test "Ф.1c/D317: Duration checked_add — Some / None at boundary" {
+    ro top = Duration.from_nanos(i64_max())
+    assert(top.checked_add(Duration.from_nanos(1)).is_none())
+    match top.checked_add(Duration.from_nanos(0)) {
+        Some(r) => assert(r.as_nanos() == i64_max()),
+        None => assert(false),
+    }
+    match Duration.from_nanos(1000).checked_add(Duration.from_nanos(337)) {
+        Some(r) => assert(r.as_nanos() == 1337),
+        None => assert(false),
+    }
+}
+
+test "Ф.1c/D317: Duration checked_sub / checked_mul / checked_div" {
+    ro low = Duration.from_nanos(-i64_max())
+    assert(low.checked_sub(Duration.from_nanos(2)).is_none())
+    assert(Duration.from_nanos(i64_max()).checked_mul(2).is_none())
+    // i64::MIN * -1 overflows
+    assert(Duration.from_nanos(i64_min()).checked_mul(-1).is_none())
+    // i64::MIN / -1 overflows; /0 undefined
+    assert(Duration.from_nanos(i64_min()).checked_div(-1).is_none())
+    assert(Duration.from_nanos(10).checked_div(0).is_none())
+    match Duration.from_nanos(100).checked_div(4) {
+        Some(r) => assert(r.as_nanos() == 25),
+        None => assert(false),
+    }
+    match Duration.from_nanos(1000).checked_mul(1000) {
+        Some(r) => assert(r.as_nanos() == 1_000_000),
+        None => assert(false),
+    }
+}
+
+test "Ф.1c/D317: Duration saturating_* clamps to ±MAX (no wrap)" {
+    ro top = Duration.from_nanos(i64_max())
+    assert(top.saturating_add(Duration.from_nanos(1_000_000)).as_nanos() == i64_max())
+    assert(top.saturating_mul(4).as_nanos() == i64_max())
+    // -1 + (-MAX) underflows below -MAX → clamp to -MAX (symmetric ±MAX)
+    assert(Duration.from_nanos(-1).saturating_add(Duration.from_nanos(-i64_max())).as_nanos() == -i64_max())
+    // negative overflow via mul
+    assert(Duration.from_nanos(i64_max()).saturating_mul(-2).as_nanos() == -i64_max())
+    // in-range unaffected
+    assert(1.second().saturating_add(1.second()).as_nanos() == 2_000_000_000)
+}
+
+test "Ф.1c/D317: @abs(i64::MIN) saturates to MAX (two's-complement asymmetry)" {
+    assert(Duration.from_nanos(i64_min()).abs().as_nanos() == i64_max())
+    assert(Duration.from_nanos(-5).abs().as_nanos() == 5)
+    assert(Duration.from_nanos(5).abs().as_nanos() == 5)
+}
+
+test "Ф.1c/D317: f64 conversions reject out-of-range (try_* → None)" {
+    ro g = 1_000_000_000.0                 // 1e9
+    // 1e18 s × 1e9 = 1e27 ns ≫ i64::MAX → out of range
+    assert(Duration.try_from_secs_f64(g * g).is_none())
+    match Duration.try_from_secs_f64(1.5) {
+        Some(r) => assert(r.as_millis() == 1500),
+        None => assert(false),
+    }
+    // @try_mul_f64 / @try_div_f64
+    assert(Duration.from_nanos(i64_max()).try_mul_f64(g).is_none())
+    match 10.seconds().try_mul_f64(1.5) {
+        Some(r) => assert(r == 15.seconds()),
+        None => assert(false),
+    }
+}
+
+test "Ф.1c/D317: Timestamp saturates at i64 horizon (~2262, no wrap to 1677)" {
+    ro tmax = Timestamp.from_unix_nanos(i64_max())
+    assert(tmax.checked_add(1.nanos()).is_none())
+    // @plus saturates instead of wrapping negative
+    assert((tmax + 1.seconds()).as_unix_nanos() == i64_max())
+    ro tmin = Timestamp.from_unix_nanos(i64_min())
+    assert(tmin.checked_sub(1.nanos()).is_none())
+    assert((tmin - 1.seconds()).as_unix_nanos() == i64_min())
+    // saturating diff
+    assert((Timestamp.from_unix_secs(1042) - Timestamp.from_unix_secs(1000)) == 42.seconds())
+}
+
+test "Ф.1c/D318: Monotonic elapsed_since saturate-to-zero; checked_duration_since → None on regress" {
+    ro m = Monotonic.now()
+    ro earlier = m - 5.seconds()
+    // equal marks → 0
+    assert(m.elapsed_since(m).as_nanos() == 0)
+    // apparent regress (earlier before m) → saturate to 0, never negative
+    assert(earlier.elapsed_since(m).as_nanos() == 0)
+    // forward → 5s
+    assert(m.elapsed_since(earlier) == 5.seconds())
+    // checked: regress → None; forward → Some(5s)
+    assert(earlier.checked_duration_since(m).is_none())
+    match m.checked_duration_since(earlier) {
+        Some(r) => assert(r == 5.seconds()),
+        None => assert(false),
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Plan 65 Ф.12 / D124 — Monotonic clock (monotonic time, immune to wall-clock skew)
 // ──────────────────────────────────────────────────────────────────────────
 //
@@ -934,23 +1300,28 @@ export fn Monotonic @as_nanos() -> i64 => @nanos
 // ── Monotonic arithmetic (D124 rule 3: NO cross-type ops with Timestamp) ──
 
 /// `Monotonic + Duration → Monotonic` — сдвинуть монотонный момент вперёд
-/// (deadline в будущем).
+/// (deadline в будущем). **Saturates at boundary** (D317).
 #stable(since = "0.6")
 export fn Monotonic @plus(d Duration) -> Monotonic =>
-    { nanos: @nanos + d.nanos }
+    { nanos: sat_add_i64(@nanos, d.nanos, i64_min(), i64_max()) }
 
 /// `Monotonic - Duration → Monotonic` — сдвинуть монотонный момент назад
-/// (deadline в прошлом или earlier-than-now).
+/// (deadline в прошлом или earlier-than-now). **Saturates at boundary** (D317).
 ///
 /// NOTE: для `Monotonic - Monotonic → Duration` используй `elapsed_since`
 /// (named method). Operator overload отсутствует, чтобы не конфликтовать
 /// с method-resolution на receiver type (см. Эволюция).
 #stable(since = "0.6")
 export fn Monotonic @minus(d Duration) -> Monotonic =>
-    { nanos: @nanos - d.nanos }
+    { nanos: sat_sub_i64(@nanos, d.nanos, i64_min(), i64_max()) }
 
-/// Elapsed time between two Monotonic points. Signed: positive если
-/// `self` after `other`, negative если before.
+/// Elapsed time between two Monotonic points.
+///
+/// **Plan 175 Ф.1c (D318 — non-regression):** результат **saturate-to-zero**.
+/// Если `self < other` (кажущийся регресс часов — HW/VM/OS-баг, JDK-6458294),
+/// возвращает `Duration.ZERO`, НИКОГДА не negative и НИКОГДА не panic (без
+/// global-lock — урок Rust 1.60-saga). Для явного детекта регресса используй
+/// [`checked_duration_since`] (→ `None`).
 ///
 /// # Examples
 /// ```nova
@@ -961,7 +1332,24 @@ export fn Monotonic @minus(d Duration) -> Monotonic =>
 /// ```
 #stable(since = "0.6")
 export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
-    { nanos: @nanos - other.nanos }
+    if @nanos > other.nanos {
+        Duration.from_nanos(sat_sub_i64(@nanos, other.nanos, i64_min(), i64_max()))
+    } else {
+        Duration.from_nanos(0)
+    }
+
+/// Checked elapsed time — `None` при регрессе (`self < other`), иначе
+/// `Some(self - other)` (Plan 175 Ф.1c / D318; Rust `checked_duration_since`).
+#stable(since = "0.6")
+export fn Monotonic @checked_duration_since(other Monotonic) -> Option[Duration] =>
+    if @nanos < other.nanos {
+        None
+    } else {
+        match checked_sub_i64(@nanos, other.nanos) {
+            Some(r) => Some(Duration.from_nanos(r)),
+            None => None,
+        }
+    }
 
 
 // ── Compare (D183 amendment, Plan 91.8a.2 part 3) ──
