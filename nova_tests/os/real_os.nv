@@ -1,0 +1,36 @@
+// real_os.nv — real Os handler smoke test over the native process environment
+// (Plan 176 Ф.3, D324). Uses only reproducible facts (pid > 0, a temp dir
+// exists, a uniquely-named env var round-trips) so it is deterministic on any
+// host. env mutation uses a unique key to avoid disturbing the real environment.
+module nova_tests.os
+
+import std.os.{real_os, Os, get_env, set_env, remove_env, has_env, args, current_dir, temp_dir, pid}
+
+test "real_os: pid > 0; cwd resolves; temp_dir is non-empty" {
+    with Os = real_os() {
+        assert(pid() > 0)
+        match current_dir() {
+            Ok(p) => assert(!p.is_empty())
+            Err(_) => assert(false)
+        }
+        assert(!temp_dir().is_empty())
+    }
+}
+
+test "real_os: unique env var set -> get -> remove round-trip" {
+    with Os = real_os() {
+        ro key = "NOVA_P176_OS_TEST_KEY"
+        assert(!has_env(key))
+        match set_env(key, "novavalue") { Ok(()) => assert(true), Err(_) => assert(false) }
+        assert(has_env(key))
+        match get_env(key) { Some(v) => assert(v == "novavalue"), None => assert(false) }
+        match remove_env(key) { Ok(()) => assert(true), Err(_) => assert(false) }
+        assert(!has_env(key))
+    }
+}
+
+test "real_os: args has at least the program name" {
+    with Os = real_os() {
+        assert(args().len() >= 1)
+    }
+}

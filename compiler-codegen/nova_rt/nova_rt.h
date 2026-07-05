@@ -573,6 +573,12 @@ typedef struct { char _dummy; } nova_unit;
  * for the `Io` effect real handler. Header-only (C stdio FILE*). */
 #include "io_console.h"
 
+/* Plan 176 Ф.3 (D324): std/os native hooks (env / args / cwd / dirs / process)
+ * for the `Os` effect real handler. Header-only (getenv/getcwd/...); argv is
+ * captured by main() via nova_os_set_args. Included after nova_str / nova_alloc
+ * are defined (used by its nova_str wrappers). */
+#include "os_env.h"
+
 /* Plan 115 D214 Ф.2: tuple-return FFI test shim. Header-only inline
  * helpers used by `nova_tests/plan115/t2_external_fn_tuple_ok.nv`.
  * Plan 115 v1 ships minimum FFI scaffolding here; full user-side shim

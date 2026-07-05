@@ -1,0 +1,82 @@
+// d324_os_env_args_cwd.nv — D324 os: env / args / cwd / exit via the mockable
+// `Os` effect (Plan 176 Ф.3). Deterministic through mock_os — no real process
+// environment. `exit` is recorded, not executed.
+module spec_tests.conformance
+
+import std.os.{MockOs, mock_os, Os, get_env, get_env_bytes, set_env, remove_env, has_env, vars, args, current_dir, set_current_dir, home_dir, exit_process, pid}
+import std.fs.{Path}
+
+test "d324: mock_os env set/get/has/remove round-trip" {
+    mut d324_os = MockOs.new()
+    with Os = mock_os(d324_os) {
+        assert(!has_env("KEY"))
+        match get_env("KEY") { Some(_) => assert(false), None => assert(true) }
+        match set_env("KEY", "value") { Ok(()) => assert(true), Err(_) => assert(false) }
+        assert(has_env("KEY"))
+        match get_env("KEY") { Some(v) => assert(v == "value"), None => assert(false) }
+        // overwrite
+        match set_env("KEY", "v2") { Ok(()) => assert(true), Err(_) => assert(false) }
+        match get_env("KEY") { Some(v) => assert(v == "v2"), None => assert(false) }
+        // remove → absent again
+        match remove_env("KEY") { Ok(()) => assert(true), Err(_) => assert(false) }
+        assert(!has_env("KEY"))
+    }
+}
+
+test "d324: mock_os env value byte-correctness via get_env_bytes" {
+    mut d324_os = MockOs.new()
+    with Os = mock_os(d324_os) {
+        match set_env("RAW", "seed") { Ok(()) => assert(true), Err(_) => assert(false) }
+        match get_env_bytes("RAW".to_bytes()) {
+            Some(b) => { assert(b.len() == 4); assert(b[0] == (115 as u8)) }   // 's'
+            None    => assert(false)
+        }
+        // absent key → None (distinct from present-empty)
+        match get_env_bytes("MISSING".to_bytes()) { Some(_) => assert(false), None => assert(true) }
+    }
+}
+
+test "d324: mock_os args snapshot (argv[0] = program)" {
+    mut d324_os = MockOs.new()
+    d324_os.push_arg("prog")
+    d324_os.push_arg("--flag")
+    d324_os.push_arg("value")
+    with Os = mock_os(d324_os) {
+        ro d324_a = args()
+        assert(d324_a.len() == 3)
+        assert(d324_a[0] == "prog")
+        assert(d324_a[1] == "--flag")
+        assert(d324_a[2] == "value")
+    }
+}
+
+test "d324: mock_os vars snapshot reflects the environment" {
+    mut d324_os = MockOs.new()
+    with Os = mock_os(d324_os) {
+        ro _ = set_env("A", "1")
+        ro _ = set_env("B", "2")
+        ro d324_vs = vars()
+        assert(d324_vs.len() == 2)
+        // find A among the snapshot
+        mut d324_found = false
+        for v in d324_vs {
+            if v.key() == "A" { assert(v.value() == "1"); d324_found = true }
+        }
+        assert(d324_found)
+    }
+}
+
+test "d324: mock_os cwd get/set; pid; home; exit recorded (not executed)" {
+    mut d324_os = MockOs.new()
+    with Os = mock_os(d324_os) {
+        match current_dir() { Ok(p) => assert(p.display() == "/"), Err(_) => assert(false) }
+        match set_current_dir(Path.posix("/work")) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match current_dir() { Ok(p) => assert(p.display() == "/work"), Err(_) => assert(false) }
+        assert(pid() == 4242)
+        match home_dir() { Some(h) => assert(h.display() == "/home/user"), None => assert(false) }
+        // exit is RECORDED under mock, control continues
+        exit_process(3)
+    }
+    assert(d324_os.did_exit())
+    assert(d324_os.exit_code() == 3)
+}

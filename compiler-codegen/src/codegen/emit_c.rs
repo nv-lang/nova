@@ -18389,9 +18389,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Replaced в finalize условно if CleanupTimeoutError registered.
         self.line("/*__CLEANUP_TIMEOUT_IMPL__*/");
 
-        self.line("int main(void) {");
+        self.line("int main(int argc, char** argv) {");
         self.indent += 1;
         self.line("nova_gc_init();");
+        // Plan 176 Ф.3 (D324): capture argv for the std/os `Os` effect
+        // (os.args). Stored into os_env.h file-scope globals read by
+        // os_arg_count/os_arg_at. Harmless when os is unused.
+        self.line("nova_os_set_args(argc, argv);");
         // Plan 83.4.5.8 Ф.0 (2026-05-24): flip activation. Atomic state
         // machine из Plan 83.4.5.7 Ф.1 + uncollectable SpawnCtx allocation
         // из Plan 83.4.5.8 → default-on M:N runtime активен по D138.

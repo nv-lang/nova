@@ -1,0 +1,174 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/mock.nv — mock_os: in-memory Os handler for deterministic tests
+// (Plan 176 Ф.3, D324). The §1a mockability differentiator.
+//
+// `with Os = mock_os(state) { … }` runs the SAME code under test against an
+// in-memory environment/args/cwd map — no real process environment, no DI, fully
+// deterministic (Go juggles real os-vars, Zig has nothing). The backing `MockOs`
+// also RECORDS `exit(code)` instead of terminating, so `os.exit` is observable in
+// a test (`state.did_exit()` / `state.exit_code()`) without killing the harness.
+//
+// The handler ops return the SAME primitive int/str codes as real_os (the effect
+// is a thin int/str layer — `Option`/`Result`/`Path` are built in the os.nv
+// wrappers), so mock and real are substitutable. Env values are stored as raw
+// `[]u8` and returned via `str.from_bytes_unchecked` (verbatim, byte-transparent),
+// so a non-UTF-8 value round-trips losslessly through `get_env_bytes` — matching
+// real_os. Removal is a tombstone (`env_live[i] = false`) so indices stay stable.
+//
+// Named `mock_os` (not the plan's `mem_os`) for symmetry with `mock_io` /
+// `mock_fs` — the codebase-wide `mock_*` handler-factory convention.
+
+module std.os
+
+// ─── MockOs — in-memory env/args/cwd state + recorded exit ──
+
+/// In-memory OS state backing `mock_os`. Construct with `MockOs.new()`, seed it
+/// (`put_env`, `push_arg`, `set_cwd_str`), install it with `with Os =
+/// mock_os(state)`, and inspect it afterwards (`exit_code`, `did_exit`).
+#stable(since = "0.1")
+export type MockOs {
+    // Program arguments.
+    mut args []str
+    // Environment (parallel arrays; env_live[i] = false is a removal tombstone).
+    mut env_keys []str
+    mut env_vals [][]u8
+    mut env_live []bool
+    // Working directory + well-known dirs + host.
+    mut cwd_path str
+    mut temp str
+    mut home str
+    mut host str
+    mut pid_val int
+    // Recorded exit (mock does NOT terminate).
+    mut exited bool
+    mut exit_code_v int
+}
+
+/// A fresh mock OS: no args, empty environment, cwd `/`, temp `/tmp`, home
+/// `/home/user`, host `localhost`, pid `4242`.
+#stable(since = "0.1")
+export fn MockOs.new() -> MockOs => {
+    args: [], env_keys: [], env_vals: [], env_live: [],
+    cwd_path: "/", temp: "/tmp", home: "/home/user", host: "localhost",
+    pid_val: 4242, exited: false, exit_code_v: 0,
+}
+
+/// Append a program argument (test setup).
+#stable(since = "0.1")
+export fn MockOs mut @push_arg(a str) -> () { @args.push(a) }
+
+/// Set an environment variable directly (test setup).
+#stable(since = "0.1")
+export fn MockOs mut @put_env(k str, v str) -> () { ro _ = @env_put(k.to_bytes(), v.to_bytes()) }
+
+/// Set the mock current working directory (test setup).
+#stable(since = "0.1")
+export fn MockOs mut @set_cwd_str(p str) -> () { @cwd_path = p }
+
+/// Set the mock home directory (test setup); empty string means "no home".
+#stable(since = "0.1")
+export fn MockOs mut @set_home_str(p str) -> () { @home = p }
+
+/// Whether `os.exit` was called under this mock.
+#stable(since = "0.1")
+export fn MockOs @did_exit() -> bool => @exited
+
+/// The code passed to the last `os.exit` (`0` if never called).
+#stable(since = "0.1")
+export fn MockOs @exit_code() -> int => @exit_code_v
+
+// ─── Env table helpers ──
+
+fn MockOs @env_find(k str) -> Option[int] {
+    mut i = 0
+    while i < @env_keys.len() {
+        if @env_live[i] && @env_keys[i] == k { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+fn MockOs @nth_live(n int) -> Option[int] {
+    mut seen = 0
+    mut i = 0
+    while i < @env_keys.len() {
+        if @env_live[i] {
+            if seen == n { return Some(i) }
+            seen += 1
+        }
+        i += 1
+    }
+    None
+}
+
+fn MockOs mut @env_put(key []u8, val []u8) -> int {
+    ro k = str.from_bytes_unchecked(key)
+    match @env_find(k) {
+        Some(j) => { @env_vals[j] = val; 0 }
+        None    => { @env_keys.push(k); @env_vals.push(val); @env_live.push(true); 0 }
+    }
+}
+
+// ─── Operations (return int/str codes: real_os-identical) ──
+
+fn MockOs @mem_arg_count() -> int => @args.len()
+fn MockOs @mem_arg_at(i int) -> str {
+    if i >= 0 && i < @args.len() { @args[i] } else { "" }
+}
+
+fn MockOs @mem_env_get(key []u8) -> str {
+    ro k = str.from_bytes_unchecked(key)
+    match @env_find(k) { Some(j) => str.from_bytes_unchecked(@env_vals[j]), None => "" }
+}
+fn MockOs @mem_env_has(key []u8) -> int {
+    ro k = str.from_bytes_unchecked(key)
+    match @env_find(k) { Some(_) => 1, None => 0 }
+}
+fn MockOs mut @mem_env_remove(key []u8) -> int {
+    ro k = str.from_bytes_unchecked(key)
+    match @env_find(k) { Some(j) => { @env_live[j] = false; 0 }, None => 0 }
+}
+fn MockOs @mem_env_len() -> int {
+    mut c = 0
+    mut i = 0
+    while i < @env_keys.len() { if @env_live[i] { c += 1 }; i += 1 }
+    c
+}
+fn MockOs @mem_env_key_at(i int) -> str {
+    match @nth_live(i) { Some(j) => @env_keys[j], None => "" }
+}
+fn MockOs @mem_env_val_at(i int) -> str {
+    match @nth_live(i) { Some(j) => str.from_bytes_unchecked(@env_vals[j]), None => "" }
+}
+
+fn MockOs @mem_cwd() -> str => @cwd_path
+fn MockOs mut @mem_set_cwd(path []u8) -> int { @cwd_path = str.from_bytes_unchecked(path); 0 }
+
+fn MockOs mut @mem_exit(code int) -> int { @exited = true; @exit_code_v = code; 0 }
+
+// ─── mock_os handler ──
+
+/// In-memory `Os` handler bound to `state`. Install with `with Os =
+/// mock_os(state)`. All operations run against the `MockOs` map — no real
+/// environment, deterministic; `exit` is recorded, not executed.
+#stable(since = "0.1")
+export fn mock_os(mut state MockOs) -> Effect[Os] {
+    effect Os {
+        arg_count()               => state.mem_arg_count()
+        arg_at(i int)             => state.mem_arg_at(i)
+        env_get(key []u8)         => state.mem_env_get(key)
+        env_has(key []u8)         => state.mem_env_has(key)
+        env_set(key []u8, val []u8) => state.env_put(key, val)
+        env_remove(key []u8)      => state.mem_env_remove(key)
+        env_len()                 => state.mem_env_len()
+        env_key_at(i int)         => state.mem_env_key_at(i)
+        env_val_at(i int)         => state.mem_env_val_at(i)
+        cwd()                     => state.mem_cwd()
+        set_cwd(path []u8)        => state.mem_set_cwd(path)
+        temp_dir()                => state.temp
+        home_dir()                => state.home
+        exit(code int)            => state.mem_exit(code)
+        pid()                     => state.pid_val
+        hostname()                => state.host
+    }
+}
