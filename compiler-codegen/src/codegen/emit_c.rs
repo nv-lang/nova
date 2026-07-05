@@ -10994,6 +10994,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // definition is spliced BEFORE /*__MONO_TUPLE_TYPEDEFS__*/ in the
         // final file. Tuples may carry value-records by value and require a
         // complete (not forward-declared) type at that point.
+        //
+        // [M-180-valuerecord-field-mono-ordering] (§0 mono-completeness,
+        // keystone-class — cf. NovaRes fwd-decl 0e95bdc6): a value-record field
+        // may EMBED a lazy `NovaOpt_<T>` BY VALUE (e.g. `Option[value-record]` →
+        // `NovaOpt_NovaValue_Inner`, `Option[Option[int]]` →
+        // `NovaOpt_NovaOpt_nova_int`). Those typedefs are registered lazily into
+        // `novaopt_typedefs_buf`, spliced at `/*__NOVAOPT_TYPEDEFS__*/` which
+        // lands AFTER `/*__VALUE_RECORD_DEFS__*/` → "unknown type name" on the
+        // struct field. Snapshot the buffer here; anything registered while
+        // resolving THIS record's field C-types is HOISTED ahead of the struct
+        // (below). `novaopt_decls_seen` already marks them, so the late splice
+        // won't duplicate. Symmetrically, a by-POINTER field to a mono'd generic
+        // struct (`Nova_X____…*`) / value-record / named-tuple needs only a
+        // forward typedef ahead of the struct (full body stays at its late
+        // marker) — collected into `fwd_decls`.
+        let opt_snap = self.novaopt_typedefs_buf.borrow().len();
+        let mut fwd_decls = String::new();
         let saved_out = std::mem::take(&mut self.out);
         self.line(&format!("typedef struct NovaValue_{0} NovaValue_{0};", name));
         self.line(&format!("struct NovaValue_{} {{", name));
@@ -11003,6 +11020,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
+            // By-pointer field to a late-emitted struct → early forward typedef.
+            // Restrict to guaranteed struct tags (mono `____`, NovaValue_,
+            // NovaTuple_) so we never shadow a non-struct newtype alias typedef.
+            if let Some(pointee) = ty_c.strip_suffix('*') {
+                let pointee = pointee.trim();
+                if pointee.contains("____")
+                    || pointee.starts_with("NovaValue_")
+                    || pointee.starts_with("NovaTuple_")
+                {
+                    let fwd = format!("typedef struct {p} {p};\n", p = pointee);
+                    if !fwd_decls.contains(&fwd) && !self.value_record_defs_buf.contains(&fwd) {
+                        fwd_decls.push_str(&fwd);
+                    }
+                }
+            }
             schema.insert(f.name.clone(), ty_c.clone());
             let mangled = Self::mangle_field_name(&f.name);
             self.line(&format!("{} {};", ty_c, mangled));
@@ -11031,6 +11063,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line("};");
         self.line("");
         let struct_def = std::mem::replace(&mut self.out, saved_out);
+        // Hoist the NovaOpt typedefs this record's by-value fields registered
+        // (delta since `opt_snap`) ahead of the struct; truncate the shared
+        // buffer back so the late `/*__NOVAOPT_TYPEDEFS__*/` splice does not
+        // re-emit them. Registration order (innermost-first) is preserved, so
+        // nested `NovaOpt_NovaOpt_…` stays topologically valid.
+        let opt_delta = {
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            let d = buf[opt_snap..].to_string();
+            buf.truncate(opt_snap);
+            d
+        };
+        self.value_record_defs_buf.push_str(&fwd_decls);
+        self.value_record_defs_buf.push_str(&opt_delta);
         self.value_record_defs_buf.push_str(&struct_def);
         self.record_schemas.insert(name.to_string(), schema);
         // Value-type alias: Named{Vec3} → "NovaValue_Vec3" (no pointer).
@@ -22136,7 +22181,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
 
             ExprKind::Try(inner) => {
-                let inner_ty = self.infer_expr_c_type(inner);
+                let mut inner_ty = self.infer_expr_c_type(inner);
+                // Plan 180: `v.serialize(s)?` in a generic serde mono — the
+                // operand's Result type can mis-infer (receiver is a mono'd
+                // generic param), leaving `inner_ty` non-Result so `?` degrades
+                // to the `/* ? */` no-op below and SILENTLY swallows the Err.
+                // The `Serialize` contract fixes the return to
+                // `Result[(), SerError]`; pin it so `?` lowers to a real
+                // error-propagation. Guarded on the serde Result mono existing.
+                if !Self::is_result_like(&inner_ty)
+                    && !inner_ty.starts_with("NovaOpt_")
+                    && matches!(&inner.kind, ExprKind::Call { func, .. }
+                        if matches!(&func.kind, ExprKind::Member { name, .. } if name == "serialize"))
+                    && self.novares_typedefs_buf
+                        .borrow()
+                        .contains("NovaRes_nova_unit_NovaValue_SerError")
+                {
+                    inner_ty = "NovaRes_nova_unit_NovaValue_SerError*".to_string();
+                }
                 let val = self.emit_expr(inner)?;
                 let try_tmp = self.fresh_tmp();
                 if inner_ty.starts_with("NovaOpt_") {
@@ -22405,6 +22467,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
                 let target_c = self.type_ref_to_c(ty)
                     .map_err(|e| format!("as-cast type error: {}", e))?;
+                // Plan 180: `None as Option[T]` — emit the target-typed
+                // (NPO-aware) None literal directly. A bare `None` builds a
+                // DEFAULT-typed NovaOpt compound literal and a plain C
+                // struct-cast to the annotated `NovaOpt_<T>` is illegal
+                // ("used type … where arithmetic/pointer required"). The serde
+                // nested-Option deserialize synth pins the then-branch None type
+                // via this ascription, so honour it as a typed construction.
+                if matches!(&inner.kind, ExprKind::Ident(n) if n == "None")
+                    && target_c.starts_with("NovaOpt_")
+                {
+                    let sani = target_c.strip_prefix("NovaOpt_").unwrap_or(&target_c);
+                    return Ok(self.option_none_expr(sani));
+                }
                 let inner_c_ty = inner_c_ty_for_check;
                 let v = self.emit_expr(inner)?;
 
@@ -36142,9 +36217,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             // NPO typedef (single pointer, NULL=None) — early; the pointer field needs only
-            // the already-emitted forward-typedef of `Nova_<X>`.
+            // the already-emitted forward-typedef of `Nova_<X>`. Emit an early PROTOTYPE
+            // adjacent to the typedef (§0 phase-correctness): the eq BODY is late (needs the
+            // pointee struct + method proto), but an EARLIER inline opt_eq — e.g. a
+            // value-record whose field is `Option[<this>]`, whose own inline opt_eq is emitted
+            // in this same early zone — must see a declaration or C makes an implicit one
+            // ("conflicting types" vs the late `static inline` definition). Adjacent to the
+            // typedef so the hoist in `emit_value_record_type` carries both together.
             self.novaopt_typedefs_buf.borrow_mut().push_str(&format!(
-                "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n",
+                "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n\
+                 static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
                 sani = sanitized, cty = c_ty));
             // Structural eq, emitted LATE (after struct bodies AND method fwd-decls) so the
             // dereference compiles and any record/field `@equal` call has a visible proto.
@@ -40098,6 +40180,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                             }
                         }
+                        // Plan 180: the `Serialize` contract fixes `@x.serialize(s)`
+                        // to `Result[(), SerError]` for EVERY receiver. Inside a
+                        // generic container-conformance mono (e.g.
+                        // `Option[Vec[str]]@serialize` → `v.serialize(s)`, v:
+                        // Vec[str]) the re-emitted call can arrive here unannotated;
+                        // the return type is receiver-invariant, so resolve it
+                        // directly instead of ICE-ing (§6). Guarded on the exact
+                        // serde `Result[(),SerError]` C mono being in use.
+                        if method == "serialize"
+                            && self.novares_typedefs_buf
+                                .borrow()
+                                .contains("NovaRes_nova_unit_NovaValue_SerError")
+                        {
+                            return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
+                        }
                         {
                             let obj_desc = match &obj.kind {
                                 ExprKind::Ident(n) => format!("Ident({})", n),
@@ -43587,6 +43684,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     return ct;
                                 }
                             }
+                        }
+                        // Plan 180: the `Serialize` contract fixes `@x.serialize(s)`
+                        // to `Result[(), SerError]` for EVERY receiver. Inside a
+                        // generic container-conformance mono (e.g.
+                        // `Option[Vec[str]]@serialize` → `v.serialize(s)`, v:
+                        // Vec[str]) the re-emitted call can arrive here unannotated;
+                        // the return type is receiver-invariant, so resolve it
+                        // directly instead of ICE-ing (§6). Guarded on the exact
+                        // serde `Result[(),SerError]` C mono being in use.
+                        if method == "serialize"
+                            && self.novares_typedefs_buf
+                                .borrow()
+                                .contains("NovaRes_nova_unit_NovaValue_SerError")
+                        {
+                            return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
                         }
                         {
                             let obj_desc = match &obj.kind {

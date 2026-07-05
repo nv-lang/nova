@@ -1049,20 +1049,175 @@ fn result_ty(ok: TypeRef, err: &str) -> TypeRef {
 /// `Some(inner)`.
 fn some_call(inner: Expr) -> Expr { call(ident("Some"), vec![inner]) }
 
-/// Map a scalar field type → the `Deserializer` instance method that reads it.
-/// `None` ⇒ not a directly-supported scalar (routed through static `.deserialize`).
+/// `if <null_cond>? { None as opt_ty } else { Some(<inner>) }` — the inline
+/// Option null-check used for both top-level and nested `Option` fields. The
+/// `None` carries an explicit `as Option[T]` ascription: a bare `None` in the
+/// then-branch of a NESTED check mis-infers to the INNER option type
+/// (`Some(inner)` is `Option[Option[T]]` but the then/else would disagree), so
+/// the cast pins it to the full field type.
+fn try_wrap_none(null_cond: Expr, inner: Expr, opt_ty: &TypeRef) -> Expr {
+    let typed_none = ex(ExprKind::As(Box::new(ident("None")), opt_ty.clone()));
+    ex(ExprKind::If {
+        cond: Box::new(try_(null_cond)),
+        then: block_trailing(typed_none),
+        else_: Some(crate::ast::ElseBranch::Block(block_trailing(some_call(inner)))),
+    })
+}
+
+/// Map a "same-width" scalar field type → the `Deserializer` instance method
+/// that reads it directly (the method's return type matches the field type, so
+/// no narrowing/range-check is needed). `None` ⇒ not a same-width scalar
+/// (narrow scalar → `narrow_deser_fn`; record/container → static `.deserialize`).
 fn scalar_deser_method(ty: &TypeRef) -> Option<&'static str> {
     match type_ref_name(ty)? {
-        "int"        => Some("deser_int"),
-        "str"        => Some("deser_str"),
-        "f64"        => Some("deser_float"),
-        "bool"       => Some("deser_bool"),
-        "u64" | "uint" => Some("deser_uint"),
+        "int"  => Some("deser_int"),
+        "str"  => Some("deser_str"),
+        "f64"  => Some("deser_float"),
+        "bool" => Some("deser_bool"),
+        "u64"  => Some("deser_uint"),
+        _ => None,
+    }
+}
+
+/// Narrow-scalar deserialize plan: which `Deserializer` read method feeds the
+/// value, the narrow cast target, and the inclusive `[min, max]` bounds the
+/// (already exact-integer, D346) wire value must satisfy. A primitive
+/// `T.deserialize` static call does NOT dispatch cleanly through codegen (the
+/// `?` mis-lowers), so the synthesizer INLINES: read via the protocol method
+/// (which works), range-guard, then cast. `None` bound ⇒ no check on that side
+/// (`i64`/`uint` are full-width; unsigned needs no lower bound — `deser_uint`
+/// already rejects negatives; `f32` is a lossy narrowing with no integer bound).
+struct NarrowScalarPlan {
+    read: &'static str,
+    cast: &'static str,
+    min: Option<i64>,
+    max: Option<i64>,
+}
+
+fn narrow_scalar_deser_plan(ty: &TypeRef) -> Option<NarrowScalarPlan> {
+    let (read, cast, min, max) = match type_ref_name(ty)? {
+        "i8"   => ("deser_int",   "i8",   Some(-128),        Some(127)),
+        "i16"  => ("deser_int",   "i16",  Some(-32768),      Some(32767)),
+        "i32"  => ("deser_int",   "i32",  Some(-2147483648), Some(2147483647)),
+        "i64"  => ("deser_int",   "i64",  None,              None),
+        "u8"   => ("deser_uint",  "u8",   None,              Some(255)),
+        "u16"  => ("deser_uint",  "u16",  None,              Some(65535)),
+        "u32"  => ("deser_uint",  "u32",  None,              Some(4294967295)),
+        "uint" => ("deser_uint",  "uint", None,              None),
+        "f32"  => ("deser_float", "f32",  None,              None),
+        _ => return None,
+    };
+    Some(NarrowScalarPlan { read, cast, min, max })
+}
+
+/// `Err(DeError.of(OutOfRange(str.from(<raw>))))` — the typed range-violation
+/// error raised inline by a narrow-scalar deserialize guard.
+fn deerror_out_of_range(raw: &str) -> Expr {
+    let str_from = member_call(ident("str"), "from", vec![ident(raw)]);
+    let variant = call(ident("OutOfRange"), vec![str_from]);
+    let de = call(ex(ExprKind::Path(vec!["DeError".to_string(), "of".to_string()])), vec![variant]);
+    call(ident("Err"), vec![de])
+}
+
+/// Emit the inline statements for a narrow-scalar field into `stmts`, binding
+/// the narrowed value to local `field` read from sub-deserializer `sub`:
+///   `ro __raw = sub.deser_X()?`
+///   `if __raw < min || __raw > max { return Err(DeError.of(OutOfRange(...))) }`
+///   `ro field = __raw as T`
+fn emit_narrow_scalar_deser(stmts: &mut Vec<Stmt>, field: &str, sub: &str, plan: &NarrowScalarPlan) {
+    let raw = format!("__nv_raw_{}", field);
+    stmts.push(let_stmt(&raw, false, None, try_(member_call(ident(sub), plan.read, vec![]))));
+    let mut cond: Option<Expr> = None;
+    if let Some(min) = plan.min {
+        cond = Some(binop(BinOp::Lt, ident(&raw), int_lit(min)));
+    }
+    if let Some(max) = plan.max {
+        let hi = binop(BinOp::Gt, ident(&raw), int_lit(max));
+        cond = Some(match cond {
+            Some(prev) => binop(BinOp::Or, prev, hi),
+            None => hi,
+        });
+    }
+    if let Some(c) = cond {
+        let ret = Stmt::Return { value: Some(deerror_out_of_range(&raw)), span: span_dummy() };
+        stmts.push(Stmt::Expr(ex(ExprKind::If {
+            cond: Box::new(c),
+            then: Block { stmts: vec![ret], trailing: None, span: span_dummy(), is_unsafe: false },
+            else_: None,
+        })));
+    }
+    stmts.push(let_stmt(
+        field, false, None,
+        ex(ExprKind::As(Box::new(ident(&raw)), type_ref_named(plan.cast))),
+    ));
+}
+
+/// Scalar field type → `(Serializer method, optional widening cast target)` for
+/// the DIRECT `s.serialize_X(@f [as WIDE])` emission. A primitive receiver does
+/// not dispatch a user `@serialize`, so the record synthesizer pushes the wire
+/// call itself. Signed ints widen to `int`, unsigned to `u64`, `f32`→`f64`.
+fn scalar_ser_wire(ty: &TypeRef) -> Option<(&'static str, Option<&'static str>)> {
+    match type_ref_name(ty)? {
+        "int"                  => Some(("serialize_int", None)),
+        "i8" | "i16" | "i32" | "i64" => Some(("serialize_int", Some("int"))),
+        "u64"                  => Some(("serialize_uint", None)),
+        "uint" | "u8" | "u16" | "u32" => Some(("serialize_uint", Some("u64"))),
+        "f64"                  => Some(("serialize_float", None)),
+        "f32"                  => Some(("serialize_float", Some("f64"))),
+        "bool"                 => Some(("serialize_bool", None)),
+        "str"                  => Some(("serialize_str", None)),
         _ => None,
     }
 }
 
 fn is_option_ty(ty: &TypeRef) -> bool { type_ref_name(ty) == Some("Option") }
+
+/// Scalar primitives serde supports as a DIRECT record field: the record
+/// synthesizer emits their wire ser/deser INLINE (`s.serialize_int(@f as int)`
+/// + inline range-guard), so no primitive-method dispatch is needed. Everything
+/// routes through the JSON numeric / string / bool wire with exact-integer +
+/// range checks (D342/D346). NOT supported (→ typed
+/// `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`, never ICE):
+///   - `char`  — no faithful JSON scalar (followup [M-180-char-serde]);
+///   - `byte`  — retired alias of `u8` (D367); use `u8`;
+///   - `i128`/`u128` — exceed the numeric wire's int/u64 carrier and are not
+///     even lowered to a C type.
+pub fn serde_supported_scalar(name: &str) -> bool {
+    matches!(
+        name,
+        "int" | "uint" | "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" | "bool" | "str"
+    )
+}
+
+/// Scalar primitives serde supports NESTED inside a container (`Option[T]`,
+/// `Vec[T]`, `HashMap[str,T]`, tuple): only those with real `fn T @serialize` +
+/// `fn T.deserialize` conformance in serde.nv, because a container's generic
+/// body dispatches `v.serialize(s)` / `T.deserialize(sub)` on the element.
+/// Narrow scalars (i8..i64/u8..u32/uint/f32) do NOT dispatch as primitive
+/// methods inside a generic mono, so they are top-level-only — nesting one
+/// yields a typed `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` (followup
+/// [M-180-container-narrow-scalar]) rather than a CC-FAIL/ICE.
+fn serde_container_scalar(name: &str) -> bool {
+    matches!(name, "int" | "u64" | "f64" | "bool" | "str")
+}
+
+/// `[]u8` / `Vec[u8]` / `[N]u8` — the byte-sequence field shape that maps to a
+/// base64 string on the wire (`Serializer::serialize_bytes`, Q9 / D-canon),
+/// NOT to a JSON array of numbers.
+fn is_byte_seq_ty(ty: &TypeRef) -> bool {
+    match ty.strip_modifiers() {
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            type_ref_name(inner) == Some("u8")
+        }
+        TypeRef::Named { path, generics, .. }
+            if path.last().map(|s| s.as_str()) == Some("Vec") && generics.len() == 1 =>
+        {
+            type_ref_name(&generics[0]) == Some("u8")
+        }
+        _ => false,
+    }
+}
 
 /// Inner type of `Option[T]`.
 fn option_inner(ty: &TypeRef) -> Option<TypeRef> {
@@ -1101,10 +1256,23 @@ fn type_static_expr(ty: &TypeRef) -> Expr {
 }
 
 /// Deserialize expression for a field of type `ty` from sub-deserializer `sub`
-/// (already `?`-wrapped): scalar → `sub.deser_X()?`; else static
-/// `<T>.deserialize(sub)?`.
+/// (already `?`-wrapped): `Option[T]` → inline null-check on the SAME cursor
+/// (`if sub.is_null()? { None } else { Some(<T deser>) }`); `[]u8`/`Vec[u8]` →
+/// `sub.deser_bytes()?` (base64 wire, Q9); scalar → `sub.deser_X()?`; else
+/// static `<T>.deserialize(sub)?`.
+///
+/// The `Option` arm is RECURSIVE so nested `Option[Option[T]]` works: the
+/// built-in `Option` does not dispatch a user static `.deserialize`
+/// (`Option[int].deserialize` → bad `Option->deserialize` C), so the inline
+/// null-check is the only sound form. `Some(None)` collapses to `null` on the
+/// wire (D342), making this the faithful inverse of `@serialize`.
 fn deser_field_expr(ty: &TypeRef, sub: &str) -> Expr {
-    if let Some(m) = scalar_deser_method(ty) {
+    if let Some(inner) = option_inner(ty) {
+        let inner_de = deser_field_expr(&inner, sub);
+        try_wrap_none(member_call(ident(sub), "is_null", vec![]), inner_de, ty)
+    } else if is_byte_seq_ty(ty) {
+        try_(member_call(ident(sub), "deser_bytes", vec![]))
+    } else if let Some(m) = scalar_deser_method(ty) {
         try_(member_call(ident(sub), m, vec![]))
     } else {
         // Static `<Type>.deserialize(sub)`. For a SIMPLE named type the parser
@@ -1130,27 +1298,57 @@ fn deser_field_expr(ty: &TypeRef, sub: &str) -> Expr {
 /// Serde-aware field eligibility: primitives, `Option`/`Vec`/`HashMap[str,_]`
 /// (recurse into element types), `[]T`/tuple (recurse), types that provide the
 /// method or declare `#impl(P)`. Q16: `HashMap` key must be `str`.
+///
+/// The `top_level` distinction is load-bearing (§6, no latent ICE): a NARROW
+/// scalar (i8..i64/u8..u32/uint/f32) is emitted INLINE by the synthesizer as a
+/// direct field, but a container's generic body dispatches `v.serialize(s)` /
+/// `T.deserialize(sub)` on the element and a narrow primitive does NOT dispatch
+/// as a method inside a mono → nesting one must be a TYPED diagnostic, not a
+/// CC-FAIL. `[]u8`/`Vec[u8]` are the byte-seq exception (base64, top-level).
 pub fn check_field_eligibility_serde<Q: DeriveQuery>(
     query: &Q,
     field_type: &TypeRef,
     protocol: &str,
     method_name: &str,
 ) -> bool {
+    check_field_eligibility_serde_at(query, field_type, protocol, method_name, true)
+}
+
+fn check_field_eligibility_serde_at<Q: DeriveQuery>(
+    query: &Q,
+    field_type: &TypeRef,
+    protocol: &str,
+    method_name: &str,
+    top_level: bool,
+) -> bool {
+    // `[]u8` / `Vec[u8]` → base64 bytes wire (Q9) — top-level only: a nested
+    // byte-seq (e.g. `Option[[]u8]`) has no per-element wire in a container mono.
+    if top_level && is_byte_seq_ty(field_type) {
+        return true;
+    }
     match field_type.strip_modifiers() {
         TypeRef::Named { path, generics, .. } => {
             let name = match path.last() { Some(n) => n.as_str(), None => return false };
             if is_primitive_type(name) {
-                return true;
+                // char / byte / i128 / u128 have no faithful JSON wire → typed
+                // E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL (never an ICE, §6). Narrow
+                // scalars are direct-field only (see fn doc / serde_container_scalar).
+                return if top_level {
+                    serde_supported_scalar(name)
+                } else {
+                    serde_container_scalar(name)
+                };
             }
             match name {
-                "Option" | "Vec" | "Set" | "HashSet" => generics.iter()
-                    .all(|g| check_field_eligibility_serde(query, g, protocol, method_name)),
+                "Option" | "Vec" | "Set" | "HashSet" => generics.iter().all(|g| {
+                    check_field_eligibility_serde_at(query, g, protocol, method_name, false)
+                }),
                 "HashMap" | "Map" => {
                     // Q16: only `str` keys are serializable (E_SERDE_NONSTRING_MAP_KEY).
                     if generics.len() == 2
                         && type_ref_name(&generics[0]) == Some("str")
                     {
-                        check_field_eligibility_serde(query, &generics[1], protocol, method_name)
+                        check_field_eligibility_serde_at(query, &generics[1], protocol, method_name, false)
                     } else {
                         false
                     }
@@ -1169,9 +1367,9 @@ pub fn check_field_eligibility_serde<Q: DeriveQuery>(
             }
         }
         TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) =>
-            check_field_eligibility_serde(query, inner, protocol, method_name),
+            check_field_eligibility_serde_at(query, inner, protocol, method_name, false),
         TypeRef::Tuple(elems, _) => elems.iter()
-            .all(|t| check_field_eligibility_serde(query, t, protocol, method_name)),
+            .all(|t| check_field_eligibility_serde_at(query, t, protocol, method_name, false)),
         TypeRef::Unit(_) => true,
         _ => false,
     }
@@ -1252,9 +1450,24 @@ pub fn synthesize_serialize<Q: DeriveQuery>(
         // s.struct_field("f")?
         stmts.push(Stmt::Expr(try_(member_call(
             ident("s"), "struct_field", vec![str_lit(&f.name)]))));
-        // @f.serialize(s)?
-        stmts.push(Stmt::Expr(try_(member_call(
-            self_field(&f.name), "serialize", vec![ident("s")]))));
+        let ser_expr = if is_byte_seq_ty(&f.ty) {
+            // []u8 / Vec[u8] → base64 string wire (Q9): s.serialize_bytes(@f).
+            // NOT the generic seq path (u8 has no per-element JSON-number wire in
+            // this canon).
+            member_call(ident("s"), "serialize_bytes", vec![self_field(&f.name)])
+        } else if let Some((method, widen)) = scalar_ser_wire(&f.ty) {
+            // Direct scalar wire push: s.serialize_int(@f as int) etc. A
+            // primitive receiver does not dispatch `@f.serialize(s)`.
+            let arg = match widen {
+                Some(w) => ex(ExprKind::As(Box::new(self_field(&f.name)), type_ref_named(w))),
+                None => self_field(&f.name),
+            };
+            member_call(ident("s"), method, vec![arg])
+        } else {
+            // Record / container / Option → uniform `@f.serialize(s)`.
+            member_call(self_field(&f.name), "serialize", vec![ident("s")])
+        };
+        stmts.push(Stmt::Expr(try_(ser_expr)));
     }
     let body = FnBody::Block(block_with_trailing(
         stmts, member_call(ident("s"), "end_struct", vec![])));
@@ -1279,24 +1492,25 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
     let mut lit_fields: Vec<RecordLitField> = Vec::new();
     for f in &fields {
         let sub = format!("__nv_de_{}", f.name);
-        if let Some(inner) = option_inner(&f.ty) {
-            // mut sub = d.enter_field_or_null("f")?
-            stmts.push(let_stmt(&sub, true, None, try_(member_call(
-                ident("d"), "enter_field_or_null", vec![str_lit(&f.name)]))));
-            // ro f: Option[inner] = if sub.is_null()? { None } else { Some(<inner deser>) }
-            let inner_de = deser_field_expr(&inner, &sub);
-            let if_expr = ex(ExprKind::If {
-                cond: Box::new(try_(member_call(ident(&sub), "is_null", vec![]))),
-                then: block_trailing(ident("None")),
-                else_: Some(crate::ast::ElseBranch::Block(block_trailing(some_call(inner_de)))),
-            });
-            stmts.push(let_stmt(&f.name, false, Some(f.ty.clone()), if_expr));
-        } else {
-            // mut sub = d.enter_field("f")?
+        if let Some(plan) = narrow_scalar_deser_plan(&f.ty) {
+            // Narrow scalar → enter_field + inline read/range-guard/cast.
             stmts.push(let_stmt(&sub, true, None, try_(member_call(
                 ident("d"), "enter_field", vec![str_lit(&f.name)]))));
-            // ro f = <deser_expr>
-            stmts.push(let_stmt(&f.name, false, None, deser_field_expr(&f.ty, &sub)));
+            emit_narrow_scalar_deser(&mut stmts, &f.name, &sub, &plan);
+        } else {
+            // `Option` fields enter via `enter_field_or_null` (absent key → null
+            // cursor → None, Q7); everything else via `enter_field` (absent →
+            // MissingField). The VALUE expression is uniform: `deser_field_expr`
+            // handles the Option null-check (recursively, for nested Option),
+            // same-width scalars, `[]u8`→bytes, and static `.deserialize`.
+            let is_opt = is_option_ty(&f.ty);
+            let enter = if is_opt { "enter_field_or_null" } else { "enter_field" };
+            stmts.push(let_stmt(&sub, true, None, try_(member_call(
+                ident("d"), enter, vec![str_lit(&f.name)]))));
+            // Annotate the Option local so the None/Some(..) if-branches unify to
+            // `Option[inner]` for the checker.
+            let ty_ann = if is_opt { Some(f.ty.clone()) } else { None };
+            stmts.push(let_stmt(&f.name, false, ty_ann, deser_field_expr(&f.ty, &sub)));
         }
         lit_fields.push(RecordLitField {
             name: f.name.clone(),

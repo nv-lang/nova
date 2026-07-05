@@ -30,6 +30,7 @@ module encoding.serde
 export type SerErrorKind
     | NonFiniteFloat                 // NaN/Inf в JSON (Q19, RFC 8259)
     | SerDepthLimit                  // serialize-сторона depth-guard (Q14)
+    | SerLossyInteger(str)           // |v| > 2^53 — не lossless в f64-wire (Q15, D346); симметрично DeError.LossyInteger (уник. имя — избегает коллизии вариантов)
     | SerCustom(str)
     | SerOther(str)
 
@@ -45,10 +46,11 @@ export fn SerError.of(kind SerErrorKind) -> SerError => { kind, path: "" }
 #unstable
 export fn SerError @to_str() -> str {
     ro base = match @kind {
-        NonFiniteFloat => "non-finite float not representable in JSON"
-        SerDepthLimit  => "serialize recursion depth limit exceeded"
-        SerCustom(m)   => m
-        SerOther(m)    => m
+        NonFiniteFloat  => "non-finite float not representable in JSON"
+        SerDepthLimit   => "serialize recursion depth limit exceeded"
+        SerLossyInteger(v) => "integer ${v} is not losslessly representable in a JSON number"
+        SerCustom(m)    => m
+        SerOther(m)     => m
     }
     if @path.is_empty() { base } else { "at ${@path}: ${base}" }
 }
@@ -205,6 +207,53 @@ fn f64.deserialize[D Deserializer](mut d D) -> Result[f64, DeError] => d.deser_f
 
 fn str @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_str(@)
 fn str.deserialize[D Deserializer](mut d D) -> Result[str, DeError] => d.deser_str()
+
+// ── narrow numeric scalars (D342: int i64-wide widen on ser, range-check on
+// deser). The record synthesizer emits the SER direction inline as a direct
+// `s.serialize_int/uint/float(@f as WIDE)?` (a primitive receiver does not
+// dispatch a user `@serialize`), and the DESER direction as a static
+// `T.deserialize(sub)?` with an explicit `ro f: T` annotation so the `?`
+// lowers to the narrow C type. deser_int/deser_uint already enforce the
+// exact-integer / non-negative wire invariants (D346, Q15); the per-type
+// checks reject values that overflow the narrower target (`OutOfRange`) —
+// loss-free or typed, never silent.
+
+fn i8.deserialize[D Deserializer](mut d D) -> Result[i8, DeError] {
+    ro n = d.deser_int()?
+    if n < -128 || n > 127 { Err(DeError.of(OutOfRange(str.from(n)))) } else { Ok(n as i8) }
+}
+fn i16.deserialize[D Deserializer](mut d D) -> Result[i16, DeError] {
+    ro n = d.deser_int()?
+    if n < -32768 || n > 32767 { Err(DeError.of(OutOfRange(str.from(n)))) } else { Ok(n as i16) }
+}
+fn i32.deserialize[D Deserializer](mut d D) -> Result[i32, DeError] {
+    ro n = d.deser_int()?
+    if n < -2147483648 || n > 2147483647 { Err(DeError.of(OutOfRange(str.from(n)))) } else { Ok(n as i32) }
+}
+fn i64.deserialize[D Deserializer](mut d D) -> Result[i64, DeError] {
+    ro n = d.deser_int()?
+    Ok(n as i64)
+}
+fn u8.deserialize[D Deserializer](mut d D) -> Result[u8, DeError] {
+    ro n = d.deser_uint()?
+    if n > 255 { Err(DeError.of(OutOfRange(str.from(n)))) } else { Ok(n as u8) }
+}
+fn u16.deserialize[D Deserializer](mut d D) -> Result[u16, DeError] {
+    ro n = d.deser_uint()?
+    if n > 65535 { Err(DeError.of(OutOfRange(str.from(n)))) } else { Ok(n as u16) }
+}
+fn u32.deserialize[D Deserializer](mut d D) -> Result[u32, DeError] {
+    ro n = d.deser_uint()?
+    if n > 4294967295 { Err(DeError.of(OutOfRange(str.from(n)))) } else { Ok(n as u32) }
+}
+fn uint.deserialize[D Deserializer](mut d D) -> Result[uint, DeError] {
+    ro n = d.deser_uint()?
+    Ok(n as uint)
+}
+fn f32.deserialize[D Deserializer](mut d D) -> Result[f32, DeError] {
+    ro n = d.deser_float()?
+    Ok(n as f32)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Контейнер-conformance (Q13, §0-находка). Выразимо `.nv`-impl'ами (прецедент

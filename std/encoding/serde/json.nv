@@ -90,8 +90,22 @@ fn JsonSerializer mut @finish_obj() -> Result[(), SerError] {
 // ── Serializer-протокол ──
 
 fn JsonSerializer mut @serialize_bool(v bool) -> Result[(), SerError] => @put(JsonValue.bool(v))
-fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] => @put(JsonValue.num(v as f64))
-fn JsonSerializer mut @serialize_uint(v u64) -> Result[(), SerError] => @put(JsonValue.num(v as f64))
+fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] {
+    // Q15/D346: reject integers that would silently lose precision in the f64
+    // JSON number — SYMMETRIC with `is_exact_int` on the deser side (`|n| <
+    // 2^53`, strict), so a value this encodes is one deser_int accepts back.
+    // `json_encode(9007199254740993)` is `Err(SerLossyInteger)`, never ...992.
+    if v >= 9007199254740992 || v <= -9007199254740992 {
+        return Err(SerError.of(SerLossyInteger(str.from(v))))
+    }
+    @put(JsonValue.num(v as f64))
+}
+fn JsonSerializer mut @serialize_uint(v u64) -> Result[(), SerError] {
+    if v >= 9007199254740992 {
+        return Err(SerError.of(SerLossyInteger(str.from(v))))
+    }
+    @put(JsonValue.num(v as f64))
+}
 fn JsonSerializer mut @serialize_float(v f64) -> Result[(), SerError] {
     if v.is_nan() || v.is_infinite() {
         return Err(SerError.of(NonFiniteFloat))
