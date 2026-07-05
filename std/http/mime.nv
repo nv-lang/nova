@@ -135,4 +135,4 @@ export fn ContentType @to_header() -> str {
 
 /// Построить из Mime без параметров.
 #stable(since = "0.1")
-export fn ContentType.of(mime Mime) -> ContentType => { mime, params: Vec[Param].of() }
+export fn ContentType.new(mime Mime) -> ContentType => { mime, params: Vec[Param].of() }

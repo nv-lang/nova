@@ -83,7 +83,7 @@ export fn Response.new(status StatusCode, headers HeaderMap, body_bytes []u8) ->
 
 /// Построить ответ с явной версией + in-memory телом (Ф.2 client parse-result).
 #stable(since = "0.1")
-export fn Response.of(version Version, status StatusCode, headers HeaderMap, body_bytes []u8) -> Response =>
+export fn Response.new(version Version, status StatusCode, headers HeaderMap, body_bytes []u8) -> Response =>
     { version, status, headers, body: Body.from_bytes(body_bytes) }
 
 /// Построить ответ без тела (204/304).

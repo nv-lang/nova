@@ -62,7 +62,7 @@ export fn Response consume @error_for_status() -> Result[Response, HttpError] {
     ro ok = st.is_success() || st.is_redirect()
     ro body = @bytes()?
     if ok {
-        Ok(Response.of(ver, st, hdrs, body))
+        Ok(Response.new(ver, st, hdrs, body))
     } else {
         Err(HttpError.new(Status(st)))
     }

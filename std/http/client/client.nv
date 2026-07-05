@@ -307,11 +307,11 @@ fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow 
                     remaining -= 1
                 }
                 None => {
-                    return Ok(Response.of(parsed.version, st, parsed.headers, parsed.body))
+                    return Ok(Response.new(parsed.version, st, parsed.headers, parsed.body))
                 }
             }
         } else {
-            return Ok(Response.of(parsed.version, st, parsed.headers, parsed.body))
+            return Ok(Response.new(parsed.version, st, parsed.headers, parsed.body))
         }
     }
     Err(HttpError.new(TooManyRedirects(max)).with_url(url))
