@@ -381,13 +381,65 @@ static inline nova_str nova_int_to_str(nova_int v) {
     return (nova_str){ buf, (size_t)(n < 0 ? 0 : n) };
 }
 
+/* ---- shortest round-trip float → decimal (Plan 180 [M-180-f64-shortest-roundtrip]) ----
+ *
+ * SINGLE SOURCE OF TRUTH for every float→str path in the language: `str.from`,
+ * `@display`/`@debug`, `${x}` interpolation, `StringBuilder.append`, AND direct
+ * `println(float)` all funnel here (conv.h `nova_f64_to_str`/`nova_f32_to_str`
+ * are thin GC-allocating wrappers over these; the print helpers below print the
+ * bytes directly).
+ *
+ * Prior formatting was `snprintf("%g")` = 6 significant figures — LOSSY for
+ * arbitrary f64 (`3.141592653589793` → "3.14159", `1234567.89` → "1.23457e+06"),
+ * silently breaking `decode(encode(v)) == v`. These emit the MINIMAL decimal
+ * string whose `strtod`/`strtof` re-parses bit-for-bit to `v`.
+ *
+ * Method (style-preserving, zero-churn on legacy output): try default `%g`
+ * (6 sig-figs) first — every value already faithful in <=6 sig-figs keeps its
+ * historical rendering (incl. "100000", "0.1"); otherwise escalate precision
+ * (7..17 for f64, 7..9 for f32) and take the FIRST exact round-trip. `%.17g`
+ * (f64) / `%.9g` (f32) is an exact round-trip for every finite value, so the
+ * loop always terminates. Non-finite (inf/-inf/nan): `%g` renders them and the
+ * decimal probe is skipped (NaN != NaN, inf has no decimal form).
+ *
+ * Writes into caller `buf` (>= 32 bytes; worst case `%.17g` == 24 chars + NUL),
+ * returns the byte length. */
+static inline int nova_f64_shortest(nova_f64 v, char* buf) {
+    int n;
+    if (isnan(v) || isinf(v)) { n = snprintf(buf, 32, "%g", v); return n < 0 ? 0 : n; }
+    n = snprintf(buf, 32, "%g", v);
+    if (n >= 0 && strtod(buf, NULL) == v) return n;
+    for (int prec = 7; prec <= 17; prec++) {
+        n = snprintf(buf, 32, "%.*g", prec, v);
+        if (n < 0) return 0;
+        if (strtod(buf, NULL) == v) return n;
+    }
+    return n < 0 ? 0 : n;
+}
+static inline int nova_f32_shortest(nova_f32 v, char* buf) {
+    double dv = (double)v;
+    int n;
+    if (isnan(dv) || isinf(dv)) { n = snprintf(buf, 32, "%g", dv); return n < 0 ? 0 : n; }
+    n = snprintf(buf, 32, "%g", dv);
+    if (n >= 0 && strtof(buf, NULL) == v) return n;
+    for (int prec = 7; prec <= 9; prec++) {
+        n = snprintf(buf, 32, "%.*g", prec, dv);
+        if (n < 0) return 0;
+        if (strtof(buf, NULL) == v) return n;
+    }
+    return n < 0 ? 0 : n;
+}
+
 /* ---- println ---- */
 /* Variadic nova_println is generated per call-site. Each arg is printed
  * with its own helper depending on type. */
 
 static inline void nova_print_int(nova_int v)  { printf("%lld", (long long)v); }
-static inline void nova_print_f64(nova_f64 v)  { printf("%g", v); }
-static inline void nova_print_f32(nova_f32 v)  { printf("%g", (double)v); }
+/* Plan 180: direct println(float) uses the same shortest-round-trip formatter
+ * as str.from / interpolation — no more `%g` 6-sig divergence between
+ * `println(x)` and `println("${x}")`. */
+static inline void nova_print_f64(nova_f64 v)  { char buf[32]; int n = nova_f64_shortest(v, buf); fwrite(buf, 1, (size_t)n, stdout); }
+static inline void nova_print_f32(nova_f32 v)  { char buf[32]; int n = nova_f32_shortest(v, buf); fwrite(buf, 1, (size_t)n, stdout); }
 static inline void nova_print_bool(nova_bool v) { printf("%s", v ? "true" : "false"); }
 static inline void nova_print_str(nova_str v)   { fwrite(v.ptr, 1, v.len, stdout); }
 static inline void nova_print_char(nova_int cp) {

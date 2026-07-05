@@ -613,10 +613,15 @@ fn f64 @display(mut w Write) -> () { w.write(str.from(@)) }
 #impl(Debug)
 fn f64 @debug(mut w Write) -> () { w.write(str.from(@)) }
 
+// Plan 180: f32 display/debug via `str.from(@)` — the f32-precise
+// shortest-round-trip formatter (nova_f32_to_str, strtof-based). Widening to
+// f64 first (`str.from(@ as f64)`) would surface the f32→f64 mantissa tail now
+// that str.from(f64) is faithful (0.1f → "0.10000000149011612"); the direct
+// f32 path keeps "0.1".
 #impl(Display)
-fn f32 @display(mut w Write) -> () { w.write(str.from(@ as f64)) }
+fn f32 @display(mut w Write) -> () { w.write(str.from(@)) }
 #impl(Debug)
-fn f32 @debug(mut w Write) -> () { w.write(str.from(@ as f64)) }
+fn f32 @debug(mut w Write) -> () { w.write(str.from(@)) }
 
 #impl(Display)
 fn bool @display(mut w Write) -> () { w.write(str.from(@)) }

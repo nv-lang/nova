@@ -1,0 +1,48 @@
+// Plan 180 Ф.2 — record auto-derive via #impl(Serialize + Deserialize).
+// No hand-written @serialize/.deserialize: the compiler synthesizes them.
+module nova_tests.serde
+
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError, json_encode, json_decode}
+
+#impl(Serialize + Deserialize)
+type Addr value { ro city str, ro zip int }
+
+#impl(Serialize + Deserialize)
+type User value {
+    ro name str
+    ro age int
+    ro addr Addr
+    ro tags []str
+    ro email Option[str]
+    ro score f64
+}
+
+test "auto-derive record round-trip (flat + nested + Vec + Option + float)" {
+    ro u = User{
+        name: "alice", age: 30,
+        addr: Addr{ city: "NYC", zip: 10001 },
+        tags: ["x", "y"], email: Some("a@b.c"), score: 3.14
+    }
+    ro enc = json_encode(u)!!
+    ro dec = json_decode[User](enc)!!
+    assert(dec.name == "alice")
+    assert(dec.age == 30)
+    assert(dec.addr.city == "NYC")
+    assert(dec.addr.zip == 10001)
+    assert(dec.tags.len() == 2)
+    assert(dec.tags[0] == "x")
+    assert(dec.email == Some("a@b.c"))
+    assert(dec.score == 3.14)
+}
+
+test "auto-derive with None + empty vec" {
+    ro u = User{
+        name: "bob", age: 0,
+        addr: Addr{ city: "", zip: 0 },
+        tags: [], email: None, score: -0.5
+    }
+    ro dec = json_decode[User](json_encode(u)!!)!!
+    assert(dec.email == None)
+    assert(dec.tags.len() == 0)
+    assert(dec.score == -0.5)
+}

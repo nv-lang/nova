@@ -11259,6 +11259,23 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // definition is spliced BEFORE /*__MONO_TUPLE_TYPEDEFS__*/ in the
         // final file. Tuples may carry value-records by value and require a
         // complete (not forward-declared) type at that point.
+        //
+        // [M-180-valuerecord-field-mono-ordering] (§0 mono-completeness,
+        // keystone-class — cf. NovaRes fwd-decl 0e95bdc6): a value-record field
+        // may EMBED a lazy `NovaOpt_<T>` BY VALUE (e.g. `Option[value-record]` →
+        // `NovaOpt_NovaValue_Inner`, `Option[Option[int]]` →
+        // `NovaOpt_NovaOpt_nova_int`). Those typedefs are registered lazily into
+        // `novaopt_typedefs_buf`, spliced at `/*__NOVAOPT_TYPEDEFS__*/` which
+        // lands AFTER `/*__VALUE_RECORD_DEFS__*/` → "unknown type name" on the
+        // struct field. Snapshot the buffer here; anything registered while
+        // resolving THIS record's field C-types is HOISTED ahead of the struct
+        // (below). `novaopt_decls_seen` already marks them, so the late splice
+        // won't duplicate. Symmetrically, a by-POINTER field to a mono'd generic
+        // struct (`Nova_X____…*`) / value-record / named-tuple needs only a
+        // forward typedef ahead of the struct (full body stays at its late
+        // marker) — collected into `fwd_decls`.
+        let opt_snap = self.novaopt_typedefs_buf.borrow().len();
+        let mut fwd_decls = String::new();
         let saved_out = std::mem::take(&mut self.out);
         self.line(&format!("typedef struct NovaValue_{0} NovaValue_{0};", name));
         self.line(&format!("struct NovaValue_{} {{", name));
@@ -11268,6 +11285,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
+            // By-pointer field to a late-emitted struct → early forward typedef.
+            // Restrict to guaranteed struct tags (mono `____`, NovaValue_,
+            // NovaTuple_) so we never shadow a non-struct newtype alias typedef.
+            if let Some(pointee) = ty_c.strip_suffix('*') {
+                let pointee = pointee.trim();
+                if pointee.contains("____")
+                    || pointee.starts_with("NovaValue_")
+                    || pointee.starts_with("NovaTuple_")
+                {
+                    let fwd = format!("typedef struct {p} {p};\n", p = pointee);
+                    if !fwd_decls.contains(&fwd) && !self.value_record_defs_buf.contains(&fwd) {
+                        fwd_decls.push_str(&fwd);
+                    }
+                }
+            }
             schema.insert(f.name.clone(), ty_c.clone());
             let mangled = Self::mangle_field_name(&f.name);
             self.line(&format!("{} {};", ty_c, mangled));
@@ -11296,6 +11328,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.line("};");
         self.line("");
         let struct_def = std::mem::replace(&mut self.out, saved_out);
+        // Hoist the NovaOpt typedefs this record's by-value fields registered
+        // (delta since `opt_snap`) ahead of the struct; truncate the shared
+        // buffer back so the late `/*__NOVAOPT_TYPEDEFS__*/` splice does not
+        // re-emit them. Registration order (innermost-first) is preserved, so
+        // nested `NovaOpt_NovaOpt_…` stays topologically valid.
+        let opt_delta = {
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            let d = buf[opt_snap..].to_string();
+            buf.truncate(opt_snap);
+            d
+        };
+        self.value_record_defs_buf.push_str(&fwd_decls);
+        self.value_record_defs_buf.push_str(&opt_delta);
         self.value_record_defs_buf.push_str(&struct_def);
         self.record_schemas.insert(name.to_string(), schema);
         // Value-type alias: Named{Vec3} → "NovaValue_Vec3" (no pointer).
@@ -14305,6 +14350,53 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // static path mangles heap-side).
         Self::apply_type_subst_to_ref(ty, subst)
             .map(|c| self.value_aware_generic_c_type(&c))
+    }
+
+    /// Plan 180 [M-180-namespace-static-generic-mono followup]: resolve a
+    /// generic free-fn RETURN type of shape `Result[Ok, Err]` / `Option[Inner]`
+    /// whose type-params are bound in `subst`. `value_aware_subst_to_ref` /
+    /// `apply_type_subst_to_ref` deliberately SKIP `Result`/`Option` (they carry
+    /// the special `NovaRes_`/`NovaOpt_` mangling, not the generic-type-template
+    /// mangling), so a turbofish call like `json_decode[User](s) -> Result[T,
+    /// DeError]` inferred `None` and the `?`/`!!` degenerated. Construct the
+    /// `NovaRes`/`NovaOpt` C type directly and register its decl. Returns None
+    /// for non-Result/Option or when an arg is unresolvable.
+    fn resolve_result_option_ret(
+        &self,
+        ty: &crate::ast::TypeRef,
+        subst: &[(String, Option<String>)],
+    ) -> Option<String> {
+        use crate::ast::TypeRef;
+        let resolve_arg = |g: &TypeRef| -> Option<String> {
+            if let TypeRef::Named { path: gp, generics: gg, .. } = g {
+                if gg.is_empty() {
+                    if let Some(nm) = gp.last() {
+                        if let Some((_, Some(c))) = subst.iter().find(|(n, _)| n == nm) {
+                            return Some(c.clone());
+                        }
+                    }
+                }
+            }
+            self.type_ref_to_c(g).ok().filter(|c| !c.is_empty() && c != "void*")
+        };
+        if let TypeRef::Named { path, generics, .. } = ty {
+            match (path.last().map(|s| s.as_str()), generics.len()) {
+                (Some("Result"), 2) => {
+                    let ok = resolve_arg(&generics[0])?;
+                    let err = resolve_arg(&generics[1])?;
+                    self.register_novares_decl(&ok, &err);
+                    return Some(format!("NovaRes_{}*", Self::novares_name(&ok, &err)));
+                }
+                (Some("Option"), 1) => {
+                    let inner = resolve_arg(&generics[0])?;
+                    let sani = Self::sanitize_for_novaopt(&inner);
+                    self.register_novaopt_decl(&sani, &inner);
+                    return Some(format!("NovaOpt_{}", sani));
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Plan 59 Phase 5: compute mono'd tuple struct C name.
@@ -22664,7 +22756,24 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
 
             ExprKind::Try(inner) => {
-                let inner_ty = self.infer_expr_c_type(inner);
+                let mut inner_ty = self.infer_expr_c_type(inner);
+                // Plan 180: `v.serialize(s)?` in a generic serde mono — the
+                // operand's Result type can mis-infer (receiver is a mono'd
+                // generic param), leaving `inner_ty` non-Result so `?` degrades
+                // to the `/* ? */` no-op below and SILENTLY swallows the Err.
+                // The `Serialize` contract fixes the return to
+                // `Result[(), SerError]`; pin it so `?` lowers to a real
+                // error-propagation. Guarded on the serde Result mono existing.
+                if !Self::is_result_like(&inner_ty)
+                    && !inner_ty.starts_with("NovaOpt_")
+                    && matches!(&inner.kind, ExprKind::Call { func, .. }
+                        if matches!(&func.kind, ExprKind::Member { name, .. } if name == "serialize"))
+                    && self.novares_typedefs_buf
+                        .borrow()
+                        .contains("NovaRes_nova_unit_NovaValue_SerError")
+                {
+                    inner_ty = "NovaRes_nova_unit_NovaValue_SerError*".to_string();
+                }
                 let val = self.emit_expr(inner)?;
                 let try_tmp = self.fresh_tmp();
                 if inner_ty.starts_with("NovaOpt_") {
@@ -22933,6 +23042,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
                 let target_c = self.type_ref_to_c(ty)
                     .map_err(|e| format!("as-cast type error: {}", e))?;
+                // Plan 180: `None as Option[T]` — emit the target-typed
+                // (NPO-aware) None literal directly. A bare `None` builds a
+                // DEFAULT-typed NovaOpt compound literal and a plain C
+                // struct-cast to the annotated `NovaOpt_<T>` is illegal
+                // ("used type … where arithmetic/pointer required"). The serde
+                // nested-Option deserialize synth pins the then-branch None type
+                // via this ascription, so honour it as a typed construction.
+                if matches!(&inner.kind, ExprKind::Ident(n) if n == "None")
+                    && target_c.starts_with("NovaOpt_")
+                {
+                    let sani = target_c.strip_prefix("NovaOpt_").unwrap_or(&target_c);
+                    return Ok(self.option_none_expr(sani));
+                }
                 let inner_c_ty = inner_c_ty_for_check;
                 let v = self.emit_expr(inner)?;
 
@@ -25127,6 +25249,54 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             "Nova_{}_static_{}({})",
                             safe_recv, method_name, arg_strs.join(", ")
                         ));
+                    }
+                }
+                // Plan 180 [M-180-primitive-instance-generic-method-mono]: a
+                // GENERIC INSTANCE method on a PRIMITIVE-typed value
+                // (`v.serialize(s)` with v:str inside a mono'd `Vec[T].serialize`
+                // body where T=str, or `Some(v) => v.serialize(s)` in
+                // `Option[T].serialize`) is registered as a `__mono_method__str__…`
+                // SENTINEL; several downstream dispatch paths emit that sentinel
+                // c_name verbatim → undefined symbol at link (the STATIC primitive
+                // path materializes fine, e.g. `str.deserialize`, but the instance
+                // path does not). Route such calls through the monomorphizer FIRST,
+                // before any sentinel-leaking path. Guarded on a primitive receiver
+                // C-type, so record/generic receivers (which already dispatch and
+                // materialize correctly) are byte-identical.
+                {
+                    let robj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
+                    let prim_nova: Option<&str> = match robj_ty.as_str() {
+                        "nova_int"  => Some("int"),  "nova_str"  => Some("str"),
+                        "nova_f64"  => Some("f64"),  "nova_f32"  => Some("f32"),
+                        "nova_bool" => Some("bool"), "nova_char" => Some("char"),
+                        "nova_uint" => Some("uint"), "nova_byte" => Some("u8"),
+                        _ => None,
+                    };
+                    if let Some(pn) = prim_nova {
+                        if let Some(fn_decl) = self.mono_method_decls
+                            .get(&(pn.to_string(), method.to_string())).cloned()
+                        {
+                            if !fn_decl.generics.is_empty()
+                                && matches!(fn_decl.receiver.as_ref().map(|r| &r.kind),
+                                    Some(crate::ast::ReceiverKind::Instance))
+                            {
+                                let method_subst = self.resolve_method_level_subst(
+                                    &fn_decl, args, &[],
+                                    &format!("{}.{}", pn, method))?;
+                                let base_c_name =
+                                    format!("Nova_{}_method_{}", pn, method);
+                                let mono_name =
+                                    Self::compute_mono_name(&base_c_name, &method_subst);
+                                self.register_mono_method_instance(
+                                    &fn_decl, method_subst, &mono_name, pn);
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for a in args {
+                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                            }
+                        }
                     }
                 }
                 // Plan 14 Ф.4 / Plan 153.2: если obj — record и `method` это
@@ -27592,6 +27762,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                         }
                                         if want_instance {
                                             let obj_c = self.emit_expr(obj)?;
+                                            // Plan 180 [M-180-valuerecord-receiver-generic-method]:
+                                            // a `value`-record receiver (`NovaValue_X`, D226
+                                            // by-pointer ABI) must be passed as `&obj` to a
+                                            // method-level-generic mono method, exactly like the
+                                            // sibling concrete-dispatch site (~27043) already does.
+                                            // Without this the mono method's `NovaValue_X*` receiver
+                                            // param gets a by-value `NovaValue_X` arg → CC-FAIL.
+                                            // `prepare_method_recv` is a no-op for heap (`Nova_X*`)
+                                            // and primitive receivers, so existing dispatch is
+                                            // byte-identical.
+                                            let obj_ty_local =
+                                                self.recv_c_type_materialized(obj).unwrap_or_default();
+                                            let recv_mut = fn_decl.receiver.as_ref()
+                                                .map(|r| r.mutable).unwrap_or(false);
+                                            let obj_c = self.prepare_method_recv(
+                                                &obj_c, &obj_ty_local, recv_mut, Some(obj));
                                             let mut full = vec![obj_c];
                                             full.extend(arg_strs);
                                             let result_str = format!("{}({})", mono_name, full.join(", "));
@@ -28177,6 +28363,41 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         _ => None,
                     };
                     if let Some(recv_type) = primitive_recv {
+                        // Plan 180 [M-180-primitive-instance-generic-method-mono]:
+                        // a GENERIC instance method on a primitive value
+                        // (`v.serialize(s)` where v:str and `fn str @serialize[S
+                        // Serializer]`) is registered as a `__mono_method__str__…`
+                        // SENTINEL in method_overloads. The primitive-direct
+                        // dispatch below emits `sig.c_name` verbatim — the sentinel —
+                        // → undefined symbol at link. Route generic primitive-receiver
+                        // methods through the monomorphizer FIRST (mirrors the static
+                        // primitive path which already materializes, e.g.
+                        // `str.deserialize`). Non-generic primitive methods are NOT in
+                        // `mono_method_decls`, so they fall through unchanged.
+                        if let Some(fn_decl) = self.mono_method_decls
+                            .get(&(recv_type.to_string(), method.to_string())).cloned()
+                        {
+                            if !fn_decl.generics.is_empty()
+                                && matches!(fn_decl.receiver.as_ref().map(|r| &r.kind),
+                                    Some(crate::ast::ReceiverKind::Instance))
+                            {
+                                let method_subst = self.resolve_method_level_subst(
+                                    &fn_decl, args, &[],
+                                    &format!("{}.{}", recv_type, method))?;
+                                let base_c_name =
+                                    format!("Nova_{}_method_{}", recv_type, method);
+                                let mono_name =
+                                    Self::compute_mono_name(&base_c_name, &method_subst);
+                                self.register_mono_method_instance(
+                                    &fn_decl, method_subst, &mono_name, recv_type);
+                                let obj_c = self.emit_expr(obj)?;
+                                let mut arg_strs = vec![obj_c];
+                                for a in args {
+                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                }
+                                return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                            }
+                        }
                         // Prefer method_overloads c_name (covers external methods
                         // с custom C names — e.g. str.@compare → nova_str_compare).
                         let mo_key = (recv_type.to_string(), method.to_string());
@@ -29122,6 +29343,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 "nova_char" => return Ok(format!("nova_char_to_str({})", v)),
                                 "nova_bool" => return Ok(format!("nova_bool_to_str({})", v)),
                                 "nova_f64"  => return Ok(format!("nova_f64_to_str({})", v)),
+                                // Plan 180: str.from(f32) must route to the f32
+                                // shortest-round-trip formatter (mirror of the
+                                // interpolation/display path). Без этой ветки
+                                // f32-аргумент проваливался в целочисленный
+                                // fallback и ТРУНКИРОВАЛСЯ (0.1f → "0").
+                                "nova_f32"  => return Ok(format!("nova_f32_to_str({})", v)),
                                 "nova_int"  => return Ok(format!("nova_int_to_str({})", v)),
                                 _ => {}
                             }
@@ -29752,7 +29979,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         match c_ty.as_str() {
             "nova_str"                                      => "nova_print_str",
             "nova_bool"                                     => "nova_print_bool",
-            "nova_f32" | "nova_f64"                         => "nova_print_f64",
+            // Plan 180: f32 prints via its OWN f32-precise formatter — lumping
+            // it with f64 widened to double, which the now-faithful
+            // nova_print_f64 would render with the f32→f64 mantissa tail
+            // (3.14159f → "3.141590118408203" instead of "3.14159").
+            "nova_f32"                                      => "nova_print_f32",
+            "nova_f64"                                      => "nova_print_f64",
             // Signed/unsigned integer widths — все cast'ятся в long long
             // через nova_print_int signature.
             "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
@@ -36805,9 +37037,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             // NPO typedef (single pointer, NULL=None) — early; the pointer field needs only
-            // the already-emitted forward-typedef of `Nova_<X>`.
+            // the already-emitted forward-typedef of `Nova_<X>`. Emit an early PROTOTYPE
+            // adjacent to the typedef (§0 phase-correctness): the eq BODY is late (needs the
+            // pointee struct + method proto), but an EARLIER inline opt_eq — e.g. a
+            // value-record whose field is `Option[<this>]`, whose own inline opt_eq is emitted
+            // in this same early zone — must see a declaration or C makes an implicit one
+            // ("conflicting types" vs the late `static inline` definition). Adjacent to the
+            // typedef so the hoist in `emit_value_record_type` carries both together.
             self.novaopt_typedefs_buf.borrow_mut().push_str(&format!(
-                "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n",
+                "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n\
+                 static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
                 sani = sanitized, cty = c_ty));
             // Structural eq, emitted LATE (after struct bodies AND method fwd-decls) so the
             // dereference compiles and any record/field `@equal` call has a visible proto.
@@ -37540,6 +37779,52 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 .or_else(|| other.strip_prefix("NovaTuple_"))
                 .unwrap_or(other).to_string(),
         }
+    }
+
+    /// Plan 180 [M-180-static-method-path-ret-infer]: resolve the concrete C
+    /// return type of a static method call `Type.method(...)` whose receiver is
+    /// a type-name / mono'd-typevar Ident. Needed for the serde `Deserialize`
+    /// contract (`T.deserialize() -> Result[T, DeError]`): `method_overloads`
+    /// stores an ERASED `void*` return for generic Self-returning / method-generic
+    /// static methods, so `?`/Try/`!!` degenerate. Reconstruct from the method's
+    /// DECLARED return `TypeRef` (via `mono_method_decls`/`self_method_decls`),
+    /// which is concrete (`Result[str, DeError]`). Returns None when
+    /// unresolvable — caller keeps its existing behaviour. `from`/`try_*` keep
+    /// their dedicated handling and are excluded.
+    fn infer_static_method_ret(&self, receiver_ident: &str, method: &str) -> Option<String> {
+        if method == "from" || method == "try_from"
+            || method == "try_into" || method == "try_parse"
+        {
+            return None;
+        }
+        let concrete = self.current_type_subst.get(receiver_ident)
+            .map(|c| Self::nova_type_name_from_c(c))
+            .unwrap_or_else(|| receiver_ident.to_string());
+        let key = (concrete.clone(), method.to_string());
+        if let Some(fd) = self.mono_method_decls.get(&key)
+            .or_else(|| self.self_method_decls.get(&key))
+        {
+            if !matches!(fd.receiver.as_ref().map(|r| &r.kind),
+                Some(crate::ast::ReceiverKind::Instance))
+            {
+                if let Some(ret) = &fd.return_type {
+                    if let Ok(c) = self.type_ref_to_c(ret) {
+                        if !c.is_empty() && c != "void*" {
+                            return Some(c);
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback: a non-erased static overload's concrete return type.
+        if let Some(sigs) = self.method_overloads.get(&key) {
+            if let Some(sig) = sigs.iter().find(|s|
+                !s.is_instance && !s.return_c_type.is_empty() && s.return_c_type != "void*")
+            {
+                return Some(sig.return_c_type.clone());
+            }
+        }
+        None
     }
 
     /// Returns true для C-целочисленных типов, явно несущих ширину/знак
@@ -39713,7 +39998,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                         let key = format!("fn_ret_{}", name);
                         if let Some(t) = self.var_types.get(&key).cloned() {
-                            return t;
+                            // Plan 180 [M-180-namespace-static-generic-mono followup]:
+                            // for a TURBOFISH generic free-fn call (`json_decode[User](..)`
+                            // — the serde public API), the bare-name `fn_ret_<name>` table
+                            // holds the ERASED return (type-param → void*), so `?`/Try/`!!`
+                            // on the `Result[User, DeError]` degenerated to void*. Fall
+                            // through to the turbofish-aware generic-fn resolution below
+                            // (which substitutes the turbofish args into the return type).
+                            if !(!turbofish_args.is_empty()
+                                && self.generic_fns.contains(name.as_str()))
+                            {
+                                return t;
+                            }
                         }
                         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
                         // newtype constructor — return type = aliased C type.
@@ -39836,7 +40132,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     // generic-over-source instance (`MapIter[VecIter[int],U]`)
                                     // resolves with the `NovaValue_<short>` arg prefix —
                                     // matching the worklist instance the type-decl side emits.
-                                    let resolved = self.value_aware_subst_to_ref(ret_ty_ref, &subst);
+                                    let resolved = self.value_aware_subst_to_ref(ret_ty_ref, &subst)
+                                        .or_else(|| self.resolve_result_option_ret(ret_ty_ref, &subst));
                                     if let Some(c_ty) = resolved {
                                         if !c_ty.is_empty() && c_ty != "void*" {
                                             // Plan 153.2 gap A2: a generic FREE-FN call whose
@@ -40314,6 +40611,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 return format!("Nova_{}*", n);
                             }
                         }
+                        // Plan 180 [M-180-static-method-path-ret-infer]: general
+                        // user static-method return inference for `Type.method(...)`
+                        // where the receiver is a TYPE-NAME Ident used statically —
+                        // incl. a mono'd typevar (`T.deserialize` inside a container
+                        // body with T=str, obj_ty="nova_str", which would otherwise be
+                        // mis-inferred as a primitive INSTANCE method) and a bare
+                        // primitive type-name (`str.deserialize`). Resolve the receiver
+                        // (typevar → concrete via current_type_subst) and return the
+                        // STATIC overload's concrete `return_c_type` — the serde
+                        // `Deserialize` contract (`Result[T, DeError]`) so `?`/Try can
+                        // unwrap it. `from`/`try_*` keep their dedicated handling below.
+                        if let ExprKind::Ident(n) = &obj.kind {
+                            if let Some(c) = self.infer_static_method_ret(n, method) {
+                                return c;
+                            }
+                        }
                         // If object is an unknown generic stub (void*), method result is also void*
                         // Exception: self-referential call inside a sum-type method — look up
                         // return type from current receiver's method_overloads.
@@ -40326,6 +40639,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                             return sig.return_c_type.clone();
                                         }
                                     }
+                                }
+                            }
+                            // Plan 180 [M-180-static-method-path-ret-infer]: `Type.method(...)`
+                            // where `Type` is a bare type-name Ident (not a value) leaves
+                            // `obj_ty == "void*"`. Record types get annotated via the checker's
+                            // `resolved_types` channel, but PRIMITIVE static methods
+                            // (`str.deserialize` / `int.deserialize` — the serde `Deserialize`
+                            // contract; key `("str","deserialize")` IS in method_overloads)
+                            // are not, so `?`/Try on their `Result[str,_]` return degenerated
+                            // to `void*`. Resolve the receiver (typevar → concrete via
+                            // current_type_subst) and return the static overload's concrete
+                            // `return_c_type`. Only fires in the give-up case below, so it
+                            // strictly improves (never overrides an earlier resolution).
+                            if let ExprKind::Ident(n) = &obj.kind {
+                                if let Some(c) = self.infer_static_method_ret(n, method) {
+                                    return c;
                                 }
                             }
                             return "void*".into();
@@ -40675,6 +41004,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                             }
                         }
+                        // Plan 180: the `Serialize` contract fixes `@x.serialize(s)`
+                        // to `Result[(), SerError]` for EVERY receiver. Inside a
+                        // generic container-conformance mono (e.g.
+                        // `Option[Vec[str]]@serialize` → `v.serialize(s)`, v:
+                        // Vec[str]) the re-emitted call can arrive here unannotated;
+                        // the return type is receiver-invariant, so resolve it
+                        // directly instead of ICE-ing (§6). Guarded on the exact
+                        // serde `Result[(),SerError]` C mono being in use.
+                        if method == "serialize"
+                            && self.novares_typedefs_buf
+                                .borrow()
+                                .contains("NovaRes_nova_unit_NovaValue_SerError")
+                        {
+                            return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
+                        }
                         {
                             let obj_desc = match &obj.kind {
                                 ExprKind::Ident(n) => format!("Ident({})", n),
@@ -40710,6 +41054,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         if parts.len() == 2 {
                             let eff = &parts[0];
                             let method_name = &parts[1];
+                            // Plan 180 [M-180-static-method-path-ret-infer]: general
+                            // user static-method return inference for Path-form
+                            // `Type.method(...)` — incl. a mono'd typevar receiver
+                            // (`T.deserialize` inside a container body with T=str). The
+                            // serde `Deserialize` contract returns `Result[T, DeError]`;
+                            // without this the `?`/Try on it degenerates. Resolve the
+                            // receiver (typevar → concrete via current_type_subst) and
+                            // return the STATIC overload's concrete `return_c_type`.
+                            // `from`/`try_*` keep their dedicated handling below.
+                            if let Some(c) = self.infer_static_method_ret(eff, method_name) {
+                                return c;
+                            }
                             // D91 (Plan 21): Channel.new(cap) — Path-form.
                             if eff == "Channel" && method_name == "new" {
                                 return "Nova_ChannelPair".into();
@@ -40834,6 +41190,36 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             if let Some(decls) = self.external_registry.lookup(eff, method_name) {
                                 if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
                                     return decl.return_c_type.clone();
+                                }
+                            }
+                            // Plan 180 [M-180-static-method-path-ret-infer]: general
+                            // user static-method return-type inference. The global
+                            // `fn_ret_<method>` fallback below CANNOT distinguish
+                            // static methods overloaded by receiver type (every
+                            // `T.deserialize() -> Result[T, DeError]` — Addr / User /
+                            // int / str / Vec / Option share the name `deserialize`
+                            // with DIFFERENT return types). Resolve the receiver: if
+                            // `eff` is a typevar bound in the active mono context
+                            // (`T.deserialize` with T=User), map it to the concrete
+                            // Nova type first; then look up the per-(type, method)
+                            // `method_overloads` static sig and return its concrete
+                            // `return_c_type`. Makes parametric-return generic-static-
+                            // dispatch (the serde `Deserialize` contract) codegen-
+                            // resolvable. Runs only AFTER hardcoded cases missed, and
+                            // only overrides the (already-wrong-for-overloads) global
+                            // fn_ret fallback.
+                            {
+                                let concrete_eff = self.current_type_subst.get(eff)
+                                    .map(|c| Self::nova_type_name_from_c(c))
+                                    .unwrap_or_else(|| eff.clone());
+                                if let Some(sigs) = self.method_overloads
+                                    .get(&(concrete_eff.clone(), method_name.clone()))
+                                {
+                                    if let Some(sig) = sigs.iter()
+                                        .find(|s| !s.is_instance && !s.return_c_type.is_empty())
+                                    {
+                                        return sig.return_c_type.clone();
+                                    }
                                 }
                             }
                             let key = format!("fn_ret_{}", method_name);
@@ -43171,7 +43557,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         }
                         let key = format!("fn_ret_{}", name);
                         if let Some(t) = self.var_types.get(&key).cloned() {
-                            return t;
+                            // Plan 180 [M-180-namespace-static-generic-mono followup]:
+                            // for a TURBOFISH generic free-fn call (`json_decode[User](..)`
+                            // — the serde public API), the bare-name `fn_ret_<name>` table
+                            // holds the ERASED return (type-param → void*), so `?`/Try/`!!`
+                            // on the `Result[User, DeError]` degenerated to void*. Fall
+                            // through to the turbofish-aware generic-fn resolution below
+                            // (which substitutes the turbofish args into the return type).
+                            if !(!turbofish_args.is_empty()
+                                && self.generic_fns.contains(name.as_str()))
+                            {
+                                return t;
+                            }
                         }
                         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
                         // newtype constructor — return type = aliased C type.
@@ -43294,7 +43691,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     // generic-over-source instance (`MapIter[VecIter[int],U]`)
                                     // resolves with the `NovaValue_<short>` arg prefix —
                                     // matching the worklist instance the type-decl side emits.
-                                    let resolved = self.value_aware_subst_to_ref(ret_ty_ref, &subst);
+                                    let resolved = self.value_aware_subst_to_ref(ret_ty_ref, &subst)
+                                        .or_else(|| self.resolve_result_option_ret(ret_ty_ref, &subst));
                                     if let Some(c_ty) = resolved {
                                         if !c_ty.is_empty() && c_ty != "void*" {
                                             // Plan 153.2 gap A2: a generic FREE-FN call whose
@@ -43772,6 +44170,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 return format!("Nova_{}*", n);
                             }
                         }
+                        // Plan 180 [M-180-static-method-path-ret-infer]: general
+                        // user static-method return inference for `Type.method(...)`
+                        // where the receiver is a TYPE-NAME Ident used statically —
+                        // incl. a mono'd typevar (`T.deserialize` inside a container
+                        // body with T=str, obj_ty="nova_str", which would otherwise be
+                        // mis-inferred as a primitive INSTANCE method) and a bare
+                        // primitive type-name (`str.deserialize`). Resolve the receiver
+                        // (typevar → concrete via current_type_subst) and return the
+                        // STATIC overload's concrete `return_c_type` — the serde
+                        // `Deserialize` contract (`Result[T, DeError]`) so `?`/Try can
+                        // unwrap it. `from`/`try_*` keep their dedicated handling below.
+                        if let ExprKind::Ident(n) = &obj.kind {
+                            if let Some(c) = self.infer_static_method_ret(n, method) {
+                                return c;
+                            }
+                        }
                         // If object is an unknown generic stub (void*), method result is also void*
                         // Exception: self-referential call inside a sum-type method — look up
                         // return type from current receiver's method_overloads.
@@ -43784,6 +44198,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                             return sig.return_c_type.clone();
                                         }
                                     }
+                                }
+                            }
+                            // Plan 180 [M-180-static-method-path-ret-infer]: `Type.method(...)`
+                            // where `Type` is a bare type-name Ident (not a value) leaves
+                            // `obj_ty == "void*"`. Record types get annotated via the checker's
+                            // `resolved_types` channel, but PRIMITIVE static methods
+                            // (`str.deserialize` / `int.deserialize` — the serde `Deserialize`
+                            // contract; key `("str","deserialize")` IS in method_overloads)
+                            // are not, so `?`/Try on their `Result[str,_]` return degenerated
+                            // to `void*`. Resolve the receiver (typevar → concrete via
+                            // current_type_subst) and return the static overload's concrete
+                            // `return_c_type`. Only fires in the give-up case below, so it
+                            // strictly improves (never overrides an earlier resolution).
+                            if let ExprKind::Ident(n) = &obj.kind {
+                                if let Some(c) = self.infer_static_method_ret(n, method) {
+                                    return c;
                                 }
                             }
                             return "void*".into();
@@ -44133,6 +44563,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 }
                             }
                         }
+                        // Plan 180: the `Serialize` contract fixes `@x.serialize(s)`
+                        // to `Result[(), SerError]` for EVERY receiver. Inside a
+                        // generic container-conformance mono (e.g.
+                        // `Option[Vec[str]]@serialize` → `v.serialize(s)`, v:
+                        // Vec[str]) the re-emitted call can arrive here unannotated;
+                        // the return type is receiver-invariant, so resolve it
+                        // directly instead of ICE-ing (§6). Guarded on the exact
+                        // serde `Result[(),SerError]` C mono being in use.
+                        if method == "serialize"
+                            && self.novares_typedefs_buf
+                                .borrow()
+                                .contains("NovaRes_nova_unit_NovaValue_SerError")
+                        {
+                            return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
+                        }
                         {
                             let obj_desc = match &obj.kind {
                                 ExprKind::Ident(n) => format!("Ident({})", n),
@@ -44168,6 +44613,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         if parts.len() == 2 {
                             let eff = &parts[0];
                             let method_name = &parts[1];
+                            // Plan 180 [M-180-static-method-path-ret-infer]: general
+                            // user static-method return inference for Path-form
+                            // `Type.method(...)` — incl. a mono'd typevar receiver
+                            // (`T.deserialize` inside a container body with T=str). The
+                            // serde `Deserialize` contract returns `Result[T, DeError]`;
+                            // without this the `?`/Try on it degenerates. Resolve the
+                            // receiver (typevar → concrete via current_type_subst) and
+                            // return the STATIC overload's concrete `return_c_type`.
+                            // `from`/`try_*` keep their dedicated handling below.
+                            if let Some(c) = self.infer_static_method_ret(eff, method_name) {
+                                return c;
+                            }
                             // D91 (Plan 21): Channel.new(cap) — Path-form.
                             if eff == "Channel" && method_name == "new" {
                                 return "Nova_ChannelPair".into();
@@ -44292,6 +44749,36 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             if let Some(decls) = self.external_registry.lookup(eff, method_name) {
                                 if let Some(decl) = decls.iter().find(|d| !d.is_instance) {
                                     return decl.return_c_type.clone();
+                                }
+                            }
+                            // Plan 180 [M-180-static-method-path-ret-infer]: general
+                            // user static-method return-type inference. The global
+                            // `fn_ret_<method>` fallback below CANNOT distinguish
+                            // static methods overloaded by receiver type (every
+                            // `T.deserialize() -> Result[T, DeError]` — Addr / User /
+                            // int / str / Vec / Option share the name `deserialize`
+                            // with DIFFERENT return types). Resolve the receiver: if
+                            // `eff` is a typevar bound in the active mono context
+                            // (`T.deserialize` with T=User), map it to the concrete
+                            // Nova type first; then look up the per-(type, method)
+                            // `method_overloads` static sig and return its concrete
+                            // `return_c_type`. Makes parametric-return generic-static-
+                            // dispatch (the serde `Deserialize` contract) codegen-
+                            // resolvable. Runs only AFTER hardcoded cases missed, and
+                            // only overrides the (already-wrong-for-overloads) global
+                            // fn_ret fallback.
+                            {
+                                let concrete_eff = self.current_type_subst.get(eff)
+                                    .map(|c| Self::nova_type_name_from_c(c))
+                                    .unwrap_or_else(|| eff.clone());
+                                if let Some(sigs) = self.method_overloads
+                                    .get(&(concrete_eff.clone(), method_name.clone()))
+                                {
+                                    if let Some(sig) = sigs.iter()
+                                        .find(|s| !s.is_instance && !s.return_c_type.is_empty())
+                                    {
+                                        return sig.return_c_type.clone();
+                                    }
                                 }
                             }
                             let key = format!("fn_ret_{}", method_name);

@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR does not implement
+// Plan 180 §8.0.2: a record with a non-serializable field must be REJECTED at
+// compile time (named field), never silently drop it.
+module neg.nonserializable
+
+import std.encoding.serde.{Serialize, Serializer, SerError}
+
+// Opaque has NO `#impl(Serialize)` and is not a scalar/container.
+type Opaque value { ro raw int }
+
+#impl(Serialize)
+type Bad value { ro payload Opaque }

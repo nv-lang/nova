@@ -14326,6 +14326,10 @@ struct BoundCtx<'a> {
     /// Plan 172.3 (D310): type-set name → member type-refs. Used at instantiation
     /// to check `T ∈ set` (E_TYPE_NOT_IN_SET). Built from module.items + peer_files.
     type_sets: HashMap<String, Vec<TypeRef>>,
+    /// Plan 180: type name → declared `#impl(...)` protocol list. Lets the bound
+    /// checker accept `[T P]` for a `#impl(P)` auto-derivable type whose P-method
+    /// is compiler-synthesized (absent from the base `sig.method_table`).
+    impl_protocol_types: HashMap<String, Vec<String>>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -14353,6 +14357,21 @@ impl<'a> BoundCtx<'a> {
         type_set_scan(&module.items, &mut type_sets);
         for pf in &module.peer_files {
             type_set_scan(&pf.items_here, &mut type_sets);
+        }
+        // Plan 180: collect `#impl(...)` declarations per type (local + peers).
+        let mut impl_protocol_types: HashMap<String, Vec<String>> = HashMap::new();
+        let impl_scan = |items: &[Item], m: &mut HashMap<String, Vec<String>>| {
+            for item in items {
+                if let Item::Type(t) = item {
+                    if !t.impl_protocols.is_empty() {
+                        m.insert(t.name.clone(), t.impl_protocols.clone());
+                    }
+                }
+            }
+        };
+        impl_scan(&module.items, &mut impl_protocol_types);
+        for pf in &module.peer_files {
+            impl_scan(&pf.items_here, &mut impl_protocol_types);
         }
         for item in &module.items {
             match item {
@@ -14457,7 +14476,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -15850,6 +15869,25 @@ impl<'a> BoundCtx<'a> {
             | "f32" | "f64" | "bool" | "char"
             | "str" | "any" | "never") {
             return;
+        }
+        // Plan 180: a type declaring `#impl(P)` for a built-in AUTO-DERIVABLE
+        // protocol P (Serialize/Deserialize/Equal/Hash/Clone/Compare/Display/
+        // Debug) satisfies the `[T P]` bound — the P-method is compiler-
+        // SYNTHESIZED (register_synthesized_methods / inject_synthesized_methods)
+        // and lives in the `synth_methods` overlay, NOT the base
+        // `sig.method_table` this structural check consults. (Serde is the first
+        // auto-derive protocol used as a generic BOUND on an `#impl`-only type;
+        // the earlier `==`/`clone`/… protocols happened not to exercise this
+        // path.) verify_impl_protocols already validated the `#impl` is
+        // synthesizable, so trusting it here cannot mask a real gap.
+        if let Some(bn) = bound_name {
+            if crate::protocols::auto_derive::is_builtin_protocol(bn) {
+                if let Some(protos) = self.impl_protocol_types.get(&concrete_name) {
+                    if protos.iter().any(|p| p == bn) {
+                        return;
+                    }
+                }
+            }
         }
         let empty: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let concrete_methods = self.sig.method_table.get(&concrete_name).unwrap_or(&empty);
@@ -18032,7 +18070,27 @@ fn type_refs_equiv_modulo_self(a: &TypeRef, b: &TypeRef, recv_name: &str) -> boo
         if path.len() == 1 && path[0] == recv_name);
     if is_self(a) && (is_self(b) || is_recv(b)) { return true; }
     if is_self(b) && (is_self(a) || is_recv(a)) { return true; }
-    render_type_ref(a) == render_type_ref(b)
+    // Plan 180: recurse into composite type-refs so `Self` is matched at ANY
+    // nesting depth against the receiver type (`Result[Self, DeError]` ↔
+    // `Result[Point, DeError]` for the synthesized `Deserialize` contract — the
+    // top-level check above only compared the bare outer names).
+    match (a, b) {
+        (TypeRef::Named { path: pa, generics: ga, .. },
+         TypeRef::Named { path: pb, generics: gb, .. }) => {
+            pa == pb && ga.len() == gb.len()
+                && ga.iter().zip(gb.iter())
+                    .all(|(x, y)| type_refs_equiv_modulo_self(x, y, recv_name))
+        }
+        (TypeRef::Array(ia, _), TypeRef::Array(ib, _)) =>
+            type_refs_equiv_modulo_self(ia, ib, recv_name),
+        (TypeRef::FixedArray(na, ia, _), TypeRef::FixedArray(nb, ib, _)) =>
+            na == nb && type_refs_equiv_modulo_self(ia, ib, recv_name),
+        (TypeRef::Tuple(ea, _), TypeRef::Tuple(eb, _)) =>
+            ea.len() == eb.len()
+                && ea.iter().zip(eb.iter())
+                    .all(|(x, y)| type_refs_equiv_modulo_self(x, y, recv_name)),
+        _ => render_type_ref(a) == render_type_ref(b),
+    }
 }
 
 fn render_method_sig(name: &str, params: &[Param], ret: &Option<TypeRef>) -> String {

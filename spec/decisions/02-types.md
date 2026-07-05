@@ -13774,3 +13774,36 @@ Repr = `InMemory([]u8) | Stream(BodyReader)`; `BodyReader` — чистый Nova
   180 Ф.4) / `@trailers` (Ф.2) `[M-178-body-copy-json-trailers]`; charset-aware `@text`
   (latin1-fallback по Content-Type) `[M-178-body-text-charset]`; typed `expires Timestamp` в SetCookie
   (date→epoch, Plan 175) `[M-178-setcookie-expires-timestamp]`.
+## D340 — serde data-model + protocols (Plan 180)
+
+Format-agnostic typed serialization. Protocols `Serialize` / `Deserialize` (contract on a type) + `Serializer` / `Deserializer` (backend), generic-bound notation `[S Serializer]` (D72/D119, NOT `impl Trait` — Q12). Lean 12-case data-model (`bool int uint float str bytes option unit seq map struct enum`, Q2; `int`=i64-wide widen/range-check).
+
+- **`Serialize` = push**: `@serialize[S Serializer](mut s S) -> Result[(), SerError]`. **`Deserialize` = static pull**: `.deserialize[D Deserializer](mut d D) -> Result[Self, DeError]` (D35 static).
+- **Serializer = single mutable stack-machine** (realized form): composites framed by `begin_struct`/`struct_field`/`end_struct`, `begin_seq`/`end_seq`, `begin_map`/`map_key`/`end_map`; scalars terminal `serialize_X`. The backend owns an internal frame stack (format-agnostic). This REPLACES the aspirational "consume sub-serializer returned per composite" form: in value-semantics Nova a sub-serializer mutating shared parent state has no clean ownership; the stack machine is the sound realization (the synthesizer always emits matched begin/end pairs — same balance guarantee).
+- **Deserializer = single cursor**: `enter_field` / `enter_field_or_null` / `enter_index` / `enter_key` return a sub-cursor (`Self`) positioned at the child; sub-deserializers only READ, so no write-back/ownership problem (keyed-access model = Swift `KeyedDecodingContainer`). No `Visitor` companion TYPE is synthesized — the keyed/indexed model makes it unnecessary.
+- `SerError` / `DeError` = **`value`-record** (D215/D322 pattern), OPEN kind + `path` (D325 R5). Kinds use DISJOINT variant names (`SerErrorKind`: `NonFiniteFloat`/`SerDepthLimit`/`SerCustom`/`SerOther`; `DeErrorKind`: `UnexpectedType`/`MissingField`/`UnknownField`/`OutOfRange`/`LossyInteger`/`DepthLimitExceeded`/`Syntax`/`Custom`/`Other`) — Nova bare-variant construction does not disambiguate a shared variant name by expected-arg type, so overlaps are avoided by construction.
+- PURE (no effect) — codec over values/bytes.
+
+## D341 — record auto-derive contract (compiler synthesis)
+
+`#impl(Serialize + Deserialize)` opt-in — the 7th/8th members of the auto-derive family (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`); `is_builtin_protocol` extended. Record-path only. **SUM is GATED** ([M-126-sum-*-rich] / 180.2) — `#impl(Serialize)` on a sum → `E_AUTO_DERIVE_UNSUPPORTED_KIND`. Emitted shapes:
+- `@serialize`: `s.begin_struct(name, N)?`; per field `s.struct_field("k")?; @field.serialize(s)?`; `s.end_struct()` — UNIFORM memberwise push (like `@debug`).
+- `.deserialize`: per field `mut sub = d.enter_field[_or_null]("k")?` then TYPE-DIRECTED read — scalar → `sub.deser_X()?` (instance); record/`Vec`/`HashMap` → `<T>.deserialize(sub)?` (static); `Option[T]` → inline `if sub.is_null()? { None } else { Some(<inner>) }` (built-in `Option` does not dispatch a user static method). Then `Ok(Type{ f1, f2, … })`.
+- Field-eligibility: primitive / `Option`·`Vec`·`HashMap[str,_]` (recurse) / `#impl(P)` / provides-method — else `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` (named field; no silent drop). `HashMap` key must be `str` (Q16). priv fields serialize (structural synth). User method wins (D77).
+- **Injection ordering**: serde synth is injected BEFORE type-check (its bodies call other methods whose return types codegen's annotation-free `infer_expr_c_type` cannot always resolve; type-checking annotates them). Non-serde protocols inject AFTER check as before (some bodies, e.g. `@display`'s `w.write_str`, are intentionally not type-checkable). Bound satisfaction: a `#impl(P)` type satisfies `[T P]` for a built-in auto-derivable P even before the method is materialized.
+
+## D342 — data-model ↔ synthesis mapping (Plan 180)
+
+record→struct, `Vec`→seq, `HashMap[str,_]`→map, `Option`→option (None→null default; absent accepted on deser, Q7), scalars→prim (`int` i64-wide widen / exact-integer range-check, Q2/Q15), `[]u8`→bytes. **numeric-fidelity (Q15)**: on deser, `int`/`uint` require an f64 that is an exact integer in `[-2^53, 2^53]` — else `LossyInteger`; negative→uint → `OutOfRange`. `Option[Option[T]]` ambiguity documented (Some(None)==None on wire). `[]u8`→base64 and Timestamp/Duration mappings are followups ([M-180-bytes-base64], Plan 175 coordination).
+
+## D344 — JSON backend over std/encoding/json (Plan 180)
+
+`JsonSerializer` (stack-machine building `JsonValue` → `@into()`) / `JsonDeserializer` (cursor over `JsonValue`) layered on the existing `JsonValue`/`Json.parse` (Q11, reuse — not a new parser). Public API = **free functions** `json_encode[T]` / `json_decode[T]` / `json_encode_pretty` / `json_to_value` / `json_from_value` / `json_decode_bytes` / `json_decode_with` (NOT `Json.encode` namespace-static: turbofish on a namespace/type-static generic method does not monomorphize — Ф.0-verify empirics; free-fn turbofish does. Followup [M-180-namespace-static-generic-mono]). depth-guard (Q14 default 128 → `DepthLimitExceeded`). `ParseJsonError` → `DeError{Syntax(msg)}` with line/col preserved in the message. Map encode sorts keys (determinism). **Contract for Plan 178 record-DTO** (`json_decode[T]` / `json_encode`).
+
+## D345 — sum auto-derive + tagging (Plan 180) — GATED
+
+`match`-arm-per-variant synth + externally(default)/internally/adjacently/untagged tagging. **GATE**: sum-rich auto-derive ([M-126-sum-equal-rich]/-clone-rich/-hash-rich OPEN); auto_derive.rs sum-arms are placeholders. NOT landed. NOT on Plan 178's critical path (record-DTO suffices).
+
+## D346 — serde soundness invariants (Plan 180)
+
+Q14 depth-guard (both sides, default 128); Q15 exact-integer-check (no silent-lossy); Q16 `str`-only map keys; Q18 dup-field reconciled with `Json.parse`'s strict `DuplicateKey`.

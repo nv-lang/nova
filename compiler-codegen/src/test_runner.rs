@@ -2473,10 +2473,19 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             None
         };
 
+    // Plan 180: inject SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
+    // BEFORE numbering + type-check so their bodies are type-checked + annotated
+    // (codegen's annotation-free infer cannot resolve serde's cross-method return
+    // types). Non-serde protocols (Equal/…/Display/Debug) inject AFTER check
+    // (below) — some of their bodies are intentionally not type-checkable.
+    crate::protocols::auto_derive::inject_synthesized_methods_filtered(
+        &mut module, |p| p == "Serialize" || p == "Deserialize");
+
     // Plan 181 (D347): same-scope re-binding alpha-rename. Runs on the
-    // FULLY-ASSEMBLED module (post import-inline) so every function body — incl.
-    // folder-module peers — is uniquified before numbering / check / codegen
-    // (§2). No-op for modules without a same-scope rebind (zero-regression).
+    // FULLY-ASSEMBLED module (post import-inline, AFTER serde-inject so
+    // synthesized bodies share the uniquify invariant) so every function body —
+    // incl. folder-module peers — is uniquified before numbering / check /
+    // codegen (§2). No-op for modules without a same-scope rebind.
     {
         let _t = crate::perf_timer::PerfTimer::new("alpha-rename");
         crate::alpha_rename::alpha_rename(&mut module);
@@ -2560,12 +2569,11 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         }
     }
     {
-        // Plan 126.2 Ф.2: synthesize built-in protocol methods (Equatable/
-        // Hashable/Cloneable/Comparable/Printable) for `#impl(P)` types and
-        // inject them into module.items as Item::Fn, so codegen emits C bodies
-        // and operator dispatch (`==`/`<`/`.clone()`/...) resolves them.
-        // Runs AFTER check_module (impl_protocols validated), BEFORE desugar/
-        // codegen. User-explicit methods always win (never overwritten).
+        // Plan 126.2 Ф.2: inject the NON-serde synthesized built-in protocol
+        // methods (Equal/Hash/Clone/Compare/Display/Debug) into module.items so
+        // codegen emits C bodies and operator dispatch (`==`/`<`/`.clone()`/…)
+        // resolves them. After check_module; serde was already injected pre-check
+        // (this pass skips it — already provided). User-explicit methods win.
         let _t = crate::perf_timer::PerfTimer::new("auto-derive-inject");
         crate::protocols::auto_derive::inject_synthesized_methods(&mut module);
     }
