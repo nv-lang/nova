@@ -17696,6 +17696,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // правильного типа. Save/restore pending на fn body boundary.
         let saved_pending_result = self.pending_result_ok_inner_type.take();
         let saved_pending_option = self.pending_option_inner_type.take();
+        // [M-176-conformance-cu-map-closure]: `var_mutable` was not scoped per
+        // fn body (only test-body/spawn scopes saved it). A `mut f` local in one
+        // fn therefore leaked its mutability into `var_mutable` and, when a LATER
+        // fn's lambda captured a same-named but IMMUTABLE free var (e.g. the
+        // fn-typed `f` param of `BoxIter[T].map`), `emit_lambda` mis-classified it
+        // as a by-ref MUT capture (env field `T** f`, boxed by `&`, registered in
+        // `var_boxed` with NO unpack local). The closure-CALL `f(x)`
+        // (`NOVA_CLOS_CALL_*`) does not consult `var_boxed`, so it emitted a bare
+        // `f` — undeclared in the body fn. The misfire only surfaced when another
+        // module in the same CU (e.g. std.fs) contributed a `mut f`, which is why
+        // it read as a CU-composition bug. Scope `var_mutable` per fn body: start
+        // empty (this fn's own `mut` lets accumulate during emit, so genuine
+        // by-ref captures like the map's `mut src` still classify correctly),
+        // restore the caller's set at exit. Symmetric with test-body/spawn.
+        let saved_var_mutable_fn = std::mem::take(&mut self.var_mutable);
         let params = self.params_c(f)?;
         // Plan 170 (D307): set the current emission file for the whole fn body
         // so call-sites to file-private helpers declared in THIS file resolve to
@@ -18045,6 +18060,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // правильный тип из fn_result_ok_inner_types registry.
         self.pending_result_ok_inner_type = saved_pending_result;
         self.pending_option_inner_type = saved_pending_option;
+        // [M-176-conformance-cu-map-closure]: restore caller's mut-binding set
+        // (this fn's own `mut` locals must not leak to sibling fns).
+        self.var_mutable = saved_var_mutable_fn;
         // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
         self.flush_boxed_vars();
         self.indent = 0;
