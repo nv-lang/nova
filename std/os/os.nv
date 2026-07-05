@@ -1,0 +1,229 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/os.nv — public os API (args / env / cwd / dirs / process) + real_os
+// handler (Plan 176 Ф.3, D324).
+//
+// The pure-Nova wrapper layer over the thin `Os` effect: it builds the rich
+// `Option`/`Result`/`Path` return types from the effect's primitive `int`/`str`
+// codes, OUTSIDE the effect boundary (which would erase them). Mirrors std/fs's
+// fs.nv split (effect = int-primitive plumbing, wrappers = rich types).
+//
+// **Concurrency contract (§3c).** `set_env`/`set_current_dir` mutate
+// process-global state and are inherently racy across threads/fibers (Rust made
+// `set_var` `unsafe` in 1.84 for exactly this). Nova does not make them unsafe,
+// but documents the single-threaded-mutation contract: mutate the environment /
+// cwd only during program setup, before spawning concurrent work that reads it.
+// Reads (`get_env`, `args`, `current_dir`) are safe.
+
+module std.os
+
+import std.io.{IoError, ErrorKind}
+import std.fs.{Path}
+
+// ─── os_cstr: validate + NUL-terminate a key/path for the FFI (§3c(1)) ──
+//
+// Env keys and paths cross to C as a NUL-terminated `*u8`. Reject an interior
+// NUL (a classic truncation bug → `InvalidInput`) and append a terminator; the
+// returned bytes' `.as_ptr()` is a valid C string. (Same shape as fs's `c_path`
+// — the []u8-native `CStr.from_bytes`, `[M-176-cstr-from-bytes-canonical]`.)
+fn os_cstr(bytes []u8) -> Result[[]u8, IoError] {
+    mut i = 0
+    while i < bytes.len() {
+        if bytes[i] == (0 as u8) {
+            return Err(IoError.of(ErrorKind.InvalidInput, "argument contains NUL"))
+        }
+        i += 1
+    }
+    mut out []u8 = []u8.new()
+    out.append(bytes)
+    out.push(0 as u8)
+    Ok(out)
+}
+
+fn os_wrap_unit(rc int, op str) -> Result[(), IoError] {
+    if rc < 0 { Err(IoError.from_os(0 - rc, op)) } else { Ok(()) }
+}
+
+// ─── Program arguments ──
+
+/// The program's command-line arguments. `args()[0]` is the program path (as
+/// invoked), matching Go `os.Args` / Rust `env::args`. Bytes are carried
+/// verbatim (a non-UTF-8 argument is preserved).
+#stable(since = "0.1")
+export fn args() Os -> []str {
+    ro n = Os.arg_count()
+    mut out []str = []
+    mut i = 0
+    while i < n {
+        out.push(Os.arg_at(i))
+        i += 1
+    }
+    out
+}
+
+// ─── Environment ──
+
+/// One environment variable (a `key`/`value` pair) from `vars()`.
+#stable(since = "0.1")
+export type EnvVar value {
+    ro key str
+    ro value str
+}
+
+/// The key of this variable.
+#stable(since = "0.1")
+export fn EnvVar @key() -> str => @key
+/// The value of this variable.
+#stable(since = "0.1")
+export fn EnvVar @value() -> str => @value
+
+/// The value of environment variable `key`, or `None` if it is not set. An unset
+/// variable and an empty value are distinguished (unlike a bare lookup). Bytes
+/// are carried verbatim; use `get_env_bytes` for guaranteed byte-fidelity of a
+/// non-UTF-8 value.
+#stable(since = "0.1")
+export fn get_env(key str) Os -> Option[str] {
+    ro kb = key.to_bytes()
+    if Os.env_has(kb) == 1 { Some(Os.env_get(kb)) } else { None }
+}
+
+/// The raw value bytes of environment variable `key`, or `None` if unset —
+/// byte-correct for non-UTF-8 Unix values (Rust `var_os` precedent).
+#stable(since = "0.1")
+export fn get_env_bytes(key []u8) Os -> Option[[]u8] {
+    if Os.env_has(key) == 1 { Some(Os.env_get(key).to_bytes()) } else { None }
+}
+
+/// Whether environment variable `key` is set.
+#stable(since = "0.1")
+export fn has_env(key str) Os -> bool => Os.env_has(key.to_bytes()) == 1
+
+/// Set environment variable `key` to `value` (creating or overwriting).
+/// **Racy** (§3c): mutate only during single-threaded setup.
+#stable(since = "0.1")
+export fn set_env(key str, value str) Os -> Result[(), IoError] =>
+    set_env_bytes(key.to_bytes(), value.to_bytes())
+
+/// Set `key` to raw `value` bytes (byte-correct). **Racy** (§3c).
+#stable(since = "0.1")
+export fn set_env_bytes(key []u8, value []u8) Os -> Result[(), IoError] =>
+    os_wrap_unit(Os.env_set(key, value), "set_env")
+
+/// Remove environment variable `key`. Removing an unset variable is not an error.
+/// **Racy** (§3c).
+#stable(since = "0.1")
+export fn remove_env(key str) Os -> Result[(), IoError] =>
+    os_wrap_unit(Os.env_remove(key.to_bytes()), "remove_env")
+
+/// A snapshot of all environment variables (Go `os.Environ` / Rust `env::vars`).
+#stable(since = "0.1")
+export fn vars() Os -> []EnvVar {
+    ro n = Os.env_len()
+    mut out []EnvVar = []
+    mut i = 0
+    while i < n {
+        out.push(EnvVar { key: Os.env_key_at(i), value: Os.env_val_at(i) })
+        i += 1
+    }
+    out
+}
+
+// ─── Working directory ──
+
+/// The current working directory as an absolute `Path`, or `Err` if it cannot be
+/// determined (e.g. the directory was unlinked).
+#stable(since = "0.1")
+export fn current_dir() Os -> Result[Path, IoError] {
+    ro s = Os.cwd()
+    // Empty == the getcwd hook failed; the effect carries no errno, so surface a
+    // raw-0 IoError (kind Other) built inside std.io — avoids the cross-module
+    // payload-variant ctor gap `[M-176-xmod-payload-variant-ctor]`.
+    if s.is_empty() { Err(IoError.from_os(0, "current_dir")) }
+    else { Ok(Path.from_bytes(s.to_bytes())) }
+}
+
+/// Change the current working directory to `path`. **Racy** (§3c): mutate only
+/// during single-threaded setup — a concurrent relative-path resolution races it.
+#stable(since = "0.1")
+export fn set_current_dir(path Path) Os -> Result[(), IoError] =>
+    os_wrap_unit(Os.set_cwd(path.as_os_bytes()), "set_current_dir")
+
+// ─── Well-known directories ──
+
+/// The system temporary-file directory (`TMPDIR`/`TEMP`/`TMP`, with a portable
+/// fallback). Always returns a path.
+#stable(since = "0.1")
+export fn temp_dir() Os -> Path => Path.from_bytes(Os.temp_dir().to_bytes())
+
+/// The current user's home directory, or `None` if it cannot be determined.
+#stable(since = "0.1")
+export fn home_dir() Os -> Option[Path] {
+    ro s = Os.home_dir()
+    if s.is_empty() { None } else { Some(Path.from_bytes(s.to_bytes())) }
+}
+
+// ─── Process ──
+
+/// Terminate the process with exit `code`, after flushing stdout/stderr (exit
+/// codes 0..255 are portable). Does NOT run pending fibers / cleanup — an
+/// immediate exit (Go `os.Exit` / Rust `process::exit`). Under `real_os` this
+/// never returns. (Named `exit_process` — the bare `exit(code, msg)` is the
+/// D13 language builtin for a message-bearing abort.)
+#stable(since = "0.1")
+export fn exit_process(code int) Os -> () {
+    ro _ = Os.exit(code)
+}
+
+/// This process's id.
+#stable(since = "0.1")
+export fn pid() Os -> int => Os.pid()
+
+/// The host name, or `Err` if it cannot be determined.
+#stable(since = "0.1")
+export fn hostname() Os -> Result[str, IoError] {
+    ro s = Os.hostname()
+    if s.is_empty() { Err(IoError.from_os(0, "hostname")) } else { Ok(s) }
+}
+
+// ─── real_os — the production Os handler over the native hooks (os_env.h) ──
+//
+// Thin: each op forwards to the matching os_* hook (which returns the int/str
+// code the effect declares). Keys/paths are NUL-validated via os_cstr; a rejected
+// argument yields -EINVAL (→ InvalidInput) or an empty string.
+
+/// Concrete `Os` handler dispatching to the native process environment
+/// (getenv/getcwd/setenv/getpid/…). Install at the root of a program:
+/// `with Os = real_os() { … }`.
+#stable(since = "0.1")
+export fn real_os() -> Effect[Os] {
+    effect Os {
+        arg_count() => os_arg_count()
+        arg_at(i int) => os_arg_at(i)
+        env_get(key []u8) {
+            match os_cstr(key) { Ok(ck) => unsafe { os_env_get(ck.as_ptr()) }, Err(_) => "" }
+        }
+        env_has(key []u8) {
+            match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.as_ptr()) }, Err(_) => 0 }
+        }
+        env_set(key []u8, val []u8) {
+            match os_cstr(key) {
+                Ok(ck) => match os_cstr(val) { Ok(cv) => unsafe { os_env_set(ck.as_ptr(), cv.as_ptr()) }, Err(_) => 0 - 22 }
+                Err(_) => 0 - 22
+            }
+        }
+        env_remove(key []u8) {
+            match os_cstr(key) { Ok(ck) => unsafe { os_env_remove(ck.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        env_len() => os_env_len()
+        env_key_at(i int) => os_env_key_at(i)
+        env_val_at(i int) => os_env_val_at(i)
+        cwd() => os_cwd()
+        set_cwd(path []u8) {
+            match os_cstr(path) { Ok(cp) => unsafe { os_set_cwd(cp.as_ptr()) }, Err(_) => 0 - 22 }
+        }
+        temp_dir() => os_temp_dir()
+        home_dir() => os_home_dir()
+        exit(code int) => os_exit(code)
+        pid() => os_pid()
+        hostname() => os_hostname()
+    }
+}

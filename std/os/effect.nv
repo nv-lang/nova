@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/effect.nv — the Os plumbing effect (Plan 176 Ф.3, D324).
+//
+// `Os` is a **plumbing effect** (net/io/fs precedent): user code never calls its
+// operations directly — it goes through the free functions in os.nv (`args`,
+// `get_env`, `set_env`, `vars`, `current_dir`, `exit`, `pid`, …), which dispatch
+// to the ambient `Os` handler. Production installs `real_os()` (native
+// getenv/getcwd/setenv/… hooks, nova_rt/os_env.h); tests install `mock_os(state)`
+// — an in-memory env/args/cwd map — so the SAME code under test runs
+// deterministically with no real process environment, no DI (§1a mockability
+// differentiator: Go needs os-var juggling, Zig has nothing).
+//
+// **Thin primitive layer (§3/§0).** Operations return raw `int`/`str` codes, NOT
+// `Result`/`Option`/`Path`: an effect vtable erases a rich return to the canonical
+// `nova_int`/`nova_str` pair, so all `IoError`/`Option`/`Path` construction happens
+// in the pure-Nova os.nv wrappers OUTSIDE the effect boundary. The ops mirror the
+// os_env.h hook shapes 1:1: string getters return raw bytes-as-`str` (empty ==
+// unavailable), mutators return 0 or a NEGATIVE POSIX errno.
+//
+// **byte-first (§3.0-Q1 precedent).** Env keys/values and paths cross as `[]u8`
+// (the handler NUL-terminates them for the C boundary); string getters carry raw
+// bytes verbatim — a non-UTF-8 Unix env value round-trips losslessly through
+// `get_env_bytes`. `str`-typed convenience (`get_env`) carries the same bytes.
+
+module std.os
+
+/// Ambient OS environment access. Internal dispatch point — user code uses the
+/// free functions in os.nv, not these operations directly.
+///
+///   - `arg_count`/`arg_at`   — program arguments (argv; `arg_at(0)` = program).
+///   - `env_get`/`env_has`    — a variable's raw value bytes / its presence.
+///   - `env_set`/`env_remove` — mutate the process environment (0 / -errno).
+///   - `env_len`/`env_key_at`/`env_val_at` — snapshot iteration of all variables.
+///   - `cwd`/`set_cwd`        — current working directory (empty == error; 0/-errno).
+///   - `temp_dir`/`home_dir`  — well-known directories (home empty == none).
+///   - `exit`/`pid`/`hostname`— process exit (flush + terminate), pid, host name.
+#stable(since = "0.1")
+export type Os effect {
+    // Program arguments.
+    arg_count() -> int
+    arg_at(i int) -> str
+    // Environment (keys/values are raw bytes; the handler NUL-terminates).
+    env_get(key []u8) -> str
+    env_has(key []u8) -> int
+    env_set(key []u8, val []u8) -> int
+    env_remove(key []u8) -> int
+    env_len() -> int
+    env_key_at(i int) -> str
+    env_val_at(i int) -> str
+    // Working directory.
+    cwd() -> str
+    set_cwd(path []u8) -> int
+    // Well-known directories.
+    temp_dir() -> str
+    home_dir() -> str
+    // Process.
+    exit(code int) -> int
+    pid() -> int
+    hostname() -> str
+}

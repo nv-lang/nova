@@ -6333,7 +6333,7 @@ user-visible эффект, высокий churn) — только задокум
 3. Ф.1 — refactor без смены поведения (int-провод неизменен) → низший риск; типизация и overflow-безопасность идут отдельными фазами поверх стабильного единого источника.
 ## D322 — io-core: `io.Read`/`io.Write`/`io.Seek`, `IoError`, `Io` effect (Plan 176 Ф.1, 2026-07-04)
 
-**Статус:** IMPLEMENTED (Ф.1 — io-core; fs=D323/os=D324 — последующие фазы). Модуль `std/io`.
+**Статус:** IMPLEMENTED (Ф.1 — io-core; fs=D323 Ф.2 / os=D324 Ф.3 — реализованы). Модуль `std/io`.
 
 ### Протоколы (byte I/O)
 
@@ -6486,6 +6486,68 @@ fn File consume @close() Fs -> Result[(), IoError]   // ЕДИНСТВЕННАЯ
    `copy_file` (не `read_to_string`/`write_str`/`copy` — те резолвятся в `std.io.*[Path]` mono).
 4. **`IoError.path`/`source`** (§3b full-shape) — отложены: io↔path module-cycle + value-`Option[Path]`-mono
    blast-radius на io-core baseline; `kind`(NotFound/…) сохранён (все тесты/§8.3 на нём). Followup.
+
+## D324 — os: `Os` effect (env / args / cwd / dirs / process) (Plan 176 Ф.3, 2026-07-06)
+
+**Статус:** IMPLEMENTED (Ф.3). Модуль `std/os`. Тот же паттерн, что `Fs` (D323): тонкий int/str-primitive
+эффект + pure-Nova обёртки, строящие `Option`/`Result`/`Path` вне effect-границы. Reuse `IoError` (Q3).
+Subprocess (`Command`/`Child`/`spawn`) — НЕ здесь: под-план **176.1** (Q5).
+
+### `Os` effect — ТОНКИЙ int/str-primitive слой (§3/§0)
+
+```nova
+type Os effect {
+    arg_count() -> int;  arg_at(i int) -> str                              // argv (arg_at(0) = программа)
+    env_get(key []u8) -> str;  env_has(key []u8) -> int                    // значение (raw bytes-as-str) / наличие
+    env_set(key []u8, val []u8) -> int;  env_remove(key []u8) -> int       // 0 / -errno
+    env_len() -> int;  env_key_at(i int) -> str;  env_val_at(i int) -> str // snapshot-итерация vars
+    cwd() -> str;  set_cwd(path []u8) -> int                               // "" = error; 0 / -errno
+    temp_dir() -> str;  home_dir() -> str                                  // home "" = none
+    exit(code int) -> int;  pid() -> int;  hostname() -> str               // exit: real не возвращается; mock записывает
+}
+```
+
+- Как `Fs`: string-getter'ы несут **raw байты-as-`str`** (пустая строка == недоступно/ошибка), мутаторы →
+  `0` / НЕГАТИВНЫЙ POSIX errno. Rich-типы (`Option`/`Result`/`Path`/`EnvVar`) строятся в `os.nv`-обёртках ВНЕ
+  effect-vtable (которая стёрла бы их).
+- **byte-first (Q1-прецедент):** env-ключи/значения и пути кросят как `[]u8` (handler NUL-терминирует их для C
+  через `os_cstr`, зеркало fs `c_path`); `env_get` несёт байты verbatim → non-UTF-8 Unix env-значение
+  round-trip'ит лосслесс через `get_env_bytes` (Rust `var_os`-прецедент). `str`-удобная форма (`get_env`) несёт
+  те же байты (Go-модель).
+
+### Public API (`os.nv`, все несут `Os`)
+
+`args() -> []str` (argv, [0]=программа); `get_env(key str) -> Option[str]` / `get_env_bytes(key []u8) -> Option[[]u8]`
+(unset vs empty различимы через `env_has`); `has_env`; `set_env`/`set_env_bytes`/`remove_env -> Result[(), IoError]`;
+`vars() -> []EnvVar` (snapshot, Go `os.Environ`/Rust `env::vars`); `current_dir() -> Result[Path, IoError]` /
+`set_current_dir(Path)`; `temp_dir() -> Path`; `home_dir() -> Option[Path]`; `exit_process(code int)` (flush
+stdout/stderr + terminate; Go `os.Exit`/Rust `process::exit`; **имя `exit_process`** — bare `exit(code, msg)` —
+язык-builtin D13); `pid() -> int`; `hostname() -> Result[str, IoError]`.
+
+### Триада (плумбинг, мокабельность §1a)
+
+**`real_os()`** — нативные хуки `nova_rt/os_env.h` (`getenv`/`setenv`/`_putenv_s`/`getcwd`/`chdir`/`getpid`/
+`gethostname`/… — **non-blocking**, header-only static-inline, как `io_console.h`; НЕ libuv-park/wake — это для
+реального блокирующего I/O); argv захватывается в `main()` через `nova_os_set_args(argc, argv)` (`int main(int
+argc, char** argv)` — единственная точка эмиссии, `emit_c.rs`). **`mock_os(MockOs)`** — in-memory env/args/cwd
+map; `exit` **записывается** (`did_exit()`/`exit_code()`), НЕ терминирует → наблюдаемо в тесте без убийства
+харнесса; env-значения хранятся как raw `[]u8` + `str.from_bytes_unchecked` (byte-transparent, как real).
+
+### Concurrency-контракт (§3c)
+
+`set_env`/`set_current_dir` мутируют process-global state → inherently racy (Rust сделал `set_var` `unsafe` в
+1.84). Nova НЕ делает их unsafe, но документирует single-threaded-mutation контракт: мутировать env/cwd только в
+setup, до спавна конкурентной работы, читающей их. Чтения (`get_env`/`args`/`current_dir`) — безопасны.
+
+### Реализационные ноты
+
+1. **`os` зависит от `fs`** (для `Path`) — не цикл (`fs` не импортит `os`; `io` не импортит ни того ни другого).
+2. **`exit_process`, НЕ `exit`** — bare `exit` = язык-builtin (D13, `-> never`, message-bearing abort).
+3. **`current_dir`/`hostname` ошибка → `IoError.from_os(0, op)`** (kind `Other`), а НЕ `IoError.of(ErrorKind.Other(0),
+   …)`: `Other(int)` — payload-вариант, cross-module литерал-конструкция ловит checker-gap
+   `[M-176-xmod-payload-variant-ctor]`; `from_os`/`kind_from_errno` строят `Other` ВНУТРИ `std.io`.
+4. **Free-fn имена не коллидят** (coarse-by-name резолв, D323-нота #3): приватные хелперы `os_cstr`/`os_wrap_unit`
+   (не `c_path`/`wrap_unit` — те в `std.fs`).
 
 ## D357 — `Http` client transport seam (Plan 178 Ф.2, 2026-07-04)
 
