@@ -12,7 +12,8 @@
 > Duration/Timestamp/Monotonic + полный typed user-surface (арифметика/==/compare/neg, `Timestamp.now()`-сахар,
 > `@is_past`/`@time_until`/`@elapsed` int-based, `wait_for(Duration)`) поверх НЕизменённого int-wire-эффекта**;
 > **Ф.2 (typed-effect-ops / retire int-wire) 🚩 OWNER-GATED** (3 net-zero; prelude⟷std.time coupling — см. Ф.2-блок §4);
-> Ф.1c/Ф.4/Ф.5/Ф.6 — TODO. Все Q закрыты (§3.0).
+> **Ф.1c ✅ SHIPPED (2026-07-06): overflow-safe арифметика (D317) + Monotonic non-regression (D318)** — trap-операторы +
+> `checked_*`/`saturating_*` + boundary-saturate + f64 NaN/inf + saturate-to-zero, чистый `.nv`-слой; Ф.4/Ф.5/Ф.6 — TODO. Все Q закрыты (§3.0).
 > **Маркер:** `[M-175-time-system-rework]`. **Запуск:** «**выполни план 175**» (план самодостаточен — вся информация ниже).
 > **D-блоки (NEW):** D316 (typed Time-surface + единый источник), D317 (Duration/instant overflow-policy), D318
 > (Monotonic non-regression + clock-source contract). Amend: D124, D237, prelude-`Time`-decl. (Резерв подтверждён
@@ -374,11 +375,29 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
        Цена: schema эффекта остаётся int (mock оперирует int ns, не typed-record'ами) — отклонение от Q2/Q8 плана. **Требует
        sign-off: «typed effect surface» (с prelude-архитектурной ценой) vs «typed sugar над int-эффектом» (проще, но mock
        на int).** До этого решения Ф.2 не стартовать — иначе 4-й net-zero.
-- **Ф.1c — overflow-safe арифметика (NEW, mandatory).** Реализовать §3b/D317: trap-операторы + `checked_*`/`saturating_*`
-  на Duration; boundary-saturate + `checked_*` на Timestamp/Monotonic±Duration; `@abs(i64::MIN)`; `@div(0)`; f64 NaN/inf-policy;
-  фикс μs U+03BC в `@into()` (Q12). Unit-тесты арифметики — **inline test-блоки в std/time/** (конвенция: inline =
-  предпочтительно для unit-тестов модуля; в duration.nv уже 18 inline-тестов). DEP: Ф.1b. **Здесь Nova достигает
-  паритета Rust/Java/Swift и обходит Go/Zig.**
+- **Ф.1c — overflow-safe арифметика (NEW, mandatory). ✅ SHIPPED (2026-07-06, ветка `plan-175-time`).** Реализация — чистый
+  `.nv`-слой в `std/time/duration.nv` (codegen НЕ тронут; всё через module-private i64-хелперы). D317/D318 внесены в spec (04-effects.md).
+  - **Сделано (D317):** (1) операторы `Duration` `@plus/@minus/@neg/@times(i64|f64)/@div(i64|f64)` — **trap-on-overflow** (debug И
+    release) через `*_or_trap`-хелперы поверх явной i64-overflow-детекции (bare `+`/`*` wrap by design → детект явный); (2)
+    `@checked_add/sub/mul/div → Option[Duration]`, `@try_mul_f64/@try_div_f64 → Option`, `Duration.try_from_secs_f64 → Option`;
+    (3) `@saturating_add/sub/mul → Duration` clamp к **±(2⁶³−1)** (симметрично; `i64::MIN` исключён → `@neg`/`@abs` тотальны);
+    (4) `@abs(i64::MIN)` → saturate к MAX; `@div(0)`/`@div(MIN,-1)`/`@neg(MIN)` → trap; `from_secs_f64` теперь trap на NaN/inf/OOR;
+    (5) `Timestamp`/`Monotonic` `@plus/@minus(Duration)` + `Timestamp @minus(Timestamp)` → **boundary-saturate** + `@checked_add/sub`;
+    2262-окно (Q16). μs U+03BC → уже ASCII `"us"` (снято в Ф.3, подтверждено byte-exact).
+  - **Сделано (D318):** `Monotonic @elapsed_since` → **saturate-to-zero** на регресс (никогда negative/panic, без global-lock);
+    `@checked_duration_since(other) → Option[Duration]` (None на регрессе, `Some(ZERO)` на равенстве); clock-source/suspend/infallibility
+    задокументированы (Q14/Q15). Существующий `@elapsed_since` СОХРАНЁН (rename→`@minus(Monotonic)` — Ф.3c, Ф.2-gated).
+  - **Гейт:** cargo build clean (nova-codegen + nova-cli); conformance **PASS** (single-CU, +`d317`/`d318`); inline unit-тесты
+    `duration.nv` PASS; trap-фикстуры `nova_tests/time/rt/{dur_add_overflow,dur_div_zero,dur_f64_nan}_traps.nv` PASS
+    (`EXPECT_RUNTIME_PANIC`); cross-module `nova_tests/time/plan175_f1c_overflow_safe.nv` PASS; zero-regression **delta = 0**
+    (same-binary swap parent↔Ф.1c `duration.nv` на `nova_tests/sync` — результаты byte-identical). Rust build clean.
+  - **Отложено (не упрощение — блокер компилятора):** публичные консты `Duration.MAX`/`Duration.MIN` (Plan 178
+    `@timeout(Duration.MAX)`) НЕ введены — user type-const `MAX`/`MIN` шэдоуит builtin numeric `.MAX`/`.MIN` в type-set-bound
+    generics (spec_tests d310 → CC-FAIL). Saturation-границы = internal `i64_max()`/`i64_min()` (D317 полон). Follow-up
+    `[M-175-type-const-max-shadows-builtin]` (checker member-const-резолюция, 172-зона, owner-gated).
+  - **Исходное описание Ф.1c:** Реализовать §3b/D317: trap-операторы + `checked_*`/`saturating_*` на Duration;
+    boundary-saturate + `checked_*` на Timestamp/Monotonic±Duration; `@abs(i64::MIN)`; `@div(0)`; f64 NaN/inf-policy;
+    фикс μs U+03BC в `@into()` (Q12). DEP: Ф.1b. **Здесь Nova достигает паритета Rust/Java/Swift и обходит Go/Zig.**
 - **Ф.2 — типизированный провод (retire int-wire). 🚩 OWNER-GATED design-fork (НЕ реализован; 3 net-zero).** Замена
   int-wire-эффекта на typed-опы (`timestamp()->Timestamp`/`monotonic()->Monotonic`/`sleep(Duration)`) в схеме `Time`
   **архитектурно инфизибл** без разрешения owner'ом связки **prelude ⟷ std.time**: `Time`-decl живёт в

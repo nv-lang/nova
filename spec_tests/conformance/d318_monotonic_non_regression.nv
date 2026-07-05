@@ -1,0 +1,45 @@
+// d318_monotonic_non_regression.nv — D318: Monotonic non-regression contract.
+// При кажущемся регрессе часов (HW/VM/OS-баг, JDK-6458294) elapsed/@minus
+// SATURATE-to-ZERO (никогда negative, никогда panic, без global-lock —
+// урок Rust 1.60-saga); checked_duration_since → None. Monotonic never goes
+// backwards by contract; clock-source per-OS документирован в D318/docs.
+module spec_tests.conformance
+
+import std.time.duration
+
+test "d318: elapsed_since saturates to zero on apparent regress" {
+    ro m = Monotonic.now()
+    ro earlier = m - 10.seconds()
+    // forward → exact
+    assert(m.elapsed_since(earlier) == 10.seconds())
+    // equal marks → zero
+    assert(m.elapsed_since(m).as_nanos() == 0)
+    // regress (earlier before m) → saturate-to-zero, NEVER negative
+    ro back = earlier.elapsed_since(m)
+    assert(back.as_nanos() == 0)
+    assert(!back.is_negative())
+}
+
+test "d318: checked_duration_since → None on regress, Some forward" {
+    ro m = Monotonic.now()
+    ro earlier = m - 3.seconds()
+    assert(earlier.checked_duration_since(m).is_none())
+    match m.checked_duration_since(earlier) {
+        Some(r) => assert(r == 3.seconds()),
+        None => assert(false),
+    }
+    // equal → Some(ZERO)
+    match m.checked_duration_since(m) {
+        Some(r) => assert(r.as_nanos() == 0),
+        None => assert(false),
+    }
+}
+
+test "d318: Monotonic ± Duration saturates at boundary" {
+    ro m = Monotonic.now()
+    // forward/back within range round-trips
+    ro fwd = m + 5.seconds()
+    assert(fwd.elapsed_since(m) == 5.seconds())
+    ro bwd = m - 5.seconds()
+    assert(m.elapsed_since(bwd) == 5.seconds())
+}

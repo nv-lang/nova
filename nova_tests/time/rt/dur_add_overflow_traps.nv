@@ -1,0 +1,12 @@
+// Plan 175 Ф.1c / D317 — Duration `+` overflow traps (debug AND release).
+// Silent two's-complement wrap (Go-ловушка) недопустим: оператор паникует.
+// EXPECT_RUNTIME_PANIC Duration arithmetic overflow
+
+module rt.dur_add_overflow_traps
+
+import std.time.duration
+
+test "Duration @plus overflow → trap" {
+    ro top = Duration.from_nanos(9_223_372_036_854_775_807)  // i64::MAX
+    ro _ = top + Duration.from_nanos(1)                       // ← trap
+}

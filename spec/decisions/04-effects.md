@@ -6306,7 +6306,7 @@ user-visible эффект, высокий churn) — только задокум
 ## D316 — `Time`: плумбинг-эффект, единый источник схемы + `TimerMetrics`-split (Plan 175 Ф.1, 2026-07-04)
 
 **Source:** Plan 175 (time-system-rework), Ф.1. **Amends:** [D11](#d11)/[D14](#d14)/[D62](#d62) (prelude `Time`-decl), [D124](#d124) (wall/monotonic-разделение).
-**Status:** ✅ ACTIVE (Ф.1 — единый источник + split; **Ф.1b/Ф.3 SHIPPED 2026-07-04 — amend ниже**). Overflow-политика (→ D317) и monotonic non-regression (→ D318) — TODO (Ф.1c). Typed **effect-ops** (`timestamp()->Timestamp` в схеме, mock на typed-record'ах) — **🚩 OWNER-GATED** (retire int-wire, Ф.2; см. amend).
+**Status:** ✅ ACTIVE (Ф.1 — единый источник + split; **Ф.1b/Ф.3 SHIPPED 2026-07-04 — amend ниже**). Overflow-политика — **D317 ✅ SHIPPED (Ф.1c, 2026-07-06)**; monotonic non-regression — **D318 ✅ SHIPPED (Ф.1c, 2026-07-06)**. Typed **effect-ops** (`timestamp()->Timestamp` в схеме, mock на typed-record'ах) — **🚩 OWNER-GATED** (retire int-wire, Ф.2; см. amend).
 
 **AMEND (Plan 175 Ф.1b/Ф.3, 2026-07-04 — option C: typed `.nv`-слой поверх НЕизменённого int-wire-эффекта):**
 - `Duration`/`Timestamp`/`Monotonic` — теперь **`value`-records** (single-i64 `nanos`, stack, zero-GC). Static-конструкторы возвращают **по имени типа** (`-> Duration`), не `-> Self` (self_value-trap). `Monotonic.now()` — value-builtin (эффектонезависим → допустим в `realtime{}`).
@@ -6331,6 +6331,50 @@ user-visible эффект, высокий churn) — только задокум
 1. Пять расходящихся зеркал одной схемы (prelude-decl / codegen-hardcode / C-vtable / handler-литералы / закомментированная decl) — правка требовала синхронного изменения 5 мест; единый `.nv`-источник убирает дрейф ([feedback-maximize-nv-sourcing] §3; прецедент RuntimeError 78 Ф.2, 172.1 U.1).
 2. `TimerMetrics` — интроспекция timer-runtime (Plan 66 territory), не «время»: держать её в `Time` раздувало плумбинг-эффект и заставляло каждый mock-clock-handler стабить read-only счётчики (Q1).
 3. Ф.1 — refactor без смены поведения (int-провод неизменен) → низший риск; типизация и overflow-безопасность идут отдельными фазами поверх стабильного единого источника.
+
+## D317 — Duration/instant overflow-policy: trap-default + `checked_*`/`saturating_*` (Plan 175 Ф.1c, 2026-07-06)
+
+**Source:** Plan 175 (time-system-rework), Ф.1c. **Amends:** [D316](#d316) (ns-канон → overflow-safe арифметика). **Реализация:** `std/time/duration.nv` (чистый `.nv`-слой; codegen НЕ тронут).
+**Status:** ✅ ACTIVE / SHIPPED. Тесты: inline unit-блоки `std/time/duration.nv`; `spec_tests/conformance/d317_duration_overflow_policy.nv`; trap-фикстуры `nova_tests/time/rt/*` (`EXPECT_RUNTIME_PANIC`); cross-module `nova_tests/time/plan175_f1c_overflow_safe.nv`.
+**Нумерация:** D317 из reserved-диапазона D316–D324 (175 = D316–318).
+
+### Что
+
+`Duration`/`Timestamp`/`Monotonic` — знаковые `i64`-ns записи. До Ф.1c ВСЕ операторы (`@plus`/`@minus`/`@neg`/`@times`/`@div`/`@abs`) были сырой **unchecked i64** — two's-complement **WRAP** на ±292 годах (Go-ловушка «the trap to avoid»). D317 вводит **3-tier дисциплину** (Rust/Swift-паритет; бьёт Go silent-wrap и Zig build-mode-UB).
+
+### Правило (3-tier)
+
+- **(R1) Операторы траппят.** `+`/`-`/унарный `-`/`*`/`/` на `Duration` **паникуют на overflow в debug И release** — никогда silent wrap (Go-антипример), никогда build-mode-зависимость (Zig `ReleaseFast`-UB антипример; Swift integer-арифметика трапает всегда = прецедент). Реализация — module-private `*_or_trap` хелперы поверх явной overflow-детекции (bare i64 `+`/`*` wrap by design → overflow детектируется ЯВНО, не полагается на trap примитива).
+- **(R2) `checked_*` → `Option[T]`.** `@checked_add`/`@checked_sub`/`@checked_mul`/`@checked_div` на `Duration`; `@checked_add`/`@checked_sub` на `Timestamp`; `@checked_duration_since` на `Monotonic` (D318). `None` на overflow/`÷0`/`i64::MIN÷-1`.
+- **(R3) `saturating_*` → clamp.** `@saturating_add`/`@saturating_sub`/`@saturating_mul` на `Duration` → clamp к **±(2⁶³−1)** (симметрично; `i64::MIN` = `-2⁶³` исключён, домен симметричен → `@neg`/`@abs` тотальны). Инстанты `Timestamp`/`Monotonic` `@plus(Duration)`/`@minus(Duration)`/`@minus(инстант)` → **saturate at i64-boundary** (зеркало Go `addSec`-clamp).
+- **(R4) Асимметрия two's-complement.** `@abs(i64::MIN)` **saturate к `i64::MAX`** (НЕ UB/wrap; `|i64::MIN| > i64::MAX`). `@neg(i64::MIN)` → trap. `@div(0)` и `@div(i64::MIN, -1)` → trap.
+- **(R5) f64-конверсии.** `from_secs_f64`/`@times(f64)`/`@div(f64)` (в т.ч. `÷0.0`→`±inf`) — trap на `NaN`/`±inf`/out-of-`i64`-range; non-trapping варианты `try_from_secs_f64`/`@try_mul_f64`/`@try_div_f64` → `Option`. Не молчаливый мусор-cast (Rust `mul_f64(NaN)` паникует = прецедент).
+
+### Границы / честные уступки (Q11/Q16)
+
+- **`Duration`** = знаковый `i64` ns, диапазон **±(2⁶³−1) ns ≈ ±292 года**.
+- **`Timestamp`** = unix-epoch ns, окно **1677-09-21 .. 2262-04-11** (i64 ±292y, Q16) — контракт задокументирован. Zig `nanoTimestamp() -> i128` не имеет 2262-горизонта; Nova принимает i64 **осознанно** (i128 ломает Q2 single-i64 scalar-bridge и value-ABI ради горизонта >2262). `from_unix_nanos(i64::MAX)` + `checked_add` → `None`; `@plus` → saturate (НЕ wrap в 1677) — pos-фикстура d317.
+- **Отложено:** публичные консты `Duration.MAX`/`Duration.MIN` (Plan 178 запрашивал `@timeout(Duration.MAX)`) НЕ введены — user type-const с именем `MAX`/`MIN` **шэдоуит builtin numeric `.MAX`/`.MIN`** в type-set-bound generics (`fn[T Ints] f(x T) => x == T.MAX`, `spec_tests` d310) → мис-типизация `T.MAX` как record + CC-FAIL. Фикс — в checker member-const-резолюции (172-зона, owner-gated). Follow-up `[M-175-type-const-max-shadows-builtin]`. Saturation-границы доступны через internal `i64_max()`/`i64_min()` — функциональность D317 полная без публичной консты.
+
+### Почему
+
+Silent two's-complement wrap на ±292y — это ровно Go-ловушка; Rust/Java/Kotlin/Temporal/Swift детектят overflow. Nova достигает паритета Rust/Java/Swift и обходит Go (silent-wrap) и Zig (UB-в-ReleaseFast, build-mode-зависимость). Trap-default безопасен by construction; `checked_*` — Rust-эскейп для восстановления; `saturating_*` — для «no timeout»-семантики (Plan 178).
+
+## D318 — Monotonic: non-regression + clock-source contract (Plan 175 Ф.1c, 2026-07-06)
+
+**Source:** Plan 175, Ф.1c. **Amends:** [D124](#d124) (wall/monotonic-разделение). **Реализация:** `std/time/duration.nv`.
+**Status:** ✅ ACTIVE / SHIPPED. Тесты: `spec_tests/conformance/d318_monotonic_non_regression.nv`; inline `std/time/duration.nv`; `nova_tests/time/plan175_f1c_overflow_safe.nv`.
+
+### Правило (контракт из двух частей)
+
+- **(R1) Non-regression.** `Monotonic` never goes backwards by contract. При кажущемся регрессе часов (later mark < earlier — HW/VM/OS-баг, JDK-6458294): `@elapsed_since` **SATURATE-to-ZERO** (возвращает `Duration.ZERO`, **никогда negative, никогда panic, без global-lock** — урок Rust 1.60-saga, стабильный контракт, не флип-флопить). `@checked_duration_since(other)` → `None` на регрессе, `Some(self − other)` иначе (`Some(ZERO)` на равенстве). `Monotonic ± Duration` → saturate at boundary (D317). `Monotonic` **non-serializable** (process-local; Ф.6 верифицирует отсутствие derive-пути — Q13).
+- **(R2) Clock-source (Q14).** `monotonic()` читает `uv_hrtime()`: Linux `CLOCK_MONOTONIC` / macOS `mach_absolute_time` (оба **suspend-EXCLUDED**) / Windows QPC (suspend-поведение платформозависимо). Nova гарантирует **только монотонность + non-regression**, НЕ suspend-inclusion; `sleep_until` через сон устройства = unspecified-but-monotonic. Индустрия расходится (Zig `Instant` = `CLOCK_BOOTTIME`, Rust/Go = `MONOTONIC`, Swift экспонирует ОБА) → молчание = footgun. BOOTTIME-аналог (`ContinuousClock`) → `[M-monotonic-boottime]` (вводить при use-case).
+- **(R3) Infallibility (Q15).** `monotonic()` **infallible by contract** на tier-1 libuv (Win/Linux/macOS; `uv_hrtime` не фейлит); Zig-style error-union отклонён (вирусит call-sites ради платформ, которых нет).
+
+### Почему
+
+HW/VM/OS могут дать кажущийся регресс монотонных часов; паниковать на hot-path (retry-budgets, deadlines) недопустимо, лочить (Rust 1.60-saga) — тоже. Saturate-to-zero + `checked_*`-эскейп = стабильный, lock-free, negative-free контракт. Раздельные типы (D124) + non-serializable Monotonic закрывают Go-footgun (`m=…` течёт в `String()`).
+
 ## D322 — io-core: `io.Read`/`io.Write`/`io.Seek`, `IoError`, `Io` effect (Plan 176 Ф.1, 2026-07-04)
 
 **Статус:** IMPLEMENTED (Ф.1 — io-core; fs=D323 Ф.2 / os=D324 Ф.3 — реализованы). Модуль `std/io`.
