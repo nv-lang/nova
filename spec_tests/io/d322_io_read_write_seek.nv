@@ -2,7 +2,7 @@
 // Protocols + SeekFrom + EOF/partial contract (Q9) + IoError/ErrorKind + the
 // effect-agnostic generic `copy` (Q15) over in-memory conformers.
 
-module spec_tests.conformance
+module spec_tests.io
 
 import std.io.{BytesReader, BytesWriter, read_to_end, read_exact, copy, SeekFrom, IoError, ErrorKind}
 

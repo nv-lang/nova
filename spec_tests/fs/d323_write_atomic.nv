@@ -1,7 +1,7 @@
 // d323_write_atomic.nv — D323 durable atomic replace (§3c 5-step recipe) with
 // torn-write rollback via mock ENOSPC injection (Plan 176 Ф.2). Unlike Swift
 // `.atomic` / Zig `AtomicFile` (tmp+rename WITHOUT fsync), write_atomic fsyncs.
-module spec_tests.conformance
+module spec_tests.fs
 
 import std.fs.{Path, MemFs, mock_fs, Fs, write, read_text, create_dir, write_atomic, try_exists}
 import std.io.{ErrorKind}

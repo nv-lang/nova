@@ -4,7 +4,7 @@
 // reject + CL/TE-smuggling), Version, host/URL-валидатор (SSRF obfuscation-reject),
 // Cookie send-инварианты, HttpError(OPEN ErrorKind + source-chain). Один
 // folder-module `spec_tests.conformance`.
-module spec_tests.conformance
+module spec_tests.http
 
 import std.http.{Method, StatusCode, Version, HeaderMap, Mime, ContentType, Cookie, SetCookie, Url, HttpError, ErrorKind}
 

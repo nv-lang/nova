@@ -1,7 +1,7 @@
 // d324_os_env_args_cwd.nv — D324 os: env / args / cwd / exit via the mockable
 // `Os` effect (Plan 176 Ф.3). Deterministic through mock_os — no real process
 // environment. `exit` is recorded, not executed.
-module spec_tests.conformance
+module spec_tests.os
 
 import std.os.{MockOs, mock_os, Os, get_env, get_env_bytes, set_env, remove_env, has_env, vars, args, current_dir, set_current_dir, home_dir, exit_process, pid}
 import std.fs.{Path}

@@ -1,6 +1,6 @@
 // d323_path_bytes.nv — D323 byte-backed, platform-aware Path (Plan 176 Ф.2, Q1).
 // POSIX + Windows lexical manipulation; non-UTF-8 bytes round-trip losslessly.
-module spec_tests.conformance
+module spec_tests.fs
 
 import std.fs.{Path, PathStyle}
 

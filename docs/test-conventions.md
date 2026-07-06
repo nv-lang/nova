@@ -111,12 +111,31 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 - **`spec_tests/` — ОТДЕЛЬНЫЙ пакет** (свой `nova.toml`, workspace-member), параллельный `nova_tests/`,
   чтобы корпус можно было удалить независимо. Прогон: `nova test spec_tests`. Через релизный `nova`
   (C-codegen pipeline), не интерпретатор.
-- **Структура — ОДИН пир-модуль `spec_tests.conformance` (минимум CU, директива владельца 2026-06-28):**
-  ВСЕ spec/D-тесты живут в `spec_tests/conformance/` (один folder-module = ОДИН compile unit = один
-  std-parse → быстрый регресс; НЕ подпапка-на-тему, та была бы отдельным CU). **Под конкретный D —
-  ОТДЕЛЬНЫЙ файл** `d<NNN>_<кратко>.nv` (все `module spec_tests.conformance`); общие типы — в
+- **Структура — ДВА яруса CU (директива владельца 2026-06-28, уточнена 2026-07-06):**
+  1. **`spec_tests/conformance/` — ЯЗЫК + ПРЕЛЮДИЯ** (один folder-module = ОДИН compile unit =
+     один std-parse → быстрый регресс). Сюда идут ТОЛЬКО тесты **семантики самого языка**: D-блоки
+     синтаксиса, типов, эффектов, консьюм-модели, дженериков, паттернов, FFI-ABI, прелюдии
+     (`Vec`/`str`/`Option`/`Result`/числовые ширины и т.п.). Пример язык-D: d54 (as-cast), d85
+     (`?`-return), d102 (named args), d282/d353 (FFI), d325 (Result-everywhere), d347 (rebinding).
+     Тест, который импортит std-тип лишь чтобы прогнать **языковую** норму (map-литерал D108,
+     size-accessors D117, consume-guards D174, lazy-iter D260, duration-overflow D317) — остаётся
+     здесь: он про язык, а не про std-модуль.
+  2. **`spec_tests/<модуль>/` — тесты КОНКРЕТНОГО std-модуля** (contract/поведение библиотеки, а не
+     языка) — **ОТДЕЛЬНЫЙ folder-module = ОТДЕЛЬНЫЙ CU** со своим `module spec_tests.<модуль>`.
+     По одному каталогу на std-модуль: `spec_tests/compress` (`std.encoding.compress`),
+     `spec_tests/http` (`std.http`), `spec_tests/io` (`std.io`), `spec_tests/fs` (`std.fs`),
+     `spec_tests/os` (`std.os`) — и так далее по мере роста stdlib (`spec_tests/serde` для
+     `std.encoding.serde`, если появятся фикстуры, и т.п.). Отрицательные тесты модуля — в
+     `spec_tests/<модуль>/neg/` (каждый — свой standalone-CU с `EXPECT_COMPILE_ERROR`, как в
+     `conformance/neg/`). **Почему отдельно, а не в conformance:** std-модуль — это библиотека
+     поверх языка; смешивать её contract-тесты с language-ядром раздувает язык-CU чужими
+     зависимостями и путает сигнал «сломан язык» vs «сломана библиотека».
+  3. Прогон всего дерева: `nova test --positive --compile-error spec_tests` (обходит conformance +
+     все модульные CU). Отдельный модуль: `nova test --positive --compile-error spec_tests/<модуль>`.
+  **Под конкретный D — ОТДЕЛЬНЫЙ файл** `d<NNN>_<кратко>.nv` (в conformance — `module
+  spec_tests.conformance`; в модульном каталоге — `module spec_tests.<модуль>`); общие типы — в
   `types_<domain>.nv` пир-файле, объявлены ОДИН раз (folder = один модуль из co-equal файлов).
-  **Имена типов domain-prefixed** (один namespace на весь suite → избегаем коллизий между D-файлами).
+  **Имена типов domain-prefixed** (один namespace на весь CU → избегаем коллизий между D-файлами).
   **Префиксуй и функции, и ЛОКАЛЬНЫЕ переменные** (`d263_buf`, не `buf`) · согласовано 2026-07-02:
   резолвер пока держит один name-keyed namespace на CU (`var_types` last-wins между пир-файлами) —
   одноимённый локал соседнего D-файла молча перебивает тип твоего, тест падает загадочным
