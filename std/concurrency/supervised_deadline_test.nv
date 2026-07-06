@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 174 (D349) — областной срок `supervised(deadline:/timeout:)`.
+// По истечении срока: кооперативная отмена области (тот же путь, что
+// `cancel:`) → cleanup'ы добегают → наружу типизированный `TimeoutError`
+// (ловится `with Fail[TimeoutError]` / `is TimeoutError`).
+//
+// Проверяется:
+//   1. тело укладывается в срок → результат как обычно (таймер погашен);
+//   2. `timeout:` (относит.) истёк → TimeoutError, ловится `is TimeoutError`;
+//   3. отмена прерывает `Time.sleep` РАНО (замер времени << полный сон);
+//   4. `deadline:` (абсолютный Monotonic) — та же семантика;
+//   5. вложенные сроки — внутренний НЕ может продлить внешний;
+//   6. `deadline:`+`cancel:` вместе — раннее из двух;
+//   7. нулевой/отрицательный срок → мгновенный TimeoutError (D349).
+
+module concurrency.supervised_deadline_test
+
+import std.time.duration
+
+
+// Хелпер для проверки `is TimeoutError` (D54/174.3 narrowing на `any`):
+// принимает `any`, значение TimeoutError бокс'ится, внутри — is-дискриминация.
+fn is_timeout_error(e any) -> bool => e is TimeoutError
+
+
+// 1. Тело укладывается в срок → нормальный проход, TimeoutError НЕ летит.
+test "within-budget: тело успевает — срок не срабатывает" {
+    mut done = false
+    supervised(timeout: Duration.from_secs(30)) {
+        spawn { Time.sleep(5) }
+    }
+    done = true
+    assert(done)
+}
+
+
+// 2. + 3. timeout истёк → TimeoutError, ловится `is TimeoutError`,
+//    и sleep(5000) прерван РАНО (elapsed << 5000).
+test "timeout fires: TimeoutError caught, sleep interrupted early" {
+    // Typed catch by `Fail[TimeoutError]` proves the escaping error is a
+    // TimeoutError (dispatch is by type-id — a non-TimeoutError would not
+    // route here). The `is TimeoutError` narrowing form is exercised in the
+    // `outcome`-based test below.
+    mut caught_typed = false
+    ro t0 = Time.now()
+    ro r = with Fail[TimeoutError] = |e| {
+        // `is TimeoutError` narrowing (e boxed to `any` через хелпер).
+        caught_typed = is_timeout_error(e)
+        0
+    } {
+        supervised(timeout: Duration.from_millis(100)) {
+            spawn { Time.sleep(5000) }
+        }
+        99
+    }
+    ro elapsed = Time.now() - t0
+    // Handler сработал на TimeoutError → r = 0 (не 99).
+    assert(r == 0)
+    assert(caught_typed)
+    // Ключевой замер: sleep(5000) прерван отменой около срока (100ms),
+    // НЕ доспал до конца. Порог щедрый (2000ms) под медленный CI.
+    assert(elapsed < 2000)
+}
+
+
+// 4. Абсолютная форма `deadline: Monotonic`.
+test "deadline (absolute Monotonic) fires TimeoutError" {
+    mut caught = false
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught = true
+        0
+    } {
+        supervised(deadline: Monotonic.now() + Duration.from_millis(100)) {
+            spawn { Time.sleep(5000) }
+        }
+        7
+    }
+    assert(r == 0)
+    assert(caught)
+}
+
+
+// 5. Вложенные сроки: внутренний срок ДЛИННЕЕ внешнего — не может продлить.
+//    Внешний (100ms) срабатывает, sleep(5000) во вложенной области прерван рано.
+test "nested: inner deadline cannot extend outer" {
+    mut caught = false
+    ro t0 = Time.now()
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught = true
+        0
+    } {
+        supervised(timeout: Duration.from_millis(100)) {
+            supervised(timeout: Duration.from_secs(30)) {
+                spawn { Time.sleep(5000) }
+            }
+        }
+        1
+    }
+    ro elapsed = Time.now() - t0
+    assert(r == 0)
+    assert(caught)
+    assert(elapsed < 2000)
+}
+
+
+// 6. `deadline:` + `cancel:` вместе — раннее из двух.
+//    6a. cancel раньше срока → штатная отмена, TimeoutError НЕ летит.
+test "deadline+cancel: cancel earlier — no TimeoutError" {
+    ro tok = CancelToken.new()
+    mut timed_out = false
+    ro r = with Fail[TimeoutError] = |_e| {
+        timed_out = true
+        0
+    } {
+        supervised(cancel: tok, timeout: Duration.from_secs(30)) {
+            spawn { Time.sleep(20); tok.cancel() }
+            spawn { Time.sleep(5000) }
+        }
+        5
+    }
+    // Отмена сделала работу до срока → нет TimeoutError → r = 5.
+    assert(!timed_out)
+    assert(r == 5)
+}
+
+//    6b. срок раньше cancel → TimeoutError.
+test "deadline+cancel: deadline earlier — TimeoutError" {
+    ro tok = CancelToken.new()
+    mut timed_out = false
+    ro r = with Fail[TimeoutError] = |_e| {
+        timed_out = true
+        0
+    } {
+        supervised(cancel: tok, timeout: Duration.from_millis(100)) {
+            spawn { Time.sleep(5000); tok.cancel() }
+        }
+        5
+    }
+    assert(timed_out)
+    assert(r == 0)
+}
+
+
+// 7. Нулевой срок → мгновенный TimeoutError (D349: срок в прошлом/сейчас
+//    = немедленное истечение; тело-дети отменяются на первом suspend).
+test "zero timeout: immediate TimeoutError" {
+    mut caught = false
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught = true
+        0
+    } {
+        supervised(timeout: Duration.from_millis(0)) {
+            spawn { Time.sleep(5000) }
+        }
+        3
+    }
+    assert(caught)
+    assert(r == 0)
+}

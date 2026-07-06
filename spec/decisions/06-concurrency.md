@@ -6308,3 +6308,102 @@ Cross-module callee-резолюция, точность str-literal-interning, 
 соундны). O1-потребление набора (frame-elision / write-back-skip) — Plan 144 Ф.2,
 [M-144.0-may-gc-effect-analysis].
 
+
+---
+
+## D408. `supervised(deadline:/timeout:)` — областной срок → отмена → `TimeoutError` (Plan 174)
+
+> Расширяет [D50](#d50) / [D75](#d75) (`supervised` / `supervised(cancel: tok)`).
+> Нормативная база — план 173 §3a «Bounded-shutdown — дедлайн на SCOPE, не на
+> cleanup». Owner sign-off 2026-07-06.
+
+**Форма.** К именованным аргументам keyword-конструкции `supervised` добавлены
+`deadline:` и `timeout:` (набор: `cancel:` / `deadline:` / `timeout:`, в любом
+порядке, через запятую; каждый — не более одного раза; `deadline:` и `timeout:`
+взаимно исключающи):
+
+```nova
+supervised(deadline: <Monotonic>) { тело с любыми эффектами }   // абсолютная точка (канон)
+supervised(timeout:  <Duration>)  { тело с любыми эффектами }   // относительный сахар
+supervised(cancel: tok, timeout: 5.seconds()) { ... }          // комбинируется с cancel:
+```
+
+- **`deadline: <Monotonic>`** — абсолютная точка на монотонных часах (D124);
+  канон, потому что при пропагации во вложенные области складываются точки, а не
+  относительные интервалы (иначе внутренний интервал «съезжал» бы на своё время
+  входа). Codegen извлекает `i64 nanos` value-record'а.
+- **`timeout: <Duration>`** — относительный сахар, равный
+  `deadline: Monotonic.now() + d`. Codegen лоуэрит в
+  `_nova_monotonic_ns() + (int64_t)d.nanos`.
+
+Обе формы низводятся к абсолютному сроку в наносекундах (`NovaFiberQueue.deadline_ns`,
+0 = нет срока).
+
+**Структурная конструкция, НЕ функция-обёртка.** В отличие от ретрактируемого
+`with_timeout[T](ms, fn() -> T)` (std/concurrency), который берёт **чистую**
+`fn() -> T` и потому НЕ пропускает эффекты тела, `supervised(deadline:)` — часть
+самой keyword-конструкции: тело выполняется с любым effect-row (`Http`, `Net`,
+`Fail[E]`, …), эффекты протекают наружу естественно.
+
+**Механика (таймер → отмена → TimeoutError).**
+1. **Вход области.** `nova_scope_init` наследует срок enclosing-области
+   (`_nova_active_scope->deadline_ns`); codegen ужимает его собственным
+   `deadline:`/`timeout:` через `nova_deadline_combine` (минимум ненулевых —
+   **внутренний срок может только УЖЕСТОЧИТЬ, никогда не продлить** внешний).
+2. **Драйв.** `nova_supervised_run_impl` ограничивает свою idle-парковку сроком
+   (`_nova_scope_deadline_run_once`: armed stack-timer + `uv_run(UV_RUN_ONCE)`),
+   так что drain-loop просыпается в точке срока даже когда все волокна
+   запаркованы на далёком `Time.sleep`/сетевом ожидании.
+3. **Истечение.** В точке срока (и только если область ещё не отменена cancel-
+   токеном — earliest-of-two) доставляется **кооперативная областная отмена**
+   ровно тем же путём, что `cancel:` (`nova_scope_deliver_cancel`: cancel_requested
+   + wake всех запаркованных волокон + worker-fibers + driver). Sleep/сетевой
+   park прерывается РАНО (не досыпает до конца), cleanup'ы (defer/consume)
+   добегают (completes-by-default, §3a).
+4. **Наружу.** По завершении drain, если срок сработал, наружу летит
+   **типизированный `TimeoutError { deadline_ns i64 }`** (prelude/errors) —
+   ловится `with Fail[TimeoutError]` или `is TimeoutError` (D54/174.3). Таймер
+   гасится при нормальном выходе (stack-timer — ноль утечки).
+
+**USER-precedence.** Если внутри области случилась НАСТОЯЩАЯ user-ошибка И истёк
+срок — наружу летит user-ошибка (не `TimeoutError`): срок лишь отменил siblings.
+Только CANCEL-исход (или его отсутствие) при сработавшем сроке → `TimeoutError`.
+
+**Нулевой / отрицательный / прошедший срок.** `timeout: 0` (или прошедший
+`deadline:`) → срок истёк немедленно: дети отменяются на первом suspend, наружу
+`TimeoutError`. Значение runtime'ное (выражение `Duration`/`Monotonic`) — не
+compile-ошибка; мгновенный таймаут — принцип D317 (никогда silent-мусор).
+
+**Вложенность (пропагация точки).** Плоский нижележащий `supervised {}` без
+своего срока наследует ambient-срок через `nova_scope_init` (ноль изменений
+codegen — byte-identical для не-deadline областей). Внутренний `supervised(timeout: 30s)`
+внутри внешнего `supervised(timeout: 100ms)` эффективно ограничен 100ms.
+
+**Longjmp-safety.** Throw (в т.ч. `TimeoutError`), пробивающий тело внешней
+области, чей run-loop ещё не исполнялся, восстанавливает `_nova_active_scope`
+(a) в `nova_supervised_run_impl` на всех путях выхода и (b) в `with Fail[...]`-
+блоке при входе/выходе — иначе следующая область унаследовала бы `deadline_ns` из
+освобождённого stack-фрейма (spurious immediate `TimeoutError`).
+
+**Отличие от `CleanupTimeoutError` (D192).** Та — про cleanup-бюджет ОДНОГО
+ресурса (ретракнута §3a в пользу watchdog-варна); эта — про срок ЦЕЛОЙ области
+(bounded-shutdown). Разные типы, разные механизмы.
+
+**Ретракция `with_timeout` (§3a п.4) — UNBLOCKED, отложена маркером.** Теперь,
+когда `supervised(timeout:)` приземлён, `with_timeout[T]`/`within[T]`
+(std/concurrency/cancellation.nv) субсумированы и подлежат удалению вместе с
+миграцией ~7 тест-ссылок. Не сделано в этом заходе (не «дёшево/безопасно» —
+cancellation.nv уже независимо сломан retired-API-дрейфом) → маркер
+`[M-174-retract-with-timeout]`. `race2` остаётся до общего `race` (173.1 §2a).
+
+**Реализация:** parser `parse_supervised` (мультиаргумент); AST
+`Supervised { body, cancel, deadline: Option<SupervisedDeadline{expr, relative} >}`;
+codegen `emit_supervised` (`.nanos`-извлечение + `nova_deadline_combine`);
+runtime `nova_rt/fibers.h` (`NovaFiberQueue.deadline_ns`/`saved_active_scope`,
+`nova_scope_init` inherit, `nova_deadline_combine`/`nova_scope_deliver_cancel`/
+`_nova_scope_deadline_run_once`/`nova_throw_scope_timeout` + run_impl deadline-gate);
+typed-throw splice `_nova_throw_scope_timeout_impl` (по образцу CleanupTimeoutError);
+`with Fail[...]` active-scope restore. Тесты: `std/concurrency/supervised_deadline_test.nv`
+(8/8: within-budget; timeout→TimeoutError+`is`; sleep interrupted early <2000ms для
+sleep(5000); абсолютный deadline; вложенность inner-can't-extend; deadline+cancel
+earliest-of-two ×2; zero→immediate).

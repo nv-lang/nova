@@ -307,6 +307,40 @@ export type CleanupTimeoutError {
     ro duration_ms int
 }
 
+/// Scope-deadline exceeded (Plan 174 / D349, план 173 §3a). Выбрасывается
+/// runtime'ом наружу из `supervised(deadline:/timeout:) { ... }` когда срок
+/// области истёк: все fiber'ы области кооперативно отменяются (тот же путь,
+/// что `cancel:`), их cleanup'ы добегают, и наружу летит типизированный
+/// `TimeoutError` — ловится `is TimeoutError` (D54/174.3) или
+/// `with Fail[TimeoutError]`.
+///
+/// `deadline_ns` — превышенная точка на монотонных часах (абсолютные
+/// наносекунды, epoch реализации; только дельты значимы). Отличается от
+/// [`CleanupTimeoutError`] (D192): та — про cleanup-бюджет ресурса; эта — про
+/// срок ЦЕЛОЙ области (bounded-shutdown). Реальная USER-ошибка внутри области
+/// побеждает срок (USER-precedence): при истечении срока И user-throw'е наружу
+/// летит user-ошибка, не `TimeoutError`.
+///
+/// # Examples
+///
+/// ```nova
+/// fn fetch_bounded() Fail[TimeoutError] -> () {
+///     supervised(timeout: 5.seconds()) {
+///         spawn { slow_download() }  // если > 5s — TimeoutError
+///     }
+/// }
+///
+/// with Fail[TimeoutError] = |_| interrupt handle_timeout() {
+///     supervised(deadline: Monotonic.now() + 200.millis()) {
+///         spawn { poll_until_ready() }
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export type TimeoutError {
+    ro deadline_ns i64
+}
+
 /// Sentinel composed в `MultiError.suppressed` когда cleanup-cascade
 /// глубина превышает `D193` depth-limit (256). Дальнейшие compose silently
 /// ignored; pointer на этот sentinel signal'ит «cascade was truncated at

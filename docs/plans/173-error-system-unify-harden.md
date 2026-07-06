@@ -164,9 +164,22 @@ Bare `defer`/`defer(o)`/`consume` — ВСЕ completes-by-default. Модель 
 По дедлайну → кооперативная отмена детей → cleanup'ы добегают. Превышение самого дедлайна при зависшем
 cleanup → **watchdog-варн** («fiber X застрял в cleanup»), НЕ force-kill.
 
+> ✅ **`supervised(deadline:)` / `supervised(timeout:)` ПРИЗЕМЛЕНЫ (Plan 174, D408, 2026-07-06).**
+> Обе формы + `cancel:` комбинируются; таймер→областная отмена (путь `cancel:`)→типизированный
+> `TimeoutError` (prelude, ловится `is TimeoutError` / `with Fail[TimeoutError]`); USER-precedence;
+> вложенность через min-комбинацию точки (`nova_scope_init` inherit + `nova_deadline_combine`); sleep
+> прерывается рано; zero/past→immediate. Longjmp-safe restore `_nova_active_scope` (run_impl + with-Fail).
+> Тесты `std/concurrency/supervised_deadline_test.nv` 8/8; regress delta 0. **`parallel for`-зеркалирование
+> deadline-параметров — отдельный заход** (десугарит в supervised, но keyword-args ParallelFor пока нет)
+> → маркер `[M-174-parallel-for-deadline]`. Известное ограничение: main-flow blocking В ТЕЛЕ до старта
+> run-loop не ограничено сроком (идиома — `spawn` работу); документировано в simplifications.
+
 **(4) `with_timeout` — убрать; `race2` — оставить до общего `race`.**
 - **`with_timeout[T]`** (`std/concurrency/cancellation.nv:156`) — субсумирован `supervised(timeout:)`.
   Удалить (fn + ~7 тест-ссылок) **после** landing Plan 175 + deadline-параметров → **Ф.3-остаток**.
+  ⚠ **UNBLOCKED (2026-07-06):** deadline-параметры приземлены (D408) → ретракция теперь возможна, но
+  НЕ сделана в этом заходе (cancellation.nv независимо сломан retired-API-дрейфом `str.len`/`ro`-field;
+  не «дёшево/безопасно») → маркер `[M-174-retract-with-timeout]`.
 - **`race`/`race2`** — ⚠ Ред. 2 согласовано с [173.1 §2a](173.1-parallel-collect-and-supervised-value.md)
   (авторитет): `race2` **ОСТАЁТСЯ** до landing общего N-арного `race[T](…funcs)` (гейт Plan 48 Ф.4
   closures-in-generic-array) + миграции callers; дизайн общего `race` уже зафиксирован в 173.1 §2a

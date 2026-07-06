@@ -18,6 +18,12 @@ int nova_in_fiber(void) {
  * because the impl is process-wide. */
 void (*_nova_throw_cleanup_timeout_fn)(int duration_ms) = NULL;
 
+/* Plan 174 (D349): supervised scope-deadline typed-throw indirection. Set by
+ * codegen-emitted impl in the user TU when `TimeoutError` is referenced
+ * (constructs Nova_TimeoutError + calls nova_throw_typed). NULL — fallback to
+ * plain-string throw in nova_throw_scope_timeout. Process-wide (not __thread). */
+void (*_nova_throw_scope_timeout_fn)(int64_t deadline_ns) = NULL;
+
 /* D61: `interrupt v` — early-exit from the nearest enclosing with-block.
  *
  * Semantics across mco coroutine boundary:

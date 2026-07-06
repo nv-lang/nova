@@ -1220,9 +1220,13 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::ClosureFull(sb) => collect_fn_sig_body(sb, out),
         ExprKind::Spawn(body) => collect_expr(body, out),
         ExprKind::Detach(body) | ExprKind::Blocking(body) => collect_block(body, out),
-        ExprKind::Supervised { body, cancel } => {
+        ExprKind::Supervised { body, cancel, deadline } => {
             if let Some(c) = cancel {
                 collect_expr(c, out);
+            }
+            if let Some(_dl) = deadline {
+                let _dl_e = &_dl.expr;
+                collect_expr(_dl_e, out);
             }
             collect_block(body, out);
         }
@@ -2064,9 +2068,10 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
         ExprKind::Block(b) => walk_block_lints(b, out),
         ExprKind::Spawn(x) => walk_expr_lints(x, out),
         ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_lints(b, out),
-        ExprKind::Supervised { body, cancel } => {
+        ExprKind::Supervised { body, cancel, deadline } => {
             walk_block_lints(body, out);
             if let Some(c) = cancel { walk_expr_lints(c, out); }
+            if let Some(_dl) = deadline { walk_expr_lints(&_dl.expr, out); }
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             walk_block_lints(body, out);

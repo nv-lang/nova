@@ -305,9 +305,10 @@ fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, regi
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
         | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
             normalize_chains_block(body, counter, registry),
-        ExprKind::Supervised { body, cancel } => {
+        ExprKind::Supervised { body, cancel, deadline } => {
             normalize_chains_block(body, counter, registry);
             if let Some(c) = cancel { normalize_chains_expr(c, counter, registry); }
+            if let Some(_dl) = deadline { normalize_chains_expr(&mut _dl.expr, counter, registry); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => normalize_chains_expr(e, counter, registry),
         ExprKind::Try(e) | ExprKind::Bang(e)

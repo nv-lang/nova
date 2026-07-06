@@ -272,9 +272,10 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
         ExprKind::Block(b) => normalize_block(b, sigs),
         ExprKind::Spawn(x) => normalize_expr(x, sigs),
         ExprKind::Detach(b) | ExprKind::Blocking(b) => normalize_block(b, sigs),
-        ExprKind::Supervised { body, cancel } => {
+        ExprKind::Supervised { body, cancel, deadline } => {
             normalize_block(body, sigs);
             if let Some(c) = cancel { normalize_expr(c, sigs); }
+            if let Some(_dl) = deadline { normalize_expr(&mut _dl.expr, sigs); }
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             normalize_block(body, sigs)
