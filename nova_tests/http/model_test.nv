@@ -96,7 +96,7 @@ test "headermap: Content-Length + Transfer-Encoding conflict → Err (smuggling)
 test "mime + content-type parse" {
     ro m = Mime.parse("Application/JSON")!!
     assert(m.essence() == "application/json")
-    assert(m.type_() == "application")
+    assert(m.mtype() == "application")
     assert(m.subtype() == "json")
     ro ct = ContentType.parse("text/html; charset=utf-8")!!
     assert(ct.mime.essence() == "text/html")

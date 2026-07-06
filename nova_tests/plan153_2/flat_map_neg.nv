@@ -7,14 +7,14 @@ module nova_tests.plan153_2
 import std.collections.vec_lazy
 
 test "flat_map empty outer — first next is None" {
-    mut it = Vec[int].of().lazy().flat_map(|x| Vec[int].of(x).lazy())
+    mut it = Vec[int].new().lazy().flat_map(|x| Vec[int].of(x).lazy())
     assert(it.next() == None)
     // stays None
     assert(it.next() == None)
 }
 
 test "flat_map all-empty inners — next is None" {
-    mut it = Vec[int].of(1, 2, 3).lazy().flat_map(|_| Vec[int].of().lazy())
+    mut it = Vec[int].of(1, 2, 3).lazy().flat_map(|_| Vec[int].new().lazy())
     assert(it.next() == None)
 }
 
@@ -30,7 +30,7 @@ test "flat_map skips empty then yields from non-empty" {
     ro v = Vec[int].of(1, 2, 3)
     ro got = v.lazy().flat_map(|x| {
         if x == 1 {
-            Vec[int].of().lazy()
+            Vec[int].new().lazy()
         } else {
             Vec[int].of(x * 100).lazy()
         }

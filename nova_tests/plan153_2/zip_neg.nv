@@ -25,7 +25,7 @@ test "zip stops at shorter right — next returns None after end" {
 }
 
 test "zip empty — first next is None" {
-    ro a = Vec[int].of()
+    ro a = Vec[int].new()
     ro b = Vec[int].of(1, 2, 3)
     mut it = a.lazy().zip(b.lazy())
     assert(it.next() == None)

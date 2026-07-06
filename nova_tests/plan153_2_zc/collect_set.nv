@@ -25,7 +25,7 @@ test "collect_set after filter" {
 }
 
 test "collect_set on empty yields empty set" {
-    ro v = Vec[int].of()
+    ro v = Vec[int].new()
     ro s = v.iter().collect_set()
     assert(s.len() == 0)
 }

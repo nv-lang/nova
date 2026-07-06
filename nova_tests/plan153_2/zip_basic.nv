@@ -24,7 +24,7 @@ test "zip truncates to shorter — right longer" {
 }
 
 test "zip with empty left" {
-    ro a = Vec[int].of()
+    ro a = Vec[int].new()
     ro b = Vec[int].of(10, 20, 30)
     ro got = a.lazy().zip(b.lazy()).collect()
     assert(got == [])
@@ -32,14 +32,14 @@ test "zip with empty left" {
 
 test "zip with empty right" {
     ro a = Vec[int].of(1, 2, 3)
-    ro b = Vec[int].of()
+    ro b = Vec[int].new()
     ro got = a.lazy().zip(b.lazy()).collect()
     assert(got == [])
 }
 
 test "zip both empty" {
-    ro a = Vec[int].of()
-    ro b = Vec[int].of()
+    ro a = Vec[int].new()
+    ro b = Vec[int].new()
     ro got = a.lazy().zip(b.lazy()).collect()
     assert(got == [])
 }

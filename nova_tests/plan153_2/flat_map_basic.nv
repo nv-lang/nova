@@ -15,14 +15,14 @@ test "flat_map collect all" {
 }
 
 test "flat_map empty outer" {
-    ro v = Vec[int].of()
+    ro v = Vec[int].new()
     ro got = v.lazy().flat_map(|x| Vec[int].of(x, x * 10).lazy()).collect()
     assert(got == [])
 }
 
 test "flat_map empty inner" {
     ro v = Vec[int].of(1, 2, 3)
-    ro got = v.lazy().flat_map(|_| Vec[int].of().lazy()).collect()
+    ro got = v.lazy().flat_map(|_| Vec[int].new().lazy()).collect()
     assert(got == [])
 }
 
@@ -30,7 +30,7 @@ test "flat_map mixed empty and non-empty inner" {
     ro v = Vec[int].of(1, 2, 3)
     ro got = v.lazy().flat_map(|x| {
         if x == 2 {
-            Vec[int].of().lazy()
+            Vec[int].new().lazy()
         } else {
             Vec[int].of(x).lazy()
         }

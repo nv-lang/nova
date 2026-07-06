@@ -34,19 +34,19 @@ export type MockResponse value {
 /// Response with the given status code (default empty body).
 #stable(since = "0.1")
 export fn MockResponse.new(status int) -> MockResponse =>
-    { status, headers: HeaderMap.new(), body: Vec[u8].of(), raw: None, echo: None }
+    { status, headers: HeaderMap.new(), body: Vec[u8].new(), raw: None, echo: None }
 
 /// Response from a RAW HTTP/1.1 wire template (chunked / malformed fixtures).
 #stable(since = "0.1")
 export fn MockResponse.raw(wire str) -> MockResponse =>
-    { status: 200, headers: HeaderMap.new(), body: Vec[u8].of(), raw: Some(wire), echo: None }
+    { status: 200, headers: HeaderMap.new(), body: Vec[u8].new(), raw: Some(wire), echo: None }
 
 /// 200 response whose body echoes the named REQUEST header the client sent
 /// (empty if absent). Deterministic hook to assert what the client actually
 /// transmitted — e.g. that Authorization was stripped on a cross-origin redirect.
 #stable(since = "0.1")
 export fn MockResponse.echo_request_header(name str) -> MockResponse =>
-    { status: 200, headers: HeaderMap.new(), body: Vec[u8].of(), raw: None, echo: Some(name) }
+    { status: 200, headers: HeaderMap.new(), body: Vec[u8].new(), raw: None, echo: Some(name) }
 
 /// Add a response header (replace).
 #stable(since = "0.1")
@@ -91,7 +91,7 @@ export type MockHttp value { priv routes []MockRoute }
 
 /// Empty mock (unmatched requests get a synthetic 404).
 #stable(since = "0.1")
-export fn mock_http() -> MockHttp => { routes: Vec[MockRoute].of() }
+export fn mock_http() -> MockHttp => { routes: Vec[MockRoute].new() }
 
 /// Register a route. `method`/`path` = "*" matches any. Later routes append
 /// (first match wins). `path` compares against the request-target path (query
@@ -144,7 +144,7 @@ fn mock_dispatch(routes []MockRoute, request str) -> Result[str, HttpError] {
         }
     }
     // Unmatched → synthetic 404 (still a valid Response for the client).
-    Ok(serialize_response(StatusCode.not_found(), HeaderMap.new(), Vec[u8].of()))
+    Ok(serialize_response(StatusCode.not_found(), HeaderMap.new(), Vec[u8].new()))
 }
 
 fn route_matches(r MockRoute, method str, path str) -> bool {

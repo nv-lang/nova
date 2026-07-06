@@ -24,17 +24,17 @@ test "append a concrete Vec via the AsSlice bound — bulk-copies the elements (
 test "append degenerate cases — empty source is a no-op, empty target absorbs (D299)" {
     // empty source appended to non-empty target → unchanged
     mut x = Vec[int].of(1, 2, 3)
-    ro emptySrc = Vec[int].of()
+    ro emptySrc = Vec[int].new()
     x.append(emptySrc)
     assert(x == [1, 2, 3])
     // non-empty source appended to empty target → becomes the source sequence
-    mut y = Vec[int].of()
+    mut y = Vec[int].new()
     ro src = Vec[int].of(7, 8, 9)
     y.append(src)
     assert(y == [7, 8, 9])
     // both empty → still empty
-    mut z = Vec[int].of()
-    ro emptyB = Vec[int].of()
+    mut z = Vec[int].new()
+    ro emptyB = Vec[int].new()
     z.append(emptyB)
     assert(z.len() == 0)
 }

@@ -33,7 +33,7 @@ test "lazy chain two vecs" {
 }
 
 test "lazy chain with empty first" {
-    ro a = Vec[int].of()
+    ro a = Vec[int].new()
     ro b = Vec[int].of(1, 2, 3)
     ro got = a.lazy().chain(b.lazy()).collect()
     assert(got == [1, 2, 3])
@@ -41,7 +41,7 @@ test "lazy chain with empty first" {
 
 test "lazy chain with empty second" {
     ro a = Vec[int].of(1, 2, 3)
-    ro b = Vec[int].of()
+    ro b = Vec[int].new()
     ro got = a.lazy().chain(b.lazy()).collect()
     assert(got == [1, 2, 3])
 }

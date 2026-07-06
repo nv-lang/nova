@@ -13,7 +13,7 @@ test "body: from_bytes/from_str discharge via bytes/text" {
 }
 
 test "body: stream reader drains in order" {
-    mut chunks = Vec[[]u8].of()
+    mut chunks = Vec[[]u8].new()
     chunks.push("ab".to_bytes())
     chunks.push("cd".to_bytes())
     consume b = Body.from_reader(BodyReader.from_chunks(chunks))
@@ -26,7 +26,7 @@ test "body: with_limit → BodyTooLarge" {
 }
 
 test "body: text rejects invalid UTF-8" {
-    mut bad = Vec[u8].of()
+    mut bad = Vec[u8].new()
     bad.push(0xFF as u8)
     bad.push(0xFE as u8)
     consume b = Body.from_bytes(bad)

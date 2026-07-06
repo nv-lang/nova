@@ -27,13 +27,13 @@ test "max returns largest int element" {
 }
 
 test "min on empty iterator returns None" {
-    ro v = Vec[int].of()
+    ro v = Vec[int].new()
     ro m = v.iter().min()
     assert(m == None)
 }
 
 test "max on empty iterator returns None" {
-    ro v = Vec[int].of()
+    ro v = Vec[int].new()
     ro m = v.iter().max()
     assert(m == None)
 }

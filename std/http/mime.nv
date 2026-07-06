@@ -31,7 +31,7 @@ export fn Mime.parse(s str) -> Result[Mime, HttpError] {
 export fn Mime @essence() -> str => "${@mtype}/${@msub}"
 /// Тип-часть (`text`).
 #stable(since = "0.1")
-export fn Mime @type_() -> str => @mtype
+export fn Mime @mtype() -> str => @mtype
 /// Subtype-часть (`html`).
 #stable(since = "0.1")
 export fn Mime @subtype() -> str => @msub
@@ -67,7 +67,7 @@ export fn ContentType.parse(s str) -> Result[ContentType, HttpError] {
         return Err(HttpError.protocol_error("empty Content-Type"))
     }
     ro mime = Mime.parse(mime_head(parts))?
-    mut params = Vec[Param].of()
+    mut params = Vec[Param].new()
     mut i = 1
     while i < parts.len() {
         match nth_str(parts, i).split_once("=") {
@@ -135,4 +135,4 @@ export fn ContentType @to_header() -> str {
 
 /// Построить из Mime без параметров.
 #stable(since = "0.1")
-export fn ContentType.new(mime Mime) -> ContentType => { mime, params: Vec[Param].of() }
+export fn ContentType.new(mime Mime) -> ContentType => { mime, params: Vec[Param].new() }

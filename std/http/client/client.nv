@@ -65,12 +65,12 @@ export type HttpClientBuilder value {
 /// Start a client builder with production defaults (10 redirects, UA set).
 #stable(since = "0.1")
 export fn HttpClient.builder() -> HttpClientBuilder =>
-    { default_headers: Vec[HeaderKV].of(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
+    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
 
 /// Client with production defaults.
 #stable(since = "0.1")
 export fn HttpClient.new() -> HttpClient =>
-    { default_headers: Vec[HeaderKV].of(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
+    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
 
 // Internal self-accessors (field privacy is enforced at the call-site module,
 // so cross-type reads of these `priv` fields go through owner methods, D281).
@@ -133,8 +133,8 @@ export fn HttpClient @request(method Method, url str) -> RequestBuilder => new_r
 
 fn new_rb(c HttpClient, m Method, url str) -> RequestBuilder =>
     { client: c, method: m, url_input: url,
-      header_ops: Vec[HeaderOp].of(), query: Vec[(str, str)].of(),
-      body_bytes: Vec[u8].of(), has_body: false, content_type: None }
+      header_ops: Vec[HeaderOp].new(), query: Vec[(str, str)].new(),
+      body_bytes: Vec[u8].new(), has_body: false, content_type: None }
 
 // ── RequestBuilder ───────────────────────────────────────────────────────────
 
@@ -297,7 +297,7 @@ fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow 
                     ro cross = ns != scheme || nh != host || np != port
                     if code == 303 || ((code == 301 || code == 302) && !method_is_get_head(method)) {
                         method = Get
-                        body = Vec[u8].of()
+                        body = Vec[u8].new()
                         headers = drop_body_headers(headers)
                     }
                     if cross {

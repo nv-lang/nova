@@ -9,21 +9,21 @@ test "append vec to vec" {
 
 test "append empty vec to non-empty" {
     mut a = Vec[int].of(1, 2, 3)
-    ro b = Vec[int].of()
+    ro b = Vec[int].new()
     a.append(b)
     assert(a == [1, 2, 3])
 }
 
 test "append non-empty vec to empty" {
-    mut a = Vec[int].of()
+    mut a = Vec[int].new()
     ro b = Vec[int].of(1, 2, 3)
     a.append(b)
     assert(a == [1, 2, 3])
 }
 
 test "append both empty" {
-    mut a = Vec[int].of()
-    ro b = Vec[int].of()
+    mut a = Vec[int].new()
+    ro b = Vec[int].new()
     a.append(b)
     assert(a == [])
 }
