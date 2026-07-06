@@ -4,12 +4,12 @@
 // host. env mutation uses a unique key to avoid disturbing the real environment.
 module nova_tests.os
 
-import std.os.{real_os, Os, get_env, set_env, remove_env, has_env, args, current_dir, temp_dir, pid}
+import std.os.{real_os, Os, env, remove_env, has_env, args, cwd, temp_dir, pid}
 
 test "real_os: pid > 0; cwd resolves; temp_dir is non-empty" {
     with Os = real_os() {
         assert(pid() > 0)
-        match current_dir() {
+        match cwd() {
             Ok(p) => assert(!p.is_empty())
             Err(_) => assert(false)
         }
@@ -21,9 +21,9 @@ test "real_os: unique env var set -> get -> remove round-trip" {
     with Os = real_os() {
         ro key = "NOVA_P176_OS_TEST_KEY"
         assert(!has_env(key))
-        match set_env(key, "novavalue") { Ok(()) => assert(true), Err(_) => assert(false) }
+        match env(key, "novavalue") { Ok(()) => assert(true), Err(_) => assert(false) }
         assert(has_env(key))
-        match get_env(key) { Some(v) => assert(v == "novavalue"), None => assert(false) }
+        match env(key) { Some(v) => assert(v == "novavalue"), None => assert(false) }
         match remove_env(key) { Ok(()) => assert(true), Err(_) => assert(false) }
         assert(!has_env(key))
     }

@@ -9,29 +9,29 @@ test "d324: mock_os env set/get/has/remove round-trip" {
     mut d324_os = MockOs.new()
     with Os = mock_os(d324_os) {
         assert(!has_env("KEY"))
-        match get_env("KEY") { Some(_) => assert(false), None => assert(true) }
-        match set_env("KEY", "value") { Ok(()) => assert(true), Err(_) => assert(false) }
+        match env("KEY") { Some(_) => assert(false), None => assert(true) }
+        match env("KEY", "value") { Ok(()) => assert(true), Err(_) => assert(false) }
         assert(has_env("KEY"))
-        match get_env("KEY") { Some(v) => assert(v == "value"), None => assert(false) }
+        match env("KEY") { Some(v) => assert(v == "value"), None => assert(false) }
         // overwrite
-        match set_env("KEY", "v2") { Ok(()) => assert(true), Err(_) => assert(false) }
-        match get_env("KEY") { Some(v) => assert(v == "v2"), None => assert(false) }
+        match env("KEY", "v2") { Ok(()) => assert(true), Err(_) => assert(false) }
+        match env("KEY") { Some(v) => assert(v == "v2"), None => assert(false) }
         // remove → absent again
         match remove_env("KEY") { Ok(()) => assert(true), Err(_) => assert(false) }
         assert(!has_env("KEY"))
     }
 }
 
-test "d324: mock_os env value byte-correctness via get_env_bytes" {
+test "d324: mock_os env value byte-correctness via env_bytes" {
     mut d324_os = MockOs.new()
     with Os = mock_os(d324_os) {
-        match set_env("RAW", "seed") { Ok(()) => assert(true), Err(_) => assert(false) }
-        match get_env_bytes("RAW".to_bytes()) {
+        match env("RAW", "seed") { Ok(()) => assert(true), Err(_) => assert(false) }
+        match env_bytes("RAW".to_bytes()) {
             Some(b) => { assert(b.len() == 4); assert(b[0] == (115 as u8)) }   // 's'
             None    => assert(false)
         }
         // absent key → None (distinct from present-empty)
-        match get_env_bytes("MISSING".to_bytes()) { Some(_) => assert(false), None => assert(true) }
+        match env_bytes("MISSING".to_bytes()) { Some(_) => assert(false), None => assert(true) }
     }
 }
 
@@ -52,8 +52,8 @@ test "d324: mock_os args snapshot (argv[0] = program)" {
 test "d324: mock_os vars snapshot reflects the environment" {
     mut d324_os = MockOs.new()
     with Os = mock_os(d324_os) {
-        ro _ = set_env("A", "1")
-        ro _ = set_env("B", "2")
+        ro _ = env("A", "1")
+        ro _ = env("B", "2")
         ro d324_vs = vars()
         assert(d324_vs.len() == 2)
         // find A among the snapshot
@@ -68,9 +68,9 @@ test "d324: mock_os vars snapshot reflects the environment" {
 test "d324: mock_os cwd get/set; pid; home; exit recorded (not executed)" {
     mut d324_os = MockOs.new()
     with Os = mock_os(d324_os) {
-        match current_dir() { Ok(p) => assert(p.display() == "/"), Err(_) => assert(false) }
-        match set_current_dir(Path.posix("/work")) { Ok(()) => assert(true), Err(_) => assert(false) }
-        match current_dir() { Ok(p) => assert(p.display() == "/work"), Err(_) => assert(false) }
+        match cwd() { Ok(p) => assert(p.display() == "/"), Err(_) => assert(false) }
+        match cwd(Path.posix("/work")) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match cwd() { Ok(p) => assert(p.display() == "/work"), Err(_) => assert(false) }
         assert(pid() == 4242)
         match home_dir() { Some(h) => assert(h.display() == "/home/user"), None => assert(false) }
         // exit is RECORDED under mock, control continues

@@ -78,19 +78,16 @@ export fn EnvVar @value() -> str => @value
 
 /// The value of environment variable `key`, or `None` if it is not set. An unset
 /// variable and an empty value are distinguished (unlike a bare lookup). Bytes
-/// are carried verbatim; use `get_env_bytes` for guaranteed byte-fidelity of a
+/// are carried verbatim; use `env_bytes` for guaranteed byte-fidelity of a
 /// non-UTF-8 value.
 #stable(since = "0.1")
-export fn get_env(key str) Os -> Option[str] {
-    ro kb = key.to_bytes()
-    if Os.env_has(kb) { Some(Os.env_get(kb)) } else { None }
-}
+export fn env(key str) Os -> Option[str] => Os.env_get(key.to_bytes())
 
 /// The raw value bytes of environment variable `key`, or `None` if unset —
 /// byte-correct for non-UTF-8 Unix values (Rust `var_os` precedent).
 #stable(since = "0.1")
-export fn get_env_bytes(key []u8) Os -> Option[[]u8] {
-    if Os.env_has(key) { Some(Os.env_get(key).to_bytes()) } else { None }
+export fn env_bytes(key []u8) Os -> Option[[]u8] {
+    match Os.env_get(key) { Some(s) => Some(s.to_bytes()), None => None }
 }
 
 /// Whether environment variable `key` is set.
@@ -100,13 +97,13 @@ export fn has_env(key str) Os -> bool => Os.env_has(key.to_bytes())
 /// Set environment variable `key` to `value` (creating or overwriting).
 /// **Racy** (§3c): mutate only during single-threaded setup.
 #stable(since = "0.1")
-export fn set_env(key str, value str) Os -> Result[(), IoError] =>
-    set_env_bytes(key.to_bytes(), value.to_bytes())
+export fn env(key str, value str) Os -> Result[(), IoError] =>
+    env_bytes(key.to_bytes(), value.to_bytes())
 
 /// Set `key` to raw `value` bytes (byte-correct). **Racy** (§3c).
 #stable(since = "0.1")
-export fn set_env_bytes(key []u8, value []u8) Os -> Result[(), IoError] =>
-    os_wrap_unit(Os.env_set(key, value), "set_env")
+export fn env_bytes(key []u8, value []u8) Os -> Result[(), IoError] =>
+    os_wrap_unit(Os.env_set(key, value), "env")
 
 /// Remove environment variable `key`. Removing an unset variable is not an error.
 /// **Racy** (§3c).
@@ -132,20 +129,20 @@ export fn vars() Os -> []EnvVar {
 /// The current working directory as an absolute `Path`, or `Err` if it cannot be
 /// determined (e.g. the directory was unlinked).
 #stable(since = "0.1")
-export fn current_dir() Os -> Result[Path, IoError] {
+export fn cwd() Os -> Result[Path, IoError] {
     ro s = Os.cwd()
     // Empty == the getcwd hook failed; the effect carries no errno, so surface a
     // raw-0 IoError (kind Other) built inside std.io — avoids the cross-module
     // payload-variant ctor gap `[M-176-xmod-payload-variant-ctor]`.
-    if s.is_empty() { Err(IoError.from_os(0, "current_dir")) }
+    if s.is_empty() { Err(IoError.from_os(0, "cwd")) }
     else { Ok(Path.from_bytes(s.to_bytes())) }
 }
 
 /// Change the current working directory to `path`. **Racy** (§3c): mutate only
 /// during single-threaded setup — a concurrent relative-path resolution races it.
 #stable(since = "0.1")
-export fn set_current_dir(path Path) Os -> Result[(), IoError] =>
-    os_wrap_unit(Os.set_cwd(path.as_os_bytes()), "set_current_dir")
+export fn cwd(path Path) Os -> Result[(), IoError] =>
+    os_wrap_unit(Os.set_cwd(path.as_os_bytes()), "cwd")
 
 // ─── Well-known directories ──
 
@@ -199,7 +196,7 @@ export fn real_os() -> Effect[Os] {
         arg_count() => os_arg_count()
         arg_at(i int) => os_arg_at(i)
         env_get(key []u8) {
-            match os_cstr(key) { Ok(ck) => unsafe { os_env_get(ck.as_ptr()) }, Err(_) => "" }
+            match os_cstr(key) { Ok(ck) => if unsafe { os_env_has(ck.as_ptr()) } == 1 { Some(unsafe { os_env_get(ck.as_ptr()) }) } else { None }, Err(_) => None }
         }
         env_has(key []u8) {
             match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.as_ptr()) } == 1, Err(_) => false }

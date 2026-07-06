@@ -6686,7 +6686,7 @@ Subprocess (`Command`/`Child`/`spawn`) — НЕ здесь: под-план **17
 ```nova
 type Os effect {
     arg_count() -> int;  arg_at(i int) -> str                              // argv (arg_at(0) = программа)
-    env_get(key []u8) -> str;  env_has(key []u8) -> int                    // значение (raw bytes-as-str) / наличие
+    env_get(key []u8) -> Option[str];  env_has(key []u8) -> bool           // значение (raw bytes-as-str) / наличие
     env_set(key []u8, val []u8) -> int;  env_remove(key []u8) -> int       // 0 / -errno
     env_len() -> int;  env_key_at(i int) -> str;  env_val_at(i int) -> str // snapshot-итерация vars
     cwd() -> str;  set_cwd(path []u8) -> int                               // "" = error; 0 / -errno
@@ -6700,15 +6700,15 @@ type Os effect {
   effect-vtable (которая стёрла бы их).
 - **byte-first (Q1-прецедент):** env-ключи/значения и пути кросят как `[]u8` (handler NUL-терминирует их для C
   через `os_cstr`, зеркало fs `c_path`); `env_get` несёт байты verbatim → non-UTF-8 Unix env-значение
-  round-trip'ит лосслесс через `get_env_bytes` (Rust `var_os`-прецедент). `str`-удобная форма (`get_env`) несёт
+  round-trip'ит лосслесс через `env_bytes` (Rust `var_os`-прецедент). `str`-удобная форма (`env`) несёт
   те же байты (Go-модель).
 
 ### Public API (`os.nv`, все несут `Os`)
 
-`args() -> []str` (argv, [0]=программа); `get_env(key str) -> Option[str]` / `get_env_bytes(key []u8) -> Option[[]u8]`
-(unset vs empty различимы через `env_has`); `has_env`; `set_env`/`set_env_bytes`/`remove_env -> Result[(), IoError]`;
-`vars() -> []EnvVar` (snapshot, Go `os.Environ`/Rust `env::vars`); `current_dir() -> Result[Path, IoError]` /
-`set_current_dir(Path)`; `temp_dir() -> Path`; `home_dir() -> Option[Path]`; `exit_process(code int)` (flush
+`args() -> []str` (argv, [0]=программа); `env(key str) -> Option[str]` / `env_bytes(key []u8) -> Option[[]u8]`
+(перегрузка по арности; unset vs empty различимы); `has_env`; `env(key str, value str)` / `env_bytes(key []u8, value []u8)` / `remove_env -> Result[(), IoError]`;
+`vars() -> []EnvVar` (snapshot, Go `os.Environ`/Rust `env::vars`); `cwd() -> Result[Path, IoError]` /
+`cwd(Path) -> Result[(), IoError]`; `temp_dir() -> Path`; `home_dir() -> Option[Path]`; `exit_process(code int)` (flush
 stdout/stderr + terminate; Go `os.Exit`/Rust `process::exit`; **имя `exit_process`** — bare `exit(code, msg)` —
 язык-builtin D13); `pid() -> int`; `hostname() -> Result[str, IoError]`.
 
@@ -6723,19 +6723,33 @@ map; `exit` **записывается** (`did_exit()`/`exit_code()`), НЕ те
 
 ### Concurrency-контракт (§3c)
 
-`set_env`/`set_current_dir` мутируют process-global state → inherently racy (Rust сделал `set_var` `unsafe` в
+`env(key, value)`/`cwd(path)` мутируют process-global state → inherently racy (Rust сделал `set_var` `unsafe` в
 1.84). Nova НЕ делает их unsafe, но документирует single-threaded-mutation контракт: мутировать env/cwd только в
-setup, до спавна конкурентной работы, читающей их. Чтения (`get_env`/`args`/`current_dir`) — безопасны.
+setup, до спавна конкурентной работы, читающей их. Чтения (`env(key)`/`args`/`cwd()`) — безопасны.
 
 ### Реализационные ноты
 
 1. **`os` зависит от `fs`** (для `Path`) — не цикл (`fs` не импортит `os`; `io` не импортит ни того ни другого).
 2. **`exit_process`, НЕ `exit`** — bare `exit` = язык-builtin (D13, `-> never`, message-bearing abort).
-3. **`current_dir`/`hostname` ошибка → `IoError.from_os(0, op)`** (kind `Other`), а НЕ `IoError.of(ErrorKind.Other(0),
+3. **`cwd()`/`hostname()` ошибка → `IoError.from_os(0, op)`** (kind `Other`), а НЕ `IoError.of(ErrorKind.Other(0),
    …)`: `Other(int)` — payload-вариант, cross-module литерал-конструкция ловит checker-gap
    `[M-176-xmod-payload-variant-ctor]`; `from_os`/`kind_from_errno` строят `Other` ВНУТРИ `std.io`.
 4. **Free-fn имена не коллидят** (coarse-by-name резолв, D323-нота #3): приватные хелперы `os_cstr`/`os_wrap_unit`
    (не `c_path`/`wrap_unit` — те в `std.fs`).
+
+### Амендмент D324 (2026-07-07) — оп env_get -> Option; публичная поверхность перегрузка по арности
+
+**Решение владельца:** Два уточнения:
+
+1. **`env_get` в эффекте** → `Option[str]` (вместо `str` с сентинелём-""). Присутствие ключа (ранее определяемое через `env_has` снаружи опа) теперь решается ЗДЕСЬ: `match os_cstr(key) { Ok(ck) => if unsafe { os_env_has(ck.as_ptr()) } == 1 { Some(unsafe { os_env_get(ck.as_ptr()) }) } else { None }, Err(_) => None }`. Осмысление: сентинель-"" не различал `KEY=` (пусто) и отсутствие ключа; Option явен и безопасен (правило 4 стиля).
+
+2. **Публичная поверхность — перегрузка по арности (канон D117-семьи):**
+   - `env(key str) -> Option[str]` — чтение переименование с `get_env`; `env_bytes(key []u8) -> Option[[]u8]` с `get_env_bytes`.
+   - `env(key str, value str) -> Result[(), IoError]` — писание; `env_bytes(key []u8, value []u8) -> Result[(), IoError]` с `set_env_bytes`.
+   - `cwd() -> Result[Path, IoError]` — чтение с `current_dir`; `cwd(Path) -> Result[(), IoError]` — писание с `set_current_dir`.
+   - `has_env`, `remove_env` остаются без изменений.
+
+Реализация: `real_os()` обновлён в `std/os/os.nv`; `mock_os()` и `MockOs` в `std/os/mock.nv` возвращают `Option[str]` из `@mem_env_get`. Миграция: 7 вызовов `get_env` ← `env`, 3 `get_env_bytes` ← `env_bytes`, 8 `set_env` ← `env`, 1 `set_env_bytes` ← `env_bytes`, 7 `current_dir` ← `cwd`, 2 `set_current_dir` ← `cwd` (~28 мест в тестах; пуст в spec_tests/examples). Импорты обновлены.
 
 ## D357 — `Http` client transport seam (Plan 178 Ф.2, 2026-07-04)
 
