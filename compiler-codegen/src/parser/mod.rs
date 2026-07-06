@@ -9913,38 +9913,87 @@ impl Parser {
     /// или позиционная форма → diagnostic.
     fn parse_supervised(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwSupervised)?.span;
-        let cancel = if matches!(self.peek().kind, TokenKind::LParen) {
+        // Именованные аргументы `cancel:` / `deadline:` / `timeout:` в любом
+        // порядке, через запятую (Plan 174 / D349 — расширение план-47 формы).
+        // Каждый — не более одного раза; `deadline:` и `timeout:` взаимно
+        // исключающи (обе задают срок; выбери одну форму).
+        let mut cancel: Option<Box<Expr>> = None;
+        let mut deadline: Option<crate::ast::SupervisedDeadline> = None;
+        if matches!(self.peek().kind, TokenKind::LParen) {
             self.bump(); // (
             self.skip_newlines();
-            // Имя аргумента — обязано быть `cancel`.
-            match &self.peek().kind {
-                TokenKind::Ident(name) if name == "cancel" => {
-                    self.bump(); // cancel
+            loop {
+                let arg_span = self.peek().span;
+                let name = match &self.peek().kind {
+                    TokenKind::Ident(n)
+                        if n == "cancel" || n == "deadline" || n == "timeout" =>
+                    {
+                        n.clone()
+                    }
+                    other => {
+                        return Err(Diagnostic::new(
+                            format!(
+                                "`supervised` accepts only named arguments \
+                                 `cancel:`, `deadline:`, `timeout:` (got {}); use \
+                                 `supervised(cancel: tok) {{ ... }}`, \
+                                 `supervised(deadline: mono) {{ ... }}` or \
+                                 `supervised(timeout: dur) {{ ... }}`",
+                                other.name()
+                            ),
+                            self.peek().span,
+                        ));
+                    }
+                };
+                self.bump(); // name
+                self.expect(&TokenKind::Colon)?;
+                self.skip_newlines();
+                let expr = self.parse_expr()?;
+                match name.as_str() {
+                    "cancel" => {
+                        if cancel.is_some() {
+                            return Err(Diagnostic::new(
+                                "duplicate `cancel:` argument in `supervised`".to_string(),
+                                arg_span,
+                            ));
+                        }
+                        cancel = Some(Box::new(expr));
+                    }
+                    kind @ ("deadline" | "timeout") => {
+                        if deadline.is_some() {
+                            return Err(Diagnostic::new(
+                                "`supervised` accepts at most one of `deadline:` / \
+                                 `timeout:` (both set a scope deadline — pick one form; \
+                                 `timeout: d` == `deadline: Monotonic.now() + d`)"
+                                    .to_string(),
+                                arg_span,
+                            ));
+                        }
+                        deadline = Some(crate::ast::SupervisedDeadline {
+                            expr: Box::new(expr),
+                            relative: kind == "timeout",
+                            span: arg_span,
+                        });
+                    }
+                    _ => unreachable!(),
                 }
-                other => {
-                    return Err(Diagnostic::new(
-                        format!(
-                            "`supervised` accepts only the named argument `cancel:` \
-                             (got {}); use `supervised(cancel: tok) {{ ... }}`",
-                            other.name()
-                        ),
-                        self.peek().span,
-                    ));
+                self.skip_newlines();
+                if self.eat(&TokenKind::Comma).is_some() {
+                    self.skip_newlines();
+                    // Разрешаем trailing-comma перед `)`.
+                    if matches!(self.peek().kind, TokenKind::RParen) {
+                        break;
+                    }
+                    continue;
                 }
+                break;
             }
-            self.expect(&TokenKind::Colon)?;
-            self.skip_newlines();
-            let expr = self.parse_expr()?;
             self.skip_newlines();
             self.expect(&TokenKind::RParen)?;
-            Some(Box::new(expr))
-        } else {
-            None
-        };
+        }
         let block = self.parse_block()?;
         let end = block.span;
         Ok(Expr::new(
-            ExprKind::Supervised { body: block, cancel },
+            ExprKind::Supervised { body: block, cancel, deadline },
             start.merge(end),
         ))
     }

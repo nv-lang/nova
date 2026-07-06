@@ -363,6 +363,27 @@ typedef struct {
      * on this counter == 0 before returning, so the stack frame stays alive
      * until the driver has finished dereferencing scope fields. */
     nova_atomic_int pending_driver_jobs;
+
+    /* Plan 174 (D349): scope deadline — absolute monotonic-clock nanoseconds
+     * (uv_hrtime() epoch). 0 = no deadline. Set by codegen for
+     * `supervised(deadline:/timeout:)`; inherited (min-combined) from the
+     * enclosing scope by nova_scope_init so a deadline propagates into nested
+     * scopes and an inner scope can only TIGHTEN, never extend, the outer
+     * deadline. nova_supervised_run_impl arms a bounded uv_run wait against
+     * it, delivers scope-cancel on expiry, and throws a typed `TimeoutError`.
+     * Not atomic: single-owner (the scope's own driving thread reads it;
+     * the deadline callback runs inline on that same loop). */
+    int64_t deadline_ns;
+
+    /* Plan 174 (D349): the enclosing `_nova_active_scope` captured at
+     * nova_scope_init (before this scope makes itself active). Restored by
+     * nova_supervised_run_impl on EVERY exit path — crucially the re-throw /
+     * interrupt / timeout longjmp paths, where codegen's own
+     * `_nova_active_scope = prev` line is skipped. Without this a caught throw
+     * (e.g. TimeoutError) would leave _nova_active_scope dangling at this
+     * scope's freed stack frame, and the next scope_init would inherit a
+     * garbage deadline_ns from it. NULL for the top-level scope. */
+    struct NovaFiberQueue* saved_active_scope;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -573,6 +594,15 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     q->capacity            = cap;
 }
 
+/* Plan 174 (D349): forward-decl of the active-scope TLS so nova_scope_init can
+ * inherit the enclosing scope's deadline. Full platform-conditional definition
+ * is below (~line 1660); a matching earlier extern decl is legal C. */
+#ifdef _MSC_VER
+__declspec(thread) extern NovaFiberQueue* _nova_active_scope;
+#else
+extern __thread NovaFiberQueue* _nova_active_scope;
+#endif
+
 static inline void nova_scope_init(NovaFiberQueue* q) {
     q->count = 0;
     q->capacity = 0;
@@ -610,6 +640,17 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->armed_sleeps_head = NULL;  /* Plan 83.11 Ф.3 */
     nova_aint_init(&q->slot_lock, 0);  /* Plan 83.11 Ф.3.B: slot alloc spinlock */
     nova_aint_init(&q->pending_driver_jobs, 0);  /* Plan 83.11 §12.31 */
+    /* Plan 174 (D349): inherit the enclosing scope's deadline. At scope_init
+     * time _nova_active_scope still points at the PARENT scope (the child sets
+     * it to itself only after init), so a nested scope automatically picks up
+     * an ambient deadline — including plain `supervised {}` blocks (no codegen
+     * change). Scopes with their own `deadline:`/`timeout:` tighten this via
+     * nova_deadline_combine right after init. Top-level scope: parent NULL → 0. */
+    q->deadline_ns = _nova_active_scope ? _nova_active_scope->deadline_ns : 0;
+    /* Plan 174 (D349): capture the enclosing active scope for longjmp-safe
+     * restore in nova_supervised_run_impl (parent at init time; codegen sets
+     * _nova_active_scope=&q only AFTER init). */
+    q->saved_active_scope = _nova_active_scope;
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -1976,6 +2017,86 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     q->count = 0;
 }
 
+/* ─── Plan 174 (D349): scope-deadline helpers ─── */
+
+/* Forward-decl: monotonic-ns clock (defined below, after the scheduler). */
+static inline int64_t _nova_monotonic_ns(void);
+
+/* Combine two absolute-ns deadlines treating 0 as "no deadline". Result =
+ * the earliest (tightest) non-zero point. An inner scope can only TIGHTEN an
+ * inherited deadline, never extend it (план 173 §3a). */
+static inline int64_t nova_deadline_combine(int64_t a, int64_t b) {
+    if (a == 0) return b;
+    if (b == 0) return a;
+    return a < b ? a : b;
+}
+
+/* Deliver cooperative cancellation to a scope directly (no cancel-token). Same
+ * wake-fan-out as the bound-scope branch of nova_cancel_token_cancel_reason:
+ * mark the scope cancelled, propagate the reason, and wake every parked fiber
+ * (SYNC/ASYNC slots, worker-parked fibers, driver-armed timers) so a blocked
+ * `Time.sleep` / network park unblocks EARLY instead of running to full term.
+ * Idempotent: first-cancel-wins is enforced by the caller checking
+ * cancel_requested before calling. */
+static inline void nova_scope_deliver_cancel(NovaFiberQueue* q, void* reason_ptr) {
+    if (!q) return;
+    nova_abool_store(&q->cancel_requested, true);
+    q->cancel_reason_ptr = reason_ptr;
+    nova_sched_cancel_all_pending(q);
+    nova_scope_cancel_wake_all(q);
+    {
+        extern void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* scope);
+        nova_runtime_cancel_worker_fibers(q);
+    }
+    _nova_cancel_via_driver(q);
+}
+
+/* Plan 174 (D349): typed `TimeoutError` throw hook. Assigned by codegen in
+ * main() when the user program references `TimeoutError` (mirrors the
+ * CleanupTimeoutError pattern). When NULL — string-fallback throw is used
+ * (production-safe; outer fail-frame still catches). Carries the exceeded
+ * deadline point (absolute monotonic ns). */
+extern void (*_nova_throw_scope_timeout_fn)(int64_t deadline_ns);
+
+static inline void nova_throw_scope_timeout(int64_t deadline_ns) {
+    if (_nova_throw_scope_timeout_fn) {
+        _nova_throw_scope_timeout_fn(deadline_ns);
+        /* unreachable — fn does not return on the throw path */
+    }
+    /* Fallback: plain string throw (USER kind). Prefix is the recognized
+     * marker; `with Fail` still catches and propagates. */
+    nova_throw(nova_str_from_cstr("supervised-timeout: scope deadline exceeded"));
+    /* unreachable */
+}
+
+/* Plan 174 (D349): no-op timer cb for the scope-deadline bounded wait. */
+static void _nova_scope_deadline_wait_cb(uv_timer_t* h) { (void)h; }
+
+/* UV_RUN_ONCE bounded by the scope deadline so the drain loop wakes at the
+ * deadline even when every fiber is parked on a far-future timer (e.g.
+ * `spawn { Time.sleep(10_000) }` under a 1s deadline). Mirrors the proven
+ * armed-stack-timer + UV_RUN_ONCE pattern of the main-flow Time.sleep loop.
+ * deadline_ns==0 → plain UV_RUN_ONCE (byte-identical to legacy behaviour). */
+static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
+    uv_loop_t* loop = nova_current_loop();
+    if (deadline_ns == 0) { uv_run(loop, UV_RUN_ONCE); return; }
+    int64_t remaining_ns = deadline_ns - _nova_monotonic_ns();
+    if (remaining_ns <= 0) {
+        /* Deadline already passed — don't block; pump ready events so
+         * cancellation close_cbs can complete and fibers drain. */
+        uv_run(loop, UV_RUN_NOWAIT);
+        return;
+    }
+    int64_t remaining_ms = remaining_ns / 1000000LL + 1;  /* round up, min 1 */
+    uv_timer_t w;
+    uv_timer_init(loop, &w);
+    uv_timer_start(&w, _nova_scope_deadline_wait_cb, (uint64_t)remaining_ms, 0);
+    uv_run(loop, UV_RUN_ONCE);
+    uv_timer_stop(&w);
+    uv_close((uv_handle_t*)&w, NULL);
+    uv_run(loop, UV_RUN_NOWAIT);  /* release handle via NOWAIT pass */
+}
+
 /* Round-robin run: resume each live fiber until all are dead.
  * After all fibers complete, if any threw — re-throw on main-flow.
  *
@@ -2011,8 +2132,23 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         extern void nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
         nova_runtime_set_watchdog_scope((struct NovaFiberQueue*)q);
     }
+    /* Plan 174 (D349): scope deadline — absolute monotonic ns (0 = none),
+     * inherited+tightened by nova_scope_init/codegen. On expiry we deliver
+     * cooperative cancel to this scope (waking parked fibers early) and latch
+     * `_dl_fired` so the tail throws a typed TimeoutError. */
+    int64_t _dl_ns    = q->deadline_ns;
+    bool    _dl_fired = false;
     for (;;) {
         int alive = nova_supervised_step(q);
+        /* Plan 174 (D349): deadline gate. Fire once, and only if the scope
+         * wasn't already cancelled by a bound token (earliest-of-the-two wins
+         * — token cancel takes precedence, no bogus TimeoutError). */
+        if (_dl_ns != 0 && !_dl_fired
+            && !nova_abool_load(&q->cancel_requested)
+            && _nova_monotonic_ns() >= _dl_ns) {
+            _dl_fired = true;
+            nova_scope_deliver_cancel(q, NULL);
+        }
         if (alive == 0) {
             /* Plan 44.5 Layer 5: local done — но могут быть remote
              * fiber'ы running на workers. Wait для них. */
@@ -2045,7 +2181,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             if (_nova_on_worker_thread()) {
                 nova_runtime_worker_pump_scope((struct NovaFiberQueue*)q);
             } else {
-                uv_run(nova_current_loop(), UV_RUN_ONCE);
+                _nova_scope_deadline_run_once(_dl_ns);  /* Plan 174 (D349) */
             }
             continue;
         }
@@ -2053,7 +2189,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
          * Если ready=0 и parked>0 → idle в uv_run UV_RUN_ONCE. */
         int parked = nova_sched_count_parked(q);
         if (parked > 0 && parked == alive) {
-            uv_run(nova_current_loop(), UV_RUN_ONCE);
+            _nova_scope_deadline_run_once(_dl_ns);  /* Plan 174 (D349) */
         }
     }
     /* Plan 83.11 Phase A: clear watchdog scope before cleanup. */
@@ -2108,6 +2244,14 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         q->ctx_pins_count = 0;
         q->ctx_pins_cap   = 0;
     }
+    /* Plan 174 (D349): restore the enclosing active scope on EVERY exit path
+     * (normal + interrupt + CANCEL-return + re-throw + TimeoutError longjmp).
+     * Codegen's post-run `_nova_active_scope = prev` covers only the normal
+     * fall-through; the longjmp paths below skip it, which would leave the TLS
+     * dangling at this (freed) stack scope and corrupt the next scope's
+     * inherited deadline. Idempotent with the codegen restore on the normal
+     * path (same value). */
+    _nova_active_scope = q->saved_active_scope;
     /* Pending interrupt from a fiber's handler-method takes priority over
      * fiber-throw error: handler ran successfully, decided to interrupt
      * the with-block. Re-issue on main-flow where the with-frame is reachable.
@@ -2133,6 +2277,20 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * first_error_atomic_kind. Приоритет: local first_error побеждает над
      * atomic (если оба есть — local зафиксировался первым в этом thread'е).
      * Если только atomic — берём atomic_kind. */
+    /* Plan 174 (D349): the scope deadline fired. Surface it as a typed
+     * `TimeoutError` — UNLESS a real USER error propagated, in which case
+     * USER-precedence applies (the genuine error wins; the deadline merely
+     * cancelled the siblings). CANCEL-only or error-free scope → TimeoutError.
+     * Runs after tok-unbind + ctx_pins free above, so the longjmp leaves no
+     * dangling scope state (same discipline as the USER re-throw below). */
+    if (_dl_fired) {
+        NovaThrowKind _dk = q->first_error ? q->first_error_kind
+                                           : q->first_error_atomic_kind;
+        if (!err || _dk == NOVA_THROW_CANCEL) {
+            nova_throw_scope_timeout(_dl_ns);
+            /* unreachable */
+        }
+    }
     if (err) {
         NovaThrowKind kind = q->first_error ? q->first_error_kind
                                             : q->first_error_atomic_kind;

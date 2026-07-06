@@ -543,11 +543,15 @@ impl<'a> Analyzer<'a> {
                 self.flag_mut(cur).makes_indirect = true;
                 self.walk_expr(cur, recv, scope, inner);
             }
-            ExprKind::Supervised { body, cancel } => {
+            ExprKind::Supervised { body, cancel, deadline } => {
                 self.flag_mut(cur).allocates = true;
                 self.flag_mut(cur).makes_indirect = true;
                 if let Some(c) = cancel {
                     self.walk_expr(cur, recv, scope, c);
+                }
+                if let Some(_dl) = deadline {
+                    let _dl_e = &_dl.expr;
+                    self.walk_expr(cur, recv, scope, _dl_e);
                 }
                 self.walk_block(cur, recv, scope, body);
             }

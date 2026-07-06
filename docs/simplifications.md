@@ -37982,3 +37982,34 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
 - **[M-153.1-append-as-slice-ccfail]** — same-arity param-type overload (`Box6[T] @tag(int)` /
   `@tag(str)`) на generic-типе схлопывался: дедуп `generic_type_methods` сравнивал name+count+
   receiver, НЕ param-типы. Fix: span-free `type_ref_overload_key` в дедупе (TypeRef без PartialEq).
+
+## Plan 174 — `supervised(deadline:/timeout:)` deadline-combinator (D408, 2026-07-06)
+
+- **[Plan-174-deadline-combinator]** (LANDED, `nova-p174` ветка deadline-combinator) — областной срок
+  как СТРУКТУРНАЯ keyword-конструкция (не fn-обёртка → эффекты тела протекают): `supervised(deadline:
+  <Monotonic>)` (абс. точка, канон) / `supervised(timeout: <Duration>)` (относит. сахар = `now()+d`),
+  комбинируется с `cancel:`. Механика: `NovaFiberQueue.deadline_ns` (абс. монотон. ns, 0=нет); `nova_scope_init`
+  наследует ambient-срок из `_nova_active_scope`; codegen `emit_supervised` ужимает своим сроком через
+  `nova_deadline_combine` (min ненулевых — inner можно только ужесточить); `run_impl` bounded-idle
+  (`_nova_scope_deadline_run_once`: armed stack-timer + UV_RUN_ONCE) будит drain в точке срока; в точке —
+  `nova_scope_deliver_cancel` (путь `cancel:`, sleep/net-park прерываются рано); наружу типизированный
+  `TimeoutError{deadline_ns i64}` (prelude, `is TimeoutError`/`with Fail[TimeoutError]`) через splice
+  `_nova_throw_scope_timeout_impl` (по образцу CleanupTimeoutError). USER-precedence: реальная ошибка бьёт
+  срок. Zero/past→immediate (D317-дух). Тесты `std/concurrency/supervised_deadline_test.nv` 8/8 (в т.ч. замер:
+  sleep(5000) под timeout(100ms) завершается <2000ms). Regress delta 0 (сверено baseline 560566f3;
+  побочно ПОЧИНЕН latent `plan83_10_3/nested_supervised_cancel` RUN-FAIL→PASS).
+- **[Plan-174-active-scope-longjmp-restore]** (сопутствующий bugfix) — throw (в т.ч. TimeoutError),
+  пробивающий тело внешней области до её run-loop, оставлял `_nova_active_scope` висящим на освобождённом
+  stack-фрейме → следующая область наследовала garbage `deadline_ns` (spurious immediate TimeoutError).
+  Fix двухуровневый: (1) `run_impl` восстанавливает `_nova_active_scope = q->saved_active_scope` на ВСЕХ
+  путях выхода (в т.ч. longjmp); (2) `with Fail[...]`-блок (emit_with) снапшотит+восстанавливает active-scope
+  вокруг catch (gated на Fail — не-catching effect-handlers byte-identical). Латентный pre-existing дефект,
+  экспонированный deadline-наследованием.
+- **Известные ограничения (честный gate, НЕ упрощения фичи):** (a) main-flow blocking В ТЕЛЕ до старта
+  run-loop не ограничено сроком — тело исполняется inline перед `nova_supervised_run`; идиома — `spawn`
+  работу (structured-concurrency канон); (b) чекер НЕ выдаёт structured-диагностику на неверный тип
+  аргумента `deadline:`/`timeout:` — полагается на C-type-check `.nanos` (как `ChanReader.close_after`);
+  правильная checker-диагностика — followup; (c) `deadline:`/`timeout:` требует `import std.time.duration`
+  (Duration/Monotonic ctors) — как и любое использование этих типов; (d) `parallel for`-зеркалирование
+  параметров отложено `[M-174-parallel-for-deadline]`; (e) ретракция `with_timeout` отложена
+  `[M-174-retract-with-timeout]` (cancellation.nv независимо сломан retired-API).

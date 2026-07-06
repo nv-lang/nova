@@ -368,10 +368,14 @@ impl Numberer {
             ExprKind::Block(b) => self.block(b),
             ExprKind::Spawn(x) => self.expr(x),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.block(b),
-            ExprKind::Supervised { body, cancel } => {
+            ExprKind::Supervised { body, cancel, deadline } => {
                 self.block(body);
                 if let Some(c) = cancel {
                     self.expr(c);
+                }
+                if let Some(_dl) = deadline {
+                    let _dl_e = &mut _dl.expr;
+                    self.expr(_dl_e);
                 }
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {

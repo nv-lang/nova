@@ -2437,14 +2437,23 @@ pub enum ExprKind {
     Block(Block),
     /// `spawn body` — D50
     Spawn(Box<Expr>),
-    /// `supervised { body }` / `supervised(cancel: tok) { body }` —
+    /// `supervised { body }` / `supervised(cancel: tok) { body }` /
+    /// `supervised(deadline: mono) { body }` / `supervised(timeout: dur) { body }` —
     /// structured-concurrency scope (D50). `cancel` — опциональный
     /// именованный аргумент `cancel:` с выражением типа `CancelToken`
     /// (D75 revised, Plan 47): внешний код может вызвать `tok.cancel()`
     /// чтобы fail-fast все fiber'ы scope'а.
+    ///
+    /// `deadline` — опциональный областной срок (Plan 174 / D349, §3a плана 173).
+    /// `deadline: <Monotonic>` — абсолютная точка (канон); `timeout: <Duration>`
+    /// — относительный сахар (`Monotonic.now() + d`). По истечении — областная
+    /// отмена (тот же путь, что `cancel:`) + наружу типизированный `TimeoutError`
+    /// (ловится `is TimeoutError`). Пропагируется во вложенные области: срок
+    /// наследуется, внутренний срок не может продлить внешний (min-комбинация).
     Supervised {
         body: Block,
         cancel: Option<Box<Expr>>,
+        deadline: Option<SupervisedDeadline>,
     },
     /// `detach { body }` — fire-and-forget, global supervisor (D50).
     /// Requires `Detach` effect in the enclosing function's signature.
@@ -2740,6 +2749,20 @@ pub enum MatchArmBody {
     Expr(Expr),
     /// `pattern => { block }` — единственное исключение из D40 (D19)
     Block(Block),
+}
+
+/// Областной срок для `supervised` (Plan 174 / D349, план 173 §3a).
+///
+/// `deadline: <expr>` (`relative == false`) — `expr` типа `Monotonic`, абсолютная
+/// точка на монотонных часах. `timeout: <expr>` (`relative == true`) — `expr`
+/// типа `Duration`, относительный сахар = `Monotonic.now() + expr`.
+#[derive(Debug, Clone)]
+pub struct SupervisedDeadline {
+    pub expr: Box<Expr>,
+    /// `true` для `timeout:` (Duration, relative), `false` для `deadline:`
+    /// (Monotonic, absolute point).
+    pub relative: bool,
+    pub span: Span,
 }
 
 /// One arm of a `select` expression --- D94.

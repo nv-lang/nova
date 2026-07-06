@@ -596,9 +596,13 @@ impl<'t> Renamer<'t> {
             ExprKind::Block(b) => self.block(b),
             ExprKind::Spawn(x) => self.expr(x),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.block(b),
-            ExprKind::Supervised { body, cancel } => {
+            ExprKind::Supervised { body, cancel, deadline } => {
                 if let Some(c) = cancel {
                     self.expr(c);
+                }
+                if let Some(_dl) = deadline {
+                    let _dl_e = &mut _dl.expr;
+                    self.expr(_dl_e);
                 }
                 self.block(body);
             }
@@ -1019,9 +1023,13 @@ pub(crate) fn collect_names_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::Block(b) => collect_names_block(b, out),
         ExprKind::Spawn(x) => collect_names_expr(x, out),
         ExprKind::Detach(b) | ExprKind::Blocking(b) => collect_names_block(b, out),
-        ExprKind::Supervised { body, cancel } => {
+        ExprKind::Supervised { body, cancel, deadline } => {
             if let Some(c) = cancel {
                 collect_names_expr(c, out);
+            }
+            if let Some(_dl) = deadline {
+                let _dl_e = &_dl.expr;
+                collect_names_expr(_dl_e, out);
             }
             collect_names_block(body, out);
         }

@@ -5472,6 +5472,15 @@ impl CEmitter {
             self.register_type_id("CleanupTimeoutError");
         }
 
+        // Plan 174 (D349): register TimeoutError type id (prelude type thrown by
+        // the supervised scope-deadline runtime path). Gated on the real type
+        // definition (same #no_prelude discipline as CleanupTimeoutError above)
+        // so `_nova_throw_scope_timeout_impl` is emitted only when the struct
+        // Nova_TimeoutError + NOVA_TID_USER_TimeoutError are available.
+        if self.record_schemas.contains_key("TimeoutError") {
+            self.register_type_id("TimeoutError");
+        }
+
         // Plan 61 Ф.1: splice TypeId defines + overriding nova_typeid_to_name.
         // Каждый registered user-type получает `#define NOVA_TID_USER_<X> N`;
         // также emit'тся overriding `nova_typeid_to_name` switch для diagnostic.
@@ -5562,6 +5571,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         };
         self.out = self.out.replace("/*__CLEANUP_TIMEOUT_IMPL__*/", &ct_impl);
         self.out = self.out.replace("/*__CLEANUP_TIMEOUT_INIT__*/", &ct_init);
+
+        // Plan 174 (D349): typed TimeoutError throw impl — assigned to
+        // _nova_throw_scope_timeout_fn in main() when TimeoutError is
+        // referenced. Replaces the string-fallback in nova_throw_scope_timeout.
+        let (to_impl, to_init) = if self.type_id_registry.contains_key("TimeoutError") {
+            let impl_block = "\
+/* Plan 174 (D349): typed TimeoutError throw — assigned to\n\
+ * _nova_throw_scope_timeout_fn in main(). Replaces the string-fallback in\n\
+ * nova_throw_scope_timeout when TimeoutError is referenced. */\n\
+static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
+    Nova_TimeoutError* _e = (Nova_TimeoutError*)nova_alloc(sizeof(Nova_TimeoutError));\n\
+    _e->deadline_ns = (int64_t)deadline_ns;\n\
+    (void)nova_throw_typed(nova_str_from_cstr(\"supervised-timeout: scope deadline exceeded\"), (void*)_e, NOVA_TID_USER_TimeoutError);\n\
+    /* unreachable */\n\
+}\n".to_string();
+            let init_line = "    _nova_throw_scope_timeout_fn = &_nova_throw_scope_timeout_impl;".to_string();
+            (impl_block, init_line)
+        } else {
+            (String::new(), String::new())
+        };
+        self.out = self.out.replace("/*__SCOPE_TIMEOUT_IMPL__*/", &to_impl);
+        self.out = self.out.replace("/*__SCOPE_TIMEOUT_INIT__*/", &to_init);
 
         // Plan 61 followup #4: per-E Fail dispatch splice.
         let per_e_decls = self.render_per_e_fail_decls();
@@ -7300,6 +7331,28 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let mut saves: Vec<(String, String, String)> = Vec::new();
         let mut has_fail = false;
 
+        // Plan 174 (D349): a `with Fail[...]` block can CATCH a throw that
+        // propagated through an in-flight `supervised { supervised { ... } }`
+        // whose outer run-loop never executed (the body longjmp'd past it). On
+        // that path `_nova_active_scope` is left dangling at the freed outer
+        // scope frame, and the NEXT scope_init would inherit a garbage
+        // `deadline_ns` from it → a spurious immediate TimeoutError. Snapshot
+        // the active scope at with-entry and restore it after the catch is
+        // resolved (normal completion AND handled throw both fall through to
+        // the finalizer-restore tail). Gated on Fail so non-catching effect
+        // handlers stay byte-identical.
+        let catches_fail = bindings.iter().any(|b| matches!(
+            &b.effect,
+            TypeRef::Named { path, .. } if path.last().map_or(false, |s| s == "Fail")
+        ));
+        let active_scope_save = if catches_fail {
+            let sv = self.fresh_tmp();
+            self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", sv));
+            Some(sv)
+        } else {
+            None
+        };
+
         // Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: detect
         // Application binding для init/fire finalizer stack. Local stack
         // var + TLS pointer swap. Fired LIFO в обоих normal + throw paths.
@@ -7690,6 +7743,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 "_nova_active_finalizer_stack = {prev};",
                 prev = prev_var
             ));
+        }
+
+        // Plan 174 (D349): restore the with-entry active scope (see snapshot at
+        // the top). Runs on both normal completion and handled-throw paths.
+        if let Some(sv) = &active_scope_save {
+            self.line(&format!("_nova_active_scope = {};", sv));
         }
 
         Ok(result_tmp)
@@ -8970,8 +9029,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// в стейтменте тела не оставит висящий `bound_scope`), и ОТВЯЗЫВАЕТСЯ
     /// внутри `nova_supervised_run_cancel` на всех путях выхода (нормальный
     /// возврат + re-throw).
-    fn emit_supervised(&mut self, body: &Block, cancel: Option<&Expr>)
-        -> Result<String, String>
+    fn emit_supervised(
+        &mut self,
+        body: &Block,
+        cancel: Option<&Expr>,
+        deadline: Option<&crate::ast::SupervisedDeadline>,
+    ) -> Result<String, String>
     {
         let id = self.supervised_counter;
         self.supervised_counter += 1;
@@ -9005,6 +9068,41 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         } else {
             None
         };
+
+        // Plan 174 (D349): scope deadline. `deadline:` = absolute Monotonic
+        // point; `timeout:` = relative Duration (sugar for `Monotonic.now() +
+        // d`). Both lower to an absolute monotonic-ns i64. Computed at scope
+        // entry (source order, before body) so nested scopes inherit the
+        // tightened point via nova_scope_init. nova_deadline_combine keeps the
+        // earliest of the inherited (nova_scope_init) and this local point —
+        // an inner scope can only TIGHTEN, never extend (план 173 §3a).
+        // Emitted ONLY when a deadline/timeout is present → plain and cancel-
+        // only scopes stay byte-identical.
+        // The type checker validates the argument type (Monotonic for
+        // `deadline:`, Duration for `timeout:`) and rejects everything else
+        // with a structured diagnostic — see `check_supervised_deadline_type`.
+        // Codegen therefore trusts the checker and extracts the single `i64
+        // nanos` field of the value-record (both are single-field `value`
+        // records — `.nanos` is a plain struct access; if the checker were
+        // bypassed the C compiler would reject `.nanos` on a non-record).
+        if let Some(dl) = deadline {
+            let v = self.emit_expr(&dl.expr)?;
+            if dl.relative {
+                // `timeout: <Duration>` — relative offset from now.
+                self.line(&format!(
+                    "{}.deadline_ns = nova_deadline_combine({}.deadline_ns, \
+                     _nova_monotonic_ns() + (int64_t)(({}).nanos));",
+                    queue_var, queue_var, v
+                ));
+            } else {
+                // `deadline: <Monotonic>` — absolute point on the monotonic clock.
+                self.line(&format!(
+                    "{}.deadline_ns = nova_deadline_combine({}.deadline_ns, \
+                     (int64_t)(({}).nanos));",
+                    queue_var, queue_var, v
+                ));
+            }
+        }
 
         // Set _nova_active_scope to this queue so that on main-flow,
         // Time.sleep (default handler) finds the right scope to drive.
@@ -9143,7 +9241,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         span,
                     );
                     let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                    self.emit_supervised(&supervised_block, None)?;
+                    self.emit_supervised(&supervised_block, None, None)?;
                     self.indent -= 1;
                     self.line("}");
                     self.indent -= 1;
@@ -9164,7 +9262,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 span,
             );
             let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-            return self.emit_supervised(&supervised_block, None);
+            return self.emit_supervised(&supervised_block, None, None);
         }
 
         // Array-mode: infer element type from the trailing expression.
@@ -9194,7 +9292,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                return self.emit_supervised(&supervised_block, None);
+                return self.emit_supervised(&supervised_block, None, None);
             }
         };
 
@@ -9232,7 +9330,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         span,
                     );
                     let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                    return self.emit_supervised(&supervised_block, None);
+                    return self.emit_supervised(&supervised_block, None, None);
                 }
                 // Materialise the array once, then walk indices.
                 let arr_var = format!("_nova_par_src_{}", self.tmp_counter);
@@ -9279,7 +9377,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     span,
                 );
                 let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                return self.emit_supervised(&supervised_block, None);
+                return self.emit_supervised(&supervised_block, None, None);
             }
         };
 
@@ -10455,9 +10553,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             }
             ExprKind::Interrupt(Some(v)) => Self::collect_idents_expr(v, out),
             ExprKind::Block(b) => Self::collect_idents_block(b, out),
-            ExprKind::Supervised { body, cancel } => {
+            ExprKind::Supervised { body, cancel, deadline } => {
                 Self::collect_idents_block(body, out);
                 if let Some(c) = cancel { Self::collect_idents_expr(c, out); }
+                if let Some(dl) = deadline { Self::collect_idents_expr(&dl.expr, out); }
             }
             ExprKind::Detach(b) | ExprKind::Blocking(b) => Self::collect_idents_block(b, out),
             ExprKind::Select { arms } => {
@@ -19151,6 +19250,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         //   - nova_throw_typed (из effects.h, всегда доступно)
         // Replaced в finalize условно if CleanupTimeoutError registered.
         self.line("/*__CLEANUP_TIMEOUT_IMPL__*/");
+        // Plan 174 (D349): typed TimeoutError throw impl splice (same placement
+        // rationale — after Nova_TimeoutError struct + tid macro, before main).
+        self.line("/*__SCOPE_TIMEOUT_IMPL__*/");
 
         self.line("int main(int argc, char** argv) {");
         self.indent += 1;
@@ -19196,6 +19298,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // referenced). Spliced at finalize via __CLEANUP_TIMEOUT_INIT__
         // placeholder.
         self.line("/*__CLEANUP_TIMEOUT_INIT__*/");
+        // Plan 174 (D349): assign typed TimeoutError throw fn pointer (if
+        // TimeoutError referenced). Spliced via __SCOPE_TIMEOUT_INIT__.
+        self.line("/*__SCOPE_TIMEOUT_INIT__*/");
         // Plan 22 Ф.5 (D92): implicit main-scope. Top-level main теперь
         // имеет supervised-like scope для detach'ей, pending timer'ов и
         // background fiber'ов. Они доработают до quiescence перед exit.
@@ -24304,8 +24409,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ExprKind::Spawn(body) => {
                 self.emit_spawn(body)
             }
-            ExprKind::Supervised { body, cancel } => {
-                self.emit_supervised(body, cancel.as_deref())
+            ExprKind::Supervised { body, cancel, deadline } => {
+                self.emit_supervised(body, cancel.as_deref(), deadline.as_ref())
             }
             ExprKind::Detach(body) => {
                 self.emit_detach(body)
@@ -36013,11 +36118,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 for s in &b.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &b.trailing { Self::collect_free_idents(t, out); }
             }
-            ExprKind::Supervised { body, cancel } => {
+            ExprKind::Supervised { body, cancel, deadline } => {
                 for s in &body.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &body.trailing { Self::collect_free_idents(t, out); }
                 // Plan 47: cancel-token expr — свободный идентификатор scope'а.
                 if let Some(c) = cancel { Self::collect_free_idents(c, out); }
+                // Plan 174 (D349): deadline/timeout expr — тоже свободный.
+                if let Some(dl) = deadline { Self::collect_free_idents(&dl.expr, out); }
             }
             ExprKind::Select { arms } => {
                 for arm in arms {
@@ -36158,10 +36265,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             ExprKind::Detach(b) | ExprKind::Blocking(b) => {
                 Self::collect_truly_free_idents_block(b, bound, out);
             }
-            ExprKind::Supervised { body, cancel } => {
+            ExprKind::Supervised { body, cancel, deadline } => {
                 Self::collect_truly_free_idents_block(body, bound, out);
                 if let Some(c) = cancel {
                     Self::collect_truly_free_idents(c, bound, out);
+                }
+                if let Some(dl) = deadline {
+                    Self::collect_truly_free_idents(&dl.expr, bound, out);
                 }
             }
             ExprKind::Select { arms } => {
