@@ -14,7 +14,7 @@
 // works on `[]u8` (byte-correct incl. non-UTF-8 bodies); the seam carries the
 // bytes as a byte-string (`str.from_bytes_unchecked`), see effect.nv.
 
-module std.http.client
+module http.client
 import std.http.{HeaderMap, StatusCode, Version, HttpError}
 
 // Parsed HTTP/1.1 response (module-internal; body fully materialized in memory —

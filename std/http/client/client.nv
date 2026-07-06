@@ -29,7 +29,7 @@
 //   · Proxy/CONNECT-tunnel, SSRF-guard, cookie-jar, idempotent-retry — client
 //     policy surface deferred beyond CORE. [M-178-client-policy-surface]
 
-module std.http.client
+module http.client
 import std.http.{Method, Url, HeaderMap, Response, Request, Http, HttpError, ErrorKind, Version, StatusCode}
 
 import std.encoding.base64.{Base64}
