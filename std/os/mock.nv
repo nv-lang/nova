@@ -116,9 +116,9 @@ fn MockOs @mem_arg_at(i int) -> str {
     if i >= 0 && i < @args.len() { @args[i] } else { "" }
 }
 
-fn MockOs @mem_env_get(key []u8) -> str {
+fn MockOs @mem_env_get(key []u8) -> Option[str] {
     ro k = str.from_bytes_unchecked(key)
-    match @env_find(k) { Some(j) => str.from_bytes_unchecked(@env_vals[j]), None => "" }
+    match @env_find(k) { Some(j) => Some(str.from_bytes_unchecked(@env_vals[j])), None => None }
 }
 fn MockOs @mem_env_has(key []u8) -> bool {
     ro k = str.from_bytes_unchecked(key)

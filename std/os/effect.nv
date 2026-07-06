@@ -40,7 +40,7 @@ export type Os effect {
     arg_count() -> int
     arg_at(i int) -> str
     // Environment (keys/values are raw bytes; the handler NUL-terminates).
-    env_get(key []u8) -> str
+    env_get(key []u8) -> Option[str]
     env_has(key []u8) -> bool
     env_set(key []u8, val []u8) -> int
     env_remove(key []u8) -> int

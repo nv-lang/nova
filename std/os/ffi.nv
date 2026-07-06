@@ -27,7 +27,7 @@ extern "C" fn os_arg_at(i int) -> str
 
 // ─── Environment ──
 // Keys/values are NUL-terminated `*u8`. Getter returns raw value bytes as a
-// `str` (empty when absent — disambiguate with os_env_has). Mutators return 0
+// `str` (empty when absent — disambiguate with os_env_has; конвертируется в Option на границе, обработчик в os.nv). Mutators return 0
 // or a NEGATIVE POSIX errno.
 
 // env_get: raw value bytes for `key` (empty if absent).
