@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: MIT OR Apache-2.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 178 Р¤.1 / D358: std/http/mime.nv вЂ” Mime / ContentType.
 //
 // Mime = type/subtype (RFC 6838, РЅРѕСЂРјР°Р»РёР·РѕРІР°РЅ lowercase). ContentType = Mime +
