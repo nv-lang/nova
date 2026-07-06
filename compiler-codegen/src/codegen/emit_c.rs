@@ -28357,6 +28357,32 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                                 }
                                             }
                                         }
+                                        // [M-codegen-method-return-turbofish] Seed any
+                                        // still-unbound method-level type-params from the
+                                        // explicit turbofish (`obj.m[T]()`), positionally
+                                        // onto `fn_decl.generics`. Without this, a method
+                                        // whose type-param appears ONLY in return position
+                                        // (`fn Reg @empty[T]() -> Vec[T]`, serde's
+                                        // `resp.json_as[T]()`) has nothing to infer T from —
+                                        // it silently defaulted to `nova_int` below and the
+                                        // turbofish was dropped (mono'd to the wrong element →
+                                        // `void*`/`nova_int` miscompile). Fill None slots only,
+                                        // so arg/receiver inference still wins where present
+                                        // (mirrors `resolve_method_level_subst`'s turbofish seed).
+                                        {
+                                            let explicit_tf = std::mem::take(&mut self.current_method_turbofish);
+                                            if !explicit_tf.is_empty() {
+                                                for (slot, tr) in subst_pending.iter_mut().zip(explicit_tf.iter()) {
+                                                    if slot.1.is_none() {
+                                                        if let Ok(c) = self.type_ref_to_c(tr) {
+                                                            if !c.is_empty() && c != "void*" {
+                                                                slot.1 = Some(c);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                         // Finalize: extract bound, fallback nova_int для unbound.
                                         let type_subst: Vec<(String, String)> = subst_pending.into_iter()
                                             .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
@@ -40196,7 +40222,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
                                         let recv_key = (rt.clone(), mn.clone());
                                         if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
-                                            if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &[], args) {
+                                            if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &turbofish_args, args) {
                                                 let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
                                                     .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
                                                 if let Some(ret_ty) = &fn_decl.return_type {
@@ -43774,7 +43800,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
                                         let recv_key = (rt.clone(), mn.clone());
                                         if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
-                                            if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &[], args) {
+                                            if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &turbofish_args, args) {
                                                 let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
                                                     .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
                                                 if let Some(ret_ty) = &fn_decl.return_type {
