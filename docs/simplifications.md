@@ -37911,3 +37911,47 @@ conformance); zero-regression byte-identical (content) на не-коллиди�
 `[M-sync-crossmodule-samename-type-collision]` + `[M-codegen-nominal-type-name-collision]`.
 **НЕ** закрыл `[M-codegen-cross-module-ctor-emission]` (victim NetError.IoError — variant↔type
 name-clash, отдельный root, репро идентичен на baseline).
+
+---
+
+**[178 Ф.2-enh, 2026-07-06] Auto-decompress landed + `[M-codegen-cross-module-ctor-emission]` FIXED (keystone) + live-socket smoke restored (link-unblocked, runtime-gated).**
+
+**Codegen-фикс (keystone, разблокировал остальное).** Root уточнён репро (прошлый диагноз неточен):
+explicit-receiver **payload-variant CALL** `Sum.Variant(x)` (`NetError.IoError(msg)`) парсится как
+2-сегментный `Path` → в `emit_call` диспатчится через `method_overloads`-static-ветку, где payload-вариант
+зарегистрирован КАК pseudo-static-overload с `c_name = Nova_<Sum>_static_<Variant>` (никогда не определён;
+определён лишь `nova_make_<Sum>_<Variant>`). **НЕ** зависит от co-present одноимённого ТИПА (`IoError`) —
+репро идентичен с/без `import std.io` (это НЕ variant↔type clash, а **universal** explicit-receiver
+payload-variant misroute). Unit-варианты (`NetError.ConnectionReset` — member-access, не call) не задеты.
+**Fix:** хелпер `try_emit_explicit_variant_ctor(recv_type, variant, args)` — когда receiver=сумма,
+владеющая payload-вариантом `variant` подходящей арности (не generic; collision-aware base через
+`ref_type_base`), эмитит `nova_make_<sum>_<variant>(args)`. Вставлен в ОБА static-emit-сайта (Path-арм
+до `method_overloads`-lookup + Member `method_receivers`-арм). Вариант всегда бьёт одноимённый
+static/тип-в-скоупе (контекст однозначен). Доказано: servernet CU эмитит `nova_make_NetError_IoError`
+(0 undefined static-ref; baseline=1) → net+http линкуются. НЕ сокращение — целевой sound-фикс роутинга.
+
+**Auto-decompress (`[M-178-autodecompress-needs-179]` CLOSED).** `std.http.client`: default
+`Accept-Encoding: gzip, deflate` (opt-out `@no_decompress()`); `finalize_response` прозрачно декодит
+`Content-Encoding` gzip/`x-gzip` (`gzip_decode`) + `deflate` (`zlib_decode`→raw `inflate` fallback для
+не-zlib-сендеров), снимает `Content-Encoding`+переписывает `Content-Length` на декод-длину. Bomb-guard
+`max_decompressed` (64 MiB default, D334; `@max_decompressed(n)`, `<0`=без cap) прокинут как `max_output`
+→ `Err(BodyTooLarge)`, НЕ OOM. Decode-fail → `HttpError{Protocol}` + типизированный
+`ErrSource.Compress(CompressError)` (`HttpError.from_compress`; OPEN enum, non-breaking). `br` закрыт —
+нет кодека `[M-178-autodecompress-br]`. Добавлен `CompressError.@is_bomb()` (bomb-детект без импорта OPEN
+`ErrorKind`-вариантов, чей `Other` коллидировал бы с http). Разблокировано **D381** (collision-aware
+mangling: compress+http `ErrorKind` co-present линкуемы — работает и на merge-base baseline).
+Тесты `nova_tests/http_decompress/decompress_test.nv`: gzip+deflate круговой round-trip (mock-encode 179 →
+клиент декодит back to original), opt-out (тело остаётся compressed), neg bomb→`BodyTooLarge` — все PASS.
+
+**Live-socket smoke (Task 3, честный gate — НЕ упрощение).** `nova_tests/http_servernet/servernet_smoke_test.nv`
+(loopback GET /health через `handle_connection`) восстановлен. LINK-препятствие снято (см. codegen-фикс).
+**RUNTIME-блок — pre-existing net-substrate segfault** `[M-178-servernet-live-net-substrate-segfault]`:
+чистый net две-fibers loopback тест (ZERO http, ZERO codegen-change) сегфолтит ДЕТЕРМИНИРОВАННО (5/5,
+~100ms) на merge-base baseline И current. Также plan83_12 net-тесты ICE `[P67-LEGACY] method=bind` +
+`.unwrap()` на `Result[_,NetError]` эмитит `Nova_Fail_fail(NetError*)` vs `nova_str`. Net live-socket
+substrate в этом worktree широко сломан — не Plan 178. Смоук хранится (как plan83_12 соседи) — не в
+быстрой regress-выборке; зазеленеет с фиксом net-runtime. Server-ЛОГИКА полностью mock-покрыта (9 PASS).
+
+**Гейт:** сборка Rust чистая; conformance **54/0** (не тронут); http/compress/io/fs delta-0 (baseline vs
+current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`ErrSource.Compress` + auto-decompress
+инварианты).
