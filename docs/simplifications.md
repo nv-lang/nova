@@ -37394,7 +37394,7 @@ D185 §amend-2 added.
 
 ## Plan 181 (D325 fallible Result-everywhere): 3 codegen-бага найдены при .nv-миграции std (2026-06-25, base64 `d33bde3e` / json `03586f33`)
 
-- **Контекст.** Миграция std под D325 (Result-everywhere, Plan 181 Ф.2a): `base64.decode`→Result (закоммичен), `complex.from(str)`→`try_from` (откачен), json-парсер→Result (закоммичен). Все три `nova check`-чисты, но `nova test` (C-codegen) вскрыл 3 РАЗНЫХ codegen-бага. Компилятор не трогаем (чинит отдельный агент) — баги зафиксированы маркерами; `.nv`-исходники D325-корректны. Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen, home=Plan 181 §6); детали — там же и в `docs/backlog-followups.md`.
+- **Контекст.** Миграция std под D325 (Result-everywhere, Plan 181 Ф.2a): `base64.decode`→Result (закоммичен), `complex.from(str)`→`try_from` (откачен), json-парсер→Result (закоммичен). Все три `nova check`-чисты, но `nova test` (C-codegen) вскрыл 3 РАЗНЫХ codegen-бага. Компилятор не трогаем (чинит отдельный агент) — баги зафиксированы маркерами; `.nv`-исходники D325-корректны. Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen, home=Plan 181 §6); детали — там же и в `docs/plans/backlog-followups.md`.
 - **`[M-181-ifexpr-value-materialize-codegen]` (base64).** Материализатор значения if/match-ветки в expression-позиции берёт C-указатель приёмника `mut @`-метода (`out.push(...)` → `NovaArray*`) вместо `unit` (return-типа метода) → каст `unit → NovaArray_nova_byte*` CC-FAIL. **Корень (owner-insight):** `@` передаётся по ссылке (аналог `T&`); reference НЕ тип в Nova (ABI-only) → протекает как raw-указатель. Фикс: брать return-тип метода. Overlaps Plan 172.1 U.4.4 if-expr.
 - **`[M-181-result-over-named-tuple-codegen]` (complex, РЕГРЕССИЯ).** `Result[Complex,E]` над named-tuple `type Complex(re,im)` → wrapper-struct `NovaRes_NovaTuple_Complex_…` использует `NovaTuple_Complex` ДО его typedef (forward-reference) → `unknown type name 'NovaTuple_Complex'`. Оригинал complex проходил `nova test` → обёртка Result новая → регрессия → миграция ОТКАЧЕНА (не ронять зелёный тест), реклассифицирована Ф.2a→Ф.2b. Фикс: ранняя forward-декларация named-tuple типов в generic-wrapper (родств. D123/D216).
 - **`[M-181-anon-record-in-ctor-arg-codegen]` (json).** Анон record-литерал как аргумент обёртки/конструктора (`Ok({ tok:.., line, col })`/`Ok({ lex, cur })`) → `codegen error: anonymous record literal without spread not supported`. При прямом `return { .. }` codegen знал target-тип из return-типа и коэрсил (D55); обёрнутый в `Ok(..)` теряет target-контекст. НЕ регрессия (оригинал json уже падал `nova test` на пре-существующем erasure-баге `[M-91.13]`). Source-workaround: type-annotated binding до `Ok`. Фикс: пробрасывать ожидаемый тип в анон-record-литерал в аргумент-позиции.
@@ -38073,7 +38073,7 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
 - **Старый слой НЕ удалён** — потребители `nova_tests/{plan83_12,plan91_12,plan91_15,plan91_16}`
   и `plan178/net_byte_surface_mock.nv` остаются на `std.net` до санации Plan 182. `std/net/*.nv`
   получили баннер `// DEPRECATED (план 183 Ф.3) …`; удаление + grep-инварианты +
-  namespace-ренейм `net2`→`net` — `[M-183-old-net-removal-after-182]` (docs/backlog-followups.md).
+  namespace-ренейм `net2`→`net` — `[M-183-old-net-removal-after-182]` (docs/plans/backlog-followups.md).
 - **Гейты:** conformance `--positive --compile-error` 54/0 (без изменений — Rust-компилятор не
   трогался). http-семейство (`http`/`http_transport`/`http_server`/`http_typed`/`http_decompress`/
   `http_servernet`) + `std/net2/tcp_test` + `std/http/client` — **8/8 PASS** (было 5/5 до захода;
@@ -38083,7 +38083,7 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
   `nova build` (в отличие от `nova test`) ICE на `mut x = match Effect.op(...){…}; x.close()` для
   ЛЮБОГО эффекта с consume-результатом; репродуцировано идентично на старом `std.net` — общий разрыв
   между `nova build`- и `nova test`-путями тайпчека, не регрессия этого захода. Задокументировано в
-  `docs/backlog-followups.md`.
+  `docs/plans/backlog-followups.md`.
 
 ## План 183 Ф.4 (2026-07-06) — корень UDP-флейка, M:N-стресс, замер
 
@@ -38148,6 +38148,6 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 компиляторных дефектов, вскрытых по ходу (implicit-decl truncation и lost-wake — закрыты
 на месте; loop-affinity-контракт, same-module `to_str()`-коллизия, GC-трассировка
 `Vec[value+heap]`, `unwrap()` на typed-error, resize-инференс на выведенном `[]u8` —
-остаются OPEN, все с обходами в коде и маркерами в `docs/backlog-followups.md`) —
+остаются OPEN, все с обходами в коде и маркерами в `docs/plans/backlog-followups.md`) —
 ни один не блокирует закрытие ядра. **Гейт финального захода:** conformance
 `--positive --compile-error` = 54/0 (без изменений — Ф.5 правит только `.md`/докблоки).

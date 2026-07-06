@@ -6279,7 +6279,7 @@ user-visible эффект, высокий churn) — только задокум
 `examples/net/*`) мигрированы (Ф.3) + M:N-стресс/эхо-замер (Ф.4, amend ниже). **Остаток —
 Ф.5-хвост, НЕ этот D-блок:** физическое удаление старого `std/net`/`net.c` + namespace-ренейм
 `net2`→`net`, гейтовано на санацию `nova_tests` — `[M-183-old-net-removal-after-182]`
-(`docs/backlog-followups.md`); до этого старый слой живёт с `// DEPRECATED`-баннером.
+(`docs/plans/backlog-followups.md`); до этого старый слой живёт с `// DEPRECATED`-баннером.
 **Амендит:** [D173](../decisions/08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv)
 (байтовый транспорт вместо `str`), [D282](../decisions/08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1)
 (один слой FFI, без `NovaRt_*_method_*`), [D301](#d301)/[D302](#d302) (split без
@@ -6374,7 +6374,7 @@ owning-loop-thread через defer-op-очередь, обобщение `nova_
 намеренно, до Plan 182), поэтому global-grep по репозиторию пока не 0; это отслеживается
 как `[M-183-old-net-removal-after-182]`, не как незакрытый критерий D407. Побочные
 компиляторные дефекты, вскрытые в ходе реализации (НЕ дефекты этого D-блока, задокументированы
-в `docs/backlog-followups.md` под Plan-183-заголовками): GC-трассировка `Vec[value-record
+в `docs/plans/backlog-followups.md` под Plan-183-заголовками): GC-трассировка `Vec[value-record
 с heap-полем]` сквозь vtable/generic-erasure, `Result[_, XError].unwrap()` на typed-error,
 type-inferred `[]u8`-буфер теряющий `resize`, `nova build` ICE на consume-результате
 effect-операции, same-module `to_str()`-коллизия на `int`-receiver'е.

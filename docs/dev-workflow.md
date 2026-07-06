@@ -92,7 +92,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
   закрывается заглушкой/TODO; фазирование — это порядок, не урезание объёма.
 - **Followup-маркеры `[M-…]`** — отложенная работа:
   - привязанные к плану → секция *Followups* того плана;
-  - «плавающие» → [docs/backlog-followups.md](backlog-followups.md) (**только живые/открытые**) + запись
+  - «плавающие» → [docs/plans/backlog-followups.md](plans/backlog-followups.md) (**только живые/открытые**) + запись
     в [docs/simplifications.md](simplifications.md) (**история**, append-only).
   - Жизненный цикл маркера описан в [AGENTS.md](../AGENTS.md#followup-markers-m).
 
@@ -173,7 +173,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 - Активные направления видно по worktree (`git worktree list`) и по индексу планов. На момент написания
   крупные узлы: унификация системы ошибок/cleanup (план 173 + 174/175/176), единый type-engine 172.x
   (D315 ResolvedType), консолидация тестов 169.1.x.
-- Открытые «плавающие» долги — [docs/backlog-followups.md](backlog-followups.md).
+- Открытые «плавающие» долги — [docs/plans/backlog-followups.md](plans/backlog-followups.md).
 
 ## 9. Частые грабли
 
@@ -199,5 +199,5 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 | Правила разработки компилятора | [docs/compiler-conventions.md](compiler-conventions.md) |
 | Управление конвенциями (мета) | [docs/conventions-governance.md](conventions-governance.md) |
 | CLI-справка | [docs/nova-cli.md](nova-cli.md) |
-| Открытые долги `[M-*]` | [docs/backlog-followups.md](backlog-followups.md) |
+| Открытые долги `[M-*]` | [docs/plans/backlog-followups.md](plans/backlog-followups.md) |
 | Модель ошибок/cleanup | [docs/idiom/error-and-cleanup-model.md](idiom/error-and-cleanup-model.md) |

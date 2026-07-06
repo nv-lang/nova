@@ -414,7 +414,7 @@ TCP echo двумя волокнами через эффект детермин�
   байт-поверхность (`write_str`/`read_to_vec`). `nova check` → PASS на обоих.
   `nova build` **не удалось верифицировать бинарём** — упирается в отдельный,
   пре-существующий (НЕ Ф.3) ICE, см. `[M-183-nova-build-consume-effect-close-ice]`
-  в `docs/backlog-followups.md` (репродуцирован идентично и на старом `std.net`,
+  в `docs/plans/backlog-followups.md` (репродуцирован идентично и на старом `std.net`,
   вне зависимости от net2 — общий разрыв `nova build` vs `nova test` в тайпчеке
   consume-результатов effect-операций). Логика подтверждена эквивалентным
   `test{}`-паттерном (accept/read/write/close) зелёным в `http_servernet` +
@@ -430,7 +430,7 @@ TCP echo двумя волокнами через эффект детермин�
 удаление после санации nova_tests (план 182).`; остаток («физическое удаление
 net.c + std/net + `NovaRt_*_method_*`» + grep-инварианты + возможный
 namespace-ренейм `net2`→`net`) зафиксирован как
-`[M-183-old-net-removal-after-182]` в `docs/backlog-followups.md`.
+`[M-183-old-net-removal-after-182]` в `docs/plans/backlog-followups.md`.
 
 **Гейты захода:** conformance `--positive --compile-error` = **54/0** (базис
 не изменился — Rust-компилятор не трогался, только `.nv`/`.md`) · http-семейство
@@ -570,7 +570,7 @@ split-close (`split_refcount`, `nova_net_tcp_mark_split`) детализиров
 
 **Три новых маркера** (`gc-vec-value-heap-tracing`, `unwrap-typed-error`,
 `resize-inference-inferred-vec`) существовали только как журнальная проза в
-«Заход 2» этого документа — Ф.5 промотировала их в `docs/backlog-followups.md` для
+«Заход 2» этого документа — Ф.5 промотировала их в `docs/plans/backlog-followups.md` для
 видимости владельцу (не были потеряны, но и не были трекаемы отдельно от плана).
 
 **Нулевое копирование (§2а) — как достигнуто:** `alloc_cb` в hot-path read/recv отдаёт

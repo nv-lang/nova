@@ -247,7 +247,7 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    передать владельцу Plan 178 (заметка в discussion-log).
 4. **Маркеры в OPEN-view:** добавить строки `[M-172-with-fail-swallows-panic]`, `[M-172-errdefer-okdefer-dead-surface]`
    (home = 173 Ф.1) и `[M-173-error-return-trace]` в `docs/plans/backlog-followups.md` (детали маркеров
-   М-172 живут в `docs/backlog-followups.md:169,185` — там обновить stale file:line на актуальные из §1).
+   М-172 живут в `docs/plans/backlog-followups.md:169,185` — там обновить stale file:line на актуальные из §1).
 5. **Хаб:** точечный статус-фикс (баннер «§3a/§3b 2026-06-26: completes-by-default, D192-ретракт,
    no-restart-default») — полный rewrite будет в Ф.2.
 - **Acceptance:** 173.1/173.2 не содержат отменённых knobs; D314/D348 подтверждены; маркеры в OPEN-view;
@@ -670,7 +670,7 @@ effect-set (Fail=Escalate-with-error; suspend в хендлере), `Supervisor[
 [dev-workflow.md](../dev-workflow.md), [conventions-governance.md](../conventions-governance.md),
 [compiler-conventions.md](../compiler-conventions.md).
 **Беклоги (ДВА файла):** OPEN-view индекс [docs/plans/backlog-followups.md](backlog-followups.md);
-детальные маркеры [docs/backlog-followups.md](../backlog-followups.md) (`[M-172-with-fail-swallows-panic]`
+детальные маркеры [docs/plans/backlog-followups.md](backlog-followups.md) (`[M-172-with-fail-swallows-panic]`
 :185, `[M-172-errdefer-okdefer-dead-surface]` :169 — file:line внутри них stale, актуальные в §1).
 **Суб-планы:** [173.0](173.0-concurrency-runtime-substrate.md), [173.1](173.1-parallel-collect-and-supervised-value.md),
 [173.2](173.2-supervision-as-effect.md), [173.3](173.3-data-race-freedom-share.md); смежные
