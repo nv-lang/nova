@@ -37911,3 +37911,29 @@ conformance); zero-regression byte-identical (content) на не-коллиди�
 `[M-sync-crossmodule-samename-type-collision]` + `[M-codegen-nominal-type-name-collision]`.
 **НЕ** закрыл `[M-codegen-cross-module-ctor-emission]` (victim NetError.IoError — variant↔type
 name-clash, отдельный root, репро идентичен на baseline).
+
+## 2026-07-06 — Пакет 4 codegen-дыр (ветка plan-176-io-fs-os)
+
+Четыре независимых codegen-дыры закрыты, каждая отдельным коммитом; zero-regression
+подтверждён двоичником merge-base (d478e72a, временный worktree) на ~41 CU
+(generics/protocols/io/serde/http/str/plan153_*/plan91/plan138/…) — дельта 0, только
+3 фикс-CU (http_typed/plan153_1/plan176_holes) red→green. НЕ сокращения — все четыре
+таргет-форма корневые фиксы, gated узко.
+
+- **[M-176-generic-wrapper-mono-inference]** — inference-ctor generic-wrapper'а с
+  void-ptr-полем. `try_generic_static_ctor_mono` (emit) + `infer_generic_static_ctor_ret`
+  (infer, воткнут ДО checker-каналов — checker резолвит в erased wrapper). Gated
+  `generic_type_has_voidptr_fields` (stub-only) + полная выводимость type-args.
+- **[M-valuerecord-receiver-generic-method]** — call-site return-inference method-generic
+  метода на value-record. Sentinel-путь `infer_expr_c_type` теперь через
+  `resolve_result_option_ret` (строит `NovaRes_<ok>_NovaValue_<E>*`) — value-БЛЕДНЫЙ
+  `apply_type_subst_to_ref` пропускал Result/Option → void*.
+- **[M-codegen-method-return-turbofish]** — turbofish метода с type-param только в return.
+  Emit: seed `current_method_turbofish` в unbound method-level slots перед nova_int-fallback.
+  Infer: `turbofish_args`→`resolve_mono_type_args`. Плюс consume-checker unwrap turbofish в
+  `consume_walk_expr` (иначе `consume @m[T]()` не consumed receiver → ложный D133). Deliverable:
+  `Response consume @json_as[T Deserialize]()` в std.http.serdejson (decode инлайнен — делегация
+  триггерит открытый bound-forward gap [M-176-io-forward-bounded-generic]).
+- **[M-153.1-append-as-slice-ccfail]** — same-arity param-type overload (`Box6[T] @tag(int)` /
+  `@tag(str)`) на generic-типе схлопывался: дедуп `generic_type_methods` сравнивал name+count+
+  receiver, НЕ param-типы. Fix: span-free `type_ref_overload_key` в дедупе (TypeRef без PartialEq).
