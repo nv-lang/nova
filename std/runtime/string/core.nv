@@ -61,7 +61,8 @@ export extern "nova" fn str @hash() -> u64
 export fn str @to_bytes() -> []u8 {
     // Plan 152.0 Ф.3: bulk copy via Vec.@append (RawMem.copy memmove) — zero
     // push-loop. Owned []u8 copy of the bytes (identical to nova_str_to_bytes).
-    mut out = []u8.with_capacity(@byte_len())
+    mut out []u8 = []u8.new()
+    out.cap(@byte_len())
     out.append(@as_bytes())
     out
 }
@@ -78,9 +79,12 @@ export fn str @to_bytes() -> []u8 {
 // buffer immutability contract (R8). `@ptr` is `*u8` (str's ro pointee);
 // from_raw_parts accepts a `*u8` and re-labels it `*mut u8` internally under its
 // own unsafe — but the `ro []u8` return type forbids any write through it.
+// [M-vec-new-static-arity-overload]: `from_raw_parts` was tried as a `new()`
+// arity-overload (D372 amend) — reverted, compiler gap (see marker on the
+// declaration in vec/core.nv). Stays `from_raw_parts` for now.
 // NOTE ([M-vec-spelling-static-dispatch-gap]): spelled `Vec[u8].from_raw_parts`
 // (NOT the `[]u8.` alias) because the `[]T.` builtin static-dispatch only
-// recognises new/with_capacity/of/from — a genuine Vec type-method outside
+// recognises new/of/from — a genuine Vec type-method outside
 // that fixed set must be named on the `Vec` type to route to its Nova body.
 // `@len` is spelled `@len()` (the method, = `nova_str_byte_len` = the `len`
 // field, O(1)): the bare field read `@len` trips D117 (E_SIZE_ACCESSOR_FIELD —
@@ -188,7 +192,8 @@ export fn str.from_bytes_lossy(ro bytes []u8) -> str {
         return str.alloc_copy(bytes.as_ptr(), n)
     }
     // Worst case every byte → 3-byte FFFD.
-    mut out = []u8.with_capacity(n * 3)
+    mut out []u8 = []u8.new()
+    out.cap(n * 3)
     mut i = 0
     while i < n {
         ro c = bytes[i] as int
@@ -300,7 +305,8 @@ export fn str @to_chars() -> []char {
     ro (bytes, n) = (@as_bytes(), @byte_len())
     // Plan 152.1 Ф.4: capacity hint = byte length (codepoint count ≤ byte count;
     // `@char_len()` retired — over-allocating by the multibyte slack is fine).
-    mut out = []char.with_capacity(@byte_len())
+    mut out []char = []char.new()
+    out.cap(@byte_len())
     mut i = 0
     while i < n {
         ro (cp, step) = decode_utf8(bytes, i, n)

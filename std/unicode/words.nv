@@ -122,7 +122,8 @@ fn wb_is_break(cps []u32, cats []int, i int, ri_run int) -> bool {
 // Word-start codepoint indices (0-based: 0, then every break position).
 fn wb_starts(cps []u32, cats []int) -> []int {
     ro n = cps.len()
-    mut starts = []int.with_capacity(n + 1)
+    mut starts []int = []int.new()
+    starts.cap(n + 1)
     if n == 0 {
         starts
     } else {
@@ -141,7 +142,8 @@ fn wb_starts(cps []u32, cats []int) -> []int {
 }
 
 fn wb_cats(cps []u32) -> []int {
-    mut cats = []int.with_capacity(cps.len())
+    mut cats []int = []int.new()
+    cats.cap(cps.len())
     for cp in cps { cats.push(wbcat(cp)) }
     cats
 }
@@ -286,14 +288,16 @@ export fn to_titlecase(s str) -> str {
     ro cats = wb_cats(cps)
     ro starts = wb_starts(cps, cats)
     // is_start[i] ⟺ cp i begins a new word (reset the first-cased tracker).
-    mut is_start = []bool.with_capacity(n)
+    mut is_start []bool = []bool.new()
+    is_start.cap(n)
     mut z = 0
     while z < n {
         is_start.push(false)
         z += 1
     }
     for st in starts { is_start[st] = true }
-    mut out = []u32.with_capacity(n)
+    mut out []u32 = []u32.new()
+    out.cap(n)
     mut seen_cased = false
     mut i = 0
     while i < n {

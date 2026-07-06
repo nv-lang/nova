@@ -105,7 +105,7 @@ fn gzip_flood(max_output int, consumed int, produced int) -> bool =>
 /// мусор после последнего валидного члена игнорируется.
 #stable(since = "0.1")
 export fn gzip_decode(data []u8, max_output int) -> Result[[]u8, CompressError] {
-    mut out = []u8.with_capacity(0)
+    mut out = []u8.new()
     mut pos = 0
     mut members = 0
     loop {
@@ -137,7 +137,7 @@ export fn gzip_decode(data []u8, max_output int) -> Result[[]u8, CompressError] 
         mut inf = Inflater.new_at(max_output, out.len())
         inf.feed(data[payload_start..data.len()])?
         inf.mark_done()
-        mut mout = []u8.with_capacity(0)
+        mut mout = []u8.new()
         loop {
             ro c = inf.read(1048576)?
             if c.len() > 0 { mout.append(c) } else { break }
@@ -195,17 +195,20 @@ export type GzipReader value {
 }
 
 #stable(since = "0.1")
-export fn GzipReader.new(max_output int) -> GzipReader =>
+export fn GzipReader.new(max_output int) -> GzipReader {
+    mut _init_header_buf []u8 = []u8.new()
+    _init_header_buf.cap(16)
     {
         inner: Inflater.new(max_output),
-        header_buf: []u8.with_capacity(16),
+        header_buf: _init_header_buf,
         header_done: false,
         crc: crc32_init(),
         out_len: 0,
         max_output,
-        tail: []u8.with_capacity(0),
+        tail: []u8.new(),
         tpos: 0,
     }
+}
 
 #stable(since = "0.1")
 export fn GzipReader mut @feed(chunk []u8) -> Result[(), CompressError] {
@@ -231,8 +234,9 @@ export fn GzipReader mut @read(max_emit int) -> Result[[]u8, CompressError] {
     if @tpos < @tail.len() {
         ro avail = @tail.len() - @tpos
         ro n = if avail < me { avail } else { me }
-        if n <= 0 { return Ok([]u8.with_capacity(0)) }
-        mut chunk = []u8.with_capacity(n)
+        if n <= 0 { return Ok([]u8.new()) }
+        mut chunk []u8 = []u8.new()
+        chunk.cap(n)
         chunk.append(@tail[@tpos..(@tpos + n)])
         @tpos = @tpos + n
         return Ok(chunk)
@@ -297,7 +301,8 @@ export fn GzipReader mut @finish() -> Result[(), CompressError] {
 
 // Минимальный 10-байтный gzip-header: magic, CM=8, FLG=0, MTIME=0, XFL=0, OS=255.
 fn gzip_header_bytes() -> []u8 {
-    mut h = []u8.with_capacity(10)
+    mut h []u8 = []u8.new()
+    h.cap(10)
     h.push(0x1f)
     h.push(0x8b)
     h.push(0x08)        // CM = deflate
@@ -316,7 +321,8 @@ fn gzip_header_bytes() -> []u8 {
 #stable(since = "0.1")
 export fn gzip_encode(data []u8, level CompressLevel) -> Result[[]u8, CompressError] {
     ro body = deflate(data, level)?
-    mut out = []u8.with_capacity(body.len() + 18)
+    mut out []u8 = []u8.new()
+    out.cap(body.len() + 18)
     out.append(gzip_header_bytes())
     out.append(body)
     ro crc = crc32(data)
@@ -360,7 +366,8 @@ export fn GzipWriter.new(level CompressLevel) -> GzipWriter =>
 
 #stable(since = "0.1")
 export fn GzipWriter mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
-    mut out = []u8.with_capacity(chunk.len())
+    mut out []u8 = []u8.new()
+    out.cap(chunk.len())
     if !@header_sent {
         out.append(gzip_header_bytes())
         @header_sent = true
@@ -373,7 +380,8 @@ export fn GzipWriter mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
 
 #stable(since = "0.1")
 export fn GzipWriter mut @flush() -> Result[[]u8, CompressError] {
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     if !@header_sent {
         out.append(gzip_header_bytes())
         @header_sent = true
@@ -384,7 +392,8 @@ export fn GzipWriter mut @flush() -> Result[[]u8, CompressError] {
 
 #stable(since = "0.1")
 export fn GzipWriter mut @finish() -> Result[[]u8, CompressError] {
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     if !@header_sent {
         out.append(gzip_header_bytes())
         @header_sent = true
@@ -421,7 +430,8 @@ test "gzip_decode: empty input" {
 
 test "gzip_decode: 300× 'a'" {
     ro comp = hexbytes("1f8b08000000000000ff4b4c1c0589440200091997892c010000")
-    mut expect = []u8.with_capacity(300)
+    mut expect []u8 = []u8.new()
+    expect.cap(300)
     for _ in 0..300 { expect.push(97) }
     assert(gzip_decode(comp, 4096)!! == expect)
 }
@@ -457,9 +467,11 @@ test "gzip streaming: feed-по-1-байту == one-shot" {
     ro comp = hexbytes("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
     ro oneshot = gzip_decode(comp, 1024)!!
     mut gr = GzipReader.new(1024)
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     for idx in 0..comp.len() {
-        mut one = []u8.with_capacity(1)
+        mut one []u8 = []u8.new()
+        one.cap(1)
         one.push(comp[idx])
         gr.feed(one)!!
         loop {
@@ -500,7 +512,8 @@ test "gzip_encode: header magic + CRC-32/ISIZE trailer verify" {
 test "gzip streaming: GzipWriter feed+finish round-trip" {
     ro data = "streamed gzip content that repeats a lot. streamed gzip content repeats.".to_bytes()
     mut gw = GzipWriter.new(CompressLevel.default())
-    mut comp = []u8.with_capacity(64)
+    mut comp []u8 = []u8.new()
+    comp.cap(64)
     comp.append(gw.feed(data)!!)
     comp.append(gw.finish()!!)
     assert(gzip_decode(comp, 65536)!! == data)

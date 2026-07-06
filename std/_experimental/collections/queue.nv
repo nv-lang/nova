@@ -54,10 +54,6 @@ export type Queue[T] {
 export fn Queue[T].new() -> Self =>
     { _inbox: [], _outbox: [] }
 
-/// Создать пустую очередь с pre-allocated ёмкостью `cap`.
-#stable(since = "0.1")
-export fn Queue[T].with_capacity(cap int) -> Self =>
-    { _inbox: []T.with_capacity(cap), _outbox: []T.with_capacity(cap) }
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -73,6 +69,22 @@ export fn Queue[T] @len() -> int =>
 #stable(since = "0.1")
 export fn Queue[T] @is_empty() -> bool =>
     @_inbox.is_empty() && @_outbox.is_empty()
+
+// D117 AMEND accessor-pair (vec-sweep, 2026-07-06): 0-arg getter half of the
+// `cap`/`cap(n)` property pair. Reports the inbox side's capacity (the two
+// backing arrays are sized identically by `cap(n)` below).
+#stable(since = "0.1")
+export fn Queue[T] @cap() -> int => @_inbox.cap()
+
+/// Reserve capacity `n` on BOTH backing arrays (replacement for the removed
+/// `Queue[T].with_capacity` static constructor: `Queue[T].new().cap(n)`).
+#stable(since = "0.1")
+export fn Queue[T] mut @cap(n int) -> @
+    requires n >= 0
+{
+    @_inbox.cap(n)
+    @_outbox.cap(n)
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────

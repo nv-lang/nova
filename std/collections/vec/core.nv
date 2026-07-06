@@ -105,15 +105,6 @@ export type Vec[T] priv {
 export fn Vec[T].new() -> Self =>
     { data: null_buf[T](), len: 0, cap: 0 }
 
-/// Create an empty `Vec[T]` pre-allocated to hold at least `n` elements
-/// without reallocating.
-export fn Vec[T].with_capacity(n int) -> Self {
-    if n <= 0 {
-        return Vec[T].new()
-    }
-    Self { data: alloc_buf[T](n), len: 0, cap: n }
-}
-
 /// Build a `Vec[T]` directly from its three raw components — the element
 /// buffer pointer, the live-element count, and the allocated capacity.
 ///
@@ -142,6 +133,21 @@ export fn Vec[T].with_capacity(n int) -> Self {
 /// pointer-value copy, never a dereference here. Whether the resulting buffer
 /// is *actually* writable is the caller's invariant (a `ro` view must not be
 /// pushed/index-written; binding the result `ro` enforces this at L2).
+///
+/// [M-vec-new-static-arity-overload] (vec-sweep, 2026-07-06, compiler gap —
+/// REPORTED, temporary rollback per owner's zero-tolerance directive): D372
+/// amend attempted to fold this into a `new()` arity-overload (`Vec[T].new()`
+/// 0-arg vs `Vec[T].new(ptr, len, cap)` 3-arg). It compiled and PASSED
+/// `spec_tests/conformance` (55/1, delta 0) in isolation, but corrupts
+/// codegen when this WHOLE vec-module peer-file set compiles together
+/// (`nova test --full std/collections/vec`): `vec_of_empty_panic` neg-test
+/// (unrelated to from_raw_parts) started CC-FAILing — generated C passed a
+/// `Nova_Vec____nova_byte*` where `nova_str` was expected, and called a
+/// 0-arg function with 3 arguments — i.e. the 0-arg/3-arg `new` overloads
+/// got cross-wired for SOME caller elsewhere in the same CU. Repro: add the
+/// `new(ptr,len,cap)` overload alongside `new()` on `Vec[T]`, then run the
+/// full `vec` folder-module (not just this file in isolation). Rolled back
+/// to the original name below pending a compiler-side fix (same wave).
 export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self {
     Self { data: unsafe { ptr as *mut T }, len, cap }
 }
@@ -195,7 +201,7 @@ export fn Vec[T] consume @into_raw() -> *mut T => @data
 /// with method-level generics do not propagate the type-arg substitution into
 /// for-in / inner generic calls (emits an unresolved `____Nova_S_p` symbol).
 /// `@extend` (an instance method) does not hit this gap and IS converted.
-export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).extend(items)
+export fn Vec[T].from(items []T) -> Self => Vec[T].new().cap(items.len()).extend(items)
 // NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
 // bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
 // by the caller and may carry a *different element C-width* than `T` — e.g.
@@ -346,8 +352,8 @@ fn null_buf[T]() -> *mut T {
 // Tests
 // ──────────────────────────────────────────────────────────────────────────
 
-test "with_capacity / reserve" {
-    mut v = Vec[int].with_capacity(16)
+test "new().cap(n) / reserve" {
+    mut v = Vec[int].new().cap(16)
     assert(v.cap() >= 16)
     assert(v.len() == 0)
     for i in 0..10 { v.push(i) }

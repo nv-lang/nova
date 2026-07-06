@@ -18,7 +18,7 @@ fn Vec[T] mut @_msort(cmp fn(T, T) -> int) -> @ {
     if n < 2 {
         return
     }
-    mut buf = Vec[T].with_capacity(n)
+    mut buf = Vec[T].new().cap(n)
     mut width = 1
     while width < n {
         buf.clear()
@@ -165,7 +165,7 @@ fn Vec[T] mut @_pdqsort(cmp fn(T, T) -> int) -> @ {
                             @_ins_sort_range(lo, hi, cmp)
                         } else if stack.len >= depth_limit {
                             // depth guard: heapsort this range via temp Vec
-                            mut tmp = Vec[T].with_capacity(size)
+                            mut tmp = Vec[T].new().cap(size)
                             mut ci = lo
                             while ci < hi {
                                 tmp.push(unsafe { @data[ci] })

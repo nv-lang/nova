@@ -28,8 +28,8 @@ import std.collections.hashmap.{HashMap}
 /// assert(s.insert(1) == false)  // дубликат
 /// assert(s.contains(1))
 ///
-/// let a = Set[int].with_capacity(4)
-/// let b = Set[int].with_capacity(4)
+/// let a = Set[int].new().cap(4)
+/// let b = Set[int].new().cap(4)
 /// // a | b — объединение
 /// // a & b — пересечение
 /// // a - b — разность
@@ -53,13 +53,6 @@ export type Set[T] {
 export fn Set[T].new() -> Self =>
     { map: HashMap[T, ()].new() }
 
-/// Создать пустое множество с pre-allocated ёмкостью.
-#stable(since = "0.1")
-export fn Set[T].with_capacity(cap int) -> Self
-    requires cap >= 0
-=>
-    { map: HashMap[T, ()].with_capacity(cap) }
-
 /// Построить множество из массива элементов.
 ///
 /// Принимает конкретный `[]T` (зеркало `HashMap.from([](K,V))`): generic-протокол
@@ -76,7 +69,8 @@ export fn Set[T].with_capacity(cap int) -> Self
 /// ```
 #stable(since = "0.1")
 export fn Set[T].from_iter(items []T) -> Self {
-    mut s = Self.with_capacity(items.len() * 2)
+    mut s = Self.new()
+    s.cap(items.len() * 2)
     for x in items {
         s.insert(x)
     }
@@ -99,6 +93,22 @@ export fn Set[T] @is_empty() -> bool => @map.is_empty()
 /// Проверить наличие элемента.
 #stable(since = "0.1")
 export fn Set[T] @contains(item T) -> bool => @map.contains(item)
+
+/// Текущая ёмкость (bucket count внутреннего `HashMap`). D117 AMEND
+/// accessor-pair — 0-arg getter half of `cap`/`cap(n)`.
+#stable(since = "0.1")
+export fn Set[T] @cap() -> int => @map.cap()
+
+/// Гарантировать ёмкость минимум под `n` элементов без rehash (delegates to
+/// `HashMap`'s own `mut @cap(n)` — same "grows only, entry-count → bucket-count"
+/// semantics). Replacement for the removed `Set[T].with_capacity` static
+/// constructor: `Set[T].new().cap(n)`.
+#stable(since = "0.1")
+export fn Set[T] mut @cap(n int) -> @
+    requires n >= 0
+{
+    @map.cap(n)
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────

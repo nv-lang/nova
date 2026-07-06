@@ -115,7 +115,7 @@ export fn Vec[T Compare] @compare(other Vec[T]) -> int {
 /// assert(b.len() == 4)
 /// ```
 export fn Vec[T Clone] @clone() -> Self {
-    mut out = Vec[T].with_capacity(@len)
+    mut out = Vec[T].new().cap(@len)
     for i in 0..@len {
         out.push(unsafe { @data[i] }.clone())
     }

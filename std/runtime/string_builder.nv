@@ -31,24 +31,43 @@ export type StringBuilder consume {
 // Default capacity для StringBuilder.new() — 16 bytes (1-line string).
 const INITIAL_CAPACITY = 16
 
-// Пустой StringBuilder с pre-allocated capacity 16.
-export fn StringBuilder.new() -> Self => StringBuilder.with_capacity(INITIAL_CAPACITY)
+// [M-vec-spelling-array-value-position-cap-collision] (vec-sweep,
+// 2026-07-06): same workaround as std/runtime/write_buffer.nv — binding the
+// `[]u8` constructor result to an explicitly-typed local FIRST, then calling
+// `.cap(n)` as a SEPARATE statement (not chained in the same expression),
+// avoids a NAME+ARITY dispatch collision with other co-compiled types' own
+// `cap` methods (reproduced standalone; see write_buffer.nv's comment for
+// the full writeup).
+//
+// [M-vec-spelling-consume-block-body-untyped] (vec-sweep, 2026-07-06,
+// RESOLVED by workaround): giving `StringBuilder.new()`/`@clone()` a
+// multi-statement BLOCK body (`{ mut _buf ...; ...; { buf: _buf } }`) broke
+// D133 consume-tracking for every OTHER file's `consume sb = StringBuilder.new()`
+// call site in the same CU — `[D133-not-consumed] переменная sb (тип \`\`)`
+// (empty resolved type — the consume-checker's own type-resolution pass
+// didn't see through the block body, unlike the main type-checker). Kept as
+// a private helper returning plain `[]u8` (no consume concerns there) so the
+// constructor itself stays the single-expression `=> { buf: … }` bare-literal
+// arrow-body shape the consume-checker expects.
+fn sb_init_buf(cap int) -> []u8 {
+    mut b []u8 = []u8.new()
+    b.cap(cap)
+    b
+}
 
-// StringBuilder с pre-allocated capacity n байт.
-export fn StringBuilder.with_capacity(n int) -> Self
-    requires n >= 0
-=> { buf: []u8.with_capacity(n) }
+// Пустой StringBuilder с pre-allocated capacity 16.
+export fn StringBuilder.new() -> Self => { buf: sb_init_buf(INITIAL_CAPACITY) }
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
-export fn StringBuilder.from(s str) -> Self => StringBuilder.with_capacity(INITIAL_CAPACITY).append(s)
+export fn StringBuilder.from(s str) -> Self => StringBuilder.new().append(s)
 
 // StringBuilder из одного codepoint (UTF-8 encode).
 // Plan 73.1 D180: delegate to from(str) — старый pattern `let mut sb = StringBuilder.new()
 // + sb.append(c)` нарушал D180 (sb consume-obligation не satisfied при
 // implicit fluent-return). [M-91.11-from-char-direct] ✅ RESOLVED/verified:
-// `with_capacity(...).append(c)` fluent chain совместим с D180 — реализован
+// `new().append(c)` fluent chain совместим с D180 — реализован
 // строкой ниже (StringBuilder.from(c char)), str.from(c) не нужен.
-export fn StringBuilder.from(c char) -> Self => StringBuilder.with_capacity(INITIAL_CAPACITY).append(c)
+export fn StringBuilder.from(c char) -> Self => StringBuilder.new().append(c)
 
 // ─── Query methods ───
 
@@ -71,12 +90,30 @@ export fn StringBuilder @char_len() -> int {
 // Allocated capacity в байтах.
 export fn StringBuilder @capacity() -> int => @buf.cap()
 
+// D117 AMEND accessor-pair alias for `@capacity()` (vec-sweep, 2026-07-06):
+// `@capacity()` stays as the pre-existing accessor name; `@cap()` exists so
+// `StringBuilder.new().cap(n)` reads as a getter/setter pair (ex-`with_capacity`,
+// D372 amend — with_capacity removed).
+export fn StringBuilder @cap() -> int => @capacity()
+
+// Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
+// own exact `mut @cap(n)` — no rounding). Replacement for the removed
+// `StringBuilder.with_capacity` static constructor: `StringBuilder.new().cap(n)`.
+// Same same-name dispatch-collision workaround as WriteBuffer's `mut @cap(n)`
+// (bind `@buf` to an explicitly `[]u8`-typed local first — `b`/`@buf` alias
+// the same heap-allocated buffer, so the mutation is visible through `@buf`).
+export fn StringBuilder mut @cap(n int) -> @
+    requires n >= @len()
+{
+    mut b []u8 = @buf
+    b.cap(n)
+}
+
 // true если буфер пуст.
 export fn StringBuilder @is_empty() -> bool => @buf.is_empty()
 
 // Независимая копия (deep copy buffer). Нужен для consume-типа при разветвлении.
-export fn StringBuilder @clone() -> Self =>
-    StringBuilder.with_capacity(@buf.len()).append(@buf)
+export fn StringBuilder @clone() -> Self => { buf: sb_init_buf(@buf.len()) }.append(@buf)
 
 // Проверить prefix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @starts_with(prefix str) -> bool {

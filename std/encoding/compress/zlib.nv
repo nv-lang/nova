@@ -40,7 +40,7 @@ export fn zlib_decode(data []u8, max_output int) -> Result[[]u8, CompressError] 
     mut inf = Inflater.new(max_output)
     inf.feed(data[2..data.len()])?
     inf.mark_done()
-    mut out = []u8.with_capacity(0)
+    mut out = []u8.new()
     loop {
         ro c = inf.read(1048576)?
         if c.len() > 0 { out.append(c) } else { break }
@@ -87,16 +87,19 @@ export type ZlibReader value {
 }
 
 #stable(since = "0.1")
-export fn ZlibReader.new(max_output int) -> ZlibReader =>
+export fn ZlibReader.new(max_output int) -> ZlibReader {
+    mut _init_header_buf []u8 = []u8.new()
+    _init_header_buf.cap(2)
     {
         inner: Inflater.new(max_output),
-        header_buf: []u8.with_capacity(2),
+        header_buf: _init_header_buf,
         header_done: false,
         adler: adler32_init(),
         max_output,
-        tail: []u8.with_capacity(0),
+        tail: []u8.new(),
         tpos: 0,
     }
+}
 
 #stable(since = "0.1")
 export fn ZlibReader mut @feed(chunk []u8) -> Result[(), CompressError] {
@@ -135,8 +138,9 @@ export fn ZlibReader mut @read(max_emit int) -> Result[[]u8, CompressError] {
     if @tpos < @tail.len() {
         ro avail = @tail.len() - @tpos
         ro n = if avail < me { avail } else { me }
-        if n <= 0 { return Ok([]u8.with_capacity(0)) }
-        mut chunk = []u8.with_capacity(n)
+        if n <= 0 { return Ok([]u8.new()) }
+        mut chunk []u8 = []u8.new()
+        chunk.cap(n)
         chunk.append(@tail[@tpos..(@tpos + n)])
         @tpos = @tpos + n
         return Ok(chunk)
@@ -208,7 +212,8 @@ fn zlib_flg() -> int {
 #stable(since = "0.1")
 export fn zlib_encode(data []u8, level CompressLevel) -> Result[[]u8, CompressError] {
     ro body = deflate(data, level)?
-    mut out = []u8.with_capacity(body.len() + 6)
+    mut out []u8 = []u8.new()
+    out.cap(body.len() + 6)
     out.push(zlib_cmf() as u8)
     out.push(zlib_flg() as u8)
     out.append(body)
@@ -245,7 +250,8 @@ export fn ZlibWriter.new(level CompressLevel) -> ZlibWriter =>
     }
 
 fn zlib_header() -> []u8 {
-    mut h = []u8.with_capacity(2)
+    mut h []u8 = []u8.new()
+    h.cap(2)
     h.push(zlib_cmf() as u8)
     h.push(zlib_flg() as u8)
     h
@@ -253,7 +259,8 @@ fn zlib_header() -> []u8 {
 
 #stable(since = "0.1")
 export fn ZlibWriter mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
-    mut out = []u8.with_capacity(chunk.len())
+    mut out []u8 = []u8.new()
+    out.cap(chunk.len())
     if !@header_sent {
         out.append(zlib_header())
         @header_sent = true
@@ -265,7 +272,8 @@ export fn ZlibWriter mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
 
 #stable(since = "0.1")
 export fn ZlibWriter mut @flush() -> Result[[]u8, CompressError] {
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     if !@header_sent {
         out.append(zlib_header())
         @header_sent = true
@@ -276,7 +284,8 @@ export fn ZlibWriter mut @flush() -> Result[[]u8, CompressError] {
 
 #stable(since = "0.1")
 export fn ZlibWriter mut @finish() -> Result[[]u8, CompressError] {
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     if !@header_sent {
         out.append(zlib_header())
         @header_sent = true
@@ -308,7 +317,8 @@ test "zlib_decode: empty input" {
 
 test "zlib_decode: 300× 'a'" {
     ro comp = hexbytes("789c4b4c1c0589440200d8a871ad")
-    mut expect = []u8.with_capacity(300)
+    mut expect []u8 = []u8.new()
+    expect.cap(300)
     for _ in 0..300 { expect.push(97) }
     assert(zlib_decode(comp, 4096)!! == expect)
 }
@@ -340,9 +350,11 @@ test "zlib streaming: feed-по-1-байту == one-shot" {
     ro comp = hexbytes("789c4b4c1c0589440200d8a871ad")
     ro oneshot = zlib_decode(comp, 4096)!!
     mut zr = ZlibReader.new(4096)
-    mut out = []u8.with_capacity(300)
+    mut out []u8 = []u8.new()
+    out.cap(300)
     for idx in 0..comp.len() {
-        mut one = []u8.with_capacity(1)
+        mut one []u8 = []u8.new()
+        one.cap(1)
         one.push(comp[idx])
         zr.feed(one)!!
         loop {
@@ -377,7 +389,8 @@ test "zlib_encode: header CMF/FLG valid (%31==0, CM=8)" {
 test "zlib streaming: ZlibWriter feed+finish round-trip" {
     ro data = "streamed zlib content that repeats. streamed zlib content that repeats.".to_bytes()
     mut zw = ZlibWriter.new(CompressLevel.best())
-    mut comp = []u8.with_capacity(64)
+    mut comp []u8 = []u8.new()
+    comp.cap(64)
     comp.append(zw.feed(data)!!)
     comp.append(zw.finish()!!)
     assert(zlib_decode(comp, 65536)!! == data)

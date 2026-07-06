@@ -55,7 +55,8 @@ fn is_hangul_syllable(cp u32) -> bool {
 
 // ---- decomposition ----
 fn decompose(cps []u32, compat bool) -> []u32 {
-    mut out = []u32.with_capacity(cps.len() * 2)
+    mut out []u32 = []u32.new()
+    out.cap(cps.len() * 2)
     for cp in cps {
         if is_hangul_syllable(cp) {
             // Hangul algorithmic decomposition — grid/index arithmetic in `int`
@@ -79,7 +80,8 @@ fn decompose(cps []u32, compat bool) -> []u32 {
 // Starters (ccc == 0) act as barriers: a combining mark is never reordered past
 // a starter, and equal-class marks keep their input order (stability).
 fn canonical_order(arr []u32) -> []u32 {
-    mut a = []u32.with_capacity(arr.len())
+    mut a []u32 = []u32.new()
+    a.cap(arr.len())
     for x in arr { a.push(x) }
     ro n = a.len()
     mut i = 1
@@ -122,7 +124,8 @@ fn compose_pair(a int, b int) -> Option[u32] {
 // the mark is not blocked (no equal/greater class mark intervenes).
 fn compose(cps []u32) -> []u32 {
     ro n = cps.len()
-    mut out = []u32.with_capacity(n)
+    mut out []u32 = []u32.new()
+    out.cap(n)
     if n == 0 {
         out
     } else {

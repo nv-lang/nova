@@ -551,7 +551,8 @@ export fn real_net() -> Effect[Net] => effect Net {
         if count < 0 {
             Err(net_error(net_last_error()))
         } else {
-            mut addrs = []SocketAddr.with_capacity(count)
+            mut addrs []SocketAddr = []SocketAddr.new()
+            addrs.cap(count)
             mut i = 0
             while i < count {
                 addrs.push(SocketAddr._from_raw(dns_addr_at(i)))
