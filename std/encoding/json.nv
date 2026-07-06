@@ -243,18 +243,43 @@ type Lexer {
 fn Lexer.new(input str) -> Self =>
     { input, pos: 0, line: 1, col: 1 }
 
-// Текущий символ (Option, None если конец).
-fn Lexer @peek() -> Option[char] => @input.as_chars().nth(@pos)
+// [M-json-lexer-byte-cursor] (Баг 1, json-санация): @pos — ВСЕГДА байтовый
+// курсор (не codepoint). Раньше @peek() шёл через `as_chars().nth(@pos)` —
+// O(n) на каждый вызов (O(n²) лексер) и рассинхронизировался с байтовыми
+// срезами `@input[start..@pos]` в @read_number на non-ASCII входе.
+// JSON-структура (whitespace/punctuation/keywords/numbers) — всегда ASCII,
+// поэтому байт-как-char валиден для всех сравнений вне строк; multibyte
+// байты попадают только в @read_string, который их не декодирует (см. там).
+
+// Текущий байт как char (Option, None на конце входа). O(1).
+fn Lexer @peek() -> Option[char] {
+    ro bytes = @input.as_bytes()
+    if @pos >= bytes.len() {
+        None
+    } else {
+        Some(char.try_from(bytes[@pos] as int).unwrap_or(' '))
+    }
+}
+
+// Общая бухгалтерия byte-cursor: @pos += 1 байт + line/col. col считается по
+// codepoint — инкремент только на лидирующих байтах (не continuation
+// 10xxxxxx), т.е. multibyte codepoint двигает col на 1, не на N байт.
+fn Lexer mut @bump(b u8) -> () {
+    if b == 0x0A {
+        @line += 1
+        @col = 1
+    } else if (b as int & 0xC0) != 0x80 {
+        @col += 1
+    }
+    @pos += 1
+}
 
 fn Lexer mut @advance() -> Option[char] {
-    ro c = @peek()
-    match c {
-        Some('\n') => { @line += 1; @col = 1 }
-        Some(_)    => { @col += 1 }
-        None       => ()
-    }
-    if c != None { @pos += 1 }
-    c
+    ro bytes = @input.as_bytes()
+    if @pos >= bytes.len() { return None }
+    ro b = bytes[@pos]
+    @bump(b)
+    Some(char.try_from(b as int).unwrap_or(' '))
 }
 
 fn Lexer mut @skip_whitespace() -> () {
@@ -318,19 +343,51 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWi
 }
 
 // Чтение JSON-строки в кавычках. Возвращает декодированный str.
+//
+// [M-json-lexer-byte-cursor] (Баг 1): копим БАЙТЫ напрямую, не через
+// @advance()'s Option[char] — вход уже валидный UTF-8, decode/re-encode не
+// нужен (и был бы некорректен: byte 0xC3 — часть multibyte-последовательности,
+// а не codepoint U+00C3). Литеральные runs между escape-последовательностями
+// копируются одним batch-append (не char-by-char конкатенацией — убирает
+// второй O(n²) паттерн, `buf = buf + str.from(c)`).
+// D133: `buf` — type-level consume (StringBuilder), обязан быть потреблён на
+// КАЖДОМ exit-point. Ранний `return Err(..)` посреди цикла нарушил бы это —
+// поэтому ошибка копится в `err` и цикл всегда доходит до одного финального
+// `buf.into_str()`; Err/Ok решается ПОСЛЕ потребления.
 fn Lexer mut @read_string() -> Result[str, ParseJsonError] {
     @advance()    // открывающая "
-    mut buf = ""
+    consume buf = StringBuilder.new()
+    ro bytes = @input.as_bytes()
+    mut run_start = @pos
+    mut err Option[ParseJsonError] = None
     mut done = false
     while !done {
-        match @advance() {
-            None => return Err(UnexpectedEof { @line, @col })
-            Some('"') => { done = true }
-            Some('\\') => { buf = buf + @read_escape()? }
-            Some(c) => { buf = buf + str.from(c) }
+        if @pos >= bytes.len() {
+            err = Some(UnexpectedEof { @line, @col })
+            done = true
+        } else {
+            ro b = bytes[@pos]
+            if b == 0x22 {               // '"' — конец строки
+                if @pos > run_start { buf.append(bytes[run_start..@pos]) }
+                @bump(b)
+                done = true
+            } else if b == 0x5C {        // '\\' — escape
+                if @pos > run_start { buf.append(bytes[run_start..@pos]) }
+                @bump(b)
+                match @read_escape() {
+                    Ok(s)  => { buf.append(s); run_start = @pos }
+                    Err(e) => { err = Some(e); done = true }
+                }
+            } else {
+                @bump(b)
+            }
         }
     }
-    Ok(buf)
+    ro s = buf.into_str()
+    match err {
+        Some(e) => Err(e)
+        None    => Ok(s)
+    }
 }
 
 // Обработка escape sequences. После '\\' — следующий символ.
@@ -340,8 +397,8 @@ fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
         Some('"')  => Ok("\"")
         Some('\\') => Ok("\\")
         Some('/')  => Ok("/")
-        Some('b')  => Ok("")
-        Some('f')  => Ok("")
+        Some(chb) if (chb as int) == 0x62 => Ok(str.from_codepoint(0x08))
+        Some(chf) if (chf as int) == 0x66 => Ok(str.from_codepoint(0x0C))
         Some('n')  => Ok("\n")
         Some('r')  => Ok("\r")
         Some('t')  => Ok("\t")
@@ -708,8 +765,8 @@ fn escape_char(c char) -> str => match c {
     '\n' => "\\n"
     '\r' => "\\r"
     '\t' => "\\t"
-    '' => "\\b"
-    '' => "\\f"
+    c if (c as int) == 0x08 => "\\b"
+    c if (c as int) == 0x0C => "\\f"
     c if (c as int) < 0x20 => unicode_escape(c as int)
     _    => str.from(c)
 }
@@ -1018,4 +1075,50 @@ test "числа: разные форматы" {
     assert(Json.parse("1.5e2")!!.as_num() == Some(150.0))
     assert(Json.parse("2.5E-1")!!.as_num() == Some(0.25))
     assert(Json.parse("-1.5e+3")!!.as_num() == Some(-1500.0))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Регресс-тесты: json-санация (Баг 1 byte/codepoint lexer, Баг 2 \b\f escape)
+// ──────────────────────────────────────────────────────────────────────────
+
+// [M-json-lexer-byte-cursor] (Баг 1): non-ASCII в строке БЕЗ escape + число
+// сразу после — раньше @pos (codepoint-курсор через nth) расходился с
+// байтовыми срезами @read_number, портя число.
+test "Баг 1: non-ASCII в строке без escape + число после" {
+    ro v = Json.parse("[\"é\", 12]")!!
+    match v.as_array() {
+        Some(xs) => {
+            assert(xs.len() == 2)
+            assert(xs[0].as_str() == Some("é"))
+            assert(xs[1].as_num() == Some(12.0))
+        }
+        None => assert(false)
+    }
+}
+
+// Многобайтовый codepoint прямо в ключе объекта.
+test "Баг 1: многобайтовый codepoint в ключе объекта" {
+    ro v = Json.parse("{\"héllo\": 1}")!!
+    match v.as_object() {
+        Some(m) => assert(m.get("héllo") == Some(Num(1.0)))
+        None    => assert(false)
+    }
+}
+
+// [M-json-escape-bf-empty] (Баг 2): \b/\f обязаны декодироваться в
+// codepoint U+0008/U+000C (не в пустую строку) и сериализоваться обратно.
+test "Баг 2: round-trip \\b\\f" {
+    ro v = Json.parse("\"\\b\\f\"")!!
+    match v.as_str() {
+        Some(s) => {
+            assert(s.byte_len() == 2)
+            ro bytes = s.as_bytes()
+            assert(bytes[0] == 8)
+            assert(bytes[1] == 12)
+        }
+        None => assert(false)
+    }
+    ro s = v.into()
+    ro parsed = Json.parse(s)!!
+    assert(parsed == v)
 }
