@@ -1,31 +1,47 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2 — UDP over the public net2 API. recv_from writes the datagram
+// Plan 183 Ф.2/Ф.4 — UDP over the public net2 API. recv_from writes the datagram
 // straight into the caller's []u8 (zero-copy) and returns the sender as a value
 // SocketAddr filled via out-param (no _net_recv_data / _net_recv_sender TLS).
 // `_must` (typed-Result extractor) is shared from tcp_test.nv (same module).
 //
-// Sockets are closed AFTER the supervised block (not inside the spawn, right on
-// the heels of recv/send) so a pending overlapped request has fully drained
-// before uv_close — closing mid-flight trips a libuv-Windows req assertion.
+// Ф.4 UDP-flake root cause (Windows-libuv, M:N): a uv handle is pinned to the
+// libuv loop it is *created* on, and libuv loops are single-thread. Under M:N
+// each worker owns its own loop; `nova_current_loop()` returns the current
+// worker's loop. If a socket is bound in the main test body (main-thread
+// `_evloop`) and then `recv_from`/`send_to` run from spawned worker fibers, the
+// uv op is issued on `_evloop` from a worker thread WHILE the main thread runs
+// `_evloop` in the supervised drain — concurrent cross-thread access to a single
+// libuv loop. The op/req is mis-queued and its completion callback never fires →
+// the parked fiber hangs (observed ~2/10 TIMEOUT). TCP never hit this because
+// `connect`/`accept` create their streams on the *current worker's* loop.
+//
+// Fix (the sound M:N pattern): each socket is bound INSIDE the fiber that does
+// its I/O, so `handle.loop == the operating worker's loop` and every uv op runs
+// on that loop's own thread. Ports are exchanged via capacity-1 channels; the
+// only *parking* channel op sits BEFORE the bind (sender) or AFTER the datagram
+// op (receiver), never between bind and the uv call — so a work-stealing
+// migration can never move the fiber off the loop its handle lives on. Because
+// the receiver's socket is bound (and its port published) before the sender
+// transmits, the kernel buffers the datagram: loopback delivery is not lost.
 
 module std.net2
 
 test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
     with Net = real_net() {
-        mut a = _must(UdpSocket.bind(SocketAddr.loopback(0)))
-        mut b = _must(UdpSocket.bind(SocketAddr.loopback(0)))
-        ro a_port = a.local_port()
-        ro b_port = b.local_port()
-        assert(a_port > 0)
-        assert(b_port > 0)
-
+        ro ch_a = Channel.new(1)   // a_port: receiver -> sender
+        ro ch_b = Channel.new(1)   // b_port: sender   -> receiver (for sender-port assert)
         supervised {
             spawn {
+                mut a = _must(UdpSocket.bind(SocketAddr.loopback(0)))
+                ro a_port = a.local_port()
+                assert(a_port > 0)
+                ch_a.tx.send(a_port)                       // buffered, no park
                 mut buf []u8 = []u8.new()
                 buf.resize(64, 0 as u8)
                 // Tuple carrying a value SocketAddr → direct match (see dns_test.nv).
                 match a.recv_from(buf) {
                     Ok((n, sender)) => {
+                        ro b_port = match ch_b.rx.recv() { Some(x) => x  None => 0 as u16 }
                         assert(n == 9)
                         assert(str.from_bytes_unchecked(buf[0..n]) == "ping net2")
                         // The out-param sender must carry b's real port.
@@ -34,25 +50,30 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
                     }
                     Err(_) => assert(false)
                 }
+                a.close()
             }
             spawn {
+                ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 as u16 }
+                mut b = _must(UdpSocket.bind(SocketAddr.loopback(0)))
+                ro b_port = b.local_port()
+                assert(b_port > 0)
+                ch_b.tx.send(b_port)                       // buffered, no park
                 assert(_must(b.send_to("ping net2".as_bytes(), SocketAddr.loopback(a_port))) == 9)
+                b.close()
             }
         }
-
-        a.close()
-        b.close()
     }
 }
 
 test "net2/udp: recv_from_vec returns owned bytes + sender" {
     with Net = real_net() {
-        mut a = _must(UdpSocket.bind(SocketAddr.loopback(0)))
-        mut b = _must(UdpSocket.bind(SocketAddr.loopback(0)))
-        ro a_port = a.local_port()
-
+        ro ch_a = Channel.new(1)   // a_port: receiver -> sender
         supervised {
             spawn {
+                mut a = _must(UdpSocket.bind(SocketAddr.loopback(0)))
+                ro a_port = a.local_port()
+                assert(a_port > 0)
+                ch_a.tx.send(a_port)                       // buffered, no park
                 match a.recv_from_vec(64) {
                     Ok((data, sender)) => {
                         assert(data.len() == 5)
@@ -61,13 +82,14 @@ test "net2/udp: recv_from_vec returns owned bytes + sender" {
                     }
                     Err(_) => assert(false)
                 }
+                a.close()
             }
             spawn {
+                ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 as u16 }
+                mut b = _must(UdpSocket.bind(SocketAddr.loopback(0)))
                 assert(_must(b.send_str("hello", SocketAddr.loopback(a_port))) == 5)
+                b.close()
             }
         }
-
-        a.close()
-        b.close()
     }
 }
