@@ -329,6 +329,53 @@ ffi.nv — value-`SocketAddr` (20-байтная запись; парсинг/ф
 дать честный канал кода ошибки (в Ф.1-тестах передаётся null). Затем Ф.3
 миграция потребителей + удаление старого слоя; Ф.4 стресс M:N + эхо-замер.
 
+### Заход 2 (2026-07-06) — итог и точка возобновления (Ф.2 обвязка)
+
+**Сделано (Ф.2 целиком):** публичный `.nv`-слой `std/net2` поверх ffi.nv —
+- **value-`SocketAddr`** = `value { priv raw []u8 }` (20-байтный NovaNetAddr-образ,
+  данные не handle; конструкция/parse/format через буферные externs) — закрывает
+  `[M-net-socketaddr-value-record]` для нового слоя;
+- **consume-типы** `TcpListener`/`TcpStream`(+`TcpReadHalf`/`TcpWriteHalf`)/`UdpSocket`,
+  must-consume `@close()`; split = один handle двум half-значениям + refcount (D407 §6);
+- **эффект `Net`** с `[]u8`-сигнатурами (`read(stream, buf mut []u8)->Result[int]`,
+  `write(stream, data []u8)->Result[int]`; никакого `str` в транспорте; addr-геттеры
+  и UDP-sender заполняют 20-байтный буфер, не пересекают vtable как multi-word return);
+- **честный out_err-канал** (заход-1 null-заглушка убрана): UV-код → `NetError` через
+  `NetError.from_code` = `nova_net_strerror` + классификация по канон-строке; суммы `enum` (D406);
+- **триада** `real_net()`/`mock_net()`; **DNS** `resolve()` — один `getaddrinfo`, C выделяет
+  GC-массив точного размера + count (без повторного запроса, замечание владельца), `.nv`
+  строит `[]SocketAddr` в `resolve()` (вне vtable); **текст-хелперы** через `str.from_bytes`.
+- **out_err / DNS-base** — через `&local` (`*mut int`, escape-промоут D216 §4), без вектор-ячеек
+  (замечание владельца). C `net2.{c,h}`: additive `_into`-конструкторы, `addr_copy_at`, DNS назад
+  на GC-массив+count. **net.c/std/net не тронуты; test_runner не тронут.**
+
+**Гейты:** conformance `--positive --compile-error` = **54/0** (= базис fe631543) ·
+TCP echo двумя волокнами через эффект детерминированно зелёный (10/10) · DNS/mock/addr/neg
+детерминированно зелёные · neg double-close → **D131** (use-after-consume; форма: `consume`-binding
+через `_open`-экстрактор в neg-модуле).
+
+**НАЙДЕННЫЕ ДЕФЕКТЫ СУБСТРАТА/КОМПИЛЯТОРА (для Ф.3/Ф.4 и владельца):**
+1. **UDP-флейк (net2.c Ф.1, Windows-libuv):** конкурентный send/recv+close даёт `reqs_pending>0`
+   assertion (митигировано: close ПОСЛЕ supervised, не в spawn) + остаточный **TIMEOUT ~2/10**
+   (lost-wake/потеря датаграммы в recv-пути под concurrency). TCP-путь стабилен (0/8). Это Ф.1-substrate
+   дефект / Ф.4 M:N-территория — **UDP-тесты закоммичены, но флейк открыт**.
+2. **GC-liveness `[]SocketAddr`:** образы-`[]u8` внутри `Vec[SocketAddr]` освобождаются GC, если
+   (a) Vec пересекает vtable как Ok-payload, ИЛИ (b) извлекается generic `_must[T]` (erasure).
+   Митигации в коде: DNS строит Vec в `resolve()` (не в handler), через vtable идёт скаляр-пара
+   `(base,count)`; тесты — прямой `match` (не generic `_must`) + чтение значений up-front. Корень —
+   компиляторная GC-трассировка сквозь `Vec[value-struct-with-heap]` / generic-erasure. Инлайн
+   `[20]u8`-rep убрал бы проблему, но литерал `[0; N]` — известный gap компилятора (crypto FAIL).
+3. **`unwrap()` на typed-error:** pre-existing gap — `Result[_, XError].unwrap()` эмитит
+   `Nova_Fail_fail(str)` и не компилится (даже `parse_int().unwrap()`). Тесты — `match`/`_must`-хелпер.
+4. **resize-инференс:** `mut b = []u8.new()` (inferred) НЕ персистит `resize`; обязательна
+   аннотация `mut b []u8 = []u8.new()` (иначе len=0 → null_buf → порча). Все буферы аннотированы.
+
+**Возобновление (заход 3 = Ф.3):** миграция потребителей `std/http/transport/real.nv` +
+`std/http/servernet/servernet.nv` + net-тесты (plan83_12/91_12/15/16) + `examples/net/*` на `std/net2`;
+удалить net.c/std/net/ffi.nv-двойную-обёртку/str-опы/`NovaRt_*_method_*`; grep-инварианты §2 = 0.
+**Перед Ф.3 или в Ф.4:** починить UDP-substrate (#1) и рассмотреть инлайн-SocketAddr после закрытия
+`[0;N]`-gap (#2). unwrap-gap (#3) и resize-инференс (#4) — отдельные компиляторные задачи.
+
 ## 5. Риски / связи
 
 - **Объём**: net.c ~2000 C-строк + 1100 .nv + потребители; 3-4 агент-захода. Самая тонкая
