@@ -35,7 +35,7 @@ module text.regex
 
 /// AST node после parsing'а regex pattern (internal — обычно не нужен напрямую).
 #stable(since = "0.1")
-export type RegexNode
+export type RegexNode enum
     | NEmpty
     | NLiteral(char)
     | NAnyChar
@@ -63,7 +63,7 @@ export type RegexNode
 
 /// NFA state — Thompson construction (internal). State хранится индексом в `[]NfaState`.
 #stable(since = "0.1")
-export type NfaState
+export type NfaState enum
     | SMatch
     | SChar { c char, out int }
     | SAnyChar { out int }
@@ -85,7 +85,7 @@ export type Regex {
 
 /// Errors при compile regex pattern.
 #stable(since = "0.1")
-export type CompileError
+export type CompileError enum
     | UnclosedGroup { position int }
     | UnclosedClass { position int }
     | InvalidEscape { position int, char char }

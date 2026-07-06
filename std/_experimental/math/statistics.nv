@@ -25,7 +25,7 @@ module math.statistics
 
 /// Errors при stats-расчётах (empty input, invalid percentile).
 #stable(since = "0.1")
-export type StatsError
+export type StatsError enum
     | EmptyInput
     | InvalidPercentile { value f64 }
 

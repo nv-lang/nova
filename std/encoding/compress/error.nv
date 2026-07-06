@@ -37,7 +37,7 @@ export type CompressError value {
 /// - `TrailingData` — мусор после валидного потока (strict-режим raw/zlib).
 /// - `Other(str)` — OPEN → wildcard обязателен.
 #stable(since = "0.1")
-export type ErrorKind
+export type ErrorKind enum
     | InvalidData(str)
     | UnexpectedEof
     | Checksum { ro kind ChecksumKind, ro expected u32, ro got u32 }
@@ -49,7 +49,7 @@ export type ErrorKind
 
 /// Какая контрольная сумма не сошлась.
 #stable(since = "0.1")
-export type ChecksumKind
+export type ChecksumKind enum
     | Crc32
     | Adler32
     | Isize

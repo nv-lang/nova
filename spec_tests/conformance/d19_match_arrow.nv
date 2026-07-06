@@ -7,7 +7,7 @@
 // Один folder-module `spec_tests.conformance`; имена D19-prefixed (без клэшей).
 module spec_tests.conformance
 
-type D19Shape
+type D19Shape enum
     | D19Circle(f64)
     | D19Square(f64)
 

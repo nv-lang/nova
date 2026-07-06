@@ -79,7 +79,7 @@ export type Version {
 
 /// Errors при парсинге semver-строки (D30 convention).
 #stable(since = "0.1")
-export type ParseVersionError
+export type ParseVersionError enum
     | EmptyInput
     | MissingMinor
     | MissingPatch

@@ -273,7 +273,7 @@ export fn ArrayGen[T] @shrink(value []T) -> Iter[[]T] {
 // ──────────────────────────────────────────────────────────────────────────
 
 // Внутренний результат прогона одного case'а.
-type RunResult
+type RunResult enum
     | Pass
     | Fail(PropertyFailed)
 

@@ -32,7 +32,7 @@ module std.http
 export type Body consume { priv repr BodyRepr, priv limit int }
 
 // Внутреннее представление тела.
-type BodyRepr
+type BodyRepr enum
     | InMemory([]u8)                 // тело целиком в памяти (replayable на 307/308)
     | Stream(BodyReader)             // ленивый источник чанков (Ф.1: in-memory pull)
 

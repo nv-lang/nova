@@ -36,7 +36,7 @@ module std.net
 ///
 /// - `[TcpListener]`, `[TcpStream]`, `[UdpSocket]`
 #stable(since = "0.1")
-export type NetError
+export type NetError enum
     | ConnectionRefused
     | AddressInUse
     | AddressNotAvailable

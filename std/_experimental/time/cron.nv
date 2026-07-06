@@ -31,7 +31,7 @@ module time.cron
 
 /// Errors при парсинге cron-выражения.
 #stable(since = "0.1")
-export type ParseCronError
+export type ParseCronError enum
     | InvalidFieldCount { actual int }
     | InvalidValue { field str, value str }
     | OutOfRange { field str, value int, min int, max int }

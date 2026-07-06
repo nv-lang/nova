@@ -69,14 +69,14 @@ export type Uuid {
 
 /// Версия UUID — старшие 4 бита 7-го байта (биты 48..51).
 #stable(since = "0.1")
-export type UuidVersion
+export type UuidVersion enum
     | V4                                // random
     | V7                                // sortable timestamp
     | Other(u8)                         // v1, v2, v3, v5, v6, v8
 
 /// Errors при парсинге UUID-строки.
 #stable(since = "0.1")
-export type ParseUuidError
+export type ParseUuidError enum
     | InvalidLength { actual int, expected int }
     | InvalidHex { position int }
     | MissingDash { position int }

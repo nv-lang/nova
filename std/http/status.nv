@@ -14,7 +14,7 @@ export type StatusCode value { priv code u16 }
 
 /// Класс статуса (первая цифра).
 #stable(since = "0.1")
-export type StatusClass
+export type StatusClass enum
     | Informational | Success | Redirection | ClientError | ServerError
 
 /// Сконструировать из u16; вне 100..599 → `Protocol`.

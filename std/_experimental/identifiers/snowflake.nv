@@ -24,7 +24,7 @@ const TWITTER_EPOCH_MS i64 = 1577836800000
 /// - `InvalidMachineId` — `machine_id` вне диапазона `0..1023`
 /// - `ClockBackwards` — системное время откатилось назад
 #stable(since = "0.1")
-export type SnowflakeError
+export type SnowflakeError enum
     | InvalidMachineId { value int }
     | ClockBackwards { now i64, last i64 }
 

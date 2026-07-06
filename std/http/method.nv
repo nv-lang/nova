@@ -11,7 +11,7 @@ module std.http
 
 /// HTTP-метод (RFC 7231 §4). `@is_idempotent` — load-bearing для retry-policy.
 #stable(since = "0.1")
-export type Method
+export type Method enum
     | Get | Head | Post | Put | Delete | Connect | Options | Trace | Patch
     | Other(str)                            // валидированный tchar-токен (uppercase-конвенция)
 

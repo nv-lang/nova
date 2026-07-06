@@ -24,7 +24,7 @@ module encoding.ini
 
 /// Errors при парсинге INI.
 #stable(since = "0.1")
-export type ParseIniError
+export type ParseIniError enum
     | InvalidLine { line int, content str }
     | UnclosedSection { line int }
 

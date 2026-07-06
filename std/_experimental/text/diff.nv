@@ -10,7 +10,7 @@ module text.diff
 
 /// Diff operation на один элемент: Equal (одинаков), Insert (только в b), Delete (только в a).
 #stable(since = "0.1")
-export type DiffOp
+export type DiffOp enum
     | Equal(str)
     | Insert(str)
     | Delete(str)

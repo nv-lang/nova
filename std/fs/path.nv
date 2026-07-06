@@ -33,7 +33,7 @@ const B_COLON     u8 = 58   // ':'
 
 /// Which platform's lexical rules a `Path` follows.
 #stable(since = "0.1")
-export type PathStyle
+export type PathStyle enum
     | Posix
     | Windows
 

@@ -20,7 +20,7 @@ module encoding.utf16
 
 /// Невалидная последовательность UTF-16 code units. Хранит проблемный code
 /// unit (0..0xFFFF) для диагностики.
-export type Utf16Error
+export type Utf16Error enum
     | LoneHighSurrogate(int)        // high surrogate без следующего low
     | LoneLowSurrogate(int)         // low surrogate без предшествующего high
     | TruncatedSurrogatePair(int)   // high surrogate в самом конце входа

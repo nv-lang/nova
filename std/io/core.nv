@@ -63,7 +63,7 @@ export type Seek protocol {
 /// absolute (from the beginning); `End(n)`/`Current(n)` are relative (may be
 /// negative). `Start(<0)` (or any resolved negative position) → `InvalidInput`.
 #stable(since = "0.1")
-export type SeekFrom
+export type SeekFrom enum
     | Start(int)
     | End(int)
     | Current(int)

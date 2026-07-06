@@ -32,7 +32,7 @@ import std.encoding.compress.{CompressError}
 /// `Status(code)` возникает ТОЛЬКО через явный `response.error_for_status()`
 /// (Ф.2); 4xx/5xx сами по себе — валидный `Response`, не ошибка (Q4).
 #stable(since = "0.1")
-export type ErrorKind
+export type ErrorKind enum
     | Connect                      // не удалось установить TCP/транспорт-соединение
     | Dns                          // резолв host провалился
     | Tls                          // TLS-handshake/verify (Ф.4 gate 116)
@@ -52,7 +52,7 @@ export type ErrorKind
 /// source` требует, чтобы варианты были матчибельны извне; `OtherSource(str)` —
 /// catch-all, wildcard обязателен. См. GATE-нотку выше про отложенные варианты.
 #stable(since = "0.1")
-export type ErrSource
+export type ErrSource enum
     | UrlParse(ParseUrlError)      // ошибка разбора URL (Ф.1). ⚠ вариант НЕ `Url`:
                                    // имя-вариант == имя-тип `Url` ломает codegen
                                    // (cast вместо wrap) → spec-amend D358 (§5).

@@ -41,7 +41,7 @@ module collections.linkedlist
 /// - `[Deque]` — двусторонняя очередь на массиве
 /// - `[Queue]` — FIFO очередь через два массива
 #stable(since = "0.1")
-export type LinkedList[T]
+export type LinkedList[T] enum
     | Empty
     | Cons(T, LinkedList[T])
 

@@ -23,7 +23,7 @@ import std.data.semver
 
 /// Один comparator в version requirement (`>=1.2.3`, `<2.0.0`, `=1.0.0`).
 #stable(since = "0.1")
-export type Comparator
+export type Comparator enum
     | Eq(Version)
     | Gt(Version)
     | Ge(Version)
@@ -51,7 +51,7 @@ export type VersionReq {
 
 /// Errors при парсинге version requirement string.
 #stable(since = "0.1")
-export type ParseRangeError
+export type ParseRangeError enum
     | EmptyInput
     | InvalidComparator { value str }
     | InvalidVersion { value str }

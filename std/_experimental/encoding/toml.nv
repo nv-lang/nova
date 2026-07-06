@@ -23,7 +23,7 @@ module encoding.toml
 
 /// TOML value variants (string/int/float/bool/array/table).
 #stable(since = "0.1")
-export type TomlValue
+export type TomlValue enum
     | TomlStr(str)
     | TomlInt(i64)
     | TomlFloat(f64)
@@ -33,7 +33,7 @@ export type TomlValue
 
 /// Errors при парсинге TOML.
 #stable(since = "0.1")
-export type ParseTomlError
+export type ParseTomlError enum
     | UnexpectedChar { line int, col int, char char }
     | UnexpectedEof { line int }
     | InvalidNumber { line int, value str }

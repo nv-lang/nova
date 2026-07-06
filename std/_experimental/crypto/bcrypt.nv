@@ -30,7 +30,7 @@ import std.testing.handlers as th
 
 /// Errors при bcrypt операциях.
 #stable(since = "0.1")
-export type BcryptError
+export type BcryptError enum
     | InvalidCost { value int }
     | InvalidHash { reason str }
     | PasswordTooLong { length int, max int }

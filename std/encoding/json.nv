@@ -88,7 +88,7 @@ import std.collections.hashmap.{HashMap}
 /// `JsonValue` подгоняется в `Object`. Поддерживает structural equality
 /// (тесты round-trip полагаются на `==`).
 #stable(since = "0.1")
-export type JsonValue
+export type JsonValue enum
     | Null
     | Bool(bool)
     | Num(f64)
@@ -102,7 +102,7 @@ export type JsonValue
 /// Конвенция D30 (`Parse<TypeName>Error`). Все варианты содержат `line` и
 /// `col` (1-based) — для IDE squiggles или CLI error messages.
 #stable(since = "0.1")
-export type ParseJsonError
+export type ParseJsonError enum
     | UnexpectedChar { line int, col int, found char }
     | UnexpectedEof { line int, col int }
     | InvalidEscape { line int, col int, seq str }
@@ -205,7 +205,7 @@ export fn JsonValue @as_object() -> Option[HashMap[str, JsonValue]] =>
 // Lexer — token type и tokenization
 // ──────────────────────────────────────────────────────────────────────────
 
-type Token
+type Token enum
     | LBrace      // {
     | RBrace      // }
     | LBracket    // [

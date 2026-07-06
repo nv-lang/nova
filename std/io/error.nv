@@ -33,7 +33,7 @@ module std.io
 /// handling; Nova takes the Rust model — one open kind + `raw_os` + (Ф.2)
 /// `source`.
 #stable(since = "0.1")
-export type ErrorKind
+export type ErrorKind enum
     | NotFound | PermissionDenied | AlreadyExists | NotADirectory | IsADirectory | DirectoryNotEmpty
     | WouldBlock | Interrupted | UnexpectedEof | WriteZero | InvalidInput | InvalidData
     | TimedOut | StorageFull | ReadOnlyFilesystem | CrossesDevices | BrokenPipe

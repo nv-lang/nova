@@ -59,7 +59,7 @@ export type Url {
 
 /// Errors при парсинге URL.
 #stable(since = "0.1")
-export type ParseUrlError
+export type ParseUrlError enum
     | EmptyInput
     | MissingScheme
     | InvalidScheme { value str }

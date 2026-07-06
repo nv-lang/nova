@@ -25,7 +25,7 @@ module data.sql
 /// SQL value variants: int, float, string, bool, bytes, null. D55 coercion:
 /// `[42, "alice"]` → `[I(42), S("alice")]` автоматически в позиции `[]SqlValue`.
 #stable(since = "0.1")
-export type SqlValue
+export type SqlValue enum
     | I(i64)
     | F(f64)
     | S(str)

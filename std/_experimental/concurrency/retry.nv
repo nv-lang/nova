@@ -27,7 +27,7 @@ import std.testing.handlers as th
 /// `Fixed` — постоянная пауза. `Exponential` — растущая (initial × multiplier^n,
 /// capped на max_delay). `Linear` — initial + increment × n, capped аналогично.
 #stable(since = "0.1")
-export type Backoff
+export type Backoff enum
     | Fixed { delay Duration }
     | Exponential { initial Duration, multiplier f64, max_delay Duration }
     | Linear { initial Duration, increment Duration, max_delay Duration }
@@ -38,7 +38,7 @@ export type Backoff
 /// `NoJitter` — exact base delay. `FullJitter` — uniform 0..base.
 /// `EqualJitter` — base/2 + random(0..base/2).
 #stable(since = "0.1")
-export type Jitter
+export type Jitter enum
     | NoJitter
     | FullJitter
     | EqualJitter

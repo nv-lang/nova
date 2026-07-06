@@ -27,7 +27,7 @@ module encoding.serde
 /// Категория ошибки сериализации (узкая — сериализация редко падает).
 /// OPEN kind → wildcard-arm обязателен на match.
 #unstable
-export type SerErrorKind
+export type SerErrorKind enum
     | NonFiniteFloat                 // NaN/Inf в JSON (Q19, RFC 8259)
     | SerDepthLimit                  // serialize-сторона depth-guard (Q14)
     | SerLossyInteger(str)           // |v| > 2^53 — не lossless в f64-wire (Q15, D346); симметрично DeError.LossyInteger (уник. имя — избегает коллизии вариантов)
@@ -58,7 +58,7 @@ export fn SerError @to_str() -> str {
 /// Категория ошибки десериализации (богатая — deser главный источник ошибок).
 /// OPEN kind → wildcard-arm обязателен.
 #unstable
-export type DeErrorKind
+export type DeErrorKind enum
     | UnexpectedType { expected str, found str }   // ждали int, нашли string
     | MissingField(str)                            // required-поле отсутствует (Q7)
     | UnknownField(str)                            // при deny_unknown_fields (Q5)

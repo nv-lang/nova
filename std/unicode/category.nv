@@ -59,7 +59,7 @@ const GC_CN int = 30    // Other, not assigned (default)
 /// The 30 Unicode General_Category values (UCD TR44 Table 12), in canonical
 /// order. `Cn` is the value of every code point not assigned a category by
 /// `UnicodeData.txt` (unassigned / reserved / noncharacter).
-export type GeneralCategory
+export type GeneralCategory enum
     | Lu | Ll | Lt | Lm | Lo
     | Mn | Mc | Me
     | Nd | Nl | No

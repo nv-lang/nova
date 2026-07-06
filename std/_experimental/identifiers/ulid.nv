@@ -61,7 +61,7 @@ export type Ulid {
 
 /// Errors при парсинге ULID-строки.
 #stable(since = "0.1")
-export type ParseUlidError
+export type ParseUlidError enum
     | InvalidLength { actual int, expected int }
     | InvalidChar { position int, char char }
     | TimestampOverflow                              // > 2^48 ms (~10889 AD)

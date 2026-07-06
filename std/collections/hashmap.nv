@@ -56,7 +56,7 @@ import std.collections.vec.{Vec}
 // `Tombstone` — была занята, потом удалена (probing продолжается, но
 // слот можно переиспользовать на insert).
 // `Occupied(K, V)` — текущий valid слот.
-type Slot[K, V]
+type Slot[K, V] enum
     | Empty
     | Tombstone
     | Occupied { key K, value V }

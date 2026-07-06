@@ -75,7 +75,7 @@ test "Self для generic ≡ D66Pair[A,B] — параметры наследу
 
 // === 5. Self в sum-варианте: рекурсивный self-метод на том же типе ===
 
-type D66Tree
+type D66Tree enum
     | D66Leaf
     | D66Node(int, D66Tree, D66Tree)
 

@@ -19,7 +19,7 @@ import std.testing.handlers as th
 
 /// Errors при JWT операциях.
 #stable(since = "0.1")
-export type JwtError
+export type JwtError enum
     | InvalidFormat
     | UnsupportedAlgorithm { alg str }
     | InvalidSignature

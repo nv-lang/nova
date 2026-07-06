@@ -15,7 +15,7 @@ module encoding.hex
 
 /// Errors при парсинге hex-строки.
 #stable(since = "0.1")
-export type ParseHexError
+export type ParseHexError enum
     | OddLength { actual int }
     | InvalidChar { position int, char char }
 

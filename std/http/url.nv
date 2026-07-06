@@ -44,7 +44,7 @@ export type Url value {
 
 /// Детальная ошибка разбора URL (source-chain внутри `HttpError`).
 #stable(since = "0.1")
-export type ParseUrlError
+export type ParseUrlError enum
     | EmptyInput
     | MissingScheme
     | InvalidScheme(str)                      // невалидный scheme-токен

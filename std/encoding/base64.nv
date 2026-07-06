@@ -36,7 +36,7 @@ module encoding.base64
 
 /// Errors при decoding base64. Coverage: bad length, invalid char, bad padding.
 #stable(since = "0.1")
-export type Base64Error
+export type Base64Error enum
     | InvalidLength { actual int }
     | InvalidChar { position int, char char }
     | InvalidPadding { position int }

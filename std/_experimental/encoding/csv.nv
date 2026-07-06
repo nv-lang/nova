@@ -6,7 +6,7 @@ module encoding.csv
 
 /// Errors при парсинге CSV (unterminated quote, unexpected char).
 #stable(since = "0.1")
-export type ParseCsvError
+export type ParseCsvError enum
     | UnterminatedQuote { line int }
     | UnexpectedChar { line int, col int, char char }
 

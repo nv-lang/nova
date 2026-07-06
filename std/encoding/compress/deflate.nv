@@ -81,7 +81,7 @@ fn resolve_deflate_level(lvl CompressLevel) -> Result[int, CompressError] {
 
 // Внутренний токен LZ77-потока. Lit = байт-литерал; Backref = (длина 3..258,
 // дистанция 1..32768) — back-reference на окно.
-type Tok
+type Tok enum
     | Lit(int)
     | Backref(int, int)
 

@@ -57,7 +57,7 @@ test "Self для multi-param static ≡ Pair[A,B]; оба параметра ro
 // Прямой аналог spec-примера `Option[T].new() -> Self => None`: None-вариант резолвится
 // в Opt[T] с нужной специализацией; match извлекает корректно-типизированное значение.
 
-type D182Opt[T]
+type D182Opt[T] enum
     | D182None
     | D182Some(T)
 

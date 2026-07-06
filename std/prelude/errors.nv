@@ -82,7 +82,7 @@ module prelude.errors
 /// (sum_schema_registry.rs:458-483). Расширение variant set требует
 /// edition bump (Plan 62.F).
 #stable(since = "0.1")
-export type RuntimeError
+export type RuntimeError enum
     | DivByZero
     | Overflow
     | IndexOutOfBounds { index int, length int }
@@ -112,7 +112,7 @@ export type RuntimeError
 ///   - `UnexpectedEnd { wanted int, available int }` — попытка прочитать
 ///     `wanted` байтов когда осталось `available < wanted`.
 #stable(since = "0.1")
-export type ReadBufferError
+export type ReadBufferError enum
     | UnexpectedEnd { wanted int, available int }
 
 
