@@ -272,9 +272,9 @@ fn MultiError @find_first_panic() -> Option[str] {
 ///         Failure(err) => {
 ///             if err is CancelError {
 ///                 // explicit cancel — rollback w/o full retry logic
-///                 @rollback()?
+///                 @rollback()!!
 ///             } else {
-///                 @rollback_with_log(err.msg)?
+///                 @rollback_with_log(err.msg)!!
 ///             }
 ///         }
 ///         Panic(_) => @rollback_emergency()

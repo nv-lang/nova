@@ -3162,6 +3162,12 @@ struct TypeCheckCtx<'a> {
     /// access check: если field.priv_field И current_recv_type != obj's type
     /// → emit E_PRIV_FIELD_READ.
     current_recv_type: std::cell::RefCell<Option<String>>,
+    /// Plan 174.2 Ф.B (cross-carrier `?` diagnostics): declared return type of
+    /// the enclosing fn, set in `f1_check_fn`, cleared on exit. Lets the
+    /// `ExprKind::Try` arm know the return CARRIER (`Result` vs `Option`) and
+    /// error type so a carrier-mismatched `?` gets a specific fix-it hint
+    /// (`.ok_or(..)` / `.ok()` / `.map_err(..)`) instead of a generic error.
+    current_fn_return_ty: std::cell::RefCell<Option<TypeRef>>,
     /// Plan 124.6 (D225): current fn's `#test_access(TypeA, TypeB, ...)` list.
     /// Если non-empty, current fn body получает priv-field access ко всем
     /// перечисленным types (escape hatch для unit tests + sibling helper
@@ -3294,6 +3300,17 @@ struct PrivRecvGuard<'a, 'b> {
 impl<'a, 'b> Drop for PrivRecvGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_recv_type.borrow_mut() = self.prev.take();
+    }
+}
+
+/// Plan 174.2 Ф.B: RAII guard для current_fn_return_ty в TypeCheckCtx.
+struct FnReturnTyGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Option<TypeRef>,
+}
+impl<'a, 'b> Drop for FnReturnTyGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_fn_return_ty.borrow_mut() = self.prev.take();
     }
 }
 
@@ -3764,6 +3781,7 @@ impl<'a> TypeCheckCtx<'a> {
             const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
+            current_fn_return_ty: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             user_shadowed_generic_types,
@@ -6442,6 +6460,12 @@ impl<'a> TypeCheckCtx<'a> {
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
         let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
+        // Plan 174.2 Ф.B: publish the enclosing fn's return type so the
+        // `ExprKind::Try` arm can diagnose carrier-mismatched `?`. Restored on
+        // exit via `FnReturnTyGuard` (RAII — covers early returns).
+        let prev_ret_ty = self.current_fn_return_ty.borrow_mut().take();
+        *self.current_fn_return_ty.borrow_mut() = fd.return_type.clone();
+        let _ret_ty_guard = FnReturnTyGuard { ctx: self, prev: prev_ret_ty };
         // Plan 124.6 (D225): set current_fn_test_access — fn body gets priv
         // access к listed types.
         let prev_ta = std::mem::take(&mut *self.current_fn_test_access.borrow_mut());
@@ -6828,6 +6852,68 @@ impl<'a> TypeCheckCtx<'a> {
             | TypeRef::Mut(inner, _)
             | TypeRef::Unsafe(inner, _) => Self::typeref_named_base(inner),
             _ => None,
+        }
+    }
+
+    /// Plan 174.2 Ф.B — cross-carrier `?` diagnostics.
+    ///
+    /// `?` (return-only, D85) пробрасывает **тем же** носителем, что и
+    /// return-тип enclosing fn: `Option`-`?` требует `Option`-fn, `Result`-`?`
+    /// требует `Result`-fn. Если носитель операнда не совпадает с носителем
+    /// return-типа — вместо generic type-mismatch на выведенном `return
+    /// None`/`return Err` даём конкретную подсказку-конверсию (`.ok_or(..)` /
+    /// `.ok()`).
+    ///
+    /// Свободный `?` в fn, чей return **вообще** не Result/Option, уже режется
+    /// `[E_TRY_IN_FAIL_FN]` (см. `check_fn`) — сюда попадаем только когда
+    /// return-носитель ЕСТЬ Result или Option, поэтому дубля нет.
+    ///
+    /// Консервативно: молчим, если тип операнда не выводится, если операнд/
+    /// return несут generic-параметры (`gs`), или если носители совпадают.
+    fn check_try_carrier_match(
+        &self,
+        inner: &Expr,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Return-носитель enclosing fn.
+        let ret_ty = match self.current_fn_return_ty.borrow().clone() {
+            Some(t) => t,
+            None => return,
+        };
+        if typeref_mentions_any(&ret_ty, gs) { return; }
+        let ret_carrier = match Self::typeref_named_base(&ret_ty) {
+            Some(b @ ("Result" | "Option")) => b,
+            _ => return, // не Result/Option → зона [E_TRY_IN_FAIL_FN].
+        };
+        // Носитель операнда.
+        let op_ty = match self.infer_expr_type(inner, scope) {
+            Some(t) => t,
+            None => return, // не выводится — молчим (safe false-negative).
+        };
+        if typeref_mentions_any(&op_ty, gs) { return; }
+        let op_carrier = match Self::typeref_named_base(&op_ty) {
+            Some(b @ ("Result" | "Option")) => b,
+            _ => return, // не Result/Option — иная ошибка (type-mismatch).
+        };
+        if op_carrier == ret_carrier { return; } // носители совпали — OK.
+        match (ret_carrier, op_carrier) {
+            ("Result", "Option") => errors.push(Diagnostic::new(
+                "[E_TRY_OPTION_IN_RESULT_FN] `?` на `Option` в функции, \
+                 возвращающей `Result` — `?` пробросил бы `return None`, но `None` \
+                 не `Result`. Сконвертируй в `Result` перед `?`: \
+                 `opt.ok_or(<error>)?` (даёт `Err(<error>)` на `None`).".to_string(),
+                inner.span,
+            )),
+            ("Option", "Result") => errors.push(Diagnostic::new(
+                "[E_TRY_RESULT_IN_OPTION_FN] `?` на `Result` в функции, \
+                 возвращающей `Option` — `?` пробросил бы `return Err(e)`, но `Err` \
+                 не `Option`. Сконвертируй в `Option` перед `?`: `res.ok()?` \
+                 (отбрасывает ошибку, даёт `None`).".to_string(),
+                inner.span,
+            )),
+            _ => {}
         }
     }
 
@@ -7698,6 +7784,12 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) => {
                 self.f1_expr(inner, gs, scope, errors);
+                // Plan 174.2 Ф.B: cross-carrier `?` diagnostics. Only for `?`
+                // (Try), not `!!` (Bang) — `!!` throws through Fail и не связан
+                // с return-carrier.
+                if matches!(e.kind, ExprKind::Try(_)) {
+                    self.check_try_carrier_match(inner, gs, scope, errors);
+                }
                 // Plan 172.1 §0a (Try/Bang): materialize the unwrapped type into the channel.
                 // `infer_expr_type` now has Try/Bang arms: Result[T,E]→T, Option[T]→T.
                 // gs-gated: a `T` inside a generic body stays on legacy.

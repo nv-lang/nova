@@ -8488,11 +8488,11 @@ fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
         Success => @commit()!!
         Failure(err) => {
             if err is DbError.Deadlock {
-                @retry_friendly_rollback()?     // err narrow'нут до DbError.Deadlock
+                @retry_friendly_rollback()!!    // err narrow'нут до DbError.Deadlock
             } else if err is DbError {
-                @rollback_with_log(err.msg)?
+                @rollback_with_log(err.msg)!!
             } else {
-                @rollback()?                     // generic non-DB failure
+                @rollback()!!                    // generic non-DB failure
             }
         }
         Panic(_) => @rollback_emergency()

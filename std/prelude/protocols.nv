@@ -443,7 +443,7 @@ export type Debug protocol {
 /// fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
 ///     match outcome {
 ///         Success      => @commit()!!
-///         Failure(_)   => @rollback()?
+///         Failure(_)   => @rollback()!!
 ///         Panic(_)     => @rollback_emergency()
 ///     }
 /// }

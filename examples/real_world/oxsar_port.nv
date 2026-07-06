@@ -149,7 +149,7 @@ type FleetReceipt { id str, eta_seconds int }
 export fn send_fleet(req Request)
     Db Net Logger CurrentUser Idem Fail[FleetError] -> Response
 {
-    ro input = req.body.parse[SendInput]()?
+    ro input = req.body.parse[SendInput]()!!
 
     // Валидация mission уже сделана в parse через тип Mission —
     // невалидное значение не получится создать. В Go было руками:
@@ -186,7 +186,7 @@ fn fleet_error_response(err FleetError) -> Response => match err {
 export fn list_fleets(req Request)
     Db Logger CurrentUser Fail -> Response
 {
-    ro user_id = CurrentUser.id().ok_or(Unauthorized)?
+    ro user_id = CurrentUser.id().ok_or(Unauthorized)!!
     ro list = transport_list(user_id)
     ro (slots_used, slots_max) = transport_slots(user_id)
 
@@ -209,17 +209,17 @@ export fn phalanx(req Request)
 {
     ro q = req.query
     ro source = q.get("source_planet_id")
-        .ok_or(PhalanxError.MissingSource)?
+        .ok_or(PhalanxError.MissingSource)!!
     ro galaxy = q.get("target_galaxy")
-        .ok_or(PhalanxError.MissingGalaxy)?
+        .ok_or(PhalanxError.MissingGalaxy)!!
         .parse[int]()
-        .map_err(|_| PhalanxError.InvalidGalaxy)?
+        .map_err(|_| PhalanxError.InvalidGalaxy)!!
     ro system = q.get("target_system")
-        .ok_or(PhalanxError.MissingSystem)?
+        .ok_or(PhalanxError.MissingSystem)!!
         .parse[int]()
-        .map_err(|_| PhalanxError.InvalidSystem)?
+        .map_err(|_| PhalanxError.InvalidSystem)!!
 
-    ro user_id = CurrentUser.id().ok_or(Unauthorized)?
+    ro user_id = CurrentUser.id().ok_or(Unauthorized)!!
     ro scans = phalanx_scan(user_id, source, galaxy, system)
 
     Response.json(200, { "scans": scans })
