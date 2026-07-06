@@ -1017,7 +1017,9 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
  *                    на main внутри supervised — drain queue per pass;
  *                    на top-level (нет scope) — native OS sleep.
  *                    ms <= 0 → один yield (compatibility с `Time.sleep(0)`).
- *   now_unix_ms()  — unix epoch ms (GetTickCount64 на Win, clock_gettime на POSIX).
+ *   now_unix_ms()  — unix epoch ms, real wall clock (uv_gettimeofday; см.
+ *                    _nova_wall_unix_ms() в fibers.h — [M-time-default-
+ *                    handler-not-wallclock] / D316 amend, 2026-07-06).
  *
  * User override: `with Time = handler Time { sleep(ms) { ... } now_unix_ms() { ... } } { body }`
  * — для тестов (fixed clock, mock sleep). */

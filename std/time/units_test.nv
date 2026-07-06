@@ -60,3 +60,24 @@ test "Duration.@sleep() округляет sub-ms длительность вв�
         assert(Timestamp.now().as_unix_millis() == 1)
     }
 }
+
+// [M-time-default-handler-not-wallclock] / D316 amend (2026-07-06): боевой
+// (default, БЕЗ `with Time = handler {...}`) обработчик Time.now_unix_ms()
+// должен отдавать настоящее wall-clock unix-время, а не monotonic uptime
+// процесса. Порог 1_700_000_000_000мс = 2023-11-14 — любое монотонное
+// значение (uptime процесса от старта, единицы-десятки секунд у короткого
+// теста) на много порядков меньше; настоящий unix epoch в 2026м — больше.
+// Это и есть детектор дефекта: до фикса default-путь возвращал
+// _nova_monotonic_ms() и тест падал бы (uptime ms << epoch ms).
+test "Timestamp.now() без with-обработчика — настоящее wall-clock время (не monotonic uptime)" {
+    ro ms = Timestamp.now().as_unix_millis()
+    assert(ms > 1_700_000_000_000)
+}
+
+// Monotonic не задета фиксом (тот же _nova_monotonic_ns источник, что и
+// до фикса — фикс трогал только _nova_time_default_now()/now_unix_ms()).
+test "Monotonic.now() всё ещё монотонно растёт после фикса wall-clock" {
+    ro t0 = Monotonic.now()
+    ro t1 = Monotonic.now()
+    assert(t1.elapsed_since(t0).as_nanos() >= 0)
+}

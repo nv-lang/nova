@@ -6425,6 +6425,13 @@ user-visible эффект, высокий churn) — только задокум
 - **Почему:** голое `now()`/`now_monotonic()` не сообщает единицу на call-site — читатель должен помнить конвенцию или лезть в докблок. Имя операции = единственный источник правды на месте вызова (симметрично `sleep(ms int)`, где единица уже в параметре).
 - Обновлены все вызовы в `std/` (schema-декларация, `std/testing/handlers.nv` mock-handler'ы, `std/time/duration.nv`, `std/concurrency/*`, `std/_experimental/concurrency/rate_limiter.nv`); codegen (`emit_c.rs`) схему НЕ хардкодит (читает из `.nv`, R1) → изменений в диспатч-логике не потребовалось, только докблок-комментарии.
 
+**AMEND ([M-time-default-handler-not-wallclock], 2026-07-06 — боевой default-обработчик `now_unix_ms()` отдавал monotonic uptime вместо wall-clock):**
+- **Дефект:** default (без `with Time = handler {...}`) обработчик `Time.now_unix_ms()` вызывал `_nova_time_default_now()` → `_nova_monotonic_ms()` (`uv_hrtime()`-based, epoch реализация-зависим, фактически uptime процесса), хотя факт-единица D316 деклараровала «unix epoch ms» (§ выше: `Timestamp.from_unix_millis(Time.now_unix_ms())`). Любой боевой код, читающий `Timestamp.now()` как настоящее календарное время (логи, TTL, сравнение с внешними timestamp'ами) без явного `with Time = handler`, получал ложный epoch.
+- **Фикс:** новая `_nova_wall_unix_ms()` (`nova_rt/fibers.h`, рядом с `_nova_monotonic_ms`/`_nova_monotonic_ns`) — настоящий wall-clock через `uv_gettimeofday(uv_timeval64_t*)` (libuv, POSIX `gettimeofday`-эквивалент на всех платформах); `_nova_time_default_now()` переключён на неё. `Nova_Time_now_unix_ms`/`Nova_Time_now_ms`/`Nova_Time_now_ns` (default-путь, без handler'а) получают исправление автоматически — все три делегируют к `_nova_time_default_now()`.
+- **НЕ затронуто:** `now_monotonic_ns()` (`_nova_monotonic_ns()`/`uv_hrtime()` — монотоника,D124/D318 non-regression), mock-обработчики `fixed_ms`/`mut_clock` (`std/testing/handlers.nv` — подменяют весь vtable, свой `now_unix_ms`-слот).
+- **Тест-детектор:** `std/time/units_test.nv` — `Timestamp.now()` без `with`-обработчика > `1_700_000_000_000` мс (после 2023-11-14; monotonic uptime короткого теста — единицы-десятки секунд, на порядки меньше).
+- **Нумерация:** amend того же D316 (боевой default-handler wall-clock ops — та же секция D316, что и unit-rename amend выше).
+
 ## D317 — Duration/instant overflow-policy: trap-default + `checked_*`/`saturating_*` (Plan 175 Ф.1c, 2026-07-06)
 
 **Source:** Plan 175 (time-system-rework), Ф.1c. **Amends:** [D316](#d316) (ns-канон → overflow-safe арифметика). **Реализация:** `std/time/duration.nv` (чистый `.nv`-слой; codegen НЕ тронут).
