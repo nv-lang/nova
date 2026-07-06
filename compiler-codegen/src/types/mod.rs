@@ -12143,6 +12143,46 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 125.1 (Ф.2): never-returning builtins + user fns whose
             // return_type resolves to `Ty::Never` → propagate `never`.
             ExprKind::Call { func, .. } => {
+                // [M-183-int-to-str-module-method-collision] (§0 checker-primary):
+                // EFFECT-OPERATION call — `Time.now_monotonic_ns()` / `Clock.tick()` — has a
+                // STATICALLY-KNOWN declared return type (the op's `return_type` in the
+                // `type E effect { op(...) -> R }` block). The checker previously did NOT
+                // infer it → `ro x = Time.now_monotonic_ns()` left `x` UNTYPED in scope →
+                // `check_instance_overload`'s `infer_arg_ty(x)` returned None → the primitive
+                // unknown-method gate was SKIPPED → a stray `x.to_str()` leaked past the
+                // checker and codegen coarse-by-name (`method_receivers` last-wins)
+                // mis-dispatched the `nova_int` receiver to a same-named FOREIGN method
+                // (`NetError.to_str` / any type's `to_str`) → silent type-confused C (the int
+                // passed as an enum/record pointer → SEGV). Resolving the op's declared return
+                // type restores `x: int` → the existing `[E_UNKNOWN_METHOD]` gate fires cleanly
+                // (int owns no `to_str`). Mirrors codegen's authoritative `effect_schemas`
+                // dispatch (emit_c `infer_expr_c_type`). The effect-op call surfaces as EITHER
+                // `func = Path([E, op])` (`E.op()` at statement level) OR `func = Member{obj:
+                // Ident(E), name: op}` — cover both. Effect must be in `self.types` (declared
+                // in this module or a merged peer); imported-only effects fall through (None)
+                // → legacy behaviour, no regression.
+                let eff_op: Option<(&str, &str)> = match &func.kind {
+                    ExprKind::Path(parts) if parts.len() == 2 => {
+                        Some((parts[0].as_str(), parts[1].as_str()))
+                    }
+                    ExprKind::Member { obj, name } => match &obj.kind {
+                        ExprKind::Ident(n) => Some((n.as_str(), name.as_str())),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some((eff, op_name)) = eff_op {
+                    if let Some(td) = self.types.get(eff) {
+                        if let TypeDeclKind::Effect(ops) = &td.kind {
+                            if let Some(op) = ops.iter().find(|m| m.name == op_name) {
+                                return Some(match &op.return_type {
+                                    Some(rt) => rt.clone(),
+                                    None => TypeRef::Unit(expr.span),
+                                });
+                            }
+                        }
+                    }
+                }
                 // [M-vec-elem-type-mismatch-silent] generic constructor:
                 // `Type[T..].new(...)` / `.with_capacity` / `.from` / `.default`
                 // / `.filled` → `Named{Type, generics:[T..]}`. Preserves the

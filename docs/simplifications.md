@@ -38151,3 +38151,39 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 остаются OPEN, все с обходами в коде и маркерами в `docs/plans/backlog-followups.md`) —
 ни один не блокирует закрытие ядра. **Гейт финального захода:** conformance
 `--positive --compile-error` = 54/0 (без изменений — Ф.5 правит только `.md`/докблоки).
+## [M-183-int-to-str-module-method-collision] CLOSED (2026-07-06) — checker infers effect-op receiver type
+
+- **Корень (факт, трейсом):** `TypeCheckCtx::infer_expr_type` (types/mod.rs) НЕ выводил return-тип
+  вызова **эффект-операции** (`Time.now_monotonic_ns()` / `Clock.tick()`, форма
+  `Call{func: Path([E,op])}` или `Call{func: Member{Ident(E),op}}`). Из-за этого `ro x =
+  Time.now_monotonic_ns()` оставлял `x` **без типа** в scope чекера → `check_instance_overload`
+  через `BoundCtx::infer_arg_ty(x)` получал `None` → примитивный gate `[E_UNKNOWN_METHOD]`
+  **пропускался** → `x.to_str()` утекал в codegen, где coarse-by-name fallback (`method_receivers`,
+  single-key last-wins) диспатчил `nova_int`-приёмник на одноимённый **чужой** метод
+  (`NetError.to_str` / любой тип с `@to_str` в модуле) → int уходил как указатель на enum/record →
+  тихий SEGV (mibps=12 → FaultAddress 0xC). Ширина класса (репро): приёмник-примитив + метод,
+  которого у примитива НЕТ + одноимённый метод у ЛЮБОГО типа (enum `Color`, value-record `wobble`).
+  Когда примитив ВЛАДЕЕТ методом (`int.abs()`) — резолвился корректно (builtin выигрывает до
+  fallback). Method-chain-результат (`w.get()->int`) уже типизировался каналом — единственный
+  дырявый источник был effect-op.
+- **Фикс (§0 «чекер — единственный владелец типов», целевая форма):** добавлен effect-op arm в
+  начало `ExprKind::Call` в `infer_expr_type` — если `func` = `Path([E,op])` / `Member{Ident(E),op}`
+  и `self.types[E]` = `TypeDeclKind::Effect(ops)`, возвращаем объявленный `return_type` операции
+  (bare `op()` → unit). Зеркалит авторитетный codegen-резолв `effect_schemas`
+  (emit_c `infer_expr_c_type`). Теперь `x: int` известен чекеру → существующий `[E_UNKNOWN_METHOD]`
+  срабатывает чисто (int не владеет `to_str`). НЕ точечный хак на `to_str`: чинит весь класс
+  «effect-op-результат → метод-вызов на примитиве».
+- **int НЕ имеет `to_str`** (prelude даёт только `@display`/`@debug`; конверсия — `str.from(int)` /
+  `${...}`). Поэтому правильный итог для `mibps.to_str()` = `[E_UNKNOWN_METHOD]`, а НЕ рабочий
+  вызов → обход `${...}` в `std/net2/stress_test` **остаётся** (комментарий обновлён: теперь это
+  чистая checker-ошибка, а не тихая генерация битого C).
+- **Тесты:** `nova_tests/plan183_f4/effect_op_int_result.nv` (positive — effect-op int корректно
+  типизирован: `str.from`/интерполяция/`.abs()` резолвятся, чужой `to_str` НЕ перехватывает) +
+  `nova_tests/plan183_f4/neg/int_to_str_effect_collision_neg.nv` (`EXPECT_COMPILE_ERROR
+  E_UNKNOWN_METHOD`).
+- **Гейты:** conformance `--positive --compile-error` **54/0**; std/net2 весь модуль **19/19 PASS**
+  (throughput-тест с `${mibps}` зелёный, 734 MiB/s); дельта против базиса `c27bf10c` (временная
+  копия-бинарь) на широкой выборке (effects/effect_registry/generics/io/contracts/narrowing/any_is/
+  http_typed/protocols/serde/http/http_transport/plan154_1/plan126/plan91_15/plan97/plan108/std·time/
+  basics/modules/plan91_14/16/plan100_6/plan108_4/inout_ref/named_params) — **0 новых FAIL**.
+  Сборка Rust чистая.

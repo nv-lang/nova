@@ -142,12 +142,14 @@ test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
                 // One-way payload: 8 MiB. MiB/s = 8 * 1e9 / elapsed_ns.
                 ro mibps = 8 * 1000000000 / elapsed_ns
                 ro elapsed_ms = elapsed_ns / 1000000
-                // NOTE: `${…}` interpolation, NOT `mibps.to_str()`: in this
-                // module `int.to_str()` mis-resolves to `NetError.to_str`
-                // (same-module method-name collision — the int is passed as
-                // the enum pointer → SEGV). Compiler defect, see
-                // [M-183-int-to-str-module-method-collision] in
-                // docs/backlog-followups.md.
+                // NOTE: `${…}` interpolation (or `str.from(mibps)`) — `int`
+                // owns no `to_str` method, so `mibps.to_str()` is a clean
+                // `[E_UNKNOWN_METHOD]`. The same-module collision that used to
+                // let it SILENTLY mis-dispatch to `NetError.to_str` (int passed
+                // as the enum pointer → SEGV) is FIXED: the checker now infers
+                // the effect-op receiver type (`Time.now_monotonic_ns()` → int)
+                // so the primitive unknown-method gate fires. See CLOSED
+                // [M-183-int-to-str-module-method-collision].
                 println("net2/stress: throughput ${mibps} MiB/s (8 MiB in 64K chunks, ${elapsed_ms} ms)")
                 assert(mibps > 0)
                 conn.close()
