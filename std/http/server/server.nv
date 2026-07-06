@@ -1,0 +1,352 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.3 / D361: std/http/server/server.nv — HTTP/1.1 server CORE (pure Nova).
+//
+// The version-logic of the server — request parsing, `ServerRequest`/`ServerResponse`
+// model, `Handler`, `ServeMux` path-routing (Go-1.22-style {param} + method + 405
+// Allow), response serialization, and the `serve_once` driver — is PURE Nova (no Net
+// effect), so it is exhaustively mock-testable WITHOUT sockets (D361 mock-first).
+// The live accept-loop over real sockets is a thin runner in std.http.servernet
+// (over the `Net` effect + supervised/spawn/CancelToken — Plan 173/83.x substrate),
+// which reuses `serve_once` verbatim.
+//
+// CORE scope (plaintext HTTP/1.1): in-memory request body (buffered by the conn
+// driver), Content-Length framing, `Handler` returns a value `ServerResponse`.
+// Handler is a concrete closure newtype (`Handler.of(f)`), the Go-`HandlerFunc`
+// form the plan names as the fallback for `impl Handler` (Q27). Deferred beyond
+// CORE (honest markers, not simplifications):
+//   · streaming request/response bodies + write-backpressure  [M-178-server-streaming]
+//   · middleware onion, 100-continue, keep-alive, chunked request decode
+//     [M-178-server-policy-surface]
+//   · graceful deadline-drain — `supervised(deadline:)` is unimplemented in main
+//     (only `supervised(cancel:)` exists); cancel-based stop-accept lands in
+//     servernet, deadline-bounded drain is gated. [M-178-server-graceful-deadline]
+//   · typed `#impl(Deserialize)` request bodies — serde in the http CU trips a
+//     codegen defect (see std.http.serdejson). [M-178-server-typed-body]
+
+module std.http.server
+
+import std.http.{Method, StatusCode, Version, HeaderMap, HttpError}
+
+// ── ServerRequest ─────────────────────────────────────────────────────────────
+
+/// A fully-received HTTP/1.1 request (CORE: body buffered in memory). Path params
+/// (`{name}` from the matched `ServeMux` route) are filled in by dispatch.
+#stable(since = "0.1")
+export type ServerRequest value {
+    ro method  Method
+    ro target  str              // raw request-target (origin-form: path[?query])
+    ro path    str              // decoded path (query stripped)
+    ro query   str              // raw query string ("" if none)
+    ro version Version
+    ro headers HeaderMap
+    ro params  [](str, str)     // matched {name} path params
+    ro body    []u8
+}
+
+/// Request method.
+#stable(since = "0.1")
+export fn ServerRequest @method() -> Method => @method
+/// Decoded request path (no query).
+#stable(since = "0.1")
+export fn ServerRequest @path() -> str => @path
+/// Raw request-target (path + optional "?query").
+#stable(since = "0.1")
+export fn ServerRequest @target() -> str => @target
+/// Request headers.
+#stable(since = "0.1")
+export fn ServerRequest @headers() -> HeaderMap => @headers
+/// Buffered request body bytes.
+#stable(since = "0.1")
+export fn ServerRequest @body_bytes() -> []u8 => @body
+
+/// First value of a request header (case-insensitive), or `None`.
+#stable(since = "0.1")
+export fn ServerRequest @header(name str) -> Option[str] {
+    match @headers.get(name) {
+        Some(hv) => match hv.to_str() { Ok(s) => Some(s), Err(_) => None }
+        None     => None
+    }
+}
+
+/// A matched path parameter (`{name}`), or `None`.
+#stable(since = "0.1")
+export fn ServerRequest @param(name str) -> Option[str] {
+    for (k, v) in @params {
+        if k == name { return Some(v) }
+    }
+    None
+}
+
+/// First query parameter value for `key` (percent-decoded), or `None`.
+#stable(since = "0.1")
+export fn ServerRequest @query_param(key str) -> Option[str] {
+    for (k, v) in parse_query(@query) {
+        if k == key { return Some(v) }
+    }
+    None
+}
+
+// Attach matched path params (used by ServeMux dispatch).
+fn ServerRequest @with_params(ps [](str, str)) -> ServerRequest =>
+    { @method, @target, @path, @query, @version, @headers, params: ps, @body }
+
+// ── ServerResponse ──────────────────────────────────────────────────────────
+
+/// A handler's response (CORE: in-memory body → exact Content-Length framing).
+#stable(since = "0.1")
+export type ServerResponse value {
+    ro status  int
+    ro headers HeaderMap
+    ro body    []u8
+}
+
+/// Response with a status code and empty body/headers.
+#stable(since = "0.1")
+export fn ServerResponse.new(status int) -> ServerResponse =>
+    { status, headers: HeaderMap.new(), body: Vec[u8].of() }
+
+/// `text/plain; charset=utf-8` response.
+#stable(since = "0.1")
+export fn ServerResponse.text(status int, s str) -> ServerResponse {
+    mut h = HeaderMap.new()
+    match h.insert("Content-Type", "text/plain; charset=utf-8") { Ok(_) => (), Err(_) => () }
+    { status, headers: h, body: s.to_bytes() }
+}
+
+/// `text/html; charset=utf-8` response.
+#stable(since = "0.1")
+export fn ServerResponse.html(status int, s str) -> ServerResponse {
+    mut h = HeaderMap.new()
+    match h.insert("Content-Type", "text/html; charset=utf-8") { Ok(_) => (), Err(_) => () }
+    { status, headers: h, body: s.to_bytes() }
+}
+
+/// Raw-bytes response with an explicit Content-Type.
+#stable(since = "0.1")
+export fn ServerResponse.bytes(status int, content_type str, data []u8) -> ServerResponse {
+    mut h = HeaderMap.new()
+    match h.insert("Content-Type", content_type) { Ok(_) => (), Err(_) => () }
+    { status, headers: h, body: data }
+}
+
+/// Bodyless response (204/304/…).
+#stable(since = "0.1")
+export fn ServerResponse.empty(status int) -> ServerResponse =>
+    { status, headers: HeaderMap.new(), body: Vec[u8].of() }
+
+/// Redirect response (`Location: location`).
+#stable(since = "0.1")
+export fn ServerResponse.redirect(status int, location str) -> ServerResponse {
+    mut h = HeaderMap.new()
+    match h.insert("Location", location) { Ok(_) => (), Err(_) => () }
+    { status, headers: h, body: Vec[u8].of() }
+}
+
+/// Add/replace a response header.
+#stable(since = "0.1")
+export fn ServerResponse @header(name str, value str) -> ServerResponse {
+    mut h = @headers
+    match h.insert(name, value) { Ok(_) => (), Err(_) => () }
+    { @status, headers: h, @body }
+}
+
+/// Status code (borrow).
+#stable(since = "0.1")
+export fn ServerResponse @status_code() -> int => @status
+
+// ── Handler (concrete closure newtype — Go HandlerFunc, Q27 fallback) ─────────
+
+/// A request handler: a function `ServerRequest -> ServerResponse`. CORE uses this
+/// concrete closure newtype (the plan's `impl Handler` fallback) so handlers store
+/// in `ServeMux` routes without existential boxing.
+#stable(since = "0.1")
+export type Handler value { priv f fn(ServerRequest) -> ServerResponse }
+
+/// Wrap a closure as a `Handler`.
+#stable(since = "0.1")
+export fn handler_fn(f fn(ServerRequest) -> ServerResponse) -> Handler => { f }
+
+/// Invoke the handler.
+#stable(since = "0.1")
+export fn Handler @handle(req ServerRequest) -> ServerResponse => (@f)(req)
+
+// ── ServeMux (Go-1.22-style routing) ──────────────────────────────────────────
+
+type Route value { ro method str, ro pattern str, ro handler Handler }
+
+/// Path-routing multiplexer: registers `(METHOD, pattern)` → `Handler`. Patterns
+/// are `/lit/{param}` segments; `{name}` matches one segment. Dispatch yields 404
+/// (no path match) or 405 + `Allow` (path matched, method did not). `HEAD` falls
+/// back to a `GET` route.
+#stable(since = "0.1")
+export type ServeMux value { priv routes []Route, priv not_found Option[Handler] }
+
+/// Empty mux.
+#stable(since = "0.1")
+export fn ServeMux.new() -> ServeMux => { routes: Vec[Route].of(), not_found: None }
+
+/// Register `handler` for `method` + `pattern`.
+#stable(since = "0.1")
+export fn ServeMux @handle(method str, pattern str, handler Handler) -> ServeMux {
+    mut rs = @routes
+    rs.push(Route { method: method.to_ascii_upper(), pattern, handler })
+    { routes: rs, @not_found }
+}
+
+/// Register a `GET` route.
+#stable(since = "0.1")
+export fn ServeMux @get(pattern str, handler Handler) -> ServeMux => @handle("GET", pattern, handler)
+/// Register a `POST` route.
+#stable(since = "0.1")
+export fn ServeMux @post(pattern str, handler Handler) -> ServeMux => @handle("POST", pattern, handler)
+/// Register a `PUT` route.
+#stable(since = "0.1")
+export fn ServeMux @put(pattern str, handler Handler) -> ServeMux => @handle("PUT", pattern, handler)
+/// Register a `DELETE` route.
+#stable(since = "0.1")
+export fn ServeMux @delete(pattern str, handler Handler) -> ServeMux => @handle("DELETE", pattern, handler)
+/// Register a `PATCH` route.
+#stable(since = "0.1")
+export fn ServeMux @patch(pattern str, handler Handler) -> ServeMux => @handle("PATCH", pattern, handler)
+
+/// Set the 404 (no-route) handler.
+#stable(since = "0.1")
+export fn ServeMux @not_found(handler Handler) -> ServeMux => { @routes, not_found: Some(handler) }
+
+/// Route a request → response. 404 if no path matches; 405 + `Allow` if the path
+/// matches but the method does not; otherwise the matched handler (with params).
+#stable(since = "0.1")
+export fn ServeMux @dispatch(req ServerRequest) -> ServerResponse {
+    ro reqm = req.method().as_str()
+    mut path_matched = false
+    mut allow = Vec[str].of()
+    for r in @routes {
+        match match_pattern(r.pattern, req.path()) {
+            Some(params) => {
+                path_matched = true
+                ro mok = r.method == reqm || (r.method == "GET" && reqm == "HEAD")
+                if mok {
+                    return r.handler.handle(req.with_params(params))
+                } else {
+                    allow.push(r.method)
+                }
+            }
+            None => ()
+        }
+    }
+    if path_matched {
+        method_not_allowed(allow)
+    } else {
+        match @not_found {
+            Some(h) => h.handle(req)
+            None    => ServerResponse.text(404, "404 page not found")
+        }
+    }
+}
+
+fn method_not_allowed(allow []str) -> ServerResponse {
+    consume sb = StringBuilder.with_capacity(32)
+    mut first = true
+    for m in allow {
+        if !first { sb.append(", ") }
+        sb.append(m)
+        first = false
+    }
+    ServerResponse.text(405, "405 method not allowed").header("Allow", sb.into_str())
+}
+
+// Match a route pattern against a request path. Returns matched {name} params, or
+// None if no match. Segment counts must be equal; literal segments compare exactly;
+// `{name}` binds one segment.
+fn match_pattern(pattern str, path str) -> Option[[](str, str)] {
+    ro pseg = split_segments(pattern)
+    ro rseg = split_segments(path)
+    if pseg.len() != rseg.len() { return None }
+    mut params = Vec[(str, str)].of()
+    mut i = 0
+    ro n = pseg.len()
+    while i < n {
+        ro p = pseg[i]
+        ro r = rseg[i]
+        if p.starts_with("{") && p.ends_with("}") {
+            ro name = p[1..p.byte_len() - 1]
+            params.push((name, percent_decode(r)))
+        } else if p != r {
+            return None
+        }
+        i += 1
+    }
+    Some(params)
+}
+
+fn split_segments(s str) -> []str {
+    mut out = Vec[str].of()
+    for part in s.split("/") {
+        if part.byte_len() > 0 { out.push(part) }
+    }
+    out
+}
+
+// ── serve_once: the pure request→response driver (mock-testable, no sockets) ──
+
+/// Parse a raw HTTP/1.1 request, route it through `mux`, and serialize the
+/// response. The single unit reused by both the mock tests and the live socket
+/// runner (std.http.servernet). Malformed request → 400.
+#stable(since = "0.1")
+export fn serve_once(mux ServeMux, raw []u8) -> []u8 {
+    match parse_request(raw) {
+        Ok(req)  => serialize_response(mux.dispatch(req))
+        Err(_)   => serialize_response(ServerResponse.text(400, "400 bad request"))
+    }
+}
+
+// ── query / percent helpers ───────────────────────────────────────────────────
+
+fn parse_query(q str) -> [](str, str) {
+    mut out = Vec[(str, str)].of()
+    if q.byte_len() == 0 { return out }
+    for pair in q.split("&") {
+        if pair.byte_len() == 0 { continue }
+        match pair.find("=") {
+            Some(i) => out.push((percent_decode(pair[0..i]), percent_decode(pair[i + 1..pair.byte_len()])))
+            None    => out.push((percent_decode(pair), ""))
+        }
+    }
+    out
+}
+
+// Minimal percent-decode (+ → space, %XX → byte). Invalid escapes pass through.
+fn percent_decode(s str) -> str {
+    ro b = s.to_bytes()
+    ro n = b.len
+    mut out = Vec[u8].with_capacity(n)
+    mut i = 0
+    while i < n {
+        ro c = b[i] as int
+        if c == 0x2B {
+            out.push(0x20)
+            i += 1
+        } else if c == 0x25 && i + 2 < n {
+            ro hi = hex_val(b[i + 1] as int)
+            ro lo = hex_val(b[i + 2] as int)
+            if hi >= 0 && lo >= 0 {
+                out.push((hi * 16 + lo) as u8)
+                i += 3
+            } else {
+                out.push(b[i])
+                i += 1
+            }
+        } else {
+            out.push(b[i])
+            i += 1
+        }
+    }
+    str.from_bytes_unchecked(out)
+}
+
+fn hex_val(c int) -> int {
+    if c >= 0x30 && c <= 0x39 { c - 0x30 }
+    else if c >= 0x61 && c <= 0x66 { c - 0x61 + 10 }
+    else if c >= 0x41 && c <= 0x46 { c - 0x41 + 10 }
+    else { -1 }
+}

@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.3 / D361: std/http/server/wire.nv — HTTP/1.1 server-side wire codec.
+//
+// Parse a raw request (request-line + headers + Content-Length body) into a
+// `ServerRequest`, and serialize a `ServerResponse` to wire bytes. Pure Nova over
+// `[]u8` (byte-correct incl. non-UTF-8 bodies). CORE framing: Content-Length
+// (identity); chunked request decode + streaming are deferred (server.nv markers).
+// Header name/value validation (CR/LF/NUL, tchar) is enforced by HeaderMap/
+// HeaderValue (anti-injection, shared with the client).
+
+module std.http.server
+
+import std.http.{Method, StatusCode, Version, HeaderMap, HttpError}
+
+// ── Request parsing ────────────────────────────────────────────────────────────
+
+// Parse a full raw HTTP/1.1 request. Malformed request-line/headers → Protocol.
+// `Host` is mandatory (HTTP/1.1, RFC 9112 §3.2) → missing Host is a Protocol error.
+fn parse_request(raw []u8) -> Result[ServerRequest, HttpError] {
+    ro n = raw.len
+    ro head_end = match find_double_crlf(raw, 0) {
+        Some(x) => x
+        None    => return Err(HttpError.protocol_error("request: no header terminator"))
+    }
+    ro body_start = head_end + 4
+
+    ro first_eol = match find_crlf(raw, 0) {
+        Some(x) => x
+        None    => return Err(HttpError.protocol_error("request: empty request line"))
+    }
+    ro (method, target, path, query, version) = parse_request_line(slice(raw, 0, first_eol))?
+
+    mut hm = HeaderMap.new()
+    mut i = first_eol + 2
+    mut running = true
+    while running && i < head_end {
+        ro eol = match find_crlf(raw, i) { Some(x) => x, None => head_end }
+        if eol <= i {
+            running = false
+        } else {
+            parse_header_line(hm, slice(raw, i, eol))?
+            i = eol + 2
+        }
+    }
+
+    if !hm.contains("host") {
+        return Err(HttpError.protocol_error("request: missing mandatory Host header"))
+    }
+
+    // Body framing: Content-Length (identity). Absent → empty body (CORE).
+    ro body = match hm.content_length()? {
+        Some(len) => {
+            ro avail = n - body_start
+            ro take = if len < avail { len } else { avail }
+            slice(raw, body_start, body_start + take)
+        }
+        None => Vec[u8].of()
+    }
+
+    Ok({ method, target, path, query, version, headers: hm, params: Vec[(str, str)].of(), body })
+}
+
+fn parse_request_line(line []u8) -> Result[(Method, str, str, str, Version), HttpError] {
+    ro sp1 = match index_of(line, 0x20, 0) {
+        Some(x) => x
+        None    => return Err(HttpError.protocol_error("request line: no space after method"))
+    }
+    ro method = Method.parse(str.from_bytes_unchecked(slice(line, 0, sp1)))?
+    ro sp2 = match index_of(line, 0x20, sp1 + 1) {
+        Some(x) => x
+        None    => return Err(HttpError.protocol_error("request line: no space after target"))
+    }
+    ro target = str.from_bytes_unchecked(slice(line, sp1 + 1, sp2))
+    if target.byte_len() == 0 {
+        return Err(HttpError.protocol_error("request line: empty target"))
+    }
+    // Reject `..`-traversal in the raw target (path smuggling defence, Q14/Q28).
+    if target.contains("..") {
+        return Err(HttpError.protocol_error("request line: path traversal (..) rejected"))
+    }
+    ro version = parse_version(str.from_bytes_unchecked(slice(line, sp2 + 1, line.len)))?
+    ro (path, query) = match target.find("?") {
+        Some(q) => (target[0..q], target[q + 1..target.byte_len()])
+        None    => (target, "")
+    }
+    Ok((method, target, path, query, version))
+}
+
+fn parse_version(tok str) -> Result[Version, HttpError] {
+    match tok {
+        "HTTP/1.0" => Ok(Http10)
+        "HTTP/1.1" => Ok(Http11)
+        _          => Err(HttpError.protocol_error("request line: unsupported HTTP version"))
+    }
+}
+
+fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
+    ro colon = match index_of(line, 0x3A, 0) {
+        Some(x) => x
+        None    => return Err(HttpError.protocol_error("header line: no colon"))
+    }
+    ro name = str.from_bytes_unchecked(slice(line, 0, colon))
+    ro value = trim_ows(slice(line, colon + 1, line.len))
+    hm.append_bytes(name, value)?
+    Ok(())
+}
+
+// ── Response serialization ─────────────────────────────────────────────────────
+
+// Serialize a ServerResponse to wire bytes. Adds Content-Length + Connection:close
+// when absent. HEAD/204/304 body suppression is applied by the caller (driver).
+fn serialize_response(resp ServerResponse) -> []u8 {
+    ro status = resp.status
+    ro headers = resp.headers
+    ro body = resp.body
+    mut buf = WriteBuffer.with_capacity(128 + body.len)
+    buf.write_str("HTTP/1.1 ")
+    buf.write_str(str.from(status))
+    buf.write_str(" ")
+    buf.write_str(reason_of(status))
+    buf.write_str("\r\n")
+
+    for (nm, v) in headers.iter() {
+        buf.write_str(nm.as_str())
+        buf.write_str(": ")
+        buf.write_bytes(v.as_bytes())
+        buf.write_str("\r\n")
+    }
+
+    if !headers.contains("content-length") && !headers.contains("transfer-encoding") {
+        buf.write_str("Content-Length: ")
+        buf.write_str(str.from(body.len))
+        buf.write_str("\r\n")
+    }
+    if !headers.contains("connection") {
+        buf.write_str("Connection: close\r\n")
+    }
+    buf.write_str("\r\n")
+    if body.len > 0 {
+        buf.write_bytes(body)
+    }
+    buf.into()
+}
+
+fn reason_of(status int) -> str {
+    match StatusCode.new(status as u16) {
+        Ok(sc) => {
+            ro r = sc.reason()
+            if r.byte_len() > 0 { r } else { "Status" }
+        }
+        Err(_) => "Status"
+    }
+}
+
+// ── byte helpers ────────────────────────────────────────────────────────────────
+
+fn slice(b []u8, start int, end int) -> []u8 {
+    mut out = Vec[u8].with_capacity(end - start)
+    mut i = start
+    while i < end {
+        out.push(b[i])
+        i += 1
+    }
+    out
+}
+
+fn index_of(b []u8, target int, from int) -> Option[int] {
+    ro n = b.len
+    mut i = from
+    while i < n {
+        if (b[i] as int) == target { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+fn find_crlf(b []u8, from int) -> Option[int] {
+    ro n = b.len
+    mut i = from
+    while i + 1 < n {
+        if (b[i] as int) == 0x0D && (b[i + 1] as int) == 0x0A { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+fn find_double_crlf(b []u8, from int) -> Option[int] {
+    ro n = b.len
+    mut i = from
+    while i + 3 < n {
+        if (b[i] as int) == 0x0D && (b[i + 1] as int) == 0x0A &&
+           (b[i + 2] as int) == 0x0D && (b[i + 3] as int) == 0x0A {
+            return Some(i)
+        }
+        i += 1
+    }
+    None
+}
+
+fn trim_ows(b []u8) -> []u8 {
+    ro n = b.len
+    mut lo = 0
+    while lo < n && is_ows(b[lo] as int) { lo += 1 }
+    mut hi = n
+    while hi > lo && is_ows(b[hi - 1] as int) { hi -= 1 }
+    slice(b, lo, hi)
+}
+
+fn is_ows(c int) -> bool => c == 0x20 || c == 0x09

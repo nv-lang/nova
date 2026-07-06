@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.3 / D361: std/http/servernet/servernet.nv — live HTTP/1.1 accept loop.
+//
+// The thin `Net`-effect runner around the pure server core (std.http.server): read a
+// full request off a socket (Content-Length framed), run it through `serve_once`,
+// write the response, close. The accept loop uses the Plan 173 / 83.x substrate
+// (supervised / spawn / CancelToken — proven by the net echo tests): each connection
+// is a spawned fiber under a supervised scope; a `CancelToken` stops accept for a
+// cancel-based graceful stop (bounded deadline-drain is gated on `supervised(deadline:)`,
+// unimplemented in main — see server.nv [M-178-server-graceful-deadline]).
+//
+// WHY A SEPARATE MODULE (net isolation, same as std.http.transport): importing
+// std.net brings `NetError` into the namespace, whose `InvalidPort` shadows
+// `ParseUrlError.InvalidPort` reachable through std.http. Keeping the net dependency
+// here preserves std.http.server's clean namespace.
+
+module std.http.servernet
+
+import std.net.{TcpListener, TcpStream, NetError}
+import std.http.server.{ServeMux, serve_once}
+
+/// Read one full HTTP/1.1 request off `stream` (headers + Content-Length body),
+/// route it through `mux`, write the serialized response, and close. One request
+/// per connection (CORE: `Connection: close`; keep-alive is a server marker).
+#stable(since = "0.1")
+export fn handle_connection(consume stream TcpStream, mux ServeMux) Net -> Result[(), NetError] {
+    consume s = stream
+    ro raw = read_request(s)
+    ro resp = serve_once(mux, raw)
+    match s.write_all_bytes(resp) {
+        Ok(_)  => { s.close(); Ok(()) }
+        Err(e) => { s.close(); Err(e) }
+    }
+}
+
+// Read until the header block terminator, then the Content-Length body. On EOF/error
+// mid-read, returns what was accumulated (the parser then yields a 400).
+fn read_request(s mut TcpStream) Net -> []u8 {
+    mut acc = Vec[u8].of()
+    mut header_end = -1
+    mut reading = true
+    while reading && header_end < 0 {
+        match s.read_bytes(65536) {
+            Ok(chunk) => {
+                if chunk.len == 0 { reading = false } else { acc.append(chunk); header_end = dcrlf(acc) }
+            }
+            Err(_) => { reading = false }
+        }
+    }
+    if header_end < 0 { return acc }
+    ro body_start = header_end + 4
+    ro need = content_length_of(acc, header_end)
+    mut more = true
+    while more && (acc.len - body_start) < need {
+        match s.read_bytes(65536) {
+            Ok(chunk) => { if chunk.len == 0 { more = false } else { acc.append(chunk) } }
+            Err(_) => { more = false }
+        }
+    }
+    acc
+}
+
+// Index of CRLF CRLF in `b`, or -1.
+fn dcrlf(b []u8) -> int {
+    ro n = b.len
+    mut i = 0
+    while i + 3 < n {
+        if (b[i] as int) == 0x0D && (b[i + 1] as int) == 0x0A &&
+           (b[i + 2] as int) == 0x0D && (b[i + 3] as int) == 0x0A {
+            return i
+        }
+        i += 1
+    }
+    -1
+}
+
+// Parse Content-Length from the header block (bytes 0..header_end). 0 if absent.
+fn content_length_of(b []u8, header_end int) -> int {
+    ro head = str.from_bytes_unchecked(head_slice(b, header_end)).to_ascii_lower()
+    match head.find("content-length:") {
+        Some(i) => {
+            ro rest = head[i + 15..head.byte_len()]
+            parse_leading_int(rest)
+        }
+        None => 0
+    }
+}
+
+fn head_slice(b []u8, end int) -> []u8 {
+    mut out = Vec[u8].with_capacity(end)
+    mut i = 0
+    while i < end {
+        out.push(b[i])
+        i += 1
+    }
+    out
+}
+
+fn parse_leading_int(s str) -> int {
+    ro b = s.to_bytes()
+    ro n = b.len
+    mut i = 0
+    while i < n && (b[i] as int) == 0x20 { i += 1 }     // skip leading spaces
+    mut v = 0
+    mut seen = false
+    while i < n {
+        ro c = b[i] as int
+        if c >= 0x30 && c <= 0x39 { v = v * 10 + (c - 0x30); seen = true; i += 1 } else { i = n }
+    }
+    if seen { v } else { 0 }
+}

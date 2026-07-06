@@ -4,6 +4,7 @@
 > **Top-level umbrella** (как Plan 176 = io+fs+os): полный HTTP-стек Nova в ОДНОМ плане — message-model, URL, HTTP/1.1 client+server, HTTPS, HTTP/2 (client+server).
 > Создан 2026-06-26. Статус **📋 READY** (**Ред. 2 — 2026-07-03**: renumber → D357–D362 выполнен; стейл-номера сняты; siblings-дыры закрыты: Monotonic/from_secs, cancel-семантика, ErrSource-export, write-backpressure, 1xx-loop, NO_PROXY-матрица, TE-trailers).
 > Маркер **[M-178-std-http]**. Запуск: «выполни план 178».
+> **Ред. 3 — 2026-07-06 (Ф.2-enh + Ф.3-server):** typed-json ПРИЗЕМЛЁН (`json_decode_body[T]` в `std.http.serdejson`); Ф.3 server-CORE ПРИЗЕМЛЁН pure (`std.http.server`: ServeMux/Handler/parse/serialize/serve_once — 9 mock-тестов). Auto-decompress БЛОКИРОВАН codegen'ом (compress↔http `ErrorKind` C-mangling collision — НЕ Plan 179); timeout REFINED-gate (нет effect-poly deadline-combinator / `supervised(deadline:)`); server live-socket runner написан но НЕ линкуется (net+http combined-CU ctor-emission bug). Детали + 5 новых codegen-маркеров → [backlog-followups.md §Plan 178 Ф.3](backlog-followups.md).
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** 178 — **точка
 > схождения пяти стрелок**; **Ред. 2 пройдена 2026-07-03**: D-блоки renumber'нуты в **D357–D362**
 > (ex-D327–D332: D327/D328 заняты 172.2/172.4; D356 — резерв 174); «from_bytes уже есть» был ЛОЖНЫМ green
