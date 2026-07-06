@@ -3997,9 +3997,21 @@ impl CEmitter {
                             .or_default();
                         // Дедуп той же декларации (builtin-снабжение + inline-merge
                         // одного .nv через `import`).
+                        // [M-153.1-append-as-slice-ccfail]: compare PARAM TYPES too —
+                        // otherwise two genuine PARAM-TYPE overloads of the same arity
+                        // on a generic type (`@tag(n int)` / `@tag(s str)`) collapse to
+                        // one `generic_type_methods` entry, the overload selection
+                        // (~28704) sees `same_name.len()==1` → index 0 → both call-sites
+                        // dispatch to the FIRST overload's mono (`Box6..._method_tag`),
+                        // passing a `nova_str` into a `nova_int` param (CC-FAIL). Same
+                        // declaration re-supplied via builtin+import has identical param
+                        // types → still deduped.
                         let dup = entry.iter().any(|g| {
                             g.name == f.name
                                 && g.params.len() == f.params.len()
+                                && g.params.iter().zip(f.params.iter()).all(|(gp, fp)|
+                                    Self::type_ref_overload_key(&gp.ty)
+                                        == Self::type_ref_overload_key(&fp.ty))
                                 && g.receiver.as_ref().map(|r| {
                                     (r.mutable, matches!(r.kind, crate::ast::ReceiverKind::Static))
                                 }) == f.receiver.as_ref().map(|r| {
@@ -14938,6 +14950,40 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
             _ => {}
+        }
+    }
+
+    /// [M-153.1-append-as-slice-ccfail] Span-free structural key for a `TypeRef`,
+    /// used to distinguish method OVERLOADS by their parameter types (`TypeRef`
+    /// derives neither `PartialEq` nor a span-free form; its span fields make a
+    /// naive comparison useless). Only needs to be injective enough to tell
+    /// `tag(int)` from `tag(str)` — surface path + nesting, no spans.
+    fn type_ref_overload_key(t: &crate::ast::TypeRef) -> String {
+        use crate::ast::TypeRef as T;
+        match t {
+            T::Named { path, generics, .. } => {
+                let mut s = path.join(".");
+                if !generics.is_empty() {
+                    s.push('[');
+                    s.push_str(&generics.iter().map(Self::type_ref_overload_key)
+                        .collect::<Vec<_>>().join(","));
+                    s.push(']');
+                }
+                s
+            }
+            T::Array(inner, _) => format!("[]{}", Self::type_ref_overload_key(inner)),
+            T::FixedArray(n, inner, _) => format!("[{}]{}", n, Self::type_ref_overload_key(inner)),
+            T::Tuple(elems, _) => format!("({})",
+                elems.iter().map(Self::type_ref_overload_key).collect::<Vec<_>>().join(",")),
+            T::Func { params, return_type, .. } => format!("fn({})->{}",
+                params.iter().map(Self::type_ref_overload_key).collect::<Vec<_>>().join(","),
+                return_type.as_ref().map(|r| Self::type_ref_overload_key(r)).unwrap_or_default()),
+            T::Protocol { .. } => "protocol".to_string(),
+            T::Unit(_) => "()".to_string(),
+            T::Readonly(inner, _) => format!("ro {}", Self::type_ref_overload_key(inner)),
+            T::Mut(inner, _) => format!("mut {}", Self::type_ref_overload_key(inner)),
+            T::Unsafe(inner, _) => format!("unsafe {}", Self::type_ref_overload_key(inner)),
+            T::Pointer(inner, _) => format!("*{}", Self::type_ref_overload_key(inner)),
         }
     }
 
