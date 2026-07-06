@@ -10,10 +10,11 @@ test "variadic of: int, multiple args" {
     assert(v.len() == 3 && v[0] == 1 && v[1] == 2 && v[2] == 3)
 }
 
-test "variadic of: empty (0 args)" {
-    ro v = Vec[int].of()
-    assert(v.len() == 0)
-}
+// `of()` with 0 args used to be a legal empty-vector spelling; D259 amend
+// (2026-07-06) makes it a contract violation (`requires args.len() > 0` on
+// `Vec[T].of`) — the panic fixture is standalone at
+// std/collections/vec/neg/vec_of_empty_panic.nv (this file merges several
+// positive tests into one module, not a place for EXPECT_RUNTIME_PANIC).
 
 test "variadic of: str element type" {
     ro v = Vec[str].of("a", "b")

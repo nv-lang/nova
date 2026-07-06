@@ -1591,3 +1591,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - ✅ **FIXED [M-172-errdefer-okdefer-dead-surface]** (Plan 173 Ф.1, 2026-07-03) — все три слоя закрыты.
   `errdefer`/`okdefer`/`defer |result|` ретракнуты (D189, hard cutover); парсер реджектит их
   tombstone-хинтом `[D189-removed-*]` (`parser/mod.rs:10052-10090`). **(1) USER-FACING БАГ (P1) —
+
+- **[M-vec-access-e7320-as-bytes-str]** (2026-07-06, P2, найден агентом of-guard) — `nova test
+  --full std/collections/vec` даёт CODEGEN-FAIL юнита `vec/access`: три ошибки
+  `[E7320] no field or method as_bytes on type str` со спанами access.nv:89/99/107 (зона
+  `e == v` в `@contains`/`@index_of` + doc-комментарий). При этом в модуле vec НЕТ ни одного
+  вызова `as_bytes` в коде (только комментарии) и НЕТ инстансов `Vec[str]`; `str @equal`
+  использует RawMem.compare, не as_bytes. Вызов синтезируется компилятором где-то в CU,
+  спаны CU-меток съехали (известная болезнь). Pre-existing на main (проверено тем же
+  бинарём до правок of-guard). Разведка корня — opus-агент 2026-07-06.

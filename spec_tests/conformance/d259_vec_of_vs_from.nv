@@ -2,7 +2,9 @@
 // `from` for CONVERTING an existing collection (Plan 153.1).
 //   • `[]T.of(a, b, c)` (variadic) — build a Vec from a literal list of elements.
 //   • `[]T.from(coll)`  — clone-like conversion of an existing `[]T`/collection.
-//   • `[]T.new()` / `[]T.of()` — empty vector.
+//   • `[]T.new()` — empty vector. `[]T.of()` with ZERO args is a contract
+//     violation (D259 amend, 2026-07-06, `requires args.len() > 0` on `of`) —
+//     see std/collections/vec/neg/vec_of_empty_panic.nv for the panic fixture.
 // Both `of` and `from` materialise the SAME element sequence; `from(coll)` is an
 // INDEPENDENT copy (mutating the source afterwards must not touch the result).
 // Spec: spec/decisions/02-types.md:12292 (D259). Depends on D232 (`[]T`), D239 (`[]T ≡ Vec[T]`).
@@ -17,10 +19,12 @@ test "of(a, b, c) builds a Vec from a literal element list (D259)" {
     assert(v[2] == 3)
 }
 
-test "of() and new() both yield an empty Vec (D259)" {
-    ro a = []int.of()
+// `of()` with zero args used to be an alternate empty-vector spelling; it is
+// now a contract violation (D259 amend, 2026-07-06) — the panic fixture lives
+// standalone at std/collections/vec/neg/vec_of_empty_panic.nv (this file is a
+// single merged conformance CU, not a place for an EXPECT_RUNTIME_PANIC test).
+test "new() yields an empty Vec (D259 amend: of() with no args is now rejected)" {
     ro b = []int.new()
-    assert(a.len() == 0)
     assert(b.len() == 0)
 }
 
