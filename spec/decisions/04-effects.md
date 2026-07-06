@@ -6274,8 +6274,13 @@ user-visible эффект, высокий churn) — только задокум
 
 ## D407 — `std/net` переработка: один слой FFI, байтовый транспорт, zero-copy, M:N-безопасность (Plan 183, 2026-07-06)
 
-**Source:** Plan 183 Ф.0, 2026-07-06. **Status:** ✅ ACTIVE (spec-first; C-слой `net2.c`
-Ф.1, .nv-обвязка Ф.2+). **Амендит:** [D173](../decisions/08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv)
+**Source:** Plan 183 Ф.0, 2026-07-06. **Status:** ✅ ACTIVE — Ф.0-Ф.4 SHIPPED (2026-07-06):
+`net2.c`/`net2.h` (Ф.1) + `std/net2` .nv-обвязка (Ф.2) + потребители (`std/http`, тесты,
+`examples/net/*`) мигрированы (Ф.3) + M:N-стресс/эхо-замер (Ф.4, amend ниже). **Остаток —
+Ф.5-хвост, НЕ этот D-блок:** физическое удаление старого `std/net`/`net.c` + namespace-ренейм
+`net2`→`net`, гейтовано на санацию `nova_tests` — `[M-183-old-net-removal-after-182]`
+(`docs/backlog-followups.md`); до этого старый слой живёт с `// DEPRECATED`-баннером.
+**Амендит:** [D173](../decisions/08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv)
 (байтовый транспорт вместо `str`), [D282](../decisions/08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1)
 (один слой FFI, без `NovaRt_*_method_*`), [D301](#d301)/[D302](#d302) (split без
 дублирующего C-API; EOF/ошибки — коды). **Связь:** [D357](#d357) (Http-транспорт
@@ -6315,17 +6320,43 @@ user-visible эффект, высокий churn) — только задокум
    Текст ошибки строит Nova-сторона из кода (`nova_net_strerror(code, buf, cap)`).
    Инвариант: `grep -E "__thread|__declspec\(thread\)" net2.c` = **0**.
 5. **`SocketAddr` = value-запись** (снимает `[M-net-socketaddr-value-record]`): адрес —
-   данные (≤16 байт адреса + порт + вид семейства), не handle. Убирает `_nova_alloc_addr`
+   данные (16 байт адреса + порт + вид семейства + паддинг = **20-байтный образ**
+   `NovaNetAddr`, `std/net2/addr.nv ADDR_IMAGE_BYTES`), не handle. Убирает `_nova_alloc_addr`
    и `_net_recv_sender`-слот. Единственные **неизбежные** копии (как у Rust/Go, поимённо):
    (а) `sockaddr_storage`→`NovaNetAddr` при запросе адреса (accept/peer/local); (б) sender
-   UDP recv; (в) `addrinfo`→GC-массив `NovaNetAddr` в DNS. НЕ в hot-path payload.
+   UDP recv; (в) `addrinfo`→GC-массив `NovaNetAddr` в DNS — **одним `getaddrinfo`-вызовом**
+   (libuv уже держит весь список адресов в колбэке, C выделяет GC-массив точного `count` —
+   нет повторного/угадывающего запроса, `nova_net_dns_lookup`). НЕ в hot-path payload.
 6. **Split без дублирующего C-API** (упрощение D301). У stream-handle с рождения
    раздельные `read_scope`/`write_scope` park-слоты → read и write независимы (full-duplex)
    БЕЗ отдельного набора `tcp_read_half_*`/`tcp_write_half_*`. «Split» на Nova-стороне =
-   раздать один handle двум half-значениям; C добавляет лишь refcount close.
+   раздать один handle двум half-значениям; close — по **refcount** (`nova_net_tcp_mark_split`
+   ставит `split_refcount=2`, каждый `close()` декрементирует, реальный `uv_close` — на 0).
 7. **Парковка/пробуждение/отмена — без изменений** (park/wake поверх libuv, `stop_cb` +
    `nova_loop_defer_close`): M:N-корректны (park-слот в scope, не в потоке). Дефект Д2 был
    в передаче результатов, не в парковке.
+
+**AMEND (Plan 183 Ф.4, 2026-07-06 — loop-affinity контракт, найден M:N-стресс-тестом).**
+Пункт 7 неполон: парковка корректна, но обнаружен **отдельный** M:N-инвариант, которому
+она подчиняется. Причина исходного UDP-флейка (~1-2/10 TIMEOUT) — НЕ lost-wake и НЕ
+потеря датаграммы (обе гипотезы проверены трейсом и отвергнуты), а **loop-affinity**: uv-handle
+пришпилен к libuv-loop'у, на котором создан (`nova_current_loop()` в bind/connect/accept);
+libuv-loop'ы не thread-safe, единственный cross-thread-safe вход — `uv_async_send`
+(его использует `nova_loop_defer_close`). Под M:N (каждый worker — свой loop) uv-оп,
+выданный на handle с loop'а ДРУГОГО потока (в т.ч. с main-loop `_evloop`, пока main крутит
+его `uv_run(UV_RUN_ONCE)` в supervised-drain), — конкурентная cross-thread мутация loop'а:
+req теряется, completion-callback не приходит, `park_until`-предикат никогда не истинен →
+волокно виснет навсегда. **Контракт** (задокументирован в заголовке `net2.c`, «LOOP-AFFINITY
+CONTRACT»): создавай handle ВНУТРИ волокна, которое им оперирует; все дальнейшие uv-опы на
+этом handle — только с того же волокна/worker'а. TCP не проявлял флейк, т.к. `connect`/`accept`
+создают stream на loop'е текущего worker'а естественно; UDP-тесты (`socket.bind()` в
+управляющем волокне, `send_to`/`recv_from` в spawn-волокнах) нарушали контракт неявно.
+После приведения тестов к контракту: 60/60 seq + 128/128 16-way-parallel (было ~1/40, ~1/96).
+Остаточный узкий класс (work-stealing миграция волокна МЕЖДУ парковками → следующий оп с
+чужого worker'а) и полный субстратный фикс (маршалинг issue-стороны каждого uv-опа на
+owning-loop-thread через defer-op-очередь, обобщение `nova_loop_defer_close`) —
+`[M-183-net2-loop-affinity-cross-thread-op]` (backlog, P2, НЕ регрессия — контракт достаточен
+для всех текущих потребителей).
 
 ### Миграция
 
@@ -6334,6 +6365,19 @@ user-visible эффект, высокий churn) — только задокум
 `str`-опов/`NovaRt_*_method_*` атомарно. Breaking внутри pre-release-окна (`std/net`
 ещё `#stable(since="0.1")`, не зарелижен). Критерии приёмки — план §4 (grep-инварианты
 =0, live-socket M:N-smoke детерминированно зелёный, эхо-замер не хуже старого слоя).
+
+**Ф.5-факт (2026-07-06):** Ф.1-Ф.4 SHIPPED как описано выше (мотивация/решение — не
+изменились, реализация подтверждена построчной сверкой с `net2.c`/`std/net2/*.nv`); из
+пяти критериев §4 плана 4 закрыты полностью, 5-й («один слой», п.1) закрыт **для нового
+слоя** (`net2.c`: 0 `NovaRt_*_method_*`, 0 `__thread`) — старый `net.c` физически ещё
+существует (потребители `nova_tests/plan83_12/91_12/91_15/91_16/plan178` не мигрированы,
+намеренно, до Plan 182), поэтому global-grep по репозиторию пока не 0; это отслеживается
+как `[M-183-old-net-removal-after-182]`, не как незакрытый критерий D407. Побочные
+компиляторные дефекты, вскрытые в ходе реализации (НЕ дефекты этого D-блока, задокументированы
+в `docs/backlog-followups.md` под Plan-183-заголовками): GC-трассировка `Vec[value-record
+с heap-полем]` сквозь vtable/generic-erasure, `Result[_, XError].unwrap()` на typed-error,
+type-inferred `[]u8`-буфер теряющий `resize`, `nova build` ICE на consume-результате
+effect-операции, same-module `to_str()`-коллизия на `int`-receiver'е.
 
 ---
 
