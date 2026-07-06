@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_REF_CALL_MARKER_REMOVED
+//
+// D326-ревизия (Plan 184 Р4): call-site маркер `ref x` удалён — вызов везде
+// `f(x)` без `ref`. Кучевые объекты и так мутируются без маркера.
+module neg.call_marker_removed
+
+fn takes(x int) -> int => x
+
+test "call-site ref marker removed" {
+    mut x = 5
+    ro _ = takes(ref x)
+    assert(true)
+}

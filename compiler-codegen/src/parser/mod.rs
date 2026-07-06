@@ -3509,46 +3509,37 @@ impl Parser {
                 ));
             }
         }
-        // Plan 172.5 (D326 R2): `ref` passing-mode marker — `ro ref name T`
-        // (read-only borrow) / `mut ref name T` (mutable in-out borrow).
-        // `ref` — режим передачи, НЕ тип: consume/const несовместимы (borrow ≠
-        // move / comptime-literal, R12); bare `ref` без `ro`/`mut` неполон.
-        let mut ref_mode = crate::ast::ParamRefMode::None;
+        // Plan 184 (D326-ревизия Р3/Р10): `ref` ИСЧЕЗАЕТ из сигнатур параметров.
+        // Формы `mut ref name T` / `ro ref name T` / `ref name T` — удалены.
+        // Синтаксис параметра — тройная ось режима {ro, mut, consume} БЕЗ `ref`:
+        // `f(x T)` (ro, представление по размеру), `f(mut x T)` (in-out всегда),
+        // `f(consume x T)` (владение). `ref` остаётся только как тип приёмника
+        // (`@` = `ref Self`), `-> @` и локал-алиасы (Р1).
+        let ref_mode = crate::ast::ParamRefMode::None;
         if matches!(self.peek().kind, TokenKind::KwRef) {
             let ref_span = self.peek().span;
-            if is_const_param {
-                return Err(Diagnostic::new(
-                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
-                     `const` и `ref` (D199 / D326): `const` — comptime literal без \
-                     runtime storage, `ref` — borrow caller-стораджа. Убери один."
-                        .to_string(),
-                    ref_span,
-                ));
-            }
-            if is_consume {
-                return Err(Diagnostic::new(
-                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
-                     `consume` и `ref` (D326 R12): `consume` = передача владения \
-                     (move), `ref` = borrow — взаимоисключающие. Убери один."
-                        .to_string(),
-                    ref_span,
-                ));
-            }
-            self.bump(); // ref
-            if is_mut {
-                ref_mode = crate::ast::ParamRefMode::MutRef;
+            let hint = if is_mut {
+                "пишите `mut x T` — параметр `mut` теперь in-out ссылка всегда"
             } else if has_readonly_prefix {
-                ref_mode = crate::ast::ParamRefMode::RoRef;
+                "пишите `x T` — представление ro-параметра выбирает компилятор по размеру"
             } else {
-                return Err(Diagnostic::new(
-                    "[E_REF_MODE_REQUIRES_RO_OR_MUT] `ref` — режим передачи \
-                     параметра (D326 R2), обязана предшествовать `ro` или `mut`: \
-                     `ro ref name T` (read-only borrow) или `mut ref name T` \
-                     (mutable in-out borrow). Голый `ref name T` неполон."
-                        .to_string(),
-                    ref_span,
-                ));
-            }
+                "пишите `mut x T` (in-out) либо `x T` (ro)"
+            };
+            return Err(Diagnostic::new(
+                format!(
+                    "[E_REF_PARAM_FORM_REMOVED] формы `mut ref`/`ro ref`/`ref` в \
+                     параметре удалены (D326-ревизия, Plan 184 Р3/Р10): `ref` больше \
+                     не пишется в сигнатуре. {}.",
+                    hint
+                ),
+                ref_span,
+            )
+            .with_suggestion(crate::diag::Suggestion {
+                message: hint.to_string(),
+                span: ref_span,
+                replacement: String::new(),
+                applicability: crate::diag::Applicability::MachineApplicable,
+            }));
         }
         let (name, name_span) = self.parse_ident()?;
         // D6: mut-маркер после имени — `name mut type` (legacy form).
@@ -3622,21 +3613,27 @@ impl Parser {
         })
     }
 
-    /// Plan 172.5 (D326 R4): парсит значение аргумента вызова, распознавая
-    /// call-site маркер `ref <place>`. `ref` здесь — единственная (кроме
-    /// параметра) легальная позиция ключевого слова; оборачивает place в
-    /// `ExprKind::RefArg`. Вне arg-позиции `ref` в выражении не появляется
-    /// (parse_expr его не принимает как prefix → ошибка «expected expression»).
+    /// Plan 184 (D326-ревизия Р4): call-site маркер `ref <place>` УДАЛЁН.
+    /// Вызов везде `f(x)` — без `ref x`. Обоснование владельца: кучевые объекты
+    /// и так мутируются без маркера; маркер на стековых давал ложное чувство
+    /// «нет `ref` = нет мутации». `f(ref x)` → парс-ошибка.
     fn parse_call_arg_value(&mut self) -> Result<Expr, Diagnostic> {
         if matches!(self.peek().kind, TokenKind::KwRef) {
             let ref_span = self.peek().span;
-            self.bump(); // ref
-            let place = self.parse_expr()?;
-            let sp = ref_span.merge(place.span);
-            Ok(Expr::new(ExprKind::RefArg(Box::new(place)), sp))
-        } else {
-            self.parse_expr()
+            return Err(Diagnostic::new(
+                "[E_REF_CALL_MARKER_REMOVED] маркер вызова `ref` удалён \
+                 (D326-ревизия, Plan 184 Р4): пишите `f(x)` без `ref`."
+                    .to_string(),
+                ref_span,
+            )
+            .with_suggestion(crate::diag::Suggestion {
+                message: "уберите маркер `ref` — пишите `f(x)`".to_string(),
+                span: ref_span,
+                replacement: String::new(),
+                applicability: crate::diag::Applicability::MachineApplicable,
+            }));
         }
+        self.parse_expr()
     }
 
     /// Парсит список эффектов между `)` и (`->` | `{` | `=>`).
