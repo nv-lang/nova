@@ -13514,8 +13514,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         "u32"  => "uint32_t",
                         "u16"  => "uint16_t",
                         "u64"  => "uint64_t",
-                        // Plan 133: uint = nova_uint (uintptr_t).
-                        "uint" => "nova_uint",
+                        // uint → uint64_t (runtime-backed NovaArray; nova_uint canon
+                        // is on the Vec-flip path). [M-uint-legacy-array-uint64-until-a4]
+                        "uint" => "uint64_t",
                         // Plan 101.1: T (generic typevar) — check current_type_subst
                         // для mono'd context (`fn[T] []T @method` body).
                         // Без этого fallback на nova_int → wrong type для
@@ -13644,8 +13645,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "u32"  => "uint32_t",
                 "u16"  => "uint16_t",
                 "u64"  => "uint64_t",
-                // Plan 133: uint = nova_uint (uintptr_t).
-                "uint" => "nova_uint",
+                // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
+                "uint" => "uint64_t",
                 // int/i64 + unknown erased T → nova_int.
                 _ => "nova_int",
             };
@@ -27002,8 +27003,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "u32"            => "uint32_t",
                             "u16"            => "uint16_t",
                             "u64"            => "uint64_t",
-                            // Plan 133: uint = nova_uint (uintptr_t).
-                            "uint"           => "nova_uint",
+                            // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
+                            "uint"           => "uint64_t",
                             // Plan 101: если substituted уже в виде "nova_*" — используем as-is.
                             other if other.starts_with("nova_") => other,
                             // int/i64 / others — nova_int slot.
@@ -42228,8 +42229,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     "u32"            => "uint32_t",
                                     "u16"            => "uint16_t",
                                     "u64"            => "uint64_t",
-                                    // Plan 133: uint = nova_uint (uintptr_t).
-                                    "uint"           => "nova_uint",
+                                    // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
+                                    "uint"           => "uint64_t",
                                     _                => "nova_int",
                                 };
                                 return format!("NovaArray_{}*", arr_suffix);
@@ -45913,8 +45914,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     "u32"            => "uint32_t",
                                     "u16"            => "uint16_t",
                                     "u64"            => "uint64_t",
-                                    // Plan 133: uint = nova_uint (uintptr_t).
-                                    "uint"           => "nova_uint",
+                                    // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
+                                    "uint"           => "uint64_t",
                                     _                => "nova_int",
                                 };
                                 return format!("NovaArray_{}*", arr_suffix);
