@@ -2326,6 +2326,135 @@ impl CEmitter {
         self.current_type_subst.get(key).map(|rt| self.subst_val_c(rt))
     }
 
+    /// Plan 172.12 A2 — STRUCTURAL erased-stub test for the printer's concreteness
+    /// decisions (the `Tuple` / `Option` / `Result` / Vec-flip arms). Answers "does
+    /// `rt` lower to a bare `Nova_<param>*` placeholder — what `is_generic_stub_c`
+    /// detects on the lowered C-name — vs a concrete type?" decided from the
+    /// `ResolvedType` STRUCTURE + the concrete-type registries, WITHOUT parsing a
+    /// `Nova_`/`____` C-string in the printer body. `full` selects the registry set:
+    /// `true` mirrors `is_generic_stub_c` (record / sum / being-defined-sum / generic
+    /// / opaque-ffi), `false` the narrower `Option`/`Tuple` inline set (record / sum
+    /// / generic). The residual shapes whose concreteness is STILL carried as a
+    /// C-string at the mono layer — a `Named`/type-param resolved through the string
+    /// `current_type_subst` / overrides / alias table, a module-qualified colliding
+    /// name, `Self`, `TypedPtr`, and the `Raw` transitional debt — route through the
+    /// single marked debt sink `debt_lowered_is_stub`. Those go RT-native (and the
+    /// sink dies) once the subst/registry producers stop freezing C-strings (A2+/A4).
+    fn rt_is_erased_stub(&self, rt: &crate::types::ResolvedType, full: bool) -> bool {
+        use crate::types::ResolvedType as R;
+        match rt {
+            // Primitives / value-erased / functions never lower to `Nova_<param>*`.
+            R::Scalar { .. } | R::Float { .. } | R::Bool | R::Str | R::Unit | R::Never
+            | R::Ptr | R::Any | R::Func { .. } => false,
+            // `readonly T` ABI ≡ `T` — transparent in the C lowering.
+            R::Readonly(inner) => self.rt_is_erased_stub(inner, full),
+            // Arrays (`NovaArray_*` / `Nova_Vec____*`) and tuples (mono struct /
+            // `_NovaTupleN`) always lower to a concrete C-form — never a bare stub.
+            R::Array(_) | R::Tuple(_) => false,
+            R::Named { name, module, args } => self.rt_named_is_stub(name, module, args, full),
+            // Type-params resolve through the (still string-carried) subst/receiver
+            // context; typed pointers and the `Raw` debt carry concreteness as a
+            // C-name — classify by lowering in the marked debt sink.
+            R::TypeParam(_) | R::TypedPtr(..) | R::Raw(_) => self.debt_lowered_is_stub(rt, full),
+        }
+    }
+
+    /// Plan 172.12 A2 — the `Named` case of `rt_is_erased_stub`, mirroring the
+    /// `resolved_named_to_c` decision tree structurally (same registries, no
+    /// C-string parse). Names resolved through the string subst / overrides / alias
+    /// table, module-qualified colliding names, and `Self` still carry concreteness
+    /// as a C-string → the debt sink.
+    fn rt_named_is_stub(
+        &self,
+        name: &str,
+        module: &[String],
+        args: &[crate::types::ResolvedType],
+        full: bool,
+    ) -> bool {
+        let full_name = if module.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}_{}", module.join("_"), name)
+        };
+        let as_rt = || crate::types::ResolvedType::Named {
+            name: name.to_string(),
+            module: module.to_vec(),
+            args: args.to_vec(),
+        };
+        // Empty-arg names resolved through the string subst / overrides / alias table
+        // (and module-qualified colliding names) carry concreteness as a C-string.
+        if args.is_empty()
+            && (self.type_subst_overrides.borrow().contains_key(&full_name)
+                || self.current_type_subst.contains_key(&full_name)
+                || self.type_aliases.contains_key(&full_name))
+        {
+            return self.debt_lowered_is_stub(&as_rt(), full);
+        }
+        if self.colliding_type_names.contains(name) {
+            return self.debt_lowered_is_stub(&as_rt(), full);
+        }
+        // Primitives never lower to a bare `Nova_<param>*`.
+        if Self::primitive_name_to_c(&full_name).is_some() {
+            return false;
+        }
+        match full_name.as_str() {
+            // NovaOpt_/NovaRes_/NovaArray_/void*/nova_int/NovaVtable_/NovaCancelToken*/
+            // Nova_StringBuilder* — none is a bare `Nova_<param>*` stub.
+            "Option" | "Result" | "Vec" | "any" | "never" | "Effect" | "CancelToken"
+            | "Write" | "usize" | "isize" | "ptr" => return false,
+            // `Self` lowers via the (string) receiver context.
+            "Self" => return self.debt_lowered_is_stub(&as_rt(), full),
+            _ => {}
+        }
+        // Protocol (value-erased) → `NovaBox_<proto>` / void*.
+        if self.protocol_types.contains(&full_name) || self.protocol_types.contains(name) {
+            return false;
+        }
+        // Generic template WITH args → mono mangling (`____`) or `NovaValue_` — concrete.
+        if !args.is_empty() && self.generic_type_templates.contains_key(&full_name) {
+            return false;
+        }
+        // Bare generic-template name (empty args → `Nova_<template>*`) or an unknown
+        // name is an erased stub; a concrete user record/sum is not. Same registry
+        // set as `is_generic_stub_c` (gated by `full`), applied structurally.
+        let concrete = self.record_schemas.contains_key(&full_name)
+            || self.sum_schemas.contains_key(&full_name)
+            || self.generic_types.contains(&full_name)
+            || (full
+                && (self.being_defined_sum_types.contains(&full_name)
+                    || self.opaque_ffi_types.contains(&full_name)));
+        !concrete
+    }
+
+    /// Plan 172.12 A2 — TRANSITIONAL DEBT sink for `rt_is_erased_stub`: classify a
+    /// residual lowering as an erased generic stub by its C-name. Reached ONLY for
+    /// the shapes whose type truth is still string-carried at the mono layer
+    /// (subst / overrides / alias / colliding / `Self` / `TypedPtr` / `Raw`). This is
+    /// the single marked point where a printer concreteness decision reads a
+    /// C-string; it reproduces the pre-A2 inline check EXACTLY — `is_generic_stub_c`
+    /// for `full`, its narrower record/sum/generic-`____` variant otherwise. Dies
+    /// when the subst/registry producers become RT-native (`Raw` removed).
+    fn debt_lowered_is_stub(&self, rt: &crate::types::ResolvedType, full: bool) -> bool {
+        match self.resolved_type_to_c(rt) {
+            Ok(c) => {
+                if full {
+                    self.is_generic_stub_c(&c)
+                } else {
+                    match c.trim_end_matches('*').trim().strip_prefix("Nova_") {
+                        Some(nm) => {
+                            !(self.record_schemas.contains_key(nm)
+                                || self.sum_schemas.contains_key(nm)
+                                || self.generic_types.contains(nm)
+                                || c.contains("____"))
+                        }
+                        None => false,
+                    }
+                }
+            }
+            Err(_) => true,
+        }
+    }
+
     fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Result<String, String> {
         use crate::types::ResolvedType as R;
         use crate::ast::PointerModifier as PM;
@@ -2450,16 +2579,12 @@ impl CEmitter {
                 for e in elems {
                     match self.resolved_type_to_c(e) {
                         Ok(c) => {
-                            let trimmed = c.trim_end_matches('*').trim();
-                            if let Some(nm) = trimmed.strip_prefix("Nova_") {
-                                let is_concrete = self.record_schemas.contains_key(nm)
-                                    || self.sum_schemas.contains_key(nm)
-                                    || self.generic_types.contains(nm)
-                                    || c.contains("____");
-                                if !is_concrete {
-                                    all_concrete = false;
-                                    break;
-                                }
+                            // Plan 172.12 A2: concreteness decided from the element
+                            // `ResolvedType` structure (narrow set), not by re-parsing
+                            // the lowered C-name for a `Nova_<param>*`/`____`.
+                            if self.rt_is_erased_stub(e, false) {
+                                all_concrete = false;
+                                break;
                             }
                             elem_cs.push(c);
                         }
@@ -2496,7 +2621,9 @@ impl CEmitter {
         if self.generic_type_templates.contains_key("Vec") {
             if let Ok(mut elem_c) = self.resolved_type_to_c(inner) {
                 // int64-erasure of an UNRESOLVED type-param element (mirror legacy).
-                if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
+                // Plan 172.12 A2: the stub test is now structural on `inner` (full
+                // registry set), not a `Nova_`/`____` parse of the lowered `elem_c`.
+                if self.rt_is_erased_stub(inner, true) {
                     elem_c = "nova_int".to_string();
                 }
                 let type_args_c = vec![elem_c];
@@ -2803,16 +2930,12 @@ impl CEmitter {
                     if inner_c == "void*" {
                         return Ok("NovaOpt_nova_int".to_string());
                     }
-                    if let Some(x) =
-                        inner_c.strip_suffix('*').and_then(|s| s.trim().strip_prefix("Nova_"))
-                    {
-                        let is_concrete = self.record_schemas.contains_key(x)
-                            || self.sum_schemas.contains_key(x)
-                            || self.generic_types.contains(x)
-                            || x.contains("____");
-                        if !is_concrete {
-                            return Ok("NovaOpt_nova_int".to_string());
-                        }
+                    // Plan 172.12 A2: erase to the int-boxed `NovaOpt_nova_int` when
+                    // the inner is an unresolved generic-param stub — decided from the
+                    // inner `ResolvedType` structure (narrow set), not a `Nova_`/`____`
+                    // parse of `inner_c`.
+                    if self.rt_is_erased_stub(inner, false) {
+                        return Ok("NovaOpt_nova_int".to_string());
                     }
                     let sanitized = Self::sanitize_for_novaopt(&inner_c);
                     self.register_novaopt_decl(&sanitized, &inner_c);
@@ -2833,8 +2956,12 @@ impl CEmitter {
                     if let (Ok(ok_c), Ok(err_c)) =
                         (self.resolved_type_to_c(&args[0]), self.resolved_type_to_c(&args[1]))
                     {
+                        // Plan 172.12 A2: the ok/err stub tests are structural on the
+                        // arg `ResolvedType`s (full registry set), not a `Nova_`/`____`
+                        // parse of the lowered `ok_c`/`err_c`.
                         if !ok_c.is_empty() && ok_c != "void*" && !err_c.is_empty() && err_c != "void*"
-                            && !self.is_generic_stub_c(&ok_c) && !self.is_generic_stub_c(&err_c)
+                            && !self.rt_is_erased_stub(&args[0], true)
+                            && !self.rt_is_erased_stub(&args[1], true)
                         {
                             return Ok(self.result_repr_c_type(&ok_c, &err_c));
                         }
