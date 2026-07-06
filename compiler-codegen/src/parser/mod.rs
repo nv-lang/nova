@@ -1285,7 +1285,7 @@ impl Parser {
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
         // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
         // `type`. Контекстный разбор после `#` (не keyword).
-        let (type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr) = self.parse_type_attrs()?;
+        let (type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs) = self.parse_type_attrs()?;
 
         // Plan 110.7.3.a: pre-parse #cancel_safe здесь чтобы canonical
         // form `#cancel_safe\nexternal fn ...` работала (attribute может
@@ -1526,12 +1526,12 @@ impl Parser {
         // Plan 124.8 [M-124.8-zero-on-move]: `#zero_on_move` — также только
         // перед `type`.
         // Plan 124.6 (D225): `#pub_to(...)` — также только перед `type`.
-        if (!type_attrs.is_empty() || zero_on_move_attr || !pub_to_attr.is_empty())
+        if (!type_attrs.is_empty() || zero_on_move_attr || !pub_to_attr.is_empty() || !serde_attrs.is_empty())
             && !matches!(self.peek().kind, TokenKind::KwType)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`#from_fields` / `#from_pairs` / `#zero_on_move` / `#pub_to` are only valid before `type`",
+                "`#from_fields` / `#from_pairs` / `#zero_on_move` / `#pub_to` / `#serde` are only valid before `type`",
                 span,
             ));
         }
@@ -1565,7 +1565,7 @@ impl Parser {
         }
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -2384,9 +2384,9 @@ impl Parser {
     /// - `#pub_to(TypeA, TypeB, ...)` — Plan 124.6 (D225): selective
     ///   friend visibility; listed types get private-field read access.
     ///
-    /// Returns `(attrs, impl_protocols, zero_on_move, pub_to)`.
+    /// Returns `(attrs, impl_protocols, zero_on_move, pub_to, serde_attrs)`.
     fn parse_type_attrs(&mut self)
-        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool, Vec<String>), Diagnostic>
+        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool, Vec<String>, Vec<crate::ast::SerdeArg>), Diagnostic>
     {
         let mut attrs = Vec::new();
         let mut impl_protocols: Vec<String> = Vec::new();
@@ -2395,6 +2395,8 @@ impl Parser {
         let mut zero_on_move: bool = false;
         // Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective friend visibility.
         let mut pub_to: Vec<String> = Vec::new();
+        // Plan 180 Ф.6 (D382): `#serde(tag=/content=/untagged)` — serde tagging mode.
+        let mut serde_attrs: Vec<crate::ast::SerdeArg> = Vec::new();
         loop {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
@@ -2589,11 +2591,81 @@ impl Parser {
                     }
                     pub_to = names;
                 }
+                "serde" => {
+                    // Plan 180 Ф.6 (D382): `#serde(tag="t")` / `#serde(tag="t",
+                    // content="c")` / `#serde(untagged)` — sum tagging mode.
+                    self.parse_serde_attr(&mut serde_attrs)?;
+                }
                 _ => break,
             }
             self.skip_newlines();
         }
-        Ok((attrs, impl_protocols, zero_on_move, pub_to))
+        Ok((attrs, impl_protocols, zero_on_move, pub_to, serde_attrs))
+    }
+
+    /// Plan 180 Ф.6 (D382): parse ONE `#serde(...)` annotation, appending its
+    /// arguments to `out`. Positioned at `#` (peek) with `serde` at peek_at(1).
+    /// Grammar: `#serde ( arg (`,` arg)* )`, `arg := ident [ `=` StrLit ]`.
+    /// Recognized keys (V1 — enum tagging, D382): `tag="s"`, `content="s"`,
+    /// `untagged`. Any other key → `E_SERDE_BAD_ATTRIBUTE` (field-customization
+    /// attributes rename/skip/… are a separate followup
+    /// [M-180-serde-field-attributes]; the AST/grammar are general so adding
+    /// them later is trivial).
+    fn parse_serde_attr(&mut self, out: &mut Vec<crate::ast::SerdeArg>) -> Result<(), Diagnostic> {
+        use crate::ast::SerdeArg;
+        self.bump(); // #
+        self.bump(); // serde
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Err(Diagnostic::new(
+                "[E_SERDE_BAD_ATTRIBUTE] `#serde` requires arguments, e.g. \
+                 `#serde(tag=\"type\")` or `#serde(untagged)`",
+                self.peek().span,
+            ));
+        }
+        self.bump(); // (
+        loop {
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::RParen) {
+                break;
+            }
+            let (key, key_span) = match &self.peek().kind {
+                TokenKind::Ident(n) => (n.clone(), self.peek().span),
+                _ => return Err(Diagnostic::new(
+                    "[E_SERDE_BAD_ATTRIBUTE] expected a serde attribute name inside `#serde(...)`",
+                    self.peek().span,
+                )),
+            };
+            self.bump(); // key
+            match key.as_str() {
+                "untagged" => out.push(SerdeArg::Untagged),
+                "tag" | "content" => {
+                    self.expect(&TokenKind::Eq)?;
+                    let val = match &self.peek().kind {
+                        TokenKind::Str(s) => { let s = s.clone(); self.bump(); s }
+                        _ => return Err(Diagnostic::new(
+                            format!("[E_SERDE_BAD_ATTRIBUTE] `{}` requires a string value: \
+                                     `#serde({}=\"...\")`", key, key),
+                            self.peek().span,
+                        )),
+                    };
+                    if key == "tag" { out.push(SerdeArg::Tag(val)); }
+                    else { out.push(SerdeArg::Content(val)); }
+                }
+                other => return Err(Diagnostic::new(
+                    format!("[E_SERDE_BAD_ATTRIBUTE] unknown or not-yet-supported serde \
+                             attribute `{}`. Supported: `tag`, `content`, `untagged` (enum \
+                             tagging, D382). Field-customization attributes (rename / \
+                             rename_all / skip / default / flatten / alias / \
+                             deny_unknown_fields) are a followup \
+                             [M-180-serde-field-attributes].", other),
+                    key_span,
+                )),
+            }
+            self.skip_newlines();
+            if matches!(self.peek().kind, TokenKind::Comma) { self.bump(); } else { break; }
+        }
+        self.expect(&TokenKind::RParen)?;
+        Ok(())
     }
 
     /// Plan 33.1 (D24): парсит блок `requires <expr>` / `ensures <expr>`
@@ -3651,7 +3723,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, serde_attrs: Vec<crate::ast::SerdeArg>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, name_span) = self.parse_ident()?;
@@ -3907,6 +3979,7 @@ impl Parser {
                 zero_on_move,
                 pub_to: pub_to.clone(),
                 file_private,
+                serde_attrs: serde_attrs.clone(),
             });
         }
         // Silence unused warning when is_external is false; name_span used только в Opaque branch.
@@ -3983,6 +4056,7 @@ impl Parser {
                     zero_on_move,
                     pub_to: pub_to.clone(),
                     file_private,
+                    serde_attrs: serde_attrs.clone(),
                 });
             }
         }
@@ -4130,6 +4204,7 @@ impl Parser {
             zero_on_move,
             pub_to,
             file_private,
+            serde_attrs,
         })
     }
 
@@ -4395,8 +4470,15 @@ impl Parser {
             // attribute — explicit friend declaration. Methods of listed
             // types get priv access. Parsed BEFORE priv/pub modifier.
             let mut visible_to: Vec<String> = Vec::new();
+            // Plan 180 Ф.6 (D382): `#serde(...)` field-level attributes.
+            let mut field_serde_attrs: Vec<crate::ast::SerdeArg> = Vec::new();
             while matches!(self.peek().kind, TokenKind::Hash) {
                 if let TokenKind::Ident(n) = &self.peek_at(1).kind {
+                    if n == "serde" {
+                        self.parse_serde_attr(&mut field_serde_attrs)?;
+                        self.skip_newlines();
+                        continue;
+                    }
                     if n == "visible_to" {
                         self.bump(); // #
                         self.bump(); // visible_to
@@ -4628,6 +4710,7 @@ impl Parser {
                 priv_field: field_priv,
                 priv_module_field: field_priv_module,
                 visible_to,
+                serde_attrs: field_serde_attrs,
             });
             // Separator: comma (inline or multi-line) OR newline (multi-line
             // only). Per D49 + D215 spec: on a SINGLE LINE, a comma is
@@ -4763,6 +4846,16 @@ impl Parser {
 
     /// Парсит один вариант sum-type: `Name` / `Name(T)` / `Name { fields }` / `Name = N`.
     fn parse_one_sum_variant(&mut self) -> Result<SumVariant, Diagnostic> {
+        // Plan 180 Ф.6 (D382): leading `#serde(...)` variant-level attributes.
+        let mut variant_serde_attrs: Vec<crate::ast::SerdeArg> = Vec::new();
+        while matches!(self.peek().kind, TokenKind::Hash) {
+            if matches!(&self.peek_at(1).kind, TokenKind::Ident(n) if n == "serde") {
+                self.parse_serde_attr(&mut variant_serde_attrs)?;
+                self.skip_newlines();
+            } else {
+                break;
+            }
+        }
         let (name, name_span) = self.parse_ident()?;
         let kind = match self.peek().kind {
             TokenKind::LParen => {
@@ -4808,6 +4901,7 @@ impl Parser {
             kind,
             discriminant,
             span: name_span.merge(end),
+            serde_attrs: variant_serde_attrs,
         })
     }
 

@@ -28640,6 +28640,7 @@ mod named_tuple_ctor_infer_tests {
             kind: SumVariantKind::Tuple(vec![payload]),
             discriminant: None,
             span: dummy_span(),
+            serde_attrs: Vec::new(),
         };
         TypeDecl {
             name: sum_name.to_string(),

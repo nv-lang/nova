@@ -31900,6 +31900,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // is divergent (throw/panic/exit/interrupt/user-never/recursive),
         // use else-branch's type instead. Otherwise fall back to then's type
         // (preserves Ф.0 baseline behavior — no flip for non-divergent).
+        // Plan 180 Ф.6: capture the two branch Result-types (already computed for
+        // if_ty) so the reconciliation below can split+combine them WITHOUT any
+        // extra `infer_expr_c_type` call (side-effect-free — re-inference perturbed
+        // mono-collection order and corrupted json.nv codegen under heavy untagged
+        // derive load).
+        let mut cap_branch_tys: Vec<String> = Vec::new();
         let mut if_ty = if else_.is_none() {
             "nova_unit".into()
         } else {
@@ -31934,6 +31940,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 None => (false, "nova_unit".into()),
             };
+            if !then_diverges { cap_branch_tys.push(then_ty.clone()); }
+            if !else_diverges { cap_branch_tys.push(else_ty.clone()); }
             let chosen = if then_diverges {
                 // Use else-branch's inferred type.
                 else_ty.clone()
@@ -32003,6 +32011,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+        }
+        // Plan 180 Ф.6: Result-branch reconciliation (mirror of emit_match) — an
+        // untagged-variant attempt `if d.is_null()? { Ok(V) } else { Err(..) }`
+        // and `raw_read`'s `Option` null-check yield the full `Result[OK, ERR]`
+        // only by combining the `Ok(..)` branch's OK with the `Err(..)` branch's
+        // ERR; each alone is a half-stub. Authoritative over the (possibly
+        // mono-degraded) channel. Only fires when BOTH concrete sides recover.
+        if let Some(rec) = self.combine_result_arm_types(&cap_branch_tys) {
+            if_ty = rec;
         }
         // Plan 174.3 (D54 v1): smart-cast narrowing. `if x is T { … }` where `x`
         // is a type-erased `any` (void*) refines `x` to `T` inside the then-block
@@ -33487,11 +33504,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 MatchArmBody::Block(b) => this.block_trailing_diverges(b),
             }
         };
-        // First pass: find a non-unit, non-nova_int, non-divergent type
+        // First pass: find a non-unit, non-nova_int, non-divergent type.
+        // Plan 180 Ф.6: an `Err(..)`/`None`-first arm whose Ok-payload is UNKNOWN
+        // infers to the erased `NovaRes_nova_int_*` Result — it must NOT shadow a
+        // later arm carrying the CONCRETE Ok type (json.nv `enter_field`:
+        // `None => Err(..)` then `Some(v) => Ok(JsonDeserializer…)` → the whole
+        // match is `Result[JsonDeserializer, DeError]`, not `Result[int, …]`).
+        // Prefer a fully-concrete type here; the erased-Ok Result is still
+        // accepted by the second pass when no concrete arm exists (genuine
+        // `Result[int, E]` matches thus resolve unchanged).
         'outer: for arm in arms {
             if arm_diverges(self, arm) { continue; }
             let t = infer_arm(self, arm);
-            if t != "nova_unit" && t != "nova_int" {
+            if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t) {
                 result_ty = t;
                 break 'outer;
             }
@@ -33526,6 +33551,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 result_ty = "nova_unit".into();
             }
         }
+        // Plan 180 Ф.6: Result-arm reconciliation. `Ok(x)` alone infers a stub
+        // ERR side (`NovaRes_<ok>_nova_str`); `Err(e)` alone a stub OK side
+        // (`NovaRes_nova_int_<err>`). A match mixing them — the pervasive
+        // `None => Err(..)` / `Some(v) => Ok(..)` shape of json.nv's
+        // `Deserializer` methods (`enter_field`, `enter_index`, …) — yields the
+        // full `Result[OK, ERR]` only by taking OK from an `Ok(..)` arm and ERR
+        // from an `Err(..)` arm. Without this the cursor Result is mis-laid-out
+        // and unwraps to garbage at runtime (decode returns spurious
+        // `UnexpectedType`). AUTHORITATIVE — applied AFTER the channel-consume
+        // below, because the checker's `resolved_types[match_id]` annotation can
+        // itself be degraded (mono-collection order) for these json.nv methods.
+        // Only fires when BOTH concrete sides are recovered from the arms.
+        let reconciled_result_ty: Option<String> = {
+            let mut arm_types: Vec<String> = Vec::new();
+            for arm in arms {
+                if arm_diverges(self, arm) { continue; }
+                arm_types.push(infer_arm(self, arm));
+            }
+            self.combine_result_arm_types(&arm_types)
+        };
         // Note: we intentionally don't inherit result_ty from current_fn_return_ty here,
         // because the match may be inside a for loop or other non-return context.
         // Exception: "NovaOpt_nova_int" is the erased generic fallback (inner type unknown).
@@ -33555,9 +33600,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if match_id.is_set() {
             if let Some(rt) = self.resolved_types.get(&match_id) {
                 if let Ok(ct) = self.resolved_type_to_c(rt) {
-                    result_ty = ct;
+                    // Plan 180 Ф.6: the channel MUST NOT downgrade a fully-concrete
+                    // Result (both sides resolved by arm-inference) to a
+                    // stub-bearing one (`NovaRes_nova_int_*` Ok / `…_nova_str*`
+                    // ERR) — the checker's annotation is itself mono-order-degraded
+                    // for json.nv's `Deserializer` methods in a many-serde-mono CU.
+                    let result_concrete = result_ty.starts_with("NovaRes_")
+                        && !Self::is_stub_ok_result(&result_ty)
+                        && !result_ty.ends_with("_nova_str*");
+                    let channel_stub = Self::is_stub_ok_result(&ct)
+                        || ct.ends_with("_nova_str*");
+                    if !(result_concrete && channel_stub) {
+                        result_ty = ct;
+                    }
                 }
             }
+        }
+        // Plan 180 Ф.6: the arm-derived `Result[OK, ERR]` reconciliation is the
+        // ground truth for a match whose arms are `Ok(..)`/`Err(..)` — it wins
+        // over BOTH the legacy passes AND a mono-order-degraded checker channel
+        // annotation (which, in a many-serde-mono compilation unit, mis-types
+        // json.nv's `Deserializer` cursor methods → decode returns garbage).
+        if let Some(rec) = reconciled_result_ty {
+            result_ty = rec;
         }
         self.line(&format!("{} {};", result_ty, result_tmp));
         self.var_types.insert(result_tmp.clone(), result_ty.clone());
@@ -39656,6 +39721,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `erase_unk` в `emit_fn` для erased array-extension generics:
     /// `Nova_<X>*` — реальный тип ⇔ `X ∈ record_schemas ∪ sum_schemas ∪
     /// generic_types`; иначе это erased type-param.
+    /// Plan 180 Ф.6: `true` for a Result C-type whose Ok payload is the erased
+    /// `nova_int` placeholder (`NovaRes_nova_int_…`), i.e. the type an
+    /// `Err(..)`/`None` arm with an unconstrained Ok side infers to. Such a
+    /// type is "weak": in `emit_match`'s first pass a concrete-Ok Result from a
+    /// sibling arm is preferred over it (json.nv `enter_field`). NOT applied to
+    /// `NovaOpt_nova_int` (Option) — that has its own fallback path.
+    fn is_stub_ok_result(s: &str) -> bool {
+        s.starts_with("NovaRes_nova_int_")
+    }
+
+    /// Plan 180 Ф.6: combine a set of ALREADY-COMPUTED arm/branch Result C-types
+    /// into the full `Result[OK, ERR]`. `Ok(x)` alone infers `NovaRes_<ok>_nova_str`
+    /// (stub ERR); `Err(e)` alone `NovaRes_nova_int_<err>` (stub OK). Splitting each
+    /// via `novares_ok_err` and taking the first NON-stub OK and NON-stub ERR yields
+    /// the real Result — the `None => Err(..)` / `Some(v) => Ok(..)` shape of json.nv's
+    /// `Deserializer` cursor methods. PURE (no `infer_expr_c_type` side effects — the
+    /// earlier re-inference variant perturbed mono-collection order and corrupted
+    /// json.nv codegen under a heavy untagged-derive load). Returns `None` unless BOTH
+    /// concrete sides are recovered.
+    fn combine_result_arm_types(&self, types: &[String]) -> Option<String> {
+        let mut ok: Option<String> = None;
+        let mut err: Option<String> = None;
+        for t in types {
+            if let Some((o, e)) = self.novares_ok_err(t) {
+                if ok.is_none() && o != "nova_int" && !o.is_empty()
+                    && o != "void*" && !self.is_generic_stub_c(&o)
+                {
+                    ok = Some(o);
+                }
+                if err.is_none() && e != "nova_str" && !e.is_empty()
+                    && e != "void*" && !self.is_generic_stub_c(&e)
+                {
+                    err = Some(e);
+                }
+            }
+        }
+        match (ok, err) {
+            (Some(o), Some(e)) => Some(self.result_repr_c_type(&o, &e)),
+            _ => None,
+        }
+    }
+
     fn is_generic_stub_c(&self, s: &str) -> bool {
         if let Some(inner) = s.strip_prefix("Nova_").and_then(|x| x.strip_suffix('*')) {
             let name = inner.trim();
@@ -42750,13 +42857,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let concrete_eff = self.subst_c(eff)
                                     .map(|c| Self::nova_type_name_from_c(&c))
                                     .unwrap_or_else(|| eff.clone());
+                                // Plan 180 Ф.6: for the serde `serialize`/`deserialize`
+                                // static contract, a mono-ordering-degraded overload sig
+                                // (`void*`/generic-stub return) must NOT be accepted — it
+                                // mis-lowers `T.deserialize(d)` (silent wrong value or the
+                                // P67 ICE below). Skip it and fall through to the direct
+                                // reconstruction. Non-serde methods keep the prior predicate.
+                                let is_serde_static =
+                                    method_name == "deserialize" || method_name == "serialize";
                                 if let Some(sigs) = self.method_overloads
                                     .get(&(concrete_eff.clone(), method_name.clone()))
                                 {
-                                    if let Some(sig) = sigs.iter()
-                                        .find(|s| !s.is_instance && !s.return_c_type.is_empty())
-                                    {
+                                    if let Some(sig) = sigs.iter().find(|s| {
+                                        !s.is_instance
+                                            && !s.return_c_type.is_empty()
+                                            && !(is_serde_static
+                                                && (s.return_c_type == "void*"
+                                                    || self.is_generic_stub_c(&s.return_c_type)))
+                                    }) {
                                         return sig.return_c_type.clone();
+                                    }
+                                }
+                                // Plan 180 Ф.6: reconstruct `Result[T, DeError]` directly
+                                // from the receiver type when the overload sig is absent or
+                                // degraded (mono-collection ordering — the `Deserialize`
+                                // contract fixes the return). Mirrors the `?`-lowering pin.
+                                if method_name == "deserialize" {
+                                    let named = |n: &str| crate::ast::TypeRef::Named {
+                                        path: vec![n.to_string()], generics: vec![],
+                                        span: crate::diag::Span::dummy(),
+                                    };
+                                    if let Ok(ok_c) = self.type_ref_to_c(&named(&concrete_eff)) {
+                                        if !ok_c.is_empty() && ok_c != "void*"
+                                            && !self.is_generic_stub_c(&ok_c)
+                                        {
+                                            let err_c = self.type_ref_to_c(&named("DeError"))
+                                                .unwrap_or_else(|_| "NovaValue_DeError".to_string());
+                                            return self.result_repr_c_type(&ok_c, &err_c);
+                                        }
                                     }
                                 }
                             }
@@ -43145,11 +43283,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let any_unit_arm = arms.iter().any(|arm| {
                         !arm_diverges(self, arm) && infer_arm(self, arm) == "nova_unit"
                     });
+                    // Plan 180 Ф.6: Result-arm reconciliation (mirror of
+                    // `emit_match`). A `None => Err(<call>)` / `Some(v) => Ok(<call>)`
+                    // match (json.nv `Deserializer` cursor methods) yields the full
+                    // `Result[OK, ERR]` only by combining the concrete OK (from an
+                    // `Ok(..)` arm) with the concrete ERR (from an `Err(..)` arm);
+                    // `Ok`/`Err` alone infer a half-stub. Only fires with BOTH sides.
+                    if !any_unit_arm {
+                        let arm_types: Vec<String> = arms.iter()
+                            .filter(|arm| !arm_diverges(self, arm))
+                            .map(|arm| infer_arm(self, arm))
+                            .collect();
+                        if let Some(rec) = self.combine_result_arm_types(&arm_types) {
+                            return rec;
+                        }
+                    }
                     // First pass: find a non-unit, non-nova_int, non-divergent type.
+                    // Skip an erased-Ok Result (`NovaRes_nova_int_*`, from an
+                    // `Err`/`None`-first arm) so a sibling concrete-Ok Result wins
+                    // (Plan 180 Ф.6; see emit_match). The second pass still accepts it.
                     for arm in arms {
                         if arm_diverges(self, arm) { continue; }
                         let t = infer_arm(self, arm);
-                        if t != "nova_unit" && t != "nova_int" {
+                        if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t) {
                             return if any_unit_arm { "nova_unit".into() } else { t };
                         }
                     }
@@ -43198,6 +43354,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else {
                 chosen
             };
+            // Plan 180 Ф.6: Result-branch reconciliation (mirror of emit_if_expr /
+            // the match path) — `if … { Ok(V) } else { Err(..) }` yields the full
+            // `Result[OK, ERR]` only by combining the two half-stub branches.
+            // Split+combine the ALREADY-computed branch types (no re-inference).
+            {
+                let mut branch_tys: Vec<String> = Vec::new();
+                if !then_diverges { branch_tys.push(then_ty.clone()); }
+                if !else_diverges { branch_tys.push(else_ty.clone()); }
+                if let Some(rec) = self.combine_result_arm_types(&branch_tys) {
+                    self.debug_if_infer_125("ch6j_If", then_diverges, &then_ty, &else_ty, &rec);
+                    return rec;
+                }
+            }
             self.debug_if_infer_125("ch6j_If", then_diverges, &then_ty, &else_ty, &chosen);
             return chosen;
         }
@@ -46328,13 +46497,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let concrete_eff = self.subst_c(eff)
                                     .map(|c| Self::nova_type_name_from_c(&c))
                                     .unwrap_or_else(|| eff.clone());
+                                // Plan 180 Ф.6: for the serde `serialize`/`deserialize`
+                                // static contract, a mono-ordering-degraded overload sig
+                                // (`void*`/generic-stub return) must NOT be accepted — it
+                                // mis-lowers `T.deserialize(d)` (silent wrong value or the
+                                // P67 ICE below). Skip it and fall through to the direct
+                                // reconstruction. Non-serde methods keep the prior predicate.
+                                let is_serde_static =
+                                    method_name == "deserialize" || method_name == "serialize";
                                 if let Some(sigs) = self.method_overloads
                                     .get(&(concrete_eff.clone(), method_name.clone()))
                                 {
-                                    if let Some(sig) = sigs.iter()
-                                        .find(|s| !s.is_instance && !s.return_c_type.is_empty())
-                                    {
+                                    if let Some(sig) = sigs.iter().find(|s| {
+                                        !s.is_instance
+                                            && !s.return_c_type.is_empty()
+                                            && !(is_serde_static
+                                                && (s.return_c_type == "void*"
+                                                    || self.is_generic_stub_c(&s.return_c_type)))
+                                    }) {
                                         return sig.return_c_type.clone();
+                                    }
+                                }
+                                // Plan 180 Ф.6: reconstruct `Result[T, DeError]` directly
+                                // from the receiver type when the overload sig is absent or
+                                // degraded (mono-collection ordering — the `Deserialize`
+                                // contract fixes the return). Mirrors the `?`-lowering pin.
+                                if method_name == "deserialize" {
+                                    let named = |n: &str| crate::ast::TypeRef::Named {
+                                        path: vec![n.to_string()], generics: vec![],
+                                        span: crate::diag::Span::dummy(),
+                                    };
+                                    if let Ok(ok_c) = self.type_ref_to_c(&named(&concrete_eff)) {
+                                        if !ok_c.is_empty() && ok_c != "void*"
+                                            && !self.is_generic_stub_c(&ok_c)
+                                        {
+                                            let err_c = self.type_ref_to_c(&named("DeError"))
+                                                .unwrap_or_else(|_| "NovaValue_DeError".to_string());
+                                            return self.result_repr_c_type(&ok_c, &err_c);
+                                        }
                                     }
                                 }
                             }
@@ -46571,11 +46771,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let any_unit_arm = arms.iter().any(|arm| {
                         !arm_diverges(self, arm) && infer_arm(self, arm) == "nova_unit"
                     });
+                    // Plan 180 Ф.6: Result-arm reconciliation (mirror of
+                    // `emit_match`). A `None => Err(<call>)` / `Some(v) => Ok(<call>)`
+                    // match (json.nv `Deserializer` cursor methods) yields the full
+                    // `Result[OK, ERR]` only by combining the concrete OK (from an
+                    // `Ok(..)` arm) with the concrete ERR (from an `Err(..)` arm);
+                    // `Ok`/`Err` alone infer a half-stub. Only fires with BOTH sides.
+                    if !any_unit_arm {
+                        let arm_types: Vec<String> = arms.iter()
+                            .filter(|arm| !arm_diverges(self, arm))
+                            .map(|arm| infer_arm(self, arm))
+                            .collect();
+                        if let Some(rec) = self.combine_result_arm_types(&arm_types) {
+                            return rec;
+                        }
+                    }
                     // First pass: find a non-unit, non-nova_int, non-divergent type.
+                    // Skip an erased-Ok Result (`NovaRes_nova_int_*`, from an
+                    // `Err`/`None`-first arm) so a sibling concrete-Ok Result wins
+                    // (Plan 180 Ф.6; see emit_match). The second pass still accepts it.
                     for arm in arms {
                         if arm_diverges(self, arm) { continue; }
                         let t = infer_arm(self, arm);
-                        if t != "nova_unit" && t != "nova_int" {
+                        if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t) {
                             return if any_unit_arm { "nova_unit".into() } else { t };
                         }
                     }

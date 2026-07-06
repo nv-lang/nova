@@ -855,6 +855,43 @@ pub enum TypeAttr {
     FromPairs,
 }
 
+/// Plan 180 Ф.6 (D382): один аргумент `#serde(...)`-аннотации. Общая
+/// key/value-грамматика (`key`, `key="s"`, `key=ident`) разбирается парсером
+/// в этот структурированный список (`serde_attrs` на TypeDecl / SumVariant /
+/// RecordField). V1 семантически потребляет ТОЛЬКО режимы тегирования
+/// (`tag`/`content`/`untagged`, D345/D382); прочие serde-ключи
+/// (`rename`/`skip`/`flatten`/`default`/`alias`/`rename_all`/
+/// `deny_unknown_fields`) отклоняются парсером как not-yet-supported
+/// (E_SERDE_BAD_ATTRIBUTE) до followup `[M-180-serde-field-attributes]`.
+/// AST-поле и грамматика — общие, так что расширение тривиально.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SerdeArg {
+    /// `tag = "type"` — имя дискриминатор-поля (internally-tagged; с `content`
+    /// — adjacently-tagged). Только на sum-типе.
+    Tag(String),
+    /// `content = "c"` — имя поля с payload'ом (adjacently-tagged; требует
+    /// `tag`). Только на sum-типе.
+    Content(String),
+    /// `untagged` — untagged (try-each-variant). Только на sum-типе.
+    Untagged,
+}
+
+/// Plan 180 Ф.6 (D382 / D345): режим тегирования sum-типа для serde. Выводится
+/// из type-level `serde_attrs` через [`sum_tagging_mode`]. `External` — default
+/// (без атрибута), поведение Ф.2-sum не меняется.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SerdeTagging {
+    /// `{"Variant": payload}` (default, Q4).
+    #[default]
+    External,
+    /// `#serde(tag="k")` — `{"k":"Variant", ...payload-fields}`.
+    Internal { tag: String },
+    /// `#serde(tag="t", content="c")` — `{"t":"Variant","c":payload}`.
+    Adjacent { tag: String, content: String },
+    /// `#serde(untagged)` — payload напрямую, вариант выбирается try-each.
+    Untagged,
+}
+
 /// Plan 124.8 (D226 NEW) + Plan 127 V1 (D228 amend): allocation contract.
 ///
 /// **Type-level** (TypeDecl.allocation, parser-set):
@@ -1051,6 +1088,10 @@ pub struct TypeDecl {
     /// с `is_export`. Ортогонален `field_default_visibility` (видимость самого
     /// типа vs дефолтная видимость его полей). Default `false`.
     pub file_private: bool,
+    /// Plan 180 Ф.6 (D382): `#serde(...)` declaration-level attributes. Used
+    /// for serde sum-tagging mode (`tag`/`content`/`untagged`, D345). Empty Vec
+    /// = default (external tagging / no serde customization). See [`SerdeArg`].
+    pub serde_attrs: Vec<SerdeArg>,
 }
 
 #[derive(Debug, Clone)]
@@ -1212,6 +1253,11 @@ pub struct RecordField {
     /// type-only access (default).
     /// Backward-compat: default empty Vec.
     pub visible_to: Vec<String>,
+    /// Plan 180 Ф.6 (D382): `#serde(...)` field-level attributes. Empty Vec =
+    /// default (no serde customization). See [`SerdeArg`]. Field-level serde
+    /// keys are parsed/stored here but their synth-consumption is a followup
+    /// (`[M-180-serde-field-attributes]`).
+    pub serde_attrs: Vec<SerdeArg>,
 }
 
 #[derive(Debug, Clone)]
@@ -1220,6 +1266,10 @@ pub struct SumVariant {
     pub kind: SumVariantKind,
     pub discriminant: Option<i64>,
     pub span: Span,
+    /// Plan 180 Ф.6 (D382): `#serde(...)` variant-level attributes. Empty Vec =
+    /// default. See [`SerdeArg`]. Variant-level serde keys are parsed/stored
+    /// here; synth-consumption is a followup (`[M-180-serde-field-attributes]`).
+    pub serde_attrs: Vec<SerdeArg>,
 }
 
 #[derive(Debug, Clone)]

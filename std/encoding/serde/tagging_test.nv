@@ -1,0 +1,90 @@
+// Plan 180 Ф.6 (D382) — serde enum tagging modes selected by `#serde(...)`
+// declaration attributes. Peer test of `module encoding.serde` (json.nv +
+// serde.nv). Covers internally-tagged (`#serde(tag="k")`) and adjacently-tagged
+// (`#serde(tag="t", content="c")`); externally-tagged (no attribute, default)
+// is covered by sum_autoderive.nv. Untagged (`#serde(untagged)`) is gated
+// ([M-180-untagged-codegen-mono]) — see the neg fixtures. Each mode: round-trip
+// + wire-contract (decode hand-written JSON, key-order-independent).
+module encoding.serde
+
+// ── Internally-tagged: unit + record variants (tuple rejected at compile) ──
+#serde(tag = "kind")
+#impl(Serialize + Deserialize + Equal)
+type Shape enum
+    | Nil
+    | Circle { r int }
+    | Rect { w int, h int }
+
+test "internal: unit variant -> { tag: name }" {
+    ro s Shape = Nil
+    assert(json_encode(s)!! == "{\"kind\":\"Nil\"}")
+    assert(json_decode[Shape]("{\"kind\":\"Nil\"}")!! == Nil)
+}
+
+test "internal: record variant - tag + inlined fields (order-independent)" {
+    ro s Shape = Circle { r: 5 }
+    assert(json_decode[Shape](json_encode(s)!!)!! == Circle { r: 5 })
+    assert(json_decode[Shape]("{\"kind\":\"Circle\",\"r\":5}")!! == Circle { r: 5 })
+    assert(json_decode[Shape]("{\"r\":5,\"kind\":\"Circle\"}")!! == Circle { r: 5 })
+}
+
+test "internal: multi-field record round-trip" {
+    ro s Shape = Rect { w: 2, h: 3 }
+    assert(json_decode[Shape](json_encode(s)!!)!! == Rect { w: 2, h: 3 })
+}
+
+test "internal: unknown tag -> Err(UnknownVariant)" {
+    match json_decode[Shape]("{\"kind\":\"Hexagon\"}") {
+        Ok(_)  => assert(false, "expected UnknownVariant")
+        Err(e) => match e.kind {
+            UnknownVariant { name, expected } => assert(name == "Hexagon")
+            _ => assert(false, "wrong kind")
+        }
+    }
+}
+
+// ── Adjacently-tagged: every variant shape ──
+#serde(tag = "t", content = "c")
+#impl(Serialize + Deserialize + Equal)
+type Node enum
+    | Leaf
+    | Val(int)
+    | Span(int, int)
+    | Named { id int, name str }
+
+test "adjacent: unit -> { tag: name } (no content field)" {
+    ro n Node = Leaf
+    assert(json_encode(n)!! == "{\"t\":\"Leaf\"}")
+    assert(json_decode[Node]("{\"t\":\"Leaf\"}")!! == Leaf)
+}
+
+test "adjacent: single payload -> tag + scalar content" {
+    ro n Node = Val(9)
+    assert(json_decode[Node](json_encode(n)!!)!! == Val(9))
+    assert(json_decode[Node]("{\"t\":\"Val\",\"c\":9}")!! == Val(9))
+    assert(json_decode[Node]("{\"c\":9,\"t\":\"Val\"}")!! == Val(9))
+}
+
+test "adjacent: tuple payload -> content array" {
+    ro n Node = Span(1, 4)
+    ro dec = json_decode[Node](json_encode(n)!!)!!
+    assert(dec == Span(1, 4))
+    assert(dec != Span(4, 1))
+    assert(json_decode[Node]("{\"t\":\"Span\",\"c\":[1,4]}")!! == Span(1, 4))
+}
+
+test "adjacent: record payload -> content object" {
+    ro n Node = Named { id: 7, name: "x" }
+    assert(json_decode[Node](json_encode(n)!!)!! == Named { id: 7, name: "x" })
+    assert(json_decode[Node]("{\"t\":\"Named\",\"c\":{\"id\":7,\"name\":\"x\"}}")!! == Named { id: 7, name: "x" })
+}
+
+test "adjacent: unknown tag -> Err(UnknownVariant)" {
+    match json_decode[Node]("{\"t\":\"Zzz\",\"c\":1}") {
+        Ok(_)  => assert(false, "expected UnknownVariant")
+        Err(e) => match e.kind {
+            UnknownVariant { name, expected } => assert(name == "Zzz")
+            _ => assert(false, "wrong kind")
+        }
+    }
+}
