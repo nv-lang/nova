@@ -2621,6 +2621,40 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             None
         };
 
+    // [M-vec-access-e7320-as-bytes-str] variant D (span-misrender fix,
+    // 2026-07-07): every diagnostic rendered below this point runs on the
+    // FULLY-MERGED module — spans may carry a `file_id` pointing at an
+    // imported peer file, not `path`/`src` (Plan 35 Ф.0 wired `file_id` into
+    // `Span`, but `codegen_to_c` still rendered every diagnostic through
+    // `SrcResolver::Single { source: src, file: path }`, which ignores
+    // `span.file_id` entirely — cross-file errors printed at the ENTRY
+    // file's line/col instead of the true one). `render_with_map` (diag.rs)
+    // resolves per-span via a `SourceMap`; build one here from
+    // `module.peer_files`, populated by `resolve_imports_inline_ex` above in
+    // strictly ascending `file_id` order (entry = 0 first; each subsequent
+    // peer's `file_id` is assigned and pushed before recursing into its own
+    // imports — see imports.rs:1414-1457), so sequential `register` calls
+    // below reproduce the same id assignment. Peer source text isn't kept
+    // post-parse, so non-entry files are re-read from disk (diagnostic path
+    // only — no perf concern). Falls back to a single-file map (identical to
+    // the old behavior) when `peer_files` is empty (no repo root found —
+    // `resolve_imports_inline_ex` was never called).
+    let source_map = {
+        let mut sm = crate::diag::SourceMap::new();
+        for pf in &module.peer_files {
+            if pf.file_id == crate::diag::MAIN_FILE_ID {
+                sm.register_main(path.to_path_buf(), src.to_string());
+            } else {
+                let content = std::fs::read_to_string(&pf.path).unwrap_or_default();
+                sm.register(pf.path.clone(), content);
+            }
+        }
+        if sm.is_empty() {
+            sm.register_main(path.to_path_buf(), src.to_string());
+        }
+        sm
+    };
+
     // Plan 180: inject SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
     // BEFORE numbering + type-check so their bodies are type-checked + annotated
     // (codegen's annotation-free infer cannot resolve serde's cross-method return
@@ -2661,7 +2695,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         }
         .map_err(|errs| {
             errs.iter()
-                .map(|d| d.render(src, &path.to_string_lossy()))
+                .map(|d| d.render_with_map(&source_map))
                 .collect::<Vec<_>>()
                 .join("\n")
         })?
@@ -2683,7 +2717,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         let _t = crate::perf_timer::PerfTimer::new("lints");
         crate::lints::lint_module(&module)
             .iter()
-            .map(|w| w.diag.render(src, &path.to_string_lossy()))
+            .map(|w| w.diag.render_with_map(&source_map))
             .collect()
     };
     // Ф.7.4 (Plan 33.6): verify-warnings (W2401/W2402) тоже dispatch'им в lint stream.
@@ -2695,7 +2729,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         let _t = crate::perf_timer::PerfTimer::new("verify");
         let verify_report = crate::verify::verify_module(&module);
         for w in &verify_report.warnings {
-            lint_warnings.push(w.render(src, &path.to_string_lossy()));
+            lint_warnings.push(w.render_with_map(&source_map));
         }
     }
     {
@@ -2705,7 +2739,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         let cfn_errs = crate::const_fn_eval::rewrite_const_fn_calls(&mut module);
         if !cfn_errs.is_empty() {
             return Err(cfn_errs.iter()
-                .map(|d| d.render(src, &path.to_string_lossy()))
+                .map(|d| d.render_with_map(&source_map))
                 .collect::<Vec<_>>()
                 .join("\n"));
         }
@@ -2716,7 +2750,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         let mono_errs = crate::const_fn_mono::specialize_mixed_const_fns(&mut module);
         if !mono_errs.is_empty() {
             return Err(mono_errs.iter()
-                .map(|d| d.render(src, &path.to_string_lossy()))
+                .map(|d| d.render_with_map(&source_map))
                 .collect::<Vec<_>>()
                 .join("\n"));
         }
