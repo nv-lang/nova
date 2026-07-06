@@ -90,7 +90,7 @@ fn content_length_of(b []u8, header_end int) -> int {
 }
 
 fn head_slice(b []u8, end int) -> []u8 {
-    mut out = Vec[u8].with_capacity(end)
+    mut out = Vec[u8].new().cap(end)
     mut i = 0
     while i < end {
         out.push(b[i])

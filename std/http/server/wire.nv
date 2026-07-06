@@ -156,7 +156,7 @@ fn reason_of(status int) -> str {
 // ── byte helpers ────────────────────────────────────────────────────────────────
 
 fn slice(b []u8, start int, end int) -> []u8 {
-    mut out = Vec[u8].with_capacity(end - start)
+    mut out = Vec[u8].new().cap(end - start)
     mut i = start
     while i < end {
         out.push(b[i])

@@ -320,7 +320,7 @@ fn parse_query(q str) -> [](str, str) {
 fn percent_decode(s str) -> str {
     ro b = s.to_bytes()
     ro n = b.len
-    mut out = Vec[u8].with_capacity(n)
+    mut out = Vec[u8].new().cap(n)
     mut i = 0
     while i < n {
         ro c = b[i] as int
