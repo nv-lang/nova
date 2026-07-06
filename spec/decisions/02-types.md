@@ -12520,6 +12520,21 @@ fn StringBuilder @write_str(s str) -> () {
 [D232](#d232-vect--nova-native-generic-growable-array) (`Vec[T]`),
 [D239](#d239-t--синтаксический-псевдоним-vect) (`[]T ≡ Vec[T]`).
 
+> **AMEND (2026-07-06, of-guard) — пустой `of()` запрещён контрактом.** Я закрываю
+> footgun, который ниже сам же и называю «идиоматичнее `new()`, но можно»: пустой
+> вызов вариадика `Vec[T].of()` (0 аргументов) теперь **запрещён контрактом**
+> `requires args.len() > 0` на `Vec[T].of` (`std/collections/vec/core.nv`). Пустой
+> вектор строится ТОЛЬКО через `Vec[T].new()` — двух равнозначных путей для одного
+> и того же значения больше нет. Нарушение — runtime-panic (`requires failed:
+> args.len() > 0`); фикстура — `std/collections/vec/neg/vec_of_empty_panic.nv`.
+> Мигрированы все прежние вызовы `.of()` без аргументов на `.new()`
+> (`std/http/server/server.nv`, `std/http/server/wire.nv`,
+> `nova_tests/http_decompress/decompress_test.nv`); тесты, нарочно проверявшие
+> легальность пустого `of()` (`spec_tests/conformance/d259_vec_of_vs_from.nv`,
+> `nova_tests/plan153_0/variadic_of.nv`), приведены в соответствие. Правило
+> «КАНОН» ниже устарело в части `Vec[int].of()` — актуальный текст только в этом
+> амендменте.
+
 ### Что
 
 Два конструктора `Vec[T]` несут **разные роли**, и их нельзя путать:
@@ -12535,12 +12550,13 @@ fn StringBuilder @write_str(s str) -> () {
 ```nova
 // КАНОН
 Vec[int].of(1, 2, 3)          // литерал элементов → of (1 аллокация)
-Vec[int].of()                 // пустой → можно of(), но идиоматичнее Vec[int].new()
-Vec[int].new()                // пустой вектор
+Vec[int].new()                // пустой вектор — ЕДИНСТВЕННЫЙ путь (см. AMEND выше)
 Vec[int].from(existing_vec)   // конверсия существующей коллекции → from
 Vec[u8].of(1, 2, 3)           // of сужает так же, как from (args []T)
 
 // АНТИ-ПАТТЕРН
+Vec[int].of()                 // ❌ contract violation (AMEND 2026-07-06): requires
+                              //    args.len() > 0 — пустой of() запрещён, → new()
 Vec[int].from([1, 2, 3])      // ❌ избыточно: под D239 литерал [1,2,3] УЖЕ Vec[int],
                               //    поэтому from его КОПИРУЕТ во второй буфер (2 аллокации).
                               //    `of(1,2,3)` берёт элементы напрямую (1 аллокация).

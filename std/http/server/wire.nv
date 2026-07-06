@@ -54,10 +54,10 @@ fn parse_request(raw []u8) -> Result[ServerRequest, HttpError] {
             ro take = if len < avail { len } else { avail }
             slice(raw, body_start, body_start + take)
         }
-        None => Vec[u8].of()
+        None => Vec[u8].new()
     }
 
-    Ok({ method, target, path, query, version, headers: hm, params: Vec[(str, str)].of(), body })
+    Ok({ method, target, path, query, version, headers: hm, params: Vec[(str, str)].new(), body })
 }
 
 fn parse_request_line(line []u8) -> Result[(Method, str, str, str, Version), HttpError] {
