@@ -215,8 +215,8 @@ export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).ex
 /// (one allocation). This is why it beats `from([1, 2, 3])`: under D239 the
 /// literal `[1, 2, 3]` is already a `Vec[int]`, so `from` would copy it into a
 /// second buffer (two allocations) for the same result. `of` narrows like `from`
-/// (`Vec[u8].of(1, 2, 3)`). `of()` with no args yields an empty `Vec[T]` (though
-/// `Vec[T].new()` reads better for the empty case).
+/// (`Vec[u8].of(1, 2, 3)`). `of()` with **no args is a contract violation**
+/// (D259 amend, 2026-07-06) — build the empty case with `Vec[T].new()`.
 ///
 /// [M-153-vec-of-variadic-codegen] (resolved): user-defined generic-static
 /// variadic collection. The call-site packs `of(1,2,3)`'s args into a single
@@ -224,7 +224,13 @@ export fn Vec[T].from(items []T) -> Self => Vec[T].with_capacity(items.len()).ex
 /// args were passed straight through (`_static_of(1,2,3)` → "too many
 /// arguments"). `from` remains the **conversion** path (copy an existing
 /// collection / narrow a width-differing source).
-export fn Vec[T].of(...args []T) -> Self => args
+///
+/// D259 amend (2026-07-06): `of()` with **zero** arguments is rejected by
+/// contract — an empty `.of()` call reads as an accident (did the caller mean
+/// `.new()`?). Build an empty vector with `Vec[T].new()` instead.
+export fn Vec[T].of(...args []T) -> Self
+    requires args.len() > 0
+=> args
 
 // ──────────────────────────────────────────────────────────────────────────
 // Size / introspection

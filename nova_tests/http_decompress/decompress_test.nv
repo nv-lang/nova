@@ -22,14 +22,14 @@ import std.encoding.compress.{gzip_encode, zlib_encode, CompressLevel}
 fn gz(s str) -> []u8 {
     match gzip_encode(s.to_bytes(), CompressLevel.default()) {
         Ok(b)  => b
-        Err(_) => Vec[u8].of()
+        Err(_) => Vec[u8].new()
     }
 }
 
 fn zl(s str) -> []u8 {
     match zlib_encode(s.to_bytes(), CompressLevel.default()) {
         Ok(b)  => b
-        Err(_) => Vec[u8].of()
+        Err(_) => Vec[u8].new()
     }
 }
 

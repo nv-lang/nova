@@ -1,0 +1,14 @@
+// D259 amend (2026-07-06) — `Vec[T].of()` with zero arguments is now a
+// contract violation: `requires args.len() > 0` (std/collections/vec/core.nv).
+// An empty variadic `.of()` call read as an accident; the empty case has an
+// explicit, intention-revealing spelling — `Vec[T].new()`.
+//
+// EXPECT_RUNTIME_PANIC requires failed: args.len() > 0
+
+module neg.vec_of_empty_panic
+
+import std.collections.vec.{Vec}
+
+test "Vec[int].of() with no args panics (D259 amend)" {
+    ro _v = Vec[int].of()
+}
