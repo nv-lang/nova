@@ -2435,6 +2435,30 @@ static inline int64_t _nova_monotonic_ns(void) {
     return (int64_t)uv_hrtime();
 }
 
+/* [M-time-default-handler-not-wallclock] / D316 amend (2026-07-06):
+ * настоящий wall-clock unix epoch в миллисекундах для default (боевого,
+ * без `with Time = handler {...}`) обработчика Time.now_unix_ms().
+ *
+ * До фикса default-путь возвращал _nova_monotonic_ms() (uptime процесса,
+ * epoch реализация-зависим — НЕ unix epoch), что ломало любой боевой код,
+ * читающий Timestamp.now() как настоящее календарное время (логи, TTL,
+ * сравнение с внешними timestamp'ами).
+ *
+ * uv_gettimeofday(uv_timeval64_t*) — libuv wall-clock (gettimeofday на
+ * POSIX, аналог на Windows), tv_sec — секунды с unix epoch (int64_t),
+ * tv_usec — микросекунды (int32_t). Возвращает 0 при успехе; libuv-реализация
+ * этого вызова не имеет документированных failure-путей на
+ * поддерживаемых платформах — при (теоретическом) сбое возвращаем 0
+ * вместо undefined tv, а не abort (Time.now_unix_ms() ambient — не должен
+ * валить процесс). */
+static inline int64_t _nova_wall_unix_ms(void) {
+    uv_timeval64_t tv;
+    if (uv_gettimeofday(&tv) != 0) {
+        return 0;
+    }
+    return (int64_t)tv.tv_sec * 1000 + (int64_t)tv.tv_usec / 1000;
+}
+
 /* ─── Plan 22 Ф.4: libuv-based fiber-sleep ─── */
 /* uv.h + eventloop.h уже подключены выше в этом файле. */
 
@@ -3054,9 +3078,11 @@ static inline nova_unit _nova_time_default_sleep(nova_int ms) {
     return NOVA_UNIT;
 }
 
-/* Default impl: monotonic milliseconds since some unspecified epoch. */
+/* Default impl: real wall-clock unix epoch milliseconds ([M-time-default-
+ * handler-not-wallclock] / D316 amend, 2026-07-06 — было ошибочно
+ * _nova_monotonic_ms(), см. _nova_wall_unix_ms() выше). */
 static inline nova_int _nova_time_default_now(void) {
-    return (nova_int)_nova_monotonic_ms();
+    return (nova_int)_nova_wall_unix_ms();
 }
 
 /* Inline dispatch: with user handler → handler method; else → default. */
