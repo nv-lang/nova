@@ -12658,6 +12658,13 @@ Cost-transparency (D135): идиома, которая выглядит как �
 
 ## D260. Ленивый итератор `Vec[T]` — boxed-fluent адаптеры (Plan 153.2)
 
+> **AMEND (2026-07-06, решение владельца): терминатор `@nth(n)` РЕТРАКТИРОВАН** (вместе с
+> `CharsIter @nth`) — тождествен `skip(n).next()` и провоцирует индексные привычки на
+> итераторах (скрытый O(n)-«индекс», в циклах O(n²)). Канонический общий набор адаптеров:
+> `skip`/`take`/`step_by`/`enumerate`/`filter`/`chain` + терминаторы `count`/`collect`/
+> `fold`/`find`/... Миграция ~57 мест — волной `[M-d73-d77-retraction-migration]`
+> (переписывание на целевую итерацию, НЕ механику `skip(n).next()`).
+
 **Status:** ACTIVE (Plan 153.2 Phase A, 2026-06-14). **Amended by
 [D277](#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)** (2026-06-15): `BoxIter[T]` помечен `value` →
 wrapper-рекорд лоуэрится by-value (0 heap-аллокаций обёртки, Stage 1); добавлен

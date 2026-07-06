@@ -3,10 +3,8 @@
 // Проверяет round-trip раскодировки реальных raw-DEFLATE / zlib / gzip векторов.
 // Spec: spec/decisions/04-effects.md (D333).
 
-module spec_tests.conformance
+module encoding.compress
 
-import std.encoding.compress.{inflate, zlib_decode, gzip_decode, ErrorKind}
-import std.encoding.compress.{deflate, gzip_encode, zlib_encode, CompressLevel}
 
 fn d333_hex(s str) -> []u8 {
     ro chars = s.to_bytes()

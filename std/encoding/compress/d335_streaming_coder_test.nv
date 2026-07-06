@@ -3,9 +3,8 @@
 // EOF-семантика (is_done). Ключевой инвариант: streaming feed-по-1-байту ==
 // one-shot байт-в-байт. Spec: spec/decisions/04-effects.md (D335).
 
-module spec_tests.conformance
+module encoding.compress
 
-import std.encoding.compress.{inflate, Inflater, GzipReader}
 
 fn d335_hex(s str) -> []u8 {
     ro chars = s.to_bytes()

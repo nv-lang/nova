@@ -2,9 +2,8 @@
 // Protocols + SeekFrom + EOF/partial contract (Q9) + IoError/ErrorKind + the
 // effect-agnostic generic `copy` (Q15) over in-memory conformers.
 
-module spec_tests.conformance
+module std.io
 
-import std.io.{BytesReader, BytesWriter, read_to_end, read_exact, copy, SeekFrom, IoError, ErrorKind}
 
 test "d322: copy is generic over Read+Write (effect-free conformers, Q15)" {
     mut d322_r = BytesReader.new("payload".to_bytes())
