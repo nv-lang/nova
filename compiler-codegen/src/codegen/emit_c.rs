@@ -2107,6 +2107,157 @@ impl CEmitter {
         pairs.into_iter().map(|(k, v)| (k, Self::lift_c_name(v))).collect()
     }
 
+    /// Plan 172.12 A1″ — structural mono-inference twin of `infer_type_param_binding`,
+    /// operating on a REAL `ResolvedType` argument (from the checker channel
+    /// `resolved_types[ExprId]`, D315) instead of a decomposed C-string. Unifies the
+    /// declared `param_ty` (a `TypeRef` from the fn/ctor/variant declaration) against the
+    /// argument's `ResolvedType`, filling `slots[name] = Some(RT)` for each template
+    /// type-param — PURELY structural (no C-string parse, no registry lookup: the RT
+    /// already carries the full nesting). This is the §0-honest source of subst truth the
+    /// A1′ carrier was widened for; the string `infer_type_param_binding` stays in parallel
+    /// (it feeds the still-string-native registries / `type_args_c`, A1‴), and the
+    /// byte-identity guard in `subst_map_adopt_rt` only ADOPTS an RT slot when it lowers to
+    /// the exact same C-name the string path produced — so a channel-miss / representation
+    /// mismatch degrades to the `Raw` debt, never diverges.
+    fn infer_type_param_binding_rt(
+        &self,
+        param_ty: &crate::ast::TypeRef,
+        arg_rt: &crate::types::ResolvedType,
+        slots: &mut Vec<(String, Option<crate::types::ResolvedType>)>,
+    ) {
+        use crate::types::ResolvedType as R;
+        use crate::ast::TypeRef as TR;
+        // View-transparent on the RT side (mirrors the C-lowering `readonly T` ≡ `T`).
+        let arg_rt = arg_rt.peel_view();
+        // Never bind a residual/opaque RT as a "concrete" arg (the string path skips
+        // empty / `void*` for the same reason): a `TypeParam`/`Any`/`Raw`/`Unit` arg is not
+        // a resolved substitution and would make the printer re-emit an erased placeholder.
+        if matches!(arg_rt, R::TypeParam(_) | R::Any | R::Raw(_) | R::Unit) {
+            return;
+        }
+        match param_ty {
+            // Bare `T` → bind `T = arg_rt` (structural counterpart of the string bare-T arm).
+            TR::Named { path, generics, .. } if generics.is_empty() => {
+                let name = path.join("_");
+                if let Some(slot) = slots.iter_mut().find(|(n, _)| n == &name) {
+                    if slot.1.is_none() {
+                        slot.1 = Some(arg_rt.clone());
+                    }
+                }
+            }
+            // `[]T` ≡ `Vec[T]` — descend into the element RT (channel carries `Named{Vec,[elem]}`
+            // per `from_type_ref`'s D239 canonicalization; the internal category key `R::Array`
+            // is handled too for robustness). No registry re-parse needed.
+            TR::Array(inner, _) => match arg_rt {
+                R::Named { name, args, .. } if name == "Vec" && args.len() == 1 => {
+                    self.infer_type_param_binding_rt(inner, &args[0], slots);
+                }
+                R::Array(elem) => self.infer_type_param_binding_rt(inner, elem, slots),
+                _ => {}
+            },
+            // Generic named `Base[..]` (Option[T] / Result[T,E] / user Box[T] / HashMap[K,V]):
+            // positionally unify the declared generics against the RT's structural args.
+            TR::Named { generics, .. } if !generics.is_empty() => {
+                if let R::Named { args, .. } = arg_rt {
+                    if args.len() == generics.len() {
+                        for (g, a) in generics.iter().zip(args.iter()) {
+                            self.infer_type_param_binding_rt(g, a, slots);
+                        }
+                    }
+                }
+            }
+            // fn(..)->T and other shapes: no structural binding (string path skips them too).
+            _ => {}
+        }
+    }
+
+    /// Plan 172.12 A1″ — channel RT for an argument expression: `resolved_types[ExprId]`
+    /// (checker-annotated, D315), or `None` when the id is unset / the channel misses.
+    fn channel_arg_rt(&self, expr: &crate::ast::Expr) -> Option<crate::types::ResolvedType> {
+        if expr.id.is_set() {
+            self.resolved_types.get(&expr.id).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Plan 172.12 A1″ — build the `Vec<(name, Option<RT>)>` slots for a set of
+    /// (declared-param-type, call-arg) pairs by structural channel inference. `slot_names`
+    /// are the template/fn type-params (in order); a slot stays `None` when no arg pins it
+    /// or the channel misses (→ the string binding falls back to the `Raw` debt).
+    fn rt_slots_from_args<'a>(
+        &self,
+        param_tys: impl Iterator<Item = &'a crate::ast::TypeRef>,
+        args: &[crate::ast::CallArg],
+        slot_names: &[String],
+    ) -> Vec<(String, Option<crate::types::ResolvedType>)> {
+        let mut slots: Vec<(String, Option<crate::types::ResolvedType>)> =
+            slot_names.iter().map(|n| (n.clone(), None)).collect();
+        for (param_ty, arg) in param_tys.zip(args.iter()) {
+            if let Some(rt) = self.channel_arg_rt(arg.expr()) {
+                self.infer_type_param_binding_rt(param_ty, &rt, &mut slots);
+            }
+        }
+        slots
+    }
+
+    /// Plan 172.12 A1″ — seed slots (positionally) from explicit turbofish type-args, the
+    /// DECLARATION-`TypeRef` structural source (`obj.method[U]` / `fn[U](...)`): `from_type_ref`
+    /// resolves the written type to a real `ResolvedType` (NO C-name parse), highest priority
+    /// (mirrors the string `resolve_mono_type_args` Source 1). The byte-identity guard in
+    /// `subst_map_adopt_rt` still validates the lowering, so a residual/type-param turbofish
+    /// (rare, nested-generic) safely degrades to `Raw`.
+    fn rt_slots_seed_turbofish(
+        &self,
+        slots: &mut [(String, Option<crate::types::ResolvedType>)],
+        turbofish_refs: &[crate::ast::TypeRef],
+    ) {
+        for (slot, tr) in slots.iter_mut().zip(turbofish_refs.iter()) {
+            if slot.1.is_none() {
+                slot.1 = Some(crate::types::ResolvedType::from_type_ref(tr));
+            }
+        }
+    }
+
+    /// Plan 172.12 A1″ — seed a `current_type_subst` map from the string mono subst,
+    /// ADOPTING the structurally-inferred `ResolvedType` for each entry whose RT lowers to
+    /// the EXACT same C-name (byte-identity guard). Entries with no RT slot, a channel-miss,
+    /// or a lowering mismatch keep the `Raw` transitional debt — so the output is
+    /// byte-identical to the pre-A1″ all-`Raw` seeding BY CONSTRUCTION, while every adopted
+    /// entry replaces a `Raw` with real structural type truth (the A1″ goal). The
+    /// `NOVA_A1PP_TRACE` env var tallies adopted-vs-Raw for yield measurement.
+    fn subst_map_adopt_rt(
+        &self,
+        pairs: &[(String, String)],
+        rt_slots: &[(String, Option<crate::types::ResolvedType>)],
+    ) -> HashMap<String, crate::types::ResolvedType> {
+        let trace = std::env::var_os("NOVA_A1PP_TRACE").is_some();
+        pairs
+            .iter()
+            .map(|(k, v)| {
+                let adopted = rt_slots
+                    .iter()
+                    .find(|(n, _)| n == k)
+                    .and_then(|(_, o)| o.clone())
+                    .filter(|rt| self.resolved_type_to_c(rt).ok().as_deref() == Some(v.as_str()));
+                match adopted {
+                    Some(rt) => {
+                        if trace {
+                            eprintln!("[A1PP] adopt {}={} rt={:?}", k, v, rt);
+                        }
+                        (k.clone(), rt)
+                    }
+                    None => {
+                        if trace {
+                            eprintln!("[A1PP] raw   {}={}", k, v);
+                        }
+                        (k.clone(), Self::lift_c_name(v.clone()))
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// Plan 172.12 A1′ — lower a `current_type_subst` VALUE to its C-name. The debt
     /// carrier `Raw(s)` returns `s` verbatim (byte-identical to the pre-A1′ stored
     /// `String`); a real `ResolvedType` (post-A1″) goes through the printer, exactly as
@@ -15253,10 +15404,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let method_c_name = format!("{}_static_{}", mangled, method);
         // Emit args with the type-substitution active (array-literal element
         // types flow through), mirroring the turbofish static path.
-        let saved_subst = std::mem::replace(
-            &mut self.current_type_subst,
-            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
-        );
+        // Plan 172.12 A1″: seed with structural RT from the channel where it lowers
+        // byte-identically (else Raw debt) — `args` carry `ExprId`, so their
+        // `resolved_types` RT unifies against the template param `TypeRef`s.
+        let slot_names: Vec<String> =
+            template.generics.iter().map(|g| g.name.clone()).collect();
+        let rt_slots = self.rt_slots_from_args(
+            fn_decl.params.iter().map(|p| &p.ty), args, &slot_names);
+        let seeded = self.subst_map_adopt_rt(&type_subst, &rt_slots);
+        let saved_subst = std::mem::replace(&mut self.current_type_subst, seeded);
         let mut arg_strs = Vec::new();
         for (i, a) in args.iter().enumerate() {
             let arg_expr = a.expr();
@@ -30497,12 +30653,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                         &fn_decl.clone(), type_subst.clone(),
                                         &mono_name.clone(), &rt_clone);
                                     // Emit args с fn_param_sigs context для closure params.
+                                    // Plan 172.12 A1″: structural RT seed (byte-identity-guarded).
+                                    let a1pp_names: Vec<String> =
+                                        fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                                    let a1pp_slots = self.rt_slots_from_args(
+                                        fn_decl.params.iter().map(|p| &p.ty), args, &a1pp_names);
                                     let mut arg_strs = Vec::new();
                                     for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                         if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
+                                            let a1pp_seed = self.subst_map_adopt_rt(&type_subst, &a1pp_slots);
                                             let saved_inner = std::mem::replace(
                                                 &mut self.current_type_subst,
-                                                Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                                a1pp_seed,
                                             );
                                             // Plan 70 PhaseA2: strict — emit_call mono-subst fn-param sig
                                             let inner_ptys: Vec<String> = fp.iter()
@@ -30782,13 +30944,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         self.register_mono_instance(&fn_decl.clone(), type_subst.clone(), &mono_name.clone());
                         // Emit args WITHOUT boxing — concrete types
                         // For fn-typed params (closures): set up fn_param_sigs context
+                        // Plan 172.12 A1″: structural RT seed (byte-identity-guarded) for
+                        // the inner-subst — the call `args` carry `ExprId` → channel RT.
+                        let a1pp_names: Vec<String> =
+                            fn_decl.generics.iter().map(|g| g.name.clone()).collect();
+                        let mut a1pp_slots = self.rt_slots_from_args(
+                            fn_decl.params.iter().map(|p| &p.ty), args, &a1pp_names);
+                        self.rt_slots_seed_turbofish(&mut a1pp_slots, &turbofish_type_refs);
                         let mut arg_strs = Vec::new();
                         for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
                                 // Temporarily set type subst for inner type resolution
+                                let a1pp_seed = self.subst_map_adopt_rt(&type_subst, &a1pp_slots);
                                 let saved_inner = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+                                    a1pp_seed,
                                 );
                                 // Plan 70 PhaseA2: strict — emit_call inner-subst fn-param sig
                                 let inner_ptys: Vec<String> = fp.iter()
