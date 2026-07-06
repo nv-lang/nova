@@ -5,16 +5,32 @@
  * legacy net.c during migration; ALL internal helpers are `static` so there is
  * no link collision with net.c's symbols.
  *
- * Park/wake/cancel are reused from the net.c mechanism (Plan 22 / D93):
+ * Park/wake/cancel follow the net.c mechanism (Plan 22 / D93) with one
+ * hard-won correction (lost-wake, see below):
  *   1. Allocate the handle on the GC heap (nova_alloc_uncollectable — a live uv
  *      handle references the struct, so GC must not move/collect it).
  *   2. Register a stop_cb for cancel integration (D93).
- *   3. Park the current fiber via nova_sched_park.
+ *   3. Park the current fiber via nova_sched_park_until (predicate!).
  *   4. The libuv callback (on the owning loop thread) stores the result INTO the
- *      per-operation fields of the handle and calls nova_sched_wake.
+ *      per-operation fields of the handle, sets the op's atomic `done` flag,
+ *      and calls nova_sched_wake.
  *   5. The fiber resumes, unregisters, checks cancel_requested.
  * The result never transits a __thread slot — it lands in the parked fiber's own
  * handle struct, which is exactly what fixes the M:N data race (Д2).
+ *
+ * LOST-WAKE CORRECTION (Plan 183 Ф.1, found by UDP smoke TIMEOUT ~3/10):
+ * nova_sched_wake resolves the target fiber via parked_co[slot], which is set
+ * only INSIDE nova_sched_park. libuv callbacks run on the loop-owning thread,
+ * concurrently with the issuing fiber's worker under M:N — a callback firing
+ * between the uv-op issue and the park finds parked_co==NULL and the wake is
+ * silently dropped → the fiber parks forever. net.c's naive single-shot
+ * `nova_sched_park` has this hole on every op. The lost-wake-free pattern
+ * (same as channels/sync): publish scope/slot + reset the atomic `done` flag
+ * BEFORE issuing the op; the callback stores results, then `done=1`, then
+ * wake; the fiber parks with nova_sched_park_until(pred) — the pred fast-path
+ * consumes a completion that beat the park, re-park absorbs spurious wakes.
+ * Predicates also treat stage >= CLOSING as completion so close/cancel wakes
+ * are never waited out.
  */
 
 #ifndef NOVA_USE_LIBUV
@@ -218,7 +234,7 @@ typedef struct NovaNet2Listener {
     nova_atomic_int stage;
     NovaFiberQueue* accept_scope;  /* NULL when no waiter */
     int             accept_slot;
-    int             pending_conns;
+    nova_atomic_int pending_conns; /* incremented by connection_cb (loop thread) */
 } NovaNet2Listener;
 
 typedef struct NovaNet2Stream {
@@ -231,28 +247,57 @@ typedef struct NovaNet2Stream {
     NovaFiberQueue* op_scope;      /* connect waiter (NULL = none) */
     int             op_slot;
     int             op_err;        /* UV code (0 = ok) */
+    nova_atomic_int op_done;       /* completion latch (lost-wake fix) */
 
     /* read path (independent slot → full-duplex without a split C-API) */
     NovaFiberQueue* read_scope;
     int             read_slot;
     uint8_t*        read_ptr;      /* caller's buffer — libuv reads straight in */
-    nova_int         read_cap;
-    nova_int         read_n;        /* >0 bytes / 0 EOF (via read_eof) */
+    nova_int        read_cap;
+    nova_int        read_n;        /* >0 bytes / 0 EOF (via read_eof) */
     int             read_err;      /* UV code (0 = ok) */
     int             read_eof;
+    nova_atomic_int read_done;     /* completion latch */
 
     /* write path (independent slot) */
     uv_write_t      write_req;
     NovaFiberQueue* write_scope;
     int             write_slot;
-    nova_int         write_n;
+    nova_int        write_n;
     int             write_err;
+    nova_atomic_int write_done;    /* completion latch */
 
     /* shutdown (half-close) */
     uv_shutdown_t   shutdown_req;
 
     volatile int32_t split_refcount; /* 0 = unsplit / 2 / 1 */
 } NovaNet2Stream;
+
+/* ─── Park predicates (lost-wake-free, see file header) ──────────────────────
+ * Each returns true when the op's completion latch is set OR the handle is
+ * closing/closed (close_cb / cancel path). Reads are SEQ_CST via nova_aint_load;
+ * callbacks publish results BEFORE the latch store. */
+
+static nova_bool _nn2_accept_ready(void* ctx) {
+    NovaNet2Listener* lst = (NovaNet2Listener*)ctx;
+    return nova_aint_load(&lst->pending_conns) > 0
+        || nova_aint_load(&lst->stage) >= NN2_CLOSING;
+}
+static nova_bool _nn2_stream_op_ready(void* ctx) {
+    NovaNet2Stream* s = (NovaNet2Stream*)ctx;
+    return nova_aint_load(&s->op_done) != 0
+        || nova_aint_load(&s->stage) >= NN2_CLOSING;
+}
+static nova_bool _nn2_stream_read_ready(void* ctx) {
+    NovaNet2Stream* s = (NovaNet2Stream*)ctx;
+    return nova_aint_load(&s->read_done) != 0
+        || nova_aint_load(&s->stage) >= NN2_CLOSING;
+}
+static nova_bool _nn2_stream_write_ready(void* ctx) {
+    NovaNet2Stream* s = (NovaNet2Stream*)ctx;
+    return nova_aint_load(&s->write_done) != 0
+        || nova_aint_load(&s->stage) >= NN2_CLOSING;
+}
 
 /* forward decls */
 static void         _nn2_stream_close_cb(uv_handle_t* h);
@@ -264,15 +309,11 @@ static NovaStopMode _nn2_listener_stop_cb(void* handle);
 
 static void _nn2_connection_cb(uv_stream_t* srv, int status) {
     NovaNet2Listener* lst = (NovaNet2Listener*)srv->data;
-    if (status < 0) {
-        if (lst->accept_scope) {
-            NovaFiberQueue* sc = lst->accept_scope; int sl = lst->accept_slot;
-            lst->accept_scope = NULL;
-            nova_sched_wake(sc, sl);
-        }
-        return;
+    if (status >= 0) {
+        /* Publish BEFORE the wake attempt — the accept predicate reads it. */
+        __atomic_fetch_add((volatile int32_t*)&lst->pending_conns, 1,
+                           __ATOMIC_ACQ_REL);
     }
-    lst->pending_conns++;
     if (lst->accept_scope) {
         NovaFiberQueue* sc = lst->accept_scope; int sl = lst->accept_slot;
         lst->accept_scope = NULL;
@@ -348,20 +389,33 @@ void* nova_net_tcp_accept(void* lstv, nova_int* out_err) {
     }
 
     for (;;) {
-        if (lst->pending_conns > 0) { lst->pending_conns--; break; }
+        /* CAS-claim one pending connection (connection_cb increments on the
+         * loop thread — plain -- would race). */
+        int32_t pc = nova_aint_load(&lst->pending_conns);
+        if (pc > 0) {
+            if (__atomic_compare_exchange_n(
+                    (volatile int32_t*)&lst->pending_conns, &pc, pc - 1,
+                    0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                break; /* claimed */
+            }
+            continue;  /* lost the CAS — retry */
+        }
         if (nova_aint_load(&lst->stage) >= NN2_CLOSING) {
             if (out_err) *out_err = UV_ECANCELED; return NULL;
         }
+        /* Publish the waiter BEFORE parking; the predicate absorbs a
+         * connection_cb that fires in the gap (lost-wake-free). */
         lst->accept_scope = scope;
         lst->accept_slot  = slot;
         nova_sched_register_pending(scope, slot, lst, _nn2_listener_stop_cb);
-        nova_sched_park(scope, slot);
+        nova_sched_park_until(scope, slot, _nn2_accept_ready, lst);
         nova_sched_unregister_pending(scope, slot);
+        lst->accept_scope = NULL;
 
         if (nova_abool_load(&cancel_sc->cancel_requested)) {
             if (out_err) *out_err = UV_ECANCELED; return NULL;
         }
-        if (nova_aint_load(&lst->stage) == NN2_CLOSED) {
+        if (nova_aint_load(&lst->stage) >= NN2_CLOSING) {
             if (out_err) *out_err = UV_ECANCELED; return NULL;
         }
     }
@@ -422,6 +476,7 @@ void nova_net_listener_close(void* lstv) {
 static void _nn2_connect_cb(uv_connect_t* req, int status) {
     NovaNet2Stream* s = (NovaNet2Stream*)req->data;
     s->op_err = status;
+    nova_aint_store(&s->op_done, 1);   /* results published → latch → wake */
     NovaFiberQueue* sc = s->op_scope; int sl = s->op_slot;
     s->op_scope = NULL;
     if (sc) nova_sched_wake(sc, sl);
@@ -476,21 +531,27 @@ void* nova_net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err) {
         return NULL;
     }
 
+    /* Publish waiter + latch BEFORE issuing the op (lost-wake-free): the
+     * connect_cb may fire on the loop thread before we park. */
+    nova_aint_store(&s->stage, NN2_PENDING);
+    nova_aint_init(&s->op_done, 0);
+    s->op_scope = scope;
+    s->op_slot  = slot;
+    nova_sched_register_pending(scope, slot, s, _nn2_stream_stop_cb);
+
     struct sockaddr_storage ss;
     _nn2_addr_to_ss(addr, &ss);
     rc = uv_tcp_connect(&s->connect_req, &s->handle,
                         (const struct sockaddr*)&ss, _nn2_connect_cb);
     if (rc != 0) {
+        nova_sched_unregister_pending(scope, slot);
+        s->op_scope = NULL;
         if (out_err) *out_err = rc;
         uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
         return NULL;
     }
 
-    nova_aint_store(&s->stage, NN2_PENDING);
-    s->op_scope = scope;
-    s->op_slot  = slot;
-    nova_sched_register_pending(scope, slot, s, _nn2_stream_stop_cb);
-    nova_sched_park(scope, slot);
+    nova_sched_park_until(scope, slot, _nn2_stream_op_ready, s);
     nova_sched_unregister_pending(scope, slot);
 
     if (nova_abool_load(&cancel_sc->cancel_requested)) {
@@ -531,6 +592,7 @@ static void _nn2_read_cb(uv_stream_t* stream, ssize_t nread,
         s->read_n   = nread;   /* data already in the caller's buffer */
         s->read_err = 0;
     }
+    nova_aint_store(&s->read_done, 1);  /* results published → latch → wake */
     NovaFiberQueue* sc = s->read_scope; int sl = s->read_slot;
     s->read_scope = NULL;
     if (sc) nova_sched_wake(sc, sl);
@@ -549,26 +611,33 @@ nova_int nova_net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
 
+    /* Publish waiter + buffer + latch BEFORE uv_read_start (lost-wake-free).
+     * NOTE: no stage transition here — read and write halves run full-duplex
+     * concurrently on the same handle (independent scopes + latches); stage is
+     * only IDLE/CLOSING/CLOSED for streams after connect. */
     s->read_ptr = buf;
     s->read_cap = cap;
     s->read_n   = 0;
     s->read_eof = 0;
     s->read_err = 0;
-
-    int rc = uv_read_start((uv_stream_t*)&s->handle,
-                           _nn2_read_alloc_cb, _nn2_read_cb);
-    if (rc != 0) return rc;
-
-    nova_aint_store(&s->stage, NN2_PENDING);
+    nova_aint_store(&s->read_done, 0);
     s->read_scope = scope;
     s->read_slot  = slot;
     nova_sched_register_pending(scope, slot, s, _nn2_stream_stop_cb);
-    nova_sched_park(scope, slot);
+
+    int rc = uv_read_start((uv_stream_t*)&s->handle,
+                           _nn2_read_alloc_cb, _nn2_read_cb);
+    if (rc != 0) {
+        nova_sched_unregister_pending(scope, slot);
+        s->read_scope = NULL;
+        return rc;
+    }
+
+    nova_sched_park_until(scope, slot, _nn2_stream_read_ready, s);
     nova_sched_unregister_pending(scope, slot);
 
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
-    if (nova_aint_load(&s->stage) == NN2_CLOSED)        return UV_ECANCELED;
-    nova_aint_store(&s->stage, NN2_IDLE);
+    if (nova_aint_load(&s->stage) >= NN2_CLOSING)       return UV_ECANCELED;
 
     if (s->read_err != 0) return s->read_err;
     if (s->read_eof)      return 0;   /* clean EOF: 0 bytes */
@@ -578,6 +647,7 @@ nova_int nova_net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
 static void _nn2_write_cb(uv_write_t* req, int status) {
     NovaNet2Stream* s = (NovaNet2Stream*)req->data;
     s->write_err = status;
+    nova_aint_store(&s->write_done, 1);  /* results published → latch → wake */
     NovaFiberQueue* sc = s->write_scope; int sl = s->write_slot;
     s->write_scope = NULL;
     if (sc) nova_sched_wake(sc, sl);
@@ -597,26 +667,31 @@ nova_int nova_net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
 
     /* Zero-copy: uv_write points straight at the caller's []u8 memory, which the
-     * Nova caller keeps alive on its fiber stack across this parked call. */
+     * Nova caller keeps alive on its fiber stack across this parked call.
+     * Publish waiter + latch BEFORE uv_write (lost-wake-free); no stage
+     * transition (full-duplex with a concurrent read, see read comment). */
     uv_buf_t ubuf = uv_buf_init((char*)(uintptr_t)buf, (unsigned int)len);
     s->write_req.data = s;
     s->write_n   = len;
     s->write_err = 0;
-
-    int rc = uv_write(&s->write_req, (uv_stream_t*)&s->handle, &ubuf, 1,
-                      _nn2_write_cb);
-    if (rc != 0) return rc;
-
-    nova_aint_store(&s->stage, NN2_PENDING);
+    nova_aint_store(&s->write_done, 0);
     s->write_scope = scope;
     s->write_slot  = slot;
     nova_sched_register_pending(scope, slot, s, _nn2_stream_stop_cb);
-    nova_sched_park(scope, slot);
+
+    int rc = uv_write(&s->write_req, (uv_stream_t*)&s->handle, &ubuf, 1,
+                      _nn2_write_cb);
+    if (rc != 0) {
+        nova_sched_unregister_pending(scope, slot);
+        s->write_scope = NULL;
+        return rc;
+    }
+
+    nova_sched_park_until(scope, slot, _nn2_stream_write_ready, s);
     nova_sched_unregister_pending(scope, slot);
 
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
-    if (nova_aint_load(&s->stage) == NN2_CLOSED)        return UV_ECANCELED;
-    nova_aint_store(&s->stage, NN2_IDLE);
+    if (nova_aint_load(&s->stage) >= NN2_CLOSING)       return UV_ECANCELED;
 
     if (s->write_err != 0) return s->write_err;
     return s->write_n;
@@ -705,21 +780,34 @@ typedef struct NovaNet2Udp {
     NovaFiberQueue* recv_scope;
     int             recv_slot;
     uint8_t*        recv_ptr;      /* caller's buffer (zero-copy) */
-    nova_int         recv_cap;
-    nova_int         recv_n;
+    nova_int        recv_cap;
+    nova_int        recv_n;
     int             recv_err;
     struct sockaddr_storage recv_sender;
     int             recv_sender_valid;
+    nova_atomic_int recv_done;     /* completion latch (lost-wake fix) */
 
     /* send path */
     uv_udp_send_t   send_req;
     NovaFiberQueue* send_scope;
     int             send_slot;
     int             send_err;
+    nova_atomic_int send_done;     /* completion latch */
 } NovaNet2Udp;
 
 static void         _nn2_udp_close_cb(uv_handle_t* h);
 static NovaStopMode _nn2_udp_stop_cb(void* handle);
+
+static nova_bool _nn2_udp_recv_ready(void* ctx) {
+    NovaNet2Udp* sock = (NovaNet2Udp*)ctx;
+    return nova_aint_load(&sock->recv_done) != 0
+        || nova_aint_load(&sock->stage) >= NN2_CLOSING;
+}
+static nova_bool _nn2_udp_send_ready(void* ctx) {
+    NovaNet2Udp* sock = (NovaNet2Udp*)ctx;
+    return nova_aint_load(&sock->send_done) != 0
+        || nova_aint_load(&sock->stage) >= NN2_CLOSING;
+}
 
 void* nova_net_udp_bind(const NovaNetAddr* addr, nova_int* out_err) {
     uv_loop_t* loop = nova_current_loop();
@@ -747,6 +835,7 @@ void* nova_net_udp_bind(const NovaNetAddr* addr, nova_int* out_err) {
 static void _nn2_udp_send_cb(uv_udp_send_t* req, int status) {
     NovaNet2Udp* sock = (NovaNet2Udp*)req->data;
     sock->send_err = status;
+    nova_aint_store(&sock->send_done, 1);  /* latch → wake */
     NovaFiberQueue* sc = sock->send_scope; int sl = sock->send_slot;
     sock->send_scope = NULL;
     if (sc) nova_sched_wake(sc, sl);
@@ -764,20 +853,22 @@ nova_int nova_net_udp_send_to(void* sockv, const uint8_t* buf, nova_int len,
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
 
-    /* Zero-copy: send straight from the caller's []u8. */
+    /* Zero-copy: send straight from the caller's []u8. Publish waiter + latch
+     * BEFORE uv_udp_send (lost-wake-free: this exact gap timed out ~3/10). */
     uv_buf_t ubuf = uv_buf_init((char*)(uintptr_t)buf, (unsigned int)len);
     struct sockaddr_storage ss;
     _nn2_addr_to_ss(addr, &ss);
     sock->send_req.data = sock;
     sock->send_err = 0;
+    nova_aint_store(&sock->send_done, 0);
+    sock->send_scope = scope;
+    sock->send_slot  = slot;
 
     int rc = uv_udp_send(&sock->send_req, &sock->handle, &ubuf, 1,
                          (const struct sockaddr*)&ss, _nn2_udp_send_cb);
-    if (rc != 0) return rc;
+    if (rc != 0) { sock->send_scope = NULL; return rc; }
 
-    sock->send_scope = scope;
-    sock->send_slot  = slot;
-    nova_sched_park(scope, slot);
+    nova_sched_park_until(scope, slot, _nn2_udp_send_ready, sock);
     sock->send_scope = NULL;
 
     if (sock->send_err != 0) return sock->send_err;
@@ -809,6 +900,7 @@ static void _nn2_udp_recv_cb(uv_udp_t* handle, ssize_t nread,
             sock->recv_sender_valid = 1;
         }
     }
+    nova_aint_store(&sock->recv_done, 1);  /* results published → latch → wake */
     NovaFiberQueue* sc = sock->recv_scope; int sl = sock->recv_slot;
     sock->recv_scope = NULL;
     if (sc) nova_sched_wake(sc, sl);
@@ -849,24 +941,31 @@ nova_int nova_net_udp_recv_from(void* sockv, uint8_t* buf, nova_int cap,
     NovaFiberQueue* cancel_sc = _nn2_cancel_scope(scope);
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
 
+    /* Publish waiter + buffer + latch BEFORE uv_udp_recv_start (lost-wake-free). */
     sock->recv_ptr = buf;
     sock->recv_cap = cap;
     sock->recv_n   = 0;
     sock->recv_err = 0;
     sock->recv_sender_valid = 0;
-
-    int rc = uv_udp_recv_start(&sock->handle, _nn2_udp_alloc_cb, _nn2_udp_recv_cb);
-    if (rc != 0) return rc;
-
+    nova_aint_store(&sock->recv_done, 0);
     nova_aint_store(&sock->stage, NN2_PENDING);
     sock->recv_scope = scope;
     sock->recv_slot  = slot;
     nova_sched_register_pending(scope, slot, sock, _nn2_udp_stop_cb);
-    nova_sched_park(scope, slot);
+
+    int rc = uv_udp_recv_start(&sock->handle, _nn2_udp_alloc_cb, _nn2_udp_recv_cb);
+    if (rc != 0) {
+        nova_sched_unregister_pending(scope, slot);
+        sock->recv_scope = NULL;
+        nova_aint_store(&sock->stage, NN2_IDLE);
+        return rc;
+    }
+
+    nova_sched_park_until(scope, slot, _nn2_udp_recv_ready, sock);
     nova_sched_unregister_pending(scope, slot);
 
     if (nova_abool_load(&cancel_sc->cancel_requested)) return UV_ECANCELED;
-    if (nova_aint_load(&sock->stage) == NN2_CLOSED)     return UV_ECANCELED;
+    if (nova_aint_load(&sock->stage) >= NN2_CLOSING)    return UV_ECANCELED;
     nova_aint_store(&sock->stage, NN2_IDLE);
 
     if (sock->recv_err != 0) return sock->recv_err;
@@ -914,16 +1013,22 @@ typedef struct {
     int              slot;
     int              status;
     struct addrinfo* res;
+    nova_atomic_int  done;   /* completion latch (lost-wake fix) */
 } NovaNet2DnsReq;
+
+static nova_bool _nn2_dns_ready(void* ctx) {
+    return nova_aint_load(&((NovaNet2DnsReq*)ctx)->done) != 0;
+}
 
 static void _nn2_dns_cb(uv_getaddrinfo_t* req, int status,
                         struct addrinfo* res) {
     NovaNet2DnsReq* dr = (NovaNet2DnsReq*)req->data;
     dr->status = status;
     dr->res    = res;
+    nova_aint_store(&dr->done, 1);  /* results published → latch → wake */
     NovaFiberQueue* sc = dr->scope; int sl = dr->slot;
     dr->scope = NULL;
-    nova_sched_wake(sc, sl);
+    if (sc) nova_sched_wake(sc, sl);
 }
 
 static NovaStopMode _nn2_dns_stop_cb(void* handle) {
@@ -967,7 +1072,7 @@ nova_int nova_net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t po
     if (rc != 0) { if (out_err) *out_err = rc; return -1; }
 
     nova_sched_register_pending(scope, slot, dr, _nn2_dns_stop_cb);
-    nova_sched_park(scope, slot);
+    nova_sched_park_until(scope, slot, _nn2_dns_ready, dr);
     nova_sched_unregister_pending(scope, slot);
 
     if (nova_abool_load(&cancel_sc->cancel_requested)) {
