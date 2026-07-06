@@ -14,6 +14,8 @@
 > **Ф.2 (typed-effect-ops / retire int-wire) 🚩 OWNER-GATED** (3 net-zero; prelude⟷std.time coupling — см. Ф.2-блок §4);
 > **Ф.1c ✅ SHIPPED (2026-07-06): overflow-safe арифметика (D317) + Monotonic non-regression (D318)** — trap-операторы +
 > `checked_*`/`saturating_*` + boundary-saturate + f64 NaN/inf + saturate-to-zero, чистый `.nv`-слой; Ф.4/Ф.5/Ф.6 — TODO. Все Q закрыты (§3.0).
+> **Единицы времени в именах опов ✅ SHIPPED (2026-07-06, owner side-task, D316 amend, вне Ф-нумерации):**
+> `now()`→`now_unix_ms()`, `now_monotonic()`→`now_monotonic_ns()` + `Duration.@sleep()`-сахар — см. блок сразу после Ф.1c ниже.
 > **Маркер:** `[M-175-time-system-rework]`. **Запуск:** «**выполни план 175**» (план самодостаточен — вся информация ниже).
 > **D-блоки (NEW):** D316 (typed Time-surface + единый источник), D317 (Duration/instant overflow-policy), D318
 > (Monotonic non-regression + clock-source contract). Amend: D124, D237, prelude-`Time`-decl. (Резерв подтверждён
@@ -398,6 +400,27 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   - **Исходное описание Ф.1c:** Реализовать §3b/D317: trap-операторы + `checked_*`/`saturating_*` на Duration;
     boundary-saturate + `checked_*` на Timestamp/Monotonic±Duration; `@abs(i64::MIN)`; `@div(0)`; f64 NaN/inf-policy;
     фикс μs U+03BC в `@into()` (Q12). DEP: Ф.1b. **Здесь Nova достигает паритета Rust/Java/Swift и обходит Go/Zig.**
+- **Единицы времени в именах опов — ✅ SHIPPED 2026-07-06 (owner side-task, D316 amend; вне формальной
+  Ф-нумерации — НЕ путать с Ф.4 ниже, которая остаётся отдельным TODO).** `Time`-эффект: `now()` → `now_unix_ms()`,
+  `now_monotonic()` → `now_monotonic_ns()` (`sleep(ms int)` не тронут — единица уже в имени параметра). Факт-единицы
+  подтверждены из runtime: `now_unix_ms` — unix-epoch мс (`Timestamp.from_unix_millis`, `std/time/duration.nv`);
+  `now_monotonic_ns` — наносекунды (`_nova_monotonic_ns()` в `nova_rt/fibers.h` оборачивает `uv_hrtime()` без
+  деления). Обновлено: schema-decl (`std/prelude/effects.nv`), mock-handlers `fixed_ms`/`mut_clock`
+  (`std/testing/handlers.nv`), все вызовы в `std/time/duration.nv`, `std/concurrency/{timer,supervised_deadline_test}.nv`,
+  `std/_experimental/concurrency/rate_limiter.nv`. **Найден+починен hardcode-дрейф**, который grep-инвариант из
+  рецепта предсказывал: C-side `NovaVtable_Time` (`nova_rt/effects.h`) и wrapper-функции `Nova_Time_now`/
+  `Nova_Time_now_monotonic` (`nova_rt/fibers.h`) — hand-written struct/function names, синхронизированы codegen'ом
+  designated-init по имени опы (НЕ по хардкод-таблице в `src/`), но сами имена были захардкожены под старые
+  `now`/`now_monotonic` → переименованы в `now_unix_ms`/`now_monotonic_ns` синхронно (иначе `NovaVtable_Time` не
+  имел бы поля `now_unix_ms` → CC-FAIL на первом же `Timestamp.now()`-вызове; воспроизведено и починено). **Сахар:**
+  `Duration.@sleep()` (**NEW**) — `Time.sleep(@to_millis_ceil())`, округляет ВВЕРХ (никогда не спит меньше
+  запрошенного). Тест: `std/time/units_test.nv` (5 блоков: Timestamp.now() unchanged, mut_clock-совместимость,
+  реальный sleep≥50ms замер по Monotonic, mock-sleep продвигает виртуальные часы, sub-ms округление вверх).
+  Spec: [D316 amend](../../spec/decisions/04-effects.md#d316). **Gate:** conformance 54/0; grep-инвариант
+  `Time\.now()` в std/+spec_tests = 0; дельта vs main-бинарь (temp-worktree) на nova_tests/time+concurrency —
+  0 непредвиденных регрессий (concurrency: `_repro_p110` идентичная pre-existing CC-FAIL до/после; time: 1 ОЖИДАЕМЫЙ
+  новый CC-FAIL в `plan175_f1_timer_metrics_split.nv` — старое имя `Time.now()`, nova_tests сознательно НЕ
+  мигрирован, уходит в будущую санацию).
 - **Ф.2 — типизированный провод (retire int-wire). 🚩 OWNER-GATED design-fork (НЕ реализован; 3 net-zero).** Замена
   int-wire-эффекта на typed-опы (`timestamp()->Timestamp`/`monotonic()->Monotonic`/`sleep(Duration)`) в схеме `Time`
   **архитектурно инфизибл** без разрешения owner'ом связки **prelude ⟷ std.time**: `Time`-decl живёт в

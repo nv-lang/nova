@@ -3603,8 +3603,10 @@ impl CEmitter {
         // этой декларации (симметрично RuntimeError/MemOrdering sum-schema,
         // 172.1 U.1). Единственный источник правды — `.nv`, без хардкод-
         // зеркала. Int-провод сохранён (Ф.1 не меняет поведение):
-        // `sleep(ms int)->()`, `now()->int`, `now_monotonic()->int`
-        // (wire raw i64; Nova-side оборачивается в Monotonic — см.
+        // `sleep(ms int)->()`, `now_unix_ms()->int`, `now_monotonic_ns()->int`
+        // (D316 amend, 2026-07-06: операции переименованы с единицей в
+        // имени, owner-side-task вне формальной Ф-нумерации плана 175;
+        // wire raw i64; Nova-side оборачивается в Monotonic — см.
         // std/time/duration.nv). Типизация опов — Ф.2/Ф.3.
         //
         // Plan 65 Ф.5: `Time.after(ms)` REMOVED — заменён

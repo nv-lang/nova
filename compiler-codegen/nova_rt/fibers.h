@@ -3067,15 +3067,19 @@ static inline nova_unit Nova_Time_sleep(nova_int ms) {
     return _nova_time_default_sleep(ms);
 }
 
-static inline nova_int Nova_Time_now(void) {
+/* Plan 175 (D316 amend, 2026-07-06 owner unit-rename): переименована из `Nova_Time_now` вслед за
+ * .nv-оп `now()` → `now_unix_ms()` — codegen зовёт C-wrapper по имени
+ * `Nova_{Effect}_{op}`, generic pattern, без хардкода в src (grep
+ * подтвердил: emit_c.rs строит имя из схемы). */
+static inline nova_int Nova_Time_now_unix_ms(void) {
     if (_nova_handler_Time) {
-        return _nova_handler_Time->now(_nova_handler_Time->ctx);
+        return _nova_handler_Time->now_unix_ms(_nova_handler_Time->ctx);
     }
     return _nova_time_default_now();
 }
 
 /* Plan 48 Ф.5: aliases for handlers.nv `now_ms` / `now_ns` shape.
- * Default-impl делегирует к now() (which is monotonic ms); now_ns
+ * Default-impl делегирует к now_unix_ms() (which is monotonic ms); now_ns
  * умножает на 1e6 (overflow безопасен в i64 для разумных значений).
  * User-handler-path использует vtable-slot напрямую. */
 static inline nova_int Nova_Time_now_ms(void) {
@@ -3092,21 +3096,23 @@ static inline nova_int Nova_Time_now_ns(void) {
     return _nova_time_default_now() * (nova_int)1000000;
 }
 
-/* Plan 65 Ф.12.2 / D124: dispatch для Monotonic.now() / Time.now_monotonic().
+/* Plan 65 Ф.12.2 / D124: dispatch для Monotonic.now() / Time.now_monotonic_ns()
+ * (переименована из `now_monotonic` — Plan 175 D316 amend (2026-07-06), единицы
+ * в именах опов; чисто механическое переименование, поведение не менялось).
  *
- * NOTE: Time handler vtable currently не имеет slot'а под now_monotonic
+ * NOTE: Time handler vtable currently не имеет slot'а под now_monotonic_ns
  * (NovaVtable_Time defined в effects.h до Plan 65). Под mock-handler этот
  * вызов прозрачно возвращает real monotonic clock — НЕ mock'нутое значение.
  * Это intentional trade-off: добавить slot потребует:
  *   1. Расширения NovaVtable_Time layout
  *   2. Re-emit'а ВСЕХ handler-literal'ов с зеро-init slot'ом (avoid
- *      NULL dereference при handler без now_monotonic decl)
+ *      NULL dereference при handler без now_monotonic_ns decl)
  *   3. Прокидывания через std/testing/handlers.nv fixed_ms / mut_clock
  *
  * Concrete user-impact: mock-clock tests НЕ контролируют Monotonic time.
  * Для timer deadline mock'а (Plan 65 Ф.10 mock-time path) используется
  * Time.sleep вместо Monotonic — sleep dispatch уже идёт через vtable. */
-static inline nova_int Nova_Time_now_monotonic(void) {
+static inline nova_int Nova_Time_now_monotonic_ns(void) {
     return (nova_int)_nova_monotonic_ns();
 }
 
