@@ -103,6 +103,19 @@ pub enum ResolvedType {
     /// `distinct_mono` (they never recurse into `effects`); only `from_type_ref` writes it
     /// and NO consumer reads it yet → byte-identical by construction (parity with U.5.5(a)).
     Func { params: Vec<ResolvedType>, ret: Box<ResolvedType>, effects: Vec<ResolvedType> },
+    /// Plan 172.12 A1′ — TRANSITIONAL DEBT carrier (the single `String`→`ResolvedType`
+    /// lift target for `current_type_subst`). A mono type-arg C-name that is born as a
+    /// C-string at the subst layer (the subst producers read the string-native mono
+    /// registries — `generic_type_instance_info` / mangled-name split — which carry NO
+    /// `ResolvedType` until A1″/A1‴). Wraps the C-name VERBATIM: NO parse, NO fabricated
+    /// structure (§0-honest — this is the OPPOSITE of a reverse `c_type→RT` inversion; it
+    /// claims no structure, only transports the string unchanged inside the widened
+    /// carrier). Produced ONLY by `Emitter::lift_c_name`, consumed ONLY by
+    /// `resolved_type_to_c` (prints the string verbatim) and `Emitter::subst_val_c` —
+    /// NEVER reaches `cat_compatible_rt` / `distinct_mono` / `from_type_ref` (subst values
+    /// are read as C only). Removed wholesale when A1″ makes the subst producers store a
+    /// real `ResolvedType`.
+    Raw(String),
 }
 
 impl ResolvedType {
@@ -11736,6 +11749,10 @@ impl<'a> TypeCheckCtx<'a> {
         Some(match rt {
             // 172.1.2 Шаг 1: residual параметр без subst-контекста невосстановим — None.
             R::TypeParam(_) => return None,
+            // 172.12 A1′: transitional debt carrier (a `current_type_subst` C-name) — it
+            // is read ONLY as a C-string (never reconstructed to a `TypeRef`), so like a
+            // residual type-param it is not recoverable here → None.
+            R::Raw(_) => return None,
             R::Scalar { width, signed, wide_default } => {
                 let name = match (width, signed, wide_default) {
                     (8,  true,  _)     => "i8",

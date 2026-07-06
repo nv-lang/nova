@@ -1193,7 +1193,7 @@ pub struct CEmitter {
     mono_method_fndecl_for_name: HashMap<String, crate::ast::FnDecl>,
     /// Plan 48: active type substitution during monomorphized fn emission.
     /// Maps type_param_name → concrete C type. Set/cleared around emit_monomorphized_fn.
-    current_type_subst: HashMap<String, String>,
+    current_type_subst: HashMap<String, crate::types::ResolvedType>,
     /// [M-91.1-method-turbofish-dispatch] Plan 91 Ф.1: transient explicit
     /// method-level type-args from `obj.method[U,...](args)` (parsed as
     /// `Call{func: TurboFish{base: Member, type_args}}`). Set by emit_call
@@ -2077,6 +2077,46 @@ impl CEmitter {
     /// concrete-vs-erased by C-string) → a MORE correct C name is deferred to
     /// `Q-resolved-type-c-name` (spec/open-questions.md): do it AFTER `type_ref_to_c` is gone
     /// (one source, U.4.8), as separate behavior-change commits (§7 — don't mix with the merge).
+    /// Plan 172.12 A1′ — THE single `String`→`ResolvedType` lift point for
+    /// `current_type_subst` values (§0: one marked debt point, not smeared). A mono
+    /// type-arg C-name has no `ResolvedType` at the subst layer (producers read the
+    /// string-native mono registries), so it is wrapped VERBATIM in `ResolvedType::Raw`
+    /// — no parse, no fabricated structure. Every write into `current_type_subst` of a
+    /// C-string routes through here (directly or via `subst_map_from_c_pairs`). Deleted
+    /// when A1″ makes the producers store a real `ResolvedType`.
+    fn lift_c_name(c: String) -> crate::types::ResolvedType {
+        crate::types::ResolvedType::Raw(c)
+    }
+
+    /// Plan 172.12 A1′ — build a `current_type_subst` map from string-pair mono subst
+    /// (`name → C-name`), lifting each value through the single `lift_c_name` debt point.
+    /// Used at the `mem::replace(&mut self.current_type_subst, …)` producer sites whose
+    /// source is a `Vec<(String,String)>` / `HashMap<String,String>` mono subst.
+    fn subst_map_from_c_pairs<I>(pairs: I) -> HashMap<String, crate::types::ResolvedType>
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        pairs.into_iter().map(|(k, v)| (k, Self::lift_c_name(v))).collect()
+    }
+
+    /// Plan 172.12 A1′ — lower a `current_type_subst` VALUE to its C-name. The debt
+    /// carrier `Raw(s)` returns `s` verbatim (byte-identical to the pre-A1′ stored
+    /// `String`); a real `ResolvedType` (post-A1″) goes through the printer, exactly as
+    /// the task prescribes («читатели, которым нужна C-строка, получают её через принтер»).
+    fn subst_val_c(&self, rt: &crate::types::ResolvedType) -> String {
+        match rt {
+            crate::types::ResolvedType::Raw(s) => s.clone(),
+            other => self.resolved_type_to_c(other).unwrap_or_default(),
+        }
+    }
+
+    /// Plan 172.12 A1′ — read a `current_type_subst` entry as its C-name (`None` if
+    /// absent). Byte-identical replacement for the pre-A1′ `current_type_subst.get(k)`
+    /// (which returned the stored `&String`).
+    fn subst_c(&self, key: &str) -> Option<String> {
+        self.current_type_subst.get(key).map(|rt| self.subst_val_c(rt))
+    }
+
     fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Result<String, String> {
         use crate::types::ResolvedType as R;
         use crate::ast::PointerModifier as PM;
@@ -2139,8 +2179,8 @@ impl CEmitter {
                 if let Some(c) = self.type_subst_overrides.borrow().get(n.as_str()) {
                     return Ok(c.clone());
                 }
-                if let Some(c) = self.current_type_subst.get(n.as_str()) {
-                    return Ok(c.clone());
+                if let Some(c) = self.subst_c(n.as_str()) {
+                    return Ok(c);
                 }
                 // ERASED-контекст (2026-07-04): ресивер = ШАБЛОННОЕ имя ("[]T",
                 // "Set") при пустом subst — тело эмитится ОДИН раз с int-erasure
@@ -2182,6 +2222,12 @@ impl CEmitter {
             }
             // Function type — opaque void* (mirrors type_ref_to_c Func arm).
             R::Func { .. } => "void*".to_string(),
+            // Plan 172.12 A1′ — transitional debt carrier: a `current_type_subst` mono
+            // type-arg that is still a C-string (see `ResolvedType::Raw`). Printed VERBATIM
+            // (the C-name IS the value) — the round-trip `lift_c_name(c)` → `Raw(c)` →
+            // `resolved_type_to_c` = `c` guarantees byte-identity while the subst carrier
+            // is `ResolvedType`-typed. Removed when A1″ populates real `ResolvedType`.
+            R::Raw(s) => s.clone(),
             R::Named { name, module, args } => self.resolved_named_to_c(name, module, args)?,
             // Array `[]T` (D239 ≡ Vec[T]) — mirrors type_ref_to_c's Array arm.
             R::Array(inner) => self.resolved_array_to_c(inner)?,
@@ -2271,7 +2317,7 @@ impl CEmitter {
             R::Scalar { .. } => inner.int_name().unwrap_or("int"),
             R::Named { name, module, args } if module.is_empty() && args.is_empty() => {
                 // type-param / user type: subst back-map (mirror legacy current_type_subst).
-                match self.current_type_subst.get(name).map(String::as_str) {
+                match self.subst_c(name).as_deref() {
                     Some("nova_str") => "str",
                     Some("nova_byte") | Some("uint8_t") => "u8",
                     Some("nova_bool") => "bool",
@@ -2520,8 +2566,8 @@ impl CEmitter {
             if let Some(concrete) = self.type_subst_overrides.borrow().get(&full) {
                 return Ok(concrete.clone());
             }
-            if let Some(concrete) = self.current_type_subst.get(&full) {
-                return Ok(concrete.clone());
+            if let Some(concrete) = self.subst_c(&full) {
+                return Ok(concrete);
             }
         }
         if let Some(c) = Self::primitive_name_to_c(&full) {
@@ -6512,7 +6558,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let inst_key = (vtable_struct.clone(), concrete_name.clone());
         if !self.emitted_vtable_instances.contains(&inst_key) {
             self.emitted_vtable_instances.insert(inst_key);
-            let old_subst = std::mem::replace(&mut self.current_type_subst, subst.clone());
+            let old_subst = std::mem::replace(
+                &mut self.current_type_subst,
+                Self::subst_map_from_c_pairs(subst.clone()),
+            );
             let mut field_inits = Vec::new();
             for m in &methods {
                 let thunk_name = format!(
@@ -6655,7 +6704,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             .zip(type_args.iter())
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        let old_subst = std::mem::replace(&mut self.current_type_subst, subst);
+        let old_subst = std::mem::replace(
+            &mut self.current_type_subst,
+            Self::subst_map_from_c_pairs(subst),
+        );
         // Plan 97.1 Ф.4 (D142): pre-compute param C types per method (для
         // overload-mangling, analog emit_effect_type). Если protocol имеет
         // overloaded methods (e.g. `get(key str)` + `get(key int)` —
@@ -6897,7 +6949,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.indent = 0;
             self.current_receiver_type = Some(t_name.to_string());
             // Substitute `Self` → `t_name` для resolution в default body.
-            self.current_type_subst.insert("Self".to_string(), t_c_ty.to_string());
+            self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(t_c_ty.to_string()));
             // Plan 172.1.1 (U.4.5 substrate, mono-side gap #1): для default-body на КОНКРЕТНОМ
             // generic-типе T (`Lru[str,int]`) populate generic-params в subst (`K→nova_str`,
             // `V→nova_int`), а не только `Self` — иначе `resolved_type_to_c(K)`/`type_ref_to_c(K)`
@@ -6914,7 +6966,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         .map(|t| t.generics.iter().map(|g| g.name.clone()).collect())
                         .unwrap_or_default();
                     for (name, a) in names.into_iter().zip(args.into_iter()) {
-                        self.current_type_subst.entry(name).or_insert(a);
+                        self.current_type_subst.entry(name).or_insert_with(|| Self::lift_c_name(a));
                     }
                 }
             }
@@ -12789,19 +12841,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         };
         match (type_name, params.len()) {
             ("Option", 1) => {
-                let t_c = match self.current_type_subst.get(&params[0]) {
-                    Some(t) => t.clone(),
+                let t_c = match self.subst_c(&params[0]) {
+                    Some(t) => t,
                     None => return format!("Nova_{}*", type_name),
                 };
                 format!("NovaOpt_{}", Self::sanitize_for_novaopt(&t_c))
             }
             ("Result", 2) => {
-                let ok_c = match self.current_type_subst.get(&params[0]) {
-                    Some(t) => t.clone(),
+                let ok_c = match self.subst_c(&params[0]) {
+                    Some(t) => t,
                     None => return format!("Nova_{}*", type_name),
                 };
-                let err_c = match self.current_type_subst.get(&params[1]) {
-                    Some(t) => t.clone(),
+                let err_c = match self.subst_c(&params[1]) {
+                    Some(t) => t,
                     None => return format!("Nova_{}*", type_name),
                 };
                 format!("NovaRes_{}_{}*",
@@ -12875,12 +12927,12 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // not `Nova_X nova_self` (value). Struct receivers are always passed
                 // by pointer in Nova's C backend.
                 if other.len() <= 2 && other.chars().all(|c| c.is_ascii_uppercase()) {
-                    if let Some(c_ty) = self.current_type_subst.get(other) {
+                    if let Some(c_ty) = self.subst_c(other) {
                         // Heap struct (`Nova_X`) must become a pointer (`Nova_X*`).
                         if c_ty.starts_with("Nova_") && !c_ty.ends_with('*') {
                             return format!("{}*", c_ty);
                         }
-                        return c_ty.clone();
+                        return c_ty;
                     }
                 }
                 // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: a
@@ -12922,7 +12974,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // Без этого fallback на nova_int → wrong type для
                         // non-int T при mono per-T emission.
                         _ => {
-                            if let Some(c_ty) = self.current_type_subst.get(elem_ty) {
+                            if let Some(c_ty) = self.subst_c(elem_ty) {
                                 let trimmed = c_ty.trim_end_matches('*').trim();
                                 c_elem_owned = trimmed.to_string();
                                 &c_elem_owned
@@ -15179,7 +15231,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // types flow through), mirroring the turbofish static path.
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            type_subst.iter().cloned().collect(),
+            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
         );
         let mut arg_strs = Vec::new();
         for (i, a) in args.iter().enumerate() {
@@ -15886,7 +15938,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // type_ref_to_c / infer_expr_c_type вызовов внутри.
         let saved_outer = std::mem::replace(
             &mut self.current_type_subst,
-            receiver_subst.iter().cloned().collect(),
+            Self::subst_map_from_c_pairs(receiver_subst.iter().cloned()),
         );
         // Type-param slots, initially None.
         let mut subst_slots: Vec<(String, Option<String>)> =
@@ -16402,7 +16454,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Compute param and return C types with substitution applied
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            type_subst.iter().cloned().collect(),
+            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
         );
         // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_instance —
         // no return type, caller chain change requires массивный refactor).
@@ -16482,7 +16534,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // перед ret_c — params получали Nova_Self fallback.
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            type_subst.iter().cloned().collect(),
+            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
         // [M-138.2-self-in-param]: bind `Self` for nested type-arg `Self` so the
@@ -16491,7 +16543,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // the SAME value-aware mono or C reports conflicting types.
         if recv_type.contains("____") {
             let self_c = self.value_aware_generic_c_type(&format!("Nova_{}*", recv_type));
-            self.current_type_subst.entry("Self".to_string()).or_insert(self_c);
+            self.current_type_subst.entry("Self".to_string()).or_insert_with(|| Self::lift_c_name(self_c));
         }
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
@@ -16571,7 +16623,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Set type substitution
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            type_subst.iter().cloned().collect(),
+            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
         );
         // Plan 11 Follow-up (2026-05-17): current_receiver_type set BEFORE
         // computing param_c_tys + ret_c, чтобы `Self` в param/return position
@@ -16594,7 +16646,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // `Self` binding (e.g. from type_subst) wins — no clobber.
         if recv_type.contains("____") {
             let self_c = self.value_aware_generic_c_type(&format!("Nova_{}*", recv_type));
-            self.current_type_subst.entry("Self".to_string()).or_insert(self_c);
+            self.current_type_subst.entry("Self".to_string()).or_insert_with(|| Self::lift_c_name(self_c));
         }
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
@@ -16672,7 +16724,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         // Fallback: derive from current_type_subst for the generic param.
                         fn_decl.generics.iter()
                             .find(|g| !g.name.is_empty())
-                            .and_then(|g| self.current_type_subst.get(&g.name).cloned())
+                            .and_then(|g| self.subst_c(&g.name))
                     })
             } else if let Some(after_prefix) = recv_c.strip_prefix("NovaArray_") {
                 // NovaArray_<elem>* — element is after the prefix, re-add '*' for structs.
@@ -17209,7 +17261,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            type_subst.iter().cloned().collect(),
+            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
         );
 
         match template.kind.clone() {
@@ -17774,7 +17826,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // Set type substitution
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            type_subst.iter().cloned().collect(),
+            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
         );
         // Compute concrete param types
         // Plan 70 PhaseA3: strict — emit_monomorphized_fn param translation.
@@ -17810,7 +17862,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 if let crate::ast::TypeRef::Named { path, generics, .. } = inner.as_ref() {
                     if generics.is_empty() {
                         let tparam_name = path.join("_");
-                        if let Some(concrete) = self.current_type_subst.get(&tparam_name).cloned() {
+                        if let Some(concrete) = self.subst_c(&tparam_name) {
                             if concrete.ends_with('*') && concrete != "nova_int*" {
                                 self.array_element_types.insert(param.name.clone(), concrete);
                                 added_array_elem_keys.push(param.name.clone());
@@ -21967,7 +22019,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // to its Nova primitive. MAX/MIN values are width-unambiguous (int64_t ≡ i64 ≡
                 // int → INT64_MAX), so the i64/int (and u64/uint) collapse is value-correct.
                 if parts.len() == 2 {
-                    if let Some(c_name) = self.current_type_subst.get(&parts[0]) {
+                    if let Some(c_name) = self.subst_c(&parts[0]) {
                         let nova_prim: Option<&str> = match c_name.trim_end_matches('*').trim() {
                             "nova_int" => Some("int"),
                             "int8_t" => Some("i8"),
@@ -22052,7 +22104,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     let variant_name = &parts[1];
                     let schema_key = if let Some(tmpl) = self.generic_type_templates.get(type_name_raw.as_str()) {
                         let type_args_c: Vec<String> = tmpl.generics.iter()
-                            .filter_map(|g| self.current_type_subst.get(&g.name).cloned())
+                            .filter_map(|g| self.subst_c(&g.name))
                             .collect();
                         if type_args_c.len() == tmpl.generics.len() {
                             let mangled = Self::compute_generic_type_c_name(type_name_raw, &type_args_c);
@@ -26182,7 +26234,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         let elem_substituted: String = if elem_t.len() <= 2
                             && elem_t.chars().all(|c| c.is_ascii_uppercase())
                         {
-                            if let Some(c_ty) = self.current_type_subst.get(elem_t.as_str()) {
+                            if let Some(c_ty) = self.subst_c(elem_t.as_str()) {
                                 // c_ty like "nova_str" or "Nova_X*" — strip pointer
                                 // и Nova_ prefix для соответствия arr_suffix формату.
                                 c_ty.trim_end_matches('*').trim().to_string()
@@ -26560,7 +26612,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     {
                                         let saved = std::mem::replace(
                                             &mut self.current_type_subst,
-                                            type_subst.iter().cloned().collect(),
+                                            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                         );
                                         if let Some(ret) = &fn_decl.return_type {
                                             self.ensure_novaopt_decls_for_typeref(ret);
@@ -26589,7 +26641,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                         {
                                             let saved_inner = std::mem::replace(
                                                 &mut self.current_type_subst,
-                                                type_subst.iter().cloned().collect(),
+                                                Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                             );
                                             let inner_ptys: Vec<String> = fp.iter()
                                                 .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
@@ -26832,7 +26884,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     {
                                         let saved = std::mem::replace(
                                             &mut self.current_type_subst,
-                                            type_subst.iter().cloned().collect(),
+                                            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                         );
                                         if let Some(ret) = &fn_decl.return_type {
                                             self.ensure_novaopt_decls_for_typeref(ret);
@@ -26857,7 +26909,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                         {
                                             let saved_inner = std::mem::replace(
                                                 &mut self.current_type_subst,
-                                                type_subst.iter().cloned().collect(),
+                                                Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                             );
                                             let inner_ptys: Vec<String> = fp.iter()
                                                 .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
@@ -27591,7 +27643,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                             };
                                             let saved_subst = std::mem::replace(
                                                 &mut self.current_type_subst,
-                                                type_subst.iter().cloned().collect(),
+                                                Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                             );
                                             let mut arg_strs = Vec::new();
                                             for (i, a) in args.iter().enumerate() {
@@ -28255,14 +28307,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     //   - иначе (obj — variable / expr) → instance call;
                     //     receiver-type из обуточенного obj_ty.
                     let recv_type_name = if let ExprKind::Ident(n) = &obj.kind {
-                        if let Some(c_ty) = self.current_type_subst.get(n) {
+                        if let Some(c_ty) = self.subst_c(n) {
                             // Plan 88 Ф.1: `n` — type-параметр в активном
                             // mono-контексте (`T.from(s)` внутри тела
                             // `wrap[T From[str]]`). Резолвим `n` → concrete
                             // Nova-тип и дальше — обычный static-dispatch.
                             // Без этого emit'ился литеральный
                             // `nova_fn_<n>_<method>` → undefined symbol.
-                            Some(Self::nova_type_name_from_c(c_ty))
+                            Some(Self::nova_type_name_from_c(&c_ty))
                         } else if self.method_overloads.keys().any(|(t, _)| t == n) {
                             // Static call.
                             Some(n.clone())
@@ -28518,7 +28570,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                             if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
                                                 let saved_inner = std::mem::replace(
                                                     &mut self.current_type_subst,
-                                                    type_subst.iter().cloned().collect(),
+                                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                                 );
                                                 // Plan 70 PhaseA2: strict — fn-typed param resolution через mono subst.
                                                 let mut inner_ptys: Vec<String> = fp.iter()
@@ -28843,7 +28895,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     .unwrap_or_default();
                                 let saved_sel = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    recv_subst_vec.iter().cloned().collect());
+                                    Self::subst_map_from_c_pairs(recv_subst_vec.iter().cloned()));
                                 let arg_c: Vec<String> = args.iter()
                                     .map(|a| self.infer_expr_c_type(a.expr())).collect();
                                 // pass 1: arity + per-param C-type match; pass 2: arity-only.
@@ -29004,7 +29056,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 let base_method_name = if overload_index > 0 {
                                     let saved_ov = std::mem::replace(
                                         &mut self.current_type_subst,
-                                        type_subst.iter().cloned().collect());
+                                        Self::subst_map_from_c_pairs(type_subst.iter().cloned()));
                                     let suffix = fn_decl.params.iter()
                                         .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_default()
                                             .replace('*', "_p")
@@ -29039,7 +29091,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 // Apply subst to param types for fn_param_sigs (closure params)
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    type_subst.iter().cloned().collect(),
+                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                 );
                                 let mut arg_strs = Vec::new();
                                 for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
@@ -29669,7 +29721,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 //    resolution (`pred fn(T) -> bool` → fn(nova_str) -> bool).
                                 let saved_subst = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    type_subst.iter().cloned().collect(),
+                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                 );
                                 // 4. Emit args с closure context. ClosureLight
                                 //    (inline `|x| ...` literal) → call emit_lambda
@@ -30332,8 +30384,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // (overload-aware через method_overloads ниже). Без
                     // этого `parts.join("_")` давал литеральный
                     // `nova_fn_<T>_<method>` → undefined symbol на линковке.
-                    let recv_seg: String = match self.current_type_subst.get(parts[0].as_str()) {
-                        Some(c_ty) => Self::nova_type_name_from_c(c_ty),
+                    let recv_seg: String = match self.subst_c(parts[0].as_str()) {
+                        Some(c_ty) => Self::nova_type_name_from_c(&c_ty),
                         None => parts[0].clone(),
                     };
                     // [M-codegen-cross-module-ctor-emission] fix: an explicit
@@ -30398,7 +30450,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                         if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
                                             let saved_inner = std::mem::replace(
                                                 &mut self.current_type_subst,
-                                                type_subst.iter().cloned().collect(),
+                                                Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                             );
                                             // Plan 70 PhaseA2: strict — emit_call mono-subst fn-param sig
                                             let inner_ptys: Vec<String> = fp.iter()
@@ -30684,7 +30736,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 // Temporarily set type subst for inner type resolution
                                 let saved_inner = std::mem::replace(
                                     &mut self.current_type_subst,
-                                    type_subst.iter().cloned().collect(),
+                                    Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                 );
                                 // Plan 70 PhaseA2: strict — emit_call inner-subst fn-param sig
                                 let inner_ptys: Vec<String> = fp.iter()
@@ -33712,9 +33764,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     // `Vec { data: ..., len: 0, cap: 0 }` defaulted every arg to
                     // `nova_int` → `Nova_Vec____nova_int` regardless of T.
                     for (i, g) in template.generics.iter().enumerate() {
-                        if let Some(c) = self.current_type_subst.get(&g.name) {
+                        if let Some(c) = self.subst_c(&g.name) {
                             if !c.is_empty() && c != "void*" {
-                                type_args_c[i] = c.clone();
+                                type_args_c[i] = c;
                             }
                         }
                     }
@@ -33814,7 +33866,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 let (concrete_sum_c, ctor_prefix) = if self.generic_types.contains(&sum_type_name) {
                     if let Some(tmpl) = self.generic_type_templates.get(&sum_type_name).cloned() {
                         let type_args_c: Vec<String> = tmpl.generics.iter()
-                            .filter_map(|g| self.current_type_subst.get(&g.name).cloned())
+                            .filter_map(|g| self.subst_c(&g.name))
                             .collect();
                         if type_args_c.len() == tmpl.generics.len() {
                             let mangled = Self::compute_generic_type_c_name(&sum_type_name, &type_args_c);
@@ -38730,8 +38782,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         {
             return None;
         }
-        let concrete = self.current_type_subst.get(receiver_ident)
-            .map(|c| Self::nova_type_name_from_c(c))
+        let concrete = self.subst_c(receiver_ident)
+            .map(|c| Self::nova_type_name_from_c(&c))
             .unwrap_or_else(|| receiver_ident.to_string());
         let key = (concrete.clone(), method.to_string());
         if let Some(fd) = self.mono_method_decls.get(&key)
@@ -39360,7 +39412,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             let subst: Vec<(String, Option<String>)> = self
                                 .current_type_subst
                                 .iter()
-                                .map(|(k, v)| (k.clone(), Some(v.clone())))
+                                .map(|(k, v)| (k.clone(), Some(self.subst_val_c(v))))
                                 .collect();
                             let mut ptys = Vec::with_capacity(params.len());
                             for p in params {
@@ -39446,16 +39498,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             let func = func.unwrap_turbofish();
             let ctor_recv_method: Option<(String, &String)> = match &func.kind {
                 ExprKind::Path(p) if p.len() == 2 => {
-                    let base = match self.current_type_subst.get(p[0].as_str()) {
-                        Some(c_ty) => Self::nova_type_name_from_c(c_ty),
+                    let base = match self.subst_c(p[0].as_str()) {
+                        Some(c_ty) => Self::nova_type_name_from_c(&c_ty),
                         None => p[0].clone(),
                     };
                     Some((base, &p[1]))
                 }
                 ExprKind::Member { obj, name } => match &obj.kind {
                     ExprKind::Ident(t) => {
-                        let base = match self.current_type_subst.get(t.as_str()) {
-                            Some(c_ty) => Self::nova_type_name_from_c(c_ty),
+                        let base = match self.subst_c(t.as_str()) {
+                            Some(c_ty) => Self::nova_type_name_from_c(&c_ty),
                             None => t.clone(),
                         };
                         Some((base, name))
@@ -39963,8 +40015,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                             // (usize/isize/ptr, Plan 133/134) — not valid here.
                                             if let crate::ast::TypeRef::Named { path, generics, .. } = tr {
                                                 if generics.is_empty() && path.len() == 1 {
-                                                    if let Some(c) = self.current_type_subst.get(&path[0]) {
-                                                        return c.clone();
+                                                    if let Some(c) = self.subst_c(&path[0]) {
+                                                        return c;
                                                     }
                                                 }
                                             }
@@ -42232,8 +42284,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // only overrides the (already-wrong-for-overloads) global
                             // fn_ret fallback.
                             {
-                                let concrete_eff = self.current_type_subst.get(eff)
-                                    .map(|c| Self::nova_type_name_from_c(c))
+                                let concrete_eff = self.subst_c(eff)
+                                    .map(|c| Self::nova_type_name_from_c(&c))
                                     .unwrap_or_else(|| eff.clone());
                                 if let Some(sigs) = self.method_overloads
                                     .get(&(concrete_eff.clone(), method_name.clone()))
@@ -43541,8 +43593,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                             // (usize/isize/ptr, Plan 133/134) — not valid here.
                                             if let crate::ast::TypeRef::Named { path, generics, .. } = tr {
                                                 if generics.is_empty() && path.len() == 1 {
-                                                    if let Some(c) = self.current_type_subst.get(&path[0]) {
-                                                        return c.clone();
+                                                    if let Some(c) = self.subst_c(&path[0]) {
+                                                        return c;
                                                     }
                                                 }
                                             }
@@ -45810,8 +45862,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // only overrides the (already-wrong-for-overloads) global
                             // fn_ret fallback.
                             {
-                                let concrete_eff = self.current_type_subst.get(eff)
-                                    .map(|c| Self::nova_type_name_from_c(c))
+                                let concrete_eff = self.subst_c(eff)
+                                    .map(|c| Self::nova_type_name_from_c(&c))
                                     .unwrap_or_else(|| eff.clone());
                                 if let Some(sigs) = self.method_overloads
                                     .get(&(concrete_eff.clone(), method_name.clone()))
