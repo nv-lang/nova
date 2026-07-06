@@ -745,7 +745,7 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
     // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
     // HashMap.iter() yields (K, V) tuple per hashmap.nv:441 — destructure
     // explicitly. `entry.key / .value` была wrong API assumption.
-    for (k, v) in m.iter() {
+    for (k, v) in m {
         if !first { buf = buf + "," }
         buf = buf + format_string(k)
         buf = buf + ":"
@@ -804,7 +804,7 @@ fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
     // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
     // HashMap.iter() yields (K, V) tuple — destructure explicitly
     // (см. format_object выше).
-    for (k, v) in m.iter() {
+    for (k, v) in m {
         if !first { buf = buf + ",\n" }
         buf = buf + inner_indent + format_string(k) + ": " + pretty_at(v, depth + 1)
         first = false

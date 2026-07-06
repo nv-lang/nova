@@ -45,7 +45,7 @@ fn serialize_request(method str, target str, host_header str, headers HeaderMap,
         buf.write_str("\r\n")
     }
 
-    for (n, v) in headers.iter() {
+    for (n, v) in headers {
         buf.write_str(n.as_str())
         buf.write_str(": ")
         buf.write_bytes(v.as_bytes())
@@ -80,7 +80,7 @@ fn serialize_response(status StatusCode, headers HeaderMap, body []u8) -> str {
     buf.write_str(status.reason())
     buf.write_str("\r\n")
 
-    for (n, v) in headers.iter() {
+    for (n, v) in headers {
         buf.write_str(n.as_str())
         buf.write_str(": ")
         buf.write_bytes(v.as_bytes())

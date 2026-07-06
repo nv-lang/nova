@@ -247,6 +247,8 @@ inverse-маркером.
 > (fire-and-forget семантика и блокировка ОС-потока соответственно),
 > что делает их кандидатами на type-level декларацию.
 >
+> ⚠️ **Detach-эффект НЕ РЕАЛИЗОВАН (констатация 2026-07-06):** в компиляторе «Detach» — лишь зарезервированное builtin-имя (types/mod.rs) и строка линтера; объявления эффекта и требования в сигнатурах нет. Поведение сирот при ошибке/панике — LogAndDrop, зашито в runtime.c (не handler). Типизация Detach — аспирация, не норма.
+>
 > 📋 **PARTIALLY IMPLEMENTED IN [D71](#d71-bootstrap-concurrency-runtime).**
 > Bootstrap'ом реализованы: `supervised`, `parallel for`, `detach`
 > (Plan 83.4.5.2 Ф.4 amend — **default AsyncDetach** через
