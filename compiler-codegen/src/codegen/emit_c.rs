@@ -2426,6 +2426,66 @@ impl CEmitter {
         self.sum_schema_registry.find_variant_compat(variant)
     }
 
+    /// [M-codegen-cross-module-ctor-emission] fix: emit a `Sum.Variant(payload)`
+    /// constructor when the explicit receiver names a sum that owns `variant`.
+    ///
+    /// An explicit-receiver payload-variant CALL (`NetError.IoError(msg)`)
+    /// otherwise mis-routes to the static-method dispatch
+    /// (`Nova_NetError_static_IoError`, undefined) because the payload variant is
+    /// ALSO registered in `method_receivers` as a pseudo-static overload of its
+    /// sum (variant-name doubles as a static-method key). Unit variants
+    /// (`NetError.ConnectionReset`) escape this — they are member-access exprs,
+    /// not calls — so only the payload form breaks, and only at the emit-call
+    /// site. A variant belongs unambiguously to its sum; the explicit receiver
+    /// disambiguates perfectly, so the variant constructor wins over any
+    /// same-named static form or same-named type-in-scope (the D381 collision fix
+    /// makes `<Sum>` mangling collision-aware; the ctor prefix mirrors it here).
+    ///
+    /// Returns `Ok(Some(call))` when `recv_type` is a NON-generic sum with a
+    /// variant `variant` of arity `args.len()`, else `Ok(None)` (caller keeps its
+    /// normal dispatch). Generic sums keep their own mono-aware bare-`Ident`
+    /// variant path (arg boxing + instance queuing) — not intercepted here.
+    fn try_emit_explicit_variant_ctor(
+        &mut self,
+        recv_type: &str,
+        variant: &str,
+        args: &[CallArg],
+    ) -> Result<Option<String>, String> {
+        // Collision-aware sum base: mirrors the ctor DEFINITION prefix
+        // (`nova_make_<base>_<variant>`), qualified per module for colliding sums.
+        let sum_base = self.ref_type_base(recv_type, &[]);
+        // Generic sums own their mono ctor path — do not intercept.
+        if self.generic_types.contains(&sum_base) || self.generic_types.contains(recv_type) {
+            return Ok(None);
+        }
+        // The receiver sum must OWN a payload variant `variant` of matching arity.
+        // Try the qualified base first, then the bare receiver name (schema keys
+        // are byte-identical for non-colliding sums).
+        let owns = |me: &Self, key: &str| -> bool {
+            me.sum_schema_registry
+                .lookup_sum_schema(key)
+                .map(|e| {
+                    e.variants.iter().any(|v| {
+                        v.variant_name == variant && v.field_c_types.len() == args.len()
+                    })
+                })
+                .unwrap_or(false)
+        };
+        if !owns(self, &sum_base) && !owns(self, recv_type) {
+            return Ok(None);
+        }
+        let mut arg_strs = Vec::with_capacity(args.len());
+        for a in args {
+            arg_strs.push(self.emit_expr(a.expr())?);
+        }
+        Ok(Some(format!(
+            "nova_make_{}_{}({})",
+            sum_base,
+            variant,
+            arg_strs.join(", ")
+        )))
+    }
+
     /// [M-sync-crossmodule…] (D348): the plain (non-mono) sum base named by the
     /// current fn's return C-type, if any — used to disambiguate a variant shared
     /// across colliding sums by call-site context.
@@ -29102,6 +29162,21 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
 
                 if let Some((type_name, is_instance)) = self.method_receivers.get(method).cloned() {
+                    // [M-codegen-cross-module-ctor-emission] fix: intercept an
+                    // explicit-receiver payload-variant CALL (`Sum.Variant(x)`)
+                    // before the static-method fallback mis-routes it to the
+                    // undefined `Nova_<Sum>_static_<Variant>`. Only for a
+                    // type-name receiver (Ident/Path); `is_instance` guards value
+                    // receivers. The variant ctor wins over the pseudo-static form.
+                    if !is_instance
+                        && matches!(&obj.kind, ExprKind::Ident(_) | ExprKind::Path(_))
+                    {
+                        if let Some(call) =
+                            self.try_emit_explicit_variant_ctor(&type_name, method, args)?
+                        {
+                            return Ok(call);
+                        }
+                    }
                     // Plan 82 followup (2026-05-23, fail-loudly): single-key
                     // method_receivers — last-wins fallback. Для STATIC-метода
                     // (`Type.m(...)`) обязана быть проверка, что зарегистрированный
@@ -29978,6 +30053,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         Some(c_ty) => Self::nova_type_name_from_c(c_ty),
                         None => parts[0].clone(),
                     };
+                    // [M-codegen-cross-module-ctor-emission] fix: an explicit
+                    // receiver payload-variant call `Sum.Variant(x)` parses as a
+                    // 2-segment Path and is otherwise dispatched via the
+                    // `method_overloads` static branch below — where a payload
+                    // variant is registered as a pseudo-static overload with
+                    // c_name `Nova_<Sum>_static_<Variant>` (never defined; only
+                    // the `nova_make_<Sum>_<Variant>` ctor is emitted). The
+                    // variant belongs unambiguously to its sum, so the ctor wins.
+                    if let Some(call) =
+                        self.try_emit_explicit_variant_ctor(&recv_seg, method_name, args)?
+                    {
+                        return Ok(call);
+                    }
                     // Plan 11 Ф.2: используем multi-overload registry —
                     // strict resolution по типам args. Это работает и
                     // при single-overload (тогда match unique без проверки

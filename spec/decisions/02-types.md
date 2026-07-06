@@ -13747,6 +13747,17 @@ Pure value-типы поверх net byte-surface (Ф.0.5). Всё fallible → 
 - **`HttpError` — non-`value` record**: `value` + `Option[Url]`/`Option[ErrSource]`-поля → codegen
   emit'ит Option-typedef ПОСЛЕ struct-а (forward-ref «unknown type»).
 
+### Амендмент Ф.2 (auto-decompress landing, 2026-07-06)
+
+- **`ErrSource` + `Compress(CompressError)`** (OPEN enum → non-breaking): типизированный source для
+  провалившегося decode `Content-Encoding` (gzip/deflate). Разблокирован фиксом D381 (collision-aware
+  module-qualified mangling) — `compress.ErrorKind` и `http.ErrorKind` теперь СОСУЩЕСТВУЮТ в одном CU
+  (доказано `nova_tests/http_decompress`). Bomb (превышение `max_decompressed`, D334) НЕ несётся через
+  `Compress`, а мапится в `HttpError{BodyTooLarge}` (DoS-guard). `br` (brotli) закрыт — нет кодека
+  `[M-178-autodecompress-br]`. Клиент шлёт `Accept-Encoding: gzip, deflate` по умолчанию (opt-out через
+  `HttpClientBuilder.@no_decompress()`); при декоде заголовок `Content-Encoding` снимается, а
+  `Content-Length` переписывается на декодированную длину (headers описывают тело, которое видит вызыватель).
+
 ## D359 — must-consume `Body` (`std/http`, Plan 178 Ф.1) {#d359}
 
 `Body` — линейный **must-consume** (D133): единственный способ «разрядить» — потребляющий метод

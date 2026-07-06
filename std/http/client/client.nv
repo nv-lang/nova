@@ -30,10 +30,11 @@
 //     policy surface deferred beyond CORE. [M-178-client-policy-surface]
 
 module std.http.client
-import std.http.{Method, Url, HeaderMap, Response, Request, Http, HttpError, ErrorKind}
+import std.http.{Method, Url, HeaderMap, Response, Request, Http, HttpError, ErrorKind, Version, StatusCode}
 
 import std.encoding.base64.{Base64}
 import std.encoding.json.{JsonValue, Json}
+import std.encoding.compress.{gzip_decode, zlib_decode, inflate, CompressError}
 
 // ── RedirectPolicy ───────────────────────────────────────────────────────────
 
@@ -47,6 +48,11 @@ export type RedirectPolicy | NoFollow | Limited(int)
 
 type HeaderKV value { ro name str, ro value str }
 
+// Default decompressed-body cap (DoS/bomb guard, D334): 64 MiB. Overridable via
+// `HttpClientBuilder.max_decompressed(n)`; a per-request `with_limit` on the Body
+// is a separate, complementary guard on the DECODED size.
+const DEFAULT_MAX_DECOMPRESSED = 67108864
+
 /// Pooled HTTP client (cheap value; shares config). Build via `.builder()` or
 /// `.new()` for production defaults.
 #stable(since = "0.1")
@@ -55,6 +61,8 @@ export type HttpClient value {
     priv follow_redirects bool
     priv max_redirects    int
     priv user_agent       str
+    priv auto_decompress  bool
+    priv max_decompressed int
 }
 
 /// Fluent client builder.
@@ -64,17 +72,22 @@ export type HttpClientBuilder value {
     priv follow_redirects bool
     priv max_redirects    int
     priv user_agent       str
+    priv auto_decompress  bool
+    priv max_decompressed int
 }
 
-/// Start a client builder with production defaults (10 redirects, UA set).
+/// Start a client builder with production defaults (10 redirects, UA set,
+/// transparent gzip/deflate decompression on with a 64 MiB decoded cap).
 #stable(since = "0.1")
 export fn HttpClient.builder() -> HttpClientBuilder =>
-    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
+    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10,
+      user_agent: "nova-http/0.1", auto_decompress: true, max_decompressed: DEFAULT_MAX_DECOMPRESSED }
 
 /// Client with production defaults.
 #stable(since = "0.1")
 export fn HttpClient.new() -> HttpClient =>
-    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10, user_agent: "nova-http/0.1" }
+    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10,
+      user_agent: "nova-http/0.1", auto_decompress: true, max_decompressed: DEFAULT_MAX_DECOMPRESSED }
 
 // Internal self-accessors (field privacy is enforced at the call-site module,
 // so cross-type reads of these `priv` fields go through owner methods, D281).
@@ -82,34 +95,49 @@ fn HttpClient @cfg_follow() -> bool => @follow_redirects
 fn HttpClient @cfg_max() -> int => @max_redirects
 fn HttpClient @cfg_ua() -> str => @user_agent
 fn HttpClient @cfg_defaults() -> []HeaderKV => @default_headers
+fn HttpClient @cfg_auto_decompress() -> bool => @auto_decompress
+fn HttpClient @cfg_max_decompressed() -> int => @max_decompressed
 
 /// Add a default header sent on every request (append).
 #stable(since = "0.1")
 export fn HttpClientBuilder @default_header(name str, value str) -> HttpClientBuilder {
     mut hs = @default_headers
     hs.push(HeaderKV { name, value })
-    { default_headers: hs, @follow_redirects, @max_redirects, @user_agent }
+    { default_headers: hs, @follow_redirects, @max_redirects, @user_agent, @auto_decompress, @max_decompressed }
 }
 
 /// Set the redirect policy (default `Limited(10)`).
 #stable(since = "0.1")
 export fn HttpClientBuilder @redirect(policy RedirectPolicy) -> HttpClientBuilder {
     match policy {
-        NoFollow    => { @default_headers, follow_redirects: false, max_redirects: 0, @user_agent }
-        Limited(n)  => { @default_headers, follow_redirects: true, max_redirects: n, @user_agent }
+        NoFollow    => { @default_headers, follow_redirects: false, max_redirects: 0, @user_agent, @auto_decompress, @max_decompressed }
+        Limited(n)  => { @default_headers, follow_redirects: true, max_redirects: n, @user_agent, @auto_decompress, @max_decompressed }
     }
 }
 
 /// Override the User-Agent.
 #stable(since = "0.1")
 export fn HttpClientBuilder @user_agent(ua str) -> HttpClientBuilder =>
-    { @default_headers, @follow_redirects, @max_redirects, user_agent: ua }
+    { @default_headers, @follow_redirects, @max_redirects, user_agent: ua, @auto_decompress, @max_decompressed }
+
+/// Disable transparent gzip/deflate decompression. With decompression OFF the
+/// client sends NO default `Accept-Encoding` and returns response bodies verbatim
+/// (a compressed body stays compressed) — the caller owns Content-Encoding.
+#stable(since = "0.1")
+export fn HttpClientBuilder @no_decompress() -> HttpClientBuilder =>
+    { @default_headers, @follow_redirects, @max_redirects, @user_agent, auto_decompress: false, @max_decompressed }
+
+/// Cap the decoded body size (bomb guard, D334). A decode that would exceed
+/// `max_bytes` fails with `Err(BodyTooLarge)` instead of allocating. `< 0` = no cap.
+#stable(since = "0.1")
+export fn HttpClientBuilder @max_decompressed(max_bytes int) -> HttpClientBuilder =>
+    { @default_headers, @follow_redirects, @max_redirects, @user_agent, @auto_decompress, max_decompressed: max_bytes }
 
 /// Finalize the client. Fallible for parity with the full builder (tls/proxy);
 /// CORE construction never fails.
 #stable(since = "0.1")
 export fn HttpClientBuilder consume @build() -> Result[HttpClient, HttpError] =>
-    Ok({ @default_headers, @follow_redirects, @max_redirects, @user_agent })
+    Ok({ @default_headers, @follow_redirects, @max_redirects, @user_agent, @auto_decompress, @max_decompressed })
 
 // ── verb shortcuts ───────────────────────────────────────────────────────────
 
@@ -235,7 +263,8 @@ export fn RequestBuilder consume @send() Http -> Result[Response, HttpError] {
         return Err(HttpError.new(InvalidUrl).with_url(url1))
     }
     ro headers = build_headers(@client, @header_ops, @content_type)?
-    run_request(@method, url1, headers, @body_bytes, @client.cfg_follow(), @client.cfg_max())
+    run_request(@method, url1, headers, @body_bytes, @client.cfg_follow(), @client.cfg_max(),
+                @client.cfg_auto_decompress(), @client.cfg_max_decompressed())
 }
 
 // ── convenience (script / one-shot) — uses a fresh default client ────────────
@@ -269,7 +298,7 @@ fn http_seam_send(host str, port int, secure bool, request str) Http -> Result[s
     Http.send(host, port, secure, request)
 }
 
-fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow bool, max int) Http -> Result[Response, HttpError] {
+fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow bool, max int, auto_decompress bool, max_decompressed int) Http -> Result[Response, HttpError] {
     mut method = method0
     mut url = url0
     mut headers = headers0
@@ -311,14 +340,83 @@ fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow 
                     remaining -= 1
                 }
                 None => {
-                    return Ok(Response.new(parsed.version, st, parsed.headers, parsed.body))
+                    return finalize_response(parsed.version, st, parsed.headers, parsed.body, auto_decompress, max_decompressed)
                 }
             }
         } else {
-            return Ok(Response.new(parsed.version, st, parsed.headers, parsed.body))
+            return finalize_response(parsed.version, st, parsed.headers, parsed.body, auto_decompress, max_decompressed)
         }
     }
     Err(HttpError.new(TooManyRedirects(max)).with_url(url))
+}
+
+// ── transparent Content-Encoding decode (gzip/deflate) ───────────────────────
+
+// Build the terminal Response, transparently decoding a gzip/deflate body when
+// auto-decompress is on. On success the Content-Encoding header is dropped and
+// Content-Length rewritten to the decoded length (so the returned headers describe
+// the body the caller actually sees). `br` (brotli) is left ENCODED — no codec —
+// and its Content-Encoding preserved [M-178-autodecompress-br].
+fn finalize_response(ver Version, st StatusCode, headers HeaderMap, body []u8, auto_decompress bool, max_decompressed int) -> Result[Response, HttpError] {
+    if !auto_decompress {
+        return Ok(Response.new(ver, st, headers, body))
+    }
+    ro enc = content_encoding_lower(headers)
+    if enc.byte_len() == 0 {
+        return Ok(Response.new(ver, st, headers, body))
+    }
+    if enc == "gzip" || enc == "x-gzip" {
+        ro decoded = decode_or_err(gzip_decode(body, max_decompressed))?
+        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len), decoded))
+    } else if enc == "deflate" {
+        // HTTP "deflate" is nominally zlib (RFC 9110); tolerate raw-DEFLATE senders.
+        ro decoded = match zlib_decode(body, max_decompressed) {
+            Ok(b)  => b
+            Err(e) => if e.is_bomb() {
+                return Err(HttpError.body_too_large())
+            } else {
+                decode_or_err(inflate(body, max_decompressed))?
+            }
+        }
+        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len), decoded))
+    } else {
+        // identity / br / unknown → leave the body (and its Content-Encoding) as-is.
+        Ok(Response.new(ver, st, headers, body))
+    }
+}
+
+// Map a compress decode Result to an http Result: bomb (cap exceeded, D334) →
+// BodyTooLarge; any other decode failure → Protocol + typed Compress source.
+fn decode_or_err(r Result[[]u8, CompressError]) -> Result[[]u8, HttpError] {
+    match r {
+        Ok(b)  => Ok(b)
+        Err(e) => if e.is_bomb() { Err(HttpError.body_too_large()) } else { Err(HttpError.from_compress(e)) }
+    }
+}
+
+// The (trimmed, lowercased) Content-Encoding token, or "" if absent/undecodable.
+fn content_encoding_lower(h HeaderMap) -> str {
+    match h.get("content-encoding") {
+        // HeaderValue already trims OWS at parse time — just normalise case.
+        Some(hv) => match hv.to_str() {
+            Ok(s)  => s.to_ascii_lower()
+            Err(_) => ""
+        }
+        None => ""
+    }
+}
+
+// Drop Content-Encoding + Transfer-Encoding and set Content-Length to the decoded
+// size — the returned headers now describe the decoded body (Go/reqwest behaviour).
+fn rewrite_encoding_headers(h HeaderMap, decoded_len int) -> HeaderMap {
+    mut hm = h
+    ro _ = hm.remove("content-encoding")
+    ro _ = hm.remove("transfer-encoding")
+    match hm.insert("Content-Length", str.from(decoded_len)) {
+        Ok(_)  => ()
+        Err(_) => ()
+    }
+    hm
 }
 
 fn build_headers(client HttpClient, ops []HeaderOp, content_type Option[str]) -> Result[HeaderMap, HttpError] {
@@ -329,6 +427,12 @@ fn build_headers(client HttpClient, ops []HeaderOp, content_type Option[str]) ->
     ro ua = client.cfg_ua()
     if !hm.contains("user-agent") && ua.byte_len() > 0 {
         hm.insert("User-Agent", ua)?
+    }
+    // Advertise the codecs we can transparently decode (gzip/deflate; br is gated —
+    // no brotli codec, [M-178-autodecompress-br]). A caller-set Accept-Encoding
+    // wins. Skipped entirely when auto-decompress is off (caller owns encoding).
+    if client.cfg_auto_decompress() && !hm.contains("accept-encoding") {
+        hm.insert("Accept-Encoding", "gzip, deflate")?
     }
     match content_type {
         Some(ct) => { hm.insert("Content-Type", ct)?; () }

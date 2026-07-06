@@ -20,6 +20,8 @@
 
 module std.http
 
+import std.encoding.compress.{CompressError}
+
 /// Категория ошибки http-домена. **OPEN** (D358): `Other(str)` — catch-all,
 /// поэтому `match` ОБЯЗАН нести wildcard-arm; расширение (h2/h3) не ломает
 /// существующие match'и.
@@ -54,6 +56,9 @@ export type ErrSource
     | UrlParse(ParseUrlError)      // ошибка разбора URL (Ф.1). ⚠ вариант НЕ `Url`:
                                    // имя-вариант == имя-тип `Url` ломает codegen
                                    // (cast вместо wrap) → spec-amend D358 (§5).
+    | Compress(CompressError)      // decode Content-Encoding (gzip/deflate) провалился
+                                   // (Ф.2, 179; D381 сделал co-presence compress+http
+                                   // ErrorKind линкуемой). [M-178-errsource-compress]
     | OtherSource(str)             // OPEN / placeholder для гейтнутых источников
 
 /// Единственная структурная ошибка домена http (R5/D325).
@@ -103,6 +108,13 @@ export fn HttpError.transport(kind ErrorKind, detail str) -> HttpError =>
 export fn HttpError.body_too_large() -> HttpError =>
     { kind: BodyTooLarge, url: None, source: None }
 
+/// Ошибка декодирования Content-Encoding (gzip/deflate) — corrupt/framing/checksum;
+/// `kind: Protocol` + типизированный `source: Compress(CompressError)` (179). Bomb
+/// (превышение `max_decompressed`, D334) НЕ сюда — он мапится в `body_too_large()`.
+#stable(since = "0.1")
+export fn HttpError.from_compress(e CompressError) -> HttpError =>
+    { kind: Protocol("content-encoding decode failed"), url: None, source: Some(Compress(e)) }
+
 /// Ошибка типизированной десериализации тела (`json_decode_body[T]`, Plan 180).
 /// `kind: Protocol` + деталь serde `DeError` (JSONPath+причина) в `source`.
 /// (Типизированный `ErrSource.De(DeError)` — отдельный gate, чтобы не тянуть serde
@@ -137,6 +149,7 @@ export fn HttpError @to_str() -> str {
     }
     match @source {
         Some(UrlParse(e))     => "${base}: ${e.to_str()}"
+        Some(Compress(e))     => "${base}: ${e.to_str()}"
         Some(OtherSource(m))  => "${base}: ${m}"
         None                  => base
     }

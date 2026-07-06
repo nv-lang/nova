@@ -75,6 +75,14 @@ export fn CompressError @to_str() -> str {
     }
 }
 
+/// `true` iff this is a decompression-bomb error (`Bomb` — output exceeded the
+/// caller's `max_output` cap, D334). Lets a consumer distinguish the DoS-guard
+/// trip from genuine corruption WITHOUT importing the OPEN `ErrorKind` variants
+/// (whose `Other`/etc. names would collide with a co-present error enum).
+#stable(since = "0.1")
+export fn CompressError @is_bomb() -> bool =>
+    match @kind { Bomb(_) => true, _ => false }
+
 fn checksum_kind_name(k ChecksumKind) -> str {
     match k {
         Crc32   => "CRC-32"
