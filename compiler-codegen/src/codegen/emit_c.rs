@@ -14954,6 +14954,207 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         format!("{}____{}", base_c_name, args)
     }
 
+    /// [M-176-generic-wrapper-mono-inference] Does the generic type `type_name`
+    /// have any field whose erased form becomes `void*` — the exact condition
+    /// (`has_void_ptr_fields`, `emit_generic_method_erased`) under which the
+    /// erased base method is emitted as a NULL/`{0}` STUB (`emit_generic_static
+    /// _method_stub`). Used to gate inference-based ctor monomorphization to the
+    /// stub-only case (types whose erased dispatch works are left byte-identical).
+    fn generic_type_has_voidptr_fields(&self, type_name: &str) -> bool {
+        let template = match self.generic_type_templates.get(type_name) {
+            Some(t) => t,
+            None => return false,
+        };
+        use crate::ast::{TypeDeclKind, TypeRef};
+        let fields = match &template.kind {
+            TypeDeclKind::Record(fields) => fields,
+            _ => return false,
+        };
+        let type_params: HashSet<String> =
+            template.generics.iter().map(|g| g.name.clone()).collect();
+        fields.iter().any(|fld| {
+            if matches!(&fld.ty, TypeRef::Pointer(..) | TypeRef::Mut(..) | TypeRef::Unsafe(..))
+                && Self::type_ref_uses_any_type_param(&fld.ty, &type_params)
+            {
+                return true;
+            }
+            if Self::type_ref_uses_any_type_param(&fld.ty, &type_params)
+                && Self::type_ref_contains_func(&fld.ty)
+            {
+                return true;
+            }
+            if let TypeRef::Named { path, generics, .. } = &fld.ty {
+                if path.len() == 1 && generics.is_empty() && type_params.contains(&path[0]) {
+                    return true;
+                }
+                !generics.is_empty()
+                    && generics.iter().any(|g| Self::type_ref_uses_any_type_param(g, &type_params))
+            } else if let TypeRef::Array(inner, _) = &fld.ty {
+                if let TypeRef::Named { generics, .. } = inner.as_ref() {
+                    !generics.is_empty()
+                        && generics.iter().any(|g| Self::type_ref_uses_any_type_param(g, &type_params))
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        })
+    }
+
+    /// [M-176-generic-wrapper-mono-inference] Constructor-argument type-arg
+    /// inference for a generic wrapper type. When a generic type's static method
+    /// is called WITHOUT explicit turbofish (`Wrap.new(x)`, `BufWriter.new(w)`),
+    /// the erased dispatch (`Nova_Wrap_static_new(void*)`) is a NULL stub for any
+    /// type with void-ptr fields → runtime crash / CC-FAIL. Mirror the turbofish
+    /// static path (~27242): infer the concrete type-args from the argument C
+    /// types, register the mono instance + worklist, and dispatch to the
+    /// monomorphized static method. Gated on the stub case only
+    /// (`generic_type_has_voidptr_fields`) so non-stub generic types keep their
+    /// existing (byte-identical) erased dispatch. Returns `Ok(None)` when the
+    /// type is non-stub, has no matching static method, or the type-args cannot
+    /// be fully inferred from the args — the caller then keeps the legacy path.
+    fn try_generic_static_ctor_mono(
+        &mut self,
+        base_name: &str,
+        method: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Result<Option<String>, String> {
+        // Gate: only intervene where the erased base is a NULL stub.
+        if !self.generic_type_has_voidptr_fields(base_name) {
+            return Ok(None);
+        }
+        let template = match self.generic_type_templates.get(base_name).cloned() {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        // The static method decl to monomorphize.
+        let fn_decl = match self.generic_type_methods.get(base_name)
+            .and_then(|ms| ms.iter().find(|m| m.name == *method
+                && !matches!(m.receiver.as_ref().map(|r| &r.kind),
+                    Some(crate::ast::ReceiverKind::Instance))))
+            .cloned()
+        {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+        // Infer each template type-param from the argument C types.
+        let mut subst_pending: Vec<(String, Option<String>)> =
+            template.generics.iter().map(|g| (g.name.clone(), None)).collect();
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let arg_c = self.infer_expr_c_type(arg.expr());
+            self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_pending);
+        }
+        // Require every template generic to be inferable; otherwise fall back.
+        if subst_pending.iter().any(|(_, c)| c.is_none()) {
+            return Ok(None);
+        }
+        let type_args_c: Vec<String> = subst_pending.iter()
+            .map(|(_, c)| c.clone().unwrap())
+            .collect();
+        if type_args_c.iter().any(|c| c.is_empty() || c == "void*") {
+            return Ok(None);
+        }
+        let type_subst: Vec<(String, String)> = subst_pending.into_iter()
+            .map(|(n, c)| (n, c.unwrap()))
+            .collect();
+        let mangled = Self::compute_generic_type_c_name(base_name, &type_args_c);
+        self.generic_type_instance_info.borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| (base_name.to_string(), type_args_c.clone()));
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push((base_name.to_string(), type_args_c.clone(), mangled.clone()));
+            }
+        }
+        let method_c_name = format!("{}_static_{}", mangled, method);
+        // Emit args with the type-substitution active (array-literal element
+        // types flow through), mirroring the turbofish static path.
+        let saved_subst = std::mem::replace(
+            &mut self.current_type_subst,
+            type_subst.iter().cloned().collect(),
+        );
+        let mut arg_strs = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let arg_expr = a.expr();
+            let target_c = if matches!(&arg_expr.kind, crate::ast::ExprKind::ArrayLit(_)) {
+                fn_decl.params.get(i)
+                    .and_then(|p| self.type_ref_to_c(&p.ty).ok())
+                    .filter(|c| !c.is_empty() && c != "void*")
+            } else { None };
+            match target_c {
+                Some(tc) => arg_strs.push(self.emit_expr_with_target_type(arg_expr, &tc)?),
+                None => arg_strs.push(self.emit_expr(arg_expr)?),
+            }
+        }
+        self.current_type_subst = saved_subst;
+        // Pre-register any generic instances referenced by the return type.
+        if let Some(rt) = fn_decl.return_type.as_ref() {
+            let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
+                .map(|(n, c)| (n.clone(), Some(c.clone())))
+                .collect();
+            self.register_generic_instances_in_typeref(rt, &subst_opt);
+        }
+        let recv_type_stripped = mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string();
+        self.register_mono_method_instance(
+            &fn_decl, type_subst, &method_c_name, &recv_type_stripped);
+        Ok(Some(format!("{}({})", method_c_name, arg_strs.join(", "))))
+    }
+
+    /// [M-176-generic-wrapper-mono-inference] Inference-side twin of
+    /// `try_generic_static_ctor_mono`: for `Wrap.new(x)` / `BufWriter.new(w)`
+    /// (a stub-only generic wrapper ctor without turbofish), return the
+    /// monomorphized instance C type (`Nova_Wrap____nova_str*`) so the LHS local
+    /// is declared with the mono type and its instance methods dispatch to the
+    /// mono bodies (not the erased NULL stubs). Immutable — no registration.
+    /// `None` when the type is non-stub, has no matching static method, or the
+    /// type-args cannot be fully inferred from the args.
+    fn infer_generic_static_ctor_ret(
+        &self,
+        base_name: &str,
+        method: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Option<String> {
+        if !self.generic_type_has_voidptr_fields(base_name) {
+            return None;
+        }
+        let tmpl = self.generic_type_templates.get(base_name)?;
+        let fn_decl = self.generic_type_methods.get(base_name)?
+            .iter()
+            .find(|m| m.name == *method
+                && !matches!(m.receiver.as_ref().map(|r| &r.kind),
+                    Some(crate::ast::ReceiverKind::Instance)))?;
+        let mut pend: Vec<(String, Option<String>)> =
+            tmpl.generics.iter().map(|g| (g.name.clone(), None)).collect();
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let arg_c = self.infer_expr_c_type(arg.expr());
+            self.infer_type_param_binding(&param.ty, &arg_c, &mut pend);
+        }
+        if pend.iter().any(|(_, c)| c.is_none()) {
+            return None;
+        }
+        let type_args_c: Vec<String> = pend.iter().map(|(_, c)| c.clone().unwrap()).collect();
+        if type_args_c.iter().any(|c| c.is_empty() || c == "void*") {
+            return None;
+        }
+        let mangled = Self::compute_generic_type_c_name(base_name, &type_args_c);
+        let mono_ptr = format!("{}*", mangled);
+        // Resolve the declared return type under the substitution. A ctor
+        // returning `Self` erases to `Nova_<base>*`; remap that to the mono ptr.
+        if let Some(rt) = fn_decl.return_type.as_ref() {
+            if let Some(c_ty) = Self::apply_type_subst_to_ref(rt, &pend) {
+                if !c_ty.is_empty() && c_ty != "void*" {
+                    if c_ty == format!("Nova_{}*", base_name) {
+                        return Some(mono_ptr);
+                    }
+                    return Some(c_ty);
+                }
+            }
+        }
+        Some(mono_ptr)
+    }
+
     /// Plan 48 Ф.7.4 (partial): try to infer mono type-args for a bare variant
     /// constructor call like `Ok2(42)` where the parent sum-type is generic.
     /// Returns (parent_type_name, mangled_instance_c_name, type_args_c) when:
@@ -29466,6 +29667,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             .unwrap_or_else(|| format!("Nova_{}_method_{}", safe_type, method));
                         return Ok(format!("{}({})", c_fn, arg_strs.join(", ")));
                     } else {
+                        // [M-176-generic-wrapper-mono-inference] `Wrap.new(x)`
+                        // parsed as Member — infer type-args from ctor args and
+                        // dispatch to the mono static method (stub-only gate).
+                        if is_generic_type {
+                            if let Some(call) =
+                                self.try_generic_static_ctor_mono(&type_name, method, args)?
+                            {
+                                return Ok(call);
+                            }
+                        }
                         // Static method: obj is the type name (Ident), not a value
                         let mut arg_strs = Vec::new();
                         for a in args {
@@ -29978,6 +30189,19 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         Some(c_ty) => Self::nova_type_name_from_c(c_ty),
                         None => parts[0].clone(),
                     };
+                    // [M-176-generic-wrapper-mono-inference] `Wrap.new(x)` /
+                    // `BufWriter.new(w)` without turbofish: a generic wrapper type
+                    // whose erased static ctor is a NULL stub. Infer the type-args
+                    // from the ctor arguments and dispatch to the monomorphized
+                    // static method BEFORE the raw single-key / overload paths
+                    // below emit the broken erased `Nova_<T>_static_new(void*)`.
+                    // Gated on the stub case only (`generic_type_has_voidptr_fields`)
+                    // so non-stub generic types keep their existing dispatch.
+                    if let Some(call) =
+                        self.try_generic_static_ctor_mono(&recv_seg, method_name, args)?
+                    {
+                        return Ok(call);
+                    }
                     // Plan 11 Ф.2: используем multi-overload registry —
                     // strict resolution по типам args. Это работает и
                     // при single-overload (тогда match unique без проверки
@@ -30166,6 +30390,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         || self.generic_type_templates.contains_key(parts0)
                         || self.generic_types.contains(parts0);
                     if is_known_type {
+                        // [M-176-generic-wrapper-mono-inference] `Wrap.new(x)` /
+                        // `BufWriter.new(w)` without explicit `[T]` — infer the
+                        // type-args from the ctor arguments and dispatch to the
+                        // monomorphized static method (stub-only gate inside).
+                        if let Some(call) =
+                            self.try_generic_static_ctor_mono(parts0, method_name, args)?
+                        {
+                            return Ok(call);
+                        }
                         let mut arg_strs = Vec::new();
                         for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         let safe = Self::sanitize_c_for_ident(parts0);
@@ -39037,6 +39270,43 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             return format!("NovaOpt_{}", Self::sanitize_for_novaopt(&target_c));
                         }
                     }
+                }
+            }
+        }
+        // [M-176-generic-wrapper-mono-inference] `Wrap.new(x)` / `BufWriter.new(w)`
+        // without turbofish: the checker resolves the call to the ERASED wrapper
+        // (`Wrap`, no type-args) — Channel 2 would then lower it to `Nova_Wrap*`
+        // and the LHS local's instance methods would dispatch to the NULL stubs.
+        // Infer the concrete type-args from the ctor arguments and return the
+        // MONO instance type FIRST (stub-only gate inside `infer_generic_static
+        // _ctor_ret`), so the local is declared with `Nova_Wrap____<T>*` and its
+        // methods reach the mono bodies. Only fires for a stub wrapper ctor with
+        // fully-inferable args; everything else falls through to the channels.
+        if let ExprKind::Call { func, args, .. } = &expr.kind {
+            let func = func.unwrap_turbofish();
+            let ctor_recv_method: Option<(String, &String)> = match &func.kind {
+                ExprKind::Path(p) if p.len() == 2 => {
+                    let base = match self.current_type_subst.get(p[0].as_str()) {
+                        Some(c_ty) => Self::nova_type_name_from_c(c_ty),
+                        None => p[0].clone(),
+                    };
+                    Some((base, &p[1]))
+                }
+                ExprKind::Member { obj, name } => match &obj.kind {
+                    ExprKind::Ident(t) => {
+                        let base = match self.current_type_subst.get(t.as_str()) {
+                            Some(c_ty) => Self::nova_type_name_from_c(c_ty),
+                            None => t.clone(),
+                        };
+                        Some((base, name))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some((base, method_name)) = ctor_recv_method {
+                if let Some(c) = self.infer_generic_static_ctor_ret(&base, method_name, args) {
+                    return c;
                 }
             }
         }
