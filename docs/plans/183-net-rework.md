@@ -136,6 +136,158 @@ simplifications; хвост: `Accept-Encoding`-интеграция http не т
 6. Спека-сначала на каждую фазу; конвенции §0/§3/§6/§7 соблюдены (§3: вся логика в .nv,
    C — только непортируемый транспорт).
 
+## Ф.0-карта, заход 1 (2026-07-06)
+
+Инвентарь снят по `compiler-codegen/nova_rt/net.c` (1548 строк) + `net.h` (354) +
+`std/net/*.nv`. **Поправка к §1:** «174 функции» — историческая цифра; на факт
+сейчас **68** `NovaRt_*_(method|static)_*` (grep) + **53** literal-name entry point
+(`^extern "C" fn` в `ffi.nv`). Двойная обёртка (Д1) = именно эти два слоя.
+
+### Ф.0-1. Статические результатные слоты (Д2) — все 6
+
+| Слот (net.c) | Тип | Что переносит | Куда в новом слое |
+|---|---|---|---|
+| `_net_tcp_read_data` :67 | `nova_str` | данные последнего TCP read | **удалён** — read пишет в буфер вызывающего (§2а) |
+| `_net_recv_data` :1379 | `nova_str` | данные последней UDP-датаграммы | **удалён** — recv пишет в буфер вызывающего |
+| `_net_recv_sender` :1380 | `SocketAddr*` | адрес отправителя UDP | **удалён** — out-param `NovaNetAddr* sender` |
+| `_net_dns_addrs` :1453 | `SocketAddr**` | массив DNS-результата | **удалён** — nova_alloc-массив, возврат `count` + `**out_arr` |
+| `_net_parse_result` :1244 | `SocketAddr*` | результат parse | **удалён** — out-param `NovaNetAddr* out` |
+| `_net_tls_last_error` :1212 | `char[4096]` | текст последней ошибки | **удалён** — код возврата (UV int); текст через `nova_net_strerror(code, buf, cap)` в буфер вызывающего |
+
+Инвариант приёмки: `grep -E "__thread|__declspec\(thread\)" net2.c` = **0**.
+(в net.c их 6 результатных + это ровно источник M:N-гонки Д2.)
+
+### Ф.0-2. Как устроены парковка и alloc_cb-путь СЕЙЧАС (что копируется)
+
+**Парковка (корректна — переиспользуется как есть).** Каждая блокирующая опера
+(connect/accept/read/write/recv/send/dns) по образцу `_nova_sleep_via_libuv`:
+`_nova_active_scope`/`_nova_active_slot` → `nova_sched_register_pending(scope, slot,
+handle, stop_cb)` → `nova_sched_park` → (libuv-cb на loop-потоке пишет в
+`handle->…` и зовёт `nova_sched_wake(scope, slot)`) → resume →
+`nova_sched_unregister_pending` → проверка `cancel_requested`. Отмена: `stop_cb`
+делает CAS stage IDLE→CLOSING и `nova_loop_defer_close` (cross-thread-safe,
+Plan 83.10.2). Cancel-scope берётся через `_nova_net_cancel_scope` (родительский
+supervised). **Это M:N-корректно** — park-слот в scope, а не в потоке. Гонка НЕ
+здесь. Механизм копируется в net2.c дословно (общий helper `_nova_net_cancel_scope`,
+stage-enum, defer_close).
+
+**alloc_cb-путь чтения СЕЙЧАС (Д2+нарушение §2а — три лишних переноса).**
+`read_bytes` → `uv_read_start(alloc_cb, read_cb)`; `_tcp_alloc_cb` (:538)
+**`malloc(cap)`** промежуточный буфер → `read_cb` пишет `read_len` → после park
+код **`nova_alloc(len+1)` + `memcpy`** из malloc-буфера в GC-строку → `free` →
+упаковка `nova_str*` в `nova_int` → в TLS `_net_tcp_read_data` → аксессор
+`tcp_stream_read_data()`. **Итог: malloc + memcpy + nova_alloc на КАЖДЫЙ read.**
+UDP recv — тот же паттерн (`_udp_alloc_cb` :1036). Запись: `write` (:661)
+**`malloc(len)`+`memcpy`** копию пользовательских данных, держит до `write_cb`,
+`free`. **Итог: malloc+memcpy на КАЖДЫЙ write.**
+
+### Ф.0-3. Новый слой = zero-copy (модель Go/Rust, образец std/fs)
+
+`std/fs/ffi.nv` уже доказал форму: `fs_read(fd, buf *mut u8, len) -> int`
+(≥0=байты / <0=−errno), `fs_write(fd, buf *u8, len) -> int` — сеть-в-буфер
+вызывающего, ноль промежуточных. Копирую её на сеть:
+
+- **read**: `nova_net_tcp_read(void* s, uint8_t* buf, int64_t cap) -> int64_t`.
+  `alloc_cb` отдаёт `uv_buf_init(s->read_ptr, s->read_cap)` — тот самый буфер
+  Nova (указатель+ёмкость сохранены в handle перед `uv_read_start`); `read_cb`
+  ставит `read_n`, `uv_read_stop`. Возврат: `n>0` байт, `0`=EOF, `<0`=−UV-код.
+  **malloc=0, memcpy=0, nova_alloc=0.**
+- **write**: `nova_net_tcp_write(void* s, const uint8_t* buf, int64_t len) -> int64_t`.
+  `uv_write` получает `uv_buf_init((char*)buf, len)` — прямо память `[]u8`; на
+  время операции указатель живёт в `write_req`, а сам буфер держит Nova-вызывающий
+  на стеке волокна (консервативный GC его видит). Возврат `n`/`<0`. **0 копий.**
+- Буфер `[]u8` вызывающего: Nova-сторона (Ф.2) владеет `mut buf []u8`, передаёт
+  `buf.as_mut_ptr()`+ёмкость (read) / `buf.as_ptr()`+len (write) — как fs.
+
+### Ф.0-4. Таблица «старая → новая сигнатура» (аллокации/копии)
+
+**Адреса** (`NovaNetAddr` = будущий `SocketAddr value`; в C-слое передаётся
+указателем на nova_alloc/стек-структуру, поля — данные, НЕ handle):
+
+| Старое (net.c) | Новое (net2.c) `nova_net_*` | копии данных |
+|---|---|---|
+| `socket_addr_loopback(port)->CSocketAddr` | `nova_net_addr_loopback(u16)->NovaNetAddr*` | 0 (конструкция) |
+| `socket_addr_loopback_v6` | `nova_net_addr_loopback_v6(u16)->NovaNetAddr*` | 0 |
+| `socket_addr_v4(a,b,c,d,port)` | `nova_net_addr_v4(...)->NovaNetAddr*` | 0 |
+| `socket_addr_parse(str)->int`+`_parse_result()` TLS | `nova_net_addr_parse(u8*,len, NovaNetAddr* out)->int` | 0 (TLS убран) |
+| `socket_addr_port` | `nova_net_addr_port(NovaNetAddr*)->u16` | 0 (в Ф.2 — чистый Nova) |
+| `socket_addr_ip->str` | `nova_net_addr_ip(NovaNetAddr*, u8* buf, cap)->int` | 0 (в буфер вызывающего) |
+| `socket_addr_is_v4/_is_v6` | `nova_net_addr_is_v4/_is_v6->bool` | 0 |
+| `socket_addr_to_str->str` | `nova_net_addr_to_str(NovaNetAddr*, u8* buf, cap)->int` | 0 |
+
+**TCP** (handle = `void*`; ошибка read/write = `<0` UV-код; connect/listen/accept =
+NULL + out-код через `int* out_err` — cold path):
+
+| Старое | Новое | копии |
+|---|---|---|
+| `tcp_listener_bind`+TLS-err | `nova_net_tcp_listen(NovaNetAddr*, int backlog, int* out_err)->void*` | 0 |
+| `tcp_listener_accept` | `nova_net_tcp_accept(void* lst, int* out_err)->void*` (parks) | 0; peer=1 named OS-перенос при запросе |
+| `tcp_stream_connect` | `nova_net_tcp_connect(NovaNetAddr*, int* out_err)->void*` (parks) | 0 |
+| `tcp_stream_read_bytes`+`_read_data()` TLS | `nova_net_tcp_read(void*, u8* buf, cap)->int64` (parks) | **0** (§2а) |
+| `tcp_stream_write` / `_write_all` | `nova_net_tcp_write(void*, u8* buf, len)->int64` (parks) | **0** (§2а) |
+| `tcp_stream_close` | `nova_net_tcp_close(void*)` (refcount-aware) | 0 |
+| — (новое) | `nova_net_tcp_shutdown(void*, int* out_err)` (uv_shutdown, half-close) | 0 |
+| `tcp_stream_local/peer_port` | `nova_net_tcp_local/peer_port(void*)->u16` | 0 |
+| `tcp_stream_local/peer_addr` | `nova_net_tcp_local/peer_addr(void*, NovaNetAddr* out)` | 1 named (sockaddr→addr) |
+| `tcp_stream_set_nodelay/_keepalive` | `nova_net_tcp_set_nodelay/_keepalive(void*, bool)` | 0 |
+| `tcp_listener_local_port/_addr/_close` | `nova_net_listener_local_port/_addr/_close` | 0/1-named/0 |
+| `tcp_listener_set_reuse_address` | `nova_net_listener_set_reuse_address(void*, bool)` | 0 |
+
+**TCP split (Д1-упрощение).** 12 функций `tcp_read_half_*`/`tcp_write_half_*` +
+`tcp_stream_split` в net.c — **исчезают**. В новом слое у handle с рождения
+раздельные `read_scope`/`write_scope`, поэтому read и write независимы БЕЗ split-API;
+«split» на Nova-стороне = раздать один `void*` двум half-значениям.
+C добавляет лишь `nova_net_tcp_mark_split(void*)` (refcount=2) — close по refcount.
+
+**UDP**:
+
+| Старое | Новое | копии |
+|---|---|---|
+| `udp_socket_bind`+TLS-err | `nova_net_udp_bind(NovaNetAddr*, int* out_err)->void*` | 0 |
+| `udp_socket_send_to(str)` | `nova_net_udp_send_to(void*, u8* buf, len, NovaNetAddr*)->int64` (parks) | **0** (§2а; было malloc+memcpy) |
+| `udp_socket_recv_from`+`_recv_data()`+`_recv_sender()` TLS | `nova_net_udp_recv_from(void*, u8* buf, cap, NovaNetAddr* sender)->int64` (parks) | **0** в буфер; sender=1 named OS-перенос |
+| `udp_socket_local_port/_addr/_close` | `nova_net_udp_local_port/_addr/_close` | 0/1-named/0 |
+
+**DNS**:
+
+| Старое | Новое | копии |
+|---|---|---|
+| `dns_lookup`+`dns_addr_at()` TLS | `nova_net_dns_lookup(u8* host, len, u16 port, NovaNetAddr** out_arr, int* out_err)->int64 count` (parks) | 1 named OS-перенос: `addrinfo`→GC-массив `NovaNetAddr`; TLS убран, массив передан явно |
+
+**Ошибки/текст**: `net_last_error()` TLS **удалён**. Опы возвращают UV-код
+(<0 / через `int* out_err`). Текст строит Nova-сторона: `nova_net_strerror(int code,
+u8* buf, int64_t cap) -> int` (обёртка `uv_strerror`, канон-строки для
+EACCES/ECONNRESET как раньше) пишет в буфер вызывающего. 0 статики.
+
+### Ф.0-5. Неизбежные копии (поимённо, как у Rust/Go) — итог
+
+1. `accept`/`*_peer_addr`/`*_local_addr`: `sockaddr_storage` → `NovaNetAddr`
+   (≤16 байт), **только по запросу адреса**, не в hot-path read/write.
+2. `udp recv_from`: sender `sockaddr` → `NovaNetAddr` (out-param, 1 шт/датаграмму).
+3. `dns_lookup`: `addrinfo`-список → GC-массив `NovaNetAddr` (N адресов, 1 раз).
+
+В hot-path **read/write/send/recv-payload**: malloc=0, memcpy=0, nova_alloc=0.
+
+### Ф.0-6. Инвентарь потребителей (кого мигрировать в Ф.3)
+
+- `std/net/ffi.nv` (53 extern), `addr.nv`, `error.nv`, `tcp.nv` (real_net-handler,
+  ~37 ops), `udp.nv`, `dns.nv`, `mock.nv` — переписываются на новый слой/байты.
+- `std/http/transport/real.nv`, `std/http/servernet/servernet.nv` — единственные
+  внешние потребители эффекта `Net` (grep). Мигрируют на байтовый surface.
+- Тесты: `nova_tests/plan83_12/*` (tcp_*), `nova_tests/plan91_12/net_v2_*`
+  (tcp/udp/dns smoke+slow), `plan91_15/*`, `plan91_16/*` (split).
+- `examples/net/echo_{client,server}.nv`.
+
+### Ф.0-7. Точка входа Ф.1 (этот заход)
+
+Новый файл `nova_rt/net2.c`+`net2.h` рядом со старым (net.c НЕ трогаю — на нём все
+потребители). Порядок: TCP (addr-хелперы → listen/accept/connect/read/write/close/
+shutdown/mark_split/ports/addrs) → UDP → DNS. Линковка net2.c во все 3 toolchain-блока
+test_runner.rs по образцу net.c. Smoke — Nova-тест на НОВОМ слое (extern "C" nova_net_*
+напрямую, только proven-типы `*()`/`*mut u8`/`*u8`/int): loopback echo двумя волокнами
+(тот самый, что на старом слое сегфолтит). .nv-обвязка эффекта (Ф.2) — namespaced-новая,
+если влезет; иначе следующий заход.
+
 ## 5. Риски / связи
 
 - **Объём**: net.c ~2000 C-строк + 1100 .nv + потребители; 3-4 агент-захода. Самая тонкая
