@@ -494,7 +494,7 @@ export type WithExitTimeout protocol {
 /// на user-типах. Паникует при invalid key (OOB, missing key etc).
 ///
 /// Встроенные `[]T` и `str` удовлетворяют через built-in codegen path;
-/// user-типы (`Vec[T]`, `HashMap[K,V]` и т.д.) реализуют явно.
+/// user-типы (`[]T`, `HashMap[K,V]` и т.д.) реализуют явно.
 ///
 /// # D238 (spec/decisions/03-syntax.md)
 ///
@@ -504,8 +504,8 @@ export type WithExitTimeout protocol {
 /// # Examples
 ///
 /// ```nova
-/// // Vec[T] implements Index[int, T]:
-/// mut v = Vec[int].new()
+/// // []T implements Index[int, T]:
+/// mut v = []int.new()
 /// v.push(10); v.push(20)
 /// assert(v[0] == 10)  // v.index(0)
 ///
@@ -529,8 +529,8 @@ export type Index[K, V] protocol {
 /// # Examples
 ///
 /// ```nova
-/// // Vec[T] implements MutIndex[int, T]:
-/// mut v = Vec[int].new()
+/// // []T implements MutIndex[int, T]:
+/// mut v = []int.new()
 /// v.push(10)
 /// v[0] = 99  // v.@index(0, 99)
 /// assert(v[0] == 99)
@@ -548,18 +548,18 @@ export type MutIndex[K, V] protocol {
 /// Raw contiguous-buffer protocol: a type that exposes a pointer + length
 /// pair suitable for bulk `RawMem.copy` operations.
 ///
-/// Implemented by `Vec[T]` (and `[]T` = same type). Allows `@append` and
-/// similar bulk-copy methods to accept any contiguous source without
-/// per-element iteration.
+/// Implemented by `[]T` (`Vec[T]` under the definition-site name). Allows
+/// `@append` and similar bulk-copy methods to accept any contiguous source
+/// without per-element iteration.
 ///
 /// # D299 (spec/decisions/02-types.md)
 ///
 /// # Examples
 ///
 /// ```nova
-/// mut a = Vec[int].of(1, 2, 3)
-/// ro b = Vec[int].of(4, 5)
-/// a.append(b)           // Vec[T] implements AsSlice[T]
+/// mut a = []int.of(1, 2, 3)
+/// ro b = []int.of(4, 5)
+/// a.append(b)           // []T implements AsSlice[T]
 /// assert(a == [1, 2, 3, 4, 5])
 /// ```
 #stable(since = "0.1")
@@ -573,7 +573,7 @@ export type AsSlice[T] protocol {
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Why these exist (the `vec_debug_pos` mis-dispatch, Plan 154.1):
-//   A container's monomorphized `Vec[T] @debug` body calls `@data[i].debug(sb)`
+//   A container's monomorphized `[]T @debug` body calls `@data[i].debug(sb)`
 //   on the ELEMENT. When T is a primitive (`int`, `f64`, ...), the element has
 //   no concrete `@debug` method, so codegen's single-key `method_receivers`
 //   fallback used to mis-route the call to the container's own erased

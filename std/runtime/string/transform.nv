@@ -93,7 +93,8 @@ export fn str @strip_suffix(suffix str) -> Option[str] {
 // Renamed to_lower → to_ascii_lower (Plan 91.18 Ф.2).
 export fn str @to_ascii_lower() -> str {
     ro (bytes, n) = (@as_bytes(), @byte_len())
-    mut out = []u8.with_capacity(n)
+    mut out []u8 = []u8.new()
+    out.cap(n)
     out.append(bytes)
     mut i = 0
     while i < n {
@@ -109,7 +110,8 @@ export fn str @to_ascii_lower() -> str {
 // Renamed to_upper → to_ascii_upper (Plan 91.18 Ф.2).
 export fn str @to_ascii_upper() -> str {
     ro (bytes, n) = (@as_bytes(), @byte_len())
-    mut out = []u8.with_capacity(n)
+    mut out []u8 = []u8.new()
+    out.cap(n)
     out.append(bytes)
     mut i = 0
     while i < n {
@@ -137,7 +139,8 @@ export fn str @concat(other str) -> str {
     // Plan 152.0 Ф.3: one alloc (cap a+b) + two bulk Vec.@append (RawMem.copy
     // memmove) + steal-into-str (reuse buffer, no second memcpy). Identical bytes
     // to the retired C nova_str_concat (1 alloc + 2 memcpy + NUL); zero push-loop.
-    mut out = []u8.with_capacity(a.len() + b.len())
+    mut out []u8 = []u8.new()
+    out.cap(a.len() + b.len())
     out.append(a)
     out.append(b)
     str.from_bytes_unchecked_steal(out)
@@ -154,7 +157,7 @@ export fn str @pad_start(width int, fill char) -> str {
     ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into_str()
+    StringBuilder.new().cap(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, pad).append(@).into_str()
 }
 
 // Pad строку с конца до width CODEPOINT'ов символом fill. Если width <= длины — s.
@@ -163,7 +166,7 @@ export fn str @pad_end(width int, fill char) -> str {
     ro pad = width - @as_chars().count()
     if pad <= 0 { return @ }
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into_str()
+    StringBuilder.new().cap(@byte_len() + pad * fill_s.byte_len()).append(@).append_repeat(fill_s, pad).into_str()
 }
 
 // Pad с обеих сторон до width CODEPOINT'ов (левый паддинг = floor(pad/2)). Plan 152.2 Ф.3.
@@ -173,13 +176,13 @@ export fn str @pad_center(width int, fill char) -> str {
     ro left = pad / 2
     ro right = pad - left
     ro fill_s = str.from(fill)
-    StringBuilder.with_capacity(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
+    StringBuilder.new().cap(@byte_len() + pad * fill_s.byte_len()).append_repeat(fill_s, left).append(@).append_repeat(fill_s, right).into_str()
 }
 
 // Повторение строки n раз. n <= 0 → пустая строка.
 export fn str @repeat(n int) -> str {
     if n <= 0 { return "" }
-    StringBuilder.with_capacity(@byte_len() * n).append_repeat(@, n).into_str()
+    StringBuilder.new().cap(@byte_len() * n).append_repeat(@, n).into_str()
 }
 
 // Заменить все non-overlapping occurrences `from` на `to`. Empty `from` → s unchanged.
@@ -189,7 +192,15 @@ export fn str @replace(from str, to str) -> str {
     if fn_len == 0 { return @ }
     ro to_len = to.byte_len()
     ro estimated = @byte_len() + if to_len > fn_len { to_len - fn_len } else { 0 }
-    consume sb = StringBuilder.with_capacity(estimated)
+    // [M-vec-spelling-consume-chain-cap-collision] (vec-sweep, 2026-07-06,
+    // RESOLVED by workaround): `consume sb = StringBuilder.new().cap(n)`
+    // (a 2-link chain bound in one `consume` let) broke D133 consume-tracking
+    // for the WHOLE compile unit — reproduced down to an arbitrary 2nd link
+    // (even a trivial unrelated `-> @` method chained onto `.new()`), not
+    // specific to `.cap`. `consume sb = StringBuilder.new()` (single call)
+    // + `.cap(n)` as its own SEPARATE statement avoids it.
+    consume sb = StringBuilder.new()
+    sb.cap(estimated)
     mut rest = @
     while true {
         match rest.find(from) {
@@ -208,7 +219,8 @@ export fn str @replace(from str, to str) -> str {
 export fn str @replacen(from str, to str, n int) -> str {
     ro fn_len = from.byte_len()
     if n <= 0 || fn_len == 0 { return @ }
-    consume sb = StringBuilder.with_capacity(@byte_len())
+    consume sb = StringBuilder.new()
+    sb.cap(@byte_len())
     mut rest = @
     mut count = 0
     while count < n {

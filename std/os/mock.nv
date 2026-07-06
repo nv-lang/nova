@@ -120,9 +120,9 @@ fn MockOs @mem_env_get(key []u8) -> str {
     ro k = str.from_bytes_unchecked(key)
     match @env_find(k) { Some(j) => str.from_bytes_unchecked(@env_vals[j]), None => "" }
 }
-fn MockOs @mem_env_has(key []u8) -> int {
+fn MockOs @mem_env_has(key []u8) -> bool {
     ro k = str.from_bytes_unchecked(key)
-    match @env_find(k) { Some(_) => 1, None => 0 }
+    match @env_find(k) { Some(_) => true, None => false }
 }
 fn MockOs mut @mem_env_remove(key []u8) -> int {
     ro k = str.from_bytes_unchecked(key)

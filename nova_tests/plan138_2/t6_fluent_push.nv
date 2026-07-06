@@ -27,7 +27,8 @@ module nova_tests.plan138_2
 import std.collections.vec.{Vec}
 
 test "fluent push chain builds the vector in one expression (task example)" {
-    ro v = Vec[u8].with_capacity(3)
+    ro v Vec[u8] = Vec[u8].new()
+    v.cap(3)
         .push(1 as u8)
         .push(2 as u8)
         .push(3 as u8)

@@ -1,4 +1,4 @@
-// D232 — `Vec[T]`: Nova-native generic growable array (Plan 131). The CORE mutating
+// D232 — `[]T`: Nova-native generic growable array (Plan 131). The CORE mutating
 // API and typed-storage property are POS-observable at runtime (spec/decisions/02-types.md:11889):
 //   • push grows the vec, len tracks live count; pop returns Option[T] (Some on non-empty,
 //     a stable None once empty) and shrinks len.
@@ -11,6 +11,14 @@
 // Sibling Vec D-blocks cover OTHER facets: D239 (`[]T ≡ Vec[T]` alias), D259 (of vs from),
 // D264 (content-hash / collect). This block exercises the D232 mutating method table itself.
 // Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
+//
+// [M-153.x-array-new-not-vec] canon exception (vec-sweep, 2026-07-07): the
+// `.new()` constructors below stay spelled `Vec[...]` — the bracket alias
+// `[]T.new()` lowers through the LEGACY erased-array path (pre-allocates 8
+// slots), which contradicts the exact allocation semantics this block asserts
+// (`cap() == 0` before first push), and its un-annotated binding breaks
+// method dispatch (`v.cap()` name-keyed onto a foreign type). `.of(...)`
+// spellings ARE the `[]T` canon — they route to the typed Vec mono path.
 module spec_tests.conformance
 
 // Heap record element — proves typed pointer-in-slot storage (no int64-erasure) for record T.
@@ -39,7 +47,7 @@ test "push grows / pop returns Option and shrinks; empty pop is a stable None (D
 }
 
 test "get(i) is bounds-checked: in-range → Some, out-of-range → None (D232)" {
-    ro v = Vec[int].of(7, 8, 9)
+    ro v = []int.of(7, 8, 9)
     assert(v.get(0) == Some(7))
     assert(v.get(2) == Some(9))
     assert(v.get(3) == None)      // index == len → out of range
@@ -47,7 +55,7 @@ test "get(i) is bounds-checked: in-range → Some, out-of-range → None (D232)"
 }
 
 test "insert shift-inserts; remove shift-removes preserving order (D232)" {
-    mut v = Vec[int].of(1, 2, 4)
+    mut v = []int.of(1, 2, 4)
     v.insert(2, 3)                // [1, 2, 3, 4]
     assert(v.len() == 4)
     assert(v[0] == 1)
@@ -62,7 +70,7 @@ test "insert shift-inserts; remove shift-removes preserving order (D232)" {
 }
 
 test "swap_remove is O(1) order-disrupting: last fills the hole (D232)" {
-    mut v = Vec[int].of(10, 20, 30, 40)
+    mut v = []int.of(10, 20, 30, 40)
     ro got = v.swap_remove(1)     // remove 20; last (40) moves into slot 1
     assert(got == 20)
     assert(v.len() == 3)
@@ -72,7 +80,7 @@ test "swap_remove is O(1) order-disrupting: last fills the hole (D232)" {
 }
 
 test "reverse flips in place; clear drops to empty; first/last track ends (D232)" {
-    mut v = Vec[int].of(1, 2, 3)
+    mut v = []int.of(1, 2, 3)
     assert(v.first() == Some(1))
     assert(v.last() == Some(3))
     v.reverse()                   // [3, 2, 1]

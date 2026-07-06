@@ -15,7 +15,8 @@ import std.collections.vec.{Vec}
 // ── POSITIVE: fluent `-> @` push tail in if-branch, unit sibling ──
 // then = Nova_Vec*  (fluent push), else = unit. if is in statement position.
 fn fill(cond bool) -> Vec[int] {
-    mut v = Vec[int].with_capacity(2)
+    mut v Vec[int] = Vec[int].new()
+    v.cap(2)
     if cond { v.push(1) }       // tail = Nova_Vec____nova_int* (fluent -> @)
     else    { v.push(2); () }   // tail = unit
     v
@@ -23,7 +24,8 @@ fn fill(cond bool) -> Vec[int] {
 
 // ── POSITIVE: mirror — fluent tail in the ELSE branch, unit in then ──
 fn fill_mirror(cond bool) -> Vec[int] {
-    mut v = Vec[int].with_capacity(2)
+    mut v Vec[int] = Vec[int].new()
+    v.cap(2)
     if cond { v.push(7); () }   // tail = unit
     else    { v.push(9) }       // tail = Nova_Vec____nova_int* (fluent -> @)
     v
@@ -32,14 +34,16 @@ fn fill_mirror(cond bool) -> Vec[int] {
 // ── POSITIVE: if WITHOUT else, fluent tail (no-else already coerces to unit,
 //    but keep as a guard so it stays valid). ──
 fn fill_noelse(cond bool) -> Vec[int] {
-    mut v = Vec[int].with_capacity(2)
+    mut v Vec[int] = Vec[int].new()
+    v.cap(2)
     if cond { v.push(5) }       // tail = Nova_Vec* ; no else → discarded
     v
 }
 
 // ── POSITIVE: nested if with fluent tails on inner branches, unit sibling. ──
 fn fill_nested(a bool, b bool) -> Vec[int] {
-    mut v = Vec[int].with_capacity(4)
+    mut v Vec[int] = Vec[int].new()
+    v.cap(4)
     if a {
         if b { v.push(1) } else { v.push(2) }   // inner: both fluent tails
     } else {
@@ -58,7 +62,8 @@ fn fill_nested(a bool, b bool) -> Vec[int] {
 //    fallback (R3 emit/infer symmetry). The chain shape `fill_nested`
 //    (nested-in-then) does NOT exercise this path.
 fn chain(n int) -> Vec[int] {
-    mut v = Vec[int].with_capacity(4)
+    mut v Vec[int] = Vec[int].new()
+    v.cap(4)
     if n == 2 {
         v.push(1)               // tail = Nova_Vec____nova_int* (fluent -> @)
     } else if n == 3 {

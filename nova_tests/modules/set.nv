@@ -53,8 +53,9 @@ test "Set: clear" {
     assert(s.len() == 0)
 }
 
-test "Set: with_capacity — работает аналогично new" {
-    mut s = Set[int].with_capacity(16)
+test "Set: new().cap(n) — работает аналогично new" {
+    mut s Set[int] = Set[int].new()
+    s.cap(16)
     s.insert(42)
     assert(s.contains(42) == true)
     assert(s.len() == 1)

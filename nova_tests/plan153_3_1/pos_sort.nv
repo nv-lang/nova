@@ -3,7 +3,8 @@ module nova_tests.plan153_3_1
 
 test "random array correctness" {
     // Build pseudo-random array using LCG (seed=12345)
-    mut xs = Vec[int].with_capacity(1000)
+    mut xs Vec[int] = Vec[int].new()
+    xs.cap(1000)
     mut seed = 12345
     mut i = 0
     while i < 1000 {
@@ -22,7 +23,8 @@ test "random array correctness" {
 }
 
 test "already sorted input" {
-    mut xs = Vec[int].with_capacity(100)
+    mut xs Vec[int] = Vec[int].new()
+    xs.cap(100)
     mut i = 0
     while i < 100 {
         xs.push(i)
@@ -37,7 +39,8 @@ test "already sorted input" {
 }
 
 test "reversed input worst-case" {
-    mut xs = Vec[int].with_capacity(200)
+    mut xs Vec[int] = Vec[int].new()
+    xs.cap(200)
     mut i = 199
     while i >= 0 {
         xs.push(i)
@@ -52,7 +55,8 @@ test "reversed input worst-case" {
 }
 
 test "all duplicates" {
-    mut xs = Vec[int].with_capacity(100)
+    mut xs Vec[int] = Vec[int].new()
+    xs.cap(100)
     mut i = 0
     while i < 100 {
         xs.push(42)
@@ -67,7 +71,8 @@ test "all duplicates" {
 }
 
 test "nearly sorted input" {
-    mut xs = Vec[int].with_capacity(50)
+    mut xs Vec[int] = Vec[int].new()
+    xs.cap(50)
     mut i = 0
     while i < 50 {
         xs.push(i)

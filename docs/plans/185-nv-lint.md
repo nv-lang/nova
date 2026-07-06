@@ -24,6 +24,7 @@
 | `try_` без инфаллибельного сиблинга (R3 D325) | `W_TRY_WITHOUT_SIBLING` | линт |
 | сеттер не `-> @` (D117 AMEND-2) | 1-арный метод-свойство `mut @x(v)` с `-> ()` → `W_SETTER_NOT_FLUENT` | линт |
 | `buf = buf + x` в цикле (perf-conventions) | `W_STR_CONCAT_LOOP` | линт |
+| тихое глотание `Result` (стиль §4: swallow-match, `ro _ =`, отброшенный statement) | `W_RESULT_DISCARDED` | линт |
 | index/offset/len-параметр без `requires` (стиль §5) | `W_PARAM_NO_CONTRACT` (public std) | линт |
 | `Fail[` в публичной std-сигнатуре собственных ошибок (R5 D325) | conformance-guard (есть) + `throw`-скан | греп |
 | `nth`/`to_bytes`/`to_chars`/`.into()`/`with_capacity`/`from_raw_parts` (ретракции) | греп-инварианты `= 0` (команды в D-блоках) | греп |

@@ -3,7 +3,8 @@
 module nova_tests.generics
 
 fn[T] []T @my_map_ch[U](f fn(T) -> U) -> []U {
-    mut out []U = []U.with_capacity(@len())
+    mut out []U = []U.new()
+    out.cap(@len())
     for x in @ { out.push(f(x)) }
     out
 }

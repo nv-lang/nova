@@ -5,7 +5,7 @@
 // behind non-ASCII `split`). It shares the parent buffer (interior pointer at
 // `@ptr + start`; conservative GC keeps the buffer alive while the view is
 // reachable) — `str` is immutable (R8), so the view never diverges. Mirrors
-// `Vec[T] @index(Range)` (std/collections/vec/slice.nv).
+// `[]T @index(Range)` (std/collections/vec/slice.nv).
 //
 // Both methods build the view via the inline byte-slice `@[a..b]` (which codegen
 // lowers to a `(nova_str){.ptr=…+from, .len=…}` view directly). They deliberately
@@ -40,7 +40,7 @@ export fn str @index(r Range) -> str
 
 // Safe byte-range slice — `Some(view)` when `[r.start, r.end)` is in bounds AND
 // both cut points land on codepoint boundaries, `None` otherwise. The
-// non-panicking counterpart of `@index(Range)` (mirrors `Vec[T] @get(Range)`).
+// non-panicking counterpart of `@index(Range)` (mirrors `[]T @get(Range)`).
 export fn str @get(r Range) -> Option[str] {
     ro n = @byte_len()
     if r.start < 0 || r.end < r.start || r.end > n { return None }

@@ -41,7 +41,7 @@ test "#impl(Next[int]) на методе: парс + диспатч итерат
 }
 
 test "blanket-адаптеры через #impl-аннотированные @next: filter+count (D186/D285)" {
-    ro d186_v = Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8)
+    ro d186_v = []int.of(1, 2, 3, 4, 5, 6, 7, 8)
     assert(d186_v.iter().count() == 8)
     assert(d186_v.iter().filter(|x| x > 4).count() == 4)
     assert(d186_v.iter().filter(|x| x > 100).count() == 0)

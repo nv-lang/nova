@@ -1,15 +1,16 @@
 // Plan 52.1 Ф.4: user-локальный тип с `#from_pairs` + правильными
-// методами (with_capacity, insert_new) ДОЛЖЕН поддерживать литерал
-// `[k: v]`.
+// методами (new, cap, insert_new — D372 amend 2026-07-06: with_capacity
+// removed, extensibility contract now checks `new`+`cap` instead) ДОЛЖЕН
+// поддерживать литерал `[k: v]`.
 //
 // Type-checker валидирует наличие требуемых методов перед добавлением
 // в from_pairs_types. Без validation user получил бы CC-error
-// 'no method with_capacity' — confusing. С validation либо тип работает,
-// либо silently fallback на HashMap (требует mismatch).
+// 'no method new' / 'no method cap' — confusing. С validation либо тип
+// работает, либо silently fallback на HashMap (требует mismatch).
 //
 // Здесь определяем MyBag — простой wrapper над int counter (не
 // настоящая мапа), но с правильной сигнатурой методов. Литерал
-// должен десугариться через MyBag.with_capacity + insert_new.
+// должен десугариться через MyBag.new() + .cap(n) + insert_new.
 module nova_tests.map_literals
 
 #from_pairs
@@ -17,9 +18,11 @@ type MyBag[K, V] {
     count int
 }
 
-export fn MyBag[K, V].with_capacity(n int) -> MyBag[K, V] {
+export fn MyBag[K, V].new() -> MyBag[K, V] {
     MyBag { count: 0 }
 }
+
+export fn MyBag[K, V] mut @cap(n int) -> @ {}
 
 export fn MyBag[K, V] mut @insert_new(k K, v V) {
     @count += 1
@@ -33,6 +36,6 @@ test "user MyBag через literal — корректное число вста
 }
 
 test "user MyBag через literal — empty case без literal" {
-    ro m = MyBag[int, str].with_capacity(0)
+    ro m = MyBag[int, str].new()
     assert(m.len() == 0)
 }

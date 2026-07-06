@@ -10,7 +10,7 @@ import std.encoding.compress.{brotli_decode, ErrorKind}
 
 fn d337_hex(s str) -> []u8 {
     ro chars = s.to_bytes()
-    mut out = []u8.with_capacity(chars.len() / 2)
+    mut out []u8 = []u8.with_capacity(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
         ro hi = d337_hv(chars[i])

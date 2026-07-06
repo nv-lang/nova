@@ -32,7 +32,7 @@ extern "C" fn os_arg_at(i int) -> str
 
 // env_get: raw value bytes for `key` (empty if absent).
 extern "C" fn os_env_get(key *u8) -> str
-// env_has: 1 if `key` is present, else 0.
+// env_has: 1 if `key` is present, else 0 (конвертируется в bool на границе, обработчик в os.nv).
 extern "C" fn os_env_has(key *u8) -> int
 // env_set: set `key` = `val` (overwrite). 0 or -errno.
 extern "C" fn os_env_set(key *u8, val *u8) -> int

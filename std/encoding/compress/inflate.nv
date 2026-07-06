@@ -86,10 +86,11 @@ export fn Inflater.new(max_output int) -> Inflater =>
 // Внутренний конструктор с уже-произведённым счётчиком `already` (multi-member
 // gzip: общий bomb-cap across членов через единый total_out).
 fn Inflater.new_at(max_output int, already int) -> Inflater {
-    mut w = []u8.with_capacity(window_size())
+    mut w []u8 = []u8.new()
+    w.cap(window_size())
     w.append_zero(window_size())
     Self {
-        input: []u8.with_capacity(0),
+        input: []u8.new(),
         bitpos: 0,
         dropped: 0,
         input_done: false,
@@ -97,15 +98,15 @@ fn Inflater.new_at(max_output int, already int) -> Inflater {
         window: w,
         wpos: 0,
         wcount: 0,
-        out: []u8.with_capacity(0),
+        out: []u8.new(),
         total_out: already,
         state: st_header(),
         final_block: false,
         stored_left: 0,
-        lit_counts: []int.with_capacity(0),
-        lit_symbols: []int.with_capacity(0),
-        dist_counts: []int.with_capacity(0),
-        dist_symbols: []int.with_capacity(0),
+        lit_counts: []int.new(),
+        lit_symbols: []int.new(),
+        dist_counts: []int.new(),
+        dist_symbols: []int.new(),
         lbase: build_length_base(),
         lext: build_length_extra(),
         dbase: build_dist_base(),
@@ -135,7 +136,7 @@ export fn Inflater mut @feed(chunk []u8) -> Result[(), CompressError] {
 /// bomb-cap.
 ///
 /// (Форма `Result[[]u8,_]` + `is_done()` вместо `Result[Option[[]u8],_]` —
-/// обход текущего codegen-ограничения по `Option[Vec[u8]]`; семантика D335
+/// обход текущего codegen-ограничения по `Option[[]u8]`; семантика D335
 /// сохранена: EOF отличается от need-more через `is_done()`.)
 #stable(since = "0.1")
 export fn Inflater mut @read(max_emit int) -> Result[[]u8, CompressError] {
@@ -147,12 +148,13 @@ export fn Inflater mut @read(max_emit int) -> Result[[]u8, CompressError] {
     @pump(target)?
     if @out.len() > 0 && me > 0 {
         ro n = if @out.len() < me { @out.len() } else { me }
-        mut chunk = []u8.with_capacity(n)
+        mut chunk []u8 = []u8.new()
+        chunk.cap(n)
         chunk.append(@out[0..n])
         @drain_out(n)
         Ok(chunk)
     } else {
-        Ok([]u8.with_capacity(0))
+        Ok([]u8.new())
     }
 }
 
@@ -200,9 +202,10 @@ fn Inflater @has_trailing() -> bool => ((@bitpos + 7) >> 3) < @input.len()
 fn Inflater @leftover_bytes() -> []u8 {
     ro start = (@bitpos + 7) >> 3
     if start >= @input.len() {
-        []u8.with_capacity(0)
+        []u8.new()
     } else {
-        mut o = []u8.with_capacity(@input.len() - start)
+        mut o []u8 = []u8.new()
+        o.cap(@input.len() - start)
         o.append(@input[start..@input.len()])
         o
     }
@@ -221,7 +224,8 @@ fn Inflater mut @compact() -> () {
     ro drop = @bitpos >> 3
     if drop > 0 {
         ro keep = @input.len() - drop
-        mut ni = []u8.with_capacity(if keep > 0 { keep } else { 0 })
+        mut ni []u8 = []u8.new()
+        ni.cap(if keep > 0 { keep } else { 0 })
         if keep > 0 {
             ni.append(@input[drop..@input.len()])
         }
@@ -234,9 +238,10 @@ fn Inflater mut @compact() -> () {
 // Убрать первые `n` байт из @out.
 fn Inflater mut @drain_out(n int) -> () {
     if n >= @out.len() {
-        @out = []u8.with_capacity(0)
+        @out = []u8.new()
     } else {
-        mut no = []u8.with_capacity(@out.len() - n)
+        mut no []u8 = []u8.new()
+        no.cap(@out.len() - n)
         no.append(@out[n..@out.len()])
         @out = no
     }
@@ -334,7 +339,8 @@ fn Inflater @decode_symbol(counts []int, symbols []int, p int) -> Result[Option[
 // Возвращает (counts[0..15], symbols, left): left<0 → over-subscribed;
 // left>0 → incomplete; left==0 → complete.
 fn build_huffman(lengths []int, n int) -> ([]int, []int, int) {
-    mut counts = []int.with_capacity(16)
+    mut counts []int = []int.new()
+    counts.cap(16)
     for _ in 0..16 { counts.push(0) }
     for i in 0..n {
         ro l = lengths[i]
@@ -351,15 +357,17 @@ fn build_huffman(lengths []int, n int) -> ([]int, []int, int) {
         }
     }
     if over {
-        return (counts, []int.with_capacity(0), -1)
+        return (counts, []int.new(), -1)
     }
     // offsets по длинам
-    mut offs = []int.with_capacity(16)
+    mut offs []int = []int.new()
+    offs.cap(16)
     for _ in 0..16 { offs.push(0) }
     for len in 1..15 {
         offs[len + 1] = offs[len] + counts[len]
     }
-    mut symbols = []int.with_capacity(n)
+    mut symbols []int = []int.new()
+    symbols.cap(n)
     for _ in 0..n { symbols.push(0) }
     for sym in 0..n {
         ro l = lengths[sym]
@@ -456,7 +464,8 @@ fn Inflater mut @step_header() -> Result[bool, CompressError] {
 
 // Fixed-Huffman таблицы (RFC 1951 §3.2.6).
 fn Inflater mut @setup_fixed() -> () {
-    mut ll = []int.with_capacity(288)
+    mut ll []int = []int.new()
+    ll.cap(288)
     for i in 0..288 {
         ro l = if i < 144 { 8 } else if i < 256 { 9 } else if i < 280 { 7 } else { 8 }
         ll.push(l)
@@ -464,7 +473,8 @@ fn Inflater mut @setup_fixed() -> () {
     ro lt = build_huffman(ll, 288)
     @lit_counts = lt.0
     @lit_symbols = lt.1
-    mut dl = []int.with_capacity(30)
+    mut dl []int = []int.new()
+    dl.cap(30)
     for _ in 0..30 { dl.push(5) }
     ro dt = build_huffman(dl, 30)
     @dist_counts = dt.0
@@ -522,7 +532,8 @@ fn Inflater mut @step_dynamic_header() -> Result[bool, CompressError] {
 
     // Длины code-length-кодов в спец-порядке
     ro order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
-    mut cl = []int.with_capacity(19)
+    mut cl []int = []int.new()
+    cl.cap(19)
     for _ in 0..19 { cl.push(0) }
     for i in 0..hclen {
         ro c = match @get_bits(p, 3) {
@@ -540,7 +551,8 @@ fn Inflater mut @step_dynamic_header() -> Result[bool, CompressError] {
 
     // Декодируем hlit+hdist длин кодов с repeat-символами 16/17/18
     ro total = hlit + hdist
-    mut lengths = []int.with_capacity(total)
+    mut lengths []int = []int.new()
+    lengths.cap(total)
     for _ in 0..total { lengths.push(0) }
     mut i = 0
     while i < total {
@@ -597,9 +609,11 @@ fn Inflater mut @step_dynamic_header() -> Result[bool, CompressError] {
     }
 
     // Разбиваем на lit/len и distance, строим таблицы
-    mut litlen = []int.with_capacity(hlit)
+    mut litlen []int = []int.new()
+    litlen.cap(hlit)
     for k in 0..hlit { litlen.push(lengths[k]) }
-    mut distl = []int.with_capacity(hdist)
+    mut distl []int = []int.new()
+    distl.cap(hdist)
     for k in 0..hdist { distl.push(lengths[hlit + k]) }
 
     if litlen[256] == 0 {
@@ -698,7 +712,7 @@ export fn inflate(data []u8, max_output int) -> Result[[]u8, CompressError] {
     mut inf = Inflater.new(max_output)
     inf.feed(data)?
     inf.mark_done()
-    mut out = []u8.with_capacity(0)
+    mut out = []u8.new()
     loop {
         ro c = inf.read(1048576)?
         if c.len() > 0 {
@@ -741,7 +755,8 @@ fn build_dist_extra() -> []int =>
 // Хелпер: hex-строка → []u8 (для эталонных векторов).
 fn hexbytes(s str) -> []u8 {
     ro chars = s.to_bytes()
-    mut out = []u8.with_capacity(chars.len() / 2)
+    mut out []u8 = []u8.new()
+    out.cap(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
         ro hi = hexval(chars[i])
@@ -781,14 +796,16 @@ test "inflate: empty stored + empty fixed block" {
 test "inflate: long back-reference / RLE overlap (300× 'a')" {
     ro comp = hexbytes("4b4c1c0589440200")
     ro got = inflate(comp, 4096)!!
-    mut expect = []u8.with_capacity(300)
+    mut expect []u8 = []u8.new()
+    expect.cap(300)
     for _ in 0..300 { expect.push(97) }   // 'a'
     assert(got == expect)
 }
 
 test "inflate: dynamic Huffman (repetitive 900B)" {
     ro comp = hexbytes("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
-    mut expect = []u8.with_capacity(900)
+    mut expect []u8 = []u8.new()
+    expect.cap(900)
     ro unit = "the quick brown fox jumps over the lazy dog. ".to_bytes()
     for _ in 0..20 { expect.append(unit) }
     ro got = inflate(comp, 4096)!!
@@ -838,9 +855,11 @@ test "inflate: streaming feed-по-1-байту с read(8) == one-shot" {
     ro comp = hexbytes("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
     ro oneshot = inflate(comp, 4096)!!
     mut inf = Inflater.new(4096)
-    mut out = []u8.with_capacity(900)
+    mut out []u8 = []u8.new()
+    out.cap(900)
     for idx in 0..comp.len() {
-        mut one = []u8.with_capacity(1)
+        mut one []u8 = []u8.new()
+        one.cap(1)
         one.push(comp[idx])
         inf.feed(one)!!
         loop {

@@ -18,8 +18,9 @@ fn hex(s str) -> Option[u32] {
 }
 
 // "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
-fn parse_cp_list(s str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(4)
+fn parse_cp_list(s str) -> []u32 {
+    mut out []u32 = []u32.new()
+    out.cap(4)
     for part in s.split(",") {
         match hex(part) { Some(cp) => out.push(cp), None => {} }
     }
@@ -31,7 +32,7 @@ fn parse_cp_list(s str) -> Vec[u32] {
 // all share this exact semicolon-of-colon text shape.
 fn parse_cp_keyed_table(data str) -> HashMap[u32, str] {
     ro entries = data.split(";")
-    mut m = HashMap[u32, str].with_capacity(entries.len() + 8)
+    mut m = HashMap[u32, str].new().cap(entries.len() + 8)
     for entry in entries {
         // codepoint key is `u32` (D327); `hex` yields `Option[u32]` (D54/D77).
         match entry.split_once(":") {
@@ -48,7 +49,7 @@ fn parse_cp_keyed_table(data str) -> HashMap[u32, str] {
 // Used for CCC table (canonical combining class).
 fn parse_cp_int_table(data str) -> HashMap[u32, int] {
     ro entries = data.split(";")
-    mut m = HashMap[u32, int].with_capacity(entries.len() + 8)
+    mut m = HashMap[u32, int].new().cap(entries.len() + 8)
     for entry in entries {
         // codepoint key `u32` (D327); CCC value `int` (a small class number, NOT a
         // codepoint — it is a measure/class, so `int` per D226).
@@ -69,7 +70,7 @@ fn parse_cp_int_table(data str) -> HashMap[u32, int] {
 // HashMap (codepoints fit in 21 bits; see [M-hashmap-tuple-key-mono]).
 fn parse_comp_table(data str) -> HashMap[int, u32] {
     ro entries = data.split(";")
-    mut m = HashMap[int, u32].with_capacity(entries.len() + 8)
+    mut m = HashMap[int, u32].new().cap(entries.len() + 8)
     for entry in entries {
         // Key is a packed pair `(a<<21)|b` (> 32 bits → `int`, D327 §bit-packing);
         // value is the composed codepoint → `u32`. `compose_pair` returns
@@ -98,14 +99,16 @@ fn parse_comp_table(data str) -> HashMap[int, u32] {
     m
 }
 
-fn str_to_cps(s str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(s.byte_len())
+fn str_to_cps(s str) -> []u32 {
+    mut out []u32 = []u32.new()
+    out.cap(s.byte_len())
     for c in s.as_chars() { out.push(c as u32) }
     out
 }
 
-fn cps_to_str(cps Vec[u32]) -> str {
-    consume sb = StringBuilder.with_capacity(cps.len() * 2)
+fn cps_to_str(cps []u32) -> str {
+    consume sb = StringBuilder.new()
+    sb.cap(cps.len() * 2)
     for cp in cps {
         ro c = match char.try_from(cp as int) { Ok(c) => c, Err(_) => '\u{FFFD}' }
         sb.append(c)

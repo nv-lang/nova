@@ -82,7 +82,7 @@ type Slot[K, V] enum
 ///
 /// # See Also
 ///
-/// - `[HashMap.with_capacity]` — создать с предварительной ёмкостью
+/// - `HashMap.new().cap(n)` — создать с предварительной ёмкостью
 /// - `[HashMap.from]` — из массива пар
 /// - `[Set]` — множество поверх HashMap
 #stable(since = "0.1")
@@ -109,6 +109,15 @@ export type HashMap[K Hash, V] {
 // Constructor / static
 // ──────────────────────────────────────────────────────────────────────────
 
+// entry-count (сколько вставок без rehash) → требуемый минимум бакетов:
+// ceil(4 * min_capacity / 3), округлённый вверх до степени двойки. Общий
+// sizing-helper для `new()` и сеттера `mut @cap(n)` (ex-`with_capacity`,
+// D372 amend 2026-07-06 — with_capacity удалён, ёмкость = свойство `cap`).
+fn hashmap_bucket_count_for(min_capacity int) -> int {
+    ro needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
+    next_pow2(needed)
+}
+
 /// Создать пустой `HashMap` с начальной ёмкостью 16.
 ///
 /// # Examples
@@ -118,31 +127,9 @@ export type HashMap[K Hash, V] {
 /// assert(m.is_empty())
 /// ```
 #stable(since = "0.1")
-export fn HashMap[K, V].new() -> HashMap[K, V] =>
-    HashMap[K, V].with_capacity(16)
-
-
-/// Создать пустой `HashMap`, рассчитанный на `min_capacity` элементов без rehash.
-///
-/// Аргумент — количество записей (entry-count), не bucket-count.
-/// Гарантирует что `min_capacity` вставок пройдут без единого rehash.
-///
-/// # Examples
-///
-/// ```nova
-/// let mut m = HashMap[str, int].with_capacity(100)
-/// for i in 0..100 { m.insert("k" + str.from(i), i) }
-/// assert(m.len() == 100)
-/// ```
-#stable(since = "0.1")
-export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V]
-    requires min_capacity >= 0
-{
-    // ceil(4 * min_capacity / 3) — entry-count → требуемый минимум бакетов.
-    ro needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
-    ro cap = next_pow2(needed)
+export fn HashMap[K, V].new() -> HashMap[K, V] {
     HashMap {
-        _buckets: new_buckets[K, V](cap),
+        _buckets: new_buckets[K, V](hashmap_bucket_count_for(16)),
         _count: 0,
         _tombstones: 0,
     }
@@ -160,7 +147,7 @@ export fn HashMap[K, V].with_capacity(min_capacity int) -> HashMap[K, V]
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
-    mut m = Self.with_capacity(pairs.len() * 2)
+    mut m = Self.new().cap(pairs.len() * 2)
     for (k, v) in pairs {
         m.insert(k, v)
     }
@@ -183,6 +170,36 @@ export fn HashMap[K, V] @is_empty() -> bool => @_count == 0
 /// Общая ёмкость внутреннего массива bucket'ов.
 #stable(since = "0.1")
 export fn HashMap[K, V] @capacity() -> int => @_buckets.len()
+
+/// D117 AMEND accessor-pair alias for `@capacity()` (same value) — the 0-arg
+/// getter half of the `cap`/`cap(n)` property pair (vec-sweep, 2026-07-06).
+/// `@capacity()` stays as the pre-existing, widely-used accessor name;
+/// `@cap()` exists so `HashMap.new().cap(n)` reads as a getter/setter pair.
+export fn HashMap[K, V] @cap() -> int => @capacity()
+
+/// Set the capacity to guarantee at least `n` entries fit without a further
+/// rehash (D117 AMEND setter: same-name 1-arg overload of `@cap()`) — the
+/// instance-method replacement for the removed `HashMap[K, V].with_capacity`
+/// static constructor: `HashMap[K, V].new().cap(n)` reproduces the OLD
+/// `with_capacity(n)`'s exact bucket count (entry-count → bucket-count sizing
+/// unchanged: `ceil(4n/3)`, next pow2), because `@_count == 0` right after
+/// `new()` — see the shrink branch below.
+///
+/// On a map that already holds entries, a hash table cannot shrink its bucket
+/// layout without discarding live data, so this setter only GROWS in that
+/// case (`n` at or below the current capacity is a no-op). It MAY also shrink
+/// when the map is currently empty (`@_count == 0`, e.g. right after `new()`
+/// or `clear()`) — a cheap reallocation with nothing to lose — which is what
+/// lets `new().cap(n)` land on the exact target size regardless of `new()`'s
+/// own default (16-entry) baseline.
+export fn HashMap[K, V] mut @cap(n int) -> @
+    requires n >= 0
+{
+    ro target = hashmap_bucket_count_for(n)
+    if target != @_buckets.len() && (target > @_buckets.len() || @_count == 0) {
+        @rehash(target)
+    }
+}
 
 
 /// Найти значение по ключу. Возвращает `Some(value)` или `None`.
@@ -254,12 +271,12 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
 /// Fast-path вставка без проверки дубликатов — только для map-literal desugar.
 ///
 /// Используется компилятором при десугаринге `[k: v, ...]` (D108).
-/// Вызывать только на свежей мапе после `with_capacity(n)` где `n ≥` итоговый count.
+/// Вызывать только на свежей мапе после `new().cap(n)` где `n ≥` итоговый count.
 ///
 /// # Contracts
 ///
 /// ```nova,must_verify
-/// // requires: map создан через with_capacity(n), n >= итоговый count
+/// // requires: map создан через new().cap(n), n >= итоговый count
 /// // requires: key не присутствует в map
 /// // ensures: @len() == old(@len()) + 1
 /// ```
@@ -294,7 +311,7 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
-    mut copy = HashMap[K, V].with_capacity(@_count)
+    mut copy = HashMap[K, V].new().cap(@_count)
     for (k, v) in @iter() {
         copy.insert_new(k.clone(), v.clone())
     }
@@ -369,7 +386,7 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
-    mut out = HashMap[K, V].with_capacity(@_count)
+    mut out = HashMap[K, V].new().cap(@_count)
     for (k, v) in @iter() {
         if pred(k, v) { out.insert_new(k, v) }
     }
@@ -616,8 +633,14 @@ fn HashMap[K, V] mut @rehash(new_cap int) {
 // (повреждённый readback после @maybe_grow). Явный `Vec[...]` строит
 // типизированное хранилище согласованно с типом поля/return — изолированно в
 // HashMap CU, до универсального флипа.
+//
+// [M-vec-spelling-hashmap-buckets-array-gap] (vec-sweep, 2026-07-06): проверено
+// заново — замена на `-> []Slot[K, V]` + `[]Slot[K, V].with_capacity(cap)` даёт
+// RUN-FAIL (rehash on growth и др. ломаются на рантайме, не на компиляции); гэп
+// [M-153.x-array-new-not-vec] всё ещё жив. ИСКЛЮЧЕНИЕ из []T-канона до фикса
+// static-dispatch разрыва между `[]T`-значением и типизированным `Vec[T]`.
 fn new_buckets[K, V](cap int) -> Vec[Slot[K, V]] {
-    mut buckets = Vec[Slot[K, V]].with_capacity(cap)
+    mut buckets = Vec[Slot[K, V]].new().cap(cap)
     for _ in 0..cap {
         buckets.push(Slot.Empty)
     }
@@ -711,8 +734,8 @@ test "from pairs constructor" {
 }
 
 test "rehash on growth" {
-    mut m = HashMap[int, int].with_capacity(4)
-    // with_capacity(4) → ceil(4*4/3)=6 → next_pow2(6)=8 бакетов.
+    mut m = HashMap[int, int].new().cap(4)
+    // cap(4) → ceil(4*4/3)=6 → next_pow2(6)=8 бакетов.
     // 100 вставок сильно превышают threshold → серия rehash'ей.
     for i in 0..100 {
         m.insert(i, i * 2)
@@ -724,41 +747,41 @@ test "rehash on growth" {
     }
 }
 
-// Plan 52 Ф.6: контракт with_capacity — `n` вставок без rehash.
-// `@capacity()` после ровно `n` вставок не должна измениться.
-// Проверяем граничные n: 4, 7, 8, 13, 16 — все бывшие баги, где
+// Plan 52 Ф.6 / vec-sweep (2026-07-06): контракт `new().cap(n)` (ex-`with_capacity`)
+// — `n` вставок без rehash. `@capacity()` после ровно `n` вставок не должна
+// измениться. Проверяем граничные n: 4, 7, 8, 13, 16 — все бывшие баги, где
 // прежняя bucket-count реализация давала threshold < n.
-test "with_capacity contract — n inserts without rehash" {
+test "new().cap(n) contract — n inserts without rehash" {
     // n = 4
-    mut m4 = HashMap[int, int].with_capacity(4)
+    mut m4 = HashMap[int, int].new().cap(4)
     ro cap4 = m4.capacity()
     for i in 0..4 { m4.insert(i, i) }
     assert(m4.capacity() == cap4)
     assert(m4.len() == 4)
 
     // n = 7
-    mut m7 = HashMap[int, int].with_capacity(7)
+    mut m7 = HashMap[int, int].new().cap(7)
     ro cap7 = m7.capacity()
     for i in 0..7 { m7.insert(i, i) }
     assert(m7.capacity() == cap7)
     assert(m7.len() == 7)
 
     // n = 8
-    mut m8 = HashMap[int, int].with_capacity(8)
+    mut m8 = HashMap[int, int].new().cap(8)
     ro cap8 = m8.capacity()
     for i in 0..8 { m8.insert(i, i) }
     assert(m8.capacity() == cap8)
     assert(m8.len() == 8)
 
     // n = 13
-    mut m13 = HashMap[int, int].with_capacity(13)
+    mut m13 = HashMap[int, int].new().cap(13)
     ro cap13 = m13.capacity()
     for i in 0..13 { m13.insert(i, i) }
     assert(m13.capacity() == cap13)
     assert(m13.len() == 13)
 
     // n = 16
-    mut m16 = HashMap[int, int].with_capacity(16)
+    mut m16 = HashMap[int, int].new().cap(16)
     ro cap16 = m16.capacity()
     for i in 0..16 { m16.insert(i, i) }
     assert(m16.capacity() == cap16)
@@ -766,7 +789,7 @@ test "with_capacity contract — n inserts without rehash" {
 }
 
 test "tombstones cleanup on rehash" {
-    mut m = HashMap[int, int].with_capacity(16)
+    mut m = HashMap[int, int].new().cap(16)
     for i in 0..10 { m.insert(i, i) }
     for i in 0..8  { m.remove(i) }
     // Сейчас: 2 occupied + 8 tombstones. Следующий insert → rehash.

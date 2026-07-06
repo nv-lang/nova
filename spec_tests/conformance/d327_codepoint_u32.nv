@@ -24,9 +24,9 @@ test "D327: char (= u32, D128) delegates to the u32 cp-API via `as u32`" {
     assert(!d327_is_ascii_upper(lower as u32))
 }
 
-test "D327: codepoints stored as Vec[u32], read back into the u32 cp-API" {
-    // Storage of codepoint sequences is Vec[u32] (rule 1), NOT Vec[int].
-    mut cps = Vec[u32].new()
+test "D327: codepoints stored as []u32, read back into the u32 cp-API" {
+    // Storage of codepoint sequences is []u32 (rule 1), NOT []int.
+    mut cps []u32 = []u32.new()
     cps.push('H' as u32)   // char -> u32 push (no narrowing)
     cps.push(0x69)         // in-range int-literal 'i' adapts to the u32 element
     assert(cps.len() == 2)

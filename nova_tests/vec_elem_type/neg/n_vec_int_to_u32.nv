@@ -7,7 +7,8 @@ module neg.n_vec_int_to_u32
 fn takes_u32(v Vec[u32]) -> int => v.len()
 
 test "Vec[int] -> Vec[u32] is rejected" {
-    mut a = Vec[int].with_capacity(1)
+    mut a Vec[int] = Vec[int].new()
+    a.cap(1)
     a.push(1)
     assert(takes_u32(a) == 1)
 }

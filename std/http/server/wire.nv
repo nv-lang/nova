@@ -113,7 +113,8 @@ fn serialize_response(resp ServerResponse) -> []u8 {
     ro status = resp.status
     ro headers = resp.headers
     ro body = resp.body
-    mut buf = WriteBuffer.with_capacity(128 + body.len)
+    mut buf = WriteBuffer.new()
+    buf.cap(128 + body.len)
     buf.write_str("HTTP/1.1 ")
     buf.write_str(str.from(status))
     buf.write_str(" ")

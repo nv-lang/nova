@@ -25485,15 +25485,20 @@ impl MapLitCtx {
                     // Plan 52.1 Ф.4: from_pairs canonical-check с
                     // method-validation. User-локальный `type #from_pairs`
                     // honored ЕСЛИ имеет требуемые методы
-                    // (`with_capacity(int) -> Self` и `insert_new(K, V)`).
+                    // (`new() -> Self`, `mut cap(n int) -> @` и
+                    // `insert_new(K, V)` — D372 amend 2026-07-06:
+                    // `with_capacity(int) -> Self` removed, construction is
+                    // now `new()` + the D117 `cap(n)` setter; desugar (см.
+                    // desugar.rs::build_map_block) эмитит `new()`+`.cap(n)`
+                    // вместо единого `with_capacity(n)`).
                     // Это безопасно: codegen эмитит вызовы этих методов,
                     // и они существуют.
                     //
                     // Без validation user мог бы получить codegen-fail
-                    // ('no method with_capacity' / 'no method insert_new')
+                    // ('no method new' / 'no method cap' / 'no method insert_new')
                     // — confusing. Validation даёт actionable error
                     // через type-check ('type X #from_pairs but missing
-                    // with_capacity method').
+                    // new/cap method').
                     if t.attrs.contains(&TypeAttr::FromPairs) {
                         let is_canonical = canonical_from_pairs_types.contains(&t.name);
                         let is_user = !is_canonical;
@@ -25504,11 +25509,13 @@ impl MapLitCtx {
                             // prepass_type_methods (собран до этого цикла,
                             // т.к. types и fns могут идти в любом порядке).
                             let methods = prepass_type_methods.get(&t.name);
-                            let has_with_capacity = methods
-                                .map_or(false, |m| m.contains("with_capacity"));
+                            let has_new = methods
+                                .map_or(false, |m| m.contains("new"));
+                            let has_cap = methods
+                                .map_or(false, |m| m.contains("cap"));
                             let has_insert_new = methods
                                 .map_or(false, |m| m.contains("insert_new"));
-                            if has_with_capacity && has_insert_new {
+                            if has_new && has_cap && has_insert_new {
                                 from_pairs_types.insert(t.name.clone());
                             }
                             // Если методов нет — silently ignore. Better-error

@@ -142,7 +142,8 @@ export fn str @iter() -> CharsIter => @as_chars()
 // `"a😀".to_code_points() == [0x61, 0x1F600]`.
 // Moved from std.encoding.utf16 → runtime.string (Plan 91.18 Ф.2).
 export fn str @to_code_points() -> []int {
-    mut out = []int.with_capacity(@byte_len())
+    mut out []int = []int.new()
+    out.cap(@byte_len())
     for c in @as_chars() { out.push(c as int) }
     out
 }

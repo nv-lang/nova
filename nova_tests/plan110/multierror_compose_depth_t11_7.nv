@@ -6,7 +6,8 @@
 module nova_tests.plan110
 
 fn make_multi_with_depth(depth int) -> MultiError {
-    mut suppressed = []str.with_capacity(depth)
+    mut suppressed []str = []str.new()
+    suppressed.cap(depth)
     for i in 0..depth {
         suppressed.push("error-${i}")
     }

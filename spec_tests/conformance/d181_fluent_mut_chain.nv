@@ -20,7 +20,7 @@
 module spec_tests.conformance
 
 test "fluent mut chain push(1).push(2).push(3) accumulates on ONE array (D181)" {
-    mut a = []int.new()
+    mut a []int = []int.new()
     a.push(1).push(2).push(3)        // depth-3 chain — each push returns @ (same a)
     assert(a.len() == 3)             // all three landed on the SAME array, not copies
     assert(a[0] == 1)
@@ -29,7 +29,7 @@ test "fluent mut chain push(1).push(2).push(3) accumulates on ONE array (D181)" 
 }
 
 test "non-mut @get returns Option[T]: in-range Some, out-of-range None (D181)" {
-    mut a = []int.new()
+    mut a []int = []int.new()
     a.push(10).push(20).push(30)     // build via the fluent mut chain
     // get is a NON-mut method → Option[T] (the contrast D181 draws vs `-> @`):
     assert(a.get(2) == Some(30))     // last chained element, bounds-checked → Some

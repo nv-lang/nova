@@ -83,19 +83,19 @@ export fn EnvVar @value() -> str => @value
 #stable(since = "0.1")
 export fn get_env(key str) Os -> Option[str] {
     ro kb = key.to_bytes()
-    if Os.env_has(kb) == 1 { Some(Os.env_get(kb)) } else { None }
+    if Os.env_has(kb) { Some(Os.env_get(kb)) } else { None }
 }
 
 /// The raw value bytes of environment variable `key`, or `None` if unset —
 /// byte-correct for non-UTF-8 Unix values (Rust `var_os` precedent).
 #stable(since = "0.1")
 export fn get_env_bytes(key []u8) Os -> Option[[]u8] {
-    if Os.env_has(key) == 1 { Some(Os.env_get(key).to_bytes()) } else { None }
+    if Os.env_has(key) { Some(Os.env_get(key).to_bytes()) } else { None }
 }
 
 /// Whether environment variable `key` is set.
 #stable(since = "0.1")
-export fn has_env(key str) Os -> bool => Os.env_has(key.to_bytes()) == 1
+export fn has_env(key str) Os -> bool => Os.env_has(key.to_bytes())
 
 /// Set environment variable `key` to `value` (creating or overwriting).
 /// **Racy** (§3c): mutate only during single-threaded setup.
@@ -202,7 +202,7 @@ export fn real_os() -> Effect[Os] {
             match os_cstr(key) { Ok(ck) => unsafe { os_env_get(ck.as_ptr()) }, Err(_) => "" }
         }
         env_has(key []u8) {
-            match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.as_ptr()) }, Err(_) => 0 }
+            match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.as_ptr()) } == 1, Err(_) => false }
         }
         env_set(key []u8, val []u8) {
             match os_cstr(key) {

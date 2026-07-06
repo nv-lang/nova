@@ -4,7 +4,7 @@
 // REPLACED). Append-only, endianness explicit (LE/BE) для multi-byte.
 //
 // API:
-//   WriteBuffer.new(), WriteBuffer.with_capacity(n)
+//   WriteBuffer.new(), WriteBuffer.new().cap(n) (ex-with_capacity, D372 amend)
 //   WriteBuffer.from(b []u8)
 //   wb.write_byte(v), wb.write_bytes(src)
 //   wb.write_u8/i8/u16_le/be/u32_le/be/u64_le/be/i*_le/be (18 methods)
@@ -25,8 +25,8 @@ test "WriteBuffer.new() — empty" {
     assert(wb.capacity() >= 16)
 }
 
-test "WriteBuffer.with_capacity(128)" {
-    mut wb = WriteBuffer.with_capacity(128)
+test "WriteBuffer.new().cap(128)" {
+    mut wb = WriteBuffer.new().cap(128)
     assert(wb.len() == 0)
     assert(wb.capacity() >= 128)
 }
@@ -134,7 +134,7 @@ test "write_i32_le — negative value" {
 // ================================================================
 
 test "auto-grow при переполнении" {
-    mut wb = WriteBuffer.with_capacity(4)
+    mut wb = WriteBuffer.new().cap(4)
     wb.write_u32_le(0x11223344)     // 4 bytes — fits
     wb.write_u32_le(0x55667788)     // 4 more — needs grow
     assert(wb.len() == 8)

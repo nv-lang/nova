@@ -19,13 +19,15 @@ test "[]u8.new() works для byte buffers" {
 }
 
 test "[]int.with_capacity(16) — len=0, capacity reserved" {
-    mut a = []int.with_capacity(16)
+    mut a []int = []int.new()
+    a.cap(16)
     assert(a.len() == 0)
     assert(a.is_empty())
 }
 
 test "[]int.with_capacity(0) — empty" {
-    mut a = []int.with_capacity(0)
+    mut a []int = []int.new()
+    a.cap(0)
     assert(a.len() == 0)
 }
 

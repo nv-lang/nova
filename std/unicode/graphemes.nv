@@ -34,8 +34,8 @@ const GCB_LVT int = 13
 // Flat int arrays: GCB stride 3 (lo,hi,cat), ExtPict stride 2 (lo,hi); both
 // sorted by lo (binary search). parse_flat/range_lookup3/in_ranges2 live in
 // the std.unicode peer ranges.nv; hex/decode_at in cp_utils.nv.
-ro gcb_flat Vec[u32] = parse_flat(GCB_DATA)
-ro extpict_flat Vec[u32] = parse_flat(EXTPICT_DATA)
+ro gcb_flat []u32 = parse_flat(GCB_DATA)
+ro extpict_flat []u32 = parse_flat(EXTPICT_DATA)
 
 fn gcb(cp u32) -> int => range_lookup3(gcb_flat, cp)
 fn is_ext_pict(cp u32) -> bool => in_ranges2(extpict_flat, cp)
@@ -44,7 +44,7 @@ fn is_ext_pict(cp u32) -> bool => in_ranges2(extpict_flat, cp)
 const INCB_CONSONANT int = 1
 const INCB_EXTEND int = 2
 const INCB_LINKER int = 3
-ro incb_flat Vec[u32] = parse_flat(INCB_DATA)
+ro incb_flat []u32 = parse_flat(INCB_DATA)
 fn incb_of(cp u32) -> int => range_lookup3(incb_flat, cp)
 
 // Is there a grapheme boundary BEFORE `cur` (between `prev` and `cur`)?

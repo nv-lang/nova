@@ -91,7 +91,7 @@ test "backward compat: concrete []int @sort() сохранён (D373)" {
 }
 
 test "sort_unstable — pdqsort (D373 §amend-2)" {
-    mut xs = Vec[int].of(5, 3, 9, 1, 7, 2, 8, 4, 6)
+    mut xs = []int.of(5, 3, 9, 1, 7, 2, 8, 4, 6)
     xs.sort_unstable()
-    assert(xs.equal(Vec[int].of(1, 2, 3, 4, 5, 6, 7, 8, 9)))
+    assert(xs.equal([]int.of(1, 2, 3, 4, 5, 6, 7, 8, 9)))
 }

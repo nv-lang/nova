@@ -85,7 +85,8 @@ test "to_code_points: raw int codepoints" {
 test "to_code_points == as_chars values as int" {
     ro s = "héλ😀"
     ro cp = s.to_code_points()
-    mut chars_as_int = []int.with_capacity(4)
+    mut chars_as_int []int = []int.new()
+    chars_as_int.cap(4)
     for c in s.as_chars() { chars_as_int.push(c as int) }
     assert(cp.len() == chars_as_int.len())
     mut i = 0

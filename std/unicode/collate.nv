@@ -36,14 +36,14 @@ import std.collections.vec.{Vec}
 // IMPLICIT_DATA uses the nested ';'-of-',' flat shape -> parse_flat.
 ro collate_single_map HashMap[u32, str] = parse_cp_keyed_table(SINGLE_DATA)
 ro collate_contraction_map HashMap[u32, str] = parse_cp_keyed_table(CONTRACTION_DATA)
-ro implicit_flat Vec[u32] = parse_flat(IMPLICIT_DATA)
+ro implicit_flat []u32 = parse_flat(IMPLICIT_DATA)
 
 // ── collation-element parsing ──
 // One CE is encoded "[*]P.S.T". We unpack it into 4 ints appended to `acc`:
 //   [variable(0/1), primary, secondary, tertiary]
-// so the whole CE stream is a flat Vec[int] of quadruples (avoids a struct/tuple
+// so the whole CE stream is a flat []int of quadruples (avoids a struct/tuple
 // HashMap value — see [M-hashmap-tuple-key-mono]).
-fn push_one_ce(mut acc Vec[u32], ce str) -> int {
+fn push_one_ce(mut acc []u32, ce str) -> int {
     mut variable u32 = 0
     mut body = ce
     match ce.strip_prefix("*") {
@@ -75,7 +75,7 @@ fn push_one_ce(mut acc Vec[u32], ce str) -> int {
 }
 
 // Parse a "ce|ce|.." CE list into flat quadruples appended to `acc`.
-fn push_ce_list(mut acc Vec[u32], ces str) {
+fn push_ce_list(mut acc []u32, ces str) {
     for ce in ces.split("|") { push_one_ce(acc, ce) }
 }
 
@@ -85,7 +85,7 @@ fn push_ce_list(mut acc Vec[u32], ces str) {
 // kind 0 (Han/default): AAAA = base + (cp >> 15), BBBB = (cp & 0x7fff) | 0x8000.
 // kind 1 (siniform):    AAAA = base,              BBBB = (cp - lo) | 0x8000.
 // Codepoints in no implicit range fall back to base 0xFBC0, kind 0.
-fn push_implicit(mut acc Vec[u32], cp u32) {
+fn push_implicit(mut acc []u32, cp u32) {
     // The range test compares `cp` against the `u32` table bounds (kept `u32`); the
     // weight arithmetic below is bit-packing / grid math → `int` (D327 §bit-packing).
     ro c = cp as int
@@ -127,7 +127,7 @@ fn push_implicit(mut acc Vec[u32], cp u32) {
 
 // ── contraction lookup helpers (variants keyed by first cp; "rest=ces#..") ──
 
-fn cp_seq_eq(a Vec[u32], b Vec[u32]) -> bool {
+fn cp_seq_eq(a []u32, b []u32) -> bool {
     if a.len() != b.len() {
         false
     } else {
@@ -142,7 +142,7 @@ fn cp_seq_eq(a Vec[u32], b Vec[u32]) -> bool {
 }
 
 // `pre` is a strict prefix of `full`?
-fn cp_seq_is_prefix(pre Vec[u32], full Vec[u32]) -> bool {
+fn cp_seq_is_prefix(pre []u32, full []u32) -> bool {
     if pre.len() >= full.len() {
         false
     } else {
@@ -158,7 +158,7 @@ fn cp_seq_is_prefix(pre Vec[u32], full Vec[u32]) -> bool {
 
 // Exact contraction match: does `first` have a variant whose tail == `tail`?
 // Returns its CE string. (No early break — iterate all variants, keep last hit.)
-fn contraction_lookup(first u32, tail Vec[u32]) -> Option[str] {
+fn contraction_lookup(first u32, tail []u32) -> Option[str] {
     mut found Option[str] = None
     match collate_contraction_map.get(first) {
         Some(variants) => {
@@ -177,7 +177,7 @@ fn contraction_lookup(first u32, tail Vec[u32]) -> Option[str] {
 }
 
 // Is `tail` a strict prefix of some longer variant tail of `first`? (keep extending)
-fn contraction_has_longer(first u32, tail Vec[u32]) -> bool {
+fn contraction_has_longer(first u32, tail []u32) -> bool {
     match collate_contraction_map.get(first) {
         Some(variants) => {
             mut yes = false
@@ -195,19 +195,21 @@ fn contraction_has_longer(first u32, tail Vec[u32]) -> bool {
     }
 }
 
-fn cp_seq_push(src Vec[u32], x u32) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(src.len() + 1)
+fn cp_seq_push(src []u32, x u32) -> []u32 {
+    mut out []u32 = []u32.new()
+    out.cap(src.len() + 1)
     for v in src { out.push(v) }
     out.push(x)
     out
 }
 
-// Same as cp_seq_push but for `Vec[int]` index lists. A separate function is
-// REQUIRED: passing a `Vec[int]` to `cp_seq_push` (which takes `Vec[u32]`)
+// Same as cp_seq_push but for `[]int` index lists. A separate function is
+// REQUIRED: passing a `[]int` to `cp_seq_push` (which takes `[]u32`)
 // reinterprets 64-bit ints as 32-bit words → garbage indices (the `(hi<<32)|lo`
 // out-of-bounds that bit the s21 discontiguous path). Keep the element types exact.
-fn idx_seq_push(src Vec[int], x int) -> Vec[int] {
-    mut out = Vec[int].with_capacity(src.len() + 1)
+fn idx_seq_push(src []int, x int) -> []int {
+    mut out []int = []int.new()
+    out.cap(src.len() + 1)
     for v in src { out.push(v) }
     out.push(x)
     out
@@ -219,17 +221,19 @@ fn idx_seq_push(src Vec[int], x int) -> Vec[int] {
 // `used` marks already-consumed indices (read-only here). Returns the chosen CE
 // string (None ⇒ caller emits implicit weights) + the list of consumed indices
 // (always includes `i`).
-fn s21_match(cps Vec[u32], used Vec[int], i int) -> (Option[str], Vec[int]) {
+fn s21_match(cps []u32, used []int, i int) -> (Option[str], []int) {
     ro n = cps.len()
     ro first = cps[i]
     mut best_ces = collate_single_map.get(first)   // longest exact so far = `first` alone
-    mut best_consumed = Vec[int].with_capacity(4)
+    mut best_consumed []int = []int.new()
+    best_consumed.cap(4)
     best_consumed.push(i)
     match collate_contraction_map.get(first) {
         Some(_) => {
-            mut cur_tail = Vec[u32].with_capacity(4)     // matched tail cps (after first)
-            mut cur_consumed = Vec[int].with_capacity(4) // their indices (in order)
-            mut prev_ccc = 0
+            mut cur_tail []u32 = []u32.new()
+            cur_tail.cap(4)
+     // matched tail cps (after first)            mut cur_consumed []int = []int.new()
+            cur_consumed.cap(4) // their indices (in order)            mut prev_ccc = 0
             mut j = i + 1
             mut going = true
             while going && j < n {
@@ -279,8 +283,9 @@ fn s21_match(cps Vec[u32], used Vec[int], i int) -> (Option[str], Vec[int]) {
 }
 
 // [i] ++ consumed (the discontiguously-matched tail indices).
-fn with_base(i int, consumed Vec[int]) -> Vec[int] {
-    mut out = Vec[int].with_capacity(consumed.len() + 1)
+fn with_base(i int, consumed []int) -> []int {
+    mut out []int = []int.new()
+    out.cap(consumed.len() + 1)
     out.push(i)
     for x in consumed { out.push(x) }
     out
@@ -288,16 +293,18 @@ fn with_base(i int, consumed Vec[int]) -> Vec[int] {
 
 // Map the NFD-normalized codepoints of `s` to the flat collation-element stream
 // (quadruples [variable, primary, secondary, tertiary]). Applies UCA S2.1.
-fn collation_elements(s str) -> Vec[u32] {
+fn collation_elements(s str) -> []u32 {
     ro cps = str_to_cps(normalize_nfd(s))
     ro n = cps.len()
-    mut used = Vec[int].with_capacity(n)
+    mut used []int = []int.new()
+    used.cap(n)
     mut z = 0
     while z < n {
         used.push(0)
         z += 1
     }
-    mut acc = Vec[u32].with_capacity(n * 8)
+    mut acc []u32 = []u32.new()
+    acc.cap(n * 8)
     mut i = 0
     while i < n {
         if used[i] == 1 {
@@ -331,16 +338,20 @@ fn collation_elements(s str) -> Vec[u32] {
 // a shorter run at level N always sorts before a longer one — standard UCA.)
 const L4_MAX u32 = 0xFFFF
 
-/// Build the UCA sort key for `s` as a `Vec[u32]` of 16-bit weights (Shifted variant).
+/// Build the UCA sort key for `s` as a `[]u32` of 16-bit weights (Shifted variant).
 /// `compare`/`eq` byte-compare these keys. Caching a precomputed key for repeated
 /// comparisons (e.g. sorting) avoids re-normalizing per comparison.
-export fn collate_sort_key(s str) -> Vec[u32] {
+export fn collate_sort_key(s str) -> []u32 {
     ro ce = collation_elements(s)
     ro m = ce.len() / 4
-    mut prim = Vec[u32].with_capacity(m + 1)
-    mut sec = Vec[u32].with_capacity(m + 1)
-    mut tert = Vec[u32].with_capacity(m + 1)
-    mut quat = Vec[u32].with_capacity(m + 1)
+    mut prim []u32 = []u32.new()
+    prim.cap(m + 1)
+    mut sec []u32 = []u32.new()
+    sec.cap(m + 1)
+    mut tert []u32 = []u32.new()
+    tert.cap(m + 1)
+    mut quat []u32 = []u32.new()
+    quat.cap(m + 1)
     mut after_variable = false
     mut j = 0
     while j < m {
@@ -373,7 +384,8 @@ export fn collate_sort_key(s str) -> Vec[u32] {
         }
         j += 1
     }
-    mut key = Vec[u32].with_capacity(prim.len() + sec.len() + tert.len() + quat.len() + 4)
+    mut key []u32 = []u32.new()
+    key.cap(prim.len() + sec.len() + tert.len() + quat.len() + 4)
     for w in prim { key.push(w) }
     key.push(0)
     for w in sec { key.push(w) }
@@ -385,7 +397,7 @@ export fn collate_sort_key(s str) -> Vec[u32] {
 }
 
 // Lexicographic compare of two weight keys: -1 / 0 / +1 (D183 int convention).
-fn compare_keys(a Vec[u32], b Vec[u32]) -> int {
+fn compare_keys(a []u32, b []u32) -> int {
     ro na = a.len()
     ro nb = b.len()
     ro n = if na < nb { na } else { nb }
@@ -434,6 +446,6 @@ export type Collator
 /// be mistaken for `str`'s default byte Ord (D254).
 export fn Collator.order(a str, b str) -> int => collate_compare(a, b)
 
-export fn Collator.key(s str) -> Vec[u32] => collate_sort_key(s)
+export fn Collator.key(s str) -> []u32 => collate_sort_key(s)
 
 export fn Collator.same(a str, b str) -> bool => collate_eq(a, b)

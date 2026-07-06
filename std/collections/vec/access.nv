@@ -254,7 +254,7 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 /// `unsafe { }` block, and the caller owns these invariants:
 ///   - Only `[0, len())` element slots are live; never read past `len()`.
 ///   - The pointer is INVALIDATED by any reallocating mutation
-///     (`push`/`reserve`/`insert`/`with_capacity` growth). Re-fetch after such.
+///     (`push`/`reserve`/`insert`/`new().cap(n)` growth). Re-fetch after such.
 ///   - On an empty `Vec` (`cap == 0`) `@data` is the `null_buf` placeholder —
 ///     non-null but a single never-live slot; do not dereference it.
 ///

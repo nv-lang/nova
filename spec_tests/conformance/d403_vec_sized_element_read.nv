@@ -1,4 +1,4 @@
-// D403 — reading an ELEMENT out of a `Vec[uint]` / `[]u8` must preserve the element's
+// D403 — reading an ELEMENT out of a `[]uint` / `[]u8` must preserve the element's
 // SIZED/UNSIGNED width (uint≠int, u8≠i8) — NO silent collapse to signed `nova_int`.
 // Surface = the three element-READ paths on a Vec whose element is a sized/unsigned
 // primitive: subscript `v[i]`, `.first()`, and the `for x in v` loop binding. All three
@@ -16,23 +16,23 @@
 // into -56, failing `got == 200` / `got > 100`. A correct sized/unsigned read keeps both
 // asserts true. Spec: spec/decisions/02-types.md (§0/§10/D368/D130 named-priority, no
 // int-collapse). SINGLE `spec_tests.conformance` folder-module; all top-level names are
-// `d403w_`-prefixed; depends on D232 (`Vec[T]`), D239 (`[]T ≡ Vec[T]`).
+// `d403w_`-prefixed; depends on D232 (`[]T`), D239 (`[]T ≡ Vec[T]`).
 module spec_tests.conformance
 
-test "Vec[uint] subscript v[i] keeps the unsigned high-bit; no signed collapse (D403)" {
-    ro v = Vec[uint].of(0x8000000000000000)   // 2^63 — high bit set; as signed int64 NEGATIVE
+test "[]uint subscript v[i] keeps the unsigned high-bit; no signed collapse (D403)" {
+    ro v = []uint.of(0x8000000000000000)   // 2^63 — high bit set; as signed int64 NEGATIVE
     ro got = v[0]                              // UNANNOTATED: inherits the element's inferred type
     assert(got > 100)                          // uint: 2^63 > 100 ✓ ; signed collapse → negative → FAIL
 }
 
-test "Vec[uint] .first() preserves unsigned width through Option unwrap (D403)" {
-    ro v = Vec[uint].of(0x8000000000000000, 7)   // first element is 2^63
+test "[]uint .first() preserves unsigned width through Option unwrap (D403)" {
+    ro v = []uint.of(0x8000000000000000, 7)   // first element is 2^63
     ro got = v.first() ?? 0                       // UNANNOTATED unwrap: inherits element type uint
     assert(got > 100)                             // uint: 2^63 > 100 ✓ ; collapse → negative → FAIL
 }
 
-test "for x in Vec[uint] — loop binding inherits unsigned element width (D403)" {
-    ro v = Vec[uint].of(0x8000000000000000, 0x8000000000000001)
+test "for x in []uint — loop binding inherits unsigned element width (D403)" {
+    ro v = []uint.of(0x8000000000000000, 0x8000000000000001)
     mut seen = 0
     for x in v {                  // x UNANNOTATED: inherits the mono next()-return element type uint
         assert(x > 100)           // each element is >= 2^63 — unsigned > 100 ✓ ; signed → negative → FAIL
