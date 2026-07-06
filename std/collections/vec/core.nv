@@ -264,7 +264,6 @@ export fn Vec[T] mut @cap(n int) -> @
     if n != @cap {
         @realloc_to(n)
     }
-    @
 }
 
 /// `true` if the vector has no live elements.
@@ -307,7 +306,7 @@ fn Vec[T] mut @realloc_to(new_cap int) -> () {
 export fn Vec[T] mut @reserve(additional int) -> @ {
     ro needed = @len + additional
     if needed <= @cap {
-        return @
+        return
     }
     mut new_cap = if @cap == 0 { 8 } else { @cap * 2 }
     // KEEP as while: non-unit-step (×2 doubling), not a `0..@len` index loop.
@@ -315,7 +314,6 @@ export fn Vec[T] mut @reserve(additional int) -> @ {
         new_cap = new_cap * 2
     }
     @realloc_to(new_cap)
-    @
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -25,7 +25,6 @@ export fn Vec[T] mut @push(v T) -> @ {
         @data[@len] = v
     }
     @len = @len + 1
-    @
 }
 
 /// Remove and return the last element, or `None` if empty.
@@ -54,7 +53,6 @@ export fn Vec[T] mut @insert(i int, v T) -> @
         @data[i] = v
     }
     @len = @len + 1
-    @
 }
 
 /// Bulk-insert (splice) every element of `other` at index `i`, shifting the
@@ -97,7 +95,6 @@ export fn Vec[T] mut @splice(i int, other Vec[T]) -> @
         }
         @len = @len + src_len
     }
-    @
 }
 
 /// Remove and return the element at `i`, shifting later elements left.
@@ -141,7 +138,6 @@ export fn Vec[T] mut @swap_remove(i int) -> T
 /// Drop all elements (set len = 0). The buffer is retained for reuse.
 export fn Vec[T] mut @clear() -> @ {
     @len = 0
-    @
 }
 
 /// If `n < len`, shorten to exactly `n` elements. Larger `n` is a no-op.
@@ -149,7 +145,6 @@ export fn Vec[T] mut @truncate(n int) -> @ {
     if n >= 0 && n < @len {
         @len = n
     }
-    @
 }
 
 /// Reverse the live elements in place.
@@ -164,7 +159,6 @@ export fn Vec[T] mut @reverse() -> @ {
         lo = lo + 1
         hi = hi - 1
     }
-    @
 }
 
 /// Swap the elements at indices `i` and `j` in place. `i == j` is a no-op.
@@ -177,7 +171,6 @@ export fn Vec[T] mut @swap(i int, j int) -> @
             (@data[i], @data[j]) = (@data[j], @data[i])
         }
     }
-    @
 }
 
 /// Resize to exactly `n` elements. `n > len` appends copies of `v`; `n < len`
@@ -199,7 +192,6 @@ export fn Vec[T] mut @resize(n int, v T) -> @
         }
         @len = n
     }
-    @
 }
 
 /// Resize to exactly `n` elements, generating each new element by calling `f()`.
@@ -220,7 +212,6 @@ export fn Vec[T] mut @resize_with(n int, f fn() -> T) -> @
         }
         @len = n
     }
-    @
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -249,7 +240,6 @@ export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
     for x in items {
         @push(x)
     }
-    @
 }
 
 // NOTE ([M-138.2-self-in-param]): the receiver-typed params below (`@append`,
@@ -278,7 +268,6 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
         }
         @len = @len + m
     }
-    @
 }
 
 /// Keep only the elements for which `pred(elem)` returns `true`, preserving
@@ -301,7 +290,6 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> @ {
         }
     }
     @len = write
-    @
 }
 
 // ─── []T extend-family parity (Plan 90.1 / D141; [M-138-vec-bulk-parity]) ──
@@ -335,7 +323,6 @@ export fn Vec[T] mut @copy_from(other Vec[T]) -> @
             RawMem.copy(other.data as *u8, @data as *mut u8, @len * size_of[T]())
         }
     }
-    @
 }
 
 /// Copy `len` elements within the same buffer from `src_from` to `dst_from`.
@@ -358,7 +345,6 @@ export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> @
             RawMem.copy((@data + src_from) as *u8, (@data + dst_from) as *mut u8, len * size_of[T]())
         }
     }
-    @
 }
 
 /// Set every live element to `v`. Element-wise for the general case; the
@@ -376,7 +362,7 @@ export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> @
 /// ```
 export fn Vec[T] mut @fill(v T) -> @ {
     if @len <= 0 {
-        return @
+        return
     }
     if size_of[T]() == 1 {
         // A 1-byte element fill is exactly a byte-pattern memset over the live
@@ -391,7 +377,6 @@ export fn Vec[T] mut @fill(v T) -> @ {
             }
         }
     }
-    @
 }
 
 /// Overwrite every live element with the result of calling `f()` (invoked once
@@ -403,7 +388,6 @@ export fn Vec[T] mut @fill_with(f fn() -> T) -> @ {
             @data[i] = f()
         }
     }
-    @
 }
 
 /// Extend `self` by `n` zero-initialised elements (`memset 0` over the new
@@ -424,14 +408,13 @@ export fn Vec[T] mut @append_zero(n int) -> @
     requires n >= 0
 {
     if n == 0 {
-        return @
+        return
     }
     @reserve(n)
     unsafe {
         RawMem.fill((@data + @len) as *mut u8, 0 as u8, n * size_of[T]())
     }
     @len = @len + n
-    @
 }
 
 // NOTE: `@compare` (the `Compare` protocol impl) lives in `protocols.nv`, not

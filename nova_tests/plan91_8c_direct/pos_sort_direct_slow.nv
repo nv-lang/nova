@@ -31,7 +31,6 @@ fn[T Compare] []T mut @sort_pairwise_direct() -> @ {
         }
         i = i + 1
     }
-    @
 }
 
 // Find the maximum using @[i].compare(max_val) > 0 where max_val comes

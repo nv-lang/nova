@@ -16,7 +16,6 @@ fn Counter4_plan123followups20260605m3chainnormv2userfluentok.new() -> Counter4_
 // FluentMethodRegistry.
 fn Counter4_plan123followups20260605m3chainnormv2userfluentok mut @step(by int) -> @ {
     @n = @n + by
-    @
 }
 
 fn Counter4_plan123followups20260605m3chainnormv2userfluentok @get() -> int => @n

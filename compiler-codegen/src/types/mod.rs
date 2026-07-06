@@ -21179,12 +21179,176 @@ impl<'a> ConsumeCtx<'a> {
     }
 }
 
+/// Plan 174 (D409, owner amendment 2026-07-06): explicit self-return ban для
+/// `-> @` тел. Возврат приёмника — ТОЛЬКО автоматический (конец тела без
+/// хвостового выражения / голый `return` / любое НЕ-`@` хвостовое выражение —
+/// discard + implicit `return @`, см. `self_return_lower.rs`). Explicit
+/// формы (хвостовой `@`, `return @`, `=> @`) — ошибка: гарантия уже даётся
+/// сигнатурой `-> @`, ручной повтор — шум и источник рассинхрона (D409 «Почему»).
+///
+/// Recurses into control-flow blocks reachable from the fn body (If/IfLet/
+/// Match/While/WhileLet/For/ParallelFor/Loop/Block-expr/ConsumeScope) — a
+/// bare `return` statement can only live inside one of these, never nested
+/// inside an arbitrary sub-expression (Binary/Call/Member/...), so that is
+/// the full reachable set. Does NOT recurse into closures/lambdas — those
+/// are a separate return-scope.
+fn expr_is_bare_self(e: &Expr) -> bool {
+    matches!(e.kind, ExprKind::SelfAccess)
+}
+
+/// Returns true if `expr` can be statically determined to always yield the
+/// receiver. Covers: bare `@`, call to a known `-> @` method on `@`, if/else
+/// where all branches yield receiver. Conservative — returns false for
+/// anything complex. Shared by `check_fluent_return`'s Check 1 (rule 2:
+/// explicit `return <expr>` must yield receiver) and Check 2 (`-> Self`
+/// should-be-`-> @` suggestion).
+fn expr_always_returns_receiver(
+    e: &Expr,
+    fluent: &std::collections::HashSet<(String, String)>,
+    recv_type: &str,
+) -> bool {
+    match &e.kind {
+        ExprKind::SelfAccess => true,
+        ExprKind::Call { func, .. } => {
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if matches!(obj.kind, ExprKind::SelfAccess) {
+                    return fluent.contains(&(recv_type.to_string(), name.clone()));
+                }
+            }
+            false
+        }
+        ExprKind::If { then, else_: Some(else_branch), .. } => {
+            let then_ok = then.trailing.as_ref()
+                .map(|t| expr_always_returns_receiver(t, fluent, recv_type))
+                .unwrap_or(false);
+            if !then_ok { return false; }
+            match else_branch {
+                ElseBranch::Block(b) => b.trailing.as_ref()
+                    .map(|t| expr_always_returns_receiver(t, fluent, recv_type))
+                    .unwrap_or(false),
+                ElseBranch::If(e2) => expr_always_returns_receiver(e2, fluent, recv_type),
+            }
+        }
+        _ => false,
+    }
+}
+
+fn check_no_explicit_self_return_block(
+    b: &Block,
+    fluent: &std::collections::HashSet<(String, String)>,
+    recv_type: &str,
+    method_name: &str,
+    errors: &mut Vec<Diagnostic>,
+) {
+    for stmt in &b.stmts {
+        check_no_explicit_self_return_stmt(stmt, fluent, recv_type, method_name, errors);
+    }
+    if let Some(t) = &b.trailing {
+        if expr_is_bare_self(t) {
+            errors.push(e_explicit_self_return(t.span, method_name));
+        }
+    }
+}
+
+fn check_no_explicit_self_return_stmt(
+    s: &Stmt,
+    fluent: &std::collections::HashSet<(String, String)>,
+    recv_type: &str,
+    method_name: &str,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match s {
+        Stmt::Return { value: Some(v), span } => {
+            if expr_is_bare_self(v) {
+                errors.push(e_explicit_self_return(*span, method_name));
+            } else if !expr_always_returns_receiver(v, fluent, recv_type) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "метод `{}` объявлен `-> @` (fluent-return, D132/D409): \
+                         `return` с явным значением, отличным от приёмника, — \
+                         ошибка. Используй голый `return` (авто-возврат D409) \
+                         или `return <вызов другого `-> @` метода>`.",
+                        method_name),
+                    *span,
+                ));
+            }
+        }
+        Stmt::Return { value: None, .. } => {} // D409: голый `return` — легален, авто.
+        Stmt::Let(decl) => check_no_explicit_self_return_expr(&decl.value, fluent, recv_type, method_name, errors),
+        Stmt::Assign { value, .. } => check_no_explicit_self_return_expr(value, fluent, recv_type, method_name, errors),
+        Stmt::TupleAssign { rhs, .. } => {
+            for e in rhs { check_no_explicit_self_return_expr(e, fluent, recv_type, method_name, errors); }
+        }
+        Stmt::ConsumeScope { body, .. } => check_no_explicit_self_return_block(body, fluent, recv_type, method_name, errors),
+        Stmt::Expr(e) => check_no_explicit_self_return_expr(e, fluent, recv_type, method_name, errors),
+        _ => {}
+    }
+}
+
+/// Descend ONLY into control-flow-bearing expr kinds (the same reachable
+/// set as the lowering pass) — a `return` statement cannot be nested inside
+/// a Binary/Call/Member/etc. expression position, so those need no recursion.
+fn check_no_explicit_self_return_expr(
+    e: &Expr,
+    fluent: &std::collections::HashSet<(String, String)>,
+    recv_type: &str,
+    method_name: &str,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match &e.kind {
+        ExprKind::If { then, else_, .. } => {
+            check_no_explicit_self_return_block(then, fluent, recv_type, method_name, errors);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => check_no_explicit_self_return_block(b, fluent, recv_type, method_name, errors),
+                    ElseBranch::If(e2) => check_no_explicit_self_return_expr(e2, fluent, recv_type, method_name, errors),
+                }
+            }
+        }
+        ExprKind::IfLet { then, else_, .. } => {
+            check_no_explicit_self_return_block(then, fluent, recv_type, method_name, errors);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => check_no_explicit_self_return_block(b, fluent, recv_type, method_name, errors),
+                    ElseBranch::If(e2) => check_no_explicit_self_return_expr(e2, fluent, recv_type, method_name, errors),
+                }
+            }
+        }
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Block(b) => check_no_explicit_self_return_block(b, fluent, recv_type, method_name, errors),
+                    MatchArmBody::Expr(e2) => check_no_explicit_self_return_expr(e2, fluent, recv_type, method_name, errors),
+                }
+            }
+        }
+        ExprKind::While { body, .. } | ExprKind::Loop { body, .. } => check_no_explicit_self_return_block(body, fluent, recv_type, method_name, errors),
+        ExprKind::WhileLet { body, .. } => check_no_explicit_self_return_block(body, fluent, recv_type, method_name, errors),
+        ExprKind::For { body, .. } | ExprKind::ParallelFor { body, .. } => check_no_explicit_self_return_block(body, fluent, recv_type, method_name, errors),
+        ExprKind::Block(b) => check_no_explicit_self_return_block(b, fluent, recv_type, method_name, errors),
+        _ => {}
+    }
+}
+
+fn e_explicit_self_return(span: Span, method_name: &str) -> Diagnostic {
+    Diagnostic::new(
+        format!(
+            "[E_EXPLICIT_SELF_RETURN] метод `{}` объявлен `-> @`: возврат приёмника \
+             автоматический (D409, амендмент владельца 2026-07-06) — явный `@`/`return @` \
+             запрещён. Уберите его: голый `return` (в ветке) или просто ничего не пишите \
+             (в конце тела).",
+            method_name),
+        span,
+    )
+}
+
 /// Plan 73 (D131): consume-check входная точка — walk всех function /
 /// method / test bodies модуля.
-/// Plan 77 (D132): `-> @` fluent-return — тело non-external метода
-/// обязано завершаться выражением `@` (вернуть сам receiver). Делает
-/// гарантию «возвращает receiver» проверяемой → consume-checker может
-/// soundly трактовать `let x = recv.method()` как alias receiver'а.
+/// Plan 77 (D132) / Plan 174 (D409): `-> @` fluent-return — возврат
+/// приёмника гарантирован сигнатурой; тело либо автоматическое (D409),
+/// либо явно делегирует в другой `-> @` метод. Делает гарантию «возвращает
+/// receiver» проверяемой → consume-checker может soundly трактовать
+/// `let x = recv.method()` как alias receiver'а.
 fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
     // Build set of (type_name, method_name) pairs that have `returns_receiver: true`
     // in this module. Used by both checks below.
@@ -21200,40 +21364,6 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
             None
         })
         .collect();
-
-    // Returns true if `expr` can be statically determined to always yield the receiver.
-    // Covers: bare `@`, call to a known `-> @` method on `@`, if/else where all
-    // branches yield receiver. Conservative — returns false for anything complex.
-    fn expr_always_returns_receiver(
-        e: &Expr,
-        fluent: &std::collections::HashSet<(String, String)>,
-        recv_type: &str,
-    ) -> bool {
-        match &e.kind {
-            ExprKind::SelfAccess => true,
-            ExprKind::Call { func, .. } => {
-                if let ExprKind::Member { obj, name } = &func.kind {
-                    if matches!(obj.kind, ExprKind::SelfAccess) {
-                        return fluent.contains(&(recv_type.to_string(), name.clone()));
-                    }
-                }
-                false
-            }
-            ExprKind::If { then, else_: Some(else_branch), .. } => {
-                let then_ok = then.trailing.as_ref()
-                    .map(|t| expr_always_returns_receiver(t, fluent, recv_type))
-                    .unwrap_or(false);
-                if !then_ok { return false; }
-                match else_branch {
-                    ElseBranch::Block(b) => b.trailing.as_ref()
-                        .map(|t| expr_always_returns_receiver(t, fluent, recv_type))
-                        .unwrap_or(false),
-                    ElseBranch::If(e2) => expr_always_returns_receiver(e2, fluent, recv_type),
-                }
-            }
-            _ => false,
-        }
-    }
 
     // Returns true if a body can be statically determined to always yield the receiver.
     // External: C-runtime contract guarantees it. Block: checks trailing expression
@@ -21274,24 +21404,24 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
         if let Item::Fn(f) = item {
             let recv_type = f.receiver.as_ref().map(|r| r.type_name.as_str()).unwrap_or("");
             if f.returns_receiver {
-                // Check 1: `-> @` body must always return receiver.
-                // Accepted: bare `@`, call to another `-> @` method, if/else where
-                // all branches yield receiver, external fn (C-contract).
-                if !body_always_returns_receiver(&f.body, &fluent_methods, recv_type) {
-                    let span = match &f.body {
-                        FnBody::Block(b) => b.span,
-                        FnBody::Expr(e) => e.span,
-                        FnBody::External => f.span,
-                    };
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "метод `{}` объявлен `-> @` (fluent-return, D132): его \
-                             тело обязано завершаться выражением `@` (или вызовом \
-                             другого `-> @` метода). Добавьте `@` последним \
-                             выражением тела.",
-                            f.name),
-                        span,
-                    ));
+                // Check 1 (D409): explicit self-return ban + rule-2 (return
+                // anything other than the receiver is an error). Auto-return
+                // (missing trailing / bare `return` / discarded non-`@`
+                // trailing) is legalized by `self_return_lower.rs`, applied
+                // AFTER this check runs — so this check sees the ORIGINAL,
+                // as-written source.
+                match &f.body {
+                    FnBody::External => {}
+                    FnBody::Expr(e) => {
+                        if expr_is_bare_self(e) {
+                            errors.push(e_explicit_self_return(e.span, &f.name));
+                        } else {
+                            check_no_explicit_self_return_expr(e, &fluent_methods, recv_type, &f.name, errors);
+                        }
+                    }
+                    FnBody::Block(b) => {
+                        check_no_explicit_self_return_block(b, &fluent_methods, recv_type, &f.name, errors);
+                    }
                 }
             } else {
                 // Check 2: `-> Self` method where all return paths yield `@`

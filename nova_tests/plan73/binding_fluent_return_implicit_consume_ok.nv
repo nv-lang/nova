@@ -14,7 +14,7 @@ type Box4 consume {
 
 fn Box4.new() -> Self => { data: [].with_capacity(4) }
 
-fn Box4 mut @push(x int) -> @ { @data.push(x); @ }
+fn Box4 mut @push(x int) -> @ { @data.push(x) }
 
 fn Box4 consume @sum() -> int {
     mut s = 0

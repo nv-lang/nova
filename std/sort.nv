@@ -50,7 +50,6 @@ export fn []int mut @sort() -> @ {
         @[j + 1] = key
         i = i + 1
     }
-    @
 }
 
 
@@ -81,7 +80,6 @@ export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
         @[j + 1] = key
         i = i + 1
     }
-    @
 }
 
 
@@ -233,7 +231,6 @@ export fn[T Compare] []T mut @sort_of() -> @ {
         @[j + 1] = key
         i = i + 1
     }
-    @
 }
 
 /// Generic min_by с custom comparator. T не обязан satisfying Compare.
@@ -297,7 +294,6 @@ export fn[T] []T mut @reverse_of() -> @ {
         i = i + 1
         j = j - 1
     }
-    @
 }
 
 /// Sum для `[]int`. Returns 0 для empty.
@@ -417,7 +413,6 @@ export fn[T] []T mut @sort_by_of(cmp fn(T, T) -> int) -> @ {
         @[j + 1] = key
         i = i + 1
     }
-    @
 }
 
 /// Generic binary_search для отсортированного `[T Compare]`.

@@ -150,11 +150,11 @@ export fn Vec[T] mut @rotate_left(n int) -> @
     requires n >= 0
 {
     if @len < 2 {
-        return @
+        return
     }
     ro k = n % @len
     if k == 0 {
-        return @
+        return
     }
     // Save the leading `k` elements, shift the suffix `[k, len)` down to the
     // front (overlap-safe memmove), then drop the saved prefix into the tail.
@@ -167,7 +167,6 @@ export fn Vec[T] mut @rotate_left(n int) -> @
         RawMem.copy((@data + k) as *u8, @data as *mut u8, (@len - k) * size_of[T]())
         RawMem.copy(head.data as *u8, (@data + (@len - k)) as *mut u8, k * size_of[T]())
     }
-    @
 }
 
 /// Rotate the live elements right by `n` positions, in place. Element at index
@@ -186,11 +185,11 @@ export fn Vec[T] mut @rotate_right(n int) -> @
     requires n >= 0
 {
     if @len < 2 {
-        return @
+        return
     }
     ro k = n % @len
     if k == 0 {
-        return @
+        return
     }
     // Rotating right by `k` is rotating left by `len - k`.
     @rotate_left(@len - k)

@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR D132
+//
+// D409 rule 2 (unchanged from D132): a `-> @` method returning anything other
+// than the receiver is a compile error — auto-return (D409) only legalizes
+// the RECEIVER-yielding implicit exits (missing trailing / bare `return` /
+// discarded non-`@` trailing), never an explicit `return <unrelated value>`.
+
+module neg.d409_return_wrong_value_neg
+
+type D409Bad2 { mut n int }
+
+fn D409Bad2.new() -> D409Bad2 => { n: 0 }
+
+// ОШИБКА D132/D409: `return 5` — явный возврат значения, не являющегося
+// приёмником и не являющегося вызовом другого `-> @` метода.
+fn D409Bad2 mut @tweak() -> @ {
+    @n += 1
+    return 5
+}
+
+test "should not compile" {
+    mut w = D409Bad2.new()
+    ro _ = w.tweak()
+    assert(w.n == 1)
+}

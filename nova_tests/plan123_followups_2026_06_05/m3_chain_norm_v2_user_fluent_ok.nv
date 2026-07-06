@@ -16,7 +16,6 @@ fn Counter4.new() -> Counter4 => { n: 0 }
 // FluentMethodRegistry.
 fn Counter4 mut @step(by int) -> @ {
     @n = @n + by
-    @
 }
 
 fn Counter4 @get() -> int => @n

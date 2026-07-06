@@ -186,6 +186,9 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
     }
 
     // 3. Execute.
+    // Plan 174 (D409): auto-return lowering для `-> @` тел (interp path —
+    // check_module above already gated E_EXPLICIT_SELF_RETURN).
+    crate::self_return_lower::lower_module(&mut module);
     crate::callnorm::normalize_module(&mut module);
     crate::chain_norm::normalize_chains_module(&mut module);
     let mut interp = crate::interp::Interpreter::new();

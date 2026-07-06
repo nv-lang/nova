@@ -1,8 +1,9 @@
-// EXPECT_COMPILE_ERROR D132
+// EXPECT_COMPILE_ERROR E_EXPLICIT_SELF_RETURN
 //
-// Plan 77 (D132): `-> @` гарантирует возврат receiver'а — тело обязано
-// завершаться выражением `@`. Здесь тело кончается statement'ом без
-// `@` → compile error (иначе гарантия `-> @` была бы ложной).
+// Plan 174 (D409, owner amendment 2026-07-06): `-> @` возврат приёмника —
+// теперь ТОЛЬКО автоматический. Explicit `@`/`return @` в хвосте `-> @`-тела
+// запрещён (was: REQUIRED under D132; D409 inverts this — see D132's old
+// requirement retracted).
 
 module neg.fluent_body_err
 
@@ -10,9 +11,11 @@ type Bldr { mut k int }
 
 fn Bldr.new() -> Bldr => { k: 0 }
 
-// ОШИБКА D132: тело `-> @` метода не завершается `@`.
+// ОШИБКА D409: явный хвостовой `@` в `-> @`-теле запрещён — возврат
+// приёмника уже автоматический (`return` / конец тела было бы достаточно).
 fn Bldr mut @tweak() -> @ {
     @k = @k + 1
+    @
 }
 
 test "fluent body without @" {
