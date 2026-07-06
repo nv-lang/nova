@@ -201,3 +201,33 @@ extern "nova" fn print(...items []any) -> ()
 /// ```
 #stable(since = "0.1")
 extern "nova" fn println(...items []any) -> ()
+
+/// Подавленные ошибки, сопровождавшие последнюю пойманную ошибку (D158,
+/// Plan 173 Ф.4 модель Б). Cleanup-fail во время propagation НЕ подменяет
+/// primary — primary отдаётся ловящему КАК ЕСТЬ (типизированная ловля
+/// `with Fail[Primary]` работает, эффект НЕ становится `Fail[MultiError]`);
+/// подавленные лежат «в кармане» и достаются этим аксессором ПОСЛЕ ловли.
+///
+/// Возвращает `[]any` в хронологическом порядке аварий (первая-упавшая
+/// первой); каждый элемент — `any`, сужается через `is T` / `.try_as[T]()`.
+/// Пустой массив = cleanup не падал (карман пуст). Карман сбрасывается на
+/// каждый свежий `throw` и заполняется в момент ловли (транспорт
+/// `nova_rethrow_with_suppressed`), поэтому не течёт между несвязанными
+/// ловлями.
+///
+/// **Bootstrap:** codegen special-case (emit_c.rs, `emit_call`) материализует
+/// массив из `_nova_last_error.frame.error_suppressed` через готовые
+/// read-аксессоры `nova_failframe_suppressed_count` / `_at`.
+///
+/// # Examples
+/// ```nova
+/// mut primary_code = 0
+/// with Fail[DbErr] = effect Fail[DbErr] { fail(e) { primary_code = e.code } } {
+///     do_tx()            // тело кинуло DbErr; @cleanup кинул Cleanup2
+/// }
+/// for s in suppressed() {          // == [Cleanup2]
+///     if s is Cleanup2 { Log.warn("cleanup failed") }
+/// }
+/// ```
+#stable(since = "0.1")
+extern "nova" fn suppressed() -> []any

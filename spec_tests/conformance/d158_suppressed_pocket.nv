@@ -1,0 +1,69 @@
+// D158 — Модель доставки composite-ошибки, ВАРИАНТ Б (амендмент 2026-07-06,
+// Plan 173 Ф.4 #6/#7). Норма (spec/decisions/03-syntax.md §D158 «Модель
+// доставки — вариант Б»): cleanup-fail во время propagation НЕ подменяет primary
+// и НЕ меняет эффект — primary отдаётся ловящему КАК ЕСТЬ; подавленные лежат «в
+// кармане» и достаются свободным аксессором `suppressed() -> []any` ПОСЛЕ ловли.
+// Покрытие (позитив): (1) один упавший cleanup → suppressed() == [Cleanup],
+// элемент сужается через `is T`; (2) без упавшего cleanup → suppressed() пуст;
+// (3) карман не течёт между несвязанными ловлями (reset-on-throw). Отвергнутая
+// конверт-модель `Err(MultiError{...})` — §«Что отвергнуто». Один folder-module.
+module spec_tests.conformance
+
+type D158PrimErr { code int }
+type D158CleanupErr { tag int }
+
+fn d158b_throw_prim() Fail[D158PrimErr] -> () { throw D158PrimErr { code: 7 } }
+fn d158b_throw_cleanup() Fail[D158CleanupErr] -> () { throw D158CleanupErr { tag: 9 } }
+
+// Body throws the primary; a defer's cleanup then fails during the unwind.
+fn d158b_body_with_failing_cleanup() Fail -> () {
+    defer { d158b_throw_cleanup() }
+    d158b_throw_prim()
+}
+
+// Body throws the primary; no cleanup fails.
+fn d158b_body_clean() Fail -> () {
+    d158b_throw_prim()
+}
+
+// (1) primary caught as-is; suppressed() surfaces the cleanup error, narrowable.
+fn d158b_run_single() -> bool {
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        d158b_body_with_failing_cleanup()
+    }
+    ro sup = suppressed()
+    sup.len() == 1 && (sup.get(0)!! is D158CleanupErr)
+}
+
+// (2) empty pocket when no cleanup fails.
+fn d158b_run_empty() -> int {
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        d158b_body_clean()
+    }
+    suppressed().len()
+}
+
+// (3) no leak between unrelated catches.
+fn d158b_run_no_leak() -> bool {
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        d158b_body_with_failing_cleanup()
+    }
+    ro c1 = suppressed().len()
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        d158b_body_clean()
+    }
+    ro c2 = suppressed().len()
+    c1 == 1 && c2 == 0
+}
+
+test "D158 model B: primary caught as-is, suppressed() surfaces failing cleanup" {
+    assert(d158b_run_single())
+}
+
+test "D158 model B: no failing cleanup → suppressed() empty" {
+    assert(d158b_run_empty() == 0)
+}
+
+test "D158 model B: pocket does not leak between unrelated catches" {
+    assert(d158b_run_no_leak())
+}

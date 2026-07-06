@@ -386,10 +386,32 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   (≡ Kotlin/Java, лучше Swift); detach enforced; ни одна ошибка fiber'а не теряется молча;
   `parallel for → []T` для любого T (173.1); **без упрощений**.
 
-### Ф.4 — MultiError end-to-end + типизированный ScopeOutcome (🔨 В РАБОТЕ; ГЕЙТ [Plan 174.3] ✅ в main)
-1. **#6:** материализовать `NovaErrorChain` → Nova `MultiError` в точке получения composed-ошибки
-   (handler-arm/scope-result); использовать ГОТОВЫЕ read-аксессоры `nova_failframe_suppressed_count/at`
-   (`effects.h:269-283`); методы = уже объявленные в `errors.nv:207-250`.
+### Ф.4 — MultiError end-to-end + типизированный ScopeOutcome (✅ ЗАКРЫТА 2026-07-06; ГЕЙТ [Plan 174.3] ✅ в main)
+1. ✅ **#6 РЕАЛИЗОВАН (2026-07-06, модель Б — решение владельца):** противоречие спеки D158 (конверт
+   `Err(MultiError{primary,suppressed})`) и §6 разрешено В ПОЛЬЗУ §6 — primary отдаётся ловящему
+   **КАК ЕСТЬ** (типизированная ловля работает, эффект НЕ становится `Fail[MultiError]`); подавленные —
+   «в кармане», достаются свободным аксессором **`suppressed() -> []any`** ПОСЛЕ ловли
+   (`std/prelude/runtime.nv` + re-export в facade). Карман = thread-local
+   `_nova_last_error.frame.error_suppressed` (инфра #5); заполняется (a) FAIL-path — зеркалирование в
+   `nova_rethrow_with_suppressed` (transport-chokepoint), (b) interrupt-path (доминирующий идиом
+   `with Fail = … interrupt`) — per-cleanup `NovaFailFrame` вокруг каждого defer-тела с prepend-compose
+   прямо в карман (panic cleanup'а НЕ глотается — `nv_panic`; snapshot+relink головы сохраняет
+   аккумуляцию сквозь `nova_last_error_set`-reset бросающего cleanup'а). Материализация `[]any`:
+   codegen-intercept `suppressed()` (emit_c.rs `emit_call`) через ГОТОВЫЕ read-аксессоры
+   `nova_failframe_suppressed_count/at`; элементы `any` (typed payload — `nova_any_from_boxed`, голый
+   str — `nova_any_box`), сужение `is T`/`.try_as[T]()`. Спека D158 амендирована (баннер +
+   §«Модель доставки — вариант Б» + §«Что отвергнуто»); тип `MultiError` (`errors.nv`) остаётся
+   опциональной value-обёрткой, НЕ конвертом эффекта.
+   **Сопутствующий (той же осью) фикс hijack'а:** cleanup-throw во время unwind РАНЬШЕ диспатчился в
+   ещё-установленный with-Fail handler сцены (string-slot arm без tid-check → мисфайр на чужом payload,
+   перезапись in-flight результата, двойной прогон defer-тела). Модель Б: `NovaFailFrame.is_cleanup`
+   (ставится codegen'ом на unwind-path cleanup-кадрах: defer FAIL `_tdf` / interrupt `_idf` /
+   consume FromFrame|Interrupt) + `nova_in_cleanup_unwind()`-байпас в `Nova_Fail_fail`/
+   `nova_throw_typed`/generated per-E entries — ошибка cleanup'а летит в свой кадр → карман; явный
+   handler-wrap ВНУТРИ cleanup (свой не-cleanup кадр) работает как раньше (D158 backward-compat);
+   normal-exit cleanup-кадры не маркируются (их ошибка = primary, handler срабатывает). Попутно:
+   `nova_interrupt_push_defer` зануляет `value`/`value_ptr` (re-issue пробует value_ptr — stack-garbage
+   уводил int-interrupt в pointer-роут).
 2. ✅ **#5 РЕАЛИЗОВАН (2026-07-06):** `ScopeOutcome.Failure(any)` (`core.nv:149`) — типизированный payload
    протянут в outcome; `if e is T` narrowing в `@cleanup`/`defer(o)` (D54/174.3). Materialization
    (`assign_scope_outcome_from_frame`, `emit_c.rs`): USER_TYPED → `nova_any_from_boxed(payload,tid)` (усыновляет
@@ -406,29 +428,40 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    `err is CancelError`. Conformance 53/0; regress delta 0. **Остаток (документирован в simplifications):**
    value-typed throw box-repr предполагает pointer (records — универсум typed-errors); per-E-handler+interrupt
    staleness-окно (payload-only, already-Failure).
-3. **#7:** инвариант suppressed-chain: убрать безусловный `error_suppressed=NULL` (`effects.h:93,114,131,801`,
-   NOVA_TRY :285) ИЛИ маршрутизировать все cleanup-throw через `nova_rethrow_with_suppressed`.
+3. ✅ **#7 РЕАЛИЗОВАН (2026-07-06):** инвариант suppressed-chain переосмыслен под модель Б — reset
+   `error_suppressed=NULL` на СВЕЖИЙ throw = ПРАВИЛЬНАЯ семантика (новая ошибка = новый карман; нет
+   утечки между несвязанными ловлями); cleanup-throw'ы НЕ «голые» — каждый локально кадрирован
+   (is_cleanup-кадр) и композируется (FAIL-path: chain на scope-кадре → `nova_rethrow_with_suppressed`;
+   interrupt-path: prepend в карман напрямую). Порядок = хронология аварий (LIFO-цепочка читается
+   back-to-front). Дыра «per-E entry не стемпит `_nova_last_error`» закрыта (stamp в начале generated
+   `_nova_throw_typed_<E>` — иначе per-E-ловля не сбрасывала карман → чужая цепочка текла в следующую).
+   Тесты: порядок [C,B] при двух авариях; пустой карман; переживание промежуточного кадра;
+   catch+rethrow; несвязанные ловли не смешиваются.
 4. typed-предикатный доступ: **`e is T`** (D54-семантика, инфра 174.3); `.downcast[T]()` НЕ вводится (§6).
 5. *(surface-вопрос закрыт — §6: имена = `errors.nv`, typed-доступ = `is`.)*
-6. **Инвариант catchability (две ошибки → MultiError НЕ подменяет эффект):** primary остаётся носителем —
-   `nova_rethrow_with_suppressed` (`effects.h:210-218`) копирует `type_id+payload` примери; `with Fail[Primary]`
-   СРАБАТЫВАЕТ, эффект НЕ становится `Fail[MultiError]`; `e.suppressed()` = [cleanup]. Инвариант обязан
-   пережить Ф.2-унификацию — regression-guard. (Упала ТОЛЬКО cleanup → primary = cleanup-ошибка.)
+6. ✅ **Инвариант catchability РЕАЛИЗОВАН + под regression-guard (2026-07-06):** primary остаётся
+   носителем; `with Fail[Primary]` СРАБАТЫВАЕТ (тест `run_typed_catch`: тело кидает `SupA`, defer кидает
+   `SupB` → typed-ловля получает `e.code`, эффект НЕ `Fail[MultiError]`, `suppressed()==[SupB]`);
+   catch+rethrow сохраняет карман (`run_catch_rethrow`). (Упала ТОЛЬКО cleanup → primary =
+   cleanup-ошибка, карман пуст — normal-exit кадры не маркируются, handler срабатывает.)
 
 **Фундамент typed-errors — type_id-инфра Plan 61 (готова):** compile-time `NOVA_TID_<E>`
 (`type_id_registry`, `emit_c.rs:1241`), typed-throw несёт `(payload, tid)`, матчинг в arm'е handler'а
 (`fail_e_map`, `emit_c.rs:1249`) → `is T` = та же проверка `type_id == NOVA_TID_T`. `any`-boxing/vtable —
 [Plan 174.3](174.3-any-type-and-is-downcast.md) (📋 PROPOSED, не начат — **реализуй ПЕРВЫМ**; Ф.4 полностью
 заблокирована до него). Ф.4 строит на готовом фундаменте, не с нуля.
-- **spec/D/Q/docs:** D158/D193 завершить (materialization); D190 (`ScopeOutcome[E]` остаётся rejected); хаб-верификация.
-- **Тесты** (раскладка §4a): pos: primary+suppressed видны в handler; typed Failure dispatch; cleanup-fail
-  во время body-fail → MultiError (не overwrite); chain переживает голый throw в unwind; **catchability**:
-  тело бросает `Primary`, `@cleanup` бросает `Cleanup2` → `with Fail[Primary]` ловит (`e` = Primary,
-  type_id сохранён), `e.suppressed() == [Cleanup2]`. neg: упала ТОЛЬКО cleanup (`Cleanup2` ≠ `Primary`) →
-  `with Fail[Primary]` НЕ ловит; **неexhaustive match по вариантам E в handler-arm → compile-error**
-  (парность Zig exhaustive error-set switch / Swift typed catch). spec_tests: d158/d193-финализация.
-- **Acceptance:** D158/D193 выполнено end-to-end; cleanup-ошибка НИКОГДА не перезаписывает body-ошибку;
-  catchability-инвариант под regression-guard; **без упрощений**.
+- **spec/D/Q/docs:** ✅ D158 амендирован (модель Б, 2026-07-06 — коммит 74329729); D190 (`ScopeOutcome[E]`
+  остаётся rejected). Хаб-верификация + D193-текст-sweep → Ф.5 п.4 (materialization-часть выполнена здесь).
+- **Тесты (выполнено 2026-07-06):** `nova_tests/err173/f4_suppressed.nv` (9 тестов): typed catchability
+  (`with Fail[SupA]` ловит, `suppressed()==[SupB]`, `is`-сужение); хронологический порядок [C,B];
+  пустой карман; переживание промежуточного кадра; catch+rethrow; несвязанные ловли раздельны.
+  spec_tests: `conformance/d158_suppressed_pocket.nv` (3 теста — модель Б, пустой карман, no-leak).
+  *(Отложено вне Ф.4: neg-тест «`with Fail[Primary]` НЕ ловит чужой тип» упирается в string-slot
+  dual-install арм без tid-check — известное поведение per-E dispatch'а Plan 61, отдельная ось;
+  неexhaustive-match-по-E compile-гейт — чекерная фича, кандидат Ф.5/followup.)*
+- **Acceptance:** ✅ **Ф.4 ЗАКРЫТА 2026-07-06.** D158 материализация end-to-end (модель Б);
+  cleanup-ошибка НИКОГДА не перезаписывает body-ошибку (и больше не hijack'ит handler/результат);
+  catchability под regression-guard; conformance 54/0; regress delta 0; **без упрощений**.
 
 ### Ф.5 — Hygiene: exactly-once + watchdog + traces + spec-sweep (СКВОЗНАЯ: пункты закрываются по готовности зависимостей)
 1. **#8:** D188 R2 exactly-once runtime-счётчик `_consume_count` + `D188-on-exit-double-invocation`

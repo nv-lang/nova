@@ -37982,3 +37982,36 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
 - **[M-153.1-append-as-slice-ccfail]** — same-arity param-type overload (`Box6[T] @tag(int)` /
   `@tag(str)`) на generic-типе схлопывался: дедуп `generic_type_methods` сравнивал name+count+
   receiver, НЕ param-типы. Fix: span-free `type_ref_overload_key` в дедупе (TypeRef без PartialEq).
+
+## 2026-07-06 — Plan 173 Ф.4 #6/#7: MultiError модель Б — карман подавленных (ветка multierror-173)
+
+Вариант Б утверждён владельцем (2026-07-06): primary отдаётся ловящему КАК ЕСТЬ (типизированная
+ловля `with Fail[Primary]` работает, эффект НЕ становится `Fail[MultiError]`); подавленные — «в
+кармане», достаются свободным аксессором `suppressed() -> []any` ПОСЛЕ ловли. Спека D158
+амендирована (баннер + §«Модель доставки — вариант Б»; конверт-модель → §«Что отвергнуто»).
+
+**Механика (НЕ упрощения — корневые фиксы):**
+- Карман = `_nova_last_error.frame.error_suppressed` (инфра Ф.4 #5). Заполнение: FAIL-path —
+  зеркало в `nova_rethrow_with_suppressed` (transport-chokepoint); interrupt-path — per-cleanup
+  `NovaFailFrame` вокруг defer-тел + prepend-compose в карман (LIFO-цепочка → `suppressed()`
+  ходит back-to-front → хронологический порядок аварий). Reset на каждый свежий throw (все
+  stamp-сайты) → нет утечки между несвязанными ловлями (#7).
+- **Hijack-фикс:** cleanup-throw во время unwind диспатчился в ещё-установленный with-Fail
+  handler (string-slot arm БЕЗ tid-check → мисфайр на чужом payload, перезапись результата,
+  двойной прогон defer). Теперь `NovaFailFrame.is_cleanup` + `nova_in_cleanup_unwind()`-байпас
+  в `Nova_Fail_fail`/`nova_throw_typed`/generated per-E entries; unwind-кадры маркирует codegen
+  (defer `_tdf`/`_idf`, consume FromFrame|Interrupt). Handler-wrap ВНУТРИ cleanup работает
+  (свой не-cleanup кадр); normal-exit cleanup — handler срабатывает (ошибка = primary).
+- **Per-E stamp-дыра (#5-хвост):** `_nova_throw_typed_<E>` не стемпил `_nova_last_error`
+  (арм interrupt'ует → erased-fallback не достигался) → пре-E ловля не сбрасывала карман
+  (чужая цепочка текла в следующую ловлю). Stamp перенесён В НАЧАЛО generated entry
+  (зеркало «capture BEFORE dispatch» из Nova_Fail_fail).
+- `nova_interrupt_push_defer` зануляет `value`/`value_ptr` (re-issue пробует value_ptr;
+  stack-garbage уводил int-interrupt в pointer-роут → мусорный результат with-блока).
+
+**Остатки (документированы, вне периметра Ф.4):**
+- 🟡 `[M-110-multierror-any]`-хвост: поля типа `MultiError` (`primary`/`suppressed`) остаются
+  `str` — тип теперь ОПЦИОНАЛЬНАЯ value-обёртка (не конверт эффекта), typed-агрегация поверх
+  `suppressed()` при спросе.
+- 🟡 Single-file `nova build`: `el is T` на элементе `[]any` даёт `unknown variant`
+  (folder-module `nova test` — ок); pre-existing checker-quirk одиночного CU.
