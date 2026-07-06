@@ -60,6 +60,18 @@ typedef struct NovaFailFrame {
     void*              error_user_payload; /* Plan 61 Ф.2 typed user payload */
     NovaTypeId         error_user_type_id; /* Plan 61 Ф.2 NovaTypeId of payload */
     NovaErrorChain*    error_suppressed;   /* Plan 100.4.1 D158 — head of suppressed chain (NULL = no chain) */
+    /* Plan 173 Ф.4 #6 (D158 model B): 1 = per-cleanup frame wrapped around a
+     * defer/consume-cleanup body running while ANOTHER error is unwinding
+     * (FAIL / interrupt exit-paths). While the NEAREST frame is a cleanup
+     * frame, throw dispatchers SKIP handler dispatch (Nova_Fail_fail /
+     * nova_throw_typed / generated per-E entries) — a failing cleanup must
+     * compose into the suppressed pocket, NOT hijack the scope's own
+     * with-Fail handler (which would misfire a typed arm on a foreign payload
+     * and overwrite the in-flight result). An explicit handler-wrap INSIDE
+     * the cleanup body pushes its own non-cleanup frame → dispatch works
+     * (D158 backward-compat silent-suppress idiom preserved). Normal-exit
+     * cleanup frames are NOT marked (their failure = primary; handler fires). */
+    int                is_cleanup;
     struct NovaFailFrame* prev;
 } NovaFailFrame;
 
@@ -71,8 +83,17 @@ extern __thread NovaFailFrame* _nova_fail_top;
 #endif
 
 static inline void nova_fail_push(NovaFailFrame* f) {
+    f->is_cleanup = 0;  /* Plan 173 Ф.4 #6: default; codegen marks cleanup frames */
     f->prev = _nova_fail_top;
     _nova_fail_top = f;
+}
+
+/* Plan 173 Ф.4 #6 (D158 model B): true while the nearest fail-frame is a
+ * per-cleanup frame (unwind in progress) — throw dispatchers bypass handler
+ * dispatch so the cleanup failure lands in that frame and composes into the
+ * suppressed pocket instead of hijacking the scope's handler. */
+static inline int nova_in_cleanup_unwind(void) {
+    return _nova_fail_top && _nova_fail_top->is_cleanup;
 }
 
 static inline void nova_fail_pop(void) {
@@ -258,6 +279,21 @@ static inline void nv_compose_suppressed(NovaFailFrame* primary,
  *
  * `frame` уже popped (nova_fail_pop called); _nova_fail_top points to outer. */
 static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
+    /* ──────────────────────────────────────────────────────────────────
+     * Plan 173 Ф.4 #6 (D158 model B): mirror the composed suppressed chain
+     * into the thread-local `_nova_last_error` snapshot — the readable
+     * "pocket". Model B keeps `primary` the sole in-effect carrier (a typed
+     * `with Fail[Primary]` still catches; the effect never becomes
+     * `Fail[MultiError]`); the accompanying cleanup-failures travel out of
+     * band in this pocket and are read post-catch by the `suppressed()`
+     * accessor. `nova_rethrow_with_suppressed` is the single transport
+     * chokepoint (defer/consume TRANSPARENT terminal + panic/cancel via
+     * nova_scope_exit), so mirroring here populates the pocket for whichever
+     * outer fail-frame ultimately catches. A fresh `throw` resets the pocket
+     * (nova_last_error_set → error_suppressed = NULL), so an empty chain here
+     * surfaces as an empty pocket (task #7: no leak between unrelated catches;
+     * the reset happens per originating throw). */
+    _nova_last_error.frame.error_suppressed = frame->error_suppressed;
     if (_nova_fail_top) {
         _nova_fail_top->error_msg          = frame->error_msg;
         _nova_fail_top->error_kind         = frame->error_kind;
@@ -529,9 +565,16 @@ static inline void nova_interrupt_push(NovaInterruptFrame* f) {
 }
 
 /* Plan 61 followup #1: defer-scope push — sets kind=DEFER_SCOPE так что
- * nova_interrupt при cross-effect routing preserves defer cleanup chain. */
+ * nova_interrupt при cross-effect routing preserves defer cleanup chain.
+ * Plan 173 Ф.4 #6: value/value_ptr ZEROED — the defer intercept re-issues by
+ * probing `value_ptr` (pointer-route if non-NULL); stack-garbage value_ptr
+ * would silently reroute an int-valued interrupt through the pointer slot
+ * (garbage result). nova_interrupt/interrupt_ptr set exactly ONE slot, so
+ * the other must be deterministically zero. */
 static inline void nova_interrupt_push_defer(NovaInterruptFrame* f) {
     f->kind = NOVA_IFRAME_DEFER_SCOPE;
+    f->value = 0;
+    f->value_ptr = NULL;
     f->prev = _nova_interrupt_top;
     f->saved_handler_iframe = _nova_current_handler_iframe;
     _nova_interrupt_top = f;
@@ -852,7 +895,8 @@ static inline nova_unit Nova_Fail_fail(nova_str msg) {
      * returns to the `nova_throw(msg)` fallback below, so the stable snapshot
      * must be stamped here for the interrupt-unwound cleanup to recover it. */
     nova_last_error_set(msg, NOVA_THROW_USER, NULL, NOVA_TID_NONE);
-    if (_nova_handler_Fail) {
+    /* Plan 173 Ф.4 #6: cleanup-unwind bypasses handler dispatch (model B). */
+    if (_nova_handler_Fail && !nova_in_cleanup_unwind()) {
         NovaVtable_Fail* current = _nova_handler_Fail;
         NovaInterruptFrame* saved_handler_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail = current->prev;        /* swap для re-throw */
@@ -924,8 +968,9 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
         _nova_fail_top->error_user_type_id = tid;
         _nova_fail_top->error_suppressed   = NULL;  /* Plan 100.4.1 D158 */
     }
-    /* Step 2: erased typed slot. */
-    if (_nova_handler_Fail_any) {
+    /* Step 2: erased typed slot.
+     * Plan 173 Ф.4 #6: cleanup-unwind bypasses handler dispatch (model B). */
+    if (_nova_handler_Fail_any && !nova_in_cleanup_unwind()) {
         NovaVtable_Fail_any* current = _nova_handler_Fail_any;
         NovaInterruptFrame* saved_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail_any = current->prev;
@@ -937,8 +982,9 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
     }
     /* Step 3: legacy string slot — handler arm может быть typed (читает
      * payload через fail-frame) или string-based (читает msg). Оба работают:
-     * payload уже в frame (выше). */
-    if (_nova_handler_Fail) {
+     * payload уже в frame (выше).
+     * Plan 173 Ф.4 #6: cleanup-unwind bypasses handler dispatch (model B). */
+    if (_nova_handler_Fail && !nova_in_cleanup_unwind()) {
         NovaVtable_Fail* current = _nova_handler_Fail;
         NovaInterruptFrame* saved_iframe = _nova_current_handler_iframe;
         _nova_handler_Fail = current->prev;

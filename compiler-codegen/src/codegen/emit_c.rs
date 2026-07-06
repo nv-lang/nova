@@ -1792,12 +1792,25 @@ impl CEmitter {
                 m = mangled
             ));
             out.push_str("#endif\n");
-            out.push_str("/* Per-E throw entry: prefer per-E slot, fallback на erased nova_throw_typed. */\n");
+            out.push_str("/* Per-E throw entry: prefer per-E slot, fallback на erased nova_throw_typed.\n");
+            out.push_str(" * Plan 173 Ф.4 #6 (D158 model B): cleanup-unwind bypasses handler dispatch —\n");
+            out.push_str(" * a failing cleanup composes into the suppressed pocket, не hijack'ит handler. */\n");
             out.push_str(&format!(
                 "static inline nova_unit _nova_throw_typed_{m}({ea} payload) {{\n",
                 m = mangled, ea = e_arg
             ));
-            out.push_str(&format!("    if (_nova_handler_Fail_{m}) {{\n", m = mangled));
+            // Plan 173 Ф.4 #5/#6: stamp the STABLE snapshot BEFORE per-E dispatch
+            // (mirror of Nova_Fail_fail «capture BEFORE dispatch»): the arm usually
+            // `interrupt`s (longjmp) — the erased fallback below never runs, so
+            // without this the fresh throw would neither reset the suppressed
+            // pocket (previous catch's chain would leak into this one) nor expose
+            // the typed identity to interrupt-unwound cleanups.
+            out.push_str(&format!(
+                "    nova_last_error_set(nova_str_from_cstr(\"<{m}>\"), NOVA_THROW_USER_TYPED, (void*)payload, NOVA_TID_USER_{m});\n",
+                m = mangled));
+            out.push_str(&format!(
+                "    if (_nova_handler_Fail_{m} && !nova_in_cleanup_unwind()) {{\n",
+                m = mangled));
             out.push_str(&format!("        NovaVtable_Fail_{m}* current = _nova_handler_Fail_{m};\n",
                 m = mangled));
             out.push_str("        NovaInterruptFrame* saved_if = _nova_current_handler_iframe;\n");
@@ -19375,6 +19388,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.line(&format!("{} = 0;", entry.active_var));
             self.line(&format!("NovaFailFrame {};", df));
             self.line(&format!("nova_fail_push(&{});", df));
+            // Plan 173 Ф.4 #6 (model B): unwind-path cleanup — a failing body
+            // must land HERE (compose), не в scope-handler (dispatch bypass).
+            self.line(&format!("{}.is_cleanup = 1;", df));
             self.line(&format!("{}.error_suppressed = NULL;", df));
             self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
             self.indent += 1;
@@ -19423,11 +19439,68 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.indent += 1;
         // Interrupt path: invoke defer (Plan 173 Ф.1 #4 — все defer'ы плейн,
         // бегут на interrupt так же как на normal/error exit).
-        for entry in entries.iter().rev() {
+        //
+        // Plan 173 Ф.4 #6 (D158 model B): a `with Fail = |e| interrupt …` catch
+        // recovers the primary at the throw-site, then unwinds THIS scope via
+        // `interrupt` (kind=DEFER_SCOPE keeps `_nova_last_error.live` set). A
+        // cleanup that ITSELF fails while unwinding must NOT be lost and must NOT
+        // hijack the interrupt — it composes into the suppressed "pocket"
+        // (`_nova_last_error.frame.error_suppressed`, read post-catch by
+        // `suppressed()`). Each cleanup body runs in its own NovaFailFrame so a
+        // throwing cleanup returns here (compose + continue re-issue) instead of
+        // longjmp'ing past the remaining cleanups. A cleanup PANIC (D13
+        // abort-class) is NOT swallowed — it re-raises via nv_panic.
+        for (i, entry) in entries.iter().enumerate().rev() {
             self.line(&format!("if ({}) {{", entry.active_var));
+            self.indent += 1;
+            let idf = format!("_defer_{}_{}_idf", block_id, i);
+            let saved = format!("_defer_{}_{}_idf_supp", block_id, i);
+            // Preserve the accumulating pocket across the cleanup's OWN throw:
+            // a throwing cleanup calls nova_throw*/nova_last_error_set, which
+            // resets `_nova_last_error.frame.error_suppressed = NULL`. Snapshot
+            // the head first, then relink the composed node onto it — so each
+            // firing cleanup PREPENDS rather than clobbering the chain.
+            self.line(&format!(
+                "NovaErrorChain* {} = _nova_last_error.frame.error_suppressed;", saved));
+            self.line(&format!("NovaFailFrame {};", idf));
+            self.line(&format!("nova_fail_push(&{});", idf));
+            // Plan 173 Ф.4 #6 (model B): unwind-path cleanup — dispatch bypass
+            // (см. FAIL-path `_tdf` mark; иначе scope-handler misfires/hijacks).
+            self.line(&format!("{}.is_cleanup = 1;", idf));
+            self.line(&format!("{}.error_suppressed = NULL;", idf));
+            self.line(&format!("if (setjmp({}.jmp) == 0) {{", idf));
             self.indent += 1;
             // Plan 173 Ф.2.B2: interrupt-path → Failure (core.nv:130).
             let _ = self.emit_defer_body_with_outcome(&entry.outcome_binding, &entry.body, DeferOutcome::Interrupt);
+            self.line("nova_fail_pop();");
+            // Clean cleanup: restore the pocket (an inner throw+catch inside the
+            // body may have reset it) — the accumulated chain must survive.
+            self.line(&format!("_nova_last_error.frame.error_suppressed = {};", saved));
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            self.line("nova_fail_pop();");
+            // Cleanup failed while unwinding an interrupt-recovered error.
+            self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", idf));
+            self.indent += 1;
+            // D13: a cleanup panic dominates — re-raise (fiber death), не глотаем.
+            self.line(&format!("nv_panic({}.error_msg);", idf));
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            // Compose (prepend) into the suppressed pocket; head = most-recent
+            // (suppressed() walks back-to-front → chronological firing order).
+            self.line("NovaErrorChain* _inode = (NovaErrorChain*)nova_alloc(sizeof(NovaErrorChain));");
+            self.line(&format!("_inode->msg = {}.error_msg;", idf));
+            self.line(&format!("_inode->kind = {}.error_kind;", idf));
+            self.line(&format!("_inode->user_payload = {}.error_user_payload;", idf));
+            self.line(&format!("_inode->user_type_id = {}.error_user_type_id;", idf));
+            self.line(&format!("_inode->next = {};", saved));
+            self.line("_nova_last_error.frame.error_suppressed = _inode;");
+            self.indent -= 1;
+            self.line("}");
+            self.indent -= 1;
+            self.line("}");
             self.indent -= 1;
             self.line("}");
         }
@@ -20061,10 +20134,18 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     fn emit_consume_entry_cleanup(&mut self, policy: &ConsumePolicy, outcome: DeferOutcome, df: &str, tail: ConsumeTail) {
         // §0: cleanup symbol derived from the type name (pinned R2), never hardcoded.
         let cleanup_sym = format!("Nova_{}_consume_cleanup", policy.type_name);
+        // Plan 173 Ф.4 #6 (model B): FAIL/INTERRUPT run-sites = cleanup during
+        // unwind → mark the frame so throw dispatch bypasses handlers (failure
+        // composes into the pocket). LEAVE/EARLY (Success) = normal exit → the
+        // cleanup failure IS the primary; handlers fire as usual.
+        let unwind_cleanup = matches!(outcome, DeferOutcome::FromFrame(_) | DeferOutcome::Interrupt);
         let o_local = self.fresh_tmp();
         self.materialize_scope_outcome(&o_local, outcome);
         self.line(&format!("NovaFailFrame {};", df));
         self.line(&format!("nova_fail_push(&{});", df));
+        if unwind_cleanup {
+            self.line(&format!("{}.is_cleanup = 1;", df));
+        }
         self.line(&format!("{}.error_suppressed = NULL;", df));
         self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
         self.indent += 1;
@@ -25251,6 +25332,56 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         tmp, tid, some, none
                     ));
                 }
+            }
+        }
+        // Plan 173 Ф.4 #6 (D158 model B): `suppressed()` — free accessor returning
+        // the just-caught primary error's suppressed cleanup-failures as `[]any`,
+        // read from the thread-local pocket `_nova_last_error.frame.error_suppressed`
+        // (populated at the catch by `nova_rethrow_with_suppressed`). Model B keeps
+        // `primary` the sole in-effect carrier (`with Fail[Primary]` still catches;
+        // the effect never becomes `Fail[MultiError]`); the accompanying cleanup
+        // failures are surfaced out of band here. Elements are `any` — narrowable via
+        // `is T` / `.try_as[T]()` (#5 infra). Order = chronological (first-failed
+        // first): the LIFO compose-chain is walked back-to-front via the ready-made
+        // read-accessors `nova_failframe_suppressed_count` / `_at` (plan §Ф.4 #1).
+        if let ExprKind::Ident(name) = &func.kind {
+            if name == "suppressed" && args.is_empty()
+                && !self.var_types.contains_key("suppressed")
+            {
+                let str_info = self.register_any_typeinfo("nova_str");
+                let arr = self.fresh_tmp();
+                let cnt = self.fresh_tmp();
+                let idx = self.fresh_tmp();
+                let node = self.fresh_tmp();
+                let boxed = self.fresh_tmp();
+                let sm = self.fresh_tmp();
+                self.line(&format!(
+                    "NovaArray_void_p* {} = nova_array_new_void_p(0);", arr));
+                self.line(&format!(
+                    "int {} = nova_failframe_suppressed_count(&_nova_last_error.frame);", cnt));
+                self.line(&format!("for (int {i} = {c} - 1; {i} >= 0; {i}--) {{", i = idx, c = cnt));
+                self.indent += 1;
+                self.line(&format!(
+                    "NovaErrorChain* {} = nova_failframe_suppressed_at(&_nova_last_error.frame, {});",
+                    node, idx));
+                self.line(&format!("void* {};", boxed));
+                self.line(&format!("if ({}->user_payload != NULL) {{", node));
+                self.indent += 1;
+                self.line(&format!(
+                    "{} = nova_any_from_boxed({}->user_payload, {}->user_type_id);",
+                    boxed, node, node));
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                self.line(&format!("nova_str {} = {}->msg;", sm, node));
+                self.line(&format!(
+                    "{} = nova_any_box(&{}, &{}, sizeof(nova_str));", boxed, str_info, sm));
+                self.indent -= 1;
+                self.line("}");
+                self.line(&format!("nova_array_push_void_p({}, {});", arr, boxed));
+                self.indent -= 1;
+                self.line("}");
+                return Ok(arr);
             }
         }
         // [M-91.1-method-turbofish-dispatch] Plan 91 Ф.1: method-level turbofish.
