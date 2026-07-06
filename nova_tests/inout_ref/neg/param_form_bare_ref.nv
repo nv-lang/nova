@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_REF_PARAM_FORM_REMOVED
+//
+// D326-ревизия (Plan 184 Р3/Р10): голая форма `ref x T` в параметре удалена —
+// `ref` больше не пишется в сигнатуре. Пишите `mut x T` (in-out) либо `x T` (ro).
+module neg.param_form_bare_ref
+
+fn bad(ref a int) { a = a + 1 }
+
+test "bare ref param form removed" {
+    mut x = 0
+    bad(x)
+    assert(true)
+}

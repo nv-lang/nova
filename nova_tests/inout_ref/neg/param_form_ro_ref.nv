@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_REF_PARAM_FORM_REMOVED
+//
+// D326-ревизия (Plan 184 Р3/Р10): форма `ro ref x T` в параметре удалена —
+// представление ro-параметра выбирает компилятор по размеру. Пишите `x T`.
+module neg.param_form_ro_ref
+
+fn peek(ro ref a int) -> int => a
+
+test "ro ref param form removed" {
+    ro x = 7
+    ro _ = peek(x)
+    assert(true)
+}

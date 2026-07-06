@@ -98,3 +98,65 @@
 эскейп) → Ф.3 кодогенератор (локалы-ссылки; параметры уже by-pointer) →
 Ф.4 миграция+тесты (позитив: локал-алиас, цепочки на value; негатив: поле-ссылка,
 утечка, неоднозначная перегрузка) → Ф.5 закрытие.
+
+## 5. Ход реализации
+
+### Заход 1 — Ф.0 + Р11-аудит + Ф.1 (2026-07-06, ЗАВЕРШЁН)
+
+**Ф.0 (спека, коммит `spec(184)`):**
+- D326 (02-types.md): вставлен нормативный раздел «Ревизия D326 (Plan 184): `ref T` —
+  ограниченный тип» с правилами Р1–Р14; переворот «режим, НЕ тип» → «ограниченный тип»;
+  баннер-ретракция над исходным текстом; ⛔-маркеры на старых R1/R4; Q29-история уточнена.
+- D84 (10-overloading.md): подраздел «Ось режима {ro, mut, consume} — единая для ресивера и
+  параметров (Р13/Р14)» — правило диспатча, `E_OVERLOAD_REF_AMBIGUOUS` не нужен.
+- D181 (02-types.md): амендмент-упрощение — `-> @` = `-> ref Self` (value) / `-> Self` (heap)
+  по таблице Р7 вместо эвристик RETURN-оракула/escape-decay.
+
+**Р11 (аудит mut-параметров):** grep всех non-receiver `mut x T` по std/spec_tests/examples/
+nova_tests. Итог — 4 в **Категории A** (полагаются на приватность копии → миграция на локал
+`mut y = x` в Ф.2):
+1. `spec_tests/conformance/d32_param_passing_mut_ref_vs_value.nv:21` (`fn d32_bump(mut x int)`;
+   тест ассертит `n == 5` после мутации — канон by-value).
+2. `spec_tests/conformance/d228_value_record_copy_contract.nv:34` (`fn d228_clobber(mut v
+   D228Vec3)`; value-record copy-contract).
+3. `std/collections/vec_lazy.nv:228` (`@zip(mut other BoxIter[B])` — захватывает `other` в
+   возвращаемый BoxIter; под in-out → dangling; миграция `mut owned = other`).
+4. `std/collections/vec_lazy.nv:248` (`@chain(mut other BoxIter[T])` — то же).
+   Остальные mut-параметры (write-sinks `mut w Write`, аккумуляторы `mut acc Vec[T]`,
+   heap-record/atomic мутации, iterator-consumers) — Категория B (уже in-out по замыслу /
+   не мутируют / вызывающий не переиспользует). **Вторичная оговорка:** после Ф.2 `mut x T` =
+   строгая in-out ссылка → `ro`/rvalue-аргументы к `mut`-параметру (десятки call-site по репе:
+   `bump_by_5(c)` при `ro c`, `sum_iter(CountDown.new(5))`, …) могут потребовать реджекта на
+   call-site — широкая поверхность, решать в Ф.2.
+
+**Ф.1 (парсер, коммит `parser(184)`):**
+- Удалён call-site маркер `f(ref x)` → `E_REF_CALL_MARKER_REMOVED` (hint «пишите `f(x)`»)
+  в `parse_call_arg_value` (parser/mod.rs).
+- Удалены формы `mut ref`/`ro ref`/`ref` в параметре → `E_REF_PARAM_FORM_REMOVED` (контекстный
+  hint) в `parse_param` (parser/mod.rs). `ParamRefMode` всегда `None` от парсера.
+- Фикстуры `nova_tests/inout_ref` мигрированы: негативы форм/маркера → новые коды
+  (`param_form_mut_ref`, `param_form_ro_ref`, `param_form_bare_ref`, `call_marker_removed` —
+  7 neg зелёные); `ref_not_a_type_*` и `consume_returns_at` сохранены без изменений.
+- Гейт: Rust-сборка чистая; delta против baseline (main-двоичник, изолированные прогоны) = 0
+  новых (структурно: `ref`-keyword не встречается в .nv вне inout_ref — подтверждено grep'ом).
+
+### Точки возобновления (Заход 2+)
+
+- **Ф.1-остаток — локалы-ссылки `ro y ref T = expr` (Р1):** НЕ реализовано. `ref` в
+  тип-позиции пока остаётся `E_REF_NOT_A_TYPE` (parser/mod.rs `parse_type`). Требует: тип-узел
+  `Ref(T)` (или использование `ResolvedType::Ref` из 172.12), парс формы локала, эскейп-правила.
+- **Ф.2 (чекер) — in-out семантика `mut x T` для стековых типов:** НЕ реализовано (умышленно,
+  чтобы не ломать зелёное дерево). Сейчас парсер принимает `mut x T`, но **чекер оставлен
+  старый** (приватная копия). Ф.2 вводит: тип `Ref(T)` в носителе, нормализацию Р6
+  (`ref H ≡ H`), запрет позиций Р1 (поля/коллекции/суммы/Option → `E_REF_TYPE_POSITION`),
+  эскейп Р8, расширение эксклюзивности Р12 (`E_REF_ALIAS_OVERLAP` на mut×любой), перегрузку
+  Р13/Р14 (тройная ось). **Перед Ф.2 — выполнить миграцию 4 Категория-A mut-параметров
+  (Р11-аудит выше) на явные локалы**, иначе d32/d228-конформансы и vec_lazy сломаются.
+- **Ф.2 — re-add фикстур:** удалённые в Заходе 1 checker-фикстуры (`arg_not_mut`,
+  `arg_not_addressable`, `alias_overlap_*`, `ref_escape_capture`) и pos-behavior
+  (`d326_mut_ref_basic/record`) пересоздать под НОВУЮ модель `mut x T` (позитив: in-out на
+  value/цепочки; негатив: поле-ссылка, утечка, Р12-оверлап, неоднозначная перегрузка).
+- **Мёртвый код от Захода 1:** `ExprKind::RefArg`, `ParamRefMode::{RoRef,MutRef}` и связанные
+  checker-пути (`check_ref_arg_modes`, `mut_ref_param_names`, `E_REF_MARKER_*`,
+  `E_REF_MODE_REQUIRES_RO_OR_MUT`) больше не производятся парсером — удалить/переиспользовать
+  в Ф.2/Ф.3.
