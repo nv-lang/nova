@@ -1602,14 +1602,59 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `errdefer`/`okdefer`/`defer |result|` ретракнуты (D189, hard cutover); парсер реджектит их
   tombstone-хинтом `[D189-removed-*]` (`parser/mod.rs:10052-10090`). **(1) USER-FACING БАГ (P1) —
 
-- **[M-vec-access-e7320-as-bytes-str]** (2026-07-06, P2, найден агентом of-guard) — `nova test
-  --full std/collections/vec` даёт CODEGEN-FAIL юнита `vec/access`: три ошибки
-  `[E7320] no field or method as_bytes on type str` со спанами access.nv:89/99/107 (зона
-  `e == v` в `@contains`/`@index_of` + doc-комментарий). При этом в модуле vec НЕТ ни одного
-  вызова `as_bytes` в коде (только комментарии) и НЕТ инстансов `Vec[str]`; `str @equal`
-  использует RawMem.compare, не as_bytes. Вызов синтезируется компилятором где-то в CU,
-  спаны CU-меток съехали (известная болезнь). Pre-existing на main (проверено тем же
-  бинарём до правок of-guard). Разведка корня — opus-агент 2026-07-06.
+- ✅ **FIXED [M-vec-access-e7320-as-bytes-str]** (2026-07-06 найден / 2026-07-07 исправлен) — `nova
+  test --full std/collections/vec` давал CODEGEN-FAIL юнита `vec/access`: `[E7320] no field or
+  method as_bytes on type str` со спанами access.nv:89/99/107, при этом в vec НЕТ ни одного
+  вызова `as_bytes`. Корень (двойной): (1) частичный prelude `#prelude(core, runtime, collections,
+  protocols)` не привозит `std.runtime.string`/`std.runtime.char` — `#no_prelude`-хелперы
+  string_builder.nv/write_buffer.nv (притянуты пакетом `collections`) зовут
+  `str.@as_bytes()`/`char.try_from()`, рассчитывая на то, что consumer уже привёз ПОЛНЫЙ prelude;
+  под частичным prelude(collections) эти символы никогда не привозились → E7320 в ЛЮБОМ CU с
+  частичным prelude(collections). (2) раннер рендерил кросс-файловые диагностики через
+  `SrcResolver::Single`, игнорирующий `span.file_id` (`test_runner.rs` → `diag.rs`), поэтому ошибка
+  печаталась на ложных координатах entry-файла — отсюда впечатление «фантомного as_bytes на
+  access.nv». Фикс 1 (вариант A): `std/prelude/collections.nv` теперь явно довозит
+  `std.runtime.string`, `std.runtime.char` и `std.prelude.errors.{CharTryFromError,
+  TryFromCharError, ReadBufferError, UnexpectedEnd}` (error-типы нужны on hop deeper —
+  `char.try_from`/`ReadBuffer.@read_*` конструируют их) плюс `std.runtime.defaults` (u8/int/…
+  `@compare`, нужен ещё on hop deeper — `Vec[T Compare] @compare`, транзитивно притянутый через
+  `std.runtime.string` → `std.collections.vec.{Vec}`, иначе элемент-wise compare для `Vec[u8]`
+  молча мис-диспатчился на `str`'s compare). Фикс 2 (вариант D):
+  `Diagnostic::render_with_map(&SourceMap)` — `codegen_to_c` (test_runner.rs) теперь строит
+  `SourceMap` из `module.peer_files` (заполнен `resolve_imports_inline_ex`, строго по возрастанию
+  `file_id`; non-entry файлы перечитываются с диска для diagnostic-рендера) и рендерит через него
+  все диагностики ПОСЛЕ разрешения импортов (checker/lints/verify/const-fn errors) — cross-file
+  спаны показывают ИСТИННЫЙ файл. Регресс: `spec_tests/conformance/partial_prelude/
+  d371_partial_prelude_collections.nv` (изолированный под-модуль — `#prelude(...)` целый-CU
+  атрибут нельзя воткнуть одним peer'ом в разделяемый 182-файловый `spec_tests.conformance`, ломает
+  folder-module peer detection для остальных 181). Гейты: `vec --full` 2/2 PASS (access теперь
+  проходит); conformance --positive --compile-error 54/0 (53 база + 1 новый); nova_tests/buffers
+  2/2 PASS. Durable-семейство (эта же категория дефекта, шире E7320) — заведено отдельным маркером
+  [M-partial-prelude-primitive-method-registry] ниже.
+
+- **[M-partial-prelude-primitive-method-registry]** (2026-07-07, P2, Wave: фикс-очередь §4а /
+  план 172-семья) — durable-семейство, вариант C из разведки [M-vec-access-e7320-as-bytes-str]:
+  сейчас «метод примитива известен компилятору» ЖЁСТКО связано с «файл, объявляющий этот метод,
+  физически слит в текущий CU» (через `#prelude`/`import`). Каждый раз, когда `#no_prelude`
+  runtime-файл (char.nv, defaults.nv, string/core.nv, read_buffer.nv, write_buffer.nv,
+  string_builder.nv) использует чужой примитив-метод/error-тип, а не декларирует его как
+  собственную зависимость, любой ЧАСТИЧНЫЙ prelude, который его притягивает без «попутчика» из
+  полного prelude, ловит либо E7320/undeclared-identifier (найдено и залатано точечно в этом
+  заходе — as_bytes, char.try_from, CharTryFromError/TryFromCharError, ReadBufferError/
+  UnexpectedEnd, u8/int `@compare` из defaults.nv), либо ТИХИЙ мис-диспатч на C-уровне без
+  Nova-диагностики (Vec[T Compare] на T=u8 при отсутствии `std.runtime.defaults` в CU молча звал
+  `str`'s compare вместо `u8`'s — не репортилось как ошибка чекером, только как C-compile
+  type-mismatch). Точечные патчи в `std/prelude/collections.nv` закрыли ИМЕННО тот набор символов,
+  который нужен `collections`-facade; тот же паттерн латентен для ЛЮБОЙ другой partial-prelude
+  комбинации (core-only, runtime-only, …) и для ЛЮБОГО другого `#no_prelude` runtime-файла, чьи
+  транзитивные зависимости ещё не перечислены. Durable-фикс: зарегистрировать сигнатуры методов
+  примитивов (и error-типы, которые они конструируют) как lang-item в чекере — развязать «метод
+  известен» от «файл слит в CU», вместо ручного заведения explicit-import на каждый найденный hop.
+  Смежная находка того же захода: `std/unicode/collate.nv:236/245` (`cur_consumed`/`prev_ccc`
+  undefined identifier) — пред-существующий дефект от sweep-коммита `af4df4bdf`, НЕ относится к
+  этому маркеру, но блокирует `nova_tests/strings` (str_builder_consume_test и др., через общий
+  folder-module `nova_tests.strings`) от полного прогона; отдельный маркер не заведён — просто
+  зафиксировано здесь как побочная находка.
 
 - **[M-test-runner-shared-temp-collision]** (2026-07-07, P2, Wave: фикс-очередь §4а после разведки
   E7320) — параллельные прогоны `nova test` из разных процессов бьются на общем
@@ -1617,4 +1662,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (наблюдалось 52/1 на эталонных при четырёх фоновых агентах; с приватным TEMP стабильно 53/0;
   впервые диагностировано sweep-агентом). Фикс: включить PID/уникальный суффикс процесса в
   корень temp-каталога раннера (test_runner.rs). До фикса процессное правило: параллельные
-  прогоны — только с приватным TEMP/TMP.
+  прогоны — только с приватным TEMP/TMP. Наблюдалось СНОВА в этом заходе (nova_tests/plan62/
+  duplicate_hashable_protocol флапал PASS/PASS/RUN-FAIL на 3 последовательных прогонах с одним и
+  тем же биноремым/кодом — подтверждает, что проблема не только в параллельных прогонах, но и в
+  повторных последовательных с одной и той же приватной TEMP-директорией).
