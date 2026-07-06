@@ -13800,9 +13800,32 @@ record→struct, `Vec`→seq, `HashMap[str,_]`→map, `Option`→option (None→
 
 `JsonSerializer` (stack-machine building `JsonValue` → `@into()`) / `JsonDeserializer` (cursor over `JsonValue`) layered on the existing `JsonValue`/`Json.parse` (Q11, reuse — not a new parser). Public API = **free functions** `json_encode[T]` / `json_decode[T]` / `json_encode_pretty` / `json_to_value` / `json_from_value` / `json_decode_bytes` / `json_decode_with` (NOT `Json.encode` namespace-static: turbofish on a namespace/type-static generic method does not monomorphize — Ф.0-verify empirics; free-fn turbofish does. Followup [M-180-namespace-static-generic-mono]). depth-guard (Q14 default 128 → `DepthLimitExceeded`). `ParseJsonError` → `DeError{Syntax(msg)}` with line/col preserved in the message. Map encode sorts keys (determinism). **Contract for Plan 178 record-DTO** (`json_decode[T]` / `json_encode`).
 
-## D345 — sum auto-derive + tagging (Plan 180) — GATED
+## D345 — sum auto-derive + tagging (Plan 180)
 
-`match`-arm-per-variant synth + externally(default)/internally/adjacently/untagged tagging. **GATE**: sum-rich auto-derive ([M-126-sum-equal-rich]/-clone-rich/-hash-rich OPEN); auto_derive.rs sum-arms are placeholders. NOT landed. NOT on Plan 178's critical path (record-DTO suffices).
+**Ф.1 — sum rich data-protocol synth (✅ landed 2026-07-06).** The six built-in
+protocols (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`) now synthesize
+`match @ { … }` with one arm per variant instead of the old placeholders
+(equal=identity, hash=0, clone=self, compare=0, display/debug=typename). Per
+`SumVariantKind`: `Unit` (no payload / bare-ctor reconstruction), `Tuple(tys)`
+(positional binds, `V(a0,a1)`), `Record(fields)` (named binds, `V { f }`).
+- `@equal`: `V(a..) => match other { V(b..) => a==b && …, _ => false }` — same
+  variant + payload-wise `==`; different variant → false.
+- `@hash`: variant-index seed (`idx+1`) combined with each payload's `.hash()`
+  via the record-path rotate-XOR; distinct unit variants hash apart.
+- `@clone`: match-arm reconstruction — primitives shallow-copied, composites
+  `.clone()`d; `Unit`→bare ctor, `Tuple`→`V(clone…)`, `Record`→`V { f: clone }`.
+- `@compare`: extract both variant indices, compare those first; on tie compare
+  payloads lexicographically (`ro c = a.compare(b); if c != 0 { return c }`).
+- `@display`/`@debug`: `"V"` / `"V(x, y)"` / `"V { f: x, g: y }"`; display routes
+  primitives via `w.write_str(str.from(x))`, debug uniformly `x.debug(w)`.
+These inject AFTER type-check (like the record-path), so the emitted `match` /
+variant-patterns / variant-construction are lowered by codegen's annotation-free
+inference (scrutinee `@` + `other: Self` types known). [M-126-sum-*-rich] CLOSED.
+
+**Ф.2-sum / Ф.5 — serde sum-derive + tagging.** `match`-arm-per-variant
+`@serialize`/`.deserialize` + externally(default)/internally/adjacently/untagged
+tagging — builds on the Ф.1 pattern/ctor infra. See Plan 180 Ф.2-sum. NOT on
+Plan 178's critical path (record-DTO suffices).
 
 ## D346 — serde soundness invariants (Plan 180)
 

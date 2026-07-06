@@ -1,0 +1,83 @@
+// Plan 180 Ф.1 (D345) — sum-type RICH auto-derive, all six protocols.
+// Closes [M-126-sum-equal-rich]/-clone-rich/-hash-rich (+ -compare-rich/-fmt-rich).
+//
+// Before Plan 180 Ф.1 the sum-arms of every synthesizer were placeholders:
+//   equal=identity, hash=literal 0, clone=self, compare=0, display/debug=typename.
+// The assertions below FAIL under the placeholders and PASS under the rich
+// per-variant synthesis — a genuine behavior gate (not identity/0).
+module nova_tests.plan180_f1
+
+#impl(Equal + Hash + Clone + Compare + Display + Debug)
+type Colour
+    | Nought
+    | Dot(int)
+    | Seg(int, int)
+    | Ring { r int }
+
+test "sum @equal — same-variant payload-wise; cross-variant false" {
+    assert(Nought == Nought)
+    assert(Dot(3) == Dot(3))
+    assert(Seg(1, 2) == Seg(1, 2))
+    assert(Ring { r: 5 } == Ring { r: 5 })
+    assert(Dot(3) != Dot(4))
+    assert(Seg(1, 2) != Seg(1, 3))
+    assert(Ring { r: 5 } != Ring { r: 6 })
+    assert(Nought != Dot(0))
+    assert(Dot(0) != Seg(0, 0))
+}
+
+test "sum @hash — payload/variant distinct (placeholder was 0)" {
+    ro n Colour = Nought
+    assert(Dot(1).hash() != Dot(2).hash())
+    assert(Seg(1, 2).hash() != Seg(2, 1).hash())
+    assert(Ring { r: 1 }.hash() != Ring { r: 2 }.hash())
+    assert(n.hash() != Dot(1).hash())
+    assert(Dot(7).hash() == Dot(7).hash())
+    assert(Ring { r: 9 }.hash() == Ring { r: 9 }.hash())
+}
+
+test "sum @clone — reconstruct, equal to original" {
+    ro a = Ring { r: 7 }
+    ro b = a.clone()
+    assert(b == a)
+    match b {
+        Ring { r } => assert(r == 7)
+        _ => assert(false, "clone lost variant")
+    }
+    assert(Seg(4, 9).clone() == Seg(4, 9))
+    assert(Dot(11).clone() == Dot(11))
+    ro n Colour = Nought
+    assert(n.clone() == n)
+}
+
+test "sum @compare — variant order, then payload (placeholder was 0)" {
+    ro n Colour = Nought
+    assert(n.compare(Dot(0)) < 0)
+    assert(Dot(0).compare(Seg(0, 0)) < 0)
+    assert(Seg(0, 0).compare(Ring { r: 0 }) < 0)
+    assert(Dot(1).compare(Dot(2)) < 0)
+    assert(Dot(2).compare(Dot(1)) > 0)
+    assert(Seg(1, 2).compare(Seg(1, 3)) < 0)
+    assert(Ring { r: 1 }.compare(Ring { r: 2 }) < 0)
+    assert(Dot(5).compare(Dot(5)) == 0)
+}
+
+test "sum @display — variant-aware (placeholder wrote typename)" {
+    ro n Colour = Nought
+    assert("${n}" == "Nought")
+    ro d Colour = Dot(3)
+    assert("${d}" == "Dot(3)")
+    ro s Colour = Seg(1, 2)
+    assert("${s}" == "Seg(1, 2)")
+    ro c Colour = Ring { r: 5 }
+    assert("${c}" == "Ring { r: 5 }")
+}
+
+test "sum @debug — variant-aware" {
+    ro d Colour = Dot(3)
+    assert("${d:?}" == "Dot(3)")
+    ro s Colour = Seg(1, 2)
+    assert("${s:?}" == "Seg(1, 2)")
+    ro c Colour = Ring { r: 5 }
+    assert("${c:?}" == "Ring { r: 5 }")
+}

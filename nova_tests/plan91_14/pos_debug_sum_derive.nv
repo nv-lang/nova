@@ -1,10 +1,8 @@
 // Plan 91.14 (A7) — #impl(Debug) auto-derive on sum types
 //
-// #impl(Debug) on a sum type produces a V1 placeholder (type name) per
-// auto_derive::synthesize_debug — full variant-level synthesis is tracked
-// in [M-91.14-sum-debug-variants] followup.
-//
-// V1: output = type name (e.g., "Color" for any variant of Color).
+// Plan 180 Ф.1 (D345) replaced the V1 placeholder (which wrote the TYPE name
+// for any variant) with rich per-variant synthesis: a unit variant now debugs
+// as its own name. [M-126-sum-fmt-rich] CLOSED.
 
 module plan91_14.pos_debug_sum_derive
 
@@ -14,15 +12,18 @@ type Color | Red | Green | Blue
 #impl(Debug)
 type Status | Active | Inactive | Pending
 
-test "Color sum debug — any variant produces type name (V1)" {
+test "Color sum debug — variant name (rich synthesis)" {
     ro c = Red as Color
-    ro s = "${c:?}"
-    // V1 sum-type debug: writes type name
-    assert(s == "Color")
+    assert("${c:?}" == "Red")
+    ro g = Green as Color
+    assert("${g:?}" == "Green")
+    ro b = Blue as Color
+    assert("${b:?}" == "Blue")
 }
 
-test "Status sum debug (V1 placeholder)" {
+test "Status sum debug — variant name (rich synthesis)" {
     ro st = Active as Status
-    ro s = "${st:?}"
-    assert(s == "Status")
+    assert("${st:?}" == "Active")
+    ro p = Pending as Status
+    assert("${p:?}" == "Pending")
 }

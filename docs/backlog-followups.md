@@ -119,6 +119,17 @@ referenced from plan docs and simplifications.md.
 
 ---
 
+## Plan 126 — auto-derive sum-type rich synthesis (D345)
+
+- **[M-126-sum-equal-rich]** ✅ CLOSED (Plan 180 Ф.1, 2026-07-06) — sum `@equal` = same-variant + payload-wise `==` (nested match; cross-variant → false). `auto_derive.rs::synth_equal_sum_body`.
+- **[M-126-sum-hash-rich]** ✅ CLOSED (Plan 180 Ф.1, 2026-07-06) — sum `@hash` = variant-index seed ⊕ payload-hash (rotate-XOR combine). Distinct unit variants hash apart (placeholder was literal 0). `synth_hash_sum_body`.
+- **[M-126-sum-clone-rich]** ✅ CLOSED (Plan 180 Ф.1, 2026-07-06) — sum `@clone` = match-arm-per-variant reconstruction (primitives shallow, composites `.clone()`). `synth_clone_sum_body`.
+- **[M-126-sum-compare-rich]** ✅ CLOSED (Plan 180 Ф.1, 2026-07-06) — sum `@compare` = variant-index order, then payload lexicographic. `synth_compare_sum_body`.
+- **[M-126-sum-fmt-rich]** ✅ CLOSED (Plan 180 Ф.1, 2026-07-06) — sum `@display`/`@debug` = variant-aware output (`V` / `V(x, y)` / `V { f: x }`). `synth_fmt_sum_body`. Verify: `nova_tests/plan180_f1/sum_rich_autoderive_ok.nv`; behavior-change updated `plan91_14/pos_debug_sum_derive.nv` (was pinning V1 typename placeholder).
+- Ergonomics known-limit: method on a bare unit-variant (`Nought.hash()`) mis-infers the variant as its own type — annotate via a `Self`-typed local. Pre-existing bidirectional-inference boundary, not a synth defect.
+
+---
+
 ## Plan 147 Ф.7 — D246 checker enforcement gaps
 
 - **[M-147-ro-binding-index-freeze]** ✅ CLOSED (Plan 147 Ф.7, 2026-06-17) — `ro a = [...]; a[0] = x` now gives `E_READONLY_CONTENT`. `is_through_ro_binding` check added to `check_target_readonly` Index arm in `compiler-codegen/src/types/mod.rs`; entry-code guard avoids false positives in prelude/std imports.

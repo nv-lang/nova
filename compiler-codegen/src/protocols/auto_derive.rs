@@ -32,9 +32,10 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, GenericParam, NamedTupleField, Param,
-    RecordField, RecordLitField, Receiver, ReceiverKind, Stmt, SumVariant, TypeDecl, TypeDeclKind,
-    TypeRef,
+    BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, GenericParam, MatchArm, MatchArmBody,
+    NamedTupleField, Param, Pattern, RecordField, RecordLitField, RecordPatternField, Receiver,
+    ReceiverKind, Stmt, SumVariant, SumVariantKind, TypeDecl, TypeDeclKind, TypeRef,
+    VariantPatternKind,
 };
 use crate::diag::Span;
 
@@ -584,11 +585,10 @@ pub fn synthesize_equal<Q: DeriveQuery>(
 ) -> Result<FnDecl, DeriveError> {
     let body_expr = if let Some(fields) = iter_fields(type_decl) {
         synth_equal_record_body(&fields)
-    } else if iter_sum_variants(type_decl).is_some() {
-        // Sum-type equal: V1 — defer к identity (compiler resolves через
-        // existing eq mechanism для sum). Rich match-arms — followup
-        // [M-126-sum-equal-rich].
-        binop(BinOp::Eq, ex(ExprKind::SelfAccess), ident("other"))
+    } else if let Some(variants) = iter_sum_variants(type_decl) {
+        // Sum-type equal: same-variant + payload-wise `==` (D345 / Plan 180 Ф.1).
+        // [M-126-sum-equal-rich] CLOSED.
+        synth_equal_sum_body(variants)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -631,10 +631,10 @@ pub fn synthesize_hash<Q: DeriveQuery>(
 ) -> Result<FnDecl, DeriveError> {
     let body_expr = if let Some(fields) = iter_fields(type_decl) {
         synth_hash_record_body(&fields)
-    } else if iter_sum_variants(type_decl).is_some() {
-        // Sum-type hash: discriminant + payload-hash combine — V1 placeholder.
-        // Followup [M-126-sum-hash-rich].
-        ex(ExprKind::IntLit(0))
+    } else if let Some(variants) = iter_sum_variants(type_decl) {
+        // Sum-type hash: variant-index seed + payload-hash combine (Plan 180 Ф.1).
+        // [M-126-sum-hash-rich] CLOSED.
+        synth_hash_sum_body(variants)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -694,9 +694,10 @@ pub fn synthesize_clone<Q: DeriveQuery>(
 ) -> Result<FnDecl, DeriveError> {
     let body_expr = if let Some(fields) = iter_fields(type_decl) {
         synth_clone_record_body(&type_decl.name, &fields)
-    } else if iter_sum_variants(type_decl).is_some() {
-        // Sum-type clone — V1 placeholder. Followup [M-126-sum-clone-rich].
-        ex(ExprKind::SelfAccess)
+    } else if let Some(variants) = iter_sum_variants(type_decl) {
+        // Sum-type clone: match-arm-per-variant reconstruction (Plan 180 Ф.1).
+        // [M-126-sum-clone-rich] CLOSED.
+        synth_clone_sum_body(variants)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -751,9 +752,10 @@ pub fn synthesize_compare<Q: DeriveQuery>(
 ) -> Result<FnDecl, DeriveError> {
     let body = if let Some(fields) = iter_fields(type_decl) {
         synth_compare_record_body(&fields)
-    } else if iter_sum_variants(type_decl).is_some() {
-        // Sum-type compare — V1 placeholder. Followup [M-126-sum-compare-rich].
-        FnBody::Expr(ex(ExprKind::IntLit(0)))
+    } else if let Some(variants) = iter_sum_variants(type_decl) {
+        // Sum-type compare: variant-index order, then payload lexicographic
+        // (Plan 180 Ф.1). [M-126-sum-compare-rich] CLOSED.
+        synth_compare_sum_body(variants)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -834,9 +836,10 @@ pub fn synthesize_display<Q: DeriveQuery>(
 ) -> Result<FnDecl, DeriveError> {
     let body = if let Some(fields) = iter_fields(type_decl) {
         synth_display_record_body(&type_decl.name, &fields)
-    } else if iter_sum_variants(type_decl).is_some() {
-        // Sum-type display — V1 placeholder. Followup [M-126-sum-fmt-rich].
-        FnBody::Block(simple_display_block(&type_decl.name))
+    } else if let Some(variants) = iter_sum_variants(type_decl) {
+        // Sum-type display: variant-aware output (Plan 180 Ф.1).
+        // [M-126-sum-fmt-rich] CLOSED.
+        synth_fmt_sum_body(variants, false)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -867,9 +870,10 @@ pub fn synthesize_debug<Q: DeriveQuery>(
 ) -> Result<FnDecl, DeriveError> {
     let body = if let Some(fields) = iter_fields(type_decl) {
         synth_debug_record_body(&type_decl.name, &fields)
-    } else if iter_sum_variants(type_decl).is_some() {
-        // Sum-type debug — V1 placeholder.
-        FnBody::Block(simple_display_block(&type_decl.name))
+    } else if let Some(variants) = iter_sum_variants(type_decl) {
+        // Sum-type debug: variant-aware output (Plan 180 Ф.1).
+        // [M-126-sum-fmt-rich] CLOSED.
+        synth_fmt_sum_body(variants, true)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -997,6 +1001,391 @@ fn synth_debug_record_body(type_name: &str, fields: &[DerivedField]) -> FnBody {
     }
     FnBody::Block(Block {
         stmts,
+        trailing: None,
+        span: span_dummy(),
+        is_unsafe: false,
+    })
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Plan 180 Ф.1 — sum-type rich auto-derive synthesizers.
+// Closes [M-126-sum-equal-rich]/-clone-rich/-hash-rich (+ -compare-rich/-fmt-rich).
+//
+// The record-path synthesizers above walk fields; sum-types instead emit a
+// `match @ { … }` with one arm per variant. Each variant is one of three shapes
+// (`SumVariantKind`): `Unit` (no payload), `Tuple(tys)` (positional payload),
+// `Record(fields)` (named payload). Payload elements are bound in the arm
+// pattern and recursed into exactly like record fields (primitives shallow /
+// via `str.from`, composites via the protocol method).
+//
+// IMPORTANT (ordering): these methods inject AFTER type-check (unlike serde),
+// so the emitted `match` / variant-patterns / variant-construction must be
+// lowerable by codegen's annotation-free `infer_expr_c_type`. The scrutinee is
+// `@` (receiver type known) and `other` is a `Self` param (its type known), so
+// codegen resolves variant tags + payload C-types the same way it does for a
+// hand-written `.nv` `@debug` on `Option`/`Result` (protocols.nv).
+// ────────────────────────────────────────────────────────────────────────
+
+/// `match scrutinee { arms }` expression.
+fn ex_match(scrutinee: Expr, arms: Vec<MatchArm>) -> Expr {
+    ex(ExprKind::Match { scrutinee: Box::new(scrutinee), arms })
+}
+
+fn match_arm_expr(pattern: Pattern, body: Expr) -> MatchArm {
+    MatchArm { pattern, guard: None, body: MatchArmBody::Expr(body), span: span_dummy() }
+}
+
+fn match_arm_block(pattern: Pattern, body: Block) -> MatchArm {
+    MatchArm { pattern, guard: None, body: MatchArmBody::Block(body), span: span_dummy() }
+}
+
+fn ident_pat(name: &str) -> Pattern {
+    Pattern::Ident { name: name.to_string(), span: span_dummy(), is_mut: false }
+}
+
+fn wildcard_pat() -> Pattern {
+    Pattern::Wildcard(span_dummy())
+}
+
+/// Pattern that matches variant `v` and binds each payload element to a local
+/// named `{prefix}{i}` (tuple) / `{prefix}{fieldname}` (record). Returns the
+/// pattern plus the list of `(bind_name, element_type)` for the payload (in
+/// declaration order); empty for a `Unit` variant.
+fn variant_bind_pattern(v: &SumVariant, prefix: &str) -> (Pattern, Vec<(String, TypeRef)>) {
+    match &v.kind {
+        SumVariantKind::Unit => (
+            Pattern::Variant {
+                path: vec![v.name.clone()],
+                kind: VariantPatternKind::Unit,
+                span: span_dummy(),
+            },
+            vec![],
+        ),
+        SumVariantKind::Tuple(tys) => {
+            let binds: Vec<(String, TypeRef)> = tys
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (format!("{}{}", prefix, i), t.clone()))
+                .collect();
+            let pat = Pattern::Variant {
+                path: vec![v.name.clone()],
+                kind: VariantPatternKind::Tuple {
+                    patterns: binds.iter().map(|(n, _)| ident_pat(n)).collect(),
+                    rest: false,
+                },
+                span: span_dummy(),
+            };
+            (pat, binds)
+        }
+        SumVariantKind::Record(fields) => {
+            let binds: Vec<(String, TypeRef)> = fields
+                .iter()
+                .map(|f| (format!("{}{}", prefix, f.name), f.ty.clone()))
+                .collect();
+            let pat = Pattern::Record {
+                type_path: Some(vec![v.name.clone()]),
+                fields: fields
+                    .iter()
+                    .zip(&binds)
+                    .map(|(f, (bind, _))| RecordPatternField {
+                        name: f.name.clone(),
+                        pattern: Some(ident_pat(bind)),
+                        span: span_dummy(),
+                    })
+                    .collect(),
+                rest: false,
+                span: span_dummy(),
+            };
+            (pat, binds)
+        }
+    }
+}
+
+/// Pattern that matches variant `v` while IGNORING its payload — used for tag
+/// discrimination (`| V(..)` / `| V{ .. }` / `| V`).
+fn variant_ignore_pattern(v: &SumVariant) -> Pattern {
+    match &v.kind {
+        SumVariantKind::Unit => Pattern::Variant {
+            path: vec![v.name.clone()],
+            kind: VariantPatternKind::Unit,
+            span: span_dummy(),
+        },
+        SumVariantKind::Tuple(_) => Pattern::Variant {
+            path: vec![v.name.clone()],
+            kind: VariantPatternKind::Tuple { patterns: vec![], rest: true },
+            span: span_dummy(),
+        },
+        SumVariantKind::Record(_) => Pattern::Record {
+            type_path: Some(vec![v.name.clone()]),
+            fields: vec![],
+            rest: true,
+            span: span_dummy(),
+        },
+    }
+}
+
+/// Reconstruct variant `v` from payload value-expressions `values` (in
+/// declaration order; empty for `Unit`).
+fn variant_construct(v: &SumVariant, values: Vec<Expr>) -> Expr {
+    match &v.kind {
+        SumVariantKind::Unit => ident(&v.name),
+        SumVariantKind::Tuple(_) => call(ident(&v.name), values),
+        SumVariantKind::Record(fields) => ex(ExprKind::RecordLit {
+            type_name: Some(vec![v.name.clone()]),
+            fields: fields
+                .iter()
+                .zip(values)
+                .map(|(f, val)| RecordLitField {
+                    name: f.name.clone(),
+                    value: Some(val),
+                    is_spread: false,
+                    at_shorthand: false,
+                    span: span_dummy(),
+                })
+                .collect(),
+            inferred_map_v: None,
+        }),
+    }
+}
+
+/// Sum `@equal`: same-variant + payload-wise `==`. Different variants → false.
+/// Emitted form (per variant):
+///   `V(a0,a1) => match other { V(b0,b1) => a0 == b0 && a1 == b1, _ => false }`
+fn synth_equal_sum_body(variants: &[SumVariant]) -> Expr {
+    if variants.is_empty() {
+        return ex(ExprKind::BoolLit(true));
+    }
+    let arms = variants
+        .iter()
+        .map(|v| {
+            let (self_pat, self_binds) = variant_bind_pattern(v, "__nv_a_");
+            let (other_pat, other_binds) = variant_bind_pattern(v, "__nv_b_");
+            // Payload-wise `a_i == b_i` chained with `&&`; unit/empty → true.
+            let eq_expr = if self_binds.is_empty() {
+                ex(ExprKind::BoolLit(true))
+            } else {
+                let mut acc: Option<Expr> = None;
+                for ((a, _), (b, _)) in self_binds.iter().zip(&other_binds) {
+                    let cmp = binop(BinOp::Eq, ident(a), ident(b));
+                    acc = Some(match acc {
+                        Some(prev) => binop(BinOp::And, prev, cmp),
+                        None => cmp,
+                    });
+                }
+                acc.unwrap()
+            };
+            let inner = ex_match(
+                ident("other"),
+                vec![
+                    match_arm_expr(other_pat, eq_expr),
+                    match_arm_expr(wildcard_pat(), ex(ExprKind::BoolLit(false))),
+                ],
+            );
+            match_arm_expr(self_pat, inner)
+        })
+        .collect();
+    ex_match(ex(ExprKind::SelfAccess), arms)
+}
+
+/// Sum `@hash`: variant-index seed combined with payload hashes (same
+/// rotate-and-XOR combine as the record path). Unit variant → just the seed.
+fn synth_hash_sum_body(variants: &[SumVariant]) -> Expr {
+    if variants.is_empty() {
+        return ex(ExprKind::IntLit(0));
+    }
+    // Reuse the record-path rotate: `(h << s) | (h >> (64 - s))`.
+    let rotl = |h: Expr, s: i64| -> Expr {
+        let left = binop(BinOp::Shl, h.clone(), ex(ExprKind::IntLit(s)));
+        let right = binop(BinOp::Shr, h, ex(ExprKind::IntLit(64 - s)));
+        binop(BinOp::BitOr, left, right)
+    };
+    let arms = variants
+        .iter()
+        .enumerate()
+        .map(|(idx, v)| {
+            let (pat, binds) = variant_bind_pattern(v, "__nv_h_");
+            // Seed = variant discriminant so distinct unit variants hash apart.
+            let mut acc = ex(ExprKind::IntLit(idx as i64 + 1));
+            for (i, (bind, _)) in binds.iter().enumerate() {
+                let h = member_call(ident(bind), "hash", vec![]);
+                let s = (((13 * (i + 1)) % 63) + 1) as i64; // 1..=63
+                acc = binop(BinOp::BitXor, acc, rotl(h, s));
+            }
+            match_arm_expr(pat, acc)
+        })
+        .collect();
+    ex_match(ex(ExprKind::SelfAccess), arms)
+}
+
+/// Sum `@clone`: match-arm-per-variant reconstruction, payloads cloned
+/// (primitives shallow-copied, composites via `.clone()`).
+fn synth_clone_sum_body(variants: &[SumVariant]) -> Expr {
+    if variants.is_empty() {
+        return ex(ExprKind::SelfAccess);
+    }
+    let arms = variants
+        .iter()
+        .map(|v| {
+            let (pat, binds) = variant_bind_pattern(v, "__nv_c_");
+            let values: Vec<Expr> = binds
+                .iter()
+                .map(|(bind, ty)| {
+                    if is_primitive_field(ty) {
+                        ident(bind)
+                    } else {
+                        member_call(ident(bind), "clone", vec![])
+                    }
+                })
+                .collect();
+            match_arm_expr(pat, variant_construct(v, values))
+        })
+        .collect();
+    ex_match(ex(ExprKind::SelfAccess), arms)
+}
+
+/// Sum `@compare`: order by variant index first, then lexicographically by
+/// payload within the same variant. Emitted as a block:
+///   `ro __a = match @ {..}; ro __b = match other {..};`
+///   `if __a != __b { return __a.compare(__b) }`
+///   `match @ { V(a..) => match other { V(b..) => <chain, 0>, _ => 0 }, .. }`
+fn synth_compare_sum_body(variants: &[SumVariant]) -> FnBody {
+    if variants.is_empty() {
+        return FnBody::Expr(ex(ExprKind::IntLit(0)));
+    }
+    // Tag-extraction match: `match <scrut> { V0.. => 0, V1.. => 1, ... }`.
+    let tag_match = |scrut: Expr| -> Expr {
+        let arms = variants
+            .iter()
+            .enumerate()
+            .map(|(idx, v)| match_arm_expr(variant_ignore_pattern(v), ex(ExprKind::IntLit(idx as i64))))
+            .collect();
+        ex_match(scrut, arms)
+    };
+    let mut stmts: Vec<Stmt> = Vec::new();
+    stmts.push(let_stmt("__nv_ta", false, Some(type_ref_named("int")), tag_match(ex(ExprKind::SelfAccess))));
+    stmts.push(let_stmt("__nv_tb", false, Some(type_ref_named("int")), tag_match(ident("other"))));
+    // if __nv_ta != __nv_tb { return __nv_ta.compare(__nv_tb) }
+    let tag_cmp = member_call(ident("__nv_ta"), "compare", vec![ident("__nv_tb")]);
+    stmts.push(Stmt::Expr(ex(ExprKind::If {
+        cond: Box::new(binop(BinOp::Neq, ident("__nv_ta"), ident("__nv_tb"))),
+        then: Block {
+            stmts: vec![Stmt::Return { value: Some(tag_cmp), span: span_dummy() }],
+            trailing: None,
+            span: span_dummy(),
+            is_unsafe: false,
+        },
+        else_: None,
+    })));
+    // Same-variant payload compare.
+    let arms = variants
+        .iter()
+        .map(|v| {
+            let (self_pat, self_binds) = variant_bind_pattern(v, "__nv_a_");
+            let (other_pat, other_binds) = variant_bind_pattern(v, "__nv_b_");
+            // Inner arm body: lexicographic compare chain (or `0` for unit).
+            let inner_body: MatchArmBody = if self_binds.is_empty() {
+                MatchArmBody::Expr(ex(ExprKind::IntLit(0)))
+            } else {
+                let mut cstmts: Vec<Stmt> = Vec::new();
+                for (i, ((a, _), (b, _))) in self_binds.iter().zip(&other_binds).enumerate() {
+                    let var = format!("__nv_cc_{}", i);
+                    cstmts.push(let_stmt(
+                        &var, false, Some(type_ref_named("int")),
+                        member_call(ident(a), "compare", vec![ident(b)]),
+                    ));
+                    cstmts.push(Stmt::Expr(ex(ExprKind::If {
+                        cond: Box::new(binop(BinOp::Neq, ident(&var), ex(ExprKind::IntLit(0)))),
+                        then: Block {
+                            stmts: vec![Stmt::Return { value: Some(ident(&var)), span: span_dummy() }],
+                            trailing: None,
+                            span: span_dummy(),
+                            is_unsafe: false,
+                        },
+                        else_: None,
+                    })));
+                }
+                MatchArmBody::Block(block_with_trailing(cstmts, ex(ExprKind::IntLit(0))))
+            };
+            let inner = ex_match(
+                ident("other"),
+                vec![
+                    MatchArm { pattern: other_pat, guard: None, body: inner_body, span: span_dummy() },
+                    match_arm_expr(wildcard_pat(), ex(ExprKind::IntLit(0))),
+                ],
+            );
+            match_arm_expr(self_pat, inner)
+        })
+        .collect();
+    let tail = ex_match(ex(ExprKind::SelfAccess), arms);
+    FnBody::Block(block_with_trailing(stmts, tail))
+}
+
+/// Sum `@display`/`@debug`: variant-aware output. `Unit` → `"V"`; `Tuple` →
+/// `"V(x, y)"`; `Record` → `"V { f: x, g: y }"`. `is_debug` routes primitives:
+/// display uses `w.write_str(str.from(x))` (no scalar `.display`), debug uses
+/// uniform `x.debug(w)` (scalars implement Debug).
+fn synth_fmt_sum_body(variants: &[SumVariant], is_debug: bool) -> FnBody {
+    if variants.is_empty() {
+        // No variants — emit nothing writable; write empty type marker is odd,
+        // fall back to a no-op block (unreachable at runtime).
+        return FnBody::Block(Block { stmts: vec![], trailing: None, span: span_dummy(), is_unsafe: false });
+    }
+    let write_lit = |s: String| -> Stmt {
+        Stmt::Expr(member_call(ident("w"), "write", vec![ex(ExprKind::StrLit(s))]))
+    };
+    // Emit one payload value into `w`.
+    let emit_value = |bind: &str, ty: &TypeRef| -> Stmt {
+        if is_debug {
+            Stmt::Expr(member_call(ident(bind), "debug", vec![ident("w")]))
+        } else if is_primitive_field(ty) {
+            Stmt::Expr(member_call(
+                ident("w"), "write_str",
+                vec![member_call(ident("str"), "from", vec![ident(bind)])],
+            ))
+        } else {
+            Stmt::Expr(member_call(ident(bind), "display", vec![ident("w")]))
+        }
+    };
+    let arms = variants
+        .iter()
+        .map(|v| {
+            let (pat, binds) = variant_bind_pattern(v, "__nv_f_");
+            let mut stmts: Vec<Stmt> = Vec::new();
+            match &v.kind {
+                SumVariantKind::Unit => {
+                    stmts.push(write_lit(v.name.clone()));
+                }
+                SumVariantKind::Tuple(_) => {
+                    stmts.push(write_lit(format!("{}(", v.name)));
+                    for (i, (bind, ty)) in binds.iter().enumerate() {
+                        if i > 0 {
+                            stmts.push(write_lit(", ".to_string()));
+                        }
+                        stmts.push(emit_value(bind, ty));
+                    }
+                    stmts.push(write_lit(")".to_string()));
+                }
+                SumVariantKind::Record(fields) => {
+                    stmts.push(write_lit(format!("{} {{ ", v.name)));
+                    for (i, ((bind, ty), f)) in binds.iter().zip(fields).enumerate() {
+                        let prefix = if i == 0 {
+                            format!("{}: ", f.name)
+                        } else {
+                            format!(", {}: ", f.name)
+                        };
+                        stmts.push(Stmt::Expr(member_call(
+                            ident("w"), "write_str", vec![ex(ExprKind::StrLit(prefix))])));
+                        stmts.push(emit_value(bind, ty));
+                    }
+                    stmts.push(write_lit(" }".to_string()));
+                }
+            }
+            match_arm_block(pat, Block { stmts, trailing: None, span: span_dummy(), is_unsafe: false })
+        })
+        .collect();
+    let body = ex_match(ex(ExprKind::SelfAccess), arms);
+    FnBody::Block(Block {
+        stmts: vec![Stmt::Expr(body)],
         trailing: None,
         span: span_dummy(),
         is_unsafe: false,
@@ -2162,15 +2551,16 @@ mod tests {
     }
 
     // ─── T27: Ф.3 — synthesize_display ───────────────────────────────
+    // Plan 152.7.1 (D374 AMEND): display param renamed `sb StringBuilder` → `w Write`.
     #[test]
-    fn t27_synthesize_display_takes_stringbuilder() {
+    fn t27_synthesize_display_takes_write() {
         let q = MockQuery::new();
         let mut ctx = AutoDeriveCtx::new(&q);
         let td = make_record_type("Point", &[("x", "int"), ("y", "int")]);
         let fd = synthesize_method(&mut ctx, &td, DISPLAY).unwrap();
         assert_eq!(fd.name, "display");
         assert_eq!(fd.params.len(), 1);
-        assert_eq!(fd.params[0].name, "sb");
+        assert_eq!(fd.params[0].name, "w");
         match &fd.return_type {
             Some(TypeRef::Unit(_)) => {}
             _ => panic!("expected unit return type for display"),
@@ -2253,6 +2643,128 @@ mod tests {
             },
             _ => panic!("expected FnBody::Expr"),
         }
+    }
+
+    // ─── T31–T36: Plan 180 Ф.1 — SUM rich synthesis (not placeholder) ──
+    fn make_sum_type(name: &str, proto: &str) -> TypeDecl {
+        // `type Shape | Nought | Dot(int) | Ring { r int }`
+        let variants = vec![
+            SumVariant {
+                name: "Nought".to_string(),
+                kind: SumVariantKind::Unit,
+                discriminant: None,
+                span: Span::dummy(),
+            },
+            SumVariant {
+                name: "Dot".to_string(),
+                kind: SumVariantKind::Tuple(vec![type_ref_named("int")]),
+                discriminant: None,
+                span: Span::dummy(),
+            },
+            SumVariant {
+                name: "Ring".to_string(),
+                kind: SumVariantKind::Record(vec![RecordField {
+                    name: "r".to_string(),
+                    ty: type_ref_named("int"),
+                    span: Span::dummy(),
+                    ..RecordField::default()
+                }]),
+                discriminant: None,
+                span: Span::dummy(),
+            },
+        ];
+        let mut td = TypeDecl {
+            name: name.to_string(),
+            kind: TypeDeclKind::Sum(variants),
+            span: Span::dummy(),
+            ..TypeDecl::default()
+        };
+        td.impl_protocols.push(proto.to_string());
+        td
+    }
+
+    #[test]
+    fn t31_sum_equal_is_match_not_identity() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_sum_type("Shape", "Equal");
+        let fd = synthesize_method(&mut ctx, &td, EQUAL).unwrap();
+        // Rich synth = `match @ { … }`, NOT the old `@ == other` identity.
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::Match { arms, .. } => assert_eq!(arms.len(), 3),
+                other => panic!("expected Match body, got {:?}", other),
+            },
+            other => panic!("expected FnBody::Expr(Match), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn t32_sum_hash_is_match_not_zero() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_sum_type("Shape", "Hash");
+        let fd = synthesize_method(&mut ctx, &td, HASH).unwrap();
+        match &fd.body {
+            FnBody::Expr(e) => assert!(
+                matches!(&e.kind, ExprKind::Match { .. }),
+                "expected Match body, got {:?}", e.kind
+            ),
+            other => panic!("expected FnBody::Expr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn t33_sum_clone_is_match_not_self() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_sum_type("Shape", "Clone");
+        let fd = synthesize_method(&mut ctx, &td, CLONE).unwrap();
+        match &fd.body {
+            FnBody::Expr(e) => match &e.kind {
+                ExprKind::Match { arms, .. } => {
+                    assert_eq!(arms.len(), 3);
+                    // Unit-variant arm reconstructs via bare ident (not SelfAccess).
+                    assert!(matches!(
+                        &arms[0].pattern,
+                        Pattern::Variant { kind: VariantPatternKind::Unit, .. }
+                    ));
+                }
+                other => panic!("expected Match body, got {:?}", other),
+            },
+            other => panic!("expected FnBody::Expr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn t34_sum_compare_is_block_not_zero() {
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_sum_type("Shape", "Compare");
+        let fd = synthesize_method(&mut ctx, &td, COMPARE).unwrap();
+        // Rich compare = tag-extract block, not the old `FnBody::Expr(0)`.
+        assert!(matches!(&fd.body, FnBody::Block(_)), "expected block body");
+    }
+
+    #[test]
+    fn t35_sum_display_debug_are_blocks() {
+        let q = MockQuery::new();
+        for proto in [DISPLAY, DEBUG] {
+            let mut ctx = AutoDeriveCtx::new(&q);
+            let td = make_sum_type("Shape", proto);
+            let fd = synthesize_method(&mut ctx, &td, proto).unwrap();
+            assert!(matches!(&fd.body, FnBody::Block(_)), "expected block for {proto}");
+        }
+    }
+
+    #[test]
+    fn t36_sum_serde_still_gated() {
+        // Plan 180 Ф.2-sum remains gated: sum + Serialize → UnsupportedKind.
+        let q = MockQuery::new();
+        let mut ctx = AutoDeriveCtx::new(&q);
+        let td = make_sum_type("Shape", "Serialize");
+        let err = synthesize_method(&mut ctx, &td, SERIALIZE).unwrap_err();
+        assert!(matches!(err, DeriveError::UnsupportedTypeKind { .. }));
     }
 
     // ────────────────────────────────────────────────────────────────────
