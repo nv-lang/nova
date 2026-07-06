@@ -8,6 +8,9 @@ Cargo.lock
 *.ilk
 *.exp
 *.lib
+# Plan 179 Ф.2: vendored brotli decoder static lib is a tracked artifact
+# (headers+lib only, no sources — like libuv's vendoring style). Keep it despite *.lib.
+!nova_rt/brotli/lib/libbrotlidec.lib
 vcpkg_installed/
 vcpkg.json
 
