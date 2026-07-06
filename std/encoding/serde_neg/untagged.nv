@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_SERDE_UNTAGGED_GATED
+// Plan 180 Ф.6 (D382): `#serde(untagged)` is gated pending a codegen mono fix
+// ([M-180-untagged-codegen-mono]) — deriving an untagged sum perturbs
+// std/encoding/json codegen in the same CU. Rejected at compile time.
+module serde_neg.untagged
+import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
+#serde(untagged)
+#impl(Serialize + Deserialize)
+type Any enum
+    | Nothing
+    | Num(int)

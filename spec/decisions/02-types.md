@@ -13897,12 +13897,86 @@ degrades (mono-collection order perturbation once a sum ALSO derives Deserialize
 is pinned to `Result[T, DeError]` at the `?`-lowering site (`emit_c.rs` Try arm),
 mirroring the `.serialize?` pin.
 
-**Ф.5 — internal/adjacent/untagged tagging.** These require `#serde(tag=…)` /
-`#serde(untagged)` attributes, which need the `#serde` attribute infra (AST
-`attrs` on `SumVariant`/type) that does **not** exist yet → gated on
-[M-180-serde-attributes]. Externally-tagged (the default, no attribute) is the
-honest V1. See Plan 180 Ф.5.
+**Ф.5 — internal/adjacent tagging (✅ landed 2026-07-06, D382); untagged gated.**
+Now that the `#serde(...)` declaration-attribute infra exists (D382), the
+non-external tagging modes are synthesized from the type-level attributes:
+- `#serde(tag="k")` → **internally-tagged** ✅: unit `V`→`{"k":"V"}`; record
+  `V{f}`→`{"k":"V","f":…}` (fields inlined beside the tag). Tuple/positional
+  payloads are rejected — `E_SERDE_INTERNAL_TAG_NON_STRUCT` (no object to inline
+  the discriminator into; serde rule).
+- `#serde(tag="t", content="c")` → **adjacently-tagged** ✅: unit→`{"t":"V"}`;
+  single→`{"t":"V","c":x}`; tuple→`{"t":"V","c":[…]}`; record→`{"t":"V","c":{…}}`.
+- `#serde(untagged)` → **untagged** 🔴 GATED (`[M-180-untagged-codegen-mono]`):
+  synthesized correctly (unit→`null`; single→`x`; tuple→`[…]`; record→`{…}`;
+  deserialize buffers the `JsonValue`, Q17, and tries each variant in declaration
+  order — value-semantics cursor makes each attempt a non-destructive retry;
+  `DeError{NoVariantMatched}` if all fail). BUT compiling an untagged-derive body
+  perturbs `std/encoding/json` codegen in the same CU (mono-collection ordering →
+  `Json.parse` mis-tags a number as a bool), so `#serde(untagged)` is rejected at
+  compile time (`E_SERDE_UNTAGGED_GATED`) until that codegen-hardening prerequisite
+  lands. A compiler bug, NOT a serde-logic defect.
+Serialize/deserialize are synthesized over the SAME `Serializer`/`Deserializer`
+primitives as external (`begin_struct`/`struct_field`/`enter_field`/`enter_index`
+/`is_null`/…) — no new backend methods. The mode is computed from the type's
+`serde_attrs` by `serde_tagging_mode` (auto_derive.rs) with static validation
+(conflict / content-without-tag / on-non-sum / internal-on-tuple / untagged-gate).
+Externally-tagged (no attribute) is unchanged. [M-180-serde-tagging-modes] CLOSED
+for internal+adjacent; untagged → [M-180-untagged-codegen-mono].
+
+**Codegen soundness note (Plan 180 Ф.6).** The synthesized deserialize bodies
+exercise json.nv's `Deserializer` methods heavily; their `match m.get(k) { None
+=> Err(..), Some(v) => Ok(..) }` shape exposed a latent match/if result-type bug
+— `Ok(x)` alone infers a stub ERR side (`NovaRes_<ok>_nova_str`) and `Err(e)` a
+stub OK side (`NovaRes_nova_int_<err>`), so neither arm yields the full
+`Result[JsonDeserializer, DeError]` and the returned cursor was mis-laid-out
+(decode returned spurious `UnexpectedType`). Fixed by reconciling the concrete OK
+(from an `Ok(..)` arm) with the concrete ERR (from an `Err(..)` arm) across
+`emit_match`/`emit_if_expr` + their `infer_expr_c_type` mirrors — splitting the
+already-computed arm/branch Result-types via `novares_ok_err` (side-effect-free;
+an earlier re-inference variant perturbed mono-collection order). Order-
+independent; genuine `Result[int, E]` matches unchanged. Zero-regression verified
+(~50 dirs, byte-identical to parent). This fixed internal+adjacent; untagged
+needs a further, distinct mono-ordering fix (the json.nv corruption above).
 
 ## D346 — serde soundness invariants (Plan 180)
 
 Q14 depth-guard (both sides, default 128); Q15 exact-integer-check (no silent-lossy); Q16 `str`-only map keys; Q18 dup-field reconciled with `Json.parse`'s strict `DuplicateKey`.
+
+## D382 — declaration attributes `#serde(...)` (Plan 180 Ф.6) {#d382}
+
+**Grammar.** A declaration attribute is `#name(arg (`,` arg)*)`, `arg := ident
+[ `=` StrLit ]` — i.e. bare flags (`#serde(untagged)`), string-valued keys
+(`#serde(tag="type")`), and comma-separated combinations
+(`#serde(tag="t", content="c")`). Multiple `#serde(...)` annotations on one
+declaration accumulate. The only recognized namespace in V1 is `#serde`. Parsed
+by `parse_serde_attr` (shared across the three positions), extending the
+`#visible_to`/`#impl` marker-parsing precedent.
+
+**AST.** A new `serde_attrs: Vec<SerdeArg>` field on **`TypeDecl`**,
+**`SumVariant`**, and **`RecordField`** (empty Vec = default, backward-compat).
+`SerdeArg` = `Tag(String)` | `Content(String)` | `Untagged` — a structured
+list, general enough that field-customization keys (rename/skip/…) drop in
+without a grammar change. Type-level `#serde` is threaded through
+`parse_type_attrs` → `parse_type_decl`; field-level alongside `#visible_to` in
+the record-field loop; variant-level as a leading marker in
+`parse_one_sum_variant`.
+
+**Recognized keys (V1).** `tag`, `content`, `untagged` — sum-type enum tagging
+(consumed by D345 Ф.5 via `serde_tagging_mode`; `tag`/`content` land, `untagged`
+is parsed+validated but its derive is gated `E_SERDE_UNTAGGED_GATED`, see D345).
+**Unknown-attribute policy
+(convention, mirrors `#impl`/`#from_fields`: unknown marker → hard error, never
+silent):** any other key inside `#serde(...)` → **`E_SERDE_BAD_ATTRIBUTE`** at
+parse time (beats Go/Jackson silent tag-typo). Field-customization attributes
+(`rename`/`rename_all`/`skip`/`default`/`flatten`/`alias`/
+`deny_unknown_fields`) are parsed by the SAME grammar but their synthesis-
+consumption is a scoped follow-up ([M-180-serde-field-attributes]) — they
+currently reject as not-yet-supported rather than silently ignore.
+
+**Static validation** (`serde_tagging_mode`, surfaced as compile errors):
+`E_SERDE_TAGGING_CONFLICT` (`untagged` with `tag`/`content`; or `tag`==`content`);
+`E_SERDE_CONTENT_WITHOUT_TAG` (`content` without `tag`);
+`E_SERDE_TAGGING_ON_NON_SUM` (tagging attr on a record/non-sum);
+`E_SERDE_INTERNAL_TAG_NON_STRUCT` (internal `tag` on a type with a tuple
+variant); `E_SERDE_UNTAGGED_GATED` (untagged derive gated on a codegen-mono fix,
+[M-180-untagged-codegen-mono]). See D345 Ф.5 for the emitted wire per mode.

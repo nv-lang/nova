@@ -34,8 +34,8 @@ use std::collections::HashSet;
 use crate::ast::{
     BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, GenericParam, MatchArm, MatchArmBody,
     NamedTupleField, Param, Pattern, RecordField, RecordLitField, RecordPatternField, Receiver,
-    ReceiverKind, Stmt, SumVariant, SumVariantKind, TypeDecl, TypeDeclKind, TypeRef,
-    VariantPatternKind,
+    ReceiverKind, SerdeArg, SerdeTagging, Stmt, SumVariant, SumVariantKind, TypeDecl, TypeDeclKind,
+    TypeRef, VariantPatternKind,
 };
 use crate::diag::Span;
 
@@ -125,6 +125,14 @@ pub enum DeriveError {
         kind: String,
         protocol: String,
     },
+    /// Plan 180 Ф.6 (D382): `#serde(...)` tagging-mode misconfiguration on a
+    /// sum/record type. `message` already carries the specific `[E_SERDE_*]`
+    /// code (E_SERDE_TAGGING_CONFLICT / E_SERDE_CONTENT_WITHOUT_TAG /
+    /// E_SERDE_TAGGING_ON_NON_SUM / E_SERDE_INTERNAL_TAG_NON_STRUCT).
+    SerdeTagging {
+        type_name: String,
+        message: String,
+    },
 }
 
 impl DeriveError {
@@ -169,7 +177,108 @@ impl DeriveError {
                  implementation.",
                 type_name, kind, protocol,
             ),
+            DeriveError::SerdeTagging { message, .. } => message.clone(),
         }
+    }
+}
+
+/// Plan 180 Ф.6 (D382): compute the serde tagging mode for a type from its
+/// declaration-level `#serde(...)` attributes. For a sum type this validates
+/// the `tag`/`content`/`untagged` combination and (for internal tagging) that
+/// every variant is struct-shaped (unit or record). For a non-sum type any
+/// tagging attribute is rejected (E_SERDE_TAGGING_ON_NON_SUM).
+///
+/// Called by the serde synthesizers; returns `SerdeTagging::External` when the
+/// type carries no serde attributes (default, behaviour unchanged from Ф.2-sum).
+pub fn serde_tagging_mode(td: &TypeDecl) -> Result<SerdeTagging, DeriveError> {
+    let err = |msg: String| DeriveError::SerdeTagging {
+        type_name: td.name.clone(),
+        message: msg,
+    };
+    let is_sum = iter_sum_variants(td).is_some();
+    if !is_sum {
+        if td.serde_attrs.is_empty() {
+            return Ok(SerdeTagging::External);
+        }
+        return Err(err(format!(
+            "[E_SERDE_TAGGING_ON_NON_SUM] type `{}` is not a sum type — \
+             `#serde(tag/content/untagged)` tagging attributes apply only to \
+             sum (`type X enum A | B`, D406) declarations.",
+            td.name,
+        )));
+    }
+    let mut tag: Option<String> = None;
+    let mut content: Option<String> = None;
+    let mut untagged = false;
+    for a in &td.serde_attrs {
+        match a {
+            SerdeArg::Tag(s) => tag = Some(s.clone()),
+            SerdeArg::Content(s) => content = Some(s.clone()),
+            SerdeArg::Untagged => untagged = true,
+        }
+    }
+    if untagged && (tag.is_some() || content.is_some()) {
+        return Err(err(format!(
+            "[E_SERDE_TAGGING_CONFLICT] sum type `{}`: `#serde(untagged)` cannot \
+             be combined with `tag`/`content`.",
+            td.name,
+        )));
+    }
+    if untagged {
+        // Plan 180 Ф.6: untagged deserialize (try-each-variant, D345/D382) is
+        // synthesized correctly, BUT compiling an untagged-derive body triggers a
+        // latent codegen mono-collection-ordering corruption of `std/encoding/json`
+        // (`Json.parse` mis-tags a number as a bool in the SAME CU) — a
+        // compiler-hardening prerequisite, NOT a serde-logic defect. Gated, not
+        // shipped broken. Internally- and adjacently-tagged land unaffected.
+        return Err(err(format!(
+            "[E_SERDE_UNTAGGED_GATED] sum type `{}`: `#serde(untagged)` is gated \
+             pending a codegen mono-ordering fix ([M-180-untagged-codegen-mono]) — \
+             deriving an untagged sum currently perturbs `std/encoding/json` \
+             codegen in the same compilation unit. Use externally-tagged (default), \
+             internally-tagged (`#serde(tag=\"k\")`), or adjacently-tagged \
+             (`#serde(tag=\"t\", content=\"c\")`) instead.",
+            td.name,
+        )));
+    }
+    match (tag, content) {
+        (Some(tag), Some(content)) => {
+            if tag == content {
+                return Err(err(format!(
+                    "[E_SERDE_TAGGING_CONFLICT] sum type `{}`: adjacently-tagged \
+                     `tag` and `content` field names must differ (both `\"{}\"`).",
+                    td.name, tag,
+                )));
+            }
+            Ok(SerdeTagging::Adjacent { tag, content })
+        }
+        (Some(tag), None) => {
+            // Internal tagging inlines the discriminator INTO the payload object,
+            // so every variant must be struct-shaped (unit or record); a tuple
+            // payload has no object to inline the tag into (serde rule).
+            if let Some(variants) = iter_sum_variants(td) {
+                for v in variants {
+                    if matches!(v.kind, SumVariantKind::Tuple(_)) {
+                        return Err(err(format!(
+                            "[E_SERDE_INTERNAL_TAG_NON_STRUCT] sum type `{}`: \
+                             internally-tagged `#serde(tag=\"{}\")` requires every \
+                             variant be unit or record-shaped, but variant `{}` \
+                             has a positional (tuple) payload. Use adjacent \
+                             (`tag`+`content`) or untagged tagging instead.",
+                            td.name, tag, v.name,
+                        )));
+                    }
+                }
+            }
+            Ok(SerdeTagging::Internal { tag })
+        }
+        (None, Some(_)) => Err(err(format!(
+            "[E_SERDE_CONTENT_WITHOUT_TAG] sum type `{}`: `#serde(content=…)` \
+             requires a `tag=…` (adjacently-tagged form `#serde(tag=\"t\", \
+             content=\"c\")`).",
+            td.name,
+        ))),
+        (None, None) => Ok(SerdeTagging::External),
     }
 }
 
@@ -1854,73 +1963,145 @@ fn ser_value_expr(val: Expr, ty: &TypeRef) -> Expr {
     }
 }
 
-/// Plan 180 Ф.2-sum: externally-tagged (Q4, D345) sum `@serialize`. Wire:
-///   unit variant `V`          → bare string `"V"`
-///   1-payload variant `V(x)`  → `{"V": <x>}`
-///   N-payload variant `V(..)` → `{"V": [<e0>, <e1>, …]}`
-///   record variant `V{..}`    → `{"V": {"f": <x>, …}}`
-/// Emitted as `match @ { <arm per variant> }`, each arm evaluating to
-/// `Result[(), SerError]`.
-fn synth_serialize_sum_body(type_name: &str, variants: &[SumVariant]) -> FnBody {
+/// Serialize a `struct_field(key)? + <ser value>?` pair into `stmts`.
+fn ser_struct_field_stmt(stmts: &mut Vec<Stmt>, key: &str, bind: &str, ty: &TypeRef) {
+    stmts.push(Stmt::Expr(try_(member_call(ident("s"), "struct_field", vec![str_lit(key)]))));
+    stmts.push(Stmt::Expr(try_(ser_value_expr(ident(bind), ty))));
+}
+
+/// Emit the statements that serialize a variant's PAYLOAD (without any tag
+/// wrapper), in the current container position of `s`:
+///   single `V(x)`   → `<ser x>?`
+///   tuple  `V(a,b)` → `begin_seq(N)?; <ser a>?; <ser b>?; end_seq()?`
+///   record `V{f,g}` → `begin_struct(V,N)?; struct_field("f")?; <ser f>?; …; end_struct()?`
+/// Unit variants have no payload → empty.
+fn ser_variant_payload_stmts(v: &SumVariant, binds: &[(String, TypeRef)]) -> Vec<Stmt> {
+    let mut stmts = Vec::new();
+    match &v.kind {
+        SumVariantKind::Unit => {}
+        SumVariantKind::Tuple(tys) if tys.len() == 1 => {
+            let (bind, ty) = &binds[0];
+            stmts.push(Stmt::Expr(try_(ser_value_expr(ident(bind), ty))));
+        }
+        SumVariantKind::Tuple(_) => {
+            stmts.push(Stmt::Expr(try_(member_call(ident("s"), "begin_seq",
+                vec![int_lit(binds.len() as i64)]))));
+            for (bind, ty) in binds {
+                stmts.push(Stmt::Expr(try_(ser_value_expr(ident(bind), ty))));
+            }
+            stmts.push(Stmt::Expr(try_(member_call(ident("s"), "end_seq", vec![]))));
+        }
+        SumVariantKind::Record(fields) => {
+            stmts.push(Stmt::Expr(try_(member_call(ident("s"), "begin_struct",
+                vec![str_lit(&v.name), int_lit(fields.len() as i64)]))));
+            for ((bind, ty), f) in binds.iter().zip(fields) {
+                ser_struct_field_stmt(&mut stmts, &f.name, bind, ty);
+            }
+            stmts.push(Stmt::Expr(try_(member_call(ident("s"), "end_struct", vec![]))));
+        }
+    }
+    stmts
+}
+
+/// Plan 180 Ф.2-sum (D345) / Ф.6 (D382): sum `@serialize` per tagging mode.
+///   External (default): unit→`"V"`; single→`{"V":x}`; tuple→`{"V":[..]}`;
+///                       record→`{"V":{f}}`.
+///   Internal `tag=k`:   unit→`{"k":"V"}`; record→`{"k":"V","f":x,…}` (fields
+///                       inlined; tuple rejected at validation).
+///   Adjacent `tag=t,content=c`: unit→`{"t":"V"}`; else→`{"t":"V","c":payload}`.
+///   Untagged:           unit→`null`; single→`x`; tuple→`[..]`; record→`{f}`.
+/// Emitted as `match @ { <arm per variant> }`, each arm `Result[(), SerError]`.
+fn synth_serialize_sum_body(type_name: &str, variants: &[SumVariant], mode: &SerdeTagging) -> FnBody {
     let arms: Vec<MatchArm> = variants
         .iter()
         .map(|v| {
             let (pat, binds) = variant_bind_pattern(v, "__nv_s_");
-            match &v.kind {
-                SumVariantKind::Unit => {
-                    // `V => s.serialize_str("V")`
-                    match_arm_expr(pat, member_call(
-                        ident("s"), "serialize_str", vec![str_lit(&v.name)]))
-                }
-                SumVariantKind::Tuple(tys) if tys.len() == 1 => {
-                    // `V(x) => { s.begin_struct(T,1)?; s.struct_field("V")?;
-                    //            <ser x>?; s.end_struct() }`
-                    let (bind, ty) = &binds[0];
-                    let stmts = vec![
-                        Stmt::Expr(try_(member_call(ident("s"), "begin_struct",
-                            vec![str_lit(type_name), int_lit(1)]))),
-                        Stmt::Expr(try_(member_call(ident("s"), "struct_field",
-                            vec![str_lit(&v.name)]))),
-                        Stmt::Expr(try_(ser_value_expr(ident(bind), ty))),
-                    ];
-                    match_arm_block(pat, block_with_trailing(
-                        stmts, member_call(ident("s"), "end_struct", vec![])))
-                }
-                SumVariantKind::Tuple(_) => {
-                    // Multi-payload → inner array.
-                    let mut stmts = vec![
-                        Stmt::Expr(try_(member_call(ident("s"), "begin_struct",
-                            vec![str_lit(type_name), int_lit(1)]))),
-                        Stmt::Expr(try_(member_call(ident("s"), "struct_field",
-                            vec![str_lit(&v.name)]))),
-                        Stmt::Expr(try_(member_call(ident("s"), "begin_seq",
-                            vec![int_lit(binds.len() as i64)]))),
-                    ];
-                    for (bind, ty) in &binds {
-                        stmts.push(Stmt::Expr(try_(ser_value_expr(ident(bind), ty))));
+            let is_unit = matches!(v.kind, SumVariantKind::Unit);
+            match mode {
+                SerdeTagging::External => {
+                    if is_unit {
+                        return match_arm_expr(pat, member_call(
+                            ident("s"), "serialize_str", vec![str_lit(&v.name)]));
                     }
-                    stmts.push(Stmt::Expr(try_(member_call(ident("s"), "end_seq", vec![]))));
-                    match_arm_block(pat, block_with_trailing(
-                        stmts, member_call(ident("s"), "end_struct", vec![])))
-                }
-                SumVariantKind::Record(fields) => {
-                    // record variant → inner struct.
                     let mut stmts = vec![
                         Stmt::Expr(try_(member_call(ident("s"), "begin_struct",
                             vec![str_lit(type_name), int_lit(1)]))),
                         Stmt::Expr(try_(member_call(ident("s"), "struct_field",
                             vec![str_lit(&v.name)]))),
-                        Stmt::Expr(try_(member_call(ident("s"), "begin_struct",
-                            vec![str_lit(&v.name), int_lit(fields.len() as i64)]))),
                     ];
-                    for ((bind, ty), f) in binds.iter().zip(fields) {
+                    stmts.extend(ser_variant_payload_stmts(v, &binds));
+                    match_arm_block(pat, block_with_trailing(
+                        stmts, member_call(ident("s"), "end_struct", vec![])))
+                }
+                SerdeTagging::Internal { tag } => {
+                    // Tag field + (for record variants) inlined fields in ONE object.
+                    let n = 1 + match &v.kind {
+                        SumVariantKind::Record(fs) => fs.len() as i64,
+                        _ => 0,
+                    };
+                    let mut stmts = vec![
+                        Stmt::Expr(try_(member_call(ident("s"), "begin_struct",
+                            vec![str_lit(type_name), int_lit(n)]))),
+                        Stmt::Expr(try_(member_call(ident("s"), "struct_field", vec![str_lit(tag)]))),
+                        Stmt::Expr(try_(member_call(ident("s"), "serialize_str", vec![str_lit(&v.name)]))),
+                    ];
+                    if let SumVariantKind::Record(fields) = &v.kind {
+                        for ((bind, ty), f) in binds.iter().zip(fields) {
+                            ser_struct_field_stmt(&mut stmts, &f.name, bind, ty);
+                        }
+                    }
+                    match_arm_block(pat, block_with_trailing(
+                        stmts, member_call(ident("s"), "end_struct", vec![])))
+                }
+                SerdeTagging::Adjacent { tag, content } => {
+                    let n = if is_unit { 1 } else { 2 };
+                    let mut stmts = vec![
+                        Stmt::Expr(try_(member_call(ident("s"), "begin_struct",
+                            vec![str_lit(type_name), int_lit(n)]))),
+                        Stmt::Expr(try_(member_call(ident("s"), "struct_field", vec![str_lit(tag)]))),
+                        Stmt::Expr(try_(member_call(ident("s"), "serialize_str", vec![str_lit(&v.name)]))),
+                    ];
+                    if !is_unit {
                         stmts.push(Stmt::Expr(try_(member_call(ident("s"), "struct_field",
-                            vec![str_lit(&f.name)]))));
-                        stmts.push(Stmt::Expr(try_(ser_value_expr(ident(bind), ty))));
+                            vec![str_lit(content)]))));
+                        stmts.extend(ser_variant_payload_stmts(v, &binds));
                     }
-                    stmts.push(Stmt::Expr(try_(member_call(ident("s"), "end_struct", vec![]))));
                     match_arm_block(pat, block_with_trailing(
                         stmts, member_call(ident("s"), "end_struct", vec![])))
+                }
+                SerdeTagging::Untagged => {
+                    // Payload emitted directly; unit → null.
+                    if is_unit {
+                        return match_arm_expr(pat, member_call(
+                            ident("s"), "serialize_unit", vec![]));
+                    }
+                    if let SumVariantKind::Tuple(tys) = &v.kind {
+                        if tys.len() == 1 {
+                            let (bind, ty) = &binds[0];
+                            return match_arm_expr(pat, ser_value_expr(ident(bind), ty));
+                        }
+                    }
+                    // tuple(multi) → seq; record → struct. Both end via trailing.
+                    let (stmts, closer): (Vec<Stmt>, &str) = match &v.kind {
+                        SumVariantKind::Record(fields) => {
+                            let mut s = vec![Stmt::Expr(try_(member_call(ident("s"),
+                                "begin_struct", vec![str_lit(&v.name), int_lit(fields.len() as i64)])))];
+                            for ((bind, ty), f) in binds.iter().zip(fields) {
+                                ser_struct_field_stmt(&mut s, &f.name, bind, ty);
+                            }
+                            (s, "end_struct")
+                        }
+                        _ => {
+                            let mut s = vec![Stmt::Expr(try_(member_call(ident("s"),
+                                "begin_seq", vec![int_lit(binds.len() as i64)])))];
+                            for (bind, ty) in &binds {
+                                s.push(Stmt::Expr(try_(ser_value_expr(ident(bind), ty))));
+                            }
+                            (s, "end_seq")
+                        }
+                    };
+                    match_arm_block(pat, block_with_trailing(
+                        stmts, member_call(ident("s"), closer, vec![])))
                 }
             }
         })
@@ -1985,6 +2166,9 @@ pub fn synthesize_serialize<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
     type_decl: &TypeDecl,
 ) -> Result<FnDecl, DeriveError> {
+    // Plan 180 Ф.6: validate/compute serde tagging mode (also rejects tagging
+    // attrs on a non-sum type: E_SERDE_TAGGING_ON_NON_SUM).
+    let mode = serde_tagging_mode(type_decl)?;
     let body = if let Some(fields) = iter_fields(type_decl) {
         let mut stmts: Vec<Stmt> = Vec::new();
         // s.begin_struct("Type", N)?
@@ -2001,7 +2185,7 @@ pub fn synthesize_serialize<Q: DeriveQuery>(
         FnBody::Block(block_with_trailing(
             stmts, member_call(ident("s"), "end_struct", vec![])))
     } else if let Some(variants) = iter_sum_variants(type_decl) {
-        synth_serialize_sum_body(&type_decl.name, variants)
+        synth_serialize_sum_body(&type_decl.name, variants, &mode)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -2014,108 +2198,94 @@ pub fn synthesize_serialize<Q: DeriveQuery>(
         result_ty(TypeRef::Unit(span_dummy()), "SerError"), body))
 }
 
-/// Externally-tagged (Q4, D345) sum `.deserialize` body. Reads the tag (bare
-/// string for unit variants; single object-key otherwise), then dispatches on
-/// it and reads the payload from the tagged value cursor.
-fn synth_deserialize_sum_body(type_name: &str, variants: &[SumVariant]) -> FnBody {
-    let mut stmts: Vec<Stmt> = Vec::new();
-    // ro __nv_tag = if d.is_str()? { d.deser_str()? } else { <single object key> }
-    let then_branch = block_trailing(try_(member_call(ident("d"), "deser_str", vec![])));
-    let mut else_stmts: Vec<Stmt> = Vec::new();
-    else_stmts.push(let_stmt("__nv_keys", false, None,
-        try_(member_call(ident("d"), "map_keys", vec![]))));
-    // if __nv_keys.len() != 1 { return Err(Syntax) }
-    let bad = call(ex(ExprKind::Path(vec!["DeError".to_string(), "of".to_string()])),
-        vec![call(ident("Syntax"), vec![str_lit(
-            "externally-tagged enum expects a single-key object")])]);
-    else_stmts.push(Stmt::Expr(ex(ExprKind::If {
-        cond: Box::new(binop(BinOp::Neq,
-            member_call(ident("__nv_keys"), "len", vec![]), int_lit(1))),
-        then: Block {
-            stmts: vec![Stmt::Return { value: Some(call(ident("Err"), vec![bad])), span: span_dummy() }],
-            trailing: None, span: span_dummy(), is_unsafe: false,
-        },
-        else_: None,
-    })));
-    // trailing: __nv_keys[0] (len==1 guaranteed by the guard above)
-    let key_index = ex(ExprKind::Index {
-        obj: Box::new(ident("__nv_keys")),
-        index: Box::new(int_lit(0)),
-    });
-    let else_branch = Block {
-        stmts: else_stmts,
-        trailing: Some(Box::new(key_index)),
+/// `Variant` / `Variant(p0, p1)` / `Variant { f, g }` reconstruction expression
+/// (payload locals named `__nv_p{i}` for tuples, field-name locals for records).
+/// NOT wrapped in `Ok(...)`.
+fn variant_ctor_expr(v: &SumVariant) -> Expr {
+    match &v.kind {
+        SumVariantKind::Unit => ident(&v.name),
+        SumVariantKind::Tuple(tys) => call(
+            ident(&v.name),
+            (0..tys.len()).map(|i| ident(&format!("__nv_p{}", i))).collect(),
+        ),
+        SumVariantKind::Record(fields) => ex(ExprKind::RecordLit {
+            type_name: Some(vec![v.name.clone()]),
+            fields: fields.iter().map(|f| RecordLitField {
+                name: f.name.clone(), value: None, is_spread: false,
+                at_shorthand: false, span: span_dummy(),
+            }).collect(),
+            inferred_map_v: None,
+        }),
+    }
+}
+
+/// Read a variant payload from the cursor `sub` yielded by `sub_source` (a
+/// `?`-wrapped `Result[Deserializer, DeError]` expression). Used by the
+/// externally-tagged and adjacently-tagged paths (the payload lives under one
+/// key/index). Trailing = `Ok(<ctor>)`. For a Unit variant `sub_source` is
+/// unused and the arm is just `Ok(V)`.
+fn build_payload_arm(v: &SumVariant, sub_source: Expr) -> Block {
+    let mut astmts: Vec<Stmt> = Vec::new();
+    match &v.kind {
+        SumVariantKind::Unit => {}
+        SumVariantKind::Tuple(tys) if tys.len() == 1 => {
+            astmts.push(let_stmt("__nv_sub", true, None, sub_source));
+            emit_payload_read(&mut astmts, "__nv_p0", &tys[0], "__nv_sub");
+        }
+        SumVariantKind::Tuple(tys) => {
+            astmts.push(let_stmt("__nv_sub", true, None, sub_source));
+            for (i, ty) in tys.iter().enumerate() {
+                let e = format!("__nv_e{}", i);
+                astmts.push(let_stmt(&e, true, None, try_(member_call(
+                    ident("__nv_sub"), "enter_index", vec![int_lit(i as i64)]))));
+                emit_payload_read(&mut astmts, &format!("__nv_p{}", i), ty, &e);
+            }
+        }
+        SumVariantKind::Record(fields) => {
+            astmts.push(let_stmt("__nv_sub", true, None, sub_source));
+            for f in fields {
+                emit_record_variant_field(&mut astmts, "__nv_sub", &f.name, &f.ty);
+            }
+        }
+    }
+    Block {
+        stmts: astmts,
+        trailing: Some(Box::new(call(ident("Ok"), vec![variant_ctor_expr(v)]))),
         span: span_dummy(),
         is_unsafe: false,
-    };
-    let tag_if = ex(ExprKind::If {
-        cond: Box::new(try_(member_call(ident("d"), "is_str", vec![]))),
-        then: then_branch,
-        else_: Some(crate::ast::ElseBranch::Block(else_branch)),
-    });
-    stmts.push(let_stmt("__nv_tag", false, Some(type_ref_named("str")), tag_if));
+    }
+}
 
-    // if __nv_tag == "V0" { <arm0> } else if __nv_tag == "V1" { … } else { Err(UnknownVariant) }
+/// Internally-tagged arm: the variant's record fields are inlined into the SAME
+/// object as the tag, so they are read from `d` directly (not a sub-cursor).
+/// Only Unit and Record variants reach here (Tuple rejected at validation).
+fn build_internal_arm(v: &SumVariant) -> Block {
+    let mut astmts: Vec<Stmt> = Vec::new();
+    if let SumVariantKind::Record(fields) = &v.kind {
+        for f in fields {
+            emit_record_variant_field(&mut astmts, "d", &f.name, &f.ty);
+        }
+    }
+    Block {
+        stmts: astmts,
+        trailing: Some(Box::new(call(ident("Ok"), vec![variant_ctor_expr(v)]))),
+        span: span_dummy(),
+        is_unsafe: false,
+    }
+}
+
+/// Fold variants into an `if __nv_tag == "V0" { … } else if … { … } else {
+/// Err(UnknownVariant) }` chain over the tag string `tag_local`.
+fn fold_tag_dispatch(variants: &[SumVariant], tag_local: &str, build_arm: &dyn Fn(&SumVariant) -> Block) -> Expr {
     let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
-    let build_arm = |v: &SumVariant| -> Block {
-        let mut astmts: Vec<Stmt> = Vec::new();
-        match &v.kind {
-            SumVariantKind::Unit => {}
-            SumVariantKind::Tuple(tys) if tys.len() == 1 => {
-                astmts.push(let_stmt("__nv_sub", true, None,
-                    try_(member_call(ident("d"), "enter_key", vec![str_lit(&v.name)]))));
-                emit_payload_read(&mut astmts, "__nv_p0", &tys[0], "__nv_sub");
-            }
-            SumVariantKind::Tuple(tys) => {
-                astmts.push(let_stmt("__nv_sub", true, None,
-                    try_(member_call(ident("d"), "enter_key", vec![str_lit(&v.name)]))));
-                for (i, ty) in tys.iter().enumerate() {
-                    let e = format!("__nv_e{}", i);
-                    astmts.push(let_stmt(&e, true, None, try_(member_call(
-                        ident("__nv_sub"), "enter_index", vec![int_lit(i as i64)]))));
-                    emit_payload_read(&mut astmts, &format!("__nv_p{}", i), ty, &e);
-                }
-            }
-            SumVariantKind::Record(fields) => {
-                astmts.push(let_stmt("__nv_sub", true, None,
-                    try_(member_call(ident("d"), "enter_key", vec![str_lit(&v.name)]))));
-                for f in fields {
-                    emit_record_variant_field(&mut astmts, "__nv_sub", &f.name, &f.ty);
-                }
-            }
-        }
-        // trailing: Ok(<reconstruct>)
-        let ctor = match &v.kind {
-            SumVariantKind::Unit => ident(&v.name),
-            SumVariantKind::Tuple(tys) => call(
-                ident(&v.name),
-                (0..tys.len()).map(|i| ident(&format!("__nv_p{}", i))).collect(),
-            ),
-            SumVariantKind::Record(fields) => ex(ExprKind::RecordLit {
-                type_name: Some(vec![v.name.clone()]),
-                fields: fields.iter().map(|f| RecordLitField {
-                    name: f.name.clone(), value: None, is_spread: false,
-                    at_shorthand: false, span: span_dummy(),
-                }).collect(),
-                inferred_map_v: None,
-            }),
-        };
-        Block {
-            stmts: astmts,
-            trailing: Some(Box::new(call(ident("Ok"), vec![ctor]))),
-            span: span_dummy(),
-            is_unsafe: false,
-        }
-    };
-    // Fold variants into an if / else-if chain, terminating in UnknownVariant.
     let mut chain: crate::ast::ElseBranch = crate::ast::ElseBranch::Block(Block {
         stmts: vec![],
-        trailing: Some(Box::new(deerror_unknown_variant("__nv_tag", &variant_names))),
+        trailing: Some(Box::new(deerror_unknown_variant(tag_local, &variant_names))),
         span: span_dummy(),
         is_unsafe: false,
     });
     for v in variants.iter().rev() {
-        let cond = binop(BinOp::Eq, ident("__nv_tag"), str_lit(&v.name));
+        let cond = binop(BinOp::Eq, ident(tag_local), str_lit(&v.name));
         let if_expr = ex(ExprKind::If {
             cond: Box::new(cond),
             then: build_arm(v),
@@ -2123,7 +2293,7 @@ fn synth_deserialize_sum_body(type_name: &str, variants: &[SumVariant]) -> FnBod
         });
         chain = crate::ast::ElseBranch::If(Box::new(if_expr));
     }
-    let dispatch = match chain {
+    match chain {
         crate::ast::ElseBranch::If(e) => *e,
         // Sum with zero variants — unreachable in practice; emit UnknownVariant.
         crate::ast::ElseBranch::Block(b) => ex(ExprKind::If {
@@ -2131,13 +2301,237 @@ fn synth_deserialize_sum_body(type_name: &str, variants: &[SumVariant]) -> FnBod
             then: Block { stmts: vec![], trailing: None, span: span_dummy(), is_unsafe: false },
             else_: Some(crate::ast::ElseBranch::Block(b)),
         }),
-    };
-    FnBody::Block(Block {
-        stmts,
-        trailing: Some(Box::new(dispatch)),
+    }
+}
+
+/// Statements that read the discriminator string of an internally/adjacently
+/// tagged object into local `__nv_tag`:
+///   `mut __nv_tsub = d.enter_field(<tag_field>)?`
+///   `ro  __nv_tag  = __nv_tsub.deser_str()?`
+fn read_tag_field_stmts(tag_field: &str) -> Vec<Stmt> {
+    vec![
+        let_stmt("__nv_tsub", true, None,
+            try_(member_call(ident("d"), "enter_field", vec![str_lit(tag_field)]))),
+        let_stmt("__nv_tag", false, Some(type_ref_named("str")),
+            try_(member_call(ident("__nv_tsub"), "deser_str", vec![]))),
+    ]
+}
+
+/// `Ok(<inner>)` / `Err(<inner>)` variant-tuple pattern for Result-threading.
+fn result_pat(ctor: &str, bind: &str, mutable: bool) -> Pattern {
+    Pattern::Variant {
+        path: vec![ctor.to_string()],
+        kind: VariantPatternKind::Tuple {
+            patterns: vec![Pattern::Ident { name: bind.to_string(), span: span_dummy(), is_mut: mutable }],
+            rest: false,
+        },
         span: span_dummy(),
-        is_unsafe: false,
-    })
+    }
+}
+
+/// Thread a `Result`-valued step without `?`: `match <result_expr> { Ok(<bind>)
+/// => <cont>, Err(__nv_thr) => Err(__nv_thr) }`. Used by the untagged try-each
+/// path where an error must NOT propagate out of the whole deserialize (it
+/// means "this variant did not match — try the next").
+fn thread_result(bind: &str, mutable: bool, result_expr: Expr, cont: Expr) -> Expr {
+    ex_match(result_expr, vec![
+        match_arm_expr(result_pat("Ok", bind, mutable), cont),
+        match_arm_expr(result_pat("Err", "__nv_thr", false),
+            call(ident("Err"), vec![ident("__nv_thr")])),
+    ])
+}
+
+/// `Err(DeError.of(Other(<msg>)))` — an internal "attempt failed" error for the
+/// untagged try-each path (always discarded; the outer fold replaces it with
+/// `NoVariantMatched`).
+fn de_attempt_fail(msg: &str) -> Expr {
+    let de = call(ex(ExprKind::Path(vec!["DeError".to_string(), "of".to_string()])),
+        vec![call(ident("Other"), vec![str_lit(msg)])]);
+    call(ident("Err"), vec![de])
+}
+
+/// Read a value of type `ty` from cursor `cur` as a RAW `Result[ty, DeError]`
+/// expression (no `?` — for the untagged try-each path). Mirrors
+/// `deser_field_expr`/`emit_narrow_scalar_deser` but value-threaded.
+fn raw_read(ty: &TypeRef, cur: &str) -> Expr {
+    if let Some(inner) = option_inner(ty) {
+        // if cur.is_null()? { Ok(None as Option[T]) } else { <thread inner→Some> }
+        let some_branch = thread_result("__nv_ox", false, raw_read(&inner, cur),
+            call(ident("Ok"), vec![some_call(ident("__nv_ox"))]));
+        let typed_none = ex(ExprKind::As(Box::new(ident("None")), ty.clone()));
+        ex(ExprKind::If {
+            cond: Box::new(try_(member_call(ident(cur), "is_null", vec![]))),
+            then: block_trailing(call(ident("Ok"), vec![typed_none])),
+            else_: Some(crate::ast::ElseBranch::Block(block_trailing(some_branch))),
+        })
+    } else if is_byte_seq_ty(ty) {
+        member_call(ident(cur), "deser_bytes", vec![])
+    } else if let Some(plan) = narrow_scalar_deser_plan(ty) {
+        // match cur.deser_X() { Ok(__raw) => if <oob> { Err(OutOfRange) } else {
+        //   Ok(__raw as T) }, Err(__e) => Err(__e) }
+        let raw = "__nv_nraw";
+        let mut cond: Option<Expr> = None;
+        if let Some(min) = plan.min {
+            cond = Some(binop(BinOp::Lt, ident(raw), int_lit(min)));
+        }
+        if let Some(max) = plan.max {
+            let hi = binop(BinOp::Gt, ident(raw), int_lit(max));
+            cond = Some(match cond { Some(p) => binop(BinOp::Or, p, hi), None => hi });
+        }
+        let ok_cast = call(ident("Ok"),
+            vec![ex(ExprKind::As(Box::new(ident(raw)), type_ref_named(plan.cast)))]);
+        let ok_body = match cond {
+            Some(c) => ex(ExprKind::If {
+                cond: Box::new(c),
+                then: block_trailing(deerror_out_of_range(raw)),
+                else_: Some(crate::ast::ElseBranch::Block(block_trailing(ok_cast))),
+            }),
+            None => ok_cast,
+        };
+        thread_result(raw, false, member_call(ident(cur), plan.read, vec![]), ok_body)
+    } else if let Some(m) = scalar_deser_method(ty) {
+        member_call(ident(cur), m, vec![])
+    } else {
+        // Static `<Type>.deserialize(cur)` (already Result). Same receiver form
+        // as deser_field_expr's static arm.
+        let func = match ty.strip_modifiers() {
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let mut p = path.clone();
+                p.push("deserialize".to_string());
+                ex(ExprKind::Path(p))
+            }
+            _ => ex(ExprKind::Member {
+                obj: Box::new(type_static_expr(ty)),
+                name: "deserialize".to_string(),
+            }),
+        };
+        call(func, vec![ident(cur)])
+    }
+}
+
+/// Untagged (Q17) single-variant attempt → `Result[Self, DeError]` expression
+/// built by value-threading (no `?`), so a mismatch falls through to the next
+/// variant. Payload = whole current value: unit→`null`; single→value; tuple→
+/// array; record→object.
+fn untagged_attempt(v: &SumVariant) -> Expr {
+    match &v.kind {
+        SumVariantKind::Unit => {
+            // if d.is_null()? { Ok(V) } else { Err(...) }
+            ex(ExprKind::If {
+                cond: Box::new(try_(member_call(ident("d"), "is_null", vec![]))),
+                then: block_trailing(call(ident("Ok"), vec![ident(&v.name)])),
+                else_: Some(crate::ast::ElseBranch::Block(block_trailing(
+                    de_attempt_fail("untagged: expected null for unit variant")))),
+            })
+        }
+        SumVariantKind::Tuple(tys) if tys.len() == 1 => {
+            thread_result("__nv_p0", false, raw_read(&tys[0], "d"),
+                call(ident("Ok"), vec![variant_ctor_expr(v)]))
+        }
+        SumVariantKind::Tuple(tys) => {
+            // enter_index i, read element i, threaded.
+            let mut cont = call(ident("Ok"), vec![variant_ctor_expr(v)]);
+            for (i, ty) in tys.iter().enumerate().rev() {
+                let e = format!("__nv_e{}", i);
+                cont = thread_result(&format!("__nv_p{}", i), false, raw_read(ty, &e), cont);
+                cont = thread_result(&e, true,
+                    member_call(ident("d"), "enter_index", vec![int_lit(i as i64)]), cont);
+            }
+            cont
+        }
+        SumVariantKind::Record(fields) => {
+            let mut cont = call(ident("Ok"), vec![variant_ctor_expr(v)]);
+            for f in fields.iter().rev() {
+                let sub = format!("__nv_rf_{}", f.name);
+                let is_opt = is_option_ty(&f.ty);
+                let enter = if is_opt { "enter_field_or_null" } else { "enter_field" };
+                // read field value from sub → bind field name
+                cont = thread_result(&f.name, false, raw_read(&f.ty, &sub), cont);
+                // enter the field (mut sub)
+                cont = thread_result(&sub, true,
+                    member_call(ident("d"), enter, vec![str_lit(&f.name)]), cont);
+            }
+            cont
+        }
+    }
+}
+
+/// Plan 180 Ф.2-sum (D345) / Ф.6 (D382): sum `.deserialize` per tagging mode.
+fn synth_deserialize_sum_body(_type_name: &str, variants: &[SumVariant], mode: &SerdeTagging) -> FnBody {
+    match mode {
+        SerdeTagging::External => {
+            let mut stmts: Vec<Stmt> = Vec::new();
+            // ro __nv_tag = if d.is_str()? { d.deser_str()? } else { <single key> }
+            let then_branch = block_trailing(try_(member_call(ident("d"), "deser_str", vec![])));
+            let mut else_stmts: Vec<Stmt> = Vec::new();
+            else_stmts.push(let_stmt("__nv_keys", false, None,
+                try_(member_call(ident("d"), "map_keys", vec![]))));
+            let bad = call(ex(ExprKind::Path(vec!["DeError".to_string(), "of".to_string()])),
+                vec![call(ident("Syntax"), vec![str_lit(
+                    "externally-tagged enum expects a single-key object")])]);
+            else_stmts.push(Stmt::Expr(ex(ExprKind::If {
+                cond: Box::new(binop(BinOp::Neq,
+                    member_call(ident("__nv_keys"), "len", vec![]), int_lit(1))),
+                then: Block {
+                    stmts: vec![Stmt::Return { value: Some(call(ident("Err"), vec![bad])), span: span_dummy() }],
+                    trailing: None, span: span_dummy(), is_unsafe: false,
+                },
+                else_: None,
+            })));
+            let key_index = ex(ExprKind::Index {
+                obj: Box::new(ident("__nv_keys")),
+                index: Box::new(int_lit(0)),
+            });
+            let else_branch = Block {
+                stmts: else_stmts,
+                trailing: Some(Box::new(key_index)),
+                span: span_dummy(),
+                is_unsafe: false,
+            };
+            let tag_if = ex(ExprKind::If {
+                cond: Box::new(try_(member_call(ident("d"), "is_str", vec![]))),
+                then: then_branch,
+                else_: Some(crate::ast::ElseBranch::Block(else_branch)),
+            });
+            stmts.push(let_stmt("__nv_tag", false, Some(type_ref_named("str")), tag_if));
+            let dispatch = fold_tag_dispatch(variants, "__nv_tag", &|v| {
+                build_payload_arm(v, try_(member_call(ident("d"), "enter_key", vec![str_lit(&v.name)])))
+            });
+            FnBody::Block(Block { stmts, trailing: Some(Box::new(dispatch)), span: span_dummy(), is_unsafe: false })
+        }
+        SerdeTagging::Internal { tag } => {
+            let stmts = read_tag_field_stmts(tag);
+            let dispatch = fold_tag_dispatch(variants, "__nv_tag", &|v| build_internal_arm(v));
+            FnBody::Block(Block { stmts, trailing: Some(Box::new(dispatch)), span: span_dummy(), is_unsafe: false })
+        }
+        SerdeTagging::Adjacent { tag, content } => {
+            let stmts = read_tag_field_stmts(tag);
+            let content = content.clone();
+            let dispatch = fold_tag_dispatch(variants, "__nv_tag", &move |v| {
+                build_payload_arm(v, try_(member_call(ident("d"), "enter_field", vec![str_lit(&content)])))
+            });
+            FnBody::Block(Block { stmts, trailing: Some(Box::new(dispatch)), span: span_dummy(), is_unsafe: false })
+        }
+        SerdeTagging::Untagged => {
+            // Try each variant in order; first Ok wins; else NoVariantMatched.
+            let mut chain = call(ident("Err"),
+                vec![call(ex(ExprKind::Path(vec!["DeError".to_string(), "at".to_string()])),
+                    vec![ident("NoVariantMatched"), str_lit("$")])]);
+            for v in variants.iter().rev() {
+                let err_wild = Pattern::Variant {
+                    path: vec!["Err".to_string()],
+                    kind: VariantPatternKind::Tuple { patterns: vec![wildcard_pat()], rest: false },
+                    span: span_dummy(),
+                };
+                chain = ex_match(untagged_attempt(v), vec![
+                    match_arm_expr(result_pat("Ok", "__nv_uv", false),
+                        call(ident("Ok"), vec![ident("__nv_uv")])),
+                    match_arm_expr(err_wild, chain),
+                ]);
+            }
+            FnBody::Block(Block { stmts: vec![], trailing: Some(Box::new(chain)), span: span_dummy(), is_unsafe: false })
+        }
+    }
 }
 
 /// Synthesize `.deserialize[D Deserializer](mut d D) -> Result[Self, DeError]`.
@@ -2146,6 +2540,9 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
     _ctx: &mut AutoDeriveCtx<'_, Q>,
     type_decl: &TypeDecl,
 ) -> Result<FnDecl, DeriveError> {
+    // Plan 180 Ф.6: validate/compute serde tagging mode (rejects tagging attrs
+    // on a non-sum type: E_SERDE_TAGGING_ON_NON_SUM).
+    let mode = serde_tagging_mode(type_decl)?;
     let body = if let Some(fields) = iter_fields(type_decl) {
     let mut stmts: Vec<Stmt> = Vec::new();
     let mut lit_fields: Vec<RecordLitField> = Vec::new();
@@ -2190,7 +2587,7 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
     let ok = call(ident("Ok"), vec![record_lit]);
         FnBody::Block(block_with_trailing(stmts, ok))
     } else if let Some(variants) = iter_sum_variants(type_decl) {
-        synth_deserialize_sum_body(&type_decl.name, variants)
+        synth_deserialize_sum_body(&type_decl.name, variants, &mode)
     } else {
         return Err(DeriveError::UnsupportedTypeKind {
             type_name: type_decl.name.clone(),
@@ -2933,12 +3330,14 @@ mod tests {
                 kind: SumVariantKind::Unit,
                 discriminant: None,
                 span: Span::dummy(),
+                serde_attrs: Vec::new(),
             },
             SumVariant {
                 name: "Dot".to_string(),
                 kind: SumVariantKind::Tuple(vec![type_ref_named("int")]),
                 discriminant: None,
                 span: Span::dummy(),
+                serde_attrs: Vec::new(),
             },
             SumVariant {
                 name: "Ring".to_string(),
@@ -2950,6 +3349,7 @@ mod tests {
                 }]),
                 discriminant: None,
                 span: Span::dummy(),
+                serde_attrs: Vec::new(),
             },
         ];
         let mut td = TypeDecl {
@@ -3067,6 +3467,7 @@ mod tests {
                 kind: SumVariantKind::Tuple(vec![type_ref_named("Widget")]),
                 discriminant: None,
                 span: Span::dummy(),
+                serde_attrs: Vec::new(),
             }]),
             span: Span::dummy(),
             ..TypeDecl::default()
