@@ -12,7 +12,7 @@ module std.http
 
 /// HTTP-версия. OPEN — при разборе крыть wildcard-arm (forward-compat h3).
 #stable(since = "0.1")
-export type Version | Http10 | Http11 | Http2
+export type Version enum Http10 | Http11 | Http2
 
 /// Версия на проводе (request-/status-line).
 #stable(since = "0.1")

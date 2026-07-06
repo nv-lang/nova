@@ -366,7 +366,7 @@ export fn str @is_char_boundary(idx int) -> bool {
 // `str.try_from_codepoint` validates via `char.try_from` and returns a Result.
 
 /// Error type for `str.try_from_codepoint`: the given int is not a valid Unicode scalar value.
-export type InvalidCodepoint | InvalidCodepointError
+export type InvalidCodepoint enum InvalidCodepointError
 
 /// Checked codepoint → str. Returns `Err(InvalidCodepointError)` for surrogates,
 /// negative values, and values > 0x10FFFF. Valid codepoints map to a 1–4-byte str.

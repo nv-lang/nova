@@ -42,7 +42,7 @@ import std.encoding.compress.{gzip_decode, zlib_decode, inflate, CompressError}
 /// to `n` hops then `Err(TooManyRedirects)`. (`None` avoided — collides with
 /// `Option.None` in importer namespace, Ф.1 convention.)
 #stable(since = "0.1")
-export type RedirectPolicy | NoFollow | Limited(int)
+export type RedirectPolicy enum NoFollow | Limited(int)
 
 // ── HttpClient / builder ─────────────────────────────────────────────────────
 

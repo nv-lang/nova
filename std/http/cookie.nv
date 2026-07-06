@@ -45,7 +45,7 @@ export fn Cookie @to_header_pair() -> str => "${@name}=${@value}"
 
 /// SameSite-политика (RFC 6265bis §5.4.7).
 #stable(since = "0.1")
-export type SameSite | Strict | Lax | Cross  // Cross = wire-value "None" (Option.None-collision avoided)
+export type SameSite enum Strict | Lax | Cross  // Cross = wire-value "None" (Option.None-collision avoided)
 
 /// Set-Cookie из ответа (полные атрибуты, RFC 6265bis §4.1).
 #stable(since = "0.1")

@@ -298,7 +298,7 @@ export fn Complex @into() -> str {
 // Возвращает Err(ParseComplexError) на невалидной строке (Result-форма, D325).
 /// Errors при парсинге Complex-строки.
 #stable(since = "0.1")
-export type ParseComplexError | InvalidFormat | NotANumber
+export type ParseComplexError enum InvalidFormat | NotANumber
 
 /// `try_from` (Result) — parse `a+bi` / `bi` / `a` форматы. Round-trip с `@into`.
 /// `try_` отличает fallible-парсер от инфаллибл `Complex.from(f64)`/`from(int)` (D325 R3).

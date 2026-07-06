@@ -136,7 +136,7 @@ export type Db effect {
 
 /// Errors при выполнении DB operations.
 #stable(since = "0.1")
-export type DbError | Connection | Constraint(str) | Timeout | Other(str)
+export type DbError enum Connection | Constraint(str) | Timeout | Other(str)
 
 
 // ──────────────────────────────────────────────────────────────────────────

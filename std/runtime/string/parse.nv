@@ -12,7 +12,7 @@ import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 
 
 /// Error variants for @parse_int. Exported so callers can match on them.
-export type ParseIntError | Empty | InvalidDigit | Overflow | InvalidRadix
+export type ParseIntError enum Empty | InvalidDigit | Overflow | InvalidRadix
 
 // Plan 177 (D325): единый fallible-контракт — публичная std возвращает
 // Result. Дуальная тройка `parse_int`(throws)/`try_parse_int`(Result)/
