@@ -17,7 +17,7 @@
 // documented deviation from the plan's illustrative `mock_http().on(...)` form
 // (a value builder cannot itself be an `Effect[Http]`). [M-178-mock-build-terminal]
 
-module std.http.client
+module http.client
 import std.http.{HeaderMap, StatusCode, HttpError, Http}
 
 /// A programmed mock HTTP response. Build with `.new(status)` + `.header/.body`,
