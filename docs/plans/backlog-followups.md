@@ -1618,3 +1618,24 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   впервые диагностировано sweep-агентом). Фикс: включить PID/уникальный суффикс процесса в
   корень temp-каталога раннера (test_runner.rs). До фикса процессное правило: параллельные
   прогоны — только с приватным TEMP/TMP.
+
+- **[M-http-props-mut-chain-argpos-value-ptr-mismatch]** (2026-07-07, P1, Wave: 184 Ф.2 —
+  приёмочный тест) — результат беглой `-> @`-цепочки value-типа, использованный напрямую
+  аргументом вызова (`take(r.b(5))`), даёт CC-FAIL: `passing 'NovaValue_X *' to parameter of
+  incompatible type 'NovaValue_X'`. Репродукция 15 строк (scratchpad агента http-props,
+  комментарии-якоря в std/http/server/server.nv dispatch). Семантика по 184/D181: `-> @`
+  value = ref Self — лоуэринг возврата приёмника не согласован.
+- **[M-http-props-mut-chain-stmt-value-copy-loss]** (2026-07-07, **P1 ТИХАЯ ПОРЧА**, Wave:
+  184 Ф.2 — приёмочный тест) — цепочка ДВУХ mut-сеттеров на value-типе как statement
+  (`resp.header("A","1").header("B","2")`) компилируется и МОЛЧА ТЕРЯЕТ ОБЕ мутации
+  (проверено wire-инспекцией через serve_once). Референс-тип той же формы работает.
+  До фикса канон в std: один вызов сеттера на statement на одном mut-биндинге
+  (комментарии-якоря в server.nv/server_test.nv/client_test.nv).
+- **[M-http-server-module-path-legacy]** (2026-07-07, P2, Wave: волна миграций
+  D410/http-хвост) — server.nv/servernet.nv остались на legacy `module std.http.server`
+  (client.nv уже на rev-3 `http.server`-форме) → beside-module тест server_test.nv как
+  CLI-root упирается в E_D78_MODULE_PATH_MISMATCH (pre-existing, найден агентом http-props).
+- **[M-http-builders-second-pass]** (2026-07-07, P3, Wave: волна миграций, http-хвост) —
+  копирующие строители вне списка первой волны: ServeMux.@handle/@get/@post/@put/@delete/
+  @patch/@not_found, RequestBuilder, MockResponse — привести к mut-свойствам по D117 AMEND-2
+  (Body.@with_limit и HttpError.@with_url легальны: consume-линейный и полная замена).
