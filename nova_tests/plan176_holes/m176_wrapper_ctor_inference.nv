@@ -1,0 +1,33 @@
+// [M-176-generic-wrapper-mono-inference] repro/regression test.
+//
+// A generic wrapper type with a bare-type-param field (`BufWriter[W]{ inner W }`,
+// `BufReader[R]{ inner R }`) constructed WITHOUT explicit type args — `W`/`R`
+// inferred from the ctor argument. Before the codegen fix, the inference-only
+// ctor emitted the erased NULL stub (`Nova_BufWriter_static_new(void*){return NULL}`)
+// and the LHS local kept the erased type, so its instance methods dispatched to the
+// erased no-op bodies → CC-FAIL / runtime crash. The fix infers the type-args from
+// the ctor argument, monomorphizes the wrapper instance + its methods, and types
+// the local with the mono instance. Mirrors nova_tests/io/d322_buffered.nv but with
+// inference-form construction (`BufWriter.new(sink)`, not `BufWriter[BytesWriter].new(sink)`).
+
+module nova_tests.plan176_holes
+
+import std.io.{BytesReader, BytesWriter, BufReader, BufWriter, read_to_end}
+
+test "BufWriter ctor arg inference: close flushes to the shared sink" {
+    mut sink = BytesWriter.new()
+    consume bw = BufWriter.new(sink)           // W = BytesWriter, inferred
+    mut d []u8 = []u8.new(); d.push(0x41 as u8); d.push(0x42 as u8)
+    assert(bw.write(d).is_ok())
+    assert(bw.write("CD".to_bytes()).is_ok())
+    match bw.close() { Ok(()) => {}, Err(_) => assert(false) }
+    assert(sink.len() == 4)
+    assert(sink.bytes()[0] == 0x41 as u8)
+    assert(sink.bytes()[3] == 0x44 as u8)
+}
+
+test "BufReader ctor arg inference: serves reads through its buffer" {
+    mut src = BytesReader.new("hello world".to_bytes())
+    mut br = BufReader.new(src)                 // R = BytesReader, inferred
+    match read_to_end(br) { Ok(o) => assert(o.len() == 11), Err(_) => assert(false) }
+}

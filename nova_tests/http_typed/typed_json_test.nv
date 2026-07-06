@@ -5,7 +5,7 @@
 module nova_tests.http_typed
 
 import std.http.client.{HttpClient, mock_http, MockResponse}
-import std.http.serdejson.{json_decode_body}
+import std.http.serdejson.{json_decode_body, json_as}
 import std.http.{Http}
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
@@ -71,6 +71,38 @@ test "typed json: missing required field → Err(Protocol)" {
     with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
         consume resp = HttpClient.new().get("http://x.example/miss").send()!!
         match json_decode_body[Widget](resp.bytes()!!) {
+            Ok(_)  => assert(false)
+            Err(e) => assert(match e.kind { Protocol(_) => true, _ => false })
+        }
+    }
+}
+
+// ── method form: `resp.json_as[T]()` (turbofish in return position) ───────────
+// [M-codegen-method-return-turbofish] — the generic-method form now monomorphizes
+// correctly (T appears only in the return type; the method-call turbofish carries it).
+
+test "typed json: method form resp.json_as[T]() decodes the body" {
+    ro wire_body = "{\"id\":9,\"name\":\"widget\",\"tags\":[\"x\",\"y\",\"z\"],\"ratio\":2.5,\"note\":\"hey\"}"
+    ro m = mock_http().on("GET", "/wm", MockResponse.new(200)
+        .header("Content-Type", "application/json")
+        .text(wire_body))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://x.example/wm").send()!!
+        ro w = resp.json_as[Widget]()!!
+        assert(w.id == 9)
+        assert(w.name == "widget")
+        assert(w.tags.len() == 3)
+        assert(w.tags[2] == "z")
+        assert(w.ratio == 2.5)
+        assert(w.note == Some("hey"))
+    }
+}
+
+test "typed json: method form malformed body → Err(Protocol)" {
+    ro m = mock_http().on("GET", "/badm", MockResponse.new(200).text("{oops"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://x.example/badm").send()!!
+        match resp.json_as[Widget]() {
             Ok(_)  => assert(false)
             Err(e) => assert(match e.kind { Protocol(_) => true, _ => false })
         }

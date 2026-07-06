@@ -13,15 +13,16 @@
 // client — and every test that only imports it — free of serde, so this decode is
 // opt-in for callers who actually want typed bodies. [M-178-typed-json-needs-180]
 //
-// WHY A FREE FUNCTION (turbofish `json_decode_body[T](..)`), not a
-// `Response.@json_as[T]()` method: a generic *method* whose type param appears only
-// in return position monomorphizes to `nova_int` (the turbofish is ignored — codegen
-// limitation → silent miscompile). Free-fn turbofish (as in serde's own
-// `json_decode[T]`) monomorphizes correctly.
+// The free function `json_decode_body[T](body)` is the primitive. The method form
+// `resp.json_as[T]()` is a thin consume-wrapper over it — a generic *method* whose
+// type param appears only in return position now monomorphizes correctly
+// ([M-codegen-method-return-turbofish] fixed: the method-call turbofish is threaded
+// into the return substitution). Both surfaces are exported; the free fn stays the
+// substrate (it is also what serde's own `json_decode[T]` mirrors).
 
 module std.http.serdejson
 
-import std.http.{HttpError}
+import std.http.{HttpError, Response}
 import std.encoding.json.{Json}
 import std.encoding.serde.{Deserialize, DeError, JsonDeserializer}
 
@@ -35,6 +36,38 @@ import std.encoding.serde.{Deserialize, DeError, JsonDeserializer}
 export fn json_decode_body[T Deserialize](body []u8) -> Result[T, HttpError] {
     // Drive serde's `T.deserialize` static dispatch inline (mirrors serde's
     // `json_decode_bytes`), mapping every failure to `HttpError{Protocol}`.
+    match str.from_bytes(body) {
+        Ok(s) => match Json.parse(s) {
+            Ok(v) => {
+                mut d = JsonDeserializer.at(v, 0, 128)
+                match T.deserialize(d) {
+                    Ok(x)  => Ok(x)
+                    Err(e) => Err(HttpError.decode_error(e.to_str()))
+                }
+            }
+            Err(_) => Err(HttpError.decode_error("invalid JSON syntax"))
+        }
+        Err(_) => Err(HttpError.decode_error("response body is not valid UTF-8"))
+    }
+}
+
+/// Consume the response and deserialize its JSON body into a typed record `T`
+/// (`#impl(Deserialize)`) — the method form of `json_decode_body`. `T` appears
+/// only in return position; the method-call turbofish carries it
+/// ([M-codegen-method-return-turbofish]).
+///
+/// Usage: `ro v = resp.json_as[Widget]()!!`.
+///
+/// The decode is INLINED (not a `json_decode_body[T]` delegation) because
+/// forwarding the bounded `[T Deserialize]` param into another generic fn with
+/// the same bound is not yet supported by the checker
+/// ([M-176-io-forward-bounded-generic]).
+#stable(since = "0.1")
+export fn Response consume @json_as[T Deserialize]() -> Result[T, HttpError] {
+    ro body = match @bytes() {
+        Ok(b)  => b
+        Err(e) => return Err(e)
+    }
     match str.from_bytes(body) {
         Ok(s) => match Json.parse(s) {
             Ok(v) => {

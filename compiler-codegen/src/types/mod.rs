@@ -22611,6 +22611,12 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Вызовы — точки consume ───
         ExprKind::Call { func, args, trailing } => {
+            // [M-codegen-method-return-turbofish] A turbofish method call
+            // (`resp.json_as[T]()`) parses as `Call{func: TurboFish{base: Member}}`
+            // — unwrap the turbofish so the `Member` arm below fires and the
+            // receiver is recognised as consumed (a `consume @json_as[T]()` method
+            // otherwise left `resp` un-consumed → spurious D133-not-consumed).
+            let func = func.unwrap_turbofish();
             match &func.kind {
                 // Method call: obj.method(args).
                 ExprKind::Member { obj, name: method } => {
