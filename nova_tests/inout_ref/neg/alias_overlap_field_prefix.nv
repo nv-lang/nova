@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_REF_ALIAS_OVERLAP
+//
+// D326 R9: `ref s.a` и `ref s` перекрываются (один путь — префикс другого).
+module neg.alias_overlap_field_prefix
+
+type Pair { a int, b int }
+
+fn g(mut ref m int, mut ref n Pair) {
+    m = m + 1
+    n.b = n.b + 1
+}
+
+test "field vs whole overlap" {
+    mut s = Pair{a: 0, b: 0}
+    g(ref s.a, ref s)
+    assert(true)
+}

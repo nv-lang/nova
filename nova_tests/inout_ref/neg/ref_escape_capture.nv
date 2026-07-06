@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_REF_ESCAPE_CAPTURE
+//
+// D326 R10: `mut ref`-параметр не должен захватываться замыканием/spawn.
+module neg.ref_escape_capture
+
+fn leak(mut ref a int) {
+    ro cl = || {
+        a = a + 1
+    }
+    cl()
+}
+
+test "capture mut ref in closure" {
+    mut x = 0
+    leak(ref x)
+    assert(true)
+}

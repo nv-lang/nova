@@ -13540,7 +13540,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 ## D326 — `ref` как режим передачи параметра (safe in-out / borrow); `@`/`-> @` формализация (Plan 172.5, 2026-06-26)
 
 **Source:** Plan 172.5 (in-out ref params), 2026-06-26 — owner переоткрыл Q29 в param-mode.
-**Status:** 📋 PROPOSED (sign-off владельца на дизайн получен 2026-06-26; реализация — Plan 172.5 поверх 172.4).
+**Status:** 🟢 CORE LANDED (Plan 172.5 Ф.1-Ф.5, 2026-07-06): `mut ref` in-out params (parser+checker+codegen), эксклюзивность `E_REF_ALIAS_OVERLAP`, addressability/mut-place/escape-ban — реализованы и покрыты фикстурами (2 pos + 11 neg зелёные; регрессия byte-identical на 580 файлах). Отложено: R6 mid-chain gating, generic `mut ref` codegen (см. «Амендменты»). Sign-off дизайна — 2026-06-26.
 **Amends:** Q29 (open-questions.md — снимает отвержение param-mode; `ref`-ТИП остаётся отвергнут), D132 (03-syntax.md — alias-гарантия `-> @` ↔ R7), D228 (value-record `@` escape-decay R8).
 **Adopt verbatim:** D181/D184 (режим возврата `@`). **Bounds:** D157 (05-memory.md) + D246-P10 (эксклюзивность УЗКАЯ, не Rust/Swift).
 **Cross-ref:** Plan 172.4 / Q-value-abi-auto-placement (авто-`ro ref` + heap↔stack — НЕ дублировать), D315 (ABI выводится), D246 (L3 pointee-cap / RETURN-оракул), D131/D133/D180 (consume — borrow≠move), D156 (consume-bound), Plan 174.5/174.6 (raw pointers / FFI).
@@ -13590,6 +13590,46 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 ### Связь
 
 D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity), D131/D132/D133/D180 (consume / alias-гарантия), D228 (escape), D315 (ABI выводится), D156 (consume-bound), D157 (multi-mut sound под GC), Q29 (amend), Plan 172.4 (авто-`ro ref`/`@`/heap↔stack — реализует часть), Plan 174.5/174.6 (raw pointers / FFI). **Новый код ошибки ровно один:** `E_REF_ALIAS_OVERLAP`; остальное переиспользует existing (`E_RECEIVER_BINDING_NOT_MUT`, `E_CONSUME_RECEIVER_RETURNS_AT`, `E_AT_RETURN_OUTSIDE_METHOD`).
+
+### Амендменты по факту реализации (Plan 172.5 Ф.1-Ф.5, 2026-07-06)
+
+- **`mut ref` = единственная user-facing реализованная форма.** `ro ref`
+  синтаксис принят (R2), но его zero-copy lowering НЕ дублируется — это
+  size-driven авто-механизм Plan 172.4 (R3). Explicit `ro ref` — семантическая
+  аннотация, которая иначе передаётся как обычный value-параметр; **call-site
+  маркер `ref` на `ro ref`-параметре — ошибка** (`E_REF_MARKER_NOT_ALLOWED`,
+  R4: маркер сигнализирует ВОЗМОЖНУЮ мутацию, только для `mut ref`).
+- **Lowering `mut ref` (Ф.4):** параметр → C-указатель `T*` (в `params_c`, единый
+  для forward-decl и definition); body-использования имени авто-разыменовываются
+  (`name` → `(*name)`, набор `ref_params` в эмиттере); call-site `ref x` → `&x`
+  (узел `ExprKind::RefArg`). Форвардинг `ref`-параметра в другой `mut ref`-вызов
+  (`&(*v) ≡ v`) работает. Скаляр + record проверены (pos-фикстуры зелёные).
+- **AST:** `ref` — глобальное keyword (`TokenKind::KwRef`; `ref` не используется
+  идентификатором нигде в std/examples/tests → non-breaking). `Param.ref_mode:
+  ParamRefMode{None,RoRef,MutRef}`; call-site — `ExprKind::RefArg(place)`
+  (не тип-узел, не UnOp — производится парсером ТОЛЬКО в arg-позиции).
+- **Коды ошибок (checker/parser).** Новый headline-код — `E_REF_ALIAS_OVERLAP`
+  (R9, per-pair prefix-overlap; поддержаны литерал-дизъюнктные индексы, dynamic
+  → консервативный overlap). Механические диагностики (не заявленные в исходном
+  дизайне как existing, объявлены как новые по факту): `E_REF_NOT_A_TYPE` (R1,
+  `ref` в тип-позиции — parse), `E_REF_MODE_REQUIRES_RO_OR_MUT` (голый `ref`
+  без `ro`/`mut` — parse), `E_REF_MARKER_REQUIRED` (пропущен `ref` на `mut ref`,
+  R4), `E_REF_MARKER_NOT_ALLOWED` (`ref` на не-`mut ref`, R4),
+  `E_REF_ARG_NOT_ADDRESSABLE` (не-lvalue / index-в-цепочке, R4),
+  `E_REF_ARG_NOT_MUT` (borrow `ro`-места, R2), `E_REF_ESCAPE_CAPTURE` (захват
+  `mut ref`-параметра closure/spawn, R10). `E_CONSUME_RECEIVER_RETURNS_AT`
+  реюзнут на существующей parse-проверке `consume @ -> @` (R6).
+- **R6 mid-chain gating (`E_RECEIVER_BINDING_NOT_MUT`) — ОТЛОЖЕНО (followup
+  `[M-172.5-chain-gating-ro-at]`).** parse-часть R6 (`consume @ -> @`) сделана;
+  но гейтинг «mut-метод на `ro -> @`-хвосте» (`c.peek().bump()`) требует
+  моделирования режима `@`-возврата сквозь method-chain — глубокое
+  взаимодействие с fluent-машинерией 172.4, вне soundness in-out `mut ref`.
+  Сейчас такой вызов компилируется (value-record `-> @` = копия по R7b, мутация
+  копии безвредна); диагностика — отдельная задача.
+- **Generic `fn f[T](mut ref x T)` (R12) — codegen отложен** (`[M-172.5-generic-
+  mut-ref-codegen]`): `params_c`/`ref_params` покрывают неген. путь (concrete);
+  erased/mono-пути `mut ref` не лоуэрят указатель. Checker-часть R12 (mode
+  ортогонален type-param) не блокирует.
 
 ---
 

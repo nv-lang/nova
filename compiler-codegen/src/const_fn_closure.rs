@@ -677,6 +677,7 @@ fn lambda_params_to_fn_params(
             consume: false,
             is_mut: false,
             is_const: false,
+            ref_mode: crate::ast::ParamRefMode::None,
         });
     }
     Ok(out)
@@ -718,6 +719,7 @@ fn closure_light_params_to_fn_params(
             consume: false,
             is_mut: false,
             is_const: false,
+            ref_mode: crate::ast::ParamRefMode::None,
         });
     }
     Ok(out)

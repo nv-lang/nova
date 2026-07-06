@@ -3173,6 +3173,17 @@ Non-matching prefixes (e.g., `[NOTE]`) produce `code = None`.
 `E_STR_NO_LEN` (MachineApplicable: replace `.len` → `.byte_len()`),
 `E_STR_NO_INT_INDEX` (guidance note).
 
+**Plan 172.5 — In-out `ref`-параметры (D326, added 2026-07-06):**
+`E_REF_ALIAS_OVERLAP` (headline: два `mut ref`-аргумента одного вызова с
+пересекающимися местами, R9), `E_REF_NOT_A_TYPE` (`ref` в тип-позиции — parse, R1),
+`E_REF_MODE_REQUIRES_RO_OR_MUT` (голый `ref` без `ro`/`mut` в параметре — parse, R2),
+`E_REF_MARKER_REQUIRED` (пропущен call-site `ref` на `mut ref`-параметре, R4),
+`E_REF_MARKER_NOT_ALLOWED` (`ref`-маркер на не-`mut ref`-параметре, R4),
+`E_REF_ARG_NOT_ADDRESSABLE` (`ref` на rvalue / индекс-в-цепочке, R4),
+`E_REF_ARG_NOT_MUT` (`mut ref` borrow `ro`-места, R2),
+`E_REF_ESCAPE_CAPTURE` (захват `mut ref`-параметра closure/spawn/…, R10),
+`E_CONSUME_RECEIVER_RETURNS_AT` (реюз: `consume @ -> @` — parse, R6).
+
 **104.5.9 — Comparison chain fixes (2 fixes, added 2026-06-17):**
 `E_CMP_CHAIN_UNSUPPORTED` (guidance note — use `&&`),
 `E_RELATIONAL_OPERAND_NOT_ORDERED` (suggest import `Ordered` protocol).

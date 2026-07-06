@@ -743,6 +743,28 @@ pub struct Param {
     /// `const` И return должен быть `const`. Конфликтует с `mut`/
     /// `consume` (E_CONST_PARAM_MOD_CONFLICT).
     pub is_const: bool,
+    /// Plan 172.5 (D326): `ref` passing-mode (`ro ref`/`mut ref`). НЕ тип —
+    /// режим передачи параметра (Swift `inout` / C# `in`+`ref`, без
+    /// лайфтаймов). `MutRef` — единственная явная user-facing форма
+    /// (callee мутирует caller-сторадж in-place; call-site помечает `ref x`);
+    /// `RoRef` — read-only borrow (обычно авто, Plan 172.4). `None` — обычная
+    /// by-value передача. `MutRef` подразумевает `is_mut=true` (mut-доступ в
+    /// теле callee); взаимоисключающ с `consume`/`const` (parser enforce'ит).
+    pub ref_mode: ParamRefMode,
+}
+
+/// Plan 172.5 (D326 R2): режим передачи параметра `ref` — borrow-mode, НЕ тип.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamRefMode {
+    /// Обычная by-value передача (нет `ref`).
+    None,
+    /// `ro ref name T` — read-only borrow (zero-copy чтение). Обычно
+    /// авто/невидимо (Plan 172.4); явная форма разрешена.
+    RoRef,
+    /// `mut ref name T` — mutable in-out borrow. Единственная явная
+    /// user-facing форма. Callee пишет в caller-сторадж; видно после
+    /// синхронного вызова. Call-site обязан пометить `ref <place>`.
+    MutRef,
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.
@@ -2188,6 +2210,14 @@ pub enum ExprKind {
         /// legacy `{ x => body }` до миграции (C13 удалит legacy).
         trailing: Option<Trailing>,
     },
+    /// Plan 172.5 (D326 R4): call-site `ref <place>` argument marker. Produced
+    /// by the parser ONLY in call-argument position; wraps the addressable
+    /// place expression passed to a `mut ref` parameter. Transparent for type
+    /// inference (type = inner place type); codegen passes the operand's
+    /// address; the checker enforces marker ⟺ `mut ref` param, addressability,
+    /// non-overlap (E_REF_ALIAS_OVERLAP) and the escape ban. `ref` in any
+    /// non-argument position never reaches here (parser rejects it).
+    RefArg(Box<Expr>),
     /// `expr?` — пробрасывание Fail (D25/D65)
     Try(Box<Expr>),
     /// `expr!!` — throw-стиль для Result/Option (D85, Plan 19 C7).

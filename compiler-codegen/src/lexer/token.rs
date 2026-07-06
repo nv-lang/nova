@@ -79,6 +79,11 @@ pub enum TokenKind {
     KwMut,
     /// Plan 73 (D131): `consume` — consuming receiver/param qualifier.
     KwConsume,
+    /// Plan 172.5 (D326): `ref` — parameter passing-MODE marker (safe in-out /
+    /// borrow), NOT a type. Valid only as `ro ref`/`mut ref` on a parameter and
+    /// as the call-site `ref <place>` argument marker. `ref` in type position →
+    /// `E_REF_NOT_A_TYPE`.
+    KwRef,
     /// Plan 114 (D184): immutable binding / field / type-modifier / param.
     /// Replaces `readonly` as the canonical short keyword.
     KwRo,
@@ -248,6 +253,7 @@ impl TokenKind {
             TokenKind::KwConst => "`const`",
             TokenKind::KwMut => "`mut`",
             TokenKind::KwConsume => "`consume`",
+            TokenKind::KwRef => "`ref`",
             TokenKind::KwRo => "`ro`",
             TokenKind::KwReadonly => "`readonly`",
             TokenKind::KwUnsafe => "`unsafe`",

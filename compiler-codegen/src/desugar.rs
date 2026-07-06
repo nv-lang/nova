@@ -648,7 +648,7 @@ impl DesugarCtx {
                 }
             }
             ExprKind::TurboFish { base, .. } => self.desugar_expr(base),
-            ExprKind::Try(x) | ExprKind::Bang(x) => self.desugar_expr(x),
+            ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => self.desugar_expr(x),
             ExprKind::Coalesce(a, b) => { self.desugar_expr(a); self.desugar_expr(b); }
             ExprKind::As(x, _) | ExprKind::Is(x, _) => self.desugar_expr(x),
             ExprKind::Binary { left, right, .. } => {

@@ -3081,9 +3081,10 @@ impl Parser {
                 // хочет его вернуть. D132 + D133 несовместимы на consume-receiver.
                 if matches!(&receiver, Some(Receiver { consume: true, .. })) {
                     return Err(Diagnostic::new(
-                        "`consume` receiver и `-> @` (fluent-return) несовместимы \
-                         (D8 / Plan 100.1 D133): consume-метод уничтожает record, \
-                         fluent-return требует его сохранить. Убери `consume` или `-> @`."
+                        "[E_CONSUME_RECEIVER_RETURNS_AT] `consume` receiver и `-> @` \
+                         (fluent-return) несовместимы (D8 / D133 / D326 R6): \
+                         consume-метод уничтожает record, fluent-return требует его \
+                         сохранить. Убери `consume` или `-> @`."
                             .to_string(),
                         at_span,
                     ));
@@ -3436,6 +3437,47 @@ impl Parser {
                 ));
             }
         }
+        // Plan 172.5 (D326 R2): `ref` passing-mode marker — `ro ref name T`
+        // (read-only borrow) / `mut ref name T` (mutable in-out borrow).
+        // `ref` — режим передачи, НЕ тип: consume/const несовместимы (borrow ≠
+        // move / comptime-literal, R12); bare `ref` без `ro`/`mut` неполон.
+        let mut ref_mode = crate::ast::ParamRefMode::None;
+        if matches!(self.peek().kind, TokenKind::KwRef) {
+            let ref_span = self.peek().span;
+            if is_const_param {
+                return Err(Diagnostic::new(
+                    "[E_CONST_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `const` и `ref` (D199 / D326): `const` — comptime literal без \
+                     runtime storage, `ref` — borrow caller-стораджа. Убери один."
+                        .to_string(),
+                    ref_span,
+                ));
+            }
+            if is_consume {
+                return Err(Diagnostic::new(
+                    "[E_PARAM_MOD_CONFLICT] параметр не может быть одновременно \
+                     `consume` и `ref` (D326 R12): `consume` = передача владения \
+                     (move), `ref` = borrow — взаимоисключающие. Убери один."
+                        .to_string(),
+                    ref_span,
+                ));
+            }
+            self.bump(); // ref
+            if is_mut {
+                ref_mode = crate::ast::ParamRefMode::MutRef;
+            } else if has_readonly_prefix {
+                ref_mode = crate::ast::ParamRefMode::RoRef;
+            } else {
+                return Err(Diagnostic::new(
+                    "[E_REF_MODE_REQUIRES_RO_OR_MUT] `ref` — режим передачи \
+                     параметра (D326 R2), обязана предшествовать `ro` или `mut`: \
+                     `ro ref name T` (read-only borrow) или `mut ref name T` \
+                     (mutable in-out borrow). Голый `ref name T` неполон."
+                        .to_string(),
+                    ref_span,
+                ));
+            }
+        }
         let (name, name_span) = self.parse_ident()?;
         // D6: mut-маркер после имени — `name mut type` (legacy form).
         // Plan 108.1: тоже принимаем, помечаем is_mut.
@@ -3504,7 +3546,25 @@ impl Parser {
             consume: is_consume,
             is_mut,
             is_const: is_const_param,
+            ref_mode,
         })
+    }
+
+    /// Plan 172.5 (D326 R4): парсит значение аргумента вызова, распознавая
+    /// call-site маркер `ref <place>`. `ref` здесь — единственная (кроме
+    /// параметра) легальная позиция ключевого слова; оборачивает place в
+    /// `ExprKind::RefArg`. Вне arg-позиции `ref` в выражении не появляется
+    /// (parse_expr его не принимает как prefix → ошибка «expected expression»).
+    fn parse_call_arg_value(&mut self) -> Result<Expr, Diagnostic> {
+        if matches!(self.peek().kind, TokenKind::KwRef) {
+            let ref_span = self.peek().span;
+            self.bump(); // ref
+            let place = self.parse_expr()?;
+            let sp = ref_span.merge(place.span);
+            Ok(Expr::new(ExprKind::RefArg(Box::new(place)), sp))
+        } else {
+            self.parse_expr()
+        }
     }
 
     /// Парсит список эффектов между `)` и (`->` | `{` | `=>`).
@@ -5939,6 +5999,22 @@ impl Parser {
         let is_pointee = self.pointee_ctx;
         self.pointee_ctx = false;
         match self.peek().kind {
+            // Plan 172.5 (D326 R1): `ref` — режим передачи параметра, НЕ тип.
+            // Запрещены `ref T`-локалы/поля/возвраты/коллекции/sum/Option — всё
+            // это ловится здесь, т.к. любой из них резолвит тип через parse_type.
+            // Единственные валидные места `ref` — `ro ref`/`mut ref` на
+            // параметре (parse_param) и call-site `ref <place>` (parse args).
+            TokenKind::KwRef => {
+                return Err(Diagnostic::new(
+                    "[E_REF_NOT_A_TYPE] `ref` — режим передачи параметра (D326 R1), \
+                     НЕ тип: запрещены `ref T`-локалы/биндинги, ref-поля, ref в \
+                     Vec/коллекции/sum/Option и ref-возвраты. Используй `ro ref`/\
+                     `mut ref` только в позиции параметра (`fn f(mut ref x T)`), а \
+                     на месте вызова — маркер `f(ref x)`. Лайфтаймов в Nova нет."
+                        .to_string(),
+                    start,
+                ));
+            }
             // Plan 114 (D184) Ф.1.5: `readonly T` renamed to `ro T`.
             TokenKind::KwReadonly => {
                 return Err(Diagnostic::new(
@@ -7593,10 +7669,10 @@ impl Parser {
                             let (arg_name, _) = self.parse_ident()?;
                             self.bump(); // :
                             self.skip_newlines();
-                            let value = self.parse_expr()?;
+                            let value = self.parse_call_arg_value()?;
                             args.push(CallArg::Named { name: arg_name, value });
                         } else {
-                            args.push(CallArg::Item(self.parse_expr()?));
+                            args.push(CallArg::Item(self.parse_call_arg_value()?));
                         }
                         if self.eat(&TokenKind::Comma).is_some() {
                             self.skip_newlines();

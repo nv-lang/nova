@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_REF_ARG_NOT_MUT
+//
+// D326 R2: `mut ref` пишет в caller-сторадж — место должно быть `mut`.
+module neg.arg_not_mut
+
+fn inc(mut ref a int) {
+    a = a + 1
+}
+
+test "ref of ro local" {
+    ro x = 5
+    inc(ref x)
+    assert(true)
+}

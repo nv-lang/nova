@@ -621,6 +621,11 @@ impl<'a> Lexer<'a> {
             "const" => TokenKind::KwConst,
             "mut" => TokenKind::KwMut,
             "consume" => TokenKind::KwConsume,
+            // Plan 172.5 (D326): `ref` — parameter passing-mode marker (safe
+            // in-out / borrow), NOT a type. Global keyword: `ref` is unused as
+            // an identifier anywhere in std/examples/tests (verified), so
+            // reserving it is non-breaking.
+            "ref" => TokenKind::KwRef,
             // Plan 114 (D184): `ro` — canonical short keyword.
             "ro" => TokenKind::KwRo,
             // Plan 114 (D184): retracted; lexer still recognizes the lexeme

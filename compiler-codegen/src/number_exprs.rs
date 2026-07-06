@@ -304,7 +304,7 @@ impl Numberer {
                 }
             }
             ExprKind::TurboFish { base, .. } => self.expr(base),
-            ExprKind::Try(x) | ExprKind::Bang(x) => self.expr(x),
+            ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => self.expr(x),
             ExprKind::Coalesce(a, b) => {
                 self.expr(a);
                 self.expr(b);

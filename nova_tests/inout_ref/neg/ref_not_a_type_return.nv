@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_REF_NOT_A_TYPE
+//
+// D326 R1: ref-возврат запрещён (`ref` — не тип).
+module neg.ref_not_a_type_return
+
+fn bad(x int) -> ref int => x
+
+test "ref return type" {
+    ro _ = bad(3)
+    assert(true)
+}

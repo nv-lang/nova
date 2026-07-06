@@ -424,7 +424,7 @@ fn walk_expr_for_cancel_unsafe(
             walk_expr_for_cancel_unsafe(right, external_fns, warnings);
         }
         ExprKind::As(x, _) | ExprKind::Is(x, _) => walk_expr_for_cancel_unsafe(x, external_fns, warnings),
-        ExprKind::Try(x) | ExprKind::Bang(x) => walk_expr_for_cancel_unsafe(x, external_fns, warnings),
+        ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => walk_expr_for_cancel_unsafe(x, external_fns, warnings),
         ExprKind::Coalesce(a, b) => {
             walk_expr_for_cancel_unsafe(a, external_fns, warnings);
             walk_expr_for_cancel_unsafe(b, external_fns, warnings);
@@ -1085,7 +1085,7 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("concat".to_string());
         }
         ExprKind::Unary { operand, .. } => collect_expr(operand, out),
-        ExprKind::Try(i) | ExprKind::Bang(i) => collect_expr(i, out),
+        ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) => collect_expr(i, out),
         ExprKind::Coalesce(a, b) => {
             collect_expr(a, out);
             collect_expr(b, out);
@@ -2010,7 +2010,7 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
             }
         }
         ExprKind::TurboFish { base, .. } => walk_expr_lints(base, out),
-        ExprKind::Try(x) | ExprKind::Bang(x) => walk_expr_lints(x, out),
+        ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => walk_expr_lints(x, out),
         ExprKind::Coalesce(a, b) => { walk_expr_lints(a, out); walk_expr_lints(b, out); }
         ExprKind::As(x, _) | ExprKind::Is(x, _) => walk_expr_lints(x, out),
         ExprKind::Binary { left, right, .. } => {

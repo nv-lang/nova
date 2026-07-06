@@ -215,7 +215,7 @@ fn walk_children(e: &mut Expr, sigs: &Sigs) {
             }
         }
         ExprKind::TurboFish { base, .. } => normalize_expr(base, sigs),
-        ExprKind::Try(x) | ExprKind::Bang(x) => normalize_expr(x, sigs),
+        ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => normalize_expr(x, sigs),
         ExprKind::Coalesce(a, b) => { normalize_expr(a, sigs); normalize_expr(b, sigs); }
         ExprKind::As(x, _) | ExprKind::Is(x, _) => normalize_expr(x, sigs),
         ExprKind::Binary { left, right, .. } => {
