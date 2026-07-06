@@ -10401,7 +10401,7 @@ type CharsIter value priv { buf str, pos int }   // borrows str; GC видит p
 | `mut @next() -> Option[char]` | декод codepoint в `buf[pos]`, `pos += step` (`Next[char]`) | аморт. O(1) |
 | `@iter() -> CharsIter => @` | `Iter` (self-iterator, D58 `for c in s`) | O(1) |
 | `@count() -> int` | число codepoint'ов от `pos` (терминатор) | O(n) |
-| `@nth(i int) -> Option[char]` | i-й codepoint (явный скан) | O(n) |
+| ~~`@nth(i int)`~~ | **⛔ ретрактирован (2026-07-06, решение владельца)** — это воссозданный запрещённый `s[i]` по codepoint (`E_STR_NO_INT_INDEX`): не-mut приёмник сканировал с нуля каждый вызов → O(n²) в циклах. Целевая итерация: `for-in` + `enumerate`/`skip`; миграция `[M-d73-d77-retraction-migration]`-волной | — |
 | `@is_empty() -> bool` | `pos >= buf.byte_len()` | O(1) |
 
 - **НЕ реализует `Index[int,char]`**, нет позиционных `at`/`len` (вариант C). На `str`
