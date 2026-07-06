@@ -231,9 +231,10 @@ fn s21_match(cps []u32, used []int, i int) -> (Option[str], []int) {
     match collate_contraction_map.get(first) {
         Some(_) => {
             mut cur_tail []u32 = []u32.new()
-            cur_tail.cap(4)
-     // matched tail cps (after first)            mut cur_consumed []int = []int.new()
-            cur_consumed.cap(4) // their indices (in order)            mut prev_ccc = 0
+            cur_tail.cap(4)                     // matched tail cps (after first)
+            mut cur_consumed []int = []int.new()
+            cur_consumed.cap(4)                 // their indices (in order)
+            mut prev_ccc = 0
             mut j = i + 1
             mut going = true
             while going && j < n {
