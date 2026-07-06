@@ -262,6 +262,9 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
             .collect();
         anyhow!("{}", messages.join("\n"))
     })?;
+    // Plan 174 (D409): auto-return lowering для `-> @` тел — см. main compile
+    // path (выше в этом файле) для полного rationale.
+    nova_codegen::self_return_lower::lower_module(&mut module);
     // Plan 114.4.2 (D199) Ф.3 + 114.4.3 (V2): const fn AST rewrite + eval
     // также должен запускаться в check-режиме чтобы evaluator errors
     // (E_CONST_FN_EVAL_OVERFLOW / DIV_ZERO / DEPTH_EXCEEDED) fired.
@@ -398,6 +401,11 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     let checker_annotations = std::mem::take(&mut module_env.resolved_types);
     module_env.resolved_types = resolved_types;
     module_env.resolved_types.extend(checker_annotations);
+    // Plan 174 (D409): auto-return lowering для `-> @` тел. Запускается ПОСЛЕ
+    // check_module (E_EXPLICIT_SELF_RETURN уже отгейтил explicit-формы выше) —
+    // синтезирует `@` на implicit exit'ах, переиспользуя существующую emission
+    // manual pre-D409 формы (см. self_return_lower.rs doc).
+    nova_codegen::self_return_lower::lower_module(&mut module);
     // Plan 52 Ф.4: десугаринг map-литералов `[k: v]` → block-expression
     // ПОСЛЕ type-check, ДО effect-inference и codegen. После прохода
     // codegen видит обычные method-call'ы (with_capacity / insert).

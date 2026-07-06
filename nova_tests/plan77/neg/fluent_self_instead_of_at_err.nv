@@ -13,7 +13,6 @@ fn Bldr.new() -> Bldr => { k: 0 }
 // -> @ fluent-метод (нужен для fluent_set в check)
 fn Bldr mut @bump() -> @ {
     @k = @k + 1
-    @
 }
 
 // ОШИБКА D132: все пути возвращают @, но объявлен `-> Self` вместо `-> @`.

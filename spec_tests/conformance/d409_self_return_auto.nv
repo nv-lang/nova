@@ -1,0 +1,89 @@
+// D409 — `-> @`: автоматический возврат приёмника (амендмент владельца
+// 2026-07-06, амендит D181/D132). Explicit `@`/`return @`/`=> @` теперь
+// ЗАПРЕЩЕНЫ (см. neg/d409_explicit_self_return_neg.nv) — возврат приёмника
+// единственно автоматический:
+//   (а) конец тела без хвостового выражения → неявный `return @`;
+//   (б) голый `return` (без значения) → `return @`;
+//   (в) хвостовое НЕ-`@` выражение (напр. вызов НЕ-fluent метода) — discard,
+//       затем неявный `return @`.
+// Spec: spec/decisions/03-syntax.md D409. Часть ЕДИНОГО conformance
+// folder-module (одна CU) — все имена ниже D409-префиксованы.
+module spec_tests.conformance
+
+type D409Widget { mut n int, mut cap int }
+
+fn D409Widget.new() -> D409Widget => { n: 0, cap: 0 }
+
+// Helper — НЕ fluent (returns int, not `-> @`); its call feeds the tail of
+// `@bump_to_cap`'s body below, exercising "discard non-`@` tail value".
+fn D409Widget mut @_grow_cap(target int) -> int {
+    @cap = target
+    @cap
+}
+
+// (а) конец тела без хвостового `@` — авто-возврат приёмника.
+fn D409Widget mut @inc() -> @ {
+    @n += 1
+}
+
+// (б) голый `return` в ветке — авто `return @`; конец тела тоже авто.
+fn D409Widget mut @bump_if_room(additional int) -> @ {
+    ro needed = @n + additional
+    if needed > @cap {
+        return
+    }
+    @n = needed
+}
+
+// (в) хвостовое НЕ-`@` выражение (вызов НЕ-fluent `@_grow_cap`, возвращает
+// `int`) — discard'ится, приёмник возвращается автоматически.
+fn D409Widget mut @bump_to_cap(target int) -> @ {
+    @_grow_cap(target)
+}
+
+// Смешанный случай: несколько ranних `return` (голых) в разных ветках +
+// implicit конец тела — все пути возвращают приёмник автоматически.
+fn D409Widget mut @clamp(lo int, hi int) -> @ {
+    if @n < lo {
+        @n = lo
+        return
+    }
+    if @n > hi {
+        @n = hi
+        return
+    }
+}
+
+test "D409 (а): конец тела без хвостового @ — chaining работает" {
+    mut w = D409Widget.new()
+    ro w2 = w.inc().inc().inc()
+    assert(w2.n == 3)
+    assert(w.n == 3)
+}
+
+test "D409 (б): голый return в ветке — auto self-return + falls through" {
+    mut w = D409Widget.new()
+    w.cap = 10
+    mut w2 = w.bump_if_room(3)
+    assert(w2.n == 3)
+    ro w3 = w2.bump_if_room(100)   // needed(103) > cap(10) → bare return, n unchanged
+    assert(w3.n == 3)
+}
+
+test "D409 (в): хвостовое НЕ-@ выражение (int) discard'ится, приёмник возвращается" {
+    mut w = D409Widget.new()
+    ro w2 = w.bump_to_cap(7)
+    assert(w2.cap == 7)
+    assert(w.cap == 7)   // same object — w2 aliases w (receiver auto-returned)
+}
+
+test "D409: смесь голых return в разных ветках + implicit конец тела" {
+    mut w = D409Widget.new()
+    w.n = 5
+    mut w2 = w.clamp(0, 10)
+    assert(w2.n == 5)     // in range → falls through, no branch taken
+    mut w3 = w2.clamp(0, 3)
+    assert(w3.n == 3)     // clamped high → bare return
+    ro w4 = w3.clamp(8, 20)
+    assert(w4.n == 8)     // clamped low → bare return
+}

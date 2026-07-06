@@ -25,7 +25,7 @@ fn Token7 consume @release(mut counter AtomicInt) -> int {
 
 // Fluent mutator — no semantic change; exercises M3 path
 // (fluent-chain `-> @` before consume).
-fn Token7 mut @bump() -> @ { @ }
+fn Token7 mut @bump() -> @ {}
 
 test "property: each consume-binding satisfied exactly once across scenarios" {
     mut counter = AtomicInt.new(0)

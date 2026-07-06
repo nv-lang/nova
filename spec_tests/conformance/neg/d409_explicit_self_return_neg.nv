@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_ERROR E_EXPLICIT_SELF_RETURN
+//
+// D409 (амендмент владельца 2026-07-06): explicit self-return в `-> @`-теле
+// запрещён — возврат приёмника автоматический (см. позитив
+// d409_self_return_auto.nv). Три банённые формы: хвостовой `@`, `return @`,
+// `=> @`. Здесь — хвостовой `@` (первая ошибка, которую увидит компилятор);
+// `@bad_return_at` / `@bad_arrow_at` ниже демонстрируют остальные две формы
+// (тот же код, не достигается — компиляция уже упала на первой).
+
+module neg.d409_explicit_self_return_neg
+
+type D409Bad { mut n int }
+
+fn D409Bad.new() -> D409Bad => { n: 0 }
+
+// ОШИБКА D409 (E_EXPLICIT_SELF_RETURN): хвостовой `@` — возврат приёмника
+// уже автоматический, ручной хвостовой `@` запрещён.
+fn D409Bad mut @tail_at() -> @ {
+    @n += 1
+    @
+}
+
+// ОШИБКА D409: `return @` — тоже explicit self-return, тоже запрещён.
+fn D409Bad mut @return_at() -> @ {
+    if @n > 0 {
+        return @
+    }
+    @n += 1
+}
+
+// ОШИБКА D409: `=> @` (arrow-body) — bare `@` arrow-body тоже запрещён.
+fn D409Bad mut @arrow_at() -> @ => @
+
+test "should not compile" {
+    mut w = D409Bad.new()
+    ro _ = w.tail_at()
+    assert(w.n == 1)
+}

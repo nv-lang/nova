@@ -4214,6 +4214,9 @@ fn cmd_build(
                     anyhow!("{}", msgs.join("\n"))
                 })?
             };
+            // Plan 174 (D409): auto-return lowering для `-> @` тел. check_module
+            // выше уже отгейтил E_EXPLICIT_SELF_RETURN на as-written AST.
+            nova_codegen::self_return_lower::lower_module(&mut module);
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("effects-infer");
                 nova_codegen::types::infer_effects(&mut module);

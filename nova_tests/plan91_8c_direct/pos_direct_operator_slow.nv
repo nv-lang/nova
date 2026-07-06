@@ -24,7 +24,6 @@ fn[T Compare] []T mut @sort_direct() -> @ {
         @[j + 1] = key
         i = i + 1
     }
-    @
 }
 
 // Count elements less than a key using @[i] < key directly.

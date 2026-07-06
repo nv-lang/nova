@@ -38187,3 +38187,32 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   http_typed/protocols/serde/http/http_transport/plan154_1/plan126/plan91_15/plan97/plan108/std·time/
   basics/modules/plan91_14/16/plan100_6/plan108_4/inout_ref/named_params) — **0 новых FAIL**.
   Сборка Rust чистая.
+
+## D409 — `-> @` автоматический возврат приёмника (Plan 174 side-quest, 2026-07-06)
+
+- **Что:** реализован D409 (амендит D181/D132): в `-> @`-методах возврат приёмника единственно
+  автоматический — конец тела без хвоста / голый `return` / хвостовое НЕ-`@` выражение (discard) →
+  неявный `return @`. **Explicit-формы запрещены** (`@` в хвосте / `return @` / `=> @` →
+  `E_EXPLICIT_SELF_RETURN`; амендмент владельца — усиление изначальной редакции, обратная
+  совместимость снята). Делегация `=> @other_fluent()` остаётся легальной. `return <не-приёмник>` —
+  ошибка как раньше (D132 rule 2).
+- **Как (§0, без дублей):** чекер — `check_fluent_return` переписан (types/mod.rs: ban-walker по
+  control-flow-блокам, `return` = statement → рекурсия только в If/Match/Loop/While/For/Block/
+  ConsumeScope, замыкания — отдельный return-scope); лоуэринг — НОВЫЙ AST-pass
+  `self_return_lower.rs` (запускается ПОСЛЕ check_module во всех 4 пайплайнах: main.rs check+build,
+  test_runner.rs, doc/test_runner.rs, nova-cli build): синтезирует `SelfAccess` на implicit-exit'ах →
+  codegen видит уже привычную manual-форму, **ни строчки нового кодогена**.
+- **Миграция:** ~90 мест — std (vec/core, vec/mutate, vec/restructure, vec/sort, write_buffer,
+  string_builder, std/sort) + spec_tests (d132/d215/d326) + nova_tests (plan73×2, plan77×3,
+  plan91_8c×2, plan123×2); `{ body; @ }` → `{ body }`, `return @` → `return`, `; @ }` однострочников
+  → `}`. neg-фикстура plan77/fluent_body_err инвертирована (было «нет @» = ошибка, стало «есть @» =
+  ошибка E_EXPLICIT_SELF_RETURN).
+- **Тесты:** `spec_tests/conformance/d409_self_return_auto.nv` (4 теста: конец тела / голый return в
+  ветке / discard НЕ-@ хвоста / смесь веток) + `neg/d409_explicit_self_return_neg.nv`
+  (E_EXPLICIT_SELF_RETURN) + `neg/d409_return_wrong_value_neg.nv` (`return 5` → D132).
+- **Гейты:** conformance `--positive --compile-error` **56/0** (54 базовых + 2 новых негатива;
+  позитив влит в общий модуль); дельта против базиса `c5256bf2` (temp-worktree бинарь) на широкой
+  выборке (std/collections/vec, std/runtime, std/sort, plan128/128_2, plan153_0-6, str, strings,
+  vec_elem_type, plan73/77/91_8c/100_1/123/123_4_4, inout_ref, cgfix_fluent_tail_if, plan138_2,
+  self_nested) — **0 новых** (все фейлы байт-идентичны базису, вкл. pre-existing panic
+  plan153_4/chunks_windows P67-LEGACY). Сборка Rust чистая (compiler-codegen + nova-cli).

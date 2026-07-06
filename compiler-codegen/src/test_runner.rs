@@ -2671,6 +2671,11 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
     let checker_annotations = std::mem::take(&mut module_env.resolved_types);
     module_env.resolved_types = resolved_types;
     module_env.resolved_types.extend(checker_annotations);
+    // Plan 174 (D409): auto-return lowering для `-> @` тел. check_module выше
+    // уже отгейтил E_EXPLICIT_SELF_RETURN на as-written AST; эта мутация
+    // синтезирует `@` на implicit exit'ах, переиспользуя существующую
+    // emission manual pre-D409 формы (self_return_lower.rs doc).
+    crate::self_return_lower::lower_module(&mut module);
     // Plan 52 Ф.9: lints — ПОСЛЕ check_module (типы validated), ДО
     // desugar (lints видят MapLit-узлы). Возвращаются caller'у для
     // EXPECT_COMPILE_WARNING сверки.

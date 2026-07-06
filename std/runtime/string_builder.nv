@@ -96,7 +96,7 @@ export fn StringBuilder @ends_with(suffix str) -> bool {
 // ─── Mutating (-> @) ───
 
 // Append UTF-8 bytes из str. Zero-copy view (as_bytes).
-export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.as_bytes()); @ }
+export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.as_bytes()) }
 
 // Append codepoint как UTF-8 (1-4 байта). Fluent push chain (D181)
 // + multi-line continuation (Plan 91 followup parser fix).
@@ -117,11 +117,10 @@ export fn StringBuilder mut @append(c char) -> @ {
             .push((0x80 | ((cp >> 6) & 0x3F)) as u8)
             .push((0x80 | (cp & 0x3F)) as u8)
     }
-    @
 }
 
 // Append raw []u8 bytes. Caller отвечает за UTF-8 validity.
-export fn StringBuilder mut @append(ro arr []u8) -> @ { @buf.append(arr); @ }
+export fn StringBuilder mut @append(ro arr []u8) -> @ { @buf.append(arr) }
 
 // Plan 154.1 (D269): typed scalar overloads so `sb.append(x)` dispatches on
 // the value's type uniformly — no `append_int`-style names, no caller-side
@@ -146,19 +145,18 @@ export fn StringBuilder mut @append(x f32) -> @ { @append(str.from(x)) }
 export fn StringBuilder mut @append_repeat(s str, n int) -> @
     requires n >= 0
 {
-    if n <= 0 { return @ }
+    if n <= 0 { return }
     ro bytes = s.as_bytes()
     @buf.reserve(bytes.len() * n)
     for _ in 0..n {
         @buf.append(bytes)
     }
-    @
 }
 
 // Обрезать буфер до len байт. len >= @len() → no-op. Caller отвечает за UTF-8 границы.
 export fn StringBuilder mut @truncate(len int) -> @
     requires len >= 0
-{ @buf.truncate(len); @ }
+{ @buf.truncate(len) }
 
 // Plan 152.7.1 (D374 AMEND, ex-D374) — Write protocol implementation.
 // Delegates to @buf.append directly (same UTF-8 bytes path as @append(s str)).

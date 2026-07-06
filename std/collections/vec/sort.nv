@@ -16,7 +16,7 @@ module collections.vec
 fn Vec[T] mut @_msort(cmp fn(T, T) -> int) -> @ {
     ro n = @len
     if n < 2 {
-        return @
+        return
     }
     mut buf = Vec[T].with_capacity(n)
     mut width = 1
@@ -61,7 +61,6 @@ fn Vec[T] mut @_msort(cmp fn(T, T) -> int) -> @ {
         }
         width = width + width
     }
-    @
 }
 
 // Internal: sift element at `root` down a max-heap over [0, end). Iterative.
@@ -82,13 +81,12 @@ fn Vec[T] mut @_sift_down(root_in int, end int, cmp fn(T, T) -> int) -> @ {
         ro rootv = unsafe { @data[root] }
         ro selv = unsafe { @data[sel] }
         if cmp(rootv, selv) >= 0 {
-            return @
+            return
         }
         @swap(root, sel)
         root = sel
         child = root + root + 1
     }
-    @
 }
 
 // Internal: in-place UNSTABLE heapsort by `cmp` (ascending). Build a max-heap,
@@ -96,7 +94,7 @@ fn Vec[T] mut @_sift_down(root_in int, end int, cmp fn(T, T) -> int) -> @ {
 fn Vec[T] mut @_heapsort(cmp fn(T, T) -> int) -> @ {
     ro n = @len
     if n < 2 {
-        return @
+        return
     }
     mut start = n / 2
     while start > 0 {
@@ -109,7 +107,6 @@ fn Vec[T] mut @_heapsort(cmp fn(T, T) -> int) -> @ {
         @swap(0, end)
         @_sift_down(0, end, cmp)
     }
-    @
 }
 
 // Internal: insertion sort for small slices [lo, hi).
@@ -127,7 +124,6 @@ fn Vec[T] mut @_ins_sort_range(lo int, hi int, cmp fn(T, T) -> int) -> @ {
         unsafe { @data[j + 1] = key }
         i = i + 1
     }
-    @
 }
 
 // Internal: integer log2 (floor). ilog2(1)=0, ilog2(2)=1, ilog2(4)=2, etc.
@@ -147,7 +143,7 @@ fn _pdq_ilog2(n int) -> int {
 fn Vec[T] mut @_pdqsort(cmp fn(T, T) -> int) -> @ {
     ro n = @len
     if n < 2 {
-        return @
+        return
     }
     ro depth_limit = _pdq_ilog2(n) + _pdq_ilog2(n) + 2
     mut stack = Vec[int].new()
@@ -232,7 +228,6 @@ fn Vec[T] mut @_pdqsort(cmp fn(T, T) -> int) -> @ {
             }
         }
     }
-    @
 }
 
 /// Sort in place ascending by the element's own `Compare` (stable). O(n log n).
@@ -261,7 +256,7 @@ export fn Vec[T] mut @sort_unstable_by_key[K Compare](key fn(T) -> K) -> @ => @_
 /// duplicates (`v.sort().dedup()`). Returns `@`.
 export fn Vec[T] mut @dedup() -> @ {
     if @len < 2 {
-        return @
+        return
     }
     mut write = 1
     for read in 1..@len {
@@ -275,13 +270,12 @@ export fn Vec[T] mut @dedup() -> @ {
         }
     }
     @len = write
-    @
 }
 
 /// Remove consecutive elements considered equal by `eq(prev, cur)`. O(n).
 export fn Vec[T] mut @dedup_by(eq fn(T, T) -> bool) -> @ {
     if @len < 2 {
-        return @
+        return
     }
     mut write = 1
     for read in 1..@len {
@@ -295,13 +289,12 @@ export fn Vec[T] mut @dedup_by(eq fn(T, T) -> bool) -> @ {
         }
     }
     @len = write
-    @
 }
 
 /// Remove consecutive elements with equal projected key (`key(x)` via `==`). O(n).
 export fn Vec[T] mut @dedup_by_key[K Equal](key fn(T) -> K) -> @ {
     if @len < 2 {
-        return @
+        return
     }
     mut write = 1
     for read in 1..@len {
@@ -317,7 +310,6 @@ export fn Vec[T] mut @dedup_by_key[K Equal](key fn(T) -> K) -> @ {
         }
     }
     @len = write
-    @
 }
 
 /// Reorder in place so every element satisfying `pred` precedes those that do
@@ -353,7 +345,6 @@ fn Vec[T] mut @_median3_to_end(a int, b int, c int, cmp fn(T, T) -> int) -> @ {
     if med != c {
         @swap(med, c)
     }
-    @
 }
 
 // Internal: Lomuto partition of [lo, hi) around a median-of-three pivot.
@@ -386,12 +377,12 @@ fn Vec[T] mut @_qselect(lo_in int, hi_in int, k int, depth_in int, cmp fn(T, T) 
     while hi - lo > 1 {
         if depth == 0 {
             @_heapsort(cmp)
-            return @
+            return
         }
         depth = depth - 1
         ro p = @_partition_range(lo, hi, cmp)
         if k == p {
-            return @
+            return
         }
         if k < p {
             hi = p
@@ -399,7 +390,6 @@ fn Vec[T] mut @_qselect(lo_in int, hi_in int, k int, depth_in int, cmp fn(T, T) 
             lo = p + 1
         }
     }
-    @
 }
 
 /// Partition in place so the element at sorted position `k` lands at `self[k]`,
