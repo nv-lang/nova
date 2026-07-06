@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 183 Ф.2 (D133 must-consume / D131 use-after-consume): TcpStream is a
+// `consume` handle — `@close()` consumes it, so closing (or otherwise using) it a
+// second time is a compile error. This pins the use-after-close safety of the
+// reworked net layer. `_open` extracts a bare handle so it can be bound with the
+// `consume` keyword (the obligation form); the error fires at compile time,
+// before any run (mock_net keeps the effect satisfied for the type-check).
+
+module neg.double_close_neg
+
+import std.net2.{Net, TcpStream, SocketAddr, NetError, mock_net}
+
+fn _open(r Result[TcpStream, NetError]) -> TcpStream {
+    match r {
+        Ok(v)  => v
+        Err(_) => panic("unreachable in a compile-error fixture")
+    }
+}
+
+test "use-after-close on a TcpStream is a compile error" {
+    with Net = mock_net() {
+        consume s = _open(TcpStream.connect(SocketAddr.loopback(0)))
+        s.close()
+        s.close()   // ERROR: `s` already consumed by the first close()
+    }
+}

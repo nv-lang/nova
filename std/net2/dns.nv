@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 183 Ф.2: std/net2/dns.nv — hostname resolution (D407 §5, D295).
+//
+// DNS resolution (uv_getaddrinfo) is real network I/O + parking, so it stays in
+// the `Net` effect. ONE lookup call: the C layer allocates a GC array of exactly
+// `count` value-address images (the single named addrinfo→array OS-transfer,
+// D407 §2а — libuv already holds the whole addrinfo list, so there is no
+// pre-guess and never a second network query, matching Rust/Go); `.nv` copies
+// each image out into an owned `[]SocketAddr`.
+
+module std.net2
+
+/// Resolve `host:port` to every matching address, via the ambient `Net` effect.
+///
+/// Parks the calling fiber until resolution completes (use inside a spawned
+/// fiber). Returns `Err(NetError.NotFound)` when the host does not resolve.
+/// A host with many addresses is resolved in a SINGLE lookup (invariant).
+///
+/// ```nova
+/// with Net = real_net() {
+///     supervised {
+///         spawn {
+///             match resolve("localhost", 80) {
+///                 Ok(addrs) => { /* addrs[0] is the first resolved address */ }
+///                 Err(e)    => { /* handle */ }
+///             }
+///         }
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export fn resolve(host str, port u16) Net -> Result[[]SocketAddr, NetError] {
+    // The []SocketAddr is built HERE (a plain fn, no effect vtable) so its images
+    // survive GC; the effect only carries the (base, count) scalar pair.
+    match Net.lookup(host.as_bytes(), port) {
+        Ok((base, count)) => Ok(_build_addrs(base, count))
+        Err(e)            => Err(e)
+    }
+}
+
+// ── Handler-shared helpers (peers of real_net / mock_net in this module) ──────
+
+// Result constructors (regular fns — keep variant construction out of handlers).
+fn _lookup_ok(base int, count int) -> Result[(int, int), NetError] => Ok((base, count))
+fn _err_lookup(code int) -> Result[(int, int), NetError] => Err(NetError.from_code(code))
+
+// Build an owned []SocketAddr from a DNS result array (C base pointer + count),
+// copying each 20-byte image out via the pure `addr_copy_at` FFI.
+//
+// One image per address is fundamental to the value-record rep: `SocketAddr`
+// OWNS its image (`_from_image` wraps the buffer, it is the address's storage —
+// not a scratch), so a single reused buffer would alias every address onto the
+// last one. Exactly `count` allocations (no extra temp). A single-alloc inline
+// `[N]u8` field rep would remove them, but the fixed-array repeat literal
+// (`[0; N]`) is a known compiler gap — tracked for a later sweep.
+fn _build_addrs(base int, count int) -> []SocketAddr {
+    mut addrs []SocketAddr = []SocketAddr.new()
+    mut i = 0
+    while i < count {
+        mut img []u8 = _addr_image()
+        unsafe { nova_net_addr_copy_at(base as *(), i, img.as_ptr()) }
+        addrs.push(SocketAddr._from_image(img))
+        i = i + 1
+    }
+    addrs
+}

@@ -66,6 +66,12 @@ NovaNetAddr* nova_net_addr_loopback(uint16_t port);     /* 127.0.0.1:port */
 NovaNetAddr* nova_net_addr_loopback_v6(uint16_t port);  /* [::1]:port */
 NovaNetAddr* nova_net_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
                               uint16_t port);
+/* Ф.2: construct the value-record straight into the caller's 20-byte []u8 image
+ * (Nova SocketAddr owns the bytes; no nova_alloc, no C-owned handle). */
+void nova_net_addr_loopback_into(uint16_t port, uint8_t* out);
+void nova_net_addr_loopback_v6_into(uint16_t port, uint8_t* out);
+void nova_net_addr_v4_into(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
+                           uint16_t port, uint8_t* out);
 /* Parse "host:port" from (s,len). Fills *out on success. Returns 0=OK,
  * 1=invalid address, 2=invalid port. No TLS. */
 nova_int          nova_net_addr_parse(const uint8_t* s, nova_int len, NovaNetAddr* out);
@@ -122,12 +128,14 @@ void     nova_net_udp_local_addr(void* sock, NovaNetAddr* out);
 void     nova_net_udp_close(void* sock);
 
 /* ─── DNS ─────────────────────────────────────────────────────────────────────
- * Resolve (host,len):port. Parks the fiber (uv_getaddrinfo). On success returns
- * the count (>=1) and sets *out_arr to a nova_alloc'd array of `count`
- * NovaNetAddr (the named addrinfo→array OS-transfer). Returns -1 on error,
- * writing the UV code to *out_err. No TLS. */
+ * Resolve (host,len):port in ONE getaddrinfo call. Parks the fiber. On success
+ * sets *out_arr to a nova_alloc'd array of exactly `count` NovaNetAddr images
+ * (ownership to the caller — the single named addrinfo→array OS-transfer) and
+ * returns the count (>=1). Returns -1 on error (UV code → *out_err). No TLS. */
 nova_int  nova_net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t port,
                              NovaNetAddr** out_arr, nova_int* out_err);
+/* Copy the i-th image out of a DNS result array into a caller []u8 image. */
+void      nova_net_addr_copy_at(const NovaNetAddr* arr, nova_int i, uint8_t* out);
 
 #ifdef __cplusplus
 }

@@ -138,6 +138,37 @@ NovaNetAddr* nova_net_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
     return out;
 }
 
+/* Ф.2: value-record construction straight into the caller's 20-byte []u8 image
+ * (NovaNetAddr POD) — no nova_alloc, no C-owned handle. The Nova SocketAddr
+ * value owns these bytes; layout stays C-owned here so the .nv side never bakes
+ * struct offsets / endianness (D407 §5). */
+void nova_net_addr_loopback_into(uint16_t port, uint8_t* out) {
+    NovaNetAddr* a = (NovaNetAddr*)out;
+    struct sockaddr_in in4;
+    uv_ip4_addr("127.0.0.1", port, &in4);
+    struct sockaddr_storage ss; memset(&ss, 0, sizeof(ss));
+    memcpy(&ss, &in4, sizeof(in4));
+    _nn2_addr_from_ss(&ss, a);
+}
+
+void nova_net_addr_loopback_v6_into(uint16_t port, uint8_t* out) {
+    NovaNetAddr* a = (NovaNetAddr*)out;
+    struct sockaddr_in6 in6;
+    uv_ip6_addr("::1", port, &in6);
+    struct sockaddr_storage ss; memset(&ss, 0, sizeof(ss));
+    memcpy(&ss, &in6, sizeof(in6));
+    _nn2_addr_from_ss(&ss, a);
+}
+
+void nova_net_addr_v4_into(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
+                           uint16_t port, uint8_t* out) {
+    NovaNetAddr* r = (NovaNetAddr*)out;
+    memset(r, 0, sizeof(*r));
+    r->family = 4;
+    r->port   = port;
+    r->bytes[0] = a; r->bytes[1] = b; r->bytes[2] = c; r->bytes[3] = d;
+}
+
 nova_int nova_net_addr_parse(const uint8_t* s, nova_int len, NovaNetAddr* out) {
     char* buf = (char*)alloca((size_t)len + 1);
     memcpy(buf, s, (size_t)len);
@@ -1036,6 +1067,17 @@ static NovaStopMode _nn2_dns_stop_cb(void* handle) {
     return NOVA_STOP_ASYNC;
 }
 
+/* Copy the i-th NovaNetAddr image out of a GC array into a caller []u8 image
+ * (used by std/net2/dns.nv to build value SocketAddrs from the DNS result). */
+void nova_net_addr_copy_at(const NovaNetAddr* arr, nova_int i, uint8_t* out) {
+    memcpy(out, &arr[i], sizeof(NovaNetAddr));
+}
+
+/* DNS (D407 §5 / Ф.0-map form): ONE getaddrinfo call. libuv's callback already
+ * holds the whole addrinfo list, so the C layer allocates a GC array of exactly
+ * `count` value-address images and hands ownership to the caller via *out_arr
+ * (the single named addrinfo→array OS-transfer, §2а) — no flat pre-guess, no
+ * second lookup. Returns the count (>=1), or -1 on error (UV code → *out_err). */
 nova_int nova_net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t port,
                             NovaNetAddr** out_arr, nova_int* out_err) {
     char* hostz = (char*)malloc((size_t)host_len + 1);
@@ -1092,8 +1134,8 @@ nova_int nova_net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t po
         if (out_err) *out_err = UV_EAI_NONAME; return -1;
     }
 
-    /* Named OS-transfer (D407 §2а): addrinfo list → GC array of value addresses,
-     * ownership handed to the caller via *out_arr. */
+    /* Named OS-transfer (D407 §2а): addrinfo list → GC array of exactly `count`
+     * value images; ownership handed to the caller via *out_arr. One pass. */
     NovaNetAddr* arr =
         (NovaNetAddr*)nova_alloc(sizeof(NovaNetAddr) * (size_t)count);
     nova_int i = 0;

@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 183 Ф.2: std/net2/mock.nv — in-memory, deterministic `Net` handler.
+//
+// Same module as tcp.nv/udp.nv/addr.nv, so it reuses the package-private
+// factories and Result helpers. Touches no real socket: constructors return stub
+// handles, read/recv fill the caller buffer with fixed content, addresses are
+// filled via the pure address FFI (no I/O). Deterministic net tests without a
+// live substrate (the mock deliverable, D407).
+
+module std.net2
+
+/// In-memory `Net` handler for unit-testing code that depends on `Net`.
+///
+/// - bind / connect / accept succeed with stub handles.
+/// - write / send_to report the input byte count.
+/// - read / recv_from fill the caller buffer with `"mock-reply"` / empty.
+/// - lookup returns a single loopback address; getters return fixed stubs.
+///
+/// ```nova
+/// test "write echo without network" {
+///     with Net = mock_net() {
+///         mut s = TcpStream.connect(SocketAddr.loopback(0)).unwrap()
+///         assert(s.write("hi".as_bytes()).unwrap() == 2)
+///         s.close()
+///     }
+/// }
+/// ```
+#stable(since = "0.1")
+export fn mock_net() -> Effect[Net] => effect Net {
+    // ── TCP ──────────────────────────────────────────────────────────────────
+    tcp_bind(_addr SocketAddr)            => _listener_ok(1 as *())
+    accept(_listener TcpListener)         => _stream_ok(2 as *())
+    connect(_addr SocketAddr)             => _stream_ok(3 as *())
+    read(_stream TcpStream, buf mut []u8) => _int_ok(_mock_fill(buf, "mock-reply".as_bytes()))
+    write(_stream TcpStream, data []u8)   => _int_ok(data.len())
+    shutdown(_stream TcpStream)           => _unit_ok()
+    close_stream(_stream TcpStream)       {}
+    close_listener(_listener TcpListener) {}
+    mark_split(_stream TcpStream)         {}
+    listener_local_port(_listener TcpListener) => 4242
+    listener_local_addr(_listener TcpListener, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(4242, out.as_ptr()) }
+    }
+    stream_local_port(_stream TcpStream) => 5050
+    stream_peer_port(_stream TcpStream)  => 6060
+    stream_local_addr(_stream TcpStream, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(5050, out.as_ptr()) }
+    }
+    stream_peer_addr(_stream TcpStream, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(6060, out.as_ptr()) }
+    }
+    set_nodelay(_stream TcpStream, _on bool)          {}
+    set_keepalive(_stream TcpStream, _on bool)        {}
+    set_reuse_address(_listener TcpListener, _on bool) {}
+
+    // ── UDP ──────────────────────────────────────────────────────────────────
+    udp_bind(_addr SocketAddr)          => _socket_ok(10 as *())
+    send_to(_sock UdpSocket, data []u8, _addr SocketAddr) => _int_ok(data.len())
+    recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) {
+        unsafe { nova_net_addr_loopback_into(0, sender.as_ptr()) }
+        ro _ = buf
+        _int_ok(0)
+    }
+    close_socket(_sock UdpSocket)       {}
+    socket_local_port(_sock UdpSocket)  => 7070
+    socket_local_addr(_sock UdpSocket, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(7070, out.as_ptr()) }
+    }
+
+    // ── DNS ──────────────────────────────────────────────────────────────────
+    lookup(_host []u8, _port u16) => _mock_lookup()
+}
+
+// A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
+// so `resolve`'s _build_addrs copies one image out just like the real path.
+fn _mock_lookup() -> Result[(int, int), NetError] {
+    ro base = unsafe { nova_net_addr_loopback(0) }
+    _lookup_ok(base as int, 1)
+}
+
+// Copy up to buf.len() bytes of `data` into `buf`; returns the count copied.
+fn _mock_fill(buf mut []u8, data []u8) -> int {
+    ro n = if data.len() < buf.len() { data.len() } else { buf.len() }
+    mut i = 0
+    while i < n {
+        buf[i] = data[i]
+        i = i + 1
+    }
+    n
+}
