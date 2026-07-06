@@ -12,7 +12,7 @@
 // Этот тест защищает от случайного релакса canonical-check (если
 // кто-то уберёт peer_files filter в MapLitCtx::build — user-локальный
 // тип неожиданно начнёт триггерить desugar через себя, что небезопасно
-// без полной валидации with_capacity/insert_new методов).
+// без полной валидации new/cap/insert_new методов).
 module neg.negative_user_from_pairs_shadows
 
 #from_pairs

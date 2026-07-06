@@ -35,7 +35,8 @@ test "heap generic top-level -> Self chains stay correct (control)" {
     assert(w.len() == 3)
     assert(w == [10, 20, 30])
 
-    mut c = Vec[int].with_capacity(8)
+    mut c Vec[int] = Vec[int].new()
+    c.cap(8)
     c.push(99)
     assert(c.len() == 1)
     assert(c == [99])

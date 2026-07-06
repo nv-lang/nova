@@ -36,7 +36,8 @@ test "HashMap[int, int] insert and get" {
 }
 
 test "HashMap[int, int] rehash on growth" {
-    mut m = HashMap[int, int].with_capacity(4)
+    mut m HashMap[int, int] = HashMap[int, int].new()
+    m.cap(4)
     for i in 0..50 {
         m.insert(i, i * 2)
     }

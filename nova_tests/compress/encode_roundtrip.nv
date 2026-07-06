@@ -10,7 +10,8 @@ module nova_tests.compress
 import std.encoding.compress.{inflate, zlib_decode, gzip_decode, deflate, zlib_encode, gzip_encode, CompressLevel, Deflater, GzipWriter}
 
 fn corpus() -> []u8 {
-    mut o = []u8.with_capacity(2048)
+    mut o []u8 = []u8.new()
+    o.cap(2048)
     ro unit = "The quick brown fox jumps over the lazy dog. ".to_bytes()
     for _ in 0..40 { o.append(unit) }
     o
@@ -21,7 +22,8 @@ fn corpus() -> []u8 {
 // fixed. Single-repeated-sentence НЕ годится для level-различимости: LZ77
 // схлопывает его в считанные токены, где header-overhead dynamic > выигрыш.
 fn diverse_corpus(n int, seed int) -> []u8 {
-    mut o = []u8.with_capacity(n)
+    mut o []u8 = []u8.new()
+    o.cap(n)
     mut s = seed
     for _ in 0..n {
         s = (s * 1103515245 + 12345) & 0x7FFFFFFF
@@ -71,11 +73,13 @@ test "encode edge: empty + single byte round-trip" {
 test "streaming GzipWriter: feed + finish → gzip_decode" {
     ro data = corpus()
     mut gw = GzipWriter.new(CompressLevel.default())
-    mut comp = []u8.with_capacity(256)
+    mut comp []u8 = []u8.new()
+    comp.cap(256)
     mut i = 0
     while i < data.len() {
         ro end = if i + 13 < data.len() { i + 13 } else { data.len() }
-        mut piece = []u8.with_capacity(13)
+        mut piece []u8 = []u8.new()
+        piece.cap(13)
         piece.append(data[i..end])
         comp.append(gw.feed(piece)!!)
         i = end

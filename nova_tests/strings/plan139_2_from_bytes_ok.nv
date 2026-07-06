@@ -76,7 +76,8 @@ test "from_bytes_lossy: truncated multi-byte sequence replaced" {
 
 test "from_bytes_unchecked_steal: zero-copy reuse when cap > len" {
     // with_capacity(16) then push 3 → cap (16) > len (3): in-place NUL-term reuse.
-    mut b = []u8.with_capacity(16)
+    mut b []u8 = []u8.new()
+    b.cap(16)
     b.push(120 as u8)  // 'x'
     b.push(121 as u8)  // 'y'
     b.push(122 as u8)  // 'z'
@@ -88,7 +89,8 @@ test "from_bytes_unchecked_steal: zero-copy reuse when cap > len" {
 test "from_bytes_unchecked_steal: alloc+copy fallback when cap == len" {
     // with_capacity(2) + 2 pushes → cap (2) == len (2): no room for the NUL
     // terminator → alloc+copy fallback path (not the in-place reuse path).
-    mut b = []u8.with_capacity(2)
+    mut b []u8 = []u8.new()
+    b.cap(2)
     b.push(113 as u8)  // 'q'
     b.push(119 as u8)  // 'w'
     ro s = str.from_bytes_unchecked_steal(b)

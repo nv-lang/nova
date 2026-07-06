@@ -1,7 +1,8 @@
 module nova_tests.plan168
 
 test "Vec[u32] local var — body-only instantiation" {
-    mut v = Vec[u32].with_capacity(4)
+    mut v Vec[u32] = Vec[u32].new()
+    v.cap(4)
     v.push(1 as u32)
     v.push(2 as u32)
     assert(v.len() == 2)

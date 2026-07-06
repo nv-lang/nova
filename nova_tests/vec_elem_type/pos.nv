@@ -17,7 +17,8 @@ fn sum_vec(v Vec[int]) -> int {
 }
 
 test "Vec[int] inferred flows into []int param (D239 []T ≡ Vec[T])" {
-    mut a = Vec[int].with_capacity(2)
+    mut a Vec[int] = Vec[int].new()
+    a.cap(2)
     a.push(1)
     a.push(2)
     assert(sum_slice(a) == 3)
@@ -28,7 +29,8 @@ test "[]int literal flows into Vec[int] param" {
 }
 
 test "scalar int pushed into Vec[u32] element is allowed (value coercion)" {
-    mut u = Vec[u32].with_capacity(2)
+    mut u Vec[u32] = Vec[u32].new()
+    u.cap(2)
     u.push(7)        // int literal → u32 element: safe truncation, NOT flagged
     assert(u.len() == 1)
 }
