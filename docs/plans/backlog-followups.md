@@ -1035,6 +1035,13 @@ failure** → должны возвращать `Result[T, <Timeout/RaceError>]`
 → маркер, не тихий solo-fix (§7.7: не выдавать частичное за полное). **Home: Plan 173** (error-machinery
 для concurrency). Смежно: усиление guard §8.2 до эффект-инференса закрыло бы blind-spot, но = компилятор-
 в-тесте (дорого) — держим явный маркер вместо.
+>
+> **Резолюция Ф.4 #5 (2026-07-06): ОСТАЁТСЯ ОТКРЫТЫМ — обоснованно вне Ф.4.** Ф.4-домен = payload-типизация
+> cleanup/outcome-поверхности (`ScopeOutcome.Failure(any)`, MultiError), НЕ throw-домен stdlib-concurrency-fn.
+> `#5` (typed errors) даёт строительный блок, но полная конверсия race2/with_timeout всё ещё требует:
+> (a) concurrency-error-домен-тип (`Timeout`/`RaceError`) — **Ф.3-остаток** (structured-concurrency семантика);
+> (b) `with_timeout` **удаляется** per §3a п.4 (субсумирован `supervised(timeout:)`) → типизировать его throw =
+> мёртвая работа, гейт **Plan 175**; (c) смена 2 публичных `#stable`-сигнатур + sweep call-sites. Держим маркер.
 ## Plan 178 Ф.1 — std/http message-model followups (2026-07-04)
 
 Приземлён `std/http/` message-model + URL + валидаторы (см. simplifications.md, D358/D359). Отложено в Ф.2+ (маркеры, гейтнуто НЕ упрощено):
