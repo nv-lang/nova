@@ -490,14 +490,22 @@ worker'а); порты передаются буферизованными ка�
    прогоняет (нет эквивалентного теста; plan91-echo — smoke, не замер) —
    по плану зафиксирован только новый как базовая точка.
 
-**Стресс вскрыл НОВЫЙ компиляторный дефект (SEGV, не сеть):**
+**Стресс вскрыл НОВЫЙ компиляторный дефект (SEGV, не сеть) — ✅ CLOSED 2026-07-06:**
 `mibps.to_str()` на **int** внутри модуля `std.net2` (где определён
-`NetError @to_str`) разрешился в `Nova_NetError_method_to_str(mibps)` —
-int ушёл как указатель на enum, FaultAddress = значению int'а (mibps=12 →
-0xC), SEGV в `println`-конкатенации. `${...}`-интерполяция эмитится корректно
-(StringBuilder int-append) — обход в тесте. Зафиксировано:
-`[M-183-int-to-str-module-method-collision]` (backlog, P1 — тихая генерация
-некорректного кода).
+`NetError @to_str`) разрешался в `Nova_NetError_method_to_str(mibps)` —
+int уходил как указатель на enum, FaultAddress = значению int'а (mibps=12 →
+0xC), SEGV в `println`-конкатенации. **Корень:** чекер (`infer_expr_type`) не
+выводил return-тип вызова эффект-операции (`Time.now_monotonic_ns()`) → `mibps`
+оставался без типа в scope → примитивный gate `[E_UNKNOWN_METHOD]` пропускался →
+codegen coarse-by-name (`method_receivers` last-wins) диспатчил на чужой `to_str`.
+**Фикс (§0):** effect-op arm в `infer_expr_type` возвращает объявленный return-тип
+операции → `mibps: int` известен чекеру → чистый `[E_UNKNOWN_METHOD]` (int не
+владеет `to_str`; конверсия — `str.from`/`${...}`). `${...}`-обход в тесте остаётся
+(правильный итог — clean checker-error, а не рабочий вызов). Тесты:
+`plan183_f4/effect_op_int_result.nv` (pos) + `plan183_f4/neg/
+int_to_str_effect_collision_neg.nv` (neg, `EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD`).
+`[M-183-int-to-str-module-method-collision]` — CLOSED (детали:
+`docs/simplifications.md`).
 
 **P67-LEGACY ICE (plan83_12) на net2 — класса НЕТ.** Старый слой: `nova test
 nova_tests/plan83_12/tcp_bind_used_port_test.nv` → ICE `[P67-LEGACY] Path call
@@ -517,7 +525,8 @@ net2.c — только комментарий-контракт; временн�
 эхо-замер зафиксирован).
 
 **Остаток плана:** Ф.5 (журнал/спека/закрытие) + `[M-183-old-net-removal-after-182]`
-(гейт Plan 182) + backlog-хвосты Ф.4 (`loop-affinity` P2, `int-to-str-collision` P1).
+(гейт Plan 182) + backlog-хвост Ф.4 (`loop-affinity` P2). `int-to-str-collision` P1
+— ✅ CLOSED 2026-07-06 (см. выше).
 
 ## 5. Риски / связи
 
