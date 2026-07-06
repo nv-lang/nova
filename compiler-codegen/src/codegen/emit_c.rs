@@ -22833,6 +22833,43 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 {
                     inner_ty = "NovaRes_nova_unit_NovaValue_SerError*".to_string();
                 }
+                // Plan 180 Ф.2-sum: `T.deserialize(sub)?` — a static `.deserialize`
+                // whose return-type inference degraded to non-Result (mono-
+                // collection order perturbation when a sum type ALSO derives
+                // Deserialize: `infer_static_method_ret` can miss `(T,"deserialize")`
+                // and give `void*`). The `Deserialize` contract fixes the return
+                // to `Result[T, DeError]`; resolve the receiver type `T` and pin the
+                // Result mono so `?` lowers to a real Ok-unwrap instead of the
+                // `/* ? */` no-op that mis-assigns a `NovaRes_*` pointer to the `T`
+                // local. Only fires in the degraded case → strictly improving.
+                if !Self::is_result_like(&inner_ty)
+                    && !inner_ty.starts_with("NovaOpt_")
+                {
+                    if let ExprKind::Call { func, .. } = &inner.kind {
+                        let recv_name = match &func.kind {
+                            ExprKind::Path(p) if p.len() == 2 && p[1] == "deserialize" =>
+                                Some(p[0].clone()),
+                            ExprKind::Member { obj, name } if name == "deserialize" =>
+                                match &obj.kind { ExprKind::Ident(n) => Some(n.clone()), _ => None },
+                            _ => None,
+                        };
+                        if let Some(rn) = recv_name {
+                            let named = |n: &str| crate::ast::TypeRef::Named {
+                                path: vec![n.to_string()], generics: vec![],
+                                span: crate::diag::Span::dummy(),
+                            };
+                            if let Ok(ok_c) = self.type_ref_to_c(&named(&rn)) {
+                                if !ok_c.is_empty() && ok_c != "void*"
+                                    && !self.is_generic_stub_c(&ok_c)
+                                {
+                                    let err_c = self.type_ref_to_c(&named("DeError"))
+                                        .unwrap_or_else(|_| "NovaValue_DeError".to_string());
+                                    inner_ty = self.result_repr_c_type(&ok_c, &err_c);
+                                }
+                            }
+                        }
+                    }
+                }
                 let val = self.emit_expr(inner)?;
                 let try_tmp = self.fresh_tmp();
                 if inner_ty.starts_with("NovaOpt_") {

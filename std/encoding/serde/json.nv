@@ -234,6 +234,7 @@ fn JsonDeserializer mut @deser_bytes() -> Result[[]u8, DeError] {
     }
 }
 fn JsonDeserializer mut @is_null() -> Result[bool, DeError] => Ok(@cur.is_null())
+fn JsonDeserializer mut @is_str() -> Result[bool, DeError] => Ok(@cur.is_str())
 
 fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeError] {
     if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }

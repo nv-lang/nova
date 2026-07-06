@@ -265,6 +265,14 @@ Payload-элементы биндятся в arm-паттерне и рекур�
 > мис-инферится в тип-варианта; аннотируйте через локал `ro n Colour = Nought`
 > (та же bidirectional-инференс-граница, что для `Empty`-коллизий D141).
 
+**Serialize/Deserialize (Plan 180 Ф.2-sum, externally-tagged — ✅ landed).**
+`#impl(Serialize + Deserialize)` на sum → externally-tagged wire (Q4): unit →
+`"V"`; single-payload → `{"V": x}`; tuple → `{"V": [a, b]}`; record →
+`{"V": {fields}}`. Deser читает тег (`is_str` → bare string / single object-key),
+unknown-tag → `DeError{UnknownVariant}`. Internal/adjacent/untagged tagging →
+followup `[M-180-serde-tagging-modes]` (гейт на `#serde`-атрибутах). Пример:
+`nova_tests/serde/sum_autoderive.nv`.
+
 ## Что НЕ supported V1 (followup)
 
 | Marker                          | Описание                                                       |

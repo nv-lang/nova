@@ -13786,7 +13786,7 @@ Format-agnostic typed serialization. Protocols `Serialize` / `Deserialize` (cont
 
 ## D341 — record auto-derive contract (compiler synthesis)
 
-`#impl(Serialize + Deserialize)` opt-in — the 7th/8th members of the auto-derive family (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`); `is_builtin_protocol` extended. Record-path only. **SUM is GATED** ([M-126-sum-*-rich] / 180.2) — `#impl(Serialize)` on a sum → `E_AUTO_DERIVE_UNSUPPORTED_KIND`. Emitted shapes:
+`#impl(Serialize + Deserialize)` opt-in — the 7th/8th members of the auto-derive family (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`); `is_builtin_protocol` extended. **SUM is supported (Plan 180 Ф.2-sum, externally-tagged — see D345);** the record-path shapes below apply to record/named-tuple types. Emitted shapes:
 - `@serialize`: `s.begin_struct(name, N)?`; per field `s.struct_field("k")?; @field.serialize(s)?`; `s.end_struct()` — UNIFORM memberwise push (like `@debug`).
 - `.deserialize`: per field `mut sub = d.enter_field[_or_null]("k")?` then TYPE-DIRECTED read — scalar → `sub.deser_X()?` (instance); record/`Vec`/`HashMap` → `<T>.deserialize(sub)?` (static); `Option[T]` → inline `if sub.is_null()? { None } else { Some(<inner>) }` (built-in `Option` does not dispatch a user static method). Then `Ok(Type{ f1, f2, … })`.
 - Field-eligibility: primitive / `Option`·`Vec`·`HashMap[str,_]` (recurse) / `#impl(P)` / provides-method — else `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` (named field; no silent drop). `HashMap` key must be `str` (Q16). priv fields serialize (structural synth). User method wins (D77).
@@ -13822,10 +13822,35 @@ These inject AFTER type-check (like the record-path), so the emitted `match` /
 variant-patterns / variant-construction are lowered by codegen's annotation-free
 inference (scrutinee `@` + `other: Self` types known). [M-126-sum-*-rich] CLOSED.
 
-**Ф.2-sum / Ф.5 — serde sum-derive + tagging.** `match`-arm-per-variant
-`@serialize`/`.deserialize` + externally(default)/internally/adjacently/untagged
-tagging — builds on the Ф.1 pattern/ctor infra. See Plan 180 Ф.2-sum. NOT on
-Plan 178's critical path (record-DTO suffices).
+**Ф.2-sum — serde sum-derive, externally-tagged (✅ landed 2026-07-06).**
+`#impl(Serialize + Deserialize)` on a sum synthesizes `match`-arm-per-variant
+bodies over the Ф.1 pattern/ctor infra. **Externally-tagged (Q4, default):**
+- unit variant `V`          → bare string `"V"`
+- single-payload `V(x)`     → `{"V": <x>}`
+- multi-tuple `V(a, b)`     → `{"V": [<a>, <b>]}`  (inner array)
+- record variant `V{f, g}`  → `{"V": {"f": <f>, "g": <g>}}`  (inner struct)
+
+Serialize emits over the existing `Serializer` primitives (`begin_struct`/
+`struct_field`/`begin_seq`/`serialize_str`/…) — no new enum-specific serializer
+methods. Deserialize reads the tag (`d.is_str()?` → bare string for unit; else
+the single object key via `map_keys`/`enter_key`), then an `if/else-if` chain on
+the tag name reconstructs the variant, reading payload from the tagged cursor
+(tuple → `enter_index`, record → `enter_field`, single → direct). Unknown tag →
+`DeError{UnknownVariant{name, expected}}` (new `DeErrorKind` variant); malformed
+(non-single-key object) → `DeError{Syntax}`. Payload eligibility mirrors the
+record-field check (typed `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` by variant, never
+a bad synth). Runtime additions: `Deserializer.@is_str()` + `DeErrorKind`
+`UnknownVariant`/`NoVariantMatched`. NOT on Plan 178's critical path (record-DTO
+suffices). Codegen: a static `T.deserialize(sub)?` whose return-type inference
+degrades (mono-collection order perturbation once a sum ALSO derives Deserialize)
+is pinned to `Result[T, DeError]` at the `?`-lowering site (`emit_c.rs` Try arm),
+mirroring the `.serialize?` pin.
+
+**Ф.5 — internal/adjacent/untagged tagging.** These require `#serde(tag=…)` /
+`#serde(untagged)` attributes, which need the `#serde` attribute infra (AST
+`attrs` on `SumVariant`/type) that does **not** exist yet → gated on
+[M-180-serde-attributes]. Externally-tagged (the default, no attribute) is the
+honest V1. See Plan 180 Ф.5.
 
 ## D346 — serde soundness invariants (Plan 180)
 
