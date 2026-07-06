@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR E_TRY_IN_FAIL_FN
+//
+// D85 / Plan 174.2 (NEG) — `?` строго return-only.
+//
+// `?` пробрасывает ошибку ЗНАЧЕНИЕМ (`return Err`/`return None`), поэтому
+// осмыслен ТОЛЬКО в функции, чей return-тип — `Result[T,E]` / `Option[T]`.
+// В функции на Fail-эффекте (return-тип НЕ Result/Option) свободный `?`
+// запрещён — там ошибка пробрасывается через `!!` или `throw`. Диагностика:
+// `[E_TRY_IN_FAIL_FN]` (types/mod.rs `check_fn`, enforcement 173 Ф.1 #3).
+// Spec: spec/decisions/04-effects.md (D85, «`?` НЕ работает на Fail[E] -> T»).
+module neg.d85_try_in_fail_fn_neg
+
+type ParseErr { msg str }
+
+fn parse(s str) -> Result[int, ParseErr] {
+    if s == "" { Err(ParseErr { msg: "empty" }) } else { Ok(1) }
+}
+
+// ✗ return-тип `int` (не Result/Option), но тело использует `?` на Result.
+//   Канон: `parse(s)!!` (throw через Fail[ParseErr]) или сменить сигнатуру
+//   на `-> Result[int, ParseErr]`.
+fn bad_use(s str) Fail[ParseErr] -> int {
+    ro n = parse(s)?
+    n
+}
+
+test "D85: свободный `?` в Fail-fn (return int) отвергается" {
+    with Fail[ParseErr] = |_| interrupt 0 {
+        ro _ = bad_use("x")
+    }
+}

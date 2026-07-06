@@ -146,8 +146,8 @@ export type Result[T, E] enum Ok(T) | Err(E)
 ///     match outcome {
 ///         Success      => @commit()!!
 ///         Failure(err) =>
-///             if err is CancelError { @rollback()? }
-///             else { @rollback_with_log()? }
+///             if err is CancelError { @rollback()!! }
+///             else { @rollback_with_log()!! }
 ///         Panic(_)     => @rollback_emergency()
 ///     }
 /// }

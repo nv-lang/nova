@@ -1,0 +1,23 @@
+// Plan 174.2 Ф.B (NEG) — `?` на Result в функции, возвращающей Option.
+//
+// EXPECT_COMPILE_ERROR E_TRY_RESULT_IN_OPTION_FN
+//
+// `?` return-only (D85): Result-`?` пробросил бы `return Err(e)`, но fn
+// возвращает Option → носители не совпадают. Канон: `res.ok()?`.
+module neg.plan174_2_try_result_in_option_neg
+
+type Er { code int }
+
+fn parse(x int) -> Result[int, Er] {
+    if x > 0 { Ok(x) } else { Err(Er { code: 1 }) }
+}
+
+// ✗ Result-`?` в Option-fn.
+fn bad(x int) -> Option[int] {
+    ro v = parse(x)?
+    Some(v)
+}
+
+test "Result-`?` в Option-fn отвергается" {
+    ro _ = bad(1)
+}
