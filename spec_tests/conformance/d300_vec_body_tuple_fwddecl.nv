@@ -10,7 +10,7 @@
 module spec_tests.conformance
 
 test "[]u32 body-only instantiation gets a full struct-def and round-trips (D300)" {
-    mut v = []u32.with_capacity(4)
+    mut v []u32 = []u32.with_capacity(4)
     v.push(1 as u32)
     v.push(2 as u32)
     assert(v.len() == 2)
@@ -19,7 +19,7 @@ test "[]u32 body-only instantiation gets a full struct-def and round-trips (D300
 }
 
 test "[]u8 body-only instantiation (distinct elem mangle) round-trips (D300)" {
-    mut b = []u8.new()
+    mut b []u8 = []u8.new()
     b.push(10 as u8)
     b.push(255 as u8)
     assert(b.len() == 2)
@@ -28,7 +28,7 @@ test "[]u8 body-only instantiation (distinct elem mangle) round-trips (D300)" {
 }
 
 test "body-only []u32 as a tuple element: fwd-decl holds, .0/.1 exact (D300)" {
-    mut v = []u32.new()
+    mut v []u32 = []u32.new()
     v.push(10 as u32)
     v.push(20 as u32)
     ro t = (v, 99)

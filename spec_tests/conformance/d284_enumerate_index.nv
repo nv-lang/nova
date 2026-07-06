@@ -29,7 +29,7 @@ import std.collections.vec_iter
 test "enumerate.count == длина доставленного потока; пустой → 0 (D284 §1 терминатор)" {
     ro v = []int.of(10, 20, 30, 40)
     assert(v.iter().enumerate().count() == 4)
-    ro e = []int.new()
+    ro e []int = []int.new()
     assert(e.iter().enumerate().count() == 0)   // None транзитивно, 0 пар
 }
 

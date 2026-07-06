@@ -26,7 +26,7 @@ test "Vec is_empty/first/last (D232)" {
     assert(!(v.is_empty()))
     assert(v.first() == Some(5))
     assert(v.last() == Some(7))
-    ro e = []int.new()
+    ro e []int = []int.new()
     assert(e.is_empty())
     assert(e.first().is_none())
     assert(e.last().is_none())

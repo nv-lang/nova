@@ -40,7 +40,7 @@ test "inference from str[] parameter (D38)" {
 }
 
 test "static method []int.new() creates empty array (D38)" {
-    ro n = []int.new()
+    ro n []int = []int.new()
     assert(n.len() == 0)
 }
 

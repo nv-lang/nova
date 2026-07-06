@@ -11,6 +11,14 @@
 // Sibling Vec D-blocks cover OTHER facets: D239 (`[]T ≡ Vec[T]` alias), D259 (of vs from),
 // D264 (content-hash / collect). This block exercises the D232 mutating method table itself.
 // Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
+//
+// [M-153.x-array-new-not-vec] canon exception (vec-sweep, 2026-07-07): the
+// `.new()` constructors below stay spelled `Vec[...]` — the bracket alias
+// `[]T.new()` lowers through the LEGACY erased-array path (pre-allocates 8
+// slots), which contradicts the exact allocation semantics this block asserts
+// (`cap() == 0` before first push), and its un-annotated binding breaks
+// method dispatch (`v.cap()` name-keyed onto a foreign type). `.of(...)`
+// spellings ARE the `[]T` canon — they route to the typed Vec mono path.
 module spec_tests.conformance
 
 // Heap record element — proves typed pointer-in-slot storage (no int64-erasure) for record T.
@@ -22,7 +30,7 @@ type D232Pt {
 fn D232Pt.new(a int, b int) -> D232Pt => { x: a, y: b }
 
 test "push grows / pop returns Option and shrinks; empty pop is a stable None (D232)" {
-    mut v = []int.new()
+    mut v = Vec[int].new()
     assert(v.is_empty())
     v.push(10)
     v.push(20)
@@ -88,7 +96,7 @@ test "reverse flips in place; clear drops to empty; first/last track ends (D232)
 }
 
 test "first push into empty Vec allocates 8 slots: cap >= 8 and cap >= len (D232)" {
-    mut v = []int.new()
+    mut v = Vec[int].new()
     assert(v.cap() == 0)          // no allocation before the first push
     v.push(1)
     assert(v.len() == 1)
@@ -97,7 +105,7 @@ test "first push into empty Vec allocates 8 slots: cap >= 8 and cap >= len (D232
 }
 
 test "typed storage round-trips heap-record elements (no int64-erasure) (D232)" {
-    mut v = []D232Pt.new()
+    mut v = Vec[D232Pt].new()
     v.push(D232Pt.new(1, 2))
     v.push(D232Pt.new(3, 4))
     assert(v.len() == 2)

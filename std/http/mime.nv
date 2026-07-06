@@ -122,7 +122,8 @@ fn ContentType @param(name str) -> Option[str] {
 /// РЎРµСЂРёР°Р»РёР·РѕРІР°С‚СЊ РІ header-Р·РЅР°С‡РµРЅРёРµ (`type/subtype; k=v`).
 #stable(since = "0.1")
 export fn ContentType @to_header() -> str {
-    consume buf = StringBuilder.with_capacity(32)
+    consume buf = StringBuilder.new()
+    buf.cap(32)
     buf.append(@mime.essence())
     for p in @params {
         buf.append("; ")

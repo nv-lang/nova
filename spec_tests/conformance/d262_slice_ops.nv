@@ -39,7 +39,7 @@ test "split_first/split_last → Option; пусто → None (D262)" {
     ro v = []int.of(100, 200, 300)
     assert(v.split_first().is_some())
     assert(v.split_last().is_some())
-    ro empty = []int.new()
+    ro empty []int = []int.new()
     assert(empty.split_first().is_none())
     assert(empty.split_last().is_none())
 }

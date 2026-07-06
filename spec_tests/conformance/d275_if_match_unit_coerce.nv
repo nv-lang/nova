@@ -11,7 +11,7 @@ module spec_tests.conformance
 
 // then = fluent Vec* хвост, else = unit → if-стейтмент коэрсится в unit.
 fn d275_fill(cond bool) -> []int {
-    mut v = []int.with_capacity(2)
+    mut v []int = []int.with_capacity(2)
     if cond { v.push(1) }
     else    { v.push(2); () }
     v
@@ -19,7 +19,7 @@ fn d275_fill(cond bool) -> []int {
 
 // Зеркало: fluent в else, unit в then (симметрия ветвей).
 fn d275_fill_mirror(cond bool) -> []int {
-    mut v = []int.with_capacity(2)
+    mut v []int = []int.with_capacity(2)
     if cond { v.push(7); () }
     else    { v.push(9) }
     v
@@ -27,7 +27,7 @@ fn d275_fill_mirror(cond bool) -> []int {
 
 // else-if chain: fluent-хвосты + расходящаяся финальная ветка (infer↔emit R3).
 fn d275_chain(n int) -> []int {
-    mut v = []int.with_capacity(4)
+    mut v []int = []int.with_capacity(4)
     if n == 2 {
         v.push(1)
     } else if n == 3 {
@@ -41,7 +41,7 @@ fn d275_chain(n int) -> []int {
 
 // match-паритет: fluent-арм + unit-арм в discard-позиции → match = unit.
 fn d275_match_fill(n int) -> []int {
-    mut v = []int.with_capacity(2)
+    mut v []int = []int.with_capacity(2)
     match n {
         0 => v.push(10)
         _ => ()

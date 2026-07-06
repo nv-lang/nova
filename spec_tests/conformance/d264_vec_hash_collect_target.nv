@@ -70,7 +70,7 @@ test "прочий таргет композицией: `Set.from_iter(it.collec
 test "FromIterator из Iter-источника: `Vec.new().extend(src)` (D264 §4)" {
     // `@extend[S Iter[T]]` мономорфизируется для любого Iter-источника `S`
     // (`[]T`/VecIter/Range); прямой call-site, без ленивой стадии и без обёртки.
-    mut acc = []int.new()
+    mut acc []int = []int.new()
     acc.extend([1, 2, 3])      // []T-источник (под D239 `[]T ≡ Vec[T]`) → instance @extend
     assert(acc.len() == 3)
     assert(acc.equal([]int.of(1, 2, 3)))

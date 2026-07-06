@@ -76,7 +76,8 @@ fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpEr
     // Read to EOF (Connection: close). A mid-stream error stops the read; the wire
     // parser (client.nv) then validates framing (short body → Protocol). `Ok(0)`
     // (clean EOF, D407 byte surface) and a hard read error both end the loop.
-    mut acc = WriteBuffer.with_capacity(4096)
+    mut acc = WriteBuffer.new()
+    acc.cap(4096)
     mut reading = true
     while reading {
         match stream.read_to_vec(65536) {

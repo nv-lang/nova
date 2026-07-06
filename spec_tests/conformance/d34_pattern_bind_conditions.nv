@@ -36,7 +36,7 @@ test "while Pat = expr крутится пока матчит, связывая 
 }
 
 test "while над пустой коллекцией: паттерн сразу None → тело НЕ исполняется (D34)" {
-    mut q = []int.new()
+    mut q []int = []int.new()
     mut touched = 0
     while Some(x) = q.pop() {
         touched = touched + x   // недостижимо: первый pop уже None

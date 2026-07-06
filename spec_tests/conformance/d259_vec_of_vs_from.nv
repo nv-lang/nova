@@ -24,7 +24,7 @@ test "of(a, b, c) builds a Vec from a literal element list (D259)" {
 // standalone at std/collections/vec/neg/vec_of_empty_panic.nv (this file is a
 // single merged conformance CU, not a place for an EXPECT_RUNTIME_PANIC test).
 test "new() yields an empty Vec (D259 amend: of() with no args is now rejected)" {
-    ro b = []int.new()
+    ro b []int = []int.new()
     assert(b.len() == 0)
 }
 

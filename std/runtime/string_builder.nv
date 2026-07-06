@@ -55,6 +55,21 @@ fn sb_init_buf(cap int) -> []u8 {
     b
 }
 
+// Deep-copy helper for `@clone`: fresh exact-capacity buffer + one bulk
+// `append` (RawMem.copy). Free fn on `[]u8` (NOT a StringBuilder method) so
+// `@clone`'s own body stays a single `=> { buf: … }` expression (same
+// consume-checker shape constraint as `new()`/sb_init_buf above), AND so the
+// `append` here dispatches on a plainly-typed `[]u8` local — calling
+// `.append(@buf)` on a `{ buf: … }` record-literal receiver mis-dispatched to
+// StringBuilder's own `@append(s str)` overload (generated C passed a
+// `Nova_Vec____nova_byte*` where `nova_str` was expected) — this was the root
+// of the `vec_of_empty_panic` CC-FAIL ([M-vec-neg-panic-cascaded-cc-fail]).
+fn sb_clone_buf(src []u8) -> []u8 {
+    mut b []u8 = sb_init_buf(src.len())
+    b.append(src)
+    b
+}
+
 // Пустой StringBuilder с pre-allocated capacity 16.
 export fn StringBuilder.new() -> Self => { buf: sb_init_buf(INITIAL_CAPACITY) }
 
@@ -113,7 +128,7 @@ export fn StringBuilder mut @cap(n int) -> @
 export fn StringBuilder @is_empty() -> bool => @buf.is_empty()
 
 // Независимая копия (deep copy buffer). Нужен для consume-типа при разветвлении.
-export fn StringBuilder @clone() -> Self => { buf: sb_init_buf(@buf.len()) }.append(@buf)
+export fn StringBuilder @clone() -> Self => { buf: sb_clone_buf(@buf) }
 
 // Проверить prefix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @starts_with(prefix str) -> bool {

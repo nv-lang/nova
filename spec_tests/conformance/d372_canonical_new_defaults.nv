@@ -28,7 +28,7 @@ test "str.new() возвращает пустую строку \"\" (D372)" {
 }
 
 test "[]T.new() возвращает empty array; push после new работает (D372)" {
-    mut a = []int.new()
+    mut a []int = []int.new()
     assert(a.len() == 0)
     a.push(1)
     a.push(2)

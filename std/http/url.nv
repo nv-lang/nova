@@ -432,7 +432,8 @@ fn is_private_ipv6(h str) -> bool {
 /// Сериализовать обратно в строку. Round-trip с `Url.parse` (IPv6 re-брекетится).
 #stable(since = "0.1")
 export fn Url @to_str() -> str {
-    consume buf = StringBuilder.with_capacity(64)
+    consume buf = StringBuilder.new()
+    buf.cap(64)
     buf.append(@scheme)
     buf.append(":")
 
@@ -494,7 +495,8 @@ export fn Url @to_str() -> str {
 /// ```
 #stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
-    consume buf = StringBuilder.with_capacity(s.byte_len() * 3)
+    consume buf = StringBuilder.new()
+    buf.cap(s.byte_len() * 3)
     for c in s.as_chars() {
         if is_unreserved(c) {
             buf.append(c)
@@ -526,7 +528,8 @@ export fn Url.decode_query(s str) -> Result[str, HttpError] {
 }
 
 fn decode_query_inner(s str) -> Result[str, ParseUrlError] {
-    mut buf = WriteBuffer.with_capacity(s.byte_len())
+    mut buf = WriteBuffer.new()
+    buf.cap(s.byte_len())
     ro bytes = s.as_bytes()
     ro n = bytes.len
     mut i = 0
