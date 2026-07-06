@@ -13786,7 +13786,7 @@ Format-agnostic typed serialization. Protocols `Serialize` / `Deserialize` (cont
 
 ## D341 — record auto-derive contract (compiler synthesis)
 
-`#impl(Serialize + Deserialize)` opt-in — the 7th/8th members of the auto-derive family (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`); `is_builtin_protocol` extended. Record-path only. **SUM is GATED** ([M-126-sum-*-rich] / 180.2) — `#impl(Serialize)` on a sum → `E_AUTO_DERIVE_UNSUPPORTED_KIND`. Emitted shapes:
+`#impl(Serialize + Deserialize)` opt-in — the 7th/8th members of the auto-derive family (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`); `is_builtin_protocol` extended. **SUM is supported (Plan 180 Ф.2-sum, externally-tagged — see D345);** the record-path shapes below apply to record/named-tuple types. Emitted shapes:
 - `@serialize`: `s.begin_struct(name, N)?`; per field `s.struct_field("k")?; @field.serialize(s)?`; `s.end_struct()` — UNIFORM memberwise push (like `@debug`).
 - `.deserialize`: per field `mut sub = d.enter_field[_or_null]("k")?` then TYPE-DIRECTED read — scalar → `sub.deser_X()?` (instance); record/`Vec`/`HashMap` → `<T>.deserialize(sub)?` (static); `Option[T]` → inline `if sub.is_null()? { None } else { Some(<inner>) }` (built-in `Option` does not dispatch a user static method). Then `Ok(Type{ f1, f2, … })`.
 - Field-eligibility: primitive / `Option`·`Vec`·`HashMap[str,_]` (recurse) / `#impl(P)` / provides-method — else `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` (named field; no silent drop). `HashMap` key must be `str` (Q16). priv fields serialize (structural synth). User method wins (D77).
@@ -13800,9 +13800,57 @@ record→struct, `Vec`→seq, `HashMap[str,_]`→map, `Option`→option (None→
 
 `JsonSerializer` (stack-machine building `JsonValue` → `@into()`) / `JsonDeserializer` (cursor over `JsonValue`) layered on the existing `JsonValue`/`Json.parse` (Q11, reuse — not a new parser). Public API = **free functions** `json_encode[T]` / `json_decode[T]` / `json_encode_pretty` / `json_to_value` / `json_from_value` / `json_decode_bytes` / `json_decode_with` (NOT `Json.encode` namespace-static: turbofish on a namespace/type-static generic method does not monomorphize — Ф.0-verify empirics; free-fn turbofish does. Followup [M-180-namespace-static-generic-mono]). depth-guard (Q14 default 128 → `DepthLimitExceeded`). `ParseJsonError` → `DeError{Syntax(msg)}` with line/col preserved in the message. Map encode sorts keys (determinism). **Contract for Plan 178 record-DTO** (`json_decode[T]` / `json_encode`).
 
-## D345 — sum auto-derive + tagging (Plan 180) — GATED
+## D345 — sum auto-derive + tagging (Plan 180)
 
-`match`-arm-per-variant synth + externally(default)/internally/adjacently/untagged tagging. **GATE**: sum-rich auto-derive ([M-126-sum-equal-rich]/-clone-rich/-hash-rich OPEN); auto_derive.rs sum-arms are placeholders. NOT landed. NOT on Plan 178's critical path (record-DTO suffices).
+**Ф.1 — sum rich data-protocol synth (✅ landed 2026-07-06).** The six built-in
+protocols (`Equal`/`Hash`/`Clone`/`Compare`/`Display`/`Debug`) now synthesize
+`match @ { … }` with one arm per variant instead of the old placeholders
+(equal=identity, hash=0, clone=self, compare=0, display/debug=typename). Per
+`SumVariantKind`: `Unit` (no payload / bare-ctor reconstruction), `Tuple(tys)`
+(positional binds, `V(a0,a1)`), `Record(fields)` (named binds, `V { f }`).
+- `@equal`: `V(a..) => match other { V(b..) => a==b && …, _ => false }` — same
+  variant + payload-wise `==`; different variant → false.
+- `@hash`: variant-index seed (`idx+1`) combined with each payload's `.hash()`
+  via the record-path rotate-XOR; distinct unit variants hash apart.
+- `@clone`: match-arm reconstruction — primitives shallow-copied, composites
+  `.clone()`d; `Unit`→bare ctor, `Tuple`→`V(clone…)`, `Record`→`V { f: clone }`.
+- `@compare`: extract both variant indices, compare those first; on tie compare
+  payloads lexicographically (`ro c = a.compare(b); if c != 0 { return c }`).
+- `@display`/`@debug`: `"V"` / `"V(x, y)"` / `"V { f: x, g: y }"`; display routes
+  primitives via `w.write_str(str.from(x))`, debug uniformly `x.debug(w)`.
+These inject AFTER type-check (like the record-path), so the emitted `match` /
+variant-patterns / variant-construction are lowered by codegen's annotation-free
+inference (scrutinee `@` + `other: Self` types known). [M-126-sum-*-rich] CLOSED.
+
+**Ф.2-sum — serde sum-derive, externally-tagged (✅ landed 2026-07-06).**
+`#impl(Serialize + Deserialize)` on a sum synthesizes `match`-arm-per-variant
+bodies over the Ф.1 pattern/ctor infra. **Externally-tagged (Q4, default):**
+- unit variant `V`          → bare string `"V"`
+- single-payload `V(x)`     → `{"V": <x>}`
+- multi-tuple `V(a, b)`     → `{"V": [<a>, <b>]}`  (inner array)
+- record variant `V{f, g}`  → `{"V": {"f": <f>, "g": <g>}}`  (inner struct)
+
+Serialize emits over the existing `Serializer` primitives (`begin_struct`/
+`struct_field`/`begin_seq`/`serialize_str`/…) — no new enum-specific serializer
+methods. Deserialize reads the tag (`d.is_str()?` → bare string for unit; else
+the single object key via `map_keys`/`enter_key`), then an `if/else-if` chain on
+the tag name reconstructs the variant, reading payload from the tagged cursor
+(tuple → `enter_index`, record → `enter_field`, single → direct). Unknown tag →
+`DeError{UnknownVariant{name, expected}}` (new `DeErrorKind` variant); malformed
+(non-single-key object) → `DeError{Syntax}`. Payload eligibility mirrors the
+record-field check (typed `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` by variant, never
+a bad synth). Runtime additions: `Deserializer.@is_str()` + `DeErrorKind`
+`UnknownVariant`/`NoVariantMatched`. NOT on Plan 178's critical path (record-DTO
+suffices). Codegen: a static `T.deserialize(sub)?` whose return-type inference
+degrades (mono-collection order perturbation once a sum ALSO derives Deserialize)
+is pinned to `Result[T, DeError]` at the `?`-lowering site (`emit_c.rs` Try arm),
+mirroring the `.serialize?` pin.
+
+**Ф.5 — internal/adjacent/untagged tagging.** These require `#serde(tag=…)` /
+`#serde(untagged)` attributes, which need the `#serde` attribute infra (AST
+`attrs` on `SumVariant`/type) that does **not** exist yet → gated on
+[M-180-serde-attributes]. Externally-tagged (the default, no attribute) is the
+honest V1. See Plan 180 Ф.5.
 
 ## D346 — serde soundness invariants (Plan 180)
 

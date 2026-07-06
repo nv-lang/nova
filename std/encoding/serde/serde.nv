@@ -62,6 +62,8 @@ export type DeErrorKind
     | UnexpectedType { expected str, found str }   // ждали int, нашли string
     | MissingField(str)                            // required-поле отсутствует (Q7)
     | UnknownField(str)                            // при deny_unknown_fields (Q5)
+    | UnknownVariant { name str, expected []str }  // enum tag не совпал (Q4, sum-deser)
+    | NoVariantMatched                             // untagged — ни один вариант (Q17)
     | OutOfRange(str)                              // int не влез в i64/u64 (Q15)
     | LossyInteger(str)                            // f64 не точное целое / |v|>=2^53 (Q15)
     | DepthLimitExceeded                           // deser-сторона depth-guard (Q14)
@@ -94,6 +96,8 @@ export fn DeError @to_str() -> str {
         UnexpectedType { expected, found } => "expected ${expected}, found ${found}"
         MissingField(f)    => "missing required field `${f}`"
         UnknownField(f)    => "unknown field `${f}`"
+        UnknownVariant { name, expected } => "unknown enum variant `${name}` (expected one of ${str.from(expected.len())})"
+        NoVariantMatched   => "no enum variant matched (untagged)"
         OutOfRange(v)      => "number ${v} out of range"
         LossyInteger(v)    => "number ${v} is not a lossless integer"
         DepthLimitExceeded => "deserialize recursion depth limit exceeded"
@@ -159,6 +163,7 @@ export type Deserializer protocol {
     mut @deser_str()   -> Result[str, DeError]
     mut @deser_bytes() -> Result[[]u8, DeError]     // JSON: base64-decode (Q9)
     mut @is_null()     -> Result[bool, DeError]
+    mut @is_str()      -> Result[bool, DeError]     // externally-tagged sum: unit-variant = bare string (Q4)
     // ── struct-доступ (под-cursor по ключу) ──
     mut @enter_field(key str)         -> Result[Self, DeError]   // MissingField если нет
     mut @enter_field_or_null(key str) -> Result[Self, DeError]   // null-cursor если нет (Option-поля)

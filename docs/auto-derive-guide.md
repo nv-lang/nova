@@ -247,15 +247,36 @@ Auto-derive **совместим** с:
 - **Named tuple `type X(a int, b str)`** ([Plan 120 D215](../spec/decisions/02-types.md#d215)):
   fields обрабатываются через `NamedTupleField` ровно как `RecordField`.
 
+## Sum-type rich synthesis (Plan 180 Ф.1, D345 — ✅ landed)
+
+Все шесть built-in-протоколов синтезируются для sum-типов через
+`match @ { … }` с одной arm на variant (`SumVariantKind::Unit`/`Tuple`/`Record`).
+Payload-элементы биндятся в arm-паттерне и рекурсятся ровно как record-поля.
+
+| Marker                          | Форма                                                          | Статус |
+|---------------------------------|----------------------------------------------------------------|--------|
+| `[M-126-sum-equal-rich]`        | same-variant + payload-wise `==` (nested match, cross-variant → false) | ✅ CLOSED |
+| `[M-126-sum-hash-rich]`         | variant-index seed ⊕ payload-hash (rotate-XOR combine)         | ✅ CLOSED |
+| `[M-126-sum-clone-rich]`        | match-arm-per-variant reconstruction (payload primitives shallow, composites `.clone()`) | ✅ CLOSED |
+| `[M-126-sum-compare-rich]`      | variant-index order, then payload lexicographic                | ✅ CLOSED |
+| `[M-126-sum-fmt-rich]`          | variant-aware `@display`/`@debug` (`V` / `V(x, y)` / `V { f: x }`) | ✅ CLOSED |
+
+> **Ergonomics-примечание:** метод на bare-unit-варианте (`Nought.hash()`)
+> мис-инферится в тип-варианта; аннотируйте через локал `ro n Colour = Nought`
+> (та же bidirectional-инференс-граница, что для `Empty`-коллизий D141).
+
+**Serialize/Deserialize (Plan 180 Ф.2-sum, externally-tagged — ✅ landed).**
+`#impl(Serialize + Deserialize)` на sum → externally-tagged wire (Q4): unit →
+`"V"`; single-payload → `{"V": x}`; tuple → `{"V": [a, b]}`; record →
+`{"V": {fields}}`. Deser читает тег (`is_str` → bare string / single object-key),
+unknown-tag → `DeError{UnknownVariant}`. Internal/adjacent/untagged tagging →
+followup `[M-180-serde-tagging-modes]` (гейт на `#serde`-атрибутах). Пример:
+`nova_tests/serde/sum_autoderive.nv`.
+
 ## Что НЕ supported V1 (followup)
 
 | Marker                          | Описание                                                       |
 |---------------------------------|----------------------------------------------------------------|
-| `[M-126-sum-equal-rich]`        | Sum-type @equal — variant tag + payload recursion             |
-| `[M-126-sum-hash-rich]`         | Sum-type @hash — discriminant + payload combine                |
-| `[M-126-sum-clone-rich]`        | Sum-type @clone — match-arms с payload recursion               |
-| `[M-126-sum-compare-rich]`      | Sum-type @compare — variant ordering                           |
-| `[M-126-sum-fmt-rich]`          | Sum-type @display — variant-aware output                           |
 | `[M-126-codegen-method-table]`  | V1: synthesized FnDecl не register'ится в method_table. Codegen wiring для full `a == b` runtime semantics — V2 expansion |
 
 V1 fokuses на type-check level — auto-derive **suppresses** `E_IMPL_MISSING_METHODS` корректно, что разблокирует pattern usage в downstream type-checked code. Полное `==` wiring через method_table — Plan 126 V2 (когда понадобится в production stdlib).
