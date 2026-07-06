@@ -29228,6 +29228,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 let res_var = self.fresh_tmp();
                                 self.line(&format!("{} {} = {}({});",
                                     result_struct_ty, res_var, helper, tmp));
+                                // Plan 174.1 §4: sub-width range-check before the
+                                // narrowing cast — out-of-range → None (был
+                                // silent truncation `Some(-25)`).
+                                self.emit_parse_range_check(target, &res_var);
                                 let sanitized = Self::sanitize_for_novaopt(opt_inner);
                                 self.register_novaopt_decl(&sanitized, opt_inner);
                                 let out = self.fresh_tmp();
@@ -29299,6 +29303,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                 };
                                 self.line(&format!("{} {} = {}({});",
                                     result_struct_ty, res_var, helper, tmp));
+                                // Plan 174.1 §4: sub-width range-check before the
+                                // narrowing cast — out-of-range → Err (был silent
+                                // truncation `Ok(-25)` для `i8.try_from("999")`).
+                                self.emit_parse_range_check(target, &res_var);
                                 let out = self.fresh_tmp();
                                 // Plan 59 Ф.7.5 D1c: dual-mode producer.
                                 // Result-репрезентация + `Ok`/`Err`-имена
@@ -37934,6 +37942,43 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     /// type constant, иначе `None`. C-expression готов к emit'у напрямую.
     ///
     /// Mapping table из spec D26 (08-runtime.md).
+    /// Plan 174.1 §4 (truncation-bug fix, D309): sub-width integer range for
+    /// `T.try_from(s)` / `T.parse(s, radix)` / `T.try_parse(s)`. The str→int
+    /// engine parses into i64/u64; narrowing to a sub-width target `T` MUST be
+    /// range-checked, else a raw C cast silently truncates
+    /// (`i8.try_from("999")` → `Ok(-25)` instead of `Err(Overflow)`).
+    ///
+    /// Returns `(signed, min_c, max_c)` for the sub-width targets; `None` for
+    /// full-width (`int`/`i64`/`uint`/`u64` — the engine's own i64/u64 overflow
+    /// guard already covers those) and non-integer targets.
+    fn parse_sized_int_bounds(target: &str) -> Option<(bool, &'static str, &'static str)> {
+        match target {
+            "i8"  => Some((true,  "INT8_MIN",  "INT8_MAX")),
+            "i16" => Some((true,  "INT16_MIN", "INT16_MAX")),
+            "i32" => Some((true,  "INT32_MIN", "INT32_MAX")),
+            "u8"  => Some((false, "0",         "UINT8_MAX")),
+            "u16" => Some((false, "0",         "UINT16_MAX")),
+            "u32" => Some((false, "0",         "UINT32_MAX")),
+            _ => None,
+        }
+    }
+
+    /// Emit the sub-width range-check that flips `<res>.ok = false` (→ Err/None
+    /// path) when the parsed i64/u64 value does not fit target `T`. No-op for
+    /// full-width / non-integer targets.
+    fn emit_parse_range_check(&mut self, target: &str, res_var: &str) {
+        if let Some((signed, min, max)) = Self::parse_sized_int_bounds(target) {
+            let cond = if signed {
+                format!("((int64_t){r}.value < (int64_t)({min})) || ((int64_t){r}.value > (int64_t)({max}))",
+                    r = res_var, min = min, max = max)
+            } else {
+                format!("{r}.value > (uint64_t)({max})", r = res_var, max = max)
+            };
+            self.line(&format!("if ({r}.ok && ({cond})) {{ {r}.ok = false; }}",
+                r = res_var, cond = cond));
+        }
+    }
+
     fn numeric_type_constant_mapping(parts: &[String]) -> Option<(&'static str, &'static str)> {
         if parts.len() != 2 {
             return None;
