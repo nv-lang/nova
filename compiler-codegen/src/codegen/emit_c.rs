@@ -40195,12 +40195,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     // = "void*"; нужно резолвить через mono inference.
                                     if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
                                         let recv_key = (rt.clone(), mn.clone());
-                                        if let Some(fn_decl) = self.mono_method_decls.get(&recv_key) {
-                                            if let Ok(type_subst) = self.resolve_mono_type_args(fn_decl, &[], args) {
+                                        if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
+                                            if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &[], args) {
                                                 let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
                                                     .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
                                                 if let Some(ret_ty) = &fn_decl.return_type {
-                                                    if let Some(c_ty) = Self::apply_type_subst_to_ref(ret_ty, &subst_opt) {
+                                                    // [M-valuerecord-receiver-generic-method] value-AWARE
+                                                    // FIRST: a method-generic method whose return embeds a
+                                                    // VALUE-record (`Result[T, DeErr]`, `Option[VDec]`)
+                                                    // cannot be lowered by the static `apply_type_subst_to
+                                                    // _ref` (no `&self` → can't resolve `NovaValue_<E>` /
+                                                    // register the `NovaRes_<ok>_NovaValue_<E>` typedef) and
+                                                    // fell through to the `void*` fallback — the match
+                                                    // scrutinee then typed `void*` and `_nv_scr->tag` /
+                                                    // `payload.Ok` broke. `value_aware_subst_to_ref` resolves
+                                                    // + registers the value-record Result/Option mono.
+                                                    let c_ty_opt = self.resolve_result_option_ret(ret_ty, &subst_opt)
+                                                        .or_else(|| self.value_aware_subst_to_ref(ret_ty, &subst_opt))
+                                                        .or_else(|| Self::apply_type_subst_to_ref(ret_ty, &subst_opt));
+                                                    if let Some(c_ty) = c_ty_opt {
                                                         if !c_ty.is_empty() && c_ty != "void*" {
                                                             return c_ty;
                                                         }
@@ -43760,12 +43773,25 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                                     // = "void*"; нужно резолвить через mono inference.
                                     if candidates.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
                                         let recv_key = (rt.clone(), mn.clone());
-                                        if let Some(fn_decl) = self.mono_method_decls.get(&recv_key) {
-                                            if let Ok(type_subst) = self.resolve_mono_type_args(fn_decl, &[], args) {
+                                        if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
+                                            if let Ok(type_subst) = self.resolve_mono_type_args(&fn_decl, &[], args) {
                                                 let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
                                                     .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
                                                 if let Some(ret_ty) = &fn_decl.return_type {
-                                                    if let Some(c_ty) = Self::apply_type_subst_to_ref(ret_ty, &subst_opt) {
+                                                    // [M-valuerecord-receiver-generic-method] value-AWARE
+                                                    // FIRST: a method-generic method whose return embeds a
+                                                    // VALUE-record (`Result[T, DeErr]`, `Option[VDec]`)
+                                                    // cannot be lowered by the static `apply_type_subst_to
+                                                    // _ref` (no `&self` → can't resolve `NovaValue_<E>` /
+                                                    // register the `NovaRes_<ok>_NovaValue_<E>` typedef) and
+                                                    // fell through to the `void*` fallback — the match
+                                                    // scrutinee then typed `void*` and `_nv_scr->tag` /
+                                                    // `payload.Ok` broke. `value_aware_subst_to_ref` resolves
+                                                    // + registers the value-record Result/Option mono.
+                                                    let c_ty_opt = self.resolve_result_option_ret(ret_ty, &subst_opt)
+                                                        .or_else(|| self.value_aware_subst_to_ref(ret_ty, &subst_opt))
+                                                        .or_else(|| Self::apply_type_subst_to_ref(ret_ty, &subst_opt));
+                                                    if let Some(c_ty) = c_ty_opt {
                                                         if !c_ty.is_empty() && c_ty != "void*" {
                                                             return c_ty;
                                                         }
