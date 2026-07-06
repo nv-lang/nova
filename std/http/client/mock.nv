@@ -52,7 +52,7 @@ export fn MockResponse.echo_request_header(name str) -> MockResponse =>
 #stable(since = "0.1")
 export fn MockResponse @header(name str, value str) -> MockResponse {
     mut h = @headers
-    ro _ = h.insert(name, value)
+    h.insert(name, value)!!
     { @status, headers: h, @body, @raw, @echo }
 }
 

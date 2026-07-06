@@ -98,40 +98,50 @@ fn HttpClient @cfg_defaults() -> []HeaderKV => @default_headers
 fn HttpClient @cfg_auto_decompress() -> bool => @auto_decompress
 fn HttpClient @cfg_max_decompressed() -> int => @max_decompressed
 
-/// Add a default header sent on every request (append).
+/// Add a default header sent on every request (append). Mutating fleeting
+/// property (D117 AMEND-2): a copying builder would shallow-copy the
+/// heap-backed `default_headers` list, sharing it with the pre-call builder —
+/// canon is mutate-in-place + `-> @`.
 #stable(since = "0.1")
-export fn HttpClientBuilder @default_header(name str, value str) -> HttpClientBuilder {
-    mut hs = @default_headers
-    hs.push(HeaderKV { name, value })
-    { default_headers: hs, @follow_redirects, @max_redirects, @user_agent, @auto_decompress, @max_decompressed }
+export fn HttpClientBuilder mut @default_header(name str, value str) -> @ {
+    @default_headers.push(HeaderKV { name, value })
 }
 
 /// Set the redirect policy (default `Limited(10)`).
 #stable(since = "0.1")
-export fn HttpClientBuilder @redirect(policy RedirectPolicy) -> HttpClientBuilder {
+export fn HttpClientBuilder mut @redirect(policy RedirectPolicy) -> @ {
     match policy {
-        NoFollow    => { @default_headers, follow_redirects: false, max_redirects: 0, @user_agent, @auto_decompress, @max_decompressed }
-        Limited(n)  => { @default_headers, follow_redirects: true, max_redirects: n, @user_agent, @auto_decompress, @max_decompressed }
+        NoFollow => {
+            @follow_redirects = false
+            @max_redirects = 0
+        }
+        Limited(n) => {
+            @follow_redirects = true
+            @max_redirects = n
+        }
     }
 }
 
 /// Override the User-Agent.
 #stable(since = "0.1")
-export fn HttpClientBuilder @user_agent(ua str) -> HttpClientBuilder =>
-    { @default_headers, @follow_redirects, @max_redirects, user_agent: ua, @auto_decompress, @max_decompressed }
+export fn HttpClientBuilder mut @user_agent(ua str) -> @ {
+    @user_agent = ua
+}
 
 /// Disable transparent gzip/deflate decompression. With decompression OFF the
 /// client sends NO default `Accept-Encoding` and returns response bodies verbatim
 /// (a compressed body stays compressed) — the caller owns Content-Encoding.
 #stable(since = "0.1")
-export fn HttpClientBuilder @no_decompress() -> HttpClientBuilder =>
-    { @default_headers, @follow_redirects, @max_redirects, @user_agent, auto_decompress: false, @max_decompressed }
+export fn HttpClientBuilder mut @no_decompress() -> @ {
+    @auto_decompress = false
+}
 
 /// Cap the decoded body size (bomb guard, D334). A decode that would exceed
 /// `max_bytes` fails with `Err(BodyTooLarge)` instead of allocating. `< 0` = no cap.
 #stable(since = "0.1")
-export fn HttpClientBuilder @max_decompressed(max_bytes int) -> HttpClientBuilder =>
-    { @default_headers, @follow_redirects, @max_redirects, @user_agent, @auto_decompress, max_decompressed: max_bytes }
+export fn HttpClientBuilder mut @max_decompressed(max_bytes int) -> @ {
+    @max_decompressed = max_bytes
+}
 
 /// Finalize the client. Fallible for parity with the full builder (tls/proxy);
 /// CORE construction never fails.

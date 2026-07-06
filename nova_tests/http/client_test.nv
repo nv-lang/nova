@@ -41,7 +41,9 @@ test "client: POST round-trip, 201 + Location" {
 test "client: query builder + default headers" {
     ro m = mock_http().on("GET", "/search", MockResponse.new(200).text("ok"))
     with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
-        ro client = HttpClient.builder().default_header("Accept", "application/json").build()!!
+        mut b = HttpClient.builder()
+        b.default_header("Accept", "application/json")
+        ro client = b.build()!!
         consume resp = client.get("http://x.example/search").query([("q", "a b&c")]).send()!!
         assert(resp.status().as_u16() == 200)
         assert(match resp.drain() { Ok(_) => true, Err(_) => false })
@@ -75,7 +77,9 @@ test "client: follows 301 redirect (same origin)" {
 test "client: redirect loop → TooManyRedirects" {
     ro m = mock_http().on("GET", "/loop", MockResponse.new(301).header("Location", "/loop"))
     with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
-        ro client = HttpClient.builder().redirect(Limited(2)).build()!!
+        mut b = HttpClient.builder()
+        b.redirect(Limited(2))
+        ro client = b.build()!!
         match client.get("http://x.example/loop").send() {
             Ok(r)  => { assert(match r.drain() { Ok(_) => true, Err(_) => false }); assert(false) }
             Err(e) => assert(match e.kind { TooManyRedirects(_) => true, _ => false })
