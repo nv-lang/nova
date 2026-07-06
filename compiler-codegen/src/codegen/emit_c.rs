@@ -616,6 +616,26 @@ pub struct CEmitter {
     value_record_names: HashSet<String>,
     /// Maps sum type name → variant name → field types (positional)
     sum_schemas: HashMap<String, HashMap<String, Vec<String>>>,
+    /// [M-sync-crossmodule-samename-type-collision] Collision-aware nominal-type
+    /// mangling (D348). Set of user-type SIMPLE names declared in ≥2 DISTINCT
+    /// modules within this CU. ONLY these names get module-qualified C bases
+    /// (`Nova_<modpath>_<Name>` instead of `Nova_<Name>`); every non-colliding
+    /// name stays byte-identical. Empty for any CU without a cross-module
+    /// same-name collision → all qualification code below is a no-op (byte-
+    /// identical guarantee). Built in `emit_module` from `peer_files`.
+    colliding_type_names: HashSet<String>,
+    /// [M-sync-crossmodule…] `FileId → module_name` for every peer file. Gives a
+    /// TypeDecl its DEFINING module (`t.span.file_id → module`) at emission, and
+    /// the current-file context for reference-site qualification. Built from
+    /// `peer_files` in `emit_module`.
+    emit_file_module: HashMap<crate::diag::FileId, Vec<String>>,
+    /// [M-sync-crossmodule…] Per-file resolution of a COLLIDING simple name to
+    /// its defining module AS VISIBLE in that file (`(file_id, name) → module`).
+    /// A file sees a bare colliding name either because its own module declares
+    /// it or because it selectively imports it from exactly one module (checker
+    /// invariant: a bare type name is unambiguous within a file). Only populated
+    /// for names in `colliding_type_names`. Built in `emit_module`.
+    file_type_module: HashMap<(crate::diag::FileId, String), Vec<String>>,
     /// [M-172.1-self-ref-slice-variant-erasure] sum types currently mid-emission
     /// in `emit_sum_type`. A self-referential variant payload (`Node([]Self)`,
     /// e.g. json `JsonValue.Array([]JsonValue)`) lowers its slice element via
@@ -1502,6 +1522,9 @@ impl CEmitter {
             named_tuple_field_defaults: HashMap::new(),
             value_record_names: HashSet::new(),
             sum_schemas: HashMap::new(),
+            colliding_type_names: HashSet::new(),
+            emit_file_module: HashMap::new(),
+            file_type_module: HashMap::new(),
             being_defined_sum_types: HashSet::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
@@ -2291,6 +2314,136 @@ impl CEmitter {
     /// U.4.6: the `Named` ABI dispatch of `resolved_type_to_c`, mirroring `type_ref_to_c`'s
     /// `Named` arm driven by `ResolvedType` fields. `full` = `module ++ [name]` joined by
     /// `_` (the `path.join("_")` equivalent, U.5.5(a) made `module` lossless).
+    /// [M-sync-crossmodule-samename-type-collision] (D348) — module-qualified
+    /// C base for a colliding user type; `name` unchanged for every other type
+    /// (byte-identical). `module` must be the DEFINING module path.
+    fn qualify_type_base(&self, name: &str, module: &[String]) -> String {
+        if self.colliding_type_names.contains(name) && !module.is_empty() {
+            format!("{}_{}", module.join("_"), name)
+        } else {
+            name.to_string()
+        }
+    }
+
+    /// DEFINITION-side base: a TypeDecl's C base, qualified by its own defining
+    /// module (via `file_id`) when the simple name collides. Non-colliding →
+    /// bare `name` (byte-identical). Used by every type-DEFINITION emitter so
+    /// the struct/tag/ctor/schema key of a colliding type is unique per module.
+    fn def_type_base(&self, name: &str, file_id: crate::diag::FileId) -> String {
+        if !self.colliding_type_names.contains(name) {
+            return name.to_string();
+        }
+        match self.emit_file_module.get(&file_id) {
+            Some(m) if !m.is_empty() => self.qualify_type_base(name, m),
+            _ => name.to_string(),
+        }
+    }
+
+    /// REFERENCE-side base: resolve a (possibly bare) colliding type reference to
+    /// its qualified C base using the CURRENT emission file's view. Falls back to
+    /// the syntactic `module` (or bare `name`) when the collision cannot be
+    /// resolved (non-colliding names always return bare `name`, byte-identical).
+    fn ref_type_base(&self, name: &str, syntactic_module: &[String]) -> String {
+        if !self.colliding_type_names.contains(name) {
+            return name.to_string();
+        }
+        // Prefer the current file's resolution (handles bare same/cross-module
+        // references); this is unambiguous within a file (checker invariant).
+        if let Some(fid) = self.current_emit_file_id {
+            if let Some(m) = self.file_type_module.get(&(fid, name.to_string())) {
+                return self.qualify_type_base(name, m);
+            }
+        }
+        // Fall back to any syntactic qualifier the reference carried.
+        if !syntactic_module.is_empty() {
+            return self.qualify_type_base(name, syntactic_module);
+        }
+        name.to_string()
+    }
+
+    /// [M-sync-crossmodule…] (D348): resolve a BARE variant name to its sum,
+    /// disambiguating a variant SHARED across colliding sums (`Other` in three
+    /// `ErrorKind`s) by the current call-site context (the fn's expected return
+    /// sum). Byte-identical for a UNIQUE variant: a single candidate falls
+    /// straight through to `find_variant_compat` (the legacy first-wins), so no
+    /// non-colliding program changes. Returns the disambiguated sum base + its
+    /// variant field-C-types, or `None` if the name is not a variant.
+    fn find_variant_ctx(&self, variant: &str, argc: Option<usize>) -> Option<(String, Vec<String>)> {
+        // Only disambiguate among PLAIN (non-generic-mono) sums. A mono instance
+        // name carries the `____` type-arg separator; the generic path owns its
+        // ctor emission + instance queuing, so overriding to a mono base here
+        // would emit a call WITHOUT queuing the instance (undefined symbol). The
+        // collision this targets is between plain non-generic sums (three
+        // `ErrorKind`s), so this filter loses nothing for the intended case.
+        let plain: Vec<String> = self
+            .sum_schema_registry
+            .variant_sum_candidates(variant)
+            .into_iter()
+            .filter(|c| !c.contains("____"))
+            .collect();
+        if plain.len() >= 2 {
+            let field_count = |sum: &str| -> Option<usize> {
+                self.sum_schema_registry
+                    .lookup_sum_schema(sum)
+                    .and_then(|e| e.variants.iter().find(|v| v.variant_name == variant))
+                    .map(|v| v.field_c_types.len())
+            };
+            let build = |sum: String| -> Option<(String, Vec<String>)> {
+                self.sum_schema_registry.lookup_sum_schema(&sum).and_then(|e| {
+                    e.variants
+                        .iter()
+                        .find(|v| v.variant_name == variant)
+                        .map(|v| (sum.clone(), v.field_c_types.clone()))
+                })
+            };
+            // (1) Arity filter: `InvalidData(msg)` (1 arg) vs a same-named UNIT
+            // variant in another colliding sum — the payload count disambiguates.
+            // A single arity match wins outright.
+            if let Some(n) = argc {
+                let by_arity: Vec<&String> =
+                    plain.iter().filter(|s| field_count(s) == Some(n)).collect();
+                if by_arity.len() == 1 {
+                    return build(by_arity[0].clone());
+                }
+                // (2) Among the arity-matching subset, prefer the current fn's
+                // return sum (handles `Other(x)` — 1-arg in every ErrorKind — by
+                // the enclosing fn's return category).
+                if by_arity.len() >= 2 {
+                    if let Some(base) = self.current_fn_return_sum() {
+                        if by_arity.iter().any(|c| **c == base) {
+                            return build(base);
+                        }
+                    }
+                }
+            }
+            // (3) Arity-agnostic context fallback.
+            if let Some(base) = self.current_fn_return_sum() {
+                if plain.iter().any(|c| *c == base) {
+                    return build(base);
+                }
+            }
+        }
+        self.sum_schema_registry.find_variant_compat(variant)
+    }
+
+    /// [M-sync-crossmodule…] (D348): the plain (non-mono) sum base named by the
+    /// current fn's return C-type, if any — used to disambiguate a variant shared
+    /// across colliding sums by call-site context.
+    fn current_fn_return_sum(&self) -> Option<String> {
+        let ret = self.current_fn_return_ty.as_ref()?;
+        let base = ret
+            .strip_prefix("Nova_")
+            .unwrap_or(ret)
+            .trim_end_matches('*')
+            .trim()
+            .to_string();
+        if base.contains("____") {
+            None
+        } else {
+            Some(base)
+        }
+    }
+
     fn resolved_named_to_c(
         &self,
         name: &str,
@@ -2477,7 +2630,15 @@ impl CEmitter {
                         self.type_subst_overrides.borrow().len()
                     );
                 }
-                format!("Nova_{}*", full)
+                // [M-sync-crossmodule…] (D348): concrete user record/sum. For a
+                // COLLIDING simple name, qualify by the DEFINING module resolved
+                // from the referencing file (`ref_type_base`); every other name
+                // keeps the exact legacy `full` (byte-identical).
+                if self.colliding_type_names.contains(name) {
+                    format!("Nova_{}*", self.ref_type_base(name, module))
+                } else {
+                    format!("Nova_{}*", full)
+                }
             }
         })
     }
@@ -2690,6 +2851,139 @@ impl CEmitter {
                         self.fn_module_map
                             .entry(f.name.clone())
                             .or_insert_with(|| pf.module_name.clone());
+                    }
+                }
+            }
+        }
+
+        // [M-sync-crossmodule-samename-type-collision] (D348) — collision-aware
+        // module-qualified nominal-type mangling. A user sum/record type is
+        // mangled to `Nova_<Name>` by SIMPLE name (tag `NOVA_TAG_<Name>_<V>`,
+        // ctor `nova_make_<Name>_<V>`, schema keys). Two DIFFERENT types with the
+        // same simple name from DIFFERENT modules in one CU collide into one C
+        // struct/tag-enum/registry-entry (`ErrorKind` from std.io / std.http /
+        // std.encoding.compress). Fix: qualify ONLY the colliding names by their
+        // DEFINING module — every non-colliding name stays byte-identical, so a
+        // CU without collisions produces identical C (`colliding_type_names`
+        // empty → all qualification helpers are no-ops).
+        //
+        // Built from `peer_files`: each PeerFile carries its `file_id` +
+        // `module_name` + `items_here`. Only NON-generic concrete sum/record/
+        // newtype names participate (generic templates mangle through the mono
+        // path). `emit_file_module` gives any TypeDecl its defining module via
+        // `t.span.file_id`; `file_type_module` resolves a bare colliding
+        // reference to its defining module as visible in the referring file.
+        {
+            use std::collections::BTreeSet;
+            // file_id → module_name (all peer files, incl. imported modules).
+            for pf in &module.peer_files {
+                self.emit_file_module.insert(pf.file_id, pf.module_name.clone());
+            }
+            // name → set of DEFINING modules (distinct module paths declaring a
+            // non-generic type of that simple name).
+            let mut type_def_modules: HashMap<String, BTreeSet<Vec<String>>> = HashMap::new();
+            let record_def = |td: &TypeDecl, mods: &mut HashMap<String, BTreeSet<Vec<String>>>, m: &[String]| {
+                // Collision-qualify only the concrete (non-generic) nominal types
+                // with a POINTER `Nova_<name>*` struct/tag identity used uniformly
+                // at def+ref without alias indirection: Sum and HEAP Record. Value-
+                // records (`NovaValue_`), NamedTuple, Newtype/Alias (`type_aliases`
+                // indirection), Effect/Protocol/TypeSet, Opaque (nova_rt headers)
+                // and generics (mono-path naming) are a distinct axis — excluded so
+                // def/ref qualification stays consistent (followup for those kinds).
+                let heap_record = matches!(
+                    (&td.kind, td.allocation),
+                    (TypeDeclKind::Record(_), crate::ast::AllocKind::Heap)
+                );
+                let qualifiable = matches!(td.kind, TypeDeclKind::Sum(_)) || heap_record;
+                if qualifiable
+                    && td.generics.is_empty()
+                    && !RUNTIME_DEFINED_TYPES.contains(&td.name.as_str())
+                {
+                    mods.entry(td.name.clone()).or_default().insert(m.to_vec());
+                }
+            };
+            if module.peer_files.is_empty() {
+                for item in &module.items {
+                    if let Item::Type(td) = item {
+                        record_def(td, &mut type_def_modules, &module.name);
+                    }
+                }
+            } else {
+                for pf in &module.peer_files {
+                    for item in &pf.items_here {
+                        if let Item::Type(td) = item {
+                            record_def(td, &mut type_def_modules, &pf.module_name);
+                        }
+                    }
+                }
+            }
+            // Colliding = simple name declared in ≥2 distinct modules.
+            for (name, mods) in &type_def_modules {
+                if mods.len() >= 2 {
+                    self.colliding_type_names.insert(name.clone());
+                }
+            }
+            // Per-file resolution for colliding names: which defining module does
+            // this file see for a bare `Name`? Its own module (if it declares it)
+            // or the single module it selectively imports it from.
+            if !self.colliding_type_names.is_empty() {
+                for pf in &module.peer_files {
+                    for name in &self.colliding_type_names {
+                        let cands = match type_def_modules.get(name) {
+                            Some(c) => c,
+                            None => continue,
+                        };
+                        // (1) The peer's OWN module declares this type — every peer
+                        // of a folder-module shares that module's declarations by
+                        // Rule C (D281), referencing them WITHOUT any import. So the
+                        // peer sees `name` as its own module regardless of which
+                        // sibling file physically declares it.
+                        if cands.contains(&pf.module_name) {
+                            self.file_type_module
+                                .insert((pf.file_id, name.clone()), pf.module_name.clone());
+                            continue;
+                        }
+                        // (2) Selectively imported from exactly one candidate module.
+                        // The import path is the full PACKAGE path (`std.encoding.
+                        // compress`) while a module's declared `module_name` may omit
+                        // the package root (`encoding.compress`), so match by suffix
+                        // relationship (either path is a suffix of the other) rather
+                        // than exact equality. The candidate `cand` is always the
+                        // DEFINING `module_name`, so `hit` carries that base — keeping
+                        // reference qualification identical to the definition base.
+                        let path_matches = |cand: &[String], ipath: &[String]| -> bool {
+                            cand == ipath
+                                || (cand.len() <= ipath.len()
+                                    && ipath.ends_with(cand))
+                                || (ipath.len() <= cand.len()
+                                    && cand.ends_with(ipath))
+                        };
+                        let mut hit: Option<Vec<String>> = None;
+                        for imp in &pf.imports {
+                            let selects = match &imp.items {
+                                None => true, // whole-module import
+                                Some(items) => items.iter().any(|it| {
+                                    it.name == *name
+                                        || it.alias.as_deref() == Some(name.as_str())
+                                }),
+                            };
+                            if !selects {
+                                continue;
+                            }
+                            if let Some(cand) =
+                                cands.iter().find(|c| path_matches(c, &imp.path))
+                            {
+                                if hit.is_none() {
+                                    hit = Some(cand.clone());
+                                } else if hit.as_deref() != Some(cand.as_slice()) {
+                                    hit = None; // ambiguous — leave unqualified (checker would reject)
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(m) = hit {
+                            self.file_type_module.insert((pf.file_id, name.clone()), m);
+                        }
                     }
                 }
             }
@@ -3182,11 +3476,16 @@ impl CEmitter {
                                 format!("NovaValue_{}", t.name));
                             self.value_record_names.insert(t.name.clone());
                         } else {
+                            // [M-sync-crossmodule…] fwd-decl must match the qualified
+                            // definition base for a colliding heap record.
+                            let fb = self.def_type_base(&t.name, t.span.file_id);
                             self.user_type_fwd_decls.push_str(&format!(
-                                "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                                "typedef struct Nova_{0} Nova_{0};\n", fb));
                         }
                     }
                     TypeDeclKind::Sum(variants) => {
+                        // [M-sync-crossmodule…] qualified base for a colliding sum.
+                        let fb = self.def_type_base(&t.name, t.span.file_id);
                         if variants.is_empty() {
                             // Plan 72 P1-B: empty sum → `typedef int64_t Nova_X` (no struct).
                             // Emit the typedef here (into user_type_fwd_decls, which precedes
@@ -3194,11 +3493,11 @@ impl CEmitter {
                             // `Nova_X*` compile without "unknown type name Nova_X".
                             if !RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
                                 self.user_type_fwd_decls.push_str(&format!(
-                                    "typedef int64_t Nova_{};\n", t.name));
+                                    "typedef int64_t Nova_{};\n", fb));
                             }
                         } else {
                             self.user_type_fwd_decls.push_str(&format!(
-                                "typedef struct Nova_{0} Nova_{0};\n", t.name));
+                                "typedef struct Nova_{0} Nova_{0};\n", fb));
                         }
                     }
                     _ => {}
@@ -3625,7 +3924,17 @@ impl CEmitter {
                 }
                 crate::ast::TypeDeclKind::Sum(variants) => {
                     // Register sum schema for pattern matching + is_generic_stub_c.
-                    if !self.sum_schemas.contains_key(&type_decl.name) {
+                    // [M-sync-crossmodule…] (D348): SKIP a colliding name here — this
+                    // external-registry pre-pass keys by the BARE `type_decl.name`,
+                    // which would create a spurious unqualified `ErrorKind` schema/
+                    // registry entry alongside the module-qualified ones that
+                    // `emit_type_decl` emits (the colliding types ARE in
+                    // `module.items`). That bare entry then wins reference
+                    // resolution (`find_variant`/schema lookup) → bare
+                    // `nova_make_ErrorKind_*` calls with no definition. Non-colliding
+                    // names are unaffected (byte-identical).
+                    if !self.colliding_type_names.contains(&type_decl.name)
+                        && !self.sum_schemas.contains_key(&type_decl.name) {
                         let mut schema: std::collections::HashMap<String, Vec<String>> =
                             std::collections::HashMap::new();
                         let mut variant_order: Vec<String> = Vec::new();
@@ -10063,6 +10372,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     // ---- forward declarations ----
 
     fn emit_fn_forward_decl(&mut self, f: &FnDecl) -> Result<(), String> {
+        // [M-sync-crossmodule…] (D348): lower this fn's signature in the context
+        // of its OWN declaring file, so a colliding param/return type (`ErrorKind`
+        // in std.io's `IoError.of`) resolves to its module-qualified base rather
+        // than a bare `Nova_ErrorKind`. GATED on a collision existing in this CU:
+        // when none, `current_emit_file_id` stays exactly as the legacy passes
+        // left it (None here) so file-private fn-name resolution — and thus every
+        // emitted byte — is unchanged. The next fn/body pass re-sets it, and an
+        // `?`-error aborts compilation, so no explicit per-return restore.
+        if !self.colliding_type_names.is_empty() {
+            self.current_emit_file_id = Some(f.span.file_id);
+        }
         // D82: external fn — forward decl не нужен (реализация в nova_rt/*.h
         // уже включена через preamble #include).
         // Plan 91.10 (D163 retracted): branch для D163 external fn удалён.
@@ -10905,6 +11225,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             self.line(&format!("static const {} {} = {};", ty_c, symbol, val));
             self.var_types.insert(symbol, ty_c);
         }
+        // [M-sync-crossmodule…] (D348): make the type's own defining file the
+        // current context so field-type references to colliding types resolve
+        // (byte-identical when no collision — `current_emit_file_id` only steers
+        // `ref_type_base`, a no-op for non-colliding names). `def_base` is the
+        // module-qualified struct/tag base for a colliding struct-like type, else
+        // the bare `t.name`. Restored after the match (errors abort compilation).
+        let saved_emit_file = self.current_emit_file_id;
+        if !self.colliding_type_names.is_empty() {
+            self.current_emit_file_id = Some(t.span.file_id);
+        }
+        let def_base = self.def_type_base(&t.name, t.span.file_id);
         match &t.kind {
             TypeDeclKind::Record(fields) => {
                 // Plan 124.8 V2 (D226): branch by allocation contract.
@@ -10912,8 +11243,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Value → emit_value_record_type (inline struct, stack).
                 use crate::ast::AllocKind;
                 match t.allocation {
-                    AllocKind::Heap => self.emit_record_type(&t.name, fields)?,
-                    AllocKind::Value => self.emit_value_record_type(&t.name, fields)?,
+                    AllocKind::Heap => self.emit_record_type(&def_base, fields)?,
+                    AllocKind::Value => self.emit_value_record_type(&def_base, fields)?,
                     // Plan 127 V1: ValueHeapPromoted lives только на per-binding
                     // slots, не на TypeDecl. Type declaration аллокация всегда
                     // {Heap, Value}. Per-binding promotion обрабатывается на
@@ -10926,7 +11257,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 }
             }
             TypeDeclKind::Sum(variants) => {
-                self.emit_sum_type(&t.name, variants)?;
+                self.emit_sum_type(&def_base, variants)?;
             }
             TypeDeclKind::Newtype(inner) => {
                 // Plan 91.12 V2 (D126 retract — sync types migration):
@@ -10980,13 +11311,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             TypeDeclKind::TypeSet(_) => {}
             // Plan 120 (D215): named tuple — value-type struct with named fields.
             TypeDeclKind::NamedTuple(fields) => {
-                self.emit_named_tuple_type(&t.name, fields)?;
+                self.emit_named_tuple_type(&def_base, fields)?;
             }
             // Plan 62.D.bis (D126): unreachable — early-return on top
             // of emit_type_decl уже отфильтровал Opaque kind. Branch
             // present для exhaustiveness; semantically meaningful no-op.
             TypeDeclKind::Opaque => {}
         }
+        // [M-sync-crossmodule…] restore prior emission-file context.
+        self.current_emit_file_id = saved_emit_file;
         // Plan 124.8 [M-124.8-zero-on-move] (2026-06-03): emit per-type
         // `Nova_T_zero_storage` helper для types помеченных #zero_on_move.
         // V1: helper доступен явному вызову; auto-injection в consume-call
@@ -12551,7 +12884,10 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                         return format!("{}*", c_ty);
                     }
                 }
-                format!("Nova_{}*", other)
+                // [M-sync-crossmodule…] (D348): a method receiver whose type is a
+                // colliding sum/record resolves to its module-qualified base (byte-
+                // identical for non-colliding — `ref_type_base` ≡ id).
+                format!("Nova_{}*", self.ref_type_base(other, &[]))
             }
         }
     }
@@ -15916,6 +16252,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         recv_type: &str,
     ) -> Result<(), String> {
         use crate::ast::FnBody;
+        // [M-sync-crossmodule…] (D348): a monomorphized method body references
+        // colliding types (`ErrorKind.WriteZero` in `BufWriter[W].flush`) — resolve
+        // them under the METHOD's declaring file so `ref_type_base` qualifies the
+        // ctor/tag to match the qualified definition. GATED (byte-identical for
+        // non-colliding CUs). Restored with the type-subst at the end.
+        let saved_emit_file_id_mono = self.current_emit_file_id;
+        if !self.colliding_type_names.is_empty() {
+            self.current_emit_file_id = Some(fn_decl.span.file_id);
+        }
         // Set type substitution
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
@@ -16430,6 +16775,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
         self.out.push_str(&fn_body);
         self.current_type_subst = saved_subst;
+        self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D348
         // Plan 11 Follow-up: restore current_receiver_type теперь, когда body
         // полностью emitted (включая все Self-resolution context'ы).
         self.current_receiver_type = None;
@@ -17111,6 +17457,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         mono_name: &str,
     ) -> Result<(), String> {
         use crate::ast::FnBody;
+        // [M-sync-crossmodule…] (D348): resolve colliding-type references in a
+        // monomorphized free-fn body under its declaring file (gated; byte-
+        // identical for non-colliding CUs). Restored with the type-subst.
+        let saved_emit_file_id_mono = self.current_emit_file_id;
+        if !self.colliding_type_names.is_empty() {
+            self.current_emit_file_id = Some(fn_decl.span.file_id);
+        }
         // Set type substitution
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
@@ -17300,6 +17653,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         self.out.push_str(&fn_body);
         // Restore type substitution
         self.current_type_subst = saved_subst;
+        self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D348
         Ok(())
     }
 
@@ -17688,6 +18042,20 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 return self.emit_generic_method_erased(f);
             }
         }
+        // [M-sync-crossmodule…] (D348): establish THIS fn's declaring-file context
+        // BEFORE the signature (return type + params) is lowered, so a colliding
+        // param/return type (`ErrorKind` in std.io's `IoError.of`) resolves to its
+        // module-qualified base. The legacy set happened AFTER the signature (~180
+        // lines below), so the body was fine but the SIGNATURE emitted a bare
+        // `Nova_ErrorKind`. GATED on a collision existing so a non-colliding CU
+        // keeps the original context (unset here) while the signature is lowered —
+        // `ref_type_base` is a no-op then and the return-inference file-private fn
+        // resolution stays exactly as before → byte-identical. `saved_emit_file_id`
+        // captures the TRUE original for the end-of-body restore.
+        let saved_emit_file_id = self.current_emit_file_id;
+        if !self.colliding_type_names.is_empty() {
+            self.current_emit_file_id = Some(f.span.file_id);
+        }
         // Set receiver type FIRST so Self resolves correctly in return_type_c/params_c
         if let Some(recv) = &f.receiver {
             self.current_receiver_type = Some(recv.type_name.clone());
@@ -17804,12 +18172,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // restore the caller's set at exit. Symmetric with test-body/spawn.
         let saved_var_mutable_fn = std::mem::take(&mut self.var_mutable);
         let params = self.params_c(f)?;
-        // Plan 170 (D307): set the current emission file for the whole fn body
-        // so call-sites to file-private helpers declared in THIS file resolve to
-        // the right file-discriminated C symbol (free_fn_c_name reads this for
-        // bare-name call-sites). Restored at the end of the fn body. Any same-file
-        // module-default fn calling a `priv(file)` helper relies on this too.
-        let saved_emit_file_id = self.current_emit_file_id.replace(f.span.file_id);
+        // Plan 170 (D307): set the current emission file for the whole fn BODY so
+        // call-sites to file-private helpers declared in THIS file resolve to the
+        // right file-discriminated C symbol (free_fn_c_name reads this). Unconditional
+        // (byte-identical with legacy); for a colliding CU it merely re-affirms the
+        // gated top-of-fn set. Restored at the end via `saved_emit_file_id`
+        // (captured as the TRUE original above, D348).
+        self.current_emit_file_id = Some(f.span.file_id);
         let mangled = self.mangle_fn(f);
         // Plan 63 Fix F+ [M-result-erased-no-mono]: register fn's Result Ok
         // payload mono'd type. Enables call-site propagation (let r = parse_kv())
@@ -21166,7 +21535,9 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Unit variants (e.g. `Red` from `type Color | Red | Green`) are
                 // not function calls in Nova but need `nova_make_Color_Red()` in C.
                 // Plan 62.A.bis Ф.2.2: variant lookup via registry.
-                if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
+                // [M-sync-crossmodule…] (D348): context-disambiguated for a variant
+                // shared across colliding sums (byte-identical for unique variants).
+                if let Some((type_name, fields)) = self.find_variant_ctx(name, Some(0)) {
                     if fields.is_empty() {
                         // Plan 14 Ф.1: `None` — typed compound literal по
                         // current_fn_return_ty. Иначе — legacy nova_make.
@@ -21393,20 +21764,40 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     } else if self.sum_schemas.contains_key(type_name_raw.as_str()) {
                         type_name_raw.clone()
                     } else {
-                        String::new()
+                        // [M-sync-crossmodule…] (D348): colliding sum referenced by
+                        // its bare name — resolve to the module-qualified base
+                        // (byte-identical when no collision: `ref_type_base` ≡ id, so
+                        // this branch only ever yields the same empty key as before).
+                        // File-context-free fallback: recover the qualified sum from
+                        // the registry via the (unique) variant name.
+                        let q = self.ref_type_base(type_name_raw, &[]);
+                        if self.sum_schemas.contains_key(q.as_str()) {
+                            q
+                        } else if self.colliding_type_names.contains(type_name_raw.as_str()) {
+                            match self.find_variant_ctx(variant_name, None) {
+                                Some((sum, _)) if self.sum_schemas.contains_key(sum.as_str()) => sum,
+                                _ => String::new(),
+                            }
+                        } else {
+                            String::new()
+                        }
                     };
                     if !eff_key.is_empty() {
                         if let Some(variants) = self.sum_schemas.get(&eff_key) {
                             if let Some(fields) = variants.get(variant_name.as_str()) {
                                 if fields.is_empty() {
                                     // Constructor naming:
-                                    // - erased ("Slot"): nova_make_Slot_Empty — no Nova_ prefix
+                                    // - erased/plain ("Slot", "std_io_ErrorKind"):
+                                    //   nova_make_<base>_Empty — no Nova_ prefix
                                     // - monomorphized ("Slot____nova_str__nova_int"):
                                     //   nova_make_Nova_Slot____..._Empty — with Nova_ prefix
-                                    let ctor_prefix = if eff_key == type_name_raw.as_str() {
-                                        type_name_raw.clone()
-                                    } else {
+                                    // (mono names carry the `____` type-arg separator; a
+                                    // module-qualified base does NOT, so it stays prefix-
+                                    // free like the erased case — D348.)
+                                    let ctor_prefix = if eff_key.contains("____") {
                                         format!("Nova_{}", eff_key)
+                                    } else {
+                                        eff_key.clone()
                                     };
                                     return Ok(format!(
                                         "(nova_int)(intptr_t)nova_make_{}_{}()",
@@ -22387,9 +22778,27 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // `TypeName.Variant { fields }` — obj is the sum-type name (an Ident),
                 // name is the variant. Intercept before emit_expr(obj) which would
                 // otherwise lower the type-name as a value → wrong C type (nova_int/void*).
-                if let ExprKind::Ident(type_name) = &obj.kind {
+                if let ExprKind::Ident(type_name_raw) = &obj.kind {
+                    // [M-sync-crossmodule…] (D348): resolve a colliding sum's bare
+                    // name to its module-qualified base so the schema/registry
+                    // lookup + `nova_make_<base>_<V>` match the qualified
+                    // definition. Byte-identical for non-colliding (id map).
+                    let mut type_name = self.ref_type_base(type_name_raw, &[]);
+                    // Robust fallback: when the referencing context lacks a file
+                    // (some erased/lambda emission paths), `ref_type_base` yields the
+                    // bare colliding name — recover the qualified sum from the
+                    // registry via the (usually unique) VARIANT name, so
+                    // `ErrorKind.WriteZero` still emits `nova_make_std_io_ErrorKind_…`.
+                    if self.colliding_type_names.contains(type_name_raw.as_str())
+                        && !self.sum_schemas.contains_key(type_name.as_str())
+                        && self.sum_schema_registry.lookup_sum_schema(&type_name).is_none()
+                    {
+                        if let Some((sum, _)) = self.find_variant_ctx(name, None) {
+                            type_name = sum;
+                        }
+                    }
                     let have_schema = self.sum_schemas.contains_key(type_name.as_str())
-                        || self.sum_schema_registry.lookup_sum_schema(type_name).is_some();
+                        || self.sum_schema_registry.lookup_sum_schema(&type_name).is_some();
                     if have_schema {
                         // Unit variant: `TypeName.Variant` → `nova_make_TypeName_Variant()`
                         let schema = self.sum_schemas.get(type_name.as_str()).cloned();
@@ -22399,7 +22808,7 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             }
                             // Non-unit variant with no inline args (e.g. TypeName.Variant used
                             // as a constructor fn-value) — fall through to method-call path below.
-                        } else if let Some(entry) = self.sum_schema_registry.lookup_sum_schema(type_name) {
+                        } else if let Some(entry) = self.sum_schema_registry.lookup_sum_schema(&type_name) {
                             if let Some(v) = entry.variants.iter().find(|v| v.variant_name == *name) {
                                 if v.field_c_types.is_empty() {
                                     return Ok(format!("nova_make_{}_{}()", type_name, name));
@@ -25002,7 +25411,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
                 // Plan 62.A.bis Ф.2.2: variant construction via registry.
-                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
+                // [M-sync-crossmodule…] (D348): context+arity-disambiguated for a
+                // variant shared across colliding sums (byte-identical for unique
+                // variants). `args.len()` distinguishes `InvalidData(msg)` (compress,
+                // 1 payload) from io's unit `InvalidData` (0 payload).
+                if let Some((type_name, _)) = self.find_variant_ctx(name, Some(args.len())) {
                     // Plan 59 Ф.7.5 D3: legacy typed-Err early-return
                     // (`nova_make_Result_Err_typed` для non-str Err через
                     // `err_typed_payload`/`tid` hybrid) удалён. Полная
@@ -32964,11 +33377,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // D406: qualified `TypeName.Variant { fields }` — path has 2 parts ["TypeName", "Variant"].
             // join("_") yields "TypeName_Variant" which is not registered; split and look up directly.
             let variant_lookup = if name.len() == 2 && !self.record_schemas.contains_key(&struct_name) {
-                let (sum_part, var_part) = (&name[0], &name[1]);
+                let (sum_part_raw, var_part) = (&name[0], &name[1]);
+                // [M-sync-crossmodule…] (D348): a colliding sum referenced by its
+                // bare name in `Type.Variant{…}` must resolve to its module-
+                // qualified registry base (byte-identical for non-colliding).
+                let sum_part = self.ref_type_base(sum_part_raw, &[]);
                 if self.sum_schemas.contains_key(sum_part.as_str())
-                    || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
+                    || self.sum_schema_registry.lookup_sum_schema(&sum_part).is_some()
                 {
-                    let fields_c = self.sum_schema_registry.lookup_sum_schema(sum_part)
+                    let fields_c = self.sum_schema_registry.lookup_sum_schema(&sum_part)
                         .and_then(|e| e.variants.iter().find(|v| v.variant_name == *var_part))
                         .map(|v| v.field_c_types.clone())
                         .unwrap_or_default();
@@ -34269,7 +34686,17 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 // Determine the sum type name: explicit path or look up in schemas
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 let type_name = if path.len() > 1 {
-                    path[..path.len()-1].join("_")
+                    // [M-sync-crossmodule…] (D348): an explicit `Sum.Variant`
+                    // pattern names the sum by its (possibly bare) simple segment;
+                    // qualify it to the module-defining base for a colliding sum so
+                    // the tag matches the qualified definition (`NOVA_TAG_<base>_V`).
+                    // Byte-identical for non-colliding names (ref_type_base ≡ id).
+                    let sum_simple = &path[path.len()-2];
+                    if self.colliding_type_names.contains(sum_simple) {
+                        self.ref_type_base(sum_simple, &[])
+                    } else {
+                        path[..path.len()-1].join("_")
+                    }
                 } else {
                     // The scrutinee's C type is AUTHORITATIVE when known: a bare
                     // variant name (`Hi`) may collide across sum-types in the same
@@ -34529,7 +34956,16 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     VariantPatternKind::Tuple { patterns, .. } => {
                         // Look up field types from sum schema
                         let type_name = if path.len() > 1 {
-                            path[..path.len()-1].join("_")
+                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // explicit `Sum.Variant(..)` pattern name to its module
+                            // base so the payload field-type schema lookup matches the
+                            // qualified definition (byte-identical for non-colliding).
+                            let sum_simple = &path[path.len()-2];
+                            if self.colliding_type_names.contains(sum_simple) {
+                                self.ref_type_base(sum_simple, &[])
+                            } else {
+                                path[..path.len()-1].join("_")
+                            }
                         } else if is_opt {
                             scr_ty.clone()
                         } else {
@@ -40497,10 +40933,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // D406: qualified sum-variant access `TypeName.Variant` —
                             // `n` is the sum-type name, `method` is the variant name.
                             // Returns `Nova_TypeName*` (same ABI as any heap sum-type pointer).
-                            if self.sum_schemas.contains_key(n.as_str())
-                                || self.sum_schema_registry.lookup_sum_schema(n).is_some()
+                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // bare name to its module base (byte-identical otherwise).
+                            let nq = self.ref_type_base(n, &[]);
+                            if self.sum_schemas.contains_key(nq.as_str())
+                                || self.sum_schema_registry.lookup_sum_schema(&nq).is_some()
                             {
-                                return format!("Nova_{}*", n);
+                                return format!("Nova_{}*", nq);
                             }
                         }
                         // D75: instance methods on NovaCancelToken*.
@@ -41375,12 +41814,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // resolution exactly as the `.from` branch above does for
                             // sum/record types. Guarded on variant membership so genuine
                             // static methods (resolved via `fn_ret_*` above) are unaffected.
+                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // bare path name to its module base (byte-identical else).
+                            let eff_q = self.ref_type_base(eff, &[]);
                             if self
                                 .sum_schemas
-                                .get(eff.as_str())
+                                .get(eff_q.as_str())
                                 .map_or(false, |variants| variants.contains_key(method_name.as_str()))
                             {
-                                return format!("Nova_{}*", eff);
+                                return format!("Nova_{}*", eff_q);
                             }
                             panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name)
                         } else {
@@ -44056,10 +44498,13 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // D406: qualified sum-variant access `TypeName.Variant` —
                             // `n` is the sum-type name, `method` is the variant name.
                             // Returns `Nova_TypeName*` (same ABI as any heap sum-type pointer).
-                            if self.sum_schemas.contains_key(n.as_str())
-                                || self.sum_schema_registry.lookup_sum_schema(n).is_some()
+                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // bare name to its module base (byte-identical otherwise).
+                            let nq = self.ref_type_base(n, &[]);
+                            if self.sum_schemas.contains_key(nq.as_str())
+                                || self.sum_schema_registry.lookup_sum_schema(&nq).is_some()
                             {
-                                return format!("Nova_{}*", n);
+                                return format!("Nova_{}*", nq);
                             }
                         }
                         // D75: instance methods on NovaCancelToken*.
@@ -44934,12 +45379,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                             // resolution exactly as the `.from` branch above does for
                             // sum/record types. Guarded on variant membership so genuine
                             // static methods (resolved via `fn_ret_*` above) are unaffected.
+                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // bare path name to its module base (byte-identical else).
+                            let eff_q = self.ref_type_base(eff, &[]);
                             if self
                                 .sum_schemas
-                                .get(eff.as_str())
+                                .get(eff_q.as_str())
                                 .map_or(false, |variants| variants.contains_key(method_name.as_str()))
                             {
-                                return format!("Nova_{}*", eff);
+                                return format!("Nova_{}*", eff_q);
                             }
                             panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name)
                         } else {
