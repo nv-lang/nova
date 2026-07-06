@@ -1,8 +1,7 @@
 // d323_path_bytes.nv — D323 byte-backed, platform-aware Path (Plan 176 Ф.2, Q1).
 // POSIX + Windows lexical manipulation; non-UTF-8 bytes round-trip losslessly.
-module spec_tests.conformance
+module std.fs
 
-import std.fs.{Path, PathStyle}
 
 test "d323: posix Path join/parent/extension; is_absolute" {
     ro d323_p = Path.posix("/usr/local/bin")

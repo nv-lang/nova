@@ -1,8 +1,7 @@
 // d323_file_must_consume.nv — D323 File must-consume (D133) + mock_fs round-trip
 // + close-error visibility (Plan 176 Ф.2). The §1a #1 differentiator.
-module spec_tests.conformance
+module std.fs
 
-import std.fs.{Path, MemFs, mock_fs, Fs, File, write, read, metadata}
 import std.io.{ErrorKind}
 
 test "d323: File @close discharges (must-consume) and its close-error is visible" {

@@ -2,9 +2,8 @@
 // trailer-verify обязателен; mismatch → Checksum{kind,expected,got} (несёт
 // значения); ISIZE = (len mod 2^32). Spec: spec/decisions/04-effects.md (D336).
 
-module spec_tests.conformance
+module encoding.compress
 
-import std.encoding.compress.{gzip_decode, zlib_decode, crc32, adler32, ErrorKind, ChecksumKind}
 
 fn d336_hex(s str) -> []u8 {
     ro chars = s.to_bytes()
