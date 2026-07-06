@@ -6445,6 +6445,19 @@ instance `@foo`» (либо обратное). Это hardening аналогич
 
 > **Plan 100.4.1.** Принято 2026-05-23 (proposed; implementation pending).
 > **Amend [D90](#d90) §4** — снимает ограничение «defer body INFALLIBLE».
+>
+> **АМЕНДМЕНТ 2026-07-06 (Plan 173 Ф.4, решение владельца — модель Б).**
+> Ранняя редакция D158 (ниже, в §«Правила composition» и §«MultiError API»)
+> заворачивала обе ошибки в конверт `Err(MultiError { primary, suppressed })`
+> и отдавала его как единый `Fail[MultiError]`. **Пересмотрено:** primary
+> отдаётся ловящему **КАК ЕСТЬ** (типизированная ловля `with Fail[Primary]`
+> работает, эффект НЕ становится `Fail[MultiError]`); подавленные лежат «в
+> кармане» и достаются свободным аксессором `suppressed() -> []any` ПОСЛЕ
+> ловли. Нормативная модель доставки — §«[Модель доставки — вариант Б]
+> (#d158-модель-доставки--вариант-б)» ниже; конверт-модель отвергнута
+> (§«Что отвергнуто»). Материализация подавленных реализована end-to-end
+> (Plan 173 Ф.4 #6/#7): runtime suppressed-chain `NovaErrorChain` →
+> `suppressed()` через `nova_failframe_suppressed_count`/`_at`.
 
 ### Что
 
@@ -6519,29 +6532,73 @@ fn process() Fail[Err] -> () {
 **C. Multiple defers, each can fail** — детально в [D161](#d161)
 (Plan 100.4.4 multi-defer accumulation).
 
-### `MultiError` API
+### Модель доставки — вариант Б
+
+> **Нормативно (амендмент 2026-07-06, решение владельца — Plan 173 Ф.4 §6/#1).**
+> Перекрывает §«Правила composition» и §«MultiError API» выше в части
+> *доставки* композита ловящему (правила *накопления* цепочки — в силе).
+
+Cleanup-fail во время propagation **НЕ подменяет** primary и **НЕ меняет
+эффект**:
+
+- **primary — единственный носитель эффекта.** Тело бросило `Primary` →
+  наружу летит `Primary`. `with Fail[Primary]` ловит; `e` = `Primary`
+  (`type_id`/payload сохранены, `e is Primary` истинно); эффект остаётся
+  `Fail[Primary]`, **не** превращается в `Fail[MultiError]`.
+- **подавленные — вне эффекта, «в кармане».** Каждый cleanup-fail во время
+  unwind'а копится в thread-local suppressed-chain (`NovaErrorChain` на
+  fail-frame, LIFO); в момент ловли снимок цепочки оседает в кармане
+  (`_nova_last_error`). Ловящий достаёт их **после** перехвата свободным
+  аксессором `suppressed() -> []any`.
+- если упал **только** cleanup (тело успешно) — cleanup-ошибка становится
+  primary (обычный `Fail`), карман пуст.
 
 ```nova
-type MultiError {
-    primary: Err,
-    suppressed: []Err,                          // в порядке firing (LIFO)
+fn process() Fail[WorkErr] -> () {
+    consume tx = begin()
+    defer { tx.commit() }        // может кинуть CommitErr
+    do_work()?                   // кидает WorkErr (primary)
 }
 
-fn MultiError @primary() -> Err
-fn MultiError @suppressed() -> []Err
-fn MultiError @fmt_chain() -> str
-```
-
-Caller inspect:
-```nova
-match process() {
-    Ok(_) => Log.info("done"),
-    Err(MultiError { primary, suppressed }) => {
-        Log.error("primary: ${primary}")
-        for s in suppressed { Log.error("  suppressed: ${s}") }
-    }
+// Ловим primary типизированно; подавленные — из кармана ПОСЛЕ ловли:
+mut recovered = default_result()
+with Fail[WorkErr] = effect Fail[WorkErr] {
+    fail(e) { interrupt log_and_default(e) }   // e: WorkErr — типизированно
+} {
+    process()
+}
+for s in suppressed() {          // == [CommitErr]
+    if s is CommitErr { Log.warn("commit failed during rollback") }
 }
 ```
+
+**`suppressed() -> []any`** — свободный аксессор (`std/prelude/runtime.nv`):
+возвращает подавленные последней пойманной ошибки в **хронологическом порядке
+аварий** (первая-упавшая первой); каждый элемент — `any`, сужается через
+`is T` / `.try_as[T]()` ([D54](02-types.md#d54) / [D53](02-types.md#d53)).
+Пустой массив = cleanup не падал. Карман **сбрасывается на каждый свежий
+`throw`** и заполняется в момент ловли, поэтому не течёт между несвязанными
+ловлями (инвариант Plan 173 Ф.4 #7).
+
+**Тип `MultiError`** (`std/prelude/errors.nv`, методы `@primary`/`@suppressed`/
+`@walk`/`@find_first_panic`) остаётся как **явная value-обёртка** для кода,
+который хочет собрать primary+suppressed в одно значение (лог-агрегация,
+walk, panic-detection). Он **НЕ** конверт эффекта и НЕ строится компилятором
+автоматически — это опциональная надстройка над `suppressed()`.
+
+### Что отвергнуто
+
+**Конверт-модель `Err(MultiError { primary, suppressed })` как `Fail[MultiError]`
+— ОТВЕРГНУТА** (владелец, 2026-07-06). Причина: заворачивание primary в
+`MultiError` ломает типизированную ловлю — `with Fail[Primary]` перестал бы
+ловить (эффект стал бы `Fail[MultiError]`), а весь смысл typed-errors в том,
+что root cause ловится по своему типу. Композит-как-значение остаётся доступен
+через явный тип `MultiError` для тех, кому нужна агрегация, но по умолчанию
+эффект несёт **только** primary, а подавленные — вне канала эффекта.
+
+*(Историческая иллюстрация отвергнутой формы — деструктуринг
+`Err(MultiError { primary, suppressed })` в §«MultiError API» выше — читать
+как «НЕ так»; актуальная форма — §«Модель доставки — вариант Б».)*
 
 ### Compile-time visibility — fn-sig обязан Fail[E]
 
