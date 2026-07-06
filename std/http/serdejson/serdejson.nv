@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Ф.2 / D360: std/http/serdejson/serdejson.nv — typed JSON body decode.
+//
+// `json_decode_body[T]` deserializes a response body (`[]u8`, discharged via
+// `resp.bytes()`) into a typed record `T` (`#impl(Deserialize)`) over serde
+// (Plan 180 Ф.4), mapping serde `DeError` / JSON-syntax / non-UTF-8 failures to
+// `HttpError{Protocol}` (carrying the serde detail — JSONPath + reason — as source).
+//
+// WHY A SEPARATE MODULE (not std.http.client): the serde `Serializer`/`Deserializer`
+// protocol vtables emit `Result[(), SerError]` types that trip a codegen forward-decl
+// ordering defect when serde is pulled into the large multi-file `nova_tests.http`
+// module CU (via client.nv). Confining the serde dependency here keeps the lean core
+// client — and every test that only imports it — free of serde, so this decode is
+// opt-in for callers who actually want typed bodies. [M-178-typed-json-needs-180]
+//
+// WHY A FREE FUNCTION (turbofish `json_decode_body[T](..)`), not a
+// `Response.@json_as[T]()` method: a generic *method* whose type param appears only
+// in return position monomorphizes to `nova_int` (the turbofish is ignored — codegen
+// limitation → silent miscompile). Free-fn turbofish (as in serde's own
+// `json_decode[T]`) monomorphizes correctly.
+
+module std.http.serdejson
+
+import std.http.{HttpError}
+import std.encoding.json.{Json}
+import std.encoding.serde.{Deserialize, DeError, JsonDeserializer}
+
+/// Deserialize a JSON response body into a typed record `T` (`#impl(Deserialize)`).
+///
+/// Usage: `ro v = json_decode_body[Widget](resp.bytes()!!)!!`.
+///
+/// Decode failures (JSON syntax / missing field / type mismatch / non-UTF-8) become
+/// `HttpError{Protocol}` with the serde `DeError` detail as the error source.
+#stable(since = "0.1")
+export fn json_decode_body[T Deserialize](body []u8) -> Result[T, HttpError] {
+    // Drive serde's `T.deserialize` static dispatch inline (mirrors serde's
+    // `json_decode_bytes`), mapping every failure to `HttpError{Protocol}`.
+    match str.from_bytes(body) {
+        Ok(s) => match Json.parse(s) {
+            Ok(v) => {
+                mut d = JsonDeserializer.at(v, 0, 128)
+                match T.deserialize(d) {
+                    Ok(x)  => Ok(x)
+                    Err(e) => Err(HttpError.decode_error(e.to_str()))
+                }
+            }
+            Err(_) => Err(HttpError.decode_error("invalid JSON syntax"))
+        }
+        Err(_) => Err(HttpError.decode_error("response body is not valid UTF-8"))
+    }
+}

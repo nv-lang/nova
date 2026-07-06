@@ -1,16 +1,16 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 178 Ф.1 / D358: std/http/mime.nv — Mime / ContentType.
+﻿// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 178 Р¤.1 / D358: std/http/mime.nv вЂ” Mime / ContentType.
 //
-// Mime = type/subtype (RFC 6838, нормализован lowercase). ContentType = Mime +
-// параметры (charset/boundary). Парсинг `Content-Type: text/html; charset=utf-8`.
+// Mime = type/subtype (RFC 6838, РЅРѕСЂРјР°Р»РёР·РѕРІР°РЅ lowercase). ContentType = Mime +
+// РїР°СЂР°РјРµС‚СЂС‹ (charset/boundary). РџР°СЂСЃРёРЅРі `Content-Type: text/html; charset=utf-8`.
 
 module std.http
 
-/// MIME-тип `type/subtype` (RFC 6838), нормализован lowercase.
+/// MIME-С‚РёРї `type/subtype` (RFC 6838), РЅРѕСЂРјР°Р»РёР·РѕРІР°РЅ lowercase.
 #stable(since = "0.1")
 export type Mime value { priv mtype str, priv msub str }
 
-/// Разобрать `type/subtype`. Отсутствие `/` / пустые части → `Protocol`.
+/// Р Р°Р·РѕР±СЂР°С‚СЊ `type/subtype`. РћС‚СЃСѓС‚СЃС‚РІРёРµ `/` / РїСѓСЃС‚С‹Рµ С‡Р°СЃС‚Рё в†’ `Protocol`.
 #stable(since = "0.1")
 export fn Mime.parse(s str) -> Result[Mime, HttpError] {
     match s.split_once("/") {
@@ -26,13 +26,13 @@ export fn Mime.parse(s str) -> Result[Mime, HttpError] {
     }
 }
 
-/// Полная essence-строка `type/subtype`.
+/// РџРѕР»РЅР°СЏ essence-СЃС‚СЂРѕРєР° `type/subtype`.
 #stable(since = "0.1")
 export fn Mime @essence() -> str => "${@mtype}/${@msub}"
-/// Тип-часть (`text`).
+/// РўРёРї-С‡Р°СЃС‚СЊ (`text`).
 #stable(since = "0.1")
 export fn Mime @mtype() -> str => @mtype
-/// Subtype-часть (`html`).
+/// Subtype-С‡Р°СЃС‚СЊ (`html`).
 #stable(since = "0.1")
 export fn Mime @subtype() -> str => @msub
 
@@ -52,14 +52,14 @@ export fn Mime.text_html() -> Mime => { mtype: "text", msub: "html" }
 #stable(since = "0.1")
 export fn Mime.form_urlencoded() -> Mime => { mtype: "application", msub: "x-www-form-urlencoded" }
 
-/// Один параметр `key=value`.
+/// РћРґРёРЅ РїР°СЂР°РјРµС‚СЂ `key=value`.
 type Param value { ro key str, ro value str }
 
-/// `Content-Type` — Mime + параметры (charset/boundary).
+/// `Content-Type` вЂ” Mime + РїР°СЂР°РјРµС‚СЂС‹ (charset/boundary).
 #stable(since = "0.1")
 export type ContentType value { ro mime Mime, priv params []Param }
 
-/// Разобрать `type/subtype; k=v; k2=v2`.
+/// Р Р°Р·РѕР±СЂР°С‚СЊ `type/subtype; k=v; k2=v2`.
 #stable(since = "0.1")
 export fn ContentType.parse(s str) -> Result[ContentType, HttpError] {
     ro parts = s.split(";")
@@ -105,10 +105,10 @@ fn unquote(s str) -> str {
     }
 }
 
-/// `charset`-параметр (для decode тела).
+/// `charset`-РїР°СЂР°РјРµС‚СЂ (РґР»СЏ decode С‚РµР»Р°).
 #stable(since = "0.1")
 export fn ContentType @charset() -> Option[str] => @param("charset")
-/// `boundary`-параметр (для multipart).
+/// `boundary`-РїР°СЂР°РјРµС‚СЂ (РґР»СЏ multipart).
 #stable(since = "0.1")
 export fn ContentType @boundary() -> Option[str] => @param("boundary")
 
@@ -119,7 +119,7 @@ fn ContentType @param(name str) -> Option[str] {
     None
 }
 
-/// Сериализовать в header-значение (`type/subtype; k=v`).
+/// РЎРµСЂРёР°Р»РёР·РѕРІР°С‚СЊ РІ header-Р·РЅР°С‡РµРЅРёРµ (`type/subtype; k=v`).
 #stable(since = "0.1")
 export fn ContentType @to_header() -> str {
     consume buf = StringBuilder.with_capacity(32)
@@ -133,6 +133,6 @@ export fn ContentType @to_header() -> str {
     buf.into_str()
 }
 
-/// Построить из Mime без параметров.
+/// РџРѕСЃС‚СЂРѕРёС‚СЊ РёР· Mime Р±РµР· РїР°СЂР°РјРµС‚СЂРѕРІ.
 #stable(since = "0.1")
 export fn ContentType.new(mime Mime) -> ContentType => { mime, params: Vec[Param].new() }

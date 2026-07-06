@@ -16,9 +16,13 @@
 //   · 4xx/5xx = valid Response; opt-in error_for_status (response_ext.nv).
 //
 // Honest gates (markers, not silent simplifications):
-//   · timeout/deadline-by-default ← Plan 173 supervised scope. [M-178-timeout-needs-173]
-//   · auto-decompress gzip/deflate/br ← Plan 179. [M-178-autodecompress-needs-179]
-//   · typed .json[T]() ← Plan 180 Ф.4. [M-178-typed-json-needs-180]
+//   · timeout/deadline-by-default — substrate present but no effect-poly deadline
+//     combinator / supervised(deadline:) in main. [M-178-timeout-needs-173] (refined)
+//   · auto-decompress gzip/deflate — decode exists (Plan 179) but wiring compress
+//     into this CU collides http/compress `ErrorKind` C-mangling (codegen).
+//     [M-178-autodecompress-needs-179] → [M-codegen-nominal-type-name-collision]
+//   · typed JSON bodies — LANDED as `json_decode_body[T]` in std.http.serdejson
+//     (free-fn, isolated CU). [M-178-typed-json-needs-180] closed.
 //   · https/h2 ← Plan 116 (real_http returns Err(Tls) for https). [M-178-https-needs-116]
 //   · live keep-alive/pool reuse — decision logic + config here; live socket reuse
 //     deferred (real.nv). [M-178-client-live-pool]
@@ -479,8 +483,8 @@ fn form_encode(fields [](str, str)) -> str {
 
 // ── dynamic JSON body (Response extension; keeps the json dep out of core) ────
 
-/// Consume the response body and parse it as dynamic JSON (`JsonValue`). Typed
-/// `@json[T]()` (serde) gates on Plan 180 Ф.4 [M-178-typed-json-needs-180].
+/// Consume the response body and parse it as dynamic JSON (`JsonValue`). For a
+/// typed record `T`, use `std.http.serdejson.json_decode_body[T](resp.bytes()!!)`.
 #stable(since = "0.1")
 export fn Response consume @json() -> Result[JsonValue, HttpError] {
     ro text = @text()?
@@ -489,3 +493,4 @@ export fn Response consume @json() -> Result[JsonValue, HttpError] {
         Err(_) => Err(HttpError.protocol_error("response body is not valid JSON"))
     }
 }
+

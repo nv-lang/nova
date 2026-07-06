@@ -103,6 +103,14 @@ export fn HttpError.transport(kind ErrorKind, detail str) -> HttpError =>
 export fn HttpError.body_too_large() -> HttpError =>
     { kind: BodyTooLarge, url: None, source: None }
 
+/// Ошибка типизированной десериализации тела (`json_decode_body[T]`, Plan 180).
+/// `kind: Protocol` + деталь serde `DeError` (JSONPath+причина) в `source`.
+/// (Типизированный `ErrSource.De(DeError)` — отдельный gate, чтобы не тянуть serde
+/// в lean core-error.) Ф.2.
+#stable(since = "0.1")
+export fn HttpError.decode_error(detail str) -> HttpError =>
+    { kind: Protocol("json decode failed"), url: None, source: Some(OtherSource(detail)) }
+
 /// Приклеить url к ошибке (context-enrichment на границе client-слоя, Ф.2).
 #stable(since = "0.1")
 export fn HttpError @with_url(u Url) -> HttpError =>
