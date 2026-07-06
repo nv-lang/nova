@@ -1,104 +1,139 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.1 — TCP loopback echo on the NEW net2 C substrate (D407).
+// Plan 183 Ф.2 — TCP over the public net2 API (value SocketAddr, consume handles,
+// byte-surface `Net` effect). Two-fiber loopback echo — the exact scenario that
+// deterministically segfaulted on the old net.c TLS layer; here read writes the
+// network bytes straight into the caller's []u8 (zero static slots).
 //
-// This is the exact two-fiber live-socket scenario that deterministically
-// segfaulted on the old net.c layer ([M-178-servernet-live-net-substrate-
-// segfault]): the old layer hands read results through __thread slots, and
-// fibers migrating between OS threads under M:N work-stealing read the wrong
-// thread's slot.
-//
-// The net2 layer has NO static result slots: read writes the network bytes
-// straight into the caller's []u8 buffer (alloc_cb = slice of that very
-// buffer — zero-copy), write sends straight from the caller's bytes, results
-// travel in the parked fiber's own handle struct guarded by per-op completion
-// latches (lost-wake-free park_until discipline — see net2.c header).
-//
-// Calls go directly to the module-private extern "C" surface (ffi.nv); the
-// public value-typed API over it arrives with Plan 183 Ф.2.
-//
-// Pattern: listener created OUTSIDE supervised (bind does not park); ALL
-// parking ops (accept/connect/read/write) in spawn fibers — the supervised
-// body runs at slot=-1 and must not park.
+// NOTE on `_must`: `.unwrap()` on a `Result[_, NetError]` re-throws via `Fail[E]`
+// (core.nv), whose inline lowering only supports `E = str` (typed-error unwrap is
+// a pre-existing compiler gap — even `parse_int().unwrap()` fails to build). Net
+// tests therefore extract typed Results via a `match` helper (the same choice the
+// old std/net dns tests made). This is a test-file peer of module std.net2, so
+// the helper is shared across all net2 `*_test.nv` files and never ships.
 
 module std.net2
 
-test "net2: loopback echo round-trip, two fibers, zero static slots" {
-    ro addr0 = unsafe { nova_net_addr_loopback(0) }
-    ro lst = unsafe { nova_net_tcp_listen(addr0, 128, 0 as *()) }
-    assert(!((0 as *()) == lst))
-    ro port = unsafe { nova_net_listener_local_port(lst) }
-    assert(port > 0)
+// Module-private `panic` decl (mirrors std/collections/vec/core.nv): a folder-
+// module peer cannot rely on the prelude `panic` being visible when these test
+// bodies are compiled as a dependency of an external importer of `std.net2`.
+extern "nova" fn panic(msg str) -> never
 
-    supervised {
-        // Client fiber: connect, write, read echo reply from OUR OWN buffer.
-        spawn {
-            ro caddr = unsafe { nova_net_addr_loopback(port) }
-            ro conn = unsafe { nova_net_tcp_connect(caddr, 0 as *()) }
-            assert(!((0 as *()) == conn))
-
-            ro msg = "hello net2"
-            ro wn = unsafe { nova_net_tcp_write(conn, msg.as_ptr(), msg.byte_len()) }
-            assert(wn == 10)
-
-            mut buf []u8 = []u8.new()
-            buf.resize(64, 0 as u8)
-            ro rn = unsafe { nova_net_tcp_read(conn, buf.as_ptr(), 64) }
-            assert(rn == 16)
-            ro reply = str.from_bytes_unchecked(buf[0..rn])
-            assert(reply == "echo: hello net2")
-
-            unsafe { nova_net_tcp_close(conn) }
-        }
-
-        // Server fiber: accept, read client's bytes into OUR buffer, echo back.
-        spawn {
-            ro srv = unsafe { nova_net_tcp_accept(lst, 0 as *()) }
-            assert(!((0 as *()) == srv))
-
-            mut buf []u8 = []u8.new()
-            buf.resize(64, 0 as u8)
-            ro rn = unsafe { nova_net_tcp_read(srv, buf.as_ptr(), 64) }
-            assert(rn == 10)
-            ro msg = str.from_bytes_unchecked(buf[0..rn])
-            assert(msg == "hello net2")
-
-            ro reply = "echo: " + msg
-            ro wn = unsafe { nova_net_tcp_write(srv, reply.as_ptr(), reply.byte_len()) }
-            assert(wn == 16)
-
-            unsafe { nova_net_tcp_close(srv) }
-        }
+// Shared test helper: extract a typed Result or abort the test.
+fn _must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("net2 test: unexpected Err: " + e.to_str())
     }
-
-    unsafe { nova_net_listener_close(lst) }
 }
 
-test "net2: read returns 0 on clean EOF (peer close)" {
-    ro addr0 = unsafe { nova_net_addr_loopback(0) }
-    ro lst = unsafe { nova_net_tcp_listen(addr0, 128, 0 as *()) }
-    assert(!((0 as *()) == lst))
-    ro port = unsafe { nova_net_listener_local_port(lst) }
+test "net2/tcp: two-fiber loopback echo through the Net effect" {
+    with Net = real_net() {
+        mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+        assert(port > 0)
 
-    supervised {
-        // Client: connect and immediately close (clean FIN).
-        spawn {
-            ro caddr = unsafe { nova_net_addr_loopback(port) }
-            ro conn = unsafe { nova_net_tcp_connect(caddr, 0 as *()) }
-            assert(!((0 as *()) == conn))
-            unsafe { nova_net_tcp_close(conn) }
+        supervised {
+            spawn {
+                mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
+                assert(_must(conn.write("hello net2".as_bytes())) == 10)
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                ro n = _must(conn.read(buf))
+                assert(n == 16)
+                assert(str.from_bytes_unchecked(buf[0..n]) == "echo: hello net2")
+                conn.close()
+            }
+            spawn {
+                mut srv = _must(lst.accept())
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                ro n = _must(srv.read(buf))
+                assert(n == 10)
+                ro msg = str.from_bytes_unchecked(buf[0..n])
+                assert(msg == "hello net2")
+                assert(_must(srv.write(("echo: " + msg).as_bytes())) == 16)
+                srv.close()
+            }
         }
 
-        // Server: accept, read → must observe EOF as 0 (not garbage, not hang).
-        spawn {
-            ro srv = unsafe { nova_net_tcp_accept(lst, 0 as *()) }
-            assert(!((0 as *()) == srv))
-            mut buf []u8 = []u8.new()
-            buf.resize(16, 0 as u8)
-            ro rn = unsafe { nova_net_tcp_read(srv, buf.as_ptr(), 16) }
-            assert(rn == 0)
-            unsafe { nova_net_tcp_close(srv) }
+        lst.close()
+    }
+}
+
+test "net2/tcp: read observes clean EOF as Ok(0)" {
+    with Net = real_net() {
+        mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+
+        supervised {
+            spawn {
+                mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
+                conn.close()
+            }
+            spawn {
+                mut srv = _must(lst.accept())
+                mut buf []u8 = []u8.new()
+                buf.resize(16, 0 as u8)
+                assert(_must(srv.read(buf)) == 0)   // clean EOF, not garbage / hang
+                srv.close()
+            }
+        }
+
+        lst.close()
+    }
+}
+
+test "net2/tcp: read_text / write_str text conveniences" {
+    with Net = real_net() {
+        mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+
+        supervised {
+            spawn {
+                mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
+                assert(_must(conn.write_str("ping")) == 4)
+                assert(_must(conn.read_text(32)) == "pong")
+                conn.close()
+            }
+            spawn {
+                mut srv = _must(lst.accept())
+                assert(_must(srv.read_text(32)) == "ping")
+                assert(_must(srv.write_str("pong")) == 4)
+                srv.close()
+            }
+        }
+
+        lst.close()
+    }
+}
+
+test "net2/tcp: connect to a refused port yields Err (closed socket → NetError)" {
+    with Net = real_net() {
+        supervised {
+            spawn {
+                // Loopback port 1 (tcpmux) — nothing listens → immediate RST →
+                // ConnectionRefused. A failing op must surface a typed NetError,
+                // not crash or hang.
+                match TcpStream.connect(SocketAddr.loopback(1)) {
+                    Ok(s)  => { s.close() assert(false) }   // must not connect
+                    Err(_) => { assert(true) }              // refused / unreachable
+                }
+            }
         }
     }
+}
 
-    unsafe { nova_net_listener_close(lst) }
+test "net2/tcp: from_str rejects a malformed address" {
+    match SocketAddr.from_str("this is not an address") {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e.to_str().contains("invalid address"))
+    }
+}
+
+test "net2/tcp: from_str round-trips a v4 literal" {
+    ro a = _must(SocketAddr.from_str("127.0.0.1:9090"))
+    assert(a.is_v4())
+    assert(a.port() == 9090)
+    assert(a.ip() == "127.0.0.1")
+    assert(a.to_str() == "127.0.0.1:9090")
 }
