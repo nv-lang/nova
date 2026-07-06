@@ -10822,7 +10822,9 @@ ScopeOutcome)`** — вместе (после 1). ⚠ `CleanupTimeoutError` (err
 ### НЕ-цели
 
 - call-site try-маркер (видимость эффекта — на уровне сигнатуры); HOF-эффект-полиморфизм (Swift
-  `rethrows`) — вне периметра; `ScopeOutcome.Failure(any)` типизированный payload — **Ф.4** (гейт Plan
-  174.3); в D314 `Failure(str)` остаётся (bootstrap type-erased). Генуинная §perf-элизия — followup
+  `rethrows`) — вне периметра; `ScopeOutcome.Failure(any)` типизированный payload — **✅ реализован Ф.4 #5
+  (2026-07-06)**: cleanup/`defer(o)` восстанавливает причину через `if err is T` (D54/174.3), cancel — как
+  `Failure(CancelError{reason})`; идентичность ошибки на interrupt-path переживает разрушенный stack-fail-frame
+  через thread-local snapshot `_nova_last_error`. Генуинная §perf-элизия — followup
   `[M-173-d194-perf-elision]`. Идиома `Fail[E]→Result`: `with Fail[E] = |e| interrupt Err(e) { Ok(body) }`
   (std-сахар D314 не вводит).

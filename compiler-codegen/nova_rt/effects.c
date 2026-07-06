@@ -80,6 +80,7 @@ void nova_interrupt(nova_int value) {
              * and causes STATUS_BAD_STACK on Windows when a later test runs. */
             _nova_current_handler_iframe = f->saved_handler_iframe;
             f->value = value;
+            _nova_last_error.live = 0;  /* Ф.4 #5: with-block consumes the interrupt */
             longjmp(f->jmp, 1);
         }
         /* else: fall through к default top (defer frames intercept). */
@@ -93,6 +94,11 @@ void nova_interrupt(nova_int value) {
         NovaInterruptFrame* top = _nova_interrupt_top;
         _nova_current_handler_iframe = top->saved_handler_iframe;
         top->value = value;
+        /* Ф.4 #5: a real with-block (not a defer intercept) consuming the
+         * interrupt ends error propagation — invalidate the stable snapshot so
+         * it can't leak into a later unrelated value-`interrupt`. Defers
+         * (DEFER_SCOPE) re-issue, so they keep it live until the with-block. */
+        if (top->kind == NOVA_IFRAME_WITHBLOCK) _nova_last_error.live = 0;
         longjmp(top->jmp, 1);
         /* unreachable */
     }
@@ -149,6 +155,7 @@ void nova_interrupt_ptr(void* value) {
             NovaInterruptFrame* f = _nova_current_handler_iframe;
             _nova_current_handler_iframe = f->saved_handler_iframe;
             f->value_ptr = value;
+            _nova_last_error.live = 0;  /* Ф.4 #5: with-block consumes the interrupt */
             longjmp(f->jmp, 1);
         }
     }
@@ -156,6 +163,7 @@ void nova_interrupt_ptr(void* value) {
         NovaInterruptFrame* top = _nova_interrupt_top;
         _nova_current_handler_iframe = top->saved_handler_iframe;
         top->value_ptr = value;
+        if (top->kind == NOVA_IFRAME_WITHBLOCK) _nova_last_error.live = 0;  /* Ф.4 #5 */
         longjmp(top->jmp, 1);
         /* unreachable */
     }
@@ -177,6 +185,7 @@ void nova_interrupt_ptr(void* value) {
 
 #ifdef _MSC_VER
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
+__declspec(thread) NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
 /* Plan 61 followup #1: cross-effect throw routing slot. */
 __declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe = NULL;
@@ -200,6 +209,7 @@ __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7
 __declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 #else
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
+__thread NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
 __thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */
 __thread NovaTestFrame*      _nova_test_frame    = NULL;

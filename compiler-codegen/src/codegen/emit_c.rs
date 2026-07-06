@@ -19140,9 +19140,30 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                 self.line(&format!("Nova_ScopeOutcome* {} = nova_make_ScopeOutcome_Success();", c_local));
             }
             DeferOutcome::Interrupt => {
+                // Plan 173 Ф.2.B2 + Ф.4 #5: an `interrupt` that unwinds a
+                // defer/consume is a scope **Failure** (core.nv:130). Surface the
+                // ACTUAL error identity from the thread-local stable error slot
+                // `_nova_last_error` (captured at throw-time by nova_throw*/nv_panic
+                // — it OUTLIVES the throwing function's stack fail-frame, which the
+                // interrupt unwind may have already destroyed; reading a raw
+                // `_nova_fail_top` here segfaults cross-function). Only a pure
+                // value-`interrupt` with no in-flight throw (`_nova_last_error`
+                // not live) falls back to the plain `str "interrupt"` marker.
+                let str_info = self.register_any_typeinfo("nova_str");
+                self.line(&format!("Nova_ScopeOutcome* {};", c_local));
+                self.line("if (_nova_last_error.live) {");
+                self.indent += 1;
+                self.assign_scope_outcome_from_frame(c_local, "_nova_last_error.frame");
+                self.indent -= 1;
+                self.line("} else {");
+                self.indent += 1;
+                let itmp = self.fresh_tmp();
+                self.line(&format!("nova_str {} = nova_str_from_cstr(\"interrupt\");", itmp));
                 self.line(&format!(
-                    "Nova_ScopeOutcome* {} = nova_make_ScopeOutcome_Failure(nova_str_from_cstr(\"interrupt\"));",
-                    c_local));
+                    "{} = nova_make_ScopeOutcome_Failure(nova_any_box(&{}, &{}, sizeof(nova_str)));",
+                    c_local, str_info, itmp));
+                self.indent -= 1;
+                self.line("}");
             }
             DeferOutcome::FromFrame(frame) => {
                 self.line(&format!("Nova_ScopeOutcome* {};", c_local));
@@ -19151,23 +19172,57 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         }
     }
 
-    /// Plan 173 Ф.2.B3 (D314): присваивает уже-объявленному `var
-    /// Nova_ScopeOutcome*` исход из fail-frame по `<frame>.error_kind`:
-    /// PANIC→`Panic(msg)`, CANCEL→`Failure("cancel: "+msg)` (D90 §7 marker),
-    /// иначе→`Failure(msg)`. Единый источник для defer(o)-FromFrame И
-    /// consume-cleanup (десугар D314: обе поверхности строят исход одинаково).
+    /// Plan 173 Ф.2.B3 (D314) + Ф.4 #5 (D188/D190): присваивает уже-объявленному
+    /// `var Nova_ScopeOutcome*` исход из fail-frame по `<frame>.error_kind`.
+    /// `Failure` теперь несёт ТИПИЗИРОВАННЫЙ payload как `any` (было bootstrap-`str`,
+    /// [M-110-multierror-any] закрыт) — тело `@cleanup`/`defer(o)` восстанавливает
+    /// причину через `if err is T` (D54/174.3):
+    ///   * PANIC                       → `Panic(msg)` (Panic остаётся `str`);
+    ///   * CANCEL                      → `Failure(any = CancelError{reason=msg})`
+    ///     (типизированный — `err is CancelError`; D90 §7 amend, префикс `"cancel: "`
+    ///     убран); `Nova_CancelError` — force-emitted prelude-тип, всегда доступен;
+    ///   * USER_TYPED (payload != NULL) → `Failure(any)` усыновляет throw-site box
+    ///     (`error_user_payload`) + его runtime tid → `err is <ThrownType>`;
+    ///   * USER (голый `str`)          → `Failure(any = str)`.
+    /// Единый источник для defer(o)-FromFrame И consume-cleanup (десугар D314).
     fn assign_scope_outcome_from_frame(&mut self, var: &str, frame: &str) {
+        // Register the per-type NovaTypeInfo statics referenced below (idempotent);
+        // finalize splices them at __TYPEID_DEFINES__. `CancelError` TID here is the
+        // SAME `NOVA_TID_USER_CancelError` a user `err is CancelError` resolves to.
+        let cancel_info = self.register_any_typeinfo("Nova_CancelError");
+        let str_info = self.register_any_typeinfo("nova_str");
         self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", frame));
         self.indent += 1;
         self.line(&format!("{} = nova_make_ScopeOutcome_Panic({}.error_msg);", var, frame));
         self.indent -= 1;
         self.line(&format!("}} else if ({}.error_kind == NOVA_THROW_CANCEL) {{", frame));
         self.indent += 1;
-        self.line(&format!("{} = nova_make_ScopeOutcome_Failure(nova_str_concat(nova_str_from_cstr(\"cancel: \"), {}.error_msg));", var, frame));
+        // `CancelError` is a record → pointer representation in `any`: heap-alloc
+        // the struct and box its `Nova_CancelError*` (narrowing = `*(Nova_CancelError**)data`).
+        let ce = self.fresh_tmp();
+        self.line(&format!(
+            "Nova_CancelError* {} = (Nova_CancelError*)nova_alloc(sizeof(Nova_CancelError));",
+            ce));
+        self.line(&format!("{}->reason = {}.error_msg;", ce, frame));
+        self.line(&format!(
+            "{} = nova_make_ScopeOutcome_Failure(nova_any_box(&{}, &{}, sizeof(Nova_CancelError*)));",
+            var, cancel_info, ce));
+        self.indent -= 1;
+        self.line(&format!("}} else if ({}.error_user_payload != NULL) {{", frame));
+        self.indent += 1;
+        // USER_TYPED: adopt the heap-boxed throw-site payload directly (survives
+        // unwind) + its runtime type_id → `err is <ThrownType>` narrowing works.
+        self.line(&format!(
+            "{} = nova_make_ScopeOutcome_Failure(nova_any_from_boxed({}.error_user_payload, {}.error_user_type_id));",
+            var, frame, frame));
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
-        self.line(&format!("{} = nova_make_ScopeOutcome_Failure({}.error_msg);", var, frame));
+        let ms = self.fresh_tmp();
+        self.line(&format!("nova_str {} = {}.error_msg;", ms, frame));
+        self.line(&format!(
+            "{} = nova_make_ScopeOutcome_Failure(nova_any_box(&{}, &{}, sizeof(nova_str)));",
+            var, str_info, ms));
         self.indent -= 1;
         self.line("}");
     }
