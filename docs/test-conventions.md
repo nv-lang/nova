@@ -111,30 +111,42 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 - **`spec_tests/` — ОТДЕЛЬНЫЙ пакет** (свой `nova.toml`, workspace-member), параллельный `nova_tests/`,
   чтобы корпус можно было удалить независимо. Прогон: `nova test spec_tests`. Через релизный `nova`
   (C-codegen pipeline), не интерпретатор.
-- **Структура — ДВА яруса CU (директива владельца 2026-06-28, уточнена 2026-07-06):**
-  1. **`spec_tests/conformance/` — ЯЗЫК + ПРЕЛЮДИЯ** (один folder-module = ОДИН compile unit =
-     один std-parse → быстрый регресс). Сюда идут ТОЛЬКО тесты **семантики самого языка**: D-блоки
-     синтаксиса, типов, эффектов, консьюм-модели, дженериков, паттернов, FFI-ABI, прелюдии
-     (`Vec`/`str`/`Option`/`Result`/числовые ширины и т.п.). Пример язык-D: d54 (as-cast), d85
-     (`?`-return), d102 (named args), d282/d353 (FFI), d325 (Result-everywhere), d347 (rebinding).
-     Тест, который импортит std-тип лишь чтобы прогнать **языковую** норму (map-литерал D108,
-     size-accessors D117, consume-guards D174, lazy-iter D260, duration-overflow D317) — остаётся
-     здесь: он про язык, а не про std-модуль.
-  2. **`spec_tests/<модуль>/` — тесты КОНКРЕТНОГО std-модуля** (contract/поведение библиотеки, а не
-     языка) — **ОТДЕЛЬНЫЙ folder-module = ОТДЕЛЬНЫЙ CU** со своим `module spec_tests.<модуль>`.
-     По одному каталогу на std-модуль: `spec_tests/compress` (`std.encoding.compress`),
-     `spec_tests/http` (`std.http`), `spec_tests/io` (`std.io`), `spec_tests/fs` (`std.fs`),
-     `spec_tests/os` (`std.os`) — и так далее по мере роста stdlib (`spec_tests/serde` для
-     `std.encoding.serde`, если появятся фикстуры, и т.п.). Отрицательные тесты модуля — в
-     `spec_tests/<модуль>/neg/` (каждый — свой standalone-CU с `EXPECT_COMPILE_ERROR`, как в
-     `conformance/neg/`). **Почему отдельно, а не в conformance:** std-модуль — это библиотека
-     поверх языка; смешивать её contract-тесты с language-ядром раздувает язык-CU чужими
-     зависимостями и путает сигнал «сломан язык» vs «сломана библиотека».
-  3. Прогон всего дерева: `nova test --positive --compile-error spec_tests` (обходит conformance +
-     все модульные CU). Отдельный модуль: `nova test --positive --compile-error spec_tests/<модуль>`.
+- **Размещение — ДВА яруса (директива владельца 2026-06-28; уточнена 2026-07-06 дважды —
+  действует ЭТА редакция):**
+  1. **`spec_tests/conformance/` — ЯЗЫК + ПРЕЛЮДИЯ, и НИЧЕГО кроме** (в `spec_tests/` НЕТ других
+     каталогов). Один folder-module = ОДИН compile unit = один std-parse → быстрый регресс. Сюда
+     идут ТОЛЬКО тесты **семантики самого языка**: D-блоки синтаксиса, типов, эффектов,
+     консьюм-модели, дженериков, паттернов, FFI-ABI, прелюдии (`Vec`/`str`/`Option`/`Result`/
+     числовые ширины и т.п.). Пример язык-D: d54 (as-cast), d85 (`?`-return), d102 (named args),
+     d282/d353 (FFI), d325 (Result-everywhere), d347 (rebinding). Тест, который импортит std-тип
+     лишь чтобы прогнать **языковую** норму (map-литерал D108, size-accessors D117, consume-guards
+     D174, lazy-iter D260, duration-overflow D317) — остаётся здесь. Негативы — в
+     `conformance/neg/` (каждый standalone-CU, `module neg.<имя>`).
+  2. **Тесты std-модуля — РЯДОМ С МОДУЛЕМ**, пир-файлами `std/<модуль>/<имя>_test.nv` (прецедент:
+     `std/runtime/sync_test.nv`). Правила:
+     - **Позитив** — пир-файл `<имя>_test.nv` с **Тем ЖЕ `module`-декларатором, что у модуля**
+       (`module std.fs`, `module encoding.compress`, …), БЕЗ импорта собственного модуля
+       (same-module видимость). Суффикс `_test` вырезается из обычной (library) сборки
+       (`walk_nv`/`resolve_imports` peel `_test`); в test-режиме пиры включаются, и folder-module
+       компилируется **ОДНИМ CU** (модуль + все его `_test`-пиры) — раннер репортит один entry.
+       Cross-module импорты в тесте (напр. `std.io.{ErrorKind}` из fs-теста) — обычные.
+     - **Негатив (`EXPECT_COMPILE_ERROR`) — ТОЛЬКО в подпапке `std/<модуль>/neg/`**, каждый файл —
+       standalone-CU со своим `module neg.<имя>` (как в `conformance/neg/`). Пир-файлом класть
+       НЕЛЬЗЯ: тип folder-module-entry определяется по алфавитно-первому файлу, а битый пир
+       ломает компиляцию ВСЕГО модульного CU. Подпапка `neg/` — отдельные CU, модуль не трогают.
+     - Прогон: `nova test std` (или таргетно `nova test std/<модуль>`); негативы подхватываются
+       тем же обходом (`--compile-error`).
+     - **Известный гейт (2026-07-06):** whole-module test-CU `std/http` пока НЕ компилируется —
+       cross-module коллизия имён sum-типов (`ErrorKind` есть и в `std.http`, и в
+       `encoding.compress`; name-keyed `sum_schema_registry` берёт не ту схему → P67-LEGACY panic
+       в `emit_match`). Семейство [M-172.1-var-types-cu-name-leak]. До фикса позитивный
+       http-тест (d358) временно живёт в `nova_tests/http` (library-mode import не триггерит баг);
+       миграция — Plan 182.
+  3. **В `nova_tests/` НОВЫЕ тесты НЕ пишутся** (корпус заморожен; судьба — Plan 182 санация).
   **Под конкретный D — ОТДЕЛЬНЫЙ файл** `d<NNN>_<кратко>.nv` (в conformance — `module
-  spec_tests.conformance`; в модульном каталоге — `module spec_tests.<модуль>`); общие типы — в
-  `types_<domain>.nv` пир-файле, объявлены ОДИН раз (folder = один модуль из co-equal файлов).
+  spec_tests.conformance`; рядом с модулем — `d<NNN>_<кратко>_test.nv` с module-декларатором
+  модуля); общие типы — в `types_<domain>.nv` пир-файле, объявлены ОДИН раз (folder = один модуль
+  из co-equal файлов).
   **Имена типов domain-prefixed** (один namespace на весь CU → избегаем коллизий между D-файлами).
   **Префиксуй и функции, и ЛОКАЛЬНЫЕ переменные** (`d263_buf`, не `buf`) · согласовано 2026-07-02:
   резолвер пока держит один name-keyed namespace на CU (`var_types` last-wins между пир-файлами) —
@@ -160,12 +172,15 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 
 ### Где писать тесты для stdlib
 
-Nova поддерживает два равноправных места для тестов stdlib — как Rust, Zig, D:
+Nova поддерживает два равноправных места для тестов stdlib — как Rust, Zig, D
+(ред. 2026-07-06: `nova_tests/` ЗАМОРОЖЕН для новых тестов — контракт-тесты модуля теперь
+пир-файлами `*_test.nv` рядом с модулем, см. §spec/D-conformance suite п.2):
 
 | Место | Что тестирует | Как запускать |
 |---|---|---|
-| `std/**/*.nv` (inline) | Внутренние инварианты модуля, приватные детали реализации | `nova test std` (только std) или `nova test nova_tests std` (std + nova_tests вместе) |
-| `nova_tests/<тема>/` | Публичный контракт снаружи, интеграция с другими модулями | `nova test` |
+| `std/**/*.nv` (inline `test`-блоки) | Внутренние инварианты модуля, приватные детали реализации | `nova test std` (только std) |
+| `std/<модуль>/<имя>_test.nv` (пир-файл) | Публичный контракт модуля (pos); негативы — `std/<модуль>/neg/` | `nova test std` / `nova test std/<модуль>` |
+| `nova_tests/<тема>/` | ЗАМОРОЖЕН (legacy-корпус, Plan 182) | `nova test` |
 
 `nova test std` и `nova test nova_tests std` — **не одно и то же**: первый запускает только `std/` как tests_dir; второй запускает `nova_tests/` + `std/` вместе (multi-path, Plan 36.D.1). Для проверки inline std-тестов в изоляции используй `nova test std`.
 

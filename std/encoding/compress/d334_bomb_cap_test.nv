@@ -3,9 +3,8 @@
 // Граница: output == max_output → ok; первый байт сверх → Bomb.
 // Spec: spec/decisions/04-effects.md (D334). §8.0-critical.
 
-module spec_tests.compress
+module encoding.compress
 
-import std.encoding.compress.{inflate, ErrorKind}
 
 fn d334_hex(s str) -> []u8 {
     ro chars = s.to_bytes()
