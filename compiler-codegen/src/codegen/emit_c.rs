@@ -870,6 +870,18 @@ pub struct CEmitter {
     str_box_arrays: HashSet<String>,
     /// C type of the current method receiver (e.g. "Nova_Box"), for resolving `Self`.
     current_receiver_type: Option<String>,
+    /// Plan 172.12 A2b — structural `ResolvedType` twin of `current_receiver_type`,
+    /// kept in lock-step with it (`sync_receiver_rt` after every mutation). The
+    /// mono receiver instance is still string-native at its producers, so the value
+    /// is the `ResolvedType::Raw` transitional debt of the decorated C-key (verbatim,
+    /// no parse). The `TypeParam` printer arm reads THIS carrier through the marked
+    /// receiver-debt helpers (`debt_receiver_typeparam`/`debt_receiver_erased`) instead
+    /// of re-parsing the C-string in the printer body — moving every `Nova_`/`____`
+    /// receiver-key decode out of `resolved_type_to_c`. Byte-identical to the pre-A2b
+    /// inline parse (every value is `Raw(current_receiver_type)`); goes structurally
+    /// alive when the instance producers become RT-native, and dies with the string
+    /// carrier (A4).
+    current_receiver_rt: Option<crate::types::ResolvedType>,
     /// 172.4 Ф.3 (блокер-1, 2026-07-04): return-позиция `-> @` value-record
     /// метода — SelfAccess эмитится как `nova_self` (ptr), не `(*nova_self)`.
     in_recv_ptr_return_position: std::cell::Cell<bool>,
@@ -1591,6 +1603,7 @@ impl CEmitter {
             fn_result_ok_inner_types: HashMap::new(),
             str_box_arrays: HashSet::new(),
             current_receiver_type: None,
+            current_receiver_rt: None,
             in_recv_ptr_return_position: std::cell::Cell::new(false),
             current_receiver_is_mut: false,
             expected_record_type: None,
@@ -2121,6 +2134,18 @@ impl CEmitter {
         crate::types::ResolvedType::Raw(c)
     }
 
+    /// Plan 172.12 A2b — keep `current_receiver_rt` in lock-step with the string
+    /// `current_receiver_type` after every mutation of the latter. The mono receiver
+    /// instance is string-native at its producers, so the RT carrier holds the
+    /// `ResolvedType::Raw` transitional debt of the decorated C-key (verbatim, through
+    /// the single `lift_c_name` debt point). Called immediately after each assignment
+    /// to `current_receiver_type`, so the two carriers never diverge → the receiver-debt
+    /// helpers reading the RT carrier are byte-identical to the pre-A2b inline parse.
+    fn sync_receiver_rt(&mut self) {
+        self.current_receiver_rt =
+            self.current_receiver_type.clone().map(Self::lift_c_name);
+    }
+
     /// Plan 172.12 A1′ — build a `current_type_subst` map from string-pair mono subst
     /// (`name → C-name`), lifting each value through the single `lift_c_name` debt point.
     /// Used at the `mem::replace(&mut self.current_type_subst, …)` producer sites whose
@@ -2455,6 +2480,96 @@ impl CEmitter {
         }
     }
 
+    /// Plan 172.12 A2b — TRANSITIONAL DEBT: the bare registry key of the current
+    /// method receiver (the `Nova_<X>*` / template-name form used to index
+    /// `generic_type_instance_info`). Reads the RT receiver carrier
+    /// `current_receiver_rt`; for the `Raw` debt value (all instance producers still
+    /// string-native) it strips the `Nova_` decoration + `*` verbatim — the single
+    /// place a receiver key is string-decoded. A real `R::Named` receiver lowers
+    /// structurally through the printer (dormant until producers RT-native). Dies
+    /// with the string receiver carrier (A4).
+    fn debt_receiver_bare(&self) -> Option<String> {
+        use crate::types::ResolvedType as R;
+        let recv = self.current_receiver_rt.as_ref()?;
+        let c = match recv {
+            R::Raw(s) => s.clone(),
+            _ => self.resolved_type_to_c(recv).ok()?,
+        };
+        Some(c.trim_start_matches("Nova_").trim_end_matches('*').to_string())
+    }
+
+    /// Plan 172.12 A2b — TRANSITIONAL DEBT: resolve a type-param `n` from the mono
+    /// RECEIVER instance context (moved out of the `TypeParam` printer arm so
+    /// `resolved_type_to_c` carries no `Nova_`/`____` receiver-key decode). Two
+    /// receiver-carried sources, in the pre-A2b order:
+    /// (1) slice-extension mono (`fn []T @m` receiver = `NovaArray_<elem>`) — the
+    ///     element IS the substitution (structural for a real `R::Array`; the
+    ///     `NovaArray_<elem>` C-key, non-`____`, for the `Raw` debt value);
+    /// (2) receiver-instance registry: the bare key → `(template, args)` → the arg
+    ///     at the position of `n` in the template generics (RT-native since A1‴).
+    /// Returns `None` when the receiver context does not bind `n` (falls through to
+    /// the fn-level subst / erased checks, exactly as before). Byte-identical to the
+    /// pre-A2b inline parse (every receiver value is `Raw(current_receiver_type)`).
+    fn debt_receiver_typeparam(&self, n: &str) -> Option<String> {
+        use crate::types::ResolvedType as R;
+        // (1) slice-extension: element = substitution.
+        match self.current_receiver_rt.as_ref()? {
+            R::Array(elem) => {
+                if let Ok(ec) = self.resolved_type_to_c(elem) {
+                    if !ec.is_empty() && !ec.contains("____") {
+                        return Some(ec);
+                    }
+                }
+            }
+            R::Raw(s) => {
+                let bare = s.trim_start_matches("Nova_").trim_end_matches('*');
+                if let Some(elem) = bare.strip_prefix("NovaArray_") {
+                    if !elem.is_empty() && !elem.contains("____") {
+                        return Some(elem.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+        // (2) receiver-instance registry lookup.
+        let bare = self.debt_receiver_bare()?;
+        let info = {
+            let m = self.generic_type_instance_info.borrow();
+            m.get(&bare)
+                .or_else(|| m.get(&format!("Nova_{}", bare)))
+                .cloned()
+        };
+        if let Some((tmpl, args)) = info {
+            if let Some(td) = self.generic_type_templates.get(&tmpl) {
+                if let Some(pos) = td.generics.iter().position(|g| g.name == *n) {
+                    if let Some(c) = args.get(pos) {
+                        // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                        return Some(self.arg_c(c));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Plan 172.12 A2b — TRANSITIONAL DEBT: is the receiver an ERASED template
+    /// context for type-param `n` (receiver = the template name `[]T` / a generic
+    /// template carrying `n` at an empty subst)? The erased body is emitted ONCE with
+    /// int-erasure — `nova_int` is the truth of the erased representation, not a guess.
+    /// Reads the RT receiver carrier via `debt_receiver_bare`; byte-identical to the
+    /// pre-A2b inline `current_receiver_type` parse.
+    fn debt_receiver_erased(&self, n: &str) -> bool {
+        let Some(bare) = self.debt_receiver_bare() else {
+            return false;
+        };
+        bare == format!("[]{}", n)
+            || (self.generic_type_templates.contains_key(&bare)
+                && self
+                    .generic_type_templates
+                    .get(&bare)
+                    .map_or(false, |td| td.generics.iter().any(|g| g.name == *n)))
+    }
+
     fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Result<String, String> {
         use crate::types::ResolvedType as R;
         use crate::ast::PointerModifier as PM;
@@ -2480,34 +2595,12 @@ impl CEmitter {
                 // (generic_type_instance_info), НЕ fn-level subst: имена могут
                 // коллидировать с method-level параметрами (gap #2, пойман
                 // d119: cast (nova_str)(T-поле) при mono map[U=str]).
-                if let Some(recv) = &self.current_receiver_type {
-                    let bare = recv.trim_start_matches("Nova_").trim_end_matches('*');
-                    // 172.1.2 (2026-07-04): slice-extension mono (`fn []T @min_of`)
-                    // эмитится с ресивером NovaArray_<elem> — элемент = суффикс
-                    // (slice-extension всегда однопараметрична: синтаксис []T).
-                    if let Some(elem) = bare.strip_prefix("NovaArray_") {
-                        if !elem.is_empty() && !elem.contains("____") {
-                            return Ok(elem.to_string());
-                        }
-                    }
-                    let info = {
-                        let m = self.generic_type_instance_info.borrow();
-                        m.get(bare)
-                            .or_else(|| m.get(&format!("Nova_{}", bare)))
-                            .cloned()
-                    };
-                    if let Some((tmpl, args)) = info {
-                        if let Some(td) = self.generic_type_templates.get(&tmpl) {
-                            if let Some(pos) =
-                                td.generics.iter().position(|g| g.name == *n)
-                            {
-                                if let Some(c) = args.get(pos) {
-                                    // A1‴: registry arg is `ResolvedType` — lower to C-name.
-                                    return Ok(self.arg_c(c));
-                                }
-                            }
-                        }
-                    }
+                // Plan 172.12 A2b: the receiver-key normalization (slice-extension
+                // `NovaArray_<elem>` + `generic_type_instance_info` lookup) is read
+                // from the RT receiver carrier `current_receiver_rt` in the marked
+                // receiver-debt helper — no `Nova_`/`____` decode in the printer body.
+                if let Some(c) = self.debt_receiver_typeparam(n) {
+                    return Ok(c);
                 }
                 if std::env::var_os("NOVA_TP_TRACE").is_some() {
                     eprintln!("[TP] n={} recv={:?} ov={:?} subst={:?}", n,
@@ -2525,15 +2618,10 @@ impl CEmitter {
                 // "Set") при пустом subst — тело эмитится ОДИН раз с int-erasure
                 // (документированный erased-контракт legacy) → nova_int это
                 // ПРАВДА представления erased-тела, не guess.
-                if let Some(recv) = &self.current_receiver_type {
-                    let bare = recv.trim_start_matches("Nova_").trim_end_matches('*');
-                    let erased_ctx = bare == format!("[]{}", n)
-                        || (self.generic_type_templates.contains_key(bare)
-                            && self.generic_type_templates.get(bare).map_or(false,
-                                |td| td.generics.iter().any(|g| g.name == *n)));
-                    if erased_ctx {
-                        return Ok("nova_int".to_string());
-                    }
+                // Plan 172.12 A2b: read from the RT receiver carrier in the marked
+                // receiver-debt helper — no `Nova_` decode in the printer body.
+                if self.debt_receiver_erased(n) {
+                    return Ok("nova_int".to_string());
                 }
                 return Err(format!("unsubstituted type-param `{}`", n));
             }
@@ -4908,6 +4996,7 @@ impl CEmitter {
                     // resolution Self в param-type position (mirror return-type path
                     // на line 2148+). Без этого `fn T @method(other Self)` даёт E7001.
                     let prev_recv_for_params = self.current_receiver_type.replace(recv.type_name.clone());
+                    self.sync_receiver_rt();
                     let param_c_types: Vec<String> = f.params.iter()
                         .map(|p| if is_generic_recv {
                             Ok(self.erased_type_ref_c(&Some(p.ty.clone()), &recv_type_params))
@@ -4919,6 +5008,7 @@ impl CEmitter {
                         })
                         .collect::<Result<Vec<_>, _>>()?;
                     self.current_receiver_type = prev_recv_for_params;
+                    self.sync_receiver_rt();
                     // Resolve return type. `Self` → recv.type_name.
                     // Plan 55 Ф.3: для `=> expr` body инфирим (см. free-fn выше).
                     let return_c_type = match &f.return_type {
@@ -4945,11 +5035,13 @@ impl CEmitter {
                                 || matches!(&f.body, FnBody::Block(b) if b.stmts.is_empty());
                             if is_expr_like && matches!(recv.kind, ReceiverKind::Instance) {
                                 let prev_recv_for_ret = self.current_receiver_type.replace(recv.type_name.clone());
+                                self.sync_receiver_rt();
                                 let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
                                 let prev_nova_self = self.var_types.insert("nova_self".into(), recv_c);
                                 let ret = self.return_type_c(f)
                                     .unwrap_or_else(|_| "nova_unit".into());
                                 self.current_receiver_type = prev_recv_for_ret;
+                                self.sync_receiver_rt();
                                 match prev_nova_self {
                                     Some(prev) => { self.var_types.insert("nova_self".into(), prev); }
                                     None => { self.var_types.remove("nova_self"); }
@@ -4958,9 +5050,11 @@ impl CEmitter {
                             } else if is_expr_like {
                                 // Static receiver or no receiver: just set receiver type.
                                 let prev_recv_for_ret = self.current_receiver_type.replace(recv.type_name.clone());
+                                self.sync_receiver_rt();
                                 let ret = self.return_type_c(f)
                                     .unwrap_or_else(|_| "nova_unit".into());
                                 self.current_receiver_type = prev_recv_for_ret;
+                                self.sync_receiver_rt();
                                 ret
                             } else {
                                 "nova_unit".into()
@@ -7318,6 +7412,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
             self.indent = 0;
             self.current_receiver_type = Some(t_name.to_string());
+            self.sync_receiver_rt();
             // Substitute `Self` → `t_name` для resolution в default body.
             self.current_type_subst.insert("Self".to_string(), Self::lift_c_name(t_c_ty.to_string()));
             // Plan 172.1.1 (U.4.5 substrate, mono-side gap #1): для default-body на КОНКРЕТНОМ
@@ -7372,6 +7467,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.var_types = saved_var_types;
                 self.var_mutable = saved_var_mutable;
                 self.current_receiver_type = saved_recv;
+                self.sync_receiver_rt();
                 self.current_type_subst = saved_subst;
                 self.expected_record_type = saved_expected_record;
                 self.current_array_elem_hint = saved_array_elem_hint;
@@ -7416,6 +7512,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.var_types = saved_var_types;
                     self.var_mutable = saved_var_mutable;
                     self.current_receiver_type = saved_recv;
+                    self.sync_receiver_rt();
                     self.current_type_subst = saved_subst;
                     self.expected_record_type = saved_expected_record;
                     self.current_array_elem_hint = saved_array_elem_hint;
@@ -7464,6 +7561,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.var_types = saved_var_types;
                     self.var_mutable = saved_var_mutable;
                     self.current_receiver_type = saved_recv;
+                    self.sync_receiver_rt();
                     self.current_type_subst = saved_subst;
                     self.expected_record_type = saved_expected_record;
                     self.current_array_elem_hint = saved_array_elem_hint;
@@ -11109,6 +11207,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // forward decl emit (включая param iteration), иначе params типа
                 // `other Self` emit'ятся как `Nova_Self*`.
                 let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
+                self.sync_receiver_rt();
                 let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
                 let mut parts = if is_instance {
                     // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
@@ -11121,6 +11220,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     parts.push(format!("{} {}", p_c, p.name));
                 }
                 self.current_receiver_type = prev_recv;
+                self.sync_receiver_rt();
                 let params_s = if parts.is_empty() { "void".into() } else { parts.join(", ") };
                 self.var_types.insert(format!("fn_ret_{}", f.name), ret_c.clone());
                 // Plan 152.4.3: type-qualified return key (disambiguates same-named
@@ -11133,8 +11233,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Set receiver type for Self resolution
         if let Some(recv) = &f.receiver {
             self.current_receiver_type = Some(recv.type_name.clone());
+            self.sync_receiver_rt();
         } else {
             self.current_receiver_type = None;
+            self.sync_receiver_rt();
         }
         // Seed parameter types into var_types BEFORE inferring the return type
         // from a bodyless `-> T` (return_type_c infers from the trailing expr
@@ -13412,8 +13514,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         "u32"  => "uint32_t",
                         "u16"  => "uint16_t",
                         "u64"  => "uint64_t",
-                        // Plan 70.5: uint = alias u64.
-                        "uint" => "uint64_t",
+                        // Plan 133: uint = nova_uint (uintptr_t).
+                        "uint" => "nova_uint",
                         // Plan 101.1: T (generic typevar) — check current_type_subst
                         // для mono'd context (`fn[T] []T @method` body).
                         // Без этого fallback на nova_int → wrong type для
@@ -13542,8 +13644,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "u32"  => "uint32_t",
                 "u16"  => "uint16_t",
                 "u64"  => "uint64_t",
-                // Plan 70.5: uint = alias u64.
-                "uint" => "uint64_t",
+                // Plan 133: uint = nova_uint (uintptr_t).
+                "uint" => "nova_uint",
                 // int/i64 + unknown erased T → nova_int.
                 _ => "nova_int",
             };
@@ -13676,8 +13778,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mangled = self.mangle_fn(f);
         // Set receiver type so `Self` in return type resolves correctly.
         let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
+        self.sync_receiver_rt();
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
         self.current_receiver_type = prev_recv;
+        self.sync_receiver_rt();
         // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
         let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
         // Match the same signature as the forward declaration in emit_fn_decl
@@ -13817,6 +13921,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // emit (включая param iteration), чтобы `Self` в param-position
         // (e.g. `other Self`) тоже резолвилось правильно.
         let prev_recv = self.current_receiver_type.replace(recv.type_name.clone());
+        self.sync_receiver_rt();
         let ret_c = self.erased_type_ref_c(&f.return_type, &type_params);
         // Plan 128 Ф.1: thread recv.mutable (Ф.2 consumes).
         let recv_c = self.receiver_c_type(&recv.type_name, recv.mutable);
@@ -13914,6 +14019,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             })
             .collect();
         self.current_receiver_type = Some(recv.type_name.clone());
+        self.sync_receiver_rt();
         // Emit body
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::struct_name_from_c_type(&ret_c);
@@ -13956,6 +14062,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.array_element_types.remove(key);
         }
         self.current_receiver_type = None;
+        self.sync_receiver_rt();
         self.flush_boxed_vars();
         self.indent -= 1;
         self.line("}");
@@ -17005,6 +17112,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
         );
         let prev_recv_for_ret = self.current_receiver_type.replace(recv_type.to_string());
+        self.sync_receiver_rt();
         // [M-138.2-self-in-param]: bind `Self` for nested type-arg `Self` so the
         // FORWARD DECL matches the body (emit_monomorphized_method does the same).
         // See the detailed rationale there. Both fwd-decl and body must produce
@@ -17034,6 +17142,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 )))
             .unwrap_or_else(|| "nova_unit".into());
         self.current_receiver_type = prev_recv_for_ret;
+        self.sync_receiver_rt();
         self.current_type_subst = saved_subst;
         // Plan 48 Ф.7.2: static-методы без nova_self.
         let is_instance = matches!(fn_decl.receiver.as_ref().map(|r| &r.kind),
@@ -17098,6 +17207,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (e.g. `other Self`, `-> Self`) резолвилось в concrete mono'd type.
         // Раньше set только перед ret_c — params получали Nova_Self fallback.
         let prev_recv_for_emit = self.current_receiver_type.replace(recv_type.to_string());
+        self.sync_receiver_rt();
         // [M-138.2-self-in-param]: bind `Self` so a nested type-arg `Self`
         // (e.g. `-> FiltIt[Self, U]`, or `other Self` in a param) resolves to
         // the SAME value-aware receiver mono the call-site uses (the call-site
@@ -17336,6 +17446,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Set receiver type so @field and Self resolve correctly
         let saved_recv = std::mem::replace(&mut self.current_receiver_type, Some(recv_type.to_string()));
+        self.sync_receiver_rt();
         let saved_ret_ty = std::mem::replace(&mut self.current_fn_return_ty, Some(ret_c.clone()));
         let saved_expected = std::mem::replace(
             &mut self.expected_record_type,
@@ -17567,6 +17678,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         self.current_receiver_type = saved_recv;
+        self.sync_receiver_rt();
         self.current_fn_return_ty = saved_ret_ty;
         self.expected_record_type = saved_expected;
         // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
@@ -17607,6 +17719,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 11 Follow-up: restore current_receiver_type теперь, когда body
         // полностью emitted (включая все Self-resolution context'ы).
         self.current_receiver_type = None;
+        self.sync_receiver_rt();
         Ok(())
     }
 
@@ -18383,6 +18496,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Set receiver type (None for free fns)
         let saved_recv = self.current_receiver_type.take();
+        self.sync_receiver_rt();
         // Set return type
         let saved_ret_ty = std::mem::replace(&mut self.current_fn_return_ty, Some(ret_c.clone()));
         // Set expected_record_type from fn return type (for anonymous record literals)
@@ -18466,6 +18580,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.array_element_types.remove(&key);
         }
         self.current_receiver_type = saved_recv;
+        self.sync_receiver_rt();
         self.current_fn_return_ty = saved_ret_ty;
         self.expected_record_type = saved_expected;
         self.flush_boxed_vars();
@@ -18890,6 +19005,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Set receiver type FIRST so Self resolves correctly in return_type_c/params_c
         if let Some(recv) = &f.receiver {
             self.current_receiver_type = Some(recv.type_name.clone());
+            self.sync_receiver_rt();
             // Plan 135 Ф.2: track whether current method has a mut receiver
             // so that SelfAccess call-sites can tiebreak __mut/__ro overloads.
             self.current_receiver_is_mut = recv.mutable;
@@ -18906,6 +19022,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         } else {
             self.current_receiver_type = None;
+            self.sync_receiver_rt();
             self.current_receiver_is_mut = false;
         }
         // Seed param types before inferring a bodyless `-> T` return type (same
@@ -26885,8 +27002,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "u32"            => "uint32_t",
                             "u16"            => "uint16_t",
                             "u64"            => "uint64_t",
-                            // Plan 70.5: uint = alias u64.
-                            "uint"           => "uint64_t",
+                            // Plan 133: uint = nova_uint (uintptr_t).
+                            "uint"           => "nova_uint",
                             // Plan 101: если substituted уже в виде "nova_*" — используем as-is.
                             other if other.starts_with("nova_") => other,
                             // int/i64 / others — nova_int slot.
@@ -42059,8 +42176,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     "u32"            => "uint32_t",
                                     "u16"            => "uint16_t",
                                     "u64"            => "uint64_t",
-                                    // Plan 70.5: uint = alias u64.
-                                    "uint"           => "uint64_t",
+                                    // Plan 133: uint = nova_uint (uintptr_t).
+                                    "uint"           => "nova_uint",
                                     _                => "nova_int",
                                 };
                                 return format!("NovaArray_{}*", arr_suffix);
@@ -45701,8 +45818,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     "u32"            => "uint32_t",
                                     "u16"            => "uint16_t",
                                     "u64"            => "uint64_t",
-                                    // Plan 70.5: uint = alias u64.
-                                    "uint"           => "uint64_t",
+                                    // Plan 133: uint = nova_uint (uintptr_t).
+                                    "uint"           => "nova_uint",
                                     _                => "nova_int",
                                 };
                                 return format!("NovaArray_{}*", arr_suffix);
