@@ -1190,7 +1190,10 @@ pub struct CEmitter {
     /// другие code paths которые observe mono_method_decls.
     self_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
     /// Plan 48: monomorphization worklist — (nova_fn_name, type_subst, mangled_c_name).
-    mono_worklist: Vec<(String, Vec<(String, String)>, String)>,
+    /// Plan 172.12 A1‴: `type_subst` carries `ResolvedType` (was C-string) — structural
+    /// identity; the C-name is derived by the printer at body-seeding time. String producers
+    /// route through the `lift_c_name`/`subst_vec_from_c_pairs` debt point (§0).
+    mono_worklist: Vec<(String, Vec<(String, crate::types::ResolvedType)>, String)>,
     /// Plan 48: already-instantiated mangled names (for dedup).
     mono_instantiated: HashSet<String>,
     // [M-138.2-generic-method-overload-mono] maps a mono'd method's FINAL C name ->
@@ -1215,9 +1218,14 @@ pub struct CEmitter {
     /// Stored here instead of immediately emitting — instantiated lazily per usage.
     generic_type_templates: HashMap<String, crate::ast::TypeDecl>,
     /// Plan 48 Ф.3: worklist for lazy generic type instance emission.
-    /// Each entry: (base_type_name, type_args_c, mangled_name).
+    /// Each entry: (base_type_name, type_args, mangled_name).
     /// Uses RefCell so type_ref_to_c (&self) can enqueue instances.
-    generic_type_worklist: std::cell::RefCell<Vec<(String, Vec<String>, String)>>,
+    /// Plan 172.12 A1‴: `type_args` carries `ResolvedType` (was C-string) — structural
+    /// identity; the C-name is derived by the printer. Producers freeze their already-lowered
+    /// C-string at write time through the single `lift_c_name`/`args_lift` debt point (§0) — a
+    /// context-independent `Raw` carrier, byte-identical to the pre-A1‴ stored string (deferring
+    /// re-lowering to read time would re-bind residual type-params under a divergent mono context).
+    generic_type_worklist: std::cell::RefCell<Vec<(String, Vec<crate::types::ResolvedType>, String)>>,
     /// Plan 48 Ф.3: already-emitted generic type instances (by mangled name).
     emitted_generic_type_instances: HashSet<String>,
     /// Plan 48 Ф.3: methods per generic type template.
@@ -1251,9 +1259,13 @@ pub struct CEmitter {
     /// Plan 48 Ф.3: buffer for generic type instance definitions.
     /// Emitted separately and spliced into output before fn definitions via marker.
     generic_type_defs_buf: String,
-    /// Plan 48 Ф.3: mangled type name → (base_type_name, type_args_c).
+    /// Plan 48 Ф.3: mangled type name → (base_type_name, type_args).
     /// Uses RefCell so type_ref_to_c (&self) can register instances.
-    generic_type_instance_info: std::cell::RefCell<HashMap<String, (String, Vec<String>)>>,
+    /// Plan 172.12 A1‴: `type_args` carries `ResolvedType` (was C-string) — structural
+    /// identity; producers freeze their lowered C-string via `lift_c_name`/`args_lift`, and
+    /// readers that need the C-name lower each arg through the printer (`subst_val_c` — `Raw`
+    /// prints verbatim, byte-identical to the pre-A1‴ stored string).
+    generic_type_instance_info: std::cell::RefCell<HashMap<String, (String, Vec<crate::types::ResolvedType>)>>,
     /// Plan 48 Ф.7.6: maximum monomorphization-worklist drain depth.
     /// Default 500; overridable via CLI `--mono-depth=N` or env var
     /// `NOVA_MONO_DEPTH` (CLI wins). Guards against polymorphic recursion.
@@ -2120,6 +2132,31 @@ impl CEmitter {
         pairs.into_iter().map(|(k, v)| (k, Self::lift_c_name(v))).collect()
     }
 
+    /// Plan 172.12 A1‴ — build the ordered `Vec<(name, ResolvedType)>` mono subst carried
+    /// by `mono_worklist`, lifting each C-string value through the single `lift_c_name` debt
+    /// point (§0). The worklist carrier is now `ResolvedType`-typed WHOLE (no `String` arm);
+    /// the string producers (call-site mono inference) route here, and the worklist-fed body
+    /// seeders (`emit_monomorphized_fn`/`_method`) load `current_type_subst` directly from the
+    /// RT-typed pairs — byte-identical to the pre-A1‴ `subst_map_from_c_pairs` re-lift, but
+    /// the carrier no longer holds bare C-strings.
+    fn subst_vec_from_c_pairs(pairs: &[(String, String)]) -> Vec<(String, crate::types::ResolvedType)> {
+        pairs.iter().map(|(k, v)| (k.clone(), Self::lift_c_name(v.clone()))).collect()
+    }
+
+    /// Plan 172.12 A1‴ — lift a `Vec<String>` of already-lowered type-arg C-names into the
+    /// `ResolvedType`-typed form carried by `generic_type_worklist`/`generic_type_instance_info`,
+    /// freezing each C-string through the single `lift_c_name` debt point (§0). Byte-identical
+    /// to the pre-A1‴ stored `Vec<String>` — readers recover the C-name via `subst_val_c`.
+    fn args_lift(type_args_c: &[String]) -> Vec<crate::types::ResolvedType> {
+        type_args_c.iter().map(|c| Self::lift_c_name(c.clone())).collect()
+    }
+
+    /// Plan 172.12 A1‴ — lower a registry type-arg back to its C-name (`Raw` verbatim, real
+    /// RT via the printer). Mirror of `subst_val_c` for the instance/worklist registries.
+    fn arg_c(&self, rt: &crate::types::ResolvedType) -> String {
+        self.subst_val_c(rt)
+    }
+
     /// Plan 172.12 A1″ — structural mono-inference twin of `infer_type_param_binding`,
     /// operating on a REAL `ResolvedType` argument (from the checker channel
     /// `resolved_types[ExprId]`, D315) instead of a decomposed C-string. Unifies the
@@ -2336,7 +2373,8 @@ impl CEmitter {
                                 td.generics.iter().position(|g| g.name == *n)
                             {
                                 if let Some(c) = args.get(pos) {
-                                    return Ok(c.clone());
+                                    // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                                    return Ok(self.arg_c(c));
                                 }
                             }
                         }
@@ -2466,13 +2504,13 @@ impl CEmitter {
                 if !self.emitted_generic_type_instances.contains(&mangled) {
                     let mut wl = self.generic_type_worklist.borrow_mut();
                     if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                        wl.push(("Vec".to_string(), type_args_c.clone(), mangled.clone()));
+                        wl.push(("Vec".to_string(), Self::args_lift(&type_args_c), mangled.clone()));
                     }
                 }
                 self.generic_type_instance_info
                     .borrow_mut()
                     .entry(mangled.clone())
-                    .or_insert_with(|| ("Vec".to_string(), type_args_c));
+                    .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
                 return Ok(format!("{}*", mangled));
             }
             // else fall through to legacy (elem couldn't lower).
@@ -2875,13 +2913,13 @@ impl CEmitter {
                     if !self.emitted_generic_type_instances.contains(&mangled) {
                         let mut wl = self.generic_type_worklist.borrow_mut();
                         if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                            wl.push((full.clone(), type_args_c.clone(), mangled.clone()));
+                            wl.push((full.clone(), Self::args_lift(&type_args_c), mangled.clone()));
                         }
                     }
                     self.generic_type_instance_info
                         .borrow_mut()
                         .entry(mangled.clone())
-                        .or_insert_with(|| (full.clone(), type_args_c));
+                        .or_insert_with(|| (full.clone(), Self::args_lift(&type_args_c)));
                     if self.is_value_generic_template(&full) {
                         return Ok(format!("NovaValue_{}", Self::mono_short_name(&mangled)));
                     }
@@ -4158,13 +4196,13 @@ impl CEmitter {
                 {
                     let mut wl = self.generic_type_worklist.borrow_mut();
                     if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                        wl.push(("Vec".to_string(), type_args_c.clone(), mangled.clone()));
+                        wl.push(("Vec".to_string(), Self::args_lift(&type_args_c), mangled.clone()));
                     }
                 }
                 self.generic_type_instance_info
                     .borrow_mut()
                     .entry(mangled.clone())
-                    .or_insert_with(|| ("Vec".to_string(), type_args_c));
+                    .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
             }
         }
         // 1a1b. Plan 103.5: register type_decls from ExternalRegistry (sync.nv etc.).
@@ -7171,7 +7209,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .map(|t| t.generics.iter().map(|g| g.name.clone()).collect())
                         .unwrap_or_default();
                     for (name, a) in names.into_iter().zip(args.into_iter()) {
-                        self.current_type_subst.entry(name).or_insert_with(|| Self::lift_c_name(a));
+                        // A1‴: registry arg is already `ResolvedType` — flow straight into the
+                        // RT-typed subst carrier (no lift; `Raw` stays byte-identical).
+                        self.current_type_subst.entry(name).or_insert_with(|| a);
                     }
                 }
             }
@@ -14788,7 +14828,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .generics
             .iter()
             .enumerate()
-            .filter_map(|(i, g)| type_args_c.get(i).map(|c| (g.name.clone(), c.clone())))
+            .filter_map(|(i, g)| type_args_c.get(i).map(|c| (g.name.clone(), self.arg_c(c))))
             .collect();
         let generic_schema = self.sum_schemas.get(&base);
         let mut out: Vec<(String, Vec<String>)> = Vec::new();
@@ -14968,8 +15008,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .trim_end_matches('*');
         // Registry is authoritative — key is the `Nova_`-prefixed short name.
         let nova_key = format!("Nova_{}", stripped);
-        if let Some((_, args)) = self.generic_type_instance_info.borrow().get(&nova_key) {
-            return args.clone();
+        // A1‴: registry args carry `ResolvedType` — clone out, drop the borrow, then lower
+        // each to its C-name (`Raw` verbatim; no re-borrow while the registry Ref is alive).
+        let args_rt = self.generic_type_instance_info.borrow().get(&nova_key).map(|(_, a)| a.clone());
+        if let Some(args) = args_rt {
+            return args.iter().map(|a| self.arg_c(a)).collect();
         }
         // Fallback: depth-aware split of the args substring after the base `____`.
         if let Some(sep_pos) = stripped.find("____") {
@@ -15334,12 +15377,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if !self.emitted_generic_type_instances.contains(&mangled) {
                     let mut wl = self.generic_type_worklist.borrow_mut();
                     if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                        wl.push((base.clone(), args_c.clone(), mangled.clone()));
+                        wl.push((base.clone(), Self::args_lift(&args_c), mangled.clone()));
                     }
                 }
                 self.generic_type_instance_info.borrow_mut()
                     .entry(mangled)
-                    .or_insert_with(|| (base, args_c));
+                    .or_insert_with(|| (base, Self::args_lift(&args_c)));
             }
             TypeRef::Array(inner, _) => {
                 self.register_generic_instances_in_typeref(inner, subst);
@@ -15508,11 +15551,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mangled = Self::compute_generic_type_c_name(base_name, &type_args_c);
         self.generic_type_instance_info.borrow_mut()
             .entry(mangled.clone())
-            .or_insert_with(|| (base_name.to_string(), type_args_c.clone()));
+            .or_insert_with(|| (base_name.to_string(), Self::args_lift(&type_args_c)));
         if !self.emitted_generic_type_instances.contains(&mangled) {
             let mut wl = self.generic_type_worklist.borrow_mut();
             if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                wl.push((base_name.to_string(), type_args_c.clone(), mangled.clone()));
+                wl.push((base_name.to_string(), Self::args_lift(&type_args_c), mangled.clone()));
             }
         }
         let method_c_name = format!("{}_static_{}", mangled, method);
@@ -15659,12 +15702,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !self.emitted_generic_type_instances.contains(&mangled) {
             let mut wl = self.generic_type_worklist.borrow_mut();
             if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                wl.push((parent_type.clone(), type_args_c.clone(), mangled.clone()));
+                wl.push((parent_type.clone(), Self::args_lift(&type_args_c), mangled.clone()));
             }
         }
         self.generic_type_instance_info.borrow_mut()
             .entry(mangled.clone())
-            .or_insert_with(|| (parent_type.clone(), type_args_c.clone()));
+            .or_insert_with(|| (parent_type.clone(), Self::args_lift(&type_args_c)));
         Some((parent_type, mangled, type_args_c))
     }
 
@@ -15815,14 +15858,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if generics.is_empty() { continue; }
                 let arg_c = self.infer_expr_c_type(arg.expr());
                 let key = arg_c.trim_end_matches('*').trim().to_string();
-                let instance_args: Option<Vec<String>> = self.generic_type_instance_info
+                let instance_args: Option<Vec<crate::types::ResolvedType>> = self.generic_type_instance_info
                     .borrow()
                     .get(&key)
                     .map(|(_, args)| args.clone());
                 if let Some(iargs) = instance_args {
                     if iargs.len() == generics.len() {
                         for (gen_ty, c_ty) in generics.iter().zip(iargs.iter()) {
-                            self.infer_type_param_binding(gen_ty, c_ty, &mut subst);
+                            // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                            self.infer_type_param_binding(gen_ty, &self.arg_c(c_ty), &mut subst);
                         }
                     }
                 }
@@ -15987,7 +16031,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if base == "Vec" { args.first().cloned() } else { None }
                     });
                 match elem {
-                    Some(e) => { cur = e.trim_end_matches('*').trim().to_string(); }
+                    // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                    Some(e) => { cur = self.arg_c(&e).trim_end_matches('*').trim().to_string(); }
                     None => break,
                 }
                 continue;
@@ -16129,7 +16174,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if base == "Vec" { args.first().cloned() } else { None }
                         });
                     if let Some(elem_c) = elem {
-                        self.infer_type_param_binding(inner, &elem_c, subst);
+                        // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                        self.infer_type_param_binding(inner, &self.arg_c(&elem_c), subst);
                     }
                 }
             }
@@ -16185,7 +16231,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let type_args_owned = type_args.clone();
                                 drop(instance_info);
                                 for (g_ty, arg_c) in generics.iter().zip(type_args_owned.iter()) {
-                                    self.infer_type_param_binding(g_ty, arg_c, subst);
+                                    // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                                    self.infer_type_param_binding(g_ty, &self.arg_c(arg_c), subst);
                                 }
                             }
                         }
@@ -16786,8 +16833,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "static {} {}({});\n",
             ret_c, mono_name, params_str
         ));
-        // Enqueue for body emission
-        self.mono_worklist.push((fn_decl.name.clone(), type_subst, mono_name.to_string()));
+        // Enqueue for body emission (A1‴: carrier is RT-typed; lift string subst at the boundary)
+        self.mono_worklist.push((fn_decl.name.clone(), Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
     }
 
     /// Plan 48: register a monomorphized METHOD instance (add forward decl + worklist entry).
@@ -16888,7 +16935,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
         let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
-        self.mono_worklist.push((worklist_key, type_subst, mono_name.to_string()));
+        self.mono_worklist.push((worklist_key, Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
         // [M-138.2-generic-method-overload-mono] Record the EXACT chosen overload
         // for this final mono name so the drain emits its body (not a bare-name
         // first-wins re-lookup). Keyed on the suffixed `mono_name`, so getter and
@@ -16900,7 +16947,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_monomorphized_method(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
-        type_subst: Vec<(String, String)>,
+        type_subst: Vec<(String, crate::types::ResolvedType)>,
         mono_name: &str,
         recv_type: &str,
     ) -> Result<(), String> {
@@ -16914,10 +16961,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !self.colliding_type_names.is_empty() {
             self.current_emit_file_id = Some(fn_decl.span.file_id);
         }
-        // Set type substitution
+        // Set type substitution (A1‴: worklist carries RT — seed current_type_subst directly)
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+            type_subst.iter().cloned().collect(),
         );
         // Plan 11 Follow-up (2026-05-17): current_receiver_type set BEFORE
         // computing param_c_tys + ret_c, чтобы `Self` в param/return position
@@ -17013,7 +17060,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let elem_ty_opt: Option<String> = if recv_c.starts_with("Nova_Vec____") {
                 let mangled = recv_c.trim_end_matches('*').trim().to_string();
                 self.generic_type_instance_info.borrow()
-                    .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                    // A1‴: registry arg is `ResolvedType` — lower to C-name (`Raw` verbatim).
+                    .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                     .or_else(|| {
                         // Fallback: derive from current_type_subst for the generic param.
                         fn_decl.generics.iter()
@@ -17445,7 +17493,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut depth = 0usize;
         loop {
             if self.generic_type_worklist.borrow().is_empty() { break; }
-            let batch: Vec<(String, Vec<String>, String)> =
+            let batch: Vec<(String, Vec<crate::types::ResolvedType>, String)> =
                 self.generic_type_worklist.borrow_mut().drain(..).collect();
             for (base_name, type_args_c, mangled) in batch {
                 if self.emitted_generic_type_instances.contains(&mangled) { continue; }
@@ -17473,6 +17521,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let outer_is_value =
                         matches!(template.allocation, crate::ast::AllocKind::Value);
                     let has_placeholder = type_args_c.iter().any(|c| {
+                        // A1‴: registry args carry `ResolvedType` — lower to the C-name
+                        // (`Raw` verbatim) before the placeholder string-checks.
+                        let c = self.arg_c(c);
                         let trimmed = c.trim_end_matches('*').trim();
                         if let Some(name) = trimmed.strip_prefix("Nova_") {
                             if generic_names.contains(name) { return true; }
@@ -17505,7 +17556,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 };
                 let type_subst: Vec<(String, String)> = template.generics.iter()
                     .zip(type_args_c.iter())
-                    .map(|(g, c)| (g.name.clone(), c.clone()))
+                    .map(|(g, c)| (g.name.clone(), self.arg_c(c)))
                     .collect();
                 // Redirect output to generic_type_defs_buf so instances appear
                 // before fn definitions in the final C output (via marker splice).
@@ -18106,7 +18157,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_monomorphized_fn(
         &mut self,
         fn_decl: &crate::ast::FnDecl,
-        type_subst: Vec<(String, String)>,
+        type_subst: Vec<(String, crate::types::ResolvedType)>,
         mono_name: &str,
     ) -> Result<(), String> {
         use crate::ast::FnBody;
@@ -18117,10 +18168,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !self.colliding_type_names.is_empty() {
             self.current_emit_file_id = Some(fn_decl.span.file_id);
         }
-        // Set type substitution
+        // Set type substitution (A1‴: worklist carries RT — seed current_type_subst directly)
         let saved_subst = std::mem::replace(
             &mut self.current_type_subst,
-            Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
+            type_subst.iter().cloned().collect(),
         );
         // Compute concrete param types
         // Plan 70 PhaseA3: strict — emit_monomorphized_fn param translation.
@@ -21343,7 +21394,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // mangled suffix (`Nova_X_p` -> `Nova_X*`).
                             let mangled = arr_obj_ty.trim_end_matches('*').trim().to_string();
                             let elem_ty = self.generic_type_instance_info.borrow()
-                                .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                                // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                                .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                                 .unwrap_or_else(|| Self::desanitize_c_from_ident(
                                     arr_obj_ty
                                         .strip_prefix("Nova_Vec____")
@@ -24897,7 +24949,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // de-sanitizing the mangled suffix.
                     let mangled = obj_ty.trim_end_matches('*').trim().to_string();
                     let elem_ty = self.generic_type_instance_info.borrow()
-                        .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                         .unwrap_or_else(|| {
                             let suffix = obj_ty
                                 .strip_prefix("Nova_Vec____")
@@ -25008,7 +25060,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if outer_arr_ct.starts_with("Nova_Vec____") && !outer_arr_ct.trim_end().ends_with("**") {
                         let outer_mangled = outer_arr_ct.trim_end_matches('*').trim().to_string();
                         let inner_ty = self.generic_type_instance_info.borrow()
-                            .get(&outer_mangled).and_then(|(_, a)| a.first().cloned())
+                            .get(&outer_mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                             .unwrap_or_else(|| {
                                 let suffix = outer_arr_ct.strip_prefix("Nova_Vec____").unwrap_or("");
                                 if suffix.starts_with("Nova_") { suffix.to_string() }
@@ -25018,7 +25070,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // inner_ty = C-type of xss[outer_idx] e.g. "Nova_Vec____nova_int*"
                             let inner_mangled = inner_ty.trim_end_matches('*').trim().to_string();
                             let inner_elem = self.generic_type_instance_info.borrow()
-                                .get(&inner_mangled).and_then(|(_, a)| a.first().cloned())
+                                .get(&inner_mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                                 .unwrap_or_else(|| {
                                     let suffix = inner_ty.strip_prefix("Nova_Vec____").unwrap_or("");
                                     if suffix.starts_with("Nova_") { suffix.to_string() }
@@ -28055,17 +28107,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
                                 self.generic_type_instance_info.borrow_mut()
                                     .entry(mangled.clone())
-                                    .or_insert_with(|| (type_name.clone(), type_args_c.clone()));
+                                    .or_insert_with(|| (type_name.clone(), Self::args_lift(&type_args_c)));
                                 if !self.emitted_generic_type_instances.contains(&mangled) {
                                     let mut wl = self.generic_type_worklist.borrow_mut();
                                     if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                                        wl.push((type_name.clone(), type_args_c, mangled.clone()));
+                                        wl.push((type_name.clone(), Self::args_lift(&type_args_c), mangled.clone()));
                                     }
                                 }
                                 // Теперь dispatch идёт через generic instance path (9359)
                                 // с obj_ty = "Nova_HashMap____...*"
                                 let fake_obj_ty = format!("{}*", mangled);
-                                let instance_opt: Option<(String, Vec<String>)> =
+                                let instance_opt: Option<(String, Vec<crate::types::ResolvedType>)> =
                                     self.generic_type_instance_info.borrow()
                                         .get(&mangled).cloned();
                                 if let Some((base_name, targs)) = instance_opt {
@@ -28075,9 +28127,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if let Some(fn_decl) = method_decl {
                                         let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                                         if let Some(tmpl) = tmpl_opt {
+                                            // A1‴: registry args carry `ResolvedType` — lower to C-name.
                                             let type_subst: Vec<(String, String)> = tmpl.generics.iter()
                                                 .zip(targs.iter())
-                                                .map(|(g, c)| (g.name.clone(), c.clone()))
+                                                .map(|(g, c)| (g.name.clone(), self.arg_c(c)))
                                                 .collect();
                                             let is_inst = matches!(
                                                 fn_decl.receiver.as_ref().map(|r| &r.kind),
@@ -28894,7 +28947,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         } else if rt.starts_with("Vec____") {
                                             self.generic_type_instance_info.borrow()
                                                 .get(&format!("Nova_{}", rt))
-                                                .and_then(|(_, args)| args.first().cloned())
+                                                .and_then(|(_, args)| args.first().map(|rt| self.arg_c(rt)))
                                                 .unwrap_or_else(|| rt
                                                     .strip_prefix("Vec____")
                                                     .unwrap_or("")
@@ -29286,7 +29339,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .unwrap_or_else(|| obj_ty.trim_start_matches("Nova_"))
                         .trim_end_matches('*').trim().to_string();
                     // generic_type_instance_info keys have "Nova_" prefix; rt_trimmed doesn't.
-                    let instance_opt: Option<(String, Vec<String>)> =
+                    let instance_opt: Option<(String, Vec<crate::types::ResolvedType>)> =
                         self.generic_type_instance_info.borrow()
                             .get(&format!("Nova_{}", rt_trimmed)).cloned();
                     if let Some((base_name, type_args_c)) = instance_opt {
@@ -29337,7 +29390,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let recv_subst_vec: Vec<(String, String)> = self.generic_type_templates
                                     .get(&base_name)
                                     .map(|t| t.generics.iter().zip(type_args_c.iter())
-                                        .map(|(g, c)| (g.name.clone(), c.clone())).collect())
+                                        // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                                        .map(|(g, c)| (g.name.clone(), self.arg_c(c))).collect())
                                     .unwrap_or_default();
                                 let saved_sel = std::mem::replace(
                                     &mut self.current_type_subst,
@@ -29391,9 +29445,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             let tmpl_opt = self.generic_type_templates.get(&base_name).cloned();
                             if let Some(tmpl) = tmpl_opt {
+                                // A1‴: registry args carry `ResolvedType` — lower to C-name.
                                 let mut type_subst: Vec<(String, String)> = tmpl.generics.iter()
                                     .zip(type_args_c.iter())
-                                    .map(|(g, c)| (g.name.clone(), c.clone()))
+                                    .map(|(g, c)| (g.name.clone(), self.arg_c(c)))
                                     .collect();
                                 // Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]:
                                 // for a NESTED carrier receiver (`Vec[Vec[T]] @flatten`,
@@ -33117,9 +33172,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .and_then(|ms| ms.iter().find(|m| m.name == "next"))
                             .cloned();
                         if let (Some(tmpl), Some(method_decl)) = (tmpl_opt, method_opt) {
+                            // A1‴: registry args carry `ResolvedType` — lower to C-name.
                             let type_subst: Vec<(String, String)> = tmpl.generics.iter()
                                 .zip(type_args_c.iter())
-                                .map(|(g, c)| (g.name.clone(), c.clone()))
+                                .map(|(g, c)| (g.name.clone(), self.arg_c(c)))
                                 .collect();
                             let subst_opt: Vec<(String, Option<String>)> = type_subst.iter()
                                 .map(|(n, t)| (n.clone(), Some(t.clone()))).collect();
@@ -33213,9 +33269,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .cloned();
                             if let Some(next_decl) = next_method {
                                 if let Some(template) = self.generic_type_templates.get(&iter_struct_base).cloned() {
+                                    // A1‴: registry args carry `ResolvedType` — lower to C-name.
                                     let subst: Vec<(String, Option<String>)> = template.generics.iter()
                                         .zip(type_args_c.iter())
-                                        .map(|(g, c)| (g.name.clone(), Some(c.clone())))
+                                        .map(|(g, c)| (g.name.clone(), Some(self.arg_c(c))))
                                         .collect();
                                     // next return type — Option[(T1, T2, ...)].
                                     if let Some(ret_ty) = next_decl.return_type.as_ref() {
@@ -33857,7 +33914,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let elem_ty = if scr_ty.starts_with("Nova_Vec____") {
                     let mangled = scr_ty.trim_end_matches('*').trim().to_string();
                     this.generic_type_instance_info.borrow()
-                        .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        .get(&mangled).and_then(|(_, a)| a.first().map(|rt| this.arg_c(rt)))
                         .unwrap_or_else(|| {
                             scr_ty.strip_prefix("Nova_Vec____").unwrap_or("nova_int")
                                 .trim_end_matches('*').trim().to_string()
@@ -34325,7 +34382,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if !self.emitted_generic_type_instances.contains(&mangled) {
                         let mut wl = self.generic_type_worklist.borrow_mut();
                         if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                            wl.push((struct_name.clone(), type_args_c, mangled));
+                            wl.push((struct_name.clone(), Self::args_lift(&type_args_c), mangled));
                         }
                     }
                     // Drain so record_schemas is populated before we proceed
@@ -35250,13 +35307,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !self.emitted_generic_type_instances.contains(&mangled) {
             let mut wl = self.generic_type_worklist.borrow_mut();
             if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                wl.push(("Vec".to_string(), type_args_c.clone(), mangled.clone()));
+                wl.push(("Vec".to_string(), Self::args_lift(&type_args_c), mangled.clone()));
             }
         }
         self.generic_type_instance_info
             .borrow_mut()
             .entry(mangled.clone())
-            .or_insert_with(|| ("Vec".to_string(), type_args_c.clone()));
+            .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
 
         // 3) Register the mono method instances we are about to call
         //    (`new`/`with_capacity` static ctors, `push` and — for spread —
@@ -35360,7 +35417,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         args: &[String],
     ) -> Option<String> {
         let elem_c = self.generic_type_instance_info.borrow()
-            .get(mangled).map(|(_, a)| a.first().cloned()).flatten()
+            // A1‴: registry arg is `ResolvedType` — lower to C-name.
+            .get(mangled).map(|(_, a)| a.first().map(|rt| self.arg_c(rt))).flatten()
             .or_else(|| mangled.strip_prefix("Nova_Vec____").map(|s| s.to_string()))?;
         let tmpl_gen = self.generic_type_templates.get("Vec")
             .and_then(|t| t.generics.first().map(|g| g.name.clone()))?;
@@ -35392,7 +35450,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let type_args: Vec<String> = if let Some((_, args)) =
             self.generic_type_instance_info.borrow().get(mangled)
         {
-            args.clone()
+            // A1‴: registry args carry `ResolvedType` — lower to C-name.
+            args.iter().map(|a| self.arg_c(a)).collect()
         } else if base == "Vec" {
             // single-arg fallback (mirror of vec_method_call): elem = suffix.
             match rt_trimmed.strip_prefix("Vec____") {
@@ -35431,7 +35490,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if let Some((_, args)) = self.generic_type_instance_info
                 .borrow().get(trimmed).cloned()
             {
-                return args.into_iter().next();
+                // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                return args.into_iter().next().map(|rt| self.arg_c(&rt));
             }
             return Some(rest.to_string());
         }
@@ -36157,7 +36217,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let elem_ty = if scr_ty.starts_with("Nova_Vec____") {
                     let mangled = scr_ty.trim_end_matches('*').trim().to_string();
                     self.generic_type_instance_info.borrow()
-                        .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                        .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                         .unwrap_or_else(|| {
                             scr_ty.strip_prefix("Nova_Vec____").unwrap_or("nova_int")
                                 .trim_end_matches('*').trim().to_string()
@@ -40386,7 +40446,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if obj_ty_pre.starts_with("Nova_Vec____") && !obj_ty_pre.trim_end().ends_with("**") {
                             let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
                             if let Some(elem) = self.generic_type_instance_info.borrow()
-                                .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                                .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                             {
                                 if !elem.is_empty() { return elem; }
                             }
@@ -40438,7 +40498,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
                         if let Some(elem) = self.generic_type_instance_info.borrow()
-                            .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                            .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                         {
                             if !elem.is_empty() {
                                 return elem;
@@ -40616,11 +40676,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if type_args_c.iter().all(|c| !c.is_empty() && c != "void*") {
                                         self.generic_type_instance_info.borrow_mut()
                                             .entry(mangled.clone())
-                                            .or_insert_with(|| (type_name.clone(), type_args_c.clone()));
+                                            .or_insert_with(|| (type_name.clone(), Self::args_lift(&type_args_c)));
                                         if !self.emitted_generic_type_instances.contains(&mangled) {
                                             let mut wl = self.generic_type_worklist.borrow_mut();
                                             if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                                                wl.push((type_name.clone(), type_args_c.clone(), mangled.clone()));
+                                                wl.push((type_name.clone(), Self::args_lift(&type_args_c), mangled.clone()));
                                             }
                                         }
                                     }
@@ -40890,7 +40950,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         } else if rt.starts_with("Vec____") {
                                             self.generic_type_instance_info.borrow()
                                                 .get(&format!("Nova_{}", rt))
-                                                .and_then(|(_, args)| args.first().cloned())
+                                                .and_then(|(_, args)| args.first().map(|rt| self.arg_c(rt)))
                                                 .unwrap_or_else(|| rt
                                                     .strip_prefix("Vec____")
                                                     .unwrap_or("")
@@ -41074,7 +41134,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let info = self.generic_type_instance_info.borrow();
                                 let instance_opt = info.get(&format!("Nova_{}", rt)).cloned();
                                 drop(info);
-                                if let Some((base_name, type_args_c)) = instance_opt {
+                                if let Some((base_name, type_args_rt)) = instance_opt {
+                                    // A1‴: registry args carry `ResolvedType` — lower once to C-names for this block.
+                                    let type_args_c: Vec<String> = type_args_rt.iter().map(|c| self.arg_c(c)).collect();
                                     if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
                                         let mut subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
                                             .zip(type_args_c.iter())
@@ -44058,7 +44120,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if obj_ty_pre.starts_with("Nova_Vec____") && !obj_ty_pre.trim_end().ends_with("**") {
                             let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
                             if let Some(elem) = self.generic_type_instance_info.borrow()
-                                .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                                .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                             {
                                 if !elem.is_empty() { return elem; }
                             }
@@ -44110,7 +44172,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
                         if let Some(elem) = self.generic_type_instance_info.borrow()
-                            .get(&mangled).and_then(|(_, a)| a.first().cloned())
+                            .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
                         {
                             if !elem.is_empty() {
                                 return elem;
@@ -44256,11 +44318,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if type_args_c.iter().all(|c| !c.is_empty() && c != "void*") {
                                         self.generic_type_instance_info.borrow_mut()
                                             .entry(mangled.clone())
-                                            .or_insert_with(|| (type_name.clone(), type_args_c.clone()));
+                                            .or_insert_with(|| (type_name.clone(), Self::args_lift(&type_args_c)));
                                         if !self.emitted_generic_type_instances.contains(&mangled) {
                                             let mut wl = self.generic_type_worklist.borrow_mut();
                                             if !wl.iter().any(|(_, _, m)| m == &mangled) {
-                                                wl.push((type_name.clone(), type_args_c.clone(), mangled.clone()));
+                                                wl.push((type_name.clone(), Self::args_lift(&type_args_c), mangled.clone()));
                                             }
                                         }
                                     }
@@ -44530,7 +44592,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         } else if rt.starts_with("Vec____") {
                                             self.generic_type_instance_info.borrow()
                                                 .get(&format!("Nova_{}", rt))
-                                                .and_then(|(_, args)| args.first().cloned())
+                                                .and_then(|(_, args)| args.first().map(|rt| self.arg_c(rt)))
                                                 .unwrap_or_else(|| rt
                                                     .strip_prefix("Vec____")
                                                     .unwrap_or("")
@@ -44714,7 +44776,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 let info = self.generic_type_instance_info.borrow();
                                 let instance_opt = info.get(&format!("Nova_{}", rt)).cloned();
                                 drop(info);
-                                if let Some((base_name, type_args_c)) = instance_opt {
+                                if let Some((base_name, type_args_rt)) = instance_opt {
+                                    // A1‴: registry args carry `ResolvedType` — lower once to C-names for this block.
+                                    let type_args_c: Vec<String> = type_args_rt.iter().map(|c| self.arg_c(c)).collect();
                                     if let Some(tmpl) = self.generic_type_templates.get(&base_name) {
                                         let mut subst: Vec<(String, Option<String>)> = tmpl.generics.iter()
                                             .zip(type_args_c.iter())
