@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
 // Plan 91.13 Ф.0 / Plan 178 Ф.0.5: std/net/dns.nv — SocketAddr.lookup.
 //
 // DNS resolution (uv_getaddrinfo) is genuine network I/O + parking, so it stays

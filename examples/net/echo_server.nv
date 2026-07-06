@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 83.12: Echo server example.
+// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407).
 //
 // Listens on 127.0.0.1:7777 (configurable). Accepts one connection, reads
 // data, echoes it back. Demonstrates the TcpListener + TcpStream async API.
@@ -13,47 +14,42 @@
 
 module net.echo_server
 
+import std.net2.{SocketAddr, TcpListener, real_net}
+
 const PORT u16 = 7777
 
 fn main() {
-    ro addr = SocketAddr.loopback(PORT)
-    ro lst_r = TcpListener.bind(addr)
-    if lst_r.is_err() {
-        println("Failed to bind: " + str.from(PORT))
-        return
-    }
-    ro lst = lst_r.unwrap()
-    println("Listening on 127.0.0.1:" + str.from(lst.local_port()))
-
-    supervised {
-        spawn {
-            // Accept one connection and echo data back.
-            ro acc_r = lst.accept()
-            if acc_r.is_err() {
-                println("Accept failed")
-                lst.close()
-                return
-            }
-            ro stream = acc_r.unwrap()
-            println("Client connected from port " + str.from(stream.peer_port()))
-
-            ro rd_r = stream.read_bytes(4096)
-            if rd_r.is_err() {
-                println("Read failed")
-                stream.close()
-                lst.close()
-                return
-            }
-            // Echo back — we just confirm OK (str extraction pending codegen fix).
-            ro wr_r = stream.write("echo_ok\n")
-            if wr_r.is_err() {
-                println("Write failed")
-            } else {
-                println("Echo sent")
-            }
-            stream.close()
-            lst.close()
-            println("Done")
+    with Net = real_net() {
+        ro addr = SocketAddr.loopback(PORT)
+        mut lst = match TcpListener.bind(addr) {
+            Ok(l)  => l
+            Err(_) => panic("Failed to bind: " + str.from(PORT))
         }
+        println("Listening on 127.0.0.1:" + str.from(lst.local_port()))
+
+        supervised {
+            spawn {
+                // Accept one connection and echo data back.
+                match lst.accept() {
+                    Ok(stream) => {
+                        mut s = stream
+                        println("Client connected from port " + str.from(s.peer_port()))
+                        match s.read_to_vec(4096) {
+                            Ok(_data) => {
+                                match s.write_str("echo_ok\n") {
+                                    Ok(_)  => println("Echo sent")
+                                    Err(_) => println("Write failed")
+                                }
+                            }
+                            Err(_) => println("Read failed")
+                        }
+                        s.close()
+                    }
+                    Err(_) => println("Accept failed")
+                }
+                println("Done")
+            }
+        }
+        lst.close()
     }
 }

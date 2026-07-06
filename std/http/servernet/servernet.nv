@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 178 Ф.3 / D361: std/http/servernet/servernet.nv — live HTTP/1.1 accept loop.
+// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407) — the old
+// std.net str-carrying effect is deprecated (see std/net/*.nv banners).
 //
 // The thin `Net`-effect runner around the pure server core (std.http.server): read a
 // full request off a socket (Content-Length framed), run it through `serve_once`,
@@ -10,13 +12,13 @@
 // unimplemented in main — see server.nv [M-178-server-graceful-deadline]).
 //
 // WHY A SEPARATE MODULE (net isolation, same as std.http.transport): importing
-// std.net brings `NetError` into the namespace, whose `InvalidPort` shadows
+// std.net2 brings `NetError` into the namespace, whose `InvalidPort` shadows
 // `ParseUrlError.InvalidPort` reachable through std.http. Keeping the net dependency
 // here preserves std.http.server's clean namespace.
 
 module std.http.servernet
 
-import std.net.{TcpListener, TcpStream, NetError}
+import std.net2.{TcpListener, TcpStream, NetError}
 import std.http.server.{ServeMux, serve_once}
 
 /// Read one full HTTP/1.1 request off `stream` (headers + Content-Length body),
@@ -27,22 +29,23 @@ export fn handle_connection(consume stream TcpStream, mux ServeMux) Net -> Resul
     consume s = stream
     ro raw = read_request(s)
     ro resp = serve_once(mux, raw)
-    match s.write_all_bytes(resp) {
+    match s.write_all(resp) {
         Ok(_)  => { s.close(); Ok(()) }
         Err(e) => { s.close(); Err(e) }
     }
 }
 
 // Read until the header block terminator, then the Content-Length body. On EOF/error
-// mid-read, returns what was accumulated (the parser then yields a 400).
+// mid-read, returns what was accumulated (the parser then yields a 400). `Ok(0)`
+// (clean EOF, D407 byte surface) and a hard read error both end a loop.
 fn read_request(s mut TcpStream) Net -> []u8 {
-    mut acc = Vec[u8].of()
+    mut acc []u8 = []u8.new()
     mut header_end = -1
     mut reading = true
     while reading && header_end < 0 {
-        match s.read_bytes(65536) {
+        match s.read_to_vec(65536) {
             Ok(chunk) => {
-                if chunk.len == 0 { reading = false } else { acc.append(chunk); header_end = dcrlf(acc) }
+                if chunk.len() == 0 { reading = false } else { acc.append(chunk); header_end = dcrlf(acc) }
             }
             Err(_) => { reading = false }
         }
@@ -51,9 +54,9 @@ fn read_request(s mut TcpStream) Net -> []u8 {
     ro body_start = header_end + 4
     ro need = content_length_of(acc, header_end)
     mut more = true
-    while more && (acc.len - body_start) < need {
-        match s.read_bytes(65536) {
-            Ok(chunk) => { if chunk.len == 0 { more = false } else { acc.append(chunk) } }
+    while more && (acc.len() - body_start) < need {
+        match s.read_to_vec(65536) {
+            Ok(chunk) => { if chunk.len() == 0 { more = false } else { acc.append(chunk) } }
             Err(_) => { more = false }
         }
     }

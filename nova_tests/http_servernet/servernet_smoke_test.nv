@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 178 Ф.3 — LIVE HTTP/1.1 server smoke over a loopback socket.
+// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407) alongside
+// `std.http.servernet.handle_connection`.
 //
 // Proves `std.http.servernet.handle_connection` end-to-end over a real socket:
 // a server fiber accepts one connection and runs the request through the pure
@@ -14,22 +16,19 @@
 // throws through `Nova_Fail_fail`, whose typed-error path is a pre-existing net
 // codegen gap unrelated to this smoke — see tcp_echo_server_test.)
 //
-// STATUS (2026-07-06): the [M-codegen-cross-module-ctor-emission] LINK obstacle is
-// RESOLVED — net + http now co-compile and LINK (the variant ctor emits;
-// `Nova_NetError_static_IoError` is gone). This live smoke is currently RUNTIME-
-// blocked by a PRE-EXISTING net-substrate segfault: a pure-net two-fiber loopback
-// socket test (zero http, zero codegen change) segfaults deterministically (5/5)
-// on BOTH the merge-base baseline binary and this build. It is NOT a linker symbol
-// — see [M-178-servernet-live-net-substrate-segfault]. Stored (as its plan83_12
-// live-socket siblings are) — not in the fast regress sample; the socket path goes
-// green once the net-runtime crash is fixed. Server LOGIC stays fully mock-covered
-// (nova_tests/http_server).
+// STATUS (2026-07-06, Ф.3 re-check): the [M-codegen-cross-module-ctor-emission]
+// LINK obstacle stays resolved. The prior RUN-FAIL blamed on the net-substrate
+// M:N segfault was actually a MISSING `with Net = real_net() { ... }` handler
+// install in this test (the effect dispatch had no handler bound, so
+// `TcpListener.bind` crashed on a null vtable slot — confirmed via
+// NOVA_DIAG_SEGV: fault in `Nova_Net_tcp_bind`, not in libuv/park code). Fixed
+// here by wrapping the body in `with Net = real_net()`; green on std.net2.
 //
 // EXPECT_TIMEOUT_MS 30000
 
 module nova_tests.http_servernet
 
-import std.net.{TcpListener, TcpStream, SocketAddr}
+import std.net2.{TcpListener, TcpStream, SocketAddr, real_net}
 import std.http.server.{ServeMux, ServerResponse, handler_fn}
 import std.http.servernet.{handle_connection}
 
@@ -40,51 +39,53 @@ fn routes() -> ServeMux {
 }
 
 test "servernet: live GET /health round-trip over loopback" {
-    ro lst = match TcpListener.bind(SocketAddr.loopback(0)) {
-        Ok(l)  => l
-        Err(_) => { assert(false); return }
-    }
-    ro port = lst.local_port()
-    assert(port > 0)
+    with Net = real_net() {
+        ro lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l)  => l
+            Err(_) => { assert(false); return }
+        }
+        ro port = lst.local_port()
+        assert(port > 0)
 
-    mut got = Vec[u8].of()
-    mut server_ok = false
-    supervised {
-        // Server fiber: accept one connection, serve it through handle_connection.
-        spawn {
-            match lst.accept() {
-                Ok(srv) => {
-                    consume s = srv
-                    match handle_connection(s, routes()) {
-                        Ok(_)  => { server_ok = true }
-                        Err(_) => ()
+        mut got []u8 = []u8.new()
+        mut server_ok = false
+        supervised {
+            // Server fiber: accept one connection, serve it through handle_connection.
+            spawn {
+                match lst.accept() {
+                    Ok(srv) => {
+                        consume s = srv
+                        match handle_connection(s, routes()) {
+                            Ok(_)  => { server_ok = true }
+                            Err(_) => ()
+                        }
                     }
+                    Err(_) => ()
                 }
-                Err(_) => ()
+                lst.close()
             }
-            lst.close()
-        }
-        // Client fiber: connect, send a raw GET, read the response.
-        spawn {
-            match TcpStream.connect(SocketAddr.loopback(port)) {
-                Ok(conn) => {
-                    mut cli = conn
-                    match cli.write("GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n") {
-                        Ok(_)  => ()
-                        Err(_) => ()
+            // Client fiber: connect, send a raw GET, read the response.
+            spawn {
+                match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(conn) => {
+                        mut cli = conn
+                        match cli.write_str("GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n") {
+                            Ok(_)  => ()
+                            Err(_) => ()
+                        }
+                        match cli.read_to_vec(4096) {
+                            Ok(chunk) => got.append(chunk)
+                            Err(_)    => ()
+                        }
+                        cli.close()
                     }
-                    match cli.read_bytes(4096) {
-                        Ok(chunk) => got.append(chunk)
-                        Err(_)    => ()
-                    }
-                    cli.close()
+                    Err(_) => ()
                 }
-                Err(_) => ()
             }
         }
+        assert(server_ok)
+        ro resp = str.from_bytes_unchecked(got)
+        assert(resp.contains("HTTP/1.1 200 OK"))
+        assert(resp.contains("ok"))
     }
-    assert(server_ok)
-    ro resp = str.from_bytes_unchecked(got)
-    assert(resp.contains("HTTP/1.1 200 OK"))
-    assert(resp.contains("ok"))
 }

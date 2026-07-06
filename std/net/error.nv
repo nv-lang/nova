@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
 // Plan 83.12: std/net/error.nv — typed network error enum.
 //
 // NetError is a sum type that categorises network failures. In the V1

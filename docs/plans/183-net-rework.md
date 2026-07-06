@@ -376,6 +376,77 @@ TCP echo двумя волокнами через эффект детермин�
 **Перед Ф.3 или в Ф.4:** починить UDP-substrate (#1) и рассмотреть инлайн-SocketAddr после закрытия
 `[0;N]`-gap (#2). unwrap-gap (#3) и resize-инференс (#4) — отдельные компиляторные задачи.
 
+### Заход 3 (2026-07-06) — итог Ф.3 (миграция потребителей, БЕЗ удаления старого слоя)
+
+**Мигрировано на `std.net2`:**
+- `std/http/transport/real.nv` — `import std.net2.{TcpStream, resolve}` (был
+  `SocketAddr.lookup` → теперь свободная fn `resolve()`); `write_all(str)` →
+  `write_all(request.as_bytes())`; `read(65536)->str` → `read_to_vec(65536)->[]u8`
+  (цикл переписан на `Ok(0)`-EOF вместо старого `Err(Eof)`, т.к. байт-поверхность
+  D407 возвращает `Ok(0)` на чистый EOF, а не `Err`).
+- `std/http/servernet/servernet.nv` — `import std.net2.{TcpListener, TcpStream,
+  NetError}`; `write_all_bytes`→`write_all`, `read_bytes`→`read_to_vec`; `.len`
+  (голое поле, старый стиль) → `.len()` везде.
+- Тесты-потребители (не в исходной Ф.0-карте, но ловятся сигнатурой
+  `handle_connection`/`real_http` — без миграции не компилировались бы):
+  `nova_tests/http_transport/transport_test.nv` (`std.net.mock_net` →
+  `std.net2.mock_net`), `nova_tests/http_servernet/servernet_smoke_test.nv`
+  (`std.net.{TcpListener,TcpStream,SocketAddr}` → `std.net2.*`, `write`→`write_str`,
+  `read_bytes`→`read_to_vec`).
+- **Побочный фикс (не net2-специфичный):** `servernet_smoke_test.nv` не имел
+  `with Net = real_net() { … }` вокруг теста (баг существовал и на старом `std.net`
+  — воспроизведён идентично) → `TcpListener.bind` диспетчерил на null-vtable-слот
+  → SEGV (`Nova_Net_tcp_bind`, подтверждено `NOVA_DIAG_SEGV`). Ранее это
+  списывалось на «M:N net-substrate segfault» ([M-178-servernet-live-net-substrate-segfault]);
+  реальный корень — отсутствующий handler-install, НЕ M:N-гонка. Фикс: обернуть
+  тело в `with Net = real_net()`. 5/5 детерминированных прогонов после фикса.
+- `examples/net/echo_client.nv` / `echo_server.nv` — были УЖЕ СЛОМАНЫ до этого
+  захода (0 импортов вообще — `SocketAddr`/`TcpListener` не резолвились,
+  `nova build` падал ICE на unresolved-symbol legacy-fallback; `unwrap()` на
+  `Result[_, NetError]` тоже был бы недостижим, gap #3). Переписаны: явные
+  `import std.net2.{…}`, `with Net = real_net() { … }`, `match` вместо `unwrap()`,
+  байт-поверхность (`write_str`/`read_to_vec`). `nova check` → PASS на обоих.
+  `nova build` **не удалось верифицировать бинарём** — упирается в отдельный,
+  пре-существующий (НЕ Ф.3) ICE, см. `[M-183-nova-build-consume-effect-close-ice]`
+  в `docs/backlog-followups.md` (репродуцирован идентично и на старом `std.net`,
+  вне зависимости от net2 — общий разрыв `nova build` vs `nova test` в тайпчеке
+  consume-результатов effect-операций). Логика подтверждена эквивалентным
+  `test{}`-паттерном (accept/read/write/close) зелёным в `http_servernet` +
+  `plan91_12/net_v2_tcp_echo_slow`.
+
+**НЕ мигрировано (по карте, намеренно):** `nova_tests/plan83_12/*`,
+`nova_tests/plan91_12/*`, `plan91_15/*`, `plan91_16/*`,
+`nova_tests/plan178/net_byte_surface_mock.nv` — остаются на `std.net` до
+санации Plan 182.
+
+**Старый слой НЕ удалён** (потребители из списка выше ещё живы): `std/net/*.nv`
+получили баннер `// DEPRECATED (план 183 Ф.3): модуль заменён std/net2;
+удаление после санации nova_tests (план 182).`; остаток («физическое удаление
+net.c + std/net + `NovaRt_*_method_*`» + grep-инварианты + возможный
+namespace-ренейм `net2`→`net`) зафиксирован как
+`[M-183-old-net-removal-after-182]` в `docs/backlog-followups.md`.
+
+**Гейты захода:** conformance `--positive --compile-error` = **54/0** (базис
+не изменился — Rust-компилятор не трогался, только `.nv`/`.md`) · http-семейство
+(`nova_tests/{http,http_transport,http_server,http_typed,http_decompress,
+http_servernet/servernet_smoke_test}` + `std/net2/tcp_test` + `std/http/client`)
+= **8/8 PASS** (было 5/5 до захода — 3 новых зелёных: `http_servernet` (был
+скрыто мёртв), `tcp_test`, `client`, все без регрессий) · дельта против
+до-Ф.3-состояния: **0 новых FAIL** (Rust-бинарь не менялся, разница чисто в
+`.nv`-миграции).
+
+**Новый найденный дефект (не Ф.3-специфика, задокументирован):**
+`[M-183-nova-build-consume-effect-close-ice]` — `nova build` (в отличие от
+`nova test`) падает ICE на `mut x = match Effect.op(...) {…}.close()` для
+ЛЮБОГО эффекта с consume-результатом (репродуцировано на старом `std.net`
+тоже) — блокирует бинарную верификацию `examples/net/*`, но НЕ является
+регрессией этого захода.
+
+**Возобновление (Ф.4):** M:N-стресс + эхо-замер пропускной способности;
+UDP-substrate флейк (заход 2, #1); `[M-183-old-net-removal-after-182]`
+гейтуется на Plan 182 (санация nova_tests) — тогда удалить старый слой +
+namespace-ренейм `net2`→`net`.
+
 ## 5. Риски / связи
 
 - **Объём**: net.c ~2000 C-строк + 1100 .nv + потребители; 3-4 агент-захода. Самая тонкая

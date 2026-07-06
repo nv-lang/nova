@@ -38051,3 +38051,34 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
   (Duration/Monotonic ctors) — как и любое использование этих типов; (d) `parallel for`-зеркалирование
   параметров отложено `[M-174-parallel-for-deadline]`; (e) ретракция `with_timeout` отложена
   `[M-174-retract-with-timeout]` (cancellation.nv независимо сломан retired-API).
+
+## Plan 183 Ф.3 — миграция std/http-транспорта на std/net2 (2026-07-06)
+
+- **[Plan-183-Ф3-consumer-migration]** (LANDED, ветка `net-rework-183`) — `std/http/transport/real.nv`
+  и `std/http/servernet/servernet.nv` переведены с `std.net` (str-носитель, D-block Д3 из плана 183)
+  на `std.net2` (байт-поверхность D407: `[]u8` everywhere, `Ok(0)`=EOF вместо `Err(Eof)`, `resolve()`
+  свободная fn вместо `SocketAddr.lookup`). Сопутствующая миграция потребителей вне исходной Ф.0-карты,
+  но обязательная по сигнатуре: `nova_tests/http_transport/transport_test.nv` (`mock_net` источник),
+  `nova_tests/http_servernet/servernet_smoke_test.nv` (прямые вызовы `TcpListener`/`TcpStream`) —
+  оба импортировали `std.net`, теперь `std.net2`. `examples/net/{echo_client,echo_server}.nv`
+  переписаны на `std.net2` (были уже сломаны ДО этого захода — 0 импортов, `nova build` падал ICE
+  на unresolved `SocketAddr`; сейчас `nova check` → PASS на обоих, `nova build`-бинарь блокирован
+  отдельным пре-существующим дефектом, см. ниже).
+- **Побочный фикс (не net2-специфика):** `servernet_smoke_test.nv` не оборачивал тело в
+  `with Net = real_net() { … }` → `TcpListener.bind` диспетчерил на null-vtable-слот → SEGV.
+  Ранее атрибутировалось к «M:N net-substrate segfault»; реальный корень — отсутствующий
+  handler-install. Добавлен `with Net = real_net()`; 5/5 детерминированных прогонов.
+- **Старый слой НЕ удалён** — потребители `nova_tests/{plan83_12,plan91_12,plan91_15,plan91_16}`
+  и `plan178/net_byte_surface_mock.nv` остаются на `std.net` до санации Plan 182. `std/net/*.nv`
+  получили баннер `// DEPRECATED (план 183 Ф.3) …`; удаление + grep-инварианты +
+  namespace-ренейм `net2`→`net` — `[M-183-old-net-removal-after-182]` (docs/backlog-followups.md).
+- **Гейты:** conformance `--positive --compile-error` 54/0 (без изменений — Rust-компилятор не
+  трогался). http-семейство (`http`/`http_transport`/`http_server`/`http_typed`/`http_decompress`/
+  `http_servernet`) + `std/net2/tcp_test` + `std/http/client` — **8/8 PASS** (было 5/5 до захода;
+  3 новых зелёных, 0 регрессий; дельта против до-Ф.3 состояния = 0 новых FAIL — бинарь nova.exe
+  не пересобирался между базисом и финалом, разница чисто в `.nv`).
+- **Найден новый (не Ф.3-специфичный) дефект:** `[M-183-nova-build-consume-effect-close-ice]` —
+  `nova build` (в отличие от `nova test`) ICE на `mut x = match Effect.op(...){…}; x.close()` для
+  ЛЮБОГО эффекта с consume-результатом; репродуцировано идентично на старом `std.net` — общий разрыв
+  между `nova build`- и `nova test`-путями тайпчека, не регрессия этого захода. Задокументировано в
+  `docs/backlog-followups.md`.
