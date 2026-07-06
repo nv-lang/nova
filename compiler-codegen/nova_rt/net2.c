@@ -31,6 +31,22 @@
  * consumes a completion that beat the park, re-park absorbs spurious wakes.
  * Predicates also treat stage >= CLOSING as completion so close/cancel wakes
  * are never waited out.
+ *
+ * LOOP-AFFINITY CONTRACT (Plan 183 Ф.4, found by UDP flake ~2/10 TIMEOUT):
+ * a uv handle is pinned to the loop it was created on (nova_current_loop() at
+ * bind/connect/accept time), and libuv loops are NOT thread-safe. Under M:N
+ * every worker owns its own loop, so an op issued on a handle from a different
+ * worker (or from a worker fiber on a main-thread-bound handle while the main
+ * thread pumps _evloop in the supervised drain) is concurrent cross-thread
+ * loop mutation: the req is mis-queued and its completion callback never
+ * fires — the parked fiber hangs. This is NOT a lost-wake (the latch is
+ * sound) and NOT datagram loss. The only cross-thread-safe libuv entry point
+ * is uv_async_send (used by nova_loop_defer_close) — everything else must run
+ * on the loop's own thread. Callers (std/net2 tests, user code) must
+ * therefore create a socket INSIDE the fiber that operates it. Lifting the
+ * constraint = marshalling op issue to the owning loop thread via a defer-op
+ * queue (generalisation of nova_loop_defer_close) — backlog
+ * [M-183-net2-loop-affinity-cross-thread-op].
  */
 
 #ifndef NOVA_USE_LIBUV

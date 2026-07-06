@@ -447,6 +447,78 @@ UDP-substrate флейк (заход 2, #1); `[M-183-old-net-removal-after-182]`
 гейтуется на Plan 182 (санация nova_tests) — тогда удалить старый слой +
 namespace-ренейм `net2`→`net`.
 
+### Заход 4 (2026-07-06) — итог Ф.4 (корень UDP-флейка + M:N-стресс + замер)
+
+**Корень UDP-флейка НАЙДЕН (факт, трейсом): loop-affinity, НЕ lost-wake и НЕ
+потеря датаграммы.** Изолированный однотестовый бинарь воспроизводил
+TIMEOUT ~1/40 (seq) / ~1/96 (16-way parallel). Временные printf-трейсы в
+net2.c дали смокинг-ган: датаграмма ДОСТАВЛЕНА (`recv_cb nread=9`), а
+`send_cb` (или, в другом прогоне, `recv_cb`) вообще не выстреливал; при этом
+оба сокета `bound-on-loop = _evloop` (main-thread), а `send_to`/`recv_from`
+выдавались из spawn-волокон с worker-loop'ами. Watchdog-дамп: зависшее
+волокно `parked=1 pstate=WAIT hdl=0 stop_cb=0` (= send-путь, парковка без
+register_pending). Механика: uv-handle пришпилен к loop'у создания
+(`nova_current_loop()` на bind), libuv-loop'ы не thread-safe (единственный
+безопасный cross-thread вход — `uv_async_send`); uv-оп, выданный worker-волокном
+на main-loop-handle, конкурирует с `uv_run(UV_RUN_ONCE)` main-thread'а в
+supervised-drain → req теряется, completion не приходит, `park_until`-предикат
+никогда не истинится. Заход-1 lost-wake-латч в UDP-пути ПРИСУТСТВУЕТ и
+корректен — класс другой. TCP не флейкал, т.к. `connect`/`accept` создают
+stream на loop'е текущего worker'а.
+
+**Фикс (паттерн M:N, тест-сторона + контракт в субстрате):** сокет создаётся
+ВНУТРИ волокна, которое им оперирует (`handle.loop` == loop оперирующего
+worker'а); порты передаются буферизованными каналами; паркующий канальный оп
+только ДО bind'а или ПОСЛЕ uv-опа (не между bind и uv-вызовом). `udp_test.nv`
+переписан (оба теста). Контракт задокументирован в заголовке `net2.c`
+(«LOOP-AFFINITY CONTRACT»). Изолированный репро после фикса: **60/60 seq +
+128/128 16-way-parallel** (было 1/40, 1/96). Остаточный узкий класс
+(steal-миграция волокна между park'ами → следующий оп с чужого worker'а) и
+полный субстратный фикс (defer-op-маршалинг на owning-loop-thread, обобщение
+`nova_loop_defer_close`) — `[M-183-net2-loop-affinity-cross-thread-op]`
+(backlog, P2). Свойство UDP из плана («датаграмма может теряться») НЕ
+подтвердилось — loopback-датаграмма доставлялась во всех пойманных прогонах.
+
+**M:N-стресс (`std/net2/stress_test.nv`, новый):**
+1. 8 клиент-волокон × конкурентные echo-обмены через ОДИН listener под
+   work-stealing; каждое волокно шлёт свой 8-КиБ узор `(fid*31+k*7)%251` и
+   побайтно верифицирует эхо (класс «чужие байты» старого TLS-слоя поймался бы
+   на assert'ах). Сервер-волокно: bind-in-fiber, 8 последовательных accept+echo.
+2. Замер-ориентир §2а/§4а: **~600 MiB/s** (589/616/603 в трёх прогонах;
+   8 МиБ ping-pong чанками 64 КиБ через одно loopback-соединение, ~13 мс;
+   Dev-режим C, один поток данных). Старый слой БЕЗ правок такой замер не
+   прогоняет (нет эквивалентного теста; plan91-echo — smoke, не замер) —
+   по плану зафиксирован только новый как базовая точка.
+
+**Стресс вскрыл НОВЫЙ компиляторный дефект (SEGV, не сеть):**
+`mibps.to_str()` на **int** внутри модуля `std.net2` (где определён
+`NetError @to_str`) разрешился в `Nova_NetError_method_to_str(mibps)` —
+int ушёл как указатель на enum, FaultAddress = значению int'а (mibps=12 →
+0xC), SEGV в `println`-конкатенации. `${...}`-интерполяция эмитится корректно
+(StringBuilder int-append) — обход в тесте. Зафиксировано:
+`[M-183-int-to-str-module-method-collision]` (backlog, P1 — тихая генерация
+некорректного кода).
+
+**P67-LEGACY ICE (plan83_12) на net2 — класса НЕТ.** Старый слой: `nova test
+nova_tests/plan83_12/tcp_bind_used_port_test.nv` → ICE `[P67-LEGACY] Path call
+return type unknown for method=bind` (репро 2026-07-06). net2-эквивалент
+(новый `nova_tests/plan183_f4/net2_bind_used_port_test.nv`: тот же
+bind-to-used-port shape, TCP+UDP) — компилируется и PASS. Класс уходит вместе
+с удалением старого слоя (`[M-183-old-net-removal-after-182]`).
+
+**Гейты захода:** conformance `--positive --compile-error` = **54/0** ·
+бинарь всего модуля std.net2 (19 тестов: 2×udp, 6×tcp, 2×stress, addr/dns/mock)
+**20/20 подряд** · харнесс: udp_test **5/5**, tcp_test **5/5**, stress_test
+**3/3** · plan183_f4 PASS · http-семейство (http, http_transport, http_server,
+http_typed, http_decompress, http_servernet, std/http/client) **7/7 PASS** ·
+дельта против базиса 68151871: **0 новых FAIL** (Rust-бинарь не менялся;
+net2.c — только комментарий-контракт; временные трейсы убраны) ·
+Ф.4-приёмка §4/§4а закрыта (M:N smoke+стресс детерминированно зелёные,
+эхо-замер зафиксирован).
+
+**Остаток плана:** Ф.5 (журнал/спека/закрытие) + `[M-183-old-net-removal-after-182]`
+(гейт Plan 182) + backlog-хвосты Ф.4 (`loop-affinity` P2, `int-to-str-collision` P1).
+
 ## 5. Риски / связи
 
 - **Объём**: net.c ~2000 C-строк + 1100 .nv + потребители; 3-4 агент-захода. Самая тонкая

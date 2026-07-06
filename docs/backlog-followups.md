@@ -476,3 +476,37 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
   использующую `Net`(или любой другой) эффект с consume-типом результата — не только net.
   Priority: P1 (блокирует `nova build` для net-примеров и, вероятно, шире — любые consume-типы
   через effect-dispatch вне test-контекста).
+
+## Plan 183 Ф.4 — UDP-флейк, M:N-стресс, замер (2026-07-06)
+
+- **[M-183-net2-loop-affinity-cross-thread-op]** (NEW, OPEN) Loop-affinity-контракт
+  net2 (задокументирован в заголовке `net2.c`): uv-handle пришпилен к loop'у, на котором
+  создан (`nova_current_loop()` в bind/connect/accept), а libuv-loop'ы НЕ thread-safe —
+  единственный cross-thread-safe вход `uv_async_send`. Под M:N (loop-на-worker) uv-оп,
+  выданный на handle с чужого worker'а (или с worker'а на handle, привязанный к main
+  `_evloop`, пока main крутит его в supervised-drain `UV_RUN_ONCE`) = конкурентная
+  cross-thread мутация loop'а: req теряется, completion-callback не приходит, волокно
+  виснет навсегда. Это был корень UDP-флейка ~2/10 TIMEOUT (Ф.4-разведка, факт
+  трейсом: `send_cb`/`recv_cb` не выстреливал, датаграмма НЕ терялась, latch НЕ терял
+  wake; оба сокета bound-on `_evloop`, оп выдан с worker-loop). Митигация сейчас —
+  паттерн «создавай сокет ВНУТРИ волокна, которое им оперирует» (тесты переписаны;
+  udp 60 seq + 128 parallel = 0 fail против ~1/40 до). ОСТАТОЧНЫЙ класс: волокно может
+  быть УКРАДЕНО (work-stealing migration) между park'ами и выдать следующий оп на handle
+  с нового worker'а — окно узкое (goready диспатчит на wake-worker = loop-owner), 20/20
+  бинарь + 128 parallel зелёные, но структурно дыра остаётся. Полный фикс = маршалинг
+  issue-стороны каждого uv-опа на owning-loop-thread через defer-op-очередь
+  (обобщение `nova_loop_defer_close`: очередь + `uv_async_send`; callback-сторона уже
+  на owning-thread). Касается и старого net.c (та же архитектура). Priority: P2
+  (субстратная корректность M:N-сети; тесты/потребители сейчас следуют паттерну).
+
+- **[M-183-int-to-str-module-method-collision]** (NEW, OPEN) Компиляторный дефект
+  разрешения методов: внутри модуля, определяющего СВОЙ `X @to_str()` (здесь
+  `std.net2`: `NetError @to_str`), вызов `mibps.to_str()` на **int**-receiver'е
+  резолвится в метод модуля (`Nova_NetError_method_to_str(mibps)` в эмитированном C) —
+  int передаётся как указатель на enum → deref малого целого → SEGV. Пойман Ф.4-стрессом
+  (FaultAddress = значению int'а: mibps=12 → 0xC). `${...}`-интерполяция эмитится
+  корректно (StringBuilder int-append) — использована как обход в
+  `std/net2/stress_test.nv` (см. NOTE там). Класс: same-module method-name collision
+  побеждает builtin-метод примитива; вероятно касается любого имени, совпадающего
+  с builtin (`to_str`, `len`, ...) в модулях с одноимёнными методами на своих типах.
+  Priority: P1 (тихая генерация некорректного кода без диагностики).
