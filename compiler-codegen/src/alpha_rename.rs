@@ -490,7 +490,7 @@ impl<'t> Renamer<'t> {
                     self.trailing(t);
                 }
             }
-            ExprKind::Try(x) | ExprKind::Bang(x) => self.expr(x),
+            ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => self.expr(x),
             ExprKind::Coalesce(a, b) => {
                 self.expr(a);
                 self.expr(b);
@@ -747,7 +747,7 @@ impl<'t> Renamer<'t> {
 // collecting all `Ident`/pattern names — a superset is harmless (it only makes
 // the fresh generator skip more candidates).
 
-fn collect_names_block(b: &Block, out: &mut HashSet<String>) {
+pub(crate) fn collect_names_block(b: &Block, out: &mut HashSet<String>) {
     for s in &b.stmts {
         collect_names_stmt(s, out);
     }
@@ -859,7 +859,7 @@ fn collect_names_pattern(pat: &Pattern, out: &mut HashSet<String>) {
     }
 }
 
-fn collect_names_expr(e: &Expr, out: &mut HashSet<String>) {
+pub(crate) fn collect_names_expr(e: &Expr, out: &mut HashSet<String>) {
     match &e.kind {
         ExprKind::Ident(name) => {
             out.insert(name.clone());
@@ -925,7 +925,7 @@ fn collect_names_expr(e: &Expr, out: &mut HashSet<String>) {
                 collect_names_trailing(t, out);
             }
         }
-        ExprKind::Try(x) | ExprKind::Bang(x) => collect_names_expr(x, out),
+        ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => collect_names_expr(x, out),
         ExprKind::Coalesce(a, b) => {
             collect_names_expr(a, out);
             collect_names_expr(b, out);

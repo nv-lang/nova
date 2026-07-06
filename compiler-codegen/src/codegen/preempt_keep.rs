@@ -288,7 +288,7 @@ impl<'a> Analyzer<'a> {
             }
             ExprKind::Unary { operand, .. } => self.walk_expr(cur, recv, operand),
             ExprKind::As(inner, _) | ExprKind::Is(inner, _)
-            | ExprKind::Try(inner) | ExprKind::Bang(inner) => self.walk_expr(cur, recv, inner),
+            | ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.walk_expr(cur, recv, inner),
             ExprKind::Coalesce(l, r) => {
                 self.walk_expr(cur, recv, l);
                 self.walk_expr(cur, recv, r);

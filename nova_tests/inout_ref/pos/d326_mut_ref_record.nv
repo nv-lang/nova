@@ -1,0 +1,48 @@
+module pos.d326_mut_ref_record
+
+type Pair { a int, b int }
+
+fn f(mut ref m int, mut ref n int) {
+    m = m + 10
+    n = n + 20
+}
+
+fn bump_pair(mut ref p Pair) {
+    p.a = p.a + 1
+    p.b = p.b + 1
+}
+
+fn read_sum(ro ref p Pair) -> int {
+    p.a + p.b
+}
+
+fn inc10(mut ref a int) {
+    a = a + 10
+}
+
+fn outer(mut ref v int) {
+    inc10(ref v)
+}
+
+test "disjoint field args" {
+    mut s = Pair{a: 0, b: 0}
+    f(ref s.a, ref s.b)
+    assert(s.a == 10 && s.b == 20)
+}
+
+test "mut ref record param" {
+    mut p = Pair{a: 1, b: 2}
+    bump_pair(ref p)
+    assert(p.a == 2 && p.b == 3)
+}
+
+test "ro ref reads without copy" {
+    ro p = Pair{a: 3, b: 4}
+    assert(read_sum(p) == 7)
+}
+
+test "ref passed through nested mut ref" {
+    mut x = 0
+    outer(ref x)
+    assert(x == 10)
+}

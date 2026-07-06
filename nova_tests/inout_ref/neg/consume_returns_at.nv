@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_RECEIVER_RETURNS_AT
+//
+// D326 R6: `consume` receiver и `-> @` несовместимы.
+module neg.consume_returns_at
+
+type Box { v int }
+
+fn Box consume @drain() -> @ {
+    @
+}
+
+test "consume receiver returns at" {
+    ro b = Box{v: 1}
+    ro _ = b.drain()
+    assert(true)
+}

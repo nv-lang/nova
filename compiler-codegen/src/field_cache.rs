@@ -980,7 +980,7 @@ fn explain_walk_expr(
             if let Some(c) = cancel { explain_walk_expr(c, type_fields, info); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => explain_walk_expr(e, type_fields, info),
-        ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => explain_walk_expr(e, type_fields, info),
@@ -1744,7 +1744,7 @@ fn collect_writes_expr(
             collect_writes_block(body, recv_type, writes, callees);
             if let Some(c) = cancel { collect_writes_expr(c, recv_type, writes, callees); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             collect_writes_expr(e, recv_type, writes, callees);
@@ -1944,7 +1944,7 @@ fn collect_reads_expr(e: &Expr, recv_type: &str, reads: &mut HashSet<String>, ca
             collect_reads_block(body, recv_type, reads, callees);
             if let Some(c) = cancel { collect_reads_expr(c, recv_type, reads, callees); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             collect_reads_expr(e, recv_type, reads, callees);
@@ -2821,7 +2821,7 @@ fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -
             }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => c += count_field_reads_in_expr_weighted(e, fname, loop_mult),
-        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => c += count_field_reads_in_expr_weighted(e, fname, loop_mult),
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
@@ -3293,7 +3293,7 @@ fn expr_contains_invalidating_call_for(
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             block_contains_invalidating_call_for(body, fname, ipa)
         }
-        ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             expr_contains_invalidating_call_for(e, fname, ipa)
@@ -3485,7 +3485,7 @@ fn expr_contains_write_to(e: &Expr, fname: &str) -> bool {
                 || cancel.as_ref().map_or(false, |c| expr_contains_write_to(c, fname))
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => expr_contains_write_to(e, fname),
-        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => expr_contains_write_to(e, fname),
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
@@ -3645,7 +3645,7 @@ fn expr_contains_call(e: &Expr) -> bool {
             block_contains_call(body)
         }
         ExprKind::Throw(e) => expr_contains_call(e),
-        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => expr_contains_call(e),
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
@@ -3819,7 +3819,7 @@ fn count_field_reads_in_expr(e: &Expr, fname: &str) -> usize {
             }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => c += count_field_reads_in_expr(e, fname),
-        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => c += count_field_reads_in_expr(e, fname),
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
@@ -4095,7 +4095,7 @@ fn analyze_expr_children(e: &Expr, fields: &HashMap<String, FieldKind>, a: &mut 
                 analyze_trailing(t, fields, a);
             }
         }
-        ExprKind::Try(e) | ExprKind::Bang(e) => analyze_expr(e, fields, a),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) => analyze_expr(e, fields, a),
         ExprKind::Coalesce(a_e, b_e) => {
             analyze_expr(a_e, fields, a);
             analyze_expr(b_e, fields, a);
@@ -4379,7 +4379,7 @@ fn scan_expr(e: &Expr, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
                 scan_trailing(t, fields, out);
             }
         }
-        ExprKind::Try(e) | ExprKind::Bang(e) => scan_expr(e, fields, out),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) => scan_expr(e, fields, out),
         ExprKind::Coalesce(a, b) => {
             scan_expr(a, fields, out);
             scan_expr(b, fields, out);
@@ -4798,7 +4798,7 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
                 }
             }
         }
-        ExprKind::Try(e) | ExprKind::Bang(e) => collect_locals_expr(e, out),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) => collect_locals_expr(e, out),
         ExprKind::Coalesce(a, b) => {
             collect_locals_expr(a, out);
             collect_locals_expr(b, out);
@@ -5379,7 +5379,7 @@ fn descend_expr_for_nested(
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => descend_expr_for_nested(e, fname,
             cfg, ipa, local_names, seq, budget_left),
-        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => descend_expr_for_nested(e, fname,
             cfg, ipa, local_names, seq, budget_left),
@@ -5662,7 +5662,7 @@ fn rewrite_expr_children(e: &mut Expr, replace_map: &HashMap<String, String>) {
                 rewrite_trailing(t, replace_map);
             }
         }
-        ExprKind::Try(e) | ExprKind::Bang(e) => rewrite_expr(e, replace_map),
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) => rewrite_expr(e, replace_map),
         ExprKind::Coalesce(a, b) => {
             rewrite_expr(a, replace_map);
             rewrite_expr(b, replace_map);
@@ -6175,7 +6175,7 @@ fn licm_expr(
         ExprKind::Detach(_) | ExprKind::Blocking(_) | ExprKind::Spawn(_) => {
             // Concurrent or threadpool body — skip.
         }
-        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => {
             licm_expr(e, fields, cfg, local_names, hoist_count, ipa);
@@ -6517,7 +6517,7 @@ fn collect_closures_captures_in_expr(
             collect_closures_captures_in_block(body, fields, out);
             if let Some(c) = cancel { collect_closures_captures_in_expr(c, fields, out); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             collect_closures_captures_in_expr(e, fields, out);
@@ -6701,7 +6701,7 @@ fn expr_contains_spawn(e: &Expr) -> bool {
             block_contains_spawn(body)
         }
         ExprKind::Throw(e) | ExprKind::Spawn(e) => expr_contains_spawn(e),
-        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::Member { obj: e, .. }
+        ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => expr_contains_spawn(e),
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
@@ -6871,7 +6871,7 @@ fn first_field_span_in_expr(e: &Expr, fname: &str) -> Option<crate::diag::Span> 
             first_field_span_in_block(body, fname)
                 .or_else(|| cancel.as_ref().and_then(|c| first_field_span_in_expr(c, fname)))
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             first_field_span_in_expr(e, fname)
@@ -7306,7 +7306,7 @@ fn capture_sample_args_in_expr(
             capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
             if let Some(c) = cancel { capture_sample_args_in_expr(c, pure_methods, recv_type, name_map, out); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             capture_sample_args_in_expr(e, pure_methods, recv_type, name_map, out);
@@ -7481,7 +7481,7 @@ fn rewrite_pure_calls_in_expr_v31(
             rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
             if let Some(c) = cancel { rewrite_pure_calls_in_expr_v31(c, pure_methods, recv_type, renames); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             rewrite_pure_calls_in_expr_v31(e, pure_methods, recv_type, renames);
@@ -7669,7 +7669,7 @@ fn collect_body_writes_expr(e: &Expr, out: &mut HashSet<String>) {
             collect_body_writes_block(body, out);
             if let Some(c) = cancel { collect_body_writes_expr(c, out); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             collect_body_writes_expr(e, out);
@@ -7836,7 +7836,7 @@ fn expr_has_any_self_field_write(e: &Expr) -> bool {
             block_has_any_self_field_write(body)
         }
         ExprKind::Supervised { body, .. } => block_has_any_self_field_write(body),
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             expr_has_any_self_field_write(e)
@@ -8047,7 +8047,7 @@ fn count_pure_in_expr(
             count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
             if let Some(c) = cancel { count_pure_in_expr(c, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             count_pure_in_expr(e, pure_methods, recv_type, counts, first_spans, captured, in_closure);
@@ -8435,7 +8435,7 @@ fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
             rewrite_pure_calls_in_block(body, renames);
             if let Some(c) = cancel { rewrite_pure_calls_in_expr(c, renames); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             rewrite_pure_calls_in_expr(e, renames);
@@ -9147,7 +9147,7 @@ fn count_chains_in_expr(
                 count_chains_in_expr(c, counts, first_spans, captured, max_depth, in_closure);
             }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             count_chains_in_expr(e, counts, first_spans, captured, max_depth, in_closure);
@@ -9376,7 +9376,7 @@ fn rewrite_chains_in_expr(e: &mut Expr, name_map: &HashMap<Vec<String>, String>)
             rewrite_chains_in_block(body, name_map);
             if let Some(c) = cancel { rewrite_chains_in_expr(c, name_map); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e)
+        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
             rewrite_chains_in_expr(e, name_map);
@@ -9871,7 +9871,7 @@ fn C mut @do() -> int {
                         }
                     }
                 }
-                ExprKind::Try(e) | ExprKind::Bang(e)
+                ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
                 | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
                 | ExprKind::As(e, _) | ExprKind::Is(e, _)
                 | ExprKind::Unary { operand: e, .. } => walk_expr(e, out),

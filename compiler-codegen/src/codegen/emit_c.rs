@@ -535,6 +535,13 @@ pub struct CEmitter {
     current_spawn_capture_by_value: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
     var_types: HashMap<String, String>,
+    /// Plan 172.5 (D326 R5): names of the current function's `ro ref`/`mut ref`
+    /// parameters. Such a parameter is lowered to a C pointer (`T*`); every
+    /// value-position use of its name in the body is auto-dereferenced
+    /// (`name` → `(*name)`), and assignment through it (`name = v`) becomes
+    /// `(*name) = v`, so writes land in the caller's storage. Populated at fn
+    /// body emission and restored afterwards (methods can nest via closures).
+    ref_params: std::collections::HashSet<String>,
     /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17): per-name override
     /// for closure param types, consulted by `infer_expr_c_type` Ident arm BEFORE
     /// `var_types`. Needed because `infer_mono_method_ret_with_args` takes `&self`
@@ -1504,6 +1511,7 @@ impl CEmitter {
             current_spawn_captures: None,
             current_spawn_capture_by_value: None,
             var_types: HashMap::new(),
+            ref_params: std::collections::HashSet::new(),
             closure_param_type_overrides: RefCell::new(HashMap::new()),
             type_subst_overrides: RefCell::new(HashMap::new()),
             pattern_binding_overrides: RefCell::new(HashMap::new()),
@@ -12625,6 +12633,11 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
     ) {
         use crate::ast::ExprKind;
         match &expr.kind {
+            // Plan 172.5 (D326): call-site `ref <place>` — transparent; recurse
+            // the place for array-elem typeref collection.
+            ExprKind::RefArg(inner) => {
+                Self::collect_array_elem_typerefs_in_expr(inner, out);
+            }
             // Key sites: TurboFish carries explicit type_args (e.g. Vec[u32].with_capacity(n))
             ExprKind::TurboFish { base, type_args } => {
                 // If this is `Vec[T]` (or `[]T` sugar), add T directly as a Vec element
@@ -13121,11 +13134,22 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
             // Plan 72 P3-B: a protocol-typed parameter (`x Iter[int]`) lowers
             // to the `NovaBox_*` fat pointer so the callee can dispatch via the
             // vtable — mirrors the protocol-return-type lowering.
-            let ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+            let mut ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
                 box_ty
             } else {
                 self.type_ref_to_c(&p.ty)?
             };
+            // Plan 172.5 (D326 R5): a `mut ref` parameter is lowered to a C
+            // pointer (`T*`) — the callee receives the caller's storage address
+            // so writes land in the caller. Body uses auto-deref (`ref_params`).
+            // Consistent between forward-decl and definition (both go through
+            // this helper). `ro ref` is NOT lowered here — its zero-copy
+            // placement is the size-driven auto mechanism of Plan 172.4 (R3),
+            // NOT duplicated; explicit `ro ref` is a semantic annotation that
+            // otherwise passes like a normal value parameter.
+            if p.ref_mode == crate::ast::ParamRefMode::MutRef {
+                ty_c.push('*');
+            }
             parts.push(format!("{} {}", ty_c, p.name));
         }
         if parts.is_empty() {
@@ -18530,6 +18554,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // by-ref captures like the map's `mut src` still classify correctly),
         // restore the caller's set at exit. Symmetric with test-body/spawn.
         let saved_var_mutable_fn = std::mem::take(&mut self.var_mutable);
+        // Plan 172.5 (D326 R5): register this fn's `ro ref`/`mut ref` params so
+        // body uses of their names auto-deref (`name` → `(*name)`). Scoped per
+        // fn body (restored at exit) so a nested/sibling fn is unaffected.
+        let saved_ref_params_fn = std::mem::take(&mut self.ref_params);
+        for p in &f.params {
+            if p.ref_mode == crate::ast::ParamRefMode::MutRef {
+                self.ref_params.insert(p.name.clone());
+            }
+        }
         let params = self.params_c(f)?;
         // Plan 170 (D307): set the current emission file for the whole fn BODY so
         // call-sites to file-private helpers declared in THIS file resolve to the
@@ -18883,6 +18916,8 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
         // [M-176-conformance-cu-map-closure]: restore caller's mut-binding set
         // (this fn's own `mut` locals must not leak to sibling fns).
         self.var_mutable = saved_var_mutable_fn;
+        // Plan 172.5 (D326 R5): restore caller's ref-param set.
+        self.ref_params = saved_ref_params_fn;
         // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
         self.flush_boxed_vars();
         self.indent = 0;
@@ -21792,6 +21827,15 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
 
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         match &expr.kind {
+            // Plan 172.5 (D326 R4/R5): call-site `ref <place>` — pass the
+            // address of the addressable place. A `mut ref`/`ro ref` parameter
+            // is lowered to a C pointer (`T*`), so the argument is `&place`.
+            // (Call emission normally consumes RefArg args directly; this arm
+            // is the value-position fallback and keeps the ABI consistent.)
+            ExprKind::RefArg(inner) => {
+                let place = self.emit_expr(inner)?;
+                Ok(format!("(&({}))", place))
+            }
             // Plan 172.1 [literal-coercion channel] (§0/§1): if the checker materialized a
             // sized-integer coercion for THIS literal (D55), emit it WITH that type so a
             // context-typed literal does not collapse to `nova_int` (named-priority:
@@ -21866,6 +21910,14 @@ static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
                     } else {
                         "nova_self".into()
                     });
+                }
+                // Plan 172.5 (D326 R5): a `ro ref`/`mut ref` parameter is a C
+                // pointer — dereference on every value-position read/write so
+                // the body sees a `T`, and assignment lands in the caller's
+                // storage. Checked early: ref-params are user locals, never
+                // variant/ctor names.
+                if self.ref_params.contains(name) {
+                    return Ok(format!("(*{})", name));
                 }
                 // Plan 61 Ф.3: typed Fail[E] handler-arm parameter — name
                 // resolves через fail-frame typed payload, не как обычная

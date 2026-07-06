@@ -3192,6 +3192,13 @@ struct TypeCheckCtx<'a> {
     /// Закрывает D175 §«binding dominates» — Rust-style rule.
     /// Tracks через f1_stmt Stmt::Let; cleared on scope exit (block end).
     ro_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Plan 172.5 (D326 R10): names of the current function's `mut ref`
+    /// parameters. A `ref` borrow lives only for the synchronous call — it must
+    /// NOT escape (no store, no closure/spawn capture, no return; return/store
+    /// are already impossible since `ref` is not a type). This set drives the
+    /// closure/spawn capture ban (`E_REF_ESCAPE_CAPTURE`). Populated at fn-body
+    /// entry, restored at exit.
+    mut_ref_param_names: std::cell::RefCell<std::collections::HashSet<String>>,
     /// Plan 138.2 Ф.0c (D29 method-level shadow): names of generic types
     /// imported into the merged module that the user has REDECLARED in
     /// entry-peer-files with a DIFFERENT arity (e.g. user `type Vec { x, y }`
@@ -3797,6 +3804,7 @@ impl<'a> TypeCheckCtx<'a> {
             current_fn_return_ty: std::cell::RefCell::new(None),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
+            mut_ref_param_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             user_shadowed_generic_types,
             type_defining_modules,
             current_module: std::cell::RefCell::new(Vec::new()),
@@ -4353,7 +4361,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            ExprKind::Try(e) | ExprKind::Bang(e) => self.check_consume_scopes_in_expr(e, errors),
+            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) => self.check_consume_scopes_in_expr(e, errors),
             ExprKind::Coalesce(a, b) => {
                 self.check_consume_scopes_in_expr(a, errors);
                 self.check_consume_scopes_in_expr(b, errors);
@@ -4700,7 +4708,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_no_manual_on_exit_call_in_expr(binding, iter, errors);
                 self.check_no_manual_on_exit_call_in_block(binding, body, errors);
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.check_no_manual_on_exit_call_in_expr(binding, inner, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.check_no_manual_on_exit_call_in_expr(binding, inner, errors),
             ExprKind::Coalesce(a, b) => {
                 self.check_no_manual_on_exit_call_in_expr(binding, a, errors);
                 self.check_no_manual_on_exit_call_in_expr(binding, b, errors);
@@ -4744,7 +4752,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn detect_wrapped_init_typeref(&self, init: &Expr) -> Option<String> {
         use crate::ast::ExprKind;
         // `?` and `!!` are unwrap operators — they're EXPLICITLY safe.
-        if matches!(init.kind, ExprKind::Try(_) | ExprKind::Bang(_)) {
+        if matches!(init.kind, ExprKind::Try(_) | ExprKind::Bang(_) | ExprKind::RefArg(_)) {
             return None;
         }
         // For direct Call (e.g., `try_new()` without `?`), inspect return type.
@@ -5061,7 +5069,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_parfor_result_expr(right, scope, true, errors);
             }
             ExprKind::Unary { operand, .. } => self.check_parfor_result_expr(operand, scope, true, errors),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::Throw(inner) => self.check_parfor_result_expr(inner, scope, consumed, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) | ExprKind::Throw(inner) => self.check_parfor_result_expr(inner, scope, consumed, errors),
             ExprKind::Coalesce(a, b) => {
                 self.check_parfor_result_expr(a, scope, consumed, errors);
                 self.check_parfor_result_expr(b, scope, consumed, errors);
@@ -6147,7 +6155,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.walk_expr(right, gs, errors);
             }
             ExprKind::Unary { operand, .. } => self.walk_expr(operand, gs, errors),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 self.walk_expr(inner, gs, errors)
             }
             ExprKind::Coalesce(a, b) => {
@@ -6565,6 +6573,19 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 172.5 (D326 R10): snapshot + install this fn's `mut ref` params
+        // for the closure/spawn escape-capture ban. Restored below.
+        let mut_ref_snap_fn: std::collections::HashSet<String> =
+            self.mut_ref_param_names.borrow().clone();
+        {
+            let mut s = self.mut_ref_param_names.borrow_mut();
+            s.clear();
+            for p in &fd.params {
+                if p.ref_mode == ParamRefMode::MutRef {
+                    s.insert(p.name.clone());
+                }
+            }
+        }
         match &fd.body {
             FnBody::Expr(e) => {
                 self.f1_expr(e, &gs, &mut scope, errors);
@@ -6598,6 +6619,8 @@ impl<'a> TypeCheckCtx<'a> {
         // added — function scopes are independent; param names from one fn
         // must not bleed into the next fn's checks.
         *self.ro_binding_names.borrow_mut() = ro_snap_fn;
+        // Plan 172.5 (D326 R10): restore the enclosing fn's mut-ref-param set.
+        *self.mut_ref_param_names.borrow_mut() = mut_ref_snap_fn;
     }
 
     fn f1_block(
@@ -7567,6 +7590,16 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::TurboFish { base, .. } => {
                 self.f1_expr(base, gs, scope, errors)
             }
+            // Plan 172.5 (D326 R4): call-site `ref <place>` — transparent for
+            // the type-annotation walk; the place's own type flows through. A
+            // `RefArg` node ALWAYS marks a `mut ref` argument (BoundCtx enforces
+            // marker⟺mode), so this is the single point where the borrowed place
+            // is required to be mutable (E_REF_ARG_NOT_MUT), reusing the
+            // assignment-target readonly machinery that lives on this checker.
+            ExprKind::RefArg(inner) => {
+                self.f1_expr(inner, gs, scope, errors);
+                self.check_ref_marker_mutability(inner, scope, errors);
+            }
             ExprKind::As(inner, _) => {
                 self.f1_expr(inner, gs, scope, errors);
                 // Plan 172.1 §0a (As): materialize the cast target type into the channel.
@@ -7795,7 +7828,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 self.f1_expr(inner, gs, scope, errors);
                 // Plan 174.2 Ф.B: cross-carrier `?` diagnostics. Only for `?`
                 // (Try), not `!!` (Bang) — `!!` throws through Fail и не связан
@@ -8173,12 +8206,19 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Lambda { body, .. } => {
+                self.check_ref_escape_capture(body, errors);
                 self.f1_expr(body, gs, scope, errors)
             }
             ExprKind::ClosureLight { params, body, .. } => {
                 match body {
-                    ClosureBody::Expr(be) => self.f1_expr(be, gs, scope, errors),
-                    ClosureBody::Block(b) => self.f1_block(b, gs, scope, errors),
+                    ClosureBody::Expr(be) => {
+                        self.check_ref_escape_capture(be, errors);
+                        self.f1_expr(be, gs, scope, errors)
+                    }
+                    ClosureBody::Block(b) => {
+                        self.check_ref_escape_capture_block(b, errors);
+                        self.f1_block(b, gs, scope, errors)
+                    }
                 }
                 // 2026-07-02 (tally АТОМ 3b): zero-param truthful-подмножество —
                 // `|| body` без параметров: нечего гадать про params, ret = infer
@@ -8207,9 +8247,17 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::ClosureFull(sb) => {
+                match &sb.body {
+                    FnBody::Expr(be) => self.check_ref_escape_capture(be, errors),
+                    FnBody::Block(b) => self.check_ref_escape_capture_block(b, errors),
+                    FnBody::External => {}
+                }
                 self.f1_fn_sig_body(sb, gs, scope, errors)
             }
-            ExprKind::Spawn(body) => self.f1_expr(body, gs, scope, errors),
+            ExprKind::Spawn(body) => {
+                self.check_ref_escape_capture(body, errors);
+                self.f1_expr(body, gs, scope, errors)
+            }
             ExprKind::Detach(body) | ExprKind::Blocking(body) => self.f1_block(body, gs, scope, errors),
             ExprKind::Supervised { body, cancel } => {
                 if let Some(c) = cancel {
@@ -11120,7 +11168,7 @@ impl<'a> TypeCheckCtx<'a> {
                 self.walk_default_body_expr(right, tname, ok);
             }
             ExprKind::Unary { operand, .. } => self.walk_default_body_expr(operand, tname, ok),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.walk_default_body_expr(inner, tname, ok),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.walk_default_body_expr(inner, tname, ok),
             ExprKind::Coalesce(a, b) => {
                 self.walk_default_body_expr(a, tname, ok);
                 self.walk_default_body_expr(b, tname, ok);
@@ -11852,7 +11900,7 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 172.1 §0a: Try (`expr?`) unwraps Result[T,E]→T or Option[T]→T.
             // Bang (`expr!!`) unwraps Option[T]→T or Result[T,E]→T.
             // Conservative: only when the inner type resolves and is a known container.
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 let inner_tr = self.infer_expr_type(inner, scope)?;
                 if let TypeRef::Named { path, generics, .. } = &inner_tr {
                     let base = path.last().map(String::as_str);
@@ -13193,6 +13241,89 @@ impl<'a> TypeCheckCtx<'a> {
                 self.is_readonly_path(obj, scope)
             }
             _ => false,
+        }
+    }
+
+    /// Plan 172.5 (D326 R10): a `mut ref` borrow lives only for the synchronous
+    /// call — it must NOT escape into a closure / `spawn` / `parallel` /
+    /// `supervised` / `detach` body (whose lifetime can outlive the call →
+    /// dangling pointer). Reject capturing any `mut ref` parameter of the
+    /// enclosing function. Conservative (references, not shadow-aware) — an
+    /// over-report is sound; the escape ban is what keeps the no-lifetimes model
+    /// safe. Cheap no-op when the enclosing fn has no `mut ref` params.
+    fn check_ref_escape_capture(&self, body: &Expr, errors: &mut Vec<Diagnostic>) {
+        if self.mut_ref_param_names.borrow().is_empty() {
+            return;
+        }
+        let mut names = std::collections::HashSet::new();
+        crate::alpha_rename::collect_names_expr(body, &mut names);
+        self.report_ref_escape(&names, body.span, errors);
+    }
+
+    fn check_ref_escape_capture_block(&self, body: &Block, errors: &mut Vec<Diagnostic>) {
+        if self.mut_ref_param_names.borrow().is_empty() {
+            return;
+        }
+        let mut names = std::collections::HashSet::new();
+        crate::alpha_rename::collect_names_block(body, &mut names);
+        self.report_ref_escape(&names, body.span, errors);
+    }
+
+    fn report_ref_escape(
+        &self,
+        captured: &std::collections::HashSet<String>,
+        span: crate::diag::Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let mr = self.mut_ref_param_names.borrow();
+        for name in captured {
+            if mr.contains(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_REF_ESCAPE_CAPTURE] `mut ref`-параметр `{}` захвачен \
+                         замыканием/`spawn`/`parallel`/`supervised`/`detach` (D326 R10). \
+                         `ref` — borrow на время СИНХРОННОГО вызова, у него нет \
+                         лайфтайма; захват мог бы пережить вызов → висячий указатель. \
+                         Скопируй нужное значение в локал перед захватом.",
+                        name
+                    ),
+                    span,
+                ));
+            }
+        }
+    }
+
+    /// Plan 172.5 (D326 R2): a `mut ref` argument (`f(ref <place>)`) writes into
+    /// the caller's storage, so the borrowed place must be mutable — reject a
+    /// `ro`-bound local, and (for field/index paths) a `ro`/`priv` field or a
+    /// `ro` collection. Reuses the assignment-target readonly checker: a mut-ref
+    /// borrow is a potential write to exactly this target.
+    fn check_ref_marker_mutability(
+        &self,
+        place: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        // Bare `ro`-bound local (`ro x = ...; f(ref x)`) — mutation forbidden.
+        if let ExprKind::Ident(name) = &place.kind {
+            if self.ro_binding_names.borrow().contains(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_REF_ARG_NOT_MUT] `mut ref` пишет в caller-сторадж, но `{}` \
+                         связан через `ro` (immutable, L1 — D246 / D326 R2). Объяви его \
+                         `mut {} = ...`, иначе мутация через `ref` невозможна.",
+                        name, name
+                    ),
+                    place.span,
+                ));
+                return;
+            }
+        }
+        // Field / index paths — delegate to the assignment-target readonly
+        // checker (handles `ro`-binding domination, `ro`/`priv` fields, `ro`
+        // collections). A plain mutable Ident needs no further check.
+        if matches!(place.kind, ExprKind::Member { .. } | ExprKind::Index { .. }) {
+            self.check_target_readonly(place, scope, errors);
         }
     }
 
@@ -14851,7 +14982,7 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(right, scope, errors);
             }
             ExprKind::Unary { operand, .. } => self.walk_expr(operand, scope, errors),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.walk_expr(inner, scope, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.walk_expr(inner, scope, errors),
             ExprKind::Coalesce(a, b) => {
                 self.walk_expr(a, scope, errors);
                 self.walk_expr(b, scope, errors);
@@ -15447,9 +15578,162 @@ impl<'a> BoundCtx<'a> {
                 // (не «первый и стоп») — error recovery без каскада:
                 // просто продолжаем цикл.
                 self.check_keyword_only(effective_params, args, &bindings, errors);
+                // Plan 172.5 (D326): validate `ref` passing-mode — call-site
+                // marker ⟺ `mut ref` param, arg addressability + mutability,
+                // and same-call alias exclusivity (E_REF_ALIAS_OVERLAP).
+                self.check_ref_arg_modes(effective_params, args, &bindings, errors);
             }
         }
     }
+
+    /// Plan 172.5 (D326 R4/R9): validate the `ref` passing-mode of every
+    /// argument bound to a parameter of the resolved callee.
+    ///
+    /// - `mut ref` param ⟺ call-site `ref <place>` marker (R4): a missing
+    ///   marker on a `mut ref` param, or a `ref` marker on a non-`mut ref`
+    ///   param, is an error.
+    /// - the `ref`-marked place must be addressable (R4) and mutable (writes
+    ///   land in it).
+    /// - two `mut ref` args in the SAME call whose places overlap on a shared
+    ///   root (one path a prefix of the other, indices erased unless provably
+    ///   distinct int-literals) → `E_REF_ALIAS_OVERLAP` (R9, the sole new
+    ///   error code). This is a narrow anti-footgun, NOT a Rust/Swift exclusive
+    ///   borrow guarantee (Nova stays aliased-mut-sound under GC — D157/D246-P10).
+    fn check_ref_arg_modes(
+        &self,
+        params: &[Param],
+        args: &[CallArg],
+        bindings: &[crate::argbind::ArgBinding],
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        use crate::argbind::ArgBinding;
+        // Collect the places of `mut ref` args for the overlap relation.
+        let mut mut_ref_places: Vec<(RefPlace, crate::diag::Span)> = Vec::new();
+        for (pi, param) in params.iter().enumerate() {
+            let Some(binding) = bindings.get(pi) else { continue; };
+            // The arg expr bound to this param (single-arg bindings only;
+            // variadic/default carry no single `ref` place).
+            let arg_expr = match binding {
+                ArgBinding::Positional(ai) | ArgBinding::Named(ai) => args.get(*ai).map(|a| a.expr()),
+                _ => None,
+            };
+            let Some(arg_expr) = arg_expr else { continue; };
+            let is_ref_marked = matches!(arg_expr.kind, ExprKind::RefArg(_));
+            match param.ref_mode {
+                ParamRefMode::MutRef => {
+                    if !is_ref_marked {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_REF_MARKER_REQUIRED] параметр `{}` объявлен `mut ref` \
+                                 (in-out borrow, D326 R4) — аргумент обязан быть помечен \
+                                 `ref`, чтобы мутация caller-значения была видна в коде: \
+                                 передай `ref <place>`, где place — адресуемая переменная/\
+                                 поле. Для одиночной мутации канон — метод `mut @` (D326).",
+                                param.name
+                            ),
+                            arg_expr.span,
+                        ));
+                        continue;
+                    }
+                    let ExprKind::RefArg(inner) = &arg_expr.kind else { continue; };
+                    // Addressability (R4). Mutability of the place (E_REF_ARG_NOT_MUT)
+                    // is enforced separately in the main checker's expr-walk
+                    // (`check_ref_marker_mutability`), where the `ro`-binding set
+                    // lives — a `RefArg` node unambiguously flags a mutated place.
+                    if !self.check_ref_place_addressable(inner, errors) {
+                        continue;
+                    }
+                    if let Some(place) = RefPlace::of(inner) {
+                        mut_ref_places.push((place, inner.span));
+                    }
+                }
+                ParamRefMode::RoRef => {
+                    if is_ref_marked {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_REF_MARKER_NOT_ALLOWED] параметр `{}` объявлен `ro ref` \
+                                 (read-only borrow, D326 R4) — call-site маркер `ref` не \
+                                 ставится (он сигнализирует ВОЗМОЖНУЮ мутацию, только для \
+                                 `mut ref`). Передай аргумент без `ref`.",
+                                param.name
+                            ),
+                            arg_expr.span,
+                        ));
+                    }
+                }
+                ParamRefMode::None => {
+                    if is_ref_marked {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_REF_MARKER_NOT_ALLOWED] параметр `{}` передаётся by-value \
+                                 — маркер `ref` допустим только для `mut ref`-параметра \
+                                 (D326 R4). Убери `ref`, либо объяви параметр `mut ref {} T` \
+                                 если нужна in-place мутация caller-значения.",
+                                param.name, param.name
+                            ),
+                            arg_expr.span,
+                        ));
+                    }
+                }
+            }
+        }
+        // R9 exclusivity: pairwise prefix-overlap over the mut-ref places.
+        for i in 0..mut_ref_places.len() {
+            for j in (i + 1)..mut_ref_places.len() {
+                if mut_ref_places[i].0.overlaps(&mut_ref_places[j].0) {
+                    errors.push(Diagnostic::new(
+                        "[E_REF_ALIAS_OVERLAP] два `mut ref`-аргумента одного вызова \
+                         ссылаются на пересекающиеся места (общий root, один путь — \
+                         префикс другого; D326 R9). Одновременная in-out мутация \
+                         перекрывающихся мест запрещена (анти-footgun). Разведи их на \
+                         непересекающиеся места (напр. разные поля `x.a`/`x.b`), либо \
+                         мутируй последовательно. Замечание: это узкая синтаксическая \
+                         проверка, НЕ Rust/Swift-гарантия эксклюзивности."
+                            .to_string(),
+                        mut_ref_places[j].1,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Plan 172.5 (D326 R4): a `ref`-marked argument must be an addressable
+    /// place — a named binding / `@` receiver, optionally projected through
+    /// `.field` / `[i]`. An rvalue root (call result, literal, arithmetic) has
+    /// no stable storage to borrow. Reuses the `addr_of` chain classifier.
+    /// Returns `true` if addressable (no diagnostic emitted).
+    fn check_ref_place_addressable(&self, place: &Expr, errors: &mut Vec<Diagnostic>) -> bool {
+        match crate::ast::addr_of_chain_root(&place.kind) {
+            crate::ast::AddrChainRoot::Lvalue(_) => true,
+            crate::ast::AddrChainRoot::IndexInChain => {
+                // An array-index link in the chain roots the borrow in a buffer
+                // slot that can move (resize / GC compaction) — same hazard as
+                // `&arr[i].field`. Conservatively banned in V1.
+                errors.push(Diagnostic::new(
+                    "[E_REF_ARG_NOT_ADDRESSABLE] `ref` аргумент проходит через \
+                     индекс массива (`arr[i]...`): слот может переехать (resize / \
+                     GC-compaction), borrow был бы висячим (D326 R4). Скопируй \
+                     элемент в локал и передай `ref` на него."
+                        .to_string(),
+                    place.span,
+                ));
+                false
+            }
+            crate::ast::AddrChainRoot::Rvalue => {
+                errors.push(Diagnostic::new(
+                    "[E_REF_ARG_NOT_ADDRESSABLE] `ref` требует адресуемое место \
+                     (переменная, поле, `@`-ресивер), а не rvalue (результат \
+                     вызова, литерал, арифметика) — у него нет стабильного \
+                     стораджа для in-out borrow (D326 R4). Присвой значение \
+                     `mut`-локалу и передай `ref <локал>`."
+                        .to_string(),
+                    place.span,
+                ));
+                false
+            }
+        }
+    }
+
 
     /// Plan 50 (D102 №1): после успешного argbind — найти позиционные
     /// аргументы, легшие на параметры с дефолтом, и эмитить production-grade
@@ -16371,7 +16655,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(right, state, errors);
             }
             ExprKind::Unary { operand, .. } => self.walk_expr(operand, state, errors),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => self.walk_expr(inner, state, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.walk_expr(inner, state, errors),
             ExprKind::Coalesce(a, b) => {
                 self.walk_expr(a, state, errors);
                 self.walk_expr(b, state, errors);
@@ -17427,7 +17711,7 @@ impl NameResCtx {
                 }
             }
             ExprKind::TurboFish { base, .. } => self.walk_expr(base, file_id, scope, errors),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 self.walk_expr(inner, file_id, scope, errors)
             }
             ExprKind::Coalesce(a, b) => {
@@ -19409,7 +19693,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         ExprKind::RecordLit { fields, .. } => {
             for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_lits(v, never_ops, errors); } }
         }
-        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::Interrupt(Some(v)) => {
+        ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v)) => {
             walk_expr_for_handler_lits(v, never_ops, errors);
         }
         ExprKind::Interrupt(None) => {}
@@ -21279,7 +21563,7 @@ impl<'a> VrEscapeCtx<'a> {
                     }
                 }
             }
-            ExprKind::Try(i) | ExprKind::Bang(i) => self.walk_expr(i, errors),
+            ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) => self.walk_expr(i, errors),
             ExprKind::Coalesce(a, b) => { self.walk_expr(a, errors); self.walk_expr(b, errors); }
             ExprKind::As(i, _) | ExprKind::Is(i, _) => self.walk_expr(i, errors),
             _ => {}
@@ -22606,6 +22890,94 @@ fn is_builtin_mut_method(method: &str) -> bool {
     )
 }
 
+/// Plan 172.5 (D326 R9/R12): a normalized addressable-place path used by the
+/// `mut ref` alias-overlap relation. Built next to the consume place analysis —
+/// it shares only the `Ident`/`Member`/`Index` place parsing, NOT the
+/// MOVE/CONSUME lattice (per R12, the relation is NEW, not subsumed by D131).
+#[derive(Debug, Clone, PartialEq)]
+enum RefRoot {
+    Local(String),
+    SelfRecv,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum RefSeg {
+    Field(String),
+    /// `arr[N]` with a constant int-literal index — the only case that can be
+    /// proven disjoint from another literal (V1: no SMT / `i != j` prover).
+    IndexLit(i64),
+    /// `arr[expr]` with a non-constant index — conservatively overlaps anything
+    /// at the same position (over-reject is sound; R9).
+    IndexDyn,
+}
+
+struct RefPlace {
+    root: RefRoot,
+    segs: Vec<RefSeg>,
+}
+
+impl RefPlace {
+    /// Build the place path of a `ref`-marked argument, or `None` if the
+    /// expression is not a simple addressable place (an rvalue root — already
+    /// rejected by the addressability check).
+    fn of(e: &Expr) -> Option<RefPlace> {
+        let mut segs_rev: Vec<RefSeg> = Vec::new();
+        let mut cur = e;
+        let root = loop {
+            match &cur.kind {
+                ExprKind::Ident(n) => break RefRoot::Local(n.clone()),
+                ExprKind::SelfAccess => break RefRoot::SelfRecv,
+                ExprKind::Member { obj, name } => {
+                    segs_rev.push(RefSeg::Field(name.clone()));
+                    cur = obj;
+                }
+                ExprKind::Index { obj, index } => {
+                    let seg = match &index.kind {
+                        ExprKind::IntLit(k) => RefSeg::IndexLit(*k),
+                        _ => RefSeg::IndexDyn,
+                    };
+                    segs_rev.push(seg);
+                    cur = obj;
+                }
+                _ => return None,
+            }
+        };
+        segs_rev.reverse();
+        Some(RefPlace { root, segs: segs_rev })
+    }
+
+    /// Two places overlap ⟺ they share a root and one path is a prefix of the
+    /// other (walking segment-by-segment), unless some position is provably
+    /// disjoint — different field names, or two DISTINCT int-literal indices.
+    fn overlaps(&self, other: &RefPlace) -> bool {
+        if self.root != other.root {
+            return false;
+        }
+        let n = self.segs.len().min(other.segs.len());
+        for k in 0..n {
+            match (&self.segs[k], &other.segs[k]) {
+                (RefSeg::Field(a), RefSeg::Field(b)) => {
+                    if a != b {
+                        return false; // e.g. `x.a` vs `x.b` — disjoint
+                    }
+                }
+                (RefSeg::IndexLit(a), RefSeg::IndexLit(b)) => {
+                    if a != b {
+                        return false; // `arr[1]` vs `arr[2]` — disjoint
+                    }
+                }
+                // Any dynamic index (or a field-vs-index kind mismatch, which
+                // cannot arise for a well-typed shared root) — conservatively
+                // treat as the same slot (over-reject sound; R9 no i≠j prover).
+                _ => {}
+            }
+        }
+        // Reached the shorter path with no disjoint position → one path is a
+        // prefix of the other (`x` vs `x`, `x.a` vs `x`, `arr[i]` vs `arr[i]`).
+        true
+    }
+}
+
 fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         // ─── Листья ───
@@ -22616,6 +22988,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Использование переменной ───
         ExprKind::Ident(name) => ctx.use_var(name, e.span, errors),
+
+        // Plan 172.5 (D326 R12): call-site `ref <place>` — borrow, НЕ move.
+        // Walk the place as a normal use (so use-after-consume на borrow'нутой
+        // переменной ловится), но НЕ помечаем её consumed.
+        ExprKind::RefArg(inner) => consume_walk_expr(ctx, inner, errors),
 
         // ─── Интерполированная строка `"... ${expr} ..."` ───
         ExprKind::InterpolatedStr { parts } => {
@@ -23096,7 +23473,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, index, errors);
         }
         ExprKind::TurboFish { base, .. } => consume_walk_expr(ctx, base, errors),
-        ExprKind::Try(inner) | ExprKind::Bang(inner) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => consume_walk_expr(ctx, inner, errors),
         ExprKind::As(inner, _) | ExprKind::Is(inner, _) => consume_walk_expr(ctx, inner, errors),
         ExprKind::Unary { operand, .. } => consume_walk_expr(ctx, operand, errors),
         ExprKind::Binary { left, right, .. } => {
@@ -23576,7 +23953,7 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, cu
             walk_expr_for_defers(right, fn_effects, current_fn_effects, errors);
         }
         ExprKind::Unary { operand, .. } => walk_expr_for_defers(operand, fn_effects, current_fn_effects, errors),
-        ExprKind::Try(e2) | ExprKind::Bang(e2) | ExprKind::Throw(e2) => {
+        ExprKind::Try(e2) | ExprKind::Bang(e2) | ExprKind::RefArg(e2) | ExprKind::Throw(e2) => {
             walk_expr_for_defers(e2, fn_effects, current_fn_effects, errors);
         }
         ExprKind::Coalesce(a, b) => {
@@ -24626,7 +25003,7 @@ impl ContractCtx {
             ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
                 self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 self.walk_expr(inner, fn_effects, fn_name, errors, in_ensures);
             }
             ExprKind::Coalesce(l, r) => {
@@ -24765,7 +25142,7 @@ fn check_ghost_in_expr(e: &Expr, ghosts: &HashSet<String>, errors: &mut Vec<Diag
             }
         }
         ExprKind::Block(b) => check_ghost_in_block(b, ghosts, errors),
-        ExprKind::As(inner, _) | ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
             check_ghost_in_expr(inner, ghosts, errors);
         }
         ExprKind::Coalesce(l, r) => {
@@ -25198,7 +25575,7 @@ impl MapLitCtx {
                 }
             }
             ExprKind::TurboFish { base, .. } => self.walk_expr(base, expected, errors),
-            ExprKind::Try(x) | ExprKind::Bang(x) => self.walk_expr(x, None, errors),
+            ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => self.walk_expr(x, None, errors),
             ExprKind::Coalesce(a, b) => {
                 self.walk_expr(a, None, errors);
                 self.walk_expr(b, None, errors);
@@ -26171,7 +26548,7 @@ impl MapLitAnnotator {
                 }
             }
             ExprKind::TurboFish { base, .. } => self.walk_expr(base, expected),
-            ExprKind::Try(x) | ExprKind::Bang(x) => self.walk_expr(x, None),
+            ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => self.walk_expr(x, None),
             ExprKind::Coalesce(a, b) => {
                 self.walk_expr(a, None);
                 self.walk_expr(b, None);
@@ -27841,7 +28218,7 @@ impl UnsafeCtx {
                     self.walk_expr(inner, errors);
                 }
             }
-            ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::Is(inner, _) | ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 self.walk_expr(inner, errors);
             }
             // Plan 83 fiber-runtime constructs — body is Block.

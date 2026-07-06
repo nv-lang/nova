@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_REF_MARKER_REQUIRED
+//
+// D326 R4: `mut ref`-параметр требует call-site маркер `ref`.
+module neg.marker_required
+
+fn inc(mut ref a int) {
+    a = a + 1
+}
+
+test "missing ref marker" {
+    mut x = 0
+    inc(x)
+    assert(true)
+}

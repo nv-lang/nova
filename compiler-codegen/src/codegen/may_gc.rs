@@ -610,7 +610,7 @@ impl<'a> Analyzer<'a> {
                     self.walk_expr(cur, recv, scope, x);
                 }
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
                 // The success-unwrap path is non-allocating, but the typed-Err
                 // propagation path heap-boxes a value-type Err; the payload
                 // category is type-dependent → conservatively ALLOCATING.
@@ -1325,6 +1325,7 @@ mod tests {
             consume: false,
             is_mut: false,
             is_const: false,
+            ref_mode: crate::ast::ParamRefMode::None,
         }
     }
 

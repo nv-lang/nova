@@ -451,6 +451,11 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
             "array-литерал в контракте не поддерживается; \
              используйте forall-квантор или #pure fn".into())),
 
+        // Plan 172.5 (D326): call-site `ref <place>` в контракте не имеет смысла
+        // (borrow-передача аргумента — не чистое выражение-значение).
+        ExprKind::RefArg(_) => Err(EncodingError::Unsupported(
+            "маркер `ref` (передача по borrow) в контракте не поддерживается; \
+             контракты должны быть чистыми выражениями".into())),
         // Try (?) / Bang (!!) / Coalesce (??) — error-propagation в контрактах бессмысленна.
         ExprKind::Try(_) => Err(EncodingError::Unsupported(
             "оператор `?` в контракте не поддерживается; \

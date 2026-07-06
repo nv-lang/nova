@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_REF_ALIAS_OVERLAP
+//
+// D326 R9: два `mut ref`-аргумента одного вызова на одном и том же месте.
+module neg.alias_overlap_same_var
+
+fn f(mut ref a int, mut ref b int) {
+    a = a + 1
+    b = b + 1
+}
+
+test "same var twice" {
+    mut x = 0
+    f(ref x, ref x)
+    assert(true)
+}
