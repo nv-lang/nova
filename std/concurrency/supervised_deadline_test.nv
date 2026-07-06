@@ -43,7 +43,7 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
     // route here). The `is TimeoutError` narrowing form is exercised in the
     // `outcome`-based test below.
     mut caught_typed = false
-    ro t0 = Time.now()
+    ro t0 = Time.now_unix_ms()
     ro r = with Fail[TimeoutError] = |e| {
         // `is TimeoutError` narrowing (e boxed to `any` через хелпер).
         caught_typed = is_timeout_error(e)
@@ -54,7 +54,7 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
         }
         99
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Time.now_unix_ms() - t0
     // Handler сработал на TimeoutError → r = 0 (не 99).
     assert(r == 0)
     assert(caught_typed)
@@ -85,7 +85,7 @@ test "deadline (absolute Monotonic) fires TimeoutError" {
 //    Внешний (100ms) срабатывает, sleep(5000) во вложенной области прерван рано.
 test "nested: inner deadline cannot extend outer" {
     mut caught = false
-    ro t0 = Time.now()
+    ro t0 = Time.now_unix_ms()
     ro r = with Fail[TimeoutError] = |_e| {
         caught = true
         0
@@ -97,7 +97,7 @@ test "nested: inner deadline cannot extend outer" {
         }
         1
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Time.now_unix_ms() - t0
     assert(r == 0)
     assert(caught)
     assert(elapsed < 2000)

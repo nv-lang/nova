@@ -6392,7 +6392,7 @@ user-visible эффект, высокий churn) — только задокум
 ## D316 — `Time`: плумбинг-эффект, единый источник схемы + `TimerMetrics`-split (Plan 175 Ф.1, 2026-07-04)
 
 **Source:** Plan 175 (time-system-rework), Ф.1. **Amends:** [D11](#d11)/[D14](#d14)/[D62](#d62) (prelude `Time`-decl), [D124](#d124) (wall/monotonic-разделение).
-**Status:** ✅ ACTIVE (Ф.1 — единый источник + split; **Ф.1b/Ф.3 SHIPPED 2026-07-04 — amend ниже**). Overflow-политика — **D317 ✅ SHIPPED (Ф.1c, 2026-07-06)**; monotonic non-regression — **D318 ✅ SHIPPED (Ф.1c, 2026-07-06)**. Typed **effect-ops** (`timestamp()->Timestamp` в схеме, mock на typed-record'ах) — **🚩 OWNER-GATED** (retire int-wire, Ф.2; см. amend).
+**Status:** ✅ ACTIVE (Ф.1 — единый источник + split; **Ф.1b/Ф.3 SHIPPED 2026-07-04 — amend ниже**; **unit-rename side-task SHIPPED 2026-07-06 — единицы в именах опов, amend ниже, не путать с формальной Ф.4 (sleep-семантика/tolerance, остаётся TODO)**). Overflow-политика — **D317 ✅ SHIPPED (Ф.1c, 2026-07-06)**; monotonic non-regression — **D318 ✅ SHIPPED (Ф.1c, 2026-07-06)**. Typed **effect-ops** (`timestamp()->Timestamp` в схеме, mock на typed-record'ах) — **🚩 OWNER-GATED** (retire int-wire, Ф.2; см. amend).
 
 **AMEND (Plan 175 Ф.1b/Ф.3, 2026-07-04 — option C: typed `.nv`-слой поверх НЕизменённого int-wire-эффекта):**
 - `Duration`/`Timestamp`/`Monotonic` — теперь **`value`-records** (single-i64 `nanos`, stack, zero-GC). Static-конструкторы возвращают **по имени типа** (`-> Duration`), не `-> Self` (self_value-trap). `Monotonic.now()` — value-builtin (эффектонезависим → допустим в `realtime{}`).
@@ -6417,6 +6417,13 @@ user-visible эффект, высокий churn) — только задокум
 1. Пять расходящихся зеркал одной схемы (prelude-decl / codegen-hardcode / C-vtable / handler-литералы / закомментированная decl) — правка требовала синхронного изменения 5 мест; единый `.nv`-источник убирает дрейф ([feedback-maximize-nv-sourcing] §3; прецедент RuntimeError 78 Ф.2, 172.1 U.1).
 2. `TimerMetrics` — интроспекция timer-runtime (Plan 66 territory), не «время»: держать её в `Time` раздувало плумбинг-эффект и заставляло каждый mock-clock-handler стабить read-only счётчики (Q1).
 3. Ф.1 — refactor без смены поведения (int-провод неизменен) → низший риск; типизация и overflow-безопасность идут отдельными фазами поверх стабильного единого источника.
+
+**AMEND (owner decision, 2026-07-06 — единицы времени в именах операций; side-task вне формальной Ф-нумерации плана 175, отдельно одобрен владельцем):**
+- `Time`-эффект переименован **без смены поведения провода**: `now()` → `now_unix_ms()`, `now_monotonic()` → `now_monotonic_ns()`. `sleep(ms int)` не тронут — единица уже в имени параметра.
+- **Факт-единицы провода** (зафиксированы, не изменены этим amend'ом): `now_unix_ms()` — миллисекунды Unix-epoch (см. `Timestamp.from_unix_millis(Time.now_unix_ms())` в `std/time/duration.nv`); `now_monotonic_ns()` — наносекунды (`_nova_monotonic_ns()` в `nova_rt/fibers.h` оборачивает `uv_hrtime()` напрямую, без деления).
+- **Сахар:** `Duration.@sleep()` (**NEW**, `std/time/duration.nv`) — `Time.sleep(@to_millis_ceil())`, округляет ВВЕРХ до целых миллисекунд (никогда не спит МЕНЬШЕ запрошенного; усечение ns→ms вниз недосыпало бы).
+- **Почему:** голое `now()`/`now_monotonic()` не сообщает единицу на call-site — читатель должен помнить конвенцию или лезть в докблок. Имя операции = единственный источник правды на месте вызова (симметрично `sleep(ms int)`, где единица уже в параметре).
+- Обновлены все вызовы в `std/` (schema-декларация, `std/testing/handlers.nv` mock-handler'ы, `std/time/duration.nv`, `std/concurrency/*`, `std/_experimental/concurrency/rate_limiter.nv`); codegen (`emit_c.rs`) схему НЕ хардкодит (читает из `.nv`, R1) → изменений в диспатч-логике не потребовалось, только докблок-комментарии.
 
 ## D317 — Duration/instant overflow-policy: trap-default + `checked_*`/`saturating_*` (Plan 175 Ф.1c, 2026-07-06)
 

@@ -1,0 +1,62 @@
+// stdlib/time/units_test.nv — Plan 175 D316 amend (2026-07-06, owner unit-rename): единицы времени
+// в именах операций эффекта `Time` (`now()` → `now_unix_ms()`,
+// `now_monotonic()` → `now_monotonic_ns()`) + `Duration.@sleep()`-сахар.
+//
+// Проверяется:
+//   1. `Timestamp.now()` работает как раньше (rename — внутренняя деталь
+//      `.nv`-сахара, user-facing surface не меняется).
+//   2. `Duration.@sleep()` спит НЕ МЕНЬШЕ запрошенного (замер по `Monotonic`).
+//   3. `mut_clock`-handler совместим с переименованной операцией
+//      (`now_unix_ms()` + `sleep` продвигают виртуальные часы как раньше).
+
+module time.units_test
+
+import std.time.duration
+import std.testing.handlers as th
+
+
+test "Timestamp.now() работает как раньше после переименования Time-опов" {
+    with Time = th.fixed_ms(1_700_000_000_000) {
+        assert(Timestamp.now().as_unix_millis() == 1_700_000_000_000)
+    }
+}
+
+test "Timestamp.now() — mut_clock тоже совместим" {
+    with Time = th.mut_clock(1000 as u64) {
+        assert(Timestamp.now().as_unix_millis() == 1000)
+        Time.sleep(500)
+        assert(Timestamp.now().as_unix_millis() == 1500)
+    }
+}
+
+// `Duration.@sleep()` — реальный сон (default Time-handler, без `with`).
+// Замер по `Monotonic` — независим от wall-clock (D124/D316).
+// Короткий сон (50ms), допуск сверху свободный (планировщик/CI jitter);
+// снизу — строгий (никогда не должен доспать МЕНЬШЕ запрошенного).
+test "Duration.@sleep() спит не меньше запрошенного (замер по Monotonic)" {
+    ro t0 = Monotonic.now()
+    50.millis().sleep()
+    ro t1 = Monotonic.now()
+    ro elapsed = t1.elapsed_since(t0)
+    assert(elapsed.as_millis() >= 50)
+}
+
+// `Duration.@sleep()` под mock: продвигает виртуальные часы `mut_clock`
+// ровно на округлённое-вверх число миллисекунд — доказывает что сахар
+// зовёт переименованную `sleep`-операцию корректно (не сломан рефакторингом).
+test "Duration.@sleep() под mut_clock продвигает виртуальное время" {
+    with Time = th.mut_clock(0 as u64) {
+        assert(Timestamp.now().as_unix_millis() == 0)
+        100.millis().sleep()
+        assert(Timestamp.now().as_unix_millis() == 100)
+    }
+}
+
+// Sub-millisecond duration округляется ВВЕРХ (никогда не 0 sleep для
+// положительной длительности) — доказывает ceil, не truncate.
+test "Duration.@sleep() округляет sub-ms длительность вверх под mock" {
+    with Time = th.mut_clock(0 as u64) {
+        Duration.from_micros(500).sleep()   // 0.5ms → должно спать 1ms, не 0
+        assert(Timestamp.now().as_unix_millis() == 1)
+    }
+}

@@ -181,9 +181,10 @@ export fn fixed_ms(ms u64) -> Effect[Time] {
     effect Time {
         now_ms() => ms
         now_ns() => ms * 1_000_000
-        // Plan 175 Ф.1b: int-провод — `now()` отдаёт int ms (wire); Nova-сторона
-        // оборачивает в `Timestamp` через `Timestamp.now()`-сахар.
-        now() => ms as int
+        // Plan 175 Ф.1b/Ф.4: int-провод — `now_unix_ms()` отдаёт int ms
+        // (wire); Nova-сторона оборачивает в `Timestamp` через
+        // `Timestamp.now()`-сахар.
+        now_unix_ms() => ms as int
         sleep(d) => ()
     }
 }
@@ -199,8 +200,8 @@ export fn mut_clock(start_ms u64) -> Effect[Time] {
     effect Time {
         now_ms() => current_ms
         now_ns() => current_ms * 1_000_000
-        // Plan 175 Ф.1b: int-провод — `now()` отдаёт int ms (wire).
-        now() => current_ms as int
+        // Plan 175 Ф.1b/Ф.4: int-провод — `now_unix_ms()` отдаёт int ms (wire).
+        now_unix_ms() => current_ms as int
         // int-провод: `sleep(ms int)` — аргумент миллисекунды (schema
         // `sleep(ms int)`). Value-`Duration` НЕ пересекает границу эффекта
         // (mock оперирует int ms — Plan 175 option C). Виртуальные часы
@@ -315,12 +316,12 @@ test "PRNG: non-correlation между последовательными выз
     }
 }
 
-// ── Time handlers (Plan 175 option C: int-провод — `now()->int` ms,
+// ── Time handlers (Plan 175 D316 amend, 2026-07-06: int-провод — `now_unix_ms()->int` ms,
 //    `sleep(ms int)`. Retired `now_ms()`/`now_ns()` НЕ в схеме → не зовём;
 //    аргумент sleep — миллисекунды как int, не `Duration`). ────────────────
 
-test "fixed_ms.now() возвращает заданное значение (ms)" {
-    ro ms = with Time = fixed_ms(12345 as u64) { Time.now() }
+test "fixed_ms.now_unix_ms() возвращает заданное значение (ms)" {
+    ro ms = with Time = fixed_ms(12345 as u64) { Time.now_unix_ms() }
     assert(ms == 12345)
 }
 
@@ -328,28 +329,28 @@ test "fixed_ms.sleep — no-op (время не двигается)" {
     with Time = fixed_ms(1000 as u64) {
         Time.sleep(100)
         Time.sleep(1000)
-        assert(Time.now() == 1000)
+        assert(Time.now_unix_ms() == 1000)
     }
 }
 
 test "mut_clock — sleep продвигает виртуальное время (ms)" {
     with Time = mut_clock(0 as u64) {
-        assert(Time.now() == 0)
+        assert(Time.now_unix_ms() == 0)
         Time.sleep(500)
-        assert(Time.now() == 500)
+        assert(Time.now_unix_ms() == 500)
         Time.sleep(2000)
-        assert(Time.now() == 2500)
+        assert(Time.now_unix_ms() == 2500)
     }
 }
 
 test "mut_clock — independent instances между with-блоками" {
     ro m1 = with Time = mut_clock(1000 as u64) {
         Time.sleep(1000)
-        Time.now()
+        Time.now_unix_ms()
     }
     ro m2 = with Time = mut_clock(1000 as u64) {
         Time.sleep(5000)
-        Time.now()
+        Time.now_unix_ms()
     }
     assert(m1 == 2000)
     assert(m2 == 6000)
@@ -357,7 +358,7 @@ test "mut_clock — independent instances между with-блоками" {
 
 test "seeded + fixed_ms композируются" {
     ro r = with Random = seeded(42 as u64), Time = fixed_ms(5000 as u64) {
-        Random.u64() + (Time.now() as u64)
+        Random.u64() + (Time.now_unix_ms() as u64)
     }
     assert(r != 0 as u64)
 }
@@ -368,6 +369,6 @@ test "seeded + mut_clock композируются" {
         Time.sleep(1000)
         ro v2 = Random.u64()
         assert(v1 != v2)
-        assert(Time.now() == 1000)
+        assert(Time.now_unix_ms() == 1000)
     }
 }

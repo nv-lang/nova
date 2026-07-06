@@ -105,11 +105,11 @@ export type Fail[E] effect {
 /// scheduler'у (D11 / D14 / D62, spec/decisions/04-effects.md).
 ///
 /// **Назначение:** AI-first hooks для unit-тестов. В production
-/// `Time.now()` / `Time.sleep(ms)` дают monotonic clock и
+/// `Time.now_unix_ms()` / `Time.sleep(ms)` дают monotonic clock и
 /// fiber-suspension через runtime. В тестах handler-override:
 /// ```nova
-/// with Time = effect Time { sleep(ms) {} now() { 12345 } } {
-///     // время "замерло" — sleep noop, now() возвращает fixed value
+/// with Time = effect Time { sleep(ms) {} now_unix_ms() { 12345 } } {
+///     // время "замерло" — sleep noop, now_unix_ms() возвращает fixed value
 ///     run_test_with_fixed_clock()
 /// }
 /// ```
@@ -117,7 +117,7 @@ export type Fail[E] effect {
 /// **Default handler** (без `with` block):
 ///   - `sleep(ms)` — yields fiber через nova_fiber_sleep_ms (libuv timer
 ///     или blocking sleep если в bootstrap mode).
-///   - `now()` — monotonic timestamp ms через nova_time_now_ms.
+///   - `now_unix_ms()` — unix epoch timestamp ms через nova_time_now_ms.
 ///
 /// **Realtime-context:** `Time` суspend-effect (D64), запрещён внутри
 /// `realtime { ... }` блоков. См. `realtime_suspend_effect` в
@@ -134,20 +134,28 @@ export type Fail[E] effect {
 /// `.nv` (emit_type_decl / RUNTIME_DEFINED_TYPES-ветка строит схему из
 /// методов), а не из хардкода. Skip struct/vtable emission через
 /// RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES — `NovaVtable_Time` живёт
-/// в nova_rt/effects.h. Int-провод (`now()->int` / `now_monotonic()->int`
-/// / `sleep(ms int)`) сохраняется в Ф.1 без смены поведения; типизация
-/// (`timestamp()->Timestamp` / `monotonic()->Monotonic` / `sleep(Duration)`)
-/// — Ф.2/Ф.3.
+/// в nova_rt/effects.h. Int-провод (`now_unix_ms()->int` /
+/// `now_monotonic_ns()->int` / `sleep(ms int)`) сохраняется в Ф.1 без
+/// смены поведения; типизация (`timestamp()->Timestamp` /
+/// `monotonic()->Monotonic` / `sleep(Duration)`) — Ф.2/Ф.3.
 ///
-/// **`now_monotonic()->int`** — wire-примитив монотонных часов
+/// **Plan 175 (D316 amend, 2026-07-06, owner-approved unit-rename side-task,
+/// вне формальной Ф-нумерации плана):** операции переименованы с единицей в
+/// имени — `now()` → `now_unix_ms()` (факт-единица: миллисекунды unix
+/// epoch, см. `Timestamp.from_unix_millis` в std/time/duration.nv);
+/// `now_monotonic()` → `now_monotonic_ns()` (факт-единица: наносекунды —
+/// `_nova_monotonic_ns()` в nova_rt/fibers.h оборачивает `uv_hrtime()`
+/// БЕЗ деления). Чисто переименование wire-op, поведение не меняется.
+///
+/// **`now_monotonic_ns()->int`** — wire-примитив монотонных часов
 /// (Plan 65 Ф.12.3 / D124); `Monotonic` record оборачивается на Nova-стороне.
 /// **5 timer-observability-счётчиков ВЫНЕСЕНЫ** в отдельный `TimerMetrics`
 /// (Plan 175 Ф.1 / Q1) — read-only introspection, не «время».
 #stable(since = "0.1")
 export type Time effect {
     sleep(ms int) -> ()
-    now() -> int
-    now_monotonic() -> int
+    now_unix_ms() -> int
+    now_monotonic_ns() -> int
 }
 
 /// **TimerMetrics-effect** — read-only introspection timer-runtime

@@ -43,13 +43,13 @@ export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
         capacity,
         refill_per_sec,
         _tokens: capacity as f64,
-        _last_refill: Time.now(),
+        _last_refill: Time.now_unix_ms(),
     }
 
 
 // Refill bucket на основе прошедшего времени.
 fn TokenBucket mut @refill() Time -> () {
-    ro now = Time.now()
+    ro now = Time.now_unix_ms()
     ro elapsed = (now - @_last_refill).as_secs_f64()
     ro to_add = elapsed * @refill_per_sec
     @_tokens = @_tokens + to_add
