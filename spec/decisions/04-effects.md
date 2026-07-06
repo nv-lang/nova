@@ -6272,6 +6272,71 @@ user-visible эффект, высокий churn) — только задокум
 
 ---
 
+## D407 — `std/net` переработка: один слой FFI, байтовый транспорт, zero-copy, M:N-безопасность (Plan 183, 2026-07-06)
+
+**Source:** Plan 183 Ф.0, 2026-07-06. **Status:** ✅ ACTIVE (spec-first; C-слой `net2.c`
+Ф.1, .nv-обвязка Ф.2+). **Амендит:** [D173](../decisions/08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv)
+(байтовый транспорт вместо `str`), [D282](../decisions/08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1)
+(один слой FFI, без `NovaRt_*_method_*`), [D301](#d301)/[D302](#d302) (split без
+дублирующего C-API; EOF/ошибки — коды). **Связь:** [D357](#d357) (Http-транспорт
+поверх байтового `Net`), [D322](#d322)/[D323](#d323) (byte-surface соседи).
+
+### Мотивация (три дефекта старого `net.c`)
+
+- **Д1 двойная обёртка.** `net.c` имитировал манглинг методов Nova (`NovaRt_*_method_*`)
+  + второй слой literal-name (`ffi.nv`). C-код зависел от деталей манглинга, которых
+  знать не должен. Порядок подключения stdlib = `extern "C"` (образец fs/os).
+- **Д2 M:N-небезопасность.** Результаты операций возвращались через 6 статических
+  `__thread`-слотов (`_net_tcp_read_data`, `_net_recv_data`, `_net_recv_sender`,
+  `_net_dns_addrs`, `_net_parse_result`, `_net_tls_last_error`). Волокна мигрируют
+  между OS-потоками (work-stealing) → пишет в слот потока A, читает слот потока B →
+  чужие/пустые данные. Тот же класс, что STALE-slot M:N-гонка; сюда же
+  детерминированный сегфолт live-socket-теста.
+- **Д3 `str` как носитель байтов.** Сеть возвращает произвольные байты; `str` — UTF-8.
+  Носитель обязан быть `[]u8`; текст — явной конверсией с валидацией у пользователя.
+
+### Решение
+
+1. **Один слой FFI.** Публичные C-функции — `nova_net_*` с C-ABI-сигнатурами
+   ([D282 rule 2](../decisions/08-runtime.md#d282): скаляры / указатель+длина /
+   out-параметры / код-возврата). НИКАКИХ `nova_str`/`NovaRt_*_method_*` в транспорте.
+   Nova-типы (`TcpStream`, `SocketAddr`, …) и вся логика — в `.nv` поверх `extern "C"`.
+2. **Байтовый транспорт.** Транспортные опы: вход `(const uint8_t* buf, int64_t len)`,
+   выход `(uint8_t* buf, int64_t cap) -> int64_t n`. Эффект `Net` — `[]u8`-сигнатуры.
+   `str`-удобства (`read_text()` и т.п.) — пользовательские `.nv`-хелперы через
+   `Result[str, Utf8Error]`, НЕ операции эффекта.
+3. **Zero-copy (модель Go/Rust `read(buf)->n`).** read: `alloc_cb` отдаёт libuv срез
+   буфера **вызывающего** (указатель+ёмкость сохранены в handle) — сеть пишет прямо
+   в память Nova-буфера; `read_cb` даёт `n`. write: `uv_write` получает указатель
+   прямо на `[]u8`; буфер жив на стеке волокна (консервативный GC его видит).
+   В hot-path read/write/send/recv-payload: `malloc`/`memcpy`/`nova_alloc` данных = **0**.
+4. **Без статических слотов.** Результат — значением: код-возврата (`int`/`int64`,
+   `<0` = −UV-код) + out-параметры (`NovaNetAddr* sender`, `NovaNetAddr** dns_arr`).
+   Текст ошибки строит Nova-сторона из кода (`nova_net_strerror(code, buf, cap)`).
+   Инвариант: `grep -E "__thread|__declspec\(thread\)" net2.c` = **0**.
+5. **`SocketAddr` = value-запись** (снимает `[M-net-socketaddr-value-record]`): адрес —
+   данные (≤16 байт адреса + порт + вид семейства), не handle. Убирает `_nova_alloc_addr`
+   и `_net_recv_sender`-слот. Единственные **неизбежные** копии (как у Rust/Go, поимённо):
+   (а) `sockaddr_storage`→`NovaNetAddr` при запросе адреса (accept/peer/local); (б) sender
+   UDP recv; (в) `addrinfo`→GC-массив `NovaNetAddr` в DNS. НЕ в hot-path payload.
+6. **Split без дублирующего C-API** (упрощение D301). У stream-handle с рождения
+   раздельные `read_scope`/`write_scope` park-слоты → read и write независимы (full-duplex)
+   БЕЗ отдельного набора `tcp_read_half_*`/`tcp_write_half_*`. «Split» на Nova-стороне =
+   раздать один handle двум half-значениям; C добавляет лишь refcount close.
+7. **Парковка/пробуждение/отмена — без изменений** (park/wake поверх libuv, `stop_cb` +
+   `nova_loop_defer_close`): M:N-корректны (park-слот в scope, не в потоке). Дефект Д2 был
+   в передаче результатов, не в парковке.
+
+### Миграция
+
+Фазная (план 183): Ф.1 новый `net2.c` рядом со старым; Ф.2 namespaced .nv-обвязка;
+Ф.3 миграция потребителей (`std/http`, тесты, examples) + удаление `net.c`/`ffi.nv`/
+`str`-опов/`NovaRt_*_method_*` атомарно. Breaking внутри pre-release-окна (`std/net`
+ещё `#stable(since="0.1")`, не зарелижен). Критерии приёмки — план §4 (grep-инварианты
+=0, live-socket M:N-smoke детерминированно зелёный, эхо-замер не хуже старого слоя).
+
+---
+
 ## D325 — Единый fallible-контракт: публичный std возвращает `Result` (Plan 177, 2026-06-25)
 
 **Source:** Plan 177, 2026-06-25 (после развилки A→B1→Вариант 1 + adversarial-критика).

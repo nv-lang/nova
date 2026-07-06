@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 183 Ф.1 — UDP loopback datagram on the NEW net2 C substrate (D407).
+//
+// Pins the zero-copy UDP path: recv_from writes the datagram straight into the
+// caller's []u8 buffer (alloc_cb = slice of that buffer), send_to sends
+// straight from the caller's bytes, the sender address arrives via an
+// out-parameter (no _net_recv_data/_net_recv_sender TLS slots).
+//
+// This test is also the historical catcher of the lost-wake park race: with
+// net.c's naive publish-after-issue ordering it TIMEOUTed ~3/10 runs; the net2
+// park_until + completion-latch discipline (net2.c header) keeps it green.
+//
+// The sender NovaNetAddr out-param is a 20-byte value struct
+// { bytes[16], port u16, family u8, pad u8 } in a caller-allocated buffer,
+// inspected via the nova_net_addr_port accessor.
+
+module std.net2
+
+test "net2: UDP loopback datagram into caller's buffer + out-param sender" {
+    ro a_addr = unsafe { nova_net_addr_loopback(0) }
+    ro a = unsafe { nova_net_udp_bind(a_addr, 0 as *()) }
+    assert(!((0 as *()) == a))
+    ro a_port = unsafe { nova_net_udp_local_port(a) }
+    assert(a_port > 0)
+
+    ro b_addr = unsafe { nova_net_addr_loopback(0) }
+    ro b = unsafe { nova_net_udp_bind(b_addr, 0 as *()) }
+    assert(!((0 as *()) == b))
+    ro b_port = unsafe { nova_net_udp_local_port(b) }
+    assert(b_port > 0)
+
+    supervised {
+        // Receiver fiber: datagram lands in OUR buffer; sender filled by out-param.
+        spawn {
+            mut buf []u8 = []u8.new()
+            buf.resize(64, 0 as u8)
+            // NovaNetAddr out-param: 20-byte caller-allocated value struct.
+            mut sender []u8 = []u8.new()
+            sender.resize(20, 0 as u8)
+            ro rn = unsafe { nova_net_udp_recv_from(a, buf.as_ptr(), 64, sender.as_ptr()) }
+            assert(rn == 9)
+            ro msg = str.from_bytes_unchecked(buf[0..rn])
+            assert(msg == "ping net2")
+            // Sender port must be b's port (out-param actually filled).
+            ro sport = unsafe { nova_net_addr_port(sender.as_ptr() as *()) }
+            assert(sport == b_port)
+        }
+
+        // Sender fiber: send straight from our bytes.
+        spawn {
+            ro to = unsafe { nova_net_addr_loopback(a_port) }
+            ro msg = "ping net2"
+            ro sn = unsafe { nova_net_udp_send_to(b, msg.as_ptr(), msg.byte_len(), to) }
+            assert(sn == 9)
+        }
+    }
+
+    unsafe { nova_net_udp_close(a) }
+    unsafe { nova_net_udp_close(b) }
+}

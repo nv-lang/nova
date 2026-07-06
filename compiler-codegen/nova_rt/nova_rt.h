@@ -536,6 +536,7 @@ typedef struct { char _dummy; } nova_unit;
  * is available. */
 #ifdef NOVA_USE_LIBUV
 #  include "net.h"
+#  include "net2.h" /* Plan 183 Ф.1: reworked std/net substrate (D407) */
 #  include "fs.h"   /* Plan 176 Ф.2: std/fs — async uv_fs_* via libuv */
 #endif
 

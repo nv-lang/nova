@@ -842,6 +842,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // Plan 83.12: net.c — compiled only when libuv is available (conditional
     // on libuv presence, added inside the libuv if-let blocks per toolchain).
     let rt_net = opts.rt_dir.join("net.c");
+    // Plan 183 Ф.1: net2.c — reworked std/net substrate (one FFI layer, byte
+    // transport, zero-copy, M:N-safe). Lives alongside net.c during migration;
+    // same libuv gating.
+    let rt_net2 = opts.rt_dir.join("net2.c");
     // Plan 176 Ф.2: fs.c — std/fs async uv_fs_* backend, same libuv gating as net.c.
     let rt_fs = opts.rt_dir.join("fs.c");
     let march = march_flag();
@@ -986,6 +990,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("-I").arg(inc_path);
                 // Plan 83.12: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
+                // Plan 183 Ф.1: net2.c — reworked std/net substrate, same gate.
+                c.arg(&rt_net2);
                 // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                 c.arg(&rt_fs);
                 // Windows: libuv link via -L/-l flags (env has LIB set by vcvars).
@@ -1174,6 +1180,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg(format!("/I{}", inc_path.display()));
                 // Plan 83.12: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
+                // Plan 183 Ф.1: net2.c — reworked std/net substrate, same gate.
+                c.arg(&rt_net2);
                 // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                 c.arg(&rt_fs);
                 c.arg(evloop);
@@ -1259,6 +1267,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 c.arg("-I").arg(inc_path);
                 // Plan 83.12: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
+                // Plan 183 Ф.1: net2.c — reworked std/net substrate, same gate.
+                c.arg(&rt_net2);
                 // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                 c.arg(&rt_fs);
                 c.arg(lib_path);
