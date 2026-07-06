@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 178 Ф.2 / D357: std/http/transport/real.nv — real_http() over `Net`.
+// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407) — the old
+// std.net str-carrying effect is deprecated (see std/net/*.nv banners).
 //
 // `real_http()` is the production `Http` handler: resolve host, open a TCP
-// connection (Plan 91.12 / 178 Ф.0.5 byte-surface), write the serialized request,
+// connection (Plan 183 zero-copy byte-surface), write the serialized request,
 // read the full response. All HTTP semantics stay in Nova (std.http wire/client);
 // this handler is the thin byte-transport seam.
 //
-// WHY A SEPARATE MODULE (`std.http.transport`): importing `std.net` pulls
+// WHY A SEPARATE MODULE (`std.http.transport`): importing `std.net2` pulls
 // `NetError` into the importing module's constructor namespace, where
 // `NetError.InvalidPort` shadows `ParseUrlError.InvalidPort` (std.http/url.nv).
-// Isolating the std.net dependency here keeps std.http's namespace clean.
+// Isolating the std.net2 dependency here keeps std.http's namespace clean.
 // [M-178-transport-submodule-net-isolation]
 //
 // CORE scope (Ф.2, plaintext HTTP/1.1): one hop per connection, `Connection:
@@ -24,7 +26,7 @@
 
 module std.http.transport
 
-import std.net.{SocketAddr, TcpStream}
+import std.net2.{TcpStream, resolve}
 import std.http.{Http, HttpError, ErrorKind}
 
 /// Production `Http` handler over the `Net` effect (TCP + DNS via libuv).
@@ -52,7 +54,7 @@ export fn real_http() -> Effect[Http] => effect Http {
 
 // One plaintext HTTP/1.1 round-trip over Net: resolve → connect → write → read.
 fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpError] {
-    ro addrs = match SocketAddr.lookup(host, port as u16) {
+    ro addrs = match resolve(host, port as u16) {
         Ok(a)  => a
         Err(_) => return Err(HttpError.transport(ErrorKind.Dns, "dns resolution failed"))
     }
@@ -64,7 +66,7 @@ fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpEr
         Ok(s)  => s
         Err(_) => return Err(HttpError.transport(ErrorKind.Connect, "connect failed"))
     }
-    match stream.write_all(request) {
+    match stream.write_all(request.as_bytes()) {
         Ok(_)  => ()
         Err(_) => {
             stream.close()
@@ -72,14 +74,14 @@ fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpEr
         }
     }
     // Read to EOF (Connection: close). A mid-stream error stops the read; the wire
-    // parser (client.nv) then validates framing (short body → Protocol).
+    // parser (client.nv) then validates framing (short body → Protocol). `Ok(0)`
+    // (clean EOF, D407 byte surface) and a hard read error both end the loop.
     mut acc = WriteBuffer.with_capacity(4096)
     mut reading = true
     while reading {
-        match stream.read(65536) {
+        match stream.read_to_vec(65536) {
             Ok(chunk) => {
-                acc.write_str(chunk)
-                ()
+                if chunk.len() == 0 { reading = false } else { acc.write_bytes(chunk) }
             }
             Err(_) => { reading = false }
         }

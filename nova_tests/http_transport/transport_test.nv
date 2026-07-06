@@ -9,7 +9,7 @@ module nova_tests.http_transport
 
 import std.http.client.{HttpClient}
 import std.http.transport.{real_http}
-import std.net.{mock_net}
+import std.net2.{mock_net}
 
 test "real_http: https is gated on Plan 116 → Err(Tls)" {
     with Net = mock_net() {

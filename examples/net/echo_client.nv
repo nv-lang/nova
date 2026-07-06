@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 83.12: Echo client example.
+// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407).
 //
 // Connects to an echo server, sends a message, reads the echo back.
-// Demonstrates TcpStream.connect + write + read_bytes.
+// Demonstrates TcpStream.connect + write + read.
 //
 // Usage (start echo_server.nv first):
 //   nova build examples/net/echo_server.nv -o echo_server && ./echo_server &
@@ -12,38 +13,40 @@
 
 module net.echo_client
 
+import std.net2.{SocketAddr, TcpStream, real_net}
+
 const PORT u16 = 7777
 const MESSAGE str = "hello from nova"
 
 fn main() {
-    ro addr = SocketAddr.loopback(PORT)
-    supervised {
-        spawn {
-            ro conn_r = TcpStream.connect(addr)
-            if conn_r.is_err() {
-                println("Connect failed — is echo_server running on port " + str.from(PORT) + "?")
-                return
-            }
-            ro stream = conn_r.unwrap()
-            println("Connected to " + str.from(PORT))
+    with Net = real_net() {
+        ro addr = SocketAddr.loopback(PORT)
+        supervised {
+            spawn {
+                match TcpStream.connect(addr) {
+                    Err(_) => {
+                        println("Connect failed — is echo_server running on port " + str.from(PORT) + "?")
+                    }
+                    Ok(conn) => {
+                        mut stream = conn
+                        println("Connected to " + str.from(PORT))
 
-            ro write_r = stream.write(MESSAGE)
-            if write_r.is_err() {
-                println("Write failed")
-                stream.close()
-                return
+                        match stream.write_str(MESSAGE) {
+                            Err(_) => { println("Write failed"); stream.close() }
+                            Ok(_) => {
+                                match stream.read_to_vec(256) {
+                                    Err(_) => { println("Read failed"); stream.close() }
+                                    Ok(echo_bytes) => {
+                                        ro echo = str.from_bytes_unchecked(echo_bytes)
+                                        println("Echo: " + echo)
+                                        stream.close()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-
-            ro read_r = stream.read_bytes(256)
-            if read_r.is_err() {
-                println("Read failed")
-                stream.close()
-                return
-            }
-            ro echo = read_r.unwrap()
-            println("Echo: " + echo)
-            assert(echo == MESSAGE)
-            stream.close()
         }
     }
     println("Done.")

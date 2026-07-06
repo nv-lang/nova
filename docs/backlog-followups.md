@@ -439,3 +439,40 @@ Index-строки — `docs/plans/backlog-followups.md` (P2-Codegen).
 - **[M-179-brotli-reader-streaming]** (OPEN) Streaming `BrotliReader` (`consume value`, D133/D337 R2 — единственный consume-кодер модуля). C-примитивы шима уже инкрементальные (`nova_brotli_dec_feed`/`pull`/`done`/`needs_input`); остаётся тонкая Nova-обёртка + consume-neg-тесты (`EXPECT_COMPILE_ERROR`: не-consume / double-consume). Отложено сознательно: Ф.2-deliverable = one-shot `brotli_decode`; единственный потребитель `br` (http auto-decompress) использует one-shot, симметрично gzip/deflate-веткам `finalize_response`. Priority: P3.
 - **[M-179-brotli-unix-lib]** (OPEN) `libbrotlidec.a` для Linux/macOS не вендорен (сборка выполнялась на Windows-хосте; `detect_brotli` ищет `.a` в тех же двух путях). До vendor'а на этих хостах brotli = Q11-заглушки. Priority: P3.
 - **[M-178-d78-rev1-module-decls]** (OPEN, вскрыто переносом тестов 179 Ф.2) Вложенные folder-модули std/http декларируют retired rev-1 форму `module std.http.X` вместо канона rev-3 `http.X` ([M-D78-strict-removal] 2026-06-01 → hard error `E_D78_MODULE_PATH_MISMATCH`, но латентно: всплывает ТОЛЬКО когда папка становится test-entry). `std/http/client/` мигрирован на `module http.client` (4 файла; импорты `std.http.client` работают — прецедент `encoding.compress`, все потребители зелёные). Остальные: `std/http/{server,servernet,serdejson,transport}` — мигрировать при первом же in-module тесте (или разом). Priority: P3.
+
+## Plan 183 Ф.3 — миграция потребителей std/net → std/net2 (2026-07-06)
+
+- **[M-183-old-net-removal-after-182]** (OPEN) Физическое удаление старого net-слоя
+  (`compiler-codegen/nova_rt/net.c`/`net.h`, `std/net/*.nv` (`ffi.nv`/`addr.nv`/`tcp.nv`/`udp.nv`/
+  `dns.nv`/`mock.nv`/`effect.nv`), все `NovaRt_*_method_*`/`NovaRt_*_static_*` — ОТЛОЖЕНО
+  до санации `nova_tests` (Plan 182), т.к. `nova_tests/plan83_12/*`, `nova_tests/plan91_12/*`,
+  `plan91_15/*`, `plan91_16/*`, `nova_tests/plan178/net_byte_surface_mock.nv` остаются на старом
+  слое (по директиве 183 Ф.3 — эти тесты уходят в санацию 182, не мигрируются здесь).
+  Все живые потребители (`std/http/transport/real.nv`, `std/http/servernet/servernet.nv`,
+  `examples/net/*`, `nova_tests/http_transport`, `nova_tests/http_servernet`) уже на `std/net2`
+  (Ф.3, этот заход) — `std/net/*.nv` несут `// DEPRECATED` баннер. Удаление-гейт (проверить ПЕРЕД
+  удалением): `grep -rl "import std\.net\." nova_tests std examples` = только
+  plan83_12/91_12/91_15/91_16/plan178 (после их санации/удаления в 182 — пусто);
+  `grep -c "NovaRt_.*_method_\|NovaRt_.*_static_" compiler-codegen/nova_rt/net.c` (файл целиком уходит);
+  после удаления — рассмотреть namespace-ренейм `net2` → `net` (тоже отложено, см. план 183 §5).
+  Priority: M (гейтовано на Plan 182).
+
+- **[M-183-nova-build-consume-effect-close-ice]** (NEW, OPEN) `nova build` (fn-`main`-rooted
+  compile, в отличие от `nova test`/`test-build`, которые компилируют `test { }`-блоки) паникует
+  (ICE) на ЛЮБОЙ программе, где `mut x = match SomeEffect.op(...) { Ok(v) => v, Err(_) => panic(...) }`
+  связывает переменную consume-обязательного типа, возвращённого через effect-dispatch
+  (`TcpListener.bind` через `Net`), а затем эту переменную потребляет `.close()`:
+  `internal error … [P67-LEGACY] method call \`.close\` return type unknown — checker must
+  annotate; obj_ty="" obj=Ident(lst)`. Репродуцировано МИНИМАЛЬНО (без spawn/supervised,
+  без net2-специфики): идентичный ICE с **старым** `std.net`/`mock_net()` тоже — это НЕ регрессия
+  Plan 183 и не специфика `std.net2`, а общий разрыв между `nova build`- и `nova test`-путями
+  тайпчека consume-результатов effect-операций (родственно `[M-172-nova-int-fallback-audit]`/
+  U.4 классу «checker резолвит по-разному в разных entry-points»). Обнаружено при миграции
+  `examples/net/{echo_client,echo_server}.nv` на `std.net2` (Ф.3): оба файла типобезопасны
+  (`nova check` → PASS) и логически корректны (тот же паттерн accept/read/write/close зелёный
+  в `nova_tests/http_servernet` и `plan91_12/net_v2_tcp_echo_slow` через `nova test`), но
+  `nova build examples/net/echo_server.nv` падает ICE независимо от структуры (voпробовано:
+  с/без `supervised`, прямой вызов vs через helper-fn). Затрагивает ЛЮБОЙ example/CLI-программу,
+  использующую `Net`(или любой другой) эффект с consume-типом результата — не только net.
+  Priority: P1 (блокирует `nova build` для net-примеров и, вероятно, шире — любые consume-типы
+  через effect-dispatch вне test-контекста).
