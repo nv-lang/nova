@@ -5,7 +5,7 @@
 module spec_tests.conformance
 
 test "Vec pop — снимает с конца, пусто → None (D232)" {
-    mut v = Vec[int].of(1, 2, 3)
+    mut v = []int.of(1, 2, 3)
     assert(v.pop() == Some(3))
     assert(v.pop() == Some(2))
     assert(v.len() == 1)
@@ -14,7 +14,7 @@ test "Vec pop — снимает с конца, пусто → None (D232)" {
 }
 
 test "Vec contains/index_of (D232)" {
-    ro v = Vec[int].of(10, 20, 30)
+    ro v = []int.of(10, 20, 30)
     assert(v.contains(20))
     assert(!(v.contains(99)))
     assert(v.index_of(30) == Some(2))
@@ -22,11 +22,11 @@ test "Vec contains/index_of (D232)" {
 }
 
 test "Vec is_empty/first/last (D232)" {
-    ro v = Vec[int].of(5, 6, 7)
+    ro v = []int.of(5, 6, 7)
     assert(!(v.is_empty()))
     assert(v.first() == Some(5))
     assert(v.last() == Some(7))
-    ro e = Vec[int].new()
+    ro e = []int.new()
     assert(e.is_empty())
     assert(e.first().is_none())
     assert(e.last().is_none())

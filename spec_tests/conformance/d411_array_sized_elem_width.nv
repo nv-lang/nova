@@ -5,7 +5,7 @@
 // Codegen path (GROUNDED, compiler-codegen/src/codegen/emit_c.rs + types/mod.rs):
 //   1. `[N]T` parses to `TypeRef::FixedArray(N, T, _)` (parser/mod.rs:6061) and is then
 //      canonicalized to `R::Array(T)` — the `N` is DROPPED — at types/mod.rs:186
-//      (`FixedArray(_, inner, _) => R::Array(..)`), so a fixed array reuses the `Vec[T]`
+//      (`FixedArray(_, inner, _) => R::Array(..)`), so a fixed array reuses the `[]T`
 //      lowering. `[N]uint` ⇒ the binding's C type is `Nova_Vec____nova_uint*`
 //      (`resolved_array_to_c`, emit_c.rs:2024 — Vec template present).
 //   2. The literal `[<int-lit>, ...]` is emitted by `try_emit_typed_vec_literal`

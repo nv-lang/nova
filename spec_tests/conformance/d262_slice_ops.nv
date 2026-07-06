@@ -6,7 +6,7 @@
 module spec_tests.conformance
 
 test "split_at делит на (front, back) с len-инвариантом (D262)" {
-    ro v = Vec[int].of(10, 20, 30, 40, 50)
+    ro v = []int.of(10, 20, 30, 40, 50)
     ro pair = v.split_at(2)                      // front=[10,20], back=[30,40,50]
     assert(pair.0.len() == 2)
     assert(pair.1.len() == 3)
@@ -17,7 +17,7 @@ test "split_at делит на (front, back) с len-инвариантом (D262
 }
 
 test "first_n/last_n КЛАМПЯТ (n>len → весь, n<=0 → пусто) (D262)" {
-    ro v = Vec[int].of(1, 2, 3)
+    ro v = []int.of(1, 2, 3)
     assert(v.first_n(2).len() == 2)
     assert(v.first_n(2)[0] == 1)
     assert(v.first_n(99).len() == 3)             // clamp к len, не паника
@@ -28,7 +28,7 @@ test "first_n/last_n КЛАМПЯТ (n>len → весь, n<=0 → пусто) (D
 }
 
 test "as_slice — whole-view того же типа, алиасит элементы (D262)" {
-    ro v = Vec[int].of(7, 8, 9)
+    ro v = []int.of(7, 8, 9)
     ro s = v.as_slice()
     assert(s.len() == 3)
     assert(s[0] == 7)
@@ -36,10 +36,10 @@ test "as_slice — whole-view того же типа, алиасит элеме�
 }
 
 test "split_first/split_last → Option; пусто → None (D262)" {
-    ro v = Vec[int].of(100, 200, 300)
+    ro v = []int.of(100, 200, 300)
     assert(v.split_first().is_some())
     assert(v.split_last().is_some())
-    ro empty = Vec[int].new()
+    ro empty = []int.new()
     assert(empty.split_first().is_none())
     assert(empty.split_last().is_none())
 }

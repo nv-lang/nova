@@ -135,7 +135,7 @@ export fn Inflater mut @feed(chunk []u8) -> Result[(), CompressError] {
 /// bomb-cap.
 ///
 /// (Форма `Result[[]u8,_]` + `is_done()` вместо `Result[Option[[]u8],_]` —
-/// обход текущего codegen-ограничения по `Option[Vec[u8]]`; семантика D335
+/// обход текущего codegen-ограничения по `Option[[]u8]`; семантика D335
 /// сохранена: EOF отличается от need-more через `is_done()`.)
 #stable(since = "0.1")
 export fn Inflater mut @read(max_emit int) -> Result[[]u8, CompressError] {

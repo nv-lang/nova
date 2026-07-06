@@ -18,8 +18,8 @@ fn hex(s str) -> Option[u32] {
 }
 
 // "d1,d2,d3" (comma-separated hex) -> [d1, d2, d3].
-fn parse_cp_list(s str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(4)
+fn parse_cp_list(s str) -> []u32 {
+    mut out = []u32.with_capacity(4)
     for part in s.split(",") {
         match hex(part) { Some(cp) => out.push(cp), None => {} }
     }
@@ -98,13 +98,13 @@ fn parse_comp_table(data str) -> HashMap[int, u32] {
     m
 }
 
-fn str_to_cps(s str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(s.byte_len())
+fn str_to_cps(s str) -> []u32 {
+    mut out = []u32.with_capacity(s.byte_len())
     for c in s.as_chars() { out.push(c as u32) }
     out
 }
 
-fn cps_to_str(cps Vec[u32]) -> str {
+fn cps_to_str(cps []u32) -> str {
     consume sb = StringBuilder.with_capacity(cps.len() * 2)
     for cp in cps {
         ro c = match char.try_from(cp as int) { Ok(c) => c, Err(_) => '\u{FFFD}' }

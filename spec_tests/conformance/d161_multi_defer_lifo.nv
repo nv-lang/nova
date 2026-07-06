@@ -18,7 +18,7 @@ fn d161_fail_b() Fail[D161Err2] -> () { () }
 fn d161_ok(_n int) -> () { () }
 
 // (1) Наблюдаемый LIFO: defer'ы пишут в Vec через mut-параметр.
-fn d161_order(mut log Vec[int]) -> () {
+fn d161_order(mut log []int) -> () {
     defer { log.push(1) }   // исполнится ПОСЛЕДНИМ
     defer { log.push(2) }
     defer { log.push(3) }   // исполнится ПЕРВЫМ
@@ -40,7 +40,7 @@ fn d161_mixed() Fail -> () {
 }
 
 test "multi-defer: наблюдаемый LIFO-порядок (D161)" {
-    mut d161_log = Vec[int].new()
+    mut d161_log = []int.new()
     d161_order(d161_log)
     assert(d161_log.len() == 4)
     assert(d161_log[0] == 0)
@@ -66,7 +66,7 @@ test "multi-defer: смешанный набор, средний failable (D161)
 }
 
 test "multi-defer: backward-compat D90 — инфаллибельные (D161)" {
-    mut d161_bc = Vec[int].new()
+    mut d161_bc = []int.new()
     {
         defer { d161_bc.push(7) }
         d161_bc.push(1)

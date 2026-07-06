@@ -300,7 +300,7 @@ export fn deser_option[T Deserialize, D Deserializer](mut d D) -> Result[Option[
 
 /// []T -> data-model Seq. Deser: длина + per-index под-cursor.
 #unstable
-fn Vec[T Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+fn[T Serialize] []T @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     s.begin_seq(@len())?
     for v in @ {
         v.serialize(s)?
@@ -308,7 +308,7 @@ fn Vec[T Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     s.end_seq()
 }
 #unstable
-fn Vec[T Deserialize].deserialize[D Deserializer](mut d D) -> Result[Vec[T], DeError] {
+fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> Result[[]T, DeError] {
     ro n = d.seq_len()?
     mut out []T = []
     mut i = 0

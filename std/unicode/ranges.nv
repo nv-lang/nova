@@ -7,10 +7,10 @@ module std.unicode
 
 import std.collections.vec.{Vec}
 
-// "lo,hi,cat;lo,hi,cat;.." (or any nested ';'-of-',') -> flat Vec[u32].
+// "lo,hi,cat;lo,hi,cat;.." (or any nested ';'-of-',') -> flat []u32.
 // Used by graphemes.nv (GCB/ExtPict/InCB) and collate.nv (implicit weights).
-fn parse_flat(data str) -> Vec[u32] {
-    mut out = Vec[u32].with_capacity(1024)
+fn parse_flat(data str) -> []u32 {
+    mut out = []u32.with_capacity(1024)
     for entry in data.split(";") {
         for f in entry.split(",") {
             match hex(f) { Some(v) => out.push(v), None => {} }
@@ -20,7 +20,7 @@ fn parse_flat(data str) -> Vec[u32] {
 }
 
 // Binary search over sorted (lo,hi,cat) triples; returns cat or 0 (Other).
-fn range_lookup3(t Vec[u32], cp u32) -> int {
+fn range_lookup3(t []u32, cp u32) -> int {
     ro count = t.len() / 3
     mut lo = 0
     mut hi = count - 1
@@ -42,7 +42,7 @@ fn range_lookup3(t Vec[u32], cp u32) -> int {
 }
 
 // Binary search over sorted (lo,hi) pairs; membership test.
-fn in_ranges2(t Vec[u32], cp u32) -> bool {
+fn in_ranges2(t []u32, cp u32) -> bool {
     ro count = t.len() / 2
     mut lo = 0
     mut hi = count - 1

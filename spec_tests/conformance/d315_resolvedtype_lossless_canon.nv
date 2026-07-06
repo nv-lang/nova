@@ -2,8 +2,8 @@
 // FULL semantic identity (resolved identity, generic-args, Scalar{width,signed,wide_default},
 // effects, the 3 mutability axes, pointer-modifier fidelity). `type_ref_to_c` is retired in
 // favour of ONE lowering (`resolved_type_to_c`). The observable consequence pinned here:
-// width/sign is LOSSLESS — `Vec[u32]` and `Vec[u8]` do NOT mis-mangle into a shared
-// `nova_int`-erased carrier (the very `Vec[u32]` mis-mangling class D315 kills at the root),
+// width/sign is LOSSLESS — `[]u32` and `[]u8` do NOT mis-mangle into a shared
+// `nova_int`-erased carrier (the very `[]u32` mis-mangling class D315 kills at the root),
 // and an alias (`int`≡`i64`) canonicalizes so semantically-equal types stay value-equal.
 // Spec: spec/decisions/02-types.md:13215 (D315). Part of the SINGLE `spec_tests.conformance`
 // folder-module (one CU). D-prefixed names avoid clashes across D-files.
@@ -16,7 +16,7 @@ test "distinct Vec element widths do NOT collapse — u32 and u8 stay lossless (
     mut b []u8 = [4, 5]
     assert(b[0] == 4)
     assert(b[1] == 5)
-    // Both Vecs coexist in one CU; if `Vec[u32]`/`Vec[u8]` mis-mangled into a shared
+    // Both Vecs coexist in one CU; if `[]u32`/`[]u8` mis-mangled into a shared
     // nova_int-erased carrier (the D315 drift class), element values would corrupt.
     assert(a.len() == 3)
     assert(b.len() == 2)

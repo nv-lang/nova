@@ -71,9 +71,9 @@ export type GeneralCategory enum
 // ─── lazy-static range tables (built once on first touch) ───
 // GC_DATA: (lo,hi,code) triples (stride 3) → range_lookup3. ALPHA_DATA / WS_DATA:
 // (lo,hi) pairs (stride 2) → in_ranges2. All sorted by lo (binary search).
-ro gc_flat Vec[u32] = parse_flat(GC_DATA)
-ro alpha_flat Vec[u32] = parse_flat(ALPHA_DATA)
-ro ws_flat Vec[u32] = parse_flat(WS_DATA)
+ro gc_flat []u32 = parse_flat(GC_DATA)
+ro alpha_flat []u32 = parse_flat(ALPHA_DATA)
+ro ws_flat []u32 = parse_flat(WS_DATA)
 
 // Raw General_Category code (1..=30) of `cp`; 30 (`Cn`) when absent from GC_DATA
 // (range_lookup3 returns 0 for "not found", which we map to the Cn default).
@@ -279,7 +279,7 @@ export fn str @trim_end() -> str => @trim_unicode_end()
 /// Split on runs of Unicode whitespace, skipping empty segments.
 /// Opt-in under `import std.unicode`.
 export fn str @split_whitespace() -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     ro n = @byte_len()
     mut i = 0
     while i < n {

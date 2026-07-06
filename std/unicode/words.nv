@@ -37,7 +37,7 @@ const WB_NUMERIC int = 16
 const WB_EXTENDNUMLET int = 17
 const WB_WSEGSPACE int = 18
 
-ro wb_flat Vec[u32] = parse_flat(WB_DATA)
+ro wb_flat []u32 = parse_flat(WB_DATA)
 fn wbcat(cp u32) -> int => range_lookup3(wb_flat, cp)
 
 fn wb_ignorable(c int) -> bool => c == WB_EXTEND || c == WB_FORMAT || c == WB_ZWJ
@@ -54,7 +54,7 @@ fn wb_ri_step(c int, run int) -> int {
 // Is there a word boundary BEFORE cps[i] (between cps[i-1] and cps[i])? Applies the
 // UAX #29 rules WB3..WB999 in order (first match wins). WB4 (ignore Extend/Format/
 // ZWJ) is folded by skipping ignorables when computing the effective prev/next.
-fn wb_is_break(cps Vec[u32], cats Vec[int], i int, ri_run int) -> bool {
+fn wb_is_break(cps []u32, cats []int, i int, ri_run int) -> bool {
     ro n = cps.len()
     ro p = cats[i - 1]   // immediate previous
     ro c = cats[i]       // current
@@ -120,9 +120,9 @@ fn wb_is_break(cps Vec[u32], cats Vec[int], i int, ri_run int) -> bool {
 }
 
 // Word-start codepoint indices (0-based: 0, then every break position).
-fn wb_starts(cps Vec[u32], cats Vec[int]) -> Vec[int] {
+fn wb_starts(cps []u32, cats []int) -> []int {
     ro n = cps.len()
-    mut starts = Vec[int].with_capacity(n + 1)
+    mut starts = []int.with_capacity(n + 1)
     if n == 0 {
         starts
     } else {
@@ -140,8 +140,8 @@ fn wb_starts(cps Vec[u32], cats Vec[int]) -> Vec[int] {
     }
 }
 
-fn wb_cats(cps Vec[u32]) -> Vec[int] {
-    mut cats = Vec[int].with_capacity(cps.len())
+fn wb_cats(cps []u32) -> []int {
+    mut cats = []int.with_capacity(cps.len())
     for cp in cps { cats.push(wbcat(cp)) }
     cats
 }
@@ -286,14 +286,14 @@ export fn to_titlecase(s str) -> str {
     ro cats = wb_cats(cps)
     ro starts = wb_starts(cps, cats)
     // is_start[i] ⟺ cp i begins a new word (reset the first-cased tracker).
-    mut is_start = Vec[bool].with_capacity(n)
+    mut is_start = []bool.with_capacity(n)
     mut z = 0
     while z < n {
         is_start.push(false)
         z += 1
     }
     for st in starts { is_start[st] = true }
-    mut out = Vec[u32].with_capacity(n)
+    mut out = []u32.with_capacity(n)
     mut seen_cased = false
     mut i = 0
     while i < n {

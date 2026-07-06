@@ -27,14 +27,14 @@ module spec_tests.conformance
 import std.collections.vec_iter
 
 test "enumerate.count == длина доставленного потока; пустой → 0 (D284 §1 терминатор)" {
-    ro v = Vec[int].of(10, 20, 30, 40)
+    ro v = []int.of(10, 20, 30, 40)
     assert(v.iter().enumerate().count() == 4)
-    ro e = Vec[int].new()
+    ro e = []int.new()
     assert(e.iter().enumerate().count() == 0)   // None транзитивно, 0 пар
 }
 
 test "enumerate.collect: .0 == порядковый индекс с 0, .1 == элемент в порядке (D284 §3/§4)" {
-    ro v = Vec[int].of(10, 20, 30)
+    ro v = []int.of(10, 20, 30)
     ro got = v.iter().enumerate().collect()
     assert(got.len() == 3)
     ro p0 = got[0]
@@ -46,7 +46,7 @@ test "enumerate.collect: .0 == порядковый индекс с 0, .1 == э�
 }
 
 test "enumerate ПОСЛЕ filter: индекс рестартует с 0 над отфильтрованным потоком (D284 §4)" {
-    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    ro v = []int.of(1, 2, 3, 4, 5)
     // filter оставляет чётные (2,4) → enumerate переиндексирует доставленные: (0,2),(1,4).
     // Пропущенные элементы НЕ увеличивают i — индекс непрерывен с 0 по потоку.
     ro got = v.iter().filter(|x| x % 2 == 0).enumerate().collect()
@@ -58,10 +58,10 @@ test "enumerate ПОСЛЕ filter: индекс рестартует с 0 над
 }
 
 test "filter на .0 (индекс) и на .1 (значение) пары — оба поля кортежа наблюдаемы (D284 §3)" {
-    ro v = Vec[int].of(10, 20, 30, 40, 50)
+    ro v = []int.of(10, 20, 30, 40, 50)
     // чётно-индексированные пары: индексы 0,2,4 → 3 пары
     assert(v.iter().enumerate().filter(|p| p.0 % 2 == 0).count() == 3)
-    ro w = Vec[int].of(1, 2, 3, 4, 5)
+    ro w = []int.of(1, 2, 3, 4, 5)
     // пары с нечётным значением .1: (0,1),(2,3),(4,5) → 3 пары
     assert(w.iter().enumerate().filter(|p| p.1 % 2 == 1).count() == 3)
 }

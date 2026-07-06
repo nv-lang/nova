@@ -86,9 +86,9 @@ export fn str @rfind(needle str) -> Option[int] {
 // случай — `return out.push(...)` без отдельного `out`. Семантика как у retired C
 // nova_str_split: пустой `sep` → один элемент со всей строкой; иначе
 // non-overlapping матчи (N матчей ⇒ N+1 сегментов, хвост всегда push'ится).
-// `Vec[str].new()` (не `[]str.`) — cross-type producer на `Vec`; `ro []str` = L2 RO.
+// `[]str.new()` (не `[]str.`) — cross-type producer на `Vec`; `ro []str` = L2 RO.
 export fn str @split(sep str) -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     ro sep_len = sep.byte_len()
     ro sn = @byte_len()
     if sep_len == 0 {
@@ -118,7 +118,7 @@ fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
 // unsplit remainder (Rust `splitn`). `n <= 0` → empty; `n == 1` / empty sep →
 // whole string. Byte-scan, zero-copy `@[a..b]` views.
 export fn str @splitn(n int, sep str) -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     if n <= 0 { return out }
     ro sep_len = sep.byte_len()
     ro sn = @byte_len()
@@ -143,7 +143,7 @@ export fn str @splitn(n int, sep str) -> ro []str {
 
 // Split from the RIGHT, parts in REVERSE order (Rust `rsplit`). Empty sep → whole.
 export fn str @rsplit(sep str) -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     ro sep_len = sep.byte_len()
     ro sn = @byte_len()
     if sep_len == 0 { return out.push(@[0..sn]) }
@@ -164,7 +164,7 @@ export fn str @rsplit(sep str) -> ro []str {
 // `rsplit` into AT MOST `n` parts (reverse order). `n <= 0` → empty; `n == 1` /
 // empty sep → whole.
 export fn str @rsplitn(n int, sep str) -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     if n <= 0 { return out }
     ro sep_len = sep.byte_len()
     ro sn = @byte_len()
@@ -206,7 +206,7 @@ export fn str @rsplit_once(sep str) -> Option[(str, str)] {
 // Like `split`, but a trailing empty segment (when the string ends with `sep`)
 // is omitted (Rust `split_terminator`). `"a,b,".split_terminator(",") == ["a","b"]`.
 export fn str @split_terminator(sep str) -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     ro sep_len = sep.byte_len()
     ro sn = @byte_len()
     if sep_len == 0 { return out.push(@[0..sn]) }
@@ -230,7 +230,7 @@ export fn str @split_terminator(sep str) -> ro []str {
 // — Phase B (`[M-152-ws-unicode]`, delegates to std/unicode in Plan 152.4).
 // Renamed split_whitespace → split_ascii_whitespace (Plan 91.18 Ф.2).
 export fn str @split_ascii_whitespace() -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     ro (bytes, sn) = (@as_bytes(), @byte_len())
     mut i = 0
     while i < sn {
@@ -247,7 +247,7 @@ export fn str @split_ascii_whitespace() -> ro []str {
 // trailing `\r` is stripped). A final line without a trailing newline is included;
 // the empty string yields no lines (Rust `lines`).
 export fn str @lines() -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     ro (bytes, sn) = (@as_bytes(), @byte_len())
     if sn == 0 { return out }
     mut start = 0
@@ -270,7 +270,7 @@ export fn str @lines() -> ro []str {
 // Байтовые offset'ы всех non-overlapping вхождений `needle` (Rust `match_indices`,
 // но только offset'ы). Пустой needle → пусто. Композируется со slice.
 export fn str @match_indices(needle str) -> []int {
-    mut out = Vec[int].new()
+    mut out = []int.new()
     ro nn = needle.byte_len()
     if nn == 0 { return out }
     ro sn = @byte_len()
@@ -323,7 +323,7 @@ export fn str @ends_with(c char) -> bool {
 // Все вхождения `needle` как подстроки (zero-copy views) — Rust `matches`.
 // Пустой needle → пусто.
 export fn str @matches(needle str) -> ro []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     ro nn = needle.byte_len()
     if nn == 0 { return out }
     ro sn = @byte_len()

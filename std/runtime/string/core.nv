@@ -78,9 +78,10 @@ export fn str @to_bytes() -> []u8 {
 // buffer immutability contract (R8). `@ptr` is `*u8` (str's ro pointee);
 // from_raw_parts accepts a `*u8` and re-labels it `*mut u8` internally under its
 // own unsafe — but the `ro []u8` return type forbids any write through it.
-// NOTE: spelled `Vec[u8].from_raw_parts` (not the `[]u8.` alias) because the
-// `[]T.` builtin static-dispatch only recognises new/with_capacity; a genuine
-// Vec type-method must be named on the `Vec` type to route to its Nova body.
+// NOTE ([M-vec-spelling-static-dispatch-gap]): spelled `Vec[u8].from_raw_parts`
+// (NOT the `[]u8.` alias) because the `[]T.` builtin static-dispatch only
+// recognises new/with_capacity/of/from — a genuine Vec type-method outside
+// that fixed set must be named on the `Vec` type to route to its Nova body.
 // `@len` is spelled `@len()` (the method, = `nova_str_byte_len` = the `len`
 // field, O(1)): the bare field read `@len` trips D117 (E_SIZE_ACCESSOR_FIELD —
 // size-like accessors are method-only). `@ptr` is not a size accessor, so the
