@@ -37870,3 +37870,20 @@ Deps-in-main проверены эмпирически; ниже — что за
 - **CANCEL → `Failure(CancelError{reason})`** (не отдельный `Cancelled(any)`-вариант из spec-sketch 03-syntax:8733):
   соответствует существующей 3-вариантной `ScopeOutcome` (Success/Failure/Panic) и плану §6 (Failure(any) folds cancel);
   префикс `"cancel: "` (bootstrap-дискриминатор) убран — дискриминация теперь `err is CancelError`.
+
+## 2026-07-06 — D381 collision-aware module-qualified nominal-type mangling (ветка fix-nominal-mangling)
+
+**[дизайн]** Cross-module same-name type collision (`ErrorKind` × std.io/std.http/std.encoding.compress
+в одном CU) закрыт **collision-aware** квалификацией, а НЕ always-qualify. Выбор обоснован фактами
+(§7 blast-radius map): always-qualify = massive churn всех `.c` + слом extern-контрактов
+`Nova_str_*`-класса; collision-aware = квалифицируем ТОЛЬКО имена, объявленные в ≥2 модулях
+(`Nova_<modpath>_<Name>`), всё прочее байт-идентично (`colliding_type_names` пуст → хелперы no-op →
+`.c` не меняется). НЕ сокращение кода (добавлены карты коллизий + пара mint-хелперов + арность/
+контекст-дизамбигуация bare-варианта) — дизайн-выбор минимального-churn sound-фикса. Единая пара
+`def_type_base`/`ref_type_base` (identity для не-коллидирующего) на всех mint-сайтах вместо зеркал.
+Область: plain-Sum + heap-Record (pointer-identity); newtype/value-record/generic/opaque — followup.
+Спека — D381 (08-runtime.md). Гейт: conformance PASS N/0 (фикстуры d358/d333-336 возвращены в
+conformance); zero-regression byte-identical (content) на не-коллидирующем корпусе. Закрывает
+`[M-sync-crossmodule-samename-type-collision]` + `[M-codegen-nominal-type-name-collision]`.
+**НЕ** закрыл `[M-codegen-cross-module-ctor-emission]` (victim NetError.IoError — variant↔type
+name-clash, отдельный root, репро идентичен на baseline).

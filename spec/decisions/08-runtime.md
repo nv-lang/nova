@@ -8400,3 +8400,67 @@ ro count = dns_lookup(host.as_ptr(), host.byte_len(), port)
 - GC не перемещает строки (intern table — статический, heap-allocated строки неперемещаемы).
 - Арифметика по указателю в Nova не поддерживается; как сырой адрес используется через `as int`.
 
+
+## D381 — Collision-aware module-qualified nominal-type C-mangling (Plan 178/179 merge, 2026-07-06)
+
+**Проблема.** Пользовательские `sum`/`record`-типы манглятся в C по ПРОСТОМУ имени:
+`Nova_<Name>` (struct/typedef), `NOVA_TAG_<Name>_<V>` (tag-enum), `nova_make_<Name>_<V>`
+(ctor), плюс ключи schema/registry. Два РАЗНЫХ типа с одним простым именем из РАЗНЫХ
+модулей в одном CU коллидируют: одна C-структура/tag-enum/registry-entry на всех →
+`redefinition` / потеря вариантов (`find_variant` возвращает выжившего) / ICE
+(`Ident 'X' not a sum-variant`). Триггер: merge 178/179 свёл в один positive-CU
+`spec_tests.conformance` ТРИ разных `ErrorKind` (`std.io` / `std.http` /
+`std.encoding.compress`) с общими именами вариантов (`Other`, `InvalidData`) РАЗНОЙ арности.
+
+**Решение — collision-aware, а НЕ always-qualify.** На входе `emit_module` строится карта
+`простое-имя → {объявляющие модули}` (из `peer_files`, каждый несёт `module_name` +
+`items_here`). Простое имя, объявленное в **≥2 РАЗНЫХ модулях**, считается *коллидирующим*
+и получает module-qualified базу `Nova_<modpath>_<Name>` (соответственно
+`NOVA_TAG_<base>_<V>`, `nova_make_<base>_<V>`, schema/registry-ключи по `<base>`). **Все
+НЕ-коллидирующие имена остаются байт-идентичны** (`Nova_<Name>`): множество коллизий пусто
+в любом CU без реальной cross-module коллизии → вся квалификация — no-op, и `.c` побайтно
+не меняется. Это минимизирует baseline-churn (в отличие от always-qualify, ломающего весь
+корпус и extern-контракты `Nova_str_*`-класса) и чинит коллизию по построению.
+
+**Область.** Квалифицируются ТОЛЬКО concrete (non-generic) типы с pointer-identity
+`Nova_<Name>*`: **plain-Sum** и **heap-Record**. Newtype/alias (`type_aliases`-indirection),
+value-record/named-tuple (`NovaValue_`/`NovaTuple_`), effect/protocol/type-set, opaque
+(nova_rt-хедеры) и generic-шаблоны (mono-путь именует по-своему) — ИСКЛЮЧЕНЫ (отдельная ось;
+followup). Prelude/builtin (`RUNTIME_DEFINED_TYPES`) — никогда.
+
+**Резолюция модуля.** DEF-модуль типа = `module_name` файла, где он объявлен
+(`TypeDecl.span.file_id → module`). REF-резолюция (в какой модуль резолвится ссылка на
+коллидирующее имя из данного файла) = модуль этого файла, если он его объявляет (Rule C /
+D281 — peers folder-модуля делят объявления БЕЗ import), иначе — единственный selectively-
+импортированный модуль (инвариант чекера: bare-имя типа однозначно внутри файла). Match
+пути импорта с `module_name` — по суффиксу (import несёт полный package-path
+`std.encoding.compress`, а `module`-декларация может опускать package-root: `encoding.compress`).
+
+**Дизамбигуация bare-конструктора варианта.** Общий вариант (`Other` во всех трёх
+`ErrorKind`; `InvalidData` в io-unit vs compress-payload) резолвится: (1) по **арности**
+payload на call-сайте (`InvalidData(msg)` — 1 arg — не io-unit `InvalidData`); (2) внутри
+одной арности — по сумме из типа возврата текущей функции (`Other(code)` в io
+`kind_from_errno`); (3) registry-fallback по уникальному имени варианта, когда file-context
+недоступен (erased/mono тела). Дизамбигуация среди **plain** (не-mono) кандидатов — mono-
+инстансы владеет generic-путь (иначе call без queuing инстанса → undefined symbol).
+
+**Единая точка.** Одна пара хелперов `def_type_base(name, file_id)` (DEF) / `ref_type_base(name)`
+(REF) + `qualify_type_base`; каждый — no-op (identity) для не-коллидирующего имени. Все
+mint-сайты (struct/tag/ctor def; `resolved_named_to_c` ref; pattern-tag; variant-ctor
+call; schema/registry ключи; mono-тела через per-fn file-context) маршрутизируются через них.
+
+**Гейт.** `nova test spec_tests/conformance` (io+http+compress `ErrorKind` в одном CU) =
+**PASS N/0** (фикстуры d322/d358/d333-336 возвращены в conformance из workaround-локаций
+`spec_tests/http`, `spec_tests/compress`). Zero-regression: не-коллидирующий корпус
+byte-identical по КОНТЕНТУ (расхождения = pre-existing typedef/variant-order
+nondeterminism, `[M-codegen-emission-nondeterminism]`, тот же multiset — baseline флюктуирует
+идентично).
+
+**НЕ покрыто (отдельная ось, followup):** variant-имя ↔ type-имя clash в резолюции
+`emit_call` (`NetError.IoError(msg)` мис-роутится в static-method `Nova_NetError_static_IoError`
+когда одноимённый ТИП `IoError` co-present) — `[M-codegen-cross-module-ctor-emission]`, НЕ
+type-name-collision (репро одинаково на baseline). Квалификация newtype/value-record/generic
+одноимённых типов — тоже followup.
+
+Закрывает `[M-sync-crossmodule-samename-type-collision]` + `[M-codegen-nominal-type-name-collision]`;
+разблокирует `[M-178-autodecompress-needs-179]` (codegen-часть).

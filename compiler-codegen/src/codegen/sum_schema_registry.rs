@@ -255,6 +255,24 @@ impl SumSchemaRegistry {
         None
     }
 
+    /// [M-sync-crossmodule-samename-type-collision] (D348): distinct sum names
+    /// (module-qualified bases, post collision-aware mangling) that declare
+    /// `variant_name`. A `len() >= 2` result means the variant is SHARED across
+    /// sums (e.g. `Other` in three different `ErrorKind`s) → a bare constructor
+    /// `Other(x)` is ambiguous and must be disambiguated by call-site context
+    /// (the expected/return sum) rather than `find_variant_v2`'s first-wins.
+    pub fn variant_sum_candidates(&self, variant_name: &str) -> Vec<String> {
+        match self.variant_to_sum.get(variant_name) {
+            Some(v) => {
+                let mut s: Vec<String> = v.iter().map(|(n, _)| n.clone()).collect();
+                s.sort();
+                s.dedup();
+                s
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// Number of entries в registry. Used by tests.
     pub fn len(&self) -> usize {
         self.entries.len()
