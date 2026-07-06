@@ -34,7 +34,7 @@ import std.http.{Method, Url, HeaderMap, Response, Request, Http, HttpError, Err
 
 import std.encoding.base64.{Base64}
 import std.encoding.json.{JsonValue, Json}
-import std.encoding.compress.{gzip_decode, zlib_decode, inflate, CompressError}
+import std.encoding.compress.{gzip_decode, zlib_decode, inflate, brotli_decode, CompressError}
 
 // ── RedirectPolicy ───────────────────────────────────────────────────────────
 
@@ -355,8 +355,9 @@ fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow 
 // Build the terminal Response, transparently decoding a gzip/deflate body when
 // auto-decompress is on. On success the Content-Encoding header is dropped and
 // Content-Length rewritten to the decoded length (so the returned headers describe
-// the body the caller actually sees). `br` (brotli) is left ENCODED — no codec —
-// and its Content-Encoding preserved [M-178-autodecompress-br].
+// the body the caller actually sees). `br` (brotli) is decoded via Plan 179 Ф.2
+// (libbrotlidec C-FFI) [M-178-autodecompress-br]; on a build without the vendored
+// brotli lib the decode returns UnsupportedMethod → surfaced as a Protocol error.
 fn finalize_response(ver Version, st StatusCode, headers HeaderMap, body []u8, auto_decompress bool, max_decompressed int) -> Result[Response, HttpError] {
     if !auto_decompress {
         return Ok(Response.new(ver, st, headers, body))
@@ -379,8 +380,12 @@ fn finalize_response(ver Version, st StatusCode, headers HeaderMap, body []u8, a
             }
         }
         Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len), decoded))
+    } else if enc == "br" {
+        // brotli (RFC 7932) via Plan 179 Ф.2 [M-178-autodecompress-br].
+        ro decoded = decode_or_err(brotli_decode(body, max_decompressed))?
+        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len), decoded))
     } else {
-        // identity / br / unknown → leave the body (and its Content-Encoding) as-is.
+        // identity / unknown → leave the body (and its Content-Encoding) as-is.
         Ok(Response.new(ver, st, headers, body))
     }
 }
@@ -428,11 +433,11 @@ fn build_headers(client HttpClient, ops []HeaderOp, content_type Option[str]) ->
     if !hm.contains("user-agent") && ua.byte_len() > 0 {
         hm.insert("User-Agent", ua)?
     }
-    // Advertise the codecs we can transparently decode (gzip/deflate; br is gated —
-    // no brotli codec, [M-178-autodecompress-br]). A caller-set Accept-Encoding
+    // Advertise the codecs we can transparently decode (gzip/deflate/br — brotli
+    // via Plan 179 Ф.2, [M-178-autodecompress-br]). A caller-set Accept-Encoding
     // wins. Skipped entirely when auto-decompress is off (caller owns encoding).
     if client.cfg_auto_decompress() && !hm.contains("accept-encoding") {
-        hm.insert("Accept-Encoding", "gzip, deflate")?
+        hm.insert("Accept-Encoding", "gzip, deflate, br")?
     }
     match content_type {
         Some(ct) => { hm.insert("Content-Type", ct)?; () }
