@@ -116,6 +116,26 @@
   пометь их `#pure`, прежде чем использовать в `requires`/`ensures`.
 - Контракты стоят **между сигнатурой и `{`**, не внутри тела.
 
+## 5а. Канон `[]T` (D239 amend, vec-sweep 2026-07-06)
+
+- **`[]T` — каноническая запись везде**: аннотации типов, возвраты, вложенные
+  формы (`[][]u8`), кортежи (`[](str, str)`), статические
+  вызовы-конструкторы (`[]u8.new()`, `[]int.of(1,2,3)`, `[]int.from(...)`).
+- **`Vec[...]` — ТОЛЬКО definition-site**, внутри `std/collections/vec/`
+  (реализация самого `Vec[T]`). За пределами этого модуля пишите `[]T`.
+- **Исключение** — известный compiler-gap `[M-153.x-array-new-not-vec]`:
+  bracket-spelling `[]T` в value-позиции конструктора иногда лоуэрится через
+  legacy erased-array путь вместо типизированного `Vec`-пути и может дать
+  RUN-FAIL (см. `std/collections/hashmap.nv::new_buckets` для примера и
+  маркера на месте). В таких точечных местах `Vec[...]` остаётся исключением
+  с явным комментарием-маркером — не переписывайте их бездумно на `[]T`.
+- **`cap(n)` (D117 setter, ex-`with_capacity`)** — см. §6 ниже: НЕ чейньте
+  `X.new().cap(n)` в одном выражении, если результат бинедится через
+  `consume`/сохраняется в переменную, которую дальше используют другие
+  вызовы в той же compile unit — известные gaps
+  `[M-vec-spelling-array-value-position-cap-collision]` /
+  `[M-vec-spelling-consume-chain-cap-collision]` (D372 amend).
+
 ## 6. Компактный стиль
 
 - **Tuple-binding для параллельных чтений:** `ro (sn, pn) = (@byte_len(), prefix.byte_len())`
@@ -124,20 +144,28 @@
 - **Операторы вместо `.compare()`/`.equal()`.** `str` синтезирует `< <= > >= == !=` из
   `@compare`/`@equal` — пишите `a < b`, не `a.compare(b) < 0`.
 - **Цепочки вызовов / fluent `-> @`.** Чейньте через self-returning мутаторы:
-  `[]u8.with_capacity(n).append(@as_bytes())`; `StringBuilder.with_capacity(n).append(x)
+  `[]u8.new().append(@as_bytes())`; `StringBuilder.new().append(x)
   .append(y).into_str()`. Метод, имеющий смысл в цепочке, объявляйте `-> @`, не `-> ()`.
+  **Исключение — `cap(n)` (D117 setter, ex-`with_capacity`, амендмент D372
+  2026-07-06): НЕ чейньте `X.new().cap(n)` в одном выражении** — известный
+  compiler-gap (`[M-vec-spelling-array-value-position-cap-collision]` /
+  `[M-vec-spelling-consume-chain-cap-collision]`, см. D372) мис-dispatch'ит
+  или ломает consume-tracking. Разбивайте на два оператора:
+  `mut x []u8 = []u8.new(); x.cap(n)` (или `consume sb = StringBuilder.new(); sb.cap(n)`),
+  и только ПОСЛЕ этого продолжайте цепочку остальных методов.
 - **Без `;` как разделителя** и **без нескольких операторов на строке через пробел**
   (`term = 11 phase = 0` — запрещено так же, как `;`). Один оператор — одна строка.
 
 ## 7. RawMem / bulk-copy вместо push-циклов
 
 - **Стройте владеющие буферы одной аллокацией + bulk `append`, не push-циклом.**
-  `@to_bytes` = `with_capacity(byte_len()).append(@as_bytes())` — один `RawMem.copy`
+  `@to_bytes` = `new()` + `.cap(byte_len())` + `.append(@as_bytes())` — один `RawMem.copy`
   (`memmove`), без цикла (`core.nv:61-67`).
 - **Сравнение/скан через `RawMem.compare` (`memcmp`), не ручной byte-loop.** `@compare`,
   `@equal` (`core.nv`); `@starts_with`, `@ends_with`, `@contains`, `@find`, `@split`
   (`search.nv`).
-- **Всегда пре-сайзьте.** `[]u8.with_capacity(n)`/`StringBuilder.with_capacity(n)` до любого
+- **Всегда пре-сайзьте.** `[]u8.new()`+`.cap(n)` / `StringBuilder.new()`+`.cap(n)`
+  (D372 amend 2026-07-06, ex-`with_capacity(n)`) до любого
   заполнения; не растите инкрементально, если финальный размер известен. Для таблиц-карт
   (case/decomp) парсите один раз в lazy-static `HashMap[int, str]` (packed-str значение
   декодируется лениво через `parse_cp_list`), не per-cp.
@@ -514,7 +542,8 @@ fn finish(consume sb StringBuilder) -> str => sb.into_str()
   второй копии. Дополняет §1 (имя `into_*`) механикой биндинга.
 
 ```nv
-consume sb = StringBuilder.with_capacity(n)
+consume sb = StringBuilder.new()
+sb.cap(n)   // D372 amend 2026-07-06: НЕ чейньте .cap(n) в ту же `consume`-строку — §6 исключение
 sb.append(a).append(b)
 ro s = sb.into_str()   // sb после into_str мёртв (use-after = E_CONSUME error)
 
@@ -541,7 +570,7 @@ fn abs(x int) -> int => if x < 0 { -x } else { x }
 
 fn left_pad(s str, w int) -> str {
     if s.byte_len() >= w { return s }   // guard-clause: ранний выход
-    StringBuilder.with_capacity(w)
+    StringBuilder.new().cap(w)
         .append_repeat(" ", w - s.byte_len())   // первый арг — str, второй — count (sb.nv:144)
         .append(s)
         .into_str()
