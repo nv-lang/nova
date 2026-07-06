@@ -6789,9 +6789,11 @@ setup, до спавна конкурентной работы, читающей
 - [D333](#d333) (`Checksum` — вариант `CompressError`), [D334](#d334) (verify на том же decode-пути).
 - Промоут `_experimental/checksums/crc32.nv` (Q15); Adler-32 NEW.
 
-## D337 — brotli C-FFI-контракт (forward-spec, gated `[M-179-brotli-vendor-lib]`) (Plan 179 Ф.2)
+## D337 — brotli C-FFI-контракт (Plan 179 Ф.2)
 
-> ⚠️ **FORWARD-SPEC, НЕ landed.** Ф.2 не приземлена — честный build-gate `[M-179-brotli-vendor-lib]`: `libbrotlidec` в проекте отсутствует (`find -iname '*brotli*'`=0; vcpkg-lib gate-env содержит только gc/z3; единственный vendored native = libuv). C-FFI без библиотеки НЕ фейкается (§0/§7.7). Этот блок фиксирует контракт **вперёд** — материализуется вместе с vendor-коммитом google/brotli.
+> ✅ **LANDED (2026-07-06) — decode (one-shot).** `[M-179-brotli-vendor-lib]` снят: google/brotli v1.2.0 **декодер** собран (`common/` + `dec/`, MSVC x64 `/MT /O2`) и вендорен как **заголовки + статическая lib** (без исходников — стиль libuv): headers `compiler-codegen/nova_rt/brotli/include/brotli/{decode,types,port,shared_dictionary}.h`, lib `compiler-codegen/nova_rt/brotli/lib/libbrotlidec.lib` (+ build-cache `target/brotli-cache/`). `brotli_decode(data, max_output)` работает на официальных RFC 7932-векторах (`tests/testdata/*.compressed`), bomb-cap инкрементально поверх FFI, ошибки типизированы. **Streaming `BrotliReader` (R2) — deferred `[M-179-brotli-reader-streaming]`** (см. «Реальность»).
+>
+> **Условная линковка (ключевой факт, аменд §5).** libuv — **mandatory** (линкуется ВСЕГДА, Plan 22 F2). brotli — **CONDITIONAL**: lib попадает в команду компоновки ТОЛЬКО когда CU реально ВЫЗЫВАЕТ декодер. Механизм — «модуль→библиотека», введён этим планом (libuv не тронут): (1) shim `nova_rt/brotli_shim.{h,c}` — прототипы всегда `#include`-аются в `nova_rt.h` (пустая зависимость), (2) `brotli_shim.c` компилируется и `libbrotlidec.lib` линкуется в `test_runner.rs` `build_command` лишь если генерённый `.c` содержит **call-site** к `brotli_decode` (не просто определение — std-fn'ы эмитятся даже мёртвыми; детектор фильтрует forward-decl/definition-header), (3) при `NOVA_USE_BROTLI` shim = реальный декодер, без — **feature-gate-заглушки** (`dec_new`→0 → `UnsupportedMethod`, НЕ link-error, Q11). Доказано: программа с `gzip_decode` но без brotli → `uses_brotli=false` → lib НЕ линкуется; brotli/http-`br` → линкуется.
 
 ### Что
 
@@ -6811,7 +6813,12 @@ brotli-decode — **C-FFI к `libbrotlidec`** (НЕ pure-Nova V1: 120 KB вст�
 2. C-instance — внешний ресурс → `consume` (D133) обязателен: release-долг виден в типе, no silent leak.
 3. Output-cap ≠ window-cap: lgwin ограничивает окно, но выход всё равно надо капить инкрементально (иначе DoS через большой валидный выход).
 
+### Реальность (landed vs deferred, 2026-07-06)
+
+- **`brotli_decode(data, max_output)` — LANDED.** Реализован в `std/encoding/compress/brotli.nv` поверх стрим-шима: `new` → `feed`(весь вход, копируется в шиме) → цикл `pull`(bounded-budget) с инкрементальным bomb-cap → `free` на КАЖДОМ пути выхода. Бомба ловится по границе (`output == max_output` ok, первый байт сверх → `Bomb`); budget = `min(64 KiB, max_output − total + 1)` → перебор ≤1 байта, память bounded. Extern-сигнатуры (R1) — `nova_brotli_dec_{new,feed,pull,done,needs_input,error,free}` с `*u8`/`*mut u8`+`int` (модель fs `fs_read`/`fs_write`), НИ ОДНОГО `[]u8` (grep=0).
+- **`BrotliReader` streaming (R2) — DEFERRED `[M-179-brotli-reader-streaming]`.** C-примитивы шима (`feed`/`pull` инкрементально) её поддерживают — это тонкая Nova-обёртка `consume`-типа. Отложена сознательно: owner-deliverable Ф.2 = `brotli_decode`, а http-auto-decompress (единственный потребитель `br`) использует **one-shot** (симметрично `gzip_decode`/`zlib_decode` в `finalize_response`). НЕ tech-debt-без-плана — followup с rationale; consume-neg-тест приземлится вместе с ней.
+
 ### Связь
 
 - [D333](#d333) (кодек-форма), [D334](#d334) (bomb-cap-over-FFI), [D335](#d335) (streaming — контраст consume vs plain value), [D282](#d282)/D355 (ex-D282, extern "C" C-ABI FFI), [D133](02-types.md#d133) (must-consume).
-- Plan 174.6 M1 (`E_FFI_NON_C_ABI_TYPE`), Plan 178 (закрывает `br`-ветку auto-decompress).
+- Plan 174.6 M1 (`E_FFI_NON_C_ABI_TYPE`), Plan 178 (закрывает `br`-ветку auto-decompress — LANDED, `Content-Encoding: br` → `brotli_decode`; `Accept-Encoding` дополнен `br`).
