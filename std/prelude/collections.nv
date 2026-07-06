@@ -123,7 +123,7 @@ export type Next[T] protocol {
 ///
 /// Generic bound для «принять любой iterable»:
 /// ```nova
-/// fn collect[C Iter[I], I Next[T], T](c C) -> Vec[T]
+/// fn collect[C Iter[I], I Next[T], T](c C) -> []T
 /// ```
 #stable(since = "0.1")
 export type Iter[I] protocol {

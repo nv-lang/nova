@@ -3,7 +3,8 @@
 module nova_tests.plan153_3_1
 
 test "large random 100000 elements" {
-    mut xs = Vec[int].with_capacity(100000)
+    mut xs Vec[int] = Vec[int].new()
+    xs.cap(100000)
     mut seed = 98765
     mut i = 0
     while i < 100000 {

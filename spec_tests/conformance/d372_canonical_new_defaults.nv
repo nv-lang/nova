@@ -1,7 +1,8 @@
 // D372 — Canonical `.new()` constructors (convention). stdlib provides `.new()`
 // для типов с единственным очевидным default-значением, возвращая этот default:
 // int/u*/i* → 0, f32/f64 → 0.0, bool → false, str → "", []T → [] (empty).
-// Также []T.with_capacity(n) — empty с pre-allocated capacity; push после new работает.
+// Также []T.new().cap(n) (ex-with_capacity(n), D372 amend 2026-07-06) — empty
+// с pre-allocated capacity; push после new работает.
 // Spec: spec/decisions/02-types.md §D372 (table line ~6526-6535). Декларации:
 // std/runtime/defaults.nv (numeric/bool), std/runtime/string/core.nv (str), builtin []T.
 module spec_tests.conformance
@@ -27,7 +28,7 @@ test "str.new() возвращает пустую строку \"\" (D372)" {
 }
 
 test "[]T.new() возвращает empty array; push после new работает (D372)" {
-    mut a = []int.new()
+    mut a []int = []int.new()
     assert(a.len() == 0)
     a.push(1)
     a.push(2)
@@ -36,8 +37,9 @@ test "[]T.new() возвращает empty array; push после new работ
     assert(a[1] == 2)
 }
 
-test "[]T.with_capacity(n) — empty (len 0) с pre-allocated capacity (D372)" {
-    mut a = []int.with_capacity(8)
+test "[]T.new().cap(n) — empty (len 0) с pre-allocated capacity (D372 amend)" {
+    mut a []int = []int.new()
+    a.cap(8)
     assert(a.len() == 0)
     a.push(42)
     assert(a.len() == 1)

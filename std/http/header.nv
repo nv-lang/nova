@@ -54,7 +54,8 @@ export fn HeaderValue.from_bytes(b []u8) -> Result[HeaderValue, HttpError] {
 /// codepoint > 0xFF → `InvalidHeader`.
 #stable(since = "0.1")
 export fn HeaderValue.from_str(s str) -> Result[HeaderValue, HttpError] {
-    mut buf = WriteBuffer.with_capacity(s.byte_len())
+    mut buf = WriteBuffer.new()
+    buf.cap(s.byte_len())
     for c in s.as_chars() {
         ro cp = c as int
         if cp > 0xFF {

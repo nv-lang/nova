@@ -12,7 +12,8 @@ import std.encoding.compress.{deflate, zlib_encode, gzip_encode, CompressLevel, 
 // hex-строка → []u8
 fn hx(s str) -> []u8 {
     ro chars = s.to_bytes()
-    mut out = []u8.with_capacity(chars.len() / 2)
+    mut out []u8 = []u8.new()
+    out.cap(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
         out.push(((hxv(chars[i]) << 4) | hxv(chars[i + 1])) as u8)
@@ -51,7 +52,8 @@ test "gzip multi-member concatenation" {
 
 test "dynamic Huffman + long back-references (900B)" {
     ro comp = hx("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
-    mut expect = []u8.with_capacity(900)
+    mut expect []u8 = []u8.new()
+    expect.cap(900)
     ro unit = "the quick brown fox jumps over the lazy dog. ".to_bytes()
     for _ in 0..20 { expect.append(unit) }
     assert(inflate(comp, 1048576)!! == expect)
@@ -77,7 +79,8 @@ test "streaming Inflater (external): feed + finish + drain" {
     mut inf = Inflater.new(4096)
     inf.feed(hx("f348cdc9c9d751707175f3710c71550400"))!!
     inf.finish()!!
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     loop {
         ro c = inf.read(1024)!!
         if c.len() > 0 { out.append(c) } else { break }
@@ -88,9 +91,11 @@ test "streaming Inflater (external): feed + finish + drain" {
 test "streaming GzipReader (external): byte-by-byte == one-shot" {
     ro comp = hx("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
     mut gr = GzipReader.new(1048576)
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     for idx in 0..comp.len() {
-        mut one = []u8.with_capacity(1)
+        mut one []u8 = []u8.new()
+        one.cap(1)
         one.push(comp[idx])
         gr.feed(one)!!
         loop {
@@ -115,7 +120,8 @@ test "ZlibReader streaming (external)" {
     mut zr = ZlibReader.new(4096)
     zr.feed(hx("789cf348cdc9c9d751707175f3710c7155040025c40457"))!!
     zr.finish()!!
-    mut out = []u8.with_capacity(16)
+    mut out []u8 = []u8.new()
+    out.cap(16)
     loop {
         ro c = zr.read(1024)!!
         if c.len() > 0 { out.append(c) } else { break }

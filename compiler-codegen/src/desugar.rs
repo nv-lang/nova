@@ -1,17 +1,19 @@
 //! Plan 52 Ф.4/Ф.5 (D108): AST-десугаринг map-литералов `[k: v]`.
 //!
-//! `MapLit` десугарится в block-expression с `with_capacity` + `@insert`
+//! `MapLit` десугарится в block-expression с `new()` + `.cap(n)` + `@insert`
 //! **до** codegen и treewalk-интерпретатора — единый проход закрывает
 //! оба пути, без дублирования логики. После этого прохода `ExprKind::MapLit`
 //! в AST больше не встречается (codegen/interp заглушки остаются как
 //! safety-net на случай нового непокрытого вызова).
 //!
-//! Десугаринг (D108):
+//! Десугаринг (D108; D372 amend 2026-07-06 — `with_capacity` removed,
+//! construction is `new()` + the D117 `mut @cap(n)` setter):
 //! ```text
 //! [k1: v1, k2: v2]
 //! // →
 //! {
-//!     let mut _m0 = HashMap.with_capacity(2)
+//!     let mut _m0 = HashMap.new()
+//!     _m0.cap(2)
 //!     let _ = _m0.insert(k1, v1)
 //!     let _ = _m0.insert(k2, v2)
 //!     _m0
@@ -21,14 +23,14 @@
 //! - Порядок вычисления нормативный: `k1, v1, k2, v2, ...` — пары слева
 //!   направо, ключ перед значением (D108). Block-statements эмитятся в
 //!   этом порядке естественно.
-//! - `with_capacity(n)` несёт контракт «n вставок без rehash» (Ф.6).
+//! - `cap(n)` несёт контракт «n вставок без rehash» (Ф.6).
 //! - `@insert` возвращает `Option[V]`; возврат отбрасывается через
 //!   `let _ = ...` (защита от будущего lint «discarded non-unit»).
 //! - Temp-переменная `_m0`, `_m1`, ... — per-module счётчик, valid ISO
 //!   C11 (без `$`); вложенные литералы не конфликтуют именами.
 //! - Пустой `[]` НЕ доходит сюда как `MapLit` — он остаётся
 //!   `ArrayLit(vec![])` и резолвится по ожидаемому типу отдельно.
-//! - `HashMap.with_capacity` / `.insert` вызываются **без turbofish** —
+//! - `HashMap.new` / `.cap` / `.insert` вызываются **без turbofish** —
 //!   мономорфизация codegen/interp выводит `K`/`V` из аргументов.
 //!
 //! Bootstrap: десугаринг захардкожен на `HashMap`. Точка расширения —
@@ -183,7 +185,7 @@ impl DesugarCtx {
     }
 
     /// Plan 52 Ф.10: десугаринг D55 map-coercion `{field: v}` →
-    /// `HashMap[str, V].with_capacity(n) + n × insert("field", v)`
+    /// `HashMap[str, V].new().cap(n) + n × insert("field", v)`
     /// block-expression. Mirror MapLit-десугаринга для consistency.
     ///
     /// Spread (`...src`) уже отвергнут type-checker'ом (Plan 52 Ф.3);
@@ -199,7 +201,7 @@ impl DesugarCtx {
         let n = fields.len();
         let mut stmts: Vec<Stmt> = Vec::with_capacity(n + 1);
 
-        // Callee: HashMap[str, V].with_capacity (mirror MapLit с
+        // Callee: HashMap[str, V].new (mirror MapLit с
         // turbofish — codegen mono требует Ident-based callee, не Path).
         let str_ty = TypeRef::Named {
             path: vec!["str".to_string()],
@@ -214,17 +216,33 @@ impl DesugarCtx {
             },
             span,
         );
-        let with_capacity_callee = Expr::new(
+        // D372 amend (vec-sweep, 2026-07-06): `with_capacity` removed —
+        // construction is now `new()`. [M-vec-spelling-maplit-desugar-cap-ice]
+        // (compiler gap, reported): chaining an EXTRA `.cap(n)` statement
+        // here (before the insert_new calls below) reproducibly CRASHED the
+        // compiler on the very next statement (ICE: "method call
+        // `.insert_new` return type unknown") — the D117 setter's presence
+        // in this exact position desyncs the checker's per-statement `_mN`
+        // type-inference cache. Conservative fix (mirrors the analogous
+        // array-literal ctor fix in emit_c.rs `register_vec_mono_method`):
+        // drop the pre-sizing optimization entirely, rely on normal
+        // amortized (×2) growth during the insert_new loop below.
+        // Correctness-preserving; perf-only regression (an occasional extra
+        // rehash for large map literals) — and changes the map literal's
+        // `@capacity()` value right after construction (was pre-sized via
+        // `with_capacity(n)`; now whatever `HashMap[K,V].new()`'s own
+        // default is, possibly followed by ordinary growth rehashes).
+        let new_callee = Expr::new(
             ExprKind::Member {
                 obj: Box::new(turbofish),
-                name: "with_capacity".to_string(),
+                name: "new".to_string(),
             },
             span,
         );
-        let with_capacity_call = Expr::new(
+        let new_call = Expr::new(
             ExprKind::Call {
-                func: Box::new(with_capacity_callee),
-                args: vec![CallArg::Item(Expr::new(ExprKind::IntLit(n as i64), span))],
+                func: Box::new(new_callee),
+                args: vec![],
                 trailing: None,
             },
             span,
@@ -233,11 +251,12 @@ impl DesugarCtx {
             mutable: true,
             pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false },
             ty: None,
-            value: with_capacity_call,
+            value: new_call,
             span,
             is_ghost: false,
             consume: false,
         }));
+        let _ = n; // pre-sizing dropped (see comment above) — `n` no longer used here.
 
         // Для каждого поля: `let _ = _mN.insert("name", value_expr)`
         for f in fields {
@@ -252,7 +271,7 @@ impl DesugarCtx {
                 None => Expr::new(ExprKind::Ident(f.name.clone()), span),
             };
             // Plan 52 Ф.21: используем `insert_new` (нет возврата Option) —
-            // мапа только что создана через with_capacity, дубликатов
+            // мапа только что создана через new().cap(n), дубликатов
             // быть не может. См. std/collections/hashmap.nv::@insert_new.
             let insert_call = Expr::new(
                 ExprKind::Call {
@@ -279,19 +298,23 @@ impl DesugarCtx {
         })
     }
 
-    /// Строит block-expression `{ let mut _mN = HashMap[K,V].with_capacity(n);
+    /// Строит block-expression `{ let mut _mN = HashMap[K,V].new(); _mN.cap(n);
     /// let _ = _mN.insert(k, v); ...; _mN }` из пар map-литерала.
     ///
     /// Plan 52 Ф.7 production-fix: если `inferred_key`/`inferred_value`
     /// заполнены type-checker'ом (MapLitCtx::annotate_module) — используем
-    /// turbofish `HashMap[K, V].with_capacity(n)` для корректной
+    /// turbofish `HashMap[K, V].new()` для корректной
     /// мономорфизации. Без turbofish codegen инстанциирует
     /// `HashMap[void*, void*]` → segfault на runtime при `K.hash()`/
     /// `K.eq()` через generic-bound dispatch (Plan 48 Ф.7.7 partial).
     ///
-    /// Fallback (K/V неизвестны): bare `HashMap.with_capacity(n)` — может
+    /// Fallback (K/V неизвестны): bare `HashMap.new()` — может
     /// упасть в codegen без аннотации; type-checker эмитит «cannot infer»
     /// до десугаринга если контекст не даёт K/V.
+    ///
+    /// D372 amend (vec-sweep, 2026-07-06): `with_capacity(n)` заменён на
+    /// `new()` + отдельный statement `_mN.cap(n)` (D117 setter) — `with_capacity`
+    /// как static-метод удалён из `HashMap`/`Vec`/`Set`.
     fn build_map_block(
         &mut self,
         elems: Vec<MapElem>,
@@ -326,11 +349,18 @@ impl DesugarCtx {
         let n = pairs_count + spread_count * 8;
         let mut stmts: Vec<Stmt> = Vec::with_capacity(elems.len() + 1);
 
-        // Callee: `<TargetType>.with_capacity` (Path) или
-        // `<TargetType>[K, V].with_capacity` (TurboFish + Member).
-        let with_capacity_callee: Expr = match (inferred_key, inferred_value) {
+        // Callee: `<TargetType>.new` (Path) или `<TargetType>[K, V].new`
+        // (TurboFish + Member). D372 amend (vec-sweep, 2026-07-06):
+        // `with_capacity` removed — construction is `new()` only.
+        // [M-vec-spelling-maplit-desugar-cap-ice] (compiler gap, reported):
+        // an extra `.cap(n)` statement here (before the insert_new/insert
+        // calls below) reproducibly CRASHED the compiler on the next
+        // statement (ICE: "method call `.insert_new` return type unknown").
+        // Conservative fix: drop the pre-sizing optimization, rely on normal
+        // amortized growth. Correctness-preserving; perf-only regression.
+        let new_callee: Expr = match (inferred_key, inferred_value) {
             (Some(k_ty), Some(v_ty)) => {
-                // TurboFish: `<TargetType>[K, V]` затем `.with_capacity`.
+                // TurboFish: `<TargetType>[K, V]` затем `.new`.
                 // ВАЖНО: base должен быть `Ident`, не `Path([_])` —
                 // парсер для одиночного имени строит Ident; codegen
                 // мономорфизирует только Ident-based callee.
@@ -348,31 +378,28 @@ impl DesugarCtx {
                 Expr::new(
                     ExprKind::Member {
                         obj: Box::new(turbofish),
-                        name: "with_capacity".to_string(),
+                        name: "new".to_string(),
                     },
                     span,
                 )
             }
             _ => {
-                // Fallback: bare `<TargetType>.with_capacity` — мономорфизация
+                // Fallback: bare `<TargetType>.new` — мономорфизация
                 // через контекст (может не сработать для generic-methods,
                 // см. Plan 48 Ф.7.7 baseline-баг).
                 Expr::new(
                     ExprKind::Path(vec![
                         target_type_name.clone(),
-                        "with_capacity".to_string(),
+                        "new".to_string(),
                     ]),
                     span,
                 )
             }
         };
-        let with_capacity_call = Expr::new(
+        let new_call = Expr::new(
             ExprKind::Call {
-                func: Box::new(with_capacity_callee),
-                args: vec![CallArg::Item(Expr::new(
-                    ExprKind::IntLit(n as i64),
-                    span,
-                ))],
+                func: Box::new(new_callee),
+                args: vec![],
                 trailing: None,
             },
             span,
@@ -381,11 +408,12 @@ impl DesugarCtx {
             mutable: true,
             pattern: Pattern::Ident { name: tmp.clone(), span, is_mut: false },
             ty: None,
-            value: with_capacity_call,
+            value: new_call,
             span,
             is_ghost: false,
             consume: false,
         }));
+        let _ = n; // pre-sizing dropped (see comment above) — `n` no longer used here.
 
         // Plan 52 Ф.13 production-fix: explicit temp-bindings для
         // гарантированного нормативного eval-order (D108 §4748:

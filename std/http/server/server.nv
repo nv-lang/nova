@@ -245,7 +245,8 @@ export fn ServeMux @dispatch(req ServerRequest) -> ServerResponse {
 }
 
 fn method_not_allowed(allow []str) -> ServerResponse {
-    consume sb = StringBuilder.with_capacity(32)
+    consume sb = StringBuilder.new()
+    sb.cap(32)
     mut first = true
     for m in allow {
         if !first { sb.append(", ") }

@@ -33,7 +33,8 @@ type ParsedResponse value {
 // `target` is the origin-form request-target (path + optional "?query").
 // Adds Host / Content-Length / Connection:close when not already present.
 fn serialize_request(method str, target str, host_header str, headers HeaderMap, body []u8) -> str {
-    mut buf = WriteBuffer.with_capacity(256 + body.len)
+    mut buf = WriteBuffer.new()
+    buf.cap(256 + body.len)
     buf.write_str(method)
     buf.write_str(" ")
     buf.write_str(target)
@@ -73,7 +74,8 @@ fn serialize_request(method str, target str, host_header str, headers HeaderMap,
 // Serialize an HTTP/1.1 response to raw wire bytes (used by mock_http to feed the
 // SAME parser real_http uses). Adds Content-Length + Connection:close if absent.
 fn serialize_response(status StatusCode, headers HeaderMap, body []u8) -> str {
-    mut buf = WriteBuffer.with_capacity(128 + body.len)
+    mut buf = WriteBuffer.new()
+    buf.cap(128 + body.len)
     buf.write_str("HTTP/1.1 ")
     buf.write_str(str.from(status.as_u16() as int))
     buf.write_str(" ")
@@ -267,7 +269,8 @@ fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
 // ── chunked transfer decoding (RFC 9112 §7.1) ───────────────────────────────
 
 fn decode_chunked(b []u8, start int) -> Result[[]u8, HttpError] {
-    mut out = WriteBuffer.with_capacity(256)
+    mut out = WriteBuffer.new()
+    out.cap(256)
     ro n = b.len
     mut i = start
     mut running = true

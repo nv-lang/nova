@@ -50,7 +50,8 @@ export fn str @encode_utf16() -> []u16 {
     // capacity hint: code units ≤ byte_len (ASCII=1 байт=1 unit; не-ASCII —
     // меньше units чем байт, кроме supplementary 4 байта→2 units; byte_len —
     // безопасная верхняя граница без второго прохода).
-    mut out = []u16.with_capacity(@byte_len())
+    mut out []u16 = []u16.new()
+    out.cap(@byte_len())
     for c in @as_chars() {
         ro cp = c as int
         if cp < 0x10000 {
@@ -75,7 +76,8 @@ export fn str @encode_utf16() -> []u16 {
 /// через `StringBuilder` (потребляется один раз на единственном успешном пути).
 export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
     ro n = units.len()
-    mut cps = []int.with_capacity(n)
+    mut cps []int = []int.new()
+    cps.cap(n)
     mut i = 0
     while i < n {
         ro u = units[i] as int
@@ -95,7 +97,7 @@ export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
     // Все code units валидны → строим str. StringBuilder создаётся ПОСЛЕ всех
     // ранних `return Err`, потребляется один раз через @as_str (D133-safe).
     // Capacity *4: supplementary codepoints encode to 4 UTF-8 bytes.
-    consume sb = StringBuilder.with_capacity(cps.len() * 4)
+    consume sb = StringBuilder.new().cap(cps.len() * 4)
     for cp in cps {
         ro c = match char.try_from(cp) { Ok(c) => c, Err(_) => '\u{FFFD}' }
         sb.append(c)

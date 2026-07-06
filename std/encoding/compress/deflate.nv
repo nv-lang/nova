@@ -104,9 +104,11 @@ type DeflateEnc {
     mut dext []int
 }
 
-fn DeflateEnc.new() -> DeflateEnc =>
+fn DeflateEnc.new() -> DeflateEnc {
+    mut _init_bytes []u8 = []u8.new()
+    _init_bytes.cap(64)
     {
-        bytes: []u8.with_capacity(64),
+        bytes: _init_bytes,
         bitbuf: 0,
         bitcnt: 0,
         lbase: build_length_base(),
@@ -114,6 +116,7 @@ fn DeflateEnc.new() -> DeflateEnc =>
         dbase: build_dist_base(),
         dext: build_dist_extra(),
     }
+}
 
 // Записать `n` младших бит `value` (LSB-first).
 fn DeflateEnc mut @put_bits(value int, n int) -> () {
@@ -148,7 +151,8 @@ fn DeflateEnc mut @put_byte(b u8) -> () {
 // для следующего блока (streaming-continuity).
 fn DeflateEnc mut @take_bytes() -> []u8 {
     ro out = @bytes
-    @bytes = []u8.with_capacity(16)
+    @bytes = []u8.new()
+    @bytes.cap(16)
     out
 }
 
@@ -262,9 +266,11 @@ fn DeflateEnc mut @emit_fixed_block(tokens []Tok, is_final bool) -> () {
 // Деградирует на fixed при вырожденном (<2 CL-символа) code-length-наборе.
 fn DeflateEnc mut @emit_dynamic_block(tokens []Tok, is_final bool) -> () {
     // 1. Частоты lit/len (+EOB) и distance
-    mut lit_freq = []int.with_capacity(288)
+    mut lit_freq []int = []int.new()
+    lit_freq.cap(288)
     for _ in 0..288 { lit_freq.push(0) }
-    mut dist_freq = []int.with_capacity(30)
+    mut dist_freq []int = []int.new()
+    dist_freq.cap(30)
     for _ in 0..30 { dist_freq.push(0) }
     lit_freq[256] = 1       // EOB всегда присутствует
     for tok in tokens {
@@ -296,7 +302,8 @@ fn DeflateEnc mut @emit_dynamic_block(tokens []Tok, is_final bool) -> () {
     while hdist > 1 && dist_lens[hdist - 1] == 0 { hdist = hdist - 1 }
 
     // 4. Объединённый массив длин + RLE (символы 0..18)
-    mut all = []int.with_capacity(hlit + hdist)
+    mut all []int = []int.new()
+    all.cap(hlit + hdist)
     for k in 0..hlit { all.push(lit_lens[k]) }
     for k in 0..hdist { all.push(dist_lens[k]) }
     ro rle = rle_lengths(all, hlit + hdist)
@@ -304,7 +311,8 @@ fn DeflateEnc mut @emit_dynamic_block(tokens []Tok, is_final bool) -> () {
     ro cl_ext = rle.1
 
     // 5. Код-длины code-length-кодов (max 7 бит)
-    mut cl_freq = []int.with_capacity(19)
+    mut cl_freq []int = []int.new()
+    cl_freq.cap(19)
     for _ in 0..19 { cl_freq.push(0) }
     for t in 0..cl_sym.len() { cl_freq[cl_sym[t]] = cl_freq[cl_sym[t]] + 1 }
     ro cl_lens = build_code_lengths(cl_freq, 19, 7)
@@ -358,7 +366,7 @@ fn DeflateEnc mut @emit_dynamic_block(tokens []Tok, is_final bool) -> () {
 // (residual биты сохраняются для стриминга); is_final помечает финальный блок.
 fn DeflateEnc mut @compress_segment(data []u8, level int, is_final bool) -> () {
     if data.len() == 0 {
-        @emit_fixed_block([]Tok.with_capacity(0), is_final)
+        @emit_fixed_block([]Tok.new(), is_final)
         return
     }
     if level == 0 {
@@ -381,7 +389,8 @@ fn DeflateEnc mut @compress_segment(data []u8, level int, is_final bool) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn fixed_lit_lens() -> []int {
-    mut ll = []int.with_capacity(288)
+    mut ll []int = []int.new()
+    ll.cap(288)
     for i in 0..288 {
         ll.push(if i < 144 { 8 } else if i < 256 { 9 } else if i < 280 { 7 } else { 8 })
     }
@@ -389,7 +398,8 @@ fn fixed_lit_lens() -> []int {
 }
 
 fn fixed_dist_lens() -> []int {
-    mut dl = []int.with_capacity(30)
+    mut dl []int = []int.new()
+    dl.cap(30)
     for _ in 0..30 { dl.push(5) }
     dl
 }
@@ -415,20 +425,23 @@ fn reverse_bits(code int, len int) -> int {
 // кодов (0 для неиспользуемых символов). Правило совпадает с декодером
 // (build_huffman): короче длина → меньший код; в пределах длины — по индексу.
 fn assign_codes(lens []int, n int) -> []int {
-    mut bl_count = []int.with_capacity(16)
+    mut bl_count []int = []int.new()
+    bl_count.cap(16)
     for _ in 0..16 { bl_count.push(0) }
     for i in 0..n {
         ro l = lens[i]
         if l > 0 { bl_count[l] = bl_count[l] + 1 }
     }
-    mut next_code = []int.with_capacity(16)
+    mut next_code []int = []int.new()
+    next_code.cap(16)
     for _ in 0..16 { next_code.push(0) }
     mut code = 0
     for bits in 1..16 {
         code = (code + bl_count[bits - 1]) << 1
         next_code[bits] = code
     }
-    mut codes = []int.with_capacity(n)
+    mut codes []int = []int.new()
+    codes.cap(n)
     for _ in 0..n { codes.push(0) }
     for i in 0..n {
         ro l = lens[i]
@@ -540,11 +553,14 @@ fn enforce_max_code_size(num_codes mut []int, code_list_len int, maxbits int) ->
 // Построить код-длины (0..maxbits) по частотам символов. Возвращает массив длины
 // n (0 = символ не используется). Полный префиксный код для ≥2 символов.
 fn build_code_lengths(freq []int, n int, maxbits int) -> []int {
-    mut lens = []int.with_capacity(n)
+    mut lens []int = []int.new()
+    lens.cap(n)
     for _ in 0..n { lens.push(0) }
 
-    mut syms = []int.with_capacity(n)
-    mut keys = []int.with_capacity(n)
+    mut syms []int = []int.new()
+    syms.cap(n)
+    mut keys []int = []int.new()
+    keys.cap(n)
     for s in 0..n {
         if freq[s] > 0 {
             syms.push(s)
@@ -579,13 +595,15 @@ fn build_code_lengths(freq []int, n int, maxbits int) -> []int {
     calc_min_redundancy(keys, m)        // keys[i] → код-длина позиции i
 
     // Гистограмма длин; свернуть >maxbits в maxbits.
-    mut wide = []int.with_capacity(64)
+    mut wide []int = []int.new()
+    wide.cap(64)
     for _ in 0..64 { wide.push(0) }
     for t in 0..m {
         ro l = if keys[t] < 63 { keys[t] } else { 63 }
         wide[l] = wide[l] + 1
     }
-    mut num_codes = []int.with_capacity(maxbits + 1)
+    mut num_codes []int = []int.new()
+    num_codes.cap(maxbits + 1)
     for _ in 0..(maxbits + 1) { num_codes.push(0) }
     for b in 0..(maxbits + 1) { num_codes[b] = wide[b] }
     for b in (maxbits + 1)..64 { num_codes[maxbits] = num_codes[maxbits] + wide[b] }
@@ -614,8 +632,10 @@ fn build_code_lengths(freq []int, n int, maxbits int) -> []int {
 // Кодирует массив код-длин символами 0..18. Возвращает (symbols, extra-values);
 // число extra-бит определяется символом (16→2, 17→3, 18→7, иначе 0).
 fn rle_lengths(lens []int, count int) -> ([]int, []int) {
-    mut sym = []int.with_capacity(count)
-    mut ext = []int.with_capacity(count)
+    mut sym []int = []int.new()
+    sym.cap(count)
+    mut ext []int = []int.new()
+    ext.cap(count)
     mut i = 0
     while i < count {
         ro cur = lens[i]
@@ -673,7 +693,8 @@ fn hash3(a u8, b u8, c u8, mask int) -> int =>
 // ratio); `max_chain` — предел длины hash-цепочки (speed/ratio).
 fn lz77_tokens(data []u8, lazy bool, max_chain int) -> []Tok {
     ro n = data.len()
-    mut toks = []Tok.with_capacity(n / 2 + 4)
+    mut toks []Tok = []Tok.new()
+    toks.cap(n / 2 + 4)
     if n == 0 {
         return toks
     }
@@ -681,9 +702,11 @@ fn lz77_tokens(data []u8, lazy bool, max_chain int) -> []Tok {
     ro hsize = 1 << hbits
     ro hmask = hsize - 1
     ro wsize = window_size()
-    mut head = []int.with_capacity(hsize)
+    mut head []int = []int.new()
+    head.cap(hsize)
     for _ in 0..hsize { head.push(-1) }
-    mut prev = []int.with_capacity(n)
+    mut prev []int = []int.new()
+    prev.cap(n)
     for _ in 0..n { prev.push(-1) }
 
     mut i = 0
@@ -834,7 +857,7 @@ export fn Deflater.new(level CompressLevel) -> Deflater {
     }
     {
         enc: DeflateEnc.new(),
-        pending: []u8.with_capacity(0),
+        pending: []u8.new(),
         level: lv,
         bad,
         finished: false,
@@ -853,10 +876,10 @@ export fn Deflater mut @feed(chunk []u8) -> Result[[]u8, CompressError] {
     @pending.append(chunk)
     if @pending.len() >= 65536 {
         @enc.compress_segment(@pending, @level, false)
-        @pending = []u8.with_capacity(0)
+        @pending = []u8.new()
         return Ok(@enc.take_bytes())
     }
-    Ok([]u8.with_capacity(0))
+    Ok([]u8.new())
 }
 
 /// SYNC-FLUSH: сжать буфер как non-final блок + sync-маркер (byte-align).
@@ -870,7 +893,7 @@ export fn Deflater mut @flush() -> Result[[]u8, CompressError] {
         return Err(CompressError.invalid("deflater already finished"))
     }
     @enc.compress_segment(@pending, @level, false)
-    @pending = []u8.with_capacity(0)
+    @pending = []u8.new()
     @enc.emit_sync()
     Ok(@enc.take_bytes())
 }
@@ -885,7 +908,7 @@ export fn Deflater mut @finish() -> Result[[]u8, CompressError] {
         return Err(CompressError.invalid("deflater already finished"))
     }
     @enc.compress_segment(@pending, @level, true)
-    @pending = []u8.with_capacity(0)
+    @pending = []u8.new()
     @enc.align()
     @finished = true
     Ok(@enc.take_bytes())
@@ -898,14 +921,16 @@ export fn Deflater mut @finish() -> Result[[]u8, CompressError] {
 
 // Повторить unit `times` раз в []u8.
 fn rep_bytes(unit []u8, times int) -> []u8 {
-    mut o = []u8.with_capacity(unit.len() * times)
+    mut o []u8 = []u8.new()
+    o.cap(unit.len() * times)
     for _ in 0..times { o.append(unit) }
     o
 }
 
 // Псевдослучайный []u8 (детерминированный LCG) — incompressible corpus.
 fn prng_bytes(n int, seed int) -> []u8 {
-    mut o = []u8.with_capacity(n)
+    mut o []u8 = []u8.new()
+    o.cap(n)
     mut s = seed
     for _ in 0..n {
         s = (s * 1103515245 + 12345) & 0x7FFFFFFF
@@ -963,7 +988,8 @@ test "deflate: level-distinguishability — best < fastest < stored" {
     // repeated sentence сюда НЕ годится (схлопывается в считанные токены, где
     // dynamic-header-overhead может превысить выигрыш).
     ro data = prng_bytes(3000, 987654)
-    mut letters = []u8.with_capacity(3000)
+    mut letters []u8 = []u8.new()
+    letters.cap(3000)
     for b in data { letters.push((97 + (b as int) % 26) as u8) }
     ro stored = deflate(letters, CompressLevel.none())!!
     ro fast = deflate(letters, CompressLevel.fastest())!!
@@ -998,12 +1024,14 @@ test "deflate: stored block (level 0) has no back-refs" {
 test "deflate streaming: feed + finish == one-shot round-trip" {
     ro data = rep_bytes("streaming deflate test payload. ".to_bytes(), 50)
     mut df = Deflater.new(CompressLevel.best())
-    mut comp = []u8.with_capacity(64)
+    mut comp []u8 = []u8.new()
+    comp.cap(64)
     // Кормим по 7 байт.
     mut i = 0
     while i < data.len() {
         ro end = if i + 7 < data.len() { i + 7 } else { data.len() }
-        mut piece = []u8.with_capacity(7)
+        mut piece []u8 = []u8.new()
+        piece.cap(7)
         piece.append(data[i..end])
         comp.append(df.feed(piece)!!)
         i = end
@@ -1016,14 +1044,16 @@ test "deflate streaming: flush produces decodable prefix (D335)" {
     ro part1 = "first half before flush. ".to_bytes()
     ro part2 = "second half after flush.".to_bytes()
     mut df = Deflater.new(CompressLevel.fastest())
-    mut prefix = []u8.with_capacity(64)
+    mut prefix []u8 = []u8.new()
+    prefix.cap(64)
     prefix.append(df.feed(part1)!!)
     prefix.append(df.flush()!!)
     // Префикс декодится в ровно part1 через streaming Inflater (без finish —
     // поток не завершён, но sync-flush сделал part1 decodable).
     mut inf = Inflater.new(0)
     inf.feed(prefix)!!
-    mut got = []u8.with_capacity(32)
+    mut got []u8 = []u8.new()
+    got.cap(32)
     loop {
         ro c = inf.read(64)!!
         if c.len() > 0 { got.append(c) } else { break }

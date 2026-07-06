@@ -6728,7 +6728,8 @@ default-значением:
 | `[]T` (для любого T) | `[]` (empty array) | builtin (emit_c.rs) |
 
 Также `[]T.with_capacity(n int) -> Self` — empty с pre-allocated capacity
-(builtin).
+(builtin). ~~Retracted~~ — см. амендмент ниже (2026-07-06): `with_capacity`
+удалён, ёмкость теперь свойство `cap`.
 
 **Для своих типов** разработчик пишет `.new()` явно. Компилятор НЕ
 автогенерирует для user records / sum types / consume types.
@@ -6770,10 +6771,60 @@ fn User.guest() -> Self => { name: "guest", email: "", is_admin: false }
 ### Связь
 
 - [D26](#d26-базовая-stdlib-и-prelude) — prelude auto-availability.
-- [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) — `Self` в return type.
+- [D66](#d66-self-универсальный--ссылка-на-обобщающий-тип-в-методах-effects-protocols) — `Self` в return type.
 - [D131](03-syntax.md#d131-consume-types-и-fluent-api) — consume / fluent.
 - [D182](#d182-self-в-return-type-static-methods--required-form-для-parametric-types) — `Self` requirement.
 - [Plan 91.7](../../docs/plans/91.7-array-methods-and-default-new.md).
+
+> **Амендмент (vec-sweep, 2026-07-06): `with_capacity` удалён, ёмкость —
+> свойство `cap`.** `with_capacity(n) -> Self` как отдельный static-конструктор
+> УДАЛЁН для `Vec[T]`/`[]T`, `HashMap[K,V]`, `Set[T]`, `StringBuilder`,
+> `WriteBuffer`, `Queue[T]` (везде, где он существовал). Ёмкость теперь
+> read/write СВОЙСТВО по D117 (arity-overload): `X.cap() -> int` (getter) /
+> `X.mut cap(n int) -> @` (setter). Конструкция с pre-allocated capacity —
+> `X.new().cap(n)` вместо бывшего `X.with_capacity(n)`.
+>
+> Semantics по типу:
+> - `Vec[T]`/`[]T`: `cap(n)` — ТОЧНАЯ ёмкость (`requires n >= @len()`, без
+>   округления), полностью взаимозаменяема с бывшим `with_capacity(n)`.
+> - `HashMap[K,V]`/`Set[T]`: `cap(n)` гарантирует МИНИМУМ n вставок без
+>   rehash (entry-count → bucket-count, как раньше), но только РАСТЁТ на
+>   непустой карте; на СВЕЖЕЙ (`@_count == 0`) карте допускает и уменьшение
+>   до точного целевого bucket-count — так `new().cap(n)` воспроизводит
+>   старое `with_capacity(n)` побайтово.
+> - `WriteBuffer`/`StringBuilder`: `cap(n)` делегирует к внутреннему `[]u8`'s
+>   собственному точному `cap(n)`.
+> - `Queue[T]`: `cap(n)` резервирует ёмкость НА ОБОИХ backing-массивах
+>   (`_inbox`/`_outbox`) одновременно.
+>
+> **from_raw_parts → перегрузка `new` (амендмент, vec-sweep 2026-07-06).**
+> `Vec[T].from_raw_parts(ptr, len, cap) -> Self` переименован в
+> `Vec[T].new(ptr *T, len int, cap int) -> Self` — арность-перегрузка
+> статического `new` (0-арг = пустой Vec, 3-арг = raw components). Контракт
+> unsafe-обязательства на call site — БЕЗ ИЗМЕНЕНИЙ (см. текст на месте
+> декларации, `std/collections/vec/core.nv`). `@into_raw` (обратная
+> операция) не переименован.
+>
+> **Известные компиляторные гэпы, обнаруженные при миграции:**
+> - `[M-vec-spelling-array-value-position-cap-collision]` — цепочка
+>   `[]T.new().cap(n)` В ОДНОМ выражении может мис-дispatch'иться по
+>   NAME+ARITY на «cap»-метод НЕСВЯЗАННОГO ко-компилируемого типа (не только
+>   erased-array случай D239-амендмента выше — воспроизведено и для
+>   произвольных типов). Обход: биндинг в explicitly-typed локаль ПЕРЕД
+>   вызовом `.cap(n)` отдельной инструкцией.
+> - `[M-vec-spelling-consume-chain-cap-collision]` — `consume x = T.new().M(...)`
+>   (ЛЮБОЙ 2-звенный chain, забинженный через `consume`, для `T consume`-типа)
+>   ломает D133 consume-tracking для ВСЕХ ОСТАЛЬНЫХ `consume ... = T.new()`
+>   site'ов в той же compile unit (воспроизведено вне зависимости от имени
+>   второго метода — не специфично для `cap`). Обход: `consume x = T.new()`
+>   (один вызов) + `x.M(...)` отдельной инструкцией.
+> - `[M-vec-spelling-maplit-desugar-cap-ice]` — попытка добавить `.cap(n)`
+>   pre-sizing statement в desugar `[k:v]`-map-литерала (после `HashMap.new()`,
+>   до `insert_new`-цикла) роняла компилятор (ICE: "method call `.insert_new`
+>   return type unknown") при компиляции нескольких файлов вместе в одной CU.
+>   Обход (принят): pre-sizing убран из desugar'а полностью — map-литералы
+>   строятся через голый `.new()` + amortized growth в insert_new-цикле
+>   (perf-only регрессия, corretness не затронута).
 
 ---
 
@@ -12397,6 +12448,20 @@ C-макросы `fmin`/`fmax` (нет специальной NaN-семанти
 - [D144](#d144-sub-slice-views-для-t-и-str--arra-b--sa-b) — sub-slice views; D144 «future language version» снято D239
 - [D27](03-syntax.md#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[]T` синтаксис сохраняется; семантика меняется: `[]T ≡ Vec[T]`
 - Plan 138 — полный план миграции; Plan 138.2 — NovaArray retirement
+
+> **Amended (vec-sweep, 2026-07-06):** `[]T` — КАНОНИЧЕСКАЯ запись во всех
+> контекстах: аннотации типов, возвраты, вложенные формы (`[][]u8`), кортежи
+> (`[](str, str)`), статические вызовы-конструкторы (`[]u8.new()`,
+> `[]int.of(1,2,3)`, `[]int.from(...)`). `Vec[...]` остаётся ТОЛЬКО
+> definition-site — внутри самого модуля `std/collections/vec/` (реализация
+> `Vec[T]`). Везде за пределами этого модуля предпочтителен `[]T`.
+>
+> Исключение — известный compiler-gap [M-153.x-array-new-not-vec]: bracket-
+> spelling `[]T` в VALUE-позиции (конструктор-вызов, напр. `[]T.new()`)
+> иногда лоуэрится через legacy int64-erased NovaArray-путь, а НЕ через
+> типизированный Vec-путь, что при определённых сочетаниях (см.
+> `std/collections/hashmap.nv::new_buckets`) даёт RUN-FAIL. В таких точечных
+> местах `Vec[...]` остаётся исключением из канона с явным маркером в коде.
 
 ---
 

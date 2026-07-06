@@ -85,8 +85,8 @@ export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
 
 // NOTE (Plan 153.x consolidation): the concrete `[]int @binary_search ->
 // Option[int]` that lived here was REMOVED. Under D239 (`[]T ≡ Vec[T]`) it
-// became a second `@binary_search` on `Vec[int]` whose RETURN TYPE conflicts
-// with the canonical, prelude-visible `Vec[T Compare] @binary_search ->
+// became a second `@binary_search` on `[]int` whose RETURN TYPE conflicts
+// with the canonical, prelude-visible `[]T Compare @binary_search ->
 // Result[int,int]` (std/collections/vec/access.nv). The prelude version wins
 // resolution, so a caller writing `xs.binary_search(t) == Some(i)` hit a
 // hard C type error (`NovaRes_*` vs `NovaOpt_*`). The canon is the Vec
@@ -100,7 +100,7 @@ export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
 // conflict, and their `[]int`-exact receiver signatures are still REQUIRED for
 // correct in-place mutation of arrays built via `[]int.new()` /
 // `[]int.with_capacity()`. Those constructors currently lower to the legacy
-// `NovaArray_T` runtime type (not `Vec[T]`), and a `mut @`-method call on such
+// `NovaArray_T` runtime type (not `[]T`), and a `mut @`-method call on such
 // a receiver mis-dispatches to the erased generic `Nova_Vec_method_*` (element
 // width erased to `void*`), so the prelude Vec `@sort`/`@reverse` silently
 // no-op on them. Removing the `[]int @sort`/`@sort_by` here would regress every

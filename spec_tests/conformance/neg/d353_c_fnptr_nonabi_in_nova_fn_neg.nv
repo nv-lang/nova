@@ -1,6 +1,6 @@
 // D353 / Plan 174.6 M2 NEG — a `*extern "C" fn(...)` C-callback type is legal in
 // a NON-extern-"C" (Nova) fn signature, but its SIGNATURE must still be C-ABI.
-// A malformed C-callback (`Vec[int]` param) is rejected wherever it is written —
+// A malformed C-callback (`[]int` param) is rejected wherever it is written —
 // here in a plain Nova fn parameter, not an `extern "C" fn` declaration. Only
 // the C-callback sub-signature is checked (the enclosing Nova fn may take other
 // Nova types freely).
@@ -9,7 +9,7 @@
 
 module neg.d353_c_fnptr_nonabi_in_nova_fn_neg
 
-fn d353_register(cb *extern "C" fn(Vec[int]) -> i64) -> int => 0
+fn d353_register(cb *extern "C" fn([]int) -> i64) -> int => 0
 
 test "rejects malformed C-callback sig in a Nova fn parameter (M2)" {
     assert(1 == 1)

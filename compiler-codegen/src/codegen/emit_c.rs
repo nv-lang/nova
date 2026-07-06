@@ -26903,7 +26903,55 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     return Ok(format!("nova_array_new_{}({})", arr_suffix, v));
                                 }
                             }
-                            _ => {}
+                            _ => {
+                                // [M-vec-spelling-static-dispatch-gap] partial close
+                                // (vec-sweep, 2026-07-07): `[]T.of(...)` / `[]T.from(...)`
+                                // / any OTHER Vec static spelled on the `[]T` alias used
+                                // to FALL THROUGH to the generic method_receivers path,
+                                // where the `Path(["__array", T])` receiver read as bare
+                                // `T` → strict-mode `[E_UNKNOWN_TYPE_METHOD] T.of(...)`
+                                // (and in folder-module CUs the error was misattributed
+                                // to a NEIGHBOURING file — see d102/d259 case). Rewrite
+                                // the receiver to the equivalent `Vec[T].method(...)`
+                                // TurboFish form and re-enter emit_call, so the ENTIRE
+                                // existing Vec static machinery (variadic `of` arg
+                                // packing, mono registration, `from`, …) applies
+                                // unchanged. `new`/`with_capacity` above keep their
+                                // legacy erased lowering byte-identically (their output
+                                // is unchanged by this arm).
+                                let elem_tr = crate::ast::TypeRef::Named {
+                                    path: vec![elem_t.clone()],
+                                    generics: Vec::new(),
+                                    span: obj.span,
+                                };
+                                let turbofish = Expr {
+                                    kind: ExprKind::TurboFish {
+                                        base: Box::new(Expr {
+                                            kind: ExprKind::Ident("Vec".to_string()),
+                                            span: obj.span,
+                                            id: crate::ast::ExprId::UNSET,
+                                        }),
+                                        type_args: vec![elem_tr],
+                                    },
+                                    span: obj.span,
+                                    id: crate::ast::ExprId::UNSET,
+                                };
+                                let new_func = Expr {
+                                    kind: ExprKind::Member {
+                                        obj: Box::new(turbofish),
+                                        name: method.clone(),
+                                    },
+                                    span: func.span,
+                                    id: crate::ast::ExprId::UNSET,
+                                };
+                                // Fresh call — its own variadic routing must be
+                                // allowed (`of` packs its args into a collected []T).
+                                let saved = std::mem::replace(
+                                    &mut self.suppress_variadic_routing, false);
+                                let result = self.emit_call(&new_func, args, call_id);
+                                self.suppress_variadic_routing = saved;
+                                return result;
+                            }
                         }
                     }
                 }
@@ -32380,8 +32428,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let sb = self.fresh_tmp_named("interp_sb");
+        // D372 amend (vec-sweep, 2026-07-07): `StringBuilder.with_capacity`
+        // removed — construct via `new()` and pre-size through the D117
+        // `mut @cap(n) -> @` setter's mono symbol (fluent, returns the sb).
         self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_static_with_capacity({});",
+            "Nova_StringBuilder* {} = Nova_StringBuilder_method_cap__nova_int(Nova_StringBuilder_static_new(), {});",
             sb, estimate
         ));
         for p in parts {
@@ -32865,9 +32916,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 )
             })?;
             // Render into a dedicated builder, then steal to a str.
+            // D372 amend (vec-sweep, 2026-07-07): with_capacity removed —
+            // `new()` already pre-sizes to the same 16-byte default.
             let fmt_sb = self.fresh_tmp_named("fmt_sb");
             self.line(&format!(
-                "Nova_StringBuilder* {} = Nova_StringBuilder_static_with_capacity(16);",
+                "Nova_StringBuilder* {} = Nova_StringBuilder_static_new();",
                 fmt_sb
             ));
             self.line(&format!("{}({}, {});", fn_name, v, fmt_sb));
@@ -35443,7 +35496,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
 
         // 3) Register the mono method instances we are about to call
-        //    (`new`/`with_capacity` static ctors, `push` and — for spread —
+        //    (`new` static ctor, `push` and — for spread —
         //    `clone`/`iter`/`next`). Reuse the same machinery the regular
         //    `Vec[T].method()` dispatch uses (register_mono_method_instance).
         let rt_trimmed = mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string();
@@ -35454,29 +35507,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 None => return Ok(None), // Vec template has no generic param — bail.
             }
         };
-        let direct_count = elems.iter()
-            .filter(|e| matches!(e, ArrayElem::Item(_))).count();
-
-        // Static constructor: `new` for empty/spread-prefixed, `with_capacity`
-        // for a known direct count.
-        let ctor_method = if direct_count > 0 { "with_capacity" } else { "new" };
-        let ctor_c = format!("{}_static_{}", mangled, ctor_method);
-        self.register_vec_mono_method(ctor_method, &type_subst, &ctor_c, &rt_trimmed)?;
+        // Static constructor: always `new` (D372 amend 2026-07-06 —
+        // `with_capacity` removed as a static ctor; capacity is now the
+        // `cap(n)` D117 setter). Pre-sizing a known direct-element-count
+        // literal via an explicit `.cap(n)` call here would need this
+        // registration helper to disambiguate the `cap` GETTER (0-arg) from
+        // the `cap` SETTER (1-arg) by arity — `register_vec_mono_method`
+        // looks up `generic_type_methods["Vec"]` by NAME ONLY, so it is not
+        // arity-safe for an overloaded accessor pair. Simplest safe fix:
+        // drop the pre-sizing optimization here and always emit `new()`;
+        // the push loop below still grows amortized (×2), just without the
+        // single exact pre-allocation. Correctness-preserving, minor perf-only
+        // regression for literal-with-many-elements construction.
+        let ctor_c = format!("{}_static_new", mangled);
+        self.register_vec_mono_method("new", &type_subst, &ctor_c, &rt_trimmed)?;
 
         let push_c = format!("{}_method_push", rt_trimmed);
         self.register_vec_mono_method("push", &type_subst, &push_c, &rt_trimmed)?;
 
         // 4) Emit the construction.
         let tmp = self.fresh_tmp();
-        if direct_count > 0 {
-            self.line(&format!(
-                "{ty}* {tmp} = {ctor}((nova_int){n}LL);",
-                ty = mangled, tmp = tmp, ctor = ctor_c, n = direct_count));
-        } else {
-            self.line(&format!(
-                "{ty}* {tmp} = {ctor}();",
-                ty = mangled, tmp = tmp, ctor = ctor_c));
-        }
+        self.line(&format!(
+            "{ty}* {tmp} = {ctor}();",
+            ty = mangled, tmp = tmp, ctor = ctor_c));
         self.var_types.insert(tmp.clone(), format!("{}*", mangled));
 
         for elem in elems {
@@ -42041,9 +42094,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`
                         // → NovaArray_<T>*. obj — Path(["__array", "<T>"]).
                         if let ExprKind::Path(parts) = &obj.kind {
-                            if parts.len() == 2 && parts[0] == "__array"
-                                && (method == "new" || method == "with_capacity")
-                            {
+                            if parts.len() == 2 && parts[0] == "__array" {
+                                if method == "new" || method == "with_capacity" {
                                 let arr_suffix = match parts[1].as_str() {
                                     "str"            => "nova_str",
                                     "u8"    => "nova_byte",
@@ -42064,6 +42116,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _                => "nova_int",
                                 };
                                 return format!("NovaArray_{}*", arr_suffix);
+                                }
+                                // [M-vec-spelling-static-dispatch-gap] partial close
+                                // (vec-sweep, 2026-07-07), R3 mirror of the emit_call
+                                // bridge: `[]T.of(...)` / `[]T.from(...)` / other Vec
+                                // statics spelled on the `[]T` alias infer via the
+                                // equivalent `Vec[T].method(...)` TurboFish form —
+                                // without this the binding's type collapsed to the
+                                // UN-mono'd `Nova_Vec*` and follow-up method calls
+                                // dispatched to garbage generic stubs.
+                                let synth = Expr {
+                                    kind: ExprKind::Call {
+                                        func: Box::new(Expr {
+                                            kind: ExprKind::Member {
+                                                obj: Box::new(Expr {
+                                                    kind: ExprKind::TurboFish {
+                                                        base: Box::new(Expr {
+                                                            kind: ExprKind::Ident(
+                                                                "Vec".to_string()),
+                                                            span: obj.span,
+                                                            id: crate::ast::ExprId::UNSET,
+                                                        }),
+                                                        type_args: vec![
+                                                            crate::ast::TypeRef::Named {
+                                                                path: vec![parts[1].clone()],
+                                                                generics: Vec::new(),
+                                                                span: obj.span,
+                                                            },
+                                                        ],
+                                                    },
+                                                    span: obj.span,
+                                                    id: crate::ast::ExprId::UNSET,
+                                                }),
+                                                name: method.clone(),
+                                            },
+                                            span: func.span,
+                                            id: crate::ast::ExprId::UNSET,
+                                        }),
+                                        args: args.to_vec(),
+                                        trailing: None,
+                                    },
+                                    span: func.span,
+                                    id: crate::ast::ExprId::UNSET,
+                                };
+                                return self.infer_expr_c_type(&synth);
                             }
                         }
                         // [M-172.1-d174] phase-safe: Ident-ресивер без материализованного
@@ -45683,9 +45779,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // D38 array-static-method: `[]T.new()` / `[]T.with_capacity(n)`
                         // → NovaArray_<T>*. obj — Path(["__array", "<T>"]).
                         if let ExprKind::Path(parts) = &obj.kind {
-                            if parts.len() == 2 && parts[0] == "__array"
-                                && (method == "new" || method == "with_capacity")
-                            {
+                            if parts.len() == 2 && parts[0] == "__array" {
+                                if method == "new" || method == "with_capacity" {
                                 let arr_suffix = match parts[1].as_str() {
                                     "str"            => "nova_str",
                                     "u8"    => "nova_byte",
@@ -45706,6 +45801,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _                => "nova_int",
                                 };
                                 return format!("NovaArray_{}*", arr_suffix);
+                                }
+                                // [M-vec-spelling-static-dispatch-gap] partial close
+                                // (vec-sweep, 2026-07-07), R3 mirror of the emit_call
+                                // bridge: `[]T.of(...)` / `[]T.from(...)` / other Vec
+                                // statics spelled on the `[]T` alias infer via the
+                                // equivalent `Vec[T].method(...)` TurboFish form —
+                                // without this the binding's type collapsed to the
+                                // UN-mono'd `Nova_Vec*` and follow-up method calls
+                                // dispatched to garbage generic stubs.
+                                let synth = Expr {
+                                    kind: ExprKind::Call {
+                                        func: Box::new(Expr {
+                                            kind: ExprKind::Member {
+                                                obj: Box::new(Expr {
+                                                    kind: ExprKind::TurboFish {
+                                                        base: Box::new(Expr {
+                                                            kind: ExprKind::Ident(
+                                                                "Vec".to_string()),
+                                                            span: obj.span,
+                                                            id: crate::ast::ExprId::UNSET,
+                                                        }),
+                                                        type_args: vec![
+                                                            crate::ast::TypeRef::Named {
+                                                                path: vec![parts[1].clone()],
+                                                                generics: Vec::new(),
+                                                                span: obj.span,
+                                                            },
+                                                        ],
+                                                    },
+                                                    span: obj.span,
+                                                    id: crate::ast::ExprId::UNSET,
+                                                }),
+                                                name: method.clone(),
+                                            },
+                                            span: func.span,
+                                            id: crate::ast::ExprId::UNSET,
+                                        }),
+                                        args: args.to_vec(),
+                                        trailing: None,
+                                    },
+                                    span: func.span,
+                                    id: crate::ast::ExprId::UNSET,
+                                };
+                                return self.infer_expr_c_type(&synth);
                             }
                         }
                         // [M-172.1-d174] phase-safe: Ident-ресивер без материализованного

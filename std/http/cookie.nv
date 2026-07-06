@@ -154,7 +154,8 @@ export fn SetCookie @is_persistent() -> bool =>
 /// Сериализовать обратно в значение заголовка `Set-Cookie`.
 #stable(since = "0.1")
 export fn SetCookie @serialize() -> str {
-    consume buf = StringBuilder.with_capacity(64)
+    consume buf = StringBuilder.new()
+    buf.cap(64)
     buf.append(@name)
     buf.append("=")
     buf.append(@value)

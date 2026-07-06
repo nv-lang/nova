@@ -1,7 +1,7 @@
 // D231 — RawMem allocator API (nova_alloc / alloc_uncollectable /
 // free_uncollectable). POS, runtime-observable normative behaviour of the
 // low-level GC-tracked allocation primitives that Nova-native data structures
-// (Vec[T], custom allocators, FFI) are built on. Every call is gated behind
+// ([]T, custom allocators, FFI) are built on. Every call is gated behind
 // `unsafe { }` (E_UNSAFE_CALL_REQUIRES_WRAP, D216 §9) — the `unsafe` keyword is
 // exercised here implicitly: the whole suite only compiles because each
 // RawMem.* call sits inside an `unsafe { }` block.

@@ -79,7 +79,8 @@ test "decompress: disabled → body stays gzip-compressed" {
 
 test "decompress: gzip bomb past max_decompressed → Err(BodyTooLarge)" {
     // 20 000 repeated bytes compress tiny but decode large; cap at 256.
-    consume big = StringBuilder.with_capacity(20000)
+    consume big = StringBuilder.new()
+    big.cap(20000)
     mut i = 0
     while i < 20000 { big.append("A"); i += 1 }
     ro payload = big.into_str()

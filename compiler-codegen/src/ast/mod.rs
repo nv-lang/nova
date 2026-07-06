@@ -847,9 +847,11 @@ pub enum TypeAttr {
     FromFields,
     /// Plan 52 Ф.23: `#from_pairs` — тип desugar'а map-литерала `[k: v]`.
     /// Если expected type помечен `#from_pairs`, десугаринг вызывает
-    /// `ExpectedType.with_capacity(n)` + `insert_new(k, v)` per pair
-    /// вместо хардкода `HashMap`. Тип должен предоставить методы
-    /// `static with_capacity(int) -> Self` и `mut insert_new(K, V)`.
+    /// `ExpectedType.new()` + `.cap(n)` + `insert_new(k, v)` per pair
+    /// вместо хардкода `HashMap` (D372 amend 2026-07-06: `with_capacity`
+    /// removed, заменён на `new()` + D117 setter `cap(n)`). Тип должен
+    /// предоставить методы `static new() -> Self`, `mut cap(n int) -> @`
+    /// и `mut insert_new(K, V)`.
     /// Stdlib HashMap имеет оба attribute. User-типы получают
     /// расширяемость без модификации компилятора.
     FromPairs,
@@ -2174,14 +2176,15 @@ pub enum ExprKind {
     /// `[k1: v1, k2: v2]` — map-литерал (D108, Plan 52). Конструирует
     /// `HashMap[K, V]`. Ключи и значения — выражения; порядок вычисления
     /// нормативный: `k1, v1, k2, v2, ...` (слева направо, ключ перед
-    /// значением). Десугарится в codegen/interp в `with_capacity`+`@insert`
-    /// block-expression. Пустой `[]` остаётся `ArrayLit(vec![])` —
+    /// значением). Десугарится в codegen/interp в `new()`+`.cap(n)`+`@insert`
+    /// block-expression (D372 amend 2026-07-06: `with_capacity` removed).
+    /// Пустой `[]` остаётся `ArrayLit(vec![])` —
     /// разрешается по ожидаемому типу на type-check.
     ///
     /// Plan 52 Ф.7 production-fix: `inferred_key`/`inferred_value` —
     /// типы K/V, выведенные type-checker'ом (MapLitCtx::annotate_module)
     /// после inference. Десугаринг использует их для генерации turbofish
-    /// `HashMap[K, V].with_capacity(n)` — без turbofish мономорфизация
+    /// `HashMap[K, V].new()` — без turbofish мономорфизация
     /// инстанциирует `HashMap[void*, void*]` → runtime segfault на
     /// generic-метод-резолюции. Парсер заполняет `None`, type-checker —
     /// `Some(_)` если K/V определены однозначно.
@@ -2208,8 +2211,9 @@ pub enum ExprKind {
         /// анонимный `{field: v}` стоит в позиции, ожидающей тип с
         /// `#from_fields` (= `HashMap[str, V]`) — записывает сюда
         /// `Some(V)`. Десугаринг тогда превращает узел в
-        /// `HashMap[str, V].with_capacity(n) + insert("field", v)`
-        /// block-expression (mirror MapLit-desugar). Без этого flag'а
+        /// `HashMap[str, V].new().cap(n) + insert("field", v)`
+        /// block-expression (mirror MapLit-desugar; D372 amend
+        /// 2026-07-06: `with_capacity` removed). Без этого flag'а
         /// codegen пытался бы построить record-struct из полей →
         /// «no member named 'debug' in 'struct Nova_HashMap'».
         /// `None` для обычного record-литерала или type_name = Some.

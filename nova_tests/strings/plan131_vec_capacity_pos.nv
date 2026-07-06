@@ -5,7 +5,8 @@ module nova_tests.strings
 import std.collections.vec.{Vec}
 
 test "with_capacity reserves up front" {
-    mut v = Vec[int].with_capacity(16)
+    mut v Vec[int] = Vec[int].new()
+    v.cap(16)
     assert(v.cap() >= 16)
     assert(v.len() == 0)
     assert(v.is_empty())

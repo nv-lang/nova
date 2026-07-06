@@ -452,7 +452,8 @@ fn build_headers(client HttpClient, ops []HeaderOp, content_type Option[str]) ->
 
 fn apply_query(u Url, params [](str, str)) -> Url {
     if params.len() == 0 { return u }
-    consume sb = StringBuilder.with_capacity(64)
+    consume sb = StringBuilder.new()
+    sb.cap(64)
     mut first = true
     match u.query {
         Some(q) => {
@@ -539,7 +540,8 @@ fn resolve_url(base Url, loc str) -> Url {
 }
 
 fn url_with_target(base Url, target str) -> Url {
-    consume sb = StringBuilder.with_capacity(64)
+    consume sb = StringBuilder.new()
+    sb.cap(64)
     sb.append(base.scheme)
     sb.append("://")
     match base.host {
@@ -578,7 +580,8 @@ fn last_slash(s str) -> Option[int] {
 }
 
 fn form_encode(fields [](str, str)) -> str {
-    consume sb = StringBuilder.with_capacity(64)
+    consume sb = StringBuilder.new()
+    sb.cap(64)
     mut first = true
     for (k, v) in fields {
         if !first { sb.append("&") }
