@@ -39,7 +39,7 @@ export type ServerRequest value {
     ro query   str              // raw query string ("" if none)
     ro version Version
     ro headers HeaderMap
-    ro params  [](str, str)     // matched {name} path params
+    params     [](str, str)     // matched {name} path params (mut: set by ServeMux.@dispatch via @params(ps))
     ro body    []u8
 }
 
@@ -86,9 +86,14 @@ export fn ServerRequest @query_param(key str) -> Option[str] {
     None
 }
 
-// Attach matched path params (used by ServeMux dispatch).
-fn ServerRequest @with_params(ps [](str, str)) -> ServerRequest =>
-    { @method, @target, @path, @query, @version, @headers, params: ps, @body }
+/// Attach matched path params (used by ServeMux dispatch). Mutating fleeting
+/// property (D117 AMEND-2): a copying `with_params` would shallow-copy the
+/// heap-backed `headers`/`body` fields, sharing them with the pre-dispatch
+/// request — no real independence, just an extra allocation.
+#stable(since = "0.1")
+export fn ServerRequest mut @params(ps [](str, str)) -> @ {
+    @params = ps
+}
 
 // ── ServerResponse ──────────────────────────────────────────────────────────
 
@@ -142,12 +147,16 @@ export fn ServerResponse.redirect(status int, location str) -> ServerResponse {
     { status, headers: h, body: Vec[u8].new() }
 }
 
-/// Add/replace a response header.
+/// Add/replace a response header. Mutating fleeting property (D117 AMEND-2):
+/// a copying `@header` would shallow-copy the heap-backed `body` field,
+/// sharing it with the pre-call response — canon is mutate-in-place + `-> @`.
+/// Total setter (`-> @`, no `Result`): the name/value here are handler-authored
+/// literals, not network input — an invalid name/CR-LF value is a caller bug,
+/// so `insert` panics (`!!`) instead of silently swallowing the error. Dynamic
+/// (network-derived) header values go through `headers().insert(n, v)?` directly.
 #stable(since = "0.1")
-export fn ServerResponse @header(name str, value str) -> ServerResponse {
-    mut h = @headers
-    match h.insert(name, value) { Ok(_) => (), Err(_) => () }
-    { @status, headers: h, @body }
+export fn ServerResponse mut @header(name str, value str) -> @ {
+    @headers.insert(name, value)!!
 }
 
 /// Status code (borrow).
@@ -216,7 +225,7 @@ export fn ServeMux @not_found(handler Handler) -> ServeMux => { @routes, not_fou
 /// Route a request → response. 404 if no path matches; 405 + `Allow` if the path
 /// matches but the method does not; otherwise the matched handler (with params).
 #stable(since = "0.1")
-export fn ServeMux @dispatch(req ServerRequest) -> ServerResponse {
+export fn ServeMux @dispatch(mut req ServerRequest) -> ServerResponse {
     ro reqm = req.method().as_str()
     mut path_matched = false
     mut allow = Vec[str].new()
@@ -226,7 +235,14 @@ export fn ServeMux @dispatch(req ServerRequest) -> ServerResponse {
                 path_matched = true
                 ro mok = r.method == reqm || (r.method == "GET" && reqm == "HEAD")
                 if mok {
-                    return r.handler.handle(req.with_params(params))
+                    // [M-http-props-mut-chain-argpos-value-ptr-mismatch]
+                    // цепочка до фикса — `r.handler.handle(req.params(params))` (fleeting
+                    // `-> @` chain-result used DIRECTLY as a call argument) is a codegen
+                    // gap for `value`-type receivers: CC-FAIL "passing NovaValue_ServerRequest*
+                    // to parameter of incompatible type NovaValue_ServerRequest; dereference
+                    // with *". Split into a bare-statement mutation + plain-value pass.
+                    req.params(params)
+                    return r.handler.handle(req)
                 } else {
                     allow.push(r.method)
                 }
@@ -252,7 +268,9 @@ fn method_not_allowed(allow []str) -> ServerResponse {
         sb.append(m)
         first = false
     }
-    ServerResponse.text(405, "405 method not allowed").header("Allow", sb.into_str())
+    mut resp = ServerResponse.text(405, "405 method not allowed")
+    resp.header("Allow", sb.into_str())
+    resp
 }
 
 // Match a route pattern against a request path. Returns matched {name} params, or

@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// http-props (2026-07-07): `ServerRequest.@with_params`/`ServerResponse.@header`
+// copying setters → mutating fleeting properties (D117 AMEND-2). A shallow copy
+// of a `value`-typed record shares its heap-backed fields (`headers`, `body`)
+// with the pre-call instance — no real independence, just an extra allocation.
+// Canon: `mut @x(v) -> @`, auto self-return (D409).
+
+module std.http.server
+
+// ── ServerResponse.@header: mutating chain adds BOTH headers ─────────────────
+//
+// [M-http-props-mut-chain-stmt-value-copy-loss] цепочка до фикса — a 2-link
+// `resp.header(a,1).header(b,2)` chained in ONE statement on a `value`-type
+// receiver compiles and runs, but silently drops BOTH headers (verified with a
+// minimal `Rec value { .. }` repro too: chaining loses the mutation instead of
+// applying it through the fleeting `-> @` result). Reported to the owner
+// 2026-07-07 with a minimal repro; workaround below — one `.header()` call per
+// statement on the SAME `mut` binding (still exercises the D117 AMEND-2 canon:
+// mutate-in-place, no copy/aliasing of the heap-backed `body`/`headers`).
+
+test "ServerResponse.header(): mutating chain lands both headers on the wire" {
+    mut resp = ServerResponse.text(200, "ok")
+    resp.header("X-A", "1")
+    resp.header("X-B", "2")
+    ro wire = serialize_response(resp)
+    ro s = str.from_bytes_unchecked(wire)
+    assert(s.contains("x-a: 1"))
+    assert(s.contains("x-b: 2"))
+}
+
+test "ServerResponse.header(): repeated call on the SAME mut binding accumulates" {
+    mut resp = ServerResponse.empty(204)
+    resp.header("X-One", "1")
+    resp.header("X-Two", "2")
+    ro wire = serialize_response(resp)
+    ro s = str.from_bytes_unchecked(wire)
+    assert(s.contains("x-one: 1"))
+    assert(s.contains("x-two: 2"))
+}
+
+// ── ServeMux dispatch: path params attach via mutating ServerRequest.@params ──
+
+test "ServeMux dispatch: path params attach via mutating @params" {
+    ro mux = ServeMux.new()
+        .get("/users/{id}", handler_fn(|req| ServerResponse.text(200, "user " + req.param("id").unwrap_or("?"))))
+    ro req = "GET /users/77 HTTP/1.1\r\nHost: x\r\n\r\n".to_bytes()
+    ro wire = serve_once(mux, req)
+    ro s = str.from_bytes_unchecked(wire)
+    assert(s.contains("user 77"))
+}
