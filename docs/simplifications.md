@@ -37870,3 +37870,24 @@ Deps-in-main проверены эмпирически; ниже — что за
 - **CANCEL → `Failure(CancelError{reason})`** (не отдельный `Cancelled(any)`-вариант из spec-sketch 03-syntax:8733):
   соответствует существующей 3-вариантной `ScopeOutcome` (Success/Failure/Panic) и плану §6 (Failure(any) folds cancel);
   префикс `"cancel: "` (bootstrap-дискриминатор) убран — дискриминация теперь `err is CancelError`.
+
+## Plan 174 (заход 2026-07-06 — 174.2 spec-closure/cross-carrier, 174.1 truncation, 174.5 eval)
+
+- **174.2 Ф.B cross-carrier `?` — консервативная детекция, не полная.** Диагностики
+  `E_TRY_OPTION_IN_RESULT_FN`/`E_TRY_RESULT_IN_OPTION_FN` срабатывают только когда носитель операнда
+  ВЫВОДИТСЯ (`infer_expr_type`), не несёт generics и ПРОТИВОПОЛОЖЕН носителю return-типа. При
+  невыводимом/generic операнде — молчим (safe false-negative): мисматч всё равно поймается как
+  type-error на синтезированном `return None`/`Err`. НЕ может превратить компилирующийся код в
+  падающий. Третья диагностика (E1≠E2 `.map_err`-hint) НЕ реализована — требует sum-extension
+  compat-проверки (172.1), иначе false-positive на легальном widening. `[M-174.2-try-err-type-mismatch-hint]`.
+- **174.1 truncation-фикс — в существующей хардкод-архитектуре, не структурный.** `emit_parse_range_check`
+  добавляет sub-width range-check ПЕРЕД narrowing-кастом в обе codegen-хардкод-ветки (try_from/try_parse).
+  Это фиксит named-acceptance баг (`i8.try_from("999")` → Err вместо Ok(-25)) как изолированный
+  корректностный фикс. Полный структурный вариант-B (generic-движок в .nv, удаление хардкода, typed
+  errors вместо flat-string, float-канон, radix-поверхность) — отложен под координацию 172.1-hardcode ×
+  177 (`[M-174.1-parse-engine-structural]`). Err-тип у sub-width try_from остаётся flat-string (не
+  typed ParseIntError) — pre-existing, закрывается structural-заходом. value-equality на sub-width
+  Result-payload (`unwrap_or(0)==N`) имеет отдельный pre-existing лимит (Ok=nova_int/Err=nova_str
+  bootstrap-Result) — тесты проверяют классификацию (is_err/is_none), не значение.
+- **174.5 — только §7.7-оценка, без кода.** Write-cap-баг подтверждён живым по символам; checker/codegen/
+  spec-amend отложены (02-types = зона 172, координация). Символы зафиксированы для turnkey-resume.
