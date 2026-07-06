@@ -586,6 +586,13 @@ typedef struct { char _dummy; } nova_unit;
  * `[M-115-ffi-build-pipeline]`. */
 #include "plan115_ffi_test.h"
 
+/* Plan 179 Ф.2 (D337): std/encoding/compress brotli C-FFI shim — PURE prototypes.
+ * Always included (no brotli dependency here); the DEFINITIONS (brotli_shim.c) and
+ * libbrotlidec.lib are compiled/linked ONLY when the generated .c actually calls a
+ * nova_brotli_* symbol (test_runner.rs conditional-link gate). A program that never
+ * decodes brotli links neither the shim nor the lib. */
+#include "brotli_shim.h"
+
 /* Plan 115 D214 Ф.3 / A7: sqlite_mini_ffi.h moved → `examples/ffi/`
  * (user-side location). Now wired through `[M-115-ffi-build-pipeline]` —
  * `nova_tests/nova.toml [ffi] c_shims` force-includes header per package.

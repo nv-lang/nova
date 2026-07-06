@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/compress/ffi.nv — private C FFI layer for brotli decode (Plan 179 Ф.2).
+//
+// All declarations are module-private (no `export`). C symbols are called by
+// literal name (D282: `extern "C" fn`). C side: nova_rt/brotli_shim.{h,c}, which
+// wraps the vendored libbrotlidec (google/brotli). The shim + libbrotlidec.lib are
+// linked ONLY when a CU actually reaches one of these symbols (conditional link,
+// test_runner.rs `nova_brotli_` marker) — a program that never decodes brotli
+// links neither the shim nor the lib. When the lib is unavailable for the host the
+// shim compiles as feature-gate stubs (dec_new → 0), so brotli_decode degrades to
+// UnsupportedMethod at runtime, never a link error (Q11).
+//
+// ⚠ C-ABI (174.6 M1 / D282): []u8 / Vec are GC types and are FORBIDDEN in extern
+// signatures. Compressed input and decoded output cross as raw (*u8/*mut u8, int)
+// buffers; the []u8 ↔ pointer conversion happens in the Nova wrapper (brotli.nv),
+// exactly like std/fs's fs_read/fs_write. The decoder handle is an opaque `int`
+// (intptr-wide) carrying a NovaBrotliDec*; 0 = null / failed / feature-gated-out.
+
+module encoding.compress
+
+// Create a streaming decoder instance. Returns an opaque handle (> 0), or 0 on
+// allocation failure OR when brotli is not built for this host (Q11 feature-gate).
+extern "C" fn nova_brotli_dec_new() -> int
+
+// Append `len` compressed bytes from `p` (copied into the decoder's own buffer, so
+// the Nova []u8 need not outlive the call). Returns 0 on success, -1 on OOM/bad-arg.
+extern "C" fn nova_brotli_dec_feed(h int, p *u8, len int) -> int
+
+// Decode up to `out_cap` bytes into `out` (a []u8.as_ptr() destination). Returns
+// the number of bytes written (>= 0), or -1 on a decode error (query dec_error).
+// After the call inspect dec_done / dec_needs_input for stream state.
+extern "C" fn nova_brotli_dec_pull(h int, out *mut u8, out_cap int) -> int
+
+// 1 once the stream reached clean end (BROTLI_DECODER_RESULT_SUCCESS), else 0.
+extern "C" fn nova_brotli_dec_done(h int) -> int
+
+// 1 if the last pull blocked needing more input (→ truncated when no more feeds).
+extern "C" fn nova_brotli_dec_needs_input(h int) -> int
+
+// Detailed BrotliDecoderErrorCode (< 0) after a -1 pull, else 0.
+extern "C" fn nova_brotli_dec_error(h int) -> int
+
+// Destroy the decoder + free all internal buffers. Safe on a 0 handle.
+extern "C" fn nova_brotli_dec_free(h int) -> ()

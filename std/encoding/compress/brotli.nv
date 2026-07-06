@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/compress/brotli.nv — brotli (RFC 7932) DECODE via C-FFI (Plan 179 Ф.2).
+//
+// brotli is the one codec in this module that is NOT pure-Nova: RFC 7932 carries a
+// 120 KiB static dictionary + context modeling, making a V1 pure port dispro­portionate
+// (§3.0 Q2; even Zig std ships no brotli). Decode delegates to the vendored
+// libbrotlidec through the thin C shim in ffi.nv (nova_rt/brotli_shim.c). The shim +
+// lib are linked ONLY for a CU that actually decodes brotli (conditional link) and
+// degrade to a runtime UnsupportedMethod when the lib is absent (Q11).
+//
+// The bomb-cap (D334) is enforced Nova-side, INCREMENTALLY, OVER the FFI: pull emits
+// at most a bounded budget per call, and we abort with CompressError{Bomb} the moment
+// the accumulated output would exceed `max_output` — the C decoder never runs away
+// (its own window is format-bounded to <=16 MiB by lgwin<=24, independent of output).
+//
+// Spec: spec/decisions/04-effects.md (D337 brotli C-FFI contract; D333/D334 codec+bomb).
+
+module encoding.compress
+
+// Per-pull output budget: bounds a single FFI decode step so one highly-compressible
+// input chunk cannot force a huge single allocation (§1a bounded-per-call). 64 KiB.
+const BROTLI_PULL_BUDGET int = 65536
+
+/// brotli (RFC 7932) one-shot decode. `max_output` is the bomb-cap (D334): output
+/// exceeding the limit → `CompressError{Bomb}`. `0` = no limit (caller-trust; Plan
+/// 178 always passes a real cap). A corrupt stream → `InvalidData`; a truncated
+/// stream → `UnexpectedEof`. When brotli is not built for this host the call returns
+/// `UnsupportedMethod("brotli not built")` (Q11 — never a panic / link error).
+#stable(since = "0.1")
+export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError] {
+    ro h = nova_brotli_dec_new()
+    if h == 0 {
+        return Err(CompressError.unsupported("brotli not built"))
+    }
+    // Feed the whole compressed input (the shim copies it internally).
+    if data.len() > 0 {
+        ro fr = unsafe { nova_brotli_dec_feed(h, data.as_ptr(), data.len()) }
+        if fr != 0 {
+            nova_brotli_dec_free(h)
+            return Err(CompressError.invalid("brotli: input too large to buffer"))
+        }
+    }
+    mut out []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(BROTLI_PULL_BUDGET, 0 as u8)
+    mut total = 0
+    mut err Option[CompressError] = None
+    mut finished = false
+    while !finished {
+        // Bound the per-pull budget so we overshoot the cap by at most one byte —
+        // `output == max_output` is OK, the first byte over trips Bomb (D334).
+        ro budget = if max_output > 0 {
+            ro room = max_output - total + 1
+            if room < BROTLI_PULL_BUDGET { room } else { BROTLI_PULL_BUDGET }
+        } else {
+            BROTLI_PULL_BUDGET
+        }
+        ro n = unsafe { nova_brotli_dec_pull(h, chunk.as_ptr(), budget) }
+        if n < 0 {
+            err = Some(CompressError.invalid("brotli: corrupt stream"))
+            finished = true
+        } else {
+            total += n
+            if max_output > 0 && total > max_output {
+                err = Some(CompressError.bomb(max_output))
+                finished = true
+            } else {
+                mut i = 0
+                while i < n {
+                    out.push(chunk[i])
+                    i += 1
+                }
+                if nova_brotli_dec_done(h) != 0 {
+                    finished = true
+                } else if n == 0 {
+                    // No progress and not finished: truncated input, or a stall.
+                    ro needs = nova_brotli_dec_needs_input(h)
+                    err = if needs != 0 {
+                        Some(CompressError.eof())
+                    } else {
+                        Some(CompressError.invalid("brotli: decoder stalled"))
+                    }
+                    finished = true
+                }
+            }
+        }
+    }
+    nova_brotli_dec_free(h)
+    match err {
+        Some(e) => Err(e)
+        None    => Ok(out)
+    }
+}
