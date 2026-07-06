@@ -120,17 +120,22 @@ export type Result[T, E] enum Ok(T) | Err(E)
 /// scope-block'а. `Cleanup.cleanup` получает это значение и решает
 /// что делать с ресурсом (commit/rollback/release/etc).
 ///
-/// **Type-erased Failure**: payload `str` в bootstrap'е (вместо `any`
-/// per D188 spec) — routing через `if err.contains(...)` или upgrade
-/// до `any` после [M-110-multierror-any]. Resource-типы используют
-/// `Failure(_)` pattern + специфичный narrowing в типах ошибок.
+/// **Typed Failure payload** (Plan 173 Ф.4 #5, D188/D190): `Failure` carries
+/// the erased original error as `any` (was bootstrap `str` — closed
+/// [M-110-multierror-any]). `@cleanup`/`defer(o)` bodies narrow it with
+/// `if err is T` (D54/174.3) to recover the typed cause:
+/// - a typed `throw MyErr{..}` surfaces as `Failure(any=MyErr)` → `err is MyErr`;
+/// - a bare `throw "msg"` surfaces as `Failure(any=str)` → `err is str`;
+/// - a cooperative cancel surfaces as `Failure(any=CancelError{reason})` →
+///   `err is CancelError` (D90 §7 amend — typed, no more `"cancel: "` prefix);
+/// - `interrupt` surfaces as `Failure(any=str="interrupt")`.
+/// `ScopeOutcome[E]` (a per-scope typed outcome) stays **rejected** (D190) —
+/// the erased `any` is the single canonical surface.
 ///
 /// **Variants:**
 /// - `Success` — body завершился нормально (включая `return v`).
-/// - `Failure(reason)` — body throw'нул / cancel / interrupt
-///   (D90 §7 amend: cancel приходит как `Failure("cancel: <reason>")` —
-///   префикс синхронизирован с codegen `assign_scope_outcome_from_frame`;
-///   interrupt — как `Failure("interrupt")`, Plan 173 Ф.2.B2/B3 D314).
+/// - `Failure(err)` — body throw'нул / cancel / interrupt; `err: any`
+///   (Plan 173 Ф.2.B2/B3 D314 + Ф.4 #5 typed payload).
 /// - `Panic(msg)` — body panic'нул; resource НЕ должен throw в этом
 ///   случае (это bug), но может выполнить emergency cleanup.
 ///
@@ -140,13 +145,15 @@ export type Result[T, E] enum Ok(T) | Err(E)
 /// fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
 ///     match outcome {
 ///         Success      => @commit()!!
-///         Failure(_)   => @rollback()?
+///         Failure(err) =>
+///             if err is CancelError { @rollback()? }
+///             else { @rollback_with_log()? }
 ///         Panic(_)     => @rollback_emergency()
 ///     }
 /// }
 /// ```
 #stable(since = "0.1")
-export type ScopeOutcome enum Success | Failure(str) | Panic(str)
+export type ScopeOutcome enum Success | Failure(any) | Panic(str)
 
 
 // ──────────────────────────────────────────────────────────────────────────

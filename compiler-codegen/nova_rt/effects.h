@@ -79,6 +79,47 @@ static inline void nova_fail_pop(void) {
     if (_nova_fail_top) _nova_fail_top = _nova_fail_top->prev;
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.4 #5 (D188/D190): thread-local STABLE error snapshot.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * The per-throw error identity (msg/kind/typed-payload/tid) lives on a
+ * `NovaFailFrame` that is a STACK local of the throwing function. When a
+ * `with Fail = … interrupt` handler catches a throw, control unwinds via the
+ * interrupt stack, which does NOT pop fail-frames — so `_nova_fail_top` may
+ * still point at a frame whose stack storage the unwind already destroyed
+ * (reading it segfaults once the throw came from a nested function).
+ *
+ * `_nova_last_error` snapshots those four stable, self-owned fields (the typed
+ * payload is heap/GC-boxed at the throw site and outlives the stack frame; the
+ * msg is a heap/static `nova_str`) into thread-local storage at throw-time, so
+ * a defer/consume-cleanup unwound via `interrupt` can recover the ORIGINAL
+ * typed error for `Failure(any)` → `if err is T`. `.live` gates the read:
+ * set on every throw/panic, cleared when the error is caught (nova_scope_exit
+ * CATCH) — a pure value-`interrupt` with no in-flight throw sees `.live == 0`
+ * and falls back to the plain `"interrupt"` marker. */
+typedef struct {
+    int           live;   /* 1 while an error is propagating; 0 once caught */
+    NovaFailFrame frame;  /* stable snapshot of the in-flight error */
+} NovaLastError;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaLastError _nova_last_error;
+#else
+extern __thread NovaLastError _nova_last_error;
+#endif
+
+static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
+                                       void* payload, NovaTypeId tid) {
+    _nova_last_error.live               = 1;
+    _nova_last_error.frame.error_msg           = msg;
+    _nova_last_error.frame.error_kind          = kind;
+    _nova_last_error.frame.error_reason_ptr    = NULL;
+    _nova_last_error.frame.error_user_payload  = payload;
+    _nova_last_error.frame.error_user_type_id  = tid;
+    _nova_last_error.frame.error_suppressed    = NULL;
+}
+
 /* Throw: store error, longjmp to nearest handler.
  * Plan 49 Ф.0: stamp kind=USER, reason=NULL (default — обычная ошибка).
  * Plan 100.4.1 (D158): reset error_suppressed chain (fresh throw НЕ несёт
@@ -86,10 +127,13 @@ static inline void nova_fail_pop(void) {
  * через nv_compose_suppressed; transferred к outer frame через
  * nova_rethrow_with_suppressed. */
 static inline void nova_throw(nova_str msg) {
+    nova_last_error_set(msg, NOVA_THROW_USER, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         _nova_fail_top->error_kind = NOVA_THROW_USER;
         _nova_fail_top->error_reason_ptr = NULL;
+        _nova_fail_top->error_user_payload = NULL;
+        _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
         _nova_fail_top->error_suppressed = NULL;
         longjmp(_nova_fail_top->jmp, 1);
     }
@@ -107,10 +151,13 @@ static inline void nova_throw(nova_str msg) {
  * caller через _reason вариант). Без активного handler'а отмена бесполезна
  * (некому её перехватить) — abort с диагностикой. */
 static inline void nova_throw_cancel(nova_str msg) {
+    nova_last_error_set(msg, NOVA_THROW_CANCEL, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
         _nova_fail_top->error_reason_ptr = NULL;
+        _nova_fail_top->error_user_payload = NULL;
+        _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
         _nova_fail_top->error_suppressed = NULL;  /* D158 */
         longjmp(_nova_fail_top->jmp, 1);
     }
@@ -124,10 +171,13 @@ static inline void nova_throw_cancel(nova_str msg) {
  * box'нутый `T` (caller-owned, переживает scope). Для CancelToken[str]
  * указывает на nova_str; для CancelToken[T] (Ф.6) — на box'нутый T. */
 static inline void nova_throw_cancel_reason(nova_str msg, void* reason_ptr) {
+    nova_last_error_set(msg, NOVA_THROW_CANCEL, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         _nova_fail_top->error_kind = NOVA_THROW_CANCEL;
         _nova_fail_top->error_reason_ptr = reason_ptr;
+        _nova_fail_top->error_user_payload = NULL;
+        _nova_fail_top->error_user_type_id = NOVA_TID_NONE;
         _nova_fail_top->error_suppressed = NULL;  /* D158 */
         longjmp(_nova_fail_top->jmp, 1);
     }
@@ -293,7 +343,10 @@ static inline void nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy p
         nova_rethrow_with_suppressed(primary);
         return;  /* unreachable */
     }
-    /* CATCH: handler отработал — вызывающий сам ставит result=default. */
+    /* CATCH: handler отработал — вызывающий сам ставит result=default.
+     * Ф.4 #5: the error is now caught & recovered — invalidate the stable
+     * snapshot so a later value-`interrupt` does not resurrect it. */
+    _nova_last_error.live = 0;
 }
 
 /* Accessors для MultiError prelude — count + indexed access на chain.
@@ -571,6 +624,8 @@ static inline void nova_assert_loc(
          * on main flow via nova_throw, which the test runner's _tf_fail catches.
          * On main flow (no fiber): route to _nova_test_frame as before. */
         if (nova_in_fiber() && _nova_fail_top) {
+            nova_last_error_set(nova_str_from_cstr(buf), NOVA_THROW_PANIC,
+                                NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
             _nova_fail_top->error_msg = nova_str_from_cstr(buf);
             /* Plan 140.3 (D13 amend): assert failure is a PANIC-class failure
              * (spec D13: "assert failure = panic"), identical to nv_panic and
@@ -616,6 +671,7 @@ static inline void nova_assert(nova_bool cond, const char* expr_str) {
  *
  * См. spec/decisions/08-runtime.md → D13 (panic — fiber-уровень). */
 static inline void nv_panic(nova_str msg) {
+    nova_last_error_set(msg, NOVA_THROW_PANIC, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg = msg;
         /* Plan 110.1.4.g (D188): mark frame's error_kind = PANIC so
@@ -792,6 +848,10 @@ extern __thread NovaVtable_Fail* _nova_handler_Fail;
  * `throw err`, он dispatch'ится на outer handler (D65 правило 3).
  * Восстанавливаем после return. */
 static inline nova_unit Nova_Fail_fail(nova_str msg) {
+    /* Ф.4 #5: capture BEFORE dispatch — a handler that `interrupt`s never
+     * returns to the `nova_throw(msg)` fallback below, so the stable snapshot
+     * must be stamped here for the interrupt-unwound cleanup to recover it. */
+    nova_last_error_set(msg, NOVA_THROW_USER, NULL, NOVA_TID_NONE);
     if (_nova_handler_Fail) {
         NovaVtable_Fail* current = _nova_handler_Fail;
         NovaInterruptFrame* saved_handler_iframe = _nova_current_handler_iframe;
@@ -855,6 +915,7 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
      * _nova_fail_top->error_user_payload — payload должен быть доступен
      * к моменту invoke. Это OK даже без unwind: handler-arm body — это
      * inline fn-call с captured pointer to fail-frame top. */
+    nova_last_error_set(msg_repr, NOVA_THROW_USER_TYPED, payload, tid);  /* Ф.4 #5 */
     if (_nova_fail_top) {
         _nova_fail_top->error_msg          = msg_repr;
         _nova_fail_top->error_kind         = NOVA_THROW_USER_TYPED;

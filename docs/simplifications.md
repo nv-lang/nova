@@ -37848,3 +37848,25 @@ Deps-in-main проверены эмпирически; ниже — что за
 - **Server Ф.3 — CORE LANDED (pure) + live-runner blocked-at-link.** Substrate UNBLOCKED (echo-тест доказывает supervised/spawn/accept). `std.http.server` (server/wire): `ServerRequest`/`ServerResponse`/`Handler`(concrete closure-newtype, Q27-fallback)/`ServeMux`(Go-1.22 {param}+method+405-Allow+404+HEAD→GET)/`parse_request`(Host-mandatory+`..`-reject+CL-framing)/`serialize_response`/`serve_once`. **9 mock-тестов (no sockets) PASS.** Live-runner `std.http.servernet.handle_connection` написан+codegen-компилится, но loopback-smoke НЕ ЛИНКУЕТСЯ: `undefined symbol Nova_NetError_static_IoError` (payload-variant ctor не эмитится в net+http combined-CU; net-only OK) [M-codegen-cross-module-ctor-emission]; плюс `with Net{}`-блок мис-выводит result-тип при HttpError-в-CU (обход `()` tail). Серверная ЛОГИКА полностью покрыта mock'ами (план: «mock где возможно»). Followups: streaming/backpressure, middleware/100-continue/keep-alive, graceful-deadline-drain (gated `supervised(deadline:)`), typed request-body.
 - **Owner-конвенция применена:** `Response.of`→`Response.new`, `ContentType.of`→`ContentType.new` (message.nv/mime.nv + call-sites); `.of` только за вариадик-коллекциями.
 - **Гейты:** conformance CU PASS/0-fail; http/http_server/http_typed/http_transport = 4 CU PASS/0; zero-regression sample serde+serde_e2e+net(plan91_12) = 16 CU PASS/0 (delta 0; compress byte-untронут); cargo build (debug+release) clean.
+## Plan 173 Ф.4 #5 (typed `ScopeOutcome.Failure(any)`) — realized-form + документированные границы (2026-07-06)
+
+`Failure(str)`→`Failure(any)` протянут БЕЗ функциональных упрощений keystone'а (typed narrowing `if err is T`
+в `@cleanup`/`defer(o)` работает и на FromFrame-, и на interrupt-path идиоме `with Fail = … interrupt`). Границы:
+
+- **Interrupt-path идентичность ошибки — через thread-local `_nova_last_error`, НЕ через `_nova_fail_top`.**
+  Эмпирика (cross-fn throw): к моменту interrupt-unwound cleanup'а `_nova_fail_top` указывает на РАЗРУШЕННЫЙ
+  stack-fail-frame бросившей функции (interrupt не поп'ает fail-frames) → чтение payload = **segfault**.
+  Sound-фикс: стабильный snapshot `{msg,kind,payload,tid}` стемпится на throw (heap/GC-boxed payload переживает
+  stack), читается cleanup'ом, гасится на catch (`nova_scope_exit CATCH` + with-block-consume в `nova_interrupt`).
+  **Остаточное staleness-окно** (payload-only, вариант всё равно Failure): pure value-`interrupt` в промежутке
+  между throw и его catch'ем, ИЛИ per-E-handler (`with Fail[E] = …`), который interrupt'ит ДО fallback'а на
+  `nova_throw_typed` (генерик-`Fail`-handler и bare-throw покрыты — capture в `Nova_Fail_fail`/`nova_throw_typed`).
+  Ни один тест не инспектирует payload на value-interrupt-path; GC-dangling исключён (`is T` проверяет tid без
+  deref — deref только после успешного match). Полное покрытие per-E = capture в codegen-emitted `_nova_throw_typed_<E>` (followup).
+- **Box-репрезентация typed payload предполагает pointer (record).** `nova_any_from_boxed` оборачивает
+  `error_user_payload` (= `Nova_T*` throw-site heap-box) на один уровень (`*(Nova_T**)data` narrowing) — верно
+  для ВСЕХ user error-типов (records → pointer-repr; универсум typed-errors). Гипотетический value-typed throw
+  (throw примитива/value-struct) box'ился бы иначе — вне периметра (не встречается: `throw "s"` идёт str-path).
+- **CANCEL → `Failure(CancelError{reason})`** (не отдельный `Cancelled(any)`-вариант из spec-sketch 03-syntax:8733):
+  соответствует существующей 3-вариантной `ScopeOutcome` (Success/Failure/Panic) и плану §6 (Failure(any) folds cancel);
+  префикс `"cancel: "` (bootstrap-дискриминатор) убран — дискриминация теперь `err is CancelError`.

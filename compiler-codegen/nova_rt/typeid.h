@@ -132,4 +132,33 @@ static inline const char* nova_any_name(const void* a) {
         ? ((const NovaAny*)a)->info->name : "<null>";
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.4 (#5, D188/D190): box an ALREADY-heap-boxed typed payload into
+ * `any` when only its RUNTIME `NovaTypeId` is known (not a compile-time static
+ * `NovaTypeInfo`). Used by `assign_scope_outcome_from_frame` to lift a
+ * `NovaFailFrame`'s `error_user_payload` (a typed-throw payload, heap-boxed at
+ * the throw site — survives the unwind) + `error_user_type_id` into the
+ * `ScopeOutcome.Failure(any)` variant, so `@cleanup`/`defer(o)` bodies can do
+ * `if err is T` narrowing on the original thrown value.
+ *
+ * `payload` is a typed-throw payload — the `Nova_T*` pointer a `throw MyErr{..}`
+ * heap-allocates at the throw site (user error types are records → pointer
+ * representation). The `any` ABI for such a pointer type keeps `data` pointing
+ * at a slot that HOLDS the `Nova_T*` (narrowing lowers to `*(Nova_T**)data`), so
+ * we box `payload` one indirection deep — mirroring `nova_any_box(&info,&ptr,
+ * sizeof(ptr))`, but with a `NovaTypeInfo` synthesised from the runtime tid
+ * (name via the codegen `nova_typeid_to_name` switch; `nova_any_is`/`_data`/
+ * `_name` read only `type_id`/`data`/`name`, so a heap info == a static one). */
+static inline void* nova_any_from_boxed(void* payload, NovaTypeId tid) {
+    NovaAny* a = (NovaAny*)nova_alloc(sizeof(NovaAny));
+    NovaTypeInfo* ti = (NovaTypeInfo*)nova_alloc(sizeof(NovaTypeInfo));
+    ti->type_id = tid;
+    ti->name = nova_typeid_to_name(tid);
+    void** slot = (void**)nova_alloc(sizeof(void*));
+    *slot = payload;
+    a->info = ti;
+    a->data = (void*)slot;
+    return (void*)a;
+}
+
 #endif /* NOVA_RT_TYPEID_H */

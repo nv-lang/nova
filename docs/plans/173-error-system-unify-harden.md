@@ -386,12 +386,26 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   (≡ Kotlin/Java, лучше Swift); detach enforced; ни одна ошибка fiber'а не теряется молча;
   `parallel for → []T` для любого T (173.1); **без упрощений**.
 
-### Ф.4 — MultiError end-to-end + типизированный ScopeOutcome (ПОЗЖЕ, обязательно; 🔴 ГЕЙТ: [Plan 174.3](174.3-any-type-and-is-downcast.md))
+### Ф.4 — MultiError end-to-end + типизированный ScopeOutcome (🔨 В РАБОТЕ; ГЕЙТ [Plan 174.3] ✅ в main)
 1. **#6:** материализовать `NovaErrorChain` → Nova `MultiError` в точке получения composed-ошибки
    (handler-arm/scope-result); использовать ГОТОВЫЕ read-аксессоры `nova_failframe_suppressed_count/at`
    (`effects.h:269-283`); методы = уже объявленные в `errors.nv:207-250`.
-2. **#5:** `ScopeOutcome.Failure(any)` — протянуть `error_user_payload`/`type_id`; типизированный
-   `if e is T` в `@cleanup`; `core.nv:147` → `Failure(any)`.
+2. ✅ **#5 РЕАЛИЗОВАН (2026-07-06):** `ScopeOutcome.Failure(any)` (`core.nv:149`) — типизированный payload
+   протянут в outcome; `if e is T` narrowing в `@cleanup`/`defer(o)` (D54/174.3). Materialization
+   (`assign_scope_outcome_from_frame`, `emit_c.rs`): USER_TYPED → `nova_any_from_boxed(payload,tid)` (усыновляет
+   throw-site heap-box); CANCEL → typed `CancelError{reason}` box (`err is CancelError`, префикс `"cancel: "`
+   убран); USER(bare str) → `any=str`; interrupt → `any=str "interrupt"`. **Ключевая находка:** в доминирующем
+   идиоме `with Fail = … interrupt` handler срабатывает на throw-site, scope выходит через interrupt, а
+   `_nova_fail_top` к моменту cleanup УКАЗЫВАЕТ НА РАЗРУШЕННЫЙ stack-fail-frame (cross-fn throw → segfault). Fix:
+   thread-local **STABLE snapshot `_nova_last_error`** (`effects.h`), стемпится на throw (`nova_throw*`/
+   `nova_throw_typed`/`Nova_Fail_fail`/`nv_panic`/assert-panic), читается cleanup'ом на interrupt-path, гасится
+   на catch (`nova_scope_exit CATCH` + with-block-consume в `nova_interrupt`). Закрыл `[M-110-multierror-any]`
+   в части `ScopeOutcome.Failure(any)` (typed cleanup narrowing); типизация полей самого `MultiError`
+   (`primary`/`suppressed` `str`→`any`) остаётся за #6.
+   Тесты: `err173/f4_typed_scope_outcome.nv` (typed/str/is-discrim, PASS); migrated `plan110/…_t2_11` на
+   `err is CancelError`. Conformance 53/0; regress delta 0. **Остаток (документирован в simplifications):**
+   value-typed throw box-repr предполагает pointer (records — универсум typed-errors); per-E-handler+interrupt
+   staleness-окно (payload-only, already-Failure).
 3. **#7:** инвариант suppressed-chain: убрать безусловный `error_suppressed=NULL` (`effects.h:93,114,131,801`,
    NOVA_TRY :285) ИЛИ маршрутизировать все cleanup-throw через `nova_rethrow_with_suppressed`.
 4. typed-предикатный доступ: **`e is T`** (D54-семантика, инфра 174.3); `.downcast[T]()` НЕ вводится (§6).
