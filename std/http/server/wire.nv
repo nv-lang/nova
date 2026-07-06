@@ -120,7 +120,7 @@ fn serialize_response(resp ServerResponse) -> []u8 {
     buf.write_str(reason_of(status))
     buf.write_str("\r\n")
 
-    for (nm, v) in headers.iter() {
+    for (nm, v) in headers {
         buf.write_str(nm.as_str())
         buf.write_str(": ")
         buf.write_bytes(v.as_bytes())
