@@ -2025,6 +2025,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   на mut → `*mut T` (Rust-параллель &/const); если чекер сегодня требует mut — снять;
   unsafe-границу каста/чтения сверить по D54/L3; (4) size_of-API — отдельный пункт 174.5 (const-фича).
 
+  ТУДА ЖЕ (вопрос владельца про ADDR_IMAGE_BYTES, 2026-07-08): при появлении size_of-API
+  описать net-образ типизированной записью и заменить литерал 20 на size_of[...] —
+  единственный источник истины (как Rust libc::size_of / Go cgo-godefs+Sizeof);
+  C-сторона уже защищена _Static_assert(sizeof(NovaNetAddr)==20).
 - **[M-http-module-test-block-p67]** (2026-07-07, P1-разведка, Wave: заход крашеров-182
   [opus] — то же P67-семейство) — ЛЮБОЙ test{}-блок в `module std.http` (даже no-op) валит
   компилятор: `[P67-LEGACY] Ident 'msg' not in var_types` (санация-182, три независимые
