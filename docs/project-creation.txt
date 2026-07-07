@@ -38821,3 +38821,20 @@ conformance, полная карта nova_tests (GREEN 144 / RED 93 / CRASH 17),
 толерантность к багам. Эталонная база после переездов: conformance 53/0 (лично, приватный
 TEMP — общий %TEMP% даёт флак-гонку параллельных прогонов, маркер заведён). Зачистка репо:
 15 worktree + 59 влитых веток снесены, gc до 36 МиБ.
+
+Часть 60 (2026-07-07). Закрыт фантомный E7320 (разведка [opus] опровергла coarse-by-name
+гипотезу: частичный prelude не привозил runtime.string/char/errors для #no_prelude-хелперов,
+плюс мисрендер кросс-файловых спанов SrcResolver::Single без file_id; фикс [sonnet]: три
+импорта в фасад collections — по дороге вскрыт и закрыт тихий мисдиспатч Vec[u8].compare —
+и рендер через SourceMap; vec/access зелёный впервые; conformance 53→54). Влит 184 Ф.2
+[opus]: два P1-дефекта value-цепочек закрыты системно по Р7 (беглый ref Self сквозной до
+эмиссии: деref в by-value арг-позиции, chain_norm не копирует value-корни, prepare_method_recv
+пропускает готовый указатель); тихая порча resp.header(...).header(...) убита в реальном
+nova build (сквозная проверка 5/9); приёмка дважды возвращалась (nova-cli вызовы
+normalize_chains_module с настоящими resolved_types в build/bench-путях). Попутно дочинены:
+collate-склейка от sweep-миграции, nova-lsp (Supervised без deadline-поля D349 + RefArg) —
+lsp снова собирается. os-поверхность двумя haiku-заходами: env_has -> bool; env(k)/env(k,v),
+env_bytes ×2, cwd()/cwd(p) перегрузкой по арности; оп env_get -> Option[str] (сентинель-""
+ретрактирован; прецедент Option в эффект-опах). Зачистка: 15 worktree + 59 веток, gc 36 МиБ.
+Идёт миграционная волна [sonnet] (json-санация с двумя багами корректности, D410-ренеймы,
+ретракция D73/D77/nth, json-виды, http-хвост, os-Result-аудит). Эталон main: 54/0 лично.
