@@ -28467,6 +28467,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             .all(|(w, g)| w == g))
                             };
                             if let Some(decl) = chosen {
+                                // [M-compiler-nv-porting-wave] item B1: namespace
+                                // pseudo-receivers (gc/fibers/runtime/bench) — их
+                                // C-функция возвращает `void` (Nova `-> ()`); в
+                                // expression-позиции нужно значение → сохранённый
+                                // legacy idiom `(call, (nova_int)0LL)` (см.
+                                // ExternalDecl::is_unit_wrap / NAMESPACE_OVERRIDES).
+                                if decl.is_unit_wrap {
+                                    return Ok(format!(
+                                        "({}({}), (nova_int)0LL)",
+                                        decl.c_name, arg_strs.join(", ")
+                                    ));
+                                }
                                 return Ok(format!("{}({})", decl.c_name, arg_strs.join(", ")));
                             }
                         }
@@ -28476,24 +28488,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // StringBuilder/WriteBuffer/ReadBuffer удалён. Registry-
                 // driven путь (Plan 12 Ф.3) обрабатывает это раньше.
                 //
-                // f64/f32.from_bits / int.to_bits — НЕ в external_registry
-                // (это primitive type methods, не external fn в opaque-type
-                // builtins). Hard-coded dispatch. Plan 74: f64/f32 bit-cast
-                // через nova_rt/numeric.h. `int.to_bits(f f64)` — legacy
-                // Plan 04 helper (read_buffer round-trip), оставлен как есть.
+                // [M-compiler-nv-porting-wave] item B2: f64/f32.from_bits
+                // hardcoded intercept снят — std/runtime/numeric.nv теперь
+                // embedded builtin source (PRIMITIVE_BITCAST_OVERRIDES,
+                // external_registry.rs), тот же generic registry-driven
+                // dispatch выше (строка ~28448) резолвит его. `int.to_bits`
+                // остаётся hardcoded — нет .nv-декларации нигде (legacy
+                // Plan 04 helper, read_buffer round-trip), нечего embed'ить.
                 if let ExprKind::Ident(name) = &obj.kind {
-                    if name == "f64" && method == "from_bits" {
-                        if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(format!("Nova_f64_from_bits({})", v));
-                        }
-                    }
-                    if name == "f32" && method == "from_bits" {
-                        if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(format!("Nova_f32_from_bits({})", v));
-                        }
-                    }
                     if name == "int" && method == "to_bits" {
                         if let Some(arg) = args.first() {
                             let v = self.emit_expr(arg.expr())?;
@@ -28501,194 +28503,67 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     // Plan 57: bench DSL builtins — std.bench.
-                    // Namespace-style dispatch (как `gc.*`); только видим
-                    // внутри bench-блока, но codegen этого не enforce'ит
-                    // (выгоднее не накладывать ограничений — `bench.opaque(v)`
-                    // в обычной функции просто работает как identity barrier).
-                    if name == "bench" {
-                        match method.as_str() {
-                            "opaque" if args.len() == 1 => {
-                                let v = self.emit_expr(args[0].expr())?;
-                                // Primitive black-box. На GCC/Clang inline-asm,
-                                // на MSVC volatile cast. Macros в bench.h.
-                                return Ok(format!("NOVA_BENCH_OPAQUE_PRIM({})", v));
-                            }
-                            "iterations" if args.is_empty() => {
-                                return Ok("nova_bench_iterations()".to_string());
-                            }
-                            "reset_timer" if args.is_empty() => {
-                                return Ok("(nova_bench_reset_timer(), (nova_int)0LL)".to_string());
-                            }
-                            "bytes" if args.len() == 1 => {
-                                // Setter — записывает throughput_bytes в TLS.
-                                let v = self.emit_expr(args[0].expr())?;
-                                return Ok(format!(
-                                    "(nova_bench_set_throughput_bytes({}), (nova_int)0LL)",
-                                    v));
-                            }
-                            "elements" if args.len() == 1 => {
-                                let v = self.emit_expr(args[0].expr())?;
-                                return Ok(format!(
-                                    "(nova_bench_set_throughput_elements({}), (nova_int)0LL)",
-                                    v));
-                            }
-                            "allocs" if args.is_empty() => {
-                                // Возвращает текущий alloc_count snapshot.
-                                return Ok("((nova_int)nova_bench_alloc_count_snapshot())".to_string());
-                            }
-                            "now_ns" if args.is_empty() => {
-                                // Эспозит timer для advanced bench patterns.
-                                return Ok("((nova_int)nova_bench_now_ns())".to_string());
-                            }
-                            // Plan 57.G.5 — Custom metric emission per sample.
-                            "metric" if args.len() == 3 => {
-                                let name_v = self.emit_expr(args[0].expr())?;
-                                let val_v  = self.emit_expr(args[1].expr())?;
-                                let unit_v = self.emit_expr(args[2].expr())?;
-                                return Ok(format!(
-                                    "(nova_bench_emit_metric({}, {}, {}), (nova_int)0LL)",
-                                    name_v, val_v, unit_v));
-                            }
-                            _ => {}
-                        }
+                    // `bench.opaque[T]` — класс C (аудит §3): compiler
+                    // intrinsic black-box barrier. Эмиссия — GCC/Clang
+                    // inline-asm / MSVC volatile cast (macro в bench.h),
+                    // ЗНАЕТ её только кодоген; это не regular external fn
+                    // call (никакого `c_name` не существует само по себе —
+                    // сам МЕХАНИЗМ анти-оптимизации hardcoded в C-макросе).
+                    // Остаётся hardcoded НАВСЕГДА по природе (не из-за
+                    // registry-гэпа) — как panic()/exit()/assert().
+                    // Остальные bench.* (iterations/reset_timer/bytes/
+                    // elements/allocs/now_ns/metric) — registry-driven
+                    // dispatch выше (external_registry NAMESPACE_OVERRIDES);
+                    // их hardcoded match-ветки сняты ([M-compiler-nv-porting-
+                    // wave] item B1).
+                    if name == "bench" && method == "opaque" && args.len() == 1 {
+                        let v = self.emit_expr(args[0].expr())?;
+                        // Primitive black-box. На GCC/Clang inline-asm,
+                        // на MSVC volatile cast. Macros в bench.h.
+                        return Ok(format!("NOVA_BENCH_OPAQUE_PRIM({})", v));
                     }
-                    // Plan 32: GC introspection API — std.runtime.gc.
-                    // Хардкод как `gc.*` для namespace-style dispatch (без
-                    // receiver-type, args без self).
-                    if name == "gc" {
-                        match method.as_str() {
-                            "heap_size" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_heap_size())".to_string());
-                            }
-                            "live_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_live_count())".to_string());
-                            }
-                            "alloc_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_alloc_count())".to_string());
-                            }
-                            "collect" if args.is_empty() => {
-                                // unit-return: comma-expression для совместимости
-                                // с expression-position (как nv_panic).
-                                return Ok("(nova_gc_collect(), (nova_int)0LL)".to_string());
-                            }
-                            "reset_stats" if args.is_empty() => {
-                                return Ok("(nova_gc_reset_stats(), (nova_int)0LL)".to_string());
-                            }
-                            // Plan 57.C.2: gc.last_pause_ns() — длительность
-                            // последнего collect-цикла (под malloc = 0).
-                            "last_pause_ns" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_last_pause_ns())".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Plan 44.2 Этап 3: fiber arena introspection — std.runtime.fibers.
-                    if name == "fibers" {
-                        match method.as_str() {
-                            "virtual_reserved" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_virtual_reserved())".to_string());
-                            }
-                            "slot_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_slot_count())".to_string());
-                            }
-                            "slots_active" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_slots_active())".to_string());
-                            }
-                            "high_water" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_high_water())".to_string());
-                            }
-                            // Plan 44.2 R8 P41-3: explicit decay flush.
-                            "compact" if args.is_empty() => {
-                                return Ok("(nova_fibers_compact(), (nova_int)0LL)".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Plan 44 Этап 0: M:N runtime — std.runtime.runtime.
-                    if name == "runtime" {
-                        match method.as_str() {
-                            "init" if args.len() == 1 => {
-                                let n = self.emit_expr(args[0].expr())?;
-                                return Ok(format!("(nova_runtime_init((int){}), (nova_int)0LL)", n));
-                            }
-                            "shutdown" if args.is_empty() => {
-                                return Ok("(nova_runtime_shutdown(), (nova_int)0LL)".to_string());
-                            }
-                            "worker_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_runtime_worker_count())".to_string());
-                            }
-                            // Plan 83.1 Ф.3: целевое число worker'ов.
-                            "maxprocs" if args.is_empty() => {
-                                return Ok("((nova_int)nova_runtime_maxprocs())".to_string());
-                            }
-                            "is_initialized" if args.is_empty() => {
-                                return Ok("((nova_bool)nova_runtime_is_initialized())".to_string());
-                            }
-                            "current_worker_id" if args.is_empty() => {
-                                return Ok("((nova_int)nova_runtime_current_worker_id())".to_string());
-                            }
-                            "yield" if args.is_empty() => {
-                                return Ok("(nova_fiber_yield(), (nova_int)0LL)".to_string());
-                            }
-                            // Plan 83.4.5.2 Ф.2: drain orphan fiber pool.
-                            "drain_orphans" if args.is_empty() => {
-                                return Ok("(nova_runtime_drain_orphans(), (nova_int)0LL)".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
+                    // [M-compiler-nv-porting-wave] item B1: `gc.*` (Plan 32),
+                    // `fibers.*` (Plan 44.2 Этап 3), `runtime.*` (Plan 44 Этап 0)
+                    // hardcoded namespace-dispatch блоки сняты — все методы
+                    // покрыты registry-driven dispatch выше (external_registry
+                    // NAMESPACE_OVERRIDES; gc.nv/fibers.nv/runtime.nv теперь
+                    // embedded builtin sources, как raw_mem.nv/net/*.nv).
                 }
-                // 0. Built-in primitive static methods (D35).
-                //    `str.from(x)` — string conversion (D410 to_str() family).
-                //    If user defined `fn V @to_str() -> str` for V,
-                //    call that instead of the builtin.
-                if let ExprKind::Ident(prim) = &obj.kind {
-                    // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
-                    // from_bytes_unchecked_steal MIGRATED to Nova-body. The static
-                    // C interception was removed here so the call routes through the
-                    // normal static-method dispatch to Nova_str_static_from_bytes_*.
-                    if prim == "str" && method == "from" {
-                        if let Some(arg) = args.first() {
-                            let arg_ty = self.infer_expr_c_type(arg.expr());
-                            let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
-                            // Plan 11: try multi-overload registry first.
-                            let key = ("str".to_string(), "from".to_string());
-                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
-                                let static_overloads: Vec<MethodSig> = overloads.into_iter()
-                                    .filter(|s| !s.is_instance).collect();
-                                if !static_overloads.is_empty() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    let chosen = static_overloads.iter()
-                                        .find(|s| s.param_c_types.len() == 1
-                                            && s.param_c_types[0] == arg_ty);
-                                    if let Some(sig) = chosen {
-                                        return Ok(format!("{}({})", sig.c_name, v));
-                                    }
-                                }
-                            }
-                            // [D410] V has @to_str() -> str?
-                            let to_str_c_name = self.method_overloads
-                                .get(&(arg_type.clone(), "to_str".to_string()))
-                                .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
-                                .map(|s| s.c_name.clone());
-                            if let Some(c_name) = to_str_c_name {
-                                let v = self.emit_expr(arg.expr())?;
-                                return Ok(format!("{}({})", c_name, v));
-                            }
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(if arg_ty == "nova_str" {
-                                v
-                            } else if arg_ty == "nova_char" {
-                                // D73 auto-derive: str.from(c char) → Nova_str_static_from_char.
-                                // C function always available (string_builder.h); bypasses
-                                // method_overloads lookup so it works even with #no_prelude.
-                                format!("Nova_str_static_from_char({})", v)
-                            } else {
-                                format!("nova_int_to_str((nova_int)({}))", v)
-                            });
-                        }
-                    }
-                }
+                // [M-compiler-nv-porting-wave] (2026-07-07) item B3: dead code
+                // removed here. This was `if let ExprKind::Member{obj: Ident
+                // ("str"), name: "from"} = &func.kind` (Member-form) handling
+                // for `str.from(x)` — but the parser (parse_primary,
+                // `is_primitive_type && !starts_uppercase`) ALWAYS eagerly
+                // folds `<lowercase-primitive>.<ident>` into `ExprKind::Path`
+                // during PRIMARY expression parsing, before the general
+                // postfix `.` loop (which is the only producer of
+                // `ExprKind::Member`) ever runs — confirmed by tracing the
+                // parser and by inspecting generated C for `str.from(x)` with
+                // char/bool/f64/f32/int args (always routes through the
+                // Path-form dispatch below, never through this branch).
+                // `str.from(x)` is therefore ALWAYS `ExprKind::Path(["str",
+                // "from"])`, never reaches this `ExprKind::Member` arm — this
+                // whole block (D410 to_str() registry lookup, char branch via
+                // `Nova_str_static_from_char`, int/other fallback) was
+                // unreachable. The LIVE dispatch is the Path-form block
+                // further down (`parts[0]=="str" && parts[1]=="from"`,
+                // ~line 31384 equivalent — dedicated char/bool/f64/f32/int
+                // match via `nova_char_to_str`/`nova_bool_to_str`/
+                // `nova_f64_to_str`/`nova_f32_to_str`/`nova_int_to_str`) plus
+                // its own D410 `@to_str()` fallback for non-scalar args
+                // (~line 31467 equivalent) — both kept, both still needed.
+                //
+                // `Nova_str_static_from_char` vs `nova_char_to_str`: BOTH
+                // exist in nova_rt (string_builder.h / conv.h respectively,
+                // differ on invalid-codepoint behavior — replacement-char vs
+                // empty-string). `nova_char_to_str` is the LIVE path for
+                // direct `str.from(c)` (Path-form dispatch above).
+                // `Nova_str_static_from_char` is NOT fully dead — still used
+                // internally by `Nova_str_static_from_codepoint` (backs
+                // `str.from_codepoint`, dispatched via the GENERIC
+                // ExternalRegistry Path-form fallback, a DIFFERENT method
+                // name so unaffected by this str.from investigation). Neither
+                // C function removed — only this unreachable Rust call site.
                 // Plan 65 Ф.5: E5101 (`Time.after` removed) — checked at
                 // the top of `ExprKind::Member` arm (~line 11289). The
                 // duplicate gate previously here is redundant now; the
@@ -31451,23 +31326,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // from_bytes_unchecked_steal MIGRATED to Nova-body. The static C
                 // interception was removed here so the call routes through the
                 // normal static-method dispatch to Nova_str_static_from_bytes_*.
-                // Plan 74: f64/f32.from_bits(bits uN) — IEEE 754 bit-cast
-                // uN → float через nova_rt/numeric.h. Pair с `f.to_bits()`.
-                // Legacy Plan 04: f64.from_bits также служит распаковке
-                // try_read_f64_* (r.unwrap_or(0) → nova_int bits →
-                // f64.from_bits). int.to_bits(f f64) — обратная упаковка.
-                if parts.len() == 2 && parts[0] == "f64" && parts[1] == "from_bits" {
-                    if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg.expr())?;
-                        return Ok(format!("Nova_f64_from_bits({})", v));
-                    }
-                }
-                if parts.len() == 2 && parts[0] == "f32" && parts[1] == "from_bits" {
-                    if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg.expr())?;
-                        return Ok(format!("Nova_f32_from_bits({})", v));
-                    }
-                }
+                // [M-compiler-nv-porting-wave] item B2: f64/f32.from_bits
+                // hardcoded intercept снят — numeric.nv embedded builtin
+                // source (PRIMITIVE_BITCAST_OVERRIDES), generic registry-
+                // driven Path-form dispatch below резолвит его. `int.to_bits`
+                // остаётся hardcoded — нет .nv-декларации нигде.
                 if parts.len() == 2 && parts[0] == "int" && parts[1] == "to_bits" {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
@@ -41646,21 +41509,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    // Plan 91.18 Ф.7: `char.try_from(int_expr)` — static call whose
-                    // result type must be `NovaRes_nova_char_Nova_CharTryFromError_p*`
-                    // so that `match char.try_from(cp) { Ok(c) => c, … }` binds `c`
-                    // as `nova_char` and routes `str.from(c)` → `Nova_str_static_from_char`.
-                    // Error type changed str → CharTryFromError (D77, typed error).
-                    if let ExprKind::Path(parts) = &func.kind {
-                        if parts.len() == 2 && parts[0] == "char" && parts[1] == "try_from" {
-                            if let Some(first_arg) = args.first() {
-                                let arg_ty = self.infer_expr_c_type(first_arg.expr());
-                                if arg_ty == "nova_int" {
-                                    return self.result_repr_c_type("nova_char", "Nova_CharTryFromError*");
-                                }
-                            }
-                        }
-                    }
+                    // [M-compiler-nv-porting-wave] item B4: dead duplicate
+                    // removed here. This handled `char.try_from(int_expr)` —
+                    // but [M-f64-try-parse-to-parse-f64] (2026-07-07, same-day
+                    // prior change, see runtime_registry.rs char_runtime()
+                    // history / std/prelude/errors.nv:368) renamed the ONLY
+                    // static char conversion without an infallible sibling
+                    // from `char.try_from` to `char.from`, and its error type
+                    // from `CharTryFromError` to `CharFromError` — this block
+                    // referenced BOTH old names, so it's unreachable: the
+                    // checker rejects `char.try_from(...)` before codegen
+                    // (confirmed empirically — [E_UNKNOWN_STATIC_METHOD],
+                    // no such static method on primitive `char`). `char.from`
+                    // (the live replacement) is a regular Nova-body fn
+                    // (std/runtime/char.nv) — its return type is inferred via
+                    // the normal user-function path (mono_method_decls/
+                    // self_method_decls), no special-case needed.
+                    // NOT anchor for T.try_from(str) scalar-parse surface
+                    // (174.1/[M-f64-try-parse-to-parse-f64] program covers
+                    // that separately) — that live surface (~line 31246
+                    // equivalent, `parts[1] == "try_from"` scalar parsers)
+                    // is untouched.
                     // Plan 11 Ф.1-Ф.3: multi-overload infer. Если func — Path/Member
                     // call на known receiver-type, ищем в method_overloads. Это
                     // решает single-key last-wins для одноимённых методов.
@@ -43094,41 +42963,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 32: gc.* introspection — type inference.
-                            if n == "gc" {
-                                return match method.as_str() {
-                                    "heap_size" | "live_count" | "alloc_count" => "nova_int".into(),
-                                    "collect" | "reset_stats" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44.2 Этап 3: fibers.* introspection — type inference.
-                            if n == "fibers" {
-                                return match method.as_str() {
-                                    "virtual_reserved" | "slot_count" |
-                                    "slots_active" | "high_water" => "nova_int".into(),
-                                    "compact" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44 Этап 0: runtime.* — type inference.
-                            if n == "runtime" {
-                                return match method.as_str() {
-                                    "init" | "shutdown" => "nova_int".into(),
-                                    "worker_count" | "current_worker_id"
-                                    | "maxprocs" => "nova_int".into(),
-                                    "is_initialized" => "nova_bool".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 74: f64/f32.from_bits(uN) → float; legacy
-                            // Plan 04 int.to_bits(f64) → nova_int.
-                            if n == "f64" && method == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if n == "f32" && method == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] items B1/B2: gc/
+                            // fibers/runtime type-inference hardcode (heap_size/
+                            // collect/virtual_reserved/init/is_initialized/…) и
+                            // f64/f32.from_bits снят — все три .nv embedded builtin
+                            // sources (external_registry.rs), ExternalRegistry
+                            // fallback ниже резолвит return_c_type корректно.
+                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if n == "int" && method == "to_bits" {
                                 return "nova_int".into();
                             }
@@ -43722,13 +43563,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 74: f64/f32.from_bits; legacy Plan 04 int.to_bits.
-                            if eff == "f64" && method_name == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if eff == "f32" && method_name == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] item B2: f64/f32.
+                            // from_bits hardcode снят — numeric.nv embedded
+                            // builtin source (PRIMITIVE_BITCAST_OVERRIDES),
+                            // ExternalRegistry lookup below (line ~43600-ish
+                            // equivalent, external_registry.lookup(eff, ...))
+                            // резолвит return_c_type. `int.to_bits` остаётся —
+                            // нет .nv-декларации нигде.
                             if eff == "int" && method_name == "to_bits" {
                                 return "nova_int".into();
                             }
@@ -45337,21 +45178,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    // Plan 91.18 Ф.7: `char.try_from(int_expr)` — static call whose
-                    // result type must be `NovaRes_nova_char_Nova_CharTryFromError_p*`
-                    // so that `match char.try_from(cp) { Ok(c) => c, … }` binds `c`
-                    // as `nova_char` and routes `str.from(c)` → `Nova_str_static_from_char`.
-                    // Error type changed str → CharTryFromError (D77, typed error).
-                    if let ExprKind::Path(parts) = &func.kind {
-                        if parts.len() == 2 && parts[0] == "char" && parts[1] == "try_from" {
-                            if let Some(first_arg) = args.first() {
-                                let arg_ty = self.infer_expr_c_type(first_arg.expr());
-                                if arg_ty == "nova_int" {
-                                    return self.result_repr_c_type("nova_char", "Nova_CharTryFromError*");
-                                }
-                            }
-                        }
-                    }
+                    // [M-compiler-nv-porting-wave] item B4: dead duplicate
+                    // removed here. This handled `char.try_from(int_expr)` —
+                    // but [M-f64-try-parse-to-parse-f64] (2026-07-07, same-day
+                    // prior change, see runtime_registry.rs char_runtime()
+                    // history / std/prelude/errors.nv:368) renamed the ONLY
+                    // static char conversion without an infallible sibling
+                    // from `char.try_from` to `char.from`, and its error type
+                    // from `CharTryFromError` to `CharFromError` — this block
+                    // referenced BOTH old names, so it's unreachable: the
+                    // checker rejects `char.try_from(...)` before codegen
+                    // (confirmed empirically — [E_UNKNOWN_STATIC_METHOD],
+                    // no such static method on primitive `char`). `char.from`
+                    // (the live replacement) is a regular Nova-body fn
+                    // (std/runtime/char.nv) — its return type is inferred via
+                    // the normal user-function path (mono_method_decls/
+                    // self_method_decls), no special-case needed.
+                    // NOT anchor for T.try_from(str) scalar-parse surface
+                    // (174.1/[M-f64-try-parse-to-parse-f64] program covers
+                    // that separately) — that live surface (~line 31246
+                    // equivalent, `parts[1] == "try_from"` scalar parsers)
+                    // is untouched.
                     // Plan 11 Ф.1-Ф.3: multi-overload infer. Если func — Path/Member
                     // call на known receiver-type, ищем в method_overloads. Это
                     // решает single-key last-wins для одноимённых методов.
@@ -46785,41 +46632,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 32: gc.* introspection — type inference.
-                            if n == "gc" {
-                                return match method.as_str() {
-                                    "heap_size" | "live_count" | "alloc_count" => "nova_int".into(),
-                                    "collect" | "reset_stats" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44.2 Этап 3: fibers.* introspection — type inference.
-                            if n == "fibers" {
-                                return match method.as_str() {
-                                    "virtual_reserved" | "slot_count" |
-                                    "slots_active" | "high_water" => "nova_int".into(),
-                                    "compact" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44 Этап 0: runtime.* — type inference.
-                            if n == "runtime" {
-                                return match method.as_str() {
-                                    "init" | "shutdown" => "nova_int".into(),
-                                    "worker_count" | "current_worker_id"
-                                    | "maxprocs" => "nova_int".into(),
-                                    "is_initialized" => "nova_bool".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 74: f64/f32.from_bits(uN) → float; legacy
-                            // Plan 04 int.to_bits(f64) → nova_int.
-                            if n == "f64" && method == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if n == "f32" && method == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] items B1/B2: gc/
+                            // fibers/runtime type-inference hardcode (heap_size/
+                            // collect/virtual_reserved/init/is_initialized/…) и
+                            // f64/f32.from_bits снят — все три .nv embedded builtin
+                            // sources (external_registry.rs), ExternalRegistry
+                            // fallback ниже резолвит return_c_type корректно.
+                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if n == "int" && method == "to_bits" {
                                 return "nova_int".into();
                             }
@@ -47413,13 +47232,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 74: f64/f32.from_bits; legacy Plan 04 int.to_bits.
-                            if eff == "f64" && method_name == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if eff == "f32" && method_name == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] item B2: f64/f32.
+                            // from_bits hardcode снят — numeric.nv embedded
+                            // builtin source (PRIMITIVE_BITCAST_OVERRIDES),
+                            // ExternalRegistry lookup below (line ~43600-ish
+                            // equivalent, external_registry.lookup(eff, ...))
+                            // резолвит return_c_type. `int.to_bits` остаётся —
+                            // нет .nv-декларации нигде.
                             if eff == "int" && method_name == "to_bits" {
                                 return "nova_int".into();
                             }

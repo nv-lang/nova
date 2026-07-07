@@ -1,0 +1,32 @@
+// Co-equal file of module `runtime.string` (folder = one module).
+// Role: `str.from(scalar)` overloads — checker/doc source of truth
+// (D35 static conversions). Mirrors `str.from(c char)` (std/runtime/
+// char.nv) for the remaining primitive scalars.
+//
+// [M-compiler-nv-porting-wave] (2026-07-07) item B3: these calls were
+// ALREADY accepted by the checker and correctly dispatched by codegen —
+// but only via a hardcoded `arg_ty` match in emit_c.rs (Path-form static
+// dispatch, "T.from(v)" — nova_bool_to_str/nova_f64_to_str/
+// nova_f32_to_str/nova_int_to_str), with NO formal `.nv` declaration
+// (unlike `str.from(char)`). This file closes that gap: `nova doc` / IDE
+// discovery now see these overloads, matching char's precedent. The
+// codegen dispatch itself is UNCHANGED (still the hardcoded arg_ty match —
+// C names don't follow standard `Nova_str_static_from_X` mangling, same
+// irregular-naming situation as B1/B2, and the existing dispatch is
+// already correct/compact — not duplicated elsewhere, so not migrated to
+// registry-driven form).
+
+#no_prelude
+module runtime.string
+
+// D35: bool → str (`"true"`/`"false"`).
+export extern "nova" fn str.from(v bool) -> str
+
+// D35: f64 → str (shortest round-trip decimal representation).
+export extern "nova" fn str.from(v f64) -> str
+
+// D35: f32 → str (shortest round-trip decimal representation, Plan 180).
+export extern "nova" fn str.from(v f32) -> str
+
+// D35: int → str (decimal).
+export extern "nova" fn str.from(v int) -> str

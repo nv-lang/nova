@@ -31,13 +31,15 @@
 // могут использовать `if fibers.slot_count() == 0 { ... skip ... }`.
 //
 // ──────────────────────────────────────────────────────────────────────────
-// Источник истины для type-checker'а
+// Источник истины для type-checker'а И codegen
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Эти `external fn` объявления — **source of truth** для type-checker'а.
-// Codegen имеет parallel hardcoded match на `name == "fibers"` в
-// [emit_c.rs](../../compiler-codegen/src/codegen/emit_c.rs) — они должны
-// быть синхронизированы вручную. При изменении API — обновить оба места.
+// Эти `external fn` объявления — **единственный source of truth**, и для
+// type-checker'а (обычный `import`), и для codegen: c-имя
+// (`nova_fibers_*`) приходит через `ExternalRegistry::NAMESPACE_OVERRIDES`
+// (compiler-codegen/src/codegen/external_registry.rs) — этот файл
+// embedded builtin source, ручной синхронизации с emit_c.rs больше не
+// требуется ([M-compiler-nv-porting-wave] item B1, 2026-07-07).
 
 module runtime.fibers
 
