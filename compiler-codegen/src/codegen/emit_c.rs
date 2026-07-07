@@ -647,7 +647,7 @@ pub struct CEmitter {
     /// in `emit_sum_type`. A self-referential variant payload (`Node([]Self)`,
     /// e.g. json `JsonValue.Array([]JsonValue)`) lowers its slice element via
     /// `type_ref_to_c` BEFORE the type is registered in `sum_schemas`, so
-    /// `is_generic_stub_c` would mistake the concrete `Nova_<Self>*` element for an
+    /// `debt_is_generic_stub_c` would mistake the concrete `Nova_<Self>*` element for an
     /// unresolved generic-param stub and erase the Vec element to `nova_int` (→
     /// `Nova_Vec____nova_int*` payload vs `Nova_Vec____Nova_Self_p*` signature →
     /// CC-FAIL). A type being defined is concrete by construction; this guards it.
@@ -990,7 +990,7 @@ pub struct CEmitter {
     protocol_types: HashSet<String>,
     /// Plan 100.5 (D163): Set of `external type X consume` opaque FFI type names.
     /// These are concrete types (not generic stubs) — `Nova_File*` should NOT be
-    /// treated as an erased generic placeholder by `is_generic_stub_c`. Inserting
+    /// treated as an erased generic placeholder by `debt_is_generic_stub_c`. Inserting
     /// the name here ensures Result[File, IoErr] monomorphizes to the correct
     /// `NovaRes_Nova_File_p_Nova_IoErr*` rather than the erased fallback.
     opaque_ffi_types: HashSet<String>,
@@ -1766,14 +1766,14 @@ impl CEmitter {
             return;
         }
         // Auto-register TypeId если ещё нет.
-        let _ = self.typeid_macro_for(e_c);
+        let _ = self.debt_typeid_macro_for(e_c);
         self.per_e_fail_types.insert(e_c.to_string());
     }
 
     /// Plan 61 followup #4: consistent mangling для per-E identifiers
-    /// (vtable / TLS slot / throw entry / adapter). Mirrors typeid_macro_for
+    /// (vtable / TLS slot / throw entry / adapter). Mirrors debt_typeid_macro_for
     /// чтобы NOVA_TID_USER_<X> matched name.
-    fn per_e_mangle(c_type: &str) -> String {
+    fn debt_per_e_mangle(c_type: &str) -> String {
         let base = c_type.trim_end_matches('*').trim();
         let base_unwrapped = base.strip_prefix("Nova_").unwrap_or(base);
         Self::sanitize_c_for_ident(base_unwrapped)
@@ -1793,7 +1793,7 @@ impl CEmitter {
         let mut entries: Vec<&String> = self.per_e_fail_types.iter().collect();
         entries.sort();
         for e_c in &entries {
-            let mangled = Self::per_e_mangle(e_c);
+            let mangled = Self::debt_per_e_mangle(e_c);
             let e_arg: String = if e_c.ends_with('*') { (**e_c).clone() } else { format!("{}*", e_c) };
             // Используем line-by-line push_str чтобы избежать invalid
             // escape sequences (`\<spaces>` в Rust string literal).
@@ -1886,7 +1886,7 @@ impl CEmitter {
     /// Plan 61 Ф.2: получить NOVA_TID_<name> identifier для given C-type.
     /// Для primitives — fixed; для user-types — auto-register.
     /// Возвращает `(macro_name, sanitized_name)` для embed в emitted C.
-    fn typeid_macro_for(&mut self, c_type: &str) -> String {
+    fn debt_typeid_macro_for(&mut self, c_type: &str) -> String {
         let base = c_type.trim_end_matches('*').trim();
         if Self::primitive_type_id(base).is_some() {
             return format!("NOVA_TID_{}", base);
@@ -1903,9 +1903,9 @@ impl CEmitter {
     /// reuse — NOT a hardcode per type) and records the static so finalize emits
     /// `static const NovaTypeInfo NOVA_TYPEINFO_<sani> = { NOVA_TID_…, "<name>" };`
     /// at the `__TYPEID_DEFINES__` splice. Returns the static's C identifier.
-    fn register_any_typeinfo(&mut self, c_type: &str) -> String {
+    fn debt_register_any_typeinfo(&mut self, c_type: &str) -> String {
         let base = c_type.trim_end_matches('*').trim();
-        let tid_macro = self.typeid_macro_for(c_type);
+        let tid_macro = self.debt_typeid_macro_for(c_type);
         let nova_name = base.strip_prefix("Nova_").unwrap_or(base);
         let sani = Self::sanitize_c_for_ident(nova_name);
         self.any_typeinfos
@@ -1920,7 +1920,7 @@ impl CEmitter {
     /// payload for the memcpy the runtime does). Works uniformly for scalars,
     /// value-structs (nova_str) and pointers (Nova_X*).
     fn emit_any_box(&mut self, inner_c: &str, value_c: &str) -> String {
-        let tinfo = self.register_any_typeinfo(inner_c);
+        let tinfo = self.debt_register_any_typeinfo(inner_c);
         let tmp = self.fresh_tmp();
         self.line(&format!("{} {} = {};", inner_c, tmp, value_c));
         format!("nova_any_box(&{}, &{}, sizeof({}))", tinfo, tmp, tmp)
@@ -2350,11 +2350,11 @@ impl CEmitter {
 
     /// Plan 172.12 A2 — STRUCTURAL erased-stub test for the printer's concreteness
     /// decisions (the `Tuple` / `Option` / `Result` / Vec-flip arms). Answers "does
-    /// `rt` lower to a bare `Nova_<param>*` placeholder — what `is_generic_stub_c`
+    /// `rt` lower to a bare `Nova_<param>*` placeholder — what `debt_is_generic_stub_c`
     /// detects on the lowered C-name — vs a concrete type?" decided from the
     /// `ResolvedType` STRUCTURE + the concrete-type registries, WITHOUT parsing a
     /// `Nova_`/`____` C-string in the printer body. `full` selects the registry set:
-    /// `true` mirrors `is_generic_stub_c` (record / sum / being-defined-sum / generic
+    /// `true` mirrors `debt_is_generic_stub_c` (record / sum / being-defined-sum / generic
     /// / opaque-ffi), `false` the narrower `Option`/`Tuple` inline set (record / sum
     /// / generic). The residual shapes whose concreteness is STILL carried as a
     /// C-string at the mono layer — a `Named`/type-param resolved through the string
@@ -2438,7 +2438,7 @@ impl CEmitter {
         }
         // Bare generic-template name (empty args → `Nova_<template>*`) or an unknown
         // name is an erased stub; a concrete user record/sum is not. Same registry
-        // set as `is_generic_stub_c` (gated by `full`), applied structurally.
+        // set as `debt_is_generic_stub_c` (gated by `full`), applied structurally.
         let concrete = self.record_schemas.contains_key(&full_name)
             || self.sum_schemas.contains_key(&full_name)
             || self.generic_types.contains(&full_name)
@@ -2453,14 +2453,14 @@ impl CEmitter {
     /// the shapes whose type truth is still string-carried at the mono layer
     /// (subst / overrides / alias / colliding / `Self` / `TypedPtr` / `Raw`). This is
     /// the single marked point where a printer concreteness decision reads a
-    /// C-string; it reproduces the pre-A2 inline check EXACTLY — `is_generic_stub_c`
+    /// C-string; it reproduces the pre-A2 inline check EXACTLY — `debt_is_generic_stub_c`
     /// for `full`, its narrower record/sum/generic-`____` variant otherwise. Dies
     /// when the subst/registry producers become RT-native (`Raw` removed).
     fn debt_lowered_is_stub(&self, rt: &crate::types::ResolvedType, full: bool) -> bool {
         match self.resolved_type_to_c(rt) {
             Ok(c) => {
                 if full {
-                    self.is_generic_stub_c(&c)
+                    self.debt_is_generic_stub_c(&c)
                 } else {
                     match c.trim_end_matches('*').trim().strip_prefix("Nova_") {
                         Some(nm) => {
@@ -2565,6 +2565,216 @@ impl CEmitter {
                     .generic_type_templates
                     .get(&bare)
                     .map_or(false, |td| td.generics.iter().any(|g| g.name == *n)))
+    }
+
+    // ---- Plan 172.12 A4 — consumer-side debt sinks -------------------------------
+    // Extracted VERBATIM from their call sites (pure extract-function, zero logic
+    // change → byte-identical by construction). Each classifies/derives from an
+    // ALREADY-LOWERED C-name string (`elem_c`/`c_ty`/mangled name) — the value itself
+    // was produced upstream by `type_ref_to_c`/`resolved_type_to_c`/mono registries,
+    // not decoded from user input. A structural (RT-native) replacement needs the
+    // call site to carry a `ResolvedType` alongside the C-string (many don't, by
+    // signature) — that plumbing is out of A4's mechanical-ripple scope (would touch
+    // caller signatures transitively, A1′-substrate scale). Marked here as the single
+    // named point of remaining string-based decision, per §0.
+
+    /// `emit_module` forward-decl scan: skip a `Vec[elem]` fwd-decl only for a genuine
+    /// unresolved type-param stub (`Nova_K*`), not a concrete mono instance (which also
+    /// contains `____` but IS concrete — e.g. `Nova_Vec____nova_int*` from `[][]int`).
+    fn debt_skip_array_fwd_decl(&self, elem_c: &str) -> bool {
+        self.debt_is_generic_stub_c(elem_c) && !elem_c.contains("____")
+    }
+
+    /// `Nova_<Name>*` → `<Name>` (repeated-prefix `trim_start_matches` + `*`-trim).
+    fn debt_strip_nova_trim_start(&self, c_ty: &str) -> String {
+        c_ty.trim_start_matches("Nova_").trim_end_matches('*').trim().to_string()
+    }
+
+    /// Same idiom, borrowed (no alloc) — for call sites that only need a `&str`.
+    fn debt_strip_nova_trim_start_ref(c_ty: &str) -> &str {
+        c_ty.trim_start_matches("Nova_").trim_end_matches('*').trim()
+    }
+
+    /// Is `c` a bare (non-mono) heap struct pointer `Nova_<Name>*` — concrete, so
+    /// `fn_ret_by_span` may safely cache it (a `____` mono name is excluded here
+    /// because its distinct-mono identity needs the full mono-context path, not
+    /// this early forward-decl cache).
+    fn debt_is_bare_nova_ptr(&self, c: &str) -> bool {
+        c.starts_with("Nova_") && c.ends_with('*') && !c.contains("____")
+    }
+
+    /// Is lowered type-arg `c` a bare unresolved type-param placeholder (`Nova_<G>*`
+    /// where `<G>` is one of the template's own generic names) — used to skip
+    /// emitting a mono instance that would reference a non-existent placeholder
+    /// struct (recursive generic-call context, no concrete arg yet).
+    fn debt_type_arg_is_bare_placeholder(&self, c: &str, generic_names: &std::collections::HashSet<String>) -> bool {
+        let trimmed = c.trim_end_matches('*').trim();
+        trimmed.strip_prefix("Nova_")
+            .map(|name| generic_names.contains(name))
+            .unwrap_or(false)
+    }
+
+    /// `drain_generic_type_worklist`: is registry-arg `c` (RT, `arg_c`-lowered here)
+    /// a bare OR (for `value` outer templates) nested unresolved type-param
+    /// placeholder — see call site for the by-value-embedding rationale.
+    fn debt_worklist_arg_is_placeholder(
+        &self,
+        c: &crate::types::ResolvedType,
+        generic_names: &std::collections::HashSet<String>,
+        outer_is_value: bool,
+    ) -> bool {
+        // A1‴: registry args carry `ResolvedType` — lower to the C-name
+        // (`Raw` verbatim) before the placeholder string-checks.
+        let c = self.arg_c(c);
+        let trimmed = c.trim_end_matches('*').trim();
+        if let Some(name) = trimmed.strip_prefix("Nova_") {
+            if generic_names.contains(name) { return true; }
+        }
+        outer_is_value && self.debt_mangled_has_nested_placeholder(trimmed)
+    }
+
+    /// `emit_value_record_type`: restrict a forward-typedef to GUARANTEED struct
+    /// tags (mono `____` instance, `NovaValue_`, `NovaTuple_`) so a non-struct
+    /// newtype alias typedef is never shadowed.
+    /// `emit_bchk_double_array_access`: physical elem storage type held in a
+    /// `NovaArray_<elem>`'s `data[]` — `nova_int` for an erased nested array.
+    /// `emit_generic_method_erased`/`emit_fn` (erased-body fn-typed-param sigs,
+    /// Plan 70 Cat B intentional erasure): normalize an unknown `Nova_<X>*` (X not
+    /// a registered record/sum/generic — i.e. still an unresolved type-param at
+    /// erased-emission time) to `nova_int` for consistent pointer-stomping.
+    /// `register_mono_method_instance`/`emit_monomorphized_method`: bind nested
+    /// `Self` for a generic MONO instance receiver (`recv_type` carries `____`) so
+    /// the fwd-decl and body agree on `Self`'s mangled arg (else the emitted
+    /// method's return/param mono diverges from the call-site temp). No-op for
+    /// non-mono/heap-generic/primitive receivers (`value_aware_generic_c_type`
+    /// leaves those unchanged); `.or_insert` so a pre-existing `Self` binding wins.
+    fn debt_bind_self_for_mono_recv(&mut self, recv_type: &str) {
+        if recv_type.contains("____") {
+            let self_c = self.value_aware_generic_c_type(&format!("Nova_{}*", recv_type));
+            self.current_type_subst.entry("Self".to_string()).or_insert_with(|| Self::lift_c_name(self_c));
+        }
+    }
+
+    /// Strip a single leading `Nova_` prefix, or return `s` unchanged if absent
+    /// (mangled-name base-name extraction — same idiom repeated at ~10 call sites).
+    fn debt_strip_nova_prefix(s: &str) -> &str {
+        s.strip_prefix("Nova_").unwrap_or(s)
+    }
+
+    /// Strip a single leading `Nova_` prefix, or `""` if absent (base-name
+    /// extraction where a non-`Nova_` input is treated as "no match" upstream).
+    fn debt_strip_nova_prefix_or_empty(s: &str) -> &str {
+        s.strip_prefix("Nova_").unwrap_or("")
+    }
+
+    /// `Option`-returning single-strip of a `Nova_`/`NovaArray_` prefix — thin
+    /// named wrapper so the decode textually lives in one debt-marked spot
+    /// instead of ad-hoc at each dispatcher call site.
+    fn debt_strip_nova_prefix_opt(s: &str) -> Option<&str> {
+        s.strip_prefix("Nova_")
+    }
+    fn debt_strip_novaarray_prefix_opt(s: &str) -> Option<&str> {
+        s.strip_prefix("NovaArray_")
+    }
+    fn debt_strip_novatuple_prefix_or_empty(s: &str) -> &str {
+        s.strip_prefix("NovaTuple_").unwrap_or("")
+    }
+
+    /// `NovaArray_<elem>` → `<elem>`, panicking (P67-LEGACY loud-fail convention)
+    /// if the input isn't actually a `NovaArray_` name — same textual template
+    /// repeated at ~9 dispatcher call sites.
+    fn debt_strip_novaarray_prefix_or_panic(s: &str) -> &str {
+        s.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
+    }
+    fn debt_strip_novaarray_prefix_or_panic_legacy(s: &str) -> &str {
+        s.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
+    }
+
+    /// `NovaValue_<X>` / `Nova_<X>` / `NovaTuple_<X>`, first match wins, identity
+    /// fallback — the by-value/heap/named-tuple receiver-prefix priority order
+    /// repeated at several dispatcher call sites.
+    fn debt_strip_value_nova_tuple_prefix(s: &str) -> &str {
+        s.strip_prefix("NovaValue_")
+            .or_else(|| s.strip_prefix("Nova_"))
+            .or_else(|| s.strip_prefix("NovaTuple_"))
+            .unwrap_or(s)
+    }
+
+    /// Same priority order, `""` fallback (empty = "no match" upstream).
+    fn debt_strip_nova_value_tuple_prefix_or_empty(s: &str) -> &str {
+        s.strip_prefix("Nova_")
+            .or_else(|| s.strip_prefix("NovaValue_"))
+            .or_else(|| s.strip_prefix("NovaTuple_"))
+            .unwrap_or("")
+    }
+
+    /// Is `s` the `____` mono-instance arg separator — the single shared textual
+    /// test for "is this a concrete monomorphized name" repeated at many sites.
+    fn debt_contains_mono_sep(s: &str) -> bool {
+        s.contains("____")
+    }
+
+    /// `NovaValue_<X>` (by-value generic) or `Nova_<X>` (heap generic), first
+    /// match wins — order matters (`NovaValue_` embeds `Nova_` as a substring at
+    /// a DIFFERENT position, so trying `Nova_` first would mis-parse it).
+    fn debt_strip_value_or_nova_prefix_opt(s: &str) -> Option<&str> {
+        s.strip_prefix("NovaValue_").or_else(|| s.strip_prefix("Nova_"))
+    }
+
+    /// By-value generic value-record receiver (`NovaValue_<short>`) — strip
+    /// THAT prefix first (single `strip_prefix`); else fall back to the (repeated)
+    /// `Nova_` strip. Preserves the asymmetric strip semantics of the original
+    /// inline call sites exactly (single-strip vs `trim_start_matches` repeat).
+    fn debt_strip_value_prefix_or_nova_trim_start(s: &str) -> String {
+        s.strip_prefix("NovaValue_")
+            .map(|s| s.trim_end_matches('*').trim().to_string())
+            .unwrap_or_else(|| s.trim_start_matches("Nova_").trim_end_matches('*').trim().to_string())
+    }
+
+    /// `Nova_<X>` or `NovaValue_<X>`, first match wins (opposite priority from
+    /// `debt_strip_value_or_nova_prefix_opt` — preserved verbatim per call site).
+    fn debt_strip_nova_or_value_prefix(s: &str) -> &str {
+        s.strip_prefix("Nova_").or_else(|| s.strip_prefix("NovaValue_")).unwrap_or(s)
+    }
+
+    /// `register_novaopt_decl`/`register_novaopt_decl_forced` forward-typedef
+    /// polluting-check: only mono'd (`____`-bearing) `Nova_`-prefixed names need
+    /// the guard (nova_int/nova_str/runtime-defined structs are excluded).
+    fn debt_is_mono_nova_name(inner_name: &str) -> bool {
+        Self::debt_contains_mono_sep(inner_name) && inner_name.starts_with("Nova_")
+    }
+
+    /// Same idiom as `debt_strip_nova_trim_start`, without the extra `.trim()`
+    /// (byte-identical here since C-type strings never carry surrounding
+    /// whitespace, but kept distinct to avoid ANY behavioral assumption).
+    fn debt_strip_nova_trim_start_no_ws(&self, c_ty: &str) -> String {
+        c_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string()
+    }
+
+    fn debt_erase_unknown_nova_ptr(&self, c: String) -> String {
+        if let Some(inner) = c.strip_prefix("Nova_").and_then(|s| s.strip_suffix('*')) {
+            let name = inner.trim();
+            if !self.record_schemas.contains_key(name)
+                && !self.sum_schemas.contains_key(name)
+                && !self.generic_types.contains(name)
+            {
+                return "nova_int".to_string();
+            }
+        }
+        c
+    }
+
+    fn debt_novaarray_elem_storage(inner_arr_ty: &str) -> String {
+        inner_arr_ty
+            .strip_prefix("NovaArray_")
+            .map(|s| s.trim_end_matches('*').trim().to_string())
+            .unwrap_or_else(|| "nova_int".to_string())
+    }
+
+    fn debt_is_guaranteed_struct_tag(&self, pointee: &str) -> bool {
+        pointee.contains("____")
+            || pointee.starts_with("NovaValue_")
+            || pointee.starts_with("NovaTuple_")
     }
 
     fn resolved_type_to_c(&self, rt: &crate::types::ResolvedType) -> Result<String, String> {
@@ -2836,7 +3046,7 @@ impl CEmitter {
     /// straight through to `find_variant_compat` (the legacy first-wins), so no
     /// non-colliding program changes. Returns the disambiguated sum base + its
     /// variant field-C-types, or `None` if the name is not a variant.
-    fn find_variant_ctx(&self, variant: &str, argc: Option<usize>) -> Option<(String, Vec<String>)> {
+    fn debt_find_variant_ctx(&self, variant: &str, argc: Option<usize>) -> Option<(String, Vec<String>)> {
         // Only disambiguate among PLAIN (non-generic-mono) sums. A mono instance
         // name carries the `____` type-arg separator; the generic path owns its
         // ctor emission + instance queuing, so overriding to a mono base here
@@ -2877,7 +3087,7 @@ impl CEmitter {
                 // return sum (handles `Other(x)` — 1-arg in every ErrorKind — by
                 // the enclosing fn's return category).
                 if by_arity.len() >= 2 {
-                    if let Some(base) = self.current_fn_return_sum() {
+                    if let Some(base) = self.debt_current_fn_return_sum() {
                         if by_arity.iter().any(|c| **c == base) {
                             return build(base);
                         }
@@ -2885,7 +3095,7 @@ impl CEmitter {
                 }
             }
             // (3) Arity-agnostic context fallback.
-            if let Some(base) = self.current_fn_return_sum() {
+            if let Some(base) = self.debt_current_fn_return_sum() {
                 if plain.iter().any(|c| *c == base) {
                     return build(base);
                 }
@@ -2957,7 +3167,7 @@ impl CEmitter {
     /// [M-sync-crossmodule…] (D348): the plain (non-mono) sum base named by the
     /// current fn's return C-type, if any — used to disambiguate a variant shared
     /// across colliding sums by call-site context.
-    fn current_fn_return_sum(&self) -> Option<String> {
+    fn debt_current_fn_return_sum(&self) -> Option<String> {
         let ret = self.current_fn_return_ty.as_ref()?;
         let base = ret
             .strip_prefix("Nova_")
@@ -3133,7 +3343,7 @@ impl CEmitter {
                         .entry(mangled.clone())
                         .or_insert_with(|| (full.clone(), Self::args_lift(&type_args_c)));
                     if self.is_value_generic_template(&full) {
-                        return Ok(format!("NovaValue_{}", Self::mono_short_name(&mangled)));
+                        return Ok(format!("NovaValue_{}", Self::debt_mono_short_name(&mangled)));
                     }
                     return Ok(format!("{}*", mangled));
                 }
@@ -4393,8 +4603,8 @@ impl CEmitter {
                 // would dangle). A mono'd instance name (e.g.
                 // `Nova_Vec____nova_int*` from a nested `[][]int`) contains
                 // `____` and IS concrete — do NOT skip it. Mirrors the
-                // `x.contains("____")` carve-out in the Option/Named arms.
-                if self.is_generic_stub_c(&elem_c) && !elem_c.contains("____") {
+                // analogous concrete-mono carve-out used in the Option/Named arms.
+                if self.debt_skip_array_fwd_decl(&elem_c) {
                     continue;
                 }
                 let type_args_c = vec![elem_c];
@@ -4425,7 +4635,7 @@ impl CEmitter {
         //     and drain_generic_type_worklist fire correctly.
         //   - `export type OnceState | Fresh | Running | Done | Poisoned` — sum type
         //     pre-declared in sync_primitives.h (RUNTIME_DEFINED_TYPES). Register in
-        //     sum_schemas so `is_generic_stub_c("Nova_OnceState*")` returns false and
+        //     sum_schemas so `debt_is_generic_stub_c("Nova_OnceState*")` returns false and
         //     `infer_expr_c_type` correctly infers Nova_OnceState* for once.state().
         //
         // These types are NOT in the compiled test module's items (they're not prelude
@@ -4453,7 +4663,7 @@ impl CEmitter {
                     }
                 }
                 crate::ast::TypeDeclKind::Sum(variants) => {
-                    // Register sum schema for pattern matching + is_generic_stub_c.
+                    // Register sum schema for pattern matching + debt_is_generic_stub_c.
                     // [M-sync-crossmodule…] (D348): SKIP a colliding name here — this
                     // external-registry pre-pass keys by the BARE `type_decl.name`,
                     // which would create a spurious unqualified `ErrorKind` schema/
@@ -6533,7 +6743,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (`const FOO = { ... }` без явного имени типа должен подхватить
         // тип из аннотации/typed-target).
         let saved_expected = self.expected_record_type.clone();
-        self.expected_record_type = Self::struct_name_from_c_type(ty_c);
+        self.expected_record_type = Self::debt_struct_name_from_c_type(ty_c);
         let val = self.emit_expr(value)?;
         self.expected_record_type = saved_expected;
         self.line(&format!("_nova_const_{}_value = {};", name, val));
@@ -6951,11 +7161,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !concrete_c_ty.ends_with('*') { return None; }
 
         // Derive the concrete struct name from the C type ("Nova_IntCounter*" → "IntCounter").
-        let concrete_name = concrete_c_ty
-            .trim_start_matches("Nova_")
-            .trim_end_matches('*')
-            .trim()
-            .to_string();
+        let concrete_name = self.debt_strip_nova_trim_start(concrete_c_ty);
         if concrete_name.is_empty() { return None; }
 
         // Plan 97.1 Ф.1: mangling без args-суффикса для non-generic.
@@ -7839,7 +8045,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let is_primitive = Self::primitive_type_id(&e_c).is_some();
                     if e_c != "nova_str" && !e_c.is_empty() && e_c != "void*" && !is_primitive {
                         self.register_fail_e_type(&e_c);
-                        let mangled_e = Self::per_e_mangle(&e_c);
+                        let mangled_e = Self::debt_per_e_mangle(&e_c);
                         let e_arg = if e_c.ends_with('*') { e_c.clone() } else { format!("{}*", e_c) };
                         // Emit adapter fn (deferred file-scope). Используем
                         // tmp_counter для uniqueness, НЕ handler_counter —
@@ -11087,8 +11293,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if channel_safe {
                             if let Ok(ret_c) = self.type_ref_to_c(ret_tr) {
                                 if rt.is_primitive_lowerable()
-                                    || (ret_c.starts_with("Nova_") && ret_c.ends_with('*')
-                                        && !ret_c.contains("____"))
+                                    || self.debt_is_bare_nova_ptr(&ret_c)
                                 {
                                     self.fn_ret_by_span.insert(f.span, ret_c);
                                 }
@@ -11445,12 +11650,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(template) = self.generic_type_templates.get(&base_name) {
             let generic_names: std::collections::HashSet<String> = template.generics.iter()
                 .map(|g| g.name.clone()).collect();
-            let has_placeholder = type_args_c.iter().any(|c| {
-                let trimmed = c.trim_end_matches('*').trim();
-                trimmed.strip_prefix("Nova_")
-                    .map(|name| generic_names.contains(name))
-                    .unwrap_or(false)
-            });
+            let has_placeholder = type_args_c.iter()
+                .any(|c| self.debt_type_arg_is_bare_placeholder(c, &generic_names));
             if has_placeholder { return; }
         }
         let mono_name = Self::compute_generic_type_c_name(&base_name, &type_args_c);
@@ -11505,7 +11706,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     "typedef struct Nova_{0} {{ void* _nv_handle; }} Nova_{0};\n",
                     t.name
                 ));
-                // Register in opaque_ffi_types so is_generic_stub_c treats
+                // Register in opaque_ffi_types so debt_is_generic_stub_c treats
                 // `Nova_File*` as a concrete type (not an erased generic stub).
                 // This makes Result[File, IoErr] monomorphize correctly to
                 // `NovaRes_Nova_File_p_Nova_IoErr*` rather than the erased fallback.
@@ -12277,10 +12478,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // NovaTuple_) so we never shadow a non-struct newtype alias typedef.
             if let Some(pointee) = ty_c.strip_suffix('*') {
                 let pointee = pointee.trim();
-                if pointee.contains("____")
-                    || pointee.starts_with("NovaValue_")
-                    || pointee.starts_with("NovaTuple_")
-                {
+                if self.debt_is_guaranteed_struct_tag(pointee) {
                     let fwd = format!("typedef struct {p} {p};\n", p = pointee);
                     if !fwd_decls.contains(&fwd) && !self.value_record_defs_buf.contains(&fwd) {
                         fwd_decls.push_str(&fwd);
@@ -12460,7 +12658,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // [M-172.1-self-ref-slice-variant-erasure]: mark this type concrete WHILE its
         // variant payload fields are lowered, so a self-referential `[]Self` slice
         // element (`type T | Node([]T)`) resolves to `Nova_Vec____Nova_T_p*` instead
-        // of the erased `Nova_Vec____nova_int*` (`is_generic_stub_c` consults this).
+        // of the erased `Nova_Vec____nova_int*` (`debt_is_generic_stub_c` consults this).
         self.being_defined_sum_types.insert(name.to_string());
         for v in variants {
             match &v.kind {
@@ -12626,10 +12824,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ) -> String {
         // Inner element storage type: physical type held in inner->data[].
         // For erased nested arrays this is nova_int.
-        let inner_storage = inner_arr_ty
-            .strip_prefix("NovaArray_")
-            .map(|s| s.trim_end_matches('*').trim().to_string())
-            .unwrap_or_else(|| "nova_int".to_string());
+        let inner_storage = Self::debt_novaarray_elem_storage(inner_arr_ty);
         // Outer buffer stores inner-array pointers erased as nova_int.
         let outer_access = format!(
             "(*(nova_int*)nova_idx_chk((void*)({oe}), ({oi}), sizeof(nova_int)))",
@@ -13450,7 +13645,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // methods propagate to the caller, EXACTLY as the non-generic
                 // value-record path does (~line 10917). Order-independent: does
                 // not need `type_aliases` populated first.
-                if let Some(short) = self.value_generic_mono_short(other) {
+                if let Some(short) = self.debt_value_generic_mono_short(other) {
                     return format!("NovaValue_{}*", short);
                 }
                 // Plan 101.1: bare typevar receiver (`fn[T] T @method`) —
@@ -13983,18 +14178,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = f.params.iter()
             .filter_map(|p| {
                 if let TypeRef::Func { params: fp, return_type, .. } = &p.ty {
-                    let erase_unk = |c: String| -> String {
-                        if let Some(inner) = c.strip_prefix("Nova_").and_then(|s| s.strip_suffix('*')) {
-                            let name = inner.trim();
-                            if !self.record_schemas.contains_key(name)
-                                && !self.sum_schemas.contains_key(name)
-                                && !self.generic_types.contains(name)
-                            {
-                                return "nova_int".to_string();
-                            }
-                        }
-                        c
-                    };
+                    let erase_unk = |c: String| -> String { self.debt_erase_unknown_nova_ptr(c) };
                     // Plan 70 Cat B (intentional erasure): erase_unk нормализует
                     // unknown→nova_int для consistent pointer-stomping в emit_generic_*
                     // (erased generics). type_ref_to_c fail здесь = type-param ещё не
@@ -14016,7 +14200,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.sync_receiver_rt();
         // Emit body
         let saved_expected = self.expected_record_type.clone();
-        self.expected_record_type = Self::struct_name_from_c_type(&ret_c);
+        self.expected_record_type = Self::debt_struct_name_from_c_type(&ret_c);
         match &f.body {
             FnBody::Expr(e) => {
                 self.emit_source_annotation_for_expr(e);
@@ -14153,7 +14337,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.result_ok_inner_types.get(name.as_str()).cloned()
             }
             ExprKind::Call { func, .. } => {
-                let fn_c_name = self.call_target_c_name(func);
+                let fn_c_name = self.debt_call_target_c_name(func);
                 self.fn_result_ok_inner_types.get(&fn_c_name).cloned()
             }
             ExprKind::Block(b) => {
@@ -14277,7 +14461,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Mirrors `emit_call`'s callee name resolution для Ident/Path/Member cases.
-    fn call_target_c_name(&self, func: &crate::ast::Expr) -> String {
+    fn debt_call_target_c_name(&self, func: &crate::ast::Expr) -> String {
         use crate::ast::ExprKind;
         match &func.kind {
             ExprKind::Ident(name) => self.free_fn_c_name(name),
@@ -14342,7 +14526,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// static method (`Path[T,m]` / `Member{Type,m}`) → `Type.method`;
     /// instance method (`Member{var,m}`) → `<RecvType>.method` resolved via
     /// the receiver's inferred type. Covers free fns AND methods uniformly.
-    fn call_protocol_params_key(&self, func: &crate::ast::Expr) -> Option<String> {
+    fn debt_call_protocol_params_key(&self, func: &crate::ast::Expr) -> Option<String> {
         use crate::ast::ExprKind;
         match &func.kind {
             ExprKind::Ident(name) => Some(name.clone()),
@@ -14759,9 +14943,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let is_single_nova_ptr =
             cty.starts_with("Nova_") && cty.ends_with('*') && !cty.ends_with("**");
         if is_single_nova_ptr {
-            let type_name = cty
-                .strip_prefix("Nova_")
-                .unwrap_or("")
+            let type_name = Self::debt_strip_nova_prefix_or_empty(cty)
                 .trim_end_matches('*')
                 .to_string();
             // [M-172.1-option-container-eq-structural] + [M-172.1-option-hashmap-eq-structural]:
@@ -14779,7 +14961,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `pending_container_eq_monos` (drained post-emission, register_container_eq_mono).
             // Under `novaopt_early_gen` (early opt path, before the mono fn-fwd-decls) the
             // mono proto isn't visible → bail to identity; the structural-LATE opt path
-            // (opt_payload_needs_structural_eq) reaches us with early_gen off and splices
+            // (debt_opt_payload_needs_structural_eq) reaches us with early_gen off and splices
             // the eq fn AFTER the mono fwd-decls.
             if type_name.starts_with("Vec____") || type_name.starts_with("HashMap____") {
                 if *self.novaopt_early_gen.borrow() {
@@ -14826,7 +15008,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Accessing ->tag / ->payload / ->field here causes clang "incomplete
             // type" errors. Fall back to pointer identity (the function calling us
             // is in an early opt_eq context where struct members are unavailable).
-            // The structural-late opt path (opt_payload_needs_structural_eq) does
+            // The structural-late opt path (debt_opt_payload_needs_structural_eq) does
             // NOT set early_gen, so it reaches the real recursion below.
             if *self.novaopt_early_gen.borrow()
                 && (self.sum_schemas.contains_key(&type_name)
@@ -14895,7 +15077,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // codegen otherwise); a builtin record registered without an order list
             // falls back to sorted keys. EMPTY-schema records (opaque builtin runtime
             // structs like StringBuilder) are skipped → identity below (sound for
-            // opaque handles; matches the opt_payload_needs_structural_eq exclusion).
+            // opaque handles; matches the debt_opt_payload_needs_structural_eq exclusion).
             // CONTAINERS (`Vec____`/`HashMap____`) are in `record_schemas` only for
             // field-access lowering, but carry an opaque heap `data`/buckets buffer
             // where field-recursion would compare the POINTER by identity
@@ -15096,7 +15278,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// "nova_bool" → "bool"
     /// "Nova_Foo*" → "Foo"
     /// (Generic mono'd names like "Nova_X____Y" остаются как есть.)
-    fn c_type_to_nova_name(c_ty: &str) -> String {
+    fn debt_c_type_to_nova_name(c_ty: &str) -> String {
         let trimmed = c_ty.trim_end_matches('*').trim();
         match trimmed {
             "nova_int"  => "int".to_string(),
@@ -15132,7 +15314,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `generic_type_instance_info` keep the full `Nova_`-prefixed mangled
     /// name unchanged — only the *C-type surface* of a `value` template
     /// switches to the `NovaValue_<short>` by-value form.
-    fn mono_short_name(mangled_nova: &str) -> &str {
+    fn debt_mono_short_name(mangled_nova: &str) -> &str {
         mangled_nova.strip_prefix("Nova_").unwrap_or(mangled_nova)
     }
 
@@ -15228,7 +15410,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// instance. This is the value-record-safe replacement for the naive
     /// `args_str.split("__")` parse that mis-tears nested generic-over-source
     /// args.
-    fn mono_type_args_of(&self, obj_ty: &str) -> Vec<String> {
+    fn debt_mono_type_args_of(&self, obj_ty: &str) -> Vec<String> {
         let stripped = obj_ty
             .strip_prefix("NovaValue_")
             .or_else(|| obj_ty.strip_prefix("Nova_"))
@@ -15276,7 +15458,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// from `generic_type_instance_info` (mangled → base) + the template's
     /// `AllocKind`. For a bare base name it never fires (no `____`), which is
     /// correct — a bare `BoxIter` is never a concrete carrier.
-    fn value_generic_mono_short(&self, name: &str) -> Option<String> {
+    fn debt_value_generic_mono_short(&self, name: &str) -> Option<String> {
         let trimmed = name.trim_end_matches('*').trim();
         // Normalize to the short mono name (drop NovaValue_/Nova_ prefix).
         let short = trimmed
@@ -15315,7 +15497,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// return-type / let-binding inference that may produce a generic instance,
     /// so the local-var type matches the by-value method ABI.
     fn value_aware_generic_c_type(&self, c_ty: &str) -> String {
-        if let Some(short) = self.value_generic_mono_short(c_ty) {
+        if let Some(short) = self.debt_value_generic_mono_short(c_ty) {
             format!("NovaValue_{}", short)
         } else {
             c_ty.to_string()
@@ -15819,7 +16001,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .collect();
             self.register_generic_instances_in_typeref(rt, &subst_opt);
         }
-        let recv_type_stripped = mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string();
+        let recv_type_stripped = Self::debt_strip_nova_prefix(&mangled).to_string();
         self.register_mono_method_instance(
             &fn_decl, type_subst, &method_c_name, &recv_type_stripped);
         Ok(Some(format!("{}({})", method_c_name, arg_strs.join(", "))))
@@ -16130,7 +16312,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Extract Nova type name from resolved C type
                     let nova_name = {
                         let t = resolved_c.trim_end_matches('*').trim();
-                        t.strip_prefix("Nova_").unwrap_or("").to_string()
+                        Self::debt_strip_nova_prefix_or_empty(t).to_string()
                     };
                     if nova_name.is_empty() { continue; }
                     // Get the bound's generic params (e.g., `Iter[U]` → generics=[U])
@@ -16376,8 +16558,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // []T → extract element type from the receiver's concrete C type.
             crate::ast::TypeRef::Array(inner, _) => {
                 // Legacy spelling: `NovaArray_<elem>*` — strip prefix + `*`.
-                if let Some(inner_c) = concrete_c
-                    .strip_prefix("NovaArray_")
+                if let Some(inner_c) = Self::debt_strip_novaarray_prefix_opt(concrete_c)
                     .and_then(|s| s.strip_suffix('*'))
                 {
                     self.infer_type_param_binding(inner, inner_c, subst);
@@ -16655,7 +16836,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///
     /// Worker для emit_expr/infer_expr_c_type Index path: cast cast'ит
     /// `data[i]` в proper struct pointer вместо nova_int default.
-    fn compute_field_array_elem_type(&self, obj: &Expr, field: &str) -> Option<String> {
+    fn debt_compute_field_array_elem_type(&self, obj: &Expr, field: &str) -> Option<String> {
         let obj_ty = self.infer_expr_c_type(obj);
         // Strip Nova_ prefix и trailing *.
         let struct_name = obj_ty
@@ -16682,7 +16863,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 153.2 Ф.2 (STAGE 2): depth-AWARE, registry-backed args (see
             // the field-type resolver's twin fix) — a nested generic-over-source
             // arg must not be torn at its inner `____`.
-            let type_args: Vec<String> = self.mono_type_args_of(struct_name);
+            let type_args: Vec<String> = self.debt_mono_type_args_of(struct_name);
             if let Some(template) = self.generic_type_templates.get(base_name).cloned() {
                 if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
                     if let Some(field_decl) = fields.iter().find(|f| f.name == field) {
@@ -16704,13 +16885,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Plan 56 followup: deep version — компонует chain `obj.f1.f2.field[i]`
-    /// рекурсивно вызывая compute_field_array_elem_type на каждом уровне.
+    /// рекурсивно вызывая debt_compute_field_array_elem_type на каждом уровне.
     /// Возвращает element type для **самого внутреннего** array.
     fn compute_array_elem_type_for_obj(&self, obj: &Expr) -> Option<String> {
         match &obj.kind {
             ExprKind::Ident(n) => self.array_element_types.get(n).cloned(),
             ExprKind::Member { obj: inner, name } => {
-                self.compute_field_array_elem_type(inner, name)
+                self.debt_compute_field_array_elem_type(inner, name)
             }
             // [M-91.8c-direct-index-method]: @[j] in a generic []T method body
             // (ExprKind::SelfAccess). emit_monomorphized_method registers the
@@ -17087,12 +17268,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let generic_names: std::collections::HashSet<String> = fn_decl.generics.iter()
             .map(|g| g.name.clone()).collect();
         if !generic_names.is_empty() {
-            let has_placeholder = type_subst.iter().any(|(_, c)| {
-                let trimmed = c.trim_end_matches('*').trim();
-                if let Some(name) = trimmed.strip_prefix("Nova_") {
-                    generic_names.contains(name)
-                } else { false }
-            });
+            let has_placeholder = type_subst.iter()
+                .any(|(_, c)| self.debt_type_arg_is_bare_placeholder(c, &generic_names));
             if has_placeholder { return; }
         }
         self.mono_instantiated.insert(mono_name.to_string());
@@ -17111,10 +17288,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // FORWARD DECL matches the body (emit_monomorphized_method does the same).
         // See the detailed rationale there. Both fwd-decl and body must produce
         // the SAME value-aware mono or C reports conflicting types.
-        if recv_type.contains("____") {
-            let self_c = self.value_aware_generic_c_type(&format!("Nova_{}*", recv_type));
-            self.current_type_subst.entry("Self".to_string()).or_insert_with(|| Self::lift_c_name(self_c));
-        }
+        self.debt_bind_self_for_mono_recv(recv_type);
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);
@@ -17216,10 +17390,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // leaves heap-generic / non-value forms unchanged (heap `-> Self` and
         // primitive receivers are unaffected). `.or_insert` so any pre-existing
         // `Self` binding (e.g. from type_subst) wins — no clobber.
-        if recv_type.contains("____") {
-            let self_c = self.value_aware_generic_c_type(&format!("Nova_{}*", recv_type));
-            self.current_type_subst.entry("Self".to_string()).or_insert_with(|| Self::lift_c_name(self_c));
-        }
+        self.debt_bind_self_for_mono_recv(recv_type);
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);
@@ -17299,7 +17470,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .find(|g| !g.name.is_empty())
                             .and_then(|g| self.subst_c(&g.name))
                     })
-            } else if let Some(after_prefix) = recv_c.strip_prefix("NovaArray_") {
+            } else if let Some(after_prefix) = Self::debt_strip_novaarray_prefix_opt(&recv_c) {
                 // NovaArray_<elem>* — element is after the prefix, re-add '*' for structs.
                 let elem = after_prefix.trim_end_matches('*').trim();
                 if elem.starts_with("Nova_") {
@@ -17754,28 +17925,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // struct), which is the case Stage 2 must skip.
                     let outer_is_value =
                         matches!(template.allocation, crate::ast::AllocKind::Value);
-                    let has_placeholder = type_args_c.iter().any(|c| {
-                        // A1‴: registry args carry `ResolvedType` — lower to the C-name
-                        // (`Raw` verbatim) before the placeholder string-checks.
-                        let c = self.arg_c(c);
-                        let trimmed = c.trim_end_matches('*').trim();
-                        if let Some(name) = trimmed.strip_prefix("Nova_") {
-                            if generic_names.contains(name) { return true; }
-                        }
-                        // NESTED placeholder (value templates only): a generic-
-                        // over-source `value` instance arg is a COMPOUND mangled
-                        // name (`NovaValue_MapIter____Nova_I_p__Nova_U_p`) emitted
-                        // while a generic METHOD's erased base body lowers its
-                        // return type with the source type-params (`I`,`U`) still
-                        // unsubstituted. The shallow check above (whole-arg
-                        // `Nova_<param>`) misses these — the unresolved `Nova_I` /
-                        // `Nova_U` are buried inside the compound name. Emitting
-                        // the instance would declare a struct whose by-value field
-                        // type is never defined → "unknown type name". The concrete
-                        // instance is still emitted at the monomorphized call-site
-                        // where the params ARE in `current_type_subst`.
-                        outer_is_value && self.mangled_has_nested_placeholder(trimmed)
-                    });
+                    let has_placeholder = type_args_c.iter()
+                        .any(|c| self.debt_worklist_arg_is_placeholder(c, &generic_names, outer_is_value));
                     if has_placeholder { continue; }
                 }
                 self.emitted_generic_type_instances.insert(mangled.clone());
@@ -17890,7 +18041,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (pointer ABI). `short` = mangled name minus the `Nova_` prefix,
                 // the key the value-record machinery expects (parity with the
                 // non-generic value-record which keys by bare type name).
-                let short = Self::mono_short_name(mangled).to_string();
+                let short = Self::debt_mono_short_name(mangled).to_string();
                 let is_value = matches!(template.allocation, crate::ast::AllocKind::Value);
                 let struct_c_name = if is_value {
                     format!("NovaValue_{}", short)
@@ -17974,11 +18125,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 field_types.push(tc.clone());
                                 let mf = Self::mangle_field_name(&f.name);
                                 self.line(&format!("{} {};", tc, mf));
-                                let schema_base = mangled.strip_prefix("Nova_").unwrap_or(mangled);
+                                let schema_base = Self::debt_strip_nova_prefix(mangled);
                                 let key = format!("{}::{}::{}", schema_base, v.name, f.name);
                                 self.record_variant_field_types.insert(key, tc);
                             }
-                            let schema_base = mangled.strip_prefix("Nova_").unwrap_or(mangled);
+                            let schema_base = Self::debt_strip_nova_prefix(mangled);
                             let order_key = format!("{}::{}", schema_base, v.name);
                             let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                             self.record_variant_field_order.insert(order_key, field_names);
@@ -18034,7 +18185,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line("}");
                     self.line("");
                 }
-                let sum_key = mangled.strip_prefix("Nova_").unwrap_or(mangled);
+                let sum_key = Self::debt_strip_nova_prefix(mangled);
                 // Plan 62.A.bis Ф.2.1: mirror legacy insert в registry.
                 // Generic mono'd sum types — heap-pointer ABI (PointerErrorLike).
                 let variant_order: Vec<String> = variants.iter()
@@ -19186,18 +19337,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Erase unknown Nova pointer types (Nova_T*, Nova_U*, etc.) to nova_int.
                     // These appear in erased contexts like array extension methods (fn []T @map[U])
                     // where T and U are type params, not real Nova record/sum types.
-                    let erase_unk = |c: String| -> String {
-                        if let Some(inner) = c.strip_prefix("Nova_").and_then(|s| s.strip_suffix('*')) {
-                            let name = inner.trim();
-                            if !self.record_schemas.contains_key(name)
-                                && !self.sum_schemas.contains_key(name)
-                                && !self.generic_types.contains(name)
-                            {
-                                return "nova_int".to_string();
-                            }
-                        }
-                        c
-                    };
+                    let erase_unk = |c: String| -> String { self.debt_erase_unknown_nova_ptr(c) };
                     // Plan 70 Cat B (intentional erasure): erase_unk нормализует
                     // unknown→nova_int для consistent pointer-stomping в emit_generic_*
                     // (erased generics). type_ref_to_c fail здесь = type-param ещё не
@@ -19274,7 +19414,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // tests) we KEEP unconditionally — never elide under doubt.
         self.emit_prologue_preempt_check(f);
         let saved_expected = self.expected_record_type.clone();
-        self.expected_record_type = Self::struct_name_from_c_type(&ret);
+        self.expected_record_type = Self::debt_struct_name_from_c_type(&ret);
         // Plan 33.1 Ф.4 (D24): emit contracts.
         // Plan 140 Ф.1 (D24 amend): «enforce-with-elision» — недоказанные
         // контракты эмитятся БЕЗУСЛОВНО (debug И release), Z3-proven
@@ -20553,7 +20693,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `_nova_fail_top` here segfaults cross-function). Only a pure
                 // value-`interrupt` with no in-flight throw (`_nova_last_error`
                 // not live) falls back to the plain `str "interrupt"` marker.
-                let str_info = self.register_any_typeinfo("nova_str");
+                let str_info = self.debt_register_any_typeinfo("nova_str");
                 self.line(&format!("Nova_ScopeOutcome* {};", c_local));
                 self.line("if (_nova_last_error.live) {");
                 self.indent += 1;
@@ -20593,8 +20733,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Register the per-type NovaTypeInfo statics referenced below (idempotent);
         // finalize splices them at __TYPEID_DEFINES__. `CancelError` TID here is the
         // SAME `NOVA_TID_USER_CancelError` a user `err is CancelError` resolves to.
-        let cancel_info = self.register_any_typeinfo("Nova_CancelError");
-        let str_info = self.register_any_typeinfo("nova_str");
+        let cancel_info = self.debt_register_any_typeinfo("Nova_CancelError");
+        let str_info = self.debt_register_any_typeinfo("nova_str");
         self.line(&format!("if ({}.error_kind == NOVA_THROW_PANIC) {{", frame));
         self.indent += 1;
         self.line(&format!("{} = nova_make_ScopeOutcome_Panic({}.error_msg);", var, frame));
@@ -21049,7 +21189,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     ExprKind::RecordLit { type_name: None, .. });
                 let saved_expected = self.expected_record_type.clone();
                 if decl.ty.is_some() && direct_typeless_record {
-                    self.expected_record_type = Self::struct_name_from_c_type(&ty_c);
+                    self.expected_record_type = Self::debt_struct_name_from_c_type(&ty_c);
                 }
                 // Plan 127 Ф.3: if escape analysis flagged this binding as
                 // value-record-promoted, signal emit_record_lit to switch to
@@ -21100,7 +21240,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     ExprKind::Call { func, args, .. }
                     if args.is_empty() && matches!(&func.kind, ExprKind::Member { name, .. } if name == "into"));
                 if is_into_call && decl.ty.is_some() {
-                    let target_name = Self::nova_type_name_from_c(&ty_c);
+                    let target_name = Self::debt_nova_type_name_from_c(&ty_c);
                     if !target_name.is_empty() {
                         self.expected_into_target = Some(target_name);
                     }
@@ -21410,14 +21550,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             | "f32" | "f64" | "bool" | "char" | "str");
                                     if is_type { (n.clone(), true) } else {
                                         let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
-                                        let t = Self::nova_type_name_from_c(&obj_ty);
+                                        let t = Self::debt_nova_type_name_from_c(&obj_ty);
                                         (t, false)
                                     }
                                 }
                                 ExprKind::Path(parts) if parts.len() == 1 => (parts[0].clone(), true),
                                 _ => {
                                     let obj_ty = self.infer_expr_c_type(obj);
-                                    let t = Self::nova_type_name_from_c(&obj_ty);
+                                    let t = Self::debt_nova_type_name_from_c(&obj_ty);
                                     (t, false)
                                 }
                             };
@@ -21920,7 +22060,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     };
                     if is_primitive {
                         // Erased path — primitive use existing NOVA_TID_<type>.
-                        let tid_macro = self.typeid_macro_for(&val_ty);
+                        let tid_macro = self.debt_typeid_macro_for(&val_ty);
                         self.line(&format!(
                             "nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), (void*){p}, {tid});",
                             nm = val_ty.replace('*', ""),
@@ -21929,7 +22069,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         ));
                     } else {
                         self.register_fail_e_type(&val_ty);
-                        let mangled_e = Self::per_e_mangle(&val_ty);
+                        let mangled_e = Self::debt_per_e_mangle(&val_ty);
                         self.line(&format!(
                             "_nova_throw_typed_{m}({p});",
                             m = mangled_e, p = payload_expr
@@ -21976,11 +22116,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.defer_block_counter += 1;
                 let c_binding = format!("_consume_{}_{}", binding, scope_id);
                 // Strip Nova_ prefix + pointer star for symbol/label resolution.
-                let type_name = init_c_type
-                    .trim_start_matches("Nova_")
-                    .trim_end_matches('*')
-                    .trim()
-                    .to_string();
+                let type_name = self.debt_strip_nova_trim_start(&init_c_type);
 
                 self.line(&format!("/* Plan 173 Ф.2.B3-merge: consume {} = ... {{ ... }} */", binding));
                 self.line("{");
@@ -22346,7 +22482,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // disambiguation the explicit `ro e Node = Empty` annotation requests.
         if let ExprKind::Ident(name) = &expr.kind {
             let base = target_ty_c.trim_end_matches('*').trim();
-            if let Some(sum) = base.strip_prefix("Nova_") {
+            if let Some(sum) = Self::debt_strip_nova_prefix_opt(base) {
                 if let Some(entry) = self.sum_schema_registry.lookup_sum_schema(sum) {
                     if let Some(v) = entry.variants.iter().find(|v| v.variant_name == *name) {
                         if v.field_c_types.is_empty() {
@@ -22371,7 +22507,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.current_array_elem_hint = prev;
                 return result;
             }
-            if let Some(inner) = target_ty_c.strip_prefix("NovaArray_") {
+            if let Some(inner) = Self::debt_strip_novaarray_prefix_opt(target_ty_c) {
                 let hint_elem = inner.trim_end_matches('*').to_string();
                 let prev = self.current_array_elem_hint.replace(hint_elem);
                 let result = self.emit_expr(expr);
@@ -22613,7 +22749,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 62.A.bis Ф.2.2: variant lookup via registry.
                 // [M-sync-crossmodule…] (D348): context-disambiguated for a variant
                 // shared across colliding sums (byte-identical for unique variants).
-                if let Some((type_name, fields)) = self.find_variant_ctx(name, Some(0)) {
+                if let Some((type_name, fields)) = self.debt_find_variant_ctx(name, Some(0)) {
                     if fields.is_empty() {
                         // Plan 14 Ф.1: `None` — typed compound literal по
                         // current_fn_return_ty. Иначе — legacy nova_make.
@@ -22825,7 +22961,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .collect();
                         if type_args_c.len() == tmpl.generics.len() {
                             let mangled = Self::compute_generic_type_c_name(type_name_raw, &type_args_c);
-                            mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string()
+                            Self::debt_strip_nova_prefix(&mangled).to_string()
                         } else {
                             type_name_raw.clone()
                         }
@@ -22850,7 +22986,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if self.sum_schemas.contains_key(q.as_str()) {
                             q
                         } else if self.colliding_type_names.contains(type_name_raw.as_str()) {
-                            match self.find_variant_ctx(variant_name, None) {
+                            match self.debt_find_variant_ctx(variant_name, None) {
                                 Some((sum, _)) if self.sum_schemas.contains_key(sum.as_str()) => sum,
                                 _ => String::new(),
                             }
@@ -23056,7 +23192,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Nova's `==` on arrays means element-wise; emit a runtime call if available,
                 // otherwise fall back to pointer eq (correct for test cases comparing same array).
                 if lty.starts_with("NovaArray_") || rty.starts_with("NovaArray_") {
-                    let elem_ty = lty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
+                    let elem_ty = Self::debt_strip_novaarray_prefix_or_panic(&lty)
                         .trim_end_matches('*');
                     return match op {
                         BinOp::Eq  => Ok(format!("(nova_array_eq_{}({}, {}))", elem_ty, l, r)),
@@ -23376,7 +23512,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Timestamp+Duration callers existed pre-Plan-65); exposed
                     // by Monotonic.now() + Duration.
                     let type_name_sum_full = sty.trim_end_matches('*').to_string();
-                    let type_name_sum = sty.strip_prefix("Nova_").unwrap_or("").trim_end_matches('*').to_string();
+                    let type_name_sum = Self::debt_strip_nova_prefix_or_empty(&sty).trim_end_matches('*').to_string();
                     // D46 operator overloading: Nova_T* + Nova_T* → Nova_T_method_plus(l, r).
                     // GUARD ([M-153.5-flatten-nested-receiver]): `@plus` is binary
                     // over two record/sum *values* — BOTH operands must be single
@@ -23869,7 +24005,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && !self.sum_schemas.contains_key(type_name.as_str())
                         && self.sum_schema_registry.lookup_sum_schema(&type_name).is_none()
                     {
-                        if let Some((sum, _)) = self.find_variant_ctx(name, None) {
+                        if let Some((sum, _)) = self.debt_find_variant_ctx(name, None) {
                             type_name = sum;
                         }
                     }
@@ -24345,7 +24481,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             };
                             if let Ok(ok_c) = self.type_ref_to_c(&named(&rn)) {
                                 if !ok_c.is_empty() && ok_c != "void*"
-                                    && !self.is_generic_stub_c(&ok_c)
+                                    && !self.debt_is_generic_stub_c(&ok_c)
                                 {
                                     let err_c = self.type_ref_to_c(&named("DeError"))
                                         .unwrap_or_else(|_| "NovaValue_DeError".to_string());
@@ -24429,7 +24565,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // value type → heap-box.
                             let err_c = err_c_opt
                                 .unwrap_or_else(|| "void*".to_string());
-                            let tid = self.typeid_macro_for(&err_c);
+                            let tid = self.debt_typeid_macro_for(&err_c);
                             let payload_expr = if err_c.ends_with('*') {
                                 format!("(void*)({}->payload.Err._0)", try_tmp)
                             } else {
@@ -24542,7 +24678,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // value-тип → heap-box.
                         let err_c = err_c_opt
                             .unwrap_or_else(|| "void*".to_string());
-                        let tid = self.typeid_macro_for(&err_c);
+                        let tid = self.debt_typeid_macro_for(&err_c);
                         let payload_expr = if err_c.ends_with('*') {
                             format!("(void*)({}->payload.Err._0)", bang_tmp)
                         } else {
@@ -24617,7 +24753,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else { None };
                 let inner_c_ty_for_check = self.infer_expr_c_type(inner);
                 // Получим Nova-имя источника для restrictions check.
-                let src_nova = Self::nova_type_name_from_c(&inner_c_ty_for_check);
+                let src_nova = Self::debt_nova_type_name_from_c(&inner_c_ty_for_check);
                 if let Some(tgt_nova) = target_nova.as_deref() {
                     Self::check_as_cast_allowed(&src_nova, tgt_nova, &inner.kind, self.unsafe_depth > 0)?;
                 }
@@ -24703,7 +24839,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if inner_ty_is == "void*" {
                     let target_c = self.type_ref_to_c(ty)
                         .map_err(|e| format!("`is` target type error: {}", e))?;
-                    let tid = self.typeid_macro_for(&target_c);
+                    let tid = self.debt_typeid_macro_for(&target_c);
                     let x = self.emit_expr(inner)?;
                     return Ok(format!("nova_any_is({}, {})", x, tid));
                 }
@@ -24935,7 +25071,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         )
                     };
                     if is_primitive {
-                        let tid_macro = self.typeid_macro_for(&val_ty);
+                        let tid_macro = self.debt_typeid_macro_for(&val_ty);
                         Ok(format!(
                             "(nova_throw_typed(nova_str_from_cstr(\"<{nm}>\"), (void*){p}, {tid}), (nova_int)0LL)",
                             nm = val_ty.replace('*', ""),
@@ -24944,7 +25080,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         ))
                     } else {
                         self.register_fail_e_type(&val_ty);
-                        let mangled_e = Self::per_e_mangle(&val_ty);
+                        let mangled_e = Self::debt_per_e_mangle(&val_ty);
                         Ok(format!(
                             "(_nova_throw_typed_{m}({p}), (nova_int)0LL)",
                             m = mangled_e, p = payload_expr
@@ -25954,7 +26090,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 {
                     let target_c = self.type_ref_to_c(&type_args[0])
                         .map_err(|e| format!("`try_as` target type error: {}", e))?;
-                    let tid = self.typeid_macro_for(&target_c);
+                    let tid = self.debt_typeid_macro_for(&target_c);
                     let sani = Self::sanitize_for_novaopt(&target_c);
                     self.register_novaopt_decl(&sani, &target_c);
                     let x = self.emit_expr(obj)?;
@@ -25986,7 +26122,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if name == "suppressed" && args.is_empty()
                 && !self.var_types.contains_key("suppressed")
             {
-                let str_info = self.register_any_typeinfo("nova_str");
+                let str_info = self.debt_register_any_typeinfo("nova_str");
                 let arr = self.fresh_tmp();
                 let cnt = self.fresh_tmp();
                 let idx = self.fresh_tmp();
@@ -26115,7 +26251,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // anon-record-without-spread branch and is saved/restored.
                         let payload_c = if name == "Ok" { &ok_c } else { &err_c };
                         let saved_expected = self.expected_record_type.clone();
-                        self.expected_record_type = Self::struct_name_from_c_type(payload_c);
+                        self.expected_record_type = Self::debt_struct_name_from_c_type(payload_c);
                         if name == "Ok" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
                             self.expected_record_type = saved_expected;
@@ -26138,7 +26274,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // temporaries and re-dispatch with each such arg replaced by the temp
         // ident. One hook covers free fns, static methods and instance methods
         // uniformly — no per-branch boxing in the (scattered) call-emission code.
-        if let Some(key) = self.call_protocol_params_key(func) {
+        if let Some(key) = self.debt_call_protocol_params_key(func) {
             if let Some(param_protos) = self.fn_protocol_params.get(&key).cloned() {
                 let mut new_args: Vec<CallArg> = Vec::with_capacity(args.len());
                 let mut rewrote = false;
@@ -26183,7 +26319,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // with the temp. Mirrors the protocol-param pre-box hook above; one hook
         // covers free fns, static methods and instance methods. An arg that is
         // ALREADY `any` (void*) passes through unchanged (no double-box).
-        if let Some(key) = self.call_protocol_params_key(func) {
+        if let Some(key) = self.debt_call_protocol_params_key(func) {
             if let Some(any_flags) = self.fn_any_params.get(&key).cloned() {
                 let mut new_args: Vec<CallArg> = Vec::with_capacity(args.len());
                 let mut rewrote = false;
@@ -26226,7 +26362,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // emit-flow.
         //
         // Если fn НЕ variadic, но args содержит `Spread` — compile error.
-        let variadic_arity: Option<usize> = self.lookup_variadic_arity(func);
+        let variadic_arity: Option<usize> = self.debt_lookup_variadic_arity(func);
         if let Some(regular_arity) = variadic_arity {
             // Гард: больше regular args чем у fn — undefined behavior.
             // (variadic-args начинаются с regular_arity-индекса.)
@@ -26595,7 +26731,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // variant shared across colliding sums (byte-identical for unique
                 // variants). `args.len()` distinguishes `InvalidData(msg)` (compress,
                 // 1 payload) from io's unit `InvalidData` (0 payload).
-                if let Some((type_name, _)) = self.find_variant_ctx(name, Some(args.len())) {
+                if let Some((type_name, _)) = self.debt_find_variant_ctx(name, Some(args.len())) {
                     // Plan 59 Ф.7.5 D3: legacy typed-Err early-return
                     // (`nova_make_Result_Err_typed` для non-str Err через
                     // `err_typed_payload`/`tid` hybrid) удалён. Полная
@@ -26621,7 +26757,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .map(|a| self.infer_expr_c_type(a.expr()))
                             .filter(|t| !t.is_empty()
                                 && t != "void*"
-                                && !self.is_generic_stub_c(t));
+                                && !self.debt_is_generic_stub_c(t));
                         let (ok_c, err_c) = if name == "Ok" {
                             (arg_c.unwrap_or_else(|| "nova_int".into()),
                              "nova_str".to_string())
@@ -27333,8 +27469,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if let (Some(a_c), Some(b_c)) = (child_t.clone(), parent_t.clone()) {
                                         if a_c != b_c {
                                             // Cross-type: compile-time check `A: From[B]`.
-                                            let a_nova = Self::c_type_to_nova_name(&a_c);
-                                            let b_nova = Self::c_type_to_nova_name(&b_c);
+                                            let a_nova = Self::debt_c_type_to_nova_name(&a_c);
+                                            let b_nova = Self::debt_c_type_to_nova_name(&b_c);
                                             let from_ok = self.from_targets
                                                 .get(&a_nova)
                                                 .map(|vs| vs.iter().any(|v| v == &b_nova))
@@ -27986,8 +28122,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Resolve по (recv_type, method_name) + arg-types
                     // (overload, Plan 11).
                     if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
-                        let recv_ty = obj_ty.trim_start_matches("Nova_")
-                            .trim_end_matches('*').trim();
+                        let recv_ty = Self::debt_strip_nova_trim_start_ref(&obj_ty);
                         if let Some(decls) = self.external_registry
                             .lookup(recv_ty, method).map(|s| s.to_vec())
                         {
@@ -28462,7 +28597,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if prim == "str" && method == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
-                            let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                            let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
                             // Plan 11: try multi-overload registry first.
                             let key = ("str".to_string(), "from".to_string());
                             if let Some(overloads) = self.method_overloads.get(&key).cloned() {
@@ -28611,7 +28746,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             }
                                             // Strip "Nova_" so recv_type stays consistent with
                                             // instance-method path (receiver_c_type adds it back).
-                                            let recv_type_stripped = mangled.strip_prefix("Nova_").unwrap_or(&mangled);
+                                            let recv_type_stripped = Self::debt_strip_nova_prefix(&mangled);
                                             self.register_mono_method_instance(
                                                 &fn_decl, type_subst, &method_c_name, recv_type_stripped);
                                             let _ = fake_obj_ty;
@@ -28696,7 +28831,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 if obj_ty.starts_with("NovaArray_") {
-                    let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
+                    let elem_ty = Self::debt_strip_novaarray_prefix_or_panic(&obj_ty)
                         .trim_end_matches('*').trim();
                     match method.as_str() {
                         // Plan 60 / D117: size-accessor methods на []T —
@@ -28897,13 +29032,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && obj_ty.ends_with('*')
                     && obj_ty != "void*"
                 {
-                    let recv_nova = Self::nova_type_name_from_c(&obj_ty);
+                    let recv_nova = Self::debt_nova_type_name_from_c(&obj_ty);
                     let has_user_clone = self.all_methods
                         .contains(&(recv_nova.clone(), "clone".to_string()));
                     // Skip mono'd generic-instance receivers (Vec/HashMap/Set/…):
                     // they carry their own `@clone` via generic_type_methods and
                     // must fall through to the generic-method dispatch below.
-                    let is_mono_instance = recv_nova.contains("____");
+                    let is_mono_instance = Self::debt_contains_mono_sep(&recv_nova);
                     if !has_user_clone && !is_mono_instance {
                         return self.emit_expr(obj);
                     }
@@ -29185,7 +29320,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Nova-тип и дальше — обычный static-dispatch.
                             // Без этого emit'ился литеральный
                             // `nova_fn_<n>_<method>` → undefined symbol.
-                            Some(Self::nova_type_name_from_c(&c_ty))
+                            Some(Self::debt_nova_type_name_from_c(&c_ty))
                         } else if self.method_overloads.keys().any(|(t, _)| t == n) {
                             // Static call.
                             Some(n.clone())
@@ -29195,7 +29330,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // strip that prefix so dispatch resolves under the
                             // "<Name>" multi-overload key (same-named methods on
                             // different types disambiguate by receiver type).
-                            let trimmed = Self::strip_recv_c_prefix(&obj_ty);
+                            let trimmed = Self::debt_strip_recv_c_prefix(&obj_ty);
                             if !trimmed.is_empty() && trimmed != "void" {
                                 Some(trimmed)
                             } else {
@@ -29204,7 +29339,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     } else {
                         // Не-Ident obj (expr) → всегда instance.
-                        let trimmed = Self::strip_recv_c_prefix(&obj_ty);
+                        let trimmed = Self::debt_strip_recv_c_prefix(&obj_ty);
                         if !trimmed.is_empty() && trimmed != "void" {
                             Some(trimmed)
                         } else {
@@ -29314,7 +29449,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // `Nova_Wrap*` rather than the bogus
                                         // `Nova_Wrap_p` (which would leak into closure
                                         // param types as an unknown type name).
-                                        let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
+                                        let elem_c = if let Some(na) = Self::debt_strip_novaarray_prefix_opt(&rt) {
                                             na.to_string()
                                         } else if rt.starts_with("Vec____") {
                                             self.generic_type_instance_info.borrow()
@@ -30039,7 +30174,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         {
                                             if let Ok(pc) = self.type_ref_to_c(&param_decl.ty) {
                                                 if let Some(sn) =
-                                                    Self::struct_name_from_c_type(&pc)
+                                                    Self::debt_struct_name_from_c_type(&pc)
                                                 {
                                                     if self.record_schemas.contains_key(&sn) {
                                                         self.expected_record_type = Some(sn);
@@ -30275,7 +30410,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 {
                     let recv_obj_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
                     // Extract base type name: "FilterIter____..." → "FilterIter"
-                    let recv_stripped = Self::strip_recv_c_prefix(&recv_obj_ty);
+                    let recv_stripped = Self::debt_strip_recv_c_prefix(&recv_obj_ty);
                     let recv_base: &str = recv_stripped
                         .find("____")
                         .map(|i| &recv_stripped[..i])
@@ -31246,7 +31381,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if parts[0] == "str" && parts[1] == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
-                            let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
+                            let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
                             // Plan 11: try multi-overload registry first — strict
                             // arg-type match resolves between overloads (e.g. char vs int).
                             // If found, use the matching overload's c_name (with parameter
@@ -31293,7 +31428,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // этого `parts.join("_")` давал литеральный
                     // `nova_fn_<T>_<method>` → undefined symbol на линковке.
                     let recv_seg: String = match self.subst_c(parts[0].as_str()) {
-                        Some(c_ty) => Self::nova_type_name_from_c(&c_ty),
+                        Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
                         None => parts[0].clone(),
                     };
                     // [M-codegen-cross-module-ctor-emission] fix: an explicit
@@ -32187,10 +32322,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             _ => self.infer_expr_c_type(obj),
                         };
                         let stripped = obj_c_ty.trim_end_matches('*').to_string();
-                        let nova_form = stripped
-                            .strip_prefix("Nova_")
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| stripped.clone());
+                        let nova_form = Self::debt_strip_nova_prefix(&stripped).to_string();
                         for candidate in [stripped, nova_form] {
                             if self.never_returning_methods.contains(
                                 &(candidate, name.clone())
@@ -32855,10 +32987,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "nova_str" | "nova_char" | "nova_bool"
                             | "nova_f64" | "nova_f32" | "nova_int")
                     {
-                        let arg_type = arg_ty
-                            .trim_start_matches("Nova_")
-                            .trim_end_matches('*')
-                            .to_string();
+                        let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
                         let has_explicit = self.all_methods
                             .contains(&(arg_type.clone(), method_name.to_string()));
                         let method_c_fn: Option<String> = if has_explicit {
@@ -32900,10 +33029,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // User-type fallback path — Display str.from chain (D237).
                                 // (debug fallback when debug synthesis failed
                                 // earlier — caller already tried via method dispatch).
-                                let arg_type = arg_ty
-                                    .trim_start_matches("Nova_")
-                                    .trim_end_matches('*')
-                                    .to_string();
+                                let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
                                 let from_method = if is_debug { "from_debug" } else { "from" };
                                 let key = ("str".to_string(), from_method.to_string());
                                 let str_from_c: Option<String> = self.method_overloads
@@ -33145,10 +33271,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // steal the string. This reuses the exact same dispatch the bare
             // ${x}/${x:?} path uses, so user Display/Debug impls are honored.
             let method_name = if is_debug { "debug" } else { "display" };
-            let arg_type = arg_ty
-                .trim_start_matches("Nova_")
-                .trim_end_matches('*')
-                .to_string();
+            let arg_type = self.debt_strip_nova_trim_start_no_ws(arg_ty);
             let has_explicit =
                 self.all_methods.contains(&(arg_type.clone(), method_name.to_string()));
             let method_c_fn: Option<String> = if has_explicit {
@@ -33380,7 +33503,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.array_element_types.get(arr_expr.as_str()).cloned()
             };
             let elem_ty = real_elem_ty.unwrap_or_else(|| {
-                arr_ty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse"))
+                Self::debt_strip_novaarray_prefix_or_panic(&arr_ty)
                     .trim_end_matches('*').trim().to_string()
             });
 
@@ -33533,9 +33656,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Case 1 ниже; Case 2 — see "Plan 06 Ф.3: implicit `.iter()`" блок.
         // Case 3 — final error message в конце функции (улучшенный).
         // Plan 138 Ф.0.2: named tuples have "NovaTuple_" prefix, not "Nova_".
-        // "NovaTuple_Range".strip_prefix("Nova_") returns None → "" → empty iter_struct → error.
+        // stripping a plain "Nova_" prefix from "NovaTuple_Range" would return None ->
+        // "" -> empty iter_struct -> error.
         let iter_struct = if arr_ty.starts_with("NovaTuple_") {
-            arr_ty.strip_prefix("NovaTuple_").unwrap_or("")
+            Self::debt_strip_novatuple_prefix_or_empty(&arr_ty)
                 .trim_end_matches('*').trim().to_string()
         } else if arr_ty.starts_with("NovaValue_") {
             // Plan 152.1 Ф.3: value-record iterator (e.g. `CharsIter value priv`).
@@ -33550,7 +33674,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Case 2 below synthesizes `s.iter()` (str has no `next`, only `iter`).
             "str".to_string()
         } else {
-            arr_ty.strip_prefix("Nova_").unwrap_or("")
+            Self::debt_strip_nova_prefix_or_empty(&arr_ty)
                 .trim_end_matches('*').trim().to_string()
         };
         // For monomorphized iterator types like `KeysIter____nova_str__nova_int`,
@@ -34244,8 +34368,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // что legacy; detect U.6.2.b: 0 дивергенций на широком sum-heavy корпусе).
                 // Остальные field-layout/existence/mono чтения + де-хардкод baseline —
                 // финальная чистка sum-schema-трека, см. [M-172.1-U6-sumschema-baseline-nv].
-                let sum_name = scr_ty.trim_end_matches('*').trim()
-                    .strip_prefix("Nova_").unwrap_or("").to_string();
+                let sum_name = Self::debt_strip_nova_prefix_or_empty(scr_ty.trim_end_matches('*').trim()).to_string();
                 if let Some(variant_tys) = this.sum_schema_registry
                     .lookup_sum_schema(&sum_name)
                     .and_then(|e| e.variants.iter()
@@ -34276,8 +34399,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // would be `Nova_Pair*` → match result wrongly typed `Nova_Pair*`).
             Pattern::Record { type_path, fields, .. } => {
                 let mut out = vec![];
-                let scr_base = scr_ty.trim_end_matches('*').trim()
-                    .strip_prefix("Nova_").unwrap_or("").to_string();
+                let scr_base = Self::debt_strip_nova_prefix_or_empty(scr_ty.trim_end_matches('*').trim()).to_string();
                 // Try plain-record path first: explicit type_path or scr-derived
                 // name; both must hit `record_schemas`.
                 let type_name_from_path = type_path
@@ -34722,7 +34844,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         field_ty_c: &str,
     ) -> Result<String, String> {
         let saved_expected = self.expected_record_type.clone();
-        if let Some(field_struct) = Self::struct_name_from_c_type(field_ty_c) {
+        if let Some(field_struct) = Self::debt_struct_name_from_c_type(field_ty_c) {
             self.expected_record_type = Some(field_struct);
         }
         let result = self.emit_expr_with_target_type(value, field_ty_c);
@@ -34811,7 +34933,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
-                    let concrete = mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string();
+                    let concrete = Self::debt_strip_nova_prefix(&mangled).to_string();
                     // Queue instance if not yet in worklist / emitted
                     if !self.emitted_generic_type_instances.contains(&mangled) {
                         let mut wl = self.generic_type_worklist.borrow_mut();
@@ -34862,7 +34984,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // one with the same name. Fixes e.g. `Circle { r }` in `-> Shape2` picking
                 // Shape1.Circle when both Shape1 and Shape2 have a Circle variant.
                 let ctx_lookup = self.current_fn_return_ty.as_ref().and_then(|ret_ty| {
-                    let base = ret_ty.trim_end_matches('*').trim().strip_prefix("Nova_")?;
+                    let base = Self::debt_strip_nova_prefix_opt(ret_ty.trim_end_matches('*').trim())?;
                     let entry = self.sum_schema_registry.lookup_sum_schema(base)?;
                     let v = entry.variants.iter().find(|v| v.variant_name == struct_name)?;
                     Some((base.to_string(), v.field_c_types.clone()))
@@ -35207,7 +35329,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .filter(|t| t.starts_with("Nova_") && t.ends_with('*'))
                 .map(|t| t.trim_end_matches('*').trim().to_string());
             if let Some(struct_c_name) = inferred_struct_c_name {
-                let struct_name = struct_c_name.strip_prefix("Nova_").unwrap_or(&struct_c_name).to_string();
+                let struct_name = Self::debt_strip_nova_prefix(&struct_c_name).to_string();
                 self.line(&format!("{cname}* {tmp} = ({cname}*)nova_alloc(sizeof({cname}));",
                     cname = struct_c_name, tmp = tmp));
                 for f in fields {
@@ -35753,7 +35875,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //    (`new` static ctor, `push` and — for spread —
         //    `clone`/`iter`/`next`). Reuse the same machinery the regular
         //    `Vec[T].method()` dispatch uses (register_mono_method_instance).
-        let rt_trimmed = mangled.strip_prefix("Nova_").unwrap_or(&mangled).to_string();
+        let rt_trimmed = Self::debt_strip_nova_prefix(&mangled).to_string();
         let type_subst: Vec<(String, String)> = {
             let tmpl = self.generic_type_templates.get("Vec");
             match tmpl.and_then(|t| t.generics.first()) {
@@ -35857,7 +35979,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let tmpl_gen = self.generic_type_templates.get("Vec")
             .and_then(|t| t.generics.first().map(|g| g.name.clone()))?;
         let type_subst = vec![(tmpl_gen, elem_c)];
-        let rt_trimmed = mangled.strip_prefix("Nova_").unwrap_or(mangled).to_string();
+        let rt_trimmed = Self::debt_strip_nova_prefix(mangled).to_string();
         let mono_c = format!("{}_method_{}", rt_trimmed, method_name);
         if self.register_vec_mono_method(method_name, &type_subst, &mono_c, &rt_trimmed).is_err() {
             return None;
@@ -35876,7 +35998,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `<k>__<v>` is ambiguous when an arg itself mangles to `..._p`). Single-arg `Vec`
     /// gets a suffix fallback for the rare un-registered instance.
     fn register_container_eq_mono(&mut self, mangled: &str) {
-        let rt_trimmed = mangled.strip_prefix("Nova_").unwrap_or(mangled).to_string();
+        let rt_trimmed = Self::debt_strip_nova_prefix(mangled).to_string();
         let base = match rt_trimmed.split_once("____") {
             Some((b, _)) => b.to_string(),
             None => return,
@@ -35929,7 +36051,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             return Some(rest.to_string());
         }
-        if let Some(rest) = trimmed.strip_prefix("NovaArray_") {
+        if let Some(rest) = Self::debt_strip_novaarray_prefix_opt(trimmed) {
             return Some(rest.to_string());
         }
         None
@@ -35967,7 +36089,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::RecordLit { type_name: None, .. });
         let saved_expected = self.expected_record_type.clone();
         if decl.ty.is_some() && direct_typeless_record {
-            self.expected_record_type = Self::struct_name_from_c_type(&ty_c);
+            self.expected_record_type = Self::debt_struct_name_from_c_type(&ty_c);
         }
         let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
         self.expected_record_type = saved_expected;
@@ -36169,9 +36291,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // tag (NOVA_TAG_Tag1_Hi for a Nova_Tier* scrutinee), so the arm
                     // never matches and the match result is uninitialized garbage.
                     // Prefer scr_ty's sum name if it actually declares this variant.
-                    let scr_sum = scr_ty
-                        .strip_prefix("Nova_")
-                        .unwrap_or(&scr_ty)
+                    let scr_sum = Self::debt_strip_nova_prefix(&scr_ty)
                         .trim_end_matches('*')
                         .trim()
                         .to_string();
@@ -36180,7 +36300,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // (NOVA_TAG_Nova_<mono>_<V>), so deferring to find_variant_compat
                     // (base name `Slot`) stays correct there. The collision this
                     // fixes is between plain (non-generic) sum-types.
-                    let scr_is_mono = scr_sum.contains("____");
+                    let scr_is_mono = Self::debt_contains_mono_sep(&scr_sum);
                     let scr_has_variant = !scr_is_mono && self.sum_schema_registry
                         .lookup_sum_schema(&scr_sum)
                         .map(|e| e.variants.iter().any(|v| v.variant_name == variant_name))
@@ -36212,7 +36332,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let base = if is_opt && !is_opt_ptr {
                     let opt_ty_str = if scr_ty.starts_with("NovaOpt_") { &scr_ty } else { &type_name };
                     let sani = opt_ty_str.strip_prefix("NovaOpt_").unwrap_or(opt_ty_str);
-                    if self.is_novaopt_npo(sani) {
+                    if self.debt_is_novaopt_npo(sani) {
                         match variant_name.as_str() {
                             "None" => format!("({})", self.option_is_none_check(&scr, sani)),
                             "Some" => format!("({})", self.option_is_some_check(&scr, sani)),
@@ -36436,11 +36556,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Prefer mono schema derived from scrutinee's concrete type
                             // (e.g. Nova_LinkedList____nova_int* → LinkedList____nova_int)
                             // over find_variant which may return the erased base schema.
-                            let scr_base = scr_ty
-                                .trim_start_matches("Nova_")
-                                .trim_end_matches('*')
-                                .trim()
-                                .to_string();
+                            let scr_base = self.debt_strip_nova_trim_start(&scr_ty);
                             if !scr_base.is_empty() && self.sum_schemas.contains_key(&scr_base) {
                                 scr_base
                             } else {
@@ -36799,7 +36915,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(n) = base.strip_prefix("NovaValue_") {
                             n.to_string()
                         } else {
-                            base.strip_prefix("Nova_").unwrap_or("").to_string()
+                            Self::debt_strip_nova_prefix_or_empty(base).to_string()
                         }
                     });
                 let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
@@ -36838,8 +36954,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // D109: prefer concrete monomorphized type derived from scr_ty over
                     // the erased base type returned by find_variant (which picks the
                     // shortest name, e.g. "Slot" instead of "Slot____nova_str__nova_int").
-                    let sum_type_name_from_scr = scr_ty
-                        .strip_prefix("Nova_").unwrap_or(&scr_ty)
+                    let sum_type_name_from_scr = Self::debt_strip_nova_prefix(&scr_ty)
                         .trim_end_matches('*').trim().to_string();
                     let sum_type_name = if !sum_type_name_from_scr.is_empty()
                         && self.sum_schemas.contains_key(&sum_type_name_from_scr)
@@ -36850,7 +36965,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.sum_schema_registry.find_variant_compat(&variant_name)
                             .map(|(t, _)| t)
                             .unwrap_or_else(|| {
-                                scr_ty.strip_prefix("Nova_").unwrap_or(&scr_ty)
+                                Self::debt_strip_nova_prefix(&scr_ty)
                                     .trim_end_matches('*').trim().to_string()
                             })
                     };
@@ -37771,7 +37886,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if is_type { (n.clone(), true) } else {
                     // Bound: derive type from var.
                     let obj_ty = self.var_types.get(n).cloned().unwrap_or_default();
-                    let t = Self::nova_type_name_from_c(&obj_ty);
+                    let t = Self::debt_nova_type_name_from_c(&obj_ty);
                     (t, false)
                 }
             }
@@ -37779,7 +37894,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             _ => {
                 // Bound: infer from obj_ty.
                 let obj_ty = self.infer_expr_c_type(obj);
-                let t = Self::nova_type_name_from_c(&obj_ty);
+                let t = Self::debt_nova_type_name_from_c(&obj_ty);
                 (t, false)
             }
         };
@@ -38203,10 +38318,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Формат: "Nova_X____A__B*" или без суффикса "*".
         // Plan 153.2 Ф.1 (STAGE 1 — point E): a by-value generic value-record
         // receiver is "NovaValue_X____A__B" (no `*`) — strip THAT prefix first,
-        // else `strip_prefix("Nova_")` mis-parses it to base `Value_X`.
-        let stripped = obj_ty
-            .strip_prefix("NovaValue_")
-            .or_else(|| obj_ty.strip_prefix("Nova_"))?
+        // else stripping a plain "Nova_" prefix mis-parses it to base `Value_X`.
+        let stripped = Self::debt_strip_value_or_nova_prefix_opt(obj_ty)?
             .trim_end_matches('*');
         // Должно содержать "____" — разделитель base от type args
         let sep_pos = stripped.find("____")?;
@@ -38219,7 +38332,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // sanitized pointer) and so monomorphizing the chained `zmap`'s return
         // `MapIter[FilterIter[I,T], T, U]` to garbage (`Vec[nova_int*]`). Use the
         // exact instance registry (falling back to the depth-aware splitter).
-        let type_args: Vec<String> = self.mono_type_args_of(obj_ty);
+        let type_args: Vec<String> = self.debt_mono_type_args_of(obj_ty);
         let template = self.generic_type_templates.get(base_name)?.clone();
         let methods = self.generic_type_methods.get(base_name)?.clone();
         // [M-138.2-generic-method-overload-mono] Overload-aware return-type inference:
@@ -38506,7 +38619,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Из C-типа `Nova_Foo*` (или `Nova_Foo`) извлечь struct name `Foo`.
     /// Для не-Nova_-типов возвращает None.
-    fn struct_name_from_c_type(c_ty: &str) -> Option<String> {
+    fn debt_struct_name_from_c_type(c_ty: &str) -> Option<String> {
         let trimmed = c_ty.trim_end_matches('*').trim();
         // Plan 124.8 V2 (D226): value-record C type is `NovaValue_X` (no pointer).
         if let Some(s) = trimmed.strip_prefix("NovaValue_") {
@@ -38537,7 +38650,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         // 3. Inferred C-type, stripped of `NovaValue_` prefix.
-        Self::struct_name_from_c_type(inferred_c_ty)
+        Self::debt_struct_name_from_c_type(inferred_c_ty)
     }
 
     /// Plan 14 Ф.6 (D69): возвращает `regular_arity` (число
@@ -38547,7 +38660,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///   - method calls (по `method_overloads` → `MethodSig.variadic_last`).
     /// Если variadic_last == true, regular_arity = total - 1.
     /// Generic fn'ы / dynamically-resolved closure calls пропускаются.
-    fn lookup_variadic_arity(&self, func: &Expr) -> Option<usize> {
+    fn debt_lookup_variadic_arity(&self, func: &Expr) -> Option<usize> {
         // 1. Top-level user fn: `name(...)` где name — известный variadic.
         if let ExprKind::Ident(name) = &func.kind {
             if self.suppress_variadic_routing { return None; }
@@ -38889,7 +39002,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Forward-typedef для mono'd generic struct pointer (Plan 48.1).
         if let Some(stripped) = c_ty.strip_suffix('*') {
             let inner_name = stripped.trim();
-            if inner_name.contains("____") && inner_name.starts_with("Nova_") {
+            if Self::debt_is_mono_nova_name(inner_name) {
                 let fwd = format!(
                     "typedef struct {} {};\n",
                     inner_name, inner_name);
@@ -38902,7 +39015,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // [M-153.2-flat-map-inner-option]: value-record payloads — route to VR
         // buffer (same logic as register_novaopt_decl path above).
         // D215 amend: NovaTuple_ payloads need the same treatment.
-        if Self::is_late_emitted_value_payload(c_ty) {
+        if Self::debt_is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             let cmp_body_vr = "a.value == b.value".to_string(); // force_npo path
@@ -38987,7 +39100,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Skip nova_int / nova_str / runtime-defined structs.
         if let Some(stripped) = c_ty.strip_suffix('*') {
             let inner_name = stripped.trim();
-            if inner_name.contains("____") && inner_name.starts_with("Nova_") {
+            if Self::debt_is_mono_nova_name(inner_name) {
                 let fwd = format!(
                     "typedef struct {} {};\n",
                     inner_name, inner_name);
@@ -39007,7 +39120,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // compiles without "field has incomplete type".
         // D215 amend: same issue applies to NovaTuple_ (named tuple) payloads —
         // the struct body must be defined before its use in Option payload.
-        if Self::is_late_emitted_value_payload(c_ty) {
+        if Self::debt_is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             let cmp_body2 = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
@@ -39038,7 +39151,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // implicit decl. The NPO layout (single pointer, NULL=None) is UNCHANGED → eq-only,
         // no ABI change. Without this the early path emitted `a.value == b.value` (addresses)
         // → `Option[Sum/Record]==` false for equal values.
-        if self.opt_payload_needs_structural_eq(c_ty) {
+        if self.debt_opt_payload_needs_structural_eq(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             // NPO typedef (single pointer, NULL=None) — early; the pointer field needs only
@@ -39090,7 +39203,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let is_pointer = c_ty.ends_with('*');
         // Plan 134: nova_ptr removed; void* already covered by ends_with('*').
         // A20: newtype transparent typedef-to-pointer.
-        let is_newtype_ptr = c_ty.strip_prefix("Nova_")
+        let is_newtype_ptr = Self::debt_strip_nova_prefix_opt(c_ty)
             .and_then(|user_name| self.type_aliases.get(user_name))
             .map_or(false, |alias_c| alias_c.ends_with('*'));
         let is_npo = is_pointer || is_newtype_ptr;
@@ -39168,7 +39281,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// — NPO-eligible. Enables `Option[Sqlite3Handle]`,
     /// `Option[FileDescriptor]` и similar canonical FFI handle patterns.
     /// V4 (deferred): `*fn(...)` function pointers (structural detection).
-    fn is_novaopt_npo(&self, sanitized: &str) -> bool {
+    fn debt_is_novaopt_npo(&self, sanitized: &str) -> bool {
         self.novaopt_value_types.borrow()
             .get(sanitized)
             .map_or(false, |c_ty| {
@@ -39194,7 +39307,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 118 Ф.5: emit `Some(value)` constructor для NovaOpt — NPO form
     /// (just `{.value = v}`) или tagged form (`{.tag = SOME, .value = v}`).
     fn option_some_expr(&self, sanitized: &str, value_expr: &str) -> String {
-        if self.is_novaopt_npo(sanitized) {
+        if self.debt_is_novaopt_npo(sanitized) {
             format!("((NovaOpt_{}){{.value = ({})}})", sanitized, value_expr)
         } else {
             format!("((NovaOpt_{}){{.tag = NOVA_TAG_Option_Some, .value = ({})}})",
@@ -39205,7 +39318,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 118 Ф.5: emit `None` constructor для NovaOpt — NPO form
     /// (`{.value = NULL}`) или tagged form (`{.tag = NONE}`).
     fn option_none_expr(&self, sanitized: &str) -> String {
-        if self.is_novaopt_npo(sanitized) {
+        if self.debt_is_novaopt_npo(sanitized) {
             format!("((NovaOpt_{}){{.value = NULL}})", sanitized)
         } else {
             format!("((NovaOpt_{}){{.tag = NOVA_TAG_Option_None}})", sanitized)
@@ -39215,7 +39328,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 118 Ф.5: emit `is None` check для NovaOpt — NPO form
     /// (`v.value == NULL`) или tagged form (`v.tag == NONE`).
     fn option_is_none_check(&self, opt_var: &str, sanitized: &str) -> String {
-        if self.is_novaopt_npo(sanitized) {
+        if self.debt_is_novaopt_npo(sanitized) {
             format!("{}.value == NULL", opt_var)
         } else {
             format!("{}.tag == NOVA_TAG_Option_None", opt_var)
@@ -39225,7 +39338,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 118 Ф.5: emit `is Some` check для NovaOpt — NPO form
     /// (`v.value != NULL`) или tagged form (`v.tag == SOME`).
     fn option_is_some_check(&self, opt_var: &str, sanitized: &str) -> String {
-        if self.is_novaopt_npo(sanitized) {
+        if self.debt_is_novaopt_npo(sanitized) {
             format!("{}.value != NULL", opt_var)
         } else {
             format!("{}.tag == NOVA_TAG_Option_Some", opt_var)
@@ -39240,7 +39353,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let resolve = |slot: usize, fallback: &str| -> String {
             if let Some(tr) = generics.get(slot) {
                 if let Ok(c) = self.type_ref_to_c(tr) {
-                    if !c.is_empty() && c != "void*" && !self.is_generic_stub_c(&c) {
+                    if !c.is_empty() && c != "void*" && !self.debt_is_generic_stub_c(&c) {
                         return c;
                     }
                 }
@@ -39410,7 +39523,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// forward typedef, so the wrapper struct body must be deferred past the
     /// payload's definition. This is the exact predicate the NovaOpt VR-routing
     /// uses ([M-153.2] at `register_novaopt_decl[_forced]`).
-    fn is_late_emitted_value_payload(c_ty: &str) -> bool {
+    fn debt_is_late_emitted_value_payload(c_ty: &str) -> bool {
         (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
             || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*'))
     }
@@ -39423,10 +39536,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// b.value` → `Option[Sum]==` compares addresses, false for equal values). This is
     /// the phase-correctness root (§0): don't compare before the pointee struct is ready.
     /// Raw pointers (`*T`, `void*`, double-ptr `Nova_X**`, NPO newtypes) keep identity
-    /// eq; by-value aggregates (`NovaValue_`/`NovaTuple_`) → `is_late_emitted_value_payload`.
+    /// eq; by-value aggregates (`NovaValue_`/`NovaTuple_`) → `debt_is_late_emitted_value_payload`.
     /// Container monos (`Nova_Vec____*`/`Nova_HashMap____*`) are out of scope here (their
     /// element-wise eq isn't yet a single dispatcher) — tracked separately.
-    fn opt_payload_needs_structural_eq(&self, c_ty: &str) -> bool {
+    fn debt_opt_payload_needs_structural_eq(&self, c_ty: &str) -> bool {
         if let Some(inner) = c_ty.strip_prefix("Nova_").and_then(|s| s.strip_suffix('*')) {
             // double-pointer (`Nova_X**`) = raw pointer to a handle → identity.
             if inner.ends_with('*') { return false; }
@@ -39510,8 +39623,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `__NOVARES_TYPEDEFS__` marker (pointer use in fn prototypes is fine) and
         // defer the struct BODY + constructors to `__NOVARES_VR_TYPEDEFS__` (after
         // the named-tuple/value-record bodies). Mirror of NovaOpt VR-routing.
-        let payload_late = Self::is_late_emitted_value_payload(ok_c)
-            || Self::is_late_emitted_value_payload(err_c);
+        let payload_late = Self::debt_is_late_emitted_value_payload(ok_c)
+            || Self::debt_is_late_emitted_value_payload(err_c);
 
         let mut body = String::new();
         // Plan 59 Ф.7.5 D3: схема A + typed-Err поля (`err_typed_payload`
@@ -39671,7 +39784,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Allowed: *() ↔ {u64, i64, int} (для integer-storage).
             // Banned: *() ↔ {str, bool, f32, f64, char}.
             // NOTE: target_nova for *() = TypeRef::Pointer(Unit) → target_nova=None
-            // so these only fire when src_nova="*()" (from nova_type_name_from_c("void*")).
+            // so these only fire when src_nova="*()" (from debt_nova_type_name_from_c("void*")).
             ("*()",  "str",  "[E_PTR_CAST_INVALID_TARGET] `*() as str` запрещён: opaque pointer не имеет string-representation. Если нужно diagnostic-print — cast через u64: `(p as u64) as str`"),
             ("*()",  "bool", "[E_PTR_CAST_INVALID_TARGET] `*() as bool` запрещён: используйте `p == null ptr` / `p != null ptr` для null check"),
             ("*()",  "f64",  "[E_PTR_CAST_INVALID_TARGET] `*() as f64` запрещён: pointer→float не имеет semantic meaning"),
@@ -39733,7 +39846,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// receiver type. Strips a trailing `*` and the `NovaValue_` (value record) or
     /// `Nova_` (heap record) prefix, yielding the raw "<Name>" the method table is
     /// keyed by. (`nova_str`/`nova_int`/… stay as-is — handled by earlier dispatch.)
-    fn strip_recv_c_prefix(obj_ty: &str) -> String {
+    fn debt_strip_recv_c_prefix(obj_ty: &str) -> String {
         let no_ptr = obj_ty.trim_end_matches('*').trim();
         no_ptr.strip_prefix("NovaValue_")
             .or_else(|| no_ptr.strip_prefix("Nova_"))
@@ -39745,7 +39858,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .to_string()
     }
 
-    fn nova_type_name_from_c(c_ty: &str) -> String {
+    fn debt_nova_type_name_from_c(c_ty: &str) -> String {
         // Plan 134: `nova_ptr` typedef removed. `void*` = Nova `*()`.
         // cast-check table uses "*()"; но для as-cast источника void*
         // это erased generic placeholder — conservative, skip check.
@@ -39803,7 +39916,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return None;
         }
         let concrete = self.subst_c(receiver_ident)
-            .map(|c| Self::nova_type_name_from_c(&c))
+            .map(|c| Self::debt_nova_type_name_from_c(&c))
             .unwrap_or_else(|| receiver_ident.to_string());
         let key = (concrete.clone(), method.to_string());
         if let Some(fd) = self.mono_method_decls.get(&key)
@@ -40319,12 +40432,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for t in types {
             if let Some((o, e)) = self.novares_ok_err(t) {
                 if ok.is_none() && o != "nova_int" && !o.is_empty()
-                    && o != "void*" && !self.is_generic_stub_c(&o)
+                    && o != "void*" && !self.debt_is_generic_stub_c(&o)
                 {
                     ok = Some(o);
                 }
                 if err.is_none() && e != "nova_str" && !e.is_empty()
-                    && e != "void*" && !self.is_generic_stub_c(&e)
+                    && e != "void*" && !self.debt_is_generic_stub_c(&e)
                 {
                     err = Some(e);
                 }
@@ -40336,7 +40449,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    fn is_generic_stub_c(&self, s: &str) -> bool {
+    fn debt_is_generic_stub_c(&self, s: &str) -> bool {
         if let Some(inner) = s.strip_prefix("Nova_").and_then(|x| x.strip_suffix('*')) {
             let name = inner.trim();
             return !name.is_empty()
@@ -40376,7 +40489,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// concrete type. Such an instance must NOT be emitted (its field type would
     /// reference an undefined struct); the concrete instance is produced at the
     /// monomorphized call-site instead.
-    fn mangled_has_nested_placeholder(&self, mangled: &str) -> bool {
+    fn debt_mangled_has_nested_placeholder(&self, mangled: &str) -> bool {
         // Walk each `Nova_`-prefixed segment. Segments are delimited by the
         // mangle separators (`_` runs); a type-param token is a short bare
         // identifier (no further `____` nesting) that is unknown to every
@@ -40422,7 +40535,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 153.2 Ф.2: is `tok` a concrete (non-type-param) C-type token that
     /// may legitimately follow a `Nova_` prefix inside a mangled name? Covers
     /// the `nova_*` primitive family and the sanitized-pointer of one. Used by
-    /// `mangled_has_nested_placeholder` to avoid flagging a concrete arg.
+    /// `debt_mangled_has_nested_placeholder` to avoid flagging a concrete arg.
     fn is_concrete_primitive_token(&self, tok: &str) -> bool {
         let t = tok.strip_suffix("_p").unwrap_or(tok);
         matches!(t,
@@ -40526,10 +40639,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return None;
         }
         let stripped = obj_ty.trim_start_matches("const ").trim();
-        let struct_name = stripped
-            .strip_prefix("Nova_")
-            .or_else(|| stripped.strip_prefix("NovaValue_"))
-            .unwrap_or(stripped)
+        let struct_name = Self::debt_strip_nova_or_value_prefix(stripped)
             .trim_end_matches('*')
             .trim()
             .to_string();
@@ -40642,7 +40752,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let ctor_recv_method: Option<(String, &String)> = match &func.kind {
                 ExprKind::Path(p) if p.len() == 2 => {
                     let base = match self.subst_c(p[0].as_str()) {
-                        Some(c_ty) => Self::nova_type_name_from_c(&c_ty),
+                        Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
                         None => p[0].clone(),
                     };
                     Some((base, &p[1]))
@@ -40650,7 +40760,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ExprKind::Member { obj, name } => match &obj.kind {
                     ExprKind::Ident(t) => {
                         let base = match self.subst_c(t.as_str()) {
-                            Some(c_ty) => Self::nova_type_name_from_c(&c_ty),
+                            Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
                             None => t.clone(),
                         };
                         Some((base, name))
@@ -40864,7 +40974,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if type_name == "Result" && (name == "Ok" || name == "Err") {
                         let arg_c = args.first()
                             .map(|a| self.infer_expr_c_type(a.expr()))
-                            .filter(|t| !t.is_empty() && t != "void*" && !self.is_generic_stub_c(t));
+                            .filter(|t| !t.is_empty() && t != "void*" && !self.debt_is_generic_stub_c(t));
                         let (ok_c, err_c) = if name == "Ok" {
                             (arg_c.unwrap_or_else(|| "nova_int".to_string()), "nova_str".to_string())
                         } else {
@@ -40950,7 +41060,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // compute_array_elem_type_for_obj) — all of which are last-wins
                         // across folder-module peers and can be poisoned by a same-named
                         // var of a different element type in another file.
-                        if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
+                        if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
                             let elem = elem.trim_end_matches('*').trim();
                             if !elem.is_empty() { return elem.to_string(); }
                         }
@@ -40987,7 +41097,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
-                    if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
+                    if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
                         let elem = elem.trim_end_matches('*').trim();
                         return elem.to_string();
                     }
@@ -41098,7 +41208,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (no `*`), matching what `type_ref_to_c` returns and
                             // what the record-lit emitter produces.
                             if self.is_value_generic_template(&struct_name) {
-                                format!("NovaValue_{}", Self::mono_short_name(&mangled))
+                                format!("NovaValue_{}", Self::debt_mono_short_name(&mangled))
                             } else {
                                 format!("{}*", mangled)
                             }
@@ -41258,10 +41368,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // synthesized via protocol default body (because T has no
                         // explicit method AND some protocol provides default), use
                         // that protocol method's return type as the inferred type.
-                        let obj_type_name_for_synth = obj_ty
-                            .trim_start_matches("Nova_")
-                            .trim_end_matches('*')
-                            .to_string();
+                        let obj_type_name_for_synth = self.debt_strip_nova_trim_start_no_ws(&obj_ty);
                         if !obj_type_name_for_synth.is_empty()
                             && !self.all_methods.contains(
                                 &(obj_type_name_for_synth.clone(), method_name.to_string()))
@@ -41376,14 +41483,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // Plan 153.2 Ф.1 (STAGE 1 — point E): a by-value
                                         // generic value-record receiver has C-type
                                         // `NovaValue_<short>` — strip that prefix FIRST
-                                        // (else `trim_start_matches("Nova_")` mangles it
+                                        // (else stripping a plain "Nova_" prefix mangles it
                                         // into `Value_<short>` and the `Nova_<rt>` registry
                                         // lookup below misses → wrong return-type inference).
-                                        let trimmed = obj_ty
-                                            .strip_prefix("NovaValue_")
-                                            .map(|s| s.trim_end_matches('*').trim().to_string())
-                                            .unwrap_or_else(|| obj_ty.trim_start_matches("Nova_")
-                                                .trim_end_matches('*').trim().to_string());
+                                        let trimmed = Self::debt_strip_value_prefix_or_nova_trim_start(&obj_ty);
                                         if !trimmed.is_empty() && trimmed != "void" {
                                             // Plan 75: primitive C-names → Nova type names for
                                             // method_overloads lookup (keys use Nova names).
@@ -41456,7 +41559,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         let recv_structured_ty = fn_decl.receiver.as_ref()
                                             .and_then(|r| r.receiver_ty.clone());
                                         // Legacy flat elem (fallback seed).
-                                        let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
+                                        let elem_c = if let Some(na) = Self::debt_strip_novaarray_prefix_opt(&rt) {
                                             na.to_string()
                                         } else if rt.starts_with("Vec____") {
                                             self.generic_type_instance_info.borrow()
@@ -41589,7 +41692,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // даём specialized `Nova_Result*` ветке ниже
                                     // вывести concrete Ok-тип.
                                     if candidates.len() == 1
-                                        && !self.is_generic_stub_c(&candidates[0].return_c_type)
+                                        && !self.debt_is_generic_stub_c(&candidates[0].return_c_type)
                                     {
                                         return candidates[0].return_c_type.clone();
                                     }
@@ -41624,13 +41727,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if pool.len() > 1 {
                                         if let Some(sig) = pool.iter()
                                             .find(|s| s.recv_mutable == recv_mut
-                                                && !self.is_generic_stub_c(&s.return_c_type))
+                                                && !self.debt_is_generic_stub_c(&s.return_c_type))
                                         {
                                             return sig.return_c_type.clone();
                                         }
                                     }
                                     if let Some(sig) = pool.first() {
-                                        if !self.is_generic_stub_c(&sig.return_c_type) {
+                                        if !self.debt_is_generic_stub_c(&sig.return_c_type) {
                                             return sig.return_c_type.clone();
                                         }
                                     }
@@ -41865,7 +41968,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             .replace(&g.name, c)
                                                     });
                                                 if !ret.is_empty() && ret != "void*"
-                                                    && !self.is_generic_stub_c(&ret)
+                                                    && !self.debt_is_generic_stub_c(&ret)
                                                 {
                                                     return ret;
                                                 }
@@ -41886,7 +41989,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // path — consistent with the actual forward-decl signature).
                             // Only fires for generic-mono receiver types (containing "____")
                             // so primitive and erased receivers stay on their existing paths.
-                            if rt.contains("____") {
+                            if Self::debt_contains_mono_sep(&rt) {
                                 let mn_ref: &str = &mn;
                                 let blanket_fd = self.mono_method_decls.iter()
                                     .find(|((tvname, mname), fd)| {
@@ -42074,7 +42177,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let c_ret = &decl.return_c_type;
                                     if !c_ret.is_empty()
                                         && c_ret != "void*"
-                                        && !self.is_generic_stub_c(c_ret)
+                                        && !self.debt_is_generic_stub_c(c_ret)
                                     {
                                         return c_ret.clone();
                                     }
@@ -42122,7 +42225,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .map(|a| self.infer_expr_c_type(a.expr()))
                                     .filter(|t| !t.is_empty()
                                         && t != "void*"
-                                        && !self.is_generic_stub_c(t));
+                                        && !self.debt_is_generic_stub_c(t));
                                 let (ok_c, err_c): (String, String) = if name == "Ok" {
                                     (arg_c.unwrap_or_else(|| panic!("[P67-LEGACY] Ok(arg) arg type unknown — checker must annotate (compiler-conventions.md §0)")),
                                      "nova_str".to_string())
@@ -42209,7 +42312,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // so it is the authoritative source for a bare call's return
                         // type. MUST precede the `fn_ret_<name>` lookup.
                         if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
-                            if !ret_ty.is_empty() && ret_ty != "void*" && !self.is_generic_stub_c(ret_ty) {
+                            if !ret_ty.is_empty() && ret_ty != "void*" && !self.debt_is_generic_stub_c(ret_ty) {
                                 return ret_ty.clone();
                             }
                         }
@@ -42567,10 +42670,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             && obj_ty.ends_with('*')
                             && obj_ty != "void*"
                         {
-                            let recv_nova = Self::nova_type_name_from_c(&obj_ty);
+                            let recv_nova = Self::debt_nova_type_name_from_c(&obj_ty);
                             let has_user_clone = self.all_methods
                                 .contains(&(recv_nova.clone(), "clone".to_string()));
-                            if !has_user_clone && !recv_nova.contains("____") {
+                            if !has_user_clone && !Self::debt_contains_mono_sep(&recv_nova) {
                                 return obj_ty;
                             }
                         }
@@ -42643,8 +42746,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // Plan 06 Ф.3: `coll.iter()` → registered IterT type.
                         if method == "iter" {
-                            let coll_type = obj_ty.trim_start_matches("Nova_")
-                                .trim_end_matches('*').trim().to_string();
+                            let coll_type = self.debt_strip_nova_trim_start(&obj_ty);
                             if let Some(iter_t) = self.iter_returns.get(&coll_type) {
                                 return format!("Nova_{}*", iter_t);
                             }
@@ -42850,14 +42952,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 12 + Plan 18: ExternalRegistry instance-method return type.
                         // Handles AtomicInt.@load(), Mutex.@lock(), WaitGroup.@wait(), etc.
                         if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
-                            let recv_ty = obj_ty.trim_start_matches("Nova_")
-                                .trim_end_matches('*').trim();
+                            let recv_ty = Self::debt_strip_nova_trim_start_ref(&obj_ty);
                             if let Some(decls) = self.external_registry.lookup(recv_ty, method) {
                                 if let Some(decl) = decls.iter().find(|d| d.is_instance) {
                                     // Plan 62.B: пропускаем generic-стаб `Nova_T*` —
                                     // fall through к specialized NovaOpt_/Nova_Result*
                                     // блокам, знающим concrete тип из tracking/context.
-                                    if !self.is_generic_stub_c(&decl.return_c_type) {
+                                    if !self.debt_is_generic_stub_c(&decl.return_c_type) {
                                         return decl.return_c_type.clone();
                                     }
                                 }
@@ -43025,7 +43126,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // Array method calls
                         if obj_ty.starts_with("NovaArray_") {
-                            let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
+                            let elem_ty = Self::debt_strip_novaarray_prefix_or_panic_legacy(&obj_ty)
                                 .trim_end_matches('*').trim();
                             match method.as_str() {
                                 // [M-91.1-composite-array-storage] Plan 91 Ф.1: when
@@ -43212,11 +43313,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (generic mono types resolved earlier via infer_mono_method_ret).
                         {
                             let bare = obj_ty.trim_end_matches('*');
-                            let recv_tn = bare.strip_prefix("NovaValue_")
-                                .or_else(|| bare.strip_prefix("Nova_"))
-                                // D215: named tuples have NovaTuple_ C prefix
-                                .or_else(|| bare.strip_prefix("NovaTuple_"))
-                                .unwrap_or(bare);
+                            let recv_tn = Self::debt_strip_value_nova_tuple_prefix(bare);
                             if !recv_tn.is_empty() {
                                 let tq = format!("fn_ret_{}_{}", recv_tn, method);
                                 if let Some(ret_ty) = self.var_types.get(&tq) {
@@ -43235,10 +43332,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (ExternalRegistry, §3: реестр из деклараций, не хардкод).
                         {
                             let bare = obj_ty.trim_end_matches('*');
-                            let recv_tn = bare.strip_prefix("NovaValue_")
-                                .or_else(|| bare.strip_prefix("Nova_"))
-                                .or_else(|| bare.strip_prefix("NovaTuple_"))
-                                .unwrap_or(bare);
+                            let recv_tn = Self::debt_strip_value_nova_tuple_prefix(bare);
                             // D289 qualified static path `mod.Type.method(...)`: obj =
                             // Member{Ident(mod ∈ imported_modules), TypeName} — тип
                             // ресивера берём СИНТАКСИЧЕСКИ (имя типа), не из C-типа
@@ -43495,7 +43589,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // fn_ret fallback.
                             {
                                 let concrete_eff = self.subst_c(eff)
-                                    .map(|c| Self::nova_type_name_from_c(&c))
+                                    .map(|c| Self::debt_nova_type_name_from_c(&c))
                                     .unwrap_or_else(|| eff.clone());
                                 // Plan 180 Ф.6: for the serde `serialize`/`deserialize`
                                 // static contract, a mono-ordering-degraded overload sig
@@ -43513,7 +43607,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             && !s.return_c_type.is_empty()
                                             && !(is_serde_static
                                                 && (s.return_c_type == "void*"
-                                                    || self.is_generic_stub_c(&s.return_c_type)))
+                                                    || self.debt_is_generic_stub_c(&s.return_c_type)))
                                     }) {
                                         return sig.return_c_type.clone();
                                     }
@@ -43529,7 +43623,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     };
                                     if let Ok(ok_c) = self.type_ref_to_c(&named(&concrete_eff)) {
                                         if !ok_c.is_empty() && ok_c != "void*"
-                                            && !self.is_generic_stub_c(&ok_c)
+                                            && !self.debt_is_generic_stub_c(&ok_c)
                                         {
                                             let err_c = self.type_ref_to_c(&named("DeError"))
                                                 .unwrap_or_else(|_| "NovaValue_DeError".to_string());
@@ -43761,14 +43855,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let stripped_const = obj_ty
                         .trim_start_matches("const ")
                         .trim();
-                    let struct_name = stripped_const
-                        .strip_prefix("Nova_")
-                        .or_else(|| stripped_const.strip_prefix("NovaValue_"))
-                        // Plan 120 (D215): named tuple C-type is `NovaTuple_X`; schema
-                        // is registered under bare name "X" (same as records/value-records).
-                        // Without this strip, `obj.field` on a named tuple infers `nova_int`.
-                        .or_else(|| stripped_const.strip_prefix("NovaTuple_"))
-                        .unwrap_or("")
+                    let struct_name = Self::debt_strip_nova_value_tuple_prefix_or_empty(stripped_const)
                         .trim_end_matches('*')
                         .trim()
                         .to_string();
@@ -43788,7 +43875,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (`src FilterIter[VecIter[int],int]`) binds its params
                         // correctly instead of tearing `Nova_VecIter____nova_int_p`
                         // into separate fragments at the inner `____`.
-                        let type_args: Vec<String> = self.mono_type_args_of(&struct_name);
+                        let type_args: Vec<String> = self.debt_mono_type_args_of(&struct_name);
                         if let Some(template) = self.generic_type_templates.get(base_name).cloned() {
                             if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
                                 if let Some(field_decl) = fields.iter().find(|f| f.name == *name) {
@@ -44546,7 +44633,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (no `*`), matching what `type_ref_to_c` returns and
                             // what the record-lit emitter produces.
                             if self.is_value_generic_template(&struct_name) {
-                                format!("NovaValue_{}", Self::mono_short_name(&mangled))
+                                format!("NovaValue_{}", Self::debt_mono_short_name(&mangled))
                             } else {
                                 format!("{}*", mangled)
                             }
@@ -44689,7 +44776,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // compute_array_elem_type_for_obj) — all of which are last-wins
                         // across folder-module peers and can be poisoned by a same-named
                         // var of a different element type in another file.
-                        if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
+                        if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
                             let elem = elem.trim_end_matches('*').trim();
                             if !elem.is_empty() { return elem.to_string(); }
                         }
@@ -44726,7 +44813,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
-                    if let Some(elem) = obj_ty_pre.strip_prefix("NovaArray_") {
+                    if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
                         let elem = elem.trim_end_matches('*').trim();
                         return elem.to_string();
                     }
@@ -44965,10 +45052,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // synthesized via protocol default body (because T has no
                         // explicit method AND some protocol provides default), use
                         // that protocol method's return type as the inferred type.
-                        let obj_type_name_for_synth = obj_ty
-                            .trim_start_matches("Nova_")
-                            .trim_end_matches('*')
-                            .to_string();
+                        let obj_type_name_for_synth = self.debt_strip_nova_trim_start_no_ws(&obj_ty);
                         if !obj_type_name_for_synth.is_empty()
                             && !self.all_methods.contains(
                                 &(obj_type_name_for_synth.clone(), method_name.to_string()))
@@ -45083,14 +45167,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         // Plan 153.2 Ф.1 (STAGE 1 — point E): a by-value
                                         // generic value-record receiver has C-type
                                         // `NovaValue_<short>` — strip that prefix FIRST
-                                        // (else `trim_start_matches("Nova_")` mangles it
+                                        // (else stripping a plain "Nova_" prefix mangles it
                                         // into `Value_<short>` and the `Nova_<rt>` registry
                                         // lookup below misses → wrong return-type inference).
-                                        let trimmed = obj_ty
-                                            .strip_prefix("NovaValue_")
-                                            .map(|s| s.trim_end_matches('*').trim().to_string())
-                                            .unwrap_or_else(|| obj_ty.trim_start_matches("Nova_")
-                                                .trim_end_matches('*').trim().to_string());
+                                        let trimmed = Self::debt_strip_value_prefix_or_nova_trim_start(&obj_ty);
                                         if !trimmed.is_empty() && trimmed != "void" {
                                             // Plan 75: primitive C-names → Nova type names for
                                             // method_overloads lookup (keys use Nova names).
@@ -45163,7 +45243,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         let recv_structured_ty = fn_decl.receiver.as_ref()
                                             .and_then(|r| r.receiver_ty.clone());
                                         // Legacy flat elem (fallback seed).
-                                        let elem_c = if let Some(na) = rt.strip_prefix("NovaArray_") {
+                                        let elem_c = if let Some(na) = Self::debt_strip_novaarray_prefix_opt(&rt) {
                                             na.to_string()
                                         } else if rt.starts_with("Vec____") {
                                             self.generic_type_instance_info.borrow()
@@ -45296,7 +45376,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // даём specialized `Nova_Result*` ветке ниже
                                     // вывести concrete Ok-тип.
                                     if candidates.len() == 1
-                                        && !self.is_generic_stub_c(&candidates[0].return_c_type)
+                                        && !self.debt_is_generic_stub_c(&candidates[0].return_c_type)
                                     {
                                         return candidates[0].return_c_type.clone();
                                     }
@@ -45331,13 +45411,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     if pool.len() > 1 {
                                         if let Some(sig) = pool.iter()
                                             .find(|s| s.recv_mutable == recv_mut
-                                                && !self.is_generic_stub_c(&s.return_c_type))
+                                                && !self.debt_is_generic_stub_c(&s.return_c_type))
                                         {
                                             return sig.return_c_type.clone();
                                         }
                                     }
                                     if let Some(sig) = pool.first() {
-                                        if !self.is_generic_stub_c(&sig.return_c_type) {
+                                        if !self.debt_is_generic_stub_c(&sig.return_c_type) {
                                             return sig.return_c_type.clone();
                                         }
                                     }
@@ -45572,7 +45652,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                             .replace(&g.name, c)
                                                     });
                                                 if !ret.is_empty() && ret != "void*"
-                                                    && !self.is_generic_stub_c(&ret)
+                                                    && !self.debt_is_generic_stub_c(&ret)
                                                 {
                                                     return ret;
                                                 }
@@ -45593,7 +45673,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // path — consistent with the actual forward-decl signature).
                             // Only fires for generic-mono receiver types (containing "____")
                             // so primitive and erased receivers stay on their existing paths.
-                            if rt.contains("____") {
+                            if Self::debt_contains_mono_sep(&rt) {
                                 let mn_ref: &str = &mn;
                                 let blanket_fd = self.mono_method_decls.iter()
                                     .find(|((tvname, mname), fd)| {
@@ -45781,7 +45861,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let c_ret = &decl.return_c_type;
                                     if !c_ret.is_empty()
                                         && c_ret != "void*"
-                                        && !self.is_generic_stub_c(c_ret)
+                                        && !self.debt_is_generic_stub_c(c_ret)
                                     {
                                         return c_ret.clone();
                                     }
@@ -45829,7 +45909,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .map(|a| self.infer_expr_c_type(a.expr()))
                                     .filter(|t| !t.is_empty()
                                         && t != "void*"
-                                        && !self.is_generic_stub_c(t));
+                                        && !self.debt_is_generic_stub_c(t));
                                 let (ok_c, err_c): (String, String) = if name == "Ok" {
                                     (arg_c.unwrap_or_else(|| panic!("[P67-LEGACY] Ok(arg) arg type unknown — checker must annotate (compiler-conventions.md §0)")),
                                      "nova_str".to_string())
@@ -45916,7 +45996,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // so it is the authoritative source for a bare call's return
                         // type. MUST precede the `fn_ret_<name>` lookup.
                         if let Some((_, ret_ty)) = self.user_fn_sigs.get(name) {
-                            if !ret_ty.is_empty() && ret_ty != "void*" && !self.is_generic_stub_c(ret_ty) {
+                            if !ret_ty.is_empty() && ret_ty != "void*" && !self.debt_is_generic_stub_c(ret_ty) {
                                 return ret_ty.clone();
                             }
                         }
@@ -46274,10 +46354,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             && obj_ty.ends_with('*')
                             && obj_ty != "void*"
                         {
-                            let recv_nova = Self::nova_type_name_from_c(&obj_ty);
+                            let recv_nova = Self::debt_nova_type_name_from_c(&obj_ty);
                             let has_user_clone = self.all_methods
                                 .contains(&(recv_nova.clone(), "clone".to_string()));
-                            if !has_user_clone && !recv_nova.contains("____") {
+                            if !has_user_clone && !Self::debt_contains_mono_sep(&recv_nova) {
                                 return obj_ty;
                             }
                         }
@@ -46350,8 +46430,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // Plan 06 Ф.3: `coll.iter()` → registered IterT type.
                         if method == "iter" {
-                            let coll_type = obj_ty.trim_start_matches("Nova_")
-                                .trim_end_matches('*').trim().to_string();
+                            let coll_type = self.debt_strip_nova_trim_start(&obj_ty);
                             if let Some(iter_t) = self.iter_returns.get(&coll_type) {
                                 return format!("Nova_{}*", iter_t);
                             }
@@ -46557,14 +46636,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 12 + Plan 18: ExternalRegistry instance-method return type.
                         // Handles AtomicInt.@load(), Mutex.@lock(), WaitGroup.@wait(), etc.
                         if obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') {
-                            let recv_ty = obj_ty.trim_start_matches("Nova_")
-                                .trim_end_matches('*').trim();
+                            let recv_ty = Self::debt_strip_nova_trim_start_ref(&obj_ty);
                             if let Some(decls) = self.external_registry.lookup(recv_ty, method) {
                                 if let Some(decl) = decls.iter().find(|d| d.is_instance) {
                                     // Plan 62.B: пропускаем generic-стаб `Nova_T*` —
                                     // fall through к specialized NovaOpt_/Nova_Result*
                                     // блокам, знающим concrete тип из tracking/context.
-                                    if !self.is_generic_stub_c(&decl.return_c_type) {
+                                    if !self.debt_is_generic_stub_c(&decl.return_c_type) {
                                         return decl.return_c_type.clone();
                                     }
                                 }
@@ -46732,7 +46810,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // Array method calls
                         if obj_ty.starts_with("NovaArray_") {
-                            let elem_ty = obj_ty.strip_prefix("NovaArray_").unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
+                            let elem_ty = Self::debt_strip_novaarray_prefix_or_panic_legacy(&obj_ty)
                                 .trim_end_matches('*').trim();
                             match method.as_str() {
                                 // [M-91.1-composite-array-storage] Plan 91 Ф.1: when
@@ -46919,11 +46997,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (generic mono types resolved earlier via infer_mono_method_ret).
                         {
                             let bare = obj_ty.trim_end_matches('*');
-                            let recv_tn = bare.strip_prefix("NovaValue_")
-                                .or_else(|| bare.strip_prefix("Nova_"))
-                                // D215: named tuples have NovaTuple_ C prefix
-                                .or_else(|| bare.strip_prefix("NovaTuple_"))
-                                .unwrap_or(bare);
+                            let recv_tn = Self::debt_strip_value_nova_tuple_prefix(bare);
                             if !recv_tn.is_empty() {
                                 let tq = format!("fn_ret_{}_{}", recv_tn, method);
                                 if let Some(ret_ty) = self.var_types.get(&tq) {
@@ -46942,10 +47016,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (ExternalRegistry, §3: реестр из деклараций, не хардкод).
                         {
                             let bare = obj_ty.trim_end_matches('*');
-                            let recv_tn = bare.strip_prefix("NovaValue_")
-                                .or_else(|| bare.strip_prefix("Nova_"))
-                                .or_else(|| bare.strip_prefix("NovaTuple_"))
-                                .unwrap_or(bare);
+                            let recv_tn = Self::debt_strip_value_nova_tuple_prefix(bare);
                             // D289 qualified static path `mod.Type.method(...)`: obj =
                             // Member{Ident(mod ∈ imported_modules), TypeName} — тип
                             // ресивера берём СИНТАКСИЧЕСКИ (имя типа), не из C-типа
@@ -47202,7 +47273,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // fn_ret fallback.
                             {
                                 let concrete_eff = self.subst_c(eff)
-                                    .map(|c| Self::nova_type_name_from_c(&c))
+                                    .map(|c| Self::debt_nova_type_name_from_c(&c))
                                     .unwrap_or_else(|| eff.clone());
                                 // Plan 180 Ф.6: for the serde `serialize`/`deserialize`
                                 // static contract, a mono-ordering-degraded overload sig
@@ -47220,7 +47291,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             && !s.return_c_type.is_empty()
                                             && !(is_serde_static
                                                 && (s.return_c_type == "void*"
-                                                    || self.is_generic_stub_c(&s.return_c_type)))
+                                                    || self.debt_is_generic_stub_c(&s.return_c_type)))
                                     }) {
                                         return sig.return_c_type.clone();
                                     }
@@ -47236,7 +47307,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     };
                                     if let Ok(ok_c) = self.type_ref_to_c(&named(&concrete_eff)) {
                                         if !ok_c.is_empty() && ok_c != "void*"
-                                            && !self.is_generic_stub_c(&ok_c)
+                                            && !self.debt_is_generic_stub_c(&ok_c)
                                         {
                                             let err_c = self.type_ref_to_c(&named("DeError"))
                                                 .unwrap_or_else(|_| "NovaValue_DeError".to_string());
@@ -47625,14 +47696,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let stripped_const = obj_ty
                         .trim_start_matches("const ")
                         .trim();
-                    let struct_name = stripped_const
-                        .strip_prefix("Nova_")
-                        .or_else(|| stripped_const.strip_prefix("NovaValue_"))
-                        // Plan 120 (D215): named tuple C-type is `NovaTuple_X`; schema
-                        // is registered under bare name "X" (same as records/value-records).
-                        // Without this strip, `obj.field` on a named tuple infers `nova_int`.
-                        .or_else(|| stripped_const.strip_prefix("NovaTuple_"))
-                        .unwrap_or("")
+                    let struct_name = Self::debt_strip_nova_value_tuple_prefix_or_empty(stripped_const)
                         .trim_end_matches('*')
                         .trim()
                         .to_string();
@@ -47652,7 +47716,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (`src FilterIter[VecIter[int],int]`) binds its params
                         // correctly instead of tearing `Nova_VecIter____nova_int_p`
                         // into separate fragments at the inner `____`.
-                        let type_args: Vec<String> = self.mono_type_args_of(&struct_name);
+                        let type_args: Vec<String> = self.debt_mono_type_args_of(&struct_name);
                         if let Some(template) = self.generic_type_templates.get(base_name).cloned() {
                             if let crate::ast::TypeDeclKind::Record(fields) = &template.kind {
                                 if let Some(field_decl) = fields.iter().find(|f| f.name == *name) {
@@ -48277,7 +48341,7 @@ mod mangle_tests {
 mod novares_late_payload_tests {
     //! [M-181-result-over-named-tuple-codegen]: a generic wrapper (`NovaRes_<n>` /
     //! `NovaOpt_<n>`) that embeds its payload BY VALUE needs the payload's complete
-    //! struct body to precede it. `is_late_emitted_value_payload` flags the payloads
+    //! struct body to precede it. `debt_is_late_emitted_value_payload` flags the payloads
     //! whose body is emitted LATE (named tuple / mono value-record), so the wrapper
     //! body is deferred past them; everything else stays in the early section.
     use super::CEmitter;
@@ -48285,21 +48349,21 @@ mod novares_late_payload_tests {
     #[test]
     fn gates_named_tuple_and_mono_value_record_but_not_others() {
         // Named tuple (value type, emitted in the main type pass → late) → defer.
-        assert!(CEmitter::is_late_emitted_value_payload("NovaTuple_Complex"));
-        assert!(CEmitter::is_late_emitted_value_payload("NovaTuple_Foo"));
+        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Complex"));
+        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Foo"));
         // Mono'd value-record (emitted into generic_type_defs → late) → defer.
-        assert!(CEmitter::is_late_emitted_value_payload("NovaValue_Box____nova_int"));
+        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaValue_Box____nova_int"));
         // Positional mono tuple (`_NovaTuple_…`, leading underscore) is emitted
         // EARLY in __MONO_TUPLE_TYPEDEFS__ → NOT late.
-        assert!(!CEmitter::is_late_emitted_value_payload("_NovaTuple_2_8_nova_int_8_nova_int"));
+        assert!(!CEmitter::debt_is_late_emitted_value_payload("_NovaTuple_2_8_nova_int_8_nova_int"));
         // Primitives / heap records / pointers → early or forward-decl suffices.
-        assert!(!CEmitter::is_late_emitted_value_payload("nova_int"));
-        assert!(!CEmitter::is_late_emitted_value_payload("nova_str"));
-        assert!(!CEmitter::is_late_emitted_value_payload("Nova_FooError*"));
+        assert!(!CEmitter::debt_is_late_emitted_value_payload("nova_int"));
+        assert!(!CEmitter::debt_is_late_emitted_value_payload("nova_str"));
+        assert!(!CEmitter::debt_is_late_emitted_value_payload("Nova_FooError*"));
         // Pointer-to-named-tuple → forward decl is enough (not by value).
-        assert!(!CEmitter::is_late_emitted_value_payload("NovaTuple_Foo*"));
+        assert!(!CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Foo*"));
         // Non-mono value-record (no `____`) is emitted early via value_record_defs_buf.
-        assert!(!CEmitter::is_late_emitted_value_payload("NovaValue_Plain"));
+        assert!(!CEmitter::debt_is_late_emitted_value_payload("NovaValue_Plain"));
     }
 }
 
