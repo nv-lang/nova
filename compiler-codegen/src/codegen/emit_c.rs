@@ -28467,6 +28467,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             .all(|(w, g)| w == g))
                             };
                             if let Some(decl) = chosen {
+                                // [M-compiler-nv-porting-wave] item B1: namespace
+                                // pseudo-receivers (gc/fibers/runtime/bench) — их
+                                // C-функция возвращает `void` (Nova `-> ()`); в
+                                // expression-позиции нужно значение → сохранённый
+                                // legacy idiom `(call, (nova_int)0LL)` (см.
+                                // ExternalDecl::is_unit_wrap / NAMESPACE_OVERRIDES).
+                                if decl.is_unit_wrap {
+                                    return Ok(format!(
+                                        "({}({}), (nova_int)0LL)",
+                                        decl.c_name, arg_strs.join(", ")
+                                    ));
+                                }
                                 return Ok(format!("{}({})", decl.c_name, arg_strs.join(", ")));
                             }
                         }
@@ -28501,142 +28513,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     // Plan 57: bench DSL builtins — std.bench.
-                    // Namespace-style dispatch (как `gc.*`); только видим
-                    // внутри bench-блока, но codegen этого не enforce'ит
-                    // (выгоднее не накладывать ограничений — `bench.opaque(v)`
-                    // в обычной функции просто работает как identity barrier).
-                    if name == "bench" {
-                        match method.as_str() {
-                            "opaque" if args.len() == 1 => {
-                                let v = self.emit_expr(args[0].expr())?;
-                                // Primitive black-box. На GCC/Clang inline-asm,
-                                // на MSVC volatile cast. Macros в bench.h.
-                                return Ok(format!("NOVA_BENCH_OPAQUE_PRIM({})", v));
-                            }
-                            "iterations" if args.is_empty() => {
-                                return Ok("nova_bench_iterations()".to_string());
-                            }
-                            "reset_timer" if args.is_empty() => {
-                                return Ok("(nova_bench_reset_timer(), (nova_int)0LL)".to_string());
-                            }
-                            "bytes" if args.len() == 1 => {
-                                // Setter — записывает throughput_bytes в TLS.
-                                let v = self.emit_expr(args[0].expr())?;
-                                return Ok(format!(
-                                    "(nova_bench_set_throughput_bytes({}), (nova_int)0LL)",
-                                    v));
-                            }
-                            "elements" if args.len() == 1 => {
-                                let v = self.emit_expr(args[0].expr())?;
-                                return Ok(format!(
-                                    "(nova_bench_set_throughput_elements({}), (nova_int)0LL)",
-                                    v));
-                            }
-                            "allocs" if args.is_empty() => {
-                                // Возвращает текущий alloc_count snapshot.
-                                return Ok("((nova_int)nova_bench_alloc_count_snapshot())".to_string());
-                            }
-                            "now_ns" if args.is_empty() => {
-                                // Эспозит timer для advanced bench patterns.
-                                return Ok("((nova_int)nova_bench_now_ns())".to_string());
-                            }
-                            // Plan 57.G.5 — Custom metric emission per sample.
-                            "metric" if args.len() == 3 => {
-                                let name_v = self.emit_expr(args[0].expr())?;
-                                let val_v  = self.emit_expr(args[1].expr())?;
-                                let unit_v = self.emit_expr(args[2].expr())?;
-                                return Ok(format!(
-                                    "(nova_bench_emit_metric({}, {}, {}), (nova_int)0LL)",
-                                    name_v, val_v, unit_v));
-                            }
-                            _ => {}
-                        }
+                    // `bench.opaque[T]` — класс C (аудит §3): compiler
+                    // intrinsic black-box barrier. Эмиссия — GCC/Clang
+                    // inline-asm / MSVC volatile cast (macro в bench.h),
+                    // ЗНАЕТ её только кодоген; это не regular external fn
+                    // call (никакого `c_name` не существует само по себе —
+                    // сам МЕХАНИЗМ анти-оптимизации hardcoded в C-макросе).
+                    // Остаётся hardcoded НАВСЕГДА по природе (не из-за
+                    // registry-гэпа) — как panic()/exit()/assert().
+                    // Остальные bench.* (iterations/reset_timer/bytes/
+                    // elements/allocs/now_ns/metric) — registry-driven
+                    // dispatch выше (external_registry NAMESPACE_OVERRIDES);
+                    // их hardcoded match-ветки сняты ([M-compiler-nv-porting-
+                    // wave] item B1).
+                    if name == "bench" && method == "opaque" && args.len() == 1 {
+                        let v = self.emit_expr(args[0].expr())?;
+                        // Primitive black-box. На GCC/Clang inline-asm,
+                        // на MSVC volatile cast. Macros в bench.h.
+                        return Ok(format!("NOVA_BENCH_OPAQUE_PRIM({})", v));
                     }
-                    // Plan 32: GC introspection API — std.runtime.gc.
-                    // Хардкод как `gc.*` для namespace-style dispatch (без
-                    // receiver-type, args без self).
-                    if name == "gc" {
-                        match method.as_str() {
-                            "heap_size" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_heap_size())".to_string());
-                            }
-                            "live_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_live_count())".to_string());
-                            }
-                            "alloc_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_alloc_count())".to_string());
-                            }
-                            "collect" if args.is_empty() => {
-                                // unit-return: comma-expression для совместимости
-                                // с expression-position (как nv_panic).
-                                return Ok("(nova_gc_collect(), (nova_int)0LL)".to_string());
-                            }
-                            "reset_stats" if args.is_empty() => {
-                                return Ok("(nova_gc_reset_stats(), (nova_int)0LL)".to_string());
-                            }
-                            // Plan 57.C.2: gc.last_pause_ns() — длительность
-                            // последнего collect-цикла (под malloc = 0).
-                            "last_pause_ns" if args.is_empty() => {
-                                return Ok("((nova_int)nova_gc_last_pause_ns())".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Plan 44.2 Этап 3: fiber arena introspection — std.runtime.fibers.
-                    if name == "fibers" {
-                        match method.as_str() {
-                            "virtual_reserved" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_virtual_reserved())".to_string());
-                            }
-                            "slot_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_slot_count())".to_string());
-                            }
-                            "slots_active" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_slots_active())".to_string());
-                            }
-                            "high_water" if args.is_empty() => {
-                                return Ok("((nova_int)nova_fibers_high_water())".to_string());
-                            }
-                            // Plan 44.2 R8 P41-3: explicit decay flush.
-                            "compact" if args.is_empty() => {
-                                return Ok("(nova_fibers_compact(), (nova_int)0LL)".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                    // Plan 44 Этап 0: M:N runtime — std.runtime.runtime.
-                    if name == "runtime" {
-                        match method.as_str() {
-                            "init" if args.len() == 1 => {
-                                let n = self.emit_expr(args[0].expr())?;
-                                return Ok(format!("(nova_runtime_init((int){}), (nova_int)0LL)", n));
-                            }
-                            "shutdown" if args.is_empty() => {
-                                return Ok("(nova_runtime_shutdown(), (nova_int)0LL)".to_string());
-                            }
-                            "worker_count" if args.is_empty() => {
-                                return Ok("((nova_int)nova_runtime_worker_count())".to_string());
-                            }
-                            // Plan 83.1 Ф.3: целевое число worker'ов.
-                            "maxprocs" if args.is_empty() => {
-                                return Ok("((nova_int)nova_runtime_maxprocs())".to_string());
-                            }
-                            "is_initialized" if args.is_empty() => {
-                                return Ok("((nova_bool)nova_runtime_is_initialized())".to_string());
-                            }
-                            "current_worker_id" if args.is_empty() => {
-                                return Ok("((nova_int)nova_runtime_current_worker_id())".to_string());
-                            }
-                            "yield" if args.is_empty() => {
-                                return Ok("(nova_fiber_yield(), (nova_int)0LL)".to_string());
-                            }
-                            // Plan 83.4.5.2 Ф.2: drain orphan fiber pool.
-                            "drain_orphans" if args.is_empty() => {
-                                return Ok("(nova_runtime_drain_orphans(), (nova_int)0LL)".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
+                    // [M-compiler-nv-porting-wave] item B1: `gc.*` (Plan 32),
+                    // `fibers.*` (Plan 44.2 Этап 3), `runtime.*` (Plan 44 Этап 0)
+                    // hardcoded namespace-dispatch блоки сняты — все методы
+                    // покрыты registry-driven dispatch выше (external_registry
+                    // NAMESPACE_OVERRIDES; gc.nv/fibers.nv/runtime.nv теперь
+                    // embedded builtin sources, как raw_mem.nv/net/*.nv).
                 }
                 // 0. Built-in primitive static methods (D35).
                 //    `str.from(x)` — string conversion (D410 to_str() family).

@@ -43,9 +43,16 @@
 // Источник истины для type-checker'а и codegen.
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Эти `external fn` объявления — **source of truth** для type-checker'а.
-// Codegen имеет parallel hardcoded match на `name == "bench"` в emit_c.rs
-// — они должны быть синхронизированы вручную (как с `gc.*` в Plan 32).
+// Эти `external fn` объявления — **единственный source of truth**, и для
+// type-checker'а (обычный `import`), и для codegen: c-имя (`nova_bench_*`,
+// включая renamed `bytes`→`set_throughput_bytes` и т.п.) приходит через
+// `ExternalRegistry::NAMESPACE_OVERRIDES` (compiler-codegen/src/codegen/
+// external_registry.rs) — этот файл embedded builtin source, ручной
+// синхронизации с emit_c.rs больше не требуется ([M-compiler-nv-porting-
+// wave] item B1, 2026-07-07). Исключение — `opaque[T]`: класс C
+// compiler intrinsic (black-box barrier), permanently hardcoded в
+// emit_c.rs (не registry-driven — fn-level generic `T` не резолвится
+// type_ref_to_c, и сама anti-optimization emission — не C-function call).
 
 module std.bench
 

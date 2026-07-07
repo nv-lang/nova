@@ -83,6 +83,17 @@ pub struct ExternalDecl {
     /// Это необходимо чтобы `NovaRes_Nova_TcpListener_p_nova_str*` и аналоги
     /// были зарегистрированы до первого использования в коде.
     pub result_ok_err: Option<(String, String)>,
+    /// [M-compiler-nv-porting-wave] item B1: `true` для namespace pseudo-
+    /// receiver'ов (gc/fibers/runtime/bench) чья C-функция возвращает
+    /// `void`, но Nova-сигнатура — `-> ()`; вызов в expression-позиции
+    /// должен дать значение → эмиттер оборачивает
+    /// `(c_name(args), (nova_int)0LL)` вместо голого `c_name(args)`.
+    /// `false` (default) для всех обычных external fn (StringBuilder/
+    /// WriteBuffer/RawMem/…) — их unit-return уже корректно обрабатывается
+    /// без обёртки (bare call), эта обёртка — legacy idiom конкретно этих
+    /// namespace-функций, сохранён byte-for-byte при переносе из emit_c.rs
+    /// hardcoded match-блоков в registry-driven dispatch.
+    pub is_unit_wrap: bool,
 }
 
 /// Registry всех external-функций из builtins.nv.
@@ -132,6 +143,21 @@ impl ExternalRegistry {
         include_str!("../../../std/net/tcp.nv");
     pub const NET_UDP_SRC: &'static str =
         include_str!("../../../std/net/udp.nv");
+
+    // [M-compiler-nv-porting-wave] item B1: gc/fibers/runtime/bench —
+    // namespace pseudo-receiver API (Plan 32/44.2/44/57). Embedded так же,
+    // как raw_mem/net — эти .nv уже source of truth для checker'а (обычный
+    // `import`), теперь ЖЕ source питает codegen c-name dispatch через
+    // ExternalRegistry (NAMESPACE_OVERRIDES выше), убирая hardcoded
+    // match-блоки emit_c.rs.
+    pub const GC_SRC: &'static str =
+        include_str!("../../../std/runtime/gc.nv");
+    pub const FIBERS_SRC: &'static str =
+        include_str!("../../../std/runtime/fibers.nv");
+    pub const RUNTIME_SRC: &'static str =
+        include_str!("../../../std/runtime/runtime.nv");
+    pub const BENCH_SRC: &'static str =
+        include_str!("../../../std/bench.nv");
 
     /// Парсит per-type .nv файлы (string_builder/write_buffer/read_buffer/
     /// char/sync) и строит unified registry. Вызывается один раз при
@@ -187,6 +213,13 @@ impl ExternalRegistry {
             ("net/addr.nv",       Self::NET_ADDR_SRC),
             ("net/tcp.nv",        Self::NET_TCP_SRC),
             ("net/udp.nv",        Self::NET_UDP_SRC),
+            // [M-compiler-nv-porting-wave] item B1: gc/fibers/runtime/bench
+            // namespace pseudo-receivers — c-name dispatch теперь registry-
+            // driven (NAMESPACE_OVERRIDES) вместо emit_c.rs hardcoded match.
+            ("runtime/gc.nv",      Self::GC_SRC),
+            ("runtime/fibers.nv",  Self::FIBERS_SRC),
+            ("runtime/runtime.nv", Self::RUNTIME_SRC),
+            ("bench.nv",           Self::BENCH_SRC),
         ]
     }
 
@@ -257,6 +290,13 @@ impl ExternalRegistry {
                 Item::Fn(f) if f.is_external && f.extern_abi.as_deref() != Some("C") => f,
                 _ => continue,
             };
+            // [M-compiler-nv-porting-wave] item B1: fn-level generics (`fn
+            // bench.opaque[T](v T) -> T`, receiver НЕ generic — generics
+            // здесь на самой fn, не на Receiver.generics как у OnceCell[T]/
+            // Lazy[T]) не резолвятся `type_ref_to_c` (T — не конкретный
+            // тип) → skip. `bench.opaque` остаётся hardcoded в emit_c.rs
+            // (generic pass-through macro, вне registry-driven dispatch).
+            if !f.generics.is_empty() { continue; }
             debug_assert!(matches!(&f.body, FnBody::External));
             let recv_ty_str = f.receiver.as_ref().map(|r| r.type_name.clone()).unwrap_or_default();
             let total_overloads = *overload_count
@@ -355,6 +395,62 @@ impl ExternalRegistry {
         }
     }
 
+    /// [M-compiler-nv-porting-wave] item B1: gc/fibers/runtime/bench —
+    /// lowercase pseudo-receiver namespaces (Plan 32/44.2/44/57 — «namespace»,
+    /// не opaque-тип). Их `.nv`-декларации (std/runtime/{gc,fibers,runtime}.nv,
+    /// std/bench.nv) уже source of truth для checker'а (импортируются
+    /// обычным `import`), но РЕАЛЬНЫЕ C-имена этого read/introspection API —
+    /// прямые runtime internals (`nova_gc_heap_size`, `nova_fiber_yield`, …),
+    /// НЕ производные Nova_{Recv}_static_{name} mangling'а — стандартный
+    /// `mangle_method_c_name` даёт неверное имя. Раньше расхождение жило как
+    /// 4 отдельных match-блока в emit_c.rs (arity-check + C-имя, задублировано
+    /// ручной синхронизацией — см. бывшие предупреждения в .nv). Теперь —
+    /// ОДНА таблица здесь; `decl_from_fn` применяет override после обычного
+    /// mangling. `unit_wrap = true` — C-функция `void`, Nova `-> ()`,
+    /// emit-время сохраняет legacy `(call, (nova_int)0LL)` idiom (byte-
+    /// identity с прежним hardcoded выводом). `bench.opaque[T]` НЕ здесь —
+    /// класс C: compiler intrinsic black-box barrier (anti-optimization
+    /// macro, не C-function call), fn-level generic `T` вдобавок не
+    /// резолвится `type_ref_to_c` (skip по generics guard в `from_module`
+    /// ниже) — остаётся hardcoded в emit_c.rs НАВСЕГДА по природе, как
+    /// panic()/exit()/assert() (не registry-гэп).
+    const NAMESPACE_OVERRIDES: &[(&str, &str, &str, bool)] = &[
+        // gc.* (Plan 32).
+        ("gc", "heap_size",     "nova_gc_heap_size",     false),
+        ("gc", "live_count",    "nova_gc_live_count",    false),
+        ("gc", "alloc_count",   "nova_gc_alloc_count",   false),
+        ("gc", "collect",       "nova_gc_collect",       true),
+        ("gc", "reset_stats",   "nova_gc_reset_stats",   true),
+        ("gc", "last_pause_ns", "nova_gc_last_pause_ns", false),
+        // fibers.* (Plan 44.2 Этап 3).
+        ("fibers", "virtual_reserved", "nova_fibers_virtual_reserved", false),
+        ("fibers", "slot_count",       "nova_fibers_slot_count",       false),
+        ("fibers", "slots_active",     "nova_fibers_slots_active",     false),
+        ("fibers", "high_water",       "nova_fibers_high_water",       false),
+        ("fibers", "compact",          "nova_fibers_compact",          true),
+        // runtime.* (Plan 44 Этап 0).
+        ("runtime", "init",               "nova_runtime_init",               true),
+        ("runtime", "shutdown",           "nova_runtime_shutdown",           true),
+        ("runtime", "worker_count",       "nova_runtime_worker_count",       false),
+        ("runtime", "maxprocs",           "nova_runtime_maxprocs",           false),
+        ("runtime", "is_initialized",     "nova_runtime_is_initialized",     false),
+        ("runtime", "current_worker_id",  "nova_runtime_current_worker_id",  false),
+        ("runtime", "drain_orphans",      "nova_runtime_drain_orphans",      true),
+        // Irregular: `runtime.yield()` — actual C symbol is the general
+        // fiber-yield primitive, NOT `nova_runtime_yield`.
+        ("runtime", "yield",              "nova_fiber_yield",                true),
+        // bench.* (Plan 57) — `opaque[T]` excluded: class C compiler
+        // intrinsic (black-box barrier), permanently hardcoded in emit_c.rs.
+        ("bench", "iterations",  "nova_bench_iterations", false),
+        ("bench", "reset_timer", "nova_bench_reset_timer", true),
+        // Irregular: Nova method name ≠ C function name (setter naming).
+        ("bench", "bytes",    "nova_bench_set_throughput_bytes",    true),
+        ("bench", "elements", "nova_bench_set_throughput_elements", true),
+        ("bench", "allocs",   "nova_bench_alloc_count_snapshot",    false),
+        ("bench", "now_ns",   "nova_bench_now_ns",                  false),
+        ("bench", "metric",   "nova_bench_emit_metric",             true),
+    ];
+
     fn decl_from_fn(f: &FnDecl, total_overloads: usize) -> Result<ExternalDecl, String> {
         let (recv_type_name, is_instance, is_mut_recv, is_consume_recv) = match &f.receiver {
             Some(Receiver { type_name, kind, mutable, consume, .. }) => {
@@ -414,6 +510,17 @@ impl ExternalRegistry {
         } else {
             None
         };
+        // [M-compiler-nv-porting-wave] item B1: namespace c_name override
+        // (gc/fibers/runtime/bench) — см. NAMESPACE_OVERRIDES doc.
+        let (c_name, is_unit_wrap) = match recv_type_name.as_deref() {
+            Some(ns) => match Self::NAMESPACE_OVERRIDES.iter()
+                .find(|(n, m, _, _)| *n == ns && *m == f.name)
+            {
+                Some((_, _, override_c_name, unit_wrap)) => (override_c_name.to_string(), *unit_wrap),
+                None => (c_name, false),
+            },
+            None => (c_name, false),
+        };
         Ok(ExternalDecl {
             name: f.name.clone(),
             receiver_type: recv_type_name,
@@ -425,6 +532,7 @@ impl ExternalRegistry {
             c_name,
             sync_class: f.sync_class,
             result_ok_err,
+            is_unit_wrap,
         })
     }
 

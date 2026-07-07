@@ -41,13 +41,15 @@
 // и явной разгрузки перед blocking I/O.
 //
 // ──────────────────────────────────────────────────────────────────────────
-// Источник истины для type-checker'а
+// Источник истины для type-checker'а И codegen
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Эти `external fn` объявления — **source of truth** для type-checker'а.
-// Codegen имеет свой parallel hardcoded match на `name == "gc"`
-// в [emit_c.rs:7155](../../compiler-codegen/src/codegen/emit_c.rs#L7155)
-// — они должны быть синхронизированы вручную.
+// Эти `external fn` объявления — **единственный source of truth**, и для
+// type-checker'а (обычный `import`), и для codegen: c-имя (`nova_gc_*`)
+// приходит через `ExternalRegistry::NAMESPACE_OVERRIDES`
+// (compiler-codegen/src/codegen/external_registry.rs) — этот файл
+// embedded builtin source, ручной синхронизации с emit_c.rs больше не
+// требуется ([M-compiler-nv-porting-wave] item B1, 2026-07-07).
 //
 // Используется `gc` как identifier-name (D-spec exception: lowercase для
 // namespace-like API, аналог Python `gc.collect()` или Go
