@@ -504,8 +504,8 @@ export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
 //
 // Структурно совместима с любым итератором: { next() -> Option[T] }.
 export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
-    while @pos < @map._buckets.len() {
-        ro slot = @map._buckets[@pos]
+    while @pos < @map.buckets.len() {
+        ro slot = @map.buckets[@pos]
         @pos += 1
         if Occupied { key, value } = slot {
             return Some((key, value))
