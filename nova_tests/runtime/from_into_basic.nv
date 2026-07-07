@@ -62,6 +62,7 @@ test "f64.try_from валидное число" {
     assert(r.is_ok())
     // Bootstrap Result hardcoded на nova_int payload — для f64 не имеет смысла
     // unwrap_or(0) (даст int-cast). Просто проверяем is_ok.
+    // [M-f64-try-parse-to-parse-f64]: known-broken, ретракция готовится (174.1)
 }
 
 

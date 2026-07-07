@@ -39825,11 +39825,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Запрещённые пары:
         let banned: &[(&str, &str, &str)] = &[
             // (src, tgt, suggestion)
-            ("int",  "char", "use `char.try_from(n)?` (range-checked, returns Result[char, _])"),
-            ("i32",  "char", "use `char.try_from(n)?`"),
-            ("i64",  "char", "use `char.try_from(n)?`"),
-            ("u32",  "char", "use `char.try_from(n)?`"),
-            ("u64",  "char", "use `char.try_from(n)?`"),
+            ("int",  "char", "use `char.from(n)?` (range-checked, returns Result[char, _])"),
+            ("i32",  "char", "use `char.from(n)?`"),
+            ("i64",  "char", "use `char.from(n)?`"),
+            ("u32",  "char", "use `char.from(n)?`"),
+            ("u64",  "char", "use `char.from(n)?`"),
             ("char", "u8", "use `u8.try_from(c)?` (fails if codepoint > 0xFF)"),
             ("int",  "bool", "use explicit comparison (`n != 0` for truthy-int)"),
             ("i8",   "bool", "use `n != 0`"),
