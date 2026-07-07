@@ -64,7 +64,7 @@ export fn LinkedList[T].new() => Empty
 /// ```
 #stable(since = "0.1")
 export fn LinkedList[T].from_array(xs []T) -> Self {
-    mut acc LinkedList[T] = Empty
+    mut acc = Empty
     mut i = xs.len() - 1
     while i >= 0 {
         acc = Cons(xs[i], acc)
@@ -78,7 +78,7 @@ export fn LinkedList[T].from_array(xs []T) -> Self {
 export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
-    mut acc LinkedList[T] = Empty
+    mut acc = Empty
     for x in it {
         acc = Cons(x, acc)
     }
@@ -232,7 +232,7 @@ test "prepend is O(1) and adds in front" {
 }
 
 test "reverse" {
-    ro l = LinkedList[int].from_array([1, 2, 3])
+    mut l = LinkedList[int].from_array([1, 2, 3])
     ro r = l.reverse()
     assert(r.head() == Some(3))
     assert(r.tail().head() == Some(2))
@@ -268,7 +268,7 @@ test "concat with plus method" {
 
 test "Empty is identity for concat" {
     ro a = LinkedList[int].from_array([1, 2])
-    ro e LinkedList[int] = Empty
+    ro e = Empty
     assert(a.plus(e).length() == 2)
     assert(e.plus(a).length() == 2)
 }

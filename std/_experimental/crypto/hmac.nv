@@ -177,7 +177,14 @@ test "verify: правильный MAC — true" {
 test "verify: неправильный MAC — false" {
     ro key = "secret".bytes()
     ro data = "important message".bytes()
-    ro wrong [32]u8 = [0; 32]
+    // [M-hmac-array-repeat-literal-parser]: явный 32-элементный литерал
+    // вместо неподдерживаемого `[0; 32]`.
+    ro wrong [32]u8 = [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+    ]
     assert(!HmacSha256.verify(key, data, wrong))
 }
 
