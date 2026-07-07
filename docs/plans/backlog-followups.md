@@ -1731,6 +1731,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (str-версия ретрактируется — строка не должна знать о каждом числовом типе).
   Спека: примеры type-set блока `T.try_parse(...)` → `T.parse(...)` (до-R3 текст),
   амендмент в 02-types.md:13912-зоне.
+  ТУДА ЖЕ: `char.try_from(cp int) -> Result[char, CharTryFromError]` (runtime/char.nv:21) —
+  единственный статик char без infallible-сиблинга (R3-нарушение) → `char.from(cp int) ->
+  Result[char, CharFromError]` (+ренейм типа ошибки); вызовов ~6-8 (string/core ×2, hex ×2,
+  bcrypt ×2 + греп).
 
 - **[M-serde-slice-generic-method-parse]** (2026-07-07, P2, Wave: §4а-очередь после A4) —
   парсер падает на serde.nv:311 (`expected ], got identifier` в 311:37): обобщённый метод с
