@@ -44085,6 +44085,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
+                    // Module-namespace / import-alias prefix (`import … as h`;
+                    // `h.add_one(41)` parses as Member{Ident("h"), "add_one"}). A
+                    // module alias is a NAMESPACE, not a value — inferring its "type"
+                    // is meaningless. Return the empty sentinel (same as other
+                    // namespace prefixes, e.g. `bench`): the method-call inference
+                    // path treats an empty receiver type as a module-qualified free
+                    // fn and resolves the result via `fn_ret_<method>`. Placed LAST so
+                    // any real local/type/variant of the same simple name wins first.
+                    if self.imported_modules.contains(name.as_str()) {
+                        return String::new();
+                    }
                     panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
             };
         }
@@ -45098,6 +45109,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
+                    }
+                    // Module-namespace / import-alias prefix (`import … as h`;
+                    // `h.add_one(41)` parses as Member{Ident("h"), "add_one"}). A
+                    // module alias is a NAMESPACE, not a value — inferring its "type"
+                    // is meaningless. Return the empty sentinel (same as other
+                    // namespace prefixes, e.g. `bench`): the method-call inference
+                    // path treats an empty receiver type as a module-qualified free
+                    // fn and resolves the result via `fn_ret_<method>`. Placed LAST so
+                    // any real local/type/variant of the same simple name wins first.
+                    if self.imported_modules.contains(name.as_str()) {
+                        return String::new();
                     }
                     panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
                 }
