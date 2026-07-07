@@ -35,7 +35,7 @@ export fn Response @content_length() -> Option[int] {
 /// Parsed `Set-Cookie` response headers (RFC 6265bis).
 #stable(since = "0.1")
 export fn Response @cookies() -> []SetCookie {
-    mut out = Vec[SetCookie].new()
+    mut out = []SetCookie.new()
     for hv in @headers.get_all("set-cookie") {
         match hv.to_str() {
             Ok(s) => match SetCookie.parse(s) {

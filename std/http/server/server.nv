@@ -192,7 +192,7 @@ export type ServeMux value { priv routes []Route, priv not_found Option[Handler]
 
 /// Empty mux.
 #stable(since = "0.1")
-export fn ServeMux.new() -> ServeMux => { routes: Vec[Route].new(), not_found: None }
+export fn ServeMux.new() -> ServeMux => { routes: []Route.new(), not_found: None }
 
 /// Register `handler` for `method` + `pattern`.
 ///
