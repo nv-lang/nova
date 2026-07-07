@@ -434,36 +434,19 @@ fn char_runtime() -> Vec<RuntimeFn> {
             doc: "Unchecked UTF-8 encode codepoint в 1-4 байта. Caller гарантирует cp ∈ [0, 0x10FFFF]. Invalid codepoint → empty str (silent — predictable degradation). Используется JSON unicode escape parser-ами + другими decoders.",
         nova_body: None,
     },
-        // [M-f64-try-parse-to-parse-f64] (2026-07-07): renamed from `try_from`
-        // to `from` — the only static char conversion WITHOUT an infallible
-        // sibling (R3 violation); D54/D77.
-        // Nova-implemented: range-check + unsafe { cp as char } (D54 amended).
-        RuntimeFn {
-            module: "std.runtime.char",
-            receiver: Some("char"),
-            is_static: true, is_mut: false, is_consume: false,
-            name: "from",
-            params: &[("cp", "int")],
-            return_ty: "Result[char, CharFromError]",
-            effects: &[],
-            c_name: "",
-            doc: "D54/D77: int → char, validates unicode scalar value [0, 0x10FFFF] excluding surrogates.",
-            nova_body: Some("{\n    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {\n        Err(CharFromError)\n    } else {\n        Ok(unsafe { cp as char })\n    }\n}"),
-        },
-        // D54/D77: u8.try_from(c char) -> Result[u8, TryFromCharError]
-        // Nova-implemented: codepoint > 0xFF check + unsafe cast (Latin-1 subset safe).
-        RuntimeFn {
-            module: "std.runtime.char",
-            receiver: Some("u8"),
-            is_static: true, is_mut: false, is_consume: false,
-            name: "try_from",
-            params: &[("c", "char")],
-            return_ty: "Result[u8, TryFromCharError]",
-            effects: &[],
-            c_name: "",
-            doc: "D54/D77: char → u8, fails if codepoint > 0xFF (non-Latin-1).",
-            nova_body: Some("{\n    if c as int > 0xFF {\n        Err(TryFromCharError)\n    } else {\n        Ok(unsafe { c as int as u8 })\n    }\n}"),
-        },
+        // [M-compiler-nv-porting-wave] (2026-07-07) item A: `char.from` /
+        // `u8.try_from` были Nova-implemented (`nova_body: Some(...)`) —
+        // тело жило как Rust string literal здесь, а `render_nv` (Plan 13
+        // Ф.9.2) эмитил его буквально в auto-generated char.nv. Т.к. это
+        // единственные две nova_body-записи во всём реестре (после сноса
+        // *_unused в Ф.D), а render_nv перезаписывает std/runtime/char.nv
+        // ЦЕЛИКОМ по module_to_path (один файл = все записи модуля), их
+        // Nova-исходники перенесены в РУЧНОЙ co-equal sibling-файл
+        // std/runtime/char_convert.nv (тот же `module runtime.char`, по
+        // образцу write_buffer.nv/read_buffer.nv — модуль с пустым vec![]
+        // здесь полностью ручной; string_builder.nv/sync.nv+sync_test.nv —
+        // co-equal файлы одного module). char_runtime() больше не содержит
+        // этих двух записей — источник истины теперь .nv, не Rust-строка.
     ]
 }
 

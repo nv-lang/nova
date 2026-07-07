@@ -1,0 +1,35 @@
+// Hand-maintained co-equal sibling of char.nv (same `module runtime.char`,
+// по образцу write_buffer.nv/read_buffer.nv — модуль с пустым vec![] в
+// runtime_registry.rs полностью ручной; string_builder.nv и sync.nv+
+// sync_test.nv — тот же co-equal-files паттерн). char.nv остаётся
+// auto-generated (`nova-codegen emit-runtime-stubs`) для externs (str.from/
+// str.from_codepoint); эти две функции — Nova-implemented (ранее жили как
+// `nova_body: Some("...")` Rust string literal в char_runtime()) — теперь
+// .nv — единственный источник истины.
+//
+// [M-compiler-nv-porting-wave] (2026-07-07) item A.
+
+module runtime.char
+
+
+// ─── char ───
+
+// D54/D77: int → char, validates unicode scalar value [0, 0x10FFFF] excluding surrogates.
+export fn char.from(cp int) -> Result[char, CharFromError] {
+    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+        Err(CharFromError)
+    } else {
+        Ok(unsafe { cp as char })
+    }
+}
+
+// ─── u8 ───
+
+// D54/D77: char → u8, fails if codepoint > 0xFF (non-Latin-1).
+export fn u8.try_from(c char) -> Result[u8, TryFromCharError] {
+    if c as int > 0xFF {
+        Err(TryFromCharError)
+    } else {
+        Ok(unsafe { c as int as u8 })
+    }
+}
