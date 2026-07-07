@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std.collections.vec (restructure tests) — concat/flatten/rotate/drain/insert_slice.
+
+#prelude(core, runtime, collections, protocols)
+module vec.restructure_test
+
+test "concat / operator + does not mutate operands" {
+    ro a = Vec[int].from([1, 2, 3])
+    ro b = Vec[int].from([4, 5])
+    ro c = a.concat(b)
+    assert(c.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(a.len() == 3)
+    assert(b.len() == 2)
+
+    ro d = a + b
+    assert(d.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(a.len() == 3)
+    assert(b.len() == 2)
+}
+
+test "operator += appends" {
+    mut a = Vec[int].from([1, 2])
+    a += Vec[int].from([3, 4])
+    assert(a.equal(Vec[int].from([1, 2, 3, 4])))
+}
+
+test "flatten concatenates inner vecs" {
+    mut nested = Vec[Vec[int]].new()
+    nested.push(Vec[int].from([1, 2]))
+    nested.push(Vec[int].from([3]))
+    nested.push(Vec[int].from([4, 5]))
+    ro flat = nested.flatten()
+    assert(flat.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    // operands untouched (flatten copies, never moves)
+    assert(nested.len() == 3)
+
+    // empty inner rows contribute nothing
+    mut holes = Vec[Vec[int]].new()
+    holes.push(Vec[int].from([7]))
+    holes.push(Vec[int].new())
+    holes.push(Vec[int].from([8, 9]))
+    assert(holes.flatten().equal(Vec[int].from([7, 8, 9])))
+
+    // empty outer → empty
+    mut none = Vec[Vec[int]].new()
+    assert(none.flatten().len() == 0)
+}
+
+test "rotate_left / rotate_right" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    v.rotate_left(2)
+    assert(v.equal(Vec[int].from([3, 4, 5, 1, 2])))
+    v.rotate_right(2)
+    assert(v.equal(Vec[int].from([1, 2, 3, 4, 5])))
+
+    // n % len == 0 is identity
+    mut w = Vec[int].from([1, 2, 3])
+    w.rotate_left(3)
+    assert(w.equal(Vec[int].from([1, 2, 3])))
+    w.rotate_left(6)
+    assert(w.equal(Vec[int].from([1, 2, 3])))
+}
+
+test "drain returns cut + shortens receiver" {
+    mut v = Vec[int].from([1, 2, 3, 4, 5])
+    ro cut = v.drain(1..4)
+    assert(cut.equal(Vec[int].from([2, 3, 4])))
+    assert(v.equal(Vec[int].from([1, 5])))
+
+    // empty range drains nothing
+    mut u = Vec[int].from([7, 8, 9])
+    ro none = u.drain(1..1)
+    assert(none.len() == 0)
+    assert(u.equal(Vec[int].from([7, 8, 9])))
+}
+
+test "insert_slice" {
+    mut v = Vec[int].from([1, 2, 5, 6])
+    v.insert_slice(2, Vec[int].from([3, 4]))
+    assert(v.equal(Vec[int].from([1, 2, 3, 4, 5, 6])))
+
+    // insert at end == append
+    mut w = Vec[int].from([1, 2])
+    w.insert_slice(2, Vec[int].from([3, 4]))
+    assert(w.equal(Vec[int].from([1, 2, 3, 4])))
+}
