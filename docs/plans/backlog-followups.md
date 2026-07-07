@@ -2017,6 +2017,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   emit_c.rs:29141) с ЯВНЫМ контрактом «требуется выравнивание и same-type aliasing, иначе
   UB» (Rust-канон ptr::read); (2) добавить ОТДЕЛЬНЫЕ `@read_unaligned()`/`@write_unaligned()`
   с memcpy-эмиссией (typed inline-хелперы, канон Plan 145) — для сетевых парсеров/174.5;
-  (3) from_bits/to_bits ОСТАЮТСЯ extern-шимами (законный класс: легальный reinterpret в C =
-  memcpy, а наш deref-read намеренно голый — шим и есть дом memcpy); пункт переноса в чистый
-  .nv снят; (4) size_of-API — отдельный пункт 174.5 (const-фича).
+  (3) from_bits/to_bits ПЕРЕНОСЯТСЯ в чистый .nv ПОВЕРХ read_unaligned (форма владельца:
+  `unsafe { (&@ as *u64).read_unaligned() }`) — extern-записи, реестровые строки и C-обёртки
+  numeric.h сносятся; компилятор знает только универсальный примитив указателей (класс C),
+  ни одного имени bit-операций; unsafe-границу каста/чтения сверить по D54/L3; (4) size_of-API — отдельный пункт 174.5 (const-фича).
