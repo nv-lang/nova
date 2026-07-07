@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std.collections.vec (access tests) — element access: index/get/first/last.
+
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+test "get / first / last" {
+    mut v = Vec[int].from([10, 20, 30])
+    assert(v.get(0) == Some(10))
+    assert(v.get(2) == Some(30))
+    assert(v.get(3) == None)
+    assert(v.first() == Some(10))
+    assert(v.last() == Some(30))
+
+    ro empty = Vec[int].new()
+    assert(empty.first() == None)
+    assert(empty.last() == None)
+}
