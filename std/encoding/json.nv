@@ -206,14 +206,74 @@ fn Lexer.new(input str) -> Self =>
 // JSON-структура (whitespace/punctuation/keywords/numbers) — всегда ASCII,
 // поэтому байт-как-char валиден для всех сравнений вне строк; multibyte
 // байты попадают только в @read_string, который их не декодирует (см. там).
+//
+// [M-json-byte-peek] (2026-07-07): @peek()/@advance() раньше возвращали
+// Option[char], маскируя сырой байт под codepoint
+// (`char.from(byte as int) ?? ' '` — для UTF-8 лид-байта это ФАНТОМНЫЙ
+// Latin-1 символ, не настоящий codepoint; а `?? ' '` был мёртвым sentinel —
+// байт 0..255 всегда валиден как codepoint, fallback никогда не
+// срабатывал). Убрано: @peek()/@advance() теперь честно -> Option[u8].
+//
+// Стиль сравнений — байт-константы (см. блок `const B_*` ниже), НЕ inline
+// `b == ('x' as u8)`. Изначально выбирался inline char-литерал каст (D54
+// разрешает `as u8` для CHAR-ЛИТЕРАЛА, прецедент std/encoding/base64.nv:206),
+// но он ломает компиляцию: match-arm guard, чьё условие заканчивается
+// ГОЛЫМ parenthesized-выражением прямо перед `=>` (напр.
+// `Some(b) if b == ('{' as u8) => ...`), компилятор ложно распознаёт как
+// ретрактированный legacy-lambda `(x) => body` (Plan 19 D22-rev) —
+// компиляторный гэп (repro: scratchpad/repro_legacy_lambda_guard.nv,
+// см. отчёт задачи). `IDENT(args) => ...` (вызов функции/константа без
+// скобок) не триггерит — отсюда именованные `const B_* u8` вместо inline-
+// каста: guard заканчивается голым идентификатором, не `)`.
+//
+// Места, где реально нужен char (диагностика — BadTok/UnexpectedChar/
+// InvalidEscape/InvalidUnicode): ASCII байт (< 0x80, гарантирован guard'ом)
+// → тотальный `char.from(b as int)!!`; байт >= 0x80 (потенциальный лид-байт
+// multibyte UTF-8) → НАСТОЯЩИЙ codepoint через @char_at (не Latin-1-фантом,
+// см. там).
 
-// Текущий байт как char (Option, None на конце входа). O(1).
-fn Lexer @peek() -> Option[char] {
+// Байтовые константы структурного JSON (всегда ASCII) — единый стиль
+// сравнений на весь файл (см. [M-json-byte-peek] выше). Значение и ASCII-
+// комментарий на каждой строке.
+const B_SPACE     u8 = 0x20  // ' '
+const B_TAB       u8 = 0x09  // '\t'
+const B_LF        u8 = 0x0A  // '\n'
+const B_CR        u8 = 0x0D  // '\r'
+const B_LBRACE    u8 = 0x7B  // '{'
+const B_RBRACE    u8 = 0x7D  // '}'
+const B_LBRACKET  u8 = 0x5B  // '['
+const B_RBRACKET  u8 = 0x5D  // ']'
+const B_COMMA     u8 = 0x2C  // ','
+const B_COLON     u8 = 0x3A  // ':'
+const B_QUOTE     u8 = 0x22  // '"'
+const B_BACKSLASH u8 = 0x5C  // '\\'
+const B_SLASH     u8 = 0x2F  // '/'
+const B_MINUS     u8 = 0x2D  // '-'
+const B_PLUS      u8 = 0x2B  // '+'
+const B_DOT       u8 = 0x2E  // '.'
+const B_DIGIT_0   u8 = 0x30  // '0'
+const B_DIGIT_1   u8 = 0x31  // '1'
+const B_DIGIT_9   u8 = 0x39  // '9'
+const B_LOWER_A   u8 = 0x61  // 'a'
+const B_LOWER_B   u8 = 0x62  // 'b' (\b escape)
+const B_LOWER_E   u8 = 0x65  // 'e'
+const B_LOWER_F   u8 = 0x66  // 'f' (keyword "false" 1st byte, \f escape)
+const B_LOWER_N   u8 = 0x6E  // 'n' (keyword "null" 1st byte, \n escape)
+const B_LOWER_R   u8 = 0x72  // 'r' (\r escape — не путать с B_CR)
+const B_LOWER_T   u8 = 0x74  // 't' (keyword "true" 1st byte, \t escape)
+const B_LOWER_U   u8 = 0x75  // 'u' (\u escape)
+const B_UPPER_A   u8 = 0x41  // 'A'
+const B_UPPER_E   u8 = 0x45  // 'E'
+const B_UPPER_F   u8 = 0x46  // 'F'
+
+// Текущий байт (Option, None на конце входа). O(1). Честный байт — не char
+// (см. [M-json-byte-peek] выше).
+fn Lexer @peek() -> Option[u8] {
     ro bytes = @input.bytes()
     if @pos >= bytes.len() {
         None
     } else {
-        Some(char.from(bytes[@pos] as int) ?? ' ')
+        Some(bytes[@pos])
     }
 }
 
@@ -230,19 +290,28 @@ fn Lexer mut @bump(b u8) -> () {
     @pos += 1
 }
 
-fn Lexer mut @advance() -> Option[char] {
+fn Lexer mut @advance() -> Option[u8] {
     ro bytes = @input.bytes()
     if @pos >= bytes.len() { return None }
     ro b = bytes[@pos]
     @bump(b)
-    Some(char.from(b as int) ?? ' ')
+    Some(b)
 }
+
+// Настоящий (не Latin-1-фантом) codepoint на байтовой позиции `p` — только
+// для диагностики (BadTok/UnexpectedChar/InvalidEscape/InvalidUnicode), где
+// нужен реальный символ. Требование вызывающего: `p` — граница codepoint
+// (все вызывающие места лексера — сразу после ASCII-выровненных
+// @peek()/@advance() шагов). O(1): срез `@input[p..]` + первый codepoint
+// публичного `chars()`-lens (НЕ приватные `decode_utf8`/`decode_at` из
+// runtime.string/std.unicode — folder-private, чужой модуль).
+fn Lexer @char_at(p int) -> char => @input[p..].chars().next()!!
 
 fn Lexer mut @skip_whitespace() -> () {
     mut done = false
     while !done {
         match @peek() {
-            Some(' ') | Some('\t') | Some('\n') | Some('\r') => {
+            Some(b) if b == B_SPACE || b == B_TAB || b == B_LF || b == B_CR => {
                 @advance()
             }
             _ => { done = true }
@@ -259,43 +328,60 @@ fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
     ro {line, col, ..} = @
 
     match @peek() {
-        None      => Ok({ tok: EofTok, line, col })
-        Some('{') => { @advance(); Ok({ tok: LBrace,   line, col }) }
-        Some('}') => { @advance(); Ok({ tok: RBrace,   line, col }) }
-        Some('[') => { @advance(); Ok({ tok: LBracket, line, col }) }
-        Some(']') => { @advance(); Ok({ tok: RBracket, line, col }) }
-        Some(',') => { @advance(); Ok({ tok: Comma,    line, col }) }
-        Some(':') => { @advance(); Ok({ tok: Colon,    line, col }) }
-        Some('"') => Ok({ tok: StrTok(@read_string()?), line, col })
-        Some('t') => @read_keyword("true",  TrueTok,  line, col)
-        Some('f') => @read_keyword("false", FalseTok, line, col)
-        Some('n') => @read_keyword("null",  NullTok,  line, col)
-        Some(c) if is_num_start(c) => Ok({ tok: NumTok(@read_number()?), line, col })
+        None => Ok({ tok: EofTok, line, col })
+        Some(b) if b == B_LBRACE   => { @advance(); Ok({ tok: LBrace,   line, col }) }
+        Some(b) if b == B_RBRACE   => { @advance(); Ok({ tok: RBrace,   line, col }) }
+        Some(b) if b == B_LBRACKET => { @advance(); Ok({ tok: LBracket, line, col }) }
+        Some(b) if b == B_RBRACKET => { @advance(); Ok({ tok: RBracket, line, col }) }
+        Some(b) if b == B_COMMA    => { @advance(); Ok({ tok: Comma,    line, col }) }
+        Some(b) if b == B_COLON    => { @advance(); Ok({ tok: Colon,    line, col }) }
+        Some(b) if b == B_QUOTE    => Ok({ tok: StrTok(@read_string()?), line, col })
+        Some(b) if b == B_LOWER_T  => @read_keyword("true",  TrueTok,  line, col)
+        Some(b) if b == B_LOWER_F  => @read_keyword("false", FalseTok, line, col)
+        Some(b) if b == B_LOWER_N  => @read_keyword("null",  NullTok,  line, col)
+        Some(b) if is_num_start(b) => Ok({ tok: NumTok(@read_number()?), line, col })
         // [M-181-json-trailing-content]: unrecognized leading char → BadTok sentinel
         // (NOT a hard lex Err). A value-completing prefetch then SUCCEEDS, so trailing
         // garbage after a complete top-level value is classified `TrailingContent`
         // (Json.parse), while a BadTok reached mid-value/structure is turned into
         // `UnexpectedChar` by the parser's catch-all arms (taxonomy unchanged).
-        Some(c) => { @advance(); Ok({ tok: BadTok(c), line, col }) }
+        // [M-json-byte-peek]: настоящий codepoint (не Latin-1-фантом) через
+        // @char_at — @pos ещё не сдвинут (peek, не advance), позиция валидна.
+        Some(_) => {
+            ro bad_char = @char_at(@pos)
+            @advance()
+            Ok({ tok: BadTok(bad_char), line, col })
+        }
     }
 }
 
-// Plan 152.3a (D252): delegate to char ASCII-core methods (zero private dups).
-fn is_num_start(c char) -> bool => c == '-' || c.is_ascii_digit()
+// [M-json-byte-peek]: лексер теперь байт-based — сравнения напрямую по u8,
+// без char ASCII-core делегации (у u8 таких методов нет; char-методы
+// работают на char, не на u8 — Plan 152.3a делегация здесь больше не
+// применима).
+fn is_num_start(b u8) -> bool => b == B_MINUS || is_digit(b)
 
-fn is_digit(c char) -> bool => c.is_ascii_digit()
+fn is_digit(b u8) -> bool => b >= B_DIGIT_0 && b <= B_DIGIT_9
 
-fn is_hex_digit(c char) -> bool => c.is_ascii_hexdigit()
+fn is_hex_digit(b u8) -> bool =>
+    is_digit(b) || (b >= B_LOWER_A && b <= B_LOWER_F) || (b >= B_UPPER_A && b <= B_UPPER_F)
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWithPos, ParseJsonError] {
-    // `kw` — короткий ASCII-литерал ("true"/"false"/"null"); прямая for-in
-    // итерация вместо ретрактированного `chars().nth(i)` (D260-амендмент).
-    for expected in kw.chars() {
-        ro actual = @peek()
-        if Some(expected) != actual {
-            return Err(UnexpectedChar { @line, @col, found: actual ?? ' ' })
+    // `kw` — короткий ASCII-литерал ("true"/"false"/"null"); байтовая
+    // итерация (`kw.bytes()`) эквивалентна char-итерации для чистого ASCII
+    // и даёт `u8` напрямую — без char→u8 каста runtime-переменной (D54
+    // разрешает `as u8` только для CharLit, не для `char` из `kw.chars()`).
+    for expected in kw.bytes() {
+        match @peek() {
+            Some(b) if b == expected => { @advance() }
+            // Настоящий codepoint байта-расхождения (не Latin-1-фантом);
+            // @pos ещё на байте (peek, не advance).
+            Some(_) => return Err(UnexpectedChar { @line, @col, found: @char_at(@pos) })
+            // Реальный EOF — нет байта для диагностики; ' ' — placeholder
+            // (не выбор этой правки: found:char требует значение, а
+            // UnexpectedEof — отдельный вариант ошибки, вне текущего скоупа).
+            None => return Err(UnexpectedChar { @line, @col, found: ' ' })
         }
-        @advance()
     }
     Ok({ tok: t, line, col })
 }
@@ -351,17 +437,19 @@ fn Lexer mut @read_string() -> Result[str, ParseJsonError] {
 // Обработка escape sequences. После '\\' — следующий символ.
 fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
     match @advance() {
-        None       => Err(UnexpectedEof { @line, @col })
-        Some('"')  => Ok("\"")
-        Some('\\') => Ok("\\")
-        Some('/')  => Ok("/")
-        Some(chb) if (chb as int) == 0x62 => Ok(str.from_codepoint(0x08))
-        Some(chf) if (chf as int) == 0x66 => Ok(str.from_codepoint(0x0C))
-        Some('n')  => Ok("\n")
-        Some('r')  => Ok("\r")
-        Some('t')  => Ok("\t")
-        Some('u')  => @read_unicode_escape()
-        Some(c)    => Err(InvalidEscape { @line, @col, seq: "\\" + str.from(c) })
+        None                    => Err(UnexpectedEof { @line, @col })
+        Some(b) if b == B_QUOTE     => Ok("\"")
+        Some(b) if b == B_BACKSLASH => Ok("\\")
+        Some(b) if b == B_SLASH     => Ok("/")
+        Some(b) if b == B_LOWER_B   => Ok(str.from_codepoint(0x08))  // Баг 2: \b → backspace
+        Some(b) if b == B_LOWER_F   => Ok(str.from_codepoint(0x0C))  // Баг 2: \f → form feed
+        Some(b) if b == B_LOWER_N   => Ok("\n")
+        Some(b) if b == B_LOWER_R   => Ok("\r")
+        Some(b) if b == B_LOWER_T   => Ok("\t")
+        Some(b) if b == B_LOWER_U   => @read_unicode_escape()
+        // Неизвестный escape — настоящий codepoint (не Latin-1-фантом);
+        // @advance() уже сдвинул @pos на 1 байт, символ начинался на @pos-1.
+        Some(_) => Err(InvalidEscape { @line, @col, seq: "\\" + str.from(@char_at(@pos - 1)) })
     }
 }
 
@@ -374,7 +462,7 @@ fn Lexer mut @read_unicode_escape() -> Result[str, ParseJsonError] {
         // Ожидаем \u low-surrogate.
         ro next = @advance()
         ro next2 = @advance()
-        if next != Some('\\') || next2 != Some('u') {
+        if next != Some(B_BACKSLASH) || next2 != Some(B_LOWER_U) {
             return Err(InvalidUnicode { @line, @col, hex })
         }
         ro low_hex = @read_hex_quad()?
@@ -397,9 +485,12 @@ fn Lexer mut @read_hex_quad() -> Result[str, ParseJsonError] {
     for i in 0..4 {
         match @advance() {
             None => return Err(UnexpectedEof { @line, @col })
-            Some(c) if is_hex_digit(c) => { hex = hex + str.from(c) }
-            Some(c) => return Err(InvalidUnicode {
-                @line, @col, hex: hex + str.from(c)
+            // is_hex_digit(b) гарантирует ASCII (b < 0x80) — тотальный char.from.
+            Some(b) if is_hex_digit(b) => { hex = hex + str.from(char.from(b as int)!!) }
+            // Невалидный hex-digit байт — настоящий codepoint для диагностики
+            // (не Latin-1-фантом); @advance() уже сдвинул @pos, символ был на @pos-1.
+            Some(_) => return Err(InvalidUnicode {
+                @line, @col, hex: hex + str.from(@char_at(@pos - 1))
             })
         }
     }
@@ -434,12 +525,12 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     ro {pos: start, line: start_line, col: start_col, ..} = @
 
     // Знак
-    if @peek() == Some('-') { @advance() }
+    if @peek() == Some(B_MINUS) { @advance() }
 
     // Integer part: либо '0', либо [1-9][0-9]*
     match @peek() {
-        Some('0') => { @advance() }
-        Some(c) if c >= '1' && c <= '9' => {
+        Some(b) if b == B_DIGIT_0 => { @advance() }
+        Some(b) if b >= B_DIGIT_1 && b <= B_DIGIT_9 => {
             @advance()
             while is_digit_opt(@peek()) { @advance() }
         }
@@ -450,7 +541,7 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     }
 
     // Fraction: .[0-9]+
-    if @peek() == Some('.') {
+    if @peek() == Some(B_DOT) {
         @advance()
         if !is_digit_opt(@peek()) {
             return Err(InvalidNumber {
@@ -463,10 +554,10 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
 
     // Exponent: [eE][+-]?[0-9]+
     match @peek() {
-        Some('e') | Some('E') => {
+        Some(b) if b == B_LOWER_E || b == B_UPPER_E => {
             @advance()
             match @peek() {
-                Some('+') | Some('-') => { @advance() }
+                Some(b2) if b2 == B_PLUS || b2 == B_MINUS => { @advance() }
                 _ => ()
             }
             if !is_digit_opt(@peek()) {
@@ -489,8 +580,8 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     }
 }
 
-fn is_digit_opt(c Option[char]) -> bool =>
-    match c { Some(ch) => is_digit(ch), None => false }
+fn is_digit_opt(b Option[u8]) -> bool =>
+    match b { Some(x) => is_digit(x), None => false }
 
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -102,6 +102,18 @@ test "parse: ошибка — неизвестный токен" {
     })
 }
 
+// [M-json-byte-peek]: диагностика non-ASCII мусора несёт НАСТОЯЩИЙ символ,
+// не Latin-1-фантом байта (@peek()/@advance() честно -> Option[u8], но
+// BadTok(char)/UnexpectedChar{found} декодируют реальный codepoint на
+// границе конструирования ошибки — см. Lexer.@char_at в json.nv).
+test "parse: ошибка — non-ASCII мусор несёт настоящий символ" {
+    ro r = Json.parse("é")
+    assert(match r {
+        Err(ParseJsonError.UnexpectedChar { found, .. }) => found == 'é'
+        _                                                => false
+    })
+}
+
 test "parse: ошибка — незакрытая string" {
     ro r = Json.parse("\"unclosed")
     assert(match r {
