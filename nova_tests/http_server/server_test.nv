@@ -8,16 +8,23 @@ module nova_tests.http_server
 import std.http.server.{ServeMux, ServerRequest, ServerResponse, handler_fn, serve_once}
 
 // Build a small router used across the cases.
+// [M-184-mut-chain-return-position] (http-хвост, 2026-07-07): беглая цепочка
+// mut-сеттеров КАК return-значение fn (`ServeMux.new().get(..)...` глубины 4)
+// после 184 Ф.2 всё ещё мискомпилируется — C-инициализация
+// `NovaValue_ServeMux` из `NovaValue_ServeMux*` (fleeting `-> @` отдаёт
+// указатель, return-позиция ждёт значение). Statement-/arg-позиции depth 2-3
+// покрыты p184_defect_b; return-позиция — нет. Канонический mut-биндинг ниже.
 fn routes() -> ServeMux {
-    ServeMux.new()
-        .get("/health", handler_fn(|req| ServerResponse.text(200, "ok")))
-        .get("/users/{id}", handler_fn(|req| {
-            ServerResponse.text(200, "user " + req.param("id").unwrap_or("?"))
-        }))
-        .post("/echo", handler_fn(|req| {
-            ServerResponse.bytes(200, "application/octet-stream", req.body_bytes())
-        }))
-        .not_found(handler_fn(|req| ServerResponse.text(404, "nope")))
+    mut mux = ServeMux.new()
+    mux.get("/health", handler_fn(|req| ServerResponse.text(200, "ok")))
+    mux.get("/users/{id}", handler_fn(|req| {
+        ServerResponse.text(200, "user " + req.param("id").unwrap_or("?"))
+    }))
+    mux.post("/echo", handler_fn(|req| {
+        ServerResponse.bytes(200, "application/octet-stream", req.body_bytes())
+    }))
+    mux.not_found(handler_fn(|req| ServerResponse.text(404, "nope")))
+    mux
 }
 
 // Assert the response wire begins with a given status line and contains a substring.

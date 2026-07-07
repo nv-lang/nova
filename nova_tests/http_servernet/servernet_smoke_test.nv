@@ -33,9 +33,12 @@ import std.http.server.{ServeMux, ServerResponse, handler_fn}
 import std.http.servernet.{handle_connection}
 
 fn routes() -> ServeMux {
-    ServeMux.new()
-        .get("/health", handler_fn(|req| ServerResponse.text(200, "ok")))
-        .not_found(handler_fn(|req| ServerResponse.text(404, "nope")))
+    // [M-184-mut-chain-return-position]: цепочка mut-сеттеров в return-позиции
+    // мискомпилируется (см. nova_tests/http_server/server_test.nv) — mut-биндинг.
+    mut mux = ServeMux.new()
+    mux.get("/health", handler_fn(|req| ServerResponse.text(200, "ok")))
+    mux.not_found(handler_fn(|req| ServerResponse.text(404, "nope")))
+    mux
 }
 
 test "servernet: live GET /health round-trip over loopback" {

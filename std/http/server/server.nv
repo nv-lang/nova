@@ -195,32 +195,37 @@ export type ServeMux value { priv routes []Route, priv not_found Option[Handler]
 export fn ServeMux.new() -> ServeMux => { routes: Vec[Route].new(), not_found: None }
 
 /// Register `handler` for `method` + `pattern`.
+///
+/// [M-http-builders-second-pass] (http-хвост, 2026-07-07): копирующие
+/// строители ServeMux → мутирующие свойства (D117 AMEND-2, канон
+/// `mut @x(v) -> @`, auto self-return D409). Копирующая форма shallow-copy'ила
+/// heap-backed `routes` — разделяла буфер с до-вызовным экземпляром без
+/// реальной независимости. Беглые value-цепочки (`ServeMux.new().get(...)`)
+/// корректны после 184 Ф.2.
 #stable(since = "0.1")
-export fn ServeMux @handle(method str, pattern str, handler Handler) -> ServeMux {
-    mut rs = @routes
-    rs.push(Route { method: method.to_ascii_upper(), pattern, handler })
-    { routes: rs, @not_found }
+export fn ServeMux mut @handle(method str, pattern str, handler Handler) -> @ {
+    @routes.push(Route { method: method.to_ascii_upper(), pattern, handler })
 }
 
 /// Register a `GET` route.
 #stable(since = "0.1")
-export fn ServeMux @get(pattern str, handler Handler) -> ServeMux => @handle("GET", pattern, handler)
+export fn ServeMux mut @get(pattern str, handler Handler) -> @ { @handle("GET", pattern, handler) }
 /// Register a `POST` route.
 #stable(since = "0.1")
-export fn ServeMux @post(pattern str, handler Handler) -> ServeMux => @handle("POST", pattern, handler)
+export fn ServeMux mut @post(pattern str, handler Handler) -> @ { @handle("POST", pattern, handler) }
 /// Register a `PUT` route.
 #stable(since = "0.1")
-export fn ServeMux @put(pattern str, handler Handler) -> ServeMux => @handle("PUT", pattern, handler)
+export fn ServeMux mut @put(pattern str, handler Handler) -> @ { @handle("PUT", pattern, handler) }
 /// Register a `DELETE` route.
 #stable(since = "0.1")
-export fn ServeMux @delete(pattern str, handler Handler) -> ServeMux => @handle("DELETE", pattern, handler)
+export fn ServeMux mut @delete(pattern str, handler Handler) -> @ { @handle("DELETE", pattern, handler) }
 /// Register a `PATCH` route.
 #stable(since = "0.1")
-export fn ServeMux @patch(pattern str, handler Handler) -> ServeMux => @handle("PATCH", pattern, handler)
+export fn ServeMux mut @patch(pattern str, handler Handler) -> @ { @handle("PATCH", pattern, handler) }
 
 /// Set the 404 (no-route) handler.
 #stable(since = "0.1")
-export fn ServeMux @not_found(handler Handler) -> ServeMux => { @routes, not_found: Some(handler) }
+export fn ServeMux mut @not_found(handler Handler) -> @ { @not_found = Some(handler) }
 
 /// Route a request → response. 404 if no path matches; 405 + `Allow` if the path
 /// matches but the method does not; otherwise the matched handler (with params).

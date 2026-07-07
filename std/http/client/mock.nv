@@ -48,25 +48,28 @@ export fn MockResponse.raw(wire str) -> MockResponse =>
 export fn MockResponse.echo_request_header(name str) -> MockResponse =>
     { status: 200, headers: HeaderMap.new(), body: []u8.new(), raw: None, echo: Some(name) }
 
+// [M-http-builders-second-pass] (http-хвост, 2026-07-07): копирующие сеттеры
+// MockResponse → мутирующие свойства (D117 AMEND-2, `mut @x(v) -> @`, auto
+// self-return D409). Беглые цепочки (`MockResponse.new(200).header(..).body(..)`
+// в arg-позиции) корректны после 184 Ф.2.
+
 /// Add a response header (replace).
 #stable(since = "0.1")
-export fn MockResponse @header(name str, value str) -> MockResponse {
-    mut h = @headers
-    h.insert(name, value)!!
-    { @status, headers: h, @body, @raw, @echo }
+export fn MockResponse mut @header(name str, value str) -> @ {
+    @headers.insert(name, value)!!
 }
 
 /// Set the response body (bytes).
 #stable(since = "0.1")
-export fn MockResponse @body(b []u8) -> MockResponse =>
-    { @status, @headers, body: b, @raw, @echo }
+export fn MockResponse mut @body(b []u8) -> @ { @body = b }
 
 /// Set the response body from a string (UTF-8 bytes).
 #stable(since = "0.1")
-export fn MockResponse @text(s str) -> MockResponse =>
+export fn MockResponse mut @text(s str) -> @ {
     // `body` is an OWNED `[]u8` field (not `ro`) — `.clone()` materialises the
     // owned copy the field needs (D410: view+.clone() ≡ retired `to_bytes()`).
-    { @status, @headers, body: s.bytes().clone(), @raw, @echo }
+    @body = s.bytes().clone()
+}
 
 fn MockResponse @echo_target() -> Option[str] => @echo
 

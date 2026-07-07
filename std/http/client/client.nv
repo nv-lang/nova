@@ -199,62 +199,74 @@ export type RequestBuilder value {
     priv content_type Option[str]
 }
 
+// [M-http-builders-second-pass] (http-хвост, 2026-07-07): копирующие сеттеры
+// RequestBuilder → мутирующие свойства (D117 AMEND-2, `mut @x(v) -> @`, auto
+// self-return D409). Копирующая форма shallow-copy'ила heap-backed
+// `header_ops`/`query`/`body_bytes`. Беглые цепочки
+// (`client.get(u).header(..).send()`) корректны после 184 Ф.2.
+
 /// Set a header (replace all prior values of this name).
 #stable(since = "0.1")
-export fn RequestBuilder @header(name str, value str) -> RequestBuilder {
-    mut ops = @header_ops
-    ops.push(HeaderOp { replace: true, name, value })
-    { @client, @method, @url_input, header_ops: ops, @query, @body_bytes, @has_body, @content_type }
+export fn RequestBuilder mut @header(name str, value str) -> @ {
+    @header_ops.push(HeaderOp { replace: true, name, value })
 }
 
 /// Append a header (multi-value).
 #stable(since = "0.1")
-export fn RequestBuilder @append_header(name str, value str) -> RequestBuilder {
-    mut ops = @header_ops
-    ops.push(HeaderOp { replace: false, name, value })
-    { @client, @method, @url_input, header_ops: ops, @query, @body_bytes, @has_body, @content_type }
+export fn RequestBuilder mut @append_header(name str, value str) -> @ {
+    @header_ops.push(HeaderOp { replace: false, name, value })
 }
 
 /// Append query parameters (percent-encoded).
 #stable(since = "0.1")
-export fn RequestBuilder @query(params [](str, str)) -> RequestBuilder {
-    mut q = @query
-    for p in params { q.push(p) }
-    { @client, @method, @url_input, @header_ops, query: q, @body_bytes, @has_body, @content_type }
+export fn RequestBuilder mut @query(params [](str, str)) -> @ {
+    for p in params { @query.push(p) }
 }
 
 /// Set a raw byte body (replayable).
 #stable(since = "0.1")
-export fn RequestBuilder @body(bytes []u8) -> RequestBuilder =>
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: bytes, has_body: true, @content_type }
+export fn RequestBuilder mut @body(bytes []u8) -> @ {
+    @body_bytes = bytes
+    @has_body = true
+}
 
 /// Set a text body (text/plain; charset=utf-8).
 #stable(since = "0.1")
-export fn RequestBuilder @text(s str) -> RequestBuilder =>
+export fn RequestBuilder mut @text(s str) -> @ {
     // `body_bytes` is an OWNED `[]u8` field (not `ro`) — `.bytes()` alone is a
     // zero-copy `ro` view; `.clone()` materialises the owned copy the field needs
     // (D410: view+.clone() spells the retired `to_bytes()` twin explicitly).
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: s.bytes().clone(), has_body: true, content_type: Some("text/plain; charset=utf-8") }
+    @body_bytes = s.bytes().clone()
+    @has_body = true
+    @content_type = Some("text/plain; charset=utf-8")
+}
 
 /// Set a dynamic JSON body (application/json). Typed json[T] gates on Plan 180
 /// Ф.4 [M-178-typed-json-needs-180]; the dynamic `JsonValue` form lands now.
 #stable(since = "0.1")
-export fn RequestBuilder @json(value JsonValue) -> RequestBuilder =>
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: value.to_str().bytes().clone(), has_body: true, content_type: Some("application/json") }
+export fn RequestBuilder mut @json(value JsonValue) -> @ {
+    @body_bytes = value.to_str().bytes().clone()
+    @has_body = true
+    @content_type = Some("application/json")
+}
 
 /// Set a form body (application/x-www-form-urlencoded).
 #stable(since = "0.1")
-export fn RequestBuilder @form(fields [](str, str)) -> RequestBuilder =>
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: form_encode(fields).bytes().clone(), has_body: true, content_type: Some("application/x-www-form-urlencoded") }
+export fn RequestBuilder mut @form(fields [](str, str)) -> @ {
+    @body_bytes = form_encode(fields).bytes().clone()
+    @has_body = true
+    @content_type = Some("application/x-www-form-urlencoded")
+}
 
 /// `Authorization: Bearer <token>`.
 #stable(since = "0.1")
-export fn RequestBuilder @bearer_auth(token str) -> RequestBuilder =>
+export fn RequestBuilder mut @bearer_auth(token str) -> @ {
     @header("Authorization", "Bearer ${token}")
+}
 
 /// `Authorization: Basic base64(user:pass)`.
 #stable(since = "0.1")
-export fn RequestBuilder @basic_auth(user str, pass str) -> RequestBuilder {
+export fn RequestBuilder mut @basic_auth(user str, pass str) -> @ {
     ro raw = "${user}:${pass}"
     ro enc = Base64.encode(raw.bytes())
     @header("Authorization", "Basic ${enc}")
