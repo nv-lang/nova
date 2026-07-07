@@ -28529,57 +28529,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // NAMESPACE_OVERRIDES; gc.nv/fibers.nv/runtime.nv теперь
                     // embedded builtin sources, как raw_mem.nv/net/*.nv).
                 }
-                // 0. Built-in primitive static methods (D35).
-                //    `str.from(x)` — string conversion (D410 to_str() family).
-                //    If user defined `fn V @to_str() -> str` for V,
-                //    call that instead of the builtin.
-                if let ExprKind::Ident(prim) = &obj.kind {
-                    // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
-                    // from_bytes_unchecked_steal MIGRATED to Nova-body. The static
-                    // C interception was removed here so the call routes through the
-                    // normal static-method dispatch to Nova_str_static_from_bytes_*.
-                    if prim == "str" && method == "from" {
-                        if let Some(arg) = args.first() {
-                            let arg_ty = self.infer_expr_c_type(arg.expr());
-                            let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
-                            // Plan 11: try multi-overload registry first.
-                            let key = ("str".to_string(), "from".to_string());
-                            if let Some(overloads) = self.method_overloads.get(&key).cloned() {
-                                let static_overloads: Vec<MethodSig> = overloads.into_iter()
-                                    .filter(|s| !s.is_instance).collect();
-                                if !static_overloads.is_empty() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    let chosen = static_overloads.iter()
-                                        .find(|s| s.param_c_types.len() == 1
-                                            && s.param_c_types[0] == arg_ty);
-                                    if let Some(sig) = chosen {
-                                        return Ok(format!("{}({})", sig.c_name, v));
-                                    }
-                                }
-                            }
-                            // [D410] V has @to_str() -> str?
-                            let to_str_c_name = self.method_overloads
-                                .get(&(arg_type.clone(), "to_str".to_string()))
-                                .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
-                                .map(|s| s.c_name.clone());
-                            if let Some(c_name) = to_str_c_name {
-                                let v = self.emit_expr(arg.expr())?;
-                                return Ok(format!("{}({})", c_name, v));
-                            }
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(if arg_ty == "nova_str" {
-                                v
-                            } else if arg_ty == "nova_char" {
-                                // D73 auto-derive: str.from(c char) → Nova_str_static_from_char.
-                                // C function always available (string_builder.h); bypasses
-                                // method_overloads lookup so it works even with #no_prelude.
-                                format!("Nova_str_static_from_char({})", v)
-                            } else {
-                                format!("nova_int_to_str((nova_int)({}))", v)
-                            });
-                        }
-                    }
-                }
+                // [M-compiler-nv-porting-wave] (2026-07-07) item B3: dead code
+                // removed here. This was `if let ExprKind::Member{obj: Ident
+                // ("str"), name: "from"} = &func.kind` (Member-form) handling
+                // for `str.from(x)` — but the parser (parse_primary,
+                // `is_primitive_type && !starts_uppercase`) ALWAYS eagerly
+                // folds `<lowercase-primitive>.<ident>` into `ExprKind::Path`
+                // during PRIMARY expression parsing, before the general
+                // postfix `.` loop (which is the only producer of
+                // `ExprKind::Member`) ever runs — confirmed by tracing the
+                // parser and by inspecting generated C for `str.from(x)` with
+                // char/bool/f64/f32/int args (always routes through the
+                // Path-form dispatch below, never through this branch).
+                // `str.from(x)` is therefore ALWAYS `ExprKind::Path(["str",
+                // "from"])`, never reaches this `ExprKind::Member` arm — this
+                // whole block (D410 to_str() registry lookup, char branch via
+                // `Nova_str_static_from_char`, int/other fallback) was
+                // unreachable. The LIVE dispatch is the Path-form block
+                // further down (`parts[0]=="str" && parts[1]=="from"`,
+                // ~line 31384 equivalent — dedicated char/bool/f64/f32/int
+                // match via `nova_char_to_str`/`nova_bool_to_str`/
+                // `nova_f64_to_str`/`nova_f32_to_str`/`nova_int_to_str`) plus
+                // its own D410 `@to_str()` fallback for non-scalar args
+                // (~line 31467 equivalent) — both kept, both still needed.
+                //
+                // `Nova_str_static_from_char` vs `nova_char_to_str`: BOTH
+                // exist in nova_rt (string_builder.h / conv.h respectively,
+                // differ on invalid-codepoint behavior — replacement-char vs
+                // empty-string). `nova_char_to_str` is the LIVE path for
+                // direct `str.from(c)` (Path-form dispatch above).
+                // `Nova_str_static_from_char` is NOT fully dead — still used
+                // internally by `Nova_str_static_from_codepoint` (backs
+                // `str.from_codepoint`, dispatched via the GENERIC
+                // ExternalRegistry Path-form fallback, a DIFFERENT method
+                // name so unaffected by this str.from investigation). Neither
+                // C function removed — only this unreachable Rust call site.
                 // Plan 65 Ф.5: E5101 (`Time.after` removed) — checked at
                 // the top of `ExprKind::Member` arm (~line 11289). The
                 // duplicate gate previously here is redundant now; the
