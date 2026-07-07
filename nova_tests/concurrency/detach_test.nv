@@ -74,7 +74,11 @@ test "detach: captures multiple vars" {
 }
 
 test "detach: mutates captured record field" {
-    ro counter = make_counter2(10)
+    // Plan 182 Ф.3: `ro`-binding dominates over `mut field` markers (Plan 12x)
+    // — mutating a field through a `ro` binding is now a compile error
+    // (E_READONLY_FIELD). The test's own intent is to mutate, so it needs a
+    // `mut` binding.
+    mut counter = make_counter2(10)
     detach {
         counter.val = counter.val + 5
     }
