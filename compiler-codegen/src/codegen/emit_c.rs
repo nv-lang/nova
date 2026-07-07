@@ -13865,6 +13865,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 // Extension methods on array types: []T, []str, []int, etc.
+                // Plan 172.12 A7 (Vec-canon flip, owner decision 2026-07-08): the
+                // single-level `[]T` receiver was the LAST wide NovaArray_ emitter —
+                // it now mirrors `resolved_array_to_c`'s Vec-flip (D239 `[]T ≡
+                // Vec[T]`), mangling + registering the `Vec[elem]` instance instead
+                // of building a legacy `NovaArray_<elem>*` name. `uint` closes
+                // [M-uint-legacy-array-uint64-until-a4] here: it now maps to the
+                // canonical `nova_uint` (not the old `uint64_t` NovaArray slot),
+                // matching the scalar receiver arm above.
                 if let Some(elem_ty) = other.strip_prefix("[]") {
                     let c_elem_owned: String;
                     let c_elem: &str = match elem_ty {
@@ -13881,9 +13889,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         "u32"  => "uint32_t",
                         "u16"  => "uint16_t",
                         "u64"  => "uint64_t",
-                        // uint → uint64_t (runtime-backed NovaArray; nova_uint canon
-                        // is on the Vec-flip path). [M-uint-legacy-array-uint64-until-a4]
-                        "uint" => "uint64_t",
+                        // uint → nova_uint (Vec-flip canon; [M-uint-legacy-array-uint64-until-a4] CLOSED).
+                        "uint" => "nova_uint",
                         // Plan 101.1: T (generic typevar) — check current_type_subst
                         // для mono'd context (`fn[T] []T @method` body).
                         // Без этого fallback на nova_int → wrong type для
@@ -13898,13 +13905,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     };
-                    return format!("NovaArray_{}*", c_elem);
+                    let type_args_c = vec![c_elem.to_string()];
+                    let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
+                    if !self.emitted_generic_type_instances.contains(&mangled) {
+                        let mut wl = self.generic_type_worklist.borrow_mut();
+                        if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                            wl.push(("Vec".to_string(), Self::args_lift(&type_args_c), mangled.clone()));
+                        }
+                    }
+                    self.generic_type_instance_info
+                        .borrow_mut()
+                        .entry(mangled.clone())
+                        .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
+                    return format!("{}*", mangled);
                 }
                 // Plan 101 [M-fn-prefix-int-only-mono] fix: если other уже
                 // имеет форму полного NovaArray_<elem> (как при mono'd emit
                 // for fn[T] []T @method где rt передан в register_mono_method_instance),
                 // не префиксуем повторно "Nova_" — просто добавляем `*`.
-                if other.starts_with("NovaArray_") {
+                if other.starts_with("NovaArray_") || other.starts_with("Nova_Vec____") {
                     return format!("{}*", other);
                 }
                 // Plan 120 (D215): named tuple receiver — value type, no pointer.
@@ -27481,34 +27500,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // int/i64 / others — nova_int slot.
                             _                => "nova_int",
                         };
-                        // [M-record-elem-vec-bare-ctor-miscompile] fix (record-elem):
-                        // a RECORD / SUM / named-tuple element needs the REAL
-                        // `Nova_Vec____<elem>` mono. The legacy `nova_array_new_<suffix>`
-                        // lowering erases such an element to a `nova_int` pointer-slot
-                        // `NovaArray` (arr_suffix falls through to "nova_int"), which
-                        // (a) mis-types the binding against the checker's
-                        // `Nova_Vec____<elem>` (`NovaOpt_nova_int` vs
-                        // `NovaOpt_NovaValue_Rec` at `.get()` — loud CC-FAIL) and
-                        // (b) with a named literal in the SAME CU silently truncates the
-                        // value-record slot (heap corruption / OOM). Scalars stay on the
-                        // legacy path (`NovaArray_<prim>` is layout- AND slot-compatible
-                        // with `Nova_Vec____<prim>`); only composite elements route
-                        // through the shared Vec[T] static machinery below.
-                        let elem_needs_vec_mono = {
+                        // [M-record-elem-vec-bare-ctor-miscompile] fix (record-elem),
+                        // EXTENDED by Plan 172.12 A7 (Vec-canon flip, owner decision
+                        // 2026-07-08: NovaArray dies entirely): a RECORD / SUM /
+                        // named-tuple element needs the REAL `Nova_Vec____<elem>`
+                        // mono — the legacy `nova_array_new_<suffix>` lowering erases
+                        // such an element to a `nova_int` pointer-slot, mis-typing the
+                        // binding. A7 generalises this: EVERY concrete element
+                        // (primitive OR composite) now routes through the shared
+                        // Vec[T] static machinery below — `NovaArray_<prim>` is
+                        // retired for user `[]T.new()/.with_capacity()`. ONLY a
+                        // genuinely UNRESOLVED type-param element (erased-generic
+                        // mono'd body, `type_ref_to_c` fails to resolve `T`) stays on
+                        // the legacy `nova_array_new_nova_int` erasure-sentinel path —
+                        // that is the int64-slot boxing convention for an unbound
+                        // generic, an orthogonal mechanism untouched by A7.
+                        let elem_is_erased = {
                             let elem_tr = crate::ast::TypeRef::Named {
                                 path: vec![elem_t.clone()],
                                 generics: Vec::new(),
                                 span: obj.span,
                             };
-                            match self.type_ref_to_c(&elem_tr) {
-                                Ok(c) => !Self::is_primitive_array_elem_c(
-                                    c.trim_end_matches('*').trim()),
-                                Err(_) => false, // unresolved type-param → erased legacy
-                            }
+                            self.type_ref_to_c(&elem_tr).is_err()
                         };
                         let legacy_static =
                             matches!(method.as_str(), "new" | "with_capacity")
-                            && !elem_needs_vec_mono;
+                            && elem_is_erased;
                         if legacy_static {
                             match method.as_str() {
                                 "new" => {
