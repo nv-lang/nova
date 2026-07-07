@@ -30,7 +30,7 @@ const EN_NOTEMPTY      int = 39
 const EN_INVAL         int = 22
 const EN_NOSPC         int = 28
 
-// ─── MemFs — the in-memory tree + fd table + stat cache + error injection ──
+// ─── MemFs — the in-memory tree + fd table + scan iterator + error injection ──
 
 /// In-memory filesystem state backing `mock_fs`. Hand one to `mock_fs`, install
 /// it with `with Fs = mock_fs(fs)`, and (optionally) inspect it afterwards.
@@ -53,17 +53,12 @@ export type MemFs {
     mut fd_write []bool
     mut fd_live []bool
     mut next_fd int
-    // Last-stat cache (read by the stat_* accessor ops).
-    mut last_kind int
-    mut last_size int
-    mut last_mode int
-    mut last_mtime i64
-    // scandir iterator state.
+    // scandir iterator state ([M-fs-tls-mn-race]: instance fields the caller
+    // owns via `fs`, NOT a TLS/global cache — one open scan at a time per
+    // MemFs instance, same ceiling as before the redesign, just explicit).
     mut scan_names []str
     mut scan_kinds []int
     mut scan_pos int
-    // realpath cache (read by realpath_data).
-    mut last_realpath str
     // Error injection (§7 close-error / torn-write tests).
     mut inject_write_err bool
     mut inject_close_err bool
@@ -76,8 +71,7 @@ export type MemFs {
 export fn MemFs.new() -> MemFs => {
     paths: [], kinds: [], datas: [], modes: [], mtimes: [], alive: [],
     fds: [], fd_keys: [], fd_pos: [], fd_write: [], fd_live: [], next_fd: 3,
-    last_kind: 0, last_size: 0, last_mode: 0, last_mtime: 0,
-    scan_names: [], scan_kinds: [], scan_pos: 0, last_realpath: "",
+    scan_names: [], scan_kinds: [], scan_pos: 0,
     inject_write_err: false, inject_close_err: false, clock: 1,
 }
 
@@ -145,12 +139,14 @@ fn MemFs @fd_index(fd int) -> Option[int] {
     None
 }
 
-// Cache node i's stat fields for the stat_* accessors.
-fn MemFs mut @cache_stat(i int) -> () {
-    @last_kind = @kinds[i]
-    @last_size = @datas[i].len()
-    @last_mode = @modes[i]
-    @last_mtime = @mtimes[i]
+// Fill the caller's stat image for node `i` — [M-fs-tls-mn-race]: built
+// straight into the SAME real_fs-compatible image via fs_stat_build_into (no
+// syscall), so a mocked stat is byte-for-byte substitutable with a real one at
+// the accessor level (fs_stat_size(img)/... in fs.nv), never an ambient cache.
+fn MemFs @fill_stat_image(i int, img mut []u8) -> () {
+    unsafe {
+        fs_stat_build_into(img.ptr(), @datas[i].len(), @mtimes[i], @mtimes[i], @mtimes[i], @modes[i], @kinds[i])
+    }
 }
 
 // ─── Operations (return int codes: >= 0 ok, negative errno on failure) ──
@@ -287,19 +283,19 @@ fn MemFs mut @mem_seek(fd int, offset i64, whence int) -> i64 {
     }
 }
 
-fn MemFs mut @mem_fstat(fd int) -> int {
+fn MemFs mut @mem_fstat(fd int, img mut []u8) -> int {
     match @fd_index(fd) {
         None    => 0 - EN_INVAL
-        Some(i) => @stat_key(@fd_keys[i])
+        Some(i) => @stat_key(@fd_keys[i], img)
     }
 }
 
-fn MemFs mut @mem_stat(path []u8) -> int => @stat_key(mem_key(path))
+fn MemFs mut @mem_stat(path []u8, img mut []u8) -> int => @stat_key(mem_key(path), img)
 
-fn MemFs mut @stat_key(key str) -> int {
+fn MemFs mut @stat_key(key str, img mut []u8) -> int {
     match @find(key) {
         None    => 0 - EN_NOTFOUND
-        Some(i) => { @cache_stat(i); 0 }
+        Some(i) => { @fill_stat_image(i, img); 0 }
     }
 }
 
@@ -360,7 +356,11 @@ fn MemFs mut @mem_rename(src []u8, dst []u8) -> int {
     }
 }
 
-fn MemFs mut @mem_scandir(path []u8) -> int {
+// [M-fs-tls-mn-race]: the "handle" returned is just a freshly-minted id (the
+// fd counter) — MemFs supports one open scan at a time via its own instance
+// fields (unchanged ceiling from before the redesign, now explicit rather than
+// a hidden TLS/global cache). next/name/kind/close ignore the handle value.
+fn MemFs mut @mem_scandir_open(path []u8) -> int {
     ro dirkey = mem_key(path)
     mut names []str = []
     mut kinds []int = []
@@ -375,26 +375,32 @@ fn MemFs mut @mem_scandir(path []u8) -> int {
     @scan_names = names
     @scan_kinds = kinds
     @scan_pos = 0
-    @scan_names.len()
+    ro h = @next_fd
+    @next_fd = @next_fd + 1
+    h
 }
 
-fn MemFs mut @mem_scandir_next() -> int {
+fn MemFs mut @mem_scandir_next(h int) -> int {
     if @scan_pos < @scan_names.len() { @scan_pos = @scan_pos + 1; 1 } else { 0 }
 }
 
-fn MemFs @mem_scandir_name() -> str {
+fn MemFs @mem_scandir_name(h int) -> str {
     if @scan_pos >= 1 && @scan_pos <= @scan_names.len() { @scan_names[@scan_pos - 1] } else { "" }
 }
 
-fn MemFs @mem_scandir_kind() -> int {
+fn MemFs @mem_scandir_kind(h int) -> int {
     if @scan_pos >= 1 && @scan_pos <= @scan_kinds.len() { @scan_kinds[@scan_pos - 1] } else { KIND_OTHER }
 }
 
-fn MemFs mut @mem_realpath(path []u8) -> int {
+fn MemFs @mem_scandir_close(h int) -> () {}
+
+// realpath: the canonical (normalised) path is returned DIRECTLY alongside
+// the code — no cache field.
+fn MemFs @mem_realpath(path []u8) -> (int, str) {
     ro key = mem_key(path)
     match @find(key) {
-        None    => 0 - EN_NOTFOUND
-        Some(_) => { @last_realpath = key; 0 }
+        None    => (0 - EN_NOTFOUND, "")
+        Some(_) => (0, key)
     }
 }
 
@@ -464,15 +470,9 @@ export fn mock_fs(mut fs MemFs) -> Effect[Fs] {
         seek(fd int, offset i64, whence int)      => fs.mem_seek(fd, offset, whence)
         sync_all(fd int)                          => 0
         sync_data(fd int)                         => 0
-        stat(path []u8)                           => fs.mem_stat(path)
-        lstat(path []u8)                          => fs.mem_stat(path)
-        fstat(fd int)                             => fs.mem_fstat(fd)
-        stat_size()                               => fs.last_size
-        stat_mode()                               => fs.last_mode
-        stat_kind()                               => fs.last_kind
-        stat_mtime_ns()                           => fs.last_mtime
-        stat_atime_ns()                           => fs.last_mtime
-        stat_ctime_ns()                           => fs.last_mtime
+        stat(path []u8, img mut []u8)             => fs.mem_stat(path, img)
+        lstat(path []u8, img mut []u8)            => fs.mem_stat(path, img)
+        fstat(fd int, img mut []u8)               => fs.mem_fstat(fd, img)
         mkdir(path []u8, mode int)                => fs.mem_mkdir(path, mode)
         remove_file(path []u8)                    => fs.mem_remove_file(path)
         remove_dir(path []u8)                     => fs.mem_remove_dir(path)
@@ -481,11 +481,11 @@ export fn mock_fs(mut fs MemFs) -> Effect[Fs] {
         chmod(path []u8, mode int)                => fs.mem_chmod(path, mode)
         copy_file(src []u8, dst []u8)             => fs.mem_copy(src, dst)
         fsync_dir(path []u8)                      => 0
-        scandir(path []u8)                        => fs.mem_scandir(path)
-        scandir_next()                            => fs.mem_scandir_next()
-        scandir_name()                            => fs.mem_scandir_name()
-        scandir_kind()                            => fs.mem_scandir_kind()
+        scandir_open(path []u8)                   => fs.mem_scandir_open(path)
+        scandir_next(h int)                       => fs.mem_scandir_next(h)
+        scandir_name(h int)                       => fs.mem_scandir_name(h)
+        scandir_kind(h int)                       => fs.mem_scandir_kind(h)
+        scandir_close(h int)                      => fs.mem_scandir_close(h)
         realpath(path []u8)                       => fs.mem_realpath(path)
-        realpath_data()                           => fs.last_realpath
     }
 }
