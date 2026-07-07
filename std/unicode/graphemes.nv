@@ -1,9 +1,9 @@
-// Plan 152.4.3 (D253): grapheme-cluster segmentation (UAX #29) — `as_graphemes()`
+// Plan 152.4.3 (D253): grapheme-cluster segmentation (UAX #29) — `graphemes()`
 // lens. A grapheme = a user-perceived character (may be several codepoints): é
 // (e + combining), 🇺🇸 (two regional indicators), 👨‍👩‍👧 (ZWJ emoji) each = 1.
 //
 // Third string lens, symmetric with `bytes()` (bytes) / `chars()`
-// (codepoints): `as_graphemes()` (extended grapheme clusters). Decoding lens, so
+// (codepoints): `graphemes()` (extended grapheme clusters). Decoding lens, so
 // a STREAM (iterator), not a collection — like CharsIter (no positional cache;
 // `count()` is O(n)). Opt-in `std.unicode` peer; tables are lazy-static.
 //
@@ -149,7 +149,7 @@ export fn GraphemesIter mut @next() -> Option[str] {
     Some(@buf[start..@pos])
 }
 
-// `Iter` (self-iterator): `for g in s.as_graphemes()` routes through for-in (D58).
+// `Iter` (self-iterator): `for g in s.graphemes()` routes through for-in (D58).
 export fn GraphemesIter @iter() -> GraphemesIter => @
 
 // Number of grapheme clusters remaining. O(n). Non-mutating: iterates a value
@@ -172,6 +172,6 @@ export fn GraphemesIter @is_empty() -> bool => @pos >= @buf.byte_len()
 
 // ─── str lens ───
 // Lazy grapheme iterator (borrows `self`; O(1) to create). The grapheme layer of
-// the lens model: `s.as_graphemes().count()` for user-visible length, `for g in
-// s.as_graphemes()` to walk visible characters.
-export fn str @as_graphemes() -> GraphemesIter => GraphemesIter.new(@)
+// the lens model: `s.graphemes().count()` for user-visible length, `for g in
+// s.graphemes()` to walk visible characters.
+export fn str @graphemes() -> GraphemesIter => GraphemesIter.new(@)

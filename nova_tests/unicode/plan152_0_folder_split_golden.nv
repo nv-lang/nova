@@ -39,11 +39,21 @@ test "parse submodule: parse_int / ParseIntError path" {
     assert("xyz".parse_int().ok() == None)
 }
 
-test "chars submodule: chars().nth (replaces retired char_at/get(int))" {
-    // D249/D250: positional codepoint access is the codepoint lens, not str.get
-    // (which is now get(Range)->Option[str]). Retired char_at/get(int)->char.
-    assert("abc".chars().nth(0) == Some('a'))
-    assert("abc".chars().nth(9) == None)
+test "chars submodule: позиционный доступ через next()-drain (nth ретрактирован)" {
+    // D249/D250 + D260-амендмент: retired char_at/get(int) → codepoint-линза;
+    // сам @nth тоже ретрактирован (2026-07-07) — позиционный доступ = целевая
+    // итерация (for-in/next-drain), не скрытый O(n) random-access.
+    mut g0 = "abc".chars()
+    assert(g0.next() == Some('a'))
+    mut g9 = "abc".chars()
+    mut g9_i = 0
+    mut g9_last Option[char] = None
+    while g9_i <= 9 {
+        g9_last = g9.next()
+        if g9_last == None { break }
+        g9_i += 1
+    }
+    assert(g9_last == None)
 }
 
 test "A0.6: StringBuilder (Vec[u8] wrapper) == str.concat" {

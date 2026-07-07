@@ -1,5 +1,7 @@
 // Plan 152.1 Ф.3 (D250): CharsIter — codepoint decoding lens. chars() yields a
-// stream (Next[char]+Iter), NOT a collection: count()/nth() O(n), no Index[int].
+// stream (Next[char]+Iter), NOT a collection: count() O(n), no Index[int];
+// @nth ретрактирован (D260-амендмент 2026-07-07) — позиционный доступ = целевая
+// итерация (for-in + счётчик / next()-drain).
 // for c in s decodes codepoints (D58 amend, str @iter() => @chars()).
 module nova_tests.unicode
 
@@ -15,14 +17,26 @@ test "chars().is_empty()" {
     assert("".chars().is_empty() == true)
 }
 
-test "chars().nth(i): i-th codepoint" {
+test "позиционный codepoint через enumerate-стиль (nth ретрактирован)" {
     ro s = "héllo"
-    assert(s.chars().nth(0) == Some('h'))
-    assert(s.chars().nth(1) == Some('é'))
-    assert(s.chars().nth(2) == Some('l'))
-    assert(s.chars().nth(4) == Some('o'))
-    assert(s.chars().nth(5) == None)       // out of range
-    assert(s.chars().nth(-1) == None)      // negative
+    // Собираем позиции целевой итерацией — эквивалент бывших nth(0..4).
+    mut idx = 0
+    mut c0 = ' '
+    mut c1 = ' '
+    mut c2 = ' '
+    mut c4 = ' '
+    for c in s.chars() {
+        if idx == 0 { c0 = c }
+        if idx == 1 { c1 = c }
+        if idx == 2 { c2 = c }
+        if idx == 4 { c4 = c }
+        idx += 1
+    }
+    assert(c0 == 'h')
+    assert(c1 == 'é')
+    assert(c2 == 'l')
+    assert(c4 == 'o')
+    assert(idx == 5)          // всего 5 codepoints — «nth(5) == None»
 }
 
 test "for c in s decodes codepoints (str @iter => as_chars)" {
@@ -59,5 +73,7 @@ test "4-byte codepoint (emoji)" {
     ro s = "a😀b"            // a(1) + 😀(4) + b(1) = 6 bytes, 3 codepoints
     assert(s.byte_len() == 6)
     assert(s.chars().count() == 3)
-    assert(s.chars().nth(1) == Some('😀'))
+    mut it = s.chars()
+    ro _ = it.next()          // пропустить 'a' (бывший nth(1))
+    assert(it.next() == Some('😀'))
 }

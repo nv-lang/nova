@@ -10973,14 +10973,14 @@ ScopeOutcome)`** — вместе (после 1). ⚠ `CleanupTimeoutError` (err
 
 | Форма | Смысл | Примеры |
 |---|---|---|
-| голое существительное | O(1) вид/линза: заём, zero-copy, лениво | `bytes()`, `chars()`, `words()`, `sentences()`, `slice()`, `ptr()` |
+| голое существительное | O(1) вид/линза: заём, zero-copy, лениво | `bytes()`, `chars()`, `graphemes()`, `words()`, `sentences()`, `slice()`, `ptr()` |
 | `.clone()` / `.collect()` на месте вызова | явная копия/материализация вида | `s.bytes().clone()`, `s.chars().collect()` |
 | `to_*` | **трансформация** в новое владеющее значение — операция, у которой вида не существует в принципе | `to_upper()`, `to_lower()`, `to_str()`, `to_ascii_upper()` |
 | `into_*` | потребляющий финализатор (ось владения, без изменений) | `into_str()`, `into_raw()` |
 
 **Удаляются близнецы-копии** (их смысл — `вид + clone`): `to_bytes` (≡ `bytes().clone()`),
 `to_chars` (≡ `chars().collect()`). **Переименовываются виды**: `as_bytes`→`bytes`,
-`as_chars`→`chars`, `as_words`→`words`, `as_sentences`→`sentences`, `as_slice`→`slice`
+`as_chars`→`chars`, `as_graphemes`→`graphemes`, `as_words`→`words`, `as_sentences`→`sentences`, `as_slice`→`slice`
 (вкл. recv-mut перегрузку `mut @slice()`, D262-амендмент), `as_ptr`→`ptr` (ложится в канон
 методов-свойств D117: `ptr` — читатель поля). `to_upper`/`to_str`-семейство и `into_*` — без
 изменений.
