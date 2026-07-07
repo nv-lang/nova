@@ -2,16 +2,9 @@
 // Plan 178 Ф.1 — URL parse/serialize + СТРОГИЙ host/SSRF-валидатор.
 // Err-Result-проверки = позитивные test-блоки с assert на Err (test-conventions §7).
 //
-// АНКОР (Plan 182 Ф.2, 2026-07-07): НЕ мигрирован в std/http — см. якорь в
-// nova_tests/http/body_test.nv (тот же [P67-LEGACY] `Ident \`msg\` not in
-// var_types`, emit_c.rs:43828 — reproduces even with ZERO HttpError usage in
-// this specific file; confirmed the trigger is "any test{} present in
-// module std.http", not this file's content). Разморозить после фикса
-// компилятора.
-
-module nova_tests.http
-
-import std.http.{Url}
+// Migrated from nova_tests/http/url_test.nv (Plan 182 Ф.2, 2026-07-07) after the
+// P67-LEGACY `module std.http` test-block blocker was fixed (see body_test.nv header).
+module std.http
 
 test "url parse: full round-trip (userinfo/port/query/fragment)" {
     ro s = "https://alice:s3cret@api.example.com:8443/v1/users?id=42&x=y#sec"

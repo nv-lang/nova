@@ -1,20 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 178 Ф.1 — Body must-consume (positive discharge) + Request/Response + HttpError.
 //
-// АНКОР (Plan 182 Ф.2, 2026-07-07): НЕ мигрирован в std/http — как
-// `module std.http` (folder-shared CU) реально ЛЮБОЙ `test{}`-блок в этом
-// файле (вкл. пустой no-op) валит компилятор: [P67-LEGACY] `Ident \`msg\`
-// not in var_types` (emit_c.rs:43828), т.к. появление теста в std.http
-// переводит модуль из library/import-режима (DCE не эмитит недостижимое) в
-// executable-режим — и латентный баг в конструкторах HttpError (Protocol(msg)
-// и, по-видимому, любой message-payload ErrorKind variant) становится
-// достижим. Минимальный репро: `module std.http` + `test "x" {
-// HttpError.protocol_error("x") }`. В `module nova_tests.http`
-// (import-режим) тот же код зелёный. Разморозить после фикса компилятора.
-
-module nova_tests.http
-
-import std.http.{Body, BodyReader, Request, Response, Method, StatusCode, Url, HeaderMap, HttpError, ErrorKind}
+// Migrated from nova_tests/http/body_test.nv (Plan 182 Ф.2, 2026-07-07) after the
+// P67-LEGACY blocker was fixed: a `test{}` in `module std.http` used to crash the
+// compiler with `[P67-LEGACY] Ident 'msg' not in var_types` — the executable-mode
+// switch made a cross-module ErrorKind name-collision (std.http vs encoding.compress)
+// reachable, and the name-keyed prelude-shadow type-skip
+// (`should_skip_type`, emit_c.rs) dropped compress's ErrorKind sum-schema. Fixed by
+// exempting `colliding_type_names` from the shadow-skip (both distinct types now emit).
+module std.http
 
 test "body: from_bytes/from_str discharge via bytes/text" {
     consume b1 = Body.from_bytes("hello".bytes())

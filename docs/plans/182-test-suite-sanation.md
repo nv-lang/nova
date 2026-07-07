@@ -118,6 +118,52 @@ panic в `emit_match`. Библиотечный (import) режим не три�
 → **Тесты КОРРЕКТНЫ (гонят реальные баги) — НЕ удалять; чинить компилятор.** До фикса — крашеры
 исключить из дефолт-регресса: они роняют ВЕСЬ прогон и маскируют статус остальных 240 каталогов.
 
+#### 3.3-РЕЗОЛЮЦИЯ (Plan 182 CRASH-трек, 2026-07-07, ветка `crashers-182`)
+
+Прогон 17-ти на СВЕЖЕМ бинаре (после мерджей 176-184): **8 из 17 уже НЕ крашат** (аудит был
+на стейл-бинаре) — `plan48_mpm`/`plan65`/`plan154_1`/`plan34`/`plan56`/`plan83_6`/`plan83_10`/
+`plan99` дают PASS либо честно-RED (assert/neg-drift), НЕ P67 (раннер не рушат). Оставшиеся 9 —
+кластеризованы по корню, 4 корня закрыты, 3 задокументированы:
+
+- **[ЗАКРЫТ] cross-module ErrorKind-коллизия (http-блокер + семейство).** Корень НЕ в
+  sum_schema_registry, а в `should_skip_type` (emit_c.rs, `emit_module` §D29-shadow): name-keyed
+  skip дропал НЕ-entry-модульный `ErrorKind` (компресс), т.к. simple-name совпадает с http-овским
+  → его sum-схема НЕ регистрировалась → `Ident 'msg' not in var_types`. Fix: исключить
+  `colliding_type_names` из shadow-skip (коллизирующие типы уже квалифицированы в РАЗНЫЕ C-базы
+  `Nova_std_http_ErrorKind`/`Nova_encoding_compress_ErrorKind` — emit обоих redefinition-safe).
+  C-доказательство: `variant_sum_candidates(InvalidData)=[]`, `Other=[Method, std_http_ErrorKind]`
+  (компресс отсутствовал). Тесты `body/model/url`-парковки перенесены в `std/http/*_test.nv`;
+  `d358` слит в `model_test` (subset). Коммит `b3d49c3a9`.
+- **[ЗАКРЫТ] first-class-fn-value** (`plan143`/`plan143_2`/`plan114`): `ro g = leaf_double` —
+  Ident на free-fn в value-position. Emit уже лоуэрит через `emit_free_fn_value`→`void*`, а
+  infer-арм не имел зеркала → ICE. Fix: `user_fn_sigs.contains(name) → "void*"`. Коммит `4bee03689`.
+- **[ЗАКРЫТ] module-alias member-call** (`plan70_1`): `import … as h` + `h.add_one(41)` →
+  `infer(Ident("h"))` ICE. Fix: `imported_modules.contains(name) → ""` (namespace-sentinel,
+  last-resort) → method-call путь резолвит через `fn_ret_<method>`. Коммит `6adae28c1`.
+- **[ОСТАЁТСЯ, корень найден] method-call return unknown** (`map_literals` `.insert_new`,
+  `plan60` `.capacity`, `plan57` `bench.opaque`): чекер НЕ кладёт `resolved_types[expr]` для этих
+  конкретных методов (generic-stdlib insert_new/capacity; bench-intrinsic opaque на namespace-
+  ресивере obj_ty=""). Канал 43701 (resolved_types) промахивается. Fix — аннотация чекером
+  return-типа этих форм (per-method registry). [M-182-crash-method-ret-unknown].
+- **[ОСТАЁТСЯ] Path-call return unknown** (`plan83_12` `bind`): `Path`-форма вызова без
+  `fn_ret`/registry-записи. [M-182-crash-pathcall-ret-unknown], emit_c.rs:43986.
+- **[ОСТАЁТСЯ, корень найден] nested-generic collect** (`plan153_4` `chunks_windows`):
+  `v.chunks(2).collect()` даёт `[][]int`, но return-инференс `BoxIter[Vec[T]].collect()`
+  эрейзится в `nova_int` → `cs[0]` Index на nova_int → panic. Корень — mono-return nested-generic
+  collect, НЕ Index-сайт. [M-182-crash-nested-generic-collect-erase], emit_c.rs:41498.
+
+Доп-уловы из задания (тот же класс): `examples/net` — теперь `.close` return unknown,
+obj_ty=`nova_int` (ресивер `lst` эрейзнут в nova_int) → тот же [M-182-crash-method-ret-unknown]
+(erased-receiver ветвь). `std/time/timer_metrics_test` — **CC-FAIL** (не P67-краш, честный RED):
+`NovaValue_Timestamp` инициализируется `int` (value-record init mismatch, §3.2) —
+[M-182-crash-value-record-init-int]. `[M-plan62-hashable-flap-runtime]` — недетерминированный
+RUN-FAIL (не воспроизведён в этом заходе; рантайм/GC-гонка кодогена hashable, оставлен как есть).
+
+Гейты фиксов: сборка обоих крейтов зелёная; conformance `--full` **66/0** (дельта 0); prelude-
+shadow (`plan72/p3a_record_shadow_range_pos`, `plan62/range_shadow_warning`, `plan138_2/t16`,
+`plan107/allow_shadow_attr`) зелёные — collision-exempt не ломает D29-shadow; broad-sample
+(closures/sums/modules/generics) — 0 новых крашей.
+
 ### 3.4 SKIP (не RED) — гейт окружения
 z3-gated contracts-тесты (`NOVA_SMT_BACKEND=z3`) — 13-15 SKIP без z3. Легитимно.
 

@@ -4862,8 +4862,22 @@ impl CEmitter {
             .map(|(n, _)| n.clone()).collect();
         // Helper: is this Type item the merged (non-user) duplicate of a
         // name the user has also declared? Skip if so.
+        // [M-http-module-test-block-p67] / [M-sync-crossmodule-samename-type-collision]
+        // (D348): a cross-module same-SIMPLE-name COLLISION is NOT a prelude-shadow
+        // duplicate. `http.ErrorKind` and `encoding.compress.ErrorKind` are two
+        // DISTINCT types, qualified to distinct C bases (`Nova_std_http_ErrorKind`
+        // vs `Nova_encoding_compress_ErrorKind`) by def/ref_type_base — so emitting
+        // BOTH carries no C-redefinition risk, and BOTH must be emitted+registered
+        // (their schemas key by the qualified base). The name-keyed shadow-skip
+        // below wrongly dropped the non-entry-module one, so its sum-schema never
+        // registered → a `match` on a compress-only variant (`InvalidData(msg)`)
+        // found no binding → `[P67-LEGACY] Ident 'msg' not in var_types`. Exempt
+        // colliding names: the skip stays exact for genuine shadows (a re-export /
+        // same-C-base duplicate is NOT in `colliding_type_names`).
+        let colliding_type_names_snapshot = self.colliding_type_names.clone();
         let should_skip_type = |t: &TypeDecl| -> bool {
             if !user_type_names.contains(&t.name) { return false; }
+            if colliding_type_names_snapshot.contains(&t.name) { return false; }
             // User declared this name. If THIS span belongs to user — keep.
             // Otherwise (merged from import) — skip.
             !user_type_spans.contains(&(t.name.clone(), t.span))
@@ -44044,6 +44058,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return t.clone();
                         }
                     }
+                    // Free-function-as-first-class-value (`ro g = leaf_double`,
+                    // `run_op(triple, x)`): a bare Ident naming a top-level user fn
+                    // used in value position. The EMIT side lowers this via
+                    // `emit_free_fn_value` (thunk + closure literal, `(void*)clos`)
+                    // whenever the fn's signature is in `user_fn_sigs`; MIRROR that
+                    // here so the inference half agrees on the erased closure C type
+                    // `void*`. Without this the checker leaves no `resolved_types`
+                    // annotation for the value-position fn ref → the arm ICE'd with
+                    // `[P67-LEGACY] Ident 'leaf_double' not in var_types`. We are past
+                    // the `var_types.get(name)` (local-var) early-return above, so
+                    // `name` is not a local binding here.
+                    if self.user_fn_sigs.contains_key(name) {
+                        return "void*".into();
+                    }
                     // Pattern-bound or checker-annotated ident not yet in var_types
                     // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is
                     // computed before pattern_bind_typed runs). Fall back to the
@@ -44056,6 +44084,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
+                    }
+                    // Module-namespace / import-alias prefix (`import … as h`;
+                    // `h.add_one(41)` parses as Member{Ident("h"), "add_one"}). A
+                    // module alias is a NAMESPACE, not a value — inferring its "type"
+                    // is meaningless. Return the empty sentinel (same as other
+                    // namespace prefixes, e.g. `bench`): the method-call inference
+                    // path treats an empty receiver type as a module-qualified free
+                    // fn and resolves the result via `fn_ret_<method>`. Placed LAST so
+                    // any real local/type/variant of the same simple name wins first.
+                    if self.imported_modules.contains(name.as_str()) {
+                        return String::new();
                     }
                     panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
             };
@@ -45044,6 +45083,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return t.clone();
                         }
                     }
+                    // Free-function-as-first-class-value (`ro g = leaf_double`,
+                    // `run_op(triple, x)`): a bare Ident naming a top-level user fn
+                    // used in value position. The EMIT side lowers this via
+                    // `emit_free_fn_value` (thunk + closure literal, `(void*)clos`)
+                    // whenever the fn's signature is in `user_fn_sigs`; MIRROR that
+                    // here so the inference half agrees on the erased closure C type
+                    // `void*`. Without this the checker leaves no `resolved_types`
+                    // annotation for the value-position fn ref → the arm ICE'd with
+                    // `[P67-LEGACY] Ident 'leaf_double' not in var_types`. We are past
+                    // the `var_types.get(name)` (local-var) early-return above, so
+                    // `name` is not a local binding here.
+                    if self.user_fn_sigs.contains_key(name) {
+                        return "void*".into();
+                    }
                     // Pattern-bound or checker-annotated ident not yet in var_types
                     // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is
                     // computed before pattern_bind_typed runs). Fall back to the
@@ -45056,6 +45109,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
+                    }
+                    // Module-namespace / import-alias prefix (`import … as h`;
+                    // `h.add_one(41)` parses as Member{Ident("h"), "add_one"}). A
+                    // module alias is a NAMESPACE, not a value — inferring its "type"
+                    // is meaningless. Return the empty sentinel (same as other
+                    // namespace prefixes, e.g. `bench`): the method-call inference
+                    // path treats an empty receiver type as a module-qualified free
+                    // fn and resolves the result via `fn_ret_<method>`. Placed LAST so
+                    // any real local/type/variant of the same simple name wins first.
+                    if self.imported_modules.contains(name.as_str()) {
+                        return String::new();
                     }
                     panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
                 }
