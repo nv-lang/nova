@@ -137,7 +137,7 @@ export fn ZlibReader mut @read(max_emit int) -> Result[[]u8, CompressError] {
     // Сначала отдаём остаток, слитый в finish()
     if @tpos < @tail.len() {
         ro avail = @tail.len() - @tpos
-        ro n = if avail < me { avail } else { me }
+        ro n = avail.min(me)
         if n <= 0 { return Ok([]u8.new()) }
         mut chunk []u8 = []u8.new()
         chunk.cap(n)

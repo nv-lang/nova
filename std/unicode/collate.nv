@@ -401,7 +401,7 @@ export fn collate_sort_key(s str) -> []u32 {
 fn compare_keys(a []u32, b []u32) -> int {
     ro na = a.len()
     ro nb = b.len()
-    ro n = if na < nb { na } else { nb }
+    ro n = na.min(nb)
     mut i = 0
     mut result = 0
     while i < n && result == 0 {

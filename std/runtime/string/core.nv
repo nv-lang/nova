@@ -303,7 +303,7 @@ export fn str.from_bytes(ro bytes []u8) -> Result[str, Utf8Error] {
 // `[M-139.1-operator-lowered-methods]`.
 export fn str @compare(other str) -> int {
     ro (an, bn) = (@byte_len(), other.byte_len())
-    ro min = if an < bn { an } else { bn }
+    ro min = an.min(bn)
     // Plan 152.5a D-R4: RawMem.compare (= memcmp) over the shared prefix instead
     // of a byte-loop — perf-parity with the retired C nova_str_compare, so the
     // synthesized `<`/`<=`/`>`/`>=` operators (now Nova-routed) carry no penalty.

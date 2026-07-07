@@ -222,7 +222,7 @@ fn MemFs @read_common(key str, buf mut []u8, pos int) -> int {
             ro data = @datas[ni]
             ro rem = data.len() - pos
             if rem <= 0 { return 0 }
-            ro n = if cap < rem { cap } else { rem }
+            ro n = cap.min(rem)
             mut j = 0
             while j < n { buf[j] = data[pos + j]; j += 1 }
             n

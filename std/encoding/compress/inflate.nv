@@ -509,7 +509,7 @@ fn Inflater mut @step_stored() -> Result[bool, CompressError] {
     if avail <= 0 {
         return Ok(false)
     }
-    ro ncopy = if @stored_left < avail { @stored_left } else { avail }
+    ro ncopy = @stored_left.min(avail)
     for k in 0..ncopy {
         @emit(@input[bytepos + k])?
     }

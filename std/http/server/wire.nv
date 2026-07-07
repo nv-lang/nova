@@ -51,7 +51,7 @@ fn parse_request(raw []u8) -> Result[ServerRequest, HttpError] {
     ro body = match hm.content_length()? {
         Some(len) => {
             ro avail = n - body_start
-            ro take = if len < avail { len } else { avail }
+            ro take = len.min(avail)
             slice(raw, body_start, body_start + take)
         }
         None => []u8.new()
