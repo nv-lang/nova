@@ -15841,6 +15841,9 @@ impl<'a> BoundCtx<'a> {
         use crate::argbind::ArgBinding;
         // Collect the places of `mut ref` args for the overlap relation.
         let mut mut_ref_places: Vec<(RefPlace, crate::diag::Span)> = Vec::new();
+        // Plan 184 (Р12): places of NON-mut value-typed args в этом же вызове —
+        // для расширенной эксклюзивности (mut × любой параметр того же места).
+        let mut other_value_places: Vec<(RefPlace, crate::diag::Span)> = Vec::new();
         for (pi, param) in params.iter().enumerate() {
             let Some(binding) = bindings.get(pi) else { continue; };
             // The arg expr bound to this param (single-arg bindings only;
@@ -15866,6 +15869,17 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
                 continue;
+            }
+            // Plan 184 (Р12): НЕ-mut value-типизированный параметр — ro-авто-
+            // представление (копия ≤~16Б / скрытая ссылка) НАБЛЮДАЕМО при
+            // алиасинге с mut-параметром того же места (`f(a, a)` при
+            // `f(x Big, mut y Big)`: чтение x после записи y даёт разное в
+            // зависимости от представления). Собираем место для проверки
+            // пересечения с mut-местами ниже. (consume — move, не in-out.)
+            if !param.consume && self.param_ty_is_inout_value(&param.ty) {
+                if let Some(place) = RefPlace::of(arg_expr) {
+                    other_value_places.push((place, arg_expr.span));
+                }
             }
             let is_ref_marked = matches!(arg_expr.kind, ExprKind::RefArg(_));
             match param.ref_mode {
@@ -15931,7 +15945,7 @@ impl<'a> BoundCtx<'a> {
             for j in (i + 1)..mut_ref_places.len() {
                 if mut_ref_places[i].0.overlaps(&mut_ref_places[j].0) {
                     errors.push(Diagnostic::new(
-                        "[E_REF_ALIAS_OVERLAP] два `mut ref`-аргумента одного вызова \
+                        "[E_REF_ALIAS_OVERLAP] два in-out `mut`-аргумента одного вызова \
                          ссылаются на пересекающиеся места (общий root, один путь — \
                          префикс другого; D326 R9). Одновременная in-out мутация \
                          перекрывающихся мест запрещена (анти-footgun). Разведи их на \
@@ -15940,6 +15954,28 @@ impl<'a> BoundCtx<'a> {
                          проверка, НЕ Rust/Swift-гарантия эксклюзивности."
                             .to_string(),
                         mut_ref_places[j].1,
+                    ));
+                }
+            }
+        }
+        // Plan 184 (Р12): расширенная эксклюзивность — mut-место × ЛЮБОЙ другой
+        // value-параметр того же места (не только mut×mut). ro-авто-представление
+        // делает чтение НЕ-mut параметра наблюдаемо зависящим от того, копия это
+        // или скрытая ссылка, когда параллельный mut пишет в то же место.
+        for (mp, _mspan) in &mut_ref_places {
+            for (op, ospan) in &other_value_places {
+                if mp.overlaps(op) {
+                    errors.push(Diagnostic::new(
+                        "[E_REF_ALIAS_OVERLAP] in-out `mut`-аргумент и другой \
+                         value-аргумент того же вызова ссылаются на пересекающиеся \
+                         места (Plan 184 Р12, расширение D326 R9). ro-авто-\
+                         представление value-параметра (копия vs скрытая ссылка) \
+                         наблюдаемо при параллельной mut-записи в то же место — \
+                         результат зависел бы от выбора представления. Передай \
+                         непересекающиеся места либо явную локальную копию \
+                         (`ro c = a`) в неизменяемый параметр."
+                            .to_string(),
+                        *ospan,
                     ));
                 }
             }

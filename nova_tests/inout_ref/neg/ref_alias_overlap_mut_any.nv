@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_REF_ALIAS_OVERLAP
+//
+// Plan 184 (Р12): расширение узкой эксклюзивности с mut×mut на mut×ЛЮБОЙ
+// value-параметр того же места. `combine(a, a)` при `(x Big, mut y Big)`:
+// ro-авто-представление x (копия vs скрытая ссылка) наблюдаемо при mut-записи
+// в y того же места → результат зависел бы от представления → реджект.
+module neg.ref_alias_overlap_mut_any
+
+type Big value { a int, b int, c int }
+fn Big.new(x int) -> Big => { a: x, b: x, c: x }
+
+fn combine(x Big, mut y Big) -> int => x.a
+
+test "same place to mut and value param overlaps (Р12)" {
+    mut a = Big.new(1)
+    ro _ = combine(a, a)
+    assert(true)
+}
