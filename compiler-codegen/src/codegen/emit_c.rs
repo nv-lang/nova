@@ -41512,6 +41512,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
+                    {
+                        // TEMP-DEBUG (ice-p67-http): дампим контекст перед паникой.
+                        eprintln!("[P67-DBG] Index: expr.id={:?} expr.span={:?}", expr.id, expr.span);
+                        eprintln!("[P67-DBG] obj kind={} obj.id={:?} obj.span={:?}", match &obj.kind {
+                            ExprKind::Ident(n) => format!("Ident({})", n),
+                            ExprKind::Member { name, .. } => format!("Member(.{})", name),
+                            ExprKind::Call { .. } => "Call".to_string(),
+                            other => format!("{:?}", std::mem::discriminant(other)),
+                        }, obj.id, obj.span);
+                        if let ExprKind::Ident(n) = &obj.kind {
+                            eprintln!("[P67-DBG] var_types[{}]={:?} array_element_types[{}]={:?}", n, self.var_types.get(n.as_str()), n, self.array_element_types.get(n.as_str()));
+                            eprintln!("[P67-DBG] obj.id set={} resolved_types[obj]={:?}", obj.id.is_set(), self.resolved_types.get(&obj.id));
+                        }
+                        eprintln!("[P67-DBG] resolved_types[index-expr]={:?}", self.resolved_types.get(&expr.id));
+                        eprintln!("[P67-DBG] current_receiver_type={:?}", self.current_receiver_type);
+                    }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
         }
         // Channel 6n (2026-07-04): RecordLit — ДОСЛОВНЫЙ подъём legacy-арма.
@@ -45285,6 +45301,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return pointee.to_string();
                             }
                         }
+                    }
+                    {
+                        // TEMP-DEBUG (ice-p67-http): дампим контекст перед паникой.
+                        eprintln!("[P67-DBG] Index: expr.id={:?} expr.span={:?}", expr.id, expr.span);
+                        eprintln!("[P67-DBG] obj kind={} obj.id={:?} obj.span={:?}", match &obj.kind {
+                            ExprKind::Ident(n) => format!("Ident({})", n),
+                            ExprKind::Member { name, .. } => format!("Member(.{})", name),
+                            ExprKind::Call { .. } => "Call".to_string(),
+                            other => format!("{:?}", std::mem::discriminant(other)),
+                        }, obj.id, obj.span);
+                        if let ExprKind::Ident(n) = &obj.kind {
+                            eprintln!("[P67-DBG] var_types[{}]={:?} array_element_types[{}]={:?}", n, self.var_types.get(n.as_str()), n, self.array_element_types.get(n.as_str()));
+                            eprintln!("[P67-DBG] obj.id set={} resolved_types[obj]={:?}", obj.id.is_set(), self.resolved_types.get(&obj.id));
+                        }
+                        eprintln!("[P67-DBG] resolved_types[index-expr]={:?}", self.resolved_types.get(&expr.id));
+                        eprintln!("[P67-DBG] current_receiver_type={:?}", self.current_receiver_type);
                     }
                     panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
                 }
