@@ -2132,17 +2132,30 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   после set_args (иммутабельно, ок); effects.c TLS — ядро шедулера (сохраняется на
   переключении), вне класса.
 
-- **[M-sched-park-concurrent-fs]** (2026-07-08, **P0/P1 — детерминированный крэш планировщика**,
-  Plan: расследование по методике [reference-mn-race-case-study]; Wave: [opus] немедленно,
-  зона fibers.h/nova_sched — свободна) — обнаружено fs-M:N-волной: ЛЮБЫЕ 2+ конкурентных
-  файбера с блокирующей fs-операцией под real_fs() детерминированно валят планировщик:
-  `nova: nova_sched_park: invalid scope/slot`. Минимальная репродукция: 2 файбера, по
-  одному metadata() каждый. Воспроизведено на базисе 200d5a79a (ДО fs-M:N правки, старый
-  TLS-код) — довливной, ни один существующий fs-тест не гонял >1 конкурентного файбера
-  с реальным диском. Гипотеза: fs-завершения приходят с libuv THREADPOOL (в отличие от
-  net — с одного event-loop треда, его 9-файберный стресс живёт) → гонка per-scope
-  слотов при конкурентных cross-thread wake. Фикстура в отчёте fs-M:N волны (коммит
-  04b0ff2e8, не закоммичена — перманентно красная до фикса).
+- **[M-sched-park-concurrent-fs]** (2026-07-08, **ЗАКРЫТО** — тот же корень, что
+  [M-fs-tls-mn-race], уже исправлен fs-M:N-переписыванием; расследование [opus]) —
+  обнаружено fs-M:N-волной: 2+ конкурентных файбера с блокирующей fs-операцией под
+  real_fs() валили рантайм (`nova: nova_sched_park: invalid scope/slot`, а также SIGSEGV
+  и lost-wakeup-зависание). Разведка: планировщик (fibers.h/nova_sched.h/runtime.c/
+  effects.c) БАЙТ-В-БАЙТ идентичен между базисом воспроизведения 200d5a79a и main —
+  между ними менялся ТОЛЬКО fs.c/fs.h/std/fs/*.nv. КОРЕНЬ: старый fs.c держал РЕЗУЛЬТАТ
+  (`_fs_stat_tls`, `_fs_realpath_tls`) и — для scandir — ВЕСЬ запрос вместе с его
+  (scope,slot) в `__thread`-слотах. Под work-stealing файбер, запарковавшийся на воркере
+  A, возобновляется на воркере B и читает thread-local воркера B — запрос ЧУЖОГО файбера;
+  это (а) отдаёт чужой результат и (б) в scandir-пути подставляет чужой/протухший
+  (scope,slot) в nova_sched_park → `slot >= scope->count` (scope уже сброшен count=0) →
+  abort; при других раскладах — SIGSEGV (resume не того файбера, порча арены) либо
+  lost-wakeup. Гипотеза волны про «cross-thread wake с THREADPOOL» неверна: libuv-fs
+  completion (`_fs_cb`) всегда идёт на loop-треде того же воркера, НЕ с threadpool —
+  это ровно net-паттерн; проблема была не в wake, а в TLS-переносе результата.
+  Эмпирика (изолированный компилятор воркти, clang): СТАРЫЙ fs (staged из 200d5a79a) —
+  8-файберный hammer при NOVA_MAXPROCS=2 даёт ~6/20 зависаний + эпизодический SIGSEGV;
+  НОВЫЙ fs (main, net-канон: caller-owned stat-image, GC-строка realpath, handle-based
+  scandir — ноль fs thread-local'ов) — 80/80 чисто на MAXPROCS 1/2/4/16. Планировщик НЕ
+  дефектен; его abort — корректный guard, срабатывавший на порчу (scope,slot) со стороны
+  fs. Фикса в планировщике НЕ требуется (маскирующая проверка была бы обходом §4а).
+  Регресс-страж закоммичен: `std/fs/concurrent_stat_test.nv` (2 и 16 конкурентных
+  real_fs-файберов; зелёный на новом fs, ловит любой возврат fs-состояния в TLS).
 
 - **[M-test-runner-module-aggregation-segv]** (2026-07-08, P2, Plan: 182-хвост/172.13;
   Wave: при заходе в раннер) — довливной SEGV агрегации: одиночные test-build КАЖДОГО

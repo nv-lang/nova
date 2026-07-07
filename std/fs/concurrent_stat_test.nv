@@ -1,0 +1,73 @@
+// concurrent_stat_test.nv — [M-sched-park-concurrent-fs] regression guard.
+//
+// Before the fs M:N-safety rewrite (net-canon), fs.c parked the blocking op
+// but stashed its RESULT (and, for scandir, the whole request incl. its
+// (scope,slot)) in `__thread` slots. Under work-stealing a fiber that parked
+// on worker A could resume on worker B and read B's thread-locals — another
+// fiber's request — corrupting the (scope,slot) later fed to nova_sched_park.
+// That surfaced as `nova: nova_sched_park: invalid scope/slot`, spurious
+// SIGSEGV, or a lost-wakeup hang whenever 2+ fibers ran a real_fs op at once.
+// The rewrite (caller-owned stat image, GC-returned realpath, handle-based
+// scandir — no fs thread-locals) removed the shared state; the scheduler was
+// never at fault. This guard fans out concurrent real_fs ops so a regression
+// that reintroduces cross-fiber fs state trips immediately.
+//
+// NB: all asserts stay inside `test`/`spawn` blocks (no module-level helper
+// fns) — a *_test.nv file is pulled in wholesale by every module that imports
+// std.fs, and `assert` only exists in test context.
+module std.fs
+
+test "concurrent metadata: 2 fibers stat distinct files" {
+    with Fs = real_fs() {
+        supervised {
+            spawn {
+                ro dir = Path.from_str("cst_a2")
+                ro _ = remove_dir_all(dir)
+                match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
+                ro f = dir.join("f.txt")
+                match write(f, "aaaa".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+                match metadata(f) { Ok(m) => assert(m.len() == 4), Err(_) => assert(false) }
+                ro _2 = remove_dir_all(dir)
+            }
+            spawn {
+                ro dir = Path.from_str("cst_b2")
+                ro _ = remove_dir_all(dir)
+                match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
+                ro f = dir.join("f.txt")
+                match write(f, "bbbbbb".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+                match metadata(f) { Ok(m) => assert(m.len() == 6), Err(_) => assert(false) }
+                ro _2 = remove_dir_all(dir)
+            }
+        }
+    }
+}
+
+test "concurrent metadata: 16 fibers stat + read_dir on a shared file" {
+    with Fs = real_fs() {
+        supervised {
+            spawn {
+                ro dir = Path.from_str("cst_shared16")
+                ro _ = remove_dir_all(dir)
+                match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
+                ro f = dir.join("f.txt")
+                match write(f, "0123456789".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+                // File exists now; fan out concurrent stats of the same file
+                // plus two concurrent read_dir calls — all completing at once.
+                supervised {
+                    for _ in 0..16 {
+                        spawn {
+                            assert(metadata(f).is_ok())
+                        }
+                    }
+                    spawn {
+                        assert(read_dir(dir).is_ok())
+                    }
+                    spawn {
+                        assert(read_dir(dir).is_ok())
+                    }
+                }
+                ro _2 = remove_dir_all(dir)
+            }
+        }
+    }
+}
