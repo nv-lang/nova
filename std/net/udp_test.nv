@@ -2,7 +2,7 @@
 // Plan 183 Ф.2/Ф.4 — UDP over the public net2 API. recv_from writes the datagram
 // straight into the caller's []u8 (zero-copy) and returns the sender as a value
 // SocketAddr filled via out-param (no _net_recv_data / _net_recv_sender TLS).
-// `_must` (typed-Result extractor) is shared from tcp_test.nv (same module).
+// `must` (typed-Result extractor) is shared from tcp_test.nv (same module).
 //
 // Ф.4 UDP-flake root cause (Windows-libuv, M:N): a uv handle is pinned to the
 // libuv loop it is *created* on, and libuv loops are single-thread. Under M:N
@@ -32,7 +32,7 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
         ro ch_b = Channel.new(1)   // b_port: sender   -> receiver (for sender-port assert)
         supervised {
             spawn {
-                mut a = _must(UdpSocket.bind(SocketAddr.loopback(0)))
+                mut a = must(UdpSocket.bind(SocketAddr.loopback(0)))
                 ro a_port = a.local_port()
                 assert(a_port > 0)
                 ch_a.tx.send(a_port)                       // buffered, no park
@@ -54,11 +54,11 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
             }
             spawn {
                 ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 as u16 }
-                mut b = _must(UdpSocket.bind(SocketAddr.loopback(0)))
+                mut b = must(UdpSocket.bind(SocketAddr.loopback(0)))
                 ro b_port = b.local_port()
                 assert(b_port > 0)
                 ch_b.tx.send(b_port)                       // buffered, no park
-                assert(_must(b.send_to("ping net2".bytes(), SocketAddr.loopback(a_port))) == 9)
+                assert(must(b.send_to("ping net2".bytes(), SocketAddr.loopback(a_port))) == 9)
                 b.close()
             }
         }
@@ -70,7 +70,7 @@ test "net2/udp: recv_from_vec returns owned bytes + sender" {
         ro ch_a = Channel.new(1)   // a_port: receiver -> sender
         supervised {
             spawn {
-                mut a = _must(UdpSocket.bind(SocketAddr.loopback(0)))
+                mut a = must(UdpSocket.bind(SocketAddr.loopback(0)))
                 ro a_port = a.local_port()
                 assert(a_port > 0)
                 ch_a.tx.send(a_port)                       // buffered, no park
@@ -86,8 +86,8 @@ test "net2/udp: recv_from_vec returns owned bytes + sender" {
             }
             spawn {
                 ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 as u16 }
-                mut b = _must(UdpSocket.bind(SocketAddr.loopback(0)))
-                assert(_must(b.send_str("hello", SocketAddr.loopback(a_port))) == 5)
+                mut b = must(UdpSocket.bind(SocketAddr.loopback(0)))
+                assert(must(b.send_str("hello", SocketAddr.loopback(a_port))) == 5)
                 b.close()
             }
         }

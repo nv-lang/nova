@@ -95,7 +95,7 @@ fn SentencesIter.new(buf str) -> SentencesIter =>
 
 // Advance the state machine for one consumed codepoint category `c` at byte offset
 // `at` (needed to recompute sb8 lookahead from `at + step`).
-fn SentencesIter mut @_advance(c int, after int) {
+fn SentencesIter mut @advance(c int, after int) {
     @prev_imm = c
     if !sb_ignorable(c) {
         if c == SB_ATERM {
@@ -133,7 +133,7 @@ export fn SentencesIter mut @next() -> Option[str] {
     // a segment break, the boundary is already before this char).
     ro (cp0, step0) = decode_at(@buf, @pos)
     ro c0 = sbcat(cp0)
-    @_advance(c0, @pos + step0)
+    @advance(c0, @pos + step0)
     @pos += step0
     while @pos < @n {
         ro (cp, step) = decode_at(@buf, @pos)
@@ -164,7 +164,7 @@ export fn SentencesIter mut @next() -> Option[str] {
         if is_break {
             return Some(@buf[start..@pos])
         }
-        @_advance(c, @pos + step)
+        @advance(c, @pos + step)
         @pos += step
     }
     Some(@buf[start..@n])

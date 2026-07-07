@@ -230,7 +230,7 @@ fn WordsIter.new(buf str) -> WordsIter =>
     { buf, pos: 0, n: buf.byte_len(),
       prev_imm_cat: 0, prev_eff_cat: 0, prev_prev_eff_cat: 0, ri_run: 0 }
 
-fn WordsIter mut @_advance(cat int) {
+fn WordsIter mut @advance(cat int) {
     @prev_imm_cat = cat
     @ri_run = wb_ri_step(cat, @ri_run)
     if !wb_ignorable(cat) {
@@ -244,7 +244,7 @@ export fn WordsIter mut @next() -> Option[str] {
     if @pos >= @n { return None }
     ro start = @pos
     ro (cp0, step0) = decode_at(@buf, @pos)
-    @_advance(wbcat(cp0))
+    @advance(wbcat(cp0))
     @pos += step0
     while @pos < @n {
         ro (cp, step) = decode_at(@buf, @pos)
@@ -257,7 +257,7 @@ export fn WordsIter mut @next() -> Option[str] {
         if wb_is_break_s(@prev_imm_cat, @prev_eff_cat, @prev_prev_eff_cat, cat, cp, ncat, @ri_run) {
             return Some(@buf[start..@pos])
         }
-        @_advance(cat)
+        @advance(cat)
         @pos += step
     }
     Some(@buf[start..@n])

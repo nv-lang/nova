@@ -56,8 +56,8 @@ export type SnowflakeError enum
 #stable(since = "0.1")
 export type SnowflakeGen {
     ro machine_id i64                  // public config: 0..1023
-    mut _last_ms i64                         // internal: ms прошлой генерации
-    mut _sequence i64                        // internal: 0..4095
+    mut last_ms i64                         // internal: ms прошлой генерации
+    mut sequence i64                        // internal: 0..4095
 }
 
 
@@ -89,28 +89,28 @@ export fn SnowflakeGen.new(machine_id int) Fail[SnowflakeError] -> Self {
 export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
     ro now = Time.now_ms() as i64
 
-    if now < @_last_ms {
-        throw ClockBackwards { now, last: @_last_ms }
+    if now < @last_ms {
+        throw ClockBackwards { now, last: @last_ms }
     }
 
-    if now == @_last_ms {
-        @_sequence = @_sequence + 1
-        if @_sequence >= 4096 {
+    if now == @last_ms {
+        @sequence = @sequence + 1
+        if @sequence >= 4096 {
             // Sequence overflow в одной ms — busy-wait до следующей ms.
             // В production-runtime — Time.sleep(1.millis()), но bootstrap
             // не имеет sleep handler, поэтому assert.
             // Workaround: бампим last_ms.
-            @_last_ms = @_last_ms + 1
-            @_sequence = 0
+            @last_ms = @last_ms + 1
+            @sequence = 0
         }
     } else {
-        @_sequence = 0
-        @_last_ms = now
+        @sequence = 0
+        @last_ms = now
     }
 
-    ro ts_offset = @_last_ms - TWITTER_EPOCH_MS
+    ro ts_offset = @last_ms - TWITTER_EPOCH_MS
     // Layout: [42 bit ts][10 bit machine][12 bit sequence]
-    (ts_offset << 22) | (@machine_id << 12) | @_sequence
+    (ts_offset << 22) | (@machine_id << 12) | @sequence
 }
 
 
@@ -186,7 +186,7 @@ test "parse: round-trip компонентов" {
 
 test "ошибка — невалидный machine_id" {
     ro r = with Fail[SnowflakeError] = |e| interrupt Some(e) {
-        ro _ = SnowflakeGen.new(2000)
+        ro  = SnowflakeGen.new(2000)
         None
     }
     assert(match r {
@@ -197,9 +197,9 @@ test "ошибка — невалидный machine_id" {
 
 test "ошибка — clock backwards" {
     mut gen = SnowflakeGen.new(0)
-    ro _ = with Time = th.fixed_ms(2000) { gen.next() }
+    ro  = with Time = th.fixed_ms(2000) { gen.next() }
     ro r = with Time = th.fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
-        ro _ = gen.next()
+        ro  = gen.next()
         None
     }
     assert(match r {

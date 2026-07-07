@@ -28,12 +28,12 @@ module std.net
 #stable(since = "0.1")
 export fn mock_net() -> Effect[Net] => effect Net {
     // ── TCP ──────────────────────────────────────────────────────────────────
-    tcp_bind(_addr SocketAddr)            => _listener_ok(1 as *())
-    accept(_listener TcpListener)         => _stream_ok(2 as *())
-    connect(_addr SocketAddr)             => _stream_ok(3 as *())
-    read(_stream TcpStream, buf mut []u8) => _int_ok(_mock_fill(buf, "mock-reply".bytes()))
-    write(_stream TcpStream, data []u8)   => _int_ok(data.len())
-    shutdown(_stream TcpStream)           => _unit_ok()
+    tcp_bind(_addr SocketAddr)            => listener_ok(1 as *())
+    accept(_listener TcpListener)         => stream_ok(2 as *())
+    connect(_addr SocketAddr)             => stream_ok(3 as *())
+    read(_stream TcpStream, buf mut []u8) => int_ok(mock_fill(buf, "mock-reply".bytes()))
+    write(_stream TcpStream, data []u8)   => int_ok(data.len())
+    shutdown(_stream TcpStream)           => unit_ok()
     close_stream(_stream TcpStream)       {}
     close_listener(_listener TcpListener) {}
     mark_split(_stream TcpStream)         {}
@@ -54,12 +54,12 @@ export fn mock_net() -> Effect[Net] => effect Net {
     set_reuse_address(_listener TcpListener, _on bool) {}
 
     // ── UDP ──────────────────────────────────────────────────────────────────
-    udp_bind(_addr SocketAddr)          => _socket_ok(10 as *())
-    send_to(_sock UdpSocket, data []u8, _addr SocketAddr) => _int_ok(data.len())
+    udp_bind(_addr SocketAddr)          => socket_ok(10 as *())
+    send_to(_sock UdpSocket, data []u8, _addr SocketAddr) => int_ok(data.len())
     recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) {
         unsafe { nova_net_addr_loopback_into(0, sender.ptr()) }
         ro _ = buf
-        _int_ok(0)
+        int_ok(0)
     }
     close_socket(_sock UdpSocket)       {}
     socket_local_port(_sock UdpSocket)  => 7070
@@ -68,18 +68,18 @@ export fn mock_net() -> Effect[Net] => effect Net {
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(_host []u8, _port u16) => _mock_lookup()
+    lookup(_host []u8, _port u16) => mock_lookup()
 }
 
 // A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
-// so `resolve`'s _build_addrs copies one image out just like the real path.
-fn _mock_lookup() -> Result[(int, int), NetError] {
+// so `resolve`'s build_addrs copies one image out just like the real path.
+fn mock_lookup() -> Result[(int, int), NetError] {
     ro base = unsafe { nova_net_addr_loopback(0) }
-    _lookup_ok(base as int, 1)
+    lookup_ok(base as int, 1)
 }
 
 // Copy up to buf.len() bytes of `data` into `buf`; returns the count copied.
-fn _mock_fill(buf mut []u8, data []u8) -> int {
+fn mock_fill(buf mut []u8, data []u8) -> int {
     ro n = if data.len() < buf.len() { data.len() } else { buf.len() }
     mut i = 0
     while i < n {

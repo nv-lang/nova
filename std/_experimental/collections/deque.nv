@@ -37,7 +37,7 @@ module collections.deque
 /// - `[Queue]` — однонаправленная FIFO очередь через два массива
 #stable(since = "0.1")
 export type Deque[T] {
-    mut _items []T   // internal storage
+    mut items []T   // internal storage
 }
 
 
@@ -47,39 +47,39 @@ export fn Deque[T].new() -> Self => { _items: [] }
 
 /// Число элементов в deque.
 #stable(since = "0.1")
-export fn Deque[T] @len() -> int => @_items.len()
+export fn Deque[T] @len() -> int => @items.len()
 
 /// Возвращает `true` если deque пуст.
 #stable(since = "0.1")
-export fn Deque[T] @is_empty() -> bool => @_items.len() == 0
+export fn Deque[T] @is_empty() -> bool => @items.len() == 0
 
 
 /// Добавить элемент в конец. O(1) amortized.
 #stable(since = "0.1")
 export fn Deque[T] mut @push_back(x T) -> () {
-    @_items.push(x)
+    @items.push(x)
 }
 
 /// Добавить элемент в начало. O(n) в текущей реализации; O(1) в production.
 #stable(since = "0.1")
 export fn Deque[T] mut @push_front(x T) -> () {
     mut new_items []T = [x]
-    for it in @_items { new_items.push(it) }
-    @_items = new_items
+    for it in @items { new_items.push(it) }
+    @items = new_items
 }
 
 
 /// Удалить и вернуть последний элемент. O(1).
 #stable(since = "0.1")
 export fn Deque[T] mut @pop_back() -> Option[T] {
-    if @_items.len() == 0 { return None }
-    ro last_idx = @_items.len() - 1
-    ro value = @_items[last_idx]
+    if @items.len() == 0 { return None }
+    ro last_idx = @items.len() - 1
+    ro value = @items[last_idx]
     mut new_items []T = []
     for i in 0..last_idx {
-        new_items.push(@_items[i])
+        new_items.push(@items[i])
     }
-    @_items = new_items
+    @items = new_items
     Some(value)
 }
 
@@ -87,15 +87,15 @@ export fn Deque[T] mut @pop_back() -> Option[T] {
 /// Удалить и вернуть первый элемент. O(n) в текущей реализации; O(1) в production.
 #stable(since = "0.1")
 export fn Deque[T] mut @pop_front() -> Option[T] {
-    if @_items.len() == 0 { return None }
-    ro value = @_items[0]
+    if @items.len() == 0 { return None }
+    ro value = @items[0]
     mut new_items []T = []
     mut i = 1
-    while i < @_items.len() {
-        new_items.push(@_items[i])
+    while i < @items.len() {
+        new_items.push(@items[i])
         i += 1
     }
-    @_items = new_items
+    @items = new_items
     Some(value)
 }
 
@@ -103,20 +103,20 @@ export fn Deque[T] mut @pop_front() -> Option[T] {
 /// Посмотреть первый элемент без удаления. `None` если deque пуст.
 #stable(since = "0.1")
 export fn Deque[T] @front() -> Option[T] {
-    if @_items.len() == 0 { None } else { Some(@_items[0]) }
+    if @items.len() == 0 { None } else { Some(@items[0]) }
 }
 
 /// Посмотреть последний элемент без удаления. `None` если deque пуст.
 #stable(since = "0.1")
 export fn Deque[T] @back() -> Option[T] {
-    if @_items.len() == 0 { None } else { Some(@_items[@_items.len() - 1]) }
+    if @items.len() == 0 { None } else { Some(@items[@items.len() - 1]) }
 }
 
 
 /// Получить элемент по индексу. `None` если `i` вне диапазона.
 #stable(since = "0.1")
 export fn Deque[T] @get(i int) -> Option[T] {
-    if i < 0 || i >= @_items.len() { None } else { Some(@_items[i]) }
+    if i < 0 || i >= @items.len() { None } else { Some(@items[i]) }
 }
 
 
@@ -165,7 +165,7 @@ test "BFS-like sliding window" {
     for x in inputs {
         d.push_back(x)
         if d.len() > 3 {
-            ro _ = d.pop_front()
+            ro  = d.pop_front()
         }
     }
     // Window of size 3 на конце

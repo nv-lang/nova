@@ -42,28 +42,28 @@ export type TcpWriteHalf consume value { priv handle *() }
 
 // ─── Package-private factories / helpers ──────────────────────────────────────
 
-fn TcpListener._from_raw(h *()) -> TcpListener => { handle: h }
-fn TcpStream._from_raw(h *()) -> TcpStream => { handle: h }
-fn TcpReadHalf._from_raw(h *()) -> TcpReadHalf => { handle: h }
-fn TcpWriteHalf._from_raw(h *()) -> TcpWriteHalf => { handle: h }
+fn TcpListener.from_raw(h *()) -> TcpListener => { handle: h }
+fn TcpStream.from_raw(h *()) -> TcpStream => { handle: h }
+fn TcpReadHalf.from_raw(h *()) -> TcpReadHalf => { handle: h }
+fn TcpWriteHalf.from_raw(h *()) -> TcpWriteHalf => { handle: h }
 
 // Null-handle test for a cold-path constructor return.
-fn _is_null(p *()) -> bool => (0 as *()) == p
+fn is_null(p *()) -> bool => (0 as *()) == p
 
 // Result constructors as regular (non-handler) fns so the checker annotates the
 // Path-call return type (mirrors the old net.c pattern — variant construction
 // must stay out of an effect-handler body).
-fn _listener_ok(h *()) -> Result[TcpListener, NetError] => Ok(TcpListener._from_raw(h))
-fn _stream_ok(h *()) -> Result[TcpStream, NetError] => Ok(TcpStream._from_raw(h))
-fn _err_listener(code int) -> Result[TcpListener, NetError] => Err(NetError.from_code(code))
-fn _err_stream(code int) -> Result[TcpStream, NetError] => Err(NetError.from_code(code))
-fn _int_ok(n int) -> Result[int, NetError] => Ok(n)
-fn _int_err(code int) -> Result[int, NetError] => Err(NetError.from_code(code))
-fn _unit_ok() -> Result[(), NetError] => Ok(())
-fn _unit_err(code int) -> Result[(), NetError] => Err(NetError.from_code(code))
+fn listener_ok(h *()) -> Result[TcpListener, NetError] => Ok(TcpListener.from_raw(h))
+fn stream_ok(h *()) -> Result[TcpStream, NetError] => Ok(TcpStream.from_raw(h))
+fn err_listener(code int) -> Result[TcpListener, NetError] => Err(NetError.from_code(code))
+fn err_stream(code int) -> Result[TcpStream, NetError] => Err(NetError.from_code(code))
+fn int_ok(n int) -> Result[int, NetError] => Ok(n)
+fn int_err(code int) -> Result[int, NetError] => Err(NetError.from_code(code))
+fn unit_ok() -> Result[(), NetError] => Ok(())
+fn unit_err(code int) -> Result[(), NetError] => Err(NetError.from_code(code))
 
 // Tuple-return helper (codegen tuple inference in handler bodies).
-fn _split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
+fn split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
 
 // ─── TcpListener public API ───────────────────────────────────────────────────
 
@@ -87,9 +87,9 @@ export fn TcpListener @local_port() Net -> u16 { Net.listener_local_port(@) }
 /// Local address this listener is bound to.
 #stable(since = "0.1")
 export fn TcpListener @local_addr() Net -> SocketAddr {
-    mut b = _addr_image()
+    mut b = addr_image()
     Net.listener_local_addr(@, b)
-    SocketAddr._from_image(b)
+    SocketAddr.from_image(b)
 }
 
 /// Set SO_REUSEADDR.
@@ -186,17 +186,17 @@ export fn TcpStream @peer_port() Net -> u16 { Net.stream_peer_port(@) }
 /// Local address of this stream.
 #stable(since = "0.1")
 export fn TcpStream @local_addr() Net -> SocketAddr {
-    mut b = _addr_image()
+    mut b = addr_image()
     Net.stream_local_addr(@, b)
-    SocketAddr._from_image(b)
+    SocketAddr.from_image(b)
 }
 
 /// Remote peer address of this stream.
 #stable(since = "0.1")
 export fn TcpStream @peer_addr() Net -> SocketAddr {
-    mut b = _addr_image()
+    mut b = addr_image()
     Net.stream_peer_addr(@, b)
-    SocketAddr._from_image(b)
+    SocketAddr.from_image(b)
 }
 
 /// Set TCP_NODELAY (disable Nagle).
@@ -217,8 +217,8 @@ export fn TcpStream consume @close() Net { Net.close_stream(@) }
 #stable(since = "0.1")
 export fn TcpStream consume @split() Net -> (TcpReadHalf, TcpWriteHalf) {
     ro h = @handle
-    Net.mark_split(TcpStream._from_raw(h))
-    _split_pair(TcpReadHalf._from_raw(h), TcpWriteHalf._from_raw(h))
+    Net.mark_split(TcpStream.from_raw(h))
+    split_pair(TcpReadHalf.from_raw(h), TcpWriteHalf.from_raw(h))
 }
 
 // ─── TcpReadHalf / TcpWriteHalf public API ───────────────────────────────────
@@ -226,37 +226,37 @@ export fn TcpStream consume @split() Net -> (TcpReadHalf, TcpWriteHalf) {
 /// Read up to `buf.len()` bytes into `buf`; `Ok(0)` = EOF.
 #stable(since = "0.1")
 export fn TcpReadHalf mut @read(buf mut []u8) Net -> Result[int, NetError] {
-    Net.read(TcpStream._from_raw(@handle), buf)
+    Net.read(TcpStream.from_raw(@handle), buf)
 }
 
 /// Local port of this read half.
 #stable(since = "0.1")
 export fn TcpReadHalf @local_port() Net -> u16 {
-    Net.stream_local_port(TcpStream._from_raw(@handle))
+    Net.stream_local_port(TcpStream.from_raw(@handle))
 }
 
 /// Close the read half (consume). Closes the socket if the write half is gone.
 #stable(since = "0.1")
 export fn TcpReadHalf consume @close() Net {
-    Net.close_stream(TcpStream._from_raw(@handle))
+    Net.close_stream(TcpStream.from_raw(@handle))
 }
 
 /// Write `data` to the write half; returns `Ok(n)` bytes accepted.
 #stable(since = "0.1")
 export fn TcpWriteHalf mut @write(data []u8) Net -> Result[int, NetError] {
-    Net.write(TcpStream._from_raw(@handle), data)
+    Net.write(TcpStream.from_raw(@handle), data)
 }
 
 /// Local port of this write half.
 #stable(since = "0.1")
 export fn TcpWriteHalf @local_port() Net -> u16 {
-    Net.stream_local_port(TcpStream._from_raw(@handle))
+    Net.stream_local_port(TcpStream.from_raw(@handle))
 }
 
 /// Close the write half (consume). Closes the socket if the read half is gone.
 #stable(since = "0.1")
 export fn TcpWriteHalf consume @close() Net {
-    Net.close_stream(TcpStream._from_raw(@handle))
+    Net.close_stream(TcpStream.from_raw(@handle))
 }
 
 // ─── real_net: the unified Net handler (TCP + UDP + DNS) ──────────────────────
@@ -271,30 +271,30 @@ export fn real_net() -> Effect[Net] => effect Net {
     // ── TCP ──────────────────────────────────────────────────────────────────
     tcp_bind(addr SocketAddr) {
         mut err int = 0                                   // &err → *mut int out-param
-        ro h = unsafe { nova_net_tcp_listen(addr._ptr(), 128, &err) }
-        if _is_null(h) { _err_listener(err) } else { _listener_ok(h) }
+        ro h = unsafe { nova_net_tcp_listen(addr.ptr(), 128, &err) }
+        if is_null(h) { err_listener(err) } else { listener_ok(h) }
     }
     accept(listener TcpListener) {
         mut err int = 0
         ro h = unsafe { nova_net_tcp_accept(listener.handle, &err) }
-        if _is_null(h) { _err_stream(err) } else { _stream_ok(h) }
+        if is_null(h) { err_stream(err) } else { stream_ok(h) }
     }
     connect(addr SocketAddr) {
         mut err int = 0
-        ro h = unsafe { nova_net_tcp_connect(addr._ptr(), &err) }
-        if _is_null(h) { _err_stream(err) } else { _stream_ok(h) }
+        ro h = unsafe { nova_net_tcp_connect(addr.ptr(), &err) }
+        if is_null(h) { err_stream(err) } else { stream_ok(h) }
     }
     read(stream TcpStream, buf mut []u8) {
         ro n = unsafe { nova_net_tcp_read(stream.handle, buf.ptr(), buf.len()) }
-        if n < 0 { _int_err(n) } else { _int_ok(n) }
+        if n < 0 { int_err(n) } else { int_ok(n) }
     }
     write(stream TcpStream, data []u8) {
         ro n = unsafe { nova_net_tcp_write(stream.handle, data.ptr(), data.len()) }
-        if n < 0 { _int_err(n) } else { _int_ok(n) }
+        if n < 0 { int_err(n) } else { int_ok(n) }
     }
     shutdown(stream TcpStream) {
         ro rc = unsafe { nova_net_tcp_shutdown(stream.handle) }
-        if rc < 0 { _unit_err(rc) } else { _unit_ok() }
+        if rc < 0 { unit_err(rc) } else { unit_ok() }
     }
     close_stream(stream TcpStream) { unsafe { nova_net_tcp_close(stream.handle) } }
     close_listener(listener TcpListener) { unsafe { nova_net_listener_close(listener.handle) } }
@@ -318,16 +318,16 @@ export fn real_net() -> Effect[Net] => effect Net {
     // ── UDP ──────────────────────────────────────────────────────────────────
     udp_bind(addr SocketAddr) {
         mut err int = 0
-        ro h = unsafe { nova_net_udp_bind(addr._ptr(), &err) }
-        if _is_null(h) { _err_socket(err) } else { _socket_ok(h) }
+        ro h = unsafe { nova_net_udp_bind(addr.ptr(), &err) }
+        if is_null(h) { err_socket(err) } else { socket_ok(h) }
     }
     send_to(sock UdpSocket, data []u8, addr SocketAddr) {
-        ro n = unsafe { nova_net_udp_send_to(sock.handle, data.ptr(), data.len(), addr._ptr()) }
-        if n < 0 { _int_err(n) } else { _int_ok(n) }
+        ro n = unsafe { nova_net_udp_send_to(sock.handle, data.ptr(), data.len(), addr.ptr()) }
+        if n < 0 { int_err(n) } else { int_ok(n) }
     }
     recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) {
         ro n = unsafe { nova_net_udp_recv_from(sock.handle, buf.ptr(), buf.len(), sender.ptr()) }
-        if n < 0 { _int_err(n) } else { _int_ok(n) }
+        if n < 0 { int_err(n) } else { int_ok(n) }
     }
     close_socket(sock UdpSocket) { unsafe { nova_net_udp_close(sock.handle) } }
     socket_local_port(sock UdpSocket) => unsafe { nova_net_udp_local_port(sock.handle) }
@@ -340,6 +340,6 @@ export fn real_net() -> Effect[Net] => effect Net {
         mut base int = 0    // C writes the GC-array base pointer here (via &base)
         mut err int = 0
         ro count = unsafe { nova_net_dns_lookup(host.ptr(), host.len(), port, (&base) as *(), &err) }
-        if count < 0 { _err_lookup(err) } else { _lookup_ok(base, count) }
+        if count < 0 { err_lookup(err) } else { lookup_ok(base, count) }
     }
 }

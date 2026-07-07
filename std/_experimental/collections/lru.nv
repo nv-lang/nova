@@ -32,8 +32,8 @@ import std.collections.hashmap.{HashMap}
 #stable(since = "0.1")
 export type Lru[K Hash, V] {
     ro capacity int        // public config
-    mut _order []K               // internal: index 0 = most recent
-    mut _store HashMap[K, V]     // internal storage
+    mut order []K               // internal: index 0 = most recent
+    mut store HashMap[K, V]     // internal storage
 }
 
 
@@ -49,21 +49,21 @@ export fn Lru[K, V].new(capacity int) -> Self =>
 
 /// Число элементов в кэше.
 #stable(since = "0.1")
-export fn Lru[K, V] @len() -> int => @_store.len()
+export fn Lru[K, V] @len() -> int => @store.len()
 
 /// Возвращает `true` если кэш пуст.
 #stable(since = "0.1")
-export fn Lru[K, V] @is_empty() -> bool => @_store.len() == 0
+export fn Lru[K, V] @is_empty() -> bool => @store.len() == 0
 
 /// Проверить наличие ключа без обновления recency.
 #stable(since = "0.1")
-export fn Lru[K, V] @contains(k K) -> bool => @_store.contains(k)
+export fn Lru[K, V] @contains(k K) -> bool => @store.contains(k)
 
 
 /// Получить значение по ключу и обновить recency (move-to-front).
 #stable(since = "0.1")
 export fn Lru[K, V] mut @get(k K) -> Option[V] {
-    match @_store.get(k) {
+    match @store.get(k) {
         None => None
         Some(v) => {
             // Move to front
@@ -77,39 +77,39 @@ export fn Lru[K, V] mut @get(k K) -> Option[V] {
 /// Вставить или обновить пару. Если кэш полон — вытесняет LRU элемент.
 #stable(since = "0.1")
 export fn Lru[K, V] mut @put(k K, v V) -> () {
-    if @_store.contains(k) {
-        @_store.insert(k, v)
+    if @store.contains(k) {
+        @store.insert(k, v)
         @move_to_front(k)
         return ()
     }
 
-    if @_order.len() >= @capacity {
+    if @order.len() >= @capacity {
         // Evict LRU (last element)
-        ro evicted = @_order[@_order.len() - 1]
-        @_store.remove(evicted)
+        ro evicted = @order[@order.len() - 1]
+        @store.remove(evicted)
         // Удаляем последний элемент из order
         mut new_order []K = []
-        for i in 0..@_order.len() - 1 {
-            new_order.push(@_order[i])
+        for i in 0..@order.len() - 1 {
+            new_order.push(@order[i])
         }
-        @_order = new_order
+        @order = new_order
     }
 
     // Insert front
     mut new_order []K = [k]
-    for x in @_order { new_order.push(x) }
-    @_order = new_order
-    @_store.insert(k, v)
+    for x in @order { new_order.push(x) }
+    @order = new_order
+    @store.insert(k, v)
 }
 
 
 fn Lru[K, V] mut @move_to_front(k K) -> () {
     // Найти k в order, удалить, поставить в начало.
     mut new_order []K = [k]
-    for x in @_order {
+    for x in @order {
         if x != k { new_order.push(x) }
     }
-    @_order = new_order
+    @order = new_order
 }
 
 
@@ -143,7 +143,7 @@ test "get refreshes recency" {
     mut cache = Lru[str, int].new(2)
     cache.put("a", 1)
     cache.put("b", 2)
-    ro _ = cache.get("a")          // "a" теперь most recent
+    ro  = cache.get("a")          // "a" теперь most recent
     cache.put("c", 3)               // evicts "b" (LRU теперь b)
 
     assert(cache.get("a") == Some(1))

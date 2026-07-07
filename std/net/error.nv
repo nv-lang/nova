@@ -64,12 +64,12 @@ export fn NetError @to_str() -> str {
 /// `nova_net_strerror`; classification is by canonical substring.
 #stable(since = "0.1")
 export fn NetError.from_code(code int) -> NetError {
-    ro msg = _strerror_text(code)
-    _classify(msg)
+    ro msg = strerror_text(code)
+    classify(msg)
 }
 
 // Layer error text for a UV code into a Nova str (no TLS; caller buffer).
-fn _strerror_text(code int) -> str {
+fn strerror_text(code int) -> str {
     mut buf []u8 = []u8.new()
     buf.resize(256, 0 as u8)
     ro n = unsafe { nova_net_strerror(code, buf.ptr(), 256) }
@@ -79,7 +79,7 @@ fn _strerror_text(code int) -> str {
 // Classify a canonical uv_strerror message into a typed NetError. The C layer
 // normalises EACCES → "permission denied" and ECONNRESET → "connection reset by
 // peer", so substring matching here is platform-stable.
-fn _classify(msg str) -> NetError {
+fn classify(msg str) -> NetError {
     if msg.contains("connection refused") { NetError.ConnectionRefused }
     else if msg.contains("address already in use") { NetError.AddressInUse }
     else if msg.contains("address not available") { NetError.AddressNotAvailable }

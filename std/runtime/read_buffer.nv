@@ -352,7 +352,7 @@ export fn ReadBuffer mut @read_f64_be() -> Result[f64, ReadBufferError] =>
 
 // Helper: decode один UTF-8 codepoint, не advance'ит pos.
 // Returns Result[(cp, consumed_bytes), ReadBufferError].
-fn ReadBuffer @_decode_utf8_at(p int) -> Result[(int, int), ReadBufferError] {
+fn ReadBuffer @decode_utf8_at(p int) -> Result[(int, int), ReadBufferError] {
     ro avail = @data.len() - p
     if avail <= 0 {
         return Err(UnexpectedEnd { wanted: 1, available: 0 })
@@ -392,7 +392,7 @@ fn ReadBuffer @_decode_utf8_at(p int) -> Result[(int, int), ReadBufferError] {
 // UTF-8 decoder уже валидирует range — from.Err() unreachable, но
 // нужно для well-typedness; surface как UnexpectedEnd для consistency.
 export fn ReadBuffer mut @read_char() -> Result[char, ReadBufferError] =>
-    match @_decode_utf8_at(@pos) {
+    match @decode_utf8_at(@pos) {
         Ok(tup) => match char.from(tup.0) {
             Ok(c) => {
                 @pos = @pos + tup.1
@@ -411,7 +411,7 @@ export fn ReadBuffer mut @read_str(n int) -> Result[str, ReadBufferError] {
     ro start = @pos
     mut walked = start
     for i in 0..n {
-        match @_decode_utf8_at(walked) {
+        match @decode_utf8_at(walked) {
             Ok(tup) => { walked = walked + tup.1 }
             Err(e) => return Err(e)
         }
