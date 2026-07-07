@@ -6523,6 +6523,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // flushes via `flush_boxed_vars`; `emit_test` must do the same, scoped to
         // the test body and restored afterwards.
         let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+        // Plan 184: ref-локалы (`ro/mut y ref T`) регистрируются в `ref_params`
+        // (авто-деref). Как и `var_boxed`, набор ДОЛЖЕН быть scoped к телу теста
+        // — иначе имя ref-локала (`a`, `r`) протечёт в последующие emit'ы (std-
+        // методы с одноимённым обычным локалом → ложный `(*a)` → CC-FAIL).
+        let saved_ref_params_test = std::mem::take(&mut self.ref_params);
         // Plan 170 (D307): set the emission file so a `test "…"` block that calls
         // a `priv(file)` helper declared in the SAME file resolves to its file-
         // discriminated C symbol (free_fn_c_name reads current_emit_file_id).
@@ -6542,6 +6547,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.result_type_params = saved_result_type_params_test; // Plan 72 P1-C
         self.protocol_var_vtable = saved_protocol_var_vtable_test; // Plan 72 P3-B
         self.var_boxed = saved_var_boxed; // Plan 153.2: per-test box registry
+        self.ref_params = saved_ref_params_test; // Plan 184: per-test ref-locals
         let test_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Flush any lambdas discovered during this test's emit
