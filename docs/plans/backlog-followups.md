@@ -2084,3 +2084,22 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   conv.h-семейство nova_str_to_*/nova_str_parse_f64 → str_*; синхронно .nv-декларации +
   rt-хедеры + внутренние вызовы rt. Правило — строкой в compiler-conventions §FFI
   (или nv-coding-style) с датой.
+
+- **A7 старт ЗАКРЫТ (2026-07-07, заход 11, 172.12-typed-ir-mono §14.12-14.15):** координированный флип
+  `.new()/.with_capacity()` + `receiver_c_type`. Эмпирика: 3 из 5 «широких сайтов» из инвентаря заход-10
+  (binding-type, array-литералы, for-loop) оказались УЖЕ Vec-native ДО этого захода (`resolved_array_to_c`
+  Vec-flip + `try_emit_typed_vec_literal` + iter()/next()-протокол уже покрывали primitive `[]T`) — реальный
+  разрыв был только в static-ctor dispatch (scalar `[]T.new()` эмитил legacy `nova_array_new_<suffix>` в
+  Vec-типизированный биндинг — layout-совместимо, текстуально рассинхронизировано) и в `receiver_c_type`'s
+  редком extension-method-receiver арме. Оба закрыты: `elem_needs_vec_mono` → `elem_is_erased` (legacy остаётся
+  ТОЛЬКО для генуинно нерезолвленного type-param — erasure-sentinel, ортогонально), `receiver_c_type`'s `[]T`
+  манглит+регистрирует `Vec[elem]` (uint → `nova_uint`, ЗАКРЫВАЕТ `[M-uint-legacy-array-uint64-until-a4]`
+  для этих путей). Гейты: build clean, conf 66/0 δ0 (d27/d38/d403/d232 PASS), uint round-trip PASS
+  (`Nova_Vec____nova_uint`), wide nova test 18/2/1skip (2 fail байт-в-байт идентичны baseline, pre-existing
+  D249), спот-C-check 0 `NovaArray_` для []int/[]uint user-кода. **НЕ сделано** (контингенси плана):
+  `NOVA_ARRAY_DECL`/`IMPL`-снос — найдены 3 доп. блокера ВНЕ инвентаря заход-10 (Plan 96 parallel-for
+  `emit_c.rs`~9990-10090, array rest-bind destructuring ~37100-37117, `resolved_array_to_c`'s dead-in-practice
+  primitive-табличка ~2977-2993) — все строят/упоминают сырые `NovaArray_<T>*` напрямую, нужен тот же
+  мангл+регистрация паттерн до сноса макросов. `emit_array_lit`'s closure/void_p/protocol-box fallback
+  НАМЕРЕННО остаётся NovaArray (closure-arrays вне области A7, `NOVA_ARRAY_DECL(void_p)` должен остаться).
+  Следующий заход: закрыть 3 блокера → снос array.h (кроме void_p).
