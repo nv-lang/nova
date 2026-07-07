@@ -18,7 +18,7 @@
  *
  * Program arguments (argv) are captured once at process start: main() calls
  * `os_set_args(argc, argv)` (spliced by emit_c.rs) into the file-scope
- * argv globals, which os_arg_count/os_arg_at then read.
+ * argv globals, which nova_os_arg_count/nova_os_arg_at then read.
  */
 #ifndef NOVA_OS_ENV_H
 #define NOVA_OS_ENV_H
@@ -69,35 +69,35 @@ static nova_int _nova_argc = 0;
 static char**   _nova_argv = NULL;
 
 /* Called once from main() (emit_c.rs) with the process argv. */
-static inline void os_set_args(int argc, char** argv) {
+static inline void nova_os_set_args(int argc, char** argv) {
     _nova_argc = (nova_int)argc;
     _nova_argv = argv;
 }
 
 /* Number of program arguments (argv[0] = program path, included). */
-static inline nova_int os_arg_count(void) { return _nova_argc; }
+static inline nova_int nova_os_arg_count(void) { return _nova_argc; }
 
 /* The i-th argument (empty out of range). */
-static inline nova_str os_arg_at(nova_int i) {
+static inline nova_str nova_os_arg_at(nova_int i) {
     if (i < 0 || i >= _nova_argc || !_nova_argv) return _os_str("");
     return _os_str(_nova_argv[(size_t)i]);
 }
 
 /* ─── Environment ─── */
 
-/* Raw value bytes for `key` (empty if absent — disambiguate with os_env_has). */
-static inline nova_str os_env_get(const uint8_t* key) {
+/* Raw value bytes for `key` (empty if absent — disambiguate with nova_os_env_has). */
+static inline nova_str nova_os_env_get(const uint8_t* key) {
     const char* v = getenv((const char*)key);
     return _os_str(v ? v : "");
 }
 
 /* 1 if `key` is present, 0 otherwise. */
-static inline nova_int os_env_has(const uint8_t* key) {
+static inline nova_int nova_os_env_has(const uint8_t* key) {
     return getenv((const char*)key) ? 1 : 0;
 }
 
 /* Set `key` = `val` (overwrite). 0 or -errno. */
-static inline nova_int os_env_set(const uint8_t* key, const uint8_t* val) {
+static inline nova_int nova_os_env_set(const uint8_t* key, const uint8_t* val) {
 #if defined(_WIN32)
     return _putenv_s((const char*)key, (const char*)val) == 0 ? 0 : _os_fail();
 #else
@@ -106,7 +106,7 @@ static inline nova_int os_env_set(const uint8_t* key, const uint8_t* val) {
 }
 
 /* Remove `key`. 0 or -errno (removing a missing key is success). */
-static inline nova_int os_env_remove(const uint8_t* key) {
+static inline nova_int nova_os_env_remove(const uint8_t* key) {
 #if defined(_WIN32)
     return _putenv_s((const char*)key, "") == 0 ? 0 : _os_fail();
 #else
@@ -115,7 +115,7 @@ static inline nova_int os_env_remove(const uint8_t* key) {
 }
 
 /* Number of environment entries (snapshot count of `environ`). */
-static inline nova_int os_env_len(void) {
+static inline nova_int nova_os_env_len(void) {
     char** e = NOVA_ENVIRON;
     nova_int n = 0;
     if (!e) return 0;
@@ -124,7 +124,7 @@ static inline nova_int os_env_len(void) {
 }
 
 /* Key of the i-th environment entry (the part before '='). */
-static inline nova_str os_env_key_at(nova_int i) {
+static inline nova_str nova_os_env_key_at(nova_int i) {
     char** e = NOVA_ENVIRON;
     if (!e || i < 0) return _os_str("");
     const char* s = e[(size_t)i];
@@ -135,7 +135,7 @@ static inline nova_str os_env_key_at(nova_int i) {
 }
 
 /* Value of the i-th environment entry (the part after '='). */
-static inline nova_str os_env_val_at(nova_int i) {
+static inline nova_str nova_os_env_val_at(nova_int i) {
     char** e = NOVA_ENVIRON;
     if (!e || i < 0) return _os_str("");
     const char* s = e[(size_t)i];
@@ -148,7 +148,7 @@ static inline nova_str os_env_val_at(nova_int i) {
 /* ─── Working directory ─── */
 
 /* Absolute current working directory (empty on error). */
-static inline nova_str os_cwd(void) {
+static inline nova_str nova_os_cwd(void) {
     char buf[4096];
 #if defined(_WIN32)
     if (_getcwd(buf, (int)sizeof buf)) return _os_str(buf);
@@ -159,7 +159,7 @@ static inline nova_str os_cwd(void) {
 }
 
 /* Change the current working directory. 0 or -errno. */
-static inline nova_int os_set_cwd(const uint8_t* path) {
+static inline nova_int nova_os_set_cwd(const uint8_t* path) {
 #if defined(_WIN32)
     return _chdir((const char*)path) == 0 ? 0 : _os_fail();
 #else
@@ -170,7 +170,7 @@ static inline nova_int os_set_cwd(const uint8_t* path) {
 /* ─── Well-known directories ─── */
 
 /* System temp directory (TMPDIR/TEMP/TMP with a portable fallback). */
-static inline nova_str os_temp_dir(void) {
+static inline nova_str nova_os_temp_dir(void) {
 #if defined(_WIN32)
     const char* t = getenv("TEMP");
     if (!t || !*t) t = getenv("TMP");
@@ -183,7 +183,7 @@ static inline nova_str os_temp_dir(void) {
 }
 
 /* User home directory (empty == none). */
-static inline nova_str os_home_dir(void) {
+static inline nova_str nova_os_home_dir(void) {
 #if defined(_WIN32)
     const char* h = getenv("USERPROFILE");
 #else
@@ -196,7 +196,7 @@ static inline nova_str os_home_dir(void) {
 
 /* Flush stdout/stderr and terminate the process (never returns for real; the
  * declared int return keeps the effect-op shape uniform). */
-static inline nova_int os_exit(nova_int code) {
+static inline nova_int nova_os_exit(nova_int code) {
     fflush(stdout);
     fflush(stderr);
     exit((int)code);
@@ -204,7 +204,7 @@ static inline nova_int os_exit(nova_int code) {
 }
 
 /* This process's id. */
-static inline nova_int os_pid(void) {
+static inline nova_int nova_os_pid(void) {
 #if defined(_WIN32)
     return (nova_int)_getpid();
 #else
@@ -213,7 +213,7 @@ static inline nova_int os_pid(void) {
 }
 
 /* Host name (empty on error). */
-static inline nova_str os_hostname(void) {
+static inline nova_str nova_os_hostname(void) {
 #if defined(_WIN32)
     const char* h = getenv("COMPUTERNAME");
     return _os_str(h ? h : "");
