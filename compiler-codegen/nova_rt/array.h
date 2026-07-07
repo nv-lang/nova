@@ -43,18 +43,31 @@
 #define NOVA_TAG_Option_None 0
 #define NOVA_TAG_Option_Some 1
 
-/* Declare the array struct and Option<T> struct for element type T.
- * T_NAME is the C identifier used in the struct/function names (e.g. nova_int). */
+/* Declare just the Option<T> struct for element type T — split out (Plan
+ * 172.12 A8) so a primitive that needs Option[T] but NOT the legacy
+ * NovaArray_T growable-array struct (dead: `[]T` is Vec[T]-backed since the
+ * Plan 172.12 A7/A8 flip, except the `nova_int` erasure-sentinel and
+ * `void_p` closure-array — see NOVA_ARRAY_DECL below) can get ONLY the
+ * Option struct declared. */
+#define NOVA_OPT_DECL(T) \
+    typedef struct NovaOpt_##T { \
+        int     tag; \
+        T       value; \
+    } NovaOpt_##T;
+
+/* Declare the array struct AND Option<T> struct for element type T.
+ * T_NAME is the C identifier used in the struct/function names (e.g. nova_int).
+ * Plan 172.12 A8: only instantiated for `nova_int` (int64-slot erasure
+ * sentinel for unresolved generic-mono `[]T` — an orthogonal mechanism from
+ * the real per-element Vec[T] representation, untouched by the A7/A8 flip)
+ * and `void_p` (closure-array / `[]Protocol` heterogeneous-box storage). */
 #define NOVA_ARRAY_DECL(T) \
     typedef struct NovaArray_##T { \
         T*      data; \
         int64_t len; \
         int64_t cap; \
     } NovaArray_##T; \
-    typedef struct NovaOpt_##T { \
-        int     tag; \
-        T       value; \
-    } NovaOpt_##T;
+    NOVA_OPT_DECL(T)
 
 /* Implement helper functions for element type T.
  * Requires nova_alloc to be available. */
@@ -229,12 +242,22 @@
  * MethodRouting::DeclaredBody → mono'd Nova_Option_method_or_<T> с тем
  * же C-именем (C-redefinition collision если оставить здесь). */
 
-/* ---- Default instantiations for primitive arrays.
+/* ---- Default instantiations.
  *
- * Каждый primitive-тип получает собственный NovaArray_T struct с реальным
- * packed `T data[]` (не int64-erasure). Это критично для byte:
- * `[]byte` хранится как `uint8_t[]`, не int64[]. Иначе 8x memory
- * overhead и неправильная FFI-семантика.
+ * Plan 172.12 A7/A8: `[]T` is Vec[T]-backed for every CONCRETE element type
+ * (D239) — the legacy `NovaArray_T` growable-array struct + its
+ * nova_array_new / push / get / pop / eq / compare / copy_from /
+ * copy_within / append / insert / reserve / fill / truncate / slice
+ * helpers are dead for every primitive except:
+ *   - `nova_int`  — the int64-slot erasure SENTINEL for a genuinely
+ *     unresolved generic-mono `[]T` element (orthogonal mechanism, untouched
+ *     by the Vec flip — see emit_c.rs `elem_is_erased` / receiver-dispatch).
+ *   - `void_p`    — closure-array (`[]fn(...)`) / `[]Protocol` heterogeneous
+ *     box storage (intentionally NOT ported to Vec — different
+ *     representation, out of A7/A8 scope).
+ * Every other primitive still needs its `NovaOpt_T` (Option[T] tagged
+ * struct) — that's independent of the array machinery — via the narrower
+ * `NOVA_OPT_DECL`.
  */
 NOVA_ARRAY_DECL(nova_int)
 NOVA_ARRAY_IMPL(nova_int)
@@ -242,55 +265,24 @@ NOVA_ARRAY_IMPL(nova_int)
 /* Plan 70.3 / 152.8: nova_char distinct typedef = uint32_t (D128 AMEND).
  * Codepoints fit in 21 bits; uint32_t is the natural type. Distinct C type
  * prevents Option[char]↔Option[int] structural collapse in mono mangling. */
-NOVA_ARRAY_DECL(nova_char)
-NOVA_ARRAY_IMPL(nova_char)
+NOVA_OPT_DECL(nova_char)
 
-NOVA_ARRAY_DECL(nova_byte)
-NOVA_ARRAY_IMPL(nova_byte)
+NOVA_OPT_DECL(nova_byte)
 
-/* Plan 90: compare для []u8 — memcmp-класс, lexicographic.
- * ОДИН примитив: equality (== / eq) — частный случай (compare == 0).
- * Только для nova_byte: memcmp byte-wise; для multi-byte T порядок был
- * бы endianness-зависим. Возвращает -1/0/1 (модель Go/memcmp). */
-static int nova_array_compare_nova_byte(NovaArray_nova_byte* a, NovaArray_nova_byte* b) {
-    int64_t n = a->len < b->len ? a->len : b->len;
-    if (n > 0) {
-        int c = memcmp(a->data, b->data, (size_t)n);
-        if (c != 0) return c < 0 ? -1 : 1;
-    }
-    if (a->len < b->len) return -1;
-    if (a->len > b->len) return 1;
-    return 0;
-}
+NOVA_OPT_DECL(nova_bool)
 
-NOVA_ARRAY_DECL(nova_bool)
-NOVA_ARRAY_IMPL(nova_bool)
+NOVA_OPT_DECL(nova_f64)
 
-NOVA_ARRAY_DECL(nova_f64)
-NOVA_ARRAY_IMPL(nova_f64)
+/* Plan 70.4: nova_f32 distinct from nova_f64 — ABI difference (4 vs 8 bytes). */
+NOVA_OPT_DECL(nova_f32)
 
-/* Plan 70.4: nova_f32 distinct from nova_f64 — ABI difference (4 vs 8 bytes).
- * []f32 и []f64 must have distinct NovaArray structs to avoid 2x memory cost
- * and silent data corruption when f32 arrays processed as f64. */
-NOVA_ARRAY_DECL(nova_f32)
-NOVA_ARRAY_IMPL(nova_f32)
-
-/* Plan 70.4 Ф.2: sized-int arrays — distinct packed storage (ABI-real).
- * []i32 → NovaArray_int32_t* (4-byte elements), not NovaArray_nova_int* (8-byte).
- * Without these, GPU/audio/network buffers silently get 2x memory overhead
- * and wrong FFI alignment. ABI mismatch = silent data corruption. */
-NOVA_ARRAY_DECL(int32_t)
-NOVA_ARRAY_IMPL(int32_t)
-NOVA_ARRAY_DECL(int16_t)
-NOVA_ARRAY_IMPL(int16_t)
-NOVA_ARRAY_DECL(int8_t)
-NOVA_ARRAY_IMPL(int8_t)
-NOVA_ARRAY_DECL(uint32_t)
-NOVA_ARRAY_IMPL(uint32_t)
-NOVA_ARRAY_DECL(uint16_t)
-NOVA_ARRAY_IMPL(uint16_t)
-NOVA_ARRAY_DECL(uint64_t)
-NOVA_ARRAY_IMPL(uint64_t)
+/* Plan 70.4 Ф.2: sized-int Option — distinct packed storage (ABI-real). */
+NOVA_OPT_DECL(int32_t)
+NOVA_OPT_DECL(int16_t)
+NOVA_OPT_DECL(int8_t)
+NOVA_OPT_DECL(uint32_t)
+NOVA_OPT_DECL(uint16_t)
+NOVA_OPT_DECL(uint64_t)
 
 /* ---- void_p — array of opaque pointers (used for closures via NovaClosBase*).
  *
@@ -336,39 +328,12 @@ static nova_bool nova_array_eq_void_p(NovaArray_void_p* a, NovaArray_void_p* b) 
     return 1;
 }
 
-/* ---- nova_str array (cannot use macro: eq needs nova_str_eq) ---- */
-#ifndef NOVA_RT_H  /* nova_str defined in nova_rt.h; skip if not included yet */
-#endif
-NOVA_ARRAY_DECL(nova_str)
-static NovaArray_nova_str* nova_array_new_nova_str(int64_t init_cap) {
-    NovaArray_nova_str* a = (NovaArray_nova_str*)nova_alloc(sizeof(NovaArray_nova_str));
-    a->cap  = init_cap > 0 ? init_cap : 8;
-    a->len  = 0;
-    a->data = (nova_str*)nova_alloc((size_t)(a->cap) * sizeof(nova_str));
-    return a;
-}
-static void nova_array_push_nova_str(NovaArray_nova_str* a, nova_str v) {
-    if (a->len >= a->cap) {
-        int64_t new_cap = a->cap * 2;
-        nova_str* new_data = (nova_str*)nova_alloc((size_t)new_cap * sizeof(nova_str));
-        memcpy(new_data, a->data, (size_t)(a->len) * sizeof(nova_str));
-        a->data = new_data;
-        a->cap  = new_cap;
-    }
-    a->data[a->len++] = v;
-}
-static NovaOpt_nova_str nova_array_get_nova_str(NovaArray_nova_str* a, int64_t i) {
-    NovaOpt_nova_str r;
-    if (i >= 0 && i < a->len) { r.tag = NOVA_TAG_Option_Some; r.value = a->data[i]; }
-    else                       { r.tag = NOVA_TAG_Option_None; r.value = (nova_str){0,0}; }
-    return r;
-}
-static NovaOpt_nova_str nova_array_pop_nova_str(NovaArray_nova_str* a) {
-    NovaOpt_nova_str r;
-    if (a->len > 0) { a->len--; r.tag = NOVA_TAG_Option_Some; r.value = a->data[a->len]; }
-    else             { r.tag = NOVA_TAG_Option_None; r.value = (nova_str){0,0}; }
-    return r;
-}
+/* ---- nova_str: Option[str] only (Plan 172.12 A8) — the legacy
+ * `NovaArray_nova_str` growable-array struct + its hand-rolled
+ * new/push/get/pop (never macro'd: `eq` needed `nova_str_eq`, not `==`) is
+ * dead — `[]str` is Vec[str]-backed since Plan 172.12 A6/A7 (str-family
+ * moved onto the Vec substrate first, ahead of the primitive flip). */
+NOVA_OPT_DECL(nova_str)
 
 /* ---- Option constructors for nova_int (for match compatibility) ---- */
 /* Both naming conventions supported: Option and NovaOpt_nova_int */

@@ -17294,21 +17294,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 Some(format!("NovaRes_{}_{}*", ok_s, err_s))
             }
             crate::ast::TypeRef::Array(inner, _) => {
-                // [M-91.1-composite-array-storage] Plan 91 Ф.1: `[]T` element
-                // storage. Primitive elements get distinct packed storage
-                // (NovaArray_nova_str* / _nova_byte* / ...). NON-primitive
-                // elements (record/sum/Option/tuple/array) are stored via the
-                // int64-slot erasure `NovaArray_nova_int*` (boxed pointer) —
-                // the bootstrap limitation already used by `type_ref_to_c`.
-                // Emitting `NovaArray_<inner_c>*` here (e.g. inner_c=`Nova_Wrap*`
-                // → `NovaArray_Nova_Wrap**`) DIVERGED from the body lowering
-                // (which erases to `NovaArray_nova_int*`) and crashed the C
-                // compiler with `unknown type name 'NovaArray_Nova_Wrap'`. This
-                // is the actual marker bug: align the call-site to the body so
-                // both sides agree on the erased name.
+                // [M-91.1-composite-array-storage] Plan 91 Ф.1 lesson: this
+                // call-site MUST NOT invent type names the emit passes never
+                // declare, or mono fwd-decls CC-FAIL with "unknown type name".
+                // Plan 172.12 A8: primitive elements switch from the retired
+                // `NovaArray_<prim>*` (deleted with array.h's DECL/IMPL snос)
+                // to the Vec[T]-mangled name — the body lowering
+                // (`resolved_array_to_c`) registers exactly that instance, so
+                // the name always exists. NON-primitive elements keep the
+                // int64-slot `NovaArray_nova_int*` erasure sentinel unchanged
+                // (pre-A8 behavior): an UNSUBSTITUTED placeholder element
+                // (`Nova_T*` inside an erased-generic template) would otherwise
+                // mangle to a never-emitted `Nova_Vec____Nova_T_p` (empirically
+                // hit by std/collections/vec_seq), and the sentinel struct is
+                // still unconditionally declared in array.h.
                 let inner_c = Self::apply_type_subst_to_ref(inner, subst)?;
                 if Self::is_primitive_array_elem_c(&inner_c) {
-                    Some(format!("NovaArray_{}*", inner_c))
+                    Some(format!("{}*",
+                        Self::compute_generic_type_c_name("Vec", &[inner_c])))
                 } else {
                     Some("NovaArray_nova_int*".to_string())
                 }
@@ -29219,14 +29222,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 method, elem_ty, arg_strs.join(", ")));
                             return Ok(obj_c);
                         }
-                        // Plan 90: compare — memcmp-класс, только []u8 (nova_byte).
-                        "compare" if elem_ty == "nova_byte" => {
-                            let obj_c = self.emit_expr(obj)?;
-                            let mut arg_strs = vec![obj_c];
-                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
-                            return Ok(format!("nova_array_compare_nova_byte({})",
-                                arg_strs.join(", ")));
-                        }
+                        // Plan 90 `compare` (nova_array_compare_nova_byte) — АРМ СНЕСЁН
+                        // (Plan 172.12 A8): `[]u8` receivers are Vec[u8]-typed since the
+                        // A6/A7 flip (compare = RawMem-backed Nova-body, Plan 138.2), so a
+                        // `NovaArray_nova_byte*` receiver can no longer be produced and the
+                        // C helper is deleted from array.h with the rest of the legacy set.
                         _ => {}
                     }
                 }
@@ -43005,50 +43005,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let ExprKind::Path(parts) = &obj.kind {
                             if parts.len() == 2 && parts[0] == "__array" {
                                 if method == "new" || method == "with_capacity" {
-                                // [M-record-elem-vec-bare-ctor-miscompile] R3 mirror:
-                                // a RECORD / SUM / named-tuple element needs the real
-                                // `Nova_Vec____<elem>` mono type — the erased
-                                // `NovaArray_nova_int` (arr_suffix fallthrough) mis-types
-                                // the binding against the emit side (now routed through
-                                // Vec) → `NovaOpt_nova_int` vs `NovaOpt_NovaValue_Rec`
-                                // CC-FAIL / silent record truncation. Scalars keep the
-                                // legacy `NovaArray_<prim>*` (layout- and slot-compatible
-                                // with `Nova_Vec____<prim>`); composite elements infer via
-                                // the equivalent `Vec[T].new()` (both new/with_capacity
-                                // yield `Vec[T]`).
-                                let elem_needs_vec_mono = {
+                                // [M-record-elem-vec-bare-ctor-miscompile] R3 mirror,
+                                // EXTENDED by Plan 172.12 A8 (mirror of the A7 emit-side
+                                // `elem_is_erased` flip in emit_call): EVERY concrete
+                                // element (primitive OR composite) now infers via the
+                                // equivalent `Vec[T].new()` synth — the legacy
+                                // `NovaArray_<prim>*` names are retired with array.h's
+                                // NOVA_ARRAY_DECL/IMPL snос. ONLY a genuinely UNRESOLVED
+                                // type-param element (erased-generic mono'd body,
+                                // `type_ref_to_c` fails) stays on the int64-slot
+                                // `NovaArray_nova_int*` erasure sentinel — matching the
+                                // emit side exactly (infer/emit must agree on the
+                                // binding's C type).
+                                let elem_is_erased = {
                                     let elem_tr = crate::ast::TypeRef::Named {
                                         path: vec![parts[1].clone()],
                                         generics: Vec::new(),
                                         span: obj.span,
                                     };
-                                    match self.type_ref_to_c(&elem_tr) {
-                                        Ok(c) => !Self::is_primitive_array_elem_c(
-                                            c.trim_end_matches('*').trim()),
-                                        Err(_) => false,
-                                    }
+                                    self.type_ref_to_c(&elem_tr).is_err()
                                 };
-                                if !elem_needs_vec_mono {
-                                    let arr_suffix = match parts[1].as_str() {
-                                        "str"            => "nova_str",
-                                        "u8"    => "nova_byte",
-                                        "bool"           => "nova_bool",
-                                        "f64"            => "nova_f64",
-                                        // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
-                                        "f32"            => "nova_f32",
-                                        // Plan 70.4 Ф.2: sized-int distinct.
-                                        "char"           => "nova_char",
-                                        "i32"            => "int32_t",
-                                        "i16"            => "int16_t",
-                                        "i8"             => "int8_t",
-                                        "u32"            => "uint32_t",
-                                        "u16"            => "uint16_t",
-                                        "u64"            => "uint64_t",
-                                        // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
-                                        "uint"           => "uint64_t",
-                                        _                => "nova_int",
-                                    };
-                                    return format!("NovaArray_{}*", arr_suffix);
+                                if elem_is_erased {
+                                    return "NovaArray_nova_int*".to_string();
                                 }
                                 let synth_new = Expr {
                                     kind: ExprKind::Call {
@@ -46747,50 +46725,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let ExprKind::Path(parts) = &obj.kind {
                             if parts.len() == 2 && parts[0] == "__array" {
                                 if method == "new" || method == "with_capacity" {
-                                // [M-record-elem-vec-bare-ctor-miscompile] R3 mirror:
-                                // a RECORD / SUM / named-tuple element needs the real
-                                // `Nova_Vec____<elem>` mono type — the erased
-                                // `NovaArray_nova_int` (arr_suffix fallthrough) mis-types
-                                // the binding against the emit side (now routed through
-                                // Vec) → `NovaOpt_nova_int` vs `NovaOpt_NovaValue_Rec`
-                                // CC-FAIL / silent record truncation. Scalars keep the
-                                // legacy `NovaArray_<prim>*` (layout- and slot-compatible
-                                // with `Nova_Vec____<prim>`); composite elements infer via
-                                // the equivalent `Vec[T].new()` (both new/with_capacity
-                                // yield `Vec[T]`).
-                                let elem_needs_vec_mono = {
+                                // [M-record-elem-vec-bare-ctor-miscompile] R3 mirror,
+                                // EXTENDED by Plan 172.12 A8 (mirror of the A7 emit-side
+                                // `elem_is_erased` flip in emit_call): EVERY concrete
+                                // element (primitive OR composite) now infers via the
+                                // equivalent `Vec[T].new()` synth — the legacy
+                                // `NovaArray_<prim>*` names are retired with array.h's
+                                // NOVA_ARRAY_DECL/IMPL snос. ONLY a genuinely UNRESOLVED
+                                // type-param element (erased-generic mono'd body,
+                                // `type_ref_to_c` fails) stays on the int64-slot
+                                // `NovaArray_nova_int*` erasure sentinel — matching the
+                                // emit side exactly (infer/emit must agree on the
+                                // binding's C type).
+                                let elem_is_erased = {
                                     let elem_tr = crate::ast::TypeRef::Named {
                                         path: vec![parts[1].clone()],
                                         generics: Vec::new(),
                                         span: obj.span,
                                     };
-                                    match self.type_ref_to_c(&elem_tr) {
-                                        Ok(c) => !Self::is_primitive_array_elem_c(
-                                            c.trim_end_matches('*').trim()),
-                                        Err(_) => false,
-                                    }
+                                    self.type_ref_to_c(&elem_tr).is_err()
                                 };
-                                if !elem_needs_vec_mono {
-                                    let arr_suffix = match parts[1].as_str() {
-                                        "str"            => "nova_str",
-                                        "u8"    => "nova_byte",
-                                        "bool"           => "nova_bool",
-                                        "f64"            => "nova_f64",
-                                        // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
-                                        "f32"            => "nova_f32",
-                                        // Plan 70.4 Ф.2: sized-int distinct.
-                                        "char"           => "nova_char",
-                                        "i32"            => "int32_t",
-                                        "i16"            => "int16_t",
-                                        "i8"             => "int8_t",
-                                        "u32"            => "uint32_t",
-                                        "u16"            => "uint16_t",
-                                        "u64"            => "uint64_t",
-                                        // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
-                                        "uint"           => "uint64_t",
-                                        _                => "nova_int",
-                                    };
-                                    return format!("NovaArray_{}*", arr_suffix);
+                                if elem_is_erased {
+                                    return "NovaArray_nova_int*".to_string();
                                 }
                                 let synth_new = Expr {
                                     kind: ExprKind::Call {
@@ -48330,12 +48286,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ExprKind::For { .. } => "nova_unit".into(),
                 ExprKind::ParallelFor { body, .. } => {
                     // D71: array-mode when trailing exists, unit otherwise.
+                    // Plan 172.12 A8: Vec[T]-mangled result name (was
+                    // `NovaArray_<et>*` — retired with array.h's legacy runtime;
+                    // mirrors `emit_parallel_for`'s result buffer, which is
+                    // Vec[T]-typed since the same pass).
                     match &body.trailing {
                         Some(t) => {
                             let et = self.infer_expr_c_type(t);
                             match et.as_str() {
                                 "nova_int" | "nova_bool" | "nova_f64" | "nova_str" =>
-                                    format!("NovaArray_{}*", et),
+                                    format!("{}*",
+                                        Self::compute_generic_type_c_name("Vec", &[et])),
                                 _ => "nova_unit".into(),
                             }
                         }
