@@ -44,7 +44,7 @@ export fn str @index(r Range) -> str
 export fn str @get(r Range) -> Option[str] {
     ro n = @byte_len()
     if r.start < 0 || r.end < r.start || r.end > n { return None }
-    ro bytes = @as_bytes()
+    ro bytes = @bytes()
     if r.start < n && (bytes[r.start] as int & 0xC0) == 0x80 { return None }
     if r.end < n && (bytes[r.end] as int & 0xC0) == 0x80 { return None }
     Some(@[r.start..r.end])

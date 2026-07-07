@@ -49,7 +49,7 @@ fn serialize_request(method str, target str, host_header str, headers HeaderMap,
     for (n, v) in headers {
         buf.write_str(n.as_str())
         buf.write_str(": ")
-        buf.write_bytes(v.as_bytes())
+        buf.write_bytes(v.bytes())
         buf.write_str("\r\n")
     }
 
@@ -85,7 +85,7 @@ fn serialize_response(status StatusCode, headers HeaderMap, body []u8) -> str {
     for (n, v) in headers {
         buf.write_str(n.as_str())
         buf.write_str(": ")
-        buf.write_bytes(v.as_bytes())
+        buf.write_bytes(v.bytes())
         buf.write_str("\r\n")
     }
 
@@ -107,7 +107,7 @@ fn serialize_response(status StatusCode, headers HeaderMap, body []u8) -> str {
 // Parse the request-line of a serialized request → (method, path without query).
 // Used by mock_http to route. Malformed → None.
 fn parse_request_line(request str) -> Option[(str, str)] {
-    ro b = request.to_bytes()
+    ro b = request.bytes()
     ro eol = match find_crlf(b, 0) { Some(x) => x, None => return None }
     ro sp1 = match index_of(b, 0x20, 0) { Some(x) => x, None => return None }
     if sp1 >= eol { return None }
@@ -127,7 +127,7 @@ fn parse_request_line(request str) -> Option[(str, str)] {
 // actually sent (e.g. that Authorization was stripped cross-origin). None if
 // absent.
 fn find_request_header(request str, name str) -> Option[str] {
-    ro b = request.to_bytes()
+    ro b = request.bytes()
     ro key = name.to_ascii_lower()
     ro head_end = match find_double_crlf(b, 0) { Some(x) => x, None => b.len }
     ro first_eol = match find_crlf(b, 0) { Some(x) => x, None => return None }
@@ -160,7 +160,7 @@ fn find_request_header(request str, name str) -> Option[str] {
 // Parse a full raw HTTP/1.1 response. Malformed status-line/headers/framing →
 // `Err(Protocol(..))`.
 fn parse_response(raw str) -> Result[ParsedResponse, HttpError] {
-    ro b = raw.to_bytes()
+    ro b = raw.bytes()
     ro n = b.len
 
     // 1. Locate end of header block (CRLF CRLF).

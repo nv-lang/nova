@@ -115,7 +115,7 @@ export fn ServerResponse.new(status int) -> ServerResponse =>
 export fn ServerResponse.text(status int, s str) -> ServerResponse {
     mut h = HeaderMap.new()
     match h.insert("Content-Type", "text/plain; charset=utf-8") { Ok(_) => (), Err(_) => () }
-    { status, headers: h, body: s.to_bytes() }
+    { status, headers: h, body: s.bytes() }
 }
 
 /// `text/html; charset=utf-8` response.
@@ -123,7 +123,7 @@ export fn ServerResponse.text(status int, s str) -> ServerResponse {
 export fn ServerResponse.html(status int, s str) -> ServerResponse {
     mut h = HeaderMap.new()
     match h.insert("Content-Type", "text/html; charset=utf-8") { Ok(_) => (), Err(_) => () }
-    { status, headers: h, body: s.to_bytes() }
+    { status, headers: h, body: s.bytes() }
 }
 
 /// Raw-bytes response with an explicit Content-Type.
@@ -336,7 +336,7 @@ fn parse_query(q str) -> [](str, str) {
 
 // Minimal percent-decode (+ → space, %XX → byte). Invalid escapes pass through.
 fn percent_decode(s str) -> str {
-    ro b = s.to_bytes()
+    ro b = s.bytes()
     ro n = b.len
     mut out = Vec[u8].new().cap(n)
     mut i = 0

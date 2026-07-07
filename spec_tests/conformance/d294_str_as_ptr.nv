@@ -1,29 +1,29 @@
-// D294 — `str @as_ptr() -> *u8`: bytes-FFI bridge (Plan 91.12 Ф.9, ACTIVE).
+// D294 — `str @ptr() -> *u8`: bytes-FFI bridge (Plan 91.12 Ф.9, ACTIVE).
 // Норма (spec §D294): указатель на первый байт строки; пара
-// `(s.as_ptr(), s.byte_len())` полностью описывает сырой буфер без аллокаций;
+// `(s.ptr(), s.byte_len())` полностью описывает сырой буфер без аллокаций;
 // для пустой строки — implementation-defined non-null sentinel; арифметика по
 // указателю в Nova не поддерживается — как сырой адрес через `as int`.
-// Прямой аналог Rust `str::as_ptr() -> *const u8`. Шаблоны сверены с
+// Прямой аналог Rust `str::ptr() -> *const u8`. Шаблоны сверены с
 // nova_tests/plan91_12/net_v2_str_as_ptr_ok.nv. Один folder-module
 // `spec_tests.conformance`.
 module spec_tests.conformance
 
 test "as_ptr: non-null для непустой строки; *u8 → int каст (D294)" {
     ro d294_s = "hello"
-    ro d294_p = d294_s.as_ptr()
+    ro d294_p = d294_s.ptr()
     ro d294_pi = d294_p as int
     assert(d294_pi != 0)
 }
 
 test "as_ptr: пустая строка — валидный вызов, sentinel-указатель (D294)" {
     ro d294_e = ""
-    ro d294_p = d294_e.as_ptr()
+    ro d294_p = d294_e.ptr()
     ro _d294 = d294_p
 }
 
 test "as_ptr+byte_len: пара описывает буфер; round-trip байтов (D294)" {
     ro d294_s = "nova"
-    ro d294_bytes = d294_s.as_bytes()
+    ro d294_bytes = d294_s.bytes()
     ro d294_s2 = str.from_bytes_unchecked(d294_bytes)
     assert(d294_s == d294_s2)
     assert(d294_s.byte_len() == d294_s2.byte_len())
@@ -32,5 +32,5 @@ test "as_ptr+byte_len: пара описывает буфер; round-trip бай
 test "as_ptr: multi-byte UTF-8 — byte_len байтовый (D294)" {
     ro d294_u = "ёж"
     assert(d294_u.byte_len() == 4)
-    assert((d294_u.as_ptr() as int) != 0)
+    assert((d294_u.ptr() as int) != 0)
 }

@@ -231,7 +231,7 @@ export fn str @split_terminator(sep str) -> ro []str {
 // Renamed split_whitespace → split_ascii_whitespace (Plan 91.18 Ф.2).
 export fn str @split_ascii_whitespace() -> ro []str {
     mut out = []str.new()
-    ro (bytes, sn) = (@as_bytes(), @byte_len())
+    ro (bytes, sn) = (@bytes(), @byte_len())
     mut i = 0
     while i < sn {
         while i < sn && is_ascii_ws(bytes[i] as int) { i += 1 }
@@ -248,7 +248,7 @@ export fn str @split_ascii_whitespace() -> ro []str {
 // the empty string yields no lines (Rust `lines`).
 export fn str @lines() -> ro []str {
     mut out = []str.new()
-    ro (bytes, sn) = (@as_bytes(), @byte_len())
+    ro (bytes, sn) = (@bytes(), @byte_len())
     if sn == 0 { return out }
     mut start = 0
     mut i = 0
@@ -291,7 +291,7 @@ export fn str @match_indices(needle str) -> []int {
 
 // True if string contains codepoint `c` — UTF-8 scan.
 export fn str @contains(c char) -> bool {
-    ro (bytes, n) = (@as_bytes(), @byte_len())
+    ro (bytes, n) = (@bytes(), @byte_len())
     ro cp = c as int
     mut i = 0
     while i < n {
@@ -305,7 +305,7 @@ export fn str @contains(c char) -> bool {
 // True if string starts with codepoint `c`.
 export fn str @starts_with(c char) -> bool {
     if @is_empty() { return false }
-    ro bytes = @as_bytes()
+    ro bytes = @bytes()
     ro (first_cp, _) = decode_utf8(bytes, 0, @byte_len())
     first_cp == (c as int)
 }
@@ -313,7 +313,7 @@ export fn str @starts_with(c char) -> bool {
 // True if string ends with codepoint `c`.
 export fn str @ends_with(c char) -> bool {
     if @is_empty() { return false }
-    ro (bytes, n) = (@as_bytes(), @byte_len())
+    ro (bytes, n) = (@bytes(), @byte_len())
     mut i = n - 1
     while i > 0 && ((bytes[i] as int) & 0xC0) == 0x80 { i -= 1 }
     ro (last_cp, _) = decode_utf8(bytes, i, n)

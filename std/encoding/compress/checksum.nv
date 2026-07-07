@@ -37,7 +37,7 @@ fn crc32_table_value(i u8) -> u32 {
 ///
 /// # Examples
 /// ```nova
-/// assert(crc32("123456789".to_bytes()) == 0xCBF43926)
+/// assert(crc32("123456789".bytes()) == 0xCBF43926)
 /// ```
 #stable(since = "0.1")
 export fn crc32(data []u8) -> u32 =>
@@ -75,7 +75,7 @@ fn adler_base() -> u32 => 65521
 ///
 /// # Examples
 /// ```nova
-/// assert(adler32("Wikipedia".to_bytes()) == 0x11E60398)
+/// assert(adler32("Wikipedia".bytes()) == 0x11E60398)
 /// ```
 #stable(since = "0.1")
 export fn adler32(data []u8) -> u32 =>
@@ -113,19 +113,19 @@ test "crc32: пустой ввод → 0" {
 }
 
 test "crc32: '123456789' → 0xCBF43926 (классический вектор)" {
-    assert(crc32("123456789".to_bytes()) == 0xCBF43926)
+    assert(crc32("123456789".bytes()) == 0xCBF43926)
 }
 
 test "crc32: 'hello world' → 0x0D4A1185" {
-    assert(crc32("hello world".to_bytes()) == 0x0D4A1185)
+    assert(crc32("hello world".bytes()) == 0x0D4A1185)
 }
 
 test "crc32: incremental == монолитный" {
-    ro full = "The quick brown fox jumps over the lazy dog".to_bytes()
+    ro full = "The quick brown fox jumps over the lazy dog".bytes()
     mut state = crc32_init()
-    state = crc32_update(state, "The quick brown ".to_bytes())
-    state = crc32_update(state, "fox jumps over ".to_bytes())
-    state = crc32_update(state, "the lazy dog".to_bytes())
+    state = crc32_update(state, "The quick brown ".bytes())
+    state = crc32_update(state, "fox jumps over ".bytes())
+    state = crc32_update(state, "the lazy dog".bytes())
     assert(crc32(full) == crc32_finalize(state))
 }
 
@@ -135,18 +135,18 @@ test "adler32: пустой ввод → 1" {
 }
 
 test "adler32: 'Wikipedia' → 0x11E60398 (RFC 1950 пример)" {
-    assert(adler32("Wikipedia".to_bytes()) == 0x11E60398)
+    assert(adler32("Wikipedia".bytes()) == 0x11E60398)
 }
 
 test "adler32: '123456789' → 0x091E01DE" {
-    assert(adler32("123456789".to_bytes()) == 0x091E01DE)
+    assert(adler32("123456789".bytes()) == 0x091E01DE)
 }
 
 test "adler32: incremental == монолитный" {
-    ro full = "The quick brown fox jumps over the lazy dog".to_bytes()
+    ro full = "The quick brown fox jumps over the lazy dog".bytes()
     mut state = adler32_init()
-    state = adler32_update(state, "The quick brown ".to_bytes())
-    state = adler32_update(state, "fox jumps over ".to_bytes())
-    state = adler32_update(state, "the lazy dog".to_bytes())
+    state = adler32_update(state, "The quick brown ".bytes())
+    state = adler32_update(state, "fox jumps over ".bytes())
+    state = adler32_update(state, "the lazy dog".bytes())
     assert(adler32(full) == adler32_finalize(state))
 }

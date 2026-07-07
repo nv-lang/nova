@@ -244,7 +244,7 @@ test "Баг 2: round-trip \\b\\f" {
     match v.as_str() {
         Some(s) => {
             assert(s.byte_len() == 2)
-            ro bytes = s.as_bytes()
+            ro bytes = s.bytes()
             assert(bytes[0] == 8)
             assert(bytes[1] == 12)
         }

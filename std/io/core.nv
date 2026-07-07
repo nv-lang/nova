@@ -206,7 +206,7 @@ export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
 /// inlined rather than calling `write_all` — see the forward-bound note.)
 #stable(since = "0.1")
 export fn write_str[W Write](w mut W, s str) -> Result[(), IoError] {
-    ro data = s.to_bytes()
+    ro data = s.bytes()
     ro total = data.len()
     mut done = 0
     while done < total {

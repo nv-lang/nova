@@ -52,7 +52,7 @@ export fn str @encode_utf16() -> []u16 {
     // безопасная верхняя граница без второго прохода).
     mut out []u16 = []u16.new()
     out.cap(@byte_len())
-    for c in @as_chars() {
+    for c in @chars() {
         ro cp = c as int
         if cp < 0x10000 {
             out.push(cp as u16)

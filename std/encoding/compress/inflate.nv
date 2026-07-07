@@ -754,7 +754,7 @@ fn build_dist_extra() -> []int =>
 
 // Хелпер: hex-строка → []u8 (для эталонных векторов).
 fn hexbytes(s str) -> []u8 {
-    ro chars = s.to_bytes()
+    ro chars = s.bytes()
     mut out []u8 = []u8.new()
     out.cap(chars.len() / 2)
     mut i = 0
@@ -779,13 +779,13 @@ test "inflate: fixed-Huffman raw DEFLATE 'Hello, DEFLATE!'" {
     // printf 'Hello, DEFLATE!' | pigz/zlib -9 raw
     ro comp = hexbytes("f348cdc9c9d751707175f3710c71550400")
     ro got = inflate(comp, 1024)!!
-    assert(got == "Hello, DEFLATE!".to_bytes())
+    assert(got == "Hello, DEFLATE!".bytes())
 }
 
 test "inflate: stored block (level 0) 'abcdefghij'" {
     ro comp = hexbytes("010a00f5ff6162636465666768696a")
     ro got = inflate(comp, 1024)!!
-    assert(got == "abcdefghij".to_bytes())
+    assert(got == "abcdefghij".bytes())
 }
 
 test "inflate: empty stored + empty fixed block" {
@@ -806,7 +806,7 @@ test "inflate: dynamic Huffman (repetitive 900B)" {
     ro comp = hexbytes("2bc94855282ccd4cce56482aca2fcf5348cbaf50c82acd2d2856c82f4b2d5228c94855c849acaa5448c94fd703f346158f2a1e555c4e4dc500")
     mut expect []u8 = []u8.new()
     expect.cap(900)
-    ro unit = "the quick brown fox jumps over the lazy dog. ".to_bytes()
+    ro unit = "the quick brown fox jumps over the lazy dog. ".bytes()
     for _ in 0..20 { expect.append(unit) }
     ro got = inflate(comp, 4096)!!
     assert(got == expect)

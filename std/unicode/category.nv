@@ -222,7 +222,7 @@ export fn char @to_lowercase() -> str => char_to_lowercase(@ as u32)
 fn str @trim_unicode() -> str {
     ro n = @byte_len()
     if n == 0 { return @ }
-    ro bytes = @as_bytes()
+    ro bytes = @bytes()
     mut start = 0
     while start < n {
         ro (cp, step) = decode_at(@, start)
@@ -255,7 +255,7 @@ fn str @trim_unicode_start() -> str {
 // Trim Unicode whitespace from the end (zero-copy view).
 fn str @trim_unicode_end() -> str {
     ro n = @byte_len()
-    ro bytes = @as_bytes()
+    ro bytes = @bytes()
     mut end = n
     while end > 0 {
         mut i = end - 1

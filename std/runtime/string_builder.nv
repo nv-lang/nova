@@ -132,14 +132,14 @@ export fn StringBuilder @clone() -> Self => { buf: sb_clone_buf(@buf) }
 
 // Проверить prefix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @starts_with(prefix str) -> bool {
-    ro pbytes = prefix.as_bytes()
+    ro pbytes = prefix.bytes()
     ro plen = pbytes.len()
     plen <= @buf.len() && @buf[0..plen].compare(pbytes) == 0
 }
 
 // Проверить suffix буфера. Slice-view + memcmp (zero-copy).
 export fn StringBuilder @ends_with(suffix str) -> bool {
-    ro sbytes = suffix.as_bytes()
+    ro sbytes = suffix.bytes()
     ro slen = sbytes.len()
     ro blen = @buf.len()
     slen <= blen && @buf[blen - slen..blen].compare(sbytes) == 0
@@ -148,7 +148,7 @@ export fn StringBuilder @ends_with(suffix str) -> bool {
 // ─── Mutating (-> @) ───
 
 // Append UTF-8 bytes из str. Zero-copy view (as_bytes).
-export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.as_bytes()) }
+export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.bytes()) }
 
 // Append codepoint как UTF-8 (1-4 байта). Fluent push chain (D181)
 // + multi-line continuation (Plan 91 followup parser fix).
@@ -193,12 +193,12 @@ export fn StringBuilder mut @append(x f32) -> @ { @append(str.from(x)) }
 
 // Append строку s ровно n раз. n <= 0 → no-op.
 // Single reserve(total) → один realloc вместо n× амортизированного doubling.
-// `as_bytes()` — zero-copy view; `append` в loop без indirection.
+// `bytes()` — zero-copy view; `append` в loop без indirection.
 export fn StringBuilder mut @append_repeat(s str, n int) -> @
     requires n >= 0
 {
     if n <= 0 { return }
-    ro bytes = s.as_bytes()
+    ro bytes = s.bytes()
     @buf.reserve(bytes.len() * n)
     for _ in 0..n {
         @buf.append(bytes)
@@ -213,7 +213,7 @@ export fn StringBuilder mut @truncate(len int) -> @
 // Plan 152.7.1 (D374 AMEND, ex-D374) — Write protocol implementation.
 // Delegates to @buf.append directly (same UTF-8 bytes path as @append(s str)).
 // Returns () — satisfies Write protocol contract.
-export fn StringBuilder mut @write(s str) -> () { @buf.append(s.as_bytes()) }
+export fn StringBuilder mut @write(s str) -> () { @buf.append(s.bytes()) }
 
 // ─── Consume ───
 

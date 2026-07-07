@@ -102,7 +102,7 @@ fn parse_comp_table(data str) -> HashMap[int, u32] {
 fn str_to_cps(s str) -> []u32 {
     mut out []u32 = []u32.new()
     out.cap(s.byte_len())
-    for c in s.as_chars() { out.push(c as u32) }
+    for c in s.chars() { out.push(c as u32) }
     out
 }
 
@@ -123,7 +123,7 @@ fn cps_to_str(cps []u32) -> str {
 // itself is byte/bit work in `int`, cast to `u32` at the boundary. `step` is a byte
 // count, so `int` (D226 — a measure, not a codepoint).
 fn decode_at(s str, i int) -> (u32, int) {
-    ro bytes = s.as_bytes()
+    ro bytes = s.bytes()
     ro n = s.byte_len()
     ro b = bytes[i] as int
     if b < 0x80 {

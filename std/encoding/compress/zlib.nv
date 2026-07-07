@@ -307,7 +307,7 @@ export fn ZlibWriter mut @finish() -> Result[[]u8, CompressError] {
 
 test "zlib_decode: 'Hello, DEFLATE!' + Adler-32 verify" {
     ro comp = hexbytes("789cf348cdc9c9d751707175f3710c7155040025c40457")
-    assert(zlib_decode(comp, 1024)!! == "Hello, DEFLATE!".to_bytes())
+    assert(zlib_decode(comp, 1024)!! == "Hello, DEFLATE!".bytes())
 }
 
 test "zlib_decode: empty input" {
@@ -371,14 +371,14 @@ test "zlib streaming: feed-по-1-байту == one-shot" {
 }
 
 test "zlib_encode: round-trip via zlib_decode (all levels)" {
-    ro data = "zlib framing round-trip payload — repeated. zlib framing round-trip payload.".to_bytes()
+    ro data = "zlib framing round-trip payload — repeated. zlib framing round-trip payload.".bytes()
     assert(zlib_decode(zlib_encode(data, CompressLevel.none())!!, 65536)!! == data)
     assert(zlib_decode(zlib_encode(data, CompressLevel.fastest())!!, 65536)!! == data)
     assert(zlib_decode(zlib_encode(data, CompressLevel.best())!!, 65536)!! == data)
 }
 
 test "zlib_encode: header CMF/FLG valid (%31==0, CM=8)" {
-    ro comp = zlib_encode("hello".to_bytes(), CompressLevel.fastest())!!
+    ro comp = zlib_encode("hello".bytes(), CompressLevel.fastest())!!
     ro cmf = comp[0] as int
     ro flg = comp[1] as int
     assert((cmf & 0x0F) == 8)                  // CM=8
@@ -387,7 +387,7 @@ test "zlib_encode: header CMF/FLG valid (%31==0, CM=8)" {
 }
 
 test "zlib streaming: ZlibWriter feed+finish round-trip" {
-    ro data = "streamed zlib content that repeats. streamed zlib content that repeats.".to_bytes()
+    ro data = "streamed zlib content that repeats. streamed zlib content that repeats.".bytes()
     mut zw = ZlibWriter.new(CompressLevel.best())
     mut comp []u8 = []u8.new()
     comp.cap(64)

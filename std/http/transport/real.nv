@@ -66,7 +66,7 @@ fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpEr
         Ok(s)  => s
         Err(_) => return Err(HttpError.transport(ErrorKind.Connect, "connect failed"))
     }
-    match stream.write_all(request.as_bytes()) {
+    match stream.write_all(request.bytes()) {
         Ok(_)  => ()
         Err(_) => {
             stream.close()

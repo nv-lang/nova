@@ -8,7 +8,7 @@
 // `cap == len`) detaches it into a fresh buffer, so it never mutates the parent
 // (Go-model detach, GC-safe).
 //
-// `as_slice()` (a copying view whose name lied) was REMOVED in Plan 138.1; an
+// `slice()` (a copying view whose name lied) was REMOVED in Plan 138.1; an
 // owning copy is `clone()`. Plan 153.4 adds split_at/chunks/windows on this
 // same view model.
 #prelude(core, runtime, collections, protocols)

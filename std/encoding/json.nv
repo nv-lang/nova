@@ -200,7 +200,7 @@ fn Lexer.new(input str) -> Self =>
     { input, pos: 0, line: 1, col: 1 }
 
 // [M-json-lexer-byte-cursor] (Баг 1, json-санация): @pos — ВСЕГДА байтовый
-// курсор (не codepoint). Раньше @peek() шёл через `as_chars().nth(@pos)` —
+// курсор (не codepoint). Раньше @peek() шёл через `chars().nth(@pos)` —
 // O(n) на каждый вызов (O(n²) лексер) и рассинхронизировался с байтовыми
 // срезами `@input[start..@pos]` в @read_number на non-ASCII входе.
 // JSON-структура (whitespace/punctuation/keywords/numbers) — всегда ASCII,
@@ -209,7 +209,7 @@ fn Lexer.new(input str) -> Self =>
 
 // Текущий байт как char (Option, None на конце входа). O(1).
 fn Lexer @peek() -> Option[char] {
-    ro bytes = @input.as_bytes()
+    ro bytes = @input.bytes()
     if @pos >= bytes.len() {
         None
     } else {
@@ -231,7 +231,7 @@ fn Lexer mut @bump(b u8) -> () {
 }
 
 fn Lexer mut @advance() -> Option[char] {
-    ro bytes = @input.as_bytes()
+    ro bytes = @input.bytes()
     if @pos >= bytes.len() { return None }
     ro b = bytes[@pos]
     @bump(b)
@@ -288,7 +288,7 @@ fn is_hex_digit(c char) -> bool => c.is_ascii_hexdigit()
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWithPos, ParseJsonError] {
     for i in 0..kw.byte_len() {
-        ro expected = kw.as_chars().nth(i)
+        ro expected = kw.chars().nth(i)
         ro actual = @peek()
         if Some(expected.unwrap_or(' ')) != actual {
             return Err(UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') })
@@ -313,7 +313,7 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWi
 fn Lexer mut @read_string() -> Result[str, ParseJsonError] {
     @advance()    // открывающая "
     consume buf = StringBuilder.new()
-    ro bytes = @input.as_bytes()
+    ro bytes = @input.bytes()
     mut run_start = @pos
     mut err Option[ParseJsonError] = None
     mut done = false
@@ -411,7 +411,7 @@ fn parse_hex(s str) -> int
     requires s.byte_len() == 4
 {
     mut acc = 0
-    for c in s.to_chars() {
+    for c in s.chars() {
         ro d = if c >= '0' && c <= '9' {
             (c as int) - ('0' as int)
         } else if c >= 'a' && c <= 'f' {
@@ -714,7 +714,7 @@ fn format_num(n f64) -> str {
 
 fn format_string(s str) -> str {
     mut buf = "\""
-    for c in s.to_chars() {
+    for c in s.chars() {
         buf = buf + escape_char(c)
     }
     buf + "\""

@@ -16,7 +16,7 @@
 // capacity is honoured (`new().cap(n)`/`@cap(n)`, 153.1 — no pow2 rounding).
 //
 // This is the same view model as `@index(Range)` (`v[a..b]`, slice.nv) and the
-// str linse `as_bytes() -> ro []u8` (Plan 152) — all same-type, zero-copy. An
+// str linse `bytes() -> ro []u8` (Plan 152) — all same-type, zero-copy. An
 // owning copy is `clone()` / `to_vec()`, never a view.
 //
 // `@chunks`/`@chunks_exact`/`@rchunks`/`@windows` are LAZY iterators (Rust-like,
@@ -37,21 +37,21 @@ module collections.vec
 /// Read-only zero-copy view of the entire `Vec` as a `[]T` (`cap == len`).
 ///
 /// The returned view aliases the parent's element buffer at offset 0; it is the
-/// `Vec`-side analogue of `str.@as_bytes()`. Because the view's `cap == len`, a
+/// `Vec`-side analogue of `str.@bytes()`. Because the view's `cap == len`, a
 /// reallocating mutation on it detaches it (it never disturbs the parent). Use
 /// this to pass a `Vec` where a sub-range-style `[]T` view is expected without a
 /// copy; for an OWNING copy use `clone()`.
 ///
-/// The recv-mut companion `mut @as_slice() -> mut []T` (below) yields a
+/// The recv-mut companion `mut @slice() -> mut []T` (below) yields a
 /// write-through view when called on a `mut`-bound receiver (Plan 138.4 recv-mut
 /// overload dispatch — same shape as `@as_ptr` / `mut @as_ptr` in access.nv).
 ///
 /// ```nova
 /// let v = Vec[int].from([1, 2, 3])
-/// let s = v.as_slice()
+/// let s = v.slice()
 /// assert(s.len() == 3 && s[0] == 1)
 /// ```
-export fn Vec[T] @as_slice() -> Self =>
+export fn Vec[T] @slice() -> Self =>
     { @data, @len, cap: @len }
 
 /// Mutable zero-copy view of the entire `Vec` — the writable recv-mut overload
@@ -63,11 +63,11 @@ export fn Vec[T] @as_slice() -> Self =>
 ///
 /// ```nova
 /// mut v = Vec[int].from([1, 2, 3])
-/// mut s = v.as_slice()
+/// mut s = v.slice()
 /// s[0] = 99
 /// assert(v[0] == 99)            // write-through to the parent
 /// ```
-export fn Vec[T] mut @as_slice() -> mut Self =>
+export fn Vec[T] mut @slice() -> mut Self =>
     { @data, @len, cap: @len }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -194,7 +194,7 @@ export fn Vec[T] @last_n(n int) -> Self {
 
 test "as_slice — ro whole view" {
     ro v = Vec[int].from([1, 2, 3])
-    ro s = v.as_slice()
+    ro s = v.slice()
     assert(s.len() == 3)
     assert(s[0] == 1 && s[2] == 3)
     assert(s.equal(v))
@@ -202,7 +202,7 @@ test "as_slice — ro whole view" {
 
 test "mut as_slice — write-through to parent" {
     mut v = Vec[int].from([1, 2, 3])
-    mut s = v.as_slice()
+    mut s = v.slice()
     s[0] = 99
     s[2] = 77
     assert(v[0] == 99 && v[2] == 77)

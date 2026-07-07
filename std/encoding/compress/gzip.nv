@@ -420,7 +420,7 @@ export fn GzipWriter mut @finish() -> Result[[]u8, CompressError] {
 
 test "gzip_decode: 'Hello, DEFLATE!' + CRC-32 + ISIZE verify" {
     ro comp = hexbytes("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
-    assert(gzip_decode(comp, 1024)!! == "Hello, DEFLATE!".to_bytes())
+    assert(gzip_decode(comp, 1024)!! == "Hello, DEFLATE!".bytes())
 }
 
 test "gzip_decode: empty input" {
@@ -438,7 +438,7 @@ test "gzip_decode: 300× 'a'" {
 
 test "gzip_decode: multi-member concatenation → склейка" {
     ro comp = hexbytes("1f8b08000000000000fff348cdc9c9d7510000056f57de070000001f8b08000000000000ff0bcf2fca49510400de9d287606000000")
-    assert(gzip_decode(comp, 1024)!! == "Hello, World!".to_bytes())
+    assert(gzip_decode(comp, 1024)!! == "Hello, World!".bytes())
 }
 
 test "gzip_decode: bad magic → BadHeader" {
@@ -485,18 +485,18 @@ test "gzip streaming: feed-по-1-байту == one-shot" {
         if c.len() > 0 { out.append(c) } else { break }
     }
     assert(out == oneshot)
-    assert(out == "Hello, DEFLATE!".to_bytes())
+    assert(out == "Hello, DEFLATE!".bytes())
 }
 
 test "gzip_encode: round-trip via gzip_decode (all levels)" {
-    ro data = "gzip framing round-trip payload — repeated. gzip framing round-trip payload.".to_bytes()
+    ro data = "gzip framing round-trip payload — repeated. gzip framing round-trip payload.".bytes()
     assert(gzip_decode(gzip_encode(data, CompressLevel.none())!!, 65536)!! == data)
     assert(gzip_decode(gzip_encode(data, CompressLevel.fastest())!!, 65536)!! == data)
     assert(gzip_decode(gzip_encode(data, CompressLevel.best())!!, 65536)!! == data)
 }
 
 test "gzip_encode: header magic + CRC-32/ISIZE trailer verify" {
-    ro data = "verify trailer".to_bytes()
+    ro data = "verify trailer".bytes()
     ro comp = gzip_encode(data, CompressLevel.fastest())!!
     assert(comp[0] == 0x1f && comp[1] == 0x8b && comp[2] == 0x08)   // magic + CM=8
     ro n = comp.len()
@@ -510,7 +510,7 @@ test "gzip_encode: header magic + CRC-32/ISIZE trailer verify" {
 }
 
 test "gzip streaming: GzipWriter feed+finish round-trip" {
-    ro data = "streamed gzip content that repeats a lot. streamed gzip content repeats.".to_bytes()
+    ro data = "streamed gzip content that repeats a lot. streamed gzip content repeats.".bytes()
     mut gw = GzipWriter.new(CompressLevel.default())
     mut comp []u8 = []u8.new()
     comp.cap(64)

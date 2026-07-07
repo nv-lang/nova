@@ -1,7 +1,9 @@
 // D251 — Полный str-surface поверх координатной модели D249/D250: split-семейство,
 // trim/strip, search-доп (match_indices/matches/is_char_boundary), transform
-// (replace/replacen/repeat/pad_*), безопасная нарезка @get(Range), owned-линзы
-// to_bytes/to_chars. Все позиции — БАЙТОВЫЕ; нарезка/split — zero-copy views.
+// (replace/replacen/repeat/pad_*), безопасная нарезка @get(Range), owned-виды
+// bytes()+.clone() / chars()+.collect() (D410: to_bytes/to_chars close-copy twins
+// retracted — view+.clone()/.collect() spelled explicitly at the call site).
+// Все позиции — БАЙТОВЫЕ; нарезка/split — zero-copy views.
 // Spec: spec/decisions/03-syntax.md D251.
 // NB: имена по факту std ПОСЛЕ ренейма Plan 91.18 Ф.2 (D251-текст не амендирован):
 // pad_left→pad_start, pad_right→pad_end, split_whitespace→split_ascii_whitespace,
@@ -163,10 +165,16 @@ test "get(Range) -> Option[str]: None при OOB и не-границе codepoin
 }
 
 test "to_bytes / to_chars: owned-линзы (D251)" {
-    ro d251_b = "hé".to_bytes()
+    ro d251_b = "hé".bytes()
     assert(d251_b.len() == 3)
     assert(d251_b[0] == 104)         // 'h'
-    ro d251_c = "hé".to_chars()
+    // D410: materialise manually — generic `Next[T] @collect()`
+    // (std.collections.vec_iter) hits a codegen gap on custom `value
+    // priv(type)` iterators like CharsIter (found during this migration,
+    // reported separately as a defect); the push-loop is bug-free and
+    // semantically identical.
+    mut d251_c []char = []char.new()
+    for c in "hé".chars() { d251_c.push(c) }
     assert(d251_c.len() == 2)
     assert(d251_c[0] == 'h')
     assert(d251_c[1] == 'é')

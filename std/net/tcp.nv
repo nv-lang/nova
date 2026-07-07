@@ -171,7 +171,7 @@ export fn TcpStream mut @write_all(data str) Net -> Result[(), NetError] {
 #stable(since = "0.1")
 export fn TcpStream mut @read_bytes(max int) Net -> Result[[]u8, NetError] {
     match @read(max) {
-        Ok(s)  => Ok(s.to_bytes())
+        Ok(s)  => Ok(s.bytes())
         Err(e) => Err(e)
     }
 }
@@ -266,7 +266,7 @@ export fn TcpReadHalf mut @read(max int) Net -> Result[str, NetError] {
 #stable(since = "0.1")
 export fn TcpReadHalf mut @read_bytes(max int) Net -> Result[[]u8, NetError] {
     match @read(max) {
-        Ok(s)  => Ok(s.to_bytes())
+        Ok(s)  => Ok(s.bytes())
         Err(e) => Err(e)
     }
 }
@@ -547,7 +547,7 @@ export fn real_net() -> Effect[Net] => effect Net {
 
     // ── DNS ──────────────────────────────────────────────────────────────────
     lookup(host, port) {
-        ro count = dns_lookup(host.as_ptr(), host.byte_len(), port)
+        ro count = dns_lookup(host.ptr(), host.byte_len(), port)
         if count < 0 {
             Err(net_error(net_last_error()))
         } else {

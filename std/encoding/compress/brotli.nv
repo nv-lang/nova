@@ -34,7 +34,7 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
     }
     // Feed the whole compressed input (the shim copies it internally).
     if data.len() > 0 {
-        ro fr = unsafe { nova_brotli_dec_feed(h, data.as_ptr(), data.len()) }
+        ro fr = unsafe { nova_brotli_dec_feed(h, data.ptr(), data.len()) }
         if fr != 0 {
             nova_brotli_dec_free(h)
             return Err(CompressError.invalid("brotli: input too large to buffer"))
@@ -55,7 +55,7 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
         } else {
             BROTLI_PULL_BUDGET
         }
-        ro n = unsafe { nova_brotli_dec_pull(h, chunk.as_ptr(), budget) }
+        ro n = unsafe { nova_brotli_dec_pull(h, chunk.ptr(), budget) }
         if n < 0 {
             err = Some(CompressError.invalid("brotli: corrupt stream"))
             finished = true

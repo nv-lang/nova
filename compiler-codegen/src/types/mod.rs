@@ -7930,8 +7930,8 @@ impl<'a> TypeCheckCtx<'a> {
                             errors.push(Diagnostic::new(
                                 "[E_STR_NO_INT_INDEX] `str` cannot be indexed by an integer — \
                                  codepoint indexing a UTF-8 string is O(n) masquerading as O(1) \
-                                 (D249). Use a lens: byte `s.as_bytes()[i]` (O(1)), codepoint \
-                                 `s.as_chars().nth(i)` (O(n)); the only `str[..]` form is the \
+                                 (D249). Use a lens: byte `s.bytes()[i]` (O(1)), codepoint \
+                                 `s.chars().nth(i)` (O(n)); the only `str[..]` form is the \
                                  byte-range slice `s[a..b]`.".to_string(),
                                 e.span,
                             ));
@@ -10120,10 +10120,10 @@ impl<'a> TypeCheckCtx<'a> {
             // valid safe-slice accessor (slice.nv). The retired `get(int)` simply
             // fails arg-resolution against `get(Range)` (no `str.get(int)` sites remain).
             let hint = match name {
-                "len"      => Some("`byte_len()` (byte length, O(1)) or `as_chars().count()` (codepoint count, O(n))"),
-                "char_len" => Some("`as_chars().count()` (codepoint count, O(n))"),
-                "char_at"  => Some("`as_chars().nth(i)` (i-th codepoint, O(n))"),
-                "byte_at"  => Some("`as_bytes()[i]` (i-th byte, O(1), bounds-checked)"),
+                "len"      => Some("`byte_len()` (byte length, O(1)) or `chars().count()` (codepoint count, O(n))"),
+                "char_len" => Some("`chars().count()` (codepoint count, O(n))"),
+                "char_at"  => Some("`chars().nth(i)` (i-th codepoint, O(n))"),
+                "byte_at"  => Some("`bytes()[i]` (i-th byte, O(1), bounds-checked)"),
                 _ => None,
             };
             if let Some(hint) = hint {

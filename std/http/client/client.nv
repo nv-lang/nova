@@ -227,18 +227,21 @@ export fn RequestBuilder @body(bytes []u8) -> RequestBuilder =>
 /// Set a text body (text/plain; charset=utf-8).
 #stable(since = "0.1")
 export fn RequestBuilder @text(s str) -> RequestBuilder =>
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: s.to_bytes(), has_body: true, content_type: Some("text/plain; charset=utf-8") }
+    // `body_bytes` is an OWNED `[]u8` field (not `ro`) — `.bytes()` alone is a
+    // zero-copy `ro` view; `.clone()` materialises the owned copy the field needs
+    // (D410: view+.clone() spells the retired `to_bytes()` twin explicitly).
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: s.bytes().clone(), has_body: true, content_type: Some("text/plain; charset=utf-8") }
 
 /// Set a dynamic JSON body (application/json). Typed json[T] gates on Plan 180
 /// Ф.4 [M-178-typed-json-needs-180]; the dynamic `JsonValue` form lands now.
 #stable(since = "0.1")
 export fn RequestBuilder @json(value JsonValue) -> RequestBuilder =>
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: value.into().to_bytes(), has_body: true, content_type: Some("application/json") }
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: value.into().bytes().clone(), has_body: true, content_type: Some("application/json") }
 
 /// Set a form body (application/x-www-form-urlencoded).
 #stable(since = "0.1")
 export fn RequestBuilder @form(fields [](str, str)) -> RequestBuilder =>
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: form_encode(fields).to_bytes(), has_body: true, content_type: Some("application/x-www-form-urlencoded") }
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: form_encode(fields).bytes().clone(), has_body: true, content_type: Some("application/x-www-form-urlencoded") }
 
 /// `Authorization: Bearer <token>`.
 #stable(since = "0.1")
@@ -249,7 +252,7 @@ export fn RequestBuilder @bearer_auth(token str) -> RequestBuilder =>
 #stable(since = "0.1")
 export fn RequestBuilder @basic_auth(user str, pass str) -> RequestBuilder {
     ro raw = "${user}:${pass}"
-    ro enc = Base64.encode(raw.to_bytes())
+    ro enc = Base64.encode(raw.bytes())
     @header("Authorization", "Basic ${enc}")
 }
 
@@ -578,7 +581,7 @@ fn merge_rel_path(base_path str, rel str) -> str {
 }
 
 fn last_slash(s str) -> Option[int] {
-    ro b = s.to_bytes()
+    ro b = s.bytes()
     mut i = b.len - 1
     mut found = -1
     mut scanning = true

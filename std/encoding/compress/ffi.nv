@@ -26,7 +26,7 @@ extern "C" fn nova_brotli_dec_new() -> int
 // the Nova []u8 need not outlive the call). Returns 0 on success, -1 on OOM/bad-arg.
 extern "C" fn nova_brotli_dec_feed(h int, p *u8, len int) -> int
 
-// Decode up to `out_cap` bytes into `out` (a []u8.as_ptr() destination). Returns
+// Decode up to `out_cap` bytes into `out` (a []u8.ptr() destination). Returns
 // the number of bytes written (>= 0), or -1 on a decode error (query dec_error).
 // After the call inspect dec_done / dec_needs_input for stream state.
 extern "C" fn nova_brotli_dec_pull(h int, out *mut u8, out_cap int) -> int

@@ -23,7 +23,7 @@ import std.fs.{Path}
 //
 // Env keys and paths cross to C as a NUL-terminated `*u8`. Reject an interior
 // NUL (a classic truncation bug → `InvalidInput`) and append a terminator; the
-// returned bytes' `.as_ptr()` is a valid C string. (Same shape as fs's `c_path`
+// returned bytes' `.ptr()` is a valid C string. (Same shape as fs's `c_path`
 // — the []u8-native `CStr.from_bytes`, `[M-176-cstr-from-bytes-canonical]`.)
 fn os_cstr(bytes []u8) -> Result[[]u8, IoError] {
     mut i = 0
@@ -81,24 +81,24 @@ export fn EnvVar @value() -> str => @value
 /// are carried verbatim; use `env_bytes` for guaranteed byte-fidelity of a
 /// non-UTF-8 value.
 #stable(since = "0.1")
-export fn env(key str) Os -> Option[str] => Os.env_get(key.to_bytes())
+export fn env(key str) Os -> Option[str] => Os.env_get(key.bytes())
 
 /// The raw value bytes of environment variable `key`, or `None` if unset —
 /// byte-correct for non-UTF-8 Unix values (Rust `var_os` precedent).
 #stable(since = "0.1")
 export fn env_bytes(key []u8) Os -> Option[[]u8] {
-    match Os.env_get(key) { Some(s) => Some(s.to_bytes()), None => None }
+    match Os.env_get(key) { Some(s) => Some(s.bytes()), None => None }
 }
 
 /// Whether environment variable `key` is set.
 #stable(since = "0.1")
-export fn has_env(key str) Os -> bool => Os.env_has(key.to_bytes())
+export fn has_env(key str) Os -> bool => Os.env_has(key.bytes())
 
 /// Set environment variable `key` to `value` (creating or overwriting).
 /// **Racy** (§3c): mutate only during single-threaded setup.
 #stable(since = "0.1")
 export fn env(key str, value str) Os -> Result[(), IoError] =>
-    env_bytes(key.to_bytes(), value.to_bytes())
+    env_bytes(key.bytes(), value.bytes())
 
 /// Set `key` to raw `value` bytes (byte-correct). **Racy** (§3c).
 #stable(since = "0.1")
@@ -109,7 +109,7 @@ export fn env_bytes(key []u8, value []u8) Os -> Result[(), IoError] =>
 /// **Racy** (§3c).
 #stable(since = "0.1")
 export fn remove_env(key str) Os -> Result[(), IoError] =>
-    os_wrap_unit(Os.env_remove(key.to_bytes()), "remove_env")
+    os_wrap_unit(Os.env_remove(key.bytes()), "remove_env")
 
 /// A snapshot of all environment variables (Go `os.Environ` / Rust `env::vars`).
 #stable(since = "0.1")
@@ -135,7 +135,7 @@ export fn cwd() Os -> Result[Path, IoError] {
     // raw-0 IoError (kind Other) built inside std.io — avoids the cross-module
     // payload-variant ctor gap `[M-176-xmod-payload-variant-ctor]`.
     if s.is_empty() { Err(IoError.from_os(0, "cwd")) }
-    else { Ok(Path.from_bytes(s.to_bytes())) }
+    else { Ok(Path.from_bytes(s.bytes())) }
 }
 
 /// Change the current working directory to `path`. **Racy** (§3c): mutate only
@@ -149,13 +149,13 @@ export fn cwd(path Path) Os -> Result[(), IoError] =>
 /// The system temporary-file directory (`TMPDIR`/`TEMP`/`TMP`, with a portable
 /// fallback). Always returns a path.
 #stable(since = "0.1")
-export fn temp_dir() Os -> Path => Path.from_bytes(Os.temp_dir().to_bytes())
+export fn temp_dir() Os -> Path => Path.from_bytes(Os.temp_dir().bytes())
 
 /// The current user's home directory, or `None` if it cannot be determined.
 #stable(since = "0.1")
 export fn home_dir() Os -> Option[Path] {
     ro s = Os.home_dir()
-    if s.is_empty() { None } else { Some(Path.from_bytes(s.to_bytes())) }
+    if s.is_empty() { None } else { Some(Path.from_bytes(s.bytes())) }
 }
 
 // ─── Process ──
@@ -196,26 +196,26 @@ export fn real_os() -> Effect[Os] {
         arg_count() => os_arg_count()
         arg_at(i int) => os_arg_at(i)
         env_get(key []u8) {
-            match os_cstr(key) { Ok(ck) => if unsafe { os_env_has(ck.as_ptr()) } == 1 { Some(unsafe { os_env_get(ck.as_ptr()) }) } else { None }, Err(_) => None }
+            match os_cstr(key) { Ok(ck) => if unsafe { os_env_has(ck.ptr()) } == 1 { Some(unsafe { os_env_get(ck.ptr()) }) } else { None }, Err(_) => None }
         }
         env_has(key []u8) {
-            match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.as_ptr()) } == 1, Err(_) => false }
+            match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.ptr()) } == 1, Err(_) => false }
         }
         env_set(key []u8, val []u8) {
             match os_cstr(key) {
-                Ok(ck) => match os_cstr(val) { Ok(cv) => unsafe { os_env_set(ck.as_ptr(), cv.as_ptr()) }, Err(_) => 0 - 22 }
+                Ok(ck) => match os_cstr(val) { Ok(cv) => unsafe { os_env_set(ck.ptr(), cv.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
         env_remove(key []u8) {
-            match os_cstr(key) { Ok(ck) => unsafe { os_env_remove(ck.as_ptr()) }, Err(_) => 0 - 22 }
+            match os_cstr(key) { Ok(ck) => unsafe { os_env_remove(ck.ptr()) }, Err(_) => 0 - 22 }
         }
         env_len() => os_env_len()
         env_key_at(i int) => os_env_key_at(i)
         env_val_at(i int) => os_env_val_at(i)
         cwd() => os_cwd()
         set_cwd(path []u8) {
-            match os_cstr(path) { Ok(cp) => unsafe { os_set_cwd(cp.as_ptr()) }, Err(_) => 0 - 22 }
+            match os_cstr(path) { Ok(cp) => unsafe { os_set_cwd(cp.ptr()) }, Err(_) => 0 - 22 }
         }
         temp_dir() => os_temp_dir()
         home_dir() => os_home_dir()

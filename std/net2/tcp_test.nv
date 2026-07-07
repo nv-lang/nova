@@ -35,7 +35,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
         supervised {
             spawn {
                 mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
-                assert(_must(conn.write("hello net2".as_bytes())) == 10)
+                assert(_must(conn.write("hello net2".bytes())) == 10)
                 mut buf []u8 = []u8.new()
                 buf.resize(64, 0 as u8)
                 ro n = _must(conn.read(buf))
@@ -51,7 +51,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
                 assert(n == 10)
                 ro msg = str.from_bytes_unchecked(buf[0..n])
                 assert(msg == "hello net2")
-                assert(_must(srv.write(("echo: " + msg).as_bytes())) == 16)
+                assert(_must(srv.write(("echo: " + msg).bytes())) == 16)
                 srv.close()
             }
         }

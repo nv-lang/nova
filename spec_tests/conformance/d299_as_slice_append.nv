@@ -1,13 +1,13 @@
 // D299 — `AsSlice[T]` protocol: contiguous-buffer abstraction (Plan 153.1).
 // `[]T @append[S AsSlice[T]](other S)` accepts ANY contiguous source via the
-// `AsSlice[T]` protocol bound (methods `@as_ptr() -> *T`, `@len() -> int`), not just a
+// `AsSlice[T]` protocol bound (methods `@ptr() -> *T`, `@len() -> int`), not just a
 // concrete `[]T`. `[]T` implements `AsSlice[T]`, so `@append` works for:
 //   • vec → vec (bulk-copy via RawMem.copy / memmove);
 //   • empty sources / empty targets (no-op when the source len is 0);
 //   • self-append (`a.append(a)` — after @reserve the regions [0,m) and [len,len+m)
 //     are disjoint, so memmove is correct and yields the doubled sequence);
 //   • slice-views (`v[a..b]` = `[]T` ≡ `[]T` with an interior pointer) — the view's
-//     `@as_ptr()`/`@len()` describe the windowed contiguous region.
+//     `@ptr()`/`@len()` describe the windowed contiguous region.
 // Spec: spec/decisions/02-types.md:13025 (D299). Depends on D239 (`[]T ≡ Vec[T]`),
 // D144 (sub-slice views), D72 (protocol bound). Part of the SINGLE
 // `spec_tests.conformance` folder-module; D-prefixed names avoid clashes.

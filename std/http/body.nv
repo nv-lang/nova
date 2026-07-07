@@ -54,7 +54,10 @@ export fn Body.from_bytes(b []u8) -> Body => { repr: InMemory(b), limit: -1 }
 
 /// Тело из строки (UTF-8-байты).
 #stable(since = "0.1")
-export fn Body.from_str(s str) -> Body => { repr: InMemory(s.to_bytes()), limit: -1 }
+export fn Body.from_str(s str) -> Body =>
+    // `repr: InMemory([]u8)` needs an OWNED buffer; `.clone()` materialises the
+    // owned copy (D410: view+.clone() ≡ retired `to_bytes()` twin).
+    { repr: InMemory(s.bytes().clone()), limit: -1 }
 
 /// Тело из потокового ридера (Ф.1: in-memory; Ф.2 reader станет `consume`).
 #stable(since = "0.1")

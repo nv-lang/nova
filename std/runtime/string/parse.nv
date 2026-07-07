@@ -27,7 +27,7 @@ export type ParseIntError enum Empty | InvalidDigit | Overflow | InvalidRadix
 #stable(since = "0.1")
 export fn str @parse_int(radix int = 10) -> Result[int, ParseIntError] {
     if radix < 2 || radix > 36 { return Err(InvalidRadix) }
-    ro bytes = @as_bytes()
+    ro bytes = @bytes()
     ro n = @byte_len()
     if n == 0 { return Err(Empty) }
     mut neg = false

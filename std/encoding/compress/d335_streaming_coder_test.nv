@@ -7,7 +7,7 @@ module encoding.compress
 
 
 fn d335_hex(s str) -> []u8 {
-    ro chars = s.to_bytes()
+    ro chars = s.bytes()
     mut out []u8 = []u8.with_capacity(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
@@ -62,6 +62,6 @@ test "D335: GzipReader streaming framing (feed/read/finish)" {
         ro c = gr.read(1024)!!
         if c.len() > 0 { out.append(c) } else { break }
     }
-    assert(out == "Hello, DEFLATE!".to_bytes())
+    assert(out == "Hello, DEFLATE!".bytes())
     assert(gr.is_done())
 }

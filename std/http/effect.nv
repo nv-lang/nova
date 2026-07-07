@@ -15,7 +15,7 @@
 //
 // Byte-surface note (Plan 178 Ф.0.5 rationale): the request/response payload
 // crosses the seam as `str` (byte-carrying, via `str.from_bytes_unchecked` /
-// `.to_bytes()`), NOT as `[]u8` — same reason the net byte-surface used str-ops
+// `.bytes()`), NOT as `[]u8` — same reason the net byte-surface used str-ops
 // and thin wrappers (a `[]u8` effect-op parameter erases through the handler
 // vtable). The transport is length/framing-delimited so the round-trip is
 // byte-clean incl. non-UTF-8. [M-178-http-seam-str-payload]

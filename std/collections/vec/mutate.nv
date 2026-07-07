@@ -262,9 +262,9 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
     if m > 0 {
         @reserve(m)
         // memmove so self-append (`v.append(v)`) stays correct: after reserve
-        // other.as_ptr() may equal @data, but [0,m) and [len,len+m) are distinct.
+        // other.ptr() may equal @data, but [0,m) and [len,len+m) are distinct.
         unsafe {
-            RawMem.copy(other.as_ptr() as *u8, (@data + @len) as *mut u8, m * size_of[T]())
+            RawMem.copy(other.ptr() as *u8, (@data + @len) as *mut u8, m * size_of[T]())
         }
         @len = @len + m
     }

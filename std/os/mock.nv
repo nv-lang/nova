@@ -59,7 +59,7 @@ export fn MockOs mut @push_arg(a str) -> () { @args.push(a) }
 
 /// Set an environment variable directly (test setup).
 #stable(since = "0.1")
-export fn MockOs mut @put_env(k str, v str) -> () { ro _ = @env_put(k.to_bytes(), v.to_bytes()) }
+export fn MockOs mut @put_env(k str, v str) -> () { ro _ = @env_put(k.bytes(), v.bytes()) }
 
 /// Set the mock current working directory (test setup).
 #stable(since = "0.1")

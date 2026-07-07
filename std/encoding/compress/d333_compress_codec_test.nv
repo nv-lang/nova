@@ -7,7 +7,7 @@ module encoding.compress
 
 
 fn d333_hex(s str) -> []u8 {
-    ro chars = s.to_bytes()
+    ro chars = s.bytes()
     mut out []u8 = []u8.with_capacity(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
@@ -30,17 +30,17 @@ test "D333: raw DEFLATE decode is byte-first Result (fixed Huffman)" {
     ro comp = d333_hex("f348cdc9c9d751707175f3710c71550400")
     ro r = inflate(comp, 1048576)
     assert(match r { Ok(_) => true, Err(_) => false })
-    assert(r!! == "Hello, DEFLATE!".to_bytes())
+    assert(r!! == "Hello, DEFLATE!".bytes())
 }
 
 test "D333: zlib decode round-trip (RFC 1950 framing)" {
     ro comp = d333_hex("789cf348cdc9c9d751707175f3710c7155040025c40457")
-    assert(zlib_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+    assert(zlib_decode(comp, 1048576)!! == "Hello, DEFLATE!".bytes())
 }
 
 test "D333: gzip decode round-trip (RFC 1952 framing)" {
     ro comp = d333_hex("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
-    assert(gzip_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+    assert(gzip_decode(comp, 1048576)!! == "Hello, DEFLATE!".bytes())
 }
 
 test "D333: malformed input returns typed Err (not panic)" {
@@ -60,13 +60,13 @@ test "D333: deflate encode round-trips through inflate (byte-first, all levels)"
 }
 
 test "D333: gzip_encode/zlib_encode framing round-trip (RFC 1950/1952)" {
-    ro data = "conformance encode framing payload — RFC 1950 & 1952.".to_bytes()
+    ro data = "conformance encode framing payload — RFC 1950 & 1952.".bytes()
     assert(gzip_decode(gzip_encode(data, CompressLevel.best())!!, 1048576)!! == data)
     assert(zlib_decode(zlib_encode(data, CompressLevel.default())!!, 1048576)!! == data)
 }
 
 test "D333: per-codec level validation — deflate(10) → typed InvalidData" {
-    ro data = "x".to_bytes()
+    ro data = "x".bytes()
     ro r = deflate(data, CompressLevel.new(10)!!)
     assert(match r {
         Err(e) => match e.kind { ErrorKind.InvalidData(_) => true, _ => false }

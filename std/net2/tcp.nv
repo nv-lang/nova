@@ -168,7 +168,7 @@ export fn TcpStream mut @read_text(max int) Net -> Result[str, NetError] {
 /// Write text as its UTF-8 bytes; returns `Ok(n)` bytes accepted.
 #stable(since = "0.1")
 export fn TcpStream mut @write_str(s str) Net -> Result[int, NetError] {
-    Net.write(@, s.as_bytes())
+    Net.write(@, s.bytes())
 }
 
 /// Half-close the write side (TCP FIN); the read side stays open.
@@ -285,11 +285,11 @@ export fn real_net() -> Effect[Net] => effect Net {
         if _is_null(h) { _err_stream(err) } else { _stream_ok(h) }
     }
     read(stream TcpStream, buf mut []u8) {
-        ro n = unsafe { nova_net_tcp_read(stream.handle, buf.as_ptr(), buf.len()) }
+        ro n = unsafe { nova_net_tcp_read(stream.handle, buf.ptr(), buf.len()) }
         if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
     write(stream TcpStream, data []u8) {
-        ro n = unsafe { nova_net_tcp_write(stream.handle, data.as_ptr(), data.len()) }
+        ro n = unsafe { nova_net_tcp_write(stream.handle, data.ptr(), data.len()) }
         if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
     shutdown(stream TcpStream) {
@@ -301,15 +301,15 @@ export fn real_net() -> Effect[Net] => effect Net {
     mark_split(stream TcpStream) { unsafe { nova_net_tcp_mark_split(stream.handle) } }
     listener_local_port(listener TcpListener) => unsafe { nova_net_listener_local_port(listener.handle) }
     listener_local_addr(listener TcpListener, out mut []u8) {
-        unsafe { nova_net_listener_local_addr(listener.handle, out.as_ptr()) }
+        unsafe { nova_net_listener_local_addr(listener.handle, out.ptr()) }
     }
     stream_local_port(stream TcpStream) => unsafe { nova_net_tcp_local_port(stream.handle) }
     stream_peer_port(stream TcpStream)  => unsafe { nova_net_tcp_peer_port(stream.handle) }
     stream_local_addr(stream TcpStream, out mut []u8) {
-        unsafe { nova_net_tcp_local_addr(stream.handle, out.as_ptr()) }
+        unsafe { nova_net_tcp_local_addr(stream.handle, out.ptr()) }
     }
     stream_peer_addr(stream TcpStream, out mut []u8) {
-        unsafe { nova_net_tcp_peer_addr(stream.handle, out.as_ptr()) }
+        unsafe { nova_net_tcp_peer_addr(stream.handle, out.ptr()) }
     }
     set_nodelay(stream TcpStream, on bool) => unsafe { nova_net_tcp_set_nodelay(stream.handle, on) }
     set_keepalive(stream TcpStream, on bool) => unsafe { nova_net_tcp_set_keepalive(stream.handle, on) }
@@ -322,24 +322,24 @@ export fn real_net() -> Effect[Net] => effect Net {
         if _is_null(h) { _err_socket(err) } else { _socket_ok(h) }
     }
     send_to(sock UdpSocket, data []u8, addr SocketAddr) {
-        ro n = unsafe { nova_net_udp_send_to(sock.handle, data.as_ptr(), data.len(), addr._ptr()) }
+        ro n = unsafe { nova_net_udp_send_to(sock.handle, data.ptr(), data.len(), addr._ptr()) }
         if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
     recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) {
-        ro n = unsafe { nova_net_udp_recv_from(sock.handle, buf.as_ptr(), buf.len(), sender.as_ptr()) }
+        ro n = unsafe { nova_net_udp_recv_from(sock.handle, buf.ptr(), buf.len(), sender.ptr()) }
         if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
     close_socket(sock UdpSocket) { unsafe { nova_net_udp_close(sock.handle) } }
     socket_local_port(sock UdpSocket) => unsafe { nova_net_udp_local_port(sock.handle) }
     socket_local_addr(sock UdpSocket, out mut []u8) {
-        unsafe { nova_net_udp_local_addr(sock.handle, out.as_ptr()) }
+        unsafe { nova_net_udp_local_addr(sock.handle, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
     lookup(host []u8, port u16) {
         mut base int = 0    // C writes the GC-array base pointer here (via &base)
         mut err int = 0
-        ro count = unsafe { nova_net_dns_lookup(host.as_ptr(), host.len(), port, (&base) as *(), &err) }
+        ro count = unsafe { nova_net_dns_lookup(host.ptr(), host.len(), port, (&base) as *(), &err) }
         if count < 0 { _err_lookup(err) } else { _lookup_ok(base, count) }
     }
 }

@@ -1249,7 +1249,7 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             // loop. Those method selectors are injected by the desugar and
             // never appear syntactically, so without seeding them here the
             // reachability closure would prune `Iter.next` / `Iter.iter`
-            // (e.g. `CharsIter.next`, reached only via `for c in s.as_chars()`)
+            // (e.g. `CharsIter.next`, reached only via `for c in s.chars()`)
             // and emit a call to an undeclared C function. Conservatively mark
             // both protocol names used wherever a `for` loop is reachable.
             // (Harmless over-approximation for the unused-import lint: these are

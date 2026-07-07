@@ -15,12 +15,12 @@ module encoding.compress
 
 test "brotli: RFC 7932 vector decode (10x10y)" {
     ro comp = hexbytes("1b130000a4b0b2ea8147028a")
-    assert(brotli_decode(comp, 1048576)!! == "XXXXXXXXXXYYYYYYYYYY".to_bytes())
+    assert(brotli_decode(comp, 1048576)!! == "XXXXXXXXXXYYYYYYYYYY".bytes())
 }
 
 test "brotli: RFC 7932 vector decode (64x, back-reference)" {
     ro comp = hexbytes("1b3f000024b0e2998012")
-    assert(brotli_decode(comp, 1048576)!! == "X".repeat(64).to_bytes())
+    assert(brotli_decode(comp, 1048576)!! == "X".repeat(64).bytes())
 }
 
 test "brotli: empty stream" {

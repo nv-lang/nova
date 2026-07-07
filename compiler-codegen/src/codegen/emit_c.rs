@@ -21297,14 +21297,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let ExprKind::Member { obj, name } = &func.kind {
                         if self.infer_expr_c_type(obj) == "nova_str" {
                             match name.as_str() {
-                                "to_bytes" | "as_bytes" => {  // D178/D176: same element type
+                                "bytes" => {  // D410 (ex-D178/D176 as_bytes): same element type
                                     self.array_element_types
                                         .insert(binding.clone(), "nova_byte".into());
                                 }
-                                "to_chars" => {
-                                    // codepoints stored as nova_int — нет специального
-                                    // element-type; default из NovaArray_nova_int* подойдёт.
-                                }
+                                // D410: `chars()` now returns `CharsIter` (lazy), not an
+                                // array — the retired `to_chars()` (owned `[]char`) arm no
+                                // longer applies; materialization is `chars().collect()`.
                                 _ => {}
                             }
                         }
@@ -28544,9 +28543,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         //
                         // Plan 118.2 FFI internal data-pointer access — emit the
                         // `data` field directly (Vec has the same field). This is
-                        // the only bridge that stays: there is no `as_ptr`/
+                        // the only bridge that stays: there is no `ptr`/
                         // `as_mut_ptr` Nova method on Vec.
-                        "as_ptr" | "as_mut_ptr" if args.is_empty() => {
+                        // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
+                        "ptr" | "as_mut_ptr" if args.is_empty() => {
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("(({})->data)", obj_c));
                         }
@@ -28582,9 +28582,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // `arr->data` (T* field). Caller responsibility:
                         // not deref past `arr->len`; not retain pointer past
                         // mutation/realloc of arr.
-                        // `as_ptr` returns `*ro T` (ABI: `const T*` per D216 §11)
+                        // `ptr` returns `*ro T` (ABI: `const T*` per D216 §11)
                         // `as_mut_ptr` returns `*mut T` (ABI: `T*`)
-                        "as_ptr" if args.is_empty() => {
+                        // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
+                        "ptr" if args.is_empty() => {
                             let obj_c = self.emit_expr(obj)?;
                             return Ok(format!("(({}->data))", obj_c));
                         }
@@ -38038,7 +38039,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "to_upper" | "to_lower" | "trim" | "slice" | "concat"
                     | "starts_with" | "ends_with" | "contains" | "eq"
                     | "len" | "char_len" | "byte_len" | "byte_at" | "char_at"
-                    | "find" | "rfind" | "to_bytes" | "as_bytes" | "to_chars"
+                    | "find" | "rfind" | "bytes"  // D410 (ex-to_bytes/as_bytes/to_chars)
                     | "split" | "compare" | "pad_left" | "pad_right"
                     | "repeat" | "replace"
             );
@@ -38300,7 +38301,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         match method {
             // Plan 139 Ф.1: starts_with/ends_with/contains/to_upper/to_lower/
             // trim/find/rfind/char_len/char_at MIGRATED to Nova-body
-            // (std/runtime/string.nv) — they read bytes via @as_bytes()/@byte_at
+            // (std/runtime/string.nv) — they read bytes via @bytes()/@byte_at
             // and allocate via []u8/from_bytes_unchecked. Removed from this table
             // so they fall through to the Nova-body dispatch (Nova_str_method_X).
             //
@@ -38354,11 +38355,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "hash"        => Some("nova_str_hash"),
             "len"         => Some("nova_str_byte_len"),   // Plan 108 D26 rev: len = bytes O(1).
             "byte_len"    => Some("nova_str_byte_len"),  // deprecated alias for len().
-            // Plan 139 Ф.2: to_bytes/to_chars MIGRATED to Nova-body (copy from
-            // @as_bytes() zero-copy view + UTF-8 decode cursor). Removed here so
-            // they fall through to Nova-body dispatch (Nova_str_method_X).
-            // as_bytes: MIGRATED to Nova-body (Plan 139.2 Ф.0) — falls through to
-            // Nova_str_method_as_bytes via Vec[u8].from_raw_parts. No entry here.
+            // D410 (2026-07-06): to_bytes/to_chars RETRACTED (view+.clone()/
+            // .collect() at call site); bytes/chars MIGRATED to Nova-body (ex
+            // as_bytes/as_chars, Plan 139.2 Ф.0/Ф.3) — falls through to
+            // Nova_str_method_bytes via Vec[u8].from_raw_parts. No entry here.
             // split: MIGRATED to Nova-body (Plan 139.2 Ф.2) — falls through to
             // Nova_str_method_split. No entry here.
             "byte_at"     => Some("nova_str_byte_at"),  // Plan 90
@@ -42782,7 +42782,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     => return obj_ty.clone(),
                                 "compare" if vec_elem_ty == "nova_byte"
                                     => return "nova_int".into(),
-                                "as_ptr" | "as_mut_ptr"
+                                // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
+                                "ptr" | "as_mut_ptr"
                                     => return format!("{}*", vec_elem_ty),
                                 _ => { /* fall through to normal Vec method inference */ }
                             }
@@ -42822,13 +42823,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "len" | "capacity" => return "nova_int".into(),
                                 "is_empty" => return "nova_bool".into(),
                                 // Plan 118.2 — FFI access to internal data pointer.
-                                // Returns C `T*` for both as_ptr and as_mut_ptr;
+                                // Returns C `T*` for both ptr and as_mut_ptr;
                                 // semantic distinction (*ro T vs *mut T) enforced
                                 // в type-checker через mut binding requirement
                                 // (as_mut_ptr requires mut binding per D108.1).
                                 // C-side const qualifier dropped to avoid temp-var
                                 // const-init issues в unsafe blocks (codegen layout).
-                                "as_ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
+                                // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
+                                "ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
                                 _ => {
                                     // Plan 101.1: user-extension array method
                                     // (fn[T] []T @method...). Поиск в mono_method_decls
@@ -42923,12 +42925,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // Plan 71 follow-up + Plan 75: char_at → Option[char], not Option[int].
                                 "char_at" => "NovaOpt_nova_char".into(),
                                 "find" | "rfind" => "NovaOpt_nova_int".into(),
-                                // D178: renamed from bytes(). Allocating copy.
-                                "to_bytes" => "NovaArray_nova_byte*".into(),
-                                // D176: s.as_bytes() → readonly []u8 (zero-copy, same C type).
-                                "as_bytes" => "NovaArray_nova_byte*".into(),
-                                // D178: renamed from chars(). Allocating []char.
-                                "to_chars" => "NovaArray_nova_char*".into(),
+                                // D410 (2026-07-06, ex-D176 as_bytes): s.bytes() → readonly
+                                // []u8 (zero-copy, same C type). Retired `to_bytes()`
+                                // (allocating copy) twin removed — no C-type arm needed.
+                                "bytes" => "NovaArray_nova_byte*".into(),
                                 // D178: split → readonly []str (zero-copy views, same C type).
                                 "split" => "NovaArray_nova_str*".into(),
                                 // D178: compare → int.
@@ -46467,7 +46467,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     => return obj_ty.clone(),
                                 "compare" if vec_elem_ty == "nova_byte"
                                     => return "nova_int".into(),
-                                "as_ptr" | "as_mut_ptr"
+                                // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
+                                "ptr" | "as_mut_ptr"
                                     => return format!("{}*", vec_elem_ty),
                                 _ => { /* fall through to normal Vec method inference */ }
                             }
@@ -46507,13 +46508,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "len" | "capacity" => return "nova_int".into(),
                                 "is_empty" => return "nova_bool".into(),
                                 // Plan 118.2 — FFI access to internal data pointer.
-                                // Returns C `T*` for both as_ptr and as_mut_ptr;
+                                // Returns C `T*` for both ptr and as_mut_ptr;
                                 // semantic distinction (*ro T vs *mut T) enforced
                                 // в type-checker через mut binding requirement
                                 // (as_mut_ptr requires mut binding per D108.1).
                                 // C-side const qualifier dropped to avoid temp-var
                                 // const-init issues в unsafe blocks (codegen layout).
-                                "as_ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
+                                // D410 (2026-07-06): as_ptr → ptr (as_ prefix retracted).
+                                "ptr" | "as_mut_ptr" => return format!("{}*", elem_ty),
                                 _ => {
                                     // Plan 101.1: user-extension array method
                                     // (fn[T] []T @method...). Поиск в mono_method_decls
@@ -46608,12 +46610,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // Plan 71 follow-up + Plan 75: char_at → Option[char], not Option[int].
                                 "char_at" => "NovaOpt_nova_char".into(),
                                 "find" | "rfind" => "NovaOpt_nova_int".into(),
-                                // D178: renamed from bytes(). Allocating copy.
-                                "to_bytes" => "NovaArray_nova_byte*".into(),
-                                // D176: s.as_bytes() → readonly []u8 (zero-copy, same C type).
-                                "as_bytes" => "NovaArray_nova_byte*".into(),
-                                // D178: renamed from chars(). Allocating []char.
-                                "to_chars" => "NovaArray_nova_char*".into(),
+                                // D410 (2026-07-06, ex-D176 as_bytes): s.bytes() → readonly
+                                // []u8 (zero-copy, same C type). Retired `to_bytes()`
+                                // (allocating copy) twin removed — no C-type arm needed.
+                                "bytes" => "NovaArray_nova_byte*".into(),
                                 // D178: split → readonly []str (zero-copy views, same C type).
                                 "split" => "NovaArray_nova_str*".into(),
                                 // D178: compare → int.

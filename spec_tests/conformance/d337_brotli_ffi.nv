@@ -9,7 +9,7 @@ module spec_tests.conformance
 import std.encoding.compress.{brotli_decode, ErrorKind}
 
 fn d337_hex(s str) -> []u8 {
-    ro chars = s.to_bytes()
+    ro chars = s.bytes()
     mut out []u8 = []u8.with_capacity(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
@@ -31,12 +31,12 @@ fn d337_hv(c u8) -> int {
 
 test "d337: brotli_decode RFC 7932 vector (10x10y)" {
     ro comp = d337_hex("1b130000a4b0b2ea8147028a")
-    assert(brotli_decode(comp, 1048576)!! == "XXXXXXXXXXYYYYYYYYYY".to_bytes())
+    assert(brotli_decode(comp, 1048576)!! == "XXXXXXXXXXYYYYYYYYYY".bytes())
 }
 
 test "d337: brotli_decode back-reference vector (64x)" {
     ro comp = d337_hex("1b3f000024b0e2998012")
-    assert(brotli_decode(comp, 1048576)!! == "X".repeat(64).to_bytes())
+    assert(brotli_decode(comp, 1048576)!! == "X".repeat(64).bytes())
 }
 
 test "d337: brotli_decode empty stream" {

@@ -4,7 +4,7 @@
 // prelude facade (std/prelude/collections.nv) unconditionally re-exports
 // `StringBuilder`/`WriteBuffer`/`ReadBuffer`, whose `#no_prelude` Nova-body
 // implementations (std/runtime/{string_builder,write_buffer,read_buffer}.nv)
-// call `str.@as_bytes()`, `char.try_from()`/`u8.try_from()` and construct
+// call `str.@bytes()`, `char.try_from()`/`u8.try_from()` and construct
 // `ReadBufferError`/`UnexpectedEnd` — all of which assumed a FULL
 // `std.prelude` was already merged into the CU. Under this partial-prelude
 // scope those symbols were never brought in, so the moment `collections`

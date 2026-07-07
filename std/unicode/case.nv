@@ -69,7 +69,7 @@ fn upper_one(cp u32) -> []u32 {
 export fn fold_case(s str) -> str {
     mut out []u32 = []u32.new()
     out.cap(s.byte_len())
-    for c in s.as_chars() {
+    for c in s.chars() {
         // `None` arm is a fluent `out.push(..)` tail (typed `Vec*`); the `Some`
         // arm yields unit — the `match` coerces to unit in statement position
         // ([M-codegen-fluent-tail-if-unify], now fixed in codegen).
@@ -86,7 +86,7 @@ export fn fold_case(s str) -> str {
 export fn to_uppercase(s str) -> str {
     mut out []u32 = []u32.new()
     out.cap(s.byte_len())
-    for c in s.as_chars() {
+    for c in s.chars() {
         match upper_map.get(c as u32) {
             Some(seq) => { for d in parse_cp_list(seq) { out.push(d) } }
             None => out.push(c as u32)

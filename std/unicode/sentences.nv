@@ -1,6 +1,6 @@
 // Plan 152.4.6 (D253): sentence-boundary segmentation (UAX #29).
 //
-// Opt-in `std.unicode` peer. `str.@as_sentences() -> SentencesIter` iterates UAX #29
+// Opt-in `std.unicode` peer. `str.@sentences() -> SentencesIter` iterates UAX #29
 // sentence segments (every inter-boundary piece — a sentence and its trailing
 // whitespace/terminator). O(1) to create (forward state-machine driven lazily per
 // next() call — no eager materialisation).
@@ -183,4 +183,4 @@ export fn SentencesIter @count() -> int {
 
 // ─── str lens ───
 // Sentence-segment lazy iterator (O(1) to create). UAX #29 sentence segmentation.
-export fn str @as_sentences() -> SentencesIter => SentencesIter.new(@)
+export fn str @sentences() -> SentencesIter => SentencesIter.new(@)

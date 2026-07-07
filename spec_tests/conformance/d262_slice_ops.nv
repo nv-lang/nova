@@ -29,7 +29,7 @@ test "first_n/last_n КЛАМПЯТ (n>len → весь, n<=0 → пусто) (D
 
 test "as_slice — whole-view того же типа, алиасит элементы (D262)" {
     ro v = []int.of(7, 8, 9)
-    ro s = v.as_slice()
+    ro s = v.slice()
     assert(s.len() == 3)
     assert(s[0] == 7)
     assert(s[2] == 9)

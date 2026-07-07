@@ -8,7 +8,7 @@
 //      `HttpError{kind: InvalidUrl, source: Url(ParseUrlError)}` (source-chaining).
 //   2. Байт-корректный парсер: смещения — БАЙТОВЫЕ (`find`/byte-scan), срезы `s[a..b]`
 //      режутся по ASCII-делимитерам (codepoint-boundary-safe). Прежний код мешал
-//      char-index (`as_chars().nth`) с байтовым срезом — латентный баг на non-ASCII.
+//      char-index (`chars().nth`) с байтовым срезом — латентный баг на non-ASCII.
 //   3. `encode_query` multi-byte-FIX: percent-encode КАЖДОГО UTF-8-байта (прежний
 //      код эмитил ОДИН байт для >127 → порча). `decode_query` — self-contained UTF-8
 //      валидатор (str.try_from не существует; canonical str.from_bytes+Utf8Error ←
@@ -130,7 +130,14 @@ fn parse_scheme(s str) -> Result[(str, str), ParseUrlError] {
         Some(i) => {
             if i == 0 { return Err(MissingScheme) }
             ro scheme = s[0..i]
-            ro chars = scheme.to_chars()
+            // D410: materialise `scheme.chars()` manually — the generic
+            // `Next[T] @collect()` blanket impl (std.collections.vec_iter) hits a
+            // codegen gap for custom `value priv(type)` iterators like CharsIter
+            // ("anonymous record literal: expected struct 'Vec____Nova_T_p' not in
+            // record_schemas") — found during this migration, reported separately;
+            // this manual push-loop is the exact same materialization, bug-free.
+            mut chars []char = []char.new()
+            for c in scheme.chars() { chars.push(c) }
             if chars.len() == 0 { return Err(MissingScheme) }
             if !is_alpha(chars[0]) { return Err(InvalidScheme(scheme)) }
             mut j = 1
@@ -207,7 +214,7 @@ fn parse_host_port(hp str) -> Result[(str, Option[int]), ParseUrlError] {
 
 fn parse_port(port_str str) -> Result[int, ParseUrlError] {
     if port_str.byte_len() == 0 { return Err(MalformedPort(port_str)) }
-    for c in port_str.as_chars() {
+    for c in port_str.chars() {
         if !c.is_ascii_digit() { return Err(MalformedPort(port_str)) }
     }
     match port_str.parse_int().ok() {
@@ -235,7 +242,7 @@ fn validate_host(host str) -> Result[(), ParseUrlError] {
 
     // 1. Байтовая чистота: reject control (<0x21 → incl. NUL/space/tab/CR/LF), DEL,
     //    non-ASCII (IRI/punycode-обфускация вне scope — §3.8).
-    for b in host.as_bytes() {
+    for b in host.bytes() {
         ro n = b as int
         if n < 0x21 || n == 0x7f {
             return Err(InvalidHost("control or whitespace character in host"))
@@ -273,10 +280,10 @@ fn is_numeric_label(lab str) -> bool {
     if lab.byte_len() >= 2 && (lab.starts_with("0x") || lab.starts_with("0X")) {
         ro rest = lab[2..lab.byte_len()]
         if rest.byte_len() == 0 { return false }
-        for c in rest.as_chars() { if !c.is_ascii_hexdigit() { return false } }
+        for c in rest.chars() { if !c.is_ascii_hexdigit() { return false } }
         return true
     }
-    for c in lab.as_chars() { if !c.is_ascii_digit() { return false } }
+    for c in lab.chars() { if !c.is_ascii_digit() { return false } }
     true
 }
 
@@ -287,7 +294,7 @@ fn validate_ipv4_canonical(host str) -> Result[(), ParseUrlError] {
     if parts.len() != 4 { return Err(ObfuscatedIp(host)) }
     for p in parts {
         if p.byte_len() == 0 || p.byte_len() > 3 { return Err(ObfuscatedIp(host)) }
-        for c in p.as_chars() {
+        for c in p.chars() {
             if !c.is_ascii_digit() { return Err(ObfuscatedIp(host)) }
         }
         if p.byte_len() > 1 && p.starts_with("0") { return Err(ObfuscatedIp(host)) }
@@ -301,7 +308,7 @@ fn validate_ipv4_canonical(host str) -> Result[(), ParseUrlError] {
 
 // reg-name: строгий набор [A-Za-z0-9.-] (unicode/punycode/sub-delims — вне scope).
 fn validate_reg_name(host str) -> Result[(), ParseUrlError] {
-    for c in host.as_chars() {
+    for c in host.chars() {
         if !(c.is_ascii_alphanumeric() || c == '-' || c == '.') {
             return Err(InvalidHost("disallowed character in host name"))
         }
@@ -313,7 +320,7 @@ fn validate_reg_name(host str) -> Result[(), ParseUrlError] {
 // ≤1 "::", ≤8 hextet-эквивалентов. Отвергает мусор, принимает валидные формы.
 fn is_valid_ipv6(s str) -> bool {
     if s.byte_len() == 0 { return false }
-    for c in s.as_chars() {
+    for c in s.chars() {
         if !(c.is_ascii_hexdigit() || c == ':' || c == '.') { return false }
     }
     if !s.contains(":") { return false }
@@ -344,7 +351,7 @@ fn is_dotted_quad(s str) -> bool {
     if parts.len() != 4 { return false }
     for p in parts {
         if p.byte_len() == 0 || p.byte_len() > 3 { return false }
-        for c in p.as_chars() { if !c.is_ascii_digit() { return false } }
+        for c in p.chars() { if !c.is_ascii_digit() { return false } }
         match p.parse_int().ok() {
             Some(v) => if v > 255 { return false }
             None    => return false
@@ -497,14 +504,14 @@ export fn Url @to_str() -> str {
 export fn Url.encode_query(s str) -> str {
     consume buf = StringBuilder.new()
     buf.cap(s.byte_len() * 3)
-    for c in s.as_chars() {
+    for c in s.chars() {
         if is_unreserved(c) {
             buf.append(c)
         } else if c == ' ' {
             buf.append('+')
         } else {
             // Percent-encode КАЖДЫЙ байт UTF-8-представления char'а.
-            for b in str.from(c).as_bytes() {
+            for b in str.from(c).bytes() {
                 ro n = b as int
                 buf.append('%')
                 buf.append(hex_upper(((n / 16) & 0xF) as u8))
@@ -530,7 +537,7 @@ export fn Url.decode_query(s str) -> Result[str, HttpError] {
 fn decode_query_inner(s str) -> Result[str, ParseUrlError] {
     mut buf = WriteBuffer.new()
     buf.cap(s.byte_len())
-    ro bytes = s.as_bytes()
+    ro bytes = s.bytes()
     ro n = bytes.len
     mut i = 0
     while i < n {
@@ -627,8 +634,8 @@ fn hex_byte_val(b u8, pos int) -> Result[u8, ParseUrlError] {
 
 // Первое вхождение любого байта из `chars` (ASCII-делимитеры) → БАЙТОВОЕ смещение.
 fn find_first_of(s str, chars str) -> Option[int] {
-    ro bytes = s.as_bytes()
-    ro needles = chars.as_bytes()
+    ro bytes = s.bytes()
+    ro needles = chars.bytes()
     ro n = bytes.len
     ro m = needles.len
     mut i = 0

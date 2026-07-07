@@ -157,7 +157,7 @@ export fn WriteBuffer mut @write_char(c char) -> @ {
 }
 
 // Append UTF-8 байты из str (bulk memmove через []u8.append + as_bytes).
-export fn WriteBuffer mut @write_str(s str) -> @ { @buf.append(s.as_bytes()) }
+export fn WriteBuffer mut @write_str(s str) -> @ { @buf.append(s.bytes()) }
 
 // ─── 18 numeric × LE/BE ───
 //

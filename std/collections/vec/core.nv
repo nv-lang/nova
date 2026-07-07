@@ -24,7 +24,7 @@
 // deref read/write) is wrapped in an `unsafe { }` block. The element-access
 // API is fully safe — no `unsafe` to *use*; in-place element mutation is the
 // safe `v[i] = val` (D240 `MutIndex` write). The lone deliberate escape is the
-// FFI accessor `@as_ptr()` (recv-mut overload: `*T` on a `ro` receiver,
+// FFI accessor `@ptr()` (recv-mut overload: `*T` on a `ro` receiver,
 // `*mut T` on a `mut` receiver) — calling it is safe (a pointer-value copy,
 // not a deref), but *dereferencing* the returned pointer is the caller's
 // `unsafe` obligation.
@@ -113,7 +113,7 @@ export fn Vec[T].new() -> Self =>
 /// `len` and `cap` fields are `priv` (visible only to `Vec` type-methods), so a
 /// caller in another module cannot spell `Self { data: …, … }` itself — this
 /// public constructor is the only sanctioned entry. It is the inverse of the
-/// `@as_ptr()` / `@len()` / `@cap()` accessors and the analogue of Rust's
+/// `@ptr()` / `@len()` / `@cap()` accessors and the analogue of Rust's
 /// `Vec::from_raw_parts`.
 ///
 /// # Contract / unsafety
@@ -124,7 +124,7 @@ export fn Vec[T].new() -> Self =>
 ///   - the pointed-to memory stays alive for the lifetime of the returned
 ///     `Vec` (for GC-tracked buffers the returned `Vec.data` field keeps it
 ///     reachable; for a zero-copy *view* over a foreign buffer — e.g.
-///     `str.@as_bytes()` aliasing a string's internal bytes — the originating
+///     `str.@bytes()` aliasing a string's internal bytes — the originating
 ///     owner must outlive the view, and the view must be treated read-only).
 ///
 /// The incoming `ptr` is a `*T` (canonical ro pointee, `*T ≡ *ro T`); it is

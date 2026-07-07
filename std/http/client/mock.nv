@@ -64,7 +64,9 @@ export fn MockResponse @body(b []u8) -> MockResponse =>
 /// Set the response body from a string (UTF-8 bytes).
 #stable(since = "0.1")
 export fn MockResponse @text(s str) -> MockResponse =>
-    { @status, @headers, body: s.to_bytes(), @raw, @echo }
+    // `body` is an OWNED `[]u8` field (not `ro`) — `.clone()` materialises the
+    // owned copy the field needs (D410: view+.clone() ≡ retired `to_bytes()`).
+    { @status, @headers, body: s.bytes().clone(), @raw, @echo }
 
 fn MockResponse @echo_target() -> Option[str] => @echo
 
@@ -137,7 +139,7 @@ fn mock_dispatch(routes []MockRoute, request str) -> Result[str, HttpError] {
                         Some(v) => v
                         None    => ""
                     }
-                    return Ok(serialize_response(StatusCode.ok(), HeaderMap.new(), val.to_bytes()))
+                    return Ok(serialize_response(StatusCode.ok(), HeaderMap.new(), val.bytes()))
                 }
                 None => return Ok(r.resp.to_wire())
             }

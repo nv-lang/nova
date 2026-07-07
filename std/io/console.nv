@@ -150,19 +150,19 @@ export fn real_io() -> Effect[Io] {
         read_in(buf mut []u8) {
             ro want = buf.len()
             if want == 0 { return Ok(0) }
-            ro rc = unsafe { io_read_fd(0, buf.as_ptr(), want) }
+            ro rc = unsafe { io_read_fd(0, buf.ptr(), want) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "read")) }
             Ok(rc)
         }
         write_out(data []u8) {
             if data.len() == 0 { return Ok(0) }
-            ro rc = unsafe { io_write_fd(1, data.as_ptr(), data.len()) }
+            ro rc = unsafe { io_write_fd(1, data.ptr(), data.len()) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "write")) }
             Ok(rc)
         }
         write_err(data []u8) {
             if data.len() == 0 { return Ok(0) }
-            ro rc = unsafe { io_write_fd(2, data.as_ptr(), data.len()) }
+            ro rc = unsafe { io_write_fd(2, data.ptr(), data.len()) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "write")) }
             Ok(rc)
         }

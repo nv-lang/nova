@@ -6,7 +6,7 @@ module encoding.compress
 
 
 fn d336_hex(s str) -> []u8 {
-    ro chars = s.to_bytes()
+    ro chars = s.bytes()
     mut out []u8 = []u8.with_capacity(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
@@ -26,14 +26,14 @@ fn d336_hv(c u8) -> int {
 }
 
 test "D336: CRC-32 and Adler-32 known vectors" {
-    assert(crc32("123456789".to_bytes()) == 0xCBF43926)
-    assert(adler32("Wikipedia".to_bytes()) == 0x11E60398)
+    assert(crc32("123456789".bytes()) == 0xCBF43926)
+    assert(adler32("Wikipedia".bytes()) == 0x11E60398)
     assert(adler32([]) == 1)
 }
 
 test "D336: gzip trailer verified (valid CRC-32 + ISIZE)" {
     ro comp = d336_hex("1f8b08000000000000fff348cdc9c9d751707175f3710c71550400acccee010f000000")
-    assert(gzip_decode(comp, 1048576)!! == "Hello, DEFLATE!".to_bytes())
+    assert(gzip_decode(comp, 1048576)!! == "Hello, DEFLATE!".bytes())
 }
 
 test "D336: gzip CRC-32 mismatch → Checksum{Crc32}" {

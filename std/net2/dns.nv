@@ -32,7 +32,7 @@ module std.net2
 export fn resolve(host str, port u16) Net -> Result[[]SocketAddr, NetError] {
     // The []SocketAddr is built HERE (a plain fn, no effect vtable) so its images
     // survive GC; the effect only carries the (base, count) scalar pair.
-    match Net.lookup(host.as_bytes(), port) {
+    match Net.lookup(host.bytes(), port) {
         Ok((base, count)) => Ok(_build_addrs(base, count))
         Err(e)            => Err(e)
     }
@@ -58,7 +58,7 @@ fn _build_addrs(base int, count int) -> []SocketAddr {
     mut i = 0
     while i < count {
         mut img []u8 = _addr_image()
-        unsafe { nova_net_addr_copy_at(base as *(), i, img.as_ptr()) }
+        unsafe { nova_net_addr_copy_at(base as *(), i, img.ptr()) }
         addrs.push(SocketAddr._from_image(img))
         i = i + 1
     }

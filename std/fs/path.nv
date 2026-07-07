@@ -75,7 +75,7 @@ export type Path value {
 
 /// Path from a `str`, using the HOST platform's lexical style.
 #stable(since = "0.1")
-export fn Path.from_str(s str) -> Path => { bytes: s.to_bytes(), style: host_style() }
+export fn Path.from_str(s str) -> Path => { bytes: s.bytes(), style: host_style() }
 
 /// Path from raw OS bytes, HOST style (preserves non-UTF-8 bytes verbatim).
 #stable(since = "0.1")
@@ -83,15 +83,15 @@ export fn Path.from_bytes(b []u8) -> Path => { bytes: b, style: host_style() }
 
 /// Path with an explicitly pinned style (for cross-platform lexical logic/tests).
 #stable(since = "0.1")
-export fn Path.styled(s str, style PathStyle) -> Path => { bytes: s.to_bytes(), style }
+export fn Path.styled(s str, style PathStyle) -> Path => { bytes: s.bytes(), style }
 
 /// POSIX-style path (`/` separators, `\` is an ordinary byte).
 #stable(since = "0.1")
-export fn Path.posix(s str) -> Path => { bytes: s.to_bytes(), style: Posix }
+export fn Path.posix(s str) -> Path => { bytes: s.bytes(), style: Posix }
 
 /// Windows-style path (`/`+`\` separators, drive/UNC prefixes).
 #stable(since = "0.1")
-export fn Path.windows(s str) -> Path => { bytes: s.to_bytes(), style: Windows }
+export fn Path.windows(s str) -> Path => { bytes: s.bytes(), style: Windows }
 
 // ─── Byte / string views ──
 
@@ -383,7 +383,7 @@ export fn Path @with_extension(ext str) -> Path {
     }
     if ext.byte_len() > 0 {
         base.push(B_DOT)
-        base.append(ext.to_bytes())
+        base.append(ext.bytes())
     }
     d.comps[idx] = base
     Path { bytes: recompose(d, @style), @style }

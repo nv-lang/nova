@@ -1,6 +1,6 @@
 // Plan 152.4.5 (D253): word-boundary segmentation (UAX #29) + `to_titlecase`.
 //
-// Opt-in `std.unicode` peer. `str.@as_words() -> WordsIter` iterates UAX #29 word
+// Opt-in `std.unicode` peer. `str.@words() -> WordsIter` iterates UAX #29 word
 // segments (every inter-boundary piece — words, whitespace, punctuation). O(1) to
 // create (state-machine lazily driven per next() call — no eager materialisation).
 //
@@ -276,7 +276,7 @@ export fn WordsIter @count() -> int {
 
 // ─── str lens ───
 // Word-segment lazy iterator (O(1) to create). UAX #29 word segmentation.
-export fn str @as_words() -> WordsIter => WordsIter.new(@)
+export fn str @words() -> WordsIter => WordsIter.new(@)
 
 // ─── to_titlecase ───
 /// Unicode title-casing (locale-independent): titlecase the first cased char of

@@ -258,13 +258,13 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 ///   - On an empty `Vec` (`cap == 0`) `@data` is the `null_buf` placeholder —
 ///     non-null but a single never-live slot; do not dereference it.
 ///
-/// The recv-mut companion `mut @as_ptr() -> *mut T` (below) yields a writable
+/// The recv-mut companion `mut @ptr() -> *mut T` (below) yields a writable
 /// `*mut T` when called on a `mut`-bound receiver (Plan 138.4 recv-mut
 /// overload dispatch).
-// Vec[T] implements AsSlice[T] (D299): exposes @as_ptr() + @len() pair for
+// Vec[T] implements AsSlice[T] (D299): exposes @ptr() + @len() pair for
 // bulk RawMem.copy operations (used by @append).
 #impl(AsSlice[T])
-export fn Vec[T] @as_ptr() -> *T => @data
+export fn Vec[T] @ptr() -> *T => @data
 
 /// Raw mutable pointer to the element buffer — the writable recv-mut overload
 /// of `@as_ptr`. Selected when the receiver is `mut`-bound; yields `*mut T`
@@ -272,7 +272,7 @@ export fn Vec[T] @as_ptr() -> *T => @data
 ///
 /// SAFE to call; same dereference-needs-unsafe and reachability-invalidation /
 /// empty-`Vec` caveats as the `ro` overload above.
-export fn Vec[T] mut @as_ptr() -> *mut T => @data
+export fn Vec[T] mut @ptr() -> *mut T => @data
 
 // ──────────────────────────────────────────────────────────────────────────
 // Tests

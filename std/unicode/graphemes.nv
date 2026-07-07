@@ -2,7 +2,7 @@
 // lens. A grapheme = a user-perceived character (may be several codepoints): é
 // (e + combining), 🇺🇸 (two regional indicators), 👨‍👩‍👧 (ZWJ emoji) each = 1.
 //
-// Third string lens, symmetric with `as_bytes()` (bytes) / `as_chars()`
+// Third string lens, symmetric with `bytes()` (bytes) / `chars()`
 // (codepoints): `as_graphemes()` (extended grapheme clusters). Decoding lens, so
 // a STREAM (iterator), not a collection — like CharsIter (no positional cache;
 // `count()` is O(n)). Opt-in `std.unicode` peer; tables are lazy-static.

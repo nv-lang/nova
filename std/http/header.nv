@@ -23,7 +23,7 @@ export fn HeaderName.parse(s str) -> Result[HeaderName, HttpError] {
     if s.byte_len() == 0 {
         return Err(HttpError.invalid_header("empty header name"))
     }
-    for c in s.as_chars() {
+    for c in s.chars() {
         if !is_tchar(c) {
             return Err(HttpError.invalid_header("non-tchar in header name"))
         }
@@ -56,7 +56,7 @@ export fn HeaderValue.from_bytes(b []u8) -> Result[HeaderValue, HttpError] {
 export fn HeaderValue.from_str(s str) -> Result[HeaderValue, HttpError] {
     mut buf = WriteBuffer.new()
     buf.cap(s.byte_len())
-    for c in s.as_chars() {
+    for c in s.chars() {
         ro cp = c as int
         if cp > 0xFF {
             return Err(HttpError.invalid_header("non-latin1 character in header value"))
@@ -71,7 +71,7 @@ export fn HeaderValue.from_str(s str) -> Result[HeaderValue, HttpError] {
 
 /// Сырые байты значения.
 #stable(since = "0.1")
-export fn HeaderValue @as_bytes() -> []u8 => @bytes
+export fn HeaderValue @bytes() -> []u8 => @bytes
 
 /// Декодировать в `str`. non-ASCII/obs-text → `InvalidHeader` (fallible; для
 /// произвольных октетов бери `@as_bytes`).
@@ -79,7 +79,7 @@ export fn HeaderValue @as_bytes() -> []u8 => @bytes
 export fn HeaderValue @to_str() -> Result[str, HttpError] {
     for byte in @bytes {
         if (byte as int) > 0x7F {
-            return Err(HttpError.invalid_header("non-ASCII header value; use as_bytes()"))
+            return Err(HttpError.invalid_header("non-ASCII header value; use bytes()"))
         }
     }
     Ok(str.from_bytes_unchecked(@bytes))
@@ -227,7 +227,7 @@ export fn HeaderMap @content_length() -> Result[Option[int], HttpError] {
             Ok(t)  => t
             Err(_) => return Err(HttpError.protocol_error("invalid Content-Length octets"))
         }
-        for c in s.as_chars() {
+        for c in s.chars() {
             if !c.is_ascii_digit() {
                 return Err(HttpError.protocol_error("non-digit in Content-Length"))
             }

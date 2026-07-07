@@ -564,7 +564,7 @@ export type MutIndex[K, V] protocol {
 /// ```
 #stable(since = "0.1")
 export type AsSlice[T] protocol {
-    @as_ptr() -> *T
+    @ptr() -> *T
     @len() -> int
 }
 

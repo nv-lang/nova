@@ -65,7 +65,7 @@ export type CStr(*u8)
 // Plan 118.1 Ф.4 closeout — str → CStr conversions.
 //
 // Per D26 invariant: full Nova str ALWAYS has ptr[len]=='\0' by allocator,
-// so `bytes.as_ptr()` (Plan 118.2 Ф.1 builtin) already points к buffer
+// so `bytes.ptr()` (Plan 118.2 Ф.1 builtin) already points к buffer
 // where C-side strlen terminates correctly.
 //
 // @as_cstr() — scans bytes for an embedded NUL (which would truncate the
@@ -96,7 +96,7 @@ export type CStr(*u8)
 // @as_cstr_unchecked() — unsafe escape hatch, scan-free (O(1)).
 
 export fn str @as_cstr() -> CStr {
-    ro bytes = @as_bytes()
+    ro bytes = @bytes()
     for b in bytes {
         if b == 0 {
             panic("as_cstr: embedded NUL byte in str (would truncate C-string)")

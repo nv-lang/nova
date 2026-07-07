@@ -30,7 +30,7 @@ export fn Method.parse(s str) -> Result[Method, HttpError] {
     if s.byte_len() == 0 {
         return Err(HttpError.protocol_error("empty method token"))
     }
-    for c in s.as_chars() {
+    for c in s.chars() {
         if !is_tchar(c) {
             return Err(HttpError.protocol_error("invalid method token"))
         }

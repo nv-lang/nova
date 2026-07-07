@@ -87,7 +87,7 @@ export fn UdpSocket mut @send_to_bytes(data []u8, addr SocketAddr) Net -> Result
 #stable(since = "0.1")
 export fn UdpSocket mut @recv_from_bytes(max int) Net -> Result[([]u8, SocketAddr), NetError] {
     match Net.recv_from(@, max) {
-        Ok((data, sender)) => _udp_recv_bytes_ok(data.to_bytes(), sender)
+        Ok((data, sender)) => _udp_recv_bytes_ok(data.bytes(), sender)
         Err(e) => Err(e)
     }
 }

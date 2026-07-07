@@ -952,7 +952,7 @@ fn roundtrip_ok(data []u8, level CompressLevel) -> bool {
 }
 
 test "deflate: round-trip all levels — repetitive corpus" {
-    ro data = rep_bytes("the quick brown fox jumps over the lazy dog. ".to_bytes(), 40)
+    ro data = rep_bytes("the quick brown fox jumps over the lazy dog. ".bytes(), 40)
     assert(roundtrip_ok(data, CompressLevel.none()))
     assert(roundtrip_ok(data, CompressLevel.fastest()))
     assert(roundtrip_ok(data, CompressLevel.default()))
@@ -964,13 +964,13 @@ test "deflate: round-trip — empty + single byte" {
     assert(roundtrip_ok(empty, CompressLevel.none()))
     assert(roundtrip_ok(empty, CompressLevel.fastest()))
     assert(roundtrip_ok(empty, CompressLevel.best()))
-    ro one = "Z".to_bytes()
+    ro one = "Z".bytes()
     assert(roundtrip_ok(one, CompressLevel.fastest()))
     assert(roundtrip_ok(one, CompressLevel.best()))
 }
 
 test "deflate: round-trip — RLE overlap (300× 'a')" {
-    ro data = rep_bytes("a".to_bytes(), 300)
+    ro data = rep_bytes("a".bytes(), 300)
     assert(roundtrip_ok(data, CompressLevel.fastest()))
     assert(roundtrip_ok(data, CompressLevel.best()))
 }
@@ -1000,7 +1000,7 @@ test "deflate: level-distinguishability — best < fastest < stored" {
 }
 
 test "deflate: per-codec level range — deflate(10/11) → InvalidData" {
-    ro data = "hello".to_bytes()
+    ro data = "hello".bytes()
     ro l10 = CompressLevel.new(10)!!
     ro l11 = CompressLevel.new(11)!!
     assert(match deflate(data, l10) {
@@ -1015,14 +1015,14 @@ test "deflate: per-codec level range — deflate(10/11) → InvalidData" {
 }
 
 test "deflate: stored block (level 0) has no back-refs" {
-    ro data = rep_bytes("a".to_bytes(), 300)
+    ro data = rep_bytes("a".bytes(), 300)
     ro stored = deflate(data, CompressLevel.none())!!
     assert(stored.len() >= 300)                // stored не сжимает
     assert(inflate(stored, 0)!! == data)
 }
 
 test "deflate streaming: feed + finish == one-shot round-trip" {
-    ro data = rep_bytes("streaming deflate test payload. ".to_bytes(), 50)
+    ro data = rep_bytes("streaming deflate test payload. ".bytes(), 50)
     mut df = Deflater.new(CompressLevel.best())
     mut comp []u8 = []u8.new()
     comp.cap(64)
@@ -1041,8 +1041,8 @@ test "deflate streaming: feed + finish == one-shot round-trip" {
 }
 
 test "deflate streaming: flush produces decodable prefix (D335)" {
-    ro part1 = "first half before flush. ".to_bytes()
-    ro part2 = "second half after flush.".to_bytes()
+    ro part1 = "first half before flush. ".bytes()
+    ro part2 = "second half after flush.".bytes()
     mut df = Deflater.new(CompressLevel.fastest())
     mut prefix []u8 = []u8.new()
     prefix.cap(64)
@@ -1062,5 +1062,5 @@ test "deflate streaming: flush produces decodable prefix (D335)" {
     // Скормить вторую половину и дожать; проверить полный round-trip.
     prefix.append(df.feed(part2)!!)
     prefix.append(df.finish()!!)
-    assert(inflate(prefix, 0)!! == "first half before flush. second half after flush.".to_bytes())
+    assert(inflate(prefix, 0)!! == "first half before flush. second half after flush.".bytes())
 }

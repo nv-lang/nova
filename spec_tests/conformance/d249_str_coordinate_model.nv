@@ -1,5 +1,5 @@
 // D249 — Строковая координатная модель: str-координаты = байты; str[i] int запрещён;
-// str[a..b] — byte-range view; as_bytes() → ro []u8; byte_len() = единственная длина.
+// str[a..b] — byte-range view; bytes() → ro []u8; byte_len() = единственная длина.
 // Spec: spec/decisions/03-syntax.md D249. Part of the SINGLE `spec_tests.conformance` folder-module.
 module spec_tests.conformance
 

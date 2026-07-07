@@ -20,7 +20,7 @@ module std.net2
 /// test "write echo without network" {
 ///     with Net = mock_net() {
 ///         mut s = TcpStream.connect(SocketAddr.loopback(0)).unwrap()
-///         assert(s.write("hi".as_bytes()).unwrap() == 2)
+///         assert(s.write("hi".bytes()).unwrap() == 2)
 ///         s.close()
 ///     }
 /// }
@@ -31,7 +31,7 @@ export fn mock_net() -> Effect[Net] => effect Net {
     tcp_bind(_addr SocketAddr)            => _listener_ok(1 as *())
     accept(_listener TcpListener)         => _stream_ok(2 as *())
     connect(_addr SocketAddr)             => _stream_ok(3 as *())
-    read(_stream TcpStream, buf mut []u8) => _int_ok(_mock_fill(buf, "mock-reply".as_bytes()))
+    read(_stream TcpStream, buf mut []u8) => _int_ok(_mock_fill(buf, "mock-reply".bytes()))
     write(_stream TcpStream, data []u8)   => _int_ok(data.len())
     shutdown(_stream TcpStream)           => _unit_ok()
     close_stream(_stream TcpStream)       {}
@@ -39,15 +39,15 @@ export fn mock_net() -> Effect[Net] => effect Net {
     mark_split(_stream TcpStream)         {}
     listener_local_port(_listener TcpListener) => 4242
     listener_local_addr(_listener TcpListener, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(4242, out.as_ptr()) }
+        unsafe { nova_net_addr_loopback_into(4242, out.ptr()) }
     }
     stream_local_port(_stream TcpStream) => 5050
     stream_peer_port(_stream TcpStream)  => 6060
     stream_local_addr(_stream TcpStream, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(5050, out.as_ptr()) }
+        unsafe { nova_net_addr_loopback_into(5050, out.ptr()) }
     }
     stream_peer_addr(_stream TcpStream, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(6060, out.as_ptr()) }
+        unsafe { nova_net_addr_loopback_into(6060, out.ptr()) }
     }
     set_nodelay(_stream TcpStream, _on bool)          {}
     set_keepalive(_stream TcpStream, _on bool)        {}
@@ -57,14 +57,14 @@ export fn mock_net() -> Effect[Net] => effect Net {
     udp_bind(_addr SocketAddr)          => _socket_ok(10 as *())
     send_to(_sock UdpSocket, data []u8, _addr SocketAddr) => _int_ok(data.len())
     recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) {
-        unsafe { nova_net_addr_loopback_into(0, sender.as_ptr()) }
+        unsafe { nova_net_addr_loopback_into(0, sender.ptr()) }
         ro _ = buf
         _int_ok(0)
     }
     close_socket(_sock UdpSocket)       {}
     socket_local_port(_sock UdpSocket)  => 7070
     socket_local_addr(_sock UdpSocket, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(7070, out.as_ptr()) }
+        unsafe { nova_net_addr_loopback_into(7070, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────

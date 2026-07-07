@@ -169,8 +169,10 @@ export import std.prelude.effects.{Fail, Time, Mem}
 // Plan 91 Ф.2.5 (D177) + Ф.2.6 (D178): str Nova-body methods auto-available без explicit import.
 // Nova bodies в std/runtime/string.nv; Plan 54 Ф.2 dispatch (!is_external filter).
 // D178: parse_int_radix → parse_int(radix=10); to_bytes/to_chars/compare added.
+// D410 (2026-07-06): to_bytes/to_chars close-copy twins RETRACTED (view+.clone()/.collect()
+// at call site instead); as_bytes renamed → bytes (bare noun view, as_ префикс упразднён).
 // std.runtime.string имеет #no_prelude — cycle protection (prelude→string→prelude).
-export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replace, compare, to_bytes, to_chars, as_bytes}
+export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replace, compare, bytes}
 
 // Plan 169.2.1 (D303): char Unicode-aware methods (`'a'.is_alphabetic()` etc.)
 // are NOT re-exported here. A bare `export import std.unicode.{is_alphabetic,…}`
