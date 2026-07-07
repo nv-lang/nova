@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 178 Ф.1 — Method / StatusCode / Version / HeaderMap / Mime / Cookie.
 //
-// АНКОР (Plan 182 Ф.2, 2026-07-07): НЕ мигрирован в std/http — см. якорь в
-// nova_tests/http/body_test.nv (тот же [P67-LEGACY] `Ident \`msg\` not in
-// var_types`, emit_c.rs:43828: ЛЮБОЙ test{} в `module std.http` — даже
-// no-op — переводит модуль в executable-режим и делает достижимым латентный
-// баг в конструкторах HttpError). Разморозить после фикса компилятора.
-
-module nova_tests.http
-
-import std.http.{Method, StatusCode, Version, HeaderMap, HeaderValue, Mime, ContentType, Cookie, SetCookie, HttpError}
+// Migrated from nova_tests/http/model_test.nv (Plan 182 Ф.2, 2026-07-07) after the
+// P67-LEGACY `module std.http` test-block blocker was fixed (see body_test.nv header).
+// Supersedes the transitional nova_tests/http/d358_http_message_model.nv (subset).
+module std.http
 
 test "method: parse round-trip + safety/idempotency" {
     ro g = Method.parse("GET")!!

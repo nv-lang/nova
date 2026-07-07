@@ -4862,8 +4862,22 @@ impl CEmitter {
             .map(|(n, _)| n.clone()).collect();
         // Helper: is this Type item the merged (non-user) duplicate of a
         // name the user has also declared? Skip if so.
+        // [M-http-module-test-block-p67] / [M-sync-crossmodule-samename-type-collision]
+        // (D348): a cross-module same-SIMPLE-name COLLISION is NOT a prelude-shadow
+        // duplicate. `http.ErrorKind` and `encoding.compress.ErrorKind` are two
+        // DISTINCT types, qualified to distinct C bases (`Nova_std_http_ErrorKind`
+        // vs `Nova_encoding_compress_ErrorKind`) by def/ref_type_base — so emitting
+        // BOTH carries no C-redefinition risk, and BOTH must be emitted+registered
+        // (their schemas key by the qualified base). The name-keyed shadow-skip
+        // below wrongly dropped the non-entry-module one, so its sum-schema never
+        // registered → a `match` on a compress-only variant (`InvalidData(msg)`)
+        // found no binding → `[P67-LEGACY] Ident 'msg' not in var_types`. Exempt
+        // colliding names: the skip stays exact for genuine shadows (a re-export /
+        // same-C-base duplicate is NOT in `colliding_type_names`).
+        let colliding_type_names_snapshot = self.colliding_type_names.clone();
         let should_skip_type = |t: &TypeDecl| -> bool {
             if !user_type_names.contains(&t.name) { return false; }
+            if colliding_type_names_snapshot.contains(&t.name) { return false; }
             // User declared this name. If THIS span belongs to user — keep.
             // Otherwise (merged from import) — skip.
             !user_type_spans.contains(&(t.name.clone(), t.span))
