@@ -1718,3 +1718,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   D38-юнита (named/anon/cap/record-tuple, проверка ПОСЛЕ 2-го push); std/http server/client/neg,
   vec, json_test — pass; широкая дельта против main-бинаря — 0 регрессий.
 
+
+- **[M-f64-try-parse-to-parse-f64]** (2026-07-07, P2, Wave: [sonnet/haiku]-заход сразу после
+  вливания A4 — трогает emit_c) — `f64.try_parse(s) -> Option[f64]` нарушает R1/R3/R4 (D325:
+  Option вместо Result; try_ без infallible-сиблинга) и §3 (компиляторный builtin, хардкод в
+  4 местах emit_c.rs :30970/:39801/:43421/:47128 поверх nova_str_to_f64). Целевая форма:
+  `str @parse_f64() -> Result[f64, ParseFloatError]` в std/runtime/string/parse.nv по образцу
+  parse_int; builtin снести; вызовов 2 (json.nv:483, _experimental/math/complex.nv:368).
+  Заодно спека: примеры type-set дженерика 174.1 `T.try_parse(...)` → `T.parse(...)`
+  (писались до уточнения R3) — амендмент-строчка в блоке type-set (02-types.md:13912-зона).
