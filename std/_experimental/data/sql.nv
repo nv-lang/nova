@@ -355,7 +355,7 @@ test "sql tag builds template with placeholders" {
 test "sql tag with multiple args preserves order" {
     ro name = "alice"
     ro age  = 30
-    ro q = sql`INSERT INTO users (name, age) VALUES (${name}, ${age})`
+    ro q = sql`INSERT INTO users (name, age) VALUES (${S(name)}, ${I(age as i64)})`
     assert(q.template == "INSERT INTO users (name, age) VALUES (?, ?)")
     assert(q.args.len() == 2)
     match q.args[0] {

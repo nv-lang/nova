@@ -16,6 +16,7 @@
 module concurrency.retry
 
 import std.testing.handlers as th
+import std.time.duration
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -
 /// let result = policy.execute(|| http_get("https://api.example.com"))
 /// ```
 #stable(since = "0.1")
-export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T {
+export fn RetryPolicy @execute[T](body fn() -> T) Time Random -> T {
     mut attempt = 0
     mut result Option[T] = None
     mut last_error Option[E] = None
