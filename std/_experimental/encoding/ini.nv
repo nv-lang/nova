@@ -118,7 +118,7 @@ export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
             buf.append('\n')
         }
     }
-    buf.into()
+    buf.into_str()
 }
 
 
