@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/identifiers/snowflake_test.nv — публичный контракт SnowflakeGen/Snowflake.parse.
+// Детерминизм через th.fixed_ms (Time handler substitution).
+
+module identifiers.snowflake_test
+
+import std.identifiers.snowflake.{SnowflakeGen, Snowflake, SnowflakeParts, SnowflakeError}
+import std.testing.handlers as th
+
+test "next: monotonic в одной ms" {
+    mut gen = SnowflakeGen.new(1)!!
+    with Time = th.fixed_ms(1700000000000) {
+        ro a = gen.next()!!
+        ro b = gen.next()!!
+        ro c = gen.next()!!
+        // Все три в той же ms — sequence 0, 1, 2
+        assert(a < b)
+        assert(b < c)
+    }
+}
+
+test "next: разные ms → разные ID" {
+    mut gen = SnowflakeGen.new(5)!!
+    ro id1 = with Time = th.fixed_ms(1000) { gen.next()!! }
+    ro id2 = with Time = th.fixed_ms(2000) { gen.next()!! }
+    assert(id1 < id2)
+}
+
+test "parse: round-trip компонентов" {
+    mut gen = SnowflakeGen.new(42)!!
+    ro id = with Time = th.fixed_ms(1700000000000) { gen.next()!! }
+    ro parts = Snowflake.parse(id)
+    assert(parts.timestamp_ms == 1700000000000)
+    assert(parts.machine_id == 42)
+    assert(parts.sequence == 0)
+}
+
+test "ошибка — невалидный machine_id" {
+    match SnowflakeGen.new(2000) {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is InvalidMachineId)
+    }
+}
+
+test "ошибка — clock backwards" {
+    mut gen = SnowflakeGen.new(0)!!
+    ro _ = with Time = th.fixed_ms(2000) { gen.next()!! }
+    with Time = th.fixed_ms(1000) {
+        match gen.next() {
+            Ok(_)  => assert(false)
+            Err(e) => assert(e is ClockBackwards)
+        }
+    }
+}
