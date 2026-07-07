@@ -43720,6 +43720,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         {
                             return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
                         }
+                        // bench.opaque(x): compiler black-box identity intrinsic (mirror of
+                        // emit_expr's NOVA_BENCH_OPAQUE_PRIM) — its return type IS the argument
+                        // type. The checker leaves resolved_types UNSET for this namespace
+                        // intrinsic (obj_ty="" on Ident("bench") receiver), so the channel
+                        // above misses. [M-182-crash-method-ret-unknown] (bench-intrinsic branch).
+                        if method == "opaque" && args.len() == 1 {
+                            if let ExprKind::Ident(n) = &obj.kind {
+                                if n == "bench" {
+                                    return self.infer_expr_c_type(args[0].expr());
+                                }
+                            }
+                        }
                         {
                             let obj_desc = match &obj.kind {
                                 ExprKind::Ident(n) => format!("Ident({})", n),
@@ -47438,6 +47450,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .contains("NovaRes_nova_unit_NovaValue_SerError")
                         {
                             return "NovaRes_nova_unit_NovaValue_SerError*".to_string();
+                        }
+                        // bench.opaque(x): compiler black-box identity intrinsic (mirror of
+                        // emit_expr's NOVA_BENCH_OPAQUE_PRIM) — its return type IS the argument
+                        // type. The checker leaves resolved_types UNSET for this namespace
+                        // intrinsic (obj_ty="" on Ident("bench") receiver), so the channel
+                        // above misses. [M-182-crash-method-ret-unknown] (bench-intrinsic branch).
+                        if method == "opaque" && args.len() == 1 {
+                            if let ExprKind::Ident(n) = &obj.kind {
+                                if n == "bench" {
+                                    return self.infer_expr_c_type(args[0].expr());
+                                }
+                            }
                         }
                         {
                             let obj_desc = match &obj.kind {
