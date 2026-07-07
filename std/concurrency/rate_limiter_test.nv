@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/concurrency/rate_limiter_test.nv — публичный контракт TokenBucket.
+// Все тесты детерминированы через th.fixed_ms.
+
+module concurrency.rate_limiter_test
+
+import std.concurrency.rate_limiter.{TokenBucket}
+import std.testing.handlers as th
+
+test "burst в пределах capacity" {
+    with Time = th.fixed_ms(0) {
+        mut bucket = TokenBucket.new(5, 1.0)        // 1 token/sec, burst=5
+        // 5 запросов подряд — все проходят
+        for i in 0..5 {
+            assert(bucket.try_acquire())
+        }
+        // 6-й — отказ
+        assert(!bucket.try_acquire())
+    }
+}
+
+test "refill через прошедшее время" {
+    mut bucket = with Time = th.fixed_ms(0) {
+        TokenBucket.new(2, 1.0)
+    }
+
+    // На t=0 — 2 tokens
+    with Time = th.fixed_ms(0) {
+        assert(bucket.try_acquire())
+        assert(bucket.try_acquire())
+        assert(!bucket.try_acquire())                   // empty
+    }
+
+    // На t=1500ms — refill 1.5 tokens, можем взять 1
+    with Time = th.fixed_ms(1500) {
+        assert(bucket.try_acquire())
+        // ещё 0.5 — не хватит на 1
+        assert(!bucket.try_acquire())
+    }
+
+    // На t=2500ms — добралось до 1.5 tokens, ещё 1
+    with Time = th.fixed_ms(2500) {
+        assert(bucket.try_acquire())
+    }
+}
+
+test "capacity ограничивает refill" {
+    mut bucket = with Time = th.fixed_ms(0) {
+        TokenBucket.new(3, 10.0)           // 10/sec, capacity 3
+    }
+
+    // Через 100 секунд — должен оставаться 3 (capped)
+    with Time = th.fixed_ms(100_000) {
+        assert(bucket.available() == 3.0)
+        assert(bucket.try_acquire())
+        assert(bucket.try_acquire())
+        assert(bucket.try_acquire())
+        assert(!bucket.try_acquire())
+    }
+}
+
+test "регресс wall-clock назад — refill не крадёт и не портит tokens" {
+    mut bucket = with Time = th.fixed_ms(10_000) {
+        TokenBucket.new(2, 1.0)
+    }
+
+    // На t=10_000ms — full bucket, забираем один token (1 остался).
+    with Time = th.fixed_ms(10_000) {
+        assert(bucket.try_acquire())
+    }
+
+    // Часы «прыгнули назад» (NTP) на t=5_000ms — elapsed был бы -5s без
+    // clamp'а. С `.max(0)` refill просто не добавляет ничего (пауза),
+    // оставшийся token цел, не отрицателен и не обнулён.
+    with Time = th.fixed_ms(5_000) {
+        assert(bucket.available() == 1.0)
+        assert(bucket.try_acquire())               // последний оставшийся
+        assert(!bucket.try_acquire())               // пусто, не "украдено" в минус
+    }
+
+    // Часы догоняют исходную точку и идут дальше — refill возобновляется
+    // нормально от того момента, где остановился last_refill_ms.
+    with Time = th.fixed_ms(11_000) {
+        assert(bucket.try_acquire())
+    }
+}
+
+test "try_acquire_n: атомарность" {
+    mut bucket = with Time = th.fixed_ms(0) {
+        TokenBucket.new(5, 1.0)
+    }
+
+    with Time = th.fixed_ms(0) {
+        assert(bucket.try_acquire_n(3))              // ok
+        assert(!bucket.try_acquire_n(3))             // нет 3, отказ
+        assert(bucket.try_acquire_n(2))              // ровно 2 — ok
+        assert(!bucket.try_acquire_n(1))             // empty
+    }
+}
