@@ -184,6 +184,44 @@ diverse cross-dir + conformance value/method-файлы, каждый conformanc
 **отсутствует** (заход-1 его НЕ вводил, вопреки заметке §5 — проверено). См.
 точки возобновления ниже — они в силе.
 
+### Заход 3 — return-позиция беглой value-цепочки ([M-184-mut-chain-return-position], 2026-07-07)
+
+Приоритет захода — концевой P1-дефект Р7-лоуэринга: беглая цепочка `mut @setter(v) -> @`
+на `value`-типе в **return-позиции** (`fn build() -> Rec { Rec.new().a(1)…d(4) }`, глубина 4).
+Р7 задаёт value-record `-> @` = `ref Self` (`NovaValue_X*`); потребитель беглого указателя в
+return-позиции был не согласован с let/arg-потребителями (заход-2) — инициализация value-слота
+из указателя (`NovaValue_Rec _nv_tmp = Nova_Rec_method_d(...)`) давала жёсткий **CC-FAIL**
+(«initializing NovaValue_Rec with NovaValue_Rec* — dereference with *»).
+
+**Корень:** три return-позиционных потребителя эмитили значение БЕЗ деref беглого указателя.
+Воспроизведено на глубине 4 (trailing И explicit `return`).
+
+**Фикс (сквозной, тот же общий предикат `is_fluent_value_ptr_for_target`):** деref беглого
+value-ptr в трёх return-сайтах `emit_c.rs` — auto-конверсия `ref T -> T` (Р5):
+- `emit_block_stmts` (осн. путь fn-тела, ~20849) — trailing/implicit-return;
+- `emit_block_stmts_trailing` (~25789) — вариант trailing-блока;
+- `Stmt::Return` (~21770) — явный `return`.
+Все три в lockstep с let-decay (~21061) и arg-деref (`deref_fluent_value_args`) через ОДИН
+`is_fluent_value_ptr_for_target`. Предикат срабатывает ТОЛЬКО когда ret_ty — value-struct (не
+ptr) И выражение — Call value-record `-> @` метода (`fn_ret_{T}_{m}` == `{ret_ty}*`); для
+`-> @` fn (ret_ty = ptr, `fluent_self_ret`) он no-op — конфликта нет.
+
+**Регресс-безопасность (обоснование):** этот паттерн ДО фикса ВСЕГДА давал CC-FAIL (ptr в
+value-слот не компилится) — значит ни один ранее-зелёный тест его не исполнял; фикс может
+только чинить ранее-падавшее. Подтверждено: fluent/chain-сэмпл (plan77/plan123/plan138_2/
+cgfix_fluent_tail_if + оба заход-2 акцепта) зелёный; conformance без изменений.
+
+**Тест:** `nova_tests/inout_ref/p184_defect_c_return.nv` (depth-4 trailing + explicit return,
+обе мутации-по-полю проверены). Маркер `[M-184-mut-chain-return-position]` — ✅ FIXED
+(в задачнике маркер как отдельная запись не заводился; закреплён здесь + якорями в `emit_c.rs`).
+
+**Точка возобновления после захода 3:** пункты «Заход 3+» ниже В СИЛЕ ЦЕЛИКОМ (in-out `mut x T`,
+тип `Ref(T)`, `E_REF_TYPE_POSITION`, Р6/Р8/Р12/Р13/Р14, ref-локалы). Ключевой блокер порядка:
+полная in-out-семантика требует ABI-правки value-параметров в `emit_c` (передача by-pointer +
+деref в теле + address-of на call-site — как у ресивера `@`), что выходит за «минимальный
+emit_c / лоуэринг только п.5» этого захода; плюс широкая миграция (4 Категория-A + десятки
+call-site-реджектов). Это следующий выделенный заход с явно расширенной emit_c-зоной.
+
 ### Точки возобновления (Заход 3+)
 
 - **Ф.1-остаток — локалы-ссылки `ro y ref T = expr` (Р1):** НЕ реализовано. `ref` в

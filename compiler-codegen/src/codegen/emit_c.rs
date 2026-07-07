@@ -20847,6 +20847,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.emit_expr(trailing)?
             };
             self.in_recv_ptr_return_position.set(prev_recv_ret);
+            // Plan 184 (Р5/Р7) [M-184-mut-chain-return-position]: a value-record
+            // fluent `-> @` chain in trailing (implicit-return) position yields
+            // `ref Self` (`NovaValue_X*` — emit-fact from `fn_ret_*`). The by-value
+            // return consumer must deref it (auto-conversion `ref T -> T`), exactly
+            // like the let-binding decay (~21061) and call-arg consumer
+            // (`deref_fluent_value_args`) — shared `is_fluent_value_ptr_for_target`
+            // predicate keeps all consumers in lockstep. Without this,
+            // `emit_tuple_return_stash` below assigns the pointer to a value slot
+            // (`NovaValue_Rec _nv_tmp = Nova_Rec_method_d(...)`) — a C type error for
+            // `fn build() -> Rec { Rec.new().a(1)…d(4) }` at any chain depth ≥ 1.
+            // No-op when ret_ty is a pointer (the `-> @` = `ref Self` fluent-self
+            // case handled by `fluent_self_ret` above), so the two never conflict.
+            let val = if self.is_fluent_value_ptr_for_target(trailing, ret_ty) {
+                format!("(*({}))", val)
+            } else {
+                val
+            };
             // Plan 72 P3-B return: box the trailing value for a protocol return type.
             let val = self.wrap_protocol_return(val, trailing);
             let val = self.wrap_any_return(val, trailing);
@@ -21766,6 +21783,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.emit_expr_with_target_type(v, &ret_ty)?
                     } else {
                         self.emit_expr(v)?
+                    };
+                    // Plan 184 (Р5/Р7) [M-184-mut-chain-return-position]: explicit
+                    // `return <value-record fluent chain>` — same by-value consumer
+                    // deref as the trailing-expr path (emit_block_stmts_trailing) and
+                    // the let/arg consumers. `is_fluent_value_ptr_for_target` is a
+                    // no-op when ret_ty is a pointer (the `-> @` = `ref Self` fluent-
+                    // self case handled by `in_recv_ptr_return_position` above), so
+                    // the two never conflict.
+                    let val = if self.is_fluent_value_ptr_for_target(v, &ret_ty) {
+                        format!("(*({}))", val)
+                    } else {
+                        val
                     };
                     self.in_recv_ptr_return_position.set(prev_recv_ret);
                     // Plan 72 P3-B return: box explicit return value for a protocol return type.
@@ -25788,6 +25817,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         if let Some(trailing) = &block.trailing {
             let v = self.emit_expr(trailing)?;
+            // Plan 184 (Р5/Р7) [M-184-mut-chain-return-position]: a value-record
+            // fluent `-> @` chain in return position yields `ref Self`
+            // (`NovaValue_X*` — emit-fact from `fn_ret_*`). The by-value return
+            // consumer must deref it (auto-conversion `ref T -> T`), exactly like
+            // the let-binding decay (emit_stmt Let, ~21061) and the call-arg
+            // consumer (`deref_fluent_value_args`). All three stay in lockstep via
+            // the shared `is_fluent_value_ptr_for_target` predicate. Without this,
+            // `NovaValue_Rec _nv_tmp = Nova_Rec_method_d(...)` assigns a pointer to
+            // a value slot — a C type error (`build() -> Rec` with depth-≥1 chain).
+            let v = if self.is_fluent_value_ptr_for_target(trailing, ret_ty) {
+                format!("(*({}))", v)
+            } else {
+                v
+            };
             if ret_ty == "nova_unit" {
                 self.line(&format!("{};", v));
                 self.leave_defer_scope(block_id);
