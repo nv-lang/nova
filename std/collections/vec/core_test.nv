@@ -2,7 +2,7 @@
 // std.collections.vec (core tests) — Vec[T] type, constructors, len/cap.
 
 #prelude(core, runtime, collections, protocols)
-module std.collections.vec
+module vec.core_test
 
 test "new().cap(n) / reserve" {
     mut v = Vec[int].new().cap(16)

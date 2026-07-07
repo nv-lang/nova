@@ -2,7 +2,7 @@
 // std.collections.vec (views tests) — slice views, split_at, first_n/last_n.
 
 #prelude(core, runtime, collections, protocols)
-module std.collections.vec
+module vec.views_test
 
 test "as_slice — ro whole view" {
     ro v = Vec[int].from([1, 2, 3])

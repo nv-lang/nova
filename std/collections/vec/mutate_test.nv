@@ -2,7 +2,7 @@
 // std.collections.vec (mutate tests) — push/pop/insert/remove/clear/extend/append.
 
 #prelude(core, runtime, collections, protocols)
-module std.collections.vec
+module vec.mutate_test
 
 test "push / pop / len / is_empty" {
     mut v = Vec[int].new()
