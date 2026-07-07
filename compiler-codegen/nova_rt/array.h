@@ -617,96 +617,19 @@ static inline nova_int nova_str_byte_len(nova_str s) {
     return (nova_int)s.len;
 }
 
-/* ---- nova_str_to_bytes / nova_str_bytes: возвращает []byte (packed UTF-8 байты).
- * D178: renamed to nova_str_to_bytes; nova_str_bytes kept as alias. */
-static inline NovaArray_nova_byte* nova_str_to_bytes(nova_str s) {
-    NovaArray_nova_byte* a = nova_array_new_nova_byte((int64_t)s.len);
-    for (size_t i = 0; i < s.len; i++) {
-        nova_array_push_nova_byte(a, (nova_byte)(unsigned char)s.ptr[i]);
-    }
-    return a;
-}
-
-static inline NovaArray_nova_byte* nova_str_bytes(nova_str s) { return nova_str_to_bytes(s); }
-
-/* ---- nova_str_as_bytes: zero-copy view of str's UTF-8 bytes as readonly []u8.
- * Plan 108 D176: returns NovaArray_nova_byte* that aliases the str's internal
- * buffer — no memcpy. The Nova type-checker enforces readonly []u8, preventing
- * any mutation (push/pop/index-write). GC-safe: Boehm conservatively traces
- * the ptr field and keeps the original str buffer alive as long as this array
- * view is reachable. cap == len signals read-only (no intended growth). */
-static inline NovaArray_nova_byte* nova_str_as_bytes(nova_str s) {
-    NovaArray_nova_byte* a = (NovaArray_nova_byte*)nova_alloc(sizeof(NovaArray_nova_byte));
-    a->data = (nova_byte*)(uintptr_t)(const void*)s.ptr; /* zero-copy alias */
-    a->len  = (int64_t)s.len;
-    a->cap  = (int64_t)s.len; /* cap == len: read-only, no growth expected */
-    return a;
-}
-
-/* ---- nova_str_split: разбивает строку по разделителю.
- * D26 spec: `fn str @split(sep str) -> Iter[str]`. Bootstrap делает
- * eager массив string-view'ов. Пустой sep — пограничный случай: возвращаем
- * массив с одной строкой (исходная). */
-static inline NovaArray_nova_str* nova_str_split(nova_str s, nova_str sep) {
-    NovaArray_nova_str* a = nova_array_new_nova_str(0);
-    if (sep.len == 0) {
-        nova_array_push_nova_str(a, s);
-        return a;
-    }
-    size_t start = 0;
-    size_t i = 0;
-    while (i + sep.len <= s.len) {
-        if (memcmp(s.ptr + i, sep.ptr, sep.len) == 0) {
-            nova_str part = { s.ptr + start, i - start };
-            nova_array_push_nova_str(a, part);
-            i += sep.len;
-            start = i;
-        } else {
-            i++;
-        }
-    }
-    /* Tail */
-    nova_str tail = { s.ptr + start, s.len - start };
-    nova_array_push_nova_str(a, tail);
-    return a;
-}
-
-/* ---- nova_str_to_chars / nova_str_chars: возвращает []char (eager массив codepoints).
- * D178: renamed to nova_str_to_chars; nova_str_chars kept as alias. */
-static inline NovaArray_nova_int* nova_str_to_chars(nova_str s) {
-    NovaArray_nova_int* a = nova_array_new_nova_int((int64_t)s.len);
-    for (size_t i = 0; i < s.len; ) {
-        unsigned char b = (unsigned char)s.ptr[i];
-        nova_int cp = 0;
-        size_t step = 1;
-        if (b < 0x80) {
-            cp = b;
-            step = 1;
-        } else if ((b & 0xE0) == 0xC0 && i + 1 < s.len) {
-            cp = ((nova_int)(b & 0x1F) << 6)
-               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F));
-            step = 2;
-        } else if ((b & 0xF0) == 0xE0 && i + 2 < s.len) {
-            cp = ((nova_int)(b & 0x0F) << 12)
-               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F) << 6)
-               | ((nova_int)((unsigned char)s.ptr[i+2] & 0x3F));
-            step = 3;
-        } else if ((b & 0xF8) == 0xF0 && i + 3 < s.len) {
-            cp = ((nova_int)(b & 0x07) << 18)
-               | ((nova_int)((unsigned char)s.ptr[i+1] & 0x3F) << 12)
-               | ((nova_int)((unsigned char)s.ptr[i+2] & 0x3F) << 6)
-               | ((nova_int)((unsigned char)s.ptr[i+3] & 0x3F));
-            step = 4;
-        } else {
-            cp = b;
-            step = 1;
-        }
-        nova_array_push_nova_int(a, cp);
-        i += step;
-    }
-    return a;
-}
-static inline NovaArray_nova_int* nova_str_chars(nova_str s) { return nova_str_to_chars(s); }
+/* ---- str-family []T producers (to_bytes / bytes / as_bytes / split /
+ * to_chars / chars) — REMOVED in Plan 172.12 A6 (Vec-canon substrate).
+ *
+ * These `NovaArray_*`-returning helpers were retired from codegen routing by
+ * Plan 139.2 (the str type-methods `@bytes`/`@chars`/`@as_bytes`/`@split` and
+ * `str.from_bytes_*` are now Nova-body, building real `Vec[u8]`/`Vec[str]` via
+ * `Vec[T].from_raw_parts`). Verified dead (2026-07-07): zero call sites across
+ * generated C and zero FFI/extern decls — every reference is a doc comment.
+ * Owner decision (2026-07-08): NovaArray dies wholesale → these dead runtime
+ * bodies are removed here (byte-identical: nova_rt headers are `#include`d, not
+ * spliced into the generated `.c`; the functions were `static inline` + unused
+ * → no object-code change). The live O(1) primitives `nova_str_byte_len` /
+ * `nova_str_char_at` above/below are untouched. */
 
 /* ---- nova_str_char_at: codepoint по codepoint-индексу.
  * Возвращает Option[char] = NovaOpt_nova_char (Plan 70.3: distinct typedef).
