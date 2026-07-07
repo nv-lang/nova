@@ -3,12 +3,12 @@
 // Plan 184 (Р1 дополнение захода-5): `ref T` запрещён в тип-аргументе дженерика
 // для VALUE-типа — `ref` нехраним, «размера как тип» не имеет. Для кучевого H
 // действует Р6 (`ref H ≡ H`) — тот случай легален (см. позитив heap_norm).
-module neg.ref_type_position_typearg
+module neg.d326_ref_type_position_typearg_neg
 
-type Point value { x int, y int }
-fn sz[T]() -> int => 8
+type D326Point value { x int, y int }
+fn d326_sz[T]() -> int => 8
 
 test "ref of value type in turbofish type-arg is rejected" {
-    ro n = sz[ref Point]()
+    ro n = d326_sz[ref D326Point]()
     assert(n == 8)
 }

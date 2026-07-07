@@ -1,0 +1,36 @@
+// D326 Plan 184 (Р1) — ref-locals: named pointer-alias. `ro y ref T = <place>` —
+// read-alias; `mut y ref T = <place>` — write-through (writes through the alias
+// reach the target storage, like C++ `T& y`).
+// Spec: spec/decisions/02-types.md D326 (Plan 184 Р1).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326RefLocalVec3 value {
+    x f64
+    y f64
+    z f64
+}
+fn D326RefLocalVec3.new(a f64, b f64, c f64) -> D326RefLocalVec3 => { x: a, y: b, z: c }
+
+test "ro ref-local reads alias target (Р1)" {
+    mut v = D326RefLocalVec3.new(1.0, 2.0, 3.0)
+    ro r ref f64 = v.y
+    assert(r == 2.0)
+}
+
+test "mut ref-local write reaches target (Р1 write-through)" {
+    mut v = D326RefLocalVec3.new(1.0, 2.0, 3.0)
+    mut r ref f64 = v.x
+    r = 42.0
+    assert(v.x == 42.0)
+    assert(v.y == 2.0)
+    assert(v.z == 3.0)
+}
+
+test "mut ref-local accumulate through alias (Р1)" {
+    mut n = 10
+    mut a ref int = n
+    a = a + 5
+    a = a + 7
+    assert(n == 22)
+}

@@ -26,6 +26,25 @@ fn d32_bump(mut x int) {
     x = 999
 }
 
+// `mut` value-record param (Plan 184 Р10): field writes inside the callee are visible to caller.
+type D32Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+fn D32Vec3.new(a f64, b f64, c f64) -> D32Vec3 => { x: a, y: b, z: c }
+
+fn d32_clobber(mut v D32Vec3) {
+    v.x = 7.0
+    v.y = 8.0
+    v.z = 9.0
+}
+
+// In-out accumulation through repeated writes (Plan 184 Р10).
+fn d32_add_into(mut acc int, delta int) {
+    acc = acc + delta
+}
+
 test "mut record param: caller sees the field mutation (D32, by reference)" {
     mut acc = D32Account { balance: 100 }
     d32_deposit(acc, 50)
@@ -48,4 +67,19 @@ test "both passing modes are in-out on the SAME call sequence (D32 revised)" {
     d32_bump(k)           // in-out primitive: NOW visible
     assert(acc.balance == 15)
     assert(k == 999)
+}
+
+test "mut value-record param: field writes reach caller (D32 revised, Plan 184 Р10)" {
+    mut v = D32Vec3.new(1.0, 2.0, 3.0)
+    d32_clobber(v)
+    assert(v.x == 7.0)
+    assert(v.y == 8.0)
+    assert(v.z == 9.0)
+}
+
+test "in-out accumulation across two calls (D32 revised, Plan 184 Р10)" {
+    mut total = 0
+    d32_add_into(total, 10)
+    d32_add_into(total, 32)
+    assert(total == 42)
 }

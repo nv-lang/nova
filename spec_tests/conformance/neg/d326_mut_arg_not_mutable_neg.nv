@@ -4,13 +4,13 @@
 // by-pointer in-out reference — its argument must be an addressable, mutable
 // place. Passing an RVALUE (here a literal) has no stable storage for the callee
 // to write back into → E_MUT_ARG_NOT_MUTABLE.
-module neg.mut_arg_not_mutable
+module neg.d326_mut_arg_not_mutable_neg
 
-fn bump(mut x int) {
+fn d326_bump(mut x int) {
     x = 999
 }
 
 test "rvalue argument to in-out mut param is rejected" {
-    bump(5)
+    d326_bump(5)
     assert(true)
 }

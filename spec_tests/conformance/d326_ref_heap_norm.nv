@@ -1,0 +1,32 @@
+// D326 Plan 184 (Р6, Р8) — normalization `ref H ≡ H` for heap type H in type argument:
+// `f[ref H]` is legal AND identical to `f[H]` (the value is already a handle, a
+// reference to a handle does not introduce a layer). Plus downward-borrow `&v` into
+// a pointer-typed sink (Р8 legal-path for FFI).
+// Spec: spec/decisions/02-types.md D326 (Plan 184 Р6, Р8).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326Node {
+    v int
+}
+fn D326Node.new(x int) -> D326Node => { v: x }
+
+// Generic identity — monomorphic size/representation are identical for H and ref H (Р6).
+fn d326_mono[T]() -> int => 7
+
+// Downward `&v` (stack borrow in FFI) — legal (Р8(б), ffi-canon).
+fn d326_read_at(p *int) -> int => 0
+
+test "f[ref H] equals f[H] for heap H (Р6 normalization)" {
+    ro a = d326_mono[D326Node]()
+    ro b = d326_mono[ref D326Node]()
+    assert(a == b)
+    assert(b == 7)
+}
+
+test "downward &v to a *int sink is legal (Р8 downward borrow)" {
+    mut n = 5
+    ro r = d326_read_at(&n)
+    assert(r == 0)
+    assert(n == 5)
+}

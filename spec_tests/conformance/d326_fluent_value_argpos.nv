@@ -1,0 +1,43 @@
+// D326 Plan 184 Ф.2 (Р5, Р7) — fleeting `-> @` chain-result on a value-type receiver
+// used directly as a call argument: `ref Self` auto-derefs to T at the by-value argument
+// position. This exercises both the free-function form (`take(r.b(5))`) and the
+// method-call form (`sink.take(r.b(5))`), which matches the production HTTP dispatch
+// shape `handler.handle(req.params(ps))` from std/http/server.
+// Spec: spec/decisions/02-types.md D326 (Plan 184 Р5, Р7).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326ArgposRec value {
+    ro a int
+    b   int
+}
+
+fn D326ArgposRec.new(a int, b int) -> D326ArgposRec => { a, b }
+
+fn D326ArgposRec mut @b(v int) -> @ {
+    @b = v
+}
+
+// Free function taking the value by value.
+fn d326_take(r D326ArgposRec) -> int => r.b
+
+// Instance method (heap receiver) taking the value by value — the production
+// `handler.handle(...)` shape.
+type D326ArgposSink { ro tag int }
+fn D326ArgposSink.new() -> D326ArgposSink => { 0 }
+fn D326ArgposSink @take(r D326ArgposRec) -> int => r.b
+
+test "fluent value-chain result as a free-fn argument — compiles and correct (Р5/Р7)" {
+    mut r = D326ArgposRec.new(1, 0)
+    ro got = d326_take(r.b(5))
+    assert(got == 5)
+    assert(r.b == 5)
+}
+
+test "fluent value-chain result as a method-call argument — compiles and correct (Р5/Р7)" {
+    mut r = D326ArgposRec.new(1, 0)
+    ro s = D326ArgposSink.new()
+    ro got = s.take(r.b(7))
+    assert(got == 7)
+    assert(r.b == 7)
+}

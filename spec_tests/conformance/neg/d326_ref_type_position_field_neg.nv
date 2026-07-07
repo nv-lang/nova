@@ -2,9 +2,9 @@
 //
 // Plan 184 (Р1): `ref T` запрещён в поле (ссылка на стек не должна утекать в
 // долгоживущую кучу). Легально только в возврате / локальном алиасе / приёмнике.
-module neg.ref_type_position_field
+module neg.d326_ref_type_position_field_neg
 
-type Point value { x int, y int }
-type Bad { p ref Point }
+type D326Point value { x int, y int }
+type D326Bad { p ref D326Point }
 
-fn main() -> () { () }
+fn d326_main() -> () { () }
