@@ -11,7 +11,7 @@
 // old std/net dns tests made). This is a test-file peer of module std.net2, so
 // the helper is shared across all net2 `*_test.nv` files and never ships.
 
-module std.net2
+module std.net
 
 // Module-private `panic` decl (mirrors std/collections/vec/core.nv): a folder-
 // module peer cannot rely on the prelude `panic` being visible when these test

@@ -24,7 +24,7 @@
 // the receiver's socket is bound (and its port published) before the sender
 // transmits, the kernel buffers the datagram: loopback delivery is not lost.
 
-module std.net2
+module std.net
 
 test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
     with Net = real_net() {

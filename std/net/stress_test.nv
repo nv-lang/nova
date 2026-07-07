@@ -19,7 +19,7 @@
 //
 // `_must` (typed-Result extractor) is shared from tcp_test.nv (same module).
 
-module std.net2
+module std.net
 
 test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber pattern integrity" {
     with Net = real_net() {

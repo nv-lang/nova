@@ -9,7 +9,7 @@
 
 module neg.double_close_neg
 
-import std.net2.{Net, TcpStream, SocketAddr, NetError, mock_net}
+import std.net.{Net, TcpStream, SocketAddr, NetError, mock_net}
 
 fn _open(r Result[TcpStream, NetError]) -> TcpStream {
     match r {

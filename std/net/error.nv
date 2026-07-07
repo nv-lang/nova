@@ -1,37 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
-// Plan 83.12: std/net/error.nv — typed network error enum.
+// Plan 183 Ф.2: std/net2/error.nv — typed network error (D407 §4).
 //
-// NetError is a sum type that categorises network failures. In the V1
-// bootstrap implementation, external functions return `Result[T, str]`
-// (erased representation). This enum is available for user code that
-// wants to construct or document error values. Future versions will use
-// typed Result[T, NetError] once the codegen supports non-erased generics.
-//
-// C backing: Nova_NetError struct + constructors pre-declared in net.h.
-// All variants are added to RUNTIME_DEFINED_TYPES in emit_c.rs so that
-// codegen skips re-emitting the struct.
+// The C transport returns UV error codes (int, <0). The typed NetError is built
+// on the Nova side from that code via `NetError.from_code`: the code is turned
+// into text by the layer's `nova_net_strerror` (which canonicalises EACCES /
+// ECONNRESET), and that text is classified into a typed variant. No TLS, no
+// C-side error state — the honest error channel replacing the заход-1 null stub.
 
 module std.net
 
-/// Network error returned by TCP/UDP operations.
-///
-/// # Variants
-///
-/// - `ConnectionRefused` — remote host actively refused the connection.
-/// - `AddressInUse` — the local address/port is already bound by another process.
-/// - `AddressNotAvailable` — the requested address cannot be used on this host.
-/// - `NotFound` — hostname not found / no route to host.
-/// - `Eof` — the peer closed the connection (a read returned 0 bytes).
-/// - `Closed` — operation on a closed or half-closed socket.
-/// - `Cancelled` — operation was cancelled via a cancel token.
-/// - `TimedOut` — operation timed out before completion.
-/// - `BrokenPipe` — remote peer closed the connection while writing.
-/// - `ConnectionReset` — remote peer forcibly reset the connection (UV_ECONNRESET).
-/// - `PermissionDenied` — the OS denied the operation, e.g. binding a
-///   privileged port without sufficient rights (UV_EACCES).
-/// - `IoError(str)` — OS-level I/O error with message.
-/// - `InvalidAddr(str)` — malformed socket address string.
+/// Network error returned by TCP/UDP/DNS operations.
 ///
 /// # See Also
 ///
@@ -77,4 +55,39 @@ export fn NetError @to_str() -> str {
         InvalidAddr(msg)    => "invalid address: ${msg}"
         InvalidPort         => "invalid port"
     }
+}
+
+// ─── UV-code → NetError (the honest error channel) ────────────────────────────
+
+/// Build a typed `NetError` from a libuv error code (the transport's `<0`
+/// return / `out_err` cell). The message text comes from the layer's
+/// `nova_net_strerror`; classification is by canonical substring.
+#stable(since = "0.1")
+export fn NetError.from_code(code int) -> NetError {
+    ro msg = _strerror_text(code)
+    _classify(msg)
+}
+
+// Layer error text for a UV code into a Nova str (no TLS; caller buffer).
+fn _strerror_text(code int) -> str {
+    mut buf []u8 = []u8.new()
+    buf.resize(256, 0 as u8)
+    ro n = unsafe { nova_net_strerror(code, buf.ptr(), 256) }
+    str.from_bytes_unchecked(buf[0..n])
+}
+
+// Classify a canonical uv_strerror message into a typed NetError. The C layer
+// normalises EACCES → "permission denied" and ECONNRESET → "connection reset by
+// peer", so substring matching here is platform-stable.
+fn _classify(msg str) -> NetError {
+    if msg.contains("connection refused") { NetError.ConnectionRefused }
+    else if msg.contains("address already in use") { NetError.AddressInUse }
+    else if msg.contains("address not available") { NetError.AddressNotAvailable }
+    else if msg.contains("permission denied") { NetError.PermissionDenied }
+    else if msg.contains("connection reset") { NetError.ConnectionReset }
+    else if msg.contains("broken pipe") { NetError.BrokenPipe }
+    else if msg.contains("canceled") || msg.contains("cancelled") { NetError.Cancelled }
+    else if msg.contains("timed out") { NetError.TimedOut }
+    else if msg.contains("not found") || msg.contains("unknown node") || msg.contains("no address") { NetError.NotFound }
+    else { NetError.IoError(msg) }
 }

@@ -9,7 +9,7 @@
 // freed under later allocation). A monomorphic `match` keeps the element type, so
 // the images stay live — the idiomatic extraction here anyway.
 
-module std.net2
+module std.net
 
 test "net2/dns: resolve localhost yields at least one loopback address" {
     with Net = real_net() {

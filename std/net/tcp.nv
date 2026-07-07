@@ -1,134 +1,108 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
-// Plan 91.12 Ф.3 / Plan 178 Ф.0.5: std/net/tcp.nv — TCP public API + the unified
-// real_net() handler (TCP + UDP + DNS).
+// Plan 183 Ф.2: std/net2/tcp.nv — TCP value types + the unified real_net()
+// handler (TCP + UDP + DNS). Byte surface throughout (D407).
 //
-// Architecture (three layers):
-//   ffi.nv     — private C FFI (extern "C" fn, opaque handles, no export)
-//   effect.nv  — single `Net` effect declaration (tcp+udp+dns ops)
-//   tcp.nv     — TCP value types + public methods + real_net() handler (this file)
-//   udp.nv     — UDP value types + public methods
-//   dns.nv     — SocketAddr.lookup
+// Layering:
+//   ffi.nv     — private C FFI (extern "C", opaque `*()` handles, no export)
+//   effect.nv  — the single `Net` effect (byte-surface ops)
+//   tcp.nv     — TCP types + public methods + real_net() handler (this file)
+//   udp.nv     — UDP type + public methods
+//   dns.nv     — resolve()
 //   mock.nv    — mock_net() handler
 //
-// TcpListener: async TCP server socket (bind + accept loop).
-// TcpStream:   connected async TCP stream (connect + read + write).
-//
-// Both are value-records with `priv handle CTcpListener/CTcpStream` (void* C pointer).
-// close() consumes. Public methods return Result[T, NetError].
-// All operations route through the `Net` effect — never call C FFI directly.
-//
-// Byte-surface (Plan 178 Ф.0.5): @read_bytes/@write_bytes/@write_all_bytes give a
-// byte-first (`[]u8`) surface ADDITIVE to the `str` methods. They are public
-// wrappers over the `str` ops — the C transport (tcp_stream_write / _read_bytes)
-// is length-delimited, so the str↔[]u8 round-trip is byte-clean (embedded NUL /
-// non-UTF-8 preserved verbatim). The `str` variants are retained transitionally.
-//
-// C backing: tcp_stream_* / udp_socket_* / dns_* in net.h / net.c (Plan 91.12 Ф.0).
+// Handles (`TcpListener`/`TcpStream`/halves) are `consume value` records over an
+// opaque `*()` C handle; `@close()` consumes, so use-after-close is a COMPILE
+// error (D133). Read/write are full-duplex on one handle (independent C-side
+// park slots), so a "split" is just handing the same handle to two half-values
+// with a refcount close — no duplicate C read/write API (D407 §6).
 
 module std.net
 
-// ─── Value-record types ──────────────────────────────────────────────────────
+// ─── Value-record handle types ────────────────────────────────────────────────
 
-/// Async TCP listener (server socket).
-///
-/// # Lifecycle
-///
-/// ```nova
-/// with Net = real_net() {
-///     mut listener = TcpListener.bind(SocketAddr.loopback(8080))!!
-///     let stream = listener.accept()!!
-///     listener.close()
-/// }
-/// ```
-///
-/// # Effects
-///
-/// `bind` / `accept` / `close` carry `Net` (accept parks the fiber).
+/// Async TCP listener (server socket). `bind`/`accept`/`close` carry `Net`
+/// (accept parks the fiber). `close()` consumes.
 #stable(since = "0.1")
-export type TcpListener consume value { priv handle CTcpListener }
+export type TcpListener consume value { priv handle *() }
 
-/// Connected async TCP stream.
-///
-/// # Lifecycle
-///
-/// ```nova
-/// with Net = real_net() {
-///     mut stream = TcpStream.connect(SocketAddr.loopback(8080))!!
-///     stream.write("hello")!!
-///     stream.close()
-/// }
-/// ```
-///
-/// # Effects
-///
-/// `connect` / `write` / `close` carry `Net` (park the fiber via the handler).
+/// Connected async TCP stream. `connect`/`read`/`write`/`close` carry `Net`.
+/// `close()` consumes (use-after-close is a compile error, D133).
 #stable(since = "0.1")
-export type TcpStream consume value { priv handle CTcpStream }
+export type TcpStream consume value { priv handle *() }
 
-/// Read half of a split `TcpStream` (Plan 91.16 / D300).
-///
-/// Produced by `TcpStream.split()`. Carries the same underlying connection as
-/// its sibling `TcpWriteHalf`; the two may be moved into separate fibers so one
-/// fiber reads while another writes on the same connection. The socket is
-/// closed only after BOTH halves are closed.
+/// Read half of a split `TcpStream` (D407 §6). Shares the connection with its
+/// sibling `TcpWriteHalf`; the two may run in separate fibers (independent
+/// C-side park slots). The socket closes only after BOTH halves close.
 #stable(since = "0.1")
-export type TcpReadHalf consume value { priv handle CTcpStream }
+export type TcpReadHalf consume value { priv handle *() }
 
-/// Write half of a split `TcpStream` (Plan 91.16 / D300).
-///
-/// Produced by `TcpStream.split()`. See `[TcpReadHalf]` for the concurrency
-/// contract. The socket is closed only after BOTH halves are closed.
+/// Write half of a split `TcpStream` (D407 §6). See `[TcpReadHalf]`.
 #stable(since = "0.1")
-export type TcpWriteHalf consume value { priv handle CTcpStream }
+export type TcpWriteHalf consume value { priv handle *() }
 
-// ─── TcpListener public API ──────────────────────────────────────────────────
+// ─── Package-private factories / helpers ──────────────────────────────────────
 
-/// Bind a TCP listener to the given address.
-///
-/// Pass `SocketAddr.loopback(0)` to let the OS assign a free port;
-/// call `listener.local_port()` to discover the assigned port.
-///
-/// Returns `Err(NetError.AddressInUse)` if the port is already bound.
+fn TcpListener._from_raw(h *()) -> TcpListener => { handle: h }
+fn TcpStream._from_raw(h *()) -> TcpStream => { handle: h }
+fn TcpReadHalf._from_raw(h *()) -> TcpReadHalf => { handle: h }
+fn TcpWriteHalf._from_raw(h *()) -> TcpWriteHalf => { handle: h }
+
+// Null-handle test for a cold-path constructor return.
+fn _is_null(p *()) -> bool => (0 as *()) == p
+
+// Result constructors as regular (non-handler) fns so the checker annotates the
+// Path-call return type (mirrors the old net.c pattern — variant construction
+// must stay out of an effect-handler body).
+fn _listener_ok(h *()) -> Result[TcpListener, NetError] => Ok(TcpListener._from_raw(h))
+fn _stream_ok(h *()) -> Result[TcpStream, NetError] => Ok(TcpStream._from_raw(h))
+fn _err_listener(code int) -> Result[TcpListener, NetError] => Err(NetError.from_code(code))
+fn _err_stream(code int) -> Result[TcpStream, NetError] => Err(NetError.from_code(code))
+fn _int_ok(n int) -> Result[int, NetError] => Ok(n)
+fn _int_err(code int) -> Result[int, NetError] => Err(NetError.from_code(code))
+fn _unit_ok() -> Result[(), NetError] => Ok(())
+fn _unit_err(code int) -> Result[(), NetError] => Err(NetError.from_code(code))
+
+// Tuple-return helper (codegen tuple inference in handler bodies).
+fn _split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
+
+// ─── TcpListener public API ───────────────────────────────────────────────────
+
+/// Bind a TCP listener to `addr`. `SocketAddr.loopback(0)` → OS-assigned port
+/// (`local_port()` reports it). `Err(NetError.AddressInUse)` if already bound.
 #stable(since = "0.1")
 export fn TcpListener.bind(addr SocketAddr) Net -> Result[TcpListener, NetError] {
     Net.tcp_bind(addr)
 }
 
-/// Accept the next incoming connection (parks the calling fiber).
-///
-/// Cancel-safe: if the enclosing supervised scope is cancelled, the
-/// pending accept is cleaned up.
+/// Accept the next incoming connection (parks; cancel-safe).
 #stable(since = "0.1")
 export fn TcpListener mut @accept() Net -> Result[TcpStream, NetError] {
     Net.accept(@)
 }
 
-/// Return the local port this listener is bound to.
+/// Local port this listener is bound to.
 #stable(since = "0.1")
-export fn TcpListener @local_port() Net -> u16 {
-    Net.listener_local_port(@)
-}
+export fn TcpListener @local_port() Net -> u16 { Net.listener_local_port(@) }
 
-/// Return the local address this listener is bound to.
+/// Local address this listener is bound to.
 #stable(since = "0.1")
 export fn TcpListener @local_addr() Net -> SocketAddr {
-    Net.listener_local_addr(@)
+    mut b = _addr_image()
+    Net.listener_local_addr(@, b)
+    SocketAddr._from_image(b)
 }
 
-/// Set whether to reuse the local address (SO_REUSEADDR).
+/// Set SO_REUSEADDR.
 #stable(since = "0.1")
 export fn TcpListener mut @set_reuse_address(on bool) Net {
     Net.set_reuse_address(@, on)
 }
 
-/// Close the listener and release all resources (consume).
+/// Close the listener (consume).
 #stable(since = "0.1")
-export fn TcpListener consume @close() Net {
-    Net.close_listener(@)
-}
+export fn TcpListener consume @close() Net { Net.close_listener(@) }
 
-// ─── TcpStream public API ────────────────────────────────────────────────────
+// ─── TcpStream public API ─────────────────────────────────────────────────────
 
 /// Connect to a remote TCP address (parks until connected or error).
 #stable(since = "0.1")
@@ -136,429 +110,236 @@ export fn TcpStream.connect(addr SocketAddr) Net -> Result[TcpStream, NetError] 
     Net.connect(addr)
 }
 
-/// Write `data` to the stream (parks until written or error).
-///
-/// Returns `Ok(n)` where `n` is the number of bytes written.
+/// Read up to `buf.len()` bytes into `buf`; returns `Ok(n)`. `Ok(0)` = clean EOF
+/// (peer closed). The bytes land straight in `buf` (zero-copy).
 #stable(since = "0.1")
-export fn TcpStream mut @write(data str) Net -> Result[int, NetError] {
+export fn TcpStream mut @read(buf mut []u8) Net -> Result[int, NetError] {
+    Net.read(@, buf)
+}
+
+/// Write `data`; returns `Ok(n)` bytes accepted (sent straight from `data`).
+#stable(since = "0.1")
+export fn TcpStream mut @write(data []u8) Net -> Result[int, NetError] {
     Net.write(@, data)
 }
 
-/// Read up to `max` bytes from the stream (parks until data or EOF).
-///
-/// Returns `Ok(data)` where `data` is the received bytes (always non-empty).
-/// Returns `Err(NetError.Eof)` when the connection is closed by the peer.
+/// Write the entire buffer, looping until all bytes are sent.
 #stable(since = "0.1")
-export fn TcpStream mut @read(max int) Net -> Result[str, NetError] {
-    Net.read(@, max)
+export fn TcpStream mut @write_all(data []u8) Net -> Result[(), NetError] {
+    mut off = 0
+    while off < data.len() {
+        match Net.write(@, data[off..data.len()]) {
+            Ok(n)  => { if n <= 0 { return Err(NetError.BrokenPipe) } off = off + n }
+            Err(e) => { return Err(e) }
+        }
+    }
+    Ok(())
 }
 
-/// Write the entire `data` to the stream, looping until all bytes are sent.
-///
-/// Unlike `write`, which may return after a partial write, `write_all` retries
-/// until every byte is written or an error occurs.
+/// Read up to `max` bytes, returning them as an owned `[]u8` (empty = EOF).
+/// Byte-first convenience over the buffer-fill `@read`.
 #stable(since = "0.1")
-export fn TcpStream mut @write_all(data str) Net -> Result[(), NetError] {
-    Net.write_all(@, data)
+export fn TcpStream mut @read_to_vec(max int) Net -> Result[[]u8, NetError] {
+    mut buf []u8 = []u8.new()
+    buf.resize(max, 0 as u8)
+    match Net.read(@, buf) {
+        Ok(n)  => { buf.truncate(n) Ok(buf) }
+        Err(e) => { Err(e) }
+    }
 }
 
-// ── Plan 178 Ф.0.5: byte-first surface (additive over the `str` methods) ──
-
-/// Read up to `max` bytes as raw bytes (`[]u8`, byte-clean incl. non-UTF-8).
+/// Read up to `max` bytes and decode as UTF-8 text.
 ///
-/// Byte-first counterpart of `@read`; parks until data or EOF.
-/// Returns `Err(NetError.Eof)` when the connection is closed by the peer.
+/// Text convenience over the bytes: `str.from_bytes -> Result[str, Utf8Error]`;
+/// invalid UTF-8 surfaces as `NetError.IoError`.
 #stable(since = "0.1")
-export fn TcpStream mut @read_bytes(max int) Net -> Result[[]u8, NetError] {
-    match @read(max) {
-        Ok(s)  => Ok(s.bytes())
+export fn TcpStream mut @read_text(max int) Net -> Result[str, NetError] {
+    match @read_to_vec(max) {
+        Ok(bytes) => {
+            match str.from_bytes(bytes) {
+                Ok(s)  => Ok(s)
+                Err(_) => Err(NetError.IoError("invalid utf-8 in stream"))
+            }
+        }
         Err(e) => Err(e)
     }
 }
 
-/// Write raw bytes to the stream (parks until written or error).
-///
-/// Returns `Ok(n)` where `n` is the number of bytes written.
+/// Write text as its UTF-8 bytes; returns `Ok(n)` bytes accepted.
 #stable(since = "0.1")
-export fn TcpStream mut @write_bytes(data []u8) Net -> Result[int, NetError] {
-    @write(str.from_bytes_unchecked(data))
+export fn TcpStream mut @write_str(s str) Net -> Result[int, NetError] {
+    Net.write(@, s.bytes())
 }
 
-/// Write the entire byte buffer, looping until all bytes are sent.
+/// Half-close the write side (TCP FIN); the read side stays open.
 #stable(since = "0.1")
-export fn TcpStream mut @write_all_bytes(data []u8) Net -> Result[(), NetError] {
-    @write_all(str.from_bytes_unchecked(data))
-}
+export fn TcpStream mut @shutdown() Net -> Result[(), NetError] { Net.shutdown(@) }
 
-/// Return the local port of this stream.
+/// Local port of this stream.
 #stable(since = "0.1")
-export fn TcpStream @local_port() Net -> u16 {
-    Net.stream_local_port(@)
-}
+export fn TcpStream @local_port() Net -> u16 { Net.stream_local_port(@) }
 
-/// Return the remote peer port of this stream.
+/// Remote peer port of this stream.
 #stable(since = "0.1")
-export fn TcpStream @peer_port() Net -> u16 {
-    Net.stream_peer_port(@)
-}
+export fn TcpStream @peer_port() Net -> u16 { Net.stream_peer_port(@) }
 
-/// Return the local address of this stream.
+/// Local address of this stream.
 #stable(since = "0.1")
 export fn TcpStream @local_addr() Net -> SocketAddr {
-    Net.stream_local_addr(@)
+    mut b = _addr_image()
+    Net.stream_local_addr(@, b)
+    SocketAddr._from_image(b)
 }
 
-/// Return the remote peer address of this stream.
+/// Remote peer address of this stream.
 #stable(since = "0.1")
 export fn TcpStream @peer_addr() Net -> SocketAddr {
-    Net.stream_peer_addr(@)
+    mut b = _addr_image()
+    Net.stream_peer_addr(@, b)
+    SocketAddr._from_image(b)
 }
 
-/// Set TCP_NODELAY (disable Nagle's algorithm).
+/// Set TCP_NODELAY (disable Nagle).
 #stable(since = "0.1")
-export fn TcpStream mut @set_nodelay(on bool) Net {
-    Net.set_nodelay(@, on)
-}
+export fn TcpStream mut @set_nodelay(on bool) Net { Net.set_nodelay(@, on) }
 
 /// Set TCP keepalive.
 #stable(since = "0.1")
-export fn TcpStream mut @set_keepalive(on bool) Net {
-    Net.set_keepalive(@, on)
-}
+export fn TcpStream mut @set_keepalive(on bool) Net { Net.set_keepalive(@, on) }
 
-/// Close the stream and release all resources (consume).
+/// Close the stream (consume).
 #stable(since = "0.1")
-export fn TcpStream consume @close() Net {
-    Net.close_stream(@)
-}
+export fn TcpStream consume @close() Net { Net.close_stream(@) }
 
-/// Split this stream into a read half and a write half (consume).
-///
-/// The two halves share the underlying connection but have independent C-side
-/// park slots, so they may be moved into separate fibers and used concurrently
-/// (one reading while the other writes). The socket is closed only after BOTH
-/// halves have been closed.
-///
-/// ```nova
-/// let (rh, wh) = stream.split()
-/// supervised {
-///     spawn { wh.write("ping"); wh.close() }
-///     spawn { let msg = rh.read(64); rh.close() }
-/// }
-/// ```
+/// Split into a read half and a write half (consume). The halves share the
+/// connection but have independent park slots, so they may be moved into
+/// separate fibers and used concurrently; the socket closes after BOTH close.
 #stable(since = "0.1")
 export fn TcpStream consume @split() Net -> (TcpReadHalf, TcpWriteHalf) {
-    Net.split_stream(@)
+    ro h = @handle
+    Net.mark_split(TcpStream._from_raw(h))
+    _split_pair(TcpReadHalf._from_raw(h), TcpWriteHalf._from_raw(h))
 }
 
-// ─── TcpReadHalf public API ──────────────────────────────────────────────────
+// ─── TcpReadHalf / TcpWriteHalf public API ───────────────────────────────────
 
-/// Read up to `max` bytes from the read half (parks until data or EOF).
-///
-/// Returns `Ok(data)` where `data` is the received bytes (always non-empty).
-/// Returns `Err(NetError.Eof)` when the connection is closed by the peer.
+/// Read up to `buf.len()` bytes into `buf`; `Ok(0)` = EOF.
 #stable(since = "0.1")
-export fn TcpReadHalf mut @read(max int) Net -> Result[str, NetError] {
-    Net.read_half_read(@, max)
+export fn TcpReadHalf mut @read(buf mut []u8) Net -> Result[int, NetError] {
+    Net.read(TcpStream._from_raw(@handle), buf)
 }
 
-/// Read up to `max` bytes from the read half as raw bytes (`[]u8`).
-#stable(since = "0.1")
-export fn TcpReadHalf mut @read_bytes(max int) Net -> Result[[]u8, NetError] {
-    match @read(max) {
-        Ok(s)  => Ok(s.bytes())
-        Err(e) => Err(e)
-    }
-}
-
-/// Return the local port of this read half.
+/// Local port of this read half.
 #stable(since = "0.1")
 export fn TcpReadHalf @local_port() Net -> u16 {
-    Net.read_half_local_port(@)
+    Net.stream_local_port(TcpStream._from_raw(@handle))
 }
 
-/// Return the remote peer port of this read half.
-#stable(since = "0.1")
-export fn TcpReadHalf @peer_port() Net -> u16 {
-    Net.read_half_peer_port(@)
-}
-
-/// Return the local address of this read half.
-#stable(since = "0.1")
-export fn TcpReadHalf @local_addr() Net -> SocketAddr {
-    Net.read_half_local_addr(@)
-}
-
-/// Return the remote peer address of this read half.
-#stable(since = "0.1")
-export fn TcpReadHalf @peer_addr() Net -> SocketAddr {
-    Net.read_half_peer_addr(@)
-}
-
-/// Close the read half (consume). Closes the socket if the write half is
-/// already closed.
+/// Close the read half (consume). Closes the socket if the write half is gone.
 #stable(since = "0.1")
 export fn TcpReadHalf consume @close() Net {
-    Net.read_half_close(@)
+    Net.close_stream(TcpStream._from_raw(@handle))
 }
 
-// ─── TcpWriteHalf public API ─────────────────────────────────────────────────
-
-/// Write `data` to the write half (parks until written or error).
-///
-/// Returns `Ok(n)` where `n` is the number of bytes written.
+/// Write `data` to the write half; returns `Ok(n)` bytes accepted.
 #stable(since = "0.1")
-export fn TcpWriteHalf mut @write(data str) Net -> Result[int, NetError] {
-    Net.write_half_write(@, data)
+export fn TcpWriteHalf mut @write(data []u8) Net -> Result[int, NetError] {
+    Net.write(TcpStream._from_raw(@handle), data)
 }
 
-/// Write the entire `data` to the write half, looping until all bytes are sent.
-#stable(since = "0.1")
-export fn TcpWriteHalf mut @write_all(data str) Net -> Result[(), NetError] {
-    Net.write_half_write_all(@, data)
-}
-
-/// Write raw bytes to the write half (parks until written or error).
-#stable(since = "0.1")
-export fn TcpWriteHalf mut @write_bytes(data []u8) Net -> Result[int, NetError] {
-    @write(str.from_bytes_unchecked(data))
-}
-
-/// Write the entire byte buffer to the write half, looping until all bytes sent.
-#stable(since = "0.1")
-export fn TcpWriteHalf mut @write_all_bytes(data []u8) Net -> Result[(), NetError] {
-    @write_all(str.from_bytes_unchecked(data))
-}
-
-/// Return the local port of this write half.
+/// Local port of this write half.
 #stable(since = "0.1")
 export fn TcpWriteHalf @local_port() Net -> u16 {
-    Net.write_half_local_port(@)
+    Net.stream_local_port(TcpStream._from_raw(@handle))
 }
 
-/// Return the remote peer port of this write half.
-#stable(since = "0.1")
-export fn TcpWriteHalf @peer_port() Net -> u16 {
-    Net.write_half_peer_port(@)
-}
-
-/// Return the local address of this write half.
-#stable(since = "0.1")
-export fn TcpWriteHalf @local_addr() Net -> SocketAddr {
-    Net.write_half_local_addr(@)
-}
-
-/// Return the remote peer address of this write half.
-#stable(since = "0.1")
-export fn TcpWriteHalf @peer_addr() Net -> SocketAddr {
-    Net.write_half_peer_addr(@)
-}
-
-/// Close the write half (consume). Closes the socket if the read half is
-/// already closed.
+/// Close the write half (consume). Closes the socket if the read half is gone.
 #stable(since = "0.1")
 export fn TcpWriteHalf consume @close() Net {
-    Net.write_half_close(@)
+    Net.close_stream(TcpStream._from_raw(@handle))
 }
-
-// ─── Package-private factories ───────────────────────────────────────────────
-
-fn TcpListener._from_raw(h CTcpListener) -> TcpListener => { handle: h }
-fn TcpStream._from_raw(h CTcpStream) -> TcpStream => { handle: h }
-fn TcpReadHalf._from_raw(h CTcpStream) -> TcpReadHalf => { handle: h }
-fn TcpWriteHalf._from_raw(h CTcpStream) -> TcpWriteHalf => { handle: h }
-
-// ─── Error helpers ───────────────────────────────────────────────────────────
-
-// Classify a libuv error message (uv_strerror output) into a typed NetError.
-// The C runtime normalises the relevant UV codes to stable canonical strings
-// (net.c _nova_net_uv_err): UV_EACCES → "permission denied",
-// UV_ECONNRESET → "connection reset by peer", so matching here is
-// platform-stable.
-fn net_error(msg str) -> NetError {
-    if msg.contains("connection refused") { NetError.ConnectionRefused }
-    else if msg.contains("address already in use") { NetError.AddressInUse }
-    else if msg.contains("address not available") { NetError.AddressNotAvailable }
-    else if msg.contains("permission denied") { NetError.PermissionDenied }
-    else if msg.contains("connection reset") { NetError.ConnectionReset }
-    else if msg.contains("broken pipe") { NetError.BrokenPipe }
-    else if msg.contains("cancelled") { NetError.Cancelled }
-    else if msg.contains("timed out") { NetError.TimedOut }
-    else if msg.contains("not found") { NetError.NotFound }
-    else { NetError.IoError(msg) }
-}
-
-fn tcp_result_err() -> Result[TcpListener, NetError] {
-    Err(net_error(net_last_error()))
-}
-fn tcp_stream_result_err() -> Result[TcpStream, NetError] {
-    Err(net_error(net_last_error()))
-}
-fn tcp_write_result_err() -> Result[int, NetError] {
-    Err(net_error(net_last_error()))
-}
-fn tcp_read_result_err() -> Result[str, NetError] {
-    Err(net_error(net_last_error()))
-}
-fn _tcp_read_ok(data str) -> Result[str, NetError] => Ok(data)
-
-// EOF sentinel: tcp_stream_read_bytes / tcp_read_half_read return -2 when the
-// peer closed the connection (NOVA_NET_READ_EOF in net.h). Map to NetError.Eof.
-fn _tcp_read_eof() -> Result[str, NetError] => Err(NetError.Eof)
-
-// Result[(), NetError] helpers for write_all.
-fn tcp_write_unit_err() -> Result[(), NetError] {
-    Err(net_error(net_last_error()))
-}
-fn tcp_write_unit_ok() -> Result[(), NetError] => Ok(())
-
-// Workaround for codegen tuple-return inference in effect handler body.
-fn _tcp_split_pair(rh TcpReadHalf, wh TcpWriteHalf) -> (TcpReadHalf, TcpWriteHalf) => (rh, wh)
 
 // ─── real_net: the unified Net handler (TCP + UDP + DNS) ──────────────────────
 
-/// Concrete `Net` handler dispatching to libuv via C FFI.
-///
-/// One handler covers all transport: TCP (bind/accept/connect/read/write/split),
-/// UDP (bind/send_to/recv_from) and DNS (lookup). Install at the root of your
-/// async program:
+/// Concrete `Net` handler over libuv via the net2 C FFI. Install at the root of
+/// an async program:
 /// ```nova
-/// with Net = real_net() {
-///     // network code here
-/// }
+/// with Net = real_net() { /* network code */ }
 /// ```
 #stable(since = "0.1")
 export fn real_net() -> Effect[Net] => effect Net {
     // ── TCP ──────────────────────────────────────────────────────────────────
-    tcp_bind(addr) {
-        ro h = tcp_listener_bind(addr.handle)
-        if (0 as *()) == h { tcp_result_err() }
-        else { Ok(TcpListener._from_raw(h)) }
+    tcp_bind(addr SocketAddr) {
+        mut err int = 0                                   // &err → *mut int out-param
+        ro h = unsafe { nova_net_tcp_listen(addr._ptr(), 128, &err) }
+        if _is_null(h) { _err_listener(err) } else { _listener_ok(h) }
     }
-    accept(listener) {
-        ro h = tcp_listener_accept(listener.handle)
-        if (0 as *()) == h { tcp_stream_result_err() }
-        else { Ok(TcpStream._from_raw(h)) }
+    accept(listener TcpListener) {
+        mut err int = 0
+        ro h = unsafe { nova_net_tcp_accept(listener.handle, &err) }
+        if _is_null(h) { _err_stream(err) } else { _stream_ok(h) }
     }
-    connect(addr) {
-        ro h = tcp_stream_connect(addr.handle)
-        if (0 as *()) == h { tcp_stream_result_err() }
-        else { Ok(TcpStream._from_raw(h)) }
+    connect(addr SocketAddr) {
+        mut err int = 0
+        ro h = unsafe { nova_net_tcp_connect(addr._ptr(), &err) }
+        if _is_null(h) { _err_stream(err) } else { _stream_ok(h) }
     }
-    write(stream, data) {
-        ro n = tcp_stream_write(stream.handle, data)
-        if n < 0 { tcp_write_result_err() }
-        else { Ok(n) }
+    read(stream TcpStream, buf mut []u8) {
+        ro n = unsafe { nova_net_tcp_read(stream.handle, buf.ptr(), buf.len()) }
+        if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
-    write_all(stream, data) {
-        ro n = tcp_stream_write_all(stream.handle, data)
-        if n < 0 { tcp_write_unit_err() }
-        else { tcp_write_unit_ok() }
+    write(stream TcpStream, data []u8) {
+        ro n = unsafe { nova_net_tcp_write(stream.handle, data.ptr(), data.len()) }
+        if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
-    read(stream, max) {
-        ro n = tcp_stream_read_bytes(stream.handle, max)
-        if n == -2 { _tcp_read_eof() }
-        else if n < 0 { tcp_read_result_err() }
-        else { _tcp_read_ok(tcp_stream_read_data()) }
+    shutdown(stream TcpStream) {
+        ro rc = unsafe { nova_net_tcp_shutdown(stream.handle) }
+        if rc < 0 { _unit_err(rc) } else { _unit_ok() }
     }
-    close_stream(stream) {
-        ro h = stream.handle
-        ro _ = stream
-        tcp_stream_close(h)
+    close_stream(stream TcpStream) { unsafe { nova_net_tcp_close(stream.handle) } }
+    close_listener(listener TcpListener) { unsafe { nova_net_listener_close(listener.handle) } }
+    mark_split(stream TcpStream) { unsafe { nova_net_tcp_mark_split(stream.handle) } }
+    listener_local_port(listener TcpListener) => unsafe { nova_net_listener_local_port(listener.handle) }
+    listener_local_addr(listener TcpListener, out mut []u8) {
+        unsafe { nova_net_listener_local_addr(listener.handle, out.ptr()) }
     }
-    close_listener(listener) {
-        ro h = listener.handle
-        ro _ = listener
-        tcp_listener_close(h)
+    stream_local_port(stream TcpStream) => unsafe { nova_net_tcp_local_port(stream.handle) }
+    stream_peer_port(stream TcpStream)  => unsafe { nova_net_tcp_peer_port(stream.handle) }
+    stream_local_addr(stream TcpStream, out mut []u8) {
+        unsafe { nova_net_tcp_local_addr(stream.handle, out.ptr()) }
     }
-    listener_local_port(listener) => tcp_listener_local_port(listener.handle)
-    listener_local_addr(listener) => SocketAddr._from_raw(tcp_listener_local_addr(listener.handle))
-    stream_local_port(stream) => tcp_stream_local_port(stream.handle)
-    stream_peer_port(stream) => tcp_stream_peer_port(stream.handle)
-    stream_local_addr(stream) => SocketAddr._from_raw(tcp_stream_local_addr(stream.handle))
-    stream_peer_addr(stream) => SocketAddr._from_raw(tcp_stream_peer_addr(stream.handle))
-    set_nodelay(stream, on) => tcp_stream_set_nodelay(stream.handle, on)
-    set_keepalive(stream, on) => tcp_stream_set_keepalive(stream.handle, on)
-    set_reuse_address(listener, on) => tcp_listener_set_reuse_address(listener.handle, on)
-
-    // ── Plan 91.16 / D300: split + half operations ──
-    split_stream(stream) {
-        ro h = tcp_stream_split(stream.handle)
-        ro _ = stream
-        _tcp_split_pair(TcpReadHalf._from_raw(h), TcpWriteHalf._from_raw(h))
+    stream_peer_addr(stream TcpStream, out mut []u8) {
+        unsafe { nova_net_tcp_peer_addr(stream.handle, out.ptr()) }
     }
-    read_half_read(half, max) {
-        ro n = tcp_read_half_read(half.handle, max)
-        if n == -2 { _tcp_read_eof() }
-        else if n < 0 { tcp_read_result_err() }
-        else { _tcp_read_ok(tcp_stream_read_data()) }
-    }
-    read_half_close(half) {
-        ro h = half.handle
-        ro _ = half
-        tcp_read_half_close(h)
-    }
-    read_half_local_port(half) => tcp_read_half_local_port(half.handle)
-    read_half_peer_port(half) => tcp_read_half_peer_port(half.handle)
-    read_half_local_addr(half) => SocketAddr._from_raw(tcp_read_half_local_addr(half.handle))
-    read_half_peer_addr(half) => SocketAddr._from_raw(tcp_read_half_peer_addr(half.handle))
-    write_half_write(half, data) {
-        ro n = tcp_write_half_write(half.handle, data)
-        if n < 0 { tcp_write_result_err() }
-        else { Ok(n) }
-    }
-    write_half_write_all(half, data) {
-        ro n = tcp_write_half_write_all(half.handle, data)
-        if n < 0 { tcp_write_unit_err() }
-        else { tcp_write_unit_ok() }
-    }
-    write_half_close(half) {
-        ro h = half.handle
-        ro _ = half
-        tcp_write_half_close(h)
-    }
-    write_half_local_port(half) => tcp_write_half_local_port(half.handle)
-    write_half_peer_port(half) => tcp_write_half_peer_port(half.handle)
-    write_half_local_addr(half) => SocketAddr._from_raw(tcp_write_half_local_addr(half.handle))
-    write_half_peer_addr(half) => SocketAddr._from_raw(tcp_write_half_peer_addr(half.handle))
+    set_nodelay(stream TcpStream, on bool) => unsafe { nova_net_tcp_set_nodelay(stream.handle, on) }
+    set_keepalive(stream TcpStream, on bool) => unsafe { nova_net_tcp_set_keepalive(stream.handle, on) }
+    set_reuse_address(listener TcpListener, on bool) => unsafe { nova_net_listener_set_reuse_address(listener.handle, on) }
 
     // ── UDP ──────────────────────────────────────────────────────────────────
-    udp_bind(addr) {
-        ro h = udp_socket_bind(addr.handle)
-        if (0 as *()) == h { udp_result_err() }
-        else { Ok(UdpSocket._from_raw(h)) }
+    udp_bind(addr SocketAddr) {
+        mut err int = 0
+        ro h = unsafe { nova_net_udp_bind(addr._ptr(), &err) }
+        if _is_null(h) { _err_socket(err) } else { _socket_ok(h) }
     }
-    send_to(sock, data, addr) {
-        ro n = udp_socket_send_to(sock.handle, data, addr.handle)
-        if n < 0 { udp_send_result_err() }
-        else { Ok(n) }
+    send_to(sock UdpSocket, data []u8, addr SocketAddr) {
+        ro n = unsafe { nova_net_udp_send_to(sock.handle, data.ptr(), data.len(), addr._ptr()) }
+        if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
-    recv_from(sock, max) {
-        if udp_socket_recv_from(sock.handle, max) < 0 { udp_recv_result_err() }
-        else { _udp_recv_ok(udp_socket_recv_data(), SocketAddr._from_raw(udp_socket_recv_sender())) }
+    recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) {
+        ro n = unsafe { nova_net_udp_recv_from(sock.handle, buf.ptr(), buf.len(), sender.ptr()) }
+        if n < 0 { _int_err(n) } else { _int_ok(n) }
     }
-    close_socket(sock) {
-        ro h = sock.handle
-        ro _ = sock
-        udp_socket_close(h)
+    close_socket(sock UdpSocket) { unsafe { nova_net_udp_close(sock.handle) } }
+    socket_local_port(sock UdpSocket) => unsafe { nova_net_udp_local_port(sock.handle) }
+    socket_local_addr(sock UdpSocket, out mut []u8) {
+        unsafe { nova_net_udp_local_addr(sock.handle, out.ptr()) }
     }
-    socket_local_port(sock) => udp_socket_local_port(sock.handle)
-    socket_local_addr(sock) => SocketAddr._from_raw(udp_socket_local_addr(sock.handle))
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(host, port) {
-        ro count = dns_lookup(host.ptr(), host.byte_len(), port)
-        if count < 0 {
-            Err(net_error(net_last_error()))
-        } else {
-            mut addrs []SocketAddr = []SocketAddr.new()
-            addrs.cap(count)
-            mut i = 0
-            while i < count {
-                addrs.push(SocketAddr._from_raw(dns_addr_at(i)))
-                i = i + 1
-            }
-            Ok(addrs)
-        }
+    lookup(host []u8, port u16) {
+        mut base int = 0    // C writes the GC-array base pointer here (via &base)
+        mut err int = 0
+        ro count = unsafe { nova_net_dns_lookup(host.ptr(), host.len(), port, (&base) as *(), &err) }
+        if count < 0 { _err_lookup(err) } else { _lookup_ok(base, count) }
     }
 }

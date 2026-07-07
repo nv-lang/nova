@@ -1,32 +1,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
-// Plan 91.12 Ф.3 / Plan 178 Ф.0.5: std/net/addr.nv — SocketAddr public API.
+// Plan 183 Ф.2: std/net2/addr.nv — SocketAddr value-record (D407 §5).
 //
-// SocketAddr: IPv4/IPv6 socket address. The `handle` field is a CSocketAddr
-// (= void*) holding a NovaRt_SocketAddr*.
+// SocketAddr is DATA, not a handle: the value owns a 20-byte []u8 image of the
+// C `NovaNetAddr` POD (bytes[16] + port u16 + family u8 + pad). Copies are cheap
+// (the image is immutable after construction, so the shared backing is
+// value-equivalent). This closes [M-net-socketaddr-value-record] for the new
+// layer — no `_nova_alloc_addr` C heap, no opaque handle, no TLS.
 //
-// Plan 178 Ф.0.5 — AddrNet retracted: address construction/inspection do NO I/O
-// (no syscall, no parking, no capability) — они чистые операции над значением.
-// Per the placement rule (§13.2: метод в эффекте ⟺ неразрывно завязан на I/O /
-// parking / capability; иначе pure; FFI ≠ эффект) these are now plain `fn`s
-// calling the `extern "C"` address FFI directly — no `AddrNet` effect, no `with`
-// ceremony. DNS `SocketAddr.lookup` (resolve host → addresses = I/O) stays in
-// the `Net` effect (dns.nv).
-//
-// NOTE (rep): the value-record `{family, addr-bytes, port}` rep-change (§13.2 /
-// §3.10 — nv-sourcing) is byte-baseline-guarded and NON-blocking; it rides a
-// separate net-sweep commit and does not gate HTTP (HTTP берёт SocketAddr как
-// данные — работает при любом rep). This pass keeps the opaque-handle rep and
-// only retracts the effect. Marker: [M-net-socketaddr-value-record].
-//
-// C handles allocated nova_alloc_uncollectable(); GC does not collect.
+// Construction / parsing / formatting are plain `fn`s (no I/O, no parking, no
+// capability → not effect operations, per the placement rule): they call the
+// buffer-based address FFI directly (the C layer owns the struct layout, so the
+// .nv side never bakes offsets or endianness). DNS `resolve` (host → addresses =
+// real I/O) stays in the `Net` effect (dns.nv).
 
 module std.net
 
-/// IPv4/IPv6 socket address (host + port).
-///
-/// Stack-allocated: contains exactly one field (a C pointer).
-/// Cheap to copy; two copies reference the same C-side NovaRt_SocketAddr.
+/// IPv4/IPv6 socket address (host + port), stored as owned data.
 ///
 /// # Examples
 ///
@@ -36,85 +25,92 @@ module std.net
 /// let av = SocketAddr.v4(192, 168, 1, 1, 80)
 /// let ap = SocketAddr.from_str("127.0.0.1:9090")!!
 /// ```
-///
-/// # See Also
-///
-/// - `[TcpListener.bind]`, `[TcpStream.connect]`, `[UdpSocket.bind]`
 #stable(since = "0.1")
-export type SocketAddr value { priv handle CSocketAddr }
+export type SocketAddr value { priv raw []u8 }
 
-/// Create IPv4 loopback address 127.0.0.1:port.
-///
-/// Passing `port = 0` asks the OS to choose an available port.
+// Byte size of the C `NovaNetAddr` POD image the value wraps:
+//   bytes[16] (IPv6, or IPv4 in the first 4) + port u16 + family u8 + pad u8.
+// The C layer owns this layout; the .nv side treats the image opaquely.
+const ADDR_IMAGE_BYTES int = 20
+
+// A fresh, zeroed NovaNetAddr image buffer.
+fn _addr_image() -> []u8 {
+    mut b []u8 = []u8.new()
+    b.resize(ADDR_IMAGE_BYTES, 0 as u8)
+    b
+}
+
+// Package-private: wrap an already-filled 20-byte image into a SocketAddr.
+// Used by the tcp/udp/dns handlers, which fill an out-buffer via the FFI.
+fn SocketAddr._from_image(b []u8) -> SocketAddr => { raw: b }
+
+// Package-private: raw image pointer for the transport FFI (`*()` = NovaNetAddr*).
+fn SocketAddr @_ptr() -> *() => @raw.ptr() as *()
+
+/// Create IPv4 loopback address 127.0.0.1:port (port 0 = OS-assigned).
 #stable(since = "0.1")
 export fn SocketAddr.loopback(port u16) -> SocketAddr {
-    SocketAddr._from_raw(socket_addr_loopback(port))
+    mut b = _addr_image()
+    unsafe { nova_net_addr_loopback_into(port, b.ptr()) }
+    SocketAddr._from_image(b)
 }
 
 /// Create IPv6 loopback address [::1]:port.
 #stable(since = "0.1")
 export fn SocketAddr.loopback_v6(port u16) -> SocketAddr {
-    SocketAddr._from_raw(socket_addr_loopback_v6(port))
+    mut b = _addr_image()
+    unsafe { nova_net_addr_loopback_v6_into(port, b.ptr()) }
+    SocketAddr._from_image(b)
 }
 
 /// Create IPv4 address from dotted-quad octets.
-///
-/// # Examples
-///
-/// ```nova
-/// let addr = SocketAddr.v4(127, 0, 0, 1, 80)  // 127.0.0.1:80
-/// ```
 #stable(since = "0.1")
 export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr {
-    SocketAddr._from_raw(socket_addr_v4(a, b, c, d, port))
+    mut img = _addr_image()
+    unsafe { nova_net_addr_v4_into(a, b, c, d, port, img.ptr()) }
+    SocketAddr._from_image(img)
 }
 
-/// Parse "host:port" string into a SocketAddr.
+/// Parse "host:port" into a SocketAddr.
 ///
-/// Returns `Err(NetError.InvalidAddr(...))` if the string is malformed,
-/// `Err(NetError.InvalidPort)` if the port is out of range.
-/// IPv6 literal addresses must be bracketed: `"[::1]:9090"`.
-///
-/// Pure: parses an address literal, no DNS / no I/O.
+/// Returns `Err(NetError.InvalidAddr(s))` on a malformed address,
+/// `Err(NetError.InvalidPort)` on an out-of-range port. IPv6 literals must be
+/// bracketed: `"[::1]:9090"`. Pure — parses a literal, no DNS / no I/O.
 #stable(since = "0.1")
 export fn SocketAddr.from_str(s str) -> Result[SocketAddr, NetError] {
-    ro code = socket_addr_parse(s)
-    if code == 2 { addr_invalid_port() }
-    else if code != 0 { addr_invalid(s) }
-    else { Ok(SocketAddr._from_raw(socket_addr_parse_result())) }
+    mut b = _addr_image()
+    ro code = unsafe { nova_net_addr_parse(s.ptr(), s.byte_len(), b.ptr()) }
+    if code == 2 { Err(NetError.InvalidPort) }
+    else if code != 0 { Err(NetError.InvalidAddr(s)) }
+    else { Ok(SocketAddr._from_image(b)) }
 }
 
 /// Get the port number.
 #stable(since = "0.1")
-export fn SocketAddr @port() -> u16 { socket_addr_port(@handle) }
-
-/// Get the host IP as a human-readable string.
-///
-/// For IPv4: dotted-decimal ("127.0.0.1"). For IPv6: compressed hex ("::1").
-#stable(since = "0.1")
-export fn SocketAddr @ip() -> str { socket_addr_ip(@handle) }
+export fn SocketAddr @port() -> u16 => unsafe { nova_net_addr_port(@_ptr()) }
 
 /// Return `true` if this is an IPv4 address.
 #stable(since = "0.1")
-export fn SocketAddr @is_v4() -> bool { socket_addr_is_v4(@handle) }
+export fn SocketAddr @is_v4() -> bool => unsafe { nova_net_addr_is_v4(@_ptr()) }
 
 /// Return `true` if this is an IPv6 address.
 #stable(since = "0.1")
-export fn SocketAddr @is_v6() -> bool { socket_addr_is_v6(@handle) }
+export fn SocketAddr @is_v6() -> bool => unsafe { nova_net_addr_is_v6(@_ptr()) }
 
-/// Return a human-readable "host:port" string.
+/// Get the host IP as a human-readable string (v4 dotted-decimal / v6 hex).
 #stable(since = "0.1")
-export fn SocketAddr @to_str() -> str { socket_addr_to_str(@handle) }
+export fn SocketAddr @ip() -> str {
+    mut buf []u8 = []u8.new()
+    buf.resize(64, 0 as u8)
+    ro n = unsafe { nova_net_addr_ip(@_ptr(), buf.ptr(), 64) }
+    str.from_bytes_unchecked(buf[0..n])
+}
 
-// Package-private factory: wrap a CSocketAddr into a SocketAddr.
-// Used by tcp.nv / udp.nv / dns.nv handlers which cannot access priv fields directly.
-fn SocketAddr._from_raw(h CSocketAddr) -> SocketAddr => { handle: h }
-
-// ─── Error-construction helpers ──────────────────────────────────────────────
-//
-// The payload variant `NetError.InvalidAddr(s)` is constructed via a regular
-// (non-handler) fn so the checker annotates the Path-call return type. This
-// mirrors tcp.nv's `net_error()`/`tcp_result_err()` helpers and keeps the
-// variant construction out of any effect-handler body.
-fn addr_invalid(s str) -> Result[SocketAddr, NetError] => Err(NetError.InvalidAddr(s))
-fn addr_invalid_port() -> Result[SocketAddr, NetError] => Err(NetError.InvalidPort)
+/// Return a human-readable "host:port" string (v6: "[host]:port").
+#stable(since = "0.1")
+export fn SocketAddr @to_str() -> str {
+    mut buf []u8 = []u8.new()
+    buf.resize(128, 0 as u8)
+    ro n = unsafe { nova_net_addr_to_str(@_ptr(), buf.ptr(), 128) }
+    str.from_bytes_unchecked(buf[0..n])
+}

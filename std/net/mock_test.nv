@@ -3,7 +3,7 @@
 // no live substrate (no supervised/spawn needed — mock ops never park).
 // `_must` (typed-Result extractor) is shared from tcp_test.nv (same module).
 
-module std.net2
+module std.net
 
 test "net2/mock: TCP round-trip is fully in-memory" {
     with Net = mock_net() {

@@ -914,13 +914,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     /* Plan 83.11 §12.31: in-process SEGV crash localizer. Gated by
      * NOVA_DIAG_SEGV env var; no overhead when unset. No-op TU on non-Windows. */
     let rt_segv_diag = opts.rt_dir.join("segv_diag.c");
-    // Plan 83.12: net.c — compiled only when libuv is available (conditional
+    // Plan 83.12/183: net.c — std/net substrate (one FFI layer, byte transport,
+    // zero-copy, M:N-safe), compiled only when libuv is available (conditional
     // on libuv presence, added inside the libuv if-let blocks per toolchain).
+    // Plan 182 Ф.1: net2.c renamed to net.c (old std/net removed, net2 promoted).
     let rt_net = opts.rt_dir.join("net.c");
-    // Plan 183 Ф.1: net2.c — reworked std/net substrate (one FFI layer, byte
-    // transport, zero-copy, M:N-safe). Lives alongside net.c during migration;
-    // same libuv gating.
-    let rt_net2 = opts.rt_dir.join("net2.c");
     // Plan 176 Ф.2: fs.c — std/fs async uv_fs_* backend, same libuv gating as net.c.
     let rt_fs = opts.rt_dir.join("fs.c");
     // Plan 179 Ф.2 (D337): brotli_shim.c — libbrotlidec C-FFI backend. Unlike libuv
@@ -1090,10 +1088,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
-                // Plan 83.12: net.c compiled only when libuv is present.
+                // Plan 83.12/183: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
-                // Plan 183 Ф.1: net2.c — reworked std/net substrate, same gate.
-                c.arg(&rt_net2);
                 // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                 c.arg(&rt_fs);
                 // Windows: libuv link via -L/-l flags (env has LIB set by vcvars).
@@ -1292,10 +1288,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 c.arg("/DNOVA_USE_LIBUV=1");
                 c.arg(format!("/I{}", inc_path.display()));
-                // Plan 83.12: net.c compiled only when libuv is present.
+                // Plan 83.12/183: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
-                // Plan 183 Ф.1: net2.c — reworked std/net substrate, same gate.
-                c.arg(&rt_net2);
                 // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                 c.arg(&rt_fs);
                 c.arg(evloop);
@@ -1392,10 +1386,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             {
                 c.arg("-DNOVA_USE_LIBUV=1");
                 c.arg("-I").arg(inc_path);
-                // Plan 83.12: net.c compiled only when libuv is present.
+                // Plan 83.12/183: net.c compiled only when libuv is present.
                 c.arg(&rt_net);
-                // Plan 183 Ф.1: net2.c — reworked std/net substrate, same gate.
-                c.arg(&rt_net2);
                 // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                 c.arg(&rt_fs);
                 c.arg(lib_path);

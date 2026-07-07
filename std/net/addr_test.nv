@@ -2,7 +2,7 @@
 // Plan 183 Ф.2 — value SocketAddr: pure construction / inspection / formatting
 // (no effect, no I/O). Pins the value-record rep ([M-net-socketaddr-value-record]).
 
-module std.net2
+module std.net
 
 test "net2/addr: v4 construction, inspection, formatting" {
     ro a = SocketAddr.v4(192, 168, 1, 1, 8080)
@@ -22,6 +22,7 @@ test "net2/addr: loopback v4 / v6" {
     ro v6 = SocketAddr.loopback_v6(443)
     assert(v6.is_v6())
     assert(v6.port() == 443)
+    assert(v6.ip() == "::1")
     assert(v6.to_str() == "[::1]:443")
 }
 

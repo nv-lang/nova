@@ -1,117 +1,68 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
-// Plan 91.12 Ф.2 / Plan 178 Ф.0.5: std/net effect — single unified `Net` effect.
+// Plan 183 Ф.2: std/net2/effect.nv — the single unified `Net` effect (D407 §2).
 //
-// Effects provide a mockable dispatch point for network operations.
-// Concrete handlers: real_net() (tcp.nv) / mock_net() (mock.nv).
+// One mockable dispatch point for all transport: TCP + UDP + DNS. Concrete
+// handlers: real_net() (tcp.nv) / mock_net() (mock.nv).
 //
-// Effect operations take/return public Nova value types (SocketAddr, etc.),
-// not raw C handles. Handlers unwrap/wrap .handle internally.
+// BYTE SURFACE (D407 §2/§3): every transport operation carries `[]u8`, never
+// `str`. Reads follow the Go/Rust `read(buf) -> n` zero-copy shape — the caller
+// owns the buffer, the op fills it and returns the count. This also sidesteps
+// the effect-vtable Ok-payload erasure (a `Result[[]u8, _]` return erases to
+// nova_int; a buffer-fill returning `int` does not — same rule as std/io). str
+// conveniences (`read_text`, …) are user-side `.nv` helpers over these bytes via
+// `str.from_bytes -> Result[str, Utf8Error]`, NOT effect operations (tcp.nv).
 //
-// All fallible operations return Result[T, NetError] so error handling is
-// explicit and uniform at the call site. Operations that wait on I/O park the
-// calling fiber inside the effect handler (real_net), resuming it when the
-// libuv event loop completes the request; the caller sees a plain
-// synchronous-looking call carrying only the `Net` effect.
+// Addresses never cross the vtable as a multi-word RETURN either: address getters
+// and the UDP sender fill a caller 20-byte []u8 image, which the public method
+// wraps into a `SocketAddr` value. `SocketAddr` DOES appear as an ARGUMENT
+// (multi-word args are fine — cf. std/io `read_in(buf mut []u8)`).
 //
-// D173/D301: std/net effect family spec (amended Plan 178 Ф.0.5 — TCP-split
-// byte-surface). D365: net effect family (ex-D291 TcpNet/UdpNet/DnsNet)
-// reconciled to spec D62's single canonical `Net` (04-effects.md:2990) —
-// [M-net-merge-to-single-effect].
+// Operations that wait on I/O (accept/connect/read/write/send_to/recv_from/
+// lookup) park the calling fiber inside real_net and resume from the libuv loop;
+// the caller sees a synchronous-looking call carrying only the `Net` effect.
 
 module std.net
 
-// ─── Plan 178 Ф.0.5: TcpNet + UdpNet + DnsNet merged into one `Net` effect ────
-//
-// Spec D62 (04-effects.md:2990) canonises ONE `Net` effect for "сетевые
-// запросы". Plan 91.12 had split it into TcpNet/UdpNet/DnsNet (ex-D291); that
-// granularity was an unblessed divergence from the canon. The merge returns the
-// code to spec: one effect, one `real_net()` handler (~37 ops: tcp+udp+dns), one
-// `mock_net()`. AddrNet retracted separately — its ops do no I/O, so they are
-// pure `.nv` calling the `extern "C"` address FFI directly (FFI ≠ effect); see
-// addr.nv.
-//
-// ─── Effect-operation naming convention (Plan 91.15 P2) ──────────────────────
-//
-// These effect operations are internal dispatch points; user code never calls
-// them directly (it uses the @method() API on TcpListener/TcpStream/UdpSocket).
-// Operation names follow a per-handle prefix so the receiver type is obvious at
-// the dispatch site:
-//
-//   listener_*    — operations on a TcpListener   (listener_local_port, …)
-//   stream_*      — operations on a TcpStream      (stream_local_addr, …)
-//   read_half_*   — operations on a TcpReadHalf    (Plan 91.16 split)
-//   write_half_*  — operations on a TcpWriteHalf   (Plan 91.16 split)
-//   socket_*      — operations on a UdpSocket       (socket_local_port, …)
-//
-// Exceptions (intentional, verb implies receiver): accept / connect / write /
-// write_all / read / send_to / recv_from / lookup and the close_<kind> family
-// (close_stream / close_listener / close_socket / split_stream). The two
-// constructors that would otherwise collide after the merge are disambiguated
-// by protocol prefix: `tcp_bind` (→ TcpListener) and `udp_bind` (→ UdpSocket).
-//
-// Byte-surface note (Plan 178 Ф.0.5): the `[]u8` read/write/send/recv methods
-// (TcpStream.@read_bytes / @write_bytes / …, UdpSocket.@send_to_bytes / …) are
-// NOT effect operations — they are thin public wrappers over the `str`-carrying
-// ops below (str↔[]u8 conversion in the public method; the C transport is
-// already length-delimited so the round-trip is byte-clean). See tcp.nv/udp.nv.
-
-// Net -- unified TCP + UDP + DNS transport operations.
-//
-// All fallible operations return Result[T, NetError].
-// Operations that wait on I/O (accept, connect, write, read, send_to,
-// recv_from, lookup) park the calling fiber inside the handler and resume it
-// from the libuv event loop.
+/// Unified TCP + UDP + DNS transport. All fallible operations return
+/// `Result[T, NetError]`.
 #stable(since = "0.1")
 export type Net effect {
     // ── TCP ──────────────────────────────────────────────────────────────────
     tcp_bind(addr SocketAddr) -> Result[TcpListener, NetError]
     accept(listener TcpListener) -> Result[TcpStream, NetError]
     connect(addr SocketAddr) -> Result[TcpStream, NetError]
-    write(stream TcpStream, data str) -> Result[int, NetError]
-    write_all(stream TcpStream, data str) -> Result[(), NetError]
-    read(stream TcpStream, max int) -> Result[str, NetError]
+    // Fill buf[0..n] from the stream; Ok(0) = clean EOF (peer close).
+    read(stream TcpStream, buf mut []u8) -> Result[int, NetError]
+    // Send data; Ok(n) = bytes accepted.
+    write(stream TcpStream, data []u8) -> Result[int, NetError]
+    shutdown(stream TcpStream) -> Result[(), NetError]
     close_stream(stream TcpStream) -> ()
     close_listener(listener TcpListener) -> ()
+    mark_split(stream TcpStream) -> ()
     listener_local_port(listener TcpListener) -> u16
-    listener_local_addr(listener TcpListener) -> SocketAddr
+    listener_local_addr(listener TcpListener, out mut []u8) -> ()
     stream_local_port(stream TcpStream) -> u16
     stream_peer_port(stream TcpStream) -> u16
-    stream_local_addr(stream TcpStream) -> SocketAddr
-    stream_peer_addr(stream TcpStream) -> SocketAddr
-    // Socket options — stubs in real_net for now (Ф.6).
+    stream_local_addr(stream TcpStream, out mut []u8) -> ()
+    stream_peer_addr(stream TcpStream, out mut []u8) -> ()
     set_nodelay(stream TcpStream, on bool) -> ()
     set_keepalive(stream TcpStream, on bool) -> ()
     set_reuse_address(listener TcpListener, on bool) -> ()
 
-    // ── Plan 91.16 / D300: TcpStream split into read + write halves ──
-    // split_stream consumes the stream and yields two halves that may be used
-    // concurrently from separate fibers (independent C-side park slots).
-    split_stream(stream TcpStream) -> (TcpReadHalf, TcpWriteHalf)
-    read_half_read(half TcpReadHalf, max int) -> Result[str, NetError]
-    read_half_close(half TcpReadHalf) -> ()
-    read_half_local_port(half TcpReadHalf) -> u16
-    read_half_peer_port(half TcpReadHalf) -> u16
-    read_half_local_addr(half TcpReadHalf) -> SocketAddr
-    read_half_peer_addr(half TcpReadHalf) -> SocketAddr
-    write_half_write(half TcpWriteHalf, data str) -> Result[int, NetError]
-    write_half_write_all(half TcpWriteHalf, data str) -> Result[(), NetError]
-    write_half_close(half TcpWriteHalf) -> ()
-    write_half_local_port(half TcpWriteHalf) -> u16
-    write_half_peer_port(half TcpWriteHalf) -> u16
-    write_half_local_addr(half TcpWriteHalf) -> SocketAddr
-    write_half_peer_addr(half TcpWriteHalf) -> SocketAddr
-
     // ── UDP ──────────────────────────────────────────────────────────────────
     udp_bind(addr SocketAddr) -> Result[UdpSocket, NetError]
-    send_to(sock UdpSocket, data str, addr SocketAddr) -> Result[int, NetError]
-    recv_from(sock UdpSocket, max int) -> Result[(str, SocketAddr), NetError]
+    send_to(sock UdpSocket, data []u8, addr SocketAddr) -> Result[int, NetError]
+    // Datagram into buf[0..n]; sender's 20-byte image into `sender`.
+    recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) -> Result[int, NetError]
     close_socket(sock UdpSocket) -> ()
     socket_local_port(sock UdpSocket) -> u16
-    socket_local_addr(sock UdpSocket) -> SocketAddr
+    socket_local_addr(sock UdpSocket, out mut []u8) -> ()
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    // Async DNS resolution (uv_getaddrinfo). Parks via callback (net.c).
-    // V2: returns ALL resolved addresses as []SocketAddr.
-    lookup(host str, port u16) -> Result[[]SocketAddr, NetError]
+    // Resolve (host):port in one call. Returns (array_base, count) where
+    // `array_base` is the GC address-image array pointer as an int; `resolve`
+    // (dns.nv) builds the owned []SocketAddr from it OUTSIDE the vtable (a
+    // Vec-of-value-records Ok payload does not survive the effect vtable's GC
+    // tracing — the scalar pair does; the array stays live via `array_base`).
+    lookup(host []u8, port u16) -> Result[(int, int), NetError]
 }

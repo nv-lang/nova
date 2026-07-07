@@ -1,353 +1,145 @@
 #ifndef NOVA_RT_NET_H
 #define NOVA_RT_NET_H
 
-/* Plan 83.12: async net/socket stdlib — TCP + UDP via libuv.
+/* Plan 183 Ф.1 / Plan 182 Ф.1: nova_rt/net.c — async TCP/UDP/DNS stdlib substrate
+ * (file renamed from net2.c/net2.h once the legacy std/net substrate was removed).
  *
- * Implements std/net/{tcp,udp,addr} using the Plan 22 park/wake pattern
- * (D93) and the Plan 83.10.2 NovaDeferredCloseQueue for cross-thread
- * uv_close safety.
+ * ONE layer of FFI (D407): public C functions are plain `nova_net_*` with
+ * C-ABI signatures (D282 rule 2) — scalars, pointer+length, out-parameters,
+ * return codes. NO `nova_str` and NO `NovaRt_*_method_*` mangling-imitators in
+ * the transport (that was Д1 in Plan 183). The Nova types (TcpStream,
+ * SocketAddr, …) and all logic live in `.nv` on top of `extern "C"` (model:
+ * std/fs on uv_fs_*).
  *
- * Types:
- *   NovaRt_SocketAddr — opaque sockaddr_storage wrapper
- *   NovaRt_TcpListener — uv_tcp_t server-side listener
- *   NovaRt_TcpStream   — uv_tcp_t connected stream (client or accepted)
- *   NovaRt_UdpSocket   — uv_udp_t datagram socket
+ * ZERO-COPY transport (D407 §2а, model std/fs `fs_read`/`fs_write`):
+ *   - read:  nova_net_tcp_read(h, buf, cap) — libuv's alloc_cb hands the caller's
+ *            buffer slice straight to the kernel; read_cb reports n. No malloc,
+ *            no memcpy, no nova_alloc in the hot path.
+ *   - write: nova_net_tcp_write(h, buf, len) — uv_write points directly at the
+ *            caller's []u8 memory (kept alive on the fiber stack; the
+ *            conservative GC sees it). No copy.
  *
- * Park/wake lifecycle (per operation, follows sleep pattern):
- *   1. Caller fiber: set up request, register stop_cb, park(scope, slot).
- *   2. libuv callback fires on owning loop thread: store result, wake(scope, slot).
- *   3. Fiber resumes: unregister stop_cb, check cancel_requested.
+ * NO static result slots (Д2 fix): results are returned by value — return code
+ * (int/int64, <0 = -UV code) + out-parameters (NovaNetAddr* sender, dns array).
+ * Error text is built on the Nova side from the code via nova_net_strerror().
+ * Invariant: grep -E "__thread|__declspec\(thread\)" net.c == 0.
  *
- * Thread-affinity invariant (Plan 83.10.2):
- *   All uv_* operations on a handle MUST run on the thread that owns the
- *   handle's loop. Cross-thread close (from cancel stop_cb) is routed via
- *   nova_loop_defer_close so the loop's thread performs the actual uv_close.
+ * Park/wake/cancel: park slot lives in the supervised scope, not in the OS
+ * thread → M:N-safe. Cross-thread uv_close routed via nova_loop_defer_close
+ * (Plan 83.10.2).
  *
- * Allocation: all net handles use nova_alloc_uncollectable() to prevent GC
- * collection while a live libuv handle references the struct.
+ * SocketAddr = value-record (NovaNetAddr): address is DATA (<=16 bytes + port +
+ * family kind), not a handle. Handles (listener/stream/udp) are opaque `void*`.
+ *
+ * Plan 182 Ф.1: the pre-D407 legacy std/net substrate (old net.c/net.h, one
+ * FFI generation back) was removed and this file promoted to net.c/net.h in
+ * its place. All internal helpers here are `static`.
  */
 
 #ifndef NOVA_USE_LIBUV
-#  error "Plan 83.12: NOVA_USE_LIBUV required for std/net."
+#  error "Plan 183: NOVA_USE_LIBUV required for std/net."
 #endif
 
 #include <uv.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <stdint.h>
 #include "nova_rt.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* ─── Stage enum (shared by all net handle types) ─────────────────── */
+/* ─── NovaNetAddr — value-record socket address (mirrors SocketAddr value) ────
+ * `bytes` holds the raw network-order address (IPv4 in the first 4 bytes, IPv6
+ * across all 16). `family` is 4 (IPv4) / 6 (IPv6) / 0 (unspecified). Passed
+ * across the FFI by pointer to a caller-owned / nova_alloc'd struct. */
+typedef struct NovaNetAddr {
+    uint8_t  bytes[16];
+    uint16_t port;      /* host byte order */
+    uint8_t  family;    /* 4 | 6 | 0 */
+    uint8_t  _pad;
+} NovaNetAddr;
 
-typedef enum {
-    NOVA_NET_STAGE_IDLE    = 0,  /* handle alive, no pending operation */
-    NOVA_NET_STAGE_PENDING = 1,  /* async operation in flight, fiber parked */
-    NOVA_NET_STAGE_CLOSING = 2,  /* uv_close issued */
-    NOVA_NET_STAGE_CLOSED  = 3,  /* close_cb has fired */
-} NovaNetStage;
+/* ─── Addresses (no I/O — pure data construction / inspection) ─────────────── */
 
-/* ─── Read sentinels (returned by tcp_stream_read_bytes / tcp_read_half_read) ──
- * >= 0 : number of bytes read (data in tcp_stream_read_data() TLS slot).
- * -1   : generic I/O error (message in net_last_error()).
- * -2   : end of file — the peer closed the connection (Plan 91.15: NetError.Eof). */
-#define NOVA_NET_READ_ERR  (-1)
-#define NOVA_NET_READ_EOF  (-2)
+/* Constructors return a nova_alloc'd NovaNetAddr* (Nova sees it as an opaque
+ * pointer in Ф.1; becomes an inline value-record in Ф.2). */
+NovaNetAddr* nova_net_addr_loopback(uint16_t port);     /* 127.0.0.1:port */
+NovaNetAddr* nova_net_addr_loopback_v6(uint16_t port);  /* [::1]:port */
+NovaNetAddr* nova_net_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
+                              uint16_t port);
+/* Ф.2: construct the value-record straight into the caller's 20-byte []u8 image
+ * (Nova SocketAddr owns the bytes; no nova_alloc, no C-owned handle). */
+void nova_net_addr_loopback_into(uint16_t port, uint8_t* out);
+void nova_net_addr_loopback_v6_into(uint16_t port, uint8_t* out);
+void nova_net_addr_v4_into(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
+                           uint16_t port, uint8_t* out);
+/* Parse "host:port" from (s,len). Fills *out on success. Returns 0=OK,
+ * 1=invalid address, 2=invalid port. No TLS. */
+nova_int          nova_net_addr_parse(const uint8_t* s, nova_int len, NovaNetAddr* out);
+uint16_t     nova_net_addr_port(const NovaNetAddr* a);
+nova_bool          nova_net_addr_is_v4(const NovaNetAddr* a);
+nova_bool          nova_net_addr_is_v6(const NovaNetAddr* a);
+/* Format the host IP text into the caller's buffer; returns the text length
+ * (bytes) written (<= cap). Zero intermediate allocation. */
+nova_int      nova_net_addr_ip(const NovaNetAddr* a, uint8_t* buf, nova_int cap);
+/* Format "host:port" (v6: "[host]:port") into the caller's buffer. */
+nova_int      nova_net_addr_to_str(const NovaNetAddr* a, uint8_t* buf, nova_int cap);
 
-/* ─── Canonical error strings (Plan 91.15 P2 / D302) ──────────────────────────
- * Net errors are carried to the Nova layer as the libuv message string and
- * classified by std/net/tcp.nv `net_error()`. For the codes below the runtime
- * normalises the message to a fixed canonical string (rather than relying on the
- * platform-specific uv_strerror text) so the Nova-side string match is stable
- * across OSes. See _nova_net_uv_err in net.c.
- *   UV_EACCES     → NetError.PermissionDenied
- *   UV_ECONNRESET → NetError.ConnectionReset                                    */
-#define NOVA_NET_MSG_PERMISSION_DENIED   "permission denied"
-#define NOVA_NET_MSG_CONNECTION_RESET    "connection reset by peer"
+/* Format the human-readable text for a UV error code into the caller's buffer;
+ * returns the length written. Replaces the net.c net_last_error() TLS slot. */
+nova_int      nova_net_strerror(nova_int code, uint8_t* buf, nova_int cap);
 
-/* ─── NetAddrResult: error codes for address parsing ──────────────── */
+/* ─── TCP ─────────────────────────────────────────────────────────────────────
+ * Handles are opaque `void*`. Hot-path read/write return int64 (>=0 bytes,
+ * 0 = EOF on read, <0 = -UV error code). Cold-path constructors return the
+ * handle or NULL; on NULL the UV error code is written to *out_err (if non-NULL). */
 
-typedef enum {
-    NET_ADDR_OK           = 0,
-    NET_ADDR_INVALID_ADDR = 1,  /* malformed host or missing port separator */
-    NET_ADDR_INVALID_PORT = 2,  /* port out of range 1-65535 */
-} NetAddrResult;
+void*    nova_net_tcp_listen(const NovaNetAddr* addr, nova_int backlog, nova_int* out_err);
+void*    nova_net_tcp_accept(void* lst, nova_int* out_err);   /* parks fiber */
+void*    nova_net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err); /* parks */
+nova_int  nova_net_tcp_read(void* s, uint8_t* buf, nova_int cap);   /* parks; ZERO-COPY */
+nova_int  nova_net_tcp_write(void* s, const uint8_t* buf, nova_int len); /* parks; ZERO-COPY */
+nova_int      nova_net_tcp_shutdown(void* s);                 /* half-close write side */
+void     nova_net_tcp_close(void* s);                    /* refcount-aware */
+void     nova_net_tcp_mark_split(void* s);               /* refcount = 2 (split) */
+uint16_t nova_net_tcp_local_port(void* s);
+uint16_t nova_net_tcp_peer_port(void* s);
+void     nova_net_tcp_local_addr(void* s, NovaNetAddr* out);
+void     nova_net_tcp_peer_addr(void* s, NovaNetAddr* out);
+void     nova_net_tcp_set_nodelay(void* s, nova_bool on);
+void     nova_net_tcp_set_keepalive(void* s, nova_bool on);
 
-/* ─── NovaRt_SocketAddr ──────────────────────────────────────────────── */
+uint16_t nova_net_listener_local_port(void* lst);
+void     nova_net_listener_local_addr(void* lst, NovaNetAddr* out);
+void     nova_net_listener_set_reuse_address(void* lstv, nova_bool on);
+void     nova_net_listener_close(void* lst);
 
-/* Opaque IPv4/IPv6 socket address. Large enough for both families.
- * host_cache is populated lazily by host_str(). */
-typedef struct NovaRt_SocketAddr {
-    struct sockaddr_storage storage;   /* actual address data */
-    char    host_cache[64];            /* cached host string (NULL-term) */
-    int     host_cached;               /* 1 once host_cache is valid */
-} NovaRt_SocketAddr;
+/* ─── UDP ─────────────────────────────────────────────────────────────────── */
 
-/* ─── NovaRt_TcpListener ─────────────────────────────────────────────── */
+void*    nova_net_udp_bind(const NovaNetAddr* addr, nova_int* out_err);
+/* send_to: bytes straight from caller's []u8; parks until sent. n or <0. */
+nova_int  nova_net_udp_send_to(void* sock, const uint8_t* buf, nova_int len,
+                              const NovaNetAddr* addr);
+/* recv_from: datagram written straight into caller's buf (ZERO-COPY); sender
+ * address filled into *sender (the one named OS-transfer). Returns n or <0. */
+nova_int  nova_net_udp_recv_from(void* sock, uint8_t* buf, nova_int cap,
+                                NovaNetAddr* sender);
+uint16_t nova_net_udp_local_port(void* sock);
+void     nova_net_udp_local_addr(void* sock, NovaNetAddr* out);
+void     nova_net_udp_close(void* sock);
 
-/* The connection_cb state is stored here; at most one pending accept at
- * a time (V1). A separate pending_accepts counter tracks backlogged
- * connections so a fast client doesn't get missed. */
-typedef struct NovaRt_TcpListener {
-    uv_tcp_t        handle;            /* must be first (uv_close compat) */
-    uv_loop_t*      loop;              /* owning loop */
-    nova_atomic_int stage;             /* NovaNetStage */
-
-    /* One-slot pending-accept queue: */
-    NovaFiberQueue* accept_scope;      /* NULL when no waiter */
-    int             accept_slot;
-    void*           accept_result;     /* NovaRt_TcpStream* on success */
-    nova_str        accept_error;      /* error msg if accept_result==NULL */
-    int             pending_conns;     /* # connections queued by OS */
-} NovaRt_TcpListener;
-
-/* ─── NovaRt_TcpStream ───────────────────────────────────────────────── */
-
-/* Before split (Plan 91.16): one pending operation at a time
- * (connect/read_bytes/write). connect and the un-split read/write all use the
- * shared op_scope/op_slot pair.
- *
- * After split() (Plan 91.16 / D300): the stream is owned by a TcpReadHalf and a
- * TcpWriteHalf which may run concurrently in two different fibers. To avoid the
- * two halves clobbering each other's park bookkeeping, the read path uses
- * read_scope/read_slot and the write path uses write_scope/write_slot. The
- * legacy op_scope/op_slot pair stays in use for connect and for the un-split
- * TcpStream.read/.write methods (those callers serialise, so reusing one pair
- * is safe). split_refcount counts live halves (2 → 1 → 0); the underlying
- * handle is uv_close'd only when the last half closes. */
-typedef struct NovaRt_TcpStream {
-    uv_tcp_t        handle;            /* must be first */
-    uv_loop_t*      loop;              /* owning loop */
-    nova_atomic_int stage;             /* NovaNetStage */
-
-    /* Pending operation (connect / un-split read_bytes / un-split write): */
-    NovaFiberQueue* op_scope;          /* NULL when idle */
-    int             op_slot;
-    nova_str        op_error;          /* set on failure (un-split + connect) */
-
-    /* connect_req (reusable for single connect): */
-    uv_connect_t    connect_req;
-
-    /* read state: */
-    char*           read_buf;          /* malloc'd, freed after read */
-    ssize_t         read_len;          /* bytes received (≥0) or UV error (<0) */
-    int             read_max;          /* max_bytes requested */
-    int             is_eof;            /* 1 if UV_EOF received */
-
-    /* write state: */
-    uv_write_t      write_req;
-    char*           write_buf;         /* copy of user data (malloc'd) */
-    ssize_t         write_len;         /* bytes written on success */
-
-    /* ── Plan 91.16 split: independent read/write park slots ── */
-    NovaFiberQueue* read_scope;        /* read-half park slot (NULL = idle) */
-    int             read_slot;
-    nova_str        read_op_error;     /* set by read_cb on the split path */
-    NovaFiberQueue* write_scope;       /* write-half park slot (NULL = idle) */
-    int             write_slot;
-    nova_str        write_op_error;    /* set by write_cb on the split path */
-    volatile int32_t split_refcount;   /* live half count: 0 (un-split) / 2 / 1 */
-} NovaRt_TcpStream;
-
-/* ── Plan 91.16: TcpReadHalf / TcpWriteHalf ──
- * Both halves wrap the SAME NovaRt_TcpStream*. Nova sees CTcpReadHalf /
- * CTcpWriteHalf as opaque newtypes over *() carrying this pointer. */
-typedef struct NovaRt_TcpReadHalf  { NovaRt_TcpStream* stream; } NovaRt_TcpReadHalf;
-typedef struct NovaRt_TcpWriteHalf { NovaRt_TcpStream* stream; } NovaRt_TcpWriteHalf;
-
-/* ─── NovaRt_UdpSocket ───────────────────────────────────────────────── */
-
-typedef struct NovaRt_UdpSocket {
-    uv_udp_t        handle;            /* must be first */
-    uv_loop_t*      loop;              /* owning loop */
-    nova_atomic_int stage;             /* NovaNetStage */
-
-    /* Pending recv_from: */
-    NovaFiberQueue* recv_scope;        /* NULL when idle */
-    int             recv_slot;
-    nova_str        recv_error;
-
-    char*           recv_buf;          /* malloc'd, freed after recv */
-    ssize_t         recv_len;          /* bytes received */
-    int             recv_max;          /* max_bytes requested */
-
-    /* Last sender (set by alloc_cb/recv_cb): */
-    struct sockaddr_storage last_sender_storage;
-    int             last_sender_valid; /* 1 once populated */
-} NovaRt_UdpSocket;
-
-/* ─── SocketAddr constructors ──────────────────────────────────────── */
-
-NovaRt_SocketAddr* NovaRt_SocketAddr_static_loopback(uint16_t port);
-NovaRt_SocketAddr* NovaRt_SocketAddr_static_loopback_v6(uint16_t port);
-NovaRt_SocketAddr* NovaRt_SocketAddr_static_v4(uint8_t a, uint8_t b,
-                                            uint8_t c, uint8_t d,
-                                            uint16_t port);
-/* Parse NUL-terminated "host:port" string into addr (must be pre-allocated).
- * Returns NET_ADDR_OK on success; addr->storage is populated.
- * On error the storage is undefined; caller must not use addr. */
-NetAddrResult
-    NovaRt_SocketAddr_static_parse(const char* s, NovaRt_SocketAddr* addr);
-uint16_t  NovaRt_SocketAddr_method_port(NovaRt_SocketAddr* addr);
-nova_str  NovaRt_SocketAddr_method_host_str(NovaRt_SocketAddr* addr);
-nova_bool NovaRt_SocketAddr_method_is_v4(NovaRt_SocketAddr* addr);
-nova_bool NovaRt_SocketAddr_method_is_v6(NovaRt_SocketAddr* addr);
-nova_str  NovaRt_SocketAddr_method_to_str(NovaRt_SocketAddr* addr);
-
-/* ─── TcpListener methods ──────────────────────────────────────────── */
-
-NovaRes_nova_int_nova_str*
-    NovaRt_TcpListener_static_bind(NovaRt_SocketAddr* addr);
-NovaRes_nova_int_nova_str*
-    NovaRt_TcpListener_method_accept(NovaRt_TcpListener* lst);
-uint16_t         NovaRt_TcpListener_method_local_port(NovaRt_TcpListener* lst);
-NovaRt_SocketAddr* NovaRt_TcpListener_method_local_addr(NovaRt_TcpListener* lst);
-nova_unit        NovaRt_TcpListener_method_close(NovaRt_TcpListener* lst);
-
-/* ─── TcpStream methods ────────────────────────────────────────────── */
-
-NovaRes_nova_int_nova_str*
-    NovaRt_TcpStream_static_connect(NovaRt_SocketAddr* addr);
-NovaRes_nova_int_nova_str*
-    NovaRt_TcpStream_method_read_bytes(NovaRt_TcpStream* s, nova_int max_bytes);
-NovaRes_nova_int_nova_str*
-    NovaRt_TcpStream_method_write(NovaRt_TcpStream* s, nova_str data);
-uint16_t         NovaRt_TcpStream_method_local_port(NovaRt_TcpStream* s);
-uint16_t         NovaRt_TcpStream_method_peer_port(NovaRt_TcpStream* s);
-NovaRt_SocketAddr* NovaRt_TcpStream_method_local_addr(NovaRt_TcpStream* s);
-NovaRt_SocketAddr* NovaRt_TcpStream_method_peer_addr(NovaRt_TcpStream* s);
-nova_unit        NovaRt_TcpStream_method_close(NovaRt_TcpStream* s);
-
-/* ─── UdpSocket methods ────────────────────────────────────────────── */
-
-NovaRes_nova_int_nova_str*
-    NovaRt_UdpSocket_static_bind(NovaRt_SocketAddr* addr);
-NovaRes_nova_int_nova_str*
-    NovaRt_UdpSocket_method_send_to(NovaRt_UdpSocket* sock,
-                                   nova_str data, NovaRt_SocketAddr* addr);
-NovaRes_nova_int_nova_str*
-    NovaRt_UdpSocket_method_recv_from(NovaRt_UdpSocket* sock, nova_int max_bytes);
-NovaRt_SocketAddr* NovaRt_UdpSocket_method_last_sender(NovaRt_UdpSocket* sock);
-uint16_t         NovaRt_UdpSocket_method_local_port(NovaRt_UdpSocket* sock);
-NovaRt_SocketAddr* NovaRt_UdpSocket_method_local_addr(NovaRt_UdpSocket* sock);
-nova_unit        NovaRt_UdpSocket_method_close(NovaRt_UdpSocket* sock);
-
-/* ─── Plan 91.12 Ф.0: literal-name entry-points (Nova extern "C" fn) ──── */
-/*
- * Handle ABI: all C handles are passed and returned as their typed pointer
- * (NovaRt_SocketAddr*, NovaRt_TcpListener*, etc.). Constructors return the
- * pointer or NULL on error. Error message: call net_last_error() after any
- * NULL return. Numeric results (bytes written, recv status) use nova_int.
- *
- * Nova sees these as CSocketAddr(*()) / CTcpListener(*()) etc. — opaque
- * newtypes over void* — which is ABI-compatible with typed C pointers.
- *
- * udp_socket_recv_from uses TLS: stores data+sender in thread-local buffers
- * for Nova to read via udp_socket_recv_data() / udp_socket_recv_sender()
- * immediately after (no intervening Blocking call → cooperative-safe).
- */
-
-NovaRt_SocketAddr*  socket_addr_loopback(uint16_t port);
-NovaRt_SocketAddr*  socket_addr_loopback_v6(uint16_t port);
-NovaRt_SocketAddr*  socket_addr_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
-/* Plan 178 Ф.0.5: parse "host:port". Returns the NetAddrResult code
- * (0=OK, 1=INVALID_ADDR, 2=INVALID_PORT); on OK the parsed address is stashed in
- * a thread-local slot, read immediately after via socket_addr_parse_result()
- * (cooperative-safe TLS accessor, like tcp_stream_read_data). */
-nova_int            socket_addr_parse(nova_str s);
-NovaRt_SocketAddr*  socket_addr_parse_result(void);
-uint16_t            socket_addr_port(NovaRt_SocketAddr* addr);
-nova_str            socket_addr_ip(NovaRt_SocketAddr* addr);
-nova_bool           socket_addr_is_v4(NovaRt_SocketAddr* addr);
-nova_bool           socket_addr_is_v6(NovaRt_SocketAddr* addr);
-nova_str            socket_addr_to_str(NovaRt_SocketAddr* addr);
-
-NovaRt_TcpListener* tcp_listener_bind(NovaRt_SocketAddr* addr);   /* NULL on error */
-NovaRt_TcpStream*   tcp_listener_accept(NovaRt_TcpListener* lst); /* NULL on error */
-uint16_t            tcp_listener_local_port(NovaRt_TcpListener* lst);
-NovaRt_SocketAddr*  tcp_listener_local_addr(NovaRt_TcpListener* lst);
-nova_unit           tcp_listener_close(NovaRt_TcpListener* lst);
-
-NovaRt_TcpStream*   tcp_stream_connect(NovaRt_SocketAddr* addr);  /* NULL on error */
-nova_int            tcp_stream_write(NovaRt_TcpStream* s, nova_str data);  /* bytes or -1 */
-nova_int            tcp_stream_write_all(NovaRt_TcpStream* s, nova_str data); /* total bytes or -1 */
-nova_int            tcp_stream_read_bytes(NovaRt_TcpStream* s, nova_int max); /* bytes (0=EOF), -1=error */
-nova_str            tcp_stream_read_data(void);  /* TLS: data from last tcp_stream_read_bytes */
-uint16_t            tcp_stream_local_port(NovaRt_TcpStream* s);
-uint16_t            tcp_stream_peer_port(NovaRt_TcpStream* s);
-NovaRt_SocketAddr*  tcp_stream_local_addr(NovaRt_TcpStream* s);
-NovaRt_SocketAddr*  tcp_stream_peer_addr(NovaRt_TcpStream* s);
-nova_unit           tcp_stream_set_nodelay(NovaRt_TcpStream* s, nova_bool on);    /* TCP_NODELAY */
-nova_unit           tcp_stream_set_keepalive(NovaRt_TcpStream* s, nova_bool on);  /* SO_KEEPALIVE */
-nova_unit           tcp_stream_close(NovaRt_TcpStream* s);
-nova_unit           tcp_listener_set_reuse_address(NovaRt_TcpListener* lst, nova_bool on); /* SO_REUSEADDR */
-nova_str            net_last_error(void);  /* thread-local; valid after NULL/-1 return */
-
-/* ─── Plan 91.16: TcpStream.split() → (TcpReadHalf, TcpWriteHalf) (D300) ──── */
-/*
- * tcp_stream_split: set split_refcount=2 and return the SAME underlying handle
- * as both half handles (read half and write half wrap the same pointer). The
- * caller consumes the TcpStream so the un-split methods can no longer touch it.
- *
- * The read half parks on read_scope/read_slot; the write half parks on
- * write_scope/write_slot — fully independent, so a server fiber may read while
- * another fiber writes on the same connection without TOCTOU corruption.
- *
- * Each half's close() decrements split_refcount; uv_close fires only when the
- * count reaches 0 (last half closed). Closing the same half twice is prevented
- * at the Nova level (consume types).
- */
-NovaRt_TcpStream*   tcp_stream_split(NovaRt_TcpStream* s);  /* sets refcount=2, returns same handle */
-nova_int            tcp_read_half_read(NovaRt_TcpStream* s, nova_int max); /* bytes (0=EOF), -1=error */
-nova_int            tcp_write_half_write(NovaRt_TcpStream* s, nova_str data); /* bytes or -1 */
-nova_int            tcp_write_half_write_all(NovaRt_TcpStream* s, nova_str data); /* total bytes or -1 */
-nova_unit           tcp_read_half_close(NovaRt_TcpStream* s);
-nova_unit           tcp_write_half_close(NovaRt_TcpStream* s);
-uint16_t            tcp_read_half_local_port(NovaRt_TcpStream* s);
-uint16_t            tcp_read_half_peer_port(NovaRt_TcpStream* s);
-NovaRt_SocketAddr*  tcp_read_half_local_addr(NovaRt_TcpStream* s);
-NovaRt_SocketAddr*  tcp_read_half_peer_addr(NovaRt_TcpStream* s);
-uint16_t            tcp_write_half_local_port(NovaRt_TcpStream* s);
-uint16_t            tcp_write_half_peer_port(NovaRt_TcpStream* s);
-NovaRt_SocketAddr*  tcp_write_half_local_addr(NovaRt_TcpStream* s);
-NovaRt_SocketAddr*  tcp_write_half_peer_addr(NovaRt_TcpStream* s);
-
-NovaRt_UdpSocket*   udp_socket_bind(NovaRt_SocketAddr* addr);     /* NULL on error */
-nova_int            udp_socket_send_to(NovaRt_UdpSocket* s, nova_str data, NovaRt_SocketAddr* addr);
-nova_int            udp_socket_recv_from(NovaRt_UdpSocket* s, nova_int max); /* 0 or -1 */
-nova_str            udp_socket_recv_data(void);    /* TLS: data from last recv_from */
-NovaRt_SocketAddr*  udp_socket_recv_sender(void);  /* TLS: sender from last recv_from */
-uint16_t            udp_socket_local_port(NovaRt_UdpSocket* s);
-NovaRt_SocketAddr*  udp_socket_local_addr(NovaRt_UdpSocket* s);
-nova_unit           udp_socket_close(NovaRt_UdpSocket* s);
-
-/* ─── DNS ─────────────────────────────────────────────────────────── */
-
-/* dns_lookup: resolve "host" to a list of SocketAddr for the given port.
- * Blocking (parks fiber via uv_getaddrinfo callback).
- * Returns count of addresses written into *out_addrs (GC-heap array).
- * Returns -1 on error; call net_last_error() for the message.
- *
- * Nova ffi.nv wraps this as:
- *   extern "C" fn dns_lookup(host *u8, host_len int, port u16, out_addrs *()) -> int
- * On success Nova reads out_addrs[0..count-1] as CSocketAddr handles. */
-/* dns_lookup: park fiber, call uv_getaddrinfo.
- * Returns count (≥1) on success; dns_last_addrs() returns the GC-heap array.
- * Returns -1 on error; net_last_error() returns the message.
- * The two TLS accessors are cooperative-safe: no Blocking call may interleave
- * between dns_lookup() returning and dns_last_addrs()/dns_addr_at() reads. */
-nova_int            dns_lookup(const uint8_t* host, nova_int host_len,
-                               uint16_t port);
-
-/* dns_addr_at: read the i-th SocketAddr from the last dns_lookup result.
- * Returns the pointer cast to nova_int (intptr_t) — matches CSocketAddr ABI. */
-nova_int            dns_addr_at(nova_int i);
+/* ─── DNS ─────────────────────────────────────────────────────────────────────
+ * Resolve (host,len):port in ONE getaddrinfo call. Parks the fiber. On success
+ * sets *out_arr to a nova_alloc'd array of exactly `count` NovaNetAddr images
+ * (ownership to the caller — the single named addrinfo→array OS-transfer) and
+ * returns the count (>=1). Returns -1 on error (UV code → *out_err). No TLS. */
+nova_int  nova_net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t port,
+                             NovaNetAddr** out_arr, nova_int* out_err);
+/* Copy the i-th image out of a DNS result array into a caller []u8 image. */
+void      nova_net_addr_copy_at(const NovaNetAddr* arr, nova_int i, uint8_t* out);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* NOVA_RT_NET_H */
+#endif /* NOVA_RT_NET2_H */
