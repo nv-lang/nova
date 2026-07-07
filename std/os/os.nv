@@ -193,34 +193,34 @@ export fn hostname() Os -> Result[str, IoError] {
 #stable(since = "0.1")
 export fn real_os() -> Effect[Os] {
     effect Os {
-        arg_count() => os_arg_count()
-        arg_at(i int) => os_arg_at(i)
+        arg_count() => nova_os_arg_count()
+        arg_at(i int) => nova_os_arg_at(i)
         env_get(key []u8) {
-            match os_cstr(key) { Ok(ck) => if unsafe { os_env_has(ck.ptr()) } == 1 { Some(unsafe { os_env_get(ck.ptr()) }) } else { None }, Err(_) => None }
+            match os_cstr(key) { Ok(ck) => if unsafe { nova_os_env_has(ck.ptr()) } == 1 { Some(unsafe { nova_os_env_get(ck.ptr()) }) } else { None }, Err(_) => None }
         }
         env_has(key []u8) {
-            match os_cstr(key) { Ok(ck) => unsafe { os_env_has(ck.ptr()) } == 1, Err(_) => false }
+            match os_cstr(key) { Ok(ck) => unsafe { nova_os_env_has(ck.ptr()) } == 1, Err(_) => false }
         }
         env_set(key []u8, val []u8) {
             match os_cstr(key) {
-                Ok(ck) => match os_cstr(val) { Ok(cv) => unsafe { os_env_set(ck.ptr(), cv.ptr()) }, Err(_) => 0 - 22 }
+                Ok(ck) => match os_cstr(val) { Ok(cv) => unsafe { nova_os_env_set(ck.ptr(), cv.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
         env_remove(key []u8) {
-            match os_cstr(key) { Ok(ck) => unsafe { os_env_remove(ck.ptr()) }, Err(_) => 0 - 22 }
+            match os_cstr(key) { Ok(ck) => unsafe { nova_os_env_remove(ck.ptr()) }, Err(_) => 0 - 22 }
         }
-        env_len() => os_env_len()
-        env_key_at(i int) => os_env_key_at(i)
-        env_val_at(i int) => os_env_val_at(i)
-        cwd() => os_cwd()
+        env_len() => nova_os_env_len()
+        env_key_at(i int) => nova_os_env_key_at(i)
+        env_val_at(i int) => nova_os_env_val_at(i)
+        cwd() => nova_os_cwd()
         set_cwd(path []u8) {
-            match os_cstr(path) { Ok(cp) => unsafe { os_set_cwd(cp.ptr()) }, Err(_) => 0 - 22 }
+            match os_cstr(path) { Ok(cp) => unsafe { nova_os_set_cwd(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        temp_dir() => os_temp_dir()
-        home_dir() => os_home_dir()
-        exit(code int) => os_exit(code)
-        pid() => os_pid()
-        hostname() => os_hostname()
+        temp_dir() => nova_os_temp_dir()
+        home_dir() => nova_os_home_dir()
+        exit(code int) => nova_os_exit(code)
+        pid() => nova_os_pid()
+        hostname() => nova_os_hostname()
     }
 }

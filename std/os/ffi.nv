@@ -3,7 +3,7 @@
 //
 // The OS surface (env / args / cwd / well-known dirs / process) is a set of
 // **non-blocking native syscalls** — getenv/getcwd/setenv/getpid/… — so, exactly
-// like std/io's console hooks and std/fs's fs_seek, they are plain static-inline
+// like std/io's console hooks and std/fs's nova_fs_seek, they are plain static-inline
 // C hooks (nova_rt/os_env.h, always included) rather than libuv-backed park/wake
 // ops (that pattern is for real blocking I/O — fs.c/net.c). No OS handle types
 // cross the boundary: keys/paths cross as a NUL-terminated `*u8` (a validated
@@ -21,46 +21,46 @@ module std.os
 // program path. Read count then index.
 
 // arg_count: number of program arguments (>= 0; includes argv[0]).
-extern "C" fn os_arg_count() -> int
+extern "C" fn nova_os_arg_count() -> int
 // arg_at: the i-th argument as a str (empty out of range).
-extern "C" fn os_arg_at(i int) -> str
+extern "C" fn nova_os_arg_at(i int) -> str
 
 // ─── Environment ──
 // Keys/values are NUL-terminated `*u8`. Getter returns raw value bytes as a
-// `str` (empty when absent — disambiguate with os_env_has; конвертируется в Option на границе, обработчик в os.nv). Mutators return 0
+// `str` (empty when absent — disambiguate with nova_os_env_has; конвертируется в Option на границе, обработчик в os.nv). Mutators return 0
 // or a NEGATIVE POSIX errno.
 
 // env_get: raw value bytes for `key` (empty if absent).
-extern "C" fn os_env_get(key *u8) -> str
+extern "C" fn nova_os_env_get(key *u8) -> str
 // env_has: 1 if `key` is present, else 0 (конвертируется в bool на границе, обработчик в os.nv).
-extern "C" fn os_env_has(key *u8) -> int
+extern "C" fn nova_os_env_has(key *u8) -> int
 // env_set: set `key` = `val` (overwrite). 0 or -errno.
-extern "C" fn os_env_set(key *u8, val *u8) -> int
+extern "C" fn nova_os_env_set(key *u8, val *u8) -> int
 // env_remove: remove `key` (missing key = success). 0 or -errno.
-extern "C" fn os_env_remove(key *u8) -> int
+extern "C" fn nova_os_env_remove(key *u8) -> int
 // env_len: number of environment entries (snapshot count).
-extern "C" fn os_env_len() -> int
+extern "C" fn nova_os_env_len() -> int
 // env_key_at / env_val_at: key/value of the i-th entry (split on '=').
-extern "C" fn os_env_key_at(i int) -> str
-extern "C" fn os_env_val_at(i int) -> str
+extern "C" fn nova_os_env_key_at(i int) -> str
+extern "C" fn nova_os_env_val_at(i int) -> str
 
 // ─── Working directory ──
 // cwd: absolute current directory (empty on error).
-extern "C" fn os_cwd() -> str
+extern "C" fn nova_os_cwd() -> str
 // set_cwd: chdir to `path`. 0 or -errno.
-extern "C" fn os_set_cwd(path *u8) -> int
+extern "C" fn nova_os_set_cwd(path *u8) -> int
 
 // ─── Well-known directories ──
 // temp_dir: system temp directory (never empty — portable fallback).
-extern "C" fn os_temp_dir() -> str
+extern "C" fn nova_os_temp_dir() -> str
 // home_dir: user home directory (empty == none).
-extern "C" fn os_home_dir() -> str
+extern "C" fn nova_os_home_dir() -> str
 
 // ─── Process ──
 // exit: flush stdout/stderr and terminate (never returns; int keeps the op
 // shape uniform).
-extern "C" fn os_exit(code int) -> int
+extern "C" fn nova_os_exit(code int) -> int
 // pid: this process's id.
-extern "C" fn os_pid() -> int
+extern "C" fn nova_os_pid() -> int
 // hostname: host name (empty on error).
-extern "C" fn os_hostname() -> str
+extern "C" fn nova_os_hostname() -> str

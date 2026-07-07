@@ -5,7 +5,7 @@
 // Console byte I/O is a **plumbing effect** (`Io`, net-precedent): user code
 // goes through `stdin()`/`stdout()`/`stderr()` (which conform to `io.Read` /
 // `io.Write`), and those dispatch to the ambient `Io` handler. Production uses
-// `real_io()` (fd-based C hooks `io_read_fd`/`io_write_fd`); tests swap in
+// `real_io()` (fd-based C hooks `nova_io_read_fd`/`nova_io_write_fd`); tests swap in
 // `mock_io(cap)` — capturing stdout/stderr and scripting stdin — with **zero**
 // change to the code under test (Nova's mockability differentiator, §1a).
 
@@ -138,8 +138,8 @@ export fn mock_io(mut cap IoCapture) -> Effect[Io] {
 
 // Module-private C hooks (io_console.h, always included via nova_rt.h). Return
 // bytes transferred (read: 0 = EOF); a negative value is `-errno`.
-extern "C" fn io_write_fd(fd int, buf *u8, len int) -> int
-extern "C" fn io_read_fd(fd int, buf *mut u8, len int) -> int
+extern "C" fn nova_io_write_fd(fd int, buf *u8, len int) -> int
+extern "C" fn nova_io_read_fd(fd int, buf *mut u8, len int) -> int
 
 /// Real console `Io` handler: `write_out`/`write_err` go to stdout/stderr,
 /// `read_in` reads from stdin, via the fd hooks. A negative hook result maps to
@@ -150,19 +150,19 @@ export fn real_io() -> Effect[Io] {
         read_in(buf mut []u8) {
             ro want = buf.len()
             if want == 0 { return Ok(0) }
-            ro rc = unsafe { io_read_fd(0, buf.ptr(), want) }
+            ro rc = unsafe { nova_io_read_fd(0, buf.ptr(), want) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "read")) }
             Ok(rc)
         }
         write_out(data []u8) {
             if data.len() == 0 { return Ok(0) }
-            ro rc = unsafe { io_write_fd(1, data.ptr(), data.len()) }
+            ro rc = unsafe { nova_io_write_fd(1, data.ptr(), data.len()) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "write")) }
             Ok(rc)
         }
         write_err(data []u8) {
             if data.len() == 0 { return Ok(0) }
-            ro rc = unsafe { io_write_fd(2, data.ptr(), data.len()) }
+            ro rc = unsafe { nova_io_write_fd(2, data.ptr(), data.len()) }
             if rc < 0 { return Err(IoError.from_os(0 - rc, "write")) }
             Ok(rc)
         }
