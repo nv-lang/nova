@@ -39,15 +39,15 @@ export fn mock_net() -> Effect[Net] => effect Net {
     mark_split(_stream TcpStream)         {}
     listener_local_port(_listener TcpListener) => 4242
     listener_local_addr(_listener TcpListener, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(4242, out.ptr()) }
+        unsafe { net_addr_loopback_into(4242, out.ptr()) }
     }
     stream_local_port(_stream TcpStream) => 5050
     stream_peer_port(_stream TcpStream)  => 6060
     stream_local_addr(_stream TcpStream, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(5050, out.ptr()) }
+        unsafe { net_addr_loopback_into(5050, out.ptr()) }
     }
     stream_peer_addr(_stream TcpStream, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(6060, out.ptr()) }
+        unsafe { net_addr_loopback_into(6060, out.ptr()) }
     }
     set_nodelay(_stream TcpStream, _on bool)          {}
     set_keepalive(_stream TcpStream, _on bool)        {}
@@ -57,14 +57,14 @@ export fn mock_net() -> Effect[Net] => effect Net {
     udp_bind(_addr SocketAddr)          => socket_ok(10 as *())
     send_to(_sock UdpSocket, data []u8, _addr SocketAddr) => int_ok(data.len())
     recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) {
-        unsafe { nova_net_addr_loopback_into(0, sender.ptr()) }
+        unsafe { net_addr_loopback_into(0, sender.ptr()) }
         ro _ = buf
         int_ok(0)
     }
     close_socket(_sock UdpSocket)       {}
     socket_local_port(_sock UdpSocket)  => 7070
     socket_local_addr(_sock UdpSocket, out mut []u8) {
-        unsafe { nova_net_addr_loopback_into(7070, out.ptr()) }
+        unsafe { net_addr_loopback_into(7070, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ export fn mock_net() -> Effect[Net] => effect Net {
 // A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
 // so `resolve`'s build_addrs copies one image out just like the real path.
 fn mock_lookup() -> Result[(int, int), NetError] {
-    ro base = unsafe { nova_net_addr_loopback(0) }
+    ro base = unsafe { net_addr_loopback(0) }
     lookup_ok(base as int, 1)
 }
 

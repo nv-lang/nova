@@ -271,75 +271,75 @@ export fn real_net() -> Effect[Net] => effect Net {
     // ── TCP ──────────────────────────────────────────────────────────────────
     tcp_bind(addr SocketAddr) {
         mut err int = 0                                   // &err → *mut int out-param
-        ro h = unsafe { nova_net_tcp_listen(addr.ptr(), 128, &err) }
+        ro h = unsafe { net_tcp_listen(addr.ptr(), 128, &err) }
         if is_null(h) { err_listener(err) } else { listener_ok(h) }
     }
     accept(listener TcpListener) {
         mut err int = 0
-        ro h = unsafe { nova_net_tcp_accept(listener.handle, &err) }
+        ro h = unsafe { net_tcp_accept(listener.handle, &err) }
         if is_null(h) { err_stream(err) } else { stream_ok(h) }
     }
     connect(addr SocketAddr) {
         mut err int = 0
-        ro h = unsafe { nova_net_tcp_connect(addr.ptr(), &err) }
+        ro h = unsafe { net_tcp_connect(addr.ptr(), &err) }
         if is_null(h) { err_stream(err) } else { stream_ok(h) }
     }
     read(stream TcpStream, buf mut []u8) {
-        ro n = unsafe { nova_net_tcp_read(stream.handle, buf.ptr(), buf.len()) }
+        ro n = unsafe { net_tcp_read(stream.handle, buf.ptr(), buf.len()) }
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
     write(stream TcpStream, data []u8) {
-        ro n = unsafe { nova_net_tcp_write(stream.handle, data.ptr(), data.len()) }
+        ro n = unsafe { net_tcp_write(stream.handle, data.ptr(), data.len()) }
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
     shutdown(stream TcpStream) {
-        ro rc = unsafe { nova_net_tcp_shutdown(stream.handle) }
+        ro rc = unsafe { net_tcp_shutdown(stream.handle) }
         if rc < 0 { unit_err(rc) } else { unit_ok() }
     }
-    close_stream(stream TcpStream) { unsafe { nova_net_tcp_close(stream.handle) } }
-    close_listener(listener TcpListener) { unsafe { nova_net_listener_close(listener.handle) } }
-    mark_split(stream TcpStream) { unsafe { nova_net_tcp_mark_split(stream.handle) } }
-    listener_local_port(listener TcpListener) => unsafe { nova_net_listener_local_port(listener.handle) }
+    close_stream(stream TcpStream) { unsafe { net_tcp_close(stream.handle) } }
+    close_listener(listener TcpListener) { unsafe { net_listener_close(listener.handle) } }
+    mark_split(stream TcpStream) { unsafe { net_tcp_mark_split(stream.handle) } }
+    listener_local_port(listener TcpListener) => unsafe { net_listener_local_port(listener.handle) }
     listener_local_addr(listener TcpListener, out mut []u8) {
-        unsafe { nova_net_listener_local_addr(listener.handle, out.ptr()) }
+        unsafe { net_listener_local_addr(listener.handle, out.ptr()) }
     }
-    stream_local_port(stream TcpStream) => unsafe { nova_net_tcp_local_port(stream.handle) }
-    stream_peer_port(stream TcpStream)  => unsafe { nova_net_tcp_peer_port(stream.handle) }
+    stream_local_port(stream TcpStream) => unsafe { net_tcp_local_port(stream.handle) }
+    stream_peer_port(stream TcpStream)  => unsafe { net_tcp_peer_port(stream.handle) }
     stream_local_addr(stream TcpStream, out mut []u8) {
-        unsafe { nova_net_tcp_local_addr(stream.handle, out.ptr()) }
+        unsafe { net_tcp_local_addr(stream.handle, out.ptr()) }
     }
     stream_peer_addr(stream TcpStream, out mut []u8) {
-        unsafe { nova_net_tcp_peer_addr(stream.handle, out.ptr()) }
+        unsafe { net_tcp_peer_addr(stream.handle, out.ptr()) }
     }
-    set_nodelay(stream TcpStream, on bool) => unsafe { nova_net_tcp_set_nodelay(stream.handle, on) }
-    set_keepalive(stream TcpStream, on bool) => unsafe { nova_net_tcp_set_keepalive(stream.handle, on) }
-    set_reuse_address(listener TcpListener, on bool) => unsafe { nova_net_listener_set_reuse_address(listener.handle, on) }
+    set_nodelay(stream TcpStream, on bool) => unsafe { net_tcp_set_nodelay(stream.handle, on) }
+    set_keepalive(stream TcpStream, on bool) => unsafe { net_tcp_set_keepalive(stream.handle, on) }
+    set_reuse_address(listener TcpListener, on bool) => unsafe { net_listener_set_reuse_address(listener.handle, on) }
 
     // ── UDP ──────────────────────────────────────────────────────────────────
     udp_bind(addr SocketAddr) {
         mut err int = 0
-        ro h = unsafe { nova_net_udp_bind(addr.ptr(), &err) }
+        ro h = unsafe { net_udp_bind(addr.ptr(), &err) }
         if is_null(h) { err_socket(err) } else { socket_ok(h) }
     }
     send_to(sock UdpSocket, data []u8, addr SocketAddr) {
-        ro n = unsafe { nova_net_udp_send_to(sock.handle, data.ptr(), data.len(), addr.ptr()) }
+        ro n = unsafe { net_udp_send_to(sock.handle, data.ptr(), data.len(), addr.ptr()) }
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
     recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) {
-        ro n = unsafe { nova_net_udp_recv_from(sock.handle, buf.ptr(), buf.len(), sender.ptr()) }
+        ro n = unsafe { net_udp_recv_from(sock.handle, buf.ptr(), buf.len(), sender.ptr()) }
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
-    close_socket(sock UdpSocket) { unsafe { nova_net_udp_close(sock.handle) } }
-    socket_local_port(sock UdpSocket) => unsafe { nova_net_udp_local_port(sock.handle) }
+    close_socket(sock UdpSocket) { unsafe { net_udp_close(sock.handle) } }
+    socket_local_port(sock UdpSocket) => unsafe { net_udp_local_port(sock.handle) }
     socket_local_addr(sock UdpSocket, out mut []u8) {
-        unsafe { nova_net_udp_local_addr(sock.handle, out.ptr()) }
+        unsafe { net_udp_local_addr(sock.handle, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
     lookup(host []u8, port u16) {
         mut base int = 0    // C writes the GC-array base pointer here (via &base)
         mut err int = 0
-        ro count = unsafe { nova_net_dns_lookup(host.ptr(), host.len(), port, (&base) as *(), &err) }
+        ro count = unsafe { net_dns_lookup(host.ptr(), host.len(), port, (&base) as *(), &err) }
         if count < 0 { err_lookup(err) } else { lookup_ok(base, count) }
     }
 }
