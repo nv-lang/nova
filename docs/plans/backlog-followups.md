@@ -1987,3 +1987,9 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - **[M-checker-builtin-mut-method-list]** (2026-07-07, P3, Wave: 185/172-семья) —
   is_builtin_mut_method (types/mod.rs:23146) — checker-эвристика со списком mut-методов
   Vec/Map/Set, дублирует знание о реальных .nv-методах (дрейф-риск класса gc.nv).
+
+- **[M-plan62-hashable-flap-runtime]** (2026-07-07, P2, Wave: разбор 17 крашеров санации-182 —
+  тот же класс рантайм-нестабильности) — nova_tests/plan62/duplicate_hashable_protocol.nv
+  флапает PASS/RUN-FAIL в single-process ПОСЛЕДОВАТЕЛЬНЫХ прогонах (обрыв на 4-й из 90
+  проверок) — НЕ temp-гонка (доказано runner-фиксом: PID-изоляция не убрала флап). Похоже
+  на GC/рантайм-гонку в самом тесте или кодогене hashable-протокола.
