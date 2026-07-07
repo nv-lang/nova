@@ -19,7 +19,7 @@ test "encode empty object" {
 test "parse empty object" {
     ro parsed = Json.parse("{}")!!
     assert(parsed.is_object())
-    match parsed.as_object() {
+    match parsed.object() {
         Some(m) => assert(m.len() == 0)
         None    => assert(false)
     }

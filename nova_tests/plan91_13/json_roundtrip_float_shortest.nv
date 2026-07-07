@@ -7,7 +7,7 @@
 // MINIMAL decimal string whose `strtod` re-parses bit-for-bit to the original
 // double. These tests pin that faithfulness end-to-end.
 //
-// Parse-back path: `Json.parse(...)!!.as_num()` (Option[f64], the working
+// Parse-back path: `Json.parse(...)!!.num()` (Option[f64], the working
 // numeric-extraction path — the parser reads via nova_str_to_f64 and stores a
 // true f64 in JsonValue.Num).
 
@@ -17,14 +17,14 @@ import std.encoding.json.{JsonValue, Json}
 
 // str.from(v) directly → parse the emitted JSON number back → identity.
 priv(file) fn f64rt_direct(v f64) -> bool {
-    Json.parse(str.from(v))!!.as_num() == Some(v)
+    Json.parse(str.from(v))!!.num() == Some(v)
 }
 
-// JsonValue.num(v).to_str() → Json.parse → as_num: the json encode/decode path
+// JsonValue.num(v).to_str() → Json.parse → num(): the json encode/decode path
 // (`format_num` → `str.from(n)`), exactly the `decode(encode(v)) == v` gate.
 priv(file) fn f64rt_json(v f64) -> bool {
     ro encoded = JsonValue.num(v).to_str()
-    Json.parse(encoded)!!.as_num() == Some(v)
+    Json.parse(encoded)!!.num() == Some(v)
 }
 
 test "shortest-round-trip: pi (>6 sig-figs, was lossy)" {

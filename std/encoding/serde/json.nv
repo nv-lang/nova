@@ -181,25 +181,25 @@ fn is_exact_int(n f64) -> bool =>
 // ── Deserializer-протокол ──
 
 fn JsonDeserializer mut @deser_bool() -> Result[bool, DeError] {
-    match @cur.as_bool() {
+    match @cur.bool() {
         Some(b) => Ok(b)
         None    => Err(DeError.unexpected("bool", json_kind(@cur)))
     }
 }
 fn JsonDeserializer mut @deser_str() -> Result[str, DeError] {
-    match @cur.as_str() {
+    match @cur.str() {
         Some(s) => Ok(s)
         None    => Err(DeError.unexpected("string", json_kind(@cur)))
     }
 }
 fn JsonDeserializer mut @deser_float() -> Result[f64, DeError] {
-    match @cur.as_num() {
+    match @cur.num() {
         Some(n) => Ok(n)
         None    => Err(DeError.unexpected("number", json_kind(@cur)))
     }
 }
 fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
-    match @cur.as_num() {
+    match @cur.num() {
         None => Err(DeError.unexpected("int", json_kind(@cur)))
         Some(n) => {
             if !is_exact_int(n) {
@@ -211,7 +211,7 @@ fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
     }
 }
 fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
-    match @cur.as_num() {
+    match @cur.num() {
         None => Err(DeError.unexpected("uint", json_kind(@cur)))
         Some(n) => {
             if n < 0.0 {
@@ -225,7 +225,7 @@ fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
     }
 }
 fn JsonDeserializer mut @deser_bytes() -> Result[[]u8, DeError] {
-    match @cur.as_str() {
+    match @cur.str() {
         None => Err(DeError.unexpected("base64 string", json_kind(@cur)))
         Some(s) => match Base64.decode(s) {
             Ok(b)  => Ok(b)
@@ -238,7 +238,7 @@ fn JsonDeserializer mut @is_str() -> Result[bool, DeError] => Ok(@cur.is_str())
 
 fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeError] {
     if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
-    match @cur.as_object() {
+    match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => match m.get(key) {
             None    => Err(DeError.at(MissingField(key), "$.${key}"))
@@ -248,7 +248,7 @@ fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeErro
 }
 fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer, DeError] {
     if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
-    match @cur.as_object() {
+    match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => match m.get(key) {
             None    => Ok(JsonDeserializer.at(JsonValue.null(), @depth + 1, @max_depth))
@@ -257,14 +257,14 @@ fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer
     }
 }
 fn JsonDeserializer mut @seq_len() -> Result[int, DeError] {
-    match @cur.as_array() {
+    match @cur.array() {
         None    => Err(DeError.unexpected("array", json_kind(@cur)))
         Some(a) => Ok(a.len())
     }
 }
 fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError] {
     if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
-    match @cur.as_array() {
+    match @cur.array() {
         None    => Err(DeError.unexpected("array", json_kind(@cur)))
         Some(a) => match a.get(i) {
             Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
@@ -273,7 +273,7 @@ fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError]
     }
 }
 fn JsonDeserializer mut @map_keys() -> Result[[]str, DeError] {
-    match @cur.as_object() {
+    match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => {
             mut ks []str = []

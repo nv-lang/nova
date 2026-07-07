@@ -80,7 +80,7 @@ export fn Jwt.decode_hs256(secret []u8, token str) Fail[JwtError] -> JsonValue {
         Ok(v)  => v
         Err(_) => throw DecodingFailed
     }
-    ro alg = match header.as_object() {
+    ro alg = match header.object() {
         Some(m) => match m.get("alg") {
             Some(Str(a)) => a
             _            => throw InvalidFormat
@@ -124,7 +124,7 @@ export fn Jwt.validate_hs256(secret []u8, token str) Time Fail[JwtError] -> Json
     ro now_ms = Time.now_ms()
     ro now_s = now_ms / 1000
 
-    match claims.as_object() {
+    match claims.object() {
         Some(m) => {
             // exp — expiration (RFC 7519 § 4.1.4)
             match m.get("exp") {
@@ -166,7 +166,7 @@ test "encode/decode round-trip" {
     ro token = Jwt.encode_hs256(secret, claims)
     ro decoded = Jwt.decode_hs256(secret, token)
 
-    match decoded.as_object() {
+    match decoded.object() {
         Some(m) => {
             assert(m.get("sub") == Some(Str("user-42")))
             assert(m.get("admin") == Some(Bool(true)))
@@ -244,7 +244,7 @@ test "validate: ok если exp в будущем и nbf в прошлом" {
 
     with Time = th.fixed_ms(5_000_000) {
         ro claims = Jwt.validate_hs256(secret, token)
-        match claims.as_object() {
+        match claims.object() {
             Some(c) => assert(c.get("sub") == Some(Str("user")))
             None    => assert(false)
         }

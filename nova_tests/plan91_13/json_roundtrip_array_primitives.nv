@@ -21,12 +21,12 @@ test "encode mixed primitives array" {
 
 test "parse mixed primitives array" {
     ro parsed = Json.parse("[1, \"a\", true, null]")!!
-    match parsed.as_array() {
+    match parsed.array() {
         Some(xs) => {
             assert(xs.len() == 4)
-            assert(xs[0].as_num() == Some(1.0))
-            assert(xs[1].as_str() == Some("a"))
-            assert(xs[2].as_bool() == Some(true))
+            assert(xs[0].num() == Some(1.0))
+            assert(xs[1].str() == Some("a"))
+            assert(xs[2].bool() == Some(true))
             assert(xs[3].is_null())
         }
         None => assert(false)

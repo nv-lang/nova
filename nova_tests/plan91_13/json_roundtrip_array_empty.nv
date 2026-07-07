@@ -17,7 +17,7 @@ test "encode empty array" {
 test "parse empty array" {
     ro parsed = Json.parse("[]")!!
     assert(parsed.is_array())
-    match parsed.as_array() {
+    match parsed.array() {
         Some(xs) => assert(xs.len() == 0)
         None     => assert(false)
     }

@@ -50,36 +50,36 @@ test "parse null" {
 
 test "parse bool true" {
     ro parsed = Json.parse("true")!!
-    assert(parsed.as_bool() == Some(true))
+    assert(parsed.bool() == Some(true))
 }
 
 test "parse num int" {
     ro parsed = Json.parse("42")!!
-    assert(parsed.as_num() == Some(42.0))
+    assert(parsed.num() == Some(42.0))
 }
 
 test "parse str simple" {
     ro parsed = Json.parse("\"hello\"")!!
-    assert(parsed.as_str() == Some("hello"))
+    assert(parsed.str() == Some("hello"))
 }
 
 test "roundtrip bool" {
     ro orig = JsonValue.bool(true)
     ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
-    assert(decoded.as_bool() == Some(true))
+    assert(decoded.bool() == Some(true))
 }
 
 test "roundtrip num" {
     ro orig = JsonValue.num(123.0)
     ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
-    assert(decoded.as_num() == Some(123.0))
+    assert(decoded.num() == Some(123.0))
 }
 
 test "roundtrip str" {
     ro orig = JsonValue.str("world")
     ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
-    assert(decoded.as_str() == Some("world"))
+    assert(decoded.str() == Some("world"))
 }

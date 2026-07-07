@@ -13,7 +13,7 @@
 //!
 //! ```nova
 //! let v = Json.parse("{\"name\": \"alice\", \"age\": 30}")!!
-//! match v.as_object() {
+//! match v.object() {
 //!     Some(m) => assert(m.get("name") == Some(Str("alice")))
 //!     None    => assert(false)
 //! }
@@ -26,7 +26,7 @@ module encoding.json
 // (Object variant + Json.parse).  HashMap живёт в std/collections/hashmap.nv
 // и НЕ в std.prelude.  Без явного `import` peer_files codegen-prepass
 // не подтягивает hashmap.nv → HashMap не регистрируется в
-// `generic_type_templates` → fn-signature emission для `as_object()`
+// `generic_type_templates` → fn-signature emission для `object()` (тогда ещё `as_object()`, D410 rename)
 // эмитит erased `NovaOpt_nova_int` вместо concrete `NovaOpt_Nova_HashMap_p`,
 // body-pass позже видит concrete тип → mismatch CC-FAIL.
 //
@@ -129,31 +129,31 @@ export fn JsonValue @is_object() -> bool => match @ { Object(_) => true, _ => fa
 ///
 /// # Examples
 /// ```nova
-/// assert(Json.parse("true")!!.as_bool() == Some(true))
-/// assert(Json.parse("42")!!.as_bool() == None)
+/// assert(Json.parse("true")!!.bool() == Some(true))
+/// assert(Json.parse("42")!!.bool() == None)
 /// ```
 #stable(since = "0.1")
-export fn JsonValue @as_bool() -> Option[bool] =>
+export fn JsonValue @bool() -> Option[bool] =>
     match @ { Bool(b) => Some(b), _ => None }
 
 /// Extract `f64`. `None` если тип не Num.
 #stable(since = "0.1")
-export fn JsonValue @as_num() -> Option[f64] =>
+export fn JsonValue @num() -> Option[f64] =>
     match @ { Num(n) => Some(n), _ => None }
 
 /// Extract `str`. `None` если тип не Str.
 #stable(since = "0.1")
-export fn JsonValue @as_str() -> Option[str] =>
+export fn JsonValue @str() -> Option[str] =>
     match @ { Str(s) => Some(s), _ => None }
 
 /// Extract array slice. `None` если тип не Array.
 #stable(since = "0.1")
-export fn JsonValue @as_array() -> Option[[]JsonValue] =>
+export fn JsonValue @array() -> Option[[]JsonValue] =>
     match @ { Array(xs) => Some(xs), _ => None }
 
 /// Extract object map. `None` если тип не Object.
 #stable(since = "0.1")
-export fn JsonValue @as_object() -> Option[HashMap[str, JsonValue]] =>
+export fn JsonValue @object() -> Option[HashMap[str, JsonValue]] =>
     match @ { Object(m) => Some(m), _ => None }
 
 

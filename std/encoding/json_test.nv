@@ -14,18 +14,18 @@ import std.collections.hashmap.{HashMap}
 
 test "parse: примитивы" {
     assert(Json.parse("null")!!.is_null())
-    assert(Json.parse("true")!!.as_bool() == Some(true))
-    assert(Json.parse("false")!!.as_bool() == Some(false))
-    assert(Json.parse("42")!!.as_num() == Some(42.0))
-    assert(Json.parse("-3.14")!!.as_num() == Some(-3.14))
-    assert(Json.parse("1e3")!!.as_num() == Some(1000.0))
-    assert(Json.parse("\"hello\"")!!.as_str() == Some("hello"))
+    assert(Json.parse("true")!!.bool() == Some(true))
+    assert(Json.parse("false")!!.bool() == Some(false))
+    assert(Json.parse("42")!!.num() == Some(42.0))
+    assert(Json.parse("-3.14")!!.num() == Some(-3.14))
+    assert(Json.parse("1e3")!!.num() == Some(1000.0))
+    assert(Json.parse("\"hello\"")!!.str() == Some("hello"))
 }
 
 test "parse: пустые collections" {
     ro arr = Json.parse("[]")!!
     assert(arr.is_array())
-    match arr.as_array() {
+    match arr.array() {
         Some(xs) => assert(xs.len() == 0)
         None     => assert(false)
     }
@@ -36,12 +36,12 @@ test "parse: пустые collections" {
 
 test "parse: array элементов" {
     ro v = Json.parse("[1, 2, 3]")!!
-    match v.as_array() {
+    match v.array() {
         Some(xs) => {
             assert(xs.len() == 3)
-            assert(xs[0].as_num() == Some(1.0))
-            assert(xs[1].as_num() == Some(2.0))
-            assert(xs[2].as_num() == Some(3.0))
+            assert(xs[0].num() == Some(1.0))
+            assert(xs[1].num() == Some(2.0))
+            assert(xs[2].num() == Some(3.0))
         }
         None => assert(false)
     }
@@ -49,7 +49,7 @@ test "parse: array элементов" {
 
 test "parse: object с полями" {
     ro v = Json.parse("{\"name\": \"alice\", \"age\": 30}")!!
-    match v.as_object() {
+    match v.object() {
         Some(m) => {
             assert(m.get("name") == Some(JsonValue.Str("alice")))
             assert(m.get("age") == Some(JsonValue.Num(30.0)))
@@ -61,12 +61,12 @@ test "parse: object с полями" {
 test "parse: nested structures" {
     ro s = "{\"users\": [{\"id\": 1}, {\"id\": 2}]}"
     ro v = Json.parse(s)!!
-    match v.as_object() {
+    match v.object() {
         Some(root) => match root.get("users") {
-            Some(users_v) => match users_v.as_array() {
+            Some(users_v) => match users_v.array() {
                 Some(users) => {
                     assert(users.len() == 2)
-                    assert(users[0].as_object().is_some())
+                    assert(users[0].object().is_some())
                 }
                 None => assert(false)
             }
@@ -78,17 +78,17 @@ test "parse: nested structures" {
 
 test "parse: escape sequences в string" {
     ro v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")!!
-    assert(v.as_str() == Some("line1\nline2\ttab\"quote"))
+    assert(v.str() == Some("line1\nline2\ttab\"quote"))
 }
 
 test "parse: unicode escape" {
     ro v = Json.parse("\"\\u00E9\"")!!          // é
-    assert(v.as_str() == Some("é"))
+    assert(v.str() == Some("é"))
 }
 
 test "parse: surrogate pair (emoji)" {
     ro v = Json.parse("\"\\uD83D\\uDE00\"")!!   // 😀 (U+1F600)
-    match v.as_str() {
+    match v.str() {
         Some(s) => assert(s.len() > 0)
         None    => assert(false)
     }
@@ -195,18 +195,18 @@ test "pretty: формат с отступами" {
 
 test "whitespace терпимость" {
     ro v = Json.parse("  [  1  ,  2  ]  ")!!
-    match v.as_array() {
+    match v.array() {
         Some(xs) => assert(xs.len() == 2)
         None     => assert(false)
     }
 }
 
 test "числа: разные форматы" {
-    assert(Json.parse("0")!!.as_num() == Some(0.0))
-    assert(Json.parse("-0")!!.as_num() == Some(-0.0) || Json.parse("-0")!!.as_num() == Some(0.0))
-    assert(Json.parse("1.5e2")!!.as_num() == Some(150.0))
-    assert(Json.parse("2.5E-1")!!.as_num() == Some(0.25))
-    assert(Json.parse("-1.5e+3")!!.as_num() == Some(-1500.0))
+    assert(Json.parse("0")!!.num() == Some(0.0))
+    assert(Json.parse("-0")!!.num() == Some(-0.0) || Json.parse("-0")!!.num() == Some(0.0))
+    assert(Json.parse("1.5e2")!!.num() == Some(150.0))
+    assert(Json.parse("2.5E-1")!!.num() == Some(0.25))
+    assert(Json.parse("-1.5e+3")!!.num() == Some(-1500.0))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -218,11 +218,11 @@ test "числа: разные форматы" {
 // байтовыми срезами @read_number, портя число.
 test "Баг 1: non-ASCII в строке без escape + число после" {
     ro v = Json.parse("[\"é\", 12]")!!
-    match v.as_array() {
+    match v.array() {
         Some(xs) => {
             assert(xs.len() == 2)
-            assert(xs[0].as_str() == Some("é"))
-            assert(xs[1].as_num() == Some(12.0))
+            assert(xs[0].str() == Some("é"))
+            assert(xs[1].num() == Some(12.0))
         }
         None => assert(false)
     }
@@ -231,7 +231,7 @@ test "Баг 1: non-ASCII в строке без escape + число после"
 // Многобайтовый codepoint прямо в ключе объекта.
 test "Баг 1: многобайтовый codepoint в ключе объекта" {
     ro v = Json.parse("{\"héllo\": 1}")!!
-    match v.as_object() {
+    match v.object() {
         Some(m) => assert(m.get("héllo") == Some(JsonValue.Num(1.0)))
         None    => assert(false)
     }
@@ -241,7 +241,7 @@ test "Баг 1: многобайтовый codepoint в ключе объект�
 // codepoint U+0008/U+000C (не в пустую строку) и сериализоваться обратно.
 test "Баг 2: round-trip \\b\\f" {
     ro v = Json.parse("\"\\b\\f\"")!!
-    match v.as_str() {
+    match v.str() {
         Some(s) => {
             assert(s.byte_len() == 2)
             ro bytes = s.bytes()
