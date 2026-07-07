@@ -37,7 +37,7 @@ typedef struct NovaBrotliDec {
     int      needs_input; /* last pull blocked on NEEDS_MORE_INPUT */
 } NovaBrotliDec;
 
-intptr_t nova_brotli_dec_new(void) {
+intptr_t brotli_dec_new(void) {
     NovaBrotliDec* d = (NovaBrotliDec*)calloc(1, sizeof(NovaBrotliDec));
     if (!d) return 0;
     d->st = BrotliDecoderCreateInstance(NULL, NULL, NULL);
@@ -45,7 +45,7 @@ intptr_t nova_brotli_dec_new(void) {
     return (intptr_t)d;
 }
 
-intptr_t nova_brotli_dec_feed(intptr_t h, const uint8_t* p, intptr_t len) {
+intptr_t brotli_dec_feed(intptr_t h, const uint8_t* p, intptr_t len) {
     NovaBrotliDec* d = (NovaBrotliDec*)(intptr_t)h;
     if (!d || len < 0) return -1;
     if (len == 0) return 0;
@@ -72,7 +72,7 @@ intptr_t nova_brotli_dec_feed(intptr_t h, const uint8_t* p, intptr_t len) {
     return 0;
 }
 
-intptr_t nova_brotli_dec_pull(intptr_t h, uint8_t* out, intptr_t out_cap) {
+intptr_t brotli_dec_pull(intptr_t h, uint8_t* out, intptr_t out_cap) {
     NovaBrotliDec* d = (NovaBrotliDec*)(intptr_t)h;
     if (!d || out_cap < 0) return -1;
     if (d->err != 0) return -1;
@@ -101,22 +101,22 @@ intptr_t nova_brotli_dec_pull(intptr_t h, uint8_t* out, intptr_t out_cap) {
     }
 }
 
-intptr_t nova_brotli_dec_done(intptr_t h) {
+intptr_t brotli_dec_done(intptr_t h) {
     NovaBrotliDec* d = (NovaBrotliDec*)(intptr_t)h;
     return (d && d->done) ? 1 : 0;
 }
 
-intptr_t nova_brotli_dec_needs_input(intptr_t h) {
+intptr_t brotli_dec_needs_input(intptr_t h) {
     NovaBrotliDec* d = (NovaBrotliDec*)(intptr_t)h;
     return (d && d->needs_input) ? 1 : 0;
 }
 
-intptr_t nova_brotli_dec_error(intptr_t h) {
+intptr_t brotli_dec_error(intptr_t h) {
     NovaBrotliDec* d = (NovaBrotliDec*)(intptr_t)h;
     return d ? (intptr_t)d->err : -1;
 }
 
-void nova_brotli_dec_free(intptr_t h) {
+void brotli_dec_free(intptr_t h) {
     NovaBrotliDec* d = (NovaBrotliDec*)(intptr_t)h;
     if (!d) return;
     if (d->st) BrotliDecoderDestroyInstance(d->st);
@@ -126,16 +126,16 @@ void nova_brotli_dec_free(intptr_t h) {
 
 #else /* !NOVA_USE_BROTLI — feature-gate stubs (Q11) */
 
-intptr_t nova_brotli_dec_new(void) { return 0; }
-intptr_t nova_brotli_dec_feed(intptr_t h, const uint8_t* p, intptr_t len) {
+intptr_t brotli_dec_new(void) { return 0; }
+intptr_t brotli_dec_feed(intptr_t h, const uint8_t* p, intptr_t len) {
     (void)h; (void)p; (void)len; return -1;
 }
-intptr_t nova_brotli_dec_pull(intptr_t h, uint8_t* out, intptr_t out_cap) {
+intptr_t brotli_dec_pull(intptr_t h, uint8_t* out, intptr_t out_cap) {
     (void)h; (void)out; (void)out_cap; return -1;
 }
-intptr_t nova_brotli_dec_done(intptr_t h) { (void)h; return 0; }
-intptr_t nova_brotli_dec_needs_input(intptr_t h) { (void)h; return 0; }
-intptr_t nova_brotli_dec_error(intptr_t h) { (void)h; return -1; }
-void nova_brotli_dec_free(intptr_t h) { (void)h; }
+intptr_t brotli_dec_done(intptr_t h) { (void)h; return 0; }
+intptr_t brotli_dec_needs_input(intptr_t h) { (void)h; return 0; }
+intptr_t brotli_dec_error(intptr_t h) { (void)h; return -1; }
+void brotli_dec_free(intptr_t h) { (void)h; }
 
 #endif /* NOVA_USE_BROTLI */

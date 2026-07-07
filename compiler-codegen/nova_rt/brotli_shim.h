@@ -26,26 +26,26 @@
  * so brotli_shim.c compiles as a standalone TU without pulling nova_rt.h. */
 
 /* Create a streaming decoder. Returns an opaque handle (>0), or 0 on OOM. */
-intptr_t nova_brotli_dec_new(void);
+intptr_t brotli_dec_new(void);
 
 /* Append `len` compressed bytes (copied internally). 0 = OK, -1 = OOM/bad-arg. */
-intptr_t nova_brotli_dec_feed(intptr_t h, const uint8_t* p, intptr_t len);
+intptr_t brotli_dec_feed(intptr_t h, const uint8_t* p, intptr_t len);
 
 /* Decode into `out` (up to `out_cap` bytes). Returns bytes written (>=0), or -1
- * on a decode error (query nova_brotli_dec_error). After the call, inspect
- * nova_brotli_dec_done / nova_brotli_dec_needs_input for stream state. */
-intptr_t nova_brotli_dec_pull(intptr_t h, uint8_t* out, intptr_t out_cap);
+ * on a decode error (query brotli_dec_error). After the call, inspect
+ * brotli_dec_done / brotli_dec_needs_input for stream state. */
+intptr_t brotli_dec_pull(intptr_t h, uint8_t* out, intptr_t out_cap);
 
 /* 1 once the stream reached clean end (BROTLI_DECODER_RESULT_SUCCESS), else 0. */
-intptr_t nova_brotli_dec_done(intptr_t h);
+intptr_t brotli_dec_done(intptr_t h);
 
 /* 1 if the last pull blocked needing more input (truncated when no more feeds). */
-intptr_t nova_brotli_dec_needs_input(intptr_t h);
+intptr_t brotli_dec_needs_input(intptr_t h);
 
 /* Detailed BrotliDecoderErrorCode (<0) after a -1 pull, else 0. */
-intptr_t nova_brotli_dec_error(intptr_t h);
+intptr_t brotli_dec_error(intptr_t h);
 
 /* Destroy the decoder + free all internal buffers. Idempotent-safe on 0. */
-void nova_brotli_dec_free(intptr_t h);
+void brotli_dec_free(intptr_t h);
 
 #endif /* NOVA_BROTLI_SHIM_H */

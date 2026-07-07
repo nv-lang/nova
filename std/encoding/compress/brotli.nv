@@ -28,15 +28,15 @@ const BROTLI_PULL_BUDGET int = 65536
 /// `UnsupportedMethod("brotli not built")` (Q11 — never a panic / link error).
 #stable(since = "0.1")
 export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError] {
-    ro h = nova_brotli_dec_new()
+    ro h = brotli_dec_new()
     if h == 0 {
         return Err(CompressError.unsupported("brotli not built"))
     }
     // Feed the whole compressed input (the shim copies it internally).
     if data.len() > 0 {
-        ro fr = unsafe { nova_brotli_dec_feed(h, data.ptr(), data.len()) }
+        ro fr = unsafe { brotli_dec_feed(h, data.ptr(), data.len()) }
         if fr != 0 {
-            nova_brotli_dec_free(h)
+            brotli_dec_free(h)
             return Err(CompressError.invalid("brotli: input too large to buffer"))
         }
     }
@@ -55,7 +55,7 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
         } else {
             BROTLI_PULL_BUDGET
         }
-        ro n = unsafe { nova_brotli_dec_pull(h, chunk.ptr(), budget) }
+        ro n = unsafe { brotli_dec_pull(h, chunk.ptr(), budget) }
         if n < 0 {
             err = Some(CompressError.invalid("brotli: corrupt stream"))
             finished = true
@@ -70,11 +70,11 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
                     out.push(chunk[i])
                     i += 1
                 }
-                if nova_brotli_dec_done(h) != 0 {
+                if brotli_dec_done(h) != 0 {
                     finished = true
                 } else if n == 0 {
                     // No progress and not finished: truncated input, or a stall.
-                    ro needs = nova_brotli_dec_needs_input(h)
+                    ro needs = brotli_dec_needs_input(h)
                     err = if needs != 0 {
                         Some(CompressError.eof())
                     } else {
@@ -85,7 +85,7 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
             }
         }
     }
-    nova_brotli_dec_free(h)
+    brotli_dec_free(h)
     match err {
         Some(e) => Err(e)
         None    => Ok(out)
