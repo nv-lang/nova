@@ -1765,5 +1765,9 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `Option/Result @unwrap()` (:264/:363), `@unwrap_or` (:272/:370), `@unwrap_or_else`
   (:278/:379); мигрировать вызовы: `.unwrap()` ×33 → `x!!`, `.unwrap_or(v)` ×29 → `x ?? v`
   (скобки по прецедентности в цепочках: `(chain) ?? v` где нужно), `_or_else` ×0.
-  ТУДА ЖЕ: дубль StringBuilder `@capacity()`/@cap() (string_builder.nv:106/:112, alias) —
-  D9: ретрактировать `@capacity()`, вызовы → `cap()` (греп по репо).
+  ТУДА ЖЕ (подтверждено владельцем): ретракция `@capacity()` у ВСЕХ носителей — дубль
+  канонического `cap()` (D9): StringBuilder (:106/:112 alias-пара), HashMap (:172/:178
+  alias-пара), WriteBuffer (:79 — только capacity, завести cap()-чтение при сносе);
+  вызовов ~13 → `cap()`. ПЛЮС устаревшие док-строки обратного канона: 03-syntax.md:5762
+  («v.capacity() ✓ renamed from .cap» — до-амендментная эпоха D117) и таблица длин там же
+  (:1923-зона) — привести к cap()-канону, D117-таблицу method-имён обновить.
