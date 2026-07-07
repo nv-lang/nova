@@ -2391,3 +2391,20 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   его synthetic-флагом и скипать в `lint_unused_imports`, либо расширить `is_prelude_import`
   на его реальный path. Волна промоушена 2026-07-08 репортила гейт как «PASS + 1 phantom-WARN
   на файл» со ссылкой сюда.
+
+- **[M-hashmap-swisstable-candidate]** (2026-07-08, P3-кандидат, Plan: отдельный атом ПОСЛЕ
+  всех текущих работ (директива владельца); Wave: [opus-карта → sonnet]) — апгрейд
+  внутренностей std/collections/hashmap.nv на SwissTable-раскладку: контрольные байты
+  (1Б/слот: Empty/Deleted/H2-отпечаток 7 бит) отдельным []u8 + KV-массив без enum-тегов;
+  групповое пробирование по 16 (портативный u64-путь, SIMD опционально); load factor 7/8;
+  Deleted только при полной группе (минимум могилок). Публичная поверхность НЕ меняется.
+  Поля уже закрыты D281-формой `priv { }` (2026-07-08) — layout свободен для замены.
+
+- **[M-d162-structural-throw-sibling]** (2026-07-08, P2, Plan: 172.13 чекер-каналы;
+  Wave: с остальными чекер-маркерами) — D162 (uncovered-error-path) — структурный, не
+  dataflow: требует throw ПРЯМЫМ сиблингом сразу после потребления; throw внутри
+  match-ветки (`Err(_) => throw`) при наличии раннего return в той же fn не доказывается,
+  даже когда поток очевидно безопасен. Обходной канон (применён в _experimental
+  encoding/toml, text/regex, волна 3б 2026-07-08): `if x.is_err() { throw ... }` сиблингом
+  + отдельный match для извлечения (Err-ветка = panic("unreachable")). Правильный фикс:
+  научить D162 покрытию через match-ветки (или полноценный dataflow по путям).

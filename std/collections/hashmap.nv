@@ -88,7 +88,7 @@ type Slot[K, V] enum
 #stable(since = "0.1")
 #from_fields
 #from_pairs
-export type HashMap[K Hash, V] {
+export type HashMap[K Hash, V] priv {
     // buckets — массив слотов. Длина — степень двойки (для битовой маски
     // вместо modulo — `idx & (len - 1)`). Internal: layout может изменяться,
     // не обращайся напрямую. Используй @len() / @get() / @insert().
