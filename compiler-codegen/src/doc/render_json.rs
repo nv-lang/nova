@@ -659,6 +659,15 @@ fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
                 write_typeref_structural(w, inner);
             });
         }
+        // Plan 184: `ref T` — ограниченный ссылочный тип.
+        TypeRef::Ref(inner, _) => {
+            let source = super::collector::render_type_for_doc(ty);
+            w.field_object("structural_type", |w| {
+                w.field_str("kind", "ref");
+                w.field_str("source", &source);
+                write_typeref_structural(w, inner);
+            });
+        }
     }
 }
 

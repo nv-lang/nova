@@ -13111,7 +13111,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
         }
     }
 
@@ -13239,7 +13240,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             TypeRef::Readonly(inner, _)
             | TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::collect_array_elem_typerefs(inner, out),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_array_elem_typerefs(inner, out),
             TypeRef::Unit(_) => {}
         }
     }
@@ -15844,6 +15846,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             T::Mut(inner, _) => format!("mut {}", Self::type_ref_overload_key(inner)),
             T::Unsafe(inner, _) => format!("unsafe {}", Self::type_ref_overload_key(inner)),
             T::Pointer(inner, _) => format!("*{}", Self::type_ref_overload_key(inner)),
+            // Plan 184: `ref T` distinct overload key (Р13/Р14 mode axis — the
+            // ref-ness of the target participates in structural distinction).
+            T::Ref(inner, _) => format!("ref {}", Self::type_ref_overload_key(inner)),
         }
     }
 
@@ -16999,7 +17004,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::type_ref_mentions_name(inner, names),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::type_ref_mentions_name(inner, names),
         }
     }
 
@@ -39032,7 +39038,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
     }
 

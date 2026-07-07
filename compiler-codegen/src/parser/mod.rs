@@ -6117,21 +6117,19 @@ impl Parser {
         let no_dotted_path = self.receiver_elem_ctx;
         self.receiver_elem_ctx = false;
         match self.peek().kind {
-            // Plan 172.5 (D326 R1): `ref` — режим передачи параметра, НЕ тип.
-            // Запрещены `ref T`-локалы/поля/возвраты/коллекции/sum/Option — всё
-            // это ловится здесь, т.к. любой из них резолвит тип через parse_type.
-            // Единственные валидные места `ref` — `ro ref`/`mut ref` на
-            // параметре (parse_param) и call-site `ref <place>` (parse args).
+            // Plan 184 (D326-ревизия, 2026-07-07): `ref` — ОГРАНИЧЕННЫЙ тип
+            // (аналог C++ `T&`), а НЕ «режим передачи». Парсер принимает `ref T`
+            // в любой типовой позиции → `TypeRef::Ref`; ЗАПРЕТ позиций (поля,
+            // коллекции, суммы, Option, тип-аргументы дженериков → Р1
+            // E_REF_TYPE_POSITION) вводит ЧЕКЕР, т.к. Р6-нормализация (`ref H ≡
+            // H`) требует знания heap/value, доступного только после резолва.
+            // Формы `ref`/`ro ref`/`mut ref` в ПАРАМЕТРЕ сняты заходом-1
+            // (E_REF_PARAM_FORM_REMOVED в parse_param) — здесь не воскрешаем.
             TokenKind::KwRef => {
-                return Err(Diagnostic::new(
-                    "[E_REF_NOT_A_TYPE] `ref` — режим передачи параметра (D326 R1), \
-                     НЕ тип: запрещены `ref T`-локалы/биндинги, ref-поля, ref в \
-                     Vec/коллекции/sum/Option и ref-возвраты. Используй `ro ref`/\
-                     `mut ref` только в позиции параметра (`fn f(mut ref x T)`), а \
-                     на месте вызова — маркер `f(ref x)`. Лайфтаймов в Nova нет."
-                        .to_string(),
-                    start,
-                ));
+                let ref_span = self.bump().span;
+                let inner = self.parse_type()?;
+                let full = ref_span.merge(inner.span());
+                return Ok(TypeRef::Ref(Box::new(inner), full));
             }
             // Plan 114 (D184) Ф.1.5: `readonly T` renamed to `ro T`.
             TokenKind::KwReadonly => {
@@ -6732,7 +6730,8 @@ impl Parser {
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
             | TypeRef::Unsafe(inner, _)
-            | TypeRef::Pointer(inner, _) => Self::collect_free_typevars(inner, out),
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_free_typevars(inner, out),
             TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
         }
     }

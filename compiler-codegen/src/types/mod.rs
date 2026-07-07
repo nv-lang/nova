@@ -255,6 +255,13 @@ impl ResolvedType {
                 }
                 _ => R::from_type_ref(inner),
             },
+            // Plan 184 (D326-ревизия): `ref T` — ограниченный ссылочный тип.
+            // Для системы типов ПРОЗРАЧЕН (Р5: чтение = разыменование → `T`):
+            // резолвится в тип цели. Р6 (`ref H ≡ H`) выпадает автоматически —
+            // и value, и heap `T` дают тот же `ResolvedType`, что и без `ref`.
+            // Указатель-алиас (value `T`) — деталь C-lowering (ref-локалы,
+            // `type_ref_to_c`), не наблюдаемая на уровне резолва.
+            TypeRef::Ref(inner, _) => R::from_type_ref(inner),
         }
     }
 
@@ -2989,6 +2996,8 @@ fn is_value_type_for_v3(
         Readonly(inner, _) | Mut(inner, _) | Unsafe(inner, _) => {
             is_value_type_for_v3(inner, types)
         }
+        // Plan 184: `ref T` — ссылочный алиас; классифицируем по цели (Р5).
+        Ref(inner, _) => is_value_type_for_v3(inner, types),
         // Module-qualified Named (path.len() > 1) — out-of-module type;
         // assume reference (conservative — won't break value semantic для
         // local types; cross-module value records require explicit detection
@@ -3065,6 +3074,8 @@ fn check_v3_ro_mut_conflict(
         }
         Unsafe(inner, _) => check_v3_ro_mut_conflict(inner, types, at_binding_top, errors),
         Pointer(inner, _) => check_v3_ro_mut_conflict(inner, types, false, errors),
+        // Plan 184: `ref T` — прозрачно рекурсируем в цель.
+        Ref(inner, _) => check_v3_ro_mut_conflict(inner, types, false, errors),
         Array(inner, _) | FixedArray(_, inner, _) => {
             check_v3_ro_mut_conflict(inner, types, false, errors);
         }
@@ -5711,6 +5722,10 @@ impl<'a> TypeCheckCtx<'a> {
             | TypeRef::Unsafe(inner, _) => self.infinite_dfs(inner, root, on_path, gs),
             // Pointer `*T` (any pointee) — always 8 bytes. INDIRECTION. STOP.
             TypeRef::Pointer(_, _) => None,
+            // Plan 184: `ref T` — указатель-алиас (8 байт). INDIRECTION. STOP.
+            // (ref к тому же root не создаёт inline-цикл; к тому же Р1 запрещает
+            // ref в полях — сюда он в норме не доходит.)
+            TypeRef::Ref(_, _) => None,
             // Slice `[]T` — 16-byte {ptr,len}. INDIRECTION. STOP.
             TypeRef::Array(_, _) => None,
             // Unit / Func / Protocol — finite leaves / existentials. STOP.
@@ -5799,6 +5814,7 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Readonly(inner, _) => format!("ro {}", Self::typeref_display(inner)),
             TypeRef::Mut(inner, _) => format!("mut {}", Self::typeref_display(inner)),
             TypeRef::Unsafe(inner, _) => format!("unsafe {}", Self::typeref_display(inner)),
+            TypeRef::Ref(inner, _) => format!("ref {}", Self::typeref_display(inner)),
             TypeRef::Tuple(elems, _) => {
                 let parts: Vec<String> = elems.iter().map(Self::typeref_display).collect();
                 format!("({})", parts.join(", "))
@@ -5915,9 +5931,12 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Readonly(inner, _) => self.walk_typeref(inner, gs, errors),
             // Plan 118 D216 + Plan 118.5: typed pointer `*T` family
             // (Pointer/Mut/Unsafe) — all transparent, walk inner for arity checks.
+            // Plan 184: `ref T` — прозрачно для arity (позиционный запрет Р1
+            // делает отдельный проход check_ref_type_positions).
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => self.walk_typeref(inner, gs, errors),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => self.walk_typeref(inner, gs, errors),
         }
     }
 
@@ -5957,7 +5976,8 @@ impl<'a> TypeCheckCtx<'a> {
             // (Pointer/Mut/Unsafe) — all transparent, recurse on inner.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::collect_named_idents(inner, out),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_named_idents(inner, out),
         }
     }
 
@@ -13762,6 +13782,8 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
                 self.resolved_cat_of_depth(inner, gs, depth + 1)
             }
+            // Plan 184: `ref T` категориально = цель (Р5 чтение = T; Р6 heap ≡ H).
+            TypeRef::Ref(inner, _) => self.resolved_cat_of_depth(inner, gs, depth + 1),
         }
     }
 
@@ -14052,7 +14074,8 @@ fn typeref_mentions_any(ty: &TypeRef, names: &HashSet<String>) -> bool {
         | TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
         | TypeRef::Unsafe(inner, _)
-        | TypeRef::Pointer(inner, _) => typeref_mentions_any(inner, names),
+        | TypeRef::Pointer(inner, _)
+        | TypeRef::Ref(inner, _) => typeref_mentions_any(inner, names),
         TypeRef::Tuple(elems, _) => elems.iter().any(|e| typeref_mentions_any(e, names)),
         TypeRef::Func { params, return_type, .. } => {
             params.iter().any(|p| typeref_mentions_any(p, names))
@@ -14166,6 +14189,7 @@ pub(crate) fn typeref_display(tr: &TypeRef) -> String {
         TypeRef::Pointer(inner, _) => format!("*{}", typeref_display(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", typeref_display(inner)),
         TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_display(inner)),
+        TypeRef::Ref(inner, _) => format!("ref {}", typeref_display(inner)),
     }
 }
 
@@ -18752,6 +18776,7 @@ fn render_type_ref(t: &TypeRef) -> String {
         TypeRef::Pointer(inner, _) => format!("* {}", render_type_ref(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", render_type_ref(inner)),
         TypeRef::Unsafe(inner, _) => format!("unsafe {}", render_type_ref(inner)),
+        TypeRef::Ref(inner, _) => format!("ref {}", render_type_ref(inner)),
     }
 }
 
@@ -19061,6 +19086,8 @@ fn subst_typeref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
         TypeRef::Mut(inner, s) => TypeRef::Mut(Box::new(subst_typeref(inner, subst)), *s),
         TypeRef::Pointer(inner, s) => TypeRef::Pointer(Box::new(subst_typeref(inner, subst)), *s),
         TypeRef::Unsafe(inner, s) => TypeRef::Unsafe(Box::new(subst_typeref(inner, subst)), *s),
+        // Plan 184: `ref T` — подставляем цель (`f[T]() -> ref T` при T=…).
+        TypeRef::Ref(inner, s) => TypeRef::Ref(Box::new(subst_typeref(inner, subst)), *s),
         // Func/Protocol/Unit — params/methods rarely reference the receiver's
         // type-params in a way the narrowing check needs; clone as-is.
         _ => t.clone(),
@@ -19452,6 +19479,8 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                     }
                     _ => type_key(inner),
                 },
+                // Plan 184: `ref T` — отдельный ключ (Р13/Р14 ось режима).
+                TypeRef::Ref(inner, _) => format!("ref_{}", type_key(inner)),
             }
         }
         fn op_sig(m: &EffectMethod) -> String {
@@ -26436,6 +26465,7 @@ fn typeref_render(t: &TypeRef) -> String {
         TypeRef::Pointer(inner, _) => format!("* {}", typeref_render(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", typeref_render(inner)),
         TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_render(inner)),
+        TypeRef::Ref(inner, _) => format!("ref {}", typeref_render(inner)),
     }
 }
 
@@ -27286,6 +27316,9 @@ fn ffi_c_abi_violation(
         TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _) => {
             ffi_c_abi_violation(inner, types, is_top_return, visited)
         }
+        // Plan 184 (Р9): `ref T` НЕ C-ABI — extern-граница только сырые
+        // `*`/`*mut`. `ref` — ABI-деталь Nova-передачи, не переносима.
+        TR::Ref(_, span) => Some((*span, render_type_ref(ty))),
         // Raw pointers: `*T` (any pointee) is C-ABI, recursion stops at the
         // address — EXCEPT a pointer to a fn (fn-pointer), where the D353
         // ABI-tag decides: `*extern "C" fn` is C-ABI (signature types must be
@@ -27560,7 +27593,8 @@ fn ffi_validate_c_fnptr_occurrences(
             }
             ffi_validate_c_fnptr_occurrences(inner, types, errors, reported);
         }
-        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _) => {
+        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _)
+        | TR::Ref(inner, _) => {
             ffi_validate_c_fnptr_occurrences(inner, types, errors, reported)
         }
         TR::Tuple(elems, _) => {

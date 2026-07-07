@@ -796,6 +796,10 @@ impl ExternalRegistry {
                     Self::type_ref_to_c(inner, recv)
                 }
             }
+            // Plan 184: `ref T` не появляется на extern-границе (Р9 — только
+            // сырые `*`/`*mut`); транспарентно резолвим цель (Р6 для heap уже
+            // выполнена, value-ref → указатель-алиас эмитится на месте локала).
+            TypeRef::Ref(inner, _) => Self::type_ref_to_c(inner, recv),
         }
     }
 

@@ -1647,6 +1647,18 @@ pub enum TypeRef {
     /// The PREFIX outer forms (`mut * T` / `ro * T` / `unsafe * T`) are
     /// retired parse errors (`E_POINTER_PREFIX_MODIFIER`).
     Pointer(Box<TypeRef>, Span),
+    /// **Plan 184 (D326-ревизия, 2026-07-07):** `ref T` — ограниченный
+    /// ссылочный тип (аналог C++ `T&`): непереселяемый алиас на хранилище `T`.
+    /// Легальные позиции (Р1): возврат (`-> ref Self` — де-сахар `-> @` для
+    /// value-типов), локальный алиас (`ro y ref T = x.a.b` / `mut y ref T`),
+    /// тип приёмника (`@` = `ref Self`). ЗАПРЕЩЁН (Р1, → `E_REF_TYPE_POSITION`):
+    /// поля, элементы коллекций, payload сумм, аргумент `Option`, тип-аргументы
+    /// дженериков (`f[ref T]` turbofish/`size_of[ref T]`). Нормализация Р6: для
+    /// кучевого `H` — `ref H ≡ H` (значение уже handle), проверяется ДО
+    /// позиционного запрета, так что `f[ref H]` легален и ≡ `f[H]`.
+    /// C-lowering: `ref T` (value `T`) → `T*` (указатель-алиас); `ref H` (heap)
+    /// → `H` по Р6. Auto-конверсия Р5: `ref T → T` (чтение = разыменование).
+    Ref(Box<TypeRef>, Span),
 }
 
 // Plan 123 baseline-fix (2026-06-02): Default for TypeRef used by test
@@ -1669,7 +1681,8 @@ impl TypeRef {
             | TypeRef::Readonly(_, span)
             | TypeRef::Mut(_, span)
             | TypeRef::Unsafe(_, span)
-            | TypeRef::Pointer(_, span) => *span,
+            | TypeRef::Pointer(_, span)
+            | TypeRef::Ref(_, span) => *span,
         }
     }
 
@@ -1870,7 +1883,8 @@ impl TypeRef {
             | TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
             | TypeRef::Unsafe(inner, _)
-            | TypeRef::Pointer(inner, _) => inner.uses_any_type_param(params),
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Ref(inner, _) => inner.uses_any_type_param(params),
             TypeRef::Tuple(ts, _) => ts.iter().any(|t| t.uses_any_type_param(params)),
             TypeRef::Func { params: p, return_type, .. } => {
                 p.iter().any(|t| t.uses_any_type_param(params))

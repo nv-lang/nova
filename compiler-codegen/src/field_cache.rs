@@ -432,10 +432,12 @@ fn is_reference_type_ref_with_depth(
         TypeRef::Tuple(_, _) => false,
         // Unit — no @-fields possible, inert.
         TypeRef::Unit(_) => false,
-        // Wrappers — peel and recurse.
+        // Wrappers — peel and recurse. Plan 184: `ref T` (forbidden as a field
+        // by Р1, but peel defensively) — a pointer alias to T's storage.
         TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _) => {
+        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Ref(inner, _) => {
             is_reference_type_ref_with_depth(inner, registry, depth + 1)
         }
         TypeRef::Named { path, .. } => {

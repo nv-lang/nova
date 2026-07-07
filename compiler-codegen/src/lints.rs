@@ -534,7 +534,8 @@ fn walk_typeref_for_a22(tr: &TypeRef, warnings: &mut Vec<LintWarning>) {
             // Plan 118.5 D216 V2: Pointer is 2-tuple; Mut/Unsafe — wrappers.
             TypeRef::Pointer(_, span)
             | TypeRef::Mut(_, span)
-            | TypeRef::Unsafe(_, span) => *span,
+            | TypeRef::Unsafe(_, span)
+            | TypeRef::Ref(_, span) => *span,
         };
         warnings.push(LintWarning {
             rule: "W_OPTION_DOUBLE_NESTED",
@@ -562,7 +563,8 @@ fn walk_typeref_for_a22(tr: &TypeRef, warnings: &mut Vec<LintWarning>) {
         // Plan 118.5 D216 V2: Pointer 2-tuple + Mut/Unsafe transparent wrappers.
         | TypeRef::Pointer(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _) => walk_typeref_for_a22(inner, warnings),
+        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Ref(inner, _) => walk_typeref_for_a22(inner, warnings),
         TypeRef::Tuple(items, _) => {
             for it in items { walk_typeref_for_a22(it, warnings); }
         }
@@ -945,7 +947,8 @@ fn collect_tr(tr: &TypeRef, out: &mut HashSet<String>) {
         // transparent wrappers — recurse on inner.
         TypeRef::Pointer(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _) => collect_tr(inner, out),
+        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Ref(inner, _) => collect_tr(inner, out),
     }
 }
 
