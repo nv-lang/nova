@@ -112,7 +112,7 @@ static nova_int _fs_ret(ssize_t r) {
     return (r < 0) ? _fs_fail((int)r) : (nova_int)r;
 }
 
-static nova_str _nova_fs_cstr(const char* s) {
+static nova_str _fs_cstr(const char* s) {
     if (!s) { nova_str z; z.ptr = NULL; z.len = 0; return z; }
     size_t n = strlen(s);
     char* p = (char*)nova_alloc(n + 1);
@@ -139,7 +139,7 @@ static int _open_flags(int nf) {
 
 /* ─── open / close / read / write ──────────────────────────────────── */
 
-nova_int nova_fs_open(const uint8_t* path, nova_int flags, nova_int mode) {
+nova_int fs_open(const uint8_t* path, nova_int flags, nova_int mode) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_open(nova_current_loop(), &fr->req, (const char*)path,
                         _open_flags((int)flags), (int)mode, _fs_cb);
@@ -148,7 +148,7 @@ nova_int nova_fs_open(const uint8_t* path, nova_int flags, nova_int mode) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_close(nova_int fd) {
+nova_int fs_close(nova_int fd) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_close(nova_current_loop(), &fr->req, (uv_file)fd, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -156,7 +156,7 @@ nova_int nova_fs_close(nova_int fd) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_read(nova_int fd, uint8_t* buf, nova_int len) {
+nova_int fs_read(nova_int fd, uint8_t* buf, nova_int len) {
     _NovaFsReq* fr = _fs_begin();
     uv_buf_t b = uv_buf_init((char*)buf, (unsigned int)len);
     int rc = uv_fs_read(nova_current_loop(), &fr->req, (uv_file)fd, &b, 1, -1, _fs_cb);
@@ -165,7 +165,7 @@ nova_int nova_fs_read(nova_int fd, uint8_t* buf, nova_int len) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_write(nova_int fd, const uint8_t* buf, nova_int len) {
+nova_int fs_write(nova_int fd, const uint8_t* buf, nova_int len) {
     _NovaFsReq* fr = _fs_begin();
     uv_buf_t b = uv_buf_init((char*)(uintptr_t)buf, (unsigned int)len);
     int rc = uv_fs_write(nova_current_loop(), &fr->req, (uv_file)fd, &b, 1, -1, _fs_cb);
@@ -174,7 +174,7 @@ nova_int nova_fs_write(nova_int fd, const uint8_t* buf, nova_int len) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_read_at(nova_int fd, uint8_t* buf, nova_int len, nova_int offset) {
+nova_int fs_read_at(nova_int fd, uint8_t* buf, nova_int len, nova_int offset) {
     _NovaFsReq* fr = _fs_begin();
     uv_buf_t b = uv_buf_init((char*)buf, (unsigned int)len);
     int rc = uv_fs_read(nova_current_loop(), &fr->req, (uv_file)fd, &b, 1, (int64_t)offset, _fs_cb);
@@ -183,7 +183,7 @@ nova_int nova_fs_read_at(nova_int fd, uint8_t* buf, nova_int len, nova_int offse
     return _fs_ret(r);
 }
 
-nova_int nova_fs_write_at(nova_int fd, const uint8_t* buf, nova_int len, nova_int offset) {
+nova_int fs_write_at(nova_int fd, const uint8_t* buf, nova_int len, nova_int offset) {
     _NovaFsReq* fr = _fs_begin();
     uv_buf_t b = uv_buf_init((char*)(uintptr_t)buf, (unsigned int)len);
     int rc = uv_fs_write(nova_current_loop(), &fr->req, (uv_file)fd, &b, 1, (int64_t)offset, _fs_cb);
@@ -192,7 +192,7 @@ nova_int nova_fs_write_at(nova_int fd, const uint8_t* buf, nova_int len, nova_in
     return _fs_ret(r);
 }
 
-nova_int nova_fs_fsync(nova_int fd) {
+nova_int fs_fsync(nova_int fd) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_fsync(nova_current_loop(), &fr->req, (uv_file)fd, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -200,7 +200,7 @@ nova_int nova_fs_fsync(nova_int fd) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_fdatasync(nova_int fd) {
+nova_int fs_fdatasync(nova_int fd) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_fdatasync(nova_current_loop(), &fr->req, (uv_file)fd, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -226,7 +226,7 @@ static int _kind_from_mode(uint64_t m) {
     return 0;                               /* KIND_OTHER */
 }
 
-nova_int nova_fs_stat(const uint8_t* path) {
+nova_int fs_stat(const uint8_t* path) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_stat(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -235,7 +235,7 @@ nova_int nova_fs_stat(const uint8_t* path) {
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-nova_int nova_fs_lstat(const uint8_t* path) {
+nova_int fs_lstat(const uint8_t* path) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_lstat(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -244,7 +244,7 @@ nova_int nova_fs_lstat(const uint8_t* path) {
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-nova_int nova_fs_fstat(nova_int fd) {
+nova_int fs_fstat(nova_int fd) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_fstat(nova_current_loop(), &fr->req, (uv_file)fd, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -253,23 +253,23 @@ nova_int nova_fs_fstat(nova_int fd) {
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-nova_int nova_fs_stat_size(void) { return (nova_int)_fs_stat_tls.st_size; }
-nova_int nova_fs_stat_mode(void) { return (nova_int)_fs_stat_tls.st_mode; }
-nova_int nova_fs_stat_kind(void) { return (nova_int)_kind_from_mode(_fs_stat_tls.st_mode); }
-int64_t  nova_fs_stat_mtime_ns(void) {
+nova_int fs_stat_size(void) { return (nova_int)_fs_stat_tls.st_size; }
+nova_int fs_stat_mode(void) { return (nova_int)_fs_stat_tls.st_mode; }
+nova_int fs_stat_kind(void) { return (nova_int)_kind_from_mode(_fs_stat_tls.st_mode); }
+int64_t  fs_stat_mtime_ns(void) {
     return (int64_t)_fs_stat_tls.st_mtim.tv_sec * 1000000000LL + (int64_t)_fs_stat_tls.st_mtim.tv_nsec;
 }
-int64_t  nova_fs_stat_atime_ns(void) {
+int64_t  fs_stat_atime_ns(void) {
     return (int64_t)_fs_stat_tls.st_atim.tv_sec * 1000000000LL + (int64_t)_fs_stat_tls.st_atim.tv_nsec;
 }
-int64_t  nova_fs_stat_ctime_ns(void) {
+int64_t  fs_stat_ctime_ns(void) {
     /* Prefer birth time (creation); fall back to 0 → Nova @created() == None. */
     return (int64_t)_fs_stat_tls.st_birthtim.tv_sec * 1000000000LL + (int64_t)_fs_stat_tls.st_birthtim.tv_nsec;
 }
 
 /* ─── mkdir / unlink / rmdir / rename / symlink / chmod / copyfile ──── */
 
-nova_int nova_fs_mkdir(const uint8_t* path, nova_int mode) {
+nova_int fs_mkdir(const uint8_t* path, nova_int mode) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_mkdir(nova_current_loop(), &fr->req, (const char*)path, (int)mode, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -277,7 +277,7 @@ nova_int nova_fs_mkdir(const uint8_t* path, nova_int mode) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_unlink(const uint8_t* path) {
+nova_int fs_unlink(const uint8_t* path) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_unlink(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -285,7 +285,7 @@ nova_int nova_fs_unlink(const uint8_t* path) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_rmdir(const uint8_t* path) {
+nova_int fs_rmdir(const uint8_t* path) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_rmdir(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -293,7 +293,7 @@ nova_int nova_fs_rmdir(const uint8_t* path) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_rename(const uint8_t* from, const uint8_t* to) {
+nova_int fs_rename(const uint8_t* from, const uint8_t* to) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_rename(nova_current_loop(), &fr->req, (const char*)from, (const char*)to, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -301,7 +301,7 @@ nova_int nova_fs_rename(const uint8_t* from, const uint8_t* to) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_symlink(const uint8_t* target, const uint8_t* link) {
+nova_int fs_symlink(const uint8_t* target, const uint8_t* link) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_symlink(nova_current_loop(), &fr->req, (const char*)target, (const char*)link, 0, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -309,7 +309,7 @@ nova_int nova_fs_symlink(const uint8_t* target, const uint8_t* link) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_chmod(const uint8_t* path, nova_int mode) {
+nova_int fs_chmod(const uint8_t* path, nova_int mode) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_chmod(nova_current_loop(), &fr->req, (const char*)path, (int)mode, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -317,7 +317,7 @@ nova_int nova_fs_chmod(const uint8_t* path, nova_int mode) {
     return _fs_ret(r);
 }
 
-nova_int nova_fs_copyfile(const uint8_t* from, const uint8_t* to) {
+nova_int fs_copyfile(const uint8_t* from, const uint8_t* to) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_copyfile(nova_current_loop(), &fr->req, (const char*)from, (const char*)to, 0, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -337,20 +337,20 @@ nova_int nova_fs_copyfile(const uint8_t* from, const uint8_t* to) {
   static __thread nova_str _fs_realpath_tls;
 #endif
 
-nova_int nova_fs_realpath(const uint8_t* path) {
+nova_int fs_realpath(const uint8_t* path) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_realpath(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
-    if (r >= 0) _fs_realpath_tls = _nova_fs_cstr((const char*)fr->req.ptr);
+    if (r >= 0) _fs_realpath_tls = _fs_cstr((const char*)fr->req.ptr);
     uv_fs_req_cleanup(&fr->req);
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-nova_str nova_fs_realpath_data(void) { return _fs_realpath_tls; }
+nova_str fs_realpath_data(void) { return _fs_realpath_tls; }
 
 /* ─── parent-dir fsync (write_atomic step 5) ───────────────────────── */
 
-nova_int nova_fs_fsync_dir(const uint8_t* path) {
+nova_int fs_fsync_dir(const uint8_t* path) {
 #if defined(_WIN32)
     /* Directory fsync is not supported by the Win32 API — the atomic MoveFileEx
      * rename is already durable enough for the write_atomic contract (§3c). */
@@ -385,7 +385,7 @@ nova_int nova_fs_fsync_dir(const uint8_t* path) {
   static __thread uv_dirent_t   _fs_scandir_ent;
 #endif
 
-nova_int nova_fs_scandir(const uint8_t* path) {
+nova_int fs_scandir(const uint8_t* path) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_scandir(nova_current_loop(), &fr->req, (const char*)path, 0, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
@@ -399,7 +399,7 @@ nova_int nova_fs_scandir(const uint8_t* path) {
     return (nova_int)r;    /* entry count */
 }
 
-nova_int nova_fs_scandir_next(void) {
+nova_int fs_scandir_next(void) {
     if (!_fs_scandir_fr) return 0;
     int rc = uv_fs_scandir_next(&_fs_scandir_fr->req, &_fs_scandir_ent);
     if (rc != 0) {
@@ -411,11 +411,11 @@ nova_int nova_fs_scandir_next(void) {
     return 1;   /* _fs_scandir_ent holds this entry */
 }
 
-nova_str nova_fs_scandir_name(void) {
-    return _nova_fs_cstr(_fs_scandir_ent.name);
+nova_str fs_scandir_name(void) {
+    return _fs_cstr(_fs_scandir_ent.name);
 }
 
-nova_int nova_fs_scandir_kind(void) {
+nova_int fs_scandir_kind(void) {
     switch (_fs_scandir_ent.type) {
         case UV_DIRENT_DIR:  return 2;   /* KIND_DIR */
         case UV_DIRENT_LINK: return 3;   /* KIND_SYMLINK */

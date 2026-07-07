@@ -265,84 +265,84 @@ export fn File consume @close() Fs -> Result[(), IoError] => wrap_unit(Fs.close(
 export fn real_fs() -> Effect[Fs] {
     effect Fs {
         open(path []u8, flags int, mode int) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_open(cp.ptr(), flags, mode) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_open(cp.ptr(), flags, mode) }, Err(_) => 0 - 22 }
         }
-        close(fd int) => nova_fs_close(fd)
+        close(fd int) => fs_close(fd)
         read(fd int, buf mut []u8) {
             if buf.len() == 0 { return 0 }
-            unsafe { nova_fs_read(fd, buf.ptr(), buf.len()) }
+            unsafe { fs_read(fd, buf.ptr(), buf.len()) }
         }
         write(fd int, data []u8) {
             if data.len() == 0 { return 0 }
-            unsafe { nova_fs_write(fd, data.ptr(), data.len()) }
+            unsafe { fs_write(fd, data.ptr(), data.len()) }
         }
         read_at(fd int, buf mut []u8, offset int) {
             if buf.len() == 0 { return 0 }
-            unsafe { nova_fs_read_at(fd, buf.ptr(), buf.len(), offset) }
+            unsafe { fs_read_at(fd, buf.ptr(), buf.len(), offset) }
         }
         write_at(fd int, data []u8, offset int) {
             if data.len() == 0 { return 0 }
-            unsafe { nova_fs_write_at(fd, data.ptr(), data.len(), offset) }
+            unsafe { fs_write_at(fd, data.ptr(), data.len(), offset) }
         }
-        seek(fd int, offset i64, whence int) => nova_fs_seek(fd, offset, whence)
-        sync_all(fd int) => nova_fs_fsync(fd)
-        sync_data(fd int) => nova_fs_fdatasync(fd)
+        seek(fd int, offset i64, whence int) => fs_seek(fd, offset, whence)
+        sync_all(fd int) => fs_fsync(fd)
+        sync_data(fd int) => fs_fdatasync(fd)
         stat(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_stat(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_stat(cp.ptr()) }, Err(_) => 0 - 22 }
         }
         lstat(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_lstat(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_lstat(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        fstat(fd int) => nova_fs_fstat(fd)
-        stat_size() => nova_fs_stat_size()
-        stat_mode() => nova_fs_stat_mode()
-        stat_kind() => nova_fs_stat_kind()
-        stat_mtime_ns() => nova_fs_stat_mtime_ns()
-        stat_atime_ns() => nova_fs_stat_atime_ns()
-        stat_ctime_ns() => nova_fs_stat_ctime_ns()
+        fstat(fd int) => fs_fstat(fd)
+        stat_size() => fs_stat_size()
+        stat_mode() => fs_stat_mode()
+        stat_kind() => fs_stat_kind()
+        stat_mtime_ns() => fs_stat_mtime_ns()
+        stat_atime_ns() => fs_stat_atime_ns()
+        stat_ctime_ns() => fs_stat_ctime_ns()
         mkdir(path []u8, mode int) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_mkdir(cp.ptr(), mode) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_mkdir(cp.ptr(), mode) }, Err(_) => 0 - 22 }
         }
         remove_file(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_unlink(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_unlink(cp.ptr()) }, Err(_) => 0 - 22 }
         }
         remove_dir(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_rmdir(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_rmdir(cp.ptr()) }, Err(_) => 0 - 22 }
         }
         rename(src []u8, dst []u8) {
             match c_path(src) {
-                Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { nova_fs_rename(cs.ptr(), cd.ptr()) }, Err(_) => 0 - 22 }
+                Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { fs_rename(cs.ptr(), cd.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
         symlink(target []u8, link []u8) {
             match c_path(target) {
-                Ok(ct) => match c_path(link) { Ok(cl) => unsafe { nova_fs_symlink(ct.ptr(), cl.ptr()) }, Err(_) => 0 - 22 }
+                Ok(ct) => match c_path(link) { Ok(cl) => unsafe { fs_symlink(ct.ptr(), cl.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
         chmod(path []u8, mode int) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_chmod(cp.ptr(), mode) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_chmod(cp.ptr(), mode) }, Err(_) => 0 - 22 }
         }
         copy_file(src []u8, dst []u8) {
             match c_path(src) {
-                Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { nova_fs_copyfile(cs.ptr(), cd.ptr()) }, Err(_) => 0 - 22 }
+                Ok(cs) => match c_path(dst) { Ok(cd) => unsafe { fs_copyfile(cs.ptr(), cd.ptr()) }, Err(_) => 0 - 22 }
                 Err(_) => 0 - 22
             }
         }
         fsync_dir(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_fsync_dir(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_fsync_dir(cp.ptr()) }, Err(_) => 0 - 22 }
         }
         scandir(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_scandir(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_scandir(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        scandir_next() => nova_fs_scandir_next()
-        scandir_name() => nova_fs_scandir_name()
-        scandir_kind() => nova_fs_scandir_kind()
+        scandir_next() => fs_scandir_next()
+        scandir_name() => fs_scandir_name()
+        scandir_kind() => fs_scandir_kind()
         realpath(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { nova_fs_realpath(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) { Ok(cp) => unsafe { fs_realpath(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        realpath_data() => nova_fs_realpath_data()
+        realpath_data() => fs_realpath_data()
     }
 }
 

@@ -39,7 +39,7 @@ extern char **environ;
 #  define NOVA_ENVIRON environ
 #endif
 
-/* ─── nova_str wrappers (mirror fs.c's _nova_fs_cstr; GC-allocated copy) ─── */
+/* ─── nova_str wrappers (mirror fs.c's _fs_cstr; GC-allocated copy) ─── */
 
 static inline nova_str _nova_os_bytes(const uint8_t* s, nova_int n) {
     nova_str out;

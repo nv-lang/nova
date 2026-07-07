@@ -13,7 +13,7 @@
 // ⚠ C-ABI (174.6 M1 / D282): []u8 / Vec are GC types and are FORBIDDEN in extern
 // signatures. Compressed input and decoded output cross as raw (*u8/*mut u8, int)
 // buffers; the []u8 ↔ pointer conversion happens in the Nova wrapper (brotli.nv),
-// exactly like std/fs's nova_fs_read/nova_fs_write. The decoder handle is an opaque `int`
+// exactly like std/fs's fs_read/fs_write. The decoder handle is an opaque `int`
 // (intptr-wide) carrying a NovaBrotliDec*; 0 = null / failed / feature-gated-out.
 
 module encoding.compress

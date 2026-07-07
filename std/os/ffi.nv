@@ -3,7 +3,7 @@
 //
 // The OS surface (env / args / cwd / well-known dirs / process) is a set of
 // **non-blocking native syscalls** — getenv/getcwd/setenv/getpid/… — so, exactly
-// like std/io's console hooks and std/fs's nova_fs_seek, they are plain static-inline
+// like std/io's console hooks and std/fs's fs_seek, they are plain static-inline
 // C hooks (nova_rt/os_env.h, always included) rather than libuv-backed park/wake
 // ops (that pattern is for real blocking I/O — fs.c/net.c). No OS handle types
 // cross the boundary: keys/paths cross as a NUL-terminated `*u8` (a validated
