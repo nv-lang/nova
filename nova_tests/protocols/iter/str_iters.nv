@@ -4,18 +4,17 @@
 // сырые UTF-8 байты (zero-copy view). Оба итерируются обычным for-in.
 // D178 (Plan 91 Ф.2.6): renamed from chars()/bytes(). D410 (2026-07-06): retired
 // as_chars/as_bytes prefix — bare noun names now.
-// NB: `.chars().collect()` (generic `Next[T] @collect()`, std.collections.vec_iter)
-// hits a codegen gap on custom `value priv(type)` iterators like CharsIter (found
-// during this migration, reported separately) — positional len()/index() tests
-// below materialise via an explicit push-loop instead, bug-free and identical.
+// `.chars().collect()` (generic `Next[T] @collect()`, std.collections.vec_iter)
+// materialises the codepoints into an owned `[]char`; it drives the blanket over
+// the `value priv(type)` CharsIter — the regression target for
+// [M-next-collect-value-record] (formerly a codegen gap that forced the explicit
+// push-loop this file used to carry).
 
 module iter.str_iters
 
-fn to_char_vec(s str) -> []char {
-    mut out []char = []char.new()
-    for c in s.chars() { out.push(c) }
-    out
-}
+import std.collections.vec_iter
+
+fn to_char_vec(s str) -> []char => s.chars().collect()
 
 test "str.chars() — обход codepoint'ов ASCII" {
     mut count = 0

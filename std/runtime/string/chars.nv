@@ -72,6 +72,7 @@ fn CharsIter.new(buf str) -> CharsIter => { buf, pos: 0 }
 // R-UTF8 (D26 AMEND): the source str is always valid UTF-8, so the decode is
 // total — no malformed-sequence branch is reachable (the `else` arm only guards
 // against a truncated tail and degrades to a single-byte step).
+#impl(Next[char])
 export fn CharsIter mut @next() -> Option[char] {
     ro (bytes, n) = (@buf.bytes(), @buf.byte_len())
     if @pos >= n { return None }

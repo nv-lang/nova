@@ -30507,14 +30507,54 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                     let proto_method = bpath.last()
                                                         .map(|s| s.to_lowercase())
                                                         .unwrap_or_default();
-                                                    if let Some(opt_ret) =
-                                                        self.infer_mono_method_ret_with_args(
+                                                    let proto_base = bpath.last().cloned()
+                                                        .unwrap_or_default();
+                                                    // [M-next-collect-value-record] Bind the
+                                                    // blanket's inner typevar (`T` in `Next[T]`)
+                                                    // to the receiver's element. Primary source:
+                                                    // the generic-instance `@next()` return
+                                                    // inference (MapIter/FilterIter/… — receiver
+                                                    // C-type carries `____`-type-args). Fallback
+                                                    // for a CONCRETE `value priv(type)` iterator
+                                                    // like `CharsIter` (no type-args, so the
+                                                    // generic inference returns None): read the
+                                                    // element straight from the receiver's own
+                                                    // `#impl(Next[<elem>])` spec — the
+                                                    // authoritative concrete binding in
+                                                    // `type_impl_protocols`. Without a bound `T`,
+                                                    // the `collect` body's `Vec[T].new()` erases
+                                                    // to `Vec____Nova_T` (record schema missing →
+                                                    // codegen error).
+                                                    let elem_opt: Option<String> = self
+                                                        .infer_mono_method_ret_with_args(
                                                             &recv_obj_ty, &proto_method, &[])
-                                                    {
-                                                        let elem = opt_ret
+                                                        .map(|opt_ret| opt_ret
                                                             .strip_prefix("NovaOpt_")
                                                             .unwrap_or(&opt_ret)
-                                                            .to_string();
+                                                            .to_string())
+                                                        .or_else(|| {
+                                                            self.type_impl_protocols
+                                                                .get(recv_base)
+                                                                .and_then(|specs| specs.iter()
+                                                                    .find(|s| impl_spec_base_name(s)
+                                                                        == proto_base.as_str())
+                                                                    .cloned())
+                                                                .and_then(|s| s.find('[').and_then(
+                                                                    |i| s.rfind(']').map(|j|
+                                                                        s[i + 1..j].to_string())))
+                                                                .map(|inner| inner.split(',').next()
+                                                                    .unwrap_or("").trim().to_string())
+                                                                .filter(|a| !a.is_empty())
+                                                                .and_then(|arg| self.type_ref_to_c(
+                                                                    &crate::ast::TypeRef::Named {
+                                                                        path: vec![arg],
+                                                                        generics: vec![],
+                                                                        span: crate::diag::Span::dummy(),
+                                                                    }).ok())
+                                                                .filter(|c| !c.is_empty()
+                                                                    && c != "void*")
+                                                        });
+                                                    if let Some(elem) = elem_opt {
                                                         for bg in bgens {
                                                             if let crate::ast::TypeRef::Named {
                                                                 path: gp, generics: gg, ..
