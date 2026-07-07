@@ -10,7 +10,7 @@ import std.encoding.json.{JsonValue, Json}
 
 test "encode empty array" {
     ro v = JsonValue.array([])
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "[]")
 }
 
@@ -25,10 +25,10 @@ test "parse empty array" {
 
 test "roundtrip empty array" {
     ro orig = JsonValue.array([])
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     // Re-encode и сравнение через строку — JsonValue не имеет structural `==`
     // (D46 не покрывает sum-types per json.nv top comment).
-    ro re_encoded = decoded.into()
+    ro re_encoded = decoded.to_str()
     assert(re_encoded == encoded)
 }

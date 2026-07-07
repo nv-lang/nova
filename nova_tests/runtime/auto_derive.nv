@@ -1,13 +1,10 @@
-// auto_derive.nv — Plan 08 Ф.3: D77 4-way auto-derive synthesis.
+// auto_derive.nv — Plan 08 Ф.3 (историческое): D77 4-way auto-derive synthesis.
 //
-// Программист пишет ОДНУ форму конверсии, codegen синтезирует
-// обратную:
-//   - `T.from(v V)` ↔ `v.@into() -> T`        (D73, уже работало)
-//   - `T.try_from(v V)` ↔ `v.@try_into() -> Result[T, E]`  (Ф.3, новое)
-//
-// Bootstrap-ограничение: оба направления симметричны на уровне
-// dispatch'а (try_from/from registries). Compile-time ошибки если
-// синтез не находит target — ещё не реализованы (Ф.6).
+// [D73/D77 retraction 2026-07-06]: auto-derive синтез (`T.from`↔`.into()`,
+// `T.try_from`↔`.try_into()`) полностью снят вместе с протоколами From/
+// Into/TryFrom/TryInto — тесты на synthesized-направление удалены ниже.
+// Остаются: явные `T.try_from(v)`/`T.from(v)` static-конструкторы (просто
+// конвенция имени, не протокол).
 
 module nova_tests.runtime
 
@@ -18,7 +15,6 @@ type Celsius1 {
 }
 
 
-// Программист пишет ОДНУ форму — try_from. Synthesis даёт try_into.
 export fn Celsius1.try_from(n int) -> Result[Celsius1, str] {
     // Validation: −273.15 — абсолютный ноль.
     if n < -273 {
@@ -41,24 +37,7 @@ test "Celsius1.try_from(int) невалидное" {
 }
 
 
-test "auto-derive: int.@try_into() → Result[Celsius1, str]" {
-    // Программист НЕ писал `fn int @try_into() -> Result[Celsius1, str]`.
-    // Codegen синтезирует через Celsius1.try_from.
-    // Проверка через is_ok — payload-extraction требует доп. boilerplate.
-    ro n = 25
-    ro r = n.try_into()
-    assert(r.is_ok())
-}
-
-
-test "auto-derive: int.@try_into() невалидный → Err" {
-    ro n = -500
-    ro r = n.try_into()
-    assert(r.is_err())
-}
-
-
-// from/into auto-derive (уже работало; smoke-проверка).
+// from/into auto-derive (историческое; smoke-проверка `.from` конвенции).
 type Wrapper {
     inner int
 }
@@ -69,15 +48,7 @@ export fn Wrapper.from(n int) -> Wrapper {
 }
 
 
-test "from auto-derive: Wrapper.from(int)" {
+test "Wrapper.from(int)" {
     ro w = Wrapper.from(42)
     assert(w.inner == 42)
-}
-
-
-test "into auto-derive: int.@into() → Wrapper" {
-    // Программист НЕ писал `fn int @into() -> Wrapper`.
-    // Codegen синтезирует через Wrapper.from.
-    ro w = 100.into()
-    assert(w.inner == 100)
 }

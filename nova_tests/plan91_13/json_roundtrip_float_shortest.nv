@@ -20,10 +20,10 @@ priv(file) fn f64rt_direct(v f64) -> bool {
     Json.parse(str.from(v))!!.as_num() == Some(v)
 }
 
-// JsonValue.num(v).into() → Json.parse → as_num: the json encode/decode path
+// JsonValue.num(v).to_str() → Json.parse → as_num: the json encode/decode path
 // (`format_num` → `str.from(n)`), exactly the `decode(encode(v)) == v` gate.
 priv(file) fn f64rt_json(v f64) -> bool {
-    ro encoded = JsonValue.num(v).into()
+    ro encoded = JsonValue.num(v).to_str()
     Json.parse(encoded)!!.as_num() == Some(v)
 }
 

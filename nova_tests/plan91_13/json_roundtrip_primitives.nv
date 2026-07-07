@@ -9,37 +9,37 @@ import std.encoding.json.{JsonValue, Json}
 
 test "encode null" {
     ro v = JsonValue.null()
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "null")
 }
 
 test "encode bool true" {
     ro v = JsonValue.bool(true)
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "true")
 }
 
 test "encode bool false" {
     ro v = JsonValue.bool(false)
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "false")
 }
 
 test "encode num integer" {
     ro v = JsonValue.num(42.0)
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "42")
 }
 
 test "encode num negative" {
     ro v = JsonValue.num(-17.0)
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "-17")
 }
 
 test "encode str simple" {
     ro v = JsonValue.str("hello")
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "\"hello\"")
 }
 
@@ -65,21 +65,21 @@ test "parse str simple" {
 
 test "roundtrip bool" {
     ro orig = JsonValue.bool(true)
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     assert(decoded.as_bool() == Some(true))
 }
 
 test "roundtrip num" {
     ro orig = JsonValue.num(123.0)
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     assert(decoded.as_num() == Some(123.0))
 }
 
 test "roundtrip str" {
     ro orig = JsonValue.str("world")
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     assert(decoded.as_str() == Some("world"))
 }

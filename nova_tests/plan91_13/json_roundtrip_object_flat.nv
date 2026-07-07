@@ -30,7 +30,7 @@ test "roundtrip flat object preserves len + key existence" {
     m.insert("k", JsonValue.str("v"))
     m.insert("n", JsonValue.num(42.0))
     ro orig = JsonValue.object(m)
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     if let Some(dm) = decoded.as_object() {
         assert(dm.len() == 2)

@@ -15,7 +15,7 @@ test "encode mixed primitives array" {
         JsonValue.bool(true),
         JsonValue.null(),
     ])
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "[1,\"a\",true,null]")
 }
 
@@ -40,9 +40,9 @@ test "roundtrip mixed primitives array" {
         JsonValue.bool(true),
         JsonValue.null(),
     ])
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     // Re-encode + string compare (JsonValue без structural ==).
-    ro re_encoded = decoded.into()
+    ro re_encoded = decoded.to_str()
     assert(re_encoded == encoded)
 }

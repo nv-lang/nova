@@ -12,7 +12,7 @@ import std.collections.hashmap.{HashMap}
 test "encode empty object" {
     ro m = HashMap[str, JsonValue].new()
     ro v = JsonValue.object(m)
-    ro encoded = v.into()
+    ro encoded = v.to_str()
     assert(encoded == "{}")
 }
 
@@ -28,9 +28,9 @@ test "parse empty object" {
 test "roundtrip empty object" {
     ro m = HashMap[str, JsonValue].new()
     ro orig = JsonValue.object(m)
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     // Re-encode + string compare (JsonValue без structural ==).
-    ro re_encoded = decoded.into()
+    ro re_encoded = decoded.to_str()
     assert(re_encoded == encoded)
 }

@@ -1,8 +1,10 @@
-// Plan 85.3 Ф.2 — TryFrom[T, E]: Ok-путь.
+// Plan 85.3 Ф.2 — try_from: Ok-путь.
 //
-// `TryFrom[T, E]` реализуется static-методом
-// `fn Type.try_from(v T) -> Result[Self, E]` (D77, migration path b —
-// Result вместо Fail-effect). Здесь — успешные конверсии.
+// `try_from` — конвенция имени static-метода-конструктора
+// `fn Type.try_from(v T) -> Result[Self, E]` (D325 R3 try_-prefix;
+// TryFrom/TryInto protocol-пара D77 ретрактирована 2026-07-06 — это
+// НЕ реализация протокола, просто именованный конструктор). Здесь —
+// успешные конверсии.
 //
 // Note: payload Ok достаётся через `r.unwrap_or(default)`, не через
 // `match Ok(p) => p.field` (последнее — pre-existing codegen-баг

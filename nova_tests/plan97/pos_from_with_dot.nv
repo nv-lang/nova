@@ -1,9 +1,12 @@
-// Plan 97 Ф.4 — обновлённый протокол From[T] с .from работает.
+// Plan 97 Ф.4 — .from static-конструктор с leading-точкой (D35) работает.
 //
-// Регресс-позитив: protocols.nv From[T] теперь объявлен с .from(t T)
-// (leading-точка, static). Реализация через fn Type.from — D35.
-// Проверяем: реализация компилируется, вызов работает, Into[U]
-// auto-derive продолжает работать.
+// Регресс-позитив: реализация через `fn Type.from` компилируется, вызов
+// работает.
+//
+// [D73/D77 retraction 2026-07-06]: второй тест файла ("Into[Celsius2]
+// auto-derive из From[Fahrenheit]") удалён — протоколы From/Into и их
+// auto-derive ретрактированы; `.from` остаётся просто конвенцией имени
+// конструктора-конверсии (не протокол).
 
 module nova_tests.plan97
 
@@ -16,21 +19,14 @@ type Celsius2 {
     value f64
 }
 
-// From[Fahrenheit] для Celsius2 — реализация через D35 static.
+// Celsius2.from(Fahrenheit) — реализация через D35 static.
 fn Celsius2.from(f Fahrenheit) -> Celsius2 =>
     { value: (f.value - 32.0) * 5.0 / 9.0 }
 
 
-test "From[Fahrenheit] для Celsius2 — прямой Celsius2.from(f) работает" {
+test "прямой Celsius2.from(f) работает" {
     ro f = Fahrenheit { value: 212.0 }
     ro c = Celsius2.from(f)
     // 212F = 100C
     assert(c.value > 99.9 && c.value < 100.1)
-}
-
-test "Into[Celsius2] auto-derive из From[Fahrenheit]" {
-    ro f = Fahrenheit { value: 32.0 }
-    ro c Celsius2 = f.into()
-    // 32F = 0C
-    assert(c.value > -0.01 && c.value < 0.01)
 }

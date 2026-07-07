@@ -29,10 +29,10 @@ test "deep array nesting roundtrip string-compare" {
         JsonValue.array([JsonValue.num(1.0), JsonValue.num(2.0)]),
         JsonValue.array([JsonValue.num(3.0), JsonValue.num(4.0)]),
     ])
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     assert(encoded == "[[1,2],[3,4]]")
     ro decoded = Json.parse(encoded)!!
-    ro re_encoded = decoded.into()
+    ro re_encoded = decoded.to_str()
     assert(re_encoded == encoded)
 }
 
@@ -51,7 +51,7 @@ test "nested object encoded round-trips via re-encode" {
     root.insert("arr", arr)
     ro orig = JsonValue.object(root)
 
-    ro encoded = orig.into()
+    ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
     assert(decoded.is_object())
 

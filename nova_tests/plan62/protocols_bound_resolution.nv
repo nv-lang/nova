@@ -3,11 +3,11 @@
 // Verifies С‡С‚Рѕ formal protocol declarations РІ std/prelude/protocols.nv
 // (re-export'РЅСѓС‚С‹Рµ С‡РµСЂРµР· std/prelude.nv facade) auto-available РІРµР·РґРµ
 // С‡РµСЂРµР· R27 auto-import, Рё С‡С‚Рѕ bound clauses `[T Hash]`/`[T Equal]`/
-// `[T Compare]`/`[T From[X]]`/`[T Into[X]]`/`[T Display]` СЂРµР·РѕР»РІСЏС‚СЃСЏ
+// `[T Compare]`/`[T Display]` СЂРµР·РѕР»РІСЏС‚СЃСЏ
 // С‡РµСЂРµР· cross-file resolve Р±РµР· explicit import.
 //
-// РџРѕРєСЂС‹С‚РёРµ (6 РёР· 8 protocols вЂ” TryFrom/TryInto deferred per Plan 56 Р¤.2.7
-// effect-free enforcement):
+// РџРѕРєСЂС‹С‚РёРµ (4 protocols; From/Into/TryFrom/TryInto ретрактированы D73/D77
+// 2026-07-06 — секции про них удалены, см. пометку ниже):
 //   1. `Hash` bound вЂ” generic fn РїСЂРёРЅРёРјР°РµС‚ T СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№
 //      `hash() -> u64`. User-defined type implementing СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ.
 //   2. `Equal` bound вЂ” generic fn РїСЂРёРЅРёРјР°РµС‚ T СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№
@@ -15,12 +15,10 @@
 //   3. `Compare` bound вЂ” generic fn РїСЂРёРЅРёРјР°РµС‚ T СѓРґРѕРІР»РµС‚РІРѕСЂСЏСЋС‰РёР№
 //      `compare(other Self) -> int`. D183 (Plan 91.8a): int-based
 //      memcmp convention; Ordering sum-type СѓРґР°Р»С‘РЅ.
-//   4. `From[X]` bound вЂ” type-decl c bound РЅР° conversion.
-//   5. `Into[X]` bound вЂ” bound РЅР° dual direction (D73 auto-derive).
-//   6. `Display` bound вЂ” formatting protocol (StringBuilder dependency
+//   4. `Display` bound вЂ” formatting protocol (StringBuilder dependency
 //      СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· type-checker builtins HashSet).
 //
-// Acceptance: РІСЃРµ 6 tests РґРѕР»Р¶РЅС‹ pass вЂ” type-check РїСЂРѕС…РѕРґРёС‚ РїСЂРё
+// Acceptance: РІСЃРµ 4 tests РґРѕР»Р¶РЅС‹ pass вЂ” type-check РїСЂРѕС…РѕРґРёС‚ РїСЂРё
 // satisfied bound'Р°С…, runtime behavior РєРѕСЂСЂРµРєС‚РЅС‹Р№.
 
 module nova_tests.plan62
@@ -90,63 +88,11 @@ test "Compare bound вЂ” Item2.compare() СЃ int-based check" {
 
 
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// 4. From[X] bound вЂ” type-decl СЃ bound РЅР° conversion.
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-
-type Celsius { value f64 }
-type Fahrenheit { value f64 }
-
-// D73 `From[Fahrenheit]` impl: static factory, РЅРµ instance method.
-// Syntax: `fn Type.from(...)` (Р±РµР· `@`) вЂ” see std/encoding/json.nv:627+.
-export fn Celsius.from(f Fahrenheit) -> Celsius =>
-    { value: (f.value - 32.0) * 5.0 / 9.0 }
-
-// Generic fn СЃ bound `[T From[X]]` вЂ” bootstrap limitation: generic
-// static method dispatch (`T.from(f)`) РЅРµ monomorphРёР·РёСЂСѓРµС‚СЃСЏ РІ
-// bootstrap codegen (Plan 14 limitation, СЃРј. Q-result-monomorphization).
-// РџРѕСЌС‚РѕРјСѓ Р·РґРµСЃСЊ С‚РµСЃС‚ РїСЂРѕРІРµСЂСЏРµС‚ direct call РЅР° concrete type вЂ” bound
-// parsed and resolution С‡РµСЂРµР· prelude СЂР°Р±РѕС‚Р°РµС‚; full generic dispatch
-// вЂ” Plan 62.E+.
-
-test "From[X] bound вЂ” concrete Celsius.from(Fahrenheit) С‡РµСЂРµР· prelude resolution" {
-    ro f = Fahrenheit { value: 212.0 }
-    ro c = Celsius.from(f)
-    // 212В°F == 100В°C
-    assert(c.value > 99.9 && c.value < 100.1)
-}
-
-// Bound declaration parsed вЂ” type-checker eligibility check (Р±РµР· actual
-// call) РїСЂРѕРІРµСЂСЏРµС‚ С‡С‚Рѕ bound СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude.
-fn _accepts_from[T From[Fahrenheit]](_v T) -> () => ()
-
-
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-// 5. Into[X] bound вЂ” dual direction, D73 auto-derive (BOOTSTRAP NOTE).
-// в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-
-// D73 auto-derive `Into[U]` РѕС‚ `From[T]` РІ bootstrap'Рµ РќР• СЂРµР°Р»РёР·РѕРІР°РЅ:
-// type-checker РЅРµ СЃРёРЅС‚РµР·РёСЂСѓРµС‚ `Fahrenheit.to_str()` body РёР· СЃСѓС‰РµСЃС‚РІСѓСЋС‰РµР№
-// `Celsius.from(Fahrenheit)` РґРµРєР»Р°СЂР°С†РёРё (СЃРј. plan doc В§62.E + Plan 62.E+).
-// РџРѕСЌС‚РѕРјСѓ Р·РґРµСЃСЊ С‚РµСЃС‚ РїСЂРѕРІРµСЂСЏРµС‚ explicit `@into` impl: РєР°РЅРѕРЅРёС‡РµСЃРєРёР№
-// pattern РґР»СЏ Into-СѓРґРѕРІР»РµС‚РІРѕСЂРµРЅРёСЏ РґРѕ РїРѕР»РЅРѕР№ D73 СЂРµР°Р»РёР·Р°С†РёРё.
-
-type FahrToC { value f64 }
-
-export fn FahrToC @into() -> Celsius =>
-    { value: (@value - 32.0) * 5.0 / 9.0 }
-
-// Generic fn СЃ bound `[T Into[Celsius]]` вЂ” type-checker РІР°Р»РёРґРёСЂСѓРµС‚ С‡С‚Рѕ
-// T РёРјРµРµС‚ `into() -> Celsius` РјРµС‚РѕРґ (СЃС‚СЂСѓРєС‚СѓСЂРЅРѕ С‡РµСЂРµР· prelude).
-fn needs_into[T Into[Celsius]](v T) -> Celsius => v.into()
-
-test "Into[X] bound вЂ” explicit @into impl СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· prelude" {
-    ro f = FahrToC { value: 32.0 }
-    ro c = needs_into(f)
-    // 32В°F == 0В°C
-    assert(c.value > -0.1 && c.value < 0.1)
-}
-
-
+// [D73/D77 retraction 2026-07-06]: секции 4 (From[X] bound) и 5 (Into[X]
+// bound) удалены целиком — протоколы From/Into ретрактированы вместе со
+// всей compiler auto-derive-обвязкой (blanket identity, 4-way resolution).
+// Оставшиеся секции (1/2/3/6 — Hash/Equal/Compare/Display) не затронуты:
+// это отдельные протоколы, retraction их не касается.
 // в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
 // 6. Display bound вЂ” StringBuilder dependency СЂРµР·РѕР»РІРёС‚СЃСЏ С‡РµСЂРµР· builtins.
 //    Plan 91.8a (D183): renamed Display в†’ Display.

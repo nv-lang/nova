@@ -1,10 +1,9 @@
-// Plan 85.3 Ф.2 — TryInto[U, E]: instance-метод fallible-конверсии.
+// Plan 85.3 Ф.2 — try_into: instance-метод fallible-конверсии.
 //
-// `TryInto[U, E]` реализуется instance-методом
-// `fn Type @try_into() -> Result[U, E]` (D77, migration path b).
-//
-// Note: в bootstrap TryInto НЕ авто-выводится из TryFrom (auto-derive
-// отложен, см. std/prelude/protocols.nv) — метод объявляется напрямую.
+// `try_into` — конвенция имени instance-метода
+// `fn Type @try_into() -> Result[U, E]` (D325 R3 try_-prefix; TryInto
+// protocol D77 ретрактирован 2026-07-06 — метод объявляется напрямую,
+// без протокола/auto-derive).
 
 module conversion.try_into_test
 

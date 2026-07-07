@@ -1,11 +1,10 @@
-// Plan 72 P2-A: TryFrom[T, E] and TryInto[U, E] protocols.
+// Plan 72 P2-A: try_from/try_into naming convention (Result-form fallible
+// conversion, D325 R3).
 //
-// Previously deferred (Plan 62.E, Plan 56 Ф.2.7): the `Fail[E]` effect row
-// in protocol methods is blocked because vtable dispatch cannot propagate
-// effect handlers. Unblocked via migration path (b): use `Result[Self, E]`
-// return type instead of `Fail[E]` effect row.
-//
-// Protocol declarations are now live in std/prelude/protocols.nv (stable 0.1).
+// [D73/D77 retraction 2026-07-06]: TryFrom[T, E]/TryInto[U, E] protocol
+// declarations + auto-derive removed from std/prelude/protocols.nv; this
+// file only ever exercised plain `Type.try_from(v) -> Result[Self, E]`
+// static methods (no bound, no protocol dispatch), so it is unaffected.
 // Callers must match/unwrap the Result instead of using try-propagation "?".
 
 module nova_tests.plan72

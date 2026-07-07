@@ -14,10 +14,11 @@
 // clean `EXPECT_COMPILE_ERROR` (the panic aborted the whole runner process).
 //
 // The checker consults every legitimate resolution channel first — built-in
-// primitive methods (D109/D74), prelude/protocol methods (`method_table`), the
-// D73/D84 `into`/`try_into` conversions, and any generic `fn[T] T @method` blanket —
-// so a REAL method (`s.parse_int()`, `x.abs()`, `c.is_alphabetic()`) is never flagged;
-// only a genuinely-missing name reaches this diagnostic.
+// primitive methods (D109/D74), prelude/protocol methods (`method_table`), and
+// any generic `fn[T] T @method` blanket — so a REAL method (`s.parse_int()`,
+// `x.abs()`, `c.is_alphabetic()`) is never flagged; only a genuinely-missing
+// name reaches this diagnostic. (D73/D77 `into`/`try_into` auto-derive channel
+// retracted 2026-07-06 — no longer part of this list.)
 
 module neg.d325_retracted_str_parse_method_neg
 
