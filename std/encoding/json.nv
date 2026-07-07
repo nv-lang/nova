@@ -254,8 +254,9 @@ fn Lexer mut @skip_whitespace() -> () {
 // (D325 — Result-everywhere). Lexer.@advance/@peek дают Option (не fallible).
 fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
     @skip_whitespace()
-    ro line = @line
-    ro col = @col
+    // D411: record-pattern binding snapshot — 2 of 4 Lexer fields (`input`,
+    // `pos` omitted), so the explicit `..` is required (partial-list rule).
+    ro {line, col, ..} = @
 
     match @peek() {
         None      => Ok({ tok: EofTok, line, col })
@@ -428,9 +429,9 @@ fn parse_hex(s str) -> int
 // Чтение числа: optional '-', integer part, optional '.fraction',
 // optional 'e[+-]exp'. Возвращает f64.
 fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
-    ro start = @pos
-    ro start_line = @line
-    ro start_col = @col
+    // D411: record-pattern binding snapshot with rename — 3 of 4 Lexer
+    // fields (`input` omitted), so `..` is required (partial-list rule).
+    ro {pos: start, line: start_line, col: start_col, ..} = @
 
     // Знак
     if @peek() == Some('-') { @advance() }

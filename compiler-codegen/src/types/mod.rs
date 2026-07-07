@@ -6652,8 +6652,14 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f4_check_value(&d.value, scope, errors);
                 // Plan 124 (D220/D221): priv field PATTERN check — recursive,
                 // covers nested destructure через sub-field types.
+                // D411 (`[M-d411-record-binding-destructuring]`): same walk
+                // ALSO enforces the record-binding `..`-partial rule here
+                // (`enforce_binding_rest = true`) — only `ro`/`mut` bindings
+                // (this is the `Stmt::Let` walk), not match-arms/for-loops.
                 let scrut_ty = self.infer_expr_type(&d.value, scope);
-                self.check_priv_pattern_recursive(&d.pattern, scrut_ty.as_ref(), errors);
+                self.check_priv_pattern_recursive_inner(
+                    &d.pattern, scrut_ty.as_ref(), true, errors,
+                );
                 // Plan 124.8 (D175 amend): track ro-binding names. `ro x = expr`
                 // делает binding immutable — даже `mut field` через `x.f = ...`
                 // блокируется (Rust-style binding dominates).
@@ -8762,8 +8768,29 @@ impl<'a> TypeCheckCtx<'a> {
         scrutinee_ty: Option<&TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
+        self.check_priv_pattern_recursive_inner(pattern, scrutinee_ty, false, errors)
+    }
+
+    /// D411 (Plan [M-d411-record-binding-destructuring]): same walk as
+    /// `check_priv_pattern_recursive`, plus (when `enforce_binding_rest`)
+    /// the record-binding `..`-partial rule: `ro {a, ..} = e` требует
+    /// explicit `..` когда перечислена НЕ вся схема типа (иначе
+    /// `E_RECORD_PATTERN_NEEDS_REST`). Только для `ro`/`mut` bindings
+    /// (`Stmt::Let` walk, `enforce_binding_rest = true`) — match-arms /
+    /// for-loop destructure (остальные call-sites) остаются permissive
+    /// (`enforce_binding_rest = false`), не в зоне D411.
+    ///
+    /// Единая функция (не дубль): переиспользует уже посчитанный `metas`
+    /// (field-schema резолв типа) вместо повторного лукапа `self.types`.
+    fn check_priv_pattern_recursive_inner(
+        &self,
+        pattern: &Pattern,
+        scrutinee_ty: Option<&TypeRef>,
+        enforce_binding_rest: bool,
+        errors: &mut Vec<Diagnostic>,
+    ) {
         match pattern {
-            Pattern::Record { type_path, fields, span, .. } => {
+            Pattern::Record { type_path, fields, rest, span } => {
                 let tname_opt: Option<String> = type_path
                     .as_ref()
                     .and_then(|p| p.last().cloned())
@@ -8840,27 +8867,68 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // D411: `..`-partial rule — только для ro/mut binding-walk
+                // (enforce_binding_rest). Частичный список полей (меньше,
+                // чем полная схема типа) без `..` — нечестный сигнал «беру
+                // всё», когда на деле берётся часть. `metas` уже несёт
+                // полную схему (Record/NamedTuple), fields — то, что
+                // перечислено в pattern; `*rest` — присутствие `..`.
+                if enforce_binding_rest && !*rest && fields.len() < metas.len() {
+                    let listed = fields.iter().map(|f| f.name.as_str())
+                        .collect::<Vec<_>>().join(", ");
+                    errors.push(
+                        Diagnostic::new(
+                            format!(
+                                "[E_RECORD_PATTERN_NEEDS_REST] record-pattern binding lists {} \
+                                 of {} field(s) of `{}` without `..` — a partial field list \
+                                 requires an explicit `..` to mark the rest as intentionally \
+                                 ignored (D411).",
+                                fields.len(), metas.len(), tname,
+                            ),
+                            *span,
+                        )
+                        .with_note(
+                            "a FULL field list (every field of the type named) needs no `..`; \
+                             a PARTIAL list must say so explicitly — this is not inferred from \
+                             field count alone.",
+                        )
+                        .with_note(format!(
+                            "add `..`: `{{ {}, .. }}`",
+                            listed,
+                        )),
+                    );
+                }
                 // Recurse into sub-patterns with resolved sub-field type.
-                let _ = span;
                 for pf in fields {
                     if let Some(sub) = &pf.pattern {
                         let sub_ty = metas.iter()
                             .find(|m| m.name == pf.name)
                             .map(|m| m.ty.clone());
-                        self.check_priv_pattern_recursive(sub, sub_ty.as_ref(), errors);
+                        self.check_priv_pattern_recursive_inner(
+                            sub, sub_ty.as_ref(), enforce_binding_rest, errors,
+                        );
                     }
                 }
             }
             Pattern::Or { alternatives, .. } => {
                 for alt in alternatives {
-                    self.check_priv_pattern_recursive(alt, scrutinee_ty, errors);
+                    self.check_priv_pattern_recursive_inner(
+                        alt, scrutinee_ty, enforce_binding_rest, errors,
+                    );
                 }
             }
             Pattern::Binding { inner, .. } => {
-                self.check_priv_pattern_recursive(inner, scrutinee_ty, errors);
+                self.check_priv_pattern_recursive_inner(
+                    inner, scrutinee_ty, enforce_binding_rest, errors,
+                );
             }
             // Variant/Tuple/Array/Wildcard/Ident/Literal — no priv-record
             // semantics at this level (handled in Plan 124.4 для tuple form).
+            // D411 note: a record pattern NESTED inside a Tuple binding
+            // element (`ro (a, {x, ..}) = pair`) does not get the
+            // `..`-rest check here — Tuple elem types aren't resolved at
+            // this call site (out of scope for [M-d411-record-binding-
+            // destructuring]; direct record-field nesting IS covered above).
             _ => {}
         }
     }
@@ -15918,7 +15986,8 @@ impl<'a> BoundCtx<'a> {
         }
     }
 
-    /// Plan 53: refutability check для `let`-pattern. Допустимы только
+    /// Plan 53 / D411: refutability check для `let`(ro/mut)-pattern.
+    /// Допустимы только
     /// irrefutable patterns:
     /// - `Ident`, `Wildcard`
     /// - `Tuple(pats)` — рекурсивно irrefutable
@@ -15926,12 +15995,15 @@ impl<'a> BoundCtx<'a> {
     ///   sum-variant) — рекурсивно irrefutable для под-pattern'ов
     /// - `Binding { inner, .. }` — inner irrefutable
     ///
-    /// Refutable (compile error):
+    /// Refutable (compile error, `[E_REFUTABLE_BINDING]`, D411):
     /// - `Literal`, `Variant`, `Or`, `Array` (всегда refutable)
     /// - `Record` с type_path к sum-variant (нужен tag-check в runtime)
     ///
-    /// Production-grade diagnostic: тип нарушения + подсказка `if let
-    /// <pat> = <expr> { ... }` / `match`.
+    /// Production-grade diagnostic: код `[E_REFUTABLE_BINDING]` + тип
+    /// нарушения + подсказка `if let <pat> = <expr> { ... }` / `match`.
+    /// (`..`-partial-list rule для record-биндингов — отдельная проверка,
+    /// `check_priv_pattern_recursive_inner` c `enforce_binding_rest`,
+    /// `[E_RECORD_PATTERN_NEEDS_REST]`.)
     fn check_let_pattern_irrefutable(&self, pat: &Pattern, errors: &mut Vec<Diagnostic>) {
         match pat {
             Pattern::Ident { .. } | Pattern::Wildcard(_) => {}
@@ -15949,15 +16021,15 @@ impl<'a> BoundCtx<'a> {
                             errors.push(
                                 Diagnostic::new(
                                     format!(
-                                        "refutable pattern in `let`: `{}` is a sum-variant — \
-                                         match is not statically guaranteed (D52). Use \
-                                         `if let` or `match` instead.",
+                                        "[E_REFUTABLE_BINDING] refutable pattern in `let`: `{}` \
+                                         is a sum-variant — match is not statically guaranteed \
+                                         (D52/D411). Use `if let` or `match` instead.",
                                         path_str,
                                     ),
                                     *span,
                                 )
                                 .with_note(
-                                    "Plan 53: `let` accepts only irrefutable patterns (Ident, \
+                                    "Plan 53/D411: `let` accepts only irrefutable patterns (Ident, \
                                      Wildcard, Tuple, plain-Record). Sum-variants need a \
                                      runtime tag-check — `let` cannot perform it.",
                                 )
@@ -15985,8 +16057,8 @@ impl<'a> BoundCtx<'a> {
             Pattern::Literal(_, span) => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern in `let`: literal match is not statically \
-                         guaranteed. Use `if let` / `match`, or a plain \
+                        "[E_REFUTABLE_BINDING] refutable pattern in `let`: literal match is not \
+                         statically guaranteed. Use `if let` / `match`, or a plain \
                          `let x = ...; if x == ...`",
                         *span,
                     )
@@ -16000,9 +16072,9 @@ impl<'a> BoundCtx<'a> {
                 errors.push(
                     Diagnostic::new(
                         format!(
-                            "refutable pattern in `let`: `{}` is a variant-pattern — \
-                             match is not statically guaranteed (D52/D59). Use `if let` \
-                             or `match` instead.",
+                            "[E_REFUTABLE_BINDING] refutable pattern in `let`: `{}` is a \
+                             variant-pattern — match is not statically guaranteed \
+                             (D52/D59/D411). Use `if let` or `match` instead.",
                             path_str,
                         ),
                         *span,
@@ -16022,8 +16094,8 @@ impl<'a> BoundCtx<'a> {
             Pattern::Or { span, .. } => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern in `let`: alternation `|` is not statically \
-                         guaranteed to match. Use `if let` / `match`.",
+                        "[E_REFUTABLE_BINDING] refutable pattern in `let`: alternation `|` is \
+                         not statically guaranteed to match. Use `if let` / `match`.",
                         *span,
                     )
                     .with_note(
@@ -16034,8 +16106,8 @@ impl<'a> BoundCtx<'a> {
             Pattern::Array { span, .. } => {
                 errors.push(
                     Diagnostic::new(
-                        "refutable pattern in `let`: array length is not statically \
-                         guaranteed. Use `if let` / `match`, or index/length checks \
+                        "[E_REFUTABLE_BINDING] refutable pattern in `let`: array length is not \
+                         statically guaranteed. Use `if let` / `match`, or index/length checks \
                          like `xs[0]`, `xs.len`.",
                         *span,
                     )

@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_RECORD_PATTERN_NEEDS_REST
+//
+// D411 — record-pattern binding `..`-rule: a PARTIAL field list (fewer names
+// than the type actually declares) must say so explicitly with a trailing
+// `..` (spec/decisions/03-syntax.md D411). Without it, the binding silently
+// drops fields — a dishonest "I take everything" signal when only part is
+// actually taken. `E_RECORD_PATTERN_NEEDS_REST` catches the omission at
+// compile time; the fix is either `{ x, y, .. }` (explicit partial) or
+// `{ x, y, z }` (the full field list, no `..` needed).
+module neg.d411_partial_no_rest_neg
+
+type D411NegPoint3 {
+    x int
+    y int
+    z int
+}
+
+fn d411_neg_xy(p D411NegPoint3) -> int {
+    // ✗ E_RECORD_PATTERN_NEEDS_REST — lists 2 of 3 fields (`x`, `y`) without
+    //   `..`; either add `..` or name `z` too.
+    ro { x, y } = p
+    x + y
+}
+
+test "D411: partial record-pattern binding without `..` is rejected" {
+    ro _ = d411_neg_xy(D411NegPoint3 { x: 1, y: 2, z: 3 })
+}
