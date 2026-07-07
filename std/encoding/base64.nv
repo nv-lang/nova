@@ -15,9 +15,9 @@
 //
 // Decisions:
 //   - D72 bounds: ничего generic.
-//   - D73 From / Into: encode = Into[str], decode = From[str].
-//     Для []u8 → str (encode) и str → []u8 (decode) обе формы
-//     через D73.
+//   - Плоские static-функции: encode/decode, без протокола (D73/D77
+//     ретрактированы 2026-07-06 — `Base64.encode`/`Base64.decode` никогда
+//     не зависели от From/Into, это просто именованные конверсии).
 //   - D325 (Plan 181): decode → Result[[]u8, Base64Error] (Result-everywhere, не throw).
 //   - Buffer для O(N) аккумуляции выходных байт/символов.
 //

@@ -236,7 +236,7 @@ export fn RequestBuilder @text(s str) -> RequestBuilder =>
 /// Ф.4 [M-178-typed-json-needs-180]; the dynamic `JsonValue` form lands now.
 #stable(since = "0.1")
 export fn RequestBuilder @json(value JsonValue) -> RequestBuilder =>
-    { @client, @method, @url_input, @header_ops, @query, body_bytes: value.into().bytes().clone(), has_body: true, content_type: Some("application/json") }
+    { @client, @method, @url_input, @header_ops, @query, body_bytes: value.to_str().bytes().clone(), has_body: true, content_type: Some("application/json") }
 
 /// Set a form body (application/x-www-form-urlencoded).
 #stable(since = "0.1")

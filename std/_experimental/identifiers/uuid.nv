@@ -19,9 +19,7 @@
 //   - D55 record-coercion для конструкции внутреннего представления.
 //   - D67 ?-оператор работает только на Result/Option.
 //   - D72 bounds (не используется напрямую — нет generic API).
-//   - D73 From[str] / Into[str]: парсинг и форматирование.
-//   - D77 TryFrom для парсинга через Result (если caller хочет
-//     не throw, а explicit Result).
+//   - `Uuid.from(s)` / `u.to_str()`: парсинг и форматирование (D410).
 //   - D74 instance-методы числовых операций.
 //
 // Pending features в bootstrap (для production tooling):
@@ -208,15 +206,15 @@ export fn Uuid @hash() -> u64 => @hi ^ @lo
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Сериализация (D73 Into[str])
+// Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Into[str]` — стандартный формат `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+/// `to_str()` — стандартный формат `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 /// (36 chars, lowercase hex, 4-2-2-2-6 байт через дефисы).
 ///
 /// Round-trip с `Uuid.from`.
 #stable(since = "0.1")
-export fn Uuid @into() -> str {
+export fn Uuid @to_str() -> str {
     consume buf = StringBuilder.with_capacity(36)
 
     // 4 байта hi MSB → 8 hex
@@ -235,7 +233,7 @@ export fn Uuid @into() -> str {
     write_hex_u32(buf, ((@lo >> 16) & 0xFFFFFFFF) as u32)
     write_hex_u16(buf, (@lo & 0xFFFF) as u16)
 
-    buf.into()
+    buf.into_str()
 }
 
 fn write_hex_u32(buf mut Buffer, v u32) {
@@ -270,10 +268,10 @@ fn hex_digit(n u8) -> char {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Парсинг (D73 From[str] + D77 TryFrom)
+// Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `From[str]` — parse standard 36-char UUID format. Case-insensitive.
+/// Parse standard 36-char UUID format. Case-insensitive.
 /// Throws `ParseUuidError` (InvalidLength/InvalidHex/MissingDash).
 #stable(since = "0.1")
 export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
@@ -346,8 +344,8 @@ fn hex_value(c char, position int) Fail[ParseUuidError] -> u8 {
 
 test "NIL и MAX константы" {
     assert(NIL.is_nil())
-    assert(NIL.into() == "00000000-0000-0000-0000-000000000000")
-    assert(MAX.into() == "ffffffff-ffff-ffff-ffff-ffffffffffff")
+    assert(NIL.to_str() == "00000000-0000-0000-0000-000000000000")
+    assert(MAX.to_str() == "ffffffff-ffff-ffff-ffff-ffffffffffff")
     assert(!MAX.is_nil())
 }
 
@@ -393,7 +391,7 @@ test "v7: lexicographic ordering по timestamp" {
     assert(!later< earlier)
 }
 
-test "round-trip: from(u.into()) == u" {
+test "round-trip: from(u.to_str()) == u" {
     ro cases = [
         NIL,
         MAX,
@@ -401,7 +399,7 @@ test "round-trip: from(u.into()) == u" {
         Uuid.new(0xffffffffffffffff, 0x0000000000000000),
     ]
     for u in cases {
-        ro s = u.into()
+        ro s = u.to_str()
         ro parsed = Uuid.from(s)
         assert(parsed== u)
     }
@@ -409,7 +407,7 @@ test "round-trip: from(u.into()) == u" {
 
 test "from: канонический пример из RFC 4122" {
     ro u = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
-    assert(u.into() == "550e8400-e29b-41d4-a716-446655440000")
+    assert(u.to_str() == "550e8400-e29b-41d4-a716-446655440000")
     match u.version() {
         V4 => ()
         _  => assert(false)
@@ -473,7 +471,7 @@ test "AI-first: тест UUID-генерации детерминистичен 
         ro u1 = Uuid.v4()
         ro u2 = Uuid.v4()
         // Воспроизводимо: тот же seed → те же UUID при любом запуске.
-        assert(u1.into() == u1.into())
+        assert(u1.to_str() == u1.to_str())
         assert(!u1== u2)
     }
 }

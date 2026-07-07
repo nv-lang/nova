@@ -39,7 +39,7 @@ test "multi-phase budget compose + decompose + totals + render" {
     assert(dh > -1e-6 && dh < 1e-6, "fractional hours within tolerance")
 
     // ── Human rendering ──
-    ro human = budget.into_human()
+    ro human = budget.to_human()
     assert(human.contains("2h"), "human render mentions hours")
     assert(human.contains("45min"), "human render mentions minutes")
     assert(human.contains("30s"), "human render mentions seconds")

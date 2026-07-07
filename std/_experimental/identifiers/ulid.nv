@@ -22,14 +22,14 @@
 // Decisions:
 //   - D52 record-тип, D55 record-coercion
 //   - D67 ?-оператор работает только на Result/Option
-//   - D73 From / Into
+//   - `Ulid.from(s)` / `u.to_str()` — конструктор-конверсия/представление (D410)
 //   - D74 instance-методы числовых операций
 //   - Эффекты Random, Time для генерации
 //
 // API:
 //   Ulid.new() Time Random -> Self
 //   Ulid.from(s str) Fail[ParseUlidError] -> Self
-//   u.into() -> str
+//   u.to_str() -> str
 //   u.timestamp_ms() -> u64
 
 module identifiers.ulid
@@ -50,7 +50,7 @@ import std.testing.handlers as th
 /// # Examples
 /// ```nova
 /// let u = Ulid.new()
-/// let s = u.into()              // 26-char Crockford Base32
+/// let s = u.to_str()            // 26-char Crockford Base32
 /// assert(s.len == 26)
 /// ```
 #stable(since = "0.1")
@@ -206,18 +206,18 @@ export fn Ulid @compare(other Ulid) -> int {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Сериализация (D73 Into[str])
+// Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Into[str]` — 26-char Crockford Base32 string. Round-trip с `Ulid.from`.
+/// `to_str()` — 26-char Crockford Base32 string. Round-trip с `Ulid.from`.
 ///
 /// # Examples
 /// ```nova
 /// let u = Ulid.new()
-/// assert(Ulid.from(u.into()) == u)
+/// assert(Ulid.from(u.to_str()) == u)
 /// ```
 #stable(since = "0.1")
-export fn Ulid @into() -> str {
+export fn Ulid @to_str() -> str {
     consume buf = StringBuilder.with_capacity(26)
 
     // 48-бит timestamp → 10 chars (10 × 5 = 50 бит, padding 2 нулевых
@@ -275,15 +275,15 @@ export fn Ulid @into() -> str {
         shift2 -= 5
     }
 
-    buf.into()
+    buf.into_str()
 }
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Парсинг (D73 From[str])
+// Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `From[str]` — parse 26-char Crockford Base32 ULID. Case-insensitive.
+/// Parse 26-char Crockford Base32 ULID. Case-insensitive.
 /// `I`/`L` → 1, `O` → 0 (Crockford ambiguity remap).
 #stable(since = "0.1")
 export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
@@ -383,9 +383,9 @@ test "lexicographic ordering — главная фича ULID" {
     ro u2 = with Time = th.fixed_ms(2000), Random = th.seeded(1) { Ulid.new() }
     ro u3 = with Time = th.fixed_ms(3000), Random = th.seeded(1) { Ulid.new() }
 
-    ro s1 = u1.into()
-    ro s2 = u2.into()
-    ro s3 = u3.into()
+    ro s1 = u1.to_str()
+    ro s2 = u2.to_str()
+    ro s3 = u3.to_str()
 
     // Лексикографически (как строки): s1 < s2 < s3
     assert(s1 < s2)
@@ -395,14 +395,14 @@ test "lexicographic ordering — главная фича ULID" {
 test "формат: 26 символов" {
     with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
         ro u = Ulid.new()
-        ro s = u.into()
+        ro s = u.to_str()
         assert(s.len() == 26)
     }
 }
 
 test "формат: только Crockford-Base32 символы" {
     with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xFEEDC0DE) {
-        ro s = Ulid.new().into()
+        ro s = Ulid.new().to_str()
         // Без I, L, O, U
         assert(!s.contains("I") && !s.contains("i"))
         assert(!s.contains("L") && !s.contains("l"))
@@ -411,10 +411,10 @@ test "формат: только Crockford-Base32 символы" {
     }
 }
 
-test "round-trip: from(u.into()) == u" {
+test "round-trip: from(u.to_str()) == u" {
     with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xCAFE) {
         ro u = Ulid.new()
-        ro s = u.into()
+        ro s = u.to_str()
         ro parsed = Ulid.from(s)
         assert(parsed== u)
     }
@@ -423,7 +423,7 @@ test "round-trip: from(u.into()) == u" {
 test "from: case-insensitive" {
     with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
         ro u = Ulid.new()
-        ro s_upper = u.into()
+        ro s_upper = u.to_str()
         // ULID by spec — upper-case, но decode принимает обе.
         ro parsed = Ulid.from(s_upper.to_ascii_lower())
         assert(parsed== u)
@@ -435,7 +435,7 @@ test "from: I/L → 1, O → 0 (Crockford ambiguity)" {
     // декодироваться идентично.
     with Time = th.fixed_ms(1000), Random = th.seeded(0) {
         ro u = Ulid.new()
-        ro s = u.into()
+        ro s = u.to_str()
         // Если в s нет '0' или '1' — пропускаем тест (но обычно есть).
         if s.contains("0") || s.contains("1") {
             ro modified = s.replace("0", "O").replace("1", "I")

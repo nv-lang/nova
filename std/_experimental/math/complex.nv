@@ -3,10 +3,10 @@
 //
 // API в стиле stdlib/duration.nv:
 //   - Complex.new(re, im)               прямой конструктор
-//   - Complex.from(re f64) / from(n int)  D73 From[f64]/From[int] —
-//                                       действительная часть
+//   - Complex.from(re f64) / from(n int)  действительная часть
+//                                       (именованный конструктор-конверсия)
 //   - Complex.try_from(s str)           Result[Complex, ParseComplexError] — парсинг (D325)
-//                                       (обратное к @into() -> str,
+//                                       (обратное к @to_str() -> str,
 //                                        round-trip property)
 //   - Complex.from_imag(im f64)         доменный конструктор —
 //                                       мнимая часть
@@ -15,7 +15,7 @@
 //                                       (доменный синтаксис эл.техники)
 //   - z + w, z * w, z.conj(), z.abs()   обычная алгебра через @-методы
 //   - z.sqr(), z.norm_sqr()             квадрат и квадрат модуля
-//   - z.is_finite(), z.into()           сервисные методы
+//   - z.is_finite(), z.to_str()         сервисные методы
 //
 // Decisions:
 //   - D215 named-tuple: `type Complex(re f64 = 0.0, im f64 = 0.0)` — stack-allocated,
@@ -26,12 +26,10 @@
 //   - D46/D363 operator overloading через `@plus`, `@times`, `@neg`, `@equal`.
 //     `!=` выводится из `@equal` автоматически.
 //   - D66 `Self` в return type — DRY, без повтора имени Complex.
-//   - D73 From/Into: `Complex.from(f64)` даёт авто-выведенный
-//     `Into[Complex]` для f64, поэтому `(2.0).into()` тоже работает
-//     (в позиции с известным целевым типом).
-//   - D70 (replaced → D73) — для строкового представления реализуем
-//     `Complex @into() -> str`, компилятор синтезирует парный
-//     `str.from(z)`.
+//   - `Complex.from(f64)` / `Complex.from(int)` — именованные static-конструкторы
+//     конверсии (D73/D77 ретрактированы 2026-07-06: протоколов From/Into больше
+//     нет, это просто конвенция имён).
+//   - Строковое представление — `Complex @to_str() -> str` (D410).
 //
 // Использует instance-методы на f64 (std.math): `@sqrt`, `@hypot`,
 // `@atan2`, `@cos`, `@sin`, `@is_finite`, `@is_nan`, `@abs`.
@@ -77,12 +75,12 @@ export const I    Complex = Complex(im: 1.0)
 export fn Complex.new(re f64, im f64) -> Self =>
     Complex(re, im)
 
-/// `From[f64]` — чисто-действительный Complex (im = 0). D73 синтезирует Into.
+/// Чисто-действительный Complex (im = 0).
 #stable(since = "0.1")
 export fn Complex.from(re f64) -> Self =>
     Complex(re: re)
 
-/// `From[int]` — convenience для `Complex.from(2)` без `as f64`.
+/// Convenience-конструктор для `Complex.from(2)` без `as f64`.
 #stable(since = "0.1")
 export fn Complex.from(n int) -> Self =>
     Complex(re: n as f64)
@@ -256,19 +254,16 @@ export fn Complex @approx_eq(other Complex, tol f64) -> bool {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Конверсия в строку (D73 + D70-replacement)
+// Конверсия в строку (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-// Реализуем `Into[str]` — компилятор автоматически даёт парный
-// `str.from(z)` через D73 авто-вывод. Обе формы вызова работают:
-//   "z = ${z}"          → через str.from(z)
-//   z.into()            // тип цели = str из контекста
-//   str.from(z)
+// `@to_str()` — представление в строку (D410). Интерполяция `"${z}"`
+// использует его же через компиляторный fallback-путь.
 //
-/// `Into[str]` — формат `a+bi` / `a-bi` / `a` / `bi` / `0.0`.
+/// `to_str()` — формат `a+bi` / `a-bi` / `a` / `bi` / `0.0`.
 /// Round-trip с `Complex.try_from(s)`.
 #stable(since = "0.1")
-export fn Complex @into() -> str {
+export fn Complex @to_str() -> str {
     if @im == 0.0 {
         "${@re}"
     } else if @re == 0.0 {
@@ -282,13 +277,13 @@ export fn Complex @into() -> str {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Парсинг из строки — обратная к `@into() -> str` (D73)
+// Парсинг из строки — обратная к `@to_str() -> str`
 // ──────────────────────────────────────────────────────────────────────────
 
-// `try_from(str)` — обратная к `Into[str]`. Round-trip property:
-//   Complex.try_from(z.into())!! ≈ z
+// `try_from(str)` — обратная к `to_str()`. Round-trip property:
+//   Complex.try_from(z.to_str())!! ≈ z
 //
-// Принимает форматы из @into():
+// Принимает форматы из @to_str():
 //   "3.0"            → re=3.0, im=0
 //   "2.0i"           → re=0,   im=2.0
 //   "1.0+2.0i"       → re=1.0, im=2.0
@@ -300,7 +295,7 @@ export fn Complex @into() -> str {
 #stable(since = "0.1")
 export type ParseComplexError enum InvalidFormat | NotANumber
 
-/// `try_from` (Result) — parse `a+bi` / `bi` / `a` форматы. Round-trip с `@into`.
+/// `try_from` (Result) — parse `a+bi` / `bi` / `a` форматы. Round-trip с `@to_str`.
 /// `try_` отличает fallible-парсер от инфаллибл `Complex.from(f64)`/`from(int)` (D325 R3).
 ///
 /// # Examples
@@ -396,7 +391,7 @@ test "constructors: new / from / from_imag / from_polar" {
     assert(z.re == 3.0)
     assert(z.im == 4.0)
 
-    // Complex.from(f64) — действительная часть (D73 From[f64]).
+    // Complex.from(f64) — действительная часть.
     ro r = Complex.from(5.0)
     assert(r.is_real())
     assert(r.re == 5.0)
@@ -405,8 +400,8 @@ test "constructors: new / from / from_imag / from_polar" {
     assert(im.is_imag())
     assert(im.im == 7.0)
 
-    // Та же конверсия через .into() — тип цели из аннотации (D73 авто-Into).
-    ro r2 Complex = (5.0).into()
+    // Та же конверсия явным static-конструктором.
+    ro r2 Complex = Complex.from(5.0)
     assert(r2== r)
 }
 
@@ -516,17 +511,17 @@ test "predicates" {
     assert(!ONE.is_imag())
 }
 
-test "into[str]: формат для разных случаев" {
-    ro s_real str = Complex.from(3.0).into()
+test "to_str(): формат для разных случаев" {
+    ro s_real str = Complex.from(3.0).to_str()
     assert(s_real == "3")        // nova_f64_to_str uses %g: strips trailing zero
 
-    ro s_imag str = Complex.from_imag(2.0).into()
+    ro s_imag str = Complex.from_imag(2.0).to_str()
     assert(s_imag == "2i")       // same: %g → "2", not "2.0"
 
-    ro s_pos str = Complex.new(1.0, 2.0).into()
+    ro s_pos str = Complex.new(1.0, 2.0).to_str()
     assert(s_pos == "1+2i")      // same: %g → "1" and "2"
 
-    ro s_neg str = Complex.new(1.0, -2.0).into()
+    ro s_neg str = Complex.new(1.0, -2.0).to_str()
     assert(s_neg == "1-2i")      // %g on -2.0 → "-2"
 }
 
@@ -537,8 +532,8 @@ test "extension method j(): мнимая единица" {
     ro z2 = 3.j()
     assert(z2== Complex.from_imag(3.0))
 
-    // Композиция через D73 (для действительной части) + j() (для мнимой):
-    //   `Complex.from(2) + 3.j()` или `(2).into() + 3.j()`
+    // Композиция явных static-конструкторов (для действительной части) + j() (для мнимой):
+    //   `Complex.from(2) + 3.j()`
     ro z3 = Complex.from(2) + 3.j()
     assert(z3.re == 2.0)
     assert(z3.im == 3.0)
@@ -546,7 +541,7 @@ test "extension method j(): мнимая единица" {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// From[str] / Into[str] round-trip
+// str.from / to_str round-trip
 // ──────────────────────────────────────────────────────────────────────────
 
 test "Complex.try_from(str): чисто действительное" {
@@ -575,7 +570,7 @@ test "Complex.try_from(str): полная форма + и -" {
     assert(neg.im == -2.0)
 }
 
-test "round-trip: try_from(z.into()) == z для всех канонических форм" {
+test "round-trip: try_from(z.to_str()) == z для всех канонических форм" {
     ro cases = [
         Complex.new(3.0, 0.0),
         Complex.from_imag(2.0),
@@ -584,7 +579,7 @@ test "round-trip: try_from(z.into()) == z для всех канонически
         ZERO,
     ]
     for z in cases {
-        ro s = z.into()
+        ro s = z.to_str()
         ro parsed Complex = Complex.try_from(s)!!
         assert(parsed.approx_eq(z, 1e-12))
     }

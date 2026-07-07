@@ -2,7 +2,7 @@
 //
 // JsonSerializer / JsonDeserializer реализуют Serializer / Deserializer
 // (serde.nv) ПОВЕРХ существующего std/encoding/json (JsonValue/Json.parse/
-// @into) — reuse RFC 8259-логики, escape, format_num, strict-DuplicateKey
+// @to_str) — reuse RFC 8259-логики, escape, format_num, strict-DuplicateKey
 // (Q11). НЕ дублируем парсер. PURE codec (без I/O-эффекта).
 //
 // Публичный API — то, что зовёт Plan 178 (typed .json[T]) для record-DTO:
@@ -32,7 +32,7 @@ fn SerFrame.obj_frame() -> SerFrame =>
 fn SerFrame.arr_frame() -> SerFrame =>
     { is_obj: false, obj: HashMap[str, JsonValue].new(), arr: [], pending: "" }
 
-/// Сериализатор: drive Serialize -> строит JsonValue -> @into() компактный JSON.
+/// Сериализатор: drive Serialize -> строит JsonValue -> @to_str() компактный JSON.
 /// Несёт depth-counter (Q14).
 #unstable
 export type JsonSerializer {
@@ -333,7 +333,7 @@ export fn json_to_value[T Serialize](v T) -> Result[JsonValue, SerError] {
 export fn json_encode[T Serialize](v T) -> Result[str, SerError] {
     mut s = JsonSerializer.new()
     v.serialize(s)?
-    if s.has_root { Ok(s.root.into()) } else { Ok(JsonValue.null().into()) }
+    if s.has_root { Ok(s.root.to_str()) } else { Ok(JsonValue.null().to_str()) }
 }
 
 /// T -> pretty JSON (2-space отступ).

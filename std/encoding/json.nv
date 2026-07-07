@@ -7,7 +7,7 @@
 //! single quotes, NaN/Infinity, unquoted keys — это JSON5/JSONC, отдельные
 //! форматы.
 //!
-//! Round-trip property: `Json.parse(v.into())!! == v` для любого `v`.
+//! Round-trip property: `Json.parse(v.to_str())!! == v` для любого `v`.
 //!
 //! # Examples
 //!
@@ -667,32 +667,30 @@ export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] {
     }
 }
 
-/// D77 `TryFrom[str]` — алиас [`Json.parse`] (D325 — fallible → Result).
-///
-/// Позволяет `str.try_into()` (Result) при известном целевом типе.
-/// Поведение идентично `Json.parse`.
+/// `try_from` — алиас [`Json.parse`] по конвенции имён конструктора-конверсии
+/// (D325 — fallible → Result). Поведение идентично `Json.parse`.
 #stable(since = "0.1")
 export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] =>
     Json.parse(s)
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Сериализация: @into() -> str
+// Сериализация: @to_str() -> str
 // ──────────────────────────────────────────────────────────────────────────
 
-/// D73 `Into[str]` — сериализация в compact JSON (single line, без отступов).
+/// `to_str()` — сериализация в compact JSON (single line, без отступов, D410).
 ///
-/// Компилятор синтезирует парный `str.from(v)`, поэтому работают обе формы:
-/// `v.into()` и `str.from(v)`. Для multi-line форматирования используй
+/// Интерполяция (`"${v}"`) и `str.from(v)` используют этот же метод через
+/// компиляторный Display-fallback. Для multi-line форматирования используй
 /// [`pretty`].
 ///
 /// # Examples
 /// ```nova
 /// let v = Array([Num(1.0), Str("a")])
-/// assert(v.into() == "[1,\"a\"]")
+/// assert(v.to_str() == "[1,\"a\"]")
 /// ```
 #stable(since = "0.1")
-export fn JsonValue @into() -> str => match @ {
+export fn JsonValue @to_str() -> str => match @ {
     Null      => "null"
     Bool(b)   => if b { "true" } else { "false" }
     Num(n)    => format_num(n)
@@ -751,7 +749,7 @@ fn format_array(xs []JsonValue) -> str {
     mut first = true
     for x in xs {
         if !first { buf = buf + "," }
-        buf = buf + x.into()
+        buf = buf + x.to_str()
         first = false
     }
     buf + "]"
@@ -767,7 +765,7 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
         if !first { buf = buf + "," }
         buf = buf + format_string(k)
         buf = buf + ":"
-        buf = buf + v.into()
+        buf = buf + v.to_str()
         first = false
     }
     buf + "}"
@@ -780,8 +778,8 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
 
 /// Pretty-print с 2-space отступами для логов и debug.
 ///
-/// Не часть D73 `Into[str]` — caller'у нужна явная функция. Compact-форма
-/// (`@into`) считается canonical для round-trip; pretty — для людей.
+/// Отдельная явная функция — не часть `to_str()`. Compact-форма
+/// (`@to_str`) считается canonical для round-trip; pretty — для людей.
 ///
 /// # Examples
 /// ```nova
@@ -798,7 +796,7 @@ fn pretty_at(v JsonValue, depth int) -> str => match v {
     Array(xs) => pretty_array(xs, depth)
     Object(m) if m.len() == 0 => "{}"
     Object(m) => pretty_object(m, depth)
-    _ => v.into()
+    _ => v.to_str()
 }
 
 fn pretty_array(xs []JsonValue, depth int) -> str {

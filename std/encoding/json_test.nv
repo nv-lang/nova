@@ -134,7 +134,7 @@ test "parse: ошибка — bad number" {
     })
 }
 
-test "into: примитивы — round-trip" {
+test "to_str: примитивы — round-trip" {
     ro cases = [
         JsonValue.Null,
         JsonValue.Bool(true),
@@ -144,32 +144,32 @@ test "into: примитивы — round-trip" {
         JsonValue.Str("hello"),
     ]
     for v in cases {
-        ro s = v.into()
+        ro s = v.to_str()
         ro parsed = Json.parse(s)!!
         assert(parsed == v)
     }
 }
 
-test "into: array round-trip" {
+test "to_str: array round-trip" {
     ro v = JsonValue.Array([JsonValue.Num(1.0), JsonValue.Num(2.0), JsonValue.Str("three")])
-    ro s = v.into()
+    ro s = v.to_str()
     ro parsed = Json.parse(s)!!
     assert(parsed == v)
 }
 
-test "into: nested object round-trip" {
+test "to_str: nested object round-trip" {
     mut m = HashMap[str, JsonValue].new()
     m.insert("name", JsonValue.Str("alice"))
     m.insert("score", JsonValue.Num(95.5))
     ro v = JsonValue.Object(m)
-    ro s = v.into()
+    ro s = v.to_str()
     ro parsed = Json.parse(s)!!
     assert(parsed == v)
 }
 
-test "into: escape в string" {
+test "to_str: escape в string" {
     ro v = JsonValue.Str("line1\nline2\ttab\"quote")
-    ro s = v.into()
+    ro s = v.to_str()
     ro parsed = Json.parse(s)!!
     assert(parsed == v)
 }
@@ -250,7 +250,7 @@ test "Баг 2: round-trip \\b\\f" {
         }
         None => assert(false)
     }
-    ro s = v.into()
+    ro s = v.to_str()
     ro parsed = Json.parse(s)!!
     assert(parsed == v)
 }

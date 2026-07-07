@@ -19,12 +19,12 @@
 //   - D52 record-тип: Url иммутабелен.
 //   - D55 record-coercion для конструирования.
 //   - D67 ?-оператор работает только на Result/Option.
-//   - D73 From[str] / Into[str]: парсинг и сериализация (round-trip).
+//   - `Url.from(s)` / `u.to_str()`: парсинг и сериализация (round-trip, D410).
 //   - D74 instance-методы char-операций.
 //
 // API:
 //   Url.from(s str) Fail[ParseUrlError] -> Self
-//   u.into() -> str  (через D73 авто-Into)
+//   u.to_str() -> str
 //   Url.encode_query(s str) -> str  (percent-encoding)
 //   Url.decode_query(s str) Fail[ParseUrlError] -> str
 
@@ -68,10 +68,10 @@ export type ParseUrlError enum
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Парсинг (D73 From[str])
+// Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `From[str]` — parse URL по RFC 3986 generic syntax.
+/// Parse URL по RFC 3986 generic syntax.
 /// Throws `ParseUrlError`. По D67 `?` после нельзя.
 #stable(since = "0.1")
 export fn Url.from(s str) Fail[ParseUrlError] -> Self {
@@ -222,12 +222,12 @@ fn is_scheme_char(c char) -> bool =>
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Сериализация (D73 Into[str])
+// Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Into[str]` — serialize Url обратно в string. Round-trip с `Url.from`.
+/// `to_str()` — serialize Url обратно в string. Round-trip с `Url.from`.
 #stable(since = "0.1")
-export fn Url @into() -> str {
+export fn Url @to_str() -> str {
     consume buf = StringBuilder.with_capacity(64)
     buf = buf + @scheme + ":"
 
@@ -477,13 +477,13 @@ test "parse: scheme нормализуется в lowercase" {
 test "round-trip: стандартный URL" {
     ro s = "https://api.example.com:8443/v1/users?id=42&active=true#section1"
     ro u = Url.from(s)
-    assert(u.into() == s)
+    assert(u.to_str() == s)
 }
 
 test "round-trip: с userinfo" {
     ro s = "https://alice:s3cret@example.com/path"
     ro u = Url.from(s)
-    assert(u.into() == s)
+    assert(u.to_str() == s)
 }
 
 test "parse: ошибка — пустой ввод" {

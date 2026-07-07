@@ -24,10 +24,10 @@
 //     возвращают новый.
 //   - D55 record-coercion: { major, minor, patch, pre, build } → Self.
 //   - D72 generic bounds: []str — массив через D27.
-//   - D73 From[str] / Into[str] пара. Программист пишет одну сторону,
-//     компилятор синтезирует вторую — обе формы вызова работают:
+//   - `Version.from(s)` (парсинг) / `v.to_str()` (сериализация) —
+//     именованные конструктор/представление (D410), не протокол:
 //       Version.from("1.2.3")            // парсинг
-//       v.into()                         // сериализация
+//       v.to_str()                       // сериализация
 //   - D74 instance-методы числовых операций (не используется напрямую,
 //     но `len`, comparisons на u64 — стандартные методы).
 //   - D46/D363 operator overloading: @equal, @compare — для естественного сравнения.
@@ -38,7 +38,7 @@
 //   - `str.contains(needle str) -> bool`
 //   - `str.find(needle str) -> Option[int]` — позиция или None
 //   - `str[from int..to int] -> str`
-//   - `u64.try_from(s str) -> Result[u64, ParseIntError]` (D77)
+//   - `u64.try_from(s str) -> Result[u64, ParseIntError]`
 //     Option получаем через `.ok()`: `u64.try_from(s).ok()`.
 // Все они стандартные str/int операции, не нуждаются в char-литералах.
 
@@ -126,7 +126,7 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Парсинг (D73 From[str])
+// Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
 // `Version.from(s str)` — парсер по semver.org § 9-10.
@@ -141,7 +141,7 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 //      leading-zero.
 //   3. Распарсить pre identifiers (split по ".", валидация alphanumeric).
 //   4. Распарсить build identifiers (split по ".", валидация).
-/// `From[str]` — parse semver.org §9-10 grammar. Throws ParseVersionError.
+/// Parse semver.org §9-10 grammar. Throws ParseVersionError.
 ///
 /// # Examples
 /// ```nova
@@ -281,13 +281,13 @@ fn is_ascii_ident_char(c char) -> bool {
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Сериализация (D73 Into[str])
+// Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Into[str]` — формат `MAJOR.MINOR.PATCH[-PRE][+BUILD]`.
-/// Round-trip: `Version.from(v.into())== v` для валидной Version.
+/// `to_str()` — формат `MAJOR.MINOR.PATCH[-PRE][+BUILD]`.
+/// Round-trip: `Version.from(v.to_str())== v` для валидной Version.
 #stable(since = "0.1")
-export fn Version @into() -> str {
+export fn Version @to_str() -> str {
     mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)
     if @pre.len() > 0 {
         s = s + "-" + join_dots(@pre)
@@ -378,7 +378,7 @@ fn compare_ident(a str, b str) -> int {
     if !a_num && b_num { return 1 }
     if a_num && b_num {
         // Оба numeric — парсим в u64 (валидация уже была в parse).
-        // D77: try_from возвращает Result, .ok() → Option, .unwrap_or → u64.
+        // try_from возвращает Result, .ok() → Option, .unwrap_or → u64.
         ro an = u64.try_from(a).ok().unwrap_or(0)
         ro bn = u64.try_from(b).ok().unwrap_or(0)
         if an < bn { return -1 }
@@ -537,31 +537,31 @@ test "parse: ошибка — нечисловой major" {
     })
 }
 
-test "into: round-trip простая версия" {
+test "to_str: round-trip простая версия" {
     ro v = Version.new(1, 2, 3)
-    assert(v.into() == "1.2.3")
-    ro parsed = Version.from(v.into())
+    assert(v.to_str() == "1.2.3")
+    ro parsed = Version.from(v.to_str())
     assert(parsed== v)
 }
 
-test "into: round-trip с pre" {
+test "to_str: round-trip с pre" {
     ro v = Version.full(1, 0, 0, ["alpha", "1"], [])
-    assert(v.into() == "1.0.0-alpha.1")
-    ro parsed = Version.from(v.into())
+    assert(v.to_str() == "1.0.0-alpha.1")
+    ro parsed = Version.from(v.to_str())
     assert(parsed== v)
 }
 
-test "into: round-trip с build" {
+test "to_str: round-trip с build" {
     ro v = Version.full(1, 0, 0, [], ["build", "42"])
-    assert(v.into() == "1.0.0+build.42")
-    ro parsed = Version.from(v.into())
+    assert(v.to_str() == "1.0.0+build.42")
+    ro parsed = Version.from(v.to_str())
     assert(parsed== v)
 }
 
-test "into: round-trip с pre и build" {
+test "to_str: round-trip с pre и build" {
     ro v = Version.full(1, 0, 0, ["beta"], ["exp", "sha", "5114f85"])
-    assert(v.into() == "1.0.0-beta+exp.sha.5114f85")
-    ro parsed = Version.from(v.into())
+    assert(v.to_str() == "1.0.0-beta+exp.sha.5114f85")
+    ro parsed = Version.from(v.to_str())
     assert(parsed== v)
 }
 
@@ -634,16 +634,15 @@ test "is_stable: только не-pre с major >= 1" {
     assert(!Version.from("1.0.0-alpha").is_stable()) // pre-release
 }
 
-test "D73: Version.from + .into() работают парно" {
+test "Version.from + .to_str() работают парно" {
     ro v Version = Version.from("3.14.159")
     assert(v.major == 3)
 
-    // Обратная форма — авто-Into через D73
-    ro s str = v.into()
+    // Обратная форма — явный to_str()
+    ro s str = v.to_str()
     assert(s == "3.14.159")
 
-    // .into() без аннотации — тип цели из контекста: let s str = ...
-    ro s2 str = Version.from("1.2.3").into()
+    ro s2 str = Version.from("1.2.3").to_str()
     assert(s2 == "1.2.3")
 }
 

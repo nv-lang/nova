@@ -603,21 +603,21 @@ export fn Duration @compare(other Duration) -> int =>
 
 
 // ──────────────────────────────────────────────────────────────────────────
-// Display (D73 Into[str])
+// Display (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Into[str]` conversion — auto-scale короткая запись.
+/// `to_str()` — auto-scale короткая запись.
 ///
 /// Выбирает unit по величине: 500ns / 150μs / 42ms / 2.5s / 5min / 2h / 3d.
-/// Для развёрнутого формата используй [`into_human`].
+/// Для развёрнутого формата используй [`to_human`].
 ///
 /// # Examples
 /// ```nova
-/// assert(500.nanos().into() == "500ns")
-/// assert(2.hours().into() == "2h")
+/// assert(500.nanos().to_str() == "500ns")
+/// assert(2.hours().to_str() == "2h")
 /// ```
 #stable(since = "0.1")
-export fn Duration @into() -> str {
+export fn Duration @to_str() -> str {
     ro n = @nanos
     ro abs = if n < 0 { -n } else { n }
     ro sign = if n < 0 { "-" } else { "" }
@@ -648,10 +648,10 @@ export fn Duration @into() -> str {
 /// # Examples
 /// ```nova
 /// let d = 1.day() + 2.hours() + 30.minutes()
-/// assert(d.into_human().contains("1d"))
+/// assert(d.to_human().contains("1d"))
 /// ```
 #stable(since = "0.1")
-export fn Duration @into_human() -> str {
+export fn Duration @to_human() -> str {
     if @is_zero() { return "0s" }
 
     ro p = @parts()
@@ -1065,18 +1065,18 @@ test "parts: декомпозиция" {
     assert(p.seconds == 45)
 }
 
-test "into[str]: auto-scale" {
-    assert(500.nanos().into() == "500ns")
-    assert(150.micros().into() == "150us")
-    assert(42.millis().into() == "42ms")
-    assert(2.seconds().into() == "2s")
-    assert(5.minutes().into() == "5min")
-    assert(2.hours().into() == "2h")
+test "to_str(): auto-scale" {
+    assert(500.nanos().to_str() == "500ns")
+    assert(150.micros().to_str() == "150us")
+    assert(42.millis().to_str() == "42ms")
+    assert(2.seconds().to_str() == "2s")
+    assert(5.minutes().to_str() == "5min")
+    assert(2.hours().to_str() == "2h")
 }
 
-test "into_human: компонентами" {
+test "to_human(): компонентами" {
     ro d = 1.day() + 2.hours() + 30.minutes()
-    ro s = d.into_human()
+    ro s = d.to_human()
     assert(s.contains("1d"))
     assert(s.contains("2h"))
     assert(s.contains("30min"))
