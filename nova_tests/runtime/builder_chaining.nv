@@ -32,7 +32,7 @@ test "StringBuilder: chain produces same buffer (Self semantics)" {
     consume sb = StringBuilder.new()
     sb.append("a").append("b")
     // append returns @, chain still uses same sb. Verify len.
-    assert(sb.len() == 2)
+    assert(sb.byte_len() == 2)
     ro s = sb.into_str()
     assert(s == "ab")
 }

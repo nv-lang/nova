@@ -38,5 +38,5 @@ test "any / all / find are alloc-free short-circuit terminators" {
     assert(v.iter().map(|x| x + 1).filter(|x| x > 3).any(|x| x == 5))
     assert(v.iter().map(|x| x * 2).filter(|x| x > 0).all(|x| x % 2 == 0))
     ro f = v.iter().map(|x| x * 10).filter(|x| x > 25).find(|x| x == 40)
-    assert(f.unwrap_or(0) == 40)
+    assert(f ?? 0 == 40)
 }

@@ -28,8 +28,8 @@ module std.net
 ///
 /// test "write echo without network" {
 ///     with Net = mock_net() {
-///         mut s = TcpStream.connect(SocketAddr.loopback(0)).unwrap()
-///         assert(s.write("hi").unwrap() == 2)
+///         mut s = TcpStream.connect(SocketAddr.loopback(0))!!
+///         assert(s.write("hi")!! == 2)
 ///         s.close()
 ///     }
 /// }

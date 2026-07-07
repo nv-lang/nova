@@ -25,7 +25,7 @@ fn Fahrenheit2.try_from(c Celsius2) -> Result[Fahrenheit2, str] => {
 test "P2-A — TryFrom Fahrenheit2 → Celsius2 Ok path" {
     ro r = Celsius2.try_from(Fahrenheit2 { deg: 212 })
     assert(r.is_ok())
-    ro c = r.unwrap_or(Celsius2 { deg: 0 })
+    ro c = r ?? Celsius2 { deg: 0 }
     assert(c.deg == 100)
 }
 
@@ -37,13 +37,13 @@ test "P2-A — TryFrom Fahrenheit2 → Celsius2 Err path (below abs zero)" {
 test "P2-A — TryFrom Celsius2 → Fahrenheit2 Ok path" {
     ro r = Fahrenheit2.try_from(Celsius2 { deg: 100 })
     assert(r.is_ok())
-    ro f = r.unwrap_or(Fahrenheit2 { deg: 0 })
+    ro f = r ?? Fahrenheit2 { deg: 0 }
     assert(f.deg == 212)
 }
 
 test "P2-A — TryInto via try_from symmetry" {
     ro r = Celsius2.try_from(Fahrenheit2 { deg: 32 })
     assert(r.is_ok())
-    ro c = r.unwrap_or(Celsius2 { deg: -1 })
+    ro c = r ?? Celsius2 { deg: -1 }
     assert(c.deg == 0)
 }

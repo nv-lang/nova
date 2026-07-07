@@ -28,10 +28,10 @@ module std.net
 ///
 /// ```nova
 /// with Net = real_net() {
-///     mut sock = UdpSocket.bind(SocketAddr.loopback(0)).unwrap()
+///     mut sock = UdpSocket.bind(SocketAddr.loopback(0))!!
 ///     let port = sock.local_port()
-///     sock.send_to("ping", SocketAddr.loopback(peer_port)).unwrap()
-///     let (data, sender) = sock.recv_from(512).unwrap()
+///     sock.send_to("ping", SocketAddr.loopback(peer_port))!!
+///     let (data, sender) = sock.recv_from(512)!!
 ///     sock.close()
 /// }
 /// ```

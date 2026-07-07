@@ -1,0 +1,85 @@
+// D411 — record-деструктуризация в биндингах `ro`/`mut`: record-pattern (та
+// же match-грамматика) в irrefutable-позиции binding'а. Симметрично уже
+// принятой кортежной деструктуризации (`ro (a, b) = ...`).
+// Spec: spec/decisions/03-syntax.md D411. Part of the SINGLE
+// `spec_tests.conformance` folder-module (D-prefixed names below are unique:
+// `D411Rec*`).
+module spec_tests.conformance
+
+type D411RecPoint {
+    x int
+    y int
+    z int
+}
+
+type D411RecInner {
+    a int
+    b int
+}
+
+type D411RecOuter {
+    inner D411RecInner
+    tag   int
+}
+
+// Mutable side-effect counter (heap record, passed BY REFERENCE — D32) used
+// to prove the destructured source expression is evaluated exactly ONCE.
+type D411RecCounter {
+    mut n int
+}
+
+fn D411RecCounter.new() -> D411RecCounter => { n: 0 }
+
+fn d411r_bump(mut c D411RecCounter) {
+    c.n = c.n + 1
+}
+
+fn d411r_make_outer(mut c D411RecCounter) -> D411RecOuter {
+    d411r_bump(c)
+    D411RecOuter { inner: D411RecInner { a: 10, b: 20 }, tag: 99 }
+}
+
+test "D411: shorthand record-pattern binding, full field list (no `..` needed)" {
+    ro p = D411RecPoint { x: 1, y: 2, z: 3 }
+    ro { x, y, z } = p
+    assert(x == 1)
+    assert(y == 2)
+    assert(z == 3)
+}
+
+test "D411: shorthand record-pattern binding, partial field list with `..`" {
+    ro p = D411RecPoint { x: 1, y: 2, z: 3 }
+    ro { x, .. } = p
+    assert(x == 1)
+}
+
+test "D411: rename (`field: name`) in record-pattern binding" {
+    ro p = D411RecPoint { x: 1, y: 2, z: 3 }
+    ro { x: rx, y: ry, .. } = p
+    assert(rx == 1)
+    assert(ry == 2)
+}
+
+test "D411: `mut` record-pattern binding — every introduced name is mutable" {
+    ro p = D411RecPoint { x: 1, y: 2, z: 3 }
+    mut { x, y, .. } = p
+    x += 1
+    y += 10
+    assert(x == 2)
+    assert(y == 12)
+}
+
+test "D411: nested record-pattern binding" {
+    ro o = D411RecOuter { inner: D411RecInner { a: 10, b: 20 }, tag: 99 }
+    ro { inner: { a, b }, tag } = o
+    assert(a == 10)
+    assert(b == 20)
+    assert(tag == 99)
+}
+
+test "D411: source expression is evaluated exactly once" {
+    mut counter = D411RecCounter.new()
+    ro { inner: { a, .. }, .. } = d411r_make_outer(counter)
+    assert(a == 10)
+    assert(counter.n == 1)   // d411r_make_outer ran ONE time, not once per bound field
+}

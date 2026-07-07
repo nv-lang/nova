@@ -18,21 +18,21 @@ module nova_tests.runtime
 test "int.try_from валидное число" {
     ro r = int.try_from("42")
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 42)
+    assert(r ?? 0 == 42)
 }
 
 
 test "int.try_from отрицательное" {
     ro r = int.try_from("-17")
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == -17)
+    assert(r ?? 0 == -17)
 }
 
 
 test "int.try_from с пробелами в начале" {
     ro r = int.try_from("  100")
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 100)
+    assert(r ?? 0 == 100)
 }
 
 
@@ -108,7 +108,7 @@ test "bool.try_from case-sensitive" {
 test "char.try_from single ASCII char" {
     ro r = char.try_from("A")
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 65)
+    assert(r ?? 0 == 65)
 }
 
 
@@ -129,7 +129,7 @@ test "char.try_from multi-char" {
 test "char.from(int) валидный codepoint" {
     ro r = char.from(65)
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 65)
+    assert(r ?? 0 == 65)
 }
 
 

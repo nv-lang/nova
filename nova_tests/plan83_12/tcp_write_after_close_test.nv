@@ -13,7 +13,7 @@ module nova_tests.plan83_12
 test "TcpStream: write after close → Err" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro port = lst.local_port()
 
     mut write_err = false
@@ -21,7 +21,7 @@ test "TcpStream: write after close → Err" {
         spawn {
             ro acc_r = lst.accept()
             assert(acc_r.is_ok())
-            ro srv = acc_r.unwrap()
+            ro srv = acc_r!!
             // Close immediately — stage → CLOSING.
             srv.close()
             // Write after close: stage == CLOSING → Err.
@@ -32,7 +32,7 @@ test "TcpStream: write after close → Err" {
         spawn {
             ro conn_r = TcpStream.connect(SocketAddr.loopback(port))
             assert(conn_r.is_ok())
-            ro cli = conn_r.unwrap()
+            ro cli = conn_r!!
             // Hold connection alive briefly so server can accept.
             Time.sleep(100)
             cli.close()
@@ -44,7 +44,7 @@ test "TcpStream: write after close → Err" {
 test "TcpStream: read_bytes after close → Err" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro port = lst.local_port()
 
     mut read_err = false
@@ -52,7 +52,7 @@ test "TcpStream: read_bytes after close → Err" {
         spawn {
             ro acc_r = lst.accept()
             assert(acc_r.is_ok())
-            ro srv = acc_r.unwrap()
+            ro srv = acc_r!!
             // Close immediately — stage → CLOSING.
             srv.close()
             // read_bytes after close: stage == CLOSING → Err.
@@ -63,7 +63,7 @@ test "TcpStream: read_bytes after close → Err" {
         spawn {
             ro conn_r = TcpStream.connect(SocketAddr.loopback(port))
             assert(conn_r.is_ok())
-            ro cli = conn_r.unwrap()
+            ro cli = conn_r!!
             Time.sleep(100)
             cli.close()
         }

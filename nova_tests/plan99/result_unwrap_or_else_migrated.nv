@@ -4,20 +4,21 @@ module nova_tests.plan99
 
 test "Result[int,str].unwrap_or_else — Ok skip closure" {
     ro r Result[int, str] = Ok(42)
-    ro v = r.unwrap_or_else(|e| 0)
+    ro v = r ?? 0
     assert(v == 42)
 }
 
 test "Result[int,str].unwrap_or_else — Err invokes f(e)" {
     ro r Result[int, str] = Err("boom")
-    // Plan 99 [M-str-len-closure-dispatch] fix (2026-06-06): closure body
-    // emit подставляет E=str для closure param.
-    ro v = r.unwrap_or_else(|e| e.byte_len())
+    // [M-unwrap-twins-retraction] (2026-07-07): `unwrap_or_else` с доступом к
+    // error payload ретрактирован (D86 amend) — `??` его отбрасывает; когда
+    // ошибка нужна, явный `match`.
+    ro v = match r { Ok(x) => x, Err(e) => e.byte_len() }
     assert(v == 4)
 }
 
 test "Result[str,int].unwrap_or_else — reversed E type" {
     ro r Result[str, int] = Err(99)
-    ro s = r.unwrap_or_else(|n| str.from(n))
+    ro s = match r { Ok(x) => x, Err(n) => str.from(n) }
     assert(s == "99")
 }

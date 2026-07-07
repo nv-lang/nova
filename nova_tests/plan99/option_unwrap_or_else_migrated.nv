@@ -4,18 +4,18 @@ module nova_tests.plan99
 
 test "Option[int].unwrap_or_else — Some skip closure" {
     ro a Option[int] = Some(42)
-    ro v = a.unwrap_or_else(|| 99)
+    ro v = a ?? 99
     assert(v == 42)
 }
 
 test "Option[int].unwrap_or_else — None invokes closure" {
     ro a Option[int] = None
-    ro v = a.unwrap_or_else(|| 99)
+    ro v = a ?? 99
     assert(v == 99)
 }
 
 test "Option[str].unwrap_or_else — None → closure result" {
     ro a Option[str] = None
-    ro s = a.unwrap_or_else(|| "computed")
+    ro s = a ?? "computed"
     assert(s == "computed")
 }

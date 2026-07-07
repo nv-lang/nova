@@ -477,6 +477,13 @@ fn critical(...) -> Result =>
 
 ### Правило
 
+> **AMEND (2026-07-07, [M-unwrap-twins-retraction]):** метод-близнецы
+> `@unwrap()` / `@unwrap_or(v)` / `@unwrap_or_else(f)` на `Option`/`Result`
+> **ретрактированы** — дублировали операторы `!!` / `??` ([D85](04-effects.md#d85),
+> [D86](04-effects.md#d86)). Ниже (v1.0 catalog) — историческая запись,
+> актуальный список методов не включает эти три; вызовы мигрированы на
+> `x!!` / `x ?? v`.
+
 #### Что в prelude (v1.0)
 
 **Типы:**
@@ -495,9 +502,8 @@ type any protocol { }                            // top-type через пуст
 ```nova
 fn Option[T] @is_some() -> bool
 fn Option[T] @is_none() -> bool
-fn Option[T] @unwrap() Fail[Error] -> T              // throw "called unwrap on None"
-fn Option[T] @unwrap_or(default T) -> T              // None → default
-fn Option[T] @unwrap_or_else(f fn() -> T) -> T       // None → f() (lazy default)
+// @unwrap() / @unwrap_or(default) / @unwrap_or_else(f) — РЕТРАКТИРОВАНЫ,
+// см. AMEND выше. Канон — операторы `!!` / `??` (D85/D86).
 fn Option[T] @map[U](f fn(T) -> U) -> Option[U]
 fn Option[T] @ok_or[E](err E) -> Result[T, E]        // None → Err(err)
 fn Option[T] @or(other Option[T]) -> Option[T]
@@ -510,26 +516,25 @@ fn Result[T, E] @is_ok() -> bool
 fn Result[T, E] @is_err() -> bool
 fn Result[T, E] @ok() -> Option[T]                   // Ok(v) → Some(v); Err → None
 fn Result[T, E] @err() -> Option[E]                  // Err(e) → Some(e); Ok → None
-fn Result[T, E] @unwrap() Fail[E] -> T               // Err(e) → throw e
-fn Result[T, E] @unwrap_or(default T) -> T           // Err → default
-fn Result[T, E] @unwrap_or_else(f fn(E) -> T) -> T   // Err → f(e) (lazy)
+// @unwrap() / @unwrap_or(default) / @unwrap_or_else(f) — РЕТРАКТИРОВАНЫ,
+// см. AMEND выше. Канон — операторы `!!` / `??` (D85/D86).
 fn Result[T, E] @map[U](f fn(T) -> U) -> Result[U, E]
 fn Result[T, E] @map_err[F](f fn(E) -> F) -> Result[T, F]
 ```
 
-`unwrap_or` / `unwrap_or_else` — основной идиоматический путь
-безопасного доступа к значению с fallback. Прецеденты — Rust
-`Option::unwrap_or`, Swift `??` оператор, TypeScript `??`.
+`??` — основной идиоматический путь безопасного доступа к значению
+с fallback. Прецеденты — Rust `Option::unwrap_or`, Swift `??`
+оператор, TypeScript `??`.
 
 ```nova
-ro n int = s.parse_int_opt().unwrap_or(0)              // на ошибке — 0 (Plan 91.18: parse_int → int Fail)
-ro cfg = config.unwrap_or_else(|| default_config())     // lazy default
+ro n int = s.parse_int_opt() ?? 0                      // на ошибке — 0 (Plan 91.18: parse_int → int Fail)
+ro cfg = config ?? default_config()                     // lazy default (RHS матч-arm, не вычисляется на Some)
 
-// Идиома: цепочка через and_then / unwrap_or:
-ro port int = env.get("PORT").and_then(|s| s.parse_int_opt()).unwrap_or(8080)
+// Идиома: цепочка через and_then / ??:
+ro port int = env.get("PORT").and_then(|s| s.parse_int_opt()) ?? 8080
 ```
 
-`@unwrap()` — assertion-style: throw'ает Fail если None/Err. Идиома
+`!!` — assertion-style: throw'ает Fail если None/Err. Идиома
 для случаев когда программист **гарантирует** что значение есть
 (prove'ил выше через `if let` / `match`). Caller-side либо ловит
 через `with Fail = ...`, либо позволяет распространиться (паника

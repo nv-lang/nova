@@ -1649,7 +1649,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   2/2 PASS. Durable-семейство (эта же категория дефекта, шире E7320) — заведено отдельным маркером
   [M-partial-prelude-primitive-method-registry] ниже.
 
-- **[M-partial-prelude-primitive-method-registry]** (2026-07-07, P2, Wave: фикс-очередь §4а /
+- **[M-partial-prelude-primitive-method-registry]** (ДОПОЛНЕНО 2026-07-07 бисектом: standalone-CU read_buffer/string_builder/write_buffer в std/runtime битые этим классом — char.from, str.from_bytes_unchecked_steal, s.bytes()-fallback в field-доступ `no member in nova_str`; pre-existing на всех точках) (2026-07-07, P2, Wave: фикс-очередь §4а /
   план 172-семья) — durable-семейство, вариант C из разведки [M-vec-access-e7320-as-bytes-str]:
   сейчас «метод примитива известен компилятору» ЖЁСТКО связано с «файл, объявляющий этот метод,
   физически слит в текущий CU» (через `#prelude`/`import`). Каждый раз, когда `#no_prelude`
@@ -1842,33 +1842,83 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `nova_tests/serde/autoderive.nv` + `nova_tests/http_typed/typed_json_test.nv` (all 3
   already RUN-FAIL in-tree; no new fixture needed).
 
-- **[M-d411-record-binding-destructuring]** (2026-07-07, P2, Wave: [sonnet]-заход после
-  §4а-пачки) — реализация D411: record-паттерн в биндингах ro/mut (десугар до чекера в
-  field-доступы; парсер: `{` после ro/mut; irrefutable-проверка E_REFUTABLE_BINDING;
-  `..`-правило как в match). Тесты: conformance позитивы (shorthand/rename/mut/вложенные,
-  однократность вычисления источника) + негативы (сумма в биндинге, частичный список без ..).
-  Первые потребители: json-лексер (ro {line, col, ..} = @), TokenWithPos-снапшоты.
+- **[M-d411-record-binding-destructuring]** ✅ FIXED (2026-07-07) — реализация D411:
+  record-паттерн в биндингах ro/mut. Парсер: `{` после ro/mut уже парсился (парсер уже
+  делегировал в общий `parse_pattern`, который уже знал record-паттерны из match — ноль
+  новой грамматики). Irrefutability-проверка (Plan 53, `check_let_pattern_irrefutable`) и
+  codegen-биндинг полей (`emit_record_destructure`, источник вычисляется один раз в tmp)
+  уже существовали в конвейере до D411 — унаследовано через retraction `let`→`ro`/`mut`.
+  Новое: код-тег `[E_REFUTABLE_BINDING]` на существующую refutability-диагностику;
+  НОВАЯ проверка `..`-правила (частичный список полей без `..` → `[E_RECORD_PATTERN_NEEDS_REST]`,
+  только для ro/mut-биндингов — `check_priv_pattern_recursive_inner` c флагом
+  `enforce_binding_rest`, types/mod.rs). Архитектура десугара: pattern-native, БЕЗ
+  отдельного AST-pass (см. D411 «Правило» в spec/decisions/03-syntax.md — обоснование).
+  Тесты: `spec_tests/conformance/d411_record_binding_destructure.nv` (shorthand/rename/
+  mut/вложенные/однократность вычисления источника через mut-counter side-effect) +
+  `spec_tests/conformance/neg/d411_sum_variant_refutable_neg.nv` +
+  `neg/d411_partial_no_rest_neg.nv`. conformance 54/0 → 56/0 (+2 neg, 0 регрессий).
+  Потребители: json-лексер `Lexer @next_token`/`@read_number` (std/encoding/json.nv) —
+  `ro {line, col, ..} = @` / `ro {pos: start, line: start_line, col: start_col, ..} = @`;
+  json_test 24/24 без изменений. Known gap: record-паттерн, вложенный внутри tuple-элемента
+  биндинга, не проходит `..`-правило (нет type-resolution на этом пути) — редкий кейс,
+  задокументирован в спеке, не блокирует закрытие.
 
-- **[M-unwrap-twins-retraction]** (2026-07-07, P2, Wave: волна-2 §4а [sonnet]) — ретракция
-  метод-близнецов операторов (амендменты D85/D86 в спеке): снести из prelude/core.nv
-  `Option/Result @unwrap()` (:264/:363), `@unwrap_or` (:272/:370), `@unwrap_or_else`
-  (:278/:379); мигрировать вызовы: `.unwrap()` ×33 → `x!!`, `.unwrap_or(v)` ×29 → `x ?? v`
-  (скобки по прецедентности в цепочках: `(chain) ?? v` где нужно), `_or_else` ×0.
-  ТУДА ЖЕ (подтверждено владельцем): ретракция `@capacity()` у ВСЕХ носителей — дубль
-  канонического `cap()` (D9): StringBuilder (:106/:112 alias-пара), HashMap (:172/:178
-  alias-пара), WriteBuffer (:79 — только capacity, завести cap()-чтение при сносе);
-  вызовов ~13 → `cap()`. ПЛЮС устаревшие док-строки обратного канона: 03-syntax.md:5762
-  («v.capacity() ✓ renamed from .cap» — до-амендментная эпоха D117) и таблица длин там же
-  (:1923-зона) — привести к cap()-канону, D117-таблицу method-имён обновить.
-  И ТУДА ЖЕ (владелец 2026-07-07): StringBuilder @len() → @byte_len() (строкоподобная
-  поверхность = D249-канон, как str; шапка string_builder.nv прямо признаёт обратный ход
-  «@byte_len удалён» — откатить); @char_len() РЕТРАКТИРОВАТЬ (0 вызовов; счёт codepoint =
-  линза+терминатор, не свойство). ГРАНИЦА: WriteBuffer @len() остаётся (байтовый буфер,
-  длина однозначна). Правило в D249-амендмент одной строкой: строкоподобное — только
-  byte_len(); байтовые буферы/коллекции — len(). Внутренние requires-сайты переименовать.
-  Мелочь в json-зоне: parse_hex/`code` типизировать u32 (кандидат-codepoint, D327).
-  Конвейеры в правленых местах — ребиндингом одним именем (D347-канон, стиль §21).
+- **[M-unwrap-twins-retraction]** ✅ FIXED (2026-07-07, [sonnet]) — ретракция
+  метод-близнецов операторов (амендменты D85/D86 в спеке): снесены из prelude/core.nv
+  `Option/Result @unwrap()`, `@unwrap_or`, `@unwrap_or_else`; мигрировано `.unwrap()`
+  ×80 → `x!!`, `.unwrap_or(v)` ×228 → `x ?? v` по всему дереву (std/ spec_tests/
+  nova_tests/ examples/) — фактические числа выше плановой оценки (33/29), т.к. план
+  считал по узкой выборке. Прецедентность: реальная грамматика (`compiler-codegen/src/
+  parser/mod.rs parse_postfix`) показала `??`/`!!` в ОДНОМ постфикс-цикле с `.`/`()`/`as`;
+  RHS `??` парсится `parse_unary()`→`parse_postfix()` (не полный `parse_expr`) — скобки
+  нужны только если fallback сам бинарное выражение вне call/cast/литерала. Проверка
+  всех ~230 реальных fallback-аргументов: везде постфикс-safe атомы — скобки НЕ
+  понадобились ни разу (не подтвердилось предположение про цепочки). `unwrap_or_else`
+  — 2 живых случая с доступом к error-значению переписаны explicit `match`
+  (nova_tests/plan99/result_unwrap_or_else_migrated.nv), остальные — `??`.
+  ТУДА ЖЕ: `@capacity()` РЕТРАКТИРОВАН у StringBuilder/HashMap/WriteBuffer (дубль
+  канонического `cap()`, D9) — вызовы .capacity() → .cap() (HashMap/StringBuilder/
+  WriteBuffer only; Vec-плана-60-эры/Channel/user-типы с собственным `@capacity()`
+  — ВНЕ периметра, найдены и намеренно НЕ тронуты). 03-syntax.md: D117 "Что"/"Правило"/
+  таблица длин (:1923-зона)/"Что отвергнуто"/forbidden-abbreviations приведены к
+  cap()-канону (`cap` добавлен в mainstream-исключения, 3→4).
+  И ТУДА ЖЕ: StringBuilder `@len()` → `@byte_len()` (D249, откат прежнего «удалён»);
+  `@char_len()` ретрактирован (0 usages в std/) — codepoint-счёт теперь
+  `.clone().into_str().chars().count()` (линза+терминатор через non-consuming clone).
+  WriteBuffer `@len()` НЕ тронут (граница — байтовый буфер).
+  json parse_hex/`code`: остались `int` — `str.from_codepoint(cp int)` (std/runtime/
+  char.nv:16) принимает `int`, менять на `u32` создало бы лишний cast без пользы (см.
+  инструкцию — «если int, оставь int»).
+  Найден и НЕ исправлен (вне периметра — компилятор): **[M-cap-getter-fluent-alias-
+  false-positive]** — см. отдельный пункт ниже.
+  Гейты: conformance 56/0 (дельта 0, эталон обновлён D411-мержем в процессе), std/
+  encoding/json_test 24/24, HashMap/WriteBuffer/Vec targeted PASS, StringBuilder
+  targeted PASS в изоляции (полный `nova_tests/strings/` как один CU уже упирается в
+  ДВА пред-существующих несвязанных дефекта — см. отчёт агента).
 
+- **[M-cap-getter-fluent-alias-false-positive]** (2026-07-07, P3, найден при
+  [M-unwrap-twins-retraction], compiler defect, НЕ ФИКШУ — вне периметра задачи) —
+  checker's `recv_returning` registry (`types/mod.rs` ~20392/20458) ключуется ТОЛЬКО
+  по `(receiver_type, method_name)`, БЕЗ arity. StringBuilder одновременно объявляет
+  0-arg getter `@cap() -> int` и 1-arg fluent setter `mut @cap(n) -> @` под тем же
+  именем; т.к. StringBuilder — `consume`-тип, D180 Rule 2 alias-эвристика
+  («`let x = recv.fluent_method()` ⇒ x aliases recv») в `check_stmt`/`Stmt::Let`
+  срабатывает на 0-arg getter тоже → `ro x = sb.cap()` ложно даёт
+  `[E_VIEW_BINDING_FORBIDDEN]`. Repro: `nova_tests/strings/str_builder_metrics.nv`
+  (2 живых сайта, workaround `+ 0` на месте с маркер-комментарием — ломает точный
+  AST-паттерн `Call{Member{Ident}}` без изменения значения). Фикс — arity-aware
+  `recv_returning` (ключ должен включать arity/сигнатуру, не только имя).
+
+- **[M-sync-test-stale-duplicate]** (2026-07-07, P2, Wave: санация-182 Ф.2) — std/runtime/
+  sync_test.nv объявляет `module runtime.sync` (не sync_test) и ПОВТОРНО объявляет
+  MemOrdering из sync.nv — устаревший файл-дубликат, не мигрированный на *_test-конвенцию;
+  валит юниты sync и sync_test в --full std/runtime (бисект 2026-07-07: pre-existing на
+  всех точках). Снести/переписать по test-conventions.
+- **[M-runner-testless-units-main-impl]** (2026-07-07, P2, Wave: заход test_runner вместе с
+  [M-test-runner-shared-temp-collision]) — 8 юнитов std/runtime (char/defaults/fibers/gc/
+  math/numeric/raw_mem/runtime) падают линковкой `nova_fn_main_impl`: раннер собирает exe
+  для модулей БЕЗ test-блоков. Такие юниты должны получать SKIP (или компиляцию без линка),
+  не CC-FAIL. Pre-existing (бисект).
 - **[M-compiler-nv-porting-wave]** (2026-07-07, P2, Wave: [haiku+sonnet] сразу после вливания
   parse-family-fix — общие ветки try_from/try_parse) — по карте аудита §3 (отчёт агента
   2026-07-07): (D) снос ~383 строк мёртвых *_unused()-реестров runtime_registry.rs:493-887;

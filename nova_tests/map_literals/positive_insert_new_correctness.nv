@@ -49,5 +49,5 @@ test "литерал с n=8 (boundary case where with_capacity contract critical
     assert(m.get(1) == Some(10))
     assert(m.get(8) == Some(80))
     // Capacity должна быть >= 8 (no rehash во время @insert_new).
-    assert(m.capacity() >= 8)
+    assert(m.cap() >= 8)
 }

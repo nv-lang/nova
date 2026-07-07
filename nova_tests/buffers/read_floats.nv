@@ -107,6 +107,6 @@ test "f64.from_bits + read_f64_be round-trip" {
     mut rb = ReadBuffer.from(wb.into())
     ro r = rb.read_f64_be()
     assert(r.is_ok())
-    ro d = r.unwrap_or(0.0)
+    ro d = r ?? 0.0
     assert(d == 2.71828)
 }

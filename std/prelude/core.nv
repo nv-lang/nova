@@ -61,7 +61,7 @@
 //   `map_err`) теперь декларируются здесь. Прежний блокер: declaration
 //   через `external fn` с return-type `T` (generic param) даёт
 //   `external_registry::type_ref_to_c` → стаб `"Nova_T*"`, который
-//   `infer_expr_c_type` возвращал для `r.unwrap_or(0)`; binop-dispatch
+//   `infer_expr_c_type` возвращал для `r ?? 0`; binop-dispatch
 //   принимал `Nova_*` за sum-type pointer → `->tag` comparison вместо
 //   value-equality. Лечение: `is_generic_stub_c` (emit_c.rs) —
 //   generic-aware lookup-блоки пропускают стаб `Nova_<X>*`, давая
@@ -254,29 +254,11 @@ fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 #stable(since = "0.1")
 fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 
-/// Возвращает значение или fail'ит если None. Идиома для случаев когда
-/// программист **гарантирует** что значение есть (prove'ил выше).
-///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Эмитится tag-check
-/// + `Nova_Fail_fail((nova_str){.ptr="called unwrap on None", ...})`.
-/// Точечный effect `Fail[Error]` зашит в codegen — message hard-coded.
-#stable(since = "0.1")
-extern "nova" fn Option[T] @unwrap() Fail[Error] -> T
-
-/// Возвращает значение или `default` если None.
-///
-/// **Plan 95.bis Ф.1**: Nova-body (`match @`). Семантически тот же
-/// `o.tag == Some ? o.value : default`, что и прежний C-трамплин
-/// `Nova_Option_method_unwrap_or_<T>`. De-magic / single-source.
-#stable(since = "0.1")
-fn Option[T] @unwrap_or(default_v T) -> T => match @ { Some(v) => v, None => default_v }
-
-/// Возвращает значение или результат `f()` (lazy default).
-///
-/// **Plan 99.3 Ф.2**: Nova-body.
-#stable(since = "0.1")
-fn Option[T] @unwrap_or_else(default_fn fn() -> T) -> T
-  => match @ { Some(v) => v, None => default_fn() }
+// [M-unwrap-twins-retraction] (2026-07-07, D85/D86 amend): `@unwrap()` /
+// `@unwrap_or(default)` / `@unwrap_or_else(f)` РЕТРАКТИРОВАНЫ — дублировали
+// операторы `x!!` / `x ?? v` / `x ?? f()`. Все вызовы мигрированы на
+// операторную форму; см. spec/decisions/04-effects.md D85 (unwrap→!!) и
+// D86 (unwrap_or[_else]→??).
 
 /// Применяет `map_fn` к содержимому Some, возвращает Some(map_fn(v)). None пропускает.
 ///
@@ -341,7 +323,7 @@ fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 // `Result[T, E] @unwrap_or(default T) -> T` даёт return-type `T`, который
 // `external_registry::type_ref_to_c` маппит в generic-стаб `"Nova_T*"`
 // (`_ => format!("Nova_{}*", name)`). `infer_expr_c_type` возвращал этот
-// стаб для `r.unwrap_or(0)`; binop-dispatch принимал `Nova_*` за sum-type
+// стаб для `r ?? 0`; binop-dispatch принимал `Nova_*` за sum-type
 // pointer и эмитил `->tag == ->tag` вместо value-equality → CC-FAIL.
 //
 // **Лечение** (emit_c.rs `is_generic_stub_c`): generic-aware lookup-блоки
@@ -354,30 +336,12 @@ fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 // `map`/`map_err` имеют method-level generic (`[U]`/`[F]`); в bootstrap
 // codegen использует mono Ok=nova_int (полноценный U≠T — Plan 59 ext).
 
-/// Возвращает Ok-значение или fail'ит с error payload если Err. Идиома
-/// для случаев когда программист **гарантирует** успех (prove'ил выше).
-///
-/// **Bootstrap**: inline emit (`<inline>` sentinel). Tag-check + при Err
-/// прокидывает `Fail[E]` с error payload.
-#stable(since = "0.1")
-extern "nova" fn Result[T, E] @unwrap() Fail[E] -> T
-
-/// Возвращает Ok-значение или `default` если Err.
-///
-/// **Plan 95.bis Ф.1**: Nova-body (`match @`). Параллель с
-/// `Option.unwrap_or` — `r->tag == Ok ? r->payload.Ok._0 : default`.
-#stable(since = "0.1")
-fn Result[T, E] @unwrap_or(default_v T) -> T => match @ { Ok(v) => v, Err(_) => default_v }
-
-/// Возвращает Ok-значение или результат `default_fn(e)` (lazy default от error).
-///
-/// **Plan 99.3 Ф.4**: Nova-body. Closure invoke `default_fn(e)` через
-/// NovaClosBase + cast — паритет Rust `Result::<T,E>::unwrap_or_else<F:
-/// FnOnce(E) -> T>(self, op: F) -> T`. Param-name `default_fn` (не
-/// `f`) — избегаем shadowing user-функций (см. Option.map).
-#stable(since = "0.1")
-fn Result[T, E] @unwrap_or_else(default_fn fn(E) -> T) -> T
-  => match @ { Ok(v) => v, Err(e) => default_fn(e) }
+// [M-unwrap-twins-retraction] (2026-07-07, D85/D86 amend): `@unwrap()` /
+// `@unwrap_or(default)` / `@unwrap_or_else(f)` РЕТРАКТИРОВАНЫ — дублировали
+// операторы `x!!` / `x ?? v`. Result's `unwrap_or_else(fn(E) -> T)` давал
+// доступ к error-значению в fallback — `??` его отбрасывает (0 канон.
+// использований с реальным доступом к `e`; там где нужен — явный `match`).
+// Все вызовы мигрированы; см. spec/decisions/04-effects.md D85/D86.
 
 /// Применяет `map_fn` к Ok-значению: `Ok(v) -> Ok(map_fn(v))`, `Err(e)` пропускает.
 ///

@@ -11,13 +11,13 @@ test "Option[int].my_map int→str (T≠U primitive→primitive)" {
     ro a Option[int] = Some(42)
     ro s = a.my_map(|x| str.from(x))
     assert(s.is_some())
-    assert(s.unwrap_or("") == "42")
+    assert(s ?? "" == "42")
 }
 
 test "Option[int].my_map int→int (T==U)" {
     ro a Option[int] = Some(7)
     ro b = a.my_map(|x| x * 2)
-    assert(b.unwrap_or(0) == 14)
+    assert(b ?? 0 == 14)
 }
 
 test "Option.my_map на None — closure не вызывается" {

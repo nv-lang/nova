@@ -22,7 +22,7 @@ module std.net
 /// with Net = real_net() {
 ///     supervised {
 ///         spawn {
-///             ro addrs = SocketAddr.lookup("example.com", 80).unwrap()
+///             ro addrs = SocketAddr.lookup("example.com", 80)!!
 ///             // addrs[0] is the first resolved address
 ///         }
 ///     }

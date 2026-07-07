@@ -119,7 +119,7 @@ test "read_byte Ok на достаточных данных" {
     mut rb = ReadBuffer.from(wb.into())
     ro r = rb.read_byte()
     assert(r.is_ok())
-    ro v = r.unwrap_or(0)
+    ro v = r ?? 0
     assert(v == 0x42)
 }
 
@@ -129,7 +129,7 @@ test "read_u32_le Ok" {
     mut rb = ReadBuffer.from(wb.into())
     ro r = rb.read_u32_le()
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 0x12345678)
+    assert(r ?? 0 == 0x12345678)
 }
 
 test "read_u32_le Err на коротком буфере" {
@@ -166,7 +166,7 @@ test "f64.from_bits + read_f64_le round-trip" {
     mut rb = ReadBuffer.from(wb.into())
     ro r = rb.read_f64_be()
     assert(r.is_ok())
-    ro bits = r.unwrap_or(0)
+    ro bits = r ?? 0
     ro d = f64.from_bits(bits)
     assert(d == 2.71828)
 }

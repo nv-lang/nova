@@ -6,21 +6,21 @@ test "Option[int].ok_or[str] — Some → Ok" {
     ro a Option[int] = Some(42)
     ro r = a.ok_or("missing")
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 42)
+    assert(r ?? 0 == 42)
 }
 
 test "Option[int].ok_or[str] — None → Err" {
     ro a Option[int] = None
     ro r = a.ok_or("missing")
     assert(r.is_err())
-    assert(r.unwrap_or(0) == 0)
+    assert(r ?? 0 == 0)
 }
 
 test "Option[str].ok_or[int] — reversed E type" {
     ro a Option[str] = Some("hello")
     ro r = a.ok_or(99)
     assert(r.is_ok())
-    assert(r.unwrap_or("") == "hello")
+    assert(r ?? "" == "hello")
 }
 
 test "Option.ok_or — None с custom E type" {

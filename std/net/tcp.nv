@@ -36,8 +36,8 @@ module std.net
 ///
 /// ```nova
 /// with Net = real_net() {
-///     mut listener = TcpListener.bind(SocketAddr.loopback(8080)).unwrap()
-///     let stream = listener.accept().unwrap()
+///     mut listener = TcpListener.bind(SocketAddr.loopback(8080))!!
+///     let stream = listener.accept()!!
 ///     listener.close()
 /// }
 /// ```
@@ -54,8 +54,8 @@ export type TcpListener consume value { priv handle CTcpListener }
 ///
 /// ```nova
 /// with Net = real_net() {
-///     mut stream = TcpStream.connect(SocketAddr.loopback(8080)).unwrap()
-///     stream.write("hello").unwrap()
+///     mut stream = TcpStream.connect(SocketAddr.loopback(8080))!!
+///     stream.write("hello")!!
 ///     stream.close()
 /// }
 /// ```

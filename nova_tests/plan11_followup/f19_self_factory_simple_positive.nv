@@ -18,7 +18,7 @@ test "HashMap.new + insert не использует tuple param" {
 test "HashMap.with_capacity + Self dispatch" {
     ro m HashMap[str, int] = HashMap[str, int].with_capacity(32)
     assert(m.len() == 0)
-    assert(m.capacity() >= 32)
+    assert(m.cap() >= 32)
 }
 
 test "HashMap.clone + Self dispatch" {

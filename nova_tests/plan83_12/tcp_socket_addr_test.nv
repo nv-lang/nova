@@ -47,7 +47,7 @@ test "SocketAddr.loopback — to_str non-empty" {
 test "TcpListener.bind — local_port non-zero after bind(loopback(0))" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro port = lst.local_port()
     assert(port > 0)
     lst.close()
@@ -56,7 +56,7 @@ test "TcpListener.bind — local_port non-zero after bind(loopback(0))" {
 test "TcpListener.bind — local_addr is_v4" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro addr = lst.local_addr()
     assert(addr.is_v4())
     lst.close()

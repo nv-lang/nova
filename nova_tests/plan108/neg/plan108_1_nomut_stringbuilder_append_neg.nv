@@ -7,7 +7,7 @@ module neg.plan108_1_nomut_stringbuilder_append_neg
 
 fn add_suffix(sb StringBuilder) -> int {
     sb.append("!")             // ✗ E_PARAM_NOT_MUT — нет `mut`
-    sb.len()
+    sb.byte_len()
 }
 
 test "no-mut + StringBuilder append → error" {

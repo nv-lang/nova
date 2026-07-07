@@ -14,7 +14,7 @@ test "TCP: connect to closed port → Err" {
     // Bind on OS-assigned port.
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro port = lst.local_port()
     // Close the listener — the OS will refuse any new connections.
     lst.close()

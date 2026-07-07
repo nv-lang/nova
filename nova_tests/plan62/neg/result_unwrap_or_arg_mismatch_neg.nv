@@ -17,6 +17,6 @@ module neg.result_unwrap_or_arg_mismatch_neg
 
 test "Result.unwrap_or с default неверного типа — compile error" {
     ro r Result[int, str] = Ok(1)
-    ro v = r.unwrap_or("wrong")
+    ro v = r ?? "wrong"
     assert(v == 1)
 }

@@ -16,7 +16,7 @@ module nova_tests.plan83_12
 test "TcpStream: read after server closes → Ok (EOF)" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro port = lst.local_port()
 
     mut read_ok = false
@@ -25,7 +25,7 @@ test "TcpStream: read after server closes → Ok (EOF)" {
         spawn {
             ro acc_r = lst.accept()
             assert(acc_r.is_ok())
-            ro srv = acc_r.unwrap()
+            ro srv = acc_r!!
             srv.close()
             lst.close()
         }
@@ -33,7 +33,7 @@ test "TcpStream: read after server closes → Ok (EOF)" {
         spawn {
             ro conn_r = TcpStream.connect(SocketAddr.loopback(port))
             assert(conn_r.is_ok())
-            ro cli = conn_r.unwrap()
+            ro cli = conn_r!!
             // Give server time to close and FIN to arrive.
             Time.sleep(50)
             ro r = cli.read_bytes(512)

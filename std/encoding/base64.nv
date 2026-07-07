@@ -266,7 +266,7 @@ fn decode_with(s str, require_padding bool) -> Result[[]u8, Base64Error] {
 fn decode_at(s str, pos int) -> Result[u8, Base64Error] {
     match s.bytes().get(pos) {
         Some(b) => {
-            ro c = char.from(b as int).unwrap_or('?')
+            ro c = char.from(b as int) ?? '?'
             match decode_char(c) {
                 Some(v) => Ok(v)
                 None    => Err(InvalidChar { position: pos, char: c })

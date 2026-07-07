@@ -29,7 +29,7 @@ test "try_into Ok — положительное значение" {
 test "try_into Ok — payload корректен" {
     ro m = Meters { v: 4 }
     ro r = m.try_into()
-    ro f = r.unwrap_or(Feet { v: 0 })
+    ro f = r ?? Feet { v: 0 }
     assert(f.v == 12)
 }
 
@@ -53,7 +53,7 @@ test "try_into ноль -> Ok (граница)" {
     ro m = Meters { v: 0 }
     ro r = m.try_into()
     assert(r.is_ok())
-    assert(r.unwrap_or(Feet { v: 99 }).v == 0)
+    assert(r ?? Feet { v: 99 }.v == 0)
 }
 
 test "try_into Ok/Err дискриминация через match" {

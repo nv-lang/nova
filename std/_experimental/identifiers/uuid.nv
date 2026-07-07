@@ -319,7 +319,7 @@ fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
     while i < to {
         match sb.get(i) {
             Some(b) => {
-                ro c = char.from(b as int).unwrap_or(' ')
+                ro c = char.from(b as int) ?? ' '
                 ro d = hex_value(c, i)
                 acc = acc * 16 + (d as u64)
             }

@@ -17,6 +17,6 @@ test "Option[uint] Some and unwrap_or" {
     ro b Option[uint] = None
     assert(a.is_some())
     assert(b.is_none())
-    assert(a.unwrap_or(0 as uint) == 99 as uint)
-    assert(b.unwrap_or(7 as uint) == 7 as uint)
+    assert(a ?? 0 as uint == 99 as uint)
+    assert(b ?? 7 as uint == 7 as uint)
 }

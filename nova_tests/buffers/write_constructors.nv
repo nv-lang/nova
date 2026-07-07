@@ -1,7 +1,7 @@
 // Plan 85.2 Ф.4 — WriteBuffer конструкторы и метрики.
 //
 // new() / new().cap(n) (ex-with_capacity, D372 amend 2026-07-06) /
-// from([]u8) / @len / @capacity / @clone.
+// from([]u8) / @len / @cap / @clone.
 
 module nova_tests.buffers
 
@@ -11,7 +11,7 @@ module nova_tests.buffers
 test "new — пустой, capacity >= 16" {
     mut wb = WriteBuffer.new()
     assert(wb.len() == 0)
-    assert(wb.capacity() >= 16)
+    assert(wb.cap() >= 16)
 }
 
 
@@ -20,13 +20,13 @@ test "new — пустой, capacity >= 16" {
 test "new().cap(0) — валиден, len 0" {
     mut wb = WriteBuffer.new().cap(0)
     assert(wb.len() == 0)
-    assert(wb.capacity() >= 0)
+    assert(wb.cap() >= 0)
 }
 
 test "new().cap(256) — capacity >= 256" {
     mut wb = WriteBuffer.new().cap(256)
     assert(wb.len() == 0)
-    assert(wb.capacity() >= 256)
+    assert(wb.cap() >= 256)
 }
 
 
@@ -73,8 +73,8 @@ test "capacity >= len, растёт при переполнении" {
     mut wb = WriteBuffer.new().cap(4)
     wb.write_u64_le(0)             // 8 байт > cap 4
     assert(wb.len() == 8)
-    assert(wb.capacity() >= 8)
-    assert(wb.capacity() >= wb.len())
+    assert(wb.cap() >= 8)
+    assert(wb.cap() >= wb.len())
 }
 
 

@@ -4,9 +4,9 @@
 // deterministically segfaulted on the old net.c TLS layer; here read writes the
 // network bytes straight into the caller's []u8 (zero static slots).
 //
-// NOTE on `_must`: `.unwrap()` on a `Result[_, NetError]` re-throws via `Fail[E]`
+// NOTE on `_must`: `!!` on a `Result[_, NetError]` re-throws via `Fail[E]`
 // (core.nv), whose inline lowering only supports `E = str` (typed-error unwrap is
-// a pre-existing compiler gap — even `parse_int().unwrap()` fails to build). Net
+// a pre-existing compiler gap — even `parse_int()!!` fails to build). Net
 // tests therefore extract typed Results via a `match` helper (the same choice the
 // old std/net dns tests made). This is a test-file peer of module std.net2, so
 // the helper is shared across all net2 `*_test.nv` files and never ships.

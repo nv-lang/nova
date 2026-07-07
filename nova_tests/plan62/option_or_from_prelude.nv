@@ -16,7 +16,7 @@ test "Option.or: Some.or(Some) returns left value" {
     ro b = Some(2)
     ro r = a.or(b)
     assert(r.is_some())
-    assert(r.unwrap() == 1)
+    assert(r!! == 1)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ test "Option.or: Some.or(None) returns left value" {
     ro b Option[int] = None
     ro r = a.or(b)
     assert(r.is_some())
-    assert(r.unwrap() == 42)
+    assert(r!! == 42)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -40,7 +40,7 @@ test "Option.or: None.or(Some) returns right value" {
     ro b = Some(99)
     ro r = a.or(b)
     assert(r.is_some())
-    assert(r.unwrap() == 99)
+    assert(r!! == 99)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ test "Option.or: chain finds first Some" {
     ro c = Some(7)
     ro r = a.or(b).or(c)
     assert(r.is_some())
-    assert(r.unwrap() == 7)
+    assert(r!! == 7)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -65,5 +65,5 @@ test "Option.or: works with str payload" {
     ro b = Some("world")
     ro r = a.or(b)
     assert(r.is_some())
-    assert(r.unwrap() == "hello")
+    assert(r!! == "hello")
 }

@@ -19,8 +19,8 @@ module std.net2
 /// ```nova
 /// test "write echo without network" {
 ///     with Net = mock_net() {
-///         mut s = TcpStream.connect(SocketAddr.loopback(0)).unwrap()
-///         assert(s.write("hi".bytes()).unwrap() == 2)
+///         mut s = TcpStream.connect(SocketAddr.loopback(0))!!
+///         assert(s.write("hi".bytes())!! == 2)
 ///         s.close()
 ///     }
 /// }

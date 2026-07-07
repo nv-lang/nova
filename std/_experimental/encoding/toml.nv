@@ -232,7 +232,7 @@ fn TomlParser mut @parse_key_value() Fail[ParseTomlError] -> () {
     if @peek() != Some('=') {
         throw UnexpectedChar {
             line: @line, col: @col,
-            char: @peek().unwrap_or(' ')
+            char: @peek() ?? ' '
         }
     }
     @advance()
@@ -287,7 +287,7 @@ fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
 fn TomlParser mut @parse_bool() Fail[ParseTomlError] -> TomlValue {
     if @match_keyword("true") { TomlBool(true) }
     else if @match_keyword("false") { TomlBool(false) }
-    else { throw UnexpectedChar { line: @line, col: @col, char: @peek().unwrap_or(' ') } }
+    else { throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' } }
 }
 
 fn TomlParser mut @match_keyword(kw str) -> bool {
@@ -355,7 +355,7 @@ fn TomlParser mut @parse_array() Fail[ParseTomlError] -> TomlValue {
         @skip_whitespace_and_newlines()
     }
     if @peek() != Some(']') {
-        throw UnexpectedChar { line: @line, col: @col, char: @peek().unwrap_or(' ') }
+        throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
     }
     @advance()
     TomlArray(items)
@@ -373,7 +373,7 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
     ro key = @parse_key()
     @skip_whitespace_and_comments()
     if @peek() != Some('=') {
-        throw UnexpectedChar { line: @line, col: @col, char: @peek().unwrap_or(' ') }
+        throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
     }
     @advance()
     @skip_whitespace_and_comments()
@@ -386,7 +386,7 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
         ro k = @parse_key()
         @skip_whitespace_and_comments()
         if @peek() != Some('=') {
-            throw UnexpectedChar { line: @line, col: @col, char: @peek().unwrap_or(' ') }
+            throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
         }
         @advance()
         @skip_whitespace_and_comments()
@@ -395,7 +395,7 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
         @skip_whitespace_and_comments()
     }
     if @peek() != Some('}') {
-        throw UnexpectedChar { line: @line, col: @col, char: @peek().unwrap_or(' ') }
+        throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
     }
     @advance()
     TomlTable(t)

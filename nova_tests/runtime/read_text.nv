@@ -120,7 +120,7 @@ test "read_char Ok happy path" {
 
     ro r = rb.read_char()
     assert(r.is_ok())
-    ro c = r.unwrap_or(0)
+    ro c = r ?? 0
     assert(c == 'X')
 }
 

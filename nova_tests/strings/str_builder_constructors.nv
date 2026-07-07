@@ -9,8 +9,8 @@ module nova_tests.strings
 
 test "new() — пустой, capacity >= 16" {
     consume sb = StringBuilder.new()
-    assert(sb.len() == 0)
-    assert(sb.capacity() >= 16)
+    assert(sb.byte_len() == 0)
+    assert(sb.cap() >= 16)
     assert(sb.is_empty())
     ro _ = sb.into_str()
 }
@@ -20,31 +20,31 @@ test "new() — пустой, capacity >= 16" {
 
 test "with_capacity(0) — пустой, валидный" {
     consume sb = StringBuilder.with_capacity(0)
-    assert(sb.len() == 0)
-    assert(sb.capacity() >= 0)
+    assert(sb.byte_len() == 0)
+    assert(sb.cap() >= 0)
     assert(sb.is_empty())
     ro _ = sb.into_str()
 }
 
 test "with_capacity(1) — capacity >= 1" {
     consume sb = StringBuilder.with_capacity(1)
-    assert(sb.len() == 0)
-    assert(sb.capacity() >= 1)
+    assert(sb.byte_len() == 0)
+    assert(sb.cap() >= 1)
     ro _ = sb.into_str()
 }
 
 test "with_capacity(100) — capacity >= 100" {
     consume sb = StringBuilder.with_capacity(100)
-    assert(sb.len() == 0)
-    assert(sb.capacity() >= 100)
+    assert(sb.byte_len() == 0)
+    assert(sb.cap() >= 100)
     ro _ = sb.into_str()
 }
 
 test "with_capacity(0) — append после ноль-капасити растёт" {
     consume sb = StringBuilder.with_capacity(0)
     sb.append("data")
-    assert(sb.len() == 4)
-    assert(sb.capacity() >= 4)
+    assert(sb.byte_len() == 4)
+    assert(sb.cap() >= 4)
     ro _ = sb.into_str()
 }
 
@@ -53,28 +53,28 @@ test "with_capacity(0) — append после ноль-капасити раст�
 
 test "from(str) — ASCII" {
     consume sb = StringBuilder.from("hello")
-    assert(sb.len() == 5)
+    assert(sb.byte_len() == 5)
     ro _ = sb.into_str()
 }
 
 test "from(str) — пустая строка" {
     consume sb = StringBuilder.from("")
-    assert(sb.len() == 0)
+    assert(sb.byte_len() == 0)
     assert(sb.is_empty())
     ro _ = sb.into_str()
 }
 
 test "from(str) — Cyrillic codepoints vs bytes" {
     consume sb = StringBuilder.from("Привет")
-    assert(sb.char_len() == 6)  // 6 codepoints
-    assert(sb.len() == 12)      // 2 байта на codepoint
+    assert(sb.clone().into_str().chars().count() == 6)  // 6 codepoints
+    assert(sb.byte_len() == 12)      // 2 байта на codepoint
     ro _ = sb.into_str()
 }
 
 test "from(str) — append продолжает с готового контента" {
     consume sb = StringBuilder.from("abc")
     sb.append("def")
-    assert(sb.len() == 6)
+    assert(sb.byte_len() == 6)
     assert(sb.into_str() == "abcdef")
 }
 
@@ -83,28 +83,28 @@ test "from(str) — append продолжает с готового контен
 
 test "from(char) — ASCII single codepoint" {
     consume sb = StringBuilder.from('A')
-    assert(sb.len() == 1)
+    assert(sb.byte_len() == 1)
     ro _ = sb.into_str()
 }
 
 test "from(char) — Cyrillic codepoint = 2 байта" {
     consume sb = StringBuilder.from('Я')
-    assert(sb.char_len() == 1)
-    assert(sb.len() == 2)
+    assert(sb.clone().into_str().chars().count() == 1)
+    assert(sb.byte_len() == 2)
     ro _ = sb.into_str()
 }
 
 test "from(char) — CJK codepoint = 3 байта" {
     consume sb = StringBuilder.from('中')
-    assert(sb.char_len() == 1)
-    assert(sb.len() == 3)
+    assert(sb.clone().into_str().chars().count() == 1)
+    assert(sb.byte_len() == 3)
     ro _ = sb.into_str()
 }
 
 test "from(char) — emoji codepoint = 4 байта" {
     consume sb = StringBuilder.from('😀')
-    assert(sb.char_len() == 1)
-    assert(sb.len() == 4)
+    assert(sb.clone().into_str().chars().count() == 1)
+    assert(sb.byte_len() == 4)
     ro _ = sb.into_str()
 }
 

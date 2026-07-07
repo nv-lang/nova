@@ -13,17 +13,17 @@ module nova_tests.types
 test "find: ASCII presence returns Some(byte_offset)" {
     ro s = "hello world"
     ro r = s.find("world")
-    assert(r.unwrap_or(-1) == 6)
+    assert(r ?? -1 == 6)
 }
 
 test "find: at the start" {
     ro r = "hello".find("hel")
-    assert(r.unwrap_or(-1) == 0)
+    assert(r ?? -1 == 0)
 }
 
 test "find: at the end" {
     ro r = "hello".find("llo")
-    assert(r.unwrap_or(-1) == 2)
+    assert(r ?? -1 == 2)
 }
 
 test "find: needle not present" {
@@ -34,7 +34,7 @@ test "find: needle not present" {
 test "find: empty needle returns Some(0)" {
     // Rust convention: пустой needle всегда matches at offset 0.
     ro r = "hello".find("")
-    assert(r.unwrap_or(-1) == 0)
+    assert(r ?? -1 == 0)
 }
 
 test "find: needle longer than haystack" {
@@ -49,17 +49,17 @@ test "find: empty haystack with non-empty needle" {
 
 test "find: empty haystack with empty needle" {
     ro r = "".find("")
-    assert(r.unwrap_or(-1) == 0)
+    assert(r ?? -1 == 0)
 }
 
 test "find: returns first match (not later)" {
     ro r = "abc-abc-abc".find("abc")
-    assert(r.unwrap_or(-1) == 0)
+    assert(r ?? -1 == 0)
 }
 
 test "find: single character search" {
     ro r = "hello".find("e")
-    assert(r.unwrap_or(-1) == 1)
+    assert(r ?? -1 == 1)
 }
 
 // ================================================================
@@ -68,12 +68,12 @@ test "find: single character search" {
 
 test "rfind: returns last match offset" {
     ro r = "abc-abc-abc".rfind("abc")
-    assert(r.unwrap_or(-1) == 8)
+    assert(r ?? -1 == 8)
 }
 
 test "rfind: when only one match" {
     ro r = "hello".rfind("ll")
-    assert(r.unwrap_or(-1) == 2)
+    assert(r ?? -1 == 2)
 }
 
 test "rfind: not present returns None" {
@@ -84,7 +84,7 @@ test "rfind: not present returns None" {
 test "rfind: empty needle returns Some(s.len)" {
     // Rust convention: пустой needle для rfind = position past last char.
     ro r = "abc".rfind("")
-    assert(r.unwrap_or(-1) == 3)
+    assert(r ?? -1 == 3)
 }
 
 // ================================================================
@@ -93,8 +93,8 @@ test "rfind: empty needle returns Some(s.len)" {
 
 test "find != rfind для multi-occurrence" {
     ro s = "ab-cd-ef"
-    ro f = s.find("-").unwrap_or(-1)
-    ro r = s.rfind("-").unwrap_or(-1)
+    ro f = s.find("-") ?? -1
+    ro r = s.rfind("-") ?? -1
     assert(f == 2)
     assert(r == 5)
     assert(f != r)
@@ -102,8 +102,8 @@ test "find != rfind для multi-occurrence" {
 
 test "find == rfind для unique match" {
     ro s = "abc-def"
-    ro f = s.find("-").unwrap_or(-1)
-    ro r = s.rfind("-").unwrap_or(-1)
+    ro f = s.find("-") ?? -1
+    ro r = s.rfind("-") ?? -1
     assert(f == r)
     assert(f == 3)
 }
@@ -114,7 +114,7 @@ test "find == rfind для unique match" {
 
 test "split-by-find: parse 'key:value'" {
     ro s = "user:42"
-    ro i = s.find(":").unwrap_or(-1)
+    ro i = s.find(":") ?? -1
     assert(i == 4)
     ro key = s[0..i]
     ro val = s[i + 1..s.byte_len()]
@@ -124,7 +124,7 @@ test "split-by-find: parse 'key:value'" {
 
 test "split-by-rfind: get last segment of path" {
     ro path = "/usr/local/bin/nova"
-    ro i = path.rfind("/").unwrap_or(-1)
+    ro i = path.rfind("/") ?? -1
     assert(i == 14)
     ro dir = path[0..i]
     ro name = path[i + 1..path.byte_len()]
@@ -172,14 +172,14 @@ test "slice: to end" {
 test "find is case-sensitive" {
     ro s = "Hello World"
     assert(s.find("hello").is_none())          // нижний регистр не найдём
-    assert(s.find("Hello").unwrap_or(-1) == 0)
+    assert(s.find("Hello") ?? -1 == 0)
 }
 
 test "rfind is case-sensitive" {
     ro s = "Hello hello"
-    assert(s.rfind("Hello").unwrap_or(-1) == 0) // только заглавный
+    assert(s.rfind("Hello") ?? -1 == 0) // только заглавный
     ro r = s.rfind("hello")
-    assert(r.unwrap_or(-1) == 6)
+    assert(r ?? -1 == 6)
 }
 
 // ================================================================
@@ -226,13 +226,13 @@ test "len for mixed content" {
 test "find: Cyrillic returns byte offset" {
     ro s = "Привет мир"           // 'мир' starts at byte 13 (6 codepoints × 2 bytes + 1 space)
     ro r = s.find("мир")
-    assert(r.unwrap_or(-1) == 13)  // byte offset
+    assert(r ?? -1 == 13)  // byte offset
 }
 
 test "rfind: Cyrillic returns byte offset" {
     ro s = "ааа-ааа"              // последний 'ааа' начинается с байта 7 (6 bytes + 1 dash)
     ro r = s.rfind("ааа")
-    assert(r.unwrap_or(-1) == 7)
+    assert(r ?? -1 == 7)
 }
 
 test "slice: Cyrillic byte indices" {
@@ -246,7 +246,7 @@ test "slice: Cyrillic byte indices" {
 
 test "split-by-find with Cyrillic" {
     ro s = "ключ:значение"        // 'ключ' = 8 bytes, ':' at byte 8, 'значение' starts at byte 9
-    ro i = s.find(":").unwrap_or(-1)
+    ro i = s.find(":") ?? -1
     assert(i == 8)                 // byte offset
     ro key = s[0..i]
     ro val = s[i + 1..s.byte_len()]

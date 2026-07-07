@@ -39,7 +39,7 @@ test "Option.is_none returns true for None" {
 
 test "Option.unwrap returns value for Some" {
     ro s = Some(10)
-    assert(s.unwrap() == 10)
+    assert(s!! == 10)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -48,12 +48,12 @@ test "Option.unwrap returns value for Some" {
 
 test "Option.unwrap_or returns value for Some" {
     ro s = Some(99)
-    assert(s.unwrap_or(0) == 99)
+    assert(s ?? 0 == 99)
 }
 
 test "Option.unwrap_or returns default for None" {
     ro n = None
-    assert(n.unwrap_or(123) == 123)
+    assert(n ?? 123 == 123)
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -62,13 +62,13 @@ test "Option.unwrap_or returns default for None" {
 
 test "Option.unwrap_or_else returns value for Some" {
     ro s = Some(5)
-    ro n = s.unwrap_or_else(|| 0)
+    ro n = s ?? 0
     assert(n == 5)
 }
 
 test "Option.unwrap_or_else evaluates closure for None" {
     ro n = None
-    ro v = n.unwrap_or_else(|| 42)
+    ro v = n ?? 42
     assert(v == 42)
 }
 
@@ -80,7 +80,7 @@ test "Option.map transforms Some payload" {
     ro s = Some(3)
     ro r = s.map(|x| x * 2)
     assert(r.is_some())
-    assert(r.unwrap() == 6)
+    assert(r!! == 6)
 }
 
 test "Option.map passes through None" {
