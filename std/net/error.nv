@@ -3,7 +3,7 @@
 //
 // The C transport returns UV error codes (int, <0). The typed NetError is built
 // on the Nova side from that code via `NetError.from_code`: the code is turned
-// into text by the layer's `nova_net_strerror` (which canonicalises EACCES /
+// into text by the layer's `net_strerror` (which canonicalises EACCES /
 // ECONNRESET), and that text is classified into a typed variant. No TLS, no
 // C-side error state — the honest error channel replacing the заход-1 null stub.
 
@@ -61,7 +61,7 @@ export fn NetError @to_str() -> str {
 
 /// Build a typed `NetError` from a libuv error code (the transport's `<0`
 /// return / `out_err` cell). The message text comes from the layer's
-/// `nova_net_strerror`; classification is by canonical substring.
+/// `net_strerror`; classification is by canonical substring.
 #stable(since = "0.1")
 export fn NetError.from_code(code int) -> NetError {
     ro msg = strerror_text(code)
@@ -72,7 +72,7 @@ export fn NetError.from_code(code int) -> NetError {
 fn strerror_text(code int) -> str {
     mut buf []u8 = []u8.new()
     buf.resize(256, 0 as u8)
-    ro n = unsafe { nova_net_strerror(code, buf.ptr(), 256) }
+    ro n = unsafe { net_strerror(code, buf.ptr(), 256) }
     str.from_bytes_unchecked(buf[0..n])
 }
 

@@ -121,7 +121,7 @@ static inline nova_parse_f64_result nova_str_to_f64(nova_str s) {
  * `*out` pointer — so the Nova-side `f64.parse` can be a PLAIN `extern "C"
  * fn` declaration, no compiler-side name knowledge needed). Writes the
  * parsed value to `*out` and returns whether the parse succeeded. */
-static inline nova_bool nova_str_parse_f64(nova_str s, double* out) {
+static inline nova_bool str_parse_f64(nova_str s, double* out) {
     nova_parse_f64_result r = nova_str_to_f64(s);
     *out = r.value;
     return r.ok;

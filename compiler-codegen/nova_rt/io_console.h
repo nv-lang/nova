@@ -22,7 +22,7 @@
 
 /* Write `len` bytes from `buf` to stdout (fd 1) or stderr (fd 2 → stderr, any
  * other fd → stdout). Returns bytes written, or -errno on a stream error. */
-static inline int64_t nova_io_write_fd(int64_t fd, const uint8_t* buf, int64_t len) {
+static inline int64_t io_write_fd(int64_t fd, const uint8_t* buf, int64_t len) {
     if (len <= 0) return 0;
     FILE* f = (fd == 2) ? stderr : stdout;
     size_t w = fwrite((const void*)buf, 1, (size_t)len, f);
@@ -38,7 +38,7 @@ static inline int64_t nova_io_write_fd(int64_t fd, const uint8_t* buf, int64_t l
 
 /* Read up to `len` bytes into `buf` from stdin (fd 0; other fds unsupported →
  * treated as stdin). Returns bytes read, 0 at EOF, or -errno on error. */
-static inline int64_t nova_io_read_fd(int64_t fd, uint8_t* buf, int64_t len) {
+static inline int64_t io_read_fd(int64_t fd, uint8_t* buf, int64_t len) {
     (void)fd;
     if (len <= 0) return 0;
     size_t r = fread((void*)buf, 1, (size_t)len, stdin);
@@ -57,9 +57,9 @@ static inline int64_t nova_io_read_fd(int64_t fd, uint8_t* buf, int64_t len) {
  * always-included console/native header rather than the libuv-gated fs.c. The
  * blocking uv_fs_* hooks (open/read/write/stat/...) are in nova_rt/fs.c. */
 
-/* nova_fs_seek: reposition the OS file offset (lseek). whence: 0=SET, 1=CUR, 2=END.
+/* fs_seek: reposition the OS file offset (lseek). whence: 0=SET, 1=CUR, 2=END.
  * Returns the new absolute offset, or -errno on error. */
-static inline int64_t nova_fs_seek(int64_t fd, int64_t offset, int64_t whence) {
+static inline int64_t fs_seek(int64_t fd, int64_t offset, int64_t whence) {
     int w = (whence == 0) ? SEEK_SET : (whence == 2) ? SEEK_END : SEEK_CUR;
 #if defined(_WIN32)
     __int64 r = _lseeki64((int)fd, offset, w);
@@ -74,7 +74,7 @@ static inline int64_t nova_fs_seek(int64_t fd, int64_t offset, int64_t whence) {
 }
 
 /* Host platform predicate for the default Path lexical style (1 on Windows). */
-static inline int64_t nova_fs_is_windows(void) {
+static inline int64_t fs_is_windows(void) {
 #if defined(_WIN32)
     return 1;
 #else

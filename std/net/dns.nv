@@ -58,7 +58,7 @@ fn build_addrs(base int, count int) -> []SocketAddr {
     mut i = 0
     while i < count {
         mut img []u8 = addr_image()
-        unsafe { nova_net_addr_copy_at(base as *(), i, img.ptr()) }
+        unsafe { net_addr_copy_at(base as *(), i, img.ptr()) }
         addrs.push(SocketAddr.from_image(img))
         i = i + 1
     }

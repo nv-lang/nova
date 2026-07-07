@@ -12,7 +12,7 @@
 //   - Posix: `/` is the only separator; `\` is an ordinary filename byte.
 //   - Windows: both `/` and `\` separate; `C:` drive prefixes and `\\srv\share`
 //     UNC prefixes are recognised; `\` is the canonical separator on output.
-// `Path.from_str` uses the HOST style (`nova_fs_is_windows` hook); `Path.posix`
+// `Path.from_str` uses the HOST style (`fs_is_windows` hook); `Path.posix`
 // / `Path.windows` pin a style explicitly, so a single test run can exercise
 // BOTH platforms' semantics (the Ф.2 gate). Pinning the style — rather than a
 // compile-time `#cfg` split — is what makes cross-platform path logic testable.
@@ -39,7 +39,7 @@ export type PathStyle enum
 
 // Host default style, resolved once from the platform predicate.
 fn host_style() -> PathStyle {
-    if nova_fs_is_windows() != 0 { Windows } else { Posix }
+    if fs_is_windows() != 0 { Windows } else { Posix }
 }
 
 // Is `b` a separator under `style`?

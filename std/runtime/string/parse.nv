@@ -63,14 +63,14 @@ export type ParseFloatError enum Empty | Invalid
 // заменён на `f64.parse(s) -> Result[f64, ParseFloatError]`. `?` пробрасывает,
 // `!!` throws, `.ok()` даёт Option при желании.
 //
-// Plain FFI, no compiler name-knowledge (§3): `nova_str_parse_f64` is a
+// Plain FFI, no compiler name-knowledge (§3): `str_parse_f64` is a
 // regular `extern "C" fn` (D282), out-param convention (bool ok + `*out`
 // value) mirroring std/net2's `out_err *mut int` cold-path constructors —
 // see `nova_str_to_f64`'s thin wrapper in nova_rt/conv.h. The compiler knows
 // NOTHING about float parsing; it just lowers an ordinary FFI call.
-extern "C" fn nova_str_parse_f64(s str, out *mut f64) -> bool
+extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
 
-/// Strict parse — delegates to `nova_str_parse_f64` (conv.h, `strtod`-based;
+/// Strict parse — delegates to `str_parse_f64` (conv.h, `strtod`-based;
 /// leading whitespace, `+`/`-`, decimal, exponent, `"nan"`/`"inf"` literals).
 /// Empty string → `Err(Empty)` (checked here so it's distinguishable from
 /// other malformed syntax, which `strtod` cannot tell apart on its own —
@@ -79,5 +79,5 @@ extern "C" fn nova_str_parse_f64(s str, out *mut f64) -> bool
 export fn f64.parse(s str) -> Result[f64, ParseFloatError] {
     if s.is_empty() { return Err(Empty) }
     mut v = 0.0
-    if unsafe { nova_str_parse_f64(s, &v) } { Ok(v) } else { Err(Invalid) }
+    if unsafe { str_parse_f64(s, &v) } { Ok(v) } else { Err(Invalid) }
 }

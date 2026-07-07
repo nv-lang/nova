@@ -856,9 +856,9 @@ fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
 /// True iff the generated `.c` actually CALLS the brotli decoder wrapper — the
 /// precise "does this CU use brotli?" test that drives the conditional link.
 ///
-/// The wrapper `brotli_decode` (and its `nova_brotli_*` extern calls) is emitted
+/// The wrapper `brotli_decode` (and its `brotli_*` extern calls) is emitted
 /// even when unreachable: std module free-fns are kept in the output regardless of
-/// use, so a bare `nova_brotli_` substring scan over-detects (a program that only
+/// use, so a bare `brotli_` substring scan over-detects (a program that only
 /// imports `gzip_decode` still carries the dead brotli body). What is unique to a
 /// program that genuinely uses brotli is a CALL SITE to the mangled wrapper — an
 /// occurrence of `...brotli_decode(` that is neither the wrapper's forward
@@ -923,7 +923,7 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_fs = opts.rt_dir.join("fs.c");
     // Plan 179 Ф.2 (D337): brotli_shim.c — libbrotlidec C-FFI backend. Unlike libuv
     // (mandatory, always linked), brotli is CONDITIONAL on USE: it is compiled and
-    // its lib linked ONLY when the generated .c actually calls a `nova_brotli_*`
+    // its lib linked ONLY when the generated .c actually calls a `brotli_*`
     // symbol (extern "C" fns emit call sites only, D82 — no forward decls — so the
     // marker appears iff a brotli codec is reached). This is the "module→library"
     // conditional-link mechanism the owner requires; libuv behaviour is unchanged.

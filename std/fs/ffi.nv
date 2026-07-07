@@ -14,7 +14,7 @@
 // ops (seek = lseek, platform predicate) are direct static-inline hooks.
 //
 // C symbols are called by literal name (D282: `extern "C" fn`). C side:
-// nova_rt/fs.h + fs.c (park/wake) and nova_rt/io_console.h (nova_fs_seek, platform).
+// nova_rt/fs.h + fs.c (park/wake) and nova_rt/io_console.h (fs_seek, platform).
 
 module std.fs
 
@@ -52,57 +52,57 @@ const KIND_OTHER   int = 0
 // NUL-terminated path (open/stat/...) or the raw byte buffer (read/write).
 
 // open: returns fd (>= 0) or -errno. `flags` is the portable OPEN_* bitset.
-extern "C" fn nova_fs_open(path *u8, flags int, mode int) -> int
+extern "C" fn fs_open(path *u8, flags int, mode int) -> int
 // close: 0 or -errno.
-extern "C" fn nova_fs_close(fd int) -> int
+extern "C" fn fs_close(fd int) -> int
 // read: fill buf[0..n] from the OS file offset (advances it); returns n (0=EOF) or -errno.
-extern "C" fn nova_fs_read(fd int, buf *mut u8, len int) -> int
+extern "C" fn fs_read(fd int, buf *mut u8, len int) -> int
 // write: write len bytes at the OS file offset (advances it); returns n or -errno.
-extern "C" fn nova_fs_write(fd int, buf *u8, len int) -> int
+extern "C" fn fs_write(fd int, buf *u8, len int) -> int
 // pread: positioned read at `offset` (does not move the cursor); n (0=EOF) or -errno.
-extern "C" fn nova_fs_read_at(fd int, buf *mut u8, len int, offset int) -> int
+extern "C" fn fs_read_at(fd int, buf *mut u8, len int, offset int) -> int
 // pwrite: positioned write at `offset` (does not move the cursor); n or -errno.
-extern "C" fn nova_fs_write_at(fd int, buf *u8, len int, offset int) -> int
+extern "C" fn fs_write_at(fd int, buf *u8, len int, offset int) -> int
 // fsync (all data + metadata): 0 or -errno.
-extern "C" fn nova_fs_fsync(fd int) -> int
+extern "C" fn fs_fsync(fd int) -> int
 // fdatasync (data only): 0 or -errno.
-extern "C" fn nova_fs_fdatasync(fd int) -> int
+extern "C" fn fs_fdatasync(fd int) -> int
 // stat/lstat/fstat: 0 or -errno; on success the uv_stat_t is cached in TLS —
-// read it via nova_fs_stat_size/mtime_ns/mode/kind IMMEDIATELY after (no intervening
+// read it via fs_stat_size/mtime_ns/mode/kind IMMEDIATELY after (no intervening
 // blocking op, cooperative-safe — same contract as net's read_data TLS).
-extern "C" fn nova_fs_stat(path *u8) -> int
-extern "C" fn nova_fs_lstat(path *u8) -> int
-extern "C" fn nova_fs_fstat(fd int) -> int
-extern "C" fn nova_fs_stat_size() -> int
-extern "C" fn nova_fs_stat_mtime_ns() -> i64
-extern "C" fn nova_fs_stat_atime_ns() -> i64
-extern "C" fn nova_fs_stat_ctime_ns() -> i64
-extern "C" fn nova_fs_stat_mode() -> int
-extern "C" fn nova_fs_stat_kind() -> int
+extern "C" fn fs_stat(path *u8) -> int
+extern "C" fn fs_lstat(path *u8) -> int
+extern "C" fn fs_fstat(fd int) -> int
+extern "C" fn fs_stat_size() -> int
+extern "C" fn fs_stat_mtime_ns() -> i64
+extern "C" fn fs_stat_atime_ns() -> i64
+extern "C" fn fs_stat_ctime_ns() -> i64
+extern "C" fn fs_stat_mode() -> int
+extern "C" fn fs_stat_kind() -> int
 // mkdir/unlink/rmdir/rename/symlink/chmod: 0 or -errno.
-extern "C" fn nova_fs_mkdir(path *u8, mode int) -> int
-extern "C" fn nova_fs_unlink(path *u8) -> int
-extern "C" fn nova_fs_rmdir(path *u8) -> int
-extern "C" fn nova_fs_rename(from *u8, to *u8) -> int
-extern "C" fn nova_fs_symlink(target *u8, link *u8) -> int
-extern "C" fn nova_fs_chmod(path *u8, mode int) -> int
+extern "C" fn fs_mkdir(path *u8, mode int) -> int
+extern "C" fn fs_unlink(path *u8) -> int
+extern "C" fn fs_rmdir(path *u8) -> int
+extern "C" fn fs_rename(from *u8, to *u8) -> int
+extern "C" fn fs_symlink(target *u8, link *u8) -> int
+extern "C" fn fs_chmod(path *u8, mode int) -> int
 // copyfile: bytes copied (>= 0) or -errno.
-extern "C" fn nova_fs_copyfile(from *u8, to *u8) -> int
+extern "C" fn fs_copyfile(from *u8, to *u8) -> int
 // realpath: 0 or -errno; on success the canonical path bytes are in a TLS slot —
-// read via nova_fs_realpath_data(). fsync on the parent dir (write_atomic step 5).
-extern "C" fn nova_fs_realpath(path *u8) -> int
-extern "C" fn nova_fs_realpath_data() -> str
-extern "C" fn nova_fs_fsync_dir(path *u8) -> int
-// scandir: entry count (>= 0) or -errno; then iterate with nova_fs_scandir_next()
-// (1 = another entry cached, 0 = done) reading nova_fs_scandir_name/kind. TLS-held
+// read via fs_realpath_data(). fsync on the parent dir (write_atomic step 5).
+extern "C" fn fs_realpath(path *u8) -> int
+extern "C" fn fs_realpath_data() -> str
+extern "C" fn fs_fsync_dir(path *u8) -> int
+// scandir: entry count (>= 0) or -errno; then iterate with fs_scandir_next()
+// (1 = another entry cached, 0 = done) reading fs_scandir_name/kind. TLS-held
 // iterator (cooperative-safe: no blocking op between next() calls).
-extern "C" fn nova_fs_scandir(path *u8) -> int
-extern "C" fn nova_fs_scandir_next() -> int
-extern "C" fn nova_fs_scandir_name() -> str
-extern "C" fn nova_fs_scandir_kind() -> int
+extern "C" fn fs_scandir(path *u8) -> int
+extern "C" fn fs_scandir_next() -> int
+extern "C" fn fs_scandir_name() -> str
+extern "C" fn fs_scandir_kind() -> int
 
 // ─── Non-blocking native hooks (io_console.h — always available, no libuv) ──
-// nova_fs_seek: lseek/_lseeki64 on the fd; returns the new absolute offset or -errno.
-extern "C" fn nova_fs_seek(fd int, offset i64, whence int) -> i64
+// fs_seek: lseek/_lseeki64 on the fd; returns the new absolute offset or -errno.
+extern "C" fn fs_seek(fd int, offset i64, whence int) -> i64
 // Platform predicate for host-default Path style (1 on Windows, 0 elsewhere).
-extern "C" fn nova_fs_is_windows() -> int
+extern "C" fn fs_is_windows() -> int

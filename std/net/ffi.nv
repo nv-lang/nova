@@ -6,11 +6,11 @@
 // return codes. NO str in the transport; NO NovaRt_*_method_* mangling.
 //
 // Zero-copy contract (D407 §2а):
-//   - nova_net_tcp_read(h, buf, cap) -> n : the network writes straight into
+//   - net_tcp_read(h, buf, cap) -> n : the network writes straight into
 //     the caller's []u8 buffer (alloc_cb hands libuv that very slice).
-//   - nova_net_tcp_write(h, buf, len) -> n : sends straight from the caller's
+//   - net_tcp_write(h, buf, len) -> n : sends straight from the caller's
 //     bytes (kept alive on the fiber stack across the parked call).
-//   Errors: negative UV codes (text via nova_net_strerror on demand).
+//   Errors: negative UV codes (text via net_strerror on demand).
 //
 // SocketAddr rep (Ф.2): the Nova value owns a 20-byte NovaNetAddr image (see
 // addr.nv). The image is passed to/from C by pointer (`*()` into the []u8
@@ -26,60 +26,60 @@ module std.net
 // ─── Addresses (pure data ops — no I/O, no parking) ──────────────────────────
 // Constructors write the 20-byte NovaNetAddr image into the caller's []u8.
 
-extern "C" fn nova_net_addr_loopback_into(port u16, out *mut u8) -> ()
+extern "C" fn net_addr_loopback_into(port u16, out *mut u8) -> ()
 // Pointer-returning loopback (nova_alloc'd GC POD) — used by mock_net's DNS stub
 // to hand `resolve` a real single-element address array.
-extern "C" fn nova_net_addr_loopback(port u16) -> *()
-extern "C" fn nova_net_addr_loopback_v6_into(port u16, out *mut u8) -> ()
-extern "C" fn nova_net_addr_v4_into(a u8, b u8, c u8, d u8, port u16, out *mut u8) -> ()
+extern "C" fn net_addr_loopback(port u16) -> *()
+extern "C" fn net_addr_loopback_v6_into(port u16, out *mut u8) -> ()
+extern "C" fn net_addr_v4_into(a u8, b u8, c u8, d u8, port u16, out *mut u8) -> ()
 // Parse "host:port" (s,len) into the 20-byte caller image `out`.
 // Returns 0=OK, 1=invalid address, 2=invalid port.
-extern "C" fn nova_net_addr_parse(s *u8, len int, out *mut u8) -> int
-extern "C" fn nova_net_addr_port(addr *()) -> u16
-extern "C" fn nova_net_addr_is_v4(addr *()) -> bool
-extern "C" fn nova_net_addr_is_v6(addr *()) -> bool
+extern "C" fn net_addr_parse(s *u8, len int, out *mut u8) -> int
+extern "C" fn net_addr_port(addr *()) -> u16
+extern "C" fn net_addr_is_v4(addr *()) -> bool
+extern "C" fn net_addr_is_v6(addr *()) -> bool
 // Format IP / "host:port" text into the caller's buffer; returns length written.
-extern "C" fn nova_net_addr_ip(addr *(), buf *mut u8, cap int) -> int
-extern "C" fn nova_net_addr_to_str(addr *(), buf *mut u8, cap int) -> int
+extern "C" fn net_addr_ip(addr *(), buf *mut u8, cap int) -> int
+extern "C" fn net_addr_to_str(addr *(), buf *mut u8, cap int) -> int
 // Error text for a UV code into the caller's buffer; returns length written.
-extern "C" fn nova_net_strerror(code int, buf *mut u8, cap int) -> int
+extern "C" fn net_strerror(code int, buf *mut u8, cap int) -> int
 // NovaNetAddr byte-size from C side (image size query).
-extern "C" fn nova_net_addr_size() -> int
+extern "C" fn net_addr_size() -> int
 
 // ─── TCP ──────────────────────────────────────────────────────────────────────
 // Constructors return the handle or null (UV code → *out_err); parking ops
 // return n / 0=EOF / <0=-UV.
 
-extern "C" fn nova_net_tcp_listen(addr *(), backlog int, out_err *mut int) -> *()
-extern "C" fn nova_net_tcp_accept(lst *(), out_err *mut int) -> *()   // parks
-extern "C" fn nova_net_tcp_connect(addr *(), out_err *mut int) -> *() // parks
-extern "C" fn nova_net_tcp_read(s *(), buf *mut u8, cap int) -> int   // parks; zero-copy
-extern "C" fn nova_net_tcp_write(s *(), buf *u8, len int) -> int      // parks; zero-copy
-extern "C" fn nova_net_tcp_shutdown(s *()) -> int                     // half-close (write side)
-extern "C" fn nova_net_tcp_close(s *()) -> ()                         // refcount-aware
-extern "C" fn nova_net_tcp_mark_split(s *()) -> ()                    // refcount = 2
-extern "C" fn nova_net_tcp_local_port(s *()) -> u16
-extern "C" fn nova_net_tcp_peer_port(s *()) -> u16
-extern "C" fn nova_net_tcp_local_addr(s *(), out *mut u8) -> ()
-extern "C" fn nova_net_tcp_peer_addr(s *(), out *mut u8) -> ()
-extern "C" fn nova_net_tcp_set_nodelay(s *(), on bool) -> ()
-extern "C" fn nova_net_tcp_set_keepalive(s *(), on bool) -> ()
+extern "C" fn net_tcp_listen(addr *(), backlog int, out_err *mut int) -> *()
+extern "C" fn net_tcp_accept(lst *(), out_err *mut int) -> *()   // parks
+extern "C" fn net_tcp_connect(addr *(), out_err *mut int) -> *() // parks
+extern "C" fn net_tcp_read(s *(), buf *mut u8, cap int) -> int   // parks; zero-copy
+extern "C" fn net_tcp_write(s *(), buf *u8, len int) -> int      // parks; zero-copy
+extern "C" fn net_tcp_shutdown(s *()) -> int                     // half-close (write side)
+extern "C" fn net_tcp_close(s *()) -> ()                         // refcount-aware
+extern "C" fn net_tcp_mark_split(s *()) -> ()                    // refcount = 2
+extern "C" fn net_tcp_local_port(s *()) -> u16
+extern "C" fn net_tcp_peer_port(s *()) -> u16
+extern "C" fn net_tcp_local_addr(s *(), out *mut u8) -> ()
+extern "C" fn net_tcp_peer_addr(s *(), out *mut u8) -> ()
+extern "C" fn net_tcp_set_nodelay(s *(), on bool) -> ()
+extern "C" fn net_tcp_set_keepalive(s *(), on bool) -> ()
 
-extern "C" fn nova_net_listener_local_port(lst *()) -> u16
-extern "C" fn nova_net_listener_local_addr(lst *(), out *mut u8) -> ()
-extern "C" fn nova_net_listener_set_reuse_address(lst *(), on bool) -> ()
-extern "C" fn nova_net_listener_close(lst *()) -> ()
+extern "C" fn net_listener_local_port(lst *()) -> u16
+extern "C" fn net_listener_local_addr(lst *(), out *mut u8) -> ()
+extern "C" fn net_listener_set_reuse_address(lst *(), on bool) -> ()
+extern "C" fn net_listener_close(lst *()) -> ()
 
 // ─── UDP ──────────────────────────────────────────────────────────────────────
 
-extern "C" fn nova_net_udp_bind(addr *(), out_err *mut int) -> *()
-extern "C" fn nova_net_udp_send_to(sock *(), buf *u8, len int, addr *()) -> int  // parks; zero-copy
+extern "C" fn net_udp_bind(addr *(), out_err *mut int) -> *()
+extern "C" fn net_udp_send_to(sock *(), buf *u8, len int, addr *()) -> int  // parks; zero-copy
 // Datagram lands straight in the caller's buf; sender (20-byte NovaNetAddr
 // image) filled via the `sender` out-param. Returns n or <0.
-extern "C" fn nova_net_udp_recv_from(sock *(), buf *mut u8, cap int, sender *mut u8) -> int
-extern "C" fn nova_net_udp_local_port(sock *()) -> u16
-extern "C" fn nova_net_udp_local_addr(sock *(), out *mut u8) -> ()
-extern "C" fn nova_net_udp_close(sock *()) -> ()
+extern "C" fn net_udp_recv_from(sock *(), buf *mut u8, cap int, sender *mut u8) -> int
+extern "C" fn net_udp_local_port(sock *()) -> u16
+extern "C" fn net_udp_local_addr(sock *(), out *mut u8) -> ()
+extern "C" fn net_udp_close(sock *()) -> ()
 
 // ─── DNS ──────────────────────────────────────────────────────────────────────
 // Resolve (host,len):port in ONE getaddrinfo call; parks. On success writes the
@@ -87,5 +87,5 @@ extern "C" fn nova_net_udp_close(sock *()) -> ()
 // Returns -1 on error (UV code → *out_err). `addr_copy_at` copies element i of
 // that array into a caller 20-byte image (dns.nv builds []SocketAddr from it).
 
-extern "C" fn nova_net_dns_lookup(host *u8, host_len int, port u16, out_arr *(), out_err *mut int) -> int
-extern "C" fn nova_net_addr_copy_at(arr *(), i int, out *mut u8) -> ()
+extern "C" fn net_dns_lookup(host *u8, host_len int, port u16, out_arr *(), out_err *mut int) -> int
+extern "C" fn net_addr_copy_at(arr *(), i int, out *mut u8) -> ()
