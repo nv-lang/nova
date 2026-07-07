@@ -133,24 +133,11 @@ fn str_runtime() -> Vec<RuntimeFn> {
     // emit_c.rs nova_str BinOp arm; `+` from `@concat`. Method-form `s.eq(t)` etc.
     // resolve to those Nova bodies too. Registry now ends with only @hash
     // (irreducible: SipHash + crypto-seed). Closes [M-139.1-operator-lowered-methods].
-    vec![
-        // D109 (Plan 48 Ф.8): FNV-1a hash для str — ключ HashMap.
-        // Codegen vector: `prim_builtin_method` dispatch перехватывает
-        // вызов до общего resolver'а (emit_c.rs); declaration здесь —
-        // для AI/IDE discovery + sanity-check.
-        RuntimeFn {
-            module: "std.runtime.string",
-            receiver: Some("str"),
-            is_static: false, is_mut: false, is_consume: false,
-            name: "hash",
-            params: &[],
-            return_ty: "u64",
-            effects: &[],
-            c_name: "nova_str_hash",
-            doc: "FNV-1a хеш по байтам строки. Используется в std.collections.HashMap.",
-            nova_body: None,
-        },
-    ]
+    //
+    // Plan 172 (porting-wave-tails): @hash is hard-coded in emit_c.rs (line 38670),
+    // no registry entry needed. Empty registry prevents emit-runtime-stubs from
+    // writing std/runtime/string.nv (mirroring char_runtime pattern).
+    vec![]
 }
 
 /// `std.runtime.math` — D74 instance-методы для f64 (и subset f32).

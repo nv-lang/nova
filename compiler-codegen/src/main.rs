@@ -533,6 +533,12 @@ fn cmd_emit_runtime_stubs(root: &PathBuf, check: bool) -> Result<()> {
     let mut total_files = 0;
     let mut diffed_files: Vec<String> = Vec::new();
     for (module, fns) in &groups {
+        // Skip empty modules (no functions) to avoid writing stub files.
+        // Mirroring pattern from char_runtime/str_runtime: if registry is
+        // empty for a module, don't emit a .nv file.
+        if fns.is_empty() {
+            continue;
+        }
         let rel_path = runtime_registry::module_to_path(module);
         let abs_path = root.join(&rel_path);
         let content = runtime_registry::render_nv(module, fns);
