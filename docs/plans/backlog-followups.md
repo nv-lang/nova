@@ -1863,25 +1863,51 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   биндинга, не проходит `..`-правило (нет type-resolution на этом пути) — редкий кейс,
   задокументирован в спеке, не блокирует закрытие.
 
-- **[M-unwrap-twins-retraction]** (2026-07-07, P2, Wave: волна-2 §4а [sonnet]) — ретракция
-  метод-близнецов операторов (амендменты D85/D86 в спеке): снести из prelude/core.nv
-  `Option/Result @unwrap()` (:264/:363), `@unwrap_or` (:272/:370), `@unwrap_or_else`
-  (:278/:379); мигрировать вызовы: `.unwrap()` ×33 → `x!!`, `.unwrap_or(v)` ×29 → `x ?? v`
-  (скобки по прецедентности в цепочках: `(chain) ?? v` где нужно), `_or_else` ×0.
-  ТУДА ЖЕ (подтверждено владельцем): ретракция `@capacity()` у ВСЕХ носителей — дубль
-  канонического `cap()` (D9): StringBuilder (:106/:112 alias-пара), HashMap (:172/:178
-  alias-пара), WriteBuffer (:79 — только capacity, завести cap()-чтение при сносе);
-  вызовов ~13 → `cap()`. ПЛЮС устаревшие док-строки обратного канона: 03-syntax.md:5762
-  («v.capacity() ✓ renamed from .cap» — до-амендментная эпоха D117) и таблица длин там же
-  (:1923-зона) — привести к cap()-канону, D117-таблицу method-имён обновить.
-  И ТУДА ЖЕ (владелец 2026-07-07): StringBuilder @len() → @byte_len() (строкоподобная
-  поверхность = D249-канон, как str; шапка string_builder.nv прямо признаёт обратный ход
-  «@byte_len удалён» — откатить); @char_len() РЕТРАКТИРОВАТЬ (0 вызовов; счёт codepoint =
-  линза+терминатор, не свойство). ГРАНИЦА: WriteBuffer @len() остаётся (байтовый буфер,
-  длина однозначна). Правило в D249-амендмент одной строкой: строкоподобное — только
-  byte_len(); байтовые буферы/коллекции — len(). Внутренние requires-сайты переименовать.
-  Мелочь в json-зоне: parse_hex/`code` типизировать u32 (кандидат-codepoint, D327).
-  Конвейеры в правленых местах — ребиндингом одним именем (D347-канон, стиль §21).
+- **[M-unwrap-twins-retraction]** ✅ FIXED (2026-07-07, [sonnet]) — ретракция
+  метод-близнецов операторов (амендменты D85/D86 в спеке): снесены из prelude/core.nv
+  `Option/Result @unwrap()`, `@unwrap_or`, `@unwrap_or_else`; мигрировано `.unwrap()`
+  ×80 → `x!!`, `.unwrap_or(v)` ×228 → `x ?? v` по всему дереву (std/ spec_tests/
+  nova_tests/ examples/) — фактические числа выше плановой оценки (33/29), т.к. план
+  считал по узкой выборке. Прецедентность: реальная грамматика (`compiler-codegen/src/
+  parser/mod.rs parse_postfix`) показала `??`/`!!` в ОДНОМ постфикс-цикле с `.`/`()`/`as`;
+  RHS `??` парсится `parse_unary()`→`parse_postfix()` (не полный `parse_expr`) — скобки
+  нужны только если fallback сам бинарное выражение вне call/cast/литерала. Проверка
+  всех ~230 реальных fallback-аргументов: везде постфикс-safe атомы — скобки НЕ
+  понадобились ни разу (не подтвердилось предположение про цепочки). `unwrap_or_else`
+  — 2 живых случая с доступом к error-значению переписаны explicit `match`
+  (nova_tests/plan99/result_unwrap_or_else_migrated.nv), остальные — `??`.
+  ТУДА ЖЕ: `@capacity()` РЕТРАКТИРОВАН у StringBuilder/HashMap/WriteBuffer (дубль
+  канонического `cap()`, D9) — вызовы .capacity() → .cap() (HashMap/StringBuilder/
+  WriteBuffer only; Vec-плана-60-эры/Channel/user-типы с собственным `@capacity()`
+  — ВНЕ периметра, найдены и намеренно НЕ тронуты). 03-syntax.md: D117 "Что"/"Правило"/
+  таблица длин (:1923-зона)/"Что отвергнуто"/forbidden-abbreviations приведены к
+  cap()-канону (`cap` добавлен в mainstream-исключения, 3→4).
+  И ТУДА ЖЕ: StringBuilder `@len()` → `@byte_len()` (D249, откат прежнего «удалён»);
+  `@char_len()` ретрактирован (0 usages в std/) — codepoint-счёт теперь
+  `.clone().into_str().chars().count()` (линза+терминатор через non-consuming clone).
+  WriteBuffer `@len()` НЕ тронут (граница — байтовый буфер).
+  json parse_hex/`code`: остались `int` — `str.from_codepoint(cp int)` (std/runtime/
+  char.nv:16) принимает `int`, менять на `u32` создало бы лишний cast без пользы (см.
+  инструкцию — «если int, оставь int»).
+  Найден и НЕ исправлен (вне периметра — компилятор): **[M-cap-getter-fluent-alias-
+  false-positive]** — см. отдельный пункт ниже.
+  Гейты: conformance 56/0 (дельта 0, эталон обновлён D411-мержем в процессе), std/
+  encoding/json_test 24/24, HashMap/WriteBuffer/Vec targeted PASS, StringBuilder
+  targeted PASS в изоляции (полный `nova_tests/strings/` как один CU уже упирается в
+  ДВА пред-существующих несвязанных дефекта — см. отчёт агента).
+
+- **[M-cap-getter-fluent-alias-false-positive]** (2026-07-07, P3, найден при
+  [M-unwrap-twins-retraction], compiler defect, НЕ ФИКШУ — вне периметра задачи) —
+  checker's `recv_returning` registry (`types/mod.rs` ~20392/20458) ключуется ТОЛЬКО
+  по `(receiver_type, method_name)`, БЕЗ arity. StringBuilder одновременно объявляет
+  0-arg getter `@cap() -> int` и 1-arg fluent setter `mut @cap(n) -> @` под тем же
+  именем; т.к. StringBuilder — `consume`-тип, D180 Rule 2 alias-эвристика
+  («`let x = recv.fluent_method()` ⇒ x aliases recv») в `check_stmt`/`Stmt::Let`
+  срабатывает на 0-arg getter тоже → `ro x = sb.cap()` ложно даёт
+  `[E_VIEW_BINDING_FORBIDDEN]`. Repro: `nova_tests/strings/str_builder_metrics.nv`
+  (2 живых сайта, workaround `+ 0` на месте с маркер-комментарием — ломает точный
+  AST-паттерн `Call{Member{Ident}}` без изменения значения). Фикс — arity-aware
+  `recv_returning` (ключ должен включать arity/сигнатуру, не только имя).
 
 - **[M-sync-test-stale-duplicate]** (2026-07-07, P2, Wave: санация-182 Ф.2) — std/runtime/
   sync_test.nv объявляет `module runtime.sync` (не sync_test) и ПОВТОРНО объявляет
