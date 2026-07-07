@@ -2034,3 +2034,19 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   компилятор: `[P67-LEGACY] Ident 'msg' not in var_types` (санация-182, три независимые
   репродукции). Блокирует возврат http-тестов body/model/url/d358 из nova_tests к модулю
   (якоря в файлах). Родня [M-172.1-var-types-cu-name-leak]/ErrorKind-коллизии.
+
+- **[M-fixed-array-value-semantics]** (2026-07-08, P2, Wave: трек A после Vec-canon substrate
+  — иначе двойная переделка) — [N]T СЕЙЧАС кучевой (три свидетельства: V3-классификатор
+  FixedArray=>false; ref_target_confirmed_heap FixedArray=>true наравне с Array/Pointer;
+  кодоген обрабатывает FixedArray одним армом с Array — отдельного стек-эмита нет).
+  Владелец: «должно быть на стеке». Целевое: [N]T с value-элементами = value-класс —
+  inline-хранение (C: `T name[N];` в кадре / поле записи), копирование по значению,
+  D27-амендмент + V3-переклассификация; открывает SocketAddr {image [20]u8} без аллокаций
+  и типизированный AddrImage (174.5-связка). [N]T с кучевыми элементами — heap-tracked
+  элементы при value-контейнере (GC-скан по месту).
+- **РЕШЕНИЕ ВЛАДЕЛЬЦА (2026-07-08) по [M-array-vec-unify]: Vec-canon — NovaArray умирает
+  целиком** (вариант typedef-alias отвергнут). Substrate-очерёдность (вердикт A5):
+  A6 = runtime-примирение (nova_str_to_chars/bytes/split и потребители read_buffer/
+  string_builder/cast.h → Vec-образы), A7 = координированный codegen-флип 5 сайтов
+  (binding-type, receiver_c_type, .new(), литералы ×3, for-loop) + снос NOVA_ARRAY_DECL-
+  набора array.h (uint-маркер закрывается автоматически), затем коллапс триплификации.
