@@ -29583,6 +29583,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     None
                                 };
                                 if let Some(sig) = chosen {
+                                    // Plan 184 (Р5/Р7): deref fluent value-record ptr
+                                    // args passed to by-value params (arg_strs is the
+                                    // non-receiver arg list, 1:1 with sig.param_c_types).
+                                    self.deref_fluent_value_args(args, &mut arg_strs, &sig.param_c_types);
                                     if want_instance {
                                         let obj_c = self.emit_expr(obj)?;
                                         // Plan 152.1 Ф.3: value-record receiver
@@ -40038,6 +40042,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .get(&format!("fn_ret_{}_{}", tn, mname))
             .map(|r| *r == format!("{}*", target_c))
             .unwrap_or(false)
+    }
+
+    /// Plan 184 (Р5/Р7): rewrite already-emitted call-arg strings so a value-
+    /// record fluent `-> @` result (`NovaValue_X*` = ref Self) passed to a
+    /// BY-VALUE parameter is dereferenced (`*ptr`) — the `ref T -> T` auto-
+    /// conversion (Р5). `arg_strs[i]` MUST correspond 1:1 to `args[i]` /
+    /// `param_c_types[i]` (the receiver, if any, already stripped). No-op for
+    /// every other arg, so it is safe to call unconditionally after overload
+    /// selection. Covers the method-call-arg surface (production
+    /// `handler.handle(req.params(ps))`) symmetrically with the free-fn site.
+    fn deref_fluent_value_args(
+        &self,
+        args: &[CallArg],
+        arg_strs: &mut [String],
+        param_c_types: &[String],
+    ) {
+        for (i, a) in args.iter().enumerate() {
+            if let (Some(s), Some(pt)) = (
+                arg_strs.get_mut(i),
+                param_c_types.get(i),
+            ) {
+                if self.is_fluent_value_ptr_for_target(a.expr(), pt) {
+                    *s = format!("(*({}))", s);
+                }
+            }
+        }
     }
 
     fn is_value_type(ty: &str) -> bool {
