@@ -36,11 +36,7 @@ export type SocketAddr value { priv raw []u8 }
 ro ADDR_IMAGE_BYTES int = nova_net_addr_size()
 
 // A fresh, zeroed NovaNetAddr image buffer.
-fn _addr_image() -> []u8 {
-    mut b []u8 = []u8.new()
-    b.resize(ADDR_IMAGE_BYTES, 0 as u8)
-    b
-}
+fn _addr_image() -> []u8 => []u8.new().resize(ADDR_IMAGE_BYTES, 0 as u8)
 
 // Package-private: wrap an already-filled 20-byte image into a SocketAddr.
 // Used by the tcp/udp/dns handlers, which fill an out-buffer via the FFI.
