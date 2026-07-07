@@ -52,7 +52,7 @@ export type Queue[T] {
 /// Создать пустую очередь.
 #stable(since = "0.1")
 export fn Queue[T].new() -> Self =>
-    { _inbox: [], _outbox: [] }
+    { inbox: [], outbox: [] }
 
 
 
@@ -125,11 +125,11 @@ export fn Queue[T] mut @pop() -> Option[T] {
 export fn Queue[T] @peek() -> Option[T] {
     if !@outbox.is_empty() {
         // Голова outbox — последний элемент (pop забирает с конца).
-        @outbox.get(@outbox.len() - 1)
+        Some(@outbox[@outbox.len() - 1])
     } else if !@inbox.is_empty() {
         // Голова находится в `in[0]` (она «дальше всего» от выхода
         // тоже, но ещё не перелита).
-        @inbox.get(0)
+        Some(@inbox[0])
     } else {
         None
     }
@@ -143,50 +143,4 @@ export fn Queue[T] mut @clear() -> () {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "FIFO order" {
-    mut q = Queue[int].new()
-    q.push(1)
-    q.push(2)
-    q.push(3)
-    assert(q.pop() == Some(1))
-    assert(q.pop() == Some(2))
-    assert(q.pop() == Some(3))
-    assert(q.pop() == None)
-}
-
-test "interleaved push/pop" {
-    mut q = Queue[int].new()
-    q.push(1)
-    q.push(2)
-    assert(q.pop() == Some(1))
-    q.push(3)
-    q.push(4)
-    assert(q.pop() == Some(2))
-    assert(q.pop() == Some(3))
-    q.push(5)
-    assert(q.pop() == Some(4))
-    assert(q.pop() == Some(5))
-    assert(q.is_empty())
-}
-
-test "peek doesn't remove" {
-    mut q = Queue[int].new()
-    q.push(42)
-    assert(q.peek() == Some(42))
-    assert(q.peek() == Some(42))             // повторно — то же значение
-    assert(q.len() == 1)
-    assert(q.pop() == Some(42))
-    assert(q.peek() == None)
-}
-
-test "empty queue" {
-    mut q Queue[int] = Queue[int].new()
-    assert(q.is_empty())
-    assert(q.len() == 0)
-    assert(q.pop() == None)
-    assert(q.peek() == None)
-}
+// Тесты — см. peer-файл queue_test.nv (module collections.queue_test).

@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/collections/priority_queue_test.nv — публичный контракт PriorityQueue.
+
+module collections.priority_queue_test
+
+import std.collections.priority_queue.{PriorityQueue}
+
+test "empty queue" {
+    ro pq = PriorityQueue[int].new()
+    assert(pq.is_empty())
+    assert(pq.peek() == None)
+    // pop из пустой — None
+    mut pq2 = pq
+    assert(pq2.pop() == None)
+}
+
+test "push / pop порядок" {
+    mut pq = PriorityQueue[int].new()
+    pq.push(5)
+    pq.push(1)
+    pq.push(3)
+    pq.push(8)
+    pq.push(2)
+
+    assert(pq.len() == 5)
+    assert(pq.pop() == Some(1))
+    assert(pq.pop() == Some(2))
+    assert(pq.pop() == Some(3))
+    assert(pq.pop() == Some(5))
+    assert(pq.pop() == Some(8))
+    assert(pq.pop() == None)
+}
+
+test "peek не удаляет" {
+    mut pq = PriorityQueue[int].new()
+    pq.push(5)
+    pq.push(1)
+    assert(pq.peek() == Some(1))
+    assert(pq.peek() == Some(1))
+    assert(pq.len() == 2)
+}

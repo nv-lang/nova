@@ -35,7 +35,7 @@ export type PriorityQueue[T Ord] {
 /// Создать пустую `PriorityQueue`.
 #stable(since = "0.1")
 export fn PriorityQueue[T].new() -> Self =>
-    { _items: [] }
+    { items: [] }
 
 /// Число элементов в очереди.
 #stable(since = "0.1")
@@ -67,15 +67,10 @@ export fn PriorityQueue[T] mut @pop() -> Option[T] {
     if @items.len() == 0 { return None }
     ro top = @items[0]
     ro last = @items.len() - 1
-    if last > 0 {
-        @items[0] = @items[last]
-    }
-    // Удаляем последний элемент (используем вспомогательный массив).
-    mut new_items []T = []
-    for i in 0..last {
-        new_items.push(@items[i])
-    }
-    @items = new_items
+    // Переносим последний элемент в корень (swap — no-op при last == 0),
+    // затем отбрасываем хвост через @pop() — bulk-copy rebuild не нужен.
+    @items.swap(0, last)
+    ro _ = @items.pop()
     if @items.len() > 0 {
         @sift_down(0)
     }
@@ -92,10 +87,7 @@ fn PriorityQueue[T] mut @sift_up(idx int) -> () {
     while i > 0 {
         ro parent = (i - 1) / 2
         if @items[i] < @items[parent] {
-            // swap
-            ro tmp = @items[i]
-            @items[i] = @items[parent]
-            @items[parent] = tmp
+            @items.swap(i, parent)
             i = parent
         } else {
             return ()
@@ -118,49 +110,10 @@ fn PriorityQueue[T] mut @sift_down(idx int) -> () {
             smallest = right
         }
         if smallest == i { return () }
-        ro tmp = @items[i]
-        @items[i] = @items[smallest]
-        @items[smallest] = tmp
+        @items.swap(i, smallest)
         i = smallest
     }
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "empty queue" {
-    ro pq = PriorityQueue[int].new()
-    assert(pq.is_empty())
-    assert(pq.peek() == None)
-    // pop из пустой — None
-    mut pq2 = pq
-    assert(pq2.pop() == None)
-}
-
-test "push / pop порядок" {
-    mut pq = PriorityQueue[int].new()
-    pq.push(5)
-    pq.push(1)
-    pq.push(3)
-    pq.push(8)
-    pq.push(2)
-
-    assert(pq.len() == 5)
-    assert(pq.pop() == Some(1))
-    assert(pq.pop() == Some(2))
-    assert(pq.pop() == Some(3))
-    assert(pq.pop() == Some(5))
-    assert(pq.pop() == Some(8))
-    assert(pq.pop() == None)
-}
-
-test "peek не удаляет" {
-    mut pq = PriorityQueue[int].new()
-    pq.push(5)
-    pq.push(1)
-    assert(pq.peek() == Some(1))
-    assert(pq.peek() == Some(1))
-    assert(pq.len() == 2)
-}
+// Тесты — см. peer-файл priority_queue_test.nv (module collections.priority_queue_test).
