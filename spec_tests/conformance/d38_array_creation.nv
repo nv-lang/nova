@@ -93,10 +93,10 @@ test "[]Rec.new() with NAMED record literal push — values survive 2nd push (D3
     out.push(D38Kv { key: "a", val: 1 })
     out.push(D38Kv { key: "b", val: 2 })
     assert(out.len() == 2)
-    assert(out.get(0).unwrap().key == "a")
-    assert(out.get(0).unwrap().val == 1)
-    assert(out.get(1).unwrap().key == "b")
-    assert(out.get(1).unwrap().val == 2)
+    assert(out.get(0)!!.key == "a")
+    assert(out.get(0)!!.val == 1)
+    assert(out.get(1)!!.key == "b")
+    assert(out.get(1)!!.val == 2)
 }
 
 test "[]Rec.new() with ANONYMOUS record literal push — values survive 2nd push (D38)" {
@@ -104,10 +104,10 @@ test "[]Rec.new() with ANONYMOUS record literal push — values survive 2nd push
     out.push({ key: "x", val: 10 })
     out.push({ key: "y", val: 20 })
     assert(out.len() == 2)
-    assert(out.get(0).unwrap().key == "x")
-    assert(out.get(0).unwrap().val == 10)
-    assert(out.get(1).unwrap().key == "y")
-    assert(out.get(1).unwrap().val == 20)
+    assert(out.get(0)!!.key == "x")
+    assert(out.get(0)!!.val == 10)
+    assert(out.get(1)!!.key == "y")
+    assert(out.get(1)!!.val == 20)
 }
 
 test "[]Rec.new().cap(n) (ex-with_capacity) with record literals (D38 / D372 amend)" {
@@ -116,8 +116,8 @@ test "[]Rec.new().cap(n) (ex-with_capacity) with record literals (D38 / D372 ame
     out.push(D38Kv { key: "c", val: 3 })
     out.push({ key: "d", val: 4 })
     assert(out.len() == 2)
-    assert(out.get(0).unwrap().val == 3)
-    assert(out.get(1).unwrap().key == "d")
+    assert(out.get(0)!!.val == 3)
+    assert(out.get(1)!!.key == "d")
 }
 
 test "record-tuple empty literal `[](Rec, Rec) = []` push — values survive 2nd push (D38)" {
@@ -125,8 +125,8 @@ test "record-tuple empty literal `[](Rec, Rec) = []` push — values survive 2nd
     out.push((D38Name { n: 1 }, D38Val { v: 10 }))
     out.push((D38Name { n: 2 }, D38Val { v: 20 }))
     assert(out.len() == 2)
-    assert(out.get(0).unwrap().0.n == 1)
-    assert(out.get(0).unwrap().1.v == 10)
-    assert(out.get(1).unwrap().0.n == 2)
-    assert(out.get(1).unwrap().1.v == 20)
+    assert(out.get(0)!!.0.n == 1)
+    assert(out.get(0)!!.1.v == 10)
+    assert(out.get(1)!!.0.n == 2)
+    assert(out.get(1)!!.1.v == 20)
 }

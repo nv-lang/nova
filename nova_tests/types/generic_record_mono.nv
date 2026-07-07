@@ -84,19 +84,19 @@ fn Result23[T] @unwrap_or(fallback T) -> T => match @ {
 test "Result23[int] Ok2 — is_ok и unwrap_or" {
     ro r = Ok2(42)
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 42)
+    assert(r ?? 0 == 42)
 }
 
 test "Result23[int] Err2 — is_ok false" {
     ro r = Err2
     assert(!r.is_ok())
-    assert(r.unwrap_or(99) == 99)
+    assert(r ?? 99 == 99)
 }
 
 test "Result23[str] Ok2" {
     ro r = Ok2("value")
     assert(r.is_ok())
-    assert(r.unwrap_or("") == "value")
+    assert(r ?? "" == "value")
 }
 
 

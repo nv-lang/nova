@@ -13,7 +13,7 @@ module nova_tests.plan83_12
 test "TcpListener: cancel in-flight accept — exits cleanly" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
 
     ro tok = CancelToken.new()
     mut acc_err = false

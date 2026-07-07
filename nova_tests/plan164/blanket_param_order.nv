@@ -17,13 +17,13 @@ import std.collections.vec_iter
 test "min returns smallest int element" {
     ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
     ro m = v.iter().min()
-    assert(m.unwrap_or(-1) == 1)
+    assert(m ?? -1 == 1)
 }
 
 test "max returns largest int element" {
     ro v = Vec[int].of(3, 1, 4, 1, 5, 9, 2, 6)
     ro m = v.iter().max()
-    assert(m.unwrap_or(-1) == 9)
+    assert(m ?? -1 == 9)
 }
 
 test "min on empty iterator returns None" {
@@ -44,14 +44,14 @@ test "min / max after filter adapter (multi-bound blanket)" {
     // resolve the two-bound blanket fn[I Next[T], T Compare] correctly.
     ro lo = v.iter().filter(|x| x > 3).min()
     ro hi = v.iter().filter(|x| x < 8).max()
-    assert(lo.unwrap_or(-1) == 7)
-    assert(hi.unwrap_or(-1) == 7)
+    assert(lo ?? -1 == 7)
+    assert(hi ?? -1 == 7)
 }
 
 test "min / max after map adapter (chained, two-bound blanket)" {
     ro v = Vec[int].of(5, 2, 8, 1, 9, 3)
     ro lo = v.iter().map(|x| x * 2).min()
     ro hi = v.iter().map(|x| x * 2).max()
-    assert(lo.unwrap_or(-1) == 2)
-    assert(hi.unwrap_or(-1) == 18)
+    assert(lo ?? -1 == 2)
+    assert(hi ?? -1 == 18)
 }

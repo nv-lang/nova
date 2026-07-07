@@ -379,8 +379,8 @@ fn compare_ident(a str, b str) -> int {
     if a_num && b_num {
         // Оба numeric — парсим в u64 (валидация уже была в parse).
         // try_from возвращает Result, .ok() → Option, .unwrap_or → u64.
-        ro an = u64.try_from(a).ok().unwrap_or(0)
-        ro bn = u64.try_from(b).ok().unwrap_or(0)
+        ro an = u64.try_from(a).ok() ?? 0
+        ro bn = u64.try_from(b).ok() ?? 0
         if an < bn { return -1 }
         if an > bn { return 1 }
         return 0

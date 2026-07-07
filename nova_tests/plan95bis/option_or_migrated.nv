@@ -12,7 +12,7 @@ test "Option[int].or — chain None.or(Some).or(None) → Some" {
     ro c Option[int] = None
     ro result_i = a.or(b).or(c)
     assert(result_i.is_some())
-    assert(result_i.unwrap_or(0) == 10)
+    assert(result_i ?? 0 == 10)
 }
 
 test "Option[str].or — both None → None" {
@@ -26,11 +26,11 @@ test "Option[str].or — first wins when present" {
     ro p Option[str] = Some("primary")
     ro q Option[str] = Some("secondary")
     ro result_p = p.or(q)
-    assert(result_p.unwrap_or("none") == "primary")
+    assert(result_p ?? "none" == "primary")
 }
 
 test "Option[char].or — None.or(Some) → second" {
     ro n Option[char] = None
     ro v Option[char] = Some('X')
-    assert(n.or(v).unwrap_or('?') == 'X')
+    assert(n.or(v) ?? '?' == 'X')
 }

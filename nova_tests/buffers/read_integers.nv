@@ -15,14 +15,14 @@ test "read_byte — !! + Result" {
     assert(rb.read_byte()!! == 0x42)
     ro r = rb.read_byte()
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 0x99)
+    assert(r ?? 0 == 0x99)
 }
 
 test "read_u8 — !! + Result" {
     ro bytes []u8 = [0x00, 0xFF]
     mut rb = ReadBuffer.from(bytes)
     assert(rb.read_u8()!! == 0x00)
-    assert(rb.read_u8().unwrap_or(1) == 0xFF)
+    assert(rb.read_u8() ?? 1 == 0xFF)
 }
 
 test "read_i8 — отрицательное" {
@@ -64,8 +64,8 @@ test "read_u16_le / be Ok" {
     wb.write_u16_le(0x1234)
     wb.write_u16_be(0x5678)
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_u16_le().unwrap_or(0) == 0x1234)
-    assert(rb.read_u16_be().unwrap_or(0) == 0x5678)
+    assert(rb.read_u16_le() ?? 0 == 0x1234)
+    assert(rb.read_u16_be() ?? 0 == 0x5678)
 }
 
 
@@ -104,8 +104,8 @@ test "read_u32_le / be Ok" {
     wb.write_u32_le(0x11223344)
     wb.write_u32_be(0x55667788)
     mut rb = ReadBuffer.from(wb.into())
-    assert(rb.read_u32_le().unwrap_or(0) == 0x11223344)
-    assert(rb.read_u32_be().unwrap_or(0) == 0x55667788)
+    assert(rb.read_u32_le() ?? 0 == 0x11223344)
+    assert(rb.read_u32_be() ?? 0 == 0x55667788)
 }
 
 

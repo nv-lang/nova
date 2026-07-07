@@ -13,14 +13,14 @@ test "UDP: bind, send_to, recv_from — is_ok" {
     // Bind receiver on OS port.
     ro rcv_r = UdpSocket.bind(SocketAddr.loopback(0))
     assert(rcv_r.is_ok())
-    ro rcv = rcv_r.unwrap()
+    ro rcv = rcv_r!!
     ro rcv_port = rcv.local_port()
     assert(rcv_port > 0)
 
     // Bind sender on OS port.
     ro snd_r = UdpSocket.bind(SocketAddr.loopback(0))
     assert(snd_r.is_ok())
-    ro snd = snd_r.unwrap()
+    ro snd = snd_r!!
     ro snd_port = snd.local_port()
     assert(snd_port > 0)
     assert(snd_port != rcv_port)
@@ -51,7 +51,7 @@ test "UDP: bind, send_to, recv_from — is_ok" {
 test "UDP: local_port and local_addr" {
     ro sock_r = UdpSocket.bind(SocketAddr.loopback(0))
     assert(sock_r.is_ok())
-    ro sock = sock_r.unwrap()
+    ro sock = sock_r!!
     ro port = sock.local_port()
     assert(port > 0)
     ro addr = sock.local_addr()

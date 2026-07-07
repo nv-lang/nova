@@ -12,7 +12,7 @@ type User { id int, name str }
 
 fn check[T](o Option[T]) -> bool => o.is_some()
 
-fn extract[T](o Option[T], default_v T) -> T => o.unwrap_or(default_v)
+fn extract[T](o Option[T], default_v T) -> T => o ?? default_v
 
 test "Option[int] param inference — без turbofish" {
     ro a Option[int] = Some(42)

@@ -211,7 +211,7 @@ fn bcrypt_base64_encode(data []u8) -> str {
 // Lexer `@peek()`/`@advance()`).
 fn alphabet_char(idx int) -> char {
     match BCRYPT_ALPHABET.bytes().get(idx) {
-        Some(b) => char.from(b as int).unwrap_or('.')
+        Some(b) => char.from(b as int) ?? '.'
         None    => '.'
     }
 }
@@ -254,7 +254,7 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
 
 fn byte_to_char_opt(bytes ro []u8, i int) -> Option[char] {
     match bytes.get(i) {
-        Some(b) => Some(char.from(b as int).unwrap_or('\0'))
+        Some(b) => Some(char.from(b as int) ?? '\0')
         None    => None
     }
 }

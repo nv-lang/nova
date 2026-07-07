@@ -31,11 +31,11 @@ test "for-in []Option + метод .is_some() / .is_none()" {
     assert(absent == 2)
 }
 
-test "for-in []Option + метод .unwrap_or()" {
+test "for-in []Option + метод  ?? " {
     ro opts []Option[int] = [Some(7), None, Some(3)]
     mut sum = 0
     for o in opts {
-        sum = sum + o.unwrap_or(0)
+        sum = sum + o ?? 0
     }
     assert(sum == 10)
 }

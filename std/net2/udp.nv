@@ -15,9 +15,9 @@ module std.net2
 /// with Net = real_net() {
 ///     supervised {
 ///         spawn {
-///             mut sock = UdpSocket.bind(SocketAddr.loopback(0)).unwrap()
+///             mut sock = UdpSocket.bind(SocketAddr.loopback(0))!!
 ///             mut buf = []u8.new(); buf.resize(512, 0 as u8)
-///             let (n, sender) = sock.recv_from(buf).unwrap()
+///             let (n, sender) = sock.recv_from(buf)!!
 ///             sock.close()
 ///         }
 ///     }

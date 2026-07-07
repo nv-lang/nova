@@ -6,7 +6,7 @@ module nova_tests.strings
 
 test "parse_int returns Result" {
     assert("42".parse_int().is_ok())
-    assert("42".parse_int().unwrap_or(0) == 42)
+    assert("42".parse_int() ?? 0 == 42)
     assert("xyz".parse_int().is_err())
 }
 

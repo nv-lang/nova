@@ -23,17 +23,17 @@ test "None.is_some / is_none" {
 
 test "Some.unwrap_or" {
     ro s = Some(42)
-    assert(s.unwrap_or(0) == 42)
+    assert(s ?? 0 == 42)
 }
 
 test "None.unwrap_or" {
     ro n = None
-    assert(n.unwrap_or(99) == 99)
+    assert(n ?? 99 == 99)
 }
 
 test "Some.unwrap" {
     ro s = Some(7)
-    assert(s.unwrap() == 7)
+    assert(s!! == 7)
 }
 
 test "None.unwrap throws Fail (caught)" {
@@ -45,7 +45,7 @@ test "None.unwrap throws Fail (caught)" {
         }
     } {
         ro n = None
-        ro _ = n.unwrap()
+        ro _ = n!!
     }
     assert(caught)
 }
@@ -68,30 +68,30 @@ test "Err.is_ok / is_err" {
 
 test "Ok.unwrap_or" {
     ro r = Ok(42)
-    assert(r.unwrap_or(0) == 42)
+    assert(r ?? 0 == 42)
 }
 
 test "Err.unwrap_or" {
     ro r = Err("bad")
-    assert(r.unwrap_or(99) == 99)
+    assert(r ?? 99 == 99)
 }
 
 test "Ok.ok() returns Some" {
     ro r = Ok(5)
     ro o = r.ok()
-    assert(o.unwrap_or(-1) == 5)
+    assert(o ?? -1 == 5)
 }
 
 test "Err.ok() returns None" {
     ro r = Err("err")
     ro o = r.ok()
     assert(o.is_none())
-    assert(o.unwrap_or(99) == 99)
+    assert(o ?? 99 == 99)
 }
 
 test "Ok.unwrap" {
     ro r = Ok(123)
-    assert(r.unwrap() == 123)
+    assert(r!! == 123)
 }
 
 test "Err.unwrap throws Fail with err message" {
@@ -103,7 +103,7 @@ test "Err.unwrap throws Fail with err message" {
         }
     } {
         ro r = Err("custom error")
-        ro _ = r.unwrap()
+        ro _ = r!!
     }
     assert(caught_msg == "custom error")
 }
@@ -116,8 +116,8 @@ fn try_parse(s str) -> Option {
     if s == "42" { Some(42) } else { None }
 }
 
-test "chained: try_parse(s).unwrap_or(default)" {
-    assert(try_parse("42").unwrap_or(0) == 42)
-    assert(try_parse("bad").unwrap_or(0) == 0)
-    assert(try_parse("nope").unwrap_or(-1) == -1)
+test "chained: try_parse(s) ?? default" {
+    assert(try_parse("42") ?? 0 == 42)
+    assert(try_parse("bad") ?? 0 == 0)
+    assert(try_parse("nope") ?? -1 == -1)
 }

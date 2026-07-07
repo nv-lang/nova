@@ -18,7 +18,7 @@ fn routes() -> ServeMux {
     mut mux = ServeMux.new()
     mux.get("/health", handler_fn(|req| ServerResponse.text(200, "ok")))
     mux.get("/users/{id}", handler_fn(|req| {
-        ServerResponse.text(200, "user " + req.param("id").unwrap_or("?"))
+        ServerResponse.text(200, "user " + req.param("id") ?? "?")
     }))
     mux.post("/echo", handler_fn(|req| {
         ServerResponse.bytes(200, "application/octet-stream", req.body_bytes())

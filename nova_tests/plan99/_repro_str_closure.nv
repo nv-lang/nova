@@ -7,5 +7,5 @@ module nova_tests.plan99
 test "Option[str].map closure str→int" {
     ro a Option[str] = Some("hello")
     ro len = a.map(|s| s.byte_len())
-    assert(len.unwrap_or(0) == 5)
+    assert(len ?? 0 == 5)
 }

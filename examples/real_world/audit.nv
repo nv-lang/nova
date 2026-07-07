@@ -107,8 +107,8 @@ fn action_from_route(method str, pattern str) -> str {
 
     // Найдём первую сущность и (опциональный) verb — пропускаем {param}.
     ro segments = p.split("/").filter(|s| s != "" && !s.starts_with("{"))
-    ro entity = segments.get(0).unwrap_or("")
-    ro verb_explicit = segments.get(1).unwrap_or("")
+    ro entity = segments.get(0) ?? ""
+    ro verb_explicit = segments.get(1) ?? ""
 
     ro verb = if verb_explicit != "" {
         verb_explicit
@@ -146,13 +146,13 @@ fn target_from_route(pattern str) Router -> (str, str) {
     ro kind = p.split("/")
         .find(|s| s != "" && !s.starts_with("{"))
         .map(singularize)
-        .unwrap_or("")
+         ?? ""
 
     // ID — первый непустой URL-param, исключая wildcard.
     ro id = Router.url_params()
         .find(|name, value| value != "" && name != "*")
         .map(|_, value| value)
-        .unwrap_or("")
+         ?? ""
 
     (kind, id)
 }
@@ -175,7 +175,7 @@ fn singularize(s str) -> str =>
 // client_ip — IP клиента с учётом X-Forwarded-For (за nginx).
 fn client_ip(headers Headers, remote_addr str) -> str =>
     match headers.get("X-Forwarded-For") {
-        Some(fwd) => fwd.split(",").get(0).unwrap_or(fwd).trim_ascii()
+        Some(fwd) => fwd.split(",").get(0) ?? fwd.trim_ascii()
         None      => match split_host_port(remote_addr) {
             Ok((host, _)) => host
             Err(_)        => remote_addr
@@ -286,7 +286,7 @@ fn audit_step(next Handler, req Request)
             payload:    sanitize_payload(payload),
             status:     resp.status,
             ip:         client_ip(req.headers, req.remote_addr),
-            user_agent: req.headers.get("User-Agent").unwrap_or(""),
+            user_agent: req.headers.get("User-Agent") ?? "",
         })
     }
 
@@ -342,7 +342,7 @@ fn list_audit(req Request) Db Fail -> Response {
 }
 
 fn parse_list_params(query Query) -> ListParams {
-    ro limit_raw = query.get("limit").and_then(parse_int).unwrap_or(100)
+    ro limit_raw = query.get("limit").and_then(parse_int) ?? 100
     ro limit = if limit_raw <= 0 || limit_raw > 500 { 100 } else { limit_raw }
 
     ListParams {
@@ -352,7 +352,7 @@ fn parse_list_params(query Query) -> ListParams {
         from:      query.get("from").and_then(parse_rfc3339),
         to:        query.get("to").and_then(parse_rfc3339),
         limit:     limit,
-        offset:    query.get("offset").and_then(parse_int).unwrap_or(0),
+        offset:    query.get("offset").and_then(parse_int) ?? 0,
     }
 }
 

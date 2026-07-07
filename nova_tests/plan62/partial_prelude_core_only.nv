@@ -27,11 +27,11 @@ fn make_some2() -> Option[int] {
 test "partial_prelude(core, runtime) вЂ” Option available" {
     ro o = make_some2()
     assert(o.is_some())
-    assert(o.unwrap() == 7)
+    assert(o!! == 7)
 }
 
 test "partial_prelude(core, runtime) вЂ” Result available" {
     ro r Result[int, str] = Ok(99)
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 99)
+    assert(r ?? 0 == 99)
 }

@@ -12,7 +12,7 @@
 // read/write paths) must emit its variant constructor, not the undefined
 // `Nova_NetError_static_IoError` static form — otherwise the link fails.
 //
-// (Result[_, NetError] is destructured via `match`, not `.unwrap()`: `.unwrap()`
+// (Result[_, NetError] is destructured via `match`, not `!!`: `!!`
 // throws through `Nova_Fail_fail`, whose typed-error path is a pre-existing net
 // codegen gap unrelated to this smoke — see tcp_echo_server_test.)
 //

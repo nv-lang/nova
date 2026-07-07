@@ -15,7 +15,7 @@ module nova_tests.plan83_12
 test "TcpStream: local_port, peer_port, local_addr, peer_addr after connect" {
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro listen_port = lst.local_port()
 
     mut local_port_ok  = false
@@ -27,7 +27,7 @@ test "TcpStream: local_port, peer_port, local_addr, peer_addr after connect" {
         spawn {
             ro acc_r = lst.accept()
             assert(acc_r.is_ok())
-            ro srv = acc_r.unwrap()
+            ro srv = acc_r!!
             // Keep server stream alive briefly so client can read addr info.
             Time.sleep(50)
             srv.close()
@@ -37,7 +37,7 @@ test "TcpStream: local_port, peer_port, local_addr, peer_addr after connect" {
         spawn {
             ro conn_r = TcpStream.connect(SocketAddr.loopback(listen_port))
             assert(conn_r.is_ok())
-            ro cli = conn_r.unwrap()
+            ro cli = conn_r!!
             local_port_ok = (cli.local_port() > 0)
             peer_port_ok  = (cli.peer_port() == listen_port)
             ro la = cli.local_addr()

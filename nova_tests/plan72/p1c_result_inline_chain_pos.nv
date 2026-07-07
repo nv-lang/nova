@@ -10,18 +10,18 @@ fn parse_bool2(s str) -> Result[bool, str] => {
     if s == "true" { Ok(true) } else { Err("not a bool") }
 }
 
-test "P1-C inline — parse_bool2(...).unwrap_or(false) Ok" {
-    assert(parse_bool2("true").unwrap_or(false) == true)
+test "P1-C inline — parse_bool2(...) ?? false Ok" {
+    assert(parse_bool2("true") ?? false == true)
 }
 
-test "P1-C inline — parse_bool2(...).unwrap_or(false) Err" {
-    assert(parse_bool2("nope").unwrap_or(false) == false)
+test "P1-C inline — parse_bool2(...) ?? false Err" {
+    assert(parse_bool2("nope") ?? false == false)
 }
 
-test "P1-C inline — parse_int2(...).map(...).unwrap_or(0)" {
-    assert(parse_int2("42").map(fn(x int) -> int => x * 2).unwrap_or(0) == 84)
+test "P1-C inline — parse_int2(...).map(...) ?? 0" {
+    assert(parse_int2("42").map(fn(x int) -> int => x * 2) ?? 0 == 84)
 }
 
-test "P1-C inline — parse_bool2(...).map(...).unwrap_or(true)" {
-    assert(parse_bool2("true").map(fn(b bool) -> bool => !b).unwrap_or(true) == false)
+test "P1-C inline — parse_bool2(...).map(...) ?? true" {
+    assert(parse_bool2("true").map(fn(b bool) -> bool => !b) ?? true == false)
 }

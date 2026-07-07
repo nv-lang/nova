@@ -13,7 +13,7 @@ test "TCP echo: server + client round-trip" {
     // Bind to OS-assigned port (port 0 → OS picks a free port).
     ro lst_r = TcpListener.bind(SocketAddr.loopback(0))
     assert(lst_r.is_ok())
-    ro lst = lst_r.unwrap()
+    ro lst = lst_r!!
     ro port = lst.local_port()
     assert(port > 0)
 
@@ -23,7 +23,7 @@ test "TCP echo: server + client round-trip" {
         spawn {
             ro acc_r = lst.accept()
             assert(acc_r.is_ok())
-            ro srv = acc_r.unwrap()
+            ro srv = acc_r!!
             ro rd_r = srv.read_bytes(512)
             assert(rd_r.is_ok())
             // Echo back whatever we received.
@@ -36,7 +36,7 @@ test "TCP echo: server + client round-trip" {
         spawn {
             ro conn_r = TcpStream.connect(SocketAddr.loopback(port))
             assert(conn_r.is_ok())
-            ro cli = conn_r.unwrap()
+            ro cli = conn_r!!
             ro wr_r = cli.write("hello")
             assert(wr_r.is_ok())
             ro rd_r = cli.read_bytes(512)

@@ -1,7 +1,8 @@
 // Plan 72 P1-C: Result[T,E] — 5 methods return correct T / E type.
 //
 // Before this fix, `infer_expr_c_type` always returned `nova_int` for
-// .unwrap() / .unwrap_or() / .unwrap_or_else(), and the emit paths for
+// `!!` / `??` (historically `.unwrap()` / `.unwrap_or()` / `.unwrap_or_else()`,
+// retracted [M-unwrap-twins-retraction]), and the emit paths for
 // these methods hardcoded `nova_int` too. For T != nova_int (e.g. bool,
 // struct pointer) this produced wrong values or type-mismatch.
 //
@@ -21,17 +22,17 @@ fn parse_bool3(s str) -> Result[bool, str] => {
 
 test "P1-C — unwrap_or on Result[int, str] Ok path" {
     ro r = parse_int3("42")
-    assert(r.unwrap_or(0) == 42)
+    assert(r ?? 0 == 42)
 }
 
 test "P1-C — unwrap_or on Result[int, str] Err path" {
     ro r = parse_int3("bad")
-    assert(r.unwrap_or(99) == 99)
+    assert(r ?? 99 == 99)
 }
 
 test "P1-C — unwrap_or_else on Result[int, str] Err path" {
     ro r = parse_int3("bad")
-    ro v = r.unwrap_or_else(fn(e str) -> int => 100)
+    ro v = r ?? 100
     assert(v == 100)
 }
 
@@ -44,12 +45,12 @@ test "P1-C — is_ok / is_err on Result[int, str]" {
 
 test "P1-C — unwrap_or on Result[bool, str] Err path" {
     ro r = parse_bool3("nope")
-    ro b = r.unwrap_or(false)
+    ro b = r ?? false
     assert(!b)
 }
 
 test "P1-C — unwrap_or on Result[bool, str] Ok path" {
     ro r = parse_bool3("true")
-    ro b = r.unwrap_or(false)
+    ro b = r ?? false
     assert(b)
 }

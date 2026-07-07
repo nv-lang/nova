@@ -50,7 +50,7 @@ fn maybe_some(flag bool) -> Option[int] {
 test "Rule E case (b): Some доступен через facade re-export" {
     ro s = maybe_some(true)
     assert(s.is_some())
-    assert(s.unwrap() == 7)
+    assert(s!! == 7)
 }
 
 test "Rule E case (b): None доступен через facade re-export" {
@@ -61,7 +61,7 @@ test "Rule E case (b): None доступен через facade re-export" {
 test "Rule E case (b): Result/Ok доступен через facade re-export" {
     ro r = maybe_ok(true)
     assert(r.is_ok())
-    assert(r.unwrap_or(0) == 42)
+    assert(r ?? 0 == 42)
 }
 
 test "Rule E case (b): Err также резолвится через facade" {

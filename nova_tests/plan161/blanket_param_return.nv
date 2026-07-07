@@ -48,5 +48,5 @@ test "blanket find Option[T] on VecIter" {
     ro v = Vec[int].of(1, 2, 3, 4, 5)
     mut it = v.iter()
     ro r = it.bfind2(|x| x > 3)
-    assert(r.unwrap_or(0) == 4)
+    assert(r ?? 0 == 4)
 }

@@ -213,7 +213,7 @@ fn Lexer @peek() -> Option[char] {
     if @pos >= bytes.len() {
         None
     } else {
-        Some(char.from(bytes[@pos] as int).unwrap_or(' '))
+        Some(char.from(bytes[@pos] as int) ?? ' ')
     }
 }
 
@@ -235,7 +235,7 @@ fn Lexer mut @advance() -> Option[char] {
     if @pos >= bytes.len() { return None }
     ro b = bytes[@pos]
     @bump(b)
-    Some(char.from(b as int).unwrap_or(' '))
+    Some(char.from(b as int) ?? ' ')
 }
 
 fn Lexer mut @skip_whitespace() -> () {
@@ -292,7 +292,7 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWi
     for expected in kw.chars() {
         ro actual = @peek()
         if Some(expected) != actual {
-            return Err(UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') })
+            return Err(UnexpectedChar { @line, @col, found: actual ?? ' ' })
         }
         @advance()
     }

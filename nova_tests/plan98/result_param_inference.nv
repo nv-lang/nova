@@ -4,7 +4,7 @@ module nova_tests.plan98
 
 fn check_ok[T, E](r Result[T, E]) -> bool => r.is_ok()
 
-fn extract_ok[T, E](r Result[T, E], default_v T) -> T => r.unwrap_or(default_v)
+fn extract_ok[T, E](r Result[T, E], default_v T) -> T => r ?? default_v
 
 test "Result[int, str] — без turbofish" {
     ro r1 Result[int, str] = Ok(7)

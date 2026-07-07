@@ -30,7 +30,7 @@ test "uint.MAX as function arg" {
 test "uint.MAX in Option" {
     ro o Option[uint] = Some(uint.MAX)
     assert(o.is_some())
-    assert(o.unwrap_or(0 as uint) == uint.MAX)
+    assert(o ?? 0 as uint == uint.MAX)
 }
 
 test "uint.MAX in array" {

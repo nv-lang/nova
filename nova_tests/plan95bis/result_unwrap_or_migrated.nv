@@ -9,12 +9,12 @@ module nova_tests.plan95bis
 
 test "Result.unwrap_or — Ok → v" {
     ro ok_r Result[int, str] = Ok(7)
-    assert(ok_r.unwrap_or(0) == 7)
+    assert(ok_r ?? 0 == 7)
 }
 
 test "Result.unwrap_or — Err → default" {
     ro err_r Result[int, str] = Err("oops")
-    assert(err_r.unwrap_or(42) == 42)
+    assert(err_r ?? 42 == 42)
 }
 
 test "Result.unwrap_or — composition with is_ok/is_err (Plan 95 Ф.5)" {

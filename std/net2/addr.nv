@@ -23,7 +23,7 @@ module std.net2
 /// let a4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
 /// let a6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
 /// let av = SocketAddr.v4(192, 168, 1, 1, 80)
-/// let ap = SocketAddr.from_str("127.0.0.1:9090").unwrap()
+/// let ap = SocketAddr.from_str("127.0.0.1:9090")!!
 /// ```
 #stable(since = "0.1")
 export type SocketAddr value { priv raw []u8 }

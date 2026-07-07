@@ -78,7 +78,7 @@ post-Plan 83.10.4 merge `7b5b2fec8e0`).
 
 | MVP-модуль | check | build→exe | run | Что показывает smoke |
 |---|---|---|---|---|
-| `Option` (prelude) | ✅ | ✅ | ✅ | `safe_div + .unwrap_or(-1) + .map(\|x\| x*2)` |
+| `Option` (prelude) | ✅ | ✅ | ✅ | `safe_div + ?? -1 + .map(\|x\| x*2)` |
 | `Result` (prelude) | ✅ | ✅ | ✅ | `type DivErr | DivByZero \| Other` + match Ok/Err |
 | `Vec` (`[]T` ext methods `std/collections/vec.nv`) | ✅ | ✅ | ✅ | `map/filter/fold/any/all/first` chained |
 | `HashMap` (`std/collections/hashmap.nv`) | ✅ | ✅ | ✅ | `new/insert/get/len/match Option` |

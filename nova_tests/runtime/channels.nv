@@ -24,9 +24,9 @@ test "channel: send + recv FIFO" {
     ro a = rx.recv()
     ro b = rx.recv()
     ro c = rx.recv()
-    assert(a.unwrap_or(-1) == 10)
-    assert(b.unwrap_or(-1) == 20)
-    assert(c.unwrap_or(-1) == 30)
+    assert(a ?? -1 == 10)
+    assert(b ?? -1 == 20)
+    assert(c ?? -1 == 30)
     tx.close()
 }
 
@@ -49,9 +49,9 @@ test "channel: ring-buffer wrap" {
     ro _ = rx.recv()
     tx.send(3)
     tx.send(4)
-    assert(rx.recv().unwrap_or(-1) == 2)
-    assert(rx.recv().unwrap_or(-1) == 3)
-    assert(rx.recv().unwrap_or(-1) == 4)
+    assert(rx.recv() ?? -1 == 2)
+    assert(rx.recv() ?? -1 == 3)
+    assert(rx.recv() ?? -1 == 4)
     tx.close()
 }
 
@@ -64,8 +64,8 @@ test "channel: close + recv drain" {
     tx.send(1)
     tx.send(2)
     tx.close()
-    assert(rx.recv().unwrap_or(-1) == 1)
-    assert(rx.recv().unwrap_or(-1) == 2)
+    assert(rx.recv() ?? -1 == 1)
+    assert(rx.recv() ?? -1 == 2)
     assert(rx.recv().is_none())
     assert(rx.recv().is_none())
 }
@@ -93,7 +93,7 @@ test "channel: try_send full buffer" {
     assert(tx.try_send(10))
     assert(tx.try_send(20))
     assert(!tx.try_send(30))
-    assert(rx.recv().unwrap_or(-1) == 10)
+    assert(rx.recv() ?? -1 == 10)
     assert(tx.try_send(30))
     tx.close()
 }
@@ -102,7 +102,7 @@ test "channel: try_recv empty buffer" {
     ro (tx, rx) = Channel.new(4)
     assert(rx.try_recv().is_none())
     tx.send(42)
-    assert(rx.try_recv().unwrap_or(-1) == 42)
+    assert(rx.try_recv() ?? -1 == 42)
     assert(rx.try_recv().is_none())
     tx.close()
 }
@@ -144,7 +144,7 @@ test "channel: concurrent send+recv via spawn" {
         }
         spawn {
             ro v = rx.recv()
-            received = v.unwrap_or(-1)
+            received = v ?? -1
         }
     }
     assert(received == 42)
@@ -179,12 +179,12 @@ test "channel: ping-pong" {
         spawn {
             tx1.send(10)
             ro reply = rx2.recv()
-            result = reply.unwrap_or(-1)
+            result = reply ?? -1
             tx1.close()
         }
         spawn {
             ro msg = rx1.recv()
-            tx2.send(msg.unwrap_or(0) * 2)
+            tx2.send(msg ?? 0 * 2)
             tx2.close()
         }
     }
@@ -215,7 +215,7 @@ fn drain_channel(rx ChanReader[int]) -> int {
 test "channel: Sender передаётся в функцию" {
     ro (tx, rx) = Channel.new(8)
     fill_channel(tx, [1, 2, 3, 4, 5])
-    ro a = rx.recv().unwrap_or(-1)
+    ro a = rx.recv() ?? -1
     assert(a == 1)
     tx.close()
 }
@@ -353,7 +353,7 @@ test "channel: double-close одного writer idempotent (Б1 fix)" {
     tx.close()  // повторный close НЕ должен corrupting writer_count
     // канал закрыт после первого close
     assert(rx.is_closed())
-    assert(rx.recv().unwrap_or(-1) == 42)
+    assert(rx.recv() ?? -1 == 42)
 }
 
 test "channel: double-close clone не ломает другой writer (Б1 fix)" {
@@ -365,7 +365,7 @@ test "channel: double-close clone не ломает другой writer (Б1 fix
     tx2.send(99)
     tx2.close()           // writer_count = 0, closed = true
     assert(rx.is_closed())
-    assert(rx.recv().unwrap_or(-1) == 99)
+    assert(rx.recv() ?? -1 == 99)
 }
 
 test "channel: try_recv различает empty-open от empty-closed через is_closed (Н1)" {
@@ -385,8 +385,8 @@ test "channel: try_recv drains buffer после close (Н1)" {
     tx.send(2)
     tx.close()
     // данные ещё в буфере — try_recv их читает
-    assert(rx.try_recv().unwrap_or(-1) == 1)
-    assert(rx.try_recv().unwrap_or(-1) == 2)
+    assert(rx.try_recv() ?? -1 == 1)
+    assert(rx.try_recv() ?? -1 == 2)
     // буфер исчерпан И канал закрыт
     assert(rx.try_recv().is_none())
     assert(rx.is_closed())

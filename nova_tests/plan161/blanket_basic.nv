@@ -10,5 +10,5 @@ test "blanket elem0 on VecIter" {
     mut it = v.iter()
     ro r = it.elem0()
     assert(r.is_some())
-    assert(r.unwrap_or(0) == 10)
+    assert(r ?? 0 == 10)
 }

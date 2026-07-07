@@ -16,19 +16,19 @@ fn make_none_user() -> Option[User_plan992ctoroptionctorinbody] => None
 test "Some(int) bare → contextual NovaOpt_nova_int" {
     ro o = make_some_int()
     assert(o.is_some())
-    assert(o.unwrap_or(0) == 42)
+    assert(o ?? 0 == 42)
 }
 
 test "Some(str) bare → contextual NovaOpt_nova_str" {
     ro o = make_some_str()
     assert(o.is_some())
-    assert(o.unwrap_or("") == "hello")
+    assert(o ?? "" == "hello")
 }
 
 test "Some(char) bare → contextual NovaOpt_nova_char" {
     ro o = make_some_char()
     assert(o.is_some())
-    assert(o.unwrap_or('?') == 'A')
+    assert(o ?? '?' == 'A')
 }
 
 test "None bare с Option[str] context" {

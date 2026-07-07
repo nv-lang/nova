@@ -6,7 +6,7 @@
 // НЕ реализация протокола, просто именованный конструктор). Здесь —
 // успешные конверсии.
 //
-// Note: payload Ok достаётся через `r.unwrap_or(default)`, не через
+// Note: payload Ok достаётся через `r ?? default`, не через
 // `match Ok(p) => p.field` (последнее — pre-existing codegen-баг
 // [M-result-record-payload-match], Plan 59).
 
@@ -30,20 +30,20 @@ test "try_from валидный порт -> Ok" {
 
 test "try_from -> Ok, значение payload корректно" {
     ro r = Port.try_from(443)
-    ro p = r.unwrap_or(Port { n: 0 })
+    ro p = r ?? Port { n: 0 }
     assert(p.n == 443)
 }
 
 test "try_from нижняя граница (1) -> Ok" {
     ro r = Port.try_from(1)
     assert(r.is_ok())
-    assert(r.unwrap_or(Port { n: 0 }).n == 1)
+    assert(r ?? Port { n: 0 }.n == 1)
 }
 
 test "try_from верхняя граница (65535) -> Ok" {
     ro r = Port.try_from(65535)
     assert(r.is_ok())
-    assert(r.unwrap_or(Port { n: 0 }).n == 65535)
+    assert(r ?? Port { n: 0 }.n == 65535)
 }
 
 test "try_from Ok-дискриминация через match" {
@@ -71,5 +71,5 @@ fn NonEmpty.try_from(s str) -> Result[NonEmpty, str] =>
 test "try_from непустой строки -> Ok" {
     ro r = NonEmpty.try_from("hello")
     assert(r.is_ok())
-    assert(r.unwrap_or(NonEmpty { text: "x" }).text == "hello")
+    assert(r ?? NonEmpty { text: "x" }.text == "hello")
 }

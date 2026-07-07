@@ -92,7 +92,7 @@ fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
             } else if n >= 65 && n <= 70 {
                 n - 65 + 10
             } else {
-                throw InvalidChar { position: pos, char: char.from(n).unwrap_or(' ') }
+                throw InvalidChar { position: pos, char: char.from(n) ?? ' ' }
             }
         }
         None => throw InvalidChar { position: pos, char: ' ' }
