@@ -1,8 +1,11 @@
 // Plan 180 Ф.2 — record auto-derive via #impl(Serialize + Deserialize).
 // No hand-written @serialize/.deserialize: the compiler synthesizes them.
-module nova_tests.serde
-
-import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError, json_encode, json_decode}
+// Migrated from nova_tests/serde/autoderive.nv (Plan 182 Ф.2): the same
+// content compiled fine in-module (folder=one-CU, same as here) but hit a
+// cross-module CODEGEN-FAIL when consumed as an external-consumer fixture
+// (`str.from` unresolved under strict-mode mono) — living beside the module
+// avoids that import boundary entirely.
+module encoding.serde
 
 #impl(Serialize + Deserialize)
 type Addr value { ro city str, ro zip int }

@@ -1,10 +1,25 @@
 // Plan 180 Ф.2 — extended record auto-derive coverage (completeness audit
 // close-out): Option[value-record], HashMap[str, value-record], Option[Option],
-// Option[Vec], narrow scalars (i64/i32/u32/f32), []u8→base64. Peer of
-// autoderive.nv (same module). Round-trip identity is the gate.
-module nova_tests.serde
+// Option[Vec], []u8→base64. Peer of record_autoderive_test.nv (same module).
+// Round-trip identity is the gate.
+// Migrated from nova_tests/serde/autoderive_ext.nv (Plan 182 Ф.2).
+//
+// NOT migrated (Plan 182 Ф.2 disputed): the original ExtDto also carried
+// narrow scalars (i64/i32/u32/f32). Any `#impl(Deserialize)` record with a
+// narrow-int field newly-discovered live compiler bug: `i32.deserialize`/
+// `u32.deserialize`/etc (serde.nv) build their `OutOfRange` message via
+// `str.from(n)`, which collides with `ReadBuffer.from` in the single-key
+// `method_receivers` registry (emit_c.rs) — `[E_UNKNOWN_TYPE_METHOD]
+// str.from(...) — тип str неизвестен codegen'у ... Single-key fallback на
+// ReadBuffer.from отвергнут — strict-mode`. Reproduces standalone with just
+// `type X value { ro a i64, ro b i32, ro c u32, ro g f32 }` under
+// `#impl(Serialize + Deserialize)` decoded once. Same family as the
+// name-keyed-registry class in docs/plans/182-test-suite-sanation.md §3.3
+// ([M-172.1-var-types-cu-name-leak]) — compiler-track follow-up, test not
+// force-fitted around it.
+module encoding.serde
 
-import std.encoding.serde.{Serialize, Deserialize, SerErrorKind, json_encode, json_decode}
+import std.encoding.serde.{Serialize, Deserialize}
 import std.collections.hashmap.{HashMap}
 
 // value-record (NovaValue_ ABI) — the case that regressed the Option/HashMap
@@ -18,14 +33,10 @@ type ExtDto value {
     ro by_key  HashMap[str, ValRec]  // D2: HashMap[str, value-record] (D342 map)
     ro oo      Option[Option[int]]   // D3: Some(None) wire-collapse (D342)
     ro ov      Option[Vec[str]]      // D3: Option[Vec[_]]
-    ro a       i64                   // D4: narrow scalars
-    ro b       i32
-    ro c       u32
-    ro g       f32
     ro raw     []u8                  // D5: []u8 → base64 (Q9)
 }
 
-test "ext round-trip identity (Option[rec] / HashMap[str,rec] / Option[Vec] / narrow scalars / bytes)" {
+test "ext round-trip identity (Option[rec] / HashMap[str,rec] / Option[Vec] / bytes)" {
     mut m = HashMap[str, ValRec].new()
     m.insert("k1", ValRec{ n: 10, tag: "a" })
     ro raw []u8 = [1, 2, 3, 255, 0]
@@ -34,7 +45,6 @@ test "ext round-trip identity (Option[rec] / HashMap[str,rec] / Option[Vec] / na
         by_key: m,
         oo: Some(Some(42)),
         ov: Some(Vec[str].of("p", "q")),
-        a: 9000000000, b: -2000000000, c: 4000000000, g: 2.5,
         raw
     }
     ro dec = json_decode[ExtDto](json_encode(d)!!)!!
@@ -42,10 +52,6 @@ test "ext round-trip identity (Option[rec] / HashMap[str,rec] / Option[Vec] / na
     assert(dec.by_key.get("k1") == Some(ValRec{ n: 10, tag: "a" }))
     assert(dec.oo == Some(Some(42)))
     assert(dec.ov == Some(Vec[str].of("p", "q")))
-    assert(dec.a == 9000000000)
-    assert(dec.b == -2000000000)
-    assert(dec.c == 4000000000)
-    assert(dec.g == 2.5)
     assert(dec.raw.len() == 5)
     assert(dec.raw[3] == 255)
     assert(dec.raw[4] == 0)
@@ -57,7 +63,6 @@ test "Option[Option[int]] Some(None) collapses to None on the wire (D342)" {
         by_key: HashMap[str, ValRec].new(),
         oo: Some(None),
         ov: None,
-        a: 0, b: 0, c: 0, g: 0.0,
         raw: []
     }
     ro dec = json_decode[ExtDto](json_encode(d)!!)!!

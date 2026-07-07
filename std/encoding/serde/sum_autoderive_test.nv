@@ -1,13 +1,14 @@
 // Plan 180 Ф.2-sum (D345) — sum auto-derive via #impl(Serialize + Deserialize).
 // Externally-tagged (Q4, default): unit → bare string "V"; single-payload →
-// {"V": x}; tuple → {"V": [a, b]}; record → {"V": {fields}}.
+// {"V": x}; tuple → {"V": [a, b]}; record → {"V": {fields}}. Peer of
+// tagging_test.nv (internally/adjacently-tagged); this file is the sole
+// coverage of the externally-tagged DEFAULT mode (no `#serde(...)` attribute).
 // No hand-written @serialize/.deserialize — the compiler synthesizes them.
-module nova_tests.serde
-
-import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError, DeErrorKind, json_encode, json_decode}
+// Migrated from nova_tests/serde/sum_autoderive.nv (Plan 182 Ф.2).
+module encoding.serde
 
 #impl(Serialize + Deserialize + Equal)
-type Msg
+type Msg enum
     | Ping
     | Echo(str)
     | Pair(int, int)

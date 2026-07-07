@@ -1,7 +1,8 @@
 // EXPECT_COMPILE_ERROR does not implement
 // Plan 180 §8.0.2: a record with a non-serializable field must be REJECTED at
 // compile time (named field), never silently drop it.
-module neg.nonserializable
+// Migrated from nova_tests/serde/neg/nonserializable.nv (Plan 182 Ф.2).
+module serde_neg.nonserializable
 
 import std.encoding.serde.{Serialize, Serializer, SerError}
 

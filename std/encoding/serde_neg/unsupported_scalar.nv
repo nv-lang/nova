@@ -2,7 +2,8 @@
 // Plan 180 §6: a scalar with no faithful JSON wire (`char`; also i128/u128,
 // retired `byte`) must be REJECTED with a typed diagnostic at derive time —
 // never an ICE, never a silent drop.
-module neg.unsupported_scalar
+// Migrated from nova_tests/serde/neg/unsupported_scalar.nv (Plan 182 Ф.2).
+module serde_neg.unsupported_scalar
 
 import std.encoding.serde.{Serialize, Deserialize}
 
