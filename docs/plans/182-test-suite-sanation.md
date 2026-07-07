@@ -140,13 +140,17 @@ panic в `emit_match`. Библиотечный (import) режим не три�
 - **[ЗАКРЫТ] module-alias member-call** (`plan70_1`): `import … as h` + `h.add_one(41)` →
   `infer(Ident("h"))` ICE. Fix: `imported_modules.contains(name) → ""` (namespace-sentinel,
   last-resort) → method-call путь резолвит через `fn_ret_<method>`. Коммит `6adae28c1`.
-- **[ОСТАЁТСЯ, корень найден] method-call return unknown** (`map_literals` `.insert_new`,
-  `plan60` `.capacity`, `plan57` `bench.opaque`): чекер НЕ кладёт `resolved_types[expr]` для этих
-  конкретных методов (generic-stdlib insert_new/capacity; bench-intrinsic opaque на namespace-
-  ресивере obj_ty=""). Канал 43701 (resolved_types) промахивается. Fix — аннотация чекером
-  return-типа этих форм (per-method registry). [M-182-crash-method-ret-unknown].
-- **[ОСТАЁТСЯ] Path-call return unknown** (`plan83_12` `bind`): `Path`-форма вызова без
-  `fn_ret`/registry-записи. [M-182-crash-pathcall-ret-unknown], emit_c.rs:43986.
+- **[ЧАСТИЧНО ЗАКРЫТ — 172.12 A5 заход-9, 2026-07-07] method-call return unknown**
+  (`map_literals` `.insert_new`, `plan60` `.capacity`, `plan57` `bench.opaque`): **insert_new+capacity
+  УЖЕ НЕ крашат** (porting/крашер-волна в main до A5). **bench.opaque ЗАКРЫТ** (коммит `b9b8008f4`):
+  `emit_expr` лоуэрит intrinsic в `NOVA_BENCH_OPAQUE_PRIM` (black-box identity), зеркалю в `infer_expr_c_type`
+  (return = тип аргумента) в ОБЕ триплет-копии (43737+47456); bench-тест P67→PASS, conformance 66/0 δ0.
+  Остаётся `examples/net` `.close` (erased-receiver ветвь, ниже). [M-182-crash-method-ret-unknown].
+- **[ОСТАЁТСЯ — checker-гэп] Path-call return unknown** (`plan83_12` `bind`): `Path`-форма вызова
+  `TcpListener.bind` без `fn_ret`/registry-записи. **Probe (A5 заход-9): chan=None, fnret/mo/external ВСЕ пусты —
+  у кодогена НЕТ источника, хотя `nova check` PASS** (чекер знает `Result[TcpListener, NetError]`, но не ПЛЮМИТ
+  в `resolved_types[call.id]`). ⇒ fix = **checker-аннотация** (types/mod.rs), НЕ emit_c-fallback.
+  [M-182-crash-pathcall-ret-unknown], emit_c.rs:~44011.
 - **[ОСТАЁТСЯ, корень найден] nested-generic collect** (`plan153_4` `chunks_windows`):
   `v.chunks(2).collect()` даёт `[][]int`, но return-инференс `BoxIter[Vec[T]].collect()`
   эрейзится в `nova_int` → `cs[0]` Index на nova_int → panic. Корень — mono-return nested-generic
