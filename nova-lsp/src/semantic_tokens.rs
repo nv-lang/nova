@@ -1173,7 +1173,11 @@ fn cached_field_spans(src: &str) -> Vec<(usize, usize, HashSet<String>)> {
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::types::infer_effects(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
+    // Plan 184 (Р7): IDE-analysis path — no binary is produced, so the
+    // value-root guard is irrelevant here; the empty map preserves the
+    // pre-184 hoisting shape the field-cache report inspects.
+    nova_codegen::chain_norm::normalize_chains_module(
+        &mut module, &std::collections::HashMap::new());
     let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
     let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
 

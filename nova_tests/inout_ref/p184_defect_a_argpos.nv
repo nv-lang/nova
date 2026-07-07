@@ -1,0 +1,42 @@
+// Plan 184 Ф.2 acceptance — [M-http-props-mut-chain-argpos-value-ptr-mismatch].
+// A fleeting `-> @` chain-result on a value-type receiver used directly as a
+// call argument must compile (ref Self auto-derefs to T at the by-value arg
+// position, Р5) and be correct. Covers BOTH the free-fn form (`take(r.b(5))`)
+// and the method-call form (`sink.take(r.b(5))`, the production shape
+// `handler.handle(req.params(ps))` from std/http/server dispatch).
+module inout_ref.p184_defect_a_argpos
+
+type Rec value {
+    ro a int
+    b   int
+}
+
+fn Rec.new(a int, b int) -> Rec => { a, b }
+
+fn Rec mut @b(v int) -> @ {
+    @b = v
+}
+
+// Free function taking the value by value.
+fn take(r Rec) -> int => r.b
+
+// Instance method (heap receiver) taking the value by value — the production
+// `handler.handle(...)` shape.
+type Sink { ro tag int }
+fn Sink.new() -> Sink => { 0 }
+fn Sink @take(r Rec) -> int => r.b
+
+test "fluent value-chain result as a free-fn argument — compiles and correct" {
+    mut r = Rec.new(1, 0)
+    ro got = take(r.b(5))
+    assert(got == 5)
+    assert(r.b == 5)
+}
+
+test "fluent value-chain result as a method-call argument — compiles and correct" {
+    mut r = Rec.new(1, 0)
+    ro s = Sink.new()
+    ro got = s.take(r.b(7))
+    assert(got == 7)
+    assert(r.b == 7)
+}

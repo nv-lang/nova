@@ -190,7 +190,7 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
     // check_module above already gated E_EXPLICIT_SELF_RETURN).
     crate::self_return_lower::lower_module(&mut module);
     crate::callnorm::normalize_module(&mut module);
-    crate::chain_norm::normalize_chains_module(&mut module);
+    crate::chain_norm::normalize_chains_module(&mut module, &std::collections::HashMap::new());
     let mut interp = crate::interp::Interpreter::new();
     if let Err(d) = interp.load_module(&module) {
         return DocTestOutcome::Failed(format!(

@@ -140,7 +140,51 @@ nova_tests. Итог — 4 в **Категории A** (полагаются н�
 - Гейт: Rust-сборка чистая; delta против baseline (main-двоичник, изолированные прогоны) = 0
   новых (структурно: `ref`-keyword не встречается в .nv вне inout_ref — подтверждено grep'ом).
 
-### Точки возобновления (Заход 2+)
+### Заход 2 — два P1-дефекта value-цепочек через Р7-лоуэринг (2026-07-07, ЗАВЕРШЁН)
+
+Приоритет захода — закрыть ДВА P1-дефекта беглых value-цепочек (приёмка). Оба —
+следствие того, что value-record `-> @` возвращает `ref Self` (`NovaValue_X*`, Р7),
+а потребители этого беглого указателя были не согласованы. Фикс — СКВОЗНОЙ по Р7,
+не точечный; общий предикат `is_fluent_value_ptr_for_target` (эмит-факт из
+`fn_ret_*`) держит все три потребителя в lockstep.
+
+**Дефект A — [M-http-props-mut-chain-argpos-value-ptr-mismatch]** (CC-FAIL при
+`take(r.b(5))`): на free-fn call-site (`emit_c.rs` `emit_call`) резолвится C-тип
+параметра callee (реестр `method_overloads[("", name)]`), и беглый value-ptr
+разыменовывается при by-value параметре (Р5 `ref T -> T`); `mut x T` (C ptr)
+получает указатель без изменений.
+
+**Дефект B — [M-http-props-mut-chain-stmt-value-copy-loss]** (тихая порча, ОБЕ
+мутации теряются): корень — `chain_norm` root-temp hoist `let _chain_root = <root>`
+КОПИРУЕТ value-типизированный корень. Фикс: в `chain_norm` протянут
+`resolved_types` + множество value-имён (`collect_value_type_names`); hoist
+ПРОПУСКАЕТСЯ для value-корней (`ChainNormCtx::root_is_value_typed`) — сырая
+вложенная форма нитит `ref Self` корректно. Глубина ≥ 3 дополнительно потребовала
+`prepare_method_recv` пропускать уже-`ref Self` указатель приёмника вместо
+materialize-and-address (иначе temp-копия рвала цепочку + ptr↔value mismatch).
+
+**Файлы фикса:** `compiler-codegen/src/chain_norm.rs` (ctx + value-guard),
+`compiler-codegen/src/codegen/emit_c.rs` (`is_fluent_value_ptr_for_target`,
+binding-decay рефактор, arg-deref в `emit_call`, `prepare_method_recv` ref-passthrough),
+call-site правки `test_runner.rs`/`main.rs`/`doc/test_runner.rs` (проброс `resolved_types`).
+
+**Тесты:** `nova_tests/inout_ref/p184_defect_a_argpos.nv` (arg-position, позитив),
+`nova_tests/inout_ref/p184_defect_b_chain.nv` (depth-2 + depth-3 statement-цепочки).
+
+**Гейты:** Rust-сборка чистая; оба приёмочных — зелёные; delta против main-двоичника
+(дельта-методика, изолированные tmp) = 0 регрессий на выборке из ~40 файлов
+(chain-critical fluent/StringBuilder/WriteBuffer/value-record method+chain +
+diverse cross-dir + conformance value/method-файлы, каждый conformance-peer
+компилит весь CU spec_tests.conformance — CU здоров). Приватный TEMP.
+
+**НЕ входило в заход 2 (умышленно, чтобы не половинить и не ломать зелёное):** полная
+Ф.2-семантика `mut x T` = in-out (широкая behavior-change: миграция 4 Категория-A +
+десятки call-site реджектов), Ф.1-остаток ref-локалы, тип `Ref(T)` в носителе,
+Р6/Р8/Р12/Р13/Р14 в чекере, `E_REF_TYPE_POSITION`. `E_REF_TYPE_POSITION` в коде
+**отсутствует** (заход-1 его НЕ вводил, вопреки заметке §5 — проверено). См.
+точки возобновления ниже — они в силе.
+
+### Точки возобновления (Заход 3+)
 
 - **Ф.1-остаток — локалы-ссылки `ro y ref T = expr` (Р1):** НЕ реализовано. `ref` в
   тип-позиции пока остаётся `E_REF_NOT_A_TYPE` (parser/mod.rs `parse_type`). Требует: тип-узел

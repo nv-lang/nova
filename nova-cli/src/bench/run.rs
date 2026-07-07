@@ -93,15 +93,25 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     // two bindings under DISTINCT C-names instead of a `redefinition` CC-FAIL.
     // Mirrors cmd_build (nova-cli/src/main.rs:4149). No-op without a rebind.
     nova_codegen::alpha_rename::alpha_rename(&mut module);
+    // Plan 184 (Р7): stable ExprIds pre-check — the checker's resolved_types
+    // must be usably keyed for chain-norm's value-root guard below (bench
+    // binaries RUN; a value-chain miscompile would silently skew results).
+    let resolved_seed = nova_codegen::number_exprs::number_exprs(&mut module);
     // Plan 140 Ф.3 (D24 amend): capture env for proven-contract elision so
     // bench perf reflects zero-cost proven contracts (Ф.5: proven-elided vs
     // all-checked vs off).
-    let bench_env = nova_codegen::types::check_module(&module).map_err(|errs| {
+    let mut bench_env = nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()
             .map(|d| d.render(&src, &path_str))
             .collect();
         anyhow!("{}", msgs.join("\n"))
     })?;
+    {
+        // Plan 184: seed merged UNDER checker annotations (mirror test_runner).
+        let checker_annotations = std::mem::take(&mut bench_env.resolved_types);
+        bench_env.resolved_types = resolved_seed;
+        bench_env.resolved_types.extend(checker_annotations);
+    }
     nova_codegen::types::infer_effects(&mut module);
     // Plan 57.C.7: run lints (включая bench-specific warnings).
     for w in nova_codegen::lints::lint_module(&module) {
@@ -115,7 +125,8 @@ pub fn run(opts: BenchRunOpts) -> Result<i32> {
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(
+        &mut module, &bench_env.resolved_types);
 
     // Codegen with bench_mode = true.
     let mut emitter = nova_codegen::codegen::CEmitter::new();
@@ -385,18 +396,27 @@ pub fn compile_for_profile(opts: &BenchRunOpts) -> Result<std::path::PathBuf> {
     // mirrors the measurement pipeline (`run`) and cmd_build so a same-scope
     // rebind compiles instead of a `redefinition` CC-FAIL. No-op without rebind.
     nova_codegen::alpha_rename::alpha_rename(&mut module);
+    // Plan 184 (Р7): ids pre-check + real resolved_types for chain-norm's
+    // value-root guard (profile binaries RUN — mirrors the `run` pipeline).
+    let resolved_seed = nova_codegen::number_exprs::number_exprs(&mut module);
     // Plan 140 Ф.3 (D24 amend): capture env for proven-contract elision.
-    let bench_env = nova_codegen::types::check_module(&module).map_err(|errs| {
+    let mut bench_env = nova_codegen::types::check_module(&module).map_err(|errs| {
         let msgs: Vec<String> = errs.iter()
             .map(|d| d.render(&src, &path_str))
             .collect();
         anyhow!("{}", msgs.join("\n"))
     })?;
+    {
+        let checker_annotations = std::mem::take(&mut bench_env.resolved_types);
+        bench_env.resolved_types = resolved_seed;
+        bench_env.resolved_types.extend(checker_annotations);
+    }
     nova_codegen::types::infer_effects(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(
+        &mut module, &bench_env.resolved_types);
 
     let mut emitter = nova_codegen::codegen::CEmitter::new();
     emitter.set_source_for_annotations(src.clone());

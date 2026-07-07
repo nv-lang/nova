@@ -1669,17 +1669,23 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   повторных последовательных с одной и той же приватной TEMP-директорией).
 
 - **[M-http-props-mut-chain-argpos-value-ptr-mismatch]** (2026-07-07, P1, Wave: 184 Ф.2 —
-  приёмочный тест) — результат беглой `-> @`-цепочки value-типа, использованный напрямую
-  аргументом вызова (`take(r.b(5))`), даёт CC-FAIL: `passing 'NovaValue_X *' to parameter of
-  incompatible type 'NovaValue_X'`. Репродукция 15 строк (scratchpad агента http-props,
-  комментарии-якоря в std/http/server/server.nv dispatch). Семантика по 184/D181: `-> @`
-  value = ref Self — лоуэринг возврата приёмника не согласован.
+  приёмочный тест) — **ЗАКРЫТ 2026-07-07 (Plan 184 Ф.2, заход 2).** Результат беглой
+  `-> @`-цепочки value-типа, использованный напрямую аргументом вызова (`take(r.b(5))`),
+  давал CC-FAIL: `passing 'NovaValue_X *' to parameter of incompatible type 'NovaValue_X'`.
+  Фикс (Р5/Р7): на free-fn call-site резолвится C-тип параметра callee, и беглый value-ptr
+  (`NovaValue_X*` = ref Self) разыменовывается при встрече с by-value параметром
+  (auto-conversion `ref T -> T`); `mut x T` in-out параметр (C `NovaValue_X*`) получает
+  указатель без изменений. Guard: приёмочный `nova_tests/inout_ref/p184_defect_a_argpos.nv`.
 - **[M-http-props-mut-chain-stmt-value-copy-loss]** (2026-07-07, **P1 ТИХАЯ ПОРЧА**, Wave:
-  184 Ф.2 — приёмочный тест) — цепочка ДВУХ mut-сеттеров на value-типе как statement
-  (`resp.header("A","1").header("B","2")`) компилируется и МОЛЧА ТЕРЯЕТ ОБЕ мутации
-  (проверено wire-инспекцией через serve_once). Референс-тип той же формы работает.
-  До фикса канон в std: один вызов сеттера на statement на одном mut-биндинге
-  (комментарии-якоря в server.nv/server_test.nv/client_test.nv).
+  184 Ф.2 — приёмочный тест) — **ЗАКРЫТ 2026-07-07 (Plan 184 Ф.2, заход 2).** Цепочка ДВУХ
+  mut-сеттеров на value-типе как statement МОЛЧА ТЕРЯЛА ОБЕ мутации. Корень: root-temp
+  hoist chain-norm (`let _chain_root = <root>`) КОПИРУЕТ value-типизированный корень (теряет
+  идентичность приёмника). Фикс (Р7): в chain-norm протянут `resolved_types`, hoist
+  ПРОПУСКАЕТСЯ для value-типизированных корней — сырая вложенная форма нитит `ref Self`
+  корректно; глубина ≥ 3 дополнительно потребовала `prepare_method_recv` пропускать уже-
+  `ref Self` указатель приёмника вместо materialize-and-address. Guard: приёмочный
+  `nova_tests/inout_ref/p184_defect_b_chain.nv` (depth-2 и depth-3). Канон «один сеттер на
+  statement» в std/http больше не обязателен (беглые value-цепочки теперь корректны).
 - **[M-http-server-module-path-legacy]** (2026-07-07, P2, Wave: волна миграций
   D410/http-хвост) — server.nv/servernet.nv остались на legacy `module std.http.server`
   (client.nv уже на rev-3 `http.server`-форме) → beside-module тест server_test.nv как

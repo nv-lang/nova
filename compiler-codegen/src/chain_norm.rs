@@ -49,7 +49,73 @@
 //! reference-typed receivers will be covered by V2 (TypeDecl-driven).
 
 use crate::ast::*;
-use std::collections::HashSet;
+use crate::types::ResolvedType;
+use std::collections::{HashMap, HashSet};
+
+/// Plan 184 (Р7, 2026-07-07): chain-norm hoisting context. Carries the fluent-
+/// method registry PLUS the type information needed to keep the root-temp hoist
+/// SOUND for value-typed roots.
+///
+/// The hoist `let _chain_root = <root>; _chain_root.m1(); …` is only semantics-
+/// preserving when `<root>` lowers to a C POINTER (reference/heap identity — a
+/// pointer copy still aliases the original). For a **value-type** root it copies
+/// the struct bits, so mutations through the temp NEVER reach the caller's
+/// binding — the silent-corruption bug [M-http-props-mut-chain-stmt-value-copy-
+/// loss]. Under Plan 184 Р7 a value-record `-> @` returns `ref Self`, so the RAW
+/// nested-call form (`m2(m1(&root, …), …)`) already threads the receiver pointer
+/// correctly; we therefore SKIP the hoist for value-typed roots and let codegen
+/// lower the raw chain.
+struct ChainNormCtx<'a> {
+    registry: FluentMethodRegistry,
+    /// Names of `value`-allocated record types visible in this module (incl.
+    /// merged imports). A chain root whose resolved type is one of these must
+    /// NOT be copy-hoisted.
+    value_names: HashSet<String>,
+    /// Checker-produced `ExprId -> ResolvedType` map (post-check). Empty in the
+    /// unit tests / cache-explain path → every root treated as reference-typed
+    /// (hoist as before), so behaviour is byte-identical there.
+    resolved: &'a HashMap<ExprId, ResolvedType>,
+}
+
+impl ChainNormCtx<'_> {
+    /// `true` iff `root`'s resolved type is a known value-record — the case the
+    /// copy-hoist would miscompile (Р7). Conservative: unknown/unresolved →
+    /// `false` (hoist proceeds, unchanged heap behaviour).
+    fn root_is_value_typed(&self, root: &Expr) -> bool {
+        let mut rt = match self.resolved.get(&root.id) {
+            Some(rt) => rt,
+            None => return false,
+        };
+        // Peel the transparent `readonly T` view (Р-agnostic — value-ness is a
+        // property of the underlying nominal type).
+        while let ResolvedType::Readonly(inner) = rt {
+            rt = inner;
+        }
+        matches!(rt, ResolvedType::Named { name, .. } if self.value_names.contains(name))
+    }
+}
+
+/// Plan 184: collect `value`-allocated record type names from the module (own
+/// items + peer files). Imported value records that were merged into the module
+/// group are included; a value record living ONLY in a not-yet-merged import is
+/// out of scope (its chains are normalized when THAT module is compiled).
+fn collect_value_type_names(module: &Module) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let mut scan = |items: &[Item]| {
+        for item in items {
+            if let Item::Type(td) = item {
+                if matches!(td.allocation, AllocKind::Value) {
+                    out.insert(td.name.clone());
+                }
+            }
+        }
+    };
+    scan(&module.items);
+    for pf in &module.peer_files {
+        scan(&pf.items_here);
+    }
+    out
+}
 
 /// Plan 123.4.4 (V1): hard-coded list of known-fluent **registry-only**
 /// builtin methods — those defined в `compiler-codegen/src/codegen/
@@ -143,15 +209,26 @@ fn is_fluent_builtin_method(name: &str) -> bool {
 ///
 /// V2 (2026-06-05): pre-builds `FluentMethodRegistry` from module's
 /// FnDecls (covers user-defined `-> @` builders).
-pub fn normalize_chains_module(module: &mut Module) {
-    let registry = build_fluent_registry(module);
+/// Plan 184 (Р7): the checker's `resolved_types` are threaded so value-typed
+/// chain roots are detected and NOT copy-hoisted (see [`ChainNormCtx`]). Callers
+/// without a checked map (unit tests, cache-explain) pass an empty map — every
+/// root is then treated as reference-typed, byte-identical to the pre-184 pass.
+pub fn normalize_chains_module(
+    module: &mut Module,
+    resolved: &HashMap<ExprId, ResolvedType>,
+) {
+    let ctx = ChainNormCtx {
+        registry: build_fluent_registry(module),
+        value_names: collect_value_type_names(module),
+        resolved,
+    };
     let mut counter = ChainCounter { next: 0 };
     for item in &mut module.items {
-        normalize_chains_item(item, &mut counter, &registry);
+        normalize_chains_item(item, &mut counter, &ctx);
     }
     for pf in &mut module.peer_files {
         for item in &mut pf.items_here {
-            normalize_chains_item(item, &mut counter, &registry);
+            normalize_chains_item(item, &mut counter, &ctx);
         }
     }
 }
@@ -170,178 +247,182 @@ impl ChainCounter {
     }
 }
 
-fn normalize_chains_item(item: &mut Item, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
+fn normalize_chains_item(item: &mut Item, counter: &mut ChainCounter, ctx: &ChainNormCtx<'_>) {
     if let Item::Fn(f) = item {
-        normalize_chains_fn(f, counter, registry);
+        normalize_chains_fn(f, counter, ctx);
     }
 }
 
-fn normalize_chains_fn(f: &mut FnDecl, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
+fn normalize_chains_fn(f: &mut FnDecl, counter: &mut ChainCounter, ctx: &ChainNormCtx<'_>) {
     match &mut f.body {
-        FnBody::Block(b) => normalize_chains_block(b, counter, registry),
-        FnBody::Expr(e) => normalize_chains_expr(e, counter, registry),
+        FnBody::Block(b) => normalize_chains_block(b, counter, ctx),
+        FnBody::Expr(e) => normalize_chains_expr(e, counter, ctx),
         FnBody::External => {}
     }
 }
 
-fn normalize_chains_block(b: &mut Block, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
+fn normalize_chains_block(b: &mut Block, counter: &mut ChainCounter, ctx: &ChainNormCtx<'_>) {
     for s in &mut b.stmts {
-        normalize_chains_stmt(s, counter, registry);
+        normalize_chains_stmt(s, counter, ctx);
     }
     if let Some(t) = &mut b.trailing {
-        normalize_chains_expr(t, counter, registry);
+        normalize_chains_expr(t, counter, ctx);
     }
 }
 
-fn normalize_chains_stmt(s: &mut Stmt, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
+fn normalize_chains_stmt(s: &mut Stmt, counter: &mut ChainCounter, ctx: &ChainNormCtx<'_>) {
     match s {
-        Stmt::Let(d) => normalize_chains_expr(&mut d.value, counter, registry),
-        Stmt::Const(d) => normalize_chains_expr(&mut d.value, counter, registry),
-        Stmt::Expr(e) => normalize_chains_expr(e, counter, registry),
+        Stmt::Let(d) => normalize_chains_expr(&mut d.value, counter, ctx),
+        Stmt::Const(d) => normalize_chains_expr(&mut d.value, counter, ctx),
+        Stmt::Expr(e) => normalize_chains_expr(e, counter, ctx),
         Stmt::Assign { target, value, .. } => {
-            normalize_chains_expr(target, counter, registry);
-            normalize_chains_expr(value, counter, registry);
+            normalize_chains_expr(target, counter, ctx);
+            normalize_chains_expr(value, counter, ctx);
         }
         Stmt::Return { value, .. } => {
-            if let Some(v) = value { normalize_chains_expr(v, counter, registry); }
+            if let Some(v) = value { normalize_chains_expr(v, counter, ctx); }
         }
-        Stmt::Throw { value, .. } => normalize_chains_expr(value, counter, registry),
+        Stmt::Throw { value, .. } => normalize_chains_expr(value, counter, ctx),
         Stmt::Defer { body, .. } => {
-            normalize_chains_expr(body, counter, registry);
+            normalize_chains_expr(body, counter, ctx);
         }
         Stmt::ConsumeScope { init, body, .. } => {
-            normalize_chains_expr(init, counter, registry);
-            normalize_chains_block(body, counter, registry);
+            normalize_chains_expr(init, counter, ctx);
+            normalize_chains_block(body, counter, ctx);
         }
         Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-            normalize_chains_expr(expr, counter, registry);
+            normalize_chains_expr(expr, counter, ctx);
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
         // Plan 136: tuple destructuring assignment — walk all lhs + rhs exprs.
         Stmt::TupleAssign { lhs, rhs, .. } => {
-            for e in lhs { normalize_chains_expr(e, counter, registry); }
-            for e in rhs { normalize_chains_expr(e, counter, registry); }
+            for e in lhs { normalize_chains_expr(e, counter, ctx); }
+            for e in rhs { normalize_chains_expr(e, counter, ctx); }
         }
     }
 }
 
-fn normalize_chains_expr(e: &mut Expr, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
+fn normalize_chains_expr(e: &mut Expr, counter: &mut ChainCounter, ctx: &ChainNormCtx<'_>) {
     // Top-down: check if THIS Expr is the outermost frame of a fluent
     // chain. If so, wrap in Block. Otherwise descend into children.
     // Top-down ordering ensures the outermost chain captures all
     // depth-N frames at once (bottom-up would rewrite inner frames first,
     // breaking the outer extractor's left-deep Call.func walk).
-    if let Some(chain_info) = try_extract_outer_fluent_chain(e, registry) {
-        if chain_info.depth >= 2 {
+    if let Some(chain_info) = try_extract_outer_fluent_chain(e, ctx) {
+        // Plan 184 (Р7): NEVER copy-hoist a value-typed root — the `let
+        // _chain_root = <value>` copy would drop every mutation flowing through
+        // the chain (silent corruption [M-http-props-mut-chain-stmt-value-copy-
+        // loss]). Leave the raw nested-call form; codegen threads `ref Self`.
+        if chain_info.depth >= 2 && !ctx.root_is_value_typed(&chain_info.root) {
             *e = build_chain_block(chain_info, counter);
             // Descend into the wrapped Block — its stmts/trailing may
             // contain further chains (e.g., method args themselves
             // hosting chains).
-            normalize_chains_expr_children(e, counter, registry);
+            normalize_chains_expr_children(e, counter, ctx);
             return;
         }
     }
     // Not the outermost frame of a chain — descend into children.
-    normalize_chains_expr_children(e, counter, registry);
+    normalize_chains_expr_children(e, counter, ctx);
 }
 
-fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
+fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, ctx: &ChainNormCtx<'_>) {
     match &mut e.kind {
-        ExprKind::Lambda { body, .. } => normalize_chains_expr(body, counter, registry),
+        ExprKind::Lambda { body, .. } => normalize_chains_expr(body, counter, ctx),
         ExprKind::ClosureLight { body, .. } => match body {
-            ClosureBody::Expr(e) => normalize_chains_expr(e, counter, registry),
-            ClosureBody::Block(b) => normalize_chains_block(b, counter, registry),
+            ClosureBody::Expr(e) => normalize_chains_expr(e, counter, ctx),
+            ClosureBody::Block(b) => normalize_chains_block(b, counter, ctx),
         },
         ExprKind::ClosureFull(sb) => match &mut sb.body {
-            FnBody::Expr(e) => normalize_chains_expr(e, counter, registry),
-            FnBody::Block(b) => normalize_chains_block(b, counter, registry),
+            FnBody::Expr(e) => normalize_chains_expr(e, counter, ctx),
+            FnBody::Block(b) => normalize_chains_block(b, counter, ctx),
             FnBody::External => {}
         },
-        ExprKind::Block(b) => normalize_chains_block(b, counter, registry),
+        ExprKind::Block(b) => normalize_chains_block(b, counter, ctx),
         ExprKind::If { cond, then, else_ } => {
-            normalize_chains_expr(cond, counter, registry);
-            normalize_chains_block(then, counter, registry);
+            normalize_chains_expr(cond, counter, ctx);
+            normalize_chains_block(then, counter, ctx);
             if let Some(eb) = else_ {
-                normalize_chains_else(eb, counter, registry);
+                normalize_chains_else(eb, counter, ctx);
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            normalize_chains_expr(scrutinee, counter, registry);
-            normalize_chains_block(then, counter, registry);
+            normalize_chains_expr(scrutinee, counter, ctx);
+            normalize_chains_block(then, counter, ctx);
             if let Some(eb) = else_ {
-                normalize_chains_else(eb, counter, registry);
+                normalize_chains_else(eb, counter, ctx);
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            normalize_chains_expr(scrutinee, counter, registry);
+            normalize_chains_expr(scrutinee, counter, ctx);
             for arm in arms.iter_mut() {
-                if let Some(g) = &mut arm.guard { normalize_chains_expr(g, counter, registry); }
+                if let Some(g) = &mut arm.guard { normalize_chains_expr(g, counter, ctx); }
                 match &mut arm.body {
-                    MatchArmBody::Expr(e) => normalize_chains_expr(e, counter, registry),
-                    MatchArmBody::Block(b) => normalize_chains_block(b, counter, registry),
+                    MatchArmBody::Expr(e) => normalize_chains_expr(e, counter, ctx),
+                    MatchArmBody::Block(b) => normalize_chains_block(b, counter, ctx),
                 }
             }
         }
         ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
-            normalize_chains_expr(iter, counter, registry);
-            normalize_chains_block(body, counter, registry);
+            normalize_chains_expr(iter, counter, ctx);
+            normalize_chains_block(body, counter, ctx);
         }
         ExprKind::While { cond, body, .. } => {
-            normalize_chains_expr(cond, counter, registry);
-            normalize_chains_block(body, counter, registry);
+            normalize_chains_expr(cond, counter, ctx);
+            normalize_chains_block(body, counter, ctx);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            normalize_chains_expr(scrutinee, counter, registry);
-            normalize_chains_block(body, counter, registry);
+            normalize_chains_expr(scrutinee, counter, ctx);
+            normalize_chains_block(body, counter, ctx);
         }
-        ExprKind::Loop { body, .. } => normalize_chains_block(body, counter, registry),
+        ExprKind::Loop { body, .. } => normalize_chains_block(body, counter, ctx),
         ExprKind::With { bindings, body } => {
             for wb in bindings.iter_mut() {
-                normalize_chains_expr(&mut wb.handler, counter, registry);
+                normalize_chains_expr(&mut wb.handler, counter, ctx);
             }
-            normalize_chains_block(body, counter, registry);
+            normalize_chains_block(body, counter, ctx);
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
         | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
-            normalize_chains_block(body, counter, registry),
+            normalize_chains_block(body, counter, ctx),
         ExprKind::Supervised { body, cancel, deadline } => {
-            normalize_chains_block(body, counter, registry);
-            if let Some(c) = cancel { normalize_chains_expr(c, counter, registry); }
-            if let Some(_dl) = deadline { normalize_chains_expr(&mut _dl.expr, counter, registry); }
+            normalize_chains_block(body, counter, ctx);
+            if let Some(c) = cancel { normalize_chains_expr(c, counter, ctx); }
+            if let Some(_dl) = deadline { normalize_chains_expr(&mut _dl.expr, counter, ctx); }
         }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) => normalize_chains_expr(e, counter, registry),
+        ExprKind::Spawn(e) | ExprKind::Throw(e) => normalize_chains_expr(e, counter, ctx),
         ExprKind::Try(e) | ExprKind::Bang(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
         | ExprKind::As(e, _) | ExprKind::Is(e, _)
-        | ExprKind::Unary { operand: e, .. } => normalize_chains_expr(e, counter, registry),
+        | ExprKind::Unary { operand: e, .. } => normalize_chains_expr(e, counter, ctx),
         ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
-            normalize_chains_expr(a, counter, registry);
-            normalize_chains_expr(b, counter, registry);
+            normalize_chains_expr(a, counter, ctx);
+            normalize_chains_expr(b, counter, ctx);
         }
         ExprKind::Index { obj, index } => {
-            normalize_chains_expr(obj, counter, registry);
-            normalize_chains_expr(index, counter, registry);
+            normalize_chains_expr(obj, counter, ctx);
+            normalize_chains_expr(index, counter, ctx);
         }
         ExprKind::Call { func, args, trailing } => {
-            normalize_chains_expr(func, counter, registry);
+            normalize_chains_expr(func, counter, ctx);
             for arg in args.iter_mut() {
                 let inner = match arg {
                     CallArg::Item(e) | CallArg::Spread(e) => e,
                     CallArg::Named { value, .. } => value,
                 };
-                normalize_chains_expr(inner, counter, registry);
+                normalize_chains_expr(inner, counter, ctx);
             }
             if let Some(t) = trailing {
                 match t {
-                    Trailing::Block(b) => normalize_chains_block(b, counter, registry),
+                    Trailing::Block(b) => normalize_chains_block(b, counter, ctx),
                     Trailing::Fn(sb) => match &mut sb.body {
-                        FnBody::Expr(e) => normalize_chains_expr(e, counter, registry),
-                        FnBody::Block(b) => normalize_chains_block(b, counter, registry),
+                        FnBody::Expr(e) => normalize_chains_expr(e, counter, ctx),
+                        FnBody::Block(b) => normalize_chains_block(b, counter, ctx),
                         FnBody::External => {}
                     },
                     Trailing::LegacyBlockWithParams(tb) =>
-                        normalize_chains_block(&mut tb.body, counter, registry),
+                        normalize_chains_block(&mut tb.body, counter, ctx),
                 }
             }
         }
@@ -349,7 +430,7 @@ fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, regi
             for el in elems.iter_mut() {
                 match el {
                     ArrayElem::Item(e) | ArrayElem::Spread(e) =>
-                        normalize_chains_expr(e, counter, registry),
+                        normalize_chains_expr(e, counter, ctx),
                 }
             }
         }
@@ -357,50 +438,50 @@ fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, regi
             for el in elems.iter_mut() {
                 match el {
                     MapElem::Pair(k, v) => {
-                        normalize_chains_expr(k, counter, registry);
-                        normalize_chains_expr(v, counter, registry);
+                        normalize_chains_expr(k, counter, ctx);
+                        normalize_chains_expr(v, counter, ctx);
                     }
-                    MapElem::Spread(e) => normalize_chains_expr(e, counter, registry),
+                    MapElem::Spread(e) => normalize_chains_expr(e, counter, ctx),
                 }
             }
         }
         ExprKind::RecordLit { fields, .. } => {
             for rf in fields.iter_mut() {
-                if let Some(v) = &mut rf.value { normalize_chains_expr(v, counter, registry); }
+                if let Some(v) = &mut rf.value { normalize_chains_expr(v, counter, ctx); }
             }
         }
         ExprKind::TupleLit(elems) => {
-            for el in elems.iter_mut() { normalize_chains_expr(el, counter, registry); }
+            for el in elems.iter_mut() { normalize_chains_expr(el, counter, ctx); }
         }
         ExprKind::InterpolatedStr { parts } => {
             for p in parts.iter_mut() {
-                if let InterpStrPart::Expr { expr: e, spec: _ } = p { normalize_chains_expr(e, counter, registry); }
+                if let InterpStrPart::Expr { expr: e, spec: _ } = p { normalize_chains_expr(e, counter, ctx); }
             }
         }
         ExprKind::TaggedTemplate { tag, args, .. } => {
-            normalize_chains_expr(tag, counter, registry);
-            for a in args.iter_mut() { normalize_chains_expr(a, counter, registry); }
+            normalize_chains_expr(tag, counter, ctx);
+            for a in args.iter_mut() { normalize_chains_expr(a, counter, ctx); }
         }
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { normalize_chains_expr(s, counter, registry); }
-            if let Some(e) = end { normalize_chains_expr(e, counter, registry); }
+            if let Some(s) = start { normalize_chains_expr(s, counter, ctx); }
+            if let Some(e) = end { normalize_chains_expr(e, counter, ctx); }
         }
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
-            normalize_chains_expr(range, counter, registry);
-            normalize_chains_expr(body, counter, registry);
+            normalize_chains_expr(range, counter, ctx);
+            normalize_chains_expr(body, counter, ctx);
         }
         ExprKind::Interrupt(opt) => {
-            if let Some(e) = opt { normalize_chains_expr(e, counter, registry); }
+            if let Some(e) = opt { normalize_chains_expr(e, counter, ctx); }
         }
         // Leaf / literal — nothing к descend into.
         _ => {}
     }
 }
 
-fn normalize_chains_else(eb: &mut ElseBranch, counter: &mut ChainCounter, registry: &FluentMethodRegistry) {
+fn normalize_chains_else(eb: &mut ElseBranch, counter: &mut ChainCounter, ctx: &ChainNormCtx<'_>) {
     match eb {
-        ElseBranch::Block(b) => normalize_chains_block(b, counter, registry),
-        ElseBranch::If(e) => normalize_chains_expr(e, counter, registry),
+        ElseBranch::Block(b) => normalize_chains_block(b, counter, ctx),
+        ElseBranch::If(e) => normalize_chains_expr(e, counter, ctx),
     }
 }
 
@@ -445,7 +526,7 @@ struct FluentChain {
 ///   (union of hardcoded `FLUENT_BUILTIN_METHODS` + per-module
 ///   `FluentMethodRegistry` of `FnDecl.returns_receiver == true` methods).
 /// - Root receiver is `Member{SelfAccess, F}` (safe-hoist pattern).
-fn try_extract_outer_fluent_chain(e: &Expr, registry: &FluentMethodRegistry) -> Option<FluentChain> {
+fn try_extract_outer_fluent_chain(e: &Expr, ctx: &ChainNormCtx<'_>) -> Option<FluentChain> {
     let mut frames: Vec<ChainFrame> = Vec::new();
     let mut cur = e;
     let outer_span = e.span;
@@ -454,7 +535,7 @@ fn try_extract_outer_fluent_chain(e: &Expr, registry: &FluentMethodRegistry) -> 
     loop {
         if let ExprKind::Call { func, args, trailing } = &cur.kind {
             if let ExprKind::Member { obj, name } = &func.kind {
-                if !is_fluent_method(name, registry) {
+                if !is_fluent_method(name, &ctx.registry) {
                     // Method not в fluent set — abort (we only hoist
                     // chains of known-safe fluent calls).
                     return None;
@@ -612,7 +693,7 @@ mod tests {
 
     fn run(src: &str) -> Module {
         let mut m = parse(src).expect("parse");
-        normalize_chains_module(&mut m);
+        normalize_chains_module(&mut m, &std::collections::HashMap::new());
         m
     }
 
@@ -922,9 +1003,9 @@ fn Buf mut @do(a int, b int) -> Buf {
 }
 "#;
         let mut m = parse(src).expect("parse");
-        normalize_chains_module(&mut m);
+        normalize_chains_module(&mut m, &std::collections::HashMap::new());
         let count1 = count_chain_root_lets(find_fn(&m, "do"));
-        normalize_chains_module(&mut m);
+        normalize_chains_module(&mut m, &std::collections::HashMap::new());
         let count2 = count_chain_root_lets(find_fn(&m, "do"));
         assert_eq!(count1, count2,
             "second normalization shouldn't add chains");

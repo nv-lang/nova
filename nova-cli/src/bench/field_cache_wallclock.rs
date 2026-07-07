@@ -313,15 +313,20 @@ fn static_estimate(file: &Path) -> Result<(u64, StaticLayerBreakdown)> {
         let _ = nova_codegen::imports::resolve_imports_inline_ex(
             file, &mut module, &repo, &stdlib_dir, true);
     }
-    if nova_codegen::types::check_module(&module).is_err() {
-        return Ok((0, StaticLayerBreakdown::default()));
-    }
+    // Plan 184 (Р7): ids + checker resolved_types for chain-norm's value-root
+    // guard, so the static estimate mirrors the real build pipeline.
+    let _ = nova_codegen::number_exprs::number_exprs(&mut module);
+    let check_env = match nova_codegen::types::check_module(&module) {
+        Ok(env) => env,
+        Err(_) => return Ok((0, StaticLayerBreakdown::default())),
+    };
     let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
     nova_codegen::types::annotate_map_literals(&mut module);
     nova_codegen::desugar::desugar_module(&mut module);
     nova_codegen::types::infer_effects(&mut module);
     nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
+    nova_codegen::chain_norm::normalize_chains_module(
+        &mut module, &check_env.resolved_types);
     let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
     let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
     let savings = nova_codegen::field_cache::cpu_savings_estimate(&report);

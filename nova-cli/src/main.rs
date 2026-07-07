@@ -1445,18 +1445,26 @@ fn cmd_check_explain_cache(
                 continue;
             }
         }
+        // Plan 184 (Р7): stamp ExprIds pre-check so the checker's resolved_types
+        // are usably keyed — chain-norm's value-root guard reads them below,
+        // keeping this report aligned with the real build pipeline.
+        let _ = nova_codegen::number_exprs::number_exprs(&mut module);
         // Type-check (skip on error — analyze best-effort).
-        if let Err(_errs) = nova_codegen::types::check_module(&module) {
-            eprintln!("warn: skip {} (type-check failed)", file.display());
-            continue;
-        }
+        let check_env = match nova_codegen::types::check_module(&module) {
+            Ok(env) => env,
+            Err(_errs) => {
+                eprintln!("warn: skip {} (type-check failed)", file.display());
+                continue;
+            }
+        };
         // Run pipeline до cache_module.
         let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
         nova_codegen::types::annotate_map_literals(&mut module);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
+        nova_codegen::chain_norm::normalize_chains_module(
+            &mut module, &check_env.resolved_types);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
         if !report.per_fn.is_empty() {
             println!("=== {} ===", file.display());
@@ -1555,16 +1563,20 @@ fn cmd_check_telemetry_cache(
                 continue;
             }
         }
-        if nova_codegen::types::check_module(&module).is_err() {
-            skipped_files += 1;
-            continue;
-        }
+        // Plan 184 (Р7): ids + checker resolved_types for chain-norm's
+        // value-root guard (report parity with the real build pipeline).
+        let _ = nova_codegen::number_exprs::number_exprs(&mut module);
+        let check_env = match nova_codegen::types::check_module(&module) {
+            Ok(env) => env,
+            Err(_) => { skipped_files += 1; continue; }
+        };
         let _ = nova_codegen::const_fn_eval::rewrite_const_fn_calls(&mut module);
         nova_codegen::types::annotate_map_literals(&mut module);
         nova_codegen::desugar::desugar_module(&mut module);
         nova_codegen::types::infer_effects(&mut module);
         nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
+        nova_codegen::chain_norm::normalize_chains_module(
+            &mut module, &check_env.resolved_types);
         let report = nova_codegen::field_cache::analyze_module(&module, &cfg);
         // Count total instance methods in module for ratio.
         let module_methods_count: usize = count_instance_methods(&module);
@@ -4205,7 +4217,15 @@ fn cmd_build(
             // `nova build` path the proven set MUST reach codegen below for
             // zero-cost elision; previously it was discarded → proven empty →
             // proven contracts were runtime-checked anyway (R4).
-            let build_env = {
+            // Plan 184 (Р7): stable ExprIds BEFORE type-check so the checker's
+            // resolved_types are usably keyed (without numbering every id is
+            // UNSET → the channel is off) — chain-norm below needs the REAL map
+            // for its value-root guard, else the copy-loss fix is silently
+            // disabled on the `nova build` path. Mirrors test_runner /
+            // nova-codegen check: number_exprs seed merged UNDER checker
+            // annotations (checker wins on collision).
+            let resolved_seed = nova_codegen::number_exprs::number_exprs(&mut module);
+            let mut build_env = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
                 nova_codegen::types::check_module(&module).map_err(|errs| {
                     let msgs: Vec<String> = errs.iter()
@@ -4214,6 +4234,11 @@ fn cmd_build(
                     anyhow!("{}", msgs.join("\n"))
                 })?
             };
+            {
+                let checker_annotations = std::mem::take(&mut build_env.resolved_types);
+                build_env.resolved_types = resolved_seed;
+                build_env.resolved_types.extend(checker_annotations);
+            }
             // Plan 174 (D409): auto-return lowering для `-> @` тел. check_module
             // выше уже отгейтил E_EXPLICIT_SELF_RETURN на as-written AST.
             nova_codegen::self_return_lower::lower_module(&mut module);
@@ -4243,7 +4268,10 @@ fn cmd_build(
             {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("callnorm");
                 nova_codegen::callnorm::normalize_module(&mut module);
-    nova_codegen::chain_norm::normalize_chains_module(&mut module);
+                // Plan 184 (Р7): REAL resolved_types — the value-root guard must
+                // be live on `nova build` (defect-B fix), not just `nova test`.
+                nova_codegen::chain_norm::normalize_chains_module(
+                    &mut module, &build_env.resolved_types);
             }
             let (c_code, warnings) = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");

@@ -21089,21 +21089,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // возвращает ptr (NovaValue_X*), биндинг к value-локалу требует
                 // deref. Robust EMIT-сигнал (урок реверта 2026-06-28): C-возврат
                 // метода из реестра fn_ret_* (эмит-факт), НЕ context-fragile infer.
-                let val = if Self::is_value_struct_val(&ty_c) {
-                    // 172.4 Ф.3 A6: NT fluent `-> @` возвращает NovaTuple_X* (ptr,
-                    // receiver_c_type), биндинг к value-локалу — deref (как VR).
-                    let rhs_fluent_ptr = (|| {
-                        let ExprKind::Call { func, .. } = &decl.value.kind else { return false };
-                        let ExprKind::Member { name: mname, .. } = &func.kind else { return false };
-                        let tn = ty_c.strip_prefix("NovaValue_")
-                            .or_else(|| ty_c.strip_prefix("NovaTuple_"))
-                            .unwrap_or("");
-                        self.var_types
-                            .get(&format!("fn_ret_{}_{}", tn, mname))
-                            .map(|r| *r == format!("{}*", ty_c))
-                            .unwrap_or(false)
-                    })();
-                    if rhs_fluent_ptr { format!("(*({}))", val) } else { val }
+                // 172.4 Ф.3 A6 / Plan 184 Р5-Р7: NT/VR fluent `-> @` возвращает ptr
+                // (`NovaValue_X*`/`NovaTuple_X*` = ref Self); биндинг к value-локалу —
+                // deref (auto-conversion ref T -> T). Общий предикат — см.
+                // `is_fluent_value_ptr_for_target` (let/arg/return в lockstep).
+                let val = if self.is_fluent_value_ptr_for_target(&decl.value, &ty_c) {
+                    format!("(*({}))", val)
                 } else {
                     val
                 };
@@ -29593,6 +29584,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     None
                                 };
                                 if let Some(sig) = chosen {
+                                    // Plan 184 (Р5/Р7): deref fluent value-record ptr
+                                    // args passed to by-value params (arg_strs is the
+                                    // non-receiver arg list, 1:1 with sig.param_c_types).
+                                    self.deref_fluent_value_args(args, &mut arg_strs, &sig.param_c_types);
                                     if want_instance {
                                         let obj_c = self.emit_expr(obj)?;
                                         // Plan 152.1 Ф.3: value-record receiver
@@ -31610,6 +31605,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Ident(n) => Some(n.clone()),
             _ => None,
         };
+        // Plan 184 (Р5/Р7): a value-record fluent `-> @` chain-result used
+        // DIRECTLY as a by-value call argument returns `ref Self` (`NovaValue_X*`);
+        // the value-position expects `NovaValue_X`, so the auto-conversion
+        // `ref T -> T` (Р5) must deref. Resolve the callee's declared param C-types
+        // (registry fact) so we only deref when the target param is a value-struct
+        // BY VALUE — a `mut x T` in-out param (C: `NovaValue_X*`) still wants the
+        // pointer, untouched. Closes [M-http-props-mut-chain-argpos-value-ptr-mismatch].
+        let callee_param_c: Vec<String> = match &func.kind {
+            ExprKind::Ident(name) => self
+                .method_overloads
+                .get(&(String::new(), name.clone()))
+                .and_then(|sigs| sigs.iter().find(|s| s.param_c_types.len() == args.len()))
+                .map(|s| s.param_c_types.clone())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         let mut arg_strs = Vec::new();
         for (arg_idx, a) in args.iter().enumerate() {
             let a: &CallArg = a;
@@ -31674,6 +31685,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     self.pending_option_inner_type = Some(format!("{}*", arg_ty));
                 }
+            } else if callee_param_c
+                .get(arg_idx)
+                .map(|pt| self.is_fluent_value_ptr_for_target(a.expr(), pt))
+                .unwrap_or(false)
+            {
+                // Plan 184 (Р5/Р7): fleeting `-> @` ref Self ptr → by-value param.
+                arg_strs.push(format!("(*({}))", v));
             } else {
                 arg_strs.push(v);
             }
@@ -39952,6 +39970,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
 
         if Self::is_value_struct_val(obj_ty) {
+            // Plan 184 (Р7): the receiver may ITSELF be a value-record fluent
+            // `-> @` result — already a `ref Self` pointer (`NovaValue_X*`, the
+            // emit-fact from `fn_ret_*`). This is a chain of depth ≥ 3 whose inner
+            // links produced the receiver. Thread that pointer straight through:
+            // materialize-and-address (the rvalue branch below) would copy the
+            // receiver into a fresh value slot — a `NovaValue_X = NovaValue_X*`
+            // type error AND a dropped mutation for every remaining link. The
+            // pointer already aliases the original binding, so pass it verbatim.
+            if let Some(e) = obj_ast {
+                if self.is_fluent_value_ptr_for_target(e, obj_ty) {
+                    return obj_c.to_string();
+                }
+            }
             // 172.4 Ф.3 A6: value-record (D226) И named-tuple (always-pointer
             // receiver) — единая адаптация: lvalue → &(obj), rvalue → hoist+&tmp.
             // recv_mutable для receiver-адреса иррелевантен (как у VR): mut/ro
@@ -39985,6 +40016,58 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// by-value форма (`NovaValue_X` / `NovaTuple_X`) — local/binding value-позиция.
     fn is_value_struct_val(c: &str) -> bool {
         Self::is_value_struct(c) && !c.ends_with('*')
+    }
+
+    /// Plan 184 (Р5/Р7): a value-record fluent `-> @` method returns `ref Self`
+    /// (`NovaValue_X*` — a pointer to the receiver). When that fleeting pointer
+    /// is consumed in a position that expects the value `NovaValue_X` (a let-
+    /// binding, a by-value call argument, …), the auto-conversion `ref T -> T`
+    /// (Р5, «чтение = разыменование») must deref it. Returns `true` iff `expr` is
+    /// such a fluent call whose EMITTED C return type (fact from the `fn_ret_*`
+    /// registry, not context-fragile infer) is exactly `{target_c}*` for a value-
+    /// struct `target_c` (no trailing `*`). Robust EMIT-signal — mirrors the
+    /// 172.4 Ф.3 binding-decay path (same registry key), factored to ONE place so
+    /// let/arg/return consumers stay in lockstep.
+    fn is_fluent_value_ptr_for_target(&self, expr: &Expr, target_c: &str) -> bool {
+        if !Self::is_value_struct_val(target_c) {
+            return false;
+        }
+        let ExprKind::Call { func, .. } = &expr.kind else { return false };
+        let ExprKind::Member { name: mname, .. } = &func.kind else { return false };
+        let tn = target_c
+            .strip_prefix("NovaValue_")
+            .or_else(|| target_c.strip_prefix("NovaTuple_"))
+            .unwrap_or("");
+        self.var_types
+            .get(&format!("fn_ret_{}_{}", tn, mname))
+            .map(|r| *r == format!("{}*", target_c))
+            .unwrap_or(false)
+    }
+
+    /// Plan 184 (Р5/Р7): rewrite already-emitted call-arg strings so a value-
+    /// record fluent `-> @` result (`NovaValue_X*` = ref Self) passed to a
+    /// BY-VALUE parameter is dereferenced (`*ptr`) — the `ref T -> T` auto-
+    /// conversion (Р5). `arg_strs[i]` MUST correspond 1:1 to `args[i]` /
+    /// `param_c_types[i]` (the receiver, if any, already stripped). No-op for
+    /// every other arg, so it is safe to call unconditionally after overload
+    /// selection. Covers the method-call-arg surface (production
+    /// `handler.handle(req.params(ps))`) symmetrically with the free-fn site.
+    fn deref_fluent_value_args(
+        &self,
+        args: &[CallArg],
+        arg_strs: &mut [String],
+        param_c_types: &[String],
+    ) {
+        for (i, a) in args.iter().enumerate() {
+            if let (Some(s), Some(pt)) = (
+                arg_strs.get_mut(i),
+                param_c_types.get(i),
+            ) {
+                if self.is_fluent_value_ptr_for_target(a.expr(), pt) {
+                    *s = format!("(*({}))", s);
+                }
+            }
+        }
     }
 
     fn is_value_type(ty: &str) -> bool {

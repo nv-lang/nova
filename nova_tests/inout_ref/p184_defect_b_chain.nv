@@ -1,0 +1,52 @@
+// Plan 184 Ф.2 acceptance — [M-http-props-mut-chain-stmt-value-copy-loss].
+// Chaining two `mut @setter(v) -> @` on a `value`-type receiver in ONE
+// statement must apply BOTH mutations to the original binding (Р7: a value-
+// record `-> @` returns `ref Self`, so the chain threads the receiver pointer;
+// chain-norm must NOT copy-hoist a value-typed root).
+//
+// The chain is exercised inside a plain `fn` (NOT a `test` block): chain-norm
+// only rewrites `Item::Fn` bodies, so the copy-hoist bug — and thus this
+// regression guard — is only reachable from a real function.
+module inout_ref.p184_defect_b_chain
+
+type Rec value {
+    ro a int
+    b   int
+    c   int
+}
+
+fn Rec.new(a int, b int, c int) -> Rec => { a, b, c }
+
+fn Rec mut @b(v int) -> @ {
+    @b = v
+}
+
+fn Rec mut @c(v int) -> @ {
+    @c = v
+}
+
+// Two-link chain as a bare statement, then observe the ORIGINAL binding.
+fn chain_bc() -> (int, int) {
+    mut r = Rec.new(1, 0, 0)
+    r.b(5).c(9)
+    (r.b, r.c)
+}
+
+// Depth-3 chain, same shape.
+fn chain_bcb() -> (int, int) {
+    mut r = Rec.new(1, 0, 0)
+    r.b(5).c(9).b(7)
+    (r.b, r.c)
+}
+
+test "2-link mut-setter chain, one statement, value type — both mutations land" {
+    ro (b, c) = chain_bc()
+    assert(b == 5)
+    assert(c == 9)
+}
+
+test "3-link mut-setter chain, one statement, value type — last write wins per field" {
+    ro (b, c) = chain_bcb()
+    assert(b == 7)
+    assert(c == 9)
+}
