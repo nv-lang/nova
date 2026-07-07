@@ -39,7 +39,7 @@ module text.markdown_minimal
 /// ```
 #stable(since = "0.1")
 export fn Markdown.to_html(md str) -> str {
-    consume buf = StringBuilder.with_capacity(md.len() * 2)
+    consume buf = StringBuilder.with_capacity(md.byte_len() * 2)
     ro lines = md.split("\n")
     mut i = 0
     mut in_code_block = false
@@ -56,7 +56,7 @@ export fn Markdown.to_html(md str) -> str {
                 in_code_block = false
             } else {
                 flush_paragraph(buf, paragraph)
-                paragraph = StringBuilder.new()
+                consume paragraph = StringBuilder.new()
                 if in_list { buf.append("</ul>\n"); in_list = false }
                 buf.append("<pre><code>")
                 in_code_block = true
@@ -75,7 +75,7 @@ export fn Markdown.to_html(md str) -> str {
         // Heading
         if line.starts_with("#") {
             flush_paragraph(buf, paragraph)
-            paragraph = StringBuilder.new()
+            consume paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
             // Целевая for-in итерация вместо ретрактированного `chars().nth(level)`
             // (D260-амендмент) — последовательный скан, случайный доступ не нужен.
@@ -85,7 +85,7 @@ export fn Markdown.to_html(md str) -> str {
                 if c != '#' { break }
                 level += 1
             }
-            ro text = line[level..line.len()].trim_ascii()
+            ro text = line[level..line.byte_len()].trim_ascii()
             buf.append("<h" + str.from(level) + ">")
             buf.append(render_inline(text))
             buf.append("</h" + str.from(level) + ">\n")
@@ -96,29 +96,29 @@ export fn Markdown.to_html(md str) -> str {
         // Bullet list item
         if line.starts_with("- ") || line.starts_with("* ") {
             flush_paragraph(buf, paragraph)
-            paragraph = StringBuilder.new()
+            consume paragraph = StringBuilder.new()
             if !in_list {
                 buf.append("<ul>\n")
                 in_list = true
             }
             buf.append("<li>")
-            buf.append(render_inline(line[2..line.len()]))
+            buf.append(render_inline(line[2..line.byte_len()]))
             buf.append("</li>\n")
             i += 1
             continue
         }
 
         // Empty line — paragraph break
-        if line.trim_ascii().len() == 0 {
+        if line.trim_ascii().byte_len() == 0 {
             flush_paragraph(buf, paragraph)
-            paragraph = StringBuilder.new()
+            consume paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
             i += 1
             continue
         }
 
         // Regular paragraph line
-        if paragraph.len() > 0 { paragraph.append(' ') }
+        if paragraph.byte_len() > 0 { paragraph.append(' ') }
         paragraph.append(line)
         i += 1
     }
@@ -128,18 +128,17 @@ export fn Markdown.to_html(md str) -> str {
     if in_list { buf.append("</ul>\n") }
     if in_code_block { buf.append("</code></pre>\n") }
 
-    buf.into()
+    buf.into_str()
 }
 
 
-fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
-    if paragraph.len() > 0 {
-        ro text = paragraph.clone().into()
-        if text.trim_ascii().len() > 0 {
-            buf.append("<p>")
-            buf.append(render_inline(text.trim_ascii()))
-            buf.append("</p>\n")
-        }
+fn flush_paragraph(mut buf StringBuilder, consume paragraph StringBuilder) -> () {
+    ro text = paragraph.into_str()
+    ro trimmed = text.trim_ascii()
+    if trimmed.byte_len() > 0 {
+        buf.append("<p>")
+        buf.append(render_inline(trimmed))
+        buf.append("</p>\n")
     }
 }
 
@@ -153,12 +152,12 @@ fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
 // [M-d73-d77-retraction-migration] Block 2 precedent) и далее — O(1)
 // `Vec[char] @get(i)`.
 fn render_inline(s str) -> str {
-    consume buf = StringBuilder.with_capacity(s.len())
+    consume buf = StringBuilder.with_capacity(s.byte_len())
     ro sc = to_chars(s)
     ro n = sc.len()
     mut i = 0
     while i < n {
-        ro c = match sc.get(i) { Some(ch) => ch, None => break }
+        ro c = sc[i]
 
         // Inline code
         if c == '`' {
@@ -236,7 +235,7 @@ fn render_inline(s str) -> str {
         buf.append(c)
         i += 1
     }
-    buf.into()
+    buf.into_str()
 }
 
 
@@ -259,7 +258,7 @@ fn find_in(sc []char, target char, start int) -> Option[int] {
 
 
 fn escape_html(s str) -> str {
-    consume buf = StringBuilder.with_capacity(s.len())
+    consume buf = StringBuilder.with_capacity(s.byte_len())
     for c in s.chars() {
         match c {
             '<' => buf.append("&lt;")
@@ -269,7 +268,7 @@ fn escape_html(s str) -> str {
             _   => buf.append(c)
         }
     }
-    buf.into()
+    buf.into_str()
 }
 
 
