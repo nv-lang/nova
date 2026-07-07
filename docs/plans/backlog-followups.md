@@ -2010,3 +2010,15 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   программой T.parse 174.1: возможно ретрактируется, не чинится); (3) `emit-runtime-stubs`
   авто-генерирует пустой stray std/runtime/string.nv (str_runtime() не опустошён при
   миграции на папку string/) — опустошить генератор.
+
+- **[M-ptr-read-write-memcpy-semantics]** (2026-07-07, P2, Wave: план 174.5 — методы
+  указателей, одна зона) — предложение владельца: from_bits/to_bits выразимы чистым .nv
+  (`(&@ as *u64).read()`), extern не нужен. Блокер: `.read()`/`.write()` эмитятся голым
+  деref (emit_c.rs:29141 `(*(ptr))`) → после понижающего каста указателя это strict-aliasing
+  UB в C. Заход: (1) D141-амендмент — read/write на сырых указателях получают
+  memcpy-семантику (alias- И alignment-безопасны; perf тот же — фиксированный memcpy = mov);
+  (2) эмиссия через типизированные inline-хелперы (канон Plan 145, без stmt-expr);
+  (3) перенос from_bits/to_bits в std/runtime/numeric.nv чистым .nv (форма владельца),
+  снос extern-записей реестра и C-обёрток numeric.h; (4) requires size_of(Self)==size_of(u64)
+  — при появлении size_of-API (его в языке НЕТ — отдельный пункт 174.5: const-фича,
+  компилятор знает размеры); (5) проверка -O2 alias-оптимизаций тестом с write-then-read.
