@@ -2024,3 +2024,9 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (3а) закрепить правило: `&` на ro-биндинге/параметре легален → ro-указатель `*T`,
   на mut → `*mut T` (Rust-параллель &/const); если чекер сегодня требует mut — снять;
   unsafe-границу каста/чтения сверить по D54/L3; (4) size_of-API — отдельный пункт 174.5 (const-фича).
+
+- **[M-http-module-test-block-p67]** (2026-07-07, P1-разведка, Wave: заход крашеров-182
+  [opus] — то же P67-семейство) — ЛЮБОЙ test{}-блок в `module std.http` (даже no-op) валит
+  компилятор: `[P67-LEGACY] Ident 'msg' not in var_types` (санация-182, три независимые
+  репродукции). Блокирует возврат http-тестов body/model/url/d358 из nova_tests к модулю
+  (якоря в файлах). Родня [M-172.1-var-types-cu-name-leak]/ErrorKind-коллизии.
