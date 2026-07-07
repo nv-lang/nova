@@ -28,8 +28,8 @@
 
 | D# | Файл | Что |
 |---|---|---|
-| D85 | 04-effects.md | Операторы `?` и `!!` — унифицированное поведение для `Result` и `Option` |
-| D86 | 04-effects.md | `??` coalesce-оператор — fallback для `Result`/`Option` без `Fail` |
+| D85 | 04-effects.md | Операторы `?` и `!!` — унифицированное поведение для `Result` и `Option`; **AMEND 2026-07-07: метод-близнец `@unwrap()` ретрактирован** (`.unwrap()` → `!!`, D9) |
+| D86 | 04-effects.md | `??` coalesce-оператор — fallback для `Result`/`Option` без `Fail`; **AMEND 2026-07-07: близнецы `@unwrap_or`/`@unwrap_or_else` ретрактированы** (`?? v` ленивый, покрывает оба) |
 | D87 | 04-effects.md | `Handler[E, IRT]` — параметризация handler типом interrupt'а |
 | D88 | 03-syntax.md | Default-значения generic-параметров (`Handler[E]` ≡ `Handler[E, never]`) |
 | D89 | 09-tooling.md | Test-tooling конвенции — `EXPECT_*` маркеры для negative-тестов |

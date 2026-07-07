@@ -1759,3 +1759,11 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `..`-правило как в match). Тесты: conformance позитивы (shorthand/rename/mut/вложенные,
   однократность вычисления источника) + негативы (сумма в биндинге, частичный список без ..).
   Первые потребители: json-лексер (ro {line, col, ..} = @), TokenWithPos-снапшоты.
+
+- **[M-unwrap-twins-retraction]** (2026-07-07, P2, Wave: волна-2 §4а [sonnet]) — ретракция
+  метод-близнецов операторов (амендменты D85/D86 в спеке): снести из prelude/core.nv
+  `Option/Result @unwrap()` (:264/:363), `@unwrap_or` (:272/:370), `@unwrap_or_else`
+  (:278/:379); мигрировать вызовы: `.unwrap()` ×33 → `x!!`, `.unwrap_or(v)` ×29 → `x ?? v`
+  (скобки по прецедентности в цепочках: `(chain) ?? v` где нужно), `_or_else` ×0.
+  ТУДА ЖЕ: дубль StringBuilder `@capacity()`/@cap() (string_builder.nv:106/:112, alias) —
+  D9: ретрактировать `@capacity()`, вызовы → `cap()` (греп по репо).
