@@ -5,7 +5,7 @@
 // API:
 //   Hex.encode(data []u8) -> str            // lowercase
 //   Hex.encode_upper(data []u8) -> str
-//   Hex.decode(s str) Fail[ParseHexError] -> []u8
+//   Hex.decode(s str) -> Result[[]u8, ParseHexError]
 //
 // Use cases: hash digests (SHA, CRC), binary dumps, debugging,
 // crypto tokens, file integrity.
@@ -31,14 +31,14 @@ export fn Hex.encode_upper(data []u8) -> str =>
     encode_with(data, true)
 
 fn encode_with(data []u8, upper bool) -> str {
-    consume buf = StringBuilder.with_capacity(data.len() * 2)
+    consume buf = StringBuilder.new().cap(data.len() * 2)
     for b in data {
         ro hi = (b as int) / 16
         ro lo = (b as int) % 16
         buf.append(digit(hi as u8, upper))
         buf.append(digit(lo as u8, upper))
     }
-    buf.into()
+    buf.into_str()
 }
 
 // Plan 34 Ф.5.2: `int as char` запрещён D54, используем `char.from(n)?`.
@@ -64,38 +64,38 @@ fn digit(n u8, upper bool) -> char {
 // Decoding
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Decode hex string в bytes. Case-insensitive. Throws `OddLength`/`InvalidChar`.
+/// Decode hex string в bytes. Case-insensitive. `Err(OddLength)`/`Err(InvalidChar)`.
 #stable(since = "0.1")
-export fn Hex.decode(s str) Fail[ParseHexError] -> []u8 {
-    if s.len() % 2 != 0 {
-        throw OddLength { actual: s.len() }
+export fn Hex.decode(s str) -> Result[[]u8, ParseHexError] {
+    if s.byte_len() % 2 != 0 {
+        return Err(OddLength { actual: s.byte_len() })
     }
-    mut out []u8 = []u8.with_capacity(s.len() / 2)
-    for i in (0..s.len()).step_by(2) {
-        ro hi = digit_value(s, i)
-        ro lo = digit_value(s, i + 1)
+    mut out = []u8.new().cap(s.byte_len() / 2)
+    for i in (0..s.byte_len()).step_by(2) {
+        ro hi = digit_value(s, i)?
+        ro lo = digit_value(s, i + 1)?
         out.push(((hi * 16 + lo) & 0xFF) as u8)
     }
-    out
+    Ok(out)
 }
 
 // Hex digest content is pure ASCII — direct byte access O(1) instead of the
 // ретрактированный `chars().nth(pos)` O(n) scan (D260-амендмент).
-fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
+fn digit_value(s str, pos int) -> Result[int, ParseHexError] {
     match s.bytes().get(pos) {
         Some(b) => {
             ro n = b as int
             if n >= 48 && n <= 57 {
-                n - 48
+                Ok(n - 48)
             } else if n >= 97 && n <= 102 {
-                n - 97 + 10
+                Ok(n - 97 + 10)
             } else if n >= 65 && n <= 70 {
-                n - 65 + 10
+                Ok(n - 65 + 10)
             } else {
-                throw InvalidChar { position: pos, char: char.from(n) ?? ' ' }
+                Err(InvalidChar { position: pos, char: char.from(n) ?? ' ' })
             }
         }
-        None => throw InvalidChar { position: pos, char: ' ' }
+        None => Err(InvalidChar { position: pos, char: ' ' })
     }
 }
 
@@ -124,43 +124,45 @@ test "encode: leading zeros сохраняются" {
     assert(Hex.encode(data) == "00010f")
 }
 
+// Compiler note: `[][]u8` (Vec of Vec) итерируемый через `for` — известный
+// gap в mono nested-array (erasure даёт `NovaArray_nova_int_p` CC-FAIL).
+// Проверяем round-trip по одному значению за раз (без обёртывающего Vec).
+// `bool`-возврат, не top-level `assert` — helper — обычный `fn` (не `test`),
+// и модуль импортируется как библиотека другими модулями (sha256/bcrypt),
+// где `assert` недоступен вне test-контекста.
+fn decode_round_trips(data []u8) -> bool {
+    ro encoded = Hex.encode(data)
+    ro decoded = Hex.decode(encoded)!!
+    decoded == data
+}
+
 test "decode: round-trip" {
-    ro cases = [
-        [],
-        [0x00],
-        [0xDE, 0xAD, 0xBE, 0xEF],
-        [0x00, 0x01, 0xFF, 0x80],
-    ]
-    for data in cases {
-        ro encoded = Hex.encode(data)
-        ro decoded = Hex.decode(encoded)
-        assert(decoded == data)
-    }
+    ro empty []u8 = []
+    ro one []u8 = [0x00]
+    ro four []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
+    ro mixed []u8 = [0x00, 0x01, 0xFF, 0x80]
+    assert(decode_round_trips(empty))
+    assert(decode_round_trips(one))
+    assert(decode_round_trips(four))
+    assert(decode_round_trips(mixed))
 }
 
 test "decode: case-insensitive" {
-    assert(Hex.decode("DEADbeef") == [0xDE, 0xAD, 0xBE, 0xEF])
-    assert(Hex.decode("deadBEEF") == [0xDE, 0xAD, 0xBE, 0xEF])
+    ro expected []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
+    assert(Hex.decode("DEADbeef")!! == expected)
+    assert(Hex.decode("deadBEEF")!! == expected)
 }
 
 test "decode: ошибка — нечётная длина" {
-    ro r = with Fail[ParseHexError] = |e| interrupt Some(e) {
-        ro _ = Hex.decode("abc")
-        None
+    match Hex.decode("abc") {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is OddLength)
     }
-    assert(match r {
-        Some(OddLength { .. }) => true
-        _                       => false
-    })
 }
 
 test "decode: ошибка — невалидный символ" {
-    ro r = with Fail[ParseHexError] = |e| interrupt Some(e) {
-        ro _ = Hex.decode("abXY")
-        None
+    match Hex.decode("abXY") {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is InvalidChar)
     }
-    assert(match r {
-        Some(InvalidChar { .. }) => true
-        _                         => false
-    })
 }
