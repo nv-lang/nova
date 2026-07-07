@@ -31,14 +31,6 @@ export type StringBuilder consume {
 // Default capacity для StringBuilder.new() — 16 bytes (1-line string).
 const INITIAL_CAPACITY = 16
 
-// [M-vec-spelling-array-value-position-cap-collision] (vec-sweep,
-// 2026-07-06): same workaround as std/runtime/write_buffer.nv — binding the
-// `[]u8` constructor result to an explicitly-typed local FIRST, then calling
-// `.cap(n)` as a SEPARATE statement (not chained in the same expression),
-// avoids a NAME+ARITY dispatch collision with other co-compiled types' own
-// `cap` methods (reproduced standalone; see write_buffer.nv's comment for
-// the full writeup).
-//
 // [M-vec-spelling-consume-block-body-untyped] (vec-sweep, 2026-07-06,
 // RESOLVED by workaround): giving `StringBuilder.new()`/`@clone()` a
 // multi-statement BLOCK body (`{ mut _buf ...; ...; { buf: _buf } }`) broke
@@ -49,11 +41,7 @@ const INITIAL_CAPACITY = 16
 // a private helper returning plain `[]u8` (no consume concerns there) so the
 // constructor itself stays the single-expression `=> { buf: … }` bare-literal
 // arrow-body shape the consume-checker expects.
-fn sb_init_buf(cap int) -> []u8 {
-    mut b []u8 = []u8.new()
-    b.cap(cap)
-    b
-}
+fn sb_init_buf(cap int) -> []u8 => []u8.new().cap(cap)
 
 // Deep-copy helper for `@clone`: fresh exact-capacity buffer + one bulk
 // `append` (RawMem.copy). Free fn on `[]u8` (NOT a StringBuilder method) so
@@ -114,15 +102,9 @@ export fn StringBuilder @cap() -> int => @capacity()
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
 // own exact `mut @cap(n)` — no rounding). Replacement for the removed
 // `StringBuilder.with_capacity` static constructor: `StringBuilder.new().cap(n)`.
-// Same same-name dispatch-collision workaround as WriteBuffer's `mut @cap(n)`
-// (bind `@buf` to an explicitly `[]u8`-typed local first — `b`/`@buf` alias
-// the same heap-allocated buffer, so the mutation is visible through `@buf`).
 export fn StringBuilder mut @cap(n int) -> @
     requires n >= @len()
-{
-    mut b []u8 = @buf
-    b.cap(n)
-}
+{ @buf.cap(n) }
 
 // true если буфер пуст.
 export fn StringBuilder @is_empty() -> bool => @buf.is_empty()

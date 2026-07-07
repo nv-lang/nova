@@ -38,34 +38,12 @@ export type WriteBuffer {
 const INITIAL_CAPACITY = 16
 
 // Пустой WriteBuffer с pre-allocated capacity 16.
-//
-// [M-vec-spelling-array-value-position-cap-collision] (vec-sweep,
-// 2026-07-06, RESOLVED by workaround): chaining `.cap(n)` directly onto a
-// same-expression array constructor (`[]u8.new().cap(n)`) mis-dispatches by
-// NAME+ARITY to an unrelated co-compiled type's own 1-arg `cap` method
-// (reproduced standalone). Binding the constructor result to an explicitly
-// `[]u8`-typed local FIRST, then calling `.cap(n)` as a SEPARATE statement,
-// resolves correctly (the declared local type anchors dispatch). The local
-// is named `_wb_buf` (not `buf`) — using the generic name `buf` here
-// triggered a SEPARATE, likely var_types-scoping-related collision with
-// some other co-compiled function's own `buf`-named local of a different
-// type (observed: external callers of `WriteBuffer.new()` then saw `wb.len()`
-// mis-resolve as `str.len()` — [E_STR_NO_LEN]); renaming the local sidesteps
-// it too. Both are reported as compiler gaps (see report); this is a
-// workaround, not a fix.
-export fn WriteBuffer.new() -> Self {
-    mut _wb_buf []u8 = []u8.new()
-    _wb_buf.cap(INITIAL_CAPACITY)
-    mut _wb_self WriteBuffer = { buf: _wb_buf }
-    _wb_self
-}
+export fn WriteBuffer.new() -> Self => { buf: []u8.new().cap(INITIAL_CAPACITY) }
 
 // WriteBuffer из существующих байт (deep copy — append через memmove).
 // Param `b` is readonly by default (D176 amend, Plan 108.1).
 export fn WriteBuffer.from(b []u8) -> Self {
-    mut _wb_buf []u8 = []u8.new()
-    _wb_buf.cap(b.len())
-    mut wb WriteBuffer = { buf: _wb_buf }
+    mut wb WriteBuffer = { buf: []u8.new().cap(b.len()) }
     wb.buf.append(b)
     wb
 }
@@ -87,32 +65,13 @@ export fn WriteBuffer @cap() -> int => @capacity()
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
 // own exact `mut @cap(n)` — no rounding). Replacement for the removed
 // `WriteBuffer.with_capacity` static constructor: `WriteBuffer.new().cap(n)`.
-//
-// [M-vec-spelling-same-name-method-dispatch-collision] (vec-sweep,
-// 2026-07-06, RESOLVED by workaround): calling `@buf.cap(n)` DIRECTLY here
-// mis-dispatched to `WriteBuffer`'s OWN `cap` (this very method) instead of
-// the field's `[]u8`/`Vec[u8]` one — reproduced: generated C called
-// `Nova_WriteBuffer_method_cap(nova_self->buf, n)` (wrong arity/type) rather
-// than the array's. Root cause: once BOTH the enclosing type and a plain
-// (non-`use`-embedded) field's type define a same-name/arity method, the
-// codegen method registry appears to prefer the ENCLOSING type by a
-// last-registered-wins rule rather than the field's declared type. Binding
-// `@buf` to an explicitly `[]u8`-typed local FIRST anchors dispatch to the
-// array/Vec method correctly (same technique as the constructors above);
-// `b`/`@buf` still alias the SAME heap-allocated Vec buffer, so the
-// resulting `@realloc_to` mutation is visible through `@buf` afterwards.
 export fn WriteBuffer mut @cap(n int) -> @
     requires n >= @len()
-{
-    mut b []u8 = @buf
-    b.cap(n)
-}
+{ @buf.cap(n) }
 
 // Независимая копия (deep copy buffer). Read-only access — original не consume'ится.
 export fn WriteBuffer @clone() -> Self {
-    mut _wb_buf []u8 = []u8.new()
-    _wb_buf.cap(@buf.len())
-    mut copy WriteBuffer = { buf: _wb_buf }
+    mut copy WriteBuffer = { buf: []u8.new().cap(@buf.len()) }
     copy.buf.append(@buf)
     copy
 }

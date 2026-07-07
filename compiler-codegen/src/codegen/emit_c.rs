@@ -29843,7 +29843,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // heap `Nova_` strip. `generic_type_instance_info` is always
                     // keyed by the `Nova_`-prefixed mangled name (for both forms),
                     // so we re-prefix `Nova_<short>` for the lookup.
-                    let rt_trimmed = Self::debt_strip_value_prefix_or_nova_trim_start(&obj_ty);
+                    let mut rt_trimmed = Self::debt_strip_value_prefix_or_nova_trim_start(&obj_ty);
+                    // [M-vec-spelling-array-value-position-cap-collision] A legacy
+                    // `NovaArray_<elem>` receiver — the C-type `[]T.new()`/`.of()`/`.from()`
+                    // infers to when the element stays on the runtime-array path (primitive
+                    // elem, D38) — is LAYOUT-IDENTICAL to the `Vec[<elem>]` mono record but
+                    // carries NO `generic_type_instance_info` entry under its own spelling,
+                    // so this whole overload-resolving generic-instance dispatch is skipped
+                    // and a method call (e.g. `[]u8.new().cap(n)`) falls through to the
+                    // coarse name-keyed `method_receivers` last-wins fallback — mis-routing
+                    // to an unrelated co-compiled type's same-name/arity method (the
+                    // WriteBuffer/StringBuilder `@cap` collision). Remap to the Vec mono key
+                    // so dispatch resolves by RECEIVER TYPE. Conservative: only when the
+                    // Vec[<elem>] instance is ALREADY registered (the overwhelming common
+                    // case — any `[]elem` type annotation registers it) so NO new instance /
+                    // codegen is introduced for receivers that don't already have one.
+                    // `nova_recv_vec_cast` records the Vec pointer C-type so the receiver
+                    // rvalue (still a `NovaArray_<elem>*`) is cast at the call site.
+                    let mut nova_recv_vec_cast: Option<String> = None;
+                    if let Some(elem) = rt_trimmed.strip_prefix("NovaArray_").map(|s| s.to_string()) {
+                        let vec_mangled = format!("Nova_Vec____{}", elem);
+                        if self.generic_type_instance_info.borrow().contains_key(&vec_mangled) {
+                            nova_recv_vec_cast = Some(format!("{}*", vec_mangled));
+                            rt_trimmed = format!("Vec____{}", elem);
+                        }
+                    }
                     // generic_type_instance_info keys have "Nova_" prefix; rt_trimmed doesn't.
                     let instance_opt: Option<(String, Vec<crate::types::ResolvedType>)> =
                         self.generic_type_instance_info.borrow()
@@ -30204,6 +30228,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     &fn_decl, type_subst, &method_c_name, &rt_trimmed);
                                 if is_instance {
                                     let obj_c = self.emit_expr(obj)?;
+                                    // [M-vec-spelling-array-value-position-cap-collision]:
+                                    // cast a remapped legacy `NovaArray_<elem>*` receiver to
+                                    // the layout-identical `Nova_Vec____<elem>*` the mono
+                                    // method expects (D38 bridge — same struct layout).
+                                    let obj_c = match &nova_recv_vec_cast {
+                                        Some(cast) => format!("(({}){})", cast, obj_c),
+                                        None => obj_c,
+                                    };
                                     // Plan 153.2 Ф.1 (STAGE 1 — by-value generic
                                     // value-records): a `value` receiver
                                     // (`NovaValue_<short>`) uses the D226

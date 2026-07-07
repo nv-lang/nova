@@ -1,0 +1,47 @@
+// Method dispatch resolves by RECEIVER TYPE, never by a coarse method
+// name+arity last-wins fallback. Regression guard for
+// [M-vec-spelling-array-value-position-cap-collision]: a co-compiled type
+// with its OWN same-name/arity method (`Widget @cap()` / `mut @cap(n)`) used
+// to POISON the name-keyed `method_receivers` fallback, so a chained
+// `[]u8.new().cap(n)` array-constructor receiver (a legacy `NovaArray_<elem>`
+// C-type that carried no generic-instance registration) mis-dispatched to the
+// unrelated type's `cap` (`Nova_Widget_method_cap(arr, n)` — wrong receiver
+// type, wrong arity). The fix remaps a `NovaArray_<elem>` receiver to its
+// layout-identical `Vec[<elem>]` mono so the overload-resolving
+// generic-instance dispatch fires and picks the array's own `cap` setter.
+module spec_tests.conformance
+
+// A co-compiled type carrying its own `cap` getter AND `cap(n)` setter — the
+// name+arity twins that used to win the last-registered dispatch race.
+type CapWidget {
+    mut n int
+}
+fn CapWidget @cap() -> int => @n
+fn CapWidget mut @cap(v int) -> @ { @n = v }
+
+test "[]u8.new().cap(n) chained dispatches to the array's cap, not a same-name type" {
+    // `[]u8.new()` infers to the legacy `NovaArray_nova_byte` C-type; the
+    // chained `.cap(4)` must set the Vec/array capacity, not route to
+    // CapWidget's getter.
+    mut b []u8 = []u8.new().cap(4)
+    b.push(1)
+    b.push(2)
+    b.push(3)
+    assert(b.len() == 3)
+    assert(b.cap() >= 4)
+
+    // The same-name method on the other type still resolves to ITS own body.
+    mut w CapWidget = { n: 0 }
+    w.cap(99)
+    assert(w.cap() == 99)
+}
+
+test "untyped-local array constructor + cap setter dispatches by receiver type" {
+    // `mut c = []u8.new()` gives `c` the NovaArray spelling too; the later
+    // `.cap(n)` / `.push` / `.len` must all dispatch on that receiver type.
+    mut c = []u8.new()
+    c.cap(8)
+    c.push(7)
+    assert(c.len() == 1)
+    assert(c.cap() >= 8)
+}
