@@ -192,7 +192,7 @@ export type ServeMux value { priv routes []Route, priv not_found Option[Handler]
 
 /// Empty mux.
 #stable(since = "0.1")
-export fn ServeMux.new() -> ServeMux => { routes: []Route.new(), not_found: None }
+export fn ServeMux.new() -> ServeMux => { routes: Vec[Route].new(), not_found: None }
 
 /// Register `handler` for `method` + `pattern`.
 #stable(since = "0.1")
@@ -338,7 +338,10 @@ fn parse_query(q str) -> [](str, str) {
 fn percent_decode(s str) -> str {
     ro b = s.bytes()
     ro n = b.len
-    mut out = []u8.new().cap(n)
+    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
+    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
+    mut out []u8 = []u8.new()
+    out.cap(n)
     mut i = 0
     while i < n {
         ro c = b[i] as int

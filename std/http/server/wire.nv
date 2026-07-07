@@ -158,7 +158,10 @@ fn reason_of(status int) -> str {
 // ── byte helpers ────────────────────────────────────────────────────────────────
 
 fn slice(b []u8, start int, end int) -> []u8 {
-    mut out = []u8.new().cap(end - start)
+    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
+    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
+    mut out []u8 = []u8.new()
+    out.cap(end - start)
     mut i = start
     while i < end {
         out.push(b[i])

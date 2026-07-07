@@ -93,7 +93,7 @@ export type MockHttp value { priv routes []MockRoute }
 
 /// Empty mock (unmatched requests get a synthetic 404).
 #stable(since = "0.1")
-export fn mock_http() -> MockHttp => { routes: []MockRoute.new() }
+export fn mock_http() -> MockHttp => { routes: Vec[MockRoute].new() }
 
 /// Register a route. `method`/`path` = "*" matches any. Later routes append
 /// (first match wins). `path` compares against the request-target path (query

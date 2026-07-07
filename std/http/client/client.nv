@@ -80,13 +80,13 @@ export type HttpClientBuilder value {
 /// transparent gzip/deflate decompression on with a 64 MiB decoded cap).
 #stable(since = "0.1")
 export fn HttpClient.builder() -> HttpClientBuilder =>
-    { default_headers: []HeaderKV.new(), follow_redirects: true, max_redirects: 10,
+    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10,
       user_agent: "nova-http/0.1", auto_decompress: true, max_decompressed: DEFAULT_MAX_DECOMPRESSED }
 
 /// Client with production defaults.
 #stable(since = "0.1")
 export fn HttpClient.new() -> HttpClient =>
-    { default_headers: []HeaderKV.new(), follow_redirects: true, max_redirects: 10,
+    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10,
       user_agent: "nova-http/0.1", auto_decompress: true, max_decompressed: DEFAULT_MAX_DECOMPRESSED }
 
 // Internal self-accessors (field privacy is enforced at the call-site module,
@@ -178,7 +178,7 @@ fn new_rb(c HttpClient, m Method, url str) -> RequestBuilder {
     // типизированный локал + пустой литерал.
     ro q [](str, str) = []
     { client: c, method: m, url_input: url,
-      header_ops: []HeaderOp.new(), query: q,
+      header_ops: Vec[HeaderOp].new(), query: q,
       body_bytes: []u8.new(), has_body: false, content_type: None }
 }
 

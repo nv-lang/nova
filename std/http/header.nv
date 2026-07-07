@@ -93,8 +93,18 @@ type HeaderEntry value { ro name HeaderName, ro value HeaderValue }
 export type HeaderMap value { priv entries []HeaderEntry }
 
 /// Пустая карта.
+///
+// [M-record-elem-vec-bare-ctor-miscompile] (http-хвост, 2026-07-07): здесь и
+// во всех соседних http-файлах RECORD-элементные векторы НАМЕРЕННО оставлены
+// в Vec[T].new()-написании (исключение из []T-косметики D262): `[]Rec.new()`
+// мискомпилируется — push record-ЛИТЕРАЛА типизируется Vec-типом вместо
+// элементного (стэндалон-репро: CC-FAIL "no member named 'name' in struct
+// Nova_Vec____NovaValue_Rec"; в CU с named-литералом HeaderEntry — тихая
+// runtime-порча кучи/OOM при сериализации). Скалярные []u8/[]str.new() и
+// (str,str)-кортежи НЕ задеты. То же для [](Rec1, Rec2)-пустых литералов
+// (см. @iter ниже).
 #stable(since = "0.1")
-export fn HeaderMap.new() -> HeaderMap => { entries: []HeaderEntry.new() }
+export fn HeaderMap.new() -> HeaderMap => { entries: Vec[HeaderEntry].new() }
 
 /// ПЕРВОЕ значение (case-insensitive) или `None`.
 #stable(since = "0.1")
@@ -110,7 +120,7 @@ export fn HeaderMap @get(name str) -> Option[HeaderValue] {
 #stable(since = "0.1")
 export fn HeaderMap @get_all(name str) -> []HeaderValue {
     ro key = name.to_ascii_lower()
-    mut out = []HeaderValue.new()
+    mut out = Vec[HeaderValue].new()
     for e in @entries {
         if e.name.as_str() == key { out.push(e.value) }
     }
@@ -172,7 +182,14 @@ export fn HeaderMap @len() -> int => @entries.len()
 /// Пары `(HeaderName, HeaderValue)` в порядке вставки.
 #stable(since = "0.1")
 export fn HeaderMap @iter() -> [](HeaderName, HeaderValue) {
-    mut out [](HeaderName, HeaderValue) = []
+    // ОСТАВЛЕНО Vec[...]-написание (исключение из []T-косметики,
+    // [M-record-tuple-vec-empty-literal-miscompile]): `mut out
+    // [](HeaderName, HeaderValue) = []` для RECORD-элементных tuple-vec
+    // мискомпилируется (кодоген путает Vec-тип с элементным NovaTuple —
+    // стэндалон-репро даёт CC-FAIL "no member named 'lower' in struct
+    // Nova_Vec____...", в этом CU — runtime-порчу памяти/OOM при втором
+    // push). (str, str)-кортежи НЕ задеты. `[](T, U).new()` не парсится.
+    mut out = Vec[(HeaderName, HeaderValue)].new()
     for e in @entries {
         out.push((e.name, e.value))
     }
@@ -180,7 +197,7 @@ export fn HeaderMap @iter() -> [](HeaderName, HeaderValue) {
 }
 
 fn without_name(entries []HeaderEntry, key str) -> []HeaderEntry {
-    mut out = []HeaderEntry.new()
+    mut out = Vec[HeaderEntry].new()
     for e in entries {
         if e.name.as_str() != key { out.push(e) }
     }

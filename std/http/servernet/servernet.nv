@@ -90,7 +90,10 @@ fn content_length_of(b []u8, header_end int) -> int {
 }
 
 fn head_slice(b []u8, end int) -> []u8 {
-    mut out = []u8.new().cap(end)
+    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
+    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
+    mut out []u8 = []u8.new()
+    out.cap(end)
     mut i = 0
     while i < end {
         out.push(b[i])
