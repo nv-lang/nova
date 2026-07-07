@@ -341,7 +341,7 @@ export fn json_encode[T Serialize](v T) -> Result[str, SerError] {
 export fn json_encode_pretty[T Serialize](v T) -> Result[str, SerError] {
     mut s = JsonSerializer.new()
     v.serialize(s)?
-    if s.has_root { Ok(pretty(s.root)) } else { Ok(pretty(JsonValue.null())) }
+    if s.has_root { Ok(s.root.to_str_pretty()) } else { Ok(JsonValue.null().to_str_pretty()) }
 }
 
 /// JsonValue (уже распарсенный DOM) -> T.

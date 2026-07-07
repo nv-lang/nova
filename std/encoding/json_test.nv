@@ -186,7 +186,7 @@ test "pretty: формат с отступами" {
     mut m = HashMap[str, JsonValue].new()
     m.insert("name", JsonValue.Str("alice"))
     ro v = JsonValue.Object(m)
-    ro p = pretty(v)
+    ro p = v.to_str_pretty()
     // Проверяем что есть newlines (формат multi-line)
     assert(p.contains("\n"))
     // Round-trip через парсер всё ещё работает

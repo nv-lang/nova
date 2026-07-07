@@ -777,20 +777,21 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
 // Pretty-print с отступами
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Pretty-print с 2-space отступами для логов и debug.
+/// Pretty-print with 2-space indentation for logs and debugging.
 ///
-/// Отдельная явная функция — не часть `to_str()`. Compact-форма
-/// (`@to_str`) считается canonical для round-trip; pretty — для людей.
+/// A distinct method, not part of `to_str()`: the compact form (`@to_str`)
+/// is canonical for round-trips; pretty output is for humans (style rule 3:
+/// public surface is methods, not free functions).
 ///
 /// # Examples
 /// ```nova
 /// let mut m = HashMap[str, JsonValue].new()
 /// m.insert("name", Str("alice"))
-/// let s = pretty(Object(m))
+/// let s = Object(m).to_str_pretty()
 /// assert(s.contains("\n"))
 /// ```
 #stable(since = "0.1")
-export fn pretty(v JsonValue) -> str => pretty_at(v, 0)
+export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 
 fn pretty_at(v JsonValue, depth int) -> str => match v {
     Array(xs) if xs.len() == 0 => "[]"
