@@ -25,7 +25,7 @@ module path.glob
 /// ```
 #stable(since = "0.1")
 export fn Glob.matches(pattern str, path str) -> bool =>
-    match_at(to_chars(pattern), 0, to_chars(path), 0)
+    match_at(collect_chars(pattern), 0, collect_chars(path), 0)
 
 // Push-loop materialisation of `s.chars()` (not `.collect()` — crashes
 // codegen on CharsIter, Block 2 precedent). `match_at`/`match_class` recurse
@@ -34,7 +34,7 @@ export fn Glob.matches(pattern str, path str) -> bool =>
 // recursion replaces the ретрактированный `chars().nth(i)` O(n)-per-call scan
 // (D260-амендмент) with O(1) `Vec[char] @get(i)`, restoring the intended
 // linear-ish complexity instead of the O(n²) footgun.
-fn to_chars(s str) -> []char {
+fn collect_chars(s str) -> []char {
     mut out []char = []char.new()
     out.cap(s.byte_len())
     for c in s.chars() { out.push(c) }
@@ -136,54 +136,4 @@ fn match_class(pattern []char, start int, c char) -> (bool, int) {
     (false, pi)         // unclosed [
 }
 
-
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "literal match" {
-    assert(Glob.matches("hello.txt", "hello.txt"))
-    assert(!Glob.matches("hello.txt", "world.txt"))
-}
-
-test "* wildcard" {
-    assert(Glob.matches("*.nv", "hello.nv"))
-    assert(Glob.matches("*.nv", "complex.nv"))
-    assert(!Glob.matches("*.nv", "hello.txt"))
-    assert(!Glob.matches("*.nv", "src/hello.nv"))          // * не пересекает /
-}
-
-test "** recursive wildcard" {
-    assert(Glob.matches("**/*.nv", "src/main.nv"))
-    assert(Glob.matches("**/*.nv", "src/admin/audit.nv"))
-    assert(Glob.matches("**", "any/path/here.txt"))
-}
-
-test "? single char" {
-    assert(Glob.matches("?.nv", "a.nv"))
-    assert(!Glob.matches("?.nv", "ab.nv"))
-    assert(!Glob.matches("?.nv", ".nv"))
-}
-
-test "character class" {
-    assert(Glob.matches("[abc].nv", "a.nv"))
-    assert(Glob.matches("[abc].nv", "b.nv"))
-    assert(!Glob.matches("[abc].nv", "d.nv"))
-}
-
-test "character range" {
-    assert(Glob.matches("[a-z].nv", "x.nv"))
-    assert(!Glob.matches("[a-z].nv", "X.nv"))
-    assert(Glob.matches("[0-9].nv", "5.nv"))
-}
-
-test "negated class" {
-    assert(Glob.matches("[!abc].nv", "d.nv"))
-    assert(!Glob.matches("[!abc].nv", "a.nv"))
-}
-
-test "complex pattern" {
-    assert(Glob.matches("src/**/*.nv", "src/main.nv"))
-    assert(Glob.matches("src/**/*.nv", "src/admin/audit.nv"))
-    assert(!Glob.matches("src/**/*.nv", "tests/main.nv"))
-}
+// Тесты — см. peer-файл glob_test.nv (module path.glob_test).
