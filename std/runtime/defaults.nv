@@ -71,12 +71,12 @@ export fn char @is_ascii_whitespace() -> bool =>
 // ASCII case mapping (a-z↔A-Z); прочие символы — без изменений.
 export fn char @to_ascii_uppercase() -> char {
     if @is_ascii_lowercase() {
-        match char.try_from(@ as int - 32) { Ok(u) => u, Err(_) => @ }
+        match char.from(@ as int - 32) { Ok(u) => u, Err(_) => @ }
     } else { @ }
 }
 export fn char @to_ascii_lowercase() -> char {
     if @is_ascii_uppercase() {
-        match char.try_from(@ as int + 32) { Ok(l) => l, Err(_) => @ }
+        match char.from(@ as int + 32) { Ok(l) => l, Err(_) => @ }
     } else { @ }
 }
 

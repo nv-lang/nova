@@ -147,7 +147,7 @@ export type Iter[I] protocol {
 // [M-vec-access-e7320-as-bytes-str] (fix, 2026-07-07): the `#no_prelude`
 // helpers this facade re-exports below (string_builder.nv, write_buffer.nv)
 // call `str.@bytes()` (string_builder.nv), and str.@bytes()'s own
-// callers pull in `char.try_from()` (std/runtime/string/core.nv:42) —
+// callers pull in `char.from()` (std/runtime/string/core.nv:42) —
 // both assume a FULL `std.prelude` is already in the CU. A consumer that
 // opts into `#prelude(collections)` only (partial prelude, D174) never
 // brings in `std.runtime.string` / `std.runtime.char`, so those bodies hit
@@ -183,8 +183,8 @@ import std.runtime.char
 // [M-partial-prelude-primitive-method-registry] backlog entry.
 import std.runtime.defaults
 
-// Same root cause, one hop deeper: `char.try_from`/`u8.try_from` (just
-// imported above) return `Result[_, CharTryFromError]` /
+// Same root cause, one hop deeper: `char.from`/`u8.try_from` (just
+// imported above) return `Result[_, CharFromError]` /
 // `Result[_, TryFromCharError]`, and `ReadBuffer`'s `@read_*` methods
 // (re-exported below, std/runtime/read_buffer.nv) return
 // `Result[_, ReadBufferError]` / construct `UnexpectedEnd{...}` — none of
@@ -194,10 +194,10 @@ import std.runtime.defaults
 // file AND `std.prelude.errors` (unrelated re-export lines, never wired to
 // each other); under partial `#prelude(collections)` only the runtime file
 // rides along, so codegen forward-declares the error type but never emits
-// its body (`error: use of undeclared identifier 'CharTryFromError'` at
+// its body (`error: use of undeclared identifier 'CharFromError'` at
 // the zero-arg variant-constructor call site). Bring the error types this
 // facade's own re-exports depend on.
-import std.prelude.errors.{CharTryFromError, TryFromCharError, ReadBufferError, UnexpectedEnd}
+import std.prelude.errors.{CharFromError, TryFromCharError, ReadBufferError, UnexpectedEnd}
 
 // Plan 109 (D179): StringBuilder — Nova-defined consume type in std/runtime/string_builder.nv.
 export import std.runtime.string_builder.{StringBuilder}

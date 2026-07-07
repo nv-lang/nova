@@ -434,19 +434,21 @@ fn char_runtime() -> Vec<RuntimeFn> {
             doc: "Unchecked UTF-8 encode codepoint в 1-4 байта. Caller гарантирует cp ∈ [0, 0x10FFFF]. Invalid codepoint → empty str (silent — predictable degradation). Используется JSON unicode escape parser-ами + другими decoders.",
         nova_body: None,
     },
-        // D54/D77: char.try_from(cp int) -> Result[char, CharTryFromError]
+        // [M-f64-try-parse-to-parse-f64] (2026-07-07): renamed from `try_from`
+        // to `from` — the only static char conversion WITHOUT an infallible
+        // sibling (R3 violation); D54/D77.
         // Nova-implemented: range-check + unsafe { cp as char } (D54 amended).
         RuntimeFn {
             module: "std.runtime.char",
             receiver: Some("char"),
             is_static: true, is_mut: false, is_consume: false,
-            name: "try_from",
+            name: "from",
             params: &[("cp", "int")],
-            return_ty: "Result[char, CharTryFromError]",
+            return_ty: "Result[char, CharFromError]",
             effects: &[],
             c_name: "",
             doc: "D54/D77: int → char, validates unicode scalar value [0, 0x10FFFF] excluding surrogates.",
-            nova_body: Some("{\n    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {\n        Err(CharTryFromError)\n    } else {\n        Ok(unsafe { cp as char })\n    }\n}"),
+            nova_body: Some("{\n    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {\n        Err(CharFromError)\n    } else {\n        Ok(unsafe { cp as char })\n    }\n}"),
         },
         // D54/D77: u8.try_from(c char) -> Result[u8, TryFromCharError]
         // Nova-implemented: codepoint > 0xFF check + unsafe cast (Latin-1 subset safe).

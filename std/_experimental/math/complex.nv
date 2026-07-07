@@ -365,9 +365,9 @@ fn split_re_im(body str) -> Option[(str, str)] {
 }
 
 fn parse_f64_or_err(s str) -> Result[f64, ParseComplexError] {
-    match f64.try_parse(s) {
-        Some(x) => Ok(x)
-        None    => Err(NotANumber)
+    match f64.parse(s) {
+        Ok(x)  => Ok(x)
+        Err(_) => Err(NotANumber)
     }
 }
 

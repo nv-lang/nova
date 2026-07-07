@@ -51,3 +51,33 @@ export fn str @parse_int(radix int = 10) -> Result[int, ParseIntError] {
     }
     Ok(if neg { -acc } else { acc })
 }
+
+/// Error variants for `f64.parse`. Exported so callers can match on them.
+export type ParseFloatError enum Empty | Invalid
+
+// [M-f64-try-parse-to-parse-f64] (2026-07-07): parsing is a constructor-
+// conversion — the domain-appropriate home is the TARGET type (`f64`), not
+// `str` (owner: str shouldn't know about every numeric type). Static, единая
+// fallible-форма (D325/R3): `f64.try_parse(s) -> Option[f64]` (компиляторный
+// builtin, Option вместо Result, без infallible-сиблинга) РЕТРАКТИРОВАН —
+// заменён на `f64.parse(s) -> Result[f64, ParseFloatError]`. `?` пробрасывает,
+// `!!` throws, `.ok()` даёт Option при желании.
+//
+// Plain FFI, no compiler name-knowledge (§3): `nova_str_parse_f64` is a
+// regular `extern "C" fn` (D282), out-param convention (bool ok + `*out`
+// value) mirroring std/net2's `out_err *mut int` cold-path constructors —
+// see `nova_str_to_f64`'s thin wrapper in nova_rt/conv.h. The compiler knows
+// NOTHING about float parsing; it just lowers an ordinary FFI call.
+extern "C" fn nova_str_parse_f64(s str, out *mut f64) -> bool
+
+/// Strict parse — delegates to `nova_str_parse_f64` (conv.h, `strtod`-based;
+/// leading whitespace, `+`/`-`, decimal, exponent, `"nan"`/`"inf"` literals).
+/// Empty string → `Err(Empty)` (checked here so it's distinguishable from
+/// other malformed syntax, which `strtod` cannot tell apart on its own —
+/// reported as `Err(Invalid)`).
+#stable(since = "0.1")
+export fn f64.parse(s str) -> Result[f64, ParseFloatError] {
+    if s.is_empty() { return Err(Empty) }
+    mut v = 0.0
+    if unsafe { nova_str_parse_f64(s, &v) } { Ok(v) } else { Err(Invalid) }
+}

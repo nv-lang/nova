@@ -3,7 +3,7 @@
 // Background: json.nv использует `str.from_codepoint(code)` для Unicode
 // escape parsing (\uXXXX), но stdlib API gap — функция не была declared.
 // D54 запретил `int as char` (Plan 34 Ф.5.2) → workaround
-// `char.try_from(n)?` adds Fail effect indirection. Sometimes caller
+// `char.from(n)?` adds Fail effect indirection. Sometimes caller
 // already validated cp range (e.g. JSON parser checks hex digits ⊆ [0,
 // 0x10FFFF]) — нужен прямой "known-valid" path.
 //

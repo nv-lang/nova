@@ -4,17 +4,17 @@
 // prelude facade (std/prelude/collections.nv) unconditionally re-exports
 // `StringBuilder`/`WriteBuffer`/`ReadBuffer`, whose `#no_prelude` Nova-body
 // implementations (std/runtime/{string_builder,write_buffer,read_buffer}.nv)
-// call `str.@bytes()`, `char.try_from()`/`u8.try_from()` and construct
+// call `str.@bytes()`, `char.from()`/`u8.try_from()` and construct
 // `ReadBufferError`/`UnexpectedEnd` — all of which assumed a FULL
 // `std.prelude` was already merged into the CU. Under this partial-prelude
 // scope those symbols were never brought in, so the moment `collections`
 // pulled the buffer/builder types into the CU, codegen hit `[E7320] no
 // field or method as_bytes on type str` (checker level) and later
-// `use of undeclared identifier 'CharTryFromError'` (C-codegen level, one
-// hop deeper via char.try_from). Fixed by making the `collections` facade
+// `use of undeclared identifier 'CharFromError'` (C-codegen level, one
+// hop deeper via char.from). Fixed by making the `collections` facade
 // bring in its own re-exports' transitive deps explicitly
 // (`std.runtime.string`, `std.runtime.char`,
-// `std.prelude.errors.{CharTryFromError, TryFromCharError, ReadBufferError,
+// `std.prelude.errors.{CharFromError, TryFromCharError, ReadBufferError,
 // UnexpectedEnd}`).
 //
 // Own subdirectory (NOT the shared `spec_tests.conformance` folder-module
@@ -39,7 +39,7 @@
 // wider gap in the same family (any `#prelude(collections)`-only consumer
 // hits it too) — tracked by [M-partial-prelude-primitive-method-registry],
 // not fixed here; using the 4-name set keeps this regression test scoped to
-// the as_bytes/char.try_from defect this changeset actually fixes.
+// the as_bytes/char.from defect this changeset actually fixes.
 #prelude(core, runtime, collections, protocols)
 module partial_prelude.d371_partial_prelude_collections
 

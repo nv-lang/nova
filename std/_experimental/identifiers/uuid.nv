@@ -252,7 +252,7 @@ fn write_hex_u16(buf mut Buffer, v u16) {
     }
 }
 
-// Plan 34 Ф.5.2: `int as char` запрещён D54, используем char.try_from.
+// Plan 34 Ф.5.2: `int as char` запрещён D54, используем char.from.
 // n всегда в [0, 15], code всегда ASCII — Err не возможен.
 fn hex_digit(n u8) -> char {
     ro code = if n < 10 {
@@ -260,7 +260,7 @@ fn hex_digit(n u8) -> char {
     } else {
         'a' as int + n as int - 10
     }
-    match char.try_from(code) {
+    match char.from(code) {
         Ok(c)  => c
         Err(_) => '?'
     }
@@ -319,7 +319,7 @@ fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
     while i < to {
         match sb.get(i) {
             Some(b) => {
-                ro c = char.try_from(b as int).unwrap_or(' ')
+                ro c = char.from(b as int).unwrap_or(' ')
                 ro d = hex_value(c, i)
                 acc = acc * 16 + (d as u64)
             }

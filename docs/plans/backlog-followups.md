@@ -1729,22 +1729,60 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   vec, json_test — pass; широкая дельта против main-бинаря — 0 регрессий.
 
 
-- **[M-f64-try-parse-to-parse-f64]** (2026-07-07, P2, Wave: [sonnet/haiku]-заход сразу после
-  вливания A4 — трогает emit_c) — `f64.try_parse(s) -> Option[f64]` нарушает R1/R3/R4 (D325:
-  Option вместо Result; try_ без infallible-сиблинга) и §3 (компиляторный builtin, хардкод в
-  4 местах emit_c.rs :30970/:39801/:43421/:47128 поверх nova_str_to_f64). Целевая форма (уточнена
-  владельцем 2026-07-07: парсинг = конструктор-конверсия, дом — тип-ЦЕЛЬ, не str):
-  `fn f64.parse(s str) -> Result[f64, ParseFloatError]` (статик, поверх extern
-  nova_str_to_f64); builtin снести; вызовов 2 (json.nv:483, _experimental complex.nv:368).
-  При 174.1 генерализуется type-set'ом: `fn[T FloatSet] T.parse(s) -> Result[...]`
-  (+SignedInt/UnsignedInt с radix); туда же РЕВИЗИЯ `str @parse_int` → `int.parse(s, radix)`
-  (str-версия ретрактируется — строка не должна знать о каждом числовом типе).
-  Спека: примеры type-set блока `T.try_parse(...)` → `T.parse(...)` (до-R3 текст),
-  амендмент в 02-types.md:13912-зоне.
-  ТУДА ЖЕ: `char.try_from(cp int) -> Result[char, CharTryFromError]` (runtime/char.nv:21) —
-  единственный статик char без infallible-сиблинга (R3-нарушение) → `char.from(cp int) ->
-  Result[char, CharFromError]` (+ренейм типа ошибки); вызовов ~6-8 (string/core ×2, hex ×2,
-  bcrypt ×2 + греп).
+- **[M-f64-try-parse-to-parse-f64]** ✅ **FIXED** (2026-07-07) — `f64.try_parse(s) ->
+  Option[f64]` нарушал R1/R3/R4 (D325: Option вместо Result; try_ без infallible-сиблинга) и
+  §3 (компиляторный builtin, хардкод в emit_c.rs поверх `nova_str_to_f64`). Снесено: f64-арм
+  вырезан из ВСЕХ мест `try_parse`-таблицы (Path-form value-emission + 2 дубликата
+  return-type-inference + `infer_static_method_ret` exclusion-list) — `f64.try_parse(...)`
+  теперь честный `[E_UNKNOWN_STATIC_METHOD]` (fall-through guard [M-154.1], verified). `f32`
+  НЕ тронут (вне скоупа фикса — try_parse для f32 остался).
+  Замена: `f64.parse(s str) -> Result[f64, ParseFloatError]`
+  (`std/runtime/string/parse.nv`) — **ЦЕЛИКОМ Nova-body, БЕЗ компиляторного знания** (§3-
+  коррекция владельца 2026-07-07 после первого захода с приватным `__parse_f64_opt`
+  builtin-триггером — тот подход был "хардкод хардкодом", отклонён и снесён обратно).
+  Финальная форма: тонкий out-param C-шим `nova_str_parse_f64(nova_str s, double* out) ->
+  nova_bool` в `nova_rt/conv.h` (оборачивает существующий `nova_str_to_f64`, D407/net2-стиль
+  bool+out-указатель, прецедент `out_err *mut int` в net2/tcp.nv) + ОБЫЧНАЯ `extern "C" fn
+  nova_str_parse_f64(s str, out *mut f64) -> bool` FFI-декларация (D282) в parse.nv + чистое
+  Nova-тело (`mut v = 0.0; if unsafe { nova_str_parse_f64(s, &v) } { Ok(v) } else {
+  Err(Invalid) }`, auto-address `&v` на mut-локал). Компилятор резолвит вызов ОБЫЧНЫМ FFI-путём
+  — ни одного нового имени parse-семейства в чекере/кодогене. Вызовов мигрировано 2:
+  json.nv:483 (`match f64.try_parse(text) { Some.. None.. }` → `match f64.parse(text) { Ok..
+  Err(_).. }`), _experimental complex.nv:368 (аналогично `parse_f64_or_err`).
+  Спека: 02-types.md примеры type-set блока `T.try_parse(...)` → `T.parse(...)` (13912/6456/
+  строка "Reuse через семейства") + однострочный R3-амендмент с датой (первое лицо).
+  Финальный грep-аудит (§3-подтверждение): `try_parse|parse_f64|__parse` в emit_c.rs —
+  ТОЛЬКО остатки живой (не тронутой) `try_parse`-ветки для int/u64/u32/u16/u8/i32/i16/i8/f32/
+  bool/char (вне скоупа) + имя C-хелпера `nova_parse_f64_result`/`nova_str_to_f64` (conv.h,
+  существовал ДО фикса, используется try_from/try_parse-f32-веткой); НИ ОДНОГО упоминания
+  `__parse_f64_opt` или иного parse-family имени, специфичного для НОВОГО `f64.parse`, не
+  осталось нигде в компиляторе — resolution идёт целиком через обычный
+  declared-function/FFI путь.
+  ТУДА ЖЕ: `char.try_from(cp int) -> Result[char, CharTryFromError]` (единственный статик char
+  без infallible-сиблинга, R3-нарушение) → `char.from(cp int) -> Result[char, CharFromError]`
+  (+ренейм типа ошибки). Source of truth — `compiler-codegen/src/codegen/runtime_registry.rs`
+  (std/runtime/char.nv авто-генерируется оттуда, `nova regen-runtime`); ренейм ТАМ принят
+  как есть (существующий registry — не новый компиляторный хардкод per correction п.3).
+  Call-sites мигрировано ~25 (полный греп, шире оценки ~6-8): std/runtime/{string/core.nv×2,
+  defaults.nv×2, read_buffer.nv}, std/_experimental/{crypto/bcrypt.nv×2, encoding/hex.nv×2,
+  encoding/url.nv×3, identifiers/ulid.nv×2, identifiers/uuid.nv×2}, std/encoding/{json.nv×2,
+  base64.nv×3, utf16.nv}, std/http/url.nv, std/unicode/cp_utils.nv, std/testing/property.nv,
+  std/prelude/{errors.nv (декларация), collections.nv (import+комменты)} + комменты в
+  nova_tests/{runtime/from_into_basic.nv (4 INT-arg теста переименованы), syntax/as_cast_*,
+  plan91_13/from_codepoint_test.nv} + spec_tests/conformance/partial_prelude/
+  d371_partial_prelude_collections.nv (комменты). НЕ тронуты (другой, str-аргумент,
+  compiler-hardcoded `T.try_from(str)`-путь, отдельный от char.from(int)): from_into_basic.nv
+  str-тесты (109/116/122), str/conversions_err.nv (все — str-arg builtin, скоуп не этот).
+  Гейты: сборка nova-cli+compiler-codegen (nova-lsp тоже, unaffected) OK; conformance 54/0
+  (delta 0); std/encoding/json_test 24/24; std/encoding/serde/json PASS; std/_experimental/
+  math/complex CC-FAIL — **pre-existing** (NovaTuple_Complex/Nova_Complex_method_equal mono
+  gap, НЕ про parse_f64_or_err — сгенерированный C для мигрированной функции корректен,
+  подтверждено грепом `nova_fn_...parse_f64_or_err`/`nova_str_parse_f64` в .c); std/runtime/
+  read_buffer standalone CODEGEN-FAIL / nova_tests/runtime folder-CU CODEGEN-FAIL (str.len()
+  retired, gc_introspect.nv/memory_growth.nv, датировано 2026-06-17) — **pre-existing,
+  изоляция вне обычного CU-контекста** (в реальном потребителе — nova_tests/buffers/
+  read_char_str — PASS); nova_tests/plan91_fe2/neg/parse_int_overflow_err RUN-FAIL —
+  **pre-existing** (parse_int body byte-identical, не тронут этим заходом).
 
 - **[M-serde-slice-generic-method-parse]** ✅ **FIXED** (2026-07-07, parser/mod.rs) —
   корень: `parse_fn`'s slice-receiver arm (`[]T`, D38) parses the element type via the
