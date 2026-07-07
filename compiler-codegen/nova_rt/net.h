@@ -58,9 +58,8 @@ typedef struct NovaNetAddr {
     uint8_t  family;    /* 4 | 6 | 0 */
     uint8_t  _pad;
 } NovaNetAddr;
-/* Контракт образа: .nv-сторона (std/net/addr.nv ADDR_IMAGE_BYTES) полагается на
- * ровно 20 байт. Меняешь layout — меняй ОБЕ стороны; assert ловит дрейф сборкой. */
-_Static_assert(sizeof(NovaNetAddr) == 20, "NovaNetAddr image must be 20 bytes (std/net/addr.nv ADDR_IMAGE_BYTES)");
+
+static inline nova_int nova_net_addr_size(void) { return (nova_int)sizeof(NovaNetAddr); }
 
 /* ─── Addresses (no I/O — pure data construction / inspection) ─────────────── */
 

@@ -43,6 +43,8 @@ extern "C" fn nova_net_addr_ip(addr *(), buf *mut u8, cap int) -> int
 extern "C" fn nova_net_addr_to_str(addr *(), buf *mut u8, cap int) -> int
 // Error text for a UV code into the caller's buffer; returns length written.
 extern "C" fn nova_net_strerror(code int, buf *mut u8, cap int) -> int
+// NovaNetAddr byte-size from C side (image size query).
+extern "C" fn nova_net_addr_size() -> int
 
 // ─── TCP ──────────────────────────────────────────────────────────────────────
 // Constructors return the handle or null (UV code → *out_err); parking ops
