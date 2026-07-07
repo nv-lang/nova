@@ -96,7 +96,8 @@ export fn Diff.format(ops []DiffOp) -> str {
         }
         buf.append('\n')
     }
-    buf.into()
+    ro result = buf.into_str()
+    result
 }
 
 
