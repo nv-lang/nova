@@ -27008,50 +27008,114 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // int/i64 / others — nova_int slot.
                             _                => "nova_int",
                         };
-                        match method.as_str() {
-                            "new" => {
-                                // []T.new() → nova_array_new_<T>(default_cap=8)
-                                return Ok(format!("nova_array_new_{}(8)", arr_suffix));
+                        // [M-record-elem-vec-bare-ctor-miscompile] fix (record-elem):
+                        // a RECORD / SUM / named-tuple element needs the REAL
+                        // `Nova_Vec____<elem>` mono. The legacy `nova_array_new_<suffix>`
+                        // lowering erases such an element to a `nova_int` pointer-slot
+                        // `NovaArray` (arr_suffix falls through to "nova_int"), which
+                        // (a) mis-types the binding against the checker's
+                        // `Nova_Vec____<elem>` (`NovaOpt_nova_int` vs
+                        // `NovaOpt_NovaValue_Rec` at `.get()` — loud CC-FAIL) and
+                        // (b) with a named literal in the SAME CU silently truncates the
+                        // value-record slot (heap corruption / OOM). Scalars stay on the
+                        // legacy path (`NovaArray_<prim>` is layout- AND slot-compatible
+                        // with `Nova_Vec____<prim>`); only composite elements route
+                        // through the shared Vec[T] static machinery below.
+                        let elem_needs_vec_mono = {
+                            let elem_tr = crate::ast::TypeRef::Named {
+                                path: vec![elem_t.clone()],
+                                generics: Vec::new(),
+                                span: obj.span,
+                            };
+                            match self.type_ref_to_c(&elem_tr) {
+                                Ok(c) => !Self::is_primitive_array_elem_c(
+                                    c.trim_end_matches('*').trim()),
+                                Err(_) => false, // unresolved type-param → erased legacy
                             }
-                            "with_capacity" => {
-                                if let Some(arg) = args.first() {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    return Ok(format!("nova_array_new_{}({})", arr_suffix, v));
+                        };
+                        let legacy_static =
+                            matches!(method.as_str(), "new" | "with_capacity")
+                            && !elem_needs_vec_mono;
+                        if legacy_static {
+                            match method.as_str() {
+                                "new" => {
+                                    // []T.new() → nova_array_new_<T>(default_cap=8)
+                                    return Ok(format!("nova_array_new_{}(8)", arr_suffix));
                                 }
+                                "with_capacity" => {
+                                    if let Some(arg) = args.first() {
+                                        let v = self.emit_expr(arg.expr())?;
+                                        return Ok(format!("nova_array_new_{}({})", arr_suffix, v));
+                                    }
+                                }
+                                _ => unreachable!(),
                             }
-                            _ => {
-                                // [M-vec-spelling-static-dispatch-gap] partial close
-                                // (vec-sweep, 2026-07-07): `[]T.of(...)` / `[]T.from(...)`
-                                // / any OTHER Vec static spelled on the `[]T` alias used
-                                // to FALL THROUGH to the generic method_receivers path,
-                                // where the `Path(["__array", T])` receiver read as bare
-                                // `T` → strict-mode `[E_UNKNOWN_TYPE_METHOD] T.of(...)`
-                                // (and in folder-module CUs the error was misattributed
-                                // to a NEIGHBOURING file — see d102/d259 case). Rewrite
-                                // the receiver to the equivalent `Vec[T].method(...)`
-                                // TurboFish form and re-enter emit_call, so the ENTIRE
-                                // existing Vec static machinery (variadic `of` arg
-                                // packing, mono registration, `from`, …) applies
-                                // unchanged. `new`/`with_capacity` above keep their
-                                // legacy erased lowering byte-identically (their output
-                                // is unchanged by this arm).
-                                let elem_tr = crate::ast::TypeRef::Named {
-                                    path: vec![elem_t.clone()],
-                                    generics: Vec::new(),
-                                    span: obj.span,
-                                };
-                                let turbofish = Expr {
-                                    kind: ExprKind::TurboFish {
-                                        base: Box::new(Expr {
-                                            kind: ExprKind::Ident("Vec".to_string()),
-                                            span: obj.span,
+                        }
+                        {
+                            // [M-vec-spelling-static-dispatch-gap] partial close
+                            // (vec-sweep, 2026-07-07): `[]T.of(...)` / `[]T.from(...)`
+                            // / any OTHER Vec static spelled on the `[]T` alias used
+                            // to FALL THROUGH to the generic method_receivers path,
+                            // where the `Path(["__array", T])` receiver read as bare
+                            // `T` → strict-mode `[E_UNKNOWN_TYPE_METHOD] T.of(...)`
+                            // (and in folder-module CUs the error was misattributed
+                            // to a NEIGHBOURING file — see d102/d259 case). Also the
+                            // record-elem `new`/`with_capacity` fix above: rewrite the
+                            // receiver to the equivalent `Vec[T].method(...)` TurboFish
+                            // form and re-enter emit_call, so the ENTIRE existing Vec
+                            // static machinery (correct `Nova_Vec____<elem>` mono,
+                            // variadic `of` arg packing, mono registration, `from`, …)
+                            // applies. `with_capacity(n)` has no Vec static equivalent
+                            // → lower to `Vec[T].new().cap(n)`.
+                            let elem_tr = crate::ast::TypeRef::Named {
+                                path: vec![elem_t.clone()],
+                                generics: Vec::new(),
+                                span: obj.span,
+                            };
+                            let turbofish = Expr {
+                                kind: ExprKind::TurboFish {
+                                    base: Box::new(Expr {
+                                        kind: ExprKind::Ident("Vec".to_string()),
+                                        span: obj.span,
+                                        id: crate::ast::ExprId::UNSET,
+                                    }),
+                                    type_args: vec![elem_tr],
+                                },
+                                span: obj.span,
+                                id: crate::ast::ExprId::UNSET,
+                            };
+                            // Fresh call — its own variadic routing must be
+                            // allowed (`of` packs its args into a collected []T).
+                            let saved = std::mem::replace(
+                                &mut self.suppress_variadic_routing, false);
+                            let result = if method == "with_capacity" {
+                                // Vec[T].new().cap(n) — no Vec `with_capacity` static.
+                                let new_call = Expr {
+                                    kind: ExprKind::Call {
+                                        func: Box::new(Expr {
+                                            kind: ExprKind::Member {
+                                                obj: Box::new(turbofish),
+                                                name: "new".to_string(),
+                                            },
+                                            span: func.span,
                                             id: crate::ast::ExprId::UNSET,
                                         }),
-                                        type_args: vec![elem_tr],
+                                        args: Vec::new(),
+                                        trailing: None,
                                     },
-                                    span: obj.span,
+                                    span: func.span,
                                     id: crate::ast::ExprId::UNSET,
                                 };
+                                let cap_func = Expr {
+                                    kind: ExprKind::Member {
+                                        obj: Box::new(new_call),
+                                        name: "cap".to_string(),
+                                    },
+                                    span: func.span,
+                                    id: crate::ast::ExprId::UNSET,
+                                };
+                                self.emit_call(&cap_func, args, call_id)
+                            } else {
                                 let new_func = Expr {
                                     kind: ExprKind::Member {
                                         obj: Box::new(turbofish),
@@ -27060,14 +27124,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     span: func.span,
                                     id: crate::ast::ExprId::UNSET,
                                 };
-                                // Fresh call — its own variadic routing must be
-                                // allowed (`of` packs its args into a collected []T).
-                                let saved = std::mem::replace(
-                                    &mut self.suppress_variadic_routing, false);
-                                let result = self.emit_call(&new_func, args, call_id);
-                                self.suppress_variadic_routing = saved;
-                                return result;
-                            }
+                                self.emit_call(&new_func, args, call_id)
+                            };
+                            self.suppress_variadic_routing = saved;
+                            return result;
                         }
                     }
                 }
@@ -29879,7 +29939,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         }
                                         arg_strs.push(v);
                                     } else {
-                                        arg_strs.push(self.emit_expr(a.expr())?);
+                                        // [M-record-elem-vec-bare-ctor-miscompile]
+                                        // (anon-form): an ANONYMOUS record literal
+                                        // `{ a, b }` in method-argument position (e.g.
+                                        // `vec_of_Rec.push({ a, b })`) needs its target
+                                        // struct as `expected_record_type` (D55) —
+                                        // otherwise emit_record_lit errors "anonymous
+                                        // record literal without spread not supported".
+                                        // The param's concrete C type is known here
+                                        // (current_type_subst is active for this mono),
+                                        // so derive the struct name from it (NOT guessed)
+                                        // and set it while emitting the arg. Narrowed to
+                                        // anon RecordLits whose param resolves to a KNOWN
+                                        // record → byte-identical for every other arg
+                                        // (saved/restored).
+                                        let saved_er = self.expected_record_type.clone();
+                                        if matches!(&a.expr().kind,
+                                            ExprKind::RecordLit { type_name: None, .. })
+                                        {
+                                            if let Ok(pc) = self.type_ref_to_c(&param_decl.ty) {
+                                                if let Some(sn) =
+                                                    Self::struct_name_from_c_type(&pc)
+                                                {
+                                                    if self.record_schemas.contains_key(&sn) {
+                                                        self.expected_record_type = Some(sn);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        let v = self.emit_expr(a.expr())?;
+                                        self.expected_record_type = saved_er;
+                                        arg_strs.push(v);
                                     }
                                 }
                                 for a in args.iter().skip(fn_decl.params.len()) {
@@ -42241,26 +42331,86 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let ExprKind::Path(parts) = &obj.kind {
                             if parts.len() == 2 && parts[0] == "__array" {
                                 if method == "new" || method == "with_capacity" {
-                                let arr_suffix = match parts[1].as_str() {
-                                    "str"            => "nova_str",
-                                    "u8"    => "nova_byte",
-                                    "bool"           => "nova_bool",
-                                    "f64"            => "nova_f64",
-                                    // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
-                                    "f32"            => "nova_f32",
-                                    // Plan 70.4 Ф.2: sized-int distinct.
-                                    "char"           => "nova_char",
-                                    "i32"            => "int32_t",
-                                    "i16"            => "int16_t",
-                                    "i8"             => "int8_t",
-                                    "u32"            => "uint32_t",
-                                    "u16"            => "uint16_t",
-                                    "u64"            => "uint64_t",
-                                    // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
-                                    "uint"           => "uint64_t",
-                                    _                => "nova_int",
+                                // [M-record-elem-vec-bare-ctor-miscompile] R3 mirror:
+                                // a RECORD / SUM / named-tuple element needs the real
+                                // `Nova_Vec____<elem>` mono type — the erased
+                                // `NovaArray_nova_int` (arr_suffix fallthrough) mis-types
+                                // the binding against the emit side (now routed through
+                                // Vec) → `NovaOpt_nova_int` vs `NovaOpt_NovaValue_Rec`
+                                // CC-FAIL / silent record truncation. Scalars keep the
+                                // legacy `NovaArray_<prim>*` (layout- and slot-compatible
+                                // with `Nova_Vec____<prim>`); composite elements infer via
+                                // the equivalent `Vec[T].new()` (both new/with_capacity
+                                // yield `Vec[T]`).
+                                let elem_needs_vec_mono = {
+                                    let elem_tr = crate::ast::TypeRef::Named {
+                                        path: vec![parts[1].clone()],
+                                        generics: Vec::new(),
+                                        span: obj.span,
+                                    };
+                                    match self.type_ref_to_c(&elem_tr) {
+                                        Ok(c) => !Self::is_primitive_array_elem_c(
+                                            c.trim_end_matches('*').trim()),
+                                        Err(_) => false,
+                                    }
                                 };
-                                return format!("NovaArray_{}*", arr_suffix);
+                                if !elem_needs_vec_mono {
+                                    let arr_suffix = match parts[1].as_str() {
+                                        "str"            => "nova_str",
+                                        "u8"    => "nova_byte",
+                                        "bool"           => "nova_bool",
+                                        "f64"            => "nova_f64",
+                                        // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
+                                        "f32"            => "nova_f32",
+                                        // Plan 70.4 Ф.2: sized-int distinct.
+                                        "char"           => "nova_char",
+                                        "i32"            => "int32_t",
+                                        "i16"            => "int16_t",
+                                        "i8"             => "int8_t",
+                                        "u32"            => "uint32_t",
+                                        "u16"            => "uint16_t",
+                                        "u64"            => "uint64_t",
+                                        // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
+                                        "uint"           => "uint64_t",
+                                        _                => "nova_int",
+                                    };
+                                    return format!("NovaArray_{}*", arr_suffix);
+                                }
+                                let synth_new = Expr {
+                                    kind: ExprKind::Call {
+                                        func: Box::new(Expr {
+                                            kind: ExprKind::Member {
+                                                obj: Box::new(Expr {
+                                                    kind: ExprKind::TurboFish {
+                                                        base: Box::new(Expr {
+                                                            kind: ExprKind::Ident(
+                                                                "Vec".to_string()),
+                                                            span: obj.span,
+                                                            id: crate::ast::ExprId::UNSET,
+                                                        }),
+                                                        type_args: vec![
+                                                            crate::ast::TypeRef::Named {
+                                                                path: vec![parts[1].clone()],
+                                                                generics: Vec::new(),
+                                                                span: obj.span,
+                                                            },
+                                                        ],
+                                                    },
+                                                    span: obj.span,
+                                                    id: crate::ast::ExprId::UNSET,
+                                                }),
+                                                name: "new".to_string(),
+                                            },
+                                            span: func.span,
+                                            id: crate::ast::ExprId::UNSET,
+                                        }),
+                                        args: Vec::new(),
+                                        trailing: None,
+                                    },
+                                    span: func.span,
+                                    id: crate::ast::ExprId::UNSET,
+                                };
+                                return self.infer_expr_c_type(&synth_new);
                                 }
                                 // [M-vec-spelling-static-dispatch-gap] partial close
                                 // (vec-sweep, 2026-07-07), R3 mirror of the emit_call
@@ -45888,26 +46038,86 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let ExprKind::Path(parts) = &obj.kind {
                             if parts.len() == 2 && parts[0] == "__array" {
                                 if method == "new" || method == "with_capacity" {
-                                let arr_suffix = match parts[1].as_str() {
-                                    "str"            => "nova_str",
-                                    "u8"    => "nova_byte",
-                                    "bool"           => "nova_bool",
-                                    "f64"            => "nova_f64",
-                                    // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
-                                    "f32"            => "nova_f32",
-                                    // Plan 70.4 Ф.2: sized-int distinct.
-                                    "char"           => "nova_char",
-                                    "i32"            => "int32_t",
-                                    "i16"            => "int16_t",
-                                    "i8"             => "int8_t",
-                                    "u32"            => "uint32_t",
-                                    "u16"            => "uint16_t",
-                                    "u64"            => "uint64_t",
-                                    // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
-                                    "uint"           => "uint64_t",
-                                    _                => "nova_int",
+                                // [M-record-elem-vec-bare-ctor-miscompile] R3 mirror:
+                                // a RECORD / SUM / named-tuple element needs the real
+                                // `Nova_Vec____<elem>` mono type — the erased
+                                // `NovaArray_nova_int` (arr_suffix fallthrough) mis-types
+                                // the binding against the emit side (now routed through
+                                // Vec) → `NovaOpt_nova_int` vs `NovaOpt_NovaValue_Rec`
+                                // CC-FAIL / silent record truncation. Scalars keep the
+                                // legacy `NovaArray_<prim>*` (layout- and slot-compatible
+                                // with `Nova_Vec____<prim>`); composite elements infer via
+                                // the equivalent `Vec[T].new()` (both new/with_capacity
+                                // yield `Vec[T]`).
+                                let elem_needs_vec_mono = {
+                                    let elem_tr = crate::ast::TypeRef::Named {
+                                        path: vec![parts[1].clone()],
+                                        generics: Vec::new(),
+                                        span: obj.span,
+                                    };
+                                    match self.type_ref_to_c(&elem_tr) {
+                                        Ok(c) => !Self::is_primitive_array_elem_c(
+                                            c.trim_end_matches('*').trim()),
+                                        Err(_) => false,
+                                    }
                                 };
-                                return format!("NovaArray_{}*", arr_suffix);
+                                if !elem_needs_vec_mono {
+                                    let arr_suffix = match parts[1].as_str() {
+                                        "str"            => "nova_str",
+                                        "u8"    => "nova_byte",
+                                        "bool"           => "nova_bool",
+                                        "f64"            => "nova_f64",
+                                        // Plan 70.4: f32 distinct (NovaArray_nova_f32*).
+                                        "f32"            => "nova_f32",
+                                        // Plan 70.4 Ф.2: sized-int distinct.
+                                        "char"           => "nova_char",
+                                        "i32"            => "int32_t",
+                                        "i16"            => "int16_t",
+                                        "i8"             => "int8_t",
+                                        "u32"            => "uint32_t",
+                                        "u16"            => "uint16_t",
+                                        "u64"            => "uint64_t",
+                                        // uint → uint64_t (runtime-backed NovaArray). [M-uint-legacy-array-uint64-until-a4]
+                                        "uint"           => "uint64_t",
+                                        _                => "nova_int",
+                                    };
+                                    return format!("NovaArray_{}*", arr_suffix);
+                                }
+                                let synth_new = Expr {
+                                    kind: ExprKind::Call {
+                                        func: Box::new(Expr {
+                                            kind: ExprKind::Member {
+                                                obj: Box::new(Expr {
+                                                    kind: ExprKind::TurboFish {
+                                                        base: Box::new(Expr {
+                                                            kind: ExprKind::Ident(
+                                                                "Vec".to_string()),
+                                                            span: obj.span,
+                                                            id: crate::ast::ExprId::UNSET,
+                                                        }),
+                                                        type_args: vec![
+                                                            crate::ast::TypeRef::Named {
+                                                                path: vec![parts[1].clone()],
+                                                                generics: Vec::new(),
+                                                                span: obj.span,
+                                                            },
+                                                        ],
+                                                    },
+                                                    span: obj.span,
+                                                    id: crate::ast::ExprId::UNSET,
+                                                }),
+                                                name: "new".to_string(),
+                                            },
+                                            span: func.span,
+                                            id: crate::ast::ExprId::UNSET,
+                                        }),
+                                        args: Vec::new(),
+                                        trailing: None,
+                                    },
+                                    span: func.span,
+                                    id: crate::ast::ExprId::UNSET,
+                                };
+                                return self.infer_expr_c_type(&synth_new);
                                 }
                                 // [M-vec-spelling-static-dispatch-gap] partial close
                                 // (vec-sweep, 2026-07-07), R3 mirror of the emit_call

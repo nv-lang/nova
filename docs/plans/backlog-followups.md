@@ -1694,4 +1694,27 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   копирующие строители вне списка первой волны: ServeMux.@handle/@get/@post/@put/@delete/
   @patch/@not_found, RequestBuilder, MockResponse — привести к mut-свойствам по D117 AMEND-2
   (Body.@with_limit и HttpError.@with_url легальны: consume-линейный и полная замена).
+- **[M-record-elem-vec-bare-ctor-miscompile]** (2026-07-07, **P1 ТИХАЯ ПОРЧА КУЧИ**, Wave:
+  D410/http-хвост) — ✅ **FIXED 2026-07-07 (ветка record-elem-fix).** `mut out = []Rec.new();
+  out.push({поля})` с RECORD-элементом мискомпилировался. **Корень:** D38 `[]T.new()` /
+  `[]T.with_capacity()` мост (emit_c.rs `ExprKind::Member`-арм) для RECORD/SUM/named-tuple
+  элемента отдавал `nova_array_new_nova_int` — `arr_suffix` проваливался в `_ => "nova_int"`
+  (эрейз в int-слот `NovaArray`), тогда как чекер и type-side (`resolved_array_to_c`) типизировали
+  биндинг как `Nova_Vec____NovaValue_Rec*`. Скаляры не задеты: `NovaArray_<prim>` layout- и
+  slot-совместим с `Nova_Vec____<prim>`; record-слот (`NovaValue_Rec`) — нет → `NovaOpt_nova_int`
+  vs `NovaOpt_NovaValue_Rec` на `.get()` (громкий CC-FAIL) ИЛИ тихая truncation value-record'а в
+  том же CU (named-литерал). **Фикс (§4а, не обход):** и emit-side, и ОБА R3-зеркала
+  (`infer_expr_c_type` &self/&mut) для КОМПОЗИТНОГО элемента (`!is_primitive_array_elem_c`)
+  маршрутизируют `[]T.new()`/`.with_capacity(n)` через ту же Vec-машинерию, что `of`/`from`
+  (turbofish `Vec[T].new()` / `.new().cap(n)`), давая правильный `Nova_Vec____<elem>` mono;
+  скаляры/эрейз-typevar byte-identical на legacy-пути. Родственный **[M-record-tuple-vec-empty-
+  literal-miscompile]** (`mut out [](Rec,Rec) = []`) закрыт тем же корнем. Попутно — анон-форма
+  `push({поля})` (пре-существующий gap [M-181]-класса, воспроизводился и на голом
+  `Vec[Rec].new()`): generic instance-method dispatch ставит `expected_record_type` из
+  резолвнутого param-C-типа вокруг emit анон-record-аргумента (D55; узко — только анон-RecordLit
+  с param в `record_schemas`). **Обход снят:** 12 record-vec + 1 record-tuple места в std/http
+  (header/client/mock/cookie/mime/response_ext/server) возвращены на `[]T.new()` / `[](A,B)=[]`,
+  комментарии-якоря удалены. **Гейты:** conformance --positive --compile-error PASS + 4 новых
+  D38-юнита (named/anon/cap/record-tuple, проверка ПОСЛЕ 2-го push); std/http server/client/neg,
+  vec, json_test — pass; широкая дельта против main-бинаря — 0 регрессий.
 
