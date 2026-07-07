@@ -6660,18 +6660,15 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
-        // Plan 172.5 (D326 R10): snapshot + install this fn's `mut ref` params
-        // for the closure/spawn escape-capture ban. Restored below.
+        // Plan 184 (заход-5, п.7): `mut ref`-параметров больше нет (ref сняты с
+        // сигнатур заходом-1), поэтому набор пуст. Оставляем snapshot/clear для
+        // сохранения формы (mut_ref_param_names ещё читается capture-баном ниже
+        // — теперь всегда пустой; переиспользование под ref-локалы — follow-up).
         let mut_ref_snap_fn: std::collections::HashSet<String> =
             self.mut_ref_param_names.borrow().clone();
         {
             let mut s = self.mut_ref_param_names.borrow_mut();
             s.clear();
-            for p in &fd.params {
-                if p.ref_mode == ParamRefMode::MutRef {
-                    s.insert(p.name.clone());
-                }
-            }
         }
         match &fd.body {
             FnBody::Expr(e) => {
@@ -15881,64 +15878,13 @@ impl<'a> BoundCtx<'a> {
                     other_value_places.push((place, arg_expr.span));
                 }
             }
-            let is_ref_marked = matches!(arg_expr.kind, ExprKind::RefArg(_));
-            match param.ref_mode {
-                ParamRefMode::MutRef => {
-                    if !is_ref_marked {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_REF_MARKER_REQUIRED] параметр `{}` объявлен `mut ref` \
-                                 (in-out borrow, D326 R4) — аргумент обязан быть помечен \
-                                 `ref`, чтобы мутация caller-значения была видна в коде: \
-                                 передай `ref <place>`, где place — адресуемая переменная/\
-                                 поле. Для одиночной мутации канон — метод `mut @` (D326).",
-                                param.name
-                            ),
-                            arg_expr.span,
-                        ));
-                        continue;
-                    }
-                    let ExprKind::RefArg(inner) = &arg_expr.kind else { continue; };
-                    // Addressability (R4). Mutability of the place (E_REF_ARG_NOT_MUT)
-                    // is enforced separately in the main checker's expr-walk
-                    // (`check_ref_marker_mutability`), where the `ro`-binding set
-                    // lives — a `RefArg` node unambiguously flags a mutated place.
-                    if !self.check_ref_place_addressable(inner, errors) {
-                        continue;
-                    }
-                    if let Some(place) = RefPlace::of(inner) {
-                        mut_ref_places.push((place, inner.span));
-                    }
-                }
-                ParamRefMode::RoRef => {
-                    if is_ref_marked {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_REF_MARKER_NOT_ALLOWED] параметр `{}` объявлен `ro ref` \
-                                 (read-only borrow, D326 R4) — call-site маркер `ref` не \
-                                 ставится (он сигнализирует ВОЗМОЖНУЮ мутацию, только для \
-                                 `mut ref`). Передай аргумент без `ref`.",
-                                param.name
-                            ),
-                            arg_expr.span,
-                        ));
-                    }
-                }
-                ParamRefMode::None => {
-                    if is_ref_marked {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_REF_MARKER_NOT_ALLOWED] параметр `{}` передаётся by-value \
-                                 — маркер `ref` допустим только для `mut ref`-параметра \
-                                 (D326 R4). Убери `ref`, либо объяви параметр `mut ref {} T` \
-                                 если нужна in-place мутация caller-значения.",
-                                param.name, param.name
-                            ),
-                            arg_expr.span,
-                        ));
-                    }
-                }
-            }
+            // Plan 184 (заход-5, п.7): мёртвый код `match param.ref_mode`
+            // (RoRef/MutRef-арм + E_REF_MARKER_* + call-site `ref`-маркер)
+            // удалён — парсер снял формы `ro ref`/`mut ref` в параметре
+            // (заход-1) и call-site маркер `f(ref x)` (E_REF_CALL_MARKER_REMOVED),
+            // поэтому `param.ref_mode` всегда `None`, а `RefArg` в CHECKER-AST не
+            // производится (RefArg — только codegen-транспорт синтезированного
+            // in-out, заход-4). Ось mut in-out ведёт value-путь Р10 выше.
         }
         // R9 exclusivity: pairwise prefix-overlap over the mut-ref places.
         for i in 0..mut_ref_places.len() {

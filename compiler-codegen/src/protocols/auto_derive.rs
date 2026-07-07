@@ -688,7 +688,6 @@ fn make_param(name: &str, ty: TypeRef) -> Param {
         consume: false,
         is_mut: false,
         is_const: false,
-        ref_mode: crate::ast::ParamRefMode::None,
     }
 }
 
@@ -1930,7 +1929,6 @@ fn make_serde_method(
             consume: false,
             is_mut: true,
             is_const: false,
-            ref_mode: crate::ast::ParamRefMode::None,
         }],
         effects: vec![],
         return_type: Some(return_type),

@@ -13879,12 +13879,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // placement is the size-driven auto mechanism of Plan 172.4 (R3),
             // NOT duplicated; explicit `ro ref` is a semantic annotation that
             // otherwise passes like a normal value parameter.
-            // Plan 184 Р10: a value/primitive `mut x T` param is ALSO lowered to
-            // `T*` (by-pointer in-out). The legacy `mut ref` form is retained for
-            // byte-compat during migration (parser no longer produces it).
-            if p.ref_mode == crate::ast::ParamRefMode::MutRef
-                || Self::param_is_inout_ptr(p, &ty_c)
-            {
+            // Plan 184 Р10: a value/primitive `mut x T` param is lowered to
+            // `T*` (by-pointer in-out). (Legacy `mut ref` form removed —
+            // заход-5 п.7: `ParamRefMode` больше нет.)
+            if Self::param_is_inout_ptr(p, &ty_c) {
                 ty_c.push('*');
             }
             parts.push(format!("{} {}", ty_c, p.name));
@@ -19287,9 +19285,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // fn body (restored at exit) so a nested/sibling fn is unaffected.
         let saved_ref_params_fn = std::mem::take(&mut self.ref_params);
         for p in &f.params {
-            if p.ref_mode == crate::ast::ParamRefMode::MutRef {
-                self.ref_params.insert(p.name.clone());
-            } else if p.is_mut && !p.consume {
+            if p.is_mut && !p.consume {
                 // Plan 184 Р10: a value/primitive `mut x T` param is by-pointer
                 // in-out; its body reads/writes auto-deref (`name` → `(*name)`).
                 // Compute the param C type exactly as `params_c` does.

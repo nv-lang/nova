@@ -1329,7 +1329,6 @@ mod tests {
             consume: false,
             is_mut: false,
             is_const: false,
-            ref_mode: crate::ast::ParamRefMode::None,
         }
     }
 

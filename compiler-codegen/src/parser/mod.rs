@@ -3538,7 +3538,6 @@ impl Parser {
         // `f(x T)` (ro, представление по размеру), `f(mut x T)` (in-out всегда),
         // `f(consume x T)` (владение). `ref` остаётся только как тип приёмника
         // (`@` = `ref Self`), `-> @` и локал-алиасы (Р1).
-        let ref_mode = crate::ast::ParamRefMode::None;
         if matches!(self.peek().kind, TokenKind::KwRef) {
             let ref_span = self.peek().span;
             let hint = if is_mut {
@@ -3632,7 +3631,6 @@ impl Parser {
             consume: is_consume,
             is_mut,
             is_const: is_const_param,
-            ref_mode,
         })
     }
 

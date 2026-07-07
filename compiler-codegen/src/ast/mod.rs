@@ -743,28 +743,11 @@ pub struct Param {
     /// `const` И return должен быть `const`. Конфликтует с `mut`/
     /// `consume` (E_CONST_PARAM_MOD_CONFLICT).
     pub is_const: bool,
-    /// Plan 172.5 (D326): `ref` passing-mode (`ro ref`/`mut ref`). НЕ тип —
-    /// режим передачи параметра (Swift `inout` / C# `in`+`ref`, без
-    /// лайфтаймов). `MutRef` — единственная явная user-facing форма
-    /// (callee мутирует caller-сторадж in-place; call-site помечает `ref x`);
-    /// `RoRef` — read-only borrow (обычно авто, Plan 172.4). `None` — обычная
-    /// by-value передача. `MutRef` подразумевает `is_mut=true` (mut-доступ в
-    /// теле callee); взаимоисключающ с `consume`/`const` (parser enforce'ит).
-    pub ref_mode: ParamRefMode,
-}
-
-/// Plan 172.5 (D326 R2): режим передачи параметра `ref` — borrow-mode, НЕ тип.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParamRefMode {
-    /// Обычная by-value передача (нет `ref`).
-    None,
-    /// `ro ref name T` — read-only borrow (zero-copy чтение). Обычно
-    /// авто/невидимо (Plan 172.4); явная форма разрешена.
-    RoRef,
-    /// `mut ref name T` — mutable in-out borrow. Единственная явная
-    /// user-facing форма. Callee пишет в caller-сторадж; видно после
-    /// синхронного вызова. Call-site обязан пометить `ref <place>`.
-    MutRef,
+    // Plan 184 (заход-5, п.7): поле `ref_mode: ParamRefMode` и сам enum удалены.
+    // D326-ревизия (Plan 184) отменила «ref — режим передачи»: `ref` теперь
+    // ОГРАНИЧЕННЫЙ ТИП (`TypeRef::Ref`), а in-out `mut x T` ведётся value-путём
+    // Р10 (`param_is_inout_ptr`/`param_ty_is_inout_value`), не отдельным полем
+    // режима. Формы `ro ref`/`mut ref` в параметре сняты заходом-1.
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.
