@@ -1746,12 +1746,57 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Result[char, CharFromError]` (+ренейм типа ошибки); вызовов ~6-8 (string/core ×2, hex ×2,
   bcrypt ×2 + греп).
 
-- **[M-serde-slice-generic-method-parse]** (2026-07-07, P2, Wave: §4а-очередь после A4) —
-  парсер падает на serde.nv:311 (`expected ], got identifier` в 311:37): обобщённый метод с
-  generic-параметром на []T-ресивере (`[]T.deserialize[D ...]`-форма) не парсится → ВЕСЬ
-  folder-CU std/encoding/serde CODEGEN-FAIL (блокирует serde-тесты, serdejson, http_typed).
-  Pre-existing (найден волной D410, подтверждён после to_str_pretty-правки). Минимальную
-  репродукцию снять при заходе.
+- **[M-serde-slice-generic-method-parse]** ✅ **FIXED** (2026-07-07, parser/mod.rs) —
+  корень: `parse_fn`'s slice-receiver arm (`[]T`, D38) parses the element type via the
+  general `parse_type()`, whose `Ident` arm greedily continues a DOTTED qualified-path
+  (`T.deserialize`) and then reads the trailing `[...]` as generic type-ARGS (no bounds) —
+  so `fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> ...`
+  (serde.nv:311, static D42 receiver) folded `T.deserialize` into one path, then choked
+  parsing the method's OWN generic-decl `[D Deserializer]` as instantiation-args, failing
+  at 311:37 (`expected ], got identifier` on the bound name). The instance form
+  (`[]T @serialize[S ...]`, serde.nv:303) never hit this — `@` doesn't continue a dotted
+  path, only `.` does. Fix: new single-consumption context flag `receiver_elem_ctx`
+  (mirrors the existing `pointee_ctx` pattern) set by `parse_fn` right before parsing the
+  slice-receiver element type; `parse_type`'s `Ident` arm skips its dotted-path
+  continuation loop when the flag is set, and the Array/FixedArray arms re-arm it before
+  their own recursive `parse_type()` call so it survives arbitrary slice depth
+  (`[][]T.method`). Verified: minimal 1-line repro (`fn[T Deserialize] []T.deserialize[D
+  Deserializer](mut d D) -> Result[[]T, int] { Ok([]) }`) now parses (progresses to a
+  semantic E_BOUND_UNKNOWN on the fabricated bound, not a syntax error); real
+  `std/encoding/serde/serde.nv` (folder-CU) now compiles and its `json` sub-test runs
+  (PASS 1/1); `nova_tests/serde` and `nova_tests/serde_e2e` and
+  `nova_tests/http_typed/typed_json_test` now compile+run (previously CODEGEN-FAIL,
+  whole-CU blocked) but surface a NEW downstream runtime gap — see
+  `[M-slice-static-deserialize-garbage-len]` below. Gates: conformance 54/0 (delta 0 vs
+  pre-fix), `std/encoding/json_test` 24/24 (unaffected, unrelated module).
+
+- **[M-slice-static-deserialize-garbage-len]** (planned, P2, home **codegen/checker —
+  static generic method dispatch on slice receiver**) — NEWLY SURFACED
+  (2026-07-07) by `[M-serde-slice-generic-method-parse]`: this exact static-receiver form
+  (`[]T.deserialize[D ...]` / call-site `Vec[T].deserialize(...)`) never compiled before,
+  so it was never runtime-exercised. Repro: `nova_tests/serde_e2e/roundtrip.nv` —
+  `User.deserialize` (line 46) calls `ro tags = Vec[str].deserialize(s3)?` (line 54) for
+  field `tags []str`; the returned `Vec` is corrupt — `tags.len()` immediately after the
+  call (before any record construction) prints a garbage huge int (observed
+  `2453244099680`, non-deterministic across runs) instead of `2`; JSON encode of the SAME
+  value is correct (`"tags":["x","y"]` — so `@serialize`/instance-form round-trips fine,
+  only the STATIC `.deserialize` form on a slice receiver is broken). Same symptom in
+  `nova_tests/serde/autoderive.nv` (`#impl(Deserialize)` auto-derive of a `tags []str`
+  field — `autoderive.nv:32,46`) and `nova_tests/http_typed/typed_json_test.nv` (3 asserts
+  on `w.tags.len()`). Separately (may be same root or a sibling gap): a DIRECT top-level
+  `json_encode[[]str](v)` / `json_decode[[]str](s)` call (bypassing any hand-written
+  record wrapper) fails EARLIER, at bound-check: `[E_?] type Vec does not satisfy
+  Serialize bound (in call to json_encode[T Serialize])` — the checker's generic-bound
+  satisfaction for `[]T`/`Vec[T]`-aliased receivers doesn't find the `[]T @serialize`
+  method (same dispatch-gap class as `[M-153.6-vec-hashmap-key-eq]`). Suspect for the
+  garbage-len bug: call-site spelling `Vec[str].deserialize(...)` vs decl spelling
+  `[]str.deserialize(...)` (D38 alias, `[]T` ≡ `Vec[T]`) diverging in receiver-name-based
+  mangling/lookup for the STATIC dispatch path specifically (instance `@serialize` isn't
+  affected — it dispatches on the runtime/structural receiver value, not on call-site
+  spelling text). NOT fixed here — out of parser scope (checker/codegen, explicit
+  boundary per Fix-1 instructions). Repro kept in `nova_tests/serde_e2e/roundtrip.nv` +
+  `nova_tests/serde/autoderive.nv` + `nova_tests/http_typed/typed_json_test.nv` (all 3
+  already RUN-FAIL in-tree; no new fixture needed).
 
 - **[M-d411-record-binding-destructuring]** (2026-07-07, P2, Wave: [sonnet]-заход после
   §4а-пачки) — реализация D411: record-паттерн в биндингах ro/mut (десугар до чекера в
