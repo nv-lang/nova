@@ -36,11 +36,30 @@ fn wrap_int(rc int, op str) -> Result[int, IoError] {
     if rc < 0 { Err(IoError.from_os(0 - rc, op)) } else { Ok(rc) }
 }
 
-// Build a Metadata from the ambient Fs stat cache (valid immediately after a
-// successful stat/lstat/fstat).
-fn read_meta() Fs -> Metadata =>
-    Metadata.of(Fs.stat_kind(), Fs.stat_size(), Fs.stat_mode(),
-                Fs.stat_mtime_ns(), Fs.stat_atime_ns(), Fs.stat_ctime_ns())
+// ─── stat image (value-record, mirrors std/net's ADDR_IMAGE_BYTES/addr_image)
+// [M-fs-tls-mn-race]: the C layer never caches a stat result in TLS — it fills
+// a caller-owned image the Nova side allocates, and the accessors below read
+// straight off that pointer (pure `fn`, no I/O — same rule that keeps
+// SocketAddr's `@port()`/... off the `Net` effect).
+
+// Byte size of the C `NovaFsStat` POD image the stat/lstat/fstat ops fill.
+ro STAT_IMAGE_BYTES int = fs_stat_image_bytes()
+
+// A fresh, zeroed NovaFsStat image buffer.
+fn stat_image() -> []u8 => []u8.new().resize(STAT_IMAGE_BYTES, 0 as u8)
+
+fn img_size(img []u8) -> int => unsafe { fs_stat_size(img.ptr()) }
+fn img_mode(img []u8) -> int => unsafe { fs_stat_mode(img.ptr()) }
+fn img_kind(img []u8) -> int => unsafe { fs_stat_kind(img.ptr()) }
+fn img_mtime_ns(img []u8) -> i64 => unsafe { fs_stat_mtime_ns(img.ptr()) }
+fn img_atime_ns(img []u8) -> i64 => unsafe { fs_stat_atime_ns(img.ptr()) }
+fn img_ctime_ns(img []u8) -> i64 => unsafe { fs_stat_ctime_ns(img.ptr()) }
+
+// Build a Metadata from a filled stat image (valid immediately after a
+// successful stat/lstat/fstat into `img`).
+fn read_meta(img []u8) -> Metadata =>
+    Metadata.of(img_kind(img), img_size(img), img_mode(img),
+                img_mtime_ns(img), img_atime_ns(img), img_ctime_ns(img))
 
 // ─── c_path: validate + NUL-terminate a path for the FFI (§3c(1)) ──
 //
@@ -137,8 +156,9 @@ export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
     // offset=-1 "current position" mode).
     mut start = 0
     if @ap {
-        ro rc = Fs.fstat(fd)
-        if rc >= 0 { start = Fs.stat_size() }
+        mut img = stat_image()
+        ro rc = Fs.fstat(fd, img)
+        if rc >= 0 { start = img_size(img) }
     }
     Ok(File._of(fd, readable, writable, start))
 }
@@ -212,9 +232,10 @@ export fn File mut @seek(pos SeekFrom) Fs -> Result[int, IoError] {
         SeekFrom.Start(n)   => n
         SeekFrom.Current(n) => @pos + n
         SeekFrom.End(n)     => {
-            ro rc = Fs.fstat(@fd)
+            mut img = stat_image()
+            ro rc = Fs.fstat(@fd, img)
             if rc < 0 { return Err(IoError.from_os(0 - rc, "seek")) }
-            Fs.stat_size() + n
+            img_size(img) + n
         }
     }
     if newpos < 0 { Err(IoError.of(ErrorKind.InvalidInput, "seek")) }
@@ -243,8 +264,9 @@ export fn File @sync_data() Fs -> Result[(), IoError] => wrap_unit(Fs.sync_data(
 /// Metadata for the open file (`fstat`).
 #stable(since = "0.1")
 export fn File @metadata() Fs -> Result[Metadata, IoError] {
-    ro rc = Fs.fstat(@fd)
-    if rc < 0 { Err(IoError.from_os(0 - rc, "fstat")) } else { Ok(read_meta()) }
+    mut img = stat_image()
+    ro rc = Fs.fstat(@fd, img)
+    if rc < 0 { Err(IoError.from_os(0 - rc, "fstat")) } else { Ok(read_meta(img)) }
 }
 
 /// Discharge (D133): close the fd and consume the handle — the **only** explicit
@@ -287,19 +309,13 @@ export fn real_fs() -> Effect[Fs] {
         seek(fd int, offset i64, whence int) => fs_seek(fd, offset, whence)
         sync_all(fd int) => fs_fsync(fd)
         sync_data(fd int) => fs_fdatasync(fd)
-        stat(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { fs_stat(cp.ptr()) }, Err(_) => 0 - 22 }
+        stat(path []u8, img mut []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_stat_into(cp.ptr(), img.ptr()) }, Err(_) => 0 - 22 }
         }
-        lstat(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { fs_lstat(cp.ptr()) }, Err(_) => 0 - 22 }
+        lstat(path []u8, img mut []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_lstat_into(cp.ptr(), img.ptr()) }, Err(_) => 0 - 22 }
         }
-        fstat(fd int) => fs_fstat(fd)
-        stat_size() => fs_stat_size()
-        stat_mode() => fs_stat_mode()
-        stat_kind() => fs_stat_kind()
-        stat_mtime_ns() => fs_stat_mtime_ns()
-        stat_atime_ns() => fs_stat_atime_ns()
-        stat_ctime_ns() => fs_stat_ctime_ns()
+        fstat(fd int, img mut []u8) => unsafe { fs_fstat_into(fd, img.ptr()) }
         mkdir(path []u8, mode int) {
             match c_path(path) { Ok(cp) => unsafe { fs_mkdir(cp.ptr(), mode) }, Err(_) => 0 - 22 }
         }
@@ -333,16 +349,23 @@ export fn real_fs() -> Effect[Fs] {
         fsync_dir(path []u8) {
             match c_path(path) { Ok(cp) => unsafe { fs_fsync_dir(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        scandir(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { fs_scandir(cp.ptr()) }, Err(_) => 0 - 22 }
+        scandir_open(path []u8) {
+            match c_path(path) { Ok(cp) => unsafe { fs_scandir_open(cp.ptr()) }, Err(_) => 0 - 22 }
         }
-        scandir_next() => fs_scandir_next()
-        scandir_name() => fs_scandir_name()
-        scandir_kind() => fs_scandir_kind()
+        scandir_next(h int) => fs_scandir_next(h)
+        scandir_name(h int) => fs_scandir_name(h)
+        scandir_kind(h int) => fs_scandir_kind(h)
+        scandir_close(h int) => fs_scandir_close(h)
         realpath(path []u8) {
-            match c_path(path) { Ok(cp) => unsafe { fs_realpath(cp.ptr()) }, Err(_) => 0 - 22 }
+            match c_path(path) {
+                Ok(cp) => {
+                    mut err = 0
+                    ro s = unsafe { fs_realpath_into(cp.ptr(), &err) }
+                    (err, s)
+                }
+                Err(_) => (0 - 22, "")
+            }
         }
-        realpath_data() => fs_realpath_data()
     }
 }
 
@@ -425,15 +448,17 @@ export fn write_text(path Path, s str) Fs -> Result[(), IoError] => write(path, 
 /// Metadata for `path`, following symlinks (`stat`).
 #stable(since = "0.1")
 export fn metadata(path Path) Fs -> Result[Metadata, IoError] {
-    ro rc = Fs.stat(path.as_os_bytes())
-    if rc < 0 { Err(IoError.from_os(0 - rc, "stat")) } else { Ok(read_meta()) }
+    mut img = stat_image()
+    ro rc = Fs.stat(path.as_os_bytes(), img)
+    if rc < 0 { Err(IoError.from_os(0 - rc, "stat")) } else { Ok(read_meta(img)) }
 }
 
 /// Metadata for `path` WITHOUT following symlinks (`lstat`).
 #stable(since = "0.1")
 export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
-    ro rc = Fs.lstat(path.as_os_bytes())
-    if rc < 0 { Err(IoError.from_os(0 - rc, "lstat")) } else { Ok(read_meta()) }
+    mut img = stat_image()
+    ro rc = Fs.lstat(path.as_os_bytes(), img)
+    if rc < 0 { Err(IoError.from_os(0 - rc, "lstat")) } else { Ok(read_meta(img)) }
 }
 
 /// Whether `path` exists — `Ok(true)`/`Ok(false)`, or `Err` for a non-`NotFound`
@@ -442,7 +467,8 @@ export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
 /// quantifier keywords, so this cannot be named `exists`.)
 #stable(since = "0.1")
 export fn try_exists(path Path) Fs -> Result[bool, IoError] {
-    ro rc = Fs.stat(path.as_os_bytes())
+    mut img = stat_image()
+    ro rc = Fs.stat(path.as_os_bytes(), img)
     if rc >= 0 { return Ok(true) }
     ro e = IoError.from_os(0 - rc, "stat")
     match e.kind { ErrorKind.NotFound => Ok(false), _ => Err(e) }
@@ -520,25 +546,36 @@ export fn copy_file(src Path, dst Path) Fs -> Result[int, IoError] =>
     wrap_int(Fs.copy_file(src.as_os_bytes(), dst.as_os_bytes()), "copy")
 
 /// List the entries of a directory (`.`/`..` excluded).
+///
+/// [M-fs-tls-mn-race]: `scandir` is handle-based (no ambient/TLS iterator
+/// state) — `h` is this call's own stream, released via `scandir_close`
+/// UNCONDITIONALLY after the loop (idempotent: a no-op if the loop already
+/// drained the stream to EOF). There is no public streaming iterator over
+/// `scandir` — `read_dir` always fully drains it, so there is no early-break
+/// path that could leak the handle.
 #stable(since = "0.1")
 export fn read_dir(path Path) Fs -> Result[[]DirEntry, IoError] {
-    ro rc = Fs.scandir(path.as_os_bytes())
-    if rc < 0 { return Err(IoError.from_os(0 - rc, "read_dir")) }
+    ro h = Fs.scandir_open(path.as_os_bytes())
+    if h < 0 { return Err(IoError.from_os(0 - h, "read_dir")) }
     mut out []DirEntry = []
     loop {
-        ro more = Fs.scandir_next()
+        ro more = Fs.scandir_next(h)
         if more == 0 { break }
-        out.push(DirEntry.of(Fs.scandir_name().bytes(), Fs.scandir_kind()))
+        out.push(DirEntry.of(Fs.scandir_name(h).bytes(), Fs.scandir_kind(h)))
     }
+    Fs.scandir_close(h)
     Ok(out)
 }
 
 /// Canonicalise `path` to an absolute, symlink-resolved path (`realpath`).
+///
+/// [M-fs-tls-mn-race]: the canonical path is returned directly from this ONE
+/// call (no TLS, no follow-up accessor call to race against).
 #stable(since = "0.1")
 export fn canonicalize(path Path) Fs -> Result[Path, IoError] {
-    ro rc = Fs.realpath(path.as_os_bytes())
+    ro (rc, data) = Fs.realpath(path.as_os_bytes())
     if rc < 0 { Err(IoError.from_os(0 - rc, "realpath")) }
-    else { Ok(Path.from_bytes(Fs.realpath_data().bytes())) }
+    else { Ok(Path.from_bytes(data.bytes())) }
 }
 
 /// Create a symbolic link at `link` pointing to `target`.

@@ -1,4 +1,5 @@
-/* Plan 176 Ф.2 (D323): nova_rt/fs.c — async filesystem stdlib via libuv uv_fs_*.
+/* Plan 176 Ф.2 (D323); M:N-safety redesign [M-fs-tls-mn-race] (2026-07-08):
+ * nova_rt/fs.c — async filesystem stdlib via libuv uv_fs_*.
  *
  * Park/wake pattern (identical to net.c / Plan 22):
  *   1. Allocate a request on the GC heap (kept alive by the parked fiber's
@@ -10,9 +11,12 @@
  *   4. Resume: unregister, read req.result, uv_fs_req_cleanup.
  *
  * Errors: UV_E* is translated to a stable POSIX errno (so the Nova-side
- * kind_from_errno is platform-independent) and returned NEGATED. Stat / scandir
- * / realpath results are cached in thread-local slots (cooperative-safe — the
- * Nova handler reads them before any other blocking op).
+ * kind_from_errno is platform-independent) and returned NEGATED.
+ *
+ * NO __thread/__declspec(thread) result slots (net.c Д2 fix, applied here —
+ * see fs.h for the full rationale): stat lands in a caller-owned image buffer,
+ * realpath returns its GC string directly from the resolving call, and scandir
+ * is handle-based. Invariant: grep -n "thread)" fs.c == 0.
  */
 
 #ifndef NOVA_USE_LIBUV
@@ -63,6 +67,12 @@ typedef struct {
     NovaFiberQueue* scope;
     int             slot;
     uv_fs_t         req;
+    /* scandir-handle-only fields (unused by every other op): the entry the
+     * last fs_scandir_next() call landed on, and whether the underlying
+     * uv_fs_t has already been uv_fs_req_cleanup'd (idempotent close: set on
+     * natural EOF too, so a later fs_scandir_close() is a safe no-op). */
+    uv_dirent_t     cur_ent;
+    int             scandir_done;
 } _NovaFsReq;
 
 static void _fs_cb(uv_fs_t* req) {
@@ -208,13 +218,22 @@ nova_int fs_fdatasync(nova_int fd) {
     return _fs_ret(r);
 }
 
-/* ─── stat / lstat / fstat + TLS cache ─────────────────────────────── */
+/* ─── stat / lstat / fstat → caller-owned image (no TLS) ───────────────
+ *
+ * NovaFsStat is the C POD the []u8 image wraps (Nova side: STAT_IMAGE_BYTES =
+ * fs_stat_image_bytes(), exactly the net_addr_size()/NovaNetAddr pattern).
+ * Field order/packing is private to this file — the Nova side never bakes
+ * offsets, only calls the pointer-taking accessors below. */
+typedef struct {
+    int64_t size;
+    int64_t mtime_ns;
+    int64_t atime_ns;
+    int64_t ctime_ns;
+    int32_t mode;
+    int32_t kind;
+} NovaFsStat;
 
-#if defined(_MSC_VER)
-  static __declspec(thread) uv_stat_t _fs_stat_tls;
-#else
-  static __thread uv_stat_t _fs_stat_tls;
-#endif
+nova_int fs_stat_image_bytes(void) { return (nova_int)sizeof(NovaFsStat); }
 
 static int _kind_from_mode(uint64_t m) {
     unsigned t = (unsigned)(m & (uint64_t)S_IFMT);
@@ -226,45 +245,60 @@ static int _kind_from_mode(uint64_t m) {
     return 0;                               /* KIND_OTHER */
 }
 
-nova_int fs_stat(const uint8_t* path) {
+static void _fill_stat_image(uint8_t* img, const uv_stat_t* st) {
+    NovaFsStat* s = (NovaFsStat*)img;
+    s->size = (int64_t)st->st_size;
+    s->mtime_ns = (int64_t)st->st_mtim.tv_sec * 1000000000LL + (int64_t)st->st_mtim.tv_nsec;
+    s->atime_ns = (int64_t)st->st_atim.tv_sec * 1000000000LL + (int64_t)st->st_atim.tv_nsec;
+    /* Prefer birth time (creation); fall back to 0 → Nova @created() == None. */
+    s->ctime_ns = (int64_t)st->st_birthtim.tv_sec * 1000000000LL + (int64_t)st->st_birthtim.tv_nsec;
+    s->mode = (int32_t)st->st_mode;
+    s->kind = (int32_t)_kind_from_mode(st->st_mode);
+}
+
+nova_int fs_stat_into(const uint8_t* path, uint8_t* img) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_stat(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
-    if (r >= 0) _fs_stat_tls = fr->req.statbuf;
+    if (r >= 0) _fill_stat_image(img, &fr->req.statbuf);
     uv_fs_req_cleanup(&fr->req);
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-nova_int fs_lstat(const uint8_t* path) {
+nova_int fs_lstat_into(const uint8_t* path, uint8_t* img) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_lstat(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
-    if (r >= 0) _fs_stat_tls = fr->req.statbuf;
+    if (r >= 0) _fill_stat_image(img, &fr->req.statbuf);
     uv_fs_req_cleanup(&fr->req);
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-nova_int fs_fstat(nova_int fd) {
+nova_int fs_fstat_into(nova_int fd, uint8_t* img) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_fstat(nova_current_loop(), &fr->req, (uv_file)fd, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
-    if (r >= 0) _fs_stat_tls = fr->req.statbuf;
+    if (r >= 0) _fill_stat_image(img, &fr->req.statbuf);
     uv_fs_req_cleanup(&fr->req);
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-nova_int fs_stat_size(void) { return (nova_int)_fs_stat_tls.st_size; }
-nova_int fs_stat_mode(void) { return (nova_int)_fs_stat_tls.st_mode; }
-nova_int fs_stat_kind(void) { return (nova_int)_kind_from_mode(_fs_stat_tls.st_mode); }
-int64_t  fs_stat_mtime_ns(void) {
-    return (int64_t)_fs_stat_tls.st_mtim.tv_sec * 1000000000LL + (int64_t)_fs_stat_tls.st_mtim.tv_nsec;
-}
-int64_t  fs_stat_atime_ns(void) {
-    return (int64_t)_fs_stat_tls.st_atim.tv_sec * 1000000000LL + (int64_t)_fs_stat_tls.st_atim.tv_nsec;
-}
-int64_t  fs_stat_ctime_ns(void) {
-    /* Prefer birth time (creation); fall back to 0 → Nova @created() == None. */
-    return (int64_t)_fs_stat_tls.st_birthtim.tv_sec * 1000000000LL + (int64_t)_fs_stat_tls.st_birthtim.tv_nsec;
+nova_int fs_stat_size(const uint8_t* img)      { return (nova_int)((const NovaFsStat*)img)->size; }
+nova_int fs_stat_mode(const uint8_t* img)      { return (nova_int)((const NovaFsStat*)img)->mode; }
+nova_int fs_stat_kind(const uint8_t* img)      { return (nova_int)((const NovaFsStat*)img)->kind; }
+int64_t  fs_stat_mtime_ns(const uint8_t* img)  { return ((const NovaFsStat*)img)->mtime_ns; }
+int64_t  fs_stat_atime_ns(const uint8_t* img)  { return ((const NovaFsStat*)img)->atime_ns; }
+int64_t  fs_stat_ctime_ns(const uint8_t* img)  { return ((const NovaFsStat*)img)->ctime_ns; }
+
+void fs_stat_build_into(uint8_t* img, nova_int size, int64_t mtime_ns,
+                         int64_t atime_ns, int64_t ctime_ns, nova_int mode, nova_int kind) {
+    NovaFsStat* s = (NovaFsStat*)img;
+    s->size = (int64_t)size;
+    s->mtime_ns = mtime_ns;
+    s->atime_ns = atime_ns;
+    s->ctime_ns = ctime_ns;
+    s->mode = (int32_t)mode;
+    s->kind = (int32_t)kind;
 }
 
 /* ─── mkdir / unlink / rmdir / rename / symlink / chmod / copyfile ──── */
@@ -329,24 +363,24 @@ nova_int fs_copyfile(const uint8_t* from, const uint8_t* to) {
     return (r < 0) ? _fs_fail((int)r) : 0;
 }
 
-/* ─── realpath + TLS cache ─────────────────────────────────────────── */
+/* ─── realpath → GC string, returned directly (no TLS) ─────────────── */
 
-#if defined(_MSC_VER)
-  static __declspec(thread) nova_str _fs_realpath_tls;
-#else
-  static __thread nova_str _fs_realpath_tls;
-#endif
-
-nova_int fs_realpath(const uint8_t* path) {
+nova_str fs_realpath_into(const uint8_t* path, nova_int* out_err) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_realpath(nova_current_loop(), &fr->req, (const char*)path, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
-    if (r >= 0) _fs_realpath_tls = _fs_cstr((const char*)fr->req.ptr);
+    nova_str out;
+    if (r >= 0) {
+        out = _fs_cstr((const char*)fr->req.ptr);
+        if (out_err) *out_err = 0;
+    } else {
+        out.ptr = NULL;
+        out.len = 0;
+        if (out_err) *out_err = _fs_fail((int)r);
+    }
     uv_fs_req_cleanup(&fr->req);
-    return (r < 0) ? _fs_fail((int)r) : 0;
+    return out;
 }
-
-nova_str fs_realpath_data(void) { return _fs_realpath_tls; }
 
 /* ─── parent-dir fsync (write_atomic step 5) ───────────────────────── */
 
@@ -375,51 +409,60 @@ nova_int fs_fsync_dir(const uint8_t* path) {
 #endif
 }
 
-/* ─── scandir (iterator over TLS-held request) ─────────────────────── */
+/* ─── scandir — handle-based iterator (no TLS) ──────────────────────────
+ * The handle IS the request pointer, boxed as an address-sized nova_int (same
+ * trick as net's opaque void* handles, just numeric because fs's own
+ * convention returns a negative-errno failure in the SAME channel — no
+ * separate out_err param needed). Ownership: the Nova-side iteration record
+ * (read_dir's local loop, today) holds the handle and MUST fs_scandir_close it
+ * — done unconditionally in fs.nv after the loop, whether it drained to EOF or
+ * exits early, since close is idempotent here. */
 
-#if defined(_MSC_VER)
-  static __declspec(thread) _NovaFsReq*   _fs_scandir_fr;
-  static __declspec(thread) uv_dirent_t   _fs_scandir_ent;
-#else
-  static __thread _NovaFsReq*   _fs_scandir_fr;
-  static __thread uv_dirent_t   _fs_scandir_ent;
-#endif
-
-nova_int fs_scandir(const uint8_t* path) {
+nova_int fs_scandir_open(const uint8_t* path) {
     _NovaFsReq* fr = _fs_begin();
     int rc = uv_fs_scandir(nova_current_loop(), &fr->req, (const char*)path, 0, _fs_cb);
     ssize_t r = _fs_wait(fr, rc);
     if (r < 0) {
         nova_int e = _fs_fail((int)r);
         uv_fs_req_cleanup(&fr->req);
-        _fs_scandir_fr = NULL;
         return e;
     }
-    _fs_scandir_fr = fr;   /* keep the req live for iteration; cleaned in _next */
-    return (nova_int)r;    /* entry count */
+    return (nova_int)(intptr_t)fr;   /* live req kept by the caller-held handle */
 }
 
-nova_int fs_scandir_next(void) {
-    if (!_fs_scandir_fr) return 0;
-    int rc = uv_fs_scandir_next(&_fs_scandir_fr->req, &_fs_scandir_ent);
+nova_int fs_scandir_next(nova_int h) {
+    _NovaFsReq* fr = (_NovaFsReq*)(intptr_t)h;
+    if (!fr || fr->scandir_done) return 0;
+    int rc = uv_fs_scandir_next(&fr->req, &fr->cur_ent);
     if (rc != 0) {
-        /* UV_EOF or error → done. */
-        uv_fs_req_cleanup(&_fs_scandir_fr->req);
-        _fs_scandir_fr = NULL;
+        /* UV_EOF or error → done; release now (idempotent — flagged). */
+        uv_fs_req_cleanup(&fr->req);
+        fr->scandir_done = 1;
         return 0;
     }
-    return 1;   /* _fs_scandir_ent holds this entry */
+    return 1;   /* fr->cur_ent holds this entry */
 }
 
-nova_str fs_scandir_name(void) {
-    return _fs_cstr(_fs_scandir_ent.name);
+nova_str fs_scandir_name(nova_int h) {
+    _NovaFsReq* fr = (_NovaFsReq*)(intptr_t)h;
+    if (!fr) { nova_str z; z.ptr = NULL; z.len = 0; return z; }
+    return _fs_cstr(fr->cur_ent.name);
 }
 
-nova_int fs_scandir_kind(void) {
-    switch (_fs_scandir_ent.type) {
+nova_int fs_scandir_kind(nova_int h) {
+    _NovaFsReq* fr = (_NovaFsReq*)(intptr_t)h;
+    if (!fr) return 0;
+    switch (fr->cur_ent.type) {
         case UV_DIRENT_DIR:  return 2;   /* KIND_DIR */
         case UV_DIRENT_LINK: return 3;   /* KIND_SYMLINK */
         case UV_DIRENT_FILE: return 1;   /* KIND_FILE */
         default:             return 0;   /* KIND_OTHER / UNKNOWN */
     }
+}
+
+void fs_scandir_close(nova_int h) {
+    _NovaFsReq* fr = (_NovaFsReq*)(intptr_t)h;
+    if (!fr || fr->scandir_done) return;   /* idempotent: no-op past EOF/close */
+    uv_fs_req_cleanup(&fr->req);
+    fr->scandir_done = 1;
 }

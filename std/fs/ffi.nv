@@ -67,18 +67,26 @@ extern "C" fn fs_write_at(fd int, buf *u8, len int, offset int) -> int
 extern "C" fn fs_fsync(fd int) -> int
 // fdatasync (data only): 0 or -errno.
 extern "C" fn fs_fdatasync(fd int) -> int
-// stat/lstat/fstat: 0 or -errno; on success the uv_stat_t is cached in TLS —
-// read it via fs_stat_size/mtime_ns/mode/kind IMMEDIATELY after (no intervening
-// blocking op, cooperative-safe — same contract as net's read_data TLS).
-extern "C" fn fs_stat(path *u8) -> int
-extern "C" fn fs_lstat(path *u8) -> int
-extern "C" fn fs_fstat(fd int) -> int
-extern "C" fn fs_stat_size() -> int
-extern "C" fn fs_stat_mtime_ns() -> i64
-extern "C" fn fs_stat_atime_ns() -> i64
-extern "C" fn fs_stat_ctime_ns() -> i64
-extern "C" fn fs_stat_mode() -> int
-extern "C" fn fs_stat_kind() -> int
+// stat/lstat/fstat → caller-owned image, NOT TLS ([M-fs-tls-mn-race] fix,
+// net-precedent: STAT_IMAGE_BYTES = fs_stat_image_bytes(), like
+// ADDR_IMAGE_BYTES = net_addr_size()). 0 or -errno; on success the img buffer
+// (STAT_IMAGE_BYTES long) is filled in place. The accessors read straight off
+// the `img` pointer passed to them — no ambient state, safe across any fiber/
+// thread interleaving.
+extern "C" fn fs_stat_image_bytes() -> int
+extern "C" fn fs_stat_into(path *u8, img *mut u8) -> int
+extern "C" fn fs_lstat_into(path *u8, img *mut u8) -> int
+extern "C" fn fs_fstat_into(fd int, img *mut u8) -> int
+extern "C" fn fs_stat_size(img *u8) -> int
+extern "C" fn fs_stat_mtime_ns(img *u8) -> i64
+extern "C" fn fs_stat_atime_ns(img *u8) -> i64
+extern "C" fn fs_stat_ctime_ns(img *u8) -> i64
+extern "C" fn fs_stat_mode(img *u8) -> int
+extern "C" fn fs_stat_kind(img *u8) -> int
+// Build a stat image from components, no syscall (net_addr_v4_into-style pure
+// value constructor) — used by mock_fs so a mocked stat produces a
+// real_fs-compatible image with no OS-owned cache anywhere.
+extern "C" fn fs_stat_build_into(img *mut u8, size int, mtime_ns i64, atime_ns i64, ctime_ns i64, mode int, kind int) -> ()
 // mkdir/unlink/rmdir/rename/symlink/chmod: 0 or -errno.
 extern "C" fn fs_mkdir(path *u8, mode int) -> int
 extern "C" fn fs_unlink(path *u8) -> int
@@ -88,18 +96,23 @@ extern "C" fn fs_symlink(target *u8, link *u8) -> int
 extern "C" fn fs_chmod(path *u8, mode int) -> int
 // copyfile: bytes copied (>= 0) or -errno.
 extern "C" fn fs_copyfile(from *u8, to *u8) -> int
-// realpath: 0 or -errno; on success the canonical path bytes are in a TLS slot —
-// read via fs_realpath_data(). fsync on the parent dir (write_atomic step 5).
-extern "C" fn fs_realpath(path *u8) -> int
-extern "C" fn fs_realpath_data() -> str
+// realpath: the canonical path is returned DIRECTLY as a fresh string from the
+// SAME call that resolves it — no TLS, no follow-up accessor. *out_err is set
+// to 0 on success or a NEGATIVE POSIX errno on failure (empty str returned).
+// fsync on the parent dir (write_atomic step 5).
+extern "C" fn fs_realpath_into(path *u8, out_err *mut int) -> str
 extern "C" fn fs_fsync_dir(path *u8) -> int
-// scandir: entry count (>= 0) or -errno; then iterate with fs_scandir_next()
-// (1 = another entry cached, 0 = done) reading fs_scandir_name/kind. TLS-held
-// iterator (cooperative-safe: no blocking op between next() calls).
-extern "C" fn fs_scandir(path *u8) -> int
-extern "C" fn fs_scandir_next() -> int
-extern "C" fn fs_scandir_name() -> str
-extern "C" fn fs_scandir_kind() -> int
+// scandir: handle-based, NOT TLS. fs_scandir_open returns a stream handle
+// (>= 0, an address-sized boxed pointer) or -errno; fs_scandir_next(h)
+// advances THAT handle's own state (1 = another entry cached, 0 = done);
+// fs_scandir_name/_kind(h) read its current entry. fs_scandir_close(h) is
+// idempotent — call it unconditionally once done with the handle (natural EOF
+// or an early break both need it released).
+extern "C" fn fs_scandir_open(path *u8) -> int
+extern "C" fn fs_scandir_next(h int) -> int
+extern "C" fn fs_scandir_name(h int) -> str
+extern "C" fn fs_scandir_kind(h int) -> int
+extern "C" fn fs_scandir_close(h int) -> ()
 
 // ─── Non-blocking native hooks (io_console.h — always available, no libuv) ──
 // fs_seek: lseek/_lseeki64 on the fd; returns the new absolute offset or -errno.

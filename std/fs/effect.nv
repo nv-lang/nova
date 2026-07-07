@@ -33,10 +33,20 @@ import std.time.duration.{Timestamp}
 // shapes 1:1 (fd/byte-count/0 on success, NEGATIVE POSIX errno on failure).
 //
 // A path is a `[]u8` (NUL-wrapped to a CStr by the handler, §3c); a file is an OS
-// `int` fd. `read`/`read_at` fill a caller buffer and return the count. `stat`
-// caches its result in the handler; `stat_size`/`stat_kind`/... read it back
-// immediately after (cooperative-safe — no blocking op interleaves, the C TLS
-// contract).
+// `int` fd. `read`/`read_at` fill a caller buffer and return the count.
+//
+// [M-fs-tls-mn-race] (2026-07-08): stat/realpath/scandir used to round-trip a
+// result through a thread-local slot between two calls (`stat()` then
+// `stat_size()`/...). A fiber can migrate OS threads between any two calls
+// (Plan 44.7 preemption) and two fibers can interleave on one thread, so a
+// TLS slot is unsound — exactly the bug net.c's Д2 fix closed for sockets.
+// Redesigned on the same net-precedent (value image / handle, never TLS):
+//   - stat/lstat/fstat fill a caller-owned STAT_IMAGE_BYTES image (`img`); the
+//     stat_* accessors are now plain pointer-taking `fn`s in fs.nv (no I/O, so
+//     not effect ops — same rule that keeps SocketAddr's accessors off `Net`).
+//   - realpath returns the canonical path directly from the resolving call.
+//   - scandir is handle-based: scandir_open/next/name/kind/close all take the
+//     stream handle explicitly.
 #stable(since = "0.1")
 export type Fs effect {
     // File lifecycle + positioned/sequential I/O (n / fd / 0, or -errno).
@@ -49,17 +59,11 @@ export type Fs effect {
     seek(fd int, offset i64, whence int) -> i64
     sync_all(fd int) -> int
     sync_data(fd int) -> int
-    // Metadata: stat/lstat/fstat return 0 or -errno and cache the result; the
-    // stat_* accessors read the cached fields.
-    stat(path []u8) -> int
-    lstat(path []u8) -> int
-    fstat(fd int) -> int
-    stat_size() -> int
-    stat_mode() -> int
-    stat_kind() -> int
-    stat_mtime_ns() -> i64
-    stat_atime_ns() -> i64
-    stat_ctime_ns() -> i64
+    // Metadata: 0 or -errno; on success `img` (STAT_IMAGE_BYTES bytes, caller-
+    // owned) is filled in place — read it via the stat_* pointer accessors.
+    stat(path []u8, img mut []u8) -> int
+    lstat(path []u8, img mut []u8) -> int
+    fstat(fd int, img mut []u8) -> int
     // Path-addressed directory / link ops (0 or -errno; copy → byte count).
     mkdir(path []u8, mode int) -> int
     remove_file(path []u8) -> int
@@ -69,15 +73,18 @@ export type Fs effect {
     chmod(path []u8, mode int) -> int
     copy_file(src []u8, dst []u8) -> int
     fsync_dir(path []u8) -> int
-    // Directory iteration: scandir returns the count (or -errno); then loop
-    // scandir_next (1 = entry cached, 0 = done) reading scandir_name/kind.
-    scandir(path []u8) -> int
-    scandir_next() -> int
-    scandir_name() -> str
-    scandir_kind() -> int
-    // realpath: 0 or -errno, canonical bytes via realpath_data.
-    realpath(path []u8) -> int
-    realpath_data() -> str
+    // Directory iteration: handle-based (no ambient/cached iterator state).
+    // scandir_open: stream handle (>= 0) or -errno. scandir_next(h): 1 = an
+    // entry is ready (read via scandir_name/_kind(h)), 0 = done.
+    // scandir_close(h) is idempotent — call unconditionally once finished.
+    scandir_open(path []u8) -> int
+    scandir_next(h int) -> int
+    scandir_name(h int) -> str
+    scandir_kind(h int) -> int
+    scandir_close(h int) -> ()
+    // realpath: canonical path + 0, or empty str + -errno — returned TOGETHER
+    // from the ONE resolving call (no TLS, no follow-up accessor).
+    realpath(path []u8) -> (int, str)
 }
 
 // ─── FileType ──
