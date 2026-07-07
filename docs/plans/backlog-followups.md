@@ -1731,3 +1731,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (str-версия ретрактируется — строка не должна знать о каждом числовом типе).
   Спека: примеры type-set блока `T.try_parse(...)` → `T.parse(...)` (до-R3 текст),
   амендмент в 02-types.md:13912-зоне.
+
+- **[M-serde-slice-generic-method-parse]** (2026-07-07, P2, Wave: §4а-очередь после A4) —
+  парсер падает на serde.nv:311 (`expected ], got identifier` в 311:37): обобщённый метод с
+  generic-параметром на []T-ресивере (`[]T.deserialize[D ...]`-форма) не парсится → ВЕСЬ
+  folder-CU std/encoding/serde CODEGEN-FAIL (блокирует serde-тесты, serdejson, http_typed).
+  Pre-existing (найден волной D410, подтверждён после to_str_pretty-правки). Минимальную
+  репродукцию снять при заходе.
