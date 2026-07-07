@@ -43,7 +43,7 @@ export type Deque[T] {
 
 /// Создать пустой `Deque`.
 #stable(since = "0.1")
-export fn Deque[T].new() -> Self => { _items: [] }
+export fn Deque[T].new() -> Self => { items: [] }
 
 /// Число элементов в deque.
 #stable(since = "0.1")
@@ -165,7 +165,7 @@ test "BFS-like sliding window" {
     for x in inputs {
         d.push_back(x)
         if d.len() > 3 {
-            ro  = d.pop_front()
+            ro _ = d.pop_front()
         }
     }
     // Window of size 3 на конце

@@ -76,7 +76,7 @@ export type Fnv64State {
 /// Init Fnv64State (offset basis по FNV spec).
 #stable(since = "0.1")
 export fn Fnv64.new() -> Fnv64State =>
-    { _h: FNV1A_64_OFFSET }
+    { h: FNV1A_64_OFFSET }
 
 
 /// Update state с очередным chunk байт.

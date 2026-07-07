@@ -186,7 +186,7 @@ test "parse: round-trip компонентов" {
 
 test "ошибка — невалидный machine_id" {
     ro r = with Fail[SnowflakeError] = |e| interrupt Some(e) {
-        ro  = SnowflakeGen.new(2000)
+        ro _ = SnowflakeGen.new(2000)
         None
     }
     assert(match r {
@@ -197,9 +197,9 @@ test "ошибка — невалидный machine_id" {
 
 test "ошибка — clock backwards" {
     mut gen = SnowflakeGen.new(0)
-    ro  = with Time = th.fixed_ms(2000) { gen.next() }
+    ro _ = with Time = th.fixed_ms(2000) { gen.next() }
     ro r = with Time = th.fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
-        ro  = gen.next()
+        ro _ = gen.next()
         None
     }
     assert(match r {

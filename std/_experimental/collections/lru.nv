@@ -42,8 +42,8 @@ export type Lru[K Hash, V] {
 export fn Lru[K, V].new(capacity int) -> Self =>
     {
         capacity,
-        _order: [],
-        _store: HashMap[K, V].new(),
+        order: [],
+        store: HashMap[K, V].new(),
     }
 
 
@@ -143,7 +143,7 @@ test "get refreshes recency" {
     mut cache = Lru[str, int].new(2)
     cache.put("a", 1)
     cache.put("b", 2)
-    ro  = cache.get("a")          // "a" теперь most recent
+    ro _ = cache.get("a")          // "a" теперь most recent
     cache.put("c", 3)               // evicts "b" (LRU теперь b)
 
     assert(cache.get("a") == Some(1))
