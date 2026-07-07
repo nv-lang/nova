@@ -5,7 +5,7 @@
 // stride) because an int literal infers the erased `nova_int` default and the
 // annotated `[]u8` element type was dropped. A sibling `Vec[u8]` built via
 // `push(_ as u8)` stores 1-byte slots, so byte-accurate ops over the literal's
-// `.as_ptr()` read mismatched strides (`RawMem.compare` saw 0x00 padding).
+// `.ptr()` read mismatched strides (`RawMem.compare` saw 0x00 padding).
 //
 // The typed-Vec literal path now promotes the erased `nova_int` first-item
 // type to the sized-int element hint from the annotation, so the literal is
@@ -29,7 +29,7 @@ test "u8 literal has 1-byte stride: compare against push-built equals" {
     assert(b.len() == 3)
     // Byte-wise memcmp over both buffers must see identical bytes.
     ro r = unsafe {
-        RawMem.compare(a.as_ptr(), b.as_ptr(), 3)
+        RawMem.compare(a.ptr(), b.ptr(), 3)
     }
     assert(r == 0)
 }
@@ -47,7 +47,7 @@ test "u8 literal differs from a literal with a flipped middle byte" {
     ro a []u8 = [1, 2, 3, 4]
     ro b []u8 = [1, 2, 9, 4]
     ro r = unsafe {
-        RawMem.compare(a.as_ptr(), b.as_ptr(), 4)
+        RawMem.compare(a.ptr(), b.ptr(), 4)
     }
     // a < b at byte index 2 (3 < 9) → normalized -1.
     assert(r == -1)

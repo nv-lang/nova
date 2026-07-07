@@ -12,7 +12,7 @@ test "must-consume: File @close discharges and returns Ok" {
             Err(_) => assert(false)
             Ok(f0) => {
                 mut f = f0
-                match f.write("abc".to_bytes()) { Ok(n) => assert(n == 3), Err(_) => assert(false) }
+                match f.write("abc".bytes()) { Ok(n) => assert(n == 3), Err(_) => assert(false) }
                 match f.close() { Ok(()) => assert(true), Err(_) => assert(false) }
             }
         }
@@ -26,7 +26,7 @@ test "must-consume: close error (ENOSPC) is visible, not swallowed" {
             Err(_) => assert(false)
             Ok(f0) => {
                 mut f = f0
-                ro _ = f.write("data".to_bytes())
+                ro _ = f.write("data".bytes())
                 fs.fail_closes()   // arm the next close to fail
                 match f.close() {
                     Ok(())  => assert(false)

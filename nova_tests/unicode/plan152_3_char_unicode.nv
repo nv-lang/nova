@@ -35,7 +35,7 @@ test "to_uppercase / to_lowercase (full, multi-code-point)" {
     // the multi-cp "i" + COMBINING DOT ABOVE (U+0069 U+0307), NOT Turkish 'i'.
     assert('İ'.to_lowercase() == "\u{69}\u{307}")
     assert('İ'.to_lowercase().byte_len() == 3)
-    assert('İ'.to_lowercase().as_chars().count() == 2)
+    assert('İ'.to_lowercase().chars().count() == 2)
     // Lone Σ (U+03A3): Final_Sigma is a string-level rule, so context-free it is
     // the non-final σ (U+03C3), the correct isolated answer.
     assert('\u{3A3}'.to_lowercase() == "\u{3C3}")

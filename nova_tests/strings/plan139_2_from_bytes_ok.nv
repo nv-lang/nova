@@ -7,7 +7,7 @@
 module nova_tests.strings
 
 test "from_bytes_unchecked: round-trip ASCII" {
-    ro bytes = "hello".to_bytes()
+    ro bytes = "hello".bytes()
     ro s = str.from_bytes_unchecked(bytes)
     assert(s == "hello")
     assert(s.byte_len() == 5)
@@ -16,7 +16,7 @@ test "from_bytes_unchecked: round-trip ASCII" {
 test "from_bytes_unchecked: round-trip multi-byte UTF-8" {
     // "héllo wörld" — multi-byte é (0xC3 0xA9) and ö (0xC3 0xB6).
     ro original = "héllo wörld"
-    ro bytes = original.to_bytes()
+    ro bytes = original.bytes()
     ro s = str.from_bytes_unchecked(bytes)
     assert(s == original)
     assert(s.byte_len() == original.byte_len())
@@ -37,12 +37,12 @@ test "from_bytes_unchecked: explicit byte build" {
     b.push(67 as u8)   // 'C'
     ro s = str.from_bytes_unchecked(b)
     assert(s == "ABC")
-    assert(s.as_bytes()[0] == 65 as u8)
+    assert(s.bytes()[0] == 65 as u8)
 }
 
 test "from_bytes_lossy: valid UTF-8 fast path (copy)" {
     ro original = "valid café"
-    ro bytes = original.to_bytes()
+    ro bytes = original.bytes()
     ro s = str.from_bytes_lossy(bytes)
     assert(s == original)
 }
@@ -56,11 +56,11 @@ test "from_bytes_lossy: invalid byte replaced with U+FFFD" {
     ro s = str.from_bytes_lossy(b)
     // "A" + U+FFFD (3 bytes) + "B" = 5 bytes.
     assert(s.byte_len() == 5)
-    assert(s.as_bytes()[0] == 0x41 as u8)   // 'A'
-    assert(s.as_bytes()[1] == 0xEF as u8)   // FFFD byte 1
-    assert(s.as_bytes()[2] == 0xBF as u8)   // FFFD byte 2
-    assert(s.as_bytes()[3] == 0xBD as u8)   // FFFD byte 3
-    assert(s.as_bytes()[4] == 0x42 as u8)   // 'B'
+    assert(s.bytes()[0] == 0x41 as u8)   // 'A'
+    assert(s.bytes()[1] == 0xEF as u8)   // FFFD byte 1
+    assert(s.bytes()[2] == 0xBF as u8)   // FFFD byte 2
+    assert(s.bytes()[3] == 0xBD as u8)   // FFFD byte 3
+    assert(s.bytes()[4] == 0x42 as u8)   // 'B'
 }
 
 test "from_bytes_lossy: truncated multi-byte sequence replaced" {
@@ -69,9 +69,9 @@ test "from_bytes_lossy: truncated multi-byte sequence replaced" {
     b.push(0xC3 as u8) // lead of 2-byte seq, but no continuation follows
     ro s = str.from_bytes_lossy(b)
     assert(s.byte_len() == 3)                 // single U+FFFD
-    assert(s.as_bytes()[0] == 0xEF as u8)
-    assert(s.as_bytes()[1] == 0xBF as u8)
-    assert(s.as_bytes()[2] == 0xBD as u8)
+    assert(s.bytes()[0] == 0xEF as u8)
+    assert(s.bytes()[1] == 0xBF as u8)
+    assert(s.bytes()[2] == 0xBD as u8)
 }
 
 test "from_bytes_unchecked_steal: zero-copy reuse when cap > len" {

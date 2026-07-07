@@ -10,5 +10,5 @@ module neg.plan139_2_byte_at_oob_neg
 
 fn main() -> () {
     ro s = "abc"
-    ro _ = s.as_bytes()[-1]         // ← OOB: negative index
+    ro _ = s.bytes()[-1]         // ← OOB: negative index
 }

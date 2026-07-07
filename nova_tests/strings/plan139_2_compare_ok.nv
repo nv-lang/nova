@@ -1,6 +1,6 @@
 // compare_ok.nv — Plan 139.2 Ф.3
 // str @compare(other) -> int — Nova-body. Lexicographic byte-loop over
-// @as_bytes() of both operands (like C strcmp / memcmp), length-aware tiebreak.
+// @bytes() of both operands (like C strcmp / memcmp), length-aware tiebreak.
 // Returns negative / 0 / positive. Byte-exact with the retired C
 // nova_str_compare (array.h:989). Direct method-form call (`s.compare(t)`)
 // routes here; comparison OPERATORS lower separately to C nova_str_lt/…

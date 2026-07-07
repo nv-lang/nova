@@ -161,7 +161,7 @@ test "client: malformed response → Protocol Err" {
 // ── must-consume: bytes() discharges the body ────────────────────────────────
 
 test "client: body bytes() discharges must-consume" {
-    ro m = mock_http().on("GET", "/b", MockResponse.new(200).body("raw".to_bytes()))
+    ro m = mock_http().on("GET", "/b", MockResponse.new(200).body("raw".bytes()))
     with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
         consume resp = HttpClient.new().get("http://x.example/b").send()!!
         ro bytes = resp.bytes()!!

@@ -32,7 +32,7 @@ fn status_line(wire []u8) -> str {
 // ── GET routing + literal path ────────────────────────────────────────────────
 
 test "server: GET /health → 200 ok" {
-    ro req = "GET /health HTTP/1.1\r\nHost: x\r\n\r\n".to_bytes()
+    ro req = "GET /health HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 200 OK")
     assert(resp_contains(wire, "ok"))
@@ -41,7 +41,7 @@ test "server: GET /health → 200 ok" {
 // ── path parameter extraction ──────────────────────────────────────────────────
 
 test "server: GET /users/{id} extracts param" {
-    ro req = "GET /users/42 HTTP/1.1\r\nHost: x\r\n\r\n".to_bytes()
+    ro req = "GET /users/42 HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 200 OK")
     assert(resp_contains(wire, "user 42"))
@@ -50,7 +50,7 @@ test "server: GET /users/{id} extracts param" {
 // ── POST body echo (Content-Length framing) ────────────────────────────────────
 
 test "server: POST /echo returns the request body" {
-    ro req = "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello".to_bytes()
+    ro req = "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 200 OK")
     assert(resp_contains(wire, "hello"))
@@ -60,7 +60,7 @@ test "server: POST /echo returns the request body" {
 // ── 404: no route matches ──────────────────────────────────────────────────────
 
 test "server: unknown path → 404 not_found handler" {
-    ro req = "GET /missing HTTP/1.1\r\nHost: x\r\n\r\n".to_bytes()
+    ro req = "GET /missing HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 404 Not Found")
     assert(resp_contains(wire, "nope"))
@@ -69,7 +69,7 @@ test "server: unknown path → 404 not_found handler" {
 // ── 405: path matches, method does not (+ Allow) ───────────────────────────────
 
 test "server: wrong method → 405 + Allow" {
-    ro req = "DELETE /health HTTP/1.1\r\nHost: x\r\n\r\n".to_bytes()
+    ro req = "DELETE /health HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 405 Method Not Allowed")
     assert(resp_contains(wire, "allow: GET"))     // header names serialize lowercased (canonical)
@@ -78,7 +78,7 @@ test "server: wrong method → 405 + Allow" {
 // ── HEAD falls back to a GET route ─────────────────────────────────────────────
 
 test "server: HEAD routes to GET handler" {
-    ro req = "HEAD /health HTTP/1.1\r\nHost: x\r\n\r\n".to_bytes()
+    ro req = "HEAD /health HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 200 OK")
 }
@@ -86,7 +86,7 @@ test "server: HEAD routes to GET handler" {
 // ── neg: missing mandatory Host → 400 ──────────────────────────────────────────
 
 test "server: missing Host → 400" {
-    ro req = "GET /health HTTP/1.1\r\n\r\n".to_bytes()
+    ro req = "GET /health HTTP/1.1\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 400 Bad Request")
 }
@@ -94,7 +94,7 @@ test "server: missing Host → 400" {
 // ── neg: path traversal (..) rejected → 400 ────────────────────────────────────
 
 test "server: path traversal (..) → 400" {
-    ro req = "GET /users/../secret HTTP/1.1\r\nHost: x\r\n\r\n".to_bytes()
+    ro req = "GET /users/../secret HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 400 Bad Request")
 }
@@ -102,7 +102,7 @@ test "server: path traversal (..) → 400" {
 // ── neg: malformed request line → 400 ──────────────────────────────────────────
 
 test "server: garbage request → 400" {
-    ro req = "not a request\r\n\r\n".to_bytes()
+    ro req = "not a request\r\n\r\n".bytes()
     ro wire = serve_once(routes(), req)
     assert(status_line(wire) == "HTTP/1.1 400 Bad Request")
 }

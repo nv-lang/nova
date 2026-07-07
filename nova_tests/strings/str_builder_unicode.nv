@@ -86,6 +86,6 @@ test "Unicode — as_str паритет char count со str" {
     sb.append("Привет, 世界 😀")
     ro n = sb.char_len()    // codepoints
     ro s = sb.into_str()
-    // Plan 108 D26 rev: s.as_chars().count() = codepoints == sb.char_len() before consume.
-    assert(s.as_chars().count() == n)
+    // Plan 108 D26 rev: s.chars().count() = codepoints == sb.char_len() before consume.
+    assert(s.chars().count() == n)
 }

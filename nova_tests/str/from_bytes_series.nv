@@ -6,7 +6,7 @@ module nova_tests.str
 
 test "from_bytes_unchecked ASCII round-trip" {
     ro s = "hello"
-    ro b []u8 = s.to_bytes()
+    ro b []u8 = s.bytes()
     ro r = str.from_bytes_unchecked(b)
     assert(r == "hello")
     assert(r.len() == 5)
@@ -14,7 +14,7 @@ test "from_bytes_unchecked ASCII round-trip" {
 
 test "from_bytes_unchecked Cyrillic round-trip" {
     ro s = "Привет"
-    ro b []u8 = s.to_bytes()
+    ro b []u8 = s.bytes()
     ro r = str.from_bytes_unchecked(b)
     assert(r == "Привет")
     assert(r.len() == 12)
@@ -22,7 +22,7 @@ test "from_bytes_unchecked Cyrillic round-trip" {
 
 test "from_bytes_lossy valid UTF-8 unchanged" {
     ro s = "hello"
-    ro b []u8 = s.to_bytes()
+    ro b []u8 = s.bytes()
     ro r = str.from_bytes_lossy(b)
     assert(r == "hello")
     assert(r.len() == 5)
@@ -30,7 +30,7 @@ test "from_bytes_lossy valid UTF-8 unchanged" {
 
 test "from_bytes_lossy valid UTF-8 Cyrillic unchanged" {
     ro s = "Привет"
-    ro b []u8 = s.to_bytes()
+    ro b []u8 = s.bytes()
     ro r = str.from_bytes_lossy(b)
     assert(r == "Привет")
     assert(r.len() == 12)
@@ -69,12 +69,12 @@ test "from_bytes_lossy mixed valid+invalid" {
 
 test "from_bytes_unchecked via as_bytes round-trip" {
     ro s = "Nova lang"
-    ro r = str.from_bytes_unchecked(s.as_bytes())
+    ro r = str.from_bytes_unchecked(s.bytes())
     assert(r == "Nova lang")
 }
 
 test "from_bytes_lossy via as_bytes round-trip" {
     ro s = "Nova lang"
-    ro r = str.from_bytes_lossy(s.as_bytes())
+    ro r = str.from_bytes_lossy(s.bytes())
     assert(r == "Nova lang")
 }

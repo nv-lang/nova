@@ -9,5 +9,5 @@ module neg.neg_byte_at_oob
 
 fn main() -> () {
     ro s = "AB"
-    ro _ = s.as_bytes()[5]
+    ro _ = s.bytes()[5]
 }

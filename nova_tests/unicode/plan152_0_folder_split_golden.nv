@@ -8,7 +8,7 @@ module nova_tests.unicode
 test "core submodule: byte_len / as_bytes / is_empty / compare" {
     ro s = "héllo"
     assert(s.byte_len() == 6)          // h + é(2) + l + l + o
-    assert(s.as_bytes()[0] == 104)     // 'h'
+    assert(s.bytes()[0] == 104)     // 'h'
     assert("".is_empty())
     assert("a".compare("b") < 0)
 }
@@ -28,7 +28,7 @@ test "transform submodule (Ф.3 buffer-refactor golden): trim / concat / to_byte
     assert("ab".concat("cd") == "abcd")      // concat via Vec.append+steal
     assert("Foo".to_ascii_lower() == "foo")
     assert("Foo".to_ascii_upper() == "FOO")
-    ro b = "abc".to_bytes()                  // to_bytes via Vec.append
+    ro b = "abc".bytes()                  // to_bytes via Vec.append
     assert(b.len() == 3)
     assert(b[0] == 97)
 }
@@ -39,11 +39,11 @@ test "parse submodule: parse_int / ParseIntError path" {
     assert("xyz".parse_int().ok() == None)
 }
 
-test "chars submodule: as_chars().nth (replaces retired char_at/get(int))" {
+test "chars submodule: chars().nth (replaces retired char_at/get(int))" {
     // D249/D250: positional codepoint access is the codepoint lens, not str.get
     // (which is now get(Range)->Option[str]). Retired char_at/get(int)->char.
-    assert("abc".as_chars().nth(0) == Some('a'))
-    assert("abc".as_chars().nth(9) == None)
+    assert("abc".chars().nth(0) == Some('a'))
+    assert("abc".chars().nth(9) == None)
 }
 
 test "A0.6: StringBuilder (Vec[u8] wrapper) == str.concat" {

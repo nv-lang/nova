@@ -1,6 +1,6 @@
 // concat_ok.nv — Plan 139.2 Ф.3
 // str @concat(other) -> str — Nova-body. Allocates a fresh []u8 of size
-// @len() + other.byte_len(), copies both operands' bytes (via @as_bytes()), then
+// @len() + other.byte_len(), copies both operands' bytes (via @bytes()), then
 // str.from_bytes_unchecked (owned + NUL-term). Byte-exact with the retired C
 // nova_str_concat. Direct method-form call (`s.concat(t)`) routes here; the
 // `+` operator lowers separately to C nova_str_concat (option (b)) — both
@@ -42,9 +42,9 @@ test "concat: multi-byte UTF-8 preserved byte-exact" {
     assert(r == "café ★")
     assert(r.byte_len() == a.byte_len() + b.byte_len())
     // NUL-term invariant + byte boundary: last byte of é region intact.
-    assert(r.as_bytes()[0] == 0x63 as u8)   // 'c'
-    assert(r.as_bytes()[3] == 0xC3 as u8)   // é lead byte
-    assert(r.as_bytes()[4] == 0xA9 as u8)   // é continuation
+    assert(r.bytes()[0] == 0x63 as u8)   // 'c'
+    assert(r.bytes()[3] == 0xC3 as u8)   // é lead byte
+    assert(r.bytes()[4] == 0xA9 as u8)   // é continuation
 }
 
 test "concat: method result equals `+` operator result" {

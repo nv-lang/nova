@@ -43,7 +43,7 @@ test "Unicode chars (Cyrillic)" {
     ro cyr = "привет"
     // Plan 108 D26 rev: len() = bytes O(1); char_len() = codepoints O(n).
     assert(cyr.byte_len() == 12)        // 6 codepoints × 2 bytes = 12 bytes
-    assert(cyr.as_chars().count() == 6)    // 6 codepoints
+    assert(cyr.chars().count() == 6)    // 6 codepoints
 }
 
 test "Unicode mixed ASCII + Cyrillic" {

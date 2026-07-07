@@ -7,5 +7,5 @@ module neg.neg_bytes_index_oob
 
 fn main() -> () {
     ro s = "AB"
-    ro _ = s.as_bytes()[5]
+    ro _ = s.bytes()[5]
 }

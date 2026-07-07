@@ -1,9 +1,20 @@
-// Plan 139 Ф.2 — str.to_chars() Nova-body (UTF-8 decode cursor over @as_bytes view).
-// to_chars -> []char (one element per codepoint).
+// Plan 139 Ф.2 — str.chars() Nova-body (UTF-8 decode cursor over @as_bytes view).
+// D410: retired to_chars() ≡ chars() materialised into an owned []char.
+// NB: `.chars().collect()` (the generic `Next[T] @collect()` blanket impl,
+// std.collections.vec_iter) hits a codegen gap for custom `value priv(type)`
+// iterators like CharsIter (found during this migration, reported separately
+// as a defect) — this file uses an explicit push-loop instead, bug-free and
+// semantically identical.
 module nova_tests.strings
 
+fn to_char_vec(s str) -> []char {
+    mut out []char = []char.new()
+    for c in s.chars() { out.push(c) }
+    out
+}
+
 test "to_chars ascii" {
-    ro cs = "abc".to_chars()
+    ro cs = to_char_vec("abc")
     assert(cs.len() == 3)
     assert(cs[0] == 'a')
     assert(cs[1] == 'b')
@@ -12,7 +23,7 @@ test "to_chars ascii" {
 
 test "to_chars multibyte codepoint count" {
     // "héllo": 5 codepoints, 6 bytes (é is 2-byte UTF-8).
-    ro cs = "héllo".to_chars()
+    ro cs = to_char_vec("héllo")
     assert(cs.len() == 5)
     assert(cs[0] == 'h')
     assert(cs[1] == 'é')
@@ -21,18 +32,18 @@ test "to_chars multibyte codepoint count" {
 
 test "to_chars 4-byte emoji" {
     // emoji is one codepoint, 4 bytes.
-    ro cs = "a😀b".to_chars()
+    ro cs = to_char_vec("a😀b")
     assert(cs.len() == 3)
     assert(cs[1] == '😀')
 }
 
 test "to_chars empty" {
-    ro cs = "".to_chars()
+    ro cs = to_char_vec("")
     assert(cs.len() == 0)
 }
 
 test "to_chars cyrillic 2-byte" {
-    ro cs = "Юра".to_chars()
+    ro cs = to_char_vec("Юра")
     assert(cs.len() == 3)
     assert(cs[0] == 'Ю')
 }

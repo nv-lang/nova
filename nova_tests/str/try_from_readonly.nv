@@ -5,14 +5,14 @@
 
 module nova_tests.str
 
-test "str.from_bytes(as_bytes()) round-trip ASCII" {
+test "str.from_bytes(bytes()) round-trip ASCII" {
     ro s = "hello"
-    ro r = str.from_bytes(s.as_bytes())
+    ro r = str.from_bytes(s.bytes())
     assert(r.is_ok())
 }
 
-test "str.from_bytes(as_bytes()) round-trip Cyrillic" {
+test "str.from_bytes(bytes()) round-trip Cyrillic" {
     ro s = "Привет"
-    ro r = str.from_bytes(s.as_bytes())
+    ro r = str.from_bytes(s.bytes())
     assert(r.is_ok())
 }

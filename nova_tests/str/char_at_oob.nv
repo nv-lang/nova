@@ -4,18 +4,18 @@
 module nova_tests.str
 
 test "char_at: empty string returns None" {
-    assert("".as_chars().nth(0) == None)
+    assert("".chars().nth(0) == None)
 }
 
 test "char_at: large index returns None" {
-    assert("abc".as_chars().nth(100) == None)
+    assert("abc".chars().nth(100) == None)
 }
 
 test "char_at: negative index returns None" {
-    assert("abc".as_chars().nth(-1) == None)
+    assert("abc".chars().nth(-1) == None)
 }
 
 test "char_at: index equals len returns None" {
     ro s = "hello"
-    assert(s.as_chars().nth(s.byte_len()) == None)
+    assert(s.chars().nth(s.byte_len()) == None)
 }

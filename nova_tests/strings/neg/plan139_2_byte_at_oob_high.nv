@@ -13,5 +13,5 @@ module neg.plan139_2_byte_at_oob_high
 
 fn main() -> () {
     ro s = "abc"
-    ro _ = s.as_bytes()[3]          // ← OOB: len == 3, valid indices 0..2
+    ro _ = s.bytes()[3]          // ← OOB: len == 3, valid indices 0..2
 }

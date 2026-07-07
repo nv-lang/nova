@@ -12,7 +12,7 @@ import std.encoding.compress.{inflate, zlib_decode, gzip_decode, deflate, zlib_e
 fn corpus() -> []u8 {
     mut o []u8 = []u8.new()
     o.cap(2048)
-    ro unit = "The quick brown fox jumps over the lazy dog. ".to_bytes()
+    ro unit = "The quick brown fox jumps over the lazy dog. ".bytes()
     for _ in 0..40 { o.append(unit) }
     o
 }
@@ -66,7 +66,7 @@ test "level distinguishability: best < fastest < stored (skewed-alphabet corpus)
 test "encode edge: empty + single byte round-trip" {
     ro empty []u8 = []
     assert(gzip_decode(gzip_encode(empty, CompressLevel.best())!!, 16)!! == empty)
-    ro one = "Q".to_bytes()
+    ro one = "Q".bytes()
     assert(zlib_decode(zlib_encode(one, CompressLevel.fastest())!!, 16)!! == one)
 }
 
@@ -89,7 +89,7 @@ test "streaming GzipWriter: feed + finish → gzip_decode" {
 }
 
 test "level range: deflate level 10/11 → Err (brotli-only)" {
-    ro data = "x".to_bytes()
+    ro data = "x".bytes()
     assert(deflate(data, CompressLevel.new(10)!!).is_err())
     assert(deflate(data, CompressLevel.new(11)!!).is_err())
     assert(CompressLevel.new(12).is_err())

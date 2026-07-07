@@ -6,7 +6,7 @@
 // std/prelude/core.nv. Its backing-pointer field `ptr` is `priv`, so reading
 // `s.ptr` from OUTSIDE the str module (here: module plan139_1.neg_str_priv_field)
 // must fire E_PRIV_FIELD_READ (Plan 124 / D220). The byte buffer is only
-// reachable via public accessors (`@len`, `@byte_at`, `@as_bytes`).
+// reachable via public accessors (`@len`, `@byte_at`, `@bytes`).
 //
 // This supersedes the old oracle-pin nova_tests/plan147/e5_str_ptr_field_ok.nv
 // (which read `s.ptr` and EXPECT'd ok under the pre-lang-item hardcoded

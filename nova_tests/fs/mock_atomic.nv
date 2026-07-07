@@ -10,9 +10,9 @@ test "mock_fs: write_atomic durable replace round-trip" {
     ro p = Path.posix("/cfg/app.conf")
     with Fs = mock_fs(fs) {
         ro _ = create_dir(Path.posix("/cfg"))
-        match write_atomic(p, "v1".to_bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match write_atomic(p, "v1".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
         match read_text(p) { Ok(s) => assert(s == "v1"), Err(_) => assert(false) }
-        match write_atomic(p, "v2-longer".to_bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match write_atomic(p, "v2-longer".bytes()) { Ok(()) => assert(true), Err(_) => assert(false) }
         match read_text(p) { Ok(s) => assert(s == "v2-longer"), Err(_) => assert(false) }
         match try_exists(Path.posix("/cfg/.app.conf.novatmp")) { Ok(b) => assert(b == false), Err(_) => assert(false) }
     }
@@ -23,9 +23,9 @@ test "mock_fs: torn-write injection -> write_atomic rolls back, temp removed" {
     ro p = Path.posix("/cfg2/data")
     with Fs = mock_fs(fs) {
         ro _ = create_dir(Path.posix("/cfg2"))
-        ro _ = write(p, "original".to_bytes())
+        ro _ = write(p, "original".bytes())
         fs.fail_writes()
-        match write_atomic(p, "new".to_bytes()) {
+        match write_atomic(p, "new".bytes()) {
             Ok(())  => assert(false)
             Err(e) => match e.kind { ErrorKind.StorageFull => assert(true), _ => assert(false) }
         }

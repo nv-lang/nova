@@ -6,7 +6,7 @@ module nova_tests.http
 import std.http.{Body, BodyReader, Request, Response, Method, StatusCode, Url, HeaderMap, HttpError, ErrorKind}
 
 test "body: from_bytes/from_str discharge via bytes/text" {
-    consume b1 = Body.from_bytes("hello".to_bytes())
+    consume b1 = Body.from_bytes("hello".bytes())
     assert(b1.bytes()!!.len == 5)
     consume b2 = Body.from_str("héllo")
     assert(b2.text()!! == "héllo")
@@ -14,14 +14,14 @@ test "body: from_bytes/from_str discharge via bytes/text" {
 
 test "body: stream reader drains in order" {
     mut chunks = Vec[[]u8].new()
-    chunks.push("ab".to_bytes())
-    chunks.push("cd".to_bytes())
+    chunks.push("ab".bytes())
+    chunks.push("cd".bytes())
     consume b = Body.from_reader(BodyReader.from_chunks(chunks))
     assert(b.bytes()!!.len == 4)
 }
 
 test "body: with_limit → BodyTooLarge" {
-    consume b = Body.from_bytes("0123456789".to_bytes()).with_limit(4)
+    consume b = Body.from_bytes("0123456789".bytes()).with_limit(4)
     assert(match b.bytes() { Ok(_) => false, Err(e) => match e.kind { BodyTooLarge => true, _ => false } })
 }
 
@@ -35,7 +35,7 @@ test "body: text rejects invalid UTF-8" {
 
 test "response: delegating discharge (must-consume body)" {
     ro h = HeaderMap.new()
-    consume resp = Response.new(StatusCode.ok(), h, "hi".to_bytes())
+    consume resp = Response.new(StatusCode.ok(), h, "hi".bytes())
     assert(resp.is_success())
     assert(resp.status().as_u16() == 200)
     assert(resp.text()!! == "hi")
@@ -44,7 +44,7 @@ test "response: delegating discharge (must-consume body)" {
 test "request: build + drain" {
     ro u = Url.parse("http://x/")!!
     ro h = HeaderMap.new()
-    consume req = Request.new(Method.Post, u, h, "payload".to_bytes())
+    consume req = Request.new(Method.Post, u, h, "payload".bytes())
     assert(match req.method() { Post => true, _ => false })
     assert(req.body_bytes()!!.len == 7)
 }

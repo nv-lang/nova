@@ -5,25 +5,25 @@ module nova_tests.strings
 
 test "byte_at ascii" {
     ro s = "abc"
-    assert(s.as_bytes()[0] == 97)
-    assert(s.as_bytes()[1] == 98)
-    assert(s.as_bytes()[2] == 99)
+    assert(s.bytes()[0] == 97)
+    assert(s.bytes()[1] == 98)
+    assert(s.bytes()[2] == 99)
 }
 
 test "byte_at multibyte raw bytes" {
     ro s = "é"                // 0xC3 0xA9
-    assert(s.as_bytes()[0] == 0xC3)
-    assert(s.as_bytes()[1] == 0xA9)
+    assert(s.bytes()[0] == 0xC3)
+    assert(s.bytes()[1] == 0xA9)
     assert(s.byte_len() == 2)
 }
 
 test "as_bytes view matches byte_at" {
     ro s = "hello"
-    ro bs = s.as_bytes()
+    ro bs = s.bytes()
     assert(bs.len() == 5)
     mut i = 0
     while i < s.byte_len() {
-        assert(bs[i] == s.as_bytes()[i])
+        assert(bs[i] == s.bytes()[i])
         i = i + 1
     }
 }

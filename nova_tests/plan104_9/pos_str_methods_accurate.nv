@@ -1,5 +1,5 @@
 // Plan 104.9 pos: str methods that nova-lsp completion now surfaces accurately.
-// Verifies byte_len() (not len), as_chars(), lines(), parse_int() — all compiling.
+// Verifies byte_len() (not len), chars(), lines(), parse_int() — all compiling.
 // Tests: "без упрощений как для прода"
 module nova_tests.plan104_9
 
@@ -14,7 +14,7 @@ test "byte_len returns byte count not char count" {
 test "as_chars iterates codepoints" {
     ro s = "abc"
     mut count = 0
-    for c in s.as_chars() {
+    for c in s.chars() {
         count = count + 1
     }
     assert(count == 3)

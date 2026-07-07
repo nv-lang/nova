@@ -5,7 +5,7 @@ module nova_tests.plan153_4
 
 test "as_slice — ro whole view aliases the buffer" {
     ro v = Vec[int].of(1, 2, 3)
-    ro s = v.as_slice()
+    ro s = v.slice()
     assert(s.len() == 3)
     assert(s.cap() == s.len())
     assert(s[0] == 1 && s[2] == 3)
@@ -14,7 +14,7 @@ test "as_slice — ro whole view aliases the buffer" {
 
 test "mut as_slice — element writes go through to the parent" {
     mut v = Vec[int].of(1, 2, 3, 4)
-    mut s = v.as_slice()
+    mut s = v.slice()
     s[0] = 99
     s[3] = 77
     assert(v[0] == 99 && v[3] == 77)

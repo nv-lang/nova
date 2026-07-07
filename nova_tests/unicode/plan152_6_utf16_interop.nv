@@ -87,7 +87,7 @@ test "to_code_points == as_chars values as int" {
     ro cp = s.to_code_points()
     mut chars_as_int []int = []int.new()
     chars_as_int.cap(4)
-    for c in s.as_chars() { chars_as_int.push(c as int) }
+    for c in s.chars() { chars_as_int.push(c as int) }
     assert(cp.len() == chars_as_int.len())
     mut i = 0
     while i < cp.len() {

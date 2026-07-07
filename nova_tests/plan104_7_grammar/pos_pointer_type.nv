@@ -31,9 +31,9 @@ test "pointer type in record field compiles" {
     assert(true)
 }
 
-test "star-u8 pointer from str.as_ptr()" {
+test "star-u8 pointer from str.ptr()" {
     ro s = "hello"
-    ro p = s.as_ptr()
+    ro p = s.ptr()
     ro p_int = p as int
     assert(p_int != 0)
 }

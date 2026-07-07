@@ -1,11 +1,11 @@
 module nova_tests.strings
 
 test "sentences is_empty on empty string" {
-    assert("".as_sentences().is_empty())
+    assert("".sentences().is_empty())
 }
 
 test "sentences is_empty after partial iteration" {
-    mut it = "Hello. World.".as_sentences()
+    mut it = "Hello. World.".sentences()
     ro _ = it.next()
     assert(!it.is_empty())
     ro _ = it.next()

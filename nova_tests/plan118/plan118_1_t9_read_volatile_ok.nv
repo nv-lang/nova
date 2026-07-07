@@ -11,18 +11,18 @@ module nova_tests.plan118
 
 test "read_volatile from u8 pointer" {
     ro buf []u8 = [42, 100]
-    ro v = unsafe { buf.as_ptr().read_volatile() }
+    ro v = unsafe { buf.ptr().read_volatile() }
     assert(v == (42 as u8))
 }
 
 test "read_volatile from i32 pointer" {
     ro buf []i32 = [1000, 2000]
-    ro v = unsafe { buf.as_ptr().read_volatile() }
+    ro v = unsafe { buf.ptr().read_volatile() }
     assert(v == (1000 as i32))
 }
 
 test "read_volatile from i64 pointer" {
     ro buf []i64 = [99999, 88888]
-    ro v = unsafe { buf.as_ptr().read_volatile() }
+    ro v = unsafe { buf.ptr().read_volatile() }
     assert(v == (99999 as i64))
 }

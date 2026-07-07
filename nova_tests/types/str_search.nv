@@ -186,29 +186,29 @@ test "rfind is case-sensitive" {
 // SECTION 7: len/char_len — Plan 108 D26 rev
 // ================================================================
 // Plan 108 D26 rev: s.byte_len() — длина в байтах O(1) (как Rust/Go).
-//                  s.as_chars().count() — длина в codepoints O(n).
+//                  s.chars().count() — длина в codepoints O(n).
 
 test "len: ASCII — bytes == codepoints" {
     ro s = "hello"
     assert(s.byte_len() == 5)          // 5 bytes (ASCII; D26 rev: len = bytes O(1))
-    assert(s.as_chars().count() == 5)     // 5 codepoints
+    assert(s.chars().count() == 5)     // 5 codepoints
 }
 
 test "len: Cyrillic — bytes != codepoints" {
     ro s = "Привет"               // 6 codepoints, 12 bytes (2 byte/char UTF-8)
     assert(s.byte_len() == 12)          // D26 rev: len = bytes
-    assert(s.as_chars().count() == 6)      // codepoints
+    assert(s.chars().count() == 6)      // codepoints
 }
 
 test "len: emoji — 4 байта на codepoint" {
     ro s = "ab😀cd"                // 5 codepoints, 4 ASCII + 4 emoji = 8 bytes
     assert(s.byte_len() == 8)            // D26 rev: len = bytes
-    assert(s.as_chars().count() == 5)       // codepoints
+    assert(s.chars().count() == 5)       // codepoints
 }
 
 test "len: empty string" {
     assert("".byte_len() == 0)
-    assert("".as_chars().count() == 0)
+    assert("".chars().count() == 0)
 }
 
 test "len for mixed content" {
@@ -216,7 +216,7 @@ test "len for mixed content" {
                                    // ASCII: a, space, space, b = 4 bytes
                                    // Cyrillic: 6*2 = 12 bytes; total bytes = 16
     assert(s.byte_len() == 16)           // D26 rev: bytes
-    assert(s.as_chars().count() == 10)      // codepoints
+    assert(s.chars().count() == 10)      // codepoints
 }
 
 // ================================================================
@@ -259,32 +259,32 @@ test "slice across emoji boundary" {
     ro r = s[2..6]                  // emoji = 4 bytes
     assert(r == "😀")
     assert(r.byte_len() == 4)
-    assert(r.as_chars().count() == 1)
+    assert(r.chars().count() == 1)
 }
 
 // ================================================================
-// SECTION 9: to_bytes() и to_chars() — итерация по строке (D178 rename)
+// SECTION 9: bytes() и chars() — итерация по строке (D410 rename)
 // ================================================================
-// D178: s.to_bytes() → []u8 (UTF-8 байты, allocating copy),
-//       s.to_chars() → []char (codepoints, allocating).
+// D410: s.bytes() → ro []u8 (UTF-8 байты, zero-copy view),
+//       s.chars() → CharsIter (codepoints, lazy iterator).
 // for-in по результату должен работать.
 
 test "bytes: ASCII — каждый символ = 1 байт" {
     ro s = "abc"
-    ro bs = s.to_bytes()
+    ro bs = s.bytes()
     assert(bs.len() == 3)
 }
 
 test "bytes: Cyrillic — UTF-8 многобайтовое представление" {
     ro s = "Привет"               // 6 codepoints, 12 bytes
-    ro bs = s.to_bytes()
+    ro bs = s.bytes()
     assert(bs.len() == 12)
 }
 
-test "bytes: for-in over s.to_bytes()" {
+test "bytes: for-in over s.bytes()" {
     ro s = "abc"
     mut sum int = 0
-    for b in s.to_bytes() {
+    for b in s.bytes() {
         sum = sum + (b as int)
     }
     // 'a'(97) + 'b'(98) + 'c'(99) = 294
@@ -293,7 +293,7 @@ test "bytes: for-in over s.to_bytes()" {
 
 test "bytes: ro-binding then for-in" {
     ro s = "ABC"
-    ro bs = s.to_bytes()
+    ro bs = s.bytes()
     mut count = 0
     for b in bs {
         if b == 'A' as u8 { count = count + 1 }
@@ -306,7 +306,7 @@ test "bytes: ro-binding then for-in" {
 test "chars: count codepoints через for-in" {
     ro s = "Привет"
     mut n = 0
-    for c in s.to_chars() {
+    for c in s.chars() {
         ro _ = c
         n = n + 1
     }
@@ -316,7 +316,7 @@ test "chars: count codepoints через for-in" {
 test "chars: emoji decode" {
     ro s = "ab😀"                  // 3 codepoints
     mut count = 0
-    for c in s.to_chars() {
+    for c in s.chars() {
         ro _ = c
         count = count + 1
     }
@@ -365,7 +365,7 @@ test "split: trailing separator" {
 
 test "bytes: round-trip через str.from_bytes" {
     ro original = "Hello, мир!"
-    ro bs = original.to_bytes()
+    ro bs = original.bytes()
     // Восстановим строку: bs → str.from_bytes(bs) → str. UTF-8 валидный
     // (исходник был str), поэтому Ok.
     ro recon = match str.from_bytes(bs) {
@@ -390,7 +390,7 @@ test "bytes: extreme values 0..255 через WriteBuffer" {
 test "bytes: for-in over packed []u8" {
     // For-in: каждый элемент — реально u8 (uint8_t), не int64.
     ro s = "ABC"
-    ro bs = s.to_bytes()
+    ro bs = s.bytes()
     mut sum = 0
     for b in bs {
         // b — это u8 (nova_byte = uint8_t), но cast to int для арифметики

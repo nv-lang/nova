@@ -11,6 +11,6 @@ module neg.plan118_1_t11_neg_write_volatile_on_ro
 test "write_volatile on ro pointer fails" {
     ro buf []u8 = [0, 0, 0]
     unsafe {
-        buf.as_ptr().write_volatile(99 as u8)
+        buf.ptr().write_volatile(99 as u8)
     }
 }
