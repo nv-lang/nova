@@ -21,7 +21,8 @@
 #include <string.h>
 
 /* Validate UTF-8 bytes. Returns 1 if valid, 0 otherwise.
- * Used by str.from_bytes_lossy (nova_str_from_bytes_lossy fast path). */
+ * Shared well-formedness helper (the retired C from_bytes_* used it; the
+ * Nova-body `str.from_bytes` decode reuses the same rules — 172.12 A6). */
 static inline nova_bool _nova_validate_utf8(const nova_byte* data, int64_t len) {
     int64_t i = 0;
     while (i < len) {
@@ -104,75 +105,17 @@ static inline nova_str Nova_str_static_from_codepoint(nova_int cp) {
     return Nova_str_static_from_char(cp);
 }
 
-/* str.from_bytes_unchecked(bytes readonly []u8) -> str.
- * O(n) copy. Caller guarantees valid UTF-8. */
-static inline nova_str nova_str_from_bytes_unchecked(NovaArray_nova_byte* arr) {
-    char* buf = (char*)nova_alloc((size_t)arr->len + 1);
-    if (arr->len > 0) memcpy(buf, arr->data, (size_t)arr->len);
-    buf[arr->len] = '\0';
-    return (nova_str){.ptr = buf, .len = (size_t)arr->len};
-}
-
-/* str.from_bytes_unchecked_steal(consume bytes []u8) -> str.
- * Zero-copy steal: reuse arr->data ptr, write '\0' at data[len] in-place
- * if capacity allows; else fall back to alloc+copy. Caller MUST consume
- * the source array (consume parameter — array unusable after call). */
-static inline nova_str nova_str_steal_bytes(NovaArray_nova_byte* arr) {
-    if (arr->cap > arr->len) {
-        arr->data[arr->len] = '\0';
-        return (nova_str){.ptr = (char*)arr->data, .len = (size_t)arr->len};
-    }
-    char* buf = (char*)nova_alloc((size_t)arr->len + 1);
-    if (arr->len > 0) memcpy(buf, arr->data, (size_t)arr->len);
-    buf[arr->len] = '\0';
-    return (nova_str){.ptr = buf, .len = (size_t)arr->len};
-}
-
-/* str.from_bytes_lossy(bytes readonly []u8) -> str.
- * Replaces invalid UTF-8 sequences with U+FFFD. */
-static inline nova_str nova_str_from_bytes_lossy(NovaArray_nova_byte* arr) {
-    static const nova_byte FFFD[3] = {0xEF, 0xBF, 0xBD};
-    if (_nova_validate_utf8(arr->data, arr->len)) {
-        return nova_str_from_bytes_unchecked(arr);  // readonly path: copy is required
-    }
-    int64_t cap = arr->len * 3 + 1;
-    char* out = (char*)nova_alloc((size_t)cap);
-    int64_t w = 0, i = 0;
-    while (i < arr->len) {
-        nova_byte c = arr->data[i];
-        int seq = 0;
-        if (c < 0x80) { seq = 1; }
-        else if ((c & 0xE0) == 0xC0 && c >= 0xC2) { seq = 2; }
-        else if ((c & 0xF0) == 0xE0) { seq = 3; }
-        else if ((c & 0xF8) == 0xF0 && c <= 0xF4) { seq = 4; }
-        int valid = (seq > 0);
-        if (valid) {
-            for (int k = 1; k < seq && valid; k++) {
-                if (i + k >= arr->len || (arr->data[i + k] & 0xC0) != 0x80) valid = 0;
-            }
-        }
-        if (valid && seq == 2 && c < 0xC2) valid = 0;
-        if (valid && seq == 3) {
-            if (c == 0xE0 && arr->data[i+1] < 0xA0) valid = 0;
-            else if (c == 0xED && arr->data[i+1] >= 0xA0) valid = 0;
-        }
-        if (valid && seq == 4) {
-            if (c == 0xF0 && arr->data[i+1] < 0x90) valid = 0;
-            else if (c == 0xF4 && arr->data[i+1] >= 0x90) valid = 0;
-        }
-        if (valid) {
-            for (int k = 0; k < seq; k++) out[w++] = (char)arr->data[i + k];
-            i += seq;
-        } else {
-            out[w++] = (char)FFFD[0];
-            out[w++] = (char)FFFD[1];
-            out[w++] = (char)FFFD[2];
-            i++;
-        }
-    }
-    out[w] = '\0';
-    return (nova_str){.ptr = out, .len = (size_t)w};
-}
+/* str.from_bytes_* []u8 consumers (from_bytes_unchecked / steal_bytes /
+ * from_bytes_lossy) — REMOVED in Plan 172.12 A6 (Vec-canon substrate).
+ *
+ * These `NovaArray_nova_byte*`-accepting helpers were retired from codegen
+ * routing by Plan 139.2 — `str.from_bytes_*` are now Nova-body statics
+ * (`Nova_str_static_from_bytes_*`) that take a real `Vec[u8]` and read its
+ * `@ptr`/`@len`. Verified dead (2026-07-07): zero call sites in generated C,
+ * zero FFI/extern decls (every reference is a doc comment). Owner decision
+ * (2026-07-08): NovaArray dies wholesale → removed here (byte-identical:
+ * `static inline` + unused, headers `#include`d not spliced). The shared
+ * `_nova_validate_utf8` well-formedness helper is untouched (used elsewhere). */
 
 /* Plan 176 Ф.0.5: `Nova_str_static_try_from_bytes` (the C backing of the retired
  * `str.try_from([]u8)` intrinsic) + its `nova_box_str` helper were removed.

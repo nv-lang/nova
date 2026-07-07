@@ -43244,7 +43244,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return match method.as_str() {
                                 "len" | "capacity" => "nova_int".into(),
                                 "clone" => "Nova_WriteBuffer*".into(),
-                                "into" => "NovaArray_nova_byte*".into(),
+                                // 172.12 A6 (Vec-canon): WriteBuffer @into -> []u8 is a
+                                // Nova-body method building a real Vec[u8]; the checker
+                                // channel supersedes this legacy fallback. Aligned to the
+                                // Vec-image so a channel-miss names the correct type
+                                // (was stale NovaArray_nova_byte*, dead but mis-named).
+                                "into" => "Nova_Vec____nova_byte*".into(),
                                 // Self-return для chaining (Ф.9.1).
                                 m if m.starts_with("write_") => "Nova_WriteBuffer*".into(),
                                 _ => "nova_int".into(),
@@ -43254,7 +43259,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return match method.as_str() {
                                 "position" | "remaining" => "nova_int".into(),
                                 "has_remaining" => "nova_bool".into(),
-                                "remaining_bytes" => "NovaArray_nova_byte*".into(),
+                                // 172.12 A6 (Vec-canon): ReadBuffer @remaining_bytes -> []u8
+                                // is a Nova-body method building a real Vec[u8]; channel
+                                // supersedes. Aligned to the Vec-image (was stale NovaArray).
+                                "remaining_bytes" => "Nova_Vec____nova_byte*".into(),
                                 // Plan 177 / D325 Ф.2b (de-hardcode §3/§10): the `read_X`
                                 // reads are now a SINGLE Result-form (`try_read_*`/bare-throw
                                 // twins retracted). Their concrete `Result[T, ReadBufferError]`
@@ -43584,11 +43592,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "char_at" => "NovaOpt_nova_char".into(),
                                 "find" | "rfind" => "NovaOpt_nova_int".into(),
                                 // D410 (2026-07-06, ex-D176 as_bytes): s.bytes() → readonly
-                                // []u8 (zero-copy, same C type). Retired `to_bytes()`
-                                // (allocating copy) twin removed — no C-type arm needed.
-                                "bytes" => "NovaArray_nova_byte*".into(),
-                                // D178: split → readonly []str (zero-copy views, same C type).
-                                "split" => "NovaArray_nova_str*".into(),
+                                // []u8. 172.12 A6 (Vec-canon): `@bytes` is a Nova-body method
+                                // returning a real Vec[u8] (Plan 139.2, via from_raw_parts);
+                                // the checker channel supersedes this legacy fallback. Aligned
+                                // to the Vec-image (was stale NovaArray_nova_byte*).
+                                "bytes" => "Nova_Vec____nova_byte*".into(),
+                                // D178: split → []str. 172.12 A6: `@split` is Nova-body
+                                // returning a real Vec[str]; aligned to the Vec-image.
+                                "split" => "Nova_Vec____nova_str*".into(),
                                 // D178: compare → int.
                                 "compare" => "nova_int".into(),
                                 // Plan 177 / D325 Ф.2b (de-hardcode §3): `str.parse_int` is now
@@ -46975,7 +46986,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return match method.as_str() {
                                 "len" | "capacity" => "nova_int".into(),
                                 "clone" => "Nova_WriteBuffer*".into(),
-                                "into" => "NovaArray_nova_byte*".into(),
+                                // 172.12 A6 (Vec-canon): WriteBuffer @into -> []u8 is a
+                                // Nova-body method building a real Vec[u8]; the checker
+                                // channel supersedes this legacy fallback. Aligned to the
+                                // Vec-image so a channel-miss names the correct type
+                                // (was stale NovaArray_nova_byte*, dead but mis-named).
+                                "into" => "Nova_Vec____nova_byte*".into(),
                                 // Self-return для chaining (Ф.9.1).
                                 m if m.starts_with("write_") => "Nova_WriteBuffer*".into(),
                                 _ => "nova_int".into(),
@@ -46985,7 +47001,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return match method.as_str() {
                                 "position" | "remaining" => "nova_int".into(),
                                 "has_remaining" => "nova_bool".into(),
-                                "remaining_bytes" => "NovaArray_nova_byte*".into(),
+                                // 172.12 A6 (Vec-canon): ReadBuffer @remaining_bytes -> []u8
+                                // is a Nova-body method building a real Vec[u8]; channel
+                                // supersedes. Aligned to the Vec-image (was stale NovaArray).
+                                "remaining_bytes" => "Nova_Vec____nova_byte*".into(),
                                 // Plan 177 / D325 Ф.2b (de-hardcode §3/§10): the `read_X`
                                 // reads are now a SINGLE Result-form (`try_read_*`/bare-throw
                                 // twins retracted). Their concrete `Result[T, ReadBufferError]`
@@ -47315,11 +47334,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "char_at" => "NovaOpt_nova_char".into(),
                                 "find" | "rfind" => "NovaOpt_nova_int".into(),
                                 // D410 (2026-07-06, ex-D176 as_bytes): s.bytes() → readonly
-                                // []u8 (zero-copy, same C type). Retired `to_bytes()`
-                                // (allocating copy) twin removed — no C-type arm needed.
-                                "bytes" => "NovaArray_nova_byte*".into(),
-                                // D178: split → readonly []str (zero-copy views, same C type).
-                                "split" => "NovaArray_nova_str*".into(),
+                                // []u8. 172.12 A6 (Vec-canon): `@bytes` is a Nova-body method
+                                // returning a real Vec[u8] (Plan 139.2, via from_raw_parts);
+                                // the checker channel supersedes this legacy fallback. Aligned
+                                // to the Vec-image (was stale NovaArray_nova_byte*).
+                                "bytes" => "Nova_Vec____nova_byte*".into(),
+                                // D178: split → []str. 172.12 A6: `@split` is Nova-body
+                                // returning a real Vec[str]; aligned to the Vec-image.
+                                "split" => "Nova_Vec____nova_str*".into(),
                                 // D178: compare → int.
                                 "compare" => "nova_int".into(),
                                 // Plan 177 / D325 Ф.2b (de-hardcode §3): `str.parse_int` is now

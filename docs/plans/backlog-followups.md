@@ -2050,3 +2050,25 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   string_builder/cast.h → Vec-образы), A7 = координированный codegen-флип 5 сайтов
   (binding-type, receiver_c_type, .new(), литералы ×3, for-loop) + снос NOVA_ARRAY_DECL-
   набора array.h (uint-маркер закрывается автоматически), затем коллапс триплификации.
+- **A6 ЗАКРЫТ (2026-07-07, заход 10, 172.12-typed-ir-mono §14.7-14.11):** str-семейство
+  runtime-примирение выполнено. ЭМПИРИКА опровергла предпосылку A5 §14.4.1 «NovaArray
+  runtime-встроен, НЕ выпиливаем»: str-C-функции (`nova_str_to_bytes`/`bytes`/`as_bytes`/
+  `split`/`to_chars`/`chars` в array.h + `from_bytes_unchecked`/`steal_bytes`/`from_bytes_lossy`
+  в string_builder.h) **МЁРТВЫ** — ноль call-site в генерируемом C, ноль FFI/extern (все
+  ссылки = doc-комментарии). Retired роутингом Plan 139.2 → Nova-body методы строят
+  реальный `Vec[u8]`/`Vec[str]` через `Vec[T].from_raw_parts`; even `ro b = s.bytes()`
+  даёт `Nova_Vec____nova_byte* b = Nova_str_method_bytes(s)` (checker-канал перекрывает
+  legacy infer). cast.h — БЕЗ NovaArray-ссылок (уже чист). **Сделано:** (1) снос 9 мёртвых
+  C-функций (byte-identical: `nova_rt/*.h` = `#include`, не splice в .c; `static inline`+unused
+  → 0 object-code); (2) align 8 устаревших infer-fallback'ов NovaArray→Vec (обе триплет-копии:
+  str.bytes/split, WriteBuffer.into, ReadBuffer.remaining_bytes — все Nova-body `[]u8`/`[]str`,
+  перекрыты каналом). **Typedef-слой-вопрос (NovaVecImage vs real-mono-forward-decl) МООТ** —
+  ни одна rt-функция не называет Vec-mono (str уже на Nova-body), 0 ре-деклараций/клэшей по
+  построению. Гейты: build оба крейта clean, conf **66/0** δ0, byte-identity 36/40 identical
+  (4 diff = generic-stub fwd-typedef ordering-нондетерм., base-vs-base доказано; **NovaArray→Vec
+  дельта-список ПУСТ** — канал перекрывает fallback → 0 emitted-C дельты), nova test выборка
+  (strings/str/buffers/unicode/json/serde/compress/plan108/145/runtime) δ0 (все fail = pre-existing
+  stale-тесты retired API `CharsIter.nth`/`str.len()` D249, идентичны на baseline). **A7 de-risked:**
+  str-runtime уже Vec → A7 = только user-`[]T` codegen-флип 5 сайтов (`receiver_c_type:13901` —
+  единственный оставшийся широкий NovaArray-эмиттер, `.new()`, литералы ×3, for-loop, type-map
+  `:2978-2992`/`:14127`) + `NOVA_ARRAY_DECL`-снос (uint-маркер закрывается там).
