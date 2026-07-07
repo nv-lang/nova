@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 182 Ф.2 (migrated from nova_tests/plan176_holes/m176_wrapper_ctor_inference.nv)
 // [M-176-generic-wrapper-mono-inference] repro/regression test.
 //
 // A generic wrapper type with a bare-type-param field (`BufWriter[W]{ inner W }`,
@@ -7,12 +9,10 @@
 // and the LHS local kept the erased type, so its instance methods dispatched to the
 // erased no-op bodies → CC-FAIL / runtime crash. The fix infers the type-args from
 // the ctor argument, monomorphizes the wrapper instance + its methods, and types
-// the local with the mono instance. Mirrors nova_tests/io/d322_buffered.nv but with
+// the local with the mono instance. Mirrors d322_buffered_test.nv but with
 // inference-form construction (`BufWriter.new(sink)`, not `BufWriter[BytesWriter].new(sink)`).
 
-module nova_tests.plan176_holes
-
-import std.io.{BytesReader, BytesWriter, BufReader, BufWriter, read_to_end}
+module std.io
 
 test "BufWriter ctor arg inference: close flushes to the shared sink" {
     mut sink = BytesWriter.new()
