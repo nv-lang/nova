@@ -152,6 +152,13 @@ panic в `emit_match`. Библиотечный (import) режим не три�
   эрейзится в `nova_int` → `cs[0]` Index на nova_int → panic. Корень — mono-return nested-generic
   collect, НЕ Index-сайт. [M-182-crash-nested-generic-collect-erase], emit_c.rs:41498.
 
+Доп-уловы из задания (тот же класс): `examples/net` — теперь `.close` return unknown,
+obj_ty=`nova_int` (ресивер `lst` эрейзнут в nova_int) → тот же [M-182-crash-method-ret-unknown]
+(erased-receiver ветвь). `std/time/timer_metrics_test` — **CC-FAIL** (не P67-краш, честный RED):
+`NovaValue_Timestamp` инициализируется `int` (value-record init mismatch, §3.2) —
+[M-182-crash-value-record-init-int]. `[M-plan62-hashable-flap-runtime]` — недетерминированный
+RUN-FAIL (не воспроизведён в этом заходе; рантайм/GC-гонка кодогена hashable, оставлен как есть).
+
 Гейты фиксов: сборка обоих крейтов зелёная; conformance `--full` **66/0** (дельта 0); prelude-
 shadow (`plan72/p3a_record_shadow_range_pos`, `plan62/range_shadow_warning`, `plan138_2/t16`,
 `plan107/allow_shadow_attr`) зелёные — collision-exempt не ломает D29-shadow; broad-sample
