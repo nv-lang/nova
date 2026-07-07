@@ -2131,3 +2131,24 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   design; brotli — handle-based; io/conv — stateless; os_env — argc/argv process-wide
   после set_args (иммутабельно, ок); effects.c TLS — ядро шедулера (сохраняется на
   переключении), вне класса.
+
+- **[M-sched-park-concurrent-fs]** (2026-07-08, **P0/P1 — детерминированный крэш планировщика**,
+  Plan: расследование по методике [reference-mn-race-case-study]; Wave: [opus] немедленно,
+  зона fibers.h/nova_sched — свободна) — обнаружено fs-M:N-волной: ЛЮБЫЕ 2+ конкурентных
+  файбера с блокирующей fs-операцией под real_fs() детерминированно валят планировщик:
+  `nova: nova_sched_park: invalid scope/slot`. Минимальная репродукция: 2 файбера, по
+  одному metadata() каждый. Воспроизведено на базисе 200d5a79a (ДО fs-M:N правки, старый
+  TLS-код) — довливной, ни один существующий fs-тест не гонял >1 конкурентного файбера
+  с реальным диском. Гипотеза: fs-завершения приходят с libuv THREADPOOL (в отличие от
+  net — с одного event-loop треда, его 9-файберный стресс живёт) → гонка per-scope
+  слотов при конкурентных cross-thread wake. Фикстура в отчёте fs-M:N волны (коммит
+  04b0ff2e8, не закоммичена — перманентно красная до фикса).
+
+- **[M-test-runner-module-aggregation-segv]** (2026-07-08, P2, Plan: 182-хвост/172.13;
+  Wave: при заходе в раннер) — довливной SEGV агрегации: одиночные test-build КАЖДОГО
+  из 8 std/fs/*_test.nv зелёные, но агрегация всех файлов модуля в один exe (target
+  d323_path_ops_test.nv) падает SEGV на определённой комбинации; воспроизводится на
+  базисе 200d5a79a. Родственно: раннер видит только 4 файла в std/fs при папочном
+  прогоне (поведение базиса); атрибуция строки падения первому файлу модуля
+  (access.nv вместо views_test.nv, замечено на vec 2026-07-07); self-import гэп
+  vec_lazy/vec_iter (E_EXTENSION_METHOD_NEEDS_IMPORT на самих себя, 2026-07-07).
