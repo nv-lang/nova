@@ -9,7 +9,7 @@
 //   wb.write_byte(v), wb.write_bytes(src)
 //   wb.write_u8/i8/u16_le/be/u32_le/be/u64_le/be/i*_le/be (18 methods)
 //   wb.write_f32_le/be/f64_le/be (4 methods)
-//   wb.len(), wb.capacity(), wb.clone()
+//   wb.len(), wb.cap(), wb.clone()
 //   wb.into() -> []u8 (infallible)
 
 module nova_tests.runtime
@@ -22,13 +22,13 @@ module nova_tests.runtime
 test "WriteBuffer.new() — empty" {
     mut wb = WriteBuffer.new()
     assert(wb.len() == 0)
-    assert(wb.capacity() >= 16)
+    assert(wb.cap() >= 16)
 }
 
 test "WriteBuffer.new().cap(128)" {
     mut wb = WriteBuffer.new().cap(128)
     assert(wb.len() == 0)
-    assert(wb.capacity() >= 128)
+    assert(wb.cap() >= 128)
 }
 
 
@@ -138,7 +138,7 @@ test "auto-grow при переполнении" {
     wb.write_u32_le(0x11223344)     // 4 bytes — fits
     wb.write_u32_le(0x55667788)     // 4 more — needs grow
     assert(wb.len() == 8)
-    assert(wb.capacity() >= 8)
+    assert(wb.cap() >= 8)
 }
 
 

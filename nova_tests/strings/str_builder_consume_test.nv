@@ -22,13 +22,16 @@ test "as_str — пустой буфер даёт пустую строку" {
     assert(s.len() == 0)
 }
 
-test "as_str — Unicode паритет char_len со str" {
+test "as_str — Unicode паритет codepoint-счёта со str" {
     consume sb = StringBuilder.new()
     sb.append("Привет")
-    ro cp_before = sb.char_len()   // codepoints before consume
+    // [M-unwrap-twins-retraction] (2026-07-07): @char_len() ретрактирован —
+    // codepoint-счёт через линзу+терминатор `chars().count()` на итоговой str
+    // (sb.clone().into_str() эквивалентно, но здесь sb и так консьюмится сразу).
     ro s = sb.into_str()
+    ro cp_after = s.chars().count()
     // Plan 108 D26 rev: str.len() = bytes O(1), str.chars().count() = codepoints O(n).
-    assert(s.chars().count() == cp_before)   // 6 codepoints == sb.char_len()
+    assert(cp_after == 6)
     assert(s.len() == 12)               // 12 bytes (2 bytes per Cyrillic codepoint)
 }
 

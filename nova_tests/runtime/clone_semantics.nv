@@ -56,8 +56,8 @@ test "StringBuilder.@clone() — независимые буферы (исклю
     consume b = a.clone()
     b.append(" world")
     // оба независимы — accumulator clone deep по семантике типа
-    assert(a.len() == 5)
-    assert(b.len() == 11)
+    assert(a.byte_len() == 5)
+    assert(b.byte_len() == 11)
     ro _ = a.into_str()
     ro _ = b.into_str()
 }

@@ -168,14 +168,12 @@ export fn HashMap[K, V] @len() -> int => @_count
 export fn HashMap[K, V] @is_empty() -> bool => @_count == 0
 
 /// Общая ёмкость внутреннего массива bucket'ов.
+///
+/// [M-unwrap-twins-retraction] (2026-07-07): `@capacity()` alias
+/// РЕТРАКТИРОВАН (дублировал канонический `@cap()`, D9) — `@cap()` теперь
+/// единственный 0-arg getter половины `cap`/`cap(n)` property-пары.
 #stable(since = "0.1")
-export fn HashMap[K, V] @capacity() -> int => @_buckets.len()
-
-/// D117 AMEND accessor-pair alias for `@capacity()` (same value) — the 0-arg
-/// getter half of the `cap`/`cap(n)` property pair (vec-sweep, 2026-07-06).
-/// `@capacity()` stays as the pre-existing, widely-used accessor name;
-/// `@cap()` exists so `HashMap.new().cap(n)` reads as a getter/setter pair.
-export fn HashMap[K, V] @cap() -> int => @capacity()
+export fn HashMap[K, V] @cap() -> int => @_buckets.len()
 
 /// Set the capacity to guarantee at least `n` entries fit without a further
 /// rehash (D117 AMEND setter: same-name 1-arg overload of `@cap()`) — the
@@ -741,50 +739,50 @@ test "rehash on growth" {
         m.insert(i, i * 2)
     }
     assert(m.len() == 100)
-    assert(m.capacity() >= 128)      // достаточно для 100 при 0.75 load
+    assert(m.cap() >= 128)      // достаточно для 100 при 0.75 load
     for i in 0..100 {
         assert(m.get(i) == Some(i * 2))
     }
 }
 
 // Plan 52 Ф.6 / vec-sweep (2026-07-06): контракт `new().cap(n)` (ex-`with_capacity`)
-// — `n` вставок без rehash. `@capacity()` после ровно `n` вставок не должна
+// — `n` вставок без rehash. `@cap()` после ровно `n` вставок не должна
 // измениться. Проверяем граничные n: 4, 7, 8, 13, 16 — все бывшие баги, где
 // прежняя bucket-count реализация давала threshold < n.
 test "new().cap(n) contract — n inserts without rehash" {
     // n = 4
     mut m4 = HashMap[int, int].new().cap(4)
-    ro cap4 = m4.capacity()
+    ro cap4 = m4.cap()
     for i in 0..4 { m4.insert(i, i) }
-    assert(m4.capacity() == cap4)
+    assert(m4.cap() == cap4)
     assert(m4.len() == 4)
 
     // n = 7
     mut m7 = HashMap[int, int].new().cap(7)
-    ro cap7 = m7.capacity()
+    ro cap7 = m7.cap()
     for i in 0..7 { m7.insert(i, i) }
-    assert(m7.capacity() == cap7)
+    assert(m7.cap() == cap7)
     assert(m7.len() == 7)
 
     // n = 8
     mut m8 = HashMap[int, int].new().cap(8)
-    ro cap8 = m8.capacity()
+    ro cap8 = m8.cap()
     for i in 0..8 { m8.insert(i, i) }
-    assert(m8.capacity() == cap8)
+    assert(m8.cap() == cap8)
     assert(m8.len() == 8)
 
     // n = 13
     mut m13 = HashMap[int, int].new().cap(13)
-    ro cap13 = m13.capacity()
+    ro cap13 = m13.cap()
     for i in 0..13 { m13.insert(i, i) }
-    assert(m13.capacity() == cap13)
+    assert(m13.cap() == cap13)
     assert(m13.len() == 13)
 
     // n = 16
     mut m16 = HashMap[int, int].new().cap(16)
-    ro cap16 = m16.capacity()
+    ro cap16 = m16.cap()
     for i in 0..16 { m16.insert(i, i) }
-    assert(m16.capacity() == cap16)
+    assert(m16.cap() == cap16)
     assert(m16.len() == 16)
 }
 

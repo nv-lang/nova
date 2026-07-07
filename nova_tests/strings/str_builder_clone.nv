@@ -11,8 +11,8 @@ test "clone — мутация клона не влияет на оригина�
     a.append("hello")
     consume b = a.clone()
     b.append(" world")
-    assert(a.len() == 5)         // оригинал не изменён (bytes)
-    assert(b.len() == 11)
+    assert(a.byte_len() == 5)         // оригинал не изменён (bytes)
+    assert(b.byte_len() == 11)
     ro _ = a.into_str()
     ro _ = b.into_str()
 }
@@ -22,8 +22,8 @@ test "clone — мутация оригинала не влияет на кло�
     a.append("base")
     consume b = a.clone()
     a.append("-extra")
-    assert(a.len() == 10)
-    assert(b.len() == 4)         // клон не изменён
+    assert(a.byte_len() == 10)
+    assert(b.byte_len() == 4)         // клон не изменён
     ro _ = a.into_str()
     ro _ = b.into_str()
 }
@@ -39,7 +39,7 @@ test "clone пустого — пустой клон" {
     consume a = StringBuilder.new()
     consume b = a.clone()
     assert(b.is_empty())
-    assert(b.len() == 0)
+    assert(b.byte_len() == 0)
     ro _ = a.into_str()
     ro _ = b.into_str()
 }
@@ -48,10 +48,10 @@ test "clone с Unicode — bytes сохранены" {
     consume a = StringBuilder.new()
     a.append("Привет 😀")
     consume b = a.clone()
-    assert(b.len() == a.len())
-    assert(b.char_len() == a.char_len())
+    assert(b.byte_len() == a.byte_len())
+    assert(b.clone().into_str().chars().count() == a.clone().into_str().chars().count())
     b.append("!")
-    assert(b.len() == a.len() + 1)
+    assert(b.byte_len() == a.byte_len() + 1)
     ro _ = a.into_str()
     ro _ = b.into_str()
 }

@@ -897,14 +897,13 @@ export fn ReadBuffer mut @read_byte() Fail[ReadBufferError] -> u8 => @try_read_b
 сокращения. Приоритет — читаемость, а не количество символов.
 
 ```nova
-fn StringBuilder @capacity()  -> int     // не @cap()
 fn ReadBuffer    @position()  -> int     // не @pos()
 
 fn copy_into(destination []u8) -> ()   // не dest
 fn parse(input str) -> Result[T, E]      // не buf, не val
 ```
 
-**Запрещены ad-hoc сокращения** (mainstream-precedent): `pos`, `cap`,
+**Запрещены ad-hoc сокращения** (mainstream-precedent): `pos`,
 `dest`, `src`, `buf`, `val`, `tmp`, `cnt`, `idx` (кроме mainstream-исключений
 ниже), `arr`, `len` (кроме mainstream-исключения), `msg` (кроме `Error.msg`
 field — закреплено D26), `cfg`, `ctx`.
@@ -915,12 +914,13 @@ field — закреплено D26), `cfg`, `ctx`.
 | Сокращение | Где разрешено | Прецеденты |
 |---|---|---|
 | `len` | длина коллекции (`s.len()`, `arr.len()`; method-only по [D117](#d117-size-like-accessors-require-call-syntax)) | Rust, Go |
+| `cap` | capacity-свойство коллекции (`arr.cap()`, `mut arr.cap(n)`; read/write property-pair, D117 AMEND 2026-07-06) — дублирующий `capacity()` РЕТРАКТИРОВАН [M-unwrap-twins-retraction] 2026-07-07 | Go |
 | `iter` | итератор (`coll.iter()`, `Iterator`) | Rust |
 | `idx` | index — **только в локальных переменных** (`for idx in ...`) | Rust convention |
 
-Ровно три исключения, никаких других. Остальные — full word:
-`length` если не коллекция-`len`, `iterator` если не protocol-имя,
-`index` если параметр или поле.
+Ровно четыре исключения, никаких других. Остальные — full word:
+`length` если не коллекция-`len`, `capacity` если не свойство-`cap`,
+`iterator` если не protocol-имя, `index` если параметр или поле.
 
 **Operator-overloading имена** ([D46](#d46-перегрузка-операторов-через--методы))
 — `@plus`, `@rem`, `@neg`, `@shl`, ... — **фиксированы** и **не подчиняются
@@ -1921,21 +1921,21 @@ extensions** (методы добавлены через `fn []T @method` по D
 | Категория | API | Семантика |
 |---|---|---|
 | длина | `xs.len()`, `xs.is_empty()` | `len()` — method-call, zero-cost lowering в `arr->len` (O(1)); `is_empty()` ≡ `len() == 0` ([D117](#d117-size-like-accessors-require-call-syntax)) |
-| capacity | `xs.capacity()` | размер выделенного storage'а; `len() ≤ capacity()`. Renamed from `.cap` (Plan 60 / D117 — Rust/C++/Swift naming) |
+| capacity | `xs.cap()`, `mut xs.cap(n)` | размер выделенного storage'а; `len() ≤ cap()`. Канон `cap()` (D117 AMEND 2026-07-06); дублирующий `.capacity()` РЕТРАКТИРОВАН [M-unwrap-twins-retraction] 2026-07-07 |
 | доступ | `xs[i]`, `xs.get(i)` | `[i]` — panic при out-of-bounds (D13); `get(i)` → `Option[T]` |
-| мутация | `mut xs.push(v)`, `mut xs.pop() -> Option[T]` | `push` grow при `len() == capacity()` |
+| мутация | `mut xs.push(v)`, `mut xs.pop() -> Option[T]` | `push` grow при `len() == cap()` |
 | итерация | `xs.iter() -> Iter[T]`, `for x in xs { ... }` | `for` — sugar над `.iter().next()` (D58) |
-| создание | `[]T.new()`, `[]T.with_capacity(n)`, `[]T.filled(v T, n int)` | static-функции на типе |
+| создание | `[]T.new()`, `[]T.new().cap(n)`, `[]T.filled(v T, n int)` | static-функции на типе; `with_capacity` удалён (D372) — `.new().cap(n)` |
 
-`xs.capacity()` — присутствует, но **не часть стабильного API** для
+`xs.cap()` — присутствует, но **не часть стабильного API** для
 прикладного кода (detail of representation D32). Использование — для
 оптимизации pre-allocation; при изменениях representation может
 исчезнуть.
 
 **Field-access form (`xs.len`, `xs.cap`, `xs.is_empty` без скобок)** —
 запрещена ([D117](#d117-size-like-accessors-require-call-syntax)).
-Compiler выдаёт `E_SIZE_ACCESSOR_FIELD`. Для legacy `.cap` —
-diagnostic подсказывает rename `.capacity()`.
+Compiler выдаёт `E_SIZE_ACCESSOR_FIELD`. Для bare `.cap` — diagnostic
+подсказывает append `()` (canonical form — `.cap()`).
 
 **Stdlib extensions** (`std/collections/vec.nv` через D35) — то, что
 пишется как обычный пользовательский метод:
@@ -5741,7 +5741,7 @@ content-char    = любой символ, кроме NEWLINE; при этом �
 ### Что
 
 Для **любого** типа `T` методы, возвращающие размер/cardinality/
-capacity (`len`, `capacity`, `byte_len`, `is_empty`, плюс будущие
+capacity (`len`, `cap`, `byte_len`, `is_empty`, плюс будущие
 `count`, `size` если они появятся как built-in convention), вызываются
 **только** через method-call с круглыми скобками: `t.method()`.
 
@@ -5759,7 +5759,9 @@ ro v = [1, 2, 3]
 ro n = v.len()        // ✓ корректно
 ro m = v.len          // ✗ error E_SIZE_ACCESSOR_FIELD
 ro z = v.is_empty()   // ✓
-ro c = v.capacity()   // ✓ (renamed from .cap — Rust/C++/Swift naming)
+ro c = v.cap()        // ✓ канон (D117 AMEND 2026-07-06 — Go-style короткое имя;
+                       //     `.capacity()` был дублирующим alias, РЕТРАКТИРОВАН
+                       //     [M-unwrap-twins-retraction] 2026-07-07)
 ```
 
 Что попадает под D117 (по conventional имени):
@@ -5767,13 +5769,15 @@ ro c = v.capacity()   // ✓ (renamed from .cap — Rust/C++/Swift naming)
 | Имя | Где |
 |---|---|
 | `len` | любая коллекция |
-| `capacity` | любая коллекция (включая `[]T`, `HashMap`, `Set`, etc.) |
-| `byte_len` | `str` (длина в байтах UTF-8) |
+| `cap` | любая коллекция (включая `[]T`, `HashMap`, `StringBuilder`, `WriteBuffer`, etc.) |
+| `byte_len` | строкоподобная поверхность (`str`, `StringBuilder`) — длина в байтах UTF-8 |
 | `is_empty` | любая коллекция |
 | `count`, `size` | если когда-нибудь добавятся как built-in convention |
 
-Имя `cap` — **legacy alias** для `capacity`; diagnostic при попытке
-field-access `t.cap` подсказывает rename на `.capacity()`.
+Имя `cap` — канон (D117 AMEND 2026-07-06). Прежний дублирующий
+`capacity` accessor РЕТРАКТИРОВАН на всех носителях
+([M-unwrap-twins-retraction], 2026-07-07) — diagnostic при попытке
+field-access `t.cap` (без скобок) подсказывает rename на `.cap()`.
 
 ### Diagnostic при нарушении
 
@@ -5789,9 +5793,9 @@ error[E_SIZE_ACCESSOR_FIELD]: size-like accessor `len` is method-only
            syntax was removed in Plan 132; use `.len()` to call)
 ```
 
-Для `.cap`:
+Для bare `.cap` (без скобок):
 ```
-   = help: rename to `.capacity()` (Rust/C++/Swift naming; D117)
+   = help: append `()` — use `.cap()` method call (D117 AMEND 2026-07-06)
 ```
 
 ### Почему
@@ -5824,7 +5828,7 @@ error[E_SIZE_ACCESSOR_FIELD]: size-like accessor `len` is method-only
 | **Swift** | `arr.count` property | `s.count` property | `dict.count` property | none (но field) |
 | **Java** | `arr.length` field | `s.length()` method | `m.size()` method | **inconsistent** |
 | **Python** | `len(arr)` builtin | `len(s)` builtin | `len(m)` builtin | none |
-| **Nova** | `arr.len()` method | `s.len()` method | `map.len()` method | none (D117) |
+| **Nova** | `arr.len()`/`arr.cap()` method | `s.len()`/`s.byte_len()` method | `map.len()`/`map.cap()` method | none (D117) |
 
 Nova = Rust паритет, **+ explicit D-block** (Rust полагается на
 convention без compiler enforcement).
@@ -5839,9 +5843,13 @@ convention без compiler enforcement).
 - **`len(x)` builtin (Go-style)** — global-function-namespace
   конфликт с user-types; не работает с method-chaining
   `vec.map(f).len()`.
-- **`cap()` (Go naming)** — отвергнуто; для редко используемого
-  accessor'а Nova выбирает полное слово `capacity()` (Rust/C++/Swift
-  parity), [D29 «явность над краткостью»](#d29-один-способ-делать-одно).
+- ~~**`cap()` (Go naming)** — отвергнуто; полное слово `capacity()`~~
+  **СУПЕРСЕДЕД D117 AMEND (2026-07-06)**: `cap()` стал каноном —
+  precedent-пара read/write свойства `@cap()`/`@cap(n)` (см. AMEND-блок
+  выше); `capacity()` был оставлен как alias, затем сам ретрактирован
+  как дубль ([M-unwrap-twins-retraction], 2026-07-07). Историческая
+  причина отказа (D29 explicitness) уступила единообразию
+  read/write-пары одним именем.
 - **Allow bare `.len` как warning, не error** — отвергнуто для
   bootstrap; method-value form требует явного intent (Plan 11
   syntax).
@@ -5878,7 +5886,7 @@ Nova-body (Plan 139.2 Ф.1): `@len() => @len` (O(1) byte-len, бывший
 - [D32](02-types.md#d32) — array layout `(ptr, len, cap)`; D117
   скрывает эти поля от user-language.
 - [D26](08-runtime.md#d26) — prelude API; D117 добавляет методы
-  `[]T.len()`, `[]T.capacity()`, `[]T.is_empty()`, `str.is_empty()`
+  `[]T.len()`, `[]T.cap()`, `[]T.is_empty()`, `str.is_empty()`
   в список prelude-API.
 - [D38](#d38-создание-массивов-и-turbofish-для-дженериков) — built-in
   API для `[]T`; D117 amend'ит таблицу (раздел "Built-in API").

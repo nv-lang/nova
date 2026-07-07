@@ -1,6 +1,6 @@
 // Plan 85.1 Ф.2 — StringBuilder non-consuming inspection.
 //
-// @starts_with(prefix) / @ends_with(suffix) / @is_empty() / @len()
+// @starts_with(prefix) / @ends_with(suffix) / @is_empty() / @byte_len()
 // — все non-consuming: append после них продолжает работать.
 // Note: @peek() удалён в Plan 109/D179 (unsound aliasing with realloc).
 
@@ -104,7 +104,7 @@ test "non-consuming — все inspection до as_str" {
     ro _ = sb.is_empty()
     ro _ = sb.starts_with("foo")
     ro _ = sb.ends_with("bar")
-    ro _ = sb.len()
+    ro _ = sb.byte_len()
     sb.append("/baz")                    // append после всех проверок
     assert(sb.into_str() == "foo/bar/baz")
 }

@@ -5,7 +5,7 @@ module nova_tests.plan108
 
 fn append_world(mut sb StringBuilder) -> int {
     sb.append(" world")
-    sb.len()
+    sb.byte_len()
 }
 
 test "mut param + StringBuilder append" {

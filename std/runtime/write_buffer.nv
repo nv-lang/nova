@@ -76,13 +76,12 @@ export fn WriteBuffer.from(b []u8) -> Self {
 export fn WriteBuffer @len() -> int => @buf.len()
 
 // Allocated capacity в байтах.
-export fn WriteBuffer @capacity() -> int => @buf.cap()
-
-// D117 AMEND accessor-pair alias for `@capacity()` (vec-sweep, 2026-07-06):
-// `@capacity()` stays as the pre-existing accessor name; `@cap()` exists so
-// `WriteBuffer.new().cap(n)` reads as a getter/setter pair (ex-`with_capacity`,
-// D372 amend — with_capacity removed).
-export fn WriteBuffer @cap() -> int => @capacity()
+//
+// [M-unwrap-twins-retraction] (2026-07-07): `@capacity()` alias
+// РЕТРАКТИРОВАН (дублировал канонический `@cap()`, D9) — `@cap()` теперь
+// единственный 0-arg getter половины `cap`/`cap(n)` property-пары
+// (ex-`with_capacity`, D372 amend — with_capacity removed).
+export fn WriteBuffer @cap() -> int => @buf.cap()
 
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
 // own exact `mut @cap(n)` — no rounding). Replacement for the removed

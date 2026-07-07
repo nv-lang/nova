@@ -9,24 +9,24 @@ module nova_tests.strings
 test "Cyrillic — len вдвое больше char_len" {
     consume sb = StringBuilder.new()
     sb.append("Программирование")
-    assert(sb.char_len() == 16)   // 16 codepoints
-    assert(sb.len() == 32)        // 2 байта на codepoint
+    assert(sb.clone().into_str().chars().count() == 16)   // 16 codepoints
+    assert(sb.byte_len() == 32)        // 2 байта на codepoint
     ro _ = sb.into_str()
 }
 
 test "CJK — len втрое больше char_len" {
     consume sb = StringBuilder.new()
     sb.append("中文字符")
-    assert(sb.char_len() == 4)
-    assert(sb.len() == 12)
+    assert(sb.clone().into_str().chars().count() == 4)
+    assert(sb.byte_len() == 12)
     ro _ = sb.into_str()
 }
 
 test "emoji — len вчетверо больше char_len" {
     consume sb = StringBuilder.new()
     sb.append("😀😁😂")
-    assert(sb.char_len() == 3)
-    assert(sb.len() == 12)
+    assert(sb.clone().into_str().chars().count() == 3)
+    assert(sb.byte_len() == 12)
     ro _ = sb.into_str()
 }
 
@@ -36,8 +36,8 @@ test "смешанный скрипт — точный подсчёт" {
     sb.append("Кир")              // 3 cp, 6 b
     sb.append("中")               // 1 cp, 3 b
     sb.append('😀')               // 1 cp, 4 b
-    assert(sb.char_len() == 10)
-    assert(sb.len() == 18)
+    assert(sb.clone().into_str().chars().count() == 10)
+    assert(sb.byte_len() == 18)
     ro _ = sb.into_str()
 }
 
@@ -66,8 +66,8 @@ test "Unicode — append(char) по одному codepoint'у" {
     sb.append('в')
     sb.append('е')
     sb.append('т')
-    assert(sb.char_len() == 6)
-    assert(sb.len() == 12)
+    assert(sb.clone().into_str().chars().count() == 6)
+    assert(sb.byte_len() == 12)
     assert(sb.into_str() == "Привет")
 }
 
@@ -75,8 +75,8 @@ test "Unicode — clone сохраняет многобайтные codepoint'ы
     consume a = StringBuilder.new()
     a.append("Ёлка 🎄 中")
     consume b = a.clone()
-    assert(b.len() == a.len())
-    assert(b.char_len() == a.char_len())
+    assert(b.byte_len() == a.byte_len())
+    assert(b.clone().into_str().chars().count() == a.clone().into_str().chars().count())
     assert(b.into_str() == "Ёлка 🎄 中")
     ro _ = a.into_str()
 }
@@ -84,8 +84,8 @@ test "Unicode — clone сохраняет многобайтные codepoint'ы
 test "Unicode — as_str паритет char count со str" {
     consume sb = StringBuilder.new()
     sb.append("Привет, 世界 😀")
-    ro n = sb.char_len()    // codepoints
+    ro n = sb.clone().into_str().chars().count()    // codepoints
     ro s = sb.into_str()
-    // Plan 108 D26 rev: s.chars().count() = codepoints == sb.char_len() before consume.
+    // Plan 108 D26 rev: s.chars().count() = codepoints == sb.clone().into_str().chars().count() before consume.
     assert(s.chars().count() == n)
 }

@@ -4,9 +4,12 @@
 // Теперь: Nova record; все методы на Nova-body.
 //
 // API-изменения (Plan 109 / D179):
-//   @len()    → bytes (O(1)), как str
-//   @char_len() → codepoints (O(n) UTF-8 walk), новый метод
-//   - @byte_len() удалён (дублировал @len())
+//   @byte_len() → bytes (O(1)), как str (D249-канон: строкоподобное — только
+//     byte_len(); [M-unwrap-twins-retraction] 2026-07-07 откатил прежнее
+//     «@byte_len удалён, используйте @len()» — D249 требует обратное)
+//   - @char_len() удалён (счёт codepoint — линза+терминатор через
+//     `.clone().into_str().chars().count()`, не выделенное свойство; 0
+//     usages в std/, [M-unwrap-twins-retraction] 2026-07-07)
 //   - @peek() удалён (unsound: pointer aliasing с realloc)
 //   @into() переименован → @as_str() (consume)
 //   @append_bytes(arr) удалён → @append(readonly arr []u8) overload
@@ -86,30 +89,17 @@ export fn StringBuilder.from(c char) -> Self => StringBuilder.new().append(c)
 
 // ─── Query methods ───
 
-// Длина буфера в байтах. O(1). Как str.len (D26 school B).
-export fn StringBuilder @len() -> int => @buf.len()
-
-// Длина в codepoints. O(n) UTF-8 walk: counting start-bytes
-// (high bits != 10xxxxxx). Manual loop — std.sort.@count_of сюда
-// нельзя import'нуть (cycle через prelude); followup [M-stringbuilder-count_of-after-sort-no-prelude].
-export fn StringBuilder @char_len() -> int {
-    mut count = 0
-    for b in @buf {
-        if (b as int & 0xC0) != 0x80 {
-            count = count + 1
-        }
-    }
-    count
-}
+// Длина буфера в байтах. O(1). D249-канон: строкоподобная поверхность
+// (как str) — только byte_len(), не len().
+export fn StringBuilder @byte_len() -> int => @buf.len()
 
 // Allocated capacity в байтах.
-export fn StringBuilder @capacity() -> int => @buf.cap()
-
-// D117 AMEND accessor-pair alias for `@capacity()` (vec-sweep, 2026-07-06):
-// `@capacity()` stays as the pre-existing accessor name; `@cap()` exists so
-// `StringBuilder.new().cap(n)` reads as a getter/setter pair (ex-`with_capacity`,
-// D372 amend — with_capacity removed).
-export fn StringBuilder @cap() -> int => @capacity()
+//
+// [M-unwrap-twins-retraction] (2026-07-07): `@capacity()` alias
+// РЕТРАКТИРОВАН (дублировал канонический `@cap()`, D9) — `@cap()` теперь
+// единственный 0-arg getter половины `cap`/`cap(n)` property-пары
+// (ex-`with_capacity`, D372 amend — with_capacity removed).
+export fn StringBuilder @cap() -> int => @buf.cap()
 
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
 // own exact `mut @cap(n)` — no rounding). Replacement for the removed
@@ -118,7 +108,7 @@ export fn StringBuilder @cap() -> int => @capacity()
 // (bind `@buf` to an explicitly `[]u8`-typed local first — `b`/`@buf` alias
 // the same heap-allocated buffer, so the mutation is visible through `@buf`).
 export fn StringBuilder mut @cap(n int) -> @
-    requires n >= @len()
+    requires n >= @byte_len()
 {
     mut b []u8 = @buf
     b.cap(n)
@@ -205,7 +195,7 @@ export fn StringBuilder mut @append_repeat(s str, n int) -> @
     }
 }
 
-// Обрезать буфер до len байт. len >= @len() → no-op. Caller отвечает за UTF-8 границы.
+// Обрезать буфер до len байт. len >= @byte_len() → no-op. Caller отвечает за UTF-8 границы.
 export fn StringBuilder mut @truncate(len int) -> @
     requires len >= 0
 { @buf.truncate(len) }
