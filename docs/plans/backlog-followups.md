@@ -1785,3 +1785,23 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   byte_len(); байтовые буферы/коллекции — len(). Внутренние requires-сайты переименовать.
   Мелочь в json-зоне: parse_hex/`code` типизировать u32 (кандидат-codepoint, D327).
   Конвейеры в правленых местах — ребиндингом одним именем (D347-канон, стиль §21).
+
+- **[M-compiler-nv-porting-wave]** (2026-07-07, P2, Wave: [haiku+sonnet] сразу после вливания
+  parse-family-fix — общие ветки try_from/try_parse) — по карте аудита §3 (отчёт агента
+  2026-07-07): (D) снос ~383 строк мёртвых *_unused()-реестров runtime_registry.rs:493-887;
+  (A) перенос nova_body-строк char/u8-конверсий в std/runtime/char.nv (:437-464);
+  (B1) namespace-дедуп gc/bench/fibers/runtime — generic-lookup в external_registry.rs,
+  снос 4 матч-блоков emit_c.rs:28448-28584 (.nv-декларации уже source of truth, gc.nv:47
+  прямо просит); (B2) bit-cast перехваты from_bits/to_bits — снос 6 копий, реестр уже
+  корректен; (B3) str.from(bool|char|f64|f32|int) — .nv extern-оверлоады + снос ветки
+  (сверить дубль Nova_str_static_from_char vs nova_char_to_str — один путь мёртв);
+  (B4) скалярные T.try_from(str) ×12 → СЛИТЬ с программой T.parse (174.1, R3-имя) —
+  отдельный заход по канону parse.nv. Проверка: греп-инвариант новых имён в emit_c = 0.
+- **[M-emit-c-dispatcher-triplication]** (2026-07-07, P2, Wave: 172.12-семья/A5) —
+  диспетчер-блок (Channel/ChanReader/Monotonic/CancelToken/bitcast/str.from/Error.new/
+  try_from/serialize) СКОПИПАЩЕН ТРИЖДЫ в emit_c.rs (~28300-31700, ~42500-43700,
+  ~45800-47300; сдвиг ровно 1087 строк) — любой фикс требует 2-3 синхронных правок.
+  Схлопнуть в одну функцию при A5/лоуэринге армов.
+- **[M-checker-builtin-mut-method-list]** (2026-07-07, P3, Wave: 185/172-семья) —
+  is_builtin_mut_method (types/mod.rs:23146) — checker-эвристика со списком mut-методов
+  Vec/Map/Set, дублирует знание о реальных .nv-методах (дрейф-риск класса gc.nv).
