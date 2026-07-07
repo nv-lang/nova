@@ -467,6 +467,10 @@ fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
 
 // \uXXXX — 4 hex digits. Проверяем surrogate pair для чисел >= 0xD800.
 fn Lexer mut @read_unicode_escape() -> Result[str, ParseJsonError] {
+    // Инвариант срезов hex-диагностики ниже: слайс [x_start..x_start+4] берётся
+    // ТОЛЬКО после успешного @read_hex_quad()? — успех = ровно 4 байта прочитаны
+    // с этой позиции; OOB здесь означал бы рассинхрон курсора и обязан паниковать
+    // (никаких clamp — тихий зажим замаскировал бы баг).
     ro hi_start = @pos
     ro code = @read_hex_quad()?
     // Surrogate pair: high (D800-DBFF) + low (DC00-DFFF).
