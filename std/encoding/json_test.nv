@@ -1,0 +1,256 @@
+// Тесты encoding.json — RFC 8259 conformance + round-trip.
+//
+// Peer-файл модуля `encoding.json` (json.nv) — feedback-module-tests-beside-module:
+// тесты std-модулей рядом с модулем, не в spec_tests/nova_tests. D78/D29 rev-3:
+// это НЕ folder-модуль (encoding/ группирует несколько независимых single-file
+// модулей: encoding.json, encoding.base64, ...) — тестовый peer получает свой
+// module path `parent.filestem` (encoding.json_test), поэтому все имена типа
+// JsonValue/ParseJsonError импортируются и варианты квалифицируются явно.
+
+module encoding.json_test
+
+import std.encoding.json.{Json, JsonValue, ParseJsonError, pretty}
+import std.collections.hashmap.{HashMap}
+
+test "parse: примитивы" {
+    assert(Json.parse("null")!!.is_null())
+    assert(Json.parse("true")!!.as_bool() == Some(true))
+    assert(Json.parse("false")!!.as_bool() == Some(false))
+    assert(Json.parse("42")!!.as_num() == Some(42.0))
+    assert(Json.parse("-3.14")!!.as_num() == Some(-3.14))
+    assert(Json.parse("1e3")!!.as_num() == Some(1000.0))
+    assert(Json.parse("\"hello\"")!!.as_str() == Some("hello"))
+}
+
+test "parse: пустые collections" {
+    ro arr = Json.parse("[]")!!
+    assert(arr.is_array())
+    match arr.as_array() {
+        Some(xs) => assert(xs.len() == 0)
+        None     => assert(false)
+    }
+
+    ro obj = Json.parse("{}")!!
+    assert(obj.is_object())
+}
+
+test "parse: array элементов" {
+    ro v = Json.parse("[1, 2, 3]")!!
+    match v.as_array() {
+        Some(xs) => {
+            assert(xs.len() == 3)
+            assert(xs[0].as_num() == Some(1.0))
+            assert(xs[1].as_num() == Some(2.0))
+            assert(xs[2].as_num() == Some(3.0))
+        }
+        None => assert(false)
+    }
+}
+
+test "parse: object с полями" {
+    ro v = Json.parse("{\"name\": \"alice\", \"age\": 30}")!!
+    match v.as_object() {
+        Some(m) => {
+            assert(m.get("name") == Some(JsonValue.Str("alice")))
+            assert(m.get("age") == Some(JsonValue.Num(30.0)))
+        }
+        None => assert(false)
+    }
+}
+
+test "parse: nested structures" {
+    ro s = "{\"users\": [{\"id\": 1}, {\"id\": 2}]}"
+    ro v = Json.parse(s)!!
+    match v.as_object() {
+        Some(root) => match root.get("users") {
+            Some(users_v) => match users_v.as_array() {
+                Some(users) => {
+                    assert(users.len() == 2)
+                    assert(users[0].as_object().is_some())
+                }
+                None => assert(false)
+            }
+            None => assert(false)
+        }
+        None => assert(false)
+    }
+}
+
+test "parse: escape sequences в string" {
+    ro v = Json.parse("\"line1\\nline2\\ttab\\\"quote\"")!!
+    assert(v.as_str() == Some("line1\nline2\ttab\"quote"))
+}
+
+test "parse: unicode escape" {
+    ro v = Json.parse("\"\\u00E9\"")!!          // é
+    assert(v.as_str() == Some("é"))
+}
+
+test "parse: surrogate pair (emoji)" {
+    ro v = Json.parse("\"\\uD83D\\uDE00\"")!!   // 😀 (U+1F600)
+    match v.as_str() {
+        Some(s) => assert(s.len() > 0)
+        None    => assert(false)
+    }
+}
+
+test "parse: ошибка — неизвестный токен" {
+    ro r = Json.parse("xyz")
+    assert(match r {
+        Err(ParseJsonError.UnexpectedChar { .. }) => true
+        _                                         => false
+    })
+}
+
+test "parse: ошибка — незакрытая string" {
+    ro r = Json.parse("\"unclosed")
+    assert(match r {
+        Err(ParseJsonError.UnexpectedEof { .. }) => true
+        _                                        => false
+    })
+}
+
+test "parse: ошибка — trailing content" {
+    ro r = Json.parse("42 garbage")
+    assert(match r {
+        Err(ParseJsonError.TrailingContent { .. }) => true
+        _                                          => false
+    })
+}
+
+test "parse: ошибка — duplicate key" {
+    ro r = Json.parse("{\"a\": 1, \"a\": 2}")
+    assert(match r {
+        Err(ParseJsonError.DuplicateKey { .. }) => true
+        _                                       => false
+    })
+}
+
+test "parse: ошибка — bad number" {
+    ro r = Json.parse("01")               // leading zero запрещён в JSON
+    assert(match r {
+        Err(ParseJsonError.TrailingContent { .. }) | Err(ParseJsonError.InvalidNumber { .. }) => true
+        _ => false
+    })
+}
+
+test "into: примитивы — round-trip" {
+    ro cases = [
+        JsonValue.Null,
+        JsonValue.Bool(true),
+        JsonValue.Bool(false),
+        JsonValue.Num(42.0),
+        JsonValue.Num(-3.14),
+        JsonValue.Str("hello"),
+    ]
+    for v in cases {
+        ro s = v.into()
+        ro parsed = Json.parse(s)!!
+        assert(parsed == v)
+    }
+}
+
+test "into: array round-trip" {
+    ro v = JsonValue.Array([JsonValue.Num(1.0), JsonValue.Num(2.0), JsonValue.Str("three")])
+    ro s = v.into()
+    ro parsed = Json.parse(s)!!
+    assert(parsed == v)
+}
+
+test "into: nested object round-trip" {
+    mut m = HashMap[str, JsonValue].new()
+    m.insert("name", JsonValue.Str("alice"))
+    m.insert("score", JsonValue.Num(95.5))
+    ro v = JsonValue.Object(m)
+    ro s = v.into()
+    ro parsed = Json.parse(s)!!
+    assert(parsed == v)
+}
+
+test "into: escape в string" {
+    ro v = JsonValue.Str("line1\nline2\ttab\"quote")
+    ro s = v.into()
+    ro parsed = Json.parse(s)!!
+    assert(parsed == v)
+}
+
+test "D325: JsonValue.try_from(s) и Json.parse(s) работают" {
+    ro v JsonValue = JsonValue.try_from("[1, 2, 3]")!!
+    assert(v.is_array())
+
+    ro v2 = Json.parse("[1, 2, 3]")!!
+    assert(v == v2)
+}
+
+test "pretty: формат с отступами" {
+    mut m = HashMap[str, JsonValue].new()
+    m.insert("name", JsonValue.Str("alice"))
+    ro v = JsonValue.Object(m)
+    ro p = pretty(v)
+    // Проверяем что есть newlines (формат multi-line)
+    assert(p.contains("\n"))
+    // Round-trip через парсер всё ещё работает
+    assert(Json.parse(p)!! == v)
+}
+
+test "whitespace терпимость" {
+    ro v = Json.parse("  [  1  ,  2  ]  ")!!
+    match v.as_array() {
+        Some(xs) => assert(xs.len() == 2)
+        None     => assert(false)
+    }
+}
+
+test "числа: разные форматы" {
+    assert(Json.parse("0")!!.as_num() == Some(0.0))
+    assert(Json.parse("-0")!!.as_num() == Some(-0.0) || Json.parse("-0")!!.as_num() == Some(0.0))
+    assert(Json.parse("1.5e2")!!.as_num() == Some(150.0))
+    assert(Json.parse("2.5E-1")!!.as_num() == Some(0.25))
+    assert(Json.parse("-1.5e+3")!!.as_num() == Some(-1500.0))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Регресс-тесты: json-санация (Баг 1 byte/codepoint lexer, Баг 2 \b\f escape)
+// ──────────────────────────────────────────────────────────────────────────
+
+// [M-json-lexer-byte-cursor] (Баг 1): non-ASCII в строке БЕЗ escape + число
+// сразу после — раньше @pos (codepoint-курсор через nth) расходился с
+// байтовыми срезами @read_number, портя число.
+test "Баг 1: non-ASCII в строке без escape + число после" {
+    ro v = Json.parse("[\"é\", 12]")!!
+    match v.as_array() {
+        Some(xs) => {
+            assert(xs.len() == 2)
+            assert(xs[0].as_str() == Some("é"))
+            assert(xs[1].as_num() == Some(12.0))
+        }
+        None => assert(false)
+    }
+}
+
+// Многобайтовый codepoint прямо в ключе объекта.
+test "Баг 1: многобайтовый codepoint в ключе объекта" {
+    ro v = Json.parse("{\"héllo\": 1}")!!
+    match v.as_object() {
+        Some(m) => assert(m.get("héllo") == Some(JsonValue.Num(1.0)))
+        None    => assert(false)
+    }
+}
+
+// [M-json-escape-bf-empty] (Баг 2): \b/\f обязаны декодироваться в
+// codepoint U+0008/U+000C (не в пустую строку) и сериализоваться обратно.
+test "Баг 2: round-trip \\b\\f" {
+    ro v = Json.parse("\"\\b\\f\"")!!
+    match v.as_str() {
+        Some(s) => {
+            assert(s.byte_len() == 2)
+            ro bytes = s.as_bytes()
+            assert(bytes[0] == 8)
+            assert(bytes[1] == 12)
+        }
+        None => assert(false)
+    }
+    ro s = v.into()
+    ro parsed = Json.parse(s)!!
+    assert(parsed == v)
+}
