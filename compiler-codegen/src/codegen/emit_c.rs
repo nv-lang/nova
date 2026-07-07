@@ -9504,10 +9504,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         // D71 `parallel for → []T`: extra ctx fields for per-iteration result write.
+        // Plan 172.12 A8: Vec[T]-mangled type (was raw `NovaArray_<T>*` — array.h
+        // legacy runtime). Already registered by `emit_supervised`'s `vec_mono_ctor_push`
+        // before this spawn body is emitted; `compute_generic_type_c_name` is a pure
+        // name computation, no re-registration needed here.
         if let Some((_, _, elem_ty)) = &parfor_slot {
+            let par_result_ty = Self::compute_generic_type_c_name("Vec", &[elem_ty.clone()]);
             let _ = writeln!(self.lambda_forward_decls, "    int64_t _nova_par_idx;");
             let _ = writeln!(self.lambda_forward_decls,
-                "    NovaArray_{}* _nova_par_result;", elem_ty);
+                "    {}* _nova_par_result;", par_result_ty);
         }
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
@@ -10027,23 +10032,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         emitted.push(self.emit_expr(x)?);
                     }
                 }
-                self.line(&format!("NovaArray_{}* {} = nova_array_new_{}({});",
-                    iter_elem_ty, arr_var, iter_elem_ty,
-                    if elems.is_empty() { 8 } else { elems.len() }));
+                // Plan 172.12 A8: Vec[T]-mangled construction (was raw NovaArray_<T>*
+                // via nova_array_new_*/nova_array_push_* — array.h legacy runtime).
+                let (src_mangled, src_ctor, src_push) = self.vec_mono_ctor_push(&iter_elem_ty)?;
+                self.line(&format!("{}* {} = {}();", src_mangled, arr_var, src_ctor));
                 for v in &emitted {
-                    self.line(&format!("nova_array_push_{}({}, {});", iter_elem_ty, arr_var, v));
+                    self.line(&format!("(void){}({}, {});", src_push, arr_var, v));
                 }
                 len_expr = format!("{}->len", arr_var);
-                iter_setup = format!("NovaArray_{}* _nova_par_src = {}; (void)_nova_par_src;",
-                    iter_elem_ty, arr_var);
+                iter_setup = format!("{}* _nova_par_src = {}; (void)_nova_par_src;",
+                    src_mangled, arr_var);
                 cur_value_expr = "_nova_par_src->data[_nova_par_i]".to_string();
             }
             ExprKind::Ident(name) => {
-                // Assume name is bound to NovaArray_T*.
+                // Assume name is bound to the Vec[T]-mangled type (D239 []T ≡ Vec[T]).
                 let arr_var = format!("(({})", name);
                 len_expr = format!("{})->len", arr_var);
-                iter_setup = format!("NovaArray_{}* _nova_par_src = {}; (void)_nova_par_src;",
-                    elem_ty_name, name);
+                let (src_mangled, _, _) = self.vec_mono_ctor_push(&elem_ty_name)?;
+                iter_setup = format!("{}* _nova_par_src = {}; (void)_nova_par_src;",
+                    src_mangled, name);
                 cur_value_expr = "_nova_par_src->data[_nova_par_i]".to_string();
             }
             _ => {
@@ -10075,8 +10082,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         self.line(&iter_setup);
         self.line(&format!("nova_int {} = {};", len_var, len_expr));
-        self.line(&format!("NovaArray_{ty}* {res} = nova_array_new_{ty}({len});",
-            ty = elem_ty_name, res = result_var, len = len_var));
+        // Plan 172.12 A8: Vec[T]-mangled result buffer (was `nova_array_new_<T>`
+        // — array.h legacy runtime). Registers the Vec[T] struct + full method
+        // suite (worklist) via `vec_mono_ctor_push`, but the buffer itself is
+        // hand-allocated (not via `.new()`/`.push()`): each parallel iteration
+        // writes its slot directly by index (`->data[idx] = v`, below in
+        // `emit_spawn`), so the backing store must be pre-sized to `len_var`
+        // up front — `push`'s incremental amortised growth doesn't apply here.
+        let (res_mangled, _res_ctor, _res_push) = self.vec_mono_ctor_push(&elem_ty_name)?;
+        self.line(&format!("{ty}* {res} = ({ty}*)nova_alloc(sizeof({ty}));",
+            ty = res_mangled, res = result_var));
+        self.line(&format!(
+            "{res}->cap = ({len} > 0 ? {len} : 8); {res}->data = ({elem}*)nova_alloc((size_t)({res}->cap) * sizeof({elem}));",
+            res = result_var, len = len_var, elem = elem_ty_name));
         self.line(&format!("{res}->len = {len};", res = result_var, len = len_var));
 
         // Open scope-block.
@@ -36058,6 +36076,47 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// erased `nova_int` default AND there is no element to infer from (so the
     /// legacy hint machinery can still apply); this keeps maximal compatibility
     /// while the rest of the pipeline migrates.
+    /// Plan 172.12 A8: shared Vec[T] mono ctor+push registration for legacy
+    /// call-sites migrating off raw `NovaArray_<T>*` construction (Plan 96
+    /// parallel-for, array rest-bind destructuring). Mirrors the registration
+    /// steps of `try_emit_typed_vec_literal` (register the Vec[T] struct
+    /// instance on the mono worklist, then register the `new`/`push` method
+    /// instances) without emitting the construction itself — callers build the
+    /// C statements with the returned names, since a couple of call-sites need
+    /// a hand-rolled allocation instead of the plain `.new()` + `.push()` loop.
+    /// Returns `(mangled Vec type name WITHOUT trailing '*', static-ctor C fn
+    /// name, push-method C fn name)`.
+    fn vec_mono_ctor_push(&mut self, elem_c: &str) -> Result<(String, String, String), String> {
+        let type_args_c = vec![elem_c.to_string()];
+        let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push(("Vec".to_string(), Self::args_lift(&type_args_c), mangled.clone()));
+            }
+        }
+        self.generic_type_instance_info
+            .borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
+
+        let rt_trimmed = Self::debt_strip_nova_prefix(&mangled).to_string();
+        let type_subst: Vec<(String, String)> = {
+            let tmpl = self.generic_type_templates.get("Vec");
+            match tmpl.and_then(|t| t.generics.first()) {
+                Some(g) => vec![(g.name.clone(), elem_c.to_string())],
+                None => return Err(
+                    "[Plan172.12-A8] Vec template has no generic param (vec_owned.nv drift?)"
+                        .to_string()),
+            }
+        };
+        let ctor_c = format!("{}_static_new", mangled);
+        self.register_vec_mono_method("new", &type_subst, &ctor_c, &rt_trimmed)?;
+        let push_c = format!("{}_method_push", rt_trimmed);
+        self.register_vec_mono_method("push", &type_subst, &push_c, &rt_trimmed)?;
+        Ok((mangled, ctor_c, push_c))
+    }
+
     fn try_emit_typed_vec_literal(
         &mut self,
         elems: &[ArrayElem],
@@ -37116,22 +37175,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         ArrayPatternElem::RestBind(name) => {
                             // Slice from before_idx to len - n_after.
-                            let rest_tmp = self.fresh_tmp();
-                            let rest_len = if n_after == 0 {
+                            // Plan 172.12 A8: Vec[T]-mangled rest-bind buffer (was raw
+                            // `NovaArray_<T>*` via nova_array_new_*/nova_array_push_* —
+                            // array.h legacy runtime). `rest_len` is unused by the Vec
+                            // ctor (no pre-sizing arg, D372 amend) — the push loop below
+                            // grows amortised, matching `try_emit_typed_vec_literal`'s
+                            // spread-copy loop.
+                            let _rest_len = if n_after == 0 {
                                 format!("{}->len - {}", scr, before_idx)
                             } else {
                                 format!("{}->len - {} - {}", scr, before_idx, n_after)
                             };
+                            let rest_tmp = self.fresh_tmp();
+                            let (mangled, ctor_c, push_c) = self.vec_mono_ctor_push(&elem_ty)?;
+                            self.line(&format!("{}* {} = {}();", mangled, rest_tmp, ctor_c));
                             self.line(&format!(
-                                "NovaArray_{et}* {rt} = nova_array_new_{et}({rl});",
-                                et = elem_ty, rt = rest_tmp, rl = rest_len));
-                            self.line(&format!(
-                                "for (nova_int _ri = {from}; _ri < (nova_int)({}->len{suf}); _ri++) {{ nova_array_push_{et}({rt}, {s}->data[_ri]); }}",
+                                "for (nova_int _ri = {from}; _ri < (nova_int)({}->len{suf}); _ri++) {{ (void){push}({rt}, {s}->data[_ri]); }}",
                                 scr, from = before_idx,
                                 suf = if n_after > 0 { format!(" - {}", n_after) } else { String::new() },
-                                et = elem_ty, rt = rest_tmp, s = scr));
-                            self.var_types.insert(name.clone(), format!("NovaArray_{}*", elem_ty));
-                            self.line(&format!("NovaArray_{et}* {n} = {rt};", et = elem_ty, n = name, rt = rest_tmp));
+                                push = push_c, rt = rest_tmp, s = scr));
+                            self.var_types.insert(name.clone(), format!("{}*", mangled));
+                            self.line(&format!("{}* {} = {};", mangled, name, rest_tmp));
                             past_rest = true;
                         }
                         ArrayPatternElem::Rest => {
