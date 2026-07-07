@@ -2295,3 +2295,18 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   уровне `.nv` (кроме полного отказа от static-namespace конструкторов для таких типов, что
   неприемлемо — теряет читаемый API); `math/complex.nv` остаётся в `_experimental`, вне
   периметра волны std/_experimental→std 2026-07-08.
+
+- **[M-lint-phantom-unused-vec-import]** (2026-07-08, P3, lints.rs) — `nova check` на КАЖДОМ
+  std-файле репортит `warning: unused import 'Vec' — imported but never referenced [unused-import]`
+  с span'ом, указывающим в произвольный текст КОММЕНТАРИЯ (напр. `std/checksums/crc32.nv:15:3` —
+  середина слова в doc-комменте), при том что файл НЕ содержит ни одного `import`-стейтмента
+  вообще (подтверждено грепом; 43+ shipped-файлов std до волны 2026-07-08 — `std/net/addr.nv`,
+  `std/collections/hashmap.nv`, вся `std/time/` и т.д.). Фантом: `is_prelude_import`
+  (`lints.rs:665`) вайтлистит только импорты с path-префиксом `std.prelude`, но какой-то
+  инжектируемый prelude/auto-import Vec-имени проходит с другим path и bogus-span. Ложный
+  сигнал на всём дереве std → делает недостижимым гейт «0 WARN» для любого std-файла и
+  обесценивает unused-import lint целиком (шум маскирует настоящие unused). Тело задачи:
+  найти источник синтетического импорта `Vec` (resolve_imports inline-инжекция?), пометить
+  его synthetic-флагом и скипать в `lint_unused_imports`, либо расширить `is_prelude_import`
+  на его реальный path. Волна промоушена 2026-07-08 репортила гейт как «PASS + 1 phantom-WARN
+  на файл» со ссылкой сюда.
