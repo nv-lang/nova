@@ -67,7 +67,7 @@ export fn ContentType.parse(s str) -> Result[ContentType, HttpError] {
         return Err(HttpError.protocol_error("empty Content-Type"))
     }
     ro mime = Mime.parse(mime_head(parts))?
-    mut params = Vec[Param].new()
+    mut params = []Param.new()
     mut i = 1
     while i < parts.len() {
         match nth_str(parts, i).split_once("=") {
@@ -136,4 +136,4 @@ export fn ContentType @to_header() -> str {
 
 /// РџРѕСЃС‚СЂРѕРёС‚СЊ РёР· Mime Р±РµР· РїР°СЂР°РјРµС‚СЂРѕРІ.
 #stable(since = "0.1")
-export fn ContentType.new(mime Mime) -> ContentType => { mime, params: Vec[Param].new() }
+export fn ContentType.new(mime Mime) -> ContentType => { mime, params: []Param.new() }

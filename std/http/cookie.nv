@@ -21,7 +21,7 @@ export type Cookie value { ro name str, ro value str }
 /// Разобрать заголовок `Cookie: k=v; k2=v2` → список пар (RFC 6265 §5.4).
 #stable(since = "0.1")
 export fn Cookie.parse_header(s str) -> Result[[]Cookie, HttpError] {
-    mut out = Vec[Cookie].new()
+    mut out = []Cookie.new()
     for pair in s.split(";") {
         ro p = pair.trim_ascii()
         if p.byte_len() == 0 { continue }

@@ -80,13 +80,13 @@ export type HttpClientBuilder value {
 /// transparent gzip/deflate decompression on with a 64 MiB decoded cap).
 #stable(since = "0.1")
 export fn HttpClient.builder() -> HttpClientBuilder =>
-    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10,
+    { default_headers: []HeaderKV.new(), follow_redirects: true, max_redirects: 10,
       user_agent: "nova-http/0.1", auto_decompress: true, max_decompressed: DEFAULT_MAX_DECOMPRESSED }
 
 /// Client with production defaults.
 #stable(since = "0.1")
 export fn HttpClient.new() -> HttpClient =>
-    { default_headers: Vec[HeaderKV].new(), follow_redirects: true, max_redirects: 10,
+    { default_headers: []HeaderKV.new(), follow_redirects: true, max_redirects: 10,
       user_agent: "nova-http/0.1", auto_decompress: true, max_decompressed: DEFAULT_MAX_DECOMPRESSED }
 
 // Internal self-accessors (field privacy is enforced at the call-site module,
@@ -173,10 +173,14 @@ export fn HttpClient @head(url str) -> RequestBuilder => new_rb(@, Head, url)
 #stable(since = "0.1")
 export fn HttpClient @request(method Method, url str) -> RequestBuilder => new_rb(@, method, url)
 
-fn new_rb(c HttpClient, m Method, url str) -> RequestBuilder =>
+fn new_rb(c HttpClient, m Method, url str) -> RequestBuilder {
+    // [](str, str).new() в expression-позиции не парсится (tuple-elem vec) —
+    // типизированный локал + пустой литерал.
+    ro q [](str, str) = []
     { client: c, method: m, url_input: url,
-      header_ops: Vec[HeaderOp].new(), query: Vec[(str, str)].new(),
-      body_bytes: Vec[u8].new(), has_body: false, content_type: None }
+      header_ops: []HeaderOp.new(), query: q,
+      body_bytes: []u8.new(), has_body: false, content_type: None }
+}
 
 // ── RequestBuilder ───────────────────────────────────────────────────────────
 
@@ -343,7 +347,7 @@ fn run_request(method0 Method, url0 Url, headers0 HeaderMap, body0 []u8, follow 
                     ro cross = ns != scheme || nh != host || np != port
                     if code == 303 || ((code == 301 || code == 302) && !method_is_get_head(method)) {
                         method = Get
-                        body = Vec[u8].new()
+                        body = []u8.new()
                         headers = drop_body_headers(headers)
                     }
                     if cross {

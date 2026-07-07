@@ -94,7 +94,7 @@ export type HeaderMap value { priv entries []HeaderEntry }
 
 /// Пустая карта.
 #stable(since = "0.1")
-export fn HeaderMap.new() -> HeaderMap => { entries: Vec[HeaderEntry].new() }
+export fn HeaderMap.new() -> HeaderMap => { entries: []HeaderEntry.new() }
 
 /// ПЕРВОЕ значение (case-insensitive) или `None`.
 #stable(since = "0.1")
@@ -110,7 +110,7 @@ export fn HeaderMap @get(name str) -> Option[HeaderValue] {
 #stable(since = "0.1")
 export fn HeaderMap @get_all(name str) -> []HeaderValue {
     ro key = name.to_ascii_lower()
-    mut out = Vec[HeaderValue].new()
+    mut out = []HeaderValue.new()
     for e in @entries {
         if e.name.as_str() == key { out.push(e.value) }
     }
@@ -172,7 +172,7 @@ export fn HeaderMap @len() -> int => @entries.len()
 /// Пары `(HeaderName, HeaderValue)` в порядке вставки.
 #stable(since = "0.1")
 export fn HeaderMap @iter() -> [](HeaderName, HeaderValue) {
-    mut out = Vec[(HeaderName, HeaderValue)].new()
+    mut out [](HeaderName, HeaderValue) = []
     for e in @entries {
         out.push((e.name, e.value))
     }
@@ -180,7 +180,7 @@ export fn HeaderMap @iter() -> [](HeaderName, HeaderValue) {
 }
 
 fn without_name(entries []HeaderEntry, key str) -> []HeaderEntry {
-    mut out = Vec[HeaderEntry].new()
+    mut out = []HeaderEntry.new()
     for e in entries {
         if e.name.as_str() != key { out.push(e) }
     }
@@ -201,7 +201,7 @@ export fn HeaderMap @host() -> Option[str] {
 /// `Transfer-Encoding`-токены, нормализованные lowercase (`["chunked"]`).
 #stable(since = "0.1")
 export fn HeaderMap @transfer_encoding() -> []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     for hv in @get_all("transfer-encoding") {
         ro s = match hv.to_str() { Ok(t) => t, Err(_) => "" }
         for part in s.split(",") {

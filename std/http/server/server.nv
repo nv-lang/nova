@@ -23,7 +23,7 @@
 //   · typed `#impl(Deserialize)` request bodies — serde in the http CU trips a
 //     codegen defect (see std.http.serdejson). [M-178-server-typed-body]
 
-module std.http.server
+module http.server
 
 import std.http.{Method, StatusCode, Version, HeaderMap, HttpError}
 
@@ -108,7 +108,7 @@ export type ServerResponse value {
 /// Response with a status code and empty body/headers.
 #stable(since = "0.1")
 export fn ServerResponse.new(status int) -> ServerResponse =>
-    { status, headers: HeaderMap.new(), body: Vec[u8].new() }
+    { status, headers: HeaderMap.new(), body: []u8.new() }
 
 /// `text/plain; charset=utf-8` response.
 #stable(since = "0.1")
@@ -137,14 +137,14 @@ export fn ServerResponse.bytes(status int, content_type str, data []u8) -> Serve
 /// Bodyless response (204/304/…).
 #stable(since = "0.1")
 export fn ServerResponse.empty(status int) -> ServerResponse =>
-    { status, headers: HeaderMap.new(), body: Vec[u8].new() }
+    { status, headers: HeaderMap.new(), body: []u8.new() }
 
 /// Redirect response (`Location: location`).
 #stable(since = "0.1")
 export fn ServerResponse.redirect(status int, location str) -> ServerResponse {
     mut h = HeaderMap.new()
     match h.insert("Location", location) { Ok(_) => (), Err(_) => () }
-    { status, headers: h, body: Vec[u8].new() }
+    { status, headers: h, body: []u8.new() }
 }
 
 /// Add/replace a response header. Mutating fleeting property (D117 AMEND-2):
@@ -192,7 +192,7 @@ export type ServeMux value { priv routes []Route, priv not_found Option[Handler]
 
 /// Empty mux.
 #stable(since = "0.1")
-export fn ServeMux.new() -> ServeMux => { routes: Vec[Route].new(), not_found: None }
+export fn ServeMux.new() -> ServeMux => { routes: []Route.new(), not_found: None }
 
 /// Register `handler` for `method` + `pattern`.
 #stable(since = "0.1")
@@ -228,7 +228,7 @@ export fn ServeMux @not_found(handler Handler) -> ServeMux => { @routes, not_fou
 export fn ServeMux @dispatch(mut req ServerRequest) -> ServerResponse {
     ro reqm = req.method().as_str()
     mut path_matched = false
-    mut allow = Vec[str].new()
+    mut allow = []str.new()
     for r in @routes {
         match match_pattern(r.pattern, req.path()) {
             Some(params) => {
@@ -281,7 +281,7 @@ fn match_pattern(pattern str, path str) -> Option[[](str, str)] {
     ro pseg = split_segments(pattern)
     ro rseg = split_segments(path)
     if pseg.len() != rseg.len() { return None }
-    mut params = Vec[(str, str)].new()
+    mut params [](str, str) = []
     mut i = 0
     ro n = pseg.len()
     while i < n {
@@ -299,7 +299,7 @@ fn match_pattern(pattern str, path str) -> Option[[](str, str)] {
 }
 
 fn split_segments(s str) -> []str {
-    mut out = Vec[str].new()
+    mut out = []str.new()
     for part in s.split("/") {
         if part.byte_len() > 0 { out.push(part) }
     }
@@ -322,7 +322,7 @@ export fn serve_once(mux ServeMux, raw []u8) -> []u8 {
 // ── query / percent helpers ───────────────────────────────────────────────────
 
 fn parse_query(q str) -> [](str, str) {
-    mut out = Vec[(str, str)].new()
+    mut out [](str, str) = []
     if q.byte_len() == 0 { return out }
     for pair in q.split("&") {
         if pair.byte_len() == 0 { continue }
@@ -338,7 +338,7 @@ fn parse_query(q str) -> [](str, str) {
 fn percent_decode(s str) -> str {
     ro b = s.bytes()
     ro n = b.len
-    mut out = Vec[u8].new().cap(n)
+    mut out = []u8.new().cap(n)
     mut i = 0
     while i < n {
         ro c = b[i] as int

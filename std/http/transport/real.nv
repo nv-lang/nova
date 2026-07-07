@@ -24,7 +24,7 @@
 //   · typed `ErrSource.Net(NetError)` — gated; detail carried as OtherSource by
 //     `HttpError.transport` (error.nv). [M-178-errsource-net]
 
-module std.http.transport
+module http.transport
 
 import std.net2.{TcpStream, resolve}
 import std.http.{Http, HttpError, ErrorKind}

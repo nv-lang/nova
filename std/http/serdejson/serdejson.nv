@@ -20,7 +20,7 @@
 // into the return substitution). Both surfaces are exported; the free fn stays the
 // substrate (it is also what serde's own `json_decode[T]` mirrors).
 
-module std.http.serdejson
+module http.serdejson
 
 import std.http.{HttpError, Response}
 import std.encoding.json.{Json}

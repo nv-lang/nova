@@ -16,7 +16,7 @@
 // `ParseUrlError.InvalidPort` reachable through std.http. Keeping the net dependency
 // here preserves std.http.server's clean namespace.
 
-module std.http.servernet
+module http.servernet
 
 import std.net2.{TcpListener, TcpStream, NetError}
 import std.http.server.{ServeMux, serve_once}
@@ -90,7 +90,7 @@ fn content_length_of(b []u8, header_end int) -> int {
 }
 
 fn head_slice(b []u8, end int) -> []u8 {
-    mut out = Vec[u8].new().cap(end)
+    mut out = []u8.new().cap(end)
     mut i = 0
     while i < end {
         out.push(b[i])

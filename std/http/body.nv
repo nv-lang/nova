@@ -46,7 +46,7 @@ export type BodyReader value { priv chunks [][]u8, priv pos int }
 
 /// Пустое тело.
 #stable(since = "0.1")
-export fn Body.empty() -> Body => { repr: InMemory(Vec[u8].new()), limit: -1 }
+export fn Body.empty() -> Body => { repr: InMemory([]u8.new()), limit: -1 }
 
 /// Тело из байт (InMemory; replayable).
 #stable(since = "0.1")
@@ -132,11 +132,11 @@ export fn BodyReader @at_eof() -> bool => @pos >= @chunks.len()
 #stable(since = "0.1")
 export fn BodyReader mut @next_chunk() -> Result[[]u8, HttpError] {
     if @pos >= @chunks.len() {
-        return Ok(Vec[u8].new())
+        return Ok([]u8.new())
     }
     ro chunk = match @chunks.get(@pos) {
         Some(c) => c
-        None    => Vec[u8].new()
+        None    => []u8.new()
     }
     @pos = @pos + 1
     Ok(chunk)
@@ -149,7 +149,7 @@ export fn BodyReader @close() -> Result[(), HttpError] => Ok(())
 // ── Внутренние хелперы ───────────────────────────────────────────────────────
 
 fn drain_reader(r BodyReader) -> []u8 {
-    mut out = Vec[u8].new()
+    mut out = []u8.new()
     mut rd = r
     mut running = true
     while running && !rd.at_eof() {
@@ -169,7 +169,7 @@ fn guard_limit(b []u8, lim int) -> Result[[]u8, HttpError] {
 }
 
 fn single_chunk(b []u8) -> [][]u8 {
-    mut v = Vec[[]u8].new()
+    mut v [][]u8 = []
     v.push(b)
     v
 }

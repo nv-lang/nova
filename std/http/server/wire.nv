@@ -8,7 +8,7 @@
 // Header name/value validation (CR/LF/NUL, tchar) is enforced by HeaderMap/
 // HeaderValue (anti-injection, shared with the client).
 
-module std.http.server
+module http.server
 
 import std.http.{Method, StatusCode, Version, HeaderMap, HttpError}
 
@@ -54,10 +54,12 @@ fn parse_request(raw []u8) -> Result[ServerRequest, HttpError] {
             ro take = if len < avail { len } else { avail }
             slice(raw, body_start, body_start + take)
         }
-        None => Vec[u8].new()
+        None => []u8.new()
     }
 
-    Ok({ method, target, path, query, version, headers: hm, params: Vec[(str, str)].new(), body })
+    // [](str, str).new() в expression-позиции не парсится — типизированный локал.
+    ro params [](str, str) = []
+    Ok({ method, target, path, query, version, headers: hm, params, body })
 }
 
 fn parse_request_line(line []u8) -> Result[(Method, str, str, str, Version), HttpError] {
@@ -156,7 +158,7 @@ fn reason_of(status int) -> str {
 // ── byte helpers ────────────────────────────────────────────────────────────────
 
 fn slice(b []u8, start int, end int) -> []u8 {
-    mut out = Vec[u8].new().cap(end - start)
+    mut out = []u8.new().cap(end - start)
     mut i = start
     while i < end {
         out.push(b[i])

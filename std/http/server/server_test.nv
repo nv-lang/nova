@@ -5,7 +5,7 @@
 // with the pre-call instance — no real independence, just an extra allocation.
 // Canon: `mut @x(v) -> @`, auto self-return (D409).
 
-module std.http.server
+module http.server
 
 // ── ServerResponse.@header: mutating chain adds BOTH headers ─────────────────
 //
