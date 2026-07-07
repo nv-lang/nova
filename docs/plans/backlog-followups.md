@@ -99,7 +99,7 @@
 | `[M-128.1-array-namedtuple-ro-method]` | `vs[i].ro_method()` на `[]NamedTuple`: pointer-cast в int-слот vs by-value receiver → clang mismatch; gated. | plan-128 Followups | P2 |
 | `[M-128.1-nonpure-index-key]` | Side-effecting `arr[next_idx()]` на pointer-ABI receiver вычисляется дважды; hoist-to-temp V2 не сделан. | plan-128 Followups | P2 |
 | `[M-codegen-var-types-fn-scope]` | `var_types` (codegen local-type map) НЕ scoped по функциям — локалы протекают между функциями. Plan 139.2 surfaced: Nova-body str-метод с `Vec[u8]`-локалом `a` протёк → block-expr `{ro a=…; a+b}` мис-инферил value-тип как Vec-view → SEGV. Точечно закрыт в block-expr inference (emit_block_expr + infer Block-арм пред-регистрируют блок-локалы, commit 3917d17c); корневой fix — per-fn scope/clear var_types (broad, regression-риск). **NEW REPRO (vec-sweep, 2026-07-06):** local variable named `buf` в `std/runtime/write_buffer.nv::new()`/`@cap()` мис-типизировал `wb.len()` как `str.len()` (E_STR_NO_LEN) в НЕСВЯЗАННОМ caller-файле той же CU; переименование локали (`_wb_buf`) обошло. Тот же класс, другой surface (не block-expr — top-level fn locals). | plan-139.2 post-close | P2 |
-| `[M-vec-spelling-array-value-position-cap-collision]` | **OPEN (vec-sweep, 2026-07-06).** Цепочка `[]T.new().cap(n)` (bracket-spelling, VALUE-позиция) может мис-dispatch'иться по NAME+ARITY на `cap`-метод НЕСВЯЗАННОГО ко-компилируемого типа в той же CU (воспроизведено standalone: сгенерированный C звал `Nova_Box_method_cap(...)` вместо array/Vec-метода). Специфично для bracket-spelling в value-позиции ([M-153.x-array-new-not-vec] родственный, но НЕ идентичный — та ошибка про erased-storage, эта про WRONG-method-по-имени). Обход (принят everywhere в этом заходе): биндинг в explicitly `[]T`-typed локаль ПЕРЕД `.cap(n)` отдельной инструкцией восстанавливает корректный dispatch (см. `std/runtime/write_buffer.nv`/`std/runtime/string_builder.nv` комментарии на месте). Репро: минимальный `Box`-тип с `mut @cap(v int) -> @` + `[]u8.new().cap(n)` в СОВЕРШЕННО другом файле той же CU. | codegen dispatch (method_receivers?) | P1 |
+| `[M-vec-spelling-array-value-position-cap-collision]` | ✅ **FIXED (2026-07-07, ветка cg-three-fix, emit_c.rs).** Корень: вызов метода на legacy `NovaArray_<elem>`-ресивере (C-тип, в который выводится `[]T.new()` для примитивного элемента, D38) НЕ имел записи в `generic_type_instance_info` под своим написанием → весь overload-resolving generic-instance dispatch (блок 5b) пропускался, вызов проваливался в coarse name-keyed `method_receivers` (last-wins) → `[]u8.new().cap(n)` мис-роутился на `@cap` несвязанного ко-компилируемого типа. `Nova_Vec____<elem>*` (typed-local написание) диспетчился верно — это и эксплуатировали обходы. Фикс: в блоке 5b remap `NovaArray_<elem>` → layout-идентичный `Vec____<elem>` mono-ключ (консервативно — только если инстанс Vec[<elem>] уже зарегистрирован; +каст ресивера). Обходы в write_buffer.nv/string_builder.nv СНЯТЫ. Родственный `[M-vec-spelling-same-name-method-dispatch-collision]` (field `@buf.cap(n)`) закрыт тем же. Регресс-гард: `spec_tests/conformance/dispatch_receiver_type_vs_name.nv`. | codegen dispatch (block 5b) | ✅ DONE |
 | `[M-vec-spelling-consume-chain-cap-collision]` | **OPEN (vec-sweep, 2026-07-06).** `consume x = T.new().M(...)` — ЛЮБОЙ 2-звенный method-chain, забинженный ЧЕРЕЗ `consume` в ОДНОЙ инструкции, для `T consume`-типа (напр. `StringBuilder`) — ломает D133 consume-tracking для ВСЕХ ОСТАЛЬНЫХ `consume ... = T.new()` site'ов в ТОЙ ЖЕ compile unit: `[D133-not-consumed] переменная sb (тип ``)` (пустой резолвленный тип — сбой именно в consume-checker'е, не в основном type-checker'е). Репродуцировано с ПРОИЗВОЛЬНЫМ вторым методом (не специфично для `cap` — даже тривиальный no-op `-> @`-метод triggers). Разделение на ДВЕ инструкции (`consume x = T.new()` + `x.M(...)` отдельной строкой) — рабочий обход, но НЕ универсален: тот же 2-строчный паттерн внутри самого `T`'s собственного `mut @cap(n)`-сеттера (не `consume`-контекст) НЕ ломался — баг специфичен именно к `consume`-биндингу chain-результата. Затрагивает: любой будущий new `-> @`-метод на consume-типе, используемый через chain на call-site. | consume-checker (types/mod.rs `recv_returning`?) | P1 |
 | `[M-vec-spelling-maplit-desugar-cap-ice]` → уточнён: `[M-maplit-folder-cu-insert-new-ice]` | **PRE-EXISTING НА MAIN — ДОКАЗАНО (ремонт d102, 2026-07-07).** ICE `"method call `.insert_new` return type unknown"` (P67-LEGACY, emit_c.rs:42872 в нумерации main) при компиляции `nova_tests/map_literals/` folder-module воспроизводится с БАЙТ-ИДЕНТИЧНЫМ main компилятором + std/nova_tests ДО каких-либо правок этой ветки (изоляционная сборка: `git checkout main -- compiler-codegen/src/{desugar,ast/mod,types/mod,codegen/emit_c}.rs` + `git checkout 58d0d535 -- std nova_tests` → rebuild → тот же ICE). **РЕПРОДУКЦИЯ:** `nova test nova_tests/map_literals` (folder-module CU, ≥2 файлов вместе; первым выдаётся посторонний `E_CONST_NOT_CONSTEXPR` с ложной атрибуцией на import-строку positive_clone_merge.nv, затем ICE на `_m0.insert_new` из десугаренного map-литерала). Одиночный файл в изоляции ICE НЕ даёт. Моя ранняя атрибуция «ICE от добавленного `.cap(n)` pre-sizing statement» была ОШИБКОЙ — ICE не зависит от cap-statement вовсе. Pre-sizing из map-literal desugar'а всё равно снят (см. desugar.rs) как принятая perf-only мера при удалении `with_capacity`; возврат pre-sizing возможен после фикса этого ICE. По §4а корень чинится отдельным заходом. | codegen/checker (folder-CU annotation drift) | P1 |
 | `[M-vec-spelling-hashmap-buckets-array-gap]` | **OPEN, RE-VERIFIED (vec-sweep, 2026-07-06).** `std/collections/hashmap.nv::new_buckets` строит bucket-массив ЯВНО через `Vec[Slot[K,V]]` (не `[]Slot[K,V]`) — Ф.0b workaround из Plan 138.2, датированный ДО универсального `[]T`-флипа. Перепроверено заново в этом заходе: замена на `[]Slot[K,V]` + `.new().cap(n)` даёт RUN-FAIL (rehash-тесты ломаются на рантайме). Тот же класс, что `[M-153.x-array-new-not-vec]`, всё ещё жив — `Vec[...]` остаётся санкционированным исключением из `[]T`-канона в этом конкретном месте (маркер в коде на месте). | Plan 138.2 / codegen array-erasure | P2 |
@@ -1814,8 +1814,21 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `[M-slice-static-deserialize-garbage-len]` below. Gates: conformance 54/0 (delta 0 vs
   pre-fix), `std/encoding/json_test` 24/24 (unaffected, unrelated module).
 
-- **[M-slice-static-deserialize-garbage-len]** (planned, P2, home **codegen/checker —
-  static generic method dispatch on slice receiver**) — NEWLY SURFACED
+- **[M-slice-static-deserialize-garbage-len]** ✅ **FIXED (2026-07-07, ветка cg-three-fix,
+  emit_c.rs).** Два корня: (1) диспатч — array-ext static `[]T.method` эмитился ОДНИМ
+  erased base с элементом, захардкоженным в `nova_int` (`Nova_NovaArray_nova_int_static_*`,
+  тело строит `Nova_Vec____nova_int`); каждый call-site `Vec[<elem>].method` переиспользовал
+  этот единственный nova_int-mono → str/record-элемент в nova_int-Vec = garbage `.len()` /
+  CC-FAIL. Фикс: turbofish-static путь мономорфизирует per-element (bind receiver-typevar →
+  `<elem>`, method-level generics из аргов, эмит `Nova_NovaArray_<elem>_static_<method>`;
+  int пропущен = erased base байт-идентичен). (2) return-type — return-inference turbofish-
+  static вызова деградировал до РАЗВЁРНУТОГО типа, `?` падал в `/* ? */` no-op, присваивая
+  сырой `NovaRes_*` в `Vec`-локаль (garbage `.len()`). Фикс: Try-codegen восстанавливает
+  Result-тип из ДЕКЛАРИРОВАННОГО return метода (`mono_method_decls[("[]T", method)]`) с
+  typevar→`<elem>` (обобщение прежнего Ident-only `.deserialize`-fallback на любой turbofish-
+  ресивер). Оживило serde/serde_e2e/http_typed (все RUN-FAIL → PASS). Регресс-гард:
+  `spec_tests/conformance/slice_static_generic_method.nv`. Прежний текст (диагностика ДО
+  фикса) ↓. — NEWLY SURFACED
   (2026-07-07) by `[M-serde-slice-generic-method-parse]`: this exact static-receiver form
   (`[]T.deserialize[D ...]` / call-site `Vec[T].deserialize(...)`) never compiled before,
   so it was never runtime-exercised. Repro: `nova_tests/serde_e2e/roundtrip.nv` —
@@ -1841,6 +1854,22 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   boundary per Fix-1 instructions). Repro kept in `nova_tests/serde_e2e/roundtrip.nv` +
   `nova_tests/serde/autoderive.nv` + `nova_tests/http_typed/typed_json_test.nv` (all 3
   already RUN-FAIL in-tree; no new fixture needed).
+
+- **[M-next-collect-value-record]** ✅ **FIXED (2026-07-07, ветка cg-three-fix, emit_c.rs +
+  std/runtime/string/chars.nv).** `Next[T]`-blanket-терминатор (`fn[I Next[T]] I mut
+  @collect() -> Vec[T]`, std.collections.vec_iter) не мономорфизировался для КОНКРЕТНОГО
+  `value priv(type)`-итератора, чей элемент фиксирован аннотацией `#impl(Next[<elem>])`
+  (CharsIter — `str.chars()`). Protocol-aware blanket-dispatch связывал внутренний typevar
+  `T` (в bound `Next[T]` на receiver-typevar `I`) ТОЛЬКО через generic-instance inference
+  возврата `@next()`, которая требует `____`-type-args на C-типе ресивера; у плоского
+  value-record их нет → inference давал None, `T` оставался несвязан, тело `collect`'а
+  `Vec[T].new()` эрейзилось в `Vec____Nova_T` (record schema missing → `codegen error:
+  anonymous record literal: expected struct 'Vec____Nova_T_p'`). Из-за этого to_chars-
+  миграция шла push-циклами. Фикс: при промахе generic-instance inference читать элемент
+  прямо из `#impl(Next[<elem>])`-спеки ресивера (`type_impl_protocols`) — авторитетный
+  конкретный binding. Плюс добавлен недостающий `#impl(Next[char])` на `CharsIter @next()`.
+  Регресс: `nova_tests/protocols/iter/str_iters.nv` (`to_char_vec` → `s.chars().collect()`,
+  снят push-loop обход). home **codegen — blanket-method inner-typevar binding**.
 
 - **[M-d411-record-binding-destructuring]** ✅ FIXED (2026-07-07) — реализация D411:
   record-паттерн в биндингах ro/mut. Парсер: `{` после ro/mut уже парсился (парсер уже
