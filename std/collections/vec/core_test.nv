@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std.collections.vec (core tests) — Vec[T] type, constructors, len/cap.
+
+#prelude(core, runtime, collections, protocols)
+module collections.vec
+
+test "new().cap(n) / reserve" {
+    mut v = Vec[int].new().cap(16)
+    assert(v.cap() >= 16)
+    assert(v.len() == 0)
+    for i in 0..10 { v.push(i) }
+    assert(v.len() == 10)
+    v.reserve(20)
+    assert(v.cap() >= 30)
+}
+
+test "grow — 1000 pushes preserve order" {
+    mut v = Vec[int].new()
+    for i in 0..1000 { v.push(i) }
+    assert(v.len() == 1000)
+    assert(v.get(0) == Some(0))
+    assert(v.get(500) == Some(500))
+    assert(v.get(999) == Some(999))
+}
