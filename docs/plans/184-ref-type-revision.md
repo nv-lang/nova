@@ -330,3 +330,89 @@ main-less linker; идентичны). **Осознанные поведенче
 - адрес КУЧЕВОГО содержимого через ресивер (Vec @ptr => @data) — легален, не путать.
 Приёмка захода-5: негатив `fn T @addr() -> *T => &@` (value T) → E_REF_ESCAPE; позитив
 downward `&v` в ffi-вызове (уже покрыт parse_f64-путём — закрепить явным тестом).
+
+
+### Заход 5 — носитель `Ref(T)` + Р1/Р6/Р8 + ref-локалы + Р12 + чистка (2026-07-07)
+
+Реализованы приоритетные пп.1-3 (носитель + Р1 + Р8) ПОЛНОСТЬЮ, плюс п.6
+(ref-локалы), п.4 (Р12), п.7 (чистка мёртвого кода), п.9 (тесты). Р13/Р14 (п.5)
+— честная точка возобновления (см. ниже).
+
+**п.1 Носитель `TypeRef::Ref` + flip `E_REF_NOT_A_TYPE` + `E_REF_TYPE_POSITION`:**
+- `ast::TypeRef::Ref(Box<TypeRef>, Span)` — ограниченный ссылочный тип. Все
+  exhaustive-match по `TypeRef` (~30 сайтов: render/collect/walk/subst/ffi в
+  ast/types/emit_c/external_registry/doc/lints/field_cache/parser) получили Ref-арм.
+- Парсер `parse_type` `KwRef` → `TypeRef::Ref` (было `E_REF_NOT_A_TYPE`). Формы
+  `ref`/`ro ref`/`mut ref` в параметре ОСТАЛИСЬ сняты (`E_REF_PARAM_FORM_REMOVED`).
+- `from_type_ref`/`resolved_cat_of`: Ref ПРОЗРАЧЕН (Р5 чтение=T). `type_ref_to_c`
+  (делегирует `from_type_ref`) → C-тип цели.
+- `E_REF_TYPE_POSITION` (types/mod.rs `walk_typeref` Ref-арм): ref в ЗАПРЕЩЁННОЙ
+  позиции (поле / элемент коллекции / вариант суммы / Option / тип-аргумент
+  дженерика ВКЛ. turbofish/`size_of[ref T]` / параметр) → реджект, ЕСЛИ цель НЕ
+  подтверждённо-кучевая. Легальные top-level позиции (возврат `-> ref Self`,
+  локал `ro y ref T=…`, приёмник, effect/protocol-метод возврат) снимают ведущий
+  ref через `walk_ref_return` до `walk_typeref`.
+
+**п.2 Р6 нормализация `ref H ≡ H`:** `ref_target_confirmed_heap` — heap =
+indirection-формы (`[]T`/`[N]T`/`*T`/fn/protocol) + heap-record (`allocation !=
+Value`) + `Vec`; newtype/alias по обёрнутому; value/generic-параметр/unknown →
+НЕ heap → реджект. Проверяется ДО позиционного запрета: `f[ref H]` легален и
+резолвится тождественно `f[H]` (Ref прозрачен → тот же mono-ключ).
+
+**п.3 Р8 эскейп (`check_ref_addr_escape`):** value-приёмник `@` = `ref Self`
+(Р7); `&@` в escaping-позиции (возврат / trailing / `return` / тело замыкания /
+RHS присваивания в поле) → `E_REF_ESCAPE` (авто-промоут D216 §4 не спасает —
+ref на чужой слот). Downward-заём `&@`/`&v` (аргумент вызова / ffi) —
+escaping=false, легален. Heap-приёмник исключён. Dedup по span.
+
+**п.6 ref-локалы (codegen, Ф.1-остаток):** `emit_stmt Stmt::Let` при
+`decl.ty = Ref(T)` → `T* y = &(<place>);` + регистрация `y` в `ref_params`
+(авто-деref `(*y)` на чтениях/записях, путь mut-ref-параметра захода-4).
+`var_types[y]` = пойнти-тип T. `mut y ref T` даёт ИСТИННЫЙ write-through
+(запись через алиас достигает цели). `emit_test` теперь save/restore `ref_params`
+(scoped к телу теста — иначе имя ref-локала протекало в std-методы → CC-FAIL).
+
+**п.4 Р12 (`check_ref_arg_modes`):** расширение `E_REF_ALIAS_OVERLAP` с mut×mut
+на mut×ЛЮБОЙ value-параметр того же root-места. Собираем места НЕ-mut
+value-параметров (`other_value_places`); mut-место × другое value-место того же
+root → реджект. Покрывает `f(a,a)` при `f(x Big, mut y Big)`. ro×ro того же
+места и distinct — легальны.
+
+**п.7 чистка:** удалён `enum ParamRefMode{None,RoRef,MutRef}` + поле
+`Param.ref_mode` (всегда None); мёртвый `match param.ref_mode` (RoRef/MutRef-арм
++ `E_REF_MARKER_*` + call-site `ref`-маркер) в `check_ref_arg_modes`; `== MutRef`
+ветки в `params_c`/`emit_fn`. `ExprKind::RefArg` СОХРАНЁН (codegen-транспорт
+in-out захода-4). `mut_ref_param_names`/`E_REF_ESCAPE_CAPTURE` — инертны (пусты).
+
+**п.9 тесты (nova_tests/inout_ref):** позитивы `p184_reflocal_pos` (ro read /
+mut write-through / accumulate), `p184_ref_heap_norm_pos` (`f[ref H]≡f[H]`,
+downward `&v` в `*int`-sink). Негативы `neg/ref_type_position_field`,
+`neg/ref_type_position_typearg` (value-тип в тип-аргументе),
+`neg/ref_escape_addr_self` (`&@` возврат), `neg/ref_alias_overlap_mut_any` (Р12).
+Удалены legacy `neg/ref_not_a_type_{local,return}` (премиса «ref не тип» снята).
+Итог: **6 pos + 10 neg** зелёные (было 12).
+
+**Гейты (числа):** обе крейта собираются чисто. conformance
+`--positive --compile-error spec_tests/conformance` = **56/0** (мой бинарь) =
+56/0 (main-бинарь). Широкая дельта против main-бинаря = **0** (проверено на
+plan135/plan118 — те же 2 pre-existing FAIL: E7320/E_NO_MATCHING_OVERLOAD /
+E_POINTER_RO_ASSIGN, НЕ связаны с ref). `ref`-как-тип и `&@` в std/examples/
+spec_tests ОТСУТСТВУЮТ (grep) → новые реджекты живой код не трогают. **Осознанных
+поведенческих изменений против main — нет** (все новые коды срабатывают только на
+новом `ref`/`&@`-синтаксисе, которого в дереве не было).
+
+### Точка возобновления после захода 5 — Р13/Р14 (перегрузка по оси режима)
+
+**НЕ реализовано (умышленно, чтобы не половинить рискованную правку резолвера
+перегрузок).** Сейчас `f(x T)` и `f(mut x T)` → **дубль-дефиниция** (ошибка
+«duplicate definition `f` with same signature»): mut-ось НЕ входит в
+overload-сигнатурный ключ. Р13/Р14 требуют: (1) включить ось режима
+{ro,mut,consume} параметра в ключ различения перегрузок (сейчас различается
+только по типам/арности/возврату, D84); (2) диспатч по mut-биндингу аргумента
+(mut-аргумент предпочитает mut-перегрузку, иначе ro; consume-версия — только в
+последней точке использования, consume-чекер это вычисляет). Прецедент —
+receiver-mutability (план 135, `fn T @m()` vs `fn T mut @m()`, разные символы).
+Затрагивает overload-signature computation + resolver — широкая рискованная зона,
+отдельный заход. Р-таблица D326-ревизии: Р1✅ Р2✅ Р3✅(заход-1) Р4✅(заход-1)
+Р5✅ Р6✅ Р7✅(заходы 2-4) Р8✅ Р9✅ Р10✅(заход-4) Р11✅(заход-1) Р12✅
+**Р13/Р14 — ОТКРЫТЫ**.
