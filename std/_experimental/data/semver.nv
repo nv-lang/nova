@@ -150,7 +150,7 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 /// ```
 #stable(since = "0.1")
 export fn Version.from(s str) Fail[ParseVersionError] -> Self {
-    if s.len() == 0 {
+    if s.byte_len() == 0 {
         throw EmptyInput
     }
 
@@ -159,12 +159,12 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     // Pre: после "-", но "-" может быть в build identifier'е, поэтому
     // обрабатываем сначала split по "+", потом по "-" в первой части.
     ro (left, build_str) = match s.find("+") {
-        Some(i) => (s[0..i], s[i + 1..s.len()])
+        Some(i) => (s[0..i], s[i + 1..s.byte_len()])
         None    => (s, "")
     }
 
     ro (core, pre_str) = match left.find("-") {
-        Some(i) => (left[0..i], left[i + 1..left.len()])
+        Some(i) => (left[0..i], left[i + 1..left.byte_len()])
         None    => (left, "")
     }
 
@@ -172,14 +172,14 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     ro (major, minor, patch) = parse_core(core)
 
     // Парсим pre identifiers.
-    ro pre = if pre_str.len() == 0 {
+    ro pre = if pre_str.byte_len() == 0 {
         []
     } else {
         parse_identifiers(pre_str, "pre-release", true)
     }
 
     // Парсим build identifiers.
-    ro build = if build_str.len() == 0 {
+    ro build = if build_str.byte_len() == 0 {
         []
     } else {
         parse_identifiers(build_str, "build", false)
@@ -210,13 +210,13 @@ fn parse_core(core str) Fail[ParseVersionError] -> (u64, u64, u64) {
 
 // Числовой компонент: только цифры, без leading zero (кроме "0").
 fn parse_numeric_component(s str, name str) Fail[ParseVersionError] -> u64 {
-    if s.len() == 0 {
+    if s.byte_len() == 0 {
         throw InvalidComponent { component: name, value: s }
     }
     if !is_all_digits(s) {
         throw InvalidComponent { component: name, value: s }
     }
-    if s.len() > 1 && s.starts_with("0") {
+    if s.byte_len() > 1 && s.starts_with("0") {
         throw LeadingZero { component: name, value: s }
     }
     match u64.try_from(s) {
@@ -232,14 +232,14 @@ fn parse_identifiers(s str, section str, strict_no_leading_zero bool) Fail[Parse
     ro raw = s.split(".")
     mut out []str = []
     for ident in raw {
-        if ident.len() == 0 {
+        if ident.byte_len() == 0 {
             throw EmptyIdentifier { section }
         }
         if !is_valid_identifier(ident) {
             throw InvalidIdentifier { section, value: ident }
         }
         // Numeric identifier в pre — без leading zero.
-        if strict_no_leading_zero && is_all_digits(ident) && ident.len() > 1 && ident.starts_with("0") {
+        if strict_no_leading_zero && is_all_digits(ident) && ident.byte_len() > 1 && ident.starts_with("0") {
             throw LeadingZero { component: section, value: ident }
         }
         out.push(ident)
@@ -249,7 +249,7 @@ fn parse_identifiers(s str, section str, strict_no_leading_zero bool) Fail[Parse
 
 // Проверка: все символы — ASCII цифры.
 fn is_all_digits(s str) -> bool {
-    if s.len() == 0 { return false }
+    if s.byte_len() == 0 { return false }
     for c in s.chars() {
         if !is_ascii_digit(c) {
             return false

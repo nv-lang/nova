@@ -287,8 +287,8 @@ export fn Ulid @to_str() -> str {
 /// `I`/`L` → 1, `O` → 0 (Crockford ambiguity remap).
 #stable(since = "0.1")
 export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
-    if s.len() != 26 {
-        throw InvalidLength { actual: s.len(), expected: 26 }
+    if s.byte_len() != 26 {
+        throw InvalidLength { actual: s.byte_len(), expected: 26 }
     }
 
     // 10 timestamp chars + 16 random chars = 26.
@@ -352,7 +352,7 @@ fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
                 None    => throw InvalidChar { position: pos, char: c }
             }
         }
-        None => throw InvalidLength { actual: s.len(), expected: 26 }
+        None => throw InvalidLength { actual: s.byte_len(), expected: 26 }
     }
 }
 
@@ -401,7 +401,7 @@ test "формат: 26 символов" {
     with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
         ro u = Ulid.new()
         ro s = u.to_str()
-        assert(s.len() == 26)
+        assert(s.byte_len() == 26)
     }
 }
 
