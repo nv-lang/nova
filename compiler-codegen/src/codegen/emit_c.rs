@@ -44058,6 +44058,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return t.clone();
                         }
                     }
+                    // Free-function-as-first-class-value (`ro g = leaf_double`,
+                    // `run_op(triple, x)`): a bare Ident naming a top-level user fn
+                    // used in value position. The EMIT side lowers this via
+                    // `emit_free_fn_value` (thunk + closure literal, `(void*)clos`)
+                    // whenever the fn's signature is in `user_fn_sigs`; MIRROR that
+                    // here so the inference half agrees on the erased closure C type
+                    // `void*`. Without this the checker leaves no `resolved_types`
+                    // annotation for the value-position fn ref → the arm ICE'd with
+                    // `[P67-LEGACY] Ident 'leaf_double' not in var_types`. We are past
+                    // the `var_types.get(name)` (local-var) early-return above, so
+                    // `name` is not a local binding here.
+                    if self.user_fn_sigs.contains_key(name) {
+                        return "void*".into();
+                    }
                     // Pattern-bound or checker-annotated ident not yet in var_types
                     // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is
                     // computed before pattern_bind_typed runs). Fall back to the
@@ -45057,6 +45071,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(t) = self.var_types.get("nova_self") {
                             return t.clone();
                         }
+                    }
+                    // Free-function-as-first-class-value (`ro g = leaf_double`,
+                    // `run_op(triple, x)`): a bare Ident naming a top-level user fn
+                    // used in value position. The EMIT side lowers this via
+                    // `emit_free_fn_value` (thunk + closure literal, `(void*)clos`)
+                    // whenever the fn's signature is in `user_fn_sigs`; MIRROR that
+                    // here so the inference half agrees on the erased closure C type
+                    // `void*`. Without this the checker leaves no `resolved_types`
+                    // annotation for the value-position fn ref → the arm ICE'd with
+                    // `[P67-LEGACY] Ident 'leaf_double' not in var_types`. We are past
+                    // the `var_types.get(name)` (local-var) early-return above, so
+                    // `name` is not a local binding here.
+                    if self.user_fn_sigs.contains_key(name) {
+                        return "void*".into();
                     }
                     // Pattern-bound or checker-annotated ident not yet in var_types
                     // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is
