@@ -2,10 +2,10 @@
 // std.collections.vec (views tests) — slice views, split_at, first_n/last_n.
 
 #prelude(core, runtime, collections, protocols)
-module vec.views_test
+module collections.vec
 
 test "as_slice — ro whole view" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     ro s = v.slice()
     assert(s.len() == 3)
     assert(s[0] == 1 && s[2] == 3)
@@ -13,7 +13,7 @@ test "as_slice — ro whole view" {
 }
 
 test "mut as_slice — write-through to parent" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     mut s = v.slice()
     s[0] = 99
     s[2] = 77
@@ -21,7 +21,7 @@ test "mut as_slice — write-through to parent" {
 }
 
 test "split_at — two views, invariant len(l)+len(r)==len" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
     ro (l, r) = v.split_at(2)
     assert(l.len() == 2 && r.len() == 3)
     assert(l.len() + r.len() == v.len())
@@ -30,7 +30,7 @@ test "split_at — two views, invariant len(l)+len(r)==len" {
 }
 
 test "split_at — boundary 0 and len" {
-    ro v = Vec[int].from([1, 2, 3])
+    ro v = Vec[int].of(1, 2, 3)
     ro (l0, r0) = v.split_at(0)
     assert(l0.len() == 0 && r0.len() == 3)
     ro (l3, r3) = v.split_at(3)
@@ -38,7 +38,7 @@ test "split_at — boundary 0 and len" {
 }
 
 test "split_first / split_last — non-empty" {
-    ro v = Vec[int].from([10, 20, 30])
+    ro v = Vec[int].of(10, 20, 30)
     match v.split_first() {
         Some((h, t)) => {
             assert(h == 10)
@@ -62,9 +62,9 @@ test "split_first / split_last — empty -> None" {
 }
 
 test "first_n / last_n — exact, clamp, empty" {
-    ro v = Vec[int].from([1, 2, 3, 4, 5])
-    assert(v.first_n(3).equal(Vec[int].from([1, 2, 3])))
-    assert(v.last_n(2).equal(Vec[int].from([4, 5])))
+    ro v = Vec[int].of(1, 2, 3, 4, 5)
+    assert(v.first_n(3).equal(Vec[int].of(1, 2, 3)))
+    assert(v.last_n(2).equal(Vec[int].of(4, 5)))
     // clamp above len
     assert(v.first_n(99).len() == 5)
     assert(v.last_n(99).len() == 5)
@@ -75,12 +75,12 @@ test "first_n / last_n — exact, clamp, empty" {
 }
 
 test "view detach-on-resize — push detaches, parent untouched" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     // first_n yields a cap==len view; pushing reallocates → detach.
     mut head = v.first_n(2)
     assert(head.cap() == head.len())
     head.push(99)
     // head detached into its own buffer; parent is untouched.
-    assert(head.equal(Vec[int].from([1, 2, 99])))
-    assert(v.equal(Vec[int].from([1, 2, 3])))
+    assert(head.equal(Vec[int].of(1, 2, 99)))
+    assert(v.equal(Vec[int].of(1, 2, 3)))
 }

@@ -2,10 +2,10 @@
 // std.collections.vec (access tests) — element access: index/get/first/last.
 
 #prelude(core, runtime, collections, protocols)
-module vec.access_test
+module collections.vec
 
 test "get / first / last" {
-    mut v = Vec[int].from([10, 20, 30])
+    mut v = Vec[int].of(10, 20, 30)
     assert(v.get(0) == Some(10))
     assert(v.get(2) == Some(30))
     assert(v.get(3) == None)

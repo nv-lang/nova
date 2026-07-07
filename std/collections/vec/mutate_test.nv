@@ -2,7 +2,7 @@
 // std.collections.vec (mutate tests) — push/pop/insert/remove/clear/extend/append.
 
 #prelude(core, runtime, collections, protocols)
-module vec.mutate_test
+module collections.vec
 
 test "push / pop / len / is_empty" {
     mut v = Vec[int].new()
@@ -19,32 +19,32 @@ test "push / pop / len / is_empty" {
 }
 
 test "insert / remove / swap_remove / reverse" {
-    mut v = Vec[int].from([1, 2, 4])
+    mut v = Vec[int].of(1, 2, 4)
     v.insert(2, 3)
-    assert(v.equal(Vec[int].from([1, 2, 3, 4])))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4)))
     assert(v.remove(0) == 1)
-    assert(v.equal(Vec[int].from([2, 3, 4])))
+    assert(v.equal(Vec[int].of(2, 3, 4)))
     ro sr = v.swap_remove(0)
     assert(sr == 2)
     // After swap_remove(0): last (4) moved into slot 0 → [4, 3]
     assert(v.len() == 2)
     v.reverse()
-    assert(v.equal(Vec[int].from([3, 4])))
+    assert(v.equal(Vec[int].of(3, 4)))
 }
 
 test "extend / append / retain" {
-    mut v = Vec[int].from([1, 2, 3])
+    mut v = Vec[int].of(1, 2, 3)
     v.extend([4, 5])
-    assert(v.equal(Vec[int].from([1, 2, 3, 4, 5])))
+    assert(v.equal(Vec[int].of(1, 2, 3, 4, 5)))
 
-    mut other = Vec[int].from([6, 7])
+    mut other = Vec[int].of(6, 7)
     v.append(other)
     assert(v.len() == 7)
     // @append COPIES (D141) — `other` is left unchanged, not emptied.
     assert(other.len() == 2)
 
     v.retain(|x| x % 2 == 0)
-    assert(v.equal(Vec[int].from([2, 4, 6])))
+    assert(v.equal(Vec[int].of(2, 4, 6)))
 }
 
 test "Vec[Option[int]] stores value-struct elements typed" {
