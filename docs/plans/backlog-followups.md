@@ -2072,3 +2072,15 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   str-runtime уже Vec → A7 = только user-`[]T` codegen-флип 5 сайтов (`receiver_c_type:13901` —
   единственный оставшийся широкий NovaArray-эмиттер, `.new()`, литералы ×3, for-loop, type-map
   `:2978-2992`/`:14127`) + `NOVA_ARRAY_DECL`-снос (uint-маркер закрывается там).
+
+- **[M-ffi-prefix-reversal]** (2026-07-08, P2, Wave: [haiku] СРАЗУ после вливания
+  no-underscore-prefix — общая зона std/net) — ПЕРЕРЕШЕНИЕ владельца по FFI-канону:
+  extern "nova" манглится компилятором в nova_fn_* (неймспейс уже есть); extern "C" — имя
+  как есть, vendor-префикс без причины не нужен. Канон: модульные C-шимы = `<модуль>_*`
+  БЕЗ nova_ (net_addr_loopback_into, os_env_get, str_parse_f64). ЯДРО rt С nova_ остаётся
+  (ABI языка: nova_int/nova_str типы, nova_alloc, паника, манглы nova_fn_/Nova_*).
+  Миграция-разворот: откат вчерашней канонизации nova_fs_/nova_os_/nova_io_ → fs_/os_/io_
+  (~50, были правильными); nova_net_* ×44 → net_*; nova_brotli_* ×7 → brotli_*;
+  conv.h-семейство nova_str_to_*/nova_str_parse_f64 → str_*; синхронно .nv-декларации +
+  rt-хедеры + внутренние вызовы rt. Правило — строкой в compiler-conventions §FFI
+  (или nv-coding-style) с датой.
