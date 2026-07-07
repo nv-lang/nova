@@ -535,8 +535,7 @@ typedef struct { char _dummy; } nova_unit;
  * (park/wake) + eventloop.h (nova_loop_defer_close). Only when libuv
  * is available. */
 #ifdef NOVA_USE_LIBUV
-#  include "net.h"
-#  include "net2.h" /* Plan 183 Ф.1: reworked std/net substrate (D407) */
+#  include "net.h" /* Plan 183 Ф.1 / Plan 182 Ф.1: reworked std/net substrate (D407); file renamed from net2.h */
 #  include "fs.h"   /* Plan 176 Ф.2: std/fs — async uv_fs_* via libuv */
 #endif
 

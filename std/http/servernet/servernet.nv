@@ -18,7 +18,7 @@
 
 module http.servernet
 
-import std.net2.{TcpListener, TcpStream, NetError}
+import std.net.{TcpListener, TcpStream, NetError}
 import std.http.server.{ServeMux, serve_once}
 
 /// Read one full HTTP/1.1 request off `stream` (headers + Content-Length body),

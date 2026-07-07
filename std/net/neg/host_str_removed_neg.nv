@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E7320
+//
+// Plan 182 Ф.1 (migrated from nova_tests/plan91_15/net_host_str_removed_neg.nv)
+// — negative: SocketAddr.host_str() was renamed to .ip() (D302). The old name
+// no longer resolves: `SocketAddr` has no such method, so the checker rejects
+// it (E7320 — no field or method `host_str`). Address ops are pure (no `with`).
+
+module neg.host_str_removed_neg
+
+import std.net.{SocketAddr}
+
+test "host_str is gone" {
+    ro a = SocketAddr.loopback(80)
+    ro _ = a.host_str()
+}

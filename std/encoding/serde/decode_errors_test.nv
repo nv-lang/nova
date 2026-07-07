@@ -1,0 +1,51 @@
+// Plan 180 — typed DeError on malformed / mismatched JSON (D325, §3.7).
+// Runtime Err-kind checks are POSITIVE test blocks (test-conventions: no
+// EXPECT_RUNTIME marker) — decode must return `Err(DeError)`, never throw/panic.
+// Migrated from nova_tests/serde/errors.nv (Plan 182 Ф.2).
+module encoding.serde
+
+#impl(Serialize + Deserialize)
+type DecErrRec value { ro id int, ro name str }
+
+test "malformed JSON -> Err(Syntax) with line/col in message" {
+    match json_decode[DecErrRec]("{ not json ") {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind {
+            Syntax(_) => assert(true)
+            _         => assert(false)
+        }
+    }
+}
+
+test "missing required field -> Err(MissingField)" {
+    match json_decode[DecErrRec]("{\"id\": 1}") {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind {
+            MissingField(f) => assert(f == "name")
+            _               => assert(false)
+        }
+    }
+}
+
+test "type mismatch -> Err(UnexpectedType) not panic" {
+    match json_decode[DecErrRec]("{\"id\": \"oops\", \"name\": \"x\"}") {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind {
+            UnexpectedType { expected, found } => {
+                assert(expected == "int")
+                assert(found == "string")
+            }
+            _ => assert(false)
+        }
+    }
+}
+
+test "lossy integer 2^53+1 -> Err(LossyInteger) not silent-truncate" {
+    match json_decode[DecErrRec]("{\"id\": 9007199254740993, \"name\": \"x\"}") {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind {
+            LossyInteger(_) => assert(true)
+            _               => assert(false)
+        }
+    }
+}

@@ -1,0 +1,81 @@
+// Plan 180 — end-to-end coverage of the MANUAL Serialize/Deserialize
+// trait-implementation path (hand-written @serialize/.deserialize), as
+// opposed to record_autoderive_test.nv's `#impl(Serialize+Deserialize)`
+// auto-derive coverage. Migrated from nova_tests/serde_e2e/roundtrip.nv
+// (Plan 182 Ф.2). Types renamed MAddr/MUser (prefixed) to avoid a same-CU
+// name clash with record_autoderive_test.nv's auto-derived Addr/User.
+module encoding.serde
+
+type MAddr value { ro city str, ro zip int }
+fn MAddr @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+    s.begin_struct("MAddr", 2)?
+    s.struct_field("city")?
+    @city.serialize(s)?
+    s.struct_field("zip")?
+    @zip.serialize(s)?
+    s.end_struct()
+}
+fn MAddr.deserialize[D Deserializer](mut d D) -> Result[MAddr, DeError] {
+    mut s0 = d.enter_field("city")?
+    ro city = s0.deser_str()?
+    mut s1 = d.enter_field("zip")?
+    ro zip = s1.deser_int()?
+    Ok({ city, zip })
+}
+
+type MUser value {
+    ro name str
+    ro age int
+    ro addr MAddr
+    ro tags []str
+    ro email Option[str]
+    ro score f64
+}
+fn MUser @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+    s.begin_struct("MUser", 6)?
+    s.struct_field("name")?
+    @name.serialize(s)?
+    s.struct_field("age")?
+    @age.serialize(s)?
+    s.struct_field("addr")?
+    @addr.serialize(s)?
+    s.struct_field("tags")?
+    @tags.serialize(s)?
+    s.struct_field("email")?
+    @email.serialize(s)?
+    s.struct_field("score")?
+    @score.serialize(s)?
+    s.end_struct()
+}
+fn MUser.deserialize[D Deserializer](mut d D) -> Result[MUser, DeError] {
+    mut s0 = d.enter_field("name")?
+    ro name = s0.deser_str()?
+    mut s1 = d.enter_field("age")?
+    ro age = s1.deser_int()?
+    mut s2 = d.enter_field("addr")?
+    ro addr = MAddr.deserialize(s2)?
+    mut s3 = d.enter_field("tags")?
+    ro tags = Vec[str].deserialize(s3)?
+    mut s4 = d.enter_field_or_null("email")?
+    ro email Option[str] = if s4.is_null()? { None } else { Some(s4.deser_str()?) }
+    mut s5 = d.enter_field("score")?
+    ro score = s5.deser_float()?
+    Ok({ name, age, addr, tags, email, score })
+}
+
+test "serde e2e roundtrip (manual trait impl, not derive)" {
+    ro u = MUser{
+        name: "alice", age: 30,
+        addr: MAddr{ city: "NYC", zip: 10001 },
+        tags: ["x", "y"], email: Some("a@b.c"), score: 3.14
+    }
+    ro encoded = json_encode(u)!!
+    ro decoded = json_decode[MUser](encoded)!!
+    assert(decoded.name == "alice")
+    assert(decoded.age == 30)
+    assert(decoded.addr.city == "NYC")
+    assert(decoded.addr.zip == 10001)
+    assert(decoded.tags.len() == 2)
+    assert(decoded.email == Some("a@b.c"))
+    assert(decoded.score == 3.14)
+}

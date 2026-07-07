@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 183 Ф.2 — DNS resolution over the public net2 API. The C layer returns a
+// GC array of value-address images (single getaddrinfo call, no retry); resolve
+// builds an owned []SocketAddr from it.
+//
+// NOTE: []SocketAddr is extracted via a direct `match`, NOT the generic `_must`.
+// A generic `_must[T]` erases `T = []SocketAddr` through its boxed slot such
+// that the conservative GC stops tracing the inner value-record images (they get
+// freed under later allocation). A monomorphic `match` keeps the element type, so
+// the images stay live — the idiomatic extraction here anyway.
+
+module std.net
+
+test "net2/dns: resolve localhost yields at least one loopback address" {
+    with Net = real_net() {
+        supervised {
+            spawn {
+                mut addrs []SocketAddr = []SocketAddr.new()
+                match resolve("localhost", 80) {
+                    Ok(v)  => { addrs = v }
+                    Err(_) => { assert(false) }
+                }
+                ro n = addrs.len()
+                ro p0 = addrs[0].port()
+                ro p1 = if n > 1 { addrs[1].port() } else { 80 as u16 }
+                assert(n >= 1)
+                assert(p0 == 80)
+                assert(p1 == 80)
+            }
+        }
+    }
+}
+
+test "net2/dns: an unresolvable name yields Err" {
+    with Net = real_net() {
+        supervised {
+            spawn {
+                match resolve("no-such-host.invalid", 80) {
+                    Ok(_)  => assert(false)
+                    Err(_) => assert(true)
+                }
+            }
+        }
+    }
+}

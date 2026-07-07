@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 182 Ф.1 (migrated from nova_tests/plan91_16: tcp_split_echo_slow.nv,
+// tcp_split_mock.nv) — TcpStream.split() into TcpReadHalf/TcpWriteHalf.
+// Read and write run on DIFFERENT halves backed by independent C-side park
+// slots (read_scope/read_slot vs write_scope/write_slot) — a single shared
+// op_slot would corrupt under the cross-fiber read/write traffic this test
+// drives. Halves only expose the raw byte methods (@read/@write) — no
+// read_text/write_str convenience — so tests decode through a caller buffer.
+
+module std.net
+
+test "TCP split: server + client exchange via read/write halves _slow" {
+    with Net = real_net() {
+        mut lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(l) => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+        assert(port > 0)
+
+        supervised {
+            // Server fiber: accept, split, read request, reply via write half.
+            spawn {
+                mut srv = match lst.accept() {
+                    Ok(s) => s
+                    Err(_) => panic("accept failed")
+                }
+                mut (srv_rd, srv_wr) = srv.split()
+
+                mut req_buf []u8 = []u8.new()
+                req_buf.resize(64, 0 as u8)
+                ro incoming = srv_rd.read(req_buf)
+                assert(incoming.is_ok())
+                ro req_n = match incoming { Ok(n) => n, Err(_) => panic("srv read") }
+                assert(str.from_bytes_unchecked(req_buf[0..req_n]) == "client-hello")
+
+                ro reply_wr = srv_wr.write("server-greeting".bytes())
+                assert(reply_wr.is_ok())
+
+                srv_rd.close()
+                srv_wr.close()
+            }
+
+            // Client fiber: connect, split, write request, read reply.
+            spawn {
+                mut conn = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(s) => s
+                    Err(_) => panic("connect failed")
+                }
+                mut (cli_rd, cli_wr) = conn.split()
+
+                ro wr = cli_wr.write("client-hello".bytes())
+                assert(wr.is_ok())
+                ro nbytes = match wr { Ok(n) => n, Err(_) => panic("client write") }
+                assert(nbytes == 12)
+
+                mut reply_buf []u8 = []u8.new()
+                reply_buf.resize(64, 0 as u8)
+                ro rd = cli_rd.read(reply_buf)
+                assert(rd.is_ok())
+                ro reply_n = match rd { Ok(n) => n, Err(_) => panic("client read") }
+                assert(str.from_bytes_unchecked(reply_buf[0..reply_n]) == "server-greeting")
+
+                cli_rd.close()
+                cli_wr.close()
+            }
+        }
+
+        lst.close()
+    }
+}
+
+test "split mock stream — read half + write half" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c
+                    Err(_) => panic("connect")
+                }
+                mut (rdh, wrh) = s.split()
+
+                ro w1 = wrh.write("hello".bytes())
+                assert(w1.is_ok())
+                ro nbytes = match w1 { Ok(n) => n, Err(_) => -1 }
+                assert(nbytes == 5)
+
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                ro got = rdh.read(buf)
+                assert(got.is_ok())
+                ro n = match got { Ok(n) => n, Err(_) => 0 }
+                assert(str.from_bytes_unchecked(buf[0..n]) == "mock-reply")
+
+                rdh.close()
+                wrh.close()
+            }
+        }
+    }
+}

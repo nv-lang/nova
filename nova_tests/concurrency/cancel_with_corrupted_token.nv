@@ -127,8 +127,9 @@ test "fuzz large-reason-storm: concurrent cancel с большими reason'ам
         None    => ""
     }
     // First-cancel-wins → reason == big (только этот reason возможен в storm).
+    // Plan 182 Ф.3: str.len() retired (D249, E_STR_NO_LEN) -> byte_len().
     assert(got == big)
-    assert(got.len() == 64)
+    assert(got.byte_len() == 64)
 }
 
 

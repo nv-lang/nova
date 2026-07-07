@@ -1,0 +1,97 @@
+// Plan 180 Ф.2 — extended record auto-derive coverage (completeness audit
+// close-out): Option[value-record], HashMap[str, value-record], Option[Option],
+// Option[Vec], []u8→base64. Peer of record_autoderive_test.nv (same module).
+// Round-trip identity is the gate.
+// Migrated from nova_tests/serde/autoderive_ext.nv (Plan 182 Ф.2).
+//
+// NOT migrated (Plan 182 Ф.2 disputed): the original ExtDto also carried
+// narrow scalars (i64/i32/u32/f32). Any `#impl(Deserialize)` record with a
+// narrow-int field newly-discovered live compiler bug: `i32.deserialize`/
+// `u32.deserialize`/etc (serde.nv) build their `OutOfRange` message via
+// `str.from(n)`, which collides with `ReadBuffer.from` in the single-key
+// `method_receivers` registry (emit_c.rs) — `[E_UNKNOWN_TYPE_METHOD]
+// str.from(...) — тип str неизвестен codegen'у ... Single-key fallback на
+// ReadBuffer.from отвергнут — strict-mode`. Reproduces standalone with just
+// `type X value { ro a i64, ro b i32, ro c u32, ro g f32 }` under
+// `#impl(Serialize + Deserialize)` decoded once. Same family as the
+// name-keyed-registry class in docs/plans/182-test-suite-sanation.md §3.3
+// ([M-172.1-var-types-cu-name-leak]) — compiler-track follow-up, test not
+// force-fitted around it.
+module encoding.serde
+
+import std.encoding.serde.{Serialize, Deserialize}
+import std.collections.hashmap.{HashMap}
+
+// value-record (NovaValue_ ABI) — the case that regressed the Option/HashMap
+// mono-collection (родич keystone [M-valuerecord-result-vtable-mono]).
+#impl(Serialize + Deserialize)
+type ValRec value { ro n int, ro tag str }
+
+#impl(Serialize + Deserialize)
+type ExtDto value {
+    ro opt_rec Option[ValRec]        // D1: Option[value-record]
+    ro by_key  HashMap[str, ValRec]  // D2: HashMap[str, value-record] (D342 map)
+    ro oo      Option[Option[int]]   // D3: Some(None) wire-collapse (D342)
+    ro ov      Option[Vec[str]]      // D3: Option[Vec[_]]
+    ro raw     []u8                  // D5: []u8 → base64 (Q9)
+}
+
+test "ext round-trip identity (Option[rec] / HashMap[str,rec] / Option[Vec] / bytes)" {
+    mut m = HashMap[str, ValRec].new()
+    m.insert("k1", ValRec{ n: 10, tag: "a" })
+    ro raw []u8 = [1, 2, 3, 255, 0]
+    ro d = ExtDto{
+        opt_rec: Some(ValRec{ n: 7, tag: "x" }),
+        by_key: m,
+        oo: Some(Some(42)),
+        ov: Some(Vec[str].of("p", "q")),
+        raw
+    }
+    ro dec = json_decode[ExtDto](json_encode(d)!!)!!
+    assert(dec.opt_rec == Some(ValRec{ n: 7, tag: "x" }))
+    assert(dec.by_key.get("k1") == Some(ValRec{ n: 10, tag: "a" }))
+    assert(dec.oo == Some(Some(42)))
+    assert(dec.ov == Some(Vec[str].of("p", "q")))
+    assert(dec.raw.len() == 5)
+    assert(dec.raw[3] == 255)
+    assert(dec.raw[4] == 0)
+}
+
+test "Option[Option[int]] Some(None) collapses to None on the wire (D342)" {
+    ro d = ExtDto{
+        opt_rec: None,
+        by_key: HashMap[str, ValRec].new(),
+        oo: Some(None),
+        ov: None,
+        raw: []
+    }
+    ro dec = json_decode[ExtDto](json_encode(d)!!)!!
+    // Some(None) == None on the wire (both serialize to `null`).
+    assert(dec.oo == None)
+    assert(dec.opt_rec == None)
+    assert(dec.ov == None)
+    assert(dec.raw.len() == 0)
+}
+
+// value-record carrying a full-width int — encode-side lossy guard (D346/Q15).
+#impl(Serialize + Deserialize)
+type IntBox value { ro v int }
+
+test "encode int >= 2^53 -> Err(SerLossyInteger), not silent-lossy (D346/Q15)" {
+    ro big = IntBox{ v: 9007199254740993 }   // 2^53 + 1
+    match json_encode(big) {
+        Ok(_)  => assert(false)
+        Err(e) => match e.kind {
+            SerLossyInteger(_) => assert(true)
+            _                  => assert(false)
+        }
+    }
+}
+
+test "encode int < 2^53 -> Ok, round-trips (representable)" {
+    ro ok = IntBox{ v: 9007199254740991 }    // 2^53 - 1
+    ro enc = json_encode(ok)!!
+    assert(enc.byte_len() > 0)
+    ro dec = json_decode[IntBox](enc)!!
+    assert(dec.v == 9007199254740991)
+}

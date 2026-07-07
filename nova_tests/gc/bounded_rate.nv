@@ -6,6 +6,9 @@
 // Под boehm: GC собирает unreachable objects в ходе аллокаций —
 // heap остаётся bounded. Тест не проверяет фактическое освобождение
 // (GC_gcollect нет в Nova API), но доказывает что процесс завершается.
+//
+// Plan 182 Ф.3: `str.len()` retired (D249 lens model, E_STR_NO_LEN) — updated
+// to `byte_len()` (only used as a liveness/DCE guard here, not asserted on).
 
 module nova_tests.gc
 
@@ -16,7 +19,7 @@ test "100k string allocs — process does not OOM" {
     while i < 100_000 {
         ro s = "alloc-" + str.from(i)
         // prevent dead-code elimination: use the string
-        assert(s.len() > 0)
+        assert(s.byte_len() > 0)
         i += 1
     }
     ro after = Mem.alloc_count()
@@ -44,7 +47,7 @@ test "alloc rate: 1k strings — growth bounded" {
     mut i = 0
     while i < 1000 {
         ro s = str.from(i)
-        ro _ = s.len()
+        ro _ = s.byte_len()
         i += 1
     }
     ro after = Mem.alloc_count()

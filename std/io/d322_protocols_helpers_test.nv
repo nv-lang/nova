@@ -1,0 +1,66 @@
+// d322_protocols_helpers_test.nv — io.Read/Write/Seek protocols + loop helpers
+// over the in-memory conformers (Plan 176 Ф.1, D322 §3c / Q9). Migrated from
+// nova_tests/io/d322_protocols_helpers.nv (Plan 182 Ф.2); complements
+// d322_io_read_write_seek_test.nv with write_all + read_to_string coverage and
+// a longer multi-origin seek sequence.
+
+module std.io
+
+
+test "read_to_end returns all bytes; empty reader is immediate EOF" {
+    mut r = BytesReader.new("abc".bytes())
+    match read_to_end(r) { Ok(o) => assert(o.len() == 3), Err(_) => assert(false) }
+    mut e = BytesReader.new([]u8.new())
+    match read_to_end(e) { Ok(o) => assert(o.len() == 0), Err(_) => assert(false) }
+}
+
+test "byte-roundtrip through BytesWriter incl invalid-UTF8 bytes" {
+    mut w = BytesWriter.new()
+    mut d []u8 = []u8.new()
+    d.push(0xFF as u8); d.push(0x00 as u8); d.push(0x80 as u8)
+    assert(write_all(w, d).is_ok())
+    ro out = w.bytes()
+    assert(out.len() == 3)
+    assert(out[0] == 0xFF as u8); assert(out[2] == 0x80 as u8)
+}
+
+test "read_to_string is fallible on invalid UTF-8 -> InvalidData" {
+    mut r = BytesReader.new("héllo".bytes())
+    match read_to_string(r) { Ok(s) => assert(s == "héllo"), Err(_) => assert(false) }
+    mut bad []u8 = []u8.new(); bad.push(0xFF as u8)
+    assert(read_to_string(BytesReader.new(bad)).is_err())
+}
+
+test "read_exact fills fully; short stream -> UnexpectedEof; empty buf is not EOF" {
+    mut r = BytesReader.new("abcd".bytes())
+    mut buf []u8 = []u8.new(); buf.resize(4, 0 as u8)
+    assert(read_exact(r, buf).is_ok())
+    assert(buf[0] == 0x61 as u8); assert(buf[3] == 0x64 as u8)
+    mut tail []u8 = []u8.new(); tail.resize(1, 0 as u8)
+    assert(read_exact(r, tail).is_err())   // already at EOF
+    // empty read buffer returns Ok(0) (NOT EOF): read_exact of len 0 is Ok.
+    mut r2 = BytesReader.new("x".bytes())
+    mut empty []u8 = []u8.new()
+    assert(read_exact(r2, empty).is_ok())
+}
+
+test "write_str bridge + copy moves all bytes" {
+    mut w = BytesWriter.new()
+    assert(write_str(w, "hi").is_ok())
+    assert(w.len() == 2)
+    mut r = BytesReader.new("stream this".bytes())
+    mut sink = BytesWriter.new()
+    match copy(r, sink) { Ok(n) => assert(n == 11), Err(_) => assert(false) }
+    assert(sink.len() == 11)
+    assert(sink.bytes()[0] == 0x73 as u8)
+}
+
+test "seek Start/End/Current + negative Start is InvalidInput" {
+    mut r = BytesReader.new("0123456789".bytes())
+    match r.seek(SeekFrom.start(4)) { Ok(p) => assert(p == 4), Err(_) => assert(false) }
+    mut buf []u8 = []u8.new(); buf.resize(1, 0 as u8)
+    match r.read(buf) { Ok(n) => { assert(n == 1); assert(buf[0] == 0x34 as u8) }, Err(_) => assert(false) }
+    match r.seek(SeekFrom.end(-1)) { Ok(p) => assert(p == 9), Err(_) => assert(false) }
+    match r.seek(SeekFrom.current(-4)) { Ok(p) => assert(p == 5), Err(_) => assert(false) }
+    assert(r.seek(SeekFrom.start(-1)).is_err())
+}

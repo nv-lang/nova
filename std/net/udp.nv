@@ -1,137 +1,94 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
-// Plan 91.12 Ф.4 / Plan 178 Ф.0.5: std/net/udp.nv — UDP public API.
+// Plan 183 Ф.2: std/net2/udp.nv — UDP public API (byte surface, D407).
 //
-// UdpSocket: bound async UDP datagram socket.
-//
-// All operations return Result[T, NetError] and route through the `Net` effect;
-// the concrete handler is real_net() (tcp.nv). recv_from uses the TLS pattern:
-// udp_socket_recv_from() parks the fiber, stores results in thread-local
-// buffers, then udp_socket_recv_data() / udp_socket_recv_sender() read them
-// immediately after. This is race-free because Nova fibers are cooperative — no
-// other fiber runs between the recv_from return and the two accessor calls.
-//
-// All blocking operations park the calling fiber (cancel-safe).
-// close() consumes the socket to prevent double-close.
-//
-// Byte-surface (Plan 178 Ф.0.5): @send_to_bytes / @recv_from_bytes give a
-// byte-first (`[]u8`) surface ADDITIVE to the `str` methods (byte-clean: the C
-// transport is length-delimited).
-//
-// C backing: udp_socket_* literal-name functions in net.h / net.c (Plan 91.12 Ф.0).
+// UdpSocket: bound async datagram socket. All operations carry `Net` and return
+// `Result[T, NetError]`; `send_to` sends straight from the caller's bytes,
+// `recv_from` writes the datagram straight into the caller's buffer and fills a
+// 20-byte sender image (no TLS `_net_recv_data`/`_net_recv_sender`). `close()`
+// consumes (use-after-close is a compile error, D133).
 
 module std.net
 
 /// Bound async UDP datagram socket.
 ///
-/// # Lifecycle
-///
 /// ```nova
 /// with Net = real_net() {
-///     mut sock = UdpSocket.bind(SocketAddr.loopback(0))!!
-///     let port = sock.local_port()
-///     sock.send_to("ping", SocketAddr.loopback(peer_port))!!
-///     let (data, sender) = sock.recv_from(512)!!
-///     sock.close()
+///     supervised {
+///         spawn {
+///             mut sock = UdpSocket.bind(SocketAddr.loopback(0))!!
+///             mut buf = []u8.new(); buf.resize(512, 0 as u8)
+///             let (n, sender) = sock.recv_from(buf)!!
+///             sock.close()
+///         }
+///     }
 /// }
 /// ```
-///
-/// # MTU note
-///
-/// UDP datagrams larger than the path MTU (~1400 bytes for Ethernet) may
-/// be fragmented or dropped. `send_to` returns `Err(...)` if the datagram
-/// exceeds the system's maximum allowed size.
 #stable(since = "0.1")
-export type UdpSocket consume value { priv handle CUdpSocket }
+export type UdpSocket consume value { priv handle *() }
 
-/// Bind a UDP socket to the given address.
-///
-/// Passing `SocketAddr.loopback(0)` lets the OS assign a free port.
+fn UdpSocket._from_raw(h *()) -> UdpSocket => { handle: h }
+
+// Result constructors (regular fns — keep variant construction out of handlers).
+fn _socket_ok(h *()) -> Result[UdpSocket, NetError] => Ok(UdpSocket._from_raw(h))
+fn _err_socket(code int) -> Result[UdpSocket, NetError] => Err(NetError.from_code(code))
+fn _recv_pair(n int, addr SocketAddr) -> (int, SocketAddr) => (n, addr)
+fn _recv_ok(n int, addr SocketAddr) -> Result[(int, SocketAddr), NetError] => Ok(_recv_pair(n, addr))
+fn _recv_bytes_pair(data []u8, addr SocketAddr) -> ([]u8, SocketAddr) => (data, addr)
+fn _recv_bytes_ok(data []u8, addr SocketAddr) -> Result[([]u8, SocketAddr), NetError] => Ok(_recv_bytes_pair(data, addr))
+
+/// Bind a UDP socket to `addr`. `SocketAddr.loopback(0)` → OS-assigned port.
 #stable(since = "0.1")
 export fn UdpSocket.bind(addr SocketAddr) Net -> Result[UdpSocket, NetError] {
     Net.udp_bind(addr)
 }
 
-/// Send a datagram to the specified address.
-///
-/// Returns `Ok(n)` where `n` is bytes sent, or `Err(...)` on error.
+/// Send a datagram to `addr`; returns `Ok(n)` bytes sent (straight from `data`).
 #stable(since = "0.1")
-export fn UdpSocket mut @send_to(data str, addr SocketAddr) Net -> Result[int, NetError] {
+export fn UdpSocket mut @send_to(data []u8, addr SocketAddr) Net -> Result[int, NetError] {
     Net.send_to(@, data, addr)
 }
 
-/// Receive the next datagram (up to `max` bytes) and its sender address.
-///
-/// Parks the calling fiber until a datagram arrives.
-/// Returns `Ok((data, sender))` or `Err(...)` on I/O error.
-///
-/// **Cancel-safe:** in-flight receive is aborted on scope cancel.
+/// Send text (its UTF-8 bytes) as a datagram to `addr`.
 #stable(since = "0.1")
-export fn UdpSocket mut @recv_from(max int) Net -> Result[(str, SocketAddr), NetError] {
-    Net.recv_from(@, max)
+export fn UdpSocket mut @send_str(s str, addr SocketAddr) Net -> Result[int, NetError] {
+    Net.send_to(@, s.bytes(), addr)
 }
 
-// ── Plan 178 Ф.0.5: byte-first surface (additive over the `str` methods) ──
-
-/// Send a datagram of raw bytes to the specified address.
-///
-/// Byte-first counterpart of `@send_to`. Returns `Ok(n)` where `n` is bytes sent.
+/// Receive the next datagram into `buf`; returns `Ok((n, sender))`.
+/// The bytes land straight in `buf` (zero-copy); `sender` is the peer address.
 #stable(since = "0.1")
-export fn UdpSocket mut @send_to_bytes(data []u8, addr SocketAddr) Net -> Result[int, NetError] {
-    Net.send_to(@, str.from_bytes_unchecked(data), addr)
-}
-
-/// Receive the next datagram as raw bytes (`[]u8`) and its sender address.
-///
-/// Byte-first counterpart of `@recv_from` (byte-clean incl. non-UTF-8 payloads).
-#stable(since = "0.1")
-export fn UdpSocket mut @recv_from_bytes(max int) Net -> Result[([]u8, SocketAddr), NetError] {
-    match Net.recv_from(@, max) {
-        Ok((data, sender)) => _udp_recv_bytes_ok(data.bytes(), sender)
+export fn UdpSocket mut @recv_from(buf mut []u8) Net -> Result[(int, SocketAddr), NetError] {
+    mut sender = _addr_image()
+    match Net.recv_from(@, buf, sender) {
+        Ok(n)  => _recv_ok(n, SocketAddr._from_image(sender))
         Err(e) => Err(e)
     }
 }
 
-/// Return the local port this socket is bound to.
+/// Receive the next datagram as an owned `[]u8` plus the sender address.
 #stable(since = "0.1")
-export fn UdpSocket @local_port() Net -> u16 {
-    Net.socket_local_port(@)
+export fn UdpSocket mut @recv_from_vec(max int) Net -> Result[([]u8, SocketAddr), NetError] {
+    mut buf []u8 = []u8.new()
+    buf.resize(max, 0 as u8)
+    mut sender = _addr_image()
+    match Net.recv_from(@, buf, sender) {
+        Ok(n)  => { buf.truncate(n) _recv_bytes_ok(buf, SocketAddr._from_image(sender)) }
+        Err(e) => Err(e)
+    }
 }
 
-/// Return the local address this socket is bound to.
+/// Local port this socket is bound to.
+#stable(since = "0.1")
+export fn UdpSocket @local_port() Net -> u16 { Net.socket_local_port(@) }
+
+/// Local address this socket is bound to.
 #stable(since = "0.1")
 export fn UdpSocket @local_addr() Net -> SocketAddr {
-    Net.socket_local_addr(@)
+    mut b = _addr_image()
+    Net.socket_local_addr(@, b)
+    SocketAddr._from_image(b)
 }
 
-/// Close the socket and release all resources (consume).
+/// Close the socket (consume).
 #stable(since = "0.1")
-export fn UdpSocket consume @close() Net {
-    Net.close_socket(@)
-}
-
-// ─── Package-private factories + handler helpers (used by real_net) ───────────
-
-fn UdpSocket._from_raw(h CUdpSocket) -> UdpSocket => { handle: h }
-
-// Workaround for codegen tuple-return inference in effect handler body.
-fn _udp_recv_result(data str, addr SocketAddr) -> (str, SocketAddr) => (data, addr)
-fn _udp_recv_ok(data str, addr SocketAddr) -> Result[(str, SocketAddr), NetError] {
-    Ok(_udp_recv_result(data, addr))
-}
-
-// Byte-surface tuple helper (mirrors _udp_recv_ok for []u8 payloads).
-fn _udp_recv_bytes_result(data []u8, addr SocketAddr) -> ([]u8, SocketAddr) => (data, addr)
-fn _udp_recv_bytes_ok(data []u8, addr SocketAddr) -> Result[([]u8, SocketAddr), NetError] {
-    Ok(_udp_recv_bytes_result(data, addr))
-}
-
-fn udp_result_err() -> Result[UdpSocket, NetError] {
-    Err(net_error(net_last_error()))
-}
-fn udp_send_result_err() -> Result[int, NetError] {
-    Err(net_error(net_last_error()))
-}
-fn udp_recv_result_err() -> Result[(str, SocketAddr), NetError] {
-    Err(net_error(net_last_error()))
-}
+export fn UdpSocket consume @close() Net { Net.close_socket(@) }

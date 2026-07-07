@@ -1,0 +1,44 @@
+// d324_os_mock_extras_test.nv — mock_os coverage not in
+// d324_os_env_args_cwd_test.nv: the 2-arg env_bytes SET overload, and
+// temp_dir/hostname (Plan 176 Ф.3, D324). Migrated from
+// nova_tests/os/mock_os.nv (Plan 182 Ф.2); the plain env set/get/has/remove
+// round-trip test from that source was dropped as a near-duplicate of the
+// existing d324_os_env_args_cwd_test.nv coverage.
+module std.os
+
+import std.fs.{Path}
+
+test "mock_os: env_bytes 2-arg set (raw bytes) + vars snapshot + args" {
+    mut os = MockOs.new()
+    os.push_arg("prog")
+    os.push_arg("a")
+    with Os = mock_os(os) {
+        mut raw []u8 = []u8.new()
+        raw.push(0xFF as u8); raw.push(0xFE as u8)
+        ro _ = env_bytes("B".bytes(), raw)
+        match env_bytes("B".bytes()) {
+            Some(b) => { assert(b.len() == 2); assert(b[0] == (0xFF as u8)); assert(b[1] == (0xFE as u8)) }
+            None    => assert(false)
+        }
+        ro vs = vars()
+        assert(vs.len() == 1)
+        assert(vs[0].key() == "B")
+        ro a = args()
+        assert(a.len() == 2 && a[0] == "prog" && a[1] == "a")
+    }
+}
+
+test "mock_os: cwd get/set, home, pid, hostname, temp_dir, exit recorded" {
+    mut os = MockOs.new()
+    with Os = mock_os(os) {
+        match cwd() { Ok(p) => assert(p.display() == "/"), Err(_) => assert(false) }
+        ro _ = cwd(Path.posix("/tmp/work"))
+        match cwd() { Ok(p) => assert(p.display() == "/tmp/work"), Err(_) => assert(false) }
+        assert(temp_dir().display() == "/tmp")
+        match home_dir() { Some(h) => assert(h.display() == "/home/user"), None => assert(false) }
+        assert(pid() == 4242)
+        match hostname() { Ok(h) => assert(h == "localhost"), Err(_) => assert(false) }
+        exit_process(7)
+    }
+    assert(os.did_exit() && os.exit_code() == 7)
+}

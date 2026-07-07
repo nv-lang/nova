@@ -1,0 +1,46 @@
+// d322_buffered_test.nv — BufReader + BufWriter must-consume (Plan 176 Ф.1,
+// D322/Q10). Migrated from nova_tests/io/d322_buffered.nv (Plan 182 Ф.2).
+//
+// NB: BufReader/BufWriter are constructed with EXPLICIT type args
+// (`BufWriter[BytesWriter].new(...)`) — inference-only construction of these
+// generic wrappers does not yet materialise the monomorphised methods.
+
+module std.io
+
+
+test "BufReader serves reads through its buffer" {
+    mut src = BytesReader.new("hello world".bytes())
+    mut br = BufReader[BytesReader].new(src)
+    match read_to_end(br) { Ok(o) => assert(o.len() == 11), Err(_) => assert(false) }
+}
+
+test "BufReader direct read from buffer" {
+    mut src = BytesReader.new("abcdef".bytes())
+    mut br = BufReader[BytesReader].new(src)
+    mut buf []u8 = []u8.new(); buf.resize(3, 0 as u8)
+    match br.read(buf) { Ok(n) => { assert(n == 3); assert(buf[0] == 0x61 as u8) }, Err(_) => assert(false) }
+}
+
+test "BufWriter close flushes buffered bytes to the (shared) sink" {
+    mut sink = BytesWriter.new()
+    consume bw = BufWriter[BytesWriter].new(sink)
+    mut d []u8 = []u8.new(); d.push(0x41 as u8); d.push(0x42 as u8)
+    assert(bw.write(d).is_ok())
+    assert(bw.write("CD".bytes()).is_ok())
+    // buffered — not yet on the sink until close/flush
+    match bw.close() { Ok(()) => {}, Err(_) => assert(false) }
+    assert(sink.len() == 4)
+    assert(sink.bytes()[0] == 0x41 as u8)
+    assert(sink.bytes()[3] == 0x44 as u8)
+}
+
+test "BufWriter explicit flush pushes without consuming" {
+    mut sink = BytesWriter.new()
+    consume bw = BufWriter[BytesWriter].new(sink)
+    mut d []u8 = []u8.new(); d.push(0x5A as u8)
+    ro _ = bw.write(d)
+    assert(bw.flush().is_ok())
+    assert(sink.len() == 1)
+    // still must close (D133) after a mid-life flush
+    ro _ = bw.close()
+}

@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 182 Ф.1 (migrated from nova_tests/plan91_15/net_write_all_mock.nv) —
+// TcpStream.write_all sends the whole buffer. write_all returns
+// Result[(), NetError] (no byte count) — it either writes everything or
+// errors. mock_net's write always succeeds, so write_all always succeeds too.
+
+module std.net
+
+test "write_all — full buffer through mock stream" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c
+                    Err(_) => panic("connect")
+                }
+                assert(s.write_all("the entire message".bytes()).is_ok())
+                s.close()
+            }
+        }
+    }
+}

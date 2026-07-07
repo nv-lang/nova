@@ -1,0 +1,184 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 182 Ф.2 (migrated from nova_tests/http/client_test.nv) — HTTP/1.1
+// client via mock_http() (deterministic, no sockets).
+//
+// The mock is installed via an INLINE handler `effect Http { send(..) {
+// m.reply(request) } }` that captures the frame-local `m`. This is GC-safe: the
+// conservative collector scans the test frame and keeps `m`'s routes reachable.
+// `mock_http().on(..).build()` also works but copies routes into a heap closure
+// env the current runtime does not root — it segfaults once the GC collects mid
+// run. See [M-178-mock-handler-gc-trace].
+
+module http.client
+
+import std.http.{Http}
+import std.encoding.json.{JsonValue, Json}
+
+// ── GET / POST round-trip ────────────────────────────────────────────────────
+
+test "client: GET round-trip via mock" {
+    ro m = mock_http().on("GET", "/hello", MockResponse.new(200).text("world"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://api.example.com/hello").send()!!
+        assert(resp.status().as_u16() == 200)
+        assert(resp.text()!! == "world")
+    }
+}
+
+test "client: POST round-trip, 201 + Location" {
+    ro m = mock_http().on("POST", "/v1/reports", MockResponse.new(201).header("Location", "/v1/reports/7"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new()
+            .post("http://ingest.example.com/v1/reports")
+            .text("payload")
+            .send()!!
+        assert(resp.status().as_u16() == 201)
+        assert(match resp.header("Location") { Some(l) => l == "/v1/reports/7", None => false })
+        assert(match resp.drain() { Ok(_) => true, Err(_) => false })
+    }
+}
+
+test "client: query builder + default headers" {
+    ro m = mock_http().on("GET", "/search", MockResponse.new(200).text("ok"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        mut b = HttpClient.builder()
+        b.default_header("Accept", "application/json")
+        ro client = b.build()!!
+        consume resp = client.get("http://x.example/search").query([("q", "a b&c")]).send()!!
+        assert(resp.status().as_u16() == 200)
+        assert(match resp.drain() { Ok(_) => true, Err(_) => false })
+    }
+}
+
+// ── chunked transfer decode ──────────────────────────────────────────────────
+
+test "client: Transfer-Encoding chunked decodes body" {
+    ro wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nHello\r\n6\r\n World\r\n0\r\n\r\n"
+    ro m = mock_http().on("GET", "/chunked", MockResponse.raw(wire))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://x.example/chunked").send()!!
+        assert(resp.text()!! == "Hello World")
+    }
+}
+
+// ── redirect following ───────────────────────────────────────────────────────
+
+test "client: follows 301 redirect (same origin)" {
+    ro m = mock_http()
+        .on("GET", "/a", MockResponse.new(301).header("Location", "/b"))
+        .on("GET", "/b", MockResponse.new(200).text("final"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://x.example/a").send()!!
+        assert(resp.status().as_u16() == 200)
+        assert(resp.text()!! == "final")
+    }
+}
+
+test "client: redirect loop → TooManyRedirects" {
+    ro m = mock_http().on("GET", "/loop", MockResponse.new(301).header("Location", "/loop"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        mut b = HttpClient.builder()
+        b.redirect(Limited(2))
+        ro client = b.build()!!
+        match client.get("http://x.example/loop").send() {
+            Ok(r)  => { assert(match r.drain() { Ok(_) => true, Err(_) => false }); assert(false) }
+            Err(e) => assert(match e.kind { TooManyRedirects(_) => true, _ => false })
+        }
+    }
+}
+
+// ── cross-origin auth strip (Q9 security invariant) ──────────────────────────
+
+test "client: Authorization stripped on cross-origin redirect" {
+    ro m = mock_http()
+        .on("GET", "/start", MockResponse.new(301).header("Location", "http://other.example/echo"))
+        .on("GET", "/echo", MockResponse.echo_request_header("authorization"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new()
+            .get("http://a.example/start")
+            .bearer_auth("secret")
+            .send()!!
+        // echo body = what the SECOND (cross-origin) request carried → must be empty
+        assert(resp.text()!! == "")
+    }
+}
+
+test "client: Authorization preserved on same-origin redirect" {
+    ro m = mock_http()
+        .on("GET", "/start2", MockResponse.new(301).header("Location", "/echo2"))
+        .on("GET", "/echo2", MockResponse.echo_request_header("authorization"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new()
+            .get("http://a.example/start2")
+            .bearer_auth("secret")
+            .send()!!
+        assert(resp.text()!! == "Bearer secret")
+    }
+}
+
+// ── 4xx = valid Response; error_for_status opt-in ────────────────────────────
+
+test "client: 404 is a valid Response (not an error)" {
+    ro m = mock_http().on("GET", "/missing", MockResponse.new(404).text("nope"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://x.example/missing").send()!!
+        assert(resp.status().as_u16() == 404)
+        assert(resp.status().is_client_error())
+        assert(match resp.drain() { Ok(_) => true, Err(_) => false })
+    }
+}
+
+test "client: error_for_status converts non-2xx to Err(Status)" {
+    ro m = mock_http().on("GET", "/boom", MockResponse.new(500).text("kaboom"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        match HttpClient.new().get("http://x.example/boom").send()!!.error_for_status() {
+            Ok(r)  => { assert(match r.drain() { Ok(_) => true, Err(_) => false }); assert(false) }
+            Err(e) => assert(match e.kind { Status(_) => true, _ => false })
+        }
+    }
+}
+
+test "client: error_for_status passes 2xx through" {
+    ro m = mock_http().on("GET", "/ok", MockResponse.new(200).text("good"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://x.example/ok").send()!!.error_for_status()!!
+        assert(resp.text()!! == "good")
+    }
+}
+
+// ── malformed response → Protocol error ──────────────────────────────────────
+
+test "client: malformed response → Protocol Err" {
+    ro m = mock_http().on("GET", "/bad", MockResponse.raw("garbage not http\r\n\r\n"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        match HttpClient.new().get("http://x.example/bad").send() {
+            Ok(r)  => { assert(match r.drain() { Ok(_) => true, Err(_) => false }); assert(false) }
+            Err(e) => assert(match e.kind { Protocol(_) => true, _ => false })
+        }
+    }
+}
+
+// ── must-consume: bytes() discharges the body ────────────────────────────────
+
+test "client: body bytes() discharges must-consume" {
+    ro m = mock_http().on("GET", "/b", MockResponse.new(200).body("raw".bytes()))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        consume resp = HttpClient.new().get("http://x.example/b").send()!!
+        ro bytes = resp.bytes()!!
+        assert(bytes.len == 3)
+    }
+}
+
+// ── dynamic JSON: .json() body + .json() response (typed json[T] gates on 180) ─
+
+test "client: dynamic json body + json() response parse" {
+    ro m = mock_http().on("POST", "/api", MockResponse.new(200)
+        .header("Content-Type", "application/json")
+        .text("{\"ok\":true,\"n\":7}"))
+    with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
+        ro payload = Json.parse("{\"q\":42}")!!
+        consume resp = HttpClient.new().post("http://x.example/api").json(payload).send()!!
+        ro v = resp.json()!!
+        assert(v == Json.parse("{\"ok\":true,\"n\":7}")!!)
+    }
+}

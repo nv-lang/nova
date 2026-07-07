@@ -1,0 +1,59 @@
+// d322_io_mock_test.nv — Io effect mockability: capture stdout/stderr, script
+// stdin (Plan 176 Ф.1, D322 §3c; the §8.4 Io-mock carrier). Migrated from
+// nova_tests/io/d322_io_mock.nv (Plan 182 Ф.2).
+
+module std.io
+
+
+test "mock_io captures stdout via write_str" {
+    mut cap = IoCapture.new([]u8.new())
+    with Io = mock_io(cap) {
+        mut o = stdout()
+        ro _ = write_str(o, "hello")
+    }
+    ro out = cap.out_bytes()
+    assert(out.len() == 5)
+    assert(out[0] == 0x68 as u8)
+}
+
+test "mock_io keeps stdout and stderr separate" {
+    mut cap = IoCapture.new([]u8.new())
+    with Io = mock_io(cap) {
+        mut o = stdout()
+        mut e = stderr()
+        ro _ = write_str(o, "out")
+        ro _ = write_str(e, "errs")
+    }
+    assert(cap.out_bytes().len() == 3)
+    assert(cap.err_bytes().len() == 4)
+}
+
+test "mock_io scripts stdin (read to end)" {
+    mut cap = IoCapture.new("piped stdin".bytes())
+    ro got = with Io = mock_io(cap) {
+        mut inp = stdin()
+        match read_to_end(inp) { Ok(b) => b.len(), Err(_) => -1 }
+    }
+    assert(got == 11)
+}
+
+test "mock_io scripted stdin decodes to string" {
+    mut cap = IoCapture.new("café".bytes())
+    ro s = with Io = mock_io(cap) {
+        mut inp = stdin()
+        match read_to_string(inp) { Ok(t) => t, Err(_) => "" }
+    }
+    assert(s == "café")
+}
+
+test "BufWriter over stdout batches, close flushes to the mock" {
+    mut cap = IoCapture.new([]u8.new())
+    with Io = mock_io(cap) {
+        mut o = stdout()
+        consume bw = BufWriter[Stdout].new(o)
+        ro _ = bw.write("batched".bytes())
+        // still buffered → nothing captured yet
+        ro _ = bw.close()
+    }
+    assert(cap.out_bytes().len() == 7)
+}

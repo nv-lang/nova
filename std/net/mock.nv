@@ -1,35 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// DEPRECATED (план 183 Ф.3): модуль заменён std/net2; удаление после санации nova_tests (план 182).
-// Plan 91.12 Ф.7 / Plan 178 Ф.0.5: std/net/mock.nv — in-memory mock handler.
+// Plan 183 Ф.2: std/net2/mock.nv — in-memory, deterministic `Net` handler.
 //
-// Lives in `module std.net` (same module as tcp.nv/udp.nv/addr.nv) so it
-// can access priv fields and _from_raw factories without exposing them.
-//
-// Exports:
-//   mock_net() — single `Net` handler (TCP + UDP + DNS) that never touches real
-//                sockets. Replaces the ex-triad mock_tcp_net/mock_udp_net/
-//                mock_dns_net (Plan 178 Ф.0.5 effect merge). Address ops are pure
-//                now (addr.nv), so mock_addr_net is retired.
+// Same module as tcp.nv/udp.nv/addr.nv, so it reuses the package-private
+// factories and Result helpers. Touches no real socket: constructors return stub
+// handles, read/recv fill the caller buffer with fixed content, addresses are
+// filled via the pure address FFI (no I/O). Deterministic net tests without a
+// live substrate (the mock deliverable, D407).
 
 module std.net
 
-/// In-memory `Net` handler for unit-testing Nova code that depends on `Net`.
+/// In-memory `Net` handler for unit-testing code that depends on `Net`.
 ///
-/// - bind / connect / accept always succeed (return stub handles).
-/// - write / send_to return the byte count of the input data.
-/// - read / read_half_read return "mock-reply"; recv_from returns ("", loopback(0)).
-/// - lookup returns a single loopback SocketAddr at port 0.
-/// - local/peer ports return fixed stubs; all options are no-ops.
-///
-/// # Example
+/// - bind / connect / accept succeed with stub handles.
+/// - write / send_to report the input byte count.
+/// - read / recv_from fill the caller buffer with `"mock-reply"` / empty.
+/// - lookup returns a single loopback address; getters return fixed stubs.
 ///
 /// ```nova
-/// import std.net.{SocketAddr, TcpStream, mock_net}
-///
 /// test "write echo without network" {
 ///     with Net = mock_net() {
 ///         mut s = TcpStream.connect(SocketAddr.loopback(0))!!
-///         assert(s.write("hi")!! == 2)
+///         assert(s.write("hi".bytes())!! == 2)
 ///         s.close()
 ///     }
 /// }
@@ -37,47 +28,63 @@ module std.net
 #stable(since = "0.1")
 export fn mock_net() -> Effect[Net] => effect Net {
     // ── TCP ──────────────────────────────────────────────────────────────────
-    tcp_bind(_addr)          => Ok(TcpListener._from_raw(CTcpListener(1 as *())))
-    accept(_lst)             => Ok(TcpStream._from_raw(CTcpStream(2 as *())))
-    connect(_addr)           => Ok(TcpStream._from_raw(CTcpStream(3 as *())))
-    write(_stream, data)     => Ok(data.byte_len())
-    write_all(_stream, _data) => Ok(())
-    read(_stream, _max)      => Ok("mock-reply")
-    close_stream(stream)     { ro _ = stream }
-    close_listener(lst)      { ro _ = lst }
-    listener_local_port(_lst)         => 4242
-    listener_local_addr(_lst)         => SocketAddr._from_raw(socket_addr_loopback(4242))
-    stream_local_port(_s)             => 5050
-    stream_peer_port(_s)              => 6060
-    stream_local_addr(_s)             => SocketAddr._from_raw(socket_addr_loopback(5050))
-    stream_peer_addr(_s)              => SocketAddr._from_raw(socket_addr_loopback(6060))
-    set_nodelay(_s, _on)              {}
-    set_keepalive(_s, _on)            {}
-    set_reuse_address(_lst, _on)      {}
-    // ── Plan 91.16 / D300: split + half operations ──
-    split_stream(_stream)             => _tcp_split_pair(TcpReadHalf._from_raw(CTcpStream(7 as *())), TcpWriteHalf._from_raw(CTcpStream(8 as *())))
-    read_half_read(_half, _max)       => Ok("mock-reply")
-    read_half_close(half)             { ro _ = half }
-    read_half_local_port(_half)       => 5050
-    read_half_peer_port(_half)        => 6060
-    read_half_local_addr(_half)       => SocketAddr._from_raw(socket_addr_loopback(5050))
-    read_half_peer_addr(_half)        => SocketAddr._from_raw(socket_addr_loopback(6060))
-    write_half_write(_half, data)     => Ok(data.byte_len())
-    write_half_write_all(_half, _data) => Ok(())
-    write_half_close(half)            { ro _ = half }
-    write_half_local_port(_half)      => 5050
-    write_half_peer_port(_half)       => 6060
-    write_half_local_addr(_half)      => SocketAddr._from_raw(socket_addr_loopback(5050))
-    write_half_peer_addr(_half)       => SocketAddr._from_raw(socket_addr_loopback(6060))
+    tcp_bind(_addr SocketAddr)            => _listener_ok(1 as *())
+    accept(_listener TcpListener)         => _stream_ok(2 as *())
+    connect(_addr SocketAddr)             => _stream_ok(3 as *())
+    read(_stream TcpStream, buf mut []u8) => _int_ok(_mock_fill(buf, "mock-reply".bytes()))
+    write(_stream TcpStream, data []u8)   => _int_ok(data.len())
+    shutdown(_stream TcpStream)           => _unit_ok()
+    close_stream(_stream TcpStream)       {}
+    close_listener(_listener TcpListener) {}
+    mark_split(_stream TcpStream)         {}
+    listener_local_port(_listener TcpListener) => 4242
+    listener_local_addr(_listener TcpListener, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(4242, out.ptr()) }
+    }
+    stream_local_port(_stream TcpStream) => 5050
+    stream_peer_port(_stream TcpStream)  => 6060
+    stream_local_addr(_stream TcpStream, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(5050, out.ptr()) }
+    }
+    stream_peer_addr(_stream TcpStream, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(6060, out.ptr()) }
+    }
+    set_nodelay(_stream TcpStream, _on bool)          {}
+    set_keepalive(_stream TcpStream, _on bool)        {}
+    set_reuse_address(_listener TcpListener, _on bool) {}
 
     // ── UDP ──────────────────────────────────────────────────────────────────
-    udp_bind(_addr)                => Ok(UdpSocket._from_raw(CUdpSocket(10 as *())))
-    send_to(_sock, data, _addr)    => Ok(data.byte_len())
-    recv_from(_sock, _max)         => Ok(("", SocketAddr._from_raw(socket_addr_loopback(0))))
-    close_socket(sock)             { ro _ = sock }
-    socket_local_port(_sock)       => 7070
-    socket_local_addr(_sock)       => SocketAddr._from_raw(socket_addr_loopback(7070))
+    udp_bind(_addr SocketAddr)          => _socket_ok(10 as *())
+    send_to(_sock UdpSocket, data []u8, _addr SocketAddr) => _int_ok(data.len())
+    recv_from(_sock UdpSocket, buf mut []u8, sender mut []u8) {
+        unsafe { nova_net_addr_loopback_into(0, sender.ptr()) }
+        ro _ = buf
+        _int_ok(0)
+    }
+    close_socket(_sock UdpSocket)       {}
+    socket_local_port(_sock UdpSocket)  => 7070
+    socket_local_addr(_sock UdpSocket, out mut []u8) {
+        unsafe { nova_net_addr_loopback_into(7070, out.ptr()) }
+    }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(_host, _port) => Ok([SocketAddr._from_raw(socket_addr_loopback(0))])
+    lookup(_host []u8, _port u16) => _mock_lookup()
+}
+
+// A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
+// so `resolve`'s _build_addrs copies one image out just like the real path.
+fn _mock_lookup() -> Result[(int, int), NetError] {
+    ro base = unsafe { nova_net_addr_loopback(0) }
+    _lookup_ok(base as int, 1)
+}
+
+// Copy up to buf.len() bytes of `data` into `buf`; returns the count copied.
+fn _mock_fill(buf mut []u8, data []u8) -> int {
+    ro n = if data.len() < buf.len() { data.len() } else { buf.len() }
+    mut i = 0
+    while i < n {
+        buf[i] = data[i]
+        i = i + 1
+    }
+    n
 }

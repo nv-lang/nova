@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 183 Ф.4 — M:N stress proof + throughput baseline over std/net2.
+//
+// Test 1: 8 client fibers × concurrent echo exchanges through ONE listener
+// under work-stealing. Every fiber sends its own byte pattern
+// (`(fid*31 + k*7) % 251`) and must receive exactly its own bytes back —
+// cross-fiber payload corruption (the old net.c TLS-slot class) would trip
+// the per-byte asserts.
+//
+// Test 2: throughput baseline (§2а ориентир): 8 MiB ping-pong echoed in
+// 64 KiB chunks over one loopback connection; the measured MiB/s is printed
+// (visible via `nova test-build --keep-artifacts` + direct run) and recorded
+// in docs/plans/183-net-rework.md.
+//
+// Loop-affinity contract (net2.c header, Ф.4): every socket is created INSIDE
+// the fiber that operates it, so the uv handle lives on that worker's own
+// libuv loop. The listener port is published through a buffered channel
+// (capacity == number of clients → sends never park).
+//
+// `_must` (typed-Result extractor) is shared from tcp_test.nv (same module).
+
+module std.net
+
+test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber pattern integrity" {
+    with Net = real_net() {
+        ro ch_port = Channel.new(8)
+        supervised {
+            // Server: bind in-fiber, publish the port 8×, then serve 8
+            // connections sequentially (each echo runs to completion; client
+            // payloads sit in kernel buffers meanwhile — 8 KiB ≪ SO_RCVBUF).
+            spawn {
+                mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+                ro port = lst.local_port()
+                assert(port > 0)
+                for _ in 0..8 {
+                    ch_port.tx.send(port)     // buffered (cap 8) — no park
+                }
+                for _ in 0..8 {
+                    mut conn = _must(lst.accept())
+                    mut buf []u8 = []u8.new()
+                    buf.resize(8192, 0 as u8)
+                    mut got = 0
+                    while got < 8192 {
+                        ro n = _must(conn.read(buf))
+                        assert(n > 0)          // client never half-closes early
+                        assert(_must(conn.write(buf[0..n])) == n)
+                        got = got + n
+                    }
+                    assert(got == 8192)
+                    conn.close()
+                }
+                lst.close()
+            }
+            // 8 clients: each connects in-fiber, streams its own 8 KiB
+            // pattern, and byte-verifies the echo.
+            for fid in 0..8 {
+                spawn {
+                    ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                    assert(port > 0)
+                    mut data []u8 = []u8.new()
+                    data.resize(8192, 0 as u8)
+                    for k in 0..8192 {
+                        data[k] = ((fid * 31 + k * 7) % 251) as u8
+                    }
+                    mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
+                    match conn.write_all(data) {
+                        Ok(_)  => {}
+                        Err(_) => assert(false)
+                    }
+                    // Echo arrives in-order — verify each chunk against the
+                    // pattern at its stream offset as it lands (no slice-view
+                    // reads, no second 8 KiB buffer).
+                    mut echo []u8 = []u8.new()
+                    echo.resize(8192, 0 as u8)
+                    mut off = 0
+                    while off < 8192 {
+                        ro n = _must(conn.read(echo))
+                        assert(n > 0)          // server echoes all 8192 bytes
+                        for j in 0..n {
+                            assert(echo[j] == ((fid * 31 + (off + j) * 7) % 251) as u8)
+                        }
+                        off = off + n
+                    }
+                    assert(off == 8192)
+                    conn.close()
+                }
+            }
+        }
+    }
+}
+
+test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
+    with Net = real_net() {
+        ro ch_port = Channel.new(1)
+        supervised {
+            // Echo server: one connection, echo chunks until 8 MiB total.
+            spawn {
+                mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch_port.tx.send(lst.local_port())   // buffered — no park
+                mut conn = _must(lst.accept())
+                mut buf []u8 = []u8.new()
+                buf.resize(65536, 0 as u8)
+                mut total = 0
+                while total < 8388608 {
+                    ro n = _must(conn.read(buf))
+                    assert(n > 0)
+                    assert(_must(conn.write(buf[0..n])) == n)
+                    total = total + n
+                }
+                assert(total == 8388608)
+                conn.close()
+                lst.close()
+            }
+            // Client: ping-pong 128 × 64 KiB, timed.
+            spawn {
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                mut chunk []u8 = []u8.new()
+                chunk.resize(65536, 171 as u8)      // 0xAB fill
+                mut back []u8 = []u8.new()
+                back.resize(65536, 0 as u8)
+                mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
+                ro start = Time.now_monotonic_ns()
+                for _ in 0..128 {
+                    match conn.write_all(chunk) {
+                        Ok(_)  => {}
+                        Err(_) => assert(false)
+                    }
+                    mut off = 0
+                    while off < 65536 {
+                        ro n = _must(conn.read(back))
+                        assert(n > 0)
+                        // Spot-verify each landed chunk (full byte integrity
+                        // is test 1's job).
+                        assert(back[0] == 171 as u8)
+                        assert(back[n - 1] == 171 as u8)
+                        off = off + n
+                    }
+                    assert(off == 65536)
+                }
+                ro elapsed_ns = Time.now_monotonic_ns() - start
+                assert(elapsed_ns > 0)
+                // One-way payload: 8 MiB. MiB/s = 8 * 1e9 / elapsed_ns.
+                ro mibps = 8 * 1000000000 / elapsed_ns
+                ro elapsed_ms = elapsed_ns / 1000000
+                // NOTE: `${…}` interpolation (or `str.from(mibps)`) — `int`
+                // owns no `to_str` method, so `mibps.to_str()` is a clean
+                // `[E_UNKNOWN_METHOD]`. The same-module collision that used to
+                // let it SILENTLY mis-dispatch to `NetError.to_str` (int passed
+                // as the enum pointer → SEGV) is FIXED: the checker now infers
+                // the effect-op receiver type (`Time.now_monotonic_ns()` → int)
+                // so the primitive unknown-method gate fires. See CLOSED
+                // [M-183-int-to-str-module-method-collision].
+                println("net2/stress: throughput ${mibps} MiB/s (8 MiB in 64K chunks, ${elapsed_ms} ms)")
+                assert(mibps > 0)
+                conn.close()
+            }
+        }
+    }
+}

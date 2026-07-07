@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+// Plan 180 §6: a scalar with no faithful JSON wire (`char`; also i128/u128,
+// retired `byte`) must be REJECTED with a typed diagnostic at derive time —
+// never an ICE, never a silent drop.
+// Migrated from nova_tests/serde/neg/unsupported_scalar.nv (Plan 182 Ф.2).
+module serde_neg.unsupported_scalar
+
+import std.encoding.serde.{Serialize, Deserialize}
+
+#impl(Serialize + Deserialize)
+type BadChar value { ro c char }

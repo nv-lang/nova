@@ -7,7 +7,7 @@
 
 module nova_tests.plan183_f4
 
-import std.net2.{TcpListener, UdpSocket, SocketAddr, real_net}
+import std.net.{TcpListener, UdpSocket, SocketAddr, real_net}
 
 test "net2: TcpListener bind to already-used port → Err (no P67-LEGACY ICE)" {
     with Net = real_net() {
