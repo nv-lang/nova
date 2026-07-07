@@ -12625,6 +12625,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // marker) — collected into `fwd_decls`.
         let opt_snap = self.novaopt_typedefs_buf.borrow().len();
         let mut fwd_decls = String::new();
+        // Plan 172.12 A8: by-value field C-types, for the pre-registered
+        // NovaOpt block relocation below.
+        let mut field_c_tys: Vec<String> = Vec::new();
         let saved_out = std::mem::take(&mut self.out);
         self.line(&format!("typedef struct NovaValue_{0} NovaValue_{0};", name));
         self.line(&format!("struct NovaValue_{} {{", name));
@@ -12634,6 +12637,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
+            field_c_tys.push(ty_c.clone());
             // By-pointer field to a late-emitted struct → early forward typedef.
             // Restrict to guaranteed struct tags (mono `____`, NovaValue_,
             // NovaTuple_) so we never shadow a non-struct newtype alias typedef.
@@ -12679,12 +12683,102 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // buffer back so the late `/*__NOVAOPT_TYPEDEFS__*/` splice does not
         // re-emit them. Registration order (innermost-first) is preserved, so
         // nested `NovaOpt_NovaOpt_…` stays topologically valid.
-        let opt_delta = {
+        let mut opt_delta = {
             let mut buf = self.novaopt_typedefs_buf.borrow_mut();
             let d = buf[opt_snap..].to_string();
             buf.truncate(opt_snap);
             d
         };
+        // Plan 172.12 A8 (приёмка, ExtDto-class): the delta only covers Opts
+        // registered FIRST during THIS record's field lowering. An Opt that was
+        // PRE-registered by an earlier consumer (e.g. a protocol vtable slot
+        // lowering the same `Option[[]str]` → `NovaOpt_Nova_Vec____nova_str_p`;
+        // pre-A8 the vtable took the legacy `NovaArray_*` branch so the two
+        // sites produced DIFFERENT sanitized names and the record's fresh
+        // registration hoisted normally) is seen-dedup'd → its FULL typedef
+        // stays at the late `/*__NOVAOPT_TYPEDEFS__*/` splice, AFTER this
+        // struct → "unknown/incomplete type" on the by-value field. MOVE such a
+        // block (typedef line + its `nova_opt_eq_*` fn) from the shared buffer
+        // into the hoist — same target position a fresh registration would have
+        // produced, so declaration-order safety is unchanged. The payload's
+        // mono pointee fwd-typedef (`typedef struct Nova_X____… …;`) is NOT
+        // moved (it may be shared) — an equivalent line is added to
+        // `fwd_decls` (dedup'd; C11 6.7/3 redundant typedef is valid).
+        for fty in &field_c_tys {
+            if !fty.starts_with("NovaOpt_") || fty.ends_with('*') {
+                continue;
+            }
+            let typedef_needle = format!("typedef struct {} {{", fty);
+            if opt_delta.contains(&typedef_needle)
+                || self.value_record_defs_buf.contains(&typedef_needle)
+            {
+                continue; // already ahead of (or hoisting with) this struct
+            }
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            let Some(td_start) = buf.find(&typedef_needle) else {
+                continue; // runtime-predeclared (array.h) or not registered here
+            };
+            let td_end = match buf[td_start..].find('\n') {
+                Some(rel) => td_start + rel + 1,
+                None => buf.len(),
+            };
+            let typedef_line = buf[td_start..td_end].to_string();
+            buf.replace_range(td_start..td_end, "");
+            // The eq fn block: from its header line through the first `\n}\n`
+            // (all register_novaopt_decl eq bodies are flat — a single return /
+            // tag-checks, no nested braces at column 0). ONLY move a
+            // DEFINITION (header line ending `{`): for some Opts the buffer
+            // holds a mere PROTOTYPE (`…);` — the definition lives in the late
+            // [M-172.1-option-eq-record-structural] channel); cutting from a
+            // prototype through the next `\n}\n` would swallow innocent
+            // neighbouring blocks. A prototype may safely stay at the late
+            // splice — eq call-sites live in fn bodies emitted after it.
+            let sani = &fty["NovaOpt_".len()..];
+            let eq_needle = format!("static inline nova_bool nova_opt_eq_{}(", sani);
+            let eq_block = if let Some(eq_start) = buf.find(&eq_needle) {
+                let header_end = buf[eq_start..].find('\n')
+                    .map(|r| eq_start + r)
+                    .unwrap_or(buf.len());
+                let is_definition = buf[eq_start..header_end].trim_end().ends_with('{');
+                if is_definition {
+                    let close_rel = buf[eq_start..].find("\n}\n")
+                        .map(|r| eq_start + r + "\n}\n".len());
+                    match close_rel {
+                        Some(eq_end) => {
+                            let b = buf[eq_start..eq_end].to_string();
+                            buf.replace_range(eq_start..eq_end, "");
+                            b
+                        }
+                        None => String::new(),
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            drop(buf);
+            // Forward-declare the payload's mono struct name (pointer payload
+            // `Nova_X____…*` inside the moved typedef) ahead of everything.
+            if let Some(open) = typedef_line.find('{') {
+                if let Some(val_pos) = typedef_line.find(" value;") {
+                    let payload = typedef_line[open + 1..val_pos].trim();
+                    if let Some(pointee) = payload.strip_suffix('*') {
+                        let pointee = pointee.trim();
+                        if pointee.starts_with("Nova") && pointee.contains("____") {
+                            let fwd = format!("typedef struct {p} {p};\n", p = pointee);
+                            if !fwd_decls.contains(&fwd)
+                                && !self.value_record_defs_buf.contains(&fwd)
+                            {
+                                fwd_decls.push_str(&fwd);
+                            }
+                        }
+                    }
+                }
+            }
+            opt_delta.push_str(&typedef_line);
+            opt_delta.push_str(&eq_block);
+        }
         self.value_record_defs_buf.push_str(&fwd_decls);
         self.value_record_defs_buf.push_str(&opt_delta);
         self.value_record_defs_buf.push_str(&struct_def);
