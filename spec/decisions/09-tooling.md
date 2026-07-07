@@ -3206,8 +3206,20 @@ author to convert at the FFI boundary; no single machine-applicable rewrite exis
 - `E_CLOSURE_HAS_ENV` — coercing an environment-capturing closure (or a bound method
   value) into a captureless C-ABI fn-pointer. Guidance: extract to a top-level free fn.
 
-**Total: 42 fixes** (initial ≥25 met; extended to 42 across all nova-lsp language-sync work
-plus the Plan 174.6 M1 FFI C-ABI diagnostics).
+**104.5.11 — Record-binding destructure diagnostics (2 codes, added 2026-07-07, D411):**
+Emitted by the `[M-d411-record-binding-destructuring]` checker work (`types/mod.rs`).
+Registered as **guidance-note** quick-fixes (`HasPlaceholders`, `edit = null`) — both
+diagnoses already embed the concrete fix text in a `note:`, but the exact insertion span
+depends on formatting choices left to the author.
+- `E_REFUTABLE_BINDING` — a `ro`/`mut` binding pattern is refutable (sum-variant record,
+  literal, variant, `|`-alternation, or array-length pattern; Plan 53 check, D411 adds the
+  code-tag). Guidance: use `if let` / `match` instead of a plain `ro`/`mut` binding.
+- `E_RECORD_PATTERN_NEEDS_REST` — a record-pattern binding lists fewer fields than the
+  type declares without a trailing `..` (D411 `..`-partial rule; `ro`/`mut` bindings only,
+  not match-arms/for-loops). Guidance: add `..`, or list every field.
+
+**Total: 44 fixes** (initial ≥25 met; extended to 44 across all nova-lsp language-sync work
+plus the Plan 174.6 M1 FFI C-ABI diagnostics and the D411 record-binding diagnostics).
 
 **Note on `E_STR_NO_LEN` fix applicability:**
 The `fix_str_no_len` handler scans the diagnostic range for the pattern `.len` and replaces

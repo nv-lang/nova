@@ -1842,12 +1842,26 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `nova_tests/serde/autoderive.nv` + `nova_tests/http_typed/typed_json_test.nv` (all 3
   already RUN-FAIL in-tree; no new fixture needed).
 
-- **[M-d411-record-binding-destructuring]** (2026-07-07, P2, Wave: [sonnet]-заход после
-  §4а-пачки) — реализация D411: record-паттерн в биндингах ro/mut (десугар до чекера в
-  field-доступы; парсер: `{` после ro/mut; irrefutable-проверка E_REFUTABLE_BINDING;
-  `..`-правило как в match). Тесты: conformance позитивы (shorthand/rename/mut/вложенные,
-  однократность вычисления источника) + негативы (сумма в биндинге, частичный список без ..).
-  Первые потребители: json-лексер (ro {line, col, ..} = @), TokenWithPos-снапшоты.
+- **[M-d411-record-binding-destructuring]** ✅ FIXED (2026-07-07) — реализация D411:
+  record-паттерн в биндингах ro/mut. Парсер: `{` после ro/mut уже парсился (парсер уже
+  делегировал в общий `parse_pattern`, который уже знал record-паттерны из match — ноль
+  новой грамматики). Irrefutability-проверка (Plan 53, `check_let_pattern_irrefutable`) и
+  codegen-биндинг полей (`emit_record_destructure`, источник вычисляется один раз в tmp)
+  уже существовали в конвейере до D411 — унаследовано через retraction `let`→`ro`/`mut`.
+  Новое: код-тег `[E_REFUTABLE_BINDING]` на существующую refutability-диагностику;
+  НОВАЯ проверка `..`-правила (частичный список полей без `..` → `[E_RECORD_PATTERN_NEEDS_REST]`,
+  только для ro/mut-биндингов — `check_priv_pattern_recursive_inner` c флагом
+  `enforce_binding_rest`, types/mod.rs). Архитектура десугара: pattern-native, БЕЗ
+  отдельного AST-pass (см. D411 «Правило» в spec/decisions/03-syntax.md — обоснование).
+  Тесты: `spec_tests/conformance/d411_record_binding_destructure.nv` (shorthand/rename/
+  mut/вложенные/однократность вычисления источника через mut-counter side-effect) +
+  `spec_tests/conformance/neg/d411_sum_variant_refutable_neg.nv` +
+  `neg/d411_partial_no_rest_neg.nv`. conformance 54/0 → 56/0 (+2 neg, 0 регрессий).
+  Потребители: json-лексер `Lexer @next_token`/`@read_number` (std/encoding/json.nv) —
+  `ro {line, col, ..} = @` / `ro {pos: start, line: start_line, col: start_col, ..} = @`;
+  json_test 24/24 без изменений. Known gap: record-паттерн, вложенный внутри tuple-элемента
+  биндинга, не проходит `..`-правило (нет type-resolution на этом пути) — редкий кейс,
+  задокументирован в спеке, не блокирует закрытие.
 
 - **[M-unwrap-twins-retraction]** (2026-07-07, P2, Wave: волна-2 §4а [sonnet]) — ретракция
   метод-близнецов операторов (амендменты D85/D86 в спеке): снести из prelude/core.nv
