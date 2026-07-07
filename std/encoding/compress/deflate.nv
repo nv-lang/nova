@@ -644,13 +644,13 @@ fn rle_lengths(lens []int, count int) -> ([]int, []int) {
         if cur == 0 {
             mut r = run
             while r >= 11 {
-                ro take = if r < 138 { r } else { 138 }
+                ro take = r.min(138)
                 sym.push(18)
                 ext.push(take - 11)
                 r = r - take
             }
             while r >= 3 {
-                ro take = if r < 10 { r } else { 10 }
+                ro take = r.min(10)
                 sym.push(17)
                 ext.push(take - 3)
                 r = r - take
@@ -665,7 +665,7 @@ fn rle_lengths(lens []int, count int) -> ([]int, []int) {
             ext.push(0)
             mut r = run - 1
             while r >= 3 {
-                ro take = if r < 6 { r } else { 6 }
+                ro take = r.min(6)
                 sym.push(16)
                 ext.push(take - 3)
                 r = r - take

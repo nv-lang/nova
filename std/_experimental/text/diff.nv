@@ -50,7 +50,7 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
             } else {
                 ro up = lcs[ii - 1][jj]
                 ro left = lcs[ii][jj - 1]
-                lcs[ii][jj] = if up > left { up } else { left }
+                lcs[ii][jj] = up.max(left)
             }
             jj += 1
         }

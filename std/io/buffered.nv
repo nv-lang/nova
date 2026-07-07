@@ -152,7 +152,7 @@ export fn BufReader[R Read] mut @read(buf mut []u8) -> Result[int, IoError] {
         Err(e) => return Err(e)
     }
     if avail == 0 { return Ok(0) }
-    ro n = if want < avail { want } else { avail }
+    ro n = want.min(avail)
     mut i = 0
     while i < n {
         buf[i] = @buf[@pos + i]

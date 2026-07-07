@@ -114,7 +114,7 @@ export fn mock_io(mut cap IoCapture) -> Effect[Io] {
             ro want = buf.len()
             ro rem = cap.input.len() - cap.in_pos
             if want == 0 || rem <= 0 { return Ok(0) }
-            ro n = if want < rem { want } else { rem }
+            ro n = want.min(rem)
             mut i = 0
             while i < n {
                 buf[i] = cap.input[cap.in_pos + i]
