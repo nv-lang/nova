@@ -366,6 +366,18 @@ fn is_digit(b u8) -> bool => b >= B_DIGIT_0 && b <= B_DIGIT_9
 fn is_hex_digit(b u8) -> bool =>
     is_digit(b) || (b >= B_LOWER_A && b <= B_LOWER_F) || (b >= B_UPPER_A && b <= B_UPPER_F)
 
+// Преобразовать одиночный hex-digit байт в int значение (0..15).
+// Контракт: вызывающий гарантирует is_hex_digit(b) = true.
+fn hex_digit_val(b u8) -> int {
+    if b >= B_DIGIT_0 && b <= B_DIGIT_9 {
+        (b as int) - (B_DIGIT_0 as int)
+    } else if b >= B_LOWER_A && b <= B_LOWER_F {
+        10 + (b as int) - (B_LOWER_A as int)
+    } else {
+        10 + (b as int) - (B_UPPER_A as int)
+    }
+}
+
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWithPos, ParseJsonError] {
     // `kw` — короткий ASCII-литерал ("true"/"false"/"null"); байтовая
     // итерация (`kw.bytes()`) эквивалентна char-итерации для чистого ASCII
@@ -455,66 +467,44 @@ fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
 
 // \uXXXX — 4 hex digits. Проверяем surrogate pair для чисел >= 0xD800.
 fn Lexer mut @read_unicode_escape() -> Result[str, ParseJsonError] {
-    ro hex = @read_hex_quad()?
-    ro code = parse_hex(hex)
+    ro hi_start = @pos
+    ro code = @read_hex_quad()?
     // Surrogate pair: high (D800-DBFF) + low (DC00-DFFF).
     if code >= 0xD800 && code <= 0xDBFF {
         // Ожидаем \u low-surrogate.
         ro next = @advance()
         ro next2 = @advance()
         if next != Some(B_BACKSLASH) || next2 != Some(B_LOWER_U) {
-            return Err(InvalidUnicode { @line, @col, hex })
+            return Err(InvalidUnicode { @line, @col, hex: @input[hi_start..hi_start+4] })
         }
-        ro low_hex = @read_hex_quad()?
-        ro low = parse_hex(low_hex)
+        ro lo_start = @pos
+        ro low = @read_hex_quad()?
         if low < 0xDC00 || low > 0xDFFF {
-            return Err(InvalidUnicode { @line, @col, hex: low_hex })
+            return Err(InvalidUnicode { @line, @col, hex: @input[lo_start..lo_start+4] })
         }
         ro codepoint = 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
         Ok(str.from_codepoint(codepoint))
     } else if code >= 0xDC00 && code <= 0xDFFF {
         // Lone low-surrogate — невалидно.
-        Err(InvalidUnicode { @line, @col, hex })
+        Err(InvalidUnicode { @line, @col, hex: @input[hi_start..hi_start+4] })
     } else {
         Ok(str.from_codepoint(code))
     }
 }
 
-fn Lexer mut @read_hex_quad() -> Result[str, ParseJsonError] {
-    mut hex = ""
+fn Lexer mut @read_hex_quad() -> Result[int, ParseJsonError] {
+    ro start = @pos
+    mut code = 0
     for i in 0..4 {
         match @advance() {
             None => return Err(UnexpectedEof { @line, @col })
-            // is_hex_digit(b) гарантирует ASCII (b < 0x80) — тотальный char.from.
-            Some(b) if is_hex_digit(b) => { hex = hex + str.from(char.from(b as int)!!) }
-            // Невалидный hex-digit байт — настоящий codepoint для диагностики
-            // (не Latin-1-фантом); @advance() уже сдвинул @pos, символ был на @pos-1.
+            Some(b) if is_hex_digit(b) => { code = code * 16 + hex_digit_val(b) }
             Some(_) => return Err(InvalidUnicode {
-                @line, @col, hex: hex + str.from(@char_at(@pos - 1))
+                @line, @col, hex: @input[start..@pos]
             })
         }
     }
-    Ok(hex)
-}
-
-// requires: caller (@read_unicode_escape через @read_hex_quad) гарантирует
-// ровно 4 валидных hex-digit символа — @read_hex_quad уже фильтрует через
-// is_hex_digit перед накоплением.
-fn parse_hex(s str) -> int
-    requires s.byte_len() == 4
-{
-    mut acc = 0
-    for c in s.chars() {
-        ro d = if c >= '0' && c <= '9' {
-            (c as int) - ('0' as int)
-        } else if c >= 'a' && c <= 'f' {
-            10 + (c as int) - ('a' as int)
-        } else {
-            10 + (c as int) - ('A' as int)
-        }
-        acc = acc * 16 + d
-    }
-    acc
+    Ok(code)
 }
 
 // Чтение числа: optional '-', integer part, optional '.fraction',
