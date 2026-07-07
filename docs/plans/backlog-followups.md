@@ -2103,3 +2103,13 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   мангл+регистрация паттерн до сноса макросов. `emit_array_lit`'s closure/void_p/protocol-box fallback
   НАМЕРЕННО остаётся NovaArray (closure-arrays вне области A7, `NOVA_ARRAY_DECL(void_p)` должен остаться).
   Следующий заход: закрыть 3 блокера → снос array.h (кроме void_p).
+
+- **[M-hex-blob-embed-d412]** (2026-07-07, P2, Plan: реализация после текущей очереди
+  172.12-A8/174.5; Wave: [sonnet] по карте D412) — реализовать D412: (1) лексер
+  `x"…"`-литерала (hex-цифры + разделители `_`/пробел/перенос; E_HEX_BLOB_ODD,
+  E_HEX_BLOB_CHAR) → компайл-тайм `[]u8`; (2) интринсик `embed("path")` (путь-литерал
+  относительно .nv-исходника, E_EMBED_NOT_FOUND, файл в fingerprint сборки);
+  (3) эмиссия `static const uint8_t nova_blob_<n>[]` + материализация: ro-биндинг =
+  нулевая копия (data→статика, len==cap), mut-биндинг = копия в GC-кучу в точке
+  биндинга; (4) тесты: pos (ro-вид, mut-копия, пустой x"", группировки, embed
+  round-trip) + neg (нечёт, не-hex, отсутствующий файл); спека D412 в 03-syntax.md.
