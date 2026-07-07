@@ -31,7 +31,7 @@ typedef struct { nova_int  value; nova_bool ok; } nova_char_decode_result;
 /* === str → int (signed 64-bit) === */
 /* Trim'ует ведущие пробелы. Принимает '+'/'-' префиксы.
  * Только десятичный (для hex/bin использовать отдельные парсеры). */
-static inline nova_parse_int_result str_to_i64(nova_str s) {
+static inline nova_parse_int_result nova_str_to_i64(nova_str s) {
     nova_parse_int_result r = { 0, 0 };
     if (s.len == 0) return r;
     /* skip leading whitespace */
@@ -63,7 +63,7 @@ static inline nova_parse_int_result str_to_i64(nova_str s) {
 }
 
 /* === str → u64 === */
-static inline nova_parse_u64_result str_to_u64(nova_str s) {
+static inline nova_parse_u64_result nova_str_to_u64(nova_str s) {
     nova_parse_u64_result r = { 0, 0 };
     if (s.len == 0) return r;
     size_t i = 0;
@@ -91,7 +91,7 @@ static inline nova_parse_u64_result str_to_u64(nova_str s) {
 /* === str → f64 === */
 /* Делегирует strtod. NaN/Inf-литералы поддержаны strtod'ом
  * стандартно ("nan", "inf"). */
-static inline nova_parse_f64_result str_to_f64(nova_str s) {
+static inline nova_parse_f64_result nova_str_to_f64(nova_str s) {
     nova_parse_f64_result r = { 0.0, 0 };
     if (s.len == 0) return r;
     /* strtod ожидает null-terminated; копируем в стековый буфер
@@ -117,19 +117,19 @@ static inline nova_parse_f64_result str_to_f64(nova_str s) {
 }
 
 /* [M-f64-try-parse-to-parse-f64] (2026-07-07): thin out-param shim over
- * `str_to_f64` (D407-style net2/os FFI convention — bool return +
+ * `nova_str_to_f64` (D407-style net2/os FFI convention — bool return +
  * `*out` pointer — so the Nova-side `f64.parse` can be a PLAIN `extern "C"
  * fn` declaration, no compiler-side name knowledge needed). Writes the
  * parsed value to `*out` and returns whether the parse succeeded. */
 static inline nova_bool str_parse_f64(nova_str s, double* out) {
-    nova_parse_f64_result r = str_to_f64(s);
+    nova_parse_f64_result r = nova_str_to_f64(s);
     *out = r.value;
     return r.ok;
 }
 
 /* === str → bool === */
 /* Принимает "true"/"false" (case-sensitive). */
-static inline nova_parse_bool_result str_to_bool(nova_str s) {
+static inline nova_parse_bool_result nova_str_to_bool(nova_str s) {
     nova_parse_bool_result r = { 0, 0 };
     if (s.len == 4 && memcmp(s.ptr, "true", 4) == 0) {
         r.value = 1; r.ok = 1; return r;
@@ -245,7 +245,7 @@ static inline nova_str nova_f32_to_debug_str(nova_f32 v) {
  *   \n → \n        \t → \t        \r → \r        \0 → \0
  *   ASCII control bytes (< 0x20, non-printable) → \x{HH}
  *   Multi-byte UTF-8 — passthrough (valid из source). */
-static inline nova_str str_to_debug_str(nova_str s) {
+static inline nova_str nova_str_to_debug_str(nova_str s) {
     /* Pass 1: count output bytes (incl. 2 surrounding quotes). */
     size_t out_len = 2;
     for (size_t i = 0; i < s.len; i++) {
@@ -354,7 +354,7 @@ static inline nova_str nova_char_to_debug_str(nova_int cp) {
 
 /* === str → char (single codepoint) === */
 /* err_kind: 0 ok, 1 empty, 2 multi-char, 3 invalid UTF-8. */
-static inline nova_char_decode_result str_to_char(nova_str s) {
+static inline nova_char_decode_result nova_str_to_char(nova_str s) {
     nova_char_decode_result r = { 0, 0 };
     if (s.len == 0) return r;
     unsigned char b = (unsigned char)s.ptr[0];
