@@ -4148,6 +4148,9 @@ impl CEmitter {
                     // marker (FFI/runtime entries) — default false. Ф.2 can extend
                     // ExternalDecl/ExternalRegistry to carry mutability if needed.
                     recv_mutable: false,
+                    // Plan 184 (Р13/Р14): external entries carry no per-param mode
+                    // markers — empty vector degrades matchers to pre-184 behaviour.
+                    param_modes: Vec::new(),
                     // U.4.3 c2.2: external-registry entries have no single source FnDecl.
                     fn_span: None,
                 };
@@ -5102,10 +5105,16 @@ impl CEmitter {
                     // distinct c_name → false "ambiguous overload", and (b) emit
                     // two prototypes. Skip the duplicate entirely — это НЕ overload
                     // (overload требует различия по D84-осям), а повтор одной декл.
+                    // Plan 184 (Р13/Р14): parameter MODE is an overload axis, so a
+                    // mode-differing decl (`f(x H)` vs `f(mut x H)` — same param
+                    // C-types + return) is NOT a duplicate; include modes in the
+                    // dedup key so all three register (and get distinct C symbols).
+                    let new_modes = Self::fn_param_modes(f);
                     if let Some(existing) = self.method_overloads.get(&key) {
                         let is_dup = existing.iter().any(|s|
                             s.param_c_types == param_c_types
-                            && s.return_c_type == return_c_type);
+                            && s.return_c_type == return_c_type
+                            && s.param_modes == new_modes);
                         if is_dup {
                             continue;
                         }
@@ -5124,10 +5133,28 @@ impl CEmitter {
                                       .replace(']', ""))
                             .collect::<Vec<_>>()
                             .join("_");
-                        if suffix.is_empty() {
+                        let cand = if suffix.is_empty() {
                             base_c_name.clone()
                         } else {
                             format!("{}__{}", base_c_name, suffix)
+                        };
+                        // Plan 184 (Р13/Р14): mode-overload collision — a sibling
+                        // with identical param C-types but a DIFFERENT parameter
+                        // mode already claimed this name (`f(x H)` vs `f(mut x H)`
+                        // vs `f(consume x H)`: heap params keep the handle ABI, Р6,
+                        // so the type suffix cannot separate them). Append the
+                        // param-mode tag to make the C symbol unique. Only fires on
+                        // a genuine mode difference → pure-`ro`/type-differentiated
+                        // sets are byte-identical.
+                        let new_modes = Self::fn_param_modes(f);
+                        let collides = self.method_overloads.get(&key)
+                            .map(|sigs| sigs.iter().any(|s|
+                                s.c_name == cand && s.param_modes != new_modes))
+                            .unwrap_or(false);
+                        if collides {
+                            format!("{}__{}", cand, Self::param_mode_tag(f))
+                        } else {
+                            cand
                         }
                     };
                     let variadic_last = f.params.last()
@@ -5146,6 +5173,8 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: free fns have no receiver — false.
                         recv_mutable: false,
+                        // Plan 184 (Р13/Р14): parameter-mode overload axis.
+                        param_modes: Self::fn_param_modes(f),
                         // U.4.3 c2.2: source FnDecl identity for the dispatch consume.
                         fn_span: Some(f.span),
                     };
@@ -5330,7 +5359,7 @@ impl CEmitter {
                                       .replace(']', ""))
                             .collect::<Vec<_>>()
                             .join("_");
-                        if suffix.is_empty() {
+                        let cand = if suffix.is_empty() {
                             // Plan 135 Ф.1: params identical — tiebreak by receiver mutability.
                             // ro overload (first registered, existing_count==0): keeps base_c_name.
                             // mut overload: __mut suffix.  ro-as-second: __ro suffix.
@@ -5341,6 +5370,20 @@ impl CEmitter {
                             }
                         } else {
                             format!("{}__{}", base_c_name, suffix)
+                        };
+                        // Plan 184 (Р13/Р14): parameter-mode overload collision on a
+                        // method — same param C-types, different param mode (heap
+                        // params, Р6). Append the mode tag to keep C symbols unique.
+                        // Byte-identity: only a real mode difference triggers it.
+                        let new_modes = Self::fn_param_modes(f);
+                        let collides = self.method_overloads.get(&key)
+                            .map(|sigs| sigs.iter().any(|s|
+                                s.c_name == cand && s.param_modes != new_modes))
+                            .unwrap_or(false);
+                        if collides {
+                            format!("{}__{}", cand, Self::param_mode_tag(f))
+                        } else {
+                            cand
                         }
                     };
                     // Plan 14 Ф.6: variadic-флаг — true если последний
@@ -5362,6 +5405,8 @@ impl CEmitter {
                         param_defaults,
                         // Plan 128 Ф.1: capture recv.mutable for downstream ABI dispatch.
                         recv_mutable: recv.mutable,
+                        // Plan 184 (Р13/Р14): parameter-mode overload axis.
+                        param_modes: Self::fn_param_modes(f),
                         // U.4.3 c2.2: source FnDecl identity — the KEY site for the
                         // instance-method dispatch consume (matches the checker's choice).
                         fn_span: Some(f.span),
@@ -5455,6 +5500,8 @@ impl CEmitter {
                         // the original (Ф.2 will use this when shaping the
                         // proxy's nova_self ABI).
                         recv_mutable: base_sig.recv_mutable,
+                        // Plan 184 (Р13/Р14): proxy inherits base method's param modes.
+                        param_modes: base_sig.param_modes.clone(),
                         // U.4.3 c2.2: D39 embed proxy is synthesized (no single FnDecl).
                         fn_span: None,
                     };
@@ -7730,6 +7777,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Using it here for correctness; checker enforcement (Ф.2)
                         // will wire full mut-receiver dispatch for protocol methods.
                         recv_mutable: m.receiver_mut,
+                        // Plan 184 (Р13/Р14): protocol-default params default to `ro`.
+                        param_modes: vec![0u8; param_c_tys.len()],
                         // U.4.3 c2.2: protocol-default method is synthesized (no FnDecl).
                         fn_span: None,
                     };
@@ -11386,6 +11435,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // demand. Inherit from FnDecl recv.mutable; concrete mono'd
                     // emission will use this when registering the real sig.
                     recv_mutable: recv.mutable,
+                    // Plan 184 (Р13/Р14): generic mono-sentinel — carry the source
+                    // param modes so a concrete mono method can still be mode-matched.
+                    param_modes: Self::fn_param_modes(f),
                     // U.4.3 c2.2: generic mono-sentinel is a routing placeholder, not a
                     // concrete dispatch target — channel records only non-generic callees.
                     fn_span: None,
@@ -12891,6 +12943,90 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// Plan 184 (Р14): is `e` a mutable, addressable PLACE — a binding declared
+    /// `mut`, a field path / index whose root is such a place, or the `mut @`
+    /// receiver? Used to decide whether a `mut`-mode overload is preferred for
+    /// the argument (the argument-binding-mutability dispatch rule, mirror of the
+    /// receiver-mutability tiebreak of Plan 135).
+    fn is_place_mutable(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(name) => self.var_mutable.contains(name.as_str()),
+            ExprKind::SelfAccess => self.current_receiver_is_mut,
+            ExprKind::Member { obj, .. } => self.is_place_mutable(obj),
+            ExprKind::Index { obj, .. } => self.is_place_mutable(obj),
+            _ => false,
+        }
+    }
+
+    /// Plan 184 (Р14): is `e` an owned rvalue/temporary with no addressable
+    /// backing store — a call result, literal, arithmetic, record/collection
+    /// literal, etc.? Such an argument is unconditionally last-use, so a
+    /// `consume`-mode overload participates for it (no live binding is silently
+    /// consumed). Named places (Ident/Member/Index/`@`) are NOT temporaries.
+    fn is_rvalue_temp(e: &Expr) -> bool {
+        !matches!(
+            &e.kind,
+            ExprKind::Ident(_)
+                | ExprKind::SelfAccess
+                | ExprKind::Member { .. }
+                | ExprKind::Index { .. }
+        )
+    }
+
+    /// Plan 184 (Р13/Р14): among overload candidates already matched by param
+    /// C-types (or arity), narrow by the parameter MODE axis {ro,mut,consume}
+    /// against each argument's binding capability. Selection rule (D84 amendment):
+    ///   - `ro` param — accepts any argument (specificity 0);
+    ///   - `mut` param — eligible only when the argument is a mutable place
+    ///     (specificity 2, preferred over `ro` — mirror of the receiver-mut rule);
+    ///   - `consume` param — eligible only when the argument is an owned rvalue /
+    ///     last-use temporary (specificity 3, most specific).
+    /// The most-specific eligible candidate wins. `mut` and `consume` eligibility
+    /// are mutually exclusive by argument class (a place is not a temporary), so a
+    /// unique winner exists by construction (the axes are orthogonal — no
+    /// ambiguity). Returns the input unchanged when the candidates do NOT form a
+    /// mode-overload set (identical modes) or when none is eligible (fall through
+    /// to the pre-184 selection).
+    fn narrow_by_param_mode(&self, pool: Vec<MethodSig>, args: &[CallArg]) -> Vec<MethodSig> {
+        if pool.len() < 2 {
+            return pool;
+        }
+        // Must be a real mode-overload set: all candidates carry a param_modes
+        // vector of the call's arity, and at least two modes differ.
+        let arity = args.len();
+        if pool.iter().any(|s| s.param_modes.len() != arity) {
+            return pool;
+        }
+        let first = &pool[0].param_modes;
+        if pool.iter().all(|s| &s.param_modes == first) {
+            return pool;
+        }
+        let mut best = i32::MIN;
+        let mut scored: Vec<(i32, MethodSig)> = Vec::new();
+        'cand: for s in pool.iter() {
+            let mut score = 0i32;
+            for (i, &m) in s.param_modes.iter().enumerate() {
+                let Some(arg) = args.get(i).map(|a| a.expr()) else { continue; };
+                match m {
+                    1 => {
+                        if self.is_place_mutable(arg) { score += 2; } else { continue 'cand; }
+                    }
+                    2 => {
+                        if Self::is_rvalue_temp(arg) { score += 3; } else { continue 'cand; }
+                    }
+                    _ => {}
+                }
+            }
+            if score > best { best = score; }
+            scored.push((score, s.clone()));
+        }
+        let winners: Vec<MethodSig> = scored.into_iter()
+            .filter(|(sc, _)| *sc == best)
+            .map(|(_, s)| s)
+            .collect();
+        if winners.is_empty() { pool } else { winners }
+    }
+
     /// Plan 138.4 Ф.2 (G-A): compute the param C-type vector used to match a
     /// method `FnDecl` against its registered overload signatures, replicating
     /// the registration pre-pass (~2507-2539). For generic-receiver types
@@ -12947,6 +13083,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let want_params = self.mangle_want_params(recv, f);
                     // Plan 135 Ф.1: tiebreak по recv_mutable когда params совпадают.
                     let want_recv_mut = recv.mutable;
+                    // Plan 184 (Р13/Р14): tiebreak by parameter modes too, so a
+                    // mode-overload (`fn T @m(x H)` vs `fn T mut @m(mut x H)`) emits
+                    // its OWN body under its OWN mangled symbol.
+                    let want_modes = Self::fn_param_modes(f);
+                    // Pass 0: exact match on params + recv_mutable + param_modes.
+                    for sig in overloads.iter() {
+                        if sig.param_c_types == want_params
+                            && sig.recv_mutable == want_recv_mut
+                            && sig.param_modes == want_modes {
+                            return sig.c_name.clone();
+                        }
+                    }
                     // First pass: exact match on both params + recv_mutable.
                     for sig in overloads.iter() {
                         if sig.param_c_types == want_params && sig.recv_mutable == want_recv_mut {
@@ -12999,6 +13147,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .map(|p| self.type_ref_to_c(&p.ty)
                             .unwrap_or_else(|_| "nova_int".into()))
                         .collect();
+                    // Plan 184 (Р13/Р14): mode tiebreak first — a free-fn
+                    // mode-overload (`f(x H)` vs `f(mut x H)`) shares param C-types.
+                    let want_modes = Self::fn_param_modes(f);
+                    for sig in overloads {
+                        if sig.param_c_types == want_params && sig.param_modes == want_modes {
+                            return sig.c_name.clone();
+                        }
+                    }
                     for sig in overloads {
                         if sig.param_c_types == want_params {
                             return sig.c_name.clone();
@@ -26876,12 +27032,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .collect();
                             // Filter по arity + param-types (strict matching,
                             // как в resolve_overload для методов).
-                            let matches: Vec<&MethodSig> = overloads.iter()
+                            let type_matches: Vec<MethodSig> = overloads.iter()
                                 .filter(|sig| sig.param_c_types.len() == arg_c_types.len())
                                 .filter(|sig| sig.param_c_types.iter()
                                     .zip(arg_c_types.iter())
                                     .all(|(want, got)| want == got))
+                                .cloned()
                                 .collect();
+                            // Plan 184 (Р13/Р14): among type-matched candidates,
+                            // narrow the parameter-mode axis {ro,mut,consume} by the
+                            // argument-binding capability (mut place / owned temp).
+                            let matches_v = self.narrow_by_param_mode(type_matches, args);
+                            let matches: Vec<&MethodSig> = matches_v.iter().collect();
                             match matches.len() {
                                 1 => matches[0].c_name.clone(),
                                 0 => return Err(format!(
@@ -29789,6 +29951,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     } else {
                                         pool
                                     }
+                                } else {
+                                    pool
+                                };
+                                // Plan 184 (Р13/Р14): parameter-mode axis narrowing on
+                                // the instance-method pool — the unified {ro,mut,consume}
+                                // axis for ordinary params (`fn T @m(x H)` vs
+                                // `fn T mut @m(mut x H)`), orthogonal to the receiver-mut
+                                // tiebreak above. `args` are the non-receiver call args,
+                                // 1:1 with `param_modes`.
+                                let pool: Vec<MethodSig> = if want_instance && pool.len() > 1 {
+                                    self.narrow_by_param_mode(pool, args)
                                 } else {
                                     pool
                                 };
@@ -40434,6 +40607,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             && ty_c != "nova_unit"
             && !ty_c.ends_with('*')
             && Self::is_value_type(ty_c)
+    }
+
+    /// Plan 184 (Р13/Р14): encode a parameter's passing mode as an overload-axis
+    /// discriminator — 0 = `ro` (default), 1 = `mut`, 2 = `consume`. Mode is a
+    /// legal overload axis (by the receiver-mode precedent, Plan 135), so this
+    /// code is stored in the `MethodSig.param_modes` vector and used to tiebreak
+    /// the C-name mangle and the call-site dispatch when two overloads share
+    /// identical `param_c_types` but differ only by mode.
+    fn param_mode_code(p: &crate::ast::Param) -> u8 {
+        if p.consume { 2 } else if p.is_mut { 1 } else { 0 }
+    }
+
+    /// Plan 184 (Р13/Р14): mode-vector of a `FnDecl`'s parameters (parallel to
+    /// its param list), for matching against a registered `MethodSig.param_modes`.
+    fn fn_param_modes(f: &FnDecl) -> Vec<u8> {
+        f.params.iter().map(Self::param_mode_code).collect()
+    }
+
+    /// Plan 184 (Р13/Р14): a compact, deterministic tag of a `FnDecl`'s parameter
+    /// modes (`r`/`m`/`c` per param), appended to the mangled C name ONLY when a
+    /// same-name overload with identical `param_c_types` but DIFFERENT modes was
+    /// already registered (a genuine mode-overload collision — the heap case,
+    /// Р6). Byte-identity: pure-`ro` overload sets never collide (their type
+    /// suffix already disambiguates), so no existing symbol grows this tag.
+    fn param_mode_tag(f: &FnDecl) -> String {
+        f.params.iter().map(|p| match Self::param_mode_code(p) {
+            1 => 'm',
+            2 => 'c',
+            _ => 'r',
+        }).collect()
     }
 
     /// Plan 20 follow-up: infer return type для lambda body, временно

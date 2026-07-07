@@ -1,0 +1,63 @@
+// D326-ревизия (Plan 184, Р13/Р14) — режим параметра {ro, mut, consume} как
+// ОСЬ ПЕРЕГРУЗКИ, единая для ресивера (нулевой параметр) и обычных параметров.
+// Spec: spec/decisions/10-overloading.md §«Ось режима {ro, mut, consume}».
+// Диспатч: ro-аргумент → ro-версия; mut-биндинг → mut-версия; owned-временное
+// (последняя точка использования) → consume-версия. Для кучевого T все три
+// имеют одинаковый ABI (Р6: ref H ≡ H) и различаются ТОЛЬКО режимом.
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326Box { v int }
+fn D326Box.new(n int) -> D326Box => { v: n }
+// consume-метод — терминальный потребитель для consume-перегрузки (D131/D133).
+fn D326Box consume @sink() -> int => 3
+
+// --- Ось режима на обычном параметре: три перегрузки одного имени ---
+fn d326_tag(x D326Box) -> int => 1               // ro (default)
+fn d326_tag(mut x D326Box) -> int => 2           // mut
+fn d326_tag(consume x D326Box) -> int => x.sink() // consume (потребляет x → 3)
+
+test "param-mode overload: ro binding dispatches to ro version (Р13/Р14)" {
+    ro b = D326Box.new(0)
+    assert(d326_tag(b) == 1)
+}
+
+test "param-mode overload: mut binding dispatches to mut version (Р13/Р14)" {
+    mut b = D326Box.new(0)
+    assert(d326_tag(b) == 2)
+}
+
+test "param-mode overload: owned temporary dispatches to consume version (Р14)" {
+    assert(d326_tag(D326Box.new(0)) == 3)
+}
+
+// --- Пара ro/mut без consume: mut-биндинг приоритетнее ro ---
+fn d326_kind(x D326Box) -> int => 10
+fn d326_kind(mut x D326Box) -> int => 20
+
+test "ro/mut pair: ro binding -> ro (Р14)" {
+    ro b = D326Box.new(0)
+    assert(d326_kind(b) == 10)
+}
+
+test "ro/mut pair: mut binding -> mut preferred over ro (Р14, прецедент ресивера)" {
+    mut b = D326Box.new(0)
+    assert(d326_kind(b) == 20)
+}
+
+// --- Смешение с receiver-осью: `fn T @m(x T)` vs `fn T mut @m(mut x T)` ---
+// Ресивер = нулевой параметр (Р14): обе оси действуют одновременно.
+fn D326Box @combo(x D326Box) -> int => 100
+fn D326Box mut @combo(mut x D326Box) -> int => 200
+
+test "receiver-axis + param-axis together: ro recv + ro arg (Р14)" {
+    ro a = D326Box.new(0)
+    ro b = D326Box.new(0)
+    assert(a.combo(b) == 100)
+}
+
+test "receiver-axis + param-axis together: mut recv + mut arg (Р14)" {
+    mut a = D326Box.new(0)
+    mut b = D326Box.new(0)
+    assert(a.combo(b) == 200)
+}

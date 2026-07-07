@@ -1290,18 +1290,25 @@ fn check_module_impl(
                 // совпадения **arity + arg-types + return-type** (плюс
                 // receiver-type, который уже включён в `key`). Если хоть одна
                 // ось различается — overload валиден.
-                let new_arg_tys: Vec<&TypeRef> = fd.params.iter().map(|p| &p.ty).collect();
                 // Plan 135: receiver-mutability is a valid overload axis.
                 // `fn T @m()` and `fn T mut @m()` are distinct overloads.
                 let new_recv_mut = fd.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+                // Plan 184 (Р13/Р14): parameter MODE {ro,mut,consume} is a valid
+                // overload axis too (unified with the receiver axis: `@` is the
+                // zeroth parameter). `f(x T)` / `f(mut x T)` / `f(consume x T)`
+                // are DISTINCT overloads — dispatch by argument-binding mutability
+                // / last-use (D84 amendment). Two params are mode-equal iff same
+                // `is_mut` AND same `consume`.
                 let dup_existing = entry.iter().find(|existing| {
                     // Plan 135: if receiver-mutability differs, NOT a duplicate.
                     let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
                     if existing_recv_mut != new_recv_mut { return false; }
-                    // Arity + arg-types одинаковы?
+                    // Arity + arg-types + param-modes одинаковы?
                     let args_equal = existing.params.len() == fd.params.len()
-                        && existing.params.iter().zip(new_arg_tys.iter())
-                            .all(|(p, new_ty)| typeref_equal(&p.ty, new_ty));
+                        && existing.params.iter().zip(fd.params.iter())
+                            .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
+                                && p.is_mut == np.is_mut
+                                && p.consume == np.consume);
                     if !args_equal { return false; }
                     // Return-type одинаков? (None / None или Some/Some equal).
                     match (&existing.return_type, &fd.return_type) {
@@ -1320,8 +1327,10 @@ fn check_module_impl(
                         let existing_recv_mut = existing.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
                         if existing_recv_mut != new_recv_mut { return false; }
                         let args_equal = existing.params.len() == fd.params.len()
-                            && existing.params.iter().zip(new_arg_tys.iter())
-                                .all(|(p, new_ty)| typeref_equal(&p.ty, new_ty));
+                            && existing.params.iter().zip(fd.params.iter())
+                                .all(|(p, np)| typeref_equal(&p.ty, &np.ty)
+                                    && p.is_mut == np.is_mut
+                                    && p.consume == np.consume);
                         if !args_equal { return false; }
                         match (&existing.return_type, &fd.return_type) {
                             (None, None) => true,
