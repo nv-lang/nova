@@ -1,11 +1,11 @@
-// real_fs_tmp.nv — real_fs end-to-end against a temp dir in the worktree cwd
-// (Plan 176 Ф.2). Validates the libuv uv_fs_* park/wake path. Blocking fs ops run
-// inside a spawn fiber (the park slot lives on a spawned fiber, not the supervised
-// body — the net-test pattern). Uses a relative scratch dir (Ф.3 brings
-// os.temp_dir); cleans up after.
-module nova_tests.fs
+// d323_real_fs_test.nv — real_fs end-to-end against a temp dir in the
+// worktree cwd (Plan 176 Ф.2). Validates the libuv uv_fs_* park/wake path.
+// Blocking fs ops run inside a spawn fiber (the park slot lives on a spawned
+// fiber, not the supervised body — the net-test pattern). Uses a relative
+// scratch dir (Ф.3 brings os.temp_dir); cleans up after. Migrated from
+// nova_tests/fs/real_fs_tmp.nv (Plan 182 Ф.2).
+module std.fs
 
-import std.fs.{Path, Fs, real_fs, write, read_text, metadata, remove_file, create_dir, remove_dir, remove_dir_all, read_dir}
 import std.io.{ErrorKind}
 
 test "real_fs: write / read / stat / read_dir / remove round-trip" {

@@ -1,26 +1,14 @@
-// mock_os.nv — in-memory Os handler: env / args / cwd / exit round-trips
-// (Plan 176 Ф.3, D324). Deterministic, no real process environment.
-module nova_tests.os
+// d324_os_mock_extras_test.nv — mock_os coverage not in
+// d324_os_env_args_cwd_test.nv: the 2-arg env_bytes SET overload, and
+// temp_dir/hostname (Plan 176 Ф.3, D324). Migrated from
+// nova_tests/os/mock_os.nv (Plan 182 Ф.2); the plain env set/get/has/remove
+// round-trip test from that source was dropped as a near-duplicate of the
+// existing d324_os_env_args_cwd_test.nv coverage.
+module std.os
 
-import std.os.{MockOs, mock_os, Os, env, env_bytes, remove_env, has_env, vars, args, cwd, home_dir, temp_dir, pid, hostname, exit_process}
 import std.fs.{Path}
 
-test "mock_os: env set/get/has/overwrite/remove round-trip" {
-    mut os = MockOs.new()
-    with Os = mock_os(os) {
-        assert(!has_env("X"))
-        ro _ = env("X", "1")
-        assert(has_env("X"))
-        match env("X") { Some(v) => assert(v == "1"), None => assert(false) }
-        ro _ = env("X", "2")
-        match env("X") { Some(v) => assert(v == "2"), None => assert(false) }
-        ro _ = remove_env("X")
-        assert(!has_env("X"))
-        match env("X") { Some(_) => assert(false), None => assert(true) }
-    }
-}
-
-test "mock_os: byte-correct value + vars snapshot + args" {
+test "mock_os: env_bytes 2-arg set (raw bytes) + vars snapshot + args" {
     mut os = MockOs.new()
     os.push_arg("prog")
     os.push_arg("a")
@@ -40,7 +28,7 @@ test "mock_os: byte-correct value + vars snapshot + args" {
     }
 }
 
-test "mock_os: cwd get/set, home, pid, hostname, exit recorded" {
+test "mock_os: cwd get/set, home, pid, hostname, temp_dir, exit recorded" {
     mut os = MockOs.new()
     with Os = mock_os(os) {
         match cwd() { Ok(p) => assert(p.display() == "/"), Err(_) => assert(false) }

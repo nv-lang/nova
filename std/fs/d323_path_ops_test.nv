@@ -1,7 +1,9 @@
-// path_ops.nv — byte-backed Path lexical manipulation, POSIX + Windows (D323 Q1).
-module nova_tests.fs
+// d323_path_ops_test.nv — byte-backed Path lexical manipulation, POSIX +
+// Windows (D323 Q1). Migrated from nova_tests/fs/path_ops.nv (Plan 182 Ф.2);
+// complements d323_path_bytes_test.nv with file_name/stem, normalize edge
+// cases, with_extension and equals coverage.
+module std.fs
 
-import std.fs.{Path, PathStyle}
 
 // ─── POSIX ──
 

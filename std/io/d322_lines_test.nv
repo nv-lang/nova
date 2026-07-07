@@ -1,8 +1,8 @@
-// d322_lines.nv — lines() / byte_lines() edge cases (Plan 176 Ф.1, Q7).
+// d322_lines_test.nv — lines() / byte_lines() edge cases (Plan 176 Ф.1, Q7).
+// Migrated from nova_tests/io/d322_lines.nv (Plan 182 Ф.2).
 
-module nova_tests.io
+module std.io
 
-import std.io.{BytesReader, lines, byte_lines}
 
 test "lines strips trailing CR (CRLF), yields final line without newline" {
     mut r = BytesReader.new("a\r\nbb\nccc".bytes())

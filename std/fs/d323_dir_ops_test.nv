@@ -1,7 +1,7 @@
-// mock_dir.nv — directory ops over mock_fs (Plan 176 Ф.2, D323).
-module nova_tests.fs
+// d323_dir_ops_test.nv — directory ops over mock_fs (Plan 176 Ф.2, D323).
+// Migrated from nova_tests/fs/mock_dir.nv (Plan 182 Ф.2).
+module std.fs
 
-import std.fs.{Path, MemFs, mock_fs, Fs, write, read_text, create_dir, read_dir, rename, copy_file, remove_dir, try_exists}
 import std.io.{ErrorKind}
 
 test "mock_fs: mkdir + read_dir + rename + copy_file" {

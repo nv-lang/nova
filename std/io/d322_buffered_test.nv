@@ -1,12 +1,12 @@
-// d322_buffered.nv — BufReader + BufWriter must-consume (Plan 176 Ф.1, D322/Q10).
+// d322_buffered_test.nv — BufReader + BufWriter must-consume (Plan 176 Ф.1,
+// D322/Q10). Migrated from nova_tests/io/d322_buffered.nv (Plan 182 Ф.2).
 //
 // NB: BufReader/BufWriter are constructed with EXPLICIT type args
 // (`BufWriter[BytesWriter].new(...)`) — inference-only construction of these
 // generic wrappers does not yet materialise the monomorphised methods.
 
-module nova_tests.io
+module std.io
 
-import std.io.{BytesReader, BytesWriter, BufReader, BufWriter, read_to_end, IoError, ErrorKind}
 
 test "BufReader serves reads through its buffer" {
     mut src = BytesReader.new("hello world".bytes())

@@ -1,9 +1,9 @@
-// d322_io_mock.nv — Io effect mockability: capture stdout/stderr, script stdin
-// (Plan 176 Ф.1, D322 §3c; the §8.4 Io-mock carrier).
+// d322_io_mock_test.nv — Io effect mockability: capture stdout/stderr, script
+// stdin (Plan 176 Ф.1, D322 §3c; the §8.4 Io-mock carrier). Migrated from
+// nova_tests/io/d322_io_mock.nv (Plan 182 Ф.2).
 
-module nova_tests.io
+module std.io
 
-import std.io.{Io, IoCapture, mock_io, stdin, stdout, stderr, Stdout, write_str, read_to_end, read_to_string, BufWriter}
 
 test "mock_io captures stdout via write_str" {
     mut cap = IoCapture.new([]u8.new())

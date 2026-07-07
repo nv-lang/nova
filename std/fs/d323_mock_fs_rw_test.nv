@@ -1,10 +1,10 @@
-// mock_fs.nv — in-memory Fs handler: byte round-trip + positioned I/O
-// (Plan 176 Ф.2, D323). Deterministic, no disk. (Tests are split across small
-// files — mock_options/mock_dir/mock_atomic — to keep each test binary light;
-// a heavy 10-test binary tripped a runtime GC-pressure flake, [M-176-memfs-gc-pressure].)
-module nova_tests.fs
+// d323_mock_fs_rw_test.nv — in-memory Fs handler: byte round-trip + positioned
+// I/O (Plan 176 Ф.2, D323). Deterministic, no disk. Migrated from
+// nova_tests/fs/mock_fs.nv (Plan 182 Ф.2); complements
+// d323_file_must_consume_test.nv with remove_file, non-UTF8 content and
+// positioned read_at/write_at coverage.
+module std.fs
 
-import std.fs.{Path, MemFs, mock_fs, Fs, File, read, write, read_text, metadata, try_exists, remove_file}
 import std.io.{ErrorKind, SeekFrom}
 
 test "mock_fs: write -> read -> metadata -> remove round-trip" {

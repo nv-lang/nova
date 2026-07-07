@@ -1,7 +1,7 @@
-// mock_options.nv — OpenOptions semantics over mock_fs (Plan 176 Ф.2, D323 Q13).
-module nova_tests.fs
+// d323_open_options_test.nv — OpenOptions semantics over mock_fs (Plan 176
+// Ф.2, D323 Q13). Migrated from nova_tests/fs/mock_options.nv (Plan 182 Ф.2).
+module std.fs
 
-import std.fs.{Path, MemFs, mock_fs, Fs, File, OpenOptions, write, read_text}
 import std.io.{ErrorKind}
 
 test "mock_fs: OpenOptions create_new on existing -> AlreadyExists" {
