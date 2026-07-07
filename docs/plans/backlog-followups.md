@@ -1722,8 +1722,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - **[M-f64-try-parse-to-parse-f64]** (2026-07-07, P2, Wave: [sonnet/haiku]-заход сразу после
   вливания A4 — трогает emit_c) — `f64.try_parse(s) -> Option[f64]` нарушает R1/R3/R4 (D325:
   Option вместо Result; try_ без infallible-сиблинга) и §3 (компиляторный builtin, хардкод в
-  4 местах emit_c.rs :30970/:39801/:43421/:47128 поверх nova_str_to_f64). Целевая форма:
-  `str @parse_f64() -> Result[f64, ParseFloatError]` в std/runtime/string/parse.nv по образцу
-  parse_int; builtin снести; вызовов 2 (json.nv:483, _experimental/math/complex.nv:368).
-  Заодно спека: примеры type-set дженерика 174.1 `T.try_parse(...)` → `T.parse(...)`
-  (писались до уточнения R3) — амендмент-строчка в блоке type-set (02-types.md:13912-зона).
+  4 местах emit_c.rs :30970/:39801/:43421/:47128 поверх nova_str_to_f64). Целевая форма (уточнена
+  владельцем 2026-07-07: парсинг = конструктор-конверсия, дом — тип-ЦЕЛЬ, не str):
+  `fn f64.parse(s str) -> Result[f64, ParseFloatError]` (статик, поверх extern
+  nova_str_to_f64); builtin снести; вызовов 2 (json.nv:483, _experimental complex.nv:368).
+  При 174.1 генерализуется type-set'ом: `fn[T FloatSet] T.parse(s) -> Result[...]`
+  (+SignedInt/UnsignedInt с radix); туда же РЕВИЗИЯ `str @parse_int` → `int.parse(s, radix)`
+  (str-версия ретрактируется — строка не должна знать о каждом числовом типе).
+  Спека: примеры type-set блока `T.try_parse(...)` → `T.parse(...)` (до-R3 текст),
+  амендмент в 02-types.md:13912-зоне.
