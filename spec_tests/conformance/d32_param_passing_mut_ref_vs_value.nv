@@ -1,10 +1,13 @@
-// D32 — Parameter-passing semantics. Records (managed heap) pass BY REFERENCE: a `mut`
-// record param means field-mutations inside the function are VISIBLE to the caller. Primitives
-// (`int`, …) pass BY VALUE in a register: a `mut` primitive param is a local copy whose
-// reassignment is NOT visible to the caller. Matches the two spec examples verbatim:
-// `fn deposit(mut acc Account, amount) { acc.balance += amount }` (visible) and
-// `fn weird(mut x int) { x = 999 }` (NOT visible). Spec: spec/decisions/02-types.md:2372 (D32).
-// Single `spec_tests.conformance` folder-module; D-prefixed names avoid clashes.
+// D32 — Parameter-passing semantics (REVISED for Plan 184 Р10, D326-ревизия). A `mut x T`
+// parameter is an IN-OUT reference for ALL types: field/value writes inside the callee are
+// VISIBLE to the caller. For managed-heap records the value is already a handle, so mutation
+// has always reached the caller. For VALUE/primitive types (`int`, value-records) `mut x T` is
+// now lowered to a pointer to the caller's storage (`T*`) — the old "private copy" model is
+// retracted. The argument must therefore be a mutable, addressable lvalue (else
+// E_MUT_ARG_NOT_MUTABLE). Matches the revised spec: `fn deposit(mut acc Account, amount)
+// { acc.balance += amount }` (visible) and `fn bump(mut x int) { x = 999 }` (NOW visible).
+// Spec: spec/decisions/02-types.md (D32 + D326-ревизия Р10). Single `spec_tests.conformance`
+// folder-module; D-prefixed names avoid clashes.
 module spec_tests.conformance
 
 // Managed-heap record (reference category): passed by reference.
@@ -17,7 +20,8 @@ fn d32_deposit(mut acc D32Account, amount int) {
     acc.balance += amount
 }
 
-// `mut` primitive param — local copy; reassignment is NOT visible to the caller (by value).
+// `mut` primitive param — IN-OUT (Plan 184 Р10): the reassignment IS visible to the caller
+// (`x` is a pointer to the caller's `int` storage).
 fn d32_bump(mut x int) {
     x = 999
 }
@@ -30,18 +34,18 @@ test "mut record param: caller sees the field mutation (D32, by reference)" {
     assert(acc.balance == 150)
 }
 
-test "mut primitive param: caller does NOT see the reassignment (D32, by value)" {
+test "mut primitive param: caller SEES the reassignment (D32 revised, in-out Р10)" {
     mut n = 5
     d32_bump(n)
-    // `int` is passed by value in a register; d32_bump mutated only its local copy.
-    assert(n == 5)
+    // `int` is now passed as an in-out reference; d32_bump wrote through a pointer to `n`.
+    assert(n == 999)
 }
 
-test "the two passing modes differ on the SAME call sequence (D32 contrast)" {
+test "both passing modes are in-out on the SAME call sequence (D32 revised)" {
     mut acc = D32Account { balance: 10 }
     mut k = 10
     d32_deposit(acc, 5)   // reference: visible
-    d32_bump(k)           // value: not visible
+    d32_bump(k)           // in-out primitive: NOW visible
     assert(acc.balance == 15)
-    assert(k == 10)
+    assert(k == 999)
 }

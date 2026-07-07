@@ -230,24 +230,30 @@ export fn ServeMux mut @not_found(handler Handler) -> @ { @not_found = Some(hand
 /// Route a request → response. 404 if no path matches; 405 + `Allow` if the path
 /// matches but the method does not; otherwise the matched handler (with params).
 #stable(since = "0.1")
-export fn ServeMux @dispatch(mut req ServerRequest) -> ServerResponse {
-    ro reqm = req.method().as_str()
+// Plan 184 Р10 (D326-ревизия): the request is taken by value (ro) and copied into a
+// local `mut rq` — @dispatch mutates the request LOCALLY (sets matched path params) and
+// forwards it to the handler; the mutation must NOT reach the caller (Category-A: the old
+// `mut req` "private copy" intent). Under the new in-out `mut x T` model a `mut` value-record
+// param would be by-pointer in-out, so the local copy makes the local-only intent explicit.
+export fn ServeMux @dispatch(req ServerRequest) -> ServerResponse {
+    mut rq = req
+    ro reqm = rq.method().as_str()
     mut path_matched = false
     mut allow = []str.new()
     for r in @routes {
-        match match_pattern(r.pattern, req.path()) {
+        match match_pattern(r.pattern, rq.path()) {
             Some(params) => {
                 path_matched = true
                 ro mok = r.method == reqm || (r.method == "GET" && reqm == "HEAD")
                 if mok {
                     // [M-http-props-mut-chain-argpos-value-ptr-mismatch]
-                    // цепочка до фикса — `r.handler.handle(req.params(params))` (fleeting
+                    // цепочка до фикса — `r.handler.handle(rq.params(params))` (fleeting
                     // `-> @` chain-result used DIRECTLY as a call argument) is a codegen
                     // gap for `value`-type receivers: CC-FAIL "passing NovaValue_ServerRequest*
                     // to parameter of incompatible type NovaValue_ServerRequest; dereference
                     // with *". Split into a bare-statement mutation + plain-value pass.
-                    req.params(params)
-                    return r.handler.handle(req)
+                    rq.params(params)
+                    return r.handler.handle(rq)
                 } else {
                     allow.push(r.method)
                 }
@@ -259,7 +265,7 @@ export fn ServeMux @dispatch(mut req ServerRequest) -> ServerResponse {
         method_not_allowed(allow)
     } else {
         match @not_found {
-            Some(h) => h.handle(req)
+            Some(h) => h.handle(rq)
             None    => ServerResponse.text(404, "404 page not found")
         }
     }

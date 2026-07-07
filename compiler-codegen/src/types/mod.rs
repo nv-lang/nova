@@ -14591,6 +14591,13 @@ struct BoundCtx<'a> {
     /// checker accept `[T P]` for a `#impl(P)` auto-derivable type whose P-method
     /// is compiler-synthesized (absent from the base `sig.method_table`).
     impl_protocol_types: HashMap<String, Vec<String>>,
+    /// Plan 184 Р10: names of VALUE types — value-records (`type X value {}`,
+    /// `AllocKind::Value`) and named tuples (`type X(a A, b B)`). A `mut x T`
+    /// param of such a type is a by-pointer in-out reference (arg must be a
+    /// mutable, addressable lvalue → `E_MUT_ARG_NOT_MUTABLE`). Primitives are
+    /// recognized inline. Heap records / protocols / typevars are absent here,
+    /// so their `mut` params keep the handle ABI unconstrained (Р6).
+    value_type_names: std::collections::HashSet<String>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -14633,6 +14640,22 @@ impl<'a> BoundCtx<'a> {
         impl_scan(&module.items, &mut impl_protocol_types);
         for pf in &module.peer_files {
             impl_scan(&pf.items_here, &mut impl_protocol_types);
+        }
+        // Plan 184 Р10: collect VALUE-type names (value-records + named tuples).
+        let mut value_type_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let value_scan = |items: &[Item], m: &mut std::collections::HashSet<String>| {
+            for item in items {
+                if let Item::Type(t) = item {
+                    let is_named_tuple = matches!(t.kind, TypeDeclKind::NamedTuple(_));
+                    if t.allocation.is_stack_value() || is_named_tuple {
+                        m.insert(t.name.clone());
+                    }
+                }
+            }
+        };
+        value_scan(&module.items, &mut value_type_names);
+        for pf in &module.peer_files {
+            value_scan(&pf.items_here, &mut value_type_names);
         }
         for item in &module.items {
             match item {
@@ -14737,7 +14760,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -15603,7 +15626,7 @@ impl<'a> BoundCtx<'a> {
                 // Plan 172.5 (D326): validate `ref` passing-mode — call-site
                 // marker ⟺ `mut ref` param, arg addressability + mutability,
                 // and same-call alias exclusivity (E_REF_ALIAS_OVERLAP).
-                self.check_ref_arg_modes(effective_params, args, &bindings, errors);
+                self.check_ref_arg_modes(effective_params, args, &bindings, scope, errors);
             }
         }
     }
@@ -15626,6 +15649,7 @@ impl<'a> BoundCtx<'a> {
         params: &[Param],
         args: &[CallArg],
         bindings: &[crate::argbind::ArgBinding],
+        scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
         use crate::argbind::ArgBinding;
@@ -15640,6 +15664,23 @@ impl<'a> BoundCtx<'a> {
                 _ => None,
             };
             let Some(arg_expr) = arg_expr else { continue; };
+            // Plan 184 Р10: a `mut x T` param where `T` is a VALUE/primitive type
+            // is a by-pointer in-out reference — the argument must be a mutable,
+            // addressable lvalue so writes reach the caller. Heap / protocol /
+            // typevar `mut` params keep their handle ABI (Р6: `ref H ≡ H`) and
+            // impose no such constraint (mutation already reaches the shared
+            // object; no observable copy). `consume` is a move, not in-out.
+            if param.is_mut
+                && !param.consume
+                && self.param_ty_is_inout_value(&param.ty)
+            {
+                if self.check_mut_inout_arg(arg_expr, scope, errors) {
+                    if let Some(place) = RefPlace::of(arg_expr) {
+                        mut_ref_places.push((place, arg_expr.span));
+                    }
+                }
+                continue;
+            }
             let is_ref_marked = matches!(arg_expr.kind, ExprKind::RefArg(_));
             match param.ref_mode {
                 ParamRefMode::MutRef => {
@@ -15715,6 +15756,72 @@ impl<'a> BoundCtx<'a> {
                         mut_ref_places[j].1,
                     ));
                 }
+            }
+        }
+    }
+
+    /// Plan 184 Р10: is `ty` a VALUE/primitive type whose `mut x T` parameter
+    /// uses the by-pointer in-out ABI? Primitives are recognized inline; value-
+    /// records and named tuples are looked up in `value_type_names`. Heap
+    /// records, protocols, arrays, pointers, funcs and typevars are NOT value
+    /// types (Р6: `ref H ≡ H` — their `mut` param keeps the handle ABI, no
+    /// mutability constraint on the argument). Mirrors the codegen predicate
+    /// `EmitC::param_is_inout_ptr` so checker and codegen agree.
+    fn param_ty_is_inout_value(&self, ty: &TypeRef) -> bool {
+        match ty {
+            TypeRef::Named { path, .. } if path.len() == 1 => {
+                let n = path[0].as_str();
+                matches!(
+                    n,
+                    "int" | "uint" | "i8" | "i16" | "i32" | "i64" |
+                    "u8" | "u16" | "u32" | "u64" | "f32" | "f64" |
+                    "bool" | "char" | "byte" | "str"
+                ) || self.value_type_names.contains(n)
+            }
+            TypeRef::Tuple(..) => true,
+            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+                self.param_ty_is_inout_value(inner)
+            }
+            _ => false,
+        }
+    }
+
+    /// Plan 184 Р10: the argument bound to a value/primitive `mut x T` parameter
+    /// (by-pointer in-out) must be a mutable, addressable lvalue — the callee
+    /// writes through a pointer to the caller's storage. Rejected with
+    /// `E_MUT_ARG_NOT_MUTABLE`:
+    ///   - rvalues (call results, literals, arithmetic, record literals) and
+    ///     array-index roots — no stable storage to write back into;
+    ///   - `ro`-bound locals — immutable place.
+    /// Returns `true` if the argument is a valid mutable in-out place.
+    fn check_mut_inout_arg(
+        &self,
+        arg: &Expr,
+        _scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) -> bool {
+        match crate::ast::addr_of_chain_root(&arg.kind) {
+            crate::ast::AddrChainRoot::Lvalue(_root) => {
+                // Addressable lvalue (named binding / `@` / field path). The `ro`
+                // vs `mut` binding distinction lives in `TypeCheckCtx`, not
+                // `BoundCtx`, so binding-immutability of an lvalue is enforced by
+                // the assignment-target checker on the write side, not here.
+                // [M-184-mut-arg-ro-binding] — follow-up: reject `ro`-bound
+                // lvalues at the call site too.
+                true
+            }
+            crate::ast::AddrChainRoot::IndexInChain
+            | crate::ast::AddrChainRoot::Rvalue => {
+                errors.push(Diagnostic::new(
+                    "[E_MUT_ARG_NOT_MUTABLE] аргумент связан с `mut`-параметром (in-out по \
+                     значению, Plan 184 Р10) — требуется адресуемое изменяемое место \
+                     (переменная/поле), но передано временное значение или элемент по \
+                     индексу (нет стабильного хранилища для записи в вызывающего). Свяжи \
+                     значение через `mut x = ...` и передай `x`."
+                        .to_string(),
+                    arg.span,
+                ));
+                false
             }
         }
     }

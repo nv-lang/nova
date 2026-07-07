@@ -1188,6 +1188,11 @@ pub struct CEmitter {
     /// Plan 48: generic FnDecls for monomorphization worklist drain.
     /// Key = Nova fn name (e.g. "within"). Populated during pre-pass.
     mono_fn_decls: HashMap<String, crate::ast::FnDecl>,
+    /// Plan 184 Р10: free-fn name → per-positional-param "is by-pointer in-out"
+    /// flag (a value/primitive `mut x T` param). Drives call-site address-of
+    /// injection in `synthesize_inout_refargs`. Populated for every free fn
+    /// (generic and non-generic) in `emit_fn_forward_decl`.
+    free_fn_inout_params: HashMap<String, Vec<bool>>,
     /// Plan 48: generic instance-method FnDecls for method monomorphization.
     /// Key = (receiver_type_name, method_name). Methods with own type params (e.g. @execute[T,E]).
     mono_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
@@ -1687,6 +1692,7 @@ impl CEmitter {
             file_priv_fn_c_names: HashMap::new(),
             current_emit_file_id: None,
             mono_fn_decls: HashMap::new(),
+            free_fn_inout_params: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
             mono_worklist: Vec::new(),
@@ -11010,6 +11016,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !self.colliding_type_names.is_empty() {
             self.current_emit_file_id = Some(f.span.file_id);
         }
+        // Plan 184 Р10: record which positional params of this FREE fn use the
+        // by-pointer in-out ABI (value/primitive `mut x T`), so call-sites can
+        // inject the address-of (`synthesize_inout_refargs`). Only when at least
+        // one param qualifies (keeps the map sparse).
+        if f.receiver.is_none() {
+            let flags: Vec<bool> = f.params.iter().map(|p| {
+                let ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                    box_ty
+                } else {
+                    self.type_ref_to_c(&p.ty).unwrap_or_default()
+                };
+                Self::param_is_inout_ptr(p, &ty_c)
+            }).collect();
+            if flags.iter().any(|b| *b) {
+                self.free_fn_inout_params.insert(f.name.clone(), flags);
+            }
+        }
         // D82: external fn — forward decl не нужен (реализация в nova_rt/*.h
         // уже включена через preamble #include).
         // Plan 91.10 (D163 retracted): branch для D163 external fn удалён.
@@ -13647,7 +13670,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // placement is the size-driven auto mechanism of Plan 172.4 (R3),
             // NOT duplicated; explicit `ro ref` is a semantic annotation that
             // otherwise passes like a normal value parameter.
-            if p.ref_mode == crate::ast::ParamRefMode::MutRef {
+            // Plan 184 Р10: a value/primitive `mut x T` param is ALSO lowered to
+            // `T*` (by-pointer in-out). The legacy `mut ref` form is retained for
+            // byte-compat during migration (parser no longer produces it).
+            if p.ref_mode == crate::ast::ParamRefMode::MutRef
+                || Self::param_is_inout_ptr(p, &ty_c)
+            {
                 ty_c.push('*');
             }
             parts.push(format!("{} {}", ty_c, p.name));
@@ -19092,6 +19120,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for p in &f.params {
             if p.ref_mode == crate::ast::ParamRefMode::MutRef {
                 self.ref_params.insert(p.name.clone());
+            } else if p.is_mut && !p.consume {
+                // Plan 184 Р10: a value/primitive `mut x T` param is by-pointer
+                // in-out; its body reads/writes auto-deref (`name` → `(*name)`).
+                // Compute the param C type exactly as `params_c` does.
+                let ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                    box_ty
+                } else {
+                    self.type_ref_to_c(&p.ty).unwrap_or_default()
+                };
+                if Self::param_is_inout_ptr(p, &ty_c) {
+                    self.ref_params.insert(p.name.clone());
+                }
             }
         }
         let params = self.params_c(f)?;
@@ -25861,7 +25901,47 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(())
     }
 
+    /// Plan 184 Р10: build a `RefArg`-wrapped copy of `args` for the positional
+    /// arguments that bind to a value/primitive `mut x T` param of the resolved
+    /// FREE-fn callee (by-pointer in-out ABI). Returns `None` when nothing needs
+    /// wrapping (the common case — no allocation). Value-typed `mut` params on
+    /// METHODS were migrated to local-copy Category-A (Plan 184), so only the
+    /// free-fn callee path is resolved here.
+    fn synthesize_inout_refargs(&self, func: &Expr, args: &[CallArg]) -> Option<Vec<CallArg>> {
+        let base: &Expr = match &func.kind {
+            ExprKind::TurboFish { base, .. } => base,
+            _ => func,
+        };
+        let flags: &[bool] = match &base.kind {
+            ExprKind::Ident(name) => self.free_fn_inout_params.get(name)?.as_slice(),
+            _ => return None,
+        };
+        let mut any = false;
+        let mut out: Vec<CallArg> = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            let by_ptr = flags.get(i).copied().unwrap_or(false);
+            let already = matches!(a.expr().kind, ExprKind::RefArg(_));
+            if by_ptr && !already && matches!(a, CallArg::Item(_)) {
+                any = true;
+                let inner = a.expr().clone();
+                let span = inner.span;
+                out.push(CallArg::Item(Expr::new(
+                    ExprKind::RefArg(Box::new(inner)), span)));
+            } else {
+                out.push(a.clone());
+            }
+        }
+        if any { Some(out) } else { None }
+    }
+
     fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
+        // Plan 184 Р10: a value/primitive `mut x T` free-fn param uses the
+        // by-pointer in-out ABI (`T*`). Wrap the matching call args in `RefArg`
+        // (emits `(&(place))`) so EVERY downstream arg-emission branch passes the
+        // caller's storage address. The checker (E_MUT_ARG_NOT_MUTABLE) already
+        // guaranteed each such arg is a mutable, addressable lvalue. Idempotent.
+        let inout_wrapped: Option<Vec<CallArg>> = self.synthesize_inout_refargs(func, args);
+        let args: &[CallArg] = inout_wrapped.as_deref().unwrap_or(args);
         // Plan 174.3 (D54 v1): `x.try_as[T]()` — optional downcast of a boxed
         // `any` to `Option[T]`. Runtime type_id check on the erased value: match
         // → `Some(*(T*)payload)`, mismatch → `None`. Intercepted here (before the
@@ -40126,6 +40206,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 134: nova_ptr removed; void* pointer type handled by ends_with('*').
             "Nova_ChannelPair"
         )
+    }
+
+    /// Plan 184 Р10: does this NON-receiver `mut x T` parameter use the by-pointer
+    /// in-out ABI? A `mut` param of a VALUE/primitive type `T` is lowered to `T*`
+    /// (the callee receives the caller's storage address; writes land in the
+    /// caller — same convention as a value-type `@` receiver, D226). Heap /
+    /// protocol / typevar params keep their handle ABI unchanged (Р6:
+    /// `ref H ≡ H` — the value already IS a handle, so no extra indirection and
+    /// no address-of at the call site). `ty_c` is the param's already-lowered C
+    /// type. `consume`-params (ownership move) are excluded.
+    fn param_is_inout_ptr(p: &crate::ast::Param, ty_c: &str) -> bool {
+        p.is_mut
+            && !p.consume
+            && ty_c != "nova_unit"
+            && !ty_c.ends_with('*')
+            && Self::is_value_type(ty_c)
     }
 
     /// Plan 20 follow-up: infer return type для lambda body, временно
