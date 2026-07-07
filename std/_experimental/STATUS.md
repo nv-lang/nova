@@ -17,21 +17,30 @@
 - **МОГУТ** проходить или НЕ проходить per-file `nova check` (FAIL
   модули документированы ниже).
 
-## Содержимое (Plan 91 Ф.0 baseline 2026-05-27)
+## Содержимое (Plan 91 Ф.0 baseline 2026-05-27; ред. волны промоушена 2026-07-08)
+
+> **PROMOTED 2026-07-08 (волна 1, 13 модулей):** `checksums/{crc32,fnv}` →
+> `std/checksums/`; `collections/{bloom_filter,deque,lru,priority_queue,queue}` →
+> `std/collections/`; `concurrency/rate_limiter` → `std/concurrency/`;
+> `crypto/bcrypt` → `std/crypto/`; `identifiers/snowflake` → `std/identifiers/`;
+> `math/statistics` → `std/math/`; `path/{glob,path}` → `std/path/`.
+> Каждый — с коррекцией к конвенциям (throw→Result D325, без `_opt`, канон
+> `.new().cap(n)`, снос битых конструкторов) и peer-тестами `*_test.nv` рядом.
+> `math/complex` планировался в волну, но остаётся здесь — блокирован
+> pre-existing codegen-дефектом `[M-static-selfreturn-value-mangle-conflict]`
+> (см. docs/plans/backlog-followups.md).
 
 | Domain | Files | Status | Reason for exp. |
 |---|---|---|---|
-| `collections/` | `bloom_filter`, `deque`, `linkedlist`, `lru`, `priority_queue`, `queue` | PASS check | Non-MVP per Plan 91 §Scope (MVP = vec/hashmap/set only) |
-| `crypto/` | `bcrypt`, `hmac`, `jwt`, `md5`, `sha1`, `sha256` | 4 FAIL (array literal parser), 2 PASS | Non-MVP per Plan 91 §Non-scope; 4 files trip array literal parser bug |
-| `encoding/` | `csv`, `hex`, `ini`, `toml`, `url` | 4 PASS, 1 STACK_OVERFLOW (toml) | Non-MVP per Plan 91 §Non-scope; toml stack overflow blocks `nova check std/` без skip |
-| `identifiers/` | `snowflake`, `ulid`, `uuid`, `uuid_namespace` | PASS check | Non-MVP per Plan 91 §Non-scope |
-| `checksums/` | `crc32`, `fnv` | PASS check | Non-MVP per Plan 91 §Non-scope |
+| `collections/` | `linkedlist` (остальные 5 PROMOTED 2026-07-08) | PASS check | Non-MVP per Plan 91 §Scope (MVP = vec/hashmap/set only) |
+| `crypto/` | `hmac`, `jwt`, `md5`, `sha1`, `sha256` (`bcrypt` PROMOTED 2026-07-08) | sha256 PASS+тесты зелёные (2026-07-08: `[0;N]`-литералы развёрнуты явными списками); hmac/jwt/md5/sha1 — прежний статус | Non-MVP per Plan 91 §Non-scope |
+| `encoding/` | `csv`, `hex`, `ini`, `toml`, `url` | hex PASS+тесты зелёные (2026-07-08: into_str/byte_len/Result-фиксы); csv/ini/url PASS, toml STACK_OVERFLOW | Non-MVP per Plan 91 §Non-scope; toml stack overflow blocks `nova check std/` без skip |
+| `identifiers/` | `ulid`, `uuid`, `uuid_namespace` (`snowflake` PROMOTED 2026-07-08) | PASS check | Non-MVP per Plan 91 §Non-scope |
 | `data/` | `semver`, `semver_range`, `sql` | PASS check | Non-MVP per Plan 91 §Non-scope |
-| `path/` | `glob`, `path` | PASS check | Plan 18 → 0.2+ (filesystem); non-MVP per Plan 91 §Non-scope |
-| `math/` | `complex`, `statistics` | 1 FAIL (complex D52 §2), 1 PASS | Non-MVP per Plan 91 §Scope (MVP math = runtime/math.nv basic fns) |
+| `math/` | `complex` (`statistics` PROMOTED 2026-07-08) | check PASS, CC-FAIL codegen — `[M-static-selfreturn-value-mangle-conflict]` | Промоушен gated компиляторным дефектом (не контентом модуля) |
 | `text/` | `diff`, `markdown_minimal`, `regex` | 1 FAIL (regex D52 §2), 2 PASS | Non-MVP per Plan 91 §Non-scope (regex/markdown), text MVP = runtime/string.nv |
 | `time/` | `cron` | FAIL (D52 §2) | Non-MVP per Plan 91 §Scope (MVP time = duration only) |
-| `concurrency/` | `rate_limiter`, `retry` | 1 FAIL (retry E_UNUSED_PREFIX_TYPEVAR), 1 PASS | Non-MVP — `cancellation`/`timer` остаются в std/concurrency/ как Plan 83 fiber-api |
+| `concurrency/` | `retry` (`rate_limiter` PROMOTED 2026-07-08) | FAIL (retry E_UNUSED_PREFIX_TYPEVAR) | Non-MVP — `cancellation`/`timer` остаются в std/concurrency/ как Plan 83 fiber-api |
 
 ## Promotion path (когда модуль становится MVP)
 

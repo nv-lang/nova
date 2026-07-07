@@ -26,6 +26,8 @@
 
 module crypto.sha256
 
+import std._experimental.encoding.hex.{Hex}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // State
@@ -148,7 +150,14 @@ export fn Sha256 mut @finalize() -> [32]u8 {
     }
 
     // 32 bytes output, big-endian.
-    mut out [32]u8 = [0; 32]
+    // [M-sha256-array-repeat-literal-parser]: `[0; 32]` (Rust-style array-repeat)
+    // не поддерживается парсером Nova — явный 32-элементный литерал.
+    mut out [32]u8 = [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+    ]
     mut k = 0
     while k < 8 {
         write_be_u32(out, k * 4, @h[k])
@@ -164,7 +173,14 @@ export fn Sha256 mut @finalize() -> [32]u8 {
 
 fn Sha256 mut @process_block(block []u8) -> () {
     // 1. Prepare message schedule W[0..63]
-    mut w [64]u32 = [0; 64]
+    // [M-sha256-array-repeat-literal-parser]: явный 64-элементный литерал
+    // вместо неподдерживаемого `[0; 64]`.
+    mut w [64]u32 = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]
     mut t = 0
     while t < 16 {
         w[t] = read_be_u32(block, t * 4)

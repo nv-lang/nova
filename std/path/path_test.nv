@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/path/path_test.nv — публичный контракт Path (join/parent/basename/extension/normalize).
+
+module path.path_test
+
+import std.path.path.{Path}
+
+test "join" {
+    // Positional variadic args.
+    assert(Path.join("a", "b", "c") == "a/b/c")
+    assert(Path.join("/usr", "bin") == "/usr/bin")
+    assert(Path.join("a", "/b") == "a/b")          // strip leading /
+    assert(Path.join("", "b") == "b")
+    // Spread from existing array.
+    ro parts []str = ["x", "y", "z"]
+    assert(Path.join(...parts) == "x/y/z")
+}
+
+test "parent" {
+    assert(Path.parent("/usr/bin/ls") == Some("/usr/bin"))
+    assert(Path.parent("/usr") == Some("/"))
+    assert(Path.parent("/") == None)
+    assert(Path.parent("file.txt") == None)
+}
+
+test "basename" {
+    assert(Path.basename("/usr/bin/ls") == "ls")
+    assert(Path.basename("file.txt") == "file.txt")
+    assert(Path.basename("/dir/") == "dir")
+}
+
+test "extension" {
+    assert(Path.extension("file.txt") == Some("txt"))
+    assert(Path.extension("archive.tar.gz") == Some("gz"))
+    assert(Path.extension("README") == None)
+    assert(Path.extension(".bashrc") == None)        // dotfile
+}
+
+test "is_absolute" {
+    assert(Path.is_absolute("/usr/bin"))
+    assert(!Path.is_absolute("relative/path"))
+    assert(!Path.is_absolute(""))
+}
+
+test "normalize" {
+    assert(Path.normalize("/a/b/../c") == "/a/c")
+    assert(Path.normalize("/a/./b") == "/a/b")
+    assert(Path.normalize("a/b/..") == "a")
+    assert(Path.normalize("//a//b//") == "/a/b")
+    assert(Path.normalize(".") == ".")
+    assert(Path.normalize("..") == "..")
+}

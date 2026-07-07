@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/checksums/fnv_test.nv — публичный контракт FNV-1a (известные test vectors).
+
+module checksums.fnv_test
+
+import std.checksums.fnv.{Fnv, Fnv64, Fnv64State}
+
+test "FNV-1a 32: пустой ввод" {
+    // FNV-1a offset basis (private константа модуля) — литерал вместо импорта.
+    assert(Fnv.hash32([]) == 0x811C9DC5)
+}
+
+test "FNV-1a 64: пустой ввод" {
+    assert(Fnv.hash64([]) == 0xCBF29CE484222325)
+}
+
+test "FNV-1a 32: 'a'" {
+    // Test vector: hash32("a") = 0xE40C292C
+    assert(Fnv.hash32("a".bytes()) == 0xE40C292C)
+}
+
+test "FNV-1a 64: 'foobar'" {
+    // Test vector: hash64("foobar") = 0x85944171F73967E8
+    assert(Fnv.hash64("foobar".bytes()) == 0x85944171F73967E8)
+}
+
+test "детерминизм: повторный hash → тот же результат" {
+    ro a = Fnv.hash_str("test")
+    ro b = Fnv.hash_str("test")
+    assert(a == b)
+}
+
+test "разные inputs → разные hashes (статистически)" {
+    ro a = Fnv.hash_str("hello")
+    ro b = Fnv.hash_str("world")
+    assert(a != b)
+}
+
+test "streaming: один chunk == split chunks" {
+    ro full = "Hello, world!".bytes()
+
+    ro one_shot = Fnv.hash64(full)
+
+    mut state = Fnv64.new()
+    state.update("Hello, ".bytes())
+    state.update("world!".bytes())
+    ro streaming = state.finalize()
+
+    assert(one_shot == streaming)
+}
+
+test "small change → big diff (avalanche-ish)" {
+    ro h1 = Fnv.hash_str("hello")
+    ro h2 = Fnv.hash_str("Hello")               // только регистр
+    // Хорошая hash function должна давать совсем разные значения
+    assert(h1 != h2)
+    // XOR должен иметь много set bits (statistical, упрощённо)
+    ro xor_diff = h1 ^ h2
+    assert(xor_diff != 0)
+}

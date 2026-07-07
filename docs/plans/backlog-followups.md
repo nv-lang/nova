@@ -1045,6 +1045,18 @@ Result регистрируется. Тот же класс VR-typedef-ordering,
 исключает `_experimental` явно (`stable_std_files` retain). Консолидирует бывш. Plan 177 §6-список
 (sql/jwt/snowflake/ulid/bcrypt/retry — был неполон). Home: per-module stabilization / Plan 177 §9 Q3.
 
+**Обновление (волна промоушена std/_experimental → std, 2026-07-08):** `identifiers/snowflake.nv`,
+`math/statistics.nv` **и `crypto/bcrypt.nv`** мигрированы throw→Result **и вынесены из
+`_experimental`** (стабилизация + промоушен same-wave) — снять все три из списка. `bcrypt.nv`
+попутно разблокировал и пофиксил свою транзитивную зависимость: `crypto/sha256.nv`
+(array-repeat-литерал парсер-баг — см. `[M-sha256-array-repeat-literal-parser]`, ЗАКРЫТ) и
+`encoding/hex.nv` (D133-not-consumed `buf.into()`→`buf.into_str()`, retired `str.len()`→
+`byte_len()`, `with_capacity`→`.new()`+`.cap()`, throw→Result, ВСЕ теми же принципами D325) —
+`sha256.nv`/`hex.nv` теперь ПОЛНОСТЬЮ зелёные (`nova test --full` PASS), но остаются в
+`_experimental` (вне периметра 14-модульной волны, не промоутятся сейчас — только починены как
+зависимость). Список остальных **14 файлов** без изменений (`sha256`/`hex` тоже сняты — они уже
+не throw-based).
+
 ## [M-177-concurrency-throw-fallibility] — `std/concurrency` race2/with_timeout throw bare-str (Plan 177 Ф.4-аудит 2026-07-04; home Plan 173)
 
 `std/concurrency/cancellation.nv` — `race2[T](a,b) -> T` (both-failed) и
@@ -1789,9 +1801,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   str-тесты (109/116/122), str/conversions_err.nv (все — str-arg builtin, скоуп не этот).
   Гейты: сборка nova-cli+compiler-codegen (nova-lsp тоже, unaffected) OK; conformance 54/0
   (delta 0); std/encoding/json_test 24/24; std/encoding/serde/json PASS; std/_experimental/
-  math/complex CC-FAIL — **pre-existing** (NovaTuple_Complex/Nova_Complex_method_equal mono
-  gap, НЕ про parse_f64_or_err — сгенерированный C для мигрированной функции корректен,
-  подтверждено грепом `nova_fn_...parse_f64_or_err`/`nova_str_parse_f64` в .c); std/runtime/
+  math/complex CC-FAIL — **pre-existing**, см. `[M-static-selfreturn-value-mangle-conflict]`
+  ниже для root-cause и репродукции (НЕ про parse_f64_or_err — сгенерированный C для
+  мигрированной функции корректен, подтверждено грепом `nova_fn_...parse_f64_or_err`/
+  `nova_str_parse_f64` в .c); std/runtime/
   read_buffer standalone CODEGEN-FAIL / nova_tests/runtime folder-CU CODEGEN-FAIL (str.len()
   retired, gc_introspect.nv/memory_growth.nv, датировано 2026-06-17) — **pre-existing,
   изоляция вне обычного CU-контекста** (в реальном потребителе — nova_tests/buffers/
@@ -2171,3 +2184,197 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   прогоне (поведение базиса); атрибуция строки падения первому файлу модуля
   (access.nv вместо views_test.nv, замечено на vec 2026-07-07); self-import гэп
   vec_lazy/vec_iter (E_EXTENSION_METHOD_NEEDS_IMPORT на самих себя, 2026-07-07).
+
+- **[M-rate-limiter-monotonic]** (2026-07-08, P3, Wave: при закрытии vtable-слота Plan 175 Ф.3) —
+  `std/concurrency/rate_limiter.nv` (`TokenBucket`) временно считает refill по wall-clock
+  `Time.now_unix_ms()` вместо `Monotonic` (D124), хотя refill-таймингу правильнее опираться на
+  монотонные часы (NTP-скачок wall-clock иначе даёт искажённый elapsed). Переход блокирован
+  эмпирически подтверждённым gap'ом: `Monotonic.now()` — compiler-builtin, читающий
+  `Time.now_monotonic_ns()`; `.nv`-схема эффекта `Time` (`std/prelude/effects.nv:158`) метод
+  объявляет, но рантайм-vtable `NovaVtable_Time` (`nova_rt/effects.h`) слот `now_monotonic_ns`
+  НЕ несёт — попытка замокать его в `th.fixed_ms`/`th.mut_clock` (`std/testing/handlers.nv`)
+  даёт `CC-FAIL: no member named 'now_monotonic_ns' in 'NovaVtable_Time'`. Это ровно
+  задокументированный gate «мокабельность через эффект — Ф.3-gated» (`std/time/duration.nv:1296-1300`,
+  Plan 175 §Ф.2/§Ф.3) — не новый баг, эмпирическое подтверждение существующего. **Митигация на
+  месте:** `.max(0)`-clamp на elapsed-дельте (регресс часов назад → refill на паузу, tokens не
+  портятся) + существующий capacity-cap (скачок вперёд → полное ведро, не переполнение); детерминированный
+  тест на регресс добавлен. **Тело задачи:** когда `now_monotonic_ns`-слот появится в
+  `NovaVtable_Time` (Plan 175 Ф.3) — переключить `TokenBucket.last_refill_ms` на `Monotonic`,
+  `@refill` на `Monotonic.now()` + `@elapsed_since`, вернуть мокабельность тестам через
+  Time-handler (добавить `now_monotonic_ns()` в `th.fixed_ms`/`th.mut_clock`).
+
+- **[M-sha256-array-repeat-literal-parser]** ✅ **WORKAROUND APPLIED 2026-07-08** — конкретный
+  repro давно известного «array literal parser»-gap (STATUS.md `_experimental/crypto`: «4 FAIL»,
+  `[M-183-gc-vec-value-heap-tracing]` уже упоминал «литерал-повтор `[0; N]` — известный отдельный
+  gap» без marker-id). `std/_experimental/crypto/sha256.nv` (было ×2: строки 151, 174) —
+  `mut out [32]u8 = [0; 32]` / `mut w [64]u32 = [0; 64]` (Rust-style array-repeat) →
+  `expected `,` or `]` in array literal, got int literal` — парсер Nova НЕ поддерживает
+  `[value; count]`-синтаксис. **Обнаружен как блокер промоушена `crypto/bcrypt.nv`** (волна
+  std/_experimental→std, 2026-07-08): `bcrypt.nv` вызывал `Sha256.new()/.update()/.finalize()` БЕЗ
+  явного import (резолвилось молча на что-то другое — WriteBuffer, `no member 'update'/'finalize'
+  in Nova_WriteBuffer` CC-FAIL); добавление явного `import std._experimental.crypto.sha256.{Sha256}`
+  вскрыло истинную ошибку — `sha256.nv` не парсился вообще. **Обход применён (вариант b, парсер НЕ
+  тронут):** оба литерала переписаны на явные списки нулей (32/64 штук). Цепная разблокировка:
+  `sha256.nv` → парсится, но затем вскрыл ЕЩЁ 2 независимых pre-existing дефекта в своей
+  транзитивной зависимости `encoding/hex.nv` (тоже пофикшены тем же заходом): (1) `encode_with`
+  — `buf.into()` (несуществующий метод, D133-not-consumed) → `buf.into_str()`; `with_capacity`→
+  `.new()`+`.cap()`; (2) `Hex.decode`/`digit_value` — retired `s.len()` → `s.byte_len()`, throw→
+  Result (см. `[M-177-experimental-fallible-migration]`); test-блок `[][]u8`-nested-array паттерн
+  (`NovaArray_nova_int_p` CC-FAIL, отдельный nested-generic-array gap, НЕ зафиксирован отдельным
+  marker'ом — обойдён per-value assert без Vec-обёртки, не мейнлайн-баг). `sha256.nv`+`hex.nv`
+  теперь `nova test --full` ПОЛНОСТЬЮ зелёные — но остаются в `_experimental` (вне периметра
+  14-модульной волны, только починены как транзитивная зависимость bcrypt). `crypto/bcrypt.nv`
+  САМ **успешно промоутирован** этой волной в `std/crypto/bcrypt.nv` (throw→Result + все найденные
+  попутные дефекты см. ниже) — парсер-фикс НЕ отменяет актуальность родового `[value; count]`-gap
+  для будущего кода (тело задачи (a) остаётся открытым: поддержать grammar в парсере).
+  **Попутно найдены и пофикшены НЕСВЯЗАННЫЕ реальные баги в `bcrypt.nv` самом** (не про
+  sha256/hex): (1) match на tuple-из-4×`Option[u32]` (`bcrypt_base64_decode`) эмитил `.f0->tag`
+  pointer-деref для value-embedded `NovaOpt_uint32_t` → CC-FAIL; обход — последовательный `?`-unwrap
+  вместо tuple-match (тот же класс, что и match на `Option[EnumType]` ниже); (2) `.chars()`/`.bytes()`
+  вызванные НАПРЯМУЮ на module-level `const BCRYPT_ALPHABET` резолвились в ошибочный path-call
+  `nova_fn_CONST_method()` вместо instance-метода — обход: локальная `ro`-копия константы перед
+  вызовом метода; (3) локальная переменная с именем `long` (C reserved keyword) ломала codegen —
+  переименована в `long_pw`; (4) **функциональный баг** (не codegen): `bcrypt_base64_decode`'s
+  trailing-логика покрывала ТОЛЬКО «2 leftover chars → 1 byte» (salt, 22 chars), СИЛЕНТНО теряя
+  3-й leftover char и 1 байт для «3 leftover chars → 2 bytes» (hash, 31 chars) — round-trip
+  `Bcrypt.hash`+`Bcrypt.verify` ломался на hash-порции; добавлена недостающая ветка `remaining==3`.
+  Все три файла (`sha256`/`hex`/`bcrypt`) теперь проходят `nova test --full` PASS.
+
+- **[M-match-tuple-option-value-deref]** (2026-07-08, P2, Wave: 172.13 чекер-каналы) —
+  `match` по позиционному tuple-литералу из N×`Option[T]` (T — value-тип: numeric/enum) эмитит
+  `.fN->tag` (pointer-деref через `->`) для каждого элемента, но реальная C-репрезентация
+  `Option[u32]`/`Option[<enum>]` в этом контексте — value-embedded struct (`NovaOpt_uint32_t`
+  с полями `.tag`/`.value`, НЕ указатель) → `error: member reference type 'NovaOpt_uint32_t' is
+  not a pointer; did you mean to use '.'?`. Обнаружен в `crypto/bcrypt.nv`
+  (`bcrypt_base64_decode`, `match (c0, c1, c2, c3) { (Some(a), Some(b), Some(c), Some(d)) => ... }`
+  над `Option[u32]`×4) при промоушене волны std/_experimental→std 2026-07-08. Минимальная
+  репродукция:
+  ```nova
+  fn decode4(a Option[u32], b Option[u32], c Option[u32], d Option[u32]) -> Option[u32] {
+      match (a, b, c, d) {
+          (Some(w), Some(x), Some(y), Some(z)) => Some(w + x + y + z)
+          _ => None
+      }
+  }
+  // вызов из test-блока → CC-FAIL:
+  //   member reference type 'NovaOpt_uint32_t' is not a pointer; did you mean to use '.'?
+  ```
+  **Обход в `bcrypt.nv`:** заменён на последовательный `?`-unwrap каждого `Option` вместо
+  tuple-match (семантика идентична: любой `None` → ранний `return None`), см. комментарий в коде
+  у `bcrypt_base64_decode`. Тело задачи: match-lowering для tuple-of-Option (или generic
+  tuple-of-value-type) должен использовать `.` для value-embedded вариантов Option, симметрично
+  тому, как уже резолвится одиночный (не-tuple) `match opt { Some(x) => ... }`.
+
+- **[M-module-const-chars-bytes-resolution]** (2026-07-08, P2, Wave: 172.13) — вызов instance-
+  метода (`.chars()`/`.bytes()`, возможно шире) НАПРЯМУЮ на module-level `const str`-значении
+  (не на локальной переменной) резолвится в ошибочный path-call `nova_fn_<CONST_NAME>_<method>()`
+  вместо инстанс-метода на строковом значении — типы не совпадают, CC-FAIL. Обнаружен в
+  `crypto/bcrypt.nv` (`BCRYPT_ALPHABET.chars()` внутри `bcrypt_decode_char`,
+  `BCRYPT_ALPHABET.bytes()` внутри `alphabet_char`) при промоушене волны std/_experimental→std
+  2026-07-08. Минимальная репродукция:
+  ```nova
+  const ALPHABET str = "abcdef"
+
+  fn count_a() -> int {
+      mut n = 0
+      for c in ALPHABET.chars() {          // .chars() ПРЯМО на const
+          if c == 'a' { n += 1 }
+      }
+      n
+  }
+  // вызов из test-блока → CC-FAIL:
+  //   initializing 'NovaValue_CharsIter' with an expression of incompatible type 'int'
+  //   (nova_fn_ALPHABET_chars() эмитится вместо строкового instance-метода)
+  ```
+  **Обход в `bcrypt.nv`:** `ro alphabet = BCRYPT_ALPHABET` (локальная ro-копия) ПЕРЕД вызовом
+  `.chars()`/`.bytes()` — на локальной переменной резолвится корректно. Тело задачи: резолвер
+  member-call на identifier должен ПЕРВЫМ делом проверить, не является ли identifier
+  const-значением (тогда instance-метод на его типе), и только потом рассматривать
+  path-call-интерпретацию (`Name.method()` как namespace-call); либо, симметричнее, path-call-
+  интерпретация должна требовать, чтобы `Name` резолвился в TYPE, не в `const`-binding.
+
+- **[M-c-keyword-ident-collision]** (2026-07-08, P2, Wave: 172.12-хвост или Plan 185) — Nova
+  identifier, совпадающий с зарезервированным словом C (`long`, и по тому же классу риска —
+  весь стандартный список C89/C99 keywords), ломает codegen: эмиттер выводит имя переменной
+  as-is в C без манглинга/экранирования. Обнаружен в `crypto/bcrypt.nv` (`mut long = ""` —
+  тестовая переменная-пароль) при промоушене волны std/_experimental→std 2026-07-08.
+  Минимальная репродукция:
+  ```nova
+  fn concat_pw() -> str {
+      mut long = ""                         // `long` — C keyword
+      for i in 0..3 { long = long + "a" }
+      long
+  }
+  // вызов из test-блока → CC-FAIL:
+  //   'long type-name' is invalid
+  //   expected identifier or '('
+  ```
+  **Обход в `bcrypt.nv`:** переименована в `long_pw`. Тело задачи: эмиттер обязан манглить/
+  экранировать ЛЮБОЙ user-identifier, совпадающий с зарезервированным C-словом, ДО вывода в C
+  (напр. суффикс `_nv` или префикс, единообразно для var/field/param/fn-имён) — пользователь
+  Nova не должен знать о зарезервированных словах ЦЕЛЕВОГО языка кодогена. Список C89/C99/C11
+  keywords для покрытия: `auto`, `break`, `case`, `char`, `const`, `continue`, `default`, `do`,
+  `double`, `else`, `enum`, `extern`, `float`, `for`, `goto`, `if`, `inline`, `int`, `long`,
+  `register`, `restrict`, `return`, `short`, `signed`, `sizeof`, `static`, `struct`, `switch`,
+  `typedef`, `union`, `unsigned`, `void`, `volatile`, `while`, `_Bool`, `_Complex`, `_Imaginary`
+  (+ C11 `_Alignas`/`_Alignof`/`_Atomic`/`_Generic`/`_Noreturn`/`_Static_assert`/`_Thread_local`).
+
+- **[M-static-selfreturn-value-mangle-conflict]** (2026-07-08, P2, Wave: 172.12-хвост/172.13) —
+  ЛЮБАЯ static-namespace функция `fn Type.method(...) -> Self` (или `-> Result[Self, E]`) для
+  **named-tuple/value-record** типа (D215/D228, `NovaTuple_<Type>`/`NovaValue_<Type>`-
+  представление), СОСУЩЕСТВУЮЩАЯ в одном compile unit с instance-методами (`fn Type @method`)
+  того же типа, даёт CC-FAIL: `conflicting types for 'Nova_<Type>_method_equal'` +
+  `returning 'NovaTuple_<Type>' from a function with incompatible result type
+  'NovaTuple_<Type> *'` (форвард-декларация статик-конструктора помечает возврат ПО УКАЗАТЕЛЮ,
+  тело эмитит возврат ПО ЗНАЧЕНИЮ — рассинхрон двух путей регистрации типа для одного и того же
+  `Type`). Уточняет/апгрейдит старую запись «`std/_experimental/math/complex` CC-FAIL —
+  pre-existing (`NovaTuple_Complex`/`Nova_Complex_method_equal` mono gap)» — root-cause был
+  неизвестен; теперь изолирован эмпирически (волна std/_experimental→std, 2026-07-08).
+  **НЕ специфично для Result-wrapping** (`[M-181-result-over-named-tuple-codegen]`,
+  ✅ RESOLVED 2026-06-26, чинил ИМЕННО Result[T,E]-обёртку над named-tuple — другой, уже
+  закрытый путь) — воспроизводится и для голого `-> Self`. **НЕ специфично и для конкретных
+  имён `.new`/`.from`** — попытка убрать `Complex.new`/`Complex.from`/`Complex.from_imag`
+  (тривиальные обёртки) НЕ разблокировала файл, т.к. `Complex.from_polar`/`Complex.try_from`
+  (обе тоже static-namespace, `-> Self`/`-> Result[Self,E]`) остаются и тоже триггерят класс.
+  Минимальная репродукция (named tuple + один static-конструктор + один instance-метод —
+  этого достаточно, `try_from` необязателен для триггера, но подтверждает что Result-форма
+  туда же):
+  ```nova
+  export type Pt(x f64 = 0.0, y f64 = 0.0)
+
+  export fn Pt.new(x f64, y f64) -> Self => Pt(x, y)     // static, -> Self
+  export fn Pt @plus(other Pt) -> Pt => Pt(@x + other.x, @y + other.y)  // instance-метод
+
+  test "basic" {
+      ro p = Pt.new(1.0, 2.0)
+      ro q = p.plus(Pt.new(3.0, 4.0))
+      assert(q.x == 4.0)
+  }
+  // CC-FAIL:
+  //   returning 'NovaTuple_Pt' from a function with incompatible result type 'NovaTuple_Pt *'
+  //   passing 'NovaTuple_Pt *' to parameter of incompatible type 'NovaTuple_Pt'
+  ```
+  Без static-конструктора (только bare `Pt(x, y)` record-литералы на call-site + `@plus`) —
+  компилируется чисто; без instance-метода (только static-конструктор) — тоже чисто. Нужны
+  ОБА для триггера. Тело задачи: унифицировать регистрацию C-представления `Type` между
+  static-namespace-функциями (`Type.method`) и instance-методами (`Type @method`) для
+  named-tuple/value-record — сейчас, по всей видимости, это два разных code path в
+  `emit_c.rs`, каждый решающий pointer-vs-value независимо. Не устранено воркэраундом на
+  уровне `.nv` (кроме полного отказа от static-namespace конструкторов для таких типов, что
+  неприемлемо — теряет читаемый API); `math/complex.nv` остаётся в `_experimental`, вне
+  периметра волны std/_experimental→std 2026-07-08.
+
+- **[M-lint-phantom-unused-vec-import]** (2026-07-08, P3, lints.rs) — `nova check` на КАЖДОМ
+  std-файле репортит `warning: unused import 'Vec' — imported but never referenced [unused-import]`
+  с span'ом, указывающим в произвольный текст КОММЕНТАРИЯ (напр. `std/checksums/crc32.nv:15:3` —
+  середина слова в doc-комменте), при том что файл НЕ содержит ни одного `import`-стейтмента
+  вообще (подтверждено грепом; 43+ shipped-файлов std до волны 2026-07-08 — `std/net/addr.nv`,
+  `std/collections/hashmap.nv`, вся `std/time/` и т.д.). Фантом: `is_prelude_import`
+  (`lints.rs:665`) вайтлистит только импорты с path-префиксом `std.prelude`, но какой-то
+  инжектируемый prelude/auto-import Vec-имени проходит с другим path и bogus-span. Ложный
+  сигнал на всём дереве std → делает недостижимым гейт «0 WARN» для любого std-файла и
+  обесценивает unused-import lint целиком (шум маскирует настоящие unused). Тело задачи:
+  найти источник синтетического импорта `Vec` (resolve_imports inline-инжекция?), пометить
+  его synthetic-флагом и скипать в `lint_unused_imports`, либо расширить `is_prelude_import`
+  на его реальный path. Волна промоушена 2026-07-08 репортила гейт как «PASS + 1 phantom-WARN
+  на файл» со ссылкой сюда.

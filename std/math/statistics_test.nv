@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/math/statistics_test.nv — публичный контракт Stats/StreamingStats.
+
+module math.statistics_test
+
+import std.math.statistics.{Stats, StreamingStats, StatsError}
+
+test "mean базовый" {
+    assert(Stats.mean([1.0, 2.0, 3.0, 4.0, 5.0])!! == 3.0)
+}
+
+test "median: нечётная и чётная длина" {
+    assert(Stats.median([1.0, 2.0, 3.0])!! == 2.0)
+    assert(Stats.median([1.0, 2.0, 3.0, 4.0])!! == 2.5)
+    // Несортированный input
+    assert(Stats.median([5.0, 1.0, 3.0])!! == 3.0)
+}
+
+test "variance / stddev" {
+    ro xs = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
+    // Sample variance (n-1) = 4.571...
+    ro v = Stats.variance(xs)!!
+    assert((v - 4.5714285714).abs() < 0.0001)
+    ro s = Stats.stddev(xs)!!
+    assert((s - 2.1380899352).abs() < 0.0001)
+}
+
+test "percentile: квартили" {
+    ro xs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    assert((Stats.percentile(xs, 50.0)!! - 5.5).abs() < 0.001)
+    assert((Stats.percentile(xs, 0.0)!! - 1.0).abs() < 0.001)
+    assert((Stats.percentile(xs, 100.0)!! - 10.0).abs() < 0.001)
+}
+
+test "min_max" {
+    ro (lo, hi) = Stats.min_max([3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0])!!
+    assert(lo == 1.0)
+    assert(hi == 9.0)
+}
+
+test "ошибка: пустой ввод" {
+    match Stats.mean([]) {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is EmptyInput)
+    }
+}
+
+test "ошибка: percentile вне диапазона" {
+    match Stats.percentile([1.0, 2.0, 3.0], 150.0) {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is InvalidPercentile)
+    }
+}
+
+test "streaming: equivalent one-shot" {
+    ro xs = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]
+
+    mut acc = Stats.streaming()
+    for x in xs { acc.add(x) }
+
+    assert((acc.mean()!! - Stats.mean(xs)!!).abs() < 0.0001)
+    assert((acc.variance()!! - Stats.variance(xs)!!).abs() < 0.0001)
+    assert(acc.min()!! == 2.0)
+    assert(acc.max()!! == 9.0)
+}
+
+test "streaming: больших чисел не теряет точность" {
+    // Welford устойчив к large magnitudes — наивный sum/count - mean^2 теряет точность.
+    mut acc = Stats.streaming()
+    for i in 0..1000 {
+        acc.add(1_000_000.0 + (i as f64))
+    }
+    // Variance последовательности 0..999 = sum((i - 499.5)^2) / 999 = 83416.667
+    ro v = acc.variance()!!
+    assert((v - 83416.666666666).abs() < 0.01)
+}

@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/path/glob_test.nv — публичный контракт Glob.matches.
+
+module path.glob_test
+
+import std.path.glob.{Glob}
+
+test "literal match" {
+    assert(Glob.matches("hello.txt", "hello.txt"))
+    assert(!Glob.matches("hello.txt", "world.txt"))
+}
+
+test "* wildcard" {
+    assert(Glob.matches("*.nv", "hello.nv"))
+    assert(Glob.matches("*.nv", "complex.nv"))
+    assert(!Glob.matches("*.nv", "hello.txt"))
+    assert(!Glob.matches("*.nv", "src/hello.nv"))          // * не пересекает /
+}
+
+test "** recursive wildcard" {
+    assert(Glob.matches("**/*.nv", "src/main.nv"))
+    assert(Glob.matches("**/*.nv", "src/admin/audit.nv"))
+    assert(Glob.matches("**", "any/path/here.txt"))
+}
+
+test "? single char" {
+    assert(Glob.matches("?.nv", "a.nv"))
+    assert(!Glob.matches("?.nv", "ab.nv"))
+    assert(!Glob.matches("?.nv", ".nv"))
+}
+
+test "character class" {
+    assert(Glob.matches("[abc].nv", "a.nv"))
+    assert(Glob.matches("[abc].nv", "b.nv"))
+    assert(!Glob.matches("[abc].nv", "d.nv"))
+}
+
+test "character range" {
+    assert(Glob.matches("[a-z].nv", "x.nv"))
+    assert(!Glob.matches("[a-z].nv", "X.nv"))
+    assert(Glob.matches("[0-9].nv", "5.nv"))
+}
+
+test "negated class" {
+    assert(Glob.matches("[!abc].nv", "d.nv"))
+    assert(!Glob.matches("[!abc].nv", "a.nv"))
+}
+
+test "complex pattern" {
+    assert(Glob.matches("src/**/*.nv", "src/main.nv"))
+    assert(Glob.matches("src/**/*.nv", "src/admin/audit.nv"))
+    assert(!Glob.matches("src/**/*.nv", "tests/main.nv"))
+}

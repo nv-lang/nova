@@ -1,0 +1,220 @@
+// stdlib/statistics.nv — basic descriptive statistics.
+//
+// One-shot функции на массиве + streaming аккумулятор для больших
+// потоков данных (Welford's online algorithm).
+//
+// API one-shot (Result-everywhere, D325):
+//   Stats.mean(xs []f64) -> Result[f64, StatsError]
+//   Stats.median(xs []f64) -> Result[f64, StatsError]
+//   Stats.stddev(xs []f64) -> Result[f64, StatsError]
+//   Stats.variance(xs []f64) -> Result[f64, StatsError]
+//   Stats.percentile(xs []f64, p f64) -> Result[f64, StatsError]
+//   Stats.min_max(xs []f64) -> Result[(f64, f64), StatsError]
+//
+// API streaming:
+//   let mut acc = Stats.streaming()
+//   acc.add(x)
+//   acc.add(y)
+//   let m = acc.mean()!!
+//   let v = acc.variance()!!
+//
+// Pure functions, без эффектов.
+
+module math.statistics
+
+
+/// Errors при stats-расчётах (empty input, invalid percentile).
+#stable(since = "0.1")
+export type StatsError enum
+    | EmptyInput
+    | InvalidPercentile { value f64 }
+
+
+/// Arithmetic mean. `Err(EmptyInput)` для empty array.
+#stable(since = "0.1")
+export fn Stats.mean(xs []f64) -> Result[f64, StatsError] {
+    if xs.len() == 0 { return Err(EmptyInput) }
+    mut sum = 0.0
+    for x in xs { sum = sum + x }
+    Ok(sum / (xs.len() as f64))
+}
+
+/// Sample variance (denominator n-1). `Err(EmptyInput)`.
+#stable(since = "0.1")
+export fn Stats.variance(xs []f64) -> Result[f64, StatsError] {
+    if xs.len() == 0 { return Err(EmptyInput) }
+    if xs.len() == 1 { return Ok(0.0) }
+    ro m = Stats.mean(xs)?
+    mut sum_sq = 0.0
+    for x in xs {
+        ro diff = x - m
+        sum_sq = sum_sq + diff * diff
+    }
+    Ok(sum_sq / ((xs.len() - 1) as f64))        // sample variance (n-1)
+}
+
+/// Standard deviation = √variance.
+#stable(since = "0.1")
+export fn Stats.stddev(xs []f64) -> Result[f64, StatsError] =>
+    Ok(Stats.variance(xs)?.sqrt())
+
+/// Median (50th percentile). Sorts copy of xs внутри.
+#stable(since = "0.1")
+export fn Stats.median(xs []f64) -> Result[f64, StatsError] {
+    if xs.len() == 0 { return Err(EmptyInput) }
+    ro sorted = sort_copy(xs)
+    ro n = sorted.len()
+    if n % 2 == 1 {
+        Ok(sorted[n / 2])
+    } else {
+        Ok((sorted[n / 2 - 1] + sorted[n / 2]) / 2.0)
+    }
+}
+
+/// Percentile p ∈ [0, 100] с linear interpolation. `Err(InvalidPercentile)` если out of range.
+#stable(since = "0.1")
+export fn Stats.percentile(xs []f64, p f64) -> Result[f64, StatsError] {
+    if xs.len() == 0 { return Err(EmptyInput) }
+    if p < 0.0 || p > 100.0 { return Err(InvalidPercentile { value: p }) }
+    ro sorted = sort_copy(xs)
+    ro n = sorted.len()
+    if n == 1 { return Ok(sorted[0]) }
+    ro rank = (p / 100.0) * ((n - 1) as f64)
+    ro lower = rank.floor() as int
+    ro upper = rank.ceil() as int
+    if lower == upper {
+        Ok(sorted[lower])
+    } else {
+        ro frac = rank - (lower as f64)
+        Ok(sorted[lower] * (1.0 - frac) + sorted[upper] * frac)
+    }
+}
+
+/// Min и max за один pass — `(lo, hi)` tuple.
+#stable(since = "0.1")
+export fn Stats.min_max(xs []f64) -> Result[(f64, f64), StatsError] {
+    if xs.len() == 0 { return Err(EmptyInput) }
+    mut lo = xs[0]
+    mut hi = xs[0]
+    for x in xs {
+        if x < lo { lo = x }
+        if x > hi { hi = x }
+    }
+    Ok((lo, hi))
+}
+
+/// Sum of f64-values. Empty input → 0.0 (no error).
+#stable(since = "0.1")
+export fn Stats.sum(xs []f64) -> f64 {
+    mut s = 0.0
+    for x in xs { s = s + x }
+    s
+}
+
+
+fn sort_copy(xs []f64) -> []f64 {
+    mut sorted []f64 = []
+    for x in xs { sorted.push(x) }
+    ro n = sorted.len()
+    for i in 0..n {
+        for j in 0..n - 1 - i {
+            if sorted[j] > sorted[j + 1] {
+                sorted.swap(j, j + 1)
+            }
+        }
+    }
+    sorted
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Streaming accumulator (Welford's online algorithm)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Welford 1962 — стабильное вычисление variance для длинных streams без
+// потери точности. Стандартный алгоритм `sum/count - mean^2` страдает от
+// floating-point errors на больших числах.
+
+/// Streaming statistics accumulator (Welford's online algorithm).
+///
+/// Stable variance computation для длинных streams без FP precision loss.
+/// O(1) memory, O(1) per `add`.
+#stable(since = "0.1")
+export type StreamingStats {
+    mut count i64
+    mut mean_val f64
+    mut m2 f64                 // accumulated squared distance from mean
+    mut min_val f64
+    mut max_val f64
+}
+
+
+/// Init empty StreamingStats (Welford).
+#stable(since = "0.1")
+export fn Stats.streaming() -> StreamingStats =>
+    {
+        count: 0,
+        mean_val: 0.0,
+        m2: 0.0,
+        min_val: 0.0,
+        max_val: 0.0,
+    }
+
+
+/// Add one value к accumulator. O(1).
+#stable(since = "0.1")
+export fn StreamingStats mut @add(x f64) -> () {
+    @count += 1
+    if @count == 1 {
+        @min_val = x
+        @max_val = x
+    } else {
+        if x < @min_val { @min_val = x }
+        if x > @max_val { @max_val = x }
+    }
+    ro delta = x - @mean_val
+    @mean_val = @mean_val + delta / (@count as f64)
+    ro delta2 = x - @mean_val
+    @m2 = @m2 + delta * delta2
+}
+
+
+/// Count of values added.
+#stable(since = "0.1")
+export fn StreamingStats @count_value() -> i64 => @count
+
+/// Mean. `Err(EmptyInput)` если ничего не added.
+#stable(since = "0.1")
+export fn StreamingStats @mean() -> Result[f64, StatsError] {
+    if @count == 0 { return Err(EmptyInput) }
+    Ok(@mean_val)
+}
+
+/// Sample variance (Welford'овский). `Err(EmptyInput)`.
+#stable(since = "0.1")
+export fn StreamingStats @variance() -> Result[f64, StatsError] {
+    if @count == 0 { return Err(EmptyInput) }
+    if @count == 1 { return Ok(0.0) }
+    Ok(@m2 / ((@count - 1) as f64))
+}
+
+/// Standard deviation (√variance).
+#stable(since = "0.1")
+export fn StreamingStats @stddev() -> Result[f64, StatsError] =>
+    Ok(@variance()?.sqrt())
+
+/// Min value seen. `Err(EmptyInput)`.
+#stable(since = "0.1")
+export fn StreamingStats @min() -> Result[f64, StatsError] {
+    if @count == 0 { return Err(EmptyInput) }
+    Ok(@min_val)
+}
+
+/// Max value seen. `Err(EmptyInput)`.
+#stable(since = "0.1")
+export fn StreamingStats @max() -> Result[f64, StatsError] {
+    if @count == 0 { return Err(EmptyInput) }
+    Ok(@max_val)
+}
+
+// Тесты — см. peer-файл statistics_test.nv (module math.statistics_test).

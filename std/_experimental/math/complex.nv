@@ -2,14 +2,12 @@
 // тригонометрической формой.
 //
 // API в стиле stdlib/duration.nv:
-//   - Complex.new(re, im)               прямой конструктор
-//   - Complex.from(re f64) / from(n int)  действительная часть
-//                                       (именованный конструктор-конверсия)
+//   - Complex(re, im)                   прямой конструктор (D215 named-tuple)
+//   - Complex(re: x) / Complex(re: n as f64)  действительная часть
 //   - Complex.try_from(s str)           Result[Complex, ParseComplexError] — парсинг (D325)
 //                                       (обратное к @to_str() -> str,
 //                                        round-trip property)
-//   - Complex.from_imag(im f64)         доменный конструктор —
-//                                       мнимая часть
+//   - Complex(im: x)                    доменный конструктор — мнимая часть
 //   - Complex.from_polar(r, theta)      из полярных координат
 //   - 3.0.j() / 5.j()                   sugar для мнимой единицы
 //                                       (доменный синтаксис эл.техники)
@@ -20,15 +18,14 @@
 // Decisions:
 //   - D215 named-tuple: `type Complex(re f64 = 0.0, im f64 = 0.0)` — stack-allocated,
 //     default-конструктор `Complex()` даёт 0+0i; всё иммутабельно через ro-binding.
+//     Прямой record-конструктор — канон; тривиальные static-обёртки
+//     `.new`/`.from`/`.from_imag` над ним СНЯТЫ (владелец, 2026-07-08, см. ниже).
 //   - D35 instance-методы через `fn Type @method`.
 //   - D45 для простых геттеров `-> T` опускаем; для арифметики оставляем
 //     явно (документация stdlib API).
 //   - D46/D363 operator overloading через `@plus`, `@times`, `@neg`, `@equal`.
 //     `!=` выводится из `@equal` автоматически.
 //   - D66 `Self` в return type — DRY, без повтора имени Complex.
-//   - `Complex.from(f64)` / `Complex.from(int)` — именованные static-конструкторы
-//     конверсии (D73/D77 ретрактированы 2026-07-06: протоколов From/Into больше
-//     нет, это просто конвенция имён).
 //   - Строковое представление — `Complex @to_str() -> str` (D410).
 //
 // Использует instance-методы на f64 (std.math): `@sqrt`, `@hypot`,
@@ -46,7 +43,7 @@ module math.complex
 ///
 /// # Examples
 /// ```nova
-/// let z = Complex.new(1.0, 2.0)
+/// let z = Complex(1.0, 2.0)
 /// assert(z.real() == 1.0)
 /// assert(z.imag() == 2.0)
 /// ```
@@ -69,26 +66,18 @@ export const I    Complex = Complex(im: 1.0)
 // ──────────────────────────────────────────────────────────────────────────
 // Static-конструкторы
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Direct constructor для chain-style. Эквивалент `Complex(re, im)`.
-#stable(since = "0.1")
-export fn Complex.new(re f64, im f64) -> Self =>
-    Complex(re, im)
-
-/// Чисто-действительный Complex (im = 0).
-#stable(since = "0.1")
-export fn Complex.from(re f64) -> Self =>
-    Complex(re: re)
-
-/// Convenience-конструктор для `Complex.from(2)` без `as f64`.
-#stable(since = "0.1")
-export fn Complex.from(n int) -> Self =>
-    Complex(re: n as f64)
-
-/// Чисто мнимое: `0 + (im)i`. Отдельная функция, не конверсия f64→Complex.
-#stable(since = "0.1")
-export fn Complex.from_imag(im f64) -> Self =>
-    Complex(im: im)
+//
+// Владелец (2026-07-08): `Complex.new`/`Complex.from(f64)`/`Complex.from(int)`/
+// `Complex.from_imag` сняты — тривиальные обёртки без логики над record-
+// конструктором самого `Complex(re, im)` (D215 named-tuple уже даёт прямой
+// конструктор). Канон на call-site: `Complex(re, im)`, `Complex(re: x)`,
+// `Complex(im: x)`, `Complex(re: n as f64)` для int. Побочный эффект:
+// снятие `Complex.new`-style static-namespace функций (все были `-> Self`,
+// без вычислений/валидации) обходит codegen-gap [M-...]: static `Type.fn()
+// -> Self` для named-tuple + instance-методы того же типа в одном CU давали
+// pointer/value-repr конфликт (`NovaTuple_Complex`) — см. историю в
+// docs/plans/backlog-followups.md. `from_polar` (вычисление polar→cartesian)
+// и `try_from` (парсинг) ОСТАЮТСЯ — несут логику, не тривиальны.
 
 /// Из полярных координат: `r * (cos θ + i·sin θ)`. theta в радианах.
 #stable(since = "0.1")
@@ -240,8 +229,8 @@ export fn Complex @equal(other Complex) -> bool =>
 ///
 /// # Examples
 /// ```nova
-/// let a = Complex.new(1.0, 0.0)
-/// let b = Complex.new(1.0 + 1e-10, 0.0)
+/// let a = Complex(1.0, 0.0)
+/// let b = Complex(1.0 + 1e-10, 0.0)
 /// assert(a.approx_eq(b, 1e-9))
 /// ```
 #stable(since = "0.1")
@@ -296,7 +285,7 @@ export fn Complex @to_str() -> str {
 export type ParseComplexError enum InvalidFormat | NotANumber
 
 /// `try_from` (Result) — parse `a+bi` / `bi` / `a` форматы. Round-trip с `@to_str`.
-/// `try_` отличает fallible-парсер от инфаллибл `Complex.from(f64)`/`from(int)` (D325 R3).
+/// `try_` отличает fallible-парсер от инфаллибл прямого конструктора `Complex(re: x)` (D325 R3).
 ///
 /// # Examples
 /// ```nova
@@ -377,42 +366,42 @@ fn parse_f64_or_err(s str) -> Result[f64, ParseComplexError] {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Extension: `2.0.j()` → `Complex(im: 2.0)`. Доменный sugar
-/// (физика/электротехника, `j` = √(-1)). Для чисто-real используй `Complex.from(v)`.
+/// (физика/электротехника, `j` = √(-1)). Для чисто-real используй `Complex(re: v)`.
 #stable(since = "0.1")
-export fn f64 @j() -> Complex => Complex.from_imag(@)
+export fn f64 @j() -> Complex => Complex(im: @)
 
 /// Extension: `2.j()` → `Complex(im: 2.0)` (int overload).
 #stable(since = "0.1")
-export fn int @j() -> Complex => Complex.from_imag(@ as f64)
+export fn int @j() -> Complex => Complex(im: @ as f64)
 
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты — базовые свойства алгебры и идентичности
 // ──────────────────────────────────────────────────────────────────────────
 
-test "constructors: new / from / from_imag / from_polar" {
-    ro z = Complex.new(3.0, 4.0)
+test "constructors: прямой record-литерал / re: / im: / from_polar" {
+    ro z = Complex(3.0, 4.0)
     assert(z.re == 3.0)
     assert(z.im == 4.0)
 
-    // Complex.from(f64) — действительная часть.
-    ro r = Complex.from(5.0)
+    // Complex(re: x) — действительная часть.
+    ro r = Complex(re: 5.0)
     assert(r.is_real())
     assert(r.re == 5.0)
 
-    ro im = Complex.from_imag(7.0)
+    ro im = Complex(im: 7.0)
     assert(im.is_imag())
     assert(im.im == 7.0)
 
-    // Та же конверсия явным static-конструктором.
-    ro r2 Complex = Complex.from(5.0)
+    // Тот же конструктор, повторно (named-field literal — не два разных пути).
+    ro r2 Complex = Complex(re: 5.0)
     assert(r2== r)
 }
 
 test "addition: commutative and associative" {
-    ro a = Complex.new(1.0, 2.0)
-    ro b = Complex.new(3.0, 4.0)
-    ro c = Complex.new(-1.0, 5.0)
+    ro a = Complex(1.0, 2.0)
+    ro b = Complex(3.0, 4.0)
+    ro c = Complex(-1.0, 5.0)
 
     ro ab = a + b
     ro ba = b + a
@@ -426,7 +415,7 @@ test "addition: commutative and associative" {
 }
 
 test "negation and subtraction" {
-    ro z = Complex.new(2.0, -3.0)
+    ro z = Complex(2.0, -3.0)
     ro neg = -z
     assert(neg.re == -2.0)
     assert(neg.im == 3.0)
@@ -434,7 +423,7 @@ test "negation and subtraction" {
     ro zero = z + neg
     assert(zero.is_zero())
 
-    ro diff = Complex.new(5.0, 5.0) - Complex.new(2.0, 1.0)
+    ro diff = Complex(5.0, 5.0) - Complex(2.0, 1.0)
     assert(diff.re == 3.0)
     assert(diff.im == 4.0)
 }
@@ -443,7 +432,7 @@ test "multiplication: i * i == -1" {
     ro i_sq = I * I
     assert(i_sq== -ONE)                   // основное свойство мнимой единицы
 
-    ro z = Complex.new(2.0, 3.0)
+    ro z = Complex(2.0, 3.0)
     ro zi = z * I
     // (2+3i) * i = 2i + 3i² = -3 + 2i
     assert(zi.re == -3.0)
@@ -451,9 +440,9 @@ test "multiplication: i * i == -1" {
 }
 
 test "multiplication: distributive" {
-    ro a = Complex.new(1.0, 2.0)
-    ro b = Complex.new(3.0, -1.0)
-    ro c = Complex.new(0.0, 4.0)
+    ro a = Complex(1.0, 2.0)
+    ro b = Complex(3.0, -1.0)
+    ro c = Complex(0.0, 4.0)
 
     ro lhs = a * (b + c)
     ro rhs = (a * b) + (a * c)
@@ -461,26 +450,26 @@ test "multiplication: distributive" {
 }
 
 test "scalar times: z * f64" {
-    ro z = Complex.new(2.0, 3.0)
+    ro z = Complex(2.0, 3.0)
     ro scaled = z.times(2.0)
     assert(scaled.re == 4.0)
     assert(scaled.im == 6.0)
 }
 
 test "division: z / z == 1 (для z != 0)" {
-    ro z = Complex.new(3.0, 4.0)
+    ro z = Complex(3.0, 4.0)
     ro one = z / z
     assert(one.approx_eq(ONE, 1e-12))
 }
 
 test "inverse: z * z.inv() == 1" {
-    ro z = Complex.new(2.0, 5.0)
+    ro z = Complex(2.0, 5.0)
     ro prod = z * z.inv()
     assert(prod.approx_eq(ONE, 1e-12))
 }
 
 test "conj: re/im сохраняются и инвертируются" {
-    ro z = Complex.new(3.0, -4.0)
+    ro z = Complex(3.0, -4.0)
     ro c = z.conj()
     assert(c.re == 3.0)
     assert(c.im == 4.0)
@@ -492,7 +481,7 @@ test "conj: re/im сохраняются и инвертируются" {
 }
 
 test "abs / norm_sqr для (3, 4)" {
-    ro z = Complex.new(3.0, 4.0)
+    ro z = Complex(3.0, 4.0)
     assert(z.norm_sqr() == 25.0)
     assert(z.abs() == 5.0)                  // 3-4-5 треугольник
 }
@@ -516,29 +505,29 @@ test "predicates" {
 }
 
 test "to_str(): формат для разных случаев" {
-    ro s_real str = Complex.from(3.0).to_str()
+    ro s_real str = Complex(re: 3.0).to_str()
     assert(s_real == "3")        // nova_f64_to_str uses %g: strips trailing zero
 
-    ro s_imag str = Complex.from_imag(2.0).to_str()
+    ro s_imag str = Complex(im: 2.0).to_str()
     assert(s_imag == "2i")       // same: %g → "2", not "2.0"
 
-    ro s_pos str = Complex.new(1.0, 2.0).to_str()
+    ro s_pos str = Complex(1.0, 2.0).to_str()
     assert(s_pos == "1+2i")      // same: %g → "1" and "2"
 
-    ro s_neg str = Complex.new(1.0, -2.0).to_str()
+    ro s_neg str = Complex(1.0, -2.0).to_str()
     assert(s_neg == "1-2i")      // %g on -2.0 → "-2"
 }
 
 test "extension method j(): мнимая единица" {
     ro z1 = 2.0.j()
-    assert(z1== Complex.from_imag(2.0))
+    assert(z1== Complex(im: 2.0))
 
     ro z2 = 3.j()
-    assert(z2== Complex.from_imag(3.0))
+    assert(z2== Complex(im: 3.0))
 
     // Композиция явных static-конструкторов (для действительной части) + j() (для мнимой):
-    //   `Complex.from(2) + 3.j()`
-    ro z3 = Complex.from(2) + 3.j()
+    //   `Complex(re: 2) + 3.j()`
+    ro z3 = Complex(re: 2) + 3.j()
     assert(z3.re == 2.0)
     assert(z3.im == 3.0)
 }
@@ -574,19 +563,24 @@ test "Complex.try_from(str): полная форма + и -" {
     assert(neg.im == -2.0)
 }
 
+// Compiler note: проверяем round-trip по одному значению за раз (без
+// `[]Complex`/`for`) — известный codegen-gap: `Vec[Complex]` (named-tuple,
+// D215) в этом compile unit конфликтует с представлением module-level
+// `const`-значений того же типа (`ZERO`/`ONE`/`I`) — двойная репрезентация
+// `NovaTuple_Complex` (по значению vs по указателю) даёт conflicting-types
+// в C-кодогене. Прямая проверка одного значения этот путь не задевает.
+fn assert_round_trip(z Complex) -> () {
+    ro s = z.to_str()
+    ro parsed Complex = Complex.try_from(s)!!
+    assert(parsed.approx_eq(z, 1e-12))
+}
+
 test "round-trip: try_from(z.to_str()) == z для всех канонических форм" {
-    ro cases = [
-        Complex.new(3.0, 0.0),
-        Complex.from_imag(2.0),
-        Complex.new(1.0, 2.0),
-        Complex.new(1.0, -2.0),
-        ZERO,
-    ]
-    for z in cases {
-        ro s = z.to_str()
-        ro parsed Complex = Complex.try_from(s)!!
-        assert(parsed.approx_eq(z, 1e-12))
-    }
+    assert_round_trip(Complex(3.0, 0.0))
+    assert_round_trip(Complex(im: 2.0))
+    assert_round_trip(Complex(1.0, 2.0))
+    assert_round_trip(Complex(1.0, -2.0))
+    assert_round_trip(Complex(0.0, 0.0))
 }
 
 test "Complex.try_from(str): невалидный формат → Err" {

@@ -1,0 +1,107 @@
+// stdlib/rate_limiter.nv — Token bucket rate limiter.
+//
+// AI-first флагман: использует Time effect → детерминированные тесты
+// через `with Time = th.fixed_ms(...)`.
+//
+// Token bucket algorithm:
+//   - Bucket capacity = max burst size
+//   - refill_rate tokens per second
+//   - Каждый вызов try_acquire() забирает 1 token; если их нет — false.
+//
+// API:
+//   TokenBucket.new(capacity int, refill_per_sec f64) -> TokenBucket
+//   bucket.try_acquire() Time -> bool
+//   bucket.try_acquire_n(n int) Time -> bool
+
+module concurrency.rate_limiter
+
+
+
+/// Token bucket rate limiter. `capacity` = max burst, `refill_per_sec` = sustained rate.
+///
+/// Использует Time effect → детерминирован в тестах под `th.fixed_ms(...)`.
+#stable(since = "0.1")
+// TODO(Monotonic) [M-rate-limiter-monotonic]: wall-clock `Time.now_unix_ms()`
+// временно — правильный источник для refill-тайминга это `Monotonic` (D124,
+// std/time/duration.nv), immune к NTP-скачкам. Переход gated: `Monotonic.now()`
+// — compiler-builtin, читающий `Time.now_monotonic_ns()`; `.nv`-схема эффекта
+// `Time` (std/prelude/effects.nv:158) метод объявляет, но рантайм-vtable
+// `NovaVtable_Time` (nova_rt/effects.h) слот пока не несёт — «мокабельность
+// через эффект — Ф.3-gated» (std/time/duration.nv:1296-1300, Plan 175 §Ф.2/§Ф.3).
+// До появления слота регресс часов назад/вперёд лишь ограниченно-безвреден
+// (см. `@refill` ниже: `.max(0)` на elapsed + существующий cap на `@tokens`),
+// не устранён полностью. Переключить на `Monotonic`, когда слот появится.
+export type TokenBucket {
+    ro capacity i64
+    ro refill_per_sec f64
+    mut tokens f64           // internal: текущее число tokens (может быть дробное)
+    mut last_refill_ms i64   // internal: последний refill, Unix ms (Time.now_unix_ms())
+}
+
+
+/// Init TokenBucket. Стартует с full `capacity` tokens.
+///
+/// # Examples
+/// ```nova
+/// let mut bucket = TokenBucket.new(5, 1.0)  // 5 burst, 1 token/sec sustained
+/// assert(bucket.try_acquire())
+/// ```
+#stable(since = "0.1")
+export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
+    {
+        capacity,
+        refill_per_sec,
+        tokens: capacity as f64,
+        last_refill_ms: Time.now_unix_ms() as i64,
+    }
+
+
+// Refill bucket на основе прошедшего времени.
+//
+// `.max(0)` на elapsed-дельте — защита от регресса wall-clock (NTP-скачок
+// назад): без неё отрицательный elapsed давал бы отрицательный `to_add`,
+// уменьшая `tokens` там, где время формально не двигалось вперёд. С
+// клампом регресс лишь ставит refill на паузу до момента, когда часы
+// снова догонят `last_refill_ms` — не приводит к потере/порче tokens.
+// Скачок часов ВПЕРЁД остаётся ограниченным существующим capacity-cap
+// ниже (полное ведро, не переполнение).
+fn TokenBucket mut @refill() Time -> () {
+    ro now_ms = Time.now_unix_ms() as i64
+    ro elapsed_ms = (now_ms - @last_refill_ms).max(0)
+    ro elapsed_secs = (elapsed_ms as f64) / 1000.0
+    ro to_add = elapsed_secs * @refill_per_sec
+    @tokens = @tokens + to_add
+    if @tokens > (@capacity as f64) {
+        @tokens = @capacity as f64
+    }
+    @last_refill_ms = now_ms
+}
+
+
+/// Try acquire 1 token. `true` если получилось, `false` если bucket пуст.
+#stable(since = "0.1")
+export fn TokenBucket mut @try_acquire() Time -> bool =>
+    @try_acquire_n(1)
+
+
+/// Try acquire `n` tokens atomically (all-or-nothing).
+#stable(since = "0.1")
+export fn TokenBucket mut @try_acquire_n(n int) Time -> bool {
+    @refill()
+    if @tokens >= (n as f64) {
+        @tokens = @tokens - (n as f64)
+        true
+    } else {
+        false
+    }
+}
+
+
+/// Current available tokens (refresh'нутый под current Time).
+#stable(since = "0.1")
+export fn TokenBucket mut @available() Time -> f64 {
+    @refill()
+    @tokens
+}
+
+// Тесты — см. peer-файл rate_limiter_test.nv (module concurrency.rate_limiter_test).

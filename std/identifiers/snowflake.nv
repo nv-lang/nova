@@ -11,7 +11,6 @@
 
 module identifiers.snowflake
 
-import std.testing.handlers as th
 
 
 // Custom epoch: 2020-01-01 UTC = 1577836800000 ms since Unix epoch.
@@ -43,8 +42,8 @@ export type SnowflakeError enum
 /// # Examples
 ///
 /// ```nova
-/// let mut gen = SnowflakeGen.new(1)
-/// let id = gen.next()
+/// let mut gen = SnowflakeGen.new(1)!!
+/// let id = gen.next()!!
 /// let parts = Snowflake.parse(id)
 /// assert(parts.machine_id == 1)
 /// ```
@@ -63,34 +62,34 @@ export type SnowflakeGen {
 
 /// Создать генератор для заданного `machine_id` (0..1023).
 ///
-/// Бросает `InvalidMachineId` если `machine_id` вне диапазона.
+/// `Err(InvalidMachineId)` если `machine_id` вне диапазона.
 #stable(since = "0.1")
-export fn SnowflakeGen.new(machine_id int) Fail[SnowflakeError] -> Self {
+export fn SnowflakeGen.new(machine_id int) -> Result[Self, SnowflakeError] {
     if machine_id < 0 || machine_id > 1023 {
-        throw InvalidMachineId { value: machine_id }
+        return Err(InvalidMachineId { value: machine_id })
     }
-    {
+    Ok({
         machine_id: machine_id as i64,
-        _last_ms: 0,
-        _sequence: 0,
-    }
+        last_ms: 0,
+        sequence: 0,
+    })
 }
 
 
 /// Сгенерировать следующий уникальный ID.
 ///
-/// Монотонный в рамках одной ms через sequence. Бросает `ClockBackwards`
+/// Монотонный в рамках одной ms через sequence. `Err(ClockBackwards)`
 /// если системное время отошло назад.
 ///
 /// # Effects
 ///
 /// Использует `Time` effect для получения текущего времени.
 #stable(since = "0.1")
-export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
-    ro now = Time.now_ms() as i64
+export fn SnowflakeGen mut @next() Time -> Result[i64, SnowflakeError] {
+    ro now = Time.now_unix_ms() as i64
 
     if now < @last_ms {
-        throw ClockBackwards { now, last: @last_ms }
+        return Err(ClockBackwards { now, last: @last_ms })
     }
 
     if now == @last_ms {
@@ -110,7 +109,7 @@ export fn SnowflakeGen mut @next() Time Fail[SnowflakeError] -> i64 {
 
     ro ts_offset = @last_ms - TWITTER_EPOCH_MS
     // Layout: [42 bit ts][10 bit machine][12 bit sequence]
-    (ts_offset << 22) | (@machine_id << 12) | @sequence
+    Ok((ts_offset << 22) | (@machine_id << 12) | @sequence)
 }
 
 
@@ -131,8 +130,8 @@ export type SnowflakeParts {
 /// # Examples
 ///
 /// ```nova
-/// let mut gen = SnowflakeGen.new(42)
-/// let id = gen.next()
+/// let mut gen = SnowflakeGen.new(42)!!
+/// let id = gen.next()!!
 /// let parts = Snowflake.parse(id)
 /// assert(parts.machine_id == 42)
 /// assert(parts.sequence == 0)
@@ -151,59 +150,4 @@ export fn Snowflake.parse(id i64) -> SnowflakeParts {
     { timestamp_ms, machine_id, sequence }
 }
 
-
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "next: monotonic в одной ms" {
-    mut gen = SnowflakeGen.new(1)
-    with Time = th.fixed_ms(1700000000000) {
-        ro a = gen.next()
-        ro b = gen.next()
-        ro c = gen.next()
-        // Все три в той же ms — sequence 0, 1, 2
-        assert(a < b)
-        assert(b < c)
-    }
-}
-
-test "next: разные ms → разные ID" {
-    mut gen = SnowflakeGen.new(5)
-    ro id1 = with Time = th.fixed_ms(1000) { gen.next() }
-    ro id2 = with Time = th.fixed_ms(2000) { gen.next() }
-    assert(id1 < id2)
-}
-
-test "parse: round-trip компонентов" {
-    mut gen = SnowflakeGen.new(42)
-    ro id = with Time = th.fixed_ms(1700000000000) { gen.next() }
-    ro parts = Snowflake.parse(id)
-    assert(parts.timestamp_ms == 1700000000000)
-    assert(parts.machine_id == 42)
-    assert(parts.sequence == 0)
-}
-
-test "ошибка — невалидный machine_id" {
-    ro r = with Fail[SnowflakeError] = |e| interrupt Some(e) {
-        ro _ = SnowflakeGen.new(2000)
-        None
-    }
-    assert(match r {
-        Some(InvalidMachineId { .. }) => true
-        _                              => false
-    })
-}
-
-test "ошибка — clock backwards" {
-    mut gen = SnowflakeGen.new(0)
-    ro _ = with Time = th.fixed_ms(2000) { gen.next() }
-    ro r = with Time = th.fixed_ms(1000), Fail[SnowflakeError] = |e| interrupt Some(e) {
-        ro _ = gen.next()
-        None
-    }
-    assert(match r {
-        Some(ClockBackwards { .. }) => true
-        _                            => false
-    })
-}
+// Тесты — см. peer-файл snowflake_test.nv (module identifiers.snowflake_test).
