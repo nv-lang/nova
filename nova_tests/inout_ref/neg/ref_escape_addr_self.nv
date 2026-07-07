@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_REF_ESCAPE
+//
+// Plan 184 (Р8, дополнение захода-5): `&@` (адрес приёмника value-типа = ref
+// Self) эскейпящий наружу через возврат → dangling. Авто-промоут D216 §4 не
+// применяется (ref указывает на чужой слот вызывающего).
+module neg.ref_escape_addr_self
+
+type Point value { x int, y int }
+
+fn Point @addr() -> *Point => &@
+
+fn main() -> () { () }
