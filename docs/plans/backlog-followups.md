@@ -2003,13 +2003,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   из http-волны); (3) проверить, несут ли test-блоки неявный Fail-контекст (масса `!!` в
   тестах — легальность зависит от этого).
 
-- **[M-porting-wave-tails]** (2026-07-07, P3, Wave: ближайший haiku-заход по списку) — три
+- **[M-porting-wave-tails]** ✅ FIXED (2026-07-07, P3, ветка porting-tails @071411a38; п.2 не чинится, адрес 174.1) — три
   хвоста porting-волны §3: (1) диагностические подсказки emit_c.rs (~:39828) советуют
-  снесённый `char.try_from(n)?` — обновить на `char.from(n)?`; (2) `f64.try_from(str)`
-  возвращает некорректное значение (задокументировано в from_into_basic.nv — сверить с
-  программой T.parse 174.1: возможно ретрактируется, не чинится); (3) `emit-runtime-stubs`
-  авто-генерирует пустой stray std/runtime/string.nv (str_runtime() не опустошён при
-  миграции на папку string/) — опустошить генератор.
+  снесённый `char.try_from(n)?` — обновить на `char.from(n)?` ✓; (2) `f64.try_from(str)`
+  возвращает некорректное значение (задокументировано в from_into_basic.nv — якорь
+  [M-f64-try-parse-to-parse-f64]: known-broken, ретракция программе T.parse 174.1); (3) `emit-runtime-stubs`
+  авто-генерирует пустой stray std/runtime/string.nv — str_runtime() → vec![] + check в main.rs ✓.
 
 - **[M-ptr-raw-access-contract-and-unaligned]** (2026-07-07, P2, Wave: план 174.5 — методы
   указателей; ПЕРЕРЕШЕНО владельцем: `.read()`/`.write()` НЕ получают memcpy-семантику) —
