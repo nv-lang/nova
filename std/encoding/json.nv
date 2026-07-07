@@ -213,7 +213,7 @@ fn Lexer @peek() -> Option[char] {
     if @pos >= bytes.len() {
         None
     } else {
-        Some(char.try_from(bytes[@pos] as int).unwrap_or(' '))
+        Some(char.from(bytes[@pos] as int).unwrap_or(' '))
     }
 }
 
@@ -235,7 +235,7 @@ fn Lexer mut @advance() -> Option[char] {
     if @pos >= bytes.len() { return None }
     ro b = bytes[@pos]
     @bump(b)
-    Some(char.try_from(b as int).unwrap_or(' '))
+    Some(char.from(b as int).unwrap_or(' '))
 }
 
 fn Lexer mut @skip_whitespace() -> () {
@@ -480,9 +480,9 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     }
 
     ro text = @input[start..@pos]
-    match f64.try_parse(text) {
-        Some(n) => Ok(n)
-        None    => Err(InvalidNumber {
+    match f64.parse(text) {
+        Ok(n)    => Ok(n)
+        Err(_)   => Err(InvalidNumber {
             line: start_line, col: start_col, text
         })
     }

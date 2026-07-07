@@ -31094,6 +31094,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // которого нет в runtime → forward-decl отсутствует → C компилятор
                 // дефолтит return-type к `nova_int` → mismatch на `_nv_scr->tag`
                 // в Some-pattern destructure.
+                // [M-f64-try-parse-to-parse-f64] (2026-07-07): `f64` retracted
+                // from this Option-returning `try_parse` builtin — R1/R3/R4
+                // (D325) violation (Option instead of Result, no infallible
+                // sibling). `f64.try_parse(...)` now falls through to the
+                // primitive-static-method guard below and gets an honest
+                // E_UNKNOWN_STATIC_METHOD. The public replacement,
+                // `f64.parse(s) -> Result[f64, ParseFloatError]`
+                // (std/runtime/string/parse.nv), is a PLAIN Nova-body function
+                // over an ordinary `extern "C" fn nova_str_parse_f64(s str,
+                // out *mut f64) -> bool` FFI declaration (D282, out-param
+                // convention) — the compiler has NO special knowledge of it
+                // whatsoever (§3: no new builtin, no new hardcode). `f32` is
+                // untouched (out of this fix's scope; no `f32.parse`
+                // migration was requested).
                 if parts.len() == 2 && parts[1] == "try_parse" {
                     if let Some(arg) = args.first() {
                         let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -31109,7 +31123,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 "i32" => Some(("nova_str_to_i64", "nova_parse_int_result", "int32_t")),
                                 "i16" => Some(("nova_str_to_i64", "nova_parse_int_result", "int16_t")),
                                 "i8"  => Some(("nova_str_to_i64", "nova_parse_int_result", "int8_t")),
-                                "f64" => Some(("nova_str_to_f64", "nova_parse_f64_result", "nova_f64")),
                                 "f32" => Some(("nova_str_to_f64", "nova_parse_f64_result", "nova_f32")),
                                 "bool" => Some(("nova_str_to_bool", "nova_parse_bool_result", "nova_bool")),
                                 "char" => Some(("nova_str_to_char", "nova_char_decode_result", "nova_char")),
@@ -43533,6 +43546,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (match-arm result_ty inference, Some-pattern dispatch)
                             // увидели правильный struct-тип вместо `nova_int` fallback.
                             if method_name == "try_parse" {
+                                // [M-f64-try-parse-to-parse-f64]: `f64` retracted
+                                // from this Option-returning builtin — see the
+                                // matching removal at the Path-form codegen site
+                                // this mirrors. Replacement `f64.parse` is a
+                                // plain `extern "C" fn` FFI declaration (D282),
+                                // resolved through the ordinary declared-function
+                                // path above (`mono_method_decls`/
+                                // `self_method_decls`) — no entry needed here.
                                 let opt_inner: Option<&str> = match eff.as_str() {
                                     "int" | "i64" => Some("nova_int"),
                                     "u64" | "uint" => Some("uint64_t"),
@@ -43542,7 +43563,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     "i32" => Some("int32_t"),
                                     "i16" => Some("int16_t"),
                                     "i8"  => Some("int8_t"),
-                                    "f64" => Some("nova_f64"),
                                     "f32" => Some("nova_f32"),
                                     "bool" => Some("nova_bool"),
                                     "char" => Some("nova_char"),
@@ -47217,6 +47237,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (match-arm result_ty inference, Some-pattern dispatch)
                             // увидели правильный struct-тип вместо `nova_int` fallback.
                             if method_name == "try_parse" {
+                                // [M-f64-try-parse-to-parse-f64]: `f64` retracted
+                                // from this Option-returning builtin — see the
+                                // matching removal at the Path-form codegen site
+                                // this mirrors. Replacement `f64.parse` is a
+                                // plain `extern "C" fn` FFI declaration (D282),
+                                // resolved through the ordinary declared-function
+                                // path above (`mono_method_decls`/
+                                // `self_method_decls`) — no entry needed here.
                                 let opt_inner: Option<&str> = match eff.as_str() {
                                     "int" | "i64" => Some("nova_int"),
                                     "u64" | "uint" => Some("uint64_t"),
@@ -47226,7 +47254,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     "i32" => Some("int32_t"),
                                     "i16" => Some("int16_t"),
                                     "i8"  => Some("int8_t"),
-                                    "f64" => Some("nova_f64"),
                                     "f32" => Some("nova_f32"),
                                     "bool" => Some("nova_bool"),
                                     "char" => Some("nova_char"),

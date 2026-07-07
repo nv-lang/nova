@@ -120,6 +120,23 @@ pub struct Parser {
     /// type position (`mut * T`) → forbidden if it wraps a pointer
     /// (`E_POINTER_PREFIX_MODIFIER`).
     pointee_ctx: bool,
+    /// [M-serde-slice-generic-method-parse] (2026-07-07): set true by
+    /// `parse_fn`'s slice-receiver arm (`[]T`, `[][]T`, …) immediately before
+    /// parsing the element type, then captured (and cleared) at the very
+    /// start of the recursive `parse_type` call — same single-consumption
+    /// pattern as `pointee_ctx`, but propagated through the `[]`-nesting
+    /// (Array/FixedArray arms re-arm it before their own recursive
+    /// `parse_type()` call) so it survives down to the innermost element
+    /// identifier at any slice depth. When set, the `Ident` arm's
+    /// dotted-path continuation (`path.push` loop) is skipped: in receiver
+    /// position a `.` immediately after the element type starts the
+    /// static-method-name suffix (`[]T.deserialize[D ...]`, D42 static
+    /// receiver), never a qualified sub-path of the element type itself.
+    /// Without this, `parse_type` greedily folded `T.deserialize` into one
+    /// dotted path and then tried to parse the method's OWN generic-decl
+    /// list (`[D Deserializer]`) as generic type-ARGS (no bounds allowed),
+    /// failing on the bound identifier.
+    receiver_elem_ctx: bool,
     /// Plan 153.5 (D263) / [M-153.5-flatten-nested-receiver]: the structured
     /// carrier slot TypeRefs collected by the most recent CARRIER-mode
     /// `parse_generic_decl_params_inner(true)` call. For `Vec[Vec[T]]` this is
@@ -209,6 +226,7 @@ impl Parser {
             src,
             warnings: Vec::new(),
             pointee_ctx: false,
+            receiver_elem_ctx: false,
             last_carrier_slot_types: Vec::new(),
         }
     }
@@ -2931,6 +2949,11 @@ impl Parser {
             // уровней (`[][]T`, `[][][]T`, …) `parse_type` рекурсивно строит
             // `Array(Array(...Named T))` — внутренние `[]` уже потреблены этим
             // вызовом. Plan 153.5: сохраняем ПОЛНУЮ структуру + считаем глубину.
+            // [M-serde-slice-generic-method-parse]: element type is in
+            // receiver position — a following `.method[...]` (static D42
+            // receiver, e.g. `[]T.deserialize[D Deserializer](...)`) must NOT
+            // be folded into the element type as a dotted qualified path.
+            self.receiver_elem_ctx = true;
             let elem_ty = self.parse_type()?;
             let elem_span = elem_ty.span();
             // Full structured receiver type = outer Array wrapping whatever
@@ -6089,6 +6112,10 @@ impl Parser {
         // inner doubled prefix.
         let is_pointee = self.pointee_ctx;
         self.pointee_ctx = false;
+        // [M-serde-slice-generic-method-parse]: single-consumption capture,
+        // same pattern as `is_pointee` above — see `receiver_elem_ctx` doc.
+        let no_dotted_path = self.receiver_elem_ctx;
+        self.receiver_elem_ctx = false;
         match self.peek().kind {
             // Plan 172.5 (D326 R1): `ref` — режим передачи параметра, НЕ тип.
             // Запрещены `ref T`-локалы/поля/возвраты/коллекции/sum/Option — всё
@@ -6289,11 +6316,16 @@ impl Parser {
                 if let TokenKind::Int(n) = self.peek().kind {
                     self.bump();
                     self.expect(&TokenKind::RBracket)?;
+                    // [M-serde-slice-generic-method-parse]: re-arm for the
+                    // recursive inner call so the no-dotted-path restriction
+                    // survives further `[]`/`[N]` nesting (`[][]T.method`).
+                    self.receiver_elem_ctx = no_dotted_path;
                     let inner = self.parse_type()?;
                     let span = start.merge(inner.span());
                     Ok(TypeRef::FixedArray(n as usize, Box::new(inner), span))
                 } else {
                     self.expect(&TokenKind::RBracket)?;
+                    self.receiver_elem_ctx = no_dotted_path;
                     let inner = self.parse_type()?;
                     let span = start.merge(inner.span());
                     Ok(TypeRef::Array(Box::new(inner), span))
@@ -6380,7 +6412,15 @@ impl Parser {
             }
             TokenKind::Ident(_) => {
                 let mut path = vec![self.parse_ident()?.0];
-                while matches!(self.peek().kind, TokenKind::Dot)
+                // [M-serde-slice-generic-method-parse]: in slice-receiver
+                // element position (`[]T`, `[][]T`, …), a following `.` is
+                // NEVER a qualified sub-path continuation of the element
+                // type — it starts the receiver's static-method-name suffix
+                // (`[]T.deserialize[D ...]`, D42 static receiver). Skip the
+                // dotted-path loop so the `.` and what follows are left for
+                // `parse_fn` to consume as the method name.
+                while !no_dotted_path
+                    && matches!(self.peek().kind, TokenKind::Dot)
                     && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
                 {
                     self.bump();

@@ -2,7 +2,7 @@
 // char/u8/bool. Раздел allowed-cases.
 //
 // Запрещённые `as`-cast'ы (compile-error):
-//   - int as char     → char.try_from(n)?
+//   - int as char     → char.from(n)?
 //   - char as u8    → u8.try_from(c)?  (за исключением CharLit)
 //   - int as bool     → n != 0
 //   - str as T        → T.try_from(s)?

@@ -207,11 +207,11 @@ fn bcrypt_base64_encode(data []u8) -> str {
 
 // BCRYPT_ALPHABET (64 ASCII chars) — прямой byte-доступ O(1) вместо
 // ретрактированного `chars().nth(idx)` O(n) скана (D260-амендмент).
-// `int as char` запрещён (D54) → `char.try_from` (precedent: std/encoding/json.nv
+// `int as char` запрещён (D54) → `char.from` (precedent: std/encoding/json.nv
 // Lexer `@peek()`/`@advance()`).
 fn alphabet_char(idx int) -> char {
     match BCRYPT_ALPHABET.bytes().get(idx) {
-        Some(b) => char.try_from(b as int).unwrap_or('.')
+        Some(b) => char.from(b as int).unwrap_or('.')
         None    => '.'
     }
 }
@@ -254,7 +254,7 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
 
 fn byte_to_char_opt(bytes ro []u8, i int) -> Option[char] {
     match bytes.get(i) {
-        Some(b) => Some(char.try_from(b as int).unwrap_or('\0'))
+        Some(b) => Some(char.from(b as int).unwrap_or('\0'))
         None    => None
     }
 }

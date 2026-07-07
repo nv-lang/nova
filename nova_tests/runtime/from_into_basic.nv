@@ -126,27 +126,27 @@ test "char.try_from multi-char" {
 
 // ───── int → char (codepoint range-check) ─────
 
-test "char.try_from(int) валидный codepoint" {
-    ro r = char.try_from(65)
+test "char.from(int) валидный codepoint" {
+    ro r = char.from(65)
     assert(r.is_ok())
     assert(r.unwrap_or(0) == 65)
 }
 
 
-test "char.try_from(int) negative" {
-    ro r = char.try_from(-1)
+test "char.from(int) negative" {
+    ro r = char.from(-1)
     assert(r.is_err())
 }
 
 
-test "char.try_from(int) выше 0x10FFFF" {
-    ro r = char.try_from(0x110000)
+test "char.from(int) выше 0x10FFFF" {
+    ro r = char.from(0x110000)
     assert(r.is_err())
 }
 
 
-test "char.try_from(int) surrogate" {
-    ro r = char.try_from(0xD800)
+test "char.from(int) surrogate" {
+    ro r = char.from(0xD800)
     assert(r.is_err())
 }
 

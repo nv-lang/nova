@@ -1735,29 +1735,112 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   vec, json_test — pass; широкая дельта против main-бинаря — 0 регрессий.
 
 
-- **[M-f64-try-parse-to-parse-f64]** (2026-07-07, P2, Wave: [sonnet/haiku]-заход сразу после
-  вливания A4 — трогает emit_c) — `f64.try_parse(s) -> Option[f64]` нарушает R1/R3/R4 (D325:
-  Option вместо Result; try_ без infallible-сиблинга) и §3 (компиляторный builtin, хардкод в
-  4 местах emit_c.rs :30970/:39801/:43421/:47128 поверх nova_str_to_f64). Целевая форма (уточнена
-  владельцем 2026-07-07: парсинг = конструктор-конверсия, дом — тип-ЦЕЛЬ, не str):
-  `fn f64.parse(s str) -> Result[f64, ParseFloatError]` (статик, поверх extern
-  nova_str_to_f64); builtin снести; вызовов 2 (json.nv:483, _experimental complex.nv:368).
-  При 174.1 генерализуется type-set'ом: `fn[T FloatSet] T.parse(s) -> Result[...]`
-  (+SignedInt/UnsignedInt с radix); туда же РЕВИЗИЯ `str @parse_int` → `int.parse(s, radix)`
-  (str-версия ретрактируется — строка не должна знать о каждом числовом типе).
-  Спека: примеры type-set блока `T.try_parse(...)` → `T.parse(...)` (до-R3 текст),
-  амендмент в 02-types.md:13912-зоне.
-  ТУДА ЖЕ: `char.try_from(cp int) -> Result[char, CharTryFromError]` (runtime/char.nv:21) —
-  единственный статик char без infallible-сиблинга (R3-нарушение) → `char.from(cp int) ->
-  Result[char, CharFromError]` (+ренейм типа ошибки); вызовов ~6-8 (string/core ×2, hex ×2,
-  bcrypt ×2 + греп).
+- **[M-f64-try-parse-to-parse-f64]** ✅ **FIXED** (2026-07-07) — `f64.try_parse(s) ->
+  Option[f64]` нарушал R1/R3/R4 (D325: Option вместо Result; try_ без infallible-сиблинга) и
+  §3 (компиляторный builtin, хардкод в emit_c.rs поверх `nova_str_to_f64`). Снесено: f64-арм
+  вырезан из ВСЕХ мест `try_parse`-таблицы (Path-form value-emission + 2 дубликата
+  return-type-inference + `infer_static_method_ret` exclusion-list) — `f64.try_parse(...)`
+  теперь честный `[E_UNKNOWN_STATIC_METHOD]` (fall-through guard [M-154.1], verified). `f32`
+  НЕ тронут (вне скоупа фикса — try_parse для f32 остался).
+  Замена: `f64.parse(s str) -> Result[f64, ParseFloatError]`
+  (`std/runtime/string/parse.nv`) — **ЦЕЛИКОМ Nova-body, БЕЗ компиляторного знания** (§3-
+  коррекция владельца 2026-07-07 после первого захода с приватным `__parse_f64_opt`
+  builtin-триггером — тот подход был "хардкод хардкодом", отклонён и снесён обратно).
+  Финальная форма: тонкий out-param C-шим `nova_str_parse_f64(nova_str s, double* out) ->
+  nova_bool` в `nova_rt/conv.h` (оборачивает существующий `nova_str_to_f64`, D407/net2-стиль
+  bool+out-указатель, прецедент `out_err *mut int` в net2/tcp.nv) + ОБЫЧНАЯ `extern "C" fn
+  nova_str_parse_f64(s str, out *mut f64) -> bool` FFI-декларация (D282) в parse.nv + чистое
+  Nova-тело (`mut v = 0.0; if unsafe { nova_str_parse_f64(s, &v) } { Ok(v) } else {
+  Err(Invalid) }`, auto-address `&v` на mut-локал). Компилятор резолвит вызов ОБЫЧНЫМ FFI-путём
+  — ни одного нового имени parse-семейства в чекере/кодогене. Вызовов мигрировано 2:
+  json.nv:483 (`match f64.try_parse(text) { Some.. None.. }` → `match f64.parse(text) { Ok..
+  Err(_).. }`), _experimental complex.nv:368 (аналогично `parse_f64_or_err`).
+  Спека: 02-types.md примеры type-set блока `T.try_parse(...)` → `T.parse(...)` (13912/6456/
+  строка "Reuse через семейства") + однострочный R3-амендмент с датой (первое лицо).
+  Финальный грep-аудит (§3-подтверждение): `try_parse|parse_f64|__parse` в emit_c.rs —
+  ТОЛЬКО остатки живой (не тронутой) `try_parse`-ветки для int/u64/u32/u16/u8/i32/i16/i8/f32/
+  bool/char (вне скоупа) + имя C-хелпера `nova_parse_f64_result`/`nova_str_to_f64` (conv.h,
+  существовал ДО фикса, используется try_from/try_parse-f32-веткой); НИ ОДНОГО упоминания
+  `__parse_f64_opt` или иного parse-family имени, специфичного для НОВОГО `f64.parse`, не
+  осталось нигде в компиляторе — resolution идёт целиком через обычный
+  declared-function/FFI путь.
+  ТУДА ЖЕ: `char.try_from(cp int) -> Result[char, CharTryFromError]` (единственный статик char
+  без infallible-сиблинга, R3-нарушение) → `char.from(cp int) -> Result[char, CharFromError]`
+  (+ренейм типа ошибки). Source of truth — `compiler-codegen/src/codegen/runtime_registry.rs`
+  (std/runtime/char.nv авто-генерируется оттуда, `nova regen-runtime`); ренейм ТАМ принят
+  как есть (существующий registry — не новый компиляторный хардкод per correction п.3).
+  Call-sites мигрировано ~25 (полный греп, шире оценки ~6-8): std/runtime/{string/core.nv×2,
+  defaults.nv×2, read_buffer.nv}, std/_experimental/{crypto/bcrypt.nv×2, encoding/hex.nv×2,
+  encoding/url.nv×3, identifiers/ulid.nv×2, identifiers/uuid.nv×2}, std/encoding/{json.nv×2,
+  base64.nv×3, utf16.nv}, std/http/url.nv, std/unicode/cp_utils.nv, std/testing/property.nv,
+  std/prelude/{errors.nv (декларация), collections.nv (import+комменты)} + комменты в
+  nova_tests/{runtime/from_into_basic.nv (4 INT-arg теста переименованы), syntax/as_cast_*,
+  plan91_13/from_codepoint_test.nv} + spec_tests/conformance/partial_prelude/
+  d371_partial_prelude_collections.nv (комменты). НЕ тронуты (другой, str-аргумент,
+  compiler-hardcoded `T.try_from(str)`-путь, отдельный от char.from(int)): from_into_basic.nv
+  str-тесты (109/116/122), str/conversions_err.nv (все — str-arg builtin, скоуп не этот).
+  Гейты: сборка nova-cli+compiler-codegen (nova-lsp тоже, unaffected) OK; conformance 54/0
+  (delta 0); std/encoding/json_test 24/24; std/encoding/serde/json PASS; std/_experimental/
+  math/complex CC-FAIL — **pre-existing** (NovaTuple_Complex/Nova_Complex_method_equal mono
+  gap, НЕ про parse_f64_or_err — сгенерированный C для мигрированной функции корректен,
+  подтверждено грепом `nova_fn_...parse_f64_or_err`/`nova_str_parse_f64` в .c); std/runtime/
+  read_buffer standalone CODEGEN-FAIL / nova_tests/runtime folder-CU CODEGEN-FAIL (str.len()
+  retired, gc_introspect.nv/memory_growth.nv, датировано 2026-06-17) — **pre-existing,
+  изоляция вне обычного CU-контекста** (в реальном потребителе — nova_tests/buffers/
+  read_char_str — PASS); nova_tests/plan91_fe2/neg/parse_int_overflow_err RUN-FAIL —
+  **pre-existing** (parse_int body byte-identical, не тронут этим заходом).
 
-- **[M-serde-slice-generic-method-parse]** (2026-07-07, P2, Wave: §4а-очередь после A4) —
-  парсер падает на serde.nv:311 (`expected ], got identifier` в 311:37): обобщённый метод с
-  generic-параметром на []T-ресивере (`[]T.deserialize[D ...]`-форма) не парсится → ВЕСЬ
-  folder-CU std/encoding/serde CODEGEN-FAIL (блокирует serde-тесты, serdejson, http_typed).
-  Pre-existing (найден волной D410, подтверждён после to_str_pretty-правки). Минимальную
-  репродукцию снять при заходе.
+- **[M-serde-slice-generic-method-parse]** ✅ **FIXED** (2026-07-07, parser/mod.rs) —
+  корень: `parse_fn`'s slice-receiver arm (`[]T`, D38) parses the element type via the
+  general `parse_type()`, whose `Ident` arm greedily continues a DOTTED qualified-path
+  (`T.deserialize`) and then reads the trailing `[...]` as generic type-ARGS (no bounds) —
+  so `fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> ...`
+  (serde.nv:311, static D42 receiver) folded `T.deserialize` into one path, then choked
+  parsing the method's OWN generic-decl `[D Deserializer]` as instantiation-args, failing
+  at 311:37 (`expected ], got identifier` on the bound name). The instance form
+  (`[]T @serialize[S ...]`, serde.nv:303) never hit this — `@` doesn't continue a dotted
+  path, only `.` does. Fix: new single-consumption context flag `receiver_elem_ctx`
+  (mirrors the existing `pointee_ctx` pattern) set by `parse_fn` right before parsing the
+  slice-receiver element type; `parse_type`'s `Ident` arm skips its dotted-path
+  continuation loop when the flag is set, and the Array/FixedArray arms re-arm it before
+  their own recursive `parse_type()` call so it survives arbitrary slice depth
+  (`[][]T.method`). Verified: minimal 1-line repro (`fn[T Deserialize] []T.deserialize[D
+  Deserializer](mut d D) -> Result[[]T, int] { Ok([]) }`) now parses (progresses to a
+  semantic E_BOUND_UNKNOWN on the fabricated bound, not a syntax error); real
+  `std/encoding/serde/serde.nv` (folder-CU) now compiles and its `json` sub-test runs
+  (PASS 1/1); `nova_tests/serde` and `nova_tests/serde_e2e` and
+  `nova_tests/http_typed/typed_json_test` now compile+run (previously CODEGEN-FAIL,
+  whole-CU blocked) but surface a NEW downstream runtime gap — see
+  `[M-slice-static-deserialize-garbage-len]` below. Gates: conformance 54/0 (delta 0 vs
+  pre-fix), `std/encoding/json_test` 24/24 (unaffected, unrelated module).
+
+- **[M-slice-static-deserialize-garbage-len]** (planned, P2, home **codegen/checker —
+  static generic method dispatch on slice receiver**) — NEWLY SURFACED
+  (2026-07-07) by `[M-serde-slice-generic-method-parse]`: this exact static-receiver form
+  (`[]T.deserialize[D ...]` / call-site `Vec[T].deserialize(...)`) never compiled before,
+  so it was never runtime-exercised. Repro: `nova_tests/serde_e2e/roundtrip.nv` —
+  `User.deserialize` (line 46) calls `ro tags = Vec[str].deserialize(s3)?` (line 54) for
+  field `tags []str`; the returned `Vec` is corrupt — `tags.len()` immediately after the
+  call (before any record construction) prints a garbage huge int (observed
+  `2453244099680`, non-deterministic across runs) instead of `2`; JSON encode of the SAME
+  value is correct (`"tags":["x","y"]` — so `@serialize`/instance-form round-trips fine,
+  only the STATIC `.deserialize` form on a slice receiver is broken). Same symptom in
+  `nova_tests/serde/autoderive.nv` (`#impl(Deserialize)` auto-derive of a `tags []str`
+  field — `autoderive.nv:32,46`) and `nova_tests/http_typed/typed_json_test.nv` (3 asserts
+  on `w.tags.len()`). Separately (may be same root or a sibling gap): a DIRECT top-level
+  `json_encode[[]str](v)` / `json_decode[[]str](s)` call (bypassing any hand-written
+  record wrapper) fails EARLIER, at bound-check: `[E_?] type Vec does not satisfy
+  Serialize bound (in call to json_encode[T Serialize])` — the checker's generic-bound
+  satisfaction for `[]T`/`Vec[T]`-aliased receivers doesn't find the `[]T @serialize`
+  method (same dispatch-gap class as `[M-153.6-vec-hashmap-key-eq]`). Suspect for the
+  garbage-len bug: call-site spelling `Vec[str].deserialize(...)` vs decl spelling
+  `[]str.deserialize(...)` (D38 alias, `[]T` ≡ `Vec[T]`) diverging in receiver-name-based
+  mangling/lookup for the STATIC dispatch path specifically (instance `@serialize` isn't
+  affected — it dispatches on the runtime/structural receiver value, not on call-site
+  spelling text). NOT fixed here — out of parser scope (checker/codegen, explicit
+  boundary per Fix-1 instructions). Repro kept in `nova_tests/serde_e2e/roundtrip.nv` +
+  `nova_tests/serde/autoderive.nv` + `nova_tests/http_typed/typed_json_test.nv` (all 3
+  already RUN-FAIL in-tree; no new fixture needed).
 
 - **[M-d411-record-binding-destructuring]** (2026-07-07, P2, Wave: [sonnet]-заход после
   §4а-пачки) — реализация D411: record-паттерн в биндингах ro/mut (десугар до чекера в

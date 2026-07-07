@@ -126,14 +126,14 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
             ro sb = scheme.bytes()
             // Первый символ — letter
             match sb.get(0) {
-                Some(b) if !is_alpha(char.try_from(b as int).unwrap_or(' ')) =>
+                Some(b) if !is_alpha(char.from(b as int).unwrap_or(' ')) =>
                     throw InvalidScheme { value: scheme }
                 _ => ()
             }
             // Остальные — letter/digit/+/-/.
             for j in 1..scheme.byte_len() {
                 match sb.get(j) {
-                    Some(b) if !is_scheme_char(char.try_from(b as int).unwrap_or(' ')) =>
+                    Some(b) if !is_scheme_char(char.from(b as int).unwrap_or(' ')) =>
                         throw InvalidScheme { value: scheme }
                     _ => ()
                 }
@@ -206,7 +206,7 @@ fn find_first_of(s str, chars str) -> Option[int] {
     ro sb = s.bytes()
     mut i = 0
     while i < s.byte_len() {
-        ro c = char.try_from(sb[i] as int).unwrap_or(' ')
+        ro c = char.from(sb[i] as int).unwrap_or(' ')
         if chars.contains(str.from(c)) { return Some(i) }
         i += 1
     }

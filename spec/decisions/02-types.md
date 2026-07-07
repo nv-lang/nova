@@ -6453,7 +6453,7 @@ fn[T From[K], K] T @construct_from(v K) -> T => T.from(v)   // parametric protoc
 
 **Bound = protocol-тип (D72) ИЛИ type-set ([D310](#d310-type-set-bounds-plan-1723), Plan 172.3).** Type-set — именованное
 множество конкретных типов (`type SignedInt set i8 | i16 | …`), используемое как bound:
-`fn[T SignedInt] T.try_parse(...)`. Композиция type-set ∧ protocol — через тот же `+`
+`fn[T SignedInt] T.parse(...)`. Композиция type-set ∧ protocol — через тот же `+`
 (`[T SignedInt + Hash]`): T ∈ set И реализует protocol, проверки независимы per-member;
 не более одного type-set в одном bound-листе (`E_MULTIPLE_TYPE_SETS`). Произвольные
 **representation/underlying** bounds (`~int`, structural) — по-прежнему **open question**
@@ -13909,7 +13909,7 @@ D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity)
 **Статус:** дизайн закреплён 2026-06-28 (owner sign-off; Plan 172.3 Ф.0). Amends [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) + [D145](#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101): «bound = только protocol» → «protocol ИЛИ type-set».
 
 ### Что
-Новая kind-форма объявления типа — **type-set** — задаёт **именованное множество конкретных типов**, используемое как generic-bound (`fn[T IntSet] …`). Это Go-style type-constraint: код, общий для семейства примитивов (`int.try_parse`/`u32.try_parse`/…), выражается одним generic вместо per-type обёрток. Частично закрывает [Q-representation-bound](../open-questions.md#q-representation-bound) — **только explicit-member-set**; `~underlying`/repr/structural — по-прежнему Plan 102.
+Новая kind-форма объявления типа — **type-set** — задаёт **именованное множество конкретных типов**, используемое как generic-bound (`fn[T IntSet] …`). Это Go-style type-constraint: код, общий для семейства примитивов (`int.parse`/`u32.parse`/…), выражается одним generic вместо per-type обёрток. Частично закрывает [Q-representation-bound](../open-questions.md#q-representation-bound) — **только explicit-member-set**; `~underlying`/repr/structural — по-прежнему Plan 102.
 
 ```nova
 // inline
@@ -13921,8 +13921,14 @@ type AnyNumber set
     | i8 | i16 | i32 | i64 | int
     | u8 | u16 | u32 | u64 | uint
 
-fn[T UnsignedInt] T.try_parse(s str, radix int) -> Result[T, ParseUIntError] => ...
+fn[T UnsignedInt] T.parse(s str, radix int) -> Result[T, ParseUIntError] => ...
 ```
+
+> **Амендмент (R3, 2026-07-07, я):** примеры этого блока были `T.try_parse(...)` (Option-контракт,
+> до-R3 текст). `try_parse` без infallible-сиблинга нарушает R3 (D325); я ретрактировал
+> компиляторный `f64.try_parse` builtin и заменил на `f64.parse(s) -> Result[f64, ParseFloatError]`
+> (`[M-f64-try-parse-to-parse-f64]`). Примеры выше переписаны на `T.parse` — future generalization
+> (Plan 174.1) читай как `T.parse`, не `T.try_parse`.
 
 ### Правило
 
@@ -13939,7 +13945,7 @@ fn[T UnsignedInt] T.try_parse(s str, radix int) -> Result[T, ParseUIntError] => 
 - `E_MULTIPLE_TYPE_SETS` — >1 type-set в одном bound-листе.
 
 ### Почему
-- **Reuse через семейства примитивов** — один `fn[T SignedInt] T.try_parse` вместо ×10 обёрток (разблокирует Plan 174.1, вариант B).
+- **Reuse через семейства примитивов** — один `fn[T SignedInt] T.parse` вместо ×10 обёрток (разблокирует Plan 174.1, вариант B).
 - **Zero-ambiguity синтаксис** через существующий D52-диспетч (kind-токен, как `alias`/`protocol` под D53) — без нового top-level keyword, без backtracking, без конфликта с sum-`|`.
 - **Звучность в чекере, лоуэринг в codegen** (§0/§1): membership и легальность операторов — чекер; `T.MAX` — лоуэринг подставленного имени, без `nova_int`-fallback.
 - **Знаковость разрешена на уровне декларации** (§2/§5), не рантайм-веткой.

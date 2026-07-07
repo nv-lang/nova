@@ -359,22 +359,26 @@ export type MultiErrorTruncated {
 // Char conversion errors (D54/D77)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ошибка конверсии `int` → `char`. Выбрасывается `char.try_from(cp int)`
+/// Ошибка конверсии `int` → `char`. Выбрасывается `char.from(cp int)`
 /// когда codepoint вне диапазона [0, 0x10FFFF] или является surrogate
 /// [0xD800, 0xDFFF].
 ///
 /// Unit-тип — сам факт «невалидный codepoint», payload не нужен.
 ///
+/// [M-f64-try-parse-to-parse-f64] (2026-07-07): renamed from `CharTryFromError`
+/// — `char.try_from` renamed to `char.from` (R3: was the only static char
+/// conversion without an infallible sibling).
+///
 /// # Examples
 ///
 /// ```nova
-/// match char.try_from(-1) {
+/// match char.from(-1) {
 ///     Ok(c) => ...
-///     Err(CharTryFromError) => // codepoint out of range
+///     Err(CharFromError) => // codepoint out of range
 /// }
 /// ```
 #stable(since = "0.1")
-export type CharTryFromError
+export type CharFromError
 
 /// Ошибка конверсии `char` → `u8`. Выбрасывается `u8.try_from(c char)`
 /// когда codepoint > 0xFF (символ не является Latin-1).
