@@ -12226,16 +12226,30 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
                 if let TypeRef::Named { path, generics, .. } = &obj_tr {
-                    if generics.is_empty() {
-                        if let Some(type_name) = path.last() {
-                            if let Some(td) = self.types.get(type_name) {
-                                if let TypeDeclKind::Record(fields) = &td.kind {
-                                    if td.generics.is_empty() {
-                                        return fields
-                                            .iter()
-                                            .find(|f| &f.name == name)
-                                            .map(|f| f.ty.clone());
-                                    }
+                    if let Some(type_name) = path.last() {
+                        if let Some(td) = self.types.get(type_name) {
+                            if let TypeDeclKind::Record(fields) = &td.kind {
+                                if td.generics.is_empty() && generics.is_empty() {
+                                    return fields
+                                        .iter()
+                                        .find(|f| &f.name == name)
+                                        .map(|f| f.ty.clone());
+                                }
+                                // ice-p67-http (2026-07-08): generic record с ИЗВЕСТНЫМИ
+                                // type-args ресивера (`@map: HashMap[K, V]` внутри
+                                // HashMapIter[K, V]) — поле резолвится подстановкой
+                                // receiver-args в объявленный тип поля (тот же
+                                // subst_receiver_generics, что в f3_check_member_ctx).
+                                // Раньше generic-ресивер целиком выпадал в None →
+                                // f3_check_member_ctx молча пропускал НЕСУЩЕСТВУЮЩЕЕ
+                                // поле (`@map._buckets` после переименования) → чекер
+                                // PASS + P67-ICE в codegen (Index element type unknown).
+                                if !td.generics.is_empty() && td.generics.len() == generics.len() {
+                                    return fields
+                                        .iter()
+                                        .find(|f| &f.name == name)
+                                        .map(|f| self.subst_receiver_generics(
+                                            &f.ty, &td.generics, generics));
                                 }
                             }
                         }
