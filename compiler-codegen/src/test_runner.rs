@@ -13,6 +13,7 @@
 //!   - Windows: Clang (LLVM install), MSVC (через vcvars64.bat), GCC (MSYS).
 //!   - Linux/macOS: Clang (system), GCC (system).
 
+use crate::ast;
 use crate::codegen::CEmitter;
 use crate::manifest;
 use crate::parser;
@@ -1542,6 +1543,14 @@ pub enum SkipReason {
     /// Plan 33 V1: тест требует конкретный SMT backend
     /// (через `// REQUIRES_SMT_BACKEND z3`), но активный backend другой.
     SmtBackend { required: String, actual: String },
+    /// [M-runner-testless-units-main-impl]: юнит без единого `test "..."`
+    /// блока и без явного `fn main()` — `nova_fn_main_impl` в этом случае
+    /// codegen НЕ эмитит (см. emit_main_wrapper/emit_nova_main в
+    /// codegen/emit_c.rs), поэтому cc/link упал бы `undefined symbol:
+    /// nova_fn_main_impl` несмотря на то что codegen (.nv → .c) прошёл
+    /// успешно. Компиляция уже проверена — SKIP вместо CC-FAIL, cc/link/run
+    /// не выполняются (дешевле оборвать сразу после codegen).
+    NoEntryPoint,
 }
 
 impl SkipReason {
@@ -1560,6 +1569,8 @@ impl SkipReason {
                 "requires NOVA_SMT_BACKEND={} but running with {}",
                 required, actual,
             ),
+            SkipReason::NoEntryPoint =>
+                "no test blocks and no fn main() — nothing to link/run (compiled OK)".to_string(),
         }
     }
 }
@@ -2076,11 +2087,14 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let compile_start = Instant::now();
 
     // Step 1: codegen.
-    // codegen_to_c returns Ok((codegen_warns, lint_warns)) on success,
-    // Err(msg) on compile error. codegen_warnings — lints от CEmitter
-    // (anonymous-embed override etc); lint_warnings — от lints::lint_module
-    // (Plan 52 Ф.9: NaN-key, duplicate-map-key, и др. для
-    // EXPECT_COMPILE_WARNING сверки).
+    // codegen_to_c returns Ok((codegen_warns, lint_warns, has_runnable_entry))
+    // on success, Err(msg) on compile error. codegen_warnings — lints от
+    // CEmitter (anonymous-embed override etc); lint_warnings — от
+    // lints::lint_module (Plan 52 Ф.9: NaN-key, duplicate-map-key, и др. для
+    // EXPECT_COMPILE_WARNING сверки). has_runnable_entry (Fix
+    // [M-runner-testless-units-main-impl]) — true если module имеет ≥1
+    // test-блок или явный `fn main()` (иначе `nova_fn_main_impl` не
+    // эмитится, cc/link неизбежно упадёт — SKIP ниже).
     // Plan 48 Ф.7.6: mono_depth прокинут через opts (None = default 500).
     // Plan 140 Ф.2: contracts_off прокинут через opts (build-policy opt-out).
     // Per-fixture `// CONTRACTS off|enforce` директива переопределяет
@@ -2088,12 +2102,19 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let contracts_off = parse_contracts_policy(&src).unwrap_or(opts.contracts_off);
     let codegen_result = codegen_to_c(opts.nv_file, &src, opts.mono_depth, contracts_off);
     let codegen_warnings: Vec<String> = match &codegen_result {
-        Ok((ws, _)) => ws.clone(),
+        Ok((ws, _, _)) => ws.clone(),
         Err(_) => vec![],
     };
     let lint_warnings: Vec<String> = match &codegen_result {
-        Ok((_, ls)) => ls.clone(),
+        Ok((_, ls, _)) => ls.clone(),
         Err(_) => vec![],
+    };
+    // [M-runner-testless-units-main-impl]: true когда codegen succeeded И
+    // module имеет ≥1 test-блок или явный `fn main()`. `false` на Err (не
+    // используется в этом случае — codegen-error path возвращает раньше).
+    let has_runnable_entry: bool = match &codegen_result {
+        Ok((_, _, entry)) => *entry,
+        Err(_) => false,
     };
     let cg_warn_str: String = codegen_warnings.join("\n");
 
@@ -2176,6 +2197,19 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let c_file = opts.nv_file.with_extension("c");
     if !c_file.is_file() {
         return Outcome::Fail { stage: Stage::NoCFile, elapsed: start.elapsed() };
+    }
+
+    // [M-runner-testless-units-main-impl]: codegen прошёл, .c записан
+    // (compile-check уже подтверждён) — но модуль без test-блоков и без
+    // `fn main()` не эмитит `nova_fn_main_impl`, поэтому cc/link неизбежно
+    // упадёт `undefined symbol: nova_fn_main_impl` (см. emit_main_wrapper).
+    // SKIP здесь — самая дешёвая точка обрыва: НЕ создаём tmp subdir, НЕ
+    // компилируем/линкуем C, НЕ запускаем exe.
+    if !has_runnable_entry {
+        return Outcome::Skipped {
+            reason: SkipReason::NoEntryPoint,
+            elapsed: start.elapsed(),
+        };
     }
 
     // Step 2 — isolated tmp subdir per test (Plan 26 Ф.2).
@@ -2571,7 +2605,7 @@ fn is_folder_module_peer(path: &Path) -> bool {
 ///
 /// Plan 48 Ф.7.6: `mono_depth` — optional CLI override для
 /// CEmitter.mono_depth_limit (None = default из env var или 500).
-fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off: bool) -> Result<(Vec<String>, Vec<String>), String> {
+fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off: bool) -> Result<(Vec<String>, Vec<String>, bool), String> {
     // Plan 57.D.1: PerfTimer wraps вокруг каждого pass. Markers эмитятся
     // если NOVA_PERF_TIMER=1, accumulated если NOVA_PERF_TIMER_AGGREGATE=1.
     let mut module = {
@@ -2819,6 +2853,23 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         }
     };
 
+    // [M-runner-testless-units-main-impl]: does this compilation unit have
+    // a runnable entry point? `nova_fn_main_impl` is only emitted (see
+    // emit_main_wrapper/emit_nova_main in codegen/emit_c.rs) when the FINAL
+    // merged module (post folder-module peer-merge/imports above) has ≥1
+    // `test "..."` block or an explicit top-level `fn main()`. `bench`-only
+    // modules don't count — bench_mode is off on the `nova test` path, so
+    // the bench branch of emit_main_wrapper never fires here (bench items
+    // ignored под nova test/nova build per D57 doc-comment on Item::Bench).
+    // Checked on `module` (not raw `src`) so folder-module CUs whose tests
+    // live in a peer file (not the alphabetically-first entry) are still
+    // detected correctly.
+    let has_runnable_entry = module.items.iter().any(|it| match it {
+        ast::Item::Test(_) => true,
+        ast::Item::Fn(f) => f.name == "main",
+        _ => false,
+    });
+
     let (c_code, warnings) = {
         let _t = crate::perf_timer::PerfTimer::new("codegen");
         let mut emitter = CEmitter::new();
@@ -2865,7 +2916,7 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
             e
         )
     })?;
-    Ok((warnings, lint_warnings))
+    Ok((warnings, lint_warnings, has_runnable_entry))
 }
 
 // ---------- test-all: walk + summary ----------

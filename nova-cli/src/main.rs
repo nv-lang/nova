@@ -1306,16 +1306,32 @@ fn build_source_map(
     map
 }
 
+/// [M-test-runner-shared-temp-collision]: root temp directory for a `nova
+/// test`/`nova test-build`/`nova build` process. Includes the current PID so
+/// concurrent `nova.exe` processes (parallel CI agents) — and sequential
+/// re-runs, which are always a *new* process with a *new* PID — never share
+/// the same root. Without the PID suffix, two processes running overlapping
+/// test sets produced identical `test_subdir` hash paths (Plan 26 Ф.2 hashes
+/// only the display name, not the pid) and raced on the same files: one
+/// process's cleanup (`TempSubdir`/`TmpDirGuard` Drop) could delete or
+/// truncate artifacts the other process was still reading/writing, causing
+/// spurious single-test FAILs — observed both across concurrent processes
+/// and across back-to-back sequential invocations (stale/locked directory
+/// from the previous run's cleanup racing the new run's `create_dir_all`).
+/// Determinism WITHIN one run is preserved: the pid is fixed for the whole
+/// process, so `test_subdir`'s per-display hash still resolves to the same
+/// path for the lifetime of a single `nova test` invocation.
 fn default_tmp_dir() -> PathBuf {
+    let root_name = format!("nova_tests-{}", std::process::id());
     if cfg!(target_os = "windows") {
         if let Some(temp) = std::env::var_os("TEMP") {
-            return PathBuf::from(temp).join("nova_tests");
+            return PathBuf::from(temp).join(&root_name);
         }
     }
     if let Some(tmpdir) = std::env::var_os("TMPDIR") {
-        return PathBuf::from(tmpdir).join("nova_tests");
+        return PathBuf::from(tmpdir).join(&root_name);
     }
-    PathBuf::from("/tmp/nova_tests")
+    PathBuf::from("/tmp").join(&root_name)
 }
 
 /// Hash `path` to a short hex string — used to make unique tmp subdirs

@@ -1676,15 +1676,21 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   зафиксировано здесь как побочная находка.
 
 - **[M-test-runner-shared-temp-collision]** (2026-07-07, P2, Wave: фикс-очередь §4а после разведки
-  E7320) — параллельные прогоны `nova test` из разных процессов бьются на общем
-  `%TEMP%\nova_tests\t-<hash>` (артефакты одного CU перетираются) → ложные единичные FAIL
-  (наблюдалось 52/1 на эталонных при четырёх фоновых агентах; с приватным TEMP стабильно 53/0;
-  впервые диагностировано sweep-агентом). Фикс: включить PID/уникальный суффикс процесса в
-  корень temp-каталога раннера (test_runner.rs). До фикса процессное правило: параллельные
-  прогоны — только с приватным TEMP/TMP. Наблюдалось СНОВА в этом заходе (nova_tests/plan62/
-  duplicate_hashable_protocol флапал PASS/PASS/RUN-FAIL на 3 последовательных прогонах с одним и
-  тем же биноремым/кодом — подтверждает, что проблема не только в параллельных прогонах, но и в
-  повторных последовательных с одной и той же приватной TEMP-директорией).
+  E7320) — **✅ FIXED** (2026-07-07, worktree `nova-runner`/`runner-fixes`). параллельные прогоны
+  `nova test` из разных процессов бьются на общем `%TEMP%\nova_tests\t-<hash>` (артефакты одного
+  CU перетираются) → ложные единичные FAIL (наблюдалось 52/1 на эталонных при четырёх фоновых
+  агентах; с приватным TEMP стабильно 53/0; впервые диагностировано sweep-агентом). Фикс:
+  `default_tmp_dir()` (nova-cli/src/main.rs) теперь строит корень как `nova_tests-<PID>` (было
+  константное `nova_tests`) — `std::process::id()` уникален и для параллельных процессов, и для
+  каждого нового последовательного запуска `nova.exe` (новый процесс = новый PID); детерминизм
+  ВНУТРИ одного прогона сохранён (`test_subdir`'s per-display hash не менялся). Приёмка:
+  2 параллельных фоновых `nova test nova_tests/buffers` без приватного TEMP, ×3 повтора — все
+  6 PASS (было бы флаком до фикса). Проверено также `duplicate_hashable_protocol.nv` (nova_tests/
+  plan62) флапавшая PASS/RUN-FAIL — **флак сохранился и после фикса, включая single-process
+  sequential прогоны без единого элемента параллелизма/temp-коллизии** → диагноз этого конкретного
+  флака НЕ temp-race (вероятно отдельный дефект — RUN-FAIL обрывается на 4-й из 90 проверок,
+  похоже на crash/GC-race в рантайме теста); отдельный маркер не заведён, зафиксировано здесь как
+  побочная находка для дальнейшего разбора.
 
 - **[M-http-props-mut-chain-argpos-value-ptr-mismatch]** (2026-07-07, P1, Wave: 184 Ф.2 —
   приёмочный тест) — **ЗАКРЫТ 2026-07-07 (Plan 184 Ф.2, заход 2).** Результат беглой
@@ -1946,10 +1952,22 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   валит юниты sync и sync_test в --full std/runtime (бисект 2026-07-07: pre-existing на
   всех точках). Снести/переписать по test-conventions.
 - **[M-runner-testless-units-main-impl]** (2026-07-07, P2, Wave: заход test_runner вместе с
-  [M-test-runner-shared-temp-collision]) — 8 юнитов std/runtime (char/defaults/fibers/gc/
-  math/numeric/raw_mem/runtime) падают линковкой `nova_fn_main_impl`: раннер собирает exe
-  для модулей БЕЗ test-блоков. Такие юниты должны получать SKIP (или компиляцию без линка),
-  не CC-FAIL. Pre-existing (бисект).
+  [M-test-runner-shared-temp-collision]) — **✅ FIXED** (2026-07-07, worktree `nova-runner`/
+  `runner-fixes`). 8 юнитов std/runtime (char/defaults/fibers/gc/math/numeric/raw_mem/runtime)
+  падали линковкой `nova_fn_main_impl`: раннер собирает exe для модулей БЕЗ test-блоков.
+  Фикс: `codegen_to_c` (test_runner.rs) теперь после codegen (на ФИНАЛЬНОМ смёрженном `module`,
+  учитывает folder-module peer-merge) считает `has_runnable_entry` = есть ≥1 `test "..."` блок
+  ИЛИ явный top-level `fn main()` (bench-блоки не считаются — `nova test` не включает bench_mode,
+  emit_main_wrapper их ветку не берёт). `run_one` при `!has_runnable_entry` возвращает новый
+  `SkipReason::NoEntryPoint` СРАЗУ после того как .c записан (компиляция уже проверена) — БЕЗ tmp
+  subdir/cc/link/run (самая дешёвая точка обрыва). Codegen-ошибки при этом НЕ маскируются: путь
+  «SKIP» достижим только если codegen реально успешен. Приёмка `nova test --full ../std/runtime`:
+  было 0/13 → стало PASS 0 / FAIL 4 / SKIP 9 (8 из маркера + `write_buffer.nv`, тоже безтестовый —
+  раньше не диагностирован по имени, теперь корректно SKIP той же логикой); остаток 4 FAIL —
+  pre-existing вне этой зоны (2× partial-prelude: read_buffer/`char.from`,
+  string_builder/`str.from_bytes_unchecked_steal`; 2× sync-дубль: sync/sync_test, см.
+  [M-sync-test-stale-duplicate]). Conformance `spec_tests/conformance --full`: 56/0, дельта 0
+  против main.
 - **[M-compiler-nv-porting-wave]** (2026-07-07, P2, Wave: [haiku+sonnet] сразу после вливания
   parse-family-fix — общие ветки try_from/try_parse) — по карте аудита §3 (отчёт агента
   2026-07-07): (D) снос ~383 строк мёртвых *_unused()-реестров runtime_registry.rs:493-887;
