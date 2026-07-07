@@ -161,11 +161,11 @@ fn TomlParser mut @parse_table_header() Fail[ParseTomlError] -> () {
     ro path = @parse_key_path()
 
     if @peek() != Some(']') {
-        throw UnclosedTable { line: @line }
+        throw UnclosedTable { @line }
     }
     @advance()
     if is_array {
-        if @peek() != Some(']') { throw UnclosedTable { line: @line } }
+        if @peek() != Some(']') { throw UnclosedTable { @line } }
         @advance()
     }
 
@@ -192,8 +192,8 @@ fn TomlParser mut @parse_key() Fail[ParseTomlError] -> str {
     match @peek() {
         Some('"') => @parse_basic_string()
         Some(c) if is_bare_key_char(c) => @parse_bare_key()
-        Some(c) => throw UnexpectedChar { line: @line, col: @col, char: c }
-        None    => throw UnexpectedEof { line: @line }
+        Some(c) => throw UnexpectedChar { @line, @col, char: c }
+        None    => throw UnexpectedEof { @line }
     }
 }
 
@@ -209,7 +209,7 @@ fn TomlParser mut @parse_bare_key() -> str {
             _ => { done = true }
         }
     }
-    buf.into()
+    buf.into_str()
 }
 
 fn is_bare_key_char(c char) -> bool {
@@ -231,7 +231,7 @@ fn TomlParser mut @parse_key_value() Fail[ParseTomlError] -> () {
     @skip_whitespace_and_comments()
     if @peek() != Some('=') {
         throw UnexpectedChar {
-            line: @line, col: @col,
+            @line, @col,
             char: @peek() ?? ' '
         }
     }
@@ -249,8 +249,8 @@ fn TomlParser mut @parse_value() Fail[ParseTomlError] -> TomlValue {
         Some('{') => @parse_inline_table()
         Some('t') | Some('f') => @parse_bool()
         Some(c) if is_num_start(c) => @parse_number()
-        Some(c) => throw UnexpectedChar { line: @line, col: @col, char: c }
-        None    => throw UnexpectedEof { line: @line }
+        Some(c) => throw UnexpectedChar { @line, @col, char: c }
+        None    => throw UnexpectedEof { @line }
     }
 }
 
@@ -262,9 +262,10 @@ fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
     @advance()          // open "
     consume buf = StringBuilder.new()
     mut done = false
+    mut err Option[ParseTomlError] = None
     while !done {
         match @advance() {
-            None => throw UnexpectedEof { line: @line }
+            None => { err = Some(UnexpectedEof { @line }); done = true }
             Some('"') => { done = true }
             Some('\\') => {
                 match @advance() {
@@ -273,21 +274,23 @@ fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
                     Some('t') => buf.append('\t')
                     Some('"') => buf.append('"')
                     Some('\\') => buf.append('\\')
-                    Some(c) => throw InvalidString { line: @line, reason: "unknown escape" }
-                    None    => throw UnexpectedEof { line: @line }
+                    Some(c) => { err = Some(InvalidString { @line, reason: "unknown escape" }); done = true }
+                    None    => { err = Some(UnexpectedEof { @line }); done = true }
                 }
             }
             Some(c) => buf.append(c)
         }
     }
-    buf.into()
+    ro s = buf.into_str()
+    if err != None { throw err.unwrap() }
+    s
 }
 
 
 fn TomlParser mut @parse_bool() Fail[ParseTomlError] -> TomlValue {
     if @match_keyword("true") { TomlBool(true) }
     else if @match_keyword("false") { TomlBool(false) }
-    else { throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' } }
+    else { throw UnexpectedChar { @line, @col, char: @peek() ?? ' ' } }
 }
 
 fn TomlParser mut @match_keyword(kw str) -> bool {
@@ -326,12 +329,12 @@ fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
     if has_dot || has_exp {
         match f64.try_from(text) {
             Ok(f)  => TomlFloat(f)
-            Err(_) => throw InvalidNumber { line: @line, value: text }
+            Err(_) => throw InvalidNumber { @line, value: text }
         }
     } else {
         match i64.try_from(text) {
             Ok(n)  => TomlInt(n)
-            Err(_) => throw InvalidNumber { line: @line, value: text }
+            Err(_) => throw InvalidNumber { @line, value: text }
         }
     }
 }
@@ -355,7 +358,7 @@ fn TomlParser mut @parse_array() Fail[ParseTomlError] -> TomlValue {
         @skip_whitespace_and_newlines()
     }
     if @peek() != Some(']') {
-        throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
+        throw UnexpectedChar { @line, @col, char: @peek() ?? ' ' }
     }
     @advance()
     TomlArray(items)
@@ -373,7 +376,7 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
     ro key = @parse_key()
     @skip_whitespace_and_comments()
     if @peek() != Some('=') {
-        throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
+        throw UnexpectedChar { @line, @col, char: @peek() ?? ' ' }
     }
     @advance()
     @skip_whitespace_and_comments()
@@ -386,7 +389,7 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
         ro k = @parse_key()
         @skip_whitespace_and_comments()
         if @peek() != Some('=') {
-            throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
+            throw UnexpectedChar { @line, @col, char: @peek() ?? ' ' }
         }
         @advance()
         @skip_whitespace_and_comments()
@@ -395,7 +398,7 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
         @skip_whitespace_and_comments()
     }
     if @peek() != Some('}') {
-        throw UnexpectedChar { line: @line, col: @col, char: @peek() ?? ' ' }
+        throw UnexpectedChar { @line, @col, char: @peek() ?? ' ' }
     }
     @advance()
     TomlTable(t)
