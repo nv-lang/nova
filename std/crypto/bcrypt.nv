@@ -25,7 +25,7 @@
 
 module crypto.bcrypt
 
-import std.testing.handlers as th
+import std._experimental.crypto.sha256.{Sha256}
 
 
 /// Errors при bcrypt операциях.
@@ -64,16 +64,16 @@ const SALT_LEN int = 16          // 16 random bytes → 22 base64 chars
 /// # Examples
 /// ```nova
 /// with Random = th.seeded(42) {
-///     let h = Bcrypt.hash("secret", 10)
+///     let h = Bcrypt.hash("secret", 10)!!
 /// }
 /// ```
 #stable(since = "0.1")
-export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
+export fn Bcrypt.hash(password str, cost int) Random -> Result[str, BcryptError] {
     if cost < MIN_COST || cost > MAX_COST {
-        throw InvalidCost { value: cost }
+        return Err(InvalidCost { value: cost })
     }
     if password.bytes().len() > MAX_PASSWORD_LEN {
-        throw PasswordTooLong { length: password.bytes().len(), max: MAX_PASSWORD_LEN }
+        return Err(PasswordTooLong { length: password.bytes().len(), max: MAX_PASSWORD_LEN })
     }
 
     ro salt = Random.bytes(SALT_LEN)
@@ -81,7 +81,7 @@ export fn Bcrypt.hash(password str, cost int) Random Fail[BcryptError] -> str {
 
     // Format: $2b$<cost>$<salt><hash>
     ro cost_str = if cost < 10 { "0" + str.from(cost) } else { str.from(cost) }
-    "$2b$" + cost_str + "$" + bcrypt_base64_encode(salt) + bcrypt_base64_encode(hashed)
+    Ok("$2b$" + cost_str + "$" + bcrypt_base64_encode(salt) + bcrypt_base64_encode(hashed))
 }
 
 
@@ -176,7 +176,7 @@ const BCRYPT_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 
 
 fn bcrypt_base64_encode(data []u8) -> str {
-    consume buf = StringBuilder.with_capacity(data.len() * 4 / 3 + 4)
+    consume buf = StringBuilder.new().cap(data.len() * 4 / 3 + 4)
     mut i = 0
     while i + 2 < data.len() {
         ro b0 = data[i] as u32
@@ -210,7 +210,10 @@ fn bcrypt_base64_encode(data []u8) -> str {
 // `int as char` запрещён (D54) → `char.from` (precedent: std/encoding/json.nv
 // Lexer `@peek()`/`@advance()`).
 fn alphabet_char(idx int) -> char {
-    match BCRYPT_ALPHABET.bytes().get(idx) {
+    // [M-module-const-chars-bytes-resolution]: см. bcrypt_decode_char выше —
+    // локальная ro-копия перед `.bytes()`, не напрямую на module-level const.
+    ro alphabet = BCRYPT_ALPHABET
+    match alphabet.bytes().get(idx) {
         Some(b) => char.from(b as int) ?? '.'
         None    => '.'
     }
@@ -227,34 +230,54 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
     ro sb = s.bytes()
     mut i = 0
     while i + 3 < s.byte_len() {
-        ro c0 = bcrypt_decode_char(byte_to_char_opt(sb, i))
-        ro c1 = bcrypt_decode_char(byte_to_char_opt(sb, i + 1))
-        ro c2 = bcrypt_decode_char(byte_to_char_opt(sb, i + 2))
-        ro c3 = bcrypt_decode_char(byte_to_char_opt(sb, i + 3))
-        match (c0, c1, c2, c3) {
-            (Some(a), Some(b), Some(c), Some(d)) => {
-                ro triple = (a << 18) | (b << 12) | (c << 6) | d
-                out.push(((triple >> 16) & 0xFF) as u8)
-                out.push(((triple >> 8) & 0xFF) as u8)
-                out.push((triple & 0xFF) as u8)
-            }
-            _ => return None
-        }
+        // [M-match-tuple-option-value-deref]: последовательный `?`-unwrap каждого
+        // Option вместо `match (c0, c1, c2, c3) { (Some(a), ...) => ... }` —
+        // известный codegen-gap: match на tuple-из-Option[u32] эмитит `.f0->tag`
+        // (pointer-деref) для value-embedded `NovaOpt_uint32_t`, CC-FAIL
+        // «member reference type ... is not a pointer». Последовательный
+        // `?` даёт идентичную семантику (любой None → ранний `return None`)
+        // и этот путь не задевает.
+        ro a = bcrypt_decode_char(byte_to_char(sb, i))?
+        ro b = bcrypt_decode_char(byte_to_char(sb, i + 1))?
+        ro c = bcrypt_decode_char(byte_to_char(sb, i + 2))?
+        ro d = bcrypt_decode_char(byte_to_char(sb, i + 3))?
+        ro triple = (a << 18) | (b << 12) | (c << 6) | d
+        out.push(((triple >> 16) & 0xFF) as u8)
+        out.push(((triple >> 8) & 0xFF) as u8)
+        out.push((triple & 0xFF) as u8)
         i += 4
     }
-    // Trailing
-    if i + 1 < s.byte_len() {
-        match (bcrypt_decode_char(byte_to_char_opt(sb, i)), bcrypt_decode_char(byte_to_char_opt(sb, i + 1))) {
-            (Some(a), Some(b)) => out.push(((a << 2) | (b >> 4)) as u8)
-            _ => return None
-        }
+    // Trailing (тот же обход — последовательный `?` вместо tuple-match).
+    //
+    // BUGFIX: оригинал покрывал ТОЛЬКО «2 leftover chars → 1 byte» (salt,
+    // 22 chars = 5 групп по 4 + 2 leftover) и молча ТЕРЯЛ 3-й leftover-char
+    // для «3 leftover chars → 2 bytes» (hash, 31 char = 7 групп по 4 +
+    // 3 leftover) — round-trip `Bcrypt.hash`+`Bcrypt.verify` ломался именно
+    // на hash-порции (кусок теряемого байта менял decoded digest). Оба
+    // leftover-случая — зеркало `bcrypt_base64_encode`'s remaining==1/==2
+    // (байты→chars), здесь remaining chars→bytes: 2 chars→1 byte,
+    // 3 chars→2 bytes (стандартная base64 4-to-3 обратная формула).
+    ro remaining = s.byte_len() - i
+    if remaining == 2 {
+        ro a = bcrypt_decode_char(byte_to_char(sb, i))?
+        ro b = bcrypt_decode_char(byte_to_char(sb, i + 1))?
+        out.push(((a << 2) | (b >> 4)) as u8)
+    } else if remaining == 3 {
+        ro a = bcrypt_decode_char(byte_to_char(sb, i))?
+        ro b = bcrypt_decode_char(byte_to_char(sb, i + 1))?
+        ro c = bcrypt_decode_char(byte_to_char(sb, i + 2))?
+        out.push(((a << 2) | (b >> 4)) as u8)
+        out.push((((b << 4) | (c >> 2)) & 0xFF) as u8)
     }
     Some(out)
 }
 
-fn byte_to_char_opt(bytes ro []u8, i int) -> Option[char] {
+// Байты 0..255 всегда валидные Unicode scalar values (Latin-1 подмножество) —
+// `char.from` (Result, D325) для них никогда не возвращает `Err`; `.ok()`
+// (R4) даёт канонический Result→Option. `bytes.get(i)` даёт out-of-bounds `None`.
+fn byte_to_char(bytes ro []u8, i int) -> Option[char] {
     match bytes.get(i) {
-        Some(b) => Some(char.from(b as int) ?? '\0')
+        Some(b) => char.from(b as int).ok()
         None    => None
     }
 }
@@ -264,8 +287,15 @@ fn bcrypt_decode_char(c Option[char]) -> Option[u32] {
     match c {
         None => None
         Some(ch) => {
+            // [M-module-const-chars-bytes-resolution]: `.chars()` вызван на
+            // ЛОКАЛЬНОЙ ro-копии, не напрямую на module-level `const
+            // BCRYPT_ALPHABET` — известный codegen-gap: `CONST.method()` на
+            // top-level const резолвится как ошибочный path-call
+            // `nova_fn_CONST_method()` вместо instance-метода на строке,
+            // `NovaValue_CharsIter` init от `int`.
+            ro alphabet = BCRYPT_ALPHABET
             mut idx = 0
-            for ach in BCRYPT_ALPHABET.chars() {
+            for ach in alphabet.chars() {
                 if ach == ch { return Some(idx) }
                 idx += 1
             }
@@ -274,66 +304,4 @@ fn bcrypt_decode_char(c Option[char]) -> Option[u32] {
     }
 }
 
-
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "hash + verify round-trip" {
-    ro h = with Random = th.seeded(42) {
-        Bcrypt.hash("my-password", 4)        // cost=4 для скорости тестов
-    }
-    assert(Bcrypt.verify("my-password", h))
-    assert(!Bcrypt.verify("wrong-password", h))
-}
-
-test "детерминизм через seeded Random (тестовый сценарий)" {
-    ro h1 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
-    ro h2 = with Random = th.seeded(42) { Bcrypt.hash("password", 4) }
-    // Тот же seed → тот же salt → тот же hash
-    assert(h1 == h2)
-}
-
-test "разные salts → разные hashes" {
-    ro h1 = with Random = th.seeded(1) { Bcrypt.hash("password", 4) }
-    ro h2 = with Random = th.seeded(2) { Bcrypt.hash("password", 4) }
-    assert(h1 != h2)
-    // Но оба verify правильным паролем
-    assert(Bcrypt.verify("password", h1))
-    assert(Bcrypt.verify("password", h2))
-}
-
-test "формат hash правильный" {
-    ro h = with Random = th.seeded(0) { Bcrypt.hash("test", 4) }
-    assert(h.starts_with("$2b$04$"))
-}
-
-test "ошибка: cost вне диапазона" {
-    ro r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
-        ro _ = Bcrypt.hash("x", 1)
-        None
-    }
-    assert(match r {
-        Some(InvalidCost { .. }) => true
-        _                         => false
-    })
-}
-
-test "ошибка: пароль > 72 байта" {
-    mut long = ""
-    for i in 0..100 { long = long + "a" }
-    ro r = with Random = th.seeded(0), Fail[BcryptError] = |e| interrupt Some(e) {
-        ro _ = Bcrypt.hash(long, 4)
-        None
-    }
-    assert(match r {
-        Some(PasswordTooLong { .. }) => true
-        _                             => false
-    })
-}
-
-test "verify: malformed hash → false (не throws)" {
-    assert(!Bcrypt.verify("password", "not-a-bcrypt-hash"))
-    assert(!Bcrypt.verify("password", "$2b$10$short"))
-    assert(!Bcrypt.verify("password", ""))
-}
+// Тесты — см. peer-файл bcrypt_test.nv (module crypto.bcrypt_test).
