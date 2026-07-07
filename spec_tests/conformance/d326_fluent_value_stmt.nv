@@ -1,0 +1,53 @@
+// D326 Plan 184 Ф.2 (Р7) — chaining two `mut @setter(v) -> @` on a `value`-type receiver
+// in ONE statement must apply BOTH mutations to the original binding: a value-record
+// `-> @` returns `ref Self`, so the chain threads the receiver pointer; chain-norm must
+// NOT copy-hoist a value-typed root.
+//
+// The chain is exercised inside a plain `fn` (NOT a `test` block): chain-norm
+// only rewrites `Item::Fn` bodies, so the copy-hoist bug is only reachable from a real
+// function body (test blocks use a different lowering path).
+// Spec: spec/decisions/02-types.md D326 (Plan 184 Р7).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326StmtRec value {
+    ro a int
+    b   int
+    c   int
+}
+
+fn D326StmtRec.new(a int, b int, c int) -> D326StmtRec => { a, b, c }
+
+fn D326StmtRec mut @b(v int) -> @ {
+    @b = v
+}
+
+fn D326StmtRec mut @c(v int) -> @ {
+    @c = v
+}
+
+// Two-link chain as a bare statement, then observe the ORIGINAL binding.
+fn d326_chain_bc() -> (int, int) {
+    mut r = D326StmtRec.new(1, 0, 0)
+    r.b(5).c(9)
+    (r.b, r.c)
+}
+
+// Depth-3 chain, same shape.
+fn d326_chain_bcb() -> (int, int) {
+    mut r = D326StmtRec.new(1, 0, 0)
+    r.b(5).c(9).b(7)
+    (r.b, r.c)
+}
+
+test "2-link mut-setter chain, one statement, value type — both mutations land (Р7)" {
+    ro (b, c) = d326_chain_bc()
+    assert(b == 5)
+    assert(c == 9)
+}
+
+test "3-link mut-setter chain, one statement, value type — last write wins per field (Р7)" {
+    ro (b, c) = d326_chain_bcb()
+    assert(b == 7)
+    assert(c == 9)
+}

@@ -4,15 +4,15 @@
 // value-параметр того же места. `combine(a, a)` при `(x Big, mut y Big)`:
 // ro-авто-представление x (копия vs скрытая ссылка) наблюдаемо при mut-записи
 // в y того же места → результат зависел бы от представления → реджект.
-module neg.ref_alias_overlap_mut_any
+module neg.d326_ref_alias_overlap_mut_any_neg
 
-type Big value { a int, b int, c int }
-fn Big.new(x int) -> Big => { a: x, b: x, c: x }
+type D326Big value { a int, b int, c int }
+fn D326Big.new(x int) -> D326Big => { a: x, b: x, c: x }
 
-fn combine(x Big, mut y Big) -> int => x.a
+fn d326_combine(x D326Big, mut y D326Big) -> int => x.a
 
 test "same place to mut and value param overlaps (Р12)" {
-    mut a = Big.new(1)
-    ro _ = combine(a, a)
+    mut a = D326Big.new(1)
+    ro _ = d326_combine(a, a)
     assert(true)
 }

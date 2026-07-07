@@ -1,0 +1,56 @@
+// D326 Plan 184 Ф.2 (Р7) — a `value`-record fluent `mut @setter(v) -> @` chain in
+// RETURN position must initialise the returned VALUE from the fleeting `ref Self`
+// pointer: a value-record `-> @` returns `ref Self` (pointer); the by-value return
+// consumer (implicit trailing-expr return AND explicit `return`) must deref it via
+// the `ref T -> T` auto-conversion (Р5), mirroring the let-binding and call-arg
+// consumers via the shared `is_fluent_value_ptr_for_target` predicate.
+//
+// Before the fix, codegen would incorrectly assign a pointer to a value slot.
+// Depth-4 chain exercises the full: root materialise, inner `ref Self` passthrough,
+// and the final value-consumer deref.
+//
+// Exercised inside plain `fn`s (NOT `test` blocks): the return-position lowering
+// is only reachable from a real function body.
+// Spec: spec/decisions/02-types.md D326 (Plan 184 Р7).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326RetRec value {
+    a int
+    b int
+    c int
+    d int
+}
+
+fn D326RetRec.new(a int, b int, c int, d int) -> D326RetRec => { a, b, c, d }
+
+fn D326RetRec mut @a(v int) -> @ { @a = v }
+fn D326RetRec mut @b(v int) -> @ { @b = v }
+fn D326RetRec mut @c(v int) -> @ { @c = v }
+fn D326RetRec mut @d(v int) -> @ { @d = v }
+
+// Depth-4 chain as the trailing (implicit-return) expression.
+fn d326_build_trailing() -> D326RetRec {
+    D326RetRec.new(0, 0, 0, 0).a(1).b(2).c(3).d(4)
+}
+
+// Depth-4 chain via an explicit `return`.
+fn d326_build_explicit() -> D326RetRec {
+    return D326RetRec.new(0, 0, 0, 0).a(1).b(2).c(3).d(4)
+}
+
+test "depth-4 mut-setter chain as trailing return — all four mutations land (Р7)" {
+    ro r = d326_build_trailing()
+    assert(r.a == 1)
+    assert(r.b == 2)
+    assert(r.c == 3)
+    assert(r.d == 4)
+}
+
+test "depth-4 mut-setter chain via explicit return — all four mutations land (Р7)" {
+    ro r = d326_build_explicit()
+    assert(r.a == 1)
+    assert(r.b == 2)
+    assert(r.c == 3)
+    assert(r.d == 4)
+}

@@ -2,12 +2,12 @@
 //
 // D326-ревизия (Plan 184 Р4): call-site маркер `ref x` удалён — вызов везде
 // `f(x)` без `ref`. Кучевые объекты и так мутируются без маркера.
-module neg.call_marker_removed
+module neg.d326_call_marker_removed_neg
 
-fn takes(x int) -> int => x
+fn d326_takes(x int) -> int => x
 
 test "call-site ref marker removed" {
     mut x = 5
-    ro _ = takes(ref x)
+    ro _ = d326_takes(ref x)
     assert(true)
 }

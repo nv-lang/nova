@@ -2,12 +2,12 @@
 //
 // D326-ревизия (Plan 184 Р3/Р10): форма `ro ref x T` в параметре удалена —
 // представление ro-параметра выбирает компилятор по размеру. Пишите `x T`.
-module neg.param_form_ro_ref
+module neg.d326_param_form_ro_ref_neg
 
-fn peek(ro ref a int) -> int => a
+fn d326_peek(ro ref a int) -> int => a
 
 test "ro ref param form removed" {
     ro x = 7
-    ro _ = peek(x)
+    ro _ = d326_peek(x)
     assert(true)
 }

@@ -3,10 +3,10 @@
 // Plan 184 (Р8, дополнение захода-5): `&@` (адрес приёмника value-типа = ref
 // Self) эскейпящий наружу через возврат → dangling. Авто-промоут D216 §4 не
 // применяется (ref указывает на чужой слот вызывающего).
-module neg.ref_escape_addr_self
+module neg.d326_ref_escape_addr_self_neg
 
-type Point value { x int, y int }
+type D326Point value { x int, y int }
 
-fn Point @addr() -> *Point => &@
+fn D326Point @addr() -> *D326Point => &@
 
-fn main() -> () { () }
+fn d326_main() -> () { () }
