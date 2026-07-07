@@ -23,10 +23,12 @@
 //     for_in_range_iter, см. std/prelude/collections.nv DEFER comment).
 //     DEFERRED (Plan 62.D.bis): StringBuilder / WriteBuffer / ReadBuffer —
 //     opaque runtime types, требуют `external type` D-block в spec.
-//   - 62.E complete: 8 protocols (From/Into/TryFrom/TryInto/Hash/
-//     Equal/Compare/Display) в std/prelude/protocols.nv,
-//     re-export через facade. TryFrom/TryInto добавлены 62.E.bis
-//     (2026-05-20) после снятия effect-блокера (Plan 56 Ф.2.7-revert).
+//   - 62.E complete (historical): 8 protocols (From/Into/TryFrom/TryInto/
+//     Hash/Equal/Compare/Display) в std/prelude/protocols.nv, re-export
+//     через facade. TryFrom/TryInto добавлены 62.E.bis (2026-05-20) после
+//     снятия effect-блокера (Plan 56 Ф.2.7-revert). **From/Into/TryFrom/
+//     TryInto ретрактированы (D73/D77, 2026-07-06)** — см. версию 15 в
+//     PRELUDE_VERSION doc-блоке; остаются Hash/Equal/Compare/Display.
 //   - 62.F complete: Fail[E] effect formally объявлен. См. версии
 //     5-8 в PRELUDE_VERSION doc-блоке ниже — canonical chronology.
 //
@@ -68,7 +70,7 @@ import std.runtime.defaults
 
 // Plan 172.1 U.1.3a (минимальный prelude — Rust std::prelude / Go universe, §3
 // conventions). `char` сюда: `str.from(char)` / `str.from_codepoint` эмитит САМ
-// компилятор (тест-харнесс, строковая интерполяция, `char.into()`) — пользователь
+// компилятор (тест-харнесс, строковая интерполяция char-литералов) — пользователь
 // не может заимпортить за compiler-generated код → обязан быть неявным, как
 // Option/print. Прочие std-API (sync/net/cstr) — библиотечные, требуют ЯВНЫЙ
 // import (НЕ в prelude). Плейн import (как `defaults`) инлайнит char-сигнатуры
@@ -134,20 +136,15 @@ export import std.collections.range.{Range, RangeIter}
 // template absent → legacy NovaArray path, the contains_key("Vec") gates).
 export import std.collections.vec.{Vec, VecIter}
 
-// Plan 62.E / 62.E.bis: re-export conversion / equality / hashing /
-// ordering / display protocols из std.prelude.protocols. 8 formal
-// protocol declarations: From/Into/TryFrom/TryInto/Hash/Equal/
-// Compare/Display.
-// Декларации additive: auto-derive логика D73 (From/Into) и built-in
-// dispatch для Hash/Eq/Ord примитивов в codegen остаются неизменными.
-// Bound clauses `[T Hash]` теперь могут резолвиться через cross-file
-// resolve (Plan 15 generic-bounds infrastructure).
+// Plan 62.E / 62.E.bis: re-export equality / hashing / ordering / display
+// protocols из std.prelude.protocols.
 //
-// **62.E.bis (2026-05-20):** TryFrom/TryInto добавлены. Используют форму
-// `try_from(t T) -> Result[Self, E]` (D77, migration path b) — fallible
-// конверсия возвращает Result, вызывающий открывает через match. См.
-// std/prelude/protocols.nv.
-export import std.prelude.protocols.{From, Into, TryFrom, TryInto, Hash, Equal, Compare, Display, Clone, Index, MutIndex}
+// **[D73/D77 retraction 2026-07-06]:** From/Into/TryFrom/TryInto удалены
+// из std/prelude/protocols.nv (протоколы + auto-derive синтез в компиляторе
+// сняты целиком — см. spec/decisions/08-runtime.md#d73). Остаются
+// Hash/Equal/Compare/Display; bound clauses `[T Hash]` резолвятся через
+// cross-file resolve (Plan 15 generic-bounds infrastructure) как и раньше.
+export import std.prelude.protocols.{Hash, Equal, Compare, Display, Clone, Index, MutIndex}
 
 // Plan 62.F: re-export Fail[E] effect из std.prelude.effects.
 // Formal declaration matches hardcoded codegen pre-registration
@@ -246,5 +243,10 @@ export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replac
 ///     prelude unit lowers value/type-position `[]T` to typed
 ///     `Nova_Vec____<elem>*` storage. `#no_prelude` units keep the legacy
 ///     NovaArray path (graceful degrade).
+///   - 15 = D73/D77 retraction (2026-07-06): `From`/`Into`/`TryFrom`/
+///     `TryInto` protocol declarations removed from std/prelude/protocols.nv
+///     facade re-export (auto-derive synthesis removed from compiler too).
+///     Remaining: Hash/Equal/Compare/Display. Static `.from`/`.try_from`
+///     naming convention and `to_str()`/`to_*` (D410) are unaffected.
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 14
+export const PRELUDE_VERSION int = 15

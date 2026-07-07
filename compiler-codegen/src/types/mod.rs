@@ -3999,47 +3999,15 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        // Plan 91.8a.2 part 3 (D183 amendment, Q4 strict): E_BLANKET_IDENTITY_OVERRIDE.
-        // Identity From blanket `fn[T] T.from(t T) -> T => t` declared в prelude.
-        // Override запрещён: попытка явно объявить `fn TypeName.from(t TypeName) -> TypeName`
-        // (identity case на конкретном типе) — error.
-        for item in &module.items {
-            if let Item::Fn(fd) = item {
-                if let Some(recv) = &fd.receiver {
-                    if matches!(recv.kind, ReceiverKind::Static)
-                        && fd.name == "from"
-                        && fd.params.len() == 1
-                        && fd.generics.is_empty()
-                    {
-                        let recv_type = &recv.type_name;
-                        // Param type matches receiver type? (identity signature)
-                        let param_is_recv = matches!(
-                            &fd.params[0].ty,
-                            TypeRef::Named { path, .. }
-                                if path.len() == 1 && path[0] == *recv_type
-                        );
-                        let return_is_recv = matches!(
-                            &fd.return_type,
-                            Some(TypeRef::Named { path, .. })
-                                if path.len() == 1 && (path[0] == *recv_type || path[0] == "Self")
-                        );
-                        if param_is_recv && return_is_recv {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[E_BLANKET_IDENTITY_OVERRIDE] cannot override identity \
-                                     `fn[T] T.from(t T) -> T => t` blanket for type `{}`. \
-                                     Identity is identity (D183 amendment Q4 strict, \
-                                     D9 single canonical path). Remove this declaration; \
-                                     `{0}.from({0})` works automatically via blanket.",
-                                    recv_type
-                                ),
-                                fd.span,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
+        // [D73/D77 retraction 2026-07-06]: E_BLANKET_IDENTITY_OVERRIDE removed.
+        // It rejected an explicit `fn TypeName.from(t TypeName) -> TypeName`
+        // identity declaration because it would "override" the compiler-
+        // synthesized blanket identity `fn[T] T.from(t T) -> T => t`. That
+        // blanket no longer exists (From/Into protocols + auto-derive
+        // retracted, spec/decisions/08-runtime.md#d73) — an identity `.from`
+        // is now just an ordinary static method like any other; keeping this
+        // check would reject legal code with no actual conflict to guard
+        // against. See `[M-d73-d77-retraction-migration]`.
         // Plan 114.4 / D199 + Plan 148 Ф.3: constexpr-eligibility sets, shared
         // by the `const` enforcement (`E_CONST_NOT_CONSTEXPR`, reverse) and the
         // `ro` partition enforcement (`E_RO_FOR_CONSTEXPR_PREFER_CONST`, forward).

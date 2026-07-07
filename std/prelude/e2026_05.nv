@@ -19,7 +19,15 @@
 // **Maintenance:** этот файл — snapshot `std/prelude.nv` на момент
 // 2026-05-18 closure Plan 62 + 62.F.bis. Новые edition pins (например
 // `e2026_06.nv` если будут changes) создаются как новый файл; этот
-// остаётся неизменным forever (cross-version stability).
+// остаётся неизменным forever (cross-version stability) — ЗА ИСКЛЮЧЕНИЕМ
+// hard-ретракции: [D73/D77 retraction 2026-07-06] `From`/`Into` удалены
+// из импорта ниже. Причина исключения: edition-pin переживает АДДИТИВНЫЕ
+// изменения rolling facade, но не переживает снос лежащего в основе
+// compiler-механизма (auto-derive synthesis в emit_c.rs снесён целиком —
+// `From`/`Into` decl без него нефункциональны в ЛЮБОЙ edition). Оставлять
+// import был бы либо hard compile-error (тип не резолвится), либо
+// молчаливо-нерабочий stub — оба хуже честного удаления. См.
+// spec/decisions/08-runtime.md#d73.
 
 module prelude.e2026_05
 
@@ -30,7 +38,7 @@ export import std.prelude.runtime.{panic, exit, unreachable, assert, debug_asser
 export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd}
 export import std.prelude.collections.{Iterable}
 export import std.collections.range.{Range, RangeIter}
-export import std.prelude.protocols.{From, Into, Hash, Equal, Compare, Display}
+export import std.prelude.protocols.{Hash, Equal, Compare, Display}
 export import std.prelude.effects.{Fail, Time, Mem}
 
 /// Edition pin marker для verification что resolver выбрал edition vs

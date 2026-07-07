@@ -412,7 +412,7 @@ fn char_runtime() -> Vec<RuntimeFn> {
             return_ty: "str",
             effects: &[],
             c_name: "Nova_str_static_from_char",
-            doc: "UTF-8 encode codepoint в 1-4 байта (D73 auto-derive: char.into() -> str).",
+            doc: "UTF-8 encode codepoint в 1-4 байта. Используется интерполяцией/str.from(char).",
         nova_body: None,
     },
         // Plan 91.13 followup: `str.from_codepoint(int) -> str` — explicit

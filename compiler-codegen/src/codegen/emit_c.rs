@@ -705,18 +705,12 @@ pub struct CEmitter {
     /// (где `coll: Coll`) вставляем implicit `.iter()` и emit'им loop
     /// против IterT.
     iter_returns: HashMap<String, String>,
-    /// D73 v2 auto-derive: target_type → list of source_types for which
-    /// `target.from(src V)` is explicitly defined. Used to synthesize
-    /// `v.into()` for V via target.from when no explicit `@into` exists.
+    /// target_type → list of source_types for which `target.from(src V)` is
+    /// explicitly defined. [D73/D77 retraction 2026-07-06]: the `.into()`
+    /// auto-derive consumer of this registry was removed; it survives only
+    /// for the unrelated CancelToken cross-type cascade compile-time check
+    /// (`.cancelled_by`, naming-convention precondition, not a protocol).
     from_targets: HashMap<String, Vec<String>>,
-    /// Plan 08 Ф.3: try_from/try_into registries (D77 4-way auto-derive).
-    /// Параллельно with from_targets/into_targets.
-    try_from_targets: HashMap<String, Vec<String>>,
-    try_into_targets: HashMap<String, String>,
-    /// D73 v2 auto-derive: source_type → target_type for which
-    /// `fn V @into() -> T` is explicitly defined. Used to synthesize
-    /// `T.from(v)` via v.into() when no explicit `T.from` exists.
-    into_targets: HashMap<String, String>,
     /// Maps tuple variable name → per-element C types.
     /// Used at field access `pair.0` to cast back to the original element type when needed.
     tuple_element_types: HashMap<String, Vec<String>>,
@@ -1569,9 +1563,6 @@ impl CEmitter {
             all_methods: HashSet::new(),
             iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
-            into_targets: HashMap::new(),
-            try_from_targets: HashMap::new(),
-            try_into_targets: HashMap::new(),
             tuple_element_types: HashMap::new(),
             record_variant_field_types: HashMap::new(),
             record_variant_field_order: HashMap::new(),
@@ -5160,22 +5151,18 @@ impl CEmitter {
                         self.never_returning_methods.insert(key.clone());
                     }
                     self.method_overloads.entry(key).or_default().push(sig);
-                    // D73 v2 auto-derive registry:
-                    //   - `T.from(v V)`     → from_targets[T] += V
-                    //   - `fn V @into() -> T` → into_targets[V] = T
+                    // `T.from(v V)` → from_targets[T] += V. [D73/D77 retraction
+                    // 2026-07-06]: the `.into()`-side registry (`into_targets`)
+                    // and its auto-derive consumers were removed; `from_targets`
+                    // survives only for the CancelToken cross-type `.cancelled_by`
+                    // compile-time precondition check (naming convention, not a
+                    // protocol — see field doc above).
                     if !is_instance && f.name == "from" && !f.params.is_empty() {
                         if let TypeRef::Named { path, .. } = &f.params[0].ty {
                             if !path.is_empty() {
                                 self.from_targets.entry(recv.type_name.clone())
                                     .or_default()
                                     .push(path.join("_"));
-                            }
-                        }
-                    }
-                    if is_instance && f.name == "into" {
-                        if let Some(TypeRef::Named { path, .. }) = &f.return_type {
-                            if !path.is_empty() {
-                                self.into_targets.insert(recv.type_name.clone(), path.join("_"));
                             }
                         }
                     }
@@ -5189,31 +5176,9 @@ impl CEmitter {
                             }
                         }
                     }
-                    // Plan 08 Ф.3: D77 try_from/try_into registries.
-                    // - `T.try_from(v V)` → try_from_targets[T] += V
-                    // - `fn V @try_into() -> Result[T, E]` → try_into_targets[V] = T
-                    if !is_instance && f.name == "try_from" && !f.params.is_empty() {
-                        if let TypeRef::Named { path, .. } = &f.params[0].ty {
-                            if !path.is_empty() {
-                                self.try_from_targets.entry(recv.type_name.clone())
-                                    .or_default()
-                                    .push(path.join("_"));
-                            }
-                        }
-                    }
-                    if is_instance && f.name == "try_into" {
-                        // Берём первый generic-arg возвращаемого Result (если есть).
-                        if let Some(TypeRef::Named { path, generics, .. }) = &f.return_type {
-                            if path.last().map(|s| s.as_str()) == Some("Result") {
-                                if let Some(TypeRef::Named { path: tp, .. }) = generics.first() {
-                                    if !tp.is_empty() {
-                                        self.try_into_targets.insert(
-                                            recv.type_name.clone(), tp.join("_"));
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // [D73/D77 retraction 2026-07-06]: try_from_targets/
+                    // try_into_targets registries + their auto-derive consumers
+                    // removed wholesale (TryFrom/TryInto protocol retracted).
                 }
             }
         }
@@ -27195,7 +27160,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 return Err(format!(
                                                     "cross-type cascade `CancelToken[{}].cancelled_by(CancelToken[{}])` \
                                                      requires `{}.from({})` to be defined \
-                                                     (D73 `From` protocol); add `fn {}.from(v {}) -> Self` или \
+                                                     (naming convention, D259/D372); add `fn {}.from(v {}) -> Self` или \
                                                      используйте same-type cascade",
                                                     a_nova, b_nova, a_nova, b_nova, a_nova, b_nova
                                                 ));
@@ -28302,9 +28267,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
-                // 0. Built-in primitive static methods (D35 + D73).
-                //    `str.from(x)` — string conversion (replaces old D70 to_str).
-                //    Auto-derive: if user defined `fn V @into() -> str` for V,
+                // 0. Built-in primitive static methods (D35).
+                //    `str.from(x)` — string conversion (D410 to_str() family).
+                //    If user defined `fn V @to_str() -> str` for V,
                 //    call that instead of the builtin.
                 if let ExprKind::Ident(prim) = &obj.kind {
                     // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
@@ -28330,11 +28295,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     }
                                 }
                             }
-                            if let Some(into_target) = self.into_targets.get(&arg_type) {
-                                if into_target == "str" {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    return Ok(format!("Nova_{}_method_into({})", arg_type, v));
-                                }
+                            // [D410] V has @to_str() -> str?
+                            let to_str_c_name = self.method_overloads
+                                .get(&(arg_type.clone(), "to_str".to_string()))
+                                .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                                .map(|s| s.c_name.clone());
+                            if let Some(c_name) = to_str_c_name {
+                                let v = self.emit_expr(arg.expr())?;
+                                return Ok(format!("{}({})", c_name, v));
                             }
                             let v = self.emit_expr(arg.expr())?;
                             return Ok(if arg_ty == "nova_str" {
@@ -29007,77 +28975,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     return Ok("NULL".into());
                 }
 
-                // 4c. D73 v2 auto-derive: `v.into()` for type V where V has no
-                //     explicit `@into`, but some target T has `T.from(v V)`.
-                //     Emit `Nova_T_static_from(v)` in that case.
-                if method == "into" && args.is_empty() {
-                    let recv_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
-                    let recv_type = Self::nova_type_name_from_c(&recv_ty);
-                    // Skip if explicit `fn V @into()` is present (handled by method_receivers below).
-                    let has_explicit_into = self.method_receivers.get("into")
-                        .map(|(t, _)| t == &recv_type).unwrap_or(false);
-                    if !has_explicit_into {
-                        // Look for any target T such that `T.from(v V)` is defined.
-                        // When expected_into_target is set (from a typed let binding),
-                        // prefer that target to avoid ambiguity when multiple types
-                        // accept the same source (e.g. StringBuilder vs user type).
-                        let expected_into = self.expected_into_target.clone();
-                        let target = if let Some(ref expected) = expected_into {
-                            self.from_targets.iter()
-                                .find(|(t, sources)| t.as_str() == expected && sources.iter().any(|s| s == &recv_type))
-                                .or_else(|| self.from_targets.iter().find(|(_, sources)| sources.iter().any(|s| s == &recv_type)))
-                                .map(|(t, _)| t.clone())
-                        } else {
-                            self.from_targets.iter()
-                                .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
-                                .map(|(t, _)| t.clone())
-                        };
-                        if let Some(target_type) = target {
-                            let obj_c = self.emit_expr(obj)?;
-                            // D73 + D84 (Plan 85.3): `from` может быть
-                            // overloaded — выбрать mangled C-имя по типу
-                            // источника (recv_ty), иначе все `.into()`
-                            // на один target резолвятся в первый overload.
-                            let c_name = self.method_overloads
-                                .get(&(target_type.clone(), "from".to_string()))
-                                .filter(|sigs| sigs.len() > 1)
-                                .and_then(|sigs| sigs.iter()
-                                    .find(|s| s.param_c_types.first()
-                                        .map(|t| t == &recv_ty).unwrap_or(false))
-                                    .map(|s| s.c_name.clone()))
-                                .unwrap_or_else(|| format!("Nova_{}_static_from", target_type));
-                            return Ok(format!("{}({})", c_name, obj_c));
-                        }
-                    }
-                }
-                // Plan 08 Ф.3: D77 4-way auto-derive — `v.@try_into()`.
-                // Симметрия для @into. Если есть `T.try_from(v V)` и нет
-                // явного `V.@try_into()`, эмитим как `T.try_from(v)`.
-                if method == "try_into" && args.is_empty() {
-                    let recv_ty = self.recv_c_type_materialized(obj).unwrap_or_default();
-                    let recv_type = Self::nova_type_name_from_c(&recv_ty);
-                    let has_explicit = self.method_receivers.get("try_into")
-                        .map(|(t, _)| t == &recv_type).unwrap_or(false);
-                    if !has_explicit {
-                        let target = self.try_from_targets.iter()
-                            .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
-                            .map(|(t, _)| t.clone());
-                        if let Some(target_type) = target {
-                            let obj_c = self.emit_expr(obj)?;
-                            // D77 + D84 (Plan 85.3): overload-aware mangling,
-                            // симметрично `from` выше.
-                            let c_name = self.method_overloads
-                                .get(&(target_type.clone(), "try_from".to_string()))
-                                .filter(|sigs| sigs.len() > 1)
-                                .and_then(|sigs| sigs.iter()
-                                    .find(|s| s.param_c_types.first()
-                                        .map(|t| t == &recv_ty).unwrap_or(false))
-                                    .map(|s| s.c_name.clone()))
-                                .unwrap_or_else(|| format!("Nova_{}_static_try_from", target_type));
-                            return Ok(format!("{}({})", c_name, obj_c));
-                        }
-                    }
-                }
+                // [D73/D77 retraction 2026-07-06]: auto-derive resolution for
+                // `.into()`/`.try_into()` (synthesizing a call to some target
+                // T.from(v)/T.try_from(v) when no explicit method exists) removed
+                // wholesale — From/Into/TryFrom/TryInto protocols + auto-derive
+                // are retracted (spec/decisions/08-runtime.md#d73). `.into()`/
+                // `.try_into()` are now ordinary method names, resolved below
+                // exactly like any other user-defined method call.
 
                 // 5. User-defined method call: `obj.method(args)` → `Nova_T_method_name(obj, args)`
                 //    or static: `TypeName.method(args)` → `Nova_T_static_name(args)`
@@ -31076,8 +30980,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (Type.method(args)). Resolve по (recv_type, method_name)
                 // + arg-types.
                 //
-                // Skip `str.from` — есть hard-coded path ниже с auto-derive
-                // через D73 into_targets. Registry знает только `str.from(char)`
+                // Skip `str.from` — есть hard-coded path ниже с D410 to_str()
+                // fallback. Registry знает только `str.from(char)`
                 // но `str.from(int/f64/bool)` идут через builtin nova_*_to_str
                 // helpers — которых в registry нет.
                 if parts.len() == 2 && !(parts[0] == "str" && parts[1] == "from") {
@@ -31117,16 +31021,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if parts.len() == 2 && self.effect_schemas.contains_key(&parts[0]) {
                     format!("Nova_{}_{}", parts[0], parts[1])
                 } else if parts.len() == 2 {
-                    // Built-in primitive static methods (D35 + D73).
-                    // `str.from(x)` — convert any value to string (replaces
-                    // old D70 to_str). Bootstrap implementation: dispatch on
+                    // Built-in primitive static methods (D35).
+                    // `str.from(x)` — convert any value to string (D410
+                    // to_str() family). Bootstrap implementation: dispatch on
                     // arg type — nova_str pass-through, nova_int via
                     // nova_int_to_str. Other types TBD.
                     //
-                    // Auto-derive caveat: if user defined `fn V @into() -> str`
-                    // for the arg's type V, we should call that instead of
-                    // the builtin (so user code wins). Checked below before
-                    // falling back to builtin.
+                    // If user defined `fn V @to_str() -> str` for the arg's
+                    // type V, call that instead of the builtin (so user code
+                    // wins). Checked below before falling back to builtin.
                     if parts[0] == "str" && parts[1] == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
@@ -31149,12 +31052,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     }
                                 }
                             }
-                            // Auto-derive: V has @into() -> str?
-                            if let Some(into_target) = self.into_targets.get(&arg_type) {
-                                if into_target == "str" {
-                                    let v = self.emit_expr(arg.expr())?;
-                                    return Ok(format!("Nova_{}_method_into({})", arg_type, v));
-                                }
+                            // [D410] V has @to_str() -> str?
+                            let to_str_c_name = self.method_overloads
+                                .get(&(arg_type.clone(), "to_str".to_string()))
+                                .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                                .map(|s| s.c_name.clone());
+                            if let Some(c_name) = to_str_c_name {
+                                let v = self.emit_expr(arg.expr())?;
+                                return Ok(format!("{}({})", c_name, v));
                             }
                             let v = self.emit_expr(arg.expr())?;
                             return Ok(if arg_ty == "nova_str" {
@@ -31344,20 +31249,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return Ok(format!("Nova_{}_static_{}({})", type_name, method_name, arg_strs.join(", ")));
                         }
                     }
-                    // D73 v2 auto-derive: `T.from(v)` when no explicit T.from
-                    // exists, but `fn V @into() -> T` is defined where v: V.
-                    if method_name == "from" && args.len() == 1 {
-                        let target = recv_seg.clone();
-                        let arg_ty = self.infer_expr_c_type(args[0].expr());
-                        let arg_type = arg_ty.trim_start_matches("Nova_").trim_end_matches('*').to_string();
-                        // Check that V has @into() -> T defined.
-                        if let Some(into_target) = self.into_targets.get(&arg_type) {
-                            if into_target == &target {
-                                let v = self.emit_expr(args[0].expr())?;
-                                return Ok(format!("Nova_{}_method_into({})", arg_type, v));
-                            }
-                        }
-                    }
+                    // [D73/D77 retraction 2026-07-06]: `T.from(v)` synthesized from
+                    // `V.@into() -> T` (no explicit `T.from` declared) removed —
+                    // `T.from(v)` now resolves ONLY to an explicit static declaration.
                     // Plan 11 Follow-up (2026-05-17): если parts[0] — известный
                     // user-type (record / sum / generic template), emit explicit
                     // `Nova_<Type>_static_<method>(args)` напрямую. Без этого
@@ -32806,13 +32700,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             && s.param_c_types.len() == 1
                                             && s.param_c_types[0] == arg_ty)
                                         .map(|s| s.c_name.clone()));
+                                // [D410] fallback: user type has `@to_str() -> str`
+                                // but no `str.from`/`str.from_debug` overload —
+                                // interpolate via the instance method directly.
+                                // (Replaces the retracted D73 Into[str] auto-derive
+                                // fallback, spec/decisions/08-runtime.md#d73.)
+                                let to_str_c_name: Option<String> = if !is_debug {
+                                    self.method_overloads
+                                        .get(&(arg_type.clone(), "to_str".to_string()))
+                                        .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                                        .map(|s| s.c_name.clone())
+                                } else {
+                                    None
+                                };
                                 if let Some(c_name) = str_from_c {
                                     format!("{}({})", c_name, v)
-                                } else if !is_debug && self.into_targets.get(&arg_type)
-                                    .map(|t| t == "str").unwrap_or(false)
-                                {
-                                    let safe = Self::sanitize_c_for_ident(&arg_type);
-                                    format!("Nova_{}_method_into({})", safe, v)
+                                } else if let Some(c_name) = to_str_c_name {
+                                    format!("{}({})", c_name, v)
                                 } else {
                                     format!("nova_int_to_str((nova_int)({}))", v)
                                 }
@@ -38005,14 +37909,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         ) {
             return true;
         }
-        // D73/D84 conversion methods: `v.into()` / `v.try_into()` — the target type is
-        // inferred from context (`ro x T = v.into()`), and codegen owns the synthesis /
-        // try_from-try_into registries (emit_c: `is_instance && f.name == "into"` etc.).
-        // Available on every convertible type incl. primitives (`int.into()` → chosen T);
-        // treat as always-known so a real conversion is never mis-flagged.
-        if matches!(method, "into" | "try_into") {
-            return true;
-        }
+        // [D73/D77 retraction 2026-07-06]: primitives no longer get a blanket
+        // `.into()`/`.try_into()` existence pass — those protocols + their
+        // auto-derive synthesis are retracted (spec/decisions/08-runtime.md#d73).
+        // A primitive with no real `.into()`/`.try_into()` method now correctly
+        // falls through to `[E_UNKNOWN_METHOD]` below.
         // Map the Nova primitive NAME to a representative C-type for `prim_builtin_method`
         // (hash/eq/lt/le/gt/ge/clone). Widths collapse to the C-type codegen would emit.
         let c_ty: &str = match prim {
@@ -39612,7 +39513,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Plan 08 Ф.3: convert C-type back to Nova-type name для lookup'ов в
-    /// from_targets / try_from_targets (которые хранят Nova-имена).
+    /// from_targets (которая хранит Nova-имена).
     /// `nova_int` → `int`, `nova_str` → `str`, `Nova_Wrapper*` → `Wrapper`.
     /// Числовые primitive C-aliases (`int32_t` etc.) → соответствующее Nova-имя.
     /// Plan 152.1 Ф.3: derive the `method_overloads` receiver key from a C
@@ -42805,50 +42706,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
-                        // Plan 08 Ф.3: v.@try_into() через auto-derive →
-                        // Result[T, E]. Distinct от @into (return T напрямую).
-                        if method == "try_into" {
-                            let recv_type = Self::nova_type_name_from_c(&obj_ty);
-                            // Если есть `T.try_from(v V)` для V == recv_type, это
-                            // synthesis target — возвращает Result.
-                            let has_try_from_target = self.try_from_targets.iter()
-                                .any(|(_, sources)| sources.iter().any(|s| s == &recv_type));
-                            if has_try_from_target {
-                                // Plan 59 Ф.7.5 D3: erased mono Result.
-                                return "NovaRes_nova_int_nova_str*".into();
-                            }
-                            // Иначе fallback на explicit @try_into.
-                            if let Some(target) = self.try_into_targets.get(&recv_type) {
-                                let _ = target;
-                                return "NovaRes_nova_int_nova_str*".into();
-                            }
-                        }
-                        // Plan 08 Ф.3: v.@into() через auto-derive → T напрямую.
-                        if method == "into" {
-                            let recv_type = Self::nova_type_name_from_c(&obj_ty);
-                            let target = self.from_targets.iter()
-                                .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
-                                .map(|(t, _)| t.clone());
-                            // Helper: convert Nova type name to C type. Primitives and value-records
-                            // (D215/Plan 139) use non-pointer C types; heap types use Nova_T*.
-                            let target_to_c = |t: &str| -> String {
-                                match t {
-                                    "str" => "nova_str".into(),
-                                    "int" => "nova_int".into(),
-                                    "bool" => "nova_bool".into(),
-                                    "char" => "nova_char".into(),
-                                    "f64" => "nova_f64".into(),
-                                    "f32" => "nova_f32".into(),
-                                    other => format!("Nova_{}*", other),
-                                }
-                            };
-                            if let Some(target_type) = target {
-                                return target_to_c(&target_type);
-                            }
-                            if let Some(target_type) = self.into_targets.get(&recv_type) {
-                                return target_to_c(target_type);
-                            }
-                        }
+                        // [D73/D77 retraction 2026-07-06]: return-type inference for the
+                        // now-removed `.into()`/`.try_into()` auto-derive synthesis was
+                        // here (T from from_targets/try_from_targets). `.into()`/
+                        // `.try_into()` are ordinary method names now — they fall through
+                        // to the normal method_overloads-based inference below, same as
+                        // any other user method.
                         // Plan 138.1 Ф.1 (D239) BRIDGE: C-runtime-only array helpers
                         // on a `Vec[T]` receiver (no Vec Nova-body method). Must mirror
                         // the emission-side bridge return types exactly; all other
@@ -46490,50 +46353,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             }
                         }
-                        // Plan 08 Ф.3: v.@try_into() через auto-derive →
-                        // Result[T, E]. Distinct от @into (return T напрямую).
-                        if method == "try_into" {
-                            let recv_type = Self::nova_type_name_from_c(&obj_ty);
-                            // Если есть `T.try_from(v V)` для V == recv_type, это
-                            // synthesis target — возвращает Result.
-                            let has_try_from_target = self.try_from_targets.iter()
-                                .any(|(_, sources)| sources.iter().any(|s| s == &recv_type));
-                            if has_try_from_target {
-                                // Plan 59 Ф.7.5 D3: erased mono Result.
-                                return "NovaRes_nova_int_nova_str*".into();
-                            }
-                            // Иначе fallback на explicit @try_into.
-                            if let Some(target) = self.try_into_targets.get(&recv_type) {
-                                let _ = target;
-                                return "NovaRes_nova_int_nova_str*".into();
-                            }
-                        }
-                        // Plan 08 Ф.3: v.@into() через auto-derive → T напрямую.
-                        if method == "into" {
-                            let recv_type = Self::nova_type_name_from_c(&obj_ty);
-                            let target = self.from_targets.iter()
-                                .find(|(_, sources)| sources.iter().any(|s| s == &recv_type))
-                                .map(|(t, _)| t.clone());
-                            // Helper: convert Nova type name to C type. Primitives and value-records
-                            // (D215/Plan 139) use non-pointer C types; heap types use Nova_T*.
-                            let target_to_c = |t: &str| -> String {
-                                match t {
-                                    "str" => "nova_str".into(),
-                                    "int" => "nova_int".into(),
-                                    "bool" => "nova_bool".into(),
-                                    "char" => "nova_char".into(),
-                                    "f64" => "nova_f64".into(),
-                                    "f32" => "nova_f32".into(),
-                                    other => format!("Nova_{}*", other),
-                                }
-                            };
-                            if let Some(target_type) = target {
-                                return target_to_c(&target_type);
-                            }
-                            if let Some(target_type) = self.into_targets.get(&recv_type) {
-                                return target_to_c(target_type);
-                            }
-                        }
+                        // [D73/D77 retraction 2026-07-06]: return-type inference for the
+                        // now-removed `.into()`/`.try_into()` auto-derive synthesis was
+                        // here (T from from_targets/try_from_targets). `.into()`/
+                        // `.try_into()` are ordinary method names now — they fall through
+                        // to the normal method_overloads-based inference below, same as
+                        // any other user method.
                         // Plan 138.1 Ф.1 (D239) BRIDGE: C-runtime-only array helpers
                         // on a `Vec[T]` receiver (no Vec Nova-body method). Must mirror
                         // the emission-side bridge return types exactly; all other

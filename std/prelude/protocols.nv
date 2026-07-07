@@ -19,14 +19,10 @@
 //
 // **Bootstrap status (Plan 62.E):**
 //
-// - **`From[T]` / `Into[U]`** — formal declarations (D73). Auto-derive
-//   логика для `Into[U]` из `From[Self]` живёт в compiler — declarations
-//   здесь дают canonical API + eligible как bound (`T From[X]`) per D72.
-//   Не ломают существующую D73 auto-derive (compiler продолжает работать
-//   независимо от protocol-declaration).
-// - **`TryFrom[T, E]` / `TryInto[U, E]`** — fallible-конверсии (D77).
-//   Аналогично D73 — declarations additive. Auto-derive не реализован
-//   в bootstrap'е (TryInto от TryFrom — Plan 62.E+).
+// - **`From[T]` / `Into[U]` / `TryFrom[T, E]` / `TryInto[U, E]`** —
+//   ретрактированы (D73/D77, 2026-07-06). См. spec/decisions/08-runtime.md#d73.
+//   Остаётся: `.from(x)`/`.try_from(x)` конвенция имён (не протокол),
+//   `consume @into_ЦЕЛЬ()` (D131), `to_str()`/`to_*` (D410).
 // - **`Hash`** — `hash() -> u64` only (split из combined hash+eq в
 //   `std/collections/hashmap.nv` per D109 split policy). Совместимо с
 //   structural matching: type удовлетворяющий combined `Hash`
@@ -45,7 +41,6 @@
 //
 // **NOT modified (Plan 62.E explicit non-goals):**
 //
-// - Auto-derive логика D73 (From/Into) в compiler-codegen — остаётся.
 // - Built-in dispatch Hash/Eq/Ord для примитивов (`int.hash()`,
 //   `str.eq()`, etc.) в codegen — остаётся.
 // - `lints.rs:565` `collect_protocol_names` HashSet — идемпотентно
@@ -56,125 +51,6 @@ module prelude.protocols
 
 // Plan 91.8a (D183): Ordering sum-type удалён; Compare.compare возвращает int
 // (memcmp-style: < 0 / 0 / > 0). Никаких imports из core не требуется.
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// Conversion protocols (D73, D77)
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Конверсия `T → Self` (D73, spec/decisions/08-runtime.md#d73).
-///
-/// `from` — **статический** метод (D35: `fn Type.from(...)`); в
-/// protocol-теле помечается leading-точкой (Plan 97, резолв
-/// `Q-static-method-protocol`). Реализация: `fn Foo.from(t T) -> Foo => ...`.
-/// Auto-derive `Into[Self]` для `T` если `From[T]` объявлен на `Self`.
-///
-/// # Examples
-///
-/// ```nova
-/// type Celsius { value f64 }
-/// fn Celsius.from(f Fahrenheit) -> Celsius =>
-///     Celsius { value: (f.value - 32.0) * 5.0 / 9.0 }
-/// // Авто-доступно: Fahrenheit.into() -> Celsius
-/// ```
-#stable(since = "0.1")
-export type From[T] protocol {
-    .from(t T) -> Self
-}
-
-/// Plan 91.8a.2 (D183 amendment): blanket identity From — каждый тип T
-/// можно сконструировать из себя через `T.from(t T) -> T`. Аналог Rust
-/// `impl<T> From<T> for T`.
-///
-/// Override запрещён (Q4 strict, E_BLANKET_IDENTITY_OVERRIDE): identity
-/// is identity (D9 single canonical path). Реализация — синтезирована
-/// codegen'ом per concrete T при mono.
-///
-/// Resolution order для `T.from(value)`:
-/// 1. Explicit `fn T.from(value_type)` — user impl wins
-/// 2. Blanket identity — matches только если value_type == T
-/// 3. D77 auto-derive из From[value_type] chain
-/// 4. Error E_NO_FROM_IMPL
-///
-/// Identity Into auto-derived (D77): `t.into()` для `t: T` → `t`.
-///
-/// # Examples
-///
-/// ```nova
-/// let x int = int.from(42)             // identity blanket
-/// let m Money = Money.from(other_money) // identity blanket
-/// fn copy[T](x T) -> T => T.from(x)    // works для любого T
-/// ```
-#stable(since = "0.1")
-export fn[T] T.from(t T) -> T => t
-
-/// Конверсия `Self → U` — instance method (D73).
-///
-/// Auto-derived из `From[Self]` если `From[U]` для `T=Self` существует
-/// (compiler синтезирует `into()` body как `U.from(self)`).
-///
-/// # Examples
-///
-/// ```nova
-/// let c Celsius = f.into()  // вызывает Celsius.from(f) автоматически
-/// ```
-#stable(since = "0.1")
-export type Into[U] protocol {
-    @into() -> U
-}
-
-// TryFrom / TryInto — Result-форма по `try_`-prefix convention.
-//
-// Конвенция Nova (D325, Plan 177 — Result-everywhere): `try_` — ТОЛЬКО для
-// дизамбигуации fallible-варианта одноимённого INFALLIBLE (`from`/`try_from`,
-// `into`/`try_into`). Все прочие падающие операции носят обычное имя и
-// возвращают `Result` (без bare-throws-близнецов, без `_opt`).
-// `try_from`/`try_into` → `Result[Self, E]`.
-//
-// D77 amend (D325): 4-way → **2-way**. Бросковая Fail-форма (`from`/`into` с
-// `Fail[E]`) БОЛЬШЕ НЕ auto-derive'ится; остаются `try_from`/`try_into` (Result)
-// + инфаллибл `from`/`into`. throw на call-site = `try_from(s)!!` (D85).
-// Снятие компиляторного 4-way (`from_targets` в emit_c.rs) — Plan 177 Ф.2b
-// (до него codegen ещё эмитит bare-форму, но она deprecated).
-//
-// Note: Plan 56 Ф.2.7 (запрет эффектов в protocol-методах) **снят**
-// 2026-05-20 (D122 amended) — эффекты в protocol-методах теперь
-// разрешены. Result-форма у `TryFrom`/`TryInto` остаётся не как
-// workaround, а как естественная семантика `try_`-prefix convention.
-
-/// Fallible конверсия `T → Self`, возвращает `Result[Self, E]`.
-///
-/// Имплементируйте на типах, которые могут быть построены из `T` с
-/// возможностью ошибки. Автоматически даёт `T.try_from(v)` (D77).
-/// `try_from` — **статический** метод (D35: `fn Type.try_from(...)`),
-/// в protocol-теле помечается leading-точкой (Plan 97).
-///
-/// `Result[Self, E]`-возврат — по `try_`-prefix convention. Бросковая Fail-форма
-/// `from(...) Fail[E]` под D325 НЕ генерится (D77 2-way; throw = `try_from(v)!!`).
-///
-/// # Examples
-///
-/// ```nova
-/// let r = MyNum.try_from("42")
-/// match r {
-///     Ok(n) => println("got " + str.from(n.val))
-///     Err(e) => println("error: " + e)
-/// }
-/// ```
-#stable(since = "0.1")
-export type TryFrom[T, E] protocol {
-    .try_from(t T) -> Result[Self, E]
-}
-
-/// Fallible конверсия `Self → U`, возвращает `Result[U, E]`.
-///
-/// `try_into` — instance-метод (без leading-точки). Автоматически
-/// реализуется через `TryFrom`: если `U TryFrom[Self, E]`, то
-/// `v.try_into()` эквивалентен `U.try_from(v)` (D77).
-#stable(since = "0.1")
-export type TryInto[U, E] protocol {
-    @try_into() -> Result[U, E]
-}
 
 
 // ──────────────────────────────────────────────────────────────────────────
