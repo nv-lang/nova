@@ -575,7 +575,7 @@ typedef struct { char _dummy; } nova_unit;
 
 /* Plan 176 Ф.3 (D324): std/os native hooks (env / args / cwd / dirs / process)
  * for the `Os` effect real handler. Header-only (getenv/getcwd/...); argv is
- * captured by main() via nova_os_set_args. Included after nova_str / nova_alloc
+ * captured by main() via os_set_args. Included after nova_str / nova_alloc
  * are defined (used by its nova_str wrappers). */
 #include "os_env.h"
 

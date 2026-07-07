@@ -22,7 +22,7 @@
 
 /* Write `len` bytes from `buf` to stdout (fd 1) or stderr (fd 2 → stderr, any
  * other fd → stdout). Returns bytes written, or -errno on a stream error. */
-static inline int64_t nova_io_write_fd(int64_t fd, const uint8_t* buf, int64_t len) {
+static inline int64_t io_write_fd(int64_t fd, const uint8_t* buf, int64_t len) {
     if (len <= 0) return 0;
     FILE* f = (fd == 2) ? stderr : stdout;
     size_t w = fwrite((const void*)buf, 1, (size_t)len, f);
@@ -38,7 +38,7 @@ static inline int64_t nova_io_write_fd(int64_t fd, const uint8_t* buf, int64_t l
 
 /* Read up to `len` bytes into `buf` from stdin (fd 0; other fds unsupported →
  * treated as stdin). Returns bytes read, 0 at EOF, or -errno on error. */
-static inline int64_t nova_io_read_fd(int64_t fd, uint8_t* buf, int64_t len) {
+static inline int64_t io_read_fd(int64_t fd, uint8_t* buf, int64_t len) {
     (void)fd;
     if (len <= 0) return 0;
     size_t r = fread((void*)buf, 1, (size_t)len, stdin);
