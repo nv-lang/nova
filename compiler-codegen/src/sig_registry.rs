@@ -52,6 +52,15 @@ pub struct CodegenView {
     pub param_defaults: Vec<Option<String>>,
     /// `fn Type mut @method` ⇒ receiver is mutable.
     pub recv_mutable: bool,
+    /// Plan 184 (Р13/Р14): per-parameter passing mode {ro,mut,consume},
+    /// encoded 0=ro, 1=mut, 2=consume, parallel to `param_c_types`. Mode is an
+    /// overload axis: `f(x T)` / `f(mut x T)` / `f(consume x T)` are distinct
+    /// overloads with distinct C symbols. Used to tiebreak the C-name mangle
+    /// (`mangle_fn`) and the call-site dispatch (`narrow_by_param_mode`) when two
+    /// overloads share identical `param_c_types` but differ by mode (the heap
+    /// case, Р6: `ref H ≡ H` — `mut` keeps the handle ABI). Empty when not
+    /// populated (synthesized views) → matchers degrade to the pre-184 behaviour.
+    pub param_modes: Vec<u8>,
     /// Plan 172.1 U.4.3 (c2.2): declaration `Span` of the source `FnDecl` (when this
     /// view was built from one). The codegen dispatch site matches this against the
     /// checker's `resolved_callees` choice so codegen LOWERS the callee the checker
@@ -270,6 +279,10 @@ impl<'a> SigRegistry<'a> {
                     is_instance,
                     is_external: f.is_external,
                     recv_mutable: f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false),
+                    // Plan 184 (Р13/Р14): parameter-mode overload axis.
+                    param_modes: f.params.iter()
+                        .map(|p| if p.consume { 2u8 } else if p.is_mut { 1u8 } else { 0u8 })
+                        .collect(),
                     c_name,
                     // variadic_last / param_defaults / is_delegated: U.2.4
                     // [M-172-sig-registry].
