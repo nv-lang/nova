@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 178 Ф.3 — LIVE HTTP/1.1 server smoke over a loopback socket.
-// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407) alongside
-// `std.http.servernet.handle_connection`.
+// Plan 182 Ф.2 (migrated from nova_tests/http_servernet/servernet_smoke_test.nv)
+// — LIVE HTTP/1.1 server smoke over a loopback socket.
 //
 // Proves `std.http.servernet.handle_connection` end-to-end over a real socket:
 // a server fiber accepts one connection and runs the request through the pure
@@ -14,27 +13,20 @@
 //
 // (Result[_, NetError] is destructured via `match`, not `!!`: `!!`
 // throws through `Nova_Fail_fail`, whose typed-error path is a pre-existing net
-// codegen gap unrelated to this smoke — see tcp_echo_server_test.)
+// codegen gap unrelated to this smoke.)
 //
-// STATUS (2026-07-06, Ф.3 re-check): the [M-codegen-cross-module-ctor-emission]
-// LINK obstacle stays resolved. The prior RUN-FAIL blamed on the net-substrate
-// M:N segfault was actually a MISSING `with Net = real_net() { ... }` handler
-// install in this test (the effect dispatch had no handler bound, so
-// `TcpListener.bind` crashed on a null vtable slot — confirmed via
-// NOVA_DIAG_SEGV: fault in `Nova_Net_tcp_bind`, not in libuv/park code). Fixed
-// here by wrapping the body in `with Net = real_net()`; green on std.net2.
+// EXPECT_TIMEOUT_MS-marked (standalone per test-conventions.md — never folds
+// into the shared std.http.servernet folder-CU).
 //
 // EXPECT_TIMEOUT_MS 30000
 
-module nova_tests.http_servernet
+module rt.handle_connection_smoke
 
 import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
 import std.http.server.{ServeMux, ServerResponse, handler_fn}
 import std.http.servernet.{handle_connection}
 
 fn routes() -> ServeMux {
-    // [M-184-mut-chain-return-position]: цепочка mut-сеттеров в return-позиции
-    // мискомпилируется (см. nova_tests/http_server/server_test.nv) — mut-биндинг.
     mut mux = ServeMux.new()
     mux.get("/health", handler_fn(|req| ServerResponse.text(200, "ok")))
     mux.not_found(handler_fn(|req| ServerResponse.text(404, "nope")))

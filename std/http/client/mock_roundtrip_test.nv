@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 178 Ф.2 — HTTP/1.1 client via mock_http() (deterministic, no sockets).
+// Plan 182 Ф.2 (migrated from nova_tests/http/client_test.nv) — HTTP/1.1
+// client via mock_http() (deterministic, no sockets).
 //
 // The mock is installed via an INLINE handler `effect Http { send(..) {
 // m.reply(request) } }` that captures the frame-local `m`. This is GC-safe: the
@@ -8,9 +9,8 @@
 // env the current runtime does not root — it segfaults once the GC collects mid
 // run. See [M-178-mock-handler-gc-trace].
 
-module nova_tests.http
+module http.client
 
-import std.http.client.{HttpClient, mock_http, MockResponse, MockHttp, RedirectPolicy}
 import std.http.{Http}
 import std.encoding.json.{JsonValue, Json}
 

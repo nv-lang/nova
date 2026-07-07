@@ -1,4 +1,5 @@
 // EXPECT_COMPILE_ERROR D133-not-consumed
+// Plan 182 Ф.2 (migrated from nova_tests/http/neg/response_not_consumed.nv) —
 // Plan 178 Ф.2 / D359 — a client Response is must-consume: a Response obtained
 // from send() that is never discharged (bytes/text/drain/error_for_status) is a
 // compile error (fixes the Go resp.Body leak at compile time).

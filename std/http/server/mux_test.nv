@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 178 Ф.3 — HTTP/1.1 server CORE, mock-driven (no sockets): parse → route →
-// serialize via `serve_once`. Exercises ServeMux params/method/405-Allow, 404,
-// POST body echo, Host-mandatory + `..`-reject. [M-178-std-http] server core.
+// Plan 182 Ф.2 (migrated from nova_tests/http_server/server_test.nv) —
+// HTTP/1.1 server CORE, mock-driven (no sockets): parse → route → serialize
+// via `serve_once`. Exercises ServeMux params/method/405-Allow, 404, POST
+// body echo, Host-mandatory + `..`-reject. [M-178-std-http] server core.
 
-module nova_tests.http_server
-
-import std.http.server.{ServeMux, ServerRequest, ServerResponse, handler_fn, serve_once}
+module http.server
 
 // Build a small router used across the cases.
 // [M-184-mut-chain-return-position] (http-хвост, 2026-07-07): беглая цепочка

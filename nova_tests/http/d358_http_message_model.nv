@@ -4,6 +4,16 @@
 // reject + CL/TE-smuggling), Version, host/URL-валидатор (SSRF obfuscation-reject),
 // Cookie send-инварианты, HttpError(OPEN ErrorKind + source-chain). Один
 // folder-module `spec_tests.conformance`.
+//
+// АНКОР (Plan 182 Ф.2, 2026-07-07, обновление статуса): содержимое почти
+// целиком дублирует более полный nova_tests/http/model_test.nv (то же
+// покрытие + method safety/idempotency, headermap replace/remove,
+// mime/content-type, cookie neg). Возврат в std/http (как планировалось
+// после фикса ErrorKind-коллизии) по-прежнему блокирован — см. якорь в
+// body_test.nv: ЛЮБОЙ test{} в `module std.http` триггерит
+// [P67-LEGACY] `Ident \`msg\` not in var_types` (emit_c.rs:43828),
+// коллизия ErrorKind была лишь одним из проявлений. Оставлен как транзит;
+// после фикса компилятора — слить с model_test.nv (не дублировать).
 module nova_tests.http
 
 import std.http.{Method, StatusCode, Version, HeaderMap, Mime, ContentType, Cookie, SetCookie, Url, HttpError, ErrorKind}

@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 178 Ф.2 — transparent Content-Encoding decode (gzip/deflate) + bomb guard.
+// Plan 182 Ф.2 (migrated from nova_tests/http_decompress/decompress_test.nv) —
+// transparent Content-Encoding decode (gzip/deflate) + bomb guard.
 //
-// Circular proof: the mock server encodes a body with std.encoding.compress (Plan
-// 179's `gzip_encode`/`zlib_encode`) and serves it with `Content-Encoding: gzip`
-// (resp. deflate); the client transparently decodes it back to the ORIGINAL bytes.
-// Negative: a body that decodes past the client's `max_decompressed` cap (D334)
-// fails with the typed `Err(BodyTooLarge)`, not an OOM. Deterministic via
-// mock_http (no sockets); the mock is installed via an inline frame-capturing
-// handler (GC-safe, see [M-178-mock-handler-gc-trace]).
+// Circular proof: the mock server encodes a body with std.encoding.compress
+// (`gzip_encode`/`zlib_encode`) and serves it with `Content-Encoding: gzip`
+// (resp. deflate); the client transparently decodes it back to the ORIGINAL
+// bytes. Negative: a body that decodes past the client's `max_decompressed`
+// cap (D334) fails with the typed `Err(BodyTooLarge)`, not an OOM.
+// Deterministic via mock_http (no sockets); inline frame-capturing handler
+// (GC-safe, see [M-178-mock-handler-gc-trace]). Complements decompress_br_test.nv
+// (brotli) with gzip/deflate coverage.
 //
 // This is also the [M-178-autodecompress-needs-179] landing: compress + http
 // `ErrorKind` co-present in ONE compile unit (unblocked by the D381 collision fix).
 
-module nova_tests.http_decompress
+module http.client
 
-import std.http.client.{HttpClient, mock_http, MockResponse}
-import std.http.{Http, ErrorKind}
+import std.http.{Http}
 import std.encoding.compress.{gzip_encode, zlib_encode, CompressLevel}
 
 // gzip-encode a string body (panics only in test setup if encoding fails).
