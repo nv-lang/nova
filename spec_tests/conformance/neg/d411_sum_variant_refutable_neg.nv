@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E_REFUTABLE_BINDING
+//
+// D411 — record-pattern destructuring in `ro`/`mut` bindings requires an
+// IRREFUTABLE pattern. A record-pattern whose `type_path` names a sum-variant
+// (`Circle` below is a variant of `D411NegShape`, not a standalone record
+// type) needs a runtime tag-check to know the value actually IS that variant
+// — `ro`/`mut` cannot perform that check, so it is rejected with
+// `E_REFUTABLE_BINDING` (spec/decisions/03-syntax.md D411). Use `if let` or
+// `match` for a refutable variant-pattern instead.
+module neg.d411_sum_variant_refutable_neg
+
+type D411NegShape enum
+    | Circle { r int }
+    | Square { s int }
+
+fn d411_neg_extract_r(sh D411NegShape) -> int {
+    // ✗ E_REFUTABLE_BINDING — `Circle { r }` is a sum-variant pattern, not
+    //   irrefutable; `sh` could just as well be `Square`.
+    ro Circle { r } = sh
+    r
+}
+
+test "D411: record-pattern binding to a sum-variant is refutable — rejected" {
+    ro _ = d411_neg_extract_r(D411NegShape.Circle { r: 5 })
+}
