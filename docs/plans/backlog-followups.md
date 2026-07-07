@@ -1742,3 +1742,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   folder-CU std/encoding/serde CODEGEN-FAIL (блокирует serde-тесты, serdejson, http_typed).
   Pre-existing (найден волной D410, подтверждён после to_str_pretty-правки). Минимальную
   репродукцию снять при заходе.
+
+- **[M-d411-record-binding-destructuring]** (2026-07-07, P2, Wave: [sonnet]-заход после
+  §4а-пачки) — реализация D411: record-паттерн в биндингах ro/mut (десугар до чекера в
+  field-доступы; парсер: `{` после ro/mut; irrefutable-проверка E_REFUTABLE_BINDING;
+  `..`-правило как в match). Тесты: conformance позитивы (shorthand/rename/mut/вложенные,
+  однократность вычисления источника) + негативы (сумма в биндинге, частичный список без ..).
+  Первые потребители: json-лексер (ro {line, col, ..} = @), TokenWithPos-снапшоты.
