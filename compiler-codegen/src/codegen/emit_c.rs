@@ -21136,6 +21136,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let Pattern::Record { .. } = &decl.pattern {
                     return self.emit_record_destructure(decl);
                 }
+                // Plan 184 (Р1, Ф.1-остаток): ref-локал — `ro y ref T = <place>` /
+                // `mut y ref T = <place>` — непереселяемый УКАЗАТЕЛЬ-АЛИАС на
+                // хранилище цели (аналог C++ `T& y = place`). Emit `T* y =
+                // &(<place>);` и регистрируем `y` в `ref_params` → все чтения и
+                // записи авто-деref (`(*y)`), тем же путём, что `mut ref`-параметр
+                // (заход-4). `var_types[y]` = ПОИНТИ-тип `T` (не `T*`), как у
+                // ref-параметров: инференс видит `T`, а деref делает codegen.
+                // Кучевой `T` (Р6 `ref H ≡ H`) — inner_c уже `Nova_H*`, значит
+                // `Nova_H** y = &(handle)`; деref `(*y)` даёт handle. Корректно.
+                if let Some(TypeRef::Ref(inner, _)) = &decl.ty {
+                    if let Pattern::Ident { .. } = &decl.pattern {
+                        let binding = self.pattern_binding(&decl.pattern)?;
+                        let inner_c = self.type_ref_to_c(inner)?;
+                        let place = self.emit_expr(&decl.value)?;
+                        self.line(&format!("{}* {} = &({});", inner_c, binding, place));
+                        self.var_types.insert(binding.clone(), inner_c);
+                        self.ref_params.insert(binding);
+                        return Ok(());
+                    }
+                }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
                 let mut ty_c = if let Some(ty) = &decl.ty {
