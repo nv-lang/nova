@@ -75,7 +75,7 @@ export type ParseUrlError enum
 /// Throws `ParseUrlError`. По D67 `?` после нельзя.
 #stable(since = "0.1")
 export fn Url.from(s str) Fail[ParseUrlError] -> Self {
-    if s.len() == 0 { throw EmptyInput }
+    if s.byte_len() == 0 { throw EmptyInput }
 
     // 1. Извлечь scheme (до первого ":") и валидировать.
     ro (scheme, after_scheme) = parse_scheme(s)
@@ -83,7 +83,7 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
     // 2. Если "://" — есть authority (user/host/port), иначе path сразу.
     ro (user, password, host, port, after_authority) =
         if after_scheme.starts_with("//") {
-            parse_authority(after_scheme[2..after_scheme.len()])
+            parse_authority(after_scheme[2..after_scheme.byte_len()])
         } else {
             (None, None, None, None, after_scheme)
         }
@@ -93,9 +93,9 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
 
     // 4. Query — после "?", до "#".
     ro (query, after_query) = if after_path.starts_with("?") {
-        ro rest = after_path[1..after_path.len()]
+        ro rest = after_path[1..after_path.byte_len()]
         match rest.find("#") {
-            Some(i) => (Some(rest[0..i]), rest[i..rest.len()])
+            Some(i) => (Some(rest[0..i]), rest[i..rest.byte_len()])
             None    => (Some(rest), "")
         }
     } else {
@@ -104,7 +104,7 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
 
     // 5. Fragment — после "#".
     ro fragment = if after_query.starts_with("#") {
-        Some(after_query[1..after_query.len()])
+        Some(after_query[1..after_query.byte_len()])
     } else {
         None
     }
@@ -138,7 +138,7 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
                     _ => ()
                 }
             }
-            (scheme.to_ascii_lower(), s[i + 1..s.len()])
+            (scheme.to_ascii_lower(), s[i + 1..s.byte_len()])
         }
     }
 }
@@ -149,17 +149,17 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     // Найти конец authority — первый из /, ?, #.
     ro auth_end = find_first_of(s, "/?#")
     ro (auth, rest) = match auth_end {
-        Some(i) => (s[0..i], s[i..s.len()])
+        Some(i) => (s[0..i], s[i..s.byte_len()])
         None    => (s, "")
     }
 
-    if auth.len() == 0 {
+    if auth.byte_len() == 0 {
         return (None, None, None, None, rest)
     }
 
     // Userinfo — до "@", если есть
     ro (userinfo_opt, host_port) = match auth.find("@") {
-        Some(i) => (Some(auth[0..i]), auth[i + 1..auth.len()])
+        Some(i) => (Some(auth[0..i]), auth[i + 1..auth.byte_len()])
         None    => (None, auth)
     }
 
@@ -167,7 +167,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     ro (user, password) = match userinfo_opt {
         None => (None, None)
         Some(ui) => match ui.find(":") {
-            Some(i) => (Some(ui[0..i]), Some(ui[i + 1..ui.len()]))
+            Some(i) => (Some(ui[0..i]), Some(ui[i + 1..ui.byte_len()]))
             None    => (Some(ui), None)
         }
     }
@@ -175,7 +175,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     // host[:port]
     ro (host, port) = match host_port.find(":") {
         Some(i) => {
-            ro port_str = host_port[i + 1..host_port.len()]
+            ro port_str = host_port[i + 1..host_port.byte_len()]
             ro port_num = match int.try_from(port_str) {
                 Ok(n) if n >= 0 && n <= 65535 => n
                 _                              => throw InvalidPort { value: port_str }
@@ -193,7 +193,7 @@ fn parse_path(s str) -> (str, str) {
     // Path до "?" или "#" или EOF
     ro path_end = find_first_of(s, "?#")
     match path_end {
-        Some(i) => (s[0..i], s[i..s.len()])
+        Some(i) => (s[0..i], s[i..s.byte_len()])
         None    => (s, "")
     }
 }
@@ -235,7 +235,8 @@ fn is_scheme_char(c char) -> bool =>
 #stable(since = "0.1")
 export fn Url @to_str() -> str {
     consume buf = StringBuilder.with_capacity(64)
-    buf = buf + @scheme + ":"
+    buf.append(@scheme)
+    buf.append(":")
 
     if @host != None {
         buf.append("//")
@@ -288,7 +289,7 @@ export fn Url @to_str() -> str {
         None => ()
     }
 
-    buf.into()
+    buf.into_str()
 }
 
 
@@ -308,7 +309,7 @@ export fn Url @to_str() -> str {
 /// ```
 #stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
-    consume buf = StringBuilder.with_capacity(s.len() * 2)    // worst case
+    consume buf = StringBuilder.with_capacity(s.byte_len() * 2)    // worst case
     for c in s.chars() {
         if is_unreserved(c) {
             buf.append(c)
@@ -331,7 +332,7 @@ export fn Url.encode_query(s str) -> str {
             }
         }
     }
-    buf.into()
+    buf.into_str()
 }
 
 // Декодирует percent-encoded строку.
@@ -359,7 +360,7 @@ export fn Url.encode_query(s str) -> str {
 /// Percent-decode query string. Throws `InvalidPercentEncoding` если `%XX` malformed.
 #stable(since = "0.1")
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
-    mut buf = WriteBuffer.with_capacity(s.len())
+    mut buf = WriteBuffer.with_capacity(s.byte_len())
     // Литеральные (не `%XX`) символы проходят через as-is (`write_char(c)`) —
     // могут быть произвольным Unicode, поэтому нужны реальные char-значения,
     // не только ASCII-детект. Материализуем `[]char` ОДИН раз (push-loop, не
@@ -369,33 +370,22 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
     ro n = sc.len()
     mut i = 0
     while i < n {
-        match sc.get(i) {
-            Some('%') => {
-                if i + 2 >= n {
-                    throw InvalidPercentEncoding { position: i }
-                }
-                ro hi = hex_value_or_throw(sc, i + 1)
-                ro lo = hex_value_or_throw(sc, i + 2)
-                ro byte_val = (hi * 16 + lo) as u8
-                buf.write_byte(byte_val as u8)
-                i += 3
+        ro c = sc[i]
+        if c == '%' {
+            if i + 2 >= n {
+                throw InvalidPercentEncoding { position: i }
             }
-            Some('+') => {
-                buf.write_char(' ')
-                i += 1
-            }
-            Some(c) => {
-                buf.write_char(c)
-                i += 1
-            }
-            None => {
-                // Out-of-bounds char_at — закрываем early.
-                ro bytes = buf.into()
-                match str.from_bytes(bytes) {
-                    Ok(t)  => return t
-                    Err(_) => throw InvalidPercentEncoding { position: i }
-                }
-            }
+            ro hi = hex_value_or_throw(sc, i + 1)
+            ro lo = hex_value_or_throw(sc, i + 2)
+            ro byte_val = (hi * 16 + lo) as u8
+            buf.write_byte(byte_val as u8)
+            i += 3
+        } else if c == '+' {
+            buf.write_char(' ')
+            i += 1
+        } else {
+            buf.write_char(c)
+            i += 1
         }
     }
     ro bytes = buf.into()
