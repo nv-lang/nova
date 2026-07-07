@@ -1649,7 +1649,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   2/2 PASS. Durable-семейство (эта же категория дефекта, шире E7320) — заведено отдельным маркером
   [M-partial-prelude-primitive-method-registry] ниже.
 
-- **[M-partial-prelude-primitive-method-registry]** (2026-07-07, P2, Wave: фикс-очередь §4а /
+- **[M-partial-prelude-primitive-method-registry]** (ДОПОЛНЕНО 2026-07-07 бисектом: standalone-CU read_buffer/string_builder/write_buffer в std/runtime битые этим классом — char.from, str.from_bytes_unchecked_steal, s.bytes()-fallback в field-доступ `no member in nova_str`; pre-existing на всех точках) (2026-07-07, P2, Wave: фикс-очередь §4а /
   план 172-семья) — durable-семейство, вариант C из разведки [M-vec-access-e7320-as-bytes-str]:
   сейчас «метод примитива известен компилятору» ЖЁСТКО связано с «файл, объявляющий этот метод,
   физически слит в текущий CU» (через `#prelude`/`import`). Каждый раз, когда `#no_prelude`
@@ -1869,6 +1869,16 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Мелочь в json-зоне: parse_hex/`code` типизировать u32 (кандидат-codepoint, D327).
   Конвейеры в правленых местах — ребиндингом одним именем (D347-канон, стиль §21).
 
+- **[M-sync-test-stale-duplicate]** (2026-07-07, P2, Wave: санация-182 Ф.2) — std/runtime/
+  sync_test.nv объявляет `module runtime.sync` (не sync_test) и ПОВТОРНО объявляет
+  MemOrdering из sync.nv — устаревший файл-дубликат, не мигрированный на *_test-конвенцию;
+  валит юниты sync и sync_test в --full std/runtime (бисект 2026-07-07: pre-existing на
+  всех точках). Снести/переписать по test-conventions.
+- **[M-runner-testless-units-main-impl]** (2026-07-07, P2, Wave: заход test_runner вместе с
+  [M-test-runner-shared-temp-collision]) — 8 юнитов std/runtime (char/defaults/fibers/gc/
+  math/numeric/raw_mem/runtime) падают линковкой `nova_fn_main_impl`: раннер собирает exe
+  для модулей БЕЗ test-блоков. Такие юниты должны получать SKIP (или компиляцию без линка),
+  не CC-FAIL. Pre-existing (бисект).
 - **[M-compiler-nv-porting-wave]** (2026-07-07, P2, Wave: [haiku+sonnet] сразу после вливания
   parse-family-fix — общие ветки try_from/try_parse) — по карте аудита §3 (отчёт агента
   2026-07-07): (D) снос ~383 строк мёртвых *_unused()-реестров runtime_registry.rs:493-887;
