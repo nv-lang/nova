@@ -401,53 +401,27 @@ fn math_runtime() -> Vec<RuntimeFn> {
 }
 
 /// `std.runtime.char` — char ↔ str (UTF-8 encode/decode).
+///
+/// [M-compiler-nv-porting-wave] (2026-07-07) item A: was mixed (2 external
+/// entries auto-gen'd into std/runtime/char.nv + 2 Nova-implemented entries
+/// whose body lived as a Rust string literal, `nova_body: Some(...)`,
+/// rendered verbatim by `render_nv`). Registry-driven auto-gen writes ONE
+/// file per module (`module_to_path`, single_file form) — it cannot
+/// coexist with a hand-maintained sibling under the SAME module (Nova
+/// import resolution is single-file XOR folder per module path, see
+/// `resolve_module_paths` in imports.rs — it does NOT scan a directory for
+/// arbitrary same-named-module sibling files; `sync.nv`+`sync_test.nv`
+/// only merge via the `*_test.nv` test-peer special case, not a general
+/// mechanism; confirmed experimentally — a `char_convert.nv` sibling was
+/// silently never imported). Fix: same path StringBuilder/WriteBuffer/
+/// ReadBuffer already took (Plan 91.12/109) — char_runtime() now returns
+/// `vec![]` (empty, like write_buffer_runtime/read_buffer_runtime below);
+/// ALL FOUR declarations (str.from/str.from_codepoint externs +
+/// char.from/u8.try_from Nova bodies) live together, hand-maintained, in
+/// std/runtime/char.nv — single file, single source of truth, no more
+/// auto-gen involvement for this module.
 fn char_runtime() -> Vec<RuntimeFn> {
-    vec![
-        RuntimeFn {
-            module: "std.runtime.char",
-            receiver: Some("str"),
-            is_static: true, is_mut: false, is_consume: false,
-            name: "from",
-            params: &[("c", "char")],
-            return_ty: "str",
-            effects: &[],
-            c_name: "Nova_str_static_from_char",
-            doc: "UTF-8 encode codepoint в 1-4 байта. Используется интерполяцией/str.from(char).",
-        nova_body: None,
-    },
-        // Plan 91.13 followup: `str.from_codepoint(int) -> str` — explicit
-        // unchecked UTF-8 encode из codepoint integer. Используется в
-        // JSON unicode escape parsing (\uXXXX) и других protocol decoders
-        // где код уже validated (hex digits ⊆ [0, 0x10FFFF]). Backed by
-        // тем же runtime helper что `str.from(char)` — Nova_str_static_
-        // from_char (D54 bypass для known-valid codepoints; `int as char`
-        // забанен Plan 34 Ф.5.2).
-        RuntimeFn {
-            module: "std.runtime.char",
-            receiver: Some("str"),
-            is_static: true, is_mut: false, is_consume: false,
-            name: "from_codepoint",
-            params: &[("cp", "int")],
-            return_ty: "str",
-            effects: &[],
-            c_name: "Nova_str_static_from_char",
-            doc: "Unchecked UTF-8 encode codepoint в 1-4 байта. Caller гарантирует cp ∈ [0, 0x10FFFF]. Invalid codepoint → empty str (silent — predictable degradation). Используется JSON unicode escape parser-ами + другими decoders.",
-        nova_body: None,
-    },
-        // [M-compiler-nv-porting-wave] (2026-07-07) item A: `char.from` /
-        // `u8.try_from` были Nova-implemented (`nova_body: Some(...)`) —
-        // тело жило как Rust string literal здесь, а `render_nv` (Plan 13
-        // Ф.9.2) эмитил его буквально в auto-generated char.nv. Т.к. это
-        // единственные две nova_body-записи во всём реестре (после сноса
-        // *_unused в Ф.D), а render_nv перезаписывает std/runtime/char.nv
-        // ЦЕЛИКОМ по module_to_path (один файл = все записи модуля), их
-        // Nova-исходники перенесены в РУЧНОЙ co-equal sibling-файл
-        // std/runtime/char_convert.nv (тот же `module runtime.char`, по
-        // образцу write_buffer.nv/read_buffer.nv — модуль с пустым vec![]
-        // здесь полностью ручной; string_builder.nv/sync.nv+sync_test.nv —
-        // co-equal файлы одного module). char_runtime() больше не содержит
-        // этих двух записей — источник истины теперь .nv, не Rust-строка.
-    ]
+    vec![]
 }
 
 /// `std.runtime.string_builder` — Plan 109: StringBuilder is now a Nova-defined type.
