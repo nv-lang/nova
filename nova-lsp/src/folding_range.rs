@@ -504,7 +504,7 @@ impl<'a> Collector<'a> {
                 self.walk_expr(body);
             }
             ExprKind::Block(b) => self.walk_block(b),
-            ExprKind::Spawn(e) | ExprKind::Throw(e) => self.walk_expr(e),
+            ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::RefArg(e) => self.walk_expr(e),
             ExprKind::Supervised { body, cancel, .. } => {
                 self.walk_block(body);
                 if let Some(c) = cancel {
