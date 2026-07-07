@@ -1993,3 +1993,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   флапает PASS/RUN-FAIL в single-process ПОСЛЕДОВАТЕЛЬНЫХ прогонах (обрыв на 4-й из 90
   проверок) — НЕ temp-гонка (доказано runner-фиксом: PID-изоляция не убрала флап). Похоже
   на GC/рантайм-гонку в самом тесте или кодогене hashable-протокола.
+
+- **[M-bang-requires-fail-enforcement]** (2026-07-07, P2, Wave: §4а-остаток, чекер-заход) —
+  по D85 `!!` = throw через Fail и вне Fail-контекста должен отвергаться чекером
+  (E_BANG_REQUIRES_FAIL), фактически компилируется (найдено владельцем на
+  json.nv read_hex_quad). Заход: (1) выяснить текущий лоуэринг `!!` без Fail (тихий
+  unchecked? panic?) — если тихий unwrap, это P1-звучность; (2) enforcement + канон-миграция
+  не-Fail мест на `?? panic("...")`/честный Fail (вкл. сеттеры @header/mock `insert(...)!!`
+  из http-волны); (3) проверить, несут ли test-блоки неявный Fail-контекст (масса `!!` в
+  тестах — легальность зависит от этого).
