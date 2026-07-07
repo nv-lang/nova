@@ -12699,7 +12699,8 @@ fn BoxIter[T] mut @collect() -> Vec[T]               // терминатор д�
   (`mut src = @`) в свежее захватывающее замыкание → цепочка **реентерабельна** на
   терминатор-вызов и не мутирует BoxIter вызывающего, пока терминатор её не сдренит.
 - **Терминаторы** (драйвят/коротят): `collect`/`fold`/`reduce`/`count`/`sum(zero T)`/
-  `any`/`all`/`find`/`for_each`/`min`/`max`/`nth`/`last` (Phase A). `min`/`max` — на
+  `any`/`all`/`find`/`for_each`/`min`/`max`/`last` (Phase A; `nth` — ретрактирован, см.
+  AMEND выше). `min`/`max` — на
   `[T Compare]`; `sum(zero T)` — аддитивная идентичность вместо числового протокола.
 
 ### Модульное размещение

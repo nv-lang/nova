@@ -7898,8 +7898,10 @@ impl<'a> TypeCheckCtx<'a> {
                             errors.push(Diagnostic::new(
                                 "[E_STR_NO_INT_INDEX] `str` cannot be indexed by an integer — \
                                  codepoint indexing a UTF-8 string is O(n) masquerading as O(1) \
-                                 (D249). Use a lens: byte `s.bytes()[i]` (O(1)), codepoint \
-                                 `s.chars().nth(i)` (O(n)); the only `str[..]` form is the \
+                                 (D249). Use a lens: byte `s.bytes()[i]` (O(1)), or iterate \
+                                 codepoints with `for c in s.chars()` / `.chars().indices()` \
+                                 (positional `chars().nth(i)` was itself retracted, D260-амендмент, \
+                                 for the same O(n)-as-O(1) reason); the only `str[..]` form is the \
                                  byte-range slice `s[a..b]`.".to_string(),
                                 e.span,
                             ));
@@ -10090,7 +10092,9 @@ impl<'a> TypeCheckCtx<'a> {
             let hint = match name {
                 "len"      => Some("`byte_len()` (byte length, O(1)) or `chars().count()` (codepoint count, O(n))"),
                 "char_len" => Some("`chars().count()` (codepoint count, O(n))"),
-                "char_at"  => Some("`chars().nth(i)` (i-th codepoint, O(n))"),
+                "char_at"  => Some("`for c in chars()` / `.chars().indices()` (i-th codepoint via \
+                                    target iteration — positional `chars().nth(i)` was itself \
+                                    retracted, D260-амендмент)"),
                 "byte_at"  => Some("`bytes()[i]` (i-th byte, O(1), bounds-checked)"),
                 _ => None,
             };

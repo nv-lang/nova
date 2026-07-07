@@ -79,10 +79,12 @@ export fn Hex.decode(s str) Fail[ParseHexError] -> []u8 {
     out
 }
 
+// Hex digest content is pure ASCII — direct byte access O(1) instead of the
+// ретрактированный `chars().nth(pos)` O(n) scan (D260-амендмент).
 fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
-    match s.chars().nth(pos) {
-        Some(c) => {
-            ro n = c as int
+    match s.bytes().get(pos) {
+        Some(b) => {
+            ro n = b as int
             if n >= 48 && n <= 57 {
                 n - 48
             } else if n >= 97 && n <= 102 {
@@ -90,7 +92,7 @@ fn digit_value(s str, pos int) Fail[ParseHexError] -> int {
             } else if n >= 65 && n <= 70 {
                 n - 65 + 10
             } else {
-                throw InvalidChar { position: pos, char: c }
+                throw InvalidChar { position: pos, char: char.try_from(n).unwrap_or(' ') }
             }
         }
         None => throw InvalidChar { position: pos, char: ' ' }

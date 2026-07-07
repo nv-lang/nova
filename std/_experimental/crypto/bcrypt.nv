@@ -201,22 +201,36 @@ fn bcrypt_base64_encode(data []u8) -> str {
         buf.append(alphabet_char((((b0 << 4) | (b1 >> 4)) & 0x3F) as int))
         buf.append(alphabet_char(((b1 << 2) & 0x3F) as int))
     }
-    buf.into()
+    buf.into_str()
 }
 
 
-fn alphabet_char(idx int) -> char =>
-    BCRYPT_ALPHABET.chars().nth(idx).unwrap_or('.')
+// BCRYPT_ALPHABET (64 ASCII chars) — прямой byte-доступ O(1) вместо
+// ретрактированного `chars().nth(idx)` O(n) скана (D260-амендмент).
+// `int as char` запрещён (D54) → `char.try_from` (precedent: std/encoding/json.nv
+// Lexer `@peek()`/`@advance()`).
+fn alphabet_char(idx int) -> char {
+    match BCRYPT_ALPHABET.bytes().get(idx) {
+        Some(b) => char.try_from(b as int).unwrap_or('.')
+        None    => '.'
+    }
+}
 
-
+// bcrypt hash text — pure ASCII (bcrypt's own base64 alphabet) — byte access
+// вместо ретрактированного `chars().nth(i)` O(n) скана per-call (D260-амендмент,
+// [M-d73-d77-retraction-migration] Block 4). `bcrypt_decode_char` keeps its
+// `Option[char]` signature (unchanged, still does its own small O(64) linear
+// alphabet-index scan below) — only the byte→char reconstruction at the call
+// site becomes O(1).
 fn bcrypt_base64_decode(s str) -> Option[[]u8] {
     mut out []u8 = []
+    ro sb = s.bytes()
     mut i = 0
-    while i + 3 < s.len() {
-        ro c0 = bcrypt_decode_char(s.chars().nth(i))
-        ro c1 = bcrypt_decode_char(s.chars().nth(i + 1))
-        ro c2 = bcrypt_decode_char(s.chars().nth(i + 2))
-        ro c3 = bcrypt_decode_char(s.chars().nth(i + 3))
+    while i + 3 < s.byte_len() {
+        ro c0 = bcrypt_decode_char(byte_to_char_opt(sb, i))
+        ro c1 = bcrypt_decode_char(byte_to_char_opt(sb, i + 1))
+        ro c2 = bcrypt_decode_char(byte_to_char_opt(sb, i + 2))
+        ro c3 = bcrypt_decode_char(byte_to_char_opt(sb, i + 3))
         match (c0, c1, c2, c3) {
             (Some(a), Some(b), Some(c), Some(d)) => {
                 ro triple = (a << 18) | (b << 12) | (c << 6) | d
@@ -229,13 +243,20 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
         i += 4
     }
     // Trailing
-    if i + 1 < s.len() {
-        match (bcrypt_decode_char(s.chars().nth(i)), bcrypt_decode_char(s.chars().nth(i + 1))) {
+    if i + 1 < s.byte_len() {
+        match (bcrypt_decode_char(byte_to_char_opt(sb, i)), bcrypt_decode_char(byte_to_char_opt(sb, i + 1))) {
             (Some(a), Some(b)) => out.push(((a << 2) | (b >> 4)) as u8)
             _ => return None
         }
     }
     Some(out)
+}
+
+fn byte_to_char_opt(bytes ro []u8, i int) -> Option[char] {
+    match bytes.get(i) {
+        Some(b) => Some(char.try_from(b as int).unwrap_or('\0'))
+        None    => None
+    }
 }
 
 

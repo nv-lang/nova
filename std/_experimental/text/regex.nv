@@ -99,12 +99,24 @@ export type CompileError enum
 
 type Parser {
     pattern str
+    // Push-loop materialisation of `pattern.chars()` (not `.collect()` —
+    // crashes codegen on CharsIter). `@peek()` is called at every parse step;
+    // decoding via the ретрактированный `chars().nth(@pos)` was an O(n) scan
+    // per call (D260-амендмент). `chs.get(@pos)` is O(1). Pattern literals can
+    // contain non-ASCII chars (e.g. matching literal Unicode text), so this
+    // must be a real codepoint vector, not a byte view.
+    chs []char
     mut pos int
 }
 
-fn Parser.new(p str) -> Self => { pattern: p, pos: 0 }
+fn Parser.new(p str) -> Self {
+    mut chs []char = []char.new()
+    chs.cap(p.byte_len())
+    for c in p.chars() { chs.push(c) }
+    { pattern: p, chs, pos: 0 }
+}
 
-fn Parser @peek() -> Option[char] => @pattern.chars().nth(@pos)
+fn Parser @peek() -> Option[char] => @chs.get(@pos)
 
 fn Parser mut @advance() -> Option[char] {
     ro c = @peek()
@@ -245,7 +257,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
                     None    => throw UnclosedClass { position: start }
                 }
                 // Может быть range: \d-\f
-                if @peek() == Some('-') && @pattern.chars().nth(@pos + 1) != Some(']') {
+                if @peek() == Some('-') && @chs.get(@pos + 1) != Some(']') {
                     @advance()
                     ro to = match @advance() {
                         Some('\\') => match @advance() {
@@ -262,7 +274,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
             }
             Some(c) => {
                 @advance()
-                if @peek() == Some('-') && @pattern.chars().nth(@pos + 1) != Some(']') {
+                if @peek() == Some('-') && @chs.get(@pos + 1) != Some(']') {
                     @advance()
                     ro to = match @advance() {
                         Some(x) => x
@@ -496,23 +508,26 @@ export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
 // Двойной буфер: current set of states, next set. Для каждого character
 // шагаем по character-edge'ам. ε-переходы expand'ятся в add_state().
 
-fn add_state(set mut []bool, states []NfaState, idx int, pos int, text str) -> () {
+// `tchars` — subject text materialised as `[]char` ONCE by the caller (see
+// `try_match`) instead of scanning via the ретрактированный `chars().nth()`
+// (D260-амендмент).
+fn add_state(set mut []bool, states []NfaState, idx int, pos int, tchars []char) -> () {
     if idx < 0 || idx >= states.len() { return () }
     if set[idx] { return () }
     set[idx] = true
     match states[idx] {
         SSplit { out1, out2 } => {
-            add_state(set, states, out1, pos, text)
-            add_state(set, states, out2, pos, text)
+            add_state(set, states, out1, pos, tchars)
+            add_state(set, states, out2, pos, tchars)
         }
         SAnchorStart { out } => {
             if pos == 0 {
-                add_state(set, states, out, pos, text)
+                add_state(set, states, out, pos, tchars)
             }
         }
         SAnchorEnd { out } => {
-            if pos == text.len() {
-                add_state(set, states, out, pos, text)
+            if pos == tchars.len() {
+                add_state(set, states, out, pos, tchars)
             }
         }
         _ => ()
@@ -542,22 +557,25 @@ fn step_out(s NfaState) -> int => match s {
 }
 
 
-// Попробовать matchить начиная с position `start_pos` в text.
+// Попробовать matchить начиная с position `start_pos` в tchars (subject text
+// materialised as `[]char` by the caller — `Regex.matches`/`@find`/`@find_all`
+// decode ONCE, not per `try_match` call, restoring the doc's claimed O(n*m)
+// instead of the O(n²)-per-scan the ретрактированный `chars().nth()` caused).
 // Возвращает Some(end_pos) если matched (consumed [start_pos..end_pos]),
 // иначе None.
-fn try_match(re Regex, text str, start_pos int) -> Option[int] {
+fn try_match(re Regex, tchars []char, start_pos int) -> Option[int] {
     ro n = re.states.len
     mut current []bool = []
     mut next []bool = []
     for i in 0..n { current.push(false); next.push(false) }
 
-    add_state(current, re.states, re.start, start_pos, text)
+    add_state(current, re.states, re.start, start_pos, tchars)
 
     mut last_match = if current[final_state(re)] { Some(start_pos) } else { None }
 
     mut pos = start_pos
-    while pos < text.len() {
-        ro c = match text.chars().nth(pos) { Some(ch) => ch, None => break }
+    while pos < tchars.len() {
+        ro c = match tchars.get(pos) { Some(ch) => ch, None => break }
 
         // Reset next
         for k in 0..n { next[k] = false }
@@ -568,7 +586,7 @@ fn try_match(re Regex, text str, start_pos int) -> Option[int] {
                 if matches_class(re.states[idx], c) {
                     ro out = step_out(re.states[idx])
                     if out >= 0 {
-                        add_state(next, re.states, out, pos + 1, text)
+                        add_state(next, re.states, out, pos + 1, tchars)
                     }
                 }
             }
@@ -603,12 +621,23 @@ fn final_state(re Regex) -> int {
 
 
 // Полное соответствие?
+// Push-loop materialisation of `s.chars()` (not `.collect()` — crashes
+// codegen on CharsIter). Decoded ONCE per public entry call — see `try_match`
+// doc for why (D260-амендмент, [M-d73-d77-retraction-migration] Block 4).
+fn to_chars(s str) -> []char {
+    mut out []char = []char.new()
+    out.cap(s.byte_len())
+    for c in s.chars() { out.push(c) }
+    out
+}
+
 /// True если regex matches anywhere в text (substring match).
 #stable(since = "0.1")
 export fn Regex @matches(text str) -> bool {
-    ro r = try_match(@, text, 0)
+    ro tchars = to_chars(text)
+    ro r = try_match(@, tchars, 0)
     match r {
-        Some(end) => end == text.len()
+        Some(end) => end == tchars.len()
         None      => false
     }
 }
@@ -617,15 +646,16 @@ export fn Regex @matches(text str) -> bool {
 /// Find first match — returns `Some((start, end))` byte-offsets, или `None`.
 #stable(since = "0.1")
 export fn Regex @find(text str) -> Option[(int, int)] {
+    ro tchars = to_chars(text)
     mut start = 0
     if @anchored_start {
-        match try_match(@, text, 0) {
+        match try_match(@, tchars, 0) {
             Some(end) => return Some((0, end))
             None      => return None
         }
     }
-    while start <= text.len() {
-        match try_match(@, text, start) {
+    while start <= tchars.len() {
+        match try_match(@, tchars, start) {
             Some(end) => return Some((start, end))
             None      => ()
         }
@@ -637,10 +667,11 @@ export fn Regex @find(text str) -> Option[(int, int)] {
 /// Find all non-overlapping matches — list of `(start, end)` tuples.
 #stable(since = "0.1")
 export fn Regex @find_all(text str) -> [](int, int) {
+    ro tchars = to_chars(text)
     mut results [](int, int) = []
     mut start = 0
-    while start <= text.len() {
-        match try_match(@, text, start) {
+    while start <= tchars.len() {
+        match try_match(@, tchars, start) {
             Some(end) => {
                 results.push((start, end))
                 if end > start { start = end } else { start += 1 }

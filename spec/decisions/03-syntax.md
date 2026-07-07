@@ -9956,7 +9956,8 @@ Added: 2026-06-09  Status: ACTIVE
 > реализует `Index[int, char]` — `s[i]` (int) → `E_STR_NO_INT_INDEX` (codepoint-index
 > O(n) под видом O(1)). `str` реализует ТОЛЬКО `Index[Range, str]` (byte-range slice,
 > contract-bounds, `slice.nv`). Элементный доступ — через линзы `as_bytes()[i]` /
-> `as_chars().nth(i)`. См. [D249/D250](#d249).
+> `for c in as_chars()` (positional `as_chars().nth(i)` retracted — D260-амендмент).
+> См. [D249/D250](#d249).
 
 ### Что
 
@@ -10356,7 +10357,9 @@ Added: 2026-06-13  Status: IMPLEMENTED 2026-06-13 (Plan 152.1 Ф.1/Ф.4)
 
 1. **`str` НЕ индексируется целым** — `s[i]` (int) → **`E_STR_NO_INT_INDEX`**
    (checker, `types/mod.rs` Index-арм). Fix-it: байт `s.as_bytes()[i]` (O(1)),
-   codepoint `s.as_chars().nth(i)` (O(n)), срез `s[a..b]`. Codepoint-index на UTF-8 =
+   codepoint через `for c in s.as_chars()` / `.indices()` (O(n); positional
+   `as_chars().nth(i)` retracted — D260-амендмент, same O(n)-as-O(1) footgun),
+   срез `s[a..b]`. Codepoint-index на UTF-8 =
    O(n)-ложь под видом O(1) → запрещён (прецедент Rust/Swift).
 2. **`str[a..b]`** — единственный `str[..]`: **byte-range** zero-copy view
    (`Index[Range,str]`, `slice.nv`), O(1). Контракт `requires 0<=start &&
@@ -10366,7 +10369,8 @@ Added: 2026-06-13  Status: IMPLEMENTED 2026-06-13 (Plan 152.1 Ф.1/Ф.4)
 3. **`@as_bytes() -> ro []u8`** — байтовый слой бесплатно (`Vec[u8]`-view, D239):
    `[i]`/`len()`/итерация O(1). `@byte_at(i)` ретайрнут → `as_bytes()[i]`.
 4. **`@as_chars() -> CharsIter`** (D250) — codepoint-слой (поток, O(n)). Плоские
-   `@char_at`/`@char_len`/`@get(int)` ретайрнуты → `as_chars().nth(i)`/`.count()`.
+   `@char_at`/`@char_len`/`@get(int)` ретайрнуты → `for c in as_chars()` / `.count()`
+   (positional `as_chars().nth(i)` — сам тоже ретрактирован, D260-амендмент).
 5. **`@find`/`@rfind` → байт-offset** (композируется с `s[k..]` за O(1)).
 6. **`for c in s` → `char`** (= `s.as_chars()`, D58 amend).
 7. **Бэар `@len()` ретайрнут** → **`E_STR_NO_LEN`**. `@byte_len()` (O(1), читает
@@ -10407,7 +10411,8 @@ type CharsIter value priv { buf str, pos int }   // borrows str; GC видит p
 - **НЕ реализует `Index[int,char]`**, нет позиционных `at`/`len` (вариант C). На `str`
   нет `char_len`/`char_at` — это и есть минимализм. `CharsIter[i]` → CC-FAIL (не индексируем).
 - **`str @as_chars() -> CharsIter`** (ленивый, borrows). **`str @iter() => @as_chars()`** →
-  `for c in s` декодит codepoint'ы. codepoint-count = `as_chars().count()`, N-й = `.nth(i)`.
+  `for c in s` декодит codepoint'ы. codepoint-count = `as_chars().count()`; N-й элемент —
+  через целевую итерацию (`for`/`.indices()`), не позиционный доступ (`.nth(i)` ретрактирован).
 - **Конвенция:** `as_<repr>()` = линза/итератор-вью (borrows, zero-copy); `to_<repr>()` =
   owned копия (alloc). `as_bytes`/`as_chars` vs `to_bytes`/`to_chars`.
 - **GC/lifetime:** `CharsIter.buf` (str) держит `ptr` → conservative GC видит буфер

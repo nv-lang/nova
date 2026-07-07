@@ -199,9 +199,12 @@ fn decode_with(s str, require_padding bool) -> Result[[]u8, Base64Error] {
 
     // Считаем сколько `=` в конце — это даёт длину выхода.
     // URL-safe без padding: оцениваем по длине.
+    // `=` — ASCII, base64-контент целиком ASCII → прямой byte-доступ O(1)
+    // вместо ретрактированного `chars().nth()` (D260-амендмент).
+    ro sb = s.bytes()
     ro trimmed_len = if require_padding {
-        if s.chars().nth(s.byte_len() - 1) == Some('=') {
-            if s.chars().nth(s.byte_len() - 2) == Some('=') {
+        if sb[s.byte_len() - 1] == ('=' as u8) {
+            if sb[s.byte_len() - 2] == ('=' as u8) {
                 s.byte_len() - 2
             } else {
                 s.byte_len() - 1
@@ -257,11 +260,17 @@ fn decode_with(s str, require_padding bool) -> Result[[]u8, Base64Error] {
     Ok(out)
 }
 
+// Base64-alphabet content is pure ASCII, so byte access at `pos` IS the
+// codepoint access — O(1) direct index instead of the ретрактированный
+// `chars().nth(pos)` O(n) scan (D260-амендмент).
 fn decode_at(s str, pos int) -> Result[u8, Base64Error] {
-    match s.chars().nth(pos) {
-        Some(c) => match decode_char(c) {
-            Some(v) => Ok(v)
-            None    => Err(InvalidChar { position: pos, char: c })
+    match s.bytes().get(pos) {
+        Some(b) => {
+            ro c = char.try_from(b as int).unwrap_or('?')
+            match decode_char(c) {
+                Some(v) => Ok(v)
+                None    => Err(InvalidChar { position: pos, char: c })
+            }
         }
         None => Err(InvalidLength { actual: s.byte_len() })
     }

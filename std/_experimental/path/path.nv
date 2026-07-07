@@ -199,19 +199,28 @@ export fn Path.normalize(p str) -> str {
 
 
 // Helpers
+// `/` и `.` — ASCII байты; UTF-8 continuation/lead-байты многобайтовых
+// codepoint'ов никогда не совпадают с ASCII-диапазоном (self-sync), поэтому
+// прямой byte-scan корректен даже над non-ASCII путями — O(1) индекс вместо
+// ретрактированного `chars().nth(i)` O(n) скана (D260-амендмент). Байтовая
+// позиция при этом совместима с byte-range `s[a..b]` slicing, используемым
+// вызывающими функциями (в отличие от codepoint-индекса `nth`, который был
+// бы несовместим на non-ASCII путях).
 fn find_last_slash(s str) -> Option[int] {
+    ro sb = s.bytes()
     mut i = s.byte_len() - 1
     while i >= 0 {
-        if s.chars().nth(i) == Some('/') { return Some(i) }
+        if sb[i] == ('/' as u8) { return Some(i) }
         i -= 1
     }
     None
 }
 
 fn find_last_dot(s str) -> Option[int] {
+    ro sb = s.bytes()
     mut i = s.byte_len() - 1
     while i >= 0 {
-        if s.chars().nth(i) == Some('.') { return Some(i) }
+        if sb[i] == ('.' as u8) { return Some(i) }
         i -= 1
     }
     None

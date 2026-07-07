@@ -77,8 +77,12 @@ export fn Markdown.to_html(md str) -> str {
             flush_paragraph(buf, paragraph)
             paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
+            // Целевая for-in итерация вместо ретрактированного `chars().nth(level)`
+            // (D260-амендмент) — последовательный скан, случайный доступ не нужен.
             mut level = 0
-            while level < 6 && line.chars().nth(level) == Some('#') {
+            for c in line.chars() {
+                if level == 6 { break }
+                if c != '#' { break }
                 level += 1
             }
             ro text = line[level..line.len()].trim_ascii()
@@ -141,18 +145,27 @@ fn flush_paragraph(buf mut Buffer, paragraph Buffer) -> () {
 
 
 // Inline parsing: **bold**, *italic*, `code`, [text](url)
+//
+// Random-access index scan (lookahead/backahead на i+1, end+1, ...) — не
+// последовательный for-in паттерн, поэтому вместо ретрактированного
+// `chars().nth(i)` (D260-амендмент) материализуем `[]char` ОДИН раз (O(n)
+// push-loop, не `.collect()` — CharsIter `.collect()` крашит кодоген,
+// [M-d73-d77-retraction-migration] Block 2 precedent) и далее — O(1)
+// `Vec[char] @get(i)`.
 fn render_inline(s str) -> str {
     consume buf = StringBuilder.with_capacity(s.len())
+    ro sc = to_chars(s)
+    ro n = sc.len()
     mut i = 0
-    while i < s.len() {
-        ro c = match s.chars().nth(i) { Some(ch) => ch, None => break }
+    while i < n {
+        ro c = match sc.get(i) { Some(ch) => ch, None => break }
 
         // Inline code
         if c == '`' {
             ro start = i + 1
             mut end = start
-            while end < s.len() && s.chars().nth(end) != Some('`') { end += 1 }
-            if end < s.len() {
+            while end < n && sc.get(end) != Some('`') { end += 1 }
+            if end < n {
                 buf.append("<code>")
                 buf.append(escape_html(s[start..end]))
                 buf.append("</code>")
@@ -162,14 +175,14 @@ fn render_inline(s str) -> str {
         }
 
         // Bold ** ... **
-        if c == '*' && s.chars().nth(i + 1) == Some('*') {
+        if c == '*' && sc.get(i + 1) == Some('*') {
             ro start = i + 2
             mut end = start
-            while end + 1 < s.len() {
-                if s.chars().nth(end) == Some('*') && s.chars().nth(end + 1) == Some('*') { break }
+            while end + 1 < n {
+                if sc.get(end) == Some('*') && sc.get(end + 1) == Some('*') { break }
                 end += 1
             }
-            if end + 1 < s.len() {
+            if end + 1 < n {
                 buf.append("<strong>")
                 buf.append(escape_html(s[start..end]))
                 buf.append("</strong>")
@@ -182,8 +195,8 @@ fn render_inline(s str) -> str {
         if c == '*' {
             ro start = i + 1
             mut end = start
-            while end < s.len() && s.chars().nth(end) != Some('*') { end += 1 }
-            if end < s.len() {
+            while end < n && sc.get(end) != Some('*') { end += 1 }
+            if end < n {
                 buf.append("<em>")
                 buf.append(escape_html(s[start..end]))
                 buf.append("</em>")
@@ -194,11 +207,11 @@ fn render_inline(s str) -> str {
 
         // Link [text](url)
         if c == '[' {
-            ro close_bracket_opt = find_in(s, ']', i + 1)
+            ro close_bracket_opt = find_in(sc, ']', i + 1)
             match close_bracket_opt {
                 Some(close_bracket) => {
-                    if s.chars().nth(close_bracket + 1) == Some('(') {
-                        ro close_paren_opt = find_in(s, ')', close_bracket + 2)
+                    if sc.get(close_bracket + 1) == Some('(') {
+                        ro close_paren_opt = find_in(sc, ')', close_bracket + 2)
                         match close_paren_opt {
                             Some(close_paren) => {
                                 ro text = s[i + 1..close_bracket]
@@ -227,10 +240,18 @@ fn render_inline(s str) -> str {
 }
 
 
-fn find_in(s str, target char, start int) -> Option[int] {
+// Push-loop materialisation of `s.chars()` — see `render_inline` doc.
+fn to_chars(s str) -> []char {
+    mut out []char = []char.new()
+    out.cap(s.byte_len())
+    for c in s.chars() { out.push(c) }
+    out
+}
+
+fn find_in(sc []char, target char, start int) -> Option[int] {
     mut i = start
-    while i < s.len() {
-        if s.chars().nth(i) == Some(target) { return Some(i) }
+    while i < sc.len() {
+        if sc.get(i) == Some(target) { return Some(i) }
         i += 1
     }
     None

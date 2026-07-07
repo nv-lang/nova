@@ -630,20 +630,11 @@ export fn BoxIter[T Compare] mut @max() -> Option[T] {
     Some(best)
 }
 
-/// 0-based `n`-th remaining element (consumes the first `n`), or `None`.
-export fn BoxIter[T] mut @nth(n int) -> Option[T] {
-    mut k = n
-    while true {
-        match @next() {
-            Some(x) => {
-                if k == 0 { return Some(x) }
-                k = k - 1
-            },
-            None => return None,
-        }
-    }
-    None
-}
+// `@nth(n int) -> Option[T]` — RETRACTED (2026-07-06, D260-амендмент,
+// [M-d73-d77-retraction-migration] Block 4): positional access disguised as
+// an O(1)-looking method call while draining the iterator up to `n` — same
+// footgun family as the retired `CharsIter @nth`. Callers migrate to target
+// iteration (`for x in it`, `.skip(n).next()`, manual counted loop).
 
 /// Last remaining element, or `None` if the iterator is empty (drains it).
 export fn BoxIter[T] mut @last() -> Option[T] {

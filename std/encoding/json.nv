@@ -287,10 +287,11 @@ fn is_digit(c char) -> bool => c.is_ascii_digit()
 fn is_hex_digit(c char) -> bool => c.is_ascii_hexdigit()
 
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWithPos, ParseJsonError] {
-    for i in 0..kw.byte_len() {
-        ro expected = kw.chars().nth(i)
+    // `kw` — короткий ASCII-литерал ("true"/"false"/"null"); прямая for-in
+    // итерация вместо ретрактированного `chars().nth(i)` (D260-амендмент).
+    for expected in kw.chars() {
         ro actual = @peek()
-        if Some(expected.unwrap_or(' ')) != actual {
+        if Some(expected) != actual {
             return Err(UnexpectedChar { @line, @col, found: actual.unwrap_or(' ') })
         }
         @advance()

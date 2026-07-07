@@ -341,11 +341,16 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
     { ts_part, rand_part }
 }
 
+// Crockford base32 alphabet is pure ASCII — direct byte access O(1) instead
+// of the ретрактированный `chars().nth(pos)` O(n) scan (D260-амендмент).
 fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
-    match s.chars().nth(pos) {
-        Some(c) => match decode_char(c) {
-            Some(v) => v
-            None    => throw InvalidChar { position: pos, char: c }
+    match s.bytes().get(pos) {
+        Some(b) => {
+            ro c = char.try_from(b as int).unwrap_or(' ')
+            match decode_char(c) {
+                Some(v) => v
+                None    => throw InvalidChar { position: pos, char: c }
+            }
         }
         None => throw InvalidLength { actual: s.len(), expected: 26 }
     }

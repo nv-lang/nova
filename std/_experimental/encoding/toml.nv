@@ -48,6 +48,13 @@ export type ParseTomlError enum
 
 type TomlParser {
     input str
+    // Push-loop materialisation of `input.chars()` (not `.collect()` — crashes
+    // codegen on CharsIter). `@peek()` is the hot-path called at every parser
+    // step — decoding was the ретрактированный `chars().nth(@pos)` O(n) scan
+    // per call (O(n²) tokenizing overall, D260-амендмент); `chs.get(@pos)` is
+    // O(1). TOML basic strings allow arbitrary UTF-8, so this must be a real
+    // codepoint vector, not a byte view.
+    chs []char
     mut pos int
     mut line int
     mut col int
@@ -55,15 +62,20 @@ type TomlParser {
     mut current_path []str         // current table path для [section]
 }
 
-fn TomlParser.new(s str) -> Self =>
+fn TomlParser.new(s str) -> Self {
+    mut chs []char = []char.new()
+    chs.cap(s.byte_len())
+    for c in s.chars() { chs.push(c) }
     {
         input: s,
+        chs,
         pos: 0,
         line: 1,
         col: 1,
         root: HashMap[str, TomlValue].new(),
         current_path: [],
     }
+}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -86,7 +98,7 @@ export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue {
 // Lexing helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn TomlParser @peek() -> Option[char] => @input.chars().nth(@pos)
+fn TomlParser @peek() -> Option[char] => @chs.get(@pos)
 
 fn TomlParser mut @advance() -> Option[char] {
     ro c = @peek()
@@ -279,15 +291,15 @@ fn TomlParser mut @parse_bool() Fail[ParseTomlError] -> TomlValue {
 }
 
 fn TomlParser mut @match_keyword(kw str) -> bool {
+    // `kw` — короткий ASCII-литерал ("true"/"false"); прямая for-in итерация
+    // вместо ретрактированного `chars().nth(i)` (D260-амендмент).
     ro saved = @pos
-    mut i = 0
-    while i < kw.len() {
-        if @peek() != kw.chars().nth(i) {
+    for expected in kw.chars() {
+        if @peek() != Some(expected) {
             @pos = saved
             return false
         }
         @advance()
-        i += 1
     }
     true
 }

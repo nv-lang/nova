@@ -300,10 +300,14 @@ export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
     { hi, lo }
 }
 
+// Canonical UUID text is pure ASCII (hex digits + dashes) — direct byte
+// access O(1) instead of the ретрактированный `chars().nth(pos)` O(n) scan
+// (D260-амендмент).
 fn check_dash(s str, pos int) Fail[ParseUuidError] -> () {
-    match s.chars().nth(pos) {
-        Some('-') => ()
-        _         => throw MissingDash { position: pos }
+    ro dash = '-' as u8
+    match s.bytes().get(pos) {
+        Some(b) if b == dash => ()
+        _                    => throw MissingDash { position: pos }
     }
 }
 
@@ -311,9 +315,11 @@ fn check_dash(s str, pos int) Fail[ParseUuidError] -> () {
 fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
     mut acc u64 = 0
     mut i = from
+    ro sb = s.bytes()
     while i < to {
-        match s.chars().nth(i) {
-            Some(c) => {
+        match sb.get(i) {
+            Some(b) => {
+                ro c = char.try_from(b as int).unwrap_or(' ')
                 ro d = hex_value(c, i)
                 acc = acc * 16 + (d as u64)
             }

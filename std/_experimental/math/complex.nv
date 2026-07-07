@@ -342,14 +342,18 @@ export fn Complex.try_from(s str) -> Result[Complex, ParseComplexError] {
 // Разделить body вида "1.0+2.0" / "1.0-2.0" на (re, im).
 // Знак на первой позиции относится к re, не разделитель.
 // None если разделителя нет (значит чисто-мнимое).
+// `body` — числовой литерал (цифры/`.`/`+`/`-`/`e`/`E`/`i`), пure ASCII —
+// прямой byte-доступ O(1) вместо ретрактированного `chars().nth(i)` O(n)
+// скана (D260-амендмент).
 fn split_re_im(body str) -> Option[(str, str)] {
+    ro bb = body.bytes()
     mut i = 1                              // пропускаем знак re если есть
     while i < body.byte_len() {
-        ro c = body.chars().nth(i)
-        if c == '+' || c == '-' {
+        ro b = bb[i]
+        if b == ('+' as u8) || b == ('-' as u8) {
             // Не часть экспоненты `1e-5`?
-            ro prev = body.chars().nth(i - 1)
-            if prev != 'e' && prev != 'E' {
+            ro prev = bb[i - 1]
+            if prev != ('e' as u8) && prev != ('E' as u8) {
                 ro re_s = body[0..i]
                 ro im_s = body[i..body.byte_len()]
                 return Some((re_s, im_s))

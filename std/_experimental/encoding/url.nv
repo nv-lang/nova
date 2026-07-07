@@ -121,16 +121,19 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
         Some(i) => {
             if i == 0 { throw MissingScheme }
             ro scheme = s[0..i]
+            // Scheme (RFC 3986 § 3.1) — pure ASCII → прямой byte-доступ O(1)
+            // вместо ретрактированного `chars().nth()` O(n) скана (D260-амендмент).
+            ro sb = scheme.bytes()
             // Первый символ — letter
-            match scheme.chars().nth(0) {
-                Some(c) if !is_alpha(c) =>
+            match sb.get(0) {
+                Some(b) if !is_alpha(char.try_from(b as int).unwrap_or(' ')) =>
                     throw InvalidScheme { value: scheme }
                 _ => ()
             }
             // Остальные — letter/digit/+/-/.
-            for j in 1..scheme.len() {
-                match scheme.chars().nth(j) {
-                    Some(c) if !is_scheme_char(c) =>
+            for j in 1..scheme.byte_len() {
+                match sb.get(j) {
+                    Some(b) if !is_scheme_char(char.try_from(b as int).unwrap_or(' ')) =>
                         throw InvalidScheme { value: scheme }
                     _ => ()
                 }
@@ -195,13 +198,16 @@ fn parse_path(s str) -> (str, str) {
     }
 }
 
+// Delimiter set (`chars`) — всегда ASCII ("/?#", "?#"); UTF-8 continuation/lead
+// байты многобайтовых codepoint'ов никогда не совпадают с ASCII (self-sync),
+// поэтому byte-scan корректен даже над non-ASCII `s` — O(1) индекс вместо
+// ретрактированного `chars().nth(i)` O(n) скана (D260-амендмент).
 fn find_first_of(s str, chars str) -> Option[int] {
+    ro sb = s.bytes()
     mut i = 0
-    while i < s.len() {
-        match s.chars().nth(i) {
-            Some(c) => if chars.contains(str.from(c)) { return Some(i) }
-            None    => return None
-        }
+    while i < s.byte_len() {
+        ro c = char.try_from(sb[i] as int).unwrap_or(' ')
+        if chars.contains(str.from(c)) { return Some(i) }
         i += 1
     }
     None
@@ -354,15 +360,22 @@ export fn Url.encode_query(s str) -> str {
 #stable(since = "0.1")
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
     mut buf = WriteBuffer.with_capacity(s.len())
+    // Литеральные (не `%XX`) символы проходят через as-is (`write_char(c)`) —
+    // могут быть произвольным Unicode, поэтому нужны реальные char-значения,
+    // не только ASCII-детект. Материализуем `[]char` ОДИН раз (push-loop, не
+    // `.collect()` — крашит кодоген на CharsIter) вместо ретрактированного
+    // `chars().nth(i)` O(n) скана на каждой итерации (D260-амендмент).
+    ro sc = to_chars(s)
+    ro n = sc.len()
     mut i = 0
-    while i < s.len() {
-        match s.chars().nth(i) {
+    while i < n {
+        match sc.get(i) {
             Some('%') => {
-                if i + 2 >= s.len() {
+                if i + 2 >= n {
                     throw InvalidPercentEncoding { position: i }
                 }
-                ro hi = hex_value_or_throw(s, i + 1)
-                ro lo = hex_value_or_throw(s, i + 2)
+                ro hi = hex_value_or_throw(sc, i + 1)
+                ro lo = hex_value_or_throw(sc, i + 2)
                 ro byte_val = (hi * 16 + lo) as u8
                 buf.write_byte(byte_val as u8)
                 i += 3
@@ -402,8 +415,8 @@ fn hex_upper(n u8) -> char =>
         ('A' as int + n as int - 10) as char
     }
 
-fn hex_value_or_throw(s str, pos int) Fail[ParseUrlError] -> u8 {
-    match s.chars().nth(pos) {
+fn hex_value_or_throw(sc []char, pos int) Fail[ParseUrlError] -> u8 {
+    match sc.get(pos) {
         Some(c) => {
             ro n = c as int
             if n >= 48 && n <= 57 {
@@ -418,6 +431,14 @@ fn hex_value_or_throw(s str, pos int) Fail[ParseUrlError] -> u8 {
         }
         None => throw InvalidPercentEncoding { position: pos }
     }
+}
+
+// Push-loop materialisation of `s.chars()` — see `Url.decode_query` doc.
+fn to_chars(s str) -> []char {
+    mut out []char = []char.new()
+    out.cap(s.byte_len())
+    for c in s.chars() { out.push(c) }
+    out
 }
 
 

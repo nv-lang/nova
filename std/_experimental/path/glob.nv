@@ -25,22 +25,35 @@ module path.glob
 /// ```
 #stable(since = "0.1")
 export fn Glob.matches(pattern str, path str) -> bool =>
-    match_at(pattern, 0, path, 0)
+    match_at(to_chars(pattern), 0, to_chars(path), 0)
 
+// Push-loop materialisation of `s.chars()` (not `.collect()` — crashes
+// codegen on CharsIter, Block 2 precedent). `match_at`/`match_class` recurse
+// heavily with random-access lookahead (`pi+1`, `pi+2`, ...) — precomputing
+// ONCE at the `Glob.matches` entry point and threading `[]char` through the
+// recursion replaces the ретрактированный `chars().nth(i)` O(n)-per-call scan
+// (D260-амендмент) with O(1) `Vec[char] @get(i)`, restoring the intended
+// linear-ish complexity instead of the O(n²) footgun.
+fn to_chars(s str) -> []char {
+    mut out []char = []char.new()
+    out.cap(s.byte_len())
+    for c in s.chars() { out.push(c) }
+    out
+}
 
-fn match_at(pattern str, pi int, path str, si int) -> bool {
+fn match_at(pattern []char, pi int, path []char, si int) -> bool {
     if pi == pattern.len() {
         return si == path.len()
     }
 
-    ro p = match pattern.chars().nth(pi) { Some(c) => c, None => return false }
+    ro p = match pattern.get(pi) { Some(c) => c, None => return false }
 
     if p == '*' {
         // Check for ** (recursive)
-        if pi + 1 < pattern.len() && pattern.chars().nth(pi + 1) == Some('*') {
+        if pi + 1 < pattern.len() && pattern.get(pi + 1) == Some('*') {
             // Skip extra * and any following /
             mut next_pi = pi + 2
-            if next_pi < pattern.len() && pattern.chars().nth(next_pi) == Some('/') {
+            if next_pi < pattern.len() && pattern.get(next_pi) == Some('/') {
                 next_pi += 1
             }
             // ** matches anything including /
@@ -58,7 +71,7 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
         while try_si <= path.len() {
             if match_at(pattern, next_pi, path, try_si) { return true }
             // Останавливаемся на /
-            if try_si < path.len() && path.chars().nth(try_si) == Some('/') {
+            if try_si < path.len() && path.get(try_si) == Some('/') {
                 return match_at(pattern, next_pi, path, try_si)
             }
             try_si += 1
@@ -68,13 +81,13 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
 
     if p == '?' {
         if si == path.len() { return false }
-        if path.chars().nth(si) == Some('/') { return false }
+        if path.get(si) == Some('/') { return false }
         return match_at(pattern, pi + 1, path, si + 1)
     }
 
     if p == '[' {
         if si == path.len() { return false }
-        ro c = match path.chars().nth(si) { Some(ch) => ch, None => return false }
+        ro c = match path.get(si) { Some(ch) => ch, None => return false }
         ro (matched, next_pi) = match_class(pattern, pi + 1, c)
         if !matched { return false }
         return match_at(pattern, next_pi, path, si + 1)
@@ -82,21 +95,21 @@ fn match_at(pattern str, pi int, path str, si int) -> bool {
 
     // Literal char
     if si == path.len() { return false }
-    if path.chars().nth(si) != Some(p) { return false }
+    if path.get(si) != Some(p) { return false }
     match_at(pattern, pi + 1, path, si + 1)
 }
 
 
-fn match_class(pattern str, start int, c char) -> (bool, int) {
+fn match_class(pattern []char, start int, c char) -> (bool, int) {
     mut pi = start
     mut negate = false
-    if pi < pattern.len() && pattern.chars().nth(pi) == Some('!') {
+    if pi < pattern.len() && pattern.get(pi) == Some('!') {
         negate = true
         pi += 1
     }
     mut found = false
     while pi < pattern.len() {
-        match pattern.chars().nth(pi) {
+        match pattern.get(pi) {
             Some(']') => {
                 ro result = if negate { !found } else { found }
                 return (result, pi + 1)
@@ -104,10 +117,10 @@ fn match_class(pattern str, start int, c char) -> (bool, int) {
             Some(ch) => {
                 // Check for range a-z
                 if pi + 2 < pattern.len()
-                   && pattern.chars().nth(pi + 1) == Some('-')
-                   && pattern.chars().nth(pi + 2) != Some(']') {
+                   && pattern.get(pi + 1) == Some('-')
+                   && pattern.get(pi + 2) != Some(']') {
                     ro from_c = ch
-                    ro to_c = match pattern.chars().nth(pi + 2) { Some(x) => x, None => return (false, pi) }
+                    ro to_c = match pattern.get(pi + 2) { Some(x) => x, None => return (false, pi) }
                     if (c as int) >= (from_c as int) && (c as int) <= (to_c as int) {
                         found = true
                     }

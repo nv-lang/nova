@@ -21,14 +21,23 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str {
     mut in_quote = false
     mut line = 1
 
+    // CSV-поля — произвольный UTF-8 (не ASCII-only), а нужен рандомный
+    // 1-symbol lookahead (`i+1`) — материализуем `[]char` ОДИН раз (push-loop,
+    // не `.collect()` — крашит кодоген на CharsIter, Block 2 precedent)
+    // вместо ретрактированного `input.chars().nth(i)` O(n) скана на каждой
+    // итерации (D260-амендмент).
+    mut ic []char = []char.new()
+    ic.cap(input.byte_len())
+    for c in input.chars() { ic.push(c) }
+
     mut i = 0
-    while i < input.len() {
-        ro c = match input.chars().nth(i) { Some(ch) => ch, None => return records }
+    while i < ic.len() {
+        ro c = match ic.get(i) { Some(ch) => ch, None => return records }
 
         if in_quote {
             if c == '"' {
                 // Lookahead: "" → escaped quote, иначе закрытие quote
-                ro next = input.chars().nth(i + 1)
+                ro next = ic.get(i + 1)
                 if next == Some('"') {
                     current_field.append('"')
                     i += 2

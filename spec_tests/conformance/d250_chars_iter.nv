@@ -2,7 +2,10 @@
 // rename 2026-07-06: as_chars→chars, as_ префикс упразднён). Норма
 // (spec/decisions/03-syntax.md §D250/§D410): `chars()` — ленивая decoding-линза
 // (итератор-поток, НЕ коллекция; без Index/at/len — «no hidden O(n)»);
-// mut @next() -> Option[char]; @count() O(n); @nth(i) O(n); @is_empty();
+// mut @next() -> Option[char]; @count() O(n); @is_empty(); positional
+// `@nth(i)` ретрактирован (D260-амендмент, 2026-07-06) — воссозданный
+// запрещённый `s[i]` по codepoint; целевая итерация: `for`/`.indices()`/
+// manual next()-drain.
 // `for c in s` через str @iter() => @chars(). Конвенция (D410): голое
 // существительное = вид/линза (заём), `.collect()` на месте вызова = owned
 // копия. Один folder-module `spec_tests.conformance`.
@@ -26,8 +29,17 @@ test "as_chars: multi-byte UTF-8 codepoint'ы (D250)" {
 test "count/nth/is_empty (D250)" {
     assert("hello".chars().count() == 5)
     assert("ёж".chars().count() == 2)
-    assert("hello".chars().nth(1) == Some('e'))
-    assert("hi".chars().nth(10) == None)
+    // `@nth(i)` ретрактирован (D260-амендмент) — CharsIter не имеет
+    // `.skip()`/`.enumerate()` (это методы других адаптеров), поэтому целевая
+    // итерация здесь — ручной counted-drain через `next()`.
+    mut d250_it2 = "hello".chars()
+    mut d250_r2 Option[char] = None
+    for d250_k2 in 0..2 { d250_r2 = d250_it2.next() }
+    assert(d250_r2 == Some('e'))
+    mut d250_it3 = "hi".chars()
+    mut d250_r3 Option[char] = None
+    for d250_k3 in 0..11 { d250_r3 = d250_it3.next() }
+    assert(d250_r3 == None)
     assert("".chars().is_empty())
     assert(!"x".chars().is_empty())
 }
