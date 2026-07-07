@@ -24497,6 +24497,61 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
+                // [M-slice-static-deserialize-garbage-len] `Vec[<elem>].method(..)?`
+                // on a user generic STATIC method declared on a slice receiver
+                // (`fn[T ..] []T.method[..](..) -> Result[.., ..]`, D42/D38): the
+                // receiver is a TurboFish, NOT a bare Ident, so the Ident-only match
+                // above misses and `?` degrades to the `/* ? */` no-op that assigns
+                // the raw `NovaRes_*` pointer straight into the unwrapped local
+                // (garbage `.len()`). Recover the Result type from the method's
+                // DECLARED return `TypeRef` (in `mono_method_decls[("[]T", method)]`)
+                // with the receiver typevar bound to the concrete <elem> from the
+                // turbofish. Only fires in the degraded (non-Result) case, so a
+                // correctly-inferred call is untouched.
+                if !Self::is_result_like(&inner_ty)
+                    && !inner_ty.starts_with("NovaOpt_")
+                {
+                    if let ExprKind::Call { func, .. } = &inner.kind {
+                        if let ExprKind::Member { obj, name } = &func.kind {
+                            if let ExprKind::TurboFish { base, type_args } = &obj.kind {
+                                if matches!(&base.kind, ExprKind::Ident(_)) {
+                                    let key = ("[]T".to_string(), name.clone());
+                                    let fn_decl = self.mono_method_decls.get(&key).cloned();
+                                    if let Some(fn_decl) = fn_decl {
+                                        let is_static = matches!(
+                                            fn_decl.receiver.as_ref().map(|r| &r.kind),
+                                            Some(crate::ast::ReceiverKind::Static));
+                                        if is_static {
+                                            if let (Some(recv_tv), Ok(elem_c), Some(ret_tr)) = (
+                                                fn_decl.generics.first().map(|g| g.name.clone()),
+                                                type_args.first()
+                                                    .map(|tr| self.type_ref_to_c(tr))
+                                                    .unwrap_or_else(|| Ok(String::new())),
+                                                fn_decl.return_type.clone(),
+                                            ) {
+                                                if !elem_c.is_empty() && elem_c != "void*" {
+                                                    let saved = std::mem::replace(
+                                                        &mut self.current_type_subst,
+                                                        Self::subst_map_from_c_pairs(
+                                                            std::iter::once((recv_tv, elem_c))));
+                                                    let ret_c = self.type_ref_to_c(&ret_tr).ok();
+                                                    self.current_type_subst = saved;
+                                                    if let Some(ret_c) = ret_c {
+                                                        if Self::is_result_like(&ret_c)
+                                                            && !self.debt_is_generic_stub_c(&ret_c)
+                                                        {
+                                                            inner_ty = ret_c;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 let val = self.emit_expr(inner)?;
                 let try_tmp = self.fresh_tmp();
                 if inner_ty.starts_with("NovaOpt_") {
@@ -28769,6 +28824,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             // `mangled` already has "Nova_" prefix.
                                             let method_c_name = format!("{}_static_{}", mangled, method);
                                             return Ok(format!("{}({})", method_c_name, arg_strs.join(", ")));
+                                        }
+                                    }
+                                    // [M-slice-static-deserialize-garbage-len] A user
+                                    // generic STATIC method on a slice receiver — `fn[T ..]
+                                    // []T.method[D ..](..) -> ..` (D42/D38 static receiver)
+                                    // — is registered as an array-ext mono under
+                                    // `mono_method_decls[("[]T", method)]`, NOT as a `Vec`
+                                    // generic_type_method, so the lookup above (method_decl)
+                                    // MISSES it. Its ERASED base (emit_fn eager, array-ext)
+                                    // hardcodes the receiver element to `nova_int`; a call
+                                    // spelled `Vec[<elem>].method(..)` with <elem> != int
+                                    // (str / record) would REUSE that single nova_int mono,
+                                    // returning a wrong-element `Vec` (garbage `.len()`) or a
+                                    // param type-mismatch CC-FAIL. Monomorphize per call-site
+                                    // element: bind the receiver typevar (first generic) to
+                                    // <elem> from the turbofish type-arg, method-level
+                                    // generics from the args, and emit a per-elem static mono.
+                                    // Skip <elem> == nova_int — the erased base IS the
+                                    // nova_int instance, so that call stays byte-identical.
+                                    if base_name == "Vec" {
+                                        if let Some(elem_c) = type_args_c.first().cloned() {
+                                            if elem_c != "nova_int" {
+                                                let key = ("[]T".to_string(), method.to_string());
+                                                if let Some(fn_decl) =
+                                                    self.mono_method_decls.get(&key).cloned()
+                                                {
+                                                    let is_static = matches!(
+                                                        fn_decl.receiver.as_ref().map(|r| &r.kind),
+                                                        Some(crate::ast::ReceiverKind::Static));
+                                                    if is_static {
+                                                        let mut subst_pending: Vec<(String, Option<String>)> =
+                                                            fn_decl.generics.iter().enumerate()
+                                                                .map(|(i, g)| (g.name.clone(),
+                                                                    if i == 0 { Some(elem_c.clone()) } else { None }))
+                                                                .collect();
+                                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                                            let arg_c = self.infer_expr_c_type(arg.expr());
+                                                            self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_pending);
+                                                        }
+                                                        let type_subst: Vec<(String, String)> = subst_pending
+                                                            .into_iter()
+                                                            .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
+                                                            .collect();
+                                                        // Mono name matches the erased-base convention
+                                                        // (`receiver_type_c_ident("[]<elem>")` =
+                                                        // `NovaArray_<elem>`) with the concrete element,
+                                                        // plus a `____<paramtype>` suffix per method-level
+                                                        // generic (skip the receiver typevar, index 0).
+                                                        let recv_c_ident = format!("NovaArray_{}", elem_c);
+                                                        let base_mono = format!("Nova_{}_static_{}", recv_c_ident, method);
+                                                        let mono_name = if type_subst.len() <= 1 {
+                                                            base_mono
+                                                        } else {
+                                                            let suffix: String = type_subst.iter().skip(1)
+                                                                .map(|(_, c)| {
+                                                                    let s = c.trim_end_matches('*').trim()
+                                                                        .replace('*', "_p").replace(' ', "_");
+                                                                    format!("____{}", s)
+                                                                }).collect();
+                                                            format!("{}{}", base_mono, suffix)
+                                                        };
+                                                        self.register_mono_method_instance(
+                                                            &fn_decl, type_subst.clone(), &mono_name, &recv_c_ident);
+                                                        let saved = std::mem::replace(
+                                                            &mut self.current_type_subst,
+                                                            Self::subst_map_from_c_pairs(type_subst.iter().cloned()));
+                                                        let mut arg_strs = Vec::new();
+                                                        for a in args {
+                                                            arg_strs.push(self.emit_expr(a.expr())?);
+                                                        }
+                                                        self.current_type_subst = saved;
+                                                        return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

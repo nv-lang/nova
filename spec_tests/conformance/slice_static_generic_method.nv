@@ -1,0 +1,50 @@
+// A user generic STATIC method on a slice receiver — `fn[T ..] []T.method[D ..]
+// (..) -> ..` (D42/D38 static receiver) — monomorphizes PER call-site element,
+// and its `Result` return is recognised by `?` at a turbofish call site.
+//
+// Regression guard for [M-slice-static-deserialize-garbage-len]: the array-ext
+// static method's ERASED base hardcodes the receiver element to `nova_int`, so
+// a `Vec[<elem>].method(..)` call with <elem> != int (str / record) used to
+// REUSE that single nova_int mono — returning a wrong-element `Vec` (garbage
+// `.len()`) or a param type-mismatch CC-FAIL. Additionally, `?` on a TurboFish
+// receiver (`Vec[str].method(..)?`) degraded to a `/* ? */` no-op that assigned
+// the raw `NovaRes_*` straight into the `Vec` local (garbage `.len()`).
+module spec_tests.conformance
+
+type DeError value {
+    code int
+}
+
+// Minimal array-ext static: echoes the seed twice into a fresh `[]T`. The
+// method-level generic `D` (a stand-in for the serde `Deserializer`) is bound
+// from the second argument, exercising the per-element + method-level mono.
+fn[T] []T.echo2[D](seed T, d D) -> Result[[]T, DeError] {
+    mut out []T = []
+    out.push(seed)
+    out.push(seed)
+    Ok(out)
+}
+
+fn load_strs() -> Result[[]str, DeError] {
+    ro xs = Vec[str].echo2("a", 0)?
+    Ok(xs)
+}
+
+fn load_ints() -> Result[[]int, DeError] {
+    ro xs = Vec[int].echo2(7, 0)?
+    Ok(xs)
+}
+
+test "slice-static generic method monomorphizes per element (str)" {
+    ro xs = load_strs()!!
+    assert(xs.len() == 2)          // NOT garbage
+    assert(xs[0] == "a")
+    assert(xs[1] == "a")
+}
+
+test "slice-static generic method — int element (erased-base path) still correct" {
+    ro xs = load_ints()!!
+    assert(xs.len() == 2)
+    assert(xs[0] == 7)
+    assert(xs[1] == 7)
+}
