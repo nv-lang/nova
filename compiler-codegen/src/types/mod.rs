@@ -1599,6 +1599,12 @@ fn check_module_impl(
     // понять value-record semantics.
     check_value_record_escape_after_consume(module, &mut errors);
 
+    // Plan 184 (Р8): `&@` (адрес value-приёмника = `ref Self`) эскейпящий
+    // наружу (возврат / захват / поле) → E_REF_ESCAPE (авто-промоут D216 §4
+    // не спасает — ref на чужой слот). Downward-заём `&@`/`&v` в вызов —
+    // легален (не флагаем).
+    check_ref_addr_escape(module, &mut errors);
+
     // Plan 91.10 (D163 retracted, 2026-05-30): check_external_fn_needs_caps
     // удалён. Capability tracking via отдельный syntax — redundant с effect
     // system. См. docs/plans/91.10-d163-retract-capability-syntax.md.
@@ -22022,6 +22028,231 @@ impl<'a> VrEscapeCtx<'a> {
             ExprKind::Coalesce(a, b) => { self.walk_expr(a, errors); self.walk_expr(b, errors); }
             ExprKind::As(i, _) | ExprKind::Is(i, _) => self.walk_expr(i, errors),
             _ => {}
+        }
+    }
+}
+
+// ============================================================================
+// Plan 184 (Р8) — escape-анализ ссылок: `&<ref-цель>` НАРУЖУ → E_REF_ESCAPE.
+//
+// «ref-цель» на живой поверхности — приёмник `@` value-типа (Р7: `@` = `ref
+// Self`, указывает на ЧУЖОЕ хранилище вызывающего). `&@` эскейпящий наружу
+// (возврат / захват замыканием / запись в поле) даёт dangling: авто-промоут
+// D216 §4 НЕ применяется (промоутится только СВОЁ значение-локал; ref
+// указывает на чужой слот, промоут копии тихо меняет семантику) → реджект.
+//
+// Легально (НЕ флагаем):
+//   - `&@` ВНИЗ по стеку (аргумент вызова / ffi out-параметр) — заём короче
+//     исходного (действующий канон `nova_str_parse_f64(s, &v)`);
+//   - `&@` на КУЧЕВОМ приёмнике — `@` = Self (handle), `&@` = адрес копии
+//     handle → авто-промоут корректен; адрес кучевого содержимого (Vec @data)
+//     легален. Поэтому пасс ограничен VALUE-приёмниками.
+// V1-синтаксический: флагаем `&@` в escaping-позиции (возврат / trailing /
+// `return` / тело замыкания / RHS присваивания в поле). Аргументы вызовов —
+// downward, escaping=false.
+// ============================================================================
+fn check_ref_addr_escape(module: &Module, errors: &mut Vec<Diagnostic>) {
+    use std::collections::HashSet;
+    // Value-типы приёмника: value-record + named-tuple (по имени).
+    let mut value_types: HashSet<String> = HashSet::new();
+    let mut collect = |items: &[Item], out: &mut HashSet<String>| {
+        for it in items {
+            if let Item::Type(td) = it {
+                let is_value = match &td.kind {
+                    crate::ast::TypeDeclKind::Record(_) => {
+                        td.allocation == crate::ast::AllocKind::Value
+                    }
+                    crate::ast::TypeDeclKind::NamedTuple(_) => true,
+                    _ => false,
+                };
+                if is_value {
+                    out.insert(td.name.clone());
+                }
+            }
+        }
+    };
+    collect(&module.items, &mut value_types);
+    for pf in &module.peer_files {
+        collect(&pf.items_here, &mut value_types);
+    }
+
+    // Приёмник value-типа: value-record/named-tuple ИЛИ примитив (int/f64/…).
+    let recv_is_value = |name: &str| -> bool {
+        value_types.contains(name) || RefEscapeCtx::is_primitive_recv(name)
+    };
+
+    let mut local: Vec<Diagnostic> = Vec::new();
+    let mut visit_fn = |fd: &crate::ast::FnDecl, out: &mut Vec<Diagnostic>| {
+        let Some(recv) = &fd.receiver else { return };
+        if recv.kind != crate::ast::ReceiverKind::Instance { return; }
+        // consume-приёмник: значение потребляется — иные правила (D131); не тут.
+        if recv.consume { return; }
+        if !recv_is_value(&recv.type_name) { return; }
+        let ctx = RefEscapeCtx {};
+        match &fd.body {
+            crate::ast::FnBody::Expr(e) => ctx.walk(e, true, out),
+            crate::ast::FnBody::Block(b) => ctx.walk_block(b, out),
+            crate::ast::FnBody::External => {}
+        }
+    };
+    for item in &module.items {
+        if let Item::Fn(fd) = item { visit_fn(fd, &mut local); }
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(fd) = item { visit_fn(fd, &mut local); }
+        }
+    }
+    // Dedup по span: entry-файл может присутствовать и в module.items, и в
+    // peer_files (CU-модель), давая двойную эмиссию одного и того же места.
+    let mut seen: HashSet<Span> = HashSet::new();
+    for d in local {
+        if seen.insert(d.span) {
+            errors.push(d);
+        }
+    }
+}
+
+struct RefEscapeCtx {}
+
+impl RefEscapeCtx {
+    fn is_primitive_recv(name: &str) -> bool {
+        matches!(name,
+            "int" | "uint" | "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64" | "f32" | "f64"
+            | "bool" | "char" | "byte")
+    }
+
+    fn is_addr_of_self(e: &crate::ast::Expr) -> bool {
+        use crate::ast::{ExprKind, UnOp};
+        if let ExprKind::Unary { op: UnOp::AddrOf, operand } = &e.kind {
+            matches!(operand.kind, ExprKind::SelfAccess)
+        } else {
+            false
+        }
+    }
+
+    fn emit(e: &crate::ast::Expr, errors: &mut Vec<Diagnostic>) {
+        errors.push(Diagnostic::new(
+            "[E_REF_ESCAPE] `&@` эскейпит наружу (возврат / захват замыканием / \
+             запись в поле): приёмник `@` value-типа — `ref Self` (Р7), \
+             указывает на хранилище ВЫЗЫВАЮЩЕГО. Авто-промоут D216 §4 не \
+             применяется (промоутится только своё значение-локал, а `ref` \
+             указывает на чужой слот) → dangling-ссылка (Р8, Plan 184). \
+             Варианты: возьмите владение (`consume @`) и промоутьте своё \
+             значение; либо сделайте явную локальную копию (`ro v = @`) и \
+             верните `&v`. Заём ВНИЗ (аргумент вызова / ffi) — легален, здесь \
+             не он.".to_string(),
+            e.span,
+        ));
+    }
+
+    /// Тело блока: trailing-выражение — escaping; `return X` — X escaping;
+    /// присваивание в поле `x.f = &@` — RHS escaping; прочее — вниз (false).
+    fn walk_block(&self, b: &crate::ast::Block, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::Stmt;
+        for s in &b.stmts {
+            match s {
+                Stmt::Return { value: Some(v), .. } => self.walk(v, true, errors),
+                Stmt::Assign { target, value, .. } => {
+                    // RHS присваивания в ПОЛЕ (не локал) — потенциальный escape в кучу.
+                    let to_field = matches!(target.kind, crate::ast::ExprKind::Member { .. });
+                    self.walk(value, to_field, errors);
+                }
+                Stmt::Expr(e) => self.walk(e, false, errors),
+                Stmt::Let(d) => self.walk(&d.value, false, errors),
+                Stmt::Defer { body, .. } => self.walk(body, false, errors),
+                _ => {}
+            }
+        }
+        if let Some(t) = &b.trailing {
+            self.walk(t, true, errors);
+        }
+    }
+
+    /// `escaping` — истина, если значение `e` покидает фрейм (возврат/захват/
+    /// поле). `&@` в такой позиции → реджект. В аргументах вызовов escaping
+    /// сбрасывается (downward-заём легален).
+    fn walk(&self, e: &crate::ast::Expr, escaping: bool, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        if escaping && Self::is_addr_of_self(e) {
+            Self::emit(e, errors);
+            return;
+        }
+        match &e.kind {
+            ExprKind::Call { func, args, .. } => {
+                self.walk(func, false, errors);
+                // Downward-заём: аргументы вызова НЕ эскейпят фрейм вызывающего.
+                for a in args {
+                    self.walk(a.expr(), false, errors);
+                }
+            }
+            ExprKind::Block(b) => self.walk_block(b, errors),
+            ExprKind::If { cond, then, else_ } => {
+                self.walk(cond, false, errors);
+                self.walk_block_val(then, escaping, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.walk_block_val(b, escaping, errors),
+                        crate::ast::ElseBranch::If(ie) => self.walk(ie, escaping, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk(scrutinee, false, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.walk(g, false, errors); }
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expr(ex) => self.walk(ex, escaping, errors),
+                        crate::ast::MatchArmBody::Block(b) => self.walk_block_val(b, escaping, errors),
+                    }
+                }
+            }
+            // Замыкание захватывает окружение — `&@` внутри эскейпит с ним.
+            ExprKind::ClosureLight { body, .. } => match body {
+                crate::ast::ClosureBody::Expr(ex) => self.walk(ex, true, errors),
+                crate::ast::ClosureBody::Block(b) => self.walk_block(b, errors),
+            },
+            // Обёртки, сохраняющие escaping «спину» возвращаемого значения.
+            ExprKind::Unary { operand, .. } => self.walk(operand, escaping, errors),
+            ExprKind::Member { obj, .. } => self.walk(obj, escaping, errors),
+            ExprKind::As(i, _) | ExprKind::Try(i) | ExprKind::Bang(i) => {
+                self.walk(i, escaping, errors)
+            }
+            ExprKind::Coalesce(a, b) => {
+                self.walk(a, escaping, errors);
+                self.walk(b, escaping, errors);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.walk(left, false, errors);
+                self.walk(right, false, errors);
+            }
+            ExprKind::Index { obj, index } => {
+                self.walk(obj, false, errors);
+                self.walk(index, false, errors);
+            }
+            _ => {}
+        }
+    }
+
+    /// Блок в позиции-значения (ветвь if/match): trailing наследует escaping.
+    fn walk_block_val(&self, b: &crate::ast::Block, escaping: bool, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::Stmt;
+        for s in &b.stmts {
+            match s {
+                Stmt::Return { value: Some(v), .. } => self.walk(v, true, errors),
+                Stmt::Assign { target, value, .. } => {
+                    let to_field = matches!(target.kind, crate::ast::ExprKind::Member { .. });
+                    self.walk(value, to_field, errors);
+                }
+                Stmt::Expr(e) => self.walk(e, false, errors),
+                Stmt::Let(d) => self.walk(&d.value, false, errors),
+                Stmt::Defer { body, .. } => self.walk(body, false, errors),
+                _ => {}
+            }
+        }
+        if let Some(t) = &b.trailing {
+            self.walk(t, escaping, errors);
         }
     }
 }
