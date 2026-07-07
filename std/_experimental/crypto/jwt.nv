@@ -130,7 +130,7 @@ export fn Jwt.validate_hs256(secret []u8, token str) Time Fail[JwtError] -> Json
             match m.get("exp") {
                 Some(Num(exp_s)) => {
                     if (now_s as f64) >= exp_s {
-                        throw TokenExpired { exp_ms: (exp_s as u64) * 1000, now_ms: now_ms }
+                        throw TokenExpired { exp_ms: (exp_s as u64) * 1000, now_ms }
                     }
                 }
                 _ => ()
@@ -139,7 +139,7 @@ export fn Jwt.validate_hs256(secret []u8, token str) Time Fail[JwtError] -> Json
             match m.get("nbf") {
                 Some(Num(nbf_s)) => {
                     if (now_s as f64) < nbf_s {
-                        throw NotYetValid { nbf_ms: (nbf_s as u64) * 1000, now_ms: now_ms }
+                        throw NotYetValid { nbf_ms: (nbf_s as u64) * 1000, now_ms }
                     }
                 }
                 _ => ()

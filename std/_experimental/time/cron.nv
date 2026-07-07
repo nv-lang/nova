@@ -164,7 +164,7 @@ fn parse_int_in(s str, name str, min int, max int) Fail[ParseCronError] -> int {
         Err(_) => throw InvalidValue { field: name, value: s }
     }
     if n < min || n > max {
-        throw OutOfRange { field: name, value: n, min: min, max: max }
+        throw OutOfRange { field: name, value: n, min, max }
     }
     n
 }
