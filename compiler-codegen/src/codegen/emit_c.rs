@@ -40772,7 +40772,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if matches!(&expr.kind, ExprKind::Call { .. }) {
                 if let Some(span) = self.resolved_callees.get(&expr.id) {
                     if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
-                        return ch_ret.clone();
+                        // [M-into-raw-generic-stub-ret] The channel keys a callee's
+                        // return C-type by its DECLARATION span, so a generic method
+                        // whose return embeds an unsubstituted type-param — e.g.
+                        // `Vec[T] @into_raw() -> *mut T`, lowered ONCE at registration
+                        // to the erased placeholder `Nova_T**` — leaks that stub to a
+                        // CONCRETE call site (`bytes.into_raw()` on `Vec[u8]` wants
+                        // `nova_byte*`). Emitting a local with the stub C-type made
+                        // `buf[n] = 0` a wrong-stride (8-byte) write — an out-of-bounds
+                        // heap store in `str.from_bytes_unchecked_steal`'s in-place
+                        // NUL-terminate path. Skip the stub so the receiver-substitution
+                        // -aware method-return inference below resolves `T` → the
+                        // concrete element and yields the correct `nova_byte*`.
+                        if !self.debt_is_generic_stub_c(ch_ret) {
+                            return ch_ret.clone();
+                        }
                     }
                 }
             }
@@ -40841,7 +40855,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         eprintln!("[MEMBER-INT ch2-consume] id={:?} span={:?} rt={:?}", expr.id, expr.span, rt);
                     }
-                    return ir_c;
+                    // [M-into-raw-generic-stub-ret] A generic method CALL whose
+                    // checker-annotated return type still embeds an unsubstituted
+                    // type-param (`Vec[T] @into_raw() -> *mut T` → the erased stub
+                    // `Nova_T**`) must NOT be adopted verbatim at a concrete call
+                    // site — the receiver-substitution-aware method-return inference
+                    // below resolves `T` to the concrete element (`nova_byte*`).
+                    // Skipping the stub only here (Call + stub) leaves every concrete
+                    // channel annotation authoritative. Mirror of the Channel-1 guard.
+                    if matches!(&expr.kind, ExprKind::Call { .. })
+                        && self.debt_is_generic_stub_c(&ir_c)
+                    {
+                        // fall through to substitution-aware inference below
+                    } else {
+                        return ir_c;
+                    }
                 }
             }
         }

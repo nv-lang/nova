@@ -712,11 +712,13 @@ fn format_num(n f64) -> str {
 }
 
 fn format_string(s str) -> str {
-    mut buf = "\""
+    consume buf = StringBuilder.new()
+    buf.append("\"")
     for c in s.chars() {
-        buf = buf + escape_char(c)
+        buf.append(escape_char(c))
     }
-    buf + "\""
+    buf.append("\"")
+    buf.into_str()
 }
 
 fn escape_char(c char) -> str => match c {
@@ -746,30 +748,34 @@ fn to_hex_4(n int) -> str {
 }
 
 fn format_array(xs []JsonValue) -> str {
-    mut buf = "["
+    consume buf = StringBuilder.new()
+    buf.append("[")
     mut first = true
     for x in xs {
-        if !first { buf = buf + "," }
-        buf = buf + x.to_str()
+        if !first { buf.append(",") }
+        buf.append(x.to_str())
         first = false
     }
-    buf + "]"
+    buf.append("]")
+    buf.into_str()
 }
 
 fn format_object(m HashMap[str, JsonValue]) -> str {
-    mut buf = "{"
+    consume buf = StringBuilder.new()
+    buf.append("{")
     mut first = true
     // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
     // HashMap.iter() yields (K, V) tuple per hashmap.nv:441 — destructure
     // explicitly. `entry.key / .value` была wrong API assumption.
     for (k, v) in m {
-        if !first { buf = buf + "," }
-        buf = buf + format_string(k)
-        buf = buf + ":"
-        buf = buf + v.to_str()
+        if !first { buf.append(",") }
+        buf.append(format_string(k))
+        buf.append(":")
+        buf.append(v.to_str())
         first = false
     }
-    buf + "}"
+    buf.append("}")
+    buf.into_str()
 }
 
 
@@ -804,34 +810,46 @@ fn pretty_at(v JsonValue, depth int) -> str => match v {
 fn pretty_array(xs []JsonValue, depth int) -> str {
     ro inner_indent = indent(depth + 1)
     ro outer_indent = indent(depth)
-    mut buf = "[\n"
+    consume buf = StringBuilder.new()
+    buf.append("[\n")
     mut first = true
     for x in xs {
-        if !first { buf = buf + ",\n" }
-        buf = buf + inner_indent + pretty_at(x, depth + 1)
+        if !first { buf.append(",\n") }
+        buf.append(inner_indent)
+        buf.append(pretty_at(x, depth + 1))
         first = false
     }
-    buf + "\n" + outer_indent + "]"
+    buf.append("\n")
+    buf.append(outer_indent)
+    buf.append("]")
+    buf.into_str()
 }
 
 fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
     ro inner_indent = indent(depth + 1)
     ro outer_indent = indent(depth)
-    mut buf = "{\n"
+    consume buf = StringBuilder.new()
+    buf.append("{\n")
     mut first = true
     // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
     // HashMap.iter() yields (K, V) tuple — destructure explicitly
     // (см. format_object выше).
     for (k, v) in m {
-        if !first { buf = buf + ",\n" }
-        buf = buf + inner_indent + format_string(k) + ": " + pretty_at(v, depth + 1)
+        if !first { buf.append(",\n") }
+        buf.append(inner_indent)
+        buf.append(format_string(k))
+        buf.append(": ")
+        buf.append(pretty_at(v, depth + 1))
         first = false
     }
-    buf + "\n" + outer_indent + "}"
+    buf.append("\n")
+    buf.append(outer_indent)
+    buf.append("}")
+    buf.into_str()
 }
 
 fn indent(depth int) -> str {
-    mut s = ""
-    for i in 0..depth { s = s + "  " }
-    s
+    consume buf = StringBuilder.new()
+    for i in 0..depth { buf.append("  ") }
+    buf.into_str()
 }
