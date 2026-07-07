@@ -1,0 +1,50 @@
+// Plan 184 Р10 (D326-ревизия) — in-out `mut x T` positive behavior.
+// A `mut x T` parameter of a VALUE/primitive type is a by-pointer in-out
+// reference: writes inside the callee reach the caller's storage. Recreated
+// pos-behavior after the Заход-1 deletion of `d326_mut_ref_*` fixtures.
+module inout_ref.p184_inout_pos
+
+type Vec3 value {
+    x f64
+    y f64
+    z f64
+}
+fn Vec3.new(a f64, b f64, c f64) -> Vec3 => { x: a, y: b, z: c }
+
+// Primitive in-out.
+fn bump(mut x int) {
+    x = 999
+}
+
+// Value-record in-out (free fn).
+fn clobber(mut v Vec3) {
+    v.x = 7.0
+    v.y = 8.0
+    v.z = 9.0
+}
+
+// In-out accumulation through repeated writes.
+fn add_into(mut acc int, delta int) {
+    acc = acc + delta
+}
+
+test "primitive mut param is in-out: reassignment reaches caller (Р10)" {
+    mut n = 5
+    bump(n)
+    assert(n == 999)
+}
+
+test "value-record mut param is in-out: field writes reach caller (Р10)" {
+    mut v = Vec3.new(1.0, 2.0, 3.0)
+    clobber(v)
+    assert(v.x == 7.0)
+    assert(v.y == 8.0)
+    assert(v.z == 9.0)
+}
+
+test "in-out accumulation across two calls (Р10)" {
+    mut total = 0
+    add_into(total, 10)
+    add_into(total, 32)
+    assert(total == 42)
+}

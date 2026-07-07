@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_MUT_ARG_NOT_MUTABLE
+//
+// Plan 184 Р10 (D326-ревизия): a `mut x T` param of a VALUE/primitive type is a
+// by-pointer in-out reference — its argument must be an addressable, mutable
+// place. Passing an RVALUE (here a literal) has no stable storage for the callee
+// to write back into → E_MUT_ARG_NOT_MUTABLE.
+module neg.mut_arg_not_mutable
+
+fn bump(mut x int) {
+    x = 999
+}
+
+test "rvalue argument to in-out mut param is rejected" {
+    bump(5)
+    assert(true)
+}

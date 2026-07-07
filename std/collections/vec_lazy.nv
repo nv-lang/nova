@@ -227,8 +227,12 @@ export fn BoxIter[T] @step_by(n int) -> BoxIter[T]
 /// ```
 export fn BoxIter[A] @zip[B](mut other BoxIter[B]) -> BoxIter[(A, B)] {
     mut src = @
+    // Plan 184 Р10: capture a LOCAL copy of `other` before the closure (the
+    // returned BoxIter outlives the call — a captured in-out param reference
+    // would dangle). `BoxIter` is a heap handle, so this is a handle rebind.
+    mut oth = other
     { step: || match src.next() {
-        Some(a) => match other.next() {
+        Some(a) => match oth.next() {
             Some(b) => Some((a, b)),
             None => None,
         },
@@ -247,6 +251,8 @@ export fn BoxIter[A] @zip[B](mut other BoxIter[B]) -> BoxIter[(A, B)] {
 /// ```
 export fn BoxIter[T] @chain(mut other BoxIter[T]) -> BoxIter[T] {
     mut src = @
+    // Plan 184 Р10: capture a LOCAL copy of `other` before the closure (see @zip).
+    mut oth = other
     mut first_done = false
     { step: || {
         if !first_done {
@@ -255,7 +261,7 @@ export fn BoxIter[T] @chain(mut other BoxIter[T]) -> BoxIter[T] {
                 None => { first_done = true },
             }
         }
-        other.next()
+        oth.next()
     } }
 }
 

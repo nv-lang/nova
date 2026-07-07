@@ -222,6 +222,66 @@ cgfix_fluent_tail_if + оба заход-2 акцепта) зелёный; confo
 emit_c / лоуэринг только п.5» этого захода; плюс широкая миграция (4 Категория-A + десятки
 call-site-реджектов). Это следующий выделенный заход с явно расширенной emit_c-зоной.
 
+### Заход 4 — in-out `mut x T` ABI (Р10) + категория-А + E_MUT_ARG_NOT_MUTABLE (2026-07-07)
+
+Приоритет захода — keystone-ABI: `mut x T` параметра **значимого/примитивного** типа
+становится in-out ссылкой (by-pointer, как value-ресивер `@`), а не приватной копией.
+Ключевое наблюдение (снизившее риск): почти все `mut`-параметры std — **кучевые/протокольные/
+типовар** (`mut w Write`, `mut s S`, `mut d D`, `mut it T`, `BoxIter`), которые по **Р6**
+(`ref H ≡ H`) НЕ меняют ABI (значение уже handle, мутация и так достигает вызывающего). Реально
+ABI-флипаются только value-типизированные `mut`-параметры — во всём репозитории их **три**:
+`d32_bump(mut x int)`, `d228_clobber(mut v D228Vec3)` (оба — free-fn, conformance) и
+`ServeMux @dispatch(mut req ServerRequest)` (метод, std/http). Метод мигрирован в Category-A →
+единственная оставшаяся by-ptr-поверхность — **free-fn**, что позволило обойтись одним
+call-site-хуком без правки метод-диспетчера.
+
+**Кодоген (emit_c.rs):**
+- `param_is_inout_ptr(p, ty_c)` — предикат by-pointer (is_mut & !consume & value-тип & !unit & !ptr;
+  переиспользует `is_value_type`).
+- `params_c` — сигнатура `T*` для таких параметров (рядом с legacy `MutRef`).
+- `emit_fn` — регистрация в `ref_params` → авто-деref `name`→`(*name)` в теле (тот же путь, что
+  у legacy `mut ref` — переиспользован, не дублирован).
+- `emit_call` (вершина) — `synthesize_inout_refargs` оборачивает совпадающие позиционные
+  аргументы **free-fn** в `RefArg` (эмит `(&(place))`); один хук покрывает ВСЕ downstream-ветви
+  эмиссии аргументов. Драйвится картой `free_fn_inout_params` (имя → per-param by-ptr флаги),
+  заполняется в `emit_fn_forward_decl` (до эмиссии тел). `mono_fn_decls` держит ТОЛЬКО generic
+  free-fn — поэтому нужна отдельная карта для non-generic.
+
+**Чекер (types/mod.rs, BoundCtx):**
+- `check_ref_arg_modes` перевязан с мёртвого `param.ref_mode` на `param.is_mut` + value-тип →
+  аргумент обязан быть адресуемым местом, иначе `E_MUT_ARG_NOT_MUTABLE` (rvalue/индекс). ro-биндинг-
+  случай оставлен follow-up `[M-184-mut-arg-ro-binding]` (ro_binding_names живёт в TypeCheckCtx,
+  не в BoundCtx; addressability-проверка контекст-free и достаточна для зелёного дерева + neg-теста).
+- `value_type_names` (value-records + named tuples) + `param_ty_is_inout_value` — зеркалит
+  codegen-предикат (чекер и codegen согласованы).
+
+**Миграция (пункт 2):**
+- d32/d228 conformance → НОВЫЙ in-out канон (мутация ДОСТИГАЕТ вызывающего: `d32_bump`→`n==999`,
+  `d228_clobber`→`v.x==999.0`). Комментарии-спека в шапках переписаны.
+- `ServeMux @dispatch(mut req)` → `@dispatch(req)` + `mut rq = req` (Category-A: мутирует локально,
+  форвардит handler'у; caller-writeback не нужен). Снимает value-record by-ptr на методе.
+- `vec_lazy @zip/@chain` → `mut oth = other` до замыкания (BoxIter heap — rebind handle; защита
+  под будущий Р8-escape).
+
+**Тесты:** `nova_tests/inout_ref/p184_inout_pos.nv` (примитив/value-record/in-out-аккумуляция),
+`neg/mut_arg_not_mutable.nv` (rvalue → E_MUT_ARG_NOT_MUTABLE).
+
+**Гейты (числа):** обе крейта собираются чисто. conformance `--positive --compile-error
+spec_tests/conformance` = **54/0** (baseline с чистого main-бинаря) → **54/0** (мой бинарь, с
+переписанными d32/d228 — проходят в полном CU). nova_tests/inout_ref = **12/0**. std/collections
+дельта против main-бинаря = **0** (4 PASS / 3 FAIL, 3 fail — pre-existing harness: `Vec.lazy()`/
+`VecIter.map()` extension-import + errors.nv `starts_with`; идентичны на обоих бинарях).
+std/http дельта = **0** (2/3, те же 3 pre-existing: serdejson import + 2×`nova_fn_main_impl`
+main-less linker; идентичны). **Осознанные поведенческие изменения:** d32_bump/d228_clobber (мутация
+теперь видна вызывающему — суть Р10); @dispatch/zip/chain — рефактор без изменения наблюдаемого
+поведения. Коммит `095bf5698`.
+
+**НЕ входило в заход 4 (умышленно, честная точка возобновления):** тип `Ref(T)` +
+`E_REF_TYPE_POSITION` (пункт 3), Р6-нормализация в носителе, Р8-escape, Р12-расширение
+эксклюзивности (mut×любой), Р13/Р14 перегрузка по оси режима, ref-локалы (Ф.1-остаток),
+удаление мёртвого кода захода-1, амендменты спеки (D326-ревизия статусы Р-таблицы). ro-биндинг-
+реджект к mut-параметру — `[M-184-mut-arg-ro-binding]`.
+
 ### Точки возобновления (Заход 3+)
 
 - **Ф.1-остаток — локалы-ссылки `ro y ref T = expr` (Р1):** НЕ реализовано. `ref` в
