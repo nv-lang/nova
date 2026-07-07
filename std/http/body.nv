@@ -50,22 +50,22 @@ export fn Body.empty() -> Body => { repr: InMemory([]u8.new()), limit: -1 }
 
 /// Тело из байт (InMemory; replayable).
 #stable(since = "0.1")
-export fn Body.from_bytes(b []u8) -> Body => { repr: InMemory(b), limit: -1 }
+export fn Body.from(b []u8) -> Body => { repr: InMemory(b), limit: -1 }
 
 /// Тело из строки (UTF-8-байты).
 #stable(since = "0.1")
-export fn Body.from_str(s str) -> Body =>
+export fn Body.from(s str) -> Body =>
     // `repr: InMemory([]u8)` needs an OWNED buffer; `.clone()` materialises the
     // owned copy (D410: view+.clone() ≡ retired `to_bytes()` twin).
     { repr: InMemory(s.bytes().clone()), limit: -1 }
 
 /// Тело из потокового ридера (Ф.1: in-memory; Ф.2 reader станет `consume`).
 #stable(since = "0.1")
-export fn Body.from_reader(r BodyReader) -> Body => { repr: Stream(r), limit: -1 }
+export fn Body.from(r BodyReader) -> Body => { repr: Stream(r), limit: -1 }
 
 /// In-memory ридер над списком чанков (для тестов/прокси; pure Nova).
 #stable(since = "0.1")
-export fn BodyReader.from_chunks(chunks [][]u8) -> BodyReader => { chunks, pos: 0 }
+export fn BodyReader.from(chunks [][]u8) -> BodyReader => { chunks, pos: 0 }
 
 // ── Max-size guard (DoS/OOM-защита) ──────────────────────────────────────────
 
@@ -112,7 +112,7 @@ export fn Body consume @drain() -> Result[(), HttpError] {
 #stable(since = "0.1")
 export fn Body consume @into_reader() -> BodyReader {
     match @repr {
-        InMemory(b) => BodyReader.from_chunks(single_chunk(b))
+        InMemory(b) => BodyReader.from(single_chunk(b))
         Stream(r)   => r
     }
 }

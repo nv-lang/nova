@@ -5,7 +5,7 @@ module neg.d359_double_consume
 import std.http.{Body}
 
 test "body consumed twice → compile error" {
-    consume b = Body.from_bytes("x".bytes())
+    consume b = Body.from("x".bytes())
     ro _ = b.bytes()
     ro _2 = b.bytes()
 }

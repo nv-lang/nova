@@ -11,9 +11,9 @@
 module std.http
 
 test "body: from_bytes/from_str discharge via bytes/text" {
-    consume b1 = Body.from_bytes("hello".bytes())
+    consume b1 = Body.from("hello".bytes())
     assert(b1.bytes()!!.len == 5)
-    consume b2 = Body.from_str("héllo")
+    consume b2 = Body.from("héllo")
     assert(b2.text()!! == "héllo")
 }
 
@@ -21,12 +21,12 @@ test "body: stream reader drains in order" {
     mut chunks = Vec[[]u8].new()
     chunks.push("ab".bytes())
     chunks.push("cd".bytes())
-    consume b = Body.from_reader(BodyReader.from_chunks(chunks))
+    consume b = Body.from(BodyReader.from(chunks))
     assert(b.bytes()!!.len == 4)
 }
 
 test "body: with_limit → BodyTooLarge" {
-    consume b = Body.from_bytes("0123456789".bytes()).with_limit(4)
+    consume b = Body.from("0123456789".bytes()).with_limit(4)
     assert(match b.bytes() { Ok(_) => false, Err(e) => match e.kind { BodyTooLarge => true, _ => false } })
 }
 
@@ -34,7 +34,7 @@ test "body: text rejects invalid UTF-8" {
     mut bad = Vec[u8].new()
     bad.push(0xFF as u8)
     bad.push(0xFE as u8)
-    consume b = Body.from_bytes(bad)
+    consume b = Body.from(bad)
     assert(match b.text() { Ok(_) => false, Err(_) => true })
 }
 

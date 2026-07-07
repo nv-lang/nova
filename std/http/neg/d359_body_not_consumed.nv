@@ -5,5 +5,5 @@ module neg.d359_body_not_consumed
 import std.http.{Body}
 
 test "body created but never consumed → compile error" {
-    consume b = Body.from_bytes("x".bytes())
+    consume b = Body.from("x".bytes())
 }

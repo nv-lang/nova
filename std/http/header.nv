@@ -41,7 +41,7 @@ export type HeaderValue value { priv bytes []u8 }
 
 /// Из сырых байт. CR/LF/NUL → `InvalidHeader` (anti-injection).
 #stable(since = "0.1")
-export fn HeaderValue.from_bytes(b []u8) -> Result[HeaderValue, HttpError] {
+export fn HeaderValue.from(b []u8) -> Result[HeaderValue, HttpError] {
     for byte in b {
         if is_forbidden_octet(byte) {
             return Err(HttpError.invalid_header("CR/LF/NUL in header value"))
@@ -53,7 +53,7 @@ export fn HeaderValue.from_bytes(b []u8) -> Result[HeaderValue, HttpError] {
 /// Из строки (latin1 fast-path: codepoint 0..255 → один байт). CR/LF/NUL или
 /// codepoint > 0xFF → `InvalidHeader`.
 #stable(since = "0.1")
-export fn HeaderValue.from_str(s str) -> Result[HeaderValue, HttpError] {
+export fn HeaderValue.from(s str) -> Result[HeaderValue, HttpError] {
     mut buf = WriteBuffer.new()
     buf.cap(s.byte_len())
     for c in s.chars() {
@@ -131,7 +131,7 @@ export fn HeaderMap @contains(name str) -> bool {
 #stable(since = "0.1")
 export fn HeaderMap mut @insert(name str, value str) -> Result[(), HttpError] {
     ro hn = HeaderName.parse(name)?
-    ro hv = HeaderValue.from_str(value)?
+    ro hv = HeaderValue.from(value)?
     @entries = without_name(@entries, hn.as_str())
     @entries.push(HeaderEntry { name: hn, value: hv })
     Ok(())
@@ -141,7 +141,7 @@ export fn HeaderMap mut @insert(name str, value str) -> Result[(), HttpError] {
 #stable(since = "0.1")
 export fn HeaderMap mut @append(name str, value str) -> Result[(), HttpError] {
     ro hn = HeaderName.parse(name)?
-    ro hv = HeaderValue.from_str(value)?
+    ro hv = HeaderValue.from(value)?
     @entries.push(HeaderEntry { name: hn, value: hv })
     Ok(())
 }
@@ -151,7 +151,7 @@ export fn HeaderMap mut @append(name str, value str) -> Result[(), HttpError] {
 #stable(since = "0.1")
 export fn HeaderMap mut @append_bytes(name str, value []u8) -> Result[(), HttpError] {
     ro hn = HeaderName.parse(name)?
-    ro hv = HeaderValue.from_bytes(value)?
+    ro hv = HeaderValue.from(value)?
     @entries.push(HeaderEntry { name: hn, value: hv })
     Ok(())
 }
