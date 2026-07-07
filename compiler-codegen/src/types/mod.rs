@@ -5306,7 +5306,9 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         if let Some(rt) = &fd.return_type {
-            self.walk_typeref(rt, &gs, errors);
+            // Plan 184 (Р1): возврат — легальная top-level ref-позиция
+            // (`-> ref Self` де-сахар `-> @` для value-типов).
+            self.walk_ref_return(rt, &gs, errors);
         }
         for e in &fd.effects {
             self.walk_typeref(e, &gs, errors);
@@ -5388,7 +5390,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
                     if let Some(rt) = &m.return_type {
-                        self.walk_typeref(rt, &ms, errors);
+                        self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
                         self.walk_typeref(e, &ms, errors);
@@ -5405,7 +5407,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
                     if let Some(rt) = &m.return_type {
-                        self.walk_typeref(rt, &ms, errors);
+                        self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
                         self.walk_typeref(e, &ms, errors);
@@ -5833,6 +5835,66 @@ impl<'a> TypeCheckCtx<'a> {
         tr.uses_any_type_param(params)
     }
 
+    /// **Plan 184 (Р6):** является ли цель `ref`-типа ПОДТВЕРЖДЁННО кучевой
+    /// (тогда `ref H ≡ H` нормализуется и легален в любой позиции). Кучевые:
+    /// indirection-формы (`[]T`/`[N]T`/`*T`/fn/protocol), кучевой record
+    /// (`allocation != Value`), `Vec`; newtype/alias — по обёрнутому. Value
+    /// (примитивы, value-record, named-tuple, tuple, unit), generic-параметр и
+    /// НЕИЗВЕСТНОЕ имя → `false` (не подтверждён heap → `ref` в запрещённой
+    /// позиции реджектится: «ref нехраним, не имеет размера как тип»).
+    fn ref_target_confirmed_heap(&self, inner: &TypeRef, gs: &HashSet<String>) -> bool {
+        use TypeRef::*;
+        match inner {
+            Array(..) | FixedArray(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
+            Readonly(i, _) | Mut(i, _) | Unsafe(i, _) | Ref(i, _) => {
+                self.ref_target_confirmed_heap(i, gs)
+            }
+            Tuple(..) | Unit(..) => false,
+            Named { path, .. } => {
+                let name = path.last().map(|s| s.as_str()).unwrap_or("");
+                if gs.contains(name) {
+                    return false; // generic-параметр — storage неизвестен
+                }
+                if name == "Vec" {
+                    return true; // slice/Vec — GC-handle
+                }
+                match self.types.get(name) {
+                    Some(td) => match &td.kind {
+                        crate::ast::TypeDeclKind::Record(_) => {
+                            td.allocation != crate::ast::AllocKind::Value
+                        }
+                        crate::ast::TypeDeclKind::Newtype(nt) => {
+                            self.ref_target_confirmed_heap(nt, gs)
+                        }
+                        crate::ast::TypeDeclKind::Alias(al) => {
+                            self.ref_target_confirmed_heap(al, gs)
+                        }
+                        // Sum / named-tuple / protocol / effect / typeset —
+                        // консервативно НЕ подтверждаем heap (value/ambiguous).
+                        _ => false,
+                    },
+                    None => false, // неизвестное имя — не подтверждён heap
+                }
+            }
+        }
+    }
+
+    /// **Plan 184 (Р1):** обход типа в ЛЕГАЛЬНОЙ top-level ref-позиции (возврат
+    /// `-> ref Self`, локальный алиас `ro y ref T = …`). Ведущий `ref` здесь
+    /// разрешён (любой цели); снимаем его и проверяем цель как обычный тип —
+    /// так вложенный `ref` (внутри цели) всё равно ловится walk_typeref.
+    fn walk_ref_return(
+        &self,
+        tr: &TypeRef,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match tr {
+            TypeRef::Ref(inner, _) => self.walk_typeref(inner, gs, errors),
+            _ => self.walk_typeref(tr, gs, errors),
+        }
+    }
+
     /// Ф.2: рекурсивная проверка арности одного TypeRef-дерева.
     fn walk_typeref(
         &self,
@@ -5931,12 +5993,36 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Readonly(inner, _) => self.walk_typeref(inner, gs, errors),
             // Plan 118 D216 + Plan 118.5: typed pointer `*T` family
             // (Pointer/Mut/Unsafe) — all transparent, walk inner for arity checks.
-            // Plan 184: `ref T` — прозрачно для arity (позиционный запрет Р1
-            // делает отдельный проход check_ref_type_positions).
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
-            | TypeRef::Ref(inner, _) => self.walk_typeref(inner, gs, errors),
+            | TypeRef::Unsafe(inner, _) => self.walk_typeref(inner, gs, errors),
+            // Plan 184 (Р1/Р6): `ref T` встреченный ЗДЕСЬ = ЗАПРЕЩЁННАЯ позиция
+            // (поле / элемент коллекции / вариант суммы / Option / тип-аргумент
+            // дженерика / параметр). Легальные top-level позиции (возврат,
+            // локальный алиас, приёмник) снимают ведущий `ref` ДО вызова
+            // walk_typeref (`walk_ref_return`/`let`-аннотация), поэтому сюда
+            // ведущий-легальный ref не доходит. Р6: `ref H` (heap) ≡ H —
+            // нормализуется, легально; `ref V` (value) / ref generic/unknown —
+            // реджект E_REF_TYPE_POSITION.
+            TypeRef::Ref(inner, span) => {
+                if !self.ref_target_confirmed_heap(inner, gs) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_REF_TYPE_POSITION] `ref {}` недопустим в этой позиции \
+                             (поле / элемент коллекции / вариант суммы / Option / \
+                             тип-аргумент дженерика / параметр): ссылка на стек не \
+                             должна утекать в долгоживущую кучу (Р1, Plan 184). `ref` \
+                             легален только в возврате (`-> ref Self`), локальном \
+                             алиасе (`ro y ref T = ...`) и типе приёмника (`@`). Для \
+                             кучевого типа `H` действует `ref H ≡ H` (Р6) — пишите \
+                             сам `H` без `ref`.",
+                            typeref_display(inner)
+                        ),
+                        *span,
+                    ));
+                }
+                self.walk_typeref(inner, gs, errors);
+            }
         }
     }
 
@@ -6007,7 +6093,9 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Expr(e) => self.walk_expr(e, gs, errors),
             Stmt::Let(d) => {
                 if let Some(t) = &d.ty {
-                    self.walk_typeref(t, gs, errors);
+                    // Plan 184 (Р1): локальная аннотация — легальная top-level
+                    // ref-позиция (`ro y ref T = …` / `mut y ref T = …`).
+                    self.walk_ref_return(t, gs, errors);
                 }
                 self.walk_expr(&d.value, gs, errors);
             }
