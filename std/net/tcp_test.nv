@@ -19,7 +19,7 @@ module std.net
 extern "nova" fn panic(msg str) -> never
 
 // Shared test helper: extract a typed Result or abort the test.
-fn _must[T](r Result[T, NetError]) -> T {
+fn must[T](r Result[T, NetError]) -> T {
     match r {
         Ok(v)  => v
         Err(e) => panic("net2 test: unexpected Err: " + e.to_str())
@@ -28,30 +28,30 @@ fn _must[T](r Result[T, NetError]) -> T {
 
 test "net2/tcp: two-fiber loopback echo through the Net effect" {
     with Net = real_net() {
-        mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
         ro port = lst.local_port()
         assert(port > 0)
 
         supervised {
             spawn {
-                mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
-                assert(_must(conn.write("hello net2".bytes())) == 10)
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                assert(must(conn.write("hello net2".bytes())) == 10)
                 mut buf []u8 = []u8.new()
                 buf.resize(64, 0 as u8)
-                ro n = _must(conn.read(buf))
+                ro n = must(conn.read(buf))
                 assert(n == 16)
                 assert(str.from_bytes_unchecked(buf[0..n]) == "echo: hello net2")
                 conn.close()
             }
             spawn {
-                mut srv = _must(lst.accept())
+                mut srv = must(lst.accept())
                 mut buf []u8 = []u8.new()
                 buf.resize(64, 0 as u8)
-                ro n = _must(srv.read(buf))
+                ro n = must(srv.read(buf))
                 assert(n == 10)
                 ro msg = str.from_bytes_unchecked(buf[0..n])
                 assert(msg == "hello net2")
-                assert(_must(srv.write(("echo: " + msg).bytes())) == 16)
+                assert(must(srv.write(("echo: " + msg).bytes())) == 16)
                 srv.close()
             }
         }
@@ -62,19 +62,19 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
 
 test "net2/tcp: read observes clean EOF as Ok(0)" {
     with Net = real_net() {
-        mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
         ro port = lst.local_port()
 
         supervised {
             spawn {
-                mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 conn.close()
             }
             spawn {
-                mut srv = _must(lst.accept())
+                mut srv = must(lst.accept())
                 mut buf []u8 = []u8.new()
                 buf.resize(16, 0 as u8)
-                assert(_must(srv.read(buf)) == 0)   // clean EOF, not garbage / hang
+                assert(must(srv.read(buf)) == 0)   // clean EOF, not garbage / hang
                 srv.close()
             }
         }
@@ -85,20 +85,20 @@ test "net2/tcp: read observes clean EOF as Ok(0)" {
 
 test "net2/tcp: read_text / write_str text conveniences" {
     with Net = real_net() {
-        mut lst = _must(TcpListener.bind(SocketAddr.loopback(0)))
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
         ro port = lst.local_port()
 
         supervised {
             spawn {
-                mut conn = _must(TcpStream.connect(SocketAddr.loopback(port)))
-                assert(_must(conn.write_str("ping")) == 4)
-                assert(_must(conn.read_text(32)) == "pong")
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                assert(must(conn.write_str("ping")) == 4)
+                assert(must(conn.read_text(32)) == "pong")
                 conn.close()
             }
             spawn {
-                mut srv = _must(lst.accept())
-                assert(_must(srv.read_text(32)) == "ping")
-                assert(_must(srv.write_str("pong")) == 4)
+                mut srv = must(lst.accept())
+                assert(must(srv.read_text(32)) == "ping")
+                assert(must(srv.write_str("pong")) == 4)
                 srv.close()
             }
         }
@@ -131,7 +131,7 @@ test "net2/tcp: from_str rejects a malformed address" {
 }
 
 test "net2/tcp: from_str round-trips a v4 literal" {
-    ro a = _must(SocketAddr.from_str("127.0.0.1:9090"))
+    ro a = must(SocketAddr.from_str("127.0.0.1:9090"))
     assert(a.is_v4())
     assert(a.port() == 9090)
     assert(a.ip() == "127.0.0.1")

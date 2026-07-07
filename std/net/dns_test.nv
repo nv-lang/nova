@@ -3,8 +3,8 @@
 // GC array of value-address images (single getaddrinfo call, no retry); resolve
 // builds an owned []SocketAddr from it.
 //
-// NOTE: []SocketAddr is extracted via a direct `match`, NOT the generic `_must`.
-// A generic `_must[T]` erases `T = []SocketAddr` through its boxed slot such
+// NOTE: []SocketAddr is extracted via a direct `match`, NOT the generic `must`.
+// A generic `must[T]` erases `T = []SocketAddr` through its boxed slot such
 // that the conservative GC stops tracing the inner value-record images (they get
 // freed under later allocation). A monomorphic `match` keeps the element type, so
 // the images stay live — the idiomatic extraction here anyway.

@@ -69,7 +69,7 @@ export fn Fnv.hash_str(s str) -> u64 =>
 /// Streaming state для FNV-1a 64-bit (incremental updates).
 #stable(since = "0.1")
 export type Fnv64State {
-    mut _h u64    // internal accumulator
+    mut h u64    // internal accumulator
 }
 
 
@@ -83,15 +83,15 @@ export fn Fnv64.new() -> Fnv64State =>
 #stable(since = "0.1")
 export fn Fnv64State mut @update(data []u8) -> () {
     for b in data {
-        @_h = @_h ^ (b as u64)
-        @_h = @_h * FNV1A_64_PRIME
+        @h = @h ^ (b as u64)
+        @h = @h * FNV1A_64_PRIME
     }
 }
 
 
 /// Finalize — return final hash.
 #stable(since = "0.1")
-export fn Fnv64State @finalize() -> u64 => @_h
+export fn Fnv64State @finalize() -> u64 => @h
 
 
 // ──────────────────────────────────────────────────────────────────────────

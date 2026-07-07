@@ -40,8 +40,8 @@ module collections.queue
 /// - `[Deque]` — двусторонняя очередь
 #stable(since = "0.1")
 export type Queue[T] {
-    mut _inbox  []T   // internal: входная сторона FIFO
-    mut _outbox []T   // internal: выходная сторона FIFO (reversed in)
+    mut inbox  []T   // internal: входная сторона FIFO
+    mut outbox []T   // internal: выходная сторона FIFO (reversed in)
 }
 
 
@@ -63,18 +63,18 @@ export fn Queue[T].new() -> Self =>
 /// Число элементов в очереди.
 #stable(since = "0.1")
 export fn Queue[T] @len() -> int =>
-    @_inbox.len() + @_outbox.len()
+    @inbox.len() + @outbox.len()
 
 /// Возвращает `true` если очередь пуста.
 #stable(since = "0.1")
 export fn Queue[T] @is_empty() -> bool =>
-    @_inbox.is_empty() && @_outbox.is_empty()
+    @inbox.is_empty() && @outbox.is_empty()
 
 // D117 AMEND accessor-pair (vec-sweep, 2026-07-06): 0-arg getter half of the
 // `cap`/`cap(n)` property pair. Reports the inbox side's capacity (the two
 // backing arrays are sized identically by `cap(n)` below).
 #stable(since = "0.1")
-export fn Queue[T] @cap() -> int => @_inbox.cap()
+export fn Queue[T] @cap() -> int => @inbox.cap()
 
 /// Reserve capacity `n` on BOTH backing arrays (replacement for the removed
 /// `Queue[T].with_capacity` static constructor: `Queue[T].new().cap(n)`).
@@ -82,8 +82,8 @@ export fn Queue[T] @cap() -> int => @_inbox.cap()
 export fn Queue[T] mut @cap(n int) -> @
     requires n >= 0
 {
-    @_inbox.cap(n)
-    @_outbox.cap(n)
+    @inbox.cap(n)
+    @outbox.cap(n)
 }
 
 
@@ -94,7 +94,7 @@ export fn Queue[T] mut @cap(n int) -> @
 /// Добавить элемент в конец очереди. O(1).
 #stable(since = "0.1")
 export fn Queue[T] mut @push(item T) -> () =>
-    @_inbox.push(item)
+    @inbox.push(item)
 
 /// Извлечь элемент из начала очереди (FIFO). O(1) amortized.
 ///
@@ -108,28 +108,28 @@ export fn Queue[T] mut @push(item T) -> () =>
 /// ```
 #stable(since = "0.1")
 export fn Queue[T] mut @pop() -> Option[T] {
-    if @_outbox.is_empty() {
+    if @outbox.is_empty() {
         // Перелить `in` в `out` в обратном порядке.
         loop {
-            match @_inbox.pop() {
-                Some(x) => @_outbox.push(x)
+            match @inbox.pop() {
+                Some(x) => @outbox.push(x)
                 None    => break
             }
         }
     }
-    @_outbox.pop()
+    @outbox.pop()
 }
 
 /// Посмотреть первый элемент без удаления. `None` если пусто.
 #stable(since = "0.1")
 export fn Queue[T] @peek() -> Option[T] {
-    if !@_outbox.is_empty() {
+    if !@outbox.is_empty() {
         // Голова outbox — последний элемент (pop забирает с конца).
-        @_outbox.get(@_outbox.len() - 1)
-    } else if !@_inbox.is_empty() {
+        @outbox.get(@outbox.len() - 1)
+    } else if !@inbox.is_empty() {
         // Голова находится в `in[0]` (она «дальше всего» от выхода
         // тоже, но ещё не перелита).
-        @_inbox.get(0)
+        @inbox.get(0)
     } else {
         None
     }
@@ -138,8 +138,8 @@ export fn Queue[T] @peek() -> Option[T] {
 /// Очистить очередь.
 #stable(since = "0.1")
 export fn Queue[T] mut @clear() -> () {
-    @_inbox.clear()
-    @_outbox.clear()
+    @inbox.clear()
+    @outbox.clear()
 }
 
 

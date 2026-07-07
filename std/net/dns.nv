@@ -33,7 +33,7 @@ export fn resolve(host str, port u16) Net -> Result[[]SocketAddr, NetError] {
     // The []SocketAddr is built HERE (a plain fn, no effect vtable) so its images
     // survive GC; the effect only carries the (base, count) scalar pair.
     match Net.lookup(host.bytes(), port) {
-        Ok((base, count)) => Ok(_build_addrs(base, count))
+        Ok((base, count)) => Ok(build_addrs(base, count))
         Err(e)            => Err(e)
     }
 }
@@ -41,8 +41,8 @@ export fn resolve(host str, port u16) Net -> Result[[]SocketAddr, NetError] {
 // ── Handler-shared helpers (peers of real_net / mock_net in this module) ──────
 
 // Result constructors (regular fns — keep variant construction out of handlers).
-fn _lookup_ok(base int, count int) -> Result[(int, int), NetError] => Ok((base, count))
-fn _err_lookup(code int) -> Result[(int, int), NetError] => Err(NetError.from_code(code))
+fn lookup_ok(base int, count int) -> Result[(int, int), NetError] => Ok((base, count))
+fn err_lookup(code int) -> Result[(int, int), NetError] => Err(NetError.from_code(code))
 
 // Build an owned []SocketAddr from a DNS result array (C base pointer + count),
 // copying each 20-byte image out via the pure `addr_copy_at` FFI.
@@ -53,13 +53,13 @@ fn _err_lookup(code int) -> Result[(int, int), NetError] => Err(NetError.from_co
 // last one. Exactly `count` allocations (no extra temp). A single-alloc inline
 // `[N]u8` field rep would remove them, but the fixed-array repeat literal
 // (`[0; N]`) is a known compiler gap — tracked for a later sweep.
-fn _build_addrs(base int, count int) -> []SocketAddr {
+fn build_addrs(base int, count int) -> []SocketAddr {
     mut addrs []SocketAddr = []SocketAddr.new()
     mut i = 0
     while i < count {
-        mut img []u8 = _addr_image()
+        mut img []u8 = addr_image()
         unsafe { nova_net_addr_copy_at(base as *(), i, img.ptr()) }
-        addrs.push(SocketAddr._from_image(img))
+        addrs.push(SocketAddr.from_image(img))
         i = i + 1
     }
     addrs

@@ -36,37 +36,37 @@ export type SocketAddr value { priv raw []u8 }
 ro ADDR_IMAGE_BYTES int = nova_net_addr_size()
 
 // A fresh, zeroed NovaNetAddr image buffer.
-fn _addr_image() -> []u8 => []u8.new().resize(ADDR_IMAGE_BYTES, 0 as u8)
+fn addr_image() -> []u8 => []u8.new().resize(ADDR_IMAGE_BYTES, 0 as u8)
 
 // Package-private: wrap an already-filled 20-byte image into a SocketAddr.
 // Used by the tcp/udp/dns handlers, which fill an out-buffer via the FFI.
-fn SocketAddr._from_image(b []u8) -> SocketAddr => { raw: b }
+fn SocketAddr.from_image(b []u8) -> SocketAddr => { raw: b }
 
 // Package-private: raw image pointer for the transport FFI (`*()` = NovaNetAddr*).
-fn SocketAddr @_ptr() -> *() => @raw.ptr() as *()
+fn SocketAddr @ptr() -> *() => @raw.ptr() as *()
 
 /// Create IPv4 loopback address 127.0.0.1:port (port 0 = OS-assigned).
 #stable(since = "0.1")
 export fn SocketAddr.loopback(port u16) -> SocketAddr {
-    mut b = _addr_image()
+    mut b = addr_image()
     unsafe { nova_net_addr_loopback_into(port, b.ptr()) }
-    SocketAddr._from_image(b)
+    SocketAddr.from_image(b)
 }
 
 /// Create IPv6 loopback address [::1]:port.
 #stable(since = "0.1")
 export fn SocketAddr.loopback_v6(port u16) -> SocketAddr {
-    mut b = _addr_image()
+    mut b = addr_image()
     unsafe { nova_net_addr_loopback_v6_into(port, b.ptr()) }
-    SocketAddr._from_image(b)
+    SocketAddr.from_image(b)
 }
 
 /// Create IPv4 address from dotted-quad octets.
 #stable(since = "0.1")
 export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr {
-    mut img = _addr_image()
+    mut img = addr_image()
     unsafe { nova_net_addr_v4_into(a, b, c, d, port, img.ptr()) }
-    SocketAddr._from_image(img)
+    SocketAddr.from_image(img)
 }
 
 /// Parse "host:port" into a SocketAddr.
@@ -76,31 +76,31 @@ export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr {
 /// bracketed: `"[::1]:9090"`. Pure — parses a literal, no DNS / no I/O.
 #stable(since = "0.1")
 export fn SocketAddr.from_str(s str) -> Result[SocketAddr, NetError] {
-    mut b = _addr_image()
+    mut b = addr_image()
     ro code = unsafe { nova_net_addr_parse(s.ptr(), s.byte_len(), b.ptr()) }
     if code == 2 { Err(NetError.InvalidPort) }
     else if code != 0 { Err(NetError.InvalidAddr(s)) }
-    else { Ok(SocketAddr._from_image(b)) }
+    else { Ok(SocketAddr.from_image(b)) }
 }
 
 /// Get the port number.
 #stable(since = "0.1")
-export fn SocketAddr @port() -> u16 => unsafe { nova_net_addr_port(@_ptr()) }
+export fn SocketAddr @port() -> u16 => unsafe { nova_net_addr_port(@ptr()) }
 
 /// Return `true` if this is an IPv4 address.
 #stable(since = "0.1")
-export fn SocketAddr @is_v4() -> bool => unsafe { nova_net_addr_is_v4(@_ptr()) }
+export fn SocketAddr @is_v4() -> bool => unsafe { nova_net_addr_is_v4(@ptr()) }
 
 /// Return `true` if this is an IPv6 address.
 #stable(since = "0.1")
-export fn SocketAddr @is_v6() -> bool => unsafe { nova_net_addr_is_v6(@_ptr()) }
+export fn SocketAddr @is_v6() -> bool => unsafe { nova_net_addr_is_v6(@ptr()) }
 
 /// Get the host IP as a human-readable string (v4 dotted-decimal / v6 hex).
 #stable(since = "0.1")
 export fn SocketAddr @ip() -> str {
     mut buf []u8 = []u8.new()
     buf.resize(64, 0 as u8)
-    ro n = unsafe { nova_net_addr_ip(@_ptr(), buf.ptr(), 64) }
+    ro n = unsafe { nova_net_addr_ip(@ptr(), buf.ptr(), 64) }
     str.from_bytes_unchecked(buf[0..n])
 }
 
@@ -109,6 +109,6 @@ export fn SocketAddr @ip() -> str {
 export fn SocketAddr @to_str() -> str {
     mut buf []u8 = []u8.new()
     buf.resize(128, 0 as u8)
-    ro n = unsafe { nova_net_addr_to_str(@_ptr(), buf.ptr(), 128) }
+    ro n = unsafe { nova_net_addr_to_str(@ptr(), buf.ptr(), 128) }
     str.from_bytes_unchecked(buf[0..n])
 }

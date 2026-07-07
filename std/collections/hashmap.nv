@@ -89,19 +89,19 @@ type Slot[K, V] enum
 #from_fields
 #from_pairs
 export type HashMap[K Hash, V] {
-    // _buckets — массив слотов. Длина — степень двойки (для битовой маски
+    // buckets — массив слотов. Длина — степень двойки (для битовой маски
     // вместо modulo — `idx & (len - 1)`). Internal: layout может изменяться,
     // не обращайся напрямую. Используй @len() / @get() / @insert().
-    _buckets []Slot[K, V]
+    buckets []Slot[K, V]
 
-    // _count — число Occupied слотов. Не считая Tombstone. Internal:
+    // count — число Occupied слотов. Не считая Tombstone. Internal:
     // экспонируется через @len().
-    _count int
+    count int
 
-    // _tombstones считаются отдельно — для решения о rehash при
+    // tombstones считаются отдельно — для решения о rehash при
     // accumulating tombstones (даже если count низкий, много
     // tombstones замедляют lookup). Internal.
-    _tombstones int
+    tombstones int
 }
 
 
@@ -129,9 +129,9 @@ fn hashmap_bucket_count_for(min_capacity int) -> int {
 #stable(since = "0.1")
 export fn HashMap[K, V].new() -> HashMap[K, V] {
     HashMap {
-        _buckets: new_buckets[K, V](hashmap_bucket_count_for(16)),
-        _count: 0,
-        _tombstones: 0,
+        buckets: new_buckets[K, V](hashmap_bucket_count_for(16)),
+        count: 0,
+        tombstones: 0,
     }
 }
 
@@ -161,11 +161,11 @@ export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
 
 /// Число элементов в map (не считая tombstone-слотов).
 #stable(since = "0.1")
-export fn HashMap[K, V] @len() -> int => @_count
+export fn HashMap[K, V] @len() -> int => @count
 
 /// Возвращает `true` если map пуст.
 #stable(since = "0.1")
-export fn HashMap[K, V] @is_empty() -> bool => @_count == 0
+export fn HashMap[K, V] @is_empty() -> bool => @count == 0
 
 /// Общая ёмкость внутреннего массива bucket'ов.
 ///
@@ -173,20 +173,20 @@ export fn HashMap[K, V] @is_empty() -> bool => @_count == 0
 /// РЕТРАКТИРОВАН (дублировал канонический `@cap()`, D9) — `@cap()` теперь
 /// единственный 0-arg getter половины `cap`/`cap(n)` property-пары.
 #stable(since = "0.1")
-export fn HashMap[K, V] @cap() -> int => @_buckets.len()
+export fn HashMap[K, V] @cap() -> int => @buckets.len()
 
 /// Set the capacity to guarantee at least `n` entries fit without a further
 /// rehash (D117 AMEND setter: same-name 1-arg overload of `@cap()`) — the
 /// instance-method replacement for the removed `HashMap[K, V].with_capacity`
 /// static constructor: `HashMap[K, V].new().cap(n)` reproduces the OLD
 /// `with_capacity(n)`'s exact bucket count (entry-count → bucket-count sizing
-/// unchanged: `ceil(4n/3)`, next pow2), because `@_count == 0` right after
+/// unchanged: `ceil(4n/3)`, next pow2), because `@count == 0` right after
 /// `new()` — see the shrink branch below.
 ///
 /// On a map that already holds entries, a hash table cannot shrink its bucket
 /// layout without discarding live data, so this setter only GROWS in that
 /// case (`n` at or below the current capacity is a no-op). It MAY also shrink
-/// when the map is currently empty (`@_count == 0`, e.g. right after `new()`
+/// when the map is currently empty (`@count == 0`, e.g. right after `new()`
 /// or `clear()`) — a cheap reallocation with nothing to lose — which is what
 /// lets `new().cap(n)` land on the exact target size regardless of `new()`'s
 /// own default (16-entry) baseline.
@@ -194,7 +194,7 @@ export fn HashMap[K, V] mut @cap(n int) -> @
     requires n >= 0
 {
     ro target = hashmap_bucket_count_for(n)
-    if target != @_buckets.len() && (target > @_buckets.len() || @_count == 0) {
+    if target != @buckets.len() && (target > @buckets.len() || @count == 0) {
         @rehash(target)
     }
 }
@@ -213,7 +213,7 @@ export fn HashMap[K, V] mut @cap(n int) -> @
 #stable(since = "0.1")
 export fn HashMap[K, V] @get(key K) -> Option[V] {
     ro idx = @find_slot(key)
-    match @_buckets[idx] {
+    match @buckets[idx] {
         Occupied { value } => Some(value)        // partial: key игнорируется
         _                  => None
     }
@@ -243,23 +243,23 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
     @maybe_grow()
 
     ro idx = @find_slot(key)
-    match @_buckets[idx] {
+    match @buckets[idx] {
         Occupied { key: _, value: old } => {
             // Замена существующего значения — count не меняется.
-            @_buckets[idx] = Occupied { key, value }
+            @buckets[idx] = Occupied { key, value }
             Some(old)
         }
         Tombstone => {
             // Переиспользуем tombstone — count++, tombstones--.
-            @_buckets[idx] = Occupied { key, value }
-            @_count += 1
-            @_tombstones -= 1
+            @buckets[idx] = Occupied { key, value }
+            @count += 1
+            @tombstones -= 1
             None
         }
         Empty => {
             // Новая запись.
-            @_buckets[idx] = Occupied { key, value }
-            @_count += 1
+            @buckets[idx] = Occupied { key, value }
+            @count += 1
             None
         }
     }
@@ -281,8 +281,8 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @insert_new(key K, value V) {
     ro idx = @find_slot(key)
-    @_buckets[idx] = Occupied { key, value }
-    @_count += 1
+    @buckets[idx] = Occupied { key, value }
+    @count += 1
 }
 
 
@@ -309,7 +309,7 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
-    mut copy = HashMap[K, V].new().cap(@_count)
+    mut copy = HashMap[K, V].new().cap(@count)
     for (k, v) in @iter() {
         copy.insert_new(k.clone(), v.clone())
     }
@@ -384,7 +384,7 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
 /// ```
 #stable(since = "0.1")
 export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
-    mut out = HashMap[K, V].new().cap(@_count)
+    mut out = HashMap[K, V].new().cap(@count)
     for (k, v) in @iter() {
         if pred(k, v) { out.insert_new(k, v) }
     }
@@ -421,11 +421,11 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
     ro idx = @find_slot(key)
-    match @_buckets[idx] {
+    match @buckets[idx] {
         Occupied { value } => {                  // partial: key игнорируется
-            @_buckets[idx] = Tombstone
-            @_count -= 1
-            @_tombstones += 1
+            @buckets[idx] = Tombstone
+            @count -= 1
+            @tombstones += 1
             Some(value)
         }
         _ => None
@@ -436,11 +436,11 @@ export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
 /// Удалить все элементы. Не освобождает внутренний массив (capacity сохраняется).
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @clear() {
-    for i in 0..@_buckets.len() {
-        @_buckets[i] = Empty
+    for i in 0..@buckets.len() {
+        @buckets[i] = Empty
     }
-    @_count = 0
-    @_tombstones = 0
+    @count = 0
+    @tombstones = 0
 }
 
 
@@ -554,12 +554,12 @@ export fn ValuesIter[K, V] mut @next() -> Option[V] =>
 //
 // Linear probing: cap-mask вместо modulo.
 fn HashMap[K, V] @find_slot(key K) -> int {
-    ro mask = @_buckets.len() - 1
+    ro mask = @buckets.len() - 1
     mut idx = (key.hash() as int) & mask
     mut first_tombstone = -1
 
     loop {
-        match @_buckets[idx] {
+        match @buckets[idx] {
             Empty => {
                 // Если по пути встретили tombstone — переиспользуем
                 // его. Иначе — первый Empty.
@@ -582,15 +582,15 @@ fn HashMap[K, V] @find_slot(key K) -> int {
 // превышен или слишком много tombstones.
 // Load factor = 3/4 (75%): used * 4 < buckets * 3 → не растём.
 fn HashMap[K, V] mut @maybe_grow() {
-    ro used = @_count + @_tombstones
-    if used * 4 < @_buckets.len() * 3 { return }
+    ro used = @count + @tombstones
+    if used * 4 < @buckets.len() * 3 { return }
 
     // Если tombstones — большая часть, можно rehash в тот же размер.
     // Иначе удваиваем capacity.
-    ro new_cap = if @_tombstones * 2 > @_count {
-        @_buckets.len()
+    ro new_cap = if @tombstones * 2 > @count {
+        @buckets.len()
     } else {
-        @_buckets.len() * 2
+        @buckets.len() * 2
     }
 
     @rehash(new_cap)
@@ -601,10 +601,10 @@ fn HashMap[K, V] mut @maybe_grow() {
 //
 // Используется при росте и при cleanup tombstones.
 fn HashMap[K, V] mut @rehash(new_cap int) {
-    ro old_buckets = @_buckets
-    @_buckets = new_buckets[K, V](new_cap)
-    @_count = 0
-    @_tombstones = 0
+    ro old_buckets = @buckets
+    @buckets = new_buckets[K, V](new_cap)
+    @count = 0
+    @tombstones = 0
 
     for slot in old_buckets {
         if Occupied { key, value } = slot {
