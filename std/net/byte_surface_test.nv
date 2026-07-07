@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 182 Ф.1 (migrated from nova_tests/plan178/net_byte_surface_mock.nv) —
+// byte-first net surface over mock_net(). Exercises write/write_all/read_to_vec
+// on TcpStream + split halves, send_to/recv_from_vec on UdpSocket. The mock
+// does not echo, so this validates the wrapper contract (byte counts, []u8
+// materialisation incl. embedded NUL + non-UTF-8 lead byte) rather than a
+// real round-trip (covered by tcp_test.nv / split_test.nv over real_net()).
+
+module std.net
+
+test "TcpStream.write / write_all return byte count" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c, Err(_) => panic("connect")
+                }
+                // Payload incl. embedded NUL + non-UTF-8 lead byte.
+                ro n = match s.write(Vec[u8].of(0x48, 0x69, 0x00, 0xFF)) {
+                    Ok(n) => n, Err(_) => panic("write")
+                }
+                assert(n == 4)
+                assert(s.write_all(Vec[u8].of(1, 2, 3)).is_ok())
+                s.close()
+            }
+        }
+    }
+}
+
+test "TcpStream.read_to_vec materialises []u8" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c, Err(_) => panic("connect")
+                }
+                ro bytes = match s.read_to_vec(64) { Ok(b) => b, Err(_) => panic("read_to_vec") }
+                // mock read returns "mock-reply" (10 bytes).
+                assert(bytes.len() == 10)
+                assert(str.from_bytes_unchecked(bytes) == "mock-reply")
+                s.close()
+            }
+        }
+    }
+}
+
+test "TcpReadHalf.read / TcpWriteHalf.write over split" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c, Err(_) => panic("connect")
+                }
+                mut (rdh, wrh) = s.split()
+                ro n = match wrh.write(Vec[u8].of(9, 8, 7, 6, 5)) {
+                    Ok(n) => n, Err(_) => panic("write")
+                }
+                assert(n == 5)
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                ro got = match rdh.read(buf) { Ok(n) => n, Err(_) => panic("read") }
+                assert(got == 10)
+                rdh.close()
+                wrh.close()
+            }
+        }
+    }
+}
+
+test "UdpSocket.send_to / recv_from_vec (mock)" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut sock = match UdpSocket.bind(SocketAddr.loopback(0)) {
+                    Ok(s) => s, Err(_) => panic("bind")
+                }
+                ro n = match sock.send_to(Vec[u8].of(0xDE, 0xAD, 0xBE, 0xEF), SocketAddr.loopback(9999)) {
+                    Ok(n) => n, Err(_) => panic("send_to")
+                }
+                assert(n == 4)
+                ro (data, _sender) = match sock.recv_from_vec(64) {
+                    Ok(t) => t, Err(_) => panic("recv_from_vec")
+                }
+                // mock recv returns "" → 0 bytes.
+                assert(data.len() == 0)
+                sock.close()
+            }
+        }
+    }
+}

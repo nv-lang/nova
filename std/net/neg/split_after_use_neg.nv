@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 182 Ф.1 (migrated from nova_tests/plan91_16/tcp_split_stream_after_split_neg.nv)
+// — negative: use of a TcpStream after split(). split() consumes the stream;
+// any subsequent use of it is a compile error (E_CONSUMED_AFTER_USE).
+
+module neg.split_after_use_neg
+
+import std.net.{TcpStream, SocketAddr, mock_net}
+
+test "use stream after split → compile error" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c
+                    Err(_) => panic("connect")
+                }
+                mut (rdh, wrh) = s.split()
+                ro _ = s.write("oops".bytes())   // ERROR: s consumed by split()
+                rdh.close()
+                wrh.close()
+            }
+        }
+    }
+}

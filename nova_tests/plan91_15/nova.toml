@@ -1,23 +1,17 @@
-# nova.toml — scoped FFI manifest for Plan 91.15 std/net API-polish tests.
+# nova.toml — Plan 91.15 remaining tests (Debug-impl positives).
 #
-# Force-includes net_v2_guard.h (defines NOVA_NET_V2=1) before nova_rt.h
-# to suppress V1 NovaRes_*-returning declarations from net.h that conflict
-# with V2 codegen output (Nova_T* return types), and to alias overloaded
-# method call-site names + the Nova_NetError_static_* constructor call-sites
-# to their definition names (codegen emits nova_make_NetError_* definitions).
+# Plan 182 Ф.1: the std/net-consumer tests (net_*.nv) were migrated to
+# std/net/*_test.nv + std/net/neg/ (net2 was promoted/renamed to std/net; no
+# more V1/V2 codegen conflict, so the net_v2_guard.h FFI shim this manifest
+# used to force-include is gone too).
 
 [package]
 name = "plan91_15"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
-description = "Plan 91.15 std/net P1 polish (NetError.Eof, write_all, ip(), to_str) tests"
+description = "Plan 91.15 Debug-impl positive tests"
 
 [lib]
 src = "."
 
 [dependencies]
-
-[ffi]
-c_shims      = ["net_v2_guard.h"]
-include_dirs = []
-libs         = []

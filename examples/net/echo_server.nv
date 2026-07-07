@@ -14,7 +14,7 @@
 
 module net.echo_server
 
-import std.net2.{SocketAddr, TcpListener, real_net}
+import std.net.{SocketAddr, TcpListener, real_net}
 
 const PORT u16 = 7777
 

@@ -26,7 +26,7 @@
 
 module http.transport
 
-import std.net2.{TcpStream, resolve}
+import std.net.{TcpStream, resolve}
 import std.http.{Http, HttpError, ErrorKind}
 
 /// Production `Http` handler over the `Net` effect (TCP + DNS via libuv).

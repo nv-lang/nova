@@ -28,7 +28,7 @@
 
 module nova_tests.http_servernet
 
-import std.net2.{TcpListener, TcpStream, SocketAddr, real_net}
+import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
 import std.http.server.{ServeMux, ServerResponse, handler_fn}
 import std.http.servernet.{handle_connection}
 
