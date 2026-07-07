@@ -1,4 +1,6 @@
-// Plan 175 Ф.1b + Ф.3 (option C) — pos-фикстура: value-records + typed
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 182 Ф.1 (migrated from nova_tests/time/plan175_f1b_value_typed_surface.nv)
+// — Plan 175 Ф.1b + Ф.3 (option C) — pos-фикстура: value-records + typed
 // surface поверх int-wire эффекта.
 //
 // Покрывает §8 acceptance:
@@ -9,7 +11,7 @@
 //   - `@is_past`/`@time_until`/`@elapsed` РАБОТАЮТ (int-based) под mock-часами;
 //   - `Monotonic.now()` (value-builtin) non-regression.
 
-module nova_tests.time
+module time.value_typed_surface_test
 
 import std.time.duration
 import std.testing.handlers as th

@@ -1,4 +1,6 @@
-// Plan 175 Ф.1 — единый источник схемы Time + вынос TimerMetrics.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 182 Ф.1 (migrated from nova_tests/time/plan175_f1_timer_metrics_split.nv)
+// — Plan 175 Ф.1: единый источник схемы Time + вынос TimerMetrics.
 //
 // Позитив-фикстура behavior-change'а Ф.1 (§8.0 «каждое изменение поведения
 // закрыто pos-фикстурой»):
@@ -10,11 +12,8 @@
 //   3. Схема `Time` теперь читается codegen'ом ИЗ std/prelude/effects.nv
 //      (единый источник) — компиляция этого файла = smoke-проверка, что
 //      единый источник даёт ту же схему.
-//
-// Single-file folder-module — нет cross-file const-capture (обходит
-// pre-existing spawn-const-capture дефект в nova_tests/plan65).
 
-module nova_tests.time
+module time.timer_metrics_test
 
 import std.time.duration
 
