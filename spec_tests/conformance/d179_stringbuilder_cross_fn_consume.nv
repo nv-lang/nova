@@ -1,0 +1,93 @@
+// D179 — StringBuilder consume + `into_str()` across sibling functions.
+// Regression guard for [M-into-raw-generic-stub-ret]: three (or more) adjacent
+// free functions, each finalising its own `consume buf = StringBuilder.new()`
+// loop with `buf.into_str()`, where one calls another WHILE its own `buf` is
+// still live (cross-function nested consume). This is the exact shape the JSON
+// serializer uses (`format_string` / `format_array` / `format_object`).
+//
+// The defect was NOT in consume-tracking: `into_str()` lowers to
+// `str.from_bytes_unchecked_steal(@buf)`, whose in-place NUL-terminate path
+// (`buf[n] = 0`) ran on a mis-typed local — codegen adopted the checker channel's
+// UN-substituted return type of `Vec[T] @into_raw() -> *mut T` (the erased stub
+// `Nova_T**`, 8-byte stride) instead of the concrete `nova_byte*` (1-byte stride),
+// so the write clobbered 8 bytes at offset `n*8` — a heap overflow that corrupted
+// the GC heap and produced a deterministic downstream crash once several such
+// steals accumulated. Fixed by making `infer_expr_c_type` skip a generic-stub
+// channel return for a CALL and fall through to receiver-substitution-aware
+// method-return inference (→ `nova_byte*`).
+//
+// Positive coverage: exercise every sibling AND the cross-calling driver, and
+// assert the exact produced strings so heap corruption surfaces as a wrong result
+// or a crash (never a silent pass). Part of the SINGLE `spec_tests.conformance`
+// folder-module; D-prefixed unique names avoid duplicate-top-level-name clashes.
+module spec_tests.conformance
+
+// Sibling 1: own consume buf, quotes a leaf (per-char append loop).
+fn d179_fmt_leaf(s str) -> str {
+    consume buf = StringBuilder.new()
+    buf.append("\"")
+    for c in s.chars() {
+        buf.append(c)
+    }
+    buf.append("\"")
+    buf.into_str()
+}
+
+// Sibling 2: own consume buf; calls d179_fmt_leaf (→ another LIVE consume buf)
+// once per element WHILE this buf is still live.
+fn d179_fmt_list(items []str) -> str {
+    consume buf = StringBuilder.new()
+    buf.append("[")
+    mut first = true
+    for it in items {
+        if !first { buf.append(",") }
+        first = false
+        buf.append(d179_fmt_leaf(it))
+    }
+    buf.append("]")
+    buf.into_str()
+}
+
+// Sibling 3: own consume buf; cross-calls BOTH other siblings while buf live,
+// nesting a d179_fmt_list result (its own into_str) inside this one's buffer.
+fn d179_fmt_object(keys []str, vals []str) -> str {
+    consume buf = StringBuilder.new()
+    buf.append("{")
+    mut first = true
+    mut i = 0
+    for k in keys {
+        if !first { buf.append(",") }
+        first = false
+        buf.append(d179_fmt_leaf(k))
+        buf.append(":")
+        buf.append(d179_fmt_list([]str.of(vals[i])))
+        i = i + 1
+    }
+    buf.append("}")
+    buf.into_str()
+}
+
+test "StringBuilder into_str: leaf sibling round-trips (D179)" {
+    assert(d179_fmt_leaf("three") == "\"three\"")
+}
+
+test "StringBuilder into_str: list calls leaf while buf live (D179)" {
+    ro items = []str.of("x", "yy", "zzz")
+    assert(d179_fmt_list(items) == "[\"x\",\"yy\",\"zzz\"]")
+}
+
+test "StringBuilder into_str: object cross-calls both siblings while buf live (D179)" {
+    ro keys = []str.of("k1", "k2")
+    ro vals = []str.of("v1", "v2")
+    assert(d179_fmt_object(keys, vals) == "{\"k1\":[\"v1\"],\"k2\":[\"v2\"]}")
+}
+
+test "StringBuilder into_str: repeated cross-calls accumulate (heap-pressure) (D179)" {
+    ro items = []str.of("alpha", "beta", "gamma", "delta", "epsilon")
+    ro a = d179_fmt_list(items)
+    ro b = d179_fmt_object(items, items)
+    ro c = d179_fmt_leaf("zeta")
+    assert(a == "[\"alpha\",\"beta\",\"gamma\",\"delta\",\"epsilon\"]")
+    assert(b == "{\"alpha\":[\"alpha\"],\"beta\":[\"beta\"],\"gamma\":[\"gamma\"],\"delta\":[\"delta\"],\"epsilon\":[\"epsilon\"]}")
+    assert(c == "\"zeta\"")
+}
