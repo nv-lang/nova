@@ -743,28 +743,11 @@ pub struct Param {
     /// `const` И return должен быть `const`. Конфликтует с `mut`/
     /// `consume` (E_CONST_PARAM_MOD_CONFLICT).
     pub is_const: bool,
-    /// Plan 172.5 (D326): `ref` passing-mode (`ro ref`/`mut ref`). НЕ тип —
-    /// режим передачи параметра (Swift `inout` / C# `in`+`ref`, без
-    /// лайфтаймов). `MutRef` — единственная явная user-facing форма
-    /// (callee мутирует caller-сторадж in-place; call-site помечает `ref x`);
-    /// `RoRef` — read-only borrow (обычно авто, Plan 172.4). `None` — обычная
-    /// by-value передача. `MutRef` подразумевает `is_mut=true` (mut-доступ в
-    /// теле callee); взаимоисключающ с `consume`/`const` (parser enforce'ит).
-    pub ref_mode: ParamRefMode,
-}
-
-/// Plan 172.5 (D326 R2): режим передачи параметра `ref` — borrow-mode, НЕ тип.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParamRefMode {
-    /// Обычная by-value передача (нет `ref`).
-    None,
-    /// `ro ref name T` — read-only borrow (zero-copy чтение). Обычно
-    /// авто/невидимо (Plan 172.4); явная форма разрешена.
-    RoRef,
-    /// `mut ref name T` — mutable in-out borrow. Единственная явная
-    /// user-facing форма. Callee пишет в caller-сторадж; видно после
-    /// синхронного вызова. Call-site обязан пометить `ref <place>`.
-    MutRef,
+    // Plan 184 (заход-5, п.7): поле `ref_mode: ParamRefMode` и сам enum удалены.
+    // D326-ревизия (Plan 184) отменила «ref — режим передачи»: `ref` теперь
+    // ОГРАНИЧЕННЫЙ ТИП (`TypeRef::Ref`), а in-out `mut x T` ведётся value-путём
+    // Р10 (`param_is_inout_ptr`/`param_ty_is_inout_value`), не отдельным полем
+    // режима. Формы `ro ref`/`mut ref` в параметре сняты заходом-1.
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.
@@ -1647,6 +1630,18 @@ pub enum TypeRef {
     /// The PREFIX outer forms (`mut * T` / `ro * T` / `unsafe * T`) are
     /// retired parse errors (`E_POINTER_PREFIX_MODIFIER`).
     Pointer(Box<TypeRef>, Span),
+    /// **Plan 184 (D326-ревизия, 2026-07-07):** `ref T` — ограниченный
+    /// ссылочный тип (аналог C++ `T&`): непереселяемый алиас на хранилище `T`.
+    /// Легальные позиции (Р1): возврат (`-> ref Self` — де-сахар `-> @` для
+    /// value-типов), локальный алиас (`ro y ref T = x.a.b` / `mut y ref T`),
+    /// тип приёмника (`@` = `ref Self`). ЗАПРЕЩЁН (Р1, → `E_REF_TYPE_POSITION`):
+    /// поля, элементы коллекций, payload сумм, аргумент `Option`, тип-аргументы
+    /// дженериков (`f[ref T]` turbofish/`size_of[ref T]`). Нормализация Р6: для
+    /// кучевого `H` — `ref H ≡ H` (значение уже handle), проверяется ДО
+    /// позиционного запрета, так что `f[ref H]` легален и ≡ `f[H]`.
+    /// C-lowering: `ref T` (value `T`) → `T*` (указатель-алиас); `ref H` (heap)
+    /// → `H` по Р6. Auto-конверсия Р5: `ref T → T` (чтение = разыменование).
+    Ref(Box<TypeRef>, Span),
 }
 
 // Plan 123 baseline-fix (2026-06-02): Default for TypeRef used by test
@@ -1669,7 +1664,8 @@ impl TypeRef {
             | TypeRef::Readonly(_, span)
             | TypeRef::Mut(_, span)
             | TypeRef::Unsafe(_, span)
-            | TypeRef::Pointer(_, span) => *span,
+            | TypeRef::Pointer(_, span)
+            | TypeRef::Ref(_, span) => *span,
         }
     }
 
@@ -1870,7 +1866,8 @@ impl TypeRef {
             | TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
             | TypeRef::Unsafe(inner, _)
-            | TypeRef::Pointer(inner, _) => inner.uses_any_type_param(params),
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Ref(inner, _) => inner.uses_any_type_param(params),
             TypeRef::Tuple(ts, _) => ts.iter().any(|t| t.uses_any_type_param(params)),
             TypeRef::Func { params: p, return_type, .. } => {
                 p.iter().any(|t| t.uses_any_type_param(params))

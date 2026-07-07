@@ -6523,6 +6523,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // flushes via `flush_boxed_vars`; `emit_test` must do the same, scoped to
         // the test body and restored afterwards.
         let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+        // Plan 184: ref-локалы (`ro/mut y ref T`) регистрируются в `ref_params`
+        // (авто-деref). Как и `var_boxed`, набор ДОЛЖЕН быть scoped к телу теста
+        // — иначе имя ref-локала (`a`, `r`) протечёт в последующие emit'ы (std-
+        // методы с одноимённым обычным локалом → ложный `(*a)` → CC-FAIL).
+        let saved_ref_params_test = std::mem::take(&mut self.ref_params);
         // Plan 170 (D307): set the emission file so a `test "…"` block that calls
         // a `priv(file)` helper declared in the SAME file resolves to its file-
         // discriminated C symbol (free_fn_c_name reads current_emit_file_id).
@@ -6542,6 +6547,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.result_type_params = saved_result_type_params_test; // Plan 72 P1-C
         self.protocol_var_vtable = saved_protocol_var_vtable_test; // Plan 72 P3-B
         self.var_boxed = saved_var_boxed; // Plan 153.2: per-test box registry
+        self.ref_params = saved_ref_params_test; // Plan 184: per-test ref-locals
         let test_body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
         // Flush any lambdas discovered during this test's emit
@@ -13111,7 +13117,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
         }
     }
 
@@ -13239,7 +13246,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             TypeRef::Readonly(inner, _)
             | TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::collect_array_elem_typerefs(inner, out),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_array_elem_typerefs(inner, out),
             TypeRef::Unit(_) => {}
         }
     }
@@ -13871,12 +13879,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // placement is the size-driven auto mechanism of Plan 172.4 (R3),
             // NOT duplicated; explicit `ro ref` is a semantic annotation that
             // otherwise passes like a normal value parameter.
-            // Plan 184 Р10: a value/primitive `mut x T` param is ALSO lowered to
-            // `T*` (by-pointer in-out). The legacy `mut ref` form is retained for
-            // byte-compat during migration (parser no longer produces it).
-            if p.ref_mode == crate::ast::ParamRefMode::MutRef
-                || Self::param_is_inout_ptr(p, &ty_c)
-            {
+            // Plan 184 Р10: a value/primitive `mut x T` param is lowered to
+            // `T*` (by-pointer in-out). (Legacy `mut ref` form removed —
+            // заход-5 п.7: `ParamRefMode` больше нет.)
+            if Self::param_is_inout_ptr(p, &ty_c) {
                 ty_c.push('*');
             }
             parts.push(format!("{} {}", ty_c, p.name));
@@ -15844,6 +15850,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             T::Mut(inner, _) => format!("mut {}", Self::type_ref_overload_key(inner)),
             T::Unsafe(inner, _) => format!("unsafe {}", Self::type_ref_overload_key(inner)),
             T::Pointer(inner, _) => format!("*{}", Self::type_ref_overload_key(inner)),
+            // Plan 184: `ref T` distinct overload key (Р13/Р14 mode axis — the
+            // ref-ness of the target participates in structural distinction).
+            T::Ref(inner, _) => format!("ref {}", Self::type_ref_overload_key(inner)),
         }
     }
 
@@ -16999,7 +17008,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::type_ref_mentions_name(inner, names),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::type_ref_mentions_name(inner, names),
         }
     }
 
@@ -19275,9 +19285,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // fn body (restored at exit) so a nested/sibling fn is unaffected.
         let saved_ref_params_fn = std::mem::take(&mut self.ref_params);
         for p in &f.params {
-            if p.ref_mode == crate::ast::ParamRefMode::MutRef {
-                self.ref_params.insert(p.name.clone());
-            } else if p.is_mut && !p.consume {
+            if p.is_mut && !p.consume {
                 // Plan 184 Р10: a value/primitive `mut x T` param is by-pointer
                 // in-out; its body reads/writes auto-deref (`name` → `(*name)`).
                 // Compute the param C type exactly as `params_c` does.
@@ -21129,6 +21137,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // type-checker'ом — codegen ассамит irrefutable.
                 if let Pattern::Record { .. } = &decl.pattern {
                     return self.emit_record_destructure(decl);
+                }
+                // Plan 184 (Р1, Ф.1-остаток): ref-локал — `ro y ref T = <place>` /
+                // `mut y ref T = <place>` — непереселяемый УКАЗАТЕЛЬ-АЛИАС на
+                // хранилище цели (аналог C++ `T& y = place`). Emit `T* y =
+                // &(<place>);` и регистрируем `y` в `ref_params` → все чтения и
+                // записи авто-деref (`(*y)`), тем же путём, что `mut ref`-параметр
+                // (заход-4). `var_types[y]` = ПОИНТИ-тип `T` (не `T*`), как у
+                // ref-параметров: инференс видит `T`, а деref делает codegen.
+                // Кучевой `T` (Р6 `ref H ≡ H`) — inner_c уже `Nova_H*`, значит
+                // `Nova_H** y = &(handle)`; деref `(*y)` даёт handle. Корректно.
+                if let Some(TypeRef::Ref(inner, _)) = &decl.ty {
+                    if let Pattern::Ident { .. } = &decl.pattern {
+                        let binding = self.pattern_binding(&decl.pattern)?;
+                        let inner_c = self.type_ref_to_c(inner)?;
+                        let place = self.emit_expr(&decl.value)?;
+                        self.line(&format!("{}* {} = &({});", inner_c, binding, place));
+                        self.var_types.insert(binding.clone(), inner_c);
+                        self.ref_params.insert(binding);
+                        return Ok(());
+                    }
                 }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
@@ -39032,7 +39060,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
     }
 

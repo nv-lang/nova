@@ -255,6 +255,13 @@ impl ResolvedType {
                 }
                 _ => R::from_type_ref(inner),
             },
+            // Plan 184 (D326-ревизия): `ref T` — ограниченный ссылочный тип.
+            // Для системы типов ПРОЗРАЧЕН (Р5: чтение = разыменование → `T`):
+            // резолвится в тип цели. Р6 (`ref H ≡ H`) выпадает автоматически —
+            // и value, и heap `T` дают тот же `ResolvedType`, что и без `ref`.
+            // Указатель-алиас (value `T`) — деталь C-lowering (ref-локалы,
+            // `type_ref_to_c`), не наблюдаемая на уровне резолва.
+            TypeRef::Ref(inner, _) => R::from_type_ref(inner),
         }
     }
 
@@ -1591,6 +1598,12 @@ fn check_module_impl(
     // specific message than generic D131 use-after-consume — helps user
     // понять value-record semantics.
     check_value_record_escape_after_consume(module, &mut errors);
+
+    // Plan 184 (Р8): `&@` (адрес value-приёмника = `ref Self`) эскейпящий
+    // наружу (возврат / захват / поле) → E_REF_ESCAPE (авто-промоут D216 §4
+    // не спасает — ref на чужой слот). Downward-заём `&@`/`&v` в вызов —
+    // легален (не флагаем).
+    check_ref_addr_escape(module, &mut errors);
 
     // Plan 91.10 (D163 retracted, 2026-05-30): check_external_fn_needs_caps
     // удалён. Capability tracking via отдельный syntax — redundant с effect
@@ -2989,6 +3002,8 @@ fn is_value_type_for_v3(
         Readonly(inner, _) | Mut(inner, _) | Unsafe(inner, _) => {
             is_value_type_for_v3(inner, types)
         }
+        // Plan 184: `ref T` — ссылочный алиас; классифицируем по цели (Р5).
+        Ref(inner, _) => is_value_type_for_v3(inner, types),
         // Module-qualified Named (path.len() > 1) — out-of-module type;
         // assume reference (conservative — won't break value semantic для
         // local types; cross-module value records require explicit detection
@@ -3065,6 +3080,8 @@ fn check_v3_ro_mut_conflict(
         }
         Unsafe(inner, _) => check_v3_ro_mut_conflict(inner, types, at_binding_top, errors),
         Pointer(inner, _) => check_v3_ro_mut_conflict(inner, types, false, errors),
+        // Plan 184: `ref T` — прозрачно рекурсируем в цель.
+        Ref(inner, _) => check_v3_ro_mut_conflict(inner, types, false, errors),
         Array(inner, _) | FixedArray(_, inner, _) => {
             check_v3_ro_mut_conflict(inner, types, false, errors);
         }
@@ -5295,7 +5312,9 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         if let Some(rt) = &fd.return_type {
-            self.walk_typeref(rt, &gs, errors);
+            // Plan 184 (Р1): возврат — легальная top-level ref-позиция
+            // (`-> ref Self` де-сахар `-> @` для value-типов).
+            self.walk_ref_return(rt, &gs, errors);
         }
         for e in &fd.effects {
             self.walk_typeref(e, &gs, errors);
@@ -5377,7 +5396,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
                     if let Some(rt) = &m.return_type {
-                        self.walk_typeref(rt, &ms, errors);
+                        self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
                         self.walk_typeref(e, &ms, errors);
@@ -5394,7 +5413,7 @@ impl<'a> TypeCheckCtx<'a> {
                         self.walk_typeref(&p.ty, &ms, errors);
                     }
                     if let Some(rt) = &m.return_type {
-                        self.walk_typeref(rt, &ms, errors);
+                        self.walk_ref_return(rt, &ms, errors);
                     }
                     for e in &m.effects {
                         self.walk_typeref(e, &ms, errors);
@@ -5711,6 +5730,10 @@ impl<'a> TypeCheckCtx<'a> {
             | TypeRef::Unsafe(inner, _) => self.infinite_dfs(inner, root, on_path, gs),
             // Pointer `*T` (any pointee) — always 8 bytes. INDIRECTION. STOP.
             TypeRef::Pointer(_, _) => None,
+            // Plan 184: `ref T` — указатель-алиас (8 байт). INDIRECTION. STOP.
+            // (ref к тому же root не создаёт inline-цикл; к тому же Р1 запрещает
+            // ref в полях — сюда он в норме не доходит.)
+            TypeRef::Ref(_, _) => None,
             // Slice `[]T` — 16-byte {ptr,len}. INDIRECTION. STOP.
             TypeRef::Array(_, _) => None,
             // Unit / Func / Protocol — finite leaves / existentials. STOP.
@@ -5799,6 +5822,7 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Readonly(inner, _) => format!("ro {}", Self::typeref_display(inner)),
             TypeRef::Mut(inner, _) => format!("mut {}", Self::typeref_display(inner)),
             TypeRef::Unsafe(inner, _) => format!("unsafe {}", Self::typeref_display(inner)),
+            TypeRef::Ref(inner, _) => format!("ref {}", Self::typeref_display(inner)),
             TypeRef::Tuple(elems, _) => {
                 let parts: Vec<String> = elems.iter().map(Self::typeref_display).collect();
                 format!("({})", parts.join(", "))
@@ -5815,6 +5839,66 @@ impl<'a> TypeCheckCtx<'a> {
     #[inline]
     fn typeref_uses_param(tr: &TypeRef, params: &HashSet<String>) -> bool {
         tr.uses_any_type_param(params)
+    }
+
+    /// **Plan 184 (Р6):** является ли цель `ref`-типа ПОДТВЕРЖДЁННО кучевой
+    /// (тогда `ref H ≡ H` нормализуется и легален в любой позиции). Кучевые:
+    /// indirection-формы (`[]T`/`[N]T`/`*T`/fn/protocol), кучевой record
+    /// (`allocation != Value`), `Vec`; newtype/alias — по обёрнутому. Value
+    /// (примитивы, value-record, named-tuple, tuple, unit), generic-параметр и
+    /// НЕИЗВЕСТНОЕ имя → `false` (не подтверждён heap → `ref` в запрещённой
+    /// позиции реджектится: «ref нехраним, не имеет размера как тип»).
+    fn ref_target_confirmed_heap(&self, inner: &TypeRef, gs: &HashSet<String>) -> bool {
+        use TypeRef::*;
+        match inner {
+            Array(..) | FixedArray(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
+            Readonly(i, _) | Mut(i, _) | Unsafe(i, _) | Ref(i, _) => {
+                self.ref_target_confirmed_heap(i, gs)
+            }
+            Tuple(..) | Unit(..) => false,
+            Named { path, .. } => {
+                let name = path.last().map(|s| s.as_str()).unwrap_or("");
+                if gs.contains(name) {
+                    return false; // generic-параметр — storage неизвестен
+                }
+                if name == "Vec" {
+                    return true; // slice/Vec — GC-handle
+                }
+                match self.types.get(name) {
+                    Some(td) => match &td.kind {
+                        crate::ast::TypeDeclKind::Record(_) => {
+                            td.allocation != crate::ast::AllocKind::Value
+                        }
+                        crate::ast::TypeDeclKind::Newtype(nt) => {
+                            self.ref_target_confirmed_heap(nt, gs)
+                        }
+                        crate::ast::TypeDeclKind::Alias(al) => {
+                            self.ref_target_confirmed_heap(al, gs)
+                        }
+                        // Sum / named-tuple / protocol / effect / typeset —
+                        // консервативно НЕ подтверждаем heap (value/ambiguous).
+                        _ => false,
+                    },
+                    None => false, // неизвестное имя — не подтверждён heap
+                }
+            }
+        }
+    }
+
+    /// **Plan 184 (Р1):** обход типа в ЛЕГАЛЬНОЙ top-level ref-позиции (возврат
+    /// `-> ref Self`, локальный алиас `ro y ref T = …`). Ведущий `ref` здесь
+    /// разрешён (любой цели); снимаем его и проверяем цель как обычный тип —
+    /// так вложенный `ref` (внутри цели) всё равно ловится walk_typeref.
+    fn walk_ref_return(
+        &self,
+        tr: &TypeRef,
+        gs: &HashSet<String>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match tr {
+            TypeRef::Ref(inner, _) => self.walk_typeref(inner, gs, errors),
+            _ => self.walk_typeref(tr, gs, errors),
+        }
     }
 
     /// Ф.2: рекурсивная проверка арности одного TypeRef-дерева.
@@ -5918,6 +6002,33 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
             | TypeRef::Unsafe(inner, _) => self.walk_typeref(inner, gs, errors),
+            // Plan 184 (Р1/Р6): `ref T` встреченный ЗДЕСЬ = ЗАПРЕЩЁННАЯ позиция
+            // (поле / элемент коллекции / вариант суммы / Option / тип-аргумент
+            // дженерика / параметр). Легальные top-level позиции (возврат,
+            // локальный алиас, приёмник) снимают ведущий `ref` ДО вызова
+            // walk_typeref (`walk_ref_return`/`let`-аннотация), поэтому сюда
+            // ведущий-легальный ref не доходит. Р6: `ref H` (heap) ≡ H —
+            // нормализуется, легально; `ref V` (value) / ref generic/unknown —
+            // реджект E_REF_TYPE_POSITION.
+            TypeRef::Ref(inner, span) => {
+                if !self.ref_target_confirmed_heap(inner, gs) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_REF_TYPE_POSITION] `ref {}` недопустим в этой позиции \
+                             (поле / элемент коллекции / вариант суммы / Option / \
+                             тип-аргумент дженерика / параметр): ссылка на стек не \
+                             должна утекать в долгоживущую кучу (Р1, Plan 184). `ref` \
+                             легален только в возврате (`-> ref Self`), локальном \
+                             алиасе (`ro y ref T = ...`) и типе приёмника (`@`). Для \
+                             кучевого типа `H` действует `ref H ≡ H` (Р6) — пишите \
+                             сам `H` без `ref`.",
+                            typeref_display(inner)
+                        ),
+                        *span,
+                    ));
+                }
+                self.walk_typeref(inner, gs, errors);
+            }
         }
     }
 
@@ -5957,7 +6068,8 @@ impl<'a> TypeCheckCtx<'a> {
             // (Pointer/Mut/Unsafe) — all transparent, recurse on inner.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::collect_named_idents(inner, out),
+            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_named_idents(inner, out),
         }
     }
 
@@ -5987,7 +6099,9 @@ impl<'a> TypeCheckCtx<'a> {
             Stmt::Expr(e) => self.walk_expr(e, gs, errors),
             Stmt::Let(d) => {
                 if let Some(t) = &d.ty {
-                    self.walk_typeref(t, gs, errors);
+                    // Plan 184 (Р1): локальная аннотация — легальная top-level
+                    // ref-позиция (`ro y ref T = …` / `mut y ref T = …`).
+                    self.walk_ref_return(t, gs, errors);
                 }
                 self.walk_expr(&d.value, gs, errors);
             }
@@ -6546,18 +6660,15 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
-        // Plan 172.5 (D326 R10): snapshot + install this fn's `mut ref` params
-        // for the closure/spawn escape-capture ban. Restored below.
+        // Plan 184 (заход-5, п.7): `mut ref`-параметров больше нет (ref сняты с
+        // сигнатур заходом-1), поэтому набор пуст. Оставляем snapshot/clear для
+        // сохранения формы (mut_ref_param_names ещё читается capture-баном ниже
+        // — теперь всегда пустой; переиспользование под ref-локалы — follow-up).
         let mut_ref_snap_fn: std::collections::HashSet<String> =
             self.mut_ref_param_names.borrow().clone();
         {
             let mut s = self.mut_ref_param_names.borrow_mut();
             s.clear();
-            for p in &fd.params {
-                if p.ref_mode == ParamRefMode::MutRef {
-                    s.insert(p.name.clone());
-                }
-            }
         }
         match &fd.body {
             FnBody::Expr(e) => {
@@ -13762,6 +13873,8 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
                 self.resolved_cat_of_depth(inner, gs, depth + 1)
             }
+            // Plan 184: `ref T` категориально = цель (Р5 чтение = T; Р6 heap ≡ H).
+            TypeRef::Ref(inner, _) => self.resolved_cat_of_depth(inner, gs, depth + 1),
         }
     }
 
@@ -14052,7 +14165,8 @@ fn typeref_mentions_any(ty: &TypeRef, names: &HashSet<String>) -> bool {
         | TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
         | TypeRef::Unsafe(inner, _)
-        | TypeRef::Pointer(inner, _) => typeref_mentions_any(inner, names),
+        | TypeRef::Pointer(inner, _)
+        | TypeRef::Ref(inner, _) => typeref_mentions_any(inner, names),
         TypeRef::Tuple(elems, _) => elems.iter().any(|e| typeref_mentions_any(e, names)),
         TypeRef::Func { params, return_type, .. } => {
             params.iter().any(|p| typeref_mentions_any(p, names))
@@ -14166,6 +14280,7 @@ pub(crate) fn typeref_display(tr: &TypeRef) -> String {
         TypeRef::Pointer(inner, _) => format!("*{}", typeref_display(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", typeref_display(inner)),
         TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_display(inner)),
+        TypeRef::Ref(inner, _) => format!("ref {}", typeref_display(inner)),
     }
 }
 
@@ -15723,6 +15838,9 @@ impl<'a> BoundCtx<'a> {
         use crate::argbind::ArgBinding;
         // Collect the places of `mut ref` args for the overlap relation.
         let mut mut_ref_places: Vec<(RefPlace, crate::diag::Span)> = Vec::new();
+        // Plan 184 (Р12): places of NON-mut value-typed args в этом же вызове —
+        // для расширенной эксклюзивности (mut × любой параметр того же места).
+        let mut other_value_places: Vec<(RefPlace, crate::diag::Span)> = Vec::new();
         for (pi, param) in params.iter().enumerate() {
             let Some(binding) = bindings.get(pi) else { continue; };
             // The arg expr bound to this param (single-arg bindings only;
@@ -15749,71 +15867,31 @@ impl<'a> BoundCtx<'a> {
                 }
                 continue;
             }
-            let is_ref_marked = matches!(arg_expr.kind, ExprKind::RefArg(_));
-            match param.ref_mode {
-                ParamRefMode::MutRef => {
-                    if !is_ref_marked {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_REF_MARKER_REQUIRED] параметр `{}` объявлен `mut ref` \
-                                 (in-out borrow, D326 R4) — аргумент обязан быть помечен \
-                                 `ref`, чтобы мутация caller-значения была видна в коде: \
-                                 передай `ref <place>`, где place — адресуемая переменная/\
-                                 поле. Для одиночной мутации канон — метод `mut @` (D326).",
-                                param.name
-                            ),
-                            arg_expr.span,
-                        ));
-                        continue;
-                    }
-                    let ExprKind::RefArg(inner) = &arg_expr.kind else { continue; };
-                    // Addressability (R4). Mutability of the place (E_REF_ARG_NOT_MUT)
-                    // is enforced separately in the main checker's expr-walk
-                    // (`check_ref_marker_mutability`), where the `ro`-binding set
-                    // lives — a `RefArg` node unambiguously flags a mutated place.
-                    if !self.check_ref_place_addressable(inner, errors) {
-                        continue;
-                    }
-                    if let Some(place) = RefPlace::of(inner) {
-                        mut_ref_places.push((place, inner.span));
-                    }
-                }
-                ParamRefMode::RoRef => {
-                    if is_ref_marked {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_REF_MARKER_NOT_ALLOWED] параметр `{}` объявлен `ro ref` \
-                                 (read-only borrow, D326 R4) — call-site маркер `ref` не \
-                                 ставится (он сигнализирует ВОЗМОЖНУЮ мутацию, только для \
-                                 `mut ref`). Передай аргумент без `ref`.",
-                                param.name
-                            ),
-                            arg_expr.span,
-                        ));
-                    }
-                }
-                ParamRefMode::None => {
-                    if is_ref_marked {
-                        errors.push(Diagnostic::new(
-                            format!(
-                                "[E_REF_MARKER_NOT_ALLOWED] параметр `{}` передаётся by-value \
-                                 — маркер `ref` допустим только для `mut ref`-параметра \
-                                 (D326 R4). Убери `ref`, либо объяви параметр `mut ref {} T` \
-                                 если нужна in-place мутация caller-значения.",
-                                param.name, param.name
-                            ),
-                            arg_expr.span,
-                        ));
-                    }
+            // Plan 184 (Р12): НЕ-mut value-типизированный параметр — ro-авто-
+            // представление (копия ≤~16Б / скрытая ссылка) НАБЛЮДАЕМО при
+            // алиасинге с mut-параметром того же места (`f(a, a)` при
+            // `f(x Big, mut y Big)`: чтение x после записи y даёт разное в
+            // зависимости от представления). Собираем место для проверки
+            // пересечения с mut-местами ниже. (consume — move, не in-out.)
+            if !param.consume && self.param_ty_is_inout_value(&param.ty) {
+                if let Some(place) = RefPlace::of(arg_expr) {
+                    other_value_places.push((place, arg_expr.span));
                 }
             }
+            // Plan 184 (заход-5, п.7): мёртвый код `match param.ref_mode`
+            // (RoRef/MutRef-арм + E_REF_MARKER_* + call-site `ref`-маркер)
+            // удалён — парсер снял формы `ro ref`/`mut ref` в параметре
+            // (заход-1) и call-site маркер `f(ref x)` (E_REF_CALL_MARKER_REMOVED),
+            // поэтому `param.ref_mode` всегда `None`, а `RefArg` в CHECKER-AST не
+            // производится (RefArg — только codegen-транспорт синтезированного
+            // in-out, заход-4). Ось mut in-out ведёт value-путь Р10 выше.
         }
         // R9 exclusivity: pairwise prefix-overlap over the mut-ref places.
         for i in 0..mut_ref_places.len() {
             for j in (i + 1)..mut_ref_places.len() {
                 if mut_ref_places[i].0.overlaps(&mut_ref_places[j].0) {
                     errors.push(Diagnostic::new(
-                        "[E_REF_ALIAS_OVERLAP] два `mut ref`-аргумента одного вызова \
+                        "[E_REF_ALIAS_OVERLAP] два in-out `mut`-аргумента одного вызова \
                          ссылаются на пересекающиеся места (общий root, один путь — \
                          префикс другого; D326 R9). Одновременная in-out мутация \
                          перекрывающихся мест запрещена (анти-footgun). Разведи их на \
@@ -15822,6 +15900,28 @@ impl<'a> BoundCtx<'a> {
                          проверка, НЕ Rust/Swift-гарантия эксклюзивности."
                             .to_string(),
                         mut_ref_places[j].1,
+                    ));
+                }
+            }
+        }
+        // Plan 184 (Р12): расширенная эксклюзивность — mut-место × ЛЮБОЙ другой
+        // value-параметр того же места (не только mut×mut). ro-авто-представление
+        // делает чтение НЕ-mut параметра наблюдаемо зависящим от того, копия это
+        // или скрытая ссылка, когда параллельный mut пишет в то же место.
+        for (mp, _mspan) in &mut_ref_places {
+            for (op, ospan) in &other_value_places {
+                if mp.overlaps(op) {
+                    errors.push(Diagnostic::new(
+                        "[E_REF_ALIAS_OVERLAP] in-out `mut`-аргумент и другой \
+                         value-аргумент того же вызова ссылаются на пересекающиеся \
+                         места (Plan 184 Р12, расширение D326 R9). ro-авто-\
+                         представление value-параметра (копия vs скрытая ссылка) \
+                         наблюдаемо при параллельной mut-записи в то же место — \
+                         результат зависел бы от выбора представления. Передай \
+                         непересекающиеся места либо явную локальную копию \
+                         (`ro c = a`) в неизменяемый параметр."
+                            .to_string(),
+                        *ospan,
                     ));
                 }
             }
@@ -18752,6 +18852,7 @@ fn render_type_ref(t: &TypeRef) -> String {
         TypeRef::Pointer(inner, _) => format!("* {}", render_type_ref(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", render_type_ref(inner)),
         TypeRef::Unsafe(inner, _) => format!("unsafe {}", render_type_ref(inner)),
+        TypeRef::Ref(inner, _) => format!("ref {}", render_type_ref(inner)),
     }
 }
 
@@ -19061,6 +19162,8 @@ fn subst_typeref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
         TypeRef::Mut(inner, s) => TypeRef::Mut(Box::new(subst_typeref(inner, subst)), *s),
         TypeRef::Pointer(inner, s) => TypeRef::Pointer(Box::new(subst_typeref(inner, subst)), *s),
         TypeRef::Unsafe(inner, s) => TypeRef::Unsafe(Box::new(subst_typeref(inner, subst)), *s),
+        // Plan 184: `ref T` — подставляем цель (`f[T]() -> ref T` при T=…).
+        TypeRef::Ref(inner, s) => TypeRef::Ref(Box::new(subst_typeref(inner, subst)), *s),
         // Func/Protocol/Unit — params/methods rarely reference the receiver's
         // type-params in a way the narrowing check needs; clone as-is.
         _ => t.clone(),
@@ -19452,6 +19555,8 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                     }
                     _ => type_key(inner),
                 },
+                // Plan 184: `ref T` — отдельный ключ (Р13/Р14 ось режима).
+                TypeRef::Ref(inner, _) => format!("ref_{}", type_key(inner)),
             }
         }
         fn op_sig(m: &EffectMethod) -> String {
@@ -21905,6 +22010,231 @@ impl<'a> VrEscapeCtx<'a> {
             ExprKind::Coalesce(a, b) => { self.walk_expr(a, errors); self.walk_expr(b, errors); }
             ExprKind::As(i, _) | ExprKind::Is(i, _) => self.walk_expr(i, errors),
             _ => {}
+        }
+    }
+}
+
+// ============================================================================
+// Plan 184 (Р8) — escape-анализ ссылок: `&<ref-цель>` НАРУЖУ → E_REF_ESCAPE.
+//
+// «ref-цель» на живой поверхности — приёмник `@` value-типа (Р7: `@` = `ref
+// Self`, указывает на ЧУЖОЕ хранилище вызывающего). `&@` эскейпящий наружу
+// (возврат / захват замыканием / запись в поле) даёт dangling: авто-промоут
+// D216 §4 НЕ применяется (промоутится только СВОЁ значение-локал; ref
+// указывает на чужой слот, промоут копии тихо меняет семантику) → реджект.
+//
+// Легально (НЕ флагаем):
+//   - `&@` ВНИЗ по стеку (аргумент вызова / ffi out-параметр) — заём короче
+//     исходного (действующий канон `nova_str_parse_f64(s, &v)`);
+//   - `&@` на КУЧЕВОМ приёмнике — `@` = Self (handle), `&@` = адрес копии
+//     handle → авто-промоут корректен; адрес кучевого содержимого (Vec @data)
+//     легален. Поэтому пасс ограничен VALUE-приёмниками.
+// V1-синтаксический: флагаем `&@` в escaping-позиции (возврат / trailing /
+// `return` / тело замыкания / RHS присваивания в поле). Аргументы вызовов —
+// downward, escaping=false.
+// ============================================================================
+fn check_ref_addr_escape(module: &Module, errors: &mut Vec<Diagnostic>) {
+    use std::collections::HashSet;
+    // Value-типы приёмника: value-record + named-tuple (по имени).
+    let mut value_types: HashSet<String> = HashSet::new();
+    let mut collect = |items: &[Item], out: &mut HashSet<String>| {
+        for it in items {
+            if let Item::Type(td) = it {
+                let is_value = match &td.kind {
+                    crate::ast::TypeDeclKind::Record(_) => {
+                        td.allocation == crate::ast::AllocKind::Value
+                    }
+                    crate::ast::TypeDeclKind::NamedTuple(_) => true,
+                    _ => false,
+                };
+                if is_value {
+                    out.insert(td.name.clone());
+                }
+            }
+        }
+    };
+    collect(&module.items, &mut value_types);
+    for pf in &module.peer_files {
+        collect(&pf.items_here, &mut value_types);
+    }
+
+    // Приёмник value-типа: value-record/named-tuple ИЛИ примитив (int/f64/…).
+    let recv_is_value = |name: &str| -> bool {
+        value_types.contains(name) || RefEscapeCtx::is_primitive_recv(name)
+    };
+
+    let mut local: Vec<Diagnostic> = Vec::new();
+    let mut visit_fn = |fd: &crate::ast::FnDecl, out: &mut Vec<Diagnostic>| {
+        let Some(recv) = &fd.receiver else { return };
+        if recv.kind != crate::ast::ReceiverKind::Instance { return; }
+        // consume-приёмник: значение потребляется — иные правила (D131); не тут.
+        if recv.consume { return; }
+        if !recv_is_value(&recv.type_name) { return; }
+        let ctx = RefEscapeCtx {};
+        match &fd.body {
+            crate::ast::FnBody::Expr(e) => ctx.walk(e, true, out),
+            crate::ast::FnBody::Block(b) => ctx.walk_block(b, out),
+            crate::ast::FnBody::External => {}
+        }
+    };
+    for item in &module.items {
+        if let Item::Fn(fd) = item { visit_fn(fd, &mut local); }
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(fd) = item { visit_fn(fd, &mut local); }
+        }
+    }
+    // Dedup по span: entry-файл может присутствовать и в module.items, и в
+    // peer_files (CU-модель), давая двойную эмиссию одного и того же места.
+    let mut seen: HashSet<Span> = HashSet::new();
+    for d in local {
+        if seen.insert(d.span) {
+            errors.push(d);
+        }
+    }
+}
+
+struct RefEscapeCtx {}
+
+impl RefEscapeCtx {
+    fn is_primitive_recv(name: &str) -> bool {
+        matches!(name,
+            "int" | "uint" | "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64" | "f32" | "f64"
+            | "bool" | "char" | "byte")
+    }
+
+    fn is_addr_of_self(e: &crate::ast::Expr) -> bool {
+        use crate::ast::{ExprKind, UnOp};
+        if let ExprKind::Unary { op: UnOp::AddrOf, operand } = &e.kind {
+            matches!(operand.kind, ExprKind::SelfAccess)
+        } else {
+            false
+        }
+    }
+
+    fn emit(e: &crate::ast::Expr, errors: &mut Vec<Diagnostic>) {
+        errors.push(Diagnostic::new(
+            "[E_REF_ESCAPE] `&@` эскейпит наружу (возврат / захват замыканием / \
+             запись в поле): приёмник `@` value-типа — `ref Self` (Р7), \
+             указывает на хранилище ВЫЗЫВАЮЩЕГО. Авто-промоут D216 §4 не \
+             применяется (промоутится только своё значение-локал, а `ref` \
+             указывает на чужой слот) → dangling-ссылка (Р8, Plan 184). \
+             Варианты: возьмите владение (`consume @`) и промоутьте своё \
+             значение; либо сделайте явную локальную копию (`ro v = @`) и \
+             верните `&v`. Заём ВНИЗ (аргумент вызова / ffi) — легален, здесь \
+             не он.".to_string(),
+            e.span,
+        ));
+    }
+
+    /// Тело блока: trailing-выражение — escaping; `return X` — X escaping;
+    /// присваивание в поле `x.f = &@` — RHS escaping; прочее — вниз (false).
+    fn walk_block(&self, b: &crate::ast::Block, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::Stmt;
+        for s in &b.stmts {
+            match s {
+                Stmt::Return { value: Some(v), .. } => self.walk(v, true, errors),
+                Stmt::Assign { target, value, .. } => {
+                    // RHS присваивания в ПОЛЕ (не локал) — потенциальный escape в кучу.
+                    let to_field = matches!(target.kind, crate::ast::ExprKind::Member { .. });
+                    self.walk(value, to_field, errors);
+                }
+                Stmt::Expr(e) => self.walk(e, false, errors),
+                Stmt::Let(d) => self.walk(&d.value, false, errors),
+                Stmt::Defer { body, .. } => self.walk(body, false, errors),
+                _ => {}
+            }
+        }
+        if let Some(t) = &b.trailing {
+            self.walk(t, true, errors);
+        }
+    }
+
+    /// `escaping` — истина, если значение `e` покидает фрейм (возврат/захват/
+    /// поле). `&@` в такой позиции → реджект. В аргументах вызовов escaping
+    /// сбрасывается (downward-заём легален).
+    fn walk(&self, e: &crate::ast::Expr, escaping: bool, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        if escaping && Self::is_addr_of_self(e) {
+            Self::emit(e, errors);
+            return;
+        }
+        match &e.kind {
+            ExprKind::Call { func, args, .. } => {
+                self.walk(func, false, errors);
+                // Downward-заём: аргументы вызова НЕ эскейпят фрейм вызывающего.
+                for a in args {
+                    self.walk(a.expr(), false, errors);
+                }
+            }
+            ExprKind::Block(b) => self.walk_block(b, errors),
+            ExprKind::If { cond, then, else_ } => {
+                self.walk(cond, false, errors);
+                self.walk_block_val(then, escaping, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => self.walk_block_val(b, escaping, errors),
+                        crate::ast::ElseBranch::If(ie) => self.walk(ie, escaping, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk(scrutinee, false, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.walk(g, false, errors); }
+                    match &arm.body {
+                        crate::ast::MatchArmBody::Expr(ex) => self.walk(ex, escaping, errors),
+                        crate::ast::MatchArmBody::Block(b) => self.walk_block_val(b, escaping, errors),
+                    }
+                }
+            }
+            // Замыкание захватывает окружение — `&@` внутри эскейпит с ним.
+            ExprKind::ClosureLight { body, .. } => match body {
+                crate::ast::ClosureBody::Expr(ex) => self.walk(ex, true, errors),
+                crate::ast::ClosureBody::Block(b) => self.walk_block(b, errors),
+            },
+            // Обёртки, сохраняющие escaping «спину» возвращаемого значения.
+            ExprKind::Unary { operand, .. } => self.walk(operand, escaping, errors),
+            ExprKind::Member { obj, .. } => self.walk(obj, escaping, errors),
+            ExprKind::As(i, _) | ExprKind::Try(i) | ExprKind::Bang(i) => {
+                self.walk(i, escaping, errors)
+            }
+            ExprKind::Coalesce(a, b) => {
+                self.walk(a, escaping, errors);
+                self.walk(b, escaping, errors);
+            }
+            ExprKind::Binary { left, right, .. } => {
+                self.walk(left, false, errors);
+                self.walk(right, false, errors);
+            }
+            ExprKind::Index { obj, index } => {
+                self.walk(obj, false, errors);
+                self.walk(index, false, errors);
+            }
+            _ => {}
+        }
+    }
+
+    /// Блок в позиции-значения (ветвь if/match): trailing наследует escaping.
+    fn walk_block_val(&self, b: &crate::ast::Block, escaping: bool, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::Stmt;
+        for s in &b.stmts {
+            match s {
+                Stmt::Return { value: Some(v), .. } => self.walk(v, true, errors),
+                Stmt::Assign { target, value, .. } => {
+                    let to_field = matches!(target.kind, crate::ast::ExprKind::Member { .. });
+                    self.walk(value, to_field, errors);
+                }
+                Stmt::Expr(e) => self.walk(e, false, errors),
+                Stmt::Let(d) => self.walk(&d.value, false, errors),
+                Stmt::Defer { body, .. } => self.walk(body, false, errors),
+                _ => {}
+            }
+        }
+        if let Some(t) = &b.trailing {
+            self.walk(t, escaping, errors);
         }
     }
 }
@@ -26436,6 +26766,7 @@ fn typeref_render(t: &TypeRef) -> String {
         TypeRef::Pointer(inner, _) => format!("* {}", typeref_render(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", typeref_render(inner)),
         TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_render(inner)),
+        TypeRef::Ref(inner, _) => format!("ref {}", typeref_render(inner)),
     }
 }
 
@@ -27286,6 +27617,9 @@ fn ffi_c_abi_violation(
         TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _) => {
             ffi_c_abi_violation(inner, types, is_top_return, visited)
         }
+        // Plan 184 (Р9): `ref T` НЕ C-ABI — extern-граница только сырые
+        // `*`/`*mut`. `ref` — ABI-деталь Nova-передачи, не переносима.
+        TR::Ref(_, span) => Some((*span, render_type_ref(ty))),
         // Raw pointers: `*T` (any pointee) is C-ABI, recursion stops at the
         // address — EXCEPT a pointer to a fn (fn-pointer), where the D353
         // ABI-tag decides: `*extern "C" fn` is C-ABI (signature types must be
@@ -27560,7 +27894,8 @@ fn ffi_validate_c_fnptr_occurrences(
             }
             ffi_validate_c_fnptr_occurrences(inner, types, errors, reported);
         }
-        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _) => {
+        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _)
+        | TR::Ref(inner, _) => {
             ffi_validate_c_fnptr_occurrences(inner, types, errors, reported)
         }
         TR::Tuple(elems, _) => {

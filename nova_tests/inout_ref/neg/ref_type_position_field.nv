@@ -1,0 +1,10 @@
+// EXPECT_COMPILE_ERROR E_REF_TYPE_POSITION
+//
+// Plan 184 (Р1): `ref T` запрещён в поле (ссылка на стек не должна утекать в
+// долгоживущую кучу). Легально только в возврате / локальном алиасе / приёмнике.
+module neg.ref_type_position_field
+
+type Point value { x int, y int }
+type Bad { p ref Point }
+
+fn main() -> () { () }

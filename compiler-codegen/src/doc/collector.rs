@@ -891,6 +891,8 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
             TypeRef::Pointer(p_inner, _) => format!("*unsafe {}", render_type(p_inner)),
             _ => format!("unsafe {}", render_type(inner)),
         },
+        // Plan 184: `ref T` — ограниченный ссылочный тип.
+        TypeRef::Ref(inner, _) => format!("ref {}", render_type(inner)),
     }
 }
 
