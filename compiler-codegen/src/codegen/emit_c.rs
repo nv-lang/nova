@@ -28488,24 +28488,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // StringBuilder/WriteBuffer/ReadBuffer удалён. Registry-
                 // driven путь (Plan 12 Ф.3) обрабатывает это раньше.
                 //
-                // f64/f32.from_bits / int.to_bits — НЕ в external_registry
-                // (это primitive type methods, не external fn в opaque-type
-                // builtins). Hard-coded dispatch. Plan 74: f64/f32 bit-cast
-                // через nova_rt/numeric.h. `int.to_bits(f f64)` — legacy
-                // Plan 04 helper (read_buffer round-trip), оставлен как есть.
+                // [M-compiler-nv-porting-wave] item B2: f64/f32.from_bits
+                // hardcoded intercept снят — std/runtime/numeric.nv теперь
+                // embedded builtin source (PRIMITIVE_BITCAST_OVERRIDES,
+                // external_registry.rs), тот же generic registry-driven
+                // dispatch выше (строка ~28448) резолвит его. `int.to_bits`
+                // остаётся hardcoded — нет .nv-декларации нигде (legacy
+                // Plan 04 helper, read_buffer round-trip), нечего embed'ить.
                 if let ExprKind::Ident(name) = &obj.kind {
-                    if name == "f64" && method == "from_bits" {
-                        if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(format!("Nova_f64_from_bits({})", v));
-                        }
-                    }
-                    if name == "f32" && method == "from_bits" {
-                        if let Some(arg) = args.first() {
-                            let v = self.emit_expr(arg.expr())?;
-                            return Ok(format!("Nova_f32_from_bits({})", v));
-                        }
-                    }
                     if name == "int" && method == "to_bits" {
                         if let Some(arg) = args.first() {
                             let v = self.emit_expr(arg.expr())?;
@@ -31352,23 +31342,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // from_bytes_unchecked_steal MIGRATED to Nova-body. The static C
                 // interception was removed here so the call routes through the
                 // normal static-method dispatch to Nova_str_static_from_bytes_*.
-                // Plan 74: f64/f32.from_bits(bits uN) — IEEE 754 bit-cast
-                // uN → float через nova_rt/numeric.h. Pair с `f.to_bits()`.
-                // Legacy Plan 04: f64.from_bits также служит распаковке
-                // try_read_f64_* (r.unwrap_or(0) → nova_int bits →
-                // f64.from_bits). int.to_bits(f f64) — обратная упаковка.
-                if parts.len() == 2 && parts[0] == "f64" && parts[1] == "from_bits" {
-                    if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg.expr())?;
-                        return Ok(format!("Nova_f64_from_bits({})", v));
-                    }
-                }
-                if parts.len() == 2 && parts[0] == "f32" && parts[1] == "from_bits" {
-                    if let Some(arg) = args.first() {
-                        let v = self.emit_expr(arg.expr())?;
-                        return Ok(format!("Nova_f32_from_bits({})", v));
-                    }
-                }
+                // [M-compiler-nv-porting-wave] item B2: f64/f32.from_bits
+                // hardcoded intercept снят — numeric.nv embedded builtin
+                // source (PRIMITIVE_BITCAST_OVERRIDES), generic registry-
+                // driven Path-form dispatch below резолвит его. `int.to_bits`
+                // остаётся hardcoded — нет .nv-декларации нигде.
                 if parts.len() == 2 && parts[0] == "int" && parts[1] == "to_bits" {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
@@ -42995,41 +42973,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 32: gc.* introspection — type inference.
-                            if n == "gc" {
-                                return match method.as_str() {
-                                    "heap_size" | "live_count" | "alloc_count" => "nova_int".into(),
-                                    "collect" | "reset_stats" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44.2 Этап 3: fibers.* introspection — type inference.
-                            if n == "fibers" {
-                                return match method.as_str() {
-                                    "virtual_reserved" | "slot_count" |
-                                    "slots_active" | "high_water" => "nova_int".into(),
-                                    "compact" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44 Этап 0: runtime.* — type inference.
-                            if n == "runtime" {
-                                return match method.as_str() {
-                                    "init" | "shutdown" => "nova_int".into(),
-                                    "worker_count" | "current_worker_id"
-                                    | "maxprocs" => "nova_int".into(),
-                                    "is_initialized" => "nova_bool".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 74: f64/f32.from_bits(uN) → float; legacy
-                            // Plan 04 int.to_bits(f64) → nova_int.
-                            if n == "f64" && method == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if n == "f32" && method == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] items B1/B2: gc/
+                            // fibers/runtime type-inference hardcode (heap_size/
+                            // collect/virtual_reserved/init/is_initialized/…) и
+                            // f64/f32.from_bits снят — все три .nv embedded builtin
+                            // sources (external_registry.rs), ExternalRegistry
+                            // fallback ниже резолвит return_c_type корректно.
+                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if n == "int" && method == "to_bits" {
                                 return "nova_int".into();
                             }
@@ -43623,13 +43573,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 74: f64/f32.from_bits; legacy Plan 04 int.to_bits.
-                            if eff == "f64" && method_name == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if eff == "f32" && method_name == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] item B2: f64/f32.
+                            // from_bits hardcode снят — numeric.nv embedded
+                            // builtin source (PRIMITIVE_BITCAST_OVERRIDES),
+                            // ExternalRegistry lookup below (line ~43600-ish
+                            // equivalent, external_registry.lookup(eff, ...))
+                            // резолвит return_c_type. `int.to_bits` остаётся —
+                            // нет .nv-декларации нигде.
                             if eff == "int" && method_name == "to_bits" {
                                 return "nova_int".into();
                             }
@@ -46686,41 +46636,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 32: gc.* introspection — type inference.
-                            if n == "gc" {
-                                return match method.as_str() {
-                                    "heap_size" | "live_count" | "alloc_count" => "nova_int".into(),
-                                    "collect" | "reset_stats" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44.2 Этап 3: fibers.* introspection — type inference.
-                            if n == "fibers" {
-                                return match method.as_str() {
-                                    "virtual_reserved" | "slot_count" |
-                                    "slots_active" | "high_water" => "nova_int".into(),
-                                    "compact" => "nova_int".into(), // unit comma-expr
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 44 Этап 0: runtime.* — type inference.
-                            if n == "runtime" {
-                                return match method.as_str() {
-                                    "init" | "shutdown" => "nova_int".into(),
-                                    "worker_count" | "current_worker_id"
-                                    | "maxprocs" => "nova_int".into(),
-                                    "is_initialized" => "nova_bool".into(),
-                                    _ => "nova_int".into(),
-                                };
-                            }
-                            // Plan 74: f64/f32.from_bits(uN) → float; legacy
-                            // Plan 04 int.to_bits(f64) → nova_int.
-                            if n == "f64" && method == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if n == "f32" && method == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] items B1/B2: gc/
+                            // fibers/runtime type-inference hardcode (heap_size/
+                            // collect/virtual_reserved/init/is_initialized/…) и
+                            // f64/f32.from_bits снят — все три .nv embedded builtin
+                            // sources (external_registry.rs), ExternalRegistry
+                            // fallback ниже резолвит return_c_type корректно.
+                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if n == "int" && method == "to_bits" {
                                 return "nova_int".into();
                             }
@@ -47314,13 +47236,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // Plan 74: f64/f32.from_bits; legacy Plan 04 int.to_bits.
-                            if eff == "f64" && method_name == "from_bits" {
-                                return "nova_f64".into();
-                            }
-                            if eff == "f32" && method_name == "from_bits" {
-                                return "nova_f32".into();
-                            }
+                            // [M-compiler-nv-porting-wave] item B2: f64/f32.
+                            // from_bits hardcode снят — numeric.nv embedded
+                            // builtin source (PRIMITIVE_BITCAST_OVERRIDES),
+                            // ExternalRegistry lookup below (line ~43600-ish
+                            // equivalent, external_registry.lookup(eff, ...))
+                            // резолвит return_c_type. `int.to_bits` остаётся —
+                            // нет .nv-декларации нигде.
                             if eff == "int" && method_name == "to_bits" {
                                 return "nova_int".into();
                             }
