@@ -7496,6 +7496,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "typedef struct NovaRes_{n} NovaRes_{n};\n", n = n));
                     }
                 }
+                // Plan 172.12 A8 fix: a generic-mono POINTER slot (`Nova_<Base>____<args>*`
+                // — e.g. `[]u8` → `Nova_Vec____nova_byte*`) needs its typedef name
+                // declared BEFORE this vtable struct. `type_ref_to_c` registers the
+                // instance on the mono worklist, but the drain appends its
+                // forward-typedef to `user_type_fwd_decls` AFTER this vtable was
+                // appended (same buffer, later in time) → "unknown type name" at the
+                // vtable line. Pre-A8 this slot lowered to the unconditionally-declared
+                // legacy `NovaArray_<prim>*` (the Vec template isn't registered yet at
+                // protocol-emission time, so the legacy branch fired) — retired with
+                // array.h's DECL/IMPL snос. Mirror the `NovaRes_` accumulation above:
+                // forward `typedef struct <n> <n>;` into the same early buffer; the
+                // full struct body is still emitted once by the worklist drain
+                // (C11 6.7/3: redundant typedef to the same type is valid).
+                if let Some(n) = c.strip_suffix('*') {
+                    if n.starts_with("Nova_") && n.contains("____")
+                        && novares_fwds_seen.insert(n.to_string())
+                    {
+                        novares_fwds.push_str(&format!(
+                            "typedef struct {n} {n};\n", n = n));
+                    }
+                }
+                // Same A8 ordering fix for a composite Option VALUE slot
+                // (`Option[[]str]` → `NovaOpt_Nova_Vec____nova_str_p`): its full
+                // typedef is emitted by `register_novaopt_decl` into
+                // `novaopt_typedefs_buf`, spliced AFTER this early buffer. All
+                // NovaOpt emitters (array.h `NOVA_OPT_DECL` included) use the
+                // NAMED struct tag `NovaOpt_<sani>`, so a forward
+                // `typedef struct NovaOpt_<x> NovaOpt_<x>;` is compatible, and an
+                // incomplete return/param type is valid C in a function-POINTER
+                // declaration (completeness is only required at the call site,
+                // which lands after the full typedef). Restrict to composite
+                // images (a `Nova`-prefixed or pointer-sanitized payload) — the
+                // primitive `NovaOpt_nova_*` set is pre-declared in array.h.
+                if !c.ends_with('*') {
+                    if let Some(payload) = c.strip_prefix("NovaOpt_") {
+                        if (payload.contains("____") || payload.ends_with("_p")
+                            || payload.starts_with("Nova"))
+                            && novares_fwds_seen.insert(c.to_string())
+                        {
+                            novares_fwds.push_str(&format!(
+                                "typedef struct {n} {n};\n", n = c));
+                        }
+                    }
+                }
             }
             let params_str = std::iter::once("void*".to_string())
                 .chain(param_c_types.iter().cloned())
