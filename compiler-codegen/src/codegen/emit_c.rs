@@ -41509,21 +41509,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    // Plan 91.18 Ф.7: `char.try_from(int_expr)` — static call whose
-                    // result type must be `NovaRes_nova_char_Nova_CharTryFromError_p*`
-                    // so that `match char.try_from(cp) { Ok(c) => c, … }` binds `c`
-                    // as `nova_char` and routes `str.from(c)` → `Nova_str_static_from_char`.
-                    // Error type changed str → CharTryFromError (D77, typed error).
-                    if let ExprKind::Path(parts) = &func.kind {
-                        if parts.len() == 2 && parts[0] == "char" && parts[1] == "try_from" {
-                            if let Some(first_arg) = args.first() {
-                                let arg_ty = self.infer_expr_c_type(first_arg.expr());
-                                if arg_ty == "nova_int" {
-                                    return self.result_repr_c_type("nova_char", "Nova_CharTryFromError*");
-                                }
-                            }
-                        }
-                    }
+                    // [M-compiler-nv-porting-wave] item B4: dead duplicate
+                    // removed here. This handled `char.try_from(int_expr)` —
+                    // but [M-f64-try-parse-to-parse-f64] (2026-07-07, same-day
+                    // prior change, see runtime_registry.rs char_runtime()
+                    // history / std/prelude/errors.nv:368) renamed the ONLY
+                    // static char conversion without an infallible sibling
+                    // from `char.try_from` to `char.from`, and its error type
+                    // from `CharTryFromError` to `CharFromError` — this block
+                    // referenced BOTH old names, so it's unreachable: the
+                    // checker rejects `char.try_from(...)` before codegen
+                    // (confirmed empirically — [E_UNKNOWN_STATIC_METHOD],
+                    // no such static method on primitive `char`). `char.from`
+                    // (the live replacement) is a regular Nova-body fn
+                    // (std/runtime/char.nv) — its return type is inferred via
+                    // the normal user-function path (mono_method_decls/
+                    // self_method_decls), no special-case needed.
+                    // NOT anchor for T.try_from(str) scalar-parse surface
+                    // (174.1/[M-f64-try-parse-to-parse-f64] program covers
+                    // that separately) — that live surface (~line 31246
+                    // equivalent, `parts[1] == "try_from"` scalar parsers)
+                    // is untouched.
                     // Plan 11 Ф.1-Ф.3: multi-overload infer. Если func — Path/Member
                     // call на known receiver-type, ищем в method_overloads. Это
                     // решает single-key last-wins для одноимённых методов.
@@ -45172,21 +45178,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    // Plan 91.18 Ф.7: `char.try_from(int_expr)` — static call whose
-                    // result type must be `NovaRes_nova_char_Nova_CharTryFromError_p*`
-                    // so that `match char.try_from(cp) { Ok(c) => c, … }` binds `c`
-                    // as `nova_char` and routes `str.from(c)` → `Nova_str_static_from_char`.
-                    // Error type changed str → CharTryFromError (D77, typed error).
-                    if let ExprKind::Path(parts) = &func.kind {
-                        if parts.len() == 2 && parts[0] == "char" && parts[1] == "try_from" {
-                            if let Some(first_arg) = args.first() {
-                                let arg_ty = self.infer_expr_c_type(first_arg.expr());
-                                if arg_ty == "nova_int" {
-                                    return self.result_repr_c_type("nova_char", "Nova_CharTryFromError*");
-                                }
-                            }
-                        }
-                    }
+                    // [M-compiler-nv-porting-wave] item B4: dead duplicate
+                    // removed here. This handled `char.try_from(int_expr)` —
+                    // but [M-f64-try-parse-to-parse-f64] (2026-07-07, same-day
+                    // prior change, see runtime_registry.rs char_runtime()
+                    // history / std/prelude/errors.nv:368) renamed the ONLY
+                    // static char conversion without an infallible sibling
+                    // from `char.try_from` to `char.from`, and its error type
+                    // from `CharTryFromError` to `CharFromError` — this block
+                    // referenced BOTH old names, so it's unreachable: the
+                    // checker rejects `char.try_from(...)` before codegen
+                    // (confirmed empirically — [E_UNKNOWN_STATIC_METHOD],
+                    // no such static method on primitive `char`). `char.from`
+                    // (the live replacement) is a regular Nova-body fn
+                    // (std/runtime/char.nv) — its return type is inferred via
+                    // the normal user-function path (mono_method_decls/
+                    // self_method_decls), no special-case needed.
+                    // NOT anchor for T.try_from(str) scalar-parse surface
+                    // (174.1/[M-f64-try-parse-to-parse-f64] program covers
+                    // that separately) — that live surface (~line 31246
+                    // equivalent, `parts[1] == "try_from"` scalar parsers)
+                    // is untouched.
                     // Plan 11 Ф.1-Ф.3: multi-overload infer. Если func — Path/Member
                     // call на known receiver-type, ищем в method_overloads. Это
                     // решает single-key last-wins для одноимённых методов.
