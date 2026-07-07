@@ -38879,3 +38879,26 @@ builtin-хардкод снесён; первая версия агента с �
 §4а-очередь: recv_returning без арности (E_VIEW_BINDING ложный на sb.cap()), enum-autoderive
 кросс-файл. Конвенции дня: D411; ретракции D85/D86-близнецов; §21 ребиндинг-канон (D347)
 и cap-исключение; §22 «одно имя = одна операция»; правило строкоподобное=byte_len.
+
+Часть 63 (2026-07-07, вечер). Влиты: (1) cg-тройка [opus] — три дефекта одним архитектурным
+принципом «диспатч по типу приёмника, не по имени»: garbage-len статиков []T.deserialize
+(per-element mono + turbofish ?-return), Next[T].collect на кастомных итераторах (#impl-спека
+как источник элемента), NovaArray→Vec remap цепочек ([]u8.new().cap) — serde-стек ожил
+ВПЕРВЫЕ (serde/serde_e2e/http_typed 1/0), 5 обходов снято. (2) porting-волна §3 [sonnet] —
+нетто −421 строка компиляторного знания: −399 мёртвых реестров, char.nv стал ручным
+.nv-источником (реестр опустошён; задокументировано ограничение import-резолюции single-file
+XOR folder), gc/fibers/runtime/bench через ExternalRegistry (bench.opaque — интринсик класса
+C с правильным обоснованием), bitcast-перехваты снесены во всех копиях триплификации,
+str.from-скаляры .nv-оверлоадами, подтверждённо-мёртвый 47-строчный блок похоронен.
+(3) runner-фиксы [sonnet]: temp-корень nova_tests-<PID> (гонка параллельных прогонов убита,
+проба 6/6), testless-юниты → SKIP (std/runtime честный). (4) json закрыт ПОЛНОСТЬЮ:
+байтовый peek Option[u8] [sonnet] с настоящим codepoint в non-ASCII диагностиках (+тест
+"é"), hex-quad int-аккумуляцией со срезами-диагностикой [haiku] — parse_hex и двойное
+преобразование удалены. (5) Бисект std/runtime [sonnet]: 13/13 pre-existing. Дизайн-сессия
+с владельцем (вопросы по дифам): D411 реализована за день, ретракция unwrap-близнецов
+(324 миграции), min/max-канон (миграция [haiku] идёт), size_of[ref T] и &ref-эскейп
+дополнили Р-правила 184, финализирована программа 174.5 (deref-контракт D141,
+read_unaligned/write_unaligned, from_bits/to_bits чистым .nv, &ro → *T, size_of-API).
+Уловы дня в §4а: !!-без-Fail enforcement-гэп (D85), match-guard-lambda false positive,
+recv_returning без арности, plan62-флап (не temp-гонка), porting-хвосты. Эталон 56/0
+лично на каждом слиянии; пуш github main + nova-private.
