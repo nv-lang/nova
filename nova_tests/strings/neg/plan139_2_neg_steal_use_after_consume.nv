@@ -1,17 +1,19 @@
 // EXPECT_COMPILE_ERROR D131
 //
-// Plan 139.2 Ф.2 — negative: from_bytes_unchecked_steal consumes its source.
+// Plan 139.2 Ф.2 — negative: `[]u8 consume @into_str_unchecked()` consumes its
+// receiver (Plan 174.1, 2026-07-08: was the static `str.from_bytes_unchecked
+// (consume bytes)` overload — moved to a consume-method on the source `[]u8`).
 //
-// `str.from_bytes_unchecked_steal(consume bytes []u8)` STEALS the source
-// buffer (zero-copy reuse when cap > len; the Nova-body discharges the consume
-// obligation via `bytes.into_raw()`). The `consume` parameter therefore moves
-// ownership of the `[]u8` into the call — the source array is unusable
-// afterwards. Touching it again (here `b.len()`) is a use-after-consume and
-// fires the D131 linearity error. This guards the steal contract: callers
-// (e.g. StringBuilder.as_str) must surrender the buffer, never alias it.
+// `b.into_str_unchecked()` STEALS the source buffer (zero-copy reuse when
+// cap > len; the Nova-body discharges the consume obligation via
+// `@into_raw()`). The `consume` receiver therefore moves ownership of the
+// `[]u8` into the call — the source array is unusable afterwards. Touching it
+// again (here `b.len()`) is a use-after-consume and fires the D131 linearity
+// error. This guards the steal contract: callers (e.g. StringBuilder.as_str)
+// must surrender the buffer, never alias it.
 module neg.plan139_2_neg_steal_use_after_consume
 
 fn steal_then_use(b []u8) -> int {
-    ro _s = str.from_bytes_unchecked_steal(b)
+    ro _s = unsafe { b.into_str_unchecked() }
     b.len()                       // ← use-after-consume of stolen `b` → D131
 }

@@ -4,7 +4,7 @@
 // API в стиле stdlib/duration.nv:
 //   - Complex(re, im)                   прямой конструктор (D215 named-tuple)
 //   - Complex(re: x) / Complex(re: n as f64)  действительная часть
-//   - Complex.try_from(s str)           Result[Complex, ParseComplexError] — парсинг (D325)
+//   - s.to_complex()                    Result[Complex, ParseComplexError] — парсинг (174.1)
 //                                       (обратное к @to_str() -> str,
 //                                        round-trip property)
 //   - Complex(im: x)                    доменный конструктор — мнимая часть
@@ -77,7 +77,7 @@ export const I    Complex = Complex(im: 1.0)
 // -> Self` для named-tuple + instance-методы того же типа в одном CU давали
 // pointer/value-repr конфликт (`NovaTuple_Complex`) — см. историю в
 // docs/plans/backlog-followups.md. `from_polar` (вычисление polar→cartesian)
-// и `try_from` (парсинг) ОСТАЮТСЯ — несут логику, не тривиальны.
+// и str-экстеншен `s.to_complex()` (парсинг, 174.1) ОСТАЮТСЯ — несут логику, не тривиальны.
 
 /// Из полярных координат: `r * (cos θ + i·sin θ)`. theta в радианах.
 #stable(since = "0.1")
@@ -250,7 +250,7 @@ export fn Complex @approx_eq(other Complex, tol f64) -> bool {
 // использует его же через компиляторный fallback-путь.
 //
 /// `to_str()` — формат `a+bi` / `a-bi` / `a` / `bi` / `0.0`.
-/// Round-trip с `Complex.try_from(s)`.
+/// Round-trip с `s.to_complex()`.
 #stable(since = "0.1")
 export fn Complex @to_str() -> str {
     if @im == 0.0 {
@@ -269,8 +269,8 @@ export fn Complex @to_str() -> str {
 // Парсинг из строки — обратная к `@to_str() -> str`
 // ──────────────────────────────────────────────────────────────────────────
 
-// `try_from(str)` — обратная к `to_str()`. Round-trip property:
-//   Complex.try_from(z.to_str())!! ≈ z
+// `s.to_complex()` — обратная к `to_str()`. Round-trip property:
+//   z.to_str().to_complex()!! ≈ z
 //
 // Принимает форматы из @to_str():
 //   "3.0"            → re=3.0, im=0
@@ -284,17 +284,20 @@ export fn Complex @to_str() -> str {
 #stable(since = "0.1")
 export type ParseComplexError enum InvalidFormat | NotANumber
 
-/// `try_from` (Result) — parse `a+bi` / `bi` / `a` форматы. Round-trip с `@to_str`.
-/// `try_` отличает fallible-парсер от инфаллибл прямого конструктора `Complex(re: x)` (D325 R3).
+/// Parse `a+bi` / `bi` / `a` форматы. Round-trip с `@to_str`.
+///
+/// Plan 174.1 (2026-07-08, канон владельца): конверсия — метод НА ИСТОЧНИКЕ
+/// (`s.to_complex()`, зеркально `s.to_int()`/`s.to_f64()`); статик
+/// `Complex.try_from(s)` РЕТРАКТИРОВАН (одно имя = одна дверь, §22).
 ///
 /// # Examples
 /// ```nova
-/// ro z = Complex.try_from("1.0+2.0i")!!
+/// ro z = "1.0+2.0i".to_complex()!!
 /// assert(z.real() == 1.0 && z.imag() == 2.0)
 /// ```
 #stable(since = "0.1")
-export fn Complex.try_from(s str) -> Result[Complex, ParseComplexError] {
-    ro trimmed = s.trim_ascii()
+export fn str @to_complex() -> Result[Complex, ParseComplexError] {
+    ro trimmed = @trim_ascii()
     if trimmed == "" {
         return Err(InvalidFormat)
     }
@@ -354,7 +357,7 @@ fn split_re_im(body str) -> Option[(str, str)] {
 }
 
 fn parse_f64_or_err(s str) -> Result[f64, ParseComplexError] {
-    match f64.parse(s) {
+    match s.to_f64() {
         Ok(x)  => Ok(x)
         Err(_) => Err(NotANumber)
     }

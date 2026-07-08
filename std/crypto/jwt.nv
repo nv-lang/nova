@@ -78,7 +78,7 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
         Ok(b)  => b
         Err(_) => return Err(DecodingFailed)
     }
-    ro header_json = match str.from_bytes(header_bytes) {
+    ro header_json = match header_bytes.to_str() {
         Ok(s)  => s
         Err(_) => return Err(DecodingFailed)
     }
@@ -118,7 +118,7 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
         Ok(b)  => b
         Err(_) => return Err(DecodingFailed)
     }
-    ro payload_json = match str.from_bytes(payload_bytes) {
+    ro payload_json = match payload_bytes.to_str() {
         Ok(s)  => s
         Err(_) => return Err(DecodingFailed)
     }

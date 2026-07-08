@@ -34,9 +34,9 @@ test "transform submodule (Ф.3 buffer-refactor golden): trim / concat / to_byte
 }
 
 test "parse submodule: parse_int / ParseIntError path" {
-    assert("42".parse_int().ok() == Some(42))
-    assert("ff".parse_int(radix: 16).ok() == Some(255))
-    assert("xyz".parse_int().ok() == None)
+    assert("42".to_int().ok() == Some(42))
+    assert("ff".to_int(radix: 16).ok() == Some(255))
+    assert("xyz".to_int().ok() == None)
 }
 
 test "chars submodule: позиционный доступ через next()-drain (nth ретрактирован)" {

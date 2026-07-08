@@ -8,7 +8,7 @@ module std.http
 
 test "url parse: full round-trip (userinfo/port/query/fragment)" {
     ro s = "https://alice:s3cret@api.example.com:8443/v1/users?id=42&x=y#sec"
-    ro u = Url.parse(s)!!
+    ro u = s.to_url()!!
     assert(u.scheme == "https")
     assert(u.user == Some("alice"))
     assert(u.password == Some("s3cret"))
@@ -21,7 +21,7 @@ test "url parse: full round-trip (userinfo/port/query/fragment)" {
 }
 
 test "url parse: scheme lowercased, default origin port" {
-    ro u = Url.parse("HTTP://example.com/")!!
+    ro u = "HTTP://example.com/".to_url()!!
     assert(u.scheme == "http")
     ro (sch, host, port) = u.origin()
     assert(sch == "http")
@@ -30,14 +30,14 @@ test "url parse: scheme lowercased, default origin port" {
 }
 
 test "url parse: file:// empty host round-trip" {
-    ro u = Url.parse("file:///etc/hosts")!!
+    ro u = "file:///etc/hosts".to_url()!!
     assert(u.host == Some(""))
     assert(u.path == "/etc/hosts")
     assert(u.to_str() == "file:///etc/hosts")
 }
 
 test "url parse: IPv6 bracket host + port, re-bracketed on serialize" {
-    ro u = Url.parse("http://[::1]:8080/x")!!
+    ro u = "http://[::1]:8080/x".to_url()!!
     assert(u.host == Some("::1"))
     assert(u.port == Some(8080))
     assert(u.to_str() == "http://[::1]:8080/x")
@@ -45,9 +45,9 @@ test "url parse: IPv6 bracket host + port, re-bracketed on serialize" {
 }
 
 test "url parse: canonical IPv4 loopback flagged private" {
-    ro u = Url.parse("http://127.0.0.1/")!!
+    ro u = "http://127.0.0.1/".to_url()!!
     assert(u.is_private_target())
-    ro ext = Url.parse("http://93.184.216.34/")!!
+    ro ext = "http://93.184.216.34/".to_url()!!
     assert(!ext.is_private_target())
 }
 
@@ -69,36 +69,36 @@ test "decode_query: round-trip incl. multi-byte + space + reserved" {
 // ── neg (Err-Result asserts) — malformed + SSRF obfuscation reject ────────────
 
 test "url neg: missing scheme → Err" {
-    assert(match Url.parse("example.com/path") { Ok(_) => false, Err(_) => true })
+    assert(match "example.com/path".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "url neg: malformed port → Err" {
-    assert(match Url.parse("http://example.com:abc/") { Ok(_) => false, Err(_) => true })
-    assert(match Url.parse("http://example.com:99999/") { Ok(_) => false, Err(_) => true })
+    assert(match "http://example.com:abc/".to_url() { Ok(_) => false, Err(_) => true })
+    assert(match "http://example.com:99999/".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "url neg: unterminated IPv6 literal → Err" {
-    assert(match Url.parse("http://[::1/") { Ok(_) => false, Err(_) => true })
+    assert(match "http://[::1/".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "ssrf neg: hex IP obfuscation rejected" {
-    assert(match Url.parse("http://0x7f.0.0.1/") { Ok(_) => false, Err(_) => true })
+    assert(match "http://0x7f.0.0.1/".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "ssrf neg: octal IP obfuscation rejected" {
-    assert(match Url.parse("http://0177.0.0.1/") { Ok(_) => false, Err(_) => true })
+    assert(match "http://0177.0.0.1/".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "ssrf neg: decimal-integer IP obfuscation rejected" {
-    assert(match Url.parse("http://2130706433/") { Ok(_) => false, Err(_) => true })
+    assert(match "http://2130706433/".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "ssrf neg: short-form IP rejected" {
-    assert(match Url.parse("http://127.1/") { Ok(_) => false, Err(_) => true })
+    assert(match "http://127.1/".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "ssrf neg: whitespace/control in host rejected" {
-    assert(match Url.parse("http://exa mple.com/") { Ok(_) => false, Err(_) => true })
+    assert(match "http://exa mple.com/".to_url() { Ok(_) => false, Err(_) => true })
 }
 
 test "decode_query neg: truncated %X → Err" {

@@ -360,15 +360,15 @@ test "split: trailing separator" {
 // bytes() / for-in / WriteBuffer + str.from_bytes работает.
 //
 // Plan 04 Этап 6: Buffer удалён. Replaces:
-//   - Buffer.from(bs).into_str_unchecked() → str.from_bytes(bs)? (D325)
+//   - Buffer.from(bs).into_str_unchecked() → bs.to_str()? (D325)
 //   - Buffer.with_capacity + add_byte       → WriteBuffer + write_byte
 
 test "bytes: round-trip через str.from_bytes" {
     ro original = "Hello, мир!"
     ro bs = original.bytes()
-    // Восстановим строку: bs → str.from_bytes(bs) → str. UTF-8 валидный
+    // Восстановим строку: bs → bs.to_str() → str. UTF-8 валидный
     // (исходник был str), поэтому Ok.
-    ro recon = match str.from_bytes(bs) {
+    ro recon = match bs.to_str() {
         Ok(s)  => s
         Err(_) => ""    // unreachable — original was valid UTF-8
     }

@@ -47,7 +47,7 @@ test "response: delegating discharge (must-consume body)" {
 }
 
 test "request: build + drain" {
-    ro u = Url.parse("http://x/")!!
+    ro u = "http://x/".to_url()!!
     ro h = HeaderMap.new()
     consume req = Request.new(Method.Post, u, h, "payload".bytes())
     assert(match req.method() { Post => true, _ => false })
@@ -58,7 +58,7 @@ test "httperror: kind + source-chain + to_str" {
     ro e = HttpError.protocol_error("bad line")
     assert(match e.kind { Protocol(m) => m == "bad line", _ => false })
     // InvalidUrl carries a ParseUrlError source (source-chaining)
-    ro ue = match Url.parse("nope") { Ok(_) => HttpError.protocol_error("x"), Err(e2) => e2 }
+    ro ue = match "nope".to_url() { Ok(_) => HttpError.protocol_error("x"), Err(e2) => e2 }
     assert(match ue.kind { InvalidUrl => true, _ => false })
     assert(ue.to_str().byte_len() > 0)
 }

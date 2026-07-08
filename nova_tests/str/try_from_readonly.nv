@@ -1,18 +1,18 @@
 // from_bytes_readonly.nv — verify str.from_bytes works with readonly []u8 (from as_bytes)
 // D176 coercion: readonly []u8 transparent to codegen, same C type as []u8.
 // Plan 176 Ф.0.5: migrated from the retired str.try_from([]u8) intrinsic to the
-// canonical str.from_bytes(bytes) -> Result[str, Utf8Error].
+// canonical bytes.to_str() -> Result[str, Utf8Error].
 
 module nova_tests.str
 
-test "str.from_bytes(bytes()) round-trip ASCII" {
+test "bytes().to_str() round-trip ASCII" {
     ro s = "hello"
-    ro r = str.from_bytes(s.bytes())
+    ro r = s.bytes().to_str()
     assert(r.is_ok())
 }
 
-test "str.from_bytes(bytes()) round-trip Cyrillic" {
+test "bytes().to_str() round-trip Cyrillic" {
     ro s = "Привет"
-    ro r = str.from_bytes(s.bytes())
+    ro r = s.bytes().to_str()
     assert(r.is_ok())
 }

@@ -18,7 +18,7 @@
 //   "0 9-17 * * 1-5"  — каждый час с 9 до 17 в будни
 //
 // API:
-//   Cron.parse(expr str) -> Result[CronExpr, ParseCronError]
+//   s.to_cron() -> Result[CronExpr, ParseCronError]   (str-экстеншен, 174.1)
 //   expr.matches(time CronTime) -> bool
 //
 // Не реализовано (out of scope):
@@ -73,13 +73,17 @@ export type CronTime {
 ///
 /// Поддержка: `*`, `1,5,10` (list), `1-5` (range), `*/15` (step), `10-30/5` (range+step).
 ///
+/// Plan 174.1 (2026-07-08, канон владельца): конверсия — метод НА ИСТОЧНИКЕ
+/// (`s.to_cron()`, зеркально `s.to_int()`/`s.to_url()`); статик
+/// `Cron.parse(expr)` РЕТРАКТИРОВАН (одно имя = одна дверь, §22).
+///
 /// # Examples
 /// ```nova
-/// let cron = Cron.parse("*/15 9-17 * * 1-5")!!  // every 15 min, 9-17h, weekdays
+/// let cron = "*/15 9-17 * * 1-5".to_cron()!!  // every 15 min, 9-17h, weekdays
 /// ```
 #stable(since = "0.1")
-export fn Cron.parse(expr str) -> Result[CronExpr, ParseCronError] {
-    ro fields = expr.trim_ascii().split(" ")
+export fn str @to_cron() -> Result[CronExpr, ParseCronError] {
+    ro fields = @trim_ascii().split(" ")
     // Удалить пустые (multiple spaces)
     mut clean []str = []
     for f in fields {

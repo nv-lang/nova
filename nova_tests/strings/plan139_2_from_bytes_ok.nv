@@ -1,14 +1,16 @@
-// from_bytes_ok.nv — Plan 139.2 Ф.2
-// str.from_bytes_unchecked / from_bytes_lossy / from_bytes_unchecked_steal —
-// Nova-body. Reads the source (ptr,len[,cap]) via the public Vec getters
-// (@as_ptr/@len/@cap) and builds an owned, NUL-terminated str (or zero-copy
-// reuse for steal). Round-trip with @to_bytes / @as_bytes must be byte-exact.
+// from_bytes_ok.nv — Plan 139.2 Ф.2 (renamed Plan 174.1, 2026-07-08:
+// `[]u8 @to_str_unchecked()` / `@to_str_lossy()` / `@into_str_unchecked()` —
+// conversions moved from static `str.from_bytes*` constructors to methods on
+// the source `[]u8`). Nova-body. Reads the source (ptr,len[,cap]) via the
+// public Vec getters (@ptr/@len/@cap) and builds an owned, NUL-terminated str
+// (or zero-copy reuse for `into_str_unchecked`). Round-trip with `@bytes()`
+// must be byte-exact.
 
 module nova_tests.strings
 
 test "from_bytes_unchecked: round-trip ASCII" {
     ro bytes = "hello".bytes()
-    ro s = str.from_bytes_unchecked(bytes)
+    ro s = unsafe { bytes.to_str_unchecked() }
     assert(s == "hello")
     assert(s.byte_len() == 5)
 }
@@ -17,14 +19,14 @@ test "from_bytes_unchecked: round-trip multi-byte UTF-8" {
     // "héllo wörld" — multi-byte é (0xC3 0xA9) and ö (0xC3 0xB6).
     ro original = "héllo wörld"
     ro bytes = original.bytes()
-    ro s = str.from_bytes_unchecked(bytes)
+    ro s = unsafe { bytes.to_str_unchecked() }
     assert(s == original)
     assert(s.byte_len() == original.byte_len())
 }
 
 test "from_bytes_unchecked: empty array → empty string" {
     mut empty = []u8.new()
-    ro s = str.from_bytes_unchecked(empty)
+    ro s = unsafe { empty.to_str_unchecked() }
     assert(s == "")
     assert(s.byte_len() == 0)
 }
@@ -35,7 +37,7 @@ test "from_bytes_unchecked: explicit byte build" {
     b.push(65 as u8)   // 'A'
     b.push(66 as u8)   // 'B'
     b.push(67 as u8)   // 'C'
-    ro s = str.from_bytes_unchecked(b)
+    ro s = unsafe { b.to_str_unchecked() }
     assert(s == "ABC")
     assert(s.bytes()[0] == 65 as u8)
 }
@@ -43,7 +45,7 @@ test "from_bytes_unchecked: explicit byte build" {
 test "from_bytes_lossy: valid UTF-8 fast path (copy)" {
     ro original = "valid café"
     ro bytes = original.bytes()
-    ro s = str.from_bytes_lossy(bytes)
+    ro s = bytes.to_str_lossy()
     assert(s == original)
 }
 
@@ -53,7 +55,7 @@ test "from_bytes_lossy: invalid byte replaced with U+FFFD" {
     b.push(65 as u8)   // 'A'
     b.push(0xFF as u8) // invalid lead
     b.push(66 as u8)   // 'B'
-    ro s = str.from_bytes_lossy(b)
+    ro s = b.to_str_lossy()
     // "A" + U+FFFD (3 bytes) + "B" = 5 bytes.
     assert(s.byte_len() == 5)
     assert(s.bytes()[0] == 0x41 as u8)   // 'A'
@@ -67,7 +69,7 @@ test "from_bytes_lossy: truncated multi-byte sequence replaced" {
     // 0xC3 with no continuation byte → invalid; replaced with U+FFFD.
     mut b = []u8.new()
     b.push(0xC3 as u8) // lead of 2-byte seq, but no continuation follows
-    ro s = str.from_bytes_lossy(b)
+    ro s = b.to_str_lossy()
     assert(s.byte_len() == 3)                 // single U+FFFD
     assert(s.bytes()[0] == 0xEF as u8)
     assert(s.bytes()[1] == 0xBF as u8)
@@ -81,7 +83,7 @@ test "from_bytes_unchecked_steal: zero-copy reuse when cap > len" {
     b.push(120 as u8)  // 'x'
     b.push(121 as u8)  // 'y'
     b.push(122 as u8)  // 'z'
-    ro s = str.from_bytes_unchecked_steal(b)
+    ro s = unsafe { b.into_str_unchecked() }
     assert(s == "xyz")
     assert(s.byte_len() == 3)
 }
@@ -93,14 +95,14 @@ test "from_bytes_unchecked_steal: alloc+copy fallback when cap == len" {
     b.cap(2)
     b.push(113 as u8)  // 'q'
     b.push(119 as u8)  // 'w'
-    ro s = str.from_bytes_unchecked_steal(b)
+    ro s = unsafe { b.into_str_unchecked() }
     assert(s == "qw")
     assert(s.byte_len() == 2)
 }
 
 test "from_bytes_unchecked_steal: empty buffer" {
     mut b = []u8.new()
-    ro s = str.from_bytes_unchecked_steal(b)
+    ro s = unsafe { b.into_str_unchecked() }
     assert(s == "")
     assert(s.byte_len() == 0)
 }

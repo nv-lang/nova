@@ -212,7 +212,7 @@ fn find_first_of(s str, chars str) -> Option[int] {
     mut i = 0
     while i < s.byte_len() {
         ro c = (sb[i] as int).to_char() ?? ' '
-        if chars.contains(str.from(c)) { return Some(i) }
+        if chars.contains(c.to_str()) { return Some(i) }
         i += 1
     }
     None
@@ -346,7 +346,7 @@ export fn Url.encode_query(s str) -> str {
 // multi-byte UTF-8 sequence — нужен byte-buffer с финализацией через
 // UTF-8 validation. StringBuilder text-only, не подходит. WriteBuffer
 // + write_char/write_str/write_byte накапливает UTF-8 bytes; финал
-// через `str.from_bytes([]u8)?` (D325) валидирует и конвертирует.
+// через `[]u8.to_str()?` (D325) валидирует и конвертирует.
 //
 // На невалидный UTF-8 после decode'а — Err(InvalidPercentEncoding)
 // (consistent с тем что percent-encoding должен давать valid UTF-8;
@@ -382,8 +382,11 @@ export fn Url.decode_query(s str) -> Result[str, ParseUrlError] {
             i += 1
         }
     }
-    ro bytes = buf.into()
-    match str.from_bytes(bytes) {
+    // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` local — see
+    // backlog-followups.md marker. decode_utf8 = []u8 @to_str alias — this CU
+    // also has `Url @to_str()` ([M-174.1-to-str-name-collision-codegen-bug]).
+    ro bytes []u8 = buf.into()
+    match bytes.decode_utf8() {
         Ok(t)  => Ok(t)
         Err(_) => Err(InvalidPercentEncoding { position: i })
     }

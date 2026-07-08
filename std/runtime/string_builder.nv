@@ -194,4 +194,15 @@ export fn StringBuilder mut @write(s str) -> () { @buf.append(s.bytes()) }
 // если cap > len, иначе alloc+copy fallback).
 // Infallible: UTF-8 invariant поддерживается append-методами.
 // Renamed as_str → into_str (Plan 91.18 Ф.2; D77: into_* = consuming).
-export fn StringBuilder consume @into_str() -> str => unsafe { str.from_bytes_unchecked(@buf) }
+// [M-174.1-into-str-unchecked-legacy-array-codegen-gap]: the zero-copy steal
+// path (`@buf.into_str_unchecked()`) mis-codegens here — this file is
+// `#no_prelude` (breaks the prelude→collections→string_builder cycle) and so
+// `@buf` uses the LEGACY `NovaArray` representation (prelude.nv: "#no_prelude
+// units keep the legacy NovaArray path"), for which the new consume-method
+// dispatch doesn't wire correctly (generates a C body returning `int` instead
+// of `nova_str` — CC-FAIL "assigning to 'nova_str' from incompatible type
+// 'int'"). Falls back to the non-consuming copy path (`to_str_unchecked`)
+// until that gap is closed under its own plan (see backlog-followups.md
+// marker); correctness is unaffected, only the zero-copy-reuse optimization
+// is foregone for this legacy-array call site.
+export fn StringBuilder consume @into_str() -> str => unsafe { @buf.to_str_unchecked() }

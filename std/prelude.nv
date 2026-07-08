@@ -168,8 +168,23 @@ export import std.prelude.effects.{Fail, Time, Mem}
 // D178: parse_int_radix → parse_int(radix=10); to_bytes/to_chars/compare added.
 // D410 (2026-07-06): to_bytes/to_chars close-copy twins RETRACTED (view+.clone()/.collect()
 // at call site instead); as_bytes renamed → bytes (bare noun view, as_ префикс упразднён).
+// Plan 174.1 (2026-07-08): `parse_int` RETRACTED from this list — the str-level
+// parse triad is gone. Owner amend same day: conversions are METHODS ON THE
+// SOURCE (`s.to_int()`, `s.to_i64()`, `s.to_u64()`, `s.to_u32()`, `s.to_u8()`,
+// `s.to_f64()` — std/runtime/string/parse.nv), not static constructors on the
+// target type. The digit-scan engines are private (non-exported) helpers in
+// that same file, not part of str's public API.
+// Plan 174.1 (2026-07-08), same wave: `str.from_bytes`/`from_bytes_lossy`/
+// `from_bytes_unchecked` (static constructors) RETRACTED → `[]u8 @to_str()`/
+// `@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` (instance/
+// consume methods on the source `[]u8`). Unlike the retired STATIC form
+// (which needed no facade entry — static `Type.method(...)` calls resolve
+// without this bridge, see `f64.parse`/`Url.parse` precedent), INSTANCE
+// method-call syntax (`bytes.to_str()`) on a `#no_prelude`-homed method DOES
+// need this re-export to be visible without an explicit `import
+// std.runtime.string` — hence added here.
 // std.runtime.string имеет #no_prelude — cycle protection (prelude→string→prelude).
-export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replace, compare, bytes}
+export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare, bytes, to_int, to_i64, to_u64, to_u32, to_u8, to_f64, to_str, to_str_lossy, to_str_unchecked, into_str_unchecked, decode_utf8}
 
 // Plan 169.2.1 (D303): char Unicode-aware methods (`'a'.is_alphabetic()` etc.)
 // are NOT re-exported here. A bare `export import std.unicode.{is_alphabetic,…}`
@@ -248,5 +263,14 @@ export import std.runtime.string.{parse_int, pad_left, pad_right, repeat, replac
 ///     facade re-export (auto-derive synthesis removed from compiler too).
 ///     Remaining: Hash/Equal/Compare/Display. Static `.from`/`.try_from`
 ///     naming convention and `to_str()`/`to_*` (D410) are unaffected.
+///   - 16 = Plan 174.1 done (2026-07-08): `str.parse_int` (D177/D178/D325
+///     triad) RETRACTED as public API — removed from this facade's
+///     `std.runtime.string` re-export. Replaced by conversion METHODS ON
+///     THE SOURCE: `str.to_int()`/`to_i64()`/`to_u64()`/`to_u32()`/`to_u8()`/
+///     `to_f64()` (std/runtime/string/parse.nv) — added to this re-export
+///     list. (An earlier same-day design, static `T.parse(s)` on the numeric
+///     type, was superseded by the owner before landing; a type-set-bounded
+///     generic for it also hit a live path-call codegen gap,
+///     [M-174.1-parse-typeset-pathcall], out of scope here.)
 #stable(since = "0.1")
-export const PRELUDE_VERSION int = 15
+export const PRELUDE_VERSION int = 16

@@ -3,7 +3,7 @@ module neg.parse_int_invalid_digit_err
 import std.runtime.string.{ParseIntError}
 
 fn assert_invalid_digit(s str, radix int) {
-    match s.parse_int(radix: radix) {
+    match s.to_int(radix: radix) {
         Ok(_) => assert(false, "expected Err(InvalidDigit)")
         Err(e) => match e {
             InvalidDigit => {}

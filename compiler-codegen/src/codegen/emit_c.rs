@@ -451,9 +451,19 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
             }
         }
         // Fire any method whose receiver type AND name are now both reachable.
+        // Plan 174.1 [M-174.1-concrete-slice-recv-method-resolve]: a CONCRETE-
+        // slice receiver's type name ("[]u8", "[]str", "[]int" — std/text.nv
+        // join, std/sort.nv sum, std/runtime/string to_str family) can never
+        // syntactically appear as a collected `Ident`/`Member` name, so the
+        // type∧name intersection could NEVER fire for it — the body was dropped
+        // in every executable (fn-main) build while the call site was kept →
+        // implicit-decl CC-FAIL / P67 ICE. Anchor those methods on the method
+        // NAME alone (over-keep, never over-prune — G0-conservative: they are a
+        // handful of small std fns).
         let mut fired = false;
         for (i, (ty, name, refs)) in methods.iter().enumerate() {
-            if !live_method[i] && reachable.contains(ty) && reachable.contains(name) {
+            let ty_anchored = reachable.contains(ty) || ty.starts_with("[]");
+            if !live_method[i] && ty_anchored && reachable.contains(name) {
                 live_method[i] = true;
                 worklist.extend(refs.iter().cloned());
                 fired = true;
@@ -48475,10 +48485,20 @@ mod dce_tests {
         .expect("fixture parses");
         let mut used: HashSet<String> = HashSet::new();
         crate::lints::collect_used_names(&module.items, &mut used);
-        for name in ["StringBuilder", "with_capacity", "append", "into_str"] {
+        // Plan 174.1 (owner review): the seed list tracks the CURRENT desugar —
+        // `.new().cap(n)` opener (D372 amend, ex-with_capacity), `append`,
+        // consume `into_str` (ex-as_str), plus the D410 `to_str` fallback.
+        for name in ["StringBuilder", "cap", "append", "into_str", "to_str"] {
             assert!(
                 used.contains(name),
                 "interpolation must seed `{name}` for reachability-DCE soundness"
+            );
+        }
+        // Retracted names must NOT be re-seeded (dead API, [M-dce-seed-name-list]).
+        for name in ["with_capacity", "as_str", "into"] {
+            assert!(
+                !used.contains(name),
+                "retracted `{name}` must not be seeded for DCE (dead API)"
             );
         }
     }

@@ -24,7 +24,7 @@ test "as_ptr: пустая строка — валидный вызов, sentine
 test "as_ptr+byte_len: пара описывает буфер; round-trip байтов (D294)" {
     ro d294_s = "nova"
     ro d294_bytes = d294_s.bytes()
-    ro d294_s2 = str.from_bytes_unchecked(d294_bytes)
+    ro d294_s2 = unsafe { d294_bytes.to_str_unchecked() }
     assert(d294_s == d294_s2)
     assert(d294_s.byte_len() == d294_s2.byte_len())
 }

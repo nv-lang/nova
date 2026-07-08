@@ -12985,7 +12985,46 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => "Vec".to_string(),
             _ => return None,
         };
-        let overloads = match self.method_overloads(&type_name, method) {
+        // Plan 174.1 (2026-07-08) [M-174.1-concrete-slice-recv-method-resolve]:
+        // a CONCRETE-slice-receiver method (`fn []u8 @to_str()`, `fn []str
+        // @join(..)`, `fn []int @sum()` — std/sort.nv, std/text.nv,
+        // std/runtime/string) is registered in `method_table` under its LITERAL
+        // spelling ("[]u8"), while the "Vec" normalization above discards the
+        // element. The "Vec" lookup therefore misses and the checker never
+        // annotated `resolved_types` — surfacing as the long-standing
+        // `[P67-LEGACY] method call return type unknown` ICE in fn-main CUs
+        // (test-CU builds masked it via codegen's name-keyed `fn_ret_<method>`
+        // fallback). Reconstruct the literal "[]<elem>" key from the receiver's
+        // element type and retry, so the CHECKER resolves + annotates (§0).
+        let slice_key: Option<String> = match peeled {
+            TypeRef::Named { path, .. } if path.len() == 1 && path[0].starts_with("[]") => {
+                Some(path[0].clone())
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                let mut e: &TypeRef = inner;
+                loop {
+                    match e {
+                        TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => e = i,
+                        _ => break,
+                    }
+                }
+                match e {
+                    TypeRef::Named { path, generics, .. }
+                        if path.len() == 1 && generics.is_empty() =>
+                    {
+                        Some(format!("[]{}", path[0]))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let overloads = match self.method_overloads(&type_name, method).or_else(|| {
+            slice_key
+                .as_deref()
+                .filter(|k| *k != type_name.as_str())
+                .and_then(|k| self.method_overloads(k, method))
+        }) {
             Some(o) => o,
             None => {
                 // 172.1.2 (protocol-ресивер, 2026-07-03): `w Writer` — сигнатура

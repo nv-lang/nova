@@ -9,6 +9,7 @@ module plan118_1_cstr_nul.t2_neg_as_cstr_embedded_nul
 import std.ffi.cstr.{CStr}
 
 fn main() Io -> () {
-    ro s = str.from_bytes_unchecked([104, 101, 0, 108, 108, 111])
+    ro raw []u8 = [104, 101, 0, 108, 108, 111]
+    ro s = unsafe { raw.to_str_unchecked() }
     ro c = s.as_cstr()
 }

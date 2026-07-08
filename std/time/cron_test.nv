@@ -6,13 +6,13 @@ module time.cron_test
 import std.time.cron.{Cron, CronTime, ParseCronError}
 
 test "parse: every minute" {
-    ro e = Cron.parse("* * * * *")!!
+    ro e = "* * * * *".to_cron()!!
     ro t CronTime = { minute: 30, hour: 12, day_month: 15, month: 6, day_week: 3 }
     assert(e.matches(t))
 }
 
 test "parse: top of hour" {
-    ro e = Cron.parse("0 * * * *")!!
+    ro e = "0 * * * *".to_cron()!!
     ro t1 CronTime = { minute: 0, hour: 5, day_month: 1, month: 1, day_week: 0 }
     ro t2 CronTime = { minute: 1, hour: 5, day_month: 1, month: 1, day_week: 0 }
     assert(e.matches(t1))
@@ -20,7 +20,7 @@ test "parse: top of hour" {
 }
 
 test "parse: weekdays 9-17" {
-    ro e = Cron.parse("0 9-17 * * 1-5")!!
+    ro e = "0 9-17 * * 1-5".to_cron()!!
     ro monday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 1 }
     ro monday_18 CronTime = { minute: 0, hour: 18, day_month: 1, month: 1, day_week: 1 }
     ro saturday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 6 }
@@ -30,7 +30,7 @@ test "parse: weekdays 9-17" {
 }
 
 test "parse: */15 каждые 15 минут" {
-    ro e = Cron.parse("*/15 * * * *")!!
+    ro e = "*/15 * * * *".to_cron()!!
     ro zero CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
     ro fifteen CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
     ro seven CronTime = { minute: 7, hour: 0, day_month: 1, month: 1, day_week: 0 }
@@ -40,7 +40,7 @@ test "parse: */15 каждые 15 минут" {
 }
 
 test "parse: list" {
-    ro e = Cron.parse("0,30 * * * *")!!
+    ro e = "0,30 * * * *".to_cron()!!
     ro t0 CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
     ro t30 CronTime = { minute: 30, hour: 0, day_month: 1, month: 1, day_week: 0 }
     ro t15 CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
@@ -50,14 +50,14 @@ test "parse: list" {
 }
 
 test "parse: ошибка — out of range" {
-    assert(match Cron.parse("0 25 * * *") {    // hour > 23
+    assert(match "0 25 * * *".to_cron() {    // hour > 23
         Err(OutOfRange { .. }) => true
         _                      => false
     })
 }
 
 test "parse: ошибка — wrong field count" {
-    assert(match Cron.parse("0 0 0") {
+    assert(match "0 0 0".to_cron() {
         Err(InvalidFieldCount { .. }) => true
         _                             => false
     })

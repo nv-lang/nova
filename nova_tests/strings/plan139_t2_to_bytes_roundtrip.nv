@@ -25,7 +25,7 @@ test "to_bytes empty" {
 test "to_bytes round-trip via from_bytes_unchecked" {
     ro s = "round-trip ünïcödé"
     ro b = s.bytes()
-    ro r = str.from_bytes_unchecked(b)
+    ro r = unsafe { b.to_str_unchecked() }
     assert(r == s)
 }
 

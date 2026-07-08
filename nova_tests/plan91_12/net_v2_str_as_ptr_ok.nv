@@ -32,7 +32,7 @@ test "as_ptr: empty string has pointer (may be sentinel, not null)" {
 test "as_ptr: byte_len and as_ptr are consistent (round-trip via from_bytes_unchecked)" {
     ro s = "nova"
     ro bytes = s.bytes()   // []u8 copy
-    ro s2 = str.from_bytes_unchecked(bytes)
+    ro s2 = unsafe { bytes.to_str_unchecked() }
     // Round-trip: from_bytes_unchecked preserves content.
     assert(s == s2)
     // as_ptr on both points into their respective buffers; byte_len is the same.

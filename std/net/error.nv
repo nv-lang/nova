@@ -83,7 +83,11 @@ fn strerror_text(code int) -> str {
     mut buf []u8 = []u8.new()
     buf.resize(256, 0 as u8)
     ro n = unsafe { net_strerror(code, buf.ptr(), 256) }
-    unsafe { str.from_bytes_unchecked(buf[0..n]) }
+    // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local; non-unsafe
+    // decode + `??` fallback (uv_strerror text is ASCII) — same P67 gap as
+    // SocketAddr @ip (addr.nv).
+    ro msg_bytes []u8 = buf[0..n]
+    msg_bytes.decode_utf8() ?? ""
 }
 
 // Classify a canonical uv_strerror message into a typed NetError. The C layer

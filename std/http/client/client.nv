@@ -275,7 +275,7 @@ export fn RequestBuilder mut @basic_auth(user str, pass str) -> @ {
 /// Materialize a `Request` without sending.
 #stable(since = "0.1")
 export fn RequestBuilder @build() -> Result[Request, HttpError] {
-    ro url0 = Url.parse(@url_input)?
+    ro url0 = @url_input.to_url()?
     ro url1 = apply_query(url0, @query)
     ro headers = build_headers(@client, @header_ops, @content_type)?
     Ok(Request.new(@method, url1, headers, @body_bytes))
@@ -285,7 +285,7 @@ export fn RequestBuilder @build() -> Result[Request, HttpError] {
 /// Returns a must-consume `Response` (4xx/5xx included — use `error_for_status`).
 #stable(since = "0.1")
 export fn RequestBuilder consume @send() Http -> Result[Response, HttpError] {
-    ro url0 = Url.parse(@url_input)?
+    ro url0 = @url_input.to_url()?
     ro url1 = apply_query(url0, @query)
     ro scheme = url1.scheme
     if scheme != "http" && scheme != "https" {
@@ -558,9 +558,9 @@ fn drop_body_headers(h HeaderMap) -> HeaderMap {
 // relative). Unparseable → falls back to the base URL (redirect stops there).
 fn resolve_url(base Url, loc str) -> Url {
     if loc.starts_with("http://") || loc.starts_with("https://") {
-        match Url.parse(loc) { Ok(u) => u, Err(_) => base }
+        match loc.to_url() { Ok(u) => u, Err(_) => base }
     } else if loc.starts_with("//") {
-        match Url.parse("${base.scheme}:${loc}") { Ok(u) => u, Err(_) => base }
+        match "${base.scheme}:${loc}".to_url() { Ok(u) => u, Err(_) => base }
     } else if loc.starts_with("/") {
         url_with_target(base, loc)
     } else {
@@ -585,7 +585,7 @@ fn url_with_target(base Url, target str) -> Url {
     }
     if !target.starts_with("/") { sb.append("/") }
     sb.append(target)
-    match Url.parse(sb.into_str()) { Ok(u) => u, Err(_) => base }
+    match sb.into_str().to_url() { Ok(u) => u, Err(_) => base }
 }
 
 fn merge_rel_path(base_path str, rel str) -> str {

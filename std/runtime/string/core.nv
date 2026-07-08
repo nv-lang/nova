@@ -160,33 +160,47 @@ fn str.alloc_copy(src *u8, n int) -> Self {
     str { ptr: buf, len: n }
 }
 
-// D178: []u8 → str. D178: параметр `readonly bytes` (синтаксис D178).
+// Plan 174.1 (owner decision, 2026-07-08): []u8 → str conversions are METHODS
+// ON THE SOURCE (`[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/
+// `@into_str_unchecked()`), mirroring the numeric `str @to_int()` family —
+// the static `str.from_bytes`/`from_bytes_lossy`/`from_bytes_unchecked`
+// constructors are RETRACTED (one door). Bodies are byte-identical to the
+// retired statics; only the receiver moved from a `bytes []u8` PARAMETER to
+// the implicit `@` receiver.
+
+// Module-private: wrap an already-owned, NUL-terminated buffer as a str value
+// (zero-copy, no allocation/copy). Receiver `str` ⇒ type-based privacy to
+// construct `str{...}` directly (Plan 139.1/D220, same rationale as
+// `str.alloc_copy` above) — needed because `[]u8 @into_str_unchecked()`
+// (below) has receiver `[]u8`, not `str`, so it cannot build the literal itself.
+fn str.wrap_owned(buf *mut u8, len int) -> Self {
+    str { ptr: buf, len }
+}
+
 // Unchecked: no validation, O(n) copy. Caller guarantees valid UTF-8.
-// Plan 139.2 Ф.2: Nova-body — reads the source (ptr,len) via the public Vec
-// getters `@ptr()` / `@len()` (cross-type bridge; str cannot see Vec's priv
-// fields, so the public accessor is the sanctioned read) and copies into a
-// fresh owned, NUL-terminated buffer (alloc_str_copy). Identical bytes to the
-// retired C nova_str_from_bytes_unchecked.
-export unsafe fn str.from_bytes_unchecked(bytes []u8) -> str {
-    str.alloc_copy(bytes.ptr(), bytes.len())
+// Plan 139.2 Ф.2 (original Nova-body): reads (ptr,len) via the public Vec
+// getters and copies into a fresh owned, NUL-terminated buffer (alloc_copy).
+// Identical bytes to the retired C nova_str_from_bytes_unchecked.
+export unsafe fn []u8 @to_str_unchecked() -> str {
+    str.alloc_copy(@ptr(), @len())
 }
 
 // Lossy: replaces invalid UTF-8 sequences with U+FFFD. Always succeeds.
-// Plan 139.2 Ф.2: Nova-body. Fast path — when the whole input is valid UTF-8,
-// just copy (alloc_str_copy). Slow path — emit each valid sequence verbatim and
-// replace each invalid lead byte with the 3-byte U+FFFD (0xEF 0xBF 0xBD),
-// advancing 1 byte. Identical output to the retired C nova_str_from_bytes_lossy.
-export fn str.from_bytes_lossy(bytes []u8) -> str {
-    ro n = bytes.len()
-    if validate_utf8(bytes, n) {
-        return str.alloc_copy(bytes.ptr(), n)
+// Fast path — when the whole input is valid UTF-8, just copy (alloc_copy).
+// Slow path — emit each valid sequence verbatim and replace each invalid lead
+// byte with the 3-byte U+FFFD (0xEF 0xBF 0xBD), advancing 1 byte. Identical
+// output to the retired C nova_str_from_bytes_lossy.
+export fn []u8 @to_str_lossy() -> str {
+    ro n = @len()
+    if validate_utf8(@, n) {
+        return str.alloc_copy(@ptr(), n)
     }
     // Worst case every byte → 3-byte FFFD.
     mut out []u8 = []u8.new()
     out.cap(n * 3)
     mut i = 0
     while i < n {
-        ro c = bytes[i] as int
+        ro c = @[i] as int
         mut seq = 0
         if c < 0x80 { seq = 1 }
         else if (c & 0xE0) == 0xC0 && c >= 0xC2 { seq = 2 }
@@ -196,22 +210,22 @@ export fn str.from_bytes_lossy(bytes []u8) -> str {
         if valid {
             mut k = 1
             while k < seq && valid {
-                if i + k >= n || !is_cont(bytes[i + k] as int) { valid = false }
+                if i + k >= n || !is_cont(@[i + k] as int) { valid = false }
                 k += 1
             }
         }
         if valid && seq == 3 {
-            if c == 0xE0 && (bytes[i+1] as int) < 0xA0 { valid = false }
-            else if c == 0xED && (bytes[i+1] as int) >= 0xA0 { valid = false }
+            if c == 0xE0 && (@[i+1] as int) < 0xA0 { valid = false }
+            else if c == 0xED && (@[i+1] as int) >= 0xA0 { valid = false }
         }
         if valid && seq == 4 {
-            if c == 0xF0 && (bytes[i+1] as int) < 0x90 { valid = false }
-            else if c == 0xF4 && (bytes[i+1] as int) >= 0x90 { valid = false }
+            if c == 0xF0 && (@[i+1] as int) < 0x90 { valid = false }
+            else if c == 0xF4 && (@[i+1] as int) >= 0x90 { valid = false }
         }
         if valid {
             mut k = 0
             while k < seq {
-                out.push(bytes[i + k])
+                out.push(@[i + k])
                 k += 1
             }
             i += seq
@@ -222,31 +236,30 @@ export fn str.from_bytes_lossy(bytes []u8) -> str {
             i += 1
         }
     }
-    unsafe { str.from_bytes_unchecked(out) }
+    str.alloc_copy(out.ptr(), out.len())
 }
 
 // Steal variant: consume []u8, zero-copy reuse data ptr when cap > len
 // (writes '\0' at data[len] in-place); falls back to alloc+copy if cap == len.
-// Caller must consume the source array — array unusable after call.
-// Plan 91.10: D163 `needs <Cap>` retracted, plain extern "nova" fn syntax.
-// Plan 139.2 Ф.2: Nova-body. Zero-copy reuse — when the source has spare
-// capacity (cap > len) the trailing slot can hold the NUL terminator, so the
-// buffer is reused in place (`data[len] = '\0'`) and wrapped as a str view over
-// the consumed buffer; the `consume bytes` ownership is absorbed into the
-// returned str via `bytes.into_raw()` (the consume-receiver companion of
-// Vec.from_raw_parts — it consumes the Vec wrapper and hands back the writable
-// buffer). Otherwise (cap == len, no room for the NUL) fall back to alloc+copy
-// (into_raw still consumes the buffer so the obligation is discharged on every
-// path). Identical bytes to the retired C nova_str_steal_bytes.
-export unsafe fn str.from_bytes_unchecked(consume bytes []u8) -> str {
-    ro n = bytes.len()
-    ro has_room = bytes.cap() > n
-    // Consume the Vec wrapper, taking ownership of its raw buffer (writable).
-    mut buf = bytes.into_raw()
+// `consume` receiver (D131) — the []u8 is unusable after the call. Plan 91.10:
+// D163 `needs <Cap>` retracted, plain fn syntax. Plan 139.2 Ф.2 (original
+// Nova-body): zero-copy reuse — when the source has spare capacity (cap > len)
+// the trailing slot can hold the NUL terminator, so the buffer is reused in
+// place (`data[len] = '\0'`) and wrapped as a str view over the consumed
+// buffer via `@into_raw()` (the consume-method companion of
+// Vec.from_raw_parts — it consumes the Vec wrapper and hands back the
+// writable buffer). Otherwise (cap == len, no room for the NUL) fall back to
+// alloc+copy (into_raw still consumes the buffer so the obligation is
+// discharged on every path). Identical bytes to the retired C nova_str_steal_bytes.
+export unsafe fn []u8 consume @into_str_unchecked() -> str {
+    ro n = @len()
+    ro has_room = @cap() > n
+    // Consume self, taking ownership of its raw buffer (writable).
+    mut buf = @into_raw()
     if has_room {
         // In-place NUL-term at data[n] (D26 §3) + reuse the stolen buffer.
         unsafe { buf[n] = 0 as u8 }
-        return str { ptr: buf, len: n }
+        return str.wrap_owned(buf, n)
     }
     // No room for the NUL terminator — copy into a fresh owned buffer.
     str.alloc_copy(buf, n)
@@ -254,11 +267,11 @@ export unsafe fn str.from_bytes_unchecked(consume bytes []u8) -> str {
 
 // Plan 176 Ф.0.5 (D322, D325): fallible byte→str decode.
 //
-/// UTF-8 decode error for `str.from_bytes`: the input `[]u8` was not well-formed
+/// UTF-8 decode error for `[]u8.to_str()`: the input `[]u8` was not well-formed
 /// UTF-8. `byte_offset` is the index of the first byte where decoding failed —
 /// the lead byte of the ill-formed sequence, or the lead byte of an incomplete
 /// trailing sequence. Sibling of `encoding.utf16.Utf16Error` (D255); homed here
-/// in `runtime.string` next to the `from_bytes_*` family and `InvalidCodepoint`,
+/// in `runtime.string` next to the `to_str*` family and `InvalidCodepoint`,
 /// so the `#no_prelude` core needs no cross-module `encoding` import (mirrors the
 /// `InvalidCodepoint` precedent — str-conversion errors live with `str`).
 export type Utf8Error value {
@@ -270,19 +283,44 @@ export type Utf8Error value {
 /// first ill-formed byte — the `str` is NOT constructed on the error path
 /// (R-UTF8 invariant: every `str` is valid UTF-8).
 ///
-/// Canonical D325 form: the ordinary name `from_bytes` returns `Result` and
-/// pairs, per D77 symmetry, with the infallible `from_bytes_unchecked` and the
-/// always-succeeding `from_bytes_lossy`. Backs `io.read_to_string`. Precedents:
-/// Rust `str::from_utf8`, Go `utf8.Valid` + cast, Zig `utf8ValidateSlice`.
+/// Canonical D325 form: the ordinary name `to_str` returns `Result` and pairs,
+/// per D77 symmetry, with the infallible `to_str_unchecked`/`into_str_unchecked`
+/// and the always-succeeding `to_str_lossy`. Backs `io.read_to_string`.
+/// Precedents: Rust `str::from_utf8`, Go `utf8.Valid` + cast, Zig
+/// `utf8ValidateSlice`.
 ///
-/// (Plan 176 Ф.0.5 — reformulation of the retired `str.try_from([]u8)` intrinsic:
-/// canonical name + typed byte-offset error; the old string-only `try_from`
-/// byte-array overload is removed — no dual API.)
-export fn str.from_bytes(bytes []u8) -> Result[str, Utf8Error] {
-    ro n = bytes.len()
-    ro off = first_invalid_utf8(bytes, n)
+/// (Plan 176 Ф.0.5 — reformulation of the retired `str.try_from([]u8)`
+/// intrinsic; Plan 174.1 — moved from static `str.from_bytes` to `[]u8 @to_str()`.)
+export fn []u8 @to_str() -> Result[str, Utf8Error] {
+    ro n = @len()
+    ro off = first_invalid_utf8(@, n)
     if off < 0 {
-        return Ok(str.alloc_copy(bytes.ptr(), n))
+        return Ok(str.alloc_copy(@ptr(), n))
+    }
+    Err(Utf8Error { byte_offset: off })
+}
+
+// [M-174.1-to-str-name-collision-codegen-bug] (2026-07-08): identical body
+// under a distinct name, as a call-site workaround. Found during this
+// migration: when the SAME compilation unit also defines an UNRELATED type's
+// own `T.to_str() -> str` (the pervasive D410 Display convention — e.g.
+// `NetError.to_str()`, `SocketAddr.to_str()`), some call sites of
+// `bytes.to_str()` mis-codegen — emit_c.rs dispatches to the OTHER type's
+// `to_str` C body instead of this one (`Vec` receiver vs a user-record
+// receiver; reproduced with a fresh minimal type+function, confirmed fixed
+// solely by renaming — nothing else, incl. explicit Result[str,Utf8Error]
+// type ascription, worked around it). Pre-existing, separately-tracked
+// codegen dispatch gap for facade-imported `[]u8`/`Vec[T]` methods (sibling
+// of `[M-174.1-vec-method-chain-elem-erasure]`) — out of scope to fix here.
+// Use THIS name at any call site inside a CU that also uses a colliding
+// `T.to_str()`; std/net/tcp.nv (`NetError.to_str`), std/http/body.nv
+// (`HttpError.to_str`), std/io/buffered.nv (`IoError.to_str`?), std/net/addr.nv
+// (`SocketAddr.to_str`) currently need it. See backlog-followups.md marker.
+export fn []u8 @decode_utf8() -> Result[str, Utf8Error] {
+    ro n = @len()
+    ro off = first_invalid_utf8(@, n)
+    if off < 0 {
+        return Ok(str.alloc_copy(@ptr(), n))
     }
     Err(Utf8Error { byte_offset: off })
 }

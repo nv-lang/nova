@@ -36,7 +36,7 @@ import std.encoding.serde.{Deserialize, DeError, JsonDeserializer}
 export fn json_decode_body[T Deserialize](body []u8) -> Result[T, HttpError] {
     // Drive serde's `T.deserialize` static dispatch inline (mirrors serde's
     // `json_decode_bytes`), mapping every failure to `HttpError{Protocol}`.
-    match str.from_bytes(body) {
+    match body.to_str() {
         Ok(s) => match Json.parse(s) {
             Ok(v) => {
                 mut d = JsonDeserializer.at(v, 0, 128)
@@ -68,7 +68,7 @@ export fn Response consume @json_as[T Deserialize]() -> Result[T, HttpError] {
         Ok(b)  => b
         Err(e) => return Err(e)
     }
-    match str.from_bytes(body) {
+    match body.to_str() {
         Ok(s) => match Json.parse(s) {
             Ok(v) => {
                 mut d = JsonDeserializer.at(v, 0, 128)

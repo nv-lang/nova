@@ -145,12 +145,15 @@ export fn read_to_end[R Read](r mut R) -> Result[[]u8, IoError] {
 }
 
 /// Read to EOF and decode as UTF-8. Invalid UTF-8 → `IoError{InvalidData}`
-/// (Q11 — fallible, no silent `U+FFFD` like Node). Uses Ф.0.5 `str.from_bytes`.
-/// Forwards to `read_to_end` (bound carries through).
+/// (Q11 — fallible, no silent `U+FFFD` like Node). Uses `[]u8 @to_str()`
+/// (Plan 174.1) via its `@decode_utf8()` alias —
+/// [M-174.1-to-str-name-collision-codegen-bug]: this CU also defines
+/// `IoError @to_str()`, and `bytes.to_str()` mis-dispatches to it (see
+/// backlog-followups.md marker). Forwards to `read_to_end` (bound carries).
 #stable(since = "0.1")
 export fn read_to_string[R Read](r mut R) -> Result[str, IoError] {
     match read_to_end(r) {
-        Ok(out) => match str.from_bytes(out) {
+        Ok(out) => match out.decode_utf8() {
             Ok(s)  => Ok(s)
             Err(_) => Err(IoError.new(ErrorKind.InvalidData, "read_to_string"))
         }
@@ -232,7 +235,8 @@ export fn copy[R Read, W Write](r mut R, w mut W) -> Result[int, IoError] {
 #stable(since = "0.1")
 export fn lines[R Read](r mut R) -> Result[[]str, IoError] {
     match read_to_end(r) {
-        Ok(out) => match str.from_bytes(out) {
+        // decode_utf8 = to_str alias, [M-174.1-to-str-name-collision-codegen-bug].
+        Ok(out) => match out.decode_utf8() {
             Ok(s)  => Ok(s.lines())
             Err(_) => Err(IoError.new(ErrorKind.InvalidData, "lines"))
         }

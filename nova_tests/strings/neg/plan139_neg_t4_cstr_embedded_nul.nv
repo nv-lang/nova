@@ -9,6 +9,7 @@ module neg.plan139_neg_t4_cstr_embedded_nul
 import std.ffi.cstr.{CStr}
 
 fn main() Io -> () {
-    ro s = str.from_bytes_unchecked([104, 105, 0, 110])   // "hi\0n"
+    ro raw []u8 = [104, 105, 0, 110]
+    ro s = unsafe { raw.to_str_unchecked() }              // "hi\0n"
     ro c = s.as_cstr()                                    // panics on interior NUL
 }

@@ -13,7 +13,7 @@ import std.math.complex
 // в C-кодогене. Прямая проверка одного значения этот путь не задевает.
 fn assert_round_trip(z Complex) -> () {
     ro s = z.to_str()
-    ro parsed Complex = Complex.try_from(s)!!
+    ro parsed Complex = s.to_complex()!!
     assert(parsed.approx_eq(z, 1e-12))
 }
 
@@ -170,33 +170,33 @@ test "extension method j(): мнимая единица" {
     assert(z3.im == 3.0)
 }
 
-test "Complex.try_from(str): чисто действительное" {
-    ro z = Complex.try_from("3.0")!!
+test "str.to_complex(): чисто действительное" {
+    ro z = "3.0".to_complex()!!
     assert(z.re == 3.0)
     assert(z.im == 0.0)
 }
 
-test "Complex.try_from(str): чисто мнимое" {
-    ro z = Complex.try_from("2.0i")!!
+test "str.to_complex(): чисто мнимое" {
+    ro z = "2.0i".to_complex()!!
     assert(z.re == 0.0)
     assert(z.im == 2.0)
 
-    ro neg = Complex.try_from("-3.0i")!!
+    ro neg = "-3.0i".to_complex()!!
     assert(neg.re == 0.0)
     assert(neg.im == -3.0)
 }
 
-test "Complex.try_from(str): полная форма + и -" {
-    ro pos = Complex.try_from("1.0+2.0i")!!
+test "str.to_complex(): полная форма + и -" {
+    ro pos = "1.0+2.0i".to_complex()!!
     assert(pos.re == 1.0)
     assert(pos.im == 2.0)
 
-    ro neg = Complex.try_from("1.0-2.0i")!!
+    ro neg = "1.0-2.0i".to_complex()!!
     assert(neg.re == 1.0)
     assert(neg.im == -2.0)
 }
 
-test "round-trip: try_from(z.to_str()) == z для всех канонических форм" {
+test "round-trip: z.to_str().to_complex() == z для всех канонических форм" {
     assert_round_trip(Complex(3.0, 0.0))
     assert_round_trip(Complex(im: 2.0))
     assert_round_trip(Complex(1.0, 2.0))
@@ -204,8 +204,8 @@ test "round-trip: try_from(z.to_str()) == z для всех каноническ
     assert_round_trip(Complex(0.0, 0.0))
 }
 
-test "Complex.try_from(str): невалидный формат → Err" {
-    match Complex.try_from("not a number") {
+test "str.to_complex(): невалидный формат → Err" {
+    match "not a number".to_complex() {
         Ok(_)  => assert(false)
         Err(InvalidFormat) | Err(NotANumber) => ()
     }

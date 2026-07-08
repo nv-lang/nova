@@ -28,10 +28,10 @@ fn routes() -> ServeMux {
 
 // Assert the response wire begins with a given status line and contains a substring.
 fn resp_contains(wire []u8, needle str) -> bool =>
-    unsafe { str.from_bytes_unchecked(wire) }.contains(needle)
+    unsafe { wire.to_str_unchecked() }.contains(needle)
 
 fn status_line(wire []u8) -> str {
-    ro s = unsafe { str.from_bytes_unchecked(wire) }
+    ro s = unsafe { wire.to_str_unchecked() }
     match s.find("\r\n") { Some(i) => s[0..i], None => s }
 }
 
