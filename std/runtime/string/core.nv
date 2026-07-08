@@ -167,7 +167,7 @@ fn str.alloc_copy(src *u8, n int) -> Self {
 // fields, so the public accessor is the sanctioned read) and copies into a
 // fresh owned, NUL-terminated buffer (alloc_str_copy). Identical bytes to the
 // retired C nova_str_from_bytes_unchecked.
-export fn str.from_bytes_unchecked(ro bytes []u8) -> str {
+export fn str.from_bytes_unchecked(bytes []u8) -> str {
     str.alloc_copy(bytes.ptr(), bytes.len())
 }
 
@@ -176,7 +176,7 @@ export fn str.from_bytes_unchecked(ro bytes []u8) -> str {
 // just copy (alloc_str_copy). Slow path — emit each valid sequence verbatim and
 // replace each invalid lead byte with the 3-byte U+FFFD (0xEF 0xBF 0xBD),
 // advancing 1 byte. Identical output to the retired C nova_str_from_bytes_lossy.
-export fn str.from_bytes_lossy(ro bytes []u8) -> str {
+export fn str.from_bytes_lossy(bytes []u8) -> str {
     ro n = bytes.len()
     if validate_utf8(bytes, n) {
         return str.alloc_copy(bytes.ptr(), n)
@@ -278,7 +278,7 @@ export type Utf8Error value {
 /// (Plan 176 Ф.0.5 — reformulation of the retired `str.try_from([]u8)` intrinsic:
 /// canonical name + typed byte-offset error; the old string-only `try_from`
 /// byte-array overload is removed — no dual API.)
-export fn str.from_bytes(ro bytes []u8) -> Result[str, Utf8Error] {
+export fn str.from_bytes(bytes []u8) -> Result[str, Utf8Error] {
     ro n = bytes.len()
     ro off = first_invalid_utf8(bytes, n)
     if off < 0 {

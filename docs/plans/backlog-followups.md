@@ -2450,4 +2450,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   указателей (`*ro T` → E_REDUNDANT_POINTER_RO), параметровая позиция не покрыта, хотя
   принцип тот же (параметры = ro-вид по умолчанию). Сделать зеркальную диагностику
   E_REDUNDANT_PARAM_RO (или W_ на переходный период) + амендмент-строку в D246.
-  4 сайта в std вычищены рукой 2026-07-08 (chars.nv, core.nv ×2, bcrypt.nv).
+  Обе синтаксические позиции: type-modifier `bytes ro []u8` И префикс-режим
+  `(ro bytes []u8)` — диагностика должна крыть обе. 8 сайтов в std вычищены
+  рукой 2026-07-08 (chars.nv, core.nv ×2 + from_bytes-тройка, bcrypt.nv,
+  string_builder.nv @append).

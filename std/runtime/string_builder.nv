@@ -144,7 +144,7 @@ export fn StringBuilder mut @append(c char) -> @ {
 }
 
 // Append raw []u8 bytes. Caller отвечает за UTF-8 validity.
-export fn StringBuilder mut @append(ro arr []u8) -> @ { @buf.append(arr) }
+export fn StringBuilder mut @append(arr []u8) -> @ { @buf.append(arr) }
 
 // Plan 154.1 (D269): typed scalar overloads so `sb.append(x)` dispatches on
 // the value's type uniformly — no `append_int`-style names, no caller-side
