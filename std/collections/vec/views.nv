@@ -8,7 +8,7 @@
 //
 // **Detach-on-resize (Go-model, GC-safe).** A view has `cap == len`, so the
 // first *reallocating* mutation on it (`push`/`reserve`/`insert` at `cap ==
-// len`) reallocates into a fresh buffer (`@realloc_to`, core.nv) and the view
+// len`) reallocates into a fresh buffer (`@cap`, core.nv) and the view
 // silently DETACHES — it never overwrites the parent's backing store (the Go
 // shared-backing footgun is removed without a borrow-checker). Until that
 // detach point, a `mut`-bound view writes *through* to the parent buffer
