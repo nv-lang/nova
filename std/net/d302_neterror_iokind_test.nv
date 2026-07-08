@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 176 Ф.4 (Q3, D302 amendment) — NetError→io.ErrorKind projection +
+// TcpStream io.Read/io.Write structural conformance. Module-beside-module test
+// (mirrors std/io/d322_*_test.nv, std/fs/d323_*_test.nv, std/os/d324_*_test.nv —
+// spec_tests/conformance stays cross-domain-only; std-module D-coverage lives
+// beside its module).
+
+module std.net
+
+import std.io.{ErrorKind, IoError, read_exact, write_all}
+
+test "NetError.to_error_kind projects the direct-match variants" {
+    ro refused = NetError.ConnectionRefused
+    assert(match refused.to_error_kind() { ErrorKind.ConnectionRefused => true, _ => false })
+    ro reset = NetError.ConnectionReset
+    assert(match reset.to_error_kind() { ErrorKind.ConnectionReset => true, _ => false })
+    ro timed = NetError.TimedOut
+    assert(match timed.to_error_kind() { ErrorKind.TimedOut => true, _ => false })
+    ro pipe = NetError.BrokenPipe
+    assert(match pipe.to_error_kind() { ErrorKind.BrokenPipe => true, _ => false })
+    ro perm = NetError.PermissionDenied
+    assert(match perm.to_error_kind() { ErrorKind.PermissionDenied => true, _ => false })
+    ro nf = NetError.NotFound
+    assert(match nf.to_error_kind() { ErrorKind.NotFound => true, _ => false })
+    ro in_use = NetError.AddressInUse
+    assert(match in_use.to_error_kind() { ErrorKind.AddrInUse => true, _ => false })
+    ro not_avail = NetError.AddressNotAvailable
+    assert(match not_avail.to_error_kind() { ErrorKind.AddrNotAvailable => true, _ => false })
+}
+
+test "NetError.to_error_kind is a documented lossy best-effort for the rest" {
+    ro eof = NetError.Eof
+    assert(match eof.to_error_kind() { ErrorKind.UnexpectedEof => true, _ => false })
+    ro closed = NetError.Closed
+    assert(match closed.to_error_kind() { ErrorKind.NotConnected => true, _ => false })
+    ro cancelled = NetError.Cancelled
+    assert(match cancelled.to_error_kind() { ErrorKind.Interrupted => true, _ => false })
+    ro bad_port = NetError.InvalidPort
+    assert(match bad_port.to_error_kind() { ErrorKind.InvalidInput => true, _ => false })
+    ro bad_addr = NetError.InvalidAddr("x")
+    assert(match bad_addr.to_error_kind() { ErrorKind.InvalidInput => true, _ => false })
+    ro io = NetError.IoError("boom")
+    assert(match io.to_error_kind() { ErrorKind.Other(0) => true, _ => false })
+}
+
+test "NetError.to_io_error carries op + projected kind; raw_os is 0 (not recoverable)" {
+    ro refused = NetError.ConnectionRefused
+    ro e = refused.to_io_error("connect")
+    assert(match e.kind { ErrorKind.ConnectionRefused => true, _ => false })
+    assert(e.raw_os == 0)
+    assert(e.op == "connect")
+}
+
+test "TcpStream structurally conforms to io.Read/io.Write (mono-dispatch over mock_net)" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c
+                    Err(_) => panic_d302("connect")
+                }
+                // Generic io-bound helpers (std.io.write_all/read_exact take a
+                // `[W Write]`/`[R Read]` bound) accept a bare `TcpStream` —
+                // the io.Read/io.Write conformance this test exists to prove.
+                match write_all(s, "hi".bytes()) {
+                    Ok(_)  => {}
+                    Err(_) => panic_d302("write_all")
+                }
+                mut buf []u8 = []u8.new()
+                buf.resize(10, 0 as u8)
+                match read_exact(s, buf) {
+                    Ok(_)  => assert(unsafe { str.from_bytes_unchecked(buf) } == "mock-reply")
+                    Err(_) => panic_d302("read_exact")
+                }
+                s.close()
+            }
+        }
+    }
+}
+
+test "TcpStream io-conformance surfaces IoError (not NetError) on the wire" {
+    with Net = mock_net() {
+        supervised {
+            spawn {
+                mut s = match TcpStream.connect(SocketAddr.loopback(0)) {
+                    Ok(c) => c
+                    Err(_) => panic_d302("connect")
+                }
+                mut buf []u8 = []u8.new()
+                buf.resize(4, 0 as u8)
+                // `@read`/`@write` (the io.Read/io.Write conformance surface)
+                // return `Result[int, IoError]` directly — no NetError leaks
+                // through the protocol-conforming methods themselves.
+                ro r = s.read(buf)
+                ro n = match r { Ok(n) => n, Err(_) => -1 }
+                assert(n == 4)
+                s.close()
+            }
+        }
+    }
+}
+
+// `panic` is declared `extern "nova"` module-private in tcp_test.nv (same
+// folder-module CU) — reused here, not redeclared.
+fn panic_d302(op str) -> never => panic("d302_neterror_iokind: unexpected Err at " + op)

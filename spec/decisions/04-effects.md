@@ -6283,6 +6283,43 @@ OS-ошибки больше не сваливались в `IoError(str)`/`Brok
 `read_half_*`/`write_half_*`); существующие имена НЕ переименованы (нулевой
 user-visible эффект, высокий churn) — только задокументированы.
 
+### Дополнение — `NetError` → `io.ErrorKind` проекция + `TcpStream` io.Read/io.Write (Plan 176 Ф.4, Q3, 2026-07-09)
+
+**Q3-решение** (см. [Plan 176](../../docs/plans/176-io-fs-os.md) §3.0): один общий
+`io.IoError{kind, raw_os, op}` для io/fs/os; `net` **не сливается** в него (`NetError`
+остаётся отдельным типом со своими `#stable`-строками `@to_str()` — ИЗМЕНЕНИЙ здесь
+НЕТ, выбран путь «сохранить строки» вместо «обновить все net-фикстуры под общий
+`kind_to_str`», меньший дифф), но получает **аддитивную** best-effort проекцию:
+
+- `NetError @to_error_kind() -> io.ErrorKind` — маппинг каждого варианта на ближайший
+  `ErrorKind` (`ConnectionRefused`/`AddrInUse`/`AddrNotAvailable`/`NotFound`/`TimedOut`/
+  `BrokenPipe`/`ConnectionReset`/`PermissionDenied` — прямые соответствия;
+  `Eof`→`UnexpectedEof`; `Closed`→`NotConnected`; `Cancelled`→`Interrupted`;
+  `IoError(_)`→`Other(0)`; `InvalidAddr(_)`/`InvalidPort`→`InvalidInput` — лоссово,
+  текстовая деталь не переносится). `raw_os` результирующего `IoError` — всегда `0`
+  (исходный uv-код уже потреблён `classify()` при постройке `NetError` и не
+  восстановим).
+- `NetError @to_io_error(op str) -> io.IoError` — тонкая обёртка (`IoError.of`).
+
+**`TcpStream.@read`/`@write`** (`std/net/tcp.nv`) теперь возвращают
+`Result[int, io.IoError]` (через эту проекцию) вместо `Result[int, NetError]` —
+структурная конформность `io.Read`/`io.Write` (Plan 176 Ф.4(b), поверх byte-surface
+D407 Ф.2-Ф.4). `@flush()` — no-op (TCP не буферизован на стороне Nova, тот же
+контракт, что `File`, D322/D323). **Остальной `Net`-эффект не тронут**:
+`write_all`/`read_to_vec`/`read_text`/`write_str`, `TcpReadHalf`/`TcpWriteHalf`,
+`UdpSocket`, `resolve` — все по-прежнему возвращают `NetError` напрямую.
+
+**Координация 178:** `HttpError.ErrSource.Net(NetError)` (`std/http/error.nv`)
+разгейчен — `HttpError.from_net(kind, e)` несёт типизированный `NetError` вместо
+строки-плейсхолдера; `std/http/transport/real.nv` (dns/connect/write) использует его.
+Предполагавшийся namespace-shadow (`NetError.InvalidPort` vs `ParseUrlError.InvalidPort`,
+см. баннер `std/http/transport/real.nv`/`std/http/servernet/servernet.nv`) при
+проверке не подтвердился — `ParseUrlError` с тех пор переименовал этот вариант в
+`MalformedPort`; `std.http` компилируется с прямым `import std.net.{NetError}` без
+коллизий.
+
+Conformance: `spec_tests/conformance/d302_neterror_iokind.nv`.
+
 ---
 
 ## D407 — `std/net` переработка: один слой FFI, байтовый транспорт, zero-copy, M:N-безопасность (Plan 183, 2026-07-06)
