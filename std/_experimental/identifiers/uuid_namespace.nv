@@ -11,6 +11,10 @@
 
 module identifiers.uuid_namespace
 
+import std.identifiers.uuid.{Uuid}
+import std.crypto.md5.{Md5}
+import std.crypto.sha1.{Sha1}
+
 
 /// DNS namespace UUID (RFC 4122 Appendix C). Используется для name-based UUIDs
 /// от DNS-имён (e.g. www.example.com).
@@ -114,6 +118,21 @@ fn bytes_to_uuid(bytes []u8) -> Uuid {
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты — RFC 4122 Appendix C examples
 // ──────────────────────────────────────────────────────────────────────────
+//
+// [2026-07-08, волна 2 промоушена]: НЕ промоутится — `nova check` PASS, но
+// `nova test --full` CC-FAIL: `error: redefinition of
+// 'nova_fn_6crypto3md56rotl32'`. Репродуцировано МИНИМАЛЬНЫМ файлом
+// (только `import std.crypto.md5.{Md5}` + `import std.crypto.sha1.{Sha1}`,
+// без uuid_namespace вообще) — general compiler-баг: private
+// (non-exported) top-level helper с одинаковым именем+сигнатурой
+// (`fn rotl32(u32, int) -> u32`) в ДВУХ разных модулях (`crypto.md5`,
+// `crypto.sha1`), скомпилированных в ОДИН CU → duplicate C-symbol emission
+// (не name-collision между модулями — тот же mangled symbol
+// `crypto.md5.rotl32` эмиттится дважды). До этой волны md5+sha1 никогда
+// не компилировались в одном CU одновременно (md5_test/sha1_test/hmac_test
+// импортируют их по отдельности) — поэтому баг не проявлялся раньше.
+// Нужна codegen-инвестигация (private-fn dedup emission). См.
+// docs/plans/backlog-followups.md.
 
 test "v5: DNS namespace + 'www.example.com'" {
     // Известный test vector

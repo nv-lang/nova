@@ -31,8 +31,6 @@
 
 module identifiers.uuid
 
-import std.testing.handlers as th
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
@@ -130,7 +128,7 @@ export fn Uuid.v4() Random -> Self {
 /// отлично для primary keys в БД (B-tree friendly).
 #stable(since = "0.1")
 export fn Uuid.v7() Time Random -> Self {
-    ro ms = Time.now_ms()                            // u64
+    ro ms = Time.now_unix_ms() as u64
 
     // Заполняем верхние 48 бит timestamp'ом.
     // hi = [48 бит ts][4 бит version=7][12 бит rand]
@@ -215,7 +213,7 @@ export fn Uuid @hash() -> u64 => @hi ^ @lo
 /// Round-trip с `Uuid.from`.
 #stable(since = "0.1")
 export fn Uuid @to_str() -> str {
-    consume buf = StringBuilder.with_capacity(36)
+    consume buf = StringBuilder.new().cap(36)
 
     // 4 байта hi MSB → 8 hex
     write_hex_u32(buf, (@hi >> 32) as u32)
@@ -236,7 +234,7 @@ export fn Uuid @to_str() -> str {
     buf.into_str()
 }
 
-fn write_hex_u32(buf mut Buffer, v u32) {
+fn write_hex_u32(buf mut StringBuilder, v u32) {
     mut shift = 28
     while shift >= 0 {
         buf.append(hex_digit(((v >> shift) & 0xF) as u8))
@@ -244,7 +242,7 @@ fn write_hex_u32(buf mut Buffer, v u32) {
     }
 }
 
-fn write_hex_u16(buf mut Buffer, v u16) {
+fn write_hex_u16(buf mut StringBuilder, v u16) {
     mut shift = 12
     while shift >= 0 {
         buf.append(hex_digit(((v >> shift) & 0xF) as u8))
@@ -344,140 +342,4 @@ fn hex_value(c char, position int) Fail[ParseUuidError] -> u8 {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты — round-trip, версии, AI-first handler-substitution
-// ──────────────────────────────────────────────────────────────────────────
-
-test "NIL и MAX константы" {
-    assert(NIL.is_nil())
-    assert(NIL.to_str() == "00000000-0000-0000-0000-000000000000")
-    assert(MAX.to_str() == "ffffffff-ffff-ffff-ffff-ffffffffffff")
-    assert(!MAX.is_nil())
-}
-
-test "v4: version и variant корректны" {
-    with Random = th.seeded(42) {
-        ro u = Uuid.v4()
-        match u.version() {
-            V4 => ()
-            _  => assert(false)
-        }
-        assert(u.is_rfc4122())
-    }
-}
-
-test "v4: разные seed → разные UUID" {
-    ro a = with Random = th.seeded(1) { Uuid.v4() }
-    ro b = with Random = th.seeded(2) { Uuid.v4() }
-    assert(!a== b)
-}
-
-test "v4: одинаковый seed → одинаковый UUID (детерминизм)" {
-    ro a = with Random = th.seeded(42) { Uuid.v4() }
-    ro b = with Random = th.seeded(42) { Uuid.v4() }
-    assert(a== b)
-}
-
-test "v7: version и timestamp" {
-    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
-        ro u = Uuid.v7()
-        match u.version() {
-            V7 => ()
-            _  => assert(false)
-        }
-        assert(u.is_rfc4122())
-        assert(u.timestamp_ms() == 1700000000000)
-    }
-}
-
-test "v7: lexicographic ordering по timestamp" {
-    ro earlier = with Time = th.fixed_ms(1000), Random = th.seeded(0) { Uuid.v7() }
-    ro later = with Time = th.fixed_ms(2000), Random = th.seeded(0) { Uuid.v7() }
-    assert(earlier< later)
-    assert(!later< earlier)
-}
-
-test "round-trip: from(u.to_str()) == u" {
-    ro cases = [
-        NIL,
-        MAX,
-        Uuid.new(0x550e8400e29b41d4, 0xa716446655440000),
-        Uuid.new(0xffffffffffffffff, 0x0000000000000000),
-    ]
-    for u in cases {
-        ro s = u.to_str()
-        ro parsed = Uuid.from(s)
-        assert(parsed== u)
-    }
-}
-
-test "from: канонический пример из RFC 4122" {
-    ro u = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
-    assert(u.to_str() == "550e8400-e29b-41d4-a716-446655440000")
-    match u.version() {
-        V4 => ()
-        _  => assert(false)
-    }
-}
-
-test "from: case-insensitive hex" {
-    ro lower = Uuid.from("550e8400-e29b-41d4-a716-446655440000")
-    ro upper = Uuid.from("550E8400-E29B-41D4-A716-446655440000")
-    assert(lower== upper)
-}
-
-test "from: ошибка — неправильная длина" {
-    ro r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
-        ro _ = Uuid.from("too-short")
-        None
-    }
-    assert(match r {
-        Some(InvalidLength { .. }) => true
-        _                           => false
-    })
-}
-
-test "from: ошибка — отсутствует дефис" {
-    ro r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
-        ro _ = Uuid.from("550e8400xe29b-41d4-a716-446655440000")
-        None
-    }
-    assert(match r {
-        Some(MissingDash { .. }) => true
-        _                         => false
-    })
-}
-
-test "from: ошибка — не-hex символ" {
-    ro r = with Fail[ParseUuidError] = |e| interrupt Some(e) {
-        ro _ = Uuid.from("550e8400-e29b-41d4-a716-44665544000Z")
-        None
-    }
-    assert(match r {
-        Some(InvalidHex { .. }) => true
-        _                        => false
-    })
-}
-
-test "ordering: total order на UUID" {
-    ro a = Uuid.new(1, 0)
-    ro b = Uuid.new(1, 1)
-    ro c = Uuid.new(2, 0)
-
-    assert(a< b)
-    assert(b< c)
-    assert(a< c)
-    assert(!c< a)
-}
-
-test "AI-first: тест UUID-генерации детерминистичен через handler" {
-    // Без mock-библиотек: подменяем Random handler на seeded.
-    // Тот же handler-substitution что в orm_decorators.nv для Db.
-    with Random = th.seeded(0xDEADBEEF) {
-        ro u1 = Uuid.v4()
-        ro u2 = Uuid.v4()
-        // Воспроизводимо: тот же seed → те же UUID при любом запуске.
-        assert(u1.to_str() == u1.to_str())
-        assert(!u1== u2)
-    }
-}
+// Тесты — см. peer-файл uuid_test.nv (module identifiers.uuid_test).

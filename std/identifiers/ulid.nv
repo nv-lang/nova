@@ -34,8 +34,6 @@
 
 module identifiers.ulid
 
-import std.testing.handlers as th
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
@@ -156,7 +154,7 @@ fn decode_char(c char) -> Option[u8] {
 /// Throws `TimestampOverflow` если ms ≥ 2^48 (~10889 AD).
 #stable(since = "0.1")
 export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self {
-    ro ms = Time.now_ms()
+    ro ms = Time.now_unix_ms() as u64
     if ms >= 0x1000000000000 {                       // 2^48
         throw TimestampOverflow
     }
@@ -218,7 +216,7 @@ export fn Ulid @compare(other Ulid) -> int {
 /// ```
 #stable(since = "0.1")
 export fn Ulid @to_str() -> str {
-    consume buf = StringBuilder.with_capacity(26)
+    consume buf = StringBuilder.new().cap(26)
 
     // 48-бит timestamp → 10 chars (10 × 5 = 50 бит, padding 2 нулевых
     // в старших). Т.е. для timestamp нужно value < 2^48 — гарантировано
@@ -357,130 +355,4 @@ fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "генерация: ulid имеет правильный timestamp" {
-    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
-        ro u = Ulid.new()
-        assert(u.timestamp_ms() == 1700000000000)
-    }
-}
-
-test "genеrация: одинаковый seed → одинаковый ULID" {
-    ro a = with Time = th.fixed_ms(1000), Random = th.seeded(42) { Ulid.new() }
-    ro b = with Time = th.fixed_ms(1000), Random = th.seeded(42) { Ulid.new() }
-    assert(a== b)
-}
-
-test "генерация: разные timestamps → разные ULID" {
-    ro a = with Time = th.fixed_ms(1000), Random = th.seeded(0) { Ulid.new() }
-    ro b = with Time = th.fixed_ms(2000), Random = th.seeded(0) { Ulid.new() }
-    assert(!a== b)
-    assert(a< b)                                   // earlier < later
-}
-
-test "lexicographic ordering — главная фича ULID" {
-    // Несколько ULID, сгенерированных в порядке времени.
-    // Их строковые представления должны сортироваться так же.
-    ro u1 = with Time = th.fixed_ms(1000), Random = th.seeded(1) { Ulid.new() }
-    ro u2 = with Time = th.fixed_ms(2000), Random = th.seeded(1) { Ulid.new() }
-    ro u3 = with Time = th.fixed_ms(3000), Random = th.seeded(1) { Ulid.new() }
-
-    ro s1 = u1.to_str()
-    ro s2 = u2.to_str()
-    ro s3 = u3.to_str()
-
-    // Лексикографически (как строки): s1 < s2 < s3
-    assert(s1 < s2)
-    assert(s2 < s3)
-}
-
-test "формат: 26 символов" {
-    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
-        ro u = Ulid.new()
-        ro s = u.to_str()
-        assert(s.byte_len() == 26)
-    }
-}
-
-test "формат: только Crockford-Base32 символы" {
-    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xFEEDC0DE) {
-        ro s = Ulid.new().to_str()
-        // Без I, L, O, U
-        assert(!s.contains("I") && !s.contains("i"))
-        assert(!s.contains("L") && !s.contains("l"))
-        assert(!s.contains("O") && !s.contains("o"))
-        assert(!s.contains("U") && !s.contains("u"))
-    }
-}
-
-test "round-trip: from(u.to_str()) == u" {
-    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xCAFE) {
-        ro u = Ulid.new()
-        ro s = u.to_str()
-        ro parsed = Ulid.from(s)
-        assert(parsed== u)
-    }
-}
-
-test "from: case-insensitive" {
-    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0) {
-        ro u = Ulid.new()
-        ro s_upper = u.to_str()
-        // ULID by spec — upper-case, но decode принимает обе.
-        ro parsed = Ulid.from(s_upper.to_ascii_lower())
-        assert(parsed== u)
-    }
-}
-
-test "from: I/L → 1, O → 0 (Crockford ambiguity)" {
-    // Берём валидный ULID, заменяем '1' на 'I', '0' на 'O' — должны
-    // декодироваться идентично.
-    with Time = th.fixed_ms(1000), Random = th.seeded(0) {
-        ro u = Ulid.new()
-        ro s = u.to_str()
-        // Если в s нет '0' или '1' — пропускаем тест (но обычно есть).
-        if s.contains("0") || s.contains("1") {
-            ro modified = s.replace("0", "O").replace("1", "I")
-            ro parsed = Ulid.from(modified)
-            assert(parsed== u)
-        }
-    }
-}
-
-test "from: ошибка — неправильная длина" {
-    ro r = with Fail[ParseUlidError] = |e| interrupt Some(e) {
-        ro _ = Ulid.from("too-short")
-        None
-    }
-    assert(match r {
-        Some(InvalidLength { .. }) => true
-        _                           => false
-    })
-}
-
-test "from: ошибка — невалидный символ (U)" {
-    // U исключён из Crockford alphabet.
-    ro r = with Fail[ParseUlidError] = |e| interrupt Some(e) {
-        ro _ = Ulid.from("UAAAAAAAAAAAAAAAAAAAAAAAAA")     // 26 chars, но 'U' невалид
-        None
-    }
-    assert(match r {
-        Some(InvalidChar { .. }) => true
-        _                         => false
-    })
-}
-
-test "AI-first: ULID-генерация детерминистична через handler-substitution" {
-    // То же handler-substitution что в orm_decorators.nv для Db, в uuid.nv для Random.
-    with Time = th.fixed_ms(1700000000000), Random = th.seeded(0xDEADBEEF) {
-        ro u1 = Ulid.new()
-        ro u2 = Ulid.new()
-        // Time fixed → одинаковый timestamp
-        assert(u1.timestamp_ms() == u2.timestamp_ms())
-        // Random seeded → каждый вызов выдаёт разные значения, но детерминистично
-        assert(!u1== u2)
-    }
-}
+// Тесты — см. peer-файл ulid_test.nv (module identifiers.ulid_test).
