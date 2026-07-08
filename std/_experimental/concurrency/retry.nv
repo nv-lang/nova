@@ -105,7 +105,7 @@ export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -
 /// let result = policy.execute(|| http_get("https://api.example.com"))
 /// ```
 #stable(since = "0.1")
-export fn RetryPolicy @execute[T](body fn() -> T) Time Random -> T {
+export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T {
     mut attempt = 0
     mut result Option[T] = None
     mut last_error Option[E] = None
@@ -126,7 +126,7 @@ export fn RetryPolicy @execute[T](body fn() -> T) Time Random -> T {
                 attempt += 1
                 if attempt < @max_attempts {
                     ro delay = @compute_delay(attempt)
-                    Time.sleep(delay)
+                    delay.sleep()
                 }
             }
         }
@@ -237,15 +237,18 @@ test "execute: retry до успеха" {
 
 test "execute: исчерпание попыток" {
     ro policy = RetryPolicy.fixed(3, 10.millis())
-    ro r = with Time = th.fixed_ms(0), Random = th.seeded(0),
-                Fail[str] = |e| interrupt Some(e) {
+    // Flag-idiom (см. std/crypto/jwt_test.nv) вместо `interrupt Some(e)` +
+    // `match Some(..)` — второе даёт CC-FAIL на generic-E инференс
+    // (см. [M-exp-promotion-blockers: retry] в docs/plans/backlog-followups.md).
+    mut caught = ""
+    with Time = th.fixed_ms(0), Random = th.seeded(0),
+                Fail[str] = |e| { caught = e; "" } {
         ro _ = policy.execute(|| {
             throw "always fails"
             ""
         })
-        None
     }
-    assert(r == Some("always fails"))
+    assert(caught == "always fails")
 }
 
 test "exponential backoff: правильные delay'и" {
@@ -291,20 +294,27 @@ test "jitter детерминистичен через seeded Random" {
 }
 
 test "AI-first: тесты retry полностью детерминированы" {
-    // Без mock-библиотек: just handler-substitution.
+    // Без mock-библиотек: just handler-substitution. Flag-idiom (см.
+    // std/crypto/jwt_test.nv) вместо `interrupt None` + Option-sibling.
     ro policy = RetryPolicy.exponential(3)
     mut count = 0
-    with Time = th.fixed_ms(0), Random = th.seeded(123) {
-        ro r = with Fail[str] = |e| interrupt None {
+    mut got = ""
+    with Time = th.fixed_ms(0), Random = th.seeded(123),
+                Fail[str] = |e| { got = "fail"; "" } {
+        count += 1
+        got = policy.execute(|| {
             count += 1
-            Some(policy.execute(|| {
-                count += 1
-                if count < 4 { throw "fail" }
-                "ok"
-            }))
-        }
-        // Внутри policy.execute — count увеличивается на каждой попытке
+            if count < 4 { throw "fail" }
+            "ok"
+        })
+        // Внутри policy.execute — count увеличивается на каждой попытке.
+        // Assert INSIDE the with-block (not after) — a mutable var boxed
+        // for a closure capture created inside a nested with-body isn't
+        // readable once that block's scope closes (pre-existing compiler
+        // gap, out of scope for this promotion wave — see
+        // docs/plans/backlog-followups.md [M-exp-promotion-blockers: retry]).
+        assert(count > 0)
     }
     // Тест воспроизводимый при любом запуске
-    assert(count > 0)
+    assert(got == "ok" || got == "fail")
 }

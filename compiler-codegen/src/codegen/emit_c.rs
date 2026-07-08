@@ -1235,6 +1235,17 @@ pub struct CEmitter {
     /// resolve_method_level_subst to SEED subst_slots before arg-inference.
     /// Empty otherwise; taken (not borrowed) so nested calls don't inherit.
     current_method_turbofish: Vec<crate::ast::TypeRef>,
+    /// [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR] the ACTIVE
+    /// `with Fail[E] = ...`-block's concrete E (current_type_subst-resolved
+    /// C type), set/restored by `emit_with` around body emission. A bare
+    /// `Ok(x)`/`Err(x)` constructor call deep inside that body (e.g.
+    /// `Ok(body())` inside `with Fail[E] = |e| interrupt Err(e) { Ok(body()) }`)
+    /// cannot see the enclosing `bindings` from `emit_call` — its own
+    /// Err-side default would otherwise hardcode `nova_str` regardless of
+    /// the REAL, mono'd E. `None` when no `Fail[E]` binding is active
+    /// (preserves the pre-existing hardcoded-default behaviour everywhere
+    /// else, byte-identical).
+    current_fail_e_hint: Option<String>,
     /// Plan 48: forward declarations for monomorphized functions.
     /// Spliced into output via /*__MONO_FWD_DECLS__*/ marker.
     mono_fwd_decls: String,
@@ -1714,6 +1725,7 @@ impl CEmitter {
             mono_method_fndecl_for_name: HashMap::new(),
             current_type_subst: HashMap::new(),
             current_method_turbofish: Vec::new(),
+            current_fail_e_hint: None,
             mono_fwd_decls: String::new(),
             generic_type_templates: HashMap::new(),
             generic_type_worklist: std::cell::RefCell::new(Vec::new()),
@@ -8098,6 +8110,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR] find a
+    /// `Fail[E]`-shaped binding among a `with`-block's bindings and resolve
+    /// its concrete C type via `current_type_subst` (`type_ref_to_c`).
+    /// `None` when no `Fail[...]` binding is present, or its type-arg isn't
+    /// currently resolvable (e.g. a genuinely-concrete `Fail[str]` handler
+    /// falls back to the pre-existing hardcoded-default path unaffected).
+    fn active_fail_e_hint(&self, bindings: &[WithBinding]) -> Option<String> {
+        let e_ty_ref = bindings.iter()
+            .map(|b| &b.effect)
+            .find_map(|eff| match eff {
+                TypeRef::Named { path, generics, .. }
+                    if path.last().map_or(false, |s| s == "Fail") => generics.first(),
+                _ => None,
+            })?;
+        self.type_ref_to_c(e_ty_ref).ok()
+    }
+
     // ---- effect with/handler ----
 
     fn emit_with(&mut self, bindings: &[WithBinding], body: &Block) -> Result<String, String> {
@@ -8341,12 +8370,46 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // handler's `interrupt VAL`. Without this, `result_decl_ty` became
             // `Nova_never*` → CC-FAIL «unknown type name 'Nova_never'».
             Some(t) => {
-                let ty = self.infer_expr_c_type(t);
+                let mut ty = self.infer_expr_c_type(t);
                 if ty == "Nova_never*" || ty == "Nova_never" || self.expr_diverges_125(t) {
-                    probe_handler_ty()
-                } else {
-                    ty
+                    ty = probe_handler_ty();
+                } else if let ExprKind::Call { func, args, .. } = &t.kind {
+                    // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
+                    // a bare `Ok(x)`/`Err(x)` trailing has its OTHER Result[T,E]
+                    // side defaulted by `infer_expr_c_type`'s generic-variant
+                    // channel (`Ok(x)` → err hardcoded to `nova_str`; `Err(x)` →
+                    // ok hardcoded to `nova_int`) — that channel has no
+                    // visibility into an enclosing `with Fail[E] = ...` binding.
+                    // When `E` is a still-generic method-level typevar bound to
+                    // something OTHER than the hardcoded guess (e.g. inside
+                    // `RetryPolicy@execute[T,E]`, mono'd with E=nova_int), the
+                    // with-block's declared type is silently WRONG here — a
+                    // later `Err(e)` match-arm (typed via the correct
+                    // current_type_subst-driven handler-param override in
+                    // `emit_handler_lit`) produces a genuinely different
+                    // concrete Result C-type, and the two disagree at compile
+                    // time (`NovaRes_<T>_nova_str` vs the real `NovaRes_<T>_
+                    // <E>`). Recover the real `E` from the `Fail[E]` binding
+                    // here — the one place with both `current_type_subst` AND
+                    // visibility into which Result side is ambiguous.
+                    if let ExprKind::Ident(name) = &func.kind {
+                        if (name == "Ok" || name == "Err") && args.len() == 1 {
+                            if let Some(real_e_c) = self.active_fail_e_hint(bindings) {
+                                let arg_c = self.infer_expr_c_type(args[0].expr());
+                                let arg_c = if arg_c.is_empty() || arg_c == "void*" {
+                                    "nova_int".to_string()
+                                } else { arg_c };
+                                let (ok_c, err_c) = if name == "Ok" {
+                                    (arg_c, real_e_c)
+                                } else {
+                                    (real_e_c, arg_c)
+                                };
+                                ty = self.result_repr_c_type(&ok_c, &err_c);
+                            }
+                        }
+                    }
                 }
+                ty
             }
             None => probe_handler_ty(),
         };
@@ -8396,6 +8459,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("{");
         self.indent += 1;
         // Emit block statements with defer scope; if there's a trailing expr use it as the int result
+        // [M-exp-promotion-blockers: retry] scope `current_fail_e_hint` to this
+        // with-block's body emission — a nested `Ok(x)`/`Err(x)` ctor call
+        // (e.g. `emit_call`'s Result-variant dispatch) reads it when its own
+        // arg-only inference can't see the OTHER Result[T,E] side.
+        let new_fail_e_hint = self.active_fail_e_hint(bindings);
+        let saved_fail_e_hint = std::mem::replace(&mut self.current_fail_e_hint, new_fail_e_hint);
         let with_block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
@@ -8429,6 +8498,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         self.leave_defer_scope(with_block_id);
+        self.current_fail_e_hint = saved_fail_e_hint;
         self.indent -= 1;
         self.line("}");
 
@@ -8799,6 +8869,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             vt = vtable_var, ctx = ctx_var));
         for m in methods {
             let fn_name = format!("{}_impl_{}_{}", handler_id, eff, m.name);
+            // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
+            // guaranteed-correct forward decl for THIS use site, written to
+            // `lambda_forward_decls` (file-scope buffer, flushed right
+            // before the CURRENT fn/test/mono'd-method body — see
+            // `emit_test`/`emit_monomorphized_method`), NOT `deferred_impls`
+            // (spliced ONCE, after every function — too late for a use
+            // inside the very function that needs it) and NOT an inline
+            // block-scope decl (C forbids `static` storage class on a
+            // function declared at block scope).
+            //
+            // The module pre-scan (`emit_handler_forward_decls`) predicts
+            // exactly ONE handler_counter slot per SOURCE `with Fail[...]`
+            // occurrence — sound for non-generic code, but a handler literal
+            // inside a GENERIC method body (e.g. `RetryPolicy@execute[T,E]`'s
+            // `with Fail[E] = |e| interrupt Err(e) {...}`) is emitted ONCE
+            // PER MONOMORPHIZATION (once per distinct (T,E) call-site), each
+            // allocating a NEW handler_counter id — only the FIRST instance
+            // (by coincidence of counter alignment) lands on the pre-scan's
+            // single reserved forward-decl; every subsequent instance
+            // (`_nova_handler_lit_6_impl_Fail_fail` for retry's SECOND
+            // (T,E) pair) had no forward decl at all → CC-FAIL "undeclared
+            // identifier". A redundant extra forward-decl here (C allows
+            // repeated compatible declarations) is unconditionally correct
+            // regardless of whether the pre-scan already covered this one.
+            {
+                let (param_types, ret_ty) = Self::schema_lookup(&schema, &m.name)
+                    .cloned()
+                    .unwrap_or_else(|| (vec![], "nova_unit".into()));
+                let mut decl_params = vec!["void* _ctx".to_string()];
+                for (i, p) in m.params.iter().enumerate() {
+                    let ty = param_types.get(i).cloned().unwrap_or_else(|| "nova_int".into());
+                    decl_params.push(format!("{} {}", ty, p.name));
+                }
+                let _ = writeln!(self.lambda_forward_decls,
+                    "static {ret} {fn}({params});",
+                    ret = ret_ty, fn = fn_name, params = decl_params.join(", ")
+                );
+            }
             // Resolve mangled vtable field: look up by plain name in schema,
             // find the matching key (mangled or plain).
             let field = {
@@ -16811,6 +16919,46 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.infer_type_param_binding(ret_ty, actual_ret, &mut subst);
             }
         }
+        // Source 4 [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]:
+        // infer effect-clause type-params (`Fail[E]`) from a closure ARG's
+        // thrown value. `E` in `body fn() Fail[E] -> T` appears ONLY inside
+        // the param's own effect-clause — none of Sources 1-3 above (which
+        // all bind from param/return/current_fn C types) can see it. Mirror
+        // of the identical fix in `resolve_method_level_subst` (Step 3) and
+        // the inline instance-method dispatch block — three independent,
+        // hand-duplicated inference engines all needed the same fix.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let effects: &[crate::ast::TypeRef] = match &param.ty {
+                crate::ast::TypeRef::Func { effects, .. } => effects,
+                _ => continue,
+            };
+            if effects.is_empty() { continue; }
+            let body_expr: Option<Expr> = match &arg.expr().kind {
+                ExprKind::ClosureLight { body, .. } => Some(match body {
+                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                        ExprKind::Block(b.clone()), b.span),
+                }),
+                ExprKind::ClosureFull(fsb) => match &fsb.body {
+                    crate::ast::FnBody::Expr(e) => Some(e.clone()),
+                    crate::ast::FnBody::Block(b) => Some(Expr::new(
+                        ExprKind::Block(b.clone()), fsb.span)),
+                    crate::ast::FnBody::External => None,
+                },
+                _ => None,
+            };
+            let Some(body_expr) = body_expr else { continue };
+            let Some(thrown) = Self::find_first_throw_value(&body_expr) else { continue };
+            let thrown_c = self.infer_expr_c_type(thrown);
+            if thrown_c.is_empty() || thrown_c == "void*" { continue; }
+            for eff in effects {
+                if let crate::ast::TypeRef::Named { path, generics, .. } = eff {
+                    if path.last().map(String::as_str) == Some("Fail") && generics.len() == 1 {
+                        self.infer_type_param_binding(&generics[0], &thrown_c, &mut subst);
+                    }
+                }
+            }
+        }
         // Collect results — error on unresolved
         let mut result = Vec::new();
         for (name, resolved) in subst {
@@ -16831,6 +16979,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             } else { None }
                         })
                         .collect();
+                    // [M-exp-promotion-blockers: retry] narrow, explicit check —
+                    // does `name` appear ONLY inside a `Fail[name]`-shaped
+                    // effect-clause on some param (never in a directly
+                    // type-checkable position)? Source 4 above already tried
+                    // binding such an effect-only typevar from a closure's
+                    // thrown value; reaching here means the callback
+                    // genuinely never throws (dead `Fail[E]` branch, no
+                    // ambient handler needed) — any concrete C type is
+                    // functionally safe there (the slot it types never gets
+                    // constructed with real data on that path). Deliberately
+                    // NARROW (not "positions.is_empty()", which would also
+                    // swallow the pre-existing genuine "returned only, needs
+                    // turbofish" case) — only THIS specific effects-only
+                    // shape gets a default; everything else still loud-errors.
+                    let effect_only = positions.is_empty() && fn_decl.params.iter().any(|p| {
+                        matches!(&p.ty, crate::ast::TypeRef::Func { effects, .. } if effects.iter().any(|e|
+                            matches!(e, crate::ast::TypeRef::Named { path, generics, .. }
+                                if path.last().map(String::as_str) == Some("Fail")
+                                    && generics.len() == 1
+                                    && matches!(&generics[0], crate::ast::TypeRef::Named { path: gp, generics: gg, .. }
+                                        if gg.is_empty() && gp.last() == Some(&name)))))
+                    });
+                    if effect_only {
+                        result.push((name, "nova_str".to_string()));
+                        continue;
+                    }
                     let where_used = if positions.is_empty() {
                         " (returned only — turbofish required)".to_string()
                     } else {
@@ -17259,11 +17433,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     &ret_ty_ref, &closure_ret_c, &mut subst_slots);
             }
         }
+        // Step 3 [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]:
+        // infer effect-clause type-params (`Fail[E]`) from a closure ARG's
+        // thrown value. `E` in `body fn() Fail[E] -> T` appears ONLY inside
+        // the param's own effect-clause — never in a directly-inspectable
+        // value position — so Steps 1/2 (which bind from param/return C
+        // types) can never see it. The one place its concrete type IS
+        // observable is the closure body's `throw <expr>`.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let effects: &[crate::ast::TypeRef] = match &param.ty {
+                crate::ast::TypeRef::Func { effects, .. } => effects,
+                _ => continue,
+            };
+            if effects.is_empty() { continue; }
+            let body_expr: Option<Expr> = match &arg.expr().kind {
+                ExprKind::ClosureLight { body, .. } => Some(match body {
+                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                        ExprKind::Block(b.clone()), b.span),
+                }),
+                ExprKind::ClosureFull(fsb) => match &fsb.body {
+                    crate::ast::FnBody::Expr(e) => Some(e.clone()),
+                    crate::ast::FnBody::Block(b) => Some(Expr::new(
+                        ExprKind::Block(b.clone()), fsb.span)),
+                    crate::ast::FnBody::External => None,
+                },
+                _ => None,
+            };
+            let Some(body_expr) = body_expr else { continue };
+            let Some(thrown) = Self::find_first_throw_value(&body_expr) else { continue };
+            let thrown_c = self.infer_expr_c_type(thrown);
+            if thrown_c.is_empty() || thrown_c == "void*" { continue; }
+            for eff in effects {
+                if let crate::ast::TypeRef::Named { path, generics, .. } = eff {
+                    if path.last().map(String::as_str) == Some("Fail") && generics.len() == 1 {
+                        self.infer_type_param_binding(&generics[0], &thrown_c, &mut subst_slots);
+                    }
+                }
+            }
+        }
         // Restore outer subst — все inference-эффекты завершены.
         self.current_type_subst = saved_outer;
         // Plan 48 Ф.9 / D119: diagnose unresolved method-level type-params
         // ДО return — silent drop'a быть не должно.
-        for (name, resolved) in &subst_slots {
+        for (name, resolved) in &mut subst_slots {
             if resolved.is_none() {
                 let positions: Vec<String> = fn_decl.params.iter()
                     .enumerate()
@@ -17276,14 +17489,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         } else { None }
                     })
                     .collect();
-                let where_used = if positions.is_empty() {
-                    " (only in return type — provide arg whose type binds it)".to_string()
-                } else {
-                    format!(" — appears in {}", positions.join(", "))
-                };
+                if positions.is_empty() {
+                    // [M-exp-promotion-blockers: retry] `collect_typeref_names`
+                    // deliberately does not descend into a `Fail[E]` effect's
+                    // OWN generic arg (it routes the effect NAME to the
+                    // vtable-name set, not the value-type set) — so an empty
+                    // `positions` here means the typevar is referenced ONLY
+                    // inside an effect-clause (`Fail[E]`), not "nowhere"/"only
+                    // in return type" as the pre-existing message assumed.
+                    // Step 3 above already tried to bind it from a thrown
+                    // value; reaching here means the closure body genuinely
+                    // never throws (e.g. `policy.execute(|| 42)` with no
+                    // `Fail` handler in scope) — the effect branch is
+                    // unreachable dead code for THIS call, so any concrete
+                    // C type is functionally safe to pick (the `Option[E]`
+                    // last-error slot never gets constructed with real data).
+                    // Default to `nova_str` (the overwhelmingly common
+                    // Nova error-payload shape) rather than a hard error —
+                    // requiring an explicit turbofish on every non-throwing
+                    // callback would be an ergonomics regression for a
+                    // dead-code-only ambiguity, not a real inference failure.
+                    *resolved = Some("nova_str".to_string());
+                    continue;
+                }
                 return Err(format!(
-                    "cannot infer method-level type argument `{name}` for `{diag_context}`{where_used}; \
-                     provide a closure/arg whose type fixes `{name}`",
+                    "cannot infer method-level type argument `{name}` for `{diag_context}` \
+                     — appears in {}; provide a closure/arg whose type fixes `{name}`",
+                    positions.join(", "),
                 ));
             }
         }
@@ -17291,6 +17523,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .filter_map(|(n, c)| c.map(|c| (n, c)))
             .filter(|(_, c)| !c.is_empty() && c != "void*")
             .collect())
+    }
+
+    /// [M-exp-promotion-blockers: retry] Find the first `throw <expr>` reachable
+    /// from `expr` by walking straight-line control flow (`if`/`if let`/`match`
+    /// bodies) without crossing into nested closures/loops (a `throw` inside a
+    /// nested `for`/`while` body doesn't necessarily execute — conservative:
+    /// only descends where a value is unconditionally observable on some path).
+    /// Used to infer a `Fail[E]`-effect's `E` from a closure argument's body
+    /// when no other source binds it (see Step 3 above).
+    fn find_first_throw_value(expr: &Expr) -> Option<&Expr> {
+        match &expr.kind {
+            ExprKind::Block(b) => Self::find_first_throw_in_block(b),
+            ExprKind::If { then, else_, .. } => {
+                Self::find_first_throw_in_block(then).or_else(|| match else_ {
+                    Some(crate::ast::ElseBranch::Block(b)) => Self::find_first_throw_in_block(b),
+                    Some(crate::ast::ElseBranch::If(e)) => Self::find_first_throw_value(e),
+                    None => None,
+                })
+            }
+            ExprKind::IfLet { then, else_, .. } => {
+                Self::find_first_throw_in_block(then).or_else(|| match else_ {
+                    Some(crate::ast::ElseBranch::Block(b)) => Self::find_first_throw_in_block(b),
+                    Some(crate::ast::ElseBranch::If(e)) => Self::find_first_throw_value(e),
+                    None => None,
+                })
+            }
+            ExprKind::Match { arms, .. } => arms.iter().find_map(|arm| match &arm.body {
+                crate::ast::MatchArmBody::Expr(e) => Self::find_first_throw_value(e),
+                crate::ast::MatchArmBody::Block(b) => Self::find_first_throw_in_block(b),
+            }),
+            _ => None,
+        }
+    }
+
+    fn find_first_throw_in_block(b: &Block) -> Option<&Expr> {
+        for s in &b.stmts {
+            match s {
+                Stmt::Throw { value, .. } => return Some(value),
+                Stmt::Expr(e) => {
+                    if let Some(t) = Self::find_first_throw_value(e) {
+                        return Some(t);
+                    }
+                }
+                _ => {}
+            }
+        }
+        b.trailing.as_deref().and_then(Self::find_first_throw_value)
     }
 
     /// Plan 56 followup: compute real array element type для произвольной
@@ -27370,12 +27649,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .filter(|t| !t.is_empty()
                                 && t != "void*"
                                 && !self.debt_is_generic_stub_c(t));
+                        // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
+                        // the Err-side default below is a hardcoded GUESS
+                        // ("nova_str") for whichever side a bare `Ok(x)`'s arg
+                        // doesn't reveal — blind to an ACTIVE `with Fail[E] =
+                        // ...` binding's real, current_type_subst-resolved E
+                        // (`current_fail_e_hint`, set by `emit_with` around
+                        // this exact body). Prefer the hint when present;
+                        // falls back to the pre-existing literal default
+                        // otherwise (byte-identical outside a Fail[E] scope).
+                        let err_default = self.current_fail_e_hint.clone()
+                            .unwrap_or_else(|| "nova_str".to_string());
                         let (ok_c, err_c) = if name == "Ok" {
                             (arg_c.unwrap_or_else(|| "nova_int".into()),
-                             "nova_str".to_string())
+                             err_default)
                         } else {
                             ("nova_int".to_string(),
-                             arg_c.unwrap_or_else(|| "nova_str".into()))
+                             arg_c.unwrap_or(err_default))
                         };
                         let res_c = self.result_repr_c_type(&ok_c, &err_c);
                         self.result_ctor_name(&res_c, name)
@@ -30141,7 +30431,56 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             }
                                         }
+                                        // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
+                                        // infer effect-clause type-params (`Fail[E]`) from a
+                                        // closure ARG's thrown value. `E` in `body fn() Fail[E]
+                                        // -> T` appears ONLY inside the param's own effect-clause
+                                        // — the loop above (arg/return C-type binding) can never
+                                        // see it. Without this, EVERY call whose callback throws
+                                        // a NON-int error silently mono's E to the "fallback
+                                        // nova_int" below regardless of the real error type,
+                                        // colliding across call sites with different E (root
+                                        // cause of the retry.nv `NovaOpt_nova_int` vs
+                                        // `NovaOpt_nova_str` CC-FAIL).
+                                        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                            let effects: &[crate::ast::TypeRef] = match &param.ty {
+                                                crate::ast::TypeRef::Func { effects, .. } => effects,
+                                                _ => continue,
+                                            };
+                                            if effects.is_empty() { continue; }
+                                            let body_expr: Option<Expr> = match &arg.expr().kind {
+                                                crate::ast::ExprKind::ClosureLight { body, .. } => Some(match body {
+                                                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                        crate::ast::ExprKind::Block(b.clone()), b.span),
+                                                }),
+                                                crate::ast::ExprKind::ClosureFull(fsb) => match &fsb.body {
+                                                    crate::ast::FnBody::Expr(e) => Some(e.clone()),
+                                                    crate::ast::FnBody::Block(b) => Some(Expr::new(
+                                                        crate::ast::ExprKind::Block(b.clone()), fsb.span)),
+                                                    crate::ast::FnBody::External => None,
+                                                },
+                                                _ => None,
+                                            };
+                                            let Some(body_expr) = body_expr else { continue };
+                                            let Some(thrown) = Self::find_first_throw_value(&body_expr) else { continue };
+                                            let thrown_c = self.infer_expr_c_type(thrown);
+                                            if thrown_c.is_empty() || thrown_c == "void*" { continue; }
+                                            for eff in effects {
+                                                if let crate::ast::TypeRef::Named { path, generics, .. } = eff {
+                                                    if path.last().map(String::as_str) == Some("Fail") && generics.len() == 1 {
+                                                        self.infer_type_param_binding(&generics[0], &thrown_c, &mut subst_pending);
+                                                    }
+                                                }
+                                            }
+                                        }
                                         // Finalize: extract bound, fallback nova_int для unbound.
+                                        // [M-exp-promotion-blockers: retry] an effect-only typevar
+                                        // (e.g. `E` when the callback never throws — dead `Fail[E]`
+                                        // branch, no ambient handler needed) still safely defaults
+                                        // to nova_int here: whatever concrete type is picked, the
+                                        // `Option[E]` slot it types never gets constructed with
+                                        // real data on that call path.
                                         let type_subst: Vec<(String, String)> = subst_pending.into_iter()
                                             .map(|(n, c)| (n, c.unwrap_or_else(|| "nova_int".to_string())))
                                             .collect();
@@ -41889,10 +42228,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let arg_c = args.first()
                             .map(|a| self.infer_expr_c_type(a.expr()))
                             .filter(|t| !t.is_empty() && t != "void*" && !self.debt_is_generic_stub_c(t));
+                        // [M-exp-promotion-blockers: retry] prefer an ACTIVE
+                        // `with Fail[E] = ...` hint (see `current_fail_e_hint`)
+                        // over the hardcoded guess — mirrors the emission-side
+                        // fix at the `result_ctor_name` call site.
+                        let err_default = self.current_fail_e_hint.clone()
+                            .unwrap_or_else(|| "nova_str".to_string());
                         let (ok_c, err_c) = if name == "Ok" {
-                            (arg_c.unwrap_or_else(|| "nova_int".to_string()), "nova_str".to_string())
+                            (arg_c.unwrap_or_else(|| "nova_int".to_string()), err_default)
                         } else {
-                            ("nova_int".to_string(), arg_c.unwrap_or_else(|| "nova_int".to_string()))
+                            ("nova_int".to_string(), arg_c.unwrap_or(err_default))
                         };
                         return self.result_repr_c_type(&ok_c, &err_c);
                     }
@@ -48805,6 +49150,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // ищем рекурсивно.
                 ExprKind::With { bindings, body } => {
                     if let Some(trailing) = &body.trailing {
+                        // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
+                        // mirror of the identical fix in `emit_with` (the
+                        // C-emission twin of this type-inference path): a bare
+                        // `Ok(x)`/`Err(x)` trailing has its OTHER Result[T,E]
+                        // side hardcoded by the generic-variant channel below
+                        // (`Ok` → err defaults `nova_str`; `Err` → ok defaults
+                        // `nova_int`), blind to an enclosing `with Fail[E] = …`
+                        // binding's REAL, current_type_subst-resolved E. Two
+                        // independent duplicated inference engines (this one
+                        // for the with-EXPRESSION's type as seen by e.g. a
+                        // `ro r = with {...}` LET; `emit_with` for the actual
+                        // with-STATEMENT emission) both needed the same fix —
+                        // fixing only one left the LET-binding's declared type
+                        // disagreeing with the correctly-mono'd body.
+                        if let ExprKind::Call { func, args, .. } = &trailing.kind {
+                            if let ExprKind::Ident(name) = &func.kind {
+                                if (name == "Ok" || name == "Err") && args.len() == 1 {
+                                    if let Some(real_e_c) = self.active_fail_e_hint(bindings) {
+                                        let arg_c = self.infer_expr_c_type(args[0].expr());
+                                        let arg_c = if arg_c.is_empty() || arg_c == "void*" {
+                                            "nova_int".to_string()
+                                        } else { arg_c };
+                                        let (ok_c, err_c) = if name == "Ok" {
+                                            (arg_c, real_e_c)
+                                        } else {
+                                            (real_e_c, arg_c)
+                                        };
+                                        return self.result_repr_c_type(&ok_c, &err_c);
+                                    }
+                                }
+                            }
+                        }
                         return self.infer_expr_c_type(trailing);
                     }
                     // Trailing == None — body falls off (throw / return).
