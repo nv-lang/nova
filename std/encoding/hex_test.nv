@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/hex_test.nv — публичный контракт Hex encode/decode.
+
+module encoding.hex_test
+
+import std.encoding.hex.{Hex, ParseHexError}
+
+test "encode: пустой массив" {
+    ro empty []u8 = []
+    assert(Hex.encode(empty) == "")
+}
+
+test "encode: lowercase по умолчанию" {
+    ro data []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
+    assert(Hex.encode(data) == "deadbeef")
+}
+
+test "encode_upper: uppercase" {
+    ro data []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
+    assert(Hex.encode_upper(data) == "DEADBEEF")
+}
+
+test "encode: leading zeros сохраняются" {
+    ro data []u8 = [0x00, 0x01, 0x0F]
+    assert(Hex.encode(data) == "00010f")
+}
+
+// Compiler note: `[][]u8` (Vec of Vec) итерируемый через `for` — известный
+// gap в mono nested-array (erasure даёт `NovaArray_nova_int_p` CC-FAIL).
+// Проверяем round-trip по одному значению за раз (без обёртывающего Vec).
+fn decode_round_trips(data []u8) -> bool {
+    ro encoded = Hex.encode(data)
+    ro decoded = Hex.decode(encoded)!!
+    decoded == data
+}
+
+test "decode: round-trip" {
+    ro empty []u8 = []
+    ro one []u8 = [0x00]
+    ro four []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
+    ro mixed []u8 = [0x00, 0x01, 0xFF, 0x80]
+    assert(decode_round_trips(empty))
+    assert(decode_round_trips(one))
+    assert(decode_round_trips(four))
+    assert(decode_round_trips(mixed))
+}
+
+test "decode: case-insensitive" {
+    ro expected []u8 = [0xDE, 0xAD, 0xBE, 0xEF]
+    assert(Hex.decode("DEADbeef")!! == expected)
+    assert(Hex.decode("deadBEEF")!! == expected)
+}
+
+test "decode: ошибка — нечётная длина" {
+    match Hex.decode("abc") {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is OddLength)
+    }
+}
+
+test "decode: ошибка — невалидный символ" {
+    match Hex.decode("abXY") {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is InvalidChar)
+    }
+}

@@ -23,6 +23,9 @@
 
 module crypto.hmac
 
+import std.crypto.sha256.{Sha256}
+import std.encoding.hex.{Hex}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // SHA-256 specific (block_size = 64, output_size = 32)
@@ -120,78 +123,4 @@ fn normalize_key_sha256(key []u8) -> []u8 {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты — RFC 4231 test vectors для HMAC-SHA-256
-// ──────────────────────────────────────────────────────────────────────────
-
-test "HMAC-SHA256: RFC 4231 test case 1" {
-    // Key  = 0x0b × 20
-    // Data = "Hi There"
-    // HMAC = b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
-    mut key []u8 = []
-    for i in 0..20 { key.push(0x0B) }
-    ro data = "Hi There".bytes()
-    assert(HmacSha256.compute_str(key, data) ==
-        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
-}
-
-test "HMAC-SHA256: RFC 4231 test case 2" {
-    // Key  = "Jefe"
-    // Data = "what do ya want for nothing?"
-    // HMAC = 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
-    ro key = "Jefe".bytes()
-    ro data = "what do ya want for nothing?".bytes()
-    assert(HmacSha256.compute_str(key, data) ==
-        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
-}
-
-test "HMAC-SHA256: RFC 4231 test case 3 (длинный key)" {
-    // Key  = 0xaa × 20
-    // Data = 0xdd × 50
-    // HMAC = 773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe
-    mut key []u8 = []
-    for i in 0..20 { key.push(0xAA) }
-    mut data []u8 = []
-    for j in 0..50 { data.push(0xDD) }
-    assert(HmacSha256.compute_str(key, data) ==
-        "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe")
-}
-
-test "HMAC-SHA256: key > block_size (используется hashed)" {
-    // Key  = 0xaa × 131
-    // Data = "Test Using Larger Than Block-Size Key - Hash Key First"
-    mut key []u8 = []
-    for i in 0..131 { key.push(0xAA) }
-    ro data = "Test Using Larger Than Block-Size Key - Hash Key First".bytes()
-    assert(HmacSha256.compute_str(key, data) ==
-        "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
-}
-
-test "verify: правильный MAC — true" {
-    ro key = "secret".bytes()
-    ro data = "important message".bytes()
-    ro mac = HmacSha256.compute(key, data)
-    assert(HmacSha256.verify(key, data, mac))
-}
-
-test "verify: неправильный MAC — false" {
-    ro key = "secret".bytes()
-    ro data = "important message".bytes()
-    // [M-hmac-array-repeat-literal-parser]: явный 32-элементный литерал
-    // вместо неподдерживаемого `[0; 32]`.
-    ro wrong [32]u8 = [
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-    ]
-    assert(!HmacSha256.verify(key, data, wrong))
-}
-
-test "verify: tampered message — false" {
-    ro key = "secret".bytes()
-    ro data = "important message".bytes()
-    ro mac = HmacSha256.compute(key, data)
-    ro tampered = "tampered message".bytes()
-    assert(!HmacSha256.verify(key, tampered, mac))
-}
+// Тесты — см. peer-файл hmac_test.nv (module crypto.hmac_test).

@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/crypto/sha256_test.nv — NIST FIPS 180-4 test vectors для SHA-256.
+
+module crypto.sha256_test
+
+import std.crypto.sha256.{Sha256}
+import std.encoding.hex.{Hex}
+
+test "SHA-256: пустая строка" {
+    assert(Sha256.hash_str("".bytes()) ==
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+}
+
+test "SHA-256: 'abc' (NIST sample)" {
+    assert(Sha256.hash_str("abc".bytes()) ==
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+}
+
+test "SHA-256: 56-byte input (NIST 2-block sample)" {
+    ro s = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+    assert(Sha256.hash_str(s.bytes()) ==
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+}
+
+test "SHA-256: 1 миллион 'a' — long input stress" {
+    // Известный test vector. Используем incremental чтобы не строить
+    // огромный []u8 в памяти.
+    mut state = Sha256.new()
+    ro chunk []u8 = []u8.with_capacity(1000)
+    mut tmp = chunk
+    for i in 0..1000 { tmp.push('a' as u8) }
+    mut k = 0
+    while k < 1000 {
+        state.update(tmp)
+        k += 1
+    }
+    ro digest = state.finalize()
+    mut bytes []u8 = []
+    for j in 0..32 { bytes.push(digest[j]) }
+    assert(Hex.encode(bytes) ==
+        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
+}
+
+test "SHA-256: incremental == one-shot" {
+    ro full = "The quick brown fox jumps over the lazy dog".bytes()
+    ro one_shot = Sha256.hash_str(full)
+
+    mut state = Sha256.new()
+    state.update("The quick brown ".bytes())
+    state.update("fox jumps over ".bytes())
+    state.update("the lazy dog".bytes())
+    ro digest = state.finalize()
+    mut bytes []u8 = []
+    for i in 0..32 { bytes.push(digest[i]) }
+
+    assert(one_shot == Hex.encode(bytes))
+}

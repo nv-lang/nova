@@ -26,6 +26,8 @@
 
 module crypto.md5
 
+import std.encoding.hex.{Hex}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // MD5 state
@@ -248,46 +250,4 @@ fn write_le_u32(out mut [16]u8, offset int, v u32) -> () {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты — RFC 1321 § A.5 test suite
-// ──────────────────────────────────────────────────────────────────────────
-
-test "MD5: пустая строка" {
-    assert(Md5.hash_str("".bytes()) == "d41d8cd98f00b204e9800998ecf8427e")
-}
-
-test "MD5: 'a'" {
-    assert(Md5.hash_str("a".bytes()) == "0cc175b9c0f1b6a831c399e269772661")
-}
-
-test "MD5: 'abc'" {
-    assert(Md5.hash_str("abc".bytes()) == "900150983cd24fb0d6963f7d28e17f72")
-}
-
-test "MD5: 'message digest'" {
-    assert(Md5.hash_str("message digest".bytes()) == "f96b697d7cb7938d525a2f31aaf161d0")
-}
-
-test "MD5: 'abcdefghijklmnopqrstuvwxyz'" {
-    ro s = "abcdefghijklmnopqrstuvwxyz"
-    assert(Md5.hash_str(s.bytes()) == "c3fcd3d76192e4007dfb496cca67e13b")
-}
-
-test "MD5: incremental == one-shot" {
-    ro full = "The quick brown fox jumps over the lazy dog".bytes()
-    ro part1 = "The quick brown ".bytes()
-    ro part2 = "fox jumps over ".bytes()
-    ro part3 = "the lazy dog".bytes()
-
-    ro one_shot = Md5.hash_str(full)
-
-    mut state = Md5.new()
-    state.update(part1)
-    state.update(part2)
-    state.update(part3)
-    ro digest = state.finalize()
-    mut bytes []u8 = []
-    for i in 0..16 { bytes.push(digest[i]) }
-
-    assert(one_shot == Hex.encode(bytes))
-}
+// Тесты — см. peer-файл md5_test.nv (module crypto.md5_test).
