@@ -2493,3 +2493,13 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   каст-форму лечит. Две заметки реализации: (1) перегрузка одним именем с байтовым
   extern невозможна — коллизия при T=u8, имена copy_n*; (2) репро = вернуть обёртки
   и вызов в cap[T], conformance d141. Каст-форма в vec/core.nv — временный канон.
+
+- **[M-exp-promotion-blockers]** (2026-07-08, P2-пакет, Plan: 172.13; Wave: батчами после
+  первых 4 маркеров) — 6 компиляторных классов, блокирующих последние 6 модулей
+  _experimental (детали и репро — в std/_experimental/STATUS.md, разметка волны 2):
+  csv (nested [][]str runtime), toml (Fail-handler mono gap Nova_*Error_p), url
+  (tuple-destructure infer), uuid_namespace (duplicate-symbol md5+sha1 в одном CU),
+  linkedlist (2× self-recursive generic mono — родня [M-option-self-recursive-record-mono]
+  агента владельца), retry (E_UNUSED_PREFIX_TYPEVAR двусторонний). Плюс довливной
+  вне пакета: std/time/timer_metrics_test CC-FAIL (NovaValue_Timestamp ← int,
+  воспроизведён на c65af77ed) — папка time впервые в гейтах.
