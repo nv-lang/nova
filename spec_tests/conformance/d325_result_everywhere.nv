@@ -16,25 +16,31 @@
 //           стороны) из prelude — A4.
 // Один folder-module CU `spec_tests.conformance`. Идиомы сверены с
 // nova_tests/plan91_fe2 (parse_int) и nova_tests/err177_collectors.
+//
+// Plan 174.1 (2026-07-08): `str.parse_int` RETRACTED as public API — the
+// examples below now drive `s.to_int()` (still a str method,
+// std/runtime/string/parse.nv, just renamed with a narrower Int-only
+// surface), which is the SAME Result-everywhere idiom (R1/R2/D85)
+// `str.parse_int` used to demonstrate.
 module spec_tests.conformance
 
 import std.runtime.string.{ParseIntError}
 
-// ── Result-форма + все каналы D85 на УЖЕ-мигрированном str.parse_int ─────────
+// ── Result-форма + все каналы D85 на str.to_int (Plan 174.1) ─────────
 
 // `?`-проброс (D85): первая Err обрывает и возвращается наружу как Err.
 fn d325_sum_two(a str, b str) -> Result[int, ParseIntError] {
-    ro x = a.parse_int()?
-    ro y = b.parse_int()?
+    ro x = a.to_int()?
+    ro y = b.to_int()?
     Ok(x + y)
 }
 
-test "D325: parse_int — единственная Result-форма; match разбирает Ok/Err (R1/R2)" {
-    match "42".parse_int() {
+test "D325: str.to_int — единственная Result-форма; match разбирает Ok/Err (R1/R2)" {
+    match "42".to_int() {
         Ok(v)  => assert(v == 42),
         Err(_) => assert(false, "42 должно парситься"),
     }
-    match "zz".parse_int() {
+    match "zz".to_int() {
         Ok(_)  => assert(false, "zz не число"),
         Err(e) => match e {
             InvalidDigit => {}
@@ -44,9 +50,9 @@ test "D325: parse_int — единственная Result-форма; match ра
 }
 
 test "D325: канал `!!` — throw из Result разворачивает значение (D85)" {
-    ro v = "42".parse_int()!!            // Ok(42) → 42 (в test-блоке throw ловит harness)
+    ro v = "42".to_int()!!            // Ok(42) → 42 (в test-блоке throw ловит harness)
     assert(v == 42)
-    ro hex = "ff".parse_int(radix: 16)!! // 255
+    ro hex = "ff".to_int(radix: 16)!! // 255
     assert(hex == 255)
 }
 
@@ -57,8 +63,8 @@ test "D325: канал `?` — Ok разворачивается, Err → ран
 }
 
 test "D325: канал `.ok()` — Result -> Option (genuine absence, R4/D85)" {
-    assert("42".parse_int().ok() == Some(42))       // Ok → Some
-    assert("x".parse_int().ok() == None)            // Err → None (причина отброшена)
+    assert("42".to_int().ok() == Some(42))        // Ok → Some
+    assert("x".to_int().ok() == None)             // Err → None (причина отброшена)
 }
 
 // ── Result-форма на УЖЕ-мигрированном ReadBuffer.read_u32_le (prelude) ───────
@@ -119,9 +125,9 @@ test "D325/A3: HOF forwards closure's Fail[E] — no-throw и throw-путь (R5
 // (`NovaOpt_..._p`) → CC-FAIL. Класс `[M-172.1-opt-result-over-userenum-typedef-order]`
 // (домен 172.1, зеркало VR-typedef-ordering из Ф.2a/Ф.2c), вне scope Ф.3.
 
-// parse_int → Result[int, str]: при Err отдаём токен-виновник (domain-str).
+// int.parse → Result[int, str]: при Err отдаём токен-виновник (domain-str).
 fn d325_pi(s str) -> Result[int, str] {
-    match s.parse_int() {
+    match s.to_int() {
         Ok(v)  => Ok(v),
         Err(_) => Err(s),
     }

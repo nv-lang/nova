@@ -36,43 +36,43 @@ test "str pad_right" {
 // D178: single parse_int(radix int = 10) — radix defaults to 10.
 test "str parse_int" {
     // default radix=10
-    assert("42".parse_int().ok() == Some(42))
-    assert("-7".parse_int().ok() == Some(-7))
-    assert("+100".parse_int().ok() == Some(100))
-    assert("0".parse_int().ok() == Some(0))
-    assert("abc".parse_int().ok() == None)
-    assert("".parse_int().ok() == None)
-    assert("12x".parse_int().ok() == None)
+    assert("42".to_int().ok() == Some(42))
+    assert("-7".to_int().ok() == Some(-7))
+    assert("+100".to_int().ok() == Some(100))
+    assert("0".to_int().ok() == Some(0))
+    assert("abc".to_int().ok() == None)
+    assert("".to_int().ok() == None)
+    assert("12x".to_int().ok() == None)
     // explicit radix
-    assert("ff".parse_int(radix: 16).ok() == Some(255))
-    assert("FF".parse_int(radix: 16).ok() == Some(255))
-    assert("1010".parse_int(radix: 2).ok() == Some(10))
-    assert("z".parse_int(radix: 36).ok() == Some(35))
-    assert("g".parse_int(radix: 16).ok() == None)
+    assert("ff".to_int(radix: 16).ok() == Some(255))
+    assert("FF".to_int(radix: 16).ok() == Some(255))
+    assert("1010".to_int(radix: 2).ok() == Some(10))
+    assert("z".to_int(radix: 36).ok() == Some(35))
+    assert("g".to_int(radix: 16).ok() == None)
     // with sign prefix
-    assert("-ff".parse_int(radix: 16).ok() == Some(-255))
-    assert("+1010".parse_int(radix: 2).ok() == Some(10))
+    assert("-ff".to_int(radix: 16).ok() == Some(-255))
+    assert("+1010".to_int(radix: 2).ok() == Some(10))
     // explicit base 10
-    assert("42".parse_int(radix: 10).ok() == Some(42))
-    assert("-100".parse_int(radix: 10).ok() == Some(-100))
+    assert("42".to_int(radix: 10).ok() == Some(42))
+    assert("-100".to_int(radix: 10).ok() == Some(-100))
 }
 
 // D177 negative: invalid radix and edge inputs → None (no panic).
 test "str parse_int negative" {
     // invalid radix (out of 2..36 range)
-    assert("ff".parse_int(radix: 1).ok() == None)
-    assert("ff".parse_int(radix: 0).ok() == None)
-    assert("ff".parse_int(radix: -1).ok() == None)
-    assert("ff".parse_int(radix: 37).ok() == None)
+    assert("ff".to_int(radix: 1).ok() == None)
+    assert("ff".to_int(radix: 0).ok() == None)
+    assert("ff".to_int(radix: -1).ok() == None)
+    assert("ff".to_int(radix: 37).ok() == None)
     // empty string → None
-    assert("".parse_int(radix: 16).ok() == None)
+    assert("".to_int(radix: 16).ok() == None)
     // sign only → None
-    assert("-".parse_int(radix: 10).ok() == None)
-    assert("+".parse_int(radix: 16).ok() == None)
+    assert("-".to_int(radix: 10).ok() == None)
+    assert("+".to_int(radix: 16).ok() == None)
     // invalid chars for base
-    assert("2".parse_int(radix: 2).ok() == None)     // '2' invalid in binary
-    assert("g".parse_int(radix: 16).ok() == None)    // 'g' not a hex digit
-    assert("!".parse_int(radix: 10).ok() == None)    // non-digit
+    assert("2".to_int(radix: 2).ok() == None)     // '2' invalid in binary
+    assert("g".to_int(radix: 16).ok() == None)    // 'g' not a hex digit
+    assert("!".to_int(radix: 10).ok() == None)    // non-digit
 }
 
 // D177 negative: replace with empty from → unchanged; delete with empty to.

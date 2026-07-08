@@ -566,7 +566,7 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     }
 
     ro text = @input[start..@pos]
-    match f64.parse(text) {
+    match text.to_f64() {
         Ok(n)    => Ok(n)
         Err(_)   => Err(InvalidNumber {
             line: start_line, col: start_col, text

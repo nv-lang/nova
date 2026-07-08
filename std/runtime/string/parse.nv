@@ -1,6 +1,6 @@
 // AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
 // Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
-// Role: parse_int (Result-form, D325).
+// Role: primitive parse engines (private) + `str @to_*` conversion surface (D325/174.1).
 //
 // Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
 // prelude->string->prelude import cycle.
@@ -11,21 +11,27 @@ module runtime.string
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 
 
-/// Error variants for @parse_int. Exported so callers can match on them.
+/// Error variants for the integer parse engines. Exported so callers can match on them.
 export type ParseIntError enum Empty | InvalidDigit | Overflow | InvalidRadix
 
-// Plan 177 (D325): единый fallible-контракт — публичная std возвращает
-// Result. Дуальная тройка `parse_int`(throws)/`try_parse_int`(Result)/
-// `parse_int_opt`(Option) РЕТРАКТИРОВАНА (D178 amend): одна форма
-// @parse_int → Result[int, ParseIntError]. throw на call-site = `!!`,
-// проброс = `?`, Result→Option = `.ok()`.
+// Plan 174.1 (owner decision, 2026-07-08, superseding an earlier same-day
+// `T.parse(s)` static-constructor design): the str-level triad `parse_int`/
+// `try_parse_int`/`parse_int_opt` (D177/D178/D325) is RETRACTED as public
+// API — conversions live as METHODS ON THE SOURCE (`s.to_int()`, mirroring
+// `s.to_str()`/`to_str_lossy()` elsewhere), not static constructors on the
+// target type. The digit-scanning logic itself is kept as a PRIVATE engine
+// (no `export`) reused by every `to_*` wrapper below — one engine per
+// signedness domain, not duplicated per width. Radix stays available as an
+// optional keyword arg (default 10) so hex/octal/binary parsing (`s.to_int
+// (radix: 16)`) keeps working without a second public name.
 
-/// Strict parse — returns Result with explicit error. Default radix=10.
-/// `radix` valid range: 2..=36.
-/// Empty / `-` / `+` without digits → Err(Empty). Invalid digit → Err(InvalidDigit).
-/// i64 overflow → Err(Overflow). radix out of range → Err(InvalidRadix).
-#stable(since = "0.1")
-export fn str @parse_int(radix int = 10) -> Result[int, ParseIntError] {
+/// Signed decimal/radix-N engine (`int`/i64 domain, two's-complement 64-bit
+/// range). `radix` valid range: 2..=36. Empty / `-`/`+` without digits →
+/// `Err(Empty)`. Invalid digit → `Err(InvalidDigit)`. i64 overflow →
+/// `Err(Overflow)`. radix out of range → `Err(InvalidRadix)`.
+/// PRIVATE — not part of the public surface (Plan 174.1 retraction); reused
+/// by `@to_int`/`@to_i64` below.
+fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
     if radix < 2 || radix > 36 { return Err(InvalidRadix) }
     ro bytes = @bytes()
     ro n = @byte_len()
@@ -52,16 +58,43 @@ export fn str @parse_int(radix int = 10) -> Result[int, ParseIntError] {
     Ok(if neg { -acc } else { acc })
 }
 
-/// Error variants for `f64.parse`. Exported so callers can match on them.
+/// Unsigned decimal/radix-N engine (`uint`/u64 domain, full 64-bit unsigned
+/// range). Same contract as `@parse_int_core` except there is no sign: a
+/// leading `-` is not special-cased — it simply fails the digit scan at
+/// position 0 and falls out through the generic `Err(InvalidDigit)` path
+/// (D310 remark "'-' ⇒ InvalidDigit"; no dedicated branch needed). PRIVATE —
+/// reused by `@to_u64`/`@to_u32`/`@to_u8` below.
+fn str @parse_uint_core(radix int) -> Result[uint, ParseIntError] {
+    if radix < 2 || radix > 36 { return Err(InvalidRadix) }
+    ro bytes = @bytes()
+    ro n = @byte_len()
+    if n == 0 { return Err(Empty) }
+    mut start = 0
+    if bytes[0] == '+' { start = 1 }
+    if start >= n { return Err(Empty) }
+    mut acc uint = 0
+    ro uradix = radix as uint
+    for j in start..n {
+        ro c = bytes[j] as int
+        mut d = -1
+        if c >= '0' && c <= '9' { d = c - '0' }
+        else if c >= 'a' && c <= 'z' { d = c - 'a' + 10 }
+        else if c >= 'A' && c <= 'Z' { d = c - 'A' + 10 }
+        if d < 0 || d >= radix { return Err(InvalidDigit) }
+        ro ud = d as uint
+        if acc > (uint.MAX - ud) / uradix { return Err(Overflow) }
+        acc = acc * uradix + ud
+    }
+    Ok(acc)
+}
+
+/// Error variants for `str.to_f64()`. Exported so callers can match on them.
 export type ParseFloatError enum Empty | Invalid
 
-// [M-f64-try-parse-to-parse-f64] (2026-07-07): parsing is a constructor-
-// conversion — the domain-appropriate home is the TARGET type (`f64`), not
-// `str` (owner: str shouldn't know about every numeric type). Static, единая
-// fallible-форма (D325/R3): `f64.try_parse(s) -> Option[f64]` (компиляторный
-// builtin, Option вместо Result, без infallible-сиблинга) РЕТРАКТИРОВАН —
-// заменён на `f64.parse(s) -> Result[f64, ParseFloatError]`. `?` пробрасывает,
-// `!!` throws, `.ok()` даёт Option при желании.
+// [M-f64-try-parse-to-parse-f64] (2026-07-07) + Plan 174.1 (2026-07-08,
+// second amend same day): float parsing was briefly a static constructor on
+// the target type (`f64.parse(s)`), then folded back into the
+// conversion-on-source canon alongside the integer family — `str @to_f64()`.
 //
 // Plain FFI, no compiler name-knowledge (§3): `str_parse_f64` is a
 // regular `extern "C" fn` (D282), out-param convention (bool ok + `*out`
@@ -76,8 +109,58 @@ extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
 /// other malformed syntax, which `strtod` cannot tell apart on its own —
 /// reported as `Err(Invalid)`).
 #stable(since = "0.1")
-export fn f64.parse(s str) -> Result[f64, ParseFloatError] {
-    if s.is_empty() { return Err(Empty) }
+export fn str @to_f64() -> Result[f64, ParseFloatError] {
+    if @is_empty() { return Err(Empty) }
     mut v = 0.0
-    if unsafe { str_parse_f64(s, &v) } { Ok(v) } else { Err(Invalid) }
+    if unsafe { str_parse_f64(@, &v) } { Ok(v) } else { Err(Invalid) }
+}
+
+// ── Plan 174.1 (2026-07-08): `str @to_*` integer conversion surface ───────
+// Live set per actual consumers (owner decision) — NOT the full SignedInt/
+// UnsignedInt type-set: `to_int`, `to_i64`, `to_u64`, `to_u32`, `to_u8`.
+// A type-set-bounded generic (`fn[T SignedInt] T.parse(...)`, tried first
+// per "используй механизм type-set-функций из 172.3, если есть") hit a live
+// codegen gap — a generic function whose RECEIVER is the type-set parameter
+// in a *path call* aborts with `[P67-LEGACY] Path call return type unknown`
+// — pre-existing, separately-tracked (out of scope here). Per-method
+// overloads on `str` are the interim form (as `f64.parse`/`to_f64` already
+// were before this file existed in its current shape).
+//
+// `to_u32`/`to_u8` range-check the wide unsigned engine result before
+// narrowing — closes the historical truncation bug (`i8.try_parse("999")`
+// used to silently wrap via a raw C-cast instead of erroring; см. Plan
+// 174.1 §4). `to_int`/`to_i64`/`to_u64` need no post-check — the engine's
+// own overflow guard already covers their whole range.
+
+/// Decimal (default) or radix-N (`radix: 2..=36`) parse into `int`.
+#stable(since = "0.1")
+export fn str @to_int(radix int = 10) -> Result[int, ParseIntError] => @parse_int_core(radix)
+
+/// Decimal (default) or radix-N parse into `i64`. Same 64-bit range as
+/// `int` on this platform — no range-check needed beyond the engine's own.
+#stable(since = "0.1")
+export fn str @to_i64(radix int = 10) -> Result[i64, ParseIntError] =>
+    @parse_int_core(radix).map(|v| v as i64)
+
+/// Decimal (default) or radix-N parse into `u64`. Same range as `uint` on
+/// this platform — no range-check needed beyond the engine's own.
+#stable(since = "0.1")
+export fn str @to_u64(radix int = 10) -> Result[u64, ParseIntError] =>
+    @parse_uint_core(radix).map(|v| v as u64)
+
+/// Decimal (default) or radix-N parse into `u32`, range-checked (unsigned:
+/// a leading `-` is `Err(InvalidDigit)`, not negation).
+#stable(since = "0.1")
+export fn str @to_u32(radix int = 10) -> Result[u32, ParseIntError] {
+    ro v = @parse_uint_core(radix)?
+    if v > (u32.MAX as uint) { return Err(Overflow) }
+    Ok(v as u32)
+}
+
+/// Decimal (default) or radix-N parse into `u8`, range-checked.
+#stable(since = "0.1")
+export fn str @to_u8(radix int = 10) -> Result[u8, ParseIntError] {
+    ro v = @parse_uint_core(radix)?
+    if v > (u8.MAX as uint) { return Err(Overflow) }
+    Ok(v as u8)
 }

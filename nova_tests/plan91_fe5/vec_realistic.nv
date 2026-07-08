@@ -8,7 +8,7 @@ test "filter positives then sum" {
     ro raw = ["1", "-2", "3", "-4", "5"]
     mut nums = []int.new()
     for s in raw {
-        match s.parse_int() {
+        match s.to_int() {
             Ok(n) => if n > 0 { nums.push(n) }
             Err(_) => assert(false, "should parse")
         }

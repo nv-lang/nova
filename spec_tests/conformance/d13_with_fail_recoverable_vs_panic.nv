@@ -47,8 +47,8 @@ test "D325 A1/R0: expected-failure = Result/Option; panic-категория н�
     ro v []int = [10, 20, 30]
     assert(v.get(3) == None)              // OOB как ABSENCE → Option (safe, R4)
     assert(v.get(0) == Some(10))
-    assert("x".parse_int().ok() == None)  // bad input → Result → .ok() → None (R1)
-    assert("7".parse_int().ok() == Some(7))
+    assert("x".to_int().ok() == None)   // bad input → Result → .ok() → None (R1)
+    assert("7".to_int().ok() == Some(7))
     // Контраст (НЕ здесь — они panic'ают, аварийно завершая процесс):
     //   v[3] / (a + очень_большое) / (n / 0) → panic по D13, вне Result/Fail.
     // Их пруф — EXPECT_RUNTIME_PANIC фикстуры, перечисленные в шапке выше.
