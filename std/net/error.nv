@@ -6,8 +6,18 @@
 // into text by the layer's `net_strerror` (which canonicalises EACCES /
 // ECONNRESET), and that text is classified into a typed variant. No TLS, no
 // C-side error state — the honest error channel replacing the заход-1 null stub.
+//
+// Plan 176 Ф.4 (Q3): `NetError` → shared `io.ErrorKind` projection. Kept as an
+// ADDITIVE best-effort mapping (`@to_error_kind`/`@to_io_error`), NOT a rename —
+// `NetError` and its `@to_str()` strings are UNCHANGED (smaller diff than
+// updating every net fixture that asserts on them; chosen per Q3 "sохранить
+// строки ИЛИ обновить фикстуры"). The projection backs `TcpStream.@read`/
+// `@write`'s `io.Read`/`io.Write` conformance (tcp.nv) and
+// `HttpError.ErrSource.Net` (std/http/error.nv).
 
 module std.net
+
+import std.io.{ErrorKind, IoError}
 
 /// Network error returned by TCP/UDP/DNS operations.
 ///
@@ -91,3 +101,41 @@ fn classify(msg str) -> NetError {
     else if msg.contains("not found") || msg.contains("unknown node") || msg.contains("no address") { NetError.NotFound }
     else { NetError.IoError(msg) }
 }
+
+// ─── NetError → ErrorKind projection (Q3, Ф.4) ────────────────────────────────
+
+/// Best-effort projection onto the shared io/fs/os `ErrorKind` (Q3). Lossy where
+/// net has no exact counterpart (`Closed`→`NotConnected`, `Cancelled`→
+/// `Interrupted`, `IoError(msg)`/`InvalidAddr(msg)`/`InvalidPort`→`InvalidInput`/
+/// `Other` — text detail is NOT carried, only the coarse kind); `raw_os` on the
+/// resulting `IoError` is always `0` (the uv code was already consumed by
+/// `classify()` — not recoverable here). `@to_str()` keeps reporting via
+/// `NetError`'s own strings; this projection is for cross-domain conformance
+/// (`io.Read`/`io.Write` on `TcpStream`), not for display.
+#stable(since = "0.1")
+export fn NetError @to_error_kind() -> ErrorKind {
+    match @ {
+        ConnectionRefused   => ErrorKind.ConnectionRefused
+        AddressInUse        => ErrorKind.AddrInUse
+        AddressNotAvailable => ErrorKind.AddrNotAvailable
+        NotFound            => ErrorKind.NotFound
+        Eof                 => ErrorKind.UnexpectedEof
+        Closed              => ErrorKind.NotConnected
+        Cancelled           => ErrorKind.Interrupted
+        TimedOut            => ErrorKind.TimedOut
+        BrokenPipe          => ErrorKind.BrokenPipe
+        ConnectionReset     => ErrorKind.ConnectionReset
+        PermissionDenied    => ErrorKind.PermissionDenied
+        IoError(_)          => ErrorKind.Other(0)
+        InvalidAddr(_)      => ErrorKind.InvalidInput
+        InvalidPort         => ErrorKind.InvalidInput
+    }
+}
+
+/// Build a shared `io.IoError` from this `NetError` (Q3 projection + `op` for
+/// diagnostics). Used to give `TcpStream` structural `io.Read`/`io.Write`
+/// conformance without changing the `Net` effect's own `NetError` surface
+/// (`write_all`/`read_to_vec`/`read_text`/the split halves keep returning
+/// `NetError` directly).
+#stable(since = "0.1")
+export fn NetError @to_io_error(op str) -> IoError => IoError.of(@to_error_kind(), op)

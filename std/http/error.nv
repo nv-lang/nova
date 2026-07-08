@@ -10,17 +10,19 @@
 // GATE (Ф.1 self-contained): payload-типизированные `ErrSource`-варианты живут за
 // внешними гейтами и добавляются ПРИ приземлении их зависимостей (enum OPEN →
 // non-breaking):
-//   - Net(NetError)        ← Ф.2 (transport) [M-178-errsource-net]
+//   - Net(NetError)        ✅ приземлён (Plan 176 Ф.4, Q3): `HttpError.transport`
+//     теперь несёт типизированный `NetError` вместо string-detail.
 //   - Utf8(Utf8Error)      ← 176 Ф.0.5 (canonical str.from_bytes+Utf8Error) [M-178-errsource-utf8]
 //   - Io(IoError)          ← 176 (fs/io writer в copy_to)                     [M-178-errsource-io]
 //   - Compress(CompressError) ← 179 Ф.1 (decompress)                          [M-178-errsource-compress]
 //   - Tls(TlsError)        ← 116 (std/tls)                                     [M-178-errsource-tls]
-// В Ф.1 (чистая message-model, транспорта нет) НИ ОДИН из них не производится;
-// source-chaining демонстрируется через `ErrSource.Url(ParseUrlError)`.
+// Остальные ждут своих зависимостей; source-chaining демонстрируется также через
+// `ErrSource.Url(ParseUrlError)`.
 
 module std.http
 
 import std.encoding.compress.{CompressError}
+import std.net.{NetError}
 
 /// Категория ошибки http-домена. **OPEN** (D358): `Other(str)` — catch-all,
 /// поэтому `match` ОБЯЗАН нести wildcard-arm; расширение (h2/h3) не ломает
@@ -56,6 +58,8 @@ export type ErrSource enum
     | UrlParse(ParseUrlError)      // ошибка разбора URL (Ф.1). ⚠ вариант НЕ `Url`:
                                    // имя-вариант == имя-тип `Url` ломает codegen
                                    // (cast вместо wrap) → spec-amend D358 (§5).
+    | Net(NetError)                 // транспортная ошибка (Connect/Dns/Closed) — Plan
+                                   // 176 Ф.4/Q3: типизированный `std.net.NetError`.
     | Compress(CompressError)      // decode Content-Encoding (gzip/deflate) провалился
                                    // (Ф.2, 179; D381 сделал co-presence compress+http
                                    // ErrorKind линкуемой). [M-178-errsource-compress]
@@ -98,10 +102,18 @@ export fn HttpError.invalid_url(e ParseUrlError) -> HttpError =>
     { kind: InvalidUrl, url: None, source: Some(UrlParse(e)) }
 
 /// Транспортная ошибка (`Connect`/`Dns`/`Closed`/`Timeout`) с текстовой деталью в
-/// `source` (типизированный `Net(NetError)` гейтнут — [M-178-errsource-net]). Ф.2.
+/// `source` — used where no typed `NetError` is available (e.g. a hard-coded
+/// transport-layer condition, not an actual `Net`-effect failure).
 #stable(since = "0.1")
 export fn HttpError.transport(kind ErrorKind, detail str) -> HttpError =>
     { kind, url: None, source: Some(OtherSource(detail)) }
+
+/// Транспортная ошибка с типизированным `source: Net(NetError)` (Plan 176 Ф.4,
+/// Q3) — the `Net`-effect failure that triggered `kind` (`Connect`/`Dns`) is
+/// preserved instead of collapsing to a fixed string.
+#stable(since = "0.1")
+export fn HttpError.from_net(kind ErrorKind, e NetError) -> HttpError =>
+    { kind, url: None, source: Some(Net(e)) }
 
 /// `BodyTooLarge` — превышен cap тела/decompress (DoS-guard).
 #stable(since = "0.1")
@@ -149,6 +161,7 @@ export fn HttpError @to_str() -> str {
     }
     match @source {
         Some(UrlParse(e))     => "${base}: ${e.to_str()}"
+        Some(Net(e))          => "${base}: ${e.to_str()}"
         Some(Compress(e))     => "${base}: ${e.to_str()}"
         Some(OtherSource(m))  => "${base}: ${m}"
         None                  => base

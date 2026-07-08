@@ -8,10 +8,10 @@ module std.net
 test "net2/mock: TCP round-trip is fully in-memory" {
     with Net = mock_net() {
         mut s = must(TcpStream.connect(SocketAddr.loopback(0)))
-        assert(must(s.write("hi".bytes())) == 2)
+        assert(must_io(s.write("hi".bytes())) == 2)
         mut buf []u8 = []u8.new()
         buf.resize(32, 0 as u8)
-        ro n = must(s.read(buf))
+        ro n = must_io(s.read(buf))
         assert(unsafe { str.from_bytes_unchecked(buf[0..n]) } == "mock-reply")
         assert(s.local_port() == 5050)
         assert(s.peer_addr().port() == 6060)

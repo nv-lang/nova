@@ -10,8 +10,16 @@
 // tests therefore extract typed Results via a `match` helper (the same choice the
 // old std/net dns tests made). This is a test-file peer of module std.net2, so
 // the helper is shared across all net2 `*_test.nv` files and never ships.
+//
+// Plan 176 Ф.4 (Q3): `TcpStream.@read`/`@write` now return `io.IoError`
+// (io.Read/io.Write conformance), while every other `Net`-effect op
+// (bind/connect/accept/write_all/read_to_vec/...) still returns `NetError` —
+// `must_io` is the `IoError` twin of `must`, used ONLY at direct `@read`/
+// `@write` call sites below.
 
 module std.net
+
+import std.io.{IoError}
 
 // Module-private `panic` decl (mirrors std/collections/vec/core.nv): a folder-
 // module peer cannot rely on the prelude `panic` being visible when these test
@@ -20,6 +28,14 @@ extern "nova" fn panic(msg str) -> never
 
 // Shared test helper: extract a typed Result or abort the test.
 fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("net2 test: unexpected Err: " + e.to_str())
+    }
+}
+
+// `IoError` twin of `must` (Ф.4 io.Read/io.Write conformance on TcpStream).
+fn must_io[T](r Result[T, IoError]) -> T {
     match r {
         Ok(v)  => v
         Err(e) => panic("net2 test: unexpected Err: " + e.to_str())
@@ -35,10 +51,10 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
         supervised {
             spawn {
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
-                assert(must(conn.write("hello net2".bytes())) == 10)
+                assert(must_io(conn.write("hello net2".bytes())) == 10)
                 mut buf []u8 = []u8.new()
                 buf.resize(64, 0 as u8)
-                ro n = must(conn.read(buf))
+                ro n = must_io(conn.read(buf))
                 assert(n == 16)
                 assert(unsafe { str.from_bytes_unchecked(buf[0..n]) } == "echo: hello net2")
                 conn.close()
@@ -47,11 +63,11 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
                 mut srv = must(lst.accept())
                 mut buf []u8 = []u8.new()
                 buf.resize(64, 0 as u8)
-                ro n = must(srv.read(buf))
+                ro n = must_io(srv.read(buf))
                 assert(n == 10)
                 ro msg = unsafe { str.from_bytes_unchecked(buf[0..n]) }
                 assert(msg == "hello net2")
-                assert(must(srv.write(("echo: " + msg).bytes())) == 16)
+                assert(must_io(srv.write(("echo: " + msg).bytes())) == 16)
                 srv.close()
             }
         }
@@ -74,7 +90,7 @@ test "net2/tcp: read observes clean EOF as Ok(0)" {
                 mut srv = must(lst.accept())
                 mut buf []u8 = []u8.new()
                 buf.resize(16, 0 as u8)
-                assert(must(srv.read(buf)) == 0)   // clean EOF, not garbage / hang
+                assert(must_io(srv.read(buf)) == 0)   // clean EOF, not garbage / hang
                 srv.close()
             }
         }

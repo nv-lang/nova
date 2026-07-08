@@ -41,9 +41,9 @@ test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber p
                     buf.resize(8192, 0 as u8)
                     mut got = 0
                     while got < 8192 {
-                        ro n = must(conn.read(buf))
+                        ro n = must_io(conn.read(buf))
                         assert(n > 0)          // client never half-closes early
-                        assert(must(conn.write(buf[0..n])) == n)
+                        assert(must_io(conn.write(buf[0..n])) == n)
                         got = got + n
                     }
                     assert(got == 8192)
@@ -74,7 +74,7 @@ test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber p
                     echo.resize(8192, 0 as u8)
                     mut off = 0
                     while off < 8192 {
-                        ro n = must(conn.read(echo))
+                        ro n = must_io(conn.read(echo))
                         assert(n > 0)          // server echoes all 8192 bytes
                         for j in 0..n {
                             assert(echo[j] == ((fid * 31 + (off + j) * 7) % 251) as u8)
@@ -102,9 +102,9 @@ test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
                 buf.resize(65536, 0 as u8)
                 mut total = 0
                 while total < 8388608 {
-                    ro n = must(conn.read(buf))
+                    ro n = must_io(conn.read(buf))
                     assert(n > 0)
-                    assert(must(conn.write(buf[0..n])) == n)
+                    assert(must_io(conn.write(buf[0..n])) == n)
                     total = total + n
                 }
                 assert(total == 8388608)
@@ -127,7 +127,7 @@ test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
                     }
                     mut off = 0
                     while off < 65536 {
-                        ro n = must(conn.read(back))
+                        ro n = must_io(conn.read(back))
                         assert(n > 0)
                         // Spot-verify each landed chunk (full byte integrity
                         // is test 1's job).

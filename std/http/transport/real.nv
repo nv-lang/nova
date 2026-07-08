@@ -21,8 +21,10 @@
 //     (pure, tested); live socket reuse deferred. [M-178-client-live-pool]
 //   · timeout/deadline-by-default — Plan 173 supervised scope, at the call site.
 //     [M-178-timeout-needs-173]
-//   · typed `ErrSource.Net(NetError)` — gated; detail carried as OtherSource by
-//     `HttpError.transport` (error.nv). [M-178-errsource-net]
+//   · typed `ErrSource.Net(NetError)` ✅ landed (Plan 176 Ф.4, Q3): connect/
+//     write/read transport failures carry the actual `NetError` via
+//     `HttpError.from_net` (error.nv); dns resolution failure (`resolve`
+//     returns `NetError` too) is the same path.
 
 module http.transport
 
@@ -56,7 +58,7 @@ export fn real_http() -> Effect[Http] => effect Http {
 fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpError] {
     ro addrs = match resolve(host, port as u16) {
         Ok(a)  => a
-        Err(_) => return Err(HttpError.transport(ErrorKind.Dns, "dns resolution failed"))
+        Err(e) => return Err(HttpError.from_net(ErrorKind.Dns, e))
     }
     ro addr = match addrs.get(0) {
         Some(a) => a
@@ -64,13 +66,13 @@ fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpEr
     }
     mut stream = match TcpStream.connect(addr) {
         Ok(s)  => s
-        Err(_) => return Err(HttpError.transport(ErrorKind.Connect, "connect failed"))
+        Err(e) => return Err(HttpError.from_net(ErrorKind.Connect, e))
     }
     match stream.write_all(request.bytes()) {
         Ok(_)  => ()
-        Err(_) => {
+        Err(e) => {
             stream.close()
-            return Err(HttpError.transport(ErrorKind.Connect, "write failed"))
+            return Err(HttpError.from_net(ErrorKind.Connect, e))
         }
     }
     // Read to EOF (Connection: close). A mid-stream error stops the read; the wire

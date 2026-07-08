@@ -18,6 +18,8 @@
 
 module std.net
 
+import std.io.{IoError}
+
 // ─── Value-record handle types ────────────────────────────────────────────────
 
 /// Async TCP listener (server socket). `bind`/`accept`/`close` carry `Net`
@@ -112,16 +114,36 @@ export fn TcpStream.connect(addr SocketAddr) Net -> Result[TcpStream, NetError] 
 
 /// Read up to `buf.len()` bytes into `buf`; returns `Ok(n)`. `Ok(0)` = clean EOF
 /// (peer closed). The bytes land straight in `buf` (zero-copy).
+///
+/// **`io.Read` conformance (Plan 176 Ф.4, Q3):** the error is the shared
+/// `io.IoError` (best-effort projection of the transport `NetError` via
+/// `@to_error_kind()` — see std/net/error.nv), so `TcpStream` satisfies
+/// `io.Read` structurally. The `Net` effect op itself still carries `NetError`
+/// (`write_all`/`read_to_vec`/`read_text` and the split halves surface it
+/// directly, unchanged); only this method and `@write`/`@flush` are the
+/// io-conformance surface.
 #stable(since = "0.1")
-export fn TcpStream mut @read(buf mut []u8) Net -> Result[int, NetError] {
-    Net.read(@, buf)
+export fn TcpStream mut @read(buf mut []u8) Net -> Result[int, IoError] {
+    match Net.read(@, buf) {
+        Ok(n)  => Ok(n)
+        Err(e) => Err(e.to_io_error("read"))
+    }
 }
 
 /// Write `data`; returns `Ok(n)` bytes accepted (sent straight from `data`).
+/// **`io.Write` conformance (Q3):** see `@read`.
 #stable(since = "0.1")
-export fn TcpStream mut @write(data []u8) Net -> Result[int, NetError] {
-    Net.write(@, data)
+export fn TcpStream mut @write(data []u8) Net -> Result[int, IoError] {
+    match Net.write(@, data) {
+        Ok(n)  => Ok(n)
+        Err(e) => Err(e.to_io_error("write"))
+    }
 }
+
+/// `io.Write` conformance: a `TcpStream` write hits the socket directly (same
+/// unbuffered contract as `File`, D322/D323) — `@flush()` is a no-op.
+#stable(since = "0.1")
+export fn TcpStream mut @flush() -> Result[(), IoError] => Ok(())
 
 /// Write the entire buffer, looping until all bytes are sent.
 #stable(since = "0.1")
