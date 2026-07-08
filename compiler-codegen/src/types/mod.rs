@@ -3252,6 +3252,13 @@ struct TypeCheckCtx<'a> {
     /// Used together with `type_defining_modules` for module-boundary
     /// enforcement. Empty = no current module (conservative = deny).
     current_module: std::cell::RefCell<Vec<String>>,
+    /// D281 follow-up (2026-07-08): file_id → module name владельца файла.
+    /// Наполняется в `check_module` из `module.peer_files`. Нужна, чтобы
+    /// module-boundary проверка судила доступ по модулю ФАЙЛА-СПАНА
+    /// (где физически живёт код), а не по `current_module` CU: тело
+    /// generic-метода из hashmap.nv, перечитываемое в CU потребителя,
+    /// законно читает module-private поля своего модуля.
+    file_modules: std::cell::RefCell<std::collections::HashMap<crate::diag::FileId, Vec<String>>>,
     /// Plan 162 Ф.3: global TypeMethodMap — type_name → method_name →
     /// list of module_names (Vec<String>) that declared this method.
     /// Built from `module.peer_files[*].items_here` in `build`.
@@ -3834,6 +3841,7 @@ impl<'a> TypeCheckCtx<'a> {
             user_shadowed_generic_types,
             type_defining_modules,
             current_module: std::cell::RefCell::new(Vec::new()),
+            file_modules: std::cell::RefCell::new(std::collections::HashMap::new()),
             type_method_map,
             in_test_block: std::cell::Cell::new(false),
             test_block_test_access: std::cell::RefCell::new(Vec::new()),
@@ -4000,6 +4008,15 @@ impl<'a> TypeCheckCtx<'a> {
         // Plan 160 (D281) Ф.2: set current_module for module-boundary checks.
         // Restored to empty Vec on scope exit via CurrentModuleGuard RAII.
         let _module_guard = CurrentModuleGuard::set(self, module.name.clone());
+        // D281 follow-up: запомнить ОБЪЯВЛЕННЫЙ модуль каждого файла (pf.module_name,
+        // не module.name — в merged-CU файлы чужих модулей перечитываются под
+        // именем entry-модуля). Для span-based module-boundary проверки.
+        {
+            let mut fm = self.file_modules.borrow_mut();
+            for pf in &module.peer_files {
+                fm.insert(pf.file_id, pf.module_name.clone());
+            }
+        }
 
         // Plan 91.9 (D186): verify `#impl(P1 + P2 + ...)` annotations.
         // Для каждого type T с impl_protocols, проверяем что:
@@ -6338,7 +6355,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 if !base_allowed {
                                     let has_priv = rec_fields.iter().any(|fd| fd.priv_field);
                                     // Plan 160 (D281) Ф.2: module access context.
-                                    let module_allowed = self.module_priv_access_allowed(last.as_str());
+                                    let module_allowed = self.module_priv_access_allowed(last.as_str(), e.span);
                                     let has_type_priv = rec_fields.iter().any(|fd| fd.priv_field && !fd.priv_module_field);
                                     for f in fields {
                                         // Plan 124.2 (D221 §5): spread `...other` outside
@@ -6376,7 +6393,7 @@ impl<'a> TypeCheckCtx<'a> {
                                             {
                                                 // Plan 160 (D281) Ф.2: module-private init.
                                                 if fdecl.priv_module_field {
-                                                    if !self.module_priv_access_allowed(last.as_str()) {
+                                                    if !self.module_priv_access_allowed(last.as_str(), f.span) {
                                                         errors.push(Diagnostic::new(
                                                             format!(
                                                                 "[E_FIELD_MODULE_PRIVATE] cannot \
@@ -8688,13 +8705,21 @@ impl<'a> TypeCheckCtx<'a> {
     /// - `type_defining_modules` has no entry for `tname` (unknown origin),
     /// - `current_module` is empty (no module context set),
     /// - the modules differ.
-    fn module_priv_access_allowed(&self, tname: &str) -> bool {
-        let current = self.current_module.borrow();
-        if current.is_empty() {
+    fn module_priv_access_allowed(&self, tname: &str, at: crate::diag::Span) -> bool {
+        let Some(def_mod) = self.type_defining_modules.get(tname) else {
             return false;
+        };
+        let current = self.current_module.borrow();
+        if !current.is_empty() && def_mod.as_slice() == current.as_slice() {
+            return true;
         }
-        match self.type_defining_modules.get(tname) {
-            Some(def_mod) => def_mod.as_slice() == current.as_slice(),
+        // D281 follow-up (2026-07-08): код судим по модулю ЕГО файла, не по
+        // current_module CU — тело generic-метода модуля-владельца,
+        // перечитываемое в чужом CU (mono/prelude-merge), легально читает
+        // module-private поля своего модуля. Без этого `type X priv {}` на
+        // generic-типах ломал собственные итераторы (HashMapIter → buckets).
+        match self.file_modules.borrow().get(&at.file_id) {
+            Some(span_mod) => def_mod.as_slice() == span_mod.as_slice(),
             None => false,
         }
     }
@@ -8955,7 +8980,7 @@ impl<'a> TypeCheckCtx<'a> {
                             {
                                 // Plan 160 (D281) Ф.2: module-private pattern check.
                                 if meta.priv_module_field {
-                                    if !self.module_priv_access_allowed(tname.as_str()) {
+                                    if !self.module_priv_access_allowed(tname.as_str(), pf.span) {
                                         errors.push(Diagnostic::new(
                                             format!(
                                                 "[E_FIELD_MODULE_PRIVATE] cannot destructure \
@@ -10430,7 +10455,7 @@ impl<'a> TypeCheckCtx<'a> {
                         // type-private. priv_module_field=true → Module default;
                         // allow if same module, otherwise E_FIELD_MODULE_PRIVATE.
                         if field.priv_module_field {
-                            if !self.module_priv_access_allowed(tname.as_str()) {
+                            if !self.module_priv_access_allowed(tname.as_str(), span) {
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_FIELD_MODULE_PRIVATE] cannot read \
@@ -10581,7 +10606,7 @@ impl<'a> TypeCheckCtx<'a> {
                     {
                         // Plan 160 (D281) Ф.2: module-private vs type-private.
                         if field.priv_module_field {
-                            if !self.module_priv_access_allowed(tname.as_str()) {
+                            if !self.module_priv_access_allowed(tname.as_str(), span) {
                                 errors.push(Diagnostic::new(
                                     format!(
                                         "[E_FIELD_MODULE_PRIVATE] cannot read \
@@ -10719,7 +10744,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 {
                                     // Plan 160 (D281) Ф.2: module-private init.
                                     if fd.priv_module_field {
-                                        if !self.module_priv_access_allowed(name.as_str()) {
+                                        if !self.module_priv_access_allowed(name.as_str(), arg_value.span) {
                                             errors.push(Diagnostic::new(
                                                 format!(
                                                     "[E_FIELD_MODULE_PRIVATE] cannot initialize \
@@ -13652,7 +13677,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     && !self.priv_field_access_allowed(tname, &f.visible_to)
                                 {
                                     if f.priv_module_field {
-                                        if !self.module_priv_access_allowed(tname) {
+                                        if !self.module_priv_access_allowed(tname, target.span) {
                                             errors.push(Diagnostic::new(
                                                 format!(
                                                     "[E_FIELD_MODULE_PRIVATE] cannot write to \
