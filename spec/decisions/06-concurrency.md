@@ -6409,3 +6409,49 @@ typed-throw splice `_nova_throw_scope_timeout_impl` (по образцу Cleanup
 (8/8: within-budget; timeout→TimeoutError+`is`; sleep interrupted early <2000ms для
 sleep(5000); абсолютный deadline; вложенность inner-can't-extend; deadline+cancel
 earliest-of-two ×2; zero→immediate).
+
+## D414. Structured error propagation — primary-selection precedence, detach-policy, channel closed-vs-value (Plan 173 Ф.3)
+
+> Дом Ф.3-остатка плана [173](../../docs/plans/173-error-system-unify-harden.md)
+> (structured-concurrency error handling), поверх субстрата [173.0](../../docs/plans/173.0-concurrency-runtime-substrate.md)
+> (per-slot `child_error[]` + serialized decision-loop). Расширяет [D50](#d50)
+> (`spawn`/`detach`), [D75](#d75) (`supervised`), [D94](#d94) (`select`);
+> опирается на [D13](08-runtime.md#d13) (три уровня катастрофы). Owner sign-off
+> 2026-06-21 (§3a/§3b); реализация 2026-07-09.
+
+### §1. Primary-selection precedence: **PANIC > USER/USER_TYPED > CANCEL**
+
+Когда `supervised`/`parallel for`-scope удержал **несколько** падений детей
+**разных kind** (субстрат 173.0 хранит каждое в своём слоте `child_error[]`, не
+схлопывает), при дефолтной эскалации (нет супервизора — [D50](#d50)/[173.2](../../docs/plans/173.2-supervision-as-effect.md))
+**primary** (перевыбрасывается наружу) выбирается строгим рангом:
+
+| kind | rank | смысл |
+|---|---|---|
+| `PANIC` | 3 | fiber-катастрофа (bug/abort-class, D13); **не деградирует до ловимого USER** |
+| `USER` / `USER_TYPED` | 2 | управляемая ошибка (реальная throw-ошибка) |
+| `CANCEL` | 1 | кооперативная отмена siblings (следствие чужого падения, не корневая причина) |
+
+**Правило overwrite:** входящая ошибка становится primary ⇔ `rank(incoming) >
+rank(current)` (строго больше → **ties keep-first**: first-PANIC-wins,
+first-USER-wins, first-CANCEL-wins). Не-primary ошибки уходят в **suppressed**-
+карман ([D158](02-types.md#d158) / Ф.4 — MultiError-агрегация).
+
+**Инварианты и мотивация.**
+- **D13-соундность:** panic ребёнка **всегда** становится primary, даже если
+  реальная USER-ошибка была записана раньше — panic не должен «прятаться» за
+  ловимой ошибкой (иначе `with Fail[E]` на call-site мог бы проглотить процесс-
+  катастрофу). Порядок прибытия под M:N недетерминирован — ранг делает выбор
+  детерминированным.
+- **USER > CANCEL:** реальная ошибка приоритетнее отмены (Go `errgroup` делает
+  first-wins и **теряет** реальную ошибку, если отмена случилась раньше — у Nova
+  не теряется). CANCEL — производное состояние (siblings отменены из-за первого
+  падения), оно не должно вытеснять корневую причину.
+
+**Реализация.** `nova_throw_kind_precedence(NovaThrowKind)` (`nova_rt/fibers.h`) —
+единый ранг; используется обеими report-точками: `nova_fiber_report_error_kinded`
+(local/single-thread) и `nova_fiber_report_atomic_kinded` (M:N cross-worker
+CAS-loop). Заменяет прежнюю 2-уровневую CANCEL→USER-таблицу (роняла входящий
+PANIC на уже-записанном USER). Тест: `nova_tests/expected_runtime/supervised_precedence_panic_over_user.nv`
+(10 USER + 10 PANIC детей → primary детерминированно PANIC, ×5 стабильно).
+Стыкуется с catchability-инвариантом [Ф.4 п.6](../../docs/plans/173-error-system-unify-harden.md).

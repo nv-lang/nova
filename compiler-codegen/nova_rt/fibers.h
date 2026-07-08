@@ -1874,13 +1874,35 @@ extern __thread volatile int*   _nova_preempt_ptr;
  * функцию. Worker'е _nova_active_scope = &w->scope (worker's own scope,
  * не parent) — вызов report_error пошёл бы в wrong scope. Codegen
  * routes на _c->_nova_parent_scope.first_error_atomic CAS вместо. */
-/* Plan 49 Ф.2: kinded report — USER-precedence таблица:
- *   current=(none)  → write (CANCEL или USER)
- *   current=CANCEL  → keep если incoming=CANCEL; overwrite если USER
- *   current=USER    → keep всегда (first-USER-wins)
- * Это даёт: реальная ошибка ВСЕГДА surface'ится наружу, даже если отмена
- * случилась раньше. Go errgroup делает first-wins и ТЕРЯЕТ реальную
- * ошибку после cancel'а — у нас она не теряется (см. Plan 49 раздел 4). */
+/* Plan 173 Ф.3 п.1: primary-selection precedence rank среди retained ошибок
+ * разных kind. Строгий порядок **PANIC > USER/USER_TYPED > CANCEL**:
+ *   - PANIC (3)          — fiber-катастрофа; D13-инвариант: НЕ деградирует до
+ *                          ловимого USER — panic ВСЕГДА становится primary,
+ *                          даже если реальная throw-ошибка случилась раньше.
+ *   - USER / USER_TYPED (2) — управляемая ошибка (реальная), приоритетнее
+ *                          отмены (Go errgroup теряет её после cancel — мы нет).
+ *   - CANCEL (1)         — кооперативная отмена siblings; самый низкий приоритет
+ *                          (это следствие чужого падения, не корневая причина).
+ * Правило overwrite: incoming становится primary ⇔ rank(incoming) > rank(current)
+ * (строго больше → ties keep-first: first-PANIC-wins, first-USER-wins,
+ * first-CANCEL-wins). Не-primary ошибки уходят в suppressed-карман (Ф.4). */
+static inline int nova_throw_kind_precedence(NovaThrowKind kind) {
+    switch (kind) {
+        case NOVA_THROW_PANIC:      return 3;
+        case NOVA_THROW_USER:       return 2;
+        case NOVA_THROW_USER_TYPED: return 2;
+        case NOVA_THROW_CANCEL:     return 1;
+        default:                    return 0;
+    }
+}
+
+/* Plan 49 Ф.2 → Plan 173 Ф.3 п.1: kinded report — precedence-таблица (rank выше):
+ *   current=(none)  → write (любой kind)
+ *   incoming rank > current rank → overwrite (PANIC бьёт USER/CANCEL; USER бьёт CANCEL)
+ *   incoming rank ≤ current rank → keep (first-wins в пределах ранга)
+ * Это даёт: (1) реальная ошибка surface'ится наружу даже если отмена случилась
+ * раньше (Go errgroup первый-wins ТЕРЯЕТ её — у нас нет); (2) **panic ребёнка
+ * ВСЕГДА становится primary** (D13 — не глотается уже-записанным USER'ом). */
 static inline void nova_fiber_report_error_kinded(const char* msg,
                                                   NovaThrowKind kind,
                                                   void* reason_ptr) {
@@ -1891,8 +1913,11 @@ static inline void nova_fiber_report_error_kinded(const char* msg,
         q->first_error = msg;
         q->first_error_kind = kind;
         q->first_error_reason = reason_ptr;
-    } else if (q->first_error_kind == NOVA_THROW_CANCEL && kind == NOVA_THROW_USER) {
-        /* USER overwrite CANCEL — реальная ошибка приоритетнее отмены. */
+    } else if (nova_throw_kind_precedence(kind) >
+               nova_throw_kind_precedence(q->first_error_kind)) {
+        /* incoming rank выше — overwrite primary. PANIC бьёт USER/CANCEL
+         * (D13: panic не деградирует до ловимого USER); USER бьёт CANCEL
+         * (реальная ошибка приоритетнее отмены). Ties → keep-first. */
         q->first_error = msg;
         q->first_error_kind = kind;
         q->first_error_reason = reason_ptr;
@@ -1956,13 +1981,13 @@ static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
             /* CAS failed → loop: someone else wrote first, re-evaluate. */
             continue;
         }
-        /* Already non-NULL: precedence check.
-         * USER and USER_TYPED both treated as "real error" priority over CANCEL. */
+        /* Already non-NULL: precedence check (Plan 173 Ф.3 п.1).
+         * Overwrite ⇔ rank(incoming) > rank(current) — строгий порядок
+         * PANIC > USER/USER_TYPED > CANCEL. Panic ребёнка бьёт уже-записанный
+         * USER (D13 — не деградирует до ловимого); USER бьёт CANCEL. */
         NovaThrowKind cur_kind = parent->first_error_atomic_kind;
-        bool cur_is_cancel = (cur_kind == NOVA_THROW_CANCEL);
-        bool incoming_is_real = (kind == NOVA_THROW_USER ||
-                                  kind == NOVA_THROW_USER_TYPED);
-        if (cur_is_cancel && incoming_is_real) {
+        if (nova_throw_kind_precedence(kind) >
+            nova_throw_kind_precedence(cur_kind)) {
             const void* exp_for_cas = expected;
             if (nova_aptr_cas(&parent->first_error_atomic, &exp_for_cas,
                               (const void*)msg)) {
@@ -1975,7 +2000,7 @@ static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
             }
             continue;  /* expected changed под нами — retry. */
         }
-        /* Keep existing (CANCEL+CANCEL, USER+anything → first-USER-wins). */
+        /* Keep existing (equal-or-lower rank → first-wins в пределах ранга). */
         return;
     }
 }
