@@ -2581,6 +2581,26 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   toml в _experimental. Перепроверить toml после закрытия
   [M-option-self-recursive-record-mono].
 
+- **[M-generic-bound-forwarding]** (2026-07-08, P2, Plan: 172.13 батч 4;
+  **ЗАКРЫТ батчем 4** — заведён по факту и закрыт той же волной) — bound не
+  проносился через вызов bounded-generic-fn из bounded-generic-fn
+  (`fn outer[R Read](r mut R) => inner(r)` — «R does not satisfy the bound»),
+  задокументировано владельцем в std/io/core.nv:12-15 («the checker does not
+  yet carry a bound through such a forward») — из-за чего петли read/write
+  были ИНЛАЙНЕНЫ в каждый хелпер (5 копий). КОРЕНЬ уже был закрыт побочно
+  батчем 3 (fix `[M-property-testing-rot]` слой (6): passthrough-тайпвар
+  объемлющей fn удовлетворяет баунд через `current_fn_generic_names`, D72
+  энфорсится на конкретных колл-сайтах; коммит 46645224a) — батч 4 подтвердил
+  эмпирически (одно- и двухслойный форвард компилируются и исполняются) и
+  СХЛОПНУЛ инлайн-копии: read_to_string/lines/byte_lines → read_to_end,
+  write_str → write_all (однострочник), copy's внутренняя write-петля →
+  write_all(chunk.first_n(rn)). Наблюдаемая дельта: context-строка WriteZero
+  из write_str/copy теперь "write_all" (общий хелпер), не имя обёртки — тестов
+  на context-строку не было. Позитив-пин: spec_tests/conformance/
+  d122_generic_bound_forwarding.nv (1 и 2 слоя форварда, конкретный вызов,
+  runtime-ассерты). Гейты: std/io зелёный, std/net зелёный (потребитель
+  write_all), conformance PASS.
+
 - **[M-c-keyword-mangle-destructure-tail]** (2026-07-08, P3, Plan: 172.13 хвост;
   Wave: с батчем 2-3) — манглинг C-keyword идентификаторов (закрыт батчем 1,
   f8db4abbe) НЕ распространён на tuple/record-destructure bind-имена и пары

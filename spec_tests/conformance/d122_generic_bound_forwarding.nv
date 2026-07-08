@@ -1,0 +1,55 @@
+// [M-generic-bound-forwarding] (Plan 172.13 batch 4) — a bounded generic fn
+// FORWARDS its bound type-param into ANOTHER bounded generic fn: the checker
+// must carry the bound through the forward (Rust: `fn outer<T: Tr>(x: T) {
+// inner(x) }` — trivially legal). Historically this failed («the checker does
+// not yet carry a bound through such a forward», std/io/core.nv pre-batch-4
+// note) and forced std/io's read/write loop helpers to INLINE the shared loop
+// into every caller. Closed by the batch-3 passthrough-typevar fix
+// (`current_fn_generic_names` — a passthrough typevar of the enclosing fn
+// satisfies the bound; D72 enforcement stays on concrete call sites) and
+// exploited by batch 4 (std/io helpers now forward: read_to_string/lines/
+// byte_lines → read_to_end, write_str/copy → write_all).
+//
+// Discriminator: without bound-forwarding, `d122f_outer` fails to type-check
+// (`R` of the enclosing fn "does not satisfy" the callee's `R Read`-like
+// bound) — the concrete call in the test would never compile. Two layers of
+// forwarding (`outer → mid → leaf`) pin the transitive case too. Part of the
+// SINGLE `spec_tests.conformance` folder-module; D122F-prefixed names avoid
+// duplicate-top-level-name clashes in the shared module.
+module spec_tests.conformance
+
+// Single-method protocol bound (mirror of io.Read's shape, self-contained).
+type D122FSource protocol {
+    mut @next_val() -> int
+}
+
+// Concrete implementor — a counting source.
+type D122FCounter {
+    mut n int
+}
+
+fn D122FCounter mut @next_val() -> int {
+    @n += 1
+    @n
+}
+
+// Leaf: drives the bound method directly (the "primitive loop").
+fn d122f_leaf[S D122FSource](s mut S) -> int => s.next_val()
+
+// Mid: forwards its bounded typevar into the leaf — THE forward under test.
+fn d122f_mid[S D122FSource](s mut S) -> int => d122f_leaf(s) + d122f_leaf(s)
+
+// Outer: forwards through TWO layers (transitive bound-forwarding).
+fn d122f_outer[S D122FSource](s mut S) -> int => d122f_mid(s) + d122f_leaf(s)
+
+test "bound forwards through one generic layer (D122 / M-generic-bound-forwarding)" {
+    mut c = D122FCounter { n: 0 }
+    // mid = leaf + leaf = 1 + 2
+    assert(d122f_mid(c) == 3)
+}
+
+test "bound forwards through two generic layers (transitive)" {
+    mut c = D122FCounter { n: 0 }
+    // outer = mid (1+2) + leaf (3) = 6
+    assert(d122f_outer(c) == 6)
+}

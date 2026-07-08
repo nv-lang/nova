@@ -10,10 +10,11 @@
 //
 // The loop helpers (`read_exact`/`read_to_end`/`read_to_string`/`write_all`/
 // `write_str`/`copy`) are free generic functions over the protocol bounds
-// (mono-dispatch, Q15). Each drives the conformer's `@read`/`@write` **directly**
-// (they do not forward one bounded generic into another — the checker does not
-// yet carry a bound through such a forward, so the shared loop is inlined).
-// `Interrupted` (EINTR) is retried inside every loop.
+// (mono-dispatch, Q15). The primitive loops live in `read_to_end`/`write_all`;
+// the rest FORWARD their bounded generic into them — the checker carries a
+// bound through such a forward since Plan 172.13 (passthrough-typevar fix,
+// batch 3; inline copies collapsed in batch 4 — [M-generic-bound-forwarding]).
+// `Interrupted` (EINTR) is retried inside the two primitive loops.
 //
 // **Sibling of the prelude text-sink `Write`** (D258/D374, `mut @write(s str)`):
 // that one is the `@display`/`Debug` formatting sink; THIS `io.Write` is the byte
@@ -145,32 +146,15 @@ export fn read_to_end[R Read](r mut R) -> Result[[]u8, IoError] {
 
 /// Read to EOF and decode as UTF-8. Invalid UTF-8 → `IoError{InvalidData}`
 /// (Q11 — fallible, no silent `U+FFFD` like Node). Uses Ф.0.5 `str.from_bytes`.
-/// (Loop inlined rather than calling `read_to_end` — see the forward-bound note.)
+/// Forwards to `read_to_end` (bound carries through).
 #stable(since = "0.1")
 export fn read_to_string[R Read](r mut R) -> Result[str, IoError] {
-    mut out []u8 = []u8.new()
-    mut chunk []u8 = []u8.new()
-    chunk.resize(DEFAULT_CHUNK, 0 as u8)
-    loop {
-        match r.read(chunk) {
-            Ok(0)  => {
-                match str.from_bytes(out) {
-                    Ok(s)  => return Ok(s)
-                    Err(_) => return Err(IoError.of(ErrorKind.InvalidData, "read_to_string"))
-                }
-            }
-            Ok(n)  => {
-                mut i = 0
-                while i < n {
-                    out.push(chunk[i])
-                    i += 1
-                }
-            }
-            Err(e) => {
-                if e.is_interrupted() { continue }
-                return Err(e)
-            }
+    match read_to_end(r) {
+        Ok(out) => match str.from_bytes(out) {
+            Ok(s)  => Ok(s)
+            Err(_) => Err(IoError.of(ErrorKind.InvalidData, "read_to_string"))
         }
+        Err(e) => Err(e)
     }
 }
 
@@ -202,36 +186,18 @@ export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
 }
 
 /// Write a `str` to a byte sink as UTF-8 — the explicit bridge from text to the
-/// byte world (Q6, no implicit coupling with the `@display` text-sink). (Loop
-/// inlined rather than calling `write_all` — see the forward-bound note.)
+/// byte world (Q6, no implicit coupling with the `@display` text-sink).
+/// Forwards to `write_all` — the bound is carried through the generic forward
+/// ([M-generic-bound-forwarding] closed, Plan 172.13 batch 3/4).
 #stable(since = "0.1")
-export fn write_str[W Write](w mut W, s str) -> Result[(), IoError] {
-    ro data = s.bytes()
-    ro total = data.len()
-    mut done = 0
-    while done < total {
-        mut rest []u8 = []u8.new()
-        mut i = done
-        while i < total {
-            rest.push(data[i])
-            i += 1
-        }
-        match w.write(rest) {
-            Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "write_str"))
-            Ok(n)  => { done += n }
-            Err(e) => {
-                if e.is_interrupted() { continue }
-                return Err(e)
-            }
-        }
-    }
-    Ok(())
-}
+export fn write_str[W Write](w mut W, s str) -> Result[(), IoError] =>
+    write_all(w, s.bytes())
 
 // ─── Read → Write ───
 
 /// Copy the whole reader into the writer, returning the total bytes moved.
-/// Reads a chunk, writes it fully, repeats (both loops inlined). Rust `io::copy`.
+/// Reads a chunk, writes it fully (via `write_all` — the bound forwards),
+/// repeats. Rust `io::copy`.
 #stable(since = "0.1")
 export fn copy[R Read, W Write](r mut R, w mut W) -> Result[int, IoError] {
     mut moved = 0
@@ -241,25 +207,12 @@ export fn copy[R Read, W Write](r mut R, w mut W) -> Result[int, IoError] {
         match r.read(chunk) {
             Ok(0)  => return Ok(moved)
             Ok(rn) => {
-                // Write exactly the rn bytes just read, handling partial writes.
-                mut done = 0
-                while done < rn {
-                    mut rest []u8 = []u8.new()
-                    mut i = done
-                    while i < rn {
-                        rest.push(chunk[i])
-                        i += 1
-                    }
-                    match w.write(rest) {
-                        Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "copy"))
-                        Ok(wn) => { done += wn }
-                        Err(e) => {
-                            if e.is_interrupted() { continue }
-                            return Err(e)
-                        }
-                    }
+                // Write exactly the rn bytes just read (partial writes and
+                // EINTR are handled inside write_all).
+                match write_all(w, chunk.first_n(rn)) {
+                    Ok(_)  => { moved += rn }
+                    Err(e) => return Err(e)
                 }
-                moved += rn
             }
             Err(e) => {
                 if e.is_interrupted() { continue }
@@ -275,73 +228,41 @@ export fn copy[R Read, W Write](r mut R, w mut W) -> Result[int, IoError] {
 /// Each line excludes its terminator; a trailing `\r` (of `\r\n`) is stripped; a
 /// final line without a newline is yielded; an embedded lone `\r` is NOT a
 /// separator (Q7 — delegates to `str.@lines`). Invalid UTF-8 →
-/// `IoError{InvalidData}`. (Read loop inlined — see the forward-bound note.)
+/// `IoError{InvalidData}`. Forwards to `read_to_end` (bound carries through).
 #stable(since = "0.1")
 export fn lines[R Read](r mut R) -> Result[[]str, IoError] {
-    mut out []u8 = []u8.new()
-    mut chunk []u8 = []u8.new()
-    chunk.resize(DEFAULT_CHUNK, 0 as u8)
-    loop {
-        match r.read(chunk) {
-            Ok(0)  => {
-                match str.from_bytes(out) {
-                    Ok(s)  => return Ok(s.lines())
-                    Err(_) => return Err(IoError.of(ErrorKind.InvalidData, "lines"))
-                }
-            }
-            Ok(n)  => {
-                mut i = 0
-                while i < n {
-                    out.push(chunk[i])
-                    i += 1
-                }
-            }
-            Err(e) => {
-                if e.is_interrupted() { continue }
-                return Err(e)
-            }
+    match read_to_end(r) {
+        Ok(out) => match str.from_bytes(out) {
+            Ok(s)  => Ok(s.lines())
+            Err(_) => Err(IoError.of(ErrorKind.InvalidData, "lines"))
         }
+        Err(e) => Err(e)
     }
 }
 
 /// Read to EOF and split the RAW bytes on `\n` (0x0A) — no UTF-8 decode, no `\r`
 /// stripping (Q7 `byte_lines`). The terminator is not included; a final segment
-/// without a trailing `\n` is yielded. (Read loop inlined — see the forward-bound
-/// note.)
+/// without a trailing `\n` is yielded. Forwards to `read_to_end` (bound carries
+/// through).
 #stable(since = "0.1")
 export fn byte_lines[R Read](r mut R) -> Result[[][]u8, IoError] {
-    mut data []u8 = []u8.new()
-    mut chunk []u8 = []u8.new()
-    chunk.resize(DEFAULT_CHUNK, 0 as u8)
-    loop {
-        match r.read(chunk) {
-            Ok(0)  => {
-                mut out [][]u8 = []
-                mut cur []u8 = []u8.new()
-                mut i = 0
-                while i < data.len() {
-                    if (data[i] as int) == 10 {
-                        out.push(cur)
-                        cur = []u8.new()
-                    } else {
-                        cur.push(data[i])
-                    }
-                    i += 1
+    match read_to_end(r) {
+        Ok(data) => {
+            mut out [][]u8 = []
+            mut cur []u8 = []u8.new()
+            mut i = 0
+            while i < data.len() {
+                if (data[i] as int) == 10 {
+                    out.push(cur)
+                    cur = []u8.new()
+                } else {
+                    cur.push(data[i])
                 }
-                if cur.len() > 0 { out.push(cur) }
-                return Ok(out)
+                i += 1
             }
-            Ok(n)  => {
-                mut i = 0
-                while i < n {
-                    data.push(chunk[i])
-                    i += 1
-                }
-            }
-            Err(e) => {
-                if e.is_interrupted() { continue }
-                return Err(e)
-            }
+            if cur.len() > 0 { out.push(cur) }
+            Ok(out)
         }
+        Err(e) => Err(e)
     }
 }
