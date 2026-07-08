@@ -161,7 +161,7 @@ export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self {
 /// This is the *only* sanctioned way for another module to absorb a `Vec`'s
 /// backing allocation without a copy: the `consume` receiver discharges the
 /// Vec's ownership (D133), and the returned `*mut T` lets the new owner reuse
-/// the buffer in place. Used by `str.from_bytes_unchecked_steal` to steal a
+/// the buffer in place. Used by `unsafe { str.from_bytes_unchecked(consume) }` to steal a
 /// `[]u8`'s buffer into a `str` (zero-copy when spare capacity holds the NUL
 /// terminator).
 ///

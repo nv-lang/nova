@@ -79,7 +79,7 @@ fn dcrlf(b []u8) -> int {
 
 // Parse Content-Length from the header block (bytes 0..header_end). 0 if absent.
 fn content_length_of(b []u8, header_end int) -> int {
-    ro head = str.from_bytes_unchecked(head_slice(b, header_end)).to_ascii_lower()
+    ro head = unsafe { str.from_bytes_unchecked(head_slice(b, header_end)) }.to_ascii_lower()
     match head.find("content-length:") {
         Some(i) => {
             ro rest = head[i + 15..head.byte_len()]

@@ -40,7 +40,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
                 buf.resize(64, 0 as u8)
                 ro n = must(conn.read(buf))
                 assert(n == 16)
-                assert(str.from_bytes_unchecked(buf[0..n]) == "echo: hello net2")
+                assert(unsafe { str.from_bytes_unchecked(buf[0..n]) } == "echo: hello net2")
                 conn.close()
             }
             spawn {
@@ -49,7 +49,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
                 buf.resize(64, 0 as u8)
                 ro n = must(srv.read(buf))
                 assert(n == 10)
-                ro msg = str.from_bytes_unchecked(buf[0..n])
+                ro msg = unsafe { str.from_bytes_unchecked(buf[0..n]) }
                 assert(msg == "hello net2")
                 assert(must(srv.write(("echo: " + msg).bytes())) == 16)
                 srv.close()

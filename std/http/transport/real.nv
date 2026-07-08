@@ -88,5 +88,5 @@ fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpEr
         }
     }
     stream.close()
-    Ok(str.from_bytes_unchecked(acc.into()))
+    Ok(unsafe { str.from_bytes_unchecked(acc.into()) })
 }

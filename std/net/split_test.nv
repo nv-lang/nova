@@ -32,7 +32,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                 ro incoming = srv_rd.read(req_buf)
                 assert(incoming.is_ok())
                 ro req_n = match incoming { Ok(n) => n, Err(_) => panic("srv read") }
-                assert(str.from_bytes_unchecked(req_buf[0..req_n]) == "client-hello")
+                assert(unsafe { str.from_bytes_unchecked(req_buf[0..req_n]) } == "client-hello")
 
                 ro reply_wr = srv_wr.write("server-greeting".bytes())
                 assert(reply_wr.is_ok())
@@ -59,7 +59,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                 ro rd = cli_rd.read(reply_buf)
                 assert(rd.is_ok())
                 ro reply_n = match rd { Ok(n) => n, Err(_) => panic("client read") }
-                assert(str.from_bytes_unchecked(reply_buf[0..reply_n]) == "server-greeting")
+                assert(unsafe { str.from_bytes_unchecked(reply_buf[0..reply_n]) } == "server-greeting")
 
                 cli_rd.close()
                 cli_wr.close()
@@ -90,7 +90,7 @@ test "split mock stream — read half + write half" {
                 ro got = rdh.read(buf)
                 assert(got.is_ok())
                 ro n = match got { Ok(n) => n, Err(_) => 0 }
-                assert(str.from_bytes_unchecked(buf[0..n]) == "mock-reply")
+                assert(unsafe { str.from_bytes_unchecked(buf[0..n]) } == "mock-reply")
 
                 rdh.close()
                 wrh.close()

@@ -167,7 +167,7 @@ fn str.alloc_copy(src *u8, n int) -> Self {
 // fields, so the public accessor is the sanctioned read) and copies into a
 // fresh owned, NUL-terminated buffer (alloc_str_copy). Identical bytes to the
 // retired C nova_str_from_bytes_unchecked.
-export fn str.from_bytes_unchecked(bytes []u8) -> str {
+export unsafe fn str.from_bytes_unchecked(bytes []u8) -> str {
     str.alloc_copy(bytes.ptr(), bytes.len())
 }
 
@@ -222,7 +222,7 @@ export fn str.from_bytes_lossy(bytes []u8) -> str {
             i += 1
         }
     }
-    str.from_bytes_unchecked(out)
+    unsafe { str.from_bytes_unchecked(out) }
 }
 
 // Steal variant: consume []u8, zero-copy reuse data ptr when cap > len
@@ -238,7 +238,7 @@ export fn str.from_bytes_lossy(bytes []u8) -> str {
 // buffer). Otherwise (cap == len, no room for the NUL) fall back to alloc+copy
 // (into_raw still consumes the buffer so the obligation is discharged on every
 // path). Identical bytes to the retired C nova_str_steal_bytes.
-export fn str.from_bytes_unchecked_steal(consume bytes []u8) -> str {
+export unsafe fn str.from_bytes_unchecked(consume bytes []u8) -> str {
     ro n = bytes.len()
     ro has_room = bytes.cap() > n
     // Consume the Vec wrapper, taking ownership of its raw buffer (writable).

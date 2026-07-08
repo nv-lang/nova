@@ -426,5 +426,5 @@ export fn ReadBuffer mut @read_str(n int) -> Result[str, ReadBufferError] {
     // from_bytes_unchecked делает свою копию.
     ro bytes_slice = @data[start..walked]
     @pos = walked
-    Ok(str.from_bytes_unchecked(bytes_slice))
+    Ok(unsafe { str.from_bytes_unchecked(bytes_slice) })
 }

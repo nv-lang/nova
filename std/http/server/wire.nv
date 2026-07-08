@@ -67,12 +67,12 @@ fn parse_request_line(line []u8) -> Result[(Method, str, str, str, Version), Htt
         Some(x) => x
         None    => return Err(HttpError.protocol_error("request line: no space after method"))
     }
-    ro method = Method.parse(str.from_bytes_unchecked(slice(line, 0, sp1)))?
+    ro method = Method.parse(unsafe { str.from_bytes_unchecked(slice(line, 0, sp1)) })?
     ro sp2 = match index_of(line, 0x20, sp1 + 1) {
         Some(x) => x
         None    => return Err(HttpError.protocol_error("request line: no space after target"))
     }
-    ro target = str.from_bytes_unchecked(slice(line, sp1 + 1, sp2))
+    ro target = unsafe { str.from_bytes_unchecked(slice(line, sp1 + 1, sp2)) }
     if target.byte_len() == 0 {
         return Err(HttpError.protocol_error("request line: empty target"))
     }
@@ -80,7 +80,7 @@ fn parse_request_line(line []u8) -> Result[(Method, str, str, str, Version), Htt
     if target.contains("..") {
         return Err(HttpError.protocol_error("request line: path traversal (..) rejected"))
     }
-    ro version = parse_version(str.from_bytes_unchecked(slice(line, sp2 + 1, line.len)))?
+    ro version = parse_version(unsafe { str.from_bytes_unchecked(slice(line, sp2 + 1, line.len)) })?
     ro (path, query) = match target.find("?") {
         Some(q) => (target[0..q], target[q + 1..target.byte_len()])
         None    => (target, "")
@@ -101,7 +101,7 @@ fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
         Some(x) => x
         None    => return Err(HttpError.protocol_error("header line: no colon"))
     }
-    ro name = str.from_bytes_unchecked(slice(line, 0, colon))
+    ro name = unsafe { str.from_bytes_unchecked(slice(line, 0, colon)) }
     ro value = trim_ows(slice(line, colon + 1, line.len))
     hm.append_bytes(name, value)?
     Ok(())

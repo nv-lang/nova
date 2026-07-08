@@ -606,7 +606,7 @@ fn utf8_to_str(bytes []u8) -> Result[str, ParseUrlError] {
             return Err(InvalidPercentEncoding(i))
         }
     }
-    Ok(str.from_bytes_unchecked(bytes))
+    Ok(unsafe { str.from_bytes_unchecked(bytes) })
 }
 
 fn is_cont(b u8) -> bool {

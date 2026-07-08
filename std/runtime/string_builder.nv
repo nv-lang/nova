@@ -194,4 +194,4 @@ export fn StringBuilder mut @write(s str) -> () { @buf.append(s.bytes()) }
 // если cap > len, иначе alloc+copy fallback).
 // Infallible: UTF-8 invariant поддерживается append-методами.
 // Renamed as_str → into_str (Plan 91.18 Ф.2; D77: into_* = consuming).
-export fn StringBuilder consume @into_str() -> str => str.from_bytes_unchecked_steal(@buf)
+export fn StringBuilder consume @into_str() -> str => unsafe { str.from_bytes_unchecked(@buf) }

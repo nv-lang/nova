@@ -2454,3 +2454,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `(ro bytes []u8)` — диагностика должна крыть обе. 8 сайтов в std вычищены
   рукой 2026-07-08 (chars.nv, core.nv ×2 + from_bytes-тройка, bcrypt.nv,
   string_builder.nv @append).
+
+- **[M-runtime-folder-run-ice-vec-ident]** (2026-07-08, P2, Plan: 172.13, родня
+  [M-per-file-check-no-prelude-protocol-scope]) — `nova test --full std/runtime`
+  папкой = довливной ICE emit_c.rs:44410 «Ident `Vec` not in var_types» (проверено
+  на чистом 3b74fff01 тем же бинарём). Пофайловые прогоны runtime-модулей зелёные;
+  папочная агрегация #no_prelude-CU теряет тип Vec. В гейты приёмок runtime папкой
+  не входил — класс вскрыт при unsafe-волне from_bytes_unchecked.

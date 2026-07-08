@@ -101,7 +101,7 @@ export fn SocketAddr @ip() -> str {
     mut buf []u8 = []u8.new()
     buf.resize(64, 0 as u8)
     ro n = unsafe { net_addr_ip(@ptr(), buf.ptr(), 64) }
-    str.from_bytes_unchecked(buf[0..n])
+    unsafe { str.from_bytes_unchecked(buf[0..n]) }
 }
 
 /// Return a human-readable "host:port" string (v6: "[host]:port").
@@ -110,5 +110,5 @@ export fn SocketAddr @to_str() -> str {
     mut buf []u8 = []u8.new()
     buf.resize(128, 0 as u8)
     ro n = unsafe { net_addr_to_str(@ptr(), buf.ptr(), 128) }
-    str.from_bytes_unchecked(buf[0..n])
+    unsafe { str.from_bytes_unchecked(buf[0..n]) }
 }

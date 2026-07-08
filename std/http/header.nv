@@ -82,7 +82,7 @@ export fn HeaderValue @to_str() -> Result[str, HttpError] {
             return Err(HttpError.invalid_header("non-ASCII header value; use bytes()"))
         }
     }
-    Ok(str.from_bytes_unchecked(@bytes))
+    Ok(unsafe { str.from_bytes_unchecked(@bytes) })
 }
 
 // Пара имя→значение. Порядок вставки сохранён.

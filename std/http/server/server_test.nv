@@ -23,7 +23,7 @@ test "ServerResponse.header(): mutating chain lands both headers on the wire" {
     resp.header("X-A", "1")
     resp.header("X-B", "2")
     ro wire = serialize_response(resp)
-    ro s = str.from_bytes_unchecked(wire)
+    ro s = unsafe { str.from_bytes_unchecked(wire) }
     assert(s.contains("x-a: 1"))
     assert(s.contains("x-b: 2"))
 }
@@ -33,7 +33,7 @@ test "ServerResponse.header(): repeated call on the SAME mut binding accumulates
     resp.header("X-One", "1")
     resp.header("X-Two", "2")
     ro wire = serialize_response(resp)
-    ro s = str.from_bytes_unchecked(wire)
+    ro s = unsafe { str.from_bytes_unchecked(wire) }
     assert(s.contains("x-one: 1"))
     assert(s.contains("x-two: 2"))
 }
@@ -45,6 +45,6 @@ test "ServeMux dispatch: path params attach via mutating @params" {
         .get("/users/{id}", handler_fn(|req| ServerResponse.text(200, "user " + req.param("id") ?? "?")))
     ro req = "GET /users/77 HTTP/1.1\r\nHost: x\r\n\r\n".bytes()
     ro wire = serve_once(mux, req)
-    ro s = str.from_bytes_unchecked(wire)
+    ro s = unsafe { str.from_bytes_unchecked(wire) }
     assert(s.contains("user 77"))
 }

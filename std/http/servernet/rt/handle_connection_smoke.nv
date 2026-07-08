@@ -79,7 +79,7 @@ test "servernet: live GET /health round-trip over loopback" {
             }
         }
         assert(server_ok)
-        ro resp = str.from_bytes_unchecked(got)
+        ro resp = unsafe { str.from_bytes_unchecked(got) }
         assert(resp.contains("HTTP/1.1 200 OK"))
         assert(resp.contains("ok"))
     }

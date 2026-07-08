@@ -37,7 +37,7 @@ test "TcpStream.read_to_vec materialises []u8" {
                 ro bytes = match s.read_to_vec(64) { Ok(b) => b, Err(_) => panic("read_to_vec") }
                 // mock read returns "mock-reply" (10 bytes).
                 assert(bytes.len() == 10)
-                assert(str.from_bytes_unchecked(bytes) == "mock-reply")
+                assert(unsafe { str.from_bytes_unchecked(bytes) } == "mock-reply")
                 s.close()
             }
         }
