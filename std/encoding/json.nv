@@ -526,7 +526,7 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
         Some(b) if b == B_DIGIT_0 => { @advance() }
         Some(b) if b >= B_DIGIT_1 && b <= B_DIGIT_9 => {
             @advance()
-            while is_digit_opt(@peek()) { @advance() }
+            while digit_here(@peek()) { @advance() }
         }
         _ => return Err(InvalidNumber {
             line: start_line, col: start_col,
@@ -537,13 +537,13 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     // Fraction: .[0-9]+
     if @peek() == Some(B_DOT) {
         @advance()
-        if !is_digit_opt(@peek()) {
+        if !digit_here(@peek()) {
             return Err(InvalidNumber {
                 line: start_line, col: start_col,
                 text: @input[start..@pos]
             })
         }
-        while is_digit_opt(@peek()) { @advance() }
+        while digit_here(@peek()) { @advance() }
     }
 
     // Exponent: [eE][+-]?[0-9]+
@@ -554,13 +554,13 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
                 Some(b2) if b2 == B_PLUS || b2 == B_MINUS => { @advance() }
                 _ => ()
             }
-            if !is_digit_opt(@peek()) {
+            if !digit_here(@peek()) {
                 return Err(InvalidNumber {
                     line: start_line, col: start_col,
                     text: @input[start..@pos]
                 })
             }
-            while is_digit_opt(@peek()) { @advance() }
+            while digit_here(@peek()) { @advance() }
         }
         _ => ()
     }
@@ -574,7 +574,7 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
     }
 }
 
-fn is_digit_opt(b Option[u8]) -> bool =>
+fn digit_here(b Option[u8]) -> bool =>
     match b { Some(x) => is_digit(x), None => false }
 
 

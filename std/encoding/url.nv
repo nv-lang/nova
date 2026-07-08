@@ -23,10 +23,10 @@
 //   - D74 instance-методы char-операций.
 //
 // API:
-//   Url.from(s str) Fail[ParseUrlError] -> Self
+//   Url.from(s str) -> Result[Url, ParseUrlError]
 //   u.to_str() -> str
 //   Url.encode_query(s str) -> str  (percent-encoding)
-//   Url.decode_query(s str) Fail[ParseUrlError] -> str
+//   Url.decode_query(s str) -> Result[str, ParseUrlError]
 
 module encoding.url
 
@@ -72,18 +72,18 @@ export type ParseUrlError enum
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Parse URL по RFC 3986 generic syntax.
-/// Throws `ParseUrlError`. По D67 `?` после нельзя.
+/// `Err(ParseUrlError)` на malformed input.
 #stable(since = "0.1")
-export fn Url.from(s str) Fail[ParseUrlError] -> Self {
-    if s.byte_len() == 0 { throw EmptyInput }
+export fn Url.from(s str) -> Result[Url, ParseUrlError] {
+    if s.byte_len() == 0 { return Err(EmptyInput) }
 
     // 1. Извлечь scheme (до первого ":") и валидировать.
-    ro (scheme, after_scheme) = parse_scheme(s)
+    ro (scheme, after_scheme) = parse_scheme(s)?
 
     // 2. Если "://" — есть authority (user/host/port), иначе path сразу.
     ro (user, password, host, port, after_authority) =
         if after_scheme.starts_with("//") {
-            parse_authority(after_scheme[2..after_scheme.byte_len()])
+            parse_authority(after_scheme[2..after_scheme.byte_len()])?
         } else {
             (None, None, None, None, after_scheme)
         }
@@ -109,17 +109,17 @@ export fn Url.from(s str) Fail[ParseUrlError] -> Self {
         None
     }
 
-    { scheme, user, password, host, port, path, query, fragment }
+    Ok({ scheme, user, password, host, port, path, query, fragment })
 }
 
 // Scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )  (RFC 3986 § 3.1)
 // Заканчивается на ":". Чувствительна к регистру технически, но
 // конвенция — lowercase.
-fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
+fn parse_scheme(s str) -> Result[(str, str), ParseUrlError] {
     match s.find(":") {
-        None => throw MissingScheme
+        None => Err(MissingScheme)
         Some(i) => {
-            if i == 0 { throw MissingScheme }
+            if i == 0 { return Err(MissingScheme) }
             ro scheme = s[0..i]
             // Scheme (RFC 3986 § 3.1) — pure ASCII → прямой byte-доступ O(1)
             // вместо ретрактированного `chars().nth()` O(n) скана (D260-амендмент).
@@ -127,25 +127,25 @@ fn parse_scheme(s str) Fail[ParseUrlError] -> (str, str) {
             // Первый символ — letter
             match sb.get(0) {
                 Some(b) if !is_alpha((b as int).to_char() ?? ' ') =>
-                    throw InvalidScheme { value: scheme }
+                    return Err(InvalidScheme { value: scheme })
                 _ => ()
             }
             // Остальные — letter/digit/+/-/.
             for j in 1..scheme.byte_len() {
                 match sb.get(j) {
                     Some(b) if !is_scheme_char((b as int).to_char() ?? ' ') =>
-                        throw InvalidScheme { value: scheme }
+                        return Err(InvalidScheme { value: scheme })
                     _ => ()
                 }
             }
-            (scheme.to_ascii_lower(), s[i + 1..s.byte_len()])
+            Ok((scheme.to_ascii_lower(), s[i + 1..s.byte_len()]))
         }
     }
 }
 
 // Authority = [ userinfo "@" ] host [ ":" port ]
 // Заканчивается на "/", "?", "#" или EOF.
-fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Option[str], Option[int], str) {
+fn parse_authority(s str) -> Result[(Option[str], Option[str], Option[str], Option[int], str), ParseUrlError] {
     // Найти конец authority — первый из /, ?, #.
     ro auth_end = find_first_of(s, "/?#")
     ro (auth, rest) = match auth_end {
@@ -159,7 +159,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
         // explicit-but-empty authority (`file:///etc/hosts`), i.e. host is
         // the empty string, not absent. `Some("")`, not `None` (test
         // "parse: file:// без host" expects `u.host == Some("")`).
-        return (None, None, Some(""), None, rest)
+        return Ok((None, None, Some(""), None, rest))
     }
 
     // Userinfo — до "@", если есть
@@ -183,7 +183,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
             ro port_str = host_port[i + 1..host_port.byte_len()]
             ro port_num = match int.try_from(port_str) {
                 Ok(n) if n >= 0 && n <= 65535 => n
-                _                              => throw InvalidPort { value: port_str }
+                _                              => return Err(InvalidPort { value: port_str })
             }
             ro h = host_port[0..i]
             (Some(h), Some(port_num))
@@ -191,7 +191,7 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
         None => (Some(host_port), None)
     }
 
-    (user, password, host, port, rest)
+    Ok((user, password, host, port, rest))
 }
 
 fn parse_path(s str) -> (str, str) {
@@ -348,12 +348,12 @@ export fn Url.encode_query(s str) -> str {
 // + write_char/write_str/write_byte накапливает UTF-8 bytes; финал
 // через `str.from_bytes([]u8)?` (D325) валидирует и конвертирует.
 //
-// На невалидный UTF-8 после decode'а — throw InvalidPercentEncoding
+// На невалидный UTF-8 после decode'а — Err(InvalidPercentEncoding)
 // (consistent с тем что percent-encoding должен давать valid UTF-8;
 // иначе input был malformed).
-/// Percent-decode query string. Throws `InvalidPercentEncoding` если `%XX` malformed.
+/// Percent-decode query string. `Err(InvalidPercentEncoding)` если `%XX` malformed.
 #stable(since = "0.1")
-export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
+export fn Url.decode_query(s str) -> Result[str, ParseUrlError] {
     mut buf = WriteBuffer.new().cap(s.byte_len())
     // Литеральные (не `%XX`) символы проходят через as-is (`write_char(c)`) —
     // могут быть произвольным Unicode, поэтому нужны реальные char-значения,
@@ -367,10 +367,10 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
         ro c = sc[i]
         if c == '%' {
             if i + 2 >= n {
-                throw InvalidPercentEncoding { position: i }
+                return Err(InvalidPercentEncoding { position: i })
             }
-            ro hi = hex_value_or_throw(sc, i + 1)
-            ro lo = hex_value_or_throw(sc, i + 2)
+            ro hi = hex_value_at(sc, i + 1)?
+            ro lo = hex_value_at(sc, i + 2)?
             ro byte_val = (hi * 16 + lo) as u8
             buf.write_byte(byte_val as u8)
             i += 3
@@ -384,8 +384,8 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
     }
     ro bytes = buf.into()
     match str.from_bytes(bytes) {
-        Ok(t)  => t
-        Err(_) => throw InvalidPercentEncoding { position: i }
+        Ok(t)  => Ok(t)
+        Err(_) => Err(InvalidPercentEncoding { position: i })
     }
 }
 
@@ -401,21 +401,21 @@ fn hex_upper(n u8) -> char {
     (code).to_char() ?? ' '
 }
 
-fn hex_value_or_throw(sc []char, pos int) Fail[ParseUrlError] -> u8 {
+fn hex_value_at(sc []char, pos int) -> Result[u8, ParseUrlError] {
     match sc.get(pos) {
         Some(c) => {
             ro n = c as int
             if n >= 48 && n <= 57 {
-                (n - 48) as u8
+                Ok((n - 48) as u8)
             } else if n >= 97 && n <= 102 {
-                (n - 97 + 10) as u8
+                Ok((n - 97 + 10) as u8)
             } else if n >= 65 && n <= 70 {
-                (n - 65 + 10) as u8
+                Ok((n - 65 + 10) as u8)
             } else {
-                throw InvalidPercentEncoding { position: pos }
+                Err(InvalidPercentEncoding { position: pos })
             }
         }
-        None => throw InvalidPercentEncoding { position: pos }
+        None => Err(InvalidPercentEncoding { position: pos })
     }
 }
 

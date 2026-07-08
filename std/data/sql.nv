@@ -175,43 +175,43 @@ export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
 // SqlValue extractors — typed accessors для парсинга строк
 // ──────────────────────────────────────────────────────────────────────────
 
-// `expect_int` / `expect_str` / etc. — извлечь конкретный тип или throw.
-// Используется from_row-парсерами: `let id = row.get_int("id")` (throw через Fail[DbError]).
+// `expect_int` / `expect_str` / etc. — извлечь конкретный тип или `Err`.
+// Используется from_row-парсерами: `let id = row.get_int("id")?` (D325).
 //
-// Возврат `Fail[DbError]`, чтобы ошибки парсинга поднимались как DbError
-// (Constraint), а не молча возвращали None.
+// Возврат `Result[_, DbError]`, чтобы ошибки парсинга поднимались как
+// DbError (Constraint), а не молча возвращали None.
 
-/// Extract i64 или throw `Constraint`. Используется from-row парсерами.
+/// Extract i64 или `Err(Constraint)`. Используется from-row парсерами.
 #stable(since = "0.1")
-export fn SqlValue @expect_int() Fail[DbError] -> i64 =>
+export fn SqlValue @expect_int() -> Result[i64, DbError] =>
     match @ {
-        I(n) => n
-        _    => throw DbError.Constraint("expected I, got ${@}")
+        I(n) => Ok(n)
+        _    => Err(DbError.Constraint("expected I, got ${@}"))
     }
 
-/// Extract str или throw `Constraint`.
+/// Extract str или `Err(Constraint)`.
 #stable(since = "0.1")
-export fn SqlValue @expect_str() Fail[DbError] -> str =>
+export fn SqlValue @expect_str() -> Result[str, DbError] =>
     match @ {
-        S(s) => s
-        _    => throw DbError.Constraint("expected S, got ${@}")
+        S(s) => Ok(s)
+        _    => Err(DbError.Constraint("expected S, got ${@}"))
     }
 
-/// Extract bool или throw `Constraint`.
+/// Extract bool или `Err(Constraint)`.
 #stable(since = "0.1")
-export fn SqlValue @expect_bool() Fail[DbError] -> bool =>
+export fn SqlValue @expect_bool() -> Result[bool, DbError] =>
     match @ {
-        B(b) => b
-        _    => throw DbError.Constraint("expected B, got ${@}")
+        B(b) => Ok(b)
+        _    => Err(DbError.Constraint("expected B, got ${@}"))
     }
 
-/// Extract f64 или throw `Constraint`. INT→FLOAT promotion разрешена.
+/// Extract f64 или `Err(Constraint)`. INT→FLOAT promotion разрешена.
 #stable(since = "0.1")
-export fn SqlValue @expect_f64() Fail[DbError] -> f64 =>
+export fn SqlValue @expect_f64() -> Result[f64, DbError] =>
     match @ {
-        F(x) => x
-        I(n) => n as f64
-        _    => throw DbError.Constraint("expected F/I, got ${@}")
+        F(x) => Ok(x)
+        I(n) => Ok(n as f64)
+        _    => Err(DbError.Constraint("expected F/I, got ${@}"))
     }
 
 /// Extract i64 в `Option` (NULL → None) — для NULL-able колонок.
@@ -230,28 +230,28 @@ export fn SqlValue @as_str() -> Option[str] =>
         _    => None
     }
 
-/// Get column by name + expect i64. Throws `Constraint` если column missing/wrong type.
+/// Get column by name + expect i64. `Err(Constraint)` если column missing/wrong type.
 #stable(since = "0.1")
-export fn DbRow @get_int(name str) Fail[DbError] -> i64 =>
+export fn DbRow @get_int(name str) -> Result[i64, DbError] =>
     match @get(name) {
         Some(v) => v.expect_int()
-        None    => throw DbError.Constraint("missing column: ${name}")
+        None    => Err(DbError.Constraint("missing column: ${name}"))
     }
 
 /// Get column by name + expect str.
 #stable(since = "0.1")
-export fn DbRow @get_str(name str) Fail[DbError] -> str =>
+export fn DbRow @get_str(name str) -> Result[str, DbError] =>
     match @get(name) {
         Some(v) => v.expect_str()
-        None    => throw DbError.Constraint("missing column: ${name}")
+        None    => Err(DbError.Constraint("missing column: ${name}"))
     }
 
 /// Get column by name + expect bool.
 #stable(since = "0.1")
-export fn DbRow @get_bool(name str) Fail[DbError] -> bool =>
+export fn DbRow @get_bool(name str) -> Result[bool, DbError] =>
     match @get(name) {
         Some(v) => v.expect_bool()
-        None    => throw DbError.Constraint("missing column: ${name}")
+        None    => Err(DbError.Constraint("missing column: ${name}"))
     }
 
 

@@ -18,7 +18,7 @@
 //   - Escape: \. \\ \( \) \[ \] \* \+ \? \| \^ \$
 //
 // API:
-//   Regex.compile(pattern str) Fail[CompileError] -> Regex
+//   Regex.compile(pattern str) -> Result[Regex, CompileError]
 //   re.matches(text str) -> bool
 //   re.find(text str) -> Option[(int, int)]    // (start, end)
 //   re.find_all(text str) -> [](int, int)
@@ -474,39 +474,48 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Compile regex pattern. Throws `CompileError` на синтаксических ошибках.
+/// Compile regex pattern. `Err(CompileError)` на синтаксических ошибках.
 ///
 /// Поддержка: `.`, `[a-z]`, `[^abc]`, `\d \w \s \D \W \S`, `^`, `$`,
 /// `*`, `+`, `?`, `{n}`, `{n,m}`, `(...)`, `(?:...)`, `|`.
 ///
+/// D325: публичный API — Result. Внутренние `@parse_*` НЕ экспортированы и
+/// остаются на Fail[CompileError]: их возврат — RegexNode с ПРЯМОЙ рекурсией
+/// (NStar(RegexNode) и т.п.), а `Result[RegexNode, _]` крашит кодоген
+/// (аллокация в десятки ГБ / зависание; минимальная репродукция — enum с
+/// directly-recursive вариантом внутри Result) [M-result-direct-recursive-enum].
+/// Fail наружу не протекает — гасится хендлером здесь.
+///
 /// # Examples
 /// ```nova
-/// let re = Regex.compile("^[a-z]+$")
+/// let re = Regex.compile("^[a-z]+$")!!
 /// assert(re.matches("hello"))
 /// ```
 #stable(since = "0.1")
-export fn Regex.compile(pattern str) Fail[CompileError] -> Self {
-    mut p = Parser.new(pattern)
-    ro ast = p.parse_pattern()
+export fn Regex.compile(pattern str) -> Result[Regex, CompileError] {
+    with Fail[CompileError] = |e| interrupt Err(e) {
+        mut p = Parser.new(pattern)
+        ro ast = p.parse_pattern()
 
-    // Detect anchored start
-    ro anchored = match ast {
-        NConcat(items) if items.len() > 0 => match items[0] {
+        // Detect anchored start
+        ro anchored = match ast {
+            NConcat(items) if items.len() > 0 => match items[0] {
+                NAnchorStart => true
+                _            => false
+            }
             NAnchorStart => true
             _            => false
         }
-        NAnchorStart => true
-        _            => false
-    }
 
-    mut c = Compiler.new()
-    ro accept = c.add(SMatch)
-    ro start = c.compile_node(ast, accept)
+        mut c = Compiler.new()
+        ro accept = c.add(SMatch)
+        ro start = c.compile_node(ast, accept)
 
-    {
-        states: c.states,
-        start,
-        anchored_start: anchored,
+        Ok({
+            states: c.states,
+            start,
+            anchored_start: anchored,
+        })
     }
 }
 

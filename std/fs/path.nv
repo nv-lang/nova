@@ -201,7 +201,7 @@ fn recompose(d Decomp, style PathStyle) -> []u8 {
     out
 }
 
-fn bytes_to_str_opt(b []u8) -> Option[str] {
+fn bytes_to_str(b []u8) -> Option[str] {
     match str.from_bytes(b) {
         Ok(s)  => Some(s)
         Err(_) => None
@@ -245,7 +245,7 @@ export fn Path @is_relative() -> bool => !@is_absolute()
 #stable(since = "0.1")
 export fn Path @file_name() -> Option[str] {
     match @file_name_bytes() {
-        Some(b) => bytes_to_str_opt(b)
+        Some(b) => bytes_to_str(b)
         None    => None
     }
 }
@@ -288,7 +288,7 @@ export fn Path @extension() -> Option[str] {
             match last_dot(name) {
                 None    => None
                 Some(0) => None   // dotfile: leading dot is not an extension
-                Some(i) => bytes_to_str_opt(slice_from(name, i + 1))
+                Some(i) => bytes_to_str(slice_from(name, i + 1))
             }
         }
     }
@@ -302,9 +302,9 @@ export fn Path @stem() -> Option[str] {
         None    => None
         Some(name) => {
             match last_dot(name) {
-                None    => bytes_to_str_opt(name)
-                Some(0) => bytes_to_str_opt(name)          // dotfile: whole name is the stem
-                Some(i) => bytes_to_str_opt(slice_to(name, i))
+                None    => bytes_to_str(name)
+                Some(0) => bytes_to_str(name)          // dotfile: whole name is the stem
+                Some(i) => bytes_to_str(slice_to(name, i))
             }
         }
     }

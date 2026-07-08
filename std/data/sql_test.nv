@@ -55,8 +55,8 @@ test "DbRow.get and DbRow.at" {
 
 test "DbRow.get_int / get_str — typed accessors" {
     ro row DbRow = { columns: ["id", "name"], values: [SqlValue.I(42), SqlValue.S("alice")] }
-    assert(row.get_int("id") == 42)
-    assert(row.get_str("name") == "alice")
+    assert(row.get_int("id") == Ok(42))
+    assert(row.get_str("name") == Ok("alice"))
 }
 
 test "Sql.concat — fragments compose with args preserved" {
