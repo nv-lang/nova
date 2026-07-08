@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/data/sql_test.nv — публичный контракт Sql/SqlValue/DbRow/SqlBuilder
+// (safe SQL через tagged template D48, без injection).
+
+module data.sql_test
+
+import std.data.sql.{Sql, SqlValue, DbRow, sql}
+
+test "sql tag builds template with placeholders" {
+    ro user_id = 42
+    ro q = sql`SELECT * FROM users WHERE id = ${SqlValue.I(user_id as i64)}`
+    assert(q.template == "SELECT * FROM users WHERE id = ?")
+    assert(q.args.len() == 1)
+    match q.args[0] {
+        SqlValue.I(n) => assert(n == 42)
+        _             => assert(false)
+    }
+}
+
+test "sql tag with multiple args preserves order" {
+    ro name = "alice"
+    ro age  = 30
+    ro q = sql`INSERT INTO users (name, age) VALUES (${SqlValue.S(name)}, ${SqlValue.I(age as i64)})`
+    assert(q.template == "INSERT INTO users (name, age) VALUES (?, ?)")
+    assert(q.args.len() == 2)
+    match q.args[0] {
+        SqlValue.S(s) => assert(s == "alice")
+        _             => assert(false)
+    }
+    match q.args[1] {
+        SqlValue.I(n) => assert(n == 30)
+        _             => assert(false)
+    }
+}
+
+test "sql tag with no interpolation" {
+    ro q = sql`SELECT 1`
+    assert(q.template == "SELECT 1")
+    assert(q.args.len() == 0)
+}
+
+test "DbRow.get and DbRow.at" {
+    ro row DbRow = { columns: ["id", "name"], values: [SqlValue.I(42), SqlValue.S("alice")] }
+    match row.get("id") {
+        Some(SqlValue.I(n)) => assert(n == 42)
+        _                   => assert(false)
+    }
+    match row.at(1) {
+        Some(SqlValue.S(s)) => assert(s == "alice")
+        _                   => assert(false)
+    }
+    assert(row.get("missing") == None)
+    assert(row.at(99) == None)
+}
+
+test "DbRow.get_int / get_str — typed accessors" {
+    ro row DbRow = { columns: ["id", "name"], values: [SqlValue.I(42), SqlValue.S("alice")] }
+    assert(row.get_int("id") == 42)
+    assert(row.get_str("name") == "alice")
+}
+
+test "Sql.concat — fragments compose with args preserved" {
+    ro a Sql = { template: "SELECT * FROM users WHERE id = ?", args: [SqlValue.I(1)] }
+    ro b Sql = { template: "AND name = ?", args: [SqlValue.S("alice")] }
+    ro combined = a.concat(b)
+    assert(combined.template == "SELECT * FROM users WHERE id = ? AND name = ?")
+    assert(combined.args.len() == 2)
+}
+
+test "Sql.builder — fluent WHERE composition" {
+    ro q = Sql.builder(sql`SELECT * FROM users WHERE 1 = 1`).where_eq("status", SqlValue.S("active")).where_in("role", [SqlValue.S("admin"), SqlValue.S("user")]).set_suffix(sql`ORDER BY created_at DESC LIMIT 10`).build()
+
+    assert(q.template.contains("AND status = ?"))
+    assert(q.template.contains("AND role IN (?, ?)"))
+    assert(q.template.contains("ORDER BY created_at DESC LIMIT 10"))
+    assert(q.args.len() == 3)
+}
+
+test "Sql.with_filter — handler-decorator use case" {
+    ro original = sql`SELECT * FROM users WHERE active = ${SqlValue.B(true)}`
+    ro filtered = original.with_filter(sql`deleted_at IS NULL`)
+    assert(filtered.template.contains("AND (deleted_at IS NULL)"))
+    assert(filtered.args.len() == 1)                     // только original.args
+}

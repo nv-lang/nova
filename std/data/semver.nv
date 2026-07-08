@@ -158,29 +158,41 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     // Build: после "+", единственное вхождение "+" в строке.
     // Pre: после "-", но "-" может быть в build identifier'е, поэтому
     // обрабатываем сначала split по "+", потом по "-" в первой части.
-    ro (left, build_str) = match s.find("+") {
-        Some(i) => (s[0..i], s[i + 1..s.byte_len()])
-        None    => (s, "")
+    //
+    // [M-semver-trailing-dash-plus] (2026-07-08, волна 2 промоушена):
+    // различаем «дефис/плюс отсутствует» (нет pre/build секции) от
+    // «дефис/плюс есть, но секция пустая» (`1.0.0-`/`1.0.0+` — невалидно
+    // per semver.org § 9-10, должно быть `EmptyIdentifier`). Раньше оба
+    // случая схлопывались в один `byte_len() == 0` чек — молча принимали
+    // trailing `-`/`+` как «нет pre/build». Обнаружено через `nova test
+    // --full` ("пустой identifier в pre"), `nova check` этого не ловил.
+    ro (left, build_str, has_build_marker) = match s.find("+") {
+        Some(i) => (s[0..i], s[i + 1..s.byte_len()], true)
+        None    => (s, "", false)
     }
 
-    ro (core, pre_str) = match left.find("-") {
-        Some(i) => (left[0..i], left[i + 1..left.byte_len()])
-        None    => (left, "")
+    ro (core, pre_str, has_pre_marker) = match left.find("-") {
+        Some(i) => (left[0..i], left[i + 1..left.byte_len()], true)
+        None    => (left, "", false)
     }
 
     // Парсим core.
     ro (major, minor, patch) = parse_core(core)
 
     // Парсим pre identifiers.
-    ro pre = if pre_str.byte_len() == 0 {
+    ro pre = if !has_pre_marker {
         []
+    } else if pre_str.byte_len() == 0 {
+        throw EmptyIdentifier { section: "pre-release" }
     } else {
         parse_identifiers(pre_str, "pre-release", true)
     }
 
     // Парсим build identifiers.
-    ro build = if build_str.byte_len() == 0 {
+    ro build = if !has_build_marker {
         []
+    } else if build_str.byte_len() == 0 {
+        throw EmptyIdentifier { section: "build" }
     } else {
         parse_identifiers(build_str, "build", false)
     }
@@ -403,258 +415,4 @@ fn pre_eq(a []str, b []str) -> bool {
 // Note: @le/@gt/@ge removed — use @compare(other) <=/>/>=  0, or < > <= >= operators.
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "parse: простая версия" {
-    ro v = Version.from("1.2.3")
-    assert(v.major == 1)
-    assert(v.minor == 2)
-    assert(v.patch == 3)
-    assert(v.pre.len() == 0)
-    assert(v.build.len() == 0)
-}
-
-test "parse: pre-release" {
-    ro v = Version.from("1.0.0-alpha")
-    assert(v.major == 1)
-    assert(v.pre.len() == 1)
-    assert(v.pre[0] == "alpha")
-    assert(v.is_prerelease())
-}
-
-test "parse: pre-release с компонентами" {
-    ro v = Version.from("1.0.0-alpha.1")
-    assert(v.pre.len() == 2)
-    assert(v.pre[0] == "alpha")
-    assert(v.pre[1] == "1")
-}
-
-test "parse: build metadata" {
-    ro v = Version.from("1.0.0+20130313144700")
-    assert(v.build.len() == 1)
-    assert(v.build[0] == "20130313144700")
-    assert(v.has_build())
-}
-
-test "parse: pre + build" {
-    ro v = Version.from("1.0.0-beta+exp.sha.5114f85")
-    assert(v.pre[0] == "beta")
-    assert(v.build.len() == 3)
-    assert(v.build[0] == "exp")
-    assert(v.build[1] == "sha")
-    assert(v.build[2] == "5114f85")
-}
-
-test "parse: большие числа" {
-    ro v = Version.from("100.200.300")
-    assert(v.major == 100)
-    assert(v.minor == 200)
-    assert(v.patch == 300)
-}
-
-test "parse: pre с цифрами и точками" {
-    ro v = Version.from("1.0.0-x.7.z.92")
-    assert(v.pre.len() == 4)
-    assert(v.pre[3] == "92")
-}
-
-test "parse: ошибка — пустой ввод" {
-    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        ro _ = Version.from("")
-        None
-    }
-    assert(match r {
-        Some(EmptyInput) => true
-        _                => false
-    })
-}
-
-test "parse: ошибка — нет minor" {
-    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        ro _ = Version.from("1")
-        None
-    }
-    assert(match r {
-        Some(MissingMinor) => true
-        _                  => false
-    })
-}
-
-test "parse: ошибка — нет patch" {
-    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        ro _ = Version.from("1.2")
-        None
-    }
-    assert(match r {
-        Some(MissingPatch) => true
-        _                  => false
-    })
-}
-
-test "parse: ошибка — leading zero в major" {
-    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        ro _ = Version.from("01.0.0")
-        None
-    }
-    assert(match r {
-        Some(LeadingZero { .. }) => true
-        _                         => false
-    })
-}
-
-test "parse: ошибка — leading zero в pre numeric" {
-    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        ro _ = Version.from("1.0.0-01")
-        None
-    }
-    assert(match r {
-        Some(LeadingZero { .. }) => true
-        _                         => false
-    })
-}
-
-test "parse: ошибка — пустой identifier в pre" {
-    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        ro _ = Version.from("1.0.0-")
-        None
-    }
-    assert(match r {
-        Some(EmptyIdentifier { .. }) => true
-        _                             => false
-    })
-}
-
-test "parse: ошибка — нечисловой major" {
-    ro r = with Fail[ParseVersionError] = |e| interrupt Some(e) {
-        ro _ = Version.from("a.b.c")
-        None
-    }
-    assert(match r {
-        Some(InvalidComponent { .. }) => true
-        _                              => false
-    })
-}
-
-test "to_str: round-trip простая версия" {
-    ro v = Version.new(1, 2, 3)
-    assert(v.to_str() == "1.2.3")
-    ro parsed = Version.from(v.to_str())
-    assert(parsed== v)
-}
-
-test "to_str: round-trip с pre" {
-    ro v = Version.full(1, 0, 0, ["alpha", "1"], [])
-    assert(v.to_str() == "1.0.0-alpha.1")
-    ro parsed = Version.from(v.to_str())
-    assert(parsed== v)
-}
-
-test "to_str: round-trip с build" {
-    ro v = Version.full(1, 0, 0, [], ["build", "42"])
-    assert(v.to_str() == "1.0.0+build.42")
-    ro parsed = Version.from(v.to_str())
-    assert(parsed== v)
-}
-
-test "to_str: round-trip с pre и build" {
-    ro v = Version.full(1, 0, 0, ["beta"], ["exp", "sha", "5114f85"])
-    assert(v.to_str() == "1.0.0-beta+exp.sha.5114f85")
-    ro parsed = Version.from(v.to_str())
-    assert(parsed== v)
-}
-
-test "compare: numeric ordering" {
-    ro a = Version.from("1.0.0")
-    ro b = Version.from("2.0.0")
-    ro c = Version.from("1.1.0")
-    ro d = Version.from("1.0.1")
-
-    assert(a< b)
-    assert(a< c)
-    assert(a< d)
-    assert(d< c)
-    assert(c< b)
-}
-
-test "compare: pre-release < release (semver § 11.3)" {
-    ro pre = Version.from("1.0.0-alpha")
-    ro rel = Version.from("1.0.0")
-    assert(pre< rel)
-    assert(rel.gt(pre))
-}
-
-test "compare: цепочка pre-release per semver.org example" {
-    // Из § 11: 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta
-    //          < 1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
-    ro chain = [
-        Version.from("1.0.0-alpha"),
-        Version.from("1.0.0-alpha.1"),
-        Version.from("1.0.0-alpha.beta"),
-        Version.from("1.0.0-beta"),
-        Version.from("1.0.0-beta.2"),
-        Version.from("1.0.0-beta.11"),
-        Version.from("1.0.0-rc.1"),
-        Version.from("1.0.0"),
-    ]
-    for i in 0..chain.len() - 1 {
-        assert(chain[i]< chain[i + 1])
-    }
-}
-
-test "compare: numeric vs alphanumeric pre identifier" {
-    // Numeric < alphanumeric (semver § 11.4.3)
-    ro num = Version.from("1.0.0-1")
-    ro alpha = Version.from("1.0.0-a")
-    assert(num< alpha)
-}
-
-test "compare: длина pre identifiers" {
-    // Из § 11.4.4: shorter < longer когда префикс совпадает
-    ro short = Version.from("1.0.0-alpha")
-    ro long = Version.from("1.0.0-alpha.1")
-    assert(short< long)
-}
-
-test "compare: build metadata игнорируется (semver § 10)" {
-    ro a = Version.from("1.0.0+build.1")
-    ro b = Version.from("1.0.0+build.2")
-    // Имеют одинаковый precedence, но структурно разные.
-    assert(a.eq_precedence(b))
-    assert(a != b)             // структурное @equal различает build
-    assert(!(a < b))
-    assert(!(b < a))
-}
-
-test "is_stable: только не-pre с major >= 1" {
-    assert(Version.from("1.0.0").is_stable())
-    assert(Version.from("2.5.10").is_stable())
-    assert(!Version.from("0.9.0").is_stable())      // 0.x.y — нестабильное
-    assert(!Version.from("1.0.0-alpha").is_stable()) // pre-release
-}
-
-test "Version.from + .to_str() работают парно" {
-    ro v Version = Version.from("3.14.159")
-    assert(v.major == 3)
-
-    // Обратная форма — явный to_str()
-    ro s str = v.to_str()
-    assert(s == "3.14.159")
-
-    ro s2 str = Version.from("1.2.3").to_str()
-    assert(s2 == "1.2.3")
-}
-
-test "operator overloading: <, ==, !=" {
-    ro v1 = Version.from("1.0.0")
-    ro v2 = Version.from("2.0.0")
-    ro v1_copy = Version.from("1.0.0")
-
-    assert(v1 < v2)
-    assert(v2 > v1)
-    assert(v1 == v1_copy)
-    assert(v1 != v2)
-    assert(v1 <= v1_copy)
-    assert(v1 >= v1_copy)
-}
+// Тесты — см. peer-файл semver_test.nv (module data.semver_test).
