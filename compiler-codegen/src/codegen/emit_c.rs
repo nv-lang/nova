@@ -8127,6 +8127,106 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.type_ref_to_c(e_ty_ref).ok()
     }
 
+    /// [M-exp-promotion-blockers: url tuple-shape mono conflict, sibling
+    /// Option case] Plan 39 Issue A: probe a `with`-block's handler
+    /// literal(s) for the first `interrupt VAL` and return VAL's inferred
+    /// C type — used as the with-block's result type when its body has no
+    /// (or a divergent) trailing expression (D61 §10).
+    ///
+    /// `infer_handler_interrupt_ty` walks the RAW handler closure (`|e|
+    /// interrupt Some(e)`) BEFORE `emit_handler_lit`'s own param-retyping
+    /// override runs (that happens later, when the handler is actually
+    /// installed) — at this point `e`'s var_type is still whatever the
+    /// Fail effect's WIRE-level schema says (hardcoded `nova_str`,
+    /// effects.h) or simply stale/unset, so `Some(e)`'s inferred element
+    /// type is wrong for any concrete `Fail[X]` payload (X != str), not
+    /// just a generic E. Temporarily rebind the handler's first param to
+    /// the binding's REAL effect payload C type (mirrors the override
+    /// `emit_handler_lit` applies later) so the probe sees the correct
+    /// type — the same fix in spirit as `active_fail_e_hint`/
+    /// `current_fail_e_hint` above, but for a bare `Some(e)` (Option)
+    /// rather than `Ok(e)`/`Err(e)` (Result). A plain method (not a
+    /// closure) because it needs `&mut self` (var_types insert/remove)
+    /// while OTHER `&self` calls (`type_ref_to_c` et al.) are still live
+    /// at the call sites — a persistent mutably-capturing closure would
+    /// conflict with those.
+    fn probe_handler_ty(&mut self, bindings: &[WithBinding]) -> String {
+        for b in bindings {
+            let first_param = match &b.handler.kind {
+                ExprKind::ClosureLight { params, .. } if !params.is_empty() =>
+                    Some(params[0].name.clone()),
+                ExprKind::ClosureFull(fsb) if !fsb.params.is_empty() =>
+                    Some(fsb.params[0].name.clone()),
+                _ => None,
+            };
+            let payload_c: Option<String> = match &b.effect {
+                TypeRef::Named { path, generics, .. }
+                    if path.last().map_or(false, |s| s == "Fail") =>
+                    generics.first().and_then(|g| self.type_ref_to_c(g).ok()),
+                _ => None,
+            };
+            let saved = match (&first_param, &payload_c) {
+                (Some(name), Some(c)) if c != "nova_str" =>
+                    Some((name.clone(), self.var_types.insert(name.clone(), c.clone()))),
+                _ => None,
+            };
+            let ty = infer_handler_interrupt_ty(self, &b.handler);
+            if let Some((name, prev)) = saved {
+                match prev {
+                    Some(p) => { self.var_types.insert(name, p); }
+                    None => { self.var_types.remove(&name); }
+                }
+            }
+            if let Some(ty) = ty {
+                return ty;
+            }
+        }
+        "nova_unit".into()
+    }
+
+    /// `&self` twin of `probe_handler_ty` for the read-only duplicate of this
+    /// probe inside `infer_expr_c_type`'s `ExprKind::With` arm (used e.g. for
+    /// a `ro r = with {...}` LET-binding's declared type) — same fix, via
+    /// `closure_param_type_overrides` (a `RefCell`, so it works under `&self`)
+    /// instead of directly mutating `var_types`.
+    fn probe_handler_ty_ro(&self, bindings: &[WithBinding]) -> Option<String> {
+        for b in bindings {
+            let first_param = match &b.handler.kind {
+                ExprKind::ClosureLight { params, .. } if !params.is_empty() =>
+                    Some(params[0].name.clone()),
+                ExprKind::ClosureFull(fsb) if !fsb.params.is_empty() =>
+                    Some(fsb.params[0].name.clone()),
+                _ => None,
+            };
+            let payload_c: Option<String> = match &b.effect {
+                TypeRef::Named { path, generics, .. }
+                    if path.last().map_or(false, |s| s == "Fail") =>
+                    generics.first().and_then(|g| self.type_ref_to_c(g).ok()),
+                _ => None,
+            };
+            let saved = match (&first_param, &payload_c) {
+                (Some(name), Some(c)) if c != "nova_str" => {
+                    let prev = self.closure_param_type_overrides.borrow_mut()
+                        .insert(name.clone(), c.clone());
+                    Some((name.clone(), prev))
+                }
+                _ => None,
+            };
+            let ty = infer_handler_interrupt_ty(self, &b.handler);
+            if let Some((name, prev)) = saved {
+                let mut ovr = self.closure_param_type_overrides.borrow_mut();
+                match prev {
+                    Some(p) => { ovr.insert(name, p); }
+                    None => { ovr.remove(&name); }
+                }
+            }
+            if let Some(ty) = ty {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
     // ---- effect with/handler ----
 
     fn emit_with(&mut self, bindings: &[WithBinding], body: &Block) -> Result<String, String> {
@@ -8353,16 +8453,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // handler interrupt-VAL type — это semantically тип W (D61 §10).
         // Probe handler-лямбды на interrupt VAL — fallback тип W (D61 §10)
         // когда trailing отсутствует ИЛИ divergent (см. ниже).
-        let probe_handler_ty = || -> String {
-            let mut found: Option<String> = None;
-            for b in bindings {
-                if let Some(ty) = infer_handler_interrupt_ty(self, &b.handler) {
-                    found = Some(ty);
-                    break;
-                }
-            }
-            found.unwrap_or_else(|| "nova_unit".into())
-        };
         let trail_ty = match &body.trailing {
             // A divergent trailing (`throw` / `interrupt` / panic) infers as
             // `Nova_never*` — which is NOT a real C type. The with-block's value
@@ -8372,7 +8462,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Some(t) => {
                 let mut ty = self.infer_expr_c_type(t);
                 if ty == "Nova_never*" || ty == "Nova_never" || self.expr_diverges_125(t) {
-                    ty = probe_handler_ty();
+                    ty = self.probe_handler_ty(bindings);
+                } else if matches!(&t.kind, ExprKind::Ident(n) if n == "None") {
+                    // [M-exp-promotion-blockers: url tuple-shape mono conflict,
+                    // sibling Option case] mirror of the identical fix in
+                    // `infer_expr_c_type`'s `ExprKind::With` arm — a bare `None`
+                    // trailing's element type is only recoverable from a
+                    // sibling `interrupt Some(e)` handler.
+                    let probed = self.probe_handler_ty(bindings);
+                    if probed.starts_with("NovaOpt_") {
+                        ty = probed;
+                    }
                 } else if let ExprKind::Call { func, args, .. } = &t.kind {
                     // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
                     // a bare `Ok(x)`/`Err(x)` trailing has its OTHER Result[T,E]
@@ -8411,7 +8511,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 ty
             }
-            None => probe_handler_ty(),
+            None => self.probe_handler_ty(bindings),
         };
         let category = with_result_category(&trail_ty);
 
@@ -8471,7 +8571,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         if let Some(trailing) = &body.trailing {
             self.emit_source_annotation_for_expr(trailing);
-            let tv = self.emit_expr(trailing)?;
+            // [M-exp-promotion-blockers: url tuple-shape mono conflict,
+            // sibling Option case] a bare `None` trailing's OWN emission
+            // (`emit_expr`) doesn't know the sibling `interrupt Some(e)`
+            // hint either — it would default to the generic `NovaOpt_
+            // nova_int` None literal, mismatching the now-correctly-
+            // resolved `result_decl_ty`/`category` above. Construct the
+            // properly-typed None literal directly instead of going
+            // through the generic (context-blind) `emit_expr` path.
+            let tv = if matches!(&trailing.kind, ExprKind::Ident(n) if n == "None")
+                && result_decl_ty.starts_with("NovaOpt_")
+            {
+                self.option_none_expr(result_decl_ty.trim_start_matches("NovaOpt_"))
+            } else {
+                self.emit_expr(trailing)?
+            };
             match category {
                 WithResultCategory::IntLike => {
                     self.line(&format!("{} = (nova_int)({});", result_tmp, tv));
@@ -35173,7 +35287,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         'outer: for arm in arms {
             if arm_diverges(self, arm) { continue; }
             let t = infer_arm(self, arm);
-            if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t) {
+            if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t)
+                && !Self::is_default_ambiguous_composite_c(&t) {
                 result_ty = t;
                 break 'outer;
             }
@@ -41642,6 +41757,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         s.starts_with("NovaRes_nova_int_")
     }
 
+    /// [M-exp-promotion-blockers: url tuple-shape mono conflict] a tuple
+    /// literal whose every element is a bare ambiguous default (`None`
+    /// with no type context, an untyped `0`-like scalar) mono's to a
+    /// `_NovaTuple_<n>_..._NovaOpt_nova_int_..._nova_int_...` shape — the
+    /// per-scalar "default-ambiguous → nova_int" convention, generalized
+    /// element-wise (recursively, for a tuple-of-tuples). Mirrors
+    /// `is_stub_ok_result`'s "weak type" concept for the match-arm
+    /// reconciliation loops in `emit_match` / `infer_expr_c_type`'s Match
+    /// arm: a sibling arm's MORE CONCRETE tuple type (e.g. all-str, from
+    /// `Some(ui) => match ui.find(":") { ... }`) must win over an earlier
+    /// `None => (None, None)`-shaped arm's fully-ambiguous tuple — exactly
+    /// like a concrete Result wins over a stub. Without this, the bare
+    /// `t != "nova_int"` check never fires for a TUPLE type string (it's
+    /// never LITERALLY "nova_int", just entirely composed of it), so the
+    /// first arm's ambiguous tuple silently won and a later arm's genuinely
+    /// different (e.g. all-str) tuple value got assigned into it —
+    /// `struct A = struct B` C type mismatch (encoding/url.nv
+    /// `parse_authority`'s userinfo/host destructures).
+    fn is_default_ambiguous_composite_c(s: &str) -> bool {
+        if s == "nova_int" || s == "NovaOpt_nova_int" {
+            return true;
+        }
+        if let Some(elems) = Self::parse_mono_tuple_elements(s) {
+            return !elems.is_empty()
+                && elems.iter().all(|e| Self::is_default_ambiguous_composite_c(e));
+        }
+        false
+    }
+
     /// Plan 180 Ф.6: combine a set of ALREADY-COMPUTED arm/branch Result C-types
     /// into the full `Result[OK, ERR]`. `Ok(x)` alone infers `NovaRes_<ok>_nova_str`
     /// (stub ERR); `Err(e)` alone `NovaRes_nova_int_<err>` (stub OK). Splitting each
@@ -45309,7 +45453,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     for arm in arms {
                         if arm_diverges(self, arm) { continue; }
                         let t = infer_arm(self, arm);
-                        if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t) {
+                        if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t)
+                && !Self::is_default_ambiguous_composite_c(&t) {
                             return if any_unit_arm { "nova_unit".into() } else { t };
                         }
                     }
@@ -48866,7 +49011,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     for arm in arms {
                         if arm_diverges(self, arm) { continue; }
                         let t = infer_arm(self, arm);
-                        if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t) {
+                        if t != "nova_unit" && t != "nova_int" && !Self::is_stub_ok_result(&t)
+                && !Self::is_default_ambiguous_composite_c(&t) {
                             return if any_unit_arm { "nova_unit".into() } else { t };
                         }
                     }
@@ -49150,6 +49296,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // ищем рекурсивно.
                 ExprKind::With { bindings, body } => {
                     if let Some(trailing) = &body.trailing {
+                        // [M-exp-promotion-blockers: url tuple-shape mono
+                        // conflict, sibling Option case] a bare `None`
+                        // trailing (`with Fail[X] = |e| interrupt Some(e)
+                        // { ...; None }`, encoding/url.nv's test pattern) is
+                        // exactly as ambiguous as a bare `Ok`/`Err` trailing
+                        // below — its element type is only recoverable from
+                        // the sibling `interrupt Some(e)` handler. Mirror of
+                        // `emit_with`'s `probe_handler_ty`/`_ro` fix.
+                        if matches!(&trailing.kind, ExprKind::Ident(n) if n == "None") {
+                            if let Some(ty) = self.probe_handler_ty_ro(bindings) {
+                                if ty.starts_with("NovaOpt_") {
+                                    return ty;
+                                }
+                            }
+                        }
                         // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
                         // mirror of the identical fix in `emit_with` (the
                         // C-emission twin of this type-inference path): a bare

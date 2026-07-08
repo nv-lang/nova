@@ -154,7 +154,12 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     }
 
     if auth.byte_len() == 0 {
-        return (None, None, None, None, rest)
+        // `parse_authority` is only ever called after an explicit "//" was
+        // seen (Url.from's dispatch) — an empty `auth` here means an
+        // explicit-but-empty authority (`file:///etc/hosts`), i.e. host is
+        // the empty string, not absent. `Some("")`, not `None` (test
+        // "parse: file:// без host" expects `u.host == Some("")`).
+        return (None, None, Some(""), None, rest)
     }
 
     // Userinfo — до "@", если есть
