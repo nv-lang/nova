@@ -17082,6 +17082,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+            // [M-rawmem-typed-copy-wrappers] `*T` / `*mut T` param → strip one
+            // pointer level off the concrete C arg type and recurse into the
+            // pointee. Mirror of the substitution-direction unwrap already done
+            // in `apply_type_subst_to_ref` (Pointer wraps Mut/Unsafe for the
+            // postfix `*mut T`/`*unsafe T` spelling, D216/Plan 138.5); without
+            // this arm a generic fn whose type param appears ONLY under a raw
+            // pointer (e.g. `RawMem.copy_n_nonoverlapping[T](src *T, dst *mut T, ...)`)
+            // can never bind T from call-site args — every call falls through to
+            // the `cannot infer` error (or a caller-side silent fallback).
+            crate::ast::TypeRef::Pointer(inner, _) => {
+                let base = match inner.as_ref() {
+                    crate::ast::TypeRef::Mut(ti, _) | crate::ast::TypeRef::Unsafe(ti, _) => ti.as_ref(),
+                    other => other,
+                };
+                // Strip exactly ONE pointer level (`strip_suffix`, not
+                // `trim_end_matches` — the pointee itself may be a pointer,
+                // e.g. an element type `Nova_U*` inside a `Vec[U*]` buffer
+                // gives concrete_c = "Nova_U**"; trimming ALL trailing `*`
+                // would over-strip to bare "Nova_U" and bind T to an
+                // incomplete/erased stub type, not the real one-level pointee).
+                if let Some(stripped) = concrete_c.strip_prefix("const ").unwrap_or(concrete_c).strip_suffix('*') {
+                    self.infer_type_param_binding(base, stripped.trim(), subst);
+                }
+            }
+            crate::ast::TypeRef::Mut(inner, _) | crate::ast::TypeRef::Unsafe(inner, _) => {
+                if let crate::ast::TypeRef::Pointer(p_inner, _) = inner.as_ref() {
+                    if let Some(stripped) = concrete_c.strip_prefix("const ").unwrap_or(concrete_c).strip_suffix('*') {
+                        self.infer_type_param_binding(p_inner, stripped.trim(), subst);
+                    }
+                } else {
+                    self.infer_type_param_binding(inner, concrete_c, subst);
+                }
+            }
             // fn(..)->T: skip (closure C type doesn't encode return type directly)
             _ => {}
         }
@@ -32133,10 +32166,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if static_overloads.iter().any(|c| c.c_name.starts_with("__mono_method__")) {
                                 let recv_key = (recv_seg.clone(), method_name.clone());
                                 if let Some(fn_decl) = self.mono_method_decls.get(&recv_key).cloned() {
-                                    let type_subst = self.resolve_mono_type_args(&fn_decl, &[], args)
-                                        .unwrap_or_else(|_| fn_decl.generics.iter()
-                                            .map(|g| (g.name.clone(), "nova_str".to_string()))
-                                            .collect());
+                                    // [M-rawmem-typed-copy-wrappers] was: silent
+                                    // `unwrap_or_else(|_| ... "nova_str")` — masked
+                                    // genuine inference failures (e.g. a `*T`-only
+                                    // param, unhandled by `infer_type_param_binding`
+                                    // until the Pointer/Mut/Unsafe arm above) by
+                                    // mono'ing EVERY unresolved call to the SAME
+                                    // bogus `nova_str` instance regardless of the
+                                    // real T (Vec[T]@cap → copy_n_nonoverlapping
+                                    // silently corrupted non-str Vecs). Loud error
+                                    // per project doctrine — no silent fallback.
+                                    let type_subst = self.resolve_mono_type_args(&fn_decl, &[], args)?;
                                     let base_c_name = format!("Nova_{}_static_{}", recv_seg, method_name);
                                     let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                                     let rt_clone = recv_seg.clone();

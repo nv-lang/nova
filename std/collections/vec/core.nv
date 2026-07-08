@@ -286,7 +286,7 @@ export fn Vec[T] mut @cap(n int) -> @
     // bitwise; both buffers are reachable during the copy so the GC keeps every
     // referent alive.
     unsafe {
-        RawMem.copy_nonoverlapping(@data as *u8, dst as *mut u8, @len * size_of[T]())
+        RawMem.copy_n_nonoverlapping(@data, dst, @len)
     }
     @data = dst
     @cap = n
