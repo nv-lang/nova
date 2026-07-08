@@ -2497,12 +2497,36 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - **[M-exp-promotion-blockers]** (2026-07-08, P2-пакет, Plan: 172.13; Wave: батчами после
   первых 4 маркеров) — 6 компиляторных классов, блокирующих последние 6 модулей
   _experimental (детали и репро — в std/_experimental/STATUS.md, разметка волны 2):
-  csv (nested [][]str runtime), toml (Fail-handler mono gap Nova_*Error_p), url
+  csv (nested [][]str runtime), toml (Fail-handler mono gap Nova_*Error_p — ЗАКРЫТ
+  батчем 3, см. ниже; НОВЫЙ блокер найден), url
   (tuple-destructure infer), uuid_namespace (duplicate-symbol md5+sha1 в одном CU),
   linkedlist (2× self-recursive generic mono — родня [M-option-self-recursive-record-mono]
   агента владельца), retry (E_UNUSED_PREFIX_TYPEVAR двусторонний). Плюс довливной
   вне пакета: std/time/timer_metrics_test CC-FAIL (NovaValue_Timestamp ← int,
   воспроизведён на c65af77ed) — папка time впервые в гейтах.
+
+- **[toml Fail-mono, батч 3]** — корень: mono-name mangling конвенция кодирует
+  pointer-typed T как суффикс `_p` в идентификаторе (`*` не ident-safe) —
+  `Option[ParseTomlError]` (heap sum-type) моно-имя `NovaOpt_Nova_ParseTomlError_p`.
+  `Option[T].unwrap()`'s return-type inference (`infer_expr_c_type`, ДВЕ
+  дублированные копии, emit_c.rs ~44460/~48188) брала extracted-суффикс
+  НАПРЯМУЮ как C-тип вместо реверса `_p`→`*` — `throw err.unwrap()`
+  (toml.nv:287) получал bogus C-тип `Nova_ParseTomlError_p` (не объявлен) →
+  CC-FAIL «unknown type name». Фикс: новый helper
+  `debt_unmangle_ptr_suffix` (emit_c.rs), применён в обеих копиях (третья
+  копия того же паттерна, emit_c.rs:28667, НЕ трогать — там elem_ty
+  используется для построения ДРУГОГО mangled-имени, где `_p` обязан
+  остаться). Конформанс 67/0 без регрессий; std/encoding, std/data чисты.
+  **НОВЫЙ блокер после фикса** (toml всё ещё НЕ готов к промоушену):
+  `Nova_HashMap____nova_str__Nova_TomlValue_p` — «unknown type name» на
+  использовании (поле suum-варианта `TomlTable`, toml.c:740/780/879), хотя
+  typedef ЕСТЬ дальше в файле (toml.c:944/1010) — forward-declare/hoist
+  ordering для mono struct типа, использованного как поле payload'а
+  sum-варианта. Похоже на ТУ ЖЕ зону (typedef-hoist для value-полей
+  записей), что занята агентом [M-option-self-recursive-record-mono]
+  (emit_c.rs/types/mod.rs, явно «не заходить») — НЕ трогал, оставил
+  toml в _experimental. Перепроверить toml после закрытия
+  [M-option-self-recursive-record-mono].
 
 - **[M-c-keyword-mangle-destructure-tail]** (2026-07-08, P3, Plan: 172.13 хвост;
   Wave: с батчем 2-3) — манглинг C-keyword идентификаторов (закрыт батчем 1,

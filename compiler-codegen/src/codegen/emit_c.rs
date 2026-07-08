@@ -1805,6 +1805,27 @@ impl CEmitter {
         self.per_e_fail_types.insert(e_c.to_string());
     }
 
+    /// [M-exp-promotion-blockers: toml] (Plan 172.13): reverse the mono-name
+    /// "sanitized pointer" marker. A pointer-typed `T*` cannot appear literally
+    /// inside a generated C identifier (`*` isn't ident-safe), so mono struct
+    /// names encode it as a trailing `_p` instead — e.g. `Option[ParseTomlError]`
+    /// (a heap sum-type, C type `Nova_ParseTomlError*`) mono-names to
+    /// `NovaOpt_Nova_ParseTomlError_p` (see `debt_mangled_has_nested_placeholder`'s
+    /// "sanitized-pointer marker" comment for the same convention elsewhere).
+    /// Some call sites extract the element/inner segment from such a mono name
+    /// to use it AS a real C type (e.g. `Option[T].unwrap()`'s inferred return
+    /// type) — those must reverse the marker back into `T*`, or the emitted C
+    /// references a type that was never declared (`T_p` isn't a real type —
+    /// CC-FAIL "unknown type name"). Other call sites re-use the extracted
+    /// segment to build ANOTHER mangled identifier (e.g. a per-T trampoline
+    /// name) — those must NOT reverse it, and do not call this helper.
+    fn debt_unmangle_ptr_suffix(mangled: &str) -> String {
+        match mangled.strip_suffix("_p") {
+            Some(base) if !base.is_empty() => format!("{}*", base),
+            _ => mangled.to_string(),
+        }
+    }
+
     /// Plan 61 followup #4: consistent mangling для per-E identifiers
     /// (vtable / TLS slot / throw entry / adapter). Mirrors debt_typeid_macro_for
     /// чтобы NOVA_TID_USER_<X> matched name.
@@ -44436,11 +44457,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D26 prelude: NovaOpt_T method type inference.
                         if obj_ty.starts_with("NovaOpt_") {
-                            let elem_ty = obj_ty.strip_prefix("NovaOpt_")
-                                .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
-                                .trim_end_matches('*')
-                                .trim()
-                                .to_string();
+                            let elem_ty = Self::debt_unmangle_ptr_suffix(
+                                obj_ty.strip_prefix("NovaOpt_")
+                                    .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
+                                    .trim_end_matches('*')
+                                    .trim()
+                            );
                             // Plan 99.1 Ф.2: для Nova-body методов с
                             // method-level generic (`map[U]`/`ok_or[E]`)
                             // используем `infer_method_level_return_for_sum`
@@ -48164,11 +48186,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D26 prelude: NovaOpt_T method type inference.
                         if obj_ty.starts_with("NovaOpt_") {
-                            let elem_ty = obj_ty.strip_prefix("NovaOpt_")
-                                .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
-                                .trim_end_matches('*')
-                                .trim()
-                                .to_string();
+                            let elem_ty = Self::debt_unmangle_ptr_suffix(
+                                obj_ty.strip_prefix("NovaOpt_")
+                                    .unwrap_or_else(|| panic!("[P67] nova_int collapse in legacy"))
+                                    .trim_end_matches('*')
+                                    .trim()
+                            );
                             // Plan 99.1 Ф.2: для Nova-body методов с
                             // method-level generic (`map[U]`/`ok_or[E]`)
                             // используем `infer_method_level_return_for_sum`
