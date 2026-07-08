@@ -69,7 +69,7 @@ test "TcpStream structurally conforms to io.Read/io.Write (mono-dispatch over mo
                 mut buf []u8 = []u8.new()
                 buf.resize(10, 0 as u8)
                 match read_exact(s, buf) {
-                    Ok(_)  => assert(unsafe { str.from_bytes_unchecked(buf) } == "mock-reply")
+                    Ok(_)  => assert(unsafe { buf.to_str_unchecked() } == "mock-reply")
                     Err(_) => panic_d302("read_exact")
                 }
                 s.close()

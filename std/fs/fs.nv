@@ -407,7 +407,9 @@ export fn read(path Path) Fs -> Result[[]u8, IoError] {
 export fn read_text(path Path) Fs -> Result[str, IoError] {
     match read(path) {
         Err(e) => Err(e)
-        Ok(bytes) => match str.from_bytes(bytes) {
+        // decode_utf8 = []u8 @to_str alias — this CU also has `Path @to_str()`
+        // ([M-174.1-to-str-name-collision-codegen-bug], backlog-followups.md).
+        Ok(bytes) => match bytes.decode_utf8() {
             Ok(s)  => Ok(s)
             Err(_) => Err(IoError.new(ErrorKind.InvalidData, "read_to_string"))
         }

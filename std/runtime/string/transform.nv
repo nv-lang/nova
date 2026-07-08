@@ -102,7 +102,7 @@ export fn str @to_ascii_lower() -> str {
         if b >= 65 && b <= 90 { out[i] = (b + 32) as u8 }
         i += 1
     }
-    unsafe { str.from_bytes_unchecked(out) }
+    str.alloc_copy(out.ptr(), out.len())
 }
 
 // ASCII uppercase копия. Bulk-copy then in-place patch: one alloc + memcpy,
@@ -119,7 +119,7 @@ export fn str @to_ascii_upper() -> str {
         if b >= 97 && b <= 122 { out[i] = (b - 32) as u8 }
         i += 1
     }
-    unsafe { str.from_bytes_unchecked(out) }
+    str.alloc_copy(out.ptr(), out.len())
 }
 
 // Конкатенация двух строк (создаёт новую). O(a+b).
@@ -143,7 +143,7 @@ export fn str @concat(other str) -> str {
     out.cap(a.len() + b.len())
     out.append(a)
     out.append(b)
-    unsafe { str.from_bytes_unchecked(out) }
+    str.alloc_copy(out.ptr(), out.len())
 }
 
 // Оператор `+`: `s1 + s2 == s1.@plus(s2)` → @concat (D46).

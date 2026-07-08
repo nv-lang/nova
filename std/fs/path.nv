@@ -107,7 +107,9 @@ export fn Path @path_style() -> PathStyle => @style
 /// non-UTF-8 Unix name or a WTF-8 lone surrogate) — never lossy corruption.
 #stable(since = "0.1")
 export fn Path @to_str() -> Option[str] {
-    match str.from_bytes(@bytes) {
+    // decode_utf8 = []u8 @to_str alias — colliding with THIS method's own name
+    // in the same CU ([M-174.1-to-str-name-collision-codegen-bug]).
+    match @bytes.decode_utf8() {
         Ok(s)  => Some(s)
         Err(_) => None
     }
@@ -116,7 +118,7 @@ export fn Path @to_str() -> Option[str] {
 /// Lossy display string (invalid bytes → U+FFFD). **Print-only** — never feed
 /// this back to the filesystem (round-trip would corrupt non-UTF-8 names).
 #stable(since = "0.1")
-export fn Path @display() -> str => str.from_bytes_lossy(@bytes)
+export fn Path @display() -> str => @bytes.to_str_lossy()
 
 /// Number of bytes in the path.
 #stable(since = "0.1")
@@ -202,7 +204,8 @@ fn recompose(d Decomp, style PathStyle) -> []u8 {
 }
 
 fn bytes_to_str(b []u8) -> Option[str] {
-    match str.from_bytes(b) {
+    // decode_utf8 = []u8 @to_str alias ([M-174.1-to-str-name-collision-codegen-bug]).
+    match b.decode_utf8() {
         Ok(s)  => Some(s)
         Err(_) => None
     }
@@ -331,7 +334,7 @@ export fn Path @components() -> []str {
     ro d = decompose(@bytes, @style)
     mut out []str = []
     for c in d.comps {
-        out.push(str.from_bytes_lossy(c))
+        out.push(c.to_str_lossy())
     }
     out
 }

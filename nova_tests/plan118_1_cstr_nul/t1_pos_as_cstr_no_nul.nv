@@ -13,7 +13,8 @@ test "as_cstr on NUL-free strings succeeds (no panic)" {
 }
 
 test "as_cstr_unchecked does NOT scan — no panic even with an embedded NUL" {
-    ro s = str.from_bytes_unchecked([104, 105, 0, 110])
+    ro raw []u8 = [104, 105, 0, 110]
+    ro s = unsafe { raw.to_str_unchecked() }
     unsafe {
         ro c = s.as_cstr_unchecked()
     }

@@ -6,7 +6,7 @@
 // serializer uses (`format_string` / `format_array` / `format_object`).
 //
 // The defect was NOT in consume-tracking: `into_str()` lowers to
-// `str.from_bytes_unchecked_steal(@buf)`, whose in-place NUL-terminate path
+// `@buf.into_str_unchecked()`, whose in-place NUL-terminate path
 // (`buf[n] = 0`) ran on a mis-typed local — codegen adopted the checker channel's
 // UN-substituted return type of `Vec[T] @into_raw() -> *mut T` (the erased stub
 // `Nova_T**`, 8-byte stride) instead of the concrete `nova_byte*` (1-byte stride),

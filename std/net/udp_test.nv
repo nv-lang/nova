@@ -43,7 +43,7 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
                     Ok((n, sender)) => {
                         ro b_port = match ch_b.rx.recv() { Some(x) => x  None => 0 as u16 }
                         assert(n == 9)
-                        assert(unsafe { str.from_bytes_unchecked(buf[0..n]) } == "ping net2")
+                        assert(unsafe { buf[0..n].to_str_unchecked() } == "ping net2")
                         // The out-param sender must carry b's real port.
                         assert(sender.port() == b_port)
                         assert(sender.is_v4())
@@ -77,7 +77,7 @@ test "net2/udp: recv_from_vec returns owned bytes + sender" {
                 match a.recv_from_vec(64) {
                     Ok((data, sender)) => {
                         assert(data.len() == 5)
-                        assert(unsafe { str.from_bytes_unchecked(data) } == "hello")
+                        assert(unsafe { data.to_str_unchecked() } == "hello")
                         assert(sender.port() > 0)
                     }
                     Err(_) => assert(false)

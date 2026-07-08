@@ -374,7 +374,7 @@ fn percent_decode(s str) -> str {
             i += 1
         }
     }
-    unsafe { str.from_bytes_unchecked(out) }
+    unsafe { out.to_str_unchecked() }
 }
 
 fn hex_val(c int) -> int {

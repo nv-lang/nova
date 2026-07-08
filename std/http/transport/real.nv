@@ -90,5 +90,7 @@ fn http_send_over_net(host str, port int, request str) Net -> Result[str, HttpEr
         }
     }
     stream.close()
-    Ok(unsafe { str.from_bytes_unchecked(acc.into()) })
+    // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` local.
+    ro acc_bytes []u8 = acc.into()
+    Ok(unsafe { acc_bytes.to_str_unchecked() })
 }

@@ -12,7 +12,7 @@ test "net2/mock: TCP round-trip is fully in-memory" {
         mut buf []u8 = []u8.new()
         buf.resize(32, 0 as u8)
         ro n = must_io(s.read(buf))
-        assert(unsafe { str.from_bytes_unchecked(buf[0..n]) } == "mock-reply")
+        assert(unsafe { buf[0..n].to_str_unchecked() } == "mock-reply")
         assert(s.local_port() == 5050)
         assert(s.peer_addr().port() == 6060)
         s.close()
