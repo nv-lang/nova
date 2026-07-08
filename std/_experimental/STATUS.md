@@ -30,17 +30,42 @@
 > pre-existing codegen-дефектом `[M-static-selfreturn-value-mangle-conflict]`
 > (см. docs/plans/backlog-followups.md).
 
+> **PROMOTED 2026-07-08 (волна 2, 14 модулей):** `crypto/{sha256,hmac,md5,
+> sha1,jwt}` → `std/crypto/`; `encoding/{hex,ini}` → `std/encoding/`;
+> `identifiers/{ulid,uuid}` → `std/identifiers/`; `time/cron` → `std/time/`;
+> `text/{diff,markdown_minimal,regex}` → `std/text/`; `data/{semver,sql}` →
+> `std/data/` (новые каталоги). Каждый — с peer-тестами `*_test.nv`,
+> explicit imports вместо implicit cross-module resolution (последнее
+> проходит `nova check`, но ломает codegen — P67-LEGACY/mono-erasure),
+> error-path тесты на flag-idiom (`|e| { caught = e is Variant; fallback }`
+> вместо `interrupt Some(e)` + `match Some(Variant{..})` — второе даёт
+> CC-FAIL на struct-payload enum). Найдены и исправлены 3 pre-existing
+> content-бага (не promotion-механика): markdown_minimal literal-text не
+> экранировал HTML; semver.from молча принимал trailing `-`/`+` без
+> identifier; sql.nv не импортировал `std.text` для `[]str.join()`.
+> `csv`/`toml`/`url` (encoding), `uuid_namespace` (identifiers),
+> `linkedlist` (collections), `retry` (concurrency) остаются здесь —
+> каждый PASS `nova check`, но CC-FAIL/CODEGEN-FAIL под `nova test --full`
+> на РАЗНЫХ genuine compiler-дефектах (см. таблицу и
+> docs/plans/backlog-followups.md для деталей каждого).
+
 | Domain | Files | Status | Reason for exp. |
 |---|---|---|---|
-| `collections/` | `linkedlist` (остальные 5 PROMOTED 2026-07-08) | PASS check | Non-MVP per Plan 91 §Scope (MVP = vec/hashmap/set only) |
-| `crypto/` | `hmac`, `jwt`, `md5`, `sha1`, `sha256` (`bcrypt` PROMOTED 2026-07-08) | sha256 PASS+тесты зелёные (2026-07-08: `[0;N]`-литералы развёрнуты явными списками); hmac/jwt/md5/sha1 — прежний статус | Non-MVP per Plan 91 §Non-scope |
-| `encoding/` | `csv`, `hex`, `ini`, `toml`, `url` | hex PASS+тесты зелёные (2026-07-08: into_str/byte_len/Result-фиксы); csv/ini/url PASS, toml STACK_OVERFLOW | Non-MVP per Plan 91 §Non-scope; toml stack overflow blocks `nova check std/` без skip |
-| `identifiers/` | `ulid`, `uuid`, `uuid_namespace` (`snowflake` PROMOTED 2026-07-08) | PASS check | Non-MVP per Plan 91 §Non-scope |
-| `data/` | `semver`, `semver_range`, `sql` | PASS check | Non-MVP per Plan 91 §Non-scope |
-| `math/` | `complex` (`statistics` PROMOTED 2026-07-08) | check PASS, CC-FAIL codegen — `[M-static-selfreturn-value-mangle-conflict]` | Промоушен gated компиляторным дефектом (не контентом модуля) |
-| `text/` | `diff`, `markdown_minimal`, `regex` | 1 FAIL (regex D52 §2), 2 PASS | Non-MVP per Plan 91 §Non-scope (regex/markdown), text MVP = runtime/string.nv |
-| `time/` | `cron` | FAIL (D52 §2) | Non-MVP per Plan 91 §Scope (MVP time = duration only) |
-| `concurrency/` | `retry` (`rate_limiter` PROMOTED 2026-07-08) | FAIL (retry E_UNUSED_PREFIX_TYPEVAR) | Non-MVP — `cancellation`/`timer` остаются в std/concurrency/ как Plan 83 fiber-api |
+| `collections/` | `linkedlist` (остальные 5 PROMOTED 2026-07-08 w1) | check PASS, test--full CC-FAIL (2×) — self-recursive generic `.map()` P67-LEGACY + cross-CU `LinkedList[T].new()` mono-loss | Промоушен gated compiler-дефектом (recursive generic sum-type mono) |
+| `crypto/` | (пусто — все 5 PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt) | — | — |
+| `encoding/` | `csv`, `toml`, `url` (`hex`/`ini` PROMOTED 2026-07-08 w2) | check PASS, test--full CC-FAIL/CODEGEN-FAIL (3 разных дефекта — см. inline-комментарии в файлах) | Промоушен gated compiler-дефектами: csv — nested `[][]str` aliasing runtime-баг; toml — Fail-handler mono gap (`Nova_*Error_p` unknown type); url — документированный tuple-destructure infer баг (Plan 06 Ф.2), подтверждён под codegen |
+| `identifiers/` | `uuid_namespace` (`ulid`/`uuid` PROMOTED 2026-07-08 w2, `snowflake` w1) | check PASS, test--full CC-FAIL — duplicate C-symbol emission (`crypto.md5.rotl32` эмиттится дважды когда `md5`+`sha1` в одном CU) | Промоушен gated general compiler-дефектом (private-fn dedup emission), репродуцирован минимальным файлом |
+| `data/` | `semver_range` | PASS check (не проверялся в волне 2 — не в списке переноса) | Non-MVP per Plan 91 §Non-scope; `semver`/`sql` PROMOTED 2026-07-08 w2 |
+| `math/` | `complex` (`statistics` PROMOTED 2026-07-08 w1) | check PASS, CC-FAIL codegen — `[M-static-selfreturn-value-mangle-conflict]` | Промоушен gated компиляторным дефектом (не контентом модуля) |
+| `text/` | (пусто — все 3 PROMOTED 2026-07-08 w2: diff/markdown_minimal/regex) | — | — |
+| `time/` | (пусто — cron PROMOTED 2026-07-08 w2) | — | — |
+| `concurrency/` | `retry` (`rate_limiter` PROMOTED 2026-07-08 w1) | check PASS (текущая `[T]`-сигнатура), test--full CC-FAIL (E инферится per-call-site, конфликт между T-инстанциями); ПРАВИЛЬНАЯ `[T, E]`-сигнатура (matching doc-comment) REJECTED checker'ом D145 (generic E used только в effect-clause не считается "used") | Two-sided блокировка — implicit-E даёт codegen-баг, explicit-E упирается в checker-ограничение; нужен архитектурный выбор, не в рамках промоушен-волны |
+
+Модули выше с CC-FAIL/CODEGEN-FAIL под `test --full` **сохраняют** свои
+peer inline-тесты (не удалены) с комментарием `[2026-07-08, волна 2
+промоушена]`, объясняющим конкретный дефект — готовы к промоушену как
+только соответствующий codegen-баг будет исправлен (см.
+docs/plans/backlog-followups.md).
 
 ## Promotion path (когда модуль становится MVP)
 
