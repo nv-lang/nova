@@ -13,6 +13,17 @@
 > - [`docs/plans/83.11-centralized-io-driver.md`](plans/83.11-centralized-io-driver.md) §§10.4, 12.16, 12.24, 12.27-29, 12.31
 > - [`nova-private/docs/articles/mn-race-stale-slot.md`](../../../nova-private/docs/articles/mn-race-stale-slot.md) — full case study (both parts)
 > - Memory `reference-mn-race-case-study.md` — distilled template
+>
+> **Plan 173.0 update (2026-07-08):** the `[M-83.11-grow-vs-wake-race]` closure
+> (chunked stable-address `NovaSchedState`, §Group D above) was the gating
+> precondition for building **per-slot child-error retention** on top of it —
+> `child_error[]`/`child_ctx[]` (per-child, not chunked) are safe under the SAME
+> discipline this playbook teaches for `pending_remote`: freeze capacity before
+> drain (no grow-during-drain — R2 tripwire `assert(!q->_drain_started)`), write
+> the per-child slot strictly before the release-decrement, read only after the
+> acquire-load observes zero. See `docs/plans/173.0-concurrency-runtime-substrate.md`
+> §EXEC R1/R2/R3 for the three pre-fatal tripwires (pool-recycle aliasing,
+> torn-base-on-grow, marker-clash-hang) added for this substrate.
 
 ---
 
