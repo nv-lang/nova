@@ -1,0 +1,45 @@
+// [M-module-const-chars-bytes-resolution] (Plan 172.13) — calling an
+// instance method (`.chars()`/`.bytes()`, and by extension any instance
+// method) DIRECTLY on a module-level `const` value must dispatch as an
+// instance call on that value, not misresolve as a static/namespace
+// path-call `nova_fn_<CONST_NAME>_<method>()`. The parser packages a
+// dotted call whose receiver identifier starts uppercase as `Path([name,
+// method])`; the emitter must recognize that `name` is a registered
+// CONST/value binding (`var_types` — types/namespaces are never keyed
+// there) before falling through to the `Type.method(...)` static-call
+// interpretation.
+//
+// Discriminator: `CONST.chars()` used to CC-FAIL
+// (`initializing 'NovaValue_CharsIter' with an expression of incompatible
+// type 'int'`) because it silently called the zero-arg
+// `nova_fn_<CONST>_chars()` path instead of the instance method on the
+// const's string VALUE.
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+const MC_ALPHABET str = "abcdef"
+
+fn mc_count_a() -> int {
+    mut n = 0
+    for c in MC_ALPHABET.chars() {
+        if c == 'a' { n += 1 }
+    }
+    n
+}
+
+fn mc_first_byte() -> u8 {
+    mut b u8 = 0
+    for x in MC_ALPHABET.bytes() {
+        b = x
+        break
+    }
+    b
+}
+
+test "`.chars()` directly on a module-level const" {
+    assert(mc_count_a() == 1)
+}
+
+test "`.bytes()` directly on a module-level const" {
+    assert(mc_first_byte() == 97)  // 'a'
+}

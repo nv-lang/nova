@@ -1,0 +1,41 @@
+// [M-match-tuple-option-value-deref] (Plan 172.13) — `match` over a
+// positional tuple literal of N × `Option[T]` (T a value type: numeric /
+// enum) must use `.` (dot) to test/read each element's tag/payload, not
+// `->` (arrow) — the tuple scrutinee is a value-embedded named-tuple
+// struct (`_NovaTuple_...`), and each `Option[T]` field of it is itself
+// value-embedded (`NovaOpt_<T>`), never a pointer.
+//
+// Root cause was a phase-correctness gap (§0): `emit_match` DOES propagate
+// `tuple_element_types` onto the scrutinee tmp, but `pattern_cond`'s
+// `Pattern::Tuple` arm (and `pattern_bind_typed`'s mirror) never consulted
+// it before recursing into each `scr.fN` sub-pattern — so the nested
+// `Pattern::Variant` arm (`Some(x)`) couldn't see the field's concrete
+// type and defaulted to the pointer-based sum ABI.
+//
+// Discriminator: before the fix, this was CC-FAIL (`member reference type
+// 'NovaOpt_uint32_t' is not a pointer; did you mean to use '.'?`).
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+fn mto_decode4(a Option[u32], b Option[u32], c Option[u32], d Option[u32]) -> Option[u32] {
+    match (a, b, c, d) {
+        (Some(w), Some(x), Some(y), Some(z)) => Some(w + x + y + z)
+        _ => None
+    }
+}
+
+test "tuple-of-4×Option[u32] match: all Some sums the payloads" {
+    ro r = mto_decode4(Some(1), Some(2), Some(3), Some(4))
+    match r {
+        Some(v) => assert(v == 10)
+        None => assert(false)
+    }
+}
+
+test "tuple-of-4×Option[u32] match: any None falls through" {
+    ro r = mto_decode4(Some(1), None, Some(3), Some(4))
+    match r {
+        Some(_) => assert(false)
+        None => assert(true)
+    }
+}

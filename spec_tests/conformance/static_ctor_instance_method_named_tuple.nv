@@ -1,0 +1,50 @@
+// [M-static-selfreturn-value-mangle-conflict] (Plan 172.13) — a static
+// namespace fn `fn Type.method(...) -> Self` (or `-> Result[Self, E]`) for a
+// named-tuple/value-record type (D215/D228) COEXISTING in the same compile
+// unit with an instance method `fn Type @method(...)` of the same type used
+// to CC-FAIL: `conflicting types for 'Nova_<Type>_method_equal'` +
+// `returning 'NovaTuple_<Type>' from a function with incompatible result
+// type 'NovaTuple_<Type> *'`.
+//
+// Root cause: `Self` as a RETURN type resolved via `receiver_c_type` (built
+// for the ACTUAL METHOD RECEIVER's ABI — always a pointer for a value type,
+// so `@field` mutation propagates to the caller), but a STATIC method has NO
+// receiver — its `-> Self` denotes a FRESH value being constructed, and the
+// constructor body's record-literal `return Type(...)` is emitted BY VALUE,
+// matching the ordinary (non-Self) named-tuple return-type lowering. The
+// mismatch between the (wrongly pointer-typed) signature and the (correctly
+// value-typed) body is what CC-FAILed. Fixed by tracking whether the
+// enclosing fn is static (`current_receiver_is_static`) and, only then,
+// resolving `Self` like an ordinary reference to the type instead of via the
+// receiver-ABI helper. Instance-method `Self` (fluent `-> Self`/`-> @`) is
+// unchanged.
+//
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+export type SctPt(x f64 = 0.0, y f64 = 0.0)
+
+export fn SctPt.new(x f64, y f64) -> Self => SctPt(x, y)
+export fn SctPt.try_from(x f64, y f64) -> Result[Self, str] {
+    if x < 0.0 { return Err("negative x") }
+    Ok(SctPt(x, y))
+}
+export fn SctPt @plus(other SctPt) -> SctPt => SctPt(@x + other.x, @y + other.y)
+
+test "static ctor (-> Self) + instance method coexist on a named tuple" {
+    ro p = SctPt.new(1.0, 2.0)
+    ro q = p.plus(SctPt.new(3.0, 4.0))
+    assert(q.x == 4.0)
+    assert(q.y == 6.0)
+}
+
+test "static Result-returning ctor (-> Result[Self, E]) + instance method coexist" {
+    match SctPt.try_from(1.0, 2.0) {
+        Ok(p) => assert(p.x == 1.0)
+        Err(_) => assert(false)
+    }
+    match SctPt.try_from(-1.0, 2.0) {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "negative x")
+    }
+}

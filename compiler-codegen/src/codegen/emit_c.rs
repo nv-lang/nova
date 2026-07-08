@@ -883,6 +883,19 @@ pub struct CEmitter {
     /// (`fn Type mut @method`).  Used at call-sites to tiebreak overloads when
     /// the receiver is `SelfAccess` (i.e. `@other_method()` inside the body).
     current_receiver_is_mut: bool,
+    /// [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): whether the
+    /// currently-emitting fn is a STATIC namespace fn (`fn Type.method(...)`,
+    /// `ReceiverKind::Static` — no actual `self`/`@` VALUE) as opposed to an
+    /// INSTANCE method (`fn Type @method(...)`). Consulted ONLY by the `Self`
+    /// arm of `resolved_named_to_c`: a static fn's `-> Self` denotes a FRESH
+    /// value being constructed (lower like an ordinary reference to the type
+    /// — value-form for named-tuple/value-record), whereas an instance fn's
+    /// `-> Self` (fluent `-> @`) denotes the EXISTING receiver (pointer-form,
+    /// unchanged — `receiver_c_type`). Set only at the two PRIMARY forward-
+    /// decl/definition sites (mirrors `current_receiver_is_mut`); defaults to
+    /// `false` (existing pointer-form behavior) everywhere else so mono/
+    /// generic-instance paths this doesn't touch stay byte-identical.
+    current_receiver_is_static: bool,
     /// Expected struct type для anonymous record literal `=> { ... }` —
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
@@ -1602,6 +1615,7 @@ impl CEmitter {
             current_receiver_rt: None,
             in_recv_ptr_return_position: std::cell::Cell::new(false),
             current_receiver_is_mut: false,
+            current_receiver_is_static: false,
             expected_record_type: None,
             expected_into_target: None,
             current_array_elem_hint: None,
@@ -3292,6 +3306,19 @@ impl CEmitter {
                 "NovaRes_nova_int_nova_str*".to_string()
             }
             "Self" => match &self.current_receiver_type {
+                // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13):
+                // a STATIC namespace fn's `Self` (`fn Type.method() -> Self`)
+                // denotes a FRESH value being constructed — no actual receiver
+                // exists yet, so `receiver_c_type`'s ALWAYS-pointer-for-value-
+                // types rule (built for the receiver's mutation-propagation
+                // ABI) does not apply. Lower it like an ORDINARY reference to
+                // the type instead (value-form for named-tuple/value-record —
+                // matches how the constructor body's record-literal `return
+                // Type(...)` is actually emitted). An INSTANCE method's `Self`
+                // (fluent `-> Self`/`-> @`, returning the receiver itself)
+                // is UNCHANGED — stays on `receiver_c_type`, byte-identical.
+                Some(recv) if self.current_receiver_is_static =>
+                    self.resolved_named_to_c(recv, &[], &[])?,
                 Some(recv) => self.receiver_c_type(recv, false),
                 // U.4.8: `Self` outside a receiver context — carry the SAME Err the deleted
                 // `type_ref_to_c_impl` produced (Plan 11 follow-up: hard error, not a fallback,
@@ -11588,9 +11615,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(recv) = &f.receiver {
             self.current_receiver_type = Some(recv.type_name.clone());
             self.sync_receiver_rt();
+            // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): see
+            // field doc — forward-decl side of the static/instance distinction.
+            self.current_receiver_is_static = matches!(recv.kind, ReceiverKind::Static);
         } else {
             self.current_receiver_type = None;
             self.sync_receiver_rt();
+            self.current_receiver_is_static = false;
         }
         // Seed parameter types into var_types BEFORE inferring the return type
         // from a bodyless `-> T` (return_type_c infers from the trailing expr
@@ -13094,7 +13125,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Иначе генерируется invalid C (`nova_int char;`).
     ///
-    /// `n` это C-keyword? Список — стандартный C99 + popular extensions.
+    /// `n` это C-keyword? Список — стандартный C99/C11 + popular extensions.
+    ///
+    /// [M-c-keyword-ident-collision] (Plan 172.13): та же функция используется
+    /// НЕ только для полей (`mangle_field_name`'s исходное имя — historical),
+    /// но и как единый канал маскирования ЛЮБОГО user-identifier'а Nova,
+    /// который становится C-токеном (local var decl/read/write, fn-параметр,
+    /// match-arm binding). Nova сам не резервирует эти слова — пользователь
+    /// не должен знать о зарезервированных словах ЦЕЛЕВОГО языка кодогена.
     fn mangle_field_name(name: &str) -> String {
         if Self::is_c_keyword(name) {
             format!("nv_{}", name)
@@ -13113,6 +13151,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "union" | "unsigned" | "void" | "volatile" | "while" |
             "_Bool" | "_Atomic" | "_Complex" | "_Imaginary" |
             "_Generic" | "_Thread_local" | "_Static_assert" | "_Noreturn" |
+            "_Alignas" | "_Alignof" |
             "asm" | "fortran"
         )
     }
@@ -14251,7 +14290,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if Self::param_is_inout_ptr(p, &ty_c) {
                 ty_c.push('*');
             }
-            parts.push(format!("{} {}", ty_c, p.name));
+            // [M-c-keyword-ident-collision]: a Nova param named like a C
+            // keyword (`long`, `int`, ...) must not appear bare in the C
+            // signature — mangle the OUTPUT text only (internal bookkeeping
+            // — var_types/var_mutable/etc. — stays keyed by the raw Nova
+            // name `p.name`, unaffected).
+            parts.push(format!("{} {}", ty_c, Self::mangle_field_name(&p.name)));
         }
         if parts.is_empty() {
             Ok("void".into())
@@ -15253,7 +15297,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let Some(sig) =
                         sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1)
                     {
-                        return format!("{}({}, {})", sig.c_name, l, r);
+                        // [M-static-selfreturn-value-mangle-conflict] (Plan
+                        // 172.13): the named-tuple instance-method receiver
+                        // ABI is ALWAYS a pointer (`NovaTuple_X*`, D215/128) —
+                        // `l` here is always an addressable field-access chain
+                        // (a plain eq-wrapper's own by-value param, or a
+                        // recursive `(...).fN`/`.field` built from one — never
+                        // an arbitrary rvalue expression, unlike the binary/
+                        // unary operator-dispatch call sites), so `&(l)` is
+                        // always legal C — no hoist-to-temp needed here.
+                        return format!("{}(&({}), {})", sig.c_name, l, r);
                     }
                 }
                 if let Some(schema) = self.record_schemas.get(type_name) {
@@ -19539,6 +19592,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 135 Ф.2: track whether current method has a mut receiver
             // so that SelfAccess call-sites can tiebreak __mut/__ro overloads.
             self.current_receiver_is_mut = recv.mutable;
+            // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): see
+            // field doc — definition side of the static/instance distinction
+            // (mirrors the forward-decl site above, ~11603).
+            self.current_receiver_is_static = matches!(recv.kind, ReceiverKind::Static);
             // D215: pre-register nova_self type before return_type_c so that
             // SelfAccess in `=> expr` bodies (e.g. `@real() => @re`) resolves
             // the correct C type for field-access inference. Without this,
@@ -19554,6 +19611,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.current_receiver_type = None;
             self.sync_receiver_rt();
             self.current_receiver_is_mut = false;
+            self.current_receiver_is_static = false;
         }
         // Seed param types before inferring a bodyless `-> T` return type (same
         // reason as the forward-decl path ~9484): the params loop populates
@@ -20442,7 +20500,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 };
                                 // Null/zero initializer based on type.
                                 let init = if c_ty.ends_with('*') { "NULL" } else { "0" };
-                                self.line(&format!("{} {} = {};  /* hoisted for errdefer */", c_ty, name, init));
+                                // [M-c-keyword-ident-collision]: text-only mangle;
+                                // `hoisted_let_vars`/downstream lookups stay keyed
+                                // by the raw Nova name.
+                                self.line(&format!("{} {} = {};  /* hoisted for errdefer */",
+                                    c_ty, Self::mangle_field_name(name), init));
                                 self.hoisted_let_vars.insert(name.clone());
                             }
                         }
@@ -21877,16 +21939,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 100.8 fix: if binding was hoisted (pre-declared before setjmp),
                 // emit assignment-only (no type) to avoid C redeclaration error.
                 let is_hoisted = self.hoisted_let_vars.remove(&binding);
+                // [M-c-keyword-ident-collision] (Plan 172.13): mangle ONLY the
+                // C-text form of the binding name here — `binding` itself stays
+                // RAW for every map key above/below (var_types, var_mutable,
+                // hoisted_let_vars, promoted_primitive_locals, ...), which is
+                // what all later `ExprKind::Ident` reads look up by.
+                let binding_c = Self::mangle_field_name(&binding);
                 if let Some((vtable_instance, box_c_type)) = &protocol_box {
                     if is_hoisted {
                         self.line(&format!(
                             "{} = {{ .data = (void*)({}), .vtable = &{} }};",
-                            binding, val, vtable_instance
+                            binding_c, val, vtable_instance
                         ));
                     } else {
                         self.line(&format!(
                             "{} {} = {{ .data = (void*)({}), .vtable = &{} }};",
-                            box_c_type, binding, val, vtable_instance
+                            box_c_type, binding_c, val, vtable_instance
                         ));
                     }
                 } else if primitive_heap_promoted {
@@ -21898,13 +21966,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.var_types.insert(binding.clone(), ptr_ty.clone());
                     self.line(&format!(
                         "{}* {} = ({}*)nova_alloc(sizeof({}));",
-                        ty_c, binding, ty_c, ty_c
+                        ty_c, binding_c, ty_c, ty_c
                     ));
-                    self.line(&format!("*{} = {};", binding, val));
+                    self.line(&format!("*{} = {};", binding_c, val));
                 } else if is_hoisted {
-                    self.line(&format!("{} = {};", binding, val));
+                    self.line(&format!("{} = {};", binding_c, val));
                 } else {
-                    self.line(&format!("{} {} = {};", ty_c, binding, val));
+                    self.line(&format!("{} {} = {};", ty_c, binding_c, val));
                 }
                 // Plan 11 Ф.4: RHS — method value `obj.@method` или `Type.@method`.
                 // Регистрируем binding в fn_param_sigs так чтобы `f(args)` работало.
@@ -23260,7 +23328,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 {
                     return Ok(mangled.clone());
                 }
-                Ok(name.clone())
+                // [M-c-keyword-ident-collision] (Plan 172.13): plain local-var/
+                // param read (and, since Stmt::Assign lowers its target via
+                // `emit_expr`, assignment TARGETS too) — the universal fallthrough
+                // for "this identifier is a real local". Mangle the OUTPUT text
+                // only; all lookups above (var_types/private_const_c_names/etc.)
+                // already ran against the RAW `name`, so this must stay last.
+                Ok(Self::mangle_field_name(name))
             }
             ExprKind::Path(parts) => {
                 // Plan 38: numeric type constants — `int.MAX`, `f64.NAN`, etc.
@@ -23694,7 +23768,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
                             .map(|s| s.c_name.clone());
                         if let Some(c_name) = c_name_opt {
-                            let call = format!("{}({}, {})", c_name, l, r);
+                            // D215/128 (Plan 172.13): the named-tuple instance-method
+                            // receiver ABI is ALWAYS a pointer (`NovaTuple_X*`), but `l`
+                            // (the operator's LEFT operand) may be an RVALUE (e.g. a
+                            // chained `Complex.new(1,2) + Complex.new(3,4)` or
+                            // `a.plus(b) + c`) — `&(l)` on an rvalue is illegal C.
+                            // Materialize `l` into an addressable temp first (mirrors
+                            // the `NovaValue_` arithmetic wrapper's same rvalue-receiver
+                            // concern below, Plan 175 Ф.1b/Ф.3) so `&tmp` is always valid.
+                            let recv_tmp = self.fresh_tmp();
+                            self.line(&format!("{} {} = {};", tuple_ty, recv_tmp, l));
+                            let call = format!("{}(&({}), {})", c_name, recv_tmp, r);
                             return Ok(match op {
                                 BinOp::Neq => format!("(!({}))", call),
                                 _          => format!("({})", call),
@@ -24232,16 +24316,56 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return Ok(format!("{}({})", wrap, v));
                         }
                     }
-                    let type_name_opt: Option<String> = if operand_ty.starts_with("NovaTuple_") {
+                    // named-tuple (`NovaTuple_X`, VALUE ABI — receiver needs `&`)
+                    // vs. heap record/sum (`Nova_X*`, ALREADY a pointer — passed
+                    // through as-is, never `&`'d). Two distinct type_name
+                    // sources so the by-address fix below applies ONLY to the
+                    // by-value named-tuple case.
+                    let named_tuple_type_name = if operand_ty.starts_with("NovaTuple_") {
                         Some(Self::debt_strip_novatuple_prefix_or_empty(&operand_ty).to_string())
-                    } else if let Some(inner) = Self::debt_strip_nova_prefix_opt(&operand_ty)
-                        .and_then(|s| s.strip_suffix('*'))
-                    {
-                        Some(inner.to_string())
                     } else {
                         None
                     };
-                    if let Some(type_name) = type_name_opt {
+                    let heap_ptr_type_name = if named_tuple_type_name.is_none() {
+                        Self::debt_strip_nova_prefix_opt(&operand_ty)
+                            .and_then(|s| s.strip_suffix('*'))
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    };
+                    if let Some(type_name) = named_tuple_type_name {
+                        let key = (type_name, method_name.to_string());
+                        if let Some(c_name) = self.method_overloads.get(&key)
+                            .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                            .map(|s| s.c_name.clone())
+                        {
+                            // [M-static-selfreturn-value-mangle-conflict] (Plan
+                            // 172.13): named-tuple (`NovaTuple_X`) unary `@neg`/
+                            // `@not` has the SAME rvalue-receiver problem as the
+                            // binary-operator case above (`-Complex.new(1,2)`,
+                            // `-(a + b)`, ... — `v` need not be an addressable
+                            // lvalue) — the receiver ABI is ALWAYS a pointer.
+                            // NOT using the `NovaValue_` branch's forward-
+                            // declared-wrapper trick here: that wrapper's proto
+                            // is flushed into an EARLY buffer (`vr_ueq_protos_buf`,
+                            // before `struct NovaTuple_X` is typedef'd — named-
+                            // tuple types register LATER than value-records —
+                            // phase-correctness gap, §0), which would emit
+                            // `unknown type name 'NovaTuple_X'`. Materialize `v`
+                            // into an addressable temp INLINE at the call site
+                            // instead (always emitted well after the typedef,
+                            // deep inside a function body) — same technique as
+                            // the binary-operator fix just above.
+                            let recv_tmp = self.fresh_tmp();
+                            self.line(&format!("{} {} = {};", operand_ty, recv_tmp, v));
+                            return Ok(format!("({}(&({})))", c_name, recv_tmp));
+                        }
+                    }
+                    if let Some(type_name) = heap_ptr_type_name {
+                        // Heap record/sum receiver — `v` is ALREADY `Nova_X*`;
+                        // pass through unchanged (byte-identical to pre-172.13
+                        // behavior — this branch is untouched by the named-
+                        // tuple by-address fix above).
                         let key = (type_name, method_name.to_string());
                         if let Some(c_name) = self.method_overloads.get(&key)
                             .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
@@ -31783,11 +31907,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return Ok(format!("nova_int_from_f64_bits({})", v));
                     }
                 }
-                // Plan 52.2 Ф.2: parts[0] это lazy const → это instance
-                // method call на const-value, не static-method-call.
-                // Конвертим Path(["KEYWORDS", "get"]) в Member { Ident("KEYWORDS"), "get" }
-                // и делегируем в обычный method-call emit.
-                if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                // Plan 52.2 Ф.2 / [M-module-const-chars-bytes-resolution] (Plan
+                // 172.13): parts[0] resolves to a CONST/value binding (lazy
+                // const OR a plain compile-time module-level `const`, both
+                // registered in `var_types` by name — types/namespaces never
+                // are) → this Path is `<value>.<method>(...)`, an INSTANCE
+                // method call on that value, NOT a static `Type.method(...)`
+                // call. Symmetric with the type-inference sibling (~45006):
+                // excludes the `Type.CONST` associated-const-symbol shape
+                // (`parts[0]_parts[1]` also a var_types key + parts[0] starts
+                // uppercase) so an actual static/associated access isn't
+                // misrouted. Конвертим Path(["ALPHABET", "chars"]) в
+                // Member { Ident("ALPHABET"), "chars" } и делегируем в обычный
+                // method-call emit.
+                let is_assoc_const_symbol = parts.len() == 2 && {
+                    let assoc = format!("{}_{}", parts[0], parts[1]);
+                    self.var_types.contains_key(&assoc)
+                        && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                };
+                if parts.len() == 2 && !is_assoc_const_symbol
+                    && (self.lazy_consts.contains(&parts[0]) || self.var_types.contains_key(&parts[0]))
+                {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
                         span: func.span, id: crate::ast::ExprId::UNSET,
@@ -33973,9 +34113,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
             let tmp = self.fresh_tmp();
             self.line(&format!("nova_unit {};", tmp));
+            // [M-c-keyword-ident-collision]: text-only mangle of the loop-var
+            // name; `binding` itself stays RAW for var_types/var_mutable keys
+            // below (unchanged — matches how the body's `ExprKind::Ident`
+            // reads look it up).
+            let binding_c = Self::mangle_field_name(&binding);
             self.line(&format!(
                 "for (nova_int {} = {}; {} {} {}; {}++) {{",
-                binding, s, binding, cmp, e, binding
+                binding_c, s, binding_c, cmp, e, binding_c
             ));
             self.indent += 1;
             // Register loop-var so spawn-capture inside body can find it.
@@ -37032,13 +37177,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             Pattern::Tuple(pats, _) => {
+                // [M-match-tuple-option-value-deref] (Plan 172.13) / phase-
+                // correctness (§0): the recursive `pattern_cond` call below
+                // needs the CONCRETE C type of each `scr.fN` field to tell a
+                // value-embedded sum (`NovaOpt_<T>`, dot-accessor) from a
+                // pointer-based one (`Nova_<Sum>*`, arrow-accessor) — without
+                // it, `var_types.get("scr.fN")` misses (that compound access
+                // string was never a var_types KEY) and the nested
+                // `Pattern::Variant` arm silently defaults to the pointer ABI
+                // (`->tag`), CC-FAIL on a value-embedded tuple-of-Option like
+                // `match (a, b) { (Some(x), Some(y)) => ... }`. The fact IS
+                // available — `emit_match` propagates `tuple_element_types`
+                // from the scrutinee's emitted tmp onto `scr` — just wasn't
+                // being consumed here. Register each field's type under its
+                // OWN `scr.fN` access-path key (mirrors the established
+                // `tmp_registrations` discipline used elsewhere in this fn for
+                // Option/Result payload fields), then clean up.
+                let elem_tys = self.tuple_element_types.get(scr).cloned();
+                let mut tmp_registrations: Vec<String> = Vec::new();
                 let mut conds: Vec<String> = Vec::new();
                 for (i, p) in pats.iter().enumerate() {
                     let field = format!("{}.f{}", scr, i);
+                    if let Some(ty) = elem_tys.as_ref().and_then(|v| v.get(i)) {
+                        if !ty.is_empty() {
+                            self.var_types.insert(field.clone(), ty.clone());
+                            tmp_registrations.push(field.clone());
+                        }
+                    }
                     let sub = self.pattern_cond(p, &field)?;
                     if sub != "true" {
                         conds.push(sub);
                     }
+                }
+                for k in &tmp_registrations {
+                    self.var_types.remove(k);
                 }
                 if conds.is_empty() {
                     Ok("true".into())
@@ -37108,7 +37280,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let ty = self.var_types.get(scr).cloned()
                     .unwrap_or_else(|| "nova_int".into());
                 self.var_types.insert(name.clone(), ty.clone());
-                self.line(&format!("{} {} = {};", ty, name, scr));
+                // [M-c-keyword-ident-collision]: match-arm binding — text-only
+                // mangle (var_types key stays raw `name`, matching how the
+                // arm body's `ExprKind::Ident` reads look it up).
+                self.line(&format!("{} {} = {};", ty, Self::mangle_field_name(name), scr));
             }
             Pattern::Variant { path, kind, .. } => {
                 let variant_name = path.last().cloned().unwrap_or_default();
@@ -37319,13 +37494,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             };
                             if let Pattern::Ident { name, .. } = p {
+                                // [M-c-keyword-ident-collision]: text-only mangle;
+                                // var_types stays keyed by the raw Nova name (as
+                                // every `ExprKind::Ident` read/lookup expects).
+                                let name_c = Self::mangle_field_name(name);
                                 if is_boxed_inner {
                                     // field is a "NovaOpt_nova_int*" pointer; deref to get value
                                     self.var_types.insert(name.clone(), "NovaOpt_nova_int".into());
-                                    self.line(&format!("NovaOpt_nova_int {} = *{};", name, field));
+                                    self.line(&format!("NovaOpt_nova_int {} = *{};", name_c, field));
                                 } else {
                                     self.var_types.insert(name.clone(), field_ty.clone());
-                                    self.line(&format!("{} {} = {};", field_ty, name, field));
+                                    self.line(&format!("{} {} = {};", field_ty, name_c, field));
                                 }
                             } else {
                                 self.pattern_bind_typed(p, &field)?;
@@ -37385,8 +37564,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 f
                             };
                             if let Pattern::Ident { name, .. } = p {
+                                // [M-c-keyword-ident-collision]: text-only mangle.
                                 self.var_types.insert(name.clone(), elem_ty.clone());
-                                self.line(&format!("{} {} = {};", elem_ty, name, field));
+                                self.line(&format!("{} {} = {};", elem_ty, Self::mangle_field_name(name), field));
                             } else {
                                 self.var_types.insert(field.clone(), elem_ty.clone());
                                 self.pattern_bind_typed(p, &field)?;
@@ -37413,8 +37593,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 scr, from = before_idx,
                                 suf = if n_after > 0 { format!(" - {}", n_after) } else { String::new() },
                                 push = push_c, rt = rest_tmp, s = scr));
+                            // [M-c-keyword-ident-collision]: text-only mangle.
                             self.var_types.insert(name.clone(), format!("{}*", mangled));
-                            self.line(&format!("{}* {} = {};", mangled, name, rest_tmp));
+                            self.line(&format!("{}* {} = {};", mangled, Self::mangle_field_name(name), rest_tmp));
                             past_rest = true;
                         }
                         ArrayPatternElem::Rest => {
@@ -37478,8 +37659,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                         _ => {
+                            // [M-match-tuple-option-value-deref] (Plan 172.13):
+                            // mirror the `pattern_cond` fix — register this
+                            // field's CONCRETE C type under its `scr.fN`
+                            // access-path key before recursing, so a nested
+                            // `Pattern::Variant` (e.g. `Some(w)` inside a
+                            // tuple-of-Option match arm) sees the real
+                            // value-embedded `NovaOpt_<T>` type instead of
+                            // defaulting to the pointer-based sum ABI.
                             let field = format!("{}.f{}", scr, i);
+                            let elem_ty = self.tuple_element_types.get(scr)
+                                .and_then(|tys| tys.get(i))
+                                .cloned();
+                            let registered = if let Some(ty) = elem_ty.filter(|t| !t.is_empty()) {
+                                self.var_types.insert(field.clone(), ty);
+                                true
+                            } else {
+                                false
+                            };
                             self.pattern_bind_typed(p, &field)?;
+                            if registered {
+                                self.var_types.remove(&field);
+                            }
                         }
                     }
                 }
@@ -39712,9 +39913,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if Self::debt_is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
+            // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13) / §0
+            // phase-correctness: the typedef (`{ int tag; {cty} value; }`)
+            // needs the payload struct COMPLETE, so it stays in this early-
+            // but-post-struct-bodies buffer. The eq-fn BODY is a DIFFERENT
+            // fact — `emit_field_eq` on a `NovaTuple_X`/`NovaValue_X` payload
+            // may call the user's `@equal` INSTANCE method (`Nova_X_method_
+            // equal`), whose own forward declaration is only emitted in the
+            // NORMAL per-function pass (later in the file than this splice
+            // zone). Defining the body HERE made the first thing the C
+            // compiler sees a bare call → implicit declaration → "conflicting
+            // types" once the real prototype appears — the exact issue the
+            // sibling `debt_opt_payload_needs_structural_eq` branch below
+            // already solves via an early-prototype/late-body split. Mirror
+            // that split here: prototype adjacent to the typedef (early),
+            // body deferred to `novaopt_eq_fns_buf` (spliced AFTER struct
+            // bodies AND method forward-decls, `/*__NOVAOPT_EQ_FNS__*/`).
             let cmp_body2 = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
             let line2 = format!(
-                "typedef struct NovaOpt_{sani} {{ int tag; {cty} value; }} NovaOpt_{sani};\n",
+                "typedef struct NovaOpt_{sani} {{ int tag; {cty} value; }} NovaOpt_{sani};\n\
+                 static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
                 sani = sanitized, cty = c_ty);
             let eq_fn2 = format!(
                 "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
@@ -39723,9 +39941,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                  \x20   return {cmp};\n\
                  }}\n",
                 sani = sanitized, cmp = cmp_body2);
-            let mut vrbuf = self.novaopt_vr_typedefs_buf.borrow_mut();
-            vrbuf.push_str(&line2);
-            vrbuf.push_str(&eq_fn2);
+            self.novaopt_vr_typedefs_buf.borrow_mut().push_str(&line2);
+            self.novaopt_eq_fns_buf.borrow_mut().push_str(&eq_fn2);
             return;
         }
         // [M-172.1-option-eq-heap-aggregate-structural] + [M-172.1-option-eq-record-structural]
@@ -40781,7 +40998,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         recv_mutable: bool,
         obj_ast: Option<&Expr>,
     ) -> String {
-        let addressable = obj_ast
+        // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): a lazy
+        // module-level const (`const ZERO = Complex(0, 0)`, non-constexpr
+        // init) is `ExprKind::Ident("ZERO")` at the AST level — indistinguishable
+        // from a plain local variable to `is_lvalue_receiver` — but LOWERS to a
+        // getter CALL (`nova_const_ZERO()`), not a variable read. Treating it as
+        // addressable emitted `&(nova_const_ZERO())` — address-of-rvalue CC-FAIL
+        // (`ZERO.is_zero()` on a lazy-const named-tuple/value-record). Force the
+        // hoist-to-temp path for these, same as any other rvalue receiver.
+        let is_lazy_const_ident = matches!(&obj_ast.map(|e| &e.kind),
+            Some(ExprKind::Ident(name)) if self.lazy_consts.contains(name));
+        let addressable = !is_lazy_const_ident && obj_ast
             .map(|e| Self::is_lvalue_receiver(e))
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
 

@@ -45,11 +45,12 @@ test "ошибка: cost вне диапазона" {
 }
 
 test "ошибка: пароль > 72 байта" {
-    // [M-c-keyword-ident-collision]: `long` — зарезервированное C-слово,
-    // ломает codegen как имя переменной — используем доменное имя `long_pw`.
-    mut long_pw = ""
-    for i in 0..100 { long_pw = long_pw + "a" }
-    ro r = with Random = th.seeded(0) { Bcrypt.hash(long_pw, 4) }
+    // [M-c-keyword-ident-collision] РЕШЕНО (Plan 172.13): эмиттер теперь
+    // манглит C-reserved-word идентификаторы (`long` → `nv_long` в C-выхлопе)
+    // — обход `long_pw` больше не нужен, естественное имя `long` компилируется.
+    mut long = ""
+    for i in 0..100 { long = long + "a" }
+    ro r = with Random = th.seeded(0) { Bcrypt.hash(long, 4) }
     match r {
         Ok(_)  => assert(false)
         Err(e) => assert(e is PasswordTooLong)
