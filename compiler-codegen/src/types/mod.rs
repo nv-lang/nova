@@ -16933,6 +16933,13 @@ struct CapState {
     /// `realtime_active` — иначе вложенный `blocking` отвергался бы
     /// как «`blocking` внутри `realtime`».
     blocking_body_active: bool,
+    /// Plan 173 Ф.3 п.2 (D414 §2): True в effect-root контексте (тело
+    /// `test`-блока) — здесь эффект-требования сигнатуры не действуют
+    /// (у теста нет сигнатуры; он — корень, как `main` для скрипта).
+    /// `detach { }` в effect-root разрешён без объявления `Detach`
+    /// (дефолт-handler LogAndDrop — D50/D414 §2). Для обычной `fn`
+    /// остаётся `false` → `detach` требует `Detach` в сигнатуре.
+    effect_root: bool,
 }
 
 impl CapState {
@@ -16992,6 +16999,9 @@ impl<'a> CapabilityCtx<'a> {
                 }
                 Item::Test(t) => {
                     let mut state = CapState::default();
+                    // Plan 173 Ф.3 п.2: test-блок = effect-root (нет сигнатуры) —
+                    // `detach { }` разрешён без объявления `Detach` (дефолт LogAndDrop).
+                    state.effect_root = true;
                     if !file_forbidden.is_empty() {
                         state.forbidden_stack.push(file_forbidden.clone());
                     }
@@ -17247,7 +17257,32 @@ impl<'a> CapabilityCtx<'a> {
                 FnBody::External => {}
             },
             ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
-            ExprKind::Detach(body) => self.walk_block(body, state, errors),
+            ExprKind::Detach(body) => {
+                // Plan 173 Ф.3 п.2 (D50 / D414 §2): `detach { }` требует эффект
+                // `Detach` в сигнатуре enclosing-`fn` (или замыкания с эффектами) —
+                // fire-and-forget задача переживает caller'а, это наблюдаемый
+                // capability. Разрешено без объявления когда: (a) effect-root
+                // (test-блок — нет сигнатуры), (b) ambient `with Detach = …`
+                // handler в scope (эффект уже погашен на месте). Тела
+                // handler-op-литералов (`effect X { op(){ detach … } }`) сюда не
+                // доходят — capability-walker их не обходит (эффект-полиморфны,
+                // погашаются на use-site handler'а; HOF-эффект-полиморфизм — вне
+                // периметра 173, см. хаб НЕ-цели).
+                if !state.effect_root
+                    && !state.declared_effects.contains("Detach")
+                    && !state.with_handler_stack.iter().any(|h| h == "Detach")
+                {
+                    errors.push(Diagnostic::new(
+                        "`detach { }` requires the `Detach` effect in the enclosing \
+                         function signature (D50): a detached task outlives its caller — \
+                         declare `Detach` (e.g. `fn f() Detach -> ()`), or install a \
+                         `with Detach = …` handler in scope. [E_DETACH_REQUIRES_EFFECT]"
+                            .to_string(),
+                        e.span,
+                    ));
+                }
+                self.walk_block(body, state, errors);
+            }
             ExprKind::Blocking(body) => {
                 // Plan 91.15 (D172): the `blocking { }` block-form was retracted
                 // by Plan 113. The parser now rejects `blocking { ... }` outright

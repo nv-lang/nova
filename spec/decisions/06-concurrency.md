@@ -247,7 +247,7 @@ inverse-маркером.
 > (fire-and-forget семантика и блокировка ОС-потока соответственно),
 > что делает их кандидатами на type-level декларацию.
 >
-> ⚠️ **Detach-эффект НЕ РЕАЛИЗОВАН (констатация 2026-07-06):** в компиляторе «Detach» — лишь зарезервированное builtin-имя (types/mod.rs) и строка линтера; объявления эффекта и требования в сигнатурах нет. Поведение сирот при ошибке/панике — LogAndDrop, зашито в runtime.c (не handler). Типизация Detach — аспирация, не норма.
+> ⚠️ **Detach-эффект — ЧАСТИЧНО (обновлено Plan 173 Ф.3 п.2, 2026-07-09):** «Detach» — зарезервированное builtin-имя (types/mod.rs); **требование эффекта в сигнатуре ТЕПЕРЬ enforced** в checker'е (`[E_DETACH_REQUIRES_EFFECT]`, [D414 §2](#d414-structured-error-propagation--primary-selection-precedence-detach-policy-channel-closed-vs-value-plan-173-ф3)); самостоятельного effect-type-декла в std всё ещё нет. Поведение сирот при ошибке/панике — LogAndDrop, зашито в runtime.c (не handler); escalate-to-scope — opt-in design (`[M-173-detach-escalate-to-scope]`).
 >
 > 📋 **PARTIALLY IMPLEMENTED IN [D71](#d71-bootstrap-concurrency-runtime).**
 > Bootstrap'ом реализованы: `supervised`, `parallel for`, `detach`
@@ -935,11 +935,14 @@ Default-handler `SyncDetach`: тело исполняется **inline** в по
 bootstrap-default = это).
 
 В bootstrap'е:
-- Эффект `Detach` **не объявлен** в effect-system. Compile-time проверка
-  требования эффекта в сигнатуре не выполняется.
+- ⚠ **UPDATED (Plan 173 Ф.3 п.2, [D414 §2](#d414-structured-error-propagation--primary-selection-precedence-detach-policy-channel-closed-vs-value-plan-173-ф3)):**
+  требование эффекта `Detach` **теперь enforced** в checker'е —
+  `detach` без `Detach` в сигнатуре → `[E_DETACH_REQUIRES_EFFECT]` (exempt:
+  test-root / ambient `with Detach` / handler-op-тело). `Detach` остаётся
+  зарезервированным builtin-именем (не самостоятельный effect-type-декл в std).
 - Глобальный supervisor (для реального async-execution на отдельном OS-thread'е)
   — отложен до production-runtime.
-- Panic-containment (`LogAndDrop`) — отложен.
+- Panic-containment (`LogAndDrop`) — дефолт-политика ([D414 §2](#d414-structured-error-propagation--primary-selection-precedence-detach-policy-channel-closed-vs-value-plan-173-ф3)).
 
 #### 4. `parallel for x in iter { body }` — fan-out
 
@@ -6455,3 +6458,41 @@ CAS-loop). Заменяет прежнюю 2-уровневую CANCEL→USER-т
 PANIC на уже-записанном USER). Тест: `nova_tests/expected_runtime/supervised_precedence_panic_over_user.nv`
 (10 USER + 10 PANIC детей → primary детерминированно PANIC, ×5 стабильно).
 Стыкуется с catchability-инвариантом [Ф.4 п.6](../../docs/plans/173-error-system-unify-harden.md).
+
+### §2. `detach` error-policy + enforcement эффекта `Detach`
+
+**Enforcement (checker, `CapabilityCtx`).** `detach { … }` — fire-and-forget
+задача, переживающая caller'а (orphan fiber, глобальный supervisor, не локальный
+scope) — это **наблюдаемый capability** и **требует эффект `Detach`** в effect-row
+enclosing-`fn` (норма [D50](#d50), ранее не проверялась — bootstrap-gap). Checker
+отвергает `detach` без `Detach` чистым **`[E_DETACH_REQUIRES_EFFECT]`**. Разрешено
+без объявления когда:
+- **effect-root** — тело `test`-блока (нет сигнатуры; корень, как `main` для
+  скрипта) → bare `detach` легален (гасится дефолт-handler'ом);
+- **ambient handler** — `with Detach = …` в лексическом scope (эффект погашен на
+  месте; `with_handler_stack`-проверка);
+- **handler-op-литерал** — тело операции `effect X { op(){ detach … } }`
+  эффект-полиморфно (эффект — обязанность use-site handler'а, не definition-site);
+  capability-walker такие тела не обходит. Полная HOF-эффект-полиморфная
+  проверка (Swift `rethrows`-аналог) — **вне периметра 173** (см. хаб НЕ-цели).
+
+Тесты: neg `nova_tests/err173/neg/f3_detach_requires_effect` (fn без `Detach` →
+`[E_DETACH_REQUIRES_EFFECT]`); pos `nova_tests/err173_2/detach_effect_ok_test`
+(fn с `Detach` + test-root).
+
+**Error-policy словарь (runtime).** Что происходит с ошибкой/паникой в detached-
+fiber'е (у сироты нет call-site, некому вернуть `Result`):
+- **`LogAndDrop` (default)** — throw из orphan-тела → `fprintf(stderr, …)` +
+  fiber умирает чисто; caller НЕ abort'ится, другие orphans + main продолжают
+  (`runtime.c`, [§3.1](#31-default-detach-semantic--asyncdetach-plan-83452-ф4-2026-05-23)).
+  panic — critical-класс с D13-семантикой («fiber мёртв»). Паритет Go `go fn()`
+  (паника горутины роняет процесс — Nova orphan-panic логируется, процесс жив по
+  дефолту), tokio `JoinHandle`-drop.
+- **`escalate-to-scope` (opt-in, design)** — детач привязывается к enclosing
+  `supervised`-scope вместо глобального orphan-supervisor'а: ошибка сироты
+  эскалируется в scope (участвует в §1-precedence как обычный child-fail). Это
+  **opt-in**, т.к. противоречит fire-and-forget-семантике дефолта (сирота по
+  определению переживает scope). Рычаг привязки — будущий `detach in <scope>` /
+  атрибут; runtime-часть отслеживается `[M-173-detach-escalate-to-scope]` (нужен
+  scope-handle у detach-примитива + участие в decision-loop). Дефолт остаётся
+  `LogAndDrop` (изменение семантики orphan'а — owner-gated).

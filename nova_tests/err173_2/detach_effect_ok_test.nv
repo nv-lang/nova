@@ -1,0 +1,45 @@
+// detach_effect_ok_test.nv — Plan 173 Ф.3 п.2 (D50 / D414 §2) pos-twin.
+//
+// `detach { }` разрешён checker'ом (CapabilityCtx НЕ флагает) когда:
+//   (1) enclosing-`fn` объявляет эффект `Detach` в effect-row;
+//   (3) вызов из test-блока (effect-root — нет сигнатуры, дефолт LogAndDrop).
+// (Форма (2) ambient `with Detach = …` — тоже exempt в checker'е через
+// with_handler_stack-проверку, но требует объявленного effect-типа Detach +
+// handler'а, которых нет в std bootstrap — не тестируется здесь.)
+// Neg-twin (detach в fn БЕЗ Detach → E_DETACH_REQUIRES_EFFECT) —
+// err173/neg/f3_detach_requires_effect.
+//
+// Изолированная папка (module nova_tests.err173_2) — НЕ concurrency-folder
+// (у того pre-existing Duration-`-` codegen-баг в чужом файле CU).
+
+module nova_tests.err173_2
+
+type Ctr {
+    mut n int
+}
+
+fn make_ctr() -> Ctr => { n: 0 }
+
+// (1) fn с эффектом Detach — detach разрешён (не флагается).
+fn spawn_bg(c mut Ctr) Detach -> () {
+    detach {
+        c.n = c.n + 1
+    }
+}
+
+// (3) test-блок — effect-root, bare detach разрешён.
+test "detach in test-root (effect-root) compiles + runs under default handler" {
+    mut c = make_ctr()
+    detach {
+        c.n = c.n + 1
+    }
+    runtime.drain_orphans()
+    assert(c.n == 1)
+}
+
+test "detach inside Detach-effect fn compiles + runs" {
+    mut c = make_ctr()
+    spawn_bg(c)
+    runtime.drain_orphans()
+    assert(c.n == 1)
+}

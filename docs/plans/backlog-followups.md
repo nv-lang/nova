@@ -183,6 +183,7 @@
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
 | `[M-116-openssl-backend]` | Опц. OpenSSL TLS 1.0/1.1 handler (rustls = default); Plan 116 не начат (PLANNED). | plan-116 Followups | P2 |
+| `[M-173-detach-escalate-to-scope]` | `detach` error-policy opt-in `escalate-to-scope` (D414 §2): привязать сироту к enclosing `supervised`-scope → ошибка участвует в §1-precedence вместо LogAndDrop. Нужен scope-handle у detach-примитива + участие в decision-loop. Дефолт LogAndDrop не менять (owner-gated). Checker-enforcement `Detach` + LogAndDrop-дефолт уже сделаны (Ф.3 п.2). | Plan 173 Ф.3 | P3 |
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |
 | `[M-ide-integration-deferred]` | ✅ **CLOSED 2026-06-17 (Plan 104 ВСЕ sub-plans 104.0–104.9).** Production LSP полностью построен: completion/refs/rename/format/code-actions/symbols/tree-sitter/editor-packaging/close-out. 268 tests PASS. | plan-104 Followups | ✅ done |
 | `[M-104.2-cross-file-goto]` | ✅ RESOLVED (Plan 104.10 Ф.3, 2026-07-03). `goto_definition.rs` → cross-file через provenance: `span.file_id` → `file_map` (из реальных `peer_files`, НЕ grep) → `Location` в файле-цели; range disk-authoritative для peer'ов, in-memory для entry. Server использует Ф.1-кеш. 16 unit + `e2e_smoke::pos11` (JSON-RPC cross-file → prelude). | plan-104.10 Ф.3 | ✅ done |
