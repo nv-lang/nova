@@ -2482,3 +2482,14 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Generator[[]int] через `ArrayGen[T] @generate() -> []T`; ресивер лямбды типизируется
   int → E_PRIMITIVE_NO_PROTOCOL_METHOD sort. Родственно исходному «cannot infer T».
   std/testing добавить в гейты после фикса.
+
+- **[M-rawmem-typed-copy-wrappers]** (2026-07-08, P2, Plan: 172.13 — generic-mono;
+  Wave: после фикса корня) — предложение владельца: типизированные
+  `RawMem.copy_n[T]/copy_n_nonoverlapping[T](src *T, dst *mut T, count int)` (счёт в
+  элементах, Rust ptr::copy<T>) вместо кастов+`* size_of[T]()` в точках вызова.
+  ЗАБЛОКИРОВАНО компиляторным гэпом: чистая .nv generic-обёртка с *T-параметрами,
+  вызванная из generic-метода (`Vec[T] @cap` → wrapper), мискомпилится — d141-фикстура
+  падала рантаймом «index 5 out of bounds for length 1» (T=u8 путь); откат вызова на
+  каст-форму лечит. Две заметки реализации: (1) перегрузка одним именем с байтовым
+  extern невозможна — коллизия при T=u8, имена copy_n*; (2) репро = вернуть обёртки
+  и вызов в cap[T], conformance d141. Каст-форма в vec/core.nv — временный канон.
