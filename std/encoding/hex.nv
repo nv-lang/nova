@@ -41,7 +41,7 @@ fn encode_with(data []u8, upper bool) -> str {
     buf.into_str()
 }
 
-// Plan 34 Ф.5.2: `int as char` запрещён D54, используем `(n).to_char()?`.
+// Plan 34 Ф.5.2: `int as char` запрещён D54, используем `n.to_char()?`.
 // n всегда в [0, 15] (вызывается с (b as int) / 16 или % 16), поэтому
 // code всегда в valid ASCII диапазоне — `char.from` не может вернуть
 // Err. Fallback `' '` нужен только для exhaustive-match'а.
@@ -53,7 +53,7 @@ fn digit(n u8, upper bool) -> char {
     } else {
         'a' as int + n as int - 10
     }
-    match (code).to_char() {
+    match code.to_char() {
         Ok(c)  => c
         Err(_) => ' '
     }
@@ -92,7 +92,7 @@ fn digit_value(s str, pos int) -> Result[int, ParseHexError] {
             } else if n >= 65 && n <= 70 {
                 Ok(n - 65 + 10)
             } else {
-                Err(InvalidChar { position: pos, char: (n).to_char() ?? ' ' })
+                Err(InvalidChar { position: pos, char: n.to_char() ?? ' ' })
             }
         }
         None => Err(InvalidChar { position: pos, char: ' ' })

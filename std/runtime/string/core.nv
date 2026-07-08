@@ -39,7 +39,7 @@ export fn str.new() -> Self => ""
 // Ok-arm coercion (mirrors std/encoding/base64.nv encode_char). Invalid cp
 // cannot occur here — каждый cp получен из UTF-8 decode валидной строки.
 fn cp_to_char(cp int) -> char {
-    match (cp).to_char() {
+    match cp.to_char() {
         Ok(c)  => c,
         Err(_) => '\u{FFFD}',
     }
@@ -351,7 +351,7 @@ export type InvalidCodepoint enum InvalidCodepointError
 /// Checked codepoint → str. Returns `Err(InvalidCodepointError)` for surrogates,
 /// negative values, and values > 0x10FFFF. Valid codepoints map to a 1–4-byte str.
 export fn str.try_from_codepoint(cp int) -> Result[str, InvalidCodepoint] {
-    match (cp).to_char() {
+    match cp.to_char() {
         Ok(c)  => Ok(str.from(c))
         Err(_) => Err(InvalidCodepointError)
     }

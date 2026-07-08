@@ -102,7 +102,7 @@ fn encode_char(value u8) -> char {
     } else {
         'Z' as int                                   // 31
     }
-    match (code).to_char() {
+    match code.to_char() {
         Ok(c)  => c
         Err(_) => '?'
     }

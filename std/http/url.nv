@@ -670,7 +670,7 @@ fn is_unreserved(c char) -> bool =>
 fn hex_upper(n u8) -> char {
     ro v = n as int
     ro code = if v < 10 { ('0' as int) + v } else { ('A' as int) + v - 10 }
-    match (code).to_char() {
+    match code.to_char() {
         Ok(c)  => c
         Err(_) => '0'
     }

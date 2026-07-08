@@ -394,7 +394,7 @@ fn ReadBuffer @decode_utf8_at(p int) -> Result[(int, int), ReadBufferError] {
 }
 
 // Один codepoint (UTF-8 1-4 байта). Result-форма.
-// Plan 34 Ф.5.2 / D54: `int as char` запрещён; используем (n).to_char().
+// Plan 34 Ф.5.2 / D54: `int as char` запрещён; используем n.to_char().
 // UTF-8 decoder уже валидирует range — from.Err() unreachable, но
 // нужно для well-typedness; surface как UnexpectedEnd для consistency.
 export fn ReadBuffer mut @read_char() -> Result[char, ReadBufferError] =>

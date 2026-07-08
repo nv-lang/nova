@@ -398,7 +398,7 @@ fn hex_upper(n u8) -> char {
     } else {
         'A' as int + n as int - 10
     }
-    (code).to_char() ?? ' '
+    code.to_char() ?? ' '
 }
 
 fn hex_value_at(sc []char, pos int) -> Result[u8, ParseUrlError] {

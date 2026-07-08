@@ -47,7 +47,7 @@ export type Base64Error enum
 // ──────────────────────────────────────────────────────────────────────────
 
 // RFC 4648 § 4 standard alphabet.
-// Plan 34 Ф.5.2: `int as char` запрещён D54, используем (n).to_char().
+// Plan 34 Ф.5.2: `int as char` запрещён D54, используем n.to_char().
 // `value` всегда в [0, 63] (по семантике base64), значит codepoint
 // всегда в ASCII диапазоне — Err не возможен. Fallback нужен для exhaustiveness.
 fn encode_char_std(value u8) -> char {
@@ -62,7 +62,7 @@ fn encode_char_std(value u8) -> char {
     } else {
         '/' as int
     }
-    match (code).to_char() {
+    match code.to_char() {
         Ok(c)  => c
         Err(_) => '?'
     }
@@ -81,7 +81,7 @@ fn encode_char_url(value u8) -> char {
     } else {
         '_' as int
     }
-    match (code).to_char() {
+    match code.to_char() {
         Ok(c)  => c
         Err(_) => '?'
     }
