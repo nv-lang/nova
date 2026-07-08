@@ -535,6 +535,14 @@ pub struct CEmitter {
     current_spawn_capture_by_value: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
     var_types: HashMap<String, String>,
+    /// [M-consume-rebind-nested-block-shadow] (Plan 172.13): spans of
+    /// `consume x = expr` `Stmt::Let`s that `alpha_rename` determined rebind a
+    /// binding declared in an ENCLOSING (not current) scope — copied verbatim
+    /// from `Module::consume_reuse_spans` at `emit_module` entry. `Stmt::Let`
+    /// consults this by span to emit a plain reassignment (reusing the
+    /// existing, still-live C variable) instead of a fresh block-scoped C
+    /// declaration.
+    consume_reuse_spans: HashSet<Span>,
     /// Plan 172.5 (D326 R5): names of the current function's `ro ref`/`mut ref`
     /// parameters. Such a parameter is lowered to a C pointer (`T*`); every
     /// value-position use of its name in the body is auto-dereferenced
@@ -1558,6 +1566,7 @@ impl CEmitter {
             current_spawn_captures: None,
             current_spawn_capture_by_value: None,
             var_types: HashMap::new(),
+            consume_reuse_spans: HashSet::new(),
             ref_params: std::collections::HashSet::new(),
             closure_param_type_overrides: RefCell::new(HashMap::new()),
             type_subst_overrides: RefCell::new(HashMap::new()),
@@ -3594,6 +3603,10 @@ impl CEmitter {
         // applies to every fn/type in the module — ORed with per-fn opt-out by
         // `contracts_elided_for` / `invariants_elided_here`.
         self.contract_opt_out_module = module.contract_opt_out.clone();
+        // [M-consume-rebind-nested-block-shadow] (Plan 172.13): copy the
+        // alpha_rename-computed span set so `Stmt::Let` can look up its own
+        // span below.
+        self.consume_reuse_spans = module.consume_reuse_spans.clone();
         // Plan 127 Ф.2/Ф.3: run value-record escape analysis upfront so
         // codegen знает which value-record locals must be heap-promoted
         // (AllocKind::ValueHeapPromoted). Cheap: single AST walk; result
@@ -22411,7 +22424,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 72 P3-B (fat pointer): protocol-typed var → NovaBox init.
                 // Plan 100.8 fix: if binding was hoisted (pre-declared before setjmp),
                 // emit assignment-only (no type) to avoid C redeclaration error.
-                let is_hoisted = self.hoisted_let_vars.remove(&binding);
+                // [M-consume-rebind-nested-block-shadow] (Plan 172.13): a
+                // `consume x = expr` rebind whose prior binding lives in an
+                // ENCLOSING scope (alpha_rename-flagged by span) reuses that
+                // SAME live C variable the same way — plain reassignment, no
+                // fresh block-scoped declaration (which would go out of scope
+                // at the end of this block, leaving the outer `x` stale).
+                let is_hoisted = self.hoisted_let_vars.remove(&binding)
+                    || self.consume_reuse_spans.contains(&decl.span);
                 // [M-c-keyword-ident-collision] (Plan 172.13): mangle ONLY the
                 // C-text form of the binding name here — `binding` itself stays
                 // RAW for every map key above/below (var_types, var_mutable,

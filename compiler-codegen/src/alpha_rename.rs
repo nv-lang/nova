@@ -34,6 +34,7 @@
 //!   `__sN` never reaches user-facing output (acceptance criterion #4).
 
 use crate::ast::*;
+use crate::diag::Span;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
@@ -44,6 +45,10 @@ pub struct RebindTables {
     pub shadows: HashMap<String, String>,
     /// unique renamed name → original user-written base name.
     pub originals: HashMap<String, String>,
+    /// [M-consume-rebind-nested-block-shadow] (Plan 172.13): spans of
+    /// `consume x = expr` `Stmt::Let`s whose prior binding for `x` is found
+    /// in an ENCLOSING (not the current) scope — see [`Renamer::declare_consume`].
+    pub consume_reuse_spans: HashSet<Span>,
 }
 
 /// Alpha-rename same-scope re-bindings in every function body of `module`.
@@ -66,6 +71,7 @@ pub fn alpha_rename(module: &mut Module) -> RebindTables {
     // it without a separate threading channel (§2). `module.items` and the
     // `peer_files` copies rename identically, so their entries coincide.
     module.rebind_shadows = tables.shadows.clone();
+    module.consume_reuse_spans = tables.consume_reuse_spans.clone();
     // Publish the synthesized-name → original-name map for `demangle_rebind_names`
     // so diagnostics strip ONLY names this pass actually minted — never a
     // look-alike user identifier such as `buf__s1` (§0). Replaces any prior
@@ -257,6 +263,41 @@ impl<'t> Renamer<'t> {
         let _ = self.declare(name, false);
     }
 
+    /// [M-consume-rebind-nested-block-shadow] (Plan 172.13): declare a
+    /// `consume x = expr` simple-ident binding. Three cases:
+    /// - `name` unbound anywhere in scope → fresh first declaration
+    ///   (delegates to [`Self::declare`], which takes the `None` branch).
+    /// - `name` already bound in the CURRENT (innermost) scope → an ordinary
+    ///   same-scope rebind; delegates to [`Self::declare`]'s existing
+    ///   fresh-unique-name mechanism (unchanged behaviour).
+    /// - `name` bound in an ENCLOSING (not current) scope only → the prior
+    ///   binding has a live C declaration in a scope that STRICTLY encloses
+    ///   this one (an ancestor block, or the function scope itself). Nova
+    ///   treats a `consume`-rebind of it as updating that SAME logical
+    ///   variable (D347/D9 semantics), not a fresh block-scoped shadow — so
+    ///   leave the name untouched (no rename, no new scope-map entry; reads
+    ///   after this point keep resolving to the enclosing scope's existing
+    ///   mapping via `resolve()`) and record the statement's span so codegen
+    ///   emits a plain reassignment reusing the existing C variable instead
+    ///   of a new block-scoped declaration (which would silently go out of
+    ///   scope, leaving the outer variable stale/already-consumed).
+    fn declare_consume(&mut self, name: &str, span: Span) -> String {
+        if name == "_" {
+            return "_".to_string();
+        }
+        let in_current = self
+            .scopes
+            .last()
+            .map(|s| s.map.contains_key(name))
+            .unwrap_or(false);
+        if !in_current && self.resolve(name).is_some() {
+            self.tables.consume_reuse_spans.insert(span);
+            name.to_string()
+        } else {
+            self.declare(name, false)
+        }
+    }
+
     /// Mint a fresh `name__sN` that collides with no reserved/user name.
     fn fresh(&mut self, base: &str) -> String {
         loop {
@@ -296,6 +337,16 @@ impl<'t> Renamer<'t> {
             Stmt::Let(d) => {
                 // R3: the RHS sees the PREVIOUS binding — rename it first.
                 self.expr(&mut d.value);
+                // [M-consume-rebind-nested-block-shadow]: a `consume x = expr`
+                // simple-ident rebind gets the enclosing-scope-aware path
+                // (see `declare_consume`); every other pattern shape keeps the
+                // generic same-scope-only `declare_pattern`.
+                if d.consume {
+                    if let Pattern::Ident { name, .. } = &mut d.pattern {
+                        *name = self.declare_consume(&name.clone(), d.span);
+                        return;
+                    }
+                }
                 self.declare_pattern(&mut d.pattern, false);
             }
             Stmt::Const(d) => {

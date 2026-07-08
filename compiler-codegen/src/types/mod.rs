@@ -29121,6 +29121,7 @@ mod primitive_mut_method_tests {
             peer_files: Vec::new(),
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
+            consume_reuse_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -29393,6 +29394,7 @@ mod named_tuple_ctor_infer_tests {
             peer_files: Vec::new(),
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
+            consume_reuse_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -29674,6 +29676,7 @@ mod named_tuple_ctor_infer_tests {
             peer_files: Vec::new(),
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
+            consume_reuse_spans: std::collections::HashSet::new(),
         };
         let arena = FnDeclArena::new();
         let sig = crate::sig_registry::SigRegistry::build_base(&m);

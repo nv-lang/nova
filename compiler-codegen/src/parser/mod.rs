@@ -511,6 +511,7 @@ impl Parser {
             peer_files: Vec::new(),
             doc: module_doc,
             rebind_shadows: std::collections::HashMap::new(),
+            consume_reuse_spans: std::collections::HashSet::new(),
         })
     }
 
