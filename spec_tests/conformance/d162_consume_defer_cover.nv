@@ -45,3 +45,27 @@ test "failable + defer-cover — обязательство покрыто на 
     }
 }
 
+// [M-d162-structural-throw-sibling] (Plan 172.13 батч 3): throw ВНУТРИ
+// match-ветки — каноническая явная обработка error-path
+// (`Err(_) => throw ...`). До фикса D162's throw-скан (expr_has_throw)
+// не спускался в match-ветки (только If/Block/With) — функция ниже давала
+// ложный [D162-uncovered-error-path], вынуждая обходной сиблинг
+// `if x.is_err() { throw ... }` (волна 3б: text/regex).
+fn d162_failable_match_throw(n int) Fail -> int {
+    consume d162_tx = d162_begin(n)
+    d162_tx.commit()
+    match int.try_from("42") {
+        Ok(v)  => v
+        Err(_) => throw "bad quantifier"
+    }
+}
+
+test "failable + throw в match-ветке = явная обработка error-path (D162)" {
+    with Fail = effect Fail {
+        fail(_m) { interrupt () }
+    } {
+        ro v = d162_failable_match_throw(3)
+        assert(v == 42)
+    }
+}
+

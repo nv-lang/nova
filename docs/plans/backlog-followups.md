@@ -2436,13 +2436,22 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Поля уже закрыты D281-формой `priv { }` (2026-07-08) — layout свободен для замены.
 
 - **[M-d162-structural-throw-sibling]** (2026-07-08, P2, Plan: 172.13 чекер-каналы;
-  Wave: с остальными чекер-маркерами) — D162 (uncovered-error-path) — структурный, не
+  Wave: с остальными чекер-маркерами; **ЗАКРЫТ батчем 3**) — D162 (uncovered-error-path)
+  — структурный, не
   dataflow: требует throw ПРЯМЫМ сиблингом сразу после потребления; throw внутри
   match-ветки (`Err(_) => throw`) при наличии раннего return в той же fn не доказывается,
   даже когда поток очевидно безопасен. Обходной канон (применён в _experimental
   encoding/toml, text/regex, волна 3б 2026-07-08): `if x.is_err() { throw ... }` сиблингом
   + отдельный match для извлечения (Err-ветка = panic("unreachable")). Правильный фикс:
   научить D162 покрытию через match-ветки (или полноценный dataflow по путям).
+  **Фикс (батч 3):** throw-скан D162 (`expr_has_throw`, types/mod.rs) спускался
+  только в If/Block/With — расширен на Match-ветки (Expr и Block тела), IfLet,
+  While/WhileLet/For/Loop. Обход `is_err()` снят в std/text/regex.nv
+  (parse_quantifier_max → естественный match). В _experimental/encoding/toml.nv
+  is_err-обходов НЕ оказалось (его err-Option-аккумуляция в parse_basic_string —
+  D133-мотивированная, не D162). Позитив добавлен в
+  spec_tests/conformance/d162_consume_defer_cover.nv (throw в match-ветке =
+  покрытие). Гейты: conformance 67/0, std/text зелёный.
 
 - **[M-redundant-param-ro-diagnostic]** (2026-07-08, P2, Plan: 172.13/185; Wave: с
   чекер-маркерами) — вопрос владельца: `fn f(bytes ro []u8)` — избыточный явный `ro`

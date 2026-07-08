@@ -20266,6 +20266,28 @@ fn expr_has_throw(e: &crate::ast::Expr) -> bool {
             }).unwrap_or(false)
         }
         ExprKind::With { body, .. } => block_has_throw(body),
+        // [M-d162-structural-throw-sibling] (Plan 172.13 батч 3): D162's
+        // "did the coder explicitly handle the error path" evidence must see a
+        // `throw` inside a MATCH ARM (`Err(_) => throw ...`) — the canonical
+        // error-branching form — as well as the other structural branch/loop
+        // containers. Previously only If/Block/With descended, so the natural
+        // `match r { Err(e) => throw ..., Ok(v) => v }` was invisible and
+        // forced the `if x.is_err() { throw ... }` sibling workaround
+        // (волна 3б, toml/regex).
+        ExprKind::Match { arms, .. } => arms.iter().any(|a| match &a.body {
+            crate::ast::MatchArmBody::Expr(x) => expr_has_throw(x),
+            crate::ast::MatchArmBody::Block(b) => block_has_throw(b),
+        }),
+        ExprKind::IfLet { then, else_, .. } => {
+            block_has_throw(then) || else_.as_ref().map(|el| match el {
+                crate::ast::ElseBranch::Block(b) => block_has_throw(b),
+                crate::ast::ElseBranch::If(x) => expr_has_throw(x),
+            }).unwrap_or(false)
+        }
+        ExprKind::While { body, .. }
+        | ExprKind::WhileLet { body, .. }
+        | ExprKind::For { body, .. }
+        | ExprKind::Loop { body, .. } => block_has_throw(body),
         _ => false,
     }
 }
