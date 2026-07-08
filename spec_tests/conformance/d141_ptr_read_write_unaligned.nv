@@ -1,0 +1,44 @@
+// D141 / [M-ptr-raw-access-contract-and-unaligned] — pointer access contract:
+// item 1: `.read()`/`.write(v)` on raw pointers stay BARE deref (no memcpy) —
+//   caller-guaranteed alignment + same-type aliasing, else UB (Rust `ptr::
+//   read`/`ptr::write` canon). Spot-checked against emitted C separately
+//   (must contain plain `*(...)`, never `memcpy`, for these two calls).
+// item 2: separate `.read_unaligned()`/`.write_unaligned(v)` — memcpy-
+//   emission, safe at any (incl. odd) byte offset. Spot-checked against
+//   emitted C separately (must contain `memcpy` for these two calls).
+// item 4: `&ro-value as *T` (ro pointer) / `&mut-value as *mut T` (mut
+//   pointer) — address-of-then-cast associates as `(&expr) as *T`, not
+//   `&(expr as *T)` (D54/L3 unsafe boundary).
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+test "ptr read()/write() bare deref round-trip" {
+    ro x int = 42
+    unsafe {
+        ro p = (&x) as *int
+        assert(p.read() == 42)
+    }
+    mut y int = 7
+    unsafe {
+        ro q = (&y) as *mut int
+        q.write(99)
+        assert(y == 99)
+    }
+}
+
+test "read_unaligned/write_unaligned at odd byte offset in []u8 buffer" {
+    mut buf []u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    unsafe {
+        ro base = buf.ptr()
+        // Odd byte offset (1) — a plain `*(uint32_t*)` deref here would be
+        // misaligned UB; `.write_unaligned`/`.read_unaligned` (memcpy-backed)
+        // are exactly the primitive meant for this.
+        ro p = (base + 1) as *mut u32
+        p.write_unaligned(0xAABBCCDD as u32)
+        ro v = (p as *u32).read_unaligned()
+        assert(v == (0xAABBCCDD as u32))
+        // Neighbouring bytes outside the 4-byte write window untouched.
+        assert(buf[0] == (0 as u8))
+        assert(buf[5] == (0 as u8))
+    }
+}

@@ -161,6 +161,11 @@ export type Iter[I] protocol {
 // tripping the D29 early-return cycle guard (verified experimentally).
 import std.runtime.string
 import std.runtime.char
+// [M-ptr-raw-access-contract-and-unaligned] item 3: write_buffer.nv (re-
+// exported below) now calls f32/f64 `.to_bits()` — a plain Nova-body method
+// in std/runtime/numeric.nv (no longer a compiler intrinsic), same partial-
+// prelude self-containment reasoning as string/char above.
+import std.runtime.numeric
 
 // Third hop of the same root cause: `Vec[T Compare] @compare`
 // (std/collections/vec/protocols.nv, merged in transitively — see below)

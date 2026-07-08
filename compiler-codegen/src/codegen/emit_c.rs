@@ -28889,13 +28889,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // StringBuilder/WriteBuffer/ReadBuffer удалён. Registry-
                 // driven путь (Plan 12 Ф.3) обрабатывает это раньше.
                 //
-                // [M-compiler-nv-porting-wave] item B2: f64/f32.from_bits
+                // [M-compiler-nv-porting-wave] item B2 / [M-ptr-raw-access-
+                // contract-and-unaligned] item 3: f64/f32.from_bits И to_bits
                 // hardcoded intercept снят — std/runtime/numeric.nv теперь
-                // embedded builtin source (PRIMITIVE_BITCAST_OVERRIDES,
-                // external_registry.rs), тот же generic registry-driven
-                // dispatch выше (строка ~28448) резолвит его. `int.to_bits`
-                // остаётся hardcoded — нет .nv-декларации нигде (legacy
-                // Plan 04 helper, read_buffer round-trip), нечего embed'ить.
+                // ЧИСТЫЙ .nv (unsafe read_unaligned поверх pointer cast),
+                // resolved как обычный Nova-body method (не через registry
+                // вообще — PRIMITIVE_BITCAST_OVERRIDES удалена, extern-записи
+                // нет). `int.to_bits` остаётся hardcoded — нет .nv-декларации
+                // нигде (legacy Plan 04 helper, read_buffer round-trip),
+                // нечего embed'ить.
                 if let ExprKind::Ident(name) = &obj.kind {
                     if name == "int" && method == "to_bits" {
                         if let Some(arg) = args.first() {
@@ -29375,17 +29377,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 //     типах. В runtime'е они мапятся на стандартные C-функции
                 //     из <math.h>.
                 if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
-                    // Plan 74: `f.to_bits()` — IEEE 754 reinterpret-cast в
-                    // unsigned integer bit-pattern (f64→u64, f32→u32).
-                    if method == "to_bits" && args.is_empty() {
-                        let obj_c = self.emit_expr(obj)?;
-                        let c_fn = if obj_ty == "nova_f32" {
-                            "Nova_f32_to_bits"
-                        } else {
-                            "Nova_f64_to_bits"
-                        };
-                        return Ok(format!("{}({})", c_fn, obj_c));
-                    }
+                    // [M-ptr-raw-access-contract-and-unaligned] item 3: `f.to_bits()`
+                    // hardcoded intercept снят — std/runtime/numeric.nv теперь ЧИСТЫЙ
+                    // .nv (`unsafe { (&@ as *u64).read_unaligned() }`, поверх item 2),
+                    // resolved через обычный Nova-body method dispatch (как
+                    // char.from/u8.try_from). `Nova_f64_to_bits`/`Nova_f32_to_bits`
+                    // C-хелперы в numeric.h — сняты вместе с этим intercept'ом.
                     if let Some(c_fn) = Self::f64_method_to_c(method) {
                         let obj_c = self.emit_expr(obj)?;
                         let mut arg_strs = vec![obj_c];
@@ -29520,6 +29517,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 118 Ф.4 V1: typed pointer instance methods.
                 // `(*ro T).read() -> T`     → `(*p)`             (deref read)
                 // `(*mut T).write(v T)`     → `((*p) = v, NOVA_UNIT)` (deref store)
+                // [M-ptr-raw-access-contract-and-unaligned] item 1 (D141-
+                // амендмент, 2026-07-08): владелец ПЕРЕРЕШИЛ — `.read()`/
+                // `.write()` НЕ получают memcpy-семантику, остаются голым
+                // деref (как здесь). Явный контракт (Rust-канон
+                // `ptr::read`/`ptr::write`): caller ОБЯЗАН гарантировать
+                // (a) выравнивание (`p` кратен `align_of(T)`) и (b) same-type
+                // aliasing (никакого type-punning через bare read/write) —
+                // нарушение = UB (в C — misaligned access, possible crash на
+                // strict-align архитектурах / UBSan). Для непроверенного
+                // выравнивания / byte-level parsing — `.read_unaligned()`/
+                // `.write_unaligned()` (item 2, ниже) с memcpy-эмиссией.
                 // Detection: obj_ty ends с `*` и НЕ известный typedef
                 // (Nova_*, NovaArray_*, NovaOpt_*, NovaRes_*, NovaBox_*,
                 // NovaValue_*, void*). Caller wraps в `unsafe { }`
@@ -29547,6 +29555,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // чтобы expression-context (let _ = p.write(v)) тоже
                         // compiled.
                         return Ok(format!("((*({})) = ({}), NOVA_UNIT)", obj_c, val_c));
+                    }
+                    // [M-ptr-raw-access-contract-and-unaligned] item 2: separate
+                    // `.read_unaligned()` / `.write_unaligned(v)` — memcpy-семантика
+                    // (в отличие от `.read()`/`.write()` = голый deref, D141-контракт
+                    // «требуется выравнивание, иначе UB»). Portable без GNU
+                    // statement-expression (MSVC-совместимо, см. Plan 145 прецедент
+                    // компаунд-литерал+memcpy): `memcpy` возвращает СВОЙ dest-указатель
+                    // → `*(T*)memcpy(&(T){0}, src, sizeof(T))` читает byte-скопированное
+                    // значение из ОДНОГО и того же анонимного temp-объекта (текстуально
+                    // компаунд-литерал встречается один раз → одна аллокация). Запись —
+                    // симметрично: `&(T){ v }` даёт адресуемый temp с байтами v, memcpy
+                    // копирует их в dst.
+                    if method == "read_unaligned" && args.is_empty() {
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .trim_end_matches('*').trim();
+                        let obj_c = self.emit_expr(obj)?;
+                        return Ok(format!(
+                            "(*({pointee}*)memcpy(&({pointee}){{0}}, (const void*)({src}), sizeof({pointee})))",
+                            pointee = pointee, src = obj_c));
+                    }
+                    if method == "write_unaligned" && args.len() == 1 && !is_const {
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .trim_end_matches('*').trim();
+                        let obj_c = self.emit_expr(obj)?;
+                        let val_c = self.emit_expr(args[0].expr())?;
+                        return Ok(format!(
+                            "(memcpy((void*)({dst}), &({pointee}){{ ({val}) }}, sizeof({pointee})), NOVA_UNIT)",
+                            dst = obj_c, pointee = pointee, val = val_c));
                     }
                     // **Plan 118.1 Ф.2 [M-118.1-volatile-ops] (2026-06-04):**
                     // volatile reads/writes для MMIO patterns. Distinct from
@@ -31735,11 +31771,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // from_bytes_unchecked_steal MIGRATED to Nova-body. The static C
                 // interception was removed here so the call routes through the
                 // normal static-method dispatch to Nova_str_static_from_bytes_*.
-                // [M-compiler-nv-porting-wave] item B2: f64/f32.from_bits
-                // hardcoded intercept снят — numeric.nv embedded builtin
-                // source (PRIMITIVE_BITCAST_OVERRIDES), generic registry-
-                // driven Path-form dispatch below резолвит его. `int.to_bits`
-                // остаётся hardcoded — нет .nv-декларации нигде.
+                // [M-compiler-nv-porting-wave] item B2 / [M-ptr-raw-access-
+                // contract-and-unaligned] item 3: f64/f32.from_bits И to_bits
+                // hardcoded intercept снят — numeric.nv ЧИСТЫЙ .nv, resolved
+                // как обычный Nova-body static method (registry-запись и
+                // extern-форма нет вообще). `int.to_bits` остаётся hardcoded —
+                // нет .nv-декларации нигде.
                 if parts.len() == 2 && parts[0] == "int" && parts[1] == "to_bits" {
                     if let Some(arg) = args.first() {
                         let v = self.emit_expr(arg.expr())?;
@@ -38821,9 +38858,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         {
             return true;
         }
-        // Float math intrinsics (`f64_method_to_c`) + bit-reinterpret `to_bits`.
+        // Float math intrinsics (`f64_method_to_c`). `to_bits`/`from_bits` removed
+        // [M-ptr-raw-access-contract-and-unaligned] item 3 — now pure .nv methods
+        // (numeric.nv), resolved via `method_overloads` like any user method, not
+        // a codegen-hardcoded intrinsic anymore.
         if matches!(prim, "f64" | "f32")
-            && (method == "to_bits" || Self::f64_method_to_c(method).is_some())
+            && Self::f64_method_to_c(method).is_some()
         {
             return true;
         }
@@ -43302,6 +43342,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if method == "write" && args.len() == 1 {
                                 return "nova_unit".into();
                             }
+                            // [M-ptr-raw-access-contract-and-unaligned] item 2:
+                            // read_unaligned/write_unaligned — same return-type
+                            // shape as read/write (memcpy-эмиссия отличается
+                            // только в emit_call, не в инференсе типа).
+                            if method == "read_unaligned" && args.is_empty() {
+                                let pointee = obj_ty.trim_start_matches("const ")
+                                    .trim_end_matches('*').trim();
+                                return pointee.to_string();
+                            }
+                            if method == "write_unaligned" && args.len() == 1 {
+                                return "nova_unit".into();
+                            }
                             // Plan 118.1 Ф.2 [M-118.1-volatile-ops]: volatile
                             // variants return same types as regular read/write.
                             if method == "read_volatile" && args.is_empty() {
@@ -43453,9 +43505,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // [M-compiler-nv-porting-wave] items B1/B2: gc/
                             // fibers/runtime type-inference hardcode (heap_size/
                             // collect/virtual_reserved/init/is_initialized/…) и
-                            // f64/f32.from_bits снят — все три .nv embedded builtin
-                            // sources (external_registry.rs), ExternalRegistry
-                            // fallback ниже резолвит return_c_type корректно.
+                            // f64/f32.from_bits/to_bits сняты — numeric.nv теперь
+                            // ЧИСТЫЙ .nv (не extern), обычный Nova-body method-
+                            // return-type инференс резолвит return_c_type.
                             // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if n == "int" && method == "to_bits" {
                                 return "nova_int".into();
@@ -43790,15 +43842,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
                         if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
-                            // Plan 74: `f.to_bits()` → unsigned bit-pattern
-                            // (f64→u64, f32→u32).
-                            if method == "to_bits" {
-                                return if obj_ty == "nova_f32" {
-                                    "uint32_t".into()
-                                } else {
-                                    "uint64_t".into()
-                                };
-                            }
+                            // [M-ptr-raw-access-contract-and-unaligned] item 3:
+                            // `to_bits` hardcode return-type снят — numeric.nv
+                            // ЧИСТЫЙ .nv method, return-type резолвится обычным
+                            // Nova-body method-return-type инференсом (declared
+                            // `-> u64`/`-> u32` в сигнатуре).
                             if Self::f64_method_to_c(method).is_some() {
                                 return match method.as_str() {
                                     "is_nan" | "is_finite" | "is_infinite" => "nova_bool".into(),
@@ -44073,13 +44121,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // [M-compiler-nv-porting-wave] item B2: f64/f32.
-                            // from_bits hardcode снят — numeric.nv embedded
-                            // builtin source (PRIMITIVE_BITCAST_OVERRIDES),
-                            // ExternalRegistry lookup below (line ~43600-ish
-                            // equivalent, external_registry.lookup(eff, ...))
-                            // резолвит return_c_type. `int.to_bits` остаётся —
-                            // нет .nv-декларации нигде.
+                            // [M-compiler-nv-porting-wave] item B2 / [M-ptr-raw-
+                            // access-contract-and-unaligned] item 3: f64/f32.
+                            // from_bits/to_bits hardcode сняты — numeric.nv
+                            // ЧИСТЫЙ .nv (не extern), обычный Nova-body method-
+                            // return-type инференс резолвит return_c_type.
+                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if eff == "int" && method_name == "to_bits" {
                                 return "nova_int".into();
                             }
@@ -47022,6 +47069,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if method == "write" && args.len() == 1 {
                                 return "nova_unit".into();
                             }
+                            // [M-ptr-raw-access-contract-and-unaligned] item 2:
+                            // read_unaligned/write_unaligned — same return-type
+                            // shape as read/write (memcpy-эмиссия отличается
+                            // только в emit_call, не в инференсе типа).
+                            if method == "read_unaligned" && args.is_empty() {
+                                let pointee = obj_ty.trim_start_matches("const ")
+                                    .trim_end_matches('*').trim();
+                                return pointee.to_string();
+                            }
+                            if method == "write_unaligned" && args.len() == 1 {
+                                return "nova_unit".into();
+                            }
                             // Plan 118.1 Ф.2 [M-118.1-volatile-ops]: volatile
                             // variants return same types as regular read/write.
                             if method == "read_volatile" && args.is_empty() {
@@ -47173,9 +47232,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // [M-compiler-nv-porting-wave] items B1/B2: gc/
                             // fibers/runtime type-inference hardcode (heap_size/
                             // collect/virtual_reserved/init/is_initialized/…) и
-                            // f64/f32.from_bits снят — все три .nv embedded builtin
-                            // sources (external_registry.rs), ExternalRegistry
-                            // fallback ниже резолвит return_c_type корректно.
+                            // f64/f32.from_bits/to_bits сняты — numeric.nv теперь
+                            // ЧИСТЫЙ .nv (не extern), обычный Nova-body method-
+                            // return-type инференс резолвит return_c_type.
                             // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if n == "int" && method == "to_bits" {
                                 return "nova_int".into();
@@ -47510,15 +47569,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // D74 math methods on f64/f32 — return f64 (most) or bool (predicates).
                         if obj_ty == "nova_f64" || obj_ty == "nova_f32" {
-                            // Plan 74: `f.to_bits()` → unsigned bit-pattern
-                            // (f64→u64, f32→u32).
-                            if method == "to_bits" {
-                                return if obj_ty == "nova_f32" {
-                                    "uint32_t".into()
-                                } else {
-                                    "uint64_t".into()
-                                };
-                            }
+                            // [M-ptr-raw-access-contract-and-unaligned] item 3:
+                            // `to_bits` hardcode return-type снят — numeric.nv
+                            // ЧИСТЫЙ .nv method, return-type резолвится обычным
+                            // Nova-body method-return-type инференсом (declared
+                            // `-> u64`/`-> u32` в сигнатуре).
                             if Self::f64_method_to_c(method).is_some() {
                                 return match method.as_str() {
                                     "is_nan" | "is_finite" | "is_infinite" => "nova_bool".into(),
@@ -47793,13 +47848,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     _ => "nova_int".into(),
                                 };
                             }
-                            // [M-compiler-nv-porting-wave] item B2: f64/f32.
-                            // from_bits hardcode снят — numeric.nv embedded
-                            // builtin source (PRIMITIVE_BITCAST_OVERRIDES),
-                            // ExternalRegistry lookup below (line ~43600-ish
-                            // equivalent, external_registry.lookup(eff, ...))
-                            // резолвит return_c_type. `int.to_bits` остаётся —
-                            // нет .nv-декларации нигде.
+                            // [M-compiler-nv-porting-wave] item B2 / [M-ptr-raw-
+                            // access-contract-and-unaligned] item 3: f64/f32.
+                            // from_bits/to_bits hardcode сняты — numeric.nv
+                            // ЧИСТЫЙ .nv (не extern), обычный Nova-body method-
+                            // return-type инференс резолвит return_c_type.
+                            // `int.to_bits` остаётся — нет .nv-декларации нигде.
                             if eff == "int" && method_name == "to_bits" {
                                 return "nova_int".into();
                             }

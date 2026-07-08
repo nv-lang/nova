@@ -10,7 +10,10 @@
 #include <math.h>     /* D74: f64.sqrt()/sin()/cos()/etc. → libm */
 #include <float.h>    /* Plan 38: f64.MAX (DBL_MAX) / f64.EPSILON / etc. */
 #include "cast.h"     /* План 07: float→int saturation helpers */
-#include "numeric.h"  /* Plan 74: f64/f32 ↔ uN IEEE 754 bit-cast */
+/* numeric.h снят [M-ptr-raw-access-contract-and-unaligned] item 3
+ * (2026-07-08): f64/f32 to_bits/from_bits теперь ЧИСТЫЙ .nv
+ * (std/runtime/numeric.nv, unsafe read_unaligned) — C-обёртки больше не
+ * нужны, удалены вместе с этим include. */
 /* conv.h подключается в array.h (после nova_alloc и определения nova_str). */
 
 /* ---- Primitive types ---- */

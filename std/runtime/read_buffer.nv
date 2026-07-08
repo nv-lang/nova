@@ -19,6 +19,12 @@
 #no_prelude
 module runtime.read_buffer
 
+// [M-ptr-raw-access-contract-and-unaligned] item 3: f64/f32 `.from_bits()`
+// used below is no longer a compiler intrinsic — plain Nova-body method in
+// std/runtime/numeric.nv (like char.from/u8.try_from in
+// std/runtime/char.nv). `#no_prelude` files must import it explicitly.
+import std.runtime.numeric
+
 // ─── Type ───
 
 export type ReadBuffer {

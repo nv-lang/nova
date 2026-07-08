@@ -15,7 +15,12 @@
 #no_prelude
 module runtime.write_buffer
 
-// no explicit imports — #no_prelude breaks all auto-injection.
+// [M-ptr-raw-access-contract-and-unaligned] item 3: f64/f32 `.to_bits()`
+// used below (write_f32_le/be, write_f64_le/be) is no longer a compiler
+// intrinsic — it's a plain Nova-body method in std/runtime/numeric.nv (like
+// char.from/u8.try_from in std/runtime/char.nv). `#no_prelude` files must
+// import it explicitly.
+import std.runtime.numeric
 
 // ─── Type ───
 //

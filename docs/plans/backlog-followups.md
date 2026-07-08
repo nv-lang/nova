@@ -2023,8 +2023,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   [M-f64-try-parse-to-parse-f64]: known-broken, ретракция программе T.parse 174.1); (3) `emit-runtime-stubs`
   авто-генерирует пустой stray std/runtime/string.nv — str_runtime() → vec![] + check в main.rs ✓.
 
-- **[M-ptr-raw-access-contract-and-unaligned]** (2026-07-07, P2, Wave: план 174.5 — методы
-  указателей; ПЕРЕРЕШЕНО владельцем: `.read()`/`.write()` НЕ получают memcpy-семантику) —
+- **[M-ptr-raw-access-contract-and-unaligned]** ✅ РЕАЛИЗОВАНО (2026-07-08, sonnet,
+  ветка `ptr-174-5` @a23cb794b, база b16ee25e0; приёмка владельца — отдельно) (2026-07-07, P2,
+  Wave: план 174.5 — методы указателей; ПЕРЕРЕШЕНО владельцем: `.read()`/`.write()` НЕ получают
+  memcpy-семантику) —
   (1) D141-амендмент: read/write на сырых указателях = голый deref (как сейчас,
   emit_c.rs:29141) с ЯВНЫМ контрактом «требуется выравнивание и same-type aliasing, иначе
   UB» (Rust-канон ptr::read); (2) добавить ОТДЕЛЬНЫЕ `@read_unaligned()`/`@write_unaligned()`
@@ -2037,6 +2039,24 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (3а) закрепить правило: `&` на ro-биндинге/параметре легален → ro-указатель `*T`,
   на mut → `*mut T` (Rust-параллель &/const); если чекер сегодня требует mut — снять;
   unsafe-границу каста/чтения сверить по D54/L3; (4) size_of-API — отдельный пункт 174.5 (const-фича).
+
+  **Сделано (2026-07-08, ветка `ptr-174-5`):** (1) явный D141-контракт закреплён комментарием
+  на месте (голый deref остаётся, как решено); (2) `.read_unaligned()`/`.write_unaligned(v)`
+  добавлены (memcpy через compound-literal + `memcpy`-return-dest трюк, MSVC-portable, без
+  stmt-expr) во всех трёх живых копиях дispatcher-блока emit_c.rs; (3) `numeric.nv` переписан
+  дословно по форме владельца (extern/registry/numeric.h снесены; `#no_prelude`
+  write_buffer.nv/read_buffer.nv + prelude/collections.nv получили explicit
+  `import std.runtime.numeric`, т.к. to_bits/from_bits перестали быть always-available
+  compiler intrinsic); (3а) `&ro as *T`/`&mut as *mut T` уже были легальны (mut чекером не
+  требовался) — НО дословная форма владельца без внешних скобок (`&expr as *T`) не парсилась
+  (as поглощал operand AddrOf раньше знака `&`) — узкий parser-фикс (re-ассоциация в Amp/
+  RawAddrOf ветках parse_unary), 0 regressions (грепом подтверждено 0 существующих
+  использований старой ассоциации); (4) `size_of[ref T]()` уже отвергается E_REF_TYPE_POSITION
+  (общий walk_typeref-путь) — только verify, добавлен neg-тест. Conformance 66/0 → 67/0 (+1
+  neg-файл; 2 pos-файла вошли в общий CU без изменения счётчика). Targeted-фикстуры:
+  `spec_tests/conformance/d141_ptr_bitcast_roundtrip.nv`,
+  `spec_tests/conformance/d141_ptr_read_write_unaligned.nv`,
+  `spec_tests/conformance/neg/d326_size_of_ref_typearg_neg.nv`.
 
   ТУДА ЖЕ (вопрос владельца про ADDR_IMAGE_BYTES, 2026-07-08): при появлении size_of-API
   описать net-образ типизированной записью и заменить литерал 20 на size_of[...] —
