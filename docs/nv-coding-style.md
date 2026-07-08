@@ -545,6 +545,27 @@ fn finish(consume sb StringBuilder) -> str => sb.into_str()
 //   fn h(consume mut x T)        → E_PARAM_MOD_CONFLICT   (parser-level)
 ```
 
+### 18а. Срезы-виды вместо ручного копирования (2026-07-08)
+
+Поэлементная копия куска `[]T` в новый Vec — красный флаг: `[]T`-вид (D262)
+даёт то же за O(1) без аллокации.
+
+```nova
+// ПЛОХО: O(n) копия на каждой итерации частичной записи (квадратичность)
+mut rest []u8 = []u8.new()
+mut i = done
+while i < total { rest.push(@buf[i]); i += 1 }
+@inner.write(rest)
+
+// КАНОН: zero-copy срез-вид
+@inner.write(@buf[done..total])
+```
+
+Копия легальна только когда нужно ВЛАДЕНИЕ отдельным буфером — и тогда она
+пишется явно `.clone()` на виде, а не циклом (плата видна в точке вызова, §D410).
+Вычищено 2026-07-08: io/buffered drain, fs write, path slice_from/slice_to
+(вопрос владельца). Проверка (185): эвристика «push(x[i]) в счётном цикле».
+
 ## 19. `consume` — видимая линейная передача на каждом binding-site
 
 - **`consume` — логический linear-qualifier**, память остаётся под GC (это НЕ
