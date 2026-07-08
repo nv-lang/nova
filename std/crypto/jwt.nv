@@ -63,11 +63,11 @@ fn make_header_hs256() -> HashMap[str, JsonValue] {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Verify HS256 signature + return payload. **Не проверяет** exp/nbf — это
-/// делает `validate_hs256`. Throws `JwtError` (Invalid format/sig/alg).
+/// делает `validate_hs256`. `Err(JwtError)` (Invalid format/sig/alg).
 #stable(since = "0.1")
-export fn Jwt.decode_hs256(secret []u8, token str) Fail[JwtError] -> JsonValue {
+export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError] {
     ro parts = token.split(".")
-    if parts.len() != 3 { throw InvalidFormat }
+    if parts.len() != 3 { return Err(InvalidFormat) }
 
     ro header_b64 = parts[0]
     ro payload_b64 = parts[1]
@@ -76,25 +76,25 @@ export fn Jwt.decode_hs256(secret []u8, token str) Fail[JwtError] -> JsonValue {
     // Парсим header чтобы проверить alg
     ro header_bytes = match Base64.decode_url(header_b64) {
         Ok(b)  => b
-        Err(_) => throw DecodingFailed
+        Err(_) => return Err(DecodingFailed)
     }
     ro header_json = match str.from_bytes(header_bytes) {
         Ok(s)  => s
-        Err(_) => throw DecodingFailed
+        Err(_) => return Err(DecodingFailed)
     }
     ro header = match Json.parse(header_json) {
         Ok(v)  => v
-        Err(_) => throw DecodingFailed
+        Err(_) => return Err(DecodingFailed)
     }
     ro alg = match header.object() {
         Some(m) => match m.get("alg") {
             Some(JsonValue.Str(a)) => a
-            _                       => throw InvalidFormat
+            _                       => return Err(InvalidFormat)
         }
-        None => throw InvalidFormat
+        None => return Err(InvalidFormat)
     }
     if alg != "HS256" {
-        throw UnsupportedAlgorithm { alg }
+        return Err(UnsupportedAlgorithm { alg })
     }
 
     // Verify signature
@@ -102,37 +102,37 @@ export fn Jwt.decode_hs256(secret []u8, token str) Fail[JwtError] -> JsonValue {
     ro expected_mac = HmacSha256.compute(secret, signing_input.bytes())
     ro actual_sig = match Base64.decode_url(sig_b64) {
         Ok(b)  => b
-        Err(_) => throw InvalidSignature
+        Err(_) => return Err(InvalidSignature)
     }
-    if actual_sig.len() != 32 { throw InvalidSignature }
+    if actual_sig.len() != 32 { return Err(InvalidSignature) }
 
     // Constant-time compare
     mut diff = 0
     for i in 0..32 {
         diff = diff | ((expected_mac[i] as int) ^ (actual_sig[i] as int))
     }
-    if diff != 0 { throw InvalidSignature }
+    if diff != 0 { return Err(InvalidSignature) }
 
     // Parse payload
     ro payload_bytes = match Base64.decode_url(payload_b64) {
         Ok(b)  => b
-        Err(_) => throw DecodingFailed
+        Err(_) => return Err(DecodingFailed)
     }
     ro payload_json = match str.from_bytes(payload_bytes) {
         Ok(s)  => s
-        Err(_) => throw DecodingFailed
+        Err(_) => return Err(DecodingFailed)
     }
     match Json.parse(payload_json) {
-        Ok(v)  => v
-        Err(_) => throw DecodingFailed
+        Ok(v)  => Ok(v)
+        Err(_) => Err(DecodingFailed)
     }
 }
 
 /// Full JWT validation: signature + `exp` (expiration) + `nbf` (not-before).
 /// Использует Time effect — детерминирован в тестах через `th.fixed_ms(...)`.
 #stable(since = "0.1")
-export fn Jwt.validate_hs256(secret []u8, token str) Time Fail[JwtError] -> JsonValue {
-    ro claims = Jwt.decode_hs256(secret, token)
+export fn Jwt.validate_hs256(secret []u8, token str) Time -> Result[JsonValue, JwtError] {
+    ro claims = Jwt.decode_hs256(secret, token)?
     ro now_ms = Time.now_unix_ms() as u64
     ro now_s = now_ms / 1000
 
@@ -142,7 +142,7 @@ export fn Jwt.validate_hs256(secret []u8, token str) Time Fail[JwtError] -> Json
             match m.get("exp") {
                 Some(JsonValue.Num(exp_s)) => {
                     if (now_s as f64) >= exp_s {
-                        throw TokenExpired { exp_ms: (exp_s as u64) * 1000, now_ms }
+                        return Err(TokenExpired { exp_ms: (exp_s as u64) * 1000, now_ms })
                     }
                 }
                 _ => ()
@@ -151,16 +151,16 @@ export fn Jwt.validate_hs256(secret []u8, token str) Time Fail[JwtError] -> Json
             match m.get("nbf") {
                 Some(JsonValue.Num(nbf_s)) => {
                     if (now_s as f64) < nbf_s {
-                        throw NotYetValid { nbf_ms: (nbf_s as u64) * 1000, now_ms }
+                        return Err(NotYetValid { nbf_ms: (nbf_s as u64) * 1000, now_ms })
                     }
                 }
                 _ => ()
             }
         }
-        None => throw InvalidFormat
+        None => return Err(InvalidFormat)
     }
 
-    claims
+    Ok(claims)
 }
 
 
