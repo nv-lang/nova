@@ -305,8 +305,14 @@ closed, A1-A40 acceptance criteria, 65/65 fixtures PASS на release nova-cli.
 - `LinkedList`, `Tree`, `Graph` — какие именно типы?
 - `Json`, `Sql.builder` — упоминаются в `audit.nv`, не описаны
 - `Time`, `Random`, `Net`, `Db` — стандартные эффекты, не определены
-  их операции
-- HTTP, WebSocket, gRPC — что в core, что в external?
+  их операции. **Частично закрыто:** `Time` — [D316-D318](decisions/04-effects.md#d316)
+  (Plan 175, `std/time`); `Net` — [D301/D302/D407](decisions/04-effects.md#d302)
+  (Plan 91.x/183, `std/net`); `Fs`/`Os`/`Io` (не входили в исходный список —
+  добавлены тем же классом эффектов) — [D322-D324](decisions/04-effects.md#d322)
+  (Plan 176, `std/io`/`std/fs`/`std/os`). `Random`/`Db` остаются открытыми.
+- HTTP, WebSocket, gRPC — что в core, что в external? **Частично закрыто:**
+  HTTP — [D357-D361+](decisions/04-effects.md) (Plan 178, `std/http`).
+  WebSocket/gRPC остаются открытыми.
 
 ### Конкретные пробелы методов
 
