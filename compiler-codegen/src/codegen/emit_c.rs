@@ -31812,11 +31812,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return Ok(format!("nova_int_from_f64_bits({})", v));
                     }
                 }
-                // Plan 52.2 Ф.2: parts[0] это lazy const → это instance
-                // method call на const-value, не static-method-call.
-                // Конвертим Path(["KEYWORDS", "get"]) в Member { Ident("KEYWORDS"), "get" }
-                // и делегируем в обычный method-call emit.
-                if parts.len() == 2 && self.lazy_consts.contains(&parts[0]) {
+                // Plan 52.2 Ф.2 / [M-module-const-chars-bytes-resolution] (Plan
+                // 172.13): parts[0] resolves to a CONST/value binding (lazy
+                // const OR a plain compile-time module-level `const`, both
+                // registered in `var_types` by name — types/namespaces never
+                // are) → this Path is `<value>.<method>(...)`, an INSTANCE
+                // method call on that value, NOT a static `Type.method(...)`
+                // call. Symmetric with the type-inference sibling (~45006):
+                // excludes the `Type.CONST` associated-const-symbol shape
+                // (`parts[0]_parts[1]` also a var_types key + parts[0] starts
+                // uppercase) so an actual static/associated access isn't
+                // misrouted. Конвертим Path(["ALPHABET", "chars"]) в
+                // Member { Ident("ALPHABET"), "chars" } и делегируем в обычный
+                // method-call emit.
+                let is_assoc_const_symbol = parts.len() == 2 && {
+                    let assoc = format!("{}_{}", parts[0], parts[1]);
+                    self.var_types.contains_key(&assoc)
+                        && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                };
+                if parts.len() == 2 && !is_assoc_const_symbol
+                    && (self.lazy_consts.contains(&parts[0]) || self.var_types.contains_key(&parts[0]))
+                {
                     let new_obj = Expr {
                         kind: ExprKind::Ident(parts[0].clone()),
                         span: func.span, id: crate::ast::ExprId::UNSET,

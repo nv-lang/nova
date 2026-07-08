@@ -210,10 +210,10 @@ fn bcrypt_base64_encode(data []u8) -> str {
 // `int as char` запрещён (D54) → `char.from` (precedent: std/encoding/json.nv
 // Lexer `@peek()`/`@advance()`).
 fn alphabet_char(idx int) -> char {
-    // [M-module-const-chars-bytes-resolution]: см. bcrypt_decode_char выше —
-    // локальная ro-копия перед `.bytes()`, не напрямую на module-level const.
-    ro alphabet = BCRYPT_ALPHABET
-    match alphabet.bytes().get(idx) {
+    // [M-module-const-chars-bytes-resolution] РЕШЕНО (Plan 172.13): `.bytes()`
+    // теперь резолвится корректно как instance-метод и напрямую на
+    // module-level const — обход через локальную ro-копию больше не нужен.
+    match BCRYPT_ALPHABET.bytes().get(idx) {
         Some(b) => char.from(b as int) ?? '.'
         None    => '.'
     }
@@ -287,15 +287,12 @@ fn bcrypt_decode_char(c Option[char]) -> Option[u32] {
     match c {
         None => None
         Some(ch) => {
-            // [M-module-const-chars-bytes-resolution]: `.chars()` вызван на
-            // ЛОКАЛЬНОЙ ro-копии, не напрямую на module-level `const
-            // BCRYPT_ALPHABET` — известный codegen-gap: `CONST.method()` на
-            // top-level const резолвится как ошибочный path-call
-            // `nova_fn_CONST_method()` вместо instance-метода на строке,
-            // `NovaValue_CharsIter` init от `int`.
-            ro alphabet = BCRYPT_ALPHABET
+            // [M-module-const-chars-bytes-resolution] РЕШЕНО (Plan 172.13):
+            // `.chars()` теперь резолвится напрямую на module-level `const
+            // BCRYPT_ALPHABET` как instance-метод — обход через локальную
+            // ro-копию больше не нужен.
             mut idx = 0
-            for ach in alphabet.chars() {
+            for ach in BCRYPT_ALPHABET.chars() {
                 if ach == ch { return Some(idx) }
                 idx += 1
             }
