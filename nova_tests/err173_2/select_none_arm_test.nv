@@ -1,0 +1,97 @@
+// select_none_arm_test.nv — Plan 173 Ф.3 п.3 (D94 / D414 §3).
+//
+// `None = rx.recv()`-арм в select теперь РАЗЛИЧАЕТ closed от value (раньше —
+// намеренное bootstrap-упрощение: select не различал Some/None в dispatch).
+// Реализация: SelectSlot.want_none (channels.h) — None-арм fires ТОЛЬКО на
+// closed+empty; Some-арм — только на value; `_`-арм — на любой результат.
+
+module nova_tests.err173_2
+
+test "select None-arm fires on closed channel, Some-arm on value" {
+    // Канал с значением → Some-арм.
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    tx.send(42)
+    mut branch = 0
+    select {
+        Some(v) = rx => { branch = v }
+        None    = rx => { branch = -1 }
+    }
+    assert(branch == 42)        // value → Some-арм, НЕ None-арм
+}
+
+test "select None-arm fires when channel closed+empty" {
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    tx.close()                  // закрыт, пуст
+    mut branch = 0
+    select {
+        Some(v) = rx => { branch = v }
+        None    = rx => { branch = -7 }
+    }
+    assert(branch == -7)        // closed+empty → None-арм, НЕ Some-арм
+}
+
+test "select None-arm: buffered value drains via Some before None on close" {
+    ro ch = Channel.new(2)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    tx.send(5)
+    tx.close()                  // закрыт, но буфер непуст (одно значение)
+
+    // Первый select: буфер непуст → Some-арм дренирует значение.
+    mut b1 = 0
+    select {
+        Some(v) = rx => { b1 = v }
+        None    = rx => { b1 = -1 }
+    }
+    assert(b1 == 5)             // буфер дренится Some-армом
+
+    // Второй select: closed+empty → None-арм.
+    mut b2 = 0
+    select {
+        Some(v) = rx => { b2 = v }
+        None    = rx => { b2 = -1 }
+    }
+    assert(b2 == -1)            // теперь None-арм
+}
+
+test "select wildcard `_ = rx` still fires on value AND on closed (regression)" {
+    // value
+    ro ch1 = Channel.new(1)
+    ch1.tx.send(9)
+    mut f1 = false
+    select { _ = ch1.rx => { f1 = true } }
+    assert(f1)
+    // closed
+    ro ch2 = Channel.new(1)
+    ch2.tx.close()
+    mut f2 = false
+    select { _ = ch2.rx => { f2 = true } }
+    assert(f2)
+}
+
+test "select multi-channel: closed chan → None-arm, open-with-value → Some-arm" {
+    ro c1 = Channel.new(1)
+    ro c2 = Channel.new(1)
+    ro rx1 = c1.rx
+    ro rx2 = c2.rx
+    c1.tx.close()               // c1 закрыт
+    c2.tx.send(88)              // c2 имеет значение
+
+    mut from2 = 0
+    mut c1_closed = false
+    // Оба ready: c1 closed (None-арм), c2 value (Some-арм). Fisher-Yates
+    // может выбрать любой — гоняем до получения обоих исходов детерминированно
+    // через раздельные select'ы на своих каналах.
+    select {
+        None = rx1 => { c1_closed = true }
+    }
+    select {
+        Some(v) = rx2 => { from2 = v }
+    }
+    assert(c1_closed)
+    assert(from2 == 88)
+}

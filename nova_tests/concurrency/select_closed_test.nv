@@ -1,9 +1,11 @@
 // select_closed_test.nv — Plan 31 (D94): closed-channel и cancel_scope.
 //
 // Тесты покрывают сценарии с закрытыми каналами и cancel_scope.
-// В текущей реализации D94 select различает ready/not-ready арм,
-// но не различает Some(v) от None (closed) в dispatch — это
-// намеренное упрощение bootstrap (None-arm планируется отдельно).
+// ОБНОВЛЕНО (Plan 173 Ф.3 п.3, D414 §3): select ТЕПЕРЬ различает Some(v) от
+// None(closed) в dispatch — `None = rx` fires только на closed+empty,
+// `Some(v) = rx` только на value, `_ = rx` на любой. Различение проверено в
+// nova_tests/err173_2/select_none_arm_test. Тесты ниже (wildcard `_`) остаются
+// валидны (wildcard fires на любой ready recv — семантика не изменилась).
 
 module nova_tests.concurrency
 

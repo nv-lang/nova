@@ -2840,7 +2840,13 @@ pub struct SelectArm {
 #[derive(Debug, Clone)]
 pub enum SelectOp {
     Recv {
+        /// `Some(v) = rx` → `Some("v")`; `_ = rx` / `None = rx` → `None`.
         binding: Option<String>,
+        /// Plan 173 Ф.3 п.3 (D94/D414 §3): `None = rx.recv()` арм — fires
+        /// ТОЛЬКО когда канал closed И буфер пуст (recv() вернул бы `None`).
+        /// `Some(v) = rx` (needs value) и `_ = rx` (fires on value ИЛИ closed)
+        /// — `none_arm=false`. Различает closed-vs-value в select-dispatch.
+        none_arm: bool,
         chan: Box<Expr>,
     },
     Send {

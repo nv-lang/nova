@@ -10310,10 +10310,22 @@ impl Parser {
                         if matches!(self.peek().kind, TokenKind::Eq) {
                             self.bump();
                             let chan = self.parse_expr()?;
-                            return Ok(SelectOp::Recv { binding: Some(binding_s), chan: Box::new(chan) });
+                            return Ok(SelectOp::Recv { binding: Some(binding_s), none_arm: false, chan: Box::new(chan) });
                         }
                     }
                 }
+            }
+            self.pos = saved;
+        }
+        // Plan 173 Ф.3 п.3 (D94): `None = expr` recv arm — fires only on
+        // closed+empty channel (distinguishes closed from value).
+        if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "None") {
+            let saved = self.pos;
+            self.bump();
+            if matches!(self.peek().kind, TokenKind::Eq) {
+                self.bump();
+                let chan = self.parse_expr()?;
+                return Ok(SelectOp::Recv { binding: None, none_arm: true, chan: Box::new(chan) });
             }
             self.pos = saved;
         }
@@ -10324,7 +10336,7 @@ impl Parser {
             if matches!(self.peek().kind, TokenKind::Eq) {
                 self.bump();
                 let chan = self.parse_expr()?;
-                return Ok(SelectOp::Recv { binding: None, chan: Box::new(chan) });
+                return Ok(SelectOp::Recv { binding: None, none_arm: false, chan: Box::new(chan) });
             }
             self.pos = saved;
             self.bump();

@@ -1152,7 +1152,7 @@ pub(crate) fn collect_names_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
-                    SelectOp::Recv { binding, chan } => {
+                    SelectOp::Recv { binding, chan, .. } => {
                         if let Some(b) = binding {
                             out.insert(b.clone());
                         }

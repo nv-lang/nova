@@ -581,7 +581,7 @@ impl<'a> Analyzer<'a> {
                 for arm in arms {
                     let mark = scope.enter();
                     match &arm.op {
-                        SelectOp::Recv { chan, binding } => {
+                        SelectOp::Recv { chan, binding, .. } => {
                             self.walk_expr(cur, recv, scope, chan);
                             if let Some(name) = binding {
                                 scope.bind(name);

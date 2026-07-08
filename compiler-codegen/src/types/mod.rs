@@ -18346,7 +18346,7 @@ impl NameResCtx {
             ExprKind::Select { arms } => {
                 for arm in arms {
                     match &arm.op {
-                        SelectOp::Recv { binding, chan } => {
+                        SelectOp::Recv { binding, chan, .. } => {
                             self.walk_expr(chan, file_id, scope, errors);
                             let mut bindings: HashSet<String> = HashSet::new();
                             if let Some(b) = binding { bindings.insert(b.clone()); }
@@ -24476,7 +24476,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             for arm in arms {
                 ctx.states = saved.clone();
                 match &arm.op {
-                    SelectOp::Recv { binding, chan } => {
+                    SelectOp::Recv { binding, chan, .. } => {
                         consume_walk_expr(ctx, chan, errors);
                         if let Some(b) = binding { ctx.declare(b, None); }
                     }

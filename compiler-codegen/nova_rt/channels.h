@@ -715,6 +715,7 @@ typedef struct {
     nova_int           send_val;
     bool               guard;   /* false → arm disabled */
     bool               wildcard; /* true = `_ = rx` fires on closed too; false = `Some(v) = rx` needs data */
+    bool               want_none; /* Plan 173 Ф.3 п.3: `None = rx` — fires ТОЛЬКО на closed+empty (recv→None), НЕ на value */
 } SelectSlot;
 
 /* SelectWaiter struct defined earlier via BaseWaiter composition (Plan 44.1 C1). */
@@ -750,6 +751,7 @@ static inline SelectCtx nova_select_init(int n_arms,
         ctx.arms[i].send_val  = 0;
         ctx.arms[i].guard     = false;
         ctx.arms[i].wildcard  = false;
+        ctx.arms[i].want_none = false;
         /* BaseWaiter prefix — обнуляем поля чтобы valid state. */
         ctx.waiters[i].base.scope    = NULL;
         ctx.waiters[i].base.slot     = -1;
@@ -768,12 +770,13 @@ static inline SelectCtx nova_select_init(int n_arms,
 
 static inline void nova_select_set_recv(SelectCtx* ctx, int n,
                                          Nova_ChanReader* rx, int guard,
-                                         int wildcard) {
+                                         int wildcard, int want_none) {
     if (n < 0 || n >= ctx->n_arms) return;
-    ctx->arms[n].chan     = rx ? rx->state : NULL;
-    ctx->arms[n].is_recv  = true;
-    ctx->arms[n].guard    = (bool)guard;
-    ctx->arms[n].wildcard = (bool)wildcard;
+    ctx->arms[n].chan      = rx ? rx->state : NULL;
+    ctx->arms[n].is_recv   = true;
+    ctx->arms[n].guard     = (bool)guard;
+    ctx->arms[n].wildcard  = (bool)wildcard;
+    ctx->arms[n].want_none = (bool)want_none;
 }
 
 static inline void nova_select_set_send(SelectCtx* ctx, int n,
@@ -785,6 +788,7 @@ static inline void nova_select_set_send(SelectCtx* ctx, int n,
     ctx->arms[n].send_val  = val;
     ctx->arms[n].guard     = (bool)guard;
     ctx->arms[n].wildcard  = false;
+    ctx->arms[n].want_none = false;
 }
 
 /* Xorshift32 — fairness shuffle RNG seeded by ctx address. */
@@ -852,7 +856,9 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
 
         nova_mutex_lock(&st->mu);
         if (arm->is_recv) {
-            if (st->count > 0) {
+            /* Plan 173 Ф.3 п.3: value-ready fires для `Some(v)=rx`/`_=rx`, но
+             * НЕ для `None=rx` (None-арм ждёт closed+empty, не значение). */
+            if (st->count > 0 && !arm->want_none) {
                 nova_int v = st->buf[st->head];
                 st->head = (st->head + 1) % st->cap;
                 st->count--;
@@ -862,8 +868,10 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
                 _nova_select_fire_lost(ctx);
                 return 1;
             }
-            /* wildcard `_ = rx` fires on closed channel; bound `Some(v) = rx` не fires. */
-            if (nova_abool_load(&st->closed) && arm->wildcard) {
+            /* closed+empty (recv→None): wildcard `_ = rx` И `None = rx` fires;
+             * bound `Some(v) = rx` НЕ fires (нет значения). Plan 173 Ф.3 п.3. */
+            if (nova_abool_load(&st->closed) && st->count == 0
+                && (arm->wildcard || arm->want_none)) {
                 nova_mutex_unlock(&st->mu);
                 ctx->which = idx; ctx->recv_val = 0;
                 _nova_select_fire_lost(ctx);
@@ -960,7 +968,11 @@ static inline void nova_select_park(SelectCtx* ctx) {
         Nova_ChannelState* st = arm->chan;
         nova_bool cl = nova_abool_load(&st->closed);
         nova_bool rcl = nova_abool_load(&st->reader_closed);
-        if (arm->is_recv && cl && st->count == 0) continue;
+        /* Plan 173 Ф.3 п.3: closed+empty recv не разблокирует; `None=rx` на
+         * ЛЮБОМ closed-канале тоже (closed+empty уже сработал бы в
+         * try_immediate до park; closed+буфер — None-арм ждёт пустоты, но
+         * дренаж — задача sibling `Some`-арма; лишний None-waiter не вешаем). */
+        if (arm->is_recv && cl && (st->count == 0 || arm->want_none)) continue;
         if (!arm->is_recv && (cl || rcl)) continue;
         can_unblock++;
     }
@@ -989,7 +1001,9 @@ static inline void nova_select_park(SelectCtx* ctx) {
         Nova_ChannelState* st = arm->chan;
         nova_bool cl  = nova_abool_load(&st->closed);
         nova_bool rcl = nova_abool_load(&st->reader_closed);
-        if (arm->is_recv && cl && st->count == 0) continue;
+        /* Plan 173 Ф.3 п.3: не регистрируем waiter на closed-канал для recv
+         * (closed+empty) и для `None=rx` на любом closed (см. can_unblock). */
+        if (arm->is_recv && cl && (st->count == 0 || arm->want_none)) continue;
         if (!arm->is_recv && (cl || rcl)) continue;
         w->base.scope    = scope;
         w->base.slot     = slot;

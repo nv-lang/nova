@@ -1523,9 +1523,13 @@ select {
    готовый будит fiber; остальные waiters unlinked.
 3. Если **несколько** готовы одновременно — выбор **non-deterministic**.
    Программист **не должен** полагаться на конкретный порядок.
-4. **Closed channel** → `rx.recv()` возвращает `None` немедленно; arm
-   считается ready. Матчится `None`-паттерном.
-5. **Без default** и все каналы закрыты — panic "select: all channels closed".
+4. **Closed channel** → `rx.recv()` возвращает `None` (после дренажа буфера);
+   arm считается ready. **`None = rx`-паттерн различает closed от value**
+   (реализовано Plan 173 Ф.3 п.3, [D414 §3](#d414-structured-error-propagation--primary-selection-precedence-detach-policy-channel-closed-vs-value-plan-173-ф3)):
+   `Some(v) = rx` fires только на значение; `None = rx` — только на
+   closed+empty; `_ = rx` — на любой результат (value ИЛИ closed).
+5. **Без default** и все каналы закрыты (нет `None`/`_`-арма их ловящего) —
+   panic "select: all channels closed".
 
 Timeout — через `ChanReader.close_after(Duration)` возвращающий
 `ChanReader[()]` (обычный recv arm, никакого специального синтаксиса).
@@ -6496,3 +6500,30 @@ fiber'е (у сироты нет call-site, некому вернуть `Result`
   атрибут; runtime-часть отслеживается `[M-173-detach-escalate-to-scope]` (нужен
   scope-handle у detach-примитива + участие в decision-loop). Дефолт остаётся
   `LogAndDrop` (изменение семантики orphan'а — owner-gated).
+
+### §3. Channel closed-vs-value — `recv → Option` канон + select `None`-арм
+
+**Канон (Ред. 2, sign-off).** `Channel[T].recv() -> Option[T]` **ОСТАЁТСЯ**
+(D91/[D94](#d94)); Result-миграции **не будет**. `None` ⇔ канал closed **И** буфер
+пуст (после close буфер сперва дренится, потом `None`). `try_recv()` различает
+EMPTY (пусто, открыт) от closed через `is_closed()`. Это механизм, на котором
+**стоит 173.1-десугар** `parallel for` (completion-order dense через Option-канал).
+Прямое различение: `match rx.recv() { Some(v) => …; None => closed }`.
+
+**Select `None`-арм (реализовано Plan 173 Ф.3 п.3).** Раньше select **не различал**
+`Some(v)` от `None` в dispatch (bootstrap-упрощение — любой ready recv-арм
+срабатывал). Теперь recv-арм несёт паттерн (`SelectSlot.want_none`, `channels.h`):
+- `Some(v) = rx` — ready **только** когда есть значение (`count > 0`);
+- `None = rx` — ready **только** когда closed **и** буфер пуст;
+- `_ = rx` — ready на любой результат (value ИЛИ closed).
+
+Readiness — в `nova_select_try_immediate` (централизованно; park-путь re-check'ает).
+`close()` будит запаркованные select-recv-waiters → `None`-арм срабатывает при
+переходе канала в closed. **Edge (документирован):** одинокий `None = rx` на
+уже-closed канале с **непустым** буфером не срабатывает (ждёт пустоты; дренаж —
+задача sibling `Some`-арма); без sibling'а → `panic "select: all channels closed"`
+(чистый отказ, не hang) — идиоматично `None` пара́ется с `Some` на том же канале.
+
+Тесты: `nova_tests/err173_2/{channel_closed_vs_value,select_none_arm}_test`
+(recv-различение; select None/Some/wildcard на value/closed/multi-channel;
+буфер-дренаж-до-None; wildcard-регресс).

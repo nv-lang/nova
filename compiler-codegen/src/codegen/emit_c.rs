@@ -36359,13 +36359,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if n_ch == 1 && !has_default {
             let arm = arms.iter().find(|a| !matches!(a.op, SelectOp::Default)).unwrap();
             match &arm.op {
-                SelectOp::Recv { binding, chan } => {
+                SelectOp::Recv { binding, none_arm, chan } => {
                     let ch = self.emit_expr(chan)?;
                     let opt_tmp = self.fresh_tmp_named("sel_opt");
                     self.line(&format!("NovaOpt_nova_int {} = nova_chan_reader_recv({});", opt_tmp, ch));
-                    // Wildcard `_ = rx` fires on any recv result (Some or None/closed).
-                    // Bound `Some(v) = rx` fires only on Some.
-                    let cond = if binding.is_some() {
+                    // Plan 173 Ф.3 п.3: recv-arm dispatch различает результат:
+                    //   `Some(v) = rx` → fires только на Some (tag==Some);
+                    //   `None = rx`    → fires только на None/closed (tag==None);
+                    //   `_ = rx`       → fires на любой результат (value ИЛИ closed).
+                    let cond = if *none_arm {
+                        format!("{}.tag == NOVA_TAG_Option_None", opt_tmp)
+                    } else if binding.is_some() {
                         format!("{}.tag == NOVA_TAG_Option_Some", opt_tmp)
                     } else {
                         // _ = rx: fired whenever recv completed (value or closed)
@@ -36458,12 +36462,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "1".to_string()
             };
             match &arm.op {
-                SelectOp::Recv { binding, .. } => {
+                SelectOp::Recv { binding, none_arm, .. } => {
                     let ch = &ch_map.iter().find(|(idx, _)| *idx == i).unwrap().1;
-                    let wildcard = if binding.is_none() { 1 } else { 0 };
+                    // Plan 173 Ф.3 п.3: wildcard `_ = rx` (binding None, !none_arm)
+                    // fires on value ИЛИ closed; `None = rx` fires только на
+                    // closed+empty (want_none=1); `Some(v) = rx` — needs value.
+                    let wildcard = if binding.is_none() && !*none_arm { 1 } else { 0 };
+                    let want_none = if *none_arm { 1 } else { 0 };
                     self.line(&format!(
-                        "nova_select_set_recv(&{ctx}, {n}, {ch}, {guard}, {wildcard});",
-                        ctx = ctx_tmp, n = ch_idx, ch = ch, guard = guard_val, wildcard = wildcard
+                        "nova_select_set_recv(&{ctx}, {n}, {ch}, {guard}, {wildcard}, {want_none});",
+                        ctx = ctx_tmp, n = ch_idx, ch = ch, guard = guard_val, wildcard = wildcard, want_none = want_none
                     ));
                     ch_idx += 1;
                 }
