@@ -2535,11 +2535,23 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   зафиксированы автором. Довести теми же каналами + расширить
   conformance/c_keyword_ident_mangling.nv этими позициями.
 
-- **[M-random-u64-path-return-ice]** (2026-07-08, P2, Plan: 172.13 батч 3) — тупик батча 2:
+- **[M-random-u64-path-return-ice]** (2026-07-08, P2, Plan: 172.13 батч 3;
+  **ЗАКРЫТ батчем 3**) — тупик батча 2:
   `Random.u64()` внутри Uuid.v4()/v7() (транзитивно) = ICE «Path call return type unknown»;
   воспроизведён на baseline d987de52d и на уже промоутнутом std/identifiers/uuid.nv
   сам-по-себе — довливной. Блокирует промоушен uuid_namespace (его собственный
   dup-symbol корень ЗАКРЫТ батчем 2, 88a2ffe75).
+  **Корень (батч 3):** `Random` — единственный ambient-эффект, объявленный НЕ
+  в prelude, а в `std/testing/handlers.nv`; CU модуля, не импортирующего
+  testing.handlers (uuid/ulid/retry сами по себе), не имел
+  `effect_schemas["Random"]` → return-тип effect-op'а неизвестен → ICE.
+  **Фикс:** декларация `export type Random effect { u64() -> u64; bytes(n int)
+  -> []u8 }` перенесена в `std/prelude/effects.nv` (прецедент D316 — prelude =
+  единственный источник схемы; в отличие от Time, vtable Random эмитится
+  codegen'ом из декларации — обычный user-effect путь). В handlers.nv осталась
+  только фабрика `seeded()`. Компиляторный код не менялся. Гейты: conformance
+  67/0; std/identifiers, std/testing/handlers, std/concurrency, std/crypto,
+  std/time (кроме задокументированного довливного timer_metrics_test) зелёные.
 
 - **[M-consume-rebind-nested-block-shadow]** (2026-07-08, **P1 — тихий use-after-consume**,
   Plan: 172.13 батч 3) — тупик батча 2: `consume x = StringBuilder.new()` РЕ-БИНД внутри

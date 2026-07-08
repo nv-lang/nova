@@ -54,17 +54,13 @@
 module testing.handlers
 
 
-// Random — effect-тип для PRNG. Объявлен здесь же, в handlers.nv:
-// codegen генерирует NovaVtable_Random + thread-local handler при первом
-// `type Random effect` декларации, и все импортирующие модули видят
-// определение через инлайн-import (resolve_imports_inline).
-/// Random effect — ambient PRNG. Replace в тестах через `with Random = th.seeded(...)`
-/// для детерминированности.
-#stable(since = "0.1")
-export type Random effect {
-    u64() -> u64                        // 64 случайных бита
-    bytes(n int) -> []u8              // массовая генерация
-}
+// Random — effect-тип для PRNG. [M-random-u64-path-return-ice]
+// (Plan 172.13 батч 3): декларация ПЕРЕЕХАЛА в std/prelude/effects.nv —
+// Random используется как ambient-эффект модулями, которые НЕ импортируют
+// testing.handlers (identifiers/uuid, identifiers/ulid, concurrency/retry);
+// когда декларация жила здесь, такой CU не имел effect_schemas["Random"]
+// и codegen падал ICE «Path call return type unknown» на `Random.u64()`.
+// Здесь остаются только handler-фабрики (`seeded`).
 
 
 // ──────────────────────────────────────────────────────────────────────────
