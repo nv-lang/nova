@@ -347,6 +347,10 @@ export fn real_fs() -> Effect[Fs] {
         fsync_dir(path []u8) {
             match c_path(path) { Ok(cp) => unsafe { fs_fsync_dir(cp.ptr()) }, Err(_) => 0 - 22 }
         }
+        // Хендл scandir пересекает Fs-эффект как голый int НАМЕРЕННО: vtable
+        // эффектов носит примитивы (прецедент realpath-кортежа), хендл приватен
+        // и живёт только внутри read_dir. Типизированная обёртка — при
+        // выравнивании на net-канон ([M-ffi-handle-newtype], после лимитов).
         scandir_open(path []u8) {
             match c_path(path) { Ok(cp) => unsafe { fs_scandir_open(cp.ptr()) }, Err(_) => 0 - 22 }
         }

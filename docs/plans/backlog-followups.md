@@ -2613,3 +2613,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   D347 ожидает поведение mut-переприсваивания. Минимальное репро изолировано батчем 2
   (Vec-of-Vec + StringBuilder consume-reset без quote-логики — см. отчёт). Блокирует csv
   (его Vec-LHS корень закрыт, 6bf62be48).
+
+- **[M-ffi-handle-newtype]** (2026-07-09, P3, Wave: после лимитов) — решение владельца:
+  FFI-хендлы не гуляют по модулю голым int/указателем — заворачивать в типизированную
+  обёртку (net-образец TcpListener{priv handle}). СДЕЛАНО: BrotliDec в
+  std/encoding/compress/brotli.nv (int только на extern-границе внутри методов).
+  ОСТАТОК: fs scandir — хендл пересекает Fs-эффект (vtable носит примитивы),
+  обёртка требует value-record слотов в эффект-vtable либо net-канона
+  (*()+out_err) в самих шимах; net internal plumbing (*() между priv-функциями
+  ffi.nv) — довернуть при том же заходе.
