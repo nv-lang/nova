@@ -230,21 +230,22 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
     ro sb = s.bytes()
     mut i = 0
     while i + 3 < s.byte_len() {
-        // [M-match-tuple-option-value-deref]: последовательный `?`-unwrap каждого
-        // Option вместо `match (c0, c1, c2, c3) { (Some(a), ...) => ... }` —
-        // известный codegen-gap: match на tuple-из-Option[u32] эмитит `.f0->tag`
-        // (pointer-деref) для value-embedded `NovaOpt_uint32_t`, CC-FAIL
-        // «member reference type ... is not a pointer». Последовательный
-        // `?` даёт идентичную семантику (любой None → ранний `return None`)
-        // и этот путь не задевает.
-        ro a = bcrypt_decode_char(byte_to_char(sb, i))?
-        ro b = bcrypt_decode_char(byte_to_char(sb, i + 1))?
-        ro c = bcrypt_decode_char(byte_to_char(sb, i + 2))?
-        ro d = bcrypt_decode_char(byte_to_char(sb, i + 3))?
-        ro triple = (a << 18) | (b << 12) | (c << 6) | d
-        out.push(((triple >> 16) & 0xFF) as u8)
-        out.push(((triple >> 8) & 0xFF) as u8)
-        out.push((triple & 0xFF) as u8)
+        // [M-match-tuple-option-value-deref] РЕШЕНО (Plan 172.13): tuple-match
+        // над 4×Option[u32] теперь резолвится корректно (dot-accessor на
+        // value-embedded NovaOpt_uint32_t) — вернулся естественный tuple-match
+        // вместо последовательного `?`-unwrap обхода.
+        match (bcrypt_decode_char(byte_to_char(sb, i)),
+               bcrypt_decode_char(byte_to_char(sb, i + 1)),
+               bcrypt_decode_char(byte_to_char(sb, i + 2)),
+               bcrypt_decode_char(byte_to_char(sb, i + 3))) {
+            (Some(a), Some(b), Some(c), Some(d)) => {
+                ro triple = (a << 18) | (b << 12) | (c << 6) | d
+                out.push(((triple >> 16) & 0xFF) as u8)
+                out.push(((triple >> 8) & 0xFF) as u8)
+                out.push((triple & 0xFF) as u8)
+            }
+            _ => return None
+        }
         i += 4
     }
     // Trailing (тот же обход — последовательный `?` вместо tuple-match).

@@ -37082,13 +37082,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             Pattern::Tuple(pats, _) => {
+                // [M-match-tuple-option-value-deref] (Plan 172.13) / phase-
+                // correctness (§0): the recursive `pattern_cond` call below
+                // needs the CONCRETE C type of each `scr.fN` field to tell a
+                // value-embedded sum (`NovaOpt_<T>`, dot-accessor) from a
+                // pointer-based one (`Nova_<Sum>*`, arrow-accessor) — without
+                // it, `var_types.get("scr.fN")` misses (that compound access
+                // string was never a var_types KEY) and the nested
+                // `Pattern::Variant` arm silently defaults to the pointer ABI
+                // (`->tag`), CC-FAIL on a value-embedded tuple-of-Option like
+                // `match (a, b) { (Some(x), Some(y)) => ... }`. The fact IS
+                // available — `emit_match` propagates `tuple_element_types`
+                // from the scrutinee's emitted tmp onto `scr` — just wasn't
+                // being consumed here. Register each field's type under its
+                // OWN `scr.fN` access-path key (mirrors the established
+                // `tmp_registrations` discipline used elsewhere in this fn for
+                // Option/Result payload fields), then clean up.
+                let elem_tys = self.tuple_element_types.get(scr).cloned();
+                let mut tmp_registrations: Vec<String> = Vec::new();
                 let mut conds: Vec<String> = Vec::new();
                 for (i, p) in pats.iter().enumerate() {
                     let field = format!("{}.f{}", scr, i);
+                    if let Some(ty) = elem_tys.as_ref().and_then(|v| v.get(i)) {
+                        if !ty.is_empty() {
+                            self.var_types.insert(field.clone(), ty.clone());
+                            tmp_registrations.push(field.clone());
+                        }
+                    }
                     let sub = self.pattern_cond(p, &field)?;
                     if sub != "true" {
                         conds.push(sub);
                     }
+                }
+                for k in &tmp_registrations {
+                    self.var_types.remove(k);
                 }
                 if conds.is_empty() {
                     Ok("true".into())
@@ -37537,8 +37564,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                         _ => {
+                            // [M-match-tuple-option-value-deref] (Plan 172.13):
+                            // mirror the `pattern_cond` fix — register this
+                            // field's CONCRETE C type under its `scr.fN`
+                            // access-path key before recursing, so a nested
+                            // `Pattern::Variant` (e.g. `Some(w)` inside a
+                            // tuple-of-Option match arm) sees the real
+                            // value-embedded `NovaOpt_<T>` type instead of
+                            // defaulting to the pointer-based sum ABI.
                             let field = format!("{}.f{}", scr, i);
+                            let elem_ty = self.tuple_element_types.get(scr)
+                                .and_then(|tys| tys.get(i))
+                                .cloned();
+                            let registered = if let Some(ty) = elem_ty.filter(|t| !t.is_empty()) {
+                                self.var_types.insert(field.clone(), ty);
+                                true
+                            } else {
+                                false
+                            };
                             self.pattern_bind_typed(p, &field)?;
+                            if registered {
+                                self.var_types.remove(&field);
+                            }
                         }
                     }
                 }
