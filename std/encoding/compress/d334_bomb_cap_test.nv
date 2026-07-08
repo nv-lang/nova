@@ -8,7 +8,7 @@ module encoding.compress
 
 fn d334_hex(s str) -> []u8 {
     ro chars = s.bytes()
-    mut out []u8 = []u8.with_capacity(chars.len() / 2)
+    mut out []u8 = []u8.new().cap(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
         ro hi = d334_hv(chars[i])
