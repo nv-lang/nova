@@ -2,7 +2,13 @@
 # Plan 116 — std/tls: `Tls` effect on TcpNet (handshake + encrypted I/O, mockable)
 
 > **Создан 2026-05-31.**
-> **Статус:** 🆕 PLANNED.
+> **Статус:** 🆕 PLANNED. **Ревизия 2026-07-08:** перед стартом ОБЯЗАТЕЛЕН
+>   Ф.0-проход актуализации — план написан до net-rework (Plan 183: byte-surface
+>   + новая std/net поверхность заменили D201/TcpNet-эффектную модель, на которую
+>   план опирается) и до Result-everywhere (177). Масштаб (~5-8 dev-day + новая
+>   vendored-зависимость rustls + security-критичный дизайн, opus-ярус) — самый
+>   дорогой оставшийся пункт контура 172-185; по режиму экономии лимитов
+>   (2026-07-08) старт ПОСЛЕ закрытия 172.13/174.1 и полировки.
 > **Приоритет:** P1 — **0.2 release feature** (post-0.1). Без TLS Nova не
 >   подходит для production backend (HTTPS, secure RPC, encrypted RPC,
 >   gRPC-over-TLS, любой web service). После Plan 91.12 (std/net + TcpNet
