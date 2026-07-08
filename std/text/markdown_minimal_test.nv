@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/text/markdown_minimal_test.nv — публичный контракт Markdown.to_html
+// (minimal CommonMark subset).
+
+module text.markdown_minimal_test
+
+import std.text.markdown_minimal.{Markdown}
+
+test "headings" {
+    assert(Markdown.to_html("# Hello").contains("<h1>Hello</h1>"))
+    assert(Markdown.to_html("## World").contains("<h2>World</h2>"))
+    assert(Markdown.to_html("###### Six").contains("<h6>Six</h6>"))
+}
+
+test "paragraph" {
+    ro html = Markdown.to_html("This is a paragraph.")
+    assert(html.contains("<p>This is a paragraph.</p>"))
+}
+
+test "bold and italic" {
+    ro html = Markdown.to_html("**bold** and *italic*")
+    assert(html.contains("<strong>bold</strong>"))
+    assert(html.contains("<em>italic</em>"))
+}
+
+test "inline code" {
+    ro html = Markdown.to_html("Use `code` here")
+    assert(html.contains("<code>code</code>"))
+}
+
+test "link" {
+    ro html = Markdown.to_html("Visit [example](https://example.com)")
+    assert(html.contains("<a href=\"https://example.com\">example</a>"))
+}
+
+test "code block" {
+    ro md = "```\nlet x = 1\n```\n"
+    ro html = Markdown.to_html(md)
+    assert(html.contains("<pre><code>"))
+    assert(html.contains("let x = 1"))
+    assert(html.contains("</code></pre>"))
+}
+
+test "bullet list" {
+    ro md = "- one\n- two\n- three\n"
+    ro html = Markdown.to_html(md)
+    assert(html.contains("<ul>"))
+    assert(html.contains("<li>one</li>"))
+    assert(html.contains("<li>two</li>"))
+    assert(html.contains("</ul>"))
+}
+
+test "html escape" {
+    ro html = Markdown.to_html("a < b & c > d")
+    assert(html.contains("&lt;"))
+    assert(html.contains("&gt;"))
+    assert(html.contains("&amp;"))
+}

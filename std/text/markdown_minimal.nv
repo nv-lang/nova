@@ -39,7 +39,7 @@ module text.markdown_minimal
 /// ```
 #stable(since = "0.1")
 export fn Markdown.to_html(md str) -> str {
-    consume buf = StringBuilder.with_capacity(md.byte_len() * 2)
+    consume buf = StringBuilder.new().cap(md.byte_len() * 2)
     ro lines = md.split("\n")
     mut i = 0
     mut in_code_block = false
@@ -152,7 +152,7 @@ fn flush_paragraph(mut buf StringBuilder, consume paragraph StringBuilder) -> ()
 // [M-d73-d77-retraction-migration] Block 2 precedent) и далее — O(1)
 // `Vec[char] @get(i)`.
 fn render_inline(s str) -> str {
-    consume buf = StringBuilder.with_capacity(s.byte_len())
+    consume buf = StringBuilder.new().cap(s.byte_len())
     ro sc = to_chars(s)
     ro n = sc.len()
     mut i = 0
@@ -231,8 +231,17 @@ fn render_inline(s str) -> str {
             }
         }
 
-        // Литерал
-        buf.append(c)
+        // Литерал — экранируем HTML-спецсимволы (пропущенное экранирование
+        // здесь — pre-existing content-баг: escape_html() вызывался только
+        // для code/link сегментов, обычный текст проходил raw; обнаружено
+        // 2026-07-08 через `nova test --full`, `nova check` этого не ловил).
+        match c {
+            '<' => buf.append("&lt;")
+            '>' => buf.append("&gt;")
+            '&' => buf.append("&amp;")
+            '"' => buf.append("&quot;")
+            _   => buf.append(c)
+        }
         i += 1
     }
     buf.into_str()
@@ -258,7 +267,7 @@ fn find_in(sc []char, target char, start int) -> Option[int] {
 
 
 fn escape_html(s str) -> str {
-    consume buf = StringBuilder.with_capacity(s.byte_len())
+    consume buf = StringBuilder.new().cap(s.byte_len())
     for c in s.chars() {
         match c {
             '<' => buf.append("&lt;")
@@ -272,57 +281,4 @@ fn escape_html(s str) -> str {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "headings" {
-    assert(Markdown.to_html("# Hello").contains("<h1>Hello</h1>"))
-    assert(Markdown.to_html("## World").contains("<h2>World</h2>"))
-    assert(Markdown.to_html("###### Six").contains("<h6>Six</h6>"))
-}
-
-test "paragraph" {
-    ro html = Markdown.to_html("This is a paragraph.")
-    assert(html.contains("<p>This is a paragraph.</p>"))
-}
-
-test "bold and italic" {
-    ro html = Markdown.to_html("**bold** and *italic*")
-    assert(html.contains("<strong>bold</strong>"))
-    assert(html.contains("<em>italic</em>"))
-}
-
-test "inline code" {
-    ro html = Markdown.to_html("Use `code` here")
-    assert(html.contains("<code>code</code>"))
-}
-
-test "link" {
-    ro html = Markdown.to_html("Visit [example](https://example.com)")
-    assert(html.contains("<a href=\"https://example.com\">example</a>"))
-}
-
-test "code block" {
-    ro md = "```\nlet x = 1\n```\n"
-    ro html = Markdown.to_html(md)
-    assert(html.contains("<pre><code>"))
-    assert(html.contains("let x = 1"))
-    assert(html.contains("</code></pre>"))
-}
-
-test "bullet list" {
-    ro md = "- one\n- two\n- three\n"
-    ro html = Markdown.to_html(md)
-    assert(html.contains("<ul>"))
-    assert(html.contains("<li>one</li>"))
-    assert(html.contains("<li>two</li>"))
-    assert(html.contains("</ul>"))
-}
-
-test "html escape" {
-    ro html = Markdown.to_html("a < b & c > d")
-    assert(html.contains("&lt;"))
-    assert(html.contains("&gt;"))
-    assert(html.contains("&amp;"))
-}
+// Тесты — см. peer-файл markdown_minimal_test.nv (module text.markdown_minimal_test).
