@@ -1,0 +1,74 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/cron_test.nv — POSIX cron expression parse/match тесты.
+
+module time.cron_test
+
+import std.time.cron.{Cron, CronTime, ParseCronError}
+
+test "parse: every minute" {
+    ro e = Cron.parse("* * * * *")
+    ro t CronTime = { minute: 30, hour: 12, day_month: 15, month: 6, day_week: 3 }
+    assert(e.matches(t))
+}
+
+test "parse: top of hour" {
+    ro e = Cron.parse("0 * * * *")
+    ro t1 CronTime = { minute: 0, hour: 5, day_month: 1, month: 1, day_week: 0 }
+    ro t2 CronTime = { minute: 1, hour: 5, day_month: 1, month: 1, day_week: 0 }
+    assert(e.matches(t1))
+    assert(!e.matches(t2))
+}
+
+test "parse: weekdays 9-17" {
+    ro e = Cron.parse("0 9-17 * * 1-5")
+    ro monday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 1 }
+    ro monday_18 CronTime = { minute: 0, hour: 18, day_month: 1, month: 1, day_week: 1 }
+    ro saturday_10 CronTime = { minute: 0, hour: 10, day_month: 1, month: 1, day_week: 6 }
+    assert(e.matches(monday_10))
+    assert(!e.matches(monday_18))
+    assert(!e.matches(saturday_10))
+}
+
+test "parse: */15 каждые 15 минут" {
+    ro e = Cron.parse("*/15 * * * *")
+    ro zero CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro fifteen CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro seven CronTime = { minute: 7, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    assert(e.matches(zero))
+    assert(e.matches(fifteen))
+    assert(!e.matches(seven))
+}
+
+test "parse: list" {
+    ro e = Cron.parse("0,30 * * * *")
+    ro t0 CronTime = { minute: 0, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro t30 CronTime = { minute: 30, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    ro t15 CronTime = { minute: 15, hour: 0, day_month: 1, month: 1, day_week: 0 }
+    assert(e.matches(t0))
+    assert(e.matches(t30))
+    assert(!e.matches(t15))
+}
+
+test "parse: ошибка — out of range" {
+    mut caught = false
+    ro dummy = with Fail[ParseCronError] = |e| {
+        caught = e is OutOfRange
+        Cron.parse("* * * * *")
+    } {
+        Cron.parse("0 25 * * *")          // hour > 23
+    }
+    ro _ = dummy
+    assert(caught)
+}
+
+test "parse: ошибка — wrong field count" {
+    mut caught = false
+    ro dummy = with Fail[ParseCronError] = |e| {
+        caught = e is InvalidFieldCount
+        Cron.parse("* * * * *")
+    } {
+        Cron.parse("0 0 0")
+    }
+    ro _ = dummy
+    assert(caught)
+}

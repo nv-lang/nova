@@ -214,6 +214,22 @@ export fn LinkedList[T] @plus(other Self) -> Self =>
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
+//
+// [2026-07-08, волна 2 промоушена]: НЕ промоутится — `nova check` PASS, но
+// `nova test --full` даёт ДВА РАЗНЫХ compiler-бага на recursive generic
+// sum-type (`LinkedList[T] enum | Empty | Cons(T, LinkedList[T])`):
+//   1. P67-LEGACY "method call `.map` return type unknown" — self-recursive
+//      generic-method call (`t.map(f)` внутри тела `@map[U]`) не резолвится
+//      checker'ом. Попытка iterative-rewrite (accumulator вместо рекурсии)
+//      не помогла — тот же класс проблемы, другое проявление.
+//   2. Из peer-test-файла (другой CU) `LinkedList[int].new()` (`=> Empty`
+//      one-liner) даёт CC-FAIL: "initializing 'Nova_LinkedList____nova_int*'
+//      ... incompatible type 'nova_unit'" — generic mono для parametrized
+//      recursive-enum constructor, вызванного из ДРУГОГО файла, теряет тип.
+// Оба — codegen-гэпы в generic recursive sum-type mono, не content-баги
+// модуля. Совпадает с STATUS.md-пометкой "Non-MVP" (Plan 91 §Scope: MVP =
+// vec/hashmap/set only) — похоже, recursive-generic-enum path никогда не
+// проходил через `test --full` раньше. См. docs/plans/backlog-followups.md.
 
 test "from_array preserves order" {
     ro l = LinkedList[int].from_array([1, 2, 3])

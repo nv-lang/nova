@@ -189,6 +189,29 @@ fn apply_jitter(j Jitter, d Duration) Random -> Duration => match j {
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
+//
+// [2026-07-08, волна 2 промоушена]: НЕ промоутится — подтверждён исходный
+// STATUS.md-диагноз (`retry FAIL E_UNUSED_PREFIX_TYPEVAR`), но с уточнением:
+// это TWO-SIDED баг, не однократный.
+//   1. Текущая сигнатура `@execute[T](body fn() -> T) Time Random -> T`
+//      (без `E`) — `nova check` PASS, НО `nova test --full` CC-FAIL:
+//      generic `E` в `Option[E] last_error`/`Fail[E]`/`throw e` нигде не
+//      объявлен как type-param → компилятор инферит его per-call-site и
+//      конфликтует между разными T-инстанциациями теста (`NovaOpt_nova_int`
+//      vs `NovaOpt_nova_str` mismatch) — silent codegen unsoundness.
+//   2. Правильная сигнатура (как в doc-comment выше, `@execute[T, E](body
+//      fn() Fail[E] -> T) Time Random Fail[E] -> T`, явно объявляет `E`) —
+//      `nova check` REJECTS: `[E_UNUSED_PREFIX_TYPEVAR] generic E
+//      declared в fn[…] prefix но не используется в receiver, params, или
+//      return type (Plan 101.1 / D145)`. Checker не считает использованием
+//      generic `E`, если он встречается ТОЛЬКО внутри effect-clause
+//      параметра-функции (`Fail[E]`) — не в самом типе параметра/receiver/
+//      return напрямую. D145-правило слишком строгое для этого валидного
+//      effect-polymorphism паттерна (retry поверх произвольной `Fail[E]`).
+// Оба пути ведут в стену: implicit-E даёт codegen-баг, explicit-E упирается
+// в checker-ограничение D145. Нужен либо codegen-фикс (§1), либо смягчение
+// D145 (§2) — выбор архитектурный, не в рамках промоушен-волны. См.
+// docs/plans/backlog-followups.md.
 
 test "execute: первая попытка успешна" {
     ro policy = RetryPolicy.exponential(3)
