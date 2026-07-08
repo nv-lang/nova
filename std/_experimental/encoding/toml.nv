@@ -20,6 +20,8 @@
 
 module encoding.toml
 
+import std.collections.hashmap.{HashMap}
+
 
 /// TOML value variants (string/int/float/bool/array/table).
 #stable(since = "0.1")
@@ -435,6 +437,16 @@ fn TomlParser mut @insert_at_current_path(key str, value TomlValue) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
+//
+// [2026-07-08, волна 2 промоушена]: НЕ промоутится — `nova check` PASS, но
+// `nova test --full` CC-FAIL: `error: unknown type name 'Nova_ParseTomlError_p'`
+// в generated `Fail`-handler vtable (`void* ctx, Nova_ParseTomlError_p* err`).
+// Compiler mono для `Fail[ParseTomlError]` handler payload не регистрирует
+// boxed-pointer вариант этого enum — похоже на тот же класс gap, что и
+// `encoding/csv.nv` (см. её комментарий выше), но другой конкретный
+// codegen-путь (там — nested-Vec aliasing/runtime-баг, здесь — C-emit
+// type-name gap на handler vtable). Нужна отдельная codegen-инвестигация.
+// См. docs/plans/backlog-followups.md.
 
 test "parse: ключ-значение топ-уровня" {
     ro v = Toml.parse("name = \"nova\"\nversion = \"0.1.0\"\n")

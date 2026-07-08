@@ -25,7 +25,7 @@
 
 module crypto.bcrypt
 
-import std._experimental.crypto.sha256.{Sha256}
+import std.crypto.sha256.{Sha256}
 
 
 /// Errors при bcrypt операциях.

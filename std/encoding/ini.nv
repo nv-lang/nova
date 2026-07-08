@@ -21,6 +21,8 @@
 
 module encoding.ini
 
+import std.collections.hashmap.{HashMap}
+
 
 /// Errors при парсинге INI.
 #stable(since = "0.1")
@@ -90,11 +92,11 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
 /// (key `""`) выводится без `[section]` header'а сверху.
 #stable(since = "0.1")
 export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
-    consume buf = StringBuilder.with_capacity(256)
+    consume buf = StringBuilder.new().cap(256)
     // Сначала top-level ("")
     match data.get("") {
         Some(top) => {
-            for entry in top.entries() {
+            for entry in top.iter() {
                 buf.append(entry.0)
                 buf.append(" = ")
                 buf.append(entry.1)
@@ -104,14 +106,14 @@ export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
         None => ()
     }
     // Потом sections
-    for entry in data.entries() {
+    for entry in data.iter() {
         if entry.0 == "" { continue }
         buf.append('\n')
         buf.append('[')
         buf.append(entry.0)
         buf.append(']')
         buf.append('\n')
-        for kv in entry.1.entries() {
+        for kv in entry.1.iter() {
             buf.append(kv.0)
             buf.append(" = ")
             buf.append(kv.1)
@@ -122,70 +124,4 @@ export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "parse: простой INI" {
-    ro s = "[server]\nhost = localhost\nport = 8080\n"
-    ro r = Ini.parse(s)
-    match r.get("server") {
-        Some(m) => {
-            assert(m.get("host") == Some("localhost"))
-            assert(m.get("port") == Some("8080"))
-        }
-        None => assert(false)
-    }
-}
-
-test "parse: top-level (без section)" {
-    ro s = "name = nova\nversion = 0.5\n"
-    ro r = Ini.parse(s)
-    match r.get("") {
-        Some(m) => {
-            assert(m.get("name") == Some("nova"))
-            assert(m.get("version") == Some("0.5"))
-        }
-        None => assert(false)
-    }
-}
-
-test "parse: комментарии" {
-    ro s = "# this is a comment\n; this too\n[s]\nk = v\n"
-    ro r = Ini.parse(s)
-    match r.get("s") {
-        Some(m) => assert(m.get("k") == Some("v"))
-        None    => assert(false)
-    }
-}
-
-test "parse: quoted values" {
-    ro s = "[s]\nk = \"hello world\"\n"
-    ro r = Ini.parse(s)
-    match r.get("s") {
-        Some(m) => assert(m.get("k") == Some("hello world"))
-        None    => assert(false)
-    }
-}
-
-test "parse: ошибка — невалидная line" {
-    ro r = with Fail[ParseIniError] = |e| interrupt Some(e) {
-        ro _ = Ini.parse("[s]\nbroken-line-no-equals\n")
-        None
-    }
-    assert(match r {
-        Some(InvalidLine { .. }) => true
-        _                         => false
-    })
-}
-
-test "parse: ошибка — незакрытая section" {
-    ro r = with Fail[ParseIniError] = |e| interrupt Some(e) {
-        ro _ = Ini.parse("[unclosed\nk = v\n")
-        None
-    }
-    assert(match r {
-        Some(UnclosedSection { .. }) => true
-        _                             => false
-    })
-}
+// Тесты — см. peer-файл ini_test.nv (module encoding.ini_test).

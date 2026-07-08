@@ -234,7 +234,7 @@ fn is_scheme_char(c char) -> bool =>
 /// `to_str()` — serialize Url обратно в string. Round-trip с `Url.from`.
 #stable(since = "0.1")
 export fn Url @to_str() -> str {
-    consume buf = StringBuilder.with_capacity(64)
+    consume buf = StringBuilder.new().cap(64)
     buf.append(@scheme)
     buf.append(":")
 
@@ -309,7 +309,7 @@ export fn Url @to_str() -> str {
 /// ```
 #stable(since = "0.1")
 export fn Url.encode_query(s str) -> str {
-    consume buf = StringBuilder.with_capacity(s.byte_len() * 2)    // worst case
+    consume buf = StringBuilder.new().cap(s.byte_len() * 2)    // worst case
     for c in s.chars() {
         if is_unreserved(c) {
             buf.append(c)
@@ -360,7 +360,7 @@ export fn Url.encode_query(s str) -> str {
 /// Percent-decode query string. Throws `InvalidPercentEncoding` если `%XX` malformed.
 #stable(since = "0.1")
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
-    mut buf = WriteBuffer.with_capacity(s.byte_len())
+    mut buf = WriteBuffer.new().cap(s.byte_len())
     // Литеральные (не `%XX`) символы проходят через as-is (`write_char(c)`) —
     // могут быть произвольным Unicode, поэтому нужны реальные char-значения,
     // не только ASCII-детект. Материализуем `[]char` ОДИН раз (push-loop, не
@@ -398,12 +398,14 @@ export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
 fn is_unreserved(c char) -> bool =>
     is_alphanum(c) || c == '-' || c == '.' || c == '_' || c == '~'
 
-fn hex_upper(n u8) -> char =>
-    if n < 10 {
-        ('0' as int + n as int) as char
+fn hex_upper(n u8) -> char {
+    ro code = if n < 10 {
+        '0' as int + n as int
     } else {
-        ('A' as int + n as int - 10) as char
+        'A' as int + n as int - 10
     }
+    char.from(code) ?? ' '
+}
 
 fn hex_value_or_throw(sc []char, pos int) Fail[ParseUrlError] -> u8 {
     match sc.get(pos) {
@@ -435,6 +437,21 @@ fn to_chars(s str) -> []char {
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
+//
+// [2026-07-08, волна 2 промоушена]: НЕ промоутится — файл уже содержит
+// собственную документацию известного бага выше (§ `Url.decode_query`
+// doc-comment, "Bootstrap-ограничение: tuple-destructure infer"):
+// `Url.from()` использует много `let (a, b, ...) = ...` tuple-destructure
+// (`parse_scheme`/`parse_authority`/`parse_path` — разные tuple-shapes).
+// Под `nova test --full` это подтвердилось: C-emit конфликт монолитных
+// tuple-структур `_NovaTuple_2_16_NovaOpt_nova_int_...` vs
+// `..._nova_str_...` (разные tuple shapes с одинаковым arity схлопнулись
+// в общий mono-инстанс). `nova check` этого не ловит (только `test --full`
+// эмитит C). Отдельно исправлены (оставлены как есть, harmless): `hex_upper`
+// (`int as char` → `char.from(...)?? ' '`, D54) и
+// `StringBuilder/WriteBuffer.with_capacity` → `.new().cap(n)` (D372 amend,
+// старый static-ctor убран из runtime). Нужна codegen-инвестигация
+// tuple-shape mono conflict. См. docs/plans/backlog-followups.md.
 
 test "parse: простой HTTP URL" {
     ro u = Url.from("http://example.com/")

@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/encoding/ini_test.nv — публичный контракт Ini.parse/encode.
+
+module encoding.ini_test
+
+import std.encoding.ini.{Ini, ParseIniError}
+
+test "parse: простой INI" {
+    ro s = "[server]\nhost = localhost\nport = 8080\n"
+    ro r = Ini.parse(s)
+    match r.get("server") {
+        Some(m) => {
+            assert(m.get("host") == Some("localhost"))
+            assert(m.get("port") == Some("8080"))
+        }
+        None => assert(false)
+    }
+}
+
+test "parse: top-level (без section)" {
+    ro s = "name = nova\nversion = 0.5\n"
+    ro r = Ini.parse(s)
+    match r.get("") {
+        Some(m) => {
+            assert(m.get("name") == Some("nova"))
+            assert(m.get("version") == Some("0.5"))
+        }
+        None => assert(false)
+    }
+}
+
+test "parse: комментарии" {
+    ro s = "# this is a comment\n; this too\n[s]\nk = v\n"
+    ro r = Ini.parse(s)
+    match r.get("s") {
+        Some(m) => assert(m.get("k") == Some("v"))
+        None    => assert(false)
+    }
+}
+
+test "parse: quoted values" {
+    ro s = "[s]\nk = \"hello world\"\n"
+    ro r = Ini.parse(s)
+    match r.get("s") {
+        Some(m) => assert(m.get("k") == Some("hello world"))
+        None    => assert(false)
+    }
+}
+
+test "parse: ошибка — невалидная line" {
+    mut caught = false
+    ro dummy = with Fail[ParseIniError] = |e| {
+        caught = e is InvalidLine
+        HashMap[str, HashMap[str, str]].new()
+    } {
+        Ini.parse("[s]\nbroken-line-no-equals\n")
+    }
+    ro _ = dummy
+    assert(caught)
+}
+
+test "parse: ошибка — незакрытая section" {
+    mut caught = false
+    ro dummy = with Fail[ParseIniError] = |e| {
+        caught = e is UnclosedSection
+        HashMap[str, HashMap[str, str]].new()
+    } {
+        Ini.parse("[unclosed\nk = v\n")
+    }
+    ro _ = dummy
+    assert(caught)
+}
