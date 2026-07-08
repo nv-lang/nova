@@ -18,7 +18,7 @@ import std.prelude.core.{Option, Some, None}
 // Returns (codepoint, step_bytes). R-UTF8: assumes valid UTF-8.
 // On invalid lead byte: returns (bytes[i] as int, 1) — graceful degrade.
 // runtime.string decode; std.unicode has decode_at (intentional per-module copy, folder boundary).
-fn decode_utf8(bytes ro []u8, i int, n int) -> (int, int) {
+fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
     ro b = bytes[i] as int
     if b < 0x80 { return (b, 1) }
     if (b & 0xE0) == 0xC0 && i + 1 < n {

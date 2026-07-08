@@ -100,7 +100,7 @@ fn is_cont(b int) -> bool => (b & 0xC0) == 0x80
 // rejected (mirrors the retired C `_nova_validate_utf8`). Powers both the bool
 // `validate_utf8` predicate (lossy fast-path pick) and the typed
 // `str.from_bytes` decode (`Utf8Error{byte_offset}`).
-fn first_invalid_utf8(bytes ro []u8, n int) -> int {
+fn first_invalid_utf8(bytes []u8, n int) -> int {
     mut i = 0
     while i < n {
         ro c = bytes[i] as int
@@ -133,7 +133,7 @@ fn first_invalid_utf8(bytes ro []u8, n int) -> int {
 // Module-private: is `bytes[0..n]` well-formed UTF-8? Thin predicate over
 // `first_invalid_utf8` (single source of truth for the validation rules). Used
 // by @from_bytes_lossy to pick the copy-only fast path vs the FFFD-replace path.
-fn validate_utf8(bytes ro []u8, n int) -> bool => first_invalid_utf8(bytes, n) < 0
+fn validate_utf8(bytes []u8, n int) -> bool => first_invalid_utf8(bytes, n) < 0
 
 // Module-private str static method: build a freshly-allocated str by copying
 // `n` bytes from the raw source pointer `src` (`*u8`), NUL-terminating at

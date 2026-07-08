@@ -2428,3 +2428,11 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   encoding/toml, text/regex, волна 3б 2026-07-08): `if x.is_err() { throw ... }` сиблингом
   + отдельный match для извлечения (Err-ветка = panic("unreachable")). Правильный фикс:
   научить D162 покрытию через match-ветки (или полноценный dataflow по путям).
+
+- **[M-redundant-param-ro-diagnostic]** (2026-07-08, P2, Plan: 172.13/185; Wave: с
+  чекер-маркерами) — вопрос владельца: `fn f(bytes ro []u8)` — избыточный явный `ro`
+  в позиции параметра принимается молча. D246 мандатит redundancy-ошибку только для
+  указателей (`*ro T` → E_REDUNDANT_POINTER_RO), параметровая позиция не покрыта, хотя
+  принцип тот же (параметры = ro-вид по умолчанию). Сделать зеркальную диагностику
+  E_REDUNDANT_PARAM_RO (или W_ на переходный период) + амендмент-строку в D246.
+  4 сайта в std вычищены рукой 2026-07-08 (chars.nv, core.nv ×2, bcrypt.nv).

@@ -275,7 +275,7 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
 // Байты 0..255 всегда валидные Unicode scalar values (Latin-1 подмножество) —
 // `char.from` (Result, D325) для них никогда не возвращает `Err`; `.ok()`
 // (R4) даёт канонический Result→Option. `bytes.get(i)` даёт out-of-bounds `None`.
-fn byte_to_char(bytes ro []u8, i int) -> Option[char] {
+fn byte_to_char(bytes []u8, i int) -> Option[char] {
     match bytes.get(i) {
         Some(b) => char.from(b as int).ok()
         None    => None
