@@ -16,7 +16,7 @@
 module nova_tests.err173_0
 
 test "supervised drain: 6 armed M:N блоков с растущими sched-state завершаются" {
-    ro t0 = Time.now()
+    ro t0 = Time.now_unix_ms()
 
     // Профиль роста sched-state (3/1/6/4/8/5) под armed M:N: повторные grow
     // конкурентно с wake'ами (каждый ребёнок паркуется в Time.sleep, driver
@@ -28,14 +28,14 @@ test "supervised drain: 6 armed M:N блоков с растущими sched-sta
     supervised { for _ in 0..8 { spawn { Time.sleep(5) } } }
     supervised { for _ in 0..5 { spawn { Time.sleep(5) } } }
 
-    ro elapsed = Time.now() - t0
+    ro elapsed = Time.now_unix_ms() - t0
     // Все 27 детей спят по 5мс параллельно; при отсутствии зависания общий
     // elapsed должен остаться малым (< 2000мс с огромным запасом на CI-jitter).
     assert(elapsed < 2000)
 }
 
 test "supervised drain: вложенные supervised под armed M:N дренируются" {
-    ro t0 = Time.now()
+    ro t0 = Time.now_unix_ms()
     // Nested supervised — cancel-propagation drain (fibers.h:893) под M:N.
     supervised {
         for _ in 0..4 {
@@ -46,6 +46,6 @@ test "supervised drain: вложенные supervised под armed M:N дрен�
             }
         }
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Time.now_unix_ms() - t0
     assert(elapsed < 2000)
 }

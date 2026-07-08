@@ -9874,6 +9874,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // nova_alloc zero-initializes (slot=0), but 0 is a valid slot index —
         // -1 is required as "not yet set" sentinel for the worker loop restore logic.
         self.line(&format!("{ctx}->_nova_worker_slot = -1;", ctx = ctx_var));
+        // Plan 173.0 Ф.2 (A2.2): same sentinel discipline for the retention
+        // slot — 0 is a valid child index too. nova_runtime_spawn_into
+        // (runtime.c) overwrites this with the real
+        // nova_scope_alloc_child_slot() index on the M:N remote path;
+        // stays -1 on the single-thread/bootstrap path (nova_fiber_spawn_into
+        // never touches it — that path doesn't use Ф.2 retention).
+        self.line(&format!("{ctx}->_nova_parent_slot = -1;", ctx = ctx_var));
         // Plan 44.5 Layer 5: implicit M:N — runtime initialized → push в worker
         // deque; иначе single-thread path unchanged.
         // Plan 83.2 Ф.1 примечание: чтобы supervised{spawn} попал в M:N
@@ -9928,6 +9935,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // NULL = single-thread (без runtime.init). Always present.
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_parent_scope;");
+        // Plan 173.0 Ф.2 (A2.2): retention-slot index into
+        // _nova_parent_scope's child_error[]/child_ctx[] arrays — MUST
+        // immediately follow _nova_parent_scope (mirrors NovaSpawnCtxBase
+        // field order in fibers.h exactly; the worker loop casts this ctx
+        // to NovaSpawnCtxBase* by common-initial-sequence, so every base
+        // field here must match fibers.h's order/type 1:1). -1 = unset.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_parent_slot;");
         // Plan 44.5 Layer 5 park/wake: slot index в worker scope.
         // Initialized to -1; set by preamble on first run. -1 = not yet set.
         let _ = writeln!(self.lambda_forward_decls,
@@ -10148,7 +10163,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 83.10 (2026-05-25): fix [M-83.10-armed-user-throw-routing] —
         // typed throw payload + tid тоже propagate в atomic, чтобы main
         // re-throw мог dispatch через nova_throw_typed handler chain.
-        self.line("nova_fiber_report_atomic_kinded(_c->_nova_parent_scope, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
+        // Plan 173.0 Ф.2 (A2.3): nova_fiber_report_child_kinded wraps the
+        // existing atomic report (unchanged fast path) with a per-slot
+        // write into _c->_nova_parent_scope->child_error[_c->_nova_parent_slot]
+        // — replaces N-simultaneous-failure collapse with genuine per-child
+        // retention. Takes `_c` (not `_c->_nova_parent_scope`) since it
+        // needs both the parent scope AND this child's own slot index.
+        self.line("nova_fiber_report_child_kinded(_c, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
@@ -10708,6 +10729,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_parent_scope;");
+        // Plan 173.0 Ф.2 (A2.2): must mirror NovaSpawnCtxBase field order
+        // exactly (see emit_spawn's identical field for the full rationale).
+        // Detach/orphan fibers never participate in Ф.2 retention (LogAndDrop
+        // has no supervising parent to retain errors for) — stays -1 always,
+        // but the field must exist for common-initial-sequence layout parity.
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_parent_slot;");
         let _ = writeln!(self.lambda_forward_decls,
             "    int _nova_worker_slot;");
         let _ = writeln!(self.lambda_forward_decls,
@@ -10894,6 +10922,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("{ctx_var}->_nova_parent_scope = NULL;"));  // orphan!
         self.indent -= 1;
         self.line("}");
+        // Plan 173.0 Ф.2 (A2.2): detach/orphan fibers never allocate a
+        // retention slot (no supervising parent — LogAndDrop) — always -1.
+        self.line(&format!("{ctx_var}->_nova_parent_slot = -1;"));
         self.line(&format!("{ctx_var}->_nova_worker_slot = -1;"));
         self.line(&format!("{ctx_var}->_nova_saved_fail_top = NULL;"));
         self.line(&format!("{ctx_var}->_nova_saved_interrupt_top = NULL;"));

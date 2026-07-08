@@ -1124,8 +1124,15 @@ static void _worker_main(void* arg) {
             if (dead_ctx) {
                 /* Plan 83.6: route через pool release. base->_nova_pool_size
                  * decides: pool route (size > 0, push back) либо direct
-                 * Boehm free (size == 0). */
-                nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+                 * Boehm free (size == 0).
+                 * Plan 173.0 Ф.3 (A3.3, R1-guard): UNLESS this child failed
+                 * under a supervised parent — then retain the ctx instead
+                 * of releasing/recycling it (nova_scope_retain_or_release_
+                 * child, fibers.h); nova_supervised_run_impl's decision-loop
+                 * frees it later, after the failure has been observed. */
+                if (!nova_scope_retain_or_release_child(dead_ctx)) {
+                    nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+                }
             }
         } else if (mco_status(co) == MCO_SUSPENDED) {
             /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
@@ -1175,8 +1182,13 @@ static void _worker_main(void* arg) {
             NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
             mco_destroy(co);
             if (dead_ctx) {
-                /* Plan 83.6: pool release. */
-                nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+                /* Plan 83.6: pool release.
+                 * Plan 173.0 Ф.3 (A3.3, R1-guard): retain instead of
+                 * releasing if this child failed under a supervised parent
+                 * (see nova_scope_retain_or_release_child, fibers.h). */
+                if (!nova_scope_retain_or_release_child(dead_ctx)) {
+                    nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+                }
             }
         }
     }
@@ -1728,6 +1740,15 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
         nova_fiber_spawn_into((NovaFiberQueue*)scope, entry, user);
         return;
     }
+    /* Plan 173.0 Ф.2 (A2.2): assign this remote child its own retention
+     * slot in the parent scope's child_error[]/child_ctx[] arrays — on
+     * THIS (spawning) thread, before the push, so the slot exists no later
+     * than the increment below makes the child visible to the drain loop.
+     * -1 sentinel (codegen init) would otherwise persist and disable Ф.2/Ф.3
+     * retention for this child (nova_fiber_report_child_kinded /
+     * nova_scope_retain_or_release_child both no-op on slot < 0). */
+    ((NovaSpawnCtxBase*)user)->_nova_parent_slot =
+        nova_scope_alloc_child_slot((NovaFiberQueue*)scope);
     /* Increment ДО push'а — main thread в drain-loop должен видеть
      * pending_remote > 0 даже если worker сразу подхватит fiber и завершит
      * его до того как main опросит counter. */
@@ -1852,7 +1873,12 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
         nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
         mco_destroy(co);
         if (dead_ctx) {
-            nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+            /* Plan 173.0 Ф.3 (A3.3, R1-guard): retain instead of releasing
+             * if this child failed under a supervised parent (see
+             * nova_scope_retain_or_release_child, fibers.h). */
+            if (!nova_scope_retain_or_release_child(dead_ctx)) {
+                nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
+            }
         }
     } else if (mco_status(co) == MCO_SUSPENDED) {
         if (fiber_is_parked) {
