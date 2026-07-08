@@ -22837,10 +22837,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // resolve type-directed literals on the RHS (e.g. `inner = None`
                 // when `inner: Option[BoxIter[U]]` — plain emit_expr emits
                 // `(NovaOpt_nova_int){None}` regardless of the LHS type).
+                //
+                // [M-exp-promotion-blockers: csv nested [][]str runtime bug]
+                // extended to `Nova_Vec____<elem>*` targets: a bare `x = []`
+                // RESET reassignment (`current_record = []` inside a parse
+                // loop — encoding/csv.nv's `Csv.parse`) hit the exact same
+                // gap `emit_expr_with_target_type` ALREADY closes for Option
+                // (line above) but this call site never routed a Vec-typed
+                // LHS through it. Plain `emit_expr([])` has no assignment-
+                // target context, so the empty array literal silently
+                // defaulted to `Vec[nova_int]` (`try_emit_typed_vec_literal`'s
+                // own "empty literal, no hint → nova_int" fallback) — a
+                // POINTER-TYPE-MISMATCHED value (`Nova_Vec____nova_int*`)
+                // then got assigned into a `Nova_Vec____nova_str*`-typed
+                // variable (C allows the incompatible-pointer assignment with
+                // only a warning), so every subsequent `.push()`/read on that
+                // variable used the WRONG element stride/layout — corrupting
+                // `records`/nested nova[][]str state (never a `None`-style
+                // hard type mismatch, so it silently produced wrong LENGTHS/
+                // VALUES rather than a compile error, matching the marker's
+                // "differs from an expected type error" symptom).
+                // `emit_expr_with_target_type` already has a dedicated
+                // ArrayLit-vs-`Nova_Vec____` branch (sets `current_array_elem_
+                // hint` from the target's element type) — this just routes
+                // Vec-typed assignment targets through it too.
                 let lhs_ty = self.infer_expr_c_type(target);
                 let val = if *op == AssignOp::Assign
-                    && lhs_ty.starts_with("NovaOpt_")
-                    && lhs_ty != "NovaOpt_nova_int"
+                    && ((lhs_ty.starts_with("NovaOpt_") && lhs_ty != "NovaOpt_nova_int")
+                        || (lhs_ty.starts_with("Nova_Vec____") && !lhs_ty.trim_end().ends_with("**")))
                 {
                     self.emit_expr_with_target_type(value, &lhs_ty)?
                 } else {
