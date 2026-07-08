@@ -7454,7 +7454,20 @@ impl Parser {
                     ));
                 }
                 self.bump(); // eat `&`
-                let operand = self.parse_unary()?;
+                let raw_operand = self.parse_unary()?;
+                // [M-ptr-raw-access-contract-and-unaligned] (D141/D54 амендмент):
+                // `raw &expr as *T` должен ассоциироваться как `(raw &expr) as *T`,
+                // а не `raw &(expr as *T)`. Operand parse (`self.parse_unary()`)
+                // прогоняется через тот же postfix-loop (`parse_postfix`), который
+                // и «as»/«is» обрабатывает — без переассоциации голый trailing
+                // `as` был бы проглочен внутрь operand'а, и lvalue-проверка ниже
+                // видела бы Cast-rvalue вместо реального адресуемого места. Снимаем
+                // ОДИН уровень `As`, адресуем настоящий operand, затем возвращаем
+                // cast поверх результата.
+                let (operand, recast_ty) = match raw_operand.kind {
+                    ExprKind::As(inner, ty) => (*inner, Some(ty)),
+                    other => (Expr::new(other, raw_operand.span), None),
+                };
                 // Те же lvalue-проверки что у AddrOf.
                 if matches!(operand.kind, ExprKind::RecordLit { .. }) {
                     return Err(Diagnostic::new(
@@ -7501,13 +7514,20 @@ impl Parser {
                     }
                 }
                 let span = start.merge(operand.span);
-                Ok(Expr::new(
+                let addr_expr = Expr::new(
                     ExprKind::Unary {
                         op: UnOp::RawAddrOf,
                         operand: Box::new(operand),
                     },
                     span,
-                ))
+                );
+                Ok(match recast_ty {
+                    Some(ty) => {
+                        let cast_span = span.merge(ty.span());
+                        Expr::new(ExprKind::As(Box::new(addr_expr), ty), cast_span)
+                    }
+                    None => addr_expr,
+                })
             }
             // Plan 118 D216 §4: `&value` pointer creation (prefix operator,
             // expr-position only — type-position `&Type` doesn't exist).
@@ -7515,7 +7535,16 @@ impl Parser {
             // (Ф.2.4) escape analysis с auto-promote.
             TokenKind::Amp => {
                 self.bump();
-                let operand = self.parse_unary()?;
+                let raw_operand = self.parse_unary()?;
+                // [M-ptr-raw-access-contract-and-unaligned] (D141/D54 амендмент):
+                // `&expr as *T` должен ассоциироваться как `(&expr) as *T`, а не
+                // `&(expr as *T)` — та же re-ассоциация что у `raw &` выше (см.
+                // комментарий там); operand-parse (`self.parse_unary()`) идёт
+                // через тот же postfix-loop, который поглощает trailing `as`.
+                let (operand, recast_ty) = match raw_operand.kind {
+                    ExprKind::As(inner, ty) => (*inner, Some(ty)),
+                    other => (Expr::new(other, raw_operand.span), None),
+                };
                 // Plan 118 (D216 §4 amend, user design decision Session 2):
                 // `&Record { ... }` без named binding запрещён —
                 // E_AMP_RECORD_LITERAL. Records в Nova уже heap-allocated
@@ -7609,13 +7638,20 @@ impl Parser {
                     }
                 }
                 let span = start.merge(operand.span);
-                Ok(Expr::new(
+                let addr_expr = Expr::new(
                     ExprKind::Unary {
                         op: UnOp::AddrOf,
                         operand: Box::new(operand),
                     },
                     span,
-                ))
+                );
+                Ok(match recast_ty {
+                    Some(ty) => {
+                        let cast_span = span.merge(ty.span());
+                        Expr::new(ExprKind::As(Box::new(addr_expr), ty), cast_span)
+                    }
+                    None => addr_expr,
+                })
             }
             // Plan 118 D216 §5: `*p` explicit deref (prefix in expression
             // position). Type-position `*T` parsed в parse_type (Ф.1.2).
