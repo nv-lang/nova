@@ -2622,3 +2622,11 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   обёртка требует value-record слотов в эффект-vtable либо net-канона
   (*()+out_err) в самих шимах; net internal plumbing (*() между priv-функциями
   ffi.nv) — довернуть при том же заходе.
+
+- **[M-newtype-receiver-method-dispatch]** (2026-07-09, P2, Plan: 172.13-хвост/батч 4+;
+  Wave: с чекер-маркерами) — методы на newtype-ресивере (`type BrotliHandle(int)`;
+  `fn BrotliHandle @feed(...)`) не регистрируются под своим типом: вызов `dec.feed(...)`
+  диспатчится ПО ИМЕНИ на чужой `ZlibWriter @feed` того же CU (too many arguments в C).
+  Класс coarse-by-name. Репро: std/encoding/compress/brotli.nv вернуть методы на
+  BrotliHandle из истории коммита. Сейчас в brotli — прямые вызовы типизированных
+  extern'ов (типобезопасность хендла сохранена).

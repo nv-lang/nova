@@ -29,30 +29,26 @@ const BROTLI_PULL_BUDGET int = 65536
 // Типизированный хендл декодера (решение владельца 2026-07-09: FFI-хендлы не
 // гуляют по модулю голым int — net-образец TcpListener{priv handle}). Голый
 // int остаётся только на extern-границе внутри этих методов.
-type BrotliDec value priv { h int }
-
-fn BrotliDec.open() -> Option[BrotliDec] {
+// Методы на newtype-ресивере пока не диспатчатся (греп: dec.feed уводило на
+// ZlibWriter.feed по имени — [M-newtype-receiver-method-dispatch]); типобезопасность
+// дают сами типизированные extern-сигнатуры (BrotliHandle вместо int).
+fn brotli_open() -> Option[BrotliHandle] {
     ro h = brotli_dec_new()
-    if h == 0 { None } else { Some(BrotliDec { h }) }
+    if (h as int) == 0 { None } else { Some(h) }
 }
-fn BrotliDec @feed(p *u8, len int) -> int => unsafe { brotli_dec_feed(@h, p, len) }
-fn BrotliDec @pull(out *mut u8, cap int) -> int => unsafe { brotli_dec_pull(@h, out, cap) }
-fn BrotliDec @done() -> bool => brotli_dec_done(@h) != 0
-fn BrotliDec @needs_input() -> bool => brotli_dec_needs_input(@h) != 0
-fn BrotliDec @free() -> () => brotli_dec_free(@h)
 
 /// `UnsupportedMethod("brotli not built")` (Q11 — never a panic / link error).
 #stable(since = "0.1")
 export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError] {
-    ro dec = match BrotliDec.open() {
+    ro dec = match brotli_open() {
         Some(d) => d
         None    => return Err(CompressError.unsupported("brotli not built"))
     }
     // Feed the whole compressed input (the shim copies it internally).
     if data.len() > 0 {
-        ro fr = dec.feed(data.ptr(), data.len())
+        ro fr = unsafe { brotli_dec_feed(dec, data.ptr(), data.len()) }
         if fr != 0 {
-            dec.free()
+            brotli_dec_free(dec)
             return Err(CompressError.invalid("brotli: input too large to buffer"))
         }
     }
@@ -71,7 +67,7 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
         } else {
             BROTLI_PULL_BUDGET
         }
-        ro n = dec.pull(chunk.ptr(), budget)
+        ro n = unsafe { brotli_dec_pull(dec, chunk.ptr(), budget) }
         if n < 0 {
             err = Some(CompressError.invalid("brotli: corrupt stream"))
             finished = true
@@ -82,11 +78,11 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
                 finished = true
             } else {
                 out.append(chunk[0..n])
-                if dec.done() {
+                if brotli_dec_done(dec) != 0 {
                     finished = true
                 } else if n == 0 {
                     // No progress and not finished: truncated input, or a stall.
-                    err = if dec.needs_input() {
+                    err = if brotli_dec_needs_input(dec) != 0 {
                         Some(CompressError.eof())
                     } else {
                         Some(CompressError.invalid("brotli: decoder stalled"))
@@ -96,7 +92,7 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
             }
         }
     }
-    dec.free()
+    brotli_dec_free(dec)
     match err {
         Some(e) => Err(e)
         None    => Ok(out)
