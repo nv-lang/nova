@@ -88,16 +88,12 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
         ro evicted = @order[@order.len() - 1]
         @store.remove(evicted)
         // Удаляем последний элемент из order
-        mut new_order []K = []
-        for i in 0..@order.len() - 1 {
-            new_order.push(@order[i])
-        }
-        @order = new_order
+        @order = @order[0..@order.len() - 1]
     }
 
     // Insert front
     mut new_order []K = [k]
-    for x in @order { new_order.push(x) }
+    new_order.append(@order)
     @order = new_order
     @store.insert(k, v)
 }

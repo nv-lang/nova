@@ -2472,3 +2472,13 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (2) канал member-типизации generic-ресиверов чинился в 16db8f214 (types/mod.rs,
   subst_receiver_generics) — там же живёт resolved_types_buf-аннотация типов полей;
   (3) эталон conformance теперь 67/0 (не 66), гейты только на пересобранном main.
+
+- **[M-property-testing-rot]** (2026-07-08, P2, Plan: 172.13 — юнификация; Wave: с
+  чекер-маркерами) — std/testing/property.nv никогда не гонялся гейтами и сгнил слоями.
+  Сняты лично 2026-07-08: mut-sort на ro-биндингах (D36), str.len()→byte_len() (D249),
+  push-петли→append-срезы (§18а), turbofish на 5 вызовов property[T]. ОСТАЛСЯ корень:
+  протокольная юнификация — `property[[]int](gen ArrayGen[int], ...)` резолвит T=int
+  (по тип-аргументу конструктора gen), игнорируя структурную реализацию
+  Generator[[]int] через `ArrayGen[T] @generate() -> []T`; ресивер лямбды типизируется
+  int → E_PRIMITIVE_NO_PROTOCOL_METHOD sort. Родственно исходному «cannot infer T».
+  std/testing добавить в гейты после фикса.

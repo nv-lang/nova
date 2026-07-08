@@ -65,11 +65,7 @@ export fn brotli_decode(data []u8, max_output int) -> Result[[]u8, CompressError
                 err = Some(CompressError.bomb(max_output))
                 finished = true
             } else {
-                mut i = 0
-                while i < n {
-                    out.push(chunk[i])
-                    i += 1
-                }
+                out.append(chunk[0..n])
                 if brotli_dec_done(h) != 0 {
                     finished = true
                 } else if n == 0 {

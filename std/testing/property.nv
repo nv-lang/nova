@@ -202,7 +202,7 @@ export fn StrGen @generate() Random -> str {
 #stable(since = "0.1")
 export fn StrGen @shrink(value str) -> Iter[str] {
     mut steps []str = []
-    ro len = value.len
+    ro len = value.byte_len()
     if len > 0 {
         steps.push("")                                  // пустая строка
         if len > 1 { steps.push(value[0..len / 2]) }    // половина
@@ -254,13 +254,13 @@ export fn ArrayGen[T] @shrink(value []T) -> Iter[[]T] {
         // Половина (первая)
         if len > 1 {
             mut half []T = []
-            for i in 0..len / 2 { half.push(value[i]) }
+            half.append(value[0..len / 2])
             steps.push(half)
         }
         // Без последнего элемента
         if len > 1 {
             mut shorter []T = []
-            for i in 0..len - 1 { shorter.push(value[i]) }
+            shorter.append(value[0..len - 1])
             steps.push(shorter)
         }
     }
@@ -379,7 +379,7 @@ export fn property_with[T](gen Generator[T],
 test "reverse-reverse == identity для []int" {
     with Random = th.seeded(42) {
         ro gen = ArrayGen.default(IntGen.default())
-        property(gen, |xs| {
+        property[[]int](gen, |xs| {
             ro twice = xs.reverse().reverse()
             assert_prop(twice == xs)
         })
@@ -390,9 +390,11 @@ test "reverse-reverse == identity для []int" {
 test "sort idempotent для []int" {
     with Random = th.seeded(42) {
         ro gen = ArrayGen.default(IntGen.default())
-        property(gen, |xs| {
-            ro once = xs.sort()
-            ro twice = once.sort()
+        property[[]int](gen, |xs| {
+            mut once = xs.clone()
+            once.sort()
+            mut twice = once.clone()
+            twice.sort()
             assert_prop(once == twice)
         })
     }
@@ -402,7 +404,7 @@ test "sort idempotent для []int" {
 test "len(a + b) == len(a) + len(b) для []int" {
     with Random = th.seeded(123) {
         ro gen = ArrayGen.default(IntGen.default())
-        property(gen, |xs| {
+        property[[]int](gen, |xs| {
             ro ys = xs.reverse()       // любой второй массив
             ro combined = xs + ys
             assert_prop(combined.len() == xs.len() + ys.len())
@@ -414,7 +416,7 @@ test "len(a + b) == len(a) + len(b) для []int" {
 test "string concat associative" {
     with Random = th.seeded(7) {
         ro gen = StrGen.default()
-        property(gen, |s| {
+        property[str](gen, |s| {
             ro combined1 = (s + s) + s
             ro combined2 = s + (s + s)
             assert_prop(combined1 == combined2)
@@ -426,7 +428,7 @@ test "string concat associative" {
 test "double negation для bool" {
     with Random = th.seeded(1) {
         ro gen = BoolGen.new()
-        property(gen, |b| {
+        property[bool](gen, |b| {
             assert_prop(!!b == b)
         })
     }

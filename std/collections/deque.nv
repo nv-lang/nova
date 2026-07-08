@@ -64,7 +64,7 @@ export fn Deque[T] mut @push_back(x T) -> () {
 #stable(since = "0.1")
 export fn Deque[T] mut @push_front(x T) -> () {
     mut new_items []T = [x]
-    for it in @items { new_items.push(it) }
+    new_items.append(@items)
     @items = new_items
 }
 
@@ -89,13 +89,7 @@ export fn Deque[T] mut @pop_back() -> Option[T] {
 export fn Deque[T] mut @pop_front() -> Option[T] {
     if @items.len() == 0 { return None }
     ro value = @items[0]
-    mut new_items []T = []
-    mut i = 1
-    while i < @items.len() {
-        new_items.push(@items[i])
-        i += 1
-    }
-    @items = new_items
+    @items = @items[1..@items.len()]
     Some(value)
 }
 
