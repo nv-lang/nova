@@ -18,7 +18,7 @@
 //   "0 9-17 * * 1-5"  — каждый час с 9 до 17 в будни
 //
 // API:
-//   Cron.parse(expr str) Fail[ParseCronError] -> CronExpr
+//   Cron.parse(expr str) -> Result[CronExpr, ParseCronError]
 //   expr.matches(time CronTime) -> bool
 //
 // Не реализовано (out of scope):
@@ -75,10 +75,10 @@ export type CronTime {
 ///
 /// # Examples
 /// ```nova
-/// let cron = Cron.parse("*/15 9-17 * * 1-5")  // every 15 min, 9-17h, weekdays
+/// let cron = Cron.parse("*/15 9-17 * * 1-5")!!  // every 15 min, 9-17h, weekdays
 /// ```
 #stable(since = "0.1")
-export fn Cron.parse(expr str) Fail[ParseCronError] -> CronExpr {
+export fn Cron.parse(expr str) -> Result[CronExpr, ParseCronError] {
     ro fields = expr.trim_ascii().split(" ")
     // Удалить пустые (multiple spaces)
     mut clean []str = []
@@ -86,44 +86,44 @@ export fn Cron.parse(expr str) Fail[ParseCronError] -> CronExpr {
         if f.len() > 0 { clean.push(f) }
     }
     if clean.len() != 5 {
-        throw InvalidFieldCount { actual: clean.len() }
+        return Err(InvalidFieldCount { actual: clean.len() })
     }
 
-    {
-        minute:    parse_field(clean[0], "minute",    0, 59),
-        hour:      parse_field(clean[1], "hour",      0, 23),
-        day_month: parse_field(clean[2], "day_month", 1, 31),
-        month:     parse_field(clean[3], "month",     1, 12),
-        day_week:  parse_field(clean[4], "day_week",  0, 6),
-    }
+    Ok({
+        minute:    parse_field(clean[0], "minute",    0, 59)?,
+        hour:      parse_field(clean[1], "hour",      0, 23)?,
+        day_month: parse_field(clean[2], "day_month", 1, 31)?,
+        month:     parse_field(clean[3], "month",     1, 12)?,
+        day_week:  parse_field(clean[4], "day_week",  0, 6)?,
+    })
 }
 
 
-fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronField {
+fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCronError] {
     // List: "1,5,10" → объединение
     if s.contains(",") {
         mut all []int = []
         for part in s.split(",") {
-            ro sub = parse_field(part, name, min, max)
+            ro sub = parse_field(part, name, min, max)?
             for v in sub.values { all.push(v) }
         }
-        return { values: dedup_sort(all) }
+        return Ok({ values: dedup_sort(all) })
     }
 
     // Step: "*/15", "10-30/5"
     if s.contains("/") {
         ro parts = s.split("/")
         if parts.len() != 2 {
-            throw InvalidValue { field: name, value: s }
+            return Err(InvalidValue { field: name, value: s })
         }
-        ro step = parse_int_in(parts[1], name, min, max)
+        ro step = parse_int_in(parts[1], name, min, max)?
         ro base = parts[0]
         ro (range_min, range_max) = if base == "*" {
             (min, max)
         } else if base.contains("-") {
-            parse_range(base, name, min, max)
+            parse_range(base, name, min, max)?
         } else {
-            ro v = parse_int_in(base, name, min, max)
+            ro v = parse_int_in(base, name, min, max)?
             (v, max)
         }
         mut values []int = []
@@ -132,16 +132,16 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
             values.push(v)
             v += step
         }
-        return { values }
+        return Ok({ values })
     }
 
     // Range: "1-5"
     if s.contains("-") {
-        ro (lo, hi) = parse_range(s, name, min, max)
+        ro (lo, hi) = parse_range(s, name, min, max)?
         mut values []int = []
         mut v = lo
         while v <= hi { values.push(v); v += 1 }
-        return { values }
+        return Ok({ values })
     }
 
     // Wildcard: "*"
@@ -149,38 +149,38 @@ fn parse_field(s str, name str, min int, max int) Fail[ParseCronError] -> CronFi
         mut values []int = []
         mut v = min
         while v <= max { values.push(v); v += 1 }
-        return { values }
+        return Ok({ values })
     }
 
     // Single value
-    ro v = parse_int_in(s, name, min, max)
-    { values: [v] }
+    ro v = parse_int_in(s, name, min, max)?
+    Ok({ values: [v] })
 }
 
 
-fn parse_int_in(s str, name str, min int, max int) Fail[ParseCronError] -> int {
+fn parse_int_in(s str, name str, min int, max int) -> Result[int, ParseCronError] {
     ro n = match int.try_from(s) {
         Ok(x)  => x
-        Err(_) => throw InvalidValue { field: name, value: s }
+        Err(_) => return Err(InvalidValue { field: name, value: s })
     }
     if n < min || n > max {
-        throw OutOfRange { field: name, value: n, min, max }
+        return Err(OutOfRange { field: name, value: n, min, max })
     }
-    n
+    Ok(n)
 }
 
 
-fn parse_range(s str, name str, min int, max int) Fail[ParseCronError] -> (int, int) {
+fn parse_range(s str, name str, min int, max int) -> Result[(int, int), ParseCronError] {
     ro parts = s.split("-")
     if parts.len() != 2 {
-        throw InvalidValue { field: name, value: s }
+        return Err(InvalidValue { field: name, value: s })
     }
-    ro lo = parse_int_in(parts[0], name, min, max)
-    ro hi = parse_int_in(parts[1], name, min, max)
+    ro lo = parse_int_in(parts[0], name, min, max)?
+    ro hi = parse_int_in(parts[1], name, min, max)?
     if lo > hi {
-        throw InvalidValue { field: name, value: s }
+        return Err(InvalidValue { field: name, value: s })
     }
-    (lo, hi)
+    Ok((lo, hi))
 }
 
 
