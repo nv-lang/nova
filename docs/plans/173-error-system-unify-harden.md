@@ -309,7 +309,7 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   disasm hot-path: touched-подсистемы baseline-only (checker-changes не трогают codegen). **Без упрощений**
   (кроме явно-interim #7). **Следующее: Ф.2 (defer-kernel unification, spec-first D314) ИЛИ Track A (172.12/172.13).**
 
-### Ф.2 — Унификация defer-kernel (В РАБОТЕ; де-риск + D314-spec закрыты 2026-07-04)
+### Ф.2 — Унификация defer-kernel (✅ ЗАКРЫТА 2026-07-04; см. де-риск-карту §«СВОДКА»; исполнение-подтверждение 2026-07-08)
 
 > 🔨 **Ф.2.0 ЗАКРЫТ (D314-spec + де-риск-карта):** D314 написан spec-first в
 > [spec/decisions/03-syntax.md](../../spec/decisions/03-syntax.md#d314); полная де-риск-карта
@@ -361,6 +361,16 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
 - **Acceptance:** старые consume/on_exit-тесты зелёные через сахар; bare `defer(o)` работает; единый
   re-dispatch (нет per-frame дублирования); renames применены везде (grep `Consumable|@on_exit` по
   std/+docs/ = 0 вне historical); хаб переписан; disasm hot-path ≡; **без упрощений**.
+- ✅ **Закрыта.** Все под-атомы (A0/R1 43f9ee5bd/R2 ffb76506e/B1 e0d95a313/B2 23f512d84/B3-merge a23579f3e
+  (разблокирован D314 §4a `501adb50e`)/C `c6254274e`/D194 `66a29f63a`/E `0636a9edd`) уже в `main` —
+  подтверждено де-риск-картой (`173-f2-derisk-map.md` §«СВОДКА Ф.2», ПОЛНОСТЬЮ ЗАКРЫТА). Исполнение-заход
+  2026-07-08 (sonnet, ветка `defer-kernel-173-f2`, worktree nova-p173) — новых пунктов не осталось,
+  подтверждающий прогон гейтов: `cargo build --release` оба крейта чисто; conformance
+  `spec_tests/conformance` **70/0**; defer/errdefer/cleanup корпус (err173, err173_0, plan110, plan103_9,
+  plan100_4_1/2/4/5, plan125_1) **54/1** (единственный CC-FAIL `plan125_1/neg/let_never_no_context` —
+  pre-existing, задокументирован в де-риск-карте Ф.2.R2); `std/http`+`std/io`+`std/fs` **15/0** (+1 SKIP
+  `servernet` — нет test-блоков, ожидаемо). Followups вне периметра остаются: `[M-173-consume-exactly-once-observability]`,
+  `[M-173-d194-perf-elision]`, `[M-173-consume-unwind-cleanup-throw]`, multi-binding consume (п.6).
 
 ### Ф.3 — Structured-concurrency error handling (ПОЗЖЕ, обязательно)
 
