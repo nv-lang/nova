@@ -23,7 +23,7 @@ const DEFAULT_BUF_CAP int = 8192
 /// flush error instead of swallowing it. Accumulates writes and flushes to the
 /// inner sink in `DEFAULT_BUF_CAP` chunks.
 #stable(since = "0.1")
-export type BufWriter[W] consume {
+export type BufWriter[W Write] consume priv {
     mut inner W
     mut buf []u8
 }
@@ -48,7 +48,7 @@ fn BufWriter[W Write] mut @drain() -> Result[(), IoError] {
             }
         }
     }
-    @buf = []u8.new()
+    @buf.clear()
     Ok(())
 }
 
@@ -97,7 +97,7 @@ export fn BufWriter[W Write] consume @close() -> Result[(), IoError] {
 /// buffer, refilling in `DEFAULT_BUF_CAP` chunks — amortises the per-`@read`
 /// cost of many small reads. Is itself an `io.Read`.
 #stable(since = "0.1")
-export type BufReader[R] {
+export type BufReader[R Read] priv {
     mut inner R
     mut buf []u8
     mut pos int
