@@ -3,7 +3,7 @@
 // std/http/url.nv — URL parser + СТРОГИЙ host/SSRF-валидатор (RFC 3986).
 //
 // Промоут-дельта (§3.8 / §8.2 acceptance — НЕ «доводка»):
-//   1. `Url.from(s) Fail[ParseUrlError]` → `Url.parse(s) -> Result[Url, HttpError]`
+//   1. `Url.from(s) Fail[ParseUrlError]` → `s.to_url() -> Result[Url, HttpError]` (174.1)
 //      (D325 R2); `into()` → `@to_str()`. `ParseUrlError` детализирует, маппится в
 //      `HttpError{kind: InvalidUrl, source: Url(ParseUrlError)}` (source-chaining).
 //   2. Байт-корректный парсер: смещения — БАЙТОВЫЕ (`find`/byte-scan), срезы `s[a..b]`
@@ -25,7 +25,7 @@ module std.http
 ///
 /// # Examples
 /// ```nova
-/// let u = Url.parse("https://user:pass@example.com:8443/api?k=v#top")!!
+/// let u = "https://user:pass@example.com:8443/api?k=v#top".to_url()!!
 /// assert(u.scheme == "https")
 /// assert(u.host == Some("example.com"))
 /// assert(u.port == Some(8443))
@@ -76,9 +76,13 @@ export fn ParseUrlError @to_str() -> str {
 
 /// Разобрать URL (RFC 3986). Ошибка → `HttpError{kind: InvalidUrl}` с
 /// source-chain на детальный `ParseUrlError`.
+///
+/// Plan 174.1 (2026-07-08, канон владельца): конверсия — метод НА ИСТОЧНИКЕ
+/// (`s.to_url()`, зеркально `s.to_int()`/`s.to_complex()`); статик
+/// `Url.parse(s)` РЕТРАКТИРОВАН (одно имя = одна дверь, §22).
 #stable(since = "0.1")
-export fn Url.parse(s str) -> Result[Url, HttpError] {
-    match parse_url_inner(s) {
+export fn str @to_url() -> Result[Url, HttpError] {
+    match parse_url_inner(@) {
         Ok(u)  => Ok(u)
         Err(e) => Err(HttpError.invalid_url(e))
     }

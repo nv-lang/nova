@@ -24,9 +24,9 @@
 //     возвращают новый.
 //   - D55 record-coercion: { major, minor, patch, pre, build } → Self.
 //   - D72 generic bounds: []str — массив через D27.
-//   - `Version.from(s)` (парсинг) / `v.to_str()` (сериализация) —
+//   - `s.to_version()` (парсинг) / `v.to_str()` (сериализация) —
 //     именованные конструктор/представление (D410), не протокол:
-//       Version.from("1.2.3")            // парсинг
+//       "1.2.3".to_version()            // парсинг
 //       v.to_str()                       // сериализация
 //   - D74 instance-методы числовых операций (не используется напрямую,
 //     но `len`, comparisons на u64 — стандартные методы).
@@ -63,7 +63,7 @@ module data.semver
 ///
 /// # Examples
 /// ```nova
-/// let v = Version.from("1.2.3-alpha.1+exp.sha.5114f85")!!
+/// let v = "1.2.3-alpha.1+exp.sha.5114f85".to_version()!!
 /// assert(v.major() == 1)
 /// assert(v.is_prerelease())
 /// ```
@@ -129,7 +129,8 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 // Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Version.from(s str)` — парсер по semver.org § 9-10.
+// `s.to_version()` — парсер по semver.org § 9-10 (str-экстеншен, 174.1;
+// статик `Version.from(s)` ретрактирован — конверсия живёт на источнике).
 // `Err(ParseVersionError)` на любой ошибке (D325).
 //
 // Алгоритм:
@@ -144,12 +145,12 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 ///
 /// # Examples
 /// ```nova
-/// let v = Version.from("2.5.1")!!
+/// let v = "2.5.1".to_version()!!
 /// assert(v.major() == 2 && v.minor() == 5 && v.patch() == 1)
 /// ```
 #stable(since = "0.1")
-export fn Version.from(s str) -> Result[Version, ParseVersionError] {
-    if s.byte_len() == 0 {
+export fn str @to_version() -> Result[Version, ParseVersionError] {
+    if @byte_len() == 0 {
         return Err(EmptyInput)
     }
 
@@ -165,9 +166,9 @@ export fn Version.from(s str) -> Result[Version, ParseVersionError] {
     // случая схлопывались в один `byte_len() == 0` чек — молча принимали
     // trailing `-`/`+` как «нет pre/build». Обнаружено через `nova test
     // --full` ("пустой identifier в pre"), `nova check` этого не ловил.
-    ro (left, build_str, has_build_marker) = match s.find("+") {
-        Some(i) => (s[0..i], s[i + 1..s.byte_len()], true)
-        None    => (s, "", false)
+    ro (left, build_str, has_build_marker) = match @find("+") {
+        Some(i) => (@[0..i], @[i + 1..@byte_len()], true)
+        None    => (@, "", false)
     }
 
     ro (core, pre_str, has_pre_marker) = match left.find("-") {
@@ -296,7 +297,7 @@ fn is_ascii_ident_char(c char) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `to_str()` — формат `MAJOR.MINOR.PATCH[-PRE][+BUILD]`.
-/// Round-trip: `Version.from(v.to_str())== v` для валидной Version.
+/// Round-trip: `v.to_str().to_version()== v` для валидной Version.
 #stable(since = "0.1")
 export fn Version @to_str() -> str {
     mut s = str.from(@major) + "." + str.from(@minor) + "." + str.from(@patch)

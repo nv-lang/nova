@@ -212,7 +212,7 @@ fn find_first_of(s str, chars str) -> Option[int] {
     mut i = 0
     while i < s.byte_len() {
         ro c = (sb[i] as int).to_char() ?? ' '
-        if chars.contains(str.from(c)) { return Some(i) }
+        if chars.contains(c.to_str()) { return Some(i) }
         i += 1
     }
     None
