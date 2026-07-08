@@ -147,7 +147,7 @@ export type Iter[I] protocol {
 // [M-vec-access-e7320-as-bytes-str] (fix, 2026-07-07): the `#no_prelude`
 // helpers this facade re-exports below (string_builder.nv, write_buffer.nv)
 // call `str.@bytes()` (string_builder.nv), and str.@bytes()'s own
-// callers pull in `char.from()` (std/runtime/string/core.nv:42) —
+// callers pull in `().to_char()` (std/runtime/string/core.nv:42) —
 // both assume a FULL `std.prelude` is already in the CU. A consumer that
 // opts into `#prelude(collections)` only (partial prelude, D174) never
 // brings in `std.runtime.string` / `std.runtime.char`, so those bodies hit

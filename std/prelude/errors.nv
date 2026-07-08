@@ -359,7 +359,7 @@ export type MultiErrorTruncated {
 // Char conversion errors (D54/D77)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ошибка конверсии `int` → `char`. Выбрасывается `char.from(cp int)`
+/// Ошибка конверсии `int` → `char`. Выбрасывается `(cp int).to_char()`
 /// когда codepoint вне диапазона [0, 0x10FFFF] или является surrogate
 /// [0xD800, 0xDFFF].
 ///
@@ -372,7 +372,7 @@ export type MultiErrorTruncated {
 /// # Examples
 ///
 /// ```nova
-/// match char.from(-1) {
+/// match (-1).to_char() {
 ///     Ok(c) => ...
 ///     Err(CharFromError) => // codepoint out of range
 /// }

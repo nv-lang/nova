@@ -214,7 +214,7 @@ fn alphabet_char(idx int) -> char {
     // теперь резолвится корректно как instance-метод и напрямую на
     // module-level const — обход через локальную ro-копию больше не нужен.
     match BCRYPT_ALPHABET.bytes().get(idx) {
-        Some(b) => char.from(b as int) ?? '.'
+        Some(b) => (b as int).to_char() ?? '.'
         None    => '.'
     }
 }
@@ -278,7 +278,7 @@ fn bcrypt_base64_decode(s str) -> Option[[]u8] {
 // (R4) даёт канонический Result→Option. `bytes.get(i)` даёт out-of-bounds `None`.
 fn byte_to_char(bytes []u8, i int) -> Option[char] {
     match bytes.get(i) {
-        Some(b) => char.from(b as int).ok()
+        Some(b) => (b as int).to_char().ok()
         None    => None
     }
 }

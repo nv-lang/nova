@@ -102,7 +102,7 @@ fn encode_char(value u8) -> char {
     } else {
         'Z' as int                                   // 31
     }
-    match char.from(code) {
+    match (code).to_char() {
         Ok(c)  => c
         Err(_) => '?'
     }
@@ -344,7 +344,7 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self {
 fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
     match s.bytes().get(pos) {
         Some(b) => {
-            ro c = char.from(b as int) ?? ' '
+            ro c = (b as int).to_char() ?? ' '
             match decode_char(c) {
                 Some(v) => v
                 None    => throw InvalidChar { position: pos, char: c }

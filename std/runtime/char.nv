@@ -29,12 +29,15 @@ export extern "nova" fn str.from_codepoint(cp int) -> str
 
 // ─── char ───
 
-// D54/D77: int → char, validates unicode scalar value [0, 0x10FFFF] excluding surrogates.
-export fn char.from(cp int) -> Result[char, CharFromError] {
-    if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
+// D54: int → char, validates unicode scalar value [0, 0x10FFFF] excluding
+// surrogates. Ресивер-форма `@to_char()` (решение владельца 2026-07-09,
+// цепочечность: `(32 + off).to_char()?`) — бывший `(int).to_char()`
+// ретрактирован по §22 (одно имя = одна дверь); каст `int as char` запрещён D54.
+export fn int @to_char() -> Result[char, CharFromError] {
+    if @ < 0 || @ > 0x10FFFF || (@ >= 0xD800 && @ <= 0xDFFF) {
         Err(CharFromError)
     } else {
-        Ok(unsafe { cp as char })
+        Ok(unsafe { @ as char })
     }
 }
 

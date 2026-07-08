@@ -258,7 +258,7 @@ fn hex_digit(n u8) -> char {
     } else {
         'a' as int + n as int - 10
     }
-    match char.from(code) {
+    match (code).to_char() {
         Ok(c)  => c
         Err(_) => '?'
     }
@@ -317,7 +317,7 @@ fn parse_hex_range(s str, from int, to int) Fail[ParseUuidError] -> u64 {
     while i < to {
         match sb.get(i) {
             Some(b) => {
-                ro c = char.from(b as int) ?? ' '
+                ro c = (b as int).to_char() ?? ' '
                 ro d = hex_value(c, i)
                 acc = acc * 16 + (d as u64)
             }

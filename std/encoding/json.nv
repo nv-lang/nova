@@ -209,7 +209,7 @@ fn Lexer.new(input str) -> Self =>
 //
 // [M-json-byte-peek] (2026-07-07): @peek()/@advance() раньше возвращали
 // Option[char], маскируя сырой байт под codepoint
-// (`char.from(byte as int) ?? ' '` — для UTF-8 лид-байта это ФАНТОМНЫЙ
+// (`(byte as int).to_char() ?? ' '` — для UTF-8 лид-байта это ФАНТОМНЫЙ
 // Latin-1 символ, не настоящий codepoint; а `?? ' '` был мёртвым sentinel —
 // байт 0..255 всегда валиден как codepoint, fallback никогда не
 // срабатывал). Убрано: @peek()/@advance() теперь честно -> Option[u8].
@@ -228,7 +228,7 @@ fn Lexer.new(input str) -> Self =>
 //
 // Места, где реально нужен char (диагностика — BadTok/UnexpectedChar/
 // InvalidEscape/InvalidUnicode): ASCII байт (< 0x80, гарантирован guard'ом)
-// → тотальный `char.from(b as int)!!`; байт >= 0x80 (потенциальный лид-байт
+// → тотальный `(b as int).to_char()!!`; байт >= 0x80 (потенциальный лид-байт
 // multibyte UTF-8) → НАСТОЯЩИЙ codepoint через @char_at (не Latin-1-фантом,
 // см. там).
 
