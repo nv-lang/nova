@@ -119,20 +119,22 @@ fn bytes_to_uuid(bytes []u8) -> Uuid {
 // Тесты — RFC 4122 Appendix C examples
 // ──────────────────────────────────────────────────────────────────────────
 //
-// [2026-07-08, волна 2 промоушена]: НЕ промоутится — `nova check` PASS, но
-// `nova test --full` CC-FAIL: `error: redefinition of
-// 'nova_fn_6crypto3md56rotl32'`. Репродуцировано МИНИМАЛЬНЫМ файлом
-// (только `import std.crypto.md5.{Md5}` + `import std.crypto.sha1.{Sha1}`,
-// без uuid_namespace вообще) — general compiler-баг: private
-// (non-exported) top-level helper с одинаковым именем+сигнатурой
-// (`fn rotl32(u32, int) -> u32`) в ДВУХ разных модулях (`crypto.md5`,
-// `crypto.sha1`), скомпилированных в ОДИН CU → duplicate C-symbol emission
-// (не name-collision между модулями — тот же mangled symbol
-// `crypto.md5.rotl32` эмиттится дважды). До этой волны md5+sha1 никогда
-// не компилировались в одном CU одновременно (md5_test/sha1_test/hmac_test
-// импортируют их по отдельности) — поэтому баг не проявлялся раньше.
-// Нужна codegen-инвестигация (private-fn dedup emission). См.
-// docs/plans/backlog-followups.md.
+// [2026-07-08, батч 2, Plan 172.13]: НЕ промоутится — ОРИГИНАЛЬНЫЙ баг
+// (duplicate C-symbol: `crypto.md5.rotl32` эмиттился дважды, когда `md5`+
+// `sha1` — приватные `fn rotl32` с одинаковым именем в разных модулях —
+// делят один CU) ИСПРАВЛЕН compiler-side (fn_module_map collision-aware
+// qualification, mirrors [M-sync-crossmodule-samename-type-collision]
+// D348). После фикса всплыл ДРУГОЙ, не связанный, более глубокий
+// pre-existing дефект: `Random.u64()` (effect-op вызов внутри
+// `Uuid.v4()`/`v7()`, подтягиваемых транзитивно через `import
+// ...uuid.{Uuid}`) даёт `[P67-LEGACY] Path call return type unknown for
+// method=u64` — ICE. Репродуцируется даже для `nova test --full
+// std/identifiers/uuid.nv` В ОДИНОЧКУ (уже промоутнутый модуль, БЕЗ
+// uuid_namespace вообще), подтверждён на baseline d987de52d. `uuid_test.nv`
+// один проходит (там `with Random = ...` установлен перед v4/v7); в
+// uuid_namespace's тестах Random-хендлер нигде не устанавливается — эффект
+// никогда не инсталлируется в ЭТОМ CU. См. docs/plans/backlog-followups.md
+// [M-exp-promotion-blockers: uuid_namespace].
 
 test "v5: DNS namespace + 'www.example.com'" {
     // Известный test vector

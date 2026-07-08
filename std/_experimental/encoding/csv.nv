@@ -133,14 +133,27 @@ fn needs_quoting(field str) -> bool {
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
 //
-// [2026-07-08, волна 2 промоушена]: НЕ промоутится — обнаружен runtime-баг
-// (не opt-out по конвенции, а реальный дефект): `parse()` даёт неверный
-// результат под `test --full` (r.len() != 2 для "a,b,c\n1,2,3\n"), несмотря
-// на то, что `nova check` проходит и алгоритм логически выглядит корректным.
-// Похоже на nested-`[][]str` (Vec-of-Vec) aliasing/consume-семантику
-// (`consume current_field = StringBuilder.new()` reset-паттерн внутри
-// цикла). Нужна отдельная codegen-инвестигация, не тянет на mechanical
-// fix в рамках промоушен-волны. См. docs/plans/backlog-followups.md.
+// [2026-07-08, батч 2, Plan 172.13]: НЕ промоутится — TWO distinct runtime
+// defects, one fixed compiler-side, one still open:
+//   1. FIXED: `current_record = []` (reset each record) silently built a
+//      `Vec[nova_int]` instead of `Vec[str]` — the assignment-target's
+//      already-known type never reached the ambiguous `[]` literal's
+//      element-type inference (fixed in `Stmt::Assign`'s emission,
+//      emit_c.rs — extended the SAME target-type routing already used for
+//      `Option` targets to `Vec` targets).
+//   2. STILL OPEN: `consume current_field = StringBuilder.new()`, when
+//      re-bound INSIDE a nested `if`/`else` block (this file's per-char
+//      dispatch inside the parse `while` loop), emits a FRESH C
+//      block-scoped declaration that shadows the outer, function-scope
+//      `current_field` only for that block — once the block closes,
+//      subsequent code (the next loop iteration) sees the STALE, already-
+//      consumed outer variable, not the reset one. `nova check` accepts
+//      this pattern (no diagnostic), so the codegen gap is: a `consume x =
+//      expr` re-bind, when `x` is already declared in an enclosing C
+//      scope, should emit a plain assignment reusing that variable, not a
+//      new declaration. Isolated via a minimal repro (Vec-of-Vec push/reset
+//      + StringBuilder consume-reset, no quote-handling logic). See
+//      docs/plans/backlog-followups.md [M-exp-promotion-blockers: csv].
 
 test "parse: простой CSV" {
     ro r = Csv.parse("a,b,c\n1,2,3\n")
