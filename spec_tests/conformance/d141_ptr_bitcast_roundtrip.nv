@@ -1,0 +1,48 @@
+// D141 / [M-ptr-raw-access-contract-and-unaligned] item 3 — f64/f32
+// to_bits/from_bits теперь ЧИСТЫЙ .nv (std/runtime/numeric.nv), построен
+// поверх `.read_unaligned()` (item 2) над `&ro-value as *T` (item 4):
+//   fn f64 @to_bits() -> u64 => unsafe { (&@ as *u64).read_unaligned() }
+//   fn f64.from_bits(bits u64) -> f64 { unsafe { (&bits as *f64).read_unaligned() } }
+// Больше НЕ compiler-hardcoded intrinsic (extern-запись, registry-override и
+// C-обёртки nova_rt/numeric.h сняты) — resolved как обычный Nova-body method.
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+test "f64 to_bits/from_bits round-trip — 1.5" {
+    ro a = 1.5
+    assert(f64.from_bits(a.to_bits()) == a)
+    assert(a.to_bits() == 0x3FF8000000000000)
+}
+
+test "f64 to_bits/from_bits round-trip — negative zero" {
+    ro neg_zero = -0.0
+    ro pos_zero = 0.0
+    // -0.0 == 0.0 по IEEE 754, но bit-patterns различны (sign bit).
+    assert(neg_zero == pos_zero)
+    assert(neg_zero.to_bits() == 0x8000000000000000)
+    assert(pos_zero.to_bits() == 0)
+    assert(f64.from_bits(neg_zero.to_bits()).to_bits() == neg_zero.to_bits())
+}
+
+test "f64 to_bits/from_bits round-trip — NaN bit-pattern" {
+    // Явный NaN-паттерн через биты (не арифметика — детерминированный payload).
+    ro nan = f64.from_bits(0x7ff8000000000001)
+    assert(nan.is_nan())
+    assert(nan.to_bits() == 0x7ff8000000000001)
+}
+
+test "f64 to_bits/from_bits round-trip — infinity" {
+    ro inf = f64.from_bits(0x7FF0000000000000)
+    assert(inf.is_infinite())
+    assert(inf.to_bits() == 0x7FF0000000000000)
+}
+
+test "f32 to_bits/from_bits round-trip" {
+    ro a f32 = 1.5
+    assert(f32.from_bits(a.to_bits()) == a)
+    assert(a.to_bits() == (0x3FC00000 as u32))
+
+    ro inf f32 = f32.from_bits(0x7F800000 as u32)
+    assert(inf.is_infinite())
+    assert(inf.to_bits() == (0x7F800000 as u32))
+}

@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_REF_TYPE_POSITION
+//
+// [M-ptr-raw-access-contract-and-unaligned] item 5 (2026-07-08): verify
+// (not fix) that `size_of[ref T]()` — `ref` in a const-intrinsic's turbofish
+// type-argument position for a VALUE type — is already rejected by the
+// general D326/Plan 184 `ref`-type-position check (same walk_typeref path as
+// `d326_ref_type_position_typearg_neg.nv`'s ordinary generic fn; `size_of`
+// is just another turbofish-callee). Confirmed empirically pre-existing —
+// no compiler change needed for this item.
+module neg.d326_size_of_ref_typearg_neg
+
+type D326SizeOfPoint value { x int, y int }
+
+test "ref of value type in size_of[T]() type-arg is rejected" {
+    ro n = size_of[ref D326SizeOfPoint]()
+    assert(n == 16)
+}
