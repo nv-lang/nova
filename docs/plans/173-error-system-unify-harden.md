@@ -252,6 +252,13 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
    no-restart-default») — полный rewrite будет в Ф.2.
 - **Acceptance:** 173.1/173.2 не содержат отменённых knobs; D314/D348 подтверждены; маркеры в OPEN-view;
   **без упрощений**.
+- ✅ **Ф.0R ЗАКРЫТА 2026-07-09** (sonnet, ветка `err-173-f3`, `339ceeff4`): п.1 (173.1 — `strategy:`/
+  `max_restarts:`/`period:` убраны из параметр-сета) / п.2 (173.2 — SUPERSEDED-врезка §3b: MVP Escalate/Stop,
+  Restart за гейтом изоляции; п.6/п.7 гард расширен до shared-mut) / п.3 (D314 подтверждён spec-first
+  03-syntax.md:10837; D348 в спеке отсутствует → свободен за Ф.6; **NB коллизия Plan 178/D327 УЖЕ
+  саморазрешена — 178 перенумеровал HTTP на D357-D362, D327=codepoint/172.2; передавать нечего**) /
+  п.4 (`[M-173-error-return-trace]` добавлен в OPEN-view P1-таблицу; два M-172 уже были ✅ FIXED) /
+  п.5 (хаб `error-and-cleanup-model.md` — §3a/§3b-баннер в статус-блок). Заметка в discussion-log (nova-private).
 
 ### Ф.1 — Soundness + hygiene (СЕЙЧАС, обязательно; design-risk ноль)
 Багфиксы, не зависящие от деталей Model 1:
