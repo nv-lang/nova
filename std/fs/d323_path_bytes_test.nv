@@ -25,7 +25,7 @@ test "d323: non-UTF-8 path bytes round-trip; to_str is None (Q1)" {
     d323_raw.push(47 as u8)          // '/'
     d323_raw.push(0xFF as u8)        // invalid UTF-8 lead
     ro d323_bp = Path.from_bytes(d323_raw)
-    assert(d323_bp.as_os_bytes().len() == 2)
-    assert(d323_bp.as_os_bytes()[1] == (0xFF as u8))
+    assert(d323_bp.os_bytes().len() == 2)
+    assert(d323_bp.os_bytes()[1] == (0xFF as u8))
     match d323_bp.to_str() { Some(_) => assert(false), None => assert(true) }
 }

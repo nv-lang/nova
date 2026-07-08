@@ -17,7 +17,7 @@
 // BOTH platforms' semantics (the Ф.2 gate). Pinning the style — rather than a
 // compile-time `#cfg` split — is what makes cross-platform path logic testable.
 //
-// **Encoding across the FFI (§3c).** `as_os_bytes()` yields the raw bytes; the
+// **Encoding across the FFI (§3c).** `os_bytes()` yields the raw bytes; the
 // fs layer wraps them NUL-terminated (`CStr`) and hands them to libuv, which
 // converts UTF-8/WTF-8 → UTF-16 internally on Windows. That subsumes the planned
 // CWStr marshalling at THIS backend — CWStr is only needed for a direct
@@ -97,7 +97,7 @@ export fn Path.windows(s str) -> Path => { bytes: s.bytes(), style: Windows }
 
 /// The raw OS bytes (lossless; the FFI path surface).
 #stable(since = "0.1")
-export fn Path @as_os_bytes() -> []u8 => @bytes
+export fn Path @os_bytes() -> []u8 => @bytes
 
 /// The lexical style of this path.
 #stable(since = "0.1")

@@ -142,7 +142,7 @@ export fn cwd() Os -> Result[Path, IoError] {
 /// during single-threaded setup — a concurrent relative-path resolution races it.
 #stable(since = "0.1")
 export fn cwd(path Path) Os -> Result[(), IoError] =>
-    os_wrap_unit(Os.set_cwd(path.as_os_bytes()), "cwd")
+    os_wrap_unit(Os.set_cwd(path.os_bytes()), "cwd")
 
 // ─── Well-known directories ──
 

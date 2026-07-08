@@ -69,13 +69,13 @@ test "windows: join appends with backslash" {
 
 // ─── byte-faithful roundtrip + with_extension ──
 
-test "path: non-UTF8 bytes survive as_os_bytes roundtrip; to_str is None" {
+test "path: non-UTF8 bytes survive os_bytes roundtrip; to_str is None" {
     mut raw []u8 = []u8.new()
     raw.push(47 as u8)        // '/'
     raw.push(0xFF as u8)      // invalid UTF-8 lead byte
     raw.push(0xFE as u8)
     ro p = Path.from_bytes(raw)
-    ro back = p.as_os_bytes()
+    ro back = p.os_bytes()
     assert(back.len() == 3)
     assert(back[1] == (0xFF as u8))
     match p.to_str() { Some(_) => assert(false), None => assert(true) }   // not valid UTF-8

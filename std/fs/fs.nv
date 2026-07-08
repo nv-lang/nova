@@ -147,7 +147,7 @@ export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
     if @cn { flags = flags | OPEN_CREATE | OPEN_EXCL }
     ro readable = @rd
     ro writable = @wr || @ap
-    ro fd = Fs.open(path.as_os_bytes(), flags, @md)
+    ro fd = Fs.open(path.os_bytes(), flags, @md)
     if fd < 0 { return Err(IoError.from_os(0 - fd, "open")) }
     // Append starts the cursor at end-of-file (File tracks its own position and
     // uses positioned pread/pwrite — portable, avoids the non-portable OS
@@ -448,7 +448,7 @@ export fn write_text(path Path, s str) Fs -> Result[(), IoError] => write(path, 
 #stable(since = "0.1")
 export fn metadata(path Path) Fs -> Result[Metadata, IoError] {
     mut img = stat_image()
-    ro rc = Fs.stat(path.as_os_bytes(), img)
+    ro rc = Fs.stat(path.os_bytes(), img)
     if rc < 0 { Err(IoError.from_os(0 - rc, "stat")) } else { Ok(read_meta(img)) }
 }
 
@@ -456,7 +456,7 @@ export fn metadata(path Path) Fs -> Result[Metadata, IoError] {
 #stable(since = "0.1")
 export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
     mut img = stat_image()
-    ro rc = Fs.lstat(path.as_os_bytes(), img)
+    ro rc = Fs.lstat(path.os_bytes(), img)
     if rc < 0 { Err(IoError.from_os(0 - rc, "lstat")) } else { Ok(read_meta(img)) }
 }
 
@@ -467,7 +467,7 @@ export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
 #stable(since = "0.1")
 export fn try_exists(path Path) Fs -> Result[bool, IoError] {
     mut img = stat_image()
-    ro rc = Fs.stat(path.as_os_bytes(), img)
+    ro rc = Fs.stat(path.os_bytes(), img)
     if rc >= 0 { return Ok(true) }
     ro e = IoError.from_os(0 - rc, "stat")
     match e.kind { ErrorKind.NotFound => Ok(false), _ => Err(e) }
@@ -476,13 +476,13 @@ export fn try_exists(path Path) Fs -> Result[bool, IoError] {
 /// Create a single directory (Unix mode `0o777 & ~umask`).
 #stable(since = "0.1")
 export fn create_dir(path Path) Fs -> Result[(), IoError] =>
-    wrap_unit(Fs.mkdir(path.as_os_bytes(), 0o777), "create_dir")
+    wrap_unit(Fs.mkdir(path.os_bytes(), 0o777), "create_dir")
 
 /// Create `path` and every missing parent (Rust `create_dir_all`). Already-exists
 /// is not an error.
 #stable(since = "0.1")
 export fn create_dir_all(path Path) Fs -> Result[(), IoError] {
-    ro rc = Fs.mkdir(path.as_os_bytes(), 0o777)
+    ro rc = Fs.mkdir(path.os_bytes(), 0o777)
     if rc >= 0 { return Ok(()) }
     ro e = IoError.from_os(0 - rc, "mkdir")
     match e.kind {
@@ -492,7 +492,7 @@ export fn create_dir_all(path Path) Fs -> Result[(), IoError] {
             Some(par) => match create_dir_all(par) {
                 Err(e2) => Err(e2)
                 Ok(())  => {
-                    ro rc2 = Fs.mkdir(path.as_os_bytes(), 0o777)
+                    ro rc2 = Fs.mkdir(path.os_bytes(), 0o777)
                     if rc2 >= 0 { Ok(()) }
                     else {
                         ro e3 = IoError.from_os(0 - rc2, "mkdir")
@@ -508,12 +508,12 @@ export fn create_dir_all(path Path) Fs -> Result[(), IoError] {
 /// Remove a file (`unlink`).
 #stable(since = "0.1")
 export fn remove_file(path Path) Fs -> Result[(), IoError] =>
-    wrap_unit(Fs.remove_file(path.as_os_bytes()), "remove_file")
+    wrap_unit(Fs.remove_file(path.os_bytes()), "remove_file")
 
 /// Remove an empty directory (`rmdir`).
 #stable(since = "0.1")
 export fn remove_dir(path Path) Fs -> Result[(), IoError] =>
-    wrap_unit(Fs.remove_dir(path.as_os_bytes()), "remove_dir")
+    wrap_unit(Fs.remove_dir(path.os_bytes()), "remove_dir")
 
 /// Recursively remove a directory and all of its contents (Rust
 /// `remove_dir_all`). (Symlink-hardened `openat`/`unlinkat` traversal is a
@@ -536,13 +536,13 @@ export fn remove_dir_all(path Path) Fs -> Result[(), IoError] {
 /// (cross-device) surfaces as `CrossesDevices`.
 #stable(since = "0.1")
 export fn rename(src Path, dst Path) Fs -> Result[(), IoError] =>
-    wrap_unit(Fs.rename(src.as_os_bytes(), dst.as_os_bytes()), "rename")
+    wrap_unit(Fs.rename(src.os_bytes(), dst.os_bytes()), "rename")
 
 /// Copy the file `src` to `dst`, returning the byte count (uv_fs_copyfile —
 /// gets copy_file_range/CopyFileEx acceleration for free).
 #stable(since = "0.1")
 export fn copy_file(src Path, dst Path) Fs -> Result[int, IoError] =>
-    wrap_int(Fs.copy_file(src.as_os_bytes(), dst.as_os_bytes()), "copy")
+    wrap_int(Fs.copy_file(src.os_bytes(), dst.os_bytes()), "copy")
 
 /// List the entries of a directory (`.`/`..` excluded).
 ///
@@ -554,7 +554,7 @@ export fn copy_file(src Path, dst Path) Fs -> Result[int, IoError] =>
 /// path that could leak the handle.
 #stable(since = "0.1")
 export fn read_dir(path Path) Fs -> Result[[]DirEntry, IoError] {
-    ro h = Fs.scandir_open(path.as_os_bytes())
+    ro h = Fs.scandir_open(path.os_bytes())
     if h < 0 { return Err(IoError.from_os(0 - h, "read_dir")) }
     mut out []DirEntry = []
     loop {
@@ -572,7 +572,7 @@ export fn read_dir(path Path) Fs -> Result[[]DirEntry, IoError] {
 /// call (no TLS, no follow-up accessor call to race against).
 #stable(since = "0.1")
 export fn canonicalize(path Path) Fs -> Result[Path, IoError] {
-    ro (rc, data) = Fs.realpath(path.as_os_bytes())
+    ro (rc, data) = Fs.realpath(path.os_bytes())
     if rc < 0 { Err(IoError.from_os(0 - rc, "realpath")) }
     else { Ok(Path.from_bytes(data.bytes())) }
 }
@@ -580,13 +580,13 @@ export fn canonicalize(path Path) Fs -> Result[Path, IoError] {
 /// Create a symbolic link at `link` pointing to `target`.
 #stable(since = "0.1")
 export fn symlink(target Path, link Path) Fs -> Result[(), IoError] =>
-    wrap_unit(Fs.symlink(target.as_os_bytes(), link.as_os_bytes()), "symlink")
+    wrap_unit(Fs.symlink(target.os_bytes(), link.os_bytes()), "symlink")
 
 /// Apply portable permissions to `path` (Unix mode via chmod; on Windows only
 /// the readonly bit is honoured).
 #stable(since = "0.1")
 export fn set_permissions(path Path, perms Permissions) Fs -> Result[(), IoError] =>
-    wrap_unit(Fs.chmod(path.as_os_bytes(), perms.mode()), "chmod")
+    wrap_unit(Fs.chmod(path.os_bytes(), perms.mode()), "chmod")
 
 // ─── write_atomic (durable, 5-step §3c) ──
 
@@ -645,7 +645,7 @@ export fn write_atomic(path Path, data []u8) Fs -> Result[(), IoError] {
     }
     // (5) best-effort parent-dir fsync (no-op on Windows).
     match path.parent() {
-        Some(par) => { ro _ = Fs.fsync_dir(par.as_os_bytes()) }
+        Some(par) => { ro _ = Fs.fsync_dir(par.os_bytes()) }
         None      => {}
     }
     Ok(())
