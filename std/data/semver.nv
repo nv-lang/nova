@@ -63,7 +63,7 @@ module data.semver
 ///
 /// # Examples
 /// ```nova
-/// let v = Version.from("1.2.3-alpha.1+exp.sha.5114f85")
+/// let v = Version.from("1.2.3-alpha.1+exp.sha.5114f85")!!
 /// assert(v.major() == 1)
 /// assert(v.is_prerelease())
 /// ```
@@ -130,8 +130,7 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 // ──────────────────────────────────────────────────────────────────────────
 
 // `Version.from(s str)` — парсер по semver.org § 9-10.
-// Throws Fail[ParseVersionError] на любой ошибке. По D67 `?` после
-// этого вызова — ошибка: throw сам пробрасывается.
+// `Err(ParseVersionError)` на любой ошибке (D325).
 //
 // Алгоритм:
 //   1. Разделить input на core ("1.2.3") + optional pre + optional build.
@@ -141,17 +140,17 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 //      leading-zero.
 //   3. Распарсить pre identifiers (split по ".", валидация alphanumeric).
 //   4. Распарсить build identifiers (split по ".", валидация).
-/// Parse semver.org §9-10 grammar. Throws ParseVersionError.
+/// Parse semver.org §9-10 grammar. `Err(ParseVersionError)` на malformed input.
 ///
 /// # Examples
 /// ```nova
-/// let v = Version.from("2.5.1")
+/// let v = Version.from("2.5.1")!!
 /// assert(v.major() == 2 && v.minor() == 5 && v.patch() == 1)
 /// ```
 #stable(since = "0.1")
-export fn Version.from(s str) Fail[ParseVersionError] -> Self {
+export fn Version.from(s str) -> Result[Version, ParseVersionError] {
     if s.byte_len() == 0 {
-        throw EmptyInput
+        return Err(EmptyInput)
     }
 
     // Найти границы pre и build.
@@ -177,86 +176,86 @@ export fn Version.from(s str) Fail[ParseVersionError] -> Self {
     }
 
     // Парсим core.
-    ro (major, minor, patch) = parse_core(core)
+    ro (major, minor, patch) = parse_core(core)?
 
     // Парсим pre identifiers.
     ro pre = if !has_pre_marker {
         []
     } else if pre_str.byte_len() == 0 {
-        throw EmptyIdentifier { section: "pre-release" }
+        return Err(EmptyIdentifier { section: "pre-release" })
     } else {
-        parse_identifiers(pre_str, "pre-release", true)
+        parse_identifiers(pre_str, "pre-release", true)?
     }
 
     // Парсим build identifiers.
     ro build = if !has_build_marker {
         []
     } else if build_str.byte_len() == 0 {
-        throw EmptyIdentifier { section: "build" }
+        return Err(EmptyIdentifier { section: "build" })
     } else {
-        parse_identifiers(build_str, "build", false)
+        parse_identifiers(build_str, "build", false)?
     }
 
-    { major, minor, patch, pre, build }
+    Ok({ major, minor, patch, pre, build })
 }
 
 // Парсинг "MAJOR.MINOR.PATCH". Все три обязательны, цифры, без leading
 // zero (кроме самого "0").
-fn parse_core(core str) Fail[ParseVersionError] -> (u64, u64, u64) {
+fn parse_core(core str) -> Result[(u64, u64, u64), ParseVersionError] {
     ro parts = core.split(".")
     if parts.len() < 2 {
-        throw MissingMinor
+        return Err(MissingMinor)
     }
     if parts.len() < 3 {
-        throw MissingPatch
+        return Err(MissingPatch)
     }
     if parts.len() > 3 {
-        throw InvalidComponent { component: "core", value: core }
+        return Err(InvalidComponent { component: "core", value: core })
     }
 
-    ro major = parse_numeric_component(parts[0], "major")
-    ro minor = parse_numeric_component(parts[1], "minor")
-    ro patch = parse_numeric_component(parts[2], "patch")
-    (major, minor, patch)
+    ro major = parse_numeric_component(parts[0], "major")?
+    ro minor = parse_numeric_component(parts[1], "minor")?
+    ro patch = parse_numeric_component(parts[2], "patch")?
+    Ok((major, minor, patch))
 }
 
 // Числовой компонент: только цифры, без leading zero (кроме "0").
-fn parse_numeric_component(s str, name str) Fail[ParseVersionError] -> u64 {
+fn parse_numeric_component(s str, name str) -> Result[u64, ParseVersionError] {
     if s.byte_len() == 0 {
-        throw InvalidComponent { component: name, value: s }
+        return Err(InvalidComponent { component: name, value: s })
     }
     if !is_all_digits(s) {
-        throw InvalidComponent { component: name, value: s }
+        return Err(InvalidComponent { component: name, value: s })
     }
     if s.byte_len() > 1 && s.starts_with("0") {
-        throw LeadingZero { component: name, value: s }
+        return Err(LeadingZero { component: name, value: s })
     }
     match u64.try_from(s) {
-        Ok(n)  => n
-        Err(_) => throw InvalidComponent { component: name, value: s }
+        Ok(n)  => Ok(n)
+        Err(_) => Err(InvalidComponent { component: name, value: s })
     }
 }
 
 // Pre-release / build identifiers через ".".
 // strict_no_leading_zero — для pre numeric не разрешено leading zero;
 // для build разрешено всё что alphanumeric+"-".
-fn parse_identifiers(s str, section str, strict_no_leading_zero bool) Fail[ParseVersionError] -> []str {
+fn parse_identifiers(s str, section str, strict_no_leading_zero bool) -> Result[[]str, ParseVersionError] {
     ro raw = s.split(".")
     mut out []str = []
     for ident in raw {
         if ident.byte_len() == 0 {
-            throw EmptyIdentifier { section }
+            return Err(EmptyIdentifier { section })
         }
         if !is_valid_identifier(ident) {
-            throw InvalidIdentifier { section, value: ident }
+            return Err(InvalidIdentifier { section, value: ident })
         }
         // Numeric identifier в pre — без leading zero.
         if strict_no_leading_zero && is_all_digits(ident) && ident.byte_len() > 1 && ident.starts_with("0") {
-            throw LeadingZero { component: section, value: ident }
+            return Err(LeadingZero { component: section, value: ident })
         }
         out.push(ident)
     }
-    out
+    Ok(out)
 }
 
 // Проверка: все символы — ASCII цифры.
