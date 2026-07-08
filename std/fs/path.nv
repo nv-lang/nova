@@ -12,7 +12,7 @@
 //   - Posix: `/` is the only separator; `\` is an ordinary filename byte.
 //   - Windows: both `/` and `\` separate; `C:` drive prefixes and `\\srv\share`
 //     UNC prefixes are recognised; `\` is the canonical separator on output.
-// `Path.from_str` uses the HOST style (`fs_is_windows` hook); `Path.posix`
+// `Path.from_str` uses the HOST style (`HOST_STYLE`, #cfg-константа); `Path.posix`
 // / `Path.windows` pin a style explicitly, so a single test run can exercise
 // BOTH platforms' semantics (the Ф.2 gate). Pinning the style — rather than a
 // compile-time `#cfg` split — is what makes cross-platform path logic testable.
@@ -37,10 +37,17 @@ export type PathStyle enum
     | Posix
     | Windows
 
-// Host default style, resolved once from the platform predicate.
-fn host_style() -> PathStyle {
-    if fs_is_windows() != 0 { Windows } else { Posix }
-}
+// Host default style — компайл-таймовая константа бинаря через #cfg (D99),
+// чистый .nv без FFI-хука (решение владельца 2026-07-09). Платформа бинаря —
+// НЕ эффект: неизменна за время жизни процесса; тестовая вариативность —
+// pin-конструкторами Path.posix / Path.windows (module-conventions §0).
+#cfg(target_os = "windows")
+fn host_style() -> PathStyle => Windows
+
+#cfg(!target_os = "windows")
+fn host_style() -> PathStyle => Posix
+
+
 
 // Is `b` a separator under `style`?
 fn byte_is_sep(b u8, style PathStyle) -> bool {

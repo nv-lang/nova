@@ -117,5 +117,3 @@ extern "C" fn fs_scandir_close(h int) -> ()
 // ─── Non-blocking native hooks (io_console.h — always available, no libuv) ──
 // fs_seek: lseek/_lseeki64 on the fd; returns the new absolute offset or -errno.
 extern "C" fn fs_seek(fd int, offset i64, whence int) -> i64
-// Platform predicate for host-default Path style (1 on Windows, 0 elsewhere).
-extern "C" fn fs_is_windows() -> int
