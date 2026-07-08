@@ -2671,3 +2671,16 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Класс coarse-by-name. Репро: std/encoding/compress/brotli.nv вернуть методы на
   BrotliHandle из истории коммита. Сейчас в brotli — прямые вызовы типизированных
   extern'ов (типобезопасность хендла сохранена).
+
+- **[M-result-direct-recursive-enum]** (2026-07-09, **P1 — компилятор жрёт 8-17 ГБ/виснет**,
+  Plan: 172.13-хвост; Wave: с чекер-маркерами при разморозке) — `Result[X, E]`, где enum X
+  имеет прямо-рекурсивный вариант, детерминированно валит компилятор аллокацией.
+  Минимальная репродукция (~20 строк, из conv-sweep волны):
+  `type BNode enum BLit { v int } | BStar { inner BNode }` + одна
+  `fn parse() -> Result[BNode, BErr]` — компиляция уходит в бесконечную
+  рекурсию мономорфизации Result-инстанса. Копия репро:
+  nova-unders/scratchpad/repro_result_recursive_enum.nv. Обход в std/text/regex.nv:
+  13 приватных parse_* на Fail (наружу не течёт, гасится в Regex.compile) —
+  комментарии с именем маркера на месте. Родня [M-option-self-recursive-record-mono]
+  (зона агента владельца) — вероятно один класс «рекурсивный композит в
+  generic-контейнере».
