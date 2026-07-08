@@ -2461,3 +2461,14 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   на чистом 3b74fff01 тем же бинарём). Пофайловые прогоны runtime-модулей зелёные;
   папочная агрегация #no_prelude-CU теряет тип Vec. В гейты приёмок runtime папкой
   не входил — класс вскрыт при unsafe-волне from_bytes_unchecked.
+
+- **[M-option-self-recursive-record-mono]** (2026-07-08, P1, Wave: В РАБОТЕ у отдельного
+  агента владельца — зона emit_c.rs/types/mod.rs, моим волнам НЕ заходить до закрытия) —
+  самоссылочный рекорд `type Node { value int; next Option[Node] }` мис-мономорфизируется:
+  поле next эмитится NovaOpt_nova_int (тип ПЕРВОГО поля) вместо NovaOpt_Nova_Node_p;
+  каскад в gc.nv (return NOVA_UNIT в Vec-функциях). Смежный свежий контекст для охотника:
+  (1) NovaOpt-каналы правились в A8-приёмке №2 — hoist полных typedef'ов для value-полей
+  записей (emit_c.rs, коммит 22d36236c, механизм [M-180]-hoist + перенос предрегистрированных);
+  (2) канал member-типизации generic-ресиверов чинился в 16db8f214 (types/mod.rs,
+  subst_receiver_generics) — там же живёт resolved_types_buf-аннотация типов полей;
+  (3) эталон conformance теперь 67/0 (не 66), гейты только на пересобранном main.
