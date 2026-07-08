@@ -3750,7 +3750,17 @@ impl CEmitter {
         // `current_emit_file_id`), so no change needed there. Non-colliding
         // names are completely unaffected (byte-identical).
         {
+            // [батч 3, follow-up]: сигнатурно-РАЗЛИЧИМЫЕ коллизии (разная
+            // арность/типы параметров — `encode_with` у hex и base64) уже
+            // консистентно разруливаются overload-суффиксами D84 (mangle_fn +
+            // call-sites через method_overloads) — их регистрация в
+            // file_priv_fn_c_names ЛОМАЛА эту согласованность (fwd-decl
+            // квалифицирован, call-site суффиксован → linker/implicit-decl).
+            // В карту идут только коллизии с ИДЕНТИЧНОЙ сигнатурой (rotl32
+            // md5/sha1) — их overload-путь различить не может (один want_params
+            // → первый c_name для обоих тел, старый duplicate-symbol баг).
             let mut name_modules: HashMap<String, std::collections::BTreeSet<Vec<String>>> = HashMap::new();
+            let mut name_sigs: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
             for pf in &module.peer_files {
                 for item in &pf.items_here {
                     if let Item::Fn(f) = item {
@@ -3758,12 +3768,21 @@ impl CEmitter {
                             name_modules.entry(f.name.clone())
                                 .or_default()
                                 .insert(pf.module_name.clone());
+                            let sig: String = f.params.iter()
+                                .map(|p| self.type_ref_to_c(&p.ty)
+                                    .unwrap_or_else(|_| "?".into()))
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            name_sigs.entry(f.name.clone()).or_default().insert(sig);
                         }
                     }
                 }
             }
             let colliding_fn_names: std::collections::HashSet<String> = name_modules.into_iter()
-                .filter(|(_, mods)| mods.len() >= 2)
+                .filter(|(name, mods)| {
+                    mods.len() >= 2
+                        && name_sigs.get(name).map_or(false, |sigs| sigs.len() == 1)
+                })
                 .map(|(name, _)| name)
                 .collect();
             for pf in &module.peer_files {
@@ -13730,7 +13749,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // per-file name regardless of `current_emit_file_id`. Take priority
             // over the shared overload registry (file-private fns are never in
             // it — see emit_fn_forward_decl skip).
-            if f.file_private && !f.is_external {
+            //
+            // [M-exp-promotion-blockers: uuid_namespace] (батч 3 follow-up к
+            // 88a2ffe75): the batch-2 cross-module same-name dedup routes
+            // COLLIDING plain (non-`priv(file)`) free fns through this same
+            // per-(file_id, name) map — but this lookup was gated on
+            // `f.file_private`, so the FORWARD DECLARATION still emitted the
+            // unqualified name (`nova_fn_rotl32`, twice) while the definition
+            // and call sites used the qualified one → first call hit C's
+            // implicit-declaration rule → "conflicting types" at the
+            // definition. Consult the map for EVERY non-external free fn: it
+            // only contains entries D307 or the dedup deliberately inserted,
+            // keyed by the DECLARING file, so non-colliding names miss it and
+            // stay byte-identical.
+            if !f.is_external {
                 if let Some(mangled) = self
                     .file_priv_fn_c_names
                     .get(&(f.span.file_id, f.name.clone()))

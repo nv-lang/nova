@@ -53,8 +53,8 @@
 |---|---|---|---|
 | `collections/` | `linkedlist` (остальные 5 PROMOTED 2026-07-08 w1) | check PASS, test--full CC-FAIL (2×) — self-recursive generic `.map()` P67-LEGACY + cross-CU `LinkedList[T].new()` mono-loss | Промоушен gated compiler-дефектом (recursive generic sum-type mono) |
 | `crypto/` | (пусто — все 5 PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt) | — | — |
-| `encoding/` | `csv`, `toml` (`hex`/`ini`/`url` PROMOTED — `url` 2026-07-08 batch 2) | csv: check PASS, test--full RUN-FAIL root causes 1+2 BOTH now FIXED compiler-side (batch 3: [M-consume-rebind-nested-block-shadow]) — csv itself still pending its own promotion pass; toml: check PASS, test--full CC-FAIL — the original Fail-handler mono gap (`Nova_*Error_p` unknown type) is FIXED (batch 3, `debt_unmangle_ptr_suffix`), but a NEW, deeper defect now surfaces: `Nova_HashMap____nova_str__Nova_TomlValue_p` unknown-type (forward-declare/hoist ordering for a mono struct used as a sum-variant's payload field — typedef exists later in the same file) | csv: promotion pending (see docs/plans/backlog-followups.md batch 3); toml: gated by a hoist-ordering defect that looks like the same zone reserved for [M-option-self-recursive-record-mono] — re-check after that lands |
-| `identifiers/` | `uuid_namespace` (`ulid`/`uuid`/`snowflake` PROMOTED — `snowflake` w1, `ulid`/`uuid` w2) | check PASS, test--full ICE — the ORIGINAL duplicate-symbol bug (`crypto.md5.rotl32` emitted twice when `md5`+`sha1` share a CU) is FIXED (compiler-side, batch 2); a NEW, deeper, unrelated pre-existing defect now surfaces: `Random.u64()` (an effect-op call inside `Uuid.v4()`/`v7()`, pulled in transitively) hits `[P67-LEGACY] Path call return type unknown` — reproduces even for `nova test --full std/identifiers/uuid.nv` ALONE (an already-promoted module), confirmed on baseline d987de52d too | Promotion now gated by a DIFFERENT, newly-surfaced defect (effect-op return-type resolution for a never-installed effect in a given CU) — see docs/plans/backlog-followups.md [M-exp-promotion-blockers: uuid_namespace] |
+| `encoding/` | `toml` (`hex`/`ini` PROMOTED w2, `url` PROMOTED batch 2, **`csv` PROMOTED 2026-07-08 batch 3**) | toml: check PASS, test--full CC-FAIL — the original Fail-handler mono gap (`Nova_*Error_p` unknown type) is FIXED (batch 3, `debt_unmangle_ptr_suffix`), but a NEW, deeper defect now surfaces: `Nova_HashMap____nova_str__Nova_TomlValue_p` unknown-type (forward-declare/hoist ordering for a mono struct used as a sum-variant's payload field — typedef exists later in the same file) | toml: gated by a hoist-ordering defect that looks like the same zone reserved for [M-option-self-recursive-record-mono] — re-check after that lands |
+| `identifiers/` | (пусто — `snowflake` PROMOTED w1, `ulid`/`uuid` PROMOTED w2, **`uuid_namespace` PROMOTED 2026-07-08 batch 3**) | — | — |
 | `data/` | `semver_range` | PASS check (не проверялся в волне 2 — не в списке переноса) | Non-MVP per Plan 91 §Non-scope; `semver`/`sql` PROMOTED 2026-07-08 w2 |
 | `math/` | `complex` (`statistics` PROMOTED 2026-07-08 w1) | check PASS, CC-FAIL codegen — `[M-static-selfreturn-value-mangle-conflict]` | Промоушен gated компиляторным дефектом (не контентом модуля) |
 | `text/` | (пусто — все 3 PROMOTED 2026-07-08 w2: diff/markdown_minimal/regex) | — | — |
@@ -84,6 +84,19 @@
 > blocked by a DIFFERENT, narrower defect than originally diagnosed (see
 > the table below and docs/plans/backlog-followups.md
 > `[M-exp-promotion-blockers]`).
+
+> **PROMOTED 2026-07-08 (batch 3, Plan 172.13, 2 modules):** `encoding/csv`
+> → `std/encoding/` (unblocked by [M-consume-rebind-nested-block-shadow]
+> batch-3 fix — consume-rebind in a nested if/else now reuses the enclosing
+> C variable); `identifiers/uuid_namespace` → `std/identifiers/` (unblocked
+> by [M-random-u64-path-return-ice] — Random effect declaration moved to
+> the prelude — plus a batch-3 follow-up to the batch-2 dedup: the
+> qualified mangled name of a colliding cross-module private fn now also
+> reaches the FORWARD declaration via `mangle_fn`, closing the
+> "conflicting types for `nova_fn_6crypto3md56rotl32`" implicit-declaration
+> CC-FAIL). Both with peer `*_test.nv` split per the w1/w2 convention;
+> check + test --full green. `toml` stays (hoist-ordering defect, see
+> table); `linkedlist` stays (owner-agent zone).
 
 Модули выше с CC-FAIL/CODEGEN-FAIL под `test --full` **сохраняют** свои
 peer inline-тесты (не удалены) с комментарием `[2026-07-08, волна 2

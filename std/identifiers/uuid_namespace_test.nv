@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/identifiers/uuid_namespace_test.nv — публичный контракт name-based
+// UUID (v3/v5, RFC 4122 § 4.3 + Appendix C test vectors).
+
+module identifiers.uuid_namespace_test
+
+import std.identifiers.uuid.{Uuid, UuidVersion}
+import std.identifiers.uuid_namespace.{namespace_dns, namespace_url}
+
+test "v5: DNS namespace + 'www.example.com'" {
+    // Известный test vector
+    ro u = Uuid.v5(namespace_dns(), "www.example.com")
+    assert(u.to_str() == "2ed6657d-e927-568b-95e1-2665a8aea6a2")
+    match u.version() {
+        Other(5) => ()        // v5 — пока нет в UuidVersion enum в uuid.nv
+        _        => ()        // если позже добавим V5 в enum, поправим
+    }
+}
+
+test "v3: DNS namespace + 'www.example.com'" {
+    ro u = Uuid.v3(namespace_dns(), "www.example.com")
+    assert(u.to_str() == "5df41881-3aed-3515-88a7-2f4a814cf09e")
+}
+
+test "v5: одинаковые namespace+name → одинаковый UUID (детерминизм)" {
+    ro a = Uuid.v5(namespace_url(), "https://example.com/")
+    ro b = Uuid.v5(namespace_url(), "https://example.com/")
+    assert(a == b)
+}
+
+test "v5: разные namespaces → разные UUIDs" {
+    ro dns = Uuid.v5(namespace_dns(), "test")
+    ro url = Uuid.v5(namespace_url(), "test")
+    assert(dns != url)
+}

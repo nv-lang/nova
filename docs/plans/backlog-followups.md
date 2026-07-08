@@ -2543,9 +2543,16 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - **[M-exp-promotion-blockers]** (2026-07-08, P2-пакет, Plan: 172.13; Wave: батчами после
   первых 4 маркеров) — 6 компиляторных классов, блокирующих последние 6 модулей
   _experimental (детали и репро — в std/_experimental/STATUS.md, разметка волны 2):
-  csv (nested [][]str runtime), toml (Fail-handler mono gap Nova_*Error_p — ЗАКРЫТ
+  csv (nested [][]str runtime — **ЗАКРЫТ батчем 3, csv PROMOTED**), toml
+  (Fail-handler mono gap Nova_*Error_p — ЗАКРЫТ
   батчем 3, см. ниже; НОВЫЙ блокер найден), url
-  (tuple-destructure infer), uuid_namespace (duplicate-symbol md5+sha1 в одном CU),
+  (tuple-destructure infer), uuid_namespace (duplicate-symbol md5+sha1 в одном CU —
+  **ЗАКРЫТ батчем 3, uuid_namespace PROMOTED**: follow-up к дедупу 88a2ffe75 —
+  квалифицированное имя коллизии теперь доходит и до FORWARD-декларации через
+  mangle_fn; при этом регистрация в file_priv_fn_c_names сужена до коллизий с
+  ИДЕНТИЧНОЙ сигнатурой — сигнатурно-различимые, как encode_with hex/base64,
+  консистентно разруливаются overload-суффиксами D84, их квалификация ломала
+  jwt_test),
   linkedlist (2× self-recursive generic mono — родня [M-option-self-recursive-record-mono]
   агента владельца), retry (E_UNUSED_PREFIX_TYPEVAR двусторонний). Плюс довливной
   вне пакета: std/time/timer_metrics_test CC-FAIL (NovaValue_Timestamp ← int,
