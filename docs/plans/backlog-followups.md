@@ -2068,6 +2068,21 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   репродукции). Блокирует возврат http-тестов body/model/url/d358 из nova_tests к модулю
   (якоря в файлах). Родня [M-172.1-var-types-cu-name-leak]/ErrorKind-коллизии.
 
+- **[M-per-file-check-no-prelude-protocol-scope]** (2026-07-08, P2-разведка, класс per-file
+  check — conformance НЕ видит) — per-file `nova check` файла из `#no_prelude`-CU
+  `std.runtime.string` (chars.nv / core.nv) падает: E_BOUND_UNKNOWN `Iter`/`AsSlice`
+  (vec/mutate.nv:239/260 — bounds резолвятся только при prelude в walk),
+  E_IMPL_UNKNOWN_PROTOCOL `Next`/`AsSlice` (vec/iter.nv:38, vec/access.nv:267,
+  string/chars.nv:76), E_READONLY_CONTENT (string/core.nv:159 — `ro buf = RawMem.alloc(...)`,
+  `buf[n]=0`: тип `*mut u8` теряется в этом же режиме). Транзитивно подтянутый
+  std.collections.vec ссылается на протоколы из std/prelude/{collections,protocols}.nv,
+  которые per-file walk #no_prelude-CU не включает. НЕ регрессия 174.5 — цепочка бисекции
+  (2026-07-08, приёмка 174.5): (1) бинарь@b16ee25e0 + дерево@b16ee25e0 → FAIL;
+  (2) тот же бинарь + pre-merge main@1d75fcfef → FAIL (между base и merge только
+  .nv-стиль-коммиты, компилятор не менялся); (3) бинарь ветки ptr-174-5 + её дерево → FAIL
+  с идентичным списком. Полный whole-CU режим (nova test/conformance) — зелёный.
+  Родня per-file/CU-scope семейства [M-http-module-test-block-p67].
+
 - **[M-fixed-array-value-semantics]** (2026-07-08, P2, Wave: трек A после Vec-canon substrate
   — иначе двойная переделка) — [N]T СЕЙЧАС кучевой (три свидетельства: V3-классификатор
   FixedArray=>false; ref_target_confirmed_heap FixedArray=>true наравне с Array/Pointer;

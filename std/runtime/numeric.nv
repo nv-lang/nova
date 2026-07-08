@@ -12,6 +12,13 @@
 // runtime_registry.rs now returns `vec![]`, this whole file is
 // hand-maintained. Single file, single source of truth.
 
+// #no_prelude — this module is imported by #no_prelude CUs (write_buffer.nv,
+// read_buffer.nv, same discipline). The bodies below need NOTHING from the
+// prelude — only builtin syntax (unsafe / & / as / pointer read_unaligned) —
+// so an implicit `std.prelude` edge from this leaf runtime module would be
+// pure import-graph noise (extra prelude↔runtime cycle pressure on the D29
+// walk for every #no_prelude consumer).
+#no_prelude
 module runtime.numeric
 
 
