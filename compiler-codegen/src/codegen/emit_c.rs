@@ -535,6 +535,22 @@ pub struct CEmitter {
     current_spawn_capture_by_value: Option<HashSet<String>>,
     /// Maps variable name → C type string (best-effort)
     var_types: HashMap<String, String>,
+    /// [M-property-testing-rot] (Plan 172.13 батч 3): declared Nova-level
+    /// `TypeRef`s of the CURRENTLY-EMITTED monomorphized fn's params
+    /// (set/restored by `emit_monomorphized_fn`). A NESTED generic call inside
+    /// the mono body that forwards such a param (`property[T]` body calling
+    /// `property_with(gen, body, cfg)`) cannot infer the callee's type args
+    /// from C types alone — a protocol-typed param (`gen Generator[T]`) erases
+    /// to `void*`. `resolve_mono_type_args` (Source 2f) unifies the callee's
+    /// declared param TypeRefs against these caller-declared TypeRefs, lowering
+    /// leaves through `current_type_subst`.
+    current_fn_param_typerefs: HashMap<String, crate::ast::TypeRef>,
+    /// [M-property-testing-rot]: recursion guard for
+    /// `infer_protocol_structural_binding` — protocol method signatures may
+    /// mention OTHER protocols (or themselves: `Iter[T]`-returning methods on
+    /// `Iter[T]`), so the structural walk must be depth-bounded or it recurses
+    /// forever (protocol → method position → protocol → ...).
+    proto_unify_depth: std::cell::Cell<u8>,
     /// [M-consume-rebind-nested-block-shadow] (Plan 172.13): spans of
     /// `consume x = expr` `Stmt::Let`s that `alpha_rename` determined rebind a
     /// binding declared in an ENCLOSING (not current) scope — copied verbatim
@@ -1566,6 +1582,8 @@ impl CEmitter {
             current_spawn_captures: None,
             current_spawn_capture_by_value: None,
             var_types: HashMap::new(),
+            current_fn_param_typerefs: HashMap::new(),
+            proto_unify_depth: std::cell::Cell::new(0),
             consume_reuse_spans: HashSet::new(),
             ref_params: std::collections::HashSet::new(),
             closure_param_type_overrides: RefCell::new(HashMap::new()),
@@ -2360,6 +2378,32 @@ impl CEmitter {
         rt_slots: &[(String, Option<crate::types::ResolvedType>)],
     ) -> HashMap<String, crate::types::ResolvedType> {
         let trace = std::env::var_os("NOVA_A1PP_TRACE").is_some();
+        // [M-property-testing-rot] (Plan 172.13 батч 3): the byte-identity
+        // guard below lowers the candidate RT under the CALLER's
+        // `current_type_subst` — so an rt that still MENTIONS one of the slot
+        // names (e.g. `Named{T}` for a nested generic call forwarding the
+        // enclosing mono body's `T`) passes the guard (it lowers to the right
+        // C-name in the caller context) yet would make the ADOPTED map
+        // self-referential (`T → Named{T}`), sending every later lowering of
+        // `T` under the NEW subst into infinite recursion (stack overflow).
+        // Such an rt must degrade to the Raw C-name (self-contained).
+        let slot_names: Vec<&str> = pairs.iter().map(|(k, _)| k.as_str()).collect();
+        fn mentions_slot(rt: &crate::types::ResolvedType, names: &[&str]) -> bool {
+            use crate::types::ResolvedType as R;
+            match rt {
+                R::TypeParam(n) => names.contains(&n.as_str()),
+                R::Named { name, module, args } => {
+                    (module.is_empty() && args.is_empty() && names.contains(&name.as_str()))
+                        || args.iter().any(|a| mentions_slot(a, names))
+                }
+                R::Array(i) | R::Readonly(i) | R::TypedPtr(_, i) => mentions_slot(i, names),
+                R::Tuple(elems) => elems.iter().any(|e| mentions_slot(e, names)),
+                R::Func { params, ret, .. } => {
+                    params.iter().any(|p| mentions_slot(p, names)) || mentions_slot(ret, names)
+                }
+                _ => false,
+            }
+        }
         pairs
             .iter()
             .map(|(k, v)| {
@@ -2367,6 +2411,7 @@ impl CEmitter {
                     .iter()
                     .find(|(n, _)| n == k)
                     .and_then(|(_, o)| o.clone())
+                    .filter(|rt| !mentions_slot(rt, &slot_names))
                     .filter(|rt| self.resolved_type_to_c(rt).ok().as_deref() == Some(v.as_str()));
                 match adopted {
                     Some(rt) => {
@@ -8384,6 +8429,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.emit_expr(&lit_expr)?
             } else {
                 self.emit_expr(&binding.handler)?
+            };
+            // [M-property-testing-rot] (Plan 172.13 батч 3) — GC ROOT PIN: the
+            // installed handler value must be held in a STACK local for the
+            // block's lifetime, not ONLY in the thread-local
+            // `_nova_handler_<eff>` slot. Boehm's conservative collector does
+            // not scan Windows `__declspec(thread)` TLS blocks, so a handler
+            // reachable exclusively through the TLS pointer (a factory-call
+            // form, `with Random = th.seeded(42) { ... }`, which previously
+            // inlined the call INTO the TLS assignment) was collected after
+            // enough allocations inside the block (~32 `generate()+clone()`
+            // iterations, deterministic segfault) — use-after-free on the next
+            // effect-op dispatch. A handler expression that is already a bare
+            // local (`_nv_tmp_N` / user `ro h = ...`) is naturally stack-rooted;
+            // pin unconditionally — one pointer-sized local per binding, and
+            // the conservative scan keeps the vtable (and everything reachable
+            // from its ctx: closure envs, boxed PRNG state) alive.
+            let handler_val = {
+                let pin = self.fresh_tmp();
+                self.line(&format!(
+                    "NovaVtable_{eff}* {pin} = {hv}; /* GC root pin (TLS not scanned) */",
+                    eff = effect_name, pin = pin, hv = handler_val
+                ));
+                pin
             };
             let prev_var = self.fresh_tmp();
             self.line(&format!(
@@ -16682,6 +16750,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let arg_c = self.infer_expr_c_type(arg.expr());
             self.infer_type_param_binding(&param.ty, &arg_c, &mut subst_pending);
         }
+        // [M-property-testing-rot] (Plan 172.13 батч 3): TYPE-level bound
+        // structural inference — emit twin of `infer_generic_static_ctor_ret`'s
+        // pass: `type ArrayGen[G Generator[T], T]` ctor binds `G` from the arg,
+        // `T` only through `G`'s bound (concrete return of the resolved `G`'s
+        // `generate()`).
+        if subst_pending.iter().any(|(_, c)| c.is_none()) {
+            for gp in &template.generics {
+                let resolved_c = match subst_pending.iter().find(|(n, _)| n == &gp.name) {
+                    Some((_, Some(c))) => c.clone(),
+                    _ => continue,
+                };
+                for bound_ref in &gp.bounds {
+                    if let crate::ast::TypeRef::Named { path, generics: bgens, .. } = bound_ref {
+                        if bgens.is_empty() { continue; }
+                        let proto_name = path.join("_");
+                        if self.protocol_method_registry.contains_key(&proto_name) {
+                            self.infer_protocol_structural_binding(
+                                &proto_name, bgens, &resolved_c, &mut subst_pending,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         // Require every template generic to be inferable; otherwise fall back.
         if subst_pending.iter().any(|(_, c)| c.is_none()) {
             return Ok(None);
@@ -16773,6 +16865,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let arg_c = self.infer_expr_c_type(arg.expr());
             self.infer_type_param_binding(&param.ty, &arg_c, &mut pend);
         }
+        // [M-property-testing-rot] (Plan 172.13 батч 3): TYPE-level bound
+        // structural inference — `type ArrayGen[G Generator[T], T]` with ctor
+        // `ArrayGen[G, T].default(elem G)`: `G` binds from the arg, `T` only
+        // through `G`'s bound (`Generator[T]` ⇒ `T` = concrete return of the
+        // resolved `G`'s `generate()`). Mirror of resolve_mono_type_args'
+        // Source 2e-bis for the static-ctor channel.
+        if pend.iter().any(|(_, c)| c.is_none()) {
+            for gp in &tmpl.generics {
+                let resolved_c = match pend.iter().find(|(n, _)| n == &gp.name) {
+                    Some((_, Some(c))) => c.clone(),
+                    _ => continue,
+                };
+                for bound_ref in &gp.bounds {
+                    if let crate::ast::TypeRef::Named { path, generics: bgens, .. } = bound_ref {
+                        if bgens.is_empty() { continue; }
+                        let proto_name = path.join("_");
+                        if self.protocol_method_registry.contains_key(&proto_name) {
+                            self.infer_protocol_structural_binding(
+                                &proto_name, bgens, &resolved_c, &mut pend,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         if pend.iter().any(|(_, c)| c.is_none()) {
             return None;
         }
@@ -16781,6 +16898,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return None;
         }
         let mangled = Self::compute_generic_type_c_name(base_name, &type_args_c);
+        // [M-property-testing-rot] (Plan 172.13 батч 3): register the inferred
+        // instance's metadata so downstream structural inference
+        // (`infer_protocol_structural_binding` Case A) can recover
+        // (base, type-args) from the mono name — a `ro gen = ArrayGen.default(..)`
+        // binding's type flows into `property(gen, ...)`'s bound-based `T`
+        // resolution. Metadata-only (idempotent); worklist emission stays with
+        // the emit-side channels.
+        self.generic_type_instance_info.borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| (base_name.to_string(), Self::args_lift(&type_args_c)));
         let mono_ptr = format!("{}*", mangled);
         // Resolve the declared return type under the substitution. A ctor
         // returning `Self` erases to `Nova_<base>*`; remap that to the mono ptr.
@@ -16997,6 +17124,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
+        // Source 2f ([M-property-testing-rot], Plan 172.13 батч 3): nested
+        // generic call inside a MONO'd generic body forwarding the enclosing
+        // fn's params (`property[T]` body → `property_with(gen, body, cfg)`).
+        // C-type inference is useless for a protocol-typed param (erased
+        // `void*`); unify the callee's declared param TypeRefs against the
+        // CALLER's declared param TypeRefs instead, lowering leaves through
+        // `current_type_subst` (T_caller → concrete C).
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            if subst.iter().all(|(_, v)| v.is_some()) {
+                break;
+            }
+            if let ExprKind::Ident(name) = &arg.expr().kind {
+                if let Some(decl_ref) = self.current_fn_param_typerefs.get(name).cloned() {
+                    self.infer_type_param_binding_from_ref(&param.ty, &decl_ref, &mut subst);
+                }
+            }
+        }
         // Source 2c: for generic-type params (e.g. `box_get[T](b Box[T])`), extract T from
         // monomorphized instance info. After Ф.3, Box[int] arg has C type Nova_Box____nova_int*
         // and generic_type_instance_info maps "Nova_Box____nova_int" → ("Box", ["nova_int"]).
@@ -17104,6 +17248,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 for (name, c_ty) in candidates {
                     if let Some(slot) = subst.iter_mut().find(|(n, v)| n == &name && v.is_none()) {
                         slot.1 = Some(c_ty);
+                    }
+                }
+            }
+        }
+        // Source 2e-bis ([M-property-testing-rot], Plan 172.13 батч 3): GENERAL
+        // structural bound inference — supersedes 2e's narrow `Iter[U].next()
+        // -> Option[U]` shape. For `fn property[G Generator[T], T](gen G, ...)`
+        // with `G` resolved to a concrete generator (mono instance like
+        // `ArrayGen[IntGen, int]` OR a plain type like `IntGen`): walk the
+        // BOUND protocol's method signatures against the concrete type's
+        // same-named methods (`infer_protocol_structural_binding`) and bind
+        // the bound's generic positions (e.g. `T` from
+        // `@generate() -> T` ⇒ concrete return of the resolved `G`).
+        if subst.iter().any(|(_, v)| v.is_none()) {
+            for gp in &fn_decl.generics {
+                let resolved_c = match subst.iter().find(|(n, _)| n == &gp.name) {
+                    Some((_, Some(c))) => c.clone(),
+                    _ => continue,
+                };
+                for bound_ref in &gp.bounds {
+                    if let crate::ast::TypeRef::Named { path, generics: bgens, .. } = bound_ref {
+                        if bgens.is_empty() { continue; }
+                        let proto_name = path.join("_");
+                        if self.protocol_method_registry.contains_key(&proto_name) {
+                            self.infer_protocol_structural_binding(
+                                &proto_name, bgens, &resolved_c, &mut subst,
+                            );
+                        }
                     }
                 }
             }
@@ -17341,6 +17513,221 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// turbofish** (`check[int](a)` вместо естественного `check(a)`).
     /// Теперь inference recurses сквозь generic-параметризованные типы —
     /// паритет с Rust/Go-style unification.
+    /// [M-property-testing-rot] (Plan 172.13 батч 3): structural protocol
+    /// unification for generic-fn type-arg inference. Given a protocol-typed
+    /// param `p Proto[G...]` (where `G...` are TypeRefs that mention the FN's
+    /// generics) matched against a concrete generic instance `CBase[cargs...]`,
+    /// walk the protocol's method signatures: each protocol position that
+    /// mentions a protocol generic `X_i` corresponds (after `X_i ↦ G_i`) to the
+    /// CONCRETE type's same-named method position resolved under
+    /// `CBase`'s own generics ↦ `cargs`. Recursing into
+    /// [`Self::infer_type_param_binding`] with (substituted protocol position,
+    /// concrete C type) binds the fn generics through ARBITRARY structure —
+    /// e.g. `ArrayGen[U] @generate() -> []U` implementing `Generator[[]U]`
+    /// binds `T = []int` for `gen Generator[T]` ← `ArrayGen[int]` (the naive
+    /// positional zip would wrongly bind `T = int`).
+    /// [M-property-testing-rot] (Plan 172.13 батч 3): TypeRef-level structural
+    /// unification for Source 2f of [`Self::resolve_mono_type_args`]. Binds the
+    /// callee's still-unresolved generic slots by matching its declared param
+    /// TypeRef against the CALLER's declared TypeRef for the forwarded arg —
+    /// e.g. callee `gen Generator[T_callee]` vs caller `gen Generator[T_caller]`
+    /// recurses into the generics and binds `T_callee :=
+    /// type_ref_to_c(T_caller)`, which lowers through `current_type_subst`
+    /// (the caller's own mono substitution).
+    fn infer_type_param_binding_from_ref(
+        &self,
+        param_ty: &crate::ast::TypeRef,
+        concrete_ref: &crate::ast::TypeRef,
+        subst: &mut Vec<(String, Option<String>)>,
+    ) {
+        use crate::ast::TypeRef as TR;
+        // A bare Named that IS one of the callee's generic slots → bind it to
+        // the C lowering of the caller-side position (under current_type_subst).
+        if let TR::Named { path, generics, .. } = param_ty {
+            if generics.is_empty()
+                && path.len() == 1
+                && subst.iter().any(|(n, _)| n == &path[0])
+            {
+                if let Ok(c) = self.type_ref_to_c(concrete_ref) {
+                    if !c.is_empty() && c != "void*" {
+                        if let Some(slot) = subst
+                            .iter_mut()
+                            .find(|(n, v)| n == &path[0] && v.is_none())
+                        {
+                            slot.1 = Some(c);
+                        }
+                    }
+                }
+                return;
+            }
+        }
+        match (param_ty, concrete_ref) {
+            (TR::Array(pi, _), TR::Array(ci, _)) => {
+                self.infer_type_param_binding_from_ref(pi, ci, subst);
+            }
+            (
+                TR::Named { path: pp, generics: pg, .. },
+                TR::Named { path: cp, generics: cg, .. },
+            ) if pp.last() == cp.last() && pg.len() == cg.len() => {
+                for (p, c) in pg.iter().zip(cg.iter()) {
+                    self.infer_type_param_binding_from_ref(p, c, subst);
+                }
+            }
+            (
+                TR::Func { params: pfp, return_type: pr, .. },
+                TR::Func { params: cfp, return_type: cr, .. },
+            ) if pfp.len() == cfp.len() => {
+                for (p, c) in pfp.iter().zip(cfp.iter()) {
+                    self.infer_type_param_binding_from_ref(p, c, subst);
+                }
+                if let (Some(p), Some(c)) = (pr.as_ref(), cr.as_ref()) {
+                    self.infer_type_param_binding_from_ref(p, c, subst);
+                }
+            }
+            (TR::Readonly(pi, _), _) | (TR::Mut(pi, _), _) => {
+                self.infer_type_param_binding_from_ref(pi, concrete_ref, subst);
+            }
+            (_, TR::Readonly(ci, _)) | (_, TR::Mut(ci, _)) => {
+                self.infer_type_param_binding_from_ref(param_ty, ci, subst);
+            }
+            _ => {}
+        }
+    }
+
+    fn infer_protocol_structural_binding(
+        &self,
+        proto_name: &str,
+        proto_args: &[crate::ast::TypeRef],
+        concrete_c: &str,
+        subst: &mut Vec<(String, Option<String>)>,
+    ) {
+        // Depth guard: protocol positions may mention protocols (incl.
+        // themselves), so the walk is bounded (see `proto_unify_depth`).
+        if self.proto_unify_depth.get() >= 4 {
+            return;
+        }
+        self.proto_unify_depth.set(self.proto_unify_depth.get() + 1);
+        let _depth_reset = {
+            struct DepthReset<'a>(&'a std::cell::Cell<u8>);
+            impl<'a> Drop for DepthReset<'a> {
+                fn drop(&mut self) {
+                    self.0.set(self.0.get().saturating_sub(1));
+                }
+            }
+            DepthReset(&self.proto_unify_depth)
+        };
+        let Some((proto_params, proto_methods)) =
+            self.protocol_method_registry.get(proto_name).cloned()
+        else { return };
+        if proto_params.len() != proto_args.len() {
+            return;
+        }
+        // proto's own generic name → the param-position TypeRef (mentions fn generics).
+        let proto_subst: HashMap<String, crate::ast::TypeRef> = proto_params
+            .iter()
+            .cloned()
+            .zip(proto_args.iter().cloned())
+            .collect();
+        // ── Case A: concrete arg is a GENERIC mono instance
+        // (`Nova_ArrayGen____nova_int*`) — walk the concrete TEMPLATE's method
+        // declarations under its own generics ↦ instance-args substitution.
+        let stripped = concrete_c.trim_end_matches('*').trim();
+        let lookup_key = stripped
+            .strip_prefix("NovaValue_")
+            .map(|s| format!("Nova_{}", s))
+            .unwrap_or_else(|| stripped.to_string());
+        let generic_instance: Option<(String, Vec<crate::types::ResolvedType>)> = self
+            .generic_type_instance_info
+            .borrow()
+            .get(lookup_key.as_str())
+            .cloned();
+        if let Some((concrete_base, concrete_args)) = generic_instance {
+            let Some(ctemplate) = self.generic_type_templates.get(&concrete_base) else { return };
+            if ctemplate.generics.len() != concrete_args.len() {
+                return;
+            }
+            let csubst: HashMap<String, String> = ctemplate
+                .generics
+                .iter()
+                .map(|g| g.name.clone())
+                .zip(concrete_args.iter().map(|a| self.arg_c(a)))
+                .collect();
+            let Some(cmethods) = self.generic_type_methods.get(&concrete_base) else { return };
+            for pm in &proto_methods {
+                let pm_name = pm.name.trim_start_matches('@');
+                let Some(cm) = cmethods
+                    .iter()
+                    .find(|m| m.name.trim_start_matches('@') == pm_name)
+                else { continue };
+                // Resolve one (protocol position, concrete position) pair.
+                let mut unify_pos = |proto_pos: &crate::ast::TypeRef,
+                                     concrete_pos: &crate::ast::TypeRef,
+                                     subst: &mut Vec<(String, Option<String>)>| {
+                    let target =
+                        crate::const_fn_trampoline::subst_type_ref_pub(proto_pos, &proto_subst);
+                    // Lower the concrete position under csubst via the RefCell
+                    // override channel (this fn is `&self`).
+                    let saved = self.type_subst_overrides.replace(csubst.clone());
+                    let concrete_pos_c = self.type_ref_to_c(concrete_pos).ok();
+                    self.type_subst_overrides.replace(saved);
+                    if let Some(c) = concrete_pos_c {
+                        if !c.is_empty() && c != "void*" {
+                            self.infer_type_param_binding(&target, &c, subst);
+                        }
+                    }
+                };
+                if let (Some(pr), Some(cr)) = (pm.return_type.as_ref(), cm.return_type.as_ref()) {
+                    unify_pos(pr, cr, subst);
+                }
+                for (pp, cp) in pm.params.iter().zip(cm.params.iter()) {
+                    unify_pos(&pp.ty, &cp.ty, subst);
+                }
+            }
+            return;
+        }
+        // ── Case B: concrete arg is a NON-generic type (`Nova_IntGen*`) — its
+        // method signatures are already registered at the C level in
+        // `method_overloads`; unify protocol positions against those directly
+        // (e.g. `IntGen @generate() -> int` implementing `Generator[int]`).
+        let concrete_base = Self::debt_nova_type_name_from_c(concrete_c);
+        if concrete_base.is_empty() {
+            return;
+        }
+        // GUARD: a GENERIC concrete type that reached here WITHOUT instance
+        // info (an ERASED `Nova_ArrayGen*` value) must NOT bind through
+        // `method_overloads` — the registered sig for a generic type's method
+        // is the ERASED one (its own type-params defaulted, e.g.
+        // `@generate() -> []T` registered as returning `NovaArray_nova_int*`),
+        // which would silently bind the protocol position to a LIE.
+        if self.generic_types.contains(&concrete_base) {
+            return;
+        }
+        for pm in &proto_methods {
+            let pm_name = pm.name.trim_start_matches('@');
+            let key = (concrete_base.clone(), pm_name.to_string());
+            let Some(sig) = self
+                .method_overloads
+                .get(&key)
+                .and_then(|sigs| sigs.first())
+                .cloned()
+            else { continue };
+            if let Some(pr) = pm.return_type.as_ref() {
+                if !sig.return_c_type.is_empty() && sig.return_c_type != "void*" {
+                    let target =
+                        crate::const_fn_trampoline::subst_type_ref_pub(pr, &proto_subst);
+                    self.infer_type_param_binding(&target, &sig.return_c_type, subst);
+                }
+            }
+            for (pp, c) in pm.params.iter().zip(sig.param_c_types.iter()) {
+                if !c.is_empty() && c != "void*" {
+                    let target =
+                        crate::const_fn_trampoline::subst_type_ref_pub(&pp.ty, &proto_subst);
+                    self.infer_type_param_binding(&target, c, subst);
+                }
+            }
+        }
+    }
+
     fn infer_type_param_binding(
         &self,
         param_ty: &crate::ast::TypeRef,
@@ -17435,18 +17822,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .map(|s| format!("Nova_{}", s))
                             .unwrap_or_else(|| stripped.to_string());
                         let instance_info = self.generic_type_instance_info.borrow();
-                        if let Some((base, type_args)) = instance_info.get(lookup_key.as_str()) {
+                        let positional_hit = match instance_info.get(lookup_key.as_str()) {
                             // Sanity: base должен соответствовать
                             // nova_name (защита от cross-type match'а
                             // при коллизии mangled-имени).
-                            if base == &nova_name && type_args.len() == generics.len() {
-                                let type_args_owned = type_args.clone();
-                                drop(instance_info);
-                                for (g_ty, arg_c) in generics.iter().zip(type_args_owned.iter()) {
-                                    // A1‴: registry arg is `ResolvedType` — lower to C-name.
-                                    self.infer_type_param_binding(g_ty, &self.arg_c(arg_c), subst);
-                                }
+                            Some((base, type_args))
+                                if base == &nova_name && type_args.len() == generics.len() =>
+                            {
+                                Some(type_args.clone())
                             }
+                            _ => None,
+                        };
+                        drop(instance_info);
+                        if let Some(type_args_owned) = positional_hit {
+                            for (g_ty, arg_c) in generics.iter().zip(type_args_owned.iter()) {
+                                // A1‴: registry arg is `ResolvedType` — lower to C-name.
+                                self.infer_type_param_binding(g_ty, &self.arg_c(arg_c), subst);
+                            }
+                        } else if self.protocol_method_registry.contains_key(&nova_name) {
+                            // [M-property-testing-rot] (Plan 172.13 батч 3):
+                            // STRUCTURAL protocol unification. The param is
+                            // protocol-typed (`gen Generator[T]`) and the arg is a
+                            // CONCRETE type — either a generic mono instance
+                            // (`ArrayGen[int]`, mono `Nova_ArrayGen____nova_int*`)
+                            // or a plain type (`IntGen`, `Nova_IntGen*`). The
+                            // positional zip above cannot apply (base mismatch /
+                            // no instance info) — and positionally it would be
+                            // WRONG anyway: the protocol's generics relate to the
+                            // concrete type's through its structural
+                            // implementation, e.g. `ArrayGen[U] @generate() -> []U`
+                            // implements `Generator[[]U]`, so `T` in
+                            // `gen Generator[T]` must unify with `[]int`, not
+                            // `int`. Walk the protocol's method signatures against
+                            // the concrete type's same-named methods to bind the
+                            // fn generics through arbitrary structure.
+                            self.infer_protocol_structural_binding(
+                                &nova_name, generics, concrete_c, subst,
+                            );
                         }
                     }
                 }
@@ -19562,6 +19974,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .zip(&param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
             .collect();
+        // [M-property-testing-rot]: expose the declared Nova TypeRefs of this
+        // mono body's params so a NESTED generic call forwarding one of them
+        // (`property_with(gen, body, ...)`) can unify its type args at the
+        // TypeRef level (`resolve_mono_type_args` Source 2f) — the C type of a
+        // protocol-typed param is an erased `void*`, useless for inference.
+        let saved_param_typerefs = std::mem::replace(
+            &mut self.current_fn_param_typerefs,
+            fn_decl.params.iter()
+                .map(|p| (p.name.clone(), p.ty.clone()))
+                .collect(),
+        );
         // Register function-typed params in fn_param_sigs with concrete types
         // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
@@ -19689,6 +20112,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.out.push_str(&fn_body);
         // Restore type substitution
         self.current_type_subst = saved_subst;
+        self.current_fn_param_typerefs = saved_param_typerefs; // [M-property-testing-rot]
         self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D348
         Ok(())
     }
@@ -33063,8 +33487,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.current_type_subst = saved_inner;
                                 // Register temporarily so closure body knows the concrete sig
                                 let prev_sig = self.fn_param_sigs.insert(
-                                    param_decl.name.clone(), (inner_ptys, inner_ret));
-                                let v = self.emit_expr(a.expr())?;
+                                    param_decl.name.clone(), (inner_ptys.clone(), inner_ret.clone()));
+                                // [M-property-testing-rot] (Plan 172.13 батч 3): a closure
+                                // LITERAL bound to this fn-typed param must receive the
+                                // SUBSTITUTED signature as its bidirectional context —
+                                // the plain `emit_expr` route lands in the generic
+                                // ClosureLight/Lambda arms which pass `context_param_tys
+                                // = None`, defaulting every unannotated closure param to
+                                // nova_int even though the mono subst (T = Vec[...] etc.)
+                                // was JUST computed above. Mirrors the non-generic HOF
+                                // path (`hof_param_fn_sigs` + emit_lambda ctx below).
+                                let ctx: Vec<(String, String)> = inner_ptys.iter()
+                                    .map(|t| (t.clone(), inner_ret.clone()))
+                                    .collect();
+                                let v = match &a.expr().kind {
+                                    ExprKind::ClosureLight { params, body } => {
+                                        let legacy_params: Vec<LambdaParam> = params.iter()
+                                            .map(|p| LambdaParam {
+                                                name: p.name.clone(), ty: None, span: p.span,
+                                            })
+                                            .collect();
+                                        let body_expr: Expr = match body {
+                                            crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                                            crate::ast::ClosureBody::Block(b) => Expr::new(
+                                                ExprKind::Block(b.clone()), b.span,
+                                            ),
+                                        };
+                                        self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None)?
+                                    }
+                                    ExprKind::Lambda { params, body, return_type, .. } => {
+                                        self.emit_lambda(params, body, Some(&ctx), return_type.as_ref())?
+                                    }
+                                    _ => self.emit_expr(a.expr())?,
+                                };
                                 match prev_sig {
                                     Some(old) => { self.fn_param_sigs.insert(param_decl.name.clone(), old); }
                                     None => { self.fn_param_sigs.remove(&param_decl.name); }
@@ -43838,6 +44293,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                         let key = format!("fn_ret_{}", name);
+                        // [M-property-testing-rot] (Plan 172.13 батч 3): the erased
+                        // `fn_ret_<name>` fallback for a NON-turbofish GENERIC fn call
+                        // is stashed (not returned) so the mono-aware inference below
+                        // gets its shot — a nested generic call inside a mono'd body
+                        // (`shrink_loop(gen, body, value, ...)` returning `(T, E)`)
+                        // otherwise short-circuits to the erased `_NovaTupleN` while
+                        // the emit side resolves the mono tuple → C init-type clash.
+                        // The stash is returned by that block's final fallback (was a
+                        // hard `void*`), preserving the legacy answer when the mono
+                        // inference cannot bind.
+                        let mut fn_ret_generic_stash: Option<String> = None;
                         if let Some(t) = self.var_types.get(&key).cloned() {
                             // Plan 180 [M-180-namespace-static-generic-mono followup]:
                             // for a TURBOFISH generic free-fn call (`json_decode[User](..)`
@@ -43846,10 +44312,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // on the `Result[User, DeError]` degenerated to void*. Fall
                             // through to the turbofish-aware generic-fn resolution below
                             // (which substitutes the turbofish args into the return type).
-                            if !(!turbofish_args.is_empty()
-                                && self.generic_fns.contains(name.as_str()))
-                            {
+                            if !self.generic_fns.contains(name.as_str()) {
                                 return t;
+                            }
+                            if turbofish_args.is_empty() {
+                                fn_ret_generic_stash = Some(t);
                             }
                         }
                         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
@@ -43968,13 +44435,62 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             }
                                         }
                                     }
+                                    // Source 2f ([M-property-testing-rot], Plan 172.13
+                                    // батч 3) — infer-twin of the emit-side source: a
+                                    // nested generic call inside a MONO'd body forwarding
+                                    // the enclosing fn's params. Protocol-typed params
+                                    // erase to `void*` at the C level, so only the
+                                    // declared TypeRefs (via `current_fn_param_typerefs`,
+                                    // lowered through `current_type_subst`) can bind the
+                                    // callee's generics.
+                                    for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                        if subst.iter().all(|(_, v)| v.is_some()) {
+                                            break;
+                                        }
+                                        if let ExprKind::Ident(arg_name) = &arg.expr().kind {
+                                            if let Some(decl_ref) =
+                                                self.current_fn_param_typerefs.get(arg_name).cloned()
+                                            {
+                                                self.infer_type_param_binding_from_ref(
+                                                    &param.ty, &decl_ref, &mut subst,
+                                                );
+                                            }
+                                        }
+                                    }
                                     // Resolve return type by substituting bare type params.
                                     // Plan 153.2 Ф.2 (STAGE 2): value-AWARE so a nested
                                     // generic-over-source instance (`MapIter[VecIter[int],U]`)
                                     // resolves with the `NovaValue_<short>` arg prefix —
                                     // matching the worklist instance the type-decl side emits.
                                     let resolved = self.value_aware_subst_to_ref(ret_ty_ref, &subst)
-                                        .or_else(|| self.resolve_result_option_ret(ret_ty_ref, &subst));
+                                        .or_else(|| self.resolve_result_option_ret(ret_ty_ref, &subst))
+                                        // [M-property-testing-rot] (Plan 172.13 батч 3):
+                                        // `apply_type_subst_to_ref` resolves only
+                                        // type-params + primitives — a return MIXING a
+                                        // type-param with a concrete USER type (e.g.
+                                        // `(T, PropertyFailed)`) yielded None and fell to
+                                        // the erased answer, while the EMIT side lowered
+                                        // the same return through `type_ref_to_c` under
+                                        // the full mono subst → C init-type clash at the
+                                        // call site. Mirror the emit side: when EVERY slot
+                                        // is bound, lower via `type_ref_to_c` with the
+                                        // subst installed in the `type_subst_overrides`
+                                        // channel.
+                                        .or_else(|| {
+                                            if subst.is_empty()
+                                                || subst.iter().any(|(_, v)| v.is_none())
+                                            {
+                                                return None;
+                                            }
+                                            let ovr: HashMap<String, String> = subst.iter()
+                                                .map(|(n, v)| (n.clone(), v.clone().unwrap()))
+                                                .collect();
+                                            let saved = self.type_subst_overrides.replace(ovr);
+                                            let out = self.type_ref_to_c(ret_ty_ref).ok();
+                                            self.type_subst_overrides.replace(saved);
+                                            out.filter(|c| !c.is_empty() && c != "void*"
+                                                && !self.debt_is_generic_stub_c(c))
+                                        });
                                     if let Some(c_ty) = resolved {
                                         if !c_ty.is_empty() && c_ty != "void*" {
                                             // Plan 153.2 gap A2: a generic FREE-FN call whose
@@ -44025,8 +44541,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         }
                                     }
                                     // If return type resolution failed (e.g. generic record T),
-                                    // fall back to void* (erased return).
-                                    return "void*".into();
+                                    // fall back to the stashed erased `fn_ret_<name>` (legacy
+                                    // answer for non-turbofish generic calls —
+                                    // [M-property-testing-rot]), else void* (erased return).
+                                    return fn_ret_generic_stash.unwrap_or_else(|| "void*".into());
                                 }
                             }
                         }
@@ -47567,6 +48085,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                         let key = format!("fn_ret_{}", name);
+                        // [M-property-testing-rot] (Plan 172.13 батч 3): the erased
+                        // `fn_ret_<name>` fallback for a NON-turbofish GENERIC fn call
+                        // is stashed (not returned) so the mono-aware inference below
+                        // gets its shot — a nested generic call inside a mono'd body
+                        // (`shrink_loop(gen, body, value, ...)` returning `(T, E)`)
+                        // otherwise short-circuits to the erased `_NovaTupleN` while
+                        // the emit side resolves the mono tuple → C init-type clash.
+                        // The stash is returned by that block's final fallback (was a
+                        // hard `void*`), preserving the legacy answer when the mono
+                        // inference cannot bind.
+                        let mut fn_ret_generic_stash: Option<String> = None;
                         if let Some(t) = self.var_types.get(&key).cloned() {
                             // Plan 180 [M-180-namespace-static-generic-mono followup]:
                             // for a TURBOFISH generic free-fn call (`json_decode[User](..)`
@@ -47575,10 +48104,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // on the `Result[User, DeError]` degenerated to void*. Fall
                             // through to the turbofish-aware generic-fn resolution below
                             // (which substitutes the turbofish args into the return type).
-                            if !(!turbofish_args.is_empty()
-                                && self.generic_fns.contains(name.as_str()))
-                            {
+                            if !self.generic_fns.contains(name.as_str()) {
                                 return t;
+                            }
+                            if turbofish_args.is_empty() {
+                                fn_ret_generic_stash = Some(t);
                             }
                         }
                         // Plan 115 D214 [M-115-newtype-constructor]: `Type(value)`
@@ -47697,13 +48227,62 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             }
                                         }
                                     }
+                                    // Source 2f ([M-property-testing-rot], Plan 172.13
+                                    // батч 3) — infer-twin of the emit-side source: a
+                                    // nested generic call inside a MONO'd body forwarding
+                                    // the enclosing fn's params. Protocol-typed params
+                                    // erase to `void*` at the C level, so only the
+                                    // declared TypeRefs (via `current_fn_param_typerefs`,
+                                    // lowered through `current_type_subst`) can bind the
+                                    // callee's generics.
+                                    for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                                        if subst.iter().all(|(_, v)| v.is_some()) {
+                                            break;
+                                        }
+                                        if let ExprKind::Ident(arg_name) = &arg.expr().kind {
+                                            if let Some(decl_ref) =
+                                                self.current_fn_param_typerefs.get(arg_name).cloned()
+                                            {
+                                                self.infer_type_param_binding_from_ref(
+                                                    &param.ty, &decl_ref, &mut subst,
+                                                );
+                                            }
+                                        }
+                                    }
                                     // Resolve return type by substituting bare type params.
                                     // Plan 153.2 Ф.2 (STAGE 2): value-AWARE so a nested
                                     // generic-over-source instance (`MapIter[VecIter[int],U]`)
                                     // resolves with the `NovaValue_<short>` arg prefix —
                                     // matching the worklist instance the type-decl side emits.
                                     let resolved = self.value_aware_subst_to_ref(ret_ty_ref, &subst)
-                                        .or_else(|| self.resolve_result_option_ret(ret_ty_ref, &subst));
+                                        .or_else(|| self.resolve_result_option_ret(ret_ty_ref, &subst))
+                                        // [M-property-testing-rot] (Plan 172.13 батч 3):
+                                        // `apply_type_subst_to_ref` resolves only
+                                        // type-params + primitives — a return MIXING a
+                                        // type-param with a concrete USER type (e.g.
+                                        // `(T, PropertyFailed)`) yielded None and fell to
+                                        // the erased answer, while the EMIT side lowered
+                                        // the same return through `type_ref_to_c` under
+                                        // the full mono subst → C init-type clash at the
+                                        // call site. Mirror the emit side: when EVERY slot
+                                        // is bound, lower via `type_ref_to_c` with the
+                                        // subst installed in the `type_subst_overrides`
+                                        // channel.
+                                        .or_else(|| {
+                                            if subst.is_empty()
+                                                || subst.iter().any(|(_, v)| v.is_none())
+                                            {
+                                                return None;
+                                            }
+                                            let ovr: HashMap<String, String> = subst.iter()
+                                                .map(|(n, v)| (n.clone(), v.clone().unwrap()))
+                                                .collect();
+                                            let saved = self.type_subst_overrides.replace(ovr);
+                                            let out = self.type_ref_to_c(ret_ty_ref).ok();
+                                            self.type_subst_overrides.replace(saved);
+                                            out.filter(|c| !c.is_empty() && c != "void*"
+                                                && !self.debt_is_generic_stub_c(c))
+                                        });
                                     if let Some(c_ty) = resolved {
                                         if !c_ty.is_empty() && c_ty != "void*" {
                                             // Plan 153.2 gap A2: a generic FREE-FN call whose
@@ -47754,8 +48333,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         }
                                     }
                                     // If return type resolution failed (e.g. generic record T),
-                                    // fall back to void* (erased return).
-                                    return "void*".into();
+                                    // fall back to the stashed erased `fn_ret_<name>` (legacy
+                                    // answer for non-turbofish generic calls —
+                                    // [M-property-testing-rot]), else void* (erased return).
+                                    return fn_ret_generic_stash.unwrap_or_else(|| "void*".into());
                                 }
                             }
                         }

@@ -91,7 +91,7 @@ export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () {
 #stable(since = "0.1")
 export type Generator[T] protocol {
     @generate() Random -> T
-    @shrink(value T) -> Iter[T]
+    @shrink(value T) -> []T
 }
 
 
@@ -126,7 +126,7 @@ export fn IntGen @generate() Random -> int {
 
 /// Shrink int — towards 0, half, value±1.
 #stable(since = "0.1")
-export fn IntGen @shrink(value int) -> Iter[int] {
+export fn IntGen @shrink(value int) -> []int {
     // Шринкаем к 0 — стандартная стратегия для интов
     mut steps []int = []
     if value > 0 {
@@ -138,29 +138,42 @@ export fn IntGen @shrink(value int) -> Iter[int] {
         if value < -1 { steps.push(value / 2) }
         if value < -2 { steps.push(value + 1) }
     }
-    steps.iter()
+    steps
 }
 
 
-/// Bool generator: 50/50 true/false. Shrinks к false.
+/// Bool generator: `p_percent`% true (default 50/50). Shrinks к false.
+///
+/// [2026-07-08, батч 3 172.13]: было `type BoolGen { }` (без полей) — но
+/// ПУСТОЙ record-литерал (`{ }` / `BoolGen { }`) не поддержан грамматикой
+/// ни в одной позиции (парсится как пустой блок → unit); это был
+/// единственный пустой record во всём std. Поле `p_percent` — честная
+/// степень свободы по образцу соседей (IntGen min/max, StrGen max_len),
+/// аналог QuickCheck frequency.
 #stable(since = "0.1")
-export type BoolGen { }
+export type BoolGen {
+    ro p_percent int
+}
 
-/// Create BoolGen (no params).
+/// Create BoolGen — 50/50 true/false.
 #stable(since = "0.1")
-export fn BoolGen.new() -> BoolGen => { }
+export fn BoolGen.new() -> BoolGen => { p_percent: 50 }
 
-/// Generate random bool (50/50).
+/// Create BoolGen с заданной вероятностью true (в процентах, 0..100).
+#stable(since = "0.1")
+export fn BoolGen.with_percent(p int) -> BoolGen => { p_percent: p }
+
+/// Generate random bool (`p_percent`% true).
 #stable(since = "0.1")
 export fn BoolGen @generate() Random -> bool =>
-    Random.u64() & 1 == 1
+    (Random.u64() % 100) < (@p_percent as u64)
 
 /// Shrink bool — `true` → `false`, `false` → ничего.
 #stable(since = "0.1")
-export fn BoolGen @shrink(value bool) -> Iter[bool] {
+export fn BoolGen @shrink(value bool) -> []bool {
     mut steps []bool = []
     if value { steps.push(false) }
-    steps.iter()
+    steps
 }
 
 
@@ -200,7 +213,7 @@ export fn StrGen @generate() Random -> str {
 
 /// Shrink string — "" / половина / на 1 короче.
 #stable(since = "0.1")
-export fn StrGen @shrink(value str) -> Iter[str] {
+export fn StrGen @shrink(value str) -> []str {
     mut steps []str = []
     ro len = value.byte_len()
     if len > 0 {
@@ -208,33 +221,37 @@ export fn StrGen @shrink(value str) -> Iter[str] {
         if len > 1 { steps.push(value[0..len / 2]) }    // половина
         if len > 1 { steps.push(value[0..len - 1]) }    // на 1 короче
     }
-    steps.iter()
+    steps
 }
 
 
 /// Array generator — `[]T` длиной `[0, max_len]`. Каждый элемент через `elem` generator.
 /// Shrinks к пустому массиву / меньшим.
+///
+/// [2026-07-08, батч 3 172.13]: было `ro elem Generator[T]` (протокол как
+/// ТИП ПОЛЯ/параметра) — но протоколы Nova compile-time-only (D53), у
+/// protocol-typed значений НЕТ runtime-диспетча: `@elem.generate()`
+/// эмитился как NULL. Канон — bounded generic (`G Generator[T]`, статический
+/// диспетч по конкретному типу генератора, как `Vec@extend[S Iter[T]]`).
 #stable(since = "0.1")
-export type ArrayGen[T] {
-    ro elem Generator[T]
+export type ArrayGen[G Generator[T], T] {
+    ro elem G
     ro max_len int
 }
 
 /// Create ArrayGen с custom elem generator + max length.
 #stable(since = "0.1")
-export fn ArrayGen[T].new(elem Generator[T], max_len int) -> ArrayGen[T] => {
-    ArrayGen[T] { elem, max_len }
-}
+export fn ArrayGen[G, T].new(elem G, max_len int) -> ArrayGen[G, T] =>
+    { elem, max_len }
 
 /// Default ArrayGen — max 32 elements.
 #stable(since = "0.1")
-export fn ArrayGen[T].default(elem Generator[T]) -> ArrayGen[T] => {
-    ArrayGen[T].new(elem, 32)
-}
+export fn ArrayGen[G, T].default(elem G) -> ArrayGen[G, T] =>
+    ArrayGen[G, T].new(elem, 32)
 
 /// Generate random `[]T` длиной `[0, max_len]` (каждый elem через nested generator).
 #stable(since = "0.1")
-export fn ArrayGen[T] @generate() Random -> []T {
+export fn ArrayGen[G, T] @generate() Random -> []T {
     ro len = (Random.u64() as int).abs() % (@max_len + 1)
     mut result []T = []
     for i in 0..len {
@@ -245,7 +262,7 @@ export fn ArrayGen[T] @generate() Random -> []T {
 
 /// Shrink array — empty / halves / без последнего.
 #stable(since = "0.1")
-export fn ArrayGen[T] @shrink(value []T) -> Iter[[]T] {
+export fn ArrayGen[G, T] @shrink(value []T) -> [][]T {
     mut steps [][]T = []
     ro len = value.len
     if len > 0 {
@@ -264,7 +281,7 @@ export fn ArrayGen[T] @shrink(value []T) -> Iter[[]T] {
             steps.push(shorter)
         }
     }
-    steps.iter()
+    steps
 }
 
 
@@ -291,7 +308,11 @@ fn run_once[T](body fn(T) Fail[PropertyFailed] -> (), value T) -> RunResult {
 // рекурсивно: на каждом шаге пробуем все shrink-варианты, берём
 // первый который тоже падает, и шринкаем его дальше. Останавливаемся
 // когда варианты исчерпаны или достигли лимита.
-fn shrink_loop[T](gen Generator[T],
+// [2026-07-08, батч 3 172.13]: `gen Generator[T]` (протокол как тип
+// параметра) → bounded generic `[G Generator[T], T]` — см. ArrayGen выше
+// (D53: у протокольных ЗНАЧЕНИЙ нет runtime-диспетча; bounded generic =
+// статический диспетч через мономорфизацию по конкретному G).
+fn shrink_loop[G Generator[T], T](gen G,
                   body fn(T) Fail[PropertyFailed] -> (),
                   initial T,
                   initial_failure PropertyFailed,
@@ -342,7 +363,7 @@ fn shrink_loop[T](gen Generator[T],
 /// }
 /// ```
 #stable(since = "0.1")
-export fn property[T](gen Generator[T],
+export fn property[G Generator[T], T](gen G,
                       body fn(T) Fail[PropertyFailed] -> ()) Random Fail[PropertyFailed] -> () {
     property_with(gen, body, PropertyConfig.default())
 }
@@ -350,7 +371,7 @@ export fn property[T](gen Generator[T],
 
 /// Like `property` но с custom `PropertyConfig` (num_tests/shrink_steps/seed).
 #stable(since = "0.1")
-export fn property_with[T](gen Generator[T],
+export fn property_with[G Generator[T], T](gen G,
                             body fn(T) Fail[PropertyFailed] -> (),
                             cfg PropertyConfig) Random Fail[PropertyFailed] -> () {
     for i in 0..cfg.num_tests {
@@ -379,7 +400,7 @@ export fn property_with[T](gen Generator[T],
 test "reverse-reverse == identity для []int" {
     with Random = th.seeded(42) {
         ro gen = ArrayGen.default(IntGen.default())
-        property[[]int](gen, |xs| {
+        property(gen, |xs| {
             ro twice = xs.reverse().reverse()
             assert_prop(twice == xs)
         })
@@ -390,7 +411,7 @@ test "reverse-reverse == identity для []int" {
 test "sort idempotent для []int" {
     with Random = th.seeded(42) {
         ro gen = ArrayGen.default(IntGen.default())
-        property[[]int](gen, |xs| {
+        property(gen, |xs| {
             mut once = xs.clone()
             once.sort()
             mut twice = once.clone()
@@ -404,7 +425,7 @@ test "sort idempotent для []int" {
 test "len(a + b) == len(a) + len(b) для []int" {
     with Random = th.seeded(123) {
         ro gen = ArrayGen.default(IntGen.default())
-        property[[]int](gen, |xs| {
+        property(gen, |xs| {
             ro ys = xs.reverse()       // любой второй массив
             ro combined = xs + ys
             assert_prop(combined.len() == xs.len() + ys.len())
@@ -416,7 +437,7 @@ test "len(a + b) == len(a) + len(b) для []int" {
 test "string concat associative" {
     with Random = th.seeded(7) {
         ro gen = StrGen.default()
-        property[str](gen, |s| {
+        property(gen, |s| {
             ro combined1 = (s + s) + s
             ro combined2 = s + (s + s)
             assert_prop(combined1 == combined2)
@@ -428,7 +449,7 @@ test "string concat associative" {
 test "double negation для bool" {
     with Random = th.seeded(1) {
         ro gen = BoolGen.new()
-        property[bool](gen, |b| {
+        property(gen, |b| {
             assert_prop(!!b == b)
         })
     }

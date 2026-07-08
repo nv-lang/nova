@@ -14849,6 +14849,17 @@ struct BoundCtx<'a> {
     /// recognized inline. Heap records / protocols / typevars are absent here,
     /// so their `mut` params keep the handle ABI unconstrained (Р6).
     value_type_names: std::collections::HashSet<String>,
+    /// [M-property-testing-rot] (Plan 172.13 батч 3): generic-param NAMES of the
+    /// fn whose body is currently being walked. A nested call inside a bounded
+    /// generic body forwards the enclosing fn's typevar (`property[G Generator[T], T]`
+    /// body → `property_with(gen, ...)` binds callee `G := caller G`) — the
+    /// satisfaction check must recognize the PASSTHROUGH typevar and skip
+    /// (best-effort, mirroring the type-set branch's unknown-name skip): the
+    /// bound IS enforced at every top-level call site where a concrete type is
+    /// bound. Without this, `check_satisfaction` treats `G` as an unknown
+    /// concrete type with no methods → false-positive
+    /// "does not satisfy `Generator` bound".
+    current_fn_generic_names: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -15011,7 +15022,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, current_fn_generic_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -15044,7 +15055,12 @@ impl<'a> BoundCtx<'a> {
                     for p in &f.params {
                         scope.insert(p.name.clone(), p.ty.clone());
                     }
+                    // [M-property-testing-rot]: publish the fn's generic names so
+                    // check_satisfaction can recognize passthrough typevars.
+                    *self.current_fn_generic_names.borrow_mut() =
+                        f.generics.iter().map(|g| g.name.clone()).collect();
                     self.walk_fn_body(f, &mut scope, errors);
+                    self.current_fn_generic_names.borrow_mut().clear();
                 }
                 Item::Test(t) => {
                     // Plan 15: тесты тоже могут содержать generic-вызовы
@@ -16577,6 +16593,15 @@ impl<'a> BoundCtx<'a> {
             // Tuple/Func — пока пропускаем (не обрабатываем составные T).
             _ => return,
         };
+        // [M-property-testing-rot] (Plan 172.13 батч 3): PASSTHROUGH typevar —
+        // the "concrete" type is a generic param of the ENCLOSING fn
+        // (`property[G Generator[T], T]` body calling
+        // `property_with(gen, ...)`). Skip (best-effort, mirrors the type-set
+        // branch's unknown-name skip): the bound is enforced at every call
+        // site that binds a real concrete type.
+        if self.current_fn_generic_names.borrow().contains(&concrete_name) {
+            return;
+        }
         // Built-in primitives автоматически удовлетворяют ничему — у нас
         // нет registry их методов в method_table. Skip (best-effort).
         if matches!(concrete_name.as_str(),

@@ -2474,7 +2474,8 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (3) эталон conformance теперь 67/0 (не 66), гейты только на пересобранном main.
 
 - **[M-property-testing-rot]** (2026-07-08, P2, Plan: 172.13 — юнификация; Wave: с
-  чекер-маркерами) — std/testing/property.nv никогда не гонялся гейтами и сгнил слоями.
+  чекер-маркерами; **ЗАКРЫТ батчем 3** — std/testing полностью зелёный, turbofish снят)
+  — std/testing/property.nv никогда не гонялся гейтами и сгнил слоями.
   Сняты лично 2026-07-08: mut-sort на ro-биндингах (D36), str.len()→byte_len() (D249),
   push-петли→append-срезы (§18а), turbofish на 5 вызовов property[T]. ОСТАЛСЯ корень:
   протокольная юнификация — `property[[]int](gen ArrayGen[int], ...)` резолвит T=int
@@ -2482,6 +2483,42 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Generator[[]int] через `ArrayGen[T] @generate() -> []T`; ресивер лямбды типизируется
   int → E_PRIMITIVE_NO_PROTOCOL_METHOD sort. Родственно исходному «cannot infer T».
   std/testing добавить в гейты после фикса.
+  **Разбор батча 3 (слои, все закрыты):** (0) дизайн-корень контента: протокол как
+  ТИП значения (`gen Generator[T]` параметр / `ro elem Generator[T]` поле) — у
+  протоколов Nova НЕТ runtime-диспетча (D53), такие вызовы эмитились NULL;
+  property.nv переписан на канон bounded generics
+  (`property[G Generator[T], T](gen G, ...)`, `type ArrayGen[G Generator[T], T]`,
+  статический диспетч — прецедент `Vec@extend[S Iter[T]]`). Компиляторные каналы
+  (emit_c.rs): (1) mono-путь generic-вызова эмитил closure-аргумент fn-типизированного
+  параметра БЕЗ контекста → параметры лямбды дефолтились в nova_int — теперь
+  substituted-сигнатура передаётся в emit_lambda; (2) структурная протокольная
+  юнификация `infer_protocol_structural_binding` (Case A mono-инстанс через
+  generic_type_instance_info+шаблонные методы, Case B не-generic тип через
+  method_overloads; глубина ограничена — протоколы в позициях протоколов);
+  подключена в infer_type_param_binding (`_`-ветка), в Source 2e-bis
+  resolve_mono_type_args (баунды fn-generics), в infer/emit static-ctor каналы
+  (infer_generic_static_ctor_ret + try_generic_static_ctor_mono — вывод T из
+  ТИП-уровневого баунда `[G Generator[T], T]`); (3) Source 2f: вложенный
+  generic-вызов в mono-теле, пробрасывающий параметры объемлющей fn —
+  TypeRef-юнификация через новый current_fn_param_typerefs
+  (+infer_type_param_binding_from_ref); (4) subst_map_adopt_rt адоптил
+  самоссылочный RT (`T → Named{T}`, байт-гейт проходит под подстановкой
+  вызывающего) → бесконечная рекурсия lowering — guard mentions_slot;
+  (5) infer-двойник generic-return: erased `fn_ret_<name>` больше не
+  перехватывает mono-вывод (stash-фолбэк), и `(T, UserType)`-возвраты
+  лоуэрятся через type_ref_to_c под overrides (apply_type_subst_to_ref
+  не знал user-типов в элементах); (6) чекер: passthrough-тайпвар объемлющей
+  fn больше не «не удовлетворяет баунду» (current_fn_generic_names, D72
+  энфорсится на конкретных колл-сайтах); (7) **GC-корень (главная находка):**
+  Boehm НЕ сканирует Windows TLS — handler, живущий ТОЛЬКО в
+  `_nova_handler_<eff>` (форма `with Random = th.seeded(42)` инлайнила вызов
+  фабрики прямо в TLS-присваивание), собирался коллекцией (~32 итерации
+  generate+clone, детерминированный segfault) → use-after-free; emit_with
+  теперь ПИНИТ значение хендлера в stack-локале на время блока (консервативный
+  скан стека держит vtable+ctx+замыкания). Контент property.nv: BoolGen
+  получил поле p_percent (пустой record-литерал не поддержан грамматикой —
+  единственный пустой record в std), Iter[T]→[]T в shrink (протокол в
+  return-позиции), формы конструкторов. std/testing в гейтах, 6/6 тестов.
 
 - **[M-rawmem-typed-copy-wrappers]** (2026-07-08, P2, Plan: 172.13 — generic-mono;
   Wave: после фикса корня) — предложение владельца: типизированные
