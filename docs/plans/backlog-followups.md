@@ -49,6 +49,7 @@
 | `[M-83-f4-global-routing-gated-on-bench]` | Ф.4 global-routing (cross-thread работа → global вместо home-worker wake_pending) ОТЛОЖЕН: review нашёл stranding (wake-one неверен; нужен wake-all) + home-affinity дизайн Nova уже корректен/stranding-proof. Go global-queue = balancing-vs-locality tradeoff, НЕ строгое улучшение. Делать только если профайл покажет home-affinity боттлнеком. Блокирует Ф.3 coalescing. Безопасный subset (steal random-victim + 61-tick fairness) — минор. | Plan 83-go-cmn (bench-gated) | P3 |
 | `[M-83.11-grow-vs-wake-race]` | ✅ **CLOSED 2026-06-11** (Plan 83-go-cmn Ф.1b, commit `e1525d90671`). Структурный фикс: `NovaSchedState` chunked stable-address storage (chunk'и never-realloc → torn-pointer невозможен); GitHub issue #2. Closure: grow_vs_wake_explicit 100/100 + stress_iso_3e 66/66 + semaphore_batch_n 30/30 armed. История — simplifications.md + plan §9.5. | Plan 83-go-cmn Ф.1b | ✅ done |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
+| `[M-173-error-return-trace]` | **Полный propagation-trace** uncaught throw/panic (Zig-парность): цепочка `?`-проброса от throw-site до границы, не только throw-site file:line. Минимум (throw-site в debug-билде) — Plan 173 Ф.5 п.7; полный трейс — этот маркер. | Plan 173 (Ф.5 минимум) | P2 |
 | `[M-folder-module-spawn-const-capture]` | Обнаружен Plan 175 Ф.1 (2026-07-04): в folder-module `spawn`/`select`-closure, захватывающий **module-level const** (напр. `Duration.from_millis(TIMEOUT_MS1)` внутри `spawn`), эмитит captured-поле по **bare-имени** (`_ctx->TIMEOUT_MS1 = &TIMEOUT_MS1`) вместо мангл-имени `Nova_const_<mod>_TIMEOUT_MS1` → C-compile `use of undeclared identifier`. Делает целый модуль некомпилируемым при `nova test <folder-module-dir>`. **Pre-existing** (baseline-delta=0: тот же CC-FAIL на parent-бинаре). Репро: `nova_tests/plan65` (f10/f7/f11 — `TIMEOUT_MS1`/`TIMEOUT_MS2`/`TIMERS_PER_FIBER`), `nova_tests/basics/control_flow` (`apply`). Fix: спавн-capture должен резолвить module-const в мангл-глобал (не local-var capture). | floating (codegen) | P2 |
 | `[M-83-study-go-c-mn]` | Порт рабочего M:N из Go ≤1.4 C-рантайма. **✅ research+8-фаз декомпозиция; ✅ Ф.1a ring-port; ✅ Ф.1b chunked park-state (закрыл grow-vs-wake); ✅ Ф.2 gopark/goready (D244, удалил pending_wake, commit d2830c73d7d).** OPEN до Ф.3-Ф.8 (nspinning/iso-cancel/timer-heap/sysmon/netpoll). | Plan 83-study-go-c-mn | P1 |
 | `[M-83.11-f2-arm-tsan]` | Ф.2 gopark G0(RELEASE)/G1(SEQ_CST) x86-корректны (XCHG дренит store-buffer); для ARM/weak-memory валидировать под TSAN на Linux. Не регрессия (x86 целевая). Gated на `[M-nova-linux-build]`. | floating (Linux-CI) | P2 |
@@ -1336,7 +1337,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `f1_closure_array_gc_stress` (RUN-FAIL 3/3); диагностика по docs/debugging-races.md §2.1.1.
   Priority: M (гейт 172 U.4).
 
-- **[M-172-with-fail-swallows-panic]** `with Fail[E]`-handler **ловит `panic`** как
+- ✅ **FIXED [M-172-with-fail-swallows-panic]** (Plan 173 Ф.1, `25e07590`, 2026-07-04; home Plan 173 Ф.1) —
+  общий helper `nova_scope_exit` введён, симметричная ветка для `NOVA_THROW_PANIC` добавлена ПЕРЕД
+  USER-path (re-throw вместо swallow); `supervised{}`-граница для panic-restart не тронута (отдельная).
+  Ниже — исходное описание находки (оставлено как обоснование фикса). `with Fail[E]`-handler **ловит `panic`** как
   recoverable-ошибку → **нарушение D13** (panic перехватывается ТОЛЬКО runtime'ом на
   границе fiber'а; «программист НЕ ловит panic в обычном коде», нет `try_panic`/`catch` —
   spec/decisions/08-runtime.md §«Три уровня катастрофы»). **Эмпирически подтверждено

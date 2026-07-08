@@ -20,6 +20,12 @@
 >   (compose-семантика consume(panic-dominance/pairwise) vs user-defer(chain) genuinely РАЗНЫЕ; terminal-
 >   транспорт-сайты несогласованы — требуют behavior-normalization design → followups
 >   `[M-173-b3-runsite-unify]`, `[M-173-consume-interrupt-cleanup]`).
+> - **Structured-concurrency (§3a/§3b owner-пересмотры 2026-06-26):** scope-выход = **completes-by-default**
+>   (cleanup'ы добегают, не обрубаются); **force-timeout НЕ существует** (D192-ретракт — только watchdog-варн
+>   при превышении порога, cleanup продолжается); **restart по умолчанию НЕТ** (no-restart-default —
+>   child-fail → cancel-siblings / Escalate / Stop; per-fiber Restart — только для изолированных файберов,
+>   гейт [173.3](../plans/173.3-data-race-freedom-share.md)). Полная concurrency-карта — Ф.3-семейство
+>   ([173.0](../plans/173.0-concurrency-runtime-substrate.md)–173.3); полный rewrite хаба под неё — Ф.2/Ф.5.
 
 ## Три уровня катастрофы ([D13](../../spec/decisions/08-runtime.md#d13))
 
