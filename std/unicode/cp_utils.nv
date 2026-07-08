@@ -117,7 +117,7 @@ fn cps_to_str(cps []u32) -> str {
 }
 
 // UTF-8 decode at byte offset `i`: returns (codepoint, byte_step). R-UTF8 (D26)
-// makes this total; the `else` arm guards a truncated tail (single-byte step).
+// makes this total; the `else` arm guards a truncated tail / invalid lead → U+FFFD, step 1.
 // Intentional per-module copy of UTF-8 decode; runtime.string has its own (folder boundary).
 // Codepoint is returned as `u32` (D327 §flow — codepoints flow as `u32`); the decode
 // itself is byte/bit work in `int`, cast to `u32` at the boundary. `step` is a byte
@@ -135,6 +135,7 @@ fn decode_at(s str, i int) -> (u32, int) {
     } else if ((b & 0xF8) == 0xF0) && (i + 3 < n) {
         ((((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F)) as u32, 4)
     } else {
-        (b as u32, 1)
+        // U+FFFD: повреждённая/оборванная последовательность видима (канон Unicode).
+        (0xFFFD as u32, 1)
     }
 }

@@ -16,7 +16,9 @@ import std.prelude.core.{Option, Some, None}
 
 // Module-private: decode one UTF-8 codepoint at bytes[i].
 // Returns (codepoint, step_bytes). R-UTF8: assumes valid UTF-8.
-// On invalid lead byte: returns (bytes[i] as int, 1) — graceful degrade.
+// On invalid lead byte / truncated tail: returns (U+FFFD, 1) — Unicode canon
+// (Rust from_utf8_lossy, Go range-over-string); повреждение ВИДИМО, а не
+// маскируется под легальный символ (решение владельца 2026-07-08).
 // runtime.string decode; std.unicode has decode_at (intentional per-module copy, folder boundary).
 fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
     ro b = bytes[i] as int
@@ -30,7 +32,7 @@ fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
     if (b & 0xF8) == 0xF0 && i + 3 < n {
         return (((b & 0x07) << 18) | ((bytes[i+1] as int & 0x3F) << 12) | ((bytes[i+2] as int & 0x3F) << 6) | (bytes[i+3] as int & 0x3F), 4)
     }
-    (b, 1)
+    (0xFFFD, 1)
 }
 
 
