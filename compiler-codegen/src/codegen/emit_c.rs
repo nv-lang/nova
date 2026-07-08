@@ -37148,7 +37148,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Pattern::Wildcard(_) => {}
                     Pattern::Ident { name, .. } => {
                         self.var_types.insert(name.clone(), elem_types[i].to_string());
-                        self.line(&format!("{} {} = {}.{};", elem_types[i], name, tmp, fields[i]));
+                        // [M-c-keyword-mangle-destructure-tail]: text-only mangle
+                        // (var_types keyed by the raw Nova name, as reads expect).
+                        self.line(&format!("{} {} = {}.{};", elem_types[i], Self::mangle_field_name(name), tmp, fields[i]));
                     }
                     _ => return Err(format!(
                         "nested pattern in Channel.new destructure not supported: {:?}", pat
@@ -37191,7 +37193,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 (ty_c, val)
                             };
                             self.var_types.insert(name.clone(), ty_c.clone());
-                            self.line(&format!("{} {} = {};", ty_c, name, val));
+                            // [M-c-keyword-mangle-destructure-tail]: text-only
+                            // mangle of the tuple-destructure bind name.
+                            self.line(&format!("{} {} = {};", ty_c, Self::mangle_field_name(name), val));
                         }
                         _ => {
                             return Err(format!(
@@ -37246,7 +37250,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let fty = elem_tys.get(i).cloned()
                                 .unwrap_or_else(|| "nova_int".to_string());
                             self.var_types.insert(name.clone(), fty.clone());
-                            self.line(&format!("{} {} = {}.f{};", fty, name, tmp, i));
+                            // [M-c-keyword-mangle-destructure-tail]: text-only
+                            // mangle of the tuple-destructure bind name.
+                            self.line(&format!("{} {} = {}.f{};", fty, Self::mangle_field_name(name), tmp, i));
                         }
                         _ => {
                             return Err(format!(
@@ -38726,7 +38732,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .unwrap_or_else(|| "nova_int".into());
                             let field = format!("{}.f{}", scr, i);
                             self.var_types.insert(name.clone(), field_ty.clone());
-                            self.line(&format!("{} {} = {};", field_ty, name, field));
+                            // [M-c-keyword-mangle-destructure-tail]: text-only mangle.
+                            self.line(&format!("{} {} = {};", field_ty, Self::mangle_field_name(name), field));
                         }
                         Pattern::Tuple(..) => {
                             // The field may be stored as nova_int (pointer to _NovaTupleN).
@@ -38809,11 +38816,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         match &field.pattern {
                             None => {
                                 self.var_types.insert(field.name.clone(), ty.clone());
-                                self.line(&format!("{} {} = {};", ty, field.name, field_access));
+                                // [M-c-keyword-mangle-destructure-tail]: shorthand
+                                // record-destructure bind — text-only mangle (the
+                                // struct-field access `field_access` is mangled
+                                // separately via `mfn` above).
+                                self.line(&format!("{} {} = {};", ty, Self::mangle_field_name(&field.name), field_access));
                             }
                             Some(Pattern::Ident { name, .. }) => {
                                 self.var_types.insert(name.clone(), ty.clone());
-                                self.line(&format!("{} {} = {};", ty, name, field_access));
+                                // [M-c-keyword-mangle-destructure-tail]: renamed
+                                // record-destructure bind (`{ x: signed }`).
+                                self.line(&format!("{} {} = {};", ty, Self::mangle_field_name(name), field_access));
                             }
                             Some(Pattern::Wildcard(_)) | Some(Pattern::Literal(..)) => {}
                             Some(sub_pat) => {
@@ -38856,11 +38869,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         match &field.pattern {
                             None => {
                                 self.var_types.insert(field.name.clone(), ty.clone());
-                                self.line(&format!("{} {} = {};", ty, field.name, field_access));
+                                // [M-c-keyword-mangle-destructure-tail]: sum-variant
+                                // record-destructure shorthand bind — text-only mangle.
+                                self.line(&format!("{} {} = {};", ty, Self::mangle_field_name(&field.name), field_access));
                             }
                             Some(Pattern::Ident { name, .. }) => {
                                 self.var_types.insert(name.clone(), ty.clone());
-                                self.line(&format!("{} {} = {};", ty, name, field_access));
+                                // [M-c-keyword-mangle-destructure-tail]: renamed bind.
+                                self.line(&format!("{} {} = {};", ty, Self::mangle_field_name(name), field_access));
                             }
                             Some(Pattern::Wildcard(_)) | Some(Pattern::Literal(..)) => {}
                             Some(sub_pat) => {

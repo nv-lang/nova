@@ -3629,6 +3629,25 @@ impl<'a> TypeCheckCtx<'a> {
                     entry_file_ids.insert(pf.file_id);
                 }
             }
+            // [M-runtime-folder-run-ice-vec-ident] self-import gap follow-on
+            // (Plan 172.13 batch 4): a module's OWN extension methods are
+            // trivially available to itself — no `import` of one's own
+            // module is written or expected. Without this, a file whose
+            // declared module name lacks the "std" prefix (a pre-existing
+            // stdlib naming inconsistency — e.g. `std/collections/vec_lazy.nv`
+            // self-declares bare `module collections.vec_lazy`, not
+            // `std.collections.vec_lazy`) fails the `is_stdlib_module` early-out
+            // above (checks `m.first() == "std"`) AND fails the
+            // `entry_imported_modules` import-check below (the file never
+            // imports itself) — so its OWN test block calling its OWN
+            // extension method (`v.lazy()` inside `vec_lazy.nv` itself) was
+            // rejected as `[E_EXTENSION_METHOD_NEEDS_IMPORT]`. Registering the
+            // entry's own last name segment closes this regardless of the
+            // "std"-prefix inconsistency (the real, general fix: a module is
+            // always "imported" into itself).
+            if let Some(last) = module.name.last() {
+                entry_imported_modules.insert(last.clone());
+            }
         }
 
         // Plan 114.4.2 D199 + Plan 114.4.3 Ф.5 V2: precompute const fn names
@@ -12064,8 +12083,31 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 TypeRef::Tuple(converted, span)
             }
+            // [M-per-file-check-no-prelude-protocol-scope] follow-on (Plan 172.13
+            // batch 4): reconstruct a typed raw pointer round-trip. `from_type_ref`
+            // (above, ~L238-257) losslessly encodes `*T`/`*mut T`/`*unsafe T` as
+            // `TypedPtr(modifier, inner)`, but this reverse direction used to give
+            // up (`return None`) on EVERY `TypedPtr` — so any Call-channel-typed
+            // static-method-return that happened to be a pointer (`RawMem.alloc(n)
+            // -> *mut u8`) came back out of the channel as an untyped `None`. A
+            // let-binding with no explicit annotation (`ro buf = RawMem.alloc(n)`)
+            // then registered NO type for `buf` in scope, so a later `buf[n] = 0`
+            // index-write couldn't see `pointee_is_writable` (needs a `TypeRef::
+            // Pointer`) and fell through to the ro-binding L1/L2 freeze —
+            // E_READONLY_CONTENT despite `*mut u8` being writable-pointee by
+            // construction. Mirrors `from_type_ref`'s own construction 1:1 (Mut/
+            // Unsafe wrap the pointee, Ro is the bare `Pointer`).
+            R::TypedPtr(modifier, inner) => {
+                let base = Self::resolved_to_typeref(inner, span)?;
+                let wrapped = match modifier {
+                    crate::ast::PointerModifier::Ro => base,
+                    crate::ast::PointerModifier::Mut => TypeRef::Mut(Box::new(base), span),
+                    crate::ast::PointerModifier::Unsafe => TypeRef::Unsafe(Box::new(base), span),
+                };
+                TypeRef::Pointer(Box::new(wrapped), span)
+            }
             R::Unit | R::Readonly(_)
-            | R::Any | R::Ptr | R::TypedPtr { .. } | R::Func { .. } => return None,
+            | R::Any | R::Ptr | R::Func { .. } => return None,
         })
     }
 
@@ -12505,6 +12547,33 @@ impl<'a> TypeCheckCtx<'a> {
                                                     generics: Vec::new(),
                                                     span: expr.span,
                                                 });
+                                            }
+                                            // [M-per-file-check-no-prelude-protocol-scope]
+                                            // follow-on (Plan 172.13 batch 4): STATIC-method
+                                            // sibling of the free-fn oracle-row-D propagation
+                                            // above (Plan 147 Ф.3, D246) — a single-overload
+                                            // static method returning a POINTER (`RawMem.alloc`
+                                            // → `*mut u8`) or a `ro`-wrapped value was falling
+                                            // through this whole `Member{Ident,ctor}` arm
+                                            // untyped (the `concrete` match above only handles
+                                            // bare `Named`/`Self`), leaving `ro buf =
+                                            // RawMem.alloc(n)` unregistered in `scope` — the
+                                            // later `buf[n] = 0` index-write check then found
+                                            // no type for `buf`, couldn't see it's a writable
+                                            // `*mut T` pointee (`pointee_is_writable`), and
+                                            // fell through to the ro-binding L1/L2 freeze →
+                                            // spurious E_READONLY_CONTENT. This normally never
+                                            // surfaced because the check only fires for
+                                            // ENTRY-file code (see `is_target_in_entry` below)
+                                            // and this exact call shape had never been the
+                                            // entry before (it's an internal `std.runtime.*`
+                                            // helper) — a per-file `nova check
+                                            // std/runtime/string/core.nv` makes the file the
+                                            // entry and exposes it. Mirror the free-fn arm
+                                            // exactly: pointer-or-wraps-pointer / readonly
+                                            // return shapes propagate as-is.
+                                            if ret.is_pointer_or_wraps_pointer() || ret.is_readonly() {
+                                                return Some(ret.clone());
                                             }
                                         }
                                     }

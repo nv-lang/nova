@@ -2453,8 +2453,8 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   spec_tests/conformance/d162_consume_defer_cover.nv (throw в match-ветке =
   покрытие). Гейты: conformance 67/0, std/text зелёный.
 
-- **[M-redundant-param-ro-diagnostic]** (2026-07-08, P2, Plan: 172.13/185; Wave: с
-  чекер-маркерами) — вопрос владельца: `fn f(bytes ro []u8)` — избыточный явный `ro`
+- **[M-redundant-param-ro-diagnostic]** (2026-07-08, P2, Plan: 172.13/185;
+  **ЗАКРЫТ батчем 4**) — вопрос владельца: `fn f(bytes ro []u8)` — избыточный явный `ro`
   в позиции параметра принимается молча. D246 мандатит redundancy-ошибку только для
   указателей (`*ro T` → E_REDUNDANT_POINTER_RO), параметровая позиция не покрыта, хотя
   принцип тот же (параметры = ro-вид по умолчанию). Сделать зеркальную диагностику
@@ -2463,6 +2463,17 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   `(ro bytes []u8)` — диагностика должна крыть обе. 8 сайтов в std вычищены
   рукой 2026-07-08 (chars.nv, core.nv ×2 + from_bytes-тройка, bcrypt.nv,
   string_builder.nv @append).
+  **Реализация (батч 4):** hard error E_REDUNDANT_PARAM_RO в parse_param
+  (обе формы; гейт `!is_mut` сохраняет V3-комбо `ro x mut T` легальным) +
+  hard error E_REDUNDANT_RETURN_MUT на `-> mut T` (top-level only —
+  `-> *mut T` не задет). Амендмент-строка в D246 (02-types.md, рядом с
+  таблицей E_REDUNDANT_POINTER_RO). Neg: d246_redundant_param_ro_prefix_neg,
+  d246_redundant_param_ro_type_neg, d246_redundant_return_mut_neg; позитив-
+  граница d246_param_ro_mut_view (V3-комбо компилируется и исполняется).
+  Греп std/spec_tests/examples: остаточных сайтов 0 (один легитимный ранее
+  существовавший `b ro []u8` в d176_ro_type_modifier.nv переписан на голую
+  форму с примечанием об амендменте). Conformance 70 файлов (67+3 neg),
+  единый-CU прогон PASS.
 
 - **[M-runtime-folder-run-ice-vec-ident]** (2026-07-08, P2, Plan: 172.13, родня
   [M-per-file-check-no-prelude-protocol-scope]) — `nova test --full std/runtime`
@@ -2581,12 +2592,42 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   toml в _experimental. Перепроверить toml после закрытия
   [M-option-self-recursive-record-mono].
 
+- **[M-generic-bound-forwarding]** (2026-07-08, P2, Plan: 172.13 батч 4;
+  **ЗАКРЫТ батчем 4** — заведён по факту и закрыт той же волной) — bound не
+  проносился через вызов bounded-generic-fn из bounded-generic-fn
+  (`fn outer[R Read](r mut R) => inner(r)` — «R does not satisfy the bound»),
+  задокументировано владельцем в std/io/core.nv:12-15 («the checker does not
+  yet carry a bound through such a forward») — из-за чего петли read/write
+  были ИНЛАЙНЕНЫ в каждый хелпер (5 копий). КОРЕНЬ уже был закрыт побочно
+  батчем 3 (fix `[M-property-testing-rot]` слой (6): passthrough-тайпвар
+  объемлющей fn удовлетворяет баунд через `current_fn_generic_names`, D72
+  энфорсится на конкретных колл-сайтах; коммит 46645224a) — батч 4 подтвердил
+  эмпирически (одно- и двухслойный форвард компилируются и исполняются) и
+  СХЛОПНУЛ инлайн-копии: read_to_string/lines/byte_lines → read_to_end,
+  write_str → write_all (однострочник), copy's внутренняя write-петля →
+  write_all(chunk.first_n(rn)). Наблюдаемая дельта: context-строка WriteZero
+  из write_str/copy теперь "write_all" (общий хелпер), не имя обёртки — тестов
+  на context-строку не было. Позитив-пин: spec_tests/conformance/
+  d122_generic_bound_forwarding.nv (1 и 2 слоя форварда, конкретный вызов,
+  runtime-ассерты). Гейты: std/io зелёный, std/net зелёный (потребитель
+  write_all), conformance PASS.
+
 - **[M-c-keyword-mangle-destructure-tail]** (2026-07-08, P3, Plan: 172.13 хвост;
-  Wave: с батчем 2-3) — манглинг C-keyword идентификаторов (закрыт батчем 1,
+  **ЗАКРЫТ батчем 4**) — манглинг C-keyword идентификаторов (закрыт батчем 1,
   f8db4abbe) НЕ распространён на tuple/record-destructure bind-имена и пары
   `if x is T`-narrowing / defer-capture — сайты не задеты репро батча 1, честно
   зафиксированы автором. Довести теми же каналами + расширить
   conformance/c_keyword_ident_mangling.nv этими позициями.
+  **Реализация (батч 4):** тем же каналом `mangle_field_name` (text-only,
+  var_types на raw-имени) закрыты 7 декларационных сайтов emit_c.rs:
+  emit_tuple_destructure ×3 (Channel.new-пара, direct-pairing `= (a,b)`,
+  general tmp-struct путь), pattern_bind_typed Tuple-Ident,
+  pattern_bind_typed Record ×4 (plain shorthand/renamed + sum-variant
+  shorthand/renamed). `if x is T` (keyword-именованный scrutinee) и
+  defer-capture keyword-локала эмпирически оказались УЖЕ покрыты
+  батчем 1 (Ident-fallback чтения + обычный let-путь деклараций) —
+  пиннированы тестами. conformance/c_keyword_ident_mangling.nv расширен
+  позициями 5-8 (5 новых тестов), PASS.
 
 - **[M-random-u64-path-return-ice]** (2026-07-08, P2, Plan: 172.13 батч 3;
   **ЗАКРЫТ батчем 3**) — тупик батча 2:

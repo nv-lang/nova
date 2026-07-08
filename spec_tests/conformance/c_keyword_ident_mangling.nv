@@ -59,3 +59,80 @@ test "C-keyword match-arm binding (`default`), value-embedded Option" {
 test "C-keyword for-range loop induction var (`goto`)" {
     assert(c_kw_sum_range(4) == 6)  // 0+1+2+3
 }
+
+// ─── [M-c-keyword-mangle-destructure-tail] (Plan 172.13 batch 4) ───
+// Batch 1 covered locals/params/for-vars/match-arm binds; these positions
+// were honestly documented as NOT covered and are closed by batch 4:
+// tuple-destructure bind names, record-destructure bind names (shorthand
+// AND renamed), `if x is T` with a keyword-named scrutinee, defer-capture
+// of a keyword-named local.
+
+type CKwPoint {
+    ro x int
+    ro y int
+}
+
+type CKwShape enum
+    | CKwCircle(int)
+    | CKwSquare(int)
+
+// Position 5: tuple-destructure bind names (`switch`, `case`) — both the
+// direct-pairing path (`= (lit, lit)`) and the general tmp-struct path.
+fn c_kw_tuple_direct() -> int {
+    ro (switch, case) = (40, 2)
+    switch + case
+}
+
+fn c_kw_make_pair() -> (int, int) => (40, 2)
+
+fn c_kw_tuple_general() -> int {
+    ro (switch, case) = c_kw_make_pair()
+    switch + case
+}
+
+// Position 6: record-destructure bind names — shorthand `{ x }` would bind
+// non-keyword names; the RENAMED form binds keywords (`signed`, `unsigned`).
+fn c_kw_record() -> int {
+    ro p = CKwPoint { x: 40, y: 2 }
+    ro { x: signed, y: unsigned } = p
+    signed + unsigned
+}
+
+// Position 7: `if x is T` narrowing with a keyword-named scrutinee binding
+// (`register` holds the sum value; the is-test reads it).
+fn c_kw_is(sh CKwShape) -> int {
+    if sh is CKwCircle { 1 } else { 0 }
+}
+
+// Position 8: defer-capture of a keyword-named local (`union` captured and
+// read inside the defer body via a keyword-named defer-local `volatile`).
+fn c_kw_defer() -> int {
+    mut union = 41
+    defer {
+        ro volatile = union
+        ro _ = volatile
+    }
+    union += 1
+    union
+}
+
+test "C-keyword tuple-destructure binds, direct pairing (`switch`/`case`)" {
+    assert(c_kw_tuple_direct() == 42)
+}
+
+test "C-keyword tuple-destructure binds, general tmp path (`switch`/`case`)" {
+    assert(c_kw_tuple_general() == 42)
+}
+
+test "C-keyword record-destructure renamed binds (`signed`/`unsigned`)" {
+    assert(c_kw_record() == 42)
+}
+
+test "C-keyword scrutinee through `is`-narrowing (`register`)" {
+    ro register = CKwCircle(5)
+    assert(c_kw_is(register) == 1)
+}
+
+test "C-keyword local captured by defer (`union`/`volatile`)" {
+    assert(c_kw_defer() == 42)
+}

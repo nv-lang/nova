@@ -517,6 +517,65 @@ fn preload_module_nv_prelude_attrs(entry_path: &Path) -> Vec<crate::ast::ModuleA
 /// free functions (`general_category(cp int)` etc.), so a facade re-export would
 /// leak those free functions into the global namespace and break the opt-in
 /// boundary pinned by `plan152_3/neg/n_char_unicode_opt_in.nv`.
+/// [M-runtime-folder-run-ice-vec-ident] (Plan 172.13 batch 4): the checker
+/// accepts `[]T` inherent methods (`.len()`, `.append()`, `.new()`, …) in ANY
+/// module regardless of import — Vec's inherent methods are visible via the
+/// global `TypeMethodMap` / built-in-type signature registry (Plan 162,
+/// `[M-159-lazy-module-resolution]`), by DESIGN independent from whether
+/// `std.collections.vec`'s ACTUAL Nova-body declarations are merged into
+/// THIS compile unit's `merged_items`. For a normal (prelude-having) module
+/// this is moot — prelude's default facade always merges the real
+/// `std.collections.vec` too, so the two views coincide. A `#no_prelude`
+/// module that never explicitly imports `std.collections.vec` (bootstrap
+/// runtime helpers like `std/runtime/{read_buffer,write_buffer,
+/// string_builder}.nv`, which only need e.g. `std.runtime.numeric`) is where
+/// the views diverge: the checker is satisfied (TypeMethodMap knows `.len()`
+/// exists), but `merged_items` never gained Vec's real body, so codegen's
+/// C-lowering (`infer_expr_c_type` — a SEPARATE re-derivation from the
+/// checker's channel, reading actual `FnDecl`s) cannot find `.len()`'s real
+/// declared return type → `nova: internal error … [P67-LEGACY] Ident 'Vec'
+/// not in var_types` / `method call '.len' return type unknown`. Mirrors
+/// `CHAR_UNICODE_METHOD_SELECTORS` / `needs_unicode_injection` below 1:1 —
+/// same auto-inject-into-the-user-entry-group mechanism, same
+/// over-injection-is-harmless argument (Plan 159 Ф.1 reachability DCE strips
+/// anything unused). List = every INSTANCE `@method` Vec actually declares in
+/// `std/collections/vec/*.nv` (static ctors `new`/`with_capacity`/`from`/
+/// `default`/`filled` are compiler intrinsics, not Nova bodies — excluded,
+/// they need no merged declaration to lower).
+const VEC_INHERENT_METHOD_SELECTORS: &[&str] = &[
+    "append", "append_zero", "binary_search_by", "binary_search_by_key", "cap",
+    "clear", "concat", "contains", "copy_from", "copy_within", "dedup",
+    "dedup_by", "dedup_by_key", "drain", "equal", "extend", "fill",
+    "fill_with", "first", "first_n", "get", "index", "index_of", "insert",
+    "insert_slice", "is_empty", "is_sorted_by", "iter", "last", "last_n",
+    "len", "partition", "plus", "pop", "position", "ptr", "push", "remove",
+    "reserve", "resize", "resize_with", "retain", "reverse", "rotate_left",
+    "rotate_right", "rposition", "slice", "sort_by", "sort_by_key",
+    "sort_unstable_by", "sort_unstable_by_key", "splice", "split_at",
+    "split_first", "split_last", "swap", "swap_remove", "truncate",
+];
+
+/// Mirrors [`needs_unicode_injection`]: true iff some item uses a Vec
+/// inherent-method selector (`expr.foo()` receiver-call form) AND
+/// `std.collections.vec` is not already imported.
+fn needs_vec_injection(entry_items: &[Item], sibling_items: &[&[Item]]) -> bool {
+    let mut used: HashSet<String> = HashSet::new();
+    crate::lints::collect_used_names(entry_items, &mut used);
+    for items in sibling_items {
+        crate::lints::collect_used_names(items, &mut used);
+    }
+    VEC_INHERENT_METHOD_SELECTORS
+        .iter()
+        .any(|m| used.contains(&format!("@method:{}", m)))
+}
+
+/// True iff `imp` resolves to the `std.collections.vec` module (directly, or
+/// via the `std.collections` folder that re-exports it). Used to avoid
+/// double-injecting when the user already imported it.
+fn import_targets_std_collections_vec(imp: &Import) -> bool {
+    imp.path.len() >= 2 && imp.path[0] == "std" && imp.path[1] == "collections"
+}
+
 const CHAR_UNICODE_METHOD_SELECTORS: &[&str] = &[
     "is_alphabetic",
     "is_numeric",
@@ -877,6 +936,39 @@ pub fn resolve_imports_inline_ex(
         }
     }
 
+    // [M-runtime-folder-run-ice-vec-ident]: same auto-inject mechanism as the
+    // std.unicode block above, targeting `std.collections.vec` — see
+    // `VEC_INHERENT_METHOD_SELECTORS` doc for the full rationale.
+    {
+        // Note: `std/collections/vec/*.nv` self-declares `module
+        // collections.vec` (no `std` prefix — a pre-existing stdlib
+        // module-naming inconsistency; imports still spell the full
+        // `std.collections.vec`, reconciled by the resolver's path mapping).
+        let is_vec_self = module.name.len() >= 2
+            && module.name[0] == "collections"
+            && module.name[1] == "vec";
+        let already_imports_vec = module.imports.iter().any(import_targets_std_collections_vec)
+            || siblings
+                .iter()
+                .any(|s| s.module.imports.iter().any(import_targets_std_collections_vec));
+        if !is_vec_self && !already_imports_vec {
+            let sibling_items: Vec<&[Item]> =
+                siblings.iter().map(|s| s.module.items.as_slice()).collect();
+            if needs_vec_injection(&module.items, &sibling_items) {
+                let inject = Import {
+                    path: vec!["std".into(), "collections".into(), "vec".into()],
+                    items: None,
+                    alias: None,
+                    is_export: false,
+                    span: crate::diag::Span::dummy(),
+                    doc_attrs: Vec::new(),
+                    anchor: crate::ast::ImportAnchor::Package,
+                };
+                import_work.push((inject, entry_path.to_path_buf(), 0));
+            }
+        }
+    }
+
     for imp in &prelude_imports {
         import_work.push((imp.clone(), entry_path.to_path_buf(), 1));
     }
@@ -889,6 +981,14 @@ pub fn resolve_imports_inline_ex(
     // cycle-ошибки на последующих импортах. `merged_items` / `peer_files`
     // могут остаться частичными — это безвредно: при наличии ошибок
     // дальнейший пайплайн (type-check) не запускается.
+    // [M-per-file-check-no-prelude-protocol-scope] (Plan 172.13 batch 4):
+    // deferred peer-prelude requests queued by nested `resolve_one` calls
+    // (a peer needing ITS OWN implicit prelude — see the doc on `resolve_one`'s
+    // `pending_peer_preludes` parameter). Drained in a SEPARATE pass below,
+    // strictly AFTER this loop, so every top-level import target is already
+    // fully `visited` (no `in_progress` ancestor left for a legitimate
+    // prelude→…→peer cycle to hit).
+    let mut pending_peer_preludes: Vec<(Import, PathBuf)> = Vec::new();
     let mut import_errors: Vec<String> = Vec::new();
     for (imp, importer, acc_idx) in &import_work {
         let in_progress_snap = in_progress.clone();
@@ -909,6 +1009,7 @@ pub fn resolve_imports_inline_ex(
             include_test_peers,
             &mut inherited_attrs,
             &mut visible_accs[*acc_idx],
+            &mut pending_peer_preludes,
         );
         if let Err(e) = res {
             import_errors.push(format!("{}", e));
@@ -916,6 +1017,50 @@ pub fn resolve_imports_inline_ex(
             import_chain = import_chain_snap;
             visited = visited_snap;
         }
+    }
+    // Drain deferred peer-prelude requests. Best-effort (soft-fail, mirroring
+    // the signature pre-pass): these are supplementary (the peer's own
+    // protocol/bound resolution), not user-authored imports — a failure here
+    // must not turn into a top-level import error for code the user never
+    // wrote. The resolved items land in the SAME shared `merged_items` (global
+    // registries like `self.types`/`self.sig` used by BOUND/PROTOCOL checks
+    // are not scoped by `visible_acc`), so a throwaway acc is correct — we
+    // only need the declarations present, not attributed to any one file's
+    // visible-name set. `visited`-dedup still applies, so requesting the same
+    // prelude sub-module from many peers resolves it at most once.
+    {
+        let mut extra_errors: Vec<String> = Vec::new();
+        for (pi, importer) in &pending_peer_preludes {
+            let in_progress_snap = in_progress.clone();
+            let import_chain_snap = import_chain.clone();
+            let visited_snap = visited.clone();
+            let mut throwaway_visible: HashSet<String> = HashSet::new();
+            let mut throwaway_pending: Vec<(Import, PathBuf)> = Vec::new();
+            let res = resolve_one(
+                pi,
+                importer,
+                &entry_dir,
+                repo,
+                stdlib_dir,
+                &mut visited,
+                &mut in_progress,
+                &mut import_chain,
+                &mut merged_items,
+                &mut peer_files,
+                &mut next_file_id,
+                include_test_peers,
+                &mut inherited_attrs,
+                &mut throwaway_visible,
+                &mut throwaway_pending,
+            );
+            if res.is_err() {
+                extra_errors.push(format!("{:?}", res));
+                in_progress = in_progress_snap;
+                import_chain = import_chain_snap;
+                visited = visited_snap;
+            }
+        }
+        let _ = extra_errors; // soft-fail: best-effort supplementary resolve only.
     }
     if !import_errors.is_empty() {
         return Err(anyhow!(
@@ -1004,6 +1149,23 @@ fn resolve_one(
     // передаёт свой `imported_item_names`. Транзитивные sub-imports
     // получают свой временный acc (не протекают в caller).
     visible_acc: &mut HashSet<String>,
+    // [M-per-file-check-no-prelude-protocol-scope] (Plan 172.13 batch 4):
+    // deferred peer-prelude requests — see the call site below (peer loop)
+    // for the full rationale. Collected here, NOT resolved inline, and
+    // drained by the caller (`resolve_imports_inline_ex`) ONLY after the
+    // top-level `import_work` loop fully completes — i.e. with every
+    // top-level import target's `module_key` already fully `visited`
+    // (not merely `in_progress`). Resolving inline (nested, while some
+    // ancestor peer's own module_key is still `in_progress`) risked a
+    // legitimate prelude→…→that-ancestor cycle hitting the `in_progress`
+    // cycle-guard (line ~1366) and returning EARLY — silently truncating
+    // `module_exports_cache` for `std.prelude` itself (a one-shot `visited`
+    // cache), which then starved the ENTRY's own top-level prelude import of
+    // names it legitimately re-exports (observed: `assert` going missing —
+    // "undefined identifier `assert`" — in a large sibling-merged CU where
+    // an unrelated sibling's `import std.collections.vec` reached this peer
+    // loop while `vec`'s own module_key was still `in_progress`).
+    pending_peer_preludes: &mut Vec<(Import, PathBuf)>,
 ) -> Result<()> {
     // Plan 42 правило H (`internal/` boundary) — проверяется НИЖЕ, после
     // resolve в filesystem paths. Plan 42.17 Ф.4 перевёл его с хрупкого
@@ -1461,6 +1623,31 @@ fn resolve_one(
         // resolve_one пишет туда имена items которые sub притащил.
         let mut peer_visible: HashSet<String> = HashSet::new();
 
+        // [M-per-file-check-no-prelude-protocol-scope] (Plan 172.13 batch 4):
+        // this peer needs its OWN implicit prelude, decided by ITS OWN
+        // `#no_prelude`/`#prelude(..)` attrs — previously prelude was computed
+        // ONCE at the top level from the ENTRY module's attrs only (see
+        // `prelude_imports` in `resolve_imports_inline_ex`), so a `#no_prelude`
+        // entry (e.g. std/runtime/string/core.nv) that imports a normal,
+        // prelude-expecting peer (std.collections.vec) starved that peer of
+        // the prelude protocols/bounds it references (`Iter`/`AsSlice`/`Next`
+        // from std/prelude/{collections,protocols}.nv) — E_BOUND_UNKNOWN /
+        // E_IMPL_UNKNOWN_PROTOCOL, per-file-check only (whole-CU builds hide
+        // it because some OTHER non-`#no_prelude` entry in the same run
+        // already pulled prelude in). `compute_prelude_imports` short-circuits
+        // to empty for prelude-self modules and `#no_prelude` peers, so this
+        // is a no-op for the already-correct common case. NOT resolved here
+        // inline (see `pending_peer_preludes` doc on `resolve_one`'s
+        // parameter) — merely queued; the caller drains the queue once every
+        // top-level import target is fully `visited`, so a legitimate
+        // prelude→…→this-peer cycle can never hit the `in_progress` guard
+        // mid-resolution and truncate prelude's own export cache.
+        if let Ok(imps) = compute_prelude_imports(&peer_module, stdlib_dir, peer_path) {
+            for pi in imps {
+                pending_peer_preludes.push((pi, peer_path.clone()));
+            }
+        }
+
         // Recursive: resolve transitive imports for THIS peer.
         for sub in &peer_module.imports {
             // Plan 42.15: re-export. Если peer делает `export import X`
@@ -1484,6 +1671,7 @@ fn resolve_one(
                 include_test_peers,
                 inherited_attrs,
                 &mut sub_visible,
+                pending_peer_preludes,
             )?;
             // Items всегда видны самому peer'у.
             for n in &sub_visible {

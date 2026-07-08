@@ -188,6 +188,44 @@ fn redundant_pointer_ro_error(span: Span) -> Diagnostic {
     )
 }
 
+/// **[M-redundant-param-ro-diagnostic] (Plan 172.13 batch 4, D246 amendment):**
+/// an explicit `ro` in PARAMETER position is redundant — parameters are the
+/// ro-view by default (D176 amend / D246 P-rows). Mirror of
+/// `E_REDUNDANT_POINTER_RO` (same redundancy principle, L1/L2 axis instead of
+/// L3). Covers BOTH spellings: the prefix form `(ro x T)` and the
+/// type-modifier form `x ro T`. The V3-amend combination `ro x mut T`
+/// (ro binding + explicit mut content-view) stays legal — only the bare
+/// redundant `ro` is rejected.
+fn redundant_param_ro_error(span: Span) -> Diagnostic {
+    Diagnostic::new(
+        "[E_REDUNDANT_PARAM_RO] explicit `ro` on a parameter is redundant — \
+         parameters are readonly by default (D176 / D246: a bare `x T` param \
+         IS the ro view). Fix: drop the `ro` (`x T`). Mutable access is the \
+         single opt-in `mut x T`; ownership transfer is `consume x T`."
+            .to_string(),
+        span,
+    )
+}
+
+/// **[M-redundant-param-ro-diagnostic] (Plan 172.13 batch 4, D246 amendment):**
+/// an explicit `mut` in RETURN position is redundant/meaningless — a returned
+/// value is OWNED by the caller (its mutability is decided by the caller's
+/// binding: `mut x = f()` vs `ro x = f()`), so `-> mut T` promises nothing.
+/// Same redundancy class as `E_REDUNDANT_POINTER_RO`/`E_REDUNDANT_PARAM_RO`.
+/// Distinct from `-> ro T` (oracle row D — a MEANINGFUL readonly-view return)
+/// and from `-> *mut T` (L3 pointee capability on a returned pointer — legal).
+fn redundant_return_mut_error(span: Span) -> Diagnostic {
+    Diagnostic::new(
+        "[E_REDUNDANT_RETURN_MUT] explicit `mut` on a return type is \
+         redundant — the returned value is owned by the caller, whose binding \
+         decides mutability (`mut x = f()`). Fix: drop the `mut` (`-> T`). \
+         (A returned POINTER's pointee capability is spelled on the pointer \
+         itself: `-> *mut T` — that form is unaffected.)"
+            .to_string(),
+        span,
+    )
+}
+
 /// **Plan 150 / D248:** comparison operators cannot be chained (`a < b < c`,
 /// `0 <= i < n`, `a == b == c`). Nova does NOT support Python-style chaining;
 /// the canonical range form is `a OP1 b && b OP2 c`. Hard error with a fix-it
@@ -3194,6 +3232,14 @@ impl Parser {
                 })
             } else {
                 let rt = self.parse_type()?;
+                // [M-redundant-param-ro-diagnostic] (Plan 172.13 batch 4,
+                // D246 amendment): `-> mut T` — redundant `mut` in return
+                // position (returned value is caller-owned; the caller's
+                // binding decides mutability). Top-level only: `-> *mut T`
+                // is Pointer(Mut(..)) — a meaningful L3 capability, passes.
+                if rt.is_mut() {
+                    return Err(redundant_return_mut_error(rt.span()));
+                }
                 // Plan 103.9 (D174): `-> T consume` — consume-typed return.
                 // The `consume` keyword is a suffix qualifier on the type
                 // (e.g. `-> MutexGuard consume`). Eat it so it doesn't
@@ -3590,6 +3636,23 @@ impl Parser {
         }
         let ty = {
             let inner = self.parse_type()?;
+            // [M-redundant-param-ro-diagnostic] (Plan 172.13 batch 4, D246
+            // amendment): explicit `ro` in param position is redundant —
+            // params are ro by default. Both spellings rejected here:
+            //   prefix form  `(ro x T)`  → has_readonly_prefix
+            //   type form    `x ro T`    → inner.is_readonly() (top-level)
+            // The V3-amend combo `ro x mut T` (ro binding + explicit mut
+            // content-view) is NOT redundant — gated on !is_mut. `const`/
+            // `consume` prefixes conflict with `ro` earlier (parse errors
+            // above), so only the plain-ro cases reach this check.
+            if !is_mut {
+                if has_readonly_prefix {
+                    return Err(redundant_param_ro_error(name_span));
+                }
+                if inner.is_readonly() {
+                    return Err(redundant_param_ro_error(inner.span()));
+                }
+            }
             if has_readonly_prefix && !inner.is_readonly() {
                 let sp = inner.span();
                 TypeRef::Readonly(Box::new(inner), sp)
