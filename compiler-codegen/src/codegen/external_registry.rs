@@ -457,27 +457,19 @@ impl ExternalRegistry {
         ("bench", "metric",   "nova_bench_emit_metric",             true),
     ];
 
-    /// [M-compiler-nv-porting-wave] item B2: `f64`/`f32` IEEE 754 bit-cast
-    /// (Plan 74, std/runtime/numeric.nv — `f64.from_bits`/`f64 @to_bits`/
-    /// `f32.from_bits`/`f32 @to_bits`). Same irregular-naming situation as
-    /// NAMESPACE_OVERRIDES: standard `mangle_method_c_name` would produce
-    /// `Nova_f64_static_from_bits` / `Nova_f64_method_to_bits`, but the real
-    /// `nova_rt/numeric.h` symbols are `Nova_f64_from_bits` / `Nova_f64_to_bits`
-    /// (no `_static_`/`_method_` infix — these predate the D82 mangling
-    /// convention). A SEPARATE table (not folded into NAMESPACE_OVERRIDES)
-    /// because f64/f32 are primitive types, not namespace pseudo-receivers —
-    /// keeps the two override concerns distinct for readability.
-    /// `int.to_bits(f f64) -> int` (legacy Plan 04 helper, read_buffer round-
-    /// trip) is intentionally NOT here: it has no std/runtime/numeric.nv
-    /// declaration (nor anywhere else) — nothing to embed, stays hardcoded
-    /// in emit_c.rs as-is (out of B2 scope, unrelated to this dedup).
-    const PRIMITIVE_BITCAST_OVERRIDES: &[(&str, &str, &str, bool)] = &[
-        ("f64", "from_bits", "Nova_f64_from_bits", false),
-        ("f32", "from_bits", "Nova_f32_from_bits", false),
-        ("f64", "to_bits",   "Nova_f64_to_bits",   false),
-        ("f32", "to_bits",   "Nova_f32_to_bits",   false),
-    ];
-
+    /// [M-ptr-raw-access-contract-and-unaligned] item 3 (2026-07-08):
+    /// `PRIMITIVE_BITCAST_OVERRIDES` (f64/f32 `from_bits`/`to_bits` C-name
+    /// override, ex-[M-compiler-nv-porting-wave] item B2) REMOVED — these are
+    /// no longer `extern "nova"` declarations at all. `std/runtime/numeric.nv`
+    /// now declares them as ordinary Nova-body methods (`unsafe { (&@ as
+    /// *u64).read_unaligned() }` etc., поверх item 2's pointer methods),
+    /// resolved through the normal Nova-body method dispatch (same channel as
+    /// `char.from`/`u8.try_from` in `std/runtime/char.nv`) — no `ExternalDecl`,
+    /// no c_name override needed. `nova_rt/numeric.h`'s `Nova_f64_to_bits`
+    /// C helpers are dead code, removed with this change. `int.to_bits(f f64)
+    /// -> int` (legacy Plan 04 helper, read_buffer round-trip) is unrelated —
+    /// has no std/runtime/numeric.nv declaration, stays hardcoded in
+    /// emit_c.rs as-is.
     fn decl_from_fn(f: &FnDecl, total_overloads: usize) -> Result<ExternalDecl, String> {
         let (recv_type_name, is_instance, is_mut_recv, is_consume_recv) = match &f.receiver {
             Some(Receiver { type_name, kind, mutable, consume, .. }) => {
@@ -537,17 +529,15 @@ impl ExternalRegistry {
         } else {
             None
         };
-        // [M-compiler-nv-porting-wave] items B1/B2: c_name override lookup —
+        // [M-compiler-nv-porting-wave] item B1: c_name override lookup —
         // namespace pseudo-receivers (gc/fibers/runtime/bench, NAMESPACE_
-        // OVERRIDES) + primitive bit-cast (f64/f32, PRIMITIVE_BITCAST_
-        // OVERRIDES). Both tables share the same irregular-naming rationale;
-        // checked in sequence (disjoint receiver sets, no ambiguity).
+        // OVERRIDES). PRIMITIVE_BITCAST_OVERRIDES (f64/f32 bit-cast) removed
+        // [M-ptr-raw-access-contract-and-unaligned] item 3 — no longer extern,
+        // nothing to override here.
         let (c_name, is_unit_wrap) = match recv_type_name.as_deref() {
             Some(ns) => {
                 let found = Self::NAMESPACE_OVERRIDES.iter()
-                    .find(|(n, m, _, _)| *n == ns && *m == f.name)
-                    .or_else(|| Self::PRIMITIVE_BITCAST_OVERRIDES.iter()
-                        .find(|(n, m, _, _)| *n == ns && *m == f.name));
+                    .find(|(n, m, _, _)| *n == ns && *m == f.name);
                 match found {
                     Some((_, _, override_c_name, unit_wrap)) => (override_c_name.to_string(), *unit_wrap),
                     None => (c_name, false),
