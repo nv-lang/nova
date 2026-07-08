@@ -883,6 +883,19 @@ pub struct CEmitter {
     /// (`fn Type mut @method`).  Used at call-sites to tiebreak overloads when
     /// the receiver is `SelfAccess` (i.e. `@other_method()` inside the body).
     current_receiver_is_mut: bool,
+    /// [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): whether the
+    /// currently-emitting fn is a STATIC namespace fn (`fn Type.method(...)`,
+    /// `ReceiverKind::Static` — no actual `self`/`@` VALUE) as opposed to an
+    /// INSTANCE method (`fn Type @method(...)`). Consulted ONLY by the `Self`
+    /// arm of `resolved_named_to_c`: a static fn's `-> Self` denotes a FRESH
+    /// value being constructed (lower like an ordinary reference to the type
+    /// — value-form for named-tuple/value-record), whereas an instance fn's
+    /// `-> Self` (fluent `-> @`) denotes the EXISTING receiver (pointer-form,
+    /// unchanged — `receiver_c_type`). Set only at the two PRIMARY forward-
+    /// decl/definition sites (mirrors `current_receiver_is_mut`); defaults to
+    /// `false` (existing pointer-form behavior) everywhere else so mono/
+    /// generic-instance paths this doesn't touch stay byte-identical.
+    current_receiver_is_static: bool,
     /// Expected struct type для anonymous record literal `=> { ... }` —
     /// устанавливается при эмите function body, когда нужно использовать
     /// declared return type как target для anonymous record (D55).
@@ -1602,6 +1615,7 @@ impl CEmitter {
             current_receiver_rt: None,
             in_recv_ptr_return_position: std::cell::Cell::new(false),
             current_receiver_is_mut: false,
+            current_receiver_is_static: false,
             expected_record_type: None,
             expected_into_target: None,
             current_array_elem_hint: None,
@@ -3292,6 +3306,19 @@ impl CEmitter {
                 "NovaRes_nova_int_nova_str*".to_string()
             }
             "Self" => match &self.current_receiver_type {
+                // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13):
+                // a STATIC namespace fn's `Self` (`fn Type.method() -> Self`)
+                // denotes a FRESH value being constructed — no actual receiver
+                // exists yet, so `receiver_c_type`'s ALWAYS-pointer-for-value-
+                // types rule (built for the receiver's mutation-propagation
+                // ABI) does not apply. Lower it like an ORDINARY reference to
+                // the type instead (value-form for named-tuple/value-record —
+                // matches how the constructor body's record-literal `return
+                // Type(...)` is actually emitted). An INSTANCE method's `Self`
+                // (fluent `-> Self`/`-> @`, returning the receiver itself)
+                // is UNCHANGED — stays on `receiver_c_type`, byte-identical.
+                Some(recv) if self.current_receiver_is_static =>
+                    self.resolved_named_to_c(recv, &[], &[])?,
                 Some(recv) => self.receiver_c_type(recv, false),
                 // U.4.8: `Self` outside a receiver context — carry the SAME Err the deleted
                 // `type_ref_to_c_impl` produced (Plan 11 follow-up: hard error, not a fallback,
@@ -11588,9 +11615,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(recv) = &f.receiver {
             self.current_receiver_type = Some(recv.type_name.clone());
             self.sync_receiver_rt();
+            // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): see
+            // field doc — forward-decl side of the static/instance distinction.
+            self.current_receiver_is_static = matches!(recv.kind, ReceiverKind::Static);
         } else {
             self.current_receiver_type = None;
             self.sync_receiver_rt();
+            self.current_receiver_is_static = false;
         }
         // Seed parameter types into var_types BEFORE inferring the return type
         // from a bodyless `-> T` (return_type_c infers from the trailing expr
@@ -15266,7 +15297,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let Some(sig) =
                         sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1)
                     {
-                        return format!("{}({}, {})", sig.c_name, l, r);
+                        // [M-static-selfreturn-value-mangle-conflict] (Plan
+                        // 172.13): the named-tuple instance-method receiver
+                        // ABI is ALWAYS a pointer (`NovaTuple_X*`, D215/128) —
+                        // `l` here is always an addressable field-access chain
+                        // (a plain eq-wrapper's own by-value param, or a
+                        // recursive `(...).fN`/`.field` built from one — never
+                        // an arbitrary rvalue expression, unlike the binary/
+                        // unary operator-dispatch call sites), so `&(l)` is
+                        // always legal C — no hoist-to-temp needed here.
+                        return format!("{}(&({}), {})", sig.c_name, l, r);
                     }
                 }
                 if let Some(schema) = self.record_schemas.get(type_name) {
@@ -19552,6 +19592,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 135 Ф.2: track whether current method has a mut receiver
             // so that SelfAccess call-sites can tiebreak __mut/__ro overloads.
             self.current_receiver_is_mut = recv.mutable;
+            // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): see
+            // field doc — definition side of the static/instance distinction
+            // (mirrors the forward-decl site above, ~11603).
+            self.current_receiver_is_static = matches!(recv.kind, ReceiverKind::Static);
             // D215: pre-register nova_self type before return_type_c so that
             // SelfAccess in `=> expr` bodies (e.g. `@real() => @re`) resolves
             // the correct C type for field-access inference. Without this,
@@ -19567,6 +19611,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.current_receiver_type = None;
             self.sync_receiver_rt();
             self.current_receiver_is_mut = false;
+            self.current_receiver_is_static = false;
         }
         // Seed param types before inferring a bodyless `-> T` return type (same
         // reason as the forward-decl path ~9484): the params loop populates
@@ -23723,7 +23768,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
                             .map(|s| s.c_name.clone());
                         if let Some(c_name) = c_name_opt {
-                            let call = format!("{}({}, {})", c_name, l, r);
+                            // D215/128 (Plan 172.13): the named-tuple instance-method
+                            // receiver ABI is ALWAYS a pointer (`NovaTuple_X*`), but `l`
+                            // (the operator's LEFT operand) may be an RVALUE (e.g. a
+                            // chained `Complex.new(1,2) + Complex.new(3,4)` or
+                            // `a.plus(b) + c`) — `&(l)` on an rvalue is illegal C.
+                            // Materialize `l` into an addressable temp first (mirrors
+                            // the `NovaValue_` arithmetic wrapper's same rvalue-receiver
+                            // concern below, Plan 175 Ф.1b/Ф.3) so `&tmp` is always valid.
+                            let recv_tmp = self.fresh_tmp();
+                            self.line(&format!("{} {} = {};", tuple_ty, recv_tmp, l));
+                            let call = format!("{}(&({}), {})", c_name, recv_tmp, r);
                             return Ok(match op {
                                 BinOp::Neq => format!("(!({}))", call),
                                 _          => format!("({})", call),
@@ -24261,16 +24316,56 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return Ok(format!("{}({})", wrap, v));
                         }
                     }
-                    let type_name_opt: Option<String> = if operand_ty.starts_with("NovaTuple_") {
+                    // named-tuple (`NovaTuple_X`, VALUE ABI — receiver needs `&`)
+                    // vs. heap record/sum (`Nova_X*`, ALREADY a pointer — passed
+                    // through as-is, never `&`'d). Two distinct type_name
+                    // sources so the by-address fix below applies ONLY to the
+                    // by-value named-tuple case.
+                    let named_tuple_type_name = if operand_ty.starts_with("NovaTuple_") {
                         Some(Self::debt_strip_novatuple_prefix_or_empty(&operand_ty).to_string())
-                    } else if let Some(inner) = Self::debt_strip_nova_prefix_opt(&operand_ty)
-                        .and_then(|s| s.strip_suffix('*'))
-                    {
-                        Some(inner.to_string())
                     } else {
                         None
                     };
-                    if let Some(type_name) = type_name_opt {
+                    let heap_ptr_type_name = if named_tuple_type_name.is_none() {
+                        Self::debt_strip_nova_prefix_opt(&operand_ty)
+                            .and_then(|s| s.strip_suffix('*'))
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    };
+                    if let Some(type_name) = named_tuple_type_name {
+                        let key = (type_name, method_name.to_string());
+                        if let Some(c_name) = self.method_overloads.get(&key)
+                            .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
+                            .map(|s| s.c_name.clone())
+                        {
+                            // [M-static-selfreturn-value-mangle-conflict] (Plan
+                            // 172.13): named-tuple (`NovaTuple_X`) unary `@neg`/
+                            // `@not` has the SAME rvalue-receiver problem as the
+                            // binary-operator case above (`-Complex.new(1,2)`,
+                            // `-(a + b)`, ... — `v` need not be an addressable
+                            // lvalue) — the receiver ABI is ALWAYS a pointer.
+                            // NOT using the `NovaValue_` branch's forward-
+                            // declared-wrapper trick here: that wrapper's proto
+                            // is flushed into an EARLY buffer (`vr_ueq_protos_buf`,
+                            // before `struct NovaTuple_X` is typedef'd — named-
+                            // tuple types register LATER than value-records —
+                            // phase-correctness gap, §0), which would emit
+                            // `unknown type name 'NovaTuple_X'`. Materialize `v`
+                            // into an addressable temp INLINE at the call site
+                            // instead (always emitted well after the typedef,
+                            // deep inside a function body) — same technique as
+                            // the binary-operator fix just above.
+                            let recv_tmp = self.fresh_tmp();
+                            self.line(&format!("{} {} = {};", operand_ty, recv_tmp, v));
+                            return Ok(format!("({}(&({})))", c_name, recv_tmp));
+                        }
+                    }
+                    if let Some(type_name) = heap_ptr_type_name {
+                        // Heap record/sum receiver — `v` is ALREADY `Nova_X*`;
+                        // pass through unchanged (byte-identical to pre-172.13
+                        // behavior — this branch is untouched by the named-
+                        // tuple by-address fix above).
                         let key = (type_name, method_name.to_string());
                         if let Some(c_name) = self.method_overloads.get(&key)
                             .and_then(|sigs| sigs.iter().find(|s| s.is_instance))
@@ -39818,9 +39913,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if Self::debt_is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
+            // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13) / §0
+            // phase-correctness: the typedef (`{ int tag; {cty} value; }`)
+            // needs the payload struct COMPLETE, so it stays in this early-
+            // but-post-struct-bodies buffer. The eq-fn BODY is a DIFFERENT
+            // fact — `emit_field_eq` on a `NovaTuple_X`/`NovaValue_X` payload
+            // may call the user's `@equal` INSTANCE method (`Nova_X_method_
+            // equal`), whose own forward declaration is only emitted in the
+            // NORMAL per-function pass (later in the file than this splice
+            // zone). Defining the body HERE made the first thing the C
+            // compiler sees a bare call → implicit declaration → "conflicting
+            // types" once the real prototype appears — the exact issue the
+            // sibling `debt_opt_payload_needs_structural_eq` branch below
+            // already solves via an early-prototype/late-body split. Mirror
+            // that split here: prototype adjacent to the typedef (early),
+            // body deferred to `novaopt_eq_fns_buf` (spliced AFTER struct
+            // bodies AND method forward-decls, `/*__NOVAOPT_EQ_FNS__*/`).
             let cmp_body2 = self.emit_field_eq(c_ty, "a.value", "b.value", 0);
             let line2 = format!(
-                "typedef struct NovaOpt_{sani} {{ int tag; {cty} value; }} NovaOpt_{sani};\n",
+                "typedef struct NovaOpt_{sani} {{ int tag; {cty} value; }} NovaOpt_{sani};\n\
+                 static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
                 sani = sanitized, cty = c_ty);
             let eq_fn2 = format!(
                 "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
@@ -39829,9 +39941,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                  \x20   return {cmp};\n\
                  }}\n",
                 sani = sanitized, cmp = cmp_body2);
-            let mut vrbuf = self.novaopt_vr_typedefs_buf.borrow_mut();
-            vrbuf.push_str(&line2);
-            vrbuf.push_str(&eq_fn2);
+            self.novaopt_vr_typedefs_buf.borrow_mut().push_str(&line2);
+            self.novaopt_eq_fns_buf.borrow_mut().push_str(&eq_fn2);
             return;
         }
         // [M-172.1-option-eq-heap-aggregate-structural] + [M-172.1-option-eq-record-structural]
@@ -40887,7 +40998,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         recv_mutable: bool,
         obj_ast: Option<&Expr>,
     ) -> String {
-        let addressable = obj_ast
+        // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): a lazy
+        // module-level const (`const ZERO = Complex(0, 0)`, non-constexpr
+        // init) is `ExprKind::Ident("ZERO")` at the AST level — indistinguishable
+        // from a plain local variable to `is_lvalue_receiver` — but LOWERS to a
+        // getter CALL (`nova_const_ZERO()`), not a variable read. Treating it as
+        // addressable emitted `&(nova_const_ZERO())` — address-of-rvalue CC-FAIL
+        // (`ZERO.is_zero()` on a lazy-const named-tuple/value-record). Force the
+        // hoist-to-temp path for these, same as any other rvalue receiver.
+        let is_lazy_const_ident = matches!(&obj_ast.map(|e| &e.kind),
+            Some(ExprKind::Ident(name)) if self.lazy_consts.contains(name));
+        let addressable = !is_lazy_const_ident && obj_ast
             .map(|e| Self::is_lvalue_receiver(e))
             .unwrap_or_else(|| Self::looks_like_ident_str(obj_c));
 
