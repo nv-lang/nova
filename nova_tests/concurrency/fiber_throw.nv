@@ -7,10 +7,10 @@
 // nova_throw → longjmp → catch'ится прямо в fiber, fiber завершается
 // чисто, scope-runner записывает первую ошибку и rethrow'ит на main.
 //
-// Эти тесты проверяют **отсутствие abort** при throw из fiber. Сами
-// они НЕ кидают throw — только демонстрируют что инфраструктура
-// готова. Тесты с реальным throw-rethrow'ом потребуют test-runner'а
-// с поддержкой ожидаемых exit-кодов.
+// SECTION 1-3 проверяют **отсутствие abort** + Result-цепочки. SECTION 4
+// (Plan 173 Ф.3 п.4) проверяет РЕАЛЬНЫЙ throw: `with Fail[E]` вокруг
+// `supervised` ловит перевыброшенную ошибку (субстрат 173.0 retention +
+// §1-precedence D414). Прежнее «throw неперехватываем» — устарело.
 
 module nova_tests.concurrency
 
@@ -107,23 +107,47 @@ test "fiber: error-flag via Result.match (no real throw)" {
 }
 
 // ================================================================
-// SECTION 4: документация — throw infrastructure ready, tests TBD
+// SECTION 4: РЕАЛЬНЫЙ throw из fiber ЛОВИТСЯ (Plan 173 Ф.3 п.4)
 // ================================================================
 //
-// Тесты с реальным `throw` из fiber'а требуют:
-//   - Либо runtime API `nova_supervised_safe(q)` который ловит rethrow
-//     и возвращает status (вместо longjmp дальше на main).
-//   - Либо test runner с поддержкой "expected non-zero exit" для
-//     negative tests.
-//
-// Сейчас infrastructure такова:
-//   - spawn-entry имеет setjmp на fiber-stack'е → throw из body
-//     правильно ловится локально, fiber завершается чисто.
-//   - scope-runner записывает первый error и rethrow'ит на main
-//     ПОСЛЕ полного drain'а scope. Это безопасно (longjmp на main-stack).
-//   - Без try/catch на main, rethrow → abort с сообщением. Это
-//     spec-faithful (D50: "scope перевыбрасывает ошибку наружу"),
-//     но затрудняет positive-тестирование.
-//
-// Закрывающие задачи: см. open-questions D71 (cancellation propagation,
-// race/cancel_scope, with_timeout).
+// ОБНОВЛЕНО (Plan 173 Ф.3 п.4, 2026-07-09): прежний комментарий здесь
+// утверждал, что `throw` из fiber неперехватываем и требует особого
+// test-runner'а — это УСТАРЕЛО. Субстрат 173.0 (per-slot child_error[] +
+// serialized decision-loop) + retention (nova_tests/err173_0) делают throw
+// из spawn-body ПЕРЕХВАТЫВАЕМЫМ: `with Fail[E]` вокруг `supervised` ловит
+// перевыброшенную scope'ом ошибку (первую/primary по §1-precedence D414 §1).
+// Ниже — позитивные тесты реального throw (не mut-флаг).
+
+test "supervised: throw from spawn is caught by outer with Fail" {
+    mut caught = false
+    mut got = ""
+    ro _ = with Fail[str] = |e| {
+        caught = true
+        got = e
+        ""
+    } {
+        supervised {
+            spawn { throw "boom-from-fiber" }
+        }
+        "unreached-if-thrown"
+    }
+    assert(caught)
+    assert(got == "boom-from-fiber")
+}
+
+test "supervised: sole child throw surfaces as primary (single error)" {
+    mut caught = false
+    mut got = -1
+    ro _ = with Fail[int] = |e| {
+        caught = true
+        got = e
+        0
+    } {
+        supervised {
+            spawn { throw 777 }
+        }
+        99
+    }
+    assert(caught)
+    assert(got == 777)
+}
