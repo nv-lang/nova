@@ -53,13 +53,37 @@
 |---|---|---|---|
 | `collections/` | `linkedlist` (остальные 5 PROMOTED 2026-07-08 w1) | check PASS, test--full CC-FAIL (2×) — self-recursive generic `.map()` P67-LEGACY + cross-CU `LinkedList[T].new()` mono-loss | Промоушен gated compiler-дефектом (recursive generic sum-type mono) |
 | `crypto/` | (пусто — все 5 PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt) | — | — |
-| `encoding/` | `csv`, `toml`, `url` (`hex`/`ini` PROMOTED 2026-07-08 w2) | check PASS, test--full CC-FAIL/CODEGEN-FAIL (3 разных дефекта — см. inline-комментарии в файлах) | Промоушен gated compiler-дефектами: csv — nested `[][]str` aliasing runtime-баг; toml — Fail-handler mono gap (`Nova_*Error_p` unknown type); url — документированный tuple-destructure infer баг (Plan 06 Ф.2), подтверждён под codegen |
-| `identifiers/` | `uuid_namespace` (`ulid`/`uuid` PROMOTED 2026-07-08 w2, `snowflake` w1) | check PASS, test--full CC-FAIL — duplicate C-symbol emission (`crypto.md5.rotl32` эмиттится дважды когда `md5`+`sha1` в одном CU) | Промоушен gated general compiler-дефектом (private-fn dedup emission), репродуцирован минимальным файлом |
+| `encoding/` | `csv`, `toml` (`hex`/`ini`/`url` PROMOTED — `url` 2026-07-08 batch 2) | csv: check PASS, test--full RUN-FAIL — root cause 1 (Vec-typed assign-target array-literal default) FIXED compiler-side, root cause 2 (`consume x = ...` re-bind inside nested block doesn't update enclosing scope) still open; toml: check PASS, test--full CC-FAIL (Fail-handler mono gap, `Nova_*Error_p` unknown type) | csv gated by a SECOND, distinct codegen defect (see docs/plans/backlog-followups.md [M-exp-promotion-blockers: csv]); toml gated by a separate Fail-handler mono gap, not investigated this batch |
+| `identifiers/` | `uuid_namespace` (`ulid`/`uuid`/`snowflake` PROMOTED — `snowflake` w1, `ulid`/`uuid` w2) | check PASS, test--full ICE — the ORIGINAL duplicate-symbol bug (`crypto.md5.rotl32` emitted twice when `md5`+`sha1` share a CU) is FIXED (compiler-side, batch 2); a NEW, deeper, unrelated pre-existing defect now surfaces: `Random.u64()` (an effect-op call inside `Uuid.v4()`/`v7()`, pulled in transitively) hits `[P67-LEGACY] Path call return type unknown` — reproduces even for `nova test --full std/identifiers/uuid.nv` ALONE (an already-promoted module), confirmed on baseline d987de52d too | Promotion now gated by a DIFFERENT, newly-surfaced defect (effect-op return-type resolution for a never-installed effect in a given CU) — see docs/plans/backlog-followups.md [M-exp-promotion-blockers: uuid_namespace] |
 | `data/` | `semver_range` | PASS check (не проверялся в волне 2 — не в списке переноса) | Non-MVP per Plan 91 §Non-scope; `semver`/`sql` PROMOTED 2026-07-08 w2 |
 | `math/` | `complex` (`statistics` PROMOTED 2026-07-08 w1) | check PASS, CC-FAIL codegen — `[M-static-selfreturn-value-mangle-conflict]` | Промоушен gated компиляторным дефектом (не контентом модуля) |
 | `text/` | (пусто — все 3 PROMOTED 2026-07-08 w2: diff/markdown_minimal/regex) | — | — |
 | `time/` | (пусто — cron PROMOTED 2026-07-08 w2) | — | — |
-| `concurrency/` | `retry` (`rate_limiter` PROMOTED 2026-07-08 w1) | check PASS (текущая `[T]`-сигнатура), test--full CC-FAIL (E инферится per-call-site, конфликт между T-инстанциями); ПРАВИЛЬНАЯ `[T, E]`-сигнатура (matching doc-comment) REJECTED checker'ом D145 (generic E used только в effect-clause не считается "used") | Two-sided блокировка — implicit-E даёт codegen-баг, explicit-E упирается в checker-ограничение; нужен архитектурный выбор, не в рамках промоушен-волны |
+| `concurrency/` | (пусто — `rate_limiter` PROMOTED w1, `retry` PROMOTED 2026-07-08 batch 2) | — | — |
+
+> **PROMOTED 2026-07-08 (batch 2, Plan 172.13, 2 modules):** `concurrency/
+> retry` → `std/concurrency/`; `encoding/url` → `std/encoding/`. Both
+> unblocked by genuine compiler-channel fixes (not workarounds), with
+> peer-tests split to `retry_test.nv`/`url_test.nv`:
+>   - retry: D145's `E_UNUSED_PREFIX_TYPEVAR` never scanned a fn-typed
+>     param's own effect-clause (`body fn() Fail[E] -> T`) nor the method's
+>     own effect-clause when deciding if a prefix typevar is "used" — fixed
+>     in the checker (types/mod.rs). Once accepted, the SAME missing
+>     "infer E from a closure's thrown value" source was needed in THREE
+>     independent duplicated codegen engines, plus a downstream `Ok`/`Err`-
+>     inside-`with Fail[E]`-block hint-threading gap, plus a handler-literal
+>     forward-decl gap for multi-instantiation generic methods (see the
+>     batch-2 commit series for the full chain).
+>   - url: the tuple-shape mono conflict (match-arm reconciliation only
+>     recognized bare `nova_int` as an ambiguous default, not a tuple
+>     composed entirely of it) and the sibling-Option case of the same
+>     `Fail[E]`-hint gap (extended from Result to Option). One content bug
+>     (`parse_authority`'s empty-authority branch returned `host: None`
+>     instead of `Some("")` for `file:///etc/hosts`).
+> `csv`/`toml` (encoding), `uuid_namespace` (identifiers) remain — each now
+> blocked by a DIFFERENT, narrower defect than originally diagnosed (see
+> the table below and docs/plans/backlog-followups.md
+> `[M-exp-promotion-blockers]`).
 
 Модули выше с CC-FAIL/CODEGEN-FAIL под `test --full` **сохраняют** свои
 peer inline-тесты (не удалены) с комментарием `[2026-07-08, волна 2

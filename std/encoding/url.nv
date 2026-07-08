@@ -154,7 +154,12 @@ fn parse_authority(s str) Fail[ParseUrlError] -> (Option[str], Option[str], Opti
     }
 
     if auth.byte_len() == 0 {
-        return (None, None, None, None, rest)
+        // `parse_authority` is only ever called after an explicit "//" was
+        // seen (Url.from's dispatch) — an empty `auth` here means an
+        // explicit-but-empty authority (`file:///etc/hosts`), i.e. host is
+        // the empty string, not absent. `Some("")`, not `None` (test
+        // "parse: file:// без host" expects `u.host == Some("")`).
+        return (None, None, Some(""), None, rest)
     }
 
     // Userinfo — до "@", если есть
@@ -346,17 +351,6 @@ export fn Url.encode_query(s str) -> str {
 // На невалидный UTF-8 после decode'а — throw InvalidPercentEncoding
 // (consistent с тем что percent-encoding должен давать valid UTF-8;
 // иначе input был malformed).
-//
-// Bootstrap-ограничение: tuple-destructure infer (Plan 06 Ф.2)
-// типизирует `let (sch, after) = ...` поля как nova_int. После
-// использования `after.starts_with(...)` codegen падает на
-// strict-bool check. Url.from() выше использует много destructure'ов
-// → весь файл не компилируется. Это **не Plan 04 issue**, это
-// pre-existing infer ограничение.
-//
-// Когда tuple-destructure infer будет fix'нут: реализация ниже
-// готова и не требует Buffer. До тех пор файл не компилируется
-// в принципе (фейлится в parse_url) — функционально idle.
 /// Percent-decode query string. Throws `InvalidPercentEncoding` если `%XX` malformed.
 #stable(since = "0.1")
 export fn Url.decode_query(s str) Fail[ParseUrlError] -> str {
@@ -431,162 +425,4 @@ fn to_chars(s str) -> []char {
     out.cap(s.byte_len())
     for c in s.chars() { out.push(c) }
     out
-}
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-//
-// [2026-07-08, волна 2 промоушена]: НЕ промоутится — файл уже содержит
-// собственную документацию известного бага выше (§ `Url.decode_query`
-// doc-comment, "Bootstrap-ограничение: tuple-destructure infer"):
-// `Url.from()` использует много `let (a, b, ...) = ...` tuple-destructure
-// (`parse_scheme`/`parse_authority`/`parse_path` — разные tuple-shapes).
-// Под `nova test --full` это подтвердилось: C-emit конфликт монолитных
-// tuple-структур `_NovaTuple_2_16_NovaOpt_nova_int_...` vs
-// `..._nova_str_...` (разные tuple shapes с одинаковым arity схлопнулись
-// в общий mono-инстанс). `nova check` этого не ловит (только `test --full`
-// эмитит C). Отдельно исправлены (оставлены как есть, harmless): `hex_upper`
-// (`int as char` → `char.from(...)?? ' '`, D54) и
-// `StringBuilder/WriteBuffer.with_capacity` → `.new().cap(n)` (D372 amend,
-// старый static-ctor убран из runtime). Нужна codegen-инвестигация
-// tuple-shape mono conflict. См. docs/plans/backlog-followups.md.
-
-test "parse: простой HTTP URL" {
-    ro u = Url.from("http://example.com/")
-    assert(u.scheme == "http")
-    assert(u.host == Some("example.com"))
-    assert(u.port == None)
-    assert(u.path == "/")
-    assert(u.query == None)
-    assert(u.fragment == None)
-}
-
-test "parse: HTTPS с портом и path" {
-    ro u = Url.from("https://api.example.com:8443/v1/users")
-    assert(u.scheme == "https")
-    assert(u.host == Some("api.example.com"))
-    assert(u.port == Some(8443))
-    assert(u.path == "/v1/users")
-}
-
-test "parse: с query string и fragment" {
-    ro u = Url.from("https://example.com/search?q=nova&lang=en#results")
-    assert(u.path == "/search")
-    assert(u.query == Some("q=nova&lang=en"))
-    assert(u.fragment == Some("results"))
-}
-
-test "parse: userinfo (user:pass)" {
-    ro u = Url.from("https://alice:s3cret@example.com/")
-    assert(u.user == Some("alice"))
-    assert(u.password == Some("s3cret"))
-}
-
-test "parse: только user без password" {
-    ro u = Url.from("ftp://anonymous@ftp.example.org/")
-    assert(u.user == Some("anonymous"))
-    assert(u.password == None)
-}
-
-test "parse: file:// без host" {
-    ro u = Url.from("file:///etc/hosts")
-    assert(u.scheme == "file")
-    assert(u.host == Some(""))
-    assert(u.path == "/etc/hosts")
-}
-
-test "parse: scheme нормализуется в lowercase" {
-    ro u = Url.from("HTTP://example.com/")
-    assert(u.scheme == "http")
-}
-
-test "round-trip: стандартный URL" {
-    ro s = "https://api.example.com:8443/v1/users?id=42&active=true#section1"
-    ro u = Url.from(s)
-    assert(u.to_str() == s)
-}
-
-test "round-trip: с userinfo" {
-    ro s = "https://alice:s3cret@example.com/path"
-    ro u = Url.from(s)
-    assert(u.to_str() == s)
-}
-
-test "parse: ошибка — пустой ввод" {
-    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        ro _ = Url.from("")
-        None
-    }
-    assert(match r {
-        Some(EmptyInput) => true
-        _                => false
-    })
-}
-
-test "parse: ошибка — нет scheme" {
-    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        ro _ = Url.from("example.com/path")          // нет ":"
-        None
-    }
-    assert(match r {
-        Some(MissingScheme) => true
-        _                   => false
-    })
-}
-
-test "parse: ошибка — порт не число" {
-    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        ro _ = Url.from("http://example.com:abc/")
-        None
-    }
-    assert(match r {
-        Some(InvalidPort { .. }) => true
-        _                         => false
-    })
-}
-
-test "parse: ошибка — порт > 65535" {
-    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        ro _ = Url.from("http://example.com:99999/")
-        None
-    }
-    assert(match r {
-        Some(InvalidPort { .. }) => true
-        _                         => false
-    })
-}
-
-test "encode_query: ASCII unreserved неизменны" {
-    assert(Url.encode_query("hello") == "hello")
-    assert(Url.encode_query("a-b.c_d~e") == "a-b.c_d~e")
-}
-
-test "encode_query: пробел → +" {
-    assert(Url.encode_query("hello world") == "hello+world")
-}
-
-test "encode_query: спецсимволы → %XX" {
-    assert(Url.encode_query("a&b=c") == "a%26b%3Dc")
-}
-
-test "decode_query: round-trip" {
-    ro cases = ["hello", "hello world", "a&b=c", "100%"]
-    for s in cases {
-        ro encoded = Url.encode_query(s)
-        ro decoded = Url.decode_query(encoded)
-        assert(decoded == s)
-    }
-}
-
-test "decode_query: ошибка — обрезанное %X" {
-    ro r = with Fail[ParseUrlError] = |e| interrupt Some(e) {
-        ro _ = Url.decode_query("abc%2")             // обрезано
-        None
-    }
-    assert(match r {
-        Some(InvalidPercentEncoding { .. }) => true
-        _                                    => false
-    })
 }

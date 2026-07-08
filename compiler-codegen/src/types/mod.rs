@@ -5252,6 +5252,15 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(rt) = &fd.return_type {
                     Self::collect_named_idents(rt, &mut referenced);
                 }
+                // Collect from the method's OWN top-level effect-clause
+                // (`Time Random Fail[E] -> T`, between `)` and `->`) — a
+                // prefix-declared typevar used only there (effect-polymorphism,
+                // D145) is a legitimate usage, not unused. See sibling fix in
+                // `collect_named_idents`'s `TypeRef::Func` arm for the analogous
+                // fn-typed-PARAM effect-clause case.
+                for e in &fd.effects {
+                    Self::collect_named_idents(e, &mut referenced);
+                }
                 // Check each fd.generics — must be referenced.
                 for g in &fd.generics {
                     if !referenced.contains(&g.name) {
@@ -6078,12 +6087,23 @@ impl<'a> TypeCheckCtx<'a> {
                     Self::collect_named_idents(it, out);
                 }
             }
-            TypeRef::Func { params, return_type, .. } => {
+            TypeRef::Func { params, return_type, effects, .. } => {
                 for p in params {
                     Self::collect_named_idents(p, out);
                 }
                 if let Some(rt) = return_type {
                     Self::collect_named_idents(rt, out);
+                }
+                // [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]
+                // a fn-typed param's OWN effect-clause (`body fn() Fail[E] -> T`)
+                // is a legitimate usage site for a prefix-declared typevar
+                // (effect-polymorphism over an arbitrary `Fail[E]`, e.g. a
+                // generic retry/decorator wrapping any fallible callback) —
+                // without this, `E` appearing ONLY inside a callback param's
+                // effects was invisible to every caller of
+                // `collect_named_idents` (was previously the case, D145).
+                for e in effects {
+                    Self::collect_named_idents(e, out);
                 }
             }
             TypeRef::Protocol { methods: _, .. } => {}

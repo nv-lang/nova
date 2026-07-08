@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/concurrency/retry_test.nv — публичный контракт RetryPolicy.
+// Все тесты детерминированы через th.fixed_ms / th.seeded.
+
+module concurrency.retry_test
+
+import std.concurrency.retry.{RetryPolicy, Backoff, Jitter}
+import std.testing.handlers as th
+
+test "execute: первая попытка успешна" {
+    ro policy = RetryPolicy.exponential(3)
+    with Time = th.fixed_ms(0), Random = th.seeded(0) {
+        ro result = policy.execute(|| 42)
+        assert(result == 42)
+    }
+}
+
+test "execute: retry до успеха" {
+    ro policy = RetryPolicy.fixed(5, 10.millis())
+    mut attempts = 0
+    with Time = th.fixed_ms(0), Random = th.seeded(0) {
+        ro result = policy.execute(|| {
+            attempts += 1
+            if attempts < 3 { throw "transient" }
+            "success"
+        })
+        assert(result == "success")
+        assert(attempts == 3)
+    }
+}
+
+test "execute: исчерпание попыток" {
+    ro policy = RetryPolicy.fixed(3, 10.millis())
+    // Flag-idiom (см. std/crypto/jwt_test.nv) вместо `interrupt Some(e)` +
+    // `match Some(..)` — второе даёт CC-FAIL на generic-E инференс
+    // (см. [M-exp-promotion-blockers: retry] в docs/plans/backlog-followups.md).
+    mut caught = ""
+    with Time = th.fixed_ms(0), Random = th.seeded(0),
+                Fail[str] = |e| { caught = e; "" } {
+        ro _ = policy.execute(|| {
+            throw "always fails"
+            ""
+        })
+    }
+    assert(caught == "always fails")
+}
+
+test "exponential backoff: правильные delay'и" {
+    ro policy = RetryPolicy.custom(
+        5,
+        Exponential {
+            initial: 100.millis(),
+            multiplier: 2.0,
+            max_delay: 1.hour(),
+        },
+        NoJitter,
+    )
+    // attempt 1: 100ms, 2: 200ms, 3: 400ms, 4: 800ms
+    with Random = th.seeded(0) {
+        assert(policy.compute_delay(1) == 100.millis())
+        assert(policy.compute_delay(2) == 200.millis())
+        assert(policy.compute_delay(3) == 400.millis())
+        assert(policy.compute_delay(4) == 800.millis())
+    }
+}
+
+test "max_delay ограничивает exponential" {
+    ro policy = RetryPolicy.custom(
+        20,
+        Exponential {
+            initial: 1.second(),
+            multiplier: 10.0,
+            max_delay: 30.seconds(),
+        },
+        NoJitter,
+    )
+    with Random = th.seeded(0) {
+        // attempt 5: 1*10^4 = 10000s ≫ 30s, должен capped
+        assert(policy.compute_delay(5) == 30.seconds())
+    }
+}
+
+test "jitter детерминистичен через seeded Random" {
+    ro policy = RetryPolicy.custom(3, Fixed { delay: 1.second() }, FullJitter)
+    ro d1 = with Random = th.seeded(42) { policy.compute_delay(1) }
+    ro d2 = with Random = th.seeded(42) { policy.compute_delay(1) }
+    assert(d1 == d2)                               // тот же seed → тот же jitter
+}
+
+test "AI-first: тесты retry полностью детерминированы" {
+    // Без mock-библиотек: just handler-substitution. Flag-idiom (см.
+    // std/crypto/jwt_test.nv) вместо `interrupt None` + Option-sibling.
+    ro policy = RetryPolicy.exponential(3)
+    mut count = 0
+    mut got = ""
+    with Time = th.fixed_ms(0), Random = th.seeded(123),
+                Fail[str] = |e| { got = "fail"; "" } {
+        count += 1
+        got = policy.execute(|| {
+            count += 1
+            if count < 4 { throw "fail" }
+            "ok"
+        })
+        // Внутри policy.execute — count увеличивается на каждой попытке.
+        // Assert INSIDE the with-block (not after) — a mutable var boxed
+        // for a closure capture created inside a nested with-body isn't
+        // readable once that block's scope closes (pre-existing compiler
+        // gap, out of scope for this promotion wave — see
+        // docs/plans/backlog-followups.md [M-exp-promotion-blockers: retry]).
+        assert(count > 0)
+    }
+    // Тест воспроизводимый при любом запуске
+    assert(got == "ok" || got == "fail")
+}

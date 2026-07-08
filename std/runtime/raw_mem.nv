@@ -98,3 +98,26 @@ export extern "nova" unsafe fn RawMem.alloc_uncollectable(n int) -> *mut u8
 /// pointer (from `RawMem.alloc`) — use GC-tracked memory only with GC.
 /// Double-free is UB.
 export extern "nova" unsafe fn RawMem.free_uncollectable(ptr *mut u8) -> ()
+
+/// Typed memmove — copy `count` **elements** of `T` from `src` к `dst`.
+/// Overlap-safe (mirrors `RawMem.copy`, scaled by `size_of[T]()`).
+///
+/// Rust precedent: `ptr::copy<T>`. Count is in *elements*, not bytes — the
+/// byte-level `RawMem.copy` requires the caller to multiply by
+/// `size_of[T]()` at every call site; this wrapper does that once, here.
+///
+/// Caller wraps in `unsafe { }` block — raw pointer operation.
+export unsafe fn RawMem.copy_n[T](src *T, dst *mut T, count int) -> () {
+    RawMem.copy(src as *u8, dst as *mut u8, count * size_of[T]())
+}
+
+/// Typed memcpy — copy `count` **elements** of `T` from `src` к `dst`. UB при
+/// overlap (mirrors `RawMem.copy_nonoverlapping`, scaled by `size_of[T]()`).
+///
+/// Rust precedent: `ptr::copy_nonoverlapping<T>`. Count is in *elements*, not
+/// bytes.
+///
+/// Caller wraps in `unsafe { }` block — raw pointer operation.
+export unsafe fn RawMem.copy_n_nonoverlapping[T](src *T, dst *mut T, count int) -> () {
+    RawMem.copy_nonoverlapping(src as *u8, dst as *mut u8, count * size_of[T]())
+}

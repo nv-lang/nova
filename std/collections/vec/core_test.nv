@@ -22,3 +22,24 @@ test "grow — 1000 pushes preserve order" {
     assert(v.get(500) == Some(500))
     assert(v.get(999) == Some(999))
 }
+
+// [M-rawmem-typed-copy-wrappers] regression (2026-07-08): `@cap`'s realloc
+// path calls the generic `RawMem.copy_n_nonoverlapping[T]` wrapper (static
+// fn owning its OWN `[T]`, on the non-generic `RawMem` type — a shape no
+// other stdlib call used). `infer_type_param_binding` had no arm for
+// `*T`/`*mut T` params, so T never bound from call-site args; the ONE call
+// site that DID have a fallback silently defaulted every unresolved T to
+// `nova_str`, so every non-str `Vec[T]` reused the str-mono'd wrapper (wrong
+// pointer type + wrong `size_of[T]()` stride) — silent heap corruption, not
+// a compile error. `Vec[u8]` pushed past the initial capacity was the
+// smallest repro. Fixed by adding the missing Pointer/Mut/Unsafe arm to
+// `infer_type_param_binding` (emit_c.rs) and turning the silent fallback
+// into a loud `?` propagation.
+test "grow — Vec[u8] past initial capacity (non-str T mono regression)" {
+    mut v = Vec[u8].new()
+    for i in 0..40 { v.push(i as u8) }
+    assert(v.len() == 40)
+    assert(v.get(0) == Some(0 as u8))
+    assert(v.get(5) == Some(5 as u8))
+    assert(v.get(39) == Some(39 as u8))
+}

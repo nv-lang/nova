@@ -15,7 +15,6 @@
 
 module concurrency.retry
 
-import std.testing.handlers as th
 import std.time.duration
 
 
@@ -105,7 +104,7 @@ export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -
 /// let result = policy.execute(|| http_get("https://api.example.com"))
 /// ```
 #stable(since = "0.1")
-export fn RetryPolicy @execute[T](body fn() -> T) Time Random -> T {
+export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E] -> T {
     mut attempt = 0
     mut result Option[T] = None
     mut last_error Option[E] = None
@@ -126,7 +125,7 @@ export fn RetryPolicy @execute[T](body fn() -> T) Time Random -> T {
                 attempt += 1
                 if attempt < @max_attempts {
                     ro delay = @compute_delay(attempt)
-                    Time.sleep(delay)
+                    delay.sleep()
                 }
             }
         }
@@ -183,128 +182,4 @@ fn apply_jitter(j Jitter, d Duration) Random -> Duration => match j {
         ro ns = (Random.u64() % (max_ns as u64)) as i64
         half + Duration.from_nanos(ns)
     }
-}
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-//
-// [2026-07-08, волна 2 промоушена]: НЕ промоутится — подтверждён исходный
-// STATUS.md-диагноз (`retry FAIL E_UNUSED_PREFIX_TYPEVAR`), но с уточнением:
-// это TWO-SIDED баг, не однократный.
-//   1. Текущая сигнатура `@execute[T](body fn() -> T) Time Random -> T`
-//      (без `E`) — `nova check` PASS, НО `nova test --full` CC-FAIL:
-//      generic `E` в `Option[E] last_error`/`Fail[E]`/`throw e` нигде не
-//      объявлен как type-param → компилятор инферит его per-call-site и
-//      конфликтует между разными T-инстанциациями теста (`NovaOpt_nova_int`
-//      vs `NovaOpt_nova_str` mismatch) — silent codegen unsoundness.
-//   2. Правильная сигнатура (как в doc-comment выше, `@execute[T, E](body
-//      fn() Fail[E] -> T) Time Random Fail[E] -> T`, явно объявляет `E`) —
-//      `nova check` REJECTS: `[E_UNUSED_PREFIX_TYPEVAR] generic E
-//      declared в fn[…] prefix но не используется в receiver, params, или
-//      return type (Plan 101.1 / D145)`. Checker не считает использованием
-//      generic `E`, если он встречается ТОЛЬКО внутри effect-clause
-//      параметра-функции (`Fail[E]`) — не в самом типе параметра/receiver/
-//      return напрямую. D145-правило слишком строгое для этого валидного
-//      effect-polymorphism паттерна (retry поверх произвольной `Fail[E]`).
-// Оба пути ведут в стену: implicit-E даёт codegen-баг, explicit-E упирается
-// в checker-ограничение D145. Нужен либо codegen-фикс (§1), либо смягчение
-// D145 (§2) — выбор архитектурный, не в рамках промоушен-волны. См.
-// docs/plans/backlog-followups.md.
-
-test "execute: первая попытка успешна" {
-    ro policy = RetryPolicy.exponential(3)
-    with Time = th.fixed_ms(0), Random = th.seeded(0) {
-        ro result = policy.execute(|| 42)
-        assert(result == 42)
-    }
-}
-
-test "execute: retry до успеха" {
-    ro policy = RetryPolicy.fixed(5, 10.millis())
-    mut attempts = 0
-    with Time = th.fixed_ms(0), Random = th.seeded(0) {
-        ro result = policy.execute(|| {
-            attempts += 1
-            if attempts < 3 { throw "transient" }
-            "success"
-        })
-        assert(result == "success")
-        assert(attempts == 3)
-    }
-}
-
-test "execute: исчерпание попыток" {
-    ro policy = RetryPolicy.fixed(3, 10.millis())
-    ro r = with Time = th.fixed_ms(0), Random = th.seeded(0),
-                Fail[str] = |e| interrupt Some(e) {
-        ro _ = policy.execute(|| {
-            throw "always fails"
-            ""
-        })
-        None
-    }
-    assert(r == Some("always fails"))
-}
-
-test "exponential backoff: правильные delay'и" {
-    ro policy = RetryPolicy.custom(
-        5,
-        Exponential {
-            initial: 100.millis(),
-            multiplier: 2.0,
-            max_delay: 1.hour(),
-        },
-        NoJitter,
-    )
-    // attempt 1: 100ms, 2: 200ms, 3: 400ms, 4: 800ms
-    with Random = th.seeded(0) {
-        assert(policy.compute_delay(1) == 100.millis())
-        assert(policy.compute_delay(2) == 200.millis())
-        assert(policy.compute_delay(3) == 400.millis())
-        assert(policy.compute_delay(4) == 800.millis())
-    }
-}
-
-test "max_delay ограничивает exponential" {
-    ro policy = RetryPolicy.custom(
-        20,
-        Exponential {
-            initial: 1.second(),
-            multiplier: 10.0,
-            max_delay: 30.seconds(),
-        },
-        NoJitter,
-    )
-    with Random = th.seeded(0) {
-        // attempt 5: 1*10^4 = 10000s ≫ 30s, должен capped
-        assert(policy.compute_delay(5) == 30.seconds())
-    }
-}
-
-test "jitter детерминистичен через seeded Random" {
-    ro policy = RetryPolicy.custom(3, Fixed { delay: 1.second() }, FullJitter)
-    ro d1 = with Random = th.seeded(42) { policy.compute_delay(1) }
-    ro d2 = with Random = th.seeded(42) { policy.compute_delay(1) }
-    assert(d1 == d2)                               // тот же seed → тот же jitter
-}
-
-test "AI-first: тесты retry полностью детерминированы" {
-    // Без mock-библиотек: just handler-substitution.
-    ro policy = RetryPolicy.exponential(3)
-    mut count = 0
-    with Time = th.fixed_ms(0), Random = th.seeded(123) {
-        ro r = with Fail[str] = |e| interrupt None {
-            count += 1
-            Some(policy.execute(|| {
-                count += 1
-                if count < 4 { throw "fail" }
-                "ok"
-            }))
-        }
-        // Внутри policy.execute — count увеличивается на каждой попытке
-    }
-    // Тест воспроизводимый при любом запуске
-    assert(count > 0)
 }
