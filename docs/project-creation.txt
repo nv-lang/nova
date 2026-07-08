@@ -38926,3 +38926,20 @@ value-init CC-FAIL, HttpError.protocol_error P67, concurrency-CU Duration-int х
 56/0, inout_ref 7/0 юнитов; plan135-негатив — pre-existing обеих сборок (RED-карта аудита).
 Ревизия ref прошла путь «вопрос владельца → 4 раунда дизайна → 6 заходов реализации» за два
 дня с нулём регрессий эталона.
+
+Часть 66 (2026-07-08, [sonnet], ветка substrate-173-0 / nova-unders). ПЛАН 173.0 Ф.2+Ф.3
+ЗАКРЫТ (гейт для 173.1/173.2). Per-slot child_error[] retention (замена one-slot
+first_error_atomic CAS — N одновременных падений remote-детей больше не схлопываются) +
+serialized decision-loop с ctx-pinning (SpawnCtx ребёнка жив до decision-точки, R1-guard
+подавляет pool-recycle) — hook-точка для 173.2 (on_child_fail), сам эффект не реализован
+(default-политика = сегодняшний escalate-all-or-throw, byte-parity). R2-tripwire
+(_drain_started + assert в nova_scope_grow_children) доказывает grow-во-время-drain
+структурно недостижим. Ф.1 (drain-race) была уже закрыта предыдущей волной — только
+дописана строка-мост в debugging-races.md. Попутный улов: nova_tests/err173_0-гард юзал
+устаревший Time.now() (D316-дрейф) — единственный такой файл, починен. Гейты: cargo build
+чистый; conformance --positive --compile-error 70/0 (ровно ожидание); err173_0 ×20
+отдельных процессов под armed M:N зелёные; std/concurrency+net/stress+fs/concurrent_stat
+PASS; nova_tests/concurrency (109 non-slow) регресс-δ = 0 (byte-identical PASS/FAIL
+множества до/после — 107 pre-existing CODEGEN-FAIL это ТОТ ЖЕ Duration/Time.now() D316-дрейф
+в масштабе всей папки, вне периметра 173.0, честно не тронут — отдельная санация другого
+плана, тот самый «concurrency-CU Duration-int хвост» из части 65).
