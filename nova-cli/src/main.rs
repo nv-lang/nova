@@ -2167,6 +2167,27 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
     // (populates `module.rebind_shadows` for R2). No-op without a rebind.
     nova_codegen::alpha_rename::alpha_rename(&mut module);
 
+    // [M-per-file-check-no-prelude-protocol-scope] follow-on (Plan 172.13
+    // batch 4): stamp a stable `ExprId` on every expr (post-import-inline,
+    // post-alpha-rename, pre-check) — mirrors the `nova build`/`nova test`
+    // pipeline (`test_runner.rs` / `compiler-codegen/src/main.rs`) EXACTLY,
+    // same call position. Without this, `expr.id` stays `ExprId::UNSET` for
+    // every node under `nova check`, so the entire `resolved_types_buf`
+    // checker→checker "channel" (`f1_check_call` writes a call's resolved
+    // return type keyed by `expr.id`; `infer_expr_type`'s Call/Ident/Member
+    // fallbacks read it back) was COMPLETELY INERT for `nova check` — any
+    // inference that depends on the channel (e.g. a static-method call
+    // returning a raw pointer, `RawMem.alloc(n) -> *mut u8`, feeding an
+    // un-annotated `ro buf = ...` local) silently degraded to `None` and
+    // fell through to a stricter fallback rule, producing per-file-check-only
+    // false positives (E_READONLY_CONTENT et al.) invisible to `nova build`/
+    // `nova test` on the very same file. `number_exprs`'s returned seed map
+    // is for the build pipeline's own resolved-types env bootstrap
+    // (`_seed` pattern elsewhere); `nova check` has no codegen stage to feed,
+    // so the return value is intentionally discarded here — only the
+    // ID-stamping side effect on `module` matters.
+    let _ = nova_codegen::number_exprs::number_exprs(&mut module);
+
     // 3. types::check_module
     if let Err(errs) = nova_codegen::types::check_module(&module) {
         // Plan 81 Ф.8.1: cross-file рендер — ошибка из импортированного
