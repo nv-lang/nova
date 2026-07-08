@@ -1,0 +1,20 @@
+// D246-амендмент NEG ([M-redundant-param-ro-diagnostic], Plan 172.13 batch 4) —
+// явный `mut` в позиции ВОЗВРАТА ИЗБЫТОЧЕН → hard error.
+//
+// Возвращённое значение ПРИНАДЛЕЖИТ вызывающему: его мутабельность решает
+// биндинг вызывающего (`mut x = f()` vs `ro x = f()`), поэтому `-> mut T`
+// ничего не обещает — тот же класс избыточности, что E_REDUNDANT_POINTER_RO /
+// E_REDUNDANT_PARAM_RO. Fix-it: `-> T`. НЕ задевает `-> *mut T` (L3
+// pointee-capability на возвращаемом указателе — осмысленно и легально) и
+// `-> ro T` (oracle row D — осмысленный readonly-view возврат).
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_RETURN_MUT
+
+module neg.d246_redundant_return_mut_neg
+
+// `-> mut []u8` — избыточный mut в возврате → E_REDUNDANT_RETURN_MUT.
+fn d246_make_buf(n int) -> mut []u8 {
+    mut out []u8 = []u8.new()
+    out.resize(n, 0 as u8)
+    out
+}

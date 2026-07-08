@@ -1,0 +1,13 @@
+// D246-амендмент NEG ([M-redundant-param-ro-diagnostic], Plan 172.13 batch 4) —
+// явный `ro` в ТИПОВОЙ позиции параметра (`x ro T`) ИЗБЫТОЧЕН → hard error.
+//
+// Вторая синтаксическая форма того же нарушения, что и
+// d246_redundant_param_ro_prefix_neg (`(ro x T)`): параметры — ro-вид по
+// умолчанию, `bytes ro []u8` избыточен. Fix-it: `bytes []u8`.
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_PARAM_RO
+
+module neg.d246_redundant_param_ro_type_neg
+
+// `bytes ro []u8` — избыточный ro-модификатор типа → E_REDUNDANT_PARAM_RO.
+fn d246_take_type_ro(bytes ro []u8) -> int => bytes.len()

@@ -8148,6 +8148,20 @@ other_ptr`) — и больше **ничего** про pointee. L3 pointee-capa
 задаётся **только** через `*mut T`; `*ro T` избыточен → `E_REDUNDANT_POINTER_RO`.
 Reassignability указателя — L1 binding (`ro`/`mut`, D36), независима от L3.
 
+**АМЕНДМЕНТ (2026-07-08, Plan 172.13, [M-redundant-param-ro-diagnostic]) —
+избыточные модификаторы на границе fn, тот же принцип redundancy:**
+(а) явный `ro` в позиции **параметра** избыточен (параметры — ro-вид по
+умолчанию, D176) → hard error `E_REDUNDANT_PARAM_RO`, обе синтаксические
+формы: префикс `(ro x T)` и тип-модификатор `x ro T` (fix-it: `x T`);
+комбинация V3-амендмента `ro x mut T` (ro-binding + явный mut content-view,
+ортогональные оси Plan 118.5 V3) — НЕ избыточна, остаётся легальной;
+(б) явный `mut` в позиции **возврата** избыточен (возвращённое значение —
+собственность вызывающего, мутабельность решает его биндинг) → hard error
+`E_REDUNDANT_RETURN_MUT` (fix-it: `-> T`); НЕ задевает `-> *mut T`
+(L3 pointee-capability) и `-> ro T` (осмысленный readonly-view, oracle row D).
+Тесты: conformance/neg/d246_redundant_param_ro_{prefix,type}_neg,
+d246_redundant_return_mut_neg; позитив-граница d246_param_ro_mut_view.
+
 **Запрет prefix-модификаторов (`E_POINTER_PREFIX_MODIFIER`):** токены
 `ro`/`mut`/`unsafe` непосредственно **перед** `*` в type-position запрещены.
 Расширяет `E_INVALID_POINTER_MODIFIER` (D216 §1, commit 6d6a18a2ab7).

@@ -1,0 +1,25 @@
+// D246-амендмент POS ([M-redundant-param-ro-diagnostic], Plan 172.13 batch 4) —
+// граница диагностики E_REDUNDANT_PARAM_RO: комбинация V3-амендмента
+// `ro x mut T` (ro-BINDING + явный mut CONTENT-VIEW, ортогональные оси
+// Plan 118.5 V3) НЕ избыточна и остаётся легальной. Диагностика бьёт ТОЛЬКО
+// голый избыточный `ro` (prefix `(ro x T)` / типовой `x ro T` — см. neg-пару
+// d246_redundant_param_ro_{prefix,type}_neg).
+//
+// Discriminator: если бы E_REDUNDANT_PARAM_RO стрелял и по `ro x mut T`,
+// этот файл перестал бы компилироваться. Часть единого folder-module
+// `spec_tests.conformance` (D246-префиксные имена от коллизий).
+module spec_tests.conformance
+
+// `ro buf mut []int` — ro-binding (no-rebind) + mut content-view: легально.
+fn d246_sum_via_ro_mut_view(ro buf mut []int) -> int {
+    mut total = 0
+    for v in buf {
+        total += v
+    }
+    total
+}
+
+test "ro x mut T param combo stays legal (D246 amendment boundary)" {
+    ro xs []int = [1, 2, 3]
+    assert(d246_sum_via_ro_mut_view(xs) == 6)
+}

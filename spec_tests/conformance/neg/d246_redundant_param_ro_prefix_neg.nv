@@ -1,0 +1,15 @@
+// D246-амендмент NEG ([M-redundant-param-ro-diagnostic], Plan 172.13 batch 4) —
+// явный префикс `ro` в позиции параметра ИЗБЫТОЧЕН → hard error.
+//
+// Параметры — ro-вид ПО УМОЛЧАНИЮ (D176 amend / D246): голый `x T` УЖЕ ro.
+// Явный `(ro x T)` избыточен — зеркало E_REDUNDANT_POINTER_RO (тот же принцип
+// избыточности, ось L1/L2 вместо L3). Fix-it: убери `ro` → `x T`.
+// Комбинация V3-амендмента `ro x mut T` (ro-binding + явный mut content-view)
+// НЕ избыточна и остаётся легальной — см. позитив d246_param_ro_mut_view.
+//
+// EXPECT_COMPILE_ERROR E_REDUNDANT_PARAM_RO
+
+module neg.d246_redundant_param_ro_prefix_neg
+
+// `(ro bytes []u8)` — избыточный префикс-ro → E_REDUNDANT_PARAM_RO.
+fn d246_take_prefix(ro bytes []u8) -> int => bytes.len()
