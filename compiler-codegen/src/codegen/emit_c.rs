@@ -3648,13 +3648,60 @@ impl CEmitter {
         // Первый peer с данным именем побеждает (cross-module overload
         // с одним именем — редкий edge; param-суффикс всё равно
         // разводит C-имена).
-        for pf in &module.peer_files {
-            for item in &pf.items_here {
-                if let Item::Fn(f) = item {
-                    if f.receiver.is_none() {
-                        self.fn_module_map
-                            .entry(f.name.clone())
-                            .or_insert_with(|| pf.module_name.clone());
+        //
+        // [M-exp-promotion-blockers: uuid_namespace duplicate-symbol]
+        // "первый побеждает" — это глобальный, keyed-только-по-имени кэш
+        // (`fn_module_map: HashMap<String, Vec<String>>`, БЕЗ модуля/файла
+        // в ключе). Когда ДВЕ РАЗНЫЕ private free-fn с одинаковым именем
+        // (`fn rotl32(...)`, не `priv(file)`) объявлены в РАЗНЫХ модулях
+        // одного CU (`crypto.md5` и `crypto.sha1`), обе получают mangled-
+        // имя ПЕРВОГО объявившего модуля — `nova_fn_..md5..rotl32`
+        // эмиттится ДВАЖДЫ (для sha1's ДРУГОГО тела тоже) → C "redefinition".
+        // Не name-collision между модулями — тот же symbol эмиттится дважды
+        // с разным содержимым.
+        //
+        // Fix (mirrors [M-sync-crossmodule-samename-type-collision] D348's
+        // collision-aware type qualification, applied here to free-fn
+        // mangling): detect names declared as a plain (non-receiver) free
+        // fn in ≥2 DISTINCT modules, and route THOSE through the existing
+        // `file_priv_fn_c_names` per-(file_id, name) map (D307's
+        // `priv(file)` machinery) instead of the naive global cache —
+        // `free_fn_c_name` already checks `file_priv_fn_c_names` FIRST, at
+        // both the definition-emit and every call-site (via
+        // `current_emit_file_id`), so no change needed there. Non-colliding
+        // names are completely unaffected (byte-identical).
+        {
+            let mut name_modules: HashMap<String, std::collections::BTreeSet<Vec<String>>> = HashMap::new();
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        if f.receiver.is_none() && !f.is_external {
+                            name_modules.entry(f.name.clone())
+                                .or_default()
+                                .insert(pf.module_name.clone());
+                        }
+                    }
+                }
+            }
+            let colliding_fn_names: std::collections::HashSet<String> = name_modules.into_iter()
+                .filter(|(_, mods)| mods.len() >= 2)
+                .map(|(name, _)| name)
+                .collect();
+            for pf in &module.peer_files {
+                for item in &pf.items_here {
+                    if let Item::Fn(f) = item {
+                        if f.receiver.is_none() {
+                            if colliding_fn_names.contains(&f.name) {
+                                let mangled = Self::mangle_free_fn(&pf.module_name, &f.name);
+                                self.file_priv_fn_c_names
+                                    .entry((pf.file_id, f.name.clone()))
+                                    .or_insert(mangled);
+                            } else {
+                                self.fn_module_map
+                                    .entry(f.name.clone())
+                                    .or_insert_with(|| pf.module_name.clone());
+                            }
+                        }
                     }
                 }
             }

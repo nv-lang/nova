@@ -152,11 +152,11 @@ test "v3: DNS namespace + 'www.example.com'" {
 test "v5: одинаковые namespace+name → одинаковый UUID (детерминизм)" {
     ro a = Uuid.v5(namespace_url(), "https://example.com/")
     ro b = Uuid.v5(namespace_url(), "https://example.com/")
-    assert(a.eq(b))
+    assert(a == b)
 }
 
 test "v5: разные namespaces → разные UUIDs" {
     ro dns = Uuid.v5(namespace_dns(), "test")
     ro url = Uuid.v5(namespace_url(), "test")
-    assert(!dns.eq(url))
+    assert(dns != url)
 }
