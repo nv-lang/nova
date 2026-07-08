@@ -146,6 +146,25 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 только для CPU-bound-обёрток, не дефолтный I/O-путь. **Лайфтайм:** буферы/`CStr`, переданные в async libuv-вызов, должны
 пережить park — GC-root на стеке припаркованной фибры это обеспечивает.
 
+
+### 4а. Типы хендлов: newtype с `C`-префиксом прямо в extern-сигнатурах (владелец, 2026-07-09)
+
+FFI-хендл никогда не ходит по Nova-коду голым `int`/`*()`:
+
+```nova
+type CBrotliHandle(int)          // либо type CFooHandle(*()) — по природе шима
+extern "C" fn brotli_dec_new() -> CBrotliHandle
+extern "C" fn brotli_dec_feed(h CBrotliHandle, p *u8, len int) -> int
+```
+
+Кодоген опускает newtype-над-int в `typedef nova_int Nova_C…;` — C-ABI шима не
+меняется, а по Nova-коду хендл номинален (посторонний int не подсунешь).
+`C`-префикс маркирует происхождение (сишный ресурс). Публичная поверхность
+модуля хендл наружу не выпускает (§1, net-образец `TcpListener { priv handle }`).
+Эталон: std/encoding/compress/ffi.nv. Легальные исключения — комментарием на
+месте (хендл через эффект-vtable: fs scandir, [M-ffi-handle-newtype]).
+Проверка: план 185, W_FFI_BARE_HANDLE.
+
 ## 5. Нейминг (выжимка; полное — [nv-coding-style](nv-coding-style.md))
 
 - Конструктор — **`X.new(...)`** (как `Vec.new`/`Barrier.new`; `.of` зарезервирован за variadic у `Vec`). Валидирующий конструктор → `Result`.

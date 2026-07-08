@@ -31,8 +31,8 @@ const BROTLI_PULL_BUDGET int = 65536
 // int остаётся только на extern-границе внутри этих методов.
 // Методы на newtype-ресивере пока не диспатчатся (греп: dec.feed уводило на
 // ZlibWriter.feed по имени — [M-newtype-receiver-method-dispatch]); типобезопасность
-// дают сами типизированные extern-сигнатуры (BrotliHandle вместо int).
-fn brotli_open() -> Option[BrotliHandle] {
+// дают сами типизированные extern-сигнатуры (CBrotliHandle вместо int).
+fn brotli_open() -> Option[CBrotliHandle] {
     ro h = brotli_dec_new()
     if (h as int) == 0 { None } else { Some(h) }
 }

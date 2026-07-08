@@ -57,6 +57,24 @@ LAYER 4  C shim                    ~5-10 lines, adapts out-param → struct
 LAYER 5  Actual C library          sqlite3_open(path, &db_out)
 ```
 
+
+## Typed handles (canon 2026-07-09)
+
+Declare every C handle as a `C`-prefixed newtype IN the extern signatures —
+never let a bare `int`/`*()` handle flow through Nova code:
+
+```nova
+type CBrotliHandle(int)
+extern "C" fn brotli_dec_new() -> CBrotliHandle
+extern "C" fn brotli_dec_feed(h CBrotliHandle, p *u8, len int) -> int
+```
+
+Lowering: newtype-over-int → `typedef nova_int Nova_CBrotliHandle;` — the C shim
+ABI is untouched; the Nova side gets nominal typing for free. Null-check via
+`(h as int) == 0`. Normative rule: module-conventions §4а. Known gap: methods
+on a newtype receiver mis-dispatch by name ([M-newtype-receiver-method-dispatch]) —
+call the typed externs directly until fixed.
+
 ## Plan 115 V1 setup
 
 Nova V1 has these foundational pieces (commit `<plan-115-merge>`):
