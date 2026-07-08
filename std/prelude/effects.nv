@@ -222,6 +222,38 @@ export type Mem effect {
     reset() -> ()
 }
 
+/// **Random-effect** — ambient PRNG (D11 / D61).
+///
+/// **Назначение:** AI-first substitution случайности. Production-код
+/// (`Uuid.v4()`, `Ulid.new()`, `Bcrypt.hash`, retry-jitter) объявляет
+/// `Random` в effect-row; тесты подменяют handler детерминированным PRNG:
+/// ```nova
+/// import std.testing.handlers as th
+/// with Random = th.seeded(42) { Uuid.v4() }   // deterministic
+/// ```
+/// Handler-фабрика `seeded(seed u64) -> Effect[Random]` (xoshiro256++) —
+/// в `std/testing/handlers.nv`.
+///
+/// **[M-random-u64-path-return-ice] (Plan 172.13 батч 3):** декларация
+/// перенесена сюда из `std/testing/handlers.nv`. `Random` — ambient-эффект,
+/// на который ссылаются модули БЕЗ импорта testing.handlers (uuid, ulid,
+/// retry); когда декларация жила вне prelude, CU такого модуля не имел
+/// `effect_schemas["Random"]`, и codegen падал ICE «Path call return type
+/// unknown» на `Random.u64()`. Prelude — единственный источник схемы
+/// (симметрично `Time`, D316), но в отличие от Time у Random НЕТ
+/// runtime-vtable в nova_rt/*.h — `NovaVtable_Random` + dispatch эмитятся
+/// codegen'ом из этой декларации (обычный user-effect путь, БЕЗ
+/// RUNTIME_DEFINED_TYPES skip).
+///
+/// **Default handler:** пока НЕ установлен (`_nova_handler_Random == NULL`
+/// вне `with Random = ...`); CSPRNG-фабрика `secure()` запланирована
+/// (см. spec/open-questions.md).
+#stable(since = "0.1")
+export type Random effect {
+    u64() -> u64                        // 64 случайных бита
+    bytes(n int) -> []u8                // массовая генерация
+}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 110.4.3 (D185) — ResourceTrace observability effect (Plan 173 Ф.2.R1 rename)

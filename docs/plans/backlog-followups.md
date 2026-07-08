@@ -2436,13 +2436,22 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Поля уже закрыты D281-формой `priv { }` (2026-07-08) — layout свободен для замены.
 
 - **[M-d162-structural-throw-sibling]** (2026-07-08, P2, Plan: 172.13 чекер-каналы;
-  Wave: с остальными чекер-маркерами) — D162 (uncovered-error-path) — структурный, не
+  Wave: с остальными чекер-маркерами; **ЗАКРЫТ батчем 3**) — D162 (uncovered-error-path)
+  — структурный, не
   dataflow: требует throw ПРЯМЫМ сиблингом сразу после потребления; throw внутри
   match-ветки (`Err(_) => throw`) при наличии раннего return в той же fn не доказывается,
   даже когда поток очевидно безопасен. Обходной канон (применён в _experimental
   encoding/toml, text/regex, волна 3б 2026-07-08): `if x.is_err() { throw ... }` сиблингом
   + отдельный match для извлечения (Err-ветка = panic("unreachable")). Правильный фикс:
   научить D162 покрытию через match-ветки (или полноценный dataflow по путям).
+  **Фикс (батч 3):** throw-скан D162 (`expr_has_throw`, types/mod.rs) спускался
+  только в If/Block/With — расширен на Match-ветки (Expr и Block тела), IfLet,
+  While/WhileLet/For/Loop. Обход `is_err()` снят в std/text/regex.nv
+  (parse_quantifier_max → естественный match). В _experimental/encoding/toml.nv
+  is_err-обходов НЕ оказалось (его err-Option-аккумуляция в parse_basic_string —
+  D133-мотивированная, не D162). Позитив добавлен в
+  spec_tests/conformance/d162_consume_defer_cover.nv (throw в match-ветке =
+  покрытие). Гейты: conformance 67/0, std/text зелёный.
 
 - **[M-redundant-param-ro-diagnostic]** (2026-07-08, P2, Plan: 172.13/185; Wave: с
   чекер-маркерами) — вопрос владельца: `fn f(bytes ro []u8)` — избыточный явный `ro`
@@ -2474,7 +2483,8 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (3) эталон conformance теперь 67/0 (не 66), гейты только на пересобранном main.
 
 - **[M-property-testing-rot]** (2026-07-08, P2, Plan: 172.13 — юнификация; Wave: с
-  чекер-маркерами) — std/testing/property.nv никогда не гонялся гейтами и сгнил слоями.
+  чекер-маркерами; **ЗАКРЫТ батчем 3** — std/testing полностью зелёный, turbofish снят)
+  — std/testing/property.nv никогда не гонялся гейтами и сгнил слоями.
   Сняты лично 2026-07-08: mut-sort на ro-биндингах (D36), str.len()→byte_len() (D249),
   push-петли→append-срезы (§18а), turbofish на 5 вызовов property[T]. ОСТАЛСЯ корень:
   протокольная юнификация — `property[[]int](gen ArrayGen[int], ...)` резолвит T=int
@@ -2482,6 +2492,42 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Generator[[]int] через `ArrayGen[T] @generate() -> []T`; ресивер лямбды типизируется
   int → E_PRIMITIVE_NO_PROTOCOL_METHOD sort. Родственно исходному «cannot infer T».
   std/testing добавить в гейты после фикса.
+  **Разбор батча 3 (слои, все закрыты):** (0) дизайн-корень контента: протокол как
+  ТИП значения (`gen Generator[T]` параметр / `ro elem Generator[T]` поле) — у
+  протоколов Nova НЕТ runtime-диспетча (D53), такие вызовы эмитились NULL;
+  property.nv переписан на канон bounded generics
+  (`property[G Generator[T], T](gen G, ...)`, `type ArrayGen[G Generator[T], T]`,
+  статический диспетч — прецедент `Vec@extend[S Iter[T]]`). Компиляторные каналы
+  (emit_c.rs): (1) mono-путь generic-вызова эмитил closure-аргумент fn-типизированного
+  параметра БЕЗ контекста → параметры лямбды дефолтились в nova_int — теперь
+  substituted-сигнатура передаётся в emit_lambda; (2) структурная протокольная
+  юнификация `infer_protocol_structural_binding` (Case A mono-инстанс через
+  generic_type_instance_info+шаблонные методы, Case B не-generic тип через
+  method_overloads; глубина ограничена — протоколы в позициях протоколов);
+  подключена в infer_type_param_binding (`_`-ветка), в Source 2e-bis
+  resolve_mono_type_args (баунды fn-generics), в infer/emit static-ctor каналы
+  (infer_generic_static_ctor_ret + try_generic_static_ctor_mono — вывод T из
+  ТИП-уровневого баунда `[G Generator[T], T]`); (3) Source 2f: вложенный
+  generic-вызов в mono-теле, пробрасывающий параметры объемлющей fn —
+  TypeRef-юнификация через новый current_fn_param_typerefs
+  (+infer_type_param_binding_from_ref); (4) subst_map_adopt_rt адоптил
+  самоссылочный RT (`T → Named{T}`, байт-гейт проходит под подстановкой
+  вызывающего) → бесконечная рекурсия lowering — guard mentions_slot;
+  (5) infer-двойник generic-return: erased `fn_ret_<name>` больше не
+  перехватывает mono-вывод (stash-фолбэк), и `(T, UserType)`-возвраты
+  лоуэрятся через type_ref_to_c под overrides (apply_type_subst_to_ref
+  не знал user-типов в элементах); (6) чекер: passthrough-тайпвар объемлющей
+  fn больше не «не удовлетворяет баунду» (current_fn_generic_names, D72
+  энфорсится на конкретных колл-сайтах); (7) **GC-корень (главная находка):**
+  Boehm НЕ сканирует Windows TLS — handler, живущий ТОЛЬКО в
+  `_nova_handler_<eff>` (форма `with Random = th.seeded(42)` инлайнила вызов
+  фабрики прямо в TLS-присваивание), собирался коллекцией (~32 итерации
+  generate+clone, детерминированный segfault) → use-after-free; emit_with
+  теперь ПИНИТ значение хендлера в stack-локале на время блока (консервативный
+  скан стека держит vtable+ctx+замыкания). Контент property.nv: BoolGen
+  получил поле p_percent (пустой record-литерал не поддержан грамматикой —
+  единственный пустой record в std), Iter[T]→[]T в shrink (протокол в
+  return-позиции), формы конструкторов. std/testing в гейтах, 6/6 тестов.
 
 - **[M-rawmem-typed-copy-wrappers]** (2026-07-08, P2, Plan: 172.13 — generic-mono;
   Wave: после фикса корня) — предложение владельца: типизированные
@@ -2497,12 +2543,43 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - **[M-exp-promotion-blockers]** (2026-07-08, P2-пакет, Plan: 172.13; Wave: батчами после
   первых 4 маркеров) — 6 компиляторных классов, блокирующих последние 6 модулей
   _experimental (детали и репро — в std/_experimental/STATUS.md, разметка волны 2):
-  csv (nested [][]str runtime), toml (Fail-handler mono gap Nova_*Error_p), url
-  (tuple-destructure infer), uuid_namespace (duplicate-symbol md5+sha1 в одном CU),
+  csv (nested [][]str runtime — **ЗАКРЫТ батчем 3, csv PROMOTED**), toml
+  (Fail-handler mono gap Nova_*Error_p — ЗАКРЫТ
+  батчем 3, см. ниже; НОВЫЙ блокер найден), url
+  (tuple-destructure infer), uuid_namespace (duplicate-symbol md5+sha1 в одном CU —
+  **ЗАКРЫТ батчем 3, uuid_namespace PROMOTED**: follow-up к дедупу 88a2ffe75 —
+  квалифицированное имя коллизии теперь доходит и до FORWARD-декларации через
+  mangle_fn; при этом регистрация в file_priv_fn_c_names сужена до коллизий с
+  ИДЕНТИЧНОЙ сигнатурой — сигнатурно-различимые, как encode_with hex/base64,
+  консистентно разруливаются overload-суффиксами D84, их квалификация ломала
+  jwt_test),
   linkedlist (2× self-recursive generic mono — родня [M-option-self-recursive-record-mono]
   агента владельца), retry (E_UNUSED_PREFIX_TYPEVAR двусторонний). Плюс довливной
   вне пакета: std/time/timer_metrics_test CC-FAIL (NovaValue_Timestamp ← int,
   воспроизведён на c65af77ed) — папка time впервые в гейтах.
+
+- **[toml Fail-mono, батч 3]** — корень: mono-name mangling конвенция кодирует
+  pointer-typed T как суффикс `_p` в идентификаторе (`*` не ident-safe) —
+  `Option[ParseTomlError]` (heap sum-type) моно-имя `NovaOpt_Nova_ParseTomlError_p`.
+  `Option[T].unwrap()`'s return-type inference (`infer_expr_c_type`, ДВЕ
+  дублированные копии, emit_c.rs ~44460/~48188) брала extracted-суффикс
+  НАПРЯМУЮ как C-тип вместо реверса `_p`→`*` — `throw err.unwrap()`
+  (toml.nv:287) получал bogus C-тип `Nova_ParseTomlError_p` (не объявлен) →
+  CC-FAIL «unknown type name». Фикс: новый helper
+  `debt_unmangle_ptr_suffix` (emit_c.rs), применён в обеих копиях (третья
+  копия того же паттерна, emit_c.rs:28667, НЕ трогать — там elem_ty
+  используется для построения ДРУГОГО mangled-имени, где `_p` обязан
+  остаться). Конформанс 67/0 без регрессий; std/encoding, std/data чисты.
+  **НОВЫЙ блокер после фикса** (toml всё ещё НЕ готов к промоушену):
+  `Nova_HashMap____nova_str__Nova_TomlValue_p` — «unknown type name» на
+  использовании (поле suum-варианта `TomlTable`, toml.c:740/780/879), хотя
+  typedef ЕСТЬ дальше в файле (toml.c:944/1010) — forward-declare/hoist
+  ordering для mono struct типа, использованного как поле payload'а
+  sum-варианта. Похоже на ТУ ЖЕ зону (typedef-hoist для value-полей
+  записей), что занята агентом [M-option-self-recursive-record-mono]
+  (emit_c.rs/types/mod.rs, явно «не заходить») — НЕ трогал, оставил
+  toml в _experimental. Перепроверить toml после закрытия
+  [M-option-self-recursive-record-mono].
 
 - **[M-c-keyword-mangle-destructure-tail]** (2026-07-08, P3, Plan: 172.13 хвост;
   Wave: с батчем 2-3) — манглинг C-keyword идентификаторов (закрыт батчем 1,
@@ -2511,11 +2588,23 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   зафиксированы автором. Довести теми же каналами + расширить
   conformance/c_keyword_ident_mangling.nv этими позициями.
 
-- **[M-random-u64-path-return-ice]** (2026-07-08, P2, Plan: 172.13 батч 3) — тупик батча 2:
+- **[M-random-u64-path-return-ice]** (2026-07-08, P2, Plan: 172.13 батч 3;
+  **ЗАКРЫТ батчем 3**) — тупик батча 2:
   `Random.u64()` внутри Uuid.v4()/v7() (транзитивно) = ICE «Path call return type unknown»;
   воспроизведён на baseline d987de52d и на уже промоутнутом std/identifiers/uuid.nv
   сам-по-себе — довливной. Блокирует промоушен uuid_namespace (его собственный
   dup-symbol корень ЗАКРЫТ батчем 2, 88a2ffe75).
+  **Корень (батч 3):** `Random` — единственный ambient-эффект, объявленный НЕ
+  в prelude, а в `std/testing/handlers.nv`; CU модуля, не импортирующего
+  testing.handlers (uuid/ulid/retry сами по себе), не имел
+  `effect_schemas["Random"]` → return-тип effect-op'а неизвестен → ICE.
+  **Фикс:** декларация `export type Random effect { u64() -> u64; bytes(n int)
+  -> []u8 }` перенесена в `std/prelude/effects.nv` (прецедент D316 — prelude =
+  единственный источник схемы; в отличие от Time, vtable Random эмитится
+  codegen'ом из декларации — обычный user-effect путь). В handlers.nv осталась
+  только фабрика `seeded()`. Компиляторный код не менялся. Гейты: conformance
+  67/0; std/identifiers, std/testing/handlers, std/concurrency, std/crypto,
+  std/time (кроме задокументированного довливного timer_metrics_test) зелёные.
 
 - **[M-consume-rebind-nested-block-shadow]** (2026-07-08, **P1 — тихий use-after-consume**,
   Plan: 172.13 батч 3) — тупик батча 2: `consume x = StringBuilder.new()` РЕ-БИНД внутри

@@ -60,6 +60,17 @@ pub struct Module {
     /// obligation. Empty (`Default`) until the pass runs; harmless for any
     /// module with no same-scope rebind.
     pub rebind_shadows: std::collections::HashMap<String, String>,
+    /// [M-consume-rebind-nested-block-shadow] (Plan 172.13): spans of
+    /// `consume x = expr` `Let`-statements whose prior binding for `x` lives
+    /// in an ENCLOSING (not the current) lexical scope — a nested-block
+    /// consume-rebind. Nova's own semantics (D347/D9) treat this as updating
+    /// the SAME logical variable (not a fresh block-scoped shadow), so
+    /// codegen must reuse the existing C variable (plain reassignment)
+    /// instead of emitting a new block-scoped C declaration that would go
+    /// out of scope at the end of the block, silently reverting to the
+    /// stale (already-consumed) outer value. Populated by `alpha_rename`;
+    /// empty (`Default`) for any module without this pattern.
+    pub consume_reuse_spans: std::collections::HashSet<crate::diag::Span>,
 }
 
 /// Plan 42 Sub-plan 42.4 (шаг 1, 2026-05-14): per-peer source attribution.

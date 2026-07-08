@@ -216,9 +216,14 @@ fn Parser mut @parse_quantifier_max(start int) Fail[CompileError] -> int {
     }
     ro m = m_str.into_str()
     if m.byte_len() == 0 { return -1 }        // {n,} — unbounded
-    ro parsed = int.try_from(m)
-    if parsed.is_err() { throw InvalidQuantifier { position: start } }
-    parsed!!
+    // [M-d162-structural-throw-sibling] (батч 3): естественная match-форма
+    // возвращена — D162 теперь видит throw внутри match-ветки как явную
+    // обработку error-path (обходной `if parsed.is_err() { throw ... }` +
+    // `parsed!!` волны 3б снят).
+    match int.try_from(m) {
+        Ok(v)  => v
+        Err(_) => throw InvalidQuantifier { position: start }
+    }
 }
 
 // atom := char | '.' | '[' ... ']' | '(' alt ')' | '\\' escape | '^' | '$'

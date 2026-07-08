@@ -97,3 +97,45 @@ test "loop: per-iteration rebind в теле цикла (D347)" {
     }
     assert(total == 1 + 2 + 3)   // (0+1)+(1+1)+(2+1) = 6
 }
+
+// [M-consume-rebind-nested-block-shadow] (P1, Plan 172.13 батч 3): `consume x = expr`
+// re-bound INSIDE a nested if/else block, where `x` was declared in the ENCLOSING
+// (function) scope, must reuse the SAME C variable (plain reassignment) — NOT a fresh
+// block-scoped C declaration that silently reverts to the stale (already-consumed)
+// outer value once the block closes. Behavioral-distinction: if the reset inside the
+// `if`-branch were block-scoped-only, `sb.append('b')` below would land on the
+// ORIGINAL (pre-reset) `sb` (still holding `'a'`), giving `"ab"` instead of `"b"`.
+test "[M-consume-rebind-nested-block-shadow]: reset внутри вложенного if/else виден после блока" {
+    consume sb = StringBuilder.new()
+    sb.append('a')
+    if true {
+        consume sb = StringBuilder.new()   // nested-block consume-rebind of the OUTER sb
+    } else {
+        sb.append('z')
+    }
+    sb.append('b')
+    ro s = sb.into_str()
+    assert(s == "b")
+}
+
+// Same defect, loop-shaped (the original csv.nv-style repro): a consume-rebind inside
+// a nested `if` must be visible to the NEXT loop iteration, not just discarded at the
+// end of that iteration's block. Without the fix this is a silent use-after-consume
+// (`sb.append('x')` at i==3 would operate on the dangling pre-reset builder consumed
+// by `into_str()` two iterations earlier) rather than a clean wrong-value failure.
+test "[M-consume-rebind-nested-block-shadow]: reset виден следующей итерации цикла" {
+    mut parts []str = []
+    consume sb = StringBuilder.new()
+    mut i = 0
+    while i < 4 {
+        if i == 2 {
+            parts.push(sb.into_str())
+            consume sb = StringBuilder.new()
+        } else {
+            sb.append('x')
+        }
+        i += 1
+    }
+    parts.push(sb.into_str())
+    assert(parts == ["xx", "x"])
+}

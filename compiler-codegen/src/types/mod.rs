@@ -14849,6 +14849,17 @@ struct BoundCtx<'a> {
     /// recognized inline. Heap records / protocols / typevars are absent here,
     /// so their `mut` params keep the handle ABI unconstrained (Р6).
     value_type_names: std::collections::HashSet<String>,
+    /// [M-property-testing-rot] (Plan 172.13 батч 3): generic-param NAMES of the
+    /// fn whose body is currently being walked. A nested call inside a bounded
+    /// generic body forwards the enclosing fn's typevar (`property[G Generator[T], T]`
+    /// body → `property_with(gen, ...)` binds callee `G := caller G`) — the
+    /// satisfaction check must recognize the PASSTHROUGH typevar and skip
+    /// (best-effort, mirroring the type-set branch's unknown-name skip): the
+    /// bound IS enforced at every top-level call site where a concrete type is
+    /// bound. Without this, `check_satisfaction` treats `G` as an unknown
+    /// concrete type with no methods → false-positive
+    /// "does not satisfy `Generator` bound".
+    current_fn_generic_names: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -15011,7 +15022,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, current_fn_generic_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -15044,7 +15055,12 @@ impl<'a> BoundCtx<'a> {
                     for p in &f.params {
                         scope.insert(p.name.clone(), p.ty.clone());
                     }
+                    // [M-property-testing-rot]: publish the fn's generic names so
+                    // check_satisfaction can recognize passthrough typevars.
+                    *self.current_fn_generic_names.borrow_mut() =
+                        f.generics.iter().map(|g| g.name.clone()).collect();
                     self.walk_fn_body(f, &mut scope, errors);
+                    self.current_fn_generic_names.borrow_mut().clear();
                 }
                 Item::Test(t) => {
                     // Plan 15: тесты тоже могут содержать generic-вызовы
@@ -16577,6 +16593,15 @@ impl<'a> BoundCtx<'a> {
             // Tuple/Func — пока пропускаем (не обрабатываем составные T).
             _ => return,
         };
+        // [M-property-testing-rot] (Plan 172.13 батч 3): PASSTHROUGH typevar —
+        // the "concrete" type is a generic param of the ENCLOSING fn
+        // (`property[G Generator[T], T]` body calling
+        // `property_with(gen, ...)`). Skip (best-effort, mirrors the type-set
+        // branch's unknown-name skip): the bound is enforced at every call
+        // site that binds a real concrete type.
+        if self.current_fn_generic_names.borrow().contains(&concrete_name) {
+            return;
+        }
         // Built-in primitives автоматически удовлетворяют ничему — у нас
         // нет registry их методов в method_table. Skip (best-effort).
         if matches!(concrete_name.as_str(),
@@ -20241,6 +20266,28 @@ fn expr_has_throw(e: &crate::ast::Expr) -> bool {
             }).unwrap_or(false)
         }
         ExprKind::With { body, .. } => block_has_throw(body),
+        // [M-d162-structural-throw-sibling] (Plan 172.13 батч 3): D162's
+        // "did the coder explicitly handle the error path" evidence must see a
+        // `throw` inside a MATCH ARM (`Err(_) => throw ...`) — the canonical
+        // error-branching form — as well as the other structural branch/loop
+        // containers. Previously only If/Block/With descended, so the natural
+        // `match r { Err(e) => throw ..., Ok(v) => v }` was invisible and
+        // forced the `if x.is_err() { throw ... }` sibling workaround
+        // (волна 3б, toml/regex).
+        ExprKind::Match { arms, .. } => arms.iter().any(|a| match &a.body {
+            crate::ast::MatchArmBody::Expr(x) => expr_has_throw(x),
+            crate::ast::MatchArmBody::Block(b) => block_has_throw(b),
+        }),
+        ExprKind::IfLet { then, else_, .. } => {
+            block_has_throw(then) || else_.as_ref().map(|el| match el {
+                crate::ast::ElseBranch::Block(b) => block_has_throw(b),
+                crate::ast::ElseBranch::If(x) => expr_has_throw(x),
+            }).unwrap_or(false)
+        }
+        ExprKind::While { body, .. }
+        | ExprKind::WhileLet { body, .. }
+        | ExprKind::For { body, .. }
+        | ExprKind::Loop { body, .. } => block_has_throw(body),
         _ => false,
     }
 }
@@ -29121,6 +29168,7 @@ mod primitive_mut_method_tests {
             peer_files: Vec::new(),
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
+            consume_reuse_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -29393,6 +29441,7 @@ mod named_tuple_ctor_infer_tests {
             peer_files: Vec::new(),
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
+            consume_reuse_spans: std::collections::HashSet::new(),
         }
     }
 
@@ -29674,6 +29723,7 @@ mod named_tuple_ctor_infer_tests {
             peer_files: Vec::new(),
             doc: None,
             rebind_shadows: std::collections::HashMap::new(),
+            consume_reuse_spans: std::collections::HashSet::new(),
         };
         let arena = FnDeclArena::new();
         let sig = crate::sig_registry::SigRegistry::build_base(&m);
