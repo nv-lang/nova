@@ -30,6 +30,12 @@
 #include "minicoro.h"
 #endif
 
+/* Plan 173.0 Ф.2: explicit (not relying on transitive minicoro.h include) —
+ * used by the R2 tripwire in nova_scope_grow_children. No-op under NDEBUG
+ * (release builds), matching the rest of the codebase's debug-tripwire
+ * convention (canary/poison checks are debug-only). */
+#include <assert.h>
+
 #include "nova_rt.h"
 /* effects.h is included by nova_rt.h before fibers.h, so NovaFailFrame
  * and _nova_fail_top are visible here. */
@@ -185,6 +191,41 @@ static inline void nova_fiber_yield(void);
  * ~50 KB/scope — nested overflow'ил stack на 5+ уровнях. */
 
 #define NOVA_SCOPE_INITIAL_CAP 16
+
+/* ─── Plan 173.0 Ф.2: per-child error retention (runtime substrate) ───
+ *
+ * Replaces the one-slot `first_error_atomic` CAS (which collapses N
+ * simultaneous remote-child failures into a single winner — decisions 1/2
+ * of docs/plans/173.0-concurrency-runtime-substrate.md) with a genuine
+ * per-child slot: each M:N remote child is assigned its own index
+ * (`_nova_parent_slot`, NovaSpawnCtxBase) at spawn time; on throw, that
+ * child writes ONLY its own slot — no CAS, no collapsing, N failures stay
+ * N distinct retained records.
+ *
+ * Deliberately a SEPARATE index space from the local-scheduling arrays
+ * (`fibers[]`/`fiber_error[]`/`count`, Ф.1 — frozen, not touched here):
+ * those stay dedicated to the bootstrap/single-thread path. Under the
+ * shipped auto-arm design (codegen's `emit_main_function` calls
+ * `_auto_arm_if_needed()` as main()'s first statement) the M:N remote path
+ * is live before any user `spawn` executes, so a single scope object never
+ * sees BOTH local- and remote-scheduled children in practice — the two
+ * index spaces never collide within one NovaFiberQueue instance.
+ *
+ * R2 tripwire (§EXEC risk R2): capacity is frozen once the drain loop
+ * starts (`_drain_started`) — every remote child is spawned into the scope
+ * on the calling thread BEFORE `nova_supervised_run_impl`'s loop begins
+ * (codegen emits all `spawn` statements before the scope-exit drain call,
+ * and a spawned child's body has no reference to the parent's stack-local
+ * NovaFiberQueue, so it cannot itself spawn further children into it) —
+ * so grow-during-drain is structurally unreachable; the assert in
+ * `nova_scope_grow_children` proves it stays that way. */
+typedef struct {
+    const char*   msg;      /* NULL = empty slot (no error recorded yet) */
+    NovaThrowKind kind;      /* USER / CANCEL / USER_TYPED */
+    void*         reason;    /* boxed T for CANCEL (GC-managed) */
+    void*         payload;   /* boxed T for USER_TYPED (GC-managed) */
+    NovaTypeId    tid;       /* payload type id for USER_TYPED */
+} NovaChildError;
 
 typedef struct {
     /* Plan 22 Ф.7: dynamic arrays через managed heap.
@@ -384,6 +425,22 @@ typedef struct {
      * scope's freed stack frame, and the next scope_init would inherit a
      * garbage deadline_ns from it. NULL for the top-level scope. */
     struct NovaFiberQueue* saved_active_scope;
+
+    /* ─── Plan 173.0 Ф.2/Ф.3: per-child retention (see NovaChildError above) ───
+     * Separate index space from fibers[]/fiber_error[]/count (Ф.1, frozen).
+     * Populated ONLY by the M:N remote-spawn path (nova_runtime_spawn_into /
+     * nova_scope_alloc_child_slot); bootstrap/local spawn is unaffected. */
+    NovaChildError* child_error;     /* dynamic [child_capacity], NULL until 1st remote spawn */
+    void**          child_ctx;       /* dynamic [child_capacity] — retained SpawnCtx (Ф.3 R1-guard);
+                                       * NULL entry = child still alive or completed without error
+                                       * (ctx already recycled to the pool normally) */
+    int             child_count;     /* next free index == number of remote children ever spawned */
+    int             child_capacity;  /* allocated length of child_error[]/child_ctx[] */
+    /* R2 tripwire (§EXEC risk R2): set true at the top of
+     * nova_supervised_run_impl's drain loop; nova_scope_grow_children asserts
+     * this is still false — proves grow-during-drain never happens (see
+     * comment above NovaChildError). Debug-only cost (no-op in NDEBUG). */
+    nova_bool       _drain_started;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -651,6 +708,14 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * restore in nova_supervised_run_impl (parent at init time; codegen sets
      * _nova_active_scope=&q only AFTER init). */
     q->saved_active_scope = _nova_active_scope;
+    /* Plan 173.0 Ф.2/Ф.3: per-child retention — lazy-alloc'нутся в
+     * nova_scope_alloc_child_slot (первый remote spawn). Idle scope
+     * (никогда не spawn'ил remote-ребёнка) = нулевой overhead. */
+    q->child_error    = NULL;
+    q->child_ctx      = NULL;
+    q->child_count    = 0;
+    q->child_capacity = 0;
+    q->_drain_started = false;
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -820,6 +885,90 @@ static inline void nova_scope_pin_ctx(NovaFiberQueue* scope, void* ctx) {
         scope->ctx_pins_cap = new_cap;
     }
     scope->ctx_pins[scope->ctx_pins_count++] = ctx;
+}
+
+/* Plan 173.0 Ф.2: grow child_error[]/child_ctx[] to at least new_cap slots.
+ * Mirrors nova_scope_pin_ctx's growth style (nova_alloc for child_error —
+ * GC-scanned heap, since `reason`/`payload` fields are boxed-T GC pointers
+ * that must stay traceable; nova_alloc_uncollectable for child_ctx — same
+ * discipline as ctx_pins, since retained SpawnCtx buffers must survive GC
+ * pressure across the whole retention window Ф.3 needs them for).
+ *
+ * R2 tripwire (§EXEC risk R2): asserts !scope->_drain_started. Every remote
+ * child is spawned into the scope on the calling thread BEFORE the drain
+ * loop starts (nova_supervised_run_impl sets _drain_started=true at loop
+ * entry) — a spawned child's body has no reference to the parent's
+ * stack-local NovaFiberQueue, so it structurally cannot call back into this
+ * grow path during drain. The assert proves that invariant holds instead of
+ * silently trusting it — if it ever fires, the fix is chunked stable-address
+ * storage (Option A fallback, §EXEC risk R2), NOT loosening this assert. */
+static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) {
+    if (new_cap <= scope->child_capacity) return;
+    assert(!scope->_drain_started &&
+           "[M-173.0-R2] child_error[] grow-during-drain — torn-base risk, "
+           "see §EXEC risk R2 in docs/plans/173.0-concurrency-runtime-substrate.md");
+    int cap = scope->child_capacity > 0 ? scope->child_capacity : NOVA_SCOPE_INITIAL_CAP;
+    while (cap < new_cap) cap *= 2;
+    NovaChildError* new_err = (NovaChildError*)nova_alloc(sizeof(NovaChildError) * (size_t)cap);
+    void**          new_ctx = (void**)nova_alloc_uncollectable(sizeof(void*) * (size_t)cap);
+    if (scope->child_error) {
+        for (int i = 0; i < scope->child_count; i++) {
+            new_err[i] = scope->child_error[i];
+            new_ctx[i] = scope->child_ctx[i];
+        }
+        nova_free_uncollectable(scope->child_ctx);
+        /* child_error's old array is regular GC-collectable — no manual free. */
+    }
+    for (int i = scope->child_count; i < cap; i++) {
+        new_err[i].msg = NULL;
+        new_err[i].kind = NOVA_THROW_USER;
+        new_err[i].reason = NULL;
+        new_err[i].payload = NULL;
+        new_err[i].tid = 0;
+        new_ctx[i] = NULL;
+    }
+    scope->child_error    = new_err;
+    scope->child_ctx      = new_ctx;
+    scope->child_capacity = cap;
+}
+
+/* Plan 173.0 Ф.2/A2.2: allocate a fresh per-child retention slot for a
+ * REMOTE (M:N) child, at spawn time, on the thread executing the `spawn`
+ * statement. Not lock-protected — matches the established invariant of
+ * nova_scope_pin_ctx just above (also non-atomic): spawn-time calls into a
+ * given parent scope happen sequentially on one thread (D50 structured
+ * concurrency — a spawned body has no handle to the parent's local scope
+ * variable, so it cannot itself call spawn into it), so concurrent callers
+ * of THIS function against the SAME scope do not occur in practice. */
+static inline int nova_scope_alloc_child_slot(NovaFiberQueue* scope) {
+    if (scope->child_count >= scope->child_capacity) {
+        nova_scope_grow_children(scope, scope->child_count + 1);
+    }
+    int idx = scope->child_count++;
+    scope->child_error[idx].msg = NULL;
+    scope->child_ctx[idx] = NULL;
+    return idx;
+}
+
+/* Plan 173.0 Ф.2/A2.4: read-API — collect all retained (non-empty) child
+ * errors for this scope into caller-supplied `out` (capacity `cap`).
+ * Returns the number written. Safe to call any time (empty slots simply
+ * skipped) but the intended contract (§EXEC A2.4) is: call only after
+ * `pending_remote == 0` has been observed (the existing acquire-load gate
+ * already present at every nova_supervised_run_impl/drain_main_scope exit
+ * path) — that established happens-before is what makes the plain (non-
+ * atomic) `child_error[]` writes below visible here. */
+static inline int nova_scope_collect_child_errors(NovaFiberQueue* scope,
+                                                    NovaChildError* out,
+                                                    int cap) {
+    if (!scope || !scope->child_error) return 0;
+    int n = 0;
+    for (int i = 0; i < scope->child_count && n < cap; i++) {
+        if (scope->child_error[i].msg != NULL) {
+            out[n++] = scope->child_error[i];
+        }
+    }
+    return n;
 }
 
 /* ---- D75 (revised, Plan 47): CancelToken — caller-owned cancellation handle ----
@@ -1373,6 +1522,16 @@ static inline NovaCancelToken* nova_cancel_token_merge2(
 
 typedef struct {
     NovaFiberQueue*      _nova_parent_scope;
+    /* Plan 173.0 Ф.2 (A2.2): index into _nova_parent_scope's child_error[]/
+     * child_ctx[] retention arrays (nova_scope_alloc_child_slot), set by
+     * nova_runtime_spawn_into BEFORE the remote push. -1 = not assigned
+     * (single-thread/bootstrap spawn via nova_fiber_spawn_into, or the
+     * orphan detach path — neither participates in Ф.2 retention).
+     * MUST be mirrored in BOTH codegen SpawnCtx_N layouts (emit_c.rs
+     * emit_spawn + emit_detach), immediately after _nova_parent_scope —
+     * same FATAL-if-forgotten discipline as every other NovaSpawnCtxBase
+     * field (see schedlink/_nova_park_state notes below). */
+    int                  _nova_parent_slot;
     int                  _nova_worker_slot;
     NovaFailFrame*       _nova_saved_fail_top;
     NovaInterruptFrame*  _nova_saved_interrupt_top;
@@ -1821,6 +1980,82 @@ static inline void nova_fiber_report_atomic_kinded(NovaFiberQueue* parent,
     }
 }
 
+/* Plan 173.0 Ф.2 (A2.3): per-child kinded error report for the M:N remote
+ * path. Wraps nova_fiber_report_atomic_kinded (UNCHANGED — still the cheap
+ * single-slot cancel-signal / first-error fast path the existing re-throw
+ * tail reads) with a per-slot write into this child's OWN
+ * parent->child_error[base->_nova_parent_slot] entry — no CAS, no
+ * collapsing: each child owns a disjoint index (assigned once at spawn
+ * time by nova_scope_alloc_child_slot, never shared), so concurrent
+ * siblings writing their own slots never race each other.
+ *
+ * Ordering (R2 happens-before, §EXEC risk R2): called from the spawn
+ * entry-function's catch block STRICTLY BEFORE the epilogue's
+ * `nova_aint_fetch_sub_release(&pending_remote)` a few lines later in the
+ * SAME thread's program order (emit_c.rs emit_spawn) — the identical
+ * ordering discipline this file already documents for first_error_atomic
+ * ("read через nova_aptr_load(acquire) в main thread после
+ * pending_remote == 0 — корректный happens-before", NovaFiberQueue comment
+ * above); child_error[] rides the same established guarantee. */
+static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
+                                                   const char* msg,
+                                                   NovaThrowKind kind,
+                                                   void* reason_ptr,
+                                                   void* payload,
+                                                   NovaTypeId tid) {
+    if (!base || !base->_nova_parent_scope || !msg) return;
+    NovaFiberQueue* parent = base->_nova_parent_scope;
+    nova_fiber_report_atomic_kinded(parent, msg, kind, reason_ptr, payload, tid);
+    int slot = base->_nova_parent_slot;
+    if (slot >= 0 && parent->child_error && slot < parent->child_capacity) {
+        parent->child_error[slot].msg     = msg;
+        parent->child_error[slot].kind    = kind;
+        parent->child_error[slot].reason  = reason_ptr;
+        parent->child_error[slot].payload = payload;
+        parent->child_error[slot].tid     = tid;
+    }
+}
+
+/* Plan 173.0 Ф.3 (A3.2/A3.3 — R1-guard): called by the worker loop right
+ * after a remote child dies (MCO_DEAD), BEFORE routing its SpawnCtx buffer
+ * back to the pool (runtime.c nova_spawn_pool_release call sites). If this
+ * child recorded an error (child_error[slot].msg != NULL — written by
+ * nova_fiber_report_child_kinded strictly before this point in the SAME
+ * child fiber's execution: same thread, program order, no synchronization
+ * needed), retain the ctx pointer in child_ctx[slot] instead of releasing
+ * it — the Ф.3 decision-loop (nova_supervised_run_impl) needs it alive.
+ *
+ * R1 risk (§EXEC): if we released to the pool here, the buffer could be
+ * handed to the NEXT nova_spawn_pool_acquire before the decision-loop reads
+ * the retained ctx — the retained pointer would then alias a live,
+ * differently-captured fiber's storage → silent corruption. This is the
+ * ONLY point where that decision can be made (the ctx is about to be freed
+ * or pooled either way, right here, right now).
+ *
+ * Returns true if retained (caller MUST skip nova_spawn_pool_release for
+ * this ctx), false if the caller should release exactly as before (clean
+ * completion, no parent scope, or no slot assigned — e.g. bootstrap/local
+ * spawn, or the orphan detach path, neither of which sets a slot ≥ 0). */
+static inline bool nova_scope_retain_or_release_child(NovaSpawnCtxBase* dead_ctx) {
+    if (!dead_ctx || !dead_ctx->_nova_parent_scope || dead_ctx->_nova_parent_slot < 0) {
+        return false;
+    }
+    NovaFiberQueue* parent = dead_ctx->_nova_parent_scope;
+    int slot = dead_ctx->_nova_parent_slot;
+    if (slot >= parent->child_capacity || !parent->child_error
+        || parent->child_error[slot].msg == NULL) {
+        return false;  /* clean completion (or slot never grown) — normal release. */
+    }
+    parent->child_ctx[slot] = (void*)dead_ctx;
+    return true;
+}
+
+/* Plan 173.0 Ф.3 (A3.4): forward-decl — defined in runtime.c, declared in
+ * runtime.h which (like the 83.10.3 decls just below) is included AFTER
+ * fibers.h in nova_rt.h. Needed by nova_supervised_run_impl's decision-loop
+ * tail to release retained child ctx buffers back to their pool. */
+void nova_spawn_pool_release(void* ctx, size_t size);
+
 /* Plan 83.10.3 (2026-05-26): forward-decls — runtime.h included AFTER
  * fibers.h in nova_rt.h. Forward-declare to allow use in fibers.h functions.
  * Returns -1 on main thread, worker id (>=0) on worker thread. */
@@ -2097,6 +2332,30 @@ static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
     uv_run(loop, UV_RUN_NOWAIT);  /* release handle via NOWAIT pass */
 }
 
+/* Plan 173.0 Ф.3 (A3.5): internal decision hook — called once per retained
+ * child failure by the serialized decision-loop in nova_supervised_run_impl
+ * (below), BEFORE that child's SpawnCtx is freed. `idx`/`err`/`ctx` are all
+ * still valid at the call (ctx alive precisely because Ф.3's R1-guard
+ * withheld it from the SpawnCtx pool at death — see
+ * nova_scope_retain_or_release_child above).
+ *
+ * THIS IS THE HOOK POINT FOR 173.2 (supervision-as-effect) — `on_child_fail`
+ * dispatch replaces this body there. Plan 173.0 itself does not implement
+ * any supervision policy (per §3/§EXEC: "hook-точка для 173.2 ... сам
+ * эффект НЕ реализуешь"): the DEFAULT policy for 173.0 is a pure observer
+ * that changes nothing — the actual escalate-all-or-throw decision (first
+ * USER error re-thrown, CANCEL-only silently swallowed) remains driven
+ * EXACTLY as before by q->first_error / q->first_error_atomic in this
+ * function's own tail (unchanged control flow, unchanged byte-for-byte
+ * externally observable behaviour — G-NEG parity gate). This function
+ * existing + being called once per failure with a live ctx is the
+ * infrastructure guarantee 173.0 promises; it does nothing else yet. */
+static inline void nova_supervised_decide(NovaFiberQueue* scope, int idx,
+                                           const NovaChildError* err, void* ctx) {
+    (void)scope; (void)idx; (void)err; (void)ctx;
+    /* Default policy (Plan 173.0): no-op observer. See comment above. */
+}
+
 /* Round-robin run: resume each live fiber until all are dead.
  * After all fibers complete, if any threw — re-throw on main-flow.
  *
@@ -2138,6 +2397,11 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * `_dl_fired` so the tail throws a typed TimeoutError. */
     int64_t _dl_ns    = q->deadline_ns;
     bool    _dl_fired = false;
+    /* Plan 173.0 Ф.2 R2 tripwire: latch BEFORE the drain loop starts — every
+     * remote child was spawned into `q` on this thread earlier in program
+     * order (see NovaChildError comment). nova_scope_grow_children asserts
+     * this stays false for its whole call, proving no grow-during-drain. */
+    q->_drain_started = true;
     for (;;) {
         int alive = nova_supervised_step(q);
         /* Plan 174 (D349): deadline gate. Fire once, and only if the scope
@@ -2212,6 +2476,30 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */
     nova_sched_drop_state(q);
+    /* Plan 173.0 Ф.3 (A3.4): serialized failure-decision loop. Runs exactly
+     * here — pending_remote==0 already observed (loop above only exits with
+     * remote==0), so every remote child that will ever report is done
+     * reporting; nova_sched_drop_state just ran, so this is STRICTLY BEFORE
+     * ctx_pins is freed below (§EXEC ordering: retention(step-death) →
+     * loop/hook(here) → free ctx(ctx_pins block) → re-throw(tail)).
+     * Iterates every retained failure ONCE, ctx alive at the call (Ф.3
+     * R1-guard withheld it from the pool at death) — then releases each
+     * retained ctx back to its pool now that the decision hook has run. */
+    if (q->child_error) {
+        for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
+            if (q->child_error[_nv_di].msg != NULL) {
+                void* _nv_dctx = q->child_ctx ? q->child_ctx[_nv_di] : NULL;
+                nova_supervised_decide(q, _nv_di, &q->child_error[_nv_di], _nv_dctx);
+            }
+        }
+        for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
+            if (q->child_ctx && q->child_ctx[_nv_di]) {
+                NovaSpawnCtxBase* _nv_rctx = (NovaSpawnCtxBase*)q->child_ctx[_nv_di];
+                nova_spawn_pool_release(_nv_rctx, _nv_rctx->_nova_pool_size);
+                q->child_ctx[_nv_di] = NULL;
+            }
+        }
+    }
     /* Plan 44.5 Layer 5: prefer cross-worker first_error_atomic (set
      * через CAS из worker fiber'а) над single-thread first_error.
      * После pending_remote == 0 cause-effect через atomic release/acquire
