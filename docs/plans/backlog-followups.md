@@ -1993,10 +1993,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (B4) скалярные T.try_from(str) ×12 → СЛИТЬ с программой T.parse (174.1, R3-имя) —
   отдельный заход по канону parse.nv. Проверка: греп-инвариант новых имён в emit_c = 0.
 - **[M-emit-c-dispatcher-triplication]** (2026-07-07, P2, Wave: 172.12-семья/A5) —
-  диспетчер-блок (Channel/ChanReader/Monotonic/CancelToken/bitcast/str.from/Error.new/
-  try_from/serialize) СКОПИПАЩЕН ТРИЖДЫ в emit_c.rs (~28300-31700, ~42500-43700,
-  ~45800-47300; сдвиг ровно 1087 строк) — любой фикс требует 2-3 синхронных правок.
-  Схлопнуть в одну функцию при A5/лоуэринге армов.
+  ✅ ЗАКРЫТ 2026-07-08 (172.12 §14.19, коммиты `503394757`+`eab52620d`): обе infer-копии
+  (channel-6q + недостижимый legacy-match Call-арм; 2485 строк дословно, 0 различий)
+  схлопнуты в единый хелпер `infer_call_ret_c`; −2476 строк. «Третья копия» ~28300 =
+  `emit_call` — не копия инференса (эмиссия, `&mut self`, `Result`), остаётся своим
+  каналом по построению. Фикс интринсика отныне = 1 infer-правка (+1 emit при
+  необходимости), было 2-3 синхронных.
 - **[M-checker-builtin-mut-method-list]** (2026-07-07, P3, Wave: 185/172-семья) —
   is_builtin_mut_method (types/mod.rs:23146) — checker-эвристика со списком mut-методов
   Vec/Map/Set, дублирует знание о реальных .nv-методах (дрейф-риск класса gc.nv).
