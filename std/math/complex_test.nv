@@ -1,0 +1,212 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std.math.complex — tests (extracted from complex.nv per module-test convention).
+
+#prelude(core, runtime, collections, protocols)
+module math.complex_test
+
+import std.math.complex
+
+// `[]Complex`/`for`) — известный codegen-gap: `Vec[Complex]` (named-tuple,
+// D215) в этом compile unit конфликтует с представлением module-level
+// `const`-значений того же типа (`ZERO`/`ONE`/`I`) — двойная репрезентация
+// `NovaTuple_Complex` (по значению vs по указателю) даёт conflicting-types
+// в C-кодогене. Прямая проверка одного значения этот путь не задевает.
+fn assert_round_trip(z Complex) -> () {
+    ro s = z.to_str()
+    ro parsed Complex = Complex.try_from(s)!!
+    assert(parsed.approx_eq(z, 1e-12))
+}
+
+test "constructors: прямой record-литерал / re: / im: / from_polar" {
+    ro z = Complex(3.0, 4.0)
+    assert(z.re == 3.0)
+    assert(z.im == 4.0)
+
+    // Complex(re: x) — действительная часть.
+    ro r = Complex(re: 5.0)
+    assert(r.is_real())
+    assert(r.re == 5.0)
+
+    ro im = Complex(im: 7.0)
+    assert(im.is_imag())
+    assert(im.im == 7.0)
+
+    // Тот же конструктор, повторно (named-field literal — не два разных пути).
+    ro r2 Complex = Complex(re: 5.0)
+    assert(r2== r)
+}
+
+test "addition: commutative and associative" {
+    ro a = Complex(1.0, 2.0)
+    ro b = Complex(3.0, 4.0)
+    ro c = Complex(-1.0, 5.0)
+
+    ro ab = a + b
+    ro ba = b + a
+    assert(ab== ba)                       // a+b == b+a
+    assert(ab.re == 4.0)
+    assert(ab.im == 6.0)
+
+    ro abc1 = (a + b) + c
+    ro abc2 = a + (b + c)
+    assert(abc1== abc2)                   // ассоциативность
+}
+
+test "negation and subtraction" {
+    ro z = Complex(2.0, -3.0)
+    ro neg = -z
+    assert(neg.re == -2.0)
+    assert(neg.im == 3.0)
+
+    ro zero = z + neg
+    assert(zero.is_zero())
+
+    ro diff = Complex(5.0, 5.0) - Complex(2.0, 1.0)
+    assert(diff.re == 3.0)
+    assert(diff.im == 4.0)
+}
+
+test "multiplication: i * i == -1" {
+    ro i_sq = I * I
+    assert(i_sq== -ONE)                   // основное свойство мнимой единицы
+
+    ro z = Complex(2.0, 3.0)
+    ro zi = z * I
+    // (2+3i) * i = 2i + 3i² = -3 + 2i
+    assert(zi.re == -3.0)
+    assert(zi.im == 2.0)
+}
+
+test "multiplication: distributive" {
+    ro a = Complex(1.0, 2.0)
+    ro b = Complex(3.0, -1.0)
+    ro c = Complex(0.0, 4.0)
+
+    ro lhs = a * (b + c)
+    ro rhs = (a * b) + (a * c)
+    assert(lhs.approx_eq(rhs, 1e-12))
+}
+
+test "scalar times: z * f64" {
+    ro z = Complex(2.0, 3.0)
+    ro scaled = z.times(2.0)
+    assert(scaled.re == 4.0)
+    assert(scaled.im == 6.0)
+}
+
+test "division: z / z == 1 (для z != 0)" {
+    ro z = Complex(3.0, 4.0)
+    ro one = z / z
+    assert(one.approx_eq(ONE, 1e-12))
+}
+
+test "inverse: z * z.inv() == 1" {
+    ro z = Complex(2.0, 5.0)
+    ro prod = z * z.inv()
+    assert(prod.approx_eq(ONE, 1e-12))
+}
+
+test "conj: re/im сохраняются и инвертируются" {
+    ro z = Complex(3.0, -4.0)
+    ro c = z.conj()
+    assert(c.re == 3.0)
+    assert(c.im == 4.0)
+
+    // z * conj(z) == |z|² (вещественное)
+    ro prod = z * c
+    assert(prod.is_real())
+    assert(prod.re == 25.0)                 // 3² + 4² = 25
+}
+
+test "abs / norm_sqr для (3, 4)" {
+    ro z = Complex(3.0, 4.0)
+    assert(z.norm_sqr() == 25.0)
+    assert(z.abs() == 5.0)                  // 3-4-5 треугольник
+}
+
+test "from_polar / arg: round-trip" {
+    ro r = 2.0
+    ro theta = 1.0                          // ~57°
+    ro z = Complex.from_polar(r, theta)
+    // Модуль восстанавливается точно.
+    assert((z.abs() - r).abs() < 1e-12)
+    // Аргумент восстанавливается точно.
+    assert((z.arg() - theta).abs() < 1e-12)
+}
+
+test "predicates" {
+    assert(ZERO.is_zero())
+    assert(ONE.is_real())
+    assert(I.is_imag())
+    assert(!ZERO.is_imag())                  // 0 не считается чисто мнимым
+    assert(!ONE.is_imag())
+}
+
+test "to_str(): формат для разных случаев" {
+    ro s_real str = Complex(re: 3.0).to_str()
+    assert(s_real == "3")        // nova_f64_to_str uses %g: strips trailing zero
+
+    ro s_imag str = Complex(im: 2.0).to_str()
+    assert(s_imag == "2i")       // same: %g → "2", not "2.0"
+
+    ro s_pos str = Complex(1.0, 2.0).to_str()
+    assert(s_pos == "1+2i")      // same: %g → "1" and "2"
+
+    ro s_neg str = Complex(1.0, -2.0).to_str()
+    assert(s_neg == "1-2i")      // %g on -2.0 → "-2"
+}
+
+test "extension method j(): мнимая единица" {
+    ro z1 = 2.0.j()
+    assert(z1== Complex(im: 2.0))
+
+    ro z2 = 3.j()
+    assert(z2== Complex(im: 3.0))
+
+    // Композиция явных static-конструкторов (для действительной части) + j() (для мнимой):
+    //   `Complex(re: 2) + 3.j()`
+    ro z3 = Complex(re: 2) + 3.j()
+    assert(z3.re == 2.0)
+    assert(z3.im == 3.0)
+}
+
+test "Complex.try_from(str): чисто действительное" {
+    ro z = Complex.try_from("3.0")!!
+    assert(z.re == 3.0)
+    assert(z.im == 0.0)
+}
+
+test "Complex.try_from(str): чисто мнимое" {
+    ro z = Complex.try_from("2.0i")!!
+    assert(z.re == 0.0)
+    assert(z.im == 2.0)
+
+    ro neg = Complex.try_from("-3.0i")!!
+    assert(neg.re == 0.0)
+    assert(neg.im == -3.0)
+}
+
+test "Complex.try_from(str): полная форма + и -" {
+    ro pos = Complex.try_from("1.0+2.0i")!!
+    assert(pos.re == 1.0)
+    assert(pos.im == 2.0)
+
+    ro neg = Complex.try_from("1.0-2.0i")!!
+    assert(neg.re == 1.0)
+    assert(neg.im == -2.0)
+}
+
+test "round-trip: try_from(z.to_str()) == z для всех канонических форм" {
+    assert_round_trip(Complex(3.0, 0.0))
+    assert_round_trip(Complex(im: 2.0))
+    assert_round_trip(Complex(1.0, 2.0))
+    assert_round_trip(Complex(1.0, -2.0))
+    assert_round_trip(Complex(0.0, 0.0))
+}
+
+test "Complex.try_from(str): невалидный формат → Err" {
+    match Complex.try_from("not a number") {
+        Ok(_)  => assert(false)
+        Err(InvalidFormat) | Err(NotANumber) => ()
+    }
+}

@@ -2503,3 +2503,10 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   агента владельца), retry (E_UNUSED_PREFIX_TYPEVAR двусторонний). Плюс довливной
   вне пакета: std/time/timer_metrics_test CC-FAIL (NovaValue_Timestamp ← int,
   воспроизведён на c65af77ed) — папка time впервые в гейтах.
+
+- **[M-c-keyword-mangle-destructure-tail]** (2026-07-08, P3, Plan: 172.13 хвост;
+  Wave: с батчем 2-3) — манглинг C-keyword идентификаторов (закрыт батчем 1,
+  f8db4abbe) НЕ распространён на tuple/record-destructure bind-имена и пары
+  `if x is T`-narrowing / defer-capture — сайты не задеты репро батча 1, честно
+  зафиксированы автором. Довести теми же каналами + расширить
+  conformance/c_keyword_ident_mangling.nv этими позициями.
