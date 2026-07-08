@@ -2613,11 +2613,21 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   write_all), conformance PASS.
 
 - **[M-c-keyword-mangle-destructure-tail]** (2026-07-08, P3, Plan: 172.13 хвост;
-  Wave: с батчем 2-3) — манглинг C-keyword идентификаторов (закрыт батчем 1,
+  **ЗАКРЫТ батчем 4**) — манглинг C-keyword идентификаторов (закрыт батчем 1,
   f8db4abbe) НЕ распространён на tuple/record-destructure bind-имена и пары
   `if x is T`-narrowing / defer-capture — сайты не задеты репро батча 1, честно
   зафиксированы автором. Довести теми же каналами + расширить
   conformance/c_keyword_ident_mangling.nv этими позициями.
+  **Реализация (батч 4):** тем же каналом `mangle_field_name` (text-only,
+  var_types на raw-имени) закрыты 7 декларационных сайтов emit_c.rs:
+  emit_tuple_destructure ×3 (Channel.new-пара, direct-pairing `= (a,b)`,
+  general tmp-struct путь), pattern_bind_typed Tuple-Ident,
+  pattern_bind_typed Record ×4 (plain shorthand/renamed + sum-variant
+  shorthand/renamed). `if x is T` (keyword-именованный scrutinee) и
+  defer-capture keyword-локала эмпирически оказались УЖЕ покрыты
+  батчем 1 (Ident-fallback чтения + обычный let-путь деклараций) —
+  пиннированы тестами. conformance/c_keyword_ident_mangling.nv расширен
+  позициями 5-8 (5 новых тестов), PASS.
 
 - **[M-random-u64-path-return-ice]** (2026-07-08, P2, Plan: 172.13 батч 3;
   **ЗАКРЫТ батчем 3**) — тупик батча 2:
