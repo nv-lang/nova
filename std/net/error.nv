@@ -138,4 +138,4 @@ export fn NetError @to_error_kind() -> ErrorKind {
 /// (`write_all`/`read_to_vec`/`read_text`/the split halves keep returning
 /// `NetError` directly).
 #stable(since = "0.1")
-export fn NetError @to_io_error(op str) -> IoError => IoError.of(@to_error_kind(), op)
+export fn NetError @to_io_error(op str) -> IoError => IoError.new(@to_error_kind(), op)

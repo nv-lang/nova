@@ -65,7 +65,7 @@ export type IoError value {
 /// Leaf error with a categorised kind and an operation name. `raw_os = 0`
 /// (Nova-synthesised, no OS code).
 #stable(since = "0.1")
-export fn IoError.of(kind ErrorKind, op str) -> IoError =>
+export fn IoError.new(kind ErrorKind, op str) -> IoError =>
     { kind, raw_os: 0, op }
 
 /// Error carrying a raw OS code. `kind` is the categorised projection of

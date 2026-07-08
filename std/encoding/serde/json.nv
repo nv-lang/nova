@@ -70,7 +70,7 @@ fn JsonSerializer mut @put(v JsonValue) -> Result[(), SerError] {
 
 fn JsonSerializer mut @set_pending(key str) -> Result[(), SerError] {
     match @stack.pop() {
-        None => Err(SerError.of(SerOther("field key outside container")))
+        None => Err(SerError.new(SerOther("field key outside container")))
         Some(mut fr) => {
             fr.pending = key
             @stack.push(fr)
@@ -82,7 +82,7 @@ fn JsonSerializer mut @set_pending(key str) -> Result[(), SerError] {
 fn JsonSerializer mut @finish_obj() -> Result[(), SerError] {
     @depth = @depth - 1
     match @stack.pop() {
-        None    => Err(SerError.of(SerOther("end without begin")))
+        None    => Err(SerError.new(SerOther("end without begin")))
         Some(fr) => @put(JsonValue.object(fr.obj))
     }
 }
@@ -96,19 +96,19 @@ fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] {
     // 2^53`, strict), so a value this encodes is one deser_int accepts back.
     // `json_encode(9007199254740993)` is `Err(SerLossyInteger)`, never ...992.
     if v >= 9007199254740992 || v <= -9007199254740992 {
-        return Err(SerError.of(SerLossyInteger(str.from(v))))
+        return Err(SerError.new(SerLossyInteger(str.from(v))))
     }
     @put(JsonValue.num(v as f64))
 }
 fn JsonSerializer mut @serialize_uint(v u64) -> Result[(), SerError] {
     if v >= 9007199254740992 {
-        return Err(SerError.of(SerLossyInteger(str.from(v))))
+        return Err(SerError.new(SerLossyInteger(str.from(v))))
     }
     @put(JsonValue.num(v as f64))
 }
 fn JsonSerializer mut @serialize_float(v f64) -> Result[(), SerError] {
     if v.is_nan() || v.is_infinite() {
-        return Err(SerError.of(NonFiniteFloat))
+        return Err(SerError.new(NonFiniteFloat))
     }
     @put(JsonValue.num(v))
 }
@@ -120,7 +120,7 @@ fn JsonSerializer mut @serialize_none() -> Result[(), SerError] => @put(JsonValu
 
 fn JsonSerializer mut @begin_struct(name str, len int) -> Result[(), SerError] {
     @depth = @depth + 1
-    if @depth > @max_depth { return Err(SerError.of(SerDepthLimit)) }
+    if @depth > @max_depth { return Err(SerError.new(SerDepthLimit)) }
     @stack.push(SerFrame.obj_frame())
     Ok(())
 }
@@ -129,7 +129,7 @@ fn JsonSerializer mut @end_struct() -> Result[(), SerError] => @finish_obj()
 
 fn JsonSerializer mut @begin_map(len int) -> Result[(), SerError] {
     @depth = @depth + 1
-    if @depth > @max_depth { return Err(SerError.of(SerDepthLimit)) }
+    if @depth > @max_depth { return Err(SerError.new(SerDepthLimit)) }
     @stack.push(SerFrame.obj_frame())
     Ok(())
 }
@@ -138,14 +138,14 @@ fn JsonSerializer mut @end_map() -> Result[(), SerError] => @finish_obj()
 
 fn JsonSerializer mut @begin_seq(len int) -> Result[(), SerError] {
     @depth = @depth + 1
-    if @depth > @max_depth { return Err(SerError.of(SerDepthLimit)) }
+    if @depth > @max_depth { return Err(SerError.new(SerDepthLimit)) }
     @stack.push(SerFrame.arr_frame())
     Ok(())
 }
 fn JsonSerializer mut @end_seq() -> Result[(), SerError] {
     @depth = @depth - 1
     match @stack.pop() {
-        None     => Err(SerError.of(SerOther("end_seq without begin")))
+        None     => Err(SerError.new(SerOther("end_seq without begin")))
         Some(fr) => @put(JsonValue.array(fr.arr))
     }
 }
@@ -203,7 +203,7 @@ fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
         None => Err(DeError.unexpected("int", json_kind(@cur)))
         Some(n) => {
             if !is_exact_int(n) {
-                Err(DeError.of(LossyInteger(str.from(n))))
+                Err(DeError.new(LossyInteger(str.from(n))))
             } else {
                 Ok(n as int)
             }
@@ -215,9 +215,9 @@ fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
         None => Err(DeError.unexpected("uint", json_kind(@cur)))
         Some(n) => {
             if n < 0.0 {
-                Err(DeError.of(OutOfRange(str.from(n))))
+                Err(DeError.new(OutOfRange(str.from(n))))
             } else if !is_exact_int(n) {
-                Err(DeError.of(LossyInteger(str.from(n))))
+                Err(DeError.new(LossyInteger(str.from(n))))
             } else {
                 Ok(n as u64)
             }
@@ -229,7 +229,7 @@ fn JsonDeserializer mut @deser_bytes() -> Result[[]u8, DeError] {
         None => Err(DeError.unexpected("base64 string", json_kind(@cur)))
         Some(s) => match Base64.decode(s) {
             Ok(b)  => Ok(b)
-            Err(_e) => Err(DeError.of(Syntax("invalid base64 data")))
+            Err(_e) => Err(DeError.new(Syntax("invalid base64 data")))
         }
     }
 }
@@ -237,17 +237,17 @@ fn JsonDeserializer mut @is_null() -> Result[bool, DeError] => Ok(@cur.is_null()
 fn JsonDeserializer mut @is_str() -> Result[bool, DeError] => Ok(@cur.is_str())
 
 fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeError] {
-    if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
+    if @depth + 1 > @max_depth { return Err(DeError.new(DepthLimitExceeded)) }
     match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => match m.get(key) {
-            None    => Err(DeError.at(MissingField(key), "$.${key}"))
+            None    => Err(DeError.new(MissingField(key), path: "$.${key}"))
             Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
         }
     }
 }
 fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer, DeError] {
-    if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
+    if @depth + 1 > @max_depth { return Err(DeError.new(DepthLimitExceeded)) }
     match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => match m.get(key) {
@@ -263,12 +263,12 @@ fn JsonDeserializer mut @seq_len() -> Result[int, DeError] {
     }
 }
 fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError] {
-    if @depth + 1 > @max_depth { return Err(DeError.of(DepthLimitExceeded)) }
+    if @depth + 1 > @max_depth { return Err(DeError.new(DepthLimitExceeded)) }
     match @cur.array() {
         None    => Err(DeError.unexpected("array", json_kind(@cur)))
         Some(a) => match a.get(i) {
             Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
-            None    => Err(DeError.of(Other("sequence index out of range")))
+            None    => Err(DeError.new(Other("sequence index out of range")))
         }
     }
 }
@@ -359,7 +359,7 @@ export fn json_decode[T Deserialize](s str) -> Result[T, DeError] {
             mut d = JsonDeserializer.at(v, 0, 128)
             T.deserialize(d)
         }
-        Err(e) => Err(DeError.of(Syntax(parse_err_msg(e))))
+        Err(e) => Err(DeError.new(Syntax(parse_err_msg(e))))
     }
 }
 
@@ -371,7 +371,7 @@ export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeE
             mut d = JsonDeserializer.at(v, 0, max_depth)
             T.deserialize(d)
         }
-        Err(e) => Err(DeError.of(Syntax(parse_err_msg(e))))
+        Err(e) => Err(DeError.new(Syntax(parse_err_msg(e))))
     }
 }
 
@@ -385,9 +385,9 @@ export fn json_decode_bytes[T Deserialize](b []u8) -> Result[T, DeError] {
                     mut d = JsonDeserializer.at(v, 0, 128)
                     T.deserialize(d)
                 }
-                Err(e) => Err(DeError.of(Syntax(parse_err_msg(e))))
+                Err(e) => Err(DeError.new(Syntax(parse_err_msg(e))))
             }
         }
-        Err(e) => Err(DeError.of(Syntax("invalid utf-8 at byte ${str.from(e.byte_offset)}")))
+        Err(e) => Err(DeError.new(Syntax("invalid utf-8 at byte ${str.from(e.byte_offset)}")))
     }
 }

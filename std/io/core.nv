@@ -100,7 +100,7 @@ export fn read_exact[R Read](r mut R, buf mut []u8) -> Result[(), IoError] {
     chunk.resize(total, 0 as u8)
     while filled < total {
         match r.read(chunk) {
-            Ok(0)  => return Err(IoError.of(ErrorKind.UnexpectedEof, "read_exact"))
+            Ok(0)  => return Err(IoError.new(ErrorKind.UnexpectedEof, "read_exact"))
             Ok(n)  => {
                 mut i = 0
                 while i < n {
@@ -152,7 +152,7 @@ export fn read_to_string[R Read](r mut R) -> Result[str, IoError] {
     match read_to_end(r) {
         Ok(out) => match str.from_bytes(out) {
             Ok(s)  => Ok(s)
-            Err(_) => Err(IoError.of(ErrorKind.InvalidData, "read_to_string"))
+            Err(_) => Err(IoError.new(ErrorKind.InvalidData, "read_to_string"))
         }
         Err(e) => Err(e)
     }
@@ -174,7 +174,7 @@ export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
             i += 1
         }
         match w.write(rest) {
-            Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "write_all"))
+            Ok(0)  => return Err(IoError.new(ErrorKind.WriteZero, "write_all"))
             Ok(n)  => { done += n }
             Err(e) => {
                 if e.is_interrupted() { continue }
@@ -234,7 +234,7 @@ export fn lines[R Read](r mut R) -> Result[[]str, IoError] {
     match read_to_end(r) {
         Ok(out) => match str.from_bytes(out) {
             Ok(s)  => Ok(s.lines())
-            Err(_) => Err(IoError.of(ErrorKind.InvalidData, "lines"))
+            Err(_) => Err(IoError.new(ErrorKind.InvalidData, "lines"))
         }
         Err(e) => Err(e)
     }

@@ -783,6 +783,28 @@ export fn parse_url(s str) Fail[ParseUrlError] -> Url {
 const MAX_RETRIES int = 5
 ```
 
+### 21б. Конструкторы: `new` + дефолт-параметры; `of` только вариадик (2026-07-09)
+
+Тривиальная установка полей записи — это `Type.new(...)`, и ровно ОДИН
+конструктор: опциональные поля выражаются дефолт-параметрами (D102,
+передаются по имени), а не парой функций:
+
+```nova
+// ПЛОХО: две двери + имя of у невариадика
+export fn DeError.of(kind DeErrorKind) -> DeError => { kind, path: "" }
+export fn DeError.at(kind DeErrorKind, path str) -> DeError => { kind, path }
+
+// КАНОН
+export fn DeError.new(kind DeErrorKind, path str = "") -> DeError => { kind, path }
+// вызовы: DeError.new(k) · DeError.new(k, path: "$.field")
+```
+
+Имя `of` зарезервировано ЗА ВАРИАДИК-коллекциями (`Vec[T].of(a, b, c)`);
+`from` — за конверсией из другого типа. Хелперы С СЕМАНТИКОЙ (не голая
+установка полей: `DeError.unexpected(expected, found)`) остаются именованными.
+Вычищено 2026-07-09: SerError/DeError (of/at→new), IoError/Metadata/DirEntry
+(of→new), 45 вызовов + serde-derive генератор. Проверка (185): W_NONVARIADIC_OF.
+
 ## 22. Перегрузки одного имени — все в одном модуле; различай — называй по-разному
 
 - **Одно имя = одна операция (· согласовано 2026-07-07).** Вариации по ТИПУ/арности

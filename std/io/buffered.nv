@@ -40,7 +40,7 @@ fn BufWriter[W Write] mut @drain() -> Result[(), IoError] {
     mut done = 0
     while done < total {
         match @inner.write(@buf[done..total]) {
-            Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "flush"))
+            Ok(0)  => return Err(IoError.new(ErrorKind.WriteZero, "flush"))
             Ok(n)  => { done += n }
             Err(e) => {
                 if e.is_interrupted() { continue }

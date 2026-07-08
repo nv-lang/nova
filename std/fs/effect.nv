@@ -161,7 +161,7 @@ export type Metadata {
 
 /// Build metadata from raw stat fields (fs.c accessors / mock node).
 #stable(since = "0.1")
-export fn Metadata.of(kind int, size int, mode int, mtime_ns i64, atime_ns i64, ctime_ns i64) -> Metadata =>
+export fn Metadata.new(kind int, size int, mode int, mtime_ns i64, atime_ns i64, ctime_ns i64) -> Metadata =>
     { kind: file_type_of(kind), size, mode, mtime_ns, atime_ns, ctime_ns }
 
 /// The file kind.
@@ -208,7 +208,7 @@ export type DirEntry {
 
 /// Build a DirEntry from a raw scandir name + kind code.
 #stable(since = "0.1")
-export fn DirEntry.of(name []u8, kind int) -> DirEntry =>
+export fn DirEntry.new(name []u8, kind int) -> DirEntry =>
     { name: Path.from_bytes(name), kind: file_type_of(kind) }
 
 /// The bare entry name (no directory prefix).

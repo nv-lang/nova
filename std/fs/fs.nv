@@ -58,7 +58,7 @@ fn img_ctime_ns(img []u8) -> i64 => unsafe { fs_stat_ctime_ns(img.ptr()) }
 // Build a Metadata from a filled stat image (valid immediately after a
 // successful stat/lstat/fstat into `img`).
 fn read_meta(img []u8) -> Metadata =>
-    Metadata.of(img_kind(img), img_size(img), img_mode(img),
+    Metadata.new(img_kind(img), img_size(img), img_mode(img),
                 img_mtime_ns(img), img_atime_ns(img), img_ctime_ns(img))
 
 // ─── c_path: validate + NUL-terminate a path for the FFI (§3c(1)) ──
@@ -73,7 +73,7 @@ fn c_path(path []u8) -> Result[[]u8, IoError] {
     mut i = 0
     while i < path.len() {
         if path[i] == (0 as u8) {
-            return Err(IoError.of(ErrorKind.InvalidInput, "path contains NUL"))
+            return Err(IoError.new(ErrorKind.InvalidInput, "path contains NUL"))
         }
         i += 1
     }
@@ -133,10 +133,10 @@ export fn OpenOptions mut @mode(v int) -> @ { @md = v }
 #stable(since = "0.1")
 export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
     if @ap && @tr {
-        return Err(IoError.of(ErrorKind.InvalidInput, "open: append conflicts with truncate"))
+        return Err(IoError.new(ErrorKind.InvalidInput, "open: append conflicts with truncate"))
     }
     if (@cr || @cn) && !(@wr || @ap) {
-        return Err(IoError.of(ErrorKind.InvalidInput, "open: create requires write or append"))
+        return Err(IoError.new(ErrorKind.InvalidInput, "open: create requires write or append"))
     }
     mut flags = 0
     if @rd { flags = flags | OPEN_READ }
@@ -236,7 +236,7 @@ export fn File mut @seek(pos SeekFrom) Fs -> Result[int, IoError] {
             img_size(img) + n
         }
     }
-    if newpos < 0 { Err(IoError.of(ErrorKind.InvalidInput, "seek")) }
+    if newpos < 0 { Err(IoError.new(ErrorKind.InvalidInput, "seek")) }
     else { @pos = newpos; Ok(newpos) }
 }
 
@@ -409,7 +409,7 @@ export fn read_text(path Path) Fs -> Result[str, IoError] {
         Err(e) => Err(e)
         Ok(bytes) => match str.from_bytes(bytes) {
             Ok(s)  => Ok(s)
-            Err(_) => Err(IoError.of(ErrorKind.InvalidData, "read_to_string"))
+            Err(_) => Err(IoError.new(ErrorKind.InvalidData, "read_to_string"))
         }
     }
 }
@@ -424,7 +424,7 @@ export fn write(path Path, data []u8) Fs -> Result[(), IoError] {
     mut done = 0
     while done < total {
         match f.write(data[done..total]) {
-            Ok(0)  => { werr = Some(IoError.of(ErrorKind.WriteZero, "write")); done = total }
+            Ok(0)  => { werr = Some(IoError.new(ErrorKind.WriteZero, "write")); done = total }
             Ok(n)  => { done += n }
             Err(e) => {
                 if e.is_interrupted() { continue }
@@ -560,7 +560,7 @@ export fn read_dir(path Path) Fs -> Result[[]DirEntry, IoError] {
     loop {
         ro more = Fs.scandir_next(h)
         if more == 0 { break }
-        out.push(DirEntry.of(Fs.scandir_name(h).bytes(), Fs.scandir_kind(h)))
+        out.push(DirEntry.new(Fs.scandir_name(h).bytes(), Fs.scandir_kind(h)))
     }
     Fs.scandir_close(h)
     Ok(out)
@@ -624,7 +624,7 @@ export fn write_atomic(path Path, data []u8) Fs -> Result[(), IoError] {
     mut done = 0
     while done < total {
         match f.write(data[done..total]) {
-            Ok(0)  => { err = Some(IoError.of(ErrorKind.WriteZero, "write_atomic")); done = total }
+            Ok(0)  => { err = Some(IoError.new(ErrorKind.WriteZero, "write_atomic")); done = total }
             Ok(n)  => { done += n }
             Err(e) => { if e.is_interrupted() { continue }; err = Some(e); done = total }
         }

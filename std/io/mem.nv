@@ -64,7 +64,7 @@ export fn BytesReader mut @seek(pos SeekFrom) -> Result[int, IoError] {
         SeekFrom.Current(n) => @pos + n
     }
     if newpos < 0 {
-        return Err(IoError.of(ErrorKind.InvalidInput, "seek"))
+        return Err(IoError.new(ErrorKind.InvalidInput, "seek"))
     }
     @pos = newpos
     Ok(newpos)

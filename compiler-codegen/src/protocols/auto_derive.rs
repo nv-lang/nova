@@ -1624,19 +1624,19 @@ fn narrow_scalar_deser_plan(ty: &TypeRef) -> Option<NarrowScalarPlan> {
     Some(NarrowScalarPlan { read, cast, min, max })
 }
 
-/// `Err(DeError.of(OutOfRange(str.from(<raw>))))` — the typed range-violation
+/// `Err(DeError.new(OutOfRange(str.from(<raw>))))` — the typed range-violation
 /// error raised inline by a narrow-scalar deserialize guard.
 fn deerror_out_of_range(raw: &str) -> Expr {
     let str_from = member_call(ident("str"), "from", vec![ident(raw)]);
     let variant = call(ident("OutOfRange"), vec![str_from]);
-    let de = call(ex(ExprKind::Path(vec!["DeError".to_string(), "of".to_string()])), vec![variant]);
+    let de = call(ex(ExprKind::Path(vec!["DeError".to_string(), "new".to_string()])), vec![variant]);
     call(ident("Err"), vec![de])
 }
 
 /// Emit the inline statements for a narrow-scalar field into `stmts`, binding
 /// the narrowed value to local `field` read from sub-deserializer `sub`:
 ///   `ro __raw = sub.deser_X()?`
-///   `if __raw < min || __raw > max { return Err(DeError.of(OutOfRange(...))) }`
+///   `if __raw < min || __raw > max { return Err(DeError.new(OutOfRange(...))) }`
 ///   `ro field = __raw as T`
 fn emit_narrow_scalar_deser(stmts: &mut Vec<Stmt>, field: &str, sub: &str, plan: &NarrowScalarPlan) {
     let raw = format!("__nv_raw_{}", field);
@@ -2153,8 +2153,12 @@ fn deerror_unknown_variant(tag_local: &str, variant_names: &[String]) -> Expr {
         ],
         inferred_map_v: None,
     });
-    let de = call(ex(ExprKind::Path(vec!["DeError".to_string(), "at".to_string()])),
-        vec![uv, str_lit("$")]);
+    let de = ex(ExprKind::Call {
+        func: Box::new(ex(ExprKind::Path(vec!["DeError".to_string(), "new".to_string()]))),
+        args: vec![CallArg::Item(uv),
+                   CallArg::Named { name: "path".to_string(), value: str_lit("$") }],
+        trailing: None,
+    });
     call(ident("Err"), vec![de])
 }
 
@@ -2339,11 +2343,11 @@ fn thread_result(bind: &str, mutable: bool, result_expr: Expr, cont: Expr) -> Ex
     ])
 }
 
-/// `Err(DeError.of(Other(<msg>)))` — an internal "attempt failed" error for the
+/// `Err(DeError.new(Other(<msg>)))` — an internal "attempt failed" error for the
 /// untagged try-each path (always discarded; the outer fold replaces it with
 /// `NoVariantMatched`).
 fn de_attempt_fail(msg: &str) -> Expr {
-    let de = call(ex(ExprKind::Path(vec!["DeError".to_string(), "of".to_string()])),
+    let de = call(ex(ExprKind::Path(vec!["DeError".to_string(), "new".to_string()])),
         vec![call(ident("Other"), vec![str_lit(msg)])]);
     call(ident("Err"), vec![de])
 }
@@ -2464,7 +2468,7 @@ fn synth_deserialize_sum_body(_type_name: &str, variants: &[SumVariant], mode: &
             let mut else_stmts: Vec<Stmt> = Vec::new();
             else_stmts.push(let_stmt("__nv_keys", false, None,
                 try_(member_call(ident("d"), "map_keys", vec![]))));
-            let bad = call(ex(ExprKind::Path(vec!["DeError".to_string(), "of".to_string()])),
+            let bad = call(ex(ExprKind::Path(vec!["DeError".to_string(), "new".to_string()])),
                 vec![call(ident("Syntax"), vec![str_lit(
                     "externally-tagged enum expects a single-key object")])]);
             else_stmts.push(Stmt::Expr(ex(ExprKind::If {
@@ -2513,8 +2517,12 @@ fn synth_deserialize_sum_body(_type_name: &str, variants: &[SumVariant], mode: &
         SerdeTagging::Untagged => {
             // Try each variant in order; first Ok wins; else NoVariantMatched.
             let mut chain = call(ident("Err"),
-                vec![call(ex(ExprKind::Path(vec!["DeError".to_string(), "at".to_string()])),
-                    vec![ident("NoVariantMatched"), str_lit("$")])]);
+                vec![ex(ExprKind::Call {
+                    func: Box::new(ex(ExprKind::Path(vec!["DeError".to_string(), "new".to_string()]))),
+                    args: vec![CallArg::Item(ident("NoVariantMatched")),
+                               CallArg::Named { name: "path".to_string(), value: str_lit("$") }],
+                    trailing: None,
+                })]);
             for v in variants.iter().rev() {
                 let err_wild = Pattern::Variant {
                     path: vec!["Err".to_string()],
