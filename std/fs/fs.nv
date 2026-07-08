@@ -89,44 +89,42 @@ fn c_path(path []u8) -> Result[[]u8, IoError] {
 /// `OpenOptions`). A `value` — each setter returns a modified copy.
 #stable(since = "0.1")
 export type OpenOptions value {
-    ro rd bool
-    ro wr bool
-    ro ap bool
-    ro tr bool
-    ro cr bool
-    ro cn bool
-    ro md int
+    mut rd bool
+    mut wr bool
+    mut ap bool
+    mut tr bool
+    mut cr bool
+    mut cn bool
+    mut md int
 }
-
-fn oo(rd bool, wr bool, ap bool, tr bool, cr bool, cn bool, md int) -> OpenOptions =>
-    { rd, wr, ap, tr, cr, cn, md }
 
 /// Fresh options: nothing enabled, default create-mode `0o666` (`& ~umask` at the
 /// OS, Q12).
 #stable(since = "0.1")
-export fn OpenOptions.new() -> OpenOptions => oo(false, false, false, false, false, false, 0o666)
+export fn OpenOptions.new() -> OpenOptions =>
+    { rd: false, wr: false, ap: false, tr: false, cr: false, cn: false, md: 0o666 }
 
 /// Open for reading.
 #stable(since = "0.1")
-export fn OpenOptions @read(v bool) -> OpenOptions => oo(v, @wr, @ap, @tr, @cr, @cn, @md)
+export fn OpenOptions mut @read(v bool) -> @ { @rd = v }
 /// Open for writing.
 #stable(since = "0.1")
-export fn OpenOptions @write(v bool) -> OpenOptions => oo(@rd, v, @ap, @tr, @cr, @cn, @md)
+export fn OpenOptions mut @write(v bool) -> @ { @wr = v }
 /// Append: every write goes to end-of-file (implies write).
 #stable(since = "0.1")
-export fn OpenOptions @append(v bool) -> OpenOptions => oo(@rd, @wr, v, @tr, @cr, @cn, @md)
+export fn OpenOptions mut @append(v bool) -> @ { @ap = v }
 /// Truncate to zero length on open (requires write).
 #stable(since = "0.1")
-export fn OpenOptions @truncate(v bool) -> OpenOptions => oo(@rd, @wr, @ap, v, @cr, @cn, @md)
+export fn OpenOptions mut @truncate(v bool) -> @ { @tr = v }
 /// Create the file if it does not exist.
 #stable(since = "0.1")
-export fn OpenOptions @create(v bool) -> OpenOptions => oo(@rd, @wr, @ap, @tr, v, @cn, @md)
+export fn OpenOptions mut @create(v bool) -> @ { @cr = v }
 /// Create the file, failing if it already exists (`O_EXCL`, anti-TOCTOU).
 #stable(since = "0.1")
-export fn OpenOptions @create_new(v bool) -> OpenOptions => oo(@rd, @wr, @ap, @tr, @cr, v, @md)
+export fn OpenOptions mut @create_new(v bool) -> @ { @cn = v }
 /// Unix create-mode escape hatch (`0o600`, …); ignored on Windows (Q12).
 #stable(since = "0.1")
-export fn OpenOptions @mode(v int) -> OpenOptions => oo(@rd, @wr, @ap, @tr, @cr, @cn, v)
+export fn OpenOptions mut @mode(v int) -> @ { @md = v }
 
 /// Open `path` under these options. Validates the combination, computes the
 /// portable flag set, and dispatches to the ambient `Fs`.
