@@ -13094,7 +13094,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Иначе генерируется invalid C (`nova_int char;`).
     ///
-    /// `n` это C-keyword? Список — стандартный C99 + popular extensions.
+    /// `n` это C-keyword? Список — стандартный C99/C11 + popular extensions.
+    ///
+    /// [M-c-keyword-ident-collision] (Plan 172.13): та же функция используется
+    /// НЕ только для полей (`mangle_field_name`'s исходное имя — historical),
+    /// но и как единый канал маскирования ЛЮБОГО user-identifier'а Nova,
+    /// который становится C-токеном (local var decl/read/write, fn-параметр,
+    /// match-arm binding). Nova сам не резервирует эти слова — пользователь
+    /// не должен знать о зарезервированных словах ЦЕЛЕВОГО языка кодогена.
     fn mangle_field_name(name: &str) -> String {
         if Self::is_c_keyword(name) {
             format!("nv_{}", name)
@@ -13113,6 +13120,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "union" | "unsigned" | "void" | "volatile" | "while" |
             "_Bool" | "_Atomic" | "_Complex" | "_Imaginary" |
             "_Generic" | "_Thread_local" | "_Static_assert" | "_Noreturn" |
+            "_Alignas" | "_Alignof" |
             "asm" | "fortran"
         )
     }
@@ -14251,7 +14259,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if Self::param_is_inout_ptr(p, &ty_c) {
                 ty_c.push('*');
             }
-            parts.push(format!("{} {}", ty_c, p.name));
+            // [M-c-keyword-ident-collision]: a Nova param named like a C
+            // keyword (`long`, `int`, ...) must not appear bare in the C
+            // signature — mangle the OUTPUT text only (internal bookkeeping
+            // — var_types/var_mutable/etc. — stays keyed by the raw Nova
+            // name `p.name`, unaffected).
+            parts.push(format!("{} {}", ty_c, Self::mangle_field_name(&p.name)));
         }
         if parts.is_empty() {
             Ok("void".into())
@@ -20442,7 +20455,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 };
                                 // Null/zero initializer based on type.
                                 let init = if c_ty.ends_with('*') { "NULL" } else { "0" };
-                                self.line(&format!("{} {} = {};  /* hoisted for errdefer */", c_ty, name, init));
+                                // [M-c-keyword-ident-collision]: text-only mangle;
+                                // `hoisted_let_vars`/downstream lookups stay keyed
+                                // by the raw Nova name.
+                                self.line(&format!("{} {} = {};  /* hoisted for errdefer */",
+                                    c_ty, Self::mangle_field_name(name), init));
                                 self.hoisted_let_vars.insert(name.clone());
                             }
                         }
@@ -21877,16 +21894,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 100.8 fix: if binding was hoisted (pre-declared before setjmp),
                 // emit assignment-only (no type) to avoid C redeclaration error.
                 let is_hoisted = self.hoisted_let_vars.remove(&binding);
+                // [M-c-keyword-ident-collision] (Plan 172.13): mangle ONLY the
+                // C-text form of the binding name here — `binding` itself stays
+                // RAW for every map key above/below (var_types, var_mutable,
+                // hoisted_let_vars, promoted_primitive_locals, ...), which is
+                // what all later `ExprKind::Ident` reads look up by.
+                let binding_c = Self::mangle_field_name(&binding);
                 if let Some((vtable_instance, box_c_type)) = &protocol_box {
                     if is_hoisted {
                         self.line(&format!(
                             "{} = {{ .data = (void*)({}), .vtable = &{} }};",
-                            binding, val, vtable_instance
+                            binding_c, val, vtable_instance
                         ));
                     } else {
                         self.line(&format!(
                             "{} {} = {{ .data = (void*)({}), .vtable = &{} }};",
-                            box_c_type, binding, val, vtable_instance
+                            box_c_type, binding_c, val, vtable_instance
                         ));
                     }
                 } else if primitive_heap_promoted {
@@ -21898,13 +21921,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.var_types.insert(binding.clone(), ptr_ty.clone());
                     self.line(&format!(
                         "{}* {} = ({}*)nova_alloc(sizeof({}));",
-                        ty_c, binding, ty_c, ty_c
+                        ty_c, binding_c, ty_c, ty_c
                     ));
-                    self.line(&format!("*{} = {};", binding, val));
+                    self.line(&format!("*{} = {};", binding_c, val));
                 } else if is_hoisted {
-                    self.line(&format!("{} = {};", binding, val));
+                    self.line(&format!("{} = {};", binding_c, val));
                 } else {
-                    self.line(&format!("{} {} = {};", ty_c, binding, val));
+                    self.line(&format!("{} {} = {};", ty_c, binding_c, val));
                 }
                 // Plan 11 Ф.4: RHS — method value `obj.@method` или `Type.@method`.
                 // Регистрируем binding в fn_param_sigs так чтобы `f(args)` работало.
@@ -23260,7 +23283,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 {
                     return Ok(mangled.clone());
                 }
-                Ok(name.clone())
+                // [M-c-keyword-ident-collision] (Plan 172.13): plain local-var/
+                // param read (and, since Stmt::Assign lowers its target via
+                // `emit_expr`, assignment TARGETS too) — the universal fallthrough
+                // for "this identifier is a real local". Mangle the OUTPUT text
+                // only; all lookups above (var_types/private_const_c_names/etc.)
+                // already ran against the RAW `name`, so this must stay last.
+                Ok(Self::mangle_field_name(name))
             }
             ExprKind::Path(parts) => {
                 // Plan 38: numeric type constants — `int.MAX`, `f64.NAN`, etc.
@@ -33973,9 +34002,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             };
             let tmp = self.fresh_tmp();
             self.line(&format!("nova_unit {};", tmp));
+            // [M-c-keyword-ident-collision]: text-only mangle of the loop-var
+            // name; `binding` itself stays RAW for var_types/var_mutable keys
+            // below (unchanged — matches how the body's `ExprKind::Ident`
+            // reads look it up).
+            let binding_c = Self::mangle_field_name(&binding);
             self.line(&format!(
                 "for (nova_int {} = {}; {} {} {}; {}++) {{",
-                binding, s, binding, cmp, e, binding
+                binding_c, s, binding_c, cmp, e, binding_c
             ));
             self.indent += 1;
             // Register loop-var so spawn-capture inside body can find it.
@@ -37108,7 +37142,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let ty = self.var_types.get(scr).cloned()
                     .unwrap_or_else(|| "nova_int".into());
                 self.var_types.insert(name.clone(), ty.clone());
-                self.line(&format!("{} {} = {};", ty, name, scr));
+                // [M-c-keyword-ident-collision]: match-arm binding — text-only
+                // mangle (var_types key stays raw `name`, matching how the
+                // arm body's `ExprKind::Ident` reads look it up).
+                self.line(&format!("{} {} = {};", ty, Self::mangle_field_name(name), scr));
             }
             Pattern::Variant { path, kind, .. } => {
                 let variant_name = path.last().cloned().unwrap_or_default();
@@ -37319,13 +37356,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 }
                             };
                             if let Pattern::Ident { name, .. } = p {
+                                // [M-c-keyword-ident-collision]: text-only mangle;
+                                // var_types stays keyed by the raw Nova name (as
+                                // every `ExprKind::Ident` read/lookup expects).
+                                let name_c = Self::mangle_field_name(name);
                                 if is_boxed_inner {
                                     // field is a "NovaOpt_nova_int*" pointer; deref to get value
                                     self.var_types.insert(name.clone(), "NovaOpt_nova_int".into());
-                                    self.line(&format!("NovaOpt_nova_int {} = *{};", name, field));
+                                    self.line(&format!("NovaOpt_nova_int {} = *{};", name_c, field));
                                 } else {
                                     self.var_types.insert(name.clone(), field_ty.clone());
-                                    self.line(&format!("{} {} = {};", field_ty, name, field));
+                                    self.line(&format!("{} {} = {};", field_ty, name_c, field));
                                 }
                             } else {
                                 self.pattern_bind_typed(p, &field)?;
@@ -37385,8 +37426,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 f
                             };
                             if let Pattern::Ident { name, .. } = p {
+                                // [M-c-keyword-ident-collision]: text-only mangle.
                                 self.var_types.insert(name.clone(), elem_ty.clone());
-                                self.line(&format!("{} {} = {};", elem_ty, name, field));
+                                self.line(&format!("{} {} = {};", elem_ty, Self::mangle_field_name(name), field));
                             } else {
                                 self.var_types.insert(field.clone(), elem_ty.clone());
                                 self.pattern_bind_typed(p, &field)?;
@@ -37413,8 +37455,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 scr, from = before_idx,
                                 suf = if n_after > 0 { format!(" - {}", n_after) } else { String::new() },
                                 push = push_c, rt = rest_tmp, s = scr));
+                            // [M-c-keyword-ident-collision]: text-only mangle.
                             self.var_types.insert(name.clone(), format!("{}*", mangled));
-                            self.line(&format!("{}* {} = {};", mangled, name, rest_tmp));
+                            self.line(&format!("{}* {} = {};", mangled, Self::mangle_field_name(name), rest_tmp));
                             past_rest = true;
                         }
                         ArrayPatternElem::Rest => {

@@ -1,0 +1,61 @@
+// [M-c-keyword-ident-collision] (Plan 172.13) — a Nova identifier that
+// collides with a reserved C keyword (`long`, `register`, `default`, ...)
+// must NOT leak bare into the emitted C text: the emitter mangles it
+// (`nv_<name>` prefix) at every place it becomes a bare C token — local
+// var declaration/read/write, fn parameter, for-loop induction var,
+// match-arm binding. Internal bookkeeping (var_types/var_mutable/etc.)
+// stays keyed by the ORIGINAL Nova name; only the C-text form changes,
+// so this is invisible to Nova source semantics.
+//
+// Discriminator: any of these four positions used to be CC-FAIL
+// (`'long type-name' is invalid` / `use of undeclared identifier`)
+// before the fix — a Nova program should never need to avoid the target
+// C compiler's reserved words.
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+// Position 1: local var (`let`/`ro`/`mut`) declared, mutated in a
+// for-loop, and read — keyword `long`.
+fn c_kw_concat_pw() -> str {
+    mut long = ""
+    for i in 0..3 { long = long + "a" }
+    long
+}
+
+// Position 2: fn parameter named after a C keyword (`register`).
+fn c_kw_add_one(register int) -> int => register + 1
+
+// Position 3: match-arm binding named after a C keyword (`default`),
+// over a value-embedded `Option[int]` (NovaOpt_nova_int, dot-accessor).
+fn c_kw_unwrap_or_zero(o Option[int]) -> int {
+    match o {
+        Some(default) => default
+        None => 0
+    }
+}
+
+// Position 4: for-range loop induction variable itself named after a
+// C keyword (`int`... no — `int` is a Nova primitive type name, use a
+// non-type keyword instead: `goto`).
+fn c_kw_sum_range(n int) -> int {
+    mut total = 0
+    for goto in 0..n { total = total + goto }
+    total
+}
+
+test "C-keyword local var: declare/mutate/read (`long`)" {
+    assert(c_kw_concat_pw() == "aaa")
+}
+
+test "C-keyword fn parameter (`register`)" {
+    assert(c_kw_add_one(41) == 42)
+}
+
+test "C-keyword match-arm binding (`default`), value-embedded Option" {
+    assert(c_kw_unwrap_or_zero(Some(7)) == 7)
+    assert(c_kw_unwrap_or_zero(None) == 0)
+}
+
+test "C-keyword for-range loop induction var (`goto`)" {
+    assert(c_kw_sum_range(4) == 6)  // 0+1+2+3
+}
