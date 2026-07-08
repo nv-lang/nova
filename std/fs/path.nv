@@ -320,19 +320,9 @@ fn last_dot(b []u8) -> Option[int] {
     None
 }
 
-fn slice_from(b []u8, start int) -> []u8 {
-    mut out []u8 = []u8.new()
-    mut i = start
-    while i < b.len() { out.push(b[i]); i += 1 }
-    out
-}
+fn slice_from(b []u8, start int) -> []u8 => b[start..b.len()]
 
-fn slice_to(b []u8, end int) -> []u8 {
-    mut out []u8 = []u8.new()
-    mut i = 0
-    while i < end { out.push(b[i]); i += 1 }
-    out
-}
+fn slice_to(b []u8, end int) -> []u8 => b[0..end]
 
 /// The path's normal components, decoded lossily for inspection (root/prefix
 /// excluded). For byte-faithful iteration use `decompose` internally.

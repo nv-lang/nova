@@ -39,13 +39,7 @@ fn BufWriter[W Write] mut @drain() -> Result[(), IoError] {
     if total == 0 { return Ok(()) }
     mut done = 0
     while done < total {
-        mut rest []u8 = []u8.new()
-        mut i = done
-        while i < total {
-            rest.push(@buf[i])
-            i += 1
-        }
-        match @inner.write(rest) {
+        match @inner.write(@buf[done..total]) {
             Ok(0)  => return Err(IoError.of(ErrorKind.WriteZero, "flush"))
             Ok(n)  => { done += n }
             Err(e) => {

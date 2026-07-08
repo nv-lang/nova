@@ -421,10 +421,7 @@ export fn write(path Path, data []u8) Fs -> Result[(), IoError] {
     ro total = data.len()
     mut done = 0
     while done < total {
-        mut rest []u8 = []u8.new()
-        mut i = done
-        while i < total { rest.push(data[i]); i += 1 }
-        match f.write(rest) {
+        match f.write(data[done..total]) {
             Ok(0)  => { werr = Some(IoError.of(ErrorKind.WriteZero, "write")); done = total }
             Ok(n)  => { done += n }
             Err(e) => {
@@ -624,10 +621,7 @@ export fn write_atomic(path Path, data []u8) Fs -> Result[(), IoError] {
     ro total = data.len()
     mut done = 0
     while done < total {
-        mut rest []u8 = []u8.new()
-        mut i = done
-        while i < total { rest.push(data[i]); i += 1 }
-        match f.write(rest) {
+        match f.write(data[done..total]) {
             Ok(0)  => { err = Some(IoError.of(ErrorKind.WriteZero, "write_atomic")); done = total }
             Ok(n)  => { done += n }
             Err(e) => { if e.is_interrupted() { continue }; err = Some(e); done = total }
