@@ -415,6 +415,19 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
 - **Acceptance:** child-fail отменяет siblings + retention by default; после Ф.4 — агрегация MultiError
   (≡ Kotlin/Java, лучше Swift); detach enforced; ни одна ошибка fiber'а не теряется молча;
   `parallel for → []T` для любого T (173.1); **без упрощений**.
+- ✅ **Ф.3-остаток ЗАКРЫТ 2026-07-09** (sonnet, ветка `err-173-f3`; D-блок = **D414** — high-water был D413,
+  следующий свободный за D348-Ф.6): **п.1** (`304985107`) precedence PANIC>USER>CANCEL — единый
+  `nova_throw_kind_precedence` в обеих report-точках (local+M:N CAS), D13-соундность; D414 §1 + EXPECT_RUNTIME_PANIC
+  тест ×5. **п.2** (`1b2d835ba`) detach enforce `Detach`-эффекта (`[E_DETACH_REQUIRES_EFFECT]`, CapabilityCtx;
+  exempt test-root/ambient-handler/handler-op-полиморфизм) + error-policy словарь (LogAndDrop default /
+  escalate-to-scope opt-in `[M-173-detach-escalate-to-scope]`); D414 §2; neg+pos тесты. **п.3** (`993b8c35b`)
+  recv→Option канон верифицирован + **select `None`-арм РЕАЛИЗОВАН** (различает closed от value:
+  `SelectSlot.want_none`, parser/AST/codegen/runtime); D414 §3 + D94 update; тесты err173_2. **п.4** (`999bffff9`)
+  переписаны stale-тесты `supervised_errors.nv`/`fiber_throw.nv` SECTION 4 (ложь «throw неперехватываем» →
+  реальные тесты, верифицированы в изоляции 3/3; concurrency-folder заблокирован pre-existing Duration-багом
+  Plan175 — вне периметра). **п.5** with_timeout удаление — GATED на **Plan 175 (READY, не начат)**;
+  отложено, отслеживается `[M-174-retract-with-timeout]` (home Plan 173 Ф.3-остаток). spec: 08-runtime.md:168
+  stale-стратегии обновлены; хаб + D414 §1-§3. **Без упрощений** (п.5 честно gated).
 
 ### Ф.4 — MultiError end-to-end + типизированный ScopeOutcome (✅ ЗАКРЫТА 2026-07-06; ГЕЙТ [Plan 174.3] ✅ в main)
 1. ✅ **#6 РЕАЛИЗОВАН (2026-07-06, модель Б — решение владельца):** противоречие спеки D158 (конверт

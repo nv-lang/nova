@@ -165,8 +165,15 @@ fn server() Net Fail -> () {
     supervised {
         spawn handle_requests()
         spawn periodic_cleanup()
-    } strategy = one_for_one, max_restarts = 3
-    // supervisor рестартует упавшие fiber'ы
+    }
+    // ⚠ ОБНОВЛЕНО (Plan 173 §3b, 2026-06-26): постфикс `strategy = …,
+    // max_restarts = …` РЕТРАКНУТ. Supervision = эффект-хендлеры (Plan 173.2):
+    //   with Supervisor = effect Supervisor {
+    //       on_child_fail(idx, err, attempt) => if attempt < 3 { Restart } else { Escalate }
+    //   } { supervised { … } }
+    // Дефолт (нет супервизора) — Escalate (all-or-throw). MVP-исполнение =
+    // Escalate/Stop; Restart(single) — за гейтом изоляции (173.3). Primary при
+    // нескольких падениях — PANIC>USER>CANCEL (D414 §1, 06-concurrency.md).
 }
 ```
 

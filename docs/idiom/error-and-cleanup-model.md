@@ -26,6 +26,11 @@
 >   child-fail → cancel-siblings / Escalate / Stop; per-fiber Restart — только для изолированных файберов,
 >   гейт [173.3](../plans/173.3-data-race-freedom-share.md)). Полная concurrency-карта — Ф.3-семейство
 >   ([173.0](../plans/173.0-concurrency-runtime-substrate.md)–173.3); полный rewrite хаба под неё — Ф.2/Ф.5.
+> - **Structured error propagation (Ф.3, [D414](../../spec/decisions/06-concurrency.md#d414-structured-error-propagation--primary-selection-precedence-detach-policy-channel-closed-vs-value-plan-173-ф3)):**
+>   (§1) primary при нескольких падениях детей — строгий ранг **PANIC > USER/USER_TYPED > CANCEL**
+>   (panic не деградирует до ловимого USER; остальные — в suppressed-карман Ф.4); (§2) `detach { }`
+>   требует эффект `Detach` в сигнатуре (`[E_DETACH_REQUIRES_EFFECT]`), error-policy = LogAndDrop (default);
+>   (§3) `recv() -> Option` канон, select `None = rx` различает closed от value.
 
 ## Три уровня катастрофы ([D13](../../spec/decisions/08-runtime.md#d13))
 
