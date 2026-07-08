@@ -42699,558 +42699,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// to the SAME C-type — proving equivalence across the corpus before U.4.2+ flips
     /// codegen to read the annotation authoritatively. In release the check compiles
     /// out → byte-identical to legacy.
-    fn infer_expr_c_type(&self, expr: &Expr) -> String {
-        // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
-        // Side-effects (typedef/mono registration) that were previously in legacy are a §1
-        // violation — they belong in dedicated emit-passes, not in type-inference. We accept
-        // CC-FAIL when a side-effect is missing: that CC-FAIL identifies what needs a proper
-        // emit-pass. infer_expr_c_type_legacy panics unconditionally on entry — reaching it
-        // means the checker failed to annotate this expr (compiler-conventions.md §0).
-
-        // Plan 174.3 (D54 v1): `x.try_as[T]()` types as `Option[T]` (→ NovaOpt_<T>).
-        // Builtin on `any` — not a resolved callee, so channels below would miss it.
-        if let ExprKind::Call { func, args, .. } = &expr.kind {
-            if let ExprKind::TurboFish { base, type_args } = &func.kind {
-                if let ExprKind::Member { obj, name } = &base.kind {
-                    if name == "try_as" && type_args.len() == 1 && args.is_empty()
-                        && self.infer_expr_c_type(obj) == "void*"
-                    {
-                        if let Ok(target_c) = self.type_ref_to_c(&type_args[0]) {
-                            return format!("NovaOpt_{}", Self::sanitize_for_novaopt(&target_c));
-                        }
-                    }
-                }
-            }
-        }
-        // [M-176-generic-wrapper-mono-inference] `Wrap.new(x)` / `BufWriter.new(w)`
-        // without turbofish: the checker resolves the call to the ERASED wrapper
-        // (`Wrap`, no type-args) — Channel 2 would then lower it to `Nova_Wrap*`
-        // and the LHS local's instance methods would dispatch to the NULL stubs.
-        // Infer the concrete type-args from the ctor arguments and return the
-        // MONO instance type FIRST (stub-only gate inside `infer_generic_static
-        // _ctor_ret`), so the local is declared with `Nova_Wrap____<T>*` and its
-        // methods reach the mono bodies. Only fires for a stub wrapper ctor with
-        // fully-inferable args; everything else falls through to the channels.
-        if let ExprKind::Call { func, args, .. } = &expr.kind {
-            let func = func.unwrap_turbofish();
-            let ctor_recv_method: Option<(String, &String)> = match &func.kind {
-                ExprKind::Path(p) if p.len() == 2 => {
-                    let base = match self.subst_c(p[0].as_str()) {
-                        Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
-                        None => p[0].clone(),
-                    };
-                    Some((base, &p[1]))
-                }
-                ExprKind::Member { obj, name } => match &obj.kind {
-                    ExprKind::Ident(t) => {
-                        let base = match self.subst_c(t.as_str()) {
-                            Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
-                            None => t.clone(),
-                        };
-                        Some((base, name))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            };
-            if let Some((base, method_name)) = ctor_recv_method {
-                if let Some(c) = self.infer_generic_static_ctor_ret(&base, method_name, args) {
-                    return c;
-                }
-            }
-        }
-        // Channel 1: resolved_callees → fn_ret_by_span (Call return type from checker-chosen callee)
-        if expr.id.is_set() {
-            if matches!(&expr.kind, ExprKind::Call { .. }) {
-                if let Some(span) = self.resolved_callees.get(&expr.id) {
-                    if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
-                        // [M-into-raw-generic-stub-ret] The channel keys a callee's
-                        // return C-type by its DECLARATION span, so a generic method
-                        // whose return embeds an unsubstituted type-param — e.g.
-                        // `Vec[T] @into_raw() -> *mut T`, lowered ONCE at registration
-                        // to the erased placeholder `Nova_T**` — leaks that stub to a
-                        // CONCRETE call site (`bytes.into_raw()` on `Vec[u8]` wants
-                        // `nova_byte*`). Emitting a local with the stub C-type made
-                        // `buf[n] = 0` a wrong-stride (8-byte) write — an out-of-bounds
-                        // heap store in `str.from_bytes_unchecked_steal`'s in-place
-                        // NUL-terminate path. Skip the stub so the receiver-substitution
-                        // -aware method-return inference below resolves `T` → the
-                        // concrete element and yields the correct `nova_byte*`.
-                        if !self.debt_is_generic_stub_c(ch_ret) {
-                            return ch_ret.clone();
-                        }
-                    }
-                }
-            }
-        }
-        // Channel 2: resolved_types → resolved_type_to_c (checker-annotated type for any expr)
-        if std::env::var_os("NOVA_CH2_TRACE").is_some() {
-            if let ExprKind::Index { .. } = &expr.kind {
-                if let Some(rt) = self.resolved_types.get(&expr.id) {
-                    eprintln!("[CH2-IDX] id={:?} rt={:?} lower={:?}",
-                        expr.id, rt, self.resolved_type_to_c(rt));
-                }
-            }
-        }
-        if expr.id.is_set() {
-            // 2026-07-02 (tally АТОМ 3, [M-closure-two-reprs]): closure-ЗНАЧЕНИЕ
-            // лоуэрится в NovaClos_X* (load-bearing: clos_struct_ret_type на
-            // call-site), а НЕ в общий R::Func→void* (тот — для declared-позиций
-            // fn-типов). Kind-гейт: только сами closure-выражения.
-            if matches!(&expr.kind, ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)) {
-                if let Some(crate::types::ResolvedType::Func { params, ret, .. }) =
-                    self.resolved_types.get(&expr.id)
-                {
-                    let p_c: Result<Vec<String>, String> =
-                        params.iter().map(|p| self.resolved_type_to_c(p)).collect();
-                    if let (Ok(p_c), Ok(r_c)) = (p_c, self.resolved_type_to_c(ret)) {
-                        return format!("{}*", Self::clos_struct_name(&p_c[..], &r_c));
-                    }
-                }
-            }
-            if let Some(rt) = self.resolved_types.get(&expr.id) {
-                if let Ok(ir_c) = self.resolved_type_to_c(rt) {
-                    // SelfAccess: prefer var_types["nova_self"] when available (reliable per-scope
-                    // codegen state; channel depends on current_type_subst timing — gap #2).
-                    if matches!(&expr.kind, ExprKind::SelfAccess)
-                        && self.var_types.contains_key("nova_self")
-                    {
-                        let raw = self.var_types.get("nova_self").cloned().unwrap();
-                        return if Self::is_value_struct_ptr(&raw) {
-                            raw.trim_end_matches('*').trim().to_string()
-                        } else {
-                            raw
-                        };
-                    }
-                    // Ident in var_types: prefer reliable per-local codegen state over channel.
-                    if let ExprKind::Ident(n) = &expr.kind {
-                        if self.var_types.contains_key(n) {
-                            if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
-                                return ty.clone();
-                            }
-                            if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
-                                return ty.clone();
-                            }
-                            return self.var_types.get(n).cloned().unwrap();
-                        }
-                    }
-                    // Member: channel is AUTHORITATIVE, включая "nova_int". Прежний guard
-                    // («int = вероятно стёртый generic») устарел: оба продюсера Member-аннотаций
-                    // гейтированы — preamble-проба (infer_expr_type Member-arm) пишет ТОЛЬКО
-                    // конкретные поля non-generic record'ов; f3_check_member субститутит
-                    // receiver-generics и гейтит на primitive/concrete-named. Стирания T→int в
-                    // канале больше нет; guard лишь ронял ~1300 честных int-полей в legacy
-                    // (замер P67_TRACE 2026-07-02: все Member-заходы были in_resolved=true).
-                    if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
-                        && matches!(&expr.kind, ExprKind::Member { .. })
-                        && ir_c == "nova_int"
-                    {
-                        eprintln!("[MEMBER-INT ch2-consume] id={:?} span={:?} rt={:?}", expr.id, expr.span, rt);
-                    }
-                    // [M-into-raw-generic-stub-ret] A generic method CALL whose
-                    // checker-annotated return type still embeds an unsubstituted
-                    // type-param (`Vec[T] @into_raw() -> *mut T` → the erased stub
-                    // `Nova_T**`) must NOT be adopted verbatim at a concrete call
-                    // site — the receiver-substitution-aware method-return inference
-                    // below resolves `T` to the concrete element (`nova_byte*`).
-                    // Skipping the stub only here (Call + stub) leaves every concrete
-                    // channel annotation authoritative. Mirror of the Channel-1 guard.
-                    if matches!(&expr.kind, ExprKind::Call { .. })
-                        && self.debt_is_generic_stub_c(&ir_c)
-                    {
-                        // fall through to substitution-aware inference below
-                    } else {
-                        return ir_c;
-                    }
-                }
-            }
-        }
-        // Channel 3: var_types for Ident/SelfAccess (reliable per-local codegen state).
-        // 172.1.2 (2026-07-04): id-гейт СНЯТ — var_types это codegen-state, id не
-        // нужен; синтетические узлы нормализаций (_chain_root_*, __nova_arg_*)
-        // имеют UNSET id и падали мимо (214 заходов с vt=true в ID-MISS).
-        {
-            match &expr.kind {
-                ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
-                    let raw = self.var_types.get("nova_self").cloned().unwrap();
-                    return if Self::is_value_struct_ptr(&raw) {
-                        raw.trim_end_matches('*').trim().to_string()
-                    } else {
-                        raw
-                    };
-                }
-                ExprKind::Ident(n) if self.var_types.contains_key(n) => {
-                    if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
-                        return ty.clone();
-                    }
-                    if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
-                        return ty.clone();
-                    }
-                    return self.var_types.get(n).cloned().unwrap();
-                }
-                _ => {}
-            }
-        }
-        // Channel 4: var_types for Path call T.method(args) — primitive-receiver static methods
-        // (char.try_from, str.from, f32.from_bits …) are in method_table with C-types, not in
-        // fn_decls, so the checker cannot channel them via resolved_callees. var_types holds the
-        // correct C return type from forward-decl registration (fn_ret_{recv}_{name}).
-        if expr.id.is_set() {
-            if let ExprKind::Call { func, .. } = &expr.kind {
-                if let ExprKind::Path(parts) = &func.kind {
-                    if parts.len() == 2 {
-                        // str.from(c) is extern "nova" → not in fn_decls, not in fn_ret_by_span.
-                        // emit path resolves it to nova_char_to_str / nova_int_to_str → nova_str.
-                        if parts[0] == "str" && parts[1] == "from" {
-                            return "nova_str".into();
-                        }
-                        let tq = format!("fn_ret_{}_{}", parts[0], parts[1]);
-                        if let Some(ret) = self.var_types.get(&tq) {
-                            return ret.clone();
-                        }
-                        // NOTE: do NOT fall back to fn_ret_{name} — that key is shared across
-                        // all types and can pick up a wrong mono (e.g. Vec.from → Nova_Vec*
-                        // masking str.from → nova_str).
-                    }
-                }
-            }
-        }
-        // TurboFish: type args don't change the base C-type; delegate to base expr channels.
-        if let ExprKind::TurboFish { base, .. } = &expr.kind {
-            return self.infer_expr_c_type(base);
-        }
-        // Channel 5: control-flow structural inference (no checker annotation needed).
-        // Handles If/Block when resolved_types is absent (ExprId mismatch between merged module.items
-        // annotated by checker and peer_files.items_here iterated by codegen — architectural gap).
-        // If without else → unit (statement-form). If with else → try then-block trailing expr.
-        // Block → trailing expr. This is NOT legacy: returns correct types without panic.
-        if let ExprKind::If { else_, .. } = &expr.kind {
-            if else_.is_none() {
-                return "nova_unit".into();
-            }
-            // [D275 regression fix 2026-07-02] if-с-else НЕ обрабатываем здесь:
-            // прежний наивный возврат then-trailing типа игнорировал
-            // divergence-aware выбор ветки (Plan 125) и unit-доминирование
-            // (D275, [M-codegen-fluent-tail-if-unify]) — fluent `-> @` хвост в
-            // then при unit/неразрешимом else типизировал весь if как Vec*, а
-            // emit коэрсит его в unit → `tmp(Vec*) = NOVA_UNIT` CC-FAIL
-            // (cgfix_fluent_tail_if/chain). Legacy If-arm ниже несёт ПОЛНОЕ
-            // зеркало emit_if_expr (divergence + unit-domination) — падаем туда.
-        }
-        if let ExprKind::Block(b) = &expr.kind {
-            if let Some(e) = &b.trailing {
-                // channel_norm desugars fluent chains to Block { let _chain_root_N_F = expr; ...; _chain_root_N_F }
-                // infer_expr_c_type is called BEFORE emit_stmt registers the let, so var_types lacks the key.
-                // Scan stmts for a matching Let binding and infer from its value instead.
-                if let ExprKind::Ident(name) = &e.kind {
-                    if !self.var_types.contains_key(name.as_str()) {
-                        for s in &b.stmts {
-                            if let crate::ast::Stmt::Let(d) = s {
-                                if let crate::ast::Pattern::Ident { name: pname, .. } = &d.pattern {
-                                    if pname == name {
-                                        return self.infer_expr_c_type(&d.value);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                return self.infer_expr_c_type(e);
-            }
-            return "nova_unit".into();
-        }
-        // Channel 6: enum variant constructor calls (Ok/Err/Some/None/user sum variants).
-        // Mirrors the sum_schema_registry dispatch that lived in legacy. Needed for generic
-        // Result/Option constructors whose return types are non-primitive (not in resolved_types)
-        // and whose callee span is absent from fn_ret_by_span (generic callee → no concrete span).
-        if let ExprKind::Call { func, args, .. } = &expr.kind {
-            if let ExprKind::Ident(name) = &func.kind {
-                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
-                    if type_name == "Option" || type_name == "NovaOpt_nova_int" {
-                        if name == "Some" && !args.is_empty() {
-                            let arg_ty = self.infer_expr_c_type(args[0].expr());
-                            if !arg_ty.is_empty() && arg_ty != "void*" {
-                                let sanitized = Self::sanitize_for_novaopt(&arg_ty);
-                                return format!("NovaOpt_{}", sanitized);
-                            }
-                        }
-                        if name == "None" {
-                            if let Some(t) = self.current_fn_return_ty.as_ref() {
-                                if t.starts_with("NovaOpt_") {
-                                    return t.clone();
-                                }
-                            }
-                        }
-                        return "NovaOpt_nova_int".into();
-                    }
-                    if type_name == "Result" && (name == "Ok" || name == "Err") {
-                        let arg_c = args.first()
-                            .map(|a| self.infer_expr_c_type(a.expr()))
-                            .filter(|t| !t.is_empty() && t != "void*" && !self.debt_is_generic_stub_c(t));
-                        // [M-exp-promotion-blockers: retry] prefer an ACTIVE
-                        // `with Fail[E] = ...` hint (see `current_fail_e_hint`)
-                        // over the hardcoded guess — mirrors the emission-side
-                        // fix at the `result_ctor_name` call site.
-                        let err_default = self.current_fail_e_hint.clone()
-                            .unwrap_or_else(|| "nova_str".to_string());
-                        let (ok_c, err_c) = if name == "Ok" {
-                            (arg_c.unwrap_or_else(|| "nova_int".to_string()), err_default)
-                        } else {
-                            ("nova_int".to_string(), arg_c.unwrap_or(err_default))
-                        };
-                        return self.result_repr_c_type(&ok_c, &err_c);
-                    }
-                    if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args) {
-                        return format!("{}*", mangled);
-                    }
-                    return format!("Nova_{}*", type_name);
-                }
-            }
-        }
-        // Channel 6b: bare Ident that is an empty-sum type (e.g. `CharTryFromError` used as a
-        // value in `Err(CharTryFromError)`). Empty sums emit `typedef int64_t Nova_X`; C type = Nova_X.
-        if let ExprKind::Ident(name) = &expr.kind {
-            if self.sum_schemas.get(name.as_str()).map_or(false, |v| v.is_empty()) {
-                return format!("Nova_{}", name);
-            }
-        }
-        // Channel 6c (tally 2026-07-02): ИМЯ ТИПА как expr — TurboFish/static-ресивер
-        // (`Vec` в `Vec[int].new()`, `HashMap` в `HashMap[K,V].from(...)`). Ident
-        // представляет type-constructor; C-тип = erased heap-pointer `Nova_{name}*`.
-        // Дословный подъём legacy Ident-арма (те же реестры, тот же ответ) — legacy
-        // поверхность сокращается к удалению. Целевая форма: потребители static-вызовов
-        // не должны спрашивать C-тип имени типа вовсе (§1) — снимется с resolved_callees.
-        if let ExprKind::Ident(name) = &expr.kind {
-            if !self.var_types.contains_key(name)
-                && !self.closure_param_type_overrides.borrow().contains_key(name)
-                && !self.pattern_binding_overrides.borrow().contains_key(name)
-                && (self.generic_types.contains(name.as_str())
-                    || self.generic_type_templates.contains_key(name.as_str())
-                    || self.record_schemas.contains_key(name.as_str())
-                    || self.sum_schemas.contains_key(name.as_str()))
-            {
-                return format!("Nova_{}*", name);
-            }
-        }
-        // Channel 6e (tally 2026-07-02, Path:__array): синтетический путь
-        // `__array.T` (D38 `[]T.with_capacity()` static-ресивер) — имя типа,
-        // не значение. Дословный подъём legacy-ответа: Path-arm falls-through
-        // → "" (потребители name-keyed dispatch; реальный лоуэринг — D38-арм
-        // nova_array_new_<suffix>). Residual: сам Call НЕ аннотируем —
-        // [M-array-vec-unify] (канал канонизировал бы []T→Vec и соврал).
-        if let ExprKind::Path(parts) = &expr.kind {
-            if parts.len() == 2 && parts[0] == "__array" {
-                return String::new();
-            }
-        }
-        // Channel 6k (2026-07-04): Index — ДОСЛОВНЫЙ подъём legacy-арма
-        // (IDXL-WHO: вопросы из emit_expr Index-эмиссии; state-ответ
-        // array_element_types/схемы). Byte-identical; дети через dispatcher.
-        if let ExprKind::Index { obj, index } = &expr.kind {
-                    // Plan 96 Ф.3 — dispatch по типу index:
-                    //   arr[Range] → []T (тот же NovaArray-pointer тип что у obj)
-                    //   str[Range] → str
-                    //   arr[int]   → T (element)
-                    //   str[int]   → char (если char-indexing уже есть, иначе caller-side error)
-                    let obj_ty_pre = self.infer_expr_c_type(obj);
-                    if matches!(index.kind, ExprKind::Range { .. }) {
-                        // Slice path — result type совпадает с obj (single-type design,
-                        // D-single-type). Для str — тот же "nova_str", для []T —
-                        // тот же "NovaArray_T*".
-                        return obj_ty_pre;
-                    }
-                    // arr[i] → element type of arr.
-                    // Check array_element_types first (pointer-stomped elements override)
-                    // — BUT only when `obj_ty_pre` is NOT a self-describing mono Vec/
-                    // array name. The side-table is keyed by bare var name and is
-                    // last-wins across peer files of a folder-module: a `v` declared
-                    // `[]byte` in one test poisons the entry for a `v` declared
-                    // `[]str` in another → wrong element type (nova_byte vs nova_str)
-                    // → e.g. `v[0] == v[2]` mis-emits a raw struct `==`. The mono name
-                    // `Nova_Vec____nova_str*` is authoritative; prefer decoding it
-                    // (handled below) and consult the side-table only for non-self-
-                    // describing obj types (pointer-stomped raw buffers).
-                    let obj_ty_self_describing = obj_ty_pre.starts_with("Nova_Vec____")
-                        || obj_ty_pre.starts_with("NovaArray_");
-                    if obj_ty_self_describing {
-                        // Decode element type DIRECTLY from the authoritative mono name,
-                        // bypassing every name-keyed side-table (array_element_types,
-                        // compute_array_elem_type_for_obj) — all of which are last-wins
-                        // across folder-module peers and can be poisoned by a same-named
-                        // var of a different element type in another file.
-                        if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
-                            let elem = elem.trim_end_matches('*').trim();
-                            if !elem.is_empty() { return elem.to_string(); }
-                        }
-                        if obj_ty_pre.starts_with("Nova_Vec____") && !obj_ty_pre.trim_end().ends_with("**") {
-                            let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
-                            if let Some(elem) = self.generic_type_instance_info.borrow()
-                                .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
-                            {
-                                if !elem.is_empty() { return elem; }
-                            }
-                            let elem = obj_ty_pre.strip_prefix("Nova_Vec____")
-                                .unwrap_or("").trim_end_matches('*').trim();
-                            if !elem.is_empty() { return elem.to_string(); }
-                        }
-                    } else if let ExprKind::Ident(name) = &obj.kind {
-                        if let Some(et) = self.array_element_types.get(name) {
-                            return et.clone();
-                        }
-                    }
-                    // @field access (nova_self->field) — check by synthesized C-expression key.
-                    if let ExprKind::Member { obj: inner, name: field } = &obj.kind {
-                        if matches!(inner.kind, ExprKind::SelfAccess) {
-                            let key = format!("(nova_self->{})", Self::mangle_field_name(field));
-                            if let Some(et) = self.array_element_types.get(&key) {
-                                return et.clone();
-                            }
-                        }
-                    }
-                    // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
-                    // Compute real element type from record schema / template + subst.
-                    if let Some(elem) = self.compute_array_elem_type_for_obj(obj) {
-                        if !elem.is_empty() && elem != "nova_int" {
-                            return elem;
-                        }
-                    }
-                    // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
-                    if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
-                        let elem = elem.trim_end_matches('*').trim();
-                        return elem.to_string();
-                    }
-                    // Plan 138 Ф.3 (D238): str[i] → char.
-                    if obj_ty_pre == "nova_str" {
-                        return "nova_char".to_string();
-                    }
-                    // Plan 138 Ф.2 (D238): Vec[T] indexing — `Nova_Vec____<T>*[i]` → element type T.
-                    // `Nova_Vec____nova_int*` → `nova_int`
-                    // `Nova_Vec____Nova_Foo__*` → `Nova_Foo__*`
-                    // Pattern: `Nova_Vec____<T>*` where `<T>` is the monomorphized element type.
-                    // Plan 138.1 Ф.3: exclude `Nova_Vec____<T>**` (a `*mut Vec[T]`
-                    // raw buffer, e.g. the `data` field of `Vec[Vec[T]]`) — that is
-                    // a typed pointer, so indexing yields a `Vec[T]` value
-                    // (`Nova_Vec____<T>*`), handled by the raw-pointer-deref arm
-                    // below. Recover the precise element C type from the registry.
-                    if obj_ty_pre.starts_with("Nova_Vec____")
-                        && !obj_ty_pre.trim_end().ends_with("**")
-                    {
-                        let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
-                        if let Some(elem) = self.generic_type_instance_info.borrow()
-                            .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
-                        {
-                            if !elem.is_empty() {
-                                return elem;
-                            }
-                        }
-                        let suffix = obj_ty_pre.strip_prefix("Nova_Vec____").unwrap_or("");
-                        // Strip one trailing `*` only for scalar types; nested Nova_ element types
-                        // (Vec[Vec[T]], Vec[Record]) are pointers — preserve their `*`.
-                        let elem = if suffix.starts_with("Nova_") {
-                            suffix
-                        } else {
-                            suffix.trim_end_matches('*').trim()
-                        };
-                        if !elem.is_empty() {
-                            return elem.to_string();
-                        }
-                    }
-                    // [M-118-ptr-index-unsafe] Plan 118 D216 §8: typed pointer
-                    // `*mut T` / `*T` — ptr[i] ≡ *(ptr+i). Element type = pointee
-                    // (C type obtained by stripping trailing `*` from pointer type).
-                    // Mirror exact logic as UnOp::Deref inference (line ~29113).
-                    // Must come AFTER NovaArray_ check to avoid false-firing on
-                    // `NovaArray_nova_int*` (those use the NovaArray_ path above).
-                    if obj_ty_pre.ends_with('*') && !obj_ty_pre.starts_with("NovaArray_") {
-                        if let Some(pointee) = obj_ty_pre.strip_suffix('*') {
-                            let pointee = pointee.trim();
-                            if !pointee.is_empty() {
-                                return pointee.to_string();
-                            }
-                        }
-                    }
-                    panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
-        }
-        // Channel 6n (2026-07-04): RecordLit — ДОСЛОВНЫЙ подъём legacy-арма.
-        if let ExprKind::RecordLit { type_name: Some(name), fields, .. } = &expr.kind {
-            return {
-                    let raw_name = name.join("_");
-                    let struct_name = if raw_name == "Self" {
-                        self.current_receiver_type.clone().unwrap_or(raw_name)
-                    } else { raw_name };
-                    // D406: qualified `TypeName.Variant { fields }` — path ["TypeName", "Variant"].
-                    // join("_") gives "TypeName_Variant" which find_variant_compat won't find.
-                    // Detect and look up the sum type directly.
-                    if name.len() == 2 {
-                        let (sum_part, _var_part) = (&name[0], &name[1]);
-                        if self.sum_schemas.contains_key(sum_part.as_str())
-                            || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
-                        {
-                            return format!("Nova_{}*", sum_part);
-                        }
-                    }
-                    // Check if this is a sum-type record variant.
-                    // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
-                    if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
-                        format!("Nova_{}*", sum_type_name)
-                    } else if self.generic_types.contains(&struct_name) {
-                        // Generic type: compute concrete mono name from field values.
-                        // Check BEFORE record_schemas because record_schemas has the erased form
-                        // (with void* fields) for generic types — we want the concrete mono form.
-                        if let Some(template) = self.generic_type_templates.get(&struct_name) {
-                            use crate::ast::TypeDeclKind;
-                            let mut type_args_c: Vec<String> = template.generics.iter()
-                                .map(|_| "nova_int".to_string())
-                                .collect();
-                            if let TypeDeclKind::Record(field_decls) = &template.kind {
-                                for (i, g) in template.generics.iter().enumerate() {
-                                    for f_decl in field_decls {
-                                        if let crate::ast::TypeRef::Named { path, generics: fgens, .. } = &f_decl.ty {
-                                            if fgens.is_empty() && path.join("_") == g.name {
-                                                if let Some(field) = fields.iter().find(|f| f.name == f_decl.name) {
-                                                    if let Some(v) = &field.value {
-                                                        let c_ty = self.infer_expr_c_type(v);
-                                                        if !c_ty.is_empty() && c_ty != "void*" {
-                                                            type_args_c[i] = c_ty;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
-                            // Plan 153.2 Ф.1 (STAGE 1): a `value` generic record
-                            // literal has the by-value C-type `NovaValue_<short>`
-                            // (no `*`), matching what `type_ref_to_c` returns and
-                            // what the record-lit emitter produces.
-                            if self.is_value_generic_template(&struct_name) {
-                                format!("NovaValue_{}", Self::debt_mono_short_name(&mangled))
-                            } else {
-                                format!("{}*", mangled)
-                            }
-                        } else {
-                            "void*".into()
-                        }
-                    } else if self.record_schemas.contains_key(&struct_name) {
-                        // Plan 124.8 V2 / Plan 127: value-records use stack-typedef
-                        // `NovaValue_<X>` (no pointer); heap records use `Nova_<X>*`.
-                        if self.value_record_names.contains(&struct_name) {
-                            format!("NovaValue_{}", struct_name)
-                        } else {
-                            format!("Nova_{}*", struct_name)
-                        }
-                    } else {
-                        "void*".into()
-                    }
-            };
-        }
-        // Channel 6q (2026-07-04): Call — ДОСЛОВНЫЙ подъём КРУПНЕЙШЕГО
-        // legacy-арма (~2200 строк: method-returns, turbofish, интринсики,
-        // fn_ret_* реестры). Механический перенос; дети через dispatcher.
-        if let ExprKind::Call { func, args, .. } = &expr.kind {
-            return {
+    /// Plan 172.12 §14.19 (коллапс триплификации): ЕДИНСТВЕННЫЙ infer-канал
+    /// для `ExprKind::Call` (method-returns, turbofish, интринсики,
+    /// fn_ret_* реестры). Тело исторически было дословно продублировано
+    /// (2485 строк × 2) в channel-6q и в финальном legacy-match Call-арме;
+    /// оба сайта теперь зовут этот хелпер.
+    fn infer_call_ret_c(&self, expr: &Expr, func: &Expr, args: &[CallArg]) -> String {
                     // D38 turbofish прозрачен для inference — но extract type_args
                     // ПЕРЕД unwrap чтобы Plan 54 Ф.4 return-type inference (для
                     // generic-fn возвращающей []T) могла использовать turbofish
@@ -45736,7 +45190,560 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     } else {
                         panic!("[P67-LEGACY] Path call return type unknown (no parts) — checker must annotate (compiler-conventions.md §0)")
                     }
+    }
+
+    fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
+        // Side-effects (typedef/mono registration) that were previously in legacy are a §1
+        // violation — they belong in dedicated emit-passes, not in type-inference. We accept
+        // CC-FAIL when a side-effect is missing: that CC-FAIL identifies what needs a proper
+        // emit-pass. infer_expr_c_type_legacy panics unconditionally on entry — reaching it
+        // means the checker failed to annotate this expr (compiler-conventions.md §0).
+
+        // Plan 174.3 (D54 v1): `x.try_as[T]()` types as `Option[T]` (→ NovaOpt_<T>).
+        // Builtin on `any` — not a resolved callee, so channels below would miss it.
+        if let ExprKind::Call { func, args, .. } = &expr.kind {
+            if let ExprKind::TurboFish { base, type_args } = &func.kind {
+                if let ExprKind::Member { obj, name } = &base.kind {
+                    if name == "try_as" && type_args.len() == 1 && args.is_empty()
+                        && self.infer_expr_c_type(obj) == "void*"
+                    {
+                        if let Ok(target_c) = self.type_ref_to_c(&type_args[0]) {
+                            return format!("NovaOpt_{}", Self::sanitize_for_novaopt(&target_c));
+                        }
+                    }
+                }
+            }
+        }
+        // [M-176-generic-wrapper-mono-inference] `Wrap.new(x)` / `BufWriter.new(w)`
+        // without turbofish: the checker resolves the call to the ERASED wrapper
+        // (`Wrap`, no type-args) — Channel 2 would then lower it to `Nova_Wrap*`
+        // and the LHS local's instance methods would dispatch to the NULL stubs.
+        // Infer the concrete type-args from the ctor arguments and return the
+        // MONO instance type FIRST (stub-only gate inside `infer_generic_static
+        // _ctor_ret`), so the local is declared with `Nova_Wrap____<T>*` and its
+        // methods reach the mono bodies. Only fires for a stub wrapper ctor with
+        // fully-inferable args; everything else falls through to the channels.
+        if let ExprKind::Call { func, args, .. } = &expr.kind {
+            let func = func.unwrap_turbofish();
+            let ctor_recv_method: Option<(String, &String)> = match &func.kind {
+                ExprKind::Path(p) if p.len() == 2 => {
+                    let base = match self.subst_c(p[0].as_str()) {
+                        Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
+                        None => p[0].clone(),
+                    };
+                    Some((base, &p[1]))
+                }
+                ExprKind::Member { obj, name } => match &obj.kind {
+                    ExprKind::Ident(t) => {
+                        let base = match self.subst_c(t.as_str()) {
+                            Some(c_ty) => Self::debt_nova_type_name_from_c(&c_ty),
+                            None => t.clone(),
+                        };
+                        Some((base, name))
+                    }
+                    _ => None,
+                },
+                _ => None,
             };
+            if let Some((base, method_name)) = ctor_recv_method {
+                if let Some(c) = self.infer_generic_static_ctor_ret(&base, method_name, args) {
+                    return c;
+                }
+            }
+        }
+        // Channel 1: resolved_callees → fn_ret_by_span (Call return type from checker-chosen callee)
+        if expr.id.is_set() {
+            if matches!(&expr.kind, ExprKind::Call { .. }) {
+                if let Some(span) = self.resolved_callees.get(&expr.id) {
+                    if let Some(ch_ret) = self.fn_ret_by_span.get(span) {
+                        // [M-into-raw-generic-stub-ret] The channel keys a callee's
+                        // return C-type by its DECLARATION span, so a generic method
+                        // whose return embeds an unsubstituted type-param — e.g.
+                        // `Vec[T] @into_raw() -> *mut T`, lowered ONCE at registration
+                        // to the erased placeholder `Nova_T**` — leaks that stub to a
+                        // CONCRETE call site (`bytes.into_raw()` on `Vec[u8]` wants
+                        // `nova_byte*`). Emitting a local with the stub C-type made
+                        // `buf[n] = 0` a wrong-stride (8-byte) write — an out-of-bounds
+                        // heap store in `str.from_bytes_unchecked_steal`'s in-place
+                        // NUL-terminate path. Skip the stub so the receiver-substitution
+                        // -aware method-return inference below resolves `T` → the
+                        // concrete element and yields the correct `nova_byte*`.
+                        if !self.debt_is_generic_stub_c(ch_ret) {
+                            return ch_ret.clone();
+                        }
+                    }
+                }
+            }
+        }
+        // Channel 2: resolved_types → resolved_type_to_c (checker-annotated type for any expr)
+        if std::env::var_os("NOVA_CH2_TRACE").is_some() {
+            if let ExprKind::Index { .. } = &expr.kind {
+                if let Some(rt) = self.resolved_types.get(&expr.id) {
+                    eprintln!("[CH2-IDX] id={:?} rt={:?} lower={:?}",
+                        expr.id, rt, self.resolved_type_to_c(rt));
+                }
+            }
+        }
+        if expr.id.is_set() {
+            // 2026-07-02 (tally АТОМ 3, [M-closure-two-reprs]): closure-ЗНАЧЕНИЕ
+            // лоуэрится в NovaClos_X* (load-bearing: clos_struct_ret_type на
+            // call-site), а НЕ в общий R::Func→void* (тот — для declared-позиций
+            // fn-типов). Kind-гейт: только сами closure-выражения.
+            if matches!(&expr.kind, ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)) {
+                if let Some(crate::types::ResolvedType::Func { params, ret, .. }) =
+                    self.resolved_types.get(&expr.id)
+                {
+                    let p_c: Result<Vec<String>, String> =
+                        params.iter().map(|p| self.resolved_type_to_c(p)).collect();
+                    if let (Ok(p_c), Ok(r_c)) = (p_c, self.resolved_type_to_c(ret)) {
+                        return format!("{}*", Self::clos_struct_name(&p_c[..], &r_c));
+                    }
+                }
+            }
+            if let Some(rt) = self.resolved_types.get(&expr.id) {
+                if let Ok(ir_c) = self.resolved_type_to_c(rt) {
+                    // SelfAccess: prefer var_types["nova_self"] when available (reliable per-scope
+                    // codegen state; channel depends on current_type_subst timing — gap #2).
+                    if matches!(&expr.kind, ExprKind::SelfAccess)
+                        && self.var_types.contains_key("nova_self")
+                    {
+                        let raw = self.var_types.get("nova_self").cloned().unwrap();
+                        return if Self::is_value_struct_ptr(&raw) {
+                            raw.trim_end_matches('*').trim().to_string()
+                        } else {
+                            raw
+                        };
+                    }
+                    // Ident in var_types: prefer reliable per-local codegen state over channel.
+                    if let ExprKind::Ident(n) = &expr.kind {
+                        if self.var_types.contains_key(n) {
+                            if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
+                                return ty.clone();
+                            }
+                            if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
+                                return ty.clone();
+                            }
+                            return self.var_types.get(n).cloned().unwrap();
+                        }
+                    }
+                    // Member: channel is AUTHORITATIVE, включая "nova_int". Прежний guard
+                    // («int = вероятно стёртый generic») устарел: оба продюсера Member-аннотаций
+                    // гейтированы — preamble-проба (infer_expr_type Member-arm) пишет ТОЛЬКО
+                    // конкретные поля non-generic record'ов; f3_check_member субститутит
+                    // receiver-generics и гейтит на primitive/concrete-named. Стирания T→int в
+                    // канале больше нет; guard лишь ронял ~1300 честных int-полей в legacy
+                    // (замер P67_TRACE 2026-07-02: все Member-заходы были in_resolved=true).
+                    if std::env::var_os("NOVA_MEMBER_INT_TRACE").is_some()
+                        && matches!(&expr.kind, ExprKind::Member { .. })
+                        && ir_c == "nova_int"
+                    {
+                        eprintln!("[MEMBER-INT ch2-consume] id={:?} span={:?} rt={:?}", expr.id, expr.span, rt);
+                    }
+                    // [M-into-raw-generic-stub-ret] A generic method CALL whose
+                    // checker-annotated return type still embeds an unsubstituted
+                    // type-param (`Vec[T] @into_raw() -> *mut T` → the erased stub
+                    // `Nova_T**`) must NOT be adopted verbatim at a concrete call
+                    // site — the receiver-substitution-aware method-return inference
+                    // below resolves `T` to the concrete element (`nova_byte*`).
+                    // Skipping the stub only here (Call + stub) leaves every concrete
+                    // channel annotation authoritative. Mirror of the Channel-1 guard.
+                    if matches!(&expr.kind, ExprKind::Call { .. })
+                        && self.debt_is_generic_stub_c(&ir_c)
+                    {
+                        // fall through to substitution-aware inference below
+                    } else {
+                        return ir_c;
+                    }
+                }
+            }
+        }
+        // Channel 3: var_types for Ident/SelfAccess (reliable per-local codegen state).
+        // 172.1.2 (2026-07-04): id-гейт СНЯТ — var_types это codegen-state, id не
+        // нужен; синтетические узлы нормализаций (_chain_root_*, __nova_arg_*)
+        // имеют UNSET id и падали мимо (214 заходов с vt=true в ID-MISS).
+        {
+            match &expr.kind {
+                ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
+                    let raw = self.var_types.get("nova_self").cloned().unwrap();
+                    return if Self::is_value_struct_ptr(&raw) {
+                        raw.trim_end_matches('*').trim().to_string()
+                    } else {
+                        raw
+                    };
+                }
+                ExprKind::Ident(n) if self.var_types.contains_key(n) => {
+                    if let Some(ty) = self.closure_param_type_overrides.borrow().get(n) {
+                        return ty.clone();
+                    }
+                    if let Some(ty) = self.pattern_binding_overrides.borrow().get(n) {
+                        return ty.clone();
+                    }
+                    return self.var_types.get(n).cloned().unwrap();
+                }
+                _ => {}
+            }
+        }
+        // Channel 4: var_types for Path call T.method(args) — primitive-receiver static methods
+        // (char.try_from, str.from, f32.from_bits …) are in method_table with C-types, not in
+        // fn_decls, so the checker cannot channel them via resolved_callees. var_types holds the
+        // correct C return type from forward-decl registration (fn_ret_{recv}_{name}).
+        if expr.id.is_set() {
+            if let ExprKind::Call { func, .. } = &expr.kind {
+                if let ExprKind::Path(parts) = &func.kind {
+                    if parts.len() == 2 {
+                        // str.from(c) is extern "nova" → not in fn_decls, not in fn_ret_by_span.
+                        // emit path resolves it to nova_char_to_str / nova_int_to_str → nova_str.
+                        if parts[0] == "str" && parts[1] == "from" {
+                            return "nova_str".into();
+                        }
+                        let tq = format!("fn_ret_{}_{}", parts[0], parts[1]);
+                        if let Some(ret) = self.var_types.get(&tq) {
+                            return ret.clone();
+                        }
+                        // NOTE: do NOT fall back to fn_ret_{name} — that key is shared across
+                        // all types and can pick up a wrong mono (e.g. Vec.from → Nova_Vec*
+                        // masking str.from → nova_str).
+                    }
+                }
+            }
+        }
+        // TurboFish: type args don't change the base C-type; delegate to base expr channels.
+        if let ExprKind::TurboFish { base, .. } = &expr.kind {
+            return self.infer_expr_c_type(base);
+        }
+        // Channel 5: control-flow structural inference (no checker annotation needed).
+        // Handles If/Block when resolved_types is absent (ExprId mismatch between merged module.items
+        // annotated by checker and peer_files.items_here iterated by codegen — architectural gap).
+        // If without else → unit (statement-form). If with else → try then-block trailing expr.
+        // Block → trailing expr. This is NOT legacy: returns correct types without panic.
+        if let ExprKind::If { else_, .. } = &expr.kind {
+            if else_.is_none() {
+                return "nova_unit".into();
+            }
+            // [D275 regression fix 2026-07-02] if-с-else НЕ обрабатываем здесь:
+            // прежний наивный возврат then-trailing типа игнорировал
+            // divergence-aware выбор ветки (Plan 125) и unit-доминирование
+            // (D275, [M-codegen-fluent-tail-if-unify]) — fluent `-> @` хвост в
+            // then при unit/неразрешимом else типизировал весь if как Vec*, а
+            // emit коэрсит его в unit → `tmp(Vec*) = NOVA_UNIT` CC-FAIL
+            // (cgfix_fluent_tail_if/chain). Legacy If-arm ниже несёт ПОЛНОЕ
+            // зеркало emit_if_expr (divergence + unit-domination) — падаем туда.
+        }
+        if let ExprKind::Block(b) = &expr.kind {
+            if let Some(e) = &b.trailing {
+                // channel_norm desugars fluent chains to Block { let _chain_root_N_F = expr; ...; _chain_root_N_F }
+                // infer_expr_c_type is called BEFORE emit_stmt registers the let, so var_types lacks the key.
+                // Scan stmts for a matching Let binding and infer from its value instead.
+                if let ExprKind::Ident(name) = &e.kind {
+                    if !self.var_types.contains_key(name.as_str()) {
+                        for s in &b.stmts {
+                            if let crate::ast::Stmt::Let(d) = s {
+                                if let crate::ast::Pattern::Ident { name: pname, .. } = &d.pattern {
+                                    if pname == name {
+                                        return self.infer_expr_c_type(&d.value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return self.infer_expr_c_type(e);
+            }
+            return "nova_unit".into();
+        }
+        // Channel 6: enum variant constructor calls (Ok/Err/Some/None/user sum variants).
+        // Mirrors the sum_schema_registry dispatch that lived in legacy. Needed for generic
+        // Result/Option constructors whose return types are non-primitive (not in resolved_types)
+        // and whose callee span is absent from fn_ret_by_span (generic callee → no concrete span).
+        if let ExprKind::Call { func, args, .. } = &expr.kind {
+            if let ExprKind::Ident(name) = &func.kind {
+                if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
+                    if type_name == "Option" || type_name == "NovaOpt_nova_int" {
+                        if name == "Some" && !args.is_empty() {
+                            let arg_ty = self.infer_expr_c_type(args[0].expr());
+                            if !arg_ty.is_empty() && arg_ty != "void*" {
+                                let sanitized = Self::sanitize_for_novaopt(&arg_ty);
+                                return format!("NovaOpt_{}", sanitized);
+                            }
+                        }
+                        if name == "None" {
+                            if let Some(t) = self.current_fn_return_ty.as_ref() {
+                                if t.starts_with("NovaOpt_") {
+                                    return t.clone();
+                                }
+                            }
+                        }
+                        return "NovaOpt_nova_int".into();
+                    }
+                    if type_name == "Result" && (name == "Ok" || name == "Err") {
+                        let arg_c = args.first()
+                            .map(|a| self.infer_expr_c_type(a.expr()))
+                            .filter(|t| !t.is_empty() && t != "void*" && !self.debt_is_generic_stub_c(t));
+                        // [M-exp-promotion-blockers: retry] prefer an ACTIVE
+                        // `with Fail[E] = ...` hint (see `current_fail_e_hint`)
+                        // over the hardcoded guess — mirrors the emission-side
+                        // fix at the `result_ctor_name` call site.
+                        let err_default = self.current_fail_e_hint.clone()
+                            .unwrap_or_else(|| "nova_str".to_string());
+                        let (ok_c, err_c) = if name == "Ok" {
+                            (arg_c.unwrap_or_else(|| "nova_int".to_string()), err_default)
+                        } else {
+                            ("nova_int".to_string(), arg_c.unwrap_or(err_default))
+                        };
+                        return self.result_repr_c_type(&ok_c, &err_c);
+                    }
+                    if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args) {
+                        return format!("{}*", mangled);
+                    }
+                    return format!("Nova_{}*", type_name);
+                }
+            }
+        }
+        // Channel 6b: bare Ident that is an empty-sum type (e.g. `CharTryFromError` used as a
+        // value in `Err(CharTryFromError)`). Empty sums emit `typedef int64_t Nova_X`; C type = Nova_X.
+        if let ExprKind::Ident(name) = &expr.kind {
+            if self.sum_schemas.get(name.as_str()).map_or(false, |v| v.is_empty()) {
+                return format!("Nova_{}", name);
+            }
+        }
+        // Channel 6c (tally 2026-07-02): ИМЯ ТИПА как expr — TurboFish/static-ресивер
+        // (`Vec` в `Vec[int].new()`, `HashMap` в `HashMap[K,V].from(...)`). Ident
+        // представляет type-constructor; C-тип = erased heap-pointer `Nova_{name}*`.
+        // Дословный подъём legacy Ident-арма (те же реестры, тот же ответ) — legacy
+        // поверхность сокращается к удалению. Целевая форма: потребители static-вызовов
+        // не должны спрашивать C-тип имени типа вовсе (§1) — снимется с resolved_callees.
+        if let ExprKind::Ident(name) = &expr.kind {
+            if !self.var_types.contains_key(name)
+                && !self.closure_param_type_overrides.borrow().contains_key(name)
+                && !self.pattern_binding_overrides.borrow().contains_key(name)
+                && (self.generic_types.contains(name.as_str())
+                    || self.generic_type_templates.contains_key(name.as_str())
+                    || self.record_schemas.contains_key(name.as_str())
+                    || self.sum_schemas.contains_key(name.as_str()))
+            {
+                return format!("Nova_{}*", name);
+            }
+        }
+        // Channel 6e (tally 2026-07-02, Path:__array): синтетический путь
+        // `__array.T` (D38 `[]T.with_capacity()` static-ресивер) — имя типа,
+        // не значение. Дословный подъём legacy-ответа: Path-arm falls-through
+        // → "" (потребители name-keyed dispatch; реальный лоуэринг — D38-арм
+        // nova_array_new_<suffix>). Residual: сам Call НЕ аннотируем —
+        // [M-array-vec-unify] (канал канонизировал бы []T→Vec и соврал).
+        if let ExprKind::Path(parts) = &expr.kind {
+            if parts.len() == 2 && parts[0] == "__array" {
+                return String::new();
+            }
+        }
+        // Channel 6k (2026-07-04): Index — ДОСЛОВНЫЙ подъём legacy-арма
+        // (IDXL-WHO: вопросы из emit_expr Index-эмиссии; state-ответ
+        // array_element_types/схемы). Byte-identical; дети через dispatcher.
+        if let ExprKind::Index { obj, index } = &expr.kind {
+                    // Plan 96 Ф.3 — dispatch по типу index:
+                    //   arr[Range] → []T (тот же NovaArray-pointer тип что у obj)
+                    //   str[Range] → str
+                    //   arr[int]   → T (element)
+                    //   str[int]   → char (если char-indexing уже есть, иначе caller-side error)
+                    let obj_ty_pre = self.infer_expr_c_type(obj);
+                    if matches!(index.kind, ExprKind::Range { .. }) {
+                        // Slice path — result type совпадает с obj (single-type design,
+                        // D-single-type). Для str — тот же "nova_str", для []T —
+                        // тот же "NovaArray_T*".
+                        return obj_ty_pre;
+                    }
+                    // arr[i] → element type of arr.
+                    // Check array_element_types first (pointer-stomped elements override)
+                    // — BUT only when `obj_ty_pre` is NOT a self-describing mono Vec/
+                    // array name. The side-table is keyed by bare var name and is
+                    // last-wins across peer files of a folder-module: a `v` declared
+                    // `[]byte` in one test poisons the entry for a `v` declared
+                    // `[]str` in another → wrong element type (nova_byte vs nova_str)
+                    // → e.g. `v[0] == v[2]` mis-emits a raw struct `==`. The mono name
+                    // `Nova_Vec____nova_str*` is authoritative; prefer decoding it
+                    // (handled below) and consult the side-table only for non-self-
+                    // describing obj types (pointer-stomped raw buffers).
+                    let obj_ty_self_describing = obj_ty_pre.starts_with("Nova_Vec____")
+                        || obj_ty_pre.starts_with("NovaArray_");
+                    if obj_ty_self_describing {
+                        // Decode element type DIRECTLY from the authoritative mono name,
+                        // bypassing every name-keyed side-table (array_element_types,
+                        // compute_array_elem_type_for_obj) — all of which are last-wins
+                        // across folder-module peers and can be poisoned by a same-named
+                        // var of a different element type in another file.
+                        if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
+                            let elem = elem.trim_end_matches('*').trim();
+                            if !elem.is_empty() { return elem.to_string(); }
+                        }
+                        if obj_ty_pre.starts_with("Nova_Vec____") && !obj_ty_pre.trim_end().ends_with("**") {
+                            let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
+                            if let Some(elem) = self.generic_type_instance_info.borrow()
+                                .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
+                            {
+                                if !elem.is_empty() { return elem; }
+                            }
+                            let elem = obj_ty_pre.strip_prefix("Nova_Vec____")
+                                .unwrap_or("").trim_end_matches('*').trim();
+                            if !elem.is_empty() { return elem.to_string(); }
+                        }
+                    } else if let ExprKind::Ident(name) = &obj.kind {
+                        if let Some(et) = self.array_element_types.get(name) {
+                            return et.clone();
+                        }
+                    }
+                    // @field access (nova_self->field) — check by synthesized C-expression key.
+                    if let ExprKind::Member { obj: inner, name: field } = &obj.kind {
+                        if matches!(inner.kind, ExprKind::SelfAccess) {
+                            let key = format!("(nova_self->{})", Self::mangle_field_name(field));
+                            if let Some(et) = self.array_element_types.get(&key) {
+                                return et.clone();
+                            }
+                        }
+                    }
+                    // Plan 56 followup: deep field-access chain — obj.f1.f2.field[i].
+                    // Compute real element type from record schema / template + subst.
+                    if let Some(elem) = self.compute_array_elem_type_for_obj(obj) {
+                        if !elem.is_empty() && elem != "nova_int" {
+                            return elem;
+                        }
+                    }
+                    // Если obj — NovaArray_T*, элемент имеет тип T (из имени).
+                    if let Some(elem) = Self::debt_strip_novaarray_prefix_opt(&obj_ty_pre) {
+                        let elem = elem.trim_end_matches('*').trim();
+                        return elem.to_string();
+                    }
+                    // Plan 138 Ф.3 (D238): str[i] → char.
+                    if obj_ty_pre == "nova_str" {
+                        return "nova_char".to_string();
+                    }
+                    // Plan 138 Ф.2 (D238): Vec[T] indexing — `Nova_Vec____<T>*[i]` → element type T.
+                    // `Nova_Vec____nova_int*` → `nova_int`
+                    // `Nova_Vec____Nova_Foo__*` → `Nova_Foo__*`
+                    // Pattern: `Nova_Vec____<T>*` where `<T>` is the monomorphized element type.
+                    // Plan 138.1 Ф.3: exclude `Nova_Vec____<T>**` (a `*mut Vec[T]`
+                    // raw buffer, e.g. the `data` field of `Vec[Vec[T]]`) — that is
+                    // a typed pointer, so indexing yields a `Vec[T]` value
+                    // (`Nova_Vec____<T>*`), handled by the raw-pointer-deref arm
+                    // below. Recover the precise element C type from the registry.
+                    if obj_ty_pre.starts_with("Nova_Vec____")
+                        && !obj_ty_pre.trim_end().ends_with("**")
+                    {
+                        let mangled = obj_ty_pre.trim_end_matches('*').trim().to_string();
+                        if let Some(elem) = self.generic_type_instance_info.borrow()
+                            .get(&mangled).and_then(|(_, a)| a.first().map(|rt| self.arg_c(rt)))
+                        {
+                            if !elem.is_empty() {
+                                return elem;
+                            }
+                        }
+                        let suffix = obj_ty_pre.strip_prefix("Nova_Vec____").unwrap_or("");
+                        // Strip one trailing `*` only for scalar types; nested Nova_ element types
+                        // (Vec[Vec[T]], Vec[Record]) are pointers — preserve their `*`.
+                        let elem = if suffix.starts_with("Nova_") {
+                            suffix
+                        } else {
+                            suffix.trim_end_matches('*').trim()
+                        };
+                        if !elem.is_empty() {
+                            return elem.to_string();
+                        }
+                    }
+                    // [M-118-ptr-index-unsafe] Plan 118 D216 §8: typed pointer
+                    // `*mut T` / `*T` — ptr[i] ≡ *(ptr+i). Element type = pointee
+                    // (C type obtained by stripping trailing `*` from pointer type).
+                    // Mirror exact logic as UnOp::Deref inference (line ~29113).
+                    // Must come AFTER NovaArray_ check to avoid false-firing on
+                    // `NovaArray_nova_int*` (those use the NovaArray_ path above).
+                    if obj_ty_pre.ends_with('*') && !obj_ty_pre.starts_with("NovaArray_") {
+                        if let Some(pointee) = obj_ty_pre.strip_suffix('*') {
+                            let pointee = pointee.trim();
+                            if !pointee.is_empty() {
+                                return pointee.to_string();
+                            }
+                        }
+                    }
+                    panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
+        }
+        // Channel 6n (2026-07-04): RecordLit — ДОСЛОВНЫЙ подъём legacy-арма.
+        if let ExprKind::RecordLit { type_name: Some(name), fields, .. } = &expr.kind {
+            return {
+                    let raw_name = name.join("_");
+                    let struct_name = if raw_name == "Self" {
+                        self.current_receiver_type.clone().unwrap_or(raw_name)
+                    } else { raw_name };
+                    // D406: qualified `TypeName.Variant { fields }` — path ["TypeName", "Variant"].
+                    // join("_") gives "TypeName_Variant" which find_variant_compat won't find.
+                    // Detect and look up the sum type directly.
+                    if name.len() == 2 {
+                        let (sum_part, _var_part) = (&name[0], &name[1]);
+                        if self.sum_schemas.contains_key(sum_part.as_str())
+                            || self.sum_schema_registry.lookup_sum_schema(sum_part).is_some()
+                        {
+                            return format!("Nova_{}*", sum_part);
+                        }
+                    }
+                    // Check if this is a sum-type record variant.
+                    // Plan 62.A.bis Ф.2.2: registry-driven sum variant lookup.
+                    if let Some((sum_type_name, _)) = self.sum_schema_registry.find_variant_compat(&struct_name) {
+                        format!("Nova_{}*", sum_type_name)
+                    } else if self.generic_types.contains(&struct_name) {
+                        // Generic type: compute concrete mono name from field values.
+                        // Check BEFORE record_schemas because record_schemas has the erased form
+                        // (with void* fields) for generic types — we want the concrete mono form.
+                        if let Some(template) = self.generic_type_templates.get(&struct_name) {
+                            use crate::ast::TypeDeclKind;
+                            let mut type_args_c: Vec<String> = template.generics.iter()
+                                .map(|_| "nova_int".to_string())
+                                .collect();
+                            if let TypeDeclKind::Record(field_decls) = &template.kind {
+                                for (i, g) in template.generics.iter().enumerate() {
+                                    for f_decl in field_decls {
+                                        if let crate::ast::TypeRef::Named { path, generics: fgens, .. } = &f_decl.ty {
+                                            if fgens.is_empty() && path.join("_") == g.name {
+                                                if let Some(field) = fields.iter().find(|f| f.name == f_decl.name) {
+                                                    if let Some(v) = &field.value {
+                                                        let c_ty = self.infer_expr_c_type(v);
+                                                        if !c_ty.is_empty() && c_ty != "void*" {
+                                                            type_args_c[i] = c_ty;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let mangled = Self::compute_generic_type_c_name(&struct_name, &type_args_c);
+                            // Plan 153.2 Ф.1 (STAGE 1): a `value` generic record
+                            // literal has the by-value C-type `NovaValue_<short>`
+                            // (no `*`), matching what `type_ref_to_c` returns and
+                            // what the record-lit emitter produces.
+                            if self.is_value_generic_template(&struct_name) {
+                                format!("NovaValue_{}", Self::debt_mono_short_name(&mangled))
+                            } else {
+                                format!("{}*", mangled)
+                            }
+                        } else {
+                            "void*".into()
+                        }
+                    } else if self.record_schemas.contains_key(&struct_name) {
+                        // Plan 124.8 V2 / Plan 127: value-records use stack-typedef
+                        // `NovaValue_<X>` (no pointer); heap records use `Nova_<X>*`.
+                        if self.value_record_names.contains(&struct_name) {
+                            format!("NovaValue_{}", struct_name)
+                        } else {
+                            format!("Nova_{}*", struct_name)
+                        }
+                    } else {
+                        "void*".into()
+                    }
+            };
+        }
+        // Channel 6q (2026-07-04): Call — ДОСЛОВНЫЙ подъём КРУПНЕЙШЕГО
+        // legacy-арма (~2200 строк: method-returns, turbofish, интринсики,
+        // fn_ret_* реестры). Механический перенос; дети через dispatcher.
+        if let ExprKind::Call { func, args, .. } = &expr.kind {
+            return self.infer_call_ret_c(expr, func, args);
         }
         // Channel 6o (2026-07-04): Ident — ДОСЛОВНЫЙ подъём legacy-арма
         // (unit-варианты, empty-sum, self, buf-фоллбеки).
