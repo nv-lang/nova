@@ -117,13 +117,7 @@ fn BufReader[R Read] mut @refill() -> Result[int, IoError] {
         match @inner.read(chunk) {
             Ok(0)  => return Ok(0)
             Ok(n)  => {
-                mut fresh []u8 = []u8.new()
-                mut i = 0
-                while i < n {
-                    fresh.push(chunk[i])
-                    i += 1
-                }
-                @buf = fresh
+                @buf = chunk.truncate(n)
                 @pos = 0
                 return Ok(n)
             }
