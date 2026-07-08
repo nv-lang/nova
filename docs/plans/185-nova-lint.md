@@ -36,6 +36,7 @@
 | `Vec[` вне vec-модуля (D238/D239-амендмент) | `W_VEC_SPELLING` | линт |
 | Голый int/*() хендл в extern-семействе с new/open+free/close (module-conventions §4а, 2026-07-09) | `W_FFI_BARE_HANDLE` | линт |
 | `.of` у невариадика (§21б nv-coding-style) | `W_NONVARIADIC_OF` | линт |
+| Статик-конверсия T.from(x)/T.parse(s) (§1а) | `W_STATIC_CONVERSION` | линт |
 | Поэлементная копия `push(x[i])` в счётном цикле (§18а nv-coding-style) | `W_MANUAL_SLICE_COPY` | линт-эвристика |
 | Метод без `mut` возвращает Self с пересборкой всех полей (D117/D409, OpenOptions-класс) | `W_IMMUTABLE_REBUILD_SETTER` | линт-эвристика |
 | `as_`-префикс (D410) | `W_RETIRED_PREFIX` (as_) | линт |

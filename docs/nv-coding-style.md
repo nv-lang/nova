@@ -50,6 +50,21 @@
   `strings.md:71-82`). Голым остаётся только `byte_len()` (O(1)); codepoint/grapheme-счёт —
   через явный lens (`s.chars().count()`).
 
+### 1а. Четыре направления конверсий (система, владелец 2026-07-09)
+
+| Операция | Форма | Пример |
+|---|---|---|
+| Вид/переинтерпретация (zero-copy) | голое существительное | `s.bytes()`, `s.chars()` |
+| Конверсия с копией/валидацией из ro-источника | `x.to_*()` (→ Result где fallible) | `cp.to_char()`, `s.to_int()`, `b.to_str()` |
+| Конверсия с передачей владения | `consume x.into_*()` | `sb.into_str()`, `b.into_str_unchecked()` |
+| Конструктор без источника-носителя | `Type.new(...)` / `of` вариадик / композитные | `DeError.new(k)`, `Vec.of(1,2)`, `SocketAddr.v4(...)` |
+
+Статики-конверсии `T.from(x)` / `T.parse(s)` — ЗАПРЕЩЁННАЯ пятая дверь (дубль
+`to_*`; ломает цепочки — симптом: `.ok()`-прослойки в match). Ретрактированы
+2026-07-09: char.from→to_char, str.parse_*→to_int-семья, str.from_bytes*→
+[]u8.to_str*/into_str_unchecked. `from` уместен ТОЛЬКО когда источник — не
+значение-ресивер, а концепт (from_polar, embed). Проверка (185): W_STATIC_CONVERSION.
+
 ## 2. ASCII vs Unicode в именах методов
 
 - **Bare-имя = Unicode-семантика (под `import std.unicode`); `ascii` в имени = ASCII-only,
