@@ -2,7 +2,7 @@
 //
 // Every method here returns a `[]T` ≡ `Vec[T]` view of the SAME type (Plan 96
 // D-single-type — there is NO separate `Slice` type, D238) sharing the parent
-// element buffer: an interior pointer at `@data + start`, `len == cap` (D-cap-
+// element buffer: an interior pointer at `@data.offset(start)`, `len == cap` (D-cap-
 // len). The GC keeps the parent buffer alive while any view is reachable
 // (`GC_all_interior_pointers`, Plan 138 Ф.2).
 //
@@ -92,7 +92,7 @@ export fn Vec[T] @split_at(i int) -> (Self, Self)
     requires 0 <= i && i <= @len
 {
     ro left = Self { @data, len: i, cap: i }
-    ro right = Self { data: unsafe { @data + i }, len: @len - i, cap: @len - i }
+    ro right = Self { data: unsafe { @data.offset(i) }, len: @len - i, cap: @len - i }
     (left, right)
 }
 
@@ -112,8 +112,8 @@ export fn Vec[T] @split_first() -> Option[(T, Self)] {
     if @len == 0 {
         return None
     }
-    ro head = unsafe { @data[0] }
-    ro tail = Self { data: unsafe { @data + 1 }, len: @len - 1, cap: @len - 1 }
+    ro head = unsafe { @data.read_at(0) }
+    ro tail = Self { data: unsafe { @data.offset(1) }, len: @len - 1, cap: @len - 1 }
     Some((head, tail))
 }
 
@@ -134,7 +134,7 @@ export fn Vec[T] @split_last() -> Option[(T, Self)] {
         return None
     }
     ro n = @len - 1
-    ro last = unsafe { @data[n] }
+    ro last = unsafe { @data.read_at(n) }
     ro init = Self { @data, len: n, cap: n }
     Some((last, init))
 }
@@ -185,6 +185,6 @@ export fn Vec[T] @last_n(n int) -> Self { // [M-lint-findings-param-no-contract]
         k = @len
     }
     ro start = @len - k
-    { data: unsafe { @data + start }, len: k, cap: k }
+    { data: unsafe { @data.offset(start) }, len: k, cap: k }
 }
 

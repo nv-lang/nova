@@ -31,7 +31,7 @@ module collections.vec
 export fn Vec[T] @index(i int) -> T
     requires 0 <= i && i < @len
 {
-    unsafe { @data[i] }
+    unsafe { @data.read_at(i) }
 }
 
 /// Element at `i` by value, or `None` if out of bounds.
@@ -39,7 +39,7 @@ export fn Vec[T] @get(i int) -> Option[T] {
     if i < 0 || i >= @len {
         return None
     }
-    Some(unsafe { @data[i] })
+    Some(unsafe { @data.read_at(i) })
 }
 
 /// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex`
@@ -57,7 +57,7 @@ export fn Vec[T] mut @index(i int, val T) -> ()
     requires 0 <= i && i < @len
 {
     unsafe {
-        @data[i] = val
+        @data.write_at(i, val)
     }
 }
 
@@ -86,7 +86,7 @@ export fn Vec[T] @contains(v T) -> bool {
     // Typed local so `==` dispatches on element type `T`; a method/operator kept
     // *inside* the `unsafe` deref misresolves in codegen (same idiom as @equal).
     for i in 0..@len {
-        ro e = unsafe { @data[i] }
+        ro e = unsafe { @data.read_at(i) }
         if e == v {
             return true
         }
@@ -106,7 +106,7 @@ export fn Vec[T] @contains(v T) -> bool {
 /// ```
 export fn Vec[T] @index_of(v T) -> Option[int] {
     for i in 0..@len {
-        ro e = unsafe { @data[i] }
+        ro e = unsafe { @data.read_at(i) }
         if e == v {
             return Some(i)
         }
@@ -117,7 +117,7 @@ export fn Vec[T] @index_of(v T) -> Option[int] {
 /// First index whose element satisfies `pred`, or `None`. Linear O(n).
 export fn Vec[T] @position(pred fn(T) -> bool) -> Option[int] {
     for i in 0..@len {
-        ro e = unsafe { @data[i] }
+        ro e = unsafe { @data.read_at(i) }
         if pred(e) {
             return Some(i)
         }
@@ -131,7 +131,7 @@ export fn Vec[T] @rposition(pred fn(T) -> bool) -> Option[int] {
     mut i = @len
     while i > 0 {
         i = i - 1
-        ro e = unsafe { @data[i] }
+        ro e = unsafe { @data.read_at(i) }
         if pred(e) {
             return Some(i)
         }
@@ -147,8 +147,8 @@ export fn Vec[T Compare] @is_sorted() -> bool {
         return true
     }
     for i in 1..@len {
-        ro a = unsafe { @data[i - 1] }
-        ro b = unsafe { @data[i] }
+        ro a = unsafe { @data.read_at(i - 1) }
+        ro b = unsafe { @data.read_at(i) }
         if a.compare(b) > 0 {
             return false
         }
@@ -163,8 +163,8 @@ export fn Vec[T] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
         return true
     }
     for i in 1..@len {
-        ro a = unsafe { @data[i - 1] }
-        ro b = unsafe { @data[i] }
+        ro a = unsafe { @data.read_at(i - 1) }
+        ro b = unsafe { @data.read_at(i) }
         if cmp(a, b) > 0 {
             return false
         }
@@ -186,7 +186,7 @@ export fn Vec[T Compare] @binary_search(x T) -> Result[int, int] {
     mut hi = @len
     while lo < hi {
         ro mid = lo + (hi - lo) / 2
-        ro e = unsafe { @data[mid] }
+        ro e = unsafe { @data.read_at(mid) }
         ro c = e.compare(x)
         if c == 0 {
             return Ok(mid)
@@ -208,7 +208,7 @@ export fn Vec[T] @binary_search_by(cmp fn(T) -> int) -> Result[int, int] {
     mut hi = @len
     while lo < hi {
         ro mid = lo + (hi - lo) / 2
-        ro e = unsafe { @data[mid] }
+        ro e = unsafe { @data.read_at(mid) }
         ro c = cmp(e)
         if c == 0 {
             return Ok(mid)
@@ -230,7 +230,7 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
     mut hi = @len
     while lo < hi {
         ro mid = lo + (hi - lo) / 2
-        ro e = unsafe { @data[mid] }
+        ro e = unsafe { @data.read_at(mid) }
         ro ek = key(e)
         ro c = ek.compare(k)
         if c == 0 {

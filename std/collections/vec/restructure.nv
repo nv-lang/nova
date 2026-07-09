@@ -59,7 +59,7 @@ export fn Vec[T] @concat(other Vec[T]) -> Vec[T] {
     }
     if b > 0 {
         unsafe {
-            RawMem.copy(other.data as *u8, (out.data + a) as *mut u8, b * size_of[T]())
+            RawMem.copy(other.data as *u8, out.data.offset(a) as *mut u8, b * size_of[T]())
         }
     }
     // `out` was built with exact capacity `a + b`; set its live length to match
@@ -164,8 +164,8 @@ export fn Vec[T] mut @rotate_left(n int) -> @
     }
     head.len = k
     unsafe {
-        RawMem.copy((@data + k) as *u8, @data as *mut u8, (@len - k) * size_of[T]())
-        RawMem.copy(head.data as *u8, (@data + (@len - k)) as *mut u8, k * size_of[T]())
+        RawMem.copy(@data.offset(k) as *u8, @data as *mut u8, (@len - k) * size_of[T]())
+        RawMem.copy(head.data as *u8, @data.offset(@len - k) as *mut u8, k * size_of[T]())
     }
 }
 
@@ -228,13 +228,13 @@ export fn Vec[T] mut @drain(range Range) -> Vec[T]
     // Copy the drained run out, then shift the suffix `[end, len)` left into the
     // hole at `start` (overlap-safe memmove), and shorten `self`.
     unsafe {
-        RawMem.copy((@data + start) as *u8, out.data as *mut u8, count * size_of[T]())
+        RawMem.copy(@data.offset(start) as *u8, out.data as *mut u8, count * size_of[T]())
     }
     out.len = count
     ro tail = @len - end
     if tail > 0 {
         unsafe {
-            RawMem.copy((@data + end) as *u8, (@data + start) as *mut u8, tail * size_of[T]())
+            RawMem.copy(@data.offset(end) as *u8, @data.offset(start) as *mut u8, tail * size_of[T]())
         }
     }
     @len = @len - count

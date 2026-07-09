@@ -1,0 +1,15 @@
+// Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend) — `p+i` pointer arithmetic
+// is retired. Use `p.offset(n)`.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_OP_USE_METHOD
+
+module neg.d216_ptr_add_neg
+
+test "rejects `p+i` arithmetic" {
+    mut buf []int = [10, 20, 30]
+    unsafe {
+        ro p = buf.ptr()
+        ro q = p + 1
+        assert(q.read() == 20)
+    }
+}

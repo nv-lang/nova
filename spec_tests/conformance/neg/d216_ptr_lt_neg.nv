@@ -1,0 +1,15 @@
+// Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend) — `p<q` pointer ordering is
+// retired. Use the sign of `p.dist(q)`.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_OP_USE_METHOD
+
+module neg.d216_ptr_lt_neg
+
+test "rejects `p<q` ordering operator" {
+    mut buf []int = [10, 20, 30]
+    unsafe {
+        ro p = buf.ptr()
+        ro q = p.offset(2)
+        assert(p < q)
+    }
+}

@@ -1010,6 +1010,21 @@ pub struct CEmitter {
     /// (lazy-init геттер) вместо имени переменной. Тип сохраняется в
     /// `var_types[name]` (как для обычных const'ов).
     lazy_consts: HashSet<String>,
+    /// `[M-lazy-const-init-race]` (2026-07-09): pending lazy-const init
+    /// bodies, collected as each lazy const (`const X = <non-constexpr>` /
+    /// module-level `ro X = <runtime-expr>`) is emitted, and combined at
+    /// finalize (`emit_module`, just before `emit_main_wrapper`) into ONE
+    /// topologically-sorted `nova_consts_init()` function — replaces the old
+    /// per-const check-then-act lazy getter (non-atomic `_init` flag +
+    /// no publication barrier for the value = data race under M:N: a worker
+    /// can observe `_init=1` before the value write is visible, or two
+    /// workers can race the init itself). `nova_consts_init()` runs ONCE from
+    /// the driver's main-path, before any worker spawns (`nova_runtime_auto_arm`)
+    /// — so reads become a bare global-value access, no branch/call, and no
+    /// concurrent initializer can race. (name, init-body C statements, free
+    /// identifiers referenced by the initializer — used for the dependency
+    /// topo-sort, filtered down to other lazy-const names at finalize time).
+    pending_const_inits: Vec<(String, String, Vec<String>)>,
     /// Plan 14 Ф.4: fn-typed поля record'ов — `(record_name, field_name)
     /// → (param_c_tys, ret_c_ty)`. Заполняется при `emit_type_decl`
     /// для record-полей с TypeRef::Func. Используется в Member-call
@@ -1689,6 +1704,7 @@ impl CEmitter {
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
             lazy_consts: HashSet::new(),
+            pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
             lambda_counter: 0,
@@ -6112,6 +6128,15 @@ impl CEmitter {
             self.out.push('\n');
         }
 
+        // `[M-lazy-const-init-race]`: every module's lazy consts have been
+        // collected into `pending_const_inits` by now (all `emit_const_decl`/
+        // `ro`-global passes across every module are done) — combine into
+        // ONE topo-sorted `nova_consts_init()`, emitted textually right
+        // before `main()` (which `emit_main_wrapper` emits next, and whose
+        // body calls it via the `/*__CONSTS_INIT_CALL__*/` marker below).
+        let consts_init_fn = self.render_consts_init_fn();
+        self.out.push_str(&consts_init_fn);
+
         self.emit_main_wrapper(module);
 
         // Plan 36 followup: splice user-type forward decls в маркер
@@ -6996,50 +7021,64 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 14 Ф.2: эмит const'а с runtime-init через lazy-init геттер.
+    /// `[M-lazy-const-init-race]` (2026-07-09, absorbs Plan 14 Ф.2): эмит
+    /// const'а/module-level `ro NAME = EXPR` с runtime-init. Storage-only
+    /// здесь; the init BODY (gc_add_root + expr statements + final assign) is
+    /// captured into `self.pending_const_inits` and combined at finalize
+    /// (`emit_module`, right before `emit_main_wrapper`) into ONE
+    /// topologically-sorted `nova_consts_init()` — called ONCE from the
+    /// driver's main-path, before `nova_runtime_auto_arm()` spawns workers.
+    ///
+    /// Was (Plan 14 Ф.2, RETIRED — data race under M:N, see marker): a
+    /// PER-CONST check-then-act lazy getter (`if (!_init) { ...; _init = 1; }
+    /// return _value;`) called on every read. Non-atomic `_init` flag + no
+    /// publication barrier for `_value` meant a second thread could observe
+    /// `_init == 1` before the write to `_value` became visible (or two
+    /// threads could race the init body itself) — for pointer-valued consts
+    /// (`nova_str`/`Vec`/record) this is a crash-class bug, not just a
+    /// redundant-init inefficiency.
     ///
     /// ```c
-    /// static <Ty> _nova_const_<name>_value;
-    /// static int _nova_const_<name>_init = 0;
-    /// static <Ty> nova_const_<name>(void) {
-    ///     if (!_nova_const_<name>_init) {
-    ///         <emit_expr statements>
-    ///         _nova_const_<name>_value = <expr_val>;
-    ///         _nova_const_<name>_init = 1;
-    ///     }
-    ///     return _nova_const_<name>_value;
+    /// static <Ty> _nova_const_<name>_value;          // this fn emits just this
+    /// // ... combined into ONE fn at finalize:
+    /// static void nova_consts_init(void) {
+    ///     nova_gc_add_root(&_nova_const_<name>_value, ...);
+    ///     <emit_expr statements>
+    ///     _nova_const_<name>_value = <expr_val>;
+    ///     // ... every other lazy const, topo-sorted ...
     /// }
     /// ```
     ///
-    /// На use-site `Ident(name)` для lazy const'ов эмитим `nova_const_<name>()`.
+    /// На use-site `Ident(name)` для lazy const'ов эмитим ГОЛОЕ
+    /// `_nova_const_<name>_value` (не call — eager-init гарантирует, что оно
+    /// уже populated до старта любого worker'а).
     fn emit_lazy_const(&mut self, name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
-        // Регистрируем имя как lazy — use-site Ident(name) станет вызовом геттера.
+        // Регистрируем имя как lazy — use-site Ident(name) станет голым
+        // чтением `_nova_const_<name>_value`.
         self.lazy_consts.insert(name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
         self.var_types.insert(name.to_string(), ty_c.to_string());
-        // Эмитим storage + init-flag (file-scope statics).
+        // Эмитим storage (file-scope static; no `_init` flag anymore — the
+        // combined `nova_consts_init()` runs it exactly once, eagerly).
         self.line(&format!("static {} _nova_const_{}_value;", ty_c, name));
-        self.line(&format!("static int _nova_const_{}_init = 0;", name));
-        // Эмитим геттер. Тело уходит в deferred_impls (после всех forward
-        // declarations), чтобы вложенные emit'ы (record-литерал → side
-        // statements) не разрушали file-scope порядок.
+        // Capture this const's init-BODY into its own buffer (same
+        // side-statement-safety rationale as the old getter-body capture —
+        // nested emits, e.g. a record-literal's helper statements, must not
+        // interleave with file-scope declaration order). Combined with every
+        // OTHER lazy const's body into ONE `nova_consts_init()` at finalize.
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
-        self.indent = 0;
-        self.line(&format!("static {} nova_const_{}(void) {{", ty_c, name));
-        self.indent = 1;
-        self.line(&format!("if (!_nova_const_{}_init) {{", name));
-        self.indent = 2;
+        self.indent = 1; // body nests one level inside `nova_consts_init() { ... }`
         // Plan 152.4: register the storage cell as a GC root BEFORE building.
         // The Boehm backend runs with GC_set_no_dls(1) (alloc_boehm.c), which
         // leaves the program's static/BSS data unscanned — so this file-scope
         // `static` pointer is NOT a GC root by default, and a large lazy value
-        // (e.g. the Unicode HashMap tables) is collected the first time GC fires
-        // under memory pressure → use-after-free. Registering the cell up front
-        // means a GC triggered mid-build sees it (still NULL — harmless), and
-        // after assignment the object lives in a scanned root. No-op under
-        // malloc/RC backends.
+        // (e.g. the Unicode HashMap tables) would be collected the first time
+        // GC fires under memory pressure → use-after-free. Registering the
+        // cell up front means a GC triggered mid-init sees it (still NULL —
+        // harmless), and after assignment the object lives in a scanned root.
+        // No-op under malloc/RC backends.
         self.line(&format!(
             "nova_gc_add_root(&_nova_const_{n}_value, (char*)(&_nova_const_{n}_value) + sizeof(_nova_const_{n}_value));",
             n = name
@@ -7052,20 +7091,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let val = self.emit_expr(value)?;
         self.expected_record_type = saved_expected;
         self.line(&format!("_nova_const_{}_value = {};", name, val));
-        self.line(&format!("_nova_const_{}_init = 1;", name));
-        self.indent = 1;
-        self.line("}");
-        self.line(&format!("return _nova_const_{}_value;", name));
-        self.indent = 0;
-        self.line("}");
-        self.line("");
-        let getter_body = std::mem::replace(&mut self.out, saved_out);
+        let body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
-        // Forward decl рядом с storage — чтобы вызовы видели функцию.
-        self.line(&format!("static {} nova_const_{}(void);", ty_c, name));
-        // Тело уходит в deferred_impls (печатается после forward decls).
-        self.deferred_impls.push_str(&getter_body);
+        // Dependency scan (best-effort — see `collect_free_idents`'s
+        // coverage note) for the topo-sort at finalize: any free identifier
+        // that turns out to ALSO be a lazy-const name becomes a "must-init-
+        // before-me" edge. Over-approximates (collects ALL free idents, not
+        // just other consts) — filtered down against the final `lazy_consts`
+        // set once every module has been processed.
+        let mut free_idents = HashSet::new();
+        Self::collect_free_idents(value, &mut free_idents);
+        self.pending_const_inits.push((name.to_string(), body, free_idents.into_iter().collect()));
         Ok(())
+    }
+
+    /// `[M-lazy-const-init-race]`: Kahn's-algorithm topo-sort of the
+    /// collected lazy-const init bodies by inter-const dependency (a const
+    /// referencing another lazy const in its initializer must be emitted
+    /// AFTER the one it depends on). Declaration-order stable for
+    /// independent entries (queue seeded in original order). A dependency
+    /// cycle (shouldn't occur for well-formed const initializers — Nova has
+    /// no way to construct one without a self/mutually-referential `const`,
+    /// itself likely a separate checker error) falls back to appending the
+    /// unresolved remainder in declaration order rather than silently
+    /// dropping them.
+    fn topo_sort_const_inits(entries: &[(String, String, Vec<String>)]) -> Vec<usize> {
+        let n = entries.len();
+        let index_of: HashMap<&str, usize> = entries.iter().enumerate()
+            .map(|(i, (name, _, _))| (name.as_str(), i))
+            .collect();
+        let mut indeg = vec![0usize; n];
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (i, (name, _, deps)) in entries.iter().enumerate() {
+            for d in deps {
+                if d == name { continue; } // self-reference guard (no-op edge)
+                if let Some(&dep_idx) = index_of.get(d.as_str()) {
+                    adj[dep_idx].push(i);
+                    indeg[i] += 1;
+                }
+            }
+        }
+        let mut queue: std::collections::VecDeque<usize> =
+            (0..n).filter(|&i| indeg[i] == 0).collect();
+        let mut order = Vec::with_capacity(n);
+        while let Some(i) = queue.pop_front() {
+            order.push(i);
+            for &j in &adj[i] {
+                indeg[j] -= 1;
+                if indeg[j] == 0 { queue.push_back(j); }
+            }
+        }
+        if order.len() != n {
+            let seen: HashSet<usize> = order.iter().cloned().collect();
+            for i in 0..n {
+                if !seen.contains(&i) { order.push(i); }
+            }
+        }
+        order
+    }
+
+    /// `[M-lazy-const-init-race]`: assemble every collected lazy-const init
+    /// body (`self.pending_const_inits`) into ONE `static void
+    /// nova_consts_init(void) { ... }` function, topologically sorted.
+    /// Always emitted (possibly empty-bodied when there are no lazy consts —
+    /// keeps `emit_main_wrapper`'s call site unconditional, no extra state
+    /// threading). Called once from `emit_module` at finalize, just before
+    /// `emit_main_wrapper` — so the function TEXT appears before `main()`.
+    fn render_consts_init_fn(&self) -> String {
+        let order = Self::topo_sort_const_inits(&self.pending_const_inits);
+        let mut out = String::new();
+        out.push_str("static void nova_consts_init(void) {\n");
+        for i in order {
+            out.push_str(&self.pending_const_inits[i].1);
+        }
+        out.push_str("}\n\n");
+        out
     }
 
     /// Эмит integer-литерала с правильным C-типом (suffix + cast).
@@ -21332,6 +21432,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("int main(int argc, char** argv) {");
         self.indent += 1;
         self.line("nova_gc_init();");
+        // `[M-lazy-const-init-race]`: eager module-const init — MUST run
+        // after `nova_gc_init()` (the init bodies call `nova_gc_add_root`)
+        // and BEFORE `nova_runtime_auto_arm()` below (which spawns the M:N
+        // worker threads). Every lazy const is populated, single-threaded,
+        // before any worker can observe it — replaces the retired per-const
+        // check-then-act lazy getter (data race under concurrent first-touch).
+        self.line("nova_consts_init();");
         // Plan 176 Ф.3 (D324): capture argv for the std/os `Os` effect
         // (os.args). Stored into os_env.h file-scope globals read by
         // os_arg_count/os_arg_at. Harmless when os is unused.
@@ -23351,6 +23458,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Identified by: ends with `*`, and is not a NovaArray /
                         // Vec / str / known struct collection type.
                         if Self::is_raw_pointer_storage_c(&arr_obj_ty) {
+                            // Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend):
+                            // `p[i] = v` index WRITE on a raw pointer — this
+                            // branch is the ASSIGNMENT-side counterpart of the
+                            // `ExprKind::Index` read-arm retraction (this
+                            // Stmt::Assign special-case bypasses that arm
+                            // entirely via its own direct emission, so it
+                            // needs its own retraction check). `Nova_X*`
+                            // single-pointer (record/sum VALUE, not excluded
+                            // by `is_raw_pointer_storage_c`) is out of scope
+                            // here too — no `.write_at()` method exists for a
+                            // bare record value receiver.
+                            if !(arr_obj_ty.starts_with("Nova_") && !arr_obj_ty.ends_with("**")) {
+                                self.strict_errors.borrow_mut().push(
+                                    "error: [E_POINTER_OP_USE_METHOD] operator `p[i] = v` on \
+                                     raw pointer retired (Plan 174.5 §3/§9, D216 amend) — use \
+                                     `p.write_at(i, v)`"
+                                        .to_string());
+                            }
                             let arr_c = self.emit_expr(arr_obj)?;
                             let idx_c = self.emit_expr(index)?;
                             let val = self.emit_expr(value)?;
@@ -24386,12 +24511,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 //   - Иначе fallback'имся на raw fn-pointer (для случаев
                 //     где callee принимает direct C function: built-in
                 //     dispatch, generic erasure, и т.д.).
-                // Plan 14 Ф.2: lazy const → вызов геттера. Проверяем
-                // ПЕРВЫМ, до is_local_var, потому что emit_lazy_const
-                // регистрирует name в var_types для type-inference, а
-                // is_local_var тогда был бы true.
+                // `[M-lazy-const-init-race]` (retired Plan 14 Ф.2 getter-call
+                // form): lazy const → bare global-value read (eager
+                // `nova_consts_init()` guarantees it's already populated
+                // before any code that could reach this site runs — see
+                // `emit_lazy_const`). Проверяем ПЕРВЫМ, до is_local_var,
+                // потому что emit_lazy_const регистрирует name в var_types
+                // для type-inference, а is_local_var тогда был бы true.
                 if self.lazy_consts.contains(name) {
-                    return Ok(format!("nova_const_{}()", name));
+                    return Ok(format!("_nova_const_{}_value", name));
                 }
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));
@@ -24590,15 +24718,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
-                // Plan 14 Ф.2: `FACTOR.x` парсится как Path(["FACTOR", "x"])
-                // если первая часть — Ident с UpperCase (parser routing).
-                // Для lazy const'ов нужно `nova_const_FACTOR()->x` вместо
-                // `FACTOR_x` (last segment — record-поле).
+                // `[M-lazy-const-init-race]` (retired Plan 14 Ф.2 getter-call
+                // form): `FACTOR.x` парсится как Path(["FACTOR", "x"]) если
+                // первая часть — Ident с UpperCase (parser routing). Для lazy
+                // const'ов нужно `_nova_const_FACTOR_value->x` вместо
+                // `FACTOR_x` (last segment — record-поле) — bare read, eager
+                // init guarantees it's already populated (see emit_lazy_const).
                 if parts.len() >= 2 && self.lazy_consts.contains(&parts[0]) {
                     let const_ty = self.var_types.get(&parts[0]).cloned()
                         .unwrap_or_default();
                     let accessor = if Self::is_value_type(&const_ty) { "." } else { "->" };
-                    let mut acc = format!("nova_const_{}(){}{}", parts[0], accessor, parts[1]);
+                    let mut acc = format!("_nova_const_{}_value{}{}", parts[0], accessor, parts[1]);
                     for p in &parts[2..] {
                         acc = format!("({}.{})", acc, p);
                     }
@@ -25312,6 +25442,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let rty_is_cptr = rty.ends_with('*') && rty != "void*"
                     && !rty.starts_with("NovaArray_")
                     && (!rty.starts_with("Nova_") || rty.ends_with("**"));
+                // Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend): `p+i`/`p-i`/
+                // `p-q` on ANY raw pointer receiver `lty_is_cptr` — scalar
+                // (`int*`, `byte*`, ...) OR a `Nova_X**` struct-pointer buffer
+                // (a `*mut T` over a record/generic-T Vec element, e.g.
+                // `Vec[Vec[T]]`'s own `@data.offset(n)` — the new methods
+                // below now cover this receiver too, closing the struct-
+                // pointer gap noted in the plan) — is a retired operator,
+                // `[E_POINTER_OP_USE_METHOD]`. Use `.offset(n)` / `.dist(q)`
+                // instead. Emission still produces the old C form (degraded-
+                // but-valid) so the rest of the pipeline doesn't trip over a
+                // missing expression — `strict_errors` fails the build
+                // regardless (mirrors the E7201 pattern above).
+                let lty_is_scalar_raw_ptr = lty_is_cptr;
+                if lty_is_scalar_raw_ptr && matches!(op, BinOp::Add | BinOp::Sub) {
+                    let (src, hint) = match op {
+                        BinOp::Add => ("p + i", ".offset(n)"),
+                        BinOp::Sub if rty_is_cptr => ("p - q", ".dist(q)"),
+                        BinOp::Sub => ("p - i", ".offset(-n)"),
+                        _ => unreachable!(),
+                    };
+                    self.strict_errors.borrow_mut().push(format!(
+                        "error: [E_POINTER_OP_USE_METHOD] operator `{}` on raw pointer \
+                         retired (Plan 174.5 §3/§9, D216 amend) — use `{}`",
+                        src, hint));
+                }
                 if lty_is_cptr {
                     match op {
                         BinOp::Add => return Ok(format!("({} + {})", l, r)),
@@ -25319,6 +25474,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return Ok(format!("((ptrdiff_t)({} - {}))", l, r)),
                         _ => {}
                     }
+                }
+                // Plan 174.5 Ф.3 (retraction, §3/§9): ordering `p<q`/`p<=q`/
+                // `p>q`/`p>=q` on a SCALAR raw pointer is retired — order in a
+                // buffer is expressed via the SIGN of `.dist(q)` instead
+                // (`p.dist(q) < 0` etc). `==`/`!=` (identity) are NOT retired
+                // (§3 table) — only ordering falls here.
+                if lty_is_scalar_raw_ptr && rty_is_cptr
+                    && matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+                {
+                    let op_src = match op {
+                        BinOp::Lt => "p<q", BinOp::Le => "p<=q",
+                        BinOp::Gt => "p>q", BinOp::Ge => "p>=q",
+                        _ => unreachable!(),
+                    };
+                    self.strict_errors.borrow_mut().push(format!(
+                        "error: [E_POINTER_OP_USE_METHOD] operator `{}` on raw pointer \
+                         retired (Plan 174.5 §3/§9, D216 amend) — use the sign of \
+                         `p.dist(q)` instead",
+                        op_src));
                 }
                 // Plan 33.8 Ф.1.2: знаковая `int` Add/Sub/Mul → checked-форма
                 // (паника при переполнении, spec 04-effects.md). Только для
@@ -25376,6 +25550,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 let v = self.emit_expr(operand)?;
+                // Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend): `*p` deref on
+                // a raw pointer — same receiver guard as the `.read()`/
+                // `.write()` method family above — is a retired operator.
+                // Fires for BOTH the read form (`x = *p`) and the write form
+                // (`*p = v` reaches this same arm via `Stmt::Assign`'s generic
+                // `let tgt = self.emit_expr(target)?;` fallback, ~23373) — both
+                // are retired per §3/§9 (write ALSO keeps its own earlier,
+                // checker-level `E_POINTER_RO_ASSIGN` cap-check in
+                // `types/mod.rs::check_target_readonly`, unaffected by this).
+                if matches!(op, UnOp::Deref) {
+                    let operand_ty = self.infer_expr_c_type(operand);
+                    if operand_ty.ends_with('*')
+                        // Plan 174.5: `NovaOpt_`/`NovaRes_`/`NovaBox_`/
+                        // `NovaValue_` are VALUE structs when BARE (no star) —
+                        // `Option[T]`/`Result[T,E]`/`Box[T]`/value-record are
+                        // never represented with a trailing `*` for the value
+                        // itself, so any STARRED occurrence of these prefixes
+                        // is a genuine raw-pointer usage (e.g. `Vec[Option[T]]`'s
+                        // own `*mut T` buffer, T = Option[U]) — unlike `Nova_`
+                        // (heap record), whose VALUE repr IS single-star, so
+                        // only `Nova_X**` (double) is a genuine pointer there.
+                        && (!operand_ty.starts_with("Nova_") || operand_ty.ends_with("**"))
+                        && !operand_ty.starts_with("NovaArray_")
+                        && operand_ty != "void*"
+                    {
+                        self.strict_errors.borrow_mut().push(
+                            "error: [E_POINTER_OP_USE_METHOD] operator `*p` (deref) on raw \
+                             pointer retired (Plan 174.5 §3/§9, D216 amend) — use `p.read()` \
+                             (or `p.write(v)` for the assignment form)"
+                                .to_string());
+                    }
+                }
                 // D46/D215: unary `-` → @neg, `!` → @not on custom types.
                 // Dispatch by operand C-type: NovaTuple_T (value ABI) or Nova_T* (ref ABI).
                 if matches!(op, UnOp::Neg | UnOp::Not) {
@@ -26864,6 +27070,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             ExprKind::Index { obj, index } => {
                 let obj_ty = self.infer_expr_c_type(obj);
+                // Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend): `p[i]` (read
+                // OR write — `Stmt::Assign`'s target-fallback `let tgt =
+                // self.emit_expr(target)?` reaches this same arm for
+                // `p[i] = v`, mirroring the Deref-retraction above) on a raw
+                // scalar pointer is retired. `[]`/`@index` stays for safe
+                // containers (Vec/NovaArray/str — handled by the branches
+                // below, unaffected by this check, same receiver guard as the
+                // `.read_at()`/`.write_at()` method family).
+                if !matches!(index.kind, ExprKind::Range { .. })
+                    && obj_ty.ends_with('*')
+                    // Plan 174.5: see the Deref-retraction comment above —
+                    // `NovaOpt_`/`NovaRes_`/`NovaBox_`/`NovaValue_` are bare
+                    // (non-star) VALUE structs, so any starred occurrence is a
+                    // genuine pointer (e.g. `Vec[Option[T]]`'s buffer).
+                    && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
+                    && !obj_ty.starts_with("NovaArray_")
+                    && obj_ty != "void*"
+                {
+                    self.strict_errors.borrow_mut().push(
+                        "error: [E_POINTER_OP_USE_METHOD] operator `p[i]` on raw pointer \
+                         retired (Plan 174.5 §3/§9, D216 amend) — use `p.read_at(i)` (or \
+                         `p.write_at(i, v)` for the assignment form)"
+                            .to_string());
+                }
 
                 // Plan 96 Ф.4 — dispatch по типу index.
                 // Range-index → slice path: nova_array_slice_<T>(obj, from, to)
@@ -30762,13 +30992,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (parser не enforces; см. [M-118.1-unsafe-attr-on-external-fn]).
                 // Plan 134: nova_ptr removed; void* = erased generic placeholder,
                 // excluded as before.
+                // Plan 174.5: a single `Nova_X*` is a record/sum VALUE handle
+                // (excluded — no pointer semantics), but `Nova_X**` (a `*mut T`
+                // over a record/generic-T element, e.g. `Vec[T]`'s own
+                // `@data` field when monomorphized with a struct `T`) IS a
+                // genuine raw pointer buffer — included, so `Vec[Vec[T]]` /
+                // `Vec[Record]` generics (which call `.read_at`/`.write_at`/
+                // `.offset` on `@data` polymorphically over `T`) resolve.
+                // Plan 174.5: `NovaOpt_`/`NovaRes_`/`NovaBox_`/`NovaValue_` are
+                // bare (non-star) VALUE structs (`Option[T]`/`Result[T,E]`/
+                // `Box[T]`/value-record are never a trailing-`*` C type for
+                // the value itself) — a STARRED occurrence is always a genuine
+                // raw pointer (e.g. `Vec[Option[T]]`'s own `*mut T` buffer,
+                // T = Option[U]), so — unlike `Nova_` (heap record, whose
+                // VALUE repr IS single-star, hence only `Nova_X**` qualifies)
+                // — these four are NOT excluded at all here.
                 if obj_ty.ends_with('*')
-                    && !obj_ty.starts_with("Nova_")
+                    && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
                     && !obj_ty.starts_with("NovaArray_")
-                    && !obj_ty.starts_with("NovaOpt_")
-                    && !obj_ty.starts_with("NovaRes_")
-                    && !obj_ty.starts_with("NovaBox_")
-                    && !obj_ty.starts_with("NovaValue_")
                     && obj_ty != "void*"
                 {
                     let is_const = obj_ty.starts_with("const ");
@@ -30777,6 +31018,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return Ok(format!("(*({}))", obj_c));
                     }
                     if method == "write" && args.len() == 1 && !is_const {
+                        // Plan 174.5 §3: `.write(v *T)` overload — copy FROM a
+                        // source pointer (large struct, avoids a value-copy
+                        // through the call). Detected by the arg's C-type
+                        // being a pointer to the SAME pointee (`T*`/`const T*`);
+                        // otherwise fall through to the classic `.write(v T)`
+                        // value-store (unchanged behavior). Init-upgrade
+                        // (`-> *mut T`) NOT yet emitted here — depends on the
+                        // `unsafe T`→`uninit T` rename (§10a, deferred/172).
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .strip_suffix('*').unwrap_or_default().trim();
+                        let arg_ty = self.infer_expr_c_type(args[0].expr());
+                        let arg_pointee = arg_ty.trim_start_matches("const ")
+                            .strip_suffix('*').unwrap_or_default().trim();
+                        if arg_ty.ends_with('*') && arg_ty != "void*" && arg_pointee == pointee {
+                            let obj_c = self.emit_expr(obj)?;
+                            let src_c = self.emit_expr(args[0].expr())?;
+                            return Ok(format!("((*({})) = (*({})), NOVA_UNIT)", obj_c, src_c));
+                        }
                         let obj_c = self.emit_expr(obj)?;
                         let val_c = self.emit_expr(args[0].expr())?;
                         // void-returning store via comma-operator + NOVA_UNIT
@@ -30797,7 +31056,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // копирует их в dst.
                     if method == "read_unaligned" && args.is_empty() {
                         let pointee = obj_ty.trim_start_matches("const ")
-                            .trim_end_matches('*').trim();
+                            .strip_suffix('*').unwrap_or_default().trim();
                         let obj_c = self.emit_expr(obj)?;
                         return Ok(format!(
                             "(*({pointee}*)memcpy(&({pointee}){{0}}, (const void*)({src}), sizeof({pointee})))",
@@ -30805,7 +31064,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     if method == "write_unaligned" && args.len() == 1 && !is_const {
                         let pointee = obj_ty.trim_start_matches("const ")
-                            .trim_end_matches('*').trim();
+                            .strip_suffix('*').unwrap_or_default().trim();
                         let obj_c = self.emit_expr(obj)?;
                         let val_c = self.emit_expr(args[0].expr())?;
                         return Ok(format!(
@@ -30825,7 +31084,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Extract pointee from obj_ty: strip "const " prefix
                         // and trailing "*".
                         let pointee = obj_ty.trim_start_matches("const ")
-                            .trim_end_matches('*').trim();
+                            .strip_suffix('*').unwrap_or_default().trim();
                         let obj_c = self.emit_expr(obj)?;
                         return Ok(format!(
                             "(*((volatile {}*)({})))",
@@ -30833,12 +31092,116 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     if method == "write_volatile" && args.len() == 1 && !is_const {
                         let pointee = obj_ty.trim_start_matches("const ")
-                            .trim_end_matches('*').trim();
+                            .strip_suffix('*').unwrap_or_default().trim();
                         let obj_c = self.emit_expr(obj)?;
                         let val_c = self.emit_expr(args[0].expr())?;
                         return Ok(format!(
                             "((*((volatile {}*)({}))) = ({}), NOVA_UNIT)",
                             pointee, obj_c, val_c));
+                    }
+                    // Plan 174.5 Ф.2 (§3, owner decision 2026-07-06): `.read_at(i)`
+                    // / `.write_at(i, v)` — single-call index sugar, replaces the
+                    // retired `p[i]` / `p[i] = v` raw-pointer index operators.
+                    // `read_at` = `*(p+i)` (D141 bare access, no memcpy — same
+                    // contract as `.read()`); `write_at` is the SOLE write-cap
+                    // checkpoint for the index form (mirrors `.write`'s `is_const`
+                    // gate, one code path for both).
+                    if method == "read_at" && args.len() == 1 {
+                        let obj_c = self.emit_expr(obj)?;
+                        let idx_c = self.emit_expr(args[0].expr())?;
+                        return Ok(format!("(*(({}) + ({})))", obj_c, idx_c));
+                    }
+                    if method == "write_at" && args.len() == 2 {
+                        if is_const {
+                            let msg = "error: [E_POINTER_RO_ASSIGN] cannot `.write_at()` \
+                                through a readonly pointer — `*T` is a readonly pointee \
+                                (L3 default, Plan 174.5 §3/§4 / D246). Use `*mut T` to opt \
+                                into a writable pointee.".to_string();
+                            self.strict_errors.borrow_mut().push(msg);
+                            let _ = self.emit_expr(obj)?;
+                            let _ = self.emit_expr(args[0].expr())?;
+                            let _ = self.emit_expr(args[1].expr())?;
+                            return Ok("NOVA_UNIT".into());
+                        }
+                        let obj_c = self.emit_expr(obj)?;
+                        let idx_c = self.emit_expr(args[0].expr())?;
+                        let val_c = self.emit_expr(args[1].expr())?;
+                        return Ok(format!(
+                            "((*(({}) + ({}))) = ({}), NOVA_UNIT)",
+                            obj_c, idx_c, val_c));
+                    }
+                    // Plan 174.5 §3: `.offset(n)` — replaces retired `p+i`/`p-i`
+                    // arithmetic operators. Model A (sign-off 2026-06-22): type
+                    // does NOT degrade (`*T`→`*T`, `*mut T`→`*mut T`); C already
+                    // scales by `sizeof(pointee)`, so plain `(p) + (n)` suffices.
+                    // Bounds/align are an unsafe-contract, not a type-state.
+                    if method == "offset" && args.len() == 1 {
+                        let obj_c = self.emit_expr(obj)?;
+                        let n_c = self.emit_expr(args[0].expr())?;
+                        return Ok(format!("(({}) + ({}))", obj_c, n_c));
+                    }
+                    // Plan 174.5 §3: `.dist(q)` — replaces retired `p - q`
+                    // subtraction operator; signed element count (Rust
+                    // `offset_from`). Cast to `nova_int` (declared return type)
+                    // rather than `ptrdiff_t` so the C variable/expression type
+                    // matches what `infer_call_ret_c` reports.
+                    if method == "dist" && args.len() == 1 {
+                        let obj_c = self.emit_expr(obj)?;
+                        let q_c = self.emit_expr(args[0].expr())?;
+                        return Ok(format!("((nova_int)(({}) - ({})))", obj_c, q_c));
+                    }
+                    // Plan 174.5 §3 (RawMem-connection, S1): typed bulk-copy —
+                    // thin wrappers over the byte-level `RawMem.copy`/
+                    // `copy_nonoverlapping` formula (`n * sizeof(pointee)`),
+                    // scaled here directly (same math as `RawMem.copy_n[T]` in
+                    // std/runtime/raw_mem.nv) since the receiver is already a
+                    // concrete C pointer (no generic dispatch needed).
+                    // `copy_from`/`copy_from_nonoverlapping` WRITE through the
+                    // receiver (`dst = self`) — gated by `is_const` (write-cap);
+                    // `copy_to`/`copy_to_nonoverlapping` READ the receiver
+                    // (`src = self`) — no receiver write-cap needed (the
+                    // destination pointer's own `*mut` typing is the caller's
+                    // unsafe contract, not checked at this codegen layer).
+                    if (method == "copy_from" || method == "copy_from_nonoverlapping")
+                        && args.len() == 2
+                    {
+                        if is_const {
+                            let msg = format!(
+                                "error: [E_POINTER_RO_ASSIGN] cannot `.{}()` through a \
+                                 readonly pointer — `*T` is a readonly pointee (L3 default, \
+                                 Plan 174.5 §3/§4 / D246). Use `*mut T` to opt into a \
+                                 writable pointee.",
+                                method);
+                            self.strict_errors.borrow_mut().push(msg);
+                            let _ = self.emit_expr(obj)?;
+                            let _ = self.emit_expr(args[0].expr())?;
+                            let _ = self.emit_expr(args[1].expr())?;
+                            return Ok("NOVA_UNIT".into());
+                        }
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .strip_suffix('*').unwrap_or_default().trim();
+                        let c_fn = if method == "copy_from" { "memmove" } else { "memcpy" };
+                        let obj_c = self.emit_expr(obj)?;
+                        let src_c = self.emit_expr(args[0].expr())?;
+                        let n_c = self.emit_expr(args[1].expr())?;
+                        return Ok(format!(
+                            "({c_fn}((void*)({dst}), (const void*)({src}), \
+                             (size_t)((size_t)({n}) * sizeof({pointee}))), NOVA_UNIT)",
+                            c_fn = c_fn, dst = obj_c, src = src_c, n = n_c, pointee = pointee));
+                    }
+                    if (method == "copy_to" || method == "copy_to_nonoverlapping")
+                        && args.len() == 2
+                    {
+                        let pointee = obj_ty.trim_start_matches("const ")
+                            .strip_suffix('*').unwrap_or_default().trim();
+                        let c_fn = if method == "copy_to" { "memmove" } else { "memcpy" };
+                        let obj_c = self.emit_expr(obj)?;
+                        let dst_c = self.emit_expr(args[0].expr())?;
+                        let n_c = self.emit_expr(args[1].expr())?;
+                        return Ok(format!(
+                            "({c_fn}((void*)({dst}), (const void*)({src}), \
+                             (size_t)((size_t)({n}) * sizeof({pointee}))), NOVA_UNIT)",
+                            c_fn = c_fn, dst = dst_c, src = obj_c, n = n_c, pointee = pointee));
                     }
                 }
                 // 3c. D74 math methods on int (selected — abs, sign):
@@ -42217,11 +42580,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): a lazy
         // module-level const (`const ZERO = Complex(0, 0)`, non-constexpr
         // init) is `ExprKind::Ident("ZERO")` at the AST level — indistinguishable
-        // from a plain local variable to `is_lvalue_receiver` — but LOWERS to a
-        // getter CALL (`nova_const_ZERO()`), not a variable read. Treating it as
-        // addressable emitted `&(nova_const_ZERO())` — address-of-rvalue CC-FAIL
-        // (`ZERO.is_zero()` on a lazy-const named-tuple/value-record). Force the
-        // hoist-to-temp path for these, same as any other rvalue receiver.
+        // from a plain local variable to `is_lvalue_receiver`. Originally this
+        // LOWERED to a getter CALL (`nova_const_ZERO()`, an rvalue) — treating
+        // it as addressable emitted `&(nova_const_ZERO())`, an address-of-
+        // rvalue CC-FAIL (`ZERO.is_zero()` on a lazy-const named-tuple/value-
+        // record). `[M-lazy-const-init-race]` (2026-07-09) retired the getter
+        // in favour of a bare `_nova_const_ZERO_value` global read, which IS
+        // genuinely addressable now — but the forced hoist-to-temp below is
+        // harmless (an extra copy, not a correctness issue) and is kept as-is
+        // rather than risk a new address-of-static-global path this guard was
+        // never exercised against.
         let is_lazy_const_ident = matches!(&obj_ast.map(|e| &e.kind),
             Some(ExprKind::Ident(name)) if self.lazy_consts.contains(name));
         let addressable = !is_lazy_const_ident && obj_ast
@@ -44319,19 +44687,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (*mut T).write(v T) -> nova_unit. Match obj_ty pattern
                         // `T*` или `const T*`, NOT Nova_*/NovaArray_*/etc.
                         // Plan 134: nova_ptr removed; void* = erased placeholder excluded.
+                        // Plan 174.5: widen to `Nova_X**` (raw pointer buffer
+                        // over a record/generic-T element) — mirrors the
+                        // emission-side guard above; a single `Nova_X*` (record
+                        // value handle) stays excluded.
                         if obj_ty.ends_with('*')
-                            && !obj_ty.starts_with("Nova_")
+                            && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
                             && !obj_ty.starts_with("NovaArray_")
-                            && !obj_ty.starts_with("NovaOpt_")
-                            && !obj_ty.starts_with("NovaRes_")
-                            && !obj_ty.starts_with("NovaBox_")
-                            && !obj_ty.starts_with("NovaValue_")
                             && obj_ty != "void*"
                         {
                             if method == "read" && args.is_empty() {
-                                // pointee = strip "const " prefix + trailing '*'
+                                // pointee = strip "const " prefix + ONE trailing
+                                // '*' (not `trim_end_matches`, which would over-
+                                // strip a `Nova_X**` double-pointer to `Nova_X`).
                                 let pointee = obj_ty.trim_start_matches("const ")
-                                    .trim_end_matches('*').trim();
+                                    .strip_suffix('*').unwrap_or_default().trim();
                                 return pointee.to_string();
                             }
                             if method == "write" && args.len() == 1 {
@@ -44343,7 +44713,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // только в emit_call, не в инференсе типа).
                             if method == "read_unaligned" && args.is_empty() {
                                 let pointee = obj_ty.trim_start_matches("const ")
-                                    .trim_end_matches('*').trim();
+                                    .strip_suffix('*').unwrap_or_default().trim();
                                 return pointee.to_string();
                             }
                             if method == "write_unaligned" && args.len() == 1 {
@@ -44353,10 +44723,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // variants return same types as regular read/write.
                             if method == "read_volatile" && args.is_empty() {
                                 let pointee = obj_ty.trim_start_matches("const ")
-                                    .trim_end_matches('*').trim();
+                                    .strip_suffix('*').unwrap_or_default().trim();
                                 return pointee.to_string();
                             }
                             if method == "write_volatile" && args.len() == 1 {
+                                return "nova_unit".into();
+                            }
+                            // Plan 174.5 Ф.2 (§3): read_at/write_at/offset/dist +
+                            // copy_from(_nonoverlapping)/copy_to(_nonoverlapping)
+                            // — same infer channel as the read/write family above.
+                            if method == "read_at" && args.len() == 1 {
+                                let pointee = obj_ty.trim_start_matches("const ")
+                                    .strip_suffix('*').unwrap_or_default().trim();
+                                return pointee.to_string();
+                            }
+                            if method == "write_at" && args.len() == 2 {
+                                return "nova_unit".into();
+                            }
+                            // Model A (sign-off 2026-06-22): `.offset(n)` does
+                            // NOT degrade the receiver type (`*T`→`*T`,
+                            // `*mut T`→`*mut T`).
+                            if method == "offset" && args.len() == 1 {
+                                return obj_ty.clone();
+                            }
+                            if method == "dist" && args.len() == 1 {
+                                return "nova_int".into();
+                            }
+                            if (method == "copy_from" || method == "copy_from_nonoverlapping"
+                                || method == "copy_to" || method == "copy_to_nonoverlapping")
+                                && args.len() == 2
+                            {
                                 return "nova_unit".into();
                             }
                         }
