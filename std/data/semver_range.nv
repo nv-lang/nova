@@ -18,7 +18,7 @@
 module data.semver_range
 
 // Plan 35 Ф.1: cross-file resolve. Version тип определён в semver.
-import semver
+import std.data.semver
 
 
 /// Один comparator в version requirement (`>=1.2.3`, `<2.0.0`, `=1.0.0`).
@@ -41,7 +41,7 @@ export type ComparatorSet {
 /// # Examples
 /// ```nova
 /// let req = VersionReq.parse("^1.2.3")  // >=1.2.3 <2.0.0
-/// assert(req.matches("1.5.0".to_version()))
+/// assert(req.matches("1.5.0".to_version()!!))
 /// ```
 #stable(since = "0.1")
 export type VersionReq {
@@ -126,14 +126,14 @@ fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
     [Eq(parse_version(s))]
 }
 
-fn parse_version(s str) Fail[ParseRangeError] -> Version {
-    // Plan 61 followup #1 + #2: cross-effect throw в handler-arm теперь
-    // работает (owner_iframe attach в emit_with). Idiomatic D65 правило 3
-    // form — handler-rethrow напрямую без Result-wrapping.
-    with Fail[ParseVersionError] = |_e| throw InvalidVersion { value: s } {
-        s.to_version()
+fn parse_version(s str) Fail[ParseRangeError] -> Version =>
+    // `to_version()` возвращает Result (D325) — конвертируем Err в наш
+    // Fail-эффект честным match (старый with-хендлер был под Fail-версию
+    // semver-парсера, ретрактированную при промоушене).
+    match s.to_version() {
+        Ok(v)  => v
+        Err(_) => throw InvalidVersion { value: s }
     }
-}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -158,66 +158,12 @@ fn set_matches(set ComparatorSet, v Version) -> bool {
 }
 
 fn comparator_matches(c Comparator, v Version) -> bool => match c {
-    Eq(req) => v.eq(req)
-    Gt(req) => v.gt(req)
-    Ge(req) => v.ge(req)
-    Lt(req) => v.lt(req)
-    Le(req) => v.le(req)
+    Eq(req) => v.equal(req)
+    Gt(req) => v > req
+    Ge(req) => v >= req
+    Lt(req) => v < req
+    Le(req) => v <= req
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-
-test "exact: 1.2.3 matches только 1.2.3" {
-    ro req = VersionReq.parse("1.2.3")
-    assert(req.matches("1.2.3".to_version()))
-    assert(!req.matches("1.2.4".to_version()))
-    assert(!req.matches("1.2.2".to_version()))
-}
-
-test "caret ^1.2.3 = >=1.2.3 <2.0.0" {
-    ro req = VersionReq.parse("^1.2.3")
-    assert(req.matches("1.2.3".to_version()))
-    assert(req.matches("1.2.4".to_version()))
-    assert(req.matches("1.5.0".to_version()))
-    assert(req.matches("1.99.99".to_version()))
-    assert(!req.matches("2.0.0".to_version()))
-    assert(!req.matches("1.2.2".to_version()))
-}
-
-test "tilde ~1.2.3 = >=1.2.3 <1.3.0" {
-    ro req = VersionReq.parse("~1.2.3")
-    assert(req.matches("1.2.3".to_version()))
-    assert(req.matches("1.2.99".to_version()))
-    assert(!req.matches("1.3.0".to_version()))
-    assert(!req.matches("1.2.2".to_version()))
-}
-
-test ">=1.0.0 — нижняя граница" {
-    ro req = VersionReq.parse(">=1.0.0")
-    assert(req.matches("1.0.0".to_version()))
-    assert(req.matches("99.0.0".to_version()))
-    assert(!req.matches("0.9.9".to_version()))
-}
-
-test "AND: >1.0.0 <2.0.0" {
-    ro req = VersionReq.parse(">1.0.0 <2.0.0")
-    assert(req.matches("1.5.0".to_version()))
-    assert(!req.matches("1.0.0".to_version()))        // строгое >
-    assert(!req.matches("2.0.0".to_version()))
-}
-
-test "OR: 1.0.0 || 2.0.0" {
-    ro req = VersionReq.parse("1.0.0 || 2.0.0")
-    assert(req.matches("1.0.0".to_version()))
-    assert(req.matches("2.0.0".to_version()))
-    assert(!req.matches("1.5.0".to_version()))
-}
-
-test "wildcard *: matches anything" {
-    ro req = VersionReq.parse("*")
-    assert(req.matches("0.0.1".to_version()))
-    assert(req.matches("99.99.99".to_version()))
-}
+// Тесты — см. peer-файл semver_range_test.nv (module data.semver_range_test).
