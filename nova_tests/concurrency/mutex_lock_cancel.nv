@@ -29,7 +29,7 @@ const SLACK_MS1 int = 500
 test "mutex.lock() parked waiter wakes on cancel — not blocked by holder" {
     ro tok = CancelToken.new()
     mut m = Mutex.new()
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
 
     supervised(cancel: tok) {
         // Holder: takes the lock first, then sleeps long. Will be cancelled
@@ -58,10 +58,10 @@ test "mutex.lock() parked waiter wakes on cancel — not blocked by holder" {
         }
     }
 
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // Cancel arrived at ~50ms; waking both fibers + scope drain should
     // complete well within SLACK_MS1. If the parked mutex waiter is NOT
     // cancel-routed, elapsed approaches 10_000ms.
-    assert(elapsed < 50 + SLACK_MS1)
+    assert(elapsed.as_millis() < 50 + SLACK_MS1)
     assert(tok.is_cancelled())
 }

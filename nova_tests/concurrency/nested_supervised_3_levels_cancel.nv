@@ -35,7 +35,7 @@ test "nested supervised cascade — outer cancel cascades 3 levels" {
     middle_tok.cancelled_by(outer_tok)
     inner_tok.cancelled_by(middle_tok)
 
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
 
     supervised(cancel: outer_tok) {
         spawn { Time.sleep(10_000) }
@@ -55,7 +55,7 @@ test "nested supervised cascade — outer cancel cascades 3 levels" {
         }
     }
 
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
 
     // All three tokens must report cancelled (cascade propagated through all levels).
     assert(outer_tok.is_cancelled())
@@ -64,6 +64,6 @@ test "nested supervised cascade — outer cancel cascades 3 levels" {
 
     // The 10-second sleeps must have been interrupted: cancel fired at ~30ms.
     // Budget 3000ms = cascade hop + 3-level scope unwind on Windows M:N.
-    ro after_cancel = elapsed - 30
+    ro after_cancel = (elapsed - 30.millis()).as_millis()
     assert(after_cancel < 3_000)
 }
