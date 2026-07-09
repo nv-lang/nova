@@ -104,7 +104,16 @@
   .swarm .swarm-label { font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:5px; display:flex; gap:6px; align-items:baseline; }
   .swarm .swarm-label b { font-family:var(--mono); color:var(--ink-soft); }
   .swarm-grid { display:grid; grid-template-columns:repeat(30,1fr); grid-auto-rows:20px; gap:3px; }
-  .sq { border-radius:3px; background:var(--track); transition:background .25s, opacity .3s; }
+  .sq { border-radius:3px; background:var(--track); transition:background .25s, opacity .3s; cursor:default; }
+  .sq:hover { outline:2px solid color-mix(in oklab, var(--ink) 35%, transparent); outline-offset:1px; }
+
+  /* hover tooltip for swarm cells */
+  #tip { position:fixed; z-index:100; pointer-events:none; display:none;
+    background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow);
+    padding:6px 10px; font-family:var(--mono); font-size:11.5px; color:var(--ink);
+    transform:translate(-50%,-130%); white-space:nowrap; }
+  #tip .st-done { color:var(--accent); } #tip .st-fail { color:var(--crit); }
+  #tip .st-cancel { color:var(--ghost); } #tip .st-run { color:var(--ink-soft); }
   .sq.run { background:color-mix(in oklab, var(--accent) 30%, var(--track)); }
   .sq.done { background:var(--accent); }
   .sq.fail { background:var(--crit); }
@@ -193,9 +202,10 @@
     </div>
 
     <div class="swarm" id="swarm" style="margin:0 16px 10px; display:none;">
-      <div class="swarm-label">background fan-out — ещё <b id="swarmCount">90</b> реальных запросов той же пачки</div>
+      <div class="swarm-label">background fan-out — ещё <b id="swarmCount">90</b> реальных запросов той же пачки · наведи на квадрат</div>
       <div class="swarm-grid" id="swarmGrid"></div>
     </div>
+    <div id="tip"></div>
 
     <div class="hud" id="hud">
       <div class="stat"><span class="k" id="s-fanoutK">sources</span><span class="v" id="s-fanout">6</span></div>
@@ -281,6 +291,10 @@
       ]
     }
   };
+
+  // real names for the swarm wall (tooltip makes each square a real request)
+  SCENARIOS.weather.bgNames = ("Осло Берлин Париж Мадрид Рим Прага Вена Варшава Хельсинки Стокгольм Копенгаген Амстердам Брюссель Лиссабон Афины Дублин Цюрих Женева Милан Мюнхен Гамбург Барселона Валенсия Порту Краков Гданьск Рига Вильнюс Таллин Минск Белград София Бухарест Будапешт Стамбул Анкара Тбилиси Ереван Баку Алматы Астана Ташкент Бишкек Дубай Доха Эр-Рияд Тель-Авив Каир Касабланка Найроби Кейптаун Лагос Дели Мумбаи Бангалор Ченнаи Пекин Шанхай Гуанчжоу Шэньчжэнь Гонконг Тайбэй Сеул Пусан Осака Киото Нагоя Сингапур Джакарта Бангкок Ханой Манила Куала-Лумпур Сидней Мельбурн Окленд Торонто Ванкувер Монреаль Чикаго Бостон Сиэтл Остин Денвер Майами Хьюстон Мехико Богота Лима Сантьяго Буэнос-Айрес Сан-Паулу Рио Казань Екатеринбург Самара Омск").split(" ");
+  SCENARIOS.health.bgNames = ("google.com youtube.com wikipedia.org reddit.com amazon.com bing.com linkedin.com netflix.com pinterest.com zoom.us discord.com twitch.tv spotify.com apple.com microsoft.com adobe.com salesforce.com oracle.com ibm.com intel.com nvidia.com amd.com dell.com hp.com samsung.com sony.com xiaomi.com stackoverflow.com gitlab.com bitbucket.org docker.com kubernetes.io python.org rust-lang.org golang.org nodejs.org npmjs.org pypi.org crates.io maven.org jetbrains.com vscode.dev mozilla.org opera.com brave.com duckduckgo.com yandex.ru mail.ru vk.com ok.ru avito.ru ozon.ru wildberries.ru sber.ru tinkoff.ru rzd.ru gosuslugi.ru habr.com 2gis.ru kinopoisk.ru ivi.ru rutube.ru dzen.ru lenta.ru rbc.ru tass.ru interfax.ru cloudflare.net fastly.com akamai.com vercel.app netlify.app herokuapp.com digitalocean.com linode.com vultr.com ovh.com hetzner.com telegram.org whatsapp.com signal.org proton.me figma.com notion.so slack.com trello.com asana.com atlassian.com dropbox.com box.com wetransfer.com").split(" ");
 
   function providers(mode){
     var S = SCENARIOS[scen], rnd = mode==="chaos";
@@ -380,11 +394,13 @@
     if(S.bg){
       sw.style.display="";
       document.getElementById("swarmCount").textContent=S.bg;
+      var names=S.bgNames||[];
       for(var b=0;b<S.bg;b++){
-        var el=document.createElement("div"); el.className="sq"; sg.appendChild(el);
+        var el=document.createElement("div"); el.className="sq"; el.dataset.i=b; sg.appendChild(el);
         var r=Math.random(), total=0.35+Math.random()*2.0;
         var out = r<0.03 ? "fail" : (total>DEADLINE ? "cancel" : "done");
-        bgObjs.push({el:el, total:total, failAt:total*0.5, out:out, st:"idle"});
+        bgObjs.push({el:el, total:total, failAt:total*0.5, out:out, st:"idle",
+          name: names.length ? names[b%names.length] : ("req-"+(b+1))});
       }
     } else { sw.style.display="none"; }
     resize();
@@ -515,6 +531,24 @@
       b.setAttribute("aria-pressed","true"); mode=b.dataset.mode; run(); }); });
 
   document.getElementById("run").addEventListener("click", run);
+
+  // swarm tooltip: hover a square → source name + status + latency
+  var tip=document.getElementById("tip"), sgEl=document.getElementById("swarmGrid");
+  function bgStatusHtml(b){
+    if(b.st==="done")   return '<span class="st-done">✔ '+Math.round(b.total*1000)+'ms</span>';
+    if(b.st==="fail")   return '<span class="st-fail">✖ 503 @'+Math.round(b.failAt*1000)+'ms</span>';
+    if(b.st==="cancel") return '<span class="st-cancel">⟂ cancelled @ deadline</span>';
+    if(b.st==="run")    return '<span class="st-run">● live…</span>';
+    return '<span class="st-run">queued</span>';
+  }
+  sgEl.addEventListener("mousemove", function(e){
+    var t=e.target;
+    if(!t.classList || !t.classList.contains("sq")){ tip.style.display="none"; return; }
+    var b=bgObjs[+t.dataset.i]; if(!b){ tip.style.display="none"; return; }
+    tip.innerHTML = b.name + " · " + bgStatusHtml(b);
+    tip.style.left=e.clientX+"px"; tip.style.top=e.clientY+"px"; tip.style.display="block";
+  });
+  sgEl.addEventListener("mouseleave", function(){ tip.style.display="none"; });
 
   applyScenario();
   build(providers("demo")); resetStats(providers("demo")); setTimeout(run, 450);
