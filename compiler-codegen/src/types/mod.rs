@@ -3003,8 +3003,14 @@ fn is_value_type_for_v3(
         }
         Tuple(..) => true,        // anonymous tuples = value
         Unit(..) => true,
-        FixedArray(..) => false,  // [N]T heap-tracked
-        Array(..) => false,       // []T heap
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
+        // inline value-класс (стек / поле-по-месту), НЕ heap-tracked — реклассификация
+        // владельца «должно быть на стеке». Элементы могут быть кучевыми (T=Vec/heap
+        // record), но КОНТЕЙНЕР [N]T всегда inline, аналогично Tuple(..) выше (который
+        // тоже не проверяет heap-ность элементов). См. ref_target_confirmed_heap ниже —
+        // синхронная реклассификация.
+        FixedArray(..) => true,
+        Array(..) => false,       // []T heap (Vec canon, D239)
         Pointer(..) => false,
         Func { .. } => false,
         Protocol { .. } => false,
@@ -5897,19 +5903,25 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// **Plan 184 (Р6):** является ли цель `ref`-типа ПОДТВЕРЖДЁННО кучевой
     /// (тогда `ref H ≡ H` нормализуется и легален в любой позиции). Кучевые:
-    /// indirection-формы (`[]T`/`[N]T`/`*T`/fn/protocol), кучевой record
+    /// indirection-формы (`[]T`/`*T`/fn/protocol), кучевой record
     /// (`allocation != Value`), `Vec`; newtype/alias — по обёрнутому. Value
-    /// (примитивы, value-record, named-tuple, tuple, unit), generic-параметр и
-    /// НЕИЗВЕСТНОЕ имя → `false` (не подтверждён heap → `ref` в запрещённой
-    /// позиции реджектится: «ref нехраним, не имеет размера как тип»).
+    /// (примитивы, value-record, named-tuple, tuple, unit), **`[N]T` (D27-
+    /// амендмент, [M-fixed-array-value-semantics], 2026-07-10 — inline value,
+    /// НЕ heap, аналогично Tuple/Unit ниже)**, generic-параметр и НЕИЗВЕСТНОЕ
+    /// имя → `false` (не подтверждён heap → `ref` в запрещённой позиции
+    /// реджектится: «ref нехраним, не имеет размера как тип»).
     fn ref_target_confirmed_heap(&self, inner: &TypeRef, gs: &HashSet<String>) -> bool {
         use TypeRef::*;
         match inner {
-            Array(..) | FixedArray(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
+            Array(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
             Readonly(i, _) | Mut(i, _) | Unsafe(i, _) | Ref(i, _) => {
                 self.ref_target_confirmed_heap(i, gs)
             }
-            Tuple(..) | Unit(..) => false,
+            // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
+            // inline value (стек/поле-по-месту), НЕ heap — рядом с Tuple/Unit, а не
+            // с Array/Pointer выше. Не проверяет heap-ность T (как и Tuple(..) не
+            // проверяет своих элементов) — контейнер сам inline независимо от T.
+            Tuple(..) | Unit(..) | FixedArray(..) => false,
             Named { path, .. } => {
                 let name = path.last().map(|s| s.as_str()).unwrap_or("");
                 if gs.contains(name) {
