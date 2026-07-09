@@ -370,8 +370,9 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `&` | `@and(o)` | | `>>` | `@shr(n)` |
 | `^` | `@xor(o)` | | | |
 | `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
+| `a[x..y]` | `@index(r Range) -> Self` | | | |
 
-`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240). `&&`/`||` **не перегружаются** (short-circuit
+`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240); slice-индексация `a[x..y]` — та же `@index`, перегруженная по типу параметра: `x..y` (half-open, не включает `y`) лоуэрится компилятором в `Range { start: x, end: y }`, и вызывается `a.@index(r Range) -> Self` — на `[]T`/`str` возвращает view без копирования (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` **не перегружаются** (short-circuit
 семантика). Custom-операторы (`:+`, `<>`) не разрешены. Подробно —
 [D46](decisions/03-syntax.md#d46).
 
