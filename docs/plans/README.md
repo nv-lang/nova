@@ -8,10 +8,6 @@
 > [backlog-followups.md](backlog-followups.md) (только актуальное). Plan-bound детали — в Followups
 > своего плана; полная история — в [../simplifications.md](../simplifications.md). Конвенция: [AGENTS.md](../../AGENTS.md).
 
-> **Точка возобновления работ:** [CONTINUATION.md](CONTINUATION.md) — статус на паузе +
-> готовый промпт для новой сессии (обновляется в конце каждой сессии). HEAD=5b48b1d89, эталон 70/0. 173.1 остановлен — WIP на ветке parallel-collect-173-1.
-> Семья **173** (structured concurrency) — в активной работе, приоритет владельца.
-
 ## Схема нумерации
 
 - `01-…`, `02-…` — главные планы по порядку создания.
