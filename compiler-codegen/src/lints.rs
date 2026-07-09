@@ -2627,6 +2627,48 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_immutable_rebuild_setter),
         text: None,
     },
+    ConvRule {
+        id: "W_STR_CONCAT_LOOP",
+        summary: "`buf = buf + x` / `buf += \"...\"` в цикле — O(N²); канон \
+                  StringBuilder (perf-conventions)",
+        ast: Some(conv_str_concat_loop),
+        text: None,
+    },
+    ConvRule {
+        id: "W_RESULT_DISCARDED",
+        summary: "тихое глотание Result: `ro _ = fallible()` / swallow-match \
+                  `Err(_) => ()` (nv-coding-style §4)",
+        ast: Some(conv_result_discarded),
+        text: None,
+    },
+    ConvRule {
+        id: "W_PARAM_NO_CONTRACT",
+        summary: "index/offset/len-параметр публичной std-fn без `requires` \
+                  (nv-coding-style §5, норма приёмки 2026-07-07)",
+        ast: Some(conv_param_no_contract),
+        text: None,
+    },
+    ConvRule {
+        id: "W_VEC_SPELLING",
+        summary: "`Vec[` вне std/collections/vec — канон `[]T` (D238/D239); \
+                  легальные исключения несут маркер `[M-...]` на строке",
+        ast: None,
+        text: Some(conv_vec_spelling),
+    },
+    ConvRule {
+        id: "W_RETIRED_NAME",
+        summary: "ретрактированные вызовы: nth/to_bytes/to_chars/.into()/\
+                  with_capacity/from_raw_parts (греп-инварианты D-блоков)",
+        ast: None,
+        text: Some(conv_retired_name),
+    },
+    ConvRule {
+        id: "W_FAIL_PUBLIC_SIGNATURE",
+        summary: "`Fail[...]` в публичной std-сигнатуре собственных ошибок — \
+                  канон Result (R5 D325)",
+        ast: None,
+        text: Some(conv_fail_public_signature),
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -3513,6 +3555,313 @@ fn conv_immutable_rebuild_setter(m: &Module, _o: &ConvLintOptions, out: &mut Vec
             });
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// W_STR_CONCAT_LOOP — `buf = buf + x` / `buf += "..."` в цикле
+// (perf-conventions): O(N²), канон — StringBuilder.
+//
+// SEMANTIC-UPGRADE: без типов не знаем, str ли `buf` — синтаксический гейт:
+// правая часть содержит строковый литерал / интерполяцию (то есть конкатенация
+// точно строковая). `n += 1` и числовые аккумуляторы не флагуются.
+// ---------------------------------------------------------------------------
+
+fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    fn is_stringish(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => true,
+            ExprKind::Binary { op: crate::ast::BinOp::Add, left, right } => {
+                is_stringish(left) || is_stringish(right)
+            }
+            _ => false,
+        }
+    }
+    for f in conv_all_fns(m) {
+        conv_walk_fn(
+            f,
+            &mut |s, in_loop| {
+                if !in_loop {
+                    return;
+                }
+                let Stmt::Assign { target, op, value, span } = s else { return };
+                let ExprKind::Ident(tname) = &target.kind else { return };
+                let flagged = match op {
+                    // `buf += "..."` / `buf += "${x}"`.
+                    crate::ast::AssignOp::Add => is_stringish(value),
+                    // `buf = buf + x` где участвует строковый литерал/интерп.
+                    crate::ast::AssignOp::Assign => {
+                        matches!(&value.kind,
+                            ExprKind::Binary { op: crate::ast::BinOp::Add, left, right }
+                                if is_stringish(left) || is_stringish(right)
+                                    || matches!(&left.kind, ExprKind::Ident(l) if l == tname)
+                                        && is_stringish(right))
+                            && is_stringish(value)
+                    }
+                    _ => false,
+                };
+                if flagged {
+                    out.push(LintWarning {
+                        rule: "W_STR_CONCAT_LOOP",
+                        diag: Diagnostic::new(
+                            format!(
+                                "конкатенация `{} = {} + ...` в цикле — O(N²) \
+                                 (perf-conventions): каждая итерация копирует весь \
+                                 аккумулятор. Канон: `StringBuilder.new()` + \
+                                 `.append(...)` в цикле + `.into_str()` после.",
+                                tname, tname
+                            ),
+                            *span,
+                        ),
+                    });
+                }
+            },
+            &mut |_e, _| {},
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_RESULT_DISCARDED — тихое глотание Result (nv-coding-style §4):
+//   а) `ro _ = <вызов>` — discard-биндинг результата вызова;
+//   б) swallow-match: арм `Err(_) => ()` / `Err(_) => {}` без обработки.
+//
+// SEMANTIC-UPGRADE: голый вызов-statement с отброшенным Result требует
+// типов (не знаем, Result ли возврат) — не покрыт синтаксической версией.
+// ---------------------------------------------------------------------------
+
+fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    fn is_call_like(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Call { .. } => true,
+            ExprKind::Try(x) | ExprKind::Bang(x) => is_call_like(x),
+            _ => false,
+        }
+    }
+    for f in conv_all_fns(m) {
+        // Один проход, находки в локальный буфер (уникальный доступ к out
+        // нельзя делить между двумя замыканиями walker'а).
+        let mut found: Vec<(&'static str, String, Span)> = Vec::new();
+        {
+            let mut stmt_hits: Vec<Span> = Vec::new();
+            let mut arm_hits: Vec<Span> = Vec::new();
+            conv_walk_fn(
+                f,
+                &mut |s, _| {
+                    if let Stmt::Let(d) = s {
+                        if matches!(d.pattern, Pattern::Wildcard(_)) && is_call_like(&d.value) {
+                            stmt_hits.push(d.span);
+                        }
+                    }
+                },
+                &mut |e, _| {
+                    let ExprKind::Match { arms, .. } = &e.kind else { return };
+                    for arm in arms {
+                        let is_err_wildcard = matches!(&arm.pattern,
+                            Pattern::Variant { path, kind, .. }
+                                if path.last().map(String::as_str) == Some("Err")
+                                    && matches!(kind,
+                                        crate::ast::VariantPatternKind::Tuple { patterns, .. }
+                                            if patterns.iter().all(|p| matches!(p, Pattern::Wildcard(_)))));
+                        if !is_err_wildcard {
+                            continue;
+                        }
+                        let body_empty = match &arm.body {
+                            MatchArmBody::Expr(x) => matches!(x.kind, ExprKind::UnitLit),
+                            MatchArmBody::Block(b) => b.stmts.is_empty() && b.trailing.is_none(),
+                        };
+                        if body_empty {
+                            arm_hits.push(arm.span);
+                        }
+                    }
+                },
+            );
+            for sp in stmt_hits {
+                found.push((
+                    "discard",
+                    "`ro _ = <вызов>` — discard-биндинг глотает результат (в т.ч. \
+                     возможную ошибку Result) молча (nv-coding-style §4). Ошибку \
+                     обработайте (`?` / `!!` / match) или задокументируйте намеренный \
+                     дроп комментарием на месте."
+                        .to_string(),
+                    sp,
+                ));
+            }
+            for sp in arm_hits {
+                found.push((
+                    "swallow",
+                    "swallow-match: арм `Err(_) => ()` глотает ошибку молча \
+                     (nv-coding-style §4). Обработайте (лог/проброс/`?`) или \
+                     задокументируйте намеренное игнорирование."
+                        .to_string(),
+                    sp,
+                ));
+            }
+        }
+        for (_kind, msg, sp) in found {
+            out.push(LintWarning {
+                rule: "W_RESULT_DISCARDED",
+                diag: Diagnostic::new(msg, sp),
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_PARAM_NO_CONTRACT — index/offset/len-параметр публичной std-fn без
+// `requires` (nv-coding-style §5): каждый такой параметр ОБЯЗАН нести
+// контракт — норма приёмки (согласовано 2026-07-07). Только в std (in_std).
+// ---------------------------------------------------------------------------
+
+const CONV_CONTRACT_PARAM_NAMES: &[&str] = &[
+    "i", "idx", "pos", "offset", "off", "len", "n", "cap", "count", "start", "end", "limit",
+];
+
+fn conv_param_no_contract(m: &Module, o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    if !o.in_std {
+        return;
+    }
+    for f in conv_all_fns(m) {
+        if !f.is_export || f.is_external || matches!(f.body, FnBody::External) {
+            continue;
+        }
+        // Имена, упомянутые в requires-контрактах.
+        let mut required: HashSet<String> = HashSet::new();
+        for c in &f.contracts {
+            if c.kind == crate::ast::ContractKind::Requires {
+                collect_expr(&c.expr, &mut required);
+            }
+        }
+        for p in &f.params {
+            if p.is_variadic || !conv_ty_is_int(&p.ty) {
+                continue;
+            }
+            if !CONV_CONTRACT_PARAM_NAMES.contains(&p.name.as_str()) {
+                continue;
+            }
+            if !required.contains(&p.name) {
+                out.push(LintWarning {
+                    rule: "W_PARAM_NO_CONTRACT",
+                    diag: Diagnostic::new(
+                        format!(
+                            "index/offset/len-параметр `{}` публичной std-fn `{}` без \
+                             `requires`: каждый такой параметр обязан нести контракт \
+                             (nv-coding-style §5, норма приёмки 2026-07-07). Доказанный \
+                             `requires` — zero-cost (Z3 элидирует на литеральных \
+                             аргументах).",
+                            p.name, f.name
+                        ),
+                        p.span,
+                    ),
+                });
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_VEC_SPELLING (текст) — `Vec[` вне std/collections/vec (D238/D239):
+// за пределами definition-site пишется `[]T`. Строки с маркером `[M-...]`
+// (известные compiler-gap исключения) не флагуются.
+// ---------------------------------------------------------------------------
+
+fn conv_vec_spelling(src: &str, o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    if o.in_vec_module {
+        return;
+    }
+    conv_each_code_line(src, |off, full_line, code| {
+        if full_line.contains("[M-") {
+            return; // легальное исключение с маркером на строке
+        }
+        let mut from = 0usize;
+        while let Some(i) = code[from..].find("Vec[") {
+            let at = from + i;
+            // Не часть более длинного идентификатора (MyVec[...]).
+            let prev_ok = at == 0
+                || !code.as_bytes()[at - 1].is_ascii_alphanumeric()
+                    && code.as_bytes()[at - 1] != b'_';
+            if prev_ok {
+                out.push(LintWarning {
+                    rule: "W_VEC_SPELLING",
+                    diag: Diagnostic::new(
+                        "`Vec[...]` вне std/collections/vec — definition-site-only \
+                         спеллинг (D238/D239): за пределами vec-модуля пишите `[]T`. \
+                         Известные compiler-gap исключения — с комментарием-маркером \
+                         `[M-...]` на строке."
+                            .to_string(),
+                        Span::new(off + at, off + at + 4),
+                    ),
+                });
+            }
+            from = at + 4;
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// W_RETIRED_NAME (текст) — вызовы ретрактированных API (греп-инварианты
+// `= 0` из D-блоков): nth / to_bytes / to_chars / .into() / with_capacity /
+// from_raw_parts.
+// ---------------------------------------------------------------------------
+
+const CONV_RETIRED_PATTERNS: &[(&str, &str)] = &[
+    (".nth(", "`nth` ретрактирован — `.iter().skip(n)` / индекс `[n]`"),
+    (".to_bytes(", "`to_bytes` ретрактирован (D410) — `bytes().clone()`"),
+    (".to_chars(", "`to_chars` ретрактирован (D410) — `chars().collect()`"),
+    (".into()", "голый `.into()` ретрактирован (D73 retraction) — явный `to_*`/`into_*`"),
+    (".with_capacity(", "`with_capacity` ретрактирован (D372 amend) — `.new()` + `.cap(n)`"),
+    (".from_raw_parts(", "`from_raw_parts` ретрактирован — типизированные конструкторы"),
+];
+
+fn conv_retired_name(src: &str, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    conv_each_code_line(src, |off, _full, code| {
+        for (pat, note) in CONV_RETIRED_PATTERNS {
+            let mut from = 0usize;
+            while let Some(i) = code[from..].find(pat) {
+                let at = from + i;
+                out.push(LintWarning {
+                    rule: "W_RETIRED_NAME",
+                    diag: Diagnostic::new(
+                        format!("ретрактированный вызов: {}.", note),
+                        Span::new(off + at, off + at + pat.len()),
+                    ),
+                });
+                from = at + pat.len();
+            }
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// W_FAIL_PUBLIC_SIGNATURE (текст, только std) — `Fail[...]` в публичной
+// std-сигнатуре собственных ошибок (R5 D325): канон `Result[T, XError]`,
+// throw = `!!` на Result-форме. Дополняет conformance-guard.
+// ---------------------------------------------------------------------------
+
+fn conv_fail_public_signature(src: &str, o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    if !o.in_std {
+        return;
+    }
+    conv_each_code_line(src, |off, full_line, code| {
+        if full_line.contains("[M-") {
+            return;
+        }
+        let t = code.trim_start();
+        if !t.starts_with("export fn ") {
+            return;
+        }
+        if let Some(i) = code.find("Fail[") {
+            out.push(LintWarning {
+                rule: "W_FAIL_PUBLIC_SIGNATURE",
+                diag: Diagnostic::new(
+                    "`Fail[...]` в публичной std-сигнатуре: собственные ошибки std \
+                     наружу — `Result[T, XError]` (R5 D325); `Fail`-эффект наружу не \
+                     отдаём (throw = `!!` на Result-форме)."
+                        .to_string(),
+                    Span::new(off + i, off + i + 5),
+                ),
+            });
+        }
+    });
 }
 
 #[cfg(test)]
