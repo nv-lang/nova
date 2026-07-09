@@ -238,7 +238,7 @@ retry(3) {
 ```nova
 list.filter() fn(x) => x > 0
 list.fold(0) fn(acc, x) { acc + x }
-list.map() fn(s str) Fail -> int { parse(s)? }
+list.map() fn(s str) -> Result[int, ParseError] { parse(s)? }
 ```
 
 **Правила:**
