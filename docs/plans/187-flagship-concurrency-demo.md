@@ -57,7 +57,21 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 3. **HTTP-эндпоинт со стримингом** — SSE (`text/event-stream`), поверх 178.
 4. **Фронт** — довести мокап до продового: подключить к SSE, реальные шрифты
    (inline @font-face), убрать засев в Live-режиме.
-5. **Две легенды в проде** — Погода (open-meteo) и Health-check; переключатель.
+5. **Три легенды в проде** — Погода (open-meteo), Health-check и **LLM-роутер**
+   (owner 2026-07-09: только бесплатное, «скачал и запустил»): fan-out промпта по
+   N моделям, first-wins/лучший, опоздавших отменить. Live-источник — **Ollama**
+   (`localhost:11434`, обычный HTTP → TLS/116 НЕ нужен; модели с машины пользователя
+   через `/api/tags`; латентности инференса 1-10с = лучшая визуализация из трёх);
+   без Ollama — мок-LLM с нейтральными именами (`model-a`, не чужие бренды).
+   On-brand для «языка AI-эры»; код `aggregate` тот же, меняется список источников.
+   **Два паттерна на экране** (owner 2026-07-09): (a) *aggregate* — собрать всех до
+   дедлайна (погода/health); (b) **race / first-wins** — первый пригодный ответ
+   побеждает, **проигравшие отменяются** (LLM-роутер; `race` уже есть в
+   std/concurrency/cancellation.nv). Опциональная 4-я легенда — **поисковый race**
+   (google/yandex-стиль «кто первый»): Live только через бесключевые API
+   (DuckDuckGo IA / Wikipedia / SearXNG; все HTTPS → за гейтом 116); официальные
+   Google/Yandex API требуют ключи → критерий «скачал и запустил» не проходят,
+   только мок-режим.
 6. **Тесты без моков** — `with Net = mock_net()` (+ seeded-латентности) и
    `with Time = th.fixed_ms(...)` (оба существуют): проверка
    done/failed/cancelled/leaks==0 на засеянном сценарии (позитив + негатив).
@@ -71,8 +85,8 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 | **Ф.0 — прототип на СУЩЕСТВУЮЩЕМ std/http** | ничего: servernet accept-loop + ServeMux уже в main | `aggregate` + **настоящая кооперативная отмена** (`within`/`supervised(cancel:)` — уже есть, НЕ «мягкий бюджет»); polling-эндпоинт `/status` (JSON снапшот хода) | S |
 | **Ф.1 — SSE-стриминг** | `[M-178-server-streaming]` (streaming response + write-backpressure D361) — точечный маркер, НЕ весь 178 | живой поток событий бек→фронт (`text/event-stream`) | M |
 | **Ф.2 — runtime-отмена/deadline/0-leaks** | 173 Ф.3 (`deadline:`-параметр; `supervised(deadline:)` unimplemented in main — см. `[M-178-server-graceful-deadline]`) + 173.0 (substrate: multi-worker drain-гонка) + 173.1 (`parallel for → []T`, WIP `parallel-collect-173-1`) | отмена рантаймом + leaks-инвариант честен при MAXPROCS>1; чище код сбора | M |
-| **Ф.3a — Live health-check** | Ф.1 (SSE); TLS НЕ нужен (HTTP/TCP-замер) | реальные домены по-настоящему | S |
-| **Ф.3b — Live погода** | Ф.3a + **Plan 116 std/tls (PLANNED, rustls)** — open-meteo HTTPS-only, 🔴 внешний гейт | open-meteo по-настоящему | S |
+| **Ф.3a — Live health-check + Live-LLM (Ollama)** | Ф.1 (SSE); TLS НЕ нужен (health = HTTP/TCP-замер; Ollama = `localhost:11434` plain-HTTP) | реальные домены + **реальные LLM с машины пользователя** (одобрено owner 2026-07-09: детект `/api/tags`, модель=строка; нет Ollama → кнопка disabled с подсказкой, мок всегда работает) | M |
+| **Ф.3b — Live погода (+опц. поиск)** | Ф.3a + **Plan 116 std/tls (PLANNED, rustls)** — open-meteo/DDG/Wikipedia HTTPS-only, 🔴 внешний гейт | open-meteo по-настоящему; опц. поисковый race (бесключевые провайдеры) | S |
 | **Ф.4 — фронт до прода + лендинг** | Ф.1 | шрифты, подключение, публикация демо | M |
 | **Ф.5 — (опция) вложенность/граф B** | Ф.2 | scope⊃scope как разворот строки; граф-режим для тизера | S |
 
@@ -134,6 +148,11 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
    `seeded_net(seed, profile)` в демо-пакете, не в std)?
 7. **NEW: договорка о README-статусе 178** — код Ф.1-Ф.3 в main, README «READY»;
    при старте 187 сверить фактический остаток 178 (маркеры) и не дублировать работу.
+8. **NEW: Ollama-интеграция** — формат стриминга ответа (`/api/generate` NDJSON
+   stream → прогресс строки = токены!); критерий «пригодного» ответа для race
+   (первый токен vs полный ответ); поведение при 1 установленной модели (race из
+   одного — вырожденный: fallback на aggregate-вид или прогнать одну модель с
+   разными промптами?).
 
 ## 8. Вне объёма
 
