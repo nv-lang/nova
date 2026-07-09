@@ -153,6 +153,7 @@
     <div class="segmented" role="group" aria-label="Scenario" id="scenSwitch">
       <button class="seg" data-scen="weather" aria-pressed="true">☀ Погода</button>
       <button class="seg" data-scen="health" aria-pressed="false">◉ Health</button>
+      <button class="seg" data-scen="llm" aria-pressed="false">🤖 LLM</button>
     </div>
     <div class="segmented" role="group" aria-label="Data mode">
       <button class="seg" data-mode="demo" aria-pressed="true"><span class="dot"></span>Demo</button>
@@ -248,11 +249,45 @@
         {id:"registry-eu",   kind:"3 checks", probes:3, outcome:"fail"},
         {id:"mirror-remote", kind:"5 checks", probes:5, outcome:"cancel"}
       ]
+    },
+    llm: {
+      unit: "models", subUnit: "tokens", race: true,
+      sig: '<span class="kw">fn</span> ask<span class="pun">(</span>prompt <span class="ty">str</span><span class="pun">,</span> models <span class="ty">[]Model</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">Answer</span>',
+      note: '<b>race / first-wins</b>: промпт уходит всем локальным моделям (Ollama, без ключей) разом — первый пригодный ответ 🏆 побеждает, остальные <b>отменяются в тот же миг</b> (GPU освобождён, <code>0 leaks</code>). Прогресс = реальные токены.',
+      defs: [
+        {id:"llama-8b",   kind:"≈70 tok",  probes:70,  outcome:"done"},
+        {id:"qwen-14b",   kind:"≈90 tok",  probes:90,  outcome:"lost"},
+        {id:"mistral-7b", kind:"≈65 tok",  probes:65,  outcome:"lost"},
+        {id:"gemma-9b",   kind:"≈80 tok",  probes:80,  outcome:"lost"},
+        {id:"phi-4b",     kind:"≈50 tok",  probes:50,  outcome:"fail"},
+        {id:"deep-32b",   kind:"≈120 tok", probes:120, outcome:"lost"}
+      ]
     }
   };
 
   function providers(mode){
     var S = SCENARIOS[scen], rnd = mode==="chaos";
+
+    if(S.race){
+      // race / first-wins: winner = fastest "done"; losers cancel AT winner's finish
+      var totals = mode==="demo" ? [1.08, 2.60, 1.90, 1.62, 0.50, 2.90]
+                                 : S.defs.map(function(){ return 0.7+Math.random()*2.2; });
+      var winnerT = Infinity;
+      S.defs.forEach(function(d,i){ var o=rnd?(Math.random()<0.15?"fail":"race"):d.outcome;
+        if(o!=="fail" && totals[i]<winnerT) winnerT=totals[i]; });
+      winnerT = Math.min(winnerT, DEADLINE);
+      return S.defs.map(function(d,i){
+        var o = rnd ? (Math.random()<0.15 ? "fail" : "race") : d.outcome;
+        var total = totals[i];
+        if(o==="fail") return {id:d.id, kind:d.kind, probes:d.probes, outcome:"fail",
+          total:total, failAt: Math.min(total*0.6, winnerT*0.9), cancelAt:DEADLINE};
+        if(total<=winnerT+1e-9) return {id:d.id, kind:d.kind, probes:d.probes,
+          outcome:"done", total:total, failAt:Infinity, cancelAt:DEADLINE, winner:true};
+        return {id:d.id, kind:d.kind, probes:d.probes, outcome:"cancel",
+          total:total, failAt:Infinity, cancelAt:winnerT, lost:true};
+      });
+    }
+
     return S.defs.map(function(d, i){
       var o=d.outcome;
       if(rnd){ var r=Math.random(); o = r<0.14?"fail" : r<0.30?"cancel" : r<0.55?"slow" : "done"; }
@@ -261,7 +296,7 @@
                 : (0.5+Math.random()*0.8);
       if(mode==="demo"){ total = o==="cancel"?2.42 : o==="slow"?(i===3?1.72:1.34) : (i===1?0.62:0.52); }
       var failAt = o==="fail" ? (mode==="demo"?0.44:0.3+Math.random()*0.5) : Infinity;
-      return {id:d.id, kind:d.kind, probes:d.probes, outcome:o, total:total, failAt:failAt};
+      return {id:d.id, kind:d.kind, probes:d.probes, outcome:o, total:total, failAt:failAt, cancelAt:DEADLINE};
     });
   }
 
@@ -357,7 +392,7 @@
         laneObjs.forEach(function(o){
           var p=o.p;
           // how far this lane's bar has grown, in TIME (bar right-edge = min(t, settle))
-          var settleT = p.outcome==="fail" ? p.failAt : p.outcome==="cancel" ? DEADLINE : p.total;
+          var settleT = p.outcome==="fail" ? p.failAt : p.outcome==="cancel" ? p.cancelAt : p.total;
           var barT = o.settled ? settleT : Math.min(t, settleT);
           o.bar.style.width = (Math.min(barT,SPAN)/SPAN*100) + "%";
           // ghost: where this lane WOULD be if all ran sequentially (compressed 2× to fit)
@@ -377,12 +412,13 @@
                 burst(xFor(p.failAt), rr.top-lr.top+8, css("--crit"), 14); }
               stats.fail++; set("s-fail",stats.fail);
             } else if((p.outcome==="done"||p.outcome==="slow") && t>=p.total){ o.settled=true; o.lane.dataset.state="done";
-              o.status.textContent="✔ "+Math.round(p.total*1000)+"ms"; o.bar.classList.remove("pulsing");
+              o.status.textContent=(p.winner?"🏆 ":"✔ ")+Math.round(p.total*1000)+"ms"; o.bar.classList.remove("pulsing");
               o.cnt.textContent=p.probes+"/"+p.probes; stats.done++; set("s-done",stats.done);
-            } else if(p.outcome==="cancel" && t>=DEADLINE){ o.settled=true; o.lane.dataset.state="cancel"; o.status.textContent="⟂ cancel";
+            } else if(p.outcome==="cancel" && t>=p.cancelAt){ o.settled=true; o.lane.dataset.state="cancel";
+              o.status.textContent=p.lost?"⟂ lost":"⟂ cancel";
               o.bar.classList.remove("pulsing");
               if(g){ var rr2=o.lane.querySelector(".rail").getBoundingClientRect(), lr2=lanesEl.getBoundingClientRect();
-                burst(xFor(DEADLINE), rr2.top-lr2.top+8, css("--ghost"), 28); }
+                burst(xFor(p.cancelAt), rr2.top-lr2.top+8, css("--ghost"), 28); }
               stats.cancel++; set("s-cancel",stats.cancel); }
           }
           // committed probes ok (freeze-safe): done → all, cancel/fail → fraction reached
@@ -407,10 +443,10 @@
   function finish(seqTotal){
     var wall=0, closed=0, okTotal=0;
     laneObjs.forEach(function(o){ var p=o.p;
-      wall=Math.max(wall, p.outcome==="cancel"?DEADLINE:Math.min(p.total,DEADLINE));
+      wall=Math.max(wall, p.outcome==="cancel"?p.cancelAt:Math.min(p.total,DEADLINE));
       closed+=p.probes;
       // probes ok: done → all; fail/cancel → fraction of time reached before settle
-      var settleT = p.outcome==="fail" ? p.failAt : p.outcome==="cancel" ? DEADLINE : p.total;
+      var settleT = p.outcome==="fail" ? p.failAt : p.outcome==="cancel" ? p.cancelAt : p.total;
       okTotal += (o.lane.dataset.state==="done") ? p.probes : Math.round(Math.min(1,settleT/p.total)*p.probes);
     });
     set("s-pages", okTotal);
