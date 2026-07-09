@@ -2277,6 +2277,23 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     }
 }
 
+/// Plan 185: полный рекурсивный обход .nv (для lint — включая peer-файлы
+/// folder-модулей, которые test-discovery walker пропускает).
+fn lint_walk_all_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = std::fs::read_dir(root)
+        .map_err(|e| anyhow!("read_dir {}: {}", root.display(), e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            lint_walk_all_nv(&path, out)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("nv") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
 /// Plan 185: контекст файла для реестра конвенционных правил.
 fn conv_lint_options_for(path: &Path) -> nova_codegen::lints::ConvLintOptions {
     let s = path.to_string_lossy().replace('\\', "/");
@@ -2353,8 +2370,11 @@ fn cmd_lint(
             }
             files.push(p.clone());
         } else if p.is_dir() {
+            // НЕ test_runner::walk_nv: тот — test-discovery walker и молча
+            // пропускает peer-файлы folder-модулей (wire.nv и т.п.), а lint
+            // должен видеть ВСЕ .nv-файлы. Полный рекурсивный обход.
             let mut found = Vec::new();
-            nova_codegen::test_runner::walk_nv(p, &mut found)
+            lint_walk_all_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
                 // `neg/`/`*_neg/`-фикстуры — намеренно неканонический код
