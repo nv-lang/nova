@@ -302,9 +302,7 @@ export fn SqlBuilder mut @where_in(col str, values []SqlValue) -> SqlBuilder {
         @predicates.push({ template: "FALSE", args: [] })
         return @
     }
-    mut placeholders = "?"
-    mut i = 1
-    while i < values.len() { placeholders = placeholders + ", ?"; i += 1 }
+    ro placeholders = "?" + ", ?".repeat(values.len() - 1)
     @predicates.push({ template: "${col} IN (${placeholders})", args: values })
     @
 }

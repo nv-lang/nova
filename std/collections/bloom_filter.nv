@@ -120,7 +120,7 @@ export fn BloomFilter @contains(s str) -> bool {
     while i < @num_hashes {
         ro bit_idx = ((h1 + (i as u64) * h2) as int) % @bits_size
         ro safe_idx = if bit_idx < 0 { bit_idx + @bits_size } else { bit_idx }
-        if !@get_bit(safe_idx) { return false }
+        if !@bit(safe_idx) { return false }
         i += 1
     }
     true
@@ -139,7 +139,7 @@ fn BloomFilter mut @set_bit(idx int) -> () {
 }
 
 
-fn BloomFilter @get_bit(idx int) -> bool {
+fn BloomFilter @bit(idx int) -> bool {
     ro byte_idx = idx / 8
     ro bit_in_byte = idx % 8
     ro mask = (1 << bit_in_byte)

@@ -77,7 +77,9 @@ export type SeekFrom enum
 
 /// Seek to an absolute offset from the start (`n >= 0`).
 #stable(since = "0.1")
-export fn SeekFrom.start(n int) -> SeekFrom => Start(n)
+export fn SeekFrom.start(n int) -> SeekFrom
+    requires n >= 0
+    => Start(n)
 
 /// Seek relative to the end (`n` is usually `<= 0`).
 #stable(since = "0.1")

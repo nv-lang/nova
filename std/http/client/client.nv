@@ -446,10 +446,8 @@ fn rewrite_encoding_headers(h HeaderMap, decoded_len int) -> HeaderMap {
     mut hm = h
     ro _ = hm.remove("content-encoding")
     ro _ = hm.remove("transfer-encoding")
-    match hm.insert("Content-Length", str.from(decoded_len)) {
-        Ok(_)  => ()
-        Err(_) => ()
-    }
+    // Статически валидное имя заголовка — insert отказать не может.
+    ro _ = hm.insert("Content-Length", str.from(decoded_len))
     hm
 }
 

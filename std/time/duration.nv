@@ -472,7 +472,7 @@ export fn Duration @times(n i64) -> Duration =>
 /// Scalar multiplication by float (`Duration * f64`).
 ///
 /// **Traps on `NaN`/`±inf`/out-of-range** (D317) — никогда silent мусор-cast.
-/// Для non-trapping варианта — [`try_mul_f64`]. Для финансовых расчётов считай
+/// Для non-trapping варианта — [`checked_mul_f64`]. Для финансовых расчётов считай
 /// в i64 nanoseconds вручную чтобы избежать FP-rounding.
 #stable(since = "0.1")
 export fn Duration @times(n f64) -> Duration =>
@@ -526,7 +526,7 @@ export fn Duration @checked_div(n i64) -> Option[Duration] =>
 
 /// Checked float multiply — `None` on `NaN`/`±inf`/out-of-range (D317).
 #stable(since = "0.1")
-export fn Duration @try_mul_f64(n f64) -> Option[Duration] =>
+export fn Duration @checked_mul_f64(n f64) -> Option[Duration] =>
     match f64_nanos_checked((@nanos as f64) * n) {
         Some(r) => Some(Duration.from_nanos(r)),
         None => None,
@@ -534,7 +534,7 @@ export fn Duration @try_mul_f64(n f64) -> Option[Duration] =>
 
 /// Checked float divide — `None` on `NaN`/`±inf`/out-of-range (D317).
 #stable(since = "0.1")
-export fn Duration @try_div_f64(n f64) -> Option[Duration] =>
+export fn Duration @checked_div_f64(n f64) -> Option[Duration] =>
     match f64_nanos_checked((@nanos as f64) / n) {
         Some(r) => Some(Duration.from_nanos(r)),
         None => None,
@@ -1223,9 +1223,9 @@ test "Ф.1c/D317: f64 conversions reject out-of-range (try_* → None)" {
         Some(r) => assert(r.as_millis() == 1500),
         None => assert(false),
     }
-    // @try_mul_f64 / @try_div_f64
-    assert(Duration.from_nanos(i64_max()).try_mul_f64(g).is_none())
-    match 10.seconds().try_mul_f64(1.5) {
+    // @checked_mul_f64 / @checked_div_f64
+    assert(Duration.from_nanos(i64_max()).checked_mul_f64(g).is_none())
+    match 10.seconds().checked_mul_f64(1.5) {
         Some(r) => assert(r == 15.seconds()),
         None => assert(false),
     }

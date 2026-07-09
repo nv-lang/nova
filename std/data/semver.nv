@@ -311,14 +311,14 @@ export fn Version @to_str() -> str {
 }
 
 fn join_dots(parts []str) -> str {
-    mut s = ""
+    consume sb = StringBuilder.new()
     mut first = true
     for p in parts {
-        if !first { s = s + "." }
-        s = s + p
+        if !first { sb.append(".") }
+        sb.append(p)
         first = false
     }
-    s
+    sb.into_str()
 }
 
 

@@ -195,47 +195,47 @@ export fn FilterMapIter[I, T, U] @filter(pred fn(U) -> bool) -> FilterIter[Self,
 // These cannot be blanket (return type contains the concrete adapter name),
 // so one definition per source type is required.
 
-export fn VecIter[T] @take(n int) -> TakeIter[Self, T] 
+export fn VecIter[T] @take(n int) -> TakeIter[Self, T]
     requires n >= 0
     => { src: @, left: n }
-export fn VecIter[T] @skip(n int) -> SkipIter[Self, T] 
+export fn VecIter[T] @skip(n int) -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 
-export fn MapIter[I, T, U] @take(n int) -> TakeIter[Self, U] 
+export fn MapIter[I, T, U] @take(n int) -> TakeIter[Self, U]
     requires n >= 0
     => { src: @, left: n }
-export fn MapIter[I, T, U] @skip(n int) -> SkipIter[Self, U] 
+export fn MapIter[I, T, U] @skip(n int) -> SkipIter[Self, U]
     requires n >= 0
     => { src: @, to_skip: n }
 
-export fn FilterIter[I, T] @take(n int) -> TakeIter[Self, T] 
+export fn FilterIter[I, T] @take(n int) -> TakeIter[Self, T]
     requires n >= 0
     => { src: @, left: n }
-export fn FilterIter[I, T] @skip(n int) -> SkipIter[Self, T] 
+export fn FilterIter[I, T] @skip(n int) -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 
-export fn FilterMapIter[I, T, U] @take(n int) -> TakeIter[Self, U] 
+export fn FilterMapIter[I, T, U] @take(n int) -> TakeIter[Self, U]
     requires n >= 0
     => { src: @, left: n }
-export fn FilterMapIter[I, T, U] @skip(n int) -> SkipIter[Self, U] 
+export fn FilterMapIter[I, T, U] @skip(n int) -> SkipIter[Self, U]
     requires n >= 0
     => { src: @, to_skip: n }
 
-export fn TakeIter[I, T] @take(n int) -> TakeIter[Self, T] 
+export fn TakeIter[I, T] @take(n int) -> TakeIter[Self, T]
     requires n >= 0
     => { src: @, left: n }
-export fn TakeIter[I, T] @skip(n int) -> SkipIter[Self, T] 
+export fn TakeIter[I, T] @skip(n int) -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn TakeIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
 export fn TakeIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
 
-export fn SkipIter[I, T] @take(n int) -> TakeIter[Self, T] 
+export fn SkipIter[I, T] @take(n int) -> TakeIter[Self, T]
     requires n >= 0
     => { src: @, left: n }
-export fn SkipIter[I, T] @skip(n int) -> SkipIter[Self, T] 
+export fn SkipIter[I, T] @skip(n int) -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn SkipIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
@@ -282,10 +282,10 @@ export fn SkipIter[I, T]     @step_by(n int) -> StepByIter[Self, T]
     requires n > 0
     => { src: @, step: n, first: true, rem: n - 1 }
 
-export fn StepByIter[I, T] @take(n int)  -> TakeIter[Self, T]    
+export fn StepByIter[I, T] @take(n int)  -> TakeIter[Self, T]
     requires n >= 0
     => { src: @, left: n }
-export fn StepByIter[I, T] @skip(n int)  -> SkipIter[Self, T]    
+export fn StepByIter[I, T] @skip(n int)  -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn StepByIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
@@ -308,10 +308,10 @@ export fn SkipIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 
 export fn EnumerateIter[I, T] @map[U](f fn((int, T)) -> U) -> MapIter[Self, (int, T), U] => { src: @, f }
 export fn EnumerateIter[I, T] @filter(pred fn((int, T)) -> bool) -> FilterIter[Self, (int, T)] => { src: @, pred }
 export fn EnumerateIter[I, T] @filter_map[U](f fn((int, T)) -> Option[U]) -> FilterMapIter[Self, (int, T), U] => { src: @, f }
-export fn EnumerateIter[I, T] @take(n int) -> TakeIter[Self, (int, T)] 
+export fn EnumerateIter[I, T] @take(n int) -> TakeIter[Self, (int, T)]
     requires n >= 0
     => { src: @, left: n }
-export fn EnumerateIter[I, T] @skip(n int) -> SkipIter[Self, (int, T)] 
+export fn EnumerateIter[I, T] @skip(n int) -> SkipIter[Self, (int, T)]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn EnumerateIter[I, T] @enumerate() -> EnumerateIter[Self, (int, T)] => { src: @, i: 0 }
