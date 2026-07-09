@@ -2698,7 +2698,21 @@ pub fn run_conv_rules(
             hook(src, opts, &mut out);
         }
     }
+    // Универсальная суппрессия «остаток под маркером»: находка, чья строка
+    // исходника несёт `[M-...]`-маркер (ссылку на идущую работу / backlog),
+    // не выводится — цель приёмки «0 находок или все остатки под маркерами».
+    out.retain(|w| !conv_span_line_has_marker(src, w.diag.span.start));
     out
+}
+
+/// `true` если строка исходника, содержащая byte-offset, несёт `[M-`-маркер.
+fn conv_span_line_has_marker(src: &str, offset: usize) -> bool {
+    if offset >= src.len() {
+        return false;
+    }
+    let line_start = src[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end = src[offset..].find('\n').map(|i| offset + i).unwrap_or(src.len());
+    src[line_start..line_end].contains("[M-")
 }
 
 // ---------------------------------------------------------------------------
@@ -3244,6 +3258,10 @@ fn conv_try_without_sibling(m: &Module, _o: &ConvLintOptions, out: &mut Vec<Lint
         })
         .collect();
     for f in &fns {
+        // Приватные try_-хелперы — плумбинг, R3 нормирует публичный API.
+        if !f.is_export {
+            continue;
+        }
         let Some(rest) = f.name.strip_prefix("try_") else { continue };
         if rest.is_empty() {
             continue;
@@ -3630,12 +3648,28 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
 // ---------------------------------------------------------------------------
 
 fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
-    fn is_call_like(e: &Expr) -> bool {
+    // SEMANTIC-UPGRADE: без типов не знаем, Result ли возврат — гейтим
+    // discard-биндинг на callee-имена, семантика которых почти наверняка
+    // Result (ошибку close/flush/write глотать нельзя — ENOSPC-класс).
+    // Option-дропы (`ro _ = map.remove(k)` / `stack.pop()`) легальны.
+    const RESULT_CALLEES: &[&str] = &[
+        "close", "flush", "write", "write_all", "send", "shutdown", "commit",
+        "sync", "wait",
+    ];
+    fn callee_name(e: &Expr) -> Option<&str> {
         match &e.kind {
-            ExprKind::Call { .. } => true,
-            ExprKind::Try(x) | ExprKind::Bang(x) => is_call_like(x),
-            _ => false,
+            ExprKind::Call { func, .. } => match &func.kind {
+                ExprKind::Member { name, .. } => Some(name.as_str()),
+                ExprKind::Ident(n) => Some(n.as_str()),
+                ExprKind::Path(p) => p.last().map(String::as_str),
+                _ => None,
+            },
+            ExprKind::Try(x) | ExprKind::Bang(x) => callee_name(x),
+            _ => None,
         }
+    }
+    fn is_call_like(e: &Expr) -> bool {
+        callee_name(e).map_or(false, |n| RESULT_CALLEES.contains(&n))
     }
     for f in conv_all_fns(m) {
         // Один проход, находки в локальный буфер (уникальный доступ к out
@@ -3722,6 +3756,14 @@ fn conv_param_no_contract(m: &Module, o: &ConvLintOptions, out: &mut Vec<LintWar
     }
     for f in conv_all_fns(m) {
         if !f.is_export || f.is_external || matches!(f.body, FnBody::External) {
+            continue;
+        }
+        // Fn, возвращающая Option/Result, обрабатывает граничные значения
+        // самим типом возврата (`@get(i) -> Option[T]`: отрицательный индекс
+        // → None) — контракт там опционален, не норма приёмки.
+        if f.return_type.as_ref().and_then(conv_ty_last_name)
+            .map_or(false, |n| n == "Option" || n == "Result")
+        {
             continue;
         }
         // Имена, упомянутые в requires-контрактах.
@@ -3850,6 +3892,17 @@ fn conv_fail_public_signature(src: &str, o: &ConvLintOptions, out: &mut Vec<Lint
             return;
         }
         if let Some(i) = code.find("Fail[") {
+            // Generic re-throw `Fail[E]` (одна заглавная буква = тип-параметр)
+            // — легальный комбинатор-паттерн (retry/execute), не собственная
+            // ошибка std. R5 — про конкретные XError-типы.
+            let inner: String = code[i + 5..]
+                .chars()
+                .take_while(|c| *c != ']')
+                .collect();
+            let inner = inner.trim();
+            if inner.len() == 1 && inner.chars().all(|c| c.is_ascii_uppercase()) {
+                return;
+            }
             out.push(LintWarning {
                 rule: "W_FAIL_PUBLIC_SIGNATURE",
                 diag: Diagnostic::new(

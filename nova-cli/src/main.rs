@@ -2282,8 +2282,12 @@ fn conv_lint_options_for(path: &Path) -> nova_codegen::lints::ConvLintOptions {
     let s = path.to_string_lossy().replace('\\', "/");
     let in_std = (s.contains("/std/") || s.starts_with("std/"))
         && !s.ends_with("_test.nv");
-    let in_vec_module =
-        s.contains("std/collections/vec/") || s.contains("/collections/vec/");
+    // Definition-site `Vec[T]` — папка std/collections/vec/ ПЛЮС её
+    // вынесенные поверхности vec_iter.nv / vec_lazy.nv (реализация самого
+    // Vec[T]-итератор-слоя; receiver-позиция требует номинального спеллинга).
+    let in_vec_module = s.contains("/collections/vec/")
+        || s.contains("/collections/vec_")
+        || s.starts_with("std/collections/vec");
     nova_codegen::lints::ConvLintOptions { in_std, in_vec_module }
 }
 
@@ -2353,6 +2357,16 @@ fn cmd_lint(
             nova_codegen::test_runner::walk_nv(p, &mut found)
                 .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
             for f in found {
+                // `neg/`/`*_neg/`-фикстуры — намеренно неканонический код
+                // (EXPECT_COMPILE_ERROR), конвенции к ним не применяются.
+                let is_neg_fixture = f.components().any(|c| {
+                    c.as_os_str().to_str().map_or(false, |s| {
+                        s == "neg" || s.ends_with("_neg")
+                    })
+                });
+                if is_neg_fixture {
+                    continue;
+                }
                 if !should_skip_path_full(&f, include_runtime, skip) {
                     files.push(f);
                 }
@@ -2393,13 +2407,17 @@ fn cmd_lint(
         // span'ы file-local. Parse-fail → текст-правила всё равно работают.
         let module = match nova_codegen::parser::parse_collecting_warnings(&src) {
             Ok((m, _)) => Some(m),
-            Err(_) => None,
+            Err(d) => {
+                // Файл не парсится — это дело `nova check`, не lint.
+                // Прогоняем только текст-правила, прогон не валим.
+                if !quiet {
+                    eprintln!("{}: parse failed ({}) — text-rules only",
+                        f.display(), d.message.lines().next().unwrap_or(""));
+                }
+                parse_failures += 1;
+                None
+            }
         };
-        if module.is_none() {
-            // Файл не парсится — это дело `nova check`, не lint. Прогоняем
-            // только текст-правила, парсинг не валим.
-            parse_failures += 1;
-        }
         let opts = conv_lint_options_for(f);
         let warnings = nova_codegen::lints::run_conv_rules(
             module.as_ref(),
