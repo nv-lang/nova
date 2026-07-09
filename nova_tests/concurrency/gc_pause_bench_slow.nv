@@ -40,10 +40,10 @@ fn run_rounds(rounds int, per_round int) -> int {
         for i in 0..per_round {
             ro _ = make_obj4(i)
         }
-        ro t0 = Time.now()
+        ro t0 = Monotonic.now()
         gc.collect()
-        ro t1 = Time.now()
-        ro pause = t1 - t0
+        ro t1 = Monotonic.now()
+        ro pause = t1.elapsed_since(t0).as_millis() as int
         if pause > max_pause {
             max_pause = pause
         }
