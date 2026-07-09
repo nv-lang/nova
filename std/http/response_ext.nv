@@ -40,9 +40,9 @@ export fn Response @cookies() -> []SetCookie {
         match hv.to_str() {
             Ok(s) => match SetCookie.parse(s) {
                 Ok(sc) => { out.push(sc); () }
-                Err(_) => ()
+                Err(_) => () // [M-lint-findings-result-discarded-lenient-parse]
             }
-            Err(_) => ()
+            Err(_) => () // [M-lint-findings-result-discarded-lenient-parse]
         }
     }
     out

@@ -366,11 +366,11 @@ fn percent_decode(s str) -> str {
                 out.push((hi * 16 + lo) as u8)
                 i += 3
             } else {
-                out.push(b[i])
+                out.push(b[i]) // [M-lint-findings-manual-slice-copy]
                 i += 1
             }
         } else {
-            out.push(b[i])
+            out.push(b[i]) // [M-lint-findings-manual-slice-copy]
             i += 1
         }
     }

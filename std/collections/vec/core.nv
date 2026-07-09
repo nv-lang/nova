@@ -148,7 +148,7 @@ export fn Vec[T].new() -> Self =>
 /// `new(ptr,len,cap)` overload alongside `new()` on `Vec[T]`, then run the
 /// full `vec` folder-module (not just this file in isolation). Rolled back
 /// to the original name below pending a compiler-side fix (same wave).
-export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self {
+export fn Vec[T].from_raw_parts(ptr *T, len int, cap int) -> Self { // [M-lint-findings-param-no-contract]
     Self { data: unsafe { ptr as *mut T }, len, cap }
 }
 
@@ -202,7 +202,7 @@ export fn Vec[T] consume @into_raw() -> *mut T => @data
 /// with method-level generics do not propagate the type-arg substitution into
 /// for-in / inner generic calls (emits an unresolved `____Nova_S_p` symbol).
 /// `@extend` (an instance method) does not hit this gap and IS converted.
-export fn Vec[T].from(items []T) -> Self => Vec[T].new().cap(items.len()).extend(items)
+export fn Vec[T].from(items []T) -> Self => Vec[T].new().cap(items.len()).extend(items) // [M-lint-findings-static-conversion]
 // NOTE ([M-138-rawmem-bulk-ops], Plan 138.2): `from` is intentionally NOT
 // bulk-copied via `RawMem.copy_nonoverlapping`. The source `items` is supplied
 // by the caller and may carry a *different element C-width* than `T` — e.g.

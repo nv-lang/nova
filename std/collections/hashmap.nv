@@ -146,7 +146,7 @@ export fn HashMap[K, V].new() -> HashMap[K, V] {
 /// assert(m.len() == 2)
 /// ```
 #stable(since = "0.1")
-export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
+export fn HashMap[K, V].from(pairs [](K, V)) -> Self { // [M-lint-findings-static-conversion]
     mut m = Self.new().cap(pairs.len() * 2)
     for (k, v) in pairs {
         m.insert(k, v)

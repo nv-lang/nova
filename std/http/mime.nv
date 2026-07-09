@@ -12,7 +12,7 @@ export type Mime value { priv mtype str, priv msub str }
 
 /// Р Р°Р·РѕР±СЂР°С‚СЊ `type/subtype`. РћС‚СЃСѓС‚СЃС‚РІРёРµ `/` / РїСѓСЃС‚С‹Рµ С‡Р°СЃС‚Рё в†’ `Protocol`.
 #stable(since = "0.1")
-export fn Mime.parse(s str) -> Result[Mime, HttpError] {
+export fn Mime.parse(s str) -> Result[Mime, HttpError] { // [M-lint-findings-static-conversion]
     match s.split_once("/") {
         Some((t, sub)) => {
             ro tt = t.trim_ascii()
@@ -61,7 +61,7 @@ export type ContentType value { ro mime Mime, priv params []Param }
 
 /// Р Р°Р·РѕР±СЂР°С‚СЊ `type/subtype; k=v; k2=v2`.
 #stable(since = "0.1")
-export fn ContentType.parse(s str) -> Result[ContentType, HttpError] {
+export fn ContentType.parse(s str) -> Result[ContentType, HttpError] { // [M-lint-findings-static-conversion]
     ro parts = s.split(";")
     if parts.len() == 0 {
         return Err(HttpError.protocol_error("empty Content-Type"))

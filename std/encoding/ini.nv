@@ -34,7 +34,7 @@ export type ParseIniError enum
 /// Parse INI document → `HashMap[section, HashMap[key, value]]`. Keys в дефолтной
 /// (без секции) хранятся под ключом `""`.
 #stable(since = "0.1")
-export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]] {
+export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]] { // [M-lint-findings-static-conversion]
     mut result = HashMap[str, HashMap[str, str]].new()
     result.insert("", HashMap[str, str].new())
     mut current_section = ""

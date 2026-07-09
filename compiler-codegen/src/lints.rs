@@ -2541,6 +2541,9 @@ pub struct ConvLintOptions {
     /// Файл внутри `std/collections/vec/` — definition-site `Vec[T]`
     /// (W_VEC_SPELLING там не действует).
     pub in_vec_module: bool,
+    /// Файл — тест (`*_test.nv` / nova_tests): в тестах канон владельца —
+    /// `Vec[T].of(a, b, c)` (вариадик), W_VEC_SPELLING не действует.
+    pub in_test: bool,
 }
 
 /// Одно конвенционное правило реестра.
@@ -3807,7 +3810,9 @@ fn conv_param_no_contract(m: &Module, o: &ConvLintOptions, out: &mut Vec<LintWar
 // ---------------------------------------------------------------------------
 
 fn conv_vec_spelling(src: &str, o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
-    if o.in_vec_module {
+    // Definition-site и тесты: в тестах канон — `Vec[T].of(a, b, c)`
+    // (решение владельца; вариадик-конструктор требует номинала).
+    if o.in_vec_module || o.in_test {
         return;
     }
     conv_each_code_line(src, |off, full_line, code| {

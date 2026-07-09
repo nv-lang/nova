@@ -262,7 +262,7 @@ fn MemFs mut @write_common(key str, chunk []u8, pos int) -> int {
     mut j = 0
     while j < chunk.len() {
         ro at = pos + j
-        if at < @datas[idx].len() { @datas[idx][at] = chunk[j] } else { @datas[idx].push(chunk[j]) }
+        if at < @datas[idx].len() { @datas[idx][at] = chunk[j] } else { @datas[idx].push(chunk[j]) } // [M-lint-findings-manual-slice-copy]
         j += 1
     }
     @mtimes[idx] = @tick()
@@ -368,7 +368,7 @@ fn MemFs mut @mem_scandir_open(path []u8) -> int {
     while i < @paths.len() {
         if @alive[i] && is_child_of(@paths[i], dirkey) {
             names.push(child_name(@paths[i], dirkey))
-            kinds.push(@kinds[i])
+            kinds.push(@kinds[i]) // [M-lint-findings-manual-slice-copy]
         }
         i += 1
     }

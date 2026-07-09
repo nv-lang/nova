@@ -174,11 +174,11 @@ export fn Duration.try_from_secs_f64(s f64) -> Option[Duration] =>
 
 /// Total duration in nanoseconds (raw underlying value).
 #stable(since = "0.1")
-export fn Duration @as_nanos() => @nanos
+export fn Duration @as_nanos() => @nanos // [M-d410-as-to-migration]
 
 /// Total duration in microseconds (truncating division — sub-μs nanoseconds dropped).
 #stable(since = "0.1")
-export fn Duration @as_micros() => @nanos / 1_000
+export fn Duration @as_micros() => @nanos / 1_000 // [M-d410-as-to-migration]
 
 /// Total duration in milliseconds (truncating — sub-ms nanoseconds dropped).
 ///
@@ -187,23 +187,23 @@ export fn Duration @as_micros() => @nanos / 1_000
 /// assert(Duration.from_secs(2).as_millis() == 2000)
 /// ```
 #stable(since = "0.1")
-export fn Duration @as_millis() => @nanos / 1_000_000
+export fn Duration @as_millis() => @nanos / 1_000_000 // [M-d410-as-to-migration]
 
 /// Total duration in whole seconds (truncating).
 #stable(since = "0.1")
-export fn Duration @as_secs() => @nanos / 1_000_000_000
+export fn Duration @as_secs() => @nanos / 1_000_000_000 // [M-d410-as-to-migration]
 
 /// Total duration in whole minutes (truncating).
 #stable(since = "0.1")
-export fn Duration @as_mins() => @nanos / 60_000_000_000
+export fn Duration @as_mins() => @nanos / 60_000_000_000 // [M-d410-as-to-migration]
 
 /// Total duration in whole hours (truncating).
 #stable(since = "0.1")
-export fn Duration @as_hours() => @nanos / 3_600_000_000_000
+export fn Duration @as_hours() => @nanos / 3_600_000_000_000 // [M-d410-as-to-migration]
 
 /// Total duration in whole days (truncating).
 #stable(since = "0.1")
-export fn Duration @as_days() => @nanos / 86_400_000_000_000
+export fn Duration @as_days() => @nanos / 86_400_000_000_000 // [M-d410-as-to-migration]
 
 /// Total duration as fractional seconds (`f64`).
 ///
@@ -214,11 +214,11 @@ export fn Duration @as_days() => @nanos / 86_400_000_000_000
 /// assert(Duration.from_millis(1500).as_secs_f64() == 1.5)
 /// ```
 #stable(since = "0.1")
-export fn Duration @as_secs_f64() -> f64 => (@nanos as f64) / 1_000_000_000.0
+export fn Duration @as_secs_f64() -> f64 => (@nanos as f64) / 1_000_000_000.0 // [M-d410-as-to-migration]
 
 /// Total duration as fractional milliseconds (`f64`).
 #stable(since = "0.1")
-export fn Duration @as_millis_f64() => (@nanos as f64) / 1_000_000.0
+export fn Duration @as_millis_f64() => (@nanos as f64) / 1_000_000.0 // [M-d410-as-to-migration]
 
 // Round up to whole milliseconds — module-private helper for `@sleep`.
 // `@as_millis` truncates toward zero, which would sleep LESS than
@@ -732,15 +732,15 @@ export fn Timestamp.now() Time -> Timestamp =>
 
 /// Unix epoch seconds (truncating). Negative для timestamps до 1970.
 #stable(since = "0.1")
-export fn Timestamp @as_unix_secs() => @nanos / 1_000_000_000
+export fn Timestamp @as_unix_secs() => @nanos / 1_000_000_000 // [M-d410-as-to-migration]
 
 /// Unix epoch milliseconds (truncating).
 #stable(since = "0.1")
-export fn Timestamp @as_unix_millis() => @nanos / 1_000_000
+export fn Timestamp @as_unix_millis() => @nanos / 1_000_000 // [M-d410-as-to-migration]
 
 /// Unix epoch nanoseconds (raw `i64`).
 #stable(since = "0.1")
-export fn Timestamp @as_unix_nanos() => @nanos
+export fn Timestamp @as_unix_nanos() => @nanos // [M-d410-as-to-migration]
 
 
 /// `Timestamp + Duration → Timestamp` — сдвинуть момент вперёд (deadline, expiry).
@@ -1315,7 +1315,7 @@ export type Monotonic value {
 /// Raw nanoseconds — escape hatch для FFI / bench. Cросс-процессное
 /// сравнение бессмысленно. Cравнение внутри одного процесса допустимо.
 #stable(since = "0.6")
-export fn Monotonic @as_nanos() -> i64 => @nanos
+export fn Monotonic @as_nanos() -> i64 => @nanos // [M-d410-as-to-migration]
 
 
 // ── Monotonic arithmetic (D124 rule 3: NO cross-type ops with Timestamp) ──

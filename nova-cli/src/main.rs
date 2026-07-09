@@ -2305,7 +2305,9 @@ fn conv_lint_options_for(path: &Path) -> nova_codegen::lints::ConvLintOptions {
     let in_vec_module = s.contains("/collections/vec/")
         || s.contains("/collections/vec_")
         || s.starts_with("std/collections/vec");
-    nova_codegen::lints::ConvLintOptions { in_std, in_vec_module }
+    let in_test = s.ends_with("_test.nv") || s.contains("/nova_tests/")
+        || s.contains("/spec_tests/");
+    nova_codegen::lints::ConvLintOptions { in_std, in_vec_module, in_test }
 }
 
 /// Plan 185: `nova lint [paths]` — прогон реестра конвенционных правил

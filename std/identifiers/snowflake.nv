@@ -142,7 +142,7 @@ export type SnowflakeParts {
 /// - `[SnowflakeGen.next]` — генерация ID
 /// - `[SnowflakeParts]` — структура результата
 #stable(since = "0.1")
-export fn Snowflake.parse(id i64) -> SnowflakeParts {
+export fn Snowflake.parse(id i64) -> SnowflakeParts { // [M-lint-findings-static-conversion]
     ro sequence = (id & 0xFFF) as int
     ro machine_id = ((id >> 12) & 0x3FF) as int
     ro ts_offset = id >> 22
