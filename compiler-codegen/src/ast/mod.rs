@@ -2165,6 +2165,17 @@ pub enum ExprKind {
     IntLit(i64),
     FloatLit(f64),
     StrLit(String),
+    /// D412 (Plan 186): compile-time byte blob, type `[]u8`. Two surface
+    /// sources produce this node:
+    ///   - hex-blob literal `x"48 69"` (parser, from `TokenKind::HexBlob`);
+    ///   - `embed("path")` intrinsic (embed_resolve pass replaces the Call
+    ///     with the file's bytes; path relative to the calling .nv file).
+    /// NOT a numeric literal: leading zero bytes significant, byte order =
+    /// written order. Codegen emits one interned `static const uint8_t
+    /// nova_blob_<hash>[]` per distinct content; ro-binding = zero-copy view
+    /// (data → static, len == cap == N), mut/consume binding = GC-heap copy
+    /// at the binding point.
+    HexBlobLit(Vec<u8>),
     /// `"hello ${name}, age=${n}"` — D44 string interpolation.
     /// Codegen эмитит StringBuilder-цепочку: одна аллокация
     /// + per-fragment `@append` (без O(N²) от `+`).

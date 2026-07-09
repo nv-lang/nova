@@ -3349,7 +3349,7 @@ fn expr_contains_invalidating_call_for(
         | ExprKind::ProtocolLit { .. } => false,
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => false,
     }
 }
@@ -3554,7 +3554,7 @@ fn expr_contains_write_to(e: &Expr, fname: &str) -> bool {
         | ExprKind::ProtocolLit { .. } => false,
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => false,
     }
 }
@@ -3694,7 +3694,7 @@ fn expr_contains_call(e: &Expr) -> bool {
         | ExprKind::ProtocolLit { .. } => false,
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => false,
     }
 }
@@ -4042,7 +4042,7 @@ fn analyze_expr_children(e: &Expr, fields: &HashMap<String, FieldKind>, a: &mut 
     match &e.kind {
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => {}
 
         ExprKind::InterpolatedStr { parts } => {
@@ -4339,7 +4339,7 @@ fn scan_expr(e: &Expr, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
     match &e.kind {
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => {}
 
         ExprKind::InterpolatedStr { parts } => {
@@ -4755,7 +4755,7 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
     match &e.kind {
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => {}
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
@@ -5626,7 +5626,7 @@ fn rewrite_expr_children(e: &mut Expr, replace_map: &HashMap<String, String>) {
     match &mut e.kind {
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => {}
 
         ExprKind::InterpolatedStr { parts } => {
@@ -6325,7 +6325,7 @@ fn licm_expr(
         | ExprKind::ProtocolLit { .. } => {}
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => {}
     }
 }
@@ -6800,7 +6800,7 @@ fn expr_contains_spawn(e: &Expr) -> bool {
         | ExprKind::ProtocolLit { .. } => false,
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
         | ExprKind::SelfAccess => false,
     }
 }

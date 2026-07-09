@@ -6571,7 +6571,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
         }
     }
@@ -7563,6 +7563,16 @@ impl<'a> TypeCheckCtx<'a> {
                 }),
                 ExprKind::UnitLit => Some(ResolvedType::Unit),
                 ExprKind::NullPtrLit => Some(ResolvedType::Ptr),
+                // D412 (Plan 186): hex-blob / embed → `[]u8` ≡ Vec[u8] (D239 nominal canon).
+                ExprKind::HexBlobLit(_) => Some(ResolvedType::Named {
+                    name: "Vec".to_string(),
+                    module: Vec::new(),
+                    args: vec![ResolvedType::Scalar {
+                        width: 8,
+                        signed: false,
+                        wide_default: false,
+                    }],
+                }),
                 _ => None,
             };
             if let Some(rt) = lit_rt {
@@ -8528,7 +8538,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
         }
     }
@@ -12379,6 +12389,11 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(prim_ref("str", expr.span))
             }
             ExprKind::CharLit(_) => Some(prim_ref("char", expr.span)),
+            // D412 (Plan 186): hex-blob / embed → `[]u8`.
+            ExprKind::HexBlobLit(_) => Some(TypeRef::Array(
+                Box::new(prim_ref("u8", expr.span)),
+                expr.span,
+            )),
             // Plan 134: null ptr literal → *() = TypeRef::Pointer(TypeRef::Unit).
             ExprKind::NullPtrLit => Some(TypeRef::Pointer(
                 Box::new(TypeRef::Unit(expr.span)),
@@ -15552,7 +15567,7 @@ impl<'a> BoundCtx<'a> {
             // Литералы / ident'ы / handler-литералы — без рекурсии в bound-проверке.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::HandlerLit { .. } => {}
         }
@@ -17344,7 +17359,7 @@ impl<'a> CapabilityCtx<'a> {
             // Литералы / ident'ы / handler-литералы — без рекурсии.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::HandlerLit { .. }
             | ExprKind::ProtocolLit { .. } => {}
@@ -18206,7 +18221,7 @@ impl NameResCtx {
             // Литералы.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
 
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
@@ -20275,7 +20290,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         // Leaf expressions — nothing to recurse into.
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit
-        | ExprKind::NullPtrLit
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
         | ExprKind::SelfAccess => {}
     }
 }
@@ -23909,7 +23924,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         // ─── Листья ───
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
         | ExprKind::Path(_) | ExprKind::SelfAccess => {}
 
         // ─── Использование переменной ───
@@ -26673,7 +26688,7 @@ impl MapLitCtx {
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
         }
     }
 
@@ -27627,7 +27642,7 @@ impl MapLitAnnotator {
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
         }
         // Подавляем unused warnings.
         let _ = &self.fn_generics;

@@ -83,6 +83,12 @@ impl<'a> Lexer<'a> {
                 TokenKind::Newline
             }
             b if b.is_ascii_digit() => return self.lex_number(start),
+            // D412: `x"…"` hex-blob literal — MUST be checked before the
+            // generic ident-start branch (`x` alone is a valid identifier;
+            // ident+string juxtaposition with no operator between them is
+            // not otherwise legal Nova syntax, so hijacking this exact
+            // two-byte sequence is non-breaking — mirrors D/Rust `b"…"`).
+            b'x' if self.peek_at(1) == Some(b'"') => return self.lex_hex_blob(start),
             b if is_ident_start(b) => return self.lex_ident_or_keyword(start),
             b'"' => return self.lex_string(start),
             b'\'' => return self.lex_char(start),
@@ -839,6 +845,69 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
+    }
+
+    /// D412: `x"48 69"` — hex-blob literal. Hex digits + separators (`_`,
+    /// space, `\n`, tolerated `\r` for CRLF sources) between the quotes;
+    /// separators are pure visual grouping and carry no value. Odd digit
+    /// count → `E_HEX_BLOB_ODD`; non-hex/non-separator byte → `E_HEX_BLOB_CHAR`.
+    /// Empty `x""` is legal → empty `[]u8`. NOT a numeric literal: leading
+    /// zero bytes are significant, byte order = written order (no
+    /// endianness reinterpretation).
+    fn lex_hex_blob(&mut self, start: usize) -> Result<Token, Diagnostic> {
+        self.pos += 2; // `x"`
+        let mut digits: Vec<u8> = Vec::new(); // ASCII hex-digit bytes, separators stripped
+        loop {
+            let Some(&b) = self.bytes.get(self.pos) else {
+                return Err(Diagnostic::new(
+                    "unterminated hex-blob literal",
+                    self.span(start, self.pos),
+                ));
+            };
+            match b {
+                b'"' => {
+                    self.pos += 1;
+                    break;
+                }
+                b'_' | b' ' | b'\n' | b'\r' | b'\t' => {
+                    self.pos += 1;
+                }
+                _ if b.is_ascii_hexdigit() => {
+                    digits.push(b);
+                    self.pos += 1;
+                }
+                other => {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "[E_HEX_BLOB_CHAR] invalid character {:?} in hex-blob literal \
+                             (D412): only hex digits and `_`/space/newline separators are \
+                             allowed inside `x\"…\"`",
+                            other as char
+                        ),
+                        self.span(self.pos, self.pos + 1),
+                    ));
+                }
+            }
+        }
+        let span = self.span(start, self.pos);
+        if digits.len() % 2 != 0 {
+            return Err(Diagnostic::new(
+                format!(
+                    "[E_HEX_BLOB_ODD] hex-blob literal has an odd number of hex digits \
+                     ({}) — D412 requires an even count (each byte = 2 digits)",
+                    digits.len()
+                ),
+                span,
+            ));
+        }
+        let mut bytes = Vec::with_capacity(digits.len() / 2);
+        for pair in digits.chunks(2) {
+            // `is_ascii_hexdigit` guaranteed above — parse cannot fail.
+            let s = std::str::from_utf8(pair).expect("ascii hexdigit bytes are valid utf8");
+            let v = u8::from_str_radix(s, 16).expect("validated hex-digit pair");
+            bytes.push(v);
+        }
+        Ok(Token::new(TokenKind::HexBlob(bytes), span))
     }
 
     /// Q-char-literals: `'a'` / `'\n'` / `'\\'` / `'\''` / `'\u{1F600}'`.

@@ -37,6 +37,12 @@ pub enum TokenKind {
     Float(f64),
     Str(String),
     Backtick(String),
+    /// D412: hex-blob literal `x"48 69"` — compile-time byte sequence.
+    /// Separators (`_`, space, newline) already stripped, hex digit-pairs
+    /// already decoded into raw bytes by the lexer. Type `[]u8` (NOT a
+    /// numeric literal — leading zero bytes are significant, byte order =
+    /// written order).
+    HexBlob(Vec<u8>),
     Ident(String),
     /// Plan 45 / D104: doc-comment. `///` (Outer) — внешний, к следующей
     /// декларации; `//!` (Inner) — внутренний модуля.
@@ -235,6 +241,7 @@ impl TokenKind {
             TokenKind::Float(_) => "float literal",
             TokenKind::Str(_) => "string literal",
             TokenKind::Backtick(_) => "backtick string",
+            TokenKind::HexBlob(_) => "hex-blob literal",
             TokenKind::Ident(_) => "identifier",
             TokenKind::DocComment { kind: DocCommentKind::Outer, .. } => "outer doc-comment `///`",
             TokenKind::DocComment { kind: DocCommentKind::Inner, .. } => "inner doc-comment `//!`",

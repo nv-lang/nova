@@ -1178,6 +1178,15 @@ pub struct CEmitter {
     /// (symbol, escaped_c_string, byte_len). Ordered (not just the HashMap)
     /// for deterministic emitted-C output.
     interned_str_emit: Vec<(String, String, usize)>,
+    /// Plan 186 (D412): blob-literal interning. Maps blob CONTENT (raw
+    /// bytes of `x"..."` / `embed(...)`) -> the C symbol of its single shared
+    /// `static const uint8_t nova_blob_<hash>[]` rodata buffer. Identical
+    /// blobs (same bytes) share one buffer -- mirror of interned_str_literals.
+    interned_blob_literals: HashMap<Vec<u8>, String>,
+    /// Plan 186 (D412): insertion-ordered blob list rendered at the
+    /// `/*__INTERNED_STR_LITERALS__*/` preamble marker (appended after the
+    /// str literals). Ordered for deterministic emitted-C output.
+    interned_blob_emit: Vec<(String, Vec<u8>)>,
     /// Plan 70.1: set of imported-module prefix names visible в this module
     /// (alias + last-segment of import path). Used в emit_call Member dispatch
     /// чтобы распознать `<alias>.func(args)` или `<module>.func(args)` pattern
@@ -1748,6 +1757,8 @@ impl CEmitter {
             strict_errors: std::cell::RefCell::new(Vec::new()),
             interned_str_literals: HashMap::new(),
             interned_str_emit: Vec::new(),
+            interned_blob_literals: HashMap::new(),
+            interned_blob_emit: Vec::new(),
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
@@ -6490,7 +6501,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // during body emission (intern_str_literal), emitted at the preamble
         // marker as one shared rodata buffer + one nova_str value per content.
         let interned = self.render_interned_str_literals();
-        self.out = self.out.replace("/*__INTERNED_STR_LITERALS__*/", &interned);
+        // Plan 186 (D412): blob statics share the same preamble marker
+        // (plain uint8_t arrays -- no type dependencies).
+        let interned_blobs = self.render_interned_blob_literals();
+        self.out = self.out.replace(
+            "/*__INTERNED_STR_LITERALS__*/",
+            &format!("{}{}", interned, interned_blobs),
+        );
 
         // Plan 70 Ф.B0 (session 2): strict-error finalization gate.
         // Cascade-blocked sites (infer_expr_c_type, register_mono_instance,
@@ -14383,6 +14400,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Atoms and lambda/closure bodies — no TypeRefs to collect here
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
             | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
+            | ExprKind::HexBlobLit(_)
             | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
             | ExprKind::SelfAccess | ExprKind::InterpolatedStr { .. }
             | ExprKind::Interrupt(None)
@@ -22593,6 +22611,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return Ok(());
                     }
                 }
+                // Plan 186 (D412): blob materialization at the binding point.
+                // ro-binding -> zero-copy view (default emit_expr path below);
+                // mut-binding / consume-binding -> COPY into the GC heap here,
+                // so the value is a normal writable/growable Vec[u8] buffer
+                // (writes to the .rodata static are never emitted).
+                if let ExprKind::HexBlobLit(bytes) = &decl.value.kind {
+                    if (decl.mutable || decl.consume)
+                        && matches!(&decl.pattern, Pattern::Ident { .. })
+                    {
+                        let bytes = bytes.clone();
+                        let binding = self.pattern_binding(&decl.pattern)?;
+                        let vec_c = self.ensure_vec_u8_instance();
+                        let (src, n) = if bytes.is_empty() {
+                            ("(const uint8_t*)0".to_string(), 0usize)
+                        } else {
+                            let n = bytes.len();
+                            (self.intern_blob_literal(&bytes), n)
+                        };
+                        self.line(&format!(
+                            "{vec_c}* {binding} = ({vec_c}*)nova_blob_copy({src}, {n});"
+                        ));
+                        self.var_types.insert(binding, format!("{vec_c}*"));
+                        return Ok(());
+                    }
+                }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
                 let mut ty_c = if let Some(ty) = &decl.ty {
@@ -24174,6 +24217,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::UnitLit     => Ok("NOVA_UNIT".into()),
             // Plan 134: `null ptr` literal → C `((void*)0)` (*() = void*).
             ExprKind::NullPtrLit  => Ok("((void*)0)".into()),
+            // Plan 186 (D412): hex-blob / embed literal -> `[]u8` zero-copy VIEW
+            // over the interned static rodata blob (data -> static, len == cap
+            // == N; no memcpy on this path). The mut/consume-binding COPY path
+            // is handled in emit_stmt's Let arm (materialize-by-copy at the
+            // binding point).
+            ExprKind::HexBlobLit(bytes) => {
+                let bytes = bytes.clone();
+                let vec_c = self.ensure_vec_u8_instance();
+                if bytes.is_empty() {
+                    return Ok(format!("(({}*)nova_blob_view((const uint8_t*)0, 0))", vec_c));
+                }
+                let n = bytes.len();
+                let sym = self.intern_blob_literal(&bytes);
+                Ok(format!("(({}*)nova_blob_view({}, {}))", vec_c, sym, n))
+            }
             ExprKind::StrLit(s)   => {
                 // Plan 139 Ф.6: literal interning. Identical string literals
                 // share one `static const uint8_t[]` rodata buffer + one
@@ -46522,6 +46580,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ExprKind::UnitLit => "nova_unit".into(),
                 // Plan 134: `null ptr` literal → *() = void*.
                 ExprKind::NullPtrLit => "void*".into(),
+                // Plan 186 (D412): hex-blob / embed literal -> []u8 = Vec[u8] mono.
+                ExprKind::HexBlobLit(_) => "Nova_Vec____nova_byte*".into(),
                 ExprKind::TupleLit(elems) => {
                     // Plan 59: prefer mono'd tuple struct если все element types
                     // concrete. Параллель с emit_expr::TupleLit decision.
@@ -47854,6 +47914,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             },
             ExprKind::UnitLit => "()".to_string(),
             ExprKind::NullPtrLit => "null".to_string(),
+            // Plan 186 (D412): hex-blob literal -- render back as x"...".
+            ExprKind::HexBlobLit(bytes) => format!(
+                "x\"{}\"",
+                bytes.iter().map(|b| format!("{:02X}", b)).collect::<String>()
+            ),
             ExprKind::Ident(n) => n.clone(),
             ExprKind::Path(parts) => parts.join("::"),
             // `@` (bare receiver) — appears standalone rarely; `@field`/`@method()`
@@ -48079,6 +48144,77 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 139 Ф.6: render all interned string-literal statics for the
     /// `/*__INTERNED_STR_LITERALS__*/` preamble marker. Each literal becomes
     /// one shared rodata buffer + one shared `static const nova_str` value.
+    /// Plan 186 (D412): intern a blob literal's CONTENT -> shared static
+    /// symbol `nova_blob_<hash>` (FNV-1a hex; sequence suffix on the
+    /// astronomically-unlikely hash collision -- mirror intern_str_literal).
+    fn intern_blob_literal(&mut self, bytes: &[u8]) -> String {
+        if let Some(sym) = self.interned_blob_literals.get(bytes) {
+            return sym.clone();
+        }
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in bytes {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        let mut sym = format!("nova_blob_{:016x}", hash);
+        if self.interned_blob_emit.iter().any(|(existing, _)| existing == &sym) {
+            let mut seq = 1usize;
+            loop {
+                let candidate = format!("nova_blob_{:016x}_{}", hash, seq);
+                if !self.interned_blob_emit.iter().any(|(existing, _)| existing == &candidate) {
+                    sym = candidate;
+                    break;
+                }
+                seq += 1;
+            }
+        }
+        self.interned_blob_emit.push((sym.clone(), bytes.to_vec()));
+        self.interned_blob_literals.insert(bytes.to_vec(), sym.clone());
+        sym
+    }
+
+    /// Plan 186 (D412): render all interned blob statics (one shared rodata
+    /// buffer per distinct content) for the preamble marker.
+    fn render_interned_blob_literals(&self) -> String {
+        if self.interned_blob_emit.is_empty() {
+            return String::new();
+        }
+        let mut out = String::new();
+        out.push_str("/* Plan 186 (D412): interned hex-blob/embed literals (rodata dedup). */\n");
+        for (sym, bytes) in &self.interned_blob_emit {
+            // Empty blobs never reach here (emit sites pass NULL/0 directly).
+            out.push_str(&format!("static const uint8_t {}[] = {{", sym));
+            for (i, b) in bytes.iter().enumerate() {
+                if i % 16 == 0 {
+                    out.push_str("\n    ");
+                }
+                out.push_str(&format!("0x{:02X},", b));
+            }
+            out.push_str("\n};\n");
+        }
+        out
+    }
+
+    /// Plan 186 (D412): make sure the `Vec[u8]` mono instance
+    /// (`Nova_Vec____nova_byte`) is registered + queued for emission -- a blob
+    /// literal may be the CU's only `[]u8` producer. Mirrors the turbofish
+    /// registration block in infer_call_ret_c. Returns the mangled name.
+    fn ensure_vec_u8_instance(&mut self) -> String {
+        let type_args_c = vec!["nova_byte".to_string()];
+        let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
+        self.generic_type_instance_info
+            .borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push(("Vec".to_string(), Self::args_lift(&type_args_c), mangled.clone()));
+            }
+        }
+        mangled
+    }
+
     fn render_interned_str_literals(&self) -> String {
         if self.interned_str_emit.is_empty() {
             return String::new();
