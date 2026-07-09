@@ -1,0 +1,311 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/civil_test.nv — Plan 175.1 Ф.1: Plain civil types.
+//
+// Границы: високосные (leap_feb29), конец месяца, epoch-day round-trip
+// (Hinnant), ISO-week week-year≠calendar-year, отрицательные годы
+// (proleptic, year 0 = 1 BCE), validate-by-default (Feb-30 → Err).
+
+module time.civil
+
+import std.time.duration
+
+
+// ── Date: конструктор + validate-by-default (Q6) ──
+
+test "Date.new: валидные даты" {
+    ro d = Date.new(2026, Jul, 10)!!
+    assert(d.year() == 2026)
+    assert(d.month() == Jul)
+    assert(d.day() == 10)
+}
+
+test "Date.new: Feb-30 отвергается структурной ошибкой (не normalize)" {
+    assert(match Date.new(2024, Feb, 30) {
+        Err(InvalidField(FieldKind.Day, 30, 1, 29)) => true
+        _ => false
+    })
+}
+
+test "leap_feb29: 2020-02-29 Ok, 2021-02-29 Err (Q6/Q10)" {
+    assert(Date.new(2020, Feb, 29).is_ok())
+    assert(match Date.new(2021, Feb, 29) {
+        Err(InvalidField(FieldKind.Day, 29, 1, 28)) => true
+        _ => false
+    })
+}
+
+test "leap-века: 2000 високосный (÷400), 1900 нет (век)" {
+    assert(Date.new(2000, Feb, 29).is_ok())
+    assert(!Date.new(1900, Feb, 29).is_ok())
+    assert(Date.new(2000, Jan, 1)!!.is_leap_year())
+    assert(!Date.new(1900, Jan, 1)!!.is_leap_year())
+}
+
+test "Date.new: month-13 недостижим по типам, day 0/32 → Err" {
+    assert(!Date.new(2026, Jan, 0).is_ok())
+    assert(!Date.new(2026, Jan, 32).is_ok())
+    assert(!Date.new(2026, Apr, 31).is_ok())   // 30-дневный месяц
+}
+
+
+// ── Hinnant epoch-day: канон + round-trip ──
+
+test "epoch-day канон: 1970-01-01 = 0, 2000-03-01 = 11017 (Hinnant)" {
+    assert(Date.new(1970, Jan, 1)!!.to_epoch_day() == 0)
+    assert(Date.new(2000, Mar, 1)!!.to_epoch_day() == 11017)
+    assert(Date.new(1969, Dec, 31)!!.to_epoch_day() == -1)
+}
+
+test "epoch-day round-trip по сетке (включая границы месяцев/лет)" {
+    // Плотная сетка вокруг переходов век/високосность.
+    mut ed = Date.new(1896, Feb, 25)!!.to_epoch_day()
+    ro end = Date.new(1904, Mar, 5)!!.to_epoch_day()
+    while ed <= end {
+        ro d = Date.from_epoch_day(ed)
+        ro back = Date.new(d.year(), d.month(), d.day())!!
+        assert(back.to_epoch_day() == ed)
+        ed += 97   // взаимно-просто с 7 и длинами месяцев
+    }
+}
+
+test "отрицательные годы: proleptic, year 0 = 1 BCE (Q10)" {
+    ro d = Date.new(0, Jan, 1)!!
+    assert(d.year() == 0)
+    // Год 0 високосный (÷400)
+    assert(Date.new(0, Feb, 29).is_ok())
+    ro bc = Date.new(-1, Dec, 31)!!
+    assert(bc.days_until(d) == 1)
+}
+
+
+// ── Weekday / day_of_year / адъюстеры ──
+
+test "weekday: 1970-01-01 = Thu; 2026-07-10 = Fri" {
+    assert(Date.new(1970, Jan, 1)!!.weekday() == Thu)
+    assert(Date.new(2026, Jul, 10)!!.weekday() == Fri)
+    assert(Date.new(2000, Mar, 1)!!.weekday() == Wed)
+}
+
+test "weekday @number/@next/@prev циклы" {
+    // [M-175.1-variant-literal-receiver]: метод на variant-литерале
+    // (`Sun.next()`) эмитится как несуществующий Path-вызов
+    // `nova_fn_Sun_next` → линк-ошибка; обход §4а — bound-local ресивер.
+    ro mon Weekday = Mon
+    ro sun Weekday = Sun
+    assert(mon.number() == 1 && sun.number() == 7)
+    assert(sun.next() == Mon)
+    assert(mon.prev() == Sun)
+}
+
+test "day_of_year: границы + високосный сдвиг" {
+    assert(Date.new(2026, Jan, 1)!!.day_of_year() == 1)
+    assert(Date.new(2026, Dec, 31)!!.day_of_year() == 365)
+    assert(Date.new(2020, Dec, 31)!!.day_of_year() == 366)
+    assert(Date.new(2020, Mar, 1)!!.day_of_year() == 61)   // 31+29+1
+}
+
+test "адъюстеры: first/last day of month, next/prev weekday" {
+    ro d = Date.new(2026, Jul, 10)!!   // Fri
+    assert(d.first_day_of_month().day() == 1)
+    assert(d.last_day_of_month().day() == 31)
+    assert(Date.new(2024, Feb, 10)!!.last_day_of_month().day() == 29)
+    // next(Fri) от пятницы — строго через 7 дней
+    assert(d.next(Fri).day() == 17)
+    assert(d.next(Mon).day() == 13)
+    assert(d.prev(Fri).day() == 3)
+    assert(d.prev(Thu).day() == 9)
+}
+
+test "nth_weekday: второй вторник июля-2026 = 14-е; 5-й понедельник Feb-2026 → Err" {
+    ro d = Date.new(2026, Jul, 1)!!
+    assert(d.nth_weekday(2, Tue)!!.day() == 14)
+    // Feb-2026: 28 дней, максимум 4 вхождения каждого дня
+    assert(!Date.new(2026, Feb, 1)!!.nth_weekday(5, Mon).is_ok())
+}
+
+
+// ── ISO-week (week-year ≠ calendar-year у границ) ──
+
+test "iso_week: обычная середина года" {
+    // 2026-07-10 — пятница ISO-недели 28
+    assert(Date.new(2026, Jul, 10)!!.iso_week() == 28)
+    assert(Date.new(2026, Jul, 10)!!.iso_week_year() == 2026)
+}
+
+test "iso_week: week-year != calendar-year на границе (footgun-fixture)" {
+    // 2027-01-01 (Fri) принадлежит ISO-неделе 53 week-year'а 2026
+    ro d = Date.new(2027, Jan, 1)!!
+    assert(d.weekday() == Fri)
+    assert(d.iso_week_year() == 2026)
+    assert(d.iso_week() == 53)
+    // 2024-12-30 (Mon) — неделя 1 week-year'а 2025
+    ro d2 = Date.new(2024, Dec, 30)!!
+    assert(d2.weekday() == Mon)
+    assert(d2.iso_week_year() == 2025)
+    assert(d2.iso_week() == 1)
+}
+
+
+// ── Date normalize (явный opt-in, Q6) ──
+
+test "from_normalized: перенос дня и месяца" {
+    ro d = Date.from_normalized(2024, 2, 30)   // → 2024-03-01
+    assert(d.year() == 2024 && d.month() == Mar && d.day() == 1)
+    ro d2 = Date.from_normalized(2026, 14, 1)  // месяц 14 → Feb следующего
+    assert(d2.year() == 2027 && d2.month() == Feb)
+    ro d3 = Date.from_normalized(2026, 0, 5)   // месяц 0 → Dec предыдущего
+    assert(d3.year() == 2025 && d3.month() == Dec)
+}
+
+
+// ── Compare / структурное == ──
+
+test "Date compare + структурное ==" {
+    ro a = Date.new(2026, Jul, 10)!!
+    ro b = Date.new(2026, Jul, 11)!!
+    assert(a < b)
+    assert(a == Date.new(2026, Jul, 10)!!)
+    assert(a != b)
+}
+
+test "Date.min_value/max_value компилируются и упорядочены" {
+    assert(Date.min_value() < Date.max_value())
+    assert(Date.min_value().year() == Date.min_year())
+    assert(Date.max_value().year() == Date.max_year())
+    assert(Date.min_value().month() == Jan && Date.min_value().day() == 1)
+    assert(Date.max_value().month() == Dec && Date.max_value().day() == 31)
+}
+
+
+// ── TimeOfDay ──
+
+test "TimeOfDay.new: валидация + компоненты + дефолт-параметры (§21б)" {
+    ro t = TimeOfDay.new(14, 30)!!
+    assert(t.hour() == 14 && t.minute() == 30 && t.second() == 0 && t.nano() == 0)
+    ro t2 = TimeOfDay.new(23, 59, s: 59, ns: 999_999_999)!!
+    assert(t2.second() == 59 && t2.nano() == 999_999_999)
+}
+
+test "TimeOfDay.new: hour-25 / minute-60 / second-60 → InvalidField" {
+    assert(match TimeOfDay.new(25, 0) {
+        Err(InvalidField(FieldKind.Hour, 25, 0, 23)) => true
+        _ => false
+    })
+    assert(!TimeOfDay.new(0, 60).is_ok())
+    assert(!TimeOfDay.new(0, 0, s: 60).is_ok())   // :60 на КОНСТРУКТОРЕ — Err (clamp только parse, Q5)
+}
+
+test "TimeOfDay @plus: явный day-carry (не молчит)" {
+    ro (t, carry) = TimeOfDay.new(23, 30)!!.plus(1.hour())
+    assert(t.hour() == 0 && t.minute() == 30)
+    assert(carry == 1)
+    ro (t2, carry2) = TimeOfDay.new(0, 30)!!.minus(1.hour())
+    assert(t2.hour() == 23 && t2.minute() == 30)
+    assert(carry2 == -1)
+    ro (t3, carry3) = TimeOfDay.new(12, 0)!!.plus(30.minutes())
+    assert(t3.hour() == 12 && t3.minute() == 30 && carry3 == 0)
+}
+
+test "TimeOfDay compare + midnight" {
+    assert(TimeOfDay.midnight() < TimeOfDay.new(0, 0, s: 1)!!)
+    assert(TimeOfDay.midnight().to_nanos_of_day() == 0)
+}
+
+
+// ── DateTime ──
+
+test "DateTime: сборка + компоненты + Date @at сахар" {
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
+    assert(dt.year() == 2026 && dt.month() == Jul && dt.day() == 10)
+    assert(dt.hour() == 14 && dt.minute() == 30)
+    assert(dt.weekday() == Fri)
+}
+
+test "DateTime @plus(Duration): day-carry через границу года" {
+    ro dt = Date.new(2026, Dec, 31)!!.at(TimeOfDay.new(23, 30)!!)
+    ro dt2 = dt.plus(1.hour())
+    assert(dt2.year() == 2027 && dt2.month() == Jan && dt2.day() == 1)
+    assert(dt2.hour() == 0 && dt2.minute() == 30)
+    // Обратно
+    ro dt3 = dt2.minus(1.hour())
+    assert(dt3.compare(dt) == 0)
+}
+
+test "DateTime @duration_until (elapsed по plain-шкале)" {
+    ro a = Date.new(2026, Jul, 10)!!.at_midnight()
+    ro b = Date.new(2026, Jul, 11)!!.at(TimeOfDay.new(6, 0)!!)
+    assert(a.duration_until(b) == 30.hours())
+    assert(b.duration_until(a) == (Duration.from_nanos(0) - 30.hours()))
+}
+
+test "DateTime compare: дата приоритетнее времени" {
+    ro a = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(23, 0)!!)
+    ro b = Date.new(2026, Jul, 11)!!.at_midnight()
+    assert(a < b)
+}
+
+
+// ── YearMonth / MonthDay ──
+
+test "YearMonth: length/first/last/next/prev" {
+    ro ym = YearMonth.new(2024, Feb)!!
+    assert(ym.length() == 29)
+    assert(YearMonth.new(2023, Feb)!!.length() == 28)
+    assert(ym.first_day().day() == 1)
+    assert(ym.last_day().day() == 29)
+    ro nx = ym.next()
+    assert(nx.month() == Mar)
+    ro dec = YearMonth.new(2026, Dec)!!
+    ro dn = dec.next()
+    assert(dn.year() == 2027 && dn.month() == Jan)
+    ro jan = YearMonth.new(2026, Jan)!!
+    ro jp = jan.prev()
+    assert(jp.year() == 2025 && jp.month() == Dec)
+}
+
+test "YearMonth @at_day: валидация дня по месяцу" {
+    ro ym = YearMonth.new(2023, Feb)!!
+    assert(!ym.at_day(29).is_ok())
+    assert(ym.at_day(28).is_ok())
+}
+
+test "MonthDay: Feb-29 валиден как анниверсари (Q1)" {
+    ro md = MonthDay.new(Feb, 29)!!
+    assert(md.is_valid_year(2024))
+    assert(!md.is_valid_year(2023))
+    assert(md.at_year(2024).is_ok())
+    assert(!md.at_year(2023).is_ok())
+    // Feb-30 — невалиден даже как анниверсари
+    assert(!MonthDay.new(Feb, 30).is_ok())
+}
+
+
+// ── Month enum ──
+
+test "Month: number/length/next/prev" {
+    // bound-local ресиверы: [M-175.1-variant-literal-receiver]
+    ro jan Month = Jan
+    ro feb Month = Feb
+    ro dec Month = Dec
+    assert(jan.number() == 1 && dec.number() == 12)
+    assert(feb.length(true) == 29 && feb.length(false) == 28)
+    assert(dec.next() == Jan)
+    assert(jan.prev() == Dec)
+    assert(Month.from_number(7)!! == Jul)
+    assert(!Month.from_number(13).is_ok())
+}
+
+
+// ── ISO display (полный parse — Ф.5) ──
+
+test "to_iso: канонические формы" {
+    assert(Date.new(2026, Jul, 10)!!.to_iso() == "2026-07-10")
+    assert(Date.new(33, Jan, 5)!!.to_iso() == "0033-01-05")
+    assert(Date.new(-500, Mar, 1)!!.to_iso() == "-0500-03-01")
+    assert(TimeOfDay.new(14, 30)!!.to_iso() == "14:30:00")
+    assert(TimeOfDay.new(14, 30, s: 5, ns: 250_000_000)!!.to_iso() == "14:30:05.250")
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
+    assert(dt.to_iso() == "2026-07-10T14:30:00")
+    assert(YearMonth.new(2026, Jul)!!.to_iso() == "2026-07")
+    assert(MonthDay.new(Feb, 29)!!.to_iso() == "--02-29")
+}

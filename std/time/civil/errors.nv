@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/errors.nv — структурные ошибки + базовые sum-типы календаря.
+//
+// Plan 175.1 (D319/D320/D321). Co-equal файл модуля `time.civil`: все типы
+// видны остальным файлам модуля без импорта (как runtime.string).
+//
+// Структурные ошибки (D321): конструкторы/parse возвращают `Result`, НЕТ
+// default-panicking конструктора (урок chrono `from_ymd` deprecated).
+
+module time.civil
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// FieldKind — какое поле нарушено (для InvalidField / InvalidValue)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Идентификатор компонента даты/времени в структурной ошибке.
+#stable(since = "0.1")
+export type FieldKind enum
+    | Year
+    | Month
+    | Day
+    | Hour
+    | Minute
+    | Second
+    | Nano
+    | OffsetSec
+    | Weekday
+
+
+/// Человекочитаемое имя поля (для сообщений).
+#stable(since = "0.1")
+export fn FieldKind @name() -> str =>
+    match @ {
+        Year      => "year",
+        Month     => "month",
+        Day       => "day",
+        Hour      => "hour",
+        Minute    => "minute",
+        Second    => "second",
+        Nano      => "nanosecond",
+        OffsetSec => "offset-seconds",
+        Weekday   => "weekday",
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// DateError — ошибки построения/арифметики (D321)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Структурная ошибка построения/арифметики календарных величин.
+///
+/// - `InvalidField(field, given, min, max)` — Feb 30, month 13, hour 25.
+/// - `RangeOverflow(kind)` — civil↔Timestamp вне ±292y окна (D317).
+/// - `Ambiguous(kind)` — `Reject` на DST gap/overlap.
+///
+/// Shape — time-crate `ComponentRange` + java.time `getErrorIndex`.
+#stable(since = "0.1")
+export type DateError enum
+    | InvalidField(FieldKind, i64, i64, i64)
+    | RangeOverflow(str)
+    | Ambiguous(str)
+
+
+/// Диагностическое сообщение.
+#stable(since = "0.1")
+export fn DateError @to_str() -> str =>
+    match @ {
+        InvalidField(f, given, mn, mx) => {
+            "invalid " + f.name() + ": " + str.from(given) +
+                " (expected " + str.from(mn) + ".." + str.from(mx) + ")"
+        }
+        RangeOverflow(kind) => "range overflow: " + kind,
+        Ambiguous(kind)     => "ambiguous local time: " + kind,
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// ParseDateTimeError — ошибки разбора текста (D321)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Ошибка разбора ISO-8601/RFC-3339/pattern-строки.
+///
+/// - `FormatMismatch(position, expected)` — структура не совпала.
+/// - `InvalidValue(position, field, given)` — значение вне диапазона.
+#stable(since = "0.1")
+export type ParseDateTimeError enum
+    | FormatMismatch(int, str)
+    | InvalidValue(int, FieldKind, i64)
+
+
+/// Диагностическое сообщение.
+#stable(since = "0.1")
+export fn ParseDateTimeError @to_str() -> str =>
+    match @ {
+        FormatMismatch(pos, expected) => {
+            "format mismatch at " + str.from(pos) + ": expected " + expected
+        }
+        InvalidValue(pos, field, given) => {
+            "invalid " + field.name() + " at " + str.from(pos) + ": " + str.from(given)
+        }
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Disambiguation / OffsetConflict — DST-политики (D321)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// 4-way разрешение неоднозначного локального времени при переходе DST.
+///
+/// - `Compatible` (default) — gap → push-forward на длину gap (after-offset);
+///   overlap → earlier-offset. Совместимо с Temporal/jiff/RFC-5545.
+/// - `Earlier` / `Later` — явный выбор для overlap.
+/// - `Reject` — `Err(Ambiguous)` на любом gap/overlap.
+#stable(since = "0.1")
+export type Disambiguation enum
+    | Compatible
+    | Earlier
+    | Later
+    | Reject
+
+
+/// 4-way разрешение рассогласования сохранённого offset с текущими правилами
+/// зоны (post-tzdb-change drift). Только для explicit-offset строк.
+///
+/// - `Reject` (default) — `Err` при расхождении.
+/// - `Use` — доверять сохранённому offset как есть.
+/// - `Prefer` — предпочесть сохранённый, если он валиден для зоны.
+/// - `Ignore` — игнорировать сохранённый, пересчитать по зоне.
+#stable(since = "0.1")
+export type OffsetConflict enum
+    | Reject
+    | Use
+    | Prefer
+    | Ignore
