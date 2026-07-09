@@ -589,6 +589,7 @@ j.name("deploy")    // setter — переприсваивает и возвра
 | После `type Имя` идёт | Что это |
 |---|---|
 | `enum` | sum-type (D406; `enum` — контекстный identifier-маркер, не lexer-keyword) |
+| `set` | type-set — generic-bound по членству в явном списке типов (D310; тоже контекстный) |
 | `(` | tuple-структура |
 | `{` | record-структура |
 | `alias` | alias |
@@ -1351,10 +1352,12 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
 Подробно — [D16](decisions/03-syntax.md#d16).
 Массивы — `[]T` (динамический), `[N]T` (фиксированный), [D27](decisions/03-syntax.md#d27).
 
-## Generic bounds — `[T Protocol]`
+## Generic bounds — `[T Protocol]` или `[T TypeSet]`
 
-Параметр-тип ограничивается protocol'ом через единое правило «name type»
-(без двоеточия):
+Параметр-тип ограничивается через единое правило «name type» (без
+двоеточия) — двумя способами: **protocol** (structural, любой тип с
+подходящими методами) или **type-set** (D310, ниже — closed список
+конкретных типов, membership-предикат, не структурный):
 
 ```nova
 fn dedup[T Hash](xs []T) -> []T => ...
@@ -1388,7 +1391,41 @@ fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](x
 Если паттерн повторяется — выносится в именованный protocol (`type Ord
 protocol { ... }`).
 
-Подробно — [D72](decisions/02-types.md#d72).
+### Type-set — bound по членству, не по структуре
+
+**Type-set** — четвёртая kind-форма `type` (наряду с newtype/alias/
+record-tuple/`enum`, D310): именованное множество **конкретных** типов,
+перечисленных явно. В отличие от protocol (любой тип с подходящими
+методами удовлетворяет структурно), type-set — closed list, только
+явно перечисленные члены проходят:
+
+```nova
+// inline — | разделяет члены, перед первым не нужен
+type Num set int | f64
+
+// многострочный — | обязателен у каждого члена, включая первый
+type AnyNumber set
+    | i8 | i16 | i32 | i64 | int
+    | u8 | u16 | u32 | u64 | uint
+
+fn[T Num] sum_two(a T, b T) -> T => a + b
+```
+
+Диспетч по первому токену после `type Name` (как `enum`/`alias`) — `set`
+контекстный, не глобальный keyword. Bound из type-set ведёт себя как
+protocol-bound: `[T Num]`. Композиция с протоколами — через `+`: `[T
+SignedInt + Hash]` (T ∈ set И реализует Hash). **Не больше одного
+type-set** в списке bound'ов (`E_MULTIPLE_TYPE_SETS`) — протоколов
+можно сколько угодно.
+
+**Члены — только конкретные типы**, перечисленные по идентичности:
+newtype `type MyI8 i8` не входит в `{i8}` автоматически — нужен явный
+листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect/другого
+type-set как члена). **Один set не смешивает signed/unsigned целые**
+(`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInt`/`UnsignedInt` в
+prelude (`std/prelude/protocols.nv`) разделены по этой оси.
+
+Подробно — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 
 ## Конверсии: `as` и `T.from(v)`
 
