@@ -38,7 +38,7 @@ export type Period value {
 ///
 /// # Examples
 /// ```nova
-/// ro p = Period.new(1, 2, 3)      // 1y 2mo 3d
+/// ro p = Period.new(years: 1, months: 2, days: 3)
 /// ro m = Period.new(months: 18)   // 18mo (не нормализуется автоматически)
 /// ```
 #stable(since = "0.1")
@@ -247,11 +247,11 @@ export fn Date @saturating_plus(p Period) -> Date =>
 #stable(since = "0.1")
 export fn Date @saturating_minus(p Period) -> Date => @saturating_plus(p.neg())
 
-/// `Date - Date → Period` (calendar-diff, biggest-unit-first: полные годы,
-/// затем полные месяцы, затем дни). Знак: `later - earlier` положителен.
-/// Для exact-дней используй [`@days_until`].
-#stable(since = "0.1")
-export fn Date @minus(other Date) -> Period => Period.between(other, @)
+// NB: operator-форма `Date @minus(other Date) -> Period` НЕ введена:
+// перегрузка `@minus` по типу аргумента (Period vs Date) на одном ресивере
+// резолвится неверно (arg-тип не участвует в выборе → результат мис-
+// типизируется). Обход §4а [M-175.1-minus-overload-arg-type]: канонические
+// формы — `Period.between(start, end)` (calendar-diff) и `@days_until` (exact).
 
 /// Календарная разность `end - start` (biggest-unit-first).
 ///
