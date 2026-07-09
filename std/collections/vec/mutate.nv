@@ -141,7 +141,7 @@ export fn Vec[T] mut @clear() -> @ {
 }
 
 /// If `n < len`, shorten to exactly `n` elements. Larger `n` is a no-op.
-export fn Vec[T] mut @truncate(n int) -> @ {
+export fn Vec[T] mut @truncate(n int) -> @ { // [M-lint-findings-param-no-contract]
     if n >= 0 && n < @len {
         @len = n
     }

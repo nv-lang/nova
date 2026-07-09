@@ -272,7 +272,7 @@ fn hex_digit(n u8) -> char {
 /// Parse standard 36-char UUID format. Case-insensitive.
 /// Throws `ParseUuidError` (InvalidLength/InvalidHex/MissingDash).
 #stable(since = "0.1")
-export fn Uuid.from(s str) Fail[ParseUuidError] -> Self {
+export fn Uuid.from(s str) Fail[ParseUuidError] -> Self { // [M-lint-findings-static-conversion]
     if s.byte_len() != 36 {
         throw InvalidLength { actual: s.byte_len(), expected: 36 }
     }

@@ -743,7 +743,7 @@ fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) -> Result[(), Pa
 /// assert(v.is_array())
 /// ```
 #stable(since = "0.1")
-export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] {
+export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] { // [M-lint-findings-static-conversion]
     mut p = Parser.new(s)?
     ro v = p.parse_value()?
 
@@ -757,7 +757,7 @@ export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] {
 /// `try_from` — алиас [`Json.parse`] по конвенции имён конструктора-конверсии
 /// (D325 — fallible → Result). Поведение идентично `Json.parse`.
 #stable(since = "0.1")
-export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] =>
+export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [M-lint-findings-static-conversion]
     Json.parse(s)
 
 

@@ -63,7 +63,7 @@ export type SetCookie value {
 /// Разобрать заголовок `Set-Cookie`. Валидирует `__Host-`/`__Secure-`-префиксы и
 /// `SameSite=None ⇒ Secure` (send-инварианты enforce'ятся by construction).
 #stable(since = "0.1")
-export fn SetCookie.parse(s str) -> Result[SetCookie, HttpError] {
+export fn SetCookie.parse(s str) -> Result[SetCookie, HttpError] { // [M-lint-findings-static-conversion]
     ro parts = s.split(";")
     ro head = match parts.get(0) { Some(h) => h.trim_ascii(), None => "" }
     ro (name, value) = match head.split_once("=") {
@@ -97,7 +97,7 @@ export fn SetCookie.parse(s str) -> Result[SetCookie, HttpError] {
                     if key == "domain" { domain = Some(av) }
                     else if key == "path" { path = Some(av) }
                     else if key == "max-age" {
-                        match av.to_int() { Ok(n) => { max_age = Some(n); () }, Err(_) => () }
+                        match av.to_int() { Ok(n) => { max_age = Some(n); () }, Err(_) => () } // [M-lint-findings-result-discarded-lenient-parse]
                     }
                     else if key == "samesite" {
                         ro sv = av.to_ascii_lower()

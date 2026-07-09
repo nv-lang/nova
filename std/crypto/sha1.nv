@@ -46,7 +46,7 @@ export fn Sha1.hash(data []u8) -> [20]u8 {
 export fn Sha1.hash_str(data []u8) -> str {
     ro digest = Sha1.hash(data)
     mut bytes []u8 = []
-    for i in 0..20 { bytes.push(digest[i]) }
+    for i in 0..20 { bytes.push(digest[i]) } // [M-lint-findings-manual-slice-copy]
     Hex.encode(bytes)
 }
 

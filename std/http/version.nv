@@ -16,7 +16,7 @@ export type Version enum Http10 | Http11 | Http2
 
 /// Версия на проводе (request-/status-line).
 #stable(since = "0.1")
-export fn Version @as_str() -> str {
+export fn Version @as_str() -> str { // [M-d410-as-to-migration]
     match @ {
         Http10 => "HTTP/1.0"
         Http11 => "HTTP/1.1"

@@ -77,15 +77,17 @@ export type SeekFrom enum
 
 /// Seek to an absolute offset from the start (`n >= 0`).
 #stable(since = "0.1")
-export fn SeekFrom.start(n int) -> SeekFrom => Start(n)
+export fn SeekFrom.start(n int) -> SeekFrom
+    requires n >= 0
+    => Start(n)
 
 /// Seek relative to the end (`n` is usually `<= 0`).
 #stable(since = "0.1")
-export fn SeekFrom.end(n int) -> SeekFrom => End(n)
+export fn SeekFrom.end(n int) -> SeekFrom => End(n) // [M-lint-findings-param-no-contract]
 
 /// Seek relative to the current position (`n` may be negative).
 #stable(since = "0.1")
-export fn SeekFrom.current(n int) -> SeekFrom => Current(n)
+export fn SeekFrom.current(n int) -> SeekFrom => Current(n) // [M-lint-findings-param-no-contract]
 
 // ─── Read loop helpers ───
 
@@ -132,7 +134,7 @@ export fn read_to_end[R Read](r mut R) -> Result[[]u8, IoError] {
             Ok(n)  => {
                 mut i = 0
                 while i < n {
-                    out.push(chunk[i])
+                    out.push(chunk[i]) // [M-lint-findings-manual-slice-copy]
                     i += 1
                 }
             }
@@ -173,7 +175,7 @@ export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
         mut rest []u8 = []u8.new()
         mut i = done
         while i < total {
-            rest.push(data[i])
+            rest.push(data[i]) // [M-lint-findings-manual-slice-copy]
             i += 1
         }
         match w.write(rest) {
@@ -260,7 +262,7 @@ export fn byte_lines[R Read](r mut R) -> Result[[][]u8, IoError] {
                     out.push(cur)
                     cur = []u8.new()
                 } else {
-                    cur.push(data[i])
+                    cur.push(data[i]) // [M-lint-findings-manual-slice-copy]
                 }
                 i += 1
             }

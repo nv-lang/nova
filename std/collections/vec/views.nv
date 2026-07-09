@@ -155,7 +155,7 @@ export fn Vec[T] @split_last() -> Option[(T, Self)] {
 /// assert(v.first_n(99).len() == 5)   // clamped to len
 /// assert(v.first_n(0).len() == 0)
 /// ```
-export fn Vec[T] @first_n(n int) -> Self {
+export fn Vec[T] @first_n(n int) -> Self { // [M-lint-findings-param-no-contract]
     mut k = n
     if k < 0 {
         k = 0
@@ -176,7 +176,7 @@ export fn Vec[T] @first_n(n int) -> Self {
 /// assert(v.last_n(99).len() == 5)    // clamped to len
 /// assert(v.last_n(0).len() == 0)
 /// ```
-export fn Vec[T] @last_n(n int) -> Self {
+export fn Vec[T] @last_n(n int) -> Self { // [M-lint-findings-param-no-contract]
     mut k = n
     if k < 0 {
         k = 0

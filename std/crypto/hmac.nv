@@ -67,7 +67,7 @@ export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {
     outer.update(outer_pad)
     mut inner_bytes []u8 = []
     for j in 0..SHA256_OUTPUT_SIZE {
-        inner_bytes.push(inner_digest[j])
+        inner_bytes.push(inner_digest[j]) // [M-lint-findings-manual-slice-copy]
     }
     outer.update(inner_bytes)
     outer.finalize()
@@ -78,7 +78,7 @@ export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {
 export fn HmacSha256.compute_str(key []u8, message []u8) -> str {
     ro mac = HmacSha256.compute(key, message)
     mut bytes []u8 = []
-    for i in 0..SHA256_OUTPUT_SIZE { bytes.push(mac[i]) }
+    for i in 0..SHA256_OUTPUT_SIZE { bytes.push(mac[i]) } // [M-lint-findings-manual-slice-copy]
     Hex.encode(bytes)
 }
 
@@ -113,7 +113,7 @@ fn normalize_key_sha256(key []u8) -> []u8 {
 
     if key.len() > SHA256_BLOCK_SIZE {
         ro hashed = Sha256.hash(key)
-        for i in 0..SHA256_OUTPUT_SIZE { block.push(hashed[i]) }
+        for i in 0..SHA256_OUTPUT_SIZE { block.push(hashed[i]) } // [M-lint-findings-manual-slice-copy]
     } else {
         for b in key { block.push(b) }
     }

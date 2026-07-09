@@ -69,7 +69,7 @@ export fn PropertyFailed.new(msg str) -> PropertyFailed =>
 /// Property-test assertion. Throws PropertyFailed на false — runner ловит +
 /// шринкает (vs. обычный `assert(...)` который panics без shrinking).
 #stable(since = "0.1")
-export fn assert_prop(cond bool) Fail[PropertyFailed] -> () {
+export fn assert_prop(cond bool) Fail[PropertyFailed] -> () { // [M-lint-findings-fail-public-signature]
     if !cond {
         throw PropertyFailed.new("property predicate failed")
     }
@@ -77,7 +77,7 @@ export fn assert_prop(cond bool) Fail[PropertyFailed] -> () {
 
 /// Like `assert_prop` но с custom message.
 #stable(since = "0.1")
-export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () {
+export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () { // [M-lint-findings-fail-public-signature]
     if !cond {
         throw PropertyFailed.new(msg)
     }

@@ -611,7 +611,7 @@ fn Inflater mut @step_dynamic_header() -> Result[bool, CompressError] {
     // Разбиваем на lit/len и distance, строим таблицы
     mut litlen []int = []int.new()
     litlen.cap(hlit)
-    for k in 0..hlit { litlen.push(lengths[k]) }
+    for k in 0..hlit { litlen.push(lengths[k]) } // [M-lint-findings-manual-slice-copy]
     mut distl []int = []int.new()
     distl.cap(hdist)
     for k in 0..hdist { distl.push(lengths[hlit + k]) }

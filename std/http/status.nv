@@ -28,7 +28,7 @@ export fn StatusCode.new(code u16) -> Result[StatusCode, HttpError] {
 
 /// Числовое значение.
 #stable(since = "0.1")
-export fn StatusCode @as_u16() -> u16 => @code
+export fn StatusCode @as_u16() -> u16 => @code // [M-d410-as-to-migration]
 
 /// Класс статуса.
 #stable(since = "0.1")

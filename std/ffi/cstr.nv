@@ -95,7 +95,7 @@ export type CStr(*u8)
 // [M-118.1-cstr-nul-check] CLOSED.
 // @as_cstr_unchecked() — unsafe escape hatch, scan-free (O(1)).
 
-export fn str @as_cstr() -> CStr {
+export fn str @as_cstr() -> CStr { // [M-d410-as-to-migration]
     ro bytes = @bytes()
     for b in bytes {
         if b == 0 {
@@ -109,7 +109,7 @@ export fn str @as_cstr() -> CStr {
     unsafe { CStr(nova_str_terminated_ptr(@)) }
 }
 
-export unsafe fn str @as_cstr_unchecked() -> CStr {
+export unsafe fn str @as_cstr_unchecked() -> CStr { // [M-d410-as-to-migration]
     // Scan-free O(1)-amortized hatch — caller asserts no embedded NUL. Does NOT
     // re-scan, but STILL guarantees NUL-termination at @len() via the same
     // D26 §3 terminator resolution (a non-terminated slice would otherwise make

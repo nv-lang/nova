@@ -19,7 +19,7 @@ export type HeaderName value { priv lower str }
 
 /// Разобрать имя. Пустое / не-tchar / non-ASCII → `InvalidHeader`.
 #stable(since = "0.1")
-export fn HeaderName.parse(s str) -> Result[HeaderName, HttpError] {
+export fn HeaderName.parse(s str) -> Result[HeaderName, HttpError] { // [M-lint-findings-static-conversion]
     if s.byte_len() == 0 {
         return Err(HttpError.invalid_header("empty header name"))
     }
@@ -33,7 +33,7 @@ export fn HeaderName.parse(s str) -> Result[HeaderName, HttpError] {
 
 /// Канон. lowercase-имя.
 #stable(since = "0.1")
-export fn HeaderName @as_str() -> str => @lower
+export fn HeaderName @as_str() -> str => @lower // [M-d410-as-to-migration]
 
 /// Значение заголовка — байты (visible ASCII + obs-text); CR/LF/NUL запрещены.
 #stable(since = "0.1")
@@ -41,7 +41,7 @@ export type HeaderValue value { priv bytes []u8 }
 
 /// Из сырых байт. CR/LF/NUL → `InvalidHeader` (anti-injection).
 #stable(since = "0.1")
-export fn HeaderValue.from(b []u8) -> Result[HeaderValue, HttpError] {
+export fn HeaderValue.from(b []u8) -> Result[HeaderValue, HttpError] { // [M-lint-findings-static-conversion]
     for byte in b {
         if is_forbidden_octet(byte) {
             return Err(HttpError.invalid_header("CR/LF/NUL in header value"))
@@ -53,7 +53,7 @@ export fn HeaderValue.from(b []u8) -> Result[HeaderValue, HttpError] {
 /// Из строки (latin1 fast-path: codepoint 0..255 → один байт). CR/LF/NUL или
 /// codepoint > 0xFF → `InvalidHeader`.
 #stable(since = "0.1")
-export fn HeaderValue.from(s str) -> Result[HeaderValue, HttpError] {
+export fn HeaderValue.from(s str) -> Result[HeaderValue, HttpError] { // [M-lint-findings-static-conversion]
     mut buf = WriteBuffer.new()
     buf.cap(s.byte_len())
     for c in s.chars() {
@@ -66,7 +66,7 @@ export fn HeaderValue.from(s str) -> Result[HeaderValue, HttpError] {
         }
         buf.write_byte(cp as u8)
     }
-    Ok({ bytes: buf.into() })
+    Ok({ bytes: buf.into() }) // [M-lint-findings-writebuffer-into]
 }
 
 /// Сырые байты значения.

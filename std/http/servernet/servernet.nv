@@ -96,11 +96,7 @@ fn head_slice(b []u8, end int) -> []u8 {
     // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
     mut out []u8 = []u8.new()
     out.cap(end)
-    mut i = 0
-    while i < end {
-        out.push(b[i])
-        i += 1
-    }
+    out.append(b[0..end])
     out
 }
 

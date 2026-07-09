@@ -173,6 +173,36 @@ enum Cmd {
         /// --telemetry-baseline.
         #[arg(long = "telemetry-gate-caches-drop", value_name = "F")]
         telemetry_gate_caches_drop: Option<f64>,
+        /// Plan 185: прогнать конвенционные W_*-правила (`nova lint`-реестр)
+        /// внутри check — те же правила поверх ТОГО ЖЕ реестра.
+        #[arg(long = "lint")]
+        lint: bool,
+    },
+    /// Plan 185: машинные проверки конвенций (W_*-правила реестра).
+    ///
+    /// Прогоняет реестр конвенционных правил (lints.rs::CONV_RULES) по
+    /// .nv-файлам БЕЗ type-check/codegen. Вывод — формат check
+    /// (`файл:строка:кол: warning: текст [W_ID]`). Exit-код: 0 — чисто,
+    /// 1 — есть находки.
+    Lint {
+        /// Paths (files or directories). If empty, uses workspace root.
+        #[arg(num_args = 0..)]
+        paths: Vec<PathBuf>,
+        /// Прогнать только выбранные правила: `--rule W_X,W_Y`.
+        #[arg(long = "rule", value_name = "W_ID[,W_ID...]")]
+        rule: Option<String>,
+        /// Показать реестр правил (id + описание) и выйти.
+        #[arg(long = "list-rules")]
+        list_rules: bool,
+        /// Include std/runtime/ (auto-gen, normally skipped).
+        #[arg(long = "include-runtime")]
+        include_runtime: bool,
+        /// Skip files whose path matches this substring (repeatable).
+        #[arg(long = "skip", value_name = "PATTERN")]
+        skip: Vec<String>,
+        /// Показать только находки и summary (без per-file ok).
+        #[arg(long, short = 'q')]
+        quiet: bool,
     },
     /// [UNSUPPORTED] Run a Nova file via the interpreter — the
     /// tree-walking interpreter is currently NOT supported; use
@@ -1849,6 +1879,7 @@ fn cmd_check(
     telemetry_baseline: Option<&Path>,
     telemetry_gate_affected_drop: Option<f64>,
     telemetry_gate_caches_drop: Option<f64>,
+    lint: bool,
 ) -> Result<()> {
     // Plan 123.5 (D217 §6 amend V5): --explain-cache mode — per-file
     // analyze module без mutation, emit report to stdout. Skips
@@ -1965,7 +1996,7 @@ fn cmd_check(
             builder
                 .spawn_scoped(s, move || {
                     for f in &files[start..end] {
-                        let res = check_one_file(f, verbose);
+                        let res = check_one_file(f, verbose, lint);
                         let _ = tx.send(res);
                     }
                 })
@@ -2097,7 +2128,7 @@ struct CheckResult {
 /// До Plan 36 Ф.0 `cmd_check` дёргал только 1-3 — molча пропускал
 /// effect-inference и lints, которые `cmd_build` ловит. Это был
 /// silent correctness gap.
-fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
+fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     let t0 = if verbose { Some(std::time::Instant::now()) } else { None };
     let measure = |t0: Option<std::time::Instant>| -> u64 {
         t0.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0)
@@ -2231,7 +2262,7 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
     nova_codegen::types::infer_effects(&mut module);
 
     // 5. lints::lint_module — anonymous-embed override, etc.
-    let lint_warnings: Vec<String> = nova_codegen::lints::lint_module(&module)
+    let mut lint_warnings: Vec<String> = nova_codegen::lints::lint_module(&module)
         .into_iter()
         .map(|w| {
             let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
@@ -2242,11 +2273,231 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
         })
         .collect();
 
+    // 6. Plan 185: `--lint` — конвенционные W_*-правила поверх ТОГО ЖЕ
+    // реестра, что и `nova lint`. Прогоняем по СВЕЖЕМУ per-file parse
+    // (без import-inline): findings только из самого файла, span'ы —
+    // file-local (иначе реестр линтовал бы вмерженный prelude/std в
+    // каждый проверяемый файл).
+    if conv_lint {
+        if let Ok((fresh, _)) = nova_codegen::parser::parse_collecting_warnings(&src) {
+            let opts = conv_lint_options_for(path);
+            for w in nova_codegen::lints::run_conv_rules(Some(&fresh), &src, &opts, None) {
+                let (line, col) =
+                    nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+                lint_warnings.push(format!(
+                    "{}:{}:{}: {} [{}]",
+                    path.display(), line, col, w.diag.message, w.rule
+                ));
+            }
+        }
+    }
+
     CheckResult {
         file: path.to_path_buf(),
         error: None,
         warnings: lint_warnings,
         elapsed_ms: measure(t0),
+    }
+}
+
+/// Plan 185: полный рекурсивный обход .nv (для lint — включая peer-файлы
+/// folder-модулей, которые test-discovery walker пропускает).
+fn lint_walk_all_nv(root: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = std::fs::read_dir(root)
+        .map_err(|e| anyhow!("read_dir {}: {}", root.display(), e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| anyhow!("read_dir entry: {}", e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            lint_walk_all_nv(&path, out)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("nv") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Plan 185: контекст файла для реестра конвенционных правил.
+fn conv_lint_options_for(path: &Path) -> nova_codegen::lints::ConvLintOptions {
+    let s = path.to_string_lossy().replace('\\', "/");
+    let in_std = (s.contains("/std/") || s.starts_with("std/"))
+        && !s.ends_with("_test.nv");
+    // Definition-site `Vec[T]` — папка std/collections/vec/ ПЛЮС её
+    // вынесенные поверхности vec_iter.nv / vec_lazy.nv (реализация самого
+    // Vec[T]-итератор-слоя; receiver-позиция требует номинального спеллинга).
+    let in_vec_module = s.contains("/collections/vec/")
+        || s.contains("/collections/vec_")
+        || s.starts_with("std/collections/vec");
+    let in_test = s.ends_with("_test.nv") || s.contains("/nova_tests/")
+        || s.contains("/spec_tests/");
+    nova_codegen::lints::ConvLintOptions { in_std, in_vec_module, in_test }
+}
+
+/// Plan 185: `nova lint [paths]` — прогон реестра конвенционных правил
+/// по .nv-файлам без type-check/codegen. Exit 0 — чисто, 1 — находки.
+fn cmd_lint(
+    paths: &[PathBuf],
+    rule: Option<&str>,
+    list_rules: bool,
+    include_runtime: bool,
+    skip: &[String],
+    quiet: bool,
+) -> Result<()> {
+    use std::collections::HashSet;
+
+    if list_rules {
+        println!("Реестр конвенционных правил (план 185):");
+        for r in nova_codegen::lints::CONV_RULES {
+            println!("  {:28} {}", r.id, r.summary);
+        }
+        return Ok(());
+    }
+
+    // --rule W_X,W_Y — выборочное включение (с валидацией id).
+    let enabled: Option<HashSet<String>> = match rule {
+        None => None,
+        Some(spec) => {
+            let known: HashSet<&str> =
+                nova_codegen::lints::conv_rule_ids().into_iter().collect();
+            let mut set = HashSet::new();
+            for id in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                if !known.contains(id) {
+                    return Err(usage_err(format!(
+                        "unknown lint rule `{}`; see `nova lint --list-rules`",
+                        id
+                    )));
+                }
+                set.insert(id.to_string());
+            }
+            if set.is_empty() {
+                return Err(usage_err("--rule: empty rule list"));
+            }
+            Some(set)
+        }
+    };
+
+    // Сбор файлов — как в cmd_check.
+    let owned_root;
+    let resolved_paths: Vec<PathBuf> = if paths.is_empty() {
+        owned_root = find_repo_root()?;
+        vec![owned_root.clone()]
+    } else {
+        paths.to_vec()
+    };
+    let mut files: Vec<PathBuf> = Vec::new();
+    for p in &resolved_paths {
+        if !p.exists() {
+            return Err(usage_err(format!("path not found: {}", p.display())));
+        }
+        if p.is_file() {
+            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+                return Err(usage_err(format!("not a Nova source: {}", p.display())));
+            }
+            files.push(p.clone());
+        } else if p.is_dir() {
+            // НЕ test_runner::walk_nv: тот — test-discovery walker и молча
+            // пропускает peer-файлы folder-модулей (wire.nv и т.п.), а lint
+            // должен видеть ВСЕ .nv-файлы. Полный рекурсивный обход.
+            let mut found = Vec::new();
+            lint_walk_all_nv(p, &mut found)
+                .map_err(|e| anyhow!("walk {}: {}", p.display(), e))?;
+            for f in found {
+                // `neg/`/`*_neg/`-фикстуры — намеренно неканонический код
+                // (EXPECT_COMPILE_ERROR), конвенции к ним не применяются.
+                let is_neg_fixture = f.components().any(|c| {
+                    c.as_os_str().to_str().map_or(false, |s| {
+                        s == "neg" || s.ends_with("_neg")
+                    })
+                });
+                if is_neg_fixture {
+                    continue;
+                }
+                if !should_skip_path_full(&f, include_runtime, skip) {
+                    files.push(f);
+                }
+            }
+        } else {
+            return Err(usage_err(format!(
+                "path is neither file nor directory: {}",
+                p.display()
+            )));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|p| match p.canonicalize() {
+        Ok(c) => seen.insert(c),
+        Err(_) => true,
+    });
+    files.sort();
+
+    if files.is_empty() {
+        if !quiet {
+            println!("no .nv files to lint");
+        }
+        return Ok(());
+    }
+
+    let mut findings = 0usize;
+    let mut parse_failures = 0usize;
+    for f in &files {
+        let src = match read_file(f) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}: read: {}", f.display(), e);
+                parse_failures += 1;
+                continue;
+            }
+        };
+        // Per-file parse без import-resolution: правила синтаксические,
+        // span'ы file-local. Parse-fail → текст-правила всё равно работают.
+        let module = match nova_codegen::parser::parse_collecting_warnings(&src) {
+            Ok((m, _)) => Some(m),
+            Err(d) => {
+                // Файл не парсится — это дело `nova check`, не lint.
+                // Прогоняем только текст-правила, прогон не валим.
+                if !quiet {
+                    eprintln!("{}: parse failed ({}) — text-rules only",
+                        f.display(), d.message.lines().next().unwrap_or(""));
+                }
+                parse_failures += 1;
+                None
+            }
+        };
+        let opts = conv_lint_options_for(f);
+        let warnings = nova_codegen::lints::run_conv_rules(
+            module.as_ref(),
+            &src,
+            &opts,
+            enabled.as_ref(),
+        );
+        for w in &warnings {
+            let (line, col) =
+                nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+            println!(
+                "{}:{}:{}: warning: {} [{}]",
+                f.display(), line, col, w.diag.message, w.rule
+            );
+        }
+        findings += warnings.len();
+    }
+
+    if !quiet || findings > 0 {
+        println!();
+        println!(
+            "lint: {} file(s), {} finding(s){}",
+            files.len(),
+            findings,
+            if parse_failures > 0 {
+                format!(", {} parse-failure(s) (text-rules only)", parse_failures)
+            } else {
+                String::new()
+            }
+        );
+    }
+    if findings > 0 {
+        Err(anyhow!("{} lint finding(s)", findings))
+    } else {
+        Ok(())
     }
 }
 
@@ -5665,7 +5916,7 @@ fn run() -> ExitCode {
     apply_field_cache_cli_flags(&cli);
 
     let result = match cli.cmd {
-        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json, telemetry_baseline, telemetry_gate_affected_drop, telemetry_gate_caches_drop } => cmd_check(
+        Cmd::Check { paths, jobs, quiet, verbose, list, format, include_runtime, skip, explain_cache, telemetry_cache, telemetry_json, telemetry_baseline, telemetry_gate_affected_drop, telemetry_gate_caches_drop, lint } => cmd_check(
             &paths,
             jobs,
             quiet,
@@ -5680,7 +5931,11 @@ fn run() -> ExitCode {
             telemetry_baseline.as_deref(),
             telemetry_gate_affected_drop,
             telemetry_gate_caches_drop,
+            lint,
         ),
+        Cmd::Lint { paths, rule, list_rules, include_runtime, skip, quiet } => {
+            cmd_lint(&paths, rule.as_deref(), list_rules, include_runtime, &skip, quiet)
+        }
         Cmd::Run { file } => cmd_run(&file),
         Cmd::Add { name, path, git, tag, branch, rev, version } => cmd_add(
             &name,

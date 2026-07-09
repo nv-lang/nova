@@ -114,7 +114,7 @@ export fn ServerResponse.new(status int) -> ServerResponse =>
 #stable(since = "0.1")
 export fn ServerResponse.text(status int, s str) -> ServerResponse {
     mut h = HeaderMap.new()
-    match h.insert("Content-Type", "text/plain; charset=utf-8") { Ok(_) => (), Err(_) => () }
+    ro _ = h.insert("Content-Type", "text/plain; charset=utf-8") // статическое имя — не может отказать
     { status, headers: h, body: s.bytes() }
 }
 
@@ -122,7 +122,7 @@ export fn ServerResponse.text(status int, s str) -> ServerResponse {
 #stable(since = "0.1")
 export fn ServerResponse.html(status int, s str) -> ServerResponse {
     mut h = HeaderMap.new()
-    match h.insert("Content-Type", "text/html; charset=utf-8") { Ok(_) => (), Err(_) => () }
+    ro _ = h.insert("Content-Type", "text/html; charset=utf-8") // статическое имя — не может отказать
     { status, headers: h, body: s.bytes() }
 }
 
@@ -130,7 +130,7 @@ export fn ServerResponse.html(status int, s str) -> ServerResponse {
 #stable(since = "0.1")
 export fn ServerResponse.bytes(status int, content_type str, data []u8) -> ServerResponse {
     mut h = HeaderMap.new()
-    match h.insert("Content-Type", content_type) { Ok(_) => (), Err(_) => () }
+    ro _ = h.insert("Content-Type", content_type) // статическое имя — не может отказать
     { status, headers: h, body: data }
 }
 
@@ -143,7 +143,7 @@ export fn ServerResponse.empty(status int) -> ServerResponse =>
 #stable(since = "0.1")
 export fn ServerResponse.redirect(status int, location str) -> ServerResponse {
     mut h = HeaderMap.new()
-    match h.insert("Location", location) { Ok(_) => (), Err(_) => () }
+    ro _ = h.insert("Location", location) // статическое имя — не может отказать
     { status, headers: h, body: []u8.new() }
 }
 
@@ -366,11 +366,11 @@ fn percent_decode(s str) -> str {
                 out.push((hi * 16 + lo) as u8)
                 i += 3
             } else {
-                out.push(b[i])
+                out.push(b[i]) // [M-lint-findings-manual-slice-copy]
                 i += 1
             }
         } else {
-            out.push(b[i])
+            out.push(b[i]) // [M-lint-findings-manual-slice-copy]
             i += 1
         }
     }

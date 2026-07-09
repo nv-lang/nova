@@ -75,12 +75,9 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
         }
     }
 
-    // Reverse
-    mut ops []DiffOp = []
-    for k in (0..ops_rev.len()).reverse() {
-        ops.push(ops_rev[k])
-    }
-    ops
+    // Reverse in place (§18а: не поэлементная копия).
+    ops_rev.reverse()
+    ops_rev
 }
 
 

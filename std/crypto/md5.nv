@@ -115,7 +115,7 @@ export fn Md5.hash(data []u8) -> [16]u8 {
 export fn Md5.hash_str(data []u8) -> str {
     ro digest = Md5.hash(data)
     mut bytes []u8 = []
-    for i in 0..16 { bytes.push(digest[i]) }
+    for i in 0..16 { bytes.push(digest[i]) } // [M-lint-findings-manual-slice-copy]
     Hex.encode(bytes)
 }
 
