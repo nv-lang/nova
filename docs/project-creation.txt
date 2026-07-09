@@ -38967,3 +38967,30 @@ defer/err-корпус (err173, plan100_4_1/2/4/5, plan110, plan110_9_np) 0 FAIL
 (гейт под-пункта; runtime 497/500 — 2 фейла = ENV-модель merged-CU (standalone PASS), 1 =
 Duration-дрейф nested_supervised_3_levels_cancel — параллельный агент). Ф.4 Stop — гейт 173.2;
 parallel(timeout:) — после 175; race/consume-синтаксис — 48 Ф.4 / 173.3.
+
+Часть 68 (2026-07-09/10, [haiku]). Сводка волны слияний в main за 2026-07-09/10 (по git log)
++ хвосты-cleanup. Влиты четыре ветки: (1) hexblob-186 (780bad378) — план 186 пп.1-4: hex-блоб
+литерал x"48 69" → []u8 компайл-тайм (лексер с разделителями _/пробел/перенос, E_HEX_BLOB_ODD/
+CHAR), интринсик embed("path") с fingerprint пересборки (E_EMBED_NOT_FOUND, выход выше корня —
+ошибка), эмиссия static const + интернирование по содержимому, ro-вид нулевой копии / mut-копия
+в GC-кучу, conformance-тесты D412 pos+neg + дедуп двойных embed-диагностик (78bf3d252);
+п.5 свип-миграция простыней закрыт пусто 2026-07-10 [haiku] — применимых сайтов в std/ нет
+(все «простыни» = fixed-size [N]u8/[N]u32/[N]int стек-массивы, x-блоб даёт []u8; карта в плане).
+(2) lint-185 (98bede37a) — nova lint ПОЛНАЯ ВЕРСИЯ, детально в записи 2026-07-09 выше.
+(3) ptr-methods-174-5 (1c1f0e177) — план 174.5: 9+2 unsafe-методов указателей (read/write/
+read_unaligned/write_unaligned/offset/add/sub/distance_to/lt + from_bits/to_bits чистым .nv),
+операторные формы ретрактированы E_POINTER_OP_USE_METHOD (7c797b7b8), миграция std 116 сайтов
+(c6be66893), conformance pos+8 neg (c6c4a7af0), спека-амендмент D216 «всё через методы»
+таблицей (59f7edc2a) — закрыт spec-остаток T5. (4) parallel-collect-173-1 (026a268df) — план
+173.1 ЯДРО: supervised{…v} value-expression + parallel for → []T канальным сбором, D414 §4 +
+D71-amend (f886faaef), три довисевших runtime/codegen-бага починены той же волной — детально
+в части 67. Точечные P1/P2: [M-lazy-const-init-race] — eager nova_consts_init() вместо
+per-const lazy-getter (50cfdcb92); [M-const-init-concurrency-gate] маркер — конкуренция в
+ro-инициализаторах не запрещена контрактно, гейт волной 173.3 (dc568ab7d). Субстрат 173.0
+Ф.2+Ф.3 (per-slot child_error[], serialized decision-loop, R2-tripwire) — влит ранее, детально
+в части 66. Хвосты-cleanup [haiku, ветка tails-cleanup]: промоушен data/semver_range →
+std/data/ (1ea2f919c: import std.data.semver, Version-сравнения через @equal/операторы вместо
+ретрактированных eq/gt/ge/lt/le, parse_version честным match по Result — снят CC-FAIL
+незахваченного `s` в cross-effect with-хендлере, peer-тесты semver_range_test.nv; check PASS,
+test --full зелёный, каталог data/ в _experimental опустел) + закрытие свипа 186 п.5
+(715868068). Гейт волны: conformance --positive --compile-error 82/0.
