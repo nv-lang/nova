@@ -9,10 +9,12 @@
 // Asserted norms (spec/decisions/02-types.md, D231 §API / §Safety rules):
 //   1. `RawMem.alloc(n)` returns ZEROED memory — Safety rule 1, CONTRACT
 //      "all bytes = 0x00". Every byte of a fresh buffer reads back 0.
-//   2. The returned `*mut u8` is a usable typed buffer: a `buf[i] = v` store
-//      followed by a `buf[i]` load round-trips the written value (D216 §6/§8
-//      pointer index ≡ `*(buf + i)`, scaled by sizeof).
-//   3. `*p` deref form is equivalent to `p[0]` for load/store.
+//   2. The returned `*mut u8` is a usable typed buffer: a `.write_at(i, v)`
+//      store followed by a `.read_at(i)` load round-trips the written value
+//      (Plan 174.5 §3 — replaces the retired `buf[i] = v` / `buf[i]` index
+//      operators; `.read_at`/`.write_at` = `p.offset(i).read()`/`.write(v)`
+//      single-call sugar, scaled by sizeof).
+//   3. `.read()`/`.write(v)` form is equivalent to `.read_at(0)`/`.write_at(0, v)`.
 //   4. `RawMem.alloc_uncollectable(n)` likewise returns zeroed, usable memory;
 //      a write/read round-trips, and `RawMem.free_uncollectable(p)` releases it
 //      (Safety rule 3 — non-GC long-lived buffer + its mandatory free path).
@@ -28,47 +30,49 @@ test "RawMem.alloc returns zeroed memory (D231 §Safety rule 1 — CONTRACT)" {
     // Fresh GC-tracked buffer: every byte must read back as 0x00.
     mut buf = unsafe { RawMem.alloc(8) }
     unsafe {
-        assert(buf[0] == 0)
-        assert(buf[1] == 0)
-        assert(buf[2] == 0)
-        assert(buf[3] == 0)
-        assert(buf[4] == 0)
-        assert(buf[5] == 0)
-        assert(buf[6] == 0)
-        assert(buf[7] == 0)
+        assert(buf.read_at(0) == 0)
+        assert(buf.read_at(1) == 0)
+        assert(buf.read_at(2) == 0)
+        assert(buf.read_at(3) == 0)
+        assert(buf.read_at(4) == 0)
+        assert(buf.read_at(5) == 0)
+        assert(buf.read_at(6) == 0)
+        assert(buf.read_at(7) == 0)
     }
 }
 
 test "RawMem.alloc buffer is usable — store/load round-trips (D231 §API)" {
-    // The `*mut u8` from alloc is a writable typed buffer; `buf[i]` index is
-    // the D216 §6 deref form `*(buf + i)`.
+    // The `*mut u8` from alloc is a writable typed buffer; `.read_at`/
+    // `.write_at` are the Plan 174.5 §3 index-sugar (= `.offset(i).read()`/
+    // `.write(v)`, D141 bare-access contract, no memcpy).
     mut buf = unsafe { RawMem.alloc(4) }
     unsafe {
-        buf[0] = 10
-        buf[1] = 20
-        buf[2] = 30
-        buf[3] = 40
-        assert(buf[0] == 10)
-        assert(buf[1] == 20)
-        assert(buf[2] == 30)
-        assert(buf[3] == 40)
+        buf.write_at(0, 10 as u8)
+        buf.write_at(1, 20 as u8)
+        buf.write_at(2, 30 as u8)
+        buf.write_at(3, 40 as u8)
+        assert(buf.read_at(0) == 10)
+        assert(buf.read_at(1) == 20)
+        assert(buf.read_at(2) == 30)
+        assert(buf.read_at(3) == 40)
     }
     // Downgrade `*mut u8` to a readonly `*u8` view (D216 §1) — same bytes.
     unsafe {
         ro view = buf as *u8
-        assert(view[0] == 10)
-        assert(view[3] == 40)
+        assert(view.read_at(0) == 10)
+        assert(view.read_at(3) == 40)
     }
 }
 
-test "RawMem.alloc — `*p` deref form equals index form (D231 §API)" {
-    // `*p` (deref) and `p[0]` (index-0) are the same load/store slot.
+test "RawMem.alloc — `.read()`/`.write(v)` form equals index form (D231 §API)" {
+    // `.read()`/`.write(v)` (bare) and `.read_at(0)`/`.write_at(0, v)` (index-0)
+    // are the same load/store slot.
     mut p = unsafe { RawMem.alloc(1) }
     unsafe {
-        assert(*p == 0)        // zeroed on alloc (Safety rule 1)
-        *p = 42 as u8
-        assert(*p == 42)
-        assert(p[0] == 42)     // index form agrees with deref form
+        assert(p.read() == 0)        // zeroed on alloc (Safety rule 1)
+        p.write(42 as u8)
+        assert(p.read() == 42)
+        assert(p.read_at(0) == 42)   // index form agrees with bare form
     }
 }
 
@@ -77,10 +81,10 @@ test "RawMem.alloc_uncollectable round-trips + free (D231 §Safety rule 3)" {
     // (the free is mandatory for uncollectable allocations).
     unsafe {
         mut p = RawMem.alloc_uncollectable(16)
-        ro first = *p
+        ro first = p.read()
         assert(first == 0)         // zeroed (CONTRACT)
-        *p = 7 as u8
-        assert(*p == 7)            // write/read round-trip
+        p.write(7 as u8)
+        assert(p.read() == 7)      // write/read round-trip
         RawMem.free_uncollectable(p)
     }
 }

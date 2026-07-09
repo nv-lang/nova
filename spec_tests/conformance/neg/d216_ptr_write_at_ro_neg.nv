@@ -1,0 +1,15 @@
+// Plan 174.5 §3/§4 — `.write_at()` is the SOLE write-cap checkpoint for the
+// index-write form; a bare `*T` (ro pointee, L3 default) rejects it.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_RO_ASSIGN
+
+module neg.d216_ptr_write_at_ro_neg
+
+test "rejects .write_at() through a readonly pointer" {
+    ro x int = 42
+    unsafe {
+        ro p = (&x) as *int
+        p.write_at(0, 99)
+    }
+    assert(x == 99)
+}

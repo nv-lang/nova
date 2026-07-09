@@ -33,7 +33,7 @@ test "read_unaligned/write_unaligned at odd byte offset in []u8 buffer" {
         // Odd byte offset (1) — a plain `*(uint32_t*)` deref here would be
         // misaligned UB; `.write_unaligned`/`.read_unaligned` (memcpy-backed)
         // are exactly the primitive meant for this.
-        ro p = (base + 1) as *mut u32
+        ro p = (base.offset(1)) as *mut u32
         p.write_unaligned(0xAABBCCDD as u32)
         ro v = (p as *u32).read_unaligned()
         assert(v == (0xAABBCCDD as u32))

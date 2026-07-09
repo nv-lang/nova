@@ -1,0 +1,102 @@
+// Plan 174.5 §3 (D216 amend, owner sign-off 2026-07-06) — new pointer
+// intrinsic methods on raw `*T`/`*mut T`: `.read_at(i)`, `.write_at(i, v)`,
+// `.offset(n)`, `.dist(q)`, `.write(v *T)` copy-from-pointer overload,
+// `.copy_from`/`.copy_from_nonoverlapping`/`.copy_to`/`.copy_to_nonoverlapping`.
+// `read_at` spot-check: must emit bare `*(p+i)` (D141 contract, no memcpy) —
+// verified against the generated C separately (gate, not in this file).
+module spec_tests.conformance
+
+test "read_at/write_at — single-call index sugar" {
+    mut buf []int = [10, 20, 30, 40]
+    unsafe {
+        ro p = buf.ptr()
+        assert(p.read_at(0) == 10)
+        assert(p.read_at(2) == 30)
+    }
+    unsafe {
+        mut q = buf.ptr()
+        q.write_at(1, 99)
+    }
+    assert(buf[1] == 99)
+}
+
+test "offset — type does not degrade (Model A), element units" {
+    mut buf []int = [1, 2, 3, 4, 5]
+    unsafe {
+        ro p = buf.ptr()
+        ro p2 = p.offset(2)
+        assert(p2.read() == 3)
+        assert(p2.read_at(1) == 4)
+    }
+}
+
+test "dist — signed element count, sign gives order" {
+    mut buf []int = [1, 2, 3, 4, 5]
+    unsafe {
+        ro p = buf.ptr()
+        ro q = p.offset(3)
+        assert(q.dist(p) == 3)
+        assert(p.dist(q) == -3)
+        assert(p.dist(p) == 0)
+    }
+}
+
+test "write(v T) classic value store still works" {
+    mut x int = 1
+    unsafe {
+        ro p = (&x) as *mut int
+        p.write(42)
+    }
+    assert(x == 42)
+}
+
+test "write(v *T) overload — copy from a source pointer" {
+    mut dst int = 0
+    ro src int = 77
+    unsafe {
+        ro d = (&dst) as *mut int
+        ro s = (&src) as *int
+        d.write(s)
+    }
+    assert(dst == 77)
+}
+
+test "copy_from / copy_from_nonoverlapping — typed bulk copy into receiver" {
+    mut dst []int = [0, 0, 0, 0]
+    ro src []int = [1, 2, 3, 4]
+    unsafe {
+        mut d = dst.ptr()
+        ro s = src.ptr()
+        d.copy_from(s, 4)
+    }
+    assert(dst[0] == 1 && dst[1] == 2 && dst[2] == 3 && dst[3] == 4)
+
+    mut dst2 []int = [0, 0, 0]
+    ro src2 []int = [7, 8, 9]
+    unsafe {
+        mut d2 = dst2.ptr()
+        ro s2 = src2.ptr()
+        d2.copy_from_nonoverlapping(s2, 3)
+    }
+    assert(dst2[0] == 7 && dst2[1] == 8 && dst2[2] == 9)
+}
+
+test "copy_to / copy_to_nonoverlapping — typed bulk copy FROM receiver" {
+    mut dst []int = [0, 0, 0, 0]
+    ro src []int = [5, 6, 7, 8]
+    unsafe {
+        ro s = src.ptr()
+        mut d = dst.ptr()
+        s.copy_to(d, 4)
+    }
+    assert(dst[0] == 5 && dst[1] == 6 && dst[2] == 7 && dst[3] == 8)
+
+    mut dst2 []int = [0, 0]
+    ro src2 []int = [11, 12]
+    unsafe {
+        ro s2 = src2.ptr()
+        mut d2 = dst2.ptr()
+        s2.copy_to_nonoverlapping(d2, 2)
+    }
+    assert(dst2[0] == 11 && dst2[1] == 12)
+}
