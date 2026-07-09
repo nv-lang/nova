@@ -567,7 +567,7 @@ enforced компилятором. Настоящая приватность —
 // export fn Job.new(...).
 
 fn Job @name() -> str => @name           // getter — 0 аргументов
-fn Job mut @name(v str) { @name = v }    // setter — 1 аргумент, -> @ неявный
+fn Job mut @name(v str) -> @ { @name = v }    // setter — 1 аргумент, возврат @ автоматический
 
 mut j = Job { name: "build" }
 j.name()            // getter — "build"
