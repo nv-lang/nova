@@ -2700,11 +2700,20 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 
 - **[M-lazy-const-init-race]** (2026-07-09, **P1 — UB-гонка в M:N**, вопрос владельца;
   Plan: волна сразу после 174.1, зона emit_c const-канал; Wave: [sonnet]) —
-  генерируемый lazy-init модульных констант (`nova_const_X(void)`: check-then-act по
-  неатомарному `_init`-флагу, без барьеров) не потокобезопасен: двойной gc_add_root,
-  а главное — публикация value без release/acquire (тред видит init=1 раньше value;
-  для указательных констант nova_str/Vec = крэш-класс, родня fs-TLS). ФИКС: снять
-  ленивость — кодоген собирает инициализаторы в одну `nova_consts_init()`
-  (топологический порядок по зависимостям), вызов из драйвера ДО спавна воркеров;
-  чтение констант становится голым значением (минус ветка на каждом доступе).
-  Атомики не нужны. Пример: nova_const_ADDR_IMAGE_BYTES в любом net-CU.
+  **ЗАКРЫТО (2026-07-09, worktree `nova-174`/`ptr-methods-174-5`, [sonnet]).**
+  ~~генерируемый lazy-init модульных констант (`nova_const_X(void)`: check-then-act по
+  неатомарному `_init`-флагу, без барьеров) не потокобезопасен~~ — снята ленивость:
+  `emit_lazy_const` (emit_c.rs) больше не эмитит per-const getter — storage-only
+  (`static Ty _nova_const_X_value;`, БЕЗ `_init`-флага), init-body собирается в
+  `pending_const_inits` и на finalize (`emit_module`, перед `emit_main_wrapper`)
+  объединяется в ОДНУ `static void nova_consts_init(void) {...}` (Kahn-топосорт по
+  `collect_free_idents`-зависимостям, `topo_sort_const_inits`); вызов
+  `nova_consts_init()` в `main()` сразу после `nova_gc_init()`, ДО
+  `nova_runtime_auto_arm()` (спавн воркеров). Чтение констант — голое
+  `_nova_const_X_value` (было `nova_const_X()`-call), два use-site (Ident +
+  qualified-path) переведены. Атомики не понадобились (single-threaded init до
+  конкурентности). Гейт: `nova test --positive --compile-error
+  spec_tests/conformance` 78/0 (без регресса); `nova test std` 59/3(pre-existing,
+  не регресс)/61-skip; спот-греп `.c` — `if (!_init)` веток 0, `nova_consts_init()`
+  вызывается ровно один раз в `main()`; `std/net/addr_test` (ADDR_IMAGE_BYTES)
+  PASS, спот-дифф `.c` подтверждает eager init + bare-value read.

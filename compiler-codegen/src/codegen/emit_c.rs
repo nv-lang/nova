@@ -1010,6 +1010,21 @@ pub struct CEmitter {
     /// (lazy-init геттер) вместо имени переменной. Тип сохраняется в
     /// `var_types[name]` (как для обычных const'ов).
     lazy_consts: HashSet<String>,
+    /// `[M-lazy-const-init-race]` (2026-07-09): pending lazy-const init
+    /// bodies, collected as each lazy const (`const X = <non-constexpr>` /
+    /// module-level `ro X = <runtime-expr>`) is emitted, and combined at
+    /// finalize (`emit_module`, just before `emit_main_wrapper`) into ONE
+    /// topologically-sorted `nova_consts_init()` function — replaces the old
+    /// per-const check-then-act lazy getter (non-atomic `_init` flag +
+    /// no publication barrier for the value = data race under M:N: a worker
+    /// can observe `_init=1` before the value write is visible, or two
+    /// workers can race the init itself). `nova_consts_init()` runs ONCE from
+    /// the driver's main-path, before any worker spawns (`nova_runtime_auto_arm`)
+    /// — so reads become a bare global-value access, no branch/call, and no
+    /// concurrent initializer can race. (name, init-body C statements, free
+    /// identifiers referenced by the initializer — used for the dependency
+    /// topo-sort, filtered down to other lazy-const names at finalize time).
+    pending_const_inits: Vec<(String, String, Vec<String>)>,
     /// Plan 14 Ф.4: fn-typed поля record'ов — `(record_name, field_name)
     /// → (param_c_tys, ret_c_ty)`. Заполняется при `emit_type_decl`
     /// для record-полей с TypeRef::Func. Используется в Member-call
@@ -1680,6 +1695,7 @@ impl CEmitter {
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
             lazy_consts: HashSet::new(),
+            pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
             trailing_block_counter: 0,
             lambda_counter: 0,
@@ -6101,6 +6117,15 @@ impl CEmitter {
             self.out.push('\n');
         }
 
+        // `[M-lazy-const-init-race]`: every module's lazy consts have been
+        // collected into `pending_const_inits` by now (all `emit_const_decl`/
+        // `ro`-global passes across every module are done) — combine into
+        // ONE topo-sorted `nova_consts_init()`, emitted textually right
+        // before `main()` (which `emit_main_wrapper` emits next, and whose
+        // body calls it via the `/*__CONSTS_INIT_CALL__*/` marker below).
+        let consts_init_fn = self.render_consts_init_fn();
+        self.out.push_str(&consts_init_fn);
+
         self.emit_main_wrapper(module);
 
         // Plan 36 followup: splice user-type forward decls в маркер
@@ -6979,50 +7004,64 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 14 Ф.2: эмит const'а с runtime-init через lazy-init геттер.
+    /// `[M-lazy-const-init-race]` (2026-07-09, absorbs Plan 14 Ф.2): эмит
+    /// const'а/module-level `ro NAME = EXPR` с runtime-init. Storage-only
+    /// здесь; the init BODY (gc_add_root + expr statements + final assign) is
+    /// captured into `self.pending_const_inits` and combined at finalize
+    /// (`emit_module`, right before `emit_main_wrapper`) into ONE
+    /// topologically-sorted `nova_consts_init()` — called ONCE from the
+    /// driver's main-path, before `nova_runtime_auto_arm()` spawns workers.
+    ///
+    /// Was (Plan 14 Ф.2, RETIRED — data race under M:N, see marker): a
+    /// PER-CONST check-then-act lazy getter (`if (!_init) { ...; _init = 1; }
+    /// return _value;`) called on every read. Non-atomic `_init` flag + no
+    /// publication barrier for `_value` meant a second thread could observe
+    /// `_init == 1` before the write to `_value` became visible (or two
+    /// threads could race the init body itself) — for pointer-valued consts
+    /// (`nova_str`/`Vec`/record) this is a crash-class bug, not just a
+    /// redundant-init inefficiency.
     ///
     /// ```c
-    /// static <Ty> _nova_const_<name>_value;
-    /// static int _nova_const_<name>_init = 0;
-    /// static <Ty> nova_const_<name>(void) {
-    ///     if (!_nova_const_<name>_init) {
-    ///         <emit_expr statements>
-    ///         _nova_const_<name>_value = <expr_val>;
-    ///         _nova_const_<name>_init = 1;
-    ///     }
-    ///     return _nova_const_<name>_value;
+    /// static <Ty> _nova_const_<name>_value;          // this fn emits just this
+    /// // ... combined into ONE fn at finalize:
+    /// static void nova_consts_init(void) {
+    ///     nova_gc_add_root(&_nova_const_<name>_value, ...);
+    ///     <emit_expr statements>
+    ///     _nova_const_<name>_value = <expr_val>;
+    ///     // ... every other lazy const, topo-sorted ...
     /// }
     /// ```
     ///
-    /// На use-site `Ident(name)` для lazy const'ов эмитим `nova_const_<name>()`.
+    /// На use-site `Ident(name)` для lazy const'ов эмитим ГОЛОЕ
+    /// `_nova_const_<name>_value` (не call — eager-init гарантирует, что оно
+    /// уже populated до старта любого worker'а).
     fn emit_lazy_const(&mut self, name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
-        // Регистрируем имя как lazy — use-site Ident(name) станет вызовом геттера.
+        // Регистрируем имя как lazy — use-site Ident(name) станет голым
+        // чтением `_nova_const_<name>_value`.
         self.lazy_consts.insert(name.to_string());
         // Регистрируем тип, чтобы infer_expr_c_type(Ident(name)) возвращал
         // правильный c-тип (для записи в var_types — как обычный binding).
         self.var_types.insert(name.to_string(), ty_c.to_string());
-        // Эмитим storage + init-flag (file-scope statics).
+        // Эмитим storage (file-scope static; no `_init` flag anymore — the
+        // combined `nova_consts_init()` runs it exactly once, eagerly).
         self.line(&format!("static {} _nova_const_{}_value;", ty_c, name));
-        self.line(&format!("static int _nova_const_{}_init = 0;", name));
-        // Эмитим геттер. Тело уходит в deferred_impls (после всех forward
-        // declarations), чтобы вложенные emit'ы (record-литерал → side
-        // statements) не разрушали file-scope порядок.
+        // Capture this const's init-BODY into its own buffer (same
+        // side-statement-safety rationale as the old getter-body capture —
+        // nested emits, e.g. a record-literal's helper statements, must not
+        // interleave with file-scope declaration order). Combined with every
+        // OTHER lazy const's body into ONE `nova_consts_init()` at finalize.
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
-        self.indent = 0;
-        self.line(&format!("static {} nova_const_{}(void) {{", ty_c, name));
-        self.indent = 1;
-        self.line(&format!("if (!_nova_const_{}_init) {{", name));
-        self.indent = 2;
+        self.indent = 1; // body nests one level inside `nova_consts_init() { ... }`
         // Plan 152.4: register the storage cell as a GC root BEFORE building.
         // The Boehm backend runs with GC_set_no_dls(1) (alloc_boehm.c), which
         // leaves the program's static/BSS data unscanned — so this file-scope
         // `static` pointer is NOT a GC root by default, and a large lazy value
-        // (e.g. the Unicode HashMap tables) is collected the first time GC fires
-        // under memory pressure → use-after-free. Registering the cell up front
-        // means a GC triggered mid-build sees it (still NULL — harmless), and
-        // after assignment the object lives in a scanned root. No-op under
-        // malloc/RC backends.
+        // (e.g. the Unicode HashMap tables) would be collected the first time
+        // GC fires under memory pressure → use-after-free. Registering the
+        // cell up front means a GC triggered mid-init sees it (still NULL —
+        // harmless), and after assignment the object lives in a scanned root.
+        // No-op under malloc/RC backends.
         self.line(&format!(
             "nova_gc_add_root(&_nova_const_{n}_value, (char*)(&_nova_const_{n}_value) + sizeof(_nova_const_{n}_value));",
             n = name
@@ -7035,20 +7074,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let val = self.emit_expr(value)?;
         self.expected_record_type = saved_expected;
         self.line(&format!("_nova_const_{}_value = {};", name, val));
-        self.line(&format!("_nova_const_{}_init = 1;", name));
-        self.indent = 1;
-        self.line("}");
-        self.line(&format!("return _nova_const_{}_value;", name));
-        self.indent = 0;
-        self.line("}");
-        self.line("");
-        let getter_body = std::mem::replace(&mut self.out, saved_out);
+        let body = std::mem::replace(&mut self.out, saved_out);
         self.indent = saved_indent;
-        // Forward decl рядом с storage — чтобы вызовы видели функцию.
-        self.line(&format!("static {} nova_const_{}(void);", ty_c, name));
-        // Тело уходит в deferred_impls (печатается после forward decls).
-        self.deferred_impls.push_str(&getter_body);
+        // Dependency scan (best-effort — see `collect_free_idents`'s
+        // coverage note) for the topo-sort at finalize: any free identifier
+        // that turns out to ALSO be a lazy-const name becomes a "must-init-
+        // before-me" edge. Over-approximates (collects ALL free idents, not
+        // just other consts) — filtered down against the final `lazy_consts`
+        // set once every module has been processed.
+        let mut free_idents = HashSet::new();
+        Self::collect_free_idents(value, &mut free_idents);
+        self.pending_const_inits.push((name.to_string(), body, free_idents.into_iter().collect()));
         Ok(())
+    }
+
+    /// `[M-lazy-const-init-race]`: Kahn's-algorithm topo-sort of the
+    /// collected lazy-const init bodies by inter-const dependency (a const
+    /// referencing another lazy const in its initializer must be emitted
+    /// AFTER the one it depends on). Declaration-order stable for
+    /// independent entries (queue seeded in original order). A dependency
+    /// cycle (shouldn't occur for well-formed const initializers — Nova has
+    /// no way to construct one without a self/mutually-referential `const`,
+    /// itself likely a separate checker error) falls back to appending the
+    /// unresolved remainder in declaration order rather than silently
+    /// dropping them.
+    fn topo_sort_const_inits(entries: &[(String, String, Vec<String>)]) -> Vec<usize> {
+        let n = entries.len();
+        let index_of: HashMap<&str, usize> = entries.iter().enumerate()
+            .map(|(i, (name, _, _))| (name.as_str(), i))
+            .collect();
+        let mut indeg = vec![0usize; n];
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (i, (name, _, deps)) in entries.iter().enumerate() {
+            for d in deps {
+                if d == name { continue; } // self-reference guard (no-op edge)
+                if let Some(&dep_idx) = index_of.get(d.as_str()) {
+                    adj[dep_idx].push(i);
+                    indeg[i] += 1;
+                }
+            }
+        }
+        let mut queue: std::collections::VecDeque<usize> =
+            (0..n).filter(|&i| indeg[i] == 0).collect();
+        let mut order = Vec::with_capacity(n);
+        while let Some(i) = queue.pop_front() {
+            order.push(i);
+            for &j in &adj[i] {
+                indeg[j] -= 1;
+                if indeg[j] == 0 { queue.push_back(j); }
+            }
+        }
+        if order.len() != n {
+            let seen: HashSet<usize> = order.iter().cloned().collect();
+            for i in 0..n {
+                if !seen.contains(&i) { order.push(i); }
+            }
+        }
+        order
+    }
+
+    /// `[M-lazy-const-init-race]`: assemble every collected lazy-const init
+    /// body (`self.pending_const_inits`) into ONE `static void
+    /// nova_consts_init(void) { ... }` function, topologically sorted.
+    /// Always emitted (possibly empty-bodied when there are no lazy consts —
+    /// keeps `emit_main_wrapper`'s call site unconditional, no extra state
+    /// threading). Called once from `emit_module` at finalize, just before
+    /// `emit_main_wrapper` — so the function TEXT appears before `main()`.
+    fn render_consts_init_fn(&self) -> String {
+        let order = Self::topo_sort_const_inits(&self.pending_const_inits);
+        let mut out = String::new();
+        out.push_str("static void nova_consts_init(void) {\n");
+        for i in order {
+            out.push_str(&self.pending_const_inits[i].1);
+        }
+        out.push_str("}\n\n");
+        out
     }
 
     /// Эмит integer-литерала с правильным C-типом (suffix + cast).
@@ -21314,6 +21414,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("int main(int argc, char** argv) {");
         self.indent += 1;
         self.line("nova_gc_init();");
+        // `[M-lazy-const-init-race]`: eager module-const init — MUST run
+        // after `nova_gc_init()` (the init bodies call `nova_gc_add_root`)
+        // and BEFORE `nova_runtime_auto_arm()` below (which spawns the M:N
+        // worker threads). Every lazy const is populated, single-threaded,
+        // before any worker can observe it — replaces the retired per-const
+        // check-then-act lazy getter (data race under concurrent first-touch).
+        self.line("nova_consts_init();");
         // Plan 176 Ф.3 (D324): capture argv for the std/os `Os` effect
         // (os.args). Stored into os_env.h file-scope globals read by
         // os_arg_count/os_arg_at. Harmless when os is unused.
@@ -24346,12 +24453,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 //   - Иначе fallback'имся на raw fn-pointer (для случаев
                 //     где callee принимает direct C function: built-in
                 //     dispatch, generic erasure, и т.д.).
-                // Plan 14 Ф.2: lazy const → вызов геттера. Проверяем
-                // ПЕРВЫМ, до is_local_var, потому что emit_lazy_const
-                // регистрирует name в var_types для type-inference, а
-                // is_local_var тогда был бы true.
+                // `[M-lazy-const-init-race]` (retired Plan 14 Ф.2 getter-call
+                // form): lazy const → bare global-value read (eager
+                // `nova_consts_init()` guarantees it's already populated
+                // before any code that could reach this site runs — see
+                // `emit_lazy_const`). Проверяем ПЕРВЫМ, до is_local_var,
+                // потому что emit_lazy_const регистрирует name в var_types
+                // для type-inference, а is_local_var тогда был бы true.
                 if self.lazy_consts.contains(name) {
-                    return Ok(format!("nova_const_{}()", name));
+                    return Ok(format!("_nova_const_{}_value", name));
                 }
                 let is_local_var = self.var_types.contains_key(name);
                 let is_user_fn = self.var_types.contains_key(&format!("fn_ret_{}", name));
@@ -24550,15 +24660,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
-                // Plan 14 Ф.2: `FACTOR.x` парсится как Path(["FACTOR", "x"])
-                // если первая часть — Ident с UpperCase (parser routing).
-                // Для lazy const'ов нужно `nova_const_FACTOR()->x` вместо
-                // `FACTOR_x` (last segment — record-поле).
+                // `[M-lazy-const-init-race]` (retired Plan 14 Ф.2 getter-call
+                // form): `FACTOR.x` парсится как Path(["FACTOR", "x"]) если
+                // первая часть — Ident с UpperCase (parser routing). Для lazy
+                // const'ов нужно `_nova_const_FACTOR_value->x` вместо
+                // `FACTOR_x` (last segment — record-поле) — bare read, eager
+                // init guarantees it's already populated (see emit_lazy_const).
                 if parts.len() >= 2 && self.lazy_consts.contains(&parts[0]) {
                     let const_ty = self.var_types.get(&parts[0]).cloned()
                         .unwrap_or_default();
                     let accessor = if Self::is_value_type(&const_ty) { "." } else { "->" };
-                    let mut acc = format!("nova_const_{}(){}{}", parts[0], accessor, parts[1]);
+                    let mut acc = format!("_nova_const_{}_value{}{}", parts[0], accessor, parts[1]);
                     for p in &parts[2..] {
                         acc = format!("({}.{})", acc, p);
                     }
@@ -42410,11 +42522,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): a lazy
         // module-level const (`const ZERO = Complex(0, 0)`, non-constexpr
         // init) is `ExprKind::Ident("ZERO")` at the AST level — indistinguishable
-        // from a plain local variable to `is_lvalue_receiver` — but LOWERS to a
-        // getter CALL (`nova_const_ZERO()`), not a variable read. Treating it as
-        // addressable emitted `&(nova_const_ZERO())` — address-of-rvalue CC-FAIL
-        // (`ZERO.is_zero()` on a lazy-const named-tuple/value-record). Force the
-        // hoist-to-temp path for these, same as any other rvalue receiver.
+        // from a plain local variable to `is_lvalue_receiver`. Originally this
+        // LOWERED to a getter CALL (`nova_const_ZERO()`, an rvalue) — treating
+        // it as addressable emitted `&(nova_const_ZERO())`, an address-of-
+        // rvalue CC-FAIL (`ZERO.is_zero()` on a lazy-const named-tuple/value-
+        // record). `[M-lazy-const-init-race]` (2026-07-09) retired the getter
+        // in favour of a bare `_nova_const_ZERO_value` global read, which IS
+        // genuinely addressable now — but the forced hoist-to-temp below is
+        // harmless (an extra copy, not a correctness issue) and is kept as-is
+        // rather than risk a new address-of-static-global path this guard was
+        // never exercised against.
         let is_lazy_const_ident = matches!(&obj_ast.map(|e| &e.kind),
             Some(ExprKind::Ident(name)) if self.lazy_consts.contains(name));
         let addressable = !is_lazy_const_ident && obj_ast
