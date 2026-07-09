@@ -7962,6 +7962,28 @@ deref, arithmetic banned by default).
 > (Ф.0 + Ф.1.5 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.3.3 + Ф.3.5 + Ф.4 partial +
 > Ф.5 partial + Ф.6 partial — 13 acceptance criteria closed).
 >
+> **D216 АМЕНДМЕНТ «всё через методы» (Plan 174.5, 2026-07-09, решения владельца
+> 2026-07-06 — таблица §3 плана):** value-доступ и адресная арифметика указателей —
+> ТОЛЬКО unsafe-методы; операторные формы РЕТРАКТИРОВАНЫ ошибкой
+> `E_POINTER_OP_USE_METHOD` (§6/§8 этого блока в операторной части устарели):
+>
+> | Метод | Семантика |
+> |---|---|
+> | `p.read() -> T` / `p.write(v T)` | голый deref `*(p)` (D141; заменяют `*p`) |
+> | `p.read_at(i) -> T` / `p.write_at(i, v)` | `*(p+i)` (заменяют `p[i]`); write_at — единая точка write-cap (`E_POINTER_RO_ASSIGN`) |
+> | `p.offset(n) -> *T` | адресная арифметика element-units (заменяет `p±i`); тип НЕ деградирует |
+> | `p.dist(q) -> int` | signed element count (заменяет `p-q`; порядок = знак dist, `p<q` ретрактирован) |
+> | `p.read_unaligned()` / `p.write_unaligned(v)` | memcpy-семантика (невыровненный доступ) |
+> | `p.read_volatile()` / `p.write_volatile(v)` | volatile |
+> | `p.write(v *T) -> *mut T` | копия из указателя-источника (без value-копии) |
+> | `p.copy_from/copy_to(src, n)` | memmove; `_nonoverlapping` — memcpy (обёртки RawMem byte-level) |
+>
+> ОСТАЮТСЯ операторами: `p == q`/`!=`, auto-deref `p.field`/`p.method()` (one-level),
+> `p as *U` (cast; unsafe при U≠T). `[]`-индексация — ТОЛЬКО безопасные контейнеры
+> (D138), у указателей её нет. `wrapping_offset` отложен ([M-174.5-wrapping-offset-deferred]).
+> Ретрактированы: `*p`, `*p=v`, `p[i]`, `p[i]=v`, `p±i`, `p-q`, `p</<=/>/>=q`.
+> Conformance: d174_5_* pos+neg (8 neg — по одному на форму). Эталон 79/0.
+>
 > **D216 §4 AMEND (Plan 118.6, 2026-06-17):** `&x` safe for all types (no
 > `unsafe {}` required for promote path). `addr_of()` / `addr_of_mut()` retired
 > → `E_ADDR_OF_REMOVED`. `mut` binding → `*mut T` auto; `ro` binding → `*T`
