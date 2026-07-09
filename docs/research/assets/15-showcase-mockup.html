@@ -73,7 +73,7 @@
   #fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 5; }
 
   .lane { position: relative; z-index:1; display: grid; grid-template-columns: 150px 1fr 92px; align-items: center;
-    gap: 12px; height: 38px; }
+    gap: 12px; height: 33px; }
   .lane .name { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); white-space: nowrap; overflow: hidden;
     display:flex; flex-direction:column; gap:1px; line-height:1.25; }
   .lane .name .id { display:flex; gap:6px; align-items:baseline; }
@@ -100,16 +100,16 @@
   .notches i { position:absolute; top:2px; bottom:2px; width:1px; background: var(--panel); }
 
   /* swarm wall: each cell = ONE real request (background fan-out beyond the hero lanes) */
-  .swarm { position:relative; z-index:1; margin-top:10px; padding-top:8px; border-top:1px dashed var(--line); }
-  .swarm .swarm-label { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:6px; display:flex; gap:8px; align-items:baseline; }
+  .swarm { position:relative; z-index:1; margin-top:6px; padding-top:6px; border-top:1px dashed var(--line); }
+  .swarm .swarm-label { font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:5px; display:flex; gap:6px; align-items:baseline; }
   .swarm .swarm-label b { font-family:var(--mono); color:var(--ink-soft); }
-  .swarm-grid { display:grid; grid-template-columns:repeat(30,1fr); gap:3px; }
-  .sq { aspect-ratio:1; border-radius:2px; background:var(--track); transition:background .25s, opacity .3s; }
+  .swarm-grid { display:grid; grid-template-columns:repeat(45,1fr); grid-auto-rows:11px; gap:2px; }
+  .sq { border-radius:2px; background:var(--track); transition:background .25s, opacity .3s; }
   .sq.run { background:color-mix(in oklab, var(--accent) 30%, var(--track)); }
   .sq.done { background:var(--accent); }
   .sq.fail { background:var(--crit); }
   .sq.cancel { background:var(--ghost); opacity:.35; }
-  @media (max-width:640px){ .swarm-grid { grid-template-columns:repeat(18,1fr); } }
+  @media (max-width:640px){ .swarm-grid { grid-template-columns:repeat(30,1fr); grid-auto-rows:9px; } }
 
   .lane .status { font-family: var(--mono); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-faint); white-space: nowrap; }
   .lane[data-state="done"] .status { color: var(--accent); } .lane[data-state="fail"] .status { color: var(--crit); }
@@ -125,7 +125,7 @@
     border-top: 1px solid var(--line); flex: 0 0 auto; }
   @media (max-width: 720px) { .hud { grid-template-columns: repeat(4, 1fr); } }
   @media (max-width: 460px) { .hud { grid-template-columns: repeat(2, 1fr); } }
-  .stat { background: var(--panel); padding: 11px 14px; min-width: 0;
+  .stat { background: var(--panel); padding: 8px 14px; min-width: 0;
     display: flex; flex-direction: column; justify-content: center; gap: 3px; }
   .stat .k { font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
