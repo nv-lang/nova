@@ -21,6 +21,7 @@
 | parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) | ✅ CLOSED 2026-07-09 (§1а to_int/to_str-семьи, char.to_str, доменные to_*) |
 | time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) | 📋 READY |
 | io / fs / os | [176](176-io-fs-os.md) (umbrella) | ✅ CLOSED 2026-07-09 (Ф.4/Ф.5 net-миграции + D302) |
+| **nova lint** (полная: сабкоманда+реестр) | [185](185-nova-lint.md) | ✅ CLOSED 2026-07-09 |
 | http (client+server, HTTPS, h2) | [178](178-std-http.md) (umbrella) | 📋 READY (Ред.2) |
 | encoding/compress (gzip/deflate/brotli) | [179](179-std-encoding-compress.md) — гейт 178 decompress | 📋 READY (Ред.2) |
 | serde / typed-json | [180](180-serde-derive.md) — гейт 178 `.json[T]` | 📋 READY (Ред.2) |
