@@ -317,15 +317,19 @@ ro r = spawn fetch_a()
 | Гомогенный fan-out с массивом результатов | `let xs = parallel for url in urls { fetch(url) }` |
 | Гетерогенная параллельность с разными типами | `mut`-захваты внутри `supervised` |
 
-> **⚠️ V1-ограничение `parallel for → []T` (Plan 173 Ф.1 interim-guard #7, 2026-07-04;
-> `[M-parfor-record-result-miscompile]`):** в текущем bootstrap-codegen сбор результата
-> в `[]T` реализован ТОЛЬКО для примитивного элемента `T ∈ {int, bool, f64, str}`. Для
-> непримитива (record / tuple / sum / вложенный `[]T`) в VALUE-позиции codegen раньше молча
-> деградировал в `unit` → сырой C-mismatch. Теперь чекер отвергает это ЧИСТО:
-> **`[E_PARFOR_RESULT_UNSUPPORTED]`**. Statement-mode `parallel for` (результат
-> отбрасывается) не затронут. **Полная поддержка любого `T`** (через channel+consume
-> десугар) — **[Plan 173.1](../../docs/plans/173.1-parallel-collect-and-supervised-value.md) Ф.2**;
-> после неё guard становится unreachable-защитой.
+> **`parallel for → []T` — ЛЮБОЙ элемент `T`, ЛЮБОЙ итератор
+> ([Plan 173.1](../../docs/plans/173.1-parallel-collect-and-supervised-value.md) Ф.2,
+> 2026-07-09; D414 §4):** сбор — через канал (клон `Sender`'а создаётся в родителе
+> на момент `spawn` → move в ребёнка → `send` trailing-значения → close на выходе
+> ребёнка; выделенный drain-fiber внутри scope; буфер `K = min(len, 16)` —
+> back-pressure, память O(CAP), не O(N)). Элемент — примитив, heap-record,
+> value-record (D228), анонимный и именованный tuple (D215), sum-тип, вложенный
+> `[]T`. **Порядок элементов = completion order** (плотный, без дыр); итерационный
+> порядок НЕ гарантирован — коду, которому нужен порядок, — `xs.sort()` /
+> сортировка по ключу. Прежний V1-guard `[E_PARFOR_RESULT_UNSUPPORTED]`
+> (Plan 173 Ф.1 #7) и примитив-whitelist УДАЛЕНЫ
+> (`[M-parfor-record-result-miscompile]` закрыт на всей матрице типов —
+> `nova_tests/err173_1/parfor_elem_matrix.nv`).
 
 Пример mut-захватов:
 ```nova
@@ -759,15 +763,22 @@ D71 фиксирует **минимальную, но spec-faithful** реали
 
 #### Тип результата `supervised` и `parallel for`
 
-**`supervised { body }` возвращает unit** (bootstrap, 2026-05-06). Trailing
-expression body не пробрасывается caller'у — отбрасывается как `(void)`.
-Это согласовано с «spawn возвращает unit» (см. п. 2): результаты от
-concurrent-выполнения берутся через mut-захваты, не через возвращаемое
-значение блока.
+**`supervised { body }` — value-expression (Plan 173.1 Ф.1, 2026-07-09;
+D414 §4):** возвращает своё trailing-выражение, вычисленное **ПОСЛЕ join'а
+всех детей** (post-join). Void-форма (нет trailing) — по-прежнему unit.
+Bootstrap-заглушка «возвращает unit, trailing отбрасывается `(void)`»
+(2026-05-06) снята. `parallel for` = сахар над этой формой.
+
+```nova
+ro total = supervised {
+    spawn { part_a() }
+    spawn { part_b() }
+    acc          // ← вычисляется после завершения ВСЕХ детей
+}
+```
 
 **`parallel for x in iter { body }`** — по spec D14 это **expression**
-типа `[]T` (где `T` — тип `body`). Spec-семантика: parallel-fan-out
-с собранными в порядке итерации результатами. Это **map**, не loop.
+типа `[]T` (где `T` — тип `body`). Это **параллельный map**, не loop.
 
 ```nova
 ro responses []Response = parallel for url in urls { fetch(url) }
@@ -775,14 +786,21 @@ ro responses []Response = parallel for url in urls { fetch(url) }
 //                          параллельный map: 1 element → 1 response
 ```
 
-**Bootstrap-codegen (2026-05-06):** array-mode реализован.
-Когда body имеет trailing-expression — форма возвращает `NovaArray_T*`
-(T ∈ {nova_int, nova_bool, nova_f64, nova_str}); каждый fiber пишет
-результат в `result.data[idx]` по своему индексу — порядок результатов
-соответствует порядку `iter` независимо от порядка планирования fiber'ов.
-Без trailing — старая semantic (statement, unit). Поддержанные
-итераторы: `a..b`, `a..=b`, array literal. Spread в array literal
-не поддержан (degrade to unit). См. `nova_tests/concurrency/parallel_for_array.nv`.
+**Codegen (Plan 173.1 Ф.2, 2026-07-09):** array-mode — канальный сбор для
+ЛЮБОГО элемента `T` и ЛЮБОГО итератора (Iter-protocol, без `len()`):
+клон `Sender`'а создаётся в родителе на момент `spawn` (refcount++ ДО
+закрытия родительского tx) и move'ится в ребёнка; ребёнок `send`'ит
+trailing-значение (int-скаляры — прямо в слот, heap-указатели — через
+intptr, value-типы — boxed-копией) и закрывает клон на ЛЮБОМ выходе
+(success/throw/cancel); родительский tx закрывается после enqueue-цикла;
+выделенный drain-fiber внутри scope дренирует до `None` (= последний клон
+закрыт) и пушит в результирующий `Vec[T]`. Буфер `K = min(len, 16)` —
+back-pressure. **Порядок = completion order (плотный)** — упавший ребёнок
+не шлёт, дыр нет; итерационный порядок НЕ гарантирован. Ошибка ребёнка →
+отмена siblings + re-throw после дренажа (173.0) — накопленный массив НЕ
+возвращается. Без trailing — statement-семантика (unit), включая
+inline-threshold оптимизацию. См. `nova_tests/err173_1/` +
+`nova_tests/concurrency/parallel_for_array.nv`.
 
 #### `for` vs `parallel for` — разные семантики
 
@@ -6527,3 +6545,49 @@ Readiness — в `nova_select_try_immediate` (централизованно; pa
 Тесты: `nova_tests/err173_2/{channel_closed_vs_value,select_none_arm}_test`
 (recv-различение; select None/Some/wildcard на value/closed/multi-channel;
 буфер-дренаж-до-None; wildcard-регресс).
+
+### §4. `supervised` — value-expression; `parallel for → []T` — канальный сбор, completion-order dense (Plan 173.1, 2026-07-09)
+
+**`supervised { … v }` — value-expression (Ф.1).** Возвращает trailing-выражение
+тела, вычисленное **ПОСЛЕ join'а всех детей** (post-join — мутации детей видны в
+`v`). Void-форма — unit. Bootstrap-заглушка «возвращает unit» снята. `parallel
+for` = сахар над этой формой. Codegen: результат объявляется вне scope-C-блока;
+unit-типизированный trailing остаётся eager/pre-join (байт-паритет со старым
+поведением — типичный случай «`spawn {…}` последним стейтментом»).
+
+**`parallel for x in xs { f(x) } → []T` (Ф.2) — для ЛЮБОГО `T` и ЛЮБОГО
+итератора.** Сбор через канал, семантика §2.3 плана 173.1:
+
+- **Клон-в-родителе:** `Sender`-клон создаётся в РОДИТЕЛЕ на момент `spawn`
+  (`writer_count++` строго ДО закрытия родительского tx) и move'ится в ребёнка;
+  ребёнок владеет и закрывает клон на **любом** выходе (success/throw/cancel).
+- **Транспорт элемента:** int-скаляры ≤64 бит — прямо в слот канала;
+  heap-указатели — через `intptr_t`; value-типы (f64/str/value-record/tuple/
+  Option/Result) — **boxed-копией** (GC-бокс; drain разыменовывает и пушит
+  копию). Политика одна на send/recv-стороны (`parfor_chan_repr`).
+- **Дренаж внутри scope:** выделенный drain-fiber — единственный потребитель;
+  `recv()` до `None` (= последний клон закрыт), `push` в `Vec[T]`. Плотный
+  сбор, **completion order** — упавший ребёнок не шлёт (дыр нет); итерационный
+  порядок НЕ гарантирован (нужен порядок — `xs.sort()`).
+- **Back-pressure:** буфер `K = min(len, CAP)`, `CAP = 16` — память O(CAP), не
+  O(N); ленивый итератор (Iter-protocol, без `len()`) → сразу CAP.
+- **Escalate:** ошибка ребёнка → отмена siblings + re-throw после дренажа
+  (субстрат 173.0) — накопленный массив НЕ возвращается. Stop-стратегия
+  (супервизор) — [173.2](../../docs/plans/173.2-supervision-as-effect.md).
+- Прежний примитив-whitelist `{int,bool,f64,str}` + slot-запись
+  `result.data[idx]` + interim-guard `[E_PARFOR_RESULT_UNSUPPORTED]` —
+  **УДАЛЕНЫ** (D71-amend; `[M-parfor-record-result-miscompile]` закрыт).
+
+**Runtime-хардненинг канала (обнаружено канальным сбором при N≥1000, armed M:N):**
+- `[M-chan-spurious-wake-retry]` — `send`/`recv` обязаны **ретраить** spurious
+  wake (не fired, канал открыт): прежний `send` молча РОНЯЛ значение, прежний
+  `recv` возвращал ложный `None` (Go `chansend`/`chanrecv` — та же петля).
+- `[M-chan-close-phantom-zero]` — close-side wake **не** ставит `fired=1`
+  (fired = «значение передано»): прежний CAS давал parked-recv фантомный
+  `Some(0)` (len = N+1) и ложный «отправлено» parked-send'у.
+
+Тесты: `nova_tests/err173_1/` — `parfor_elem_matrix` (вся матрица видов
+элемента), `parfor_iter_edge` (Iter-протокол без len / пустой / один /
+completion-плотность / N=2000 back-pressure / Escalate), `supervised_value_smoke`,
+`neg/parfor_openended_range`; `nova_tests/concurrency/parallel_for_array.nv`
+(set-equality канон для user-тестов).
