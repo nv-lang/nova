@@ -99,6 +99,18 @@
   .notches { position:absolute; inset:0; pointer-events:none; opacity:.35; }
   .notches i { position:absolute; top:2px; bottom:2px; width:1px; background: var(--panel); }
 
+  /* swarm wall: each cell = ONE real request (background fan-out beyond the hero lanes) */
+  .swarm { position:relative; z-index:1; margin-top:10px; padding-top:8px; border-top:1px dashed var(--line); }
+  .swarm .swarm-label { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:6px; display:flex; gap:8px; align-items:baseline; }
+  .swarm .swarm-label b { font-family:var(--mono); color:var(--ink-soft); }
+  .swarm-grid { display:grid; grid-template-columns:repeat(30,1fr); gap:3px; }
+  .sq { aspect-ratio:1; border-radius:2px; background:var(--track); transition:background .25s, opacity .3s; }
+  .sq.run { background:color-mix(in oklab, var(--accent) 30%, var(--track)); }
+  .sq.done { background:var(--accent); }
+  .sq.fail { background:var(--crit); }
+  .sq.cancel { background:var(--ghost); opacity:.35; }
+  @media (max-width:640px){ .swarm-grid { grid-template-columns:repeat(18,1fr); } }
+
   .lane .status { font-family: var(--mono); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-faint); white-space: nowrap; }
   .lane[data-state="done"] .status { color: var(--accent); } .lane[data-state="fail"] .status { color: var(--crit); }
   .lane[data-state="slow"] .status { color: var(--warn); } .lane[data-state="cancel"] .status { color: var(--ghost); }
@@ -180,6 +192,11 @@
       <canvas id="fx"></canvas>
     </div>
 
+    <div class="swarm" id="swarm" style="margin:0 16px 10px; display:none;">
+      <div class="swarm-label">background fan-out — ещё <b id="swarmCount">90</b> реальных запросов той же пачки</div>
+      <div class="swarm-grid" id="swarmGrid"></div>
+    </div>
+
     <div class="hud" id="hud">
       <div class="stat"><span class="k" id="s-fanoutK">sources</span><span class="v" id="s-fanout">6</span></div>
       <div class="stat accent"><span class="k">responded</span><span class="v" id="s-done">0</span></div>
@@ -225,7 +242,7 @@
      weather = collect data (open-meteo); health = ping services (real domains). */
   var SCENARIOS = {
     weather: {
-      unit: "cities", subUnit: "days",
+      unit: "cities", subUnit: "days", bg: 90,
       sig: '<span class="kw">fn</span> aggregate<span class="pun">(</span>cities <span class="ty">[]City</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">WeatherReport</span>',
       note: 'Сводка погоды по городам — fan-out к <code>open-meteo</code> (без ключа). Каждый город параллельно тянет несколько дней. Дедлайн <b>2с</b>: дальний сервер не успел → под-запросы <b>каскадно</b> отменяются, <code>0 leaks</code>.',
       defs: [
@@ -238,7 +255,7 @@
       ]
     },
     health: {
-      unit: "services", subUnit: "checks",
+      unit: "services", subUnit: "checks", bg: 90,
       sig: '<span class="kw">fn</span> aggregate<span class="pun">(</span>svc <span class="ty">[]Service</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">HealthReport</span>',
       note: 'Health-check сервисов — параллельный пинг реальных доменов + замер латентности. Дедлайн <b>2с</b> = SLA-таймаут: зависший сервис <b>каскадно</b> отменяется, <code>0 leaks</code>.',
       defs: [
@@ -251,7 +268,7 @@
       ]
     },
     llm: {
-      unit: "models", subUnit: "tokens", race: true,
+      unit: "models", subUnit: "tokens", race: true, bg: 0,
       sig: '<span class="kw">fn</span> ask<span class="pun">(</span>prompt <span class="ty">str</span><span class="pun">,</span> models <span class="ty">[]Model</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">Answer</span>',
       note: '<b>race / first-wins</b>: промпт уходит всем локальным моделям (Ollama, без ключей) разом — первый пригодный ответ 🏆 побеждает, остальные <b>отменяются в тот же миг</b> (GPU освобождён, <code>0 leaks</code>). Прогресс = реальные токены.',
       defs: [
@@ -313,7 +330,7 @@
   var gridC=document.getElementById("grid"), gtx=gridC.getContext("2d");
   var fx=document.getElementById("fx"), ctx=fx.getContext("2d");
   var deadlineEl=document.getElementById("deadline");
-  var mode="demo", raf=0, particles=[], laneObjs=[];
+  var mode="demo", raf=0, particles=[], laneObjs=[], bgObjs=[];
 
   function railGeom(){ var lane=lanesEl.querySelector(".lane"); if(!lane) return null;
     var rail=lane.querySelector(".rail"); var lr=lanesEl.getBoundingClientRect(), rr=rail.getBoundingClientRect();
@@ -355,7 +372,22 @@
     });
     // sequential-world start offset per lane: it can't begin until all prior lanes finished
     var acc=0; laneObjs.forEach(function(o){ o.seqStart=acc; acc+=Math.min(o.p.total,DEADLINE); });
-    document.getElementById("subtotal").textContent=subtotal; resize();
+    document.getElementById("subtotal").textContent=subtotal;
+
+    // swarm wall: each square = one MORE real request in the same fan-out batch
+    var S=SCENARIOS[scen], sw=document.getElementById("swarm"), sg=document.getElementById("swarmGrid");
+    bgObjs=[]; sg.innerHTML="";
+    if(S.bg){
+      sw.style.display="";
+      document.getElementById("swarmCount").textContent=S.bg;
+      for(var b=0;b<S.bg;b++){
+        var el=document.createElement("div"); el.className="sq"; sg.appendChild(el);
+        var r=Math.random(), total=0.35+Math.random()*2.0;
+        var out = r<0.03 ? "fail" : (total>DEADLINE ? "cancel" : "done");
+        bgObjs.push({el:el, total:total, failAt:total*0.5, out:out, st:"idle"});
+      }
+    } else { sw.style.display="none"; }
+    resize();
   }
 
   function burst(x,y,color,n){ n=n||22; for(var i=0;i<n;i++){ var a=Math.random()*Math.PI*2, sp=0.5+Math.random()*2.6;
@@ -368,7 +400,7 @@
   var stats;
   function set(id,v){ document.getElementById(id).textContent=v; }
   function resetStats(list){ stats={fanout:list.length,done:0,pages:0,fail:0,cancel:0};
-    set("s-fanout",list.length); set("s-done",0); set("s-pages",0); set("s-fail",0); set("s-cancel",0);
+    set("s-fanout",list.length+(SCENARIOS[scen].bg||0)); set("s-done",0); set("s-pages",0); set("s-fail",0); set("s-cancel",0);
     document.getElementById("s-speed").textContent="—"; document.getElementById("s-cmp").textContent="measuring…";
     document.getElementById("s-leaks").textContent="0 leaks"; }
 
@@ -377,7 +409,8 @@
     var list=providers(mode); build(list); resetStats(list);
     document.getElementById("hint").textContent = mode==="demo" ? "seed = 42 · воспроизводимый забег" : "seed = random · каждый забег другой";
     laneObjs.forEach(function(o){ o.lane.dataset.state="live"; o.status.textContent="live"; });
-    var seqTotal=list.reduce(function(a,p){return a+Math.min(p.total,DEADLINE);},0);
+    var seqTotal=list.reduce(function(a,p){return a+Math.min(p.total,DEADLINE);},0)
+                + bgObjs.reduce(function(a,b){return a+Math.min(b.total,DEADLINE);},0);
     var t0=performance.now(), SCALE=1500;
 
     var frozen=false;
@@ -428,7 +461,19 @@
         });
         set("s-pages",pagesOk);
 
-        var allSettled=laneObjs.every(function(o){return o.settled;});
+        // swarm wall: advance each background request by time
+        var bgDone=0,bgFail=0,bgCancel=0;
+        bgObjs.forEach(function(b){
+          var ns = b.out==="fail"   ? (t>=b.failAt ? "fail"   : t>=b.total*0.1 ? "run" : "idle")
+                 : b.out==="cancel" ? (t>=DEADLINE ? "cancel" : t>=b.total*0.1 ? "run" : "idle")
+                 :                    (t>=b.total  ? "done"   : t>=b.total*0.1 ? "run" : "idle");
+          if(ns!==b.st){ b.st=ns; b.el.className = ns==="idle" ? "sq" : "sq "+ns; }
+          if(ns==="done")bgDone++; else if(ns==="fail")bgFail++; else if(ns==="cancel")bgCancel++;
+        });
+        if(bgObjs.length){ set("s-done",stats.done+bgDone); set("s-fail",stats.fail+bgFail); set("s-cancel",stats.cancel+bgCancel); }
+
+        var bgSettled = bgObjs.every(function(b){ return b.st==="done"||b.st==="fail"||b.st==="cancel"; });
+        var allSettled = laneObjs.every(function(o){return o.settled;}) && bgSettled;
         if(allSettled){ frozen=true; finish(seqTotal); }   // freeze all lane math once settled
       }
 
@@ -449,6 +494,7 @@
       var settleT = p.outcome==="fail" ? p.failAt : p.outcome==="cancel" ? p.cancelAt : p.total;
       okTotal += (o.lane.dataset.state==="done") ? p.probes : Math.round(Math.min(1,settleT/p.total)*p.probes);
     });
+    bgObjs.forEach(function(b){ wall=Math.max(wall, Math.min(b.total,DEADLINE)); closed+=1; });
     set("s-pages", okTotal);
     document.getElementById("tclock").textContent=wall.toFixed(2);
     document.getElementById("s-speed").textContent="×"+(seqTotal/wall).toFixed(1)+" ↑";
