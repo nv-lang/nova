@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_HEX_BLOB_ODD
+//
+// D412 (hex-блоб литерал) — NEG.
+// Нечётное число hex-цифр в `x"…"` — ошибка компиляции: каждый байт = ровно
+// 2 цифры, «полбайта» невыразимы. Спека: spec/decisions/03-syntax.md D412
+// («Нечётное число цифр = ошибка компиляции (E_HEX_BLOB_ODD)»).
+
+module neg.d412_hex_blob_odd_neg
+
+fn d412_odd() -> int {
+    ro b = x"48 6"          // ✗ 3 цифры — E_HEX_BLOB_ODD
+    b.len()
+}

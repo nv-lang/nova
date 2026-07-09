@@ -1,42 +1,43 @@
 // spawn_demo.nv — D50: spawn внутри structured-scope (supervised/parallel for).
 //
-// По D50 (06-concurrency.md): `spawn body` — fire-and-forget, возвращает
-// unit. Результаты concurrent-вычислений — через mut-захваты или
-// `parallel for` (homogeneous results). `let r = spawn { expr }` —
-// compile-error (spawn не возвращает значение).
+// По D50/D415 (06-concurrency.md): `spawn body` — fire-and-forget, возвращает
+// unit. Результаты concurrent-вычислений — через `#share`-примитивы
+// (`Atomic*`/`Mutex`) / каналы или `parallel for` (homogeneous results);
+// голый mut-захват — E_CONCURRENT_MUT_CAPTURE (гонка). `let r = spawn
+// { expr }` — compile-error (spawn не возвращает значение).
 
 module effects.spawn_demo
 
 fn main() {
     // Простое spawn внутри supervised: fiber вычисляет, результат через
-    // mut-захват.
-    mut r1 = 0
+    // #share-примитив (D415).
+    mut r1 = AtomicInt.new(0)
     supervised {
         spawn {
-            r1 = 100 + 1
+            r1.store(100 + 1)
         }
     }
-    println("spawn result = ", r1)       // 101
+    println("spawn result = ", r1.load())       // 101
 
     // spawn с захватом переменной.
     ro x = 42
-    mut r2 = 0
+    mut r2 = AtomicInt.new(0)
     supervised {
         spawn {
-            r2 = x * 2
+            r2.store(x * 2)
         }
     }
-    println("captured x*2 = ", r2)       // 84
+    println("captured x*2 = ", r2.load())       // 84
 
     // Несколько spawn'ов в одном supervised — выполняются concurrent
     // (fiber scheduler делает round-robin), supervised ждёт всех.
-    mut a = 0
-    mut b = 0
+    mut a = AtomicInt.new(0)
+    mut b = AtomicInt.new(0)
     supervised {
-        spawn { a = 10 }
-        spawn { b = 20 }
+        spawn { a.store(10) }
+        spawn { b.store(20) }
     }
-    println("a + b = ", a + b)           // 30
+    println("a + b = ", a.load() + b.load())           // 30
 
     // Гомогенный fan-out: `parallel for` исполняет тело конкурентно для
     // каждого элемента. Здесь собираем результат через mut-аккумулятор
@@ -46,12 +47,12 @@ fn main() {
     // по D71) пока корректно типизируется только в `test {}`-блоках; в теле
     // обычной `fn` value-typing `parallel for` даёт `()` — pre-existing
     // compiler gap, см. отчёт Plan 91 Ф.6. Поэтому пример использует
-    // statement-форму + mut-захват.
-    mut sum_sq = 0
+    // statement-форму + AtomicInt-аккумулятор (D415: mut-захват = гонка).
+    mut sum_sq = AtomicInt.new(0)
     supervised {
         parallel for i in 0..5 {
-            sum_sq = sum_sq + i * i
+            sum_sq.fetch_add(i * i)
         }
     }
-    println("sum of squares 0..5 = ", sum_sq)   // 30
+    println("sum of squares 0..5 = ", sum_sq.load())   // 30
 }

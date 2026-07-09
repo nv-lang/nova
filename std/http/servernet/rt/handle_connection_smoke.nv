@@ -42,8 +42,11 @@ test "servernet: live GET /health round-trip over loopback" {
         ro port = lst.local_port()
         assert(port > 0)
 
-        mut got []u8 = []u8.new()
-        mut server_ok = false
+        // Plan 173.3 (D415 §2): fiber results flow back through channels, not
+        // outer-`mut` capture (`mut got`/`mut server_ok` written from spawn →
+        // E_CONCURRENT_MUT_CAPTURE). Each channel has exactly one producer.
+        ro (ok_tx, ok_rx) = Channel.new(1)
+        ro (got_tx, got_rx) = Channel.new(1)
         supervised {
             // Server fiber: accept one connection, serve it through handle_connection.
             spawn {
@@ -51,7 +54,7 @@ test "servernet: live GET /health round-trip over loopback" {
                     Ok(srv) => {
                         consume s = srv
                         match handle_connection(s, routes()) {
-                            Ok(_)  => { server_ok = true }
+                            Ok(_)  => { ok_tx.try_send(true) }
                             Err(_) => ()
                         }
                     }
@@ -69,7 +72,7 @@ test "servernet: live GET /health round-trip over loopback" {
                             Err(_) => ()
                         }
                         match cli.read_to_vec(4096) {
-                            Ok(chunk) => got.append(chunk)
+                            Ok(chunk) => { got_tx.try_send(chunk) }
                             Err(_)    => ()
                         }
                         cli.close()
@@ -78,6 +81,10 @@ test "servernet: live GET /health round-trip over loopback" {
                 }
             }
         }
+        ok_tx.close()
+        got_tx.close()
+        ro server_ok = ok_rx.try_recv() ?? false
+        ro got = got_rx.try_recv() ?? []u8.new()
         assert(server_ok)
         ro resp = unsafe { got.to_str_unchecked() }
         assert(resp.contains("HTTP/1.1 200 OK"))

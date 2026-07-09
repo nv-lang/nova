@@ -10,9 +10,10 @@
 module neg.spawn_in_realtime_compile_error
 
 fn spawn_without_scope() -> int {
-    mut counter = 0
+    // Plan 173.3 (D415 §2): тело без захвата внешнего `mut` — фикстура проверяет
+    // ИМЕННО free-spawn-ошибку, не capture-ошибку.
     spawn {
-        counter = counter + 1
+        ro _unused = 1
     }
-    counter
+    0
 }

@@ -7,31 +7,33 @@
 module nova_tests.plan83_10_3
 
 test "nested supervised completes without errors" {
-    mut total = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut total = AtomicInt.new(0)
     supervised {
         spawn {
             supervised {
-                spawn { total += 1 }
-                spawn { total += 2 }
+                spawn { total.fetch_add(1) }
+                spawn { total.fetch_add(2) }
             }
-            total += 4
+            total.fetch_add(4)
         }
     }
-    assert(total == 7)
+    assert(total.load() == 7)
 }
 
 test "nested supervised double-level completion" {
-    mut count = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut count = AtomicInt.new(0)
     supervised {
         spawn {
             supervised {
-                spawn { count += 1 }
+                spawn { count.fetch_add(1) }
             }
             supervised {
-                spawn { count += 10 }
+                spawn { count.fetch_add(10) }
             }
-            count += 100
+            count.fetch_add(100)
         }
     }
-    assert(count == 111)
+    assert(count.load() == 111)
 }

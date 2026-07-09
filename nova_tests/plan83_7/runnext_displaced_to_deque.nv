@@ -14,13 +14,14 @@ module nova_tests.plan83_7
 test "consecutive wakes — both fibers run, no loss" {
     ro n = 100
     ro ch = Channel.new(1)
-    mut received = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut received = AtomicInt.new(0)
     supervised {
         spawn {
             mut i = 0
             while i < n {
                 ro _v = ch.rx.recv()
-                received = received + 1
+                received.fetch_add(1)
                 i = i + 1
             }
         }
@@ -32,5 +33,5 @@ test "consecutive wakes — both fibers run, no loss" {
             }
         }
     }
-    assert(received == n)
+    assert(received.load() == n)
 }

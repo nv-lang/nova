@@ -25,32 +25,32 @@ fn handler_value(v int) -> int {
 // ================================================================
 
 test "race repro: 8 concurrent fibers, unique handlers, no cross-contamination" {
-    mut r0 = -1
-    mut r1 = -1
-    mut r2 = -1
-    mut r3 = -1
-    mut r4 = -1
-    mut r5 = -1
-    mut r6 = -1
-    mut r7 = -1
+    mut r0 = AtomicInt.new(-1)
+    mut r1 = AtomicInt.new(-1)
+    mut r2 = AtomicInt.new(-1)
+    mut r3 = AtomicInt.new(-1)
+    mut r4 = AtomicInt.new(-1)
+    mut r5 = AtomicInt.new(-1)
+    mut r6 = AtomicInt.new(-1)
+    mut r7 = AtomicInt.new(-1)
     supervised {
-        spawn { r0 = handler_value(100) }
-        spawn { r1 = handler_value(200) }
-        spawn { r2 = handler_value(300) }
-        spawn { r3 = handler_value(400) }
-        spawn { r4 = handler_value(500) }
-        spawn { r5 = handler_value(600) }
-        spawn { r6 = handler_value(700) }
-        spawn { r7 = handler_value(800) }
+        spawn { r0.store(handler_value(100)) }
+        spawn { r1.store(handler_value(200)) }
+        spawn { r2.store(handler_value(300)) }
+        spawn { r3.store(handler_value(400)) }
+        spawn { r4.store(handler_value(500)) }
+        spawn { r5.store(handler_value(600)) }
+        spawn { r6.store(handler_value(700)) }
+        spawn { r7.store(handler_value(800)) }
     }
-    assert(r0 == 100)
-    assert(r1 == 200)
-    assert(r2 == 300)
-    assert(r3 == 400)
-    assert(r4 == 500)
-    assert(r5 == 600)
-    assert(r6 == 700)
-    assert(r7 == 800)
+    assert(r0.load() == 100)
+    assert(r1.load() == 200)
+    assert(r2.load() == 300)
+    assert(r3.load() == 400)
+    assert(r4.load() == 500)
+    assert(r5.load() == 600)
+    assert(r6.load() == 700)
+    assert(r7.load() == 800)
 }
 
 // ================================================================
@@ -58,25 +58,25 @@ test "race repro: 8 concurrent fibers, unique handlers, no cross-contamination" 
 // ================================================================
 
 test "race repro: inherited outer + per-fiber override — no contamination" {
-    mut outer0 = -1
-    mut outer1 = -1
-    mut inner0 = -1
-    mut inner1 = -1
+    mut outer0 = AtomicInt.new(-1)
+    mut outer1 = AtomicInt.new(-1)
+    mut inner0 = AtomicInt.new(-1)
+    mut inner1 = AtomicInt.new(-1)
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 999 }
     } {
         supervised {
-            spawn { outer0 = Time.now() }           // inherits 999
-            spawn { inner0 = handler_value(111) }   // overrides to 111
-            spawn { outer1 = Time.now() }           // inherits 999
-            spawn { inner1 = handler_value(222) }   // overrides to 222
+            spawn { outer0.store(Time.now()) }           // inherits 999
+            spawn { inner0.store(handler_value(111)) }   // overrides to 111
+            spawn { outer1.store(Time.now()) }           // inherits 999
+            spawn { inner1.store(handler_value(222)) }   // overrides to 222
         }
     }
-    assert(outer0 == 999)
-    assert(outer1 == 999)
-    assert(inner0 == 111)
-    assert(inner1 == 222)
+    assert(outer0.load() == 999)
+    assert(outer1.load() == 999)
+    assert(inner0.load() == 111)
+    assert(inner1.load() == 222)
 }
 
 // ================================================================

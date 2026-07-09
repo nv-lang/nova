@@ -52,17 +52,18 @@ fn get_time_c() -> int {
 }
 
 test "armed M:N — three fibers each see their own Time handler" {
-    mut a = 0
-    mut b = 0
-    mut c = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut a = AtomicInt.new(0)
+    mut b = AtomicInt.new(0)
+    mut c = AtomicInt.new(0)
     supervised {
-        spawn { a = get_time_a() }
-        spawn { b = get_time_b() }
-        spawn { c = get_time_c() }
+        spawn { a.store(get_time_a()) }
+        spawn { b.store(get_time_b()) }
+        spawn { c.store(get_time_c()) }
     }
-    assert(a == 1001)
-    assert(b == 2002)
-    assert(c == 3003)
+    assert(a.load() == 1001)
+    assert(b.load() == 2002)
+    assert(c.load() == 3003)
 }
 
 // ================================================================
@@ -70,18 +71,19 @@ test "armed M:N — three fibers each see their own Time handler" {
 // ================================================================
 
 test "armed M:N — spawn inherits outer with-handler from parent" {
-    mut got = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut got = AtomicInt.new(0)
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 7777 }
     } {
         supervised {
             spawn {
-                got = Time.now()  // must see outer handler = 7777
+                got.store(Time.now())  // must see outer handler = 7777
             }
         }
     }
-    assert(got == 7777)
+    assert(got.load() == 7777)
 }
 
 // ================================================================
@@ -89,19 +91,20 @@ test "armed M:N — spawn inherits outer with-handler from parent" {
 // ================================================================
 
 test "armed M:N — inner with overrides outer within same fiber" {
-    mut outer_val = 0
-    mut inner_val = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut outer_val = AtomicInt.new(0)
+    mut inner_val = AtomicInt.new(0)
     with Time = effect Time {
         sleep(_ms) { return () }
         now() { return 444 }
     } {
         supervised {
-            spawn { outer_val = Time.now() }             // inherits 444
-            spawn { inner_val = get_time_b() }           // inner overrides → 2002
+            spawn { outer_val.store(Time.now()) }             // inherits 444
+            spawn { inner_val.store(get_time_b()) }           // inner overrides → 2002
         }
     }
-    assert(outer_val == 444)
-    assert(inner_val == 2002)
+    assert(outer_val.load() == 444)
+    assert(inner_val.load() == 2002)
 }
 
 // ================================================================
@@ -109,25 +112,26 @@ test "armed M:N — inner with overrides outer within same fiber" {
 // ================================================================
 
 test "armed M:N — fiber A handler does not affect fiber B" {
-    mut got_a = 0
-    mut got_b = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut got_a = AtomicInt.new(0)
+    mut got_b = AtomicInt.new(0)
     supervised {
         spawn {
             with Time = effect Time {
                 sleep(_ms) { return () }
                 now() { return 111 }
             } {
-                got_a = Time.now()
+                got_a.store(Time.now())
             }
         }
         spawn {
             // fiber B should see default handler (not 111)
             // Default Time.now() returns a real timestamp >= 0
-            got_b = Time.now()
+            got_b.store(Time.now())
         }
     }
-    assert(got_a == 111)
-    assert(got_b >= 0)
+    assert(got_a.load() == 111)
+    assert(got_b.load() >= 0)
     // If TLS handler leaked, got_b would be 111, not a real timestamp
     // (this would still pass; the real check is got_b being a valid timestamp
     //  which default handler returns, not 111)

@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR undefined identifier
+//
+// Plan 173.3 (D415 §4): use-after-consume для `spawn consume` закрыт
+// BY CONSTRUCTION — биндинг `j` существует ТОЛЬКО в теле ребёнка (владеющий
+// scope = ребёнок); обращение к `j` после spawn — undefined identifier.
+// Это и есть закрытие V1/V2-граблей 173.1 (use-after-consume клона).
+
+module neg.use_after_spawn_consume
+
+type Job consume {
+    payload int
+}
+
+fn Job.new(p int) -> Job => { payload: p }
+fn Job consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn use_after_move() -> int {
+    supervised {
+        spawn consume j = Job.new(1) {
+            ro _p = j.payload
+        }
+    }
+    j.payload
+}

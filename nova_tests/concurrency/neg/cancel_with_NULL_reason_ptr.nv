@@ -147,13 +147,14 @@ test "N11: bare cancel() on unbound-after-scope — no SEGV" {
     // Если регрессия не выполнит unbind корректно — cancel() будет писать
     // в уже-освобождённый scope queue → UAF SEGV.
     ro tok = CancelToken.new()
-    mut ran = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut ran = AtomicBool.new(false)
     supervised(cancel: tok) {
-        spawn { ran = true }
+        spawn { ran.store(true) }
     }
     // Scope завершён, token unbound. bare cancel() → bound_scope=NULL path.
     tok.cancel()
-    assert(ran)
+    assert(ran.load())
     assert(tok.is_cancelled())
     ro r = tok.reason()
     ro got = match r {
