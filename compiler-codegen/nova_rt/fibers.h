@@ -225,6 +225,19 @@ typedef struct {
     void*         reason;    /* boxed T for CANCEL (GC-managed) */
     void*         payload;   /* boxed T for USER_TYPED (GC-managed) */
     NovaTypeId    tid;       /* payload type id for USER_TYPED */
+    /* Plan 173.2 (supervision-as-effect): mid-drain publication flag.
+     * The writer (the failing child, worker thread) fills the fields above
+     * and THEN release-stores `published=true`; the reader (the scope's
+     * drive thread, nova_supervised_process_decisions) acquire-loads it
+     * before touching the plain fields — a per-slot happens-before that
+     * makes DURING-drain reads sound (the 173.0 end-of-drain read relied on
+     * the pending_remote==0 acquire gate instead; that gate still holds for
+     * the final catch-up pass). Slots have disjoint owners (one child each,
+     * nova_scope_alloc_child_slot) so there is no writer-writer race. */
+    nova_atomic_bool published;
+    /* Plan 173.2: drive-thread-only bookkeeping — this failure has been fed
+     * to the Supervisor decision exactly once. Never touched by workers. */
+    nova_bool     decided;
 } NovaChildError;
 
 typedef struct {
@@ -441,6 +454,26 @@ typedef struct {
      * this is still false — proves grow-during-drain never happens (see
      * comment above NovaChildError). Debug-only cost (no-op in NDEBUG). */
     nova_bool       _drain_started;
+    /* ─── Plan 173.2: supervision-as-effect ───
+     * Stamped by codegen at scope entry (right after nova_scope_init, on the
+     * scope's own thread, strictly BEFORE any spawn):
+     *   q.has_supervisor = (_nova_handler_Supervisor != NULL);
+     * true  → deferred-decision mode: a failing child's report goes ONLY to
+     *         its per-slot child_error[] entry (no first_error CAS, no
+     *         cancel_requested broadcast); the drive thread consults the
+     *         ambient `Supervisor.on_child_fail` handler serially, one
+     *         retained failure at a time (nova_supervised_process_decisions),
+     *         and EXECUTES the returned Decision (Escalate/Stop).
+     * false → default path, byte-parity with pre-173.2 behaviour (the
+     *         supervision branches are never entered).
+     * Cross-thread visibility: written before the first spawn_into on the
+     * same thread; children observe it through the same publication chain
+     * that already carries every other scope field (deque push/steal). */
+    nova_bool       has_supervisor;
+    /* Plan 173.2: re-entrancy latch for nova_supervised_process_decisions —
+     * drive-thread only. Guards against a handler body that (indirectly)
+     * re-enters the drive machinery. */
+    nova_bool       _deciding;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -716,6 +749,11 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->child_count    = 0;
     q->child_capacity = 0;
     q->_drain_started = false;
+    /* Plan 173.2: default = no supervisor (byte-parity path). Codegen stamps
+     * has_supervisor right after this call when a Supervisor handler is
+     * ambient at scope entry. */
+    q->has_supervisor = false;
+    q->_deciding      = false;
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -925,6 +963,8 @@ static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) 
         new_err[i].reason = NULL;
         new_err[i].payload = NULL;
         new_err[i].tid = 0;
+        nova_abool_init(&new_err[i].published, false);  /* Plan 173.2 */
+        new_err[i].decided = false;                      /* Plan 173.2 */
         new_ctx[i] = NULL;
     }
     scope->child_error    = new_err;
@@ -946,6 +986,8 @@ static inline int nova_scope_alloc_child_slot(NovaFiberQueue* scope) {
     }
     int idx = scope->child_count++;
     scope->child_error[idx].msg = NULL;
+    nova_abool_init(&scope->child_error[idx].published, false);  /* Plan 173.2 */
+    scope->child_error[idx].decided = false;                      /* Plan 173.2 */
     scope->child_ctx[idx] = NULL;
     return idx;
 }
@@ -2030,14 +2072,39 @@ static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
                                                    NovaTypeId tid) {
     if (!base || !base->_nova_parent_scope || !msg) return;
     NovaFiberQueue* parent = base->_nova_parent_scope;
-    nova_fiber_report_atomic_kinded(parent, msg, kind, reason_ptr, payload, tid);
     int slot = base->_nova_parent_slot;
+    /* Plan 173.2 (supervision-as-effect): deferred-decision mode. When the
+     * scope entered with an ambient Supervisor handler (has_supervisor
+     * stamped by codegen at scope entry, before any spawn), a child failure
+     * must NOT unilaterally elect itself primary nor broadcast cancellation
+     * — that is the Supervisor's decision, taken serially on the scope's
+     * drive thread (nova_supervised_process_decisions). Report goes ONLY to
+     * this child's own retention slot; `published` release-store pairs with
+     * the drive thread's acquire-load (per-slot happens-before for the
+     * DURING-drain read).
+     *
+     * Fallback to the default path below when no slot is available (slot<0
+     * can only mean the bootstrap/local path, which never calls this fn) —
+     * an error must never be dropped silently. */
+    if (parent->has_supervisor
+        && slot >= 0 && parent->child_error && slot < parent->child_capacity) {
+        parent->child_error[slot].msg     = msg;
+        parent->child_error[slot].kind    = kind;
+        parent->child_error[slot].reason  = reason_ptr;
+        parent->child_error[slot].payload = payload;
+        parent->child_error[slot].tid     = tid;
+        nova_abool_store(&parent->child_error[slot].published, true);
+        return;
+    }
+    /* Default path — byte-parity with pre-173.2 behaviour. */
+    nova_fiber_report_atomic_kinded(parent, msg, kind, reason_ptr, payload, tid);
     if (slot >= 0 && parent->child_error && slot < parent->child_capacity) {
         parent->child_error[slot].msg     = msg;
         parent->child_error[slot].kind    = kind;
         parent->child_error[slot].reason  = reason_ptr;
         parent->child_error[slot].payload = payload;
         parent->child_error[slot].tid     = tid;
+        nova_abool_store(&parent->child_error[slot].published, true);
     }
 }
 
@@ -2378,7 +2445,99 @@ static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
 static inline void nova_supervised_decide(NovaFiberQueue* scope, int idx,
                                            const NovaChildError* err, void* ctx) {
     (void)scope; (void)idx; (void)err; (void)ctx;
-    /* Default policy (Plan 173.0): no-op observer. See comment above. */
+    /* Default policy (Plan 173.0): no-op observer. See comment above.
+     * Plan 173.2: this observer remains the DEFAULT-mode hook (scope without
+     * a Supervisor handler) — byte-parity guaranteed. Supervisor-mode scopes
+     * take the nova_supervised_process_decisions path below instead. */
+}
+
+/* ─── Plan 173.2: supervision-as-effect — decision execution ───
+ *
+ * `Supervisor` is a real Nova effect (std/prelude/effects.nv):
+ *     type Supervisor effect { on_child_fail(idx int, err any) -> Decision }
+ *     type Decision enum Escalate | Stop | Restart | RestartAll | RestartRest
+ * Strategies are handler VALUES (`with Supervisor = policy { ... }`), like
+ * Time/Fail. The runtime cannot reference codegen-emitted symbols
+ * (NovaVtable_Supervisor / Nova_Decision), so dispatch crosses through a
+ * function pointer assigned by generated main() — the same pattern as
+ * _nova_throw_scope_timeout_fn. The bridge (emit_c.rs,
+ * _nova_supervisor_decide_impl):
+ *   - reads the ambient `_nova_handler_Supervisor` TLS vtable (NULL →
+ *     Escalate, the default);
+ *   - boxes the NovaChildError into a Nova `any` (typed payload via
+ *     nova_any_from_boxed, string throws/panics as `str`);
+ *   - invokes the Nova handler under a local fail-frame — a handler that
+ *     itself throws is treated as Escalate-with-handler-error (Q-block:
+ *     `Fail` allowed, guarded against handler-fails-self recursion);
+ *   - maps the returned Decision tag to the codes below. */
+#define NOVA_SUPERVISE_ESCALATE       0   /* Decision.Escalate (and default) */
+#define NOVA_SUPERVISE_STOP           1   /* Decision.Stop */
+#define NOVA_SUPERVISE_RESTART_GATED  2   /* Restart/RestartAll/RestartRest — §3b gated */
+
+/* Assigned by generated main() when the CU knows the Supervisor effect
+ * (prelude present). NULL → every decision defaults to Escalate. Signature
+ * erased to void* so runtime TUs (effects.c) can define the storage without
+ * seeing NovaFiberQueue/NovaChildError. */
+extern nova_int (*_nova_supervisor_decide_fn)(void* scope, nova_int idx,
+                                              const void* err);
+
+/* Serialized decision pass for supervisor-mode scopes (has_supervisor).
+ * Runs ONLY on the scope's drive thread — from nova_supervised_run_impl's
+ * drain loop (one call per iteration: failures are decided while siblings
+ * are still running, so an Escalate can cancel them EARLY, and a Stop lets
+ * them finish undisturbed) and once more after the drain completes (final
+ * catch-up under the pending_remote==0 acquire gate).
+ *
+ * Per-slot protocol: acquire-load of `published` (pairs with the child's
+ * release-store in nova_fiber_report_child_kinded) → plain fields readable;
+ * `decided` is drive-thread-only. Each failure is fed to the handler EXACTLY
+ * once, in slot order (deterministic within one pass).
+ *
+ * Decision execution:
+ *   ESCALATE — feed the child's error into the scope's primary machinery
+ *     (nova_fiber_report_atomic_kinded: precedence PANIC > USER > CANCEL +
+ *     cancel_requested broadcast — exactly what the child itself does on
+ *     the default path, so the re-throw tail needs NO changes).
+ *   STOP — drop: no primary election, no cancellation; the slot stays
+ *     retained (not lost silently — child_error[] keeps it).
+ *   RESTART_GATED — §3b: execution is gated on child isolation (173.3).
+ *     The checker rejects constructing these variants
+ *     (E_SUPERVISOR_RESTART_GATED); reaching here means the guard was
+ *     bypassed — abort loudly rather than mis-supervise.
+ *
+ * Induced sibling cancellations (kind CANCEL) are consumed silently: they
+ * are the CONSEQUENCE of an escalation, not a root failure — the handler
+ * sees only genuine child failures (USER/USER_TYPED/PANIC). */
+static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
+    if (!q->has_supervisor || !q->child_error || q->_deciding) return;
+    q->_deciding = true;
+    for (int i = 0; i < q->child_count; i++) {
+        NovaChildError* ce = &q->child_error[i];
+        if (ce->decided) continue;
+        if (!nova_abool_load(&ce->published)) continue;
+        ce->decided = true;
+        if (ce->kind == NOVA_THROW_CANCEL) continue;
+        nova_int code = _nova_supervisor_decide_fn
+            ? _nova_supervisor_decide_fn((void*)q, (nova_int)i, (const void*)ce)
+            : (nova_int)NOVA_SUPERVISE_ESCALATE;
+        switch ((int)code) {
+            case NOVA_SUPERVISE_STOP:
+                break;
+            case NOVA_SUPERVISE_RESTART_GATED:
+                fflush(stdout);
+                fprintf(stderr,
+                    "nova: Supervisor returned Restart/RestartAll/RestartRest — "
+                    "execution is gated on child isolation (Plan 173.3, "
+                    "E_SUPERVISOR_RESTART_GATED); aborting\n");
+                abort();
+            case NOVA_SUPERVISE_ESCALATE:
+            default:
+                nova_fiber_report_atomic_kinded(q, ce->msg, ce->kind,
+                                                ce->reason, ce->payload, ce->tid);
+                break;
+        }
+    }
+    q->_deciding = false;
 }
 
 /* Round-robin run: resume each live fiber until all are dead.
@@ -2429,6 +2588,12 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
     q->_drain_started = true;
     for (;;) {
         int alive = nova_supervised_step(q);
+        /* Plan 173.2: supervisor-mode scopes decide retained failures WHILE
+         * siblings still run — serialized, on this (drive) thread. A failing
+         * child's epilogue calls nova_runtime_signal_main(), so the uv_run
+         * waits below wake promptly and the decision latency is one loop
+         * iteration. No-op (single flag test) for default scopes. */
+        if (q->has_supervisor) nova_supervised_process_decisions(q);
         /* Plan 174 (D349): deadline gate. Fire once, and only if the scope
          * wasn't already cancelled by a bound token (earliest-of-the-two wins
          * — token cancel takes precedence, no bogus TimeoutError). */
@@ -2511,10 +2676,19 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * R1-guard withheld it from the pool at death) — then releases each
      * retained ctx back to its pool now that the decision hook has run. */
     if (q->child_error) {
-        for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
-            if (q->child_error[_nv_di].msg != NULL) {
-                void* _nv_dctx = q->child_ctx ? q->child_ctx[_nv_di] : NULL;
-                nova_supervised_decide(q, _nv_di, &q->child_error[_nv_di], _nv_dctx);
+        if (q->has_supervisor) {
+            /* Plan 173.2: final catch-up decision pass — pending_remote==0
+             * was observed above (the loop only exits with remote==0), so
+             * every report is visible; any failure whose publish landed
+             * after the last in-loop pass is decided here, still strictly
+             * before the retained ctx is released below. */
+            nova_supervised_process_decisions(q);
+        } else {
+            for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
+                if (q->child_error[_nv_di].msg != NULL) {
+                    void* _nv_dctx = q->child_ctx ? q->child_ctx[_nv_di] : NULL;
+                    nova_supervised_decide(q, _nv_di, &q->child_error[_nv_di], _nv_dctx);
+                }
             }
         }
         for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
