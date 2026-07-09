@@ -22,7 +22,7 @@
 module nova_tests.concurrency
 
 test "grow-vs-wake: 5 sequential supervised blocks (3/1/5/4/5) complete" {
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
 
     // Block 1: 3 fibers — initial sched-state allocation + first grow.
     supervised {
@@ -59,8 +59,8 @@ test "grow-vs-wake: 5 sequential supervised blocks (3/1/5/4/5) complete" {
         }
     }
 
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // 5 blocks × ~5ms sleeps run concurrently within each block; generous
     // slack for CI. A hang (the bug) would blow far past this.
-    assert(elapsed < 5000)
+    assert(elapsed.as_millis() < 5000)
 }

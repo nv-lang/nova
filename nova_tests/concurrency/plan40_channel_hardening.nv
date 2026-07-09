@@ -160,7 +160,7 @@ test "B7: very long timer (10s), recv wins immediately — cleanup срабат�
     // Если cleanup не работает, тест НЕ упадёт — он просто будет
     // долго закрываться (event-loop ждёт 10s timer). Но supervised
     // блок должен закрыться быстро (<100ms) с B7 — это и проверяем.
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     ro ch = Channel.new(1)
     supervised {
         spawn { ch.tx.send(99) }
@@ -171,8 +171,8 @@ test "B7: very long timer (10s), recv wins immediately — cleanup срабат�
             }
         }
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // Без B7: ~10s (event-loop hold).
     // С B7: <100ms.
-    assert(elapsed < 200)
+    assert(elapsed.as_millis() < 200)
 }

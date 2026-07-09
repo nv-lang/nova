@@ -26,7 +26,6 @@
 
 module nova_tests.concurrency
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // N10.1 — 2-node cycle: A ↔ B
 // ──────────────────────────────────────────────────────────────────────────
@@ -43,12 +42,12 @@ test "cycle 2-node: A↔B cancel(A) terminates and cancels both" {
     // Time-bound the cancel call. If cycle detection regresses, this
     // recurses infinitely and we'll either stack-overflow or time out
     // via EXPECT_TIMEOUT_MS above.
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     a.cancel("trigger")
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // Cycle traversal is O(nodes) so this is essentially instant.
     // Generous bound: 5 seconds covers slow CI.
-    assert(elapsed < 5_000)
+    assert(elapsed.as_millis() < 5_000)
     // Both tokens cancelled (cascade did reach B, then idempotently bounced).
     assert(a.is_cancelled())
     assert(b.is_cancelled())
@@ -67,10 +66,10 @@ test "cycle 3-node: A→B→C→A cancel(A) terminates and cancels all 3" {
     b.cancelled_by(a)   // a.linked += b
     c.cancelled_by(b)   // b.linked += c
     a.cancelled_by(c)   // c.linked += a
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     a.cancel("ring-start")
-    ro elapsed = Time.now() - t0
-    assert(elapsed < 5_000)
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    assert(elapsed.as_millis() < 5_000)
     assert(a.is_cancelled())
     assert(b.is_cancelled())
     assert(c.is_cancelled())
@@ -88,10 +87,10 @@ test "cycle self: A.cancelled_by(A) cancel(A) terminates" {
     ro a = CancelToken.new()
     a.cancelled_by(a)
     assert(!a.is_cancelled())
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     a.cancel("self-loop")
-    ro elapsed = Time.now() - t0
-    assert(elapsed < 5_000)
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    assert(elapsed.as_millis() < 5_000)
     assert(a.is_cancelled())
 }
 
@@ -109,10 +108,10 @@ test "cycle entered from outside: D→A↔B cancel(D) terminates, all cancelled"
     a.cancelled_by(d)   // d.linked += a
     a.cancelled_by(b)   // b.linked += a
     b.cancelled_by(a)   // a.linked += b
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     d.cancel("from-outside")
-    ro elapsed = Time.now() - t0
-    assert(elapsed < 5_000)
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    assert(elapsed.as_millis() < 5_000)
     assert(d.is_cancelled())
     assert(a.is_cancelled())
     assert(b.is_cancelled())

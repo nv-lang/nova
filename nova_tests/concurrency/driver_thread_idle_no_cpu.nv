@@ -43,30 +43,30 @@ test "100ms main-thread sleep, no fibers — completes near target" {
     // No supervised{}, no spawn{} — exercise the no-fibers path
     // specifically. The driver thread (if armed) must remain idle
     // throughout this sleep.
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     Time.sleep(100)
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
 
     // Lower bound: sleep actually waited (driver didn't short-circuit).
-    assert(elapsed >= 100 - UNDER_SLACK_MS1)
+    assert(elapsed.as_millis() >= 100 - UNDER_SLACK_MS1)
     // Upper bound: driver didn't busy-spin to the point of starving
     // the main thread for hundreds of ms.
-    assert(elapsed < 100 + OVER_SLACK_MS)
+    assert(elapsed.as_millis() < 100 + OVER_SLACK_MS)
 }
 
 test "successive idle sleeps don't accumulate driver overhead" {
     // Each iteration leaves the driver thread with nothing to do.
     // If it busy-spun between sleeps, wall-clock would balloon.
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     for _ in 0..5 {
         Time.sleep(20)
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
 
     // Theoretical: 5 × 20 = 100ms. Allow generous slack for Windows
     // timer gran (×5 iterations = up to 5×15ms drift) + oversubscription.
-    assert(elapsed >= 100 - UNDER_SLACK_MS1)
-    assert(elapsed < 100 + OVER_SLACK_MS)
+    assert(elapsed.as_millis() >= 100 - UNDER_SLACK_MS1)
+    assert(elapsed.as_millis() < 100 + OVER_SLACK_MS)
 }
 
 test "zero-ms yield on main with no fibers — instant" {
@@ -74,11 +74,11 @@ test "zero-ms yield on main with no fibers — instant" {
     // driver thread, this must return immediately, not park for any
     // measurable time. If the driver were spinning, scheduler tick
     // contention could add jitter.
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     for _ in 0..100 {
         Time.sleep(0)
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // 100 yields should be sub-second even under heavy oversubscription.
-    assert(elapsed < 1000)
+    assert(elapsed.as_millis() < 1000)
 }

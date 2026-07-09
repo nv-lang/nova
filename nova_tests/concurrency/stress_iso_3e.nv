@@ -5,7 +5,7 @@ module nova_tests.concurrency
 
 test "99+1 fibers sleep(10000), cancel(30ms) — STALE-slot stress" {
     ro tok = CancelToken.new()
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised(cancel: tok) {
         for _ in 0..99 {
             spawn { Time.sleep(10_000) }
@@ -15,7 +15,7 @@ test "99+1 fibers sleep(10000), cancel(30ms) — STALE-slot stress" {
             tok.cancel()
         }
     }
-    ro elapsed = Time.now() - t0
-    ro after_cancel = elapsed - 30
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    ro after_cancel = (elapsed - 30.millis()).as_millis()
     assert(after_cancel < 300)
 }

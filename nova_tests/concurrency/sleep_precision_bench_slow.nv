@@ -49,9 +49,9 @@ test "sleep(50) precision — p99 within ±30ms on Windows" {
     ro n int = 50
 
     for _ in 0..n {
-        ro t0 = Time.now()
+        ro t0 = Monotonic.now()
         Time.sleep(TARGET_MS)
-        ro elapsed = Time.now() - t0
+        ro elapsed = Monotonic.now().elapsed_since(t0).as_millis() as int
         ro dev = elapsed - TARGET_MS  // signed: negative = fired early
 
         // Track absolute deviation
@@ -83,7 +83,7 @@ test "sleep(0) zero-overhead yield <50ms (M:N-tolerant)" {
     // worker scheduling overhead добавляет ~250µs/yield → ~25-50ms total
     // под `nova test --jobs 16` oversubscription.
     // Ловим грубые баги (busy-loop = секунды), не precision-флейк.
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised {
         spawn {
             for _ in 0..100 {
@@ -91,7 +91,7 @@ test "sleep(0) zero-overhead yield <50ms (M:N-tolerant)" {
             }
         }
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0).as_millis() as int
     assert(elapsed < 50)  // 100 yields ≤ 50ms = 500µs avg (M:N-tolerant)
 }
 
@@ -101,9 +101,9 @@ test "sleep(1) minimum useful sleep — within Windows gran" {
     // fail если выше 50ms (3 тика — явный баг).
     mut max_observed int = 0
     for _ in 0..10 {
-        ro t0 = Time.now()
+        ro t0 = Monotonic.now()
         Time.sleep(1)
-        ro elapsed = Time.now() - t0
+        ro elapsed = Monotonic.now().elapsed_since(t0).as_millis() as int
         if elapsed > max_observed { max_observed = elapsed }
     }
     // Документируем: sleep(1) на Windows фактически ~1-31ms (2 тика).

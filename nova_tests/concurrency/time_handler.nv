@@ -38,7 +38,7 @@ test "with Time: handler.sleep called instead of default" {
             last_ms = ms
             return ()
         }
-        now() {
+        now_unix_ms() {
             return 0
         }
     } {
@@ -57,12 +57,12 @@ test "with Time: handler.now() returns custom clock value" {
         sleep(_ms) {
             return ()
         }
-        now() {
+        now_unix_ms() {
             return 42
         }
     } {
-        got1 = Time.now()
-        got2 = Time.now()
+        got1 = Time.now_unix_ms()
+        got2 = Time.now_unix_ms()
     }
     assert(got1 == 42)
     assert(got2 == 42)
@@ -75,15 +75,15 @@ test "with Time: stateful clock that ticks on each call" {
             clock = clock + ms
             return ()
         }
-        now() {
+        now_unix_ms() {
             return clock
         }
     } {
-        ro t0 = Time.now()
+        ro t0 = Time.now_unix_ms()
         Time.sleep(10)
-        ro t1 = Time.now()
+        ro t1 = Time.now_unix_ms()
         Time.sleep(5)
-        ro t2 = Time.now()
+        ro t2 = Time.now_unix_ms()
         assert(t0 == 0)
         assert(t1 == 10)
         assert(t2 == 15)
@@ -111,7 +111,7 @@ test "with Time: handler installed on main, supervised inside still works" {
             sleep_count += 1
             return ()
         }
-        now() { return 0 }
+        now_unix_ms() { return 0 }
     } {
         supervised {
             spawn {
@@ -144,13 +144,13 @@ test "Time.sleep on top level (no with) — small delays don't crash" {
     assert(true)
 }
 
-test "Time.now() on top level — monotonic non-decreasing" {
+test "Time.now_unix_ms() on top level — monotonic non-decreasing" {
     // Sleep long enough to span GetTickCount64's 16ms granularity on Win.
     // GetTickCount64 ticks ≈ every 15.625ms (system timer resolution).
     // Even after sleep(50), occasionally t2 lands in the same bucket as t1,
     // so we only assert monotonicity (>=), not exact delay.
-    ro t1 = Time.now()
+    ro t1 = Time.now_unix_ms()
     Time.sleep(50)
-    ro t2 = Time.now()
+    ro t2 = Time.now_unix_ms()
     assert(t2 >= t1)            // monotonic (clock never goes backwards)
 }

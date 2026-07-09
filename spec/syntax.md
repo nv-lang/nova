@@ -19,8 +19,11 @@ fn double(x int) -> int => x * 2
 ro j = json`{"name": "alice"}`              // -> Json
 ro q = sql`SELECT * FROM users WHERE id = ${user_id}`   // -> Sql, безопасно
 ro r = regex`\d+\.\d+`                       // -> Regex, raw
-ro b = bytes`deadbeef`                       // -> Bytes
 ```
+
+Байтовый блоб — отдельный литерал `x"…"` (hex-цифры → `[]u8`), не
+tagged template: `ro b = x"deadbeef"`. В очереди — [Plan 186](../docs/plans/186-hex-blob-embed.md)
+/ [D412](decisions/03-syntax.md#d412), в текущем компиляторе не реализован.
 
 **Интерполяция через `${expr}`** — tag-функция получает части и
 аргументы **раздельно**, что обеспечивает безопасность (защита от SQL
@@ -35,7 +38,7 @@ sql`SELECT * FROM users WHERE name = ${name}`
 **Multiline** работает естественно. Escape: `` \` ``, `\\`, `\${` —
 буквальные. Остальные символы — raw (удобно для regex и SQL).
 
-**Стандартные теги (план stdlib MVP):** `json`, `sql`, `regex`, `bytes`.
+**Стандартные теги (план stdlib MVP):** `json`, `sql`, `regex`.
 
 **Свой тег** — обычная функция:
 
@@ -60,9 +63,10 @@ ro s = "Hello, ${name}, you are ${age}"
 // = "Hello, " + str.from(name) + ", you are " + str.from(age)
 ```
 
-Каждое `${expr}` должно иметь тип, удовлетворяющий `Into[str]`
-([D73](decisions/08-runtime.md#d73)) — для всех примитивов и
-prelude-типов это автоматически. Буквальное `${` в строке — через
+Каждое `${expr}` рендерится через `str.from(v)` — примитивы и
+prelude-типы получают его автоматически; пользовательский тип
+подключается реализацией `Display` (`@display(mut w Write)`,
+[D73](decisions/08-runtime.md#d73)). Буквальное `${` в строке — через
 escape: `"\${name}"`.
 
 Подробно — [D44 → «Строковые литералы и интерполяция»](decisions/03-syntax.md#d44).
@@ -153,10 +157,10 @@ ro arr []f32 = [1.0, 2.0]
 начале/конце, не сразу после префикса (`0x_FF` ❌), не вокруг точки
 или `e`. Подробно — [D44](decisions/03-syntax.md#d44).
 
-## Аннотации типа — без двоеточия
+## Аннотации типа — форма «name type», без двоеточия
 
-В позициях, где компилятор однозначно знает «дальше идёт тип»,
-двоеточие опускается:
+В отличие от TypeScript/Rust (`name: Type`), Nova не использует `:` как
+разделитель имени и типа — только пробел, `name type`:
 
 ```nova
 fn save(u User, amount money) Fail Db -> ()    // параметры
@@ -165,7 +169,8 @@ type User { id u64, name str }                   // поля типа
 for id u64 in ids { ... }                        // for-loop
 ```
 
-`:` остаётся там, где это **разделитель ключ-значение**:
+`:` в Nova вообще не используется для типов — только как **разделитель
+ключ-значение** в литералах:
 
 ```nova
 ro alice = User { id: 1, name: "alice" }       // record-литерал
@@ -194,7 +199,6 @@ ro any   = |_| 0                            // wildcard
 list.filter(|x| x > 0)
 list.fold(0, |acc, x| acc + x)
 m.get_or_insert("k", || 0)
-spawn(|| compute())
 ```
 
 `|...|` валиден **только когда контекст однозначно задаёт сигнатуру**
@@ -235,7 +239,7 @@ retry(3) {
 ```nova
 list.filter() fn(x) => x > 0
 list.fold(0) fn(acc, x) { acc + x }
-list.map() fn(s str) Fail -> int { parse(s)? }
+list.map() fn(s str) -> Result[int, ParseError] { parse(s)? }
 ```
 
 **Правила:**
@@ -280,15 +284,64 @@ fn next_pow2(n int) -> int {                 // -> int обязателен
 }
 ```
 
-**В expression-body `-> T` опционален** — тип выводится из тела
-([D45](decisions/03-syntax.md#d45)). В block-body `-> T` обязателен (если не unit).
+**Правило `-> T` — два разных уровня, не путать:**
+
+1. **Грамматика (compile error, если нарушено).** В **block-body**
+   (`{ ... }`) `-> T` **обязателен**, если тип не `()` — компилятор не
+   выводит тип из блока (`return_type_c` делает inference только для
+   Expr-body; для Block-body без аннотации — `()`, «Что отвергнуто» в
+   [D45](decisions/03-syntax.md#d45)). В **expression-body** (`=> expr`)
+   `-> T` **опционален всегда** — тип выводится из тела. `-> T`
+   обязателен везде — сознательно отвергнутый вариант (шум для
+   тривиальных однострок).
+2. **Style-guide (линтер-warning, не compile error).** Для
+   **`export`-функций** (public API) рекомендуется писать `-> T` явно,
+   даже в expression-body, — линтер предупреждает, если опущено. Это
+   документация и стабильность контракта, а не грамматическое
+   требование: `export fn f(x int) => x * 2` без `-> int`
+   **скомпилируется**, но получит lint-warning.
+   Для приватных функций и tiny helpers (геттеры, предикаты,
+   конструкторы) — опускать нормально, warning не выдаётся.
 
 **Indentation не значим.** `fn f() => stmt1; stmt2` или multiline без
 `{}` — ошибка. Если шагов больше одного — `{}` обязательны.
 
-Style: для `export`-функций (public API) рекомендуется писать `-> T`
-явно — это документация и стабильность. Для приватных и tiny helpers
-можно опускать.
+**Если `=>`-тело — record-литерал, тип называется ровно один раз** —
+не TIMTOWTDI (два эквивалентных способа), а единственно верная запись
+для каждого из двух состояний сигнатуры (Plan 51 Ф.2, «устраняет
+единственную живую TIMTOWTDI в записи record-литералов»):
+
+```nova
+// -> T опущен → тип обязан быть в литерале
+fn Duration @plus(other Duration) => Duration { nanos: @nanos + other.nanos }
+
+// -> T присутствует → в литерале имени типа быть НЕ должно
+fn Duration @plus(other Duration) -> Duration => { nanos: @nanos + other.nanos }
+```
+
+Оба варианта записывают одну и ту же функцию, но не взаимозаменяемы —
+у каждого состояния сигнатуры (есть `-> T` или нет) ровно одна
+допустимая форма литерала. Смешение запрещено компилятором в обе
+стороны:
+
+- `-> Duration => Duration { ... }` (тип в сигнатуре И в литерале) —
+  compile error:
+
+  ```
+  error: redundant type prefix on record literal — the return type
+  `-> Duration` already declares it; write `=> { ... }`
+  ```
+
+- `=> Duration { ... }` без `-> Duration` в сигнатуре, если тип нужен
+  и снаружи (`export`, неочевидный inference), — линтер требует явный
+  `-> T` (см. правило style-guide выше); grammar-уровня ошибки здесь
+  нет, но неоднозначности тоже нет — тип всегда один источник истины.
+
+`-> Self` резолвится к типу receiver'а — то же правило: `-> Self =>
+Counter { ... }` в методе `Counter` тоже избыточно (redundant type
+prefix). Sum-coercion (`-> Shape => Circle { ... }`, литерал другого
+имени, чем return-тип) это правило не затрагивает — там имя литерала
+обязано остаться, т.к. `Circle ≠ Shape`.
 
 Подробно — [D40](decisions/03-syntax.md#d40), [D45](decisions/03-syntax.md#d45).
 
@@ -318,8 +371,9 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `&` | `@and(o)` | | `>>` | `@shr(n)` |
 | `^` | `@xor(o)` | | | |
 | `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
+| `a[x..y]` | `@index(r Range)` | | | |
 
-`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240). `&&`/`||` **не перегружаются** (short-circuit
+`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240); slice-индексация `a[x..y]` — та же `@index`, перегруженная по типу параметра: `x..y` (half-open, не включает `y`) лоуэрится компилятором в `Range { start: x, end: y }`, и вызывается `a.index(r Range)` — на `[]T`/`str` возвращает view без копирования (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` **не перегружаются** (short-circuit
 семантика). Custom-операторы (`:+`, `<>`) не разрешены. Подробно —
 [D46](decisions/03-syntax.md#d46).
 
@@ -374,7 +428,7 @@ f64.try_parse(s str) -> Option[f64]
 
 | Что | Стиль | Пример |
 |---|---|---|
-| Типы, эффекты, протоколы, варианты sum | **PascalCase** | `User`, `HashMap`, `Db`, `Hashable`, `Some` |
+| Типы, эффекты, протоколы, варианты sum | **PascalCase** | `User`, `HashMap`, `Db`, `Hash`, `Some` |
 | Generic-параметры | **PascalCase, односимвольные** | `T`, `K`, `V`, `E` |
 | Функции, методы (`@name`), параметры, поля | **snake_case** | `parse_url`, `@deposit`, `user_id`, `created_at` |
 | Константы (`const`) | **SCREAMING_SNAKE_CASE** | `MAX_PAYLOAD`, `DEFAULT_TIMEOUT` |
@@ -389,31 +443,36 @@ f64.try_parse(s str) -> Option[f64]
 Не использовать для других целей.
 
 **Договорные конвенции:**
-- `T.new(...)` — стандартный конструктор; `T.from(v X)` — из значения
-  через `From[X]` protocol ([D73](decisions/08-runtime.md#d73));
+- `T.new(...)` — стандартный конструктор; `T.from(v X)` — имя-конвенция
+  конструктора-конверсии (не protocol — `From[X]`/`Into[T]` ретрактированы
+  решением владельца 2026-07-06, [D73](decisions/08-runtime.md#d73));
   `T.from_X(...)` — доменный конструктор когда `from(v)` не передаёт
   смысл (`from_secs`, `from_polar`, `from_imag`).
-- `@into()` — конверсия в другой тип через `Into[T]` ([D73](decisions/08-runtime.md#d73));
-  тип цели берётся из контекста (`ro s str = v.into()`). Конверсия
-  в строку — `str.from(v)` или `v.into()` с context = `str` (раньше
-  было `@to_str()` через old D70 `ToStr`, отменено в v3).
+- `@to_X()` — трансформация в новое владеющее значение, когда вида
+  (zero-copy) не существует в принципе (`to_str()`, `to_upper()`,
+  D410). `consume @into_X()` — потребляющая передача владения
+  (`into_str()`, `into_raw()`, D131); универсального `v.into()`
+  **нет** — ретрактирован вместе с `From[T]`/`Into[U]`.
+- `Display`/`@display(mut w Write)` — представление в строку для
+  `${expr}`-интерполяции и `str.from(v)` на пользовательском типе
+  ([D73](decisions/08-runtime.md#d73)).
 - `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
 - **Имена ошибок** ([D30](decisions/03-syntax.md#d30)) — с типом / доменом:
   `ParseComplexError`, `ParseIntError`, `DbError`, `OverflowError`.
   Не использовать generic `ParseError`, `ValueError`, `Exception` —
   коллизии импорта, неоднозначность для AI.
 
-Конвенции `@to_X()`, `@as_X()`, `@is_X()` **не вводятся** — они
-дублируют существующие механизмы:
-- `@to_X()` дублирует `X.from(v)` / `v.into()` (D73).
+Конвенция `@as_X()`, `@is_X()` **не вводится** — дублирует
+существующие механизмы:
 - `@as_X()` дублирует keyword `as` (D54) для дешёвых cast'ов или
   `X.from` для нетривиальных.
 - `@is_X()` дублирует `v is X` (D54): для sum-типов и `any`
   оператор `is` работает напрямую (`shape is Circle`,
   `arg is int` для `arg any`). Для извлечения значения варианта
   с биндингом — `if X(n) = v` (D34).
-- `_prefix` — **только для полей** (используй методы вместо прямого
-  доступа). Для функций/методов **не используется**.
+- Приватность поля — модификатор `priv`, не `_prefix` (конвенция
+  `_prefix` **отменена** 2026-06-02, Plan 124/D220; подробно —
+  [«Видимость: export»](#видимость-export-для-публичных-деклараций) ниже).
 - Test-имена — строки естественного языка: `test "insert and get"`,
   не `"test_insert_and_get"`.
 
@@ -437,11 +496,8 @@ f64.try_parse(s str) -> Option[f64]
 - `RuntimeError` — sum bottom-уровневых runtime-ошибок
 - `RuntimeNoneError` — unit-тип, бросается через `expr!!` на `Option` ([D85](decisions/04-effects.md#d85))
 - `Effect[E]` — first-class тип handler'а эффекта
-- `From[T]` — protocol со static-методом `from(v T) -> Self`
-  ([D73](decisions/08-runtime.md#d73))
-- `Into[T]` — protocol с instance-методом `@into() -> T`
-  ([D73](decisions/08-runtime.md#d73)). Авто-выводится из `From[T]`
-  и наоборот; пишется одна сторона, другая синтезируется компилятором.
+- `Display` — protocol с instance-методом `@display(mut w Write)`,
+  представление в строку ([D73](decisions/08-runtime.md#d73))
 
 **Стандартные эффекты:**
 - `Fail[E]`, `Fail` — failable-эффект
@@ -471,27 +527,60 @@ module account
 export type Account {                    // публичный тип
     ro owner str
     balance money
-    _internal_id u64                     // convention: `_` = приватное-по-договору
-}
+    priv internal_id u64                 // field-level priv (D220) — настоящая
+}                                          // приватность, не `_prefix` (отменён)
+
+export type Job priv {                   // priv на типе — поля module-private
+    mut name str                          // by default (D281); настоящая приватность,
+}                                          // не по-договору
 
 type InternalState { ... }               // приватный тип
 
 export const ACCOUNT_MIN_BALANCE money = 0
-const _INTERNAL_TIMEOUT_MS int = 5_000
+const INTERNAL_TIMEOUT_MS int = 5_000    // без export уже module-private (D47);
+                                           // `_`-префикс не нужен, тут не поле
 
 export fn Account.new(owner str) -> Account => ...      // публичный конструктор
 export fn Account @balance() => @balance                // публичный метод
 fn Account @validate(amount money) => amount > 0       // приватный helper
 
-export type Hashable protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+export type Hash protocol {
+    @hash() -> u64
 }
 ```
 
-**Поля record:** в MVP все поля `export`-типа публичны. Convention
-`_prefix` для приватных-по-договору, не enforced компилятором —
-обычно инкапсуляция делается через **методы** (геттеры/сеттеры).
+**Поля record:** без `priv` поля `export`-типа публичны по умолчанию
+(D47). Приватность — модификатор `priv` (`priv`/`priv(type)`/`priv(file)`,
+D220 + D281) на **поле** (`priv internal_id u64`) или на **типе**, задавая
+дефолт для всех полей (`type Job priv { ... }`) — поле физически
+недоступно снаружи, компилятор это проверяет. Конвенция `_prefix` для
+полей как «приватное-по-договору» **отменена** (2026-06-02, Plan 124 /
+D220) — заменена на compile-time `priv`.
+
+**Канонический доступ к полю — одноимённые методы-свойства через
+перегрузку по арности** (D84 + D117, решение владельца 2026-07-06):
+чтение `@x() -> T` (0 аргументов), запись `mut @x(v T) -> @`
+(1 аргумент, беглая — возврат receiver'а автоматический, D409, в теле
+писать `return @`/`=> @` не нужно):
+
+```nova
+// Job — тот же priv-тип, что выше. Код ниже — внутри module account:
+// снаружи модуля record-литерал `Job { name: ... }` — E_PRIV_FIELD_INIT
+// (module-private поле нельзя инициализировать литералом извне), нужен
+// export fn Job.new(...).
+
+fn Job @name() -> str => @name           // getter — 0 аргументов
+fn Job mut @name(v str) -> @ { @name = v }    // setter — 1 аргумент, возврат @ автоматический
+
+mut j = Job { name: "build" }
+j.name()            // getter — "build"
+j.name("deploy")    // setter — переприсваивает и возвращает @
+    .name("test")    // fluent-chain: сеттер можно вызывать цепочкой
+```
+
+Пары `get_x`/`set_x` — **не канон** (в std таких 0). `with_x(v)` — другая
+операция (копия с заменённым полем, не мутация исходного). Весь новый
+код std пишется в accessor-convention парадигме.
 
 Подробно — [D47](decisions/07-modules.md#d47), [D29](decisions/07-modules.md#d29) (модули).
 
@@ -499,7 +588,8 @@ export type Hashable protocol {
 
 | После `type Имя` идёт | Что это |
 |---|---|
-| `\|` | sum-type |
+| `enum` | sum-type (D406; `enum` — контекстный identifier-маркер, не lexer-keyword) |
+| `set` | type-set — generic-bound по членству в явном списке типов (D310; тоже контекстный) |
 | `(` | tuple-структура |
 | `{` | record-структура |
 | `alias` | alias |
@@ -523,34 +613,43 @@ type Point(f64, f64)
 // unit-тип
 type Marker
 
-// sum-type — варианты через leading |
-type Color | Red | Green | Blue
+// sum-type — обязательный маркер enum (D406, 2026-07-01)
+// inline — | разделяет варианты, перед первым не нужен:
+type Color enum Red | Green | Blue
 
-type Shape
+// многострочный — | обязателен у КАЖДОГО варианта, включая первый:
+type Shape enum
     | Circle { radius f64 }
     | Square { side f64 }
     | Triangle { a f64, b f64, c f64 }
 
-type Result[T, E] | Ok(T) | Err(E)
-type Option[T] | Some(T) | None
+type Result[T, E] enum Ok(T) | Err(E)
+type Option[T] enum Some(T) | None
 ```
+
+`enum` — маркер в грамматике типов, валиден в любой type-позиции, не
+только в `type X enum ...`: параметр (`fn job(a enum A | B)`), возврат
+(`fn parse() -> enum Ok(int) | Err(str)`), поле, biнding. Named-форма
+(`type Foo enum A | B`) — просто объявление имени для inline
+type-выражения `enum A | B`, одна грамматика.
 
 Sum-варианты могут иметь числовые discriminants с auto-increment:
 
 ```nova
-type ExitStatus | Ok | Failure | Critical              // 0, 1, 2 (auto)
-type ErrorCode
+type ExitStatus enum Ok | Failure | Critical              // 0, 1, 2 (auto)
+type ErrorCode enum
     | NotFound       = 404
     | Unauthorized   = 401
     | InternalError  = 500
-type Bit u8 | Off = 0 | On = 1                         // явный базовый тип
+type Bit u8 enum Off = 0 | On = 1                          // явный базовый тип
 ```
 
-> ⚠ **`type X u8 | …` (явный базовый тип) пока не реализован** —
+> ⚠ **`type X <base> enum …` (явный базовый тип) пока не реализован** —
 > parser drift, см. [Plan 105](../docs/plans/105-sum-type-explicit-base.md).
 > Работают только формы без базового типа (implicit `int`).
 
-Подробно — [decisions/02-types.md → D52](decisions/02-types.md#d52).
+Подробно — [decisions/02-types.md → D406](decisions/02-types.md#d406-sum-type-синтаксис-enum-маркер),
+ревизия [D52](decisions/02-types.md#d52).
 
 ### Варианты sum-type — те же три формы, что top-level type
 
@@ -564,11 +663,11 @@ type Bit u8 | Off = 0 | On = 1                         // явный базов�
 | ничего | unit-вариант | `None`, `Red`, `Origin` |
 
 ```nova
-type Option[T]
+type Option[T] enum
     | Some(T)                 // позиционный — несёт значение T
     | None                    // unit — без полей, само по себе значение
 
-type Shape
+type Shape enum
     | Circle { radius f64 }   // record-вариант
     | Point(f64, f64)         // позиционный
     | Origin                  // unit
@@ -601,11 +700,23 @@ println(pair.0, pair.1)      // кортеж — то же
 // создание массивов (D38)
 ro xs []int = []                          // пустой, тип из annotation
 ro ys = []int.new()                       // через static-метод
-ro buf = []u8.with_capacity(1024)         // с pre-allocation
+mut buf = []u8.new().cap(1024)            // с pre-allocation; with_capacity
+                                           // удалён (D372 amend, 2026-07-06)
 
 // turbofish для дженериков (D38)
 ro n = parse[int]("42")?                  // явный T = int
 ro m = HashMap[str, int].new()            // явные K, V
+
+// Set[T] — множество, обёртка над HashMap[T, ()] (использует use-embed, D39)
+mut s = Set[int].new()
+s.insert(1)                               // -> bool, false если дубликат
+s.contains(1)                             // -> bool
+
+mut t = Set[int].new()
+t.insert(2)
+ro union = s | t                          // union/intersect/difference — через
+ro inter = s & t                          // operator overloading (D46), не методы
+ro diff  = s - t
 
 match shape {
     Circle { radius }    => 3.14159 * radius * radius
@@ -653,7 +764,7 @@ fn classify(x) => match x {
 рассматриваемых значений.
 
 ```nova
-type Color | Red | Green | Blue
+type Color enum Red | Green | Blue
 
 fn name(c Color) -> str => match c {
     Red   => "red"
@@ -735,7 +846,7 @@ for mut x in list {
 }
 ```
 
-Это согласовано с правилом D32/D33 — все binding'и иммутабельны по
+Это согласовано с правилом D32 + D33 — все binding'и иммутабельны по
 умолчанию, мутация явно через `mut`. Никакого `const` или `final`
 маркера в Nova нет — иммутабельность и так дефолт.
 
@@ -1022,7 +1133,7 @@ serve({ port: 9000, host: "127.0.0.1", max_conn: 16, timeout: 5.seconds() })
    подхватывают новое поле; вызовы без спреда — compile error «missing
    field», программист увидит каждое место.
 4. **Композиция** — несколько spread'ов: `{ ...BASE, ...OVERRIDES, port: 9000 }`.
-5. **Без новой грамматики** — работает через существующие D52/D55/D60.
+5. **Без новой грамматики** — работает через существующие D52 + D55 + D60.
 
 **Когда такой паттерн избыточен:**
 
@@ -1214,9 +1325,8 @@ fn log_one(x { show() -> str }) Log -> () => Log.info(x.show())
 по [D66](decisions/02-types.md#d66):
 
 ```nova
-type Hashable protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+type Hash protocol {
+    @hash() -> u64
 }
 
 type Next[T] protocol {
@@ -1243,32 +1353,34 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
 Подробно — [D16](decisions/03-syntax.md#d16).
 Массивы — `[]T` (динамический), `[N]T` (фиксированный), [D27](decisions/03-syntax.md#d27).
 
-## Generic bounds — `[T Protocol]`
+## Generic bounds — `[T Protocol]` или `[T TypeSet]`
 
-Параметр-тип ограничивается protocol'ом через единое правило «name type»
-(без двоеточия):
+Параметр-тип ограничивается через единое правило «name type» (без
+двоеточия) — двумя способами: **protocol** (structural, любой тип с
+подходящими методами) или **type-set** (D310, ниже — closed список
+конкретных типов, membership-предикат, не структурный):
 
 ```nova
-fn dedup[T Hashable](xs []T) -> []T => ...
-fn map[K Hashable, V](m HashMap[K, V]) -> ...
+fn dedup[T Hash](xs []T) -> []T => ...
+fn map[K Hash, V](m HashMap[K, V]) -> ...
 fn fold[T, Acc](xs Iter[T], init Acc, f fn(Acc, T) -> Acc) -> Acc
 ```
 
 Bound — это **protocol-тип** ([D53](decisions/02-types.md#d53)). Тот же
-`Hashable` стоит и в позиции типа значения (existential), и в bound'е
+`Hash` стоит и в позиции типа значения (existential), и в bound'е
 (universal через мономорфизацию):
 
 ```nova
-fn dump(x Hashable) -> u64 => x.hash()        // existential, dynamic dispatch
-fn dump2[T Hashable](x T) -> u64 => x.hash()  // universal, mono dispatch
+fn dump(x Hash) -> u64 => x.hash()        // existential, dynamic dispatch
+fn dump2[T Hash](x T) -> u64 => x.hash()  // universal, mono dispatch
 ```
 
 **Порядок параметров — слева направо.** Имя в bound'е должно быть
 объявлено раньше:
 
 ```nova
-fn func[K, T From[K]](v K) -> T => T.from(v)   // ok: K объявлен первым
-fn func[T From[K], K](v K) -> T                 // ОШИБКА: K используется до объявления
+fn get[K, V, C Index[K, V]](c C, k K) -> V => c[k]   // ok: K, V объявлены первыми
+fn get[C Index[K, V], K, V](c C, k K) -> V           // ОШИБКА: K, V используются до объявления
 ```
 
 **Множественные bounds** — через анонимный protocol:
@@ -1280,11 +1392,49 @@ fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](x
 Если паттерн повторяется — выносится в именованный protocol (`type Ord
 protocol { ... }`).
 
-Подробно — [D72](decisions/02-types.md#d72).
+### Type-set — bound по членству, не по структуре
 
-## Конверсии: `as` и `From`/`Into`
+**Type-set** — четвёртая kind-форма `type` (наряду с newtype/alias/
+record-tuple/`enum`, D310): именованное множество **конкретных** типов,
+перечисленных явно. В отличие от protocol (любой тип с подходящими
+методами удовлетворяет структурно), type-set — closed list, только
+явно перечисленные члены проходят:
 
-Два способа конверсии под разные сценарии:
+```nova
+// inline — | разделяет члены, перед первым не нужен
+type Num set int | f64
+
+// многострочный — | обязателен у каждого члена, включая первый
+type AnyNumber set
+    | i8 | i16 | i32 | i64 | int
+    | u8 | u16 | u32 | u64 | uint
+
+fn[T Num] sum_two(a T, b T) -> T => a + b
+```
+
+Диспетч по первому токену после `type Name` (как `enum`/`alias`) — `set`
+контекстный, не глобальный keyword. Bound из type-set ведёт себя как
+protocol-bound: `[T Num]`. Композиция с протоколами — через `+`: `[T
+SignedInt + Hash]` (T ∈ set И реализует Hash). **Не больше одного
+type-set** в списке bound'ов (`E_MULTIPLE_TYPE_SETS`) — протоколов
+можно сколько угодно.
+
+**Члены — только конкретные типы**, перечисленные по идентичности:
+newtype `type MyI8 i8` не входит в `{i8}` автоматически — нужен явный
+листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect/другого
+type-set как члена). **Один set не смешивает signed/unsigned целые**
+(`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInt`/`UnsignedInt` в
+prelude (`std/prelude/protocols.nv`) разделены по этой оси.
+
+Подробно — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
+
+## Конверсии: `as` и `T.from(v)`
+
+Два способа конверсии под разные сценарии. `From[X]`/`Into[T]` как
+protocol'ы **ретрактированы** (решение владельца 2026-07-06, D73) —
+`from` остаётся именем-конвенцией конструктора-конверсии, но не
+protocol-bound, и парный `.into()` компилятором больше не
+синтезируется — универсального `v.into()` нет:
 
 ```nova
 // 1. as — compile-time, тривиальные cast'ы (D54)
@@ -1292,42 +1442,41 @@ ro n = 100 as u32                          // numeric
 ro u = 42 as UserId                         // newtype ↔ underlying
 ro code = NotFound as int                   // sum → int
 
-// 2. From / Into — нетривиальная конверсия с runtime-логикой (D73)
+// 2. T.from(v) — конвенция конструктора-конверсии, нетривиальная
+//    конверсия с runtime-логикой (D73)
 type Celsius f64
 type Fahrenheit f64
 
-// Программист пишет ОДНУ сторону пары — компилятор синтезирует парную.
 fn Fahrenheit.from(c Celsius) -> Self =>
     Self((c as f64) * 9.0 / 5.0 + 32.0)
 
-// Две формы вызова из одной реализации:
-ro f1 = Fahrenheit.from(Celsius(100.0))    // static, explicit-type
-ro f2 = Celsius(100.0).into()              // instance, тип из контекста (требует ro-аннотации
-                                              // или return-position)
-ro f3 Fahrenheit = Celsius(100.0).into()   // тип цели — Fahrenheit (из аннотации)
+ro f1 = Fahrenheit.from(Celsius(100.0))    // static, единственная форма вызова
 
-// Конверсия в строку — частный случай:
+// Конверсия в строку — частный случай, тот же `from`:
 ro s = str.from(42)                         // "42"
-ro s2 str = (42).into()                    // "42"
-ro msg = "id=${user_id}"                    // sugar над str.from(user_id)
+ro msg = "id=${user_id}"                    // sugar над str.from(user_id) —
+                                              // для пользовательских типов
+                                              // через Display/@display
 ```
 
 **Когда какая форма:**
 
 - **`T.from(v)`** — целевой тип в начале, читается «build a Fahrenheit
-  from this Celsius». Хорош в выражениях.
-- **`v.into()`** — короче в method-chains: `c.into().log()`. Тип
-  цели — из контекста (`ro x T = ...`, параметр функции, return-type).
+  from this Celsius». Единственная форма вызова конверсии — нет
+  parallel instance-формы (`v.into()` ретрактирован).
+- Method-chain читаемость, которую раньше давал `.into()`, достигается
+  через `to_X()`/`into_X()` — конкретные именованные методы (см.
+  «Договорные конвенции» выше), не generic-конверсия по типу цели.
 
-**Граница `as` vs `From`:**
+**Граница `as` vs `T.from`:**
 
 - `as` — bit/tag-уровень, без runtime-кода: `100 as u32`, `id as u64`.
-- `From` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
+- `T.from` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
   `User.from(json)`.
 
 **Граница D73 vs D55:** D55 — automatic coercion для record/sum-литералов
 в позиции с известным типом (`ro u User = { id: 1, name: "x" }`).
-D73 — explicit method call для произвольных типов.
+`T.from(v)` — explicit method call для произвольных типов.
 
 Подробно: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
 
@@ -1358,7 +1507,7 @@ supervised {
 
 #### Тип результата
 
-**`spawn body` возвращает unit, всегда** (D50/D71, resolution 2026-05-06).
+**`spawn body` возвращает unit, всегда** (D50 + D71, resolution 2026-05-06).
 Результат body не доступен caller'у. Чтобы получить значение от
 concurrent-выполнения:
 
