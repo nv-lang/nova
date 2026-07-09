@@ -30,35 +30,35 @@ const UNDER_SLACK_MS2 int = 20
 test "sleep waits at least ms (fiber-context)" {
     supervised {
         spawn {
-            ro t0 = Time.now()
+            ro t0 = Monotonic.now()
             Time.sleep(100)
-            ro elapsed = Time.now() - t0
+            ro elapsed = Monotonic.now().elapsed_since(t0)
             // Windows: timer-resolution ~15ms означает что 100ms sleep
             // может fire через 85ms. Тест валидирует "approximately 100ms",
             // не "exact ≥ 100ms".
-            assert(elapsed >= 100 - UNDER_SLACK_MS2)
-            assert(elapsed < 100 + SLACK_MS2)
+            assert(elapsed.as_millis() >= 100 - UNDER_SLACK_MS2)
+            assert(elapsed.as_millis() < 100 + SLACK_MS2)
         }
     }
 }
 
 test "many fibers sleep concurrently, not sequentially" {
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised {
         spawn { Time.sleep(100) }
         spawn { Time.sleep(100) }
         spawn { Time.sleep(100) }
         spawn { Time.sleep(100) }
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // Все 4 fiber'а спят параллельно — итого ~100ms, не 400ms.
     // Windows timer-resolution slack — допускается ~85ms (см. выше).
-    assert(elapsed >= 100 - UNDER_SLACK_MS2)
-    assert(elapsed < 100 + SLACK_MS2)
+    assert(elapsed.as_millis() >= 100 - UNDER_SLACK_MS2)
+    assert(elapsed.as_millis() < 100 + SLACK_MS2)
 }
 
 test "cancel during long sleep wakes immediately" {
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     ro tok = CancelToken.new()
     supervised(cancel: tok) {
         spawn {
@@ -69,13 +69,13 @@ test "cancel during long sleep wakes immediately" {
             tok.cancel()
         }
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // 10 sec sleep должен прерваться через ~50ms + slack.
-    assert(elapsed < 50 + SLACK_MS2)
+    assert(elapsed.as_millis() < 50 + SLACK_MS2)
 }
 
 test "Time.sleep(0) is fast yield" {
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised {
         spawn {
             // 100 yield'ов должны завершиться очень быстро.
@@ -84,15 +84,15 @@ test "Time.sleep(0) is fast yield" {
             }
         }
     }
-    ro elapsed = Time.now() - t0
-    assert(elapsed < SLACK_MS2)
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    assert(elapsed.as_millis() < SLACK_MS2)
 }
 
 test "sleep handler override works (mock)" {
     mut calls = 0
     ro mock = effect Time {
         sleep(ms) { calls += 1; return () }
-        now()     => 12345
+        now_unix_ms() => 12345
     }
     with Time = mock {
         Time.sleep(1000)
