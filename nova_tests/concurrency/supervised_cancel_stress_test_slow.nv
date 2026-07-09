@@ -23,7 +23,7 @@ module nova_tests.concurrency
 
 test "cancel during 100 parked sleeps wakes all immediately" {
     ro tok = CancelToken.new()
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised(cancel: tok) {
         for _ in 0..99 {
             spawn {
@@ -35,14 +35,14 @@ test "cancel during 100 parked sleeps wakes all immediately" {
             tok.cancel()
         }
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // wake-not-hang: все 99 проснулись (иначе 10_000ms). 1000 >> jitter, << sleep.
-    assert(elapsed < 1000)
+    assert(elapsed.as_millis() < 1000)
 }
 
 test "cancel mid-flight with mixed sleep durations" {
     ro tok = CancelToken.new()
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised(cancel: tok) {
         for i in 0..50 {
             spawn {
@@ -54,12 +54,12 @@ test "cancel mid-flight with mixed sleep durations" {
             tok.cancel()
         }
     }
-    ro elapsed = Time.now() - t0
-    assert(elapsed < 1000)
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    assert(elapsed.as_millis() < 1000)
 }
 
 test "no leak on cancel — scope completes cleanly" {
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     for _ in 0..3 {
         ro tok = CancelToken.new()
         supervised(cancel: tok) {
@@ -72,7 +72,7 @@ test "no leak on cancel — scope completes cleanly" {
             }
         }
     }
-    ro elapsed = Time.now() - t0
+    ro elapsed = Monotonic.now().elapsed_since(t0)
     // 3 sequential 100-fiber scopes; wake-not-hang (иначе 3×5_000ms).
-    assert(elapsed < 2000)
+    assert(elapsed.as_millis() < 2000)
 }
