@@ -2162,6 +2162,29 @@ fn check_one_file(path: &Path, verbose: bool) -> CheckResult {
         // (single-file mode без cross-file context).
     }
 
+    // Plan 186 (D412): `embed("path")` -> HexBlobLit до type-check (parity
+    // с `nova build`/`nova test`; чекер не знает fn `embed`).
+    {
+        let root = nova_codegen::test_runner::find_repo_root_from(path)
+            .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+        if let Err(diags) = nova_codegen::embed_resolve::resolve_embeds(&mut module, path, &root)
+        {
+            return CheckResult {
+                file: path.to_path_buf(),
+                error: Some(
+                    diags
+                        .iter()
+                        .map(|d| d.render(&src, &path.to_string_lossy()))
+                        .collect::<Vec<_>>()
+                        .join("
+"),
+                ),
+                warnings: Vec::new(),
+                elapsed_ms: measure(t0),
+            };
+        }
+    }
+
     // Plan 181 (D347): same-scope re-binding alpha-rename before type-check so
     // `nova check` reports the same result as `nova build`/`nova test`
     // (populates `module.rebind_shadows` for R2). No-op without a rebind.
@@ -4206,6 +4229,24 @@ fn cmd_build(
         nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
     }
 
+    // Plan 186 (D412): `embed("path")` -> HexBlobLit (байты файла в AST).
+    // После import-inline (пути peer-файлов известны), ДО ключа кэша и
+    // type-check. Список встроенных файлов уходит в fingerprint кэша ниже -
+    // правка встроенного файла инвалидирует кэш пересборки.
+    let embed_files: Vec<std::path::PathBuf> = {
+        let _t = nova_codegen::perf_timer::PerfTimer::new("embed-resolve");
+        nova_codegen::embed_resolve::resolve_embeds(&mut module, &path, &repo).map_err(
+            |diags| {
+                let msgs: Vec<String> = diags
+                    .iter()
+                    .map(|d| d.render(&src, &path_str))
+                    .collect();
+                anyhow!("{}", msgs.join("
+"))
+            },
+        )?
+    };
+
     // Plan 181 (D347): same-scope re-binding alpha-rename on the fully-assembled
     // module (post import-inline), BEFORE the build cache key / type-check /
     // codegen — so cached `.c` and the checked module agree on unique C-names
@@ -4232,6 +4273,7 @@ fn cmd_build(
                 nova_codegen::imports::current_target_os(),
                 mono_depth,
                 contracts_off,
+                &embed_files,
             )
         } else {
             None

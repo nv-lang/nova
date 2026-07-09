@@ -104,6 +104,12 @@ impl Numberer {
             ExprKind::CharLit(_) => R::Named { name: "char".to_string(), module: Vec::new(), args: Vec::new() },
             ExprKind::UnitLit => R::Unit,
             ExprKind::NullPtrLit => R::Ptr,
+            // D412 (Plan 186): hex-blob / embed → `[]u8` ≡ Vec[u8] (D239 nominal canon).
+            ExprKind::HexBlobLit(_) => R::Named {
+                name: "Vec".to_string(),
+                module: Vec::new(),
+                args: vec![R::Scalar { width: 8, signed: false, wide_default: false }],
+            },
             ExprKind::Binary { op, left, right } => match op {
                 // bool-producing (result independent of operand types)
                 BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
@@ -460,7 +466,7 @@ impl Numberer {
             | ExprKind::StrLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
         }
     }
 

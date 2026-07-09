@@ -312,6 +312,14 @@ impl Interpreter {
             ExprKind::RefArg(inner) => self.eval_expr(inner, env),
             ExprKind::CharLit(cp) => Ok(Flow::Value(Value::Int(*cp as i64))),
             ExprKind::FloatLit(x) => Ok(Flow::Value(Value::Float(*x))),
+            // D412 (Plan 186): hex-blob/embed → []u8 (Vec of Int byte values).
+            // Interp unsupported for production (Q-interpreter-future); minimal
+            // faithful value so const-eval-ish paths do not crash.
+            ExprKind::HexBlobLit(bytes) => Ok(Flow::Value(Value::Array(
+                std::rc::Rc::new(std::cell::RefCell::new(
+                    bytes.iter().map(|b| Value::Int(*b as i64)).collect(),
+                )),
+            ))),
             ExprKind::StrLit(s) => Ok(Flow::Value(Value::Str(s.clone()))),
             ExprKind::InterpolatedStr { parts } => {
                 // D44 string interpolation: вычисляем каждую часть и

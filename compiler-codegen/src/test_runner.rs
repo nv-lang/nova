@@ -2681,6 +2681,23 @@ fn codegen_to_c(path: &Path, src: &str, mono_depth: Option<usize>, contracts_off
         sm
     };
 
+    // Plan 186 (D412): `embed("path")` → HexBlobLit. После import-inline
+    // (пути peer-файлов известны через span.file_id → peer_files), ДО
+    // type-check — чекер никогда не видит вызов неизвестной fn `embed`.
+    {
+        let _t = crate::perf_timer::PerfTimer::new("embed-resolve");
+        let project_root = find_repo_root_from(path)
+            .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+        if let Err(diags) = crate::embed_resolve::resolve_embeds(&mut module, path, &project_root)
+        {
+            return Err(diags
+                .iter()
+                .map(|d| d.render_with_map(&source_map))
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+    }
+
     // Plan 180: inject SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
     // BEFORE numbering + type-check so their bodies are type-checked + annotated
     // (codegen's annotation-free infer cannot resolve serde's cross-method return

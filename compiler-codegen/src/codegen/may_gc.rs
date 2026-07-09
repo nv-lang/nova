@@ -760,7 +760,7 @@ impl<'a> Analyzer<'a> {
             | ExprKind::BoolLit(_)
             | ExprKind::UnitLit
             | ExprKind::CharLit(_)
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
         }
     }
 

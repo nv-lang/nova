@@ -223,6 +223,27 @@ fn read_file(path: &PathBuf) -> Result<String> {
     std::fs::read_to_string(path).map_err(|e| anyhow!("failed to read {}: {}", path.display(), e))
 }
 
+/// Plan 186 (D412): общий враппер embed-резолюции для single-file команд
+/// (`check` / `compile`). Project root = repo root (если найден), иначе
+/// каталог файла (embed тогда ограничен поддеревом каталога).
+fn resolve_embeds_or_err(
+    module: &mut nova_codegen::ast::Module,
+    path: &PathBuf,
+    src: &str,
+) -> Result<()> {
+    let root = nova_codegen::test_runner::find_repo_root_from(path)
+        .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+    nova_codegen::embed_resolve::resolve_embeds(module, path, &root).map_err(|diags| {
+        let messages: Vec<String> = diags
+            .iter()
+            .map(|d| d.render(src, &path.to_string_lossy()))
+            .collect();
+        anyhow!("{}", messages.join("
+"))
+    })?;
+    Ok(())
+}
+
 fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
     let src = read_file(path)?;
     let mut module = nova_codegen::parser::parse(&src).map_err(|d| {
@@ -232,6 +253,9 @@ fn cmd_check(path: &PathBuf, explain_cache: bool) -> Result<()> {
         )
     })?;
     check_module_path(path, &module)?;
+    // Plan 186 (D412): `embed("path")` -> HexBlobLit до type-check
+    // (чекер не знает fn `embed`).
+    resolve_embeds_or_err(&mut module, path, &src)?;
     // Plan 181 (D347): same-scope re-binding alpha-rename. Runs BEFORE
     // number_exprs / check so every downstream pass (checker, consume-check,
     // codegen) sees unique C-names for rebound locals (§2). No-op for modules
@@ -355,6 +379,8 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
         anyhow!("{}", d.render(&src, &path.to_string_lossy()))
     })?;
     check_module_path(path, &module)?;
+    // Plan 186 (D412): `embed("path")` -> HexBlobLit до type-check.
+    resolve_embeds_or_err(&mut module, path, &src)?;
     // Plan 180: inject SERDE synthesized methods BEFORE numbering + type-check,
     // so their bodies are type-checked and annotated (codegen's annotation-free
     // infer cannot resolve serde's cross-method return types). Other auto-derive

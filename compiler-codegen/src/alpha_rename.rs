@@ -484,7 +484,7 @@ impl<'t> Renamer<'t> {
             | ExprKind::StrLit(_)
             | ExprKind::CharLit(_)
             | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
 
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
@@ -927,7 +927,7 @@ pub(crate) fn collect_names_expr(e: &Expr, out: &mut HashSet<String>) {
         | ExprKind::StrLit(_)
         | ExprKind::CharLit(_)
         | ExprKind::UnitLit
-        | ExprKind::NullPtrLit => {}
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr { expr, .. } = p {
