@@ -700,7 +700,8 @@ println(pair.0, pair.1)      // кортеж — то же
 // создание массивов (D38)
 ro xs []int = []                          // пустой, тип из annotation
 ro ys = []int.new()                       // через static-метод
-ro buf = []u8.with_capacity(1024)         // с pre-allocation
+mut buf = []u8.new().cap(1024)            // с pre-allocation; with_capacity
+                                           // удалён (D372 amend, 2026-07-06)
 
 // turbofish для дженериков (D38)
 ro n = parse[int]("42")?                  // явный T = int
