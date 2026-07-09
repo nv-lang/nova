@@ -198,7 +198,6 @@ ro any   = |_| 0                            // wildcard
 list.filter(|x| x > 0)
 list.fold(0, |acc, x| acc + x)
 m.get_or_insert("k", || 0)
-spawn(|| compute())
 ```
 
 `|...|` валиден **только когда контекст однозначно задаёт сигнатуру**
