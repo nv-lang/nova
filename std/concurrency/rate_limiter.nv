@@ -86,7 +86,9 @@ export fn TokenBucket mut @try_acquire() Time -> bool =>
 
 /// Try acquire `n` tokens atomically (all-or-nothing).
 #stable(since = "0.1")
-export fn TokenBucket mut @try_acquire_n(n int) Time -> bool {
+export fn TokenBucket mut @try_acquire_n(n int) Time -> bool
+    requires n >= 0
+{
     @refill()
     if @tokens >= (n as f64) {
         @tokens = @tokens - (n as f64)
