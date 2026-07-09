@@ -11721,6 +11721,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Self::collect_bound_names_expr(target, out);
                     Self::collect_bound_names_expr(value, out);
                 }
+                // Plan 173.3 Ф.3 (D415 §4): `spawn consume c = e { body }`
+                // desugars to Spawn(Block[ConsumeScope]) — the scope's
+                // `binding` is bound INSIDE the spawn (must not be captured
+                // from the outer fn), and its body may bind further names.
+                Stmt::ConsumeScope { binding, init, body, .. } => {
+                    out.insert(binding.clone());
+                    Self::collect_bound_names_expr(init, out);
+                    Self::collect_bound_names_block(body, out);
+                }
                 _ => {}
             }
         }
@@ -11937,6 +11946,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             Stmt::Return { value: Some(v), .. } => Self::collect_idents_expr(v, out),
             Stmt::Throw { value, .. } => Self::collect_idents_expr(value, out),
+            // Plan 173.3 Ф.3 (D415 §4): `spawn consume c = e { body }` desugar —
+            // idents referenced by the scope's init AND body must count as
+            // spawn-body references (else an outer `tx` used inside the
+            // consume-scope body is never captured into the spawn ctx →
+            // C `use of undeclared identifier`). The scope's own `binding`
+            // is excluded via collect_bound_names_block's ConsumeScope arm.
+            Stmt::ConsumeScope { init, body, .. } => {
+                Self::collect_idents_expr(init, out);
+                for s in &body.stmts {
+                    Self::collect_idents_stmt(s, out);
+                }
+                if let Some(t) = &body.trailing {
+                    Self::collect_idents_expr(t, out);
+                }
+            }
             _ => {}
         }
     }

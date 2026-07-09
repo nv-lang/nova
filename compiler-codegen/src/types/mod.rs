@@ -17069,6 +17069,19 @@ struct CapState {
     /// self-contained) free-variable scan run AT a spawn/parallel-for
     /// boundary against this stack.
     scopes: Vec<HashMap<String, ScopeBinding>>,
+    /// Plan 173.3 addendum ([M-const-init-concurrency-gate], D414 §2 note):
+    /// True while walking a MODULE-LEVEL `ro`/`const` initializer expression.
+    /// Module-level initializers run inside `nova_consts_init()` BEFORE the
+    /// M:N workers are armed ([M-lazy-const-init-race] eager fix); any
+    /// concurrency construct there would lazily arm workers MID-init
+    /// (`_auto_arm_if_needed()`) — turning the rest of consts-init
+    /// multi-threaded and resurrecting the race. Checker bans:
+    /// `spawn`/`supervised`/`detach`/`parallel for`/`select`/channel
+    /// send-recv ops, and calls to fns whose signature carries the `Detach`
+    /// effect → `E_CONST_INIT_CONCURRENCY`. Ordinary runtime calls (extern
+    /// fns, allocation) stay LEGAL for `ro` (only `const` has the stricter
+    /// E_CONST_EFFECT_IN_INIT purity rule).
+    const_init: bool,
 }
 
 impl CapState {
@@ -17150,9 +17163,59 @@ impl<'a> CapabilityCtx<'a> {
                     }
                     self.walk_block(&t.body, &mut state, errors);
                 }
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]):
+                // module-level `ro` / `const` initializers run inside
+                // nova_consts_init() BEFORE M:N workers arm — concurrency
+                // constructs are banned there (see CapState.const_init doc).
+                Item::Let(d) => {
+                    let mut state = CapState::default();
+                    state.const_init = true;
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
+                    state.scopes.push(HashMap::new());
+                    self.walk_expr(&d.value, &mut state, errors);
+                    state.scopes.pop();
+                }
+                Item::Const(c) => {
+                    let mut state = CapState::default();
+                    state.const_init = true;
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
+                    state.scopes.push(HashMap::new());
+                    self.walk_expr(&c.value, &mut state, errors);
+                    state.scopes.pop();
+                }
                 _ => {}
             }
         }
+    }
+
+    /// Plan 173.3 addendum ([M-const-init-concurrency-gate]): emit
+    /// `E_CONST_INIT_CONCURRENCY` for a concurrency construct / call inside
+    /// a module-level `ro`/`const` initializer. `what` names the construct.
+    fn const_init_concurrency_error(
+        &self,
+        what: &str,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CONST_INIT_CONCURRENCY] {} is not allowed in a module-level \
+                 `ro`/`const` initializer — these run inside `nova_consts_init()` \
+                 BEFORE the M:N workers are armed; a concurrency construct here \
+                 would lazily arm workers MID-init and make the remaining \
+                 initializers run multi-threaded (resurrecting the \
+                 [M-lazy-const-init-race] data race). Move the concurrent work \
+                 into a function called from `main`/a test, or compute the value \
+                 sequentially (ordinary runtime/extern calls remain legal in \
+                 `ro` initializers).",
+                what
+            ),
+            span,
+        ));
     }
 
     fn walk_fn_body(&self, f: &FnDecl, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
@@ -17323,6 +17386,54 @@ impl<'a> CapabilityCtx<'a> {
                 for _ in &pushed { state.with_handler_stack.pop(); }
             }
             ExprKind::Call { func, args, trailing } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]):
+                // inside a module-level ro/const initializer, ban
+                // (a) channel blocking ops by method name — `send`/`recv`
+                //     (buffered `send` PARKS when full; `recv` parks when
+                //     empty — with no workers armed that's a pre-main hang;
+                //     documented name-heuristic, matching D91 surface);
+                // (b) calls to free fns whose signature carries the `Detach`
+                //     effect (the call would detach a fiber mid-consts-init).
+                // Non-parking `try_send`/`try_recv` and ordinary runtime /
+                // extern calls remain legal (`ro` init is allowed effects).
+                if state.const_init {
+                    match &func.kind {
+                        ExprKind::Member { name, .. }
+                            if name == "send" || name == "recv" =>
+                        {
+                            self.const_init_concurrency_error(
+                                &format!("channel op `.{}()`", name),
+                                e.span,
+                                errors,
+                            );
+                        }
+                        ExprKind::Ident(fname) => {
+                            let has_detach = self
+                                .sig
+                                .free_fns(fname)
+                                .map_or(false, |fns| {
+                                    fns.iter().any(|f| {
+                                        f.effects.iter().any(|ef| matches!(
+                                            ef,
+                                            TypeRef::Named { path, .. }
+                                                if path.last().map(String::as_str) == Some("Detach")
+                                        ))
+                                    })
+                                });
+                            if has_detach {
+                                self.const_init_concurrency_error(
+                                    &format!(
+                                        "call to `{}` (declares the `Detach` effect)",
+                                        fname
+                                    ),
+                                    e.span,
+                                    errors,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 self.walk_expr(func, state, errors);
                 for a in args { self.walk_expr(a.expr(), state, errors); }
                 if let Some(t) = trailing {
@@ -17435,6 +17546,10 @@ impl<'a> CapabilityCtx<'a> {
                 FnBody::External => {}
             },
             ExprKind::Spawn(body) => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`spawn`", e.span, errors);
+                }
                 // Plan 173.3 (D415 §2): capture-check boundary — `spawn`'s
                 // body executes in a NEW fiber (M:N, may run on another OS
                 // thread). Any outer `mut` binding captured by reference
@@ -17445,6 +17560,10 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(body, state, errors);
             }
             ExprKind::Detach(body) => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`detach`", e.span, errors);
+                }
                 // Plan 173 Ф.3 п.2 (D50 / D414 §2): `detach { }` требует эффект
                 // `Detach` в сигнатуре enclosing-`fn` (или замыкания с эффектами) —
                 // fire-and-forget задача переживает caller'а, это наблюдаемый
@@ -17480,11 +17599,19 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_block(body, state, errors);
             }
             ExprKind::Supervised { body, cancel, deadline } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`supervised { }`", e.span, errors);
+                }
                 if let Some(c) = cancel { self.walk_expr(c, state, errors); }
                 if let Some(_dl) = deadline { self.walk_expr(&_dl.expr, state, errors); }
                 self.walk_block(body, state, errors);
             }
             ExprKind::ParallelFor { iter, body, pattern, elem_type } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`parallel for`", e.span, errors);
+                }
                 self.walk_expr(iter, state, errors);
                 // Plan 173.3 (D415 §2): capture-check boundary — same fan-out
                 // fiber-per-element concurrency as `spawn` (D50 desugar:
@@ -17523,6 +17650,10 @@ impl<'a> CapabilityCtx<'a> {
             }
             ExprKind::Loop { body, .. } => self.walk_block(body, state, errors),
             ExprKind::Select { arms } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`select { }`", e.span, errors);
+                }
                 for arm in arms {
                     match &arm.op {
                         SelectOp::Recv { chan, .. } => self.walk_expr(chan, state, errors),
@@ -17870,6 +18001,10 @@ fn capture_syntactic_init_type(
             Box::new(named("__nv_unknown_elem")),
             e.span,
         )),
+        // `mut x = TypeName { .. }` — record literal with explicit type.
+        ExprKind::RecordLit { type_name: Some(path), .. } => {
+            path.last().map(|n| named(n))
+        }
         ExprKind::Call { func, .. } => match &func.kind {
             ExprKind::Member { obj, .. } => {
                 // `Type.new(..)` — plain, or `Type[T].new(..)` — turbofish
