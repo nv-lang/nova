@@ -513,7 +513,10 @@ f64.try_parse(s str) -> Option[f64]
 - `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace` — основные
 - `Ask[T]` — Reader-style контекст
 - `Alloc[R]` — аллокация в region
-- `Detach`, `Blocking` — ([D50](decisions/06-concurrency.md#d50))
+- `Detach` — маркер fire-and-forget задач ([D50](decisions/06-concurrency.md#d50)).
+  Блокирующие вызовы и real-time — **не эффекты**, а атрибуты функции:
+  `#blocking` (offload на threadpool) и `#realtime` (запрет
+  parking/alloc в теле) — D172.
 
 **Примитивные типы (lowercase, исключение из PascalCase-правила):**
 - `int`, `uint`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
