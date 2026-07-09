@@ -30,6 +30,7 @@
  * reserved IDs 1..16 для cheap pattern-match в any.is_int() / etc.
  */
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef uint32_t NovaTypeId;
