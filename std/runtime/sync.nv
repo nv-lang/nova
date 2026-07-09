@@ -2048,7 +2048,10 @@ export fn Once mut @try_start() -> Option[OnceGuard consume] {
 /// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type OnceCell[T]`
 /// to opaque-handle newtype `type OnceCell[T](*())`. C struct + per-T methods
 /// continue to be emitted by codegen (emit_oncecell_instance); ABI unchanged.
+/// Plan 173.3 (D415 §2): `#share` audited vouch — exactly-once init IS
+/// internal synchronization (same reasoning as `Once`/`Mutex`).
 #stable(since = "0.1")
+#share
 export type OnceCell[T](*())
 
 /// Create an empty OnceCell.
@@ -2113,7 +2116,10 @@ export extern "nova" fn OnceCell[T] @is_initialized() -> bool
 /// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type Lazy[T]`
 /// to opaque-handle newtype `type Lazy[T](*())`. C struct + per-T methods
 /// continue to be emitted by codegen (emit_lazy_instance); ABI unchanged.
+/// Plan 173.3 (D415 §2): `#share` audited vouch — exactly-once init IS
+/// internal synchronization (same reasoning as `Once`/`Mutex`).
 #stable(since = "0.1")
+#share
 export type Lazy[T](*())
 
 /// Create a Lazy[T] with the given initializer closure.

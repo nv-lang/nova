@@ -17817,7 +17817,13 @@ fn capture_syntactic_init_type(
         )),
         ExprKind::Call { func, .. } => match &func.kind {
             ExprKind::Member { obj, .. } => {
-                if let ExprKind::Ident(tyname) = &obj.kind {
+                // `Type.new(..)` — plain, or `Type[T].new(..)` — turbofish
+                // (generic ctor, e.g. `OnceCell[int].new()`).
+                let base = match &obj.kind {
+                    ExprKind::TurboFish { base, .. } => &base.kind,
+                    other => other,
+                };
+                if let ExprKind::Ident(tyname) = base {
                     if type_decls.contains_key(tyname.as_str()) {
                         return Some(named(tyname));
                     }
