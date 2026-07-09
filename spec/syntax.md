@@ -63,9 +63,10 @@ ro s = "Hello, ${name}, you are ${age}"
 // = "Hello, " + str.from(name) + ", you are " + str.from(age)
 ```
 
-Каждое `${expr}` должно иметь тип, удовлетворяющий `Into[str]`
-([D73](decisions/08-runtime.md#d73)) — для всех примитивов и
-prelude-типов это автоматически. Буквальное `${` в строке — через
+Каждое `${expr}` рендерится через `str.from(v)` — примитивы и
+prelude-типы получают его автоматически; пользовательский тип
+подключается реализацией `Display` (`@display(mut w Write)`,
+[D73](decisions/08-runtime.md#d73)). Буквальное `${` в строке — через
 escape: `"\${name}"`.
 
 Подробно — [D44 → «Строковые литералы и интерполяция»](decisions/03-syntax.md#d44).
@@ -442,23 +443,27 @@ f64.try_parse(s str) -> Option[f64]
 Не использовать для других целей.
 
 **Договорные конвенции:**
-- `T.new(...)` — стандартный конструктор; `T.from(v X)` — из значения
-  через `From[X]` protocol ([D73](decisions/08-runtime.md#d73));
+- `T.new(...)` — стандартный конструктор; `T.from(v X)` — имя-конвенция
+  конструктора-конверсии (не protocol — `From[X]`/`Into[T]` ретрактированы
+  решением владельца 2026-07-06, [D73](decisions/08-runtime.md#d73));
   `T.from_X(...)` — доменный конструктор когда `from(v)` не передаёт
   смысл (`from_secs`, `from_polar`, `from_imag`).
-- `@into()` — конверсия в другой тип через `Into[T]` ([D73](decisions/08-runtime.md#d73));
-  тип цели берётся из контекста (`ro s str = v.into()`). Конверсия
-  в строку — `str.from(v)` или `v.into()` с context = `str` (раньше
-  было `@to_str()` через old D70 `ToStr`, отменено в v3).
+- `@to_X()` — трансформация в новое владеющее значение, когда вида
+  (zero-copy) не существует в принципе (`to_str()`, `to_upper()`,
+  D410). `consume @into_X()` — потребляющая передача владения
+  (`into_str()`, `into_raw()`, D131); универсального `v.into()`
+  **нет** — ретрактирован вместе с `From[T]`/`Into[U]`.
+- `Display`/`@display(mut w Write)` — представление в строку для
+  `${expr}`-интерполяции и `str.from(v)` на пользовательском типе
+  ([D73](decisions/08-runtime.md#d73)).
 - `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
 - **Имена ошибок** ([D30](decisions/03-syntax.md#d30)) — с типом / доменом:
   `ParseComplexError`, `ParseIntError`, `DbError`, `OverflowError`.
   Не использовать generic `ParseError`, `ValueError`, `Exception` —
   коллизии импорта, неоднозначность для AI.
 
-Конвенции `@to_X()`, `@as_X()`, `@is_X()` **не вводятся** — они
-дублируют существующие механизмы:
-- `@to_X()` дублирует `X.from(v)` / `v.into()` (D73).
+Конвенция `@as_X()`, `@is_X()` **не вводится** — дублирует
+существующие механизмы:
 - `@as_X()` дублирует keyword `as` (D54) для дешёвых cast'ов или
   `X.from` для нетривиальных.
 - `@is_X()` дублирует `v is X` (D54): для sum-типов и `any`
@@ -490,11 +495,8 @@ f64.try_parse(s str) -> Option[f64]
 - `RuntimeError` — sum bottom-уровневых runtime-ошибок
 - `RuntimeNoneError` — unit-тип, бросается через `expr!!` на `Option` ([D85](decisions/04-effects.md#d85))
 - `Effect[E]` — first-class тип handler'а эффекта
-- `From[T]` — protocol со static-методом `from(v T) -> Self`
-  ([D73](decisions/08-runtime.md#d73))
-- `Into[T]` — protocol с instance-методом `@into() -> T`
-  ([D73](decisions/08-runtime.md#d73)). Авто-выводится из `From[T]`
-  и наоборот; пишется одна сторона, другая синтезируется компилятором.
+- `Display` — protocol с instance-методом `@display(mut w Write)`,
+  представление в строку ([D73](decisions/08-runtime.md#d73))
 
 **Стандартные эффекты:**
 - `Fail[E]`, `Fail` — failable-эффект
@@ -1318,8 +1320,8 @@ fn dump2[T Hash](x T) -> u64 => x.hash()  // universal, mono dispatch
 объявлено раньше:
 
 ```nova
-fn func[K, T From[K]](v K) -> T => T.from(v)   // ok: K объявлен первым
-fn func[T From[K], K](v K) -> T                 // ОШИБКА: K используется до объявления
+fn get[K, V, C Index[K, V]](c C, k K) -> V => c[k]   // ok: K, V объявлены первыми
+fn get[C Index[K, V], K, V](c C, k K) -> V           // ОШИБКА: K, V используются до объявления
 ```
 
 **Множественные bounds** — через анонимный protocol:
@@ -1333,9 +1335,13 @@ protocol { ... }`).
 
 Подробно — [D72](decisions/02-types.md#d72).
 
-## Конверсии: `as` и `From`/`Into`
+## Конверсии: `as` и `T.from(v)`
 
-Два способа конверсии под разные сценарии:
+Два способа конверсии под разные сценарии. `From[X]`/`Into[T]` как
+protocol'ы **ретрактированы** (решение владельца 2026-07-06, D73) —
+`from` остаётся именем-конвенцией конструктора-конверсии, но не
+protocol-bound, и парный `.into()` компилятором больше не
+синтезируется — универсального `v.into()` нет:
 
 ```nova
 // 1. as — compile-time, тривиальные cast'ы (D54)
@@ -1343,42 +1349,41 @@ ro n = 100 as u32                          // numeric
 ro u = 42 as UserId                         // newtype ↔ underlying
 ro code = NotFound as int                   // sum → int
 
-// 2. From / Into — нетривиальная конверсия с runtime-логикой (D73)
+// 2. T.from(v) — конвенция конструктора-конверсии, нетривиальная
+//    конверсия с runtime-логикой (D73)
 type Celsius f64
 type Fahrenheit f64
 
-// Программист пишет ОДНУ сторону пары — компилятор синтезирует парную.
 fn Fahrenheit.from(c Celsius) -> Self =>
     Self((c as f64) * 9.0 / 5.0 + 32.0)
 
-// Две формы вызова из одной реализации:
-ro f1 = Fahrenheit.from(Celsius(100.0))    // static, explicit-type
-ro f2 = Celsius(100.0).into()              // instance, тип из контекста (требует ro-аннотации
-                                              // или return-position)
-ro f3 Fahrenheit = Celsius(100.0).into()   // тип цели — Fahrenheit (из аннотации)
+ro f1 = Fahrenheit.from(Celsius(100.0))    // static, единственная форма вызова
 
-// Конверсия в строку — частный случай:
+// Конверсия в строку — частный случай, тот же `from`:
 ro s = str.from(42)                         // "42"
-ro s2 str = (42).into()                    // "42"
-ro msg = "id=${user_id}"                    // sugar над str.from(user_id)
+ro msg = "id=${user_id}"                    // sugar над str.from(user_id) —
+                                              // для пользовательских типов
+                                              // через Display/@display
 ```
 
 **Когда какая форма:**
 
 - **`T.from(v)`** — целевой тип в начале, читается «build a Fahrenheit
-  from this Celsius». Хорош в выражениях.
-- **`v.into()`** — короче в method-chains: `c.into().log()`. Тип
-  цели — из контекста (`ro x T = ...`, параметр функции, return-type).
+  from this Celsius». Единственная форма вызова конверсии — нет
+  parallel instance-формы (`v.into()` ретрактирован).
+- Method-chain читаемость, которую раньше давал `.into()`, достигается
+  через `to_X()`/`into_X()` — конкретные именованные методы (см.
+  «Договорные конвенции» выше), не generic-конверсия по типу цели.
 
-**Граница `as` vs `From`:**
+**Граница `as` vs `T.from`:**
 
 - `as` — bit/tag-уровень, без runtime-кода: `100 as u32`, `id as u64`.
-- `From` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
+- `T.from` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
   `User.from(json)`.
 
 **Граница D73 vs D55:** D55 — automatic coercion для record/sum-литералов
 в позиции с известным типом (`ro u User = { id: 1, name: "x" }`).
-D73 — explicit method call для произвольных типов.
+`T.from(v)` — explicit method call для произвольных типов.
 
 Подробно: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
 
