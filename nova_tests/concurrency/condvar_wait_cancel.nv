@@ -35,7 +35,7 @@ test "condvar.wait() parked fiber — cancel wakes early, no notify" {
     mut waiter_in = AtomicBool.new(false)
     mut waiter_done = AtomicBool.new(false)
 
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised(cancel: tok) {
         // Waiter fiber: lock + cv.wait(mu). No predicate loop — we want
         // wait() to return exactly once (on cancel-wake) and then exit.
@@ -66,11 +66,11 @@ test "condvar.wait() parked fiber — cancel wakes early, no notify" {
             tok.cancel()
         }
     }
-    ro after_scope = Time.now() - t0
+    ro after_scope = Monotonic.now().elapsed_since(t0)
 
     // Plan 22 R4 budget for cancel-drain of a single parked waiter: <300ms.
     // Includes the ~few-ms poll window before the cancel fiber fires.
-    assert(after_scope < 300)
+    assert(after_scope.as_millis() < 300)
 
     // Sanity: cancel was actually observed, and the parked waiter resumed
     // (not stuck — would fail the 300ms budget anyway, but this catches

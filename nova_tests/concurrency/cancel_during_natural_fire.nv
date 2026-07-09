@@ -21,7 +21,7 @@ module nova_tests.concurrency
 
 test "50 fibers mixed durations + mid-flight cancel — drain <300ms" {
     ro tok = CancelToken.new()
-    ro t0 = Time.now()
+    ro t0 = Monotonic.now()
     supervised(cancel: tok) {
         // 50 fibers, durations 10ms, 15ms, 20ms, ..., 255ms.
         // At cancel time (~80ms) the first ~14 (10..75ms) have already
@@ -38,8 +38,8 @@ test "50 fibers mixed durations + mid-flight cancel — drain <300ms" {
             tok.cancel()
         }
     }
-    ro elapsed = Time.now() - t0
-    ro after_cancel = elapsed - 80
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    ro after_cancel = (elapsed - 80.millis()).as_millis()
 
     // Plan 22 R4 budget for cancel-drain of ~36 parked timers: <300ms p99.
     // Matches cancel_latency_bench.nv test 2 SLA (99+1 fibers, 300ms).
