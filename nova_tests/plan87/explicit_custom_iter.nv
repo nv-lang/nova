@@ -28,9 +28,11 @@ test "for x int in user Iterable[int]" {
 }
 
 test "parallel for x int in array literal" {
-    ro results []int = parallel for x int in [1, 2, 3] {
+    // Plan 173.1 (D71-amend): completion order → sort перед index-asserts.
+    mut results []int = parallel for x int in [1, 2, 3] {
         x * x
     }
+    results.sort()
     assert(results.len() == 3)
     assert(results[0] == 1)
     assert(results[1] == 4)

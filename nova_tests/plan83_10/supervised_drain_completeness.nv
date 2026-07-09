@@ -10,8 +10,13 @@
 
 module nova_tests.plan83_10
 
-test "parallel-for 500 — every slot unique correct" {
-    ro xs = parallel for i in 0..500 { i + 100 }
+test "parallel-for 500 — every element unique correct" {
+    // Plan 173.1 (D71-amend): completion order → sort восстанавливает
+    // соответствие «i-й элемент = i + 100» с полной силой (плотность +
+    // уникальность + корректность каждого значения).
+    mut xs = parallel for i in 0..500 { i + 100 }
+    xs.sort()
+    assert(xs.len() == 500)
     mut seen_count = 0
     mut i = 0
     while i < 500 {
@@ -24,7 +29,9 @@ test "parallel-for 500 — every slot unique correct" {
 }
 
 test "parallel-for 100 — different test instance, no cross-leak" {
-    ro ys = parallel for i in 0..100 { i + 1000 }
+    mut ys = parallel for i in 0..100 { i + 1000 }
+    ys.sort()
+    assert(ys.len() == 100)
     assert(ys[99] == 1099)
     assert(ys[0] == 1000)
 }

@@ -1539,14 +1539,23 @@ Structured-concurrency scope. Все `spawn` внутри ждут scope-exit п
 scheduler крутит resume по очереди (round-robin) пока все не завершатся. См.
 D71 для bootstrap-семантики.
 
-**Возвращает unit.** Trailing expression body отбрасывается. Результаты
-концurrent-выполнения — через mut-захваты или (для гомогенных) `parallel for`.
+**Value-expression (Plan 173.1 Ф.1; D414 §4).** Возвращает своё
+trailing-выражение, вычисленное **после join'а всех детей** (post-join —
+мутации детей видны). Void-форма (без trailing) — unit. Прежняя
+bootstrap-заглушка «возвращает unit, trailing отбрасывается» снята.
 
 ```nova
 supervised {
     spawn handle_requests()
     spawn periodic_cleanup()
-}                                  // ← ждёт пока обе fiber'ы не завершатся
+}                                  // ← ждёт пока обе fiber'ы не завершатся; unit
+
+mut hits = 0
+ro total = supervised {
+    spawn { hits += fetch_a() }
+    spawn { hits += fetch_b() }
+    hits                           // ← значение ПОСЛЕ завершения всех детей
+}
 ```
 
 `Time.sleep(0)` внутри `supervised` body (на main-уровне) даёт main-flow yield
@@ -1555,8 +1564,14 @@ supervised {
 ### `parallel for x in iter { body }`
 
 Fan-out parallel map: для каждого элемента `iter` запускается fiber с `body`,
-результаты собираются в массив **в порядке итерации**. Тип возврата — `[]T`,
-где `T` — тип `body`. Десугарится в `supervised { for x in iter { spawn { body } } }`.
+результаты собираются в массив **в порядке завершения (completion order,
+Plan 173.1 Ф.2 / D414 §4 — плотный, без дыр; порядок итерации НЕ
+гарантирован; нужен порядок — `xs.sort()`)**. Тип возврата — `[]T`, где `T`
+— тип `body` (ЛЮБОЙ тип: примитив, record, value-record, tuple, sum,
+вложенный `[]T`), итератор — любой (Iter-protocol, без `len()`). Сбор —
+через внутренний канал (Sender-клон на spawn → send из ребёнка → close на
+выходе; drain-fiber внутри scope; буфер `K = min(len, 16)` back-pressure).
+Десугарится в supervised-scope с channel-дренажом.
 Loop-переменная захватывается **по value** (snapshot на момент spawn'а).
 
 ```nova

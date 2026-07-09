@@ -192,6 +192,6 @@ test "str.from(char) Cyrillic (2-byte UTF-8)" {
     // 'П' = U+041F (Plan 108 D26 rev: len=bytes, char_len=codepoints)
     ro s = str.from('П')
     // UTF-8: 0xD0 0x9F = 2 bytes, 1 codepoint
-    assert(s.len() == 2)
+    assert(s.byte_len() == 2)
     assert(s.chars().count() == 1)
 }

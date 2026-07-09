@@ -11,12 +11,15 @@
 
 module nova_tests.plan83_6
 
-test "parallel for 100 — per-slot values correct (pool exercised)" {
+test "parallel for 100 — per-element values correct (pool exercised)" {
+    // Plan 173.1 (D71-amend): completion order → sort восстанавливает
+    // соответствие «i-й = i*2»; проверка полной силы (no ctx corruption).
     ro n = 100
-    ro xs = parallel for i in 0..100 {
+    mut xs = parallel for i in 0..100 {
         i * 2
     }
-    // Verify all slots received correct values (no ctx corruption / reuse).
+    xs.sort()
+    assert(xs.len() == n)
     mut i = 0
     while i < n {
         assert(xs[i] == i * 2)
@@ -26,9 +29,11 @@ test "parallel for 100 — per-slot values correct (pool exercised)" {
 
 test "parallel for 1000 — pool overflow path correct" {
     ro n = 1000
-    ro xs = parallel for i in 0..1000 {
+    mut xs = parallel for i in 0..1000 {
         i + 5
     }
+    xs.sort()
+    assert(xs.len() == n)
     mut i = 0
     while i < n {
         assert(xs[i] == i + 5)
