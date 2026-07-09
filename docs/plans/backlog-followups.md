@@ -2773,3 +2773,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   не регресс)/61-skip; спот-греп `.c` — `if (!_init)` веток 0, `nova_consts_init()`
   вызывается ровно один раз в `main()`; `std/net/addr_test` (ADDR_IMAGE_BYTES)
   PASS, спот-дифф `.c` подтверждает eager init + bare-value read.
+
+- **[M-const-init-concurrency-gate]** (2026-07-09, P2, вопрос владельца; Wave: В РАБОТЕ —
+  дополнение волны 173.3 [sonnet]) — module-level ro-инициализаторы исполняются в
+  nova_consts_init() ДО спавна воркеров, но чекер не запрещает в них конкуренцию
+  (E_CONST_EFFECT_IN_INIT покрывает только const); _auto_arm_if_needed() лениво поднял бы
+  M:N посреди consts_init → возврат гонки [M-lazy-const-init-race]. Фикс:
+  E_CONST_INIT_CONCURRENCY (spawn/supervised/detach/parallel/каналы/Detach-эффект
+  в сигнатурах вызываемых) + D215-амендмент. Сегодня спасает случайный гэп
+  (supervised-value не поддержан в module-init) — не контракт.
