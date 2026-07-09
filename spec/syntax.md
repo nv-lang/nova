@@ -588,7 +588,7 @@ j.name("deploy")    // setter — переприсваивает и возвра
 
 | После `type Имя` идёт | Что это |
 |---|---|
-| `\|` | sum-type |
+| `enum` | sum-type (D406; `enum` — контекстный identifier-маркер, не lexer-keyword) |
 | `(` | tuple-структура |
 | `{` | record-структура |
 | `alias` | alias |
@@ -612,34 +612,43 @@ type Point(f64, f64)
 // unit-тип
 type Marker
 
-// sum-type — варианты через leading |
-type Color | Red | Green | Blue
+// sum-type — обязательный маркер enum (D406, 2026-07-01)
+// inline — | разделяет варианты, перед первым не нужен:
+type Color enum Red | Green | Blue
 
-type Shape
+// многострочный — | обязателен у КАЖДОГО варианта, включая первый:
+type Shape enum
     | Circle { radius f64 }
     | Square { side f64 }
     | Triangle { a f64, b f64, c f64 }
 
-type Result[T, E] | Ok(T) | Err(E)
-type Option[T] | Some(T) | None
+type Result[T, E] enum Ok(T) | Err(E)
+type Option[T] enum Some(T) | None
 ```
+
+`enum` — маркер в грамматике типов, валиден в любой type-позиции, не
+только в `type X enum ...`: параметр (`fn job(a enum A | B)`), возврат
+(`fn parse() -> enum Ok(int) | Err(str)`), поле, biнding. Named-форма
+(`type Foo enum A | B`) — просто объявление имени для inline
+type-выражения `enum A | B`, одна грамматика.
 
 Sum-варианты могут иметь числовые discriminants с auto-increment:
 
 ```nova
-type ExitStatus | Ok | Failure | Critical              // 0, 1, 2 (auto)
-type ErrorCode
+type ExitStatus enum Ok | Failure | Critical              // 0, 1, 2 (auto)
+type ErrorCode enum
     | NotFound       = 404
     | Unauthorized   = 401
     | InternalError  = 500
-type Bit u8 | Off = 0 | On = 1                         // явный базовый тип
+type Bit u8 enum Off = 0 | On = 1                          // явный базовый тип
 ```
 
-> ⚠ **`type X u8 | …` (явный базовый тип) пока не реализован** —
+> ⚠ **`type X <base> enum …` (явный базовый тип) пока не реализован** —
 > parser drift, см. [Plan 105](../docs/plans/105-sum-type-explicit-base.md).
 > Работают только формы без базового типа (implicit `int`).
 
-Подробно — [decisions/02-types.md → D52](decisions/02-types.md#d52).
+Подробно — [decisions/02-types.md → D406](decisions/02-types.md#d406-sum-type-синтаксис-enum-маркер),
+ревизия [D52](decisions/02-types.md#d52).
 
 ### Варианты sum-type — те же три формы, что top-level type
 
@@ -653,11 +662,11 @@ type Bit u8 | Off = 0 | On = 1                         // явный базов�
 | ничего | unit-вариант | `None`, `Red`, `Origin` |
 
 ```nova
-type Option[T]
+type Option[T] enum
     | Some(T)                 // позиционный — несёт значение T
     | None                    // unit — без полей, само по себе значение
 
-type Shape
+type Shape enum
     | Circle { radius f64 }   // record-вариант
     | Point(f64, f64)         // позиционный
     | Origin                  // unit
@@ -695,6 +704,17 @@ ro buf = []u8.with_capacity(1024)         // с pre-allocation
 // turbofish для дженериков (D38)
 ro n = parse[int]("42")?                  // явный T = int
 ro m = HashMap[str, int].new()            // явные K, V
+
+// Set[T] — множество, обёртка над HashMap[T, ()] (использует use-embed, D39)
+mut s = Set[int].new()
+s.insert(1)                               // -> bool, false если дубликат
+s.contains(1)                             // -> bool
+
+mut t = Set[int].new()
+t.insert(2)
+ro union = s | t                          // union/intersect/difference — через
+ro inter = s & t                          // operator overloading (D46), не методы
+ro diff  = s - t
 
 match shape {
     Circle { radius }    => 3.14159 * radius * radius
@@ -742,7 +762,7 @@ fn classify(x) => match x {
 рассматриваемых значений.
 
 ```nova
-type Color | Red | Green | Blue
+type Color enum Red | Green | Blue
 
 fn name(c Color) -> str => match c {
     Red   => "red"
