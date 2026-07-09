@@ -35,7 +35,7 @@ export fn Vec[T] @index(r Range) -> Self
     requires r.start >= 0 && r.end >= r.start && r.end <= @len
 {
     ro n = r.end - r.start
-    Self { data: unsafe { @data + r.start }, len: n, cap: n }
+    Self { data: unsafe { @data.offset(r.start) }, len: n, cap: n }
 }
 
 /// Safe zero-copy sub-range view — `Some(view)` when `[r.start, r.end)` is in
@@ -45,5 +45,5 @@ export fn Vec[T] @get(r Range) -> Option[Self] {
         return None
     }
     ro n = r.end - r.start
-    Some(Self { data: unsafe { @data + r.start }, len: n, cap: n })
+    Some(Self { data: unsafe { @data.offset(r.start) }, len: n, cap: n })
 }

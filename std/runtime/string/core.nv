@@ -156,7 +156,7 @@ fn str.alloc_copy(src *u8, n int) -> Self {
     }
     ro buf = unsafe { RawMem.alloc(n + 1) }
     unsafe { RawMem.copy_nonoverlapping(src, buf, n) }
-    unsafe { buf[n] = 0 as u8 }
+    unsafe { buf.write_at(n, 0 as u8) }
     str { ptr: buf, len: n }
 }
 
@@ -258,7 +258,7 @@ export unsafe fn []u8 consume @into_str_unchecked() -> str {
     mut buf = @into_raw()
     if has_room {
         // In-place NUL-term at data[n] (D26 §3) + reuse the stolen buffer.
-        unsafe { buf[n] = 0 as u8 }
+        unsafe { buf.write_at(n, 0 as u8) }
         return str.wrap_owned(buf, n)
     }
     // No room for the NUL terminator — copy into a fresh owned buffer.
