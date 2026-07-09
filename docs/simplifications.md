@@ -38218,3 +38218,26 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   vec_elem_type, plan73/77/91_8c/100_1/123/123_4_4, inout_ref, cgfix_fluent_tail_if, plan138_2,
   self_nested) — **0 новых** (все фейлы байт-идентичны базису, вкл. pre-existing panic
   plan153_4/chunks_windows P67-LEGACY). Сборка Rust чистая (compiler-codegen + nova-cli).
+
+## Plan 173.1 — supervised-value + канальный `parallel for → []T` (D414 §4, D71-amend) (2026-07-09)
+
+- **`supervised { … v }` — value-expression:** bootstrap-заглушка «возвращает unit» СНЯТА;
+  trailing вычисляется ПОСЛЕ join детей. Упрощение сохранено сознательно: unit-типизированный
+  trailing остаётся eager/pre-join (байт-паритет — `spawn {…}` последним стейтментом это
+  trailing по грамматике, откладывать его за пределы активного scope нельзя).
+- **`parallel for → []T` — v1-упрощения РЕТИРОВАНЫ** (slot-запись `result.data[idx]`,
+  примитив-whitelist {int,bool,f64,str}, итераторы Range/ArrayLit/Ident, guard
+  `[E_PARFOR_RESULT_UNSUPPORTED]` + visitor-семейство ~200 строк в чекере): сбор через канал
+  (Sender-клон в родителе на spawn → send из ребёнка: int-скаляры прямо / heap по ссылке /
+  value-типы boxed → close на любом выходе; drain-fiber; K=min(len,16)). Порядок = completion
+  order (плотный) — iteration-order-гарантия убрана из спеки и корпуса (sort/set-equality).
+- **Остаточные упрощения (голова у гейтов):** Stop-стратегия — 173.2; `parallel(timeout:)` —
+  после 175; Semaphore-cap живых fiber'ов (память O(N) fiber'ов при O(CAP) канале) — опц.
+  Ф.3, не делался; поверхностный `consume`-синтаксис в spawn — 173.3 (лоуэринг семантики
+  клон→move→close уже в codegen напрямую).
+- **Попутные закрытия (вскрыты сбором при N≥1000 armed M:N):** [M-chan-spurious-wake-retry]
+  (plain send/recv не ретраили spurious wake — потери значений / ложный None; select ретраил),
+  [M-chan-close-phantom-zero] (close-wake ставил fired=1 без значения → фантомный Some(0)),
+  [M-spawn-module-const-capture] (module-const захватывался по сырому имени в spawn/detach/
+  blocking), [M-bare-result-try-annotation] (bare `Result` + `?` аннотировался целым Result →
+  указательная арифметика на int-payload).
