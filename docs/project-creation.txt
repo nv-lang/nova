@@ -38994,3 +38994,31 @@ std/data/ (1ea2f919c: import std.data.semver, Version-сравнения чер�
 незахваченного `s` в cross-effect with-хендлере, peer-тесты semver_range_test.nv; check PASS,
 test --full зелёный, каталог data/ в _experimental опустел) + закрытие свипа 186 п.5
 (715868068). Гейт волны: conformance --positive --compile-error 82/0.
+
+Часть 69 (2026-07-10, [fable, opus-ярус]). Plan 116 (std/tls, HTTPS) — Ф.0 целиком, ветка
+tls-116 (worktree nova-116). (1) Ф.0-АКТУАЛИЗАЦИЯ: план 2026-05-31 писался под эффект TcpNet
+(D201) — переписан целиком под пост-183 реальность (docs/plans/116-std-tls-effect.md, таблица
+«было → стало»): эффект Tls РЕТРАКТИРОВАН — std/tls = библиотечный слой поверх TcpStream
+byte-surface (методы несут Net; мотивировка module-conventions §0: транспортная импурность уже
+за Net, крипта = FFI-компьют как brotli, мок TLS-хендшейка не тестирует TLS — швы для тестов
+уже есть: Http-эффект сверху, mock_net снизу); TlsStream = consume-запись {priv tcp TcpStream,
+priv session CTlsHandle} (прецедент Body: consume-поле → НЕ value) + structural io.Read/io.Write
+через проекцию TlsError @to_error_kind/@to_io_error (образец NetError Q3); Result-everywhere
+(177); D210-D213 ретрактированы — номера next-free при промоушене (сейчас max D414). НОВАЯ
+фаза Ф.5.3: std/http https-ветка (real_http) — закрытие [M-178-https-needs-116]. (2) R-1
+решён: rustls 0.23 + провайдер ring (не aws-lc-rs: cmake+nasm — чужой toolchain; Rust и так
+обязателен для сборки Nova → rustls не добавляет НИ ОДНОГО нового требования) + webpki-roots;
+изоляция: tls_shim — отдельный крейт, dep-tree nova-codegen (clap+anyhow) НЕ тронут.
+(3) FFI-граница: ~27 символов tls_* (§5а, без vendor-префикса), хендлы CTlsHandle(*())/
+CTlsCfgHandle(*()) (§4а), sans-I/O: шим только шифрует/валидирует, весь сокет-пампинг в .nv
+поверх Net; стабильные int-коды TLS_ERR_* ↔ TlsError.from_shim. (4) Ф.0.5 вендоринг:
+compiler-codegen/tls_shim/ (staticlib, panic=abort, Cargo.lock pinned force-add — supply-chain
+R-9) — конфиг-билдеры (SystemRoots/CustomRoots/Insecure; Pinned = TLS_ERR_UNSUPPORTED до Ф.4),
+клиент+сервер сессии, mTLS оба конца, трафик-примитивы, инспекция, error-классификация;
+cargo build --release зелёный первой попыткой (rustls 0.23.41 + ring 0.17.14, имеющийся
+MSVC/clang), cargo test 5/5. R-2 (CRT) ДЕ-РИСКНУТ: без флага staticlib требует msvcrt (/MD,
+конфликт с /MT-пайплайном); -C target-feature=+crt-static → libcmt; закреплено в
+tls_shim/.cargo/config.toml. native-static-libs (Windows): bcrypt advapi32 kernel32 ntdll
+userenv ws2_32 dbghelp. Коммиты: 0d00f122 (план+README-строка), 7bae33db (шим). Следующее:
+Ф.1 (std/tls типы+ошибки+ffi.nv), Ф.2 (условная линковка по механизму brotli/D337).
+discussion-log (nova-private) НЕ обновлён — репо вне доступа этого worktree-агента.
