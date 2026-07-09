@@ -7,13 +7,14 @@ module nova_tests.plan83_10_3
 
 test "nested supervised with cancel token — cancel propagates" {
     ro tok = CancelToken.new()
-    mut inner_ran = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut inner_ran = AtomicBool.new(false)
 
     supervised(cancel: tok) {
         spawn {
             supervised {
                 spawn {
-                    inner_ran = true
+                    inner_ran.store(true)
                     tok.cancel("inner cancel")
                 }
             }
@@ -21,22 +22,23 @@ test "nested supervised with cancel token — cancel propagates" {
     }
 
     // After supervised exits: tok was cancelled by inner spawn
-    assert(inner_ran)
+    assert(inner_ran.load())
     assert(tok.is_cancelled())
 }
 
 test "nested supervised with cancel token — normal completion" {
     ro tok = CancelToken.new()
-    mut result = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut result = AtomicInt.new(0)
 
     supervised(cancel: tok) {
         spawn {
             supervised {
-                spawn { result = 42 }
+                spawn { result.store(42) }
             }
         }
     }
 
-    assert(result == 42)
+    assert(result.load() == 42)
     assert(!tok.is_cancelled())
 }

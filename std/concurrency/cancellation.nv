@@ -69,12 +69,16 @@ module concurrency.cancellation
 #stable(since = "0.1")
 export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
     ro tok = CancelToken.new()
-    mut result Option[T] = None
+    // Plan 173.3 (D415 §2): результат передаётся каналом, НЕ mut-захватом
+    // (`mut result` записываемый из spawn → E_CONCURRENT_MUT_CAPTURE:
+    // data race под M:N). Канал — санкционированный share-путь; cap 1
+    // достаточно (пишет только body-fiber, ровно один раз).
+    ro (tx, rx) = Channel.new(1)
 
     supervised(cancel: tok) {
         spawn {
             ro r = body()
-            result = Some(r)
+            tx.try_send(r)
             tok.cancel("body completed")
         }
         spawn {
@@ -82,10 +86,11 @@ export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
             tok.cancel("timeout")
         }
     }
-    // После supervised: result либо Some (body успел) либо None (timeout).
-    // Plan 49 Ф.3: CANCEL throw НЕ убегает — мы здесь даже если оба
-    // fiber'а отменены.
-    result
+    // После supervised: в канале либо значение (body успел) либо пусто
+    // (timeout). Plan 49 Ф.3: CANCEL throw НЕ убегает — мы здесь даже
+    // если оба fiber'а отменены.
+    tx.close()
+    rx.try_recv()
 }
 
 
@@ -112,14 +117,19 @@ export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
 #stable(since = "0.1")
 export fn race2[T](a fn() -> T, b fn() -> T) -> T {
     ro tok = CancelToken.new()
-    mut winner Option[T] = None
+    // Plan 173.3 (D415 §2): победитель — через канал, НЕ mut-захват.
+    // Старый код (`winner = Some(r)` из двух sibling-fiber'ов под
+    // is_cancelled()-проверкой) был настоящим TOCTOU-race: оба могли
+    // пройти проверку и писать одновременно. Канал cap 2 (оба могут
+    // успеть try_send без блокировки); FIFO-порядок канала = first-wins.
+    ro (tx, rx) = Channel.new(2)
 
     supervised(cancel: tok) {
         spawn {
             if !tok.is_cancelled() {
                 ro r = a()
                 if !tok.is_cancelled() {
-                    winner = Some(r)
+                    tx.try_send(r)
                     tok.cancel("a wins")
                 }
             }
@@ -128,14 +138,15 @@ export fn race2[T](a fn() -> T, b fn() -> T) -> T {
             if !tok.is_cancelled() {
                 ro r = b()
                 if !tok.is_cancelled() {
-                    winner = Some(r)
+                    tx.try_send(r)
                     tok.cancel("b wins")
                 }
             }
         }
     }
 
-    match winner {
+    tx.close()
+    match rx.try_recv() {
         Some(v) => v
         None    => throw "race2: both competitors failed without producing a result"
     }

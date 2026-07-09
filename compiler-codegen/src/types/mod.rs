@@ -5387,6 +5387,42 @@ impl<'a> TypeCheckCtx<'a> {
         // size walk degrades gracefully (depth-guard → None, surfaced only when
         // `size_of` forces it); this dedicated check reports it at type-check time.
         self.check_infinite_type(td, errors);
+        // Plan 173.3 (D415 §1): `#share` — applicable to kinds that have a
+        // concrete (if compiler-opaque) instance identity: Record, NamedTuple,
+        // Newtype, Opaque, Sum. NOT applicable to Effect/Protocol/Alias/TypeSet
+        // (no own storage / not a concrete instantiable type to vouch for).
+        if td.attrs.contains(&crate::ast::TypeAttr::Share) {
+            let kind_ok = matches!(
+                &td.kind,
+                TypeDeclKind::Record(_)
+                    | TypeDeclKind::NamedTuple(_)
+                    | TypeDeclKind::Newtype(_)
+                    | TypeDeclKind::Opaque
+                    | TypeDeclKind::Sum(_)
+            );
+            if !kind_ok {
+                let kind_str = match &td.kind {
+                    TypeDeclKind::Record(_) => "record",
+                    TypeDeclKind::Sum(_) => "sum",
+                    TypeDeclKind::Effect(_) => "effect",
+                    TypeDeclKind::Protocol { .. } => "protocol",
+                    TypeDeclKind::Alias(_) => "alias",
+                    TypeDeclKind::Opaque => "external opaque",
+                    TypeDeclKind::NamedTuple(_) => "named tuple",
+                    TypeDeclKind::Newtype(_) => "newtype",
+                    TypeDeclKind::TypeSet(_) => "type set",
+                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_SHARE_INVALID_KIND] `#share` cannot be applied to `{}` \
+                         ({}) — no own instance storage to vouch for. Allowed kinds: \
+                         record, named tuple, newtype, opaque, sum. Plan 173.3 (D415 §1).",
+                        td.name, kind_str
+                    ),
+                    td.span,
+                ));
+            }
+        }
     }
 
     /// Q-infinite-value-type (D280 §4): report an `E_INFINITE_TYPE` diagnostic
@@ -16828,6 +16864,35 @@ struct CapabilityCtx<'a> {
     sig: &'a crate::sig_registry::SigRegistry<'a>,
     /// Effect-type name registry (для distinguish'а effect-call vs ordinary).
     effect_decls: HashMap<String, &'a TypeDecl>,
+    /// Plan 173.3 (D415 §2): type-decl registry для `#share`-предиката
+    /// (`protocols::share_check::is_mut_alias_safe`/`is_alias_read_safe`) — capture-check на границе
+    /// `spawn`/`parallel for` должен резолвить имя захваченного типа в его
+    /// TypeDecl, чтобы рекурсивно определить share-ность полей. Тот же
+    /// merge-паттерн, что `TypeCheckCtx::build` (module.items + registry-only
+    /// builtin-модули типа sync.nv — иначе `Mutex`/`RwLock`/etc, у которых
+    /// TypeDecl приходит ТОЛЬКО через `builtin_sig_modules()`, не резолвятся).
+    type_decls: HashMap<String, &'a TypeDecl>,
+}
+
+/// Plan 173.3 (D415 §2): adapter — `CapabilityCtx.type_decls` as a
+/// `share_check::ShareQuery`.
+struct CapShareQuery<'a>(&'a HashMap<String, &'a TypeDecl>);
+
+impl<'a> crate::protocols::share_check::ShareQuery for CapShareQuery<'a> {
+    fn lookup_type(&self, name: &str) -> Option<&TypeDecl> {
+        self.0.get(name).copied()
+    }
+}
+
+/// Plan 173.3 (D415 §2): one lexical binding tracked for the spawn/
+/// parallel-for capture-check — enough fidelity to answer "is this captured
+/// name a mutable, non-`#share` binding" (fn params / block-scoped `let` /
+/// for-loop vars; see module-level capture-scan doc for the (documented,
+/// deliberate) V1 coverage limit — closures/match-arm binds are not tracked).
+#[derive(Clone)]
+struct ScopeBinding {
+    mutable: bool,
+    ty: Option<TypeRef>,
 }
 
 /// Plan 16: capability state передаётся через walk как mutable.
@@ -16868,6 +16933,28 @@ struct CapState {
     /// (дефолт-handler LogAndDrop — D50/D414 §2). Для обычной `fn`
     /// остаётся `false` → `detach` требует `Detach` в сигнатуре.
     effect_root: bool,
+    /// Plan 173.3 (D415 §2): lexical scope stack for the spawn/parallel-for
+    /// capture-check. Frames pushed on fn-param entry / block entry / for-loop
+    /// var entry, popped on exit. `walk_block` is the single choke point for
+    /// ALL block-shaped bodies (if/while/for/match-arm/fn-body/spawn/etc), so
+    /// pushing/popping there gives correct nesting with no per-call-site
+    /// threading. See `capture_scan_*` free functions for the (separate,
+    /// self-contained) free-variable scan run AT a spawn/parallel-for
+    /// boundary against this stack.
+    scopes: Vec<HashMap<String, ScopeBinding>>,
+    /// Plan 173.3 addendum ([M-const-init-concurrency-gate], D414 §2 note):
+    /// True while walking a MODULE-LEVEL `ro`/`const` initializer expression.
+    /// Module-level initializers run inside `nova_consts_init()` BEFORE the
+    /// M:N workers are armed ([M-lazy-const-init-race] eager fix); any
+    /// concurrency construct there would lazily arm workers MID-init
+    /// (`_auto_arm_if_needed()`) — turning the rest of consts-init
+    /// multi-threaded and resurrecting the race. Checker bans:
+    /// `spawn`/`supervised`/`detach`/`parallel for`/`select`/channel
+    /// send-recv ops, and calls to fns whose signature carries the `Detach`
+    /// effect → `E_CONST_INIT_CONCURRENCY`. Ordinary runtime calls (extern
+    /// fns, allocation) stay LEGAL for `ro` (only `const` has the stricter
+    /// E_CONST_EFFECT_IN_INIT purity rule).
+    const_init: bool,
 }
 
 impl CapState {
@@ -16883,14 +16970,28 @@ impl<'a> CapabilityCtx<'a> {
     fn build(module: &'a Module, sig: &'a crate::sig_registry::SigRegistry<'a>) -> Self {
         // U.2.3.2: fn_decls/method_table read from `sig` (shared base registry).
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
+        // Plan 173.3 (D415 §2): type_decls for the `#share` predicate —
+        // module-declared types first, then registry-only builtin modules
+        // (sync.nv's Mutex/RwLock/Semaphore/WaitGroup/Once/ReentrantMutex,
+        // `or_insert` so a module-declared type wins), mirroring
+        // `TypeCheckCtx::build`'s merge (§0 single source pattern).
+        let mut type_decls: HashMap<String, &TypeDecl> = HashMap::new();
         for item in &module.items {
             if let Item::Type(t) = item {
                 if matches!(t.kind, TypeDeclKind::Effect(_)) {
                     effect_decls.insert(t.name.clone(), t);
                 }
+                type_decls.insert(t.name.clone(), t);
             }
         }
-        CapabilityCtx { sig, effect_decls }
+        for ext_mod in crate::codegen::external_registry::builtin_sig_modules() {
+            for item in &ext_mod.items {
+                if let Item::Type(td) = item {
+                    type_decls.entry(td.name.clone()).or_insert(td);
+                }
+            }
+        }
+        CapabilityCtx { sig, effect_decls, type_decls }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -16935,9 +17036,59 @@ impl<'a> CapabilityCtx<'a> {
                     }
                     self.walk_block(&t.body, &mut state, errors);
                 }
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]):
+                // module-level `ro` / `const` initializers run inside
+                // nova_consts_init() BEFORE M:N workers arm — concurrency
+                // constructs are banned there (see CapState.const_init doc).
+                Item::Let(d) => {
+                    let mut state = CapState::default();
+                    state.const_init = true;
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
+                    state.scopes.push(HashMap::new());
+                    self.walk_expr(&d.value, &mut state, errors);
+                    state.scopes.pop();
+                }
+                Item::Const(c) => {
+                    let mut state = CapState::default();
+                    state.const_init = true;
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
+                    state.scopes.push(HashMap::new());
+                    self.walk_expr(&c.value, &mut state, errors);
+                    state.scopes.pop();
+                }
                 _ => {}
             }
         }
+    }
+
+    /// Plan 173.3 addendum ([M-const-init-concurrency-gate]): emit
+    /// `E_CONST_INIT_CONCURRENCY` for a concurrency construct / call inside
+    /// a module-level `ro`/`const` initializer. `what` names the construct.
+    fn const_init_concurrency_error(
+        &self,
+        what: &str,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CONST_INIT_CONCURRENCY] {} is not allowed in a module-level \
+                 `ro`/`const` initializer — these run inside `nova_consts_init()` \
+                 BEFORE the M:N workers are armed; a concurrency construct here \
+                 would lazily arm workers MID-init and make the remaining \
+                 initializers run multi-threaded (resurrecting the \
+                 [M-lazy-const-init-race] data race). Move the concurrent work \
+                 into a function called from `main`/a test, or compute the value \
+                 sequentially (ordinary runtime/extern calls remain legal in \
+                 `ro` initializers).",
+                what
+            ),
+            span,
+        ));
     }
 
     fn walk_fn_body(&self, f: &FnDecl, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
@@ -16951,26 +17102,61 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
         }
+        // Plan 173.3 (D415 §2): fn-params scope frame — outermost frame a
+        // spawn/parallel-for capture-check can see a captured name bound in.
+        let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+        for p in &f.params {
+            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()) });
+        }
+        state.scopes.push(frame);
         match &f.body {
             FnBody::Expr(e) => self.walk_expr(e, state, errors),
             FnBody::Block(b) => self.walk_block(b, state, errors),
             FnBody::External => {}
         }
+        state.scopes.pop();
     }
 
     fn walk_block(&self, b: &Block, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
+        // Plan 173.3 (D415 §2): every block is its own lexical scope frame —
+        // pushing/popping HERE (the single choke point for all block-shaped
+        // bodies) gives correct nesting for the spawn/parallel-for
+        // capture-check with no per-call-site threading elsewhere.
+        state.scopes.push(HashMap::new());
         for s in &b.stmts {
             self.walk_stmt(s, state, errors);
         }
         if let Some(t) = &b.trailing {
             self.walk_expr(t, state, errors);
         }
+        state.scopes.pop();
     }
 
     fn walk_stmt(&self, s: &Stmt, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
         match s {
             Stmt::Expr(e) => self.walk_expr(e, state, errors),
-            Stmt::Let(d) => self.walk_expr(&d.value, state, errors),
+            Stmt::Let(d) => {
+                self.walk_expr(&d.value, state, errors);
+                // Plan 173.3 (D415 §2): register this let's bound name(s) into
+                // the CURRENT (innermost) scope frame — pushed by the
+                // enclosing `walk_block`, guaranteed non-empty there. When the
+                // let has no annotation, fall back to a SYNTACTIC init-expr
+                // type sketch (ctor calls `Type.new(..)`, literals) so the
+                // dominant unannotated forms — `mut mu = Mutex.new()` (must
+                // NOT be flagged) and `mut acc = 0` (MUST be flagged) —
+                // resolve without full inference (CapabilityCtx has none).
+                if let Some(frame) = state.scopes.last_mut() {
+                    let ty = d.ty.clone().or_else(|| {
+                        capture_syntactic_init_type(&d.value, &self.type_decls)
+                    });
+                    for (name, pat_mut) in pattern_capture_names(&d.pattern) {
+                        frame.insert(name, ScopeBinding {
+                            mutable: d.mutable || pat_mut,
+                            ty: ty.clone(),
+                        });
+                    }
+                }
+            }
             Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, state, errors);
@@ -17073,6 +17259,54 @@ impl<'a> CapabilityCtx<'a> {
                 for _ in &pushed { state.with_handler_stack.pop(); }
             }
             ExprKind::Call { func, args, trailing } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]):
+                // inside a module-level ro/const initializer, ban
+                // (a) channel blocking ops by method name — `send`/`recv`
+                //     (buffered `send` PARKS when full; `recv` parks when
+                //     empty — with no workers armed that's a pre-main hang;
+                //     documented name-heuristic, matching D91 surface);
+                // (b) calls to free fns whose signature carries the `Detach`
+                //     effect (the call would detach a fiber mid-consts-init).
+                // Non-parking `try_send`/`try_recv` and ordinary runtime /
+                // extern calls remain legal (`ro` init is allowed effects).
+                if state.const_init {
+                    match &func.kind {
+                        ExprKind::Member { name, .. }
+                            if name == "send" || name == "recv" =>
+                        {
+                            self.const_init_concurrency_error(
+                                &format!("channel op `.{}()`", name),
+                                e.span,
+                                errors,
+                            );
+                        }
+                        ExprKind::Ident(fname) => {
+                            let has_detach = self
+                                .sig
+                                .free_fns(fname)
+                                .map_or(false, |fns| {
+                                    fns.iter().any(|f| {
+                                        f.effects.iter().any(|ef| matches!(
+                                            ef,
+                                            TypeRef::Named { path, .. }
+                                                if path.last().map(String::as_str) == Some("Detach")
+                                        ))
+                                    })
+                                });
+                            if has_detach {
+                                self.const_init_concurrency_error(
+                                    &format!(
+                                        "call to `{}` (declares the `Detach` effect)",
+                                        fname
+                                    ),
+                                    e.span,
+                                    errors,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 self.walk_expr(func, state, errors);
                 for a in args { self.walk_expr(a.expr(), state, errors); }
                 if let Some(t) = trailing {
@@ -17184,8 +17418,25 @@ impl<'a> CapabilityCtx<'a> {
                 FnBody::Block(b) => self.walk_block(b, state, errors),
                 FnBody::External => {}
             },
-            ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
+            ExprKind::Spawn(body) => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`spawn`", e.span, errors);
+                }
+                // Plan 173.3 (D415 §2): capture-check boundary — `spawn`'s
+                // body executes in a NEW fiber (M:N, may run on another OS
+                // thread). Any outer `mut` binding captured by reference
+                // (non-`#share`, non-consumed) is a data race. Scan BEFORE
+                // walking (so the check sees only OUTER scopes, not body's
+                // own locals — `walk_expr`/`walk_block` push body's frames).
+                self.check_spawn_capture(body, state, errors);
+                self.walk_expr(body, state, errors);
+            }
             ExprKind::Detach(body) => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`detach`", e.span, errors);
+                }
                 // Plan 173 Ф.3 п.2 (D50 / D414 §2): `detach { }` требует эффект
                 // `Detach` в сигнатуре enclosing-`fn` (или замыкания с эффектами) —
                 // fire-and-forget задача переживает caller'а, это наблюдаемый
@@ -17221,17 +17472,46 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_block(body, state, errors);
             }
             ExprKind::Supervised { body, cancel, deadline } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`supervised { }`", e.span, errors);
+                }
                 if let Some(c) = cancel { self.walk_expr(c, state, errors); }
                 if let Some(_dl) = deadline { self.walk_expr(&_dl.expr, state, errors); }
                 self.walk_block(body, state, errors);
             }
-            ExprKind::ParallelFor { iter, body, .. } => {
+            ExprKind::ParallelFor { iter, body, pattern, elem_type } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`parallel for`", e.span, errors);
+                }
                 self.walk_expr(iter, state, errors);
-                self.walk_block(body, state, errors);
+                // Plan 173.3 (D415 §2): capture-check boundary — same fan-out
+                // fiber-per-element concurrency as `spawn` (D50 desugar:
+                // `parallel for` = `supervised { for x in iter { spawn { body } } }`).
+                // Push the loop-var frame FIRST so the loop variable itself is
+                // never flagged as a "captured outer mut" (it's per-iteration
+                // local, not shared across siblings).
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                }
+                state.scopes.push(frame);
+                self.check_capture_boundary(body, state, errors);
+                for s in &body.stmts { self.walk_stmt(s, state, errors); }
+                if let Some(t) = &body.trailing { self.walk_expr(t, state, errors); }
+                state.scopes.pop();
             }
-            ExprKind::For { iter, body, .. } => {
+            ExprKind::For { iter, body, pattern, elem_type, .. } => {
                 self.walk_expr(iter, state, errors);
-                self.walk_block(body, state, errors);
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                }
+                state.scopes.push(frame);
+                for s in &body.stmts { self.walk_stmt(s, state, errors); }
+                if let Some(t) = &body.trailing { self.walk_expr(t, state, errors); }
+                state.scopes.pop();
             }
             ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, state, errors);
@@ -17243,6 +17523,10 @@ impl<'a> CapabilityCtx<'a> {
             }
             ExprKind::Loop { body, .. } => self.walk_block(body, state, errors),
             ExprKind::Select { arms } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`select { }`", e.span, errors);
+                }
                 for arm in arms {
                     match &arm.op {
                         SelectOp::Recv { chan, .. } => self.walk_expr(chan, state, errors),
@@ -17477,6 +17761,444 @@ impl<'a> CapabilityCtx<'a> {
                 span,
             ));
         }
+    }
+
+    /// Plan 173.3 (D415 §2): `spawn <body>` capture-check entry — `body` may
+    /// be a bare `Block` expr (`spawn { ... }`) or, after the Ф.3
+    /// `spawn consume c [= e] { ... }` desugar, a `Block` wrapping a single
+    /// `Stmt::ConsumeScope`. Either way the top-level `body` IS the block to
+    /// scan (unwrap `ExprKind::Block`; anything else — e.g. a bare call
+    /// expr `spawn foo()` — has no lexical body to scan, skip).
+    fn check_spawn_capture(&self, body: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
+        if let ExprKind::Block(b) = &body.kind {
+            self.check_capture_boundary(b, state, errors);
+        }
+    }
+
+    /// Plan 173.3 (D415 §2): core capture-check — collect free variables
+    /// referenced in `body` (names not locally shadowed within it), and for
+    /// each one that resolves (via `state.scopes`, searched innermost-out) to
+    /// a MUTABLE outer binding whose type is not `#share` → emit
+    /// `E_CONCURRENT_MUT_CAPTURE`. A name that resolves to an IMMUTABLE
+    /// (`ro`) outer binding, or to a `#share` type, or that isn't found at
+    /// all (unknown — const/fn-name/closure-or-match-bound name; V1 does not
+    /// track those scopes, see module docs) is never flagged — false
+    /// negatives are the safe direction here, not false positives.
+    ///
+    /// The one sanctioned exception is `consume`-move: `Stmt::ConsumeScope`
+    /// inside `body` is the explicit move-capture form (D415 §4,
+    /// `spawn consume c [= e] { .. }` desugar) — its `init` expression's
+    /// referenced names are EXEMPT (the move is syntactically visible right
+    /// there), and its `binding` name is locally shadowed for the rest of
+    /// the scan (mirrors an ordinary `let`).
+    fn check_capture_boundary(&self, body: &Block, state: &CapState, errors: &mut Vec<Diagnostic>) {
+        let mut shadow: HashSet<String> = HashSet::new();
+        let mut free: HashSet<String> = HashSet::new();
+        capture_scan_block(body, &mut shadow, &mut free);
+        let share_q = CapShareQuery(&self.type_decls);
+        let mut flagged: Vec<String> = Vec::new();
+        for name in free {
+            let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
+            if let Some(b) = binding {
+                if !b.mutable {
+                    // `ro` capture — deep-immutable view (D246): always safe,
+                    // no share requirement (D415 §2 "ro" arm).
+                    continue;
+                }
+                // `mut` binding captured by reference: safe ONLY when the
+                // type is mut-alias-safe (audited `#share` sync type, or an
+                // aggregate whose mutation paths bottom out in one). A bare
+                // `mut int`/`mut []T` accumulator — THE motivating race —
+                // is NOT (see share_check module doc).
+                let safe = match &b.ty {
+                    Some(ty) => crate::protocols::share_check::is_mut_alias_safe(&share_q, ty),
+                    // Unknown type (no annotation, no syntactic ctor
+                    // inference in scope registration) — conservative:
+                    // cannot prove internal sync ⇒ flag.
+                    None => false,
+                };
+                if !safe {
+                    flagged.push(name);
+                }
+            }
+        }
+        flagged.sort(); // deterministic diagnostic order (HashSet iteration)
+        for name in flagged {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_CONCURRENT_MUT_CAPTURE] `spawn`/`parallel for` body \
+                     captures outer `mut` binding `{}` by reference — under M:N \
+                     scheduling this is a data race (the child fiber may run \
+                     concurrently with, or migrate across threads from, the \
+                     parent/siblings). Allowed captures (Plan 173.3, D415 §2): \
+                     move it in explicitly (`spawn consume {} = expr {{ .. }}` / \
+                     `spawn consume {} {{ .. }}`), capture it `ro` (immutable \
+                     view), or use an internally-synchronized `#share` type \
+                     (`Mutex`/`Atomic*` — or a user lock-free type vouched \
+                     with `#share`).",
+                    name, name, name
+                ),
+                body.span,
+            ));
+        }
+    }
+}
+
+/// Plan 173.3 (D415 §2): SYNTACTIC init-expr type sketch for scope
+/// registration when a `let` has no annotation. Handles exactly the shapes
+/// the capture-check needs to classify correctly without full inference:
+/// - `Type.new(..)` / `Type.of(..)` / any `Type.method(..)` static-ctor call
+///   where `Type` is a KNOWN type name → `Named{Type}` (covers
+///   `mut mu = Mutex.new()` — must not be false-positived);
+/// - int/float/str/bool/char literals → the primitive (covers
+///   `mut acc = 0` — must be flagged on mut capture);
+/// - array literal → `[]<unknown>` shape (Array of an unresolvable name —
+///   still classified "container ⇒ not mut-alias-safe", which is right);
+/// - anything else → `None` (conservative-flag direction).
+fn capture_syntactic_init_type(
+    e: &Expr,
+    type_decls: &HashMap<String, &TypeDecl>,
+) -> Option<TypeRef> {
+    let named = |n: &str| TypeRef::Named {
+        path: vec![n.to_string()],
+        generics: vec![],
+        span: e.span,
+    };
+    match &e.kind {
+        ExprKind::IntLit(_) => Some(named("int")),
+        ExprKind::FloatLit(_) => Some(named("f64")),
+        ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(named("str")),
+        ExprKind::BoolLit(_) => Some(named("bool")),
+        ExprKind::CharLit(_) => Some(named("char")),
+        ExprKind::ArrayLit(_) => Some(TypeRef::Array(
+            Box::new(named("__nv_unknown_elem")),
+            e.span,
+        )),
+        // `mut x = TypeName { .. }` — record literal with explicit type.
+        ExprKind::RecordLit { type_name: Some(path), .. } => {
+            path.last().map(|n| named(n))
+        }
+        ExprKind::Call { func, .. } => match &func.kind {
+            ExprKind::Member { obj, .. } => {
+                // `Type.new(..)` — plain, or `Type[T].new(..)` — turbofish
+                // (generic ctor, e.g. `OnceCell[int].new()`).
+                let base = match &obj.kind {
+                    ExprKind::TurboFish { base, .. } => &base.kind,
+                    other => other,
+                };
+                if let ExprKind::Ident(tyname) = base {
+                    if type_decls.contains_key(tyname.as_str()) {
+                        return Some(named(tyname));
+                    }
+                }
+                None
+            }
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                if type_decls.contains_key(parts[0].as_str()) {
+                    return Some(named(&parts[0]));
+                }
+                None
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Plan 173.3 (D415 §2): bound names (+ per-name mutability) introduced by a
+/// `let`/for-loop-var/etc pattern. Non-`Ident` sub-patterns default
+/// `mutable = false` (conservative — V1 does not track per-element `mut` in
+/// destructure patterns beyond the direct `Ident{is_mut}` case; see D184 §1
+/// "no per-element granularity V1", the same limitation this mirrors).
+fn pattern_capture_names(pat: &Pattern) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    pattern_capture_names_into(pat, &mut out);
+    out
+}
+
+fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
+    match pat {
+        Pattern::Ident { name, is_mut, .. } => out.push((name.clone(), *is_mut)),
+        Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } => {
+            for p in patterns { pattern_capture_names_into(p, out); }
+        }
+        Pattern::Variant { kind: VariantPatternKind::Unit, .. } => {}
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(p) => pattern_capture_names_into(p, out),
+                    None => out.push((f.name.clone(), false)), // `{ name }` shorthand
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for e in elems {
+                match e {
+                    ArrayPatternElem::Item(p) => pattern_capture_names_into(p, out),
+                    ArrayPatternElem::RestBind(name) => out.push((name.clone(), false)),
+                    ArrayPatternElem::Rest => {}
+                }
+            }
+        }
+        Pattern::Tuple(pats, _) => { for p in pats { pattern_capture_names_into(p, out); } }
+        Pattern::Binding { name, inner, .. } => {
+            out.push((name.clone(), false));
+            pattern_capture_names_into(inner, out);
+        }
+        Pattern::Or { alternatives, .. } => {
+            if let Some(first) = alternatives.first() { pattern_capture_names_into(first, out); }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
+    }
+}
+
+/// Plan 173.3 (D415 §2): free-variable scan for the spawn/parallel-for
+/// capture-check — standalone (no `CapabilityCtx`/`CapState` dependency),
+/// self-contained local-shadow tracking over the SUB-tree only. Covers the
+/// common expression/statement shapes; an unhandled shape is a (documented,
+/// conservative-direction) under-approximation — it can only cause a missed
+/// capture, never a false E_CONCURRENT_MUT_CAPTURE.
+fn capture_scan_block(b: &Block, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    for s in &b.stmts {
+        capture_scan_stmt(s, shadow, free);
+    }
+    if let Some(t) = &b.trailing {
+        capture_scan_expr(t, shadow, free);
+    }
+}
+
+fn capture_scan_stmt(s: &Stmt, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    match s {
+        Stmt::Expr(e) => capture_scan_expr(e, shadow, free),
+        Stmt::Let(d) => {
+            capture_scan_expr(&d.value, shadow, free);
+            for (name, _) in pattern_capture_names(&d.pattern) {
+                shadow.insert(name);
+            }
+        }
+        Stmt::Const(_) => {}
+        Stmt::Assign { target, value, .. } => {
+            capture_scan_expr(target, shadow, free);
+            capture_scan_expr(value, shadow, free);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { capture_scan_expr(v, shadow, free); }
+        }
+        Stmt::Throw { value, .. } => capture_scan_expr(value, shadow, free),
+        Stmt::Break(_) | Stmt::Continue(_) => {}
+        Stmt::Defer { body, .. } => capture_scan_expr(body, shadow, free),
+        // Plan 173.3 (D415 §4): the ONE sanctioned move-capture exception —
+        // `init`'s referenced names are exempt (explicit visible move); the
+        // `binding` shadows for the rest of the scan (like an ordinary let).
+        Stmt::ConsumeScope { binding, body, .. } => {
+            shadow.insert(binding.clone());
+            for s in &body.stmts { capture_scan_stmt(s, shadow, free); }
+            if let Some(t) = &body.trailing { capture_scan_expr(t, shadow, free); }
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            capture_scan_expr(expr, shadow, free)
+        }
+        Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { capture_scan_expr(e, shadow, free); }
+            for e in rhs { capture_scan_expr(e, shadow, free); }
+        }
+    }
+}
+
+fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            if !shadow.contains(name) {
+                free.insert(name.clone());
+            }
+        }
+        ExprKind::Block(b) => {
+            // A nested block introduces its own child shadow scope (names
+            // declared inside it must not leak out as shadows for SIBLING
+            // code after the block) — but for THIS scan we only need
+            // "shadowed-or-not" membership, and Nova has no re-declaration
+            // shadowing conflicts across blocks, so extending the same set
+            // is safe (a name shadowed deeper stays shadowed; nothing here
+            // un-shadows on block exit, which is a conservative
+            // over-approximation of shadowing = fewer false positives).
+            capture_scan_block(b, shadow, free);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            capture_scan_expr(func, shadow, free);
+            for a in args { capture_scan_expr(a.expr(), shadow, free); }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => capture_scan_block(b, shadow, free),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        capture_scan_block(&tb.body, shadow, free)
+                    }
+                    crate::ast::Trailing::Fn(sb) => capture_scan_fn_sig_body(sb, shadow, free),
+                }
+            }
+        }
+        ExprKind::TurboFish { base, .. } => capture_scan_expr(base, shadow, free),
+        ExprKind::Binary { left, right, .. } => {
+            capture_scan_expr(left, shadow, free);
+            capture_scan_expr(right, shadow, free);
+        }
+        ExprKind::Unary { operand, .. } => capture_scan_expr(operand, shadow, free),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            capture_scan_expr(inner, shadow, free)
+        }
+        ExprKind::Coalesce(a, b) => {
+            capture_scan_expr(a, shadow, free);
+            capture_scan_expr(b, shadow, free);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => capture_scan_expr(inner, shadow, free),
+        ExprKind::Member { obj, .. } => capture_scan_expr(obj, shadow, free),
+        ExprKind::Index { obj, index } => {
+            capture_scan_expr(obj, shadow, free);
+            capture_scan_expr(index, shadow, free);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            capture_scan_expr(cond, shadow, free);
+            capture_scan_block(then, shadow, free);
+            capture_scan_else(else_, shadow, free);
+        }
+        ExprKind::IfLet { scrutinee, then, else_, guard, pattern } => {
+            capture_scan_expr(scrutinee, shadow, free);
+            let mut inner_shadow = shadow.clone();
+            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
+            capture_scan_block(then, &mut inner_shadow, free);
+            capture_scan_else(else_, shadow, free);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            capture_scan_expr(scrutinee, shadow, free);
+            for arm in arms {
+                let mut inner_shadow = shadow.clone();
+                for (n, _) in pattern_capture_names(&arm.pattern) { inner_shadow.insert(n); }
+                if let Some(g) = &arm.guard { capture_scan_expr(g, &mut inner_shadow, free); }
+                match &arm.body {
+                    MatchArmBody::Expr(be) => capture_scan_expr(be, &mut inner_shadow, free),
+                    MatchArmBody::Block(bb) => capture_scan_block(bb, &mut inner_shadow, free),
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => capture_scan_expr(e, shadow, free),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            let pairs = crate::ast::MapElem::cloned_pairs(elems);
+            for (k, v) in pairs.iter() {
+                capture_scan_expr(k, shadow, free);
+                capture_scan_expr(v, shadow, free);
+            }
+        }
+        ExprKind::TupleLit(elems) => { for e in elems { capture_scan_expr(e, shadow, free); } }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields { if let Some(v) = &f.value { capture_scan_expr(v, shadow, free); } }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr, .. } = p { capture_scan_expr(expr, shadow, free); }
+            }
+        }
+        ExprKind::Lambda { params, body, .. } => {
+            let mut inner_shadow = shadow.clone();
+            for p in params { inner_shadow.insert(p.name.clone()); }
+            capture_scan_expr(body, &mut inner_shadow, free);
+        }
+        ExprKind::ClosureLight { params, body } => {
+            let mut inner_shadow = shadow.clone();
+            for p in params { inner_shadow.insert(p.name.clone()); }
+            match body {
+                crate::ast::ClosureBody::Expr(be) => capture_scan_expr(be, &mut inner_shadow, free),
+                crate::ast::ClosureBody::Block(bb) => capture_scan_block(bb, &mut inner_shadow, free),
+            }
+        }
+        ExprKind::ClosureFull(sb) => capture_scan_fn_sig_body(sb, shadow, free),
+        ExprKind::For { pattern, iter, body, .. } | ExprKind::ParallelFor { pattern, iter, body, .. } => {
+            capture_scan_expr(iter, shadow, free);
+            let mut inner_shadow = shadow.clone();
+            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            capture_scan_block(body, &mut inner_shadow, free);
+        }
+        ExprKind::While { cond, body, .. } => {
+            capture_scan_expr(cond, shadow, free);
+            capture_scan_block(body, shadow, free);
+        }
+        ExprKind::WhileLet { scrutinee, body, guard, pattern, .. } => {
+            capture_scan_expr(scrutinee, shadow, free);
+            let mut inner_shadow = shadow.clone();
+            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
+            capture_scan_block(body, &mut inner_shadow, free);
+        }
+        ExprKind::Loop { body, .. } => capture_scan_block(body, shadow, free),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    crate::ast::SelectOp::Recv { chan, .. } => capture_scan_expr(chan, shadow, free),
+                    crate::ast::SelectOp::Send { chan, value } => {
+                        capture_scan_expr(chan, shadow, free);
+                        capture_scan_expr(value, shadow, free);
+                    }
+                    crate::ast::SelectOp::Default => {}
+                }
+                let mut inner_shadow = shadow.clone();
+                if let Some(g) = &arm.guard { capture_scan_expr(g, &mut inner_shadow, free); }
+                capture_scan_block(&arm.body, &mut inner_shadow, free);
+            }
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings { capture_scan_expr(&b.handler, shadow, free); }
+            capture_scan_block(body, shadow, free);
+        }
+        // Nested concurrency constructs — recurse (a nested `spawn`'s OWN
+        // capture-check runs independently when the outer walk reaches it;
+        // here we just need to keep collecting free-var reads for the
+        // OUTER boundary's purposes too, since a name captured by an inner
+        // spawn is ALSO effectively captured by the outer one if not
+        // locally bound in between).
+        ExprKind::Spawn(inner) => capture_scan_expr(inner, shadow, free),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => capture_scan_block(b, shadow, free),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { capture_scan_expr(c, shadow, free); }
+            if let Some(dl) = deadline { capture_scan_expr(&dl.expr, shadow, free); }
+            capture_scan_block(body, shadow, free);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            capture_scan_block(body, shadow, free)
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { capture_scan_expr(s, shadow, free); }
+            if let Some(e2) = end { capture_scan_expr(e2, shadow, free); }
+        }
+        ExprKind::Interrupt(v) => { if let Some(e2) = v { capture_scan_expr(e2, shadow, free); } }
+        // Literals / self / path / handler-lits / quantifiers / etc — no
+        // free-variable-capturing sub-structure relevant here.
+        _ => {}
+    }
+}
+
+fn capture_scan_else(else_: &Option<ElseBranch>, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    match else_ {
+        Some(ElseBranch::Block(b)) => capture_scan_block(b, shadow, free),
+        Some(ElseBranch::If(e)) => capture_scan_expr(e, shadow, free),
+        None => {}
+    }
+}
+
+fn capture_scan_fn_sig_body(sb: &FnSigBody, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    let mut inner_shadow = shadow.clone();
+    for p in &sb.params {
+        inner_shadow.insert(p.name.clone());
+    }
+    match &sb.body {
+        FnBody::Expr(e) => capture_scan_expr(e, &mut inner_shadow, free),
+        FnBody::Block(b) => capture_scan_block(b, &mut inner_shadow, free),
+        FnBody::External => {}
     }
 }
 

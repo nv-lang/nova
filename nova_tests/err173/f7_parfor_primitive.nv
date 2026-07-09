@@ -1,13 +1,7 @@
-// Plan 173 Ф.1 (interim-guard #7 / D71): регресс-гард value-позиции. Interim-guard
-// [E_PARFOR_RESULT_UNSUPPORTED] срабатывает ТОЛЬКО когда результат `parallel for`
-// потребляется (value-position). Statement-mode `parallel for` (fn возвращает unit
-// → trailing НЕ consumed) с record-телом — результат отбрасывается, codegen degrade
-// корректен → guard молчит. Здесь тело даёт record `Ev`, но guard НЕ флагает.
-//
-// (Не-флагание примитивного value-mode `parallel for → []int` подтверждено
-// эмпирически: canonical `concurrency/parallel_for_array.nv` не эмитит E_PARFOR;
-// repro-record эмитит. Отдельный runtime-тест примитива не добавляем — value-mode
-// binding-инференс имеет самостоятельный pre-existing codegen-gap, закрывается 173.1 Ф.2.)
+// Plan 173 Ф.1 #7 → 173.1 Ф.2 (D71-amend): statement-mode `parallel for` с
+// record-телом — результат отбрасывается, компилируется и выполняется. Прежний
+// interim-guard [E_PARFOR_RESULT_UNSUPPORTED] УДАЛЁН волной 173.1 (канальный
+// сбор поддерживает []T для любого T; value-mode покрыт err173_1/parfor_elem_matrix).
 
 module nova_tests.err173
 

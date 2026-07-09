@@ -2774,8 +2774,12 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   вызывается ровно один раз в `main()`; `std/net/addr_test` (ADDR_IMAGE_BYTES)
   PASS, спот-дифф `.c` подтверждает eager init + bare-value read.
 
-- **[M-const-init-concurrency-gate]** (2026-07-09, P2, вопрос владельца; Wave: В РАБОТЕ —
-  дополнение волны 173.3 [sonnet]) — module-level ro-инициализаторы исполняются в
+- **[M-const-init-concurrency-gate]** (2026-07-09, P2, вопрос владельца; ✅ ЗАКРЫТ 2026-07-10
+  волной 173.3 [sonnet]: `E_CONST_INIT_CONCURRENCY` в CapabilityCtx — spawn/detach/supervised/
+  parallel-for/select/блокирующие `.send()`/`.recv()`/вызов Detach-fn в module-level ro/const
+  инициализаторах; extern/runtime-вызовы легальны; D415 §6 + амендмент 03-syntax partition;
+  фикстуры err173_3/neg/const_init_{spawn,supervised,detach_fn} + pos const_init_runtime_ok_test)
+  — module-level ro-инициализаторы исполняются в
   nova_consts_init() ДО спавна воркеров, но чекер не запрещает в них конкуренцию
   (E_CONST_EFFECT_IN_INIT покрывает только const); _auto_arm_if_needed() лениво поднял бы
   M:N посреди consts_init → возврат гонки [M-lazy-const-init-race]. Фикс:

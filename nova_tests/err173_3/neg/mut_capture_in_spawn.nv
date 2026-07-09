@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_CONCURRENT_MUT_CAPTURE
+//
+// Plan 173.3 (D415 §2): захват внешнего `mut`-биндинга не-#share типа телом
+// `spawn` — гонка данных под M:N (мотивирующий кейс плана §1: mut-аккумулятор
+// в supervised). Санкционированные альтернативы: `spawn consume`, `ro`-захват,
+// `#share`-примитив (Mutex/Atomic*). Pos-twin — err173_3/share_capture_ok_test.
+
+module neg.mut_capture_in_spawn
+
+fn racy_sum() -> int {
+    mut acc = 0
+    supervised {
+        spawn { acc = acc + 1 }
+        spawn { acc = acc + 2 }
+    }
+    acc
+}
