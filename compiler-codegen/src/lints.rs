@@ -11,8 +11,8 @@
 
 use crate::ast::{
     ArrayElem, Block, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
-    HandlerMethodBody, Import, Item, MatchArmBody, Module, Pattern, Stmt,
-    TypeDeclKind, TypeRef,
+    HandlerMethodBody, Import, Item, MatchArmBody, Module, Pattern, ReceiverKind,
+    Stmt, TypeDeclKind, TypeRef,
 };
 use crate::diag::{Diagnostic, Span};
 use std::collections::HashSet;
@@ -2514,6 +2514,621 @@ fn is_fail_untyped(ty: &TypeRef) -> bool {
         }
     }
     false
+}
+
+// ============================================================================
+// Plan 185 — реестр конвенционных W_*-правил (`nova lint` / `nova check --lint`).
+//
+// Архитектура (финальная, не MVP): правило = самостоятельная единица
+// { id W_*, summary, хук }. Хук — либо AST-walker по `Module` (после parse,
+// БЕЗ type-check/import-resolution: правила синтаксические), либо текстовая
+// эвристика по исходнику файла (для «греп»-строк карты Ф.0). Никакой привязки
+// к check-пайплайну сверх точки вызова `run_conv_rules`.
+//
+// Точки входа:
+//   - `nova lint [paths]` (nova-cli) — прогон реестра по .nv-файлам;
+//   - `nova check --lint` — те же правила поверх ТОГО ЖЕ реестра.
+//
+// Правила, требующие семантики (типов), реализованы консервативной
+// синтаксической версией и помечены `// SEMANTIC-UPGRADE:` — НЕ молча.
+// ============================================================================
+
+/// Контекст файла для реестра (вычисляется вызывающей стороной по пути).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConvLintOptions {
+    /// Файл принадлежит std-поверхности (правила уровня «public std»).
+    pub in_std: bool,
+    /// Файл внутри `std/collections/vec/` — definition-site `Vec[T]`
+    /// (W_VEC_SPELLING там не действует).
+    pub in_vec_module: bool,
+}
+
+/// Одно конвенционное правило реестра.
+pub struct ConvRule {
+    /// Стабильный id (`W_*`) — используется в выводе и `--rule` фильтре.
+    pub id: &'static str,
+    /// Однострочное описание (для `nova lint --list-rules` / доков).
+    pub summary: &'static str,
+    /// AST-хук: модуль после parse (peer_files может быть пуст).
+    pub ast: Option<fn(&Module, &ConvLintOptions, &mut Vec<LintWarning>)>,
+    /// Текст-хук: сырой исходник файла (для греп-эвристик).
+    pub text: Option<fn(&str, &ConvLintOptions, &mut Vec<LintWarning>)>,
+}
+
+/// Реестр правил карты Ф.0 плана 185.
+pub const CONV_RULES: &[ConvRule] = &[
+    ConvRule {
+        id: "W_NONVARIADIC_OF",
+        summary: "static `of` без вариадик-параметра — `of` зарезервирован за \
+                  вариадик-коллекциями (nv-coding-style §21б)",
+        ast: Some(conv_nonvariadic_of),
+        text: None,
+    },
+    ConvRule {
+        id: "W_RETIRED_PREFIX",
+        summary: "префикс `as_` в имени функции/метода ретрактирован (D410): \
+                  вид = голое существительное",
+        ast: Some(conv_retired_prefix),
+        text: None,
+    },
+    ConvRule {
+        id: "W_ACCESSOR_PAIR",
+        summary: "пара `get_x`/`set_x` — канон: методы-свойства одним именем \
+                  по арности `@x()` / `mut @x(v) -> @` (D117 AMEND)",
+        ast: Some(conv_accessor_pair),
+        text: None,
+    },
+    ConvRule {
+        id: "W_WITH_MUTATOR",
+        summary: "`with_*` с mut-приёмником — `with_*` всегда возвращает НОВОЕ \
+                  значение; мутирующее свойство = `mut @x(v) -> @` (nv-coding-style §21)",
+        ast: Some(conv_with_mutator),
+        text: None,
+    },
+    ConvRule {
+        id: "W_STATIC_CONVERSION",
+        summary: "статик-конверсия `T.from(x)` / `T.parse(s)` — запрещённая пятая \
+                  дверь (§1а, ретракция 2026-07-09): канон `x.to_*()`",
+        ast: Some(conv_static_conversion),
+        text: None,
+    },
+];
+
+/// id всех правил реестра (для валидации `--rule` и `--list-rules`).
+pub fn conv_rule_ids() -> Vec<&'static str> {
+    CONV_RULES.iter().map(|r| r.id).collect()
+}
+
+/// Прогон реестра. `module` — None если файл не распарсился (текст-правила
+/// всё равно работают). `enabled` — None = все правила, Some = только выбранные.
+pub fn run_conv_rules(
+    module: Option<&Module>,
+    src: &str,
+    opts: &ConvLintOptions,
+    enabled: Option<&HashSet<String>>,
+) -> Vec<LintWarning> {
+    let mut out = Vec::new();
+    for rule in CONV_RULES {
+        if let Some(set) = enabled {
+            if !set.contains(rule.id) {
+                continue;
+            }
+        }
+        if let (Some(hook), Some(m)) = (rule.ast, module) {
+            hook(m, opts, &mut out);
+        }
+        if let Some(hook) = rule.text {
+            hook(src, opts, &mut out);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Общие helpers реестра.
+// ---------------------------------------------------------------------------
+
+/// Все FnDecl модуля (items + peer_files).
+fn conv_all_fns(m: &Module) -> Vec<&FnDecl> {
+    let mut out = Vec::new();
+    for item in &m.items {
+        if let Item::Fn(f) = item {
+            out.push(f);
+        }
+    }
+    for pf in &m.peer_files {
+        for item in &pf.items_here {
+            if let Item::Fn(f) = item {
+                out.push(f);
+            }
+        }
+    }
+    out
+}
+
+/// Имена record-полей типов, ОБЪЯВЛЕННЫХ в этом модуле: тип → поля.
+fn conv_module_record_fields(m: &Module) -> std::collections::HashMap<String, Vec<String>> {
+    let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut collect = |items: &[Item], out: &mut std::collections::HashMap<String, Vec<String>>| {
+        for item in items {
+            if let Item::Type(td) = item {
+                if let TypeDeclKind::Record(fields) = &td.kind {
+                    out.insert(
+                        td.name.clone(),
+                        fields.iter().map(|f| f.name.clone()).collect(),
+                    );
+                }
+            }
+        }
+    };
+    collect(&m.items, &mut out);
+    for pf in &m.peer_files {
+        collect(&pf.items_here, &mut out);
+    }
+    out
+}
+
+/// `TypeRef` — голый `int`?
+fn conv_ty_is_int(tr: &TypeRef) -> bool {
+    matches!(tr, TypeRef::Named { path, generics, .. }
+        if generics.is_empty() && path.len() == 1 && path[0] == "int")
+}
+
+/// `TypeRef` — «сырой хендл»: `int`, `ptr` или `*()`?
+fn conv_ty_is_bare_handle(tr: &TypeRef) -> bool {
+    match tr {
+        TypeRef::Named { path, generics, .. } if generics.is_empty() && path.len() == 1 => {
+            path[0] == "int" || path[0] == "ptr"
+        }
+        TypeRef::Pointer(inner, _) => matches!(inner.as_ref(), TypeRef::Unit(_)),
+        _ => false,
+    }
+}
+
+/// Последний сегмент Named-типа (для сравнения с receiver-типом).
+fn conv_ty_last_name(tr: &TypeRef) -> Option<&str> {
+    if let TypeRef::Named { path, .. } = tr {
+        path.last().map(String::as_str)
+    } else {
+        None
+    }
+}
+
+/// Обход всех expr/stmt тела функции с флагом «внутри цикла».
+/// `on_stmt` / `on_expr` вызываются pre-order для каждого узла.
+fn conv_walk_fn(
+    f: &FnDecl,
+    on_stmt: &mut dyn FnMut(&Stmt, bool),
+    on_expr: &mut dyn FnMut(&Expr, bool),
+) {
+    match &f.body {
+        FnBody::Expr(e) => conv_walk_expr(e, false, on_stmt, on_expr),
+        FnBody::Block(b) => conv_walk_block(b, false, on_stmt, on_expr),
+        FnBody::External => {}
+    }
+}
+
+fn conv_walk_block(
+    b: &Block,
+    in_loop: bool,
+    on_stmt: &mut dyn FnMut(&Stmt, bool),
+    on_expr: &mut dyn FnMut(&Expr, bool),
+) {
+    for s in &b.stmts {
+        conv_walk_stmt(s, in_loop, on_stmt, on_expr);
+    }
+    if let Some(t) = &b.trailing {
+        conv_walk_expr(t, in_loop, on_stmt, on_expr);
+    }
+}
+
+fn conv_walk_stmt(
+    s: &Stmt,
+    in_loop: bool,
+    on_stmt: &mut dyn FnMut(&Stmt, bool),
+    on_expr: &mut dyn FnMut(&Expr, bool),
+) {
+    on_stmt(s, in_loop);
+    match s {
+        Stmt::Let(d) => conv_walk_expr(&d.value, in_loop, on_stmt, on_expr),
+        Stmt::Const(d) => conv_walk_expr(&d.value, in_loop, on_stmt, on_expr),
+        Stmt::Expr(e) => conv_walk_expr(e, in_loop, on_stmt, on_expr),
+        Stmt::Assign { target, value, .. } => {
+            conv_walk_expr(target, in_loop, on_stmt, on_expr);
+            conv_walk_expr(value, in_loop, on_stmt, on_expr);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs {
+                conv_walk_expr(e, in_loop, on_stmt, on_expr);
+            }
+            for e in rhs {
+                conv_walk_expr(e, in_loop, on_stmt, on_expr);
+            }
+        }
+        Stmt::Return { value: Some(v), .. } => conv_walk_expr(v, in_loop, on_stmt, on_expr),
+        Stmt::Throw { value, .. } => conv_walk_expr(value, in_loop, on_stmt, on_expr),
+        Stmt::Defer { body, .. } => conv_walk_expr(body, in_loop, on_stmt, on_expr),
+        Stmt::ConsumeScope { init, body, .. } => {
+            conv_walk_expr(init, in_loop, on_stmt, on_expr);
+            conv_walk_block(body, in_loop, on_stmt, on_expr);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            conv_walk_expr(expr, in_loop, on_stmt, on_expr);
+        }
+        Stmt::Apply { args, .. } => {
+            for a in args {
+                conv_walk_expr(a, in_loop, on_stmt, on_expr);
+            }
+        }
+        Stmt::Calc { steps, .. } => {
+            for step in steps {
+                conv_walk_expr(&step.expr, in_loop, on_stmt, on_expr);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn conv_walk_expr(
+    e: &Expr,
+    in_loop: bool,
+    on_stmt: &mut dyn FnMut(&Stmt, bool),
+    on_expr: &mut dyn FnMut(&Expr, bool),
+) {
+    on_expr(e, in_loop);
+    match &e.kind {
+        ExprKind::Unary { operand, .. } => conv_walk_expr(operand, in_loop, on_stmt, on_expr),
+        ExprKind::Binary { left, right, .. } => {
+            conv_walk_expr(left, in_loop, on_stmt, on_expr);
+            conv_walk_expr(right, in_loop, on_stmt, on_expr);
+        }
+        ExprKind::As(x, _) | ExprKind::Is(x, _) => conv_walk_expr(x, in_loop, on_stmt, on_expr),
+        ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::RefArg(x) => {
+            conv_walk_expr(x, in_loop, on_stmt, on_expr)
+        }
+        ExprKind::Coalesce(a, b) => {
+            conv_walk_expr(a, in_loop, on_stmt, on_expr);
+            conv_walk_expr(b, in_loop, on_stmt, on_expr);
+        }
+        ExprKind::Member { obj, .. } => conv_walk_expr(obj, in_loop, on_stmt, on_expr),
+        ExprKind::Index { obj, index } => {
+            conv_walk_expr(obj, in_loop, on_stmt, on_expr);
+            conv_walk_expr(index, in_loop, on_stmt, on_expr);
+        }
+        ExprKind::TurboFish { base, .. } => conv_walk_expr(base, in_loop, on_stmt, on_expr),
+        ExprKind::Call { func, args, trailing } => {
+            conv_walk_expr(func, in_loop, on_stmt, on_expr);
+            for a in args {
+                conv_walk_expr(a.expr(), in_loop, on_stmt, on_expr);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => {
+                        conv_walk_block(b, in_loop, on_stmt, on_expr)
+                    }
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        conv_walk_block(&tb.body, in_loop, on_stmt, on_expr)
+                    }
+                    crate::ast::Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(e) => conv_walk_expr(e, in_loop, on_stmt, on_expr),
+                        FnBody::Block(b) => conv_walk_block(b, in_loop, on_stmt, on_expr),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::If { cond, then, else_ } => {
+            conv_walk_expr(cond, in_loop, on_stmt, on_expr);
+            conv_walk_block(then, in_loop, on_stmt, on_expr);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => conv_walk_block(b, in_loop, on_stmt, on_expr),
+                    ElseBranch::If(ie) => conv_walk_expr(ie, in_loop, on_stmt, on_expr),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            conv_walk_expr(scrutinee, in_loop, on_stmt, on_expr);
+            conv_walk_block(then, in_loop, on_stmt, on_expr);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => conv_walk_block(b, in_loop, on_stmt, on_expr),
+                    ElseBranch::If(ie) => conv_walk_expr(ie, in_loop, on_stmt, on_expr),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            conv_walk_expr(scrutinee, in_loop, on_stmt, on_expr);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    conv_walk_expr(g, in_loop, on_stmt, on_expr);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => conv_walk_expr(e, in_loop, on_stmt, on_expr),
+                    MatchArmBody::Block(b) => conv_walk_block(b, in_loop, on_stmt, on_expr),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            conv_walk_expr(iter, in_loop, on_stmt, on_expr);
+            conv_walk_block(body, true, on_stmt, on_expr);
+        }
+        ExprKind::While { cond, body, .. } => {
+            conv_walk_expr(cond, in_loop, on_stmt, on_expr);
+            conv_walk_block(body, true, on_stmt, on_expr);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            conv_walk_expr(scrutinee, in_loop, on_stmt, on_expr);
+            if let Some(g) = guard {
+                conv_walk_expr(g, in_loop, on_stmt, on_expr);
+            }
+            conv_walk_block(body, true, on_stmt, on_expr);
+        }
+        ExprKind::Loop { body, .. } => conv_walk_block(body, true, on_stmt, on_expr),
+        ExprKind::Block(b) => conv_walk_block(b, in_loop, on_stmt, on_expr),
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(x) | ArrayElem::Spread(x) => {
+                        conv_walk_expr(x, in_loop, on_stmt, on_expr)
+                    }
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for (k, v) in crate::ast::MapElem::cloned_pairs(elems).iter() {
+                conv_walk_expr(k, in_loop, on_stmt, on_expr);
+                conv_walk_expr(v, in_loop, on_stmt, on_expr);
+            }
+        }
+        ExprKind::TupleLit(items) => {
+            for x in items {
+                conv_walk_expr(x, in_loop, on_stmt, on_expr);
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value {
+                    conv_walk_expr(v, in_loop, on_stmt, on_expr);
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let crate::ast::InterpStrPart::Expr { expr, .. } = p {
+                    conv_walk_expr(expr, in_loop, on_stmt, on_expr);
+                }
+            }
+        }
+        ExprKind::TaggedTemplate { tag, args, .. } => {
+            conv_walk_expr(tag, in_loop, on_stmt, on_expr);
+            for a in args {
+                conv_walk_expr(a, in_loop, on_stmt, on_expr);
+            }
+        }
+        ExprKind::Lambda { body, .. } => conv_walk_expr(body, in_loop, on_stmt, on_expr),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => conv_walk_expr(e, in_loop, on_stmt, on_expr),
+            ClosureBody::Block(b) => conv_walk_block(b, in_loop, on_stmt, on_expr),
+        },
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => conv_walk_expr(e, in_loop, on_stmt, on_expr),
+            FnBody::Block(b) => conv_walk_block(b, in_loop, on_stmt, on_expr),
+            FnBody::External => {}
+        },
+        ExprKind::Spawn(x) | ExprKind::Throw(x) => conv_walk_expr(x, in_loop, on_stmt, on_expr),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => {
+            conv_walk_block(b, in_loop, on_stmt, on_expr)
+        }
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel {
+                conv_walk_expr(c, in_loop, on_stmt, on_expr);
+            }
+            if let Some(dl) = deadline {
+                conv_walk_expr(&dl.expr, in_loop, on_stmt, on_expr);
+            }
+            conv_walk_block(body, in_loop, on_stmt, on_expr);
+        }
+        ExprKind::With { bindings: _, body } => conv_walk_block(body, in_loop, on_stmt, on_expr),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            conv_walk_block(body, in_loop, on_stmt, on_expr)
+        }
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    conv_walk_expr(g, in_loop, on_stmt, on_expr);
+                }
+                conv_walk_block(&arm.body, in_loop, on_stmt, on_expr);
+            }
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start {
+                conv_walk_expr(s, in_loop, on_stmt, on_expr);
+            }
+            if let Some(x) = end {
+                conv_walk_expr(x, in_loop, on_stmt, on_expr);
+            }
+        }
+        ExprKind::Interrupt(Some(x)) => conv_walk_expr(x, in_loop, on_stmt, on_expr),
+        _ => {}
+    }
+}
+
+/// Итерация по строкам исходника: `(byte_offset_строки, вся_строка, код_без_комментария)`.
+fn conv_each_code_line(src: &str, mut cb: impl FnMut(usize, &str, &str)) {
+    let mut off = 0usize;
+    for line in src.split_inclusive('\n') {
+        let trimmed_line = line.trim_end_matches(['\n', '\r']);
+        let code = match trimmed_line.find("//") {
+            Some(i) => &trimmed_line[..i],
+            None => trimmed_line,
+        };
+        cb(off, trimmed_line, code);
+        off += line.len();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_NONVARIADIC_OF — `.of` у невариадика (§21б nv-coding-style).
+// ---------------------------------------------------------------------------
+
+fn conv_nonvariadic_of(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        let Some(recv) = &f.receiver else { continue };
+        if recv.kind != ReceiverKind::Static || f.name != "of" {
+            continue;
+        }
+        if f.params.iter().any(|p| p.is_variadic) {
+            continue;
+        }
+        out.push(LintWarning {
+            rule: "W_NONVARIADIC_OF",
+            diag: Diagnostic::new(
+                format!(
+                    "static `{}.of(...)` без вариадик-параметра: имя `of` \
+                     зарезервировано за вариадик-коллекциями (`Vec[T].of(a, b, c)`). \
+                     Тривиальная установка полей — `{}.new(...)` с дефолт-параметрами \
+                     (nv-coding-style §21б).",
+                    recv.type_name, recv.type_name
+                ),
+                f.span,
+            ),
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_RETIRED_PREFIX — `as_`-префикс ретрактирован (D410).
+// ---------------------------------------------------------------------------
+
+fn conv_retired_prefix(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        if let Some(rest) = f.name.strip_prefix("as_") {
+            if rest.is_empty() {
+                continue;
+            }
+            out.push(LintWarning {
+                rule: "W_RETIRED_PREFIX",
+                diag: Diagnostic::new(
+                    format!(
+                        "`{}`: префикс `as_` ретрактирован (D410). Вид/линза = голое \
+                         существительное (`bytes()`, `chars()`, `slice()`); копия — \
+                         явный `.clone()` на месте вызова; трансформация — `to_*`.",
+                        f.name
+                    ),
+                    f.span,
+                ),
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_ACCESSOR_PAIR — пары `get_x`/`set_x` (D117 AMEND).
+// ---------------------------------------------------------------------------
+
+fn conv_accessor_pair(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    use std::collections::HashMap as Map;
+    // (receiver-тип или "" для free fn, суффикс) → span get_-декларации.
+    let mut getters: Map<(String, String), Span> = Map::new();
+    let mut setters: std::collections::HashSet<(String, String)> = HashSet::new();
+    for f in conv_all_fns(m) {
+        let recv_key = f
+            .receiver
+            .as_ref()
+            .map(|r| r.type_name.clone())
+            .unwrap_or_default();
+        if let Some(rest) = f.name.strip_prefix("get_") {
+            if !rest.is_empty() {
+                getters.insert((recv_key.clone(), rest.to_string()), f.span);
+            }
+        } else if let Some(rest) = f.name.strip_prefix("set_") {
+            if !rest.is_empty() {
+                setters.insert((recv_key, rest.to_string()));
+            }
+        }
+    }
+    let mut hits: Vec<(&(String, String), &Span)> = getters
+        .iter()
+        .filter(|(k, _)| setters.contains(k))
+        .collect();
+    hits.sort_by_key(|(_, s)| s.start);
+    for ((recv, prop), span) in hits {
+        let recv_disp = if recv.is_empty() { "<free fn>" } else { recv.as_str() };
+        out.push(LintWarning {
+            rule: "W_ACCESSOR_PAIR",
+            diag: Diagnostic::new(
+                format!(
+                    "пара `get_{}`/`set_{}` на `{}`: канон — методы-свойства одним \
+                     именем по арности: чтение `@{}()`, запись `mut @{}(v) -> @` \
+                     (D117 AMEND, nv-coding-style «методы-свойства»).",
+                    prop, prop, recv_disp, prop, prop
+                ),
+                *span,
+            ),
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_WITH_MUTATOR — мутирующий `with_*` (nv-coding-style §21).
+// ---------------------------------------------------------------------------
+
+fn conv_with_mutator(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        let Some(recv) = &f.receiver else { continue };
+        if recv.mutable && f.name.starts_with("with_") && f.name.len() > "with_".len() {
+            out.push(LintWarning {
+                rule: "W_WITH_MUTATOR",
+                diag: Diagnostic::new(
+                    format!(
+                        "`{}` объявлен с mut-приёмником: `with_*` НИКОГДА не мутирует \
+                         — всегда возвращает новое значение. Мутирующее беглое \
+                         свойство = `mut @{}(v) -> @` (nv-coding-style §21, D117 AMEND).",
+                        f.name,
+                        f.name.trim_start_matches("with_")
+                    ),
+                    f.span,
+                ),
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_STATIC_CONVERSION — `T.from(x)` / `T.parse(s)` (§1а, ретракция 2026-07-09).
+//
+// SEMANTIC-UPGRADE: синтаксическая версия не различает «источник — значение»
+// (запрещено, канон `x.to_*()`) от «источник — концепт» (`from_polar` легален,
+// но он и не называется голым `from`). Голое `from`/`parse` с 1+ аргументом
+// флагуется всегда; спорные точки — комментарий-маркер на месте.
+// ---------------------------------------------------------------------------
+
+fn conv_static_conversion(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        let Some(recv) = &f.receiver else { continue };
+        if recv.kind != ReceiverKind::Static {
+            continue;
+        }
+        if (f.name == "from" || f.name == "parse") && !f.params.is_empty() {
+            out.push(LintWarning {
+                rule: "W_STATIC_CONVERSION",
+                diag: Diagnostic::new(
+                    format!(
+                        "статик-конверсия `{}.{}(...)` — запрещённая «пятая дверь» \
+                         (nv-coding-style §1а, ретракция 2026-07-09): дубль `to_*`, \
+                         ломает цепочки. Канон: метод на источнике `x.to_{}()` \
+                         (→ Result где fallible). `from` уместен только для \
+                         концепт-источника под содержательным именем (`from_polar`).",
+                        recv.type_name,
+                        f.name,
+                        recv.type_name.to_lowercase()
+                    ),
+                    f.span,
+                ),
+            });
+        }
+    }
 }
 
 #[cfg(test)]
