@@ -537,7 +537,8 @@ export type Job priv {                   // priv на типе — поля modu
 type InternalState { ... }               // приватный тип
 
 export const ACCOUNT_MIN_BALANCE money = 0
-const _INTERNAL_TIMEOUT_MS int = 5_000
+const INTERNAL_TIMEOUT_MS int = 5_000    // без export уже module-private (D47);
+                                           // `_`-префикс не нужен, тут не поле
 
 export fn Account.new(owner str) -> Account => ...      // публичный конструктор
 export fn Account @balance() => @balance                // публичный метод
