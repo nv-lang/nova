@@ -305,6 +305,32 @@ fn next_pow2(n int) -> int {                 // -> int обязателен
 **Indentation не значим.** `fn f() => stmt1; stmt2` или multiline без
 `{}` — ошибка. Если шагов больше одного — `{}` обязательны.
 
+**Если `=>`-тело — record-литерал, тип называется ровно один раз** —
+либо в `-> T`, либо в самом литерале, никогда в обоих местах
+одновременно (Plan 51 Ф.2). Две канонические формы:
+
+```nova
+fn Duration @plus(other Duration) => Duration { nanos: @nanos + other.nanos }
+// без -> T; тип берётся из имени в литерале — Duration { ... }
+
+fn Duration @plus(other Duration) -> Duration => { nanos: @nanos + other.nanos }
+// с -> T; литерал БЕЗ имени типа — просто { ... }
+```
+
+Обе формы эквивалентны по смыслу, но **дублирование запрещено** —
+`-> Duration => Duration { ... }` (тип в сигнатуре И в литерале) не
+компилируется:
+
+```
+error: redundant type prefix on record literal — the return type
+`-> Duration` already declares it; write `=> { ... }`
+```
+
+`-> Self` резолвится к типу receiver'а — то же правило: `-> Self =>
+Counter { ... }` в методе `Counter` тоже избыточно. Sum-coercion
+(`-> Shape => Circle { ... }`, литерал другого имени, чем return-тип)
+это правило не затрагивает — там имя литерала обязано остаться.
+
 Подробно — [D40](decisions/03-syntax.md#d40), [D45](decisions/03-syntax.md#d45).
 
 ## Перегрузка операторов
