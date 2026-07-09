@@ -4203,7 +4203,7 @@ mod cancel_unsafe_tests {
     fn warns_on_external_fn_without_cancel_safe_in_on_exit() {
         let m = parse(
             "module foo\n\
-             external fn native_close(h int) -> int\n\
+             extern \"nova\" fn native_close(h int) -> int\n\
              type Conn { ro h int }\n\
              fn Conn consume @cleanup(_outcome ScopeOutcome) -> () {\n\
                  ro _r = native_close(@h)\n\
@@ -4223,7 +4223,7 @@ mod cancel_unsafe_tests {
         let m = parse(
             "module foo\n\
              #cancel_safe\n\
-             external fn native_close(h int) -> int\n\
+             extern \"nova\" fn native_close(h int) -> int\n\
              type Conn { ro h int }\n\
              fn Conn consume @cleanup(_outcome ScopeOutcome) -> () {\n\
                  ro _r = native_close(@h)\n\
@@ -4242,7 +4242,7 @@ mod cancel_unsafe_tests {
     fn no_warning_on_external_fn_call_outside_on_exit() {
         let m = parse(
             "module foo\n\
-             external fn native_close(h int) -> int\n\
+             extern \"nova\" fn native_close(h int) -> int\n\
              fn regular_fn(h int) -> int => native_close(h)\n",
         );
         let ws = lint_module(&m);
