@@ -38943,3 +38943,27 @@ PASS; nova_tests/concurrency (109 non-slow) регресс-δ = 0 (byte-identica
 множества до/после — 107 pre-existing CODEGEN-FAIL это ТОТ ЖЕ Duration/Time.now() D316-дрейф
 в масштабе всей папки, вне периметра 173.0, честно не тронут — отдельная санация другого
 плана, тот самый «concurrency-CU Duration-int хвост» из части 65).
+
+Часть 67 (2026-07-09, [sonnet], ветка parallel-collect-173-1 / nova-p173). ПЛАН 173.1 ЯДРО
+ЗАКРЫТО: supervised{…v} — value-expression (trailing вычисляется ПОСЛЕ join детей; unit-trailing
+остаётся eager — байт-паритет со «spawn последним стейтментом»), parallel for → []T для ЛЮБОГО T
+(примитив/f64/str/heap-record/value-record/анон+именованный tuple/sum/вложенный []T) и ЛЮБОГО
+итератора (Iter-protocol без len) через КАНАЛЬНЫЙ сбор: Sender-клон в родителе на момент spawn →
+move в ребёнка → send trailing-значения (int-скаляры прямо, heap по ссылке, value-типы boxed) →
+close на любом выходе ребёнка; выделенный drain-fiber внутри scope; K=min(len,16) back-pressure;
+completion order, плотный (D71-amend — iteration-order-гарантия и slot-запись ретированы; чекер-
+guard E_PARFOR_RESULT_UNSUPPORTED и примитив-whitelist УДАЛЕНЫ; M-parfor-record-result-miscompile
+ЗАКРЫТ). Канальный сбор при N≥1000 armed M:N вскрыл ТРИ довисевших runtime/codegen-бага, все
+починены той же волной: [M-chan-spurious-wake-retry] (send РОНЯЛ значение / recv лгал None на
+spurious wake — теперь retry-петли как в Go chansend/chanrecv), [M-chan-close-phantom-zero]
+(close-wake ставил fired=1 без значения → фантомный Some(0), len=N+1), [M-spawn-module-const-
+capture] (spawn/detach/blocking захватывали module-const по сырому имени → undeclared C ident),
+[M-bare-result-try-annotation] (bare Result + `?` аннотировался ЦЕЛЫМ Result → указательная
+арифметика на int-payload). Корпус переведён на set-equality/sort (plan83_6/7/10/stress, plan87,
+parallel_for_array) — порядок больше не гарантирован. Spec: D414 §4 + D71-amend в 06-concurrency
++ syntax.md + README D-индекс. Гейты: conformance 834/834 (0 FAIL); err173_0 ×5 зелёный;
+defer/err-корпус (err173, plan100_4_1/2/4/5, plan110, plan110_9_np) 0 FAIL; std/concurrency
+3 PASS/4 SKIP; std/io+fs+http 7 PASS 0 FAIL; nova_tests/concurrency КОМПИЛИРУЕТСЯ ЦЕЛИКОМ
+(гейт под-пункта; runtime 497/500 — 2 фейла = ENV-модель merged-CU (standalone PASS), 1 =
+Duration-дрейф nested_supervised_3_levels_cancel — параллельный агент). Ф.4 Stop — гейт 173.2;
+parallel(timeout:) — после 175; race/consume-синтаксис — 48 Ф.4 / 173.3.
