@@ -4222,29 +4222,12 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => {}
             }
         }
-        // Plan 173 Ф.1 (interim-guard #7 / D71 / [M-parfor-record-result-miscompile]):
-        // отдельный проход ПОСЛЕ f1-assignability — resolved_types_buf уже заполнен, так
-        // что infer_expr_type для Call-trailing `parallel for` резолвит element-тип.
-        // Отвергает value-mode `parallel for → []T` с непримитивным T (codegen молча
-        // деградирует в unit → сырой C-mismatch) чисто `[E_PARFOR_RESULT_UNSUPPORTED]`.
-        {
-            let empty_scope: HashMap<String, TypeRef> = HashMap::new();
-            for item in &module.items {
-                match item {
-                    Item::Fn(fd) => {
-                        if self.is_shadowed_import_method(fd) { continue; }
-                        let ret_consumed = !matches!(&fd.return_type, None | Some(TypeRef::Unit(_)));
-                        match &fd.body {
-                            FnBody::Block(b) => self.check_parfor_result_block(b, &empty_scope, ret_consumed, errors),
-                            FnBody::Expr(e) => self.check_parfor_result_expr(e, &empty_scope, ret_consumed, errors),
-                            FnBody::External => {}
-                        }
-                    }
-                    Item::Test(t) => self.check_parfor_result_block(&t.body, &empty_scope, false, errors),
-                    _ => {}
-                }
-            }
-        }
+        // Plan 173.1 Ф.2 (D71): interim-guard `[E_PARFOR_RESULT_UNSUPPORTED]`
+        // (Plan 173 Ф.1 #7, [M-parfor-record-result-miscompile]) УДАЛЁН вместе
+        // со своим visitor-семейством (`check_parfor_result_*`/`parfor_elem_
+        // supported`): codegen собирает `parallel for → []T` для ЛЮБОГО T
+        // через канал (emit_parallel_for, channel+drain lowering) — примитив-
+        // whitelist больше не существует, guard стал бы ложным реджектом.
         // Plan 172.1 P67: Annotate peer_files.items_here ExprIds for codegen.
         // Architectural gap: codegen iterates peer_files.items_here (imported modules,
         // file-private items) with ExprIds distinct from merged module.items ExprIds
@@ -4955,183 +4938,6 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     // --- Ф.2: walk сигнатур ---------------------------------------------
-
-    // ── Plan 173 Ф.1 (interim-guard #7 / D71 / [M-parfor-record-result-miscompile]) ──
-    //
-    // `parallel for → []T` в VALUE-позиции: codegen v1 собирает результат только для
-    // элемента T ∈ {int,bool,f64,str} (whitelist emit_c.rs `emit_parallel_for`). Для
-    // непримитива codegen МОЛЧА деградирует в `unit` → downstream сырой C-mismatch
-    // (`Nova_Vec_X* = nova_unit`). Interim-guard отвергает это ЧИСТО на этапе чекера
-    // диагностикой `[E_PARFOR_RESULT_UNSUPPORTED]`. Снимается Plan 173.1 Ф.2 (полная
-    // поддержка любого T через channel+consume); guard остаётся unreachable-защитой.
-    //
-    // Только value-позиция: statement-mode `parallel for` (результат отбрасывается)
-    // деградирует КОРРЕКТНО — не флагаем. `consumed` протягивается по value-контекстам.
-    fn parfor_elem_supported(t: &TypeRef) -> bool {
-        // §0 coupling: единый список примитивов, которые codegen v1 умеет собирать в
-        // `parallel for → []T`. ⚠ ДОЛЖЕН держаться в синхроне с codegen-whitelist в
-        // `codegen/emit_c.rs` `emit_parallel_for` (там C-имена nova_int/nova_bool/
-        // nova_f64/nova_str). Оба списка и этот guard удаляются в Plan 173.1 Ф.2
-        // (полная поддержка любого T через channel+consume).
-        const PARFOR_V1_PRIMITIVE_ELEMS: [&str; 4] = ["int", "bool", "f64", "str"];
-        let t = match t {
-            TypeRef::Readonly(inner, _) => inner.as_ref(),
-            other => other,
-        };
-        if let TypeRef::Named { path, generics, .. } = t {
-            generics.is_empty()
-                && path.last().map(|s| PARFOR_V1_PRIMITIVE_ELEMS.contains(&s.as_str())).unwrap_or(false)
-        } else {
-            false
-        }
-    }
-
-    fn check_parfor_result_block(&self, b: &Block, scope: &HashMap<String, TypeRef>, trailing_consumed: bool, errors: &mut Vec<Diagnostic>) {
-        for s in &b.stmts {
-            match s {
-                Stmt::Expr(e) => self.check_parfor_result_expr(e, scope, false, errors),
-                Stmt::Let(decl) => self.check_parfor_result_expr(&decl.value, scope, true, errors),
-                Stmt::Const(decl) => self.check_parfor_result_expr(&decl.value, scope, true, errors),
-                Stmt::Assign { target, value, .. } => {
-                    self.check_parfor_result_expr(target, scope, false, errors);
-                    self.check_parfor_result_expr(value, scope, true, errors);
-                }
-                Stmt::Return { value: Some(v), .. } => self.check_parfor_result_expr(v, scope, true, errors),
-                Stmt::Throw { value, .. } => self.check_parfor_result_expr(value, scope, true, errors),
-                Stmt::ConsumeScope { init, body, .. } => {
-                    self.check_parfor_result_expr(init, scope, true, errors);
-                    self.check_parfor_result_block(body, scope, false, errors);
-                }
-                Stmt::TupleAssign { rhs, .. } => {
-                    for e in rhs { self.check_parfor_result_expr(e, scope, true, errors); }
-                }
-                _ => {}
-            }
-        }
-        if let Some(t) = &b.trailing {
-            self.check_parfor_result_expr(t, scope, trailing_consumed, errors);
-        }
-    }
-
-    fn check_parfor_result_expr(&self, e: &Expr, scope: &HashMap<String, TypeRef>, consumed: bool, errors: &mut Vec<Diagnostic>) {
-        match &e.kind {
-            ExprKind::ParallelFor { iter, body, .. } => {
-                if consumed {
-                    if let Some(trailing) = &body.trailing {
-                        // Uninferrable → НЕ флагаем (без false-positive); примитивы обычно
-                        // тривиально инферятся, непримитив-Call резолвится через реестр.
-                        let supported = self.infer_expr_type(trailing, scope)
-                            .map(|t| Self::parfor_elem_supported(&t))
-                            .unwrap_or(true);
-                        if !supported {
-                            errors.push(Diagnostic::new(
-                                "[E_PARFOR_RESULT_UNSUPPORTED] `parallel for → []T` в value-позиции в v1 \
-                                 поддерживает элемент T ∈ {int,bool,f64,str} (codegen whitelist). Непримитивный \
-                                 результат (record / tuple / sum / вложенный []T) пока не собирается — codegen \
-                                 молча деградирует в unit. Полная поддержка любого T — Plan 173.1 Ф.2. Обход: \
-                                 верни примитив и построй агрегат после, ИЛИ statement-mode `parallel for` \
-                                 (без trailing-выражения) + внешний сбор.".to_string(),
-                                e.span,
-                            ));
-                        }
-                    }
-                }
-                self.check_parfor_result_expr(iter, scope, true, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::Block(b) => self.check_parfor_result_block(b, scope, consumed, errors),
-            ExprKind::If { cond, then, else_ } => {
-                self.check_parfor_result_expr(cond, scope, false, errors);
-                self.check_parfor_result_block(then, scope, consumed, errors);
-                match else_ {
-                    Some(ElseBranch::Block(b)) => self.check_parfor_result_block(b, scope, consumed, errors),
-                    Some(ElseBranch::If(e2)) => self.check_parfor_result_expr(e2, scope, consumed, errors),
-                    None => {}
-                }
-            }
-            ExprKind::IfLet { scrutinee, then, else_, .. } => {
-                self.check_parfor_result_expr(scrutinee, scope, false, errors);
-                self.check_parfor_result_block(then, scope, consumed, errors);
-                match else_ {
-                    Some(ElseBranch::Block(b)) => self.check_parfor_result_block(b, scope, consumed, errors),
-                    Some(ElseBranch::If(e2)) => self.check_parfor_result_expr(e2, scope, consumed, errors),
-                    None => {}
-                }
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                self.check_parfor_result_expr(scrutinee, scope, false, errors);
-                for a in arms {
-                    match &a.body {
-                        MatchArmBody::Expr(e2) => self.check_parfor_result_expr(e2, scope, consumed, errors),
-                        MatchArmBody::Block(b) => self.check_parfor_result_block(b, scope, consumed, errors),
-                    }
-                    if let Some(g) = &a.guard { self.check_parfor_result_expr(g, scope, false, errors); }
-                }
-            }
-            ExprKind::For { iter, body, .. } => {
-                self.check_parfor_result_expr(iter, scope, true, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::While { cond, body, .. } => {
-                self.check_parfor_result_expr(cond, scope, false, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::WhileLet { scrutinee, body, .. } => {
-                self.check_parfor_result_expr(scrutinee, scope, false, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::Loop { body, .. } => self.check_parfor_result_block(body, scope, false, errors),
-            ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
-            | ExprKind::Realtime { body, .. } | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
-                self.check_parfor_result_block(body, scope, consumed, errors);
-            }
-            ExprKind::Supervised { body, cancel, deadline } => {
-                if let Some(c) = cancel { self.check_parfor_result_expr(c, scope, false, errors); }
-                if let Some(_dl) = deadline { self.check_parfor_result_expr(&_dl.expr, scope, false, errors); }
-                self.check_parfor_result_block(body, scope, consumed, errors);
-            }
-            ExprKind::Call { func, args, .. } => {
-                self.check_parfor_result_expr(func, scope, false, errors);
-                for a in args { self.check_parfor_result_expr(a.expr(), scope, true, errors); }
-            }
-            ExprKind::Spawn(body) => self.check_parfor_result_expr(body, scope, false, errors),
-            ExprKind::Binary { left, right, .. } => {
-                self.check_parfor_result_expr(left, scope, true, errors);
-                self.check_parfor_result_expr(right, scope, true, errors);
-            }
-            ExprKind::Unary { operand, .. } => self.check_parfor_result_expr(operand, scope, true, errors),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) | ExprKind::Throw(inner) => self.check_parfor_result_expr(inner, scope, consumed, errors),
-            ExprKind::Coalesce(a, b) => {
-                self.check_parfor_result_expr(a, scope, consumed, errors);
-                self.check_parfor_result_expr(b, scope, consumed, errors);
-            }
-            ExprKind::As(e2, _) | ExprKind::Is(e2, _) => self.check_parfor_result_expr(e2, scope, true, errors),
-            ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => self.check_parfor_result_expr(obj, scope, true, errors),
-            ExprKind::TurboFish { base, .. } => self.check_parfor_result_expr(base, scope, consumed, errors),
-            ExprKind::Interrupt(Some(body)) => self.check_parfor_result_expr(body, scope, true, errors),
-            ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { self.check_parfor_result_expr(s, scope, true, errors); }
-                if let Some(en) = end { self.check_parfor_result_expr(en, scope, true, errors); }
-            }
-            ExprKind::ArrayLit(elems) => {
-                for el in elems {
-                    match el {
-                        ArrayElem::Item(e2) | ArrayElem::Spread(e2) => self.check_parfor_result_expr(e2, scope, true, errors),
-                    }
-                }
-            }
-            ExprKind::TupleLit(elems) => {
-                for el in elems { self.check_parfor_result_expr(el, scope, true, errors); }
-            }
-            ExprKind::RecordLit { fields, .. } => {
-                for f in fields {
-                    if let Some(v) = &f.value { self.check_parfor_result_expr(v, scope, true, errors); }
-                }
-            }
-            // Closures/lambdas — свой контекст; прочие простые узлы без вложенных parallel-for.
-            _ => {}
-        }
-    }
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
         // Plan 173 Ф.1 (#3 / Plan 174.2): `?` строго return-only. Свободный `?`
@@ -7531,17 +7337,71 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         // P67: control-flow loops always evaluate to unit — annotate directly.
+        // Plan 173.1 Ф.2 (D71): `parallel for` with a trailing expression is the
+        // EXCEPTION — it evaluates to `[]T` (≡ `Vec[T]`, D239) where T is the
+        // trailing's type. Annotating it Unit here poisoned Channel 2 downstream:
+        // `Stmt::Let`'s C-type probe adopted `nova_unit` while the emission
+        // produced a `Nova_Vec____<T>*` → CC-FAIL «initializing 'nova_unit' with
+        // 'Nova_Vec____nova_int *'» ([M-parfor-record-result-miscompile] surface).
+        // Trailing-less (statement-mode) `parallel for` stays Unit. When the
+        // element type can't be inferred here, DON'T annotate — honest channel
+        // miss → codegen's `infer_expr_c_type` ParallelFor arm computes the
+        // Vec[T]* itself (same Vec-mangle, one lowering window).
         if e.id.is_set() {
-            let is_loop = matches!(
+            let is_unit_loop = matches!(
                 &e.kind,
                 ExprKind::For { .. }
                     | ExprKind::While { .. }
                     | ExprKind::WhileLet { .. }
                     | ExprKind::Loop { .. }
-                    | ExprKind::ParallelFor { .. }
             );
-            if is_loop {
+            if is_unit_loop {
                 self.resolved_types_buf.borrow_mut().insert(e.id, ResolvedType::Unit);
+            }
+            if let ExprKind::ParallelFor { pattern, iter, body, elem_type } = &e.kind {
+                match &body.trailing {
+                    None => {
+                        self.resolved_types_buf.borrow_mut().insert(e.id, ResolvedType::Unit);
+                    }
+                    Some(t) => {
+                        // The trailing may reference the LOOP VARIABLE, absent from
+                        // the outer `scope` at this preamble point — extend a local
+                        // scope copy with the pattern binding typed as the iterator's
+                        // element (same source `f1_for_body` uses). Non-Ident patterns
+                        // (destructure) or un-inferrable iterators → probe with the
+                        // outer scope as-is; a trailing that then fails to infer stays
+                        // un-annotated (honest miss → codegen fallback).
+                        let loop_elem_tr = elem_type.clone()
+                            .or_else(|| self.infer_iter_elem_type(iter, scope));
+                        let mut body_scope = scope.clone();
+                        if let (Pattern::Ident { name, .. }, Some(et)) = (pattern, &loop_elem_tr) {
+                            body_scope.insert(name.clone(), et.clone());
+                        }
+                        // Body's own top-level lets can also feed the trailing.
+                        for s in &body.stmts {
+                            if let Stmt::Let(d) = s {
+                                if let Pattern::Ident { name, .. } = &d.pattern {
+                                    let ty = d.ty.clone()
+                                        .or_else(|| self.infer_expr_type(&d.value, &body_scope));
+                                    if let Some(ty) = ty {
+                                        body_scope.insert(name.clone(), ty);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(elem_tr) = self.infer_expr_type(t, &body_scope) {
+                            let elem_rt = ResolvedType::from_type_ref(&elem_tr);
+                            self.resolved_types_buf.borrow_mut().insert(
+                                e.id,
+                                ResolvedType::Named {
+                                    name: "Vec".to_string(),
+                                    module: vec![],
+                                    args: vec![elem_rt],
+                                },
+                            );
+                        }
+                    }
+                }
             }
         }
         // Plan 172.1 (P67 literal-annotation): literal types are structurally determined —
@@ -12210,10 +12070,23 @@ impl<'a> TypeCheckCtx<'a> {
                 let inner_tr = self.infer_expr_type(inner, scope)?;
                 if let TypeRef::Named { path, generics, .. } = &inner_tr {
                     let base = path.last().map(String::as_str);
-                    if (base == Some("Result") || base == Some("Option"))
-                        && !generics.is_empty()
-                    {
-                        return Some(generics[0].clone());
+                    if base == Some("Result") || base == Some("Option") {
+                        if !generics.is_empty() {
+                            return Some(generics[0].clone());
+                        }
+                        // Plan 173.1 [M-bare-result-try-annotation] (2026-07-09):
+                        // BARE `Result`/`Option` (erased, no type args — `fn f()
+                        // -> Result`). The unwrapped T is NOT knowable here;
+                        // falling through to «return inner unchanged» annotated
+                        // `ro v = f()?` as the WHOLE Result → codegen declared
+                        // `NovaRes_…* v = payload.Ok._0` → pointer arithmetic on
+                        // an int payload (`v + 1` scaled by struct size: 42 +
+                        // sizeof instead of 43 — supervised_errors.nv SECTION 2,
+                        // uncovered when the concurrency folder first compiled
+                        // past its Ф.2-era CC-FAILs). Honest None → no channel
+                        // annotation → legacy codegen navigation types the
+                        // unwrap correctly.
+                        return None;
                     }
                 }
                 // Unknown container (user type, generic T) → return inner type unchanged.

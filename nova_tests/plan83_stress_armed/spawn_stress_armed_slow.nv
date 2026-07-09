@@ -22,13 +22,18 @@
 module plan83_stress_armed.spawn_stress_armed
 
 test "1K spawn armed M:N — baseline" {
-    ro xs = parallel for i in 0..1000 { i }
+    // Plan 173.1 (D71-amend): completion order → sort перед index-asserts.
+    mut xs = parallel for i in 0..1000 { i }
+    xs.sort()
+    assert(xs.len() == 1000)
     assert(xs[999] == 999)
     assert(xs[0] == 0)
 }
 
 test "10K spawn armed M:N — V1 stretch (jobs-safe)" {
-    ro xs = parallel for i in 0..10_000 { i + 1 }
+    mut xs = parallel for i in 0..10_000 { i + 1 }
+    xs.sort()
+    assert(xs.len() == 10_000)
     assert(xs[9999] == 10_000)
     assert(xs[0] == 1)
     assert(xs[5000] == 5001)

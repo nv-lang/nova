@@ -16,7 +16,10 @@ test "spawn workload → collect → heap bounded" {
 
     // Single parallel-for (codegen restriction — multiple parallel-for
     // в одной test fn создаёт name collision).
-    ro xs = parallel for i in 0..1000 { i }
+    // Plan 173.1 (D71-amend): completion order → sort перед index-asserts.
+    mut xs = parallel for i in 0..1000 { i }
+    xs.sort()
+    assert(xs.len() == 1000)
     assert(xs[999] == 999)
     assert(xs[0] == 0)
 

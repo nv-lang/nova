@@ -38944,26 +38944,26 @@ PASS; nova_tests/concurrency (109 non-slow) регресс-δ = 0 (byte-identica
 в масштабе всей папки, вне периметра 173.0, честно не тронут — отдельная санация другого
 плана, тот самый «concurrency-CU Duration-int хвост» из части 65).
 
-2026-07-09 (план 185, ветка lint-185, [sonnet]). nova lint — ПОЛНАЯ ВЕРСИЯ (решение
-владельца отменило MVP-срез). Реестр конвенционных правил compiler-codegen/src/lints.rs
-::CONV_RULES: 16 самостоятельных единиц {id W_*, summary, AST-хук|текст-хук} — вся
-линт/греп-часть карты Ф.0 (NONVARIADIC_OF, RETIRED_PREFIX, ACCESSOR_PAIR, WITH_MUTATOR,
-STATIC_CONVERSION, TRY_WITHOUT_SIBLING, SETTER_NOT_FLUENT, FFI_BARE_HANDLE,
-MANUAL_SLICE_COPY, IMMUTABLE_REBUILD_SETTER, STR_CONCAT_LOOP, RESULT_DISCARDED,
-PARAM_NO_CONTRACT, VEC_SPELLING, RETIRED_NAME, FAIL_PUBLIC_SIGNATURE); 4 — консервативные
-синтаксические версии с // SEMANTIC-UPGRADE:-пометкой. Сабкоманда nova lint [paths]
-(--rule/--list-rules, exit 0/1, скип neg-фикстур, собственный полный walker — walk_nv
-теста прячет peer-файлы) + nova check --lint поверх того же реестра. Универсальная
-суппрессия: находка на строке с [M-...]-маркером не выводится («остатки под маркерами»).
-Прогон std/: 128 находок → 33 истинных починено той же волной (requires n>=0 на 19
-take/skip/acquire_n; StringBuilder вместо concat-loop в semver/sql; deque pop_back →
-items.pop() [был O(n) rebuild с комментом «O(1)»]; diff reverse in place; servernet
-append(view); bloom bit(); swallow-insert'ы → документированный discard; SeekFrom.start
-requires; try_mul/div_f64 → checked_* [консистентность D317]; TokenBucket try_acquire →
-acquire [R3]); 94 остатка — миграционные классы под 7 новыми [M-lint-findings-*]
-(backlog) + существующими [M-d410-as-to-migration]/[M-ffi-handle-newtype]/
-[M-vec-new-static-arity-overload]. Итог: nova lint std/ = 0 находок. Гейты: cargo build
-оба; conformance 70/0; самотест-фикстуры nova_tests/lint/{conv_pos=4,conv_clean=0};
-nova check std байт-в-байт против main-бинаря (diff=0; пре-существующий D78-FAIL
-std/ffi/cstr.nv одинаков у обоих). Попутно: 3 пре-существующих упавших unit-теста
-lints (ретрактированный external fn, D282) починены той же волной.
+Часть 67 (2026-07-09, [sonnet], ветка parallel-collect-173-1 / nova-p173). ПЛАН 173.1 ЯДРО
+ЗАКРЫТО: supervised{…v} — value-expression (trailing вычисляется ПОСЛЕ join детей; unit-trailing
+остаётся eager — байт-паритет со «spawn последним стейтментом»), parallel for → []T для ЛЮБОГО T
+(примитив/f64/str/heap-record/value-record/анон+именованный tuple/sum/вложенный []T) и ЛЮБОГО
+итератора (Iter-protocol без len) через КАНАЛЬНЫЙ сбор: Sender-клон в родителе на момент spawn →
+move в ребёнка → send trailing-значения (int-скаляры прямо, heap по ссылке, value-типы boxed) →
+close на любом выходе ребёнка; выделенный drain-fiber внутри scope; K=min(len,16) back-pressure;
+completion order, плотный (D71-amend — iteration-order-гарантия и slot-запись ретированы; чекер-
+guard E_PARFOR_RESULT_UNSUPPORTED и примитив-whitelist УДАЛЕНЫ; M-parfor-record-result-miscompile
+ЗАКРЫТ). Канальный сбор при N≥1000 armed M:N вскрыл ТРИ довисевших runtime/codegen-бага, все
+починены той же волной: [M-chan-spurious-wake-retry] (send РОНЯЛ значение / recv лгал None на
+spurious wake — теперь retry-петли как в Go chansend/chanrecv), [M-chan-close-phantom-zero]
+(close-wake ставил fired=1 без значения → фантомный Some(0), len=N+1), [M-spawn-module-const-
+capture] (spawn/detach/blocking захватывали module-const по сырому имени → undeclared C ident),
+[M-bare-result-try-annotation] (bare Result + `?` аннотировался ЦЕЛЫМ Result → указательная
+арифметика на int-payload). Корпус переведён на set-equality/sort (plan83_6/7/10/stress, plan87,
+parallel_for_array) — порядок больше не гарантирован. Spec: D414 §4 + D71-amend в 06-concurrency
++ syntax.md + README D-индекс. Гейты: conformance 834/834 (0 FAIL); err173_0 ×5 зелёный;
+defer/err-корпус (err173, plan100_4_1/2/4/5, plan110, plan110_9_np) 0 FAIL; std/concurrency
+3 PASS/4 SKIP; std/io+fs+http 7 PASS 0 FAIL; nova_tests/concurrency КОМПИЛИРУЕТСЯ ЦЕЛИКОМ
+(гейт под-пункта; runtime 497/500 — 2 фейла = ENV-модель merged-CU (standalone PASS), 1 =
+Duration-дрейф nested_supervised_3_levels_cancel — параллельный агент). Ф.4 Stop — гейт 173.2;
+parallel(timeout:) — после 175; race/consume-синтаксис — 48 Ф.4 / 173.3.

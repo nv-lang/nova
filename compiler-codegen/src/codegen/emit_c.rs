@@ -1062,10 +1062,16 @@ pub struct CEmitter {
     /// Maps type alias name → resolved C type string (e.g. "Name" → "nova_str").
     /// Type aliases don't use pointer indirection; their C type is used directly.
     type_aliases: HashMap<String, String>,
-    /// D71 `parallel for → []T` mode. When Some, the next `emit_spawn` writes its
-    /// trailing-expression value into `result[idx]` instead of discarding.
-    /// Tuple: (idx_var_name, result_var_name, element_c_type).
-    current_parfor_slot: Option<(String, String, String)>,
+    /// D71 / Plan 173.1 Ф.2: `parallel for → []T` collection mode. When Some,
+    /// the next `emit_spawn` becomes a parallel-for CHILD: at the spawn site it
+    /// clones the parent `Nova_ChanWriter*` into its ctx (`_nova_par_tx` —
+    /// clone-in-parent at spawn moment, refcount++ BEFORE the parent tx closes),
+    /// its trailing-expression value is SENT into the channel (value types
+    /// boxed, heap types by reference — see `parfor_chan_repr`), and the clone
+    /// is closed on every fiber-exit path (success/throw/cancel) so the channel
+    /// closes by sender-refcount and the drain fiber's `recv()` sees `None`.
+    /// Tuple: (parent_tx_c_var_name, element_c_type).
+    current_parfor_send: Option<(String, String)>,
     /// Optional Nova source text — when Some, используется для (1) line:col
     /// в codegen-ошибках (Plan 14 std-fix) и (2) `/* SRC: ... */` комментов
     /// при `annotation_enabled=true`. Set via `--annotate-source` CLI flag
@@ -1523,6 +1529,21 @@ struct ConsumePolicy {
     has_resource_trace: bool,
 }
 
+/// Plan 173.1 Ф.2 (D71): element transport representation over the mono
+/// (nova_int-slotted) channel in the `parallel for → []T` collection lowering.
+/// See `Emitter::parfor_chan_repr` for the classification policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParforChanRepr {
+    /// Integer scalar ≤ 64 bit — value cast directly into the slot.
+    IntScalar,
+    /// Heap pointer — cast through `intptr_t` (element travels by reference).
+    Pointer,
+    /// Value type (f64 / str / value-record / tuple / Option / Result…) —
+    /// copied into a GC-heap box; the box pointer travels; the drain fiber
+    /// dereferences and pushes the copy.
+    Boxed,
+}
+
 /// Plan 173 Ф.2.B3-merge (D314 §4a): how a consume-cleanup that itself fails
 /// composes into the enclosing run-site's error transport.
 enum ConsumeTail {
@@ -1715,7 +1736,7 @@ impl CEmitter {
             opaque_ffi_types: HashSet::new(),
             generic_fn_tuple_arity: HashMap::new(),
             type_aliases: HashMap::new(),
-            current_parfor_slot: None,
+            current_parfor_send: None,
             annotation_source: None,
             source_file_name: "<unknown>".to_string(),
             annotation_enabled: false,
@@ -9866,6 +9887,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     // ---- spawn ----
 
+    /// Plan 173.1 Ф.2: how an element of C type `elem_c` rides the (mono
+    /// nova_int-slotted) channel in the `parallel for → []T` collection
+    /// lowering. ONE policy shared by the send side (`emit_spawn` parfor mode)
+    /// and the recv side (`emit_parfor_drain_fiber`) — they MUST agree.
+    fn parfor_chan_repr(elem_c: &str) -> ParforChanRepr {
+        if elem_c.ends_with('*') {
+            // Heap pointer (record / sum / nested Vec / boxed tuple / closure):
+            // by reference — cast through intptr_t (D71: «heap — ссылкой»).
+            ParforChanRepr::Pointer
+        } else if matches!(elem_c,
+            "nova_int" | "nova_bool" | "nova_byte" | "nova_char"
+            | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
+            | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64")
+        {
+            // Integer scalar ≤ 64 bit: value fits the nova_int slot directly.
+            ParforChanRepr::IntScalar
+        } else {
+            // Everything else — f32/f64 (bit pattern would not survive an
+            // arithmetic (nova_int) cast), nova_str (struct), value-records
+            // (NovaValue_*), anonymous/named tuples, NovaOpt_/NovaRes_ payloads
+            // — is copied into a GC-heap box; the box pointer is sent
+            // (D71: «value-типы — копией»; the copy IS the boxed snapshot).
+            ParforChanRepr::Boxed
+        }
+    }
+
     fn emit_spawn(&mut self, body: &Expr) -> Result<String, String> {
         // D50/D71: spawn разрешён только внутри structured-scope.
         // В bootstrap-codegen — только supervised. Вне scope — compile error.
@@ -9901,6 +9948,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) {
+                continue;
+            }
+            // [M-spawn-module-const-capture] (Plan 173.1, 2026-07-09): a MODULE-
+            // LEVEL const also sits in `var_types` (emit_const_decl registers
+            // name→type for inference), but it is NOT a local — its C symbol is
+            // the mangled file-scope global `Nova_const_<mod>_<NAME>`. Capturing
+            // it emitted `ctx-><NAME> = <NAME>;` with the RAW source name at the
+            // call site → undeclared C identifier (surfaced by consts referenced
+            // inside `spawn` in nova_tests/concurrency/sleep_real_clock.nv).
+            // Skip it: the body's Ident emission — with no capture-rewrite entry
+            // — falls through to the `private_const_c_names` lookup and reads the
+            // global directly (visible at file scope inside the fiber fn).
+            if self.private_const_c_names
+                .contains_key(&(body.span.file_id, name.clone()))
+            {
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
@@ -9973,14 +10035,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
-        // D71 `parallel for → []T`: also snapshot the per-iteration index and
-        // result-array pointer so the spawn body can write its result slot.
-        let parfor_slot = self.current_parfor_slot.clone();
-        if let Some((idx_var, result_var, _)) = &parfor_slot {
-            self.line(&format!("{ctx}->_nova_par_idx = {iv};",
-                ctx = ctx_var, iv = idx_var));
-            self.line(&format!("{ctx}->_nova_par_result = {rv};",
-                ctx = ctx_var, rv = result_var));
+        // D71 / Plan 173.1 Ф.2 `parallel for → []T`: clone the parent Sender
+        // into the child's ctx AT THE SPAWN SITE — the clone is created in the
+        // PARENT (refcount++ happens strictly before the parent tx close that
+        // follows the enqueue loop), then MOVEd into the child (ownership =
+        // child; the child closes it on every fiber-exit path — see the close
+        // emission after the fail-frame below). Plan 173.1 §2.3: «клон создан
+        // в родителе (момент spawn → refcount++) и MOVE'нут в ребёнка».
+        let parfor_send = self.current_parfor_send.clone();
+        if let Some((tx_var, _)) = &parfor_send {
+            self.line(&format!("{ctx}->_nova_par_tx = nova_chan_writer_clone({tx});",
+                ctx = ctx_var, tx = tx_var));
         }
 
         // Push the fiber into the scope queue. spawn returns unit (D50/D71):
@@ -10127,16 +10192,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
             }
         }
-        // D71 `parallel for → []T`: extra ctx fields for per-iteration result write.
-        // Plan 172.12 A8: Vec[T]-mangled type (was raw `NovaArray_<T>*` — array.h
-        // legacy runtime). Already registered by `emit_supervised`'s `vec_mono_ctor_push`
-        // before this spawn body is emitted; `compute_generic_type_c_name` is a pure
-        // name computation, no re-registration needed here.
-        if let Some((_, _, elem_ty)) = &parfor_slot {
-            let par_result_ty = Self::compute_generic_type_c_name("Vec", &[elem_ty.clone()]);
-            let _ = writeln!(self.lambda_forward_decls, "    int64_t _nova_par_idx;");
+        // D71 / Plan 173.1 Ф.2 `parallel for → []T`: the child's owned Sender
+        // clone (created in the parent at the spawn site, closed by the child
+        // on fiber exit). Replaces the indexed-slot pair (_nova_par_idx /
+        // _nova_par_result) of the pre-173.1 lowering — collection is dense
+        // completion-order via the channel now, no index slots (§2.3).
+        if parfor_send.is_some() {
             let _ = writeln!(self.lambda_forward_decls,
-                "    {}* _nova_par_result;", par_result_ty);
+                "    Nova_ChanWriter* _nova_par_tx;");
         }
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
@@ -10220,12 +10283,47 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("if (setjmp(_ff.jmp) == 0) {");
         self.indent += 1;
 
-        // Inside the spawn body, the parfor_slot belongs to THIS spawn — but any
-        // *nested* spawn must not inherit it. Temporarily disable while emitting body.
-        let saved_parfor = self.current_parfor_slot.take();
+        // Inside the spawn body, the parfor-send mode belongs to THIS spawn — but
+        // any *nested* spawn must not inherit it. Temporarily disable while
+        // emitting the body.
+        let saved_parfor = self.current_parfor_send.take();
 
-        // Emit body, discard its value (spawn returns unit) — UNLESS in parfor mode,
-        // where the trailing expression's value is written to result[idx].
+        // Emit body, discard its value (spawn returns unit) — UNLESS in parfor
+        // mode, where the trailing expression's value is SENT into the collection
+        // channel (Plan 173.1 Ф.2). Representation per `parfor_chan_repr`:
+        // integer scalars ride the nova_int channel slot directly; heap pointers
+        // are cast through intptr_t; everything else (f64, str, value-records,
+        // tuples, Option/Result payloads) is boxed on the GC heap and the box
+        // pointer is sent (the channel buffer is nova_alloc'd → conservatively
+        // scanned → the box stays alive while in flight).
+        let emit_parfor_send = |this: &mut Self, v: &str| {
+            if let Some((_, elem_c)) = &saved_parfor {
+                match Self::parfor_chan_repr(elem_c) {
+                    ParforChanRepr::IntScalar => {
+                        this.line(&format!(
+                            "(void)nova_chan_writer_send(_c->_nova_par_tx, (nova_int)({}));", v));
+                    }
+                    ParforChanRepr::Pointer => {
+                        this.line(&format!(
+                            "(void)nova_chan_writer_send(_c->_nova_par_tx, (nova_int)(intptr_t)({}));", v));
+                    }
+                    ParforChanRepr::Boxed => {
+                        this.line("{");
+                        this.indent += 1;
+                        this.line(&format!(
+                            "{ty}* _nova_pf_box = ({ty}*)nova_alloc(sizeof({ty}));",
+                            ty = elem_c));
+                        this.line(&format!("*_nova_pf_box = ({});", v));
+                        this.line(
+                            "(void)nova_chan_writer_send(_c->_nova_par_tx, (nova_int)(intptr_t)_nova_pf_box);");
+                        this.indent -= 1;
+                        this.line("}");
+                    }
+                }
+            } else {
+                this.line(&format!("(void)({});", v));
+            }
+        };
         match &body.kind {
             ExprKind::Block(b) => {
                 for stmt in &b.stmts {
@@ -10233,26 +10331,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 if let Some(trailing) = &b.trailing {
                     let v = self.emit_expr(trailing)?;
-                    if saved_parfor.is_some() {
-                        self.line(&format!("_c->_nova_par_result->data[_c->_nova_par_idx] = {};", v));
-                    } else {
-                        self.line(&format!("(void)({});", v));
-                    }
+                    emit_parfor_send(self, &v);
                 }
             }
             _ => {
                 let v = self.emit_expr(body)?;
-                if saved_parfor.is_some() {
-                    self.line(&format!("_c->_nova_par_result->data[_c->_nova_par_idx] = {};", v));
-                } else {
-                    self.line(&format!("(void)({});", v));
-                }
+                emit_parfor_send(self, &v);
             }
         }
 
-        // Restore parfor_slot so the surrounding emit_parallel_for can clear it
-        // after the for-loop body has run.
-        self.current_parfor_slot = saved_parfor;
+        // Restore parfor-send mode so the surrounding emit_parallel_for can clear
+        // it after the for-loop body has run.
+        self.current_parfor_send = saved_parfor;
 
         self.line("nova_fail_pop();");
         self.indent -= 1;
@@ -10297,6 +10387,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.indent -= 1;
         self.line("}");
+
+        // Plan 173.1 Ф.2: the child OWNS its Sender clone — close it on EVERY
+        // fiber-exit path (this point is reached on success, throw, cancel and
+        // interrupt alike — the fail-frame above never rethrows out of the
+        // fiber). The last closed clone drives writer_count → 0 → channel
+        // closed → the drain fiber's recv() returns None and the drain ends.
+        // A child that threw never sent → its element is simply absent (dense
+        // completion-order collection, no holes — §2.3/Stop semantics).
+        if self.current_parfor_send.is_some() {
+            self.line("nova_chan_writer_close(_c->_nova_par_tx);");
+        }
 
         // Plan 44.5 Layer 5: remote fiber post-completion cleanup.
         // (1) Free worker scope slot (alloc'd in preamble) — before decrement
@@ -10358,6 +10459,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.supervised_counter += 1;
         let queue_var = format!("_nova_scope_q_{}", id);
         let prev_scope_var = format!("_nova_prev_scope_{}", id);
+
+        // Plan 173.1 Ф.1 (D-block «supervised — value-expression»): a `supervised`
+        // block whose body ends in a trailing expression evaluates to that
+        // expression's value AFTER all spawned children have joined (round-robin
+        // drain via `nova_supervised_run`) — NOT before, and NOT discarded.
+        // Previously (bootstrap stub) trailing was evaluated eagerly *before* the
+        // scheduler ran and immediately `(void)`-discarded, so `supervised { … v }`
+        // always yielded unit regardless of `v`. `parallel for`'s array-mode (Ф.2)
+        // is the motivating caller: it needs the post-join accumulator.
+        //
+        // Mechanism: the result variable must be declared *outside* the wrapping
+        // `{ … }` C block (this codegen has no GNU statement-expressions — see
+        // `emit_parallel_for`'s identical constraint) so it stays alive past the
+        // closing brace. `infer_expr_c_type` is a pure/static inference (no
+        // codegen side-effects — same helper `emit_parallel_for` already calls
+        // ahead of emission), safe to call before opening the block.
+        //
+        // [M-codegen-let-locals-overlay] (mirrors `emit_block_expr`'s identical
+        // guard, ~line 35148): the trailing expression may reference the body's
+        // OWN top-level `let`-locals (e.g. `supervised { ro inner = …; inner + 1
+        // }`), which aren't registered in `var_types` yet at this pre-block probe
+        // point — `var_types` is populated when `body.stmts` are actually emitted,
+        // further down. Without this overlay, the probe hits a stale/absent entry
+        // (P67-LEGACY panic) or a same-named leaked binding from an unrelated
+        // earlier function (`var_types` is not per-fn scoped). Transiently
+        // register each top-level let's inferred type, probe, then restore —
+        // the real emission below re-registers these locals authoritatively.
+        //
+        // [M-supervised-value-unit-trailing] (found testing Ф.1 against the
+        // existing corpus): a trailing expression whose C type is `nova_unit`
+        // is NOT a genuine value to defer — it's almost always the body's LAST
+        // enqueueing statement written without a following statement (Nova's
+        // "last expr in a block with no semicolon is the trailing expr" rule
+        // means `supervised { spawn { … } }` parses `spawn { … }` as `body.
+        // trailing`, not `body.stmts`!). `spawn` MUST run at its source
+        // position (pre-join, to enqueue the fiber) — deferring it to
+        // post-join would silently move it OUTSIDE the active scope, breaking
+        // `current_scope_queue` (`emit_spawn` then sees no active scope: "spawn
+        // is only allowed inside `supervised`…"). So: only unit-typed trailing
+        // stays eager/pre-join/discarded (old behaviour, byte-identical);
+        // non-unit trailing gets the new deferred/post-join value treatment.
+        let mut saved_body_locals: Vec<(String, Option<String>)> = Vec::new();
+        for stmt in &body.stmts {
+            if let Stmt::Let(d) = stmt {
+                if let Pattern::Ident { name, .. } = &d.pattern {
+                    let ty = d.ty.as_ref()
+                        .and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                    saved_body_locals.push((name.clone(), self.var_types.insert(name.clone(), ty)));
+                }
+            }
+        }
+        let result_var = body.trailing.as_ref().and_then(|t| {
+            let ty = self.infer_expr_c_type(t);
+            // Empty string is `infer_expr_c_type`'s own "unhandled ExprKind, caller
+            // should degrade to nova_unit" convention (see its final wildcard arm) —
+            // e.g. bare `ExprKind::Spawn` has no dedicated arm there. Treat the same
+            // as an explicit "nova_unit" for this eager-vs-deferred decision.
+            if ty == "nova_unit" || ty.is_empty() {
+                None
+            } else {
+                let var = format!("_nova_sup_res_{}", id);
+                Some((ty, var))
+            }
+        });
+        for (name, old) in saved_body_locals.into_iter().rev() {
+            match old {
+                Some(t) => { self.var_types.insert(name, t); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
+        let result_var = result_var.map(|(ty, var)| {
+            self.line(&format!("{} {};", ty, var));
+            var
+        });
 
         // Wrap the scope in a C block so the queue is local.
         self.line("{");
@@ -10432,13 +10608,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
 
         // Emit body statements with defer scope (supervised body can contain defer).
+        // Plan 173.1 Ф.1: trailing expression is deferred — evaluated AFTER
+        // `nova_supervised_run` below (post-join), not here. Statements still run
+        // eagerly (they're what enqueue `spawn`s in the first place).
         let block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
-        if let Some(trailing) = &body.trailing {
-            let v = self.emit_expr(trailing)?;
-            self.line(&format!("(void)({});", v));
+        // Unit-typed trailing (see [M-supervised-value-unit-trailing] above) stays
+        // eager/pre-join — matches the OLD behaviour exactly (evaluate, discard).
+        // `result_var` is `None` here, so nothing runs post-join for this case.
+        if result_var.is_none() {
+            if let Some(trailing) = &body.trailing {
+                let v = self.emit_expr(trailing)?;
+                self.line(&format!("(void)({});", v));
+            }
         }
         self.leave_defer_scope(block_id);
 
@@ -10460,11 +10644,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Restore previous active scope (may be NULL or outer scope).
         self.line(&format!("_nova_active_scope = {};", prev_scope_var));
 
+        // Plan 173.1 Ф.1: NOW (post-join — every spawned child has run to
+        // completion or the scope re-threw on failure/cancel above) evaluate the
+        // deferred trailing expression and store it into the outer-declared
+        // result var. Mutations/results children produced (mut-captures, or —
+        // for `parallel for`'s channel desugar, Ф.2 — a drain-fiber-populated
+        // accumulator) are visible here.
+        if let Some(rv) = &result_var {
+            let trailing = body.trailing.as_ref()
+                .expect("result_var is Some only when body.trailing is Some");
+            let v = self.emit_expr(trailing)?;
+            self.line(&format!("{} = {};", rv, v));
+        }
+
         self.indent -= 1;
         self.line("}");
 
-        // supervised expression evaluates to unit.
-        Ok("NOVA_UNIT".to_string())
+        // supervised expression evaluates to its trailing value (Ф.1) or unit
+        // when the body has no trailing expression.
+        Ok(result_var.unwrap_or_else(|| "NOVA_UNIT".to_string()))
     }
 
     /// Emit `parallel for x in iter { body }` — D14 fan-out via desugar to
@@ -10472,15 +10670,38 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// a fiber capturing the loop-variable BY VALUE (immutable scalar) so all
     /// queued fibers see their own snapshot.
     ///
-    /// D71 `parallel for → []T`: when `body` has a trailing expression, the
-    /// parallel-for evaluates to `[]T` where T is the trailing's type. Each
-    /// fiber writes its result into `result.data[idx]` at a pre-allocated slot.
+    /// D71 / Plan 173.1 Ф.2 `parallel for → []T`: when `body` has a trailing
+    /// expression, the parallel-for evaluates to `[]T` (≡ `Vec[T]`, D239) for
+    /// ANY element type T and ANY iterator — collection is CHANNEL-based
+    /// (§2.3, sign-off 2026-06-21):
+    ///
+    ///   1. a bounded channel `K = min(len, CAP)` (CAP=16) is created in the
+    ///      scope (back-pressure buffer, NOT O(N));
+    ///   2. each iteration's spawn gets an OWNED `Sender` clone — cloned in the
+    ///      parent AT the spawn site (refcount++ strictly before the parent tx
+    ///      close), moved into the child, closed by the child on every
+    ///      fiber-exit path (see `emit_spawn`'s parfor-send mode);
+    ///   3. the child SENDS its trailing value (int scalars direct, heap
+    ///      pointers via intptr, value types boxed — `parfor_chan_repr`);
+    ///   4. the parent tx closes after the enqueue loop; a dedicated DRAIN
+    ///      fiber inside the same scope `recv()`s until `None` (= last child
+    ///      clone closed) and pushes into the result Vec — dense,
+    ///      completion-order, no index slots, no concurrent push (single
+    ///      drainer);
+    ///   5. `nova_supervised_run` joins children + drain; the Vec is the
+    ///      expression value. A child that threw never sent → its element is
+    ///      absent (dense). Child failure cancels siblings + rethrows after
+    ///      drain (173.0 substrate) → the accumulator is not returned.
+    ///
+    /// No deadlock: the drain runs concurrently with the children inside the
+    /// scope; producers parked on a full buffer are woken by the drain's recv.
     /// When body has no trailing (purely effectful), the form yields unit.
     fn emit_parallel_for(
         &mut self,
         pattern: &Pattern,
         iter: &Expr,
         body: &Block,
+        expr_id: crate::ast::ExprId,
     ) -> Result<String, String> {
         use crate::diag::Span;
         let span = Span::dummy();
@@ -10583,200 +10804,402 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return self.emit_supervised(&supervised_block, None, None);
         }
 
-        // Array-mode: infer element type from the trailing expression.
-        // Best-effort — fall back to nova_int.
+        // ──────────────────────────────────────────────────────────────────
+        // Array-mode — Plan 173.1 Ф.2: channel-collected `[]T` for ANY element
+        // type and ANY iterator (closes [M-parfor-record-result-miscompile]).
+        // ──────────────────────────────────────────────────────────────────
         let trailing = body.trailing.as_ref().unwrap();
-        let elem_ty = self.infer_expr_c_type(trailing);
-        // Element type names used in NovaArray_T are restricted to a few primitives.
-        // For pointer types or unsupported forms, conservatively bail out by pretending
-        // the body has no trailing — caller ends up with a unit `parallel for`.
-        // §0 coupling (Plan 173 Ф.1 #7): этот whitelist ДОЛЖЕН держаться в синхроне с
-        // checker-guard `types/mod.rs` `parfor_elem_supported` (там TypeRef-имена
-        // int/bool/f64/str), который отвергает непримитив value-mode ЧИСТО
-        // `[E_PARFOR_RESULT_UNSUPPORTED]` ДО этой деградации. Оба уйдут в Plan 173.1 Ф.2.
-        let elem_ty_name = match elem_ty.as_str() {
-            "nova_int" | "nova_bool" | "nova_f64" | "nova_str" => elem_ty.clone(),
-            _ => {
-                // Unsupported element type for D71 v1 — degrade to statement mode.
-                let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
-                let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
-                let for_body = Block {
-                    stmts: vec![Stmt::Expr(spawn_expr)],
-                    trailing: None,
-                    span, is_unsafe: false
-                };
-                let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
-                    span,
-                );
-                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                return self.emit_supervised(&supervised_block, None, None);
-            }
-        };
-
-        // ---- emit array-mode lowering, by hand ----
-        // 1) compute iteration count N and a per-iteration "current value" expression.
-        //    Supported iterators: ArrayLit, Range a..b, RangeInclusive a..=b, Ident
-        //    bound to an array. For unsupported iter shapes, fall back to unit.
-        let len_expr: String;
-        let iter_setup: String; // C statements that set up `nova_int _i` and per-iter `cur` value
-        let cur_value_expr: String; // expression evaluating to the current loop element
-
-        match &iter.kind {
-            ExprKind::Range { start, end, inclusive } => {
-                // Plan 96 Ф.2 — для `parallel for` нужны обе границы; open-ended
-                // не имеет смысла. Type-checker отвергает open-ended вне slice-context.
-                let start = start.as_deref().ok_or_else(||
-                    "parallel for: open-ended Range without start bound (Plan 96)".to_string())?;
-                let end = end.as_deref().ok_or_else(||
-                    "parallel for: open-ended Range without end bound (Plan 96)".to_string())?;
-                let s = self.emit_expr(start)?;
-                let e = self.emit_expr(end)?;
-                let plus_one = if *inclusive { " + 1" } else { "" };
-                len_expr = format!("({} - {}{})", e, s, plus_one);
-                iter_setup = format!("nova_int _nova_par_start = {}; (void)_nova_par_start;", s);
-                cur_value_expr = "(_nova_par_start + _nova_par_i)".to_string();
-            }
-            ExprKind::ArrayLit(elems) => {
-                // No spread support in v1.
-                if elems.iter().any(|e| matches!(e, ArrayElem::Spread(_))) {
-                    let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
-                    let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
-                    let for_body = Block { stmts: vec![Stmt::Expr(spawn_expr)], trailing: None, span, is_unsafe: false };
-                    let for_expr = Expr::new(
-                        ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
-                        span,
-                    );
-                    let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                    return self.emit_supervised(&supervised_block, None, None);
-                }
-                // Materialise the array once, then walk indices.
-                let arr_var = format!("_nova_par_src_{}", self.tmp_counter);
-                self.tmp_counter += 1;
-                // Element C type for the *iter* array — for simplicity, assume nova_int when
-                // not inferable; the loop variable is bound as nova_int regardless.
-                let iter_elem_ty = "nova_int".to_string();
-                let mut emitted = Vec::with_capacity(elems.len());
-                for el in elems {
-                    if let ArrayElem::Item(x) = el {
-                        emitted.push(self.emit_expr(x)?);
-                    }
-                }
-                // Plan 172.12 A8: Vec[T]-mangled construction (was raw NovaArray_<T>*
-                // via nova_array_new_*/nova_array_push_* — array.h legacy runtime).
-                let (src_mangled, src_ctor, src_push) = self.vec_mono_ctor_push(&iter_elem_ty)?;
-                self.line(&format!("{}* {} = {}();", src_mangled, arr_var, src_ctor));
-                for v in &emitted {
-                    self.line(&format!("(void){}({}, {});", src_push, arr_var, v));
-                }
-                len_expr = format!("{}->len", arr_var);
-                iter_setup = format!("{}* _nova_par_src = {}; (void)_nova_par_src;",
-                    src_mangled, arr_var);
-                cur_value_expr = "_nova_par_src->data[_nova_par_i]".to_string();
-            }
-            ExprKind::Ident(name) => {
-                // Assume name is bound to the Vec[T]-mangled type (D239 []T ≡ Vec[T]).
-                let arr_var = format!("(({})", name);
-                len_expr = format!("{})->len", arr_var);
-                let (src_mangled, _, _) = self.vec_mono_ctor_push(&elem_ty_name)?;
-                iter_setup = format!("{}* _nova_par_src = {}; (void)_nova_par_src;",
-                    src_mangled, name);
-                cur_value_expr = "_nova_par_src->data[_nova_par_i]".to_string();
-            }
-            _ => {
-                // Unsupported iter shape for array-mode; degrade.
-                let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
-                let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
-                let for_body = Block {
-                    stmts: vec![Stmt::Expr(spawn_expr)],
-                    trailing: None,
-                    span, is_unsafe: false
-                };
-                let for_expr = Expr::new(
-                    ExprKind::For { pattern: pattern.clone(), iter: Box::new(iter.clone()), body: for_body, elem_type: None, invariants: vec![], decreases: None, iter_consume: false },
-                    span,
-                );
-                let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                return self.emit_supervised(&supervised_block, None, None);
-            }
-        };
-
-        // 2) Declare the result array at the *outer* scope so its name is visible
-        //    after the supervised block runs (we don't have GCC statement-exprs).
         let id = self.supervised_counter;
         self.supervised_counter += 1;
+
+        // (1) Element C type. Preferred source: the checker's whole-expression
+        // annotation (ParallelFor : Vec[T] — types/mod.rs f1 preamble, §0).
+        // Fallback: probe the trailing with the loop variable transiently
+        // bound to the iterator's element C type (mirrors the checker's own
+        // body-scope extension).
+        let ann_elem: Option<crate::types::ResolvedType> = if expr_id.is_set() {
+            match self.resolved_types.get(&expr_id) {
+                Some(crate::types::ResolvedType::Named { name, args, .. })
+                    if name == "Vec" && args.len() == 1 => Some(args[0].clone()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let mut elem_c: Option<String> = ann_elem
+            .and_then(|rt| self.resolved_type_to_c(&rt).ok())
+            .filter(|c| !c.is_empty() && !self.debt_is_generic_stub_c(c));
+        if elem_c.is_none() {
+            let loop_var_c: Option<String> = match &iter.kind {
+                ExprKind::Range { .. } => Some("nova_int".to_string()),
+                _ => {
+                    let it_c = self.infer_expr_c_type(iter);
+                    self.vec_or_array_elem_c(&it_c)
+                }
+            };
+            if let (Pattern::Ident { name, .. }, Some(lc)) = (pattern, loop_var_c) {
+                let old = self.var_types.insert(name.clone(), lc);
+                let probed = self.infer_expr_c_type(trailing);
+                match old {
+                    Some(t) => { self.var_types.insert(name.clone(), t); }
+                    None => { self.var_types.remove(name); }
+                }
+                if !probed.is_empty() && !self.debt_is_generic_stub_c(&probed) {
+                    elem_c = Some(probed);
+                }
+            }
+        }
+        let elem_c = elem_c.ok_or_else(|| {
+            "parallel for → []T: element type could not be inferred \
+             (no checker Vec[T] annotation and the trailing probe failed) — \
+             annotate the loop variable (`parallel for x TYPE in …`, Plan 87)"
+                .to_string()
+        })?;
+
+        // (2) Bounded buffer K = min(len, CAP), CAP = 16 (Ф.3 §2.3): the drain
+        // is a single fast consumer — the buffer only has to absorb the burst
+        // of simultaneously-active producers, NOT the whole input (memory
+        // O(CAP), back-pressure via send-park on full). `len` is used only
+        // when the source offers it for free (Range bounds / array-literal
+        // arity / a Vec-typed local); lazy or opaque iterators go straight to
+        // CAP. Range bounds are materialised ONCE into temps (reused by the
+        // For loop below) so side-effectful bounds are not evaluated twice.
+        const PARFOR_CHAN_CAP: i64 = 16;
+        let mut for_iter: Expr = iter.clone();
+        let k_expr: String = match &iter.kind {
+            ExprKind::Range { start: Some(s), end: Some(e), inclusive } => {
+                let s_c = self.emit_expr(s)?;
+                let e_c = self.emit_expr(e)?;
+                let lo = format!("_nova_pf_lo_{}", id);
+                let hi = format!("_nova_pf_hi_{}", id);
+                self.line(&format!("nova_int {} = {};", lo, s_c));
+                self.line(&format!("nova_int {} = {};", hi, e_c));
+                self.var_types.insert(lo.clone(), "nova_int".to_string());
+                self.var_types.insert(hi.clone(), "nova_int".to_string());
+                for_iter = Expr::new(
+                    ExprKind::Range {
+                        start: Some(Box::new(Expr::new(ExprKind::Ident(lo.clone()), span))),
+                        end: Some(Box::new(Expr::new(ExprKind::Ident(hi.clone()), span))),
+                        inclusive: *inclusive,
+                    },
+                    span,
+                );
+                format!("({} - {}{})", hi, lo, if *inclusive { " + 1" } else { "" })
+            }
+            ExprKind::ArrayLit(elems)
+                if !elems.iter().any(|el| matches!(el, ArrayElem::Spread(_))) =>
+            {
+                elems.len().to_string()
+            }
+            ExprKind::Ident(n) => {
+                let it_c = self.var_types.get(n.as_str()).cloned().unwrap_or_default();
+                if self.vec_or_array_elem_c(&it_c).is_some() {
+                    // Pure variable read — safe to re-emit alongside the loop.
+                    let src_c = self.emit_expr(iter)?;
+                    format!("(({})->len)", src_c)
+                } else {
+                    PARFOR_CHAN_CAP.to_string()
+                }
+            }
+            _ => PARFOR_CHAN_CAP.to_string(),
+        };
+
+        // (3) Result Vec — declared OUTSIDE the scope block (no GNU statement-
+        // exprs) so it survives as the expression value. Built via the real
+        // `Vec[T].new()` mono ctor; the drain fiber pushes into it (amortised
+        // growth — the pre-sized slot buffer of the old lowering is gone with
+        // the index slots).
+        let (vec_mangled, vec_ctor, vec_push) = self.vec_mono_ctor_push(&elem_c)?;
+        let acc_var = format!("_nova_par_res_{}", id);
+        self.line(&format!("{ty}* {acc} = {ctor}();",
+            ty = vec_mangled, acc = acc_var, ctor = vec_ctor));
+        self.var_types.insert(acc_var.clone(), format!("{}*", vec_mangled));
+        // Element-type tracking so `xs[i]` / for-in typing over the result works.
+        self.array_element_types.insert(acc_var.clone(), elem_c.clone());
+
+        // (4) Scope block: queue + channel + active-scope swap.
         let queue_var = format!("_nova_scope_q_{}", id);
         let prev_scope_var = format!("_nova_prev_scope_{}", id);
-        let result_var = format!("_nova_par_res_{}", id);
-        let len_var = format!("_nova_par_len_{}", id);
-
-        self.line(&iter_setup);
-        self.line(&format!("nova_int {} = {};", len_var, len_expr));
-        // Plan 172.12 A8: Vec[T]-mangled result buffer (was `nova_array_new_<T>`
-        // — array.h legacy runtime). Registers the Vec[T] struct + full method
-        // suite (worklist) via `vec_mono_ctor_push`, but the buffer itself is
-        // hand-allocated (not via `.new()`/`.push()`): each parallel iteration
-        // writes its slot directly by index (`->data[idx] = v`, below in
-        // `emit_spawn`), so the backing store must be pre-sized to `len_var`
-        // up front — `push`'s incremental amortised growth doesn't apply here.
-        let (res_mangled, _res_ctor, _res_push) = self.vec_mono_ctor_push(&elem_ty_name)?;
-        self.line(&format!("{ty}* {res} = ({ty}*)nova_alloc(sizeof({ty}));",
-            ty = res_mangled, res = result_var));
-        self.line(&format!(
-            "{res}->cap = ({len} > 0 ? {len} : 8); {res}->data = ({elem}*)nova_alloc((size_t)({res}->cap) * sizeof({elem}));",
-            res = result_var, len = len_var, elem = elem_ty_name));
-        self.line(&format!("{res}->len = {len};", res = result_var, len = len_var));
-
-        // Open scope-block.
+        let tx_var = format!("_nova_pf_tx_{}", id);
+        let rx_var = format!("_nova_pf_rx_{}", id);
         self.line("{");
         self.indent += 1;
         self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
         self.line(&format!("nova_scope_init(&{});", queue_var));
+        self.line(&format!("nova_int _nova_pf_k_{} = {};", id, k_expr));
+        self.line(&format!("if (_nova_pf_k_{id} > {cap}) _nova_pf_k_{id} = {cap};",
+            id = id, cap = PARFOR_CHAN_CAP));
+        // Channel.new rejects cap <= 0; empty input still needs a live channel
+        // (the drain must see closed→None, not a throw).
+        self.line(&format!("if (_nova_pf_k_{id} < 1) _nova_pf_k_{id} = 1;", id = id));
+        self.line(&format!("Nova_ChannelPair _nova_pf_ch_{id} = nova_channel_new(_nova_pf_k_{id});",
+            id = id));
+        self.line(&format!("Nova_ChanWriter* {} = _nova_pf_ch_{}.tx;", tx_var, id));
+        self.line(&format!("Nova_ChanReader* {} = _nova_pf_ch_{}.rx;", rx_var, id));
         self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
         self.line(&format!("_nova_active_scope = &{};", queue_var));
-
-        // Activate scope for nested spawns.
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
 
-        // 3) Emit the for-loop in C.
-        self.line(&format!("for (nova_int _nova_par_i = 0; _nova_par_i < {}; _nova_par_i++) {{", len_var));
-        self.indent += 1;
-        let bind_name = match pattern {
-            Pattern::Ident { name, .. } => name.clone(),
-            _ => "_nova_par_loopvar".to_string(),
-        };
-        self.line(&format!("nova_int {} = {};", bind_name, cur_value_expr));
-        self.var_types.insert(bind_name.clone(), "nova_int".to_string());
-        self.var_mutable.remove(&bind_name);
-
-        // 4) Activate parfor_slot for this spawn.
-        let saved_slot = self.current_parfor_slot.replace((
-            "_nova_par_i".to_string(),
-            result_var.clone(),
-            elem_ty_name.clone(),
-        ));
-
+        // (5) Enqueue loop — the ORDINARY `for` lowering over the (possibly
+        // rebuilt) iterator handles ANY iterator shape and ANY pattern; the
+        // body is `spawn { <body> }` with parfor-send mode active, so each
+        // spawn site clones the Sender into its child (see emit_spawn).
+        let saved_send = self.current_parfor_send
+            .replace((tx_var.clone(), elem_c.clone()));
         let spawn_body_expr = Expr::new(ExprKind::Block(body.clone()), span);
         let spawn_expr = Expr::new(ExprKind::Spawn(Box::new(spawn_body_expr)), span);
-        let _ = self.emit_expr(&spawn_expr)?;
+        let for_body = Block {
+            stmts: vec![Stmt::Expr(spawn_expr)],
+            trailing: None,
+            span, is_unsafe: false,
+        };
+        let for_expr = Expr::new(
+            ExprKind::For {
+                pattern: pattern.clone(),
+                iter: Box::new(for_iter),
+                body: for_body,
+                elem_type: None,
+                invariants: vec![],
+                decreases: None,
+                iter_consume: false,
+            },
+            span,
+        );
+        let for_v = self.emit_expr(&for_expr)?;
+        self.line(&format!("(void)({});", for_v));
+        self.current_parfor_send = saved_send;
 
-        self.current_parfor_slot = saved_slot;
-        self.indent -= 1;
-        self.line("}");
+        // (6) Parent tx close — AFTER the enqueue loop: every child clone was
+        // already counted (clone-at-spawn in the parent), so writer_count can
+        // only reach 0 once the LAST child closes its clone. Empty input →
+        // 1→0 right here → channel closed → drain sees None immediately.
+        self.line(&format!("nova_chan_writer_close({});", tx_var));
 
-        // 5) Run scheduler, restore scope state.
+        // (7) Dedicated drain fiber — the single consumer, inside the scope,
+        // concurrent with the children (§2.3: «дренаж ВНУТРИ supervised»).
+        self.emit_parfor_drain_fiber(
+            id, &queue_var, &rx_var, &acc_var, &vec_mangled, &vec_push, &elem_c)?;
+
+        // (8) Join children + drain; restore scope state.
         self.current_scope_queue = prev;
         self.line(&format!("nova_supervised_run(&{});", queue_var));
         self.line(&format!("_nova_active_scope = {};", prev_scope_var));
-
         self.indent -= 1;
         self.line("}");
 
-        // Track the element type so let-binding propagation (`xs[i]` typing) works.
-        self.array_element_types.insert(result_var.clone(), elem_ty_name.clone());
+        // The expression value is the collected Vec[T]*.
+        Ok(acc_var)
+    }
 
-        // The expression value is the result array pointer.
-        Ok(result_var)
+    /// Plan 173.1 Ф.2: the parallel-for DRAIN fiber — the single consumer of
+    /// the collection channel. Emits (a) the ctx typedef + entry forward-decl
+    /// into `lambda_forward_decls` (file scope — same placement as
+    /// `emit_detach`), (b) the spawn-into-scope call at the CURRENT emission
+    /// point, and (c) the entry function into `deferred_impls`.
+    ///
+    /// The ctx base fields MUST mirror `NovaSpawnCtxBase` (fibers.h) 1:1 —
+    /// identical discipline to `emit_spawn`/`emit_detach` (the worker loop
+    /// casts the ctx by common-initial-sequence; a missing/misordered field
+    /// silently corrupts the first payload field).
+    ///
+    /// Body: `for(;;) { recv → None? break : push(unrepr(value)) }` wrapped in
+    /// the standard fiber fail-frame. `recv()` throws on scope cancel (child
+    /// failure auto-cancels siblings — 173.0 substrate), which lands in the
+    /// fail-frame and is reported kinded like any child error, so Escalate
+    /// semantics hold and the drain never hangs a failing scope.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_parfor_drain_fiber(
+        &mut self,
+        id: usize,
+        queue_var: &str,
+        rx_var: &str,
+        acc_var: &str,
+        vec_mangled: &str,
+        vec_push: &str,
+        elem_c: &str,
+    ) -> Result<(), String> {
+        let drain_id = format!("_nova_parfor_drain_{}", id);
+        let ctx_ty = format!("NovaParforDrainCtx_{}", id);
+        let ctx_var = format!("{}_ctx", drain_id);
+
+        // ── (a) ctx typedef + entry forward-decl (file scope). Base fields
+        // mirror NovaSpawnCtxBase exactly — see emit_spawn for the per-field
+        // rationale (parent_scope/parent_slot/worker_slot/fail-tops/fiber_scope/
+        // init_snapshot/fiber_state/pool_size/cancel-shield pair/park_state/
+        // schedlink — schedlink LAST).
+        let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_parent_scope;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_parent_slot;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int _nova_worker_slot;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFailFrame* _nova_saved_fail_top;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaInterruptFrame* _nova_saved_interrupt_top;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberQueue* _nova_fiber_scope;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaEffectSnapshot* _nova_init_snapshot;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_fiber_state;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    size_t _nova_pool_size;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_cancel_mask_count;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    int64_t _nova_cancel_deadline_ns;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    nova_atomic_int _nova_park_state;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    mco_coro* schedlink;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    Nova_ChanReader* _nova_pf_rx;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    {}* _nova_pf_acc;", vec_mangled);
+        let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
+        let _ = writeln!(self.lambda_forward_decls,
+            "static void {}(mco_coro* _co);", drain_id);
+
+        // ── (b) call site: alloc ctx + spawn into the scope (mirror of
+        // emit_spawn's call-site protocol, incl. pool-acquire under armed M:N
+        // and the spawn-time TLS handler snapshot).
+        self.line(&format!(
+            "nova_bool _nova_is_init_pfd_{} = nova_runtime_is_initialized();", id));
+        self.line(&format!(
+            "{ty}* {var} = ({ty}*)(_nova_is_init_pfd_{id} ? nova_spawn_pool_acquire(sizeof({ty})) : nova_alloc(sizeof({ty})));",
+            ty = ctx_ty, var = ctx_var, id = id));
+        self.line(&format!("{}->_nova_pf_rx = {};", ctx_var, rx_var));
+        self.line(&format!("{}->_nova_pf_acc = {};", ctx_var, acc_var));
+        self.line(&format!("{}->_nova_worker_slot = -1;", ctx_var));
+        self.line(&format!("{}->_nova_parent_slot = -1;", ctx_var));
+        self.line(&format!("if (_nova_is_init_pfd_{}) {{", id));
+        self.indent += 1;
+        self.line(&format!("{}->_nova_parent_scope = &{};", ctx_var, queue_var));
+        self.line(&format!(
+            "{}->_nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));",
+            ctx_var));
+        self.line(&format!("nova_effect_snapshot_save({}->_nova_init_snapshot);", ctx_var));
+        self.line(&format!("nova_runtime_spawn_into(&{}, {}, {});",
+            queue_var, drain_id, ctx_var));
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line(&format!("{}->_nova_parent_scope = NULL;", ctx_var));
+        self.line(&format!("{}->_nova_init_snapshot = NULL;", ctx_var));
+        self.line(&format!("nova_fiber_spawn_into(&{}, {}, {});",
+            queue_var, drain_id, ctx_var));
+        self.indent -= 1;
+        self.line("}");
+
+        // ── (c) entry function → deferred_impls (out-swap like emit_spawn).
+        let saved_out = std::mem::take(&mut self.out);
+        let saved_indent = self.indent;
+        self.indent = 0;
+        // [M-mono-spawn-fwd-decls] parity: inside a monomorphized fn body the
+        // pre-pass never saw this drain — push the decl to the mono splice.
+        if !self.current_type_subst.is_empty() {
+            self.mono_fwd_decls.push_str(&format!(
+                "static void {}(mco_coro* _co);\n", drain_id));
+        }
+        self.line(&format!("static void {}(mco_coro* _co) {{", drain_id));
+        self.indent += 1;
+        self.emit_prologue_preempt_check_unconditional();
+        self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
+        self.line("_c->_nova_worker_slot = _nova_active_slot;");
+        self.line("_c->_nova_fiber_scope = _nova_active_scope;");
+        self.line("if (_c->_nova_init_snapshot && _nova_active_slot >= 0) {");
+        self.indent += 1;
+        self.line("_nova_active_scope->fiber_effect_snapshot[_nova_active_slot] = _c->_nova_init_snapshot;");
+        self.line("_c->_nova_init_snapshot = NULL;");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("_c->_nova_worker_slot = -1;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("NovaFailFrame _ff;");
+        self.line("nova_fail_push(&_ff);");
+        self.line("if (setjmp(_ff.jmp) == 0) {");
+        self.indent += 1;
+        self.line("for (;;) {");
+        self.indent += 1;
+        self.line("NovaOpt_nova_int _r = nova_chan_reader_recv(_c->_nova_pf_rx);");
+        self.line("if (_r.tag != NOVA_TAG_Option_Some) break;");
+        // Un-transport per the SHARED repr policy (must mirror emit_spawn's
+        // send side — see `parfor_chan_repr`).
+        match Self::parfor_chan_repr(elem_c) {
+            ParforChanRepr::IntScalar => {
+                self.line(&format!(
+                    "(void){push}(_c->_nova_pf_acc, ({ty})_r.value);",
+                    push = vec_push, ty = elem_c));
+            }
+            ParforChanRepr::Pointer => {
+                self.line(&format!(
+                    "(void){push}(_c->_nova_pf_acc, ({ty})(intptr_t)_r.value);",
+                    push = vec_push, ty = elem_c));
+            }
+            ParforChanRepr::Boxed => {
+                self.line(&format!(
+                    "(void){push}(_c->_nova_pf_acc, *({ty}*)(intptr_t)_r.value);",
+                    push = vec_push, ty = elem_c));
+            }
+        }
+        self.indent -= 1;
+        self.line("}");
+        self.line("nova_fail_pop();");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("nova_fail_pop();");
+        // Identical error routing to emit_spawn: interrupt sentinel passes
+        // through silently; real errors (incl. the CANCEL thrown by recv when
+        // a failing child auto-cancels the scope) are reported kinded.
+        self.line("if (_ff.error_msg.ptr && _ff.error_msg.len == 18 && memcmp(_ff.error_msg.ptr, \"__nova_interrupt__\", 18) == 0) {");
+        self.indent += 1;
+        self.line("/* interrupt: scope state already set, fiber dies cleanly */");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("nova_fiber_report_child_kinded(_c, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        // Remote fiber post-completion cleanup — identical to emit_spawn.
+        self.line("if (_c->_nova_parent_scope) {");
+        self.indent += 1;
+        self.line("if (_c->_nova_worker_slot >= 0) {");
+        self.indent += 1;
+        self.line("nova_scope_free_slot(_nova_active_scope, _c->_nova_worker_slot);");
+        self.line("_nova_active_slot = -1;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
+        self.line("nova_runtime_signal_main();");
+        self.indent -= 1;
+        self.line("}");
+        self.indent -= 1;
+        self.line("}");
+        self.line("");
+        let entry_code = std::mem::replace(&mut self.out, saved_out);
+        self.deferred_impls.push_str(&entry_code);
+        self.indent = saved_indent;
+        Ok(())
     }
 
     /// Emit `detach { body }` — D50 fire-and-forget primitive.
@@ -10827,6 +11250,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) { continue; }
+            // [M-spawn-module-const-capture]: module-level const — resolves to
+            // its mangled file-scope global, never a capture (see emit_spawn).
+            if self.private_const_c_names
+                .contains_key(&(body.span.file_id, name.clone()))
+            {
+                continue;
+            }
             if let Some(ty) = self.var_types.get(&name).cloned() {
                 let is_scalar = matches!(ty.as_str(),
                     "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
@@ -11135,6 +11565,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut captures: Vec<(String, String, bool)> = Vec::new();
         for name in refs {
             if bound.contains(&name) { continue; }
+            // [M-spawn-module-const-capture]: module-level const — resolves to
+            // its mangled file-scope global, never a capture (see emit_spawn).
+            if self.private_const_c_names
+                .contains_key(&(body.span.file_id, name.clone()))
+            {
+                continue;
+            }
             if let Some(ty) = self.var_types.get(&name).cloned() {
                 let is_scalar = matches!(ty.as_str(),
                     "nova_int" | "nova_bool" | "nova_f64" | "nova_f32" | "nova_byte");
@@ -22745,10 +23182,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
-                let mut ty_c = if let Some(ty) = &decl.ty {
-                    self.type_ref_to_c(ty)?
+                // Plan 173.1 Ф.1 [M-codegen-let-locals-overlay-supervised]: when the
+                // RHS is a body-bearing construct whose trailing may reference the
+                // body's OWN top-level `let`s (e.g. `ro v = supervised { ro inner =
+                // …; inner + 1 }`), pre-register those locals into `var_types` before
+                // probing — mirrors `emit_block_expr`'s identical overlay for plain
+                // `{ … }` blocks (~line 35148). Without this the probe recurses into
+                // an unregistered Ident and hits the `[P67-LEGACY]` panic (found
+                // testing Ф.1's newly-legal `supervised { … v }` nesting — Supervised
+                // wasn't previously a value-position RHS, so this gap never surfaced).
+                let mut _overlay_saved: Vec<(String, Option<String>)> = Vec::new();
+                if let Some(inner_body) = Self::body_bearing_block(&decl.value) {
+                    for s2 in &inner_body.stmts {
+                        if let Stmt::Let(d2) = s2 {
+                            if let Pattern::Ident { name, .. } = &d2.pattern {
+                                let ty2 = d2.ty.as_ref().and_then(|t| self.type_ref_to_c(t).ok())
+                                    .unwrap_or_else(|| self.infer_expr_c_type(&d2.value));
+                                _overlay_saved.push((name.clone(), self.var_types.insert(name.clone(), ty2)));
+                            }
+                        }
+                    }
+                }
+                let ty_c_probe = if let Some(ty) = &decl.ty {
+                    self.type_ref_to_c(ty)
                 } else {
-                    let inferred = self.infer_expr_c_type(&decl.value);
+                    Ok(self.infer_expr_c_type(&decl.value))
+                };
+                for (name, old) in _overlay_saved.drain(..).rev() {
+                    match old {
+                        Some(t) => { self.var_types.insert(name, t); }
+                        None => { self.var_types.remove(&name); }
+                    }
+                }
+                let mut ty_c = if decl.ty.is_some() {
+                    ty_c_probe?
+                } else {
+                    let inferred = ty_c_probe?;
                     if inferred == "__none_ambiguous__" {
                         // None без контекста — дефолт nova_int (legacy).
                         // Ошибка только если тип аннотирован и несовместим
@@ -27000,7 +27469,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (Ф.3). Codegen использует собственную inference-машинерию
                 // (array_element_types / Iter-protocol next_sig) — для валидной
                 // программы результат идентичен (поведение 1:1).
-                self.emit_parallel_for(pattern, iter, body)
+                // Plan 173.1 Ф.2: expr.id прокидывается — checker аннотирует весь
+                // ParallelFor как Vec[T]; codegen читает элемент из канала.
+                self.emit_parallel_for(pattern, iter, body, expr.id)
             }
             ExprKind::TaggedTemplate { parts, args, .. } => {
                 // Bootstrap: tag function ignored, parts concatenated with args as strings.
@@ -35591,6 +36062,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line("}");
         Ok(tmp)
+    }
+
+    /// Plan 173.1 Ф.1 [M-codegen-let-locals-overlay-supervised]: extract the
+    /// `Block` body of a body-bearing expression kind whose trailing value may
+    /// reference the body's own top-level `let`s at a pre-emission type-probe
+    /// site (`Stmt::Let`'s `infer_expr_c_type(&decl.value)` call). Used to drive
+    /// the same overlay-then-restore dance `emit_block_expr` and
+    /// `branch_trailing_c_type_with_locals` already do for plain `{ … }` blocks
+    /// and if/match branches — generalised to `supervised`/`detach`/`blocking`
+    /// (and plain `Block` itself, for callers that don't special-case it).
+    fn body_bearing_block(expr: &Expr) -> Option<&Block> {
+        match &expr.kind {
+            ExprKind::Supervised { body, .. } => Some(body),
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => Some(body),
+            ExprKind::Block(body) => Some(body),
+            _ => None,
+        }
     }
 
     /// Plan 172.1 [M-codegen-if-branch-locals-overlay] (2026-06-29): infer a branch
@@ -48007,20 +48495,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 ExprKind::For { .. } => "nova_unit".into(),
                 ExprKind::ParallelFor { body, .. } => {
-                    // D71: array-mode when trailing exists, unit otherwise.
-                    // Plan 172.12 A8: Vec[T]-mangled result name (was
-                    // `NovaArray_<et>*` — retired with array.h's legacy runtime;
-                    // mirrors `emit_parallel_for`'s result buffer, which is
-                    // Vec[T]-typed since the same pass).
+                    // D71 / Plan 173.1 Ф.2: array-mode when trailing exists, unit
+                    // otherwise. `[]T` for ANY element type T (primitive / heap-record
+                    // / value-record / tuple / sum / nested `[]T`) — the primitive
+                    // whitelist (nova_int/bool/f64/str) was an interim v1 restriction
+                    // (`[M-parfor-record-result-miscompile]`), removed now that
+                    // `emit_parallel_for`'s channel+consume desugar collects any T
+                    // uniformly (box non-pointer T, pass heap T by reference).
+                    // Plan 172.12 A8: Vec[T]-mangled result name.
                     match &body.trailing {
                         Some(t) => {
                             let et = self.infer_expr_c_type(t);
-                            match et.as_str() {
-                                "nova_int" | "nova_bool" | "nova_f64" | "nova_str" =>
-                                    format!("{}*",
-                                        Self::compute_generic_type_c_name("Vec", &[et])),
-                                _ => "nova_unit".into(),
-                            }
+                            format!("{}*", Self::compute_generic_type_c_name("Vec", &[et]))
                         }
                         None => "nova_unit".into(),
                     }
@@ -48028,7 +48514,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ExprKind::While { .. } => "nova_unit".into(),
                 ExprKind::WhileLet { .. } => "nova_unit".into(),
                 ExprKind::Loop { .. } => "nova_unit".into(),
-                ExprKind::Supervised { .. } => "nova_unit".into(),
+                // Plan 173.1 Ф.1: `supervised { … v }` evaluates to `v`'s type
+                // (post-join value-expression); trailing-less form stays unit.
+                // Mirrors `Blocking`'s identical pattern below.
+                ExprKind::Supervised { body, .. } => {
+                    let t = body.trailing.as_ref()
+                        .map(|e| self.infer_expr_c_type(e))
+                        .unwrap_or_else(|| "nova_unit".into());
+                    // Normalise the "unhandled ExprKind" empty-string convention (e.g. a
+                    // bare `spawn { }` trailing, [M-supervised-value-unit-trailing]) to
+                    // an explicit "nova_unit" so nested `supervised { supervised { spawn
+                    // {…} } }` self-heals the same way at every nesting level.
+                    if t.is_empty() { "nova_unit".into() } else { t }
+                }
                 ExprKind::Detach(_) => "nova_unit".into(),
                 // Plan 83.3 Ф.4.2: `blocking { }` отдаёт значение trailing
                 // expr тела (как block-expr); без trailing — unit.

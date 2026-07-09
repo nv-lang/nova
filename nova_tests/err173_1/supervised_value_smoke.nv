@@ -1,0 +1,36 @@
+// Plan 173.1 Ф.1 smoke: supervised{} — value-expression.
+module nova_tests.err173_1
+
+test "supervised trailing value propagates" {
+    ro v = supervised {
+        42
+    }
+    assert(v == 42)
+}
+
+test "supervised void-form (no trailing) still unit" {
+    supervised {
+        ro x = 1
+        assert(x == 1)
+    }
+}
+
+test "supervised value after spawn join" {
+    mut acc = 0
+    ro v = supervised {
+        spawn { acc = acc + 1 }
+        spawn { acc = acc + 1 }
+        acc
+    }
+    assert(v == 2)
+}
+
+test "supervised nested value" {
+    ro v = supervised {
+        ro inner = supervised {
+            7
+        }
+        inner + 1
+    }
+    assert(v == 8)
+}

@@ -2782,3 +2782,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   E_CONST_INIT_CONCURRENCY (spawn/supervised/detach/parallel/каналы/Detach-эффект
   в сигнатурах вызываемых) + D215-амендмент. Сегодня спасает случайный гэп
   (supervised-value не поддержан в module-init) — не контракт.
+
+- **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ветка `fixed-array-value`
+  запушена с WIP-коммитом (классификатор [N]T=value начат в types/mod.rs; codegen/GC/тесты
+  не начаты). Возобновление: продолжить с WIP, задание — в транскрипте волны 2026-07-10.
