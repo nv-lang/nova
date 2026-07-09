@@ -126,6 +126,11 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         ExprKind::IntLit(n) => Ok(SmtTerm::IntLit(*n)),
         ExprKind::BoolLit(b) => Ok(SmtTerm::BoolLit(*b)),
         ExprKind::StrLit(s) => Ok(SmtTerm::StrLit(s.clone())),
+        // D412 (Plan 186): byte-blob literal — no SMT sort for raw byte
+        // sequences; contracts over blob contents are out of scope.
+        ExprKind::HexBlobLit(_) => Err(EncodingError::Unsupported(
+            "hex-blob literal `x\"…\"` / embed() is not encodable to SMT".into(),
+        )),
         // Plan 33.3 Ф.11: float literals → FP sort.
         ExprKind::FloatLit(v) => Ok(SmtTerm::F64Lit(v.to_bits())),
         ExprKind::Ident(n) => Ok(SmtTerm::Var(n.clone())),

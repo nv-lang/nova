@@ -146,7 +146,7 @@ export fn HashMap[K, V].new() -> HashMap[K, V] {
 /// assert(m.len() == 2)
 /// ```
 #stable(since = "0.1")
-export fn HashMap[K, V].from(pairs [](K, V)) -> Self {
+export fn HashMap[K, V].from(pairs [](K, V)) -> Self { // [M-lint-findings-static-conversion]
     mut m = Self.new().cap(pairs.len() * 2)
     for (k, v) in pairs {
         m.insert(k, v)
@@ -637,8 +637,8 @@ fn HashMap[K, V] mut @rehash(new_cap int) {
 // RUN-FAIL (rehash on growth и др. ломаются на рантайме, не на компиляции); гэп
 // [M-153.x-array-new-not-vec] всё ещё жив. ИСКЛЮЧЕНИЕ из []T-канона до фикса
 // static-dispatch разрыва между `[]T`-значением и типизированным `Vec[T]`.
-fn new_buckets[K, V](cap int) -> Vec[Slot[K, V]] {
-    mut buckets = Vec[Slot[K, V]].new().cap(cap)
+fn new_buckets[K, V](cap int) -> Vec[Slot[K, V]] { // [M-153.x-array-new-not-vec]
+    mut buckets = Vec[Slot[K, V]].new().cap(cap) // [M-153.x-array-new-not-vec]
     for _ in 0..cap {
         buckets.push(Slot.Empty)
     }

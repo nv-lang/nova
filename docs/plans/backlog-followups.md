@@ -2708,3 +2708,77 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (топологический порядок по зависимостям), вызов из драйвера ДО спавна воркеров;
   чтение констант становится голым значением (минус ветка на каждом доступе).
   Атомики не нужны. Пример: nova_const_ADDR_IMAGE_BYTES в любом net-CU.
+
+- **[M-lint-findings-static-conversion]** (2026-07-09, P3, Wave: миграционная волна §1а;
+  источник: план 185, `nova lint std/`) — 20 сайтов статик-конверсий `T.from(x)` /
+  `T.parse(s)` в std (Csv/Ini/Json.parse, Url/Body/BodyReader/HeaderValue/Ulid/Uuid.from,
+  HashMap.from, Vec[T].from, JsonValue.try_from и др.) — «пятая дверь» по §1а
+  nv-coding-style (ретракция 2026-07-09). Миграция = переименование публичного API
+  (`s.to_json()`-семья) + правка вызовов; не входит в план 185. On-line маркеры
+  на декларациях; полный список — `nova lint --rule W_STATIC_CONVERSION std/`
+  после снятия маркеров.
+
+- **[M-lint-findings-fail-public-signature]** (2026-07-09, P3, Wave: D325-R5 миграция;
+  источник: план 185) — 7 сайтов `Fail[XError]` в публичных std-сигнатурах
+  (Csv/Ini.parse, Ulid.new/from, Uuid.from, testing/property assert_prop*) — по R5
+  D325 канон `Result[T, XError]`. Миграция = смена сигнатур + вызовов (у property —
+  осознанный throw-дизайн тест-ассертов, решить при заходе). Проверка:
+  `nova lint --rule W_FAIL_PUBLIC_SIGNATURE std/`.
+
+- **[M-lint-findings-manual-slice-copy]** (2026-07-09, P3, Wave: после лимитов;
+  источник: план 185) — 29 сайтов поэлементной копии `push(x[i])` в циклах (§18а).
+  Подклассы: (а) crypto/uuid — конверсия ФИКСИРОВАННОГО `[32]u8`-дайджеста в `[]u8`:
+  канонического bulk-пути `[N]T`→`[]T` (AsSlice для fixed-array / `digest[..]`-вид)
+  сейчас НЕТ — сначала нужен std/языковой примитив; (б) deflate/inflate/io/fs/http —
+  разобрать по месту: часть — честно нерегулярные пути (документировать), часть —
+  заменить на срез-вид/append. Проверка: `nova lint --rule W_MANUAL_SLICE_COPY std/`.
+
+- **[M-lint-findings-writebuffer-into]** (2026-07-09, P3, Wave: вместе с D410-хвостом;
+  источник: план 185) — `WriteBuffer consume @into() -> []u8` — голое `into` против
+  канона `into_*` (§1а: `into_bytes`). Переименование затрагивает ~140 вызовов в
+  nova_tests + 8 в std (on-line маркеры) — механическая волна отдельным заходом.
+
+- **[M-lint-findings-param-no-contract]** (2026-07-09, P3, Wave: контракт-волна §5;
+  источник: план 185) — параметры index/len-класса без `requires` там, где домен
+  ТОТАЛЕН по дизайну: `Vec @truncate(n)` / `@first_n(n)` / `@last_n(n)` (clamp-семантика,
+  задокументирована), `SeekFrom.end/current(n)` (отрицательные легальны). Решить:
+  зафиксировать clamp/total как канон-исключение §5 или перевести на `requires` с
+  правкой вызовов. On-line маркеры на месте.
+
+- **[M-lint-findings-try-without-sibling]** (2026-07-09, P3, Wave: D325-R3 хвост;
+  источник: план 185) — `fs try_exists` (Rust-имя; голое `exists` — зарезервированное
+  слово квантора, переименовать нельзя — carve-out задокументирован в докстроке).
+  Решить: канон-исключение или новое имя (`path_exists`).
+
+- **[M-lint-findings-result-discarded-lenient-parse]** (2026-07-09, P3;
+  источник: план 185) — swallow-арм `Err(_) => ()` в lenient-парсерах
+  (http/response_ext set-cookie, http/cookie max-age): пропуск невалидного элемента —
+  осознанная семантика; задокументировать как канон-паттерн (§4) или ввести явный
+  helper (`.ok()`-цепочка). On-line маркеры на месте.
+
+  **ЗАКРЫТО (2026-07-09, worktree `nova-174`/`ptr-methods-174-5`, [sonnet]).**
+  ~~генерируемый lazy-init модульных констант (`nova_const_X(void)`: check-then-act по
+  неатомарному `_init`-флагу, без барьеров) не потокобезопасен~~ — снята ленивость:
+  `emit_lazy_const` (emit_c.rs) больше не эмитит per-const getter — storage-only
+  (`static Ty _nova_const_X_value;`, БЕЗ `_init`-флага), init-body собирается в
+  `pending_const_inits` и на finalize (`emit_module`, перед `emit_main_wrapper`)
+  объединяется в ОДНУ `static void nova_consts_init(void) {...}` (Kahn-топосорт по
+  `collect_free_idents`-зависимостям, `topo_sort_const_inits`); вызов
+  `nova_consts_init()` в `main()` сразу после `nova_gc_init()`, ДО
+  `nova_runtime_auto_arm()` (спавн воркеров). Чтение констант — голое
+  `_nova_const_X_value` (было `nova_const_X()`-call), два use-site (Ident +
+  qualified-path) переведены. Атомики не понадобились (single-threaded init до
+  конкурентности). Гейт: `nova test --positive --compile-error
+  spec_tests/conformance` 78/0 (без регресса); `nova test std` 59/3(pre-existing,
+  не регресс)/61-skip; спот-греп `.c` — `if (!_init)` веток 0, `nova_consts_init()`
+  вызывается ровно один раз в `main()`; `std/net/addr_test` (ADDR_IMAGE_BYTES)
+  PASS, спот-дифф `.c` подтверждает eager init + bare-value read.
+
+- **[M-const-init-concurrency-gate]** (2026-07-09, P2, вопрос владельца; Wave: В РАБОТЕ —
+  дополнение волны 173.3 [sonnet]) — module-level ro-инициализаторы исполняются в
+  nova_consts_init() ДО спавна воркеров, но чекер не запрещает в них конкуренцию
+  (E_CONST_EFFECT_IN_INIT покрывает только const); _auto_arm_if_needed() лениво поднял бы
+  M:N посреди consts_init → возврат гонки [M-lazy-const-init-race]. Фикс:
+  E_CONST_INIT_CONCURRENCY (spawn/supervised/detach/parallel/каналы/Detach-эффект
+  в сигнатурах вызываемых) + D215-амендмент. Сегодня спасает случайный гэп
+  (supervised-value не поддержан в module-init) — не контракт.

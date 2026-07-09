@@ -23,11 +23,11 @@ export fn str @starts_with(prefix str) -> bool {
 }
 
 // True если строка заканчивается на suffix. Plan 152.1: RawMem.compare последних
-// `fn_len` байт (`@ptr + base`).
+// `fn_len` байт (`@ptr.offset(base)`).
 export fn str @ends_with(suffix str) -> bool {
     ro (sn, fn_len) = (@byte_len(), suffix.byte_len())
     if fn_len > sn { return false }
-    unsafe { RawMem.compare(@ptr + (sn - fn_len), suffix.ptr, fn_len) == 0 }
+    unsafe { RawMem.compare(@ptr.offset((sn - fn_len)), suffix.ptr, fn_len) == 0 }
 }
 
 // True если needle встречается в строке. Plan 152.1: per-position RawMem.compare
@@ -39,7 +39,7 @@ export fn str @contains(needle str) -> bool {
     if nn > sn { return false }
     mut i = 0
     while i + nn <= sn {
-        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return true }
+        if unsafe { RawMem.compare(@ptr.offset(i), needle.ptr, nn) == 0 } { return true }
         i += 1
     }
     false
@@ -57,7 +57,7 @@ export fn str @find(needle str) -> Option[int] {
     if nn > sn { return None }
     mut i = 0
     while i + nn <= sn {
-        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return Some(i) }
+        if unsafe { RawMem.compare(@ptr.offset(i), needle.ptr, nn) == 0 } { return Some(i) }
         i += 1
     }
     None
@@ -72,7 +72,7 @@ export fn str @rfind(needle str) -> Option[int] {
     if nn > sn { return None }
     mut i = sn - nn
     while i >= 0 {
-        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } { return Some(i) }
+        if unsafe { RawMem.compare(@ptr.offset(i), needle.ptr, nn) == 0 } { return Some(i) }
         i -= 1
     }
     None
@@ -98,7 +98,7 @@ export fn str @split(sep str) -> ro []str {
     mut start = 0
     mut i = 0
     while i + sep_len <= sn {
-        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
             out.push(@[start..i])   // byte-range zero-copy view (Index[Range,str])
             i += sep_len
             start = i
@@ -129,7 +129,7 @@ export fn str @splitn(n int, sep str) -> ro []str {
     mut i = 0
     mut splits = 0
     while i + sep_len <= sn && splits < n - 1 {
-        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
             out.push(@[start..i])
             i += sep_len
             start = i
@@ -150,7 +150,7 @@ export fn str @rsplit(sep str) -> ro []str {
     mut end = sn
     mut i = sn - sep_len
     while i >= 0 {
-        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
             out.push(@[i + sep_len .. end])
             end = i
             i -= sep_len
@@ -173,7 +173,7 @@ export fn str @rsplitn(n int, sep str) -> ro []str {
     mut i = sn - sep_len
     mut splits = 0
     while i >= 0 && splits < n - 1 {
-        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
             out.push(@[i + sep_len .. end])
             end = i
             i -= sep_len
@@ -213,7 +213,7 @@ export fn str @split_terminator(sep str) -> ro []str {
     mut start = 0
     mut i = 0
     while i + sep_len <= sn {
-        if unsafe { RawMem.compare(@ptr + i, sep.ptr, sep_len) == 0 } {
+        if unsafe { RawMem.compare(@ptr.offset(i), sep.ptr, sep_len) == 0 } {
             out.push(@[start..i])
             i += sep_len
             start = i
@@ -276,7 +276,7 @@ export fn str @match_indices(needle str) -> []int {
     ro sn = @byte_len()
     mut i = 0
     while i + nn <= sn {
-        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } {
+        if unsafe { RawMem.compare(@ptr.offset(i), needle.ptr, nn) == 0 } {
             out.push(i)
             i += nn
         } else {
@@ -329,7 +329,7 @@ export fn str @matches(needle str) -> ro []str {
     ro sn = @byte_len()
     mut i = 0
     while i + nn <= sn {
-        if unsafe { RawMem.compare(@ptr + i, needle.ptr, nn) == 0 } {
+        if unsafe { RawMem.compare(@ptr.offset(i), needle.ptr, nn) == 0 } {
             out.push(@[i..i + nn])
             i += nn
         } else {

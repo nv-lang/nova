@@ -22,7 +22,7 @@ import std.runtime.raw_mem.{RawMem}
 export fn Vec[T] mut @push(v T) -> @ {
     @reserve(1)
     unsafe {
-        @data[@len] = v
+        @data.write_at(@len, v)
     }
     @len = @len + 1
 }
@@ -33,7 +33,7 @@ export fn Vec[T] mut @pop() -> Option[T] {
         return None
     }
     @len = @len - 1
-    Some(unsafe { @data[@len] })
+    Some(unsafe { @data.read_at(@len) })
 }
 
 /// Insert `v` at index `i`, shifting later elements right. Panics if
@@ -48,9 +48,9 @@ export fn Vec[T] mut @insert(i int, v T) -> @
         // the dst/src overlap correctly.
         ro tail = @len - i
         if tail > 0 {
-            RawMem.copy((@data + i) as *u8, (@data + (i + 1)) as *mut u8, tail * size_of[T]())
+            RawMem.copy(@data.offset(i) as *u8, @data.offset(i + 1) as *mut u8, tail * size_of[T]())
         }
-        @data[i] = v
+        @data.write_at(i, v)
     }
     @len = @len + 1
 }
@@ -89,9 +89,9 @@ export fn Vec[T] mut @splice(i int, other Vec[T]) -> @
             // right by `src_len` slots (memmove, overlap-safe), then copy the
             // source into the hole (memmove, robust to src being a view of self).
             if tail > 0 {
-                RawMem.copy((@data + i) as *u8, (@data + (i + src_len)) as *mut u8, tail * size_of[T]())
+                RawMem.copy(@data.offset(i) as *u8, @data.offset(i + src_len) as *mut u8, tail * size_of[T]())
             }
-            RawMem.copy(src_data as *u8, (@data + i) as *mut u8, src_len * size_of[T]())
+            RawMem.copy(src_data as *u8, @data.offset(i) as *mut u8, src_len * size_of[T]())
         }
         @len = @len + src_len
     }
@@ -102,13 +102,13 @@ export fn Vec[T] mut @splice(i int, other Vec[T]) -> @
 export fn Vec[T] mut @remove(i int) -> T
     requires 0 <= i && i < @len
 {
-    ro removed = unsafe { @data[i] }
+    ro removed = unsafe { @data.read_at(i) }
     unsafe {
         // Shift the suffix `(i, len)` one slot left with a single overlap-safe
         // memmove, closing the gap left by the removed element.
         ro tail = @len - 1 - i
         if tail > 0 {
-            RawMem.copy((@data + (i + 1)) as *u8, (@data + i) as *mut u8, tail * size_of[T]())
+            RawMem.copy(@data.offset(i + 1) as *u8, @data.offset(i) as *mut u8, tail * size_of[T]())
         }
     }
     @len = @len - 1
@@ -120,11 +120,11 @@ export fn Vec[T] mut @remove(i int) -> T
 export fn Vec[T] mut @swap_remove(i int) -> T
     requires 0 <= i && i < @len
 {
-    ro removed = unsafe { @data[i] }
+    ro removed = unsafe { @data.read_at(i) }
     ro last = @len - 1
     if i != last {
         unsafe {
-            @data[i] = @data[last]
+            @data.write_at(i, @data.read_at(last))
         }
     }
     @len = @len - 1
@@ -141,7 +141,7 @@ export fn Vec[T] mut @clear() -> @ {
 }
 
 /// If `n < len`, shorten to exactly `n` elements. Larger `n` is a no-op.
-export fn Vec[T] mut @truncate(n int) -> @ {
+export fn Vec[T] mut @truncate(n int) -> @ { // [M-lint-findings-param-no-contract]
     if n >= 0 && n < @len {
         @len = n
     }
@@ -154,7 +154,12 @@ export fn Vec[T] mut @reverse() -> @ {
     // KEEP as while: two-pointer converge (lo++ / hi--), not a forward `0..@len` loop.
     while lo < hi {
         unsafe {
-            (@data[lo], @data[hi]) = (@data[hi], @data[lo])
+            // Plan 174.5: `(a, b) = (b, a)` tuple-assign isn't expressible with
+            // method-call targets (`.write_at` isn't an lvalue) — a temp-swap
+            // via `.read_at`/`.write_at` is the direct equivalent.
+            ro tmp = @data.read_at(lo)
+            @data.write_at(lo, @data.read_at(hi))
+            @data.write_at(hi, tmp)
         }
         lo = lo + 1
         hi = hi - 1
@@ -168,7 +173,9 @@ export fn Vec[T] mut @swap(i int, j int) -> @
 {
     if i != j {
         unsafe {
-            (@data[i], @data[j]) = (@data[j], @data[i])
+            ro tmp = @data.read_at(i)
+            @data.write_at(i, @data.read_at(j))
+            @data.write_at(j, tmp)
         }
     }
 }
@@ -187,7 +194,7 @@ export fn Vec[T] mut @resize(n int, v T) -> @
         @reserve(n - @len)
         for i in start..n {
             unsafe {
-                @data[i] = v
+                @data.write_at(i, v)
             }
         }
         @len = n
@@ -207,7 +214,7 @@ export fn Vec[T] mut @resize_with(n int, f fn() -> T) -> @
         @reserve(n - @len)
         for i in start..n {
             unsafe {
-                @data[i] = f()
+                @data.write_at(i, f())
             }
         }
         @len = n
@@ -264,7 +271,7 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
         // memmove so self-append (`v.append(v)`) stays correct: after reserve
         // other.ptr() may equal @data, but [0,m) and [len,len+m) are distinct.
         unsafe {
-            RawMem.copy(other.ptr() as *u8, (@data + @len) as *mut u8, m * size_of[T]())
+            RawMem.copy(other.ptr() as *u8, @data.offset(@len) as *mut u8, m * size_of[T]())
         }
         @len = @len + m
     }
@@ -279,11 +286,11 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
 export fn Vec[T] mut @retain(pred fn(T) -> bool) -> @ {
     mut write = 0
     for read in 0..@len {
-        ro v = unsafe { @data[read] }
+        ro v = unsafe { @data.read_at(read) }
         if pred(v) {
             if write != read {
                 unsafe {
-                    @data[write] = v
+                    @data.write_at(write, v)
                 }
             }
             write = write + 1
@@ -342,7 +349,7 @@ export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> @
 {
     if len > 0 {
         unsafe {
-            RawMem.copy((@data + src_from) as *u8, (@data + dst_from) as *mut u8, len * size_of[T]())
+            RawMem.copy(@data.offset(src_from) as *u8, @data.offset(dst_from) as *mut u8, len * size_of[T]())
         }
     }
 }
@@ -373,7 +380,7 @@ export fn Vec[T] mut @fill(v T) -> @ {
     } else {
         for i in 0..@len {
             unsafe {
-                @data[i] = v
+                @data.write_at(i, v)
             }
         }
     }
@@ -385,7 +392,7 @@ export fn Vec[T] mut @fill(v T) -> @ {
 export fn Vec[T] mut @fill_with(f fn() -> T) -> @ {
     for i in 0..@len {
         unsafe {
-            @data[i] = f()
+            @data.write_at(i, f())
         }
     }
 }
@@ -412,7 +419,7 @@ export fn Vec[T] mut @append_zero(n int) -> @
     }
     @reserve(n)
     unsafe {
-        RawMem.fill((@data + @len) as *mut u8, 0 as u8, n * size_of[T]())
+        RawMem.fill(@data.offset(@len) as *mut u8, 0 as u8, n * size_of[T]())
     }
     @len = @len + n
 }

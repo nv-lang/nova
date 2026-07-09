@@ -62,6 +62,10 @@ pub fn compute_c_key(
     // (`--contracts=off` элидирует все контракт-проверки) → входит в ключ,
     // иначе кэш `enforce`-сборки переиспользовался бы для `off` и наоборот.
     contracts_off: bool,
+    // Plan 186 (D412): файлы, встроенные через `embed("path")` - их байты
+    // попадают в сгенерированный `.c` (HexBlobLit -> static const), поэтому
+    // правка встроенного файла ОБЯЗАНА инвалидировать кэш.
+    embed_files: &[PathBuf],
 ) -> Option<String> {
     let mut h = DefaultHasher::new();
     // Версия схемы ключа — смена формата кэша инвалидирует все записи.
@@ -98,6 +102,17 @@ pub fn compute_c_key(
     for pf in files {
         pf.path.to_string_lossy().hash(&mut h);
         let bytes = std::fs::read(&pf.path).ok()?;
+        bytes.hash(&mut h);
+    }
+    // Plan 186 (D412): embed-файлы - путь + содержимое (отсортированы для
+    // детерминизма; resolve_embeds уже возвращает sorted+dedup, но не
+    // полагаемся на это).
+    let mut embeds: Vec<&PathBuf> = embed_files.iter().collect();
+    embeds.sort();
+    embeds.len().hash(&mut h);
+    for ef in embeds {
+        ef.to_string_lossy().hash(&mut h);
+        let bytes = std::fs::read(ef).ok()?;
         bytes.hash(&mut h);
     }
     Some(format!("{:016x}", h.finish()))
@@ -164,13 +179,13 @@ mod tests {
         std::fs::write(&a, "module t\nfn main() -> int => 0\n").unwrap();
         let peers = vec![mk_peer(a.clone())];
 
-        let k1 = compute_c_key(&peers, &[], "windows", None, false).expect("key");
-        let k2 = compute_c_key(&peers, &[], "windows", None, false).expect("key");
+        let k1 = compute_c_key(&peers, &[], "windows", None, false, &[]).expect("key");
+        let k2 = compute_c_key(&peers, &[], "windows", None, false, &[]).expect("key");
         assert_eq!(k1, k2, "identical inputs → identical key");
 
         // Изменение содержимого файла → другой ключ.
         std::fs::write(&a, "module t\nfn main() -> int => 1\n").unwrap();
-        let k3 = compute_c_key(&peers, &[], "windows", None, false).expect("key");
+        let k3 = compute_c_key(&peers, &[], "windows", None, false, &[]).expect("key");
         assert_ne!(k1, k3, "changed source content → different key");
 
         let _ = std::fs::remove_dir_all(&root);
@@ -184,17 +199,43 @@ mod tests {
         std::fs::write(&a, "module t\nfn main() -> int => 0\n").unwrap();
         let peers = vec![mk_peer(a)];
 
-        let base = compute_c_key(&peers, &[], "windows", None, false).unwrap();
-        let other_target = compute_c_key(&peers, &[], "linux", None, false).unwrap();
+        let base = compute_c_key(&peers, &[], "windows", None, false, &[]).unwrap();
+        let other_target = compute_c_key(&peers, &[], "linux", None, false, &[]).unwrap();
         let with_feat =
-            compute_c_key(&peers, &["z3".to_string()], "windows", None, false).unwrap();
-        let other_depth = compute_c_key(&peers, &[], "windows", Some(900), false).unwrap();
+            compute_c_key(&peers, &["z3".to_string()], "windows", None, false, &[]).unwrap();
+        let other_depth = compute_c_key(&peers, &[], "windows", Some(900), false, &[]).unwrap();
         // Plan 140 Ф.2: contract build-policy входит в ключ.
-        let contracts_off = compute_c_key(&peers, &[], "windows", None, true).unwrap();
+        let contracts_off = compute_c_key(&peers, &[], "windows", None, true, &[]).unwrap();
         assert_ne!(base, other_target, "target OS is part of the key");
         assert_ne!(base, with_feat, "active features are part of the key");
         assert_ne!(base, other_depth, "mono-depth is part of the key");
         assert_ne!(base, contracts_off, "contract build-policy is part of the key");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn key_reflects_embed_files() {
+        // Plan 186 (D412): содержимое embed-файла входит в ключ.
+        let root = tmp_root("embed");
+        std::fs::create_dir_all(&root).unwrap();
+        let a = root.join("a.nv");
+        std::fs::write(&a, "module t
+fn main() -> int => 0
+").unwrap();
+        let blob = root.join("logo.bin");
+        std::fs::write(&blob, [0x48u8, 0x69]).unwrap();
+        let peers = vec![mk_peer(a)];
+
+        let no_embed = compute_c_key(&peers, &[], "windows", None, false, &[]).unwrap();
+        let with_embed =
+            compute_c_key(&peers, &[], "windows", None, false, &[blob.clone()]).unwrap();
+        assert_ne!(no_embed, with_embed, "embed file set is part of the key");
+
+        std::fs::write(&blob, [0x48u8, 0x69, 0x00]).unwrap();
+        let changed =
+            compute_c_key(&peers, &[], "windows", None, false, &[blob.clone()]).unwrap();
+        assert_ne!(with_embed, changed, "embed file CONTENT is part of the key");
 
         let _ = std::fs::remove_dir_all(&root);
     }

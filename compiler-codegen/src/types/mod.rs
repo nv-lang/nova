@@ -6607,7 +6607,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
         }
     }
@@ -7599,6 +7599,16 @@ impl<'a> TypeCheckCtx<'a> {
                 }),
                 ExprKind::UnitLit => Some(ResolvedType::Unit),
                 ExprKind::NullPtrLit => Some(ResolvedType::Ptr),
+                // D412 (Plan 186): hex-blob / embed → `[]u8` ≡ Vec[u8] (D239 nominal canon).
+                ExprKind::HexBlobLit(_) => Some(ResolvedType::Named {
+                    name: "Vec".to_string(),
+                    module: Vec::new(),
+                    args: vec![ResolvedType::Scalar {
+                        width: 8,
+                        signed: false,
+                        wide_default: false,
+                    }],
+                }),
                 _ => None,
             };
             if let Some(rt) = lit_rt {
@@ -7611,6 +7621,46 @@ impl<'a> TypeCheckCtx<'a> {
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
                 self.in_call_func.set(false);
+                // Plan 174.5 §3/§4: write-cap check for the pointer WRITE-
+                // method family (`.write`/`.write_at`/`.write_unaligned`/
+                // `.write_volatile`/`.copy_from`/`.copy_from_nonoverlapping`)
+                // — mirrors `check_target_readonly`'s Deref/Index arms
+                // (same `pointee_is_writable` helper), but at the CALL site
+                // instead of an assignment target. `pointee_is_writable`
+                // returns `None` for non-Pointer receiver types, so this is a
+                // no-op for the many OTHER types that also happen to define a
+                // `.write(...)` method (e.g. `io.Write`) — scoped exactly to
+                // raw `*T`/`*mut T` receivers. Closes the gap noted in
+                // §10a (`.write()` previously bypassed this checker-level
+                // gate entirely, relying only on the codegen-side `is_const`
+                // C-string heuristic, which misses cases like `ro-bound
+                // local = vec.ptr()` where the C type carries no `const`).
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(
+                        name.as_str(),
+                        "write" | "write_at" | "write_unaligned" | "write_volatile"
+                            | "copy_from" | "copy_from_nonoverlapping"
+                    ) {
+                        if let Some(ty) = self.infer_expr_type(obj, scope) {
+                            if let Some(writable) = pointee_is_writable(&ty) {
+                                if !writable {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_POINTER_RO_ASSIGN] cannot call `.{}()` \
+                                             through a readonly pointer — `*T` is a \
+                                             readonly pointee (the L3 default is `ro`: \
+                                             `*T ≡ *ro T`, Plan 147 / D246 / 174.5 §4). \
+                                             A writable pointee requires the `*mut T` \
+                                             opt-in.",
+                                            name
+                                        ),
+                                        e.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 // 172.1.2 C6(a): closure-параметры типизируются сигнатурой callee
                 // ДО рекурсии в args — тела замыканий (`x*2`) f1-обходятся с
                 // типизированными параметрами → дети аннотируются каналом.
@@ -8564,7 +8614,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
         }
     }
@@ -12415,6 +12465,11 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(prim_ref("str", expr.span))
             }
             ExprKind::CharLit(_) => Some(prim_ref("char", expr.span)),
+            // D412 (Plan 186): hex-blob / embed → `[]u8`.
+            ExprKind::HexBlobLit(_) => Some(TypeRef::Array(
+                Box::new(prim_ref("u8", expr.span)),
+                expr.span,
+            )),
             // Plan 134: null ptr literal → *() = TypeRef::Pointer(TypeRef::Unit).
             ExprKind::NullPtrLit => Some(TypeRef::Pointer(
                 Box::new(TypeRef::Unit(expr.span)),
@@ -15588,7 +15643,7 @@ impl<'a> BoundCtx<'a> {
             // Литералы / ident'ы / handler-литералы — без рекурсии в bound-проверке.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::HandlerLit { .. } => {}
         }
@@ -17497,7 +17552,7 @@ impl<'a> CapabilityCtx<'a> {
             // Литералы / ident'ы / handler-литералы — без рекурсии.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::HandlerLit { .. }
             | ExprKind::ProtocolLit { .. } => {}
@@ -18793,7 +18848,7 @@ impl NameResCtx {
             // Литералы.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
 
             ExprKind::InterpolatedStr { parts } => {
                 for p in parts {
@@ -20862,7 +20917,7 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         // Leaf expressions — nothing to recurse into.
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::UnitLit
-        | ExprKind::NullPtrLit
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
         | ExprKind::SelfAccess => {}
     }
 }
@@ -24496,7 +24551,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         // ─── Листья ───
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_)
-        | ExprKind::NullPtrLit
+        | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
         | ExprKind::Path(_) | ExprKind::SelfAccess => {}
 
         // ─── Использование переменной ───
@@ -27260,7 +27315,7 @@ impl MapLitCtx {
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
         }
     }
 
@@ -28214,7 +28269,7 @@ impl MapLitAnnotator {
             ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess
             | ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
-            | ExprKind::NullPtrLit => {}
+            | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit => {}
         }
         // Подавляем unused warnings.
         let _ = &self.fn_generics;

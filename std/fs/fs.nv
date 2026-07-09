@@ -386,7 +386,7 @@ export fn read(path Path) Fs -> Result[[]u8, IoError] {
     loop {
         match f.read(chunk) {
             Ok(0)  => break
-            Ok(n)  => { mut i = 0; while i < n { out.push(chunk[i]); i += 1 } }
+            Ok(n)  => { mut i = 0; while i < n { out.push(chunk[i]); i += 1 } } // [M-lint-findings-manual-slice-copy]
             Err(e) => {
                 if e.is_interrupted() { continue }
                 rerr = Some(e)
@@ -467,7 +467,7 @@ export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
 /// `NotFound` over `try_exists`-then-open. (`exists`/`forall` are reserved
 /// quantifier keywords, so this cannot be named `exists`.)
 #stable(since = "0.1")
-export fn try_exists(path Path) Fs -> Result[bool, IoError] {
+export fn try_exists(path Path) Fs -> Result[bool, IoError] { // [M-lint-findings-try-without-sibling]
     mut img = stat_image()
     ro rc = Fs.stat(path.os_bytes(), img)
     if rc >= 0 { return Ok(true) }

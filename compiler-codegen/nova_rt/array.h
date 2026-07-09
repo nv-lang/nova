@@ -877,6 +877,37 @@ static inline void* nova_idx_nochk(void* arr, nova_int i, size_t esz) {
     return (char*)h->data + (size_t)i * esz;
 }
 
+/* Plan 186 (D412) — hex-blob `x"…"` / `embed("path")` materialization.
+ *
+ * The blob bytes live in one interned `static const uint8_t nova_blob_<h>[]`
+ * (.rodata, emitted at the interned-literals preamble marker).
+ *
+ *   nova_blob_view — zero-copy `[]u8` view: 24-byte Vec header allocated on
+ *     the GC heap, data → the static blob, len == cap == N (D262 view model;
+ *     NO memcpy of the payload). Boehm ignores pointers outside its heap, so
+ *     the static blob is never collected/moved; a push on the view (len ==
+ *     cap) triggers a normal grow into a FRESH heap buffer — the static
+ *     memory is never realloc'd or written.
+ *   nova_blob_copy — mut/consume-binding materialization: payload copied
+ *     into a fresh GC-heap buffer at the binding point; the result is an
+ *     ordinary writable/growable Vec[u8] buffer. */
+static inline void* nova_blob_view(const uint8_t* p, int64_t n) {
+    NovaArrHdr* h = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
+    h->data = (void*)p;
+    h->len = n;
+    h->cap = n;
+    return h;
+}
+static inline void* nova_blob_copy(const uint8_t* p, int64_t n) {
+    NovaArrHdr* h = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
+    void* buf = n > 0 ? nova_alloc((size_t)n) : (void*)0;
+    if (n > 0) memcpy(buf, p, (size_t)n);
+    h->data = buf;
+    h->len = n;
+    h->cap = n;
+    return h;
+}
+
 /* Plan 145 — portable bit-reinterpret nova_int -> nova_f64 (MSVC C2059).
  * Заменяет GNU statement-expression union-pun
  * `({ union { nova_int i; nova_f64 f; } _u; _u.i = (v); _u.f; })`.

@@ -1,5 +1,13 @@
 # Nova — синтаксис
 
+<!-- Правило редактирования: этот документ описывает язык В НАСТОЯЩЕМ
+     ВРЕМЕНИ — «как есть». История изменений (что было ретрактировано,
+     когда и почему) живёт в spec/decisions/ (D-блоки с ретракционными
+     баннерами) — сюда её не переносить. Допустимые исключения:
+     (а) honesty-маркеры «пока не реализовано» со ссылкой на план;
+     (б) короткое «в Nova нет X — используй Y» для привычных по другим
+     языкам конструкций, без дат и номеров ретракций. -->
+
 ## Минимальные примеры
 
 ```nova
@@ -22,8 +30,8 @@ ro r = regex`\d+\.\d+`                       // -> Regex, raw
 ```
 
 Байтовый блоб — отдельный литерал `x"…"` (hex-цифры → `[]u8`), не
-tagged template: `ro b = x"deadbeef"`. В очереди — [Plan 186](../docs/plans/186-hex-blob-embed.md)
-/ [D412](decisions/03-syntax.md#d412), в текущем компиляторе не реализован.
+tagged template: `ro b = x"deadbeef"` (D412; ⚠ пока не реализован —
+[Plan 186](../docs/plans/186-hex-blob-embed.md)).
 
 **Интерполяция через `${expr}`** — tag-функция получает части и
 аргументы **раздельно**, что обеспечивает безопасность (защита от SQL
@@ -444,15 +452,16 @@ f64.try_parse(s str) -> Option[f64]
 
 **Договорные конвенции:**
 - `T.new(...)` — стандартный конструктор; `T.from(v X)` — имя-конвенция
-  конструктора-конверсии (не protocol — `From[X]`/`Into[T]` ретрактированы
-  решением владельца 2026-07-06, [D73](decisions/08-runtime.md#d73));
+  конструктора-конверсии ([D73](decisions/08-runtime.md#d73); это именно
+  конвенция имени, protocol-механики за ней нет);
   `T.from_X(...)` — доменный конструктор когда `from(v)` не передаёт
   смысл (`from_secs`, `from_polar`, `from_imag`).
 - `@to_X()` — трансформация в новое владеющее значение, когда вида
   (zero-copy) не существует в принципе (`to_str()`, `to_upper()`,
   D410). `consume @into_X()` — потребляющая передача владения
-  (`into_str()`, `into_raw()`, D131); универсального `v.into()`
-  **нет** — ретрактирован вместе с `From[T]`/`Into[U]`.
+  (`into_str()`, `into_raw()`, D131). Универсального `v.into()`
+  (Rust-style, тип цели из контекста) в Nova **нет** — только
+  конкретные именованные методы.
 - `Display`/`@display(mut w Write)` — представление в строку для
   `${expr}`-интерполяции и `str.from(v)` на пользовательском типе
   ([D73](decisions/08-runtime.md#d73)).
@@ -470,8 +479,8 @@ f64.try_parse(s str) -> Option[f64]
   оператор `is` работает напрямую (`shape is Circle`,
   `arg is int` для `arg any`). Для извлечения значения варианта
   с биндингом — `if X(n) = v` (D34).
-- Приватность поля — модификатор `priv`, не `_prefix` (конвенция
-  `_prefix` **отменена** 2026-06-02, Plan 124/D220; подробно —
+- Приватность поля — модификатор `priv`; `_`-префикс для «приватности
+  по договору» в Nova не используется (подробно —
   [«Видимость: export»](#видимость-export-для-публичных-деклараций) ниже).
 - Test-имена — строки естественного языка: `test "insert and get"`,
   не `"test_insert_and_get"`.
@@ -509,7 +518,7 @@ f64.try_parse(s str) -> Option[f64]
 **Примитивные типы (lowercase, исключение из PascalCase-правила):**
 - `int`, `uint`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
 - `f32`, `f64`
-- `str`, `bool`, `byte`, `char`
+- `str`, `bool`, `char` (байт — это `u8`, отдельного типа `byte` нет)
 
 Подробно — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 
@@ -527,12 +536,12 @@ module account
 export type Account {                    // публичный тип
     ro owner str
     balance money
-    priv internal_id u64                 // field-level priv (D220) — настоящая
-}                                          // приватность, не `_prefix` (отменён)
+    priv internal_id u64                 // field-level priv (D220):
+}                                          // поле недоступно снаружи
 
 export type Job priv {                   // priv на типе — поля module-private
-    mut name str                          // by default (D281); настоящая приватность,
-}                                          // не по-договору
+    mut name str                          // by default (D281)
+}
 
 type InternalState { ... }               // приватный тип
 
@@ -553,12 +562,12 @@ export type Hash protocol {
 (D47). Приватность — модификатор `priv` (`priv`/`priv(type)`/`priv(file)`,
 D220 + D281) на **поле** (`priv internal_id u64`) или на **типе**, задавая
 дефолт для всех полей (`type Job priv { ... }`) — поле физически
-недоступно снаружи, компилятор это проверяет. Конвенция `_prefix` для
-полей как «приватное-по-договору» **отменена** (2026-06-02, Plan 124 /
-D220) — заменена на compile-time `priv`.
+недоступно снаружи, компилятор это проверяет. `_`-префикс как
+«приватность по договору» в Nova не используется — приватность
+только compile-time, через `priv`.
 
 **Канонический доступ к полю — одноимённые методы-свойства через
-перегрузку по арности** (D84 + D117, решение владельца 2026-07-06):
+перегрузку по арности** (D84 + D117):
 чтение `@x() -> T` (0 аргументов), запись `mut @x(v T) -> @`
 (1 аргумент, беглая — возврат receiver'а автоматический, D409, в теле
 писать `return @`/`=> @` не нужно):
@@ -613,7 +622,7 @@ type Point(f64, f64)
 // unit-тип
 type Marker
 
-// sum-type — обязательный маркер enum (D406, 2026-07-01)
+// sum-type — обязательный маркер enum (D406)
 // inline — | разделяет варианты, перед первым не нужен:
 type Color enum Red | Green | Blue
 
@@ -700,8 +709,7 @@ println(pair.0, pair.1)      // кортеж — то же
 // создание массивов (D38)
 ro xs []int = []                          // пустой, тип из annotation
 ro ys = []int.new()                       // через static-метод
-mut buf = []u8.new().cap(1024)            // с pre-allocation; with_capacity
-                                           // удалён (D372 amend, 2026-07-06)
+mut buf = []u8.new().cap(1024)            // с pre-allocation (D372)
 
 // turbofish для дженериков (D38)
 ro n = parse[int]("42")?                  // явный T = int
@@ -881,10 +889,10 @@ if Some(user) = lookup(id) && user.is_active {
 }
 ```
 
-> Guard-условие через `&&` реализовано (Plan 106, закрыт 2026-06-17):
-> `if pattern = expr && bool_guard { ... }` и симметрично для `while`.
-> Не реализовано: несколько pattern-условий в одном `if`
-> (`if Some(x) = a && Some(y) = b`).
+> Guard-условие работает и для `while`: `while pattern = expr &&
+> bool_guard { ... }`. ⚠ Несколько pattern-условий в одном `if`
+> (`if Some(x) = a && Some(y) = b`) пока не реализованы — один паттерн
+> плюс bool-guard.
 
 Локальные binding'и (`data`, `user`, `line`) доступны **только в теле
 блока**. После закрывающей `}` — недоступны.
@@ -944,7 +952,7 @@ fn Account @send_to(tx ChanWriter[Account]) => tx.send(@)
 
 ```nova
 acc.balance()              // вызов метода
-// acc.@balance            // REMOVED (Plan 132): bound method value
+// acc.@balance            // НЕвалидно — bound method value в Nova нет
 Account.@balance           // unbound method value, тип: fn(Account) -> money
 || acc.balance()           // lambda (замена bound): тип fn() -> money
 Account.new                // static-функция как значение, тип: fn(str) -> Account
@@ -1077,10 +1085,10 @@ type Color { r, g, b u8 }
 Для perf-критичного кода компилятор использует **escape analysis**:
 не утекающие значения остаются на стеке, без аллокаций в managed
 heap. Программист не пишет ничего особого. Для real-time — атрибут
-`#realtime nogc fn ...` ([D64](decisions/04-effects.md#d64); блочная форма
-`realtime nogc { }` снята в Plan 113/D172). Arena-allocations через
-`region { }` — проектируемая форма ([D6](decisions/05-memory.md#d6)),
-в текущем компиляторе не реализована.
+`#realtime nogc` на функции ([D64](decisions/04-effects.md#d64));
+блочной формы нет. Arena-allocations через `region { }` —
+проектируемая форма ([D6](decisions/05-memory.md#d6)),
+⚠ в текущем компиляторе не реализована.
 
 Подробно — [D32](decisions/02-types.md#d32).
 
@@ -1210,7 +1218,7 @@ fn process(x int) Logger -> int {
     x * 2
 }
 
-// handler — обычное значение через keyword `effect` (D61; keyword `handler` снят в D142)
+// handler — обычное значение через keyword `effect` (D61)
 ro console = effect Logger {
     log(msg) => println("[LOG] ${msg}")
 }
@@ -1295,11 +1303,11 @@ fn hot_loop(data []f64) -> f64 =>
 вручную.
 
 Для real-time hot path — атрибут `#realtime nogc` на функции
-([D64](decisions/04-effects.md#d64); Plan 113/D172: блочная форма
-`realtime nogc { }` снята). В теле такой функции запрещены
-suspend-операции и аллокации в managed heap. Arena-allocations через
-`region { ... }` — проектируемая форма ([D6](decisions/05-memory.md#d6)),
-в текущем компиляторе не реализована.
+([D64](decisions/04-effects.md#d64)); блочной формы нет. В теле такой
+функции запрещены suspend-операции и аллокации в managed heap.
+Arena-allocations через `region { ... }` — проектируемая форма
+([D6](decisions/05-memory.md#d6)), ⚠ в текущем компиляторе не
+реализована.
 
 ## Структурные «интерфейсы» — `protocol`
 
@@ -1430,11 +1438,9 @@ prelude (`std/prelude/protocols.nv`) разделены по этой оси.
 
 ## Конверсии: `as` и `T.from(v)`
 
-Два способа конверсии под разные сценарии. `From[X]`/`Into[T]` как
-protocol'ы **ретрактированы** (решение владельца 2026-07-06, D73) —
-`from` остаётся именем-конвенцией конструктора-конверсии, но не
-protocol-bound, и парный `.into()` компилятором больше не
-синтезируется — универсального `v.into()` нет:
+Два способа конверсии под разные сценарии. `from` — имя-конвенция
+конструктора-конверсии (не protocol-bound); универсального `v.into()`
+(Rust-style, тип цели из контекста) в Nova нет:
 
 ```nova
 // 1. as — compile-time, тривиальные cast'ы (D54)
@@ -1462,11 +1468,10 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id) �
 **Когда какая форма:**
 
 - **`T.from(v)`** — целевой тип в начале, читается «build a Fahrenheit
-  from this Celsius». Единственная форма вызова конверсии — нет
-  parallel instance-формы (`v.into()` ретрактирован).
-- Method-chain читаемость, которую раньше давал `.into()`, достигается
-  через `to_X()`/`into_X()` — конкретные именованные методы (см.
-  «Договорные конвенции» выше), не generic-конверсия по типу цели.
+  from this Celsius». Единственная форма вызова конверсии — parallel
+  instance-формы (`v.into()`) нет.
+- Для method-chain — конкретные именованные методы `to_X()`/`into_X()`
+  (см. «Договорные конвенции» выше), не generic-конверсия по типу цели.
 
 **Граница `as` vs `T.from`:**
 
@@ -1490,9 +1495,7 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id) �
 `spawn` — keyword-конструкция (не функция). По спеке D50 — разрешён только внутри
 structured-scope (`supervised`, в т.ч. `supervised(cancel:)`, `parallel for`,
 `select`; и stdlib `race`/`with_timeout` внутри своих тел); вне scope —
-compile error. `spawn` вне structured-scope — compile error (Plan 83.10, 2026-05-25):
-bare `spawn` допустим только внутри `supervised`, `parallel for` или
-другого structured-scope. Eager-blocking-вне-scope больше не компилируется.
+compile error.
 
 Внутри scope `spawn` кладёт fiber в очередь и возвращает unit; результат
 работы — через захваченные `mut`-переменные или каналы. `spawn() { body }`
@@ -1507,7 +1510,7 @@ supervised {
 
 #### Тип результата
 
-**`spawn body` возвращает unit, всегда** (D50 + D71, resolution 2026-05-06).
+**`spawn body` возвращает unit, всегда** (D50 + D71).
 Результат body не доступен caller'у. Чтобы получить значение от
 concurrent-выполнения:
 
@@ -1526,7 +1529,7 @@ supervised {
 }
 ```
 
-**`spawn` вне scope = compile error** (Plan 83.10): bare `spawn` вне
+**`spawn` вне scope = compile error**: bare `spawn` вне
 structured-scope не компилируется. (Дополнительно: `spawn` всегда
 возвращает unit, поэтому `ro r = spawn { ... }` бессмысленно.)
 
@@ -1593,17 +1596,22 @@ ro names []str = users.map() fn(u) => u.name      // trailing-fn
 | `parallel for x in iter { body }` (body has trailing) | `[]T` | parallel map (fan-out) |
 | `parallel for x in iter { body }` (no trailing) | `unit` | parallel side-effect loop |
 
-Bootstrap-реализация (2026-05-06): array-mode работает для T ∈ {int, bool,
+⚠ Bootstrap-ограничение: array-mode работает для T ∈ {int, bool,
 f64, str} и итераторов `a..b`, `a..=b`, array literal. Без trailing — старая
 семантика (statement, unit). См. D71 в decisions/06-concurrency.md.
 
 ### `detach { body }`
 
-Fire-and-forget: тело живёт после возврата вызывающей функции, привязано к
-глобальному supervisor'у. Требует эффекта `Detach` в сигнатуре (D50). Default —
-**AsyncDetach** (Plan 83.4.5.2): тело пушится на orphan-fiber и исполняется
-асинхронно (caller возвращается мгновенно). `SyncDetach` (inline-в-caller'е) —
-legacy/test-mocking, только через явный `with Detach = SyncDetach { ... }`.
+Fire-and-forget: тело пушится на orphan-fiber (глобальный supervisor,
+не локальный scope) и исполняется асинхронно — caller возвращается
+мгновенно, тело переживает вызывающую функцию. Требует эффекта
+`Detach` в сигнатуре (D50; иначе `[E_DETACH_REQUIRES_EFFECT]`).
+Без объявления `detach` легален в теле `test`-блока (effect-root)
+и под ambient-handler'ом `with Detach = …` (мокинг в тестах).
+
+Ошибка/паника в detached-теле — **LogAndDrop**: лог в stderr, fiber
+умирает чисто, процесс и остальные fiber'ы продолжают (у сироты нет
+call-site — некому вернуть `Result`).
 
 ```nova
 fn handle_request(req Request) Net Db Detach -> Response {
@@ -1638,7 +1646,6 @@ fetch_with_kill(urls, tok)
 Token capabilities: `tok.cancel()`, `tok.is_cancelled()`,
 `tok.bind(other)` для каскадной отмены. Один токен — один живой scope
 (bind-check). Подробно — [D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
-Keyword `cancel_scope` удалён (ревизия D75, 2026-05-14).
 
 ### `Channel[T]` и `select`
 
@@ -1676,10 +1683,8 @@ select {
 closed-channel). Отдельного `<-`-оператора нет.
 
 Полная семантика (closed-channel, owner-actor pattern, отказ от
-Mutex/Atomic) — [D79](decisions/06-concurrency.md#d79).
-
-Bootstrap-status: `Channel` (capability-split) и `select` оба реализованы
-(D94; Plan 31 / Plan 44.1; Plan 65 — Duration-typed timeout-API).
+Mutex/Atomic) — [D79](decisions/06-concurrency.md#d79); `select` —
+[D94](decisions/06-concurrency.md#d94).
 
 ### `Time.sleep(ms)`
 

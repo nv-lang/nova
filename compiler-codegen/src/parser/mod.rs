@@ -8143,6 +8143,12 @@ impl Parser {
                 self.bump();
                 self.desugar_string_interpolation(s, start)
             }
+            // D412 (Plan 186): hex-blob literal `x"48 69"` → compile-time
+            // `[]u8`. Bytes already decoded by the lexer.
+            TokenKind::HexBlob(bytes) => {
+                self.bump();
+                Ok(Expr::new(ExprKind::HexBlobLit(bytes), start))
+            }
             TokenKind::Char(cp) => {
                 self.bump();
                 Ok(Expr::new(ExprKind::CharLit(cp), start))

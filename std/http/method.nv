@@ -26,7 +26,7 @@ export type Method enum
 /// assert(Method.parse("PROPFIND")!! == Method.Other("PROPFIND"))
 /// ```
 #stable(since = "0.1")
-export fn Method.parse(s str) -> Result[Method, HttpError] {
+export fn Method.parse(s str) -> Result[Method, HttpError] { // [M-lint-findings-static-conversion]
     if s.byte_len() == 0 {
         return Err(HttpError.protocol_error("empty method token"))
     }
@@ -51,7 +51,7 @@ export fn Method.parse(s str) -> Result[Method, HttpError] {
 
 /// Токен метода на проводе. `Other` → as-is.
 #stable(since = "0.1")
-export fn Method @as_str() -> str {
+export fn Method @as_str() -> str { // [M-d410-as-to-migration]
     match @ {
         Get     => "GET"
         Head    => "HEAD"

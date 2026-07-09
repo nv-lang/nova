@@ -425,7 +425,7 @@ impl<'a> Analyzer<'a> {
             // Leaves with no sub-expressions / no callee.
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
             | ExprKind::InterpolatedStr { .. } | ExprKind::BoolLit(_)
-            | ExprKind::UnitLit | ExprKind::CharLit(_) | ExprKind::NullPtrLit
+            | ExprKind::UnitLit | ExprKind::CharLit(_) | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
             | ExprKind::SelfAccess => {}
         }
     }

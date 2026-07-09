@@ -6,12 +6,12 @@
 // Token bucket algorithm:
 //   - Bucket capacity = max burst size
 //   - refill_rate tokens per second
-//   - Каждый вызов try_acquire() забирает 1 token; если их нет — false.
+//   - Каждый вызов acquire() забирает 1 token; если их нет — false.
 //
 // API:
 //   TokenBucket.new(capacity int, refill_per_sec f64) -> TokenBucket
-//   bucket.try_acquire() Time -> bool
-//   bucket.try_acquire_n(n int) Time -> bool
+//   bucket.acquire() Time -> bool
+//   bucket.acquire_n(n int) Time -> bool
 
 module concurrency.rate_limiter
 
@@ -44,7 +44,7 @@ export type TokenBucket {
 /// # Examples
 /// ```nova
 /// let mut bucket = TokenBucket.new(5, 1.0)  // 5 burst, 1 token/sec sustained
-/// assert(bucket.try_acquire())
+/// assert(bucket.acquire())
 /// ```
 #stable(since = "0.1")
 export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
@@ -80,13 +80,15 @@ fn TokenBucket mut @refill() Time -> () {
 
 /// Try acquire 1 token. `true` если получилось, `false` если bucket пуст.
 #stable(since = "0.1")
-export fn TokenBucket mut @try_acquire() Time -> bool =>
-    @try_acquire_n(1)
+export fn TokenBucket mut @acquire() Time -> bool =>
+    @acquire_n(1)
 
 
 /// Try acquire `n` tokens atomically (all-or-nothing).
 #stable(since = "0.1")
-export fn TokenBucket mut @try_acquire_n(n int) Time -> bool {
+export fn TokenBucket mut @acquire_n(n int) Time -> bool
+    requires n >= 0
+{
     @refill()
     if @tokens >= (n as f64) {
         @tokens = @tokens - (n as f64)

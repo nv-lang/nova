@@ -167,9 +167,9 @@ fn decompose(b []u8, style PathStyle) -> Decomp {
             if n >= 2 && byte_is_sep(b[0], Windows) && byte_is_sep(b[1], Windows) {
                 // UNC: consume `\\` server `\` share into the prefix.
                 prefix.push(b[0]); prefix.push(b[1]); i = 2
-                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 }
+                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 } // [M-lint-findings-manual-slice-copy]
                 if i < n { prefix.push(b[i]); i += 1 }  // sep between server and share
-                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 }
+                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 } // [M-lint-findings-manual-slice-copy]
             } else if n >= 2 && is_ascii_letter(b[0]) && b[1] == B_COLON {
                 prefix.push(b[0]); prefix.push(b[1]); i = 2
             }
@@ -186,7 +186,7 @@ fn decompose(b []u8, style PathStyle) -> Decomp {
         if byte_is_sep(b[i], style) {
             if cur.len() > 0 { comps.push(cur); cur = []u8.new() }
         } else {
-            cur.push(b[i])
+            cur.push(b[i]) // [M-lint-findings-manual-slice-copy]
         }
         i += 1
     }

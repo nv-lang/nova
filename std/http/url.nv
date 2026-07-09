@@ -560,7 +560,7 @@ fn decode_query_inner(s str) -> Result[str, ParseUrlError] {
             i += 1
         }
     }
-    utf8_to_str(buf.into())
+    utf8_to_str(buf.into()) // [M-lint-findings-writebuffer-into]
 }
 
 // Self-contained well-formed UTF-8 (RFC 3629 / Unicode Table 3-7) → str или Err.

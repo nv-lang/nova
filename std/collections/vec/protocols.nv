@@ -37,8 +37,8 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
     // `!=` operands have element type `T` (a method/operator on a raw deref kept
     // *inside* the `unsafe` block misresolves in codegen).
     for i in 0..@len {
-        ro a = unsafe { @data[i] }
-        ro b = unsafe { other.data[i] }
+        ro a = unsafe { @data.read_at(i) }
+        ro b = unsafe { other.data.read_at(i) }
         if a != b {
             return false
         }
@@ -81,8 +81,8 @@ export fn Vec[T Compare] @compare(other Vec[T]) -> int {
     // locals so `.compare` dispatches on element type `T`; a method call kept
     // *inside* the `unsafe` block on a raw deref misresolves in codegen.
     for i in 0..n {
-        ro a = unsafe { @data[i] }
-        ro b = unsafe { other.data[i] }
+        ro a = unsafe { @data.read_at(i) }
+        ro b = unsafe { other.data.read_at(i) }
         ro c = a.compare(b)
         if c != 0 {
             return c
@@ -117,7 +117,7 @@ export fn Vec[T Compare] @compare(other Vec[T]) -> int {
 export fn Vec[T Clone] @clone() -> Self {
     mut out = Vec[T].new().cap(@len)
     for i in 0..@len {
-        out.push(unsafe { @data[i] }.clone())
+        out.push(unsafe { @data.read_at(i) }.clone())
     }
     out
 }
@@ -152,7 +152,7 @@ export fn Vec[T Hash] @hash() -> u64 {
     for i in 0..@len {
         // Typed local first — `.hash()` on a raw deref kept *inside* the `unsafe`
         // block misresolves in codegen (same idiom as `@equal`/`@compare`).
-        ro e = unsafe { @data[i] }
+        ro e = unsafe { @data.read_at(i) }
         ro eh = e.hash()
         h = (h ^ eh) * prime
     }
@@ -178,7 +178,7 @@ export fn Vec[T Display] @display(mut w Write) -> () {
     w.write("Vec[")
     for i in 0..@len {
         if i > 0 { w.write(", ") }
-        unsafe { @data[i] }.display(w)
+        unsafe { @data.read_at(i) }.display(w)
     }
     w.write("]")
 }
@@ -190,7 +190,7 @@ export fn Vec[T Debug] @debug(mut w Write) -> () {
     w.write("Vec[")
     for i in 0..@len {
         if i > 0 { w.write(", ") }
-        unsafe { @data[i] }.debug(w)
+        unsafe { @data.read_at(i) }.debug(w)
     }
     w.write("]")
 }

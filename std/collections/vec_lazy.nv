@@ -157,7 +157,9 @@ export fn BoxIter[T] @enumerate() -> BoxIter[(int, T)] {
 }
 
 /// Lazily yield at most the first `n` elements, then stop.
-export fn BoxIter[T] @take(n int) -> BoxIter[T] {
+export fn BoxIter[T] @take(n int) -> BoxIter[T]
+    requires n >= 0
+{
     mut src = @
     mut left = n
     { step: || {
@@ -168,7 +170,9 @@ export fn BoxIter[T] @take(n int) -> BoxIter[T] {
 }
 
 /// Lazily discard the first `n` elements, then yield the rest.
-export fn BoxIter[T] @skip(n int) -> BoxIter[T] {
+export fn BoxIter[T] @skip(n int) -> BoxIter[T]
+    requires n >= 0
+{
     mut src = @
     mut to_drop = n
     { step: || {

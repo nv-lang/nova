@@ -216,7 +216,7 @@ export fn SqlValue @expect_f64() -> Result[f64, DbError] =>
 
 /// Extract i64 в `Option` (NULL → None) — для NULL-able колонок.
 #stable(since = "0.1")
-export fn SqlValue @as_int() -> Option[i64] =>
+export fn SqlValue @as_int() -> Option[i64] => // [M-d410-as-to-migration]
     match @ {
         I(n) => Some(n)
         _    => None
@@ -224,7 +224,7 @@ export fn SqlValue @as_int() -> Option[i64] =>
 
 /// Extract str в `Option` (NULL → None).
 #stable(since = "0.1")
-export fn SqlValue @as_str() -> Option[str] =>
+export fn SqlValue @as_str() -> Option[str] => // [M-d410-as-to-migration]
     match @ {
         S(s) => Some(s)
         _    => None
@@ -302,9 +302,7 @@ export fn SqlBuilder mut @where_in(col str, values []SqlValue) -> SqlBuilder {
         @predicates.push({ template: "FALSE", args: [] })
         return @
     }
-    mut placeholders = "?"
-    mut i = 1
-    while i < values.len() { placeholders = placeholders + ", ?"; i += 1 }
+    ro placeholders = "?" + ", ?".repeat(values.len() - 1)
     @predicates.push({ template: "${col} IN (${placeholders})", args: values })
     @
 }

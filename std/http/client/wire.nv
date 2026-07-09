@@ -72,7 +72,7 @@ fn serialize_request(method str, target str, host_header str, headers HeaderMap,
     // its concrete element type for facade-imported method lookup when chained
     // directly — bind to an explicit `[]u8` local first (see marker in
     // backlog-followups.md).
-    ro wire_bytes []u8 = buf.into()
+    ro wire_bytes []u8 = buf.into() // [M-lint-findings-writebuffer-into]
     unsafe { wire_bytes.to_str_unchecked() }
 }
 
@@ -107,7 +107,7 @@ fn serialize_response(status StatusCode, headers HeaderMap, body []u8) -> str {
         buf.write_bytes(body)
     }
     // [M-174.1-vec-method-chain-elem-erasure] (see marker above / backlog).
-    ro wire_bytes []u8 = buf.into()
+    ro wire_bytes []u8 = buf.into() // [M-lint-findings-writebuffer-into]
     unsafe { wire_bytes.to_str_unchecked() }
 }
 
@@ -316,7 +316,7 @@ fn decode_chunked(b []u8, start int) -> Result[[]u8, HttpError] {
             i = data_end + 2
         }
     }
-    Ok(out.into())
+    Ok(out.into()) // [M-lint-findings-writebuffer-into]
 }
 
 // Parse a chunk-size line (hex, up to optional ";chunk-ext"). Empty/no-hex → None.
@@ -357,7 +357,7 @@ fn slice(b []u8, start int, end int) -> []u8 {
     out.cap(end - start)
     mut i = start
     while i < end {
-        out.push(b[i])
+        out.push(b[i]) // [M-lint-findings-manual-slice-copy]
         i += 1
     }
     out

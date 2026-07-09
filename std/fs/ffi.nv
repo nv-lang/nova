@@ -52,7 +52,7 @@ const KIND_OTHER   int = 0
 // NUL-terminated path (open/stat/...) or the raw byte buffer (read/write).
 
 // open: returns fd (>= 0) or -errno. `flags` is the portable OPEN_* bitset.
-extern "C" fn fs_open(path *u8, flags int, mode int) -> int
+extern "C" fn fs_open(path *u8, flags int, mode int) -> int // [M-ffi-handle-newtype]
 // close: 0 or -errno.
 extern "C" fn fs_close(fd int) -> int
 // read: fill buf[0..n] from the OS file offset (advances it); returns n (0=EOF) or -errno.
@@ -108,7 +108,7 @@ extern "C" fn fs_fsync_dir(path *u8) -> int
 // fs_scandir_name/_kind(h) read its current entry. fs_scandir_close(h) is
 // idempotent — call it unconditionally once done with the handle (natural EOF
 // or an early break both need it released).
-extern "C" fn fs_scandir_open(path *u8) -> int
+extern "C" fn fs_scandir_open(path *u8) -> int // [M-ffi-handle-newtype]
 extern "C" fn fs_scandir_next(h int) -> int
 extern "C" fn fs_scandir_name(h int) -> str
 extern "C" fn fs_scandir_kind(h int) -> int

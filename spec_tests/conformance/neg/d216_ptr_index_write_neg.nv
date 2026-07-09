@@ -1,0 +1,15 @@
+// Plan 174.5 Ф.3 (retraction, §3/§9, D216 amend) — `p[i] = v` index WRITE on
+// a raw pointer is retired. Use `p.write_at(i, v)`.
+//
+// EXPECT_COMPILE_ERROR E_POINTER_OP_USE_METHOD
+
+module neg.d216_ptr_index_write_neg
+
+test "rejects `p[i] = v` index write" {
+    mut buf []int = [10, 20, 30]
+    unsafe {
+        mut p = buf.ptr()
+        p[1] = 99
+    }
+    assert(buf[1] == 99)
+}
