@@ -8,6 +8,10 @@
 > [backlog-followups.md](backlog-followups.md) (только актуальное). Plan-bound детали — в Followups
 > своего плана; полная история — в [../simplifications.md](../simplifications.md). Конвенция: [AGENTS.md](../../AGENTS.md).
 
+> **Точка возобновления работ:** [CONTINUATION.md](CONTINUATION.md) — статус на паузе +
+> готовый промпт для новой сессии (обновляется в конце каждой сессии). HEAD=06d6c8bbe, эталон 70/0.
+> Семья **173** (structured concurrency) — в активной работе, приоритет владельца.
+
 ## Схема нумерации
 
 - `01-…`, `02-…` — главные планы по порядку создания.
@@ -18,9 +22,9 @@
 
 | Модуль | План | Статус |
 |---|---|---|
-| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) *(зонт 174 — impl-coupled к 172.1; 172.3 ✅ CLOSED — generic-вариант B развязан)* | 📋 proposed |
+| parse (str→примитив) | [174.1](174.1-primitive-parse-api.md) | ✅ CLOSED 2026-07-09 (§1а to_int/to_str-семьи, char.to_str, доменные to_*) |
 | time | [175](175-time-system-rework.md) + [175.1](175.1-civil-time.md) (civil) | 📋 READY |
-| io / fs / os | [176](176-io-fs-os.md) (umbrella) | 📋 READY |
+| io / fs / os | [176](176-io-fs-os.md) (umbrella) | ✅ CLOSED 2026-07-09 (Ф.4/Ф.5 net-миграции + D302) |
 | http (client+server, HTTPS, h2) | [178](178-std-http.md) (umbrella) | 📋 READY (Ред.2) |
 | encoding/compress (gzip/deflate/brotli) | [179](179-std-encoding-compress.md) — гейт 178 decompress | 📋 READY (Ред.2) |
 | serde / typed-json | [180](180-serde-derive.md) — гейт 178 `.json[T]` | 📋 READY (Ред.2) |
