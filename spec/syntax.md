@@ -372,7 +372,7 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
 | `a[x..y]` | `@index(r Range)` | | | |
 
-`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240); slice-индексация `a[x..y]` — та же `@index`, перегруженная по типу параметра: `x..y` (half-open, не включает `y`) лоуэрится компилятором в `Range { start: x, end: y }`, и вызывается `a.@index(r Range)` — на `[]T`/`str` возвращает view без копирования (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` **не перегружаются** (short-circuit
+`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240); slice-индексация `a[x..y]` — та же `@index`, перегруженная по типу параметра: `x..y` (half-open, не включает `y`) лоуэрится компилятором в `Range { start: x, end: y }`, и вызывается `a.index(r Range)` — на `[]T`/`str` возвращает view без копирования (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` **не перегружаются** (short-circuit
 семантика). Custom-операторы (`:+`, `<>`) не разрешены. Подробно —
 [D46](decisions/03-syntax.md#d46).
 
@@ -1310,8 +1310,8 @@ Bound — это **protocol-тип** ([D53](decisions/02-types.md#d53)). Тот 
 (universal через мономорфизацию):
 
 ```nova
-fn dump(x Hash) -> u64 => x.@hash()        // existential, dynamic dispatch
-fn dump2[T Hash](x T) -> u64 => x.@hash()  // universal, mono dispatch
+fn dump(x Hash) -> u64 => x.hash()        // existential, dynamic dispatch
+fn dump2[T Hash](x T) -> u64 => x.hash()  // universal, mono dispatch
 ```
 
 **Порядок параметров — слева направо.** Имя в bound'е должно быть
