@@ -427,7 +427,7 @@ f64.try_parse(s str) -> Option[f64]
 
 | Что | Стиль | Пример |
 |---|---|---|
-| Типы, эффекты, протоколы, варианты sum | **PascalCase** | `User`, `HashMap`, `Db`, `Hashable`, `Some` |
+| Типы, эффекты, протоколы, варианты sum | **PascalCase** | `User`, `HashMap`, `Db`, `Hash`, `Some` |
 | Generic-параметры | **PascalCase, односимвольные** | `T`, `K`, `V`, `E` |
 | Функции, методы (`@name`), параметры, поля | **snake_case** | `parse_url`, `@deposit`, `user_id`, `created_at` |
 | Константы (`const`) | **SCREAMING_SNAKE_CASE** | `MAX_PAYLOAD`, `DEFAULT_TIMEOUT` |
@@ -536,9 +536,8 @@ export fn Account.new(owner str) -> Account => ...      // публичный к
 export fn Account @balance() => @balance                // публичный метод
 fn Account @validate(amount money) => amount > 0       // приватный helper
 
-export type Hashable protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+export type Hash protocol {
+    @hash() -> u64
 }
 ```
 
@@ -1267,9 +1266,8 @@ fn log_one(x { show() -> str }) Log -> () => Log.info(x.show())
 по [D66](decisions/02-types.md#d66):
 
 ```nova
-type Hashable protocol {
-    hash() -> u64
-    eq(other Self) -> bool
+type Hash protocol {
+    @hash() -> u64
 }
 
 type Next[T] protocol {
@@ -1302,18 +1300,18 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
 (без двоеточия):
 
 ```nova
-fn dedup[T Hashable](xs []T) -> []T => ...
-fn map[K Hashable, V](m HashMap[K, V]) -> ...
+fn dedup[T Hash](xs []T) -> []T => ...
+fn map[K Hash, V](m HashMap[K, V]) -> ...
 fn fold[T, Acc](xs Iter[T], init Acc, f fn(Acc, T) -> Acc) -> Acc
 ```
 
 Bound — это **protocol-тип** ([D53](decisions/02-types.md#d53)). Тот же
-`Hashable` стоит и в позиции типа значения (existential), и в bound'е
+`Hash` стоит и в позиции типа значения (existential), и в bound'е
 (universal через мономорфизацию):
 
 ```nova
-fn dump(x Hashable) -> u64 => x.hash()        // existential, dynamic dispatch
-fn dump2[T Hashable](x T) -> u64 => x.hash()  // universal, mono dispatch
+fn dump(x Hash) -> u64 => x.@hash()        // existential, dynamic dispatch
+fn dump2[T Hash](x T) -> u64 => x.@hash()  // universal, mono dispatch
 ```
 
 **Порядок параметров — слева направо.** Имя в bound'е должно быть
