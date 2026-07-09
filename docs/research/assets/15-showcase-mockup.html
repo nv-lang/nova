@@ -238,6 +238,7 @@
 (function(){
   "use strict";
   var root = document.documentElement;
+  root.setAttribute("data-theme","dark");   // dark is the default look (owner 2026-07-09)
   document.getElementById("theme").addEventListener("click", function(){
     var cur = root.getAttribute("data-theme");
     if(!cur){ cur = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; }
