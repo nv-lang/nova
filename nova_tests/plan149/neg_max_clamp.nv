@@ -16,15 +16,16 @@
 module nova_tests.plan149
 
 test "huge NOVA_MAX_FIBERS: clamped to MAX, fibers still spawn" {
-    mut total = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut total = AtomicInt.new(0)
     supervised {
         mut i = 1
         while i <= 25 {
             ro cur = i
-            spawn { total += cur }
+            spawn { total.fetch_add(cur) }
             i += 1
         }
     }
     // 1 + 2 + ... + 25 = 325
-    assert(total == 325)
+    assert(total.load() == 325)
 }

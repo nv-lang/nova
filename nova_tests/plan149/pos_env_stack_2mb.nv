@@ -24,10 +24,11 @@ fn rec_sum2(n int) -> int {
 }
 
 test "NOVA_FIBER_STACK=2MB: fiber recurses and returns" {
-    mut r = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = rec_sum2(1500) }
+        spawn { r.store(rec_sum2(1500)) }
     }
     // 1500 * 1501 / 2 = 1125750
-    assert(r == 1125750)
+    assert(r.load() == 1125750)
 }

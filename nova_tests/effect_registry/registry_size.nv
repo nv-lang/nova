@@ -117,8 +117,9 @@ fn eff40_inner_b() -> int {
 }
 
 test "spawn наследует handler'ы всех 40 эффектов (>32 registry)" {
-    mut s1 = -1
-    mut s2 = -1
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut s1 = AtomicInt.new(-1)
+    mut s2 = AtomicInt.new(-1)
     with Eff01 = effect Eff01 { get() => 1 },
          Eff02 = effect Eff02 { get() => 2 },
          Eff03 = effect Eff03 { get() => 3 },
@@ -160,12 +161,12 @@ test "spawn наследует handler'ы всех 40 эффектов (>32 regi
          Eff39 = effect Eff39 { get() => 39 },
          Eff40 = effect Eff40 { get() => 40 } {
         supervised {
-            spawn { s1 = read_all() }
-            spawn { s2 = read_all() }
+            spawn { s1.store(read_all()) }
+            spawn { s2.store(read_all()) }
         }
     }
-    assert(s1 == 820)
-    assert(s2 == 820)
+    assert(s1.load() == 820)
+    assert(s2.load() == 820)
 }
 
 test "outer Eff40 (>32 registry) не затирается завершившимися фиберами" {

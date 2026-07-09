@@ -23,10 +23,11 @@ fn rec_sum(n int) -> int {
 }
 
 test "env NOVA_FIBER_STACK=8MB overrides toml-baked 2MB: deep recursion ok" {
-    mut r = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = rec_sum(3000) }
+        spawn { r.store(rec_sum(3000)) }
     }
     // 3000 * 3001 / 2 = 4501500
-    assert(r == 4501500)
+    assert(r.load() == 4501500)
 }

@@ -23,24 +23,26 @@ fn rec_sum(n int) -> int {
 }
 
 test "toml-baked 2MB stack default: recursion fiber completes" {
-    mut r = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = rec_sum(1000) }
+        spawn { r.store(rec_sum(1000)) }
     }
     // 1000 * 1001 / 2 = 500500
-    assert(r == 500500)
+    assert(r.load() == 500500)
 }
 
 test "toml-baked 8192 max_fibers: 300 fibers spawn + sum" {
-    mut total = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut total = AtomicInt.new(0)
     supervised {
         mut i = 1
         while i <= 300 {
             ro cur = i
-            spawn { total += cur }
+            spawn { total.fetch_add(cur) }
             i += 1
         }
     }
     // 300 * 301 / 2 = 45150
-    assert(total == 45150)
+    assert(total.load() == 45150)
 }

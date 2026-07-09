@@ -5,26 +5,28 @@ module nova_tests.plan65
 import std.time.duration
 
 test "ChanReader.close_after(Duration.from_millis(10)) compiles and fires" {
-    mut fired = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut fired = AtomicBool.new(false)
     supervised {
         spawn {
             ro t = ChanReader.close_after(Duration.from_millis(10))
             ro v = t.recv()
-            fired = v.is_some() || v.is_none()
+            fired.store(v.is_some() || v.is_none())
         }
     }
-    assert(fired)
+    assert(fired.load())
 }
 
 test "ChanReader.close_after(Duration.from_secs(0)) returns already-closed" {
-    mut closed_immediately = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut closed_immediately = AtomicBool.new(false)
     supervised {
         spawn {
             ro t = ChanReader.close_after(Duration.from_secs(0))
             // Zero duration → channel already closed; recv returns None.
             ro v = t.recv()
-            closed_immediately = v.is_none()
+            closed_immediately.store(v.is_none())
         }
     }
-    assert(closed_immediately)
+    assert(closed_immediately.load())
 }
