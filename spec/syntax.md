@@ -1602,11 +1602,16 @@ f64, str} и итераторов `a..b`, `a..=b`, array literal. Без trailin
 
 ### `detach { body }`
 
-Fire-and-forget: тело живёт после возврата вызывающей функции, привязано к
-глобальному supervisor'у. Требует эффекта `Detach` в сигнатуре (D50). Default —
-**AsyncDetach**: тело пушится на orphan-fiber и исполняется
-асинхронно (caller возвращается мгновенно). `SyncDetach` (inline-в-caller'е) —
-для тест-мокинга, через явный `with Detach = SyncDetach { ... }`.
+Fire-and-forget: тело пушится на orphan-fiber (глобальный supervisor,
+не локальный scope) и исполняется асинхронно — caller возвращается
+мгновенно, тело переживает вызывающую функцию. Требует эффекта
+`Detach` в сигнатуре (D50; иначе `[E_DETACH_REQUIRES_EFFECT]`).
+Без объявления `detach` легален в теле `test`-блока (effect-root)
+и под ambient-handler'ом `with Detach = …` (мокинг в тестах).
+
+Ошибка/паника в detached-теле — **LogAndDrop**: лог в stderr, fiber
+умирает чисто, процесс и остальные fiber'ы продолжают (у сироты нет
+call-site — некому вернуть `Result`).
 
 ```nova
 fn handle_request(req Request) Net Db Detach -> Response {
