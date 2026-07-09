@@ -324,8 +324,13 @@ fn Duration @plus(other Duration) -> Duration => { nanos: @nanos + other.nanos }
 стороны:
 
 - `-> Duration => Duration { ... }` (тип в сигнатуре И в литерале) —
-  `error: redundant type prefix on record literal — the return type
-  \`-> Duration\` already declares it; write \`=> { ... }\``;
+  compile error:
+
+  ```
+  error: redundant type prefix on record literal — the return type
+  `-> Duration` already declares it; write `=> { ... }`
+  ```
+
 - `=> Duration { ... }` без `-> Duration` в сигнатуре, если тип нужен
   и снаружи (`export`, неочевидный inference), — линтер требует явный
   `-> T` (см. правило style-guide выше); grammar-уровня ошибки здесь
