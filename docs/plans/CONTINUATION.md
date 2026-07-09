@@ -29,12 +29,32 @@
 - Конвенции записаны: §1а (4 направления конверсий), §18а (срезы-виды), §21б (Type.new+дефолты), §4а module-conventions (типизированные C-хендлы CFooHandle), D99 host_style под #cfg, «платформенные константы бинаря — не эффект» (module-conventions §0).
 - Промоушен std/_experimental 32/35.
 
-## В работе на момент паузы (фоновый агент — проверить первым делом)
-- **173.1** [sonnet, worktree /d/Sources/nv-lang/nova-p173, ветка parallel-collect-173-1] —
-  parallel for → []T + supervised-как-значение. Получил готовое репро parallel_for CC-FAIL
-  (результат Vec[int] в nova_unit-переменную; nova_tests/concurrency блокирована этим).
-  ПРИ ВОЗОБНОВЛЕНИИ: `git -C /d/Sources/nv-lang/nova-p173 log --oneline -5` + status —
-  если завершил, принять (merge→rebuild→гейты→push); если оборван — резюм с места.
+## 173.1 — ОСТАНОВЛЕН, WIP сохранён (продолжить первым делом)
+Агент 173.1 остановлен владельцем 2026-07-09 (нет лимитов). Наработка сохранена
+**WIP-коммитом `8f67e6cfe`** на ветке `parallel-collect-173-1` в worktree
+`/d/Sources/nv-lang/nova-p173` (в main НЕ влито — main чист на 5b48b1d89).
+
+**Что сделано (WIP, НЕ проверено — остановлен на «rebuild and re-test»):**
+- Под-пункт **supervised-как-значение** (Ф.1): codegen трейлинг-значения `supervised{}`
+  (emit_c.rs +176/-20 строк) + smoke-тест `nova_tests/err173_1/supervised_value_smoke.nv`
+  (supervised возвращает трейлинг-value; void-форма = unit; value после spawn-join;
+  вложенный supervised). **Сборка и гейты НЕ прогонялись — код может не компилироваться.**
+
+**Что НЕ начато:**
+- Под-пункт **parallel for → []T** (сбор через канал+consume) — второй под-пункт 173.1.
+  Готовое репро/гейт: `parallel_for` возвращает Vec[int], но результат присваивается
+  C-переменной `nova_unit` и индексируется → module-wide CC-FAIL (nova_tests/concurrency
+  блокирована ТОЛЬКО этим после закрытия D316; репро — per_fiber_handlers.c ~28990,
+  источник parallel_for.nv/parallel_for_array.nv). После фикса nova_tests/concurrency
+  должна компилироваться целиком — это финальный гейт под-пункта.
+
+**ПРОЦЕДУРА ВОЗОБНОВЛЕНИЯ 173.1:**
+1. `cd /d/Sources/nv-lang/nova-p173 && git checkout parallel-collect-173-1` (WIP на 8f67e6cfe).
+2. Синк с main: `git rebase main` или `git merge main` (main ушёл на 5b48b1d89 — CONTINUATION/README доки; конфликтов с emit_c быть не должно).
+3. Пересобрать оба крейта, прогнать smoke-тест supervised-value — если красный, доделать codegen supervised-value.
+4. Затем под-пункт parallel for → []T по плану 173.1 + фикс parallel_for-nova_unit (репро выше); гейт = nova_tests/concurrency компилируется целиком.
+5. Гейты плана: conformance 70/0, err173_0 δ0, defer-корпус δ0, std/http+io+fs, новые pos/neg.
+6. Принять: merge в main → rebuild → гейты → push.
 
 ## Очередь (по приоритету владельца)
 1. **Семья 173 до конца** (приоритет): принять 173.1 → **173.2** supervision-as-effect
@@ -64,9 +84,9 @@ constraint-ядро 172.13 (Ф.0-Ф.3 архитектурный атом) · [N
 Продолжаем планы 172-186 (директива: целиком, без упрощений, по конвенциям, автономно,
 по-русски, экономия лимитов — haiku механика/sonnet карта/opus разведка, модель в отчётах,
 мониторь фоновых с резюмом-с-места, суб-агентов не спавнить, haiku не в main, гейты гоню сам).
-Прочитай docs/plans/CONTINUATION.md — там полный статус на main=06d6c8bbe (эталон 70/0).
-ПЕРВЫМ ДЕЛОМ: проверь фоновый агент 173.1 (worktree nova-p173, ветка parallel-collect-173-1) —
-git log/status; если завершил — прими (merge→rebuild оба крейта→conformance 70/0 + err173_0 +
-std/http/io/fs→push), если оборван — резюм с места. Дальше по очереди CONTINUATION.md:
-семья 173 (173.2 supervision-as-effect → 173.3) — ПРИОРИТЕТ; в окна 174.5-схема, P1 lazy-const;
-потом 185-MVP → 186. Заморозки не трогать без слова.
+Прочитай docs/plans/CONTINUATION.md — там полный статус на main=5b48b1d89 (эталон 70/0).
+ПЕРВЫМ ДЕЛОМ: доработай остановленный 173.1 (WIP-коммит 8f67e6cfe на ветке
+parallel-collect-173-1 в worktree nova-p173 — supervised-как-значение недопроверен +
+parallel for→[]T не начат; полная процедура возобновления — в разделе «173.1 — ОСТАНОВЛЕН»
+этого файла). Затем по очереди: семья 173 (173.2 supervision-as-effect → 173.3) — ПРИОРИТЕТ;
+в окна 174.5-схема, P1 lazy-const; потом 185-MVP → 186. Заморозки не трогать без слова.
