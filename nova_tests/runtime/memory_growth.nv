@@ -29,7 +29,7 @@ test "Mem.alloc_count() monotonically non-decreasing" {
     // Force at least one allocation: string concat.
     ro s = "hello" + "world"
     ro b = Mem.alloc_count()
-    ro _ = s.len()
+    ro _ = s.byte_len()
     assert(b >= a)
 }
 
@@ -125,10 +125,13 @@ test "parallel for → []int — bounded allocations" {
         i * 2
     }
     ro after = Mem.alloc_count()
-    assert(xs[5] == 10)
+    // Plan 173.1 (D71-amend): completion order → contains вместо index-assert
+    // (alloc_count снят ДО этой проверки — sort не влияет на замер).
+    assert(xs.len() == 10)
+    assert(xs.contains(10))
     ro delta = after - before
-    // Result array (NovaArray + data buffer) + 10 spawn ctx allocs +
-    // minicoro stacks. Loose bound — catches regressions only.
+    // Result Vec (+ amortised push growth) + channel + 10 spawn ctx allocs +
+    // drain-fiber ctx + minicoro stacks. Loose bound — catches regressions only.
     assert(delta < 300)
 }
 

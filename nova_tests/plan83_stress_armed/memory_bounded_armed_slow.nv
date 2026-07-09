@@ -23,8 +23,13 @@ test "10 cycles × 1K spawn — heap bounded" {
     mut max_growth = 0
     mut cycle = 0
     while cycle < 10 {
+        // Plan 173.1 (D71-amend): completion order → sum-инвариант вместо
+        // index-assert (сорт в hot-cycle исказил бы memory-профиль).
         ro xs = parallel for i in 0..1000 { i + cycle }
-        assert(xs[999] == 999 + cycle)
+        assert(xs.len() == 1000)
+        mut sum = 0
+        for v in xs { sum += v }
+        assert(sum == 999 * 1000 / 2 + 1000 * cycle)
         gc.collect()
         ro h = gc.heap_size()
         ro g = if h > baseline { h - baseline } else { 0 }

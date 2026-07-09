@@ -31,6 +31,6 @@ test "str + str — Unicode len/char_len (Plan 108 D26 rev)" {
     ro b = ", "          // 2 codepoints, 2 bytes
     ro c = "мир"         // 3 codepoints, 6 bytes
     ro s = a + b + c
-    assert(s.len() == 20)             // 12 + 2 + 6 bytes (len = bytes now)
+    assert(s.byte_len() == 20)        // 12 + 2 + 6 bytes (D249: byte_len)
     assert(s.chars().count() == 11)        // 6 + 2 + 3 codepoints
 }

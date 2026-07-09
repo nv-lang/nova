@@ -12020,10 +12020,23 @@ impl<'a> TypeCheckCtx<'a> {
                 let inner_tr = self.infer_expr_type(inner, scope)?;
                 if let TypeRef::Named { path, generics, .. } = &inner_tr {
                     let base = path.last().map(String::as_str);
-                    if (base == Some("Result") || base == Some("Option"))
-                        && !generics.is_empty()
-                    {
-                        return Some(generics[0].clone());
+                    if base == Some("Result") || base == Some("Option") {
+                        if !generics.is_empty() {
+                            return Some(generics[0].clone());
+                        }
+                        // Plan 173.1 [M-bare-result-try-annotation] (2026-07-09):
+                        // BARE `Result`/`Option` (erased, no type args — `fn f()
+                        // -> Result`). The unwrapped T is NOT knowable here;
+                        // falling through to «return inner unchanged» annotated
+                        // `ro v = f()?` as the WHOLE Result → codegen declared
+                        // `NovaRes_…* v = payload.Ok._0` → pointer arithmetic on
+                        // an int payload (`v + 1` scaled by struct size: 42 +
+                        // sizeof instead of 43 — supervised_errors.nv SECTION 2,
+                        // uncovered when the concurrency folder first compiled
+                        // past its Ф.2-era CC-FAILs). Honest None → no channel
+                        // annotation → legacy codegen navigation types the
+                        // unwrap correctly.
+                        return None;
                     }
                 }
                 // Unknown container (user type, generic T) → return inner type unchanged.

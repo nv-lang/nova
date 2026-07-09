@@ -10,7 +10,10 @@
 module nova_tests.plan83_7
 
 test "spawn 500 — all fibers complete (runnext drain on shutdown)" {
-    ro xs = parallel for i in 0..500 { i }
+    // Plan 173.1 (D71-amend): completion order → sort перед index-asserts.
+    mut xs = parallel for i in 0..500 { i }
+    xs.sort()
+    assert(xs.len() == 500)
     assert(xs[499] == 499)
     assert(xs[0] == 0)
     assert(xs[250] == 250)

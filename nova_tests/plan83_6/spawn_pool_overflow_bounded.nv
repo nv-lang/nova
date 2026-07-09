@@ -15,7 +15,10 @@ test "pool overflow N=2000 — heap bounded" {
 
     // 2000 fibers via parallel-for. Pool max ~4096 entries cap
     // distributed. Excess freed через Boehm. Verify no unbounded leak.
-    ro xs = parallel for i in 0..2000 { i }
+    // Plan 173.1 (D71-amend): completion order → sort перед index-asserts.
+    mut xs = parallel for i in 0..2000 { i }
+    xs.sort()
+    assert(xs.len() == 2000)
     assert(xs[1999] == 1999)
     assert(xs[0] == 0)
 
