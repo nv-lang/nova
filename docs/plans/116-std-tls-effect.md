@@ -346,7 +346,7 @@ type CTlsCfgHandle(*())   // ЭФЕМЕРНЫЙ конфиг-билдер (жи�
 | `tls_cfg_verify_pinned` | `(c, hashes *u8, count int) -> int` | SPKI-pinning (count×32 байта) — Ф.4 |
 | `tls_cfg_verify_insecure` | `(c) -> int` | InsecureSkipVerify (тесты) |
 | `tls_cfg_alpn_add` | `(c, proto *u8, len int) -> int` | добавить ALPN-протокол (повторяемо) |
-| `tls_cfg_cert_key_pem` | `(c, cert *u8, clen int, key *u8, klen int) -> int` | server cert chain + key |
+| `tls_cfg_cert_key_pem` | `(c, cert *u8, clen int, key *u8, klen int) -> int` | cert chain + key: сервер (обязательно) И клиент (mTLS-серт, Ф.5.2 — `ClientConfig` получит опциональные поля `client_cert_pem`/`client_key_pem`) |
 | `tls_cfg_client_auth_pem` | `(c, roots *u8, len int, required bool) -> int` | mTLS-режим сервера |
 | `tls_cfg_free` | `(c) -> ()` | освободить билдер (на error-пути; new/accept потребляют сами) |
 | `tls_client_new` | `(c CTlsCfgHandle, sni *u8, len int, out_err *mut int) -> CTlsHandle` | сессия клиента (билдер потреблён); null → код в out_err |
@@ -363,7 +363,7 @@ type CTlsCfgHandle(*())   // ЭФЕМЕРНЫЙ конфиг-билдер (жи�
 | `tls_alpn` | `(h, out *mut u8, cap int) -> int` | negotiated ALPN (len; 0 = нет) |
 | `tls_version` | `(h) -> int` | 0x0303 / 0x0304 |
 | `tls_cipher_suite` | `(h, out *mut u8, cap int) -> int` | имя suite (len) |
-| `tls_peer_cert_der` | `(h, i int, out *mut u8, cap int) -> int` | DER серта i (len; 0 = нет; -1 = буфер мал → перезвать с большим) |
+| `tls_peer_cert_der` | `(h, i int, out *mut u8, cap int) -> int` | DER серта i (0 = leaf); возврат = ПОЛНАЯ длина, копия min(cap,len); 0 = серта нет |
 | `tls_last_error_kind` | `(h) -> int` | стабильный код класса ошибки (таблица в shim/lib.rs ↔ TlsError.from_shim) |
 | `tls_last_error` | `(h, out *mut u8, cap int) -> int` | текст последней ошибки (len) |
 | `tls_free` | `(h) -> ()` | освободить сессию (double-free-safe на null) |
@@ -684,4 +684,19 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
   Insecure + ALPN + server cert/key + mTLS, трафик-примитивы, инспекция,
   error-классификация). `Pinned`-verifier — заглушка `TLS_ERR_UNSUPPORTED`
   до Ф.4 (реализация кастомного ServerCertVerifier — там же).
-- Сборка: `cargo build --release` — см. коммиты этой волны.
+- Сборка/верификация (2026-07-10, Windows x64, Rust 1.95):
+  - `cargo build --release` зелёный первой попыткой: rustls 0.23.41 + ring
+    0.17.14 (имеющийся cc/clang/MSVC, без cmake/nasm) → артефакт
+    `target/release/nova_tls_shim.lib` (~6.1 MB до финального dead-strip).
+  - `cargo test --release` — **5/5 PASS** (санити C-ABI: ClientHello строится
+    и wants_write, bad-PEM → TLS_ERR_INVALID_PEM, bad-SNI → TLS_ERR_INVALID_SNI,
+    Pinned → TLS_ERR_UNSUPPORTED, сервер без cert/key → TLS_ERR_BADARG).
+  - **R-2 (CRT) де-рискнут:** дефолтная сборка требует `/defaultlib:msvcrt`
+    (/MD — конфликт с /MT-пайплайном x64-windows-static); с
+    `-C target-feature=+crt-static` → `/defaultlib:libcmt` (/MT). Флаг
+    закреплён в `tls_shim/.cargo/config.toml`.
+  - native-static-libs (Windows, для link-line Ф.2.3): `bcrypt.lib
+    advapi32.lib kernel32.lib ntdll.lib userenv.lib ws2_32.lib dbghelp.lib`
+    (ws2_32/advapi32 уже в net-линковке; bcrypt/ntdll/userenv/dbghelp —
+    добавить при условной линковке).
+- Следующая фаза: Ф.1 (std/tls типы + ошибки + ffi.nv).
