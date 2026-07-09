@@ -10242,6 +10242,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let queue_var = format!("_nova_scope_q_{}", id);
         let prev_scope_var = format!("_nova_prev_scope_{}", id);
 
+        // Plan 173.1 Ф.1 (D-block «supervised — value-expression»): a `supervised`
+        // block whose body ends in a trailing expression evaluates to that
+        // expression's value AFTER all spawned children have joined (round-robin
+        // drain via `nova_supervised_run`) — NOT before, and NOT discarded.
+        // Previously (bootstrap stub) trailing was evaluated eagerly *before* the
+        // scheduler ran and immediately `(void)`-discarded, so `supervised { … v }`
+        // always yielded unit regardless of `v`. `parallel for`'s array-mode (Ф.2)
+        // is the motivating caller: it needs the post-join accumulator.
+        //
+        // Mechanism: the result variable must be declared *outside* the wrapping
+        // `{ … }` C block (this codegen has no GNU statement-expressions — see
+        // `emit_parallel_for`'s identical constraint) so it stays alive past the
+        // closing brace. `infer_expr_c_type` is a pure/static inference (no
+        // codegen side-effects — same helper `emit_parallel_for` already calls
+        // ahead of emission), safe to call before opening the block.
+        //
+        // [M-codegen-let-locals-overlay] (mirrors `emit_block_expr`'s identical
+        // guard, ~line 35148): the trailing expression may reference the body's
+        // OWN top-level `let`-locals (e.g. `supervised { ro inner = …; inner + 1
+        // }`), which aren't registered in `var_types` yet at this pre-block probe
+        // point — `var_types` is populated when `body.stmts` are actually emitted,
+        // further down. Without this overlay, the probe hits a stale/absent entry
+        // (P67-LEGACY panic) or a same-named leaked binding from an unrelated
+        // earlier function (`var_types` is not per-fn scoped). Transiently
+        // register each top-level let's inferred type, probe, then restore —
+        // the real emission below re-registers these locals authoritatively.
+        //
+        // [M-supervised-value-unit-trailing] (found testing Ф.1 against the
+        // existing corpus): a trailing expression whose C type is `nova_unit`
+        // is NOT a genuine value to defer — it's almost always the body's LAST
+        // enqueueing statement written without a following statement (Nova's
+        // "last expr in a block with no semicolon is the trailing expr" rule
+        // means `supervised { spawn { … } }` parses `spawn { … }` as `body.
+        // trailing`, not `body.stmts`!). `spawn` MUST run at its source
+        // position (pre-join, to enqueue the fiber) — deferring it to
+        // post-join would silently move it OUTSIDE the active scope, breaking
+        // `current_scope_queue` (`emit_spawn` then sees no active scope: "spawn
+        // is only allowed inside `supervised`…"). So: only unit-typed trailing
+        // stays eager/pre-join/discarded (old behaviour, byte-identical);
+        // non-unit trailing gets the new deferred/post-join value treatment.
+        let mut saved_body_locals: Vec<(String, Option<String>)> = Vec::new();
+        for stmt in &body.stmts {
+            if let Stmt::Let(d) = stmt {
+                if let Pattern::Ident { name, .. } = &d.pattern {
+                    let ty = d.ty.as_ref()
+                        .and_then(|t| self.type_ref_to_c(t).ok())
+                        .unwrap_or_else(|| self.infer_expr_c_type(&d.value));
+                    saved_body_locals.push((name.clone(), self.var_types.insert(name.clone(), ty)));
+                }
+            }
+        }
+        let result_var = body.trailing.as_ref().and_then(|t| {
+            let ty = self.infer_expr_c_type(t);
+            // Empty string is `infer_expr_c_type`'s own "unhandled ExprKind, caller
+            // should degrade to nova_unit" convention (see its final wildcard arm) —
+            // e.g. bare `ExprKind::Spawn` has no dedicated arm there. Treat the same
+            // as an explicit "nova_unit" for this eager-vs-deferred decision.
+            if ty == "nova_unit" || ty.is_empty() {
+                None
+            } else {
+                let var = format!("_nova_sup_res_{}", id);
+                Some((ty, var))
+            }
+        });
+        for (name, old) in saved_body_locals.into_iter().rev() {
+            match old {
+                Some(t) => { self.var_types.insert(name, t); }
+                None => { self.var_types.remove(&name); }
+            }
+        }
+        let result_var = result_var.map(|(ty, var)| {
+            self.line(&format!("{} {};", ty, var));
+            var
+        });
+
         // Wrap the scope in a C block so the queue is local.
         self.line("{");
         self.indent += 1;
@@ -10315,13 +10390,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
 
         // Emit body statements with defer scope (supervised body can contain defer).
+        // Plan 173.1 Ф.1: trailing expression is deferred — evaluated AFTER
+        // `nova_supervised_run` below (post-join), not here. Statements still run
+        // eagerly (they're what enqueue `spawn`s in the first place).
         let block_id = self.enter_defer_scope(body, false);
         for stmt in &body.stmts {
             self.emit_stmt(stmt)?;
         }
-        if let Some(trailing) = &body.trailing {
-            let v = self.emit_expr(trailing)?;
-            self.line(&format!("(void)({});", v));
+        // Unit-typed trailing (see [M-supervised-value-unit-trailing] above) stays
+        // eager/pre-join — matches the OLD behaviour exactly (evaluate, discard).
+        // `result_var` is `None` here, so nothing runs post-join for this case.
+        if result_var.is_none() {
+            if let Some(trailing) = &body.trailing {
+                let v = self.emit_expr(trailing)?;
+                self.line(&format!("(void)({});", v));
+            }
         }
         self.leave_defer_scope(block_id);
 
@@ -10343,11 +10426,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Restore previous active scope (may be NULL or outer scope).
         self.line(&format!("_nova_active_scope = {};", prev_scope_var));
 
+        // Plan 173.1 Ф.1: NOW (post-join — every spawned child has run to
+        // completion or the scope re-threw on failure/cancel above) evaluate the
+        // deferred trailing expression and store it into the outer-declared
+        // result var. Mutations/results children produced (mut-captures, or —
+        // for `parallel for`'s channel desugar, Ф.2 — a drain-fiber-populated
+        // accumulator) are visible here.
+        if let Some(rv) = &result_var {
+            let trailing = body.trailing.as_ref()
+                .expect("result_var is Some only when body.trailing is Some");
+            let v = self.emit_expr(trailing)?;
+            self.line(&format!("{} = {};", rv, v));
+        }
+
         self.indent -= 1;
         self.line("}");
 
-        // supervised expression evaluates to unit.
-        Ok("NOVA_UNIT".to_string())
+        // supervised expression evaluates to its trailing value (Ф.1) or unit
+        // when the body has no trailing expression.
+        Ok(result_var.unwrap_or_else(|| "NOVA_UNIT".to_string()))
     }
 
     /// Emit `parallel for x in iter { body }` — D14 fan-out via desugar to
@@ -22595,10 +22692,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
-                let mut ty_c = if let Some(ty) = &decl.ty {
-                    self.type_ref_to_c(ty)?
+                // Plan 173.1 Ф.1 [M-codegen-let-locals-overlay-supervised]: when the
+                // RHS is a body-bearing construct whose trailing may reference the
+                // body's OWN top-level `let`s (e.g. `ro v = supervised { ro inner =
+                // …; inner + 1 }`), pre-register those locals into `var_types` before
+                // probing — mirrors `emit_block_expr`'s identical overlay for plain
+                // `{ … }` blocks (~line 35148). Without this the probe recurses into
+                // an unregistered Ident and hits the `[P67-LEGACY]` panic (found
+                // testing Ф.1's newly-legal `supervised { … v }` nesting — Supervised
+                // wasn't previously a value-position RHS, so this gap never surfaced).
+                let mut _overlay_saved: Vec<(String, Option<String>)> = Vec::new();
+                if let Some(inner_body) = Self::body_bearing_block(&decl.value) {
+                    for s2 in &inner_body.stmts {
+                        if let Stmt::Let(d2) = s2 {
+                            if let Pattern::Ident { name, .. } = &d2.pattern {
+                                let ty2 = d2.ty.as_ref().and_then(|t| self.type_ref_to_c(t).ok())
+                                    .unwrap_or_else(|| self.infer_expr_c_type(&d2.value));
+                                _overlay_saved.push((name.clone(), self.var_types.insert(name.clone(), ty2)));
+                            }
+                        }
+                    }
+                }
+                let ty_c_probe = if let Some(ty) = &decl.ty {
+                    self.type_ref_to_c(ty)
                 } else {
-                    let inferred = self.infer_expr_c_type(&decl.value);
+                    Ok(self.infer_expr_c_type(&decl.value))
+                };
+                for (name, old) in _overlay_saved.drain(..).rev() {
+                    match old {
+                        Some(t) => { self.var_types.insert(name, t); }
+                        None => { self.var_types.remove(&name); }
+                    }
+                }
+                let mut ty_c = if decl.ty.is_some() {
+                    ty_c_probe?
+                } else {
+                    let inferred = ty_c_probe?;
                     if inferred == "__none_ambiguous__" {
                         // None без контекста — дефолт nova_int (legacy).
                         // Ошибка только если тип аннотирован и несовместим
@@ -35172,6 +35301,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(tmp)
     }
 
+    /// Plan 173.1 Ф.1 [M-codegen-let-locals-overlay-supervised]: extract the
+    /// `Block` body of a body-bearing expression kind whose trailing value may
+    /// reference the body's own top-level `let`s at a pre-emission type-probe
+    /// site (`Stmt::Let`'s `infer_expr_c_type(&decl.value)` call). Used to drive
+    /// the same overlay-then-restore dance `emit_block_expr` and
+    /// `branch_trailing_c_type_with_locals` already do for plain `{ … }` blocks
+    /// and if/match branches — generalised to `supervised`/`detach`/`blocking`
+    /// (and plain `Block` itself, for callers that don't special-case it).
+    fn body_bearing_block(expr: &Expr) -> Option<&Block> {
+        match &expr.kind {
+            ExprKind::Supervised { body, .. } => Some(body),
+            ExprKind::Detach(body) | ExprKind::Blocking(body) => Some(body),
+            ExprKind::Block(body) => Some(body),
+            _ => None,
+        }
+    }
+
     /// Plan 172.1 [M-codegen-if-branch-locals-overlay] (2026-06-29): infer a branch
     /// block's trailing C-type with the block's OWN `let`-locals transiently registered
     /// in `var_types`, then restore. Mirrors the stale-var guard in `emit_block_expr`
@@ -47551,20 +47697,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 ExprKind::For { .. } => "nova_unit".into(),
                 ExprKind::ParallelFor { body, .. } => {
-                    // D71: array-mode when trailing exists, unit otherwise.
-                    // Plan 172.12 A8: Vec[T]-mangled result name (was
-                    // `NovaArray_<et>*` — retired with array.h's legacy runtime;
-                    // mirrors `emit_parallel_for`'s result buffer, which is
-                    // Vec[T]-typed since the same pass).
+                    // D71 / Plan 173.1 Ф.2: array-mode when trailing exists, unit
+                    // otherwise. `[]T` for ANY element type T (primitive / heap-record
+                    // / value-record / tuple / sum / nested `[]T`) — the primitive
+                    // whitelist (nova_int/bool/f64/str) was an interim v1 restriction
+                    // (`[M-parfor-record-result-miscompile]`), removed now that
+                    // `emit_parallel_for`'s channel+consume desugar collects any T
+                    // uniformly (box non-pointer T, pass heap T by reference).
+                    // Plan 172.12 A8: Vec[T]-mangled result name.
                     match &body.trailing {
                         Some(t) => {
                             let et = self.infer_expr_c_type(t);
-                            match et.as_str() {
-                                "nova_int" | "nova_bool" | "nova_f64" | "nova_str" =>
-                                    format!("{}*",
-                                        Self::compute_generic_type_c_name("Vec", &[et])),
-                                _ => "nova_unit".into(),
-                            }
+                            format!("{}*", Self::compute_generic_type_c_name("Vec", &[et]))
                         }
                         None => "nova_unit".into(),
                     }
@@ -47572,7 +47716,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ExprKind::While { .. } => "nova_unit".into(),
                 ExprKind::WhileLet { .. } => "nova_unit".into(),
                 ExprKind::Loop { .. } => "nova_unit".into(),
-                ExprKind::Supervised { .. } => "nova_unit".into(),
+                // Plan 173.1 Ф.1: `supervised { … v }` evaluates to `v`'s type
+                // (post-join value-expression); trailing-less form stays unit.
+                // Mirrors `Blocking`'s identical pattern below.
+                ExprKind::Supervised { body, .. } => {
+                    let t = body.trailing.as_ref()
+                        .map(|e| self.infer_expr_c_type(e))
+                        .unwrap_or_else(|| "nova_unit".into());
+                    // Normalise the "unhandled ExprKind" empty-string convention (e.g. a
+                    // bare `spawn { }` trailing, [M-supervised-value-unit-trailing]) to
+                    // an explicit "nova_unit" so nested `supervised { supervised { spawn
+                    // {…} } }` self-heals the same way at every nesting level.
+                    if t.is_empty() { "nova_unit".into() } else { t }
+                }
                 ExprKind::Detach(_) => "nova_unit".into(),
                 // Plan 83.3 Ф.4.2: `blocking { }` отдаёт значение trailing
                 // expr тела (как block-expr); без trailing — unit.
