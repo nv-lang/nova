@@ -1,0 +1,98 @@
+// Plan 173.1 Ф.2 §5 pos: `parallel for → []T` над ИТЕРАТОРОМ (без len — Iter
+// protocol, K падает на CAP + back-pressure), пустой вход, один элемент,
+// completion-order плотность, большой вход (bounded fan-out буфера K=16),
+// ошибка ребёнка → Escalate (acc не возвращается, ошибка ловится) —
+// критерии приёмки №1/№3 плана.
+
+module nova_tests.err173_1
+
+// Пользовательский итератор без @len() — ленивый источник (Iter protocol).
+type CountUp { mut cur int; limit int }
+
+fn CountUp.new(limit int) -> CountUp => { cur: 0, limit }
+
+fn CountUp mut @next() -> Option[int] {
+    if @cur >= @limit {
+        None
+    } else {
+        ro v = @cur
+        @cur = @cur + 1
+        Some(v)
+    }
+}
+
+test "iterator без len — ленивый источник собирается в []T" {
+    ro xs = parallel for x int in CountUp.new(5) {
+        x * 3
+    }
+    assert(xs.len() == 5)
+    mut sum = 0
+    for v in xs { sum += v }
+    assert(sum == (0 + 1 + 2 + 3 + 4) * 3)
+}
+
+test "пустой вход → пустой []T (канал закрывается parent-tx, дренаж None сразу)" {
+    ro xs = parallel for i in 0..0 {
+        i
+    }
+    assert(xs.len() == 0)
+}
+
+test "один элемент" {
+    ro xs = parallel for i in 5..6 {
+        i * i
+    }
+    assert(xs.len() == 1)
+    assert(xs[0] == 25)
+}
+
+test "completion order: все результаты присутствуют, порядок не гарантирован" {
+    // Разные yield-профили → completion order отличается от iteration order,
+    // но сбор ПЛОТНЫЙ: ровно N элементов, ровно исходный мультисет.
+    mut xs = parallel for i in 0..8 {
+        if i % 2 == 0 { Time.sleep(0) }
+        i
+    }
+    assert(xs.len() == 8)
+    xs.sort()
+    mut i = 0
+    while i < 8 {
+        assert(xs[i] == i)
+        i += 1
+    }
+}
+
+test "большой вход: буфер K=16 (back-pressure), память O(CAP) на канал" {
+    // N=2000 >> K=16 — продюсеры паркуются на полном буфере и будятся
+    // дренажом; дедлока нет (критерий приёмки №1).
+    ro xs = parallel for i in 0..2000 {
+        i
+    }
+    assert(xs.len() == 2000)
+    mut sum = 0
+    for v in xs { sum += v }
+    assert(sum == 1999 * 2000 / 2)
+}
+
+test "ошибка ребёнка → Escalate: acc не возвращается, ошибка доходит до with Fail" {
+    mut caught = false
+    mut got = 0
+    mut reached_after = false
+    ro _ = with Fail[int] = |e| {
+        caught = true
+        got = e
+        0
+    } {
+        ro xs = parallel for i in 0..6 {
+            if i == 3 { throw 42 }
+            i
+        }
+        // При Escalate сюда не доходим — supervised перевыбросил
+        // ДО возврата значения; собранный acc не возвращается.
+        reached_after = true
+        xs.len()
+    }
+    assert(caught)
+    assert(got == 42)
+    assert(!reached_after)
+}
