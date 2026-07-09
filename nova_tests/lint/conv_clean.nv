@@ -1,0 +1,38 @@
+// Фикстура-негатив плана 185 (`nova lint` самотест): канонические формы тех же
+// операций — НОЛЬ находок реестра.
+// Прогон: nova lint nova_tests/lint/conv_clean.nv → exit 0, 0 finding(s).
+
+module lint.conv_clean
+
+type Widget { ro kind int, mut label str }
+
+// Канон §21б: new + дефолт-параметры (не `of`).
+export fn Widget.new(kind int, label str = "") -> Widget => { kind, label }
+
+// Канон D410: вид — голое существительное.
+export fn Widget @label_view() -> str => @label
+
+// Канон D117 AMEND-2: мутирующее свойство `mut @x(v) -> @`.
+export fn Widget mut @label(v str) -> @ {
+    @label = v
+}
+
+// Канон perf-conventions: StringBuilder в цикле.
+fn join(parts []str) -> str {
+    consume sb = StringBuilder.new()
+    mut first = true
+    for p in parts {
+        if !first { sb.append(",") }
+        sb.append(p)
+        first = false
+    }
+    sb.into_str()
+}
+
+fn main() -> () {
+    mut w = Widget.new(1)
+    w.label("x")
+    ro _lbl = w.label_view()
+    ro _s = join(["a", "b"])
+    ()
+}
