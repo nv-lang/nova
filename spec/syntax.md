@@ -518,7 +518,7 @@ f64.try_parse(s str) -> Option[f64]
 **Примитивные типы (lowercase, исключение из PascalCase-правила):**
 - `int`, `uint`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
 - `f32`, `f64`
-- `str`, `bool`, `byte`, `char`
+- `str`, `bool`, `char` (байт — это `u8`, отдельного типа `byte` нет)
 
 Подробно — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 
