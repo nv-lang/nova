@@ -21,6 +21,7 @@
 | 09 | [09-precise-gc-decision-2026.md](09-precise-gc-decision-2026.md) | Precise GC decision 2026: стратегия замены Boehm (рекомендация Option B — Hybrid); родитель Plan 83.13 |
 | 10 | [10-unicode-test-data-storage.md](10-unicode-test-data-storage.md) | Как хранят тяжёлые Unicode-тест-данные (Go/Rust/TS/Kotlin-Java/ICU/CPython) → рекомендация regenerate-on-demand; родитель Plan 156 |
 | 11 | [11-stdlib-method-resolution-reachability.md](11-stdlib-method-resolution-reachability.md) | Stdlib-методы на примитивах + достижимость (Rust/Swift/Zig/Go): import-vs-no-import ⊥ ленивый-анализ-vs-линкер-срез; наши замеры (отсева в codegen НЕТ) → рекомендация reachability-codegen; родитель Plan 159 |
+| 15 | [15-flagship-concurrency-showcase.md](15-flagship-concurrency-showcase.md) | Флагманское демо: живая визуализация конкурентных запросов (агрегатор). Отбор идеи из 5; SSE-транспорт; визуал swimlanes+waterfall (A+C); **дизайн и архитектура бека** на реальных примитивах (эффекты/supervised-spawn/handler-подмена/D28); gap'ы 91-Ф.6 и зависимости 173/178; родитель будущего Plan 187 |
 
 > Нумерация начинается с 03, потому что 01 и 02 переехали в отдельную
 > репу с черновиками публикаций.
