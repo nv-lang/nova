@@ -38943,3 +38943,27 @@ PASS; nova_tests/concurrency (109 non-slow) регресс-δ = 0 (byte-identica
 множества до/после — 107 pre-existing CODEGEN-FAIL это ТОТ ЖЕ Duration/Time.now() D316-дрейф
 в масштабе всей папки, вне периметра 173.0, честно не тронут — отдельная санация другого
 плана, тот самый «concurrency-CU Duration-int хвост» из части 65).
+
+2026-07-09 (план 185, ветка lint-185, [sonnet]). nova lint — ПОЛНАЯ ВЕРСИЯ (решение
+владельца отменило MVP-срез). Реестр конвенционных правил compiler-codegen/src/lints.rs
+::CONV_RULES: 16 самостоятельных единиц {id W_*, summary, AST-хук|текст-хук} — вся
+линт/греп-часть карты Ф.0 (NONVARIADIC_OF, RETIRED_PREFIX, ACCESSOR_PAIR, WITH_MUTATOR,
+STATIC_CONVERSION, TRY_WITHOUT_SIBLING, SETTER_NOT_FLUENT, FFI_BARE_HANDLE,
+MANUAL_SLICE_COPY, IMMUTABLE_REBUILD_SETTER, STR_CONCAT_LOOP, RESULT_DISCARDED,
+PARAM_NO_CONTRACT, VEC_SPELLING, RETIRED_NAME, FAIL_PUBLIC_SIGNATURE); 4 — консервативные
+синтаксические версии с // SEMANTIC-UPGRADE:-пометкой. Сабкоманда nova lint [paths]
+(--rule/--list-rules, exit 0/1, скип neg-фикстур, собственный полный walker — walk_nv
+теста прячет peer-файлы) + nova check --lint поверх того же реестра. Универсальная
+суппрессия: находка на строке с [M-...]-маркером не выводится («остатки под маркерами»).
+Прогон std/: 128 находок → 33 истинных починено той же волной (requires n>=0 на 19
+take/skip/acquire_n; StringBuilder вместо concat-loop в semver/sql; deque pop_back →
+items.pop() [был O(n) rebuild с комментом «O(1)»]; diff reverse in place; servernet
+append(view); bloom bit(); swallow-insert'ы → документированный discard; SeekFrom.start
+requires; try_mul/div_f64 → checked_* [консистентность D317]; TokenBucket try_acquire →
+acquire [R3]); 94 остатка — миграционные классы под 7 новыми [M-lint-findings-*]
+(backlog) + существующими [M-d410-as-to-migration]/[M-ffi-handle-newtype]/
+[M-vec-new-static-arity-overload]. Итог: nova lint std/ = 0 находок. Гейты: cargo build
+оба; conformance 70/0; самотест-фикстуры nova_tests/lint/{conv_pos=4,conv_clean=0};
+nova check std байт-в-байт против main-бинаря (diff=0; пре-существующий D78-FAIL
+std/ffi/cstr.nv одинаков у обоих). Попутно: 3 пре-существующих упавших unit-теста
+lints (ретрактированный external fn, D282) починены той же волной.
