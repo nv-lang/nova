@@ -849,6 +849,20 @@ pub enum TypeAttr {
     /// Stdlib HashMap имеет оба attribute. User-типы получают
     /// расширяемость без модификации компилятора.
     FromPairs,
+    /// Plan 173.3 (D415): `#share` — audited vouch that a type is safe to
+    /// alias from another fiber (data-race-freedom, one-axis model: share;
+    /// move is covered by `consume`). Bare marker (no args), like
+    /// `#zero_on_move`. Ordinary types need NEVER write this — share-ness
+    /// is auto-derived memberwise (all fields share ⇒ type share, mirroring
+    /// Plan 126 auto-derive). `#share` is needed ONLY to override the
+    /// auto-derived `false` for a type that transitively embeds the poison
+    /// base (a raw `*T` pointer field) but is internally synchronized
+    /// (`Mutex`/`RwLock`/`Atomic*`/channels, or a user lock-free type) —
+    /// the author vouches the auto-inference can't see the real
+    /// synchronization (analogous to Rust `unsafe impl Sync`). NOT a
+    /// protocol (D415 §0 — an empty-marker protocol would be trivially
+    /// true for every type); a plain type-attribute like `#impl`/`#forbid`.
+    Share,
 }
 
 /// Plan 180 Ф.6 (D382): один аргумент `#serde(...)`-аннотации. Общая

@@ -12662,8 +12662,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Inner non-ptr types (e.g. `type Wrap[T](int)`) — followup
             // [M-91.12-generic-newtype-non-ptr-inner].
             if let TypeDeclKind::Newtype(inner) = &t.kind {
-                const RUNTIME_BACKED_NEWTYPES: &[&str] =
-                    &["OnceCell", "Lazy", "Condvar"];
+                // Plan 173.3 (D415 §2): extended with the pointer-handle sync
+                // primitives that got a `#share`-carrying `type X(*())` decl
+                // (their C struct/typedef already lives hand-written in
+                // nova_rt/sync_*.h — same "codegen must not also emit its own
+                // conflicting typedef" reasoning as Condvar). Atomics: `.new()`
+                // returns `Nova_AtomicX*` (heap ptr) despite the VALUE struct
+                // typedef in sync_primitives.h — same pointer-handle ABI shape.
+                const RUNTIME_BACKED_NEWTYPES: &[&str] = &[
+                    "OnceCell", "Lazy", "Condvar",
+                    "Mutex", "RwLock", "ReentrantMutex", "WaitGroup", "Once",
+                    "Barrier", "CountDownLatch", "Semaphore",
+                    "AtomicI64", "AtomicI32", "AtomicI16", "AtomicI8",
+                    "AtomicU64", "AtomicU32", "AtomicU16", "AtomicU8",
+                    "AtomicIsize", "AtomicUsize", "AtomicInt", "AtomicBool", "AtomicPtr",
+                ];
                 if !RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
                     // Use type_ref_to_c — для inner = *() это даст "void*";
                     // для других pointer types — "*T" form. Primitives work too.
@@ -12749,8 +12762,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // List parallels Plan 91.12 V2 §«D126 retract — sync types»:
                 // ровно те 3 типа, что мигрировали с `external type` (Opaque)
                 // на `type X(*())` / `type X[T](*())`.
-                const RUNTIME_BACKED_NEWTYPES: &[&str] =
-                    &["OnceCell", "Lazy", "Condvar"];
+                // Plan 173.3 (D415 §2): extended with the pointer-handle sync
+                // primitives that got a `#share`-carrying `type X(*())` decl
+                // (their C struct/typedef already lives hand-written in
+                // nova_rt/sync_*.h — same "codegen must not also emit its own
+                // conflicting typedef" reasoning as Condvar). Atomics: `.new()`
+                // returns `Nova_AtomicX*` (heap ptr) despite the VALUE struct
+                // typedef in sync_primitives.h — same pointer-handle ABI shape.
+                const RUNTIME_BACKED_NEWTYPES: &[&str] = &[
+                    "OnceCell", "Lazy", "Condvar",
+                    "Mutex", "RwLock", "ReentrantMutex", "WaitGroup", "Once",
+                    "Barrier", "CountDownLatch", "Semaphore",
+                    "AtomicI64", "AtomicI32", "AtomicI16", "AtomicI8",
+                    "AtomicU64", "AtomicU32", "AtomicU16", "AtomicU8",
+                    "AtomicIsize", "AtomicUsize", "AtomicInt", "AtomicBool", "AtomicPtr",
+                ];
                 if RUNTIME_BACKED_NEWTYPES.contains(&t.name.as_str()) {
                     // Skip typedef emit — runtime / per-T mono handles it.
                     // Register alias так чтобы type_ref_to_c для bare `OnceCell`

@@ -23,3 +23,5 @@
 // - D109 — Equatable / Hashable / Comparable / Printable.
 
 pub mod auto_derive;
+// Plan 173.3 (D415): `#share` data-race-freedom predicate — see module doc.
+pub mod share_check;

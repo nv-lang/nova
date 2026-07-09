@@ -2487,6 +2487,20 @@ impl Parser {
                     self.bump(); // from_pairs
                     attrs.push(crate::ast::TypeAttr::FromPairs);
                 }
+                "share" => {
+                    // Plan 173.3 (D415): `#share` — audited data-race-freedom
+                    // vouch. Bare marker, no args.
+                    if attrs.contains(&crate::ast::TypeAttr::Share) {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#share` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // share
+                    attrs.push(crate::ast::TypeAttr::Share);
+                }
                 "impl" => {
                     // Plan 91.9 (D186): #impl(P1 + P2 + ...) opt-in list.
                     // Plan 164 Ф.1: protocol names may carry generic args,
@@ -10128,6 +10142,61 @@ impl Parser {
 
     fn parse_spawn(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwSpawn)?.span;
+        // Plan 173.3 Ф.3 (D415 §4): `spawn consume c [= expr] { body }` —
+        // EXPLICIT move-capture into the child fiber's OWNING scope (cleanup
+        // fires when the CHILD body exits, not the lexical block). Mirror of
+        // `consume c = expr { body }` (D188 ConsumeScope) — desugars to
+        // `Spawn(Block[ConsumeScope])` by reusing THAT machinery verbatim:
+        // the ConsumeScope's own body IS the spawn body, so its existing
+        // cleanup-on-body-exit codegen already fires at child-fiber exit.
+        // No new runtime plumbing needed (D415 §4 design note).
+        //
+        // `spawn consume c { body }` (no `= expr`) — `c` already bound in the
+        // OUTER (parent) scope; re-consuming it here transfers ownership into
+        // the child exactly like any other outer-scope reference already
+        // gets captured into the spawned closure (D415 §4 "already-bound"
+        // form) — the desugar's ConsumeScope `init` is simply `Ident(c)`.
+        if matches!(self.peek().kind, TokenKind::KwConsume) {
+            self.bump(); // consume
+            let (name, name_span) = self.parse_ident()?;
+            let init = if matches!(self.peek().kind, TokenKind::Eq) {
+                self.bump(); // =
+                self.skip_newlines();
+                let saved_trailing = self.no_trailing_block;
+                self.no_trailing_block = true;
+                let e = self.parse_expr();
+                self.no_trailing_block = saved_trailing;
+                e?
+            } else {
+                Expr::new(ExprKind::Ident(name.clone()), name_span)
+            };
+            self.skip_newlines();
+            if !matches!(self.peek().kind, TokenKind::LBrace) {
+                return Err(Diagnostic::new(
+                    "`spawn consume c [= expr]` requires a block body `{ ... }` \
+                     (D415 §4) — the child fiber owns `c`; its cleanup fires \
+                     when the child body exits, not the lexical block."
+                        .to_string(),
+                    self.peek().span,
+                ));
+            }
+            let user_body = self.parse_block()?;
+            let cs_span = start.merge(user_body.span);
+            let wrapped = Block {
+                stmts: vec![Stmt::ConsumeScope {
+                    binding: name,
+                    type_annot: None,
+                    init,
+                    body: user_body,
+                    span: cs_span,
+                }],
+                trailing: None,
+                span: cs_span,
+                is_unsafe: false,
+            };
+            let body_expr = Expr::new(ExprKind::Block(wrapped), cs_span);
+            return Ok(Expr::new(ExprKind::Spawn(Box::new(body_expr)), cs_span));
+        }
         let body = self.parse_expr()?;
         let span = start.merge(body.span);
         Ok(Expr::new(ExprKind::Spawn(Box::new(body)), span))
