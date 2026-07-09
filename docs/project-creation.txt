@@ -38944,6 +38944,30 @@ PASS; nova_tests/concurrency (109 non-slow) регресс-δ = 0 (byte-identica
 в масштабе всей папки, вне периметра 173.0, честно не тронут — отдельная санация другого
 плана, тот самый «concurrency-CU Duration-int хвост» из части 65).
 
+2026-07-09 (план 185, ветка lint-185, [sonnet]). nova lint — ПОЛНАЯ ВЕРСИЯ (решение
+владельца отменило MVP-срез). Реестр конвенционных правил compiler-codegen/src/lints.rs
+::CONV_RULES: 16 самостоятельных единиц {id W_*, summary, AST-хук|текст-хук} — вся
+линт/греп-часть карты Ф.0 (NONVARIADIC_OF, RETIRED_PREFIX, ACCESSOR_PAIR, WITH_MUTATOR,
+STATIC_CONVERSION, TRY_WITHOUT_SIBLING, SETTER_NOT_FLUENT, FFI_BARE_HANDLE,
+MANUAL_SLICE_COPY, IMMUTABLE_REBUILD_SETTER, STR_CONCAT_LOOP, RESULT_DISCARDED,
+PARAM_NO_CONTRACT, VEC_SPELLING, RETIRED_NAME, FAIL_PUBLIC_SIGNATURE); 4 — консервативные
+синтаксические версии с // SEMANTIC-UPGRADE:-пометкой. Сабкоманда nova lint [paths]
+(--rule/--list-rules, exit 0/1, скип neg-фикстур, собственный полный walker — walk_nv
+теста прячет peer-файлы) + nova check --lint поверх того же реестра. Универсальная
+суппрессия: находка на строке с [M-...]-маркером не выводится («остатки под маркерами»).
+Прогон std/: 128 находок → 33 истинных починено той же волной (requires n>=0 на 19
+take/skip/acquire_n; StringBuilder вместо concat-loop в semver/sql; deque pop_back →
+items.pop() [был O(n) rebuild с комментом «O(1)»]; diff reverse in place; servernet
+append(view); bloom bit(); swallow-insert'ы → документированный discard; SeekFrom.start
+requires; try_mul/div_f64 → checked_* [консистентность D317]; TokenBucket try_acquire →
+acquire [R3]); 94 остатка — миграционные классы под 7 новыми [M-lint-findings-*]
+(backlog) + существующими [M-d410-as-to-migration]/[M-ffi-handle-newtype]/
+[M-vec-new-static-arity-overload]. Итог: nova lint std/ = 0 находок. Гейты: cargo build
+оба; conformance 70/0; самотест-фикстуры nova_tests/lint/{conv_pos=4,conv_clean=0};
+nova check std байт-в-байт против main-бинаря (diff=0; пре-существующий D78-FAIL
+std/ffi/cstr.nv одинаков у обоих). Попутно: 3 пре-существующих упавших unit-теста
+lints (ретрактированный external fn, D282) починены той же волной.
+
 Часть 67 (2026-07-09, [sonnet], ветка parallel-collect-173-1 / nova-p173). ПЛАН 173.1 ЯДРО
 ЗАКРЫТО: supervised{…v} — value-expression (trailing вычисляется ПОСЛЕ join детей; unit-trailing
 остаётся eager — байт-паритет со «spawn последним стейтментом»), parallel for → []T для ЛЮБОГО T
@@ -38994,3 +39018,29 @@ std/data/ (1ea2f919c: import std.data.semver, Version-сравнения чер�
 незахваченного `s` в cross-effect with-хендлере, peer-тесты semver_range_test.nv; check PASS,
 test --full зелёный, каталог data/ в _experimental опустел) + закрытие свипа 186 п.5
 (715868068). Гейт волны: conformance --positive --compile-error 82/0.
+
+2026-07-10 — Plan 173.3 ЗАКРЫТ (sonnet, ветка drf-173-3, worktree nova-p182): data-race
+freedom. D415 (06-concurrency.md). Одна ось #share (тип-АТРИБУТ, не протокол; E_SHARE_INVALID_KIND
+на kind без instance-идентичности), два уровня доступа (is_alias_read_safe / is_mut_alias_safe —
+зеркало Rust «T: Sync ⇔ &T: Send») в protocols/share_check.rs (9 unit-тестов); авто-вывод
+memberwise; ядовитая база = сырой *T + записываемая ячейка (mut-поле вне audited-типа).
+Capture-check в CapabilityCtx (стек scope-фреймов + free-var скан + синтаксический эскиз
+типов init: Type.new/Type[T].new/Type{..}/литералы) на границе spawn/parallel-for →
+E_CONCURRENT_MUT_CAPTURE; ro-захват всегда легален (D246); mut — только mut-alias-safe.
+Audited #share на 24 sync-типах std/runtime/sync.nv (Mutex/RwLock/ReentrantMutex/WaitGroup/
+Once/OnceCell/Lazy/Barrier/Condvar/CountDownLatch/Semaphore + 13 Atomic*; им добавлены
+явные `type X(*())`-декларации + расширен RUNTIME_BACKED_NEWTYPES, чтобы codegen не эмитил
+конфликтующие typedef'ы). spawn consume c [= e] { } — парсер-десугар в Spawn(Block[ConsumeScope]):
+D188-cleanup срабатывает на выходе РЕБЁНКА бесплатно; use-after-consume закрыт by construction;
+минимальный emit_c-фикс (collect_idents_stmt/collect_bound_names ConsumeScope-арм — захваты
+тел spawn-consume). Ф.4: #fiber_send/E_POINTER_CROSS_FIBER (118.3, не был реализован) поглощён
+D415 §5 документально. Дополнение владельца: E_CONST_INIT_CONCURRENCY
+([M-const-init-concurrency-gate]) — spawn/detach/supervised/parallel-for/select/блокирующие
+.send()/.recv()/Detach-fn в module-level ro/const-инициализаторах запрещены (исполняются в
+nova_consts_init() ДО арминга воркеров); extern/runtime-вызовы легальны. Миграция разом:
+std 2 файла (cancellation.nv within/race2 — реальный TOCTOU! — и servernet smoke → каналы),
+nova_tests ~19 файлов → Atomic*, examples 3 файла. Идиома docs/idiom/communicate-dont-share.md.
+Гейты: conformance 79/0; err173-корпус 19/0; std/concurrency 3/0(+4 skip); sync_test 1/0;
+nova check std/nova_tests/examples FAIL-set δ0 к main-базису (кроме ожидаемых новых диагностик,
+все починены той же волной). Новые коды: E_CONCURRENT_MUT_CAPTURE, E_SHARE_INVALID_KIND,
+E_CONST_INIT_CONCURRENCY.

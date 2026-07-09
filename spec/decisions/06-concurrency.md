@@ -331,15 +331,17 @@ ro r = spawn fetch_a()
 > (`[M-parfor-record-result-miscompile]` закрыт на всей матрице типов —
 > `nova_tests/err173_1/parfor_elem_matrix.nv`).
 
-Пример mut-захватов:
+Пример возврата результатов из детей (Ред. Plan 173.3 / [D415](#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733) —
+голый mut-захват в `spawn` теперь **`[E_CONCURRENT_MUT_CAPTURE]`**; результаты
+идут через `#share`-примитивы или каналы):
 ```nova
-mut a = 0
-mut b = 0
+mut a = AtomicInt.new(0)
+mut b = AtomicInt.new(0)
 supervised {
-    spawn { a = compute_a() }       // results через shared mut
-    spawn { b = compute_b() }
+    spawn { a.store(compute_a()) }  // #share-примитив — санкционированный путь
+    spawn { b.store(compute_b()) }
 }
-use_both(a, b)
+use_both(a.load(), b.load())
 ```
 
 `spawn()` с пустыми скобками — **запрещено**: скобки не несут смысла и
@@ -684,12 +686,13 @@ implementation detail (preemption после v1.0 делает их
   новый тип в системе). Все три плохи. Async прозрачный (D62)
   делает синхронные значения от concurrent-вызова **избыточными** —
   если значение нужно, пиши прямой вызов. spawn — fire-and-forget
-  statement; результаты через `mut`-захваты или `parallel for`
+  statement; результаты через `#share`-примитивы (`Atomic*`/`Mutex`) /
+  каналы ([D415](#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733) — голый mut-захват отвергается) или `parallel for`
   (массив-результат).
 - **`Handle[T]` / future-объект от spawn.** Aналог Rust `JoinHandle`
   или Kotlin `Deferred`. Отвергнуто: добавляет тип в систему,
   требует `.value()` синтаксиса (то же что implicit-await но явно
-  в коде), не даёт ничего сверх mut-захватов.
+  в коде), не даёт ничего сверх `#share`-примитивов/каналов (D415).
 
 ### Связь
 
@@ -776,6 +779,11 @@ ro total = supervised {
     acc          // ← вычисляется после завершения ВСЕХ детей
 }
 ```
+
+Мутируемое состояние между детьми — не через голый mut-захват (с
+[D415](#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733)
+это `[E_CONCURRENT_MUT_CAPTURE]`), а через `#share`-примитивы/каналы; результат
+блока — trailing-выражение post-join.
 
 **`parallel for x in iter { body }`** — по spec D14 это **expression**
 типа `[]T` (где `T` — тип `body`). Это **параллельный map**, не loop.
@@ -913,14 +921,15 @@ ro users = fetch_users()       // тип []User; suspension случается �
 // (2) parallel for — массив гомогенных результатов.
 ro responses = parallel for url in urls { fetch(url) }   // []Response
 
-// (3) mut-захваты — гетерогенная параллельность.
-mut a = 0
-mut b = 0
+// (3) #share-примитивы — гетерогенная параллельность (D415;
+//     голый mut-захват = E_CONCURRENT_MUT_CAPTURE).
+mut a = AtomicInt.new(0)
+mut b = AtomicInt.new(0)
 supervised {
-    spawn { a = compute_a() }
-    spawn { b = compute_b() }
+    spawn { a.store(compute_a()) }
+    spawn { b.store(compute_b()) }
 }
-use_both(a, b)
+use_both(a.load(), b.load())
 ```
 
 **Bootstrap-исключение (legacy).** `spawn` вне `supervised` сейчас
@@ -935,7 +944,7 @@ compile error».
 - `spawn body` всегда unit, во всех контекстах.
 - Поле `_nova_result` в ctx-struct убирается.
 - Все обращения к результату concurrent-вызова — через прямой вызов /
-  `parallel for` / mut-захваты.
+  `parallel for` / `#share`-примитивы и каналы (D415).
 
 #### 3. `detach { body }` — fire-and-forget с default handler
 
@@ -6591,3 +6600,189 @@ unit-типизированный trailing остаётся eager/pre-join (ба
 completion-плотность / N=2000 back-pressure / Escalate), `supervised_value_smoke`,
 `neg/parfor_openended_range`; `nova_tests/concurrency/parallel_for_array.nv`
 (set-equality канон для user-тестов).
+
+## D415. Data-race freedom — `#share`-атрибут, capture-check, consume-в-spawn (Plan 173.3)
+
+> Дом [Plan 173.3](../../docs/plans/173.3-data-race-freedom-share.md)
+> (data-race-freedom: гонка → compile-error). Owner sign-off 2026-06-21
+> (решения §2 плана); реализация 2026-07-09/10. Расширяет [D50](#d50)
+> (`spawn`), [D75](#d75) (`supervised`), [D14](#d14-fiber-runtime--невидимая-инфраструктура);
+> поглощает Plan 118.3 `#fiber_send`/`E_POINTER_CROSS_FIBER` (§5).
+> Мировой контекст: Rust `Send`/`Sync` ≈ Swift 6 `Sendable` (тип-маркер,
+> авто-вывод по полям, проверка на границе конкуренции, audited unsafe-escape)
+> победили Pony-caps по эргономике; Go `-race` (рантайм) — анти-модель.
+
+### §0. `#share` — АТРИБУТ типа, НЕ протокол
+
+`#share` — bare-маркер на type-декларации (как `#zero_on_move`), парсится в
+`TypeAttr::Share`. **Протоколом не является намеренно**: пустой протокол
+(маркер без метода) был бы структурно истинен для всякого типа — систему
+протоколов (`#impl`, `verify_impl_protocols`) не трогаем. Применим только к
+kinds с собственной instance-идентичностью: record / named tuple / newtype /
+opaque / sum; на effect/protocol/alias/type-set → **`[E_SHARE_INVALID_KIND]`**.
+
+### §1. Одна ось: share. Два уровня доступа. Авто-вывод + ядовитая база
+
+**Ось одна** — «можно ли алиасить значение из другого файбера». Send/move-оси
+(как в Rust) НЕ нужно: под общим GC move всегда memory-safe — его покрывает
+`consume` (§4). Чем алиас ОПАСЕН — зависит от доступа, который он даёт
+(зеркало Rust-инварианта `T: Sync ⇔ &T: Send`):
+
+- **read-alias-safe** (`is_alias_read_safe`) — безопасно алиасить для ЧТЕНИЯ
+  (`ro`-захват / immutable-поле): примитивы, `()`, deep-immutable агрегаты
+  memberwise, контейнеры/tuple/Option/Result из read-safe элементов.
+- **mut-alias-safe** (`is_mut_alias_safe`) — безопасно алиасить для МУТАЦИИ
+  (mut-биндинг, захваченный телом `spawn`): ТОЛЬКО внутренняя синхронизация —
+  audited `#share`-vouch (§2), или агрегат, все пути мутации которого
+  упираются в такой тип. Голый `mut int`-аккумулятор — мотивирующая гонка
+  плана — read-safe, но **НЕ** mut-alias-safe.
+
+**Авто-вывод (memberwise, зеркало auto-derive Plan 126):** обычный тип share
+без единой аннотации — record share ⇔ каждое immutable-поле read-alias-safe
+И каждое `mut`-поле mut-alias-safe; sum/named-tuple — по payload'ам (read).
+Считается по запросу capture-check'а (`protocols/share_check.rs`), нигде не
+кешируется и не публикуется.
+
+**Ядовитая база:** сырой указатель `*T` (любой pointee-модификатор) — не-share
+структурно, оба уровня (аналог Rust `UnsafeCell: !Sync`); его binding-близнец —
+записываемая ячейка (`mut`-поле / mut-скаляр) без audited-синхронизации вокруг.
+Тип, транзитивно содержащий ядовитую базу, не-share; **единственный выход** —
+собственный `#share`-vouch типа.
+
+**Консервативные направления (V1):** неразрешённое имя (generic-параметр `T`,
+registry-miss) / fn-тип / anonymous-protocol / opaque-без-vouch / Effect →
+не-share. `Share`-bound для дженериков — вне V1 (см. §7 Q3/Q7).
+
+### §2. Capture-rule на границе `spawn` / `parallel for` → `E_CONCURRENT_MUT_CAPTURE`
+
+Тело `spawn`/`parallel for` исполняется в НОВОМ файбере (M:N — возможно на
+другом OS-потоке). Свободные переменные тела, резолвящиеся во ВНЕШНИЕ
+биндинги (лексический скан `CapabilityCtx`, стек scope-фреймов), могут
+пересечь границу только тремя способами:
+
+| захват | правило |
+|---|---|
+| `consume`-move (§4) | отдал во владение ребёнка — виден в коде, всегда ок |
+| `ro`-биндинг | deep-immutable view (D246) — всегда ок, share не требуется |
+| `mut`-биндинг | ок ⇔ тип mut-alias-safe (§1); иначе **`[E_CONCURRENT_MUT_CAPTURE]`** |
+
+**Audited vouch (`#share` в их `.nv`)** несут sync-примитивы std —
+`Mutex`/`RwLock`/`ReentrantMutex`/`WaitGroup`/`Once`/`OnceCell`/`Lazy`/
+`Barrier`/`Condvar`/`CountDownLatch`/`Semaphore`/все `Atomic*` (std/runtime/sync.nv):
+«внутри настоящая синхронизация, авто-вывод её не видит через opaque-handle».
+Это утверждение АВТОРА, аналог Rust `unsafe impl Sync` — компилятор верит без
+проверки (потому «audited»). Пользовательский lock-free тип пишет тот же
+`#share` — механизм один (§3).
+
+**V1-границы скана (задокументированные, направление — недолов, не
+false-positive):** биндинги замыканий/match-arm'ов не трекаются как внешние
+(имя не найдено → не флагаем); типы биндингов — из аннотаций + синтаксического
+эскиза init-выражения (`Type.new(..)`/`Type[T].new(..)`/`Type{..}`/литералы);
+не-выводимый тип mut-биндинга → консервативно флагаем.
+
+### §3. §3-философия соблюдена by construction
+
+Компилятор хардкодит только **правило** (авто-вывод + ядовитая база + чтение
+`TypeAttr::Share`) — ни одного имени типа в Rust-коде предикатов. `Mutex` не
+особый: его share-ность приходит из `#share` в `std/runtime/sync.nv`, ровно
+как у пользовательского типа.
+
+### §4. consume-в-spawn — явный move во владение ребёнка
+
+```nova
+spawn consume c = expr { body }   // связать и отдать ребёнку
+spawn consume c { body }          // уже связанный c — переотдать ребёнку
+```
+
+Зеркало `consume c = expr { body }` (D188), но владеющий scope = **ребёнок**:
+cleanup (`Cleanup[E]`, D194/D196) срабатывает на выходе тела РЕБЁНКА, не
+лексического блока родителя. Десугар: `Spawn(Block[ConsumeScope])` —
+переиспользует D188-машинерию verbatim (тело scope'а = тело spawn'а, значит
+cleanup-на-выходе-тела = cleanup-на-child-exit «бесплатно», ни одного нового
+runtime-примитива). Keyword'а `move` нет — используется `consume` (решение §2
+п.8 плана: школа Rust `move ||`, анти-Go-неявный-захват).
+
+**Use-after-consume закрыт by construction:** биндинг `c` существует ТОЛЬКО в
+теле ребёнка; обращение после `spawn` — undefined identifier (V1/V2-грабли
+173.1). Безопасные не-move захваты (`ro`, `#share`, by-value примитив в
+`ro`) — неявные, но проверяемые (§2); полный capture-list
+`spawn(consume c, ro cfg)` отвергнут (§7 Q9): обязательны явные только move'ы.
+
+### §5. Поглощение `#fiber_send` / `E_POINTER_CROSS_FIBER` (Plan 118.3) — Ф.4
+
+Ad-hoc запрет Plan 118.3 «сырой `*T` через границу файбера»
+(`E_POINTER_CROSS_FIBER` + opt-out `#fiber_send`) **поглощён** принципиальной
+проверкой: `*T` = ядовитая база (§1), содержащий тип не-share, mut-захват →
+`E_CONCURRENT_MUT_CAPTURE` (фикстура `err173_3/neg/pointer_cell_not_share`).
+`#fiber_send`/`E_POINTER_CROSS_FIBER` в компиляторе никогда не существовали
+(118.3 Ф.1 не был реализован) — ретайр чисто документальный: opt-out-маркер
+per-binding не вводится (эскейп = `#share`-vouch на обёрточном ТИПЕ,
+аудируемый в одном месте — декларации, не на каждом биндинге).
+
+### §6. Конкуренция в module-level инициализаторах → `E_CONST_INIT_CONCURRENCY`
+
+Дополнение волны ([M-const-init-concurrency-gate]; амендмент к D199-partition,
+03-syntax.md): module-level `ro`/`const`-инициализаторы исполняются в
+`nova_consts_init()` **ДО арминга M:N-воркеров** (eager-фикс
+[M-lazy-const-init-race]). Конкуренция там лениво подняла бы воркеров
+(`_auto_arm_if_needed()`) ПОСРЕДИ consts_init — хвост инициализации стал бы
+multi-threaded, возврат гонки. Чекер отвергает в init-выражениях:
+`spawn` / `detach` / `supervised` / `parallel for` / `select`, канальные
+блокирующие вызовы `.send()`/`.recv()` (паркуют без воркеров = pre-main hang;
+имя-эвристика по D91-поверхности; неблокирующие `try_send`/`try_recv`
+легальны), вызовы свободных fn с эффектом `Detach` в сигнатуре →
+**`[E_CONST_INIT_CONCURRENCY]`**. Обычные runtime/extern-вызовы и аллокация
+в `ro`-init ОСТАЮТСЯ легальными (строже — только constexpr-правило `const`,
+E_CONST_EFFECT_IN_INIT).
+
+### §7. Резолюции под-вопросов плана (V1)
+
+1. **Захваты хендлеров (Q12):** capability-walker не обходит тела
+   handler-op-литералов (эффект-полиморфны, D414 §2) — handler-state вне
+   периметра скана V1; эффект-row не несёт `#share`-обязательства. Полная
+   HOF-эффект-полиморфная проверка — вне периметра 173 (хаб НЕ-цели).
+2. **`#share`-nameability результата spawn/эффекта:** не нужен в V1 — spawn
+   возвращает unit (D50), результаты через `#share`-примитивы/каналы; RTN-
+   аналог не вводится.
+3. **Opt-out `!share`:** НЕ вводится (Rust держал `!Send` нестабильным
+   годами). Fiber-affine handle выражается ядовитой базой (сырое `*T`-поле)
+   — тип автоматически не-share.
+4. **Точная ядовитая база:** `*T`-указатель + записываемая ячейка (`mut`-поле
+   вне audited-типа). Обходной путь внутренней мутации — `ref T` (алиас на
+   storage): предикат прозрачно рекурсирует в referent с ТЕМ ЖЕ уровнем
+   доступа — обхода нет.
+5. **`ro`/D246 и `#share`:** derive кормит ось ДОСТУПА, не биндинга:
+   immutable-поле — read-правило, `mut`-поле — mut-правило; `ro`-БИНДИНГ на
+   границе — всегда ок (D246 deep-immutability). Известная V1-дырка: `ro`-
+   алиас pointee, у которого ЖИВ второй mut-алиас у родителя, не ловится —
+   зафиксировано как ограничение (направление — недолов).
+6. **Половинки канала:** обе выражаются `#share`+`consume` без спец-кейса —
+   `ro (tx, rx)`-биндинги захватываются как `ro` (send/recv не требуют mut);
+   в десугаре сбора 173.1 Sender'ы clone+move (решение §2 п.9 плана).
+7. **Region/`sending`-инференс (Swift SE-0414):** НЕ нужен — `consume`/move
+   покрывает передачу уникального, `#share` — алиасинг; регионов нет.
+8. **Диагностика leakage:** добавление не-share `mut`-поля снимает share
+   молча — сообщение E_CONCURRENT_MUT_CAPTURE на use-site называет БИНДИНГ и
+   лечения; per-field «почему тип перестал шариться» — followup
+   `[M-173.3-share-leakage-explain]`.
+9. **Полнота явности захвата:** принята РЕКОМЕНДАЦИЯ плана — явные только
+   move'ы (`spawn consume`); `ro`/`#share`/by-value — неявные-но-проверяемые.
+   Полный capture-list отвергнут (многословен для каждого loop-var).
+
+### Диагностики / тесты
+
+| код | что |
+|---|---|
+| `E_CONCURRENT_MUT_CAPTURE` | mut-захват не-mut-alias-safe типа телом spawn/parallel-for |
+| `E_SHARE_INVALID_KIND` | `#share` на kind без instance-идентичности |
+| `E_CONST_INIT_CONCURRENCY` | конкуренция в module-level ro/const-инициализаторе |
+
+Тесты: `nova_tests/err173_3/` — pos `share_capture_ok_test` (ro / `#share`-
+примитивы / `spawn consume` / авто-share user-тип / user `#share`-vouch),
+`const_init_runtime_ok_test`; neg `mut_capture_in_spawn`,
+`pointer_cell_not_share`, `share_invalid_kind`, `use_after_spawn_consume`
+(by construction), `const_init_{spawn,supervised,detach_fn}`. Unit —
+`protocols/share_check.rs::tests` (9). Миграция разом (решение §2 п.10):
+std (`concurrency/cancellation.nv` `within`/`race2` — реальные TOCTOU-гонки,
+переведены на каналы; `http/servernet` smoke — на каналы) + nova_tests
+(~19 файлов — на `Atomic*`).

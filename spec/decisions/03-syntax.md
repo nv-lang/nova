@@ -7240,6 +7240,16 @@ const COMPUTED = make_point(7, 14)         // ✗ E_CONST_NOT_CONSTEXPR
 Scope-level — без strict-правила (`ro x = 5` и `const x = 5` оба валидны,
 разница в гарантиях).
 
+#### Amend (Plan 173.3, 2026-07-10): конкуренция в module-level инициализаторах запрещена
+
+Module-level `ro`/`const`-инициализаторы исполняются в `nova_consts_init()`
+ДО арминга M:N-воркеров — конкуренция в них (`spawn`/`supervised`/`detach`/
+`parallel for`/`select`/блокирующие канальные `.send()`/`.recv()`/вызов fn с
+эффектом `Detach`) отвергается чекером: **`[E_CONST_INIT_CONCURRENCY]`**.
+Обычные runtime/extern-вызовы в `ro`-init остаются легальными. Норматив и
+мотивация — [D415 §6](06-concurrency.md#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733)
+([M-const-init-concurrency-gate]).
+
 #### Amend (Plan 148 Ф.3, 2026-06-12): forward direction implemented
 
 Прямое направление partition `E_RO_FOR_CONSTEXPR_PREFER_CONST` (раньше

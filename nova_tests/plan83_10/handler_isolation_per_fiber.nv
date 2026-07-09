@@ -30,12 +30,13 @@ fn helper_h_999() Time -> int {
 }
 
 test "per-fiber handler isolation — different values seen" {
-    mut a = 0
-    mut b = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut a = AtomicInt.new(0)
+    mut b = AtomicInt.new(0)
     supervised {
-        spawn { a = helper_h_100() }
-        spawn { b = helper_h_999() }
+        spawn { a.store(helper_h_100()) }
+        spawn { b.store(helper_h_999()) }
     }
-    assert(a == 100)
-    assert(b == 999)
+    assert(a.load() == 100)
+    assert(b.load() == 999)
 }

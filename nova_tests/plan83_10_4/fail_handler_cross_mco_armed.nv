@@ -82,7 +82,8 @@ test "armed M:N — Fail handler catches indirect throw via function" {
 
 test "armed M:N — Fail handler not triggered on success path" {
     mut handler_ran = false
-    mut result = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut result = AtomicInt.new(0)
     with Fail = effect Fail {
         fail(_msg) {
             handler_ran = true
@@ -90,11 +91,11 @@ test "armed M:N — Fail handler not triggered on success path" {
         }
     } {
         supervised {
-            spawn { result = 42 }
+            spawn { result.store(42) }
         }
     }
     assert(!handler_ran)
-    assert(result == 42)
+    assert(result.load() == 42)
 }
 
 // ================================================================

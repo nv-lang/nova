@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_CONST_INIT_CONCURRENCY
+//
+// Plan 173.3 addendum ([M-const-init-concurrency-gate]): `supervised { }`
+// в module-level `ro`-инициализаторе запрещён — конкуренция до арминга
+// M:N-воркеров (см. const_init_spawn.nv).
+
+module neg.const_init_supervised
+
+ro eager_scope = {
+    supervised {
+    }
+    1
+}

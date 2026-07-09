@@ -14,26 +14,28 @@ import std.time.duration
 
 test "Duration.from_days(10_000) allocates timer without panic" {
     ro huge = Duration.from_days(10_000)
-    mut allocated = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut allocated = AtomicBool.new(false)
     supervised {
         spawn {
             ro _t = ChanReader.close_after(huge)
             // Scope-exit cancels the pending timer; we never wait.
-            allocated = true
+            allocated.store(true)
         }
     }
-    assert(allocated)
+    assert(allocated.load())
 }
 
 test "Duration.from_hours(1_000_000) allocates without overflow" {
     // 1M hours = ~114 years. Still well within i64 ns range (~292 years cap).
     ro huge = Duration.from_hours(1_000_000)
-    mut allocated = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut allocated = AtomicBool.new(false)
     supervised {
         spawn {
             ro _t = ChanReader.close_after(huge)
-            allocated = true
+            allocated.store(true)
         }
     }
-    assert(allocated)
+    assert(allocated.load())
 }
