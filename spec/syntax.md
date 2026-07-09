@@ -19,8 +19,11 @@ fn double(x int) -> int => x * 2
 ro j = json`{"name": "alice"}`              // -> Json
 ro q = sql`SELECT * FROM users WHERE id = ${user_id}`   // -> Sql, безопасно
 ro r = regex`\d+\.\d+`                       // -> Regex, raw
-ro b = bytes`deadbeef`                       // -> Bytes
 ```
+
+Байтовый блоб — отдельный литерал `x"…"` (hex-цифры → `[]u8`), не
+tagged template: `ro b = x"deadbeef"`. В очереди — [Plan 186](../docs/plans/186-hex-blob-embed.md)
+/ [D412](decisions/03-syntax.md#d412), в текущем компиляторе не реализован.
 
 **Интерполяция через `${expr}`** — tag-функция получает части и
 аргументы **раздельно**, что обеспечивает безопасность (защита от SQL
@@ -35,7 +38,7 @@ sql`SELECT * FROM users WHERE name = ${name}`
 **Multiline** работает естественно. Escape: `` \` ``, `\\`, `\${` —
 буквальные. Остальные символы — raw (удобно для regex и SQL).
 
-**Стандартные теги (план stdlib MVP):** `json`, `sql`, `regex`, `bytes`.
+**Стандартные теги (план stdlib MVP):** `json`, `sql`, `regex`.
 
 **Свой тег** — обычная функция:
 
