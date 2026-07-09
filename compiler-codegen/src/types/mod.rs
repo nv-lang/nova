@@ -7575,6 +7575,46 @@ impl<'a> TypeCheckCtx<'a> {
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
                 self.in_call_func.set(false);
+                // Plan 174.5 §3/§4: write-cap check for the pointer WRITE-
+                // method family (`.write`/`.write_at`/`.write_unaligned`/
+                // `.write_volatile`/`.copy_from`/`.copy_from_nonoverlapping`)
+                // — mirrors `check_target_readonly`'s Deref/Index arms
+                // (same `pointee_is_writable` helper), but at the CALL site
+                // instead of an assignment target. `pointee_is_writable`
+                // returns `None` for non-Pointer receiver types, so this is a
+                // no-op for the many OTHER types that also happen to define a
+                // `.write(...)` method (e.g. `io.Write`) — scoped exactly to
+                // raw `*T`/`*mut T` receivers. Closes the gap noted in
+                // §10a (`.write()` previously bypassed this checker-level
+                // gate entirely, relying only on the codegen-side `is_const`
+                // C-string heuristic, which misses cases like `ro-bound
+                // local = vec.ptr()` where the C type carries no `const`).
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(
+                        name.as_str(),
+                        "write" | "write_at" | "write_unaligned" | "write_volatile"
+                            | "copy_from" | "copy_from_nonoverlapping"
+                    ) {
+                        if let Some(ty) = self.infer_expr_type(obj, scope) {
+                            if let Some(writable) = pointee_is_writable(&ty) {
+                                if !writable {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_POINTER_RO_ASSIGN] cannot call `.{}()` \
+                                             through a readonly pointer — `*T` is a \
+                                             readonly pointee (the L3 default is `ro`: \
+                                             `*T ≡ *ro T`, Plan 147 / D246 / 174.5 §4). \
+                                             A writable pointee requires the `*mut T` \
+                                             opt-in.",
+                                            name
+                                        ),
+                                        e.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 // 172.1.2 C6(a): closure-параметры типизируются сигнатурой callee
                 // ДО рекурсии в args — тела замыканий (`x*2`) f1-обходятся с
                 // типизированными параметрами → дети аннотируются каналом.
