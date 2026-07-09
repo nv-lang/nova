@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_EMBED_NOT_FOUND
+//
+// D412 (`embed("path")`) — NEG.
+// Отсутствующий файл — ошибка КОМПИЛЯЦИИ (не runtime): содержимое встраивается
+// на этапе сборки, путь разрешается относительно .nv-файла вызова. Спека:
+// spec/decisions/03-syntax.md D412 («Файл не найден = ошибка компиляции
+// (E_EMBED_NOT_FOUND)»).
+
+module neg.d412_embed_not_found_neg
+
+fn d412_missing() -> int {
+    ro b = embed("no_such_file_d412.bin")   // ✗ файла нет — E_EMBED_NOT_FOUND
+    b.len()
+}

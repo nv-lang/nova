@@ -68,6 +68,12 @@ pub fn resolve_embeds(
         ctx.files.dedup();
         Ok(ctx.files)
     } else {
+        // Дедуп диагностик: module.items и peer_files[].items_here — КОПИИ
+        // одного AST (Plan 42.4), один битый вызов виден дважды.
+        let mut seen: std::collections::HashSet<(crate::diag::Span, String)> =
+            std::collections::HashSet::new();
+        ctx.diags
+            .retain(|d| seen.insert((d.span, d.message.clone())));
         Err(ctx.diags)
     }
 }

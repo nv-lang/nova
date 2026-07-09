@@ -1,0 +1,90 @@
+// D412 — Hex-блоб литерал `x"…"` → `[]u8` и интринсик `embed("path")` (Plan 186).
+// - `x"48 69"` — компайл-тайм байтовая последовательность, тип `[]u8`; разделители
+//   `_`/пробел/перенос строки игнорируются; ведущие нули значимы; порядок байт =
+//   порядок записи (НЕ числовой литерал, эндианность не участвует).
+// - Пустой `x""` легален → пустой `[]u8`.
+// - ro-биндинг → zero-copy вид над статикой (len == cap == N); mut-биндинг →
+//   копия в GC-кучу в точке биндинга (push после — обычный Vec-grow).
+// - `embed("relative/path")` — содержимое файла как `[]u8`; путь относительно
+//   .nv-файла вызова; байты round-trip'ятся байт-в-байт.
+// - Интернирование по содержимому (один static const на два одинаковых литерала)
+//   проверяется спот-грепом .c (гейт плана 186), тут — только семантика.
+// См. spec/decisions/03-syntax.md D412. Часть ЕДИНОГО folder-module
+// spec_tests.conformance; имена D-префиксованы.
+module spec_tests.conformance
+
+test "x\"…\" ro view: len / element reads / leading zero significant (D412)" {
+    ro d412_blob = x"48 65 6C 6C 6F"
+    assert(d412_blob.len() == 5)
+    assert(d412_blob[0] == 0x48)
+    assert(d412_blob[4] == 0x6F)
+    // Ведущие нули значимы: x"00FF" = 2 байта [0x00, 0xFF], не число 255.
+    ro d412_lz = x"00FF"
+    assert(d412_lz.len() == 2)
+    assert(d412_lz[0] == 0)
+    assert(d412_lz[1] == 0xFF)
+}
+
+test "x\"…\" ro view: slices and iteration work like any []u8 (D412)" {
+    ro d412_sl = x"01 02 03 04 05"
+    ro d412_mid = d412_sl[1..4]
+    assert(d412_mid.len() == 3)
+    assert(d412_mid[0] == 2)
+    assert(d412_mid[2] == 4)
+    mut d412_total = 0
+    for d412_b in d412_sl {
+        d412_total = d412_total + (d412_b as int)
+    }
+    assert(d412_total == 15)
+}
+
+test "x\"…\" mut binding: copy materialization + push grows normally (D412)" {
+    mut d412_cp = x"01_02 03"
+    assert(d412_cp.len() == 3)
+    d412_cp.push(4)
+    assert(d412_cp.len() == 4)
+    assert(d412_cp[0] == 1)
+    assert(d412_cp[3] == 4)
+    // Запись в копию легальна (память — обычный GC-буфер, не .rodata).
+    d412_cp[0] = 0xAA
+    assert(d412_cp[0] == 0xAA)
+}
+
+test "empty x\"\" is a legal empty []u8 (D412)" {
+    ro d412_empty = x""
+    assert(d412_empty.len() == 0)
+}
+
+test "separators _ / space / newline are pure grouping (D412)" {
+    ro d412_grp = x"DE AD_BE
+                    EF"
+    assert(d412_grp.len() == 4)
+    assert(d412_grp[0] == 0xDE)
+    assert(d412_grp[1] == 0xAD)
+    assert(d412_grp[2] == 0xBE)
+    assert(d412_grp[3] == 0xEF)
+}
+
+test "two identical literals are semantically equal (interned, D412)" {
+    ro d412_a = x"CAFE BABE"
+    ro d412_b = x"CA_FE_BA_BE"
+    assert(d412_a.len() == d412_b.len())
+    mut d412_i = 0
+    while d412_i < d412_a.len() {
+        assert(d412_a[d412_i] == d412_b[d412_i])
+        d412_i = d412_i + 1
+    }
+}
+
+test "embed(\"path\") round-trips the fixture bytes exactly (D412)" {
+    // Путь относительно ЭТОГО .nv-файла. Фикстура: 48 69 00 FF 7F
+    // (содержит NUL и байт > 0x7F — проверка, что это сырые байты, не текст).
+    ro d412_data = embed("d412_embed_fixture.bin")
+    ro d412_want = x"48 69 00 FF 7F"
+    assert(d412_data.len() == d412_want.len())
+    mut d412_j = 0
+    while d412_j < d412_data.len() {
+        assert(d412_data[d412_j] == d412_want[d412_j])
+        d412_j = d412_j + 1
+    }
+}
