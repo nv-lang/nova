@@ -105,8 +105,8 @@ export extern "nova" fn fence(ord MemOrdering)
 /// - `[AtomicInt]` — deprecated alias; migrate to `AtomicI64`
 /// - `[AtomicBool]` — atomic boolean
 /// - `[MemOrdering]` — ordering parameter enum
-#share
 #stable(since = "0.1")
+#share
 export type AtomicI64(*())
 
 #realtime
@@ -210,8 +210,8 @@ export extern "nova" fn AtomicI64 mut @fetch_nand(v i64) -> i64
 ///
 /// Most common signed atomic; fits in single cache slot.
 /// Wraparound: signed overflow — modular arithmetic.
-#share
 #stable(since = "0.1")
+#share
 export type AtomicI32(*())
 
 #realtime
@@ -315,8 +315,8 @@ export extern "nova" fn AtomicI32 mut @fetch_nand(v i32) -> i32
 ///
 /// For compact counters and sized flags.
 /// Wraparound: signed overflow — modular arithmetic.
-#share
 #stable(since = "0.1")
+#share
 export type AtomicI16(*())
 
 #realtime
@@ -420,8 +420,8 @@ export extern "nova" fn AtomicI16 mut @fetch_nand(v i16) -> i16
 ///
 /// Byte-sized flags and narrow counters.
 /// Wraparound: i8 [-128, 127]; overflow wraps modularly (D168).
-#share
 #stable(since = "0.1")
+#share
 export type AtomicI8(*())
 
 #realtime
@@ -525,8 +525,8 @@ export extern "nova" fn AtomicI8 mut @fetch_nand(v i8) -> i8
 ///
 /// Wide unsigned counters, timestamps.
 /// Wraparound: unsigned overflow wraps modularly (D168).
-#share
 #stable(since = "0.1")
+#share
 export type AtomicU64(*())
 
 #realtime
@@ -630,8 +630,8 @@ export extern "nova" fn AtomicU64 mut @fetch_nand(v u64) -> u64
 ///
 /// Bitset slots, refcount. Most common unsigned atomic.
 /// Wraparound: unsigned overflow wraps modularly (D168).
-#share
 #stable(since = "0.1")
+#share
 export type AtomicU32(*())
 
 #realtime
@@ -735,8 +735,8 @@ export extern "nova" fn AtomicU32 mut @fetch_nand(v u32) -> u32
 ///
 /// Sized unsigned counters.
 /// Wraparound: unsigned overflow wraps modularly (D168).
-#share
 #stable(since = "0.1")
+#share
 export type AtomicU16(*())
 
 #realtime
@@ -840,8 +840,8 @@ export extern "nova" fn AtomicU16 mut @fetch_nand(v u16) -> u16
 ///
 /// Byte-sized unsigned flags, bitmap bytes.
 /// Wraparound: u8 [0, 255]; overflow wraps modularly (D168).
-#share
 #stable(since = "0.1")
+#share
 export type AtomicU8(*())
 
 #realtime
@@ -945,8 +945,8 @@ export extern "nova" fn AtomicU8 mut @fetch_nand(v u8) -> u8
 ///
 /// `int` = `i64` (Plan 70.4 D129). Platform-word signed atomic.
 /// Useful for signed indexes and offsets.
-#share
 #stable(since = "0.1")
+#share
 export type AtomicIsize(*())
 
 #realtime
@@ -1050,8 +1050,8 @@ export extern "nova" fn AtomicIsize mut @fetch_nand(v int) -> int
 ///
 /// `uint` = `u64` (Plan 70.5). Platform-word unsigned atomic.
 /// Useful for array indexes, buffer sizes.
-#share
 #stable(since = "0.1")
+#share
 export type AtomicUsize(*())
 
 #realtime
@@ -1168,8 +1168,8 @@ export extern "nova" fn AtomicUsize mut @fetch_nand(v uint) -> uint
 ///
 /// - `[AtomicBool]` — атомарный boolean
 /// - `[Mutex]` — fiber-aware mutex для non-atomic критических секций
-#share
 #stable(since = "0.1")
+#share
 export type AtomicInt(*())
 
 #realtime
@@ -1219,8 +1219,8 @@ export extern "nova" fn AtomicInt mut @compare_exchange(expected int, desired in
 /// - `[AtomicI64]` — preferred integer atomic
 /// - `[Once]` — barrier для exactly-once execution
 /// - `[MemOrdering]` — ordering parameter enum
-#share
 #stable(since = "0.1")
+#share
 export type AtomicBool(*())
 
 #realtime
@@ -1321,8 +1321,8 @@ export extern "nova" fn AtomicBool mut @fetch_xor(v bool) -> bool
 ///
 /// - `[AtomicI64]` — integer atomic
 /// - `[MemOrdering]` — ordering enum
-#share
 #stable(since = "0.1")
+#share
 export type AtomicPtr(*())
 
 #realtime
@@ -1525,8 +1525,8 @@ export extern "nova" fn OnceGuard consume @abort()
 /// engine can't see through the opaque pointer: safe to alias/capture across
 /// a `spawn`/`parallel for` boundary without a data race. Exactly the
 /// mechanism a user lock-free type uses — `Mutex` is not special-cased.
-#share
 #stable(since = "0.1")
+#share
 export type Mutex(*())
 
 #realtime
@@ -1663,8 +1663,8 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 /// - `[ReentrantMutex]` — рекурсивный mutex
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
-#share
 #stable(since = "0.1")
+#share
 export type RwLock(*())
 
 #realtime
@@ -1790,8 +1790,8 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 /// ```
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
-#share
 #stable(since = "0.1")
+#share
 export type ReentrantMutex(*())
 
 #realtime
@@ -1863,8 +1863,8 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 /// (Required for the `spawn` example right above: `wg` captured — by
 /// reference, no `consume`/move — into THREE sibling `spawn` bodies is
 /// exactly the capture-check's baseline "safe" case, D415 §2.)
-#share
 #stable(since = "0.1")
+#share
 export type WaitGroup(*())
 
 #realtime
@@ -1928,8 +1928,8 @@ export type OnceState enum
 /// - `[Lazy]` — auto-init on first access
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
-#share
 #stable(since = "0.1")
+#share
 export type Once(*())
 
 #realtime
@@ -2159,8 +2159,8 @@ export extern "nova" fn Lazy[T] @is_forced() -> bool
 /// Allocated uncollectable (GC-race fix Plan 103.3 M6).
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
-#share
 #stable(since = "0.1")
+#share
 export type Barrier(*())
 
 #realtime
@@ -2265,8 +2265,8 @@ export type WaitResult enum
 /// with runtime header's struct typedef) — see emit_c.rs §RUNTIME_BACKED_NEWTYPES.
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
-#share
 #stable(since = "0.1")
+#share
 export type Condvar(*())
 
 /// Create a new `Condvar`.
@@ -2359,8 +2359,8 @@ export extern "nova" fn Condvar mut @notify_all()
 /// Plan 173.3 (D415 §2): `#share` audited vouch — required by the
 /// `parallel for` example right above (`latch` captured by reference across
 /// sibling per-element fibers).
-#share
 #stable(since = "0.1")
+#share
 export type CountDownLatch(*())
 
 #realtime
@@ -2447,8 +2447,8 @@ export extern "nova" fn CountDownLatch @current_count() -> int
 /// - `[WaitGroup]` — count-down rendezvous
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
-#share
 #stable(since = "0.1")
+#share
 export type Semaphore(*())
 
 #realtime

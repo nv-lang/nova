@@ -1,4 +1,4 @@
-// Plan 173.3 (D415): data-race-freedom — `#share` type-attribute predicate.
+// Plan 173.3 (D415): data-race-freedom — `#share` type-attribute predicates.
 //
 // This module computes whether a TYPE is safe to alias across a fiber
 // boundary ("share"). It is deliberately NOT a protocol (D415 §0 — an
@@ -8,147 +8,191 @@
 // (`protocols/auto_derive.rs`: memberwise recursive eligibility) without
 // being routed through it.
 //
-// **The rule (hardcoded — but names ZERO types, D415 §0 / criterion 3):**
-// 1. `#share`-attributed type → `true` (audited vouch — author asserts real
-//    internal synchronization the auto-inference can't see; only escape).
-// 2. Poison base — a raw pointer type (`*T`, any pointee modifier) → `false`.
-//    Any type transitively embedding one (without its own `#share` vouch)
-//    is not share. This subsumes Plan 118.3's `E_POINTER_CROSS_FIBER`.
-// 3. Primitive scalars / `()` → `true` (by-value, no aliasable interior).
-// 4. Record / NamedTuple → `true` iff EVERY field is share (memberwise).
-// 5. Sum → `true` iff every variant's payload elements are share.
-// 6. Array / FixedArray / Tuple → `true` iff the element type(s) are share.
-// 7. Opaque / Newtype / Effect / Protocol / TypeSet with NO `#share` vouch
-//    and no fields to recurse into → `false` (unknown internals — can't
-//    prove share; matches "opaque without vouch ⇒ not share").
-// 8. Unresolved / generic type-parameter names → `false` (V1 conservative;
-//    no share-bound propagation through generics yet — see D415 §7 Q3/Q7).
-// 9. `Func` (closure/fn-pointer type) → `false` (may capture non-share state).
+// **Two predicates, one axis (D415 §1).** The `#share` axis is "can this be
+// aliased from another fiber"; what that requires depends on the ACCESS the
+// alias grants — mirroring Rust's `T: Sync ⇔ &T: Send` split between shared
+// (read) views and exclusive (write) access:
+//
+// - [`is_alias_read_safe`] — safe to alias for READ (a `ro`/immutable view
+//   from another fiber). Primitives and deep-immutable aggregates qualify
+//   memberwise; the audited `#share` vouch qualifies unconditionally.
+// - [`is_mut_alias_safe`] — safe to alias for MUTATION (an outer `mut`
+//   binding captured by a `spawn`/`parallel for` body). ONLY internal
+//   synchronization makes this safe: the audited `#share` vouch
+//   (`Mutex`/`RwLock`/`Atomic*`/…, or a user lock-free type), or an
+//   aggregate whose every mutation path bottoms out in such a type. A bare
+//   `mut int` accumulator — THE motivating race of Plan 173.3 §1 — is NOT
+//   mut-alias-safe (nothing synchronizes the cell), even though `int` is
+//   read-alias-safe.
+//
+// **Poison base (D415 §1, hardcoded — but names ZERO types, §3-compliant):**
+// a raw pointer (`*T`, any pointee modifier) and — its binding-level twin —
+// a directly writable cell (`mut` field / `mut` scalar binding) with no
+// audited synchronization around it. Any type transitively containing one
+// is not share; the ONLY escape is the type's own `#share` vouch (analogous
+// to Rust `UnsafeCell: !Sync` + `unsafe impl Sync`).
+//
+// **Conservative directions (V1):** an unresolved type name (generic
+// type-param, registry-miss) / fn-type / anonymous-protocol / opaque-без-
+// vouch → NOT share (can't prove it). Effect/Protocol/TypeSet decls → NOT
+// share (no concrete instance identity).
 
 use crate::ast::{TypeDecl, TypeDeclKind, TypeRef};
 use std::collections::HashSet;
 
-/// Query interface needed by the share predicate — separates the pure rule
+/// Query interface needed by the share predicates — separates the pure rule
 /// from `TypeCheckCtx`/`CapabilityCtx` wiring (unit-testable in isolation,
 /// mirrors `auto_derive::DeriveQuery`).
 pub trait ShareQuery {
     /// Lookup a type declaration by (bare) name. `None` — unknown / unresolved
-    /// (generic type-param, or a name the registry doesn't carry — conservative
-    /// `false`, see rule 8).
+    /// (generic type-param, or a name the registry doesn't carry) → both
+    /// predicates conservatively answer `false`.
     fn lookup_type(&self, name: &str) -> Option<&TypeDecl>;
 }
 
 const NOVA_PRIMITIVES: &[&str] = crate::protocols::auto_derive::NOVA_PRIMITIVES;
 
-/// Top-level entry point: is `ty` share (safe to alias across a fiber
-/// boundary)? `visited` guards against runaway recursion on a (structurally
-/// impossible, but defensively guarded) self-referential value-type cycle —
-/// mirrors `auto_derive::AutoDeriveCtx`'s cycle guard.
-pub fn is_share_type<Q: ShareQuery>(query: &Q, ty: &TypeRef) -> bool {
-    let mut visited: HashSet<String> = HashSet::new();
-    is_share_type_rec(query, ty, &mut visited)
+/// Access level an alias grants — selects which memberwise rule applies.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    /// Shared read-only view (`ro` capture / immutable field).
+    Read,
+    /// Exclusive-shaped write access (`mut` binding capture / `mut` field).
+    Mut,
 }
 
-fn is_share_type_rec<Q: ShareQuery>(
+/// Is `ty` safe to alias from another fiber for READ access?
+/// (`ro` deep-immutable capture — D246; immutable fields memberwise.)
+pub fn is_alias_read_safe<Q: ShareQuery>(query: &Q, ty: &TypeRef) -> bool {
+    let mut visited = HashSet::new();
+    share_rec(query, ty, Access::Read, &mut visited)
+}
+
+/// Is `ty` safe to alias from another fiber for MUTATION — i.e. may an
+/// outer `mut` binding of this type be captured by a `spawn`/`parallel for`
+/// body? True ONLY when every mutation path is internally synchronized
+/// (audited `#share` vouch, transitively).
+pub fn is_mut_alias_safe<Q: ShareQuery>(query: &Q, ty: &TypeRef) -> bool {
+    let mut visited = HashSet::new();
+    share_rec(query, ty, Access::Mut, &mut visited)
+}
+
+fn share_rec<Q: ShareQuery>(
     query: &Q,
     ty: &TypeRef,
+    access: Access,
     visited: &mut HashSet<String>,
 ) -> bool {
     match ty {
-        // Rule 2 (poison base): raw pointer of ANY pointee modifier. This is
-        // the ONLY hardcoded structural rule (no type name involved) — it is
-        // itself the audited-escape point: a type embedding one can only
-        // regain `share` via its OWN explicit `#share` vouch (checked before
-        // recursion reaches the field, in the Named-type branch below).
+        // Poison base: raw pointer of ANY pointee modifier — never share by
+        // structure; only a containing type's own `#share` vouch (checked in
+        // the Named branch before recursion reaches the field) escapes.
         TypeRef::Pointer(_, _) => false,
-        // Binding-modifier wrappers are transparent to share-ness at the
-        // TYPE level (D415 §7 Q5: `ro`/D246 axis is orthogonal — capture-check
-        // uses `ro` directly as a capture-kind, not through this predicate).
+        // Binding-modifier wrappers are transparent at the TYPE level; the
+        // ACCESS distinction is carried by the `access` parameter (the
+        // capture-check derives it from the binding's `mut`-ness, D415 §7 Q5).
         TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
-            is_share_type_rec(query, inner, visited)
+            share_rec(query, inner, access, visited)
         }
         TypeRef::Unit(_) => true,
-        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
-            is_share_type_rec(query, inner, visited)
+        // Scalars: read-aliasing is safe; a writable scalar cell aliased
+        // across fibers is THE race (unsynchronized load/store) — not
+        // mut-alias-safe.
+        TypeRef::Named { path, .. }
+            if path.len() == 1 && NOVA_PRIMITIVES.contains(&path[0].as_str()) =>
+        {
+            access == Access::Read
         }
-        TypeRef::Tuple(elems, _) => elems.iter().all(|e| is_share_type_rec(query, e, visited)),
-        // Rule 9: fn-pointer / closure type — may close over non-share state
+        // Containers ([]T = Vec, fixed arrays): reading concurrently is safe
+        // iff elements are read-safe; mutating (push/set) is unsynchronized →
+        // never mut-alias-safe.
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            access == Access::Read && share_rec(query, inner, Access::Read, visited)
+        }
+        TypeRef::Tuple(elems, _) => {
+            access == Access::Read
+                && elems.iter().all(|e| share_rec(query, e, Access::Read, visited))
+        }
+        // fn-pointer / closure type — may close over non-share state
         // invisible at the type level. Conservative `false`.
         TypeRef::Func { .. } => false,
-        // Anonymous protocol-type-in-position — existential, unknown concrete
-        // layout. Conservative `false` (same reasoning as unresolved Named).
+        // Anonymous protocol-type — existential, unknown concrete layout.
         TypeRef::Protocol { .. } => false,
-        // Plan 184 `ref T` — non-relocatable alias to storage. Aliasing IS the
-        // whole point of `ref`, so treat like a pointer for share purposes:
-        // share iff the referent itself is share (a `ref` to a `#share` type,
-        // e.g. `ref Mutex[..]`-shaped code, is fine; a `ref` to a plain `mut`
-        // record is exactly the poison case).
-        TypeRef::Ref(inner, _) => is_share_type_rec(query, inner, visited),
+        // Plan 184 `ref T` — non-relocatable alias to storage; aliasing IS
+        // its point. Same access level flows through to the referent.
+        TypeRef::Ref(inner, _) => share_rec(query, inner, access, visited),
         TypeRef::Named { path, generics, .. } => {
             let name = match path.last() {
                 Some(n) => n.as_str(),
                 None => return false,
             };
-            // Rule 3: primitives.
-            if NOVA_PRIMITIVES.contains(&name) {
-                return true;
-            }
-            // Option[T] / Result[T,E] / []T-via-Vec sugar etc. are ordinary
-            // Named generics — if the registry doesn't carry a TypeDecl for
-            // them (prelude types may be registry-only), fall back to a
-            // structural rule for the well-known container shapes so
-            // `Option[Mutex]`-shaped code isn't spuriously poisoned; anything
-            // else with no TypeDecl is rule 8 (conservative `false`).
             if let Some(td) = query.lookup_type(name) {
-                return is_share_type_decl(query, td, generics, visited);
+                return share_decl(query, td, access, visited);
             }
+            // Registry-miss fallback for the well-known prelude containers
+            // (their TypeDecl may be registry-only): Option/Result payloads
+            // follow the read rule like tuples.
             match name {
-                "Option" | "Result" => generics.iter().all(|g| is_share_type_rec(query, g, visited)),
-                _ => false, // rule 8: unresolved / generic type-param.
+                "Option" | "Result" => {
+                    access == Access::Read
+                        && generics.iter().all(|g| share_rec(query, g, Access::Read, visited))
+                }
+                _ => false, // unresolved / generic type-param — conservative.
             }
         }
     }
 }
 
-/// Share-ness of a resolved `TypeDecl` (rules 1, 4-7). `generics` are the
-/// use-site type-arguments (unused at V1 — no per-field generic-param
-/// substitution; a generic type's OWN field declarations are checked
-/// as-declared, so a field of the bare type-parameter `T` hits rule 8
-/// conservatively until a `Share`-bound generic system exists, D415 §7 Q3/Q7).
-fn is_share_type_decl<Q: ShareQuery>(
+/// Share-ness of a resolved `TypeDecl`. Use-site generics are NOT
+/// substituted at V1 — a field of a bare type-parameter `T` hits the
+/// unresolved-name rule conservatively until a `Share`-bound generic system
+/// exists (D415 §7 Q3/Q7).
+fn share_decl<Q: ShareQuery>(
     query: &Q,
     td: &TypeDecl,
-    _generics: &[TypeRef],
+    access: Access,
     visited: &mut HashSet<String>,
 ) -> bool {
-    // Rule 1: audited vouch always wins — short-circuits field recursion.
+    // Audited vouch always wins, for BOTH access levels — the author asserts
+    // real internal synchronization (its `mut` methods are safe to call
+    // through a cross-fiber alias). Short-circuits field recursion.
     if td.attrs.contains(&crate::ast::TypeAttr::Share) {
         return true;
     }
     if !visited.insert(td.name.clone()) {
-        // Cycle guard (defensive — see module doc). Treat as NOT share:
-        // can't prove it without assuming the very fact being derived.
+        // Cycle guard (defensive): can't prove share without assuming the
+        // very fact being derived → not share.
         return false;
     }
     let result = match &td.kind {
-        TypeDeclKind::Record(fields) => fields
-            .iter()
-            .all(|f| is_share_type_rec(query, &f.ty, visited)),
+        // Memberwise (auto-derive, D415 §1): an immutable field is a read
+        // view (needs read-alias safety); a `mut` field is a writable cell
+        // reachable through the alias (needs mut-alias safety — i.e. an
+        // audited-sync type — REGARDLESS of the outer access level, because
+        // a heap record aliased read-only still exposes its `mut` fields to
+        // whoever holds the OTHER, mutable alias).
+        TypeDeclKind::Record(fields) => fields.iter().all(|f| {
+            let field_access = if f.mutable { Access::Mut } else { Access::Read };
+            share_rec(query, &f.ty, field_access, visited)
+        }),
+        // Named tuples / sums: payloads are immutable views (no in-place
+        // payload mutation surface) → read rule.
         TypeDeclKind::NamedTuple(fields) => fields
             .iter()
-            .all(|f| is_share_type_rec(query, &f.ty, visited)),
+            .all(|f| share_rec(query, &f.ty, Access::Read, visited)),
         TypeDeclKind::Sum(variants) => variants.iter().all(|v| match &v.kind {
             crate::ast::SumVariantKind::Unit => true,
             crate::ast::SumVariantKind::Tuple(tys) => {
-                tys.iter().all(|t| is_share_type_rec(query, t, visited))
+                tys.iter().all(|t| share_rec(query, t, Access::Read, visited))
             }
             crate::ast::SumVariantKind::Record(fields) => fields
                 .iter()
-                .all(|f| is_share_type_rec(query, &f.ty, visited)),
+                .all(|f| share_rec(query, &f.ty, Access::Read, visited)),
         }),
-        TypeDeclKind::Newtype(inner) => is_share_type_rec(query, inner, visited),
-        TypeDeclKind::Alias(inner) => is_share_type_rec(query, inner, visited),
-        // Rule 7: no fields to recurse into, no vouch → not share.
+        // Newtype/Alias: transparent — same access level flows through.
+        TypeDeclKind::Newtype(inner) => share_rec(query, inner, access, visited),
+        TypeDeclKind::Alias(inner) => share_rec(query, inner, access, visited),
+        // No fields to recurse into + no vouch → can't prove share.
         TypeDeclKind::Opaque
         | TypeDeclKind::Effect(_)
         | TypeDeclKind::Protocol { .. }
@@ -156,4 +200,152 @@ fn is_share_type_decl<Q: ShareQuery>(
     };
     visited.remove(&td.name);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{RecordField, SumVariant, SumVariantKind, TypeAttr, TypeDeclKind};
+    use crate::diag::Span;
+    use std::collections::HashMap;
+
+    struct MockQuery {
+        types: HashMap<String, TypeDecl>,
+    }
+    impl ShareQuery for MockQuery {
+        fn lookup_type(&self, name: &str) -> Option<&TypeDecl> {
+            self.types.get(name)
+        }
+    }
+
+    fn named(name: &str) -> TypeRef {
+        TypeRef::Named { path: vec![name.to_string()], generics: vec![], span: Span::dummy() }
+    }
+
+    fn field(name: &str, ty: TypeRef, mutable: bool) -> RecordField {
+        RecordField {
+            name: name.to_string(),
+            ty,
+            mutable,
+            ..RecordField::default()
+        }
+    }
+
+    fn record(name: &str, fields: Vec<RecordField>, share: bool) -> TypeDecl {
+        TypeDecl {
+            name: name.to_string(),
+            kind: TypeDeclKind::Record(fields),
+            attrs: if share { vec![TypeAttr::Share] } else { vec![] },
+            ..TypeDecl::default()
+        }
+    }
+
+    #[test]
+    fn primitive_read_ok_mut_race() {
+        let q = MockQuery { types: HashMap::new() };
+        assert!(is_alias_read_safe(&q, &named("int")));
+        assert!(!is_mut_alias_safe(&q, &named("int"))); // THE motivating race
+    }
+
+    #[test]
+    fn pointer_is_poison_both_ways() {
+        let q = MockQuery { types: HashMap::new() };
+        let ptr = TypeRef::Pointer(Box::new(named("int")), Span::dummy());
+        assert!(!is_alias_read_safe(&q, &ptr));
+        assert!(!is_mut_alias_safe(&q, &ptr));
+    }
+
+    #[test]
+    fn audited_vouch_wins_for_mut() {
+        let mut types = HashMap::new();
+        types.insert("Mutex".to_string(), record("Mutex", vec![], true));
+        let q = MockQuery { types };
+        assert!(is_mut_alias_safe(&q, &named("Mutex")));
+    }
+
+    #[test]
+    fn immutable_record_read_ok_mut_ok() {
+        let mut types = HashMap::new();
+        types.insert(
+            "Point".to_string(),
+            record(
+                "Point",
+                vec![field("x", named("int"), false), field("y", named("int"), false)],
+                false,
+            ),
+        );
+        let q = MockQuery { types };
+        assert!(is_alias_read_safe(&q, &named("Point")));
+        // No writable paths → mut binding capture is benign (pointer copy).
+        assert!(is_mut_alias_safe(&q, &named("Point")));
+    }
+
+    #[test]
+    fn mut_scalar_field_poisons() {
+        let mut types = HashMap::new();
+        types.insert(
+            "Ctr".to_string(),
+            record("Ctr", vec![field("n", named("int"), true)], false),
+        );
+        let q = MockQuery { types };
+        assert!(!is_alias_read_safe(&q, &named("Ctr")));
+        assert!(!is_mut_alias_safe(&q, &named("Ctr")));
+    }
+
+    #[test]
+    fn mut_mutex_field_ok() {
+        let mut types = HashMap::new();
+        types.insert("Mutex".to_string(), record("Mutex", vec![], true));
+        types.insert(
+            "Shared".to_string(),
+            record("Shared", vec![field("mu", named("Mutex"), true)], false),
+        );
+        let q = MockQuery { types };
+        assert!(is_mut_alias_safe(&q, &named("Shared")));
+    }
+
+    #[test]
+    fn vec_read_ok_mut_race() {
+        let q = MockQuery { types: HashMap::new() };
+        let vec_int = TypeRef::Array(Box::new(named("int")), Span::dummy());
+        assert!(is_alias_read_safe(&q, &vec_int));
+        assert!(!is_mut_alias_safe(&q, &vec_int));
+    }
+
+    #[test]
+    fn unknown_name_conservative_false() {
+        let q = MockQuery { types: HashMap::new() };
+        assert!(!is_alias_read_safe(&q, &named("Whatever")));
+        assert!(!is_mut_alias_safe(&q, &named("T")));
+    }
+
+    #[test]
+    fn sum_of_share_payloads_read_ok() {
+        let mut types = HashMap::new();
+        types.insert(
+            "E".to_string(),
+            TypeDecl {
+                name: "E".to_string(),
+                kind: TypeDeclKind::Sum(vec![
+                    SumVariant {
+                        name: "A".into(),
+                        kind: SumVariantKind::Unit,
+                        discriminant: None,
+                        span: Span::dummy(),
+                        serde_attrs: vec![],
+                    },
+                    SumVariant {
+                        name: "B".into(),
+                        kind: SumVariantKind::Tuple(vec![named("int")]),
+                        discriminant: None,
+                        span: Span::dummy(),
+                        serde_attrs: vec![],
+                    },
+                ]),
+                ..TypeDecl::default()
+            },
+        );
+        let q = MockQuery { types };
+        assert!(is_alias_read_safe(&q, &named("E")));
+    }
 }

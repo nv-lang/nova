@@ -16937,7 +16937,7 @@ struct CapabilityCtx<'a> {
     /// Effect-type name registry (для distinguish'а effect-call vs ordinary).
     effect_decls: HashMap<String, &'a TypeDecl>,
     /// Plan 173.3 (D415 §2): type-decl registry для `#share`-предиката
-    /// (`protocols::share_check::is_share_type`) — capture-check на границе
+    /// (`protocols::share_check::is_mut_alias_safe`/`is_alias_read_safe`) — capture-check на границе
     /// `spawn`/`parallel for` должен резолвить имя захваченного типа в его
     /// TypeDecl, чтобы рекурсивно определить share-ность полей. Тот же
     /// merge-паттерн, что `TypeCheckCtx::build` (module.items + registry-only
@@ -17148,12 +17148,20 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(&d.value, state, errors);
                 // Plan 173.3 (D415 §2): register this let's bound name(s) into
                 // the CURRENT (innermost) scope frame — pushed by the
-                // enclosing `walk_block`, guaranteed non-empty there.
+                // enclosing `walk_block`, guaranteed non-empty there. When the
+                // let has no annotation, fall back to a SYNTACTIC init-expr
+                // type sketch (ctor calls `Type.new(..)`, literals) so the
+                // dominant unannotated forms — `mut mu = Mutex.new()` (must
+                // NOT be flagged) and `mut acc = 0` (MUST be flagged) —
+                // resolve without full inference (CapabilityCtx has none).
                 if let Some(frame) = state.scopes.last_mut() {
+                    let ty = d.ty.clone().or_else(|| {
+                        capture_syntactic_init_type(&d.value, &self.type_decls)
+                    });
                     for (name, pat_mut) in pattern_capture_names(&d.pattern) {
                         frame.insert(name, ScopeBinding {
                             mutable: d.mutable || pat_mut,
-                            ty: d.ty.clone(),
+                            ty: ty.clone(),
                         });
                     }
                 }
@@ -17729,38 +17737,102 @@ impl<'a> CapabilityCtx<'a> {
         let mut free: HashSet<String> = HashSet::new();
         capture_scan_block(body, &mut shadow, &mut free);
         let share_q = CapShareQuery(&self.type_decls);
+        let mut flagged: Vec<String> = Vec::new();
         for name in free {
             let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
             if let Some(b) = binding {
                 if !b.mutable {
+                    // `ro` capture — deep-immutable view (D246): always safe,
+                    // no share requirement (D415 §2 "ro" arm).
                     continue;
                 }
-                let share = match &b.ty {
-                    Some(ty) => crate::protocols::share_check::is_share_type(&share_q, ty),
-                    // No type annotation tracked (V1 — only `let`/params/
-                    // for-vars with a known type are checked precisely);
-                    // conservative: unknown type ⇒ cannot prove share.
+                // `mut` binding captured by reference: safe ONLY when the
+                // type is mut-alias-safe (audited `#share` sync type, or an
+                // aggregate whose mutation paths bottom out in one). A bare
+                // `mut int`/`mut []T` accumulator — THE motivating race —
+                // is NOT (see share_check module doc).
+                let safe = match &b.ty {
+                    Some(ty) => crate::protocols::share_check::is_mut_alias_safe(&share_q, ty),
+                    // Unknown type (no annotation, no syntactic ctor
+                    // inference in scope registration) — conservative:
+                    // cannot prove internal sync ⇒ flag.
                     None => false,
                 };
-                if !share {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "[E_CONCURRENT_MUT_CAPTURE] `spawn`/`parallel for` body \
-                             captures outer `mut` binding `{}` by reference — under M:N \
-                             scheduling this is a data race (the child fiber may run \
-                             concurrently with, or migrate across threads from, the \
-                             parent/siblings). Allowed captures (Plan 173.3, D415 §2): \
-                             move it in explicitly (`spawn consume {} = expr {{ .. }}` or \
-                             `spawn consume {} {{ .. }}`), capture it `ro` (immutable), or \
-                             give its type `#share` (e.g. `Mutex`/`Atomic*`/a user \
-                             lock-free type) if it is internally synchronized.",
-                            name, name, name
-                        ),
-                        body.span,
-                    ));
+                if !safe {
+                    flagged.push(name);
                 }
             }
         }
+        flagged.sort(); // deterministic diagnostic order (HashSet iteration)
+        for name in flagged {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_CONCURRENT_MUT_CAPTURE] `spawn`/`parallel for` body \
+                     captures outer `mut` binding `{}` by reference — under M:N \
+                     scheduling this is a data race (the child fiber may run \
+                     concurrently with, or migrate across threads from, the \
+                     parent/siblings). Allowed captures (Plan 173.3, D415 §2): \
+                     move it in explicitly (`spawn consume {} = expr {{ .. }}` / \
+                     `spawn consume {} {{ .. }}`), capture it `ro` (immutable \
+                     view), or use an internally-synchronized `#share` type \
+                     (`Mutex`/`Atomic*` — or a user lock-free type vouched \
+                     with `#share`).",
+                    name, name, name
+                ),
+                body.span,
+            ));
+        }
+    }
+}
+
+/// Plan 173.3 (D415 §2): SYNTACTIC init-expr type sketch for scope
+/// registration when a `let` has no annotation. Handles exactly the shapes
+/// the capture-check needs to classify correctly without full inference:
+/// - `Type.new(..)` / `Type.of(..)` / any `Type.method(..)` static-ctor call
+///   where `Type` is a KNOWN type name → `Named{Type}` (covers
+///   `mut mu = Mutex.new()` — must not be false-positived);
+/// - int/float/str/bool/char literals → the primitive (covers
+///   `mut acc = 0` — must be flagged on mut capture);
+/// - array literal → `[]<unknown>` shape (Array of an unresolvable name —
+///   still classified "container ⇒ not mut-alias-safe", which is right);
+/// - anything else → `None` (conservative-flag direction).
+fn capture_syntactic_init_type(
+    e: &Expr,
+    type_decls: &HashMap<String, &TypeDecl>,
+) -> Option<TypeRef> {
+    let named = |n: &str| TypeRef::Named {
+        path: vec![n.to_string()],
+        generics: vec![],
+        span: e.span,
+    };
+    match &e.kind {
+        ExprKind::IntLit(_) => Some(named("int")),
+        ExprKind::FloatLit(_) => Some(named("f64")),
+        ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(named("str")),
+        ExprKind::BoolLit(_) => Some(named("bool")),
+        ExprKind::CharLit(_) => Some(named("char")),
+        ExprKind::ArrayLit(_) => Some(TypeRef::Array(
+            Box::new(named("__nv_unknown_elem")),
+            e.span,
+        )),
+        ExprKind::Call { func, .. } => match &func.kind {
+            ExprKind::Member { obj, .. } => {
+                if let ExprKind::Ident(tyname) = &obj.kind {
+                    if type_decls.contains_key(tyname.as_str()) {
+                        return Some(named(tyname));
+                    }
+                }
+                None
+            }
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                if type_decls.contains_key(parts[0].as_str()) {
+                    return Some(named(&parts[0]));
+                }
+                None
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
 
