@@ -2592,6 +2592,41 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_static_conversion),
         text: None,
     },
+    ConvRule {
+        id: "W_TRY_WITHOUT_SIBLING",
+        summary: "`try_*` без инфаллибельного сиблинга — префикс `try_` только \
+                  для пары infallible/fallible (R3 D325)",
+        ast: Some(conv_try_without_sibling),
+        text: None,
+    },
+    ConvRule {
+        id: "W_SETTER_NOT_FLUENT",
+        summary: "1-арный метод-свойство `mut @x(v)` не возвращает `@` — сеттер \
+                  обязан быть беглым `-> @` (D117 AMEND-2)",
+        ast: Some(conv_setter_not_fluent),
+        text: None,
+    },
+    ConvRule {
+        id: "W_FFI_BARE_HANDLE",
+        summary: "голый `int`/`*()` хендл в extern-семействе с new/open+free/close \
+                  — канон: newtype `type CFooHandle(int)` (module-conventions §4а)",
+        ast: Some(conv_ffi_bare_handle),
+        text: None,
+    },
+    ConvRule {
+        id: "W_MANUAL_SLICE_COPY",
+        summary: "поэлементная копия `push(x[i])` в цикле — красный флаг: \
+                  `[]T`-вид среза даёт то же за O(1) (nv-coding-style §18а)",
+        ast: Some(conv_manual_slice_copy),
+        text: None,
+    },
+    ConvRule {
+        id: "W_IMMUTABLE_REBUILD_SETTER",
+        summary: "не-mut метод пересобирает Self всеми полями (OpenOptions-класс) \
+                  — для кучевых записей канон `mut @x(v) -> @` (D117/D409)",
+        ast: Some(conv_immutable_rebuild_setter),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -3123,6 +3158,355 @@ fn conv_static_conversion(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWa
                         recv.type_name,
                         f.name,
                         recv.type_name.to_lowercase()
+                    ),
+                    f.span,
+                ),
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_TRY_WITHOUT_SIBLING — `try_X` без инфаллибельного сиблинга `X` (R3 D325).
+//
+// Сиблинг ищется в ЭТОМ модуле (items + peers): метод — на том же
+// receiver-типе, free fn — среди free fns. Чтобы не ловить false-positive
+// на методах типов, чьи перегрузки живут в другом файле folder-модуля
+// (per-file прогон `nova lint` не видит peers), правило для методов
+// срабатывает только когда receiver-тип ОБЪЯВЛЕН в этом же модуле.
+// ---------------------------------------------------------------------------
+
+fn conv_try_without_sibling(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    let fns = conv_all_fns(m);
+    // Все объявленные тип-имена — для receiver-гейта.
+    let mut declared_names: HashSet<String> = HashSet::new();
+    fn collect_types(items: &[Item], set: &mut HashSet<String>) {
+        for it in items {
+            if let Item::Type(td) = it {
+                set.insert(td.name.clone());
+            }
+        }
+    }
+    collect_types(&m.items, &mut declared_names);
+    for pf in &m.peer_files {
+        collect_types(&pf.items_here, &mut declared_names);
+    }
+    // (receiver-тип или "", имя) всех fn.
+    let names: HashSet<(String, &str)> = fns
+        .iter()
+        .map(|f| {
+            (
+                f.receiver.as_ref().map(|r| r.type_name.clone()).unwrap_or_default(),
+                f.name.as_str(),
+            )
+        })
+        .collect();
+    for f in &fns {
+        let Some(rest) = f.name.strip_prefix("try_") else { continue };
+        if rest.is_empty() {
+            continue;
+        }
+        let recv_key = f
+            .receiver
+            .as_ref()
+            .map(|r| r.type_name.clone())
+            .unwrap_or_default();
+        // Метод на типе, объявленном не здесь → сиблинг может жить в
+        // другом peer-файле, который per-file прогон не видит. Молчим.
+        if let Some(r) = &f.receiver {
+            if !declared_names.contains(r.type_name.as_str()) {
+                continue;
+            }
+        }
+        if names.contains(&(recv_key.clone(), rest)) {
+            continue; // сиблинг есть — пара легальна (from/try_from).
+        }
+        out.push(LintWarning {
+            rule: "W_TRY_WITHOUT_SIBLING",
+            diag: Diagnostic::new(
+                format!(
+                    "`{}` без инфаллибельного сиблинга `{}`: префикс `try_` — ТОЛЬКО \
+                     чтобы отличить fallible-вариант одноимённого infallible \
+                     (`from`/`try_from`, D77). Одиночная fallible-операция — обычное \
+                     имя + `Result` (R3 D325, nv-coding-style §1).",
+                    f.name, rest
+                ),
+                f.span,
+            ),
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_SETTER_NOT_FLUENT — 1-арный `mut @x(v)` сеттер не `-> @` (D117 AMEND-2).
+//
+// Триггеры (консервативно, оба синтаксические):
+//   A. имя метода совпадает с именем поля receiver-типа, объявленного здесь;
+//   B. тело — единственный оператор `@<имя> = v` (запись собственного поля).
+// ---------------------------------------------------------------------------
+
+fn conv_setter_not_fluent(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    let record_fields = conv_module_record_fields(m);
+    for f in conv_all_fns(m) {
+        let Some(recv) = &f.receiver else { continue };
+        if recv.kind != ReceiverKind::Instance || !recv.mutable {
+            continue;
+        }
+        if f.params.len() != 1 || f.returns_receiver {
+            continue;
+        }
+        // Возврат должен быть unit (или отсутствовать) — иначе не «сеттер без @».
+        let returns_unit = match &f.return_type {
+            None => true,
+            Some(TypeRef::Unit(_)) => true,
+            Some(_) => false,
+        };
+        if !returns_unit {
+            continue;
+        }
+        let trigger_a = record_fields
+            .get(&recv.type_name)
+            .map_or(false, |fields| fields.iter().any(|fname| fname == &f.name));
+        let trigger_b = match &f.body {
+            FnBody::Block(b) if b.stmts.len() == 1 && b.trailing.is_none() => {
+                matches!(&b.stmts[0], Stmt::Assign { target, .. }
+                    if matches!(&target.kind, ExprKind::Member { obj, name }
+                        if name == &f.name && matches!(obj.kind, ExprKind::SelfAccess)))
+            }
+            _ => false,
+        };
+        if trigger_a || trigger_b {
+            out.push(LintWarning {
+                rule: "W_SETTER_NOT_FLUENT",
+                diag: Diagnostic::new(
+                    format!(
+                        "сеттер `mut @{}(v)` возвращает `()`: `-> @` у метода \
+                         установки свойства — умолчание, не опция (D117 AMEND-2). \
+                         Возврат приёмника автоматический (D409) и даёт цепочки \
+                         `r.{}(a).{}(b)`. `-> ()` — только с обоснованием на месте.",
+                        f.name, f.name, f.name
+                    ),
+                    f.span,
+                ),
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_FFI_BARE_HANDLE — голый int/*() хендл в extern-семействе (§4а
+// module-conventions): конструктор `*_new`/`*_open`/... возвращает сырой
+// `int`/`ptr`/`*()` И в модуле есть парный `*_free`/`*_close`/... — канон
+// newtype `type CFooHandle(int)` прямо в extern-сигнатурах.
+// ---------------------------------------------------------------------------
+
+const CONV_HANDLE_CTOR_SUFFIXES: &[&str] = &["_new", "_open", "_create", "_init", "_alloc"];
+const CONV_HANDLE_CLOSER_SUFFIXES: &[&str] =
+    &["_free", "_close", "_destroy", "_del", "_dispose", "_release", "_shutdown"];
+
+fn conv_ffi_bare_handle(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    let fns = conv_all_fns(m);
+    let externs: Vec<&&FnDecl> = fns.iter().filter(|f| f.is_external).collect();
+    if externs.is_empty() {
+        return;
+    }
+    // Префиксы ресурсов, у которых есть closer с сырым хендл-параметром.
+    let mut closer_prefixes: HashSet<&str> = HashSet::new();
+    for f in &externs {
+        for suf in CONV_HANDLE_CLOSER_SUFFIXES {
+            if let Some(prefix) = f.name.strip_suffix(suf) {
+                if !prefix.is_empty()
+                    && f.params.first().map_or(false, |p| conv_ty_is_bare_handle(&p.ty))
+                {
+                    closer_prefixes.insert(prefix);
+                }
+            }
+        }
+    }
+    if closer_prefixes.is_empty() {
+        return;
+    }
+    for f in &externs {
+        for suf in CONV_HANDLE_CTOR_SUFFIXES {
+            let Some(prefix) = f.name.strip_suffix(suf) else { continue };
+            if prefix.is_empty() || !closer_prefixes.contains(prefix) {
+                continue;
+            }
+            let Some(rt) = &f.return_type else { continue };
+            if conv_ty_is_bare_handle(rt) {
+                out.push(LintWarning {
+                    rule: "W_FFI_BARE_HANDLE",
+                    diag: Diagnostic::new(
+                        format!(
+                            "extern `{}` возвращает голый хендл (`int`/`ptr`/`*()`) при \
+                             парном `{}_<close/free>`: FFI-хендл никогда не ходит по \
+                             Nova-коду голым — объявите newtype `type C{}Handle(int)` \
+                             прямо в extern-сигнатурах (module-conventions §4а; эталон \
+                             std/encoding/compress/ffi.nv). Легальное исключение — \
+                             комментарий-маркер на месте.",
+                            f.name, prefix, conv_camel(prefix)
+                        ),
+                        f.span,
+                    ),
+                });
+                break;
+            }
+        }
+    }
+}
+
+/// snake_case → CamelCase (для подсказки имени newtype).
+fn conv_camel(s: &str) -> String {
+    s.split('_')
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let mut c = p.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// W_MANUAL_SLICE_COPY — `push(x[i])` в счётном цикле (§18а nv-coding-style).
+//
+// Эвристика с низким FP: аргумент push — индекс-выражение `<простой>[<ident>]`
+// внутри цикла. Срез-вид `x[a..b]` даёт то же за O(1) без аллокации; честная
+// копия владения — `.clone()` на виде, не цикл.
+// ---------------------------------------------------------------------------
+
+fn conv_manual_slice_copy(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        conv_walk_fn(
+            f,
+            &mut |_s, _| {},
+            &mut |e, in_loop| {
+                if !in_loop {
+                    return;
+                }
+                let ExprKind::Call { func, args, .. } = &e.kind else { return };
+                let ExprKind::Member { name, .. } = &func.kind else { return };
+                if name != "push" || args.len() != 1 {
+                    return;
+                }
+                let arg = args[0].expr();
+                let ExprKind::Index { obj, index } = &arg.kind else { return };
+                // Простой контейнер (ident / @field / поле) + ident-индекс —
+                // классический счётный копи-цикл.
+                let simple_obj = matches!(
+                    obj.kind,
+                    ExprKind::Ident(_) | ExprKind::SelfAccess | ExprKind::Member { .. }
+                );
+                let simple_idx = matches!(index.kind, ExprKind::Ident(_));
+                if simple_obj && simple_idx {
+                    out.push(LintWarning {
+                        rule: "W_MANUAL_SLICE_COPY",
+                        diag: Diagnostic::new(
+                            "поэлементная копия `push(x[i])` в счётном цикле — красный \
+                             флаг (§18а nv-coding-style): `[]T`-вид среза (D262) даёт \
+                             то же за O(1) без аллокации (`x[a..b]`). Нужно владение \
+                             отдельным буфером — явный `.clone()` на виде, не цикл."
+                                .to_string(),
+                            e.span,
+                        ),
+                    });
+                }
+            },
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_IMMUTABLE_REBUILD_SETTER — не-mut метод возвращает Self пересборкой
+// полей (OpenOptions-класс, D117/D409). Для кучевых записей поверхностная
+// копия делит потроха со старым объектом — канон `mut @x(v) -> @`.
+//
+// SEMANTIC-UPGRADE: без типов не отличаем value-record (где with_*-копия
+// легальна — копия честная) от кучевого record при receiver-типе из другого
+// модуля. Синтаксический гейт: receiver-тип объявлен в ЭТОМ модуле как
+// heap-record (без маркера `value`) — только тогда пересборка флагуется.
+// ---------------------------------------------------------------------------
+
+fn conv_immutable_rebuild_setter(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    // Кучевые record-типы модуля (AllocKind::Heap).
+    let mut heap_records: HashSet<String> = HashSet::new();
+    fn collect_heap(items: &[Item], set: &mut HashSet<String>) {
+        for it in items {
+            if let Item::Type(td) = it {
+                if matches!(td.kind, TypeDeclKind::Record(_))
+                    && td.allocation == crate::ast::AllocKind::Heap
+                {
+                    set.insert(td.name.clone());
+                }
+            }
+        }
+    }
+    collect_heap(&m.items, &mut heap_records);
+    for pf in &m.peer_files {
+        collect_heap(&pf.items_here, &mut heap_records);
+    }
+    if heap_records.is_empty() {
+        return;
+    }
+    for f in conv_all_fns(m) {
+        let Some(recv) = &f.receiver else { continue };
+        if recv.kind != ReceiverKind::Instance || recv.mutable || recv.consume {
+            continue;
+        }
+        if f.params.is_empty() || !heap_records.contains(recv.type_name.as_str()) {
+            continue;
+        }
+        // Возврат — receiver-тип.
+        let returns_self = f
+            .return_type
+            .as_ref()
+            .and_then(conv_ty_last_name)
+            .map_or(false, |n| n == recv.type_name);
+        if !returns_self {
+            continue;
+        }
+        // Тело — RecordLit (expr-body, единственный trailing или return).
+        let rec_lit: Option<&Expr> = match &f.body {
+            FnBody::Expr(e) => Some(e),
+            FnBody::Block(b) => match (&b.stmts[..], &b.trailing) {
+                ([], Some(t)) => Some(t),
+                ([Stmt::Return { value: Some(v), .. }], None) => Some(v),
+                _ => None,
+            },
+            FnBody::External => None,
+        };
+        let Some(lit) = rec_lit else { continue };
+        let ExprKind::RecordLit { fields, .. } = &lit.kind else { continue };
+        if fields.len() < 2 {
+            continue;
+        }
+        // ≥1 поле копирует @field (пересборка) и ≥1 поле берёт параметр.
+        let copies_self = fields.iter().any(|fl| {
+            fl.value.as_ref().map_or(false, |v| {
+                matches!(&v.kind, ExprKind::Member { obj, .. }
+                    if matches!(obj.kind, ExprKind::SelfAccess))
+                    || (fl.is_spread && matches!(v.kind, ExprKind::SelfAccess))
+            })
+        });
+        let param_names: HashSet<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+        let uses_param = fields.iter().any(|fl| {
+            fl.value.as_ref().map_or(false, |v| {
+                matches!(&v.kind, ExprKind::Ident(n) if param_names.contains(n.as_str()))
+            })
+        });
+        if copies_self && uses_param {
+            out.push(LintWarning {
+                rule: "W_IMMUTABLE_REBUILD_SETTER",
+                diag: Diagnostic::new(
+                    format!(
+                        "`@{}` без `mut` возвращает `{}` пересборкой полей \
+                         (OpenOptions-класс): для кучевой записи поверхностная копия \
+                         делит потроха со старым объектом — независимости нет, только \
+                         лишняя аллокация. Канон: мутирующее беглое свойство \
+                         `mut @x(v) -> @` (D117 AMEND / D409, nv-coding-style §21).",
+                        f.name, recv.type_name
                     ),
                     f.span,
                 ),
