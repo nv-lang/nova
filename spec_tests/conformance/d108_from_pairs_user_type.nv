@@ -1,0 +1,49 @@
+// D108 (Plan 52 Ф.23) — `#from_pairs` расширяемость: map-литерал `[k: v]`
+// десугарится не только в `HashMap[K, V]` (см. `d108_map_literal.nv`),
+// но и в ЛЮБОЙ user-тип, помеченный `#from_pairs` + реализующий протокол
+// (spec/decisions/03-syntax.md:5421 — правило-десугаринг):
+//   - `static new() -> Self`
+//   - `mut @cap(n int) -> @`        (D372 amend: замена `with_capacity`)
+//   - `mut @insert_new(key K, val V) -> ()`
+// Type-checker (`MapLitCtx::build` в types/mod.rs) валидирует наличие
+// всех трёх методов ПЕРЕД тем как добавить тип в `from_pairs_types` —
+// без этой валидации user получил бы confusing codegen-error
+// («no method new» / «no method cap» / «no method insert_new»).
+//
+// До этой фикстуры user-#from_pairs протокол проверялся только в
+// nova_tests/map_literals/positive_user_from_pairs_with_methods.nv —
+// а nova_tests НЕ гейт корректности (только byte-identical baseline,
+// см. feedback-nova-tests-not-correctness-gate). conformance-покрытие
+// отсутствовало.
+module spec_tests.conformance
+
+#from_pairs
+type D108Bag[K, V] {
+    count int
+}
+
+export fn D108Bag[K, V].new() -> D108Bag[K, V] {
+    D108Bag { count: 0 }
+}
+
+export fn D108Bag[K, V] mut @cap(n int) -> @ {}
+
+export fn D108Bag[K, V] mut @insert_new(k K, v V) {
+    @count += 1
+}
+
+export fn D108Bag[K, V] @len() -> int => @count
+
+test "from_pairs: user-тип получает map-литерал через #from_pairs протокол" {
+    ro b D108Bag[int, str] = [1: "a", 2: "b", 3: "c"]
+    assert(b.len() == 3)
+}
+
+// NB: пустой литерал `[]` в позиции user-типа с `#from_pairs` (не
+// `HashMap`) НЕ покрыт здесь — обнаружен отдельный, независимый от
+// [M-d55-anon-recordlit-codegen-gap] баг: `extract_hashmap_kv` (types/mod.rs)
+// хардкожен на literal-имя `"HashMap"`, поэтому K/V не выводятся для
+// generic non-HashMap `#from_pairs`-типа в EMPTY/all-spread map-lit ветке →
+// RUN-FAIL (runtime-краш) при `ro b D108Bag[int, str] = []`. Вне периметра
+// этой задачи (только anon record-literal codegen gap); не чинится здесь —
+// зарепорчен отдельно как [M-d108-empty-frompairs-nonhashmap-kv-infer-gap].
