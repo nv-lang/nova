@@ -54,6 +54,30 @@
 
 ---
 
+## Production-ready HTTPS — критерии приёмки (зонт, сведено 2026-07-11; бывш. Plan 196)
+
+Этот план — **дом цели «production-ready https»** (Plan 196 слит СЮДА как дубль домена).
+HTTPS готов к проду, когда ВСЁ выполнено:
+
+| # | Критерий | Где делается | Статус |
+|---|---|---|---|
+| 1 | **Rust-free бэкенд** — TLS на mbedTLS (C), модуль=.nv+.c+.lib, ноль Rust/cargo | [195](195-native-modules-c-not-rust.md) Ф.1-2 (ветка tls-mbedtls-195) | 🔧 идёт |
+| 2 | **Полная TLS-поверхность** — 1.2/1.3, cert-verify (SystemRoots/Insecure/Pinned), mTLS, ALPN, SNI, close_notify | Ф.1-5.3 (влито на rustls) → переносится на mbedTLS | ✅→перенос |
+| 3a | **teardown-hang** net close-пути починен | `[M-net-close-teardown-hang]` (ветка teardown-hang-close) | ✅ 2026-07-11 — ordering-фикс (drain close/call ДО uv_loop_close, 7bd766963); репро 0 hang/924 |
+| 3b | **cancel-safety** — отмена в handshake/read/write не течёт/не виснет | Ф.6 | 📋 |
+| 4 | **кросс-платформа** Windows(CLDR/store)+POSIX, чистый клон | Ф.6 + mbedTLS system store | 📋 частично |
+| 5 | **вынос в репу `nova-tls`** (внешняя зависимость, src/-раскладка) | [195](195-native-modules-c-not-rust.md) Ф.3 + [03.1](03.1-path-git-dependencies.md)✅ | 📋 |
+| 6 | **examples + доки** (examples/tls/echo, гайд, D-блоки) | Ф.5.4 + Ф.7 | 📋 |
+| 7 | **промоушен** std/tls+https в shipped (не _experimental), CI | Ф.7 | 📋 |
+
+**Порядок:** mbedTLS(фундамент) → teardown-hang(параллельно) → cancel-safety/кросс-платформа →
+examples/доки → вынос nova-tls → промоушен+CI.
+**Гейт production-ready:** std/tls 6/6 на mbedTLS; https-разгейт зелёный; стресс handshake+echo
+×30 = 0 hang/segv; cancel-тесты зелёные; grep 0-Rust-в-TLS; nova-tls собирается standalone
+(только clang+.lib); examples/tls/echo работает; CI гоняет tls+https.
+
+---
+
 ## Актуализация 2026-07-10 — «было → стало»
 
 | Ревизия 2026-05-31 | Актуально (эта ревизия) |
