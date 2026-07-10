@@ -1,11 +1,13 @@
 // Фикстура-позитив плана 185 (`nova lint` самотест): этот файл ДОЛЖЕН давать
-// ровно 5 находок реестра конвенционных правил:
+// ровно 6 находок реестра конвенционных правил:
 //   W_NONVARIADIC_OF      — static `of` без вариадика (§21б)
 //   W_RETIRED_PREFIX      — `as_`-метод (D410)
 //   W_WITH_MUTATOR        — with_* с mut-приёмником (§21)
 //   W_STR_CONCAT_LOOP     — конкатенация строкового литерала в цикле
 //   W_DESTRUCTURE_SNAPSHOT — 2 подряд полевых снапшота одного источника (§26, D411)
-// Прогон: nova lint nova_tests/lint/conv_pos.nv → exit 1, 5 finding(s).
+//   W_LEADING_BINOP_CONTINUATION — ведущий `||` в начале continuation-строки
+//     (footgun D417-класс — needs_quoting/is_ascii_ident_char, 2026-07-10)
+// Прогон: nova lint nova_tests/lint/conv_pos.nv → exit 1, 6 finding(s).
 // Для `nova test` файл — обычный компилируемый unit (main + вызовы).
 
 module lint.conv_pos
@@ -40,11 +42,25 @@ fn join(parts []str) -> str {
     s
 }
 
+// W_LEADING_BINOP_CONTINUATION: ведущий `||` в начале continuation-строки —
+// предыдущая строка (паренthesized bool-выражение) сбалансирована по скобкам
+// и похожа на завершённый statement; парсер парсит `|| (...)` как ОТДЕЛЬНЫЙ
+// zero-arg closure-литерал (discarded statement), а не продолжение
+// выражения. Реальный прецедент: needs_quoting/is_ascii_ident_char
+// (2026-07-10) были always-true ровно из-за этого.
+fn is_ascii_letter_leading(c int) -> bool {
+    mut result = false
+    (c >= 65 && c <= 90)
+    || (c >= 97 && c <= 122)
+    result
+}
+
 fn main() -> () {
     mut w = Widget.of(1)
     w.with_label("x")
     ro _lbl = w.as_label()
     ro _s = join(["a", "b"])
     ro _d = describe(w)
+    ro _letter = is_ascii_letter_leading(70)
     ()
 }

@@ -35,11 +35,22 @@ fn join(parts []str) -> str {
     sb.into_str()
 }
 
+// Канон nv-coding-style §27: TRAILING-оператор в конце строки (не ведущий на
+// continuation-строке) — тот же паттерн, что is_ascii_letter_leading в
+// conv_pos.nv, но безопасная форма.
+fn is_ascii_letter_trailing(c int) -> bool {
+    mut result = false
+    (c >= 65 && c <= 90) ||
+    (c >= 97 && c <= 122)
+    result
+}
+
 fn main() -> () {
     mut w = Widget.new(1)
     w.label("x")
     ro _lbl = w.label_view()
     ro _s = join(["a", "b"])
     ro _d = describe(w)
+    ro _letter = is_ascii_letter_trailing(70)
     ()
 }

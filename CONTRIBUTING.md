@@ -77,6 +77,33 @@ PR без подписей не пройдёт проверку CI.
 - Если меняете дизайн-решение, добавьте новую запись со ссылкой на старую,
   не переписывайте старую запись задним числом.
 
+## Опциональный pre-commit hook: `nova lint` (2026-07-10)
+
+CI гейтит `nova lint` на `std/` и на самотест реестра правил (см.
+`.github/workflows/nova-lint.yml`). Чтобы ловить находки ДО коммита (а не
+после push в CI), в репозитории есть **opt-in** (не активирован по
+умолчанию) pre-commit hook `.githooks/pre-commit` — прогоняет `nova lint`
+только по staged `.nv`-файлам.
+
+Активация (один раз на клон):
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Отключение:
+
+```sh
+git config --unset core.hooksPath
+```
+
+Хук требует собранный `nova-cli` (`cargo build --release --manifest-path
+nova-cli/Cargo.toml`); без бинаря он не блокирует коммит (просто
+предупреждает). Обход для одного коммита: `git commit --no-verify`.
+Легальное исключение конкретной находки — маркер `[M-...]` на строке (см.
+[docs/compiler-conventions.md](docs/compiler-conventions.md) §4), а не
+`--no-verify` систематически.
+
 ## Soundness-regression-suite (Plan 33.8 Ф.7)
 
 Верификатор контрактов (Plan 33) обязан быть **sound**: вердикт «доказано»
