@@ -39,11 +39,31 @@ test "from_pairs: user-тип получает map-литерал через #fr
     assert(b.len() == 3)
 }
 
-// NB: пустой литерал `[]` в позиции user-типа с `#from_pairs` (не
-// `HashMap`) НЕ покрыт здесь — обнаружен отдельный, независимый от
-// [M-d55-anon-recordlit-codegen-gap] баг: `extract_hashmap_kv` (types/mod.rs)
-// хардкожен на literal-имя `"HashMap"`, поэтому K/V не выводятся для
-// generic non-HashMap `#from_pairs`-типа в EMPTY/all-spread map-lit ветке →
-// RUN-FAIL (runtime-краш) при `ro b D108Bag[int, str] = []`. Вне периметра
-// этой задачи (только anon record-literal codegen gap); не чинится здесь —
-// зарепорчен отдельно как [M-d108-empty-frompairs-nonhashmap-kv-infer-gap].
+// [M-108-empty-frompairs-nonhashmap-kv-infer-gap] fix (2026-07-10, ветка
+// recordlit-callarg-fix): пустой литерал `[]` в позиции user-типа с
+// `#from_pairs` (НЕ named `HashMap`) раньше давал RUN-FAIL — `extract_hashmap_kv`
+// (types/mod.rs) был захардкожен на literal-имя `"HashMap"`, поэтому K/V не
+// выводились для generic non-HashMap `#from_pairs`-типа в EMPTY/all-spread
+// map-lit ветке (`inferred_key`/`inferred_value` = None → desugar шёл через
+// fallback-callee `Bag.new` (Path) без K/V-мономорфизации). Непустой литерал
+// работал (unify берёт типы из элементов). Фикс: kv-тип определяется по
+// декларативному `#from_pairs`-атрибуту (`expected_is_from_pairs`), не по
+// имени. Ниже — три ранее-падавших empty-контекста.
+test "from_pairs: empty-литерал для user-типа (let с явным типом)" {
+    ro b D108Bag[int, str] = []
+    assert(b.len() == 0)
+}
+
+fn d108_make_empty_bag() -> D108Bag[str, int] => []
+
+test "from_pairs: empty-литерал в return-позиции user-типа" {
+    ro b = d108_make_empty_bag()
+    assert(b.len() == 0)
+}
+
+fn d108_takes_bag(b D108Bag[int, str]) -> int => b.len()
+
+test "from_pairs: empty-литерал в call-arg позиции user-типа" {
+    ro n = d108_takes_bag([])
+    assert(n == 0)
+}

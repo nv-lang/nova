@@ -28718,7 +28718,14 @@ impl MapLitAnnotator {
             inferred_target_type,
         } = &mut e.kind {
             let pairs = crate::ast::MapElem::cloned_pairs(elems);
-            let (exp_k, exp_v) = extract_hashmap_kv(expected);
+            // [M-108-empty-frompairs-nonhashmap-kv-infer-gap] fix: kv-тип
+            // определяется по декларативному `#from_pairs`-атрибуту, не по
+            // имени "HashMap" — иначе пустой `[]`-литерал для user-типа
+            // `Bag[K,V] #from_pairs` не получал K/V из expected → RUN-FAIL.
+            let is_kv = expected
+                .map(|e| self.ctx.expected_is_from_pairs(e))
+                .unwrap_or(false);
+            let (exp_k, exp_v) = extract_hashmap_kv(expected, is_kv);
             *inferred_key = infer_unified_type(
                 pairs.iter().map(|(k, _)| k),
                 exp_k,
@@ -28743,7 +28750,9 @@ impl MapLitAnnotator {
         if let ExprKind::RecordLit { type_name: None, inferred_map_v, .. } = &mut e.kind {
             if let Some(exp) = expected {
                 if self.ctx.expected_is_from_fields(exp) {
-                    let (_, exp_v) = extract_hashmap_kv(Some(exp));
+                    // Уже в ветке #from_fields (KV-тип с 2 generics,
+                    // str-ключи) → is_kv_type=true, без хардкода имени.
+                    let (_, exp_v) = extract_hashmap_kv(Some(exp), true);
                     if let Some(v) = exp_v {
                         *inferred_map_v = Some(v.clone());
                     }
@@ -29037,11 +29046,29 @@ impl MapLitAnnotator {
 
 /// Plan 52 Ф.7: извлечь (K, V) из ожидаемого типа `HashMap[K, V]`.
 /// Возвращает (None, None) если expected не HashMap[_, _].
-fn extract_hashmap_kv(expected: Option<&TypeRef>) -> (Option<&TypeRef>, Option<&TypeRef>) {
+/// Извлечь `(K, V)` из ожидаемого key-value-типа `Named[K, V]`.
+///
+/// [M-108-empty-frompairs-nonhashmap-kv-infer-gap] fix (2026-07-10, ветка
+/// `recordlit-callarg-fix`): раньше функция была захардкожена на literal-имя
+/// `"HashMap"`, из-за чего generic user-тип с `#from_pairs`, но НЕ named
+/// `HashMap` (напр. `type Bag[K,V] #from_pairs`), не получал K/V из expected
+/// в EMPTY/`[]`-литерал ветке (`ro b Bag[int,str] = []`) → `inferred_key`/
+/// `inferred_value` оставались `None` → RUN-FAIL собранного бинаря. Непустой
+/// литерал `[k: v]` работал (unify берёт типы из элементов, минуя эту
+/// функцию). Теперь kv-тип определяется по флагу `is_kv_type` (вызывающий
+/// вычисляет через `expected_is_from_pairs`/`expected_is_from_fields` —
+/// декларативный `#from_pairs`/`#from_fields`-атрибут, не строка имени).
+/// Имя `"HashMap"` оставлено как fallback для вызовов без вычисленного
+/// флага (HashMap сам несёт оба атрибута — семантика байт-идентична).
+fn extract_hashmap_kv(
+    expected: Option<&TypeRef>,
+    is_kv_type: bool,
+) -> (Option<&TypeRef>, Option<&TypeRef>) {
     match expected {
         Some(TypeRef::Named { path, generics, .. })
-            if path.last().map(|s| s.as_str()) == Some("HashMap")
-                && generics.len() == 2 =>
+            if generics.len() == 2
+                && (is_kv_type
+                    || path.last().map(|s| s.as_str()) == Some("HashMap")) =>
         {
             (Some(&generics[0]), Some(&generics[1]))
         }
