@@ -39221,3 +39221,62 @@ mn_closure_spawn_gcroot_test.nv — изолированная сборка (tem
 через sleep() уже работает); per-OS dedicated monotonicity test; M:N-контракт mut_clock под
 реальной concurrent-нагрузкой (документирован, не verified тестом); custom E_SLEEP_UNTIL_WALL
 диагностика (generic E7301 type-mismatch уже корректно отвергает, просто менее приятный текст).
+
+## 2026-07-10 — Plan 186 recursive-mono: рекурсивные типы в mono-канале + промоушен linkedlist (модель sonnet)
+
+Задача владельца: почини оба класса рекурсивной мономорфизации
+(M-result-direct-recursive-enum, M-option-self-recursive-record-mono),
+промоутни toml и linkedlist из std/_experimental.
+
+Корень ОБОИХ названных классов — один и тот же в emit_c.rs: структурная
+генерация `==` (emit_field_eq) и NovaOpt-регистрация самоссылающихся
+heap-типов запускались ДО того, как record_schemas/sum_schemas этих типов
+были полностью заполнены.
+- Класс 1 (Result[X,E] с прямо-рекурсивным X — компилятор жрал 8-17ГБ):
+  структурная eq для heap-типа с самоссылающимся полем инлайнила ПОЛНОЕ
+  сравнение на каждом уровне вложенности до MAX_EQ_DEPTH=32 →
+  экспоненциальный рост C-строки. Фикс: `struct_eq_stack` ловит настоящий
+  цикл и уходит на именованную функцию `nova_struct_eq_<T>` (реальный
+  указатель ⇒ реальная рекурсия функции на рантайме, не развёртка на
+  компиляции).
+- Класс 2 (self-recursive record через Option[Self], next мис-мономорфизился
+  в NovaOpt_nova_int): `being_defined_record_types` (зеркало существующего
+  being_defined_sum_types) метит тип конкретным во время эмиссии его полей;
+  побочная eq-регистрация Option[Self] отложена (pending_structural_eq_bodies)
+  до момента, когда все схемы гарантированно готовы.
+Позитив-фикстуры: nova_tests/recursive_mono/{pos/option_self_linked_list.nv,
+pos/enum_tree_result.nv,neg/value_record_self_include.nv}.
+
+Промоушен linkedlist потребовал ещё ТРИ сцепленных дефекта той же зоны:
+P67-LEGACY паника на самовызове `t.map(f)` внутри `@map[U]`'s тела
+([M-generic-method-self-recursive-return] — current_fn_name/
+current_fn_param_typerefs + Source 2f для resolve_method_level_subst,
+портирован канал уже существовавший у free-fn версии); `Nova_`-префикс
+naming bug в operator-dispatch (@plus) и bare-variant ctor dispatch (Empty
+внутри .new()) — оба одним детектором "____" в mono-имени. Плюс конвенции:
+@length→@len, @reverse→@reversed (коллизия method-name single-key fallback
+с Vec/Range/HashMap — 3-й регистрант ломал резолюцию для всех трёх,
+pre-existing систем­ная хрупкость вне scope, обойдена переименованием);
+from_iter(Iter[T])→from_iter([]T) (зеркало M-91.1-set-from-iter-iterable-param).
+
+Toml: та же категория задачи для ДРУГОГО пути — плоский (не-generic)
+sum/record тип, чьё поле ссылается на mono'd generic instance
+(HashMap[str,TomlValue]). Fix [M-toml-sum-variant-mono-field-hoist]:
+pre-pass форвард-typedef в emit_sum_type/emit_record_type (тот же паттерн,
+что у emit_generic_type_instance). toml.nv теперь компилируется и линкуется
+— но `test --full` вскрыл НОВЫЙ, отдельный от recursive-mono runtime-баг
+([M-toml-repeated-fail-call-run-fail]): 4/6 тестов падают на 2+ повторных
+вызовах одной Fail-эффектной функции внутри одного with-скоупа. НЕ
+диагностирован до конца (не content-баг — парсер-логика вручную проверена
+корректной) — toml остаётся в _experimental, задача промоушена ЧАСТИЧНО
+закрыта (linkedlist — полностью; toml — компиляторный блокер снят, новый
+runtime-баг требует отдельной волны).
+
+Гейты (ветка recursive-mono, коммиты 7e826de26/2930cab7c/fadb60ce3):
+cargo build оба крейта чисто; conformance 89/0 (эталон, без регрессий);
+err173-корпус 27/0; nova_tests/{basics,generics,plan144_1,plan144_checker}
+выборка — 5 расхождений, ВСЕ подтверждены δ0 против baseline main
+(6582887e1) через temp-swap emit_c.rs; recursive_mono/ фикстуры 3/3;
+std/collections/linkedlist_test 1/1; std/collections/ полный прогон —
+13 PASS, 1 CC-FAIL (vec_lazy, подтверждён pre-existing на baseline).
+Маркеры/STATUS.md/backlog-followups.md обновлены.
