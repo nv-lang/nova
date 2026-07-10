@@ -62,16 +62,16 @@ test "B9: Channel.new(1024) — large valid capacity" {
 
 test "B5: select single-arm fast path (1 arm)" {
     ro ch = Channel.new(1)
-    mut got = 0
+    mut got = AtomicInt.new(0)
     supervised {
         spawn { ch.tx.send(42) }
         spawn {
             select {
-                Some(v) = ch.rx => { got = v }
+                Some(v) = ch.rx => { got.store(v) }
             }
         }
     }
-    assert(got == 42)
+    assert(got.load() == 42)
 }
 
 test "B5: select 16 arms — old cap (now mainstream)" {
@@ -83,31 +83,31 @@ test "B5: select 16 arms — old cap (now mainstream)" {
     ro c10 = Channel.new(1); ro c11 = Channel.new(1)
     ro c12 = Channel.new(1); ro c13 = Channel.new(1)
     ro c14 = Channel.new(1); ro c15 = Channel.new(1)
-    mut got = 0
+    mut got = AtomicInt.new(0)
     supervised {
         spawn { c7.tx.send(700) }  // средний канал
         spawn {
             select {
-                Some(v) = c0.rx  => { got = v }
-                Some(v) = c1.rx  => { got = v }
-                Some(v) = c2.rx  => { got = v }
-                Some(v) = c3.rx  => { got = v }
-                Some(v) = c4.rx  => { got = v }
-                Some(v) = c5.rx  => { got = v }
-                Some(v) = c6.rx  => { got = v }
-                Some(v) = c7.rx  => { got = v }
-                Some(v) = c8.rx  => { got = v }
-                Some(v) = c9.rx  => { got = v }
-                Some(v) = c10.rx => { got = v }
-                Some(v) = c11.rx => { got = v }
-                Some(v) = c12.rx => { got = v }
-                Some(v) = c13.rx => { got = v }
-                Some(v) = c14.rx => { got = v }
-                Some(v) = c15.rx => { got = v }
+                Some(v) = c0.rx  => { got.store(v) }
+                Some(v) = c1.rx  => { got.store(v) }
+                Some(v) = c2.rx  => { got.store(v) }
+                Some(v) = c3.rx  => { got.store(v) }
+                Some(v) = c4.rx  => { got.store(v) }
+                Some(v) = c5.rx  => { got.store(v) }
+                Some(v) = c6.rx  => { got.store(v) }
+                Some(v) = c7.rx  => { got.store(v) }
+                Some(v) = c8.rx  => { got.store(v) }
+                Some(v) = c9.rx  => { got.store(v) }
+                Some(v) = c10.rx => { got.store(v) }
+                Some(v) = c11.rx => { got.store(v) }
+                Some(v) = c12.rx => { got.store(v) }
+                Some(v) = c13.rx => { got.store(v) }
+                Some(v) = c14.rx => { got.store(v) }
+                Some(v) = c15.rx => { got.store(v) }
             }
         }
     }
-    assert(got == 700)
+    assert(got.load() == 700)
 }
 
 
@@ -120,40 +120,41 @@ test "B7: alternating recv-wins / timeout-wins (mixed pattern)" {
     // Odd i — timeout wins (не отправляем).
     // Validates: cleanup корректен для recv-wins; normal path
     // корректен для timeout-wins; нет накопления state'а между ними.
-    mut recv_wins = 0
-    mut timer_wins = 0
+    mut recv_wins = AtomicInt.new(0)
+    mut timer_wins = AtomicInt.new(0)
     mut i = 0
     while i < 20 {
+        ro cur = i
         ro ch = Channel.new(1)
         supervised {
             if i % 2 == 0 {
-                spawn { ch.tx.send(i) }
+                spawn { ch.tx.send(cur) }
             }
             spawn {
                 select {
-                    Some(_) = ch.rx => { recv_wins = recv_wins + 1 }
-                    Some(_) = ChanReader.close_after(Duration.from_millis(50)) => { timer_wins = timer_wins + 1 }
+                    Some(_) = ch.rx => { recv_wins.fetch_add(1) }
+                    Some(_) = ChanReader.close_after(Duration.from_millis(50)) => { timer_wins.fetch_add(1) }
                 }
             }
         }
         i = i + 1
     }
-    assert(recv_wins == 10)
-    assert(timer_wins == 10)
+    assert(recv_wins.load() == 10)
+    assert(timer_wins.load() == 10)
 }
 
 test "B7: very short timer (1ms) — timer wins" {
     ro ch = Channel.new(1)
-    mut fired = false
+    mut fired = AtomicBool.new(false)
     supervised {
         spawn {
             select {
                 Some(_) = ch.rx => { }
-                Some(_) = ChanReader.close_after(Duration.from_millis(1)) => { fired = true }
+                Some(_) = ChanReader.close_after(Duration.from_millis(1)) => { fired.store(true) }
             }
         }
     }
-    assert(fired)
+    assert(fired.load())
 }
 
 test "B7: very long timer (10s), recv wins immediately — cleanup срабатывает" {
