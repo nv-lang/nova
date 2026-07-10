@@ -62,17 +62,17 @@ fn drv_work(upto int) -> int {
 // ================================================================
 
 test "blocking/driver A1: trivial fast-path, 3 concurrent, no hang" {
-    mut r0 = 0
-    mut r1 = 0
-    mut r2 = 0
+    mut r0 = AtomicInt.new(0)
+    mut r1 = AtomicInt.new(0)
+    mut r2 = AtomicInt.new(0)
     supervised {
-        spawn { r0 = drv_fast(0) }
-        spawn { r1 = drv_fast(10) }
-        spawn { r2 = drv_fast(100) }
+        spawn { r0.store(drv_fast(0)) }
+        spawn { r1.store(drv_fast(10)) }
+        spawn { r2.store(drv_fast(100)) }
     }
-    assert(r0 == 1)
-    assert(r1 == 11)
-    assert(r2 == 101)
+    assert(r0.load() == 1)
+    assert(r1.load() == 11)
+    assert(r2.load() == 101)
 }
 
 // ================================================================
@@ -80,30 +80,30 @@ test "blocking/driver A1: trivial fast-path, 3 concurrent, no hang" {
 // ================================================================
 
 test "blocking/driver A2: sequential calls, correct results" {
-    mut out = 0
+    mut out = AtomicInt.new(0)
     supervised {
         spawn {
             ro a = drv_work(100)
             ro b = drv_work(200)
             ro c = drv_work(300)
-            out = a + b + c
+            out.store(a + b + c)
         }
     }
-    assert(out == 600)
+    assert(out.load() == 600)
 }
 
 test "blocking/driver A2: sequential fast-path chain x5" {
-    mut chain = 0
+    mut chain = AtomicInt.new(0)
     supervised {
         spawn {
-            chain = drv_fast(chain)
-            chain = drv_fast(chain)
-            chain = drv_fast(chain)
-            chain = drv_fast(chain)
-            chain = drv_fast(chain)
+            chain.store(drv_fast(chain.load()))
+            chain.store(drv_fast(chain.load()))
+            chain.store(drv_fast(chain.load()))
+            chain.store(drv_fast(chain.load()))
+            chain.store(drv_fast(chain.load()))
         }
     }
-    assert(chain == 5)
+    assert(chain.load() == 5)
 }
 
 // ================================================================
@@ -111,17 +111,17 @@ test "blocking/driver A2: sequential fast-path chain x5" {
 // ================================================================
 
 test "blocking/driver A3: concurrent offloads all complete" {
-    mut t0 = 0
-    mut t1 = 0
-    mut t2 = 0
+    mut t0 = AtomicInt.new(0)
+    mut t1 = AtomicInt.new(0)
+    mut t2 = AtomicInt.new(0)
     supervised {
-        spawn { t0 = drv_work(1000) }
-        spawn { t1 = drv_work(2000) }
-        spawn { t2 = drv_work(3000) }
+        spawn { t0.store(drv_work(1000)) }
+        spawn { t1.store(drv_work(2000)) }
+        spawn { t2.store(drv_work(3000)) }
     }
-    assert(t0 == 1000)
-    assert(t1 == 2000)
-    assert(t2 == 3000)
+    assert(t0.load() == 1000)
+    assert(t1.load() == 2000)
+    assert(t2.load() == 3000)
 }
 
 // ================================================================
@@ -129,36 +129,36 @@ test "blocking/driver A3: concurrent offloads all complete" {
 // ================================================================
 
 test "blocking/driver A4: worker freed — sibling progresses during offload" {
-    mut marker = 0
-    mut a_saw = -1
+    mut marker = AtomicInt.new(0)
+    mut a_saw = AtomicInt.new(-1)
     supervised {
         spawn {
             // Fiber A offloads heavy work to the driver/threadpool and parks.
             ro _ = drv_work(2000000)
-            a_saw = marker
+            a_saw.store(marker.load())
         }
         spawn {
             // Fiber B is light: must progress while A is parked on the offload.
-            marker = 1
+            marker.store(1)
         }
     }
-    assert(a_saw == 1)
-    assert(marker == 1)
+    assert(a_saw.load() == 1)
+    assert(marker.load() == 1)
 }
 
 test "blocking/driver A4: blocking interleaved with driver-routed sleep" {
-    mut order = 0
+    mut order = AtomicInt.new(0)
     supervised {
         spawn {
             ro _ = drv_work(500)
-            order = order + 1
+            order.fetch_add(1)
         }
         spawn {
             Time.sleep(1)
-            order = order + 10
+            order.fetch_add(10)
         }
     }
-    assert(order == 11)
+    assert(order.load() == 11)
 }
 
 // ================================================================
