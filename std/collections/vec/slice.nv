@@ -25,12 +25,27 @@ import std.collections.range.{Range}
 ///
 /// Panics on out-of-bounds (`start < 0`, `end < start`, or `end > len`).
 ///
-/// NOTE (wiring deferred): `v[a..b]` is currently intercepted by codegen
-/// range-slice magic (emit_c.rs `ExprKind::Index` + `Range`) which builds the
-/// identical view struct inline and never dispatches to this method. The method
-/// is present (and overloads with `@index(i int)`) so the `Index[Range,
-/// Vec[T]]` contract is satisfied as a real Nova body; routing `v[range]`
-/// through it replaces the codegen magic in a later phase.
+/// NOTE (wiring deferred — [M-172.14-vrange-nv-route], PARTIAL 2026-07-10):
+/// `v[a..b]` is currently intercepted by codegen range-slice magic (emit_c.rs
+/// `ExprKind::Index` + `Range`) which builds the identical view struct inline
+/// and never dispatches to this method. The method is present (and overloads
+/// with `@index(i int)`) so the `Index[Range, Vec[T]]` contract is satisfied as
+/// a real Nova body.
+///
+/// Full routing through this body is BLOCKED on an owner language-semantics
+/// decision (D-amendment), NOT mechanical work — three concrete blockers:
+///   (1) this method's bounds-check is a `requires` precondition → elided under
+///       `--contracts=off`, whereas `nova_vec_slice_chk` (array.h) panics
+///       always-on regardless of contract policy → routing weakens slice
+///       bounds-safety under contracts=off;
+///   (2) the OOB panic message differs (`nova_contract_violation` vs the pinned
+///       `Vec: slice … out of bounds` — nova_tests/plan96/neg_slice_*), a
+///       byte-parity break;
+///   (3) codegen's verifier-proven `_nochk` elision (hot-loop slices) is lost —
+///       this body always checks.
+/// The perf goal (0-alloc view descriptor placement) is ALREADY met via the
+/// sret `_out` mechanism (view_descriptor_stack.nv, δ alloc=0). See
+/// docs/plans/172.14-value-abi-perf-placement.md § [M-172.14-vrange-nv-route].
 export fn Vec[T] @index(r Range) -> Self
     requires r.start >= 0 && r.end >= r.start && r.end <= @len
 {
