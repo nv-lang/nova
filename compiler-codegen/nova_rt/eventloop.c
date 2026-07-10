@@ -241,6 +241,48 @@ void nova_loop_drain_closes(NovaDeferredCloseQueue* q) {
     free(batch);
 }
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: generic deferred-call
+ * queue — same shape as NovaDeferredCloseQueue above, generalised to an
+ * arbitrary fn(arg) so net.c can marshal a uv_read_start/uv_write/uv_accept/
+ * uv_udp_send/uv_udp_recv_start issue call onto the loop-owning thread when
+ * the calling fiber has been work-stolen since the handle was created. */
+void nova_call_queue_init(NovaDeferredCallQueue* q) {
+    if (!q) return;
+    q->jobs  = NULL;
+    q->count = 0;
+    q->cap   = 0;
+    nova_mutex_init(&q->mu);
+}
+
+void nova_call_queue_destroy(NovaDeferredCallQueue* q) {
+    if (!q) return;
+    nova_mutex_lock(&q->mu);
+    free(q->jobs);
+    q->jobs  = NULL;
+    q->count = 0;
+    q->cap   = 0;
+    nova_mutex_unlock(&q->mu);
+    nova_mutex_destroy(&q->mu);
+}
+
+void nova_loop_drain_calls(NovaDeferredCallQueue* q) {
+    if (!q) return;
+    /* Move jobs out under lock so producer can enqueue more in parallel
+     * (mirrors nova_loop_drain_closes). */
+    nova_mutex_lock(&q->mu);
+    int n = q->count;
+    NovaDeferredCallJob* batch = q->jobs;
+    q->jobs  = NULL;
+    q->count = 0;
+    q->cap   = 0;
+    nova_mutex_unlock(&q->mu);
+
+    for (int i = 0; i < n; i++) {
+        batch[i].fn(batch[i].arg);
+    }
+    free(batch);
+}
+
 void nova_evloop_install_sigint(struct NovaFiberQueue* main_scope) {
     if (_sigint_installed) return;
     if (!main_scope) return;

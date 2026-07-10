@@ -74,6 +74,51 @@ enum {
     NN2_CLOSED  = 3,
 };
 
+/* ─── [M-183-net2-loop-affinity-cross-thread-op] fix: cross-thread uv-op
+ * issue marshal ────────────────────────────────────────────────────────────
+ *
+ * Root cause (backlog-followups.md, filed OPEN before this fix): a fiber can
+ * be moved to a different worker by work-stealing while parked waiting on a
+ * socket op. Its NEXT libuv call against a handle created earlier (bound to
+ * the ORIGINAL worker's loop via nova_current_loop() at create time) then
+ * runs on the WRONG OS thread — concurrent, unsynchronized mutation of that
+ * loop's internal bookkeeping (libuv loops are single-thread-owned; the only
+ * cross-thread-safe entry point is uv_async_send). The issued op's
+ * completion callback is silently mis-queued/lost — the parked fiber never
+ * wakes. Measured ~1/300 on the std/tls handshake smoke
+ * ([M-116-handshake-socket-deadlock]): two fibers doing back-to-back
+ * write-then-read on their own socket are exactly the pattern that exposes
+ * the window (a park between two ops on the SAME handle is exactly the
+ * work-steal opportunity).
+ *
+ * Fix: every ISSUE call that touches a handle created in a PRIOR park cycle
+ * (read/write/accept/udp send/recv) checks `nova_current_loop() ==
+ * <handle-owning-loop>` at each call site. Fast path (same thread — the
+ * overwhelming common case) calls the raw uv_* function DIRECTLY and
+ * handles its return code SYNCHRONOUSLY, byte-for-byte like the pre-fix
+ * code — no latch, no wake. Slow path (genuine cross-thread mismatch)
+ * marshals a small "_deferred" wrapper onto the owning thread via
+ * nova_loop_defer_call (mutex-queue + uv_async_send, same shape as
+ * nova_loop_defer_close/Plan 83.10.2); that wrapper — and ONLY that
+ * wrapper — publishes the op's completion latch and calls nova_sched_wake,
+ * because in that path the call genuinely runs on a different thread than
+ * the parked caller.
+ *
+ * Why the same-thread path must NEVER call nova_sched_wake (real regression,
+ * not a theoretical concern): an earlier version of this fix routed BOTH
+ * paths through one unconditional "issue-then-latch-then-wake" helper. For
+ * ops with no callback of their own (uv_tcp_init+uv_accept complete
+ * synchronously, no async completion) this fired nova_sched_wake on the
+ * CALLING fiber's own (scope, slot) BEFORE that fiber had parked for this
+ * wait — a reentrant self-wake racing the by-co gopark/goready park-state
+ * machine (nova_sched.h). It surfaced as ~50% hangs/crashes in
+ * std/net/split_test.nv (accept-heavy) despite the std/tls handshake smoke
+ * passing 720/720 (read/write rarely hit their synchronous-failure branch,
+ * so the same reentrancy window was almost never exercised there). Splitting
+ * "raw direct call" from "deferred latch+wake wrapper" per call site removes
+ * the reentrancy entirely: the wake-capable path only ever runs on a thread
+ * OTHER than the one doing the parking. */
+
 /* ─── Cancel-scope helper (same pattern as net.c _net_cancel_scope) ─────── */
 
 static inline NovaFiberQueue* _nn2_cancel_scope(NovaFiberQueue* scope) {
@@ -423,6 +468,60 @@ static void _nn2_listener_close_cb(uv_handle_t* h) {
     }
 }
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: the accept-issue step
+ * (uv_tcp_init + uv_accept) MUST run on the loop that owns `lst` — uv_accept
+ * mutates the listener's pending-accept queue. The accepted stream inherits
+ * lst->loop (NOT nova_current_loop(): the accepting fiber may have been
+ * work-stolen since the wait-for-pending_conns park started).
+ *
+ * IMPORTANT (lesson from a real regression caught by split_test.nv stress):
+ * uv_tcp_init/uv_accept are SYNCHRONOUS libuv calls (no completion callback
+ * of their own) — unlike read/write/connect they never had a "wake the
+ * parked fiber" step in the original code. The fast (same-thread) path below
+ * therefore must NOT call nova_sched_wake either: doing so unconditionally
+ * (as an earlier version of this fix did) reentrantly wakes the CALLING
+ * fiber's own slot BEFORE it has parked for this op, racing the by-co
+ * gopark/goready park-state machine (nova_sched.h) against itself. The
+ * latch+wake protocol is only correct — and only used — on the genuine
+ * cross-thread path, where the job runs on a DIFFERENT thread than the
+ * caller and the caller unconditionally parks waiting for it. */
+static void _nn2_accept_issue_raw(NovaNet2Listener* lst, NovaNet2Stream* st,
+                                   int* out_rc) {
+    int rc = uv_tcp_init(lst->loop, &st->handle);
+    if (rc == 0) {
+        rc = uv_accept((uv_stream_t*)&lst->handle, (uv_stream_t*)&st->handle);
+        if (rc != 0) {
+            uv_close((uv_handle_t*)&st->handle, NULL);
+        }
+    }
+    *out_rc = rc;
+}
+
+typedef struct {
+    NovaNet2Listener* lst;
+    NovaNet2Stream*   st;
+    int               rc;          /* out: 0 or a UV error code */
+    NovaFiberQueue*   scope;
+    int               slot;
+    nova_atomic_int   done;         /* completion latch (cross-thread path only) */
+} Nn2AcceptIssueCtx;
+
+/* Cross-thread-only: runs on lst->loop's owning thread via defer_call. The
+ * calling fiber is guaranteed to be parked (or about to park) on `done` by
+ * the time this fires, so publish-then-wake here is the standard
+ * lost-wake-free pattern — safe precisely BECAUSE this executes on a
+ * different thread than the parking fiber. */
+static void _nn2_do_accept_issue_deferred(void* argp) {
+    Nn2AcceptIssueCtx* ctx = (Nn2AcceptIssueCtx*)argp;
+    _nn2_accept_issue_raw(ctx->lst, ctx->st, &ctx->rc);
+    nova_aint_store(&ctx->done, 1);
+    NovaFiberQueue* sc = ctx->scope; int sl = ctx->slot;
+    if (sc) nova_sched_wake(sc, sl);
+}
+static nova_bool _nn2_accept_issue_ready(void* ctx) {
+    return nova_aint_load(&((Nn2AcceptIssueCtx*)ctx)->done) != 0;
+}
+
 void* net_tcp_accept(void* lstv, nova_int* out_err) {
     NovaNet2Listener* lst = (NovaNet2Listener*)lstv;
     int32_t s = nova_aint_load(&lst->stage);
@@ -469,22 +568,44 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
         }
     }
 
-    uv_loop_t* loop = nova_current_loop();
     NovaNet2Stream* st =
         (NovaNet2Stream*)nova_alloc_uncollectable(sizeof(NovaNet2Stream));
     memset(st, 0, sizeof(*st));
     nova_aint_init(&st->stage, NN2_IDLE);
-    st->loop = loop;
+    /* Accepted stream inherits the LISTENER's loop (see Nn2AcceptIssueCtx
+     * comment) — not nova_current_loop(), which may now be a different
+     * worker than the one lst was created/bound on. */
+    st->loop = lst->loop;
     st->handle.data = st;
 
-    int rc = uv_tcp_init(loop, &st->handle);
-    if (rc != 0) { if (out_err) *out_err = rc; return NULL; }
-    rc = uv_accept((uv_stream_t*)&lst->handle, (uv_stream_t*)&st->handle);
-    if (rc != 0) {
-        if (out_err) *out_err = rc;
-        uv_close((uv_handle_t*)&st->handle, NULL);
-        return NULL;
+    int rc;
+    if (nova_current_loop() == lst->loop) {
+        /* Common case: same thread as the listener — direct call, exactly
+         * like the pre-fix code, no latch/wake involved at all. */
+        _nn2_accept_issue_raw(lst, st, &rc);
+    } else {
+        /* Genuine cross-thread case (work-steal moved this fiber off the
+         * listener's worker between parks): marshal to lst->loop's thread
+         * and park for the result. Bare park (no register_pending): this
+         * window is bounded by how fast the deferred call runs — a scope
+         * cancel during it is picked up by nova_sched_cancel_all_pending's
+         * bare-park fallback (wakes unconditionally; the predicate still
+         * requires actx.done, so a cancel-wake alone just re-parks until the
+         * real completion lands). */
+        Nn2AcceptIssueCtx actx;
+        actx.lst = lst;
+        actx.st  = st;
+        actx.rc  = 0;
+        actx.scope = scope;
+        actx.slot  = slot;
+        nova_aint_init(&actx.done, 0);
+
+        nova_loop_defer_call(lst->loop, _nn2_do_accept_issue_deferred, &actx);
+        nova_sched_park_until(scope, slot, _nn2_accept_issue_ready, &actx);
+        rc = actx.rc;
     }
+
+    if (rc != 0) { if (out_err) *out_err = rc; return NULL; }
     if (out_err) *out_err = 0;
     return st;
 }
@@ -647,6 +768,34 @@ static void _nn2_read_cb(uv_stream_t* stream, ssize_t nread,
     if (sc) nova_sched_wake(sc, sl);
 }
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: issue uv_read_start on the
+ * handle's owning thread. Same-thread path (the overwhelming common case)
+ * is a direct call with rc handled synchronously by the caller, byte-for-
+ * byte like the pre-fix code — NO latch/wake here (see the accept-fix
+ * comment above for why a same-thread reentrant wake is a real bug, not
+ * just theoretical: it raced this exact fiber's own not-yet-parked
+ * park-state and was caught by split_test.nv stress). The deferred
+ * (cross-thread) wrapper below is the only place that publishes read_done +
+ * wakes, and only because in that case the call runs on a different thread
+ * than the parked caller. */
+static void _nn2_read_start_raw(NovaNet2Stream* s, int* out_rc) {
+    *out_rc = uv_read_start((uv_stream_t*)&s->handle, _nn2_read_alloc_cb, _nn2_read_cb);
+}
+
+static void _nn2_do_read_start_deferred(void* argp) {
+    NovaNet2Stream* s = (NovaNet2Stream*)argp;
+    int rc;
+    _nn2_read_start_raw(s, &rc);
+    if (rc != 0) {
+        s->read_n   = 0;
+        s->read_err = rc;
+        nova_aint_store(&s->read_done, 1);
+        NovaFiberQueue* sc = s->read_scope; int sl = s->read_slot;
+        s->read_scope = NULL;
+        if (sc) nova_sched_wake(sc, sl);
+    }
+}
+
 nova_int net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
     int32_t st = nova_aint_load(&s->stage);
@@ -674,12 +823,18 @@ nova_int net_tcp_read(void* sv, uint8_t* buf, nova_int cap) {
     s->read_slot  = slot;
     nova_sched_register_pending(scope, slot, s, _nn2_stream_stop_cb);
 
-    int rc = uv_read_start((uv_stream_t*)&s->handle,
-                           _nn2_read_alloc_cb, _nn2_read_cb);
-    if (rc != 0) {
-        nova_sched_unregister_pending(scope, slot);
-        s->read_scope = NULL;
-        return rc;
+    if (nova_current_loop() == s->loop) {
+        /* Common case: direct call, exactly like the pre-fix code. */
+        int rc;
+        _nn2_read_start_raw(s, &rc);
+        if (rc != 0) {
+            nova_sched_unregister_pending(scope, slot);
+            s->read_scope = NULL;
+            return rc;
+        }
+    } else {
+        /* Genuine cross-thread case: marshal to s->loop's thread. */
+        nova_loop_defer_call(s->loop, _nn2_do_read_start_deferred, s);
     }
 
     nova_sched_park_until(scope, slot, _nn2_stream_read_ready, s);
@@ -702,6 +857,40 @@ static void _nn2_write_cb(uv_write_t* req, int status) {
     if (sc) nova_sched_wake(sc, sl);
 }
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: issue uv_write on the
+ * handle's owning thread. Same-thread path: direct call, rc handled
+ * synchronously by the caller — NO latch/wake (see the read-fix comment for
+ * why this matters: a same-thread reentrant wake here would race THIS
+ * fiber's own not-yet-parked park-state). `ctx` for the deferred path lives
+ * on the ISSUING fiber's own coroutine stack (safe: net_tcp_write does not
+ * return past nova_sched_park_until until write_done is published, so the
+ * deferred job — which runs strictly before that — always sees a live
+ * `ctx`). */
+typedef struct {
+    NovaNet2Stream* s;
+    uv_buf_t        ubuf;
+} Nn2WriteIssueCtx;
+
+static void _nn2_write_issue_raw(Nn2WriteIssueCtx* ctx, int* out_rc) {
+    NovaNet2Stream* s = ctx->s;
+    *out_rc = uv_write(&s->write_req, (uv_stream_t*)&s->handle, &ctx->ubuf, 1,
+                       _nn2_write_cb);
+}
+
+static void _nn2_do_write_issue_deferred(void* argp) {
+    Nn2WriteIssueCtx* ctx = (Nn2WriteIssueCtx*)argp;
+    NovaNet2Stream* s = ctx->s;
+    int rc;
+    _nn2_write_issue_raw(ctx, &rc);
+    if (rc != 0) {
+        s->write_err = rc;
+        nova_aint_store(&s->write_done, 1);
+        NovaFiberQueue* sc = s->write_scope; int sl = s->write_slot;
+        s->write_scope = NULL;
+        if (sc) nova_sched_wake(sc, sl);
+    }
+}
+
 nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
     int32_t st = nova_aint_load(&s->stage);
@@ -720,6 +909,7 @@ nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
      * Publish waiter + latch BEFORE uv_write (lost-wake-free); no stage
      * transition (full-duplex with a concurrent read, see read comment). */
     uv_buf_t ubuf = uv_buf_init((char*)(uintptr_t)buf, (unsigned int)len);
+    Nn2WriteIssueCtx wctx_defer;  /* only populated/used on the cross-thread path */
     s->write_req.data = s;
     s->write_n   = len;
     s->write_err = 0;
@@ -728,12 +918,24 @@ nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
     s->write_slot  = slot;
     nova_sched_register_pending(scope, slot, s, _nn2_stream_stop_cb);
 
-    int rc = uv_write(&s->write_req, (uv_stream_t*)&s->handle, &ubuf, 1,
-                      _nn2_write_cb);
-    if (rc != 0) {
-        nova_sched_unregister_pending(scope, slot);
-        s->write_scope = NULL;
-        return rc;
+    if (nova_current_loop() == s->loop) {
+        /* Common case: direct call, exactly like the pre-fix code. */
+        Nn2WriteIssueCtx wctx = { s, ubuf };
+        int rc;
+        _nn2_write_issue_raw(&wctx, &rc);
+        if (rc != 0) {
+            nova_sched_unregister_pending(scope, slot);
+            s->write_scope = NULL;
+            return rc;
+        }
+    } else {
+        /* Genuine cross-thread case: `wctx` is a local of THIS function call
+         * (not the else-block) — its storage lives until net_tcp_write
+         * returns, which only happens after the unconditional park below, so
+         * the deferred job always sees a live pointer. */
+        wctx_defer.s = s;
+        wctx_defer.ubuf = ubuf;
+        nova_loop_defer_call(s->loop, _nn2_do_write_issue_deferred, &wctx_defer);
     }
 
     nova_sched_park_until(scope, slot, _nn2_stream_write_ready, s);
@@ -746,10 +948,28 @@ nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
     return s->write_n;
 }
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: uv_shutdown is fire-and-
+ * forget here (close_cb NULL, no park) — a cross-thread call would race the
+ * owning loop's own uv_run same as read/write/accept. Unlike those, this
+ * function does not park, so it cannot safely wait for the (possibly
+ * deferred) issue to publish a real return code without introducing a new
+ * blocking point; `s` itself is GC-heap-owned (safe to touch from the
+ * deferred job whenever it runs), so we accept a best-effort `0` on the
+ * cross-thread path — callers of shutdown() do not depend on this rc for
+ * correctness (half-close is already advisory). */
+static void _nn2_do_shutdown_issue(void* argp) {
+    NovaNet2Stream* s = (NovaNet2Stream*)argp;
+    uv_shutdown(&s->shutdown_req, (uv_stream_t*)&s->handle, NULL);
+}
+
 nova_int net_tcp_shutdown(void* sv) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
     s->shutdown_req.data = s;
-    return uv_shutdown(&s->shutdown_req, (uv_stream_t*)&s->handle, NULL);
+    if (nova_current_loop() == s->loop) {
+        return uv_shutdown(&s->shutdown_req, (uv_stream_t*)&s->handle, NULL);
+    }
+    nova_loop_defer_call(s->loop, _nn2_do_shutdown_issue, s);
+    return 0;
 }
 
 uint16_t net_tcp_local_port(void* sv) {
@@ -890,6 +1110,37 @@ static void _nn2_udp_send_cb(uv_udp_send_t* req, int status) {
     if (sc) nova_sched_wake(sc, sl);
 }
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: issue uv_udp_send on the
+ * socket's owning thread. Same-thread path: direct call, rc handled
+ * synchronously — NO latch/wake (see the TCP read-fix comment for why: a
+ * same-thread reentrant wake races THIS fiber's own not-yet-parked
+ * park-state). Deferred wrapper below is cross-thread-only. */
+typedef struct {
+    NovaNet2Udp*            sock;
+    uv_buf_t                ubuf;
+    struct sockaddr_storage ss;
+} Nn2UdpSendIssueCtx;
+
+static void _nn2_udp_send_issue_raw(Nn2UdpSendIssueCtx* ctx, int* out_rc) {
+    NovaNet2Udp* sock = ctx->sock;
+    *out_rc = uv_udp_send(&sock->send_req, &sock->handle, &ctx->ubuf, 1,
+                          (const struct sockaddr*)&ctx->ss, _nn2_udp_send_cb);
+}
+
+static void _nn2_do_udp_send_issue_deferred(void* argp) {
+    Nn2UdpSendIssueCtx* ctx = (Nn2UdpSendIssueCtx*)argp;
+    NovaNet2Udp* sock = ctx->sock;
+    int rc;
+    _nn2_udp_send_issue_raw(ctx, &rc);
+    if (rc != 0) {
+        sock->send_err = rc;
+        nova_aint_store(&sock->send_done, 1);
+        NovaFiberQueue* sc = sock->send_scope; int sl = sock->send_slot;
+        sock->send_scope = NULL;
+        if (sc) nova_sched_wake(sc, sl);
+    }
+}
+
 nova_int net_udp_send_to(void* sockv, const uint8_t* buf, nova_int len,
                              const NovaNetAddr* addr) {
     NovaNet2Udp* sock = (NovaNet2Udp*)sockv;
@@ -913,9 +1164,18 @@ nova_int net_udp_send_to(void* sockv, const uint8_t* buf, nova_int len,
     sock->send_scope = scope;
     sock->send_slot  = slot;
 
-    int rc = uv_udp_send(&sock->send_req, &sock->handle, &ubuf, 1,
-                         (const struct sockaddr*)&ss, _nn2_udp_send_cb);
-    if (rc != 0) { sock->send_scope = NULL; return rc; }
+    Nn2UdpSendIssueCtx sctx;
+    sctx.sock = sock;
+    sctx.ubuf = ubuf;
+    sctx.ss   = ss;
+
+    if (nova_current_loop() == sock->loop) {
+        int rc;
+        _nn2_udp_send_issue_raw(&sctx, &rc);
+        if (rc != 0) { sock->send_scope = NULL; return rc; }
+    } else {
+        nova_loop_defer_call(sock->loop, _nn2_do_udp_send_issue_deferred, &sctx);
+    }
 
     nova_sched_park_until(scope, slot, _nn2_udp_send_ready, sock);
     sock->send_scope = NULL;
@@ -976,6 +1236,26 @@ static void _nn2_udp_close_cb(uv_handle_t* h) {
     }
 }
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: issue uv_udp_recv_start on
+ * the socket's owning thread (mirrors TCP read's split above: same-thread =
+ * direct call, no latch/wake; deferred wrapper is cross-thread-only). */
+static void _nn2_udp_recv_start_raw(NovaNet2Udp* sock, int* out_rc) {
+    *out_rc = uv_udp_recv_start(&sock->handle, _nn2_udp_alloc_cb, _nn2_udp_recv_cb);
+}
+
+static void _nn2_do_udp_recv_start_deferred(void* argp) {
+    NovaNet2Udp* sock = (NovaNet2Udp*)argp;
+    int rc;
+    _nn2_udp_recv_start_raw(sock, &rc);
+    if (rc != 0) {
+        sock->recv_err = rc;
+        nova_aint_store(&sock->recv_done, 1);
+        NovaFiberQueue* sc = sock->recv_scope; int sl = sock->recv_slot;
+        sock->recv_scope = NULL;
+        if (sc) nova_sched_wake(sc, sl);
+    }
+}
+
 nova_int net_udp_recv_from(void* sockv, uint8_t* buf, nova_int cap,
                                NovaNetAddr* sender) {
     NovaNet2Udp* sock = (NovaNet2Udp*)sockv;
@@ -1002,12 +1282,17 @@ nova_int net_udp_recv_from(void* sockv, uint8_t* buf, nova_int cap,
     sock->recv_slot  = slot;
     nova_sched_register_pending(scope, slot, sock, _nn2_udp_stop_cb);
 
-    int rc = uv_udp_recv_start(&sock->handle, _nn2_udp_alloc_cb, _nn2_udp_recv_cb);
-    if (rc != 0) {
-        nova_sched_unregister_pending(scope, slot);
-        sock->recv_scope = NULL;
-        nova_aint_store(&sock->stage, NN2_IDLE);
-        return rc;
+    if (nova_current_loop() == sock->loop) {
+        int rc;
+        _nn2_udp_recv_start_raw(sock, &rc);
+        if (rc != 0) {
+            nova_sched_unregister_pending(scope, slot);
+            sock->recv_scope = NULL;
+            nova_aint_store(&sock->stage, NN2_IDLE);
+            return rc;
+        }
+    } else {
+        nova_loop_defer_call(sock->loop, _nn2_do_udp_recv_start_deferred, sock);
     }
 
     nova_sched_park_until(scope, slot, _nn2_udp_recv_ready, sock);
