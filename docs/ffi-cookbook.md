@@ -1,9 +1,17 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Nova FFI Cookbook
 
-> **Plan 115 D214 (foundational FFI).** Status: 🆕 V1 — covers opaque pointer +
-> tuple-by-value returns + opaque handle pattern. Future plans extend
-> (`*T` family — Plan 118; `nova bindgen` — `[M-115-bindgen-tool]`).
+> **Scope.** Механика границы `.nv` ↔ native: `extern "C"`, opaque/typed
+> указатели, `CStr`, tuple-by-value, C-ABI-проверка, и **как подключить
+> native-артефакты к сборке** (`[ffi]` / `[ffi.staticlib]`). Foundational FFI —
+> Plan 115 D214; typed-pointer family (`*T`, `*mut T`, `Option[*T]`-NPO) —
+> **влит** (Plan 118/138.5/174.x; секции ниже — уже не «preview»).
+>
+> **Как сделать МОДУЛЬ** (layout пакета, `nova.toml`, стабильность, тесты) —
+> общий гайд [authoring-a-module](guide/authoring-a-module.md) (native-backed —
+> его §7). Дизайн-конвенции модуля (эффект-плумбинг, типы, ошибки) —
+> [module-conventions](module-conventions.md). Именование внешних пакетов
+> (`nova-<пакет>`) — [D78-амендмент Plan 192](../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10).
 >
 > ⚠️ **Plan 134 (2026-06-09): `ptr` built-in type removed.** Use `*()` (pointer
 > to unit type = `void*` in C) everywhere `ptr` appeared. Compiler emits
@@ -84,14 +92,20 @@ Nova V1 has these foundational pieces (commit `<plan-115-merge>`):
 - D82 amended (Plan 115): user-level `external fn` permitted in any
   module — no longer restricted to `std.runtime.*`.
 
-What V1 does NOT yet ship:
-- Tuple newtype `type X(ptr)` constructor — followup
-  `[M-115-newtype-constructor]`. V1 uses single-field record form.
-- `nova build --c-shim path/to/file.c` link-step CLI — followup
-  `[M-115-ffi-build-pipeline]`. V1 places shim headers in
-  `compiler-codegen/nova_rt/` and rebuilds Nova compiler.
-- Auto-generated bindings from C headers — followup
-  `[M-115-bindgen-tool]`.
+Shipped since V1 (не «future» — уже влито):
+- **Tuple newtype `type X(*())` constructor** ✅ (`[M-115-newtype-constructor]`)
+  — canonical-форма; single-field-record больше не нужна.
+- **User-shim build pipeline** ✅ — задаётся не CLI-флагом, а декларативно в
+  `nova.toml`: `[ffi]` (готовые `.c`-шимы + системные `libs`) и `[ffi.staticlib]`
+  (собираемый staticlib, Plan 192). При `import` модуля артефакты
+  компилируются/линкуются автоматически — перекомпилировать Nova-компилятор не
+  надо. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) ниже.
+- **Typed-pointer family** ✅ (`*T`/`*mut T`/`Option[*T]`-NPO/`CStr`) — Plan
+  118/138.5; см. секции ниже.
+
+Всё ещё followup:
+- Auto-generated bindings from C headers — `[M-115-bindgen-tool]`
+  (`nova bindgen header.h`, отдельный tooling-план).
 
 ## Example 1 — libsqlite3 binding
 
@@ -345,15 +359,16 @@ guard ensures single definition).
   Nova spawns fibers that touch the handle, ensure handle is either
   thread-safe or pinned to one fiber.
 
-## Plan 118 preview — typed pointers + unsafe model
+## Typed pointers + unsafe model (Plan 118 — влито)
 
-> **Status:** Plan 118 scaffolding landed (Session 2, 2026-06-01).
-> Full implementation through Ф.9 — in progress. Reference doc:
-> [`docs/typed-pointers.md`](typed-pointers.md). Plan: [`docs/plans/118-typed-pointers-and-unsafe.md`](plans/118-typed-pointers-and-unsafe.md).
+> **Status:** влито (Plan 118 → 138.5 FINAL D216; unsafe fn keyword — 118.1.7;
+> C-ABI checker — 174.6). Reference doc: [`docs/typed-pointers.md`](typed-pointers.md).
+> Plan: [`docs/plans/118-typed-pointers-and-unsafe.md`](plans/118-typed-pointers-and-unsafe.md).
+> Ниже — эволюция FFI-паттернов от opaque `*()` к typed `*T`; оба варианта
+> компилируются сегодня (opaque — legacy-совместимый, typed — предпочтительный).
 
-After Plan 118 lands, FFI patterns evolve from opaque `*()` к typed
-pointer family `*T` для type-safe FFI с buffers / structs / nullable
-returns:
+FFI-паттерны от opaque `*()` перешли к typed pointer family `*T` для
+type-safe FFI с buffers / structs / nullable returns:
 
 ```nova
 // Plan 115 V1 / Plan 134 (current — works today):
@@ -648,12 +663,78 @@ rule (D294): the pointer is valid only while the `str` is live.
 
 ---
 
+## Build pipeline — `[ffi]` и `[ffi.staticlib]` манифест
+
+Всё выше — как *написать* границу `.nv` ↔ native. Этот раздел — как *подключить*
+native-артефакты к сборке, чтобы `import` модуля тянул их **автоматически**, без
+правок компилятора. Декларация — в `nova.toml` пакета. Полное «как сделать
+модуль» — [authoring-a-module §7](guide/authoring-a-module.md#7-native-backed-модуль-частный-случай).
+
+### `[ffi]` — готовые `.c`-шимы и системные `.lib` (Plan 115 D214)
+
+Для тонкого C-шима и линковки уже-собранной системной библиотеки:
+
+```toml
+[ffi]
+c_shims      = ["native/sqlite3_shim.c"]            # компилируются и линкуются
+include_dirs = ["native/", "third_party/sqlite3/"]  # → clang -I
+libs         = ["sqlite3"]                          # → clang -lsqlite3 / sqlite3.lib
+```
+
+Пути — относительно `nova.toml`; резолвятся в абсолютные перед вызовом clang.
+`.h`-only inline-шимы включаются force-include (`-include`), `.c` — как
+compilation unit. Секция `[ffi]` может быть пустой (`FFI-aware`-маркер).
+
+### staticlib-манифест (Plan 192)
+
+Когда native-артефакт надо **собрать** (Rust-staticlib, `make`-цель), а не взять
+готовым — секция `[ffi.staticlib]`. Она обобщает бывший хардкод линковки в
+компиляторе (`detect_tls`/`tls-cache`/`-lbcrypt -lntdll`) на единый
+манифест-механизм (тот же класс, что условная линковка brotli/D337):
+
+```toml
+[ffi.staticlib]
+kind         = "rust-staticlib"          # способ сборки (пока поддержан он)
+path         = "native/tls_shim"         # каталог крейта (относительно nova.toml)
+lib          = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
+build        = "cargo build --release"   # команда сборки (cwd = path)
+cache        = "target/native-cache/tls" # опц. кэш собранного артефакта
+link_windows = ["bcrypt", "ntdll"]       # доп. системные либы по платформам
+link_unix    = []                        # Linux/macOS (пусто → через libuv-syslibs)
+```
+
+**Резолв** (`resolve_ffi_staticlib`) — лениво, по факту использования модуля:
+
+1. `cache/<lib>` — если файл **свежий** против исходников крейта;
+2. `path/target/release/<lib>` — если свежий;
+3. `build`-команда (cwd = `path`) → копирование в `cache` → линковка.
+
+**mtime-инвалидация:** артефакт считается устаревшим, если новее любой из его
+исходников (`Cargo.toml`/`Cargo.lock`/`src/**/*.rs`) — правка шима триггерит
+пересборку (закрывает класс «стейл-кэш линкует старый .lib»). Имя файла —
+платформенное: `<lib>.lib` (Windows) / `lib<lib>.a` (Unix). `link`/`link_windows`/
+`link_unix` дают платформо-корректный набор системных зависимостей (Windows:
+`-l<name>`/`<name>.lib`; Unix: `-l<name>`).
+
+**Условность линковки:** staticlib добавляется в линк-строку только для CU,
+который реально использует native-модуль (по факту вызова символов, механизм
+D337) — программа, не трогающая модуль, ничего лишнего не линкует.
+
+**Эталон.** `std/tls` в монорепо декларирует `tls_shim` именно так
+(`std/nova.toml`); standalone-образец для внешних пакетов — репозиторий
+[`nova-tls`](guide/authoring-a-module.md#8-именование-и-публикация-внешний-пакет)
+(пакет `tls` поверх `native/tls_shim/`). При отсутствии `[ffi.staticlib]`
+компилятор откатывается на legacy-детект (тот же артефакт/кэш) — снятие с
+хардкода обратимо.
+
+---
+
 ## Followups
 
 | Marker | What | Status |
 |---|---|---|
 | `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access | ✅ CLOSED 2026-06-01 (canonical syntax shipped) |
-| `[M-115-ffi-build-pipeline]` | `nova build --c-shim path/to/file.c` user-shim link CLI | 🟡 deferred (V1 shims live в `nova_rt/`) |
+| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — реализован декларативно через `nova.toml`: `[ffi]` (готовые шимы/libs, Plan 115) + `[ffi.staticlib]` (собираемый staticlib, Plan 192). См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) |
 | `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings | 🟡 deferred (major tooling, separate plan) |
 | `[M-115-d126-deprecation]` | `external type X` D126 migration audit | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` теперь жёсткая ошибка E_EXTERNAL_TYPE_RETRACTED (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract выполнен) |
 | `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |
