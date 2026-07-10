@@ -31,6 +31,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pemfile = "2"
 rustls-pki-types = "1"
 webpki-roots = "0.26"
+# SHA-256 для SPKI-pinning (Ф.4.3). Уже в дереве транзитивно (rustls feature ring)
+# → новых крейтов в lock не добавляет; прямая зависимость — чтобы звать digest.
+ring = "0.17"
 
 [profile.release]
 # panic через FFI-границу = UB → abort. Размер/скорость: opt-level по умолчанию (3).

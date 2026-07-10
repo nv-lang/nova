@@ -49,7 +49,7 @@ pub const TLS_ERR_ALPN: nova_int = -8;
 /// Протокольное нарушение peer'а (в т.ч. truncation — обрыв без close_notify).
 pub const TLS_ERR_PEER_MISBEHAVED: nova_int = -9;
 pub const TLS_ERR_INVALID_PEM: nova_int = -10;
-/// Фича ещё не реализована шимом (Pinned до Ф.4).
+/// Фича ещё не реализована шимом (напр. OCSP/CRL — followups плана).
 pub const TLS_ERR_UNSUPPORTED: nova_int = -11;
 pub const TLS_ERR_INVALID_SNI: nova_int = -12;
 
@@ -228,6 +228,126 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
     }
 }
 
+// ─── Pinned (SPKI SHA-256 pinning; Ф.4.3, D-блок B) ──────────────────────────
+
+/// Прочитать один DER TLV из `data`: возвращает (tag, диапазон-содержимого,
+/// полная-длина-TLV). Поддержка short- и long-form длины (DER). None — если
+/// данных не хватает / длина некорректна.
+fn der_tlv(data: &[u8]) -> Option<(u8, std::ops::Range<usize>, usize)> {
+    if data.len() < 2 {
+        return None;
+    }
+    let tag = data[0];
+    let b1 = data[1] as usize;
+    let (len, hdr) = if b1 < 0x80 {
+        (b1, 2)
+    } else {
+        let nbytes = b1 & 0x7f;
+        if nbytes == 0 || nbytes > 4 || data.len() < 2 + nbytes {
+            return None;
+        }
+        let mut l = 0usize;
+        for i in 0..nbytes {
+            l = (l << 8) | (data[2 + i] as usize);
+        }
+        (l, 2 + nbytes)
+    };
+    let end = hdr.checked_add(len)?;
+    if end > data.len() {
+        return None;
+    }
+    Some((tag, hdr..end, end))
+}
+
+/// Извлечь DER-кодированный SubjectPublicKeyInfo (весь SEQUENCE) из сертификата.
+/// Прогулка по tbsCertificate: [version]? serial signature issuer validity
+/// subject subjectPublicKeyInfo. SPKI — 7-й элемент (или 6-й без version).
+fn spki_der(cert: &[u8]) -> Option<Vec<u8>> {
+    let (t, cert_body, _) = der_tlv(cert)?;
+    if t != 0x30 {
+        return None;
+    } // Certificate SEQUENCE
+    let cert_body_bytes = &cert[cert_body];
+    let (t, tbs, _) = der_tlv(cert_body_bytes)?;
+    if t != 0x30 {
+        return None;
+    } // tbsCertificate SEQUENCE
+    let tbs_bytes = &cert_body_bytes[tbs];
+    let mut off = 0usize;
+    // optional version [0] EXPLICIT (context-constructed tag 0xA0)
+    let (t0, _, c0) = der_tlv(&tbs_bytes[off..])?;
+    if t0 == 0xA0 {
+        off += c0;
+    }
+    // serialNumber, signature, issuer, validity, subject — пропустить 5 полей
+    for _ in 0..5 {
+        let (_, _, c) = der_tlv(&tbs_bytes[off..])?;
+        off += c;
+    }
+    // subjectPublicKeyInfo SEQUENCE — вернуть ВЕСЬ TLV (tag+len+value)
+    let (t, _, c) = der_tlv(&tbs_bytes[off..])?;
+    if t != 0x30 {
+        return None;
+    }
+    Some(tbs_bytes[off..off + c].to_vec())
+}
+
+/// Верификатор cert-pinning: принимает серт, если SHA-256 его SPKI совпадает с
+/// одним из пинов; цепочка игнорируется, hostname-проверка опциональна
+/// (pinning заменяет её — D-блок B). Подпись рукопожатия ВСЁ РАВНО проверяется
+/// (доказывает владение пиннутым ключом).
+#[derive(Debug)]
+struct PinnedVerify {
+    pins: Vec<[u8; 32]>,
+    provider: Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinnedVerify {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let spki = spki_der(end_entity.as_ref()).ok_or_else(|| {
+            rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding)
+        })?;
+        let digest = ring::digest::digest(&ring::digest::SHA256, &spki);
+        let got: &[u8] = digest.as_ref();
+        if self.pins.iter().any(|p| p.as_slice() == got) {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::ApplicationVerificationFailure,
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider.signature_verification_algorithms.supported_schemes()
+    }
+}
+
 // ─── Конфиг-билдеры ──────────────────────────────────────────────────────────
 
 fn new_builder(is_server: bool) -> *mut c_void {
@@ -271,8 +391,8 @@ pub unsafe extern "C" fn tls_cfg_verify_pem(c: *mut c_void, pem: *const u8, len:
 }
 
 /// VerificationMode.Pinned — count хешей по 32 байта (SPKI SHA-256).
-/// Скелет Ф.0: данные принимаются, верификатор — Ф.4 (tls_client_new вернёт
-/// TLS_ERR_UNSUPPORTED). План 116 Ф.4.3.
+/// Верификатор `PinnedVerify` (Ф.4.3): сверяет SHA-256 SPKI leaf-серта с пинами,
+/// цепочку игнорирует, hostname-проверку заменяет пиннингом (D-блок B).
 #[no_mangle]
 pub unsafe extern "C" fn tls_cfg_verify_pinned(c: *mut c_void, hashes: *const u8, count: nova_int) -> nova_int {
     let (Some(b), Some(s)) = (cfg(c), slice_from(hashes, count.saturating_mul(32))) else { return TLS_ERR_BADARG };
@@ -371,9 +491,14 @@ fn build_client_config(b: &CfgBuilder) -> Result<ClientConfig, (nova_int, String
             let roots = roots_from_pem(pem).map_err(|m| (TLS_ERR_INVALID_PEM, m))?;
             versions.with_root_certificates(roots)
         }
-        Verify::Pinned(_) => {
-            // Ф.4: кастомный ServerCertVerifier (SPKI SHA-256). План 116 Ф.4.3.
-            return Err((TLS_ERR_UNSUPPORTED, "SPKI pinning not implemented until Plan 116 Ф.4".into()));
+        Verify::Pinned(pins) => {
+            if pins.is_empty() {
+                return Err((TLS_ERR_BADARG, "Pinned requires at least one pin".into()));
+            }
+            versions.dangerous().with_custom_certificate_verifier(Arc::new(PinnedVerify {
+                pins: pins.clone(),
+                provider: prov,
+            }))
         }
         Verify::Insecure => versions
             .dangerous()
@@ -781,16 +906,100 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pinned_is_unsupported_until_f4() {
-        let c = tls_client_cfg_new();
+    /// Прогнать handshake между двумя сессиями (in-memory). Возвращает Ok(())
+    /// если ОБА завершили рукопожатие; Err(code) на первой ошибке process
+    /// (например, отказ верификатора → alert). До 50 шагов.
+    unsafe fn drive_handshake(c: *mut c_void, s: *mut c_void) -> Result<(), nova_int> {
+        let mut buf = vec![0u8; 32 * 1024];
+        let mut steps = 0;
+        while (tls_is_handshaking(c) != 0 || tls_is_handshaking(s) != 0) && steps < 50 {
+            steps += 1;
+            let n = tls_write_tls(c, buf.as_mut_ptr(), buf.len() as nova_int);
+            if n > 0 {
+                let mut off = 0;
+                while off < n { let f = tls_read_tls(s, buf.as_ptr().add(off as usize), n - off); if f <= 0 { break } off += f; }
+                let rc = tls_process(s);
+                if rc < 0 { return Err(rc); }
+            }
+            let m = tls_write_tls(s, buf.as_mut_ptr(), buf.len() as nova_int);
+            if m > 0 {
+                let mut off = 0;
+                while off < m { let f = tls_read_tls(c, buf.as_ptr().add(off as usize), m - off); if f <= 0 { break } off += f; }
+                let rc = tls_process(c);
+                if rc < 0 { return Err(rc); }
+            }
+        }
+        if tls_is_handshaking(c) == 0 && tls_is_handshaking(s) == 0 { Ok(()) } else { Err(TLS_ERR_HANDSHAKE) }
+    }
+
+    // Вычислить SPKI SHA-256 пин из leaf-серта PEM (тем же кодом, что верификатор).
+    fn spki_pin(cert_pem: &[u8]) -> [u8; 32] {
+        let der = rustls_pemfile::certs(&mut &cert_pem[..]).next().unwrap().unwrap();
+        let spki = spki_der(der.as_ref()).expect("parse SPKI");
+        let d = ring::digest::digest(&ring::digest::SHA256, &spki);
+        d.as_ref().try_into().unwrap()
+    }
+
+    fn mk_server() -> *mut c_void {
         unsafe {
-            let pins = [0u8; 32];
-            assert_eq!(tls_cfg_verify_pinned(c, pins.as_ptr(), 1), TLS_ERR_OK);
-            let mut err: nova_int = 0;
-            let h = tls_client_new(c, b"example.com".as_ptr(), 11, &mut err);
-            assert!(h.is_null());
-            assert_eq!(err, TLS_ERR_UNSUPPORTED);
+            let sc = tls_server_cfg_new();
+            assert_eq!(tls_cfg_cert_key_pem(sc, CERT_PEM.as_ptr(), CERT_PEM.len() as nova_int,
+                                            KEY_PEM.as_ptr(), KEY_PEM.len() as nova_int), TLS_ERR_OK);
+            let mut e = 0;
+            let s = tls_server_new(sc, &mut e);
+            assert!(!s.is_null(), "server (err={e})");
+            s
+        }
+    }
+
+    #[test]
+    fn pinned_correct_pin_completes_handshake() {
+        unsafe {
+            let s = mk_server();
+            let pin = spki_pin(CERT_PEM);
+            let cc = tls_client_cfg_new();
+            assert_eq!(tls_cfg_verify_pinned(cc, pin.as_ptr(), 1), TLS_ERR_OK);
+            let mut e = 0;
+            let c = tls_client_new(cc, b"localhost".as_ptr(), 9, &mut e);
+            assert!(!c.is_null(), "client (err={e})");
+            assert!(drive_handshake(c, s).is_ok(), "pinned handshake with correct pin must complete");
+            tls_free(c);
+            tls_free(s);
+        }
+    }
+
+    #[test]
+    fn pinned_wrong_pin_rejects() {
+        unsafe {
+            let s = mk_server();
+            let bad = [0u8; 32]; // не совпадает с реальным SPKI
+            let cc = tls_client_cfg_new();
+            assert_eq!(tls_cfg_verify_pinned(cc, bad.as_ptr(), 1), TLS_ERR_OK);
+            let mut e = 0;
+            let c = tls_client_new(cc, b"localhost".as_ptr(), 9, &mut e);
+            assert!(!c.is_null(), "client (err={e})");
+            // клиент отвергает серт → handshake НЕ завершается (alert/ошибка).
+            assert!(drive_handshake(c, s).is_err(), "wrong pin must reject the handshake");
+            tls_free(c);
+            tls_free(s);
+        }
+    }
+
+    #[test]
+    fn pinned_wrong_sni_still_accepts() {
+        // Pinning заменяет hostname-проверку (D-блок B): неверный SNI ок,
+        // если SPKI совпадает.
+        unsafe {
+            let s = mk_server();
+            let pin = spki_pin(CERT_PEM);
+            let cc = tls_client_cfg_new();
+            assert_eq!(tls_cfg_verify_pinned(cc, pin.as_ptr(), 1), TLS_ERR_OK);
+            let mut e = 0;
+            let c = tls_client_new(cc, b"wrong.example".as_ptr(), 13, &mut e);
+            assert!(!c.is_null(), "client (err={e})");
+            assert!(drive_handshake(c, s).is_ok(), "pinning ignores hostname mismatch");
+            tls_free(c);
+            tls_free(s);
         }
     }
 
