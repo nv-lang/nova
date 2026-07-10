@@ -1115,7 +1115,60 @@ failure** → должны возвращать `Result[T, <Timeout/RaceError>]`
 - **[M-178-autodecompress-needs-179]** (CODEGEN-UNBLOCKED 2026-07-06 via D381) — НЕ gated на Plan 179 (decode `gzip_decode`/`zlib_decode`/`inflate` ЕСТЬ). Был блокер: codegen манглил nominal-типы по КОРОТКОМУ имени → `compress.ErrorKind` и `http.ErrorKind` = ОДИН `struct Nova_ErrorKind`/`NOVA_TAG_ErrorKind_*` → `redefinition` при co-presence. **Снят D381** (collision-aware module-qualified mangling): http+compress `ErrorKind` co-present в одном CU теперь компилятся+линкуются (доказано conformance PASS 1/0 с d358+d333). Auto-decompress-в-client логика + `ErrSource.Compress(CompressError)` больше НЕ гейтнуты codegen'ом — осталось приземлить сам client-код (Ф.2). См. `[M-sync-crossmodule-samename-type-collision]` (CLOSED).
 - **[M-178-typed-json-needs-180]** (CLOSED 2026-07-06) — типизированный decode приземлён как **`json_decode_body[T Deserialize](body []u8) -> Result[T, HttpError]`** (`std.http.serdejson`, поверх serde `T.deserialize`, DeError→`HttpError{Protocol}`+source). 4 pos/neg-теста (`nova_tests/http_typed/`, record-DTO round-trip + null-Option + malformed + missing-field). Два вынужденных design-решения (оба — codegen-обходы, не упрощения): (a) ~~FREE-fn turbofish, НЕ `Response.@json_as[T]()`~~ — **СНЯТО 2026-07-06:** `[M-codegen-method-return-turbofish]` CLOSED, метод-форма `Response consume @json_as[T Deserialize]()` теперь приземлена (free-fn остаётся substrate); (b) отдельный модуль `std.http.serdejson`, НЕ client.nv — serde в большом multi-file `nova_tests.http` CU роняет `NovaRes_..._SerError` forward-decl (protocol-vtable ordering) [M-codegen-serde-vtable-forwarddecl]. dynamic `@json()->JsonValue` — как было.
 - ~~**[M-178-https-needs-116]**~~ **CLOSED 2026-07-10 (Plan 116 Ф.5.3):** `real_http()` ветка `secure=true` → `https_send_over_net` (TLS-слой поверх `TcpStream`: SNI=host, SystemRoots webpki-roots, ALPN http/1.1) вместо `Err(Tls)`. Код верифицирован в compress-free CU (mock non-TLS peer → `HttpError{Tls}` детерминированно); TLS-слой — std/tls loopback-тесты. **NB:** полный http-CU прогон (`client_test`/`real_test`) блокирован PRE-EXISTING дефектом `[M-compress-checksum-structvariant-ctor-xmodule]` (см. ниже) — не Plan-116-регрессия. **Осталось (followups):** `ErrSource.Tls(TlsError)` типизированный source `[M-178-errsource-tls]`; кастомные корни/self-signed через HttpClient `[M-116-https-client-custom-roots]` (SystemRoots хардкожен в real_http; нужен client-TLS-config хук для self-signed loopback HTTPS-интеграции).
-- **[M-compress-checksum-structvariant-ctor-xmodule]** (PRE-EXISTING на main, найдено Plan 116 Ф.5.3 2026-07-10) — `std/encoding/compress/error.nv:121` `{ kind: Checksum { kind, expected, got }, … }` (**struct-payload** variant-конструктор `ErrorKind.Checksum`) → `[E_UNKNOWN_TYPE] unknown type Checksum` в БОЛЬШОМ multi-module CU (http: `client_test`/`real_test`), где co-present несколько `ErrorKind` (io/http/net/compress). Компресс-модуль СОЛО компилится (checksum_test PASS); ломается только в http-CU. Квалификация `ErrorKind.Checksum{…}` НЕ помогает (тот же span). Класс: cross-module **struct-payload** variant-ctor emission — f2e24febd чинил tuple/unit-варианты, struct-payload остался (вероятно проявлено D406-рефактором 2e3e68ec5). Блокирует ВЕСЬ http-CU (не только https). Отдельно: `gzip.nv` соло → CC-FAIL `incomplete type NovaValue_Deflater` (другой codegen-гэп того же модуля). Эскалировано — codegen-зона, вне Plan 116.
+- **[M-compress-checksum-structvariant-ctor-xmodule]** ✅ **CLOSED 2026-07-10** (найдено Plan 116 Ф.5.3, зафиксирован Plan 173 P1-волной) — `std/encoding/compress/error.nv:121` `{ kind: Checksum { kind, expected, got }, … }` (**struct-payload** variant-конструктор `ErrorKind.Checksum`) → `[E_UNKNOWN_TYPE] unknown type Checksum` в БОЛЬШОМ multi-module CU (http: `client_test`/`real_test`), где co-present несколько `ErrorKind` (io/http/net/compress). Компресс-модуль СОЛО компилится (checksum_test PASS); ломался только в http-CU.
+  **Root cause (НЕ codegen, ЧЕКЕР):** E_UNKNOWN_TYPE-гейт для RecordLit (`types/mod.rs`
+  `TypeCheckCtx::walk_expr`, Plan 173 Ф.5 zero-tolerance) искал имя bare-варианта
+  (`Checksum`) через `self.types.values().any(|td| matches!(&td.kind, Sum(vs) if
+  vs.iter().any(|v| v.name == last)))` — но `self.types: HashMap<String, &TypeDecl>`
+  keyed ПО ИМЕНИ СУММЫ (`ErrorKind`); при co-presence НЕСКОЛЬКИХ одноимённых сумм из
+  РАЗНЫХ модулей (`ErrorKind` объявлен в http/io/compress) `types.insert` перезаписывает
+  запись — выживает только ПОСЛЕДНИЙ вставленный, варианты остальных (включая
+  `Checksum`) пропадают из `types.values()`. Класс: собственная коллизия чекера,
+  НЕЗАВИСИМАЯ от codegen-мангла D381 (тот уже collision-aware на стороне emit_c.rs;
+  этот чекерный гейт — новый, добавлен ПОСЛЕ D381, коллизию не учитывал). f2e24febd
+  чинил ДРУГОЙ баг (codegen call-routing tuple/unit-вариантов) — не тот же root cause,
+  просто соседний класс cross-module sum collision.
+  **Фикс:** `TypeCheckCtx` получил параллельное поле `sum_variant_names: HashSet<String>`,
+  заполняемое ЛОССЛЕСС (прямой `Vec`-обход `module.items`/builtin-модулей — тот же loop,
+  что строит `types`, но НЕ подвержен overwrite, т.к. HashSet вставка не теряет записи
+  других одноимённых сумм). E_UNKNOWN_TYPE-гейт теперь проверяет
+  `self.sum_variant_names.contains(last)` вместо `self.types.values().any(...)`.
+  **Регресс:** `nova_tests/xmodule_struct_variant_ctor_test.nv` (+ 2 co-equal модуля
+  `xmodule_struct_variant_ctor_a`/`_b`, каждый объявляет ОДНОИМЁННУЮ сумму `Kind` —
+  один со struct-payload вариантом, другой без — зеркало реальной http-коллизии,
+  изолировано от std). **Гейты:** `std/http/client/client_test` PASS (Checksum-ошибка
+  ушла); `std/encoding/compress/*` (d333/d334/d335/d336) delta-0 PASS соло; conformance
+  91/0; `nova check std` УЛУЧШЕН (baseline 2be6d7064: PASS 118/FAIL 32 →
+  ветка: PASS 125/FAIL 25 — остаток FAIL это ДРУГОЙ pre-existing класс,
+  `std/tls/cert_modes_test.nv` undefined-identifier хелперов + intentional neg-тест,
+  не наш маркер). `real_test` отдельно падает на ДРУГОМ pre-existing дефекте
+  (`std/tls/handshake_test.nv`: undefined identifier `panic` в multi-file-module CU) —
+  вне scope этого маркера. Отдельно (не в scope): `gzip.nv` соло → CC-FAIL
+  `incomplete type NovaValue_Deflater` (другой codegen-гэп того же модуля, честно
+  зафиксирован как отдельный gap при первой эскалации, не тронут).
+
+- **[M-tls-handshake-test-panic-undefined-multifile]** (обнаружено 2026-07-10 при
+  гейтах Plan 173 P1-волны, честно зафиксировано — НЕ тронуто, вне scope) —
+  `std/http/transport/real_test.nv` (транзитивно тянет `std.tls` для интеграционного
+  TLS-сценария) CODEGEN-FAIL: `std/tls/handshake_test.nv:23/30/37` — `undefined
+  identifier 'panic'`. `handshake_test.nv` компилится СОЛО чисто (PASS) — ломается
+  ТОЛЬКО когда становится частью БОЛЬШОГО multi-file-module CU через `real_test`.
+  Похоже на класс `[M-codegen-multifile-module-impl-synth]`/`[M-178-conformance-d357-
+  d360-forwarddecl-bug]` (multi-file-module CU теряет что-то видимое соло) — не
+  расследовано вглубь (root cause не найден, вне assignment этой волны). Гейт этой
+  волны затронут не был: `[M-compress-checksum-structvariant-ctor-xmodule]` (выше)
+  подтверждён закрытым независимо через `client_test` (PASS) — `real_test` падает
+  на ЭТОМ, ДРУГОМ дефекте, не на Checksum.
+
+- **[M-tls-cert-modes-test-undefined-helpers]** (обнаружено 2026-07-10 при `nova check
+  std` baseline-сравнении Plan 173 P1-волны, честно зафиксировано — НЕ тронуто, вне
+  scope) — `std/tls/cert_modes_test.nv`: `undefined identifier` для `fixture_cert`/
+  `fixture_key`/`must_tcp`/`must_listener`/`must_tls` (test-хелперы, видимо ожидаемые
+  из peer-файла того же test-модуля, не резолвятся). Присутствует И на baseline
+  `2be6d7064` (PASS 118/FAIL 32), И на этой ветке (PASS 125/FAIL 25) — подтверждённо
+  PRE-EXISTING, не регрессия P1-волны (ветка строго лучше baseline: -7 FAIL, весь
+  выигрыш — снятый `[M-compress-checksum-structvariant-ctor-xmodule]` эффект на
+  других std-файлах через `nova check`). Не расследовано вглубь.
 - **[M-116-https-client-custom-roots]** (Plan 116 Ф.5.3) — HttpClient не даёт задать TLS-корни/self-signed; `real_http`/`https_send_over_net` хардкодит `ClientConfig.new(host)`=SystemRoots. `Http`-эффект `send(host,port,secure,request)` не несёт TLS-config. Нужен: client-builder TLS-хук (roots/InsecureSkipVerify/client-cert) → проброс через `Http`-эффект. Разблокирует self-signed loopback HTTPS-интеграционный тест через публичный HttpClient. За CORE Ф.5.3.
 - **[M-178-client-policy-surface]** — Proxy/CONNECT-tunnel, SSRF-guard, cookie-jar, idempotent-retry+pool-eviction, 1xx-interim loop, NO_PROXY-матрица, TE:trailers, Expect:100 — за CORE.
 
@@ -2755,13 +2808,21 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   67/0; std/identifiers, std/testing/handlers, std/concurrency, std/crypto,
   std/time (кроме задокументированного довливного timer_metrics_test) зелёные.
 
-- **[M-consume-rebind-nested-block-shadow]** (2026-07-08, **P1 — тихий use-after-consume**,
-  Plan: 172.13 батч 3) — тупик батча 2: `consume x = StringBuilder.new()` РЕ-БИНД внутри
-  вложенного if/else эмитится как НОВОЕ C-объявление, тенющее внешнее только на блок —
-  после выхода итерация цикла видит старую (consumed) переменную. Чекер молчит; семантика
-  D347 ожидает поведение mut-переприсваивания. Минимальное репро изолировано батчем 2
-  (Vec-of-Vec + StringBuilder consume-reset без quote-логики — см. отчёт). Блокирует csv
-  (его Vec-LHS корень закрыт, 6bf62be48).
+- **[M-consume-rebind-nested-block-shadow]** ✅ **CLOSED 2026-07-08** (найден батчем 2,
+  **зафиксирован ФИКСОМ в ТОМ ЖЕ дне** коммитом `3f0198c8fd`, Plan 172.13 батч 3) —
+  `consume x = StringBuilder.new()` РЕ-БИНД внутри вложенного if/else эмитился как НОВОЕ
+  C-объявление, тенющее внешнее только на блок — после выхода итерация цикла видела
+  старую (consumed) переменную. Чекер молчал; семантика D347 ожидает поведение
+  mut-переприсваивания. Фикс: `alpha_rename` различает same-scope rebind (existing path)
+  vs rebind, чья прежняя привязка живёт в ОХВАТЫВАЮЩЕМ scope (новое: имя не трогается,
+  span стейтмента пишется в `Module::consume_reuse_spans`); `emit_c.rs` при виде спана
+  эмитит plain reassignment вместо fresh block-scoped C-декларации (тот же `is_hoisted`
+  канал). Регресс: `spec_tests/conformance/d347_same_scope_rebinding.nv` (2 новых теста,
+  включая loop-shaped repro один-в-один как в этом маркере). **Ретроактивная
+  верификация 2026-07-10 (Plan 173 P1-волна):** маркер оставался помечен OPEN в этом
+  файле по документационному долгу — код-фикс уже был в истории HEAD задолго до волны.
+  Перепроверено на слиянии: `d347_same_scope_rebinding` PASS (1/0), `std/encoding/csv_test`
+  PASS (1/0). Блокировавший csv Vec-LHS корень закрыт отдельно (6bf62be48).
 
 - **[M-ffi-handle-newtype]** (2026-07-09, P3, Wave: после лимитов) — решение владельца:
   FFI-хендлы не гуляют по модулю голым int/указателем — заворачивать в типизированную

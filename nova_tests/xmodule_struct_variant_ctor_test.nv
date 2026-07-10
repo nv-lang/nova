@@ -1,0 +1,29 @@
+// [M-compress-checksum-structvariant-ctor-xmodule] (P1, Plan 173 P1-волна) —
+// регресс-фикстура: cross-module struct-payload variant-конструктор НЕ должен
+// падать в E_UNKNOWN_TYPE, когда в ОДНОМ compile-unit co-present ДВЕ одноимённые
+// (`Kind`) sum-декларации из разных модулей (`xmodule_struct_variant_ctor_a` и
+// `xmodule_struct_variant_ctor_b` — зеркало реальной коллизии `ErrorKind` между
+// std/io и std/encoding/compress в std/http client_test).
+//
+// Импорт ОБОИХ `make_info`/`make_bad` пуллит ОБЕ Kind-декларации в один
+// merged module.items → воспроизводит коллизию `self.types` HashMap (last-wins).
+module nova_tests.xmodule_struct_variant_ctor_test
+
+import nova_tests.xmodule_struct_variant_ctor_a.{make_info}
+import nova_tests.xmodule_struct_variant_ctor_b.{make_bad}
+
+test "[M-compress-checksum-structvariant-ctor-xmodule]: struct-payload variant-ctor через границу модуля с co-present одноимённой суммой" {
+    ro k = make_info(42, "boom")
+    match k {
+        Info { code, msg } => assert(code == 42 && msg == "boom")
+        Other(_) => assert(false)
+    }
+}
+
+test "[M-compress-checksum-structvariant-ctor-xmodule]: co-present одноимённая сумма (mod_b Kind) остаётся рабочей" {
+    ro k = make_bad("nope")
+    match k {
+        Bad(m) => assert(m == "nope")
+        Empty => assert(false)
+    }
+}
