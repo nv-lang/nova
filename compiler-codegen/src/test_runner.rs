@@ -2563,7 +2563,12 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let stderr = bytes_to_string(&run_captured.stderr);
     let run_status = match run_captured.status {
         Some(s) => s,
-        None => return Outcome::Timeout { elapsed: start.elapsed() },
+        None => {
+            if std::env::var("NOVA_DEBUG_TIMEOUT_DUMP").as_deref() == Ok("1") {
+                eprintln!("=== TIMEOUT STDOUT ===\n{}\n=== TIMEOUT STDERR ===\n{}\n=== END ===", stdout, stderr);
+            }
+            return Outcome::Timeout { elapsed: start.elapsed() };
+        }
     };
     let exit = run_status.code().unwrap_or(-1);
 
