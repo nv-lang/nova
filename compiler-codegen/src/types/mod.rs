@@ -17889,7 +17889,12 @@ impl<'a> CapabilityCtx<'a> {
         let mut free: HashSet<String> = HashSet::new();
         capture_scan_block(body, &mut shadow, &mut free);
         let share_q = CapShareQuery(&self.type_decls);
-        let mut flagged: Vec<String> = Vec::new();
+        // (name, why) — `why` is the per-field refusal explanation
+        // ([M-173.3-share-leakage-explain]): the FIRST poison path returned
+        // by `share_check::mut_alias_failure`, rendered as a
+        // `Type.field.subfield` chain + reason, so that a non-share `mut`
+        // field deep inside a type no longer strips share-ness silently.
+        let mut flagged: Vec<(String, String)> = Vec::new();
         for name in free {
             let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
             if let Some(b) = binding {
@@ -17903,33 +17908,56 @@ impl<'a> CapabilityCtx<'a> {
                 // aggregate whose mutation paths bottom out in one). A bare
                 // `mut int`/`mut []T` accumulator — THE motivating race —
                 // is NOT (see share_check module doc).
-                let safe = match &b.ty {
-                    Some(ty) => crate::protocols::share_check::is_mut_alias_safe(&share_q, ty),
+                let why = match &b.ty {
+                    Some(ty) => {
+                        match crate::protocols::share_check::mut_alias_failure(&share_q, ty) {
+                            None => continue, // mut-alias-safe — not flagged.
+                            Some(f) => {
+                                if f.path.is_empty() {
+                                    // The binding's own type refused.
+                                    format!("`{}` is {}", f.ty, f.reason)
+                                } else {
+                                    // A transitively-reached field refused —
+                                    // name the full chain (leakage explain).
+                                    let root = render_type_ref(ty);
+                                    format!(
+                                        "`{}` is poisoned at `{}` (`{}`): {}",
+                                        root,
+                                        f.chain(&root),
+                                        f.ty,
+                                        f.reason
+                                    )
+                                }
+                            }
+                        }
+                    }
                     // Unknown type (no annotation, no syntactic ctor
                     // inference in scope registration) — conservative:
                     // cannot prove internal sync ⇒ flag.
-                    None => false,
+                    None => "its type is unknown at the capture site (no \
+                             annotation, no recognizable ctor) — share-ness \
+                             cannot be proven, conservatively flagged"
+                        .to_string(),
                 };
-                if !safe {
-                    flagged.push(name);
-                }
+                flagged.push((name, why));
             }
         }
         flagged.sort(); // deterministic diagnostic order (HashSet iteration)
-        for name in flagged {
+        for (name, why) in flagged {
             errors.push(Diagnostic::new(
                 format!(
-                    "[E_CONCURRENT_MUT_CAPTURE] `spawn`/`parallel for` body \
-                     captures outer `mut` binding `{}` by reference — under M:N \
-                     scheduling this is a data race (the child fiber may run \
-                     concurrently with, or migrate across threads from, the \
-                     parent/siblings). Allowed captures (Plan 173.3, D415 §2): \
-                     move it in explicitly (`spawn consume {} = expr {{ .. }}` / \
+                    "[E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `{}` \
+                     captured by reference in a `spawn`/`parallel for` body: \
+                     {} — under M:N scheduling this alias is a data race (the \
+                     child fiber may run concurrently with, or migrate across \
+                     threads from, the parent/siblings). Allowed captures \
+                     (Plan 173.3, D415 §2): move it in explicitly \
+                     (`spawn consume {} = expr {{ .. }}` / \
                      `spawn consume {} {{ .. }}`), capture it `ro` (immutable \
                      view), or use an internally-synchronized `#share` type \
                      (`Mutex`/`Atomic*` — or a user lock-free type vouched \
                      with `#share`).",
-                    name, name, name
+                    name, why, name, name
                 ),
                 body.span,
             ));
@@ -19779,7 +19807,7 @@ fn render_method_sig(name: &str, params: &[Param], ret: &Option<TypeRef>) -> Str
     format!("{}({}){}", name, p_strs.join(", "), r)
 }
 
-fn render_type_ref(t: &TypeRef) -> String {
+pub(crate) fn render_type_ref(t: &TypeRef) -> String {
     match t {
         TypeRef::Named { path, generics, .. } => {
             if generics.is_empty() {
