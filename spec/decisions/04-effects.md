@@ -6557,6 +6557,8 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 - **Nova-сторона:** `Offset.local() Time -> Offset` (`std/time/civil/offset.nv`) — явный запрос числового сдвига (см. D321 amend ниже: НЕ implicit-зона, D319 R1 не меняется).
 - **Тесты:** `std/testing/handlers.nv` (fixed_ms/mut_clock coherence + custom handler-литерал non-zero); `std/time/civil/zoned_test.nv` (`Offset.local()` через handler-литерал — доказывает полную мокабельность нового опа).
 
+**UPD 2026-07-10 (волна handler-annot, «один канал»):** барьер (b) — codegen-гэп anonymous-record-literal-в-handler-body — **СНЯТ**. Причина была не в «anon-record вообще», а в том, что оп-тела handler-литерала эмитились в отдельные C-функции БЕЗ переключения типового контекста (`expected_record_type`/`current_fn_return_ty` оставались от внешней функции); фикс подвёл к оп-телам ТОТ ЖЕ единый канал разметки, что у обычных fn/лямбд/протокол-методов (per-op контекст из effect-схемы, `emit_c.rs::emit_handler_lit`). Матрица: `nova_tests/plan175_handler_annot/repro_matrix.nv` (анонимные heap/value record'ы, tuple, sum-вариант, конструктор, захваты, вложенные хендлеры — все PASS). **Решение по `Time` НЕ пересматривается:** барьер (a) — намеренная opacity `Monotonic` (нормативное разграничение в AMEND выше) — самодостаточен, и `option C` (int-wire + typed `.nv`-сахар) остаётся итоговой отгруженной архитектурой (решение владельца). Провод `Time` этой волной не менялся.
+
 ## D317 — Duration/instant overflow-policy: trap-default + `checked_*`/`saturating_*` (Plan 175 Ф.1c, 2026-07-06)
 
 **Source:** Plan 175 (time-system-rework), Ф.1c. **Amends:** [D316](#d316) (ns-канон → overflow-safe арифметика). **Реализация:** `std/time/duration.nv` (чистый `.nv`-слой; codegen НЕ тронут).

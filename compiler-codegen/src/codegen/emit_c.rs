@@ -9619,6 +9619,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ));
             }
 
+            // Plan 175 handler-annot («один канал»): оп-тело — отдельная C-функция
+            // со СВОЕЙ сигнатурой (ret_ty из effect-схемы = той же разметки, что
+            // видел чекер), но до этого фикса эмитилось с type-контекстом ВНЕШНЕЙ
+            // функции: `expected_record_type`/`current_fn_return_ty` оставались от
+            // enclosing fn. Анонимный record-литерал (D55, `make() => { x: 1 }`)
+            // в теле опа падал «anonymous record literal without spread not
+            // supported in codegen» (задокументировано в D316-amend Ф.2), а
+            // `return X` coercion читал чужой return-тип. Подводим ТОТ ЖЕ канал,
+            // что и emit_fn_body (:20826) / lambda (:15807) / protocol-method
+            // (:21619) — потребитель один, инференция не дублируется.
+            // `contracts_post_label` гасим: `return` в оп-теле не должен emit'ить
+            // `goto` на ensures-лейбл внешней функции (лейбл вне этой C-функции).
+            let saved_op_ret_ty = std::mem::replace(
+                &mut self.current_fn_return_ty, Some(ret_ty.clone()));
+            let saved_op_expected = std::mem::replace(
+                &mut self.expected_record_type,
+                Self::debt_struct_name_from_c_type(&ret_ty));
+            let saved_op_post_label = self.contracts_post_label.take();
+
             match &m.body {
                 HandlerMethodBody::Expr(e) => {
                     let v = self.emit_expr(e)?;
@@ -9667,6 +9686,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+
+            // Plan 175 handler-annot: restore enclosing-fn type context.
+            self.current_fn_return_ty = saved_op_ret_ty;
+            self.expected_record_type = saved_op_expected;
+            self.contracts_post_label = saved_op_post_label;
 
             // Undef the macros so they don't leak
             for (cap_name, _) in &all_captures {

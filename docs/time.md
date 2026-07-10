@@ -210,6 +210,14 @@ typed-обёртка живёт в родном модуле типа (где an
 не конфликтуют. `[M-time-now-schema-mismatch]` закрыт **частично по конструкции**
 (user-surface полностью typed и мокабелен; wire — int).
 
+**UPD 2026-07-10 (волна handler-annot):** codegen-ограничение (b) — anonymous
+record-literal в handler-теле — **снято** (единый канал типовой разметки подведён
+к эмиссии оп-тел; см. D316-amend UPD в `spec/decisions/04-effects.md` и матрицу
+`nova_tests/plan175_handler_annot/repro_matrix.nv`). На архитектуру `Time` это
+НЕ влияет: барьер (a) — намеренная opacity `Monotonic` — самодостаточен, option C
+(int-wire + typed-сахар) остаётся итоговым решением владельца; провод `Time`
+не менялся.
+
 ## Nova vs 7 языков
 
 | | Go | Rust | TypeScript/JS | Kotlin | Java | Zig | Swift | **Nova** |
