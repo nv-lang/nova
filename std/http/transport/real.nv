@@ -14,9 +14,11 @@
 // Isolating the std.net2 dependency here keeps std.http's namespace clean.
 // [M-178-transport-submodule-net-isolation]
 //
-// CORE scope (Ф.2, plaintext HTTP/1.1): one hop per connection, `Connection:
+// CORE scope (plaintext HTTP/1.1 + HTTPS): one hop per connection, `Connection:
 // close`, read-to-EOF. HARD-GATES / honest deferrals:
-//   · https (`secure = true`) — Plan 116 TLS → `Err(Tls)`. [M-178-https-needs-116]
+//   · https (`secure = true`) — ✅ Plan 116 Ф.5.3: TLS-слой поверх TcpStream
+//     (SNI = host, SystemRoots webpki-roots, ALPN http/1.1). Закрывает
+//     [M-178-https-needs-116].
 //   · keep-alive live conn reuse / pool — decision logic + config in client.nv
 //     (pure, tested); live socket reuse deferred. [M-178-client-live-pool]
 //   · timeout/deadline-by-default — Plan 173 supervised scope, at the call site.
@@ -24,11 +26,14 @@
 //   · typed `ErrSource.Net(NetError)` ✅ landed (Plan 176 Ф.4, Q3): connect/
 //     write/read transport failures carry the actual `NetError` via
 //     `HttpError.from_net` (error.nv); dns resolution failure (`resolve`
-//     returns `NetError` too) is the same path.
+//     returns `NetError` too) is the same path. Typed `ErrSource.Tls(TlsError)`
+//     — followup [M-178-errsource-tls]; пока TLS-провал несётся как
+//     `ErrorKind.Tls` + текст.
 
 module http.transport
 
 import std.net.{TcpStream, resolve}
+import std.tls.{TlsStream, ClientConfig}
 import std.http.{Http, HttpError, ErrorKind}
 
 /// Production `Http` handler over the `Net` effect (TCP + DNS via libuv).
@@ -46,10 +51,63 @@ import std.http.{Http, HttpError, ErrorKind}
 export fn real_http() -> Effect[Http] => effect Http {
     send(host, port, secure, request) {
         if secure {
-            // https/TLS is a hard gate on Plan 116. [M-178-https-needs-116]
-            Err(HttpError.new(ErrorKind.Tls))
+            https_send_over_net(host, port, request)
         } else {
             http_send_over_net(host, port, request)
+        }
+    }
+}
+
+// One HTTPS/1.1 round-trip: resolve → TCP connect → TLS handshake (SNI=host,
+// SystemRoots) → write → read-to-EOF over the encrypted stream → close.
+// Закрывает [M-178-https-needs-116] (Plan 116 Ф.5.3).
+fn https_send_over_net(host str, port int, request str) Net -> Result[str, HttpError] {
+    ro addrs = match resolve(host, port as u16) {
+        Ok(a)  => a
+        Err(e) => return Err(HttpError.from_net(ErrorKind.Dns, e))
+    }
+    ro addr = match addrs.get(0) {
+        Some(a) => a
+        None    => return Err(HttpError.transport(ErrorKind.Dns, "no addresses resolved"))
+    }
+    // SNI + hostname-verification target = host; SystemRoots + ALPN http/1.1
+    // (дефолт ClientConfig.new). TlsStream.connect потребляет tcp на ВСЕХ путях
+    // (на ошибке закрывает сам) — поэтому connect+handshake одним match'ем без
+    // промежуточного consume-биндинга tcp (D131 path-merge).
+    ro cfg = ClientConfig.new(host)
+    ro conn = match TcpStream.connect(addr) {
+        Ok(s)  => TlsStream.connect(s, cfg)
+        Err(e) => return Err(HttpError.from_net(ErrorKind.Connect, e))
+    }
+    consume tls = match conn {
+        Ok(s)  => s
+        Err(e) => return Err(HttpError.transport(ErrorKind.Tls, e.to_str()))
+    }
+    // Единственный consume tls — `close` в конце на ВСЕХ путях; ошибки write/read
+    // сворачиваются в сентинел (D131: без early-return после consume).
+    mut acc = WriteBuffer.new()
+    acc.cap(4096)
+    mut err_detail Option[str] = None
+    match tls.write_all(request.bytes()) {
+        Ok(_)  => {
+            mut reading = true
+            while reading {
+                match tls.read_to_vec(65536) {
+                    Ok(chunk) => {
+                        if chunk.len() == 0 { reading = false } else { acc.write_bytes(chunk) }
+                    }
+                    Err(_) => { reading = false }
+                }
+            }
+        }
+        Err(e) => { err_detail = Some(e.to_str()) }
+    }
+    tls.close()
+    match err_detail {
+        Some(d) => Err(HttpError.transport(ErrorKind.Tls, d))
+        None    => {
+            ro acc_bytes []u8 = acc.into()
+            Ok(unsafe { acc_bytes.to_str_unchecked() })
         }
     }
 }
