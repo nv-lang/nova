@@ -39044,3 +39044,31 @@ nova_tests ~19 файлов → Atomic*, examples 3 файла. Идиома doc
 nova check std/nova_tests/examples FAIL-set δ0 к main-базису (кроме ожидаемых новых диагностик,
 все починены той же волной). Новые коды: E_CONCURRENT_MUT_CAPTURE, E_SHARE_INVALID_KIND,
 E_CONST_INIT_CONCURRENCY.
+
+2026-07-10 [sonnet, ветка supervision-173-2]. Plan 173.2 — supervision-as-effect (MVP §3b),
+D416 (06-concurrency.md) + amend 08-runtime.md (постфикс-strategy пример → эффект-хендлеры).
+Ф.1: `type Decision enum Escalate|Stop|Restart|RestartAll|RestartRest` + `type Supervisor
+effect { on_child_fail(idx int, err any) -> Decision }` в std/prelude/effects.nv (обычный
+user-effect путь, как Random — без RUNTIME_DEFINED-скипа); политики
+std/concurrency/supervisor.nv (escalate()/stop() → Effect[Supervisor]). Amend §2.1: attempt
+отложен вместе с Restart-исполнением. Ф.2 (рантайм+кодген): NovaFiberQueue.has_supervisor
+(штамп codegen'ом на входе supervised/parallel-for из TLS _nova_handler_Supervisor);
+deferred-decision режим в nova_fiber_report_child_kinded (per-slot запись + release-publish
+`published`, БЕЗ CAS-primary/cancel-бродкаста); nova_supervised_process_decisions —
+serialized decision-pass в drain-цикле nova_supervised_run_impl (решения ПОКА siblings бегут)
++ финальный catch-up (byte-parity: default-режим сохраняет observer-loop 173.0 без изменений);
+исполнение: Escalate → nova_fiber_report_atomic_kinded (тот же precedence-путь D414) + cancel;
+Stop → drop (slot retained); Restart-тег → громкий abort (checker делает недостижимым).
+Мост: `_nova_supervisor_decide_fn` (effects.c, NULL=Escalate-all) ← generated
+`_nova_supervisor_decide_impl` (emit_c splice __SUPERVISOR_DECIDE_IMPL/INIT: TLS-vtable,
+NovaChildError→any боксинг nova_any_from_boxed/nova_any_box(str), fail-frame guard — throw
+хендлера = Escalate-with-handler-error, Decision-tag→NOVA_SUPERVISE_*). Чекер: E_SUPERVISOR_
+RESTART_GATED (Restart* в Supervisor-хендлере), E_SUPERVISOR_HANDLER_INTERRUPT,
+E_SUPERVISOR_HANDLER_SUSPEND (Time.sleep, приближение V1) — walk_expr_for_handler_lits
++in_supervisor-флаг. Тесты: nova_tests/err173_2 pos ×3 файла (stop: siblings живут+scope
+продолжает+panic-до-решения; escalate: паритет с дефолтом на идентичном теле, custom-политика
+(idx,err)-narrowing+mut-состояние, Escalate-with-error 7777; parfor: Stop=«собери выживших»
+36/40 dense) + neg ×3; std/concurrency/supervisor_test.nv. Гейты: cargo оба; conformance
+82/0; err173_0 ×5 стаб.; err173_2/err173_3+neg зелёные; std/concurrency 7/0. Известный
+MAIN-side красный: err173_1/parfor_diag (E_CONCURRENT_MUT_CAPTURE D415 бьёт supervised_value_
+smoke.nv 173.1) — вне периметра 173.2, чинить волне 173.1/173.3.

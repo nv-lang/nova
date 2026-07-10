@@ -24,6 +24,16 @@ void (*_nova_throw_cleanup_timeout_fn)(int duration_ms) = NULL;
  * plain-string throw in nova_throw_scope_timeout. Process-wide (not __thread). */
 void (*_nova_throw_scope_timeout_fn)(int64_t deadline_ns) = NULL;
 
+/* Plan 173.2 (supervision-as-effect): Supervisor decision bridge. Set by
+ * generated main() when the CU knows the `Supervisor` effect (prelude
+ * present) — the impl reads the ambient `_nova_handler_Supervisor` TLS
+ * vtable, boxes the NovaChildError into a Nova `any`, invokes the handler's
+ * `on_child_fail(idx, err)` and maps the Decision tag to NOVA_SUPERVISE_*.
+ * NULL — every decision defaults to Escalate (= pre-173.2 behaviour).
+ * Process-wide (not __thread): the impl itself resolves per-thread TLS. */
+nova_int (*_nova_supervisor_decide_fn)(void* scope, nova_int idx,
+                                       const void* err) = NULL;
+
 /* D61: `interrupt v` — early-exit from the nearest enclosing with-block.
  *
  * Semantics across mco coroutine boundary:

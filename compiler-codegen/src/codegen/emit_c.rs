@@ -6426,6 +6426,75 @@ impl CEmitter {
             self.register_type_id("TimeoutError");
         }
 
+        // Plan 173.2 (supervision-as-effect): Supervisor decision-bridge —
+        // computed BEFORE the __TYPEID_DEFINES__ splice below because the
+        // bridge boxes string-throw errors into `any` and must register the
+        // `str` NovaTypeInfo static (debt_register_any_typeinfo mutates
+        // any_typeinfos, rendered into tid_defines). Gated on the CU knowing
+        // BOTH the Supervisor effect schema AND the Decision sum (prelude
+        // present) — `#no_prelude` CUs get empty splices and the runtime
+        // falls back to Escalate-all (fn pointer stays NULL).
+        let (sup_impl, sup_init) = if self.effect_schemas.contains_key("Supervisor")
+            && self.sum_schemas.contains_key("Decision")
+        {
+            let str_tinfo = self.debt_register_any_typeinfo("nova_str");
+            let impl_block = format!("\
+/* Plan 173.2: Supervisor decision bridge — assigned to\n\
+ * _nova_supervisor_decide_fn in main(). Called by the runtime's serialized\n\
+ * decision pass (nova_supervised_process_decisions, fibers.h) once per\n\
+ * retained child failure, on the scope's drive thread. Maps the ambient\n\
+ * Nova `Supervisor.on_child_fail(idx, err)` handler's Decision to the\n\
+ * NOVA_SUPERVISE_* codes. No handler → Escalate (the default policy). */\n\
+static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, const void* _err_v) {{\n\
+    NovaFiberQueue* _scope = (NovaFiberQueue*)_scope_v;\n\
+    const NovaChildError* _err = (const NovaChildError*)_err_v;\n\
+    NovaVtable_Supervisor* _h = _nova_handler_Supervisor;\n\
+    if (!_h) return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
+    /* Box the failure into Nova `any`: typed-throw payload keeps its type\n\
+     * (narrowable via `err is T`); string throws / panics box the message\n\
+     * as `str`. */\n\
+    void* _e_any = NULL;\n\
+    if (_err->payload != NULL && _err->tid != 0) {{\n\
+        _e_any = nova_any_from_boxed(_err->payload, _err->tid);\n\
+    }} else {{\n\
+        nova_str _m = nova_str_from_cstr(_err->msg ? _err->msg : \"\");\n\
+        _e_any = nova_any_box(&{ti}, &_m, sizeof(nova_str));\n\
+    }}\n\
+    /* Q-block (173.2): `Fail` is allowed inside the handler = Escalate-with-\n\
+     * handler-error. Guard the invocation with a local fail-frame so a\n\
+     * handler throw cannot longjmp past the drive loop (which would abandon\n\
+     * still-running children); the thrown error is fed into the scope's\n\
+     * primary machinery and the child failure escalates normally (rank\n\
+     * precedence decides the surviving primary — a child PANIC still wins,\n\
+     * D13). */\n\
+    NovaFailFrame _sf;\n\
+    nova_fail_push(&_sf);\n\
+    if (setjmp(_sf.jmp) == 0) {{\n\
+        Nova_Decision* _d = _h->on_child_fail(_h->ctx, _idx, _e_any);\n\
+        nova_fail_pop();\n\
+        if (_d == NULL) return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
+        switch (_d->tag) {{\n\
+            case NOVA_TAG_Decision_Escalate: return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
+            case NOVA_TAG_Decision_Stop:     return (nova_int)NOVA_SUPERVISE_STOP;\n\
+            default:                         return (nova_int)NOVA_SUPERVISE_RESTART_GATED;\n\
+        }}\n\
+    }} else {{\n\
+        nova_fail_pop();\n\
+        nova_fiber_report_atomic_kinded(_scope, _sf.error_msg.ptr, _sf.error_kind,\n\
+                                        _sf.error_reason_ptr, _sf.error_user_payload,\n\
+                                        _sf.error_user_type_id);\n\
+        return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
+    }}\n\
+}}\n", ti = str_tinfo);
+            let init_line =
+                "    _nova_supervisor_decide_fn = &_nova_supervisor_decide_impl;".to_string();
+            (impl_block, init_line)
+        } else {
+            (String::new(), String::new())
+        };
+        self.out = self.out.replace("/*__SUPERVISOR_DECIDE_IMPL__*/", &sup_impl);
+        self.out = self.out.replace("/*__SUPERVISOR_DECIDE_INIT__*/", &sup_init);
+
         // Plan 61 Ф.1: splice TypeId defines + overriding nova_typeid_to_name.
         // Каждый registered user-type получает `#define NOVA_TID_USER_<X> N`;
         // также emit'тся overriding `nova_typeid_to_name` switch для diagnostic.
@@ -10540,6 +10609,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent += 1;
         self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
         self.line(&format!("nova_scope_init(&{});", queue_var));
+        // Plan 173.2 (supervision-as-effect): stamp supervisor-mode at scope
+        // entry — on the scope's own thread, strictly BEFORE any spawn. An
+        // ambient `with Supervisor = policy` handler flips the scope into
+        // deferred-decision mode (fibers.h). Emitted only when the CU knows
+        // the Supervisor effect (prelude present) — `#no_prelude` CUs and the
+        // no-handler case stay byte-identical (field is false from init).
+        if self.effect_schemas.contains_key("Supervisor") {
+            self.line(&format!(
+                "{q}.has_supervisor = (_nova_handler_Supervisor != NULL);",
+                q = queue_var
+            ));
+        }
 
         // Plan 47: evaluate the cancel-token expr at scope entry — source
         // order, `(cancel: tok)` стоит до `{ body }`. Кладём в temp;
@@ -10926,6 +11007,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent += 1;
         self.line(&format!("NovaFiberQueue {} = {{0}};", queue_var));
         self.line(&format!("nova_scope_init(&{});", queue_var));
+        // Plan 173.2: same supervisor-mode stamp as emit_supervised — the
+        // array-mode `parallel for` scope is its own supervised scope.
+        if self.effect_schemas.contains_key("Supervisor") {
+            self.line(&format!(
+                "{q}.has_supervisor = (_nova_handler_Supervisor != NULL);",
+                q = queue_var
+            ));
+        }
         self.line(&format!("nova_int _nova_pf_k_{} = {};", id, k_expr));
         self.line(&format!("if (_nova_pf_k_{id} > {cap}) _nova_pf_k_{id} = {cap};",
             id = id, cap = PARFOR_CHAN_CAP));
@@ -21915,6 +22004,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 174 (D349): typed TimeoutError throw impl splice (same placement
         // rationale — after Nova_TimeoutError struct + tid macro, before main).
         self.line("/*__SCOPE_TIMEOUT_IMPL__*/");
+        // Plan 173.2 (supervision-as-effect): Supervisor decision-bridge impl
+        // splice — after NovaVtable_Supervisor + Nova_Decision definitions
+        // (type-decl stage), before main(). Replaced in finalize when the CU
+        // knows the Supervisor effect + Decision sum (prelude present).
+        self.line("/*__SUPERVISOR_DECIDE_IMPL__*/");
 
         self.line("int main(int argc, char** argv) {");
         self.indent += 1;
@@ -21970,6 +22064,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 174 (D349): assign typed TimeoutError throw fn pointer (if
         // TimeoutError referenced). Spliced via __SCOPE_TIMEOUT_INIT__.
         self.line("/*__SCOPE_TIMEOUT_INIT__*/");
+        // Plan 173.2: assign the Supervisor decision bridge (if the CU knows
+        // the Supervisor effect). Spliced via __SUPERVISOR_DECIDE_INIT__.
+        self.line("/*__SUPERVISOR_DECIDE_INIT__*/");
         // Plan 22 Ф.5 (D92): implicit main-scope. Top-level main теперь
         // имеет supervised-like scope для detach'ей, pending timer'ов и
         // background fiber'ов. Они доработают до quiescence перед exit.
