@@ -2680,6 +2680,16 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_destructure_snapshot),
         text: None,
     },
+    ConvRule {
+        id: "W_LEADING_BINOP_CONTINUATION",
+        summary: "ведущий бинарный оператор (`||`/`&&`/`+`/…) в начале \
+                  продолжающей строки многострочного выражения — footgun: \
+                  ведущий `||` парсится как zero-arg closure-литерал \
+                  (D417-класс); канон — trailing-оператор в конце строки \
+                  (nv-coding-style §27)",
+        ast: None,
+        text: Some(conv_leading_binop_continuation),
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -4152,6 +4162,345 @@ fn conv_destructure_snapshot(m: &Module, _o: &ConvLintOptions, out: &mut Vec<Lin
             FnBody::Block(b) => conv_walk_block_for_destructure(b, out),
             FnBody::External => {}
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_LEADING_BINOP_CONTINUATION (текст) — ведущий бинарный оператор в начале
+// continuation-строки многострочного выражения.
+//
+// Причина (D417-класс, `E_CLOSURE_SCALAR_RETURN`, types/mod.rs
+// `check_closure_scalar_return`): парсер НЕ продолжает выражение через
+// ведущий `||`/`&&`/… на СЛЕДУЮЩЕЙ строке — если предыдущая строка уже сама
+// по себе полна (statement-sequence внутри `{ }`-блока), она завершает
+// statement, а строка с ведущим `||` парсится как ОТДЕЛЬНЫЙ zero-arg
+// closure-литерал (discarded statement). Для `||` это тихо даёт always-true
+// в скалярном возврате (реальный баг needs_quoting/is_ascii_ident_char,
+// 2026-07-10). Этот линт ловит ПРИЧИНУ (стиль) раньше и во ВСЕХ контекстах
+// (не только скалярный return, который покрывает только
+// `E_CLOSURE_SCALAR_RETURN`).
+//
+// Эвристика (греп-уровня, не полный парс): строка-продолжение начинается
+// (после отступа) с бинарного оператора, И ближайшая предыдущая непустая
+// код-строка выглядит как самостоятельно завершённый statement.
+//
+// Калибровка против ложных срабатываний (§7.3, эмпирически на std +
+// nova_tests, 2026-07-10) вскрыла НЕСКОЛЬКО реальных safe-паттернов — каждый
+// закрыт отдельным гейтом:
+//
+//   1. **Ограниченный parse_expr()-вызов безопасен ВСЕГДА** (`if`/`while`/
+//      `for`/`match`-условие ДО открывающей `{`, arrow-body `fn ... =>
+//      EXPR`, содержимое `(...)`/`[...]`-списка) — Pratt-парсер не
+//      завершает выражение на границе строки там, где НЕТ statement-
+//      sequence. Подтверждено: `std/data/semver.nv` (arrow-body), `std/
+//      path/glob.nv` (if-условие без скобок), `nova_tests/map_literals/
+//      positive_siphash_smoke.nv` (`-1: "neg",` внутри многострочного
+//      map-литерала `[...]`) — все реально компилируются и проходят тесты.
+//      Гейты: `brace_depth >= 1` (cumulative-счётчик ТОЛЬКО `{`/`}` —
+//      arrow-body верхнего уровня модуля имеет brace_depth == 0);
+//      `par_depth == 0` (cumulative-счётчик ТОЛЬКО `(`/`)`/`[`/`]` — внутри
+//      открытого списка/вызова всегда 0 не бывает); `awaiting_brace`-
+//      состояние (от строки-начала statement'а с `if`/`while`/`for`/
+//      `match`/`else` до появления `{`).
+//   2. **`} else {` (и любой close+reopen НА ОДНОЙ строке) — НЕ «предыдущий
+//      statement завершён»**: net-delta скобок этой строки — 0 (совпадает с
+//      «завершённый statement»), но реально строка ЗАКРЫВАЕТ один блок и
+//      ОТКРЫВАЕТ новый — следующая строка ПЕРВЫЙ statement НОВОГО блока
+//      (напр. `-1` как отрицательный литерал — не continuation).
+//      Подтверждено: `nova_tests/plan106/guard_ok_basic.nv`,
+//      `nova_tests/concurrency/blocking_test.nv` (`} else { \n -1 \n }`).
+//      Гейт: `last_brace_open` — последний `{`/`}`-символ ПРЕДЫДУЩЕЙ
+//      строки; если это `{` (не `}`) — строка «похожа на завершённую» НЕ
+//      считается (даже при net-delta == 0).
+//   3. **Унарный префикс — не бинарный оператор.** `-`/`+`/`*` в Nova имеют
+//      ПОВСЕДНЕВНЫЕ унарные прочтения на месте начала statement'а:
+//      отрицательный/положительный числовой литерал (`-1`, частый trailing-
+//      результат fn/if-ветки) и разыменование сырого указателя (`*p = v`,
+//      Plan 118 unsafe/raw-pointers — очень частый паттерн в
+//      `nova_tests/plan118*`/`plan147`). В отличие от `||`/`&&`/сравнений,
+//      у этих трёх токенов НЕТ надёжного «это бинарное продолжение»
+//      прочтения без полного парса — **исключены** из набора детектируемых
+//      операторов (иначе шквал ложных находок на легитимный код).
+//   4. **`calc { ... }`-блок (Plan 33.5, equational reasoning) КАНОНИЧЕСКИ
+//      использует ведущие `==`/`<`/… НА КАЖДОЙ строке** (`x * 2;` \n `== x *
+//      2;`) — это НЕ баг, это спроектированный синтаксис доказательного
+//      блока. Подтверждено: `nova_tests/contracts/calc_basic_positive.nv`.
+//      Гейт: весь `calc { ... }`-блок (по глубине `{}` от точки открытия до
+//      возврата на тот же уровень) — вне проверки целиком.
+//   5. **Backtick tagged-template литералы (`` html`...` ``) — их
+//      МНОГОСТРОЧНОЕ содержимое НЕ код** (HTML/произвольный текст внутри),
+//      может начинаться с `<...>`. Подтверждено:
+//      `nova_tests/types/alias_tagged.nv` (`html\`<html>...\``). Гейт:
+//      backtick-состояние (`` ` ``…`` ` ``) трактуется как непрозрачная
+//      строка, персистентная между строками (аналог блок-комментария).
+//
+// Известное ограничение: НЕ ловит случай, когда предыдущий statement — это
+// блок, закрывающийся ОДНОЙ строкой `}` (this последняя строка сама по себе
+// НЕ «завершённый statement» в терминах этой эвристики) — осознанный
+// компромисс простоты (мотивирующий пример ловится точно: `(a && b)` \n
+// `|| (c && d)`).
+// ---------------------------------------------------------------------------
+
+/// Бинарные операторы-кандидаты. Длинные формы — ПЕРЕД короткими (порядок
+/// имеет значение для `starts_with`-матчинга). `+`/`-`/`*` сознательно
+/// ИСКЛЮЧЕНЫ — см. п.3 в комментарии выше (унарный литерал-знак / raw-
+/// pointer deref — слишком частые легитимные прочтения).
+const CONV_LEADING_BINOPS: &[&str] = &[
+    "||", "&&", "==", "!=", "<=", ">=", "<<", ">>", "/", "%", "<", ">",
+];
+
+/// Управляющие слова, открывающие condition-span, длящийся ДО ближайшей `{`
+/// (Nova `if`/`while`/`for`/`match`/`else` не требуют скобок вокруг условия).
+const CONV_COND_KEYWORDS: &[&str] = &["if", "while", "for", "match", "else"];
+
+/// Если `trimmed` начинается с одного из `CONV_LEADING_BINOPS` (и это не
+/// стрелка `->`/`=>` и не хвост блок-комментария `*/`) — возвращает токен.
+fn conv_match_leading_binop(trimmed: &str) -> Option<&'static str> {
+    if trimmed.starts_with("->") || trimmed.starts_with("=>") || trimmed.starts_with("*/") {
+        return None;
+    }
+    for op in CONV_LEADING_BINOPS {
+        if trimmed.starts_with(op) {
+            return Some(op);
+        }
+    }
+    None
+}
+
+/// `true`, если строка-начало statement'а — управляющее слово
+/// (`if`/`while`/`for`/`match`/`else`), за которым следует word-boundary
+/// (пробел / конец строки / `(`), т.е. это не префикс идентификатора
+/// (`ifoo`).
+fn conv_starts_cond_keyword(trimmed: &str) -> bool {
+    for kw in CONV_COND_KEYWORDS {
+        if let Some(rest) = trimmed.strip_prefix(kw) {
+            if rest.is_empty() || !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// `true`, если строка-начало statement'а — `calc` (proof-блок, Plan 33.5),
+/// за которым следует word-boundary.
+fn conv_starts_calc_keyword(trimmed: &str) -> bool {
+    if let Some(rest) = trimmed.strip_prefix("calc") {
+        return rest.is_empty() || !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_');
+    }
+    false
+}
+
+/// Результат построчного скана: net-delta ВСЕХ скобок (круглые+квадратные+
+/// фигурные), net-delta ТОЛЬКО фигурных, последний фигурный символ строки
+/// (`Some(true)` = `{`, `Some(false)` = `}`, `None` = фигурных не было),
+/// есть ли в строке код вне комментария/строки/backtick-литерала.
+struct ConvLineScan {
+    delta: i32,
+    brace_delta: i32,
+    last_brace_open: Option<bool>,
+    has_code: bool,
+}
+
+/// Сканирует ОДНУ строку исходника, обновляя межстрочное состояние
+/// `in_block_comment` и `in_backtick` (backtick tagged-template литералы —
+/// `` `...` `` — многострочны, содержимое непрозрачно, п.5 выше).
+fn conv_scan_line_delta(line: &str, in_block_comment: &mut bool, in_backtick: &mut bool) -> ConvLineScan {
+    let mut delta = 0i32;
+    let mut brace_delta = 0i32;
+    let mut last_brace_open: Option<bool> = None;
+    let mut has_code = false;
+    let mut in_string = false;
+    let mut chars = line.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if *in_backtick {
+            if ch == '\\' {
+                chars.next();
+                continue;
+            }
+            if ch == '`' {
+                *in_backtick = false;
+            }
+            continue;
+        }
+        if *in_block_comment {
+            if ch == '*' && line[idx..].starts_with("*/") {
+                *in_block_comment = false;
+                chars.next();
+            }
+            continue;
+        }
+        if in_string {
+            if ch == '\\' {
+                chars.next();
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '/' && line[idx..].starts_with("//") {
+            break;
+        }
+        if ch == '/' && line[idx..].starts_with("/*") {
+            *in_block_comment = true;
+            chars.next();
+            continue;
+        }
+        if ch == '`' {
+            *in_backtick = true;
+            has_code = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            has_code = true;
+            continue;
+        }
+        if ch.is_whitespace() {
+            continue;
+        }
+        has_code = true;
+        match ch {
+            '(' | '[' | '{' => delta += 1,
+            ')' | ']' | '}' => delta -= 1,
+            _ => {}
+        }
+        if ch == '{' {
+            brace_delta += 1;
+            last_brace_open = Some(true);
+        } else if ch == '}' {
+            brace_delta -= 1;
+            last_brace_open = Some(false);
+        }
+    }
+    ConvLineScan { delta, brace_delta, last_brace_open, has_code }
+}
+
+fn conv_leading_binop_continuation(src: &str, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    let mut off = 0usize;
+    let mut in_block_comment = false;
+    let mut in_backtick = false;
+    let mut prev_delta: Option<i32> = None;
+    let mut prev_brace_delta: i32 = 0;
+    let mut prev_last_brace_open: Option<bool> = None;
+    let mut prev_is_decl = false;
+    let mut brace_depth: i32 = 0;
+    let mut par_depth: i32 = 0;
+    let mut awaiting_brace = false;
+    let mut calc_base_depth: Option<i32> = None;
+
+    for raw_line in src.split_inclusive('\n') {
+        let line_off = off;
+        off += raw_line.len();
+        let line = raw_line.trim_end_matches(['\n', '\r']);
+
+        let was_in_block_comment = in_block_comment;
+        let scan = conv_scan_line_delta(line, &mut in_block_comment, &mut in_backtick);
+        let ConvLineScan { delta, brace_delta, last_brace_open, has_code } = scan;
+        let par_delta = delta - brace_delta;
+
+        if !has_code {
+            continue;
+        }
+
+        if !was_in_block_comment {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with("//") && !trimmed.starts_with("/*") {
+                let in_calc_block = calc_base_depth.is_some_and(|d| brace_depth >= d);
+                if !awaiting_brace && !in_calc_block && brace_depth >= 1 && par_depth == 0 {
+                    if let Some(op) = conv_match_leading_binop(trimmed) {
+                        // `||` уникален: это ЕДИНСТВЕННЫЙ оператор набора,
+                        // у которого ЕСТЬ легитимное альтернативное чтение
+                        // как ПЕРВЫЙ токен statement'а — zero-arg closure-
+                        // литерал, возвращаемый как trailing-значение блока
+                        // (`fn() -> fn() -> int { ... \n || { ... } }`,
+                        // прецедент калибровки
+                        // `nova_tests/syntax/closure_mut_capture_escape.nv:18`
+                        // — реальный, ПРАВИЛЬНЫЙ код). Когда предыдущая
+                        // строка — ДЕКЛАРАЦИЯ (`mut`/`ro`/`const`), нет связной
+                        // истории «continuation одного выражения» (декларация
+                        // не производит операнд для объединения) — не
+                        // флагуем именно `||` в этом сочетании. Другие
+                        // операторы (`&&`/сравнения/…) НЕ имеют такого
+                        // легитимного альтернативного чтения — для них
+                        // декларация-предшественник ПРОДОЛЖАЕТ считаться
+                        // подозрительной (реальный риск: `ro valid =
+                        // check_a(x)` \n `&& check_b(x)` — забытый trailing).
+                        let prev_looks_complete = prev_delta == Some(0)
+                            && prev_last_brace_open != Some(true)
+                            && !(op == "||" && prev_is_decl);
+                        if prev_looks_complete {
+                            let indent = line.len() - trimmed.len();
+                            let start = line_off + indent;
+                            out.push(LintWarning {
+                                rule: "W_LEADING_BINOP_CONTINUATION",
+                                diag: Diagnostic::new(
+                                    format!(
+                                        "ведущий бинарный оператор `{op}` в начале continuation-строки: \
+                                         предыдущая строка сбалансирована по скобкам и похожа на \
+                                         завершённый statement — парсер, скорее всего, НЕ продолжит его \
+                                         этим оператором (ведущий `||` парсится как отдельный zero-arg \
+                                         closure-литерал → discarded statement → возможен always-true, \
+                                         D417-класс). Канон — TRAILING-форма: перенесите `{op}` в конец \
+                                         ПРЕДЫДУЩЕЙ строки (nv-coding-style §27)."
+                                    ),
+                                    Span::new(start, start + op.len()),
+                                ),
+                            });
+                        }
+                    }
+                }
+                // Обновление awaiting_brace: строка-начало statement'а
+                // начинается с управляющего слова — входим в condition-span,
+                // длящийся до появления `{` (на этой ЖЕ или последующей
+                // строке). «Начало statement'а» здесь ШИРЕ, чем гейт
+                // предупреждения выше: сюда попадает И «предыдущий statement
+                // сбалансирован» (prev_delta == Some(0), не после close+
+                // reopen), И «предыдущая строка только что ОТКРЫЛА новый
+                // блок» (prev_brace_delta > 0) — т.е. текущая строка ПЕРВЫЙ
+                // statement внутри только что открытого блока (напр.
+                // вложенный `if` сразу после `while cond {` / `match x {
+                // Arm => {` — без этого расширения `if`-заголовок первого
+                // statement'а блока не распознаётся, ложное срабатывание на
+                // его continuation-строках, см. std/path/glob.nv-прецедент).
+                let at_fresh_stmt = (prev_delta == Some(0) && prev_last_brace_open != Some(true))
+                    || prev_brace_delta > 0;
+                if !awaiting_brace && at_fresh_stmt && conv_starts_cond_keyword(trimmed) {
+                    awaiting_brace = true;
+                }
+                if brace_delta > 0 {
+                    awaiting_brace = false;
+                }
+                // `calc { ... }` (п.4): весь блок — вне проверки, до
+                // возврата brace_depth на уровень, на котором calc открылся.
+                // Требуем инлайновую `{` на ТОЙ ЖЕ строке (`calc {`,
+                // единственная наблюдаемая форма) — `calc` без `{` на этой
+                // же строке не распознаётся (редкий/гипотетический случай,
+                // осознанный компромисс простоты).
+                if calc_base_depth.is_none()
+                    && at_fresh_stmt
+                    && conv_starts_calc_keyword(trimmed)
+                    && brace_delta > 0
+                {
+                    calc_base_depth = Some(brace_depth + brace_delta);
+                }
+            }
+        }
+
+        brace_depth += brace_delta;
+        if calc_base_depth.is_some_and(|d| brace_depth < d) {
+            calc_base_depth = None;
+        }
+        par_depth += par_delta;
+        prev_is_decl = !was_in_block_comment && {
+            let t = line.trim_start();
+            t.starts_with("mut ") || t.starts_with("ro ") || t.starts_with("const ")
+        };
+        prev_delta = Some(delta);
+        prev_brace_delta = brace_delta;
+        prev_last_brace_open = last_brace_open;
     }
 }
 
