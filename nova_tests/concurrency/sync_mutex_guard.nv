@@ -6,39 +6,46 @@
 // Key differences from V1:
 //   V1: m.lock() / defer m.unlock()  (statically unchecked; deprecated pair)
 //   V2: consume g = m.lock() / defer g.unlock()  (consume-checked; static guarantee)
+//
+// D415 §2 amendment (2026-07-11): counters guarded by the (bare) `Mutex`
+// below are wrapped in `IntCell` (`#share`-vouched, defined in the peer
+// file sync_mutex.nv — same folder-module CU) instead of a raw `mut int`,
+// same reasoning as sync_mutex.nv: Nova's `Mutex` doesn't wrap its own
+// data (unlike Rust's `Mutex<T>`), so the capture-check cannot see the
+// external lock/unlock discipline — the author vouches it explicitly.
 
 module nova_tests.concurrency
 
 test "MutexGuard: lock and unlock single fiber" {
     mut m = Mutex.new()
-    mut counter = 0
+    mut counter = IntCell.new(0)
     supervised {
         spawn {
             consume g1 = m.lock()
-            counter = counter + 1
+            counter.val = counter.val + 1
             g1.unlock()
             consume g2 = m.lock()
-            counter = counter + 1
+            counter.val = counter.val + 1
             g2.unlock()
         }
     }
-    assert(counter == 2)
+    assert(counter.val == 2)
 }
 
 test "MutexGuard: mutual exclusion — inside never > 1" {
     mut m = Mutex.new()
-    mut inside = 0
-    mut violations = 0
+    mut inside = IntCell.new(0)
+    mut violations = IntCell.new(0)
 
     supervised {
         spawn {
             mut i = 0
             while i < 50 {
                 consume g = m.lock()
-                inside = inside + 1
-                if inside > 1 { violations = violations + 1 }
+                inside.val = inside.val + 1
+                if inside.val > 1 { violations.val = violations.val + 1 }
                 runtime.yield()
-                inside = inside - 1
+                inside.val = inside.val - 1
                 g.unlock()
                 i = i + 1
             }
@@ -47,29 +54,29 @@ test "MutexGuard: mutual exclusion — inside never > 1" {
             mut i = 0
             while i < 50 {
                 consume g = m.lock()
-                inside = inside + 1
-                if inside > 1 { violations = violations + 1 }
+                inside.val = inside.val + 1
+                if inside.val > 1 { violations.val = violations.val + 1 }
                 runtime.yield()
-                inside = inside - 1
+                inside.val = inside.val - 1
                 g.unlock()
                 i = i + 1
             }
         }
     }
-    assert(violations == 0)
-    assert(inside == 0)
+    assert(violations.val == 0)
+    assert(inside.val == 0)
 }
 
 test "MutexGuard: explicit lock/unlock preserves V1 compat (bare API)" {
     mut m = Mutex.new()
-    mut counter = 0
+    mut counter = IntCell.new(0)
     supervised {
         spawn {
             mut i = 0
             while i < 100 {
                 // V2 explicit guard API:
                 consume g = m.lock()
-                counter = counter + 1
+                counter.val = counter.val + 1
                 g.unlock()
                 i = i + 1
             }
@@ -78,26 +85,26 @@ test "MutexGuard: explicit lock/unlock preserves V1 compat (bare API)" {
             mut i = 0
             while i < 100 {
                 consume g = m.lock()
-                counter = counter + 1
+                counter.val = counter.val + 1
                 g.unlock()
                 i = i + 1
             }
         }
     }
-    assert(counter == 200)
+    assert(counter.val == 200)
 }
 
 test "MutexGuard: explicit lock/unlock frees mutex for reuse" {
     mut m = Mutex.new()
-    mut counter = 0
+    mut counter = IntCell.new(0)
     supervised {
         spawn {
             consume g = m.lock()
-            counter = counter + 1
+            counter.val = counter.val + 1
             g.unlock()
         }
     }
-    assert(counter == 1)
+    assert(counter.val == 1)
     // m is free again — can lock
     ro ok = m.try_lock()
     assert(ok == true)
