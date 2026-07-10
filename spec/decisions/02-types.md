@@ -10807,11 +10807,15 @@ behavior; V3 §V3.1 does NOT fire on loop-var-introduced rebindings.
 3. **Named tuples**: `type Point(x f64, y f64)` (Plan 120 D215)
 4. **Anonymous tuples**: `(A, B, C)` literal type syntax
 5. **Unit**: `()` (zero-size value)
+6. **Fixed arrays** `[N]T` ([M-fixed-array-value-semantics], 2026-07-10,
+   D27-амендмент): inline value-класс (стек / поле-по-месту, C `T name[N];`),
+   копирующее присваивание/передача. Элементы могут быть кучевыми
+   (`[N]str`, `[N]*T`) — контейнер всё равно value, как и у Tuple.
 
 **Reference types per V3:**
 
 - Records (`type X { ... }` default — heap)
-- Arrays `[]T` / FixedArray `[N]T` (heap-tracked для elements)
+- Arrays `[]T` (≡ `Vec[T]`, D239; `[N]T` — value, см. п.6 выше)
 - Pointer (any modifier wrapping)
 - Func, Protocol
 
@@ -10836,8 +10840,8 @@ fn is_value_type_for_v3(ty: &TypeRef, type_decls: &TypeDeclRegistry) -> bool {
             false
         }
         Tuple(..) => true,    // anonymous tuples — value
-        FixedArray(..) => false,  // [N]T — heap-tracked elements
-        Array(..) => false,       // []T — heap
+        FixedArray(..) => true,   // [N]T — inline value ([M-fixed-array-value-semantics], D27-амендмент 2026-07-10)
+        Array(..) => false,       // []T — heap (Vec canon, D239)
         Pointer(..) => false,
         Func { .. } => false,
         Protocol { .. } => false,
