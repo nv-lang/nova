@@ -2876,20 +2876,32 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Атомики не нужны. Пример: nova_const_ADDR_IMAGE_BYTES в любом net-CU.
 
 - **[M-lint-findings-static-conversion]** (2026-07-09, P3, Wave: миграционная волна §1а;
-  источник: план 185, `nova lint std/`) — 20 сайтов статик-конверсий `T.from(x)` /
-  `T.parse(s)` в std (Csv/Ini/Json.parse, Url/Body/BodyReader/HeaderValue/Ulid/Uuid.from,
+  источник: план 185, `nova lint std/`) — 21 сайт статик-конверсий `T.from(x)` /
+  `T.parse(s)` в std (Csv/Ini/Json/**Toml**.parse, Url/Body/BodyReader/HeaderValue/Ulid/Uuid.from,
   HashMap.from, Vec[T].from, JsonValue.try_from и др.) — «пятая дверь» по §1а
   nv-coding-style (ретракция 2026-07-09). Миграция = переименование публичного API
   (`s.to_json()`-семья) + правка вызовов; не входит в план 185. On-line маркеры
   на декларациях; полный список — `nova lint --rule W_STATIC_CONVERSION std/`
-  после снятия маркеров.
+  после снятия маркеров. [lint-sanitation 2026-07-10]: `Toml.parse` добавлен в
+  список — промоушен toml.nv из std/_experimental случился ПОСЛЕ первоначальной
+  волны (2026-07-09), маркер не был проставлен; проставлен сейчас. `VersionReq.parse`
+  (data/semver_range.nv) НЕ в этом списке — для него сделан полноценный фикс
+  (`str @to_versionreq() -> Result[...]`, по образцу `semver.nv`), т.к. файл малой
+  сложности без зависимых Fail-эффект regression-тестов.
 
 - **[M-lint-findings-fail-public-signature]** (2026-07-09, P3, Wave: D325-R5 миграция;
-  источник: план 185) — 7 сайтов `Fail[XError]` в публичных std-сигнатурах
-  (Csv/Ini.parse, Ulid.new/from, Uuid.from, testing/property assert_prop*) — по R5
+  источник: план 185) — 8 сайтов `Fail[XError]` в публичных std-сигнатурах
+  (Csv/Ini/**Toml**.parse, Ulid.new/from, Uuid.from, testing/property assert_prop*) — по R5
   D325 канон `Result[T, XError]`. Миграция = смена сигнатур + вызовов (у property —
   осознанный throw-дизайн тест-ассертов, решить при заходе). Проверка:
-  `nova lint --rule W_FAIL_PUBLIC_SIGNATURE std/`.
+  `nova lint --rule W_FAIL_PUBLIC_SIGNATURE std/`. [lint-sanitation 2026-07-10]:
+  `Toml.parse` — доп. причина держать Fail-эффект (не просто «ленивый долг»):
+  `std/encoding/toml_test.nv` (создан 2026-07-10, `[M-toml-repeated-fail-call-run-fail]`)
+  ПИНИТ поведение ПОВТОРНЫХ Fail-эффектных вызовов в одном `with`-scope именно
+  через `Toml.parse` как пробник механизма fail-frame; перевод на `Result`
+  убрал бы единственный удобный Fail-эффектный вызов и обнулил регресс-покрытие
+  того самого механизма. Конверсия — только вместе с ревизией этих тестов
+  (не в периметре этой волны).
 
 - **[M-lint-findings-manual-slice-copy]** ✅ **ЗАКРЫТ (2026-07-10, ветка std-hygiene).**
   ~~29~~ все сайты поэлементной копии `push(x[i])` в циклах (§18а) разобраны. (а)
