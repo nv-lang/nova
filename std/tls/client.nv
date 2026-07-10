@@ -50,6 +50,18 @@ fn build_client_cfg(config ClientConfig) -> Result[CTlsCfgHandle, TlsError] {
             return Err(TlsError.from_shim(arc, "alpn config"))
         }
     }
+    // mTLS: клиентский серт (если задан) — та же extern-обёртка, что серверная.
+    if config.client_cert_pem.len() > 0 {
+        ro cert = config.client_cert_pem
+        ro key = config.client_key_pem
+        ro krc = unsafe {
+            tls_cfg_cert_key_pem(c, cert.ptr(), cert.len(), key.ptr(), key.len())
+        }
+        if krc != 0 {
+            tls_cfg_free(c)
+            return Err(TlsError.from_shim(krc, "client cert/key"))
+        }
+    }
     Ok(c)
 }
 
