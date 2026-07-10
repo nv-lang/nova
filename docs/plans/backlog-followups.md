@@ -2608,16 +2608,33 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   копия того же паттерна, emit_c.rs:28667, НЕ трогать — там elem_ty
   используется для построения ДРУГОГО mangled-имени, где `_p` обязан
   остаться). Конформанс 67/0 без регрессий; std/encoding, std/data чисты.
-  **НОВЫЙ блокер после фикса** (toml всё ещё НЕ готов к промоушену):
-  `Nova_HashMap____nova_str__Nova_TomlValue_p` — «unknown type name» на
-  использовании (поле suum-варианта `TomlTable`, toml.c:740/780/879), хотя
-  typedef ЕСТЬ дальше в файле (toml.c:944/1010) — forward-declare/hoist
-  ordering для mono struct типа, использованного как поле payload'а
-  sum-варианта. Похоже на ТУ ЖЕ зону (typedef-hoist для value-полей
-  записей), что занята агентом [M-option-self-recursive-record-mono]
-  (emit_c.rs/types/mod.rs, явно «не заходить») — НЕ трогал, оставил
-  toml в _experimental. Перепроверить toml после закрытия
-  [M-option-self-recursive-record-mono].
+  **Hoist-блокер ЗАКРЫТ 2026-07-10 (Plan 186 recursive-mono)** —
+  `[M-toml-sum-variant-mono-field-hoist]`: `emit_sum_type`/`emit_record_type`
+  писали `struct Nova_{name} { ... }` без pre-pass форвард-декларации для
+  pointer-полей, чьё C-имя — mono'd generic instance ещё не эмитированный
+  (typedef только после `drain_generic_type_worklist`). Фикс — pre-pass
+  (собрать все field-типы ДО открытия struct, эмитить `typedef struct X X;`
+  для `Nova_`-префиксных pointer-типов) в ОБЕИХ функциях, зеркалит уже
+  существующий паттерн `emit_generic_type_instance`'s Record-ветки.
+  `being_defined_sum_types`/`being_defined_record_types` (см.
+  [M-option-self-recursive-record-mono] выше) переставлены на самый ВЕРХ
+  функции — pre-pass тоже зовёт `type_ref_to_c` на своих полях, гвард
+  обязан быть виден и на этом первом проходе. toml.nv теперь компилируется
+  И линкуется. compiler-codegen/src/codegen/emit_c.rs.
+  **НОВЫЙ блокер, толькочто найден, НЕ recursive-mono** —
+  `[M-toml-repeated-fail-call-run-fail]`: `test --full` теперь RUN-FAIL на
+  4/6 тестов (все multi-key/multi-element входы: 2× bare-key + 2×
+  basic-string, или 3× parse_number внутри array) — тесты с РОВНО ОДНИМ
+  вызовом `Fail`-эффектной parser-функции внутри `with Fail[...]`-скоупа
+  (comments-тест, unclosed-string-тест) ПРОХОДЯТ; с 2+ повторными вызовами
+  — падают с ложным throw. Парсер-логика вручную вычитана и корректна
+  (RegexNode-подобных self-recursive типов здесь нет — HashMap[str,
+  TomlValue] mono, не рекурсивный enum). Похоже на runtime/codegen баг в
+  повторном использовании Fail-эффект-хендлера / `consume`-биндинга
+  (`parse_bare_key`/`parse_basic_string` оба используют `consume buf =
+  StringBuilder.new()`) внутри ОДНОГО `with`-скоупа — не диагностировано
+  до конца, требует отдельной волны. toml остаётся в _experimental до
+  закрытия.
 
 - **[M-generic-bound-forwarding]** (2026-07-08, P2, Plan: 172.13 батч 4;
   **ЗАКРЫТ батчем 4** — заведён по факту и закрыт той же волной) — bound не

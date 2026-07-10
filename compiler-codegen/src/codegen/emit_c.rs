@@ -14105,6 +14105,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     fn emit_record_type(&mut self, name: &str, fields: &[RecordField]) -> Result<(), String> {
         let mut schema = HashMap::new();
+        // [M-option-self-recursive-record-mono]: mark this record concrete WHILE
+        // its OWN fields are lowered — mirrors `being_defined_sum_types` in
+        // `emit_sum_type` — so a self-referential field (`next Option[Self]`) is
+        // recognised as the concrete `Nova_<Name>*` heap type instead of an
+        // unresolved generic-param stub (`rt_named_is_stub` consults this).
+        // MUST be set before ANY `type_ref_to_c` call on this record's own
+        // fields — including the forward-decl pre-pass right below, which
+        // calls it too (a self-referential `Option[Self]` field's structural-
+        // eq registration side effect must see this guard on its FIRST call,
+        // or the deferral fix in `register_novaopt_decl` never engages).
+        self.being_defined_record_types.insert(name.to_string());
+        // [M-toml-sum-variant-mono-field-hoist] (Plan 186, recursive-mono):
+        // mirror of the SAME pre-pass in `emit_sum_type` (see its doc) — a
+        // plain record field whose C type is a pointer to a MONO'D GENERIC
+        // instance (e.g. `TomlParser { mut root HashMap[str, TomlValue] }`)
+        // needs a forward `typedef struct X X;` BEFORE this record's own
+        // `struct Nova_{name} {` opens (the mono instance's real typedef is
+        // only emitted later, when `drain_generic_type_worklist` runs). A C
+        // typedef statement cannot appear inside another struct's braces, so
+        // this must run as its own pass before the struct is opened below.
+        {
+            let mut fwd_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for f in fields {
+                if let Ok(tc) = self.type_ref_to_c(&f.ty) {
+                    if let Some(base) = tc.strip_suffix('*') {
+                        let base = base.trim_end_matches('*').trim();
+                        if base.starts_with("Nova_") && fwd_seen.insert(base.to_string()) {
+                            self.line(&format!("typedef struct {0} {0};", base));
+                        }
+                    }
+                }
+            }
+        }
         self.line(&format!("typedef struct Nova_{0} Nova_{0};", name));
         self.line(&format!("struct Nova_{} {{", name));
         self.indent += 1;
@@ -14116,12 +14149,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if fields.is_empty() {
             self.line("char _empty_record_marker;");
         }
-        // [M-option-self-recursive-record-mono]: mark this record concrete WHILE
-        // its OWN fields are lowered — mirrors `being_defined_sum_types` in
-        // `emit_sum_type` — so a self-referential field (`next Option[Self]`) is
-        // recognised as the concrete `Nova_<Name>*` heap type instead of an
-        // unresolved generic-param stub (`rt_named_is_stub` consults this).
-        self.being_defined_record_types.insert(name.to_string());
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
             schema.insert(f.name.clone(), ty_c.clone());
@@ -14231,6 +14258,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Collect schema while building union
         let mut sum_schema: HashMap<String, Vec<String>> = HashMap::new();
 
+        // [M-172.1-self-ref-slice-variant-erasure]: mark this type concrete WHILE its
+        // variant payload fields are lowered, so a self-referential `[]Self` slice
+        // element (`type T | Node([]T)`) resolves to `Nova_Vec____Nova_T_p*` instead
+        // of the erased `Nova_Vec____nova_int*` (`debt_is_generic_stub_c` consults
+        // this). MUST be set before ANY `type_ref_to_c` call on this sum's own
+        // variant fields — including the forward-decl pre-pass right below.
+        self.being_defined_sum_types.insert(name.to_string());
+        // [M-toml-sum-variant-mono-field-hoist] (Plan 186, recursive-mono):
+        // pre-emit forward `typedef struct X X;` decls for any Tuple/Record
+        // variant payload field whose C type is a pointer to a MONO'D GENERIC
+        // instance (e.g. `TomlTable(HashMap[str, TomlValue])` — the field's
+        // `Nova_HashMap____nova_str__Nova_TomlValue_p*` typedef is only
+        // emitted later, when `drain_generic_type_worklist` runs — long
+        // after this plain (non-generic) sum type's OWN struct body, which
+        // references it as a pointer field right here). A pointer field only
+        // needs the type NAME declared, not the full struct body, so a
+        // forward-decl emitted BEFORE this struct opens is sufficient — but
+        // it must be emitted before `struct Nova_{name} {` starts (a C
+        // typedef statement cannot appear inside another struct's braces),
+        // hence this dedicated pre-pass over ALL variants (mirrors the
+        // analogous pre-pass `emit_generic_type_instance`'s Record arm
+        // already does for its OWN fields, one level up the generic-instance
+        // stack — this closes the SAME gap for a plain sum's fields).
+        {
+            let mut fwd_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for v in variants {
+                let field_tys: Vec<&crate::ast::TypeRef> = match &v.kind {
+                    SumVariantKind::Unit => Vec::new(),
+                    SumVariantKind::Tuple(types) => types.iter().collect(),
+                    SumVariantKind::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
+                };
+                for ty in field_tys {
+                    if let Ok(tc) = self.type_ref_to_c(ty) {
+                        if let Some(base) = tc.strip_suffix('*') {
+                            let base = base.trim_end_matches('*').trim();
+                            if base.starts_with("Nova_") && fwd_seen.insert(base.to_string()) {
+                                self.line(&format!("typedef struct {0} {0};", base));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Union payload
         self.line(&format!("typedef struct Nova_{0} Nova_{0};", name));
         self.line(&format!("struct Nova_{} {{", name));
@@ -14243,11 +14314,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !has_payload {
             self.line("char _dummy;");
         }
-        // [M-172.1-self-ref-slice-variant-erasure]: mark this type concrete WHILE its
-        // variant payload fields are lowered, so a self-referential `[]Self` slice
-        // element (`type T | Node([]T)`) resolves to `Nova_Vec____Nova_T_p*` instead
-        // of the erased `Nova_Vec____nova_int*` (`debt_is_generic_stub_c` consults this).
-        self.being_defined_sum_types.insert(name.to_string());
         for v in variants {
             match &v.kind {
                 SumVariantKind::Unit => {
