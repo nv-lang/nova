@@ -39098,3 +39098,42 @@ std) — 8 обходов §4а с маркерами: [M-175.1-local-offset-eff
 [M-175.1-minus-overload-arg-type], [M-175.1-operator-arg-type-blind],
 [M-175.1-qualified-variant-value], [M-175.1-enum-default-param],
 [M-175.1-interp-value-record-display]; данные: [M-175.1-full-tzdb-embed].
+
+=== 2026-07-10: Plan 173 Ф.5+Ф.6 — hygiene-финал + panics-клаузула (D348); зонт закрыт (ветка err-173-f56, sonnet) ===
+Ф.5 (сквозная гигиена, 5 коммитов ad6a9b191/843810e49/9c15dbe7b/58fcf2975/cdd23a5b2):
+- D188 R2 exactly-once — РЕАЛЬНЫЙ runtime-счётчик: скрытое поле _consume_ccount на heap-record
+  инстансе + пролог-guard в Nova_<T>_consume_cleanup (единый chokepoint всех путей вызова) →
+  panic D188-on-exit-double-invocation; чекер D188-r2-manual-on-exit расширен на алиасы/receiver-
+  подвыражения; extern "nova" cleanup'ы (D194 hot-path) исключены.
+- D192-РЕТРАКТ ПРИМЕНЁН: тип CleanupTimeoutError УДАЛЁН (prelude+codegen-splice+runtime-hook);
+  watchdog армится только вокруг cleanup-вызова (nv_cleanup_watchdog_arm/disarm); превышение
+  порога = one-shot stderr-варн «fiber stuck in cleanup» + duration_ms/overrun в ResourceTrace
+  exit-событии (D185 amend; timeout дропнут из enter; D195-override тесты мигрированы на overrun);
+  3-level resolution сохранена как источник ПОРОГА. nv_resume_panic→nv_panic в D188-десугаре (#9).
+- Попутный §4а-фикс: record-literal с неизвестным типом → [E_UNKNOWN_TYPE] (был тихий miscompile).
+- Sweep: historical-баннеры D158/D160/D161/D162; stale race/with_timeout в 06-concurrency/04-effects;
+  README-индекс; хаб error-and-cleanup-model догнал факт (Ф.2 ЗАКРЫТА + Ф.5-строка).
+- nova_runtime_reset() (сброс fail/interrupt-frames + handler-слотов между panic-тестами; из
+  user-кода недоступен) + throw-site трассировка (Zig-минимум: TLS _nova_throw_site, стемп на
+  throw/panic/unreachable, «at file:line (throw site)» в 4 uncaught-abort ветках).
+Ф.6 (panics-клаузула, d1707363f/3e4505953/3f2262696):
+- СПЕК-ПЕРВЫМ: D348 (09-tooling.md) — test "имя" panics "паттерн" {…}, инверсия PASS/FAIL
+  (PASS ⇔ PANIC-класс D13 + substring D89), exit=0, granularity per-test; amend D89 (шестой класс;
+  EXPECT_RUNTIME_PANIC → legacy + --panic lane); таблица folder-module layout. NB: «(D348)»-комменты
+  в emit_c про crossmodule-mangling — ошибочная ссылка на фактический D381, исправлены.
+- parser/AST TestDecl.panics (контекстное KW как raw/bench); codegen test-frame: инверсия веток,
+  PANIC-дискриминатор, nova_test_msg_contains (ptr,len-окно), nova_runtime_reset() в эпилоге.
+- ВСКРЫТЫЙ §4а-ФИКС (D13/D414, тот же класс что Ф.1 #1): supervised re-throw ДЕГРАДИРОВАЛ панику
+  ребёнка до ловимого USER (plain nova_throw) — теперь kind==PANIC транспортируется nv_panic'ом.
+- Миграция корпуса: 67 panics-тестов в 62 файлах; −52 CU (39 фолдов из neg//rt/ + 13
+  expected_runtime → новая folder-module папка runtime_panics/ одним CU; 6 in-place). Возвраты в
+  legacy (55 файлов EXPECT_RUNTIME_PANIC): throw-класс (sync unlock-guards = nova_throw USER),
+  file-режимы (CONTRACTS off/#unchecked), процессные (fiber stack overflow SEH, token-bind abort,
+  uncaught-trace stderr), мигранты pre-existing-красных CU (verified родным baseline-бинарём).
+- test-conventions.md (a/b/c) обновлены с «· согласовано»; Rust-тесты раннера d348_panics_clause.rs
+  7/7 (мета-FAIL-кейсы «нет паники→FAIL»/«неверный паттерн→FAIL» — не .nv-фикстурами).
+Гейты (слито с main fed26870f): cargo build оба крейта чисто; conformance 83/0 (эталон 82 + новый
+d192-ретракт neg); err173*-корпус 28/0; --panic lane 53/1 (TIMEOUT pre-existing); nova_tests-выборка
+(basics/effects/generics/atomics/narrowing/any_is) δ=0 vs родной baseline-бинарь (35/5 оба,
+посписочный diff пуст). Зонт 173: все фазы закрыты; остаток — Ф.3 п.5 with_timeout (gated Plan 175,
+[M-174-retract-with-timeout]) + followups [M-173-error-return-trace] (минимум сделан) и пр.

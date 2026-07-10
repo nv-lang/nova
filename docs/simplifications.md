@@ -38276,3 +38276,35 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   все neg зелёные; std/concurrency 7/0. Известный MAIN-side красный (не эта ветка):
   err173_1/parfor_diag — D415-гейт `E_CONCURRENT_MUT_CAPTURE` бьёт mut-захват в
   supervised_value_smoke.nv (файл 173.1, гейт 173.3) — чинить волне 173.1/173.3.
+
+## Plan 173 Ф.5+Ф.6 — hygiene + panics-клаузула (2026-07-10, ветка err-173-f56)
+
+**Ф.5 — отступления/границы (не упрощения):**
+- **Per-instance exactly-once счётчик — только пользовательские heap-record типы.** Extern "nova"
+  cleanup'ы (MutexGuard/ReadGuard/WriteGuard/Permit — D194 hot-path) счётчиком не оснащаются: их
+  структуры рукописные в nova_rt (инъекция поля невозможна из codegen). Generic consume-типы —
+  mono-путь без прологa (в корпусе таких нет). Scope-локальный дубль-гард сохранён как
+  defense-in-depth для extern-типов.
+- **Watchdog-варн наблюдаем в .nv только структурно** (overrun-флаг exit-события); сам stderr-текст
+  «fiber stuck in cleanup» в .nv-фикстуре не проверяется (нет EXPECT-механики для warn-потока
+  positive-теста) — механика той же ветки, что overrun, покрыт код-путь.
+- **[E_UNKNOWN_TYPE] на record-literal** — точечный фикс вскрытого miscompile-класса; общий
+  name-resolution пробел (unknown-тип в TypeRef/Fail[...]-позиции «не наша забота») остаётся —
+  d192-ретракт neg-тесты используют record-literal вектор.
+
+**Ф.6 — фактическая граница миграции (план оценивал −78 CU, факт −52):**
+- **Throw-класс НЕ мигрируем by design:** sync unlock/misuse-guards, Channel.new capacity,
+  select-all-closed кидаются `nova_throw` (USER) — по строгой D348-семантике это не паника
+  (инверсия не принимает). Семантический вопрос «должны ли sync-misuse-guards быть panic-классом
+  (D13)» — отдельное языковое решение, НЕ взято в Ф.6.
+- **File-режимные тесты** (`// CONTRACTS off`, module-level `#unchecked`) остаются standalone —
+  директива действует на весь CU.
+- **Процессные тесты** (fiber stack overflow = SEH-kill, token-double-bind abort из fiber,
+  uncaught-abort stderr «(throw site)») — легитимный legacy (изоляция процесса обязательна).
+- **Мигранты pre-existing-красных CU возвращены** (plan153_4/5, plan138/_2, plan83_10, strings,
+  contracts, plan11_followup, plan153_2): вливание в красный CU = потеря покрытия; сами CU красные
+  на родном baseline-бинаре (internal error P67-LEGACY chunks_windows, E_STR_NO_LEN-дрейфы,
+  strict-propagation) — санация корпуса вне периметра (Plan 182).
+- **Contract-диагностика в folder-module CU** печатает file:line entry-файла CU (loc_for_span от
+  annotation_source) — panics-паттерны мигрантов ослаблены (без file:line-префикса). Точность
+  file:line в multi-file CU — известная ось (span→peer-файл маппинг), не регресс этой волны.
