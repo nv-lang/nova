@@ -39265,3 +39265,59 @@ materialize-temp на call-site, auto-deref в теле через ref_params-п
 non-generic, наименьший риск) вместо равномерного прохода по всем 66.
 План 172.14 обновлён реальными числами (заменяет оценку ~180), README
 строка обновлена, тесты/находки закоммичены и запушены.
+
+=== 2026-07-10 — волна handler-annot: единый канал типовой разметки для тел эффект-хендлеров (ветка handler-annot, модель sonnet) ===
+
+Дефект конвенции «один канал» (владелец 2026-07-10): оп-тела handler-литерала
+(`with E = effect E { op() {...} }`) вырезаются в отдельные C-функции
+(emit_c.rs::emit_handler_lit), но эмитились с типовым контекстом ВНЕШНЕЙ
+функции — expected_record_type / current_fn_return_ty / contracts_post_label
+не переключались на сигнатуру опа из effect-схемы. Следствие: анонимный
+record-литерал (D55) в оп-теле падал «anonymous record literal without spread
+not supported in codegen» (это и был блокер (b) из D316-amend Ф.2, из-за
+которого typed-wire для Time признан невозможным).
+
+Разведка (матрица nova_tests/plan175_handler_annot/repro_matrix.nv):
+- ПАДАЛО: анонимный heap-record (=> и block/return-формы), анонимный
+  value-record, захват+анонимный record.
+- РАБОТАЛО и работает: именованные Point{...}/PointV{...}, анонимный tuple,
+  sum-вариант Shape2.Circle{...}, конструктор Type.new(...).
+- Отдельный класс (НЕ хендлер-специфичный, предсуществующий на чистой базе
+  6582887e1, воспроизводится в ОБЫЧНОМ тест-теле — nova_tests/basics/
+  functions.nv): let-bound ClosureFull `ro f = fn(a int) -> int => a+1` →
+  CC-FAIL «undeclared identifier f» (infer_expr_c_type(ClosureFull) даёт
+  пустой ty_c; чекер аннотирует resolved_types только для zero-param
+  ClosureLight). Новый floating-маркер [M-closurefull-let-empty-ty] (backlog),
+  трек 172.12.
+
+Фикс (02d5da526): per-op save/restore в emit_handler_lit — current_fn_return_ty
+= схемный ret опа, expected_record_type = debt_struct_name_from_c_type(ret),
+contracts_post_label гасится (return в оп-теле не должен goto'ить на
+ensures-лейбл внешней функции). Тот же канал, что emit_fn_body (:20826) /
+лямбды (:15807) / протокол-методы (:21619); инференция НЕ дублируется.
+
+Спека (ff56970fe): D316-amend UPD в 04-effects.md + docs/time.md Ф.2 —
+ограничение (b) снято; option C для Time ОСТАЁТСЯ по причине (a) opacity
+Monotonic (решение владельца, sign-off «подмена источника ≠ фабрикация
+значения» — влит из main тем же днём); провод Time не менялся.
+
+Слияние с main (2f8178789, afc31820f): конфликт в 04-effects.md разрешён
+сохранением ОБОИХ абзацев (владельческий AMEND + UPD волны).
+
+Гейты (на слитом дереве, оба крейта собраны): conformance 90/0 (эталон с
+d326 совпал); матрица PASS; std/testing 2/0; err173/1/2/3 PASS; err173_0
+PASS с --timeout 300 (стресс 40×5 M:N медленный под параллельной нагрузкой,
+дефолтных 60с мало — флака, не регрессия). δ0-выборка (basics, effects,
+plan61, plan97, contracts, plan110, concurrency, std/time) на двух бинарях
+(база afc31820f в temp-worktree nova-175-base-check vs фикс) — множества
+БАЙТ-ИДЕНТИЧНЫ: 9 PASS + 4 одинаковых предсуществующих падения
+(control_flow → [M-folder-module-spawn-const-capture]; effects/basic и
+_repro_p110 — pre-existing в backlog; apply_arity_suggest_w2402 — δ0).
+
+Аудит (задание п.5, места отказа эмиссии из-за отсутствия разметки, НЕ
+чинились — трек 172.12): emit_c.rs:38364 (spread без типа), :38450
+(anon-record без контекста — остаточный отказ, теперь недостижим из
+хендлер-тел), E7001 :7483/:7512, generic-инференс :18217/:18959,
+P67-LEGACY паники (checker-must-annotate): :44092, :45052, :45056, :45883,
+:46309, :46555, :46557, :46560, :47034, :47221, :48249, :48374, :48400,
+:49021, :49106, :49109, :49155.
