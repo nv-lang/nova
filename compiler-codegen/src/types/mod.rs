@@ -8132,6 +8132,30 @@ impl<'a> TypeCheckCtx<'a> {
                 let index_is_range = matches!(index.kind, ExprKind::Range { .. })
                     || self.infer_expr_type(index, scope).as_ref()
                         .and_then(Self::typeref_named_base) == Some("Range");
+                // [M-172.14-range-idx-postorder-retry] (канальный фикс, 2026-07-10,
+                // регресс bcrypt): the EARLY Range-index whole-expr probe (Plan 172.1.1
+                // U.4.5 "Index probe", earlier in `f1_expr_inner` — before this match's
+                // recursive `f1_expr(obj)`/`f1_expr(index)` above) runs PRE-ORDER — when
+                // `obj`'s type is visible ONLY via the channel (`resolved_types_buf`,
+                // populated POST-ORDER by a method call like `state.finalize()` with no
+                // scope-visible type), `infer_expr_type(obj)` inside that early probe
+                // fails (buf still empty at that point) → the WHOLE Range-index expr
+                // (`state.finalize()[0..32]`) never gets a resolved_types_buf entry →
+                // codegen's `infer_expr_c_type` Channel 2 misses it → falls to legacy →
+                // stale `[N]T` C-type for the binding instead of the correct `[]T`
+                // (checker's `infer_expr_type` Index-arm DOES compute `[]T` for a
+                // FixedArray Range-slice — [M-fixed-array-value-semantics] — but that
+                // fix never reaches the channel for this ordering). Retry HERE,
+                // POST-ORDER (children just got annotated above) — idempotent no-op if
+                // the early probe already succeeded (scope-typed `obj` case).
+                if index_is_range && e.id.is_set()
+                    && !self.resolved_types_buf.borrow().contains_key(&e.id)
+                {
+                    if let Some(tr) = self.infer_expr_type(e, scope) {
+                        let rt = Self::mark_type_params(ResolvedType::from_type_ref(&tr), gs);
+                        self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                    }
+                }
                 if !index_is_range {
                     if std::env::var_os("NOVA_IDX_TRACE").is_some() {
                         if let ExprKind::Ident(on) = &obj.kind {

@@ -41,6 +41,15 @@ use crate::ast::{
 pub struct EscapeResult {
     /// `fn_id` → set of escaped local names (must be heap-promoted).
     promoted_per_fn: HashMap<String, HashSet<String>>,
+    /// Plan 172.14 (sret/_out, дизайн 172.14 §3): `fn_id` → имена локалов,
+    /// чьё ЗНАЧЕНИЕ-идентификатор достигает эскейп-синка. НЕЗАВИСИМЫЙ от
+    /// value-record анализа walker ПО ИМЕНИ — placement-предикат стек-слота
+    /// видов. V1 OVER-эскейп (промах = heap = сегодняшнее поведение).
+    /// Синки: return/tail/throw; тело замыкания (любое упоминание);
+    /// arg-позиция вызова (НЕ receiver-позиция метод-вызова); голый Ident
+    /// как RHS Let/Assign (алиас); элементы RecordLit/TupleLit/ArrayLit;
+    /// значение store в Member/Index.
+    ident_escapes_per_fn: HashMap<String, HashSet<String>>,
 }
 
 impl EscapeResult {
@@ -70,6 +79,16 @@ impl EscapeResult {
     /// with promoted locals для emitting per-fn warnings.
     pub fn iter_promoted(&self) -> impl Iterator<Item = (&String, &HashSet<String>)> {
         self.promoted_per_fn.iter()
+    }
+
+    /// Plan 172.14 (sret/_out §3): true, если значение-идентификатор локала
+    /// `local_name` в `fn_id` достигает эскейп-синка (V1 OVER). Consumer:
+    /// placement-предикат стек-слота в emit_let — эскейп → GC-куча.
+    pub fn ident_escapes(&self, fn_id: &str, local_name: &str) -> bool {
+        self.ident_escapes_per_fn
+            .get(fn_id)
+            .map(|s| s.contains(local_name))
+            .unwrap_or(false)
     }
 }
 
@@ -105,8 +124,12 @@ pub fn analyze_module(module: &Module) -> EscapeResult {
     };
 
     for item in entry_items {
-        if let Item::Fn(fd) = item {
-            analyze_fn(fd, &value_records, &mut result);
+        match item {
+            Item::Fn(fd) => analyze_fn(fd, &value_records, &mut result),
+            // Plan 172.14 (sret/_out §3): тест-тела — ident-эскейп walker с
+            // ключом `test::<имя>` (зеркало emit_test's current_fn_id).
+            Item::Test(t) => analyze_test_idents(t, &mut result),
+            _ => {}
         }
     }
     // Also walk non-entry peer fns (per-file emission still needs their
@@ -114,12 +137,25 @@ pub fn analyze_module(module: &Module) -> EscapeResult {
     for pf in &module.peer_files {
         if pf.is_entry_module { continue; }
         for item in &pf.items_here {
-            if let Item::Fn(fd) = item {
-                analyze_fn(fd, &value_records, &mut result);
+            match item {
+                Item::Fn(fd) => analyze_fn(fd, &value_records, &mut result),
+                Item::Test(t) => analyze_test_idents(t, &mut result),
+                _ => {}
             }
         }
     }
     result
+}
+
+/// Plan 172.14 (sret/_out §3): ident-эскейп для test-блока — ключ
+/// `test::<имя>` (конвенция emit_test). Value-record promote-анализ на
+/// тест-тела НЕ распространяется (поведение Plan 127 не меняется).
+fn analyze_test_idents(t: &crate::ast::TestDecl, result: &mut EscapeResult) {
+    let mut escaped = HashSet::new();
+    ie_block(&t.body, /*tail_esc=*/ false, &mut escaped);
+    if !escaped.is_empty() {
+        result.ident_escapes_per_fn.insert(format!("test::{}", t.name), escaped);
+    }
 }
 
 /// Collect names of all value-record type declarations in the module.
@@ -176,7 +212,379 @@ fn analyze_fn(
         FnBody::External => {}
     }
     if !ctx.promoted.is_empty() {
-        result.promoted_per_fn.insert(key, ctx.promoted);
+        result.promoted_per_fn.insert(key.clone(), ctx.promoted);
+    }
+    // Plan 172.14 (sret/_out §3): независимый ident-эскейп walker (по имени,
+    // любые типы) для placement-предиката стек-слота видов.
+    let escaped = collect_escaped_idents(fd);
+    if !escaped.is_empty() {
+        result.ident_escapes_per_fn.insert(key, escaped);
+    }
+}
+
+// =============================================================================
+// Plan 172.14 (sret/_out §3) — ident-escape walker
+// =============================================================================
+
+/// Collect names of locals whose VALUE (the identifier itself) reaches an
+/// escape sink anywhere in `fd`'s body. Name-keyed, type-agnostic, V1 OVER-
+/// эскейп: неточность всегда в сторону «эскейпит» (промах = heap =
+/// сегодняшнее поведение, семантика сохранена).
+///
+/// esc-режим walk'а: `true` — значение выражения уходит из кадра (Ident →
+/// mark); `false` — значение только читается на месте. Receiver-позиция
+/// метод-вызова (`x.method(...)` — obj) walk'ается с `false` (допущение V1:
+/// метод не сохраняет receiver сверх его собственных полей — верно для
+/// Vec/std-видов; документировано в дизайне 172.14 §3). Тела замыканий —
+/// все Ident внутри → mark (замыкание может жить дольше кадра).
+fn collect_escaped_idents(fd: &FnDecl) -> HashSet<String> {
+    let mut out = HashSet::new();
+    match &fd.body {
+        FnBody::Block(b) => ie_block(b, /*tail_esc=*/ true, &mut out),
+        FnBody::Expr(e) => ie_expr(e, /*esc=*/ true, &mut out),
+        FnBody::External => {}
+    }
+    out
+}
+
+fn ie_block(b: &Block, tail_esc: bool, out: &mut HashSet<String>) {
+    for stmt in &b.stmts {
+        ie_stmt(stmt, out);
+    }
+    if let Some(t) = &b.trailing {
+        ie_expr(t, tail_esc, out);
+    }
+}
+
+fn ie_stmt(stmt: &Stmt, out: &mut HashSet<String>) {
+    match stmt {
+        Stmt::Let(decl) => {
+            // Алиас `ro y = x` — V1: mark x (транзитивность не отслеживается).
+            if let ExprKind::Ident(n) = &decl.value.kind {
+                out.insert(n.clone());
+            }
+            ie_expr(&decl.value, false, out);
+        }
+        Stmt::Return { value: Some(e), .. } => ie_expr(e, true, out),
+        Stmt::Return { value: None, .. } => {}
+        Stmt::Throw { value, .. } => ie_expr(value, true, out),
+        Stmt::Assign { target, value, .. } => {
+            // Store в Member/Index (heap) — значение эскейпит; в голый локал —
+            // алиас (V1: mark голый Ident RHS).
+            let heap_store = matches!(target.kind, ExprKind::Member { .. } | ExprKind::Index { .. });
+            ie_expr(target, false, out);
+            if let ExprKind::Ident(n) = &value.kind {
+                out.insert(n.clone());
+            }
+            ie_expr(value, heap_store, out);
+        }
+        Stmt::Expr(e) => ie_expr(e, false, out),
+        Stmt::Const(_) | Stmt::Break(_) | Stmt::Continue(_) => {}
+        Stmt::Defer { body, .. } => ie_expr(body, false, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            ie_expr(init, false, out);
+            ie_block(body, false, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => ie_expr(expr, false, out),
+        Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { ie_expr(e, false, out); }
+            for e in rhs {
+                if let ExprKind::Ident(n) = &e.kind {
+                    out.insert(n.clone());
+                }
+                ie_expr(e, true, out);
+            }
+        }
+    }
+}
+
+/// Mark ALL identifiers mentioned anywhere inside `e` (closure bodies —
+/// замыкание может пережить кадр, любой захват = эскейп). Явный обход тех же
+/// форм, что `ie_expr`, но с пометкой каждого Ident (включая receiver-позиции).
+fn ie_mark_all(e: &Expr, out: &mut HashSet<String>) {
+    if let ExprKind::Ident(n) = &e.kind {
+        out.insert(n.clone());
+    }
+    match &e.kind {
+        ExprKind::Call { func, args, .. } => {
+            ie_mark_all(func, out);
+            for a in args { ie_mark_all(a.expr(), out); }
+        }
+        ExprKind::Member { obj, .. } => ie_mark_all(obj, out),
+        ExprKind::Index { obj, index } => {
+            ie_mark_all(obj, out);
+            ie_mark_all(index, out);
+        }
+        ExprKind::Unary { operand, .. } => ie_mark_all(operand, out),
+        ExprKind::Binary { left, right, .. } => {
+            ie_mark_all(left, out);
+            ie_mark_all(right, out);
+        }
+        ExprKind::Block(b) => ie_mark_all_block(b, out),
+        ExprKind::If { cond, then, else_ } => {
+            ie_mark_all(cond, out);
+            ie_mark_all_block(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => ie_mark_all_block(b, out),
+                    ElseBranch::If(e2) => ie_mark_all(e2, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            ie_mark_all(scrutinee, out);
+            ie_mark_all_block(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => ie_mark_all_block(b, out),
+                    ElseBranch::If(e2) => ie_mark_all(e2, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            ie_mark_all(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard { ie_mark_all(g, out); }
+                match &arm.body {
+                    MatchArmBody::Expr(e2) => ie_mark_all(e2, out),
+                    MatchArmBody::Block(b) => ie_mark_all_block(b, out),
+                }
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            ie_mark_all(cond, out);
+            ie_mark_all_block(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            ie_mark_all(scrutinee, out);
+            ie_mark_all_block(body, out);
+        }
+        ExprKind::Loop { body, .. } => ie_mark_all_block(body, out),
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            ie_mark_all(iter, out);
+            ie_mark_all_block(body, out);
+        }
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e2) => ie_mark_all(e2, out),
+            ClosureBody::Block(b) => ie_mark_all_block(b, out),
+        },
+        ExprKind::ClosureFull(sig) => match &sig.body {
+            FnBody::Block(b) => ie_mark_all_block(b, out),
+            FnBody::Expr(e2) => ie_mark_all(e2, out),
+            FnBody::External => {}
+        },
+        ExprKind::Lambda { body, .. } => ie_mark_all(body, out),
+        ExprKind::Spawn(inner) => ie_mark_all(inner, out),
+        ExprKind::Supervised { body, cancel, .. } => {
+            if let Some(c) = cancel { ie_mark_all(c, out); }
+            ie_mark_all_block(body, out);
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => ie_mark_all_block(b, out),
+        ExprKind::TupleLit(elems) => {
+            for e2 in elems { ie_mark_all(e2, out); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for elem in elems {
+                match elem {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => ie_mark_all(e2, out),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { ie_mark_all(v, out); }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr, .. } = p { ie_mark_all(expr, out); }
+            }
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => ie_mark_all(inner, out),
+        ExprKind::Coalesce(a, b) => {
+            ie_mark_all(a, out);
+            ie_mark_all(b, out);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => ie_mark_all(inner, out),
+        ExprKind::TurboFish { base, .. } => ie_mark_all(base, out),
+        ExprKind::With { bindings, body } => {
+            for b in bindings { ie_mark_all(&b.handler, out); }
+            ie_mark_all_block(body, out);
+        }
+        _ => {}
+    }
+}
+
+fn ie_mark_all_block(b: &Block, out: &mut HashSet<String>) {
+    for stmt in &b.stmts {
+        match stmt {
+            Stmt::Let(decl) => ie_mark_all(&decl.value, out),
+            Stmt::Return { value: Some(e), .. } => ie_mark_all(e, out),
+            Stmt::Return { value: None, .. } => {}
+            Stmt::Throw { value, .. } => ie_mark_all(value, out),
+            Stmt::Assign { target, value, .. } => {
+                ie_mark_all(target, out);
+                ie_mark_all(value, out);
+            }
+            Stmt::Expr(e) => ie_mark_all(e, out),
+            Stmt::Defer { body, .. } => ie_mark_all(body, out),
+            Stmt::ConsumeScope { init, body, .. } => {
+                ie_mark_all(init, out);
+                ie_mark_all_block(body, out);
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => ie_mark_all(expr, out),
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { ie_mark_all(e, out); }
+                for e in rhs { ie_mark_all(e, out); }
+            }
+            _ => {}
+        }
+    }
+    if let Some(t) = &b.trailing {
+        ie_mark_all(t, out);
+    }
+}
+
+fn ie_expr(e: &Expr, esc: bool, out: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Ident(n) => {
+            if esc {
+                out.insert(n.clone());
+            }
+        }
+        ExprKind::Call { func, args, .. } => {
+            // Receiver-позиция метод-вызова — НЕ эскейп (V1-допущение,
+            // дизайн 172.14 §3); аргументы — эскейп.
+            match &func.kind {
+                ExprKind::Member { obj, .. } => ie_expr(obj, false, out),
+                ExprKind::TurboFish { base, .. } => {
+                    if let ExprKind::Member { obj, .. } = &base.kind {
+                        ie_expr(obj, false, out);
+                    }
+                }
+                _ => ie_expr(func, false, out),
+            }
+            for a in args {
+                ie_expr(a.expr(), true, out);
+            }
+        }
+        ExprKind::Member { obj, .. } => ie_expr(obj, false, out),
+        ExprKind::Index { obj, index } => {
+            ie_expr(obj, false, out);
+            ie_expr(index, false, out);
+        }
+        ExprKind::Unary { op: UnOp::AddrOf, operand }
+        | ExprKind::Unary { op: UnOp::RawAddrOf, operand } => {
+            // Взятие адреса — консервативно эскейп значения-идентификатора.
+            if let ExprKind::Ident(n) = &operand.kind {
+                out.insert(n.clone());
+            }
+            ie_expr(operand, false, out);
+        }
+        ExprKind::Unary { operand, .. } => ie_expr(operand, esc, out),
+        ExprKind::Binary { left, right, .. } => {
+            ie_expr(left, false, out);
+            ie_expr(right, false, out);
+        }
+        ExprKind::Block(b) => ie_block(b, esc, out),
+        ExprKind::If { cond, then, else_ } => {
+            ie_expr(cond, false, out);
+            ie_block(then, esc, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => ie_block(b, esc, out),
+                    ElseBranch::If(e2) => ie_expr(e2, esc, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            ie_expr(scrutinee, false, out);
+            ie_block(then, esc, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => ie_block(b, esc, out),
+                    ElseBranch::If(e2) => ie_expr(e2, esc, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            ie_expr(scrutinee, false, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard { ie_expr(g, false, out); }
+                match &arm.body {
+                    MatchArmBody::Expr(e2) => ie_expr(e2, esc, out),
+                    MatchArmBody::Block(b) => ie_block(b, esc, out),
+                }
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            ie_expr(cond, false, out);
+            ie_block(body, false, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            ie_expr(scrutinee, false, out);
+            ie_block(body, false, out);
+        }
+        ExprKind::Loop { body, .. } => ie_block(body, false, out),
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            ie_expr(iter, false, out);
+            ie_block(body, false, out);
+        }
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e2) => ie_mark_all(e2, out),
+            ClosureBody::Block(b) => ie_mark_all_block(b, out),
+        },
+        ExprKind::ClosureFull(sig) => match &sig.body {
+            FnBody::Block(b) => ie_mark_all_block(b, out),
+            FnBody::Expr(e2) => ie_mark_all(e2, out),
+            FnBody::External => {}
+        },
+        ExprKind::Lambda { body, .. } => ie_mark_all(body, out),
+        // Конкурентные формы: чайлд может пережить кадр родителя — любой
+        // захваченный Ident = эскейп (та же логика, что замыкания).
+        ExprKind::Spawn(inner) => ie_mark_all(inner, out),
+        ExprKind::Supervised { body, cancel, .. } => {
+            if let Some(c) = cancel { ie_mark_all(c, out); }
+            ie_mark_all_block(body, out);
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => ie_mark_all_block(b, out),
+        ExprKind::TupleLit(elems) => {
+            for e2 in elems { ie_expr(e2, true, out); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for elem in elems {
+                match elem {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => ie_expr(e2, true, out),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value {
+                    ie_expr(v, true, out);
+                }
+            }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr, .. } = p {
+                    ie_expr(expr, false, out);
+                }
+            }
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => ie_expr(inner, esc, out),
+        ExprKind::Coalesce(a, b) => {
+            ie_expr(a, esc, out);
+            ie_expr(b, esc, out);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => ie_expr(inner, esc, out),
+        ExprKind::TurboFish { base, .. } => ie_expr(base, esc, out),
+        ExprKind::With { bindings, body } => {
+            for b in bindings { ie_expr(&b.handler, false, out); }
+            ie_block(body, false, out);
+        }
+        _ => {}
     }
 }
 

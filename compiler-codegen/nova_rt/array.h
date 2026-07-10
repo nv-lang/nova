@@ -976,7 +976,13 @@ static inline void* nova_box_value(const void* src, size_t sz) {
  * структуры имеют начальный layout NovaArrHdr; новый view alloc'ится и
  * указывает внутрь исходного буфера (data + from*esz). _chk — с
  * bounds-check (panic), _nochk — proven in-range (Plan 140.2 элизия). */
-static inline void* nova_vec_slice_chk(void* src, nova_int from, nova_int to, size_t esz) {
+/* Plan 172.14 (sret/_out, дизайн-секция 172.14 §2): *_out-формы — callee
+ * конструирует дескриптор ПО МЕСТУ в готовом `out` (caller решает
+ * размещение: стек-слот при не-эскейпе / GC-куча иначе). Классические
+ * формы — тонкие обёртки с alloc (единственная аллокация на верху
+ * цепочки). Безопасно при out == src: чтения полей src предшествуют
+ * записям out. */
+static inline void* nova_vec_slice_chk_out(void* src, nova_int from, nova_int to, size_t esz, void* out) {
     NovaArrHdr* s = (NovaArrHdr*)src;
     if (from < 0 || to < from || to > s->len) {
         char buf[96];
@@ -985,19 +991,25 @@ static inline void* nova_vec_slice_chk(void* src, nova_int from, nova_int to, si
         if (n < 0) n = 0; if (n > 95) n = 95;
         nv_panic((nova_str){ .ptr = (const uint8_t*)buf, .len = (nova_int)n });
     }
-    NovaArrHdr* r = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
+    NovaArrHdr* r = (NovaArrHdr*)out;
     r->data = (char*)s->data + (size_t)from * esz;
     r->len = to - from;
     r->cap = to - from;
     return r;
 }
-static inline void* nova_vec_slice_nochk(void* src, nova_int from, nova_int to, size_t esz) {
+static inline void* nova_vec_slice_nochk_out(void* src, nova_int from, nova_int to, size_t esz, void* out) {
     NovaArrHdr* s = (NovaArrHdr*)src;
-    NovaArrHdr* r = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
+    NovaArrHdr* r = (NovaArrHdr*)out;
     r->data = (char*)s->data + (size_t)from * esz;
     r->len = to - from;
     r->cap = to - from;
     return r;
+}
+static inline void* nova_vec_slice_chk(void* src, nova_int from, nova_int to, size_t esz) {
+    return nova_vec_slice_chk_out(src, from, to, esz, nova_alloc(sizeof(NovaArrHdr)));
+}
+static inline void* nova_vec_slice_nochk(void* src, nova_int from, nova_int to, size_t esz) {
+    return nova_vec_slice_nochk_out(src, from, to, esz, nova_alloc(sizeof(NovaArrHdr)));
 }
 
 /* Plan 145 — portable str byte-range slice (MSVC). Plan 152.1 byte-range
