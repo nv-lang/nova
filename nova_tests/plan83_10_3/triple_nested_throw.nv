@@ -28,19 +28,20 @@ test "triple nested throw — outermost handler catches" {
 }
 
 test "triple nested — normal completion all levels" {
-    mut depth = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut depth = AtomicInt.new(0)
     supervised {
         spawn {
-            depth += 1
+            depth.fetch_add(1)
             supervised {
                 spawn {
-                    depth += 1
+                    depth.fetch_add(1)
                     supervised {
-                        spawn { depth += 1 }
+                        spawn { depth.fetch_add(1) }
                     }
                 }
             }
         }
     }
-    assert(depth == 3)
+    assert(depth.load() == 3)
 }

@@ -11,38 +11,41 @@ test "zero Duration produces an already-closed reader" {
     // const-access through Path-form does not currently inherit the record
     // type in infer_expr_c_type (orthogonal codegen limitation, not Plan 65).
     // Once that is fixed, the line below can read `Duration.ZERO`.
-    mut got_none = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut got_none = AtomicBool.new(false)
     supervised {
         spawn {
             ro t = ChanReader.close_after(Duration.from_nanos(0))
             ro v = t.recv()
             // No timer allocated; recv immediately returns None.
-            got_none = v.is_none()
+            got_none.store(v.is_none())
         }
     }
-    assert(got_none)
+    assert(got_none.load())
 }
 
 test "zero Duration via from_secs(0) — equivalent fast-path" {
-    mut got_none = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut got_none = AtomicBool.new(false)
     supervised {
         spawn {
             ro t = ChanReader.close_after(Duration.from_secs(0))
             ro v = t.recv()
-            got_none = v.is_none()
+            got_none.store(v.is_none())
         }
     }
-    assert(got_none)
+    assert(got_none.load())
 }
 
 test "zero Duration via from_nanos(0) — equivalent fast-path" {
-    mut got_none = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut got_none = AtomicBool.new(false)
     supervised {
         spawn {
             ro t = ChanReader.close_after(Duration.from_nanos(0))
             ro v = t.recv()
-            got_none = v.is_none()
+            got_none.store(v.is_none())
         }
     }
-    assert(got_none)
+    assert(got_none.load())
 }

@@ -295,6 +295,80 @@ export type ResourceTrace effect {
 
 
 // ──────────────────────────────────────────────────────────────────────────
+// Plan 173.2 — Supervisor effect (supervision-as-effect) + Decision
+// ──────────────────────────────────────────────────────────────────────────
+
+/// **Решение супервизора** на падение ребёнка scope'а (Plan 173.2).
+/// Возвращается хендлером `Supervisor.on_child_fail`.
+///
+/// **MVP-исполнение (§3b, 2026-06-26): только `Escalate` / `Stop`.**
+/// `Restart` / `RestartAll` / `RestartRest` остаются в словаре (сигнатура
+/// эффекта стабильна), но их ИСПОЛНЕНИЕ гейтится изоляцией restartable-тела
+/// (Plan 173.3 `#share`/consume-в-spawn): конструирование этих вариантов
+/// внутри Supervisor-хендлера сегодня отклоняется компилятором
+/// (`E_SUPERVISOR_RESTART_GATED`).
+///
+///   - `Escalate` — ошибка ребёнка становится primary-ошибкой scope'а
+///     (precedence PANIC > USER > CANCEL, D13), siblings кооперативно
+///     отменяются, scope перевыбрасывает наружу. Поведение дефолта
+///     (без супервизора).
+///   - `Stop` — ребёнок «выкинут»: его ошибка НЕ эскалируется, siblings
+///     НЕ отменяются, scope продолжает работу. Ошибка остаётся retained
+///     per-slot (173.0) — не теряется молча, доступна диагностике.
+#stable(since = "0.1")
+export type Decision enum Escalate | Stop | Restart | RestartAll | RestartRest
+
+/// **Supervisor-эффект** — подменяемая политика реакции на падение ребёнка
+/// `spawn`/`parallel for` внутри `supervised { ... }` (Plan 173.2, D-блок
+/// supervision-as-effect; Erlang-style supervision = handler strategy).
+///
+/// **Операция** `on_child_fail(idx, err) -> Decision`:
+///   - `idx` — retention-слот упавшего ребёнка (173.0 `child_error[]`,
+///     spawn-порядок remote-детей scope'а);
+///   - `err` — значение ошибки как `any`: typed-throw payload (сужается
+///     `err is T`), для string-throw / panic — `str`-сообщение.
+///
+/// **Стратегии = хендлеры** (значения эффекта); отдельной сущности
+/// «имя стратегии» нет. Встроенные политики: `std.concurrency.supervisor`
+/// (`escalate()` / `stop()`).
+///
+/// ```nova
+/// import std.concurrency.supervisor as sup
+/// with Supervisor = sup.stop() {
+///     supervised {
+///         for u in urls { spawn { fetch(u) } }   // упавший НЕ отменяет siblings
+///     }
+/// }
+/// ```
+///
+/// **Дефолт (нет хендлера):** сегодняшний all-or-throw — первая реальная
+/// ошибка отменяет siblings и перевыбрасывается (байт-паритет со старым
+/// поведением; supervision-ветка рантайма вообще не активируется).
+///
+/// **Семантика вызова:** хендлер исполняется СЕРИАЛИЗОВАННО, на main-flow
+/// драйв-цикла scope'а (субстрат 173.0), по одному падению, до освобождения
+/// SpawnCtx упавшего. panic ребёнка тоже доходит до решения (kind PANIC);
+/// индуцированные отмены siblings (kind CANCEL) хендлеру НЕ показываются —
+/// это следствие эскалации, не корневое падение.
+///
+/// **Ограничения хендлера** (closed handler effect-set, Q-блок 173.2):
+/// `throw`/`Fail` разрешён — трактуется как Escalate-with-error (ошибка
+/// хендлера идёт в primary-machinery scope'а); `interrupt` и
+/// suspend-операции (`Time.sleep`) в теле хендлера запрещены —
+/// компилятор отклоняет (drain-loop нельзя блокировать).
+///
+/// **Периметр MVP:** политика применяется к remote-детям armed M:N
+/// runtime (дефолтный путь исполнения; источник (idx, err) — per-slot
+/// `child_error[]` 173.0). Bootstrap/single-thread путь (`NOVA_NO_AUTOARM=1`)
+/// и implicit main-scope (`detach` на top-level) остаются на дефолтном
+/// Escalate-all.
+#stable(since = "0.1")
+export type Supervisor effect {
+    on_child_fail(idx int, err any) -> Decision
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
 // Plan 110.4.5 (D195) — Application effect для top-level lifecycle
 // ──────────────────────────────────────────────────────────────────────────
 

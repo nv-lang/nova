@@ -9,7 +9,8 @@ module nova_tests.plan65
 import std.time.duration
 
 test "500_000 ns Duration triggers at least 1ms delay" {
-    mut elapsed_ok = false
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut elapsed_ok = AtomicBool.new(false)
     supervised {
         spawn {
             ro start = Time.now()
@@ -20,8 +21,8 @@ test "500_000 ns Duration triggers at least 1ms delay" {
             // Time.now() returns monotonic ms. delta_ms >= 1 expected; allow
             // small slack for scheduler jitter. Mostly we want to assert
             // it's NOT 0 (which would prove rounding-down regression).
-            elapsed_ok = (after - start) >= 1
+            elapsed_ok.store((after - start) >= 1)
         }
     }
-    assert(elapsed_ok)
+    assert(elapsed_ok.load())
 }

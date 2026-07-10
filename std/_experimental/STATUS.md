@@ -55,7 +55,7 @@
 | `crypto/` | (пусто — все 5 PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt) | — | — |
 | `encoding/` | `toml` (`hex`/`ini` PROMOTED w2, `url` PROMOTED batch 2, **`csv` PROMOTED 2026-07-08 batch 3**) | toml: check PASS, test--full CC-FAIL — the original Fail-handler mono gap (`Nova_*Error_p` unknown type) is FIXED (batch 3, `debt_unmangle_ptr_suffix`), but a NEW, deeper defect now surfaces: `Nova_HashMap____nova_str__Nova_TomlValue_p` unknown-type (forward-declare/hoist ordering for a mono struct used as a sum-variant's payload field — typedef exists later in the same file) | toml: gated by a hoist-ordering defect that looks like the same zone reserved for [M-option-self-recursive-record-mono] — re-check after that lands |
 | `identifiers/` | (пусто — `snowflake` PROMOTED w1, `ulid`/`uuid` PROMOTED w2, **`uuid_namespace` PROMOTED 2026-07-08 batch 3**) | — | — |
-| `data/` | `semver_range` | PASS check (не проверялся в волне 2 — не в списке переноса) | Non-MVP per Plan 91 §Non-scope; `semver`/`sql` PROMOTED 2026-07-08 w2 |
+| `data/` | (пусто — `semver`/`sql` PROMOTED 2026-07-08 w2, **`semver_range` PROMOTED 2026-07-10**) | — | — |
 | `math/` | `complex` (`statistics` PROMOTED 2026-07-08 w1) | check PASS, CC-FAIL codegen — `[M-static-selfreturn-value-mangle-conflict]` | Промоушен gated компиляторным дефектом (не контентом модуля) |
 | `text/` | (пусто — все 3 PROMOTED 2026-07-08 w2: diff/markdown_minimal/regex) | — | — |
 | `time/` | (пусто — cron PROMOTED 2026-07-08 w2) | — | — |
@@ -84,6 +84,17 @@
 > blocked by a DIFFERENT, narrower defect than originally diagnosed (see
 > the table below and docs/plans/backlog-followups.md
 > `[M-exp-promotion-blockers]`).
+
+> **PROMOTED 2026-07-10 (1 module):** `data/semver_range` → `std/data/`
+> (peer к `semver`, PROMOTED w2). Коррекции при промоушене: import
+> `semver` → `std.data.semver`; методы сравнения Version под актуальный
+> API (`@equal` + операторы `< > <= >=` через `@compare` вместо
+> ретрактированных `eq/gt/ge/lt/le`); `parse_version` — честный `match`
+> по `Result` из `to_version()` (старый cross-effect `with`-хендлер был
+> под Fail-версию semver-парсера + генерил CC-FAIL: лямбда-хендлер не
+> захватывал `s`); в тестах `to_version()!!` (Result, не Version).
+> Inline-тесты вынесены в peer `semver_range_test.nv`
+> (module data.semver_range_test); check PASS + test --full зелёный.
 
 > **PROMOTED 2026-07-08 (batch 3, Plan 172.13, 2 modules):** `encoding/csv`
 > → `std/encoding/` (unblocked by [M-consume-rebind-nested-block-shadow]

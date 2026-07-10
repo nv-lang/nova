@@ -1,0 +1,10 @@
+module nova_tests.err173_1
+
+test "diag parallel for 1000 len" {
+    ro xs = parallel for i in 0..1000 { i }
+    println("len = ", xs.len())
+    mut sum = 0
+    for v in xs { sum += v }
+    println("sum = ", sum)
+    assert(xs.len() == 1000)
+}

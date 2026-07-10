@@ -41,71 +41,71 @@ fn dot_product(ax int, ay int, bx int, by int) -> int =>
 
 // ---- basic spawn semantics (D50) ----
 
-test "spawn: literal value через mut-capture" {
-    mut r = 0
+test "spawn: literal value через #share-примитив (D415)" {
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = 42 }
+        spawn { r.store(42) }
     }
-    assert(r == 42)
+    assert(r.load() == 42)
 }
 
 test "spawn: arithmetic expression" {
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = 10 + 20 + 30 }
+        spawn { r.store(10 + 20 + 30) }
     }
-    assert(r == 60)
+    assert(r.load() == 60)
 }
 
 test "spawn: captures immutable vars" {
     ro x = 100
     ro y = 200
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = x + y }
+        spawn { r.store(x + y) }
     }
-    assert(r == 300)
+    assert(r.load() == 300)
 }
 
 // ---- mutation visibility ----
 
 test "spawn: mutates captured var, change visible after fiber" {
-    mut counter = 0
+    mut counter = AtomicInt.new(0)
     supervised {
-        spawn { counter += 7 }
+        spawn { counter.fetch_add(7) }
     }
-    assert(counter == 7)
+    assert(counter.load() == 7)
 }
 
 test "spawn: two independent mutations, both visible" {
-    mut a = 0
-    mut b = 0
+    mut a = AtomicInt.new(0)
+    mut b = AtomicInt.new(0)
     supervised {
-        spawn { a += 10 }
-        spawn { b += 20 }
+        spawn { a.fetch_add(10) }
+        spawn { b.fetch_add(20) }
     }
-    assert(a == 10)
-    assert(b == 20)
+    assert(a.load() == 10)
+    assert(b.load() == 20)
 }
 
 // ---- function calls inside fiber ----
 
 test "spawn: calls function inside fiber" {
     ro n = 10
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = sum_to(n) }
+        spawn { r.store(sum_to(n)) }
     }
-    assert(r == 55)
+    assert(r.load() == 55)
 }
 
 test "spawn: large computation sum_to(1000)" {
     ro n = 1000
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = sum_to(n) }
+        spawn { r.store(sum_to(n)) }
     }
-    assert(r == 500500)
+    assert(r.load() == 500500)
 }
 
 test "spawn: captures multiple vars into function call" {
@@ -113,11 +113,11 @@ test "spawn: captures multiple vars into function call" {
     ro ay = 4
     ro bx = 5
     ro by = 6
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = dot_product(ax, ay, bx, by) }
+        spawn { r.store(dot_product(ax, ay, bx, by)) }
     }
-    assert(r == 39)
+    assert(r.load() == 39)
 }
 
 // ---- GC: record lifetime under pressure ----
@@ -167,44 +167,44 @@ test "GC: chain of records, each depends on previous" {
 
 test "GC: allocate during spawn, read after" {
     ro p = make_point(3, 4)
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = p.x * p.x + p.y * p.y }
+        spawn { r.store(p.x * p.x + p.y * p.y) }
     }
-    assert(r == 25)
+    assert(r.load() == 25)
 }
 
 test "GC: records allocated inside spawn body visible after fiber" {
-    mut result_x = 0
-    mut result_y = 0
+    mut result_x = AtomicInt.new(0)
+    mut result_y = AtomicInt.new(0)
     supervised {
         spawn {
             ro inner = make_point(42, 99)
-            result_x = inner.x
-            result_y = inner.y
+            result_x.store(inner.x)
+            result_y.store(inner.y)
         }
     }
-    assert(result_x == 42)
-    assert(result_y == 99)
+    assert(result_x.load() == 42)
+    assert(result_y.load() == 99)
 }
 
 // ---- stress: GC + spawn interleaved ----
 
 test "GC+spawn interleaved: records allocated between fibers survive" {
     ro p1 = make_point(10, 20)
-    mut r1 = 0
+    mut r1 = AtomicInt.new(0)
     supervised {
-        spawn { r1 = p1.x + p1.y }      // fiber 1: 30
+        spawn { r1.store(p1.x + p1.y) }      // fiber 1: 30
     }
-    ro p2 = make_point(r1, r1 * 2)     // {30, 60}
-    mut r2 = 0
+    ro p2 = make_point(r1.load(), r1.load() * 2)     // {30, 60}
+    mut r2 = AtomicInt.new(0)
     supervised {
-        spawn { r2 = p2.x + p2.y }      // fiber 2: 90
+        spawn { r2.store(p2.x + p2.y) }      // fiber 2: 90
     }
-    assert(r1 == 30)
+    assert(r1.load() == 30)
     assert(p2.x == 30)
     assert(p2.y == 60)
-    assert(r2 == 90)
+    assert(r2.load() == 90)
 }
 
 // ---- parallel for — homogeneous fan-out ----
@@ -230,10 +230,10 @@ test "Tree record: depth tracking via spawn" {
     ro root = make_tree(1, 0)
     ro child = make_tree(root.val * 2, root.depth + 1)
     ro grandchild = make_tree(child.val * 2, child.depth + 1)
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = grandchild.val + grandchild.depth }
+        spawn { r.store(grandchild.val + grandchild.depth) }
     }
     // val = 4, depth = 2 → 6
-    assert(r == 6)
+    assert(r.load() == 6)
 }

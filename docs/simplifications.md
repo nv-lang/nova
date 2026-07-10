@@ -38220,3 +38220,59 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   vec_elem_type, plan73/77/91_8c/100_1/123/123_4_4, inout_ref, cgfix_fluent_tail_if, plan138_2,
   self_nested) — **0 новых** (все фейлы байт-идентичны базису, вкл. pre-existing panic
   plan153_4/chunks_windows P67-LEGACY). Сборка Rust чистая (compiler-codegen + nova-cli).
+
+## Plan 173.1 — supervised-value + канальный `parallel for → []T` (D414 §4, D71-amend) (2026-07-09)
+
+- **`supervised { … v }` — value-expression:** bootstrap-заглушка «возвращает unit» СНЯТА;
+  trailing вычисляется ПОСЛЕ join детей. Упрощение сохранено сознательно: unit-типизированный
+  trailing остаётся eager/pre-join (байт-паритет — `spawn {…}` последним стейтментом это
+  trailing по грамматике, откладывать его за пределы активного scope нельзя).
+- **`parallel for → []T` — v1-упрощения РЕТИРОВАНЫ** (slot-запись `result.data[idx]`,
+  примитив-whitelist {int,bool,f64,str}, итераторы Range/ArrayLit/Ident, guard
+  `[E_PARFOR_RESULT_UNSUPPORTED]` + visitor-семейство ~200 строк в чекере): сбор через канал
+  (Sender-клон в родителе на spawn → send из ребёнка: int-скаляры прямо / heap по ссылке /
+  value-типы boxed → close на любом выходе; drain-fiber; K=min(len,16)). Порядок = completion
+  order (плотный) — iteration-order-гарантия убрана из спеки и корпуса (sort/set-equality).
+- **Остаточные упрощения (голова у гейтов):** Stop-стратегия — 173.2; `parallel(timeout:)` —
+  после 175; Semaphore-cap живых fiber'ов (память O(N) fiber'ов при O(CAP) канале) — опц.
+  Ф.3, не делался; поверхностный `consume`-синтаксис в spawn — 173.3 (лоуэринг семантики
+  клон→move→close уже в codegen напрямую).
+- **Попутные закрытия (вскрыты сбором при N≥1000 armed M:N):** [M-chan-spurious-wake-retry]
+  (plain send/recv не ретраили spurious wake — потери значений / ложный None; select ретраил),
+  [M-chan-close-phantom-zero] (close-wake ставил fired=1 без значения → фантомный Some(0)),
+  [M-spawn-module-const-capture] (module-const захватывался по сырому имени в spawn/detach/
+  blocking), [M-bare-result-try-annotation] (bare `Result` + `?` аннотировался целым Result →
+  указательная арифметика на int-payload).
+
+## Plan 173.2 — supervision-as-effect: `Supervisor`/`Decision` (D416) (2026-07-10)
+
+- **MVP-объём §3b (owner 2026-06-26) — сознательное гейтирование, не упрощение-тайком:**
+  исполняются `Escalate`/`Stop`; `Restart`/`RestartAll`/`RestartRest` остаются в словаре
+  `Decision`, но их конструирование в Supervisor-хендлере отклоняется
+  `E_SUPERVISOR_RESTART_GATED` до рычага изоляции restartable-тела (D415/173.3);
+  runtime-defense — abort на дошедшем Restart-теге. Ф.3 (restart-ceiling, consume-гард)
+  и Ф.4 (`[M-173.2-restart-all-rest]` cancel-and-join) — за тем же гейтом.
+- **Amend §2.1: `attempt`-параметр отложен** — `on_child_fail(idx, err)`; per-child
+  счётчик попыток осмыслен только с исполнением Restart и добавится той же волной
+  (сигнатура эффекта при этом расширится синхронно со снятием гейта — до снятия
+  ни один пользовательский хендлер не может зависеть от attempt).
+- **Периметр: remote-дети armed M:N** (child_error[]-субстрат 173.0 заполняет только
+  remote-путь; auto-arm делает его дефолтным). Bootstrap/single-thread
+  (`NOVA_NO_AUTOARM=1`) и implicit main-scope (top-level `detach`) — дефолтный
+  Escalate-all; задокументировано в D416 §5 и в докстринге эффекта.
+- **Suspend-запрет в хендлере — компилируемое приближение V1:** прямой `Time.sleep`
+  в теле хендлера (`E_SUPERVISOR_HANDLER_SUSPEND`) + `interrupt`
+  (`E_SUPERVISOR_HANDLER_INTERRUPT`); транзитивный suspend через вызов функции —
+  followup эффект-row-анализом (Q-блок D416 §3).
+- **Механика без упрощений:** deferred-decision режим (хендлер есть → падение пишет
+  ТОЛЬКО свой per-slot с release-publish, без CAS-primary/cancel-бродкаста); решения
+  serialized на drive-потоке ВО ВРЕМЯ drain'а (Escalate успевает отменить siblings,
+  Stop оставляет их доживать) + финальный catch-up под pending_remote==0-гейтом;
+  throw хендлера огорожен fail-frame'ом моста = Escalate-with-handler-error;
+  индуцированные CANCEL siblings хендлеру не показываются. Дефолт (нет хендлера) —
+  байт-паритет: ни одна новая ветка не активируется.
+- **Гейты:** cargo оба чистые; conformance 82/0; err173_0 (retention ×5 стаб. после
+  одиночного TIMEOUT-флейка под параллельной сборкой 4 CU) / err173_2 / err173_3 +
+  все neg зелёные; std/concurrency 7/0. Известный MAIN-side красный (не эта ветка):
+  err173_1/parfor_diag — D415-гейт `E_CONCURRENT_MUT_CAPTURE` бьёт mut-захват в
+  supervised_value_smoke.nv (файл 173.1, гейт 173.3) — чинить волне 173.1/173.3.

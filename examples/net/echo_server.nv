@@ -21,14 +21,17 @@ const PORT u16 = 7777
 fn main() {
     with Net = real_net() {
         ro addr = SocketAddr.loopback(PORT)
-        mut lst = match TcpListener.bind(addr) {
-            Ok(l)  => l
-            Err(_) => panic("Failed to bind: " + str.from(PORT))
-        }
-        println("Listening on 127.0.0.1:" + str.from(lst.local_port()))
 
         supervised {
             spawn {
+                // Plan 173.3 (D415 §2): listener живёт ЦЕЛИКОМ в серверном
+                // fiber'е (bind/accept/close) — mut-захват внешнего listener'а
+                // телом spawn был бы E_CONCURRENT_MUT_CAPTURE.
+                mut lst = match TcpListener.bind(addr) {
+                    Ok(l)  => l
+                    Err(_) => panic("Failed to bind: " + str.from(PORT))
+                }
+                println("Listening on 127.0.0.1:" + str.from(lst.local_port()))
                 // Accept one connection and echo data back.
                 match lst.accept() {
                     Ok(stream) => {
@@ -47,9 +50,9 @@ fn main() {
                     }
                     Err(_) => println("Accept failed")
                 }
+                lst.close()
                 println("Done")
             }
         }
-        lst.close()
     }
 }
