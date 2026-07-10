@@ -1,0 +1,40 @@
+// d124_wall_monotonic_separation.nv — D124: раздельные типы wall-clock
+// (Timestamp) и monotonic (Monotonic); арифметика не смешивается между
+// доменами (compile-time separation) — allowed combos здесь; forbidden
+// combos → spec_tests/conformance/neg/d124_*_neg.nv.
+module spec_tests.conformance
+
+import std.time.duration
+import std.testing.handlers as d124_th
+
+test "d124: Timestamp arithmetic — wall-clock domain" {
+    ro d124_t0 = Timestamp.from_unix_secs(1000)
+    ro d124_t1 = d124_t0 + 42.seconds()
+    assert(d124_t1.as_unix_secs() == 1042)
+    assert((d124_t1 - d124_t0) == 42.seconds())
+}
+
+test "d124: Monotonic arithmetic — process-local domain, saturate-to-zero non-regression (D318)" {
+    ro d124_m0 = Monotonic.now()
+    ro d124_m1 = d124_m0 + 5.seconds()
+    // both named-method и operator-overload forms agree (Ф.3c)
+    assert(d124_m1.elapsed_since(d124_m0) == 5.seconds())
+    assert((d124_m1 - d124_m0) == 5.seconds())
+    // apparent regress (earlier point elapsed_since later) saturates to 0,
+    // never negative/panics — D318 non-regression contract.
+    assert(d124_m0.elapsed_since(d124_m1).is_zero())
+    match d124_m0.checked_duration_since(d124_m1) {
+        None => assert(true),   // регресс → None
+        Some(_) => assert(false),
+    }
+}
+
+test "d124: Timestamp/Monotonic — независимые типы, оба mock'абельны один Time-handler'ом" {
+    with Time = d124_th.fixed_ms(1_700_000_000_000 as u64) {
+        assert(Timestamp.now().as_unix_millis() == 1_700_000_000_000)
+        // Monotonic под fixed-часами не растёт (fixed_ms — тот же snapshot).
+        ro d124_m0 = Monotonic.now()
+        ro d124_m1 = Monotonic.now()
+        assert(d124_m1.elapsed_since(d124_m0).is_zero())
+    }
+}
