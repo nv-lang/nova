@@ -6686,12 +6686,12 @@ opaque / sum; на effect/protocol/alias/type-set → **`[E_SHARE_INVALID_KIND]`
 registry-miss) / fn-тип / anonymous-protocol / opaque-без-vouch / Effect →
 не-share. `Share`-bound для дженериков — вне V1 (см. §7 Q3/Q7).
 
-### §2. Capture-rule на границе `spawn` / `parallel for` → `E_CONCURRENT_MUT_CAPTURE`
+### §2. Capture-rule на границе `spawn` / `parallel for` / `detach` → `E_CONCURRENT_MUT_CAPTURE`
 
-Тело `spawn`/`parallel for` исполняется в НОВОМ файбере (M:N — возможно на
-другом OS-потоке). Свободные переменные тела, резолвящиеся во ВНЕШНИЕ
-биндинги (лексический скан `CapabilityCtx`, стек scope-фреймов), могут
-пересечь границу только тремя способами:
+Тело `spawn`/`parallel for`/`detach` исполняется в НОВОМ файбере (M:N —
+возможно на другом OS-потоке). Свободные переменные тела, резолвящиеся во
+ВНЕШНИЕ биндинги (лексический скан `CapabilityCtx`, стек scope-фреймов),
+могут пересечь границу только тремя способами:
 
 | захват | правило |
 |---|---|
@@ -6712,6 +6712,32 @@ false-positive):** биндинги замыканий/match-arm'ов не тр�
 (имя не найдено → не флагаем); типы биндингов — из аннотаций + синтаксического
 эскиза init-выражения (`Type.new(..)`/`Type[T].new(..)`/`Type{..}`/литералы);
 не-выводимый тип mut-биндинга → консервативно флагаем.
+
+> **Амендмент (owner P1, 2026-07-11): `detach` закрывает идентичный gap.**
+> Первоначальная Ф.2-волна вкрутила capture-check только в `spawn`/
+> `parallel for` — `detach { }` (D50: orphan-файбер на worker pool,
+> fire-and-forget, НИКОГДА не join'ится с родителем) имеет РОВНО ту же
+> race-поверхность, но проверка на неё не смотрела: `detach { mut_var = … }`
+> над внешним не-`#share` `mut` компилировалась чисто, хотя orphan-тело
+> могло мигрировать на другой OS-поток и писать в ту же ячейку конкурентно с
+> родителем/siblings без синхронизации. Чекер теперь гоняет ТУ ЖЕ
+> `check_capture_boundary` на теле `detach` (`ExprKind::Detach`,
+> `types/mod.rs`), диагностика переименована в «`spawn`/`parallel for`/
+> `detach` body». Neg-фикстура: `err173_3/neg/mut_capture_in_detach.nv`;
+> pos-твин (ro/`#share` в `detach` легален): `share_capture_ok_test.nv`.
+>
+> **`blocking { }` — НЕ расширяется.** Рассмотрено и отклонено: блок-форма
+> `blocking { }` ретрактирована Plan 113 (D172) — парсер сегодня ВСЕГДА
+> отвергает `blocking { ... }` (`[D172-block-form-removed]`), конструктор
+> `ExprKind::Blocking` больше не производится (dead AST arm, см.
+> `[M-dead-exprkind-blocking-vestigial]`, backlog-followups.md). Живая
+> замена — атрибут `#blocking` перед `fn`-декларацией (Plan 113): это
+> top-level `fn`-item со своим параметрам-скоупом, НЕ closure/lambda-литерал
+> — Nova `fn` не замыкает лексический скоуп вызывающего, поэтому у тела
+> `#blocking fn` структурно нет capture-поверхности для этой проверки
+> (аргументы передаются обычным by-value `fn`-вызовом, что вообще не
+> «захват» в смысле §2). `realtime`/`nogc` — тот же класс fn-атрибутов, той
+> же причине не касается.
 
 ### §3. §3-философия соблюдена by construction
 
