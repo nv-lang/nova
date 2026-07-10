@@ -1,10 +1,11 @@
 // Фикстура-позитив плана 185 (`nova lint` самотест): этот файл ДОЛЖЕН давать
-// ровно 4 находки реестра конвенционных правил:
+// ровно 5 находок реестра конвенционных правил:
 //   W_NONVARIADIC_OF      — static `of` без вариадика (§21б)
 //   W_RETIRED_PREFIX      — `as_`-метод (D410)
 //   W_WITH_MUTATOR        — with_* с mut-приёмником (§21)
 //   W_STR_CONCAT_LOOP     — конкатенация строкового литерала в цикле
-// Прогон: nova lint nova_tests/lint/conv_pos.nv → exit 1, 4 finding(s).
+//   W_DESTRUCTURE_SNAPSHOT — 2 подряд полевых снапшота одного источника (§26, D411)
+// Прогон: nova lint nova_tests/lint/conv_pos.nv → exit 1, 5 finding(s).
 // Для `nova test` файл — обычный компилируемый unit (main + вызовы).
 
 module lint.conv_pos
@@ -22,6 +23,14 @@ export fn Widget mut @with_label(v str) -> () {
     @label = v
 }
 
+// W_DESTRUCTURE_SNAPSHOT: 2 подряд полевых снапшота одного источника `w`
+// (канон D411 — `ro { kind, label } = w`).
+fn describe(w Widget) -> str {
+    ro kind = w.kind
+    ro label = w.label
+    "${kind}" + label
+}
+
 // W_STR_CONCAT_LOOP: строковая конкатенация в цикле.
 fn join(parts []str) -> str {
     mut s = ""
@@ -36,5 +45,6 @@ fn main() -> () {
     w.with_label("x")
     ro _lbl = w.as_label()
     ro _s = join(["a", "b"])
+    ro _d = describe(w)
     ()
 }

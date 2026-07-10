@@ -120,9 +120,7 @@ fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
 // Serialize a ServerResponse to wire bytes. Adds Content-Length + Connection:close
 // when absent. HEAD/204/304 body suppression is applied by the caller (driver).
 fn serialize_response(resp ServerResponse) -> []u8 {
-    ro status = resp.status
-    ro headers = resp.headers
-    ro body = resp.body
+    ro { status, headers, body } = resp
     mut buf = WriteBuffer.new()
     buf.cap(128 + body.len())
     buf.write_str("HTTP/1.1 ")

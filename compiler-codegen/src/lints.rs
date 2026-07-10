@@ -2672,6 +2672,14 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: None,
         text: Some(conv_fail_public_signature),
     },
+    ConvRule {
+        id: "W_DESTRUCTURE_SNAPSHOT",
+        summary: "2+ соседних `ro`/`mut`-биндинга — полевые снапшоты одного \
+                  источника — канон D411 record-деструктуризация \
+                  (nv-coding-style §26)",
+        ast: Some(conv_destructure_snapshot),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -3920,6 +3928,231 @@ fn conv_fail_public_signature(src: &str, o: &ConvLintOptions, out: &mut Vec<Lint
             });
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// W_DESTRUCTURE_SNAPSHOT — 2+ подряд идущих `ro`/`mut`-биндинга вида
+// `x = <тот же ident>.x` (nv-coding-style §26, D411 канон): стилевой дрейф —
+// источник читается по частям вручную там, где D411 record-деструктуризация
+// (`ro {status, headers, ..} = resp`) даёт то же за один биндинг.
+//
+// Консервативно:
+//  - только точное имя-поле (биндинг-паттерн `Ident`, значение — `Member`
+//    БЕЗ обёртки `Call`, т.е. поле, не метод — `resp.status()` не матчит,
+//    т.к. это `Call{func: Member}`, а не голый `Member`);
+//  - shorthand-совпадение: имя биндинга == имя поля (`ro rx = p.x` не матчит —
+//    это переименование, не снапшот-дрейф);
+//  - источник — простой идентификатор (`obj` = `Ident`), не выражение;
+//  - оба биндинга в паре — ОДНОЙ мутабельности (`ro`+`ro` либо `mut`+`mut`):
+//    смешанная пара не сворачивается в один D411-биндинг (деструктуризация
+//    даёт всем полям одну мутабельность), сообщать о ней как о том же
+//    дрейфе было бы вводящей в заблуждение рекомендацией;
+//  - строго СОСЕДНИЕ `Stmt::Let` в одном `Block` (никакой другой statement
+//    между ними — иначе группа разрывается).
+// ---------------------------------------------------------------------------
+
+/// Возвращает `(источник, поле)`, если `d` — биндинг-снапшот поля вида
+/// `x = <ident>.x` (имя биндинга == имя поля).
+fn conv_field_snapshot(d: &crate::ast::LetDecl) -> Option<(&str, &str)> {
+    let Pattern::Ident { name, .. } = &d.pattern else { return None };
+    let ExprKind::Member { obj, name: field } = &d.value.kind else { return None };
+    let ExprKind::Ident(src) = &obj.kind else { return None };
+    if field != name {
+        return None;
+    }
+    Some((src.as_str(), field.as_str()))
+}
+
+/// Сканирует непосредственные stmt'ы одного блока на серии из 2+ соседних
+/// field-snapshot биндингов одного источника и одной мутабельности.
+fn conv_scan_stmts_for_destructure(stmts: &[Stmt], out: &mut Vec<LintWarning>) {
+    let mut i = 0;
+    while i < stmts.len() {
+        let Stmt::Let(d0) = &stmts[i] else { i += 1; continue };
+        let Some((src0, _)) = conv_field_snapshot(d0) else { i += 1; continue };
+        let mut j = i + 1;
+        while j < stmts.len() {
+            let Stmt::Let(dj) = &stmts[j] else { break };
+            let Some((srcj, _)) = conv_field_snapshot(dj) else { break };
+            if srcj != src0 || dj.mutable != d0.mutable {
+                break;
+            }
+            j += 1;
+        }
+        let run_len = j - i;
+        if run_len >= 2 {
+            let last = match &stmts[j - 1] {
+                Stmt::Let(dl) => dl.span,
+                _ => d0.span,
+            };
+            let kw = if d0.mutable { "mut" } else { "ro" };
+            out.push(LintWarning {
+                rule: "W_DESTRUCTURE_SNAPSHOT",
+                diag: Diagnostic::new(
+                    format!(
+                        "{} подряд идущих `{}`-биндинга снимают отдельные поля с \
+                         одного источника `{}` (`x = {}.x`) — стилевой дрейф \
+                         (nv-coding-style §26). Канон — D411 record-деструктуризация \
+                         одним биндингом: `{} {{ .., .. }} = {}`.",
+                        run_len, kw, src0, src0, kw, src0
+                    ),
+                    Span::new(d0.span.start, last.end),
+                ),
+            });
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn conv_walk_block_for_destructure(b: &Block, out: &mut Vec<LintWarning>) {
+    conv_scan_stmts_for_destructure(&b.stmts, out);
+    for s in &b.stmts {
+        conv_walk_stmt_for_destructure(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        conv_walk_expr_for_destructure(t, out);
+    }
+}
+
+fn conv_walk_stmt_for_destructure(s: &Stmt, out: &mut Vec<LintWarning>) {
+    match s {
+        Stmt::Let(d) => conv_walk_expr_for_destructure(&d.value, out),
+        Stmt::Const(d) => conv_walk_expr_for_destructure(&d.value, out),
+        Stmt::Expr(e) => conv_walk_expr_for_destructure(e, out),
+        Stmt::Assign { target, value, .. } => {
+            conv_walk_expr_for_destructure(target, out);
+            conv_walk_expr_for_destructure(value, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs {
+                conv_walk_expr_for_destructure(e, out);
+            }
+            for e in rhs {
+                conv_walk_expr_for_destructure(e, out);
+            }
+        }
+        Stmt::Return { value: Some(v), .. } => conv_walk_expr_for_destructure(v, out),
+        Stmt::Throw { value, .. } => conv_walk_expr_for_destructure(value, out),
+        Stmt::Defer { body, .. } => conv_walk_expr_for_destructure(body, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            conv_walk_expr_for_destructure(init, out);
+            conv_walk_block_for_destructure(body, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            conv_walk_expr_for_destructure(expr, out);
+        }
+        _ => {}
+    }
+}
+
+fn conv_walk_expr_for_destructure(e: &Expr, out: &mut Vec<LintWarning>) {
+    match &e.kind {
+        ExprKind::If { cond, then, else_ } => {
+            conv_walk_expr_for_destructure(cond, out);
+            conv_walk_block_for_destructure(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => conv_walk_block_for_destructure(b, out),
+                    ElseBranch::If(ie) => conv_walk_expr_for_destructure(ie, out),
+                }
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            conv_walk_expr_for_destructure(scrutinee, out);
+            conv_walk_block_for_destructure(then, out);
+            if let Some(eb) = else_ {
+                match eb {
+                    ElseBranch::Block(b) => conv_walk_block_for_destructure(b, out),
+                    ElseBranch::If(ie) => conv_walk_expr_for_destructure(ie, out),
+                }
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            conv_walk_expr_for_destructure(scrutinee, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    conv_walk_expr_for_destructure(g, out);
+                }
+                match &arm.body {
+                    MatchArmBody::Expr(e) => conv_walk_expr_for_destructure(e, out),
+                    MatchArmBody::Block(b) => conv_walk_block_for_destructure(b, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            conv_walk_expr_for_destructure(iter, out);
+            conv_walk_block_for_destructure(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            conv_walk_expr_for_destructure(cond, out);
+            conv_walk_block_for_destructure(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            conv_walk_expr_for_destructure(scrutinee, out);
+            if let Some(g) = guard {
+                conv_walk_expr_for_destructure(g, out);
+            }
+            conv_walk_block_for_destructure(body, out);
+        }
+        ExprKind::Loop { body, .. } => conv_walk_block_for_destructure(body, out),
+        ExprKind::Block(b) => conv_walk_block_for_destructure(b, out),
+        ExprKind::Call { func, args, trailing } => {
+            conv_walk_expr_for_destructure(func, out);
+            for a in args {
+                conv_walk_expr_for_destructure(a.expr(), out);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => conv_walk_block_for_destructure(b, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        conv_walk_block_for_destructure(&tb.body, out)
+                    }
+                    crate::ast::Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Expr(e) => conv_walk_expr_for_destructure(e, out),
+                        FnBody::Block(b) => conv_walk_block_for_destructure(b, out),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Expr(e) => conv_walk_expr_for_destructure(e, out),
+            FnBody::Block(b) => conv_walk_block_for_destructure(b, out),
+            FnBody::External => {}
+        },
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e) => conv_walk_expr_for_destructure(e, out),
+            ClosureBody::Block(b) => conv_walk_block_for_destructure(b, out),
+        },
+        ExprKind::Lambda { body, .. } => conv_walk_expr_for_destructure(body, out),
+        ExprKind::Spawn(x) | ExprKind::Throw(x) => conv_walk_expr_for_destructure(x, out),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => conv_walk_block_for_destructure(b, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel {
+                conv_walk_expr_for_destructure(c, out);
+            }
+            if let Some(dl) = deadline {
+                conv_walk_expr_for_destructure(&dl.expr, out);
+            }
+            conv_walk_block_for_destructure(body, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            conv_walk_block_for_destructure(body, out)
+        }
+        _ => {}
+    }
+}
+
+fn conv_destructure_snapshot(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        match &f.body {
+            FnBody::Expr(_) => {}
+            FnBody::Block(b) => conv_walk_block_for_destructure(b, out),
+            FnBody::External => {}
+        }
+    }
 }
 
 #[cfg(test)]

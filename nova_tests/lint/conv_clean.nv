@@ -17,6 +17,12 @@ export fn Widget mut @label(v str) -> @ {
     @label = v
 }
 
+// Канон §26 (D411): деструктуризация одним биндингом вместо полевых снапшотов.
+fn describe(w Widget) -> str {
+    ro { kind, label } = w
+    "${kind}" + label
+}
+
 // Канон perf-conventions: StringBuilder в цикле.
 fn join(parts []str) -> str {
     consume sb = StringBuilder.new()
@@ -34,5 +40,6 @@ fn main() -> () {
     w.label("x")
     ro _lbl = w.label_view()
     ro _s = join(["a", "b"])
+    ro _d = describe(w)
     ()
 }
