@@ -7,9 +7,10 @@
 //   - Duration/Timestamp/Monotonic — `value`-records (round-trip через
 //     from_*/as_*, stack, zero-GC);
 //   - арифметика value-records: @plus/@minus/@neg/@times/@div/@compare/==;
-//   - typed-сахар `Timestamp.now()` над int-wire `Time.now()`;
+//   - typed-сахар `Timestamp.now()` над int-wire `Time.now_unix_ms()`;
 //   - `@is_past`/`@time_until`/`@elapsed` РАБОТАЮТ (int-based) под mock-часами;
-//   - `Monotonic.now()` (value-builtin) non-regression.
+//   - `Monotonic.now()` (Plan 175 Ф.3a: `.nv`-сахар, мокабелен, больше не
+//     compiler-builtin) non-regression.
 
 module time.value_typed_surface_test
 
@@ -41,7 +42,7 @@ test "Ф.1b: value Timestamp round-trip + @plus/@minus" {
 
 test "Ф.3: Timestamp.now() sugar + @is_past/@time_until/@elapsed (int-based mock)" {
     with Time = th.fixed_ms(10_000) {
-        // sugar wraps int-wire Time.now() (ms) → value Timestamp
+        // sugar wraps int-wire Time.now_unix_ms() (ms) → value Timestamp
         assert(Timestamp.now().as_unix_millis() == 10_000)
         // 10s now; deadline at 6s is past; at 20s is future
         ro past = Timestamp.from_unix_secs(6)
