@@ -12252,7 +12252,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `binding` is bound INSIDE the spawn (must not be captured
                 // from the outer fn), and its body may bind further names.
                 Stmt::ConsumeScope { binding, init, body, .. } => {
-                    out.insert(binding.clone());
+                    // Re-give form `spawn consume x { … }` desugars with
+                    // init = Ident(x): the OUTER `x` must remain capturable
+                    // into the spawn ctx (child-side `#define` shadows body
+                    // references) — marking it bound here loses the capture →
+                    // C `use of undeclared identifier`.
+                    let regive = matches!(&init.kind, ExprKind::Ident(n) if n == binding);
+                    if !regive {
+                        out.insert(binding.clone());
+                    }
                     Self::collect_bound_names_expr(init, out);
                     Self::collect_bound_names_block(body, out);
                 }
@@ -24478,6 +24486,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
                 // Body in its OWN nested defer-scope so body-defers run BEFORE the
                 // consume-cleanup (LIFO). enter/leave are no-ops when body has none.
+                //
+                // Re-give form inside a spawn (`spawn consume x { … }`): `x` is a
+                // spawn-capture for the INIT read above (`_c->x`), but body
+                // references must hit the local `_consume_x_N` via the `#define` —
+                // suspend the capture-rewrite for the body, restore after.
+                let suspended_capture = self.current_spawn_captures.as_mut()
+                    .map(|s| s.remove(binding)).unwrap_or(false);
+                let suspended_by_value = self.current_spawn_capture_by_value.as_mut()
+                    .map(|s| s.remove(binding)).unwrap_or(false);
                 let body_defer_id = self.enter_defer_scope(body, false);
                 for s in &body.stmts {
                     self.emit_stmt(s)?;
@@ -24487,6 +24504,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("(void)({});", v));
                 }
                 self.leave_defer_scope(body_defer_id);
+                if suspended_capture {
+                    if let Some(s) = self.current_spawn_captures.as_mut() { s.insert(binding.clone()); }
+                }
+                if suspended_by_value {
+                    if let Some(s) = self.current_spawn_capture_by_value.as_mut() { s.insert(binding.clone()); }
+                }
 
                 // Normal-exit run-site: @cleanup(Success) + policy; a failing cleanup
                 // re-throws to the caller (leave-compose longjmp).
