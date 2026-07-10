@@ -39072,3 +39072,36 @@ nova_tests ~19 файлов → Atomic*, examples 3 файла. Идиома doc
 nova check std/nova_tests/examples FAIL-set δ0 к main-базису (кроме ожидаемых новых диагностик,
 все починены той же волной). Новые коды: E_CONCURRENT_MUT_CAPTURE, E_SHARE_INVALID_KIND,
 E_CONST_INIT_CONCURRENCY.
+
+Часть 70 (2026-07-10, [fable]). Plan 116 волна Ф.1+Ф.2, ветка tls-116. Слияние main
+c83a991c8 (173.3/D415 #share; конфликт журнала — обе записи сохранены; ориентир D-номеров
+116 сместился на D416+). Ф.1 (std/tls данные): error.nv (TlsError 12 вариантов, + новый
+InvalidServerName; from_shim по СТАБИЛЬНЫМ кодам шима — классификация по коду, не по
+substring, в отличие от NetError.from_code; Q3-проекция to_error_kind/to_io_error, Net(e)
+делегирует), config.nv (VerificationMode/ClientCertMode/TlsVersion+from_wire; Client/
+ServerConfig + new + with_* по D52-shorthand), ffi.nv (29 extern tls_*, §4а-newtype
+CTlsHandle(*())/CTlsCfgHandle(*()) — codegen опускает в typedef void*, подтверждено пробой).
+stream.nv ПЕРЕНЕСЁН в Ф.3: чекер запрещает consume-тип без consume-метода в модуле
+(D133-empty-consume), а честный @close требует pump+линковку. Тесты: error_test 9 +
+config_test 5 + neg (E_READONLY_FIELD ro-конфиг) — PASS; наступили на pre-existing ICE
+[M-176-xmod-payload-variant-ctor] (Type.Variant.method() без ro-биндинга) — обход net-
+прецедентом. Ф.2 (условная линковка, механизм brotli/D337): test_runner.rs — detect_tls
+(tls-cache → cargo-артефакт → AUTO-BUILD cargo по образцу detect_or_build_libuv; свежий клон
+не деградирует) + c_file_uses_tls (маркер: call-site tls_client_cfg_new(/tls_server_cfg_new(;
+Ф.5 перейдёт на скан манглед-обёрток — урок brotli) + ветки clang/-lbcrypt -lntdll, MSVC/
+bcrypt.lib ntdll.lib, gcc-Unix + NOVA_DEBUG_TLS_LINK; Q11-заглушка nova_rt/tls_stub.c (29
+символов, -11 UNSUPPORTED). НАЙДЕН И ЗАКРЫТ дефект механизма: tls_*-вызовы в генерённом C
+были implicit declaration (D82 — деклараций нет) → int-возврат 32 бита → ТРУНКАЦИЯ хендла →
+SEGV (tls_cfg_verify_system+0xB, пойман NOVA_DIAG_SEGV-локалайзером; изолированный C-тест тем
+же clang работал — рознились прототипы). Fix: nova_rt/tls_shim.h (чистые прототипы, включён
+безусловно из nova_rt.h — тот же канал, каким net.h/brotli_shim.h дают прототипы генерённому
+C); tls_stub.c включает его для сверки сигнатур. Верификация в ТРИ стороны: TLS-CU+либа →
+LINK → shim_link_test PASS (реальный rustls сквозь Nova: bad-SNI→-12, ClientHello из
+write_tls, кривой PEM→-10→from_shim→InvalidPem); не-TLS CU → no tls (semver_range_test PASS);
+либа скрыта → STUB → стаб-проба PASS (err=-11→Internal), link-error нет. Гейт волны:
+conformance --positive --compile-error 82/0 (эталон). Pre-existing красные, ДОКАЗАННО не мои
+(baseline-прогон без tls_shim.h-инклуда идентичен): std/io/d322_lines_test RUN-FAIL (seek
+requires n>=0); std/net folder-CU НЕ КОМПИЛИРУЕТСЯ — E_CONCURRENT_MUT_CAPTURE в tcp_test.nv:89
+(чекер 173.3 vs незамигрированный spawn-тест) — ЭСКАЛИРОВАНО интегратору 173.3, вне периметра
+116. Коммиты: 3c181499 (слияние), 0ede004xx→см. git (Ф.1), Ф.2. Следующее: Ф.3 (TlsStream +
+pump + handshake smoke на self-signed паре).
