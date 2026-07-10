@@ -103,9 +103,13 @@ fn fill_from_tcp(mut tcp TcpStream, session CTlsHandle) Net -> Result[bool, TlsE
     if rc < 0 {
         ro e = shim_error(session, "process")
         // rustls после ошибки хочет отправить alert peer'у — best-effort слив,
-        // намеренно не разбираем итог (ни успех, ни причина сбоя не меняют
-        // дальнейшее — исходная ошибка `e` уже зафиксирована и будет возвращена).
-        ro _sent = flush_out(tcp, session).ok()
+        // итог сознательно не разбираем: ни успех, ни причина сбоя не меняют
+        // дальнейшее — исходная ошибка `e` уже зафиксирована и будет возвращена.
+        // Именованный discard-биндинг (не swallow-match `Err(_) => ()`,
+        // nv-coding-style §4); `.ok()` не используем — на `Result[(), E]`
+        // (unit-ok) выводится тип Option[E] вместо Option[()], CC-FAIL,
+        // [M-result-ok-unit-inference-mismatch] (см. backlog).
+        ro _sent = flush_out(tcp, session)
         return Err(e)
     }
     Ok(true)
@@ -308,7 +312,10 @@ export fn TlsStream consume @close() Net {
     tls_send_close_notify(@session)
     // best-effort: peer мог уже уйти, итог сознательно не разбираем (см.
     // докстрок функции — ошибка отправки alert'а при закрытии неактуальна).
-    ro _sent = flush_out(@tcp, @session).ok()
+    // Именованный discard-биндинг, не swallow-match (nv-coding-style §4);
+    // `.ok()` не применяем — на unit-ok `Result[(), E]` CC-FAIL, см.
+    // [M-result-ok-unit-inference-mismatch] в backlog.
+    ro _sent = flush_out(@tcp, @session)
     @tcp.close()
     tls_free(@session)
 }

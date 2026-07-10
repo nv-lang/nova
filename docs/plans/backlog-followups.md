@@ -2999,3 +2999,19 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   method-level generic'ом — вероятно другой путь в чекере (`assignable`/
   `resolved_cat_of`, types/mod.rs). Не расследовано глубже (вне периметра
   lint-sanitation волны) — чинить отдельным заходом compiler-codegen.
+
+- **[M-result-ok-unit-inference-mismatch]** (2026-07-10, P2, найден при
+  lint-sanitation/починке `W_RESULT_DISCARDED` в std/tls/stream.nv) —
+  `.ok()` на `Result[(), E]` (unit-ok тип) даёт checker/codegen рассинхрон:
+  чекер типизирует биндинг как `Option[E]` (Option ОШИБКИ), а codegen
+  корректно эмитит вызов `Result_method_ok_nova_unit_<E>` возвращающий
+  `NovaOpt_nova_unit` (Option[()]) → CC-FAIL «initializing `NovaOpt_<E>_p`
+  with an expression of incompatible type `NovaOpt_nova_unit`». Минимальный
+  повод: best-effort `flush_out(tcp, session).ok()`, где
+  `flush_out -> Result[(), TlsError]`. `.ok()` на Result с НЕ-unit ok-типом
+  (напр. `Result[[]u8, E]` в std/time/civil/tzif.nv) работает штатно —
+  дефект специфичен для unit-ok. Обход (в std/tls/stream.nv ×2): вместо
+  `.ok()` — именованный discard-биндинг `ro _sent = flush_out(...)` (не
+  swallow-match, lint-clean: `flush_out` вне RESULT_CALLEES-списка правила).
+  Чинить в чекере (вывод типа `Result[(), E].ok()` → `Option[()]`, не
+  `Option[E]`) отдельным заходом compiler-codegen.
