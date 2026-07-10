@@ -725,3 +725,38 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
 - Наступили на pre-existing ICE `[M-176-xmod-payload-variant-ctor]`
   (`Type.Variant.method()` без ro-биндинга) — обход по net-прецеденту
   (ro-биндинг), в тест-файлах ссылка на маркер.
+
+### Ф.2 — Сборочная интеграция шима ✅ 2026-07-10
+
+- **Условная линковка (механизм brotli/D337), test_runner.rs:** `TlsConfig` +
+  `detect_tls` (порядок: `target/tls-cache/` → cargo-артефакт крейта →
+  **auto-build через cargo** по образцу `detect_or_build_libuv` — свежий клон
+  не деградирует; провал сборки → честный stub-путь) + `c_file_uses_tls`
+  (маркер Ф.2: call-site/decl `tls_client_cfg_new(`/`tls_server_cfg_new(`;
+  NB Ф.5: после импорта std/tls из std/http перейти на скан манглед-обёрток —
+  урок brotli, отмечено в коде) + ветки линковки в clang (gcc-стиль
+  `-lbcrypt -lntdll`) / MSVC (`bcrypt.lib ntdll.lib`) / gcc-Unix +
+  `NOVA_DEBUG_TLS_LINK=1` диагностика.
+- **Q11-заглушка `nova_rt/tls_stub.c`** (29 символов, TLS_ERR_UNSUPPORTED/-11,
+  текст «как собрать»): компилируется вместо либы; взаимоисключающие ветки —
+  clash невозможен.
+- **Найден и закрыт реальный дефект механизма:** вызов `tls_*` в
+  сгенерированном C был implicit declaration (D82 — декларации не эмитятся) →
+  возврат int (32 бита) → **трункация хендла-указателя → SEGV**
+  (`tls_cfg_verify_system+0xB`, пойман NOVA_DIAG_SEGV-локалайзером; изолированный
+  C-тест с тем же clang работал — рознились именно прототипы). Fix по
+  net/brotli-образцу: **`nova_rt/tls_shim.h`** (чистые прототипы, включён
+  безусловно из nova_rt.h; tls_stub.c включает его же — сверка сигнатур).
+- **Верификация в три стороны** (NOVA_DEBUG_TLS_LINK=1):
+  1) TLS-CU + либа → `LINK …nova_tls_shim.lib` → `shim_link_test.nv` **PASS**
+     (реальный rustls сквозь Nova: bad-SNI → -12, ClientHello в write_tls,
+     кривой PEM → -10 → `from_shim` → `InvalidPem`);
+  2) не-TLS CU (`std/data/semver_range_test`) → `no tls` + PASS;
+  3) либа скрыта → `STUB tls_stub.c` → стаб-проба PASS (cfg_new=0,
+     err=-11 → `Internal("unsupported…")`) — link-error нет.
+- **Гейт: conformance --positive --compile-error = 82/0** (эталон волны).
+- Pre-existing красные, ДОКАЗАННО не мои (baseline без tls_shim.h-инклуда —
+  идентичный фейл): `std/io/d322_lines_test` RUN-FAIL (seek `requires n >= 0`);
+  `std/net` folder-CU НЕ КОМПИЛИРУЕТСЯ — `E_CONCURRENT_MUT_CAPTURE` в
+  `tcp_test.nv:89` (свежий чекер 173.3/D415 vs незамигрированный spawn-тест
+  net) — эскалировано интегратору волны 173.3, вне периметра 116.
