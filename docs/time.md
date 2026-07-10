@@ -133,7 +133,17 @@ test "rate limiter refills after 1s" {
 
 `fixed_ms(ms)` — часы замерли (детерминированные timestamps, `sleep` — no-op).
 `mut_clock(start_ms)` — виртуальные часы, `sleep`/`Time.sleep` продвигают их без
-реального ожидания.
+реального ожидания (это и есть MVP «explicit advance» — auto-idle-продвижение
+без явного `sleep()`-вызова, когда все фибры durably-blocked, — followup, не
+реализовано; auto-advance = tokio/Kotlin-synctest-style фича, не в этой волне).
+
+**M:N-контракт:** default (real-clock) handler stateless/thread-safe. `mut_clock`
+**stateful** (мутирует захваченную `current_ms`) — под concurrent `spawn`/
+`parallel for`, одновременно читающими/двигающими один и тот же `mut_clock`,
+нужен `NOVA_MAXPROCS=1` (детерминизм гонки записи в handler-state — см.
+[[reference-mn-race-case-study]]). Тесты этой волны — однопоточные относительно
+`mut_clock` (нет конкурентного spawn поверх одного handler'а), контракт не
+проверялся под реальной M:N-нагрузкой.
 
 ## Ф.2 — почему typed effect-wire не отгружен (архитектурная находка)
 
