@@ -1,8 +1,0 @@
-# Plan 116 Ф.0/Ф.2.4: CRT-соответствие C-пайплайну Nova (x64-windows-static, /MT).
-# Без crt-static staticlib требует /defaultlib:msvcrt (/MD) и конфликтует с
-# libcmt-объектами nova_rt/bdwgc/brotli; с ним — /defaultlib:libcmt.
-# Проверено 2026-07-10: RUSTFLAGS="--print native-static-libs" →
-#   без флага:  ... /defaultlib:msvcrt
-#   с флагом:   ... /defaultlib:libcmt
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
