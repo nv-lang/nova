@@ -1641,6 +1641,39 @@ void nova_runtime_shutdown(void) {
         uv_close((uv_handle_t*)&w->wake_handle, NULL);
         /* Run one more tick to process close. */
         uv_run(&w->loop, UV_RUN_NOWAIT);
+        /* [M-net-close-teardown-hang] fix (2026-07-11): drain the deferred
+         * close/call queues and PUMP the loop BEFORE attempting
+         * uv_loop_close, not after. Root cause: the worker's own
+         * while(!stop) loop normally services close_queue/call_queue via
+         * _worker_async_cb on its next uv_run(NOWAIT) tick — net.c
+         * TcpListener/TcpStream .close() (nova_loop_defer_close) and
+         * cross-thread net-op issues (nova_loop_defer_call, Plan
+         * 183/[M-183-net2-loop-affinity-cross-thread-op]) both go through
+         * these queues, even for same-thread callers. If `w->stop` flips
+         * (loop above) in the narrow window between a fiber enqueuing such
+         * a job and the worker's next iteration, the job is left queued
+         * when the worker thread exits and is joined here — nobody left to
+         * service that loop. The PREVIOUS order (uv_loop_close THEN drain)
+         * was too late: draining after uv_loop_close still calls
+         * uv_close()/invokes the deferred fn, but nothing ever calls
+         * uv_run() again for this loop afterward, so the close_cb never
+         * fires — a live uv_tcp_t/uv_udp_t handle (and its OS socket fd) is
+         * silently leaked, never actually closed (uv__finish_close never
+         * runs). Drain + pump here instead, while the loop is still open
+         * and this cleanup path is the only thread touching it (worker
+         * already joined — single-threaded now, no race). Bounded ticks
+         * (not an unbounded uv_loop_alive spin) — a genuinely-stuck handle
+         * must not turn a leak into a shutdown hang. */
+        nova_loop_drain_calls(&w->call_queue);   /* calls first — may enqueue closes */
+        nova_loop_drain_closes(&w->close_queue);
+        for (int tick = 0; tick < 64 && uv_loop_alive(&w->loop); tick++) {
+            uv_run(&w->loop, UV_RUN_NOWAIT);
+            /* A drained call can itself enqueue a follow-on close (e.g. a
+             * deferred accept-issue that errors and self-closes) — service
+             * those too before giving up. */
+            nova_loop_drain_calls(&w->call_queue);
+            nova_loop_drain_closes(&w->close_queue);
+        }
         uv_loop_close(&w->loop);
         /* Plan 83-go-cmn Ф.1: runq is inline (no heap) → nothing to destroy. */
         free(w->wake_pending);
@@ -1649,12 +1682,10 @@ void nova_runtime_shutdown(void) {
         w->yielded = NULL;
         /* Plan 83.6: drain SpawnCtx pool — free retained ctx buffers. */
         _nova_spawn_pool_drain(w);
-        /* Plan 83.10.2: destroy per-worker deferred-close queue. */
-        nova_loop_drain_closes(&w->close_queue);  /* flush any remaining */
+        /* Plan 83.10.2 / [M-183-net2-loop-affinity-cross-thread-op]: queues
+         * already drained above (pre-close, so their close_cb's/fn's
+         * actually get pumped) — just tear down the now-empty structures. */
         nova_close_queue_destroy(&w->close_queue);
-        /* [M-183-net2-loop-affinity-cross-thread-op] fix: destroy per-worker
-         * deferred-call queue. */
-        nova_loop_drain_calls(&w->call_queue);  /* flush any remaining */
         nova_call_queue_destroy(&w->call_queue);
     }
 
