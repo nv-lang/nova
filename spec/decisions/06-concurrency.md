@@ -6786,3 +6786,123 @@ E_CONST_EFFECT_IN_INIT).
 std (`concurrency/cancellation.nv` `within`/`race2` — реальные TOCTOU-гонки,
 переведены на каналы; `http/servernet` smoke — на каналы) + nova_tests
 (~19 файлов — на `Atomic*`).
+
+## D416. Supervision-as-effect — `Supervisor`/`on_child_fail(idx, err) → Decision` (Plan 173.2)
+
+> Дом [Plan 173.2](../../docs/plans/173.2-supervision-as-effect.md)
+> (sign-off решений §2 2026-06-21; §3b-резолюция owner 2026-06-26; реализация
+> 2026-07-10). Стоит на субстрате
+> [Plan 173.0](../../docs/plans/173.0-concurrency-runtime-substrate.md)
+> (per-slot `child_error[]` retention + serialized decision-loop + R1-guard)
+> и [D414](#d414-structured-error-propagation--primary-selection-precedence-detach-policy-channel-closed-vs-value-plan-173-ф3)
+> (precedence PANIC > USER > CANCEL). Erlang-style supervision = handler
+> strategy (README), НЕ фиксированный набор стратегий-имён.
+
+### §1. Эффект и словарь
+
+`Supervisor` — настоящий эффект в `std/prelude/effects.nv` (§3 — не хардкод
+в Rust; лоуэринг = обычный user-effect путь, как `Random`):
+
+```nova
+type Decision enum Escalate | Stop | Restart | RestartAll | RestartRest
+type Supervisor effect {
+    on_child_fail(idx int, err any) -> Decision
+}
+```
+
+- `idx` — retention-слот упавшего ребёнка (spawn-порядок remote-детей,
+  173.0 `child_error[]`); `err` — ошибка как `any`: typed-throw payload
+  (сужается `err is T`), string-throw / panic — `str`-сообщение.
+- **Стратегии = хендлеры** (значения эффекта): `with Supervisor = policy
+  { … }`, как `Time`/`Fail`. Встроенные политики —
+  `std.concurrency.supervisor.escalate()` / `.stop()`. Имён-стратегий как
+  сущности нет: «one-for-all» = хендлер, возвращающий `RestartAll` (после
+  снятия гейта).
+- **Amend к тексту плана §2.1:** параметр `attempt` в MVP-сигнатуре
+  ОТСУТСТВУЕТ — он осмыслен только вместе с исполнением `Restart`
+  (per-child ретрай), которое гейтится §3b; добавляется той же волной, что
+  снимет гейт (173.3-изоляция). Словарь `Decision` полный уже сейчас —
+  сигнатура эффекта при снятии гейта не меняется.
+
+### §2. Семантика исполнения
+
+- **Дефолт (нет хендлера) = сегодняшний all-or-throw, байт-паритет.**
+  Supervision-ветка рантайма не активируется вовсе: codegen штампует
+  `has_supervisor = (_nova_handler_Supervisor != NULL)` на входе scope'а
+  (`supervised` / array-mode `parallel for`), false → все новые ветки
+  мертвы, репорт-пути byte-идентичны до-173.2.
+- **Хендлер установлен → deferred-decision режим scope'а:** падение ребёнка
+  пишется ТОЛЬКО в его per-slot `child_error[idx]` (release-publish
+  per-slot; ни CAS-выбора primary, ни cancel-бродкаста) — выбор реакции
+  принадлежит супервизору, а не упавшему.
+- **Сериализация:** `on_child_fail` исполняется на drive-потоке scope'а
+  (drain-цикл `nova_supervised_run_impl` — решения принимаются ПОКА siblings
+  ещё бегут + финальный catch-up после дрейна, строго до освобождения
+  retained SpawnCtx), по одному падению за раз, в порядке слотов;
+  ровно один вызов на падение.
+- **`Escalate`** — ошибка ребёнка идёт в primary-machinery scope'а
+  (тот же precedence-путь D414 PANIC > USER > CANCEL + cancel_requested,
+  что и на дефолте) → siblings кооперативно отменяются, scope
+  перевыбрасывает primary наружу.
+- **`Stop`** — ребёнок «выкинут» (Erlang temporary): без эскалации, без
+  отмены siblings, scope продолжает; ошибка остаётся retained per-slot
+  (не теряется молча — D414 §критерий 3).
+- **panic ребёнка доходит до решения** (kind PANIC — supervision на границе
+  fiber'а санкционирована D13); **индуцированные отмены siblings (CANCEL)
+  хендлеру не показываются** — следствие эскалации, не корневое падение.
+- **Мост рантайм↔Nova:** `_nova_supervisor_decide_fn` — fn-pointer,
+  назначаемый generated main() (паттерн `_nova_throw_scope_timeout_fn`);
+  импл (`_nova_supervisor_decide_impl`, emit_c splice) читает ambient
+  TLS-vtable, боксирует `NovaChildError` в `any`, маппит тег `Decision`
+  в `NOVA_SUPERVISE_*`-коды.
+
+### §3. Ограничения хендлера (closed handler effect-set, Q-блок)
+
+- **`throw`/`Fail` разрешён = Escalate-with-handler-error:** вызов хендлера
+  огорожен локальным fail-frame (guard от handler-fails-self / longjmp
+  мимо drain-цикла); брошенная хендлером ошибка идёт в primary-machinery
+  scope'а первой (precedence решает исход: PANIC ребёнка всё равно бьёт
+  USER хендлера — D13).
+- **`interrupt` запрещён** — `[E_SUPERVISOR_HANDLER_INTERRUPT]`: ранний
+  выход из with-блока бросил бы drain с живыми детьми.
+- **suspend-операции запрещены** — `[E_SUPERVISOR_HANDLER_SUSPEND]`
+  (компилируемое приближение V1: прямой `Time.sleep` в теле хендлера;
+  транзитивный вызов через функцию — followup эффект-row-анализом).
+
+### §4. Гейт Restart (§3b-резолюция)
+
+MVP-исполнение = `Escalate`/`Stop` (+`cancel`-токены как раньше).
+`Restart`/`RestartAll`/`RestartRest` остаются в словаре, но их
+КОНСТРУИРОВАНИЕ внутри Supervisor-хендлера отклоняется —
+`[E_SUPERVISOR_RESTART_GATED]` — до рычага изоляции restartable-тела
+([D415](#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733)
+`#share`/consume-в-spawn даёт базу; снятие гейта = отдельная волна:
+attempt-параметр, restart-ceiling, re-spawn из retained ctx;
+`RestartAll`/`RestartRest` дополнительно ждут cancel-and-join quiesce —
+`[M-173.2-restart-all-rest]`). Runtime-defense: дошедший до исполнения
+Restart-тег (гейт обойдён) — громкий abort, не тихая мис-супервизия.
+
+### §5. Периметр MVP
+
+Политика применяется к remote-детям armed M:N runtime — дефолтный путь
+исполнения (auto-arm в main; источник `(idx, err)` = per-slot
+`child_error[]` 173.0, который заполняет только remote-путь).
+Bootstrap/single-thread (`NOVA_NO_AUTOARM=1`) и implicit main-scope
+(top-level `detach`) остаются на дефолтном Escalate-all — честно
+задокументированное ограничение субстрата, не тихий пропуск политики.
+
+### Диагностики / тесты
+
+| код | что |
+|---|---|
+| `E_SUPERVISOR_RESTART_GATED` | Restart-вариант `Decision` в Supervisor-хендлере (§4) |
+| `E_SUPERVISOR_HANDLER_INTERRUPT` | `interrupt` в теле Supervisor-хендлера |
+| `E_SUPERVISOR_HANDLER_SUSPEND` | `Time.sleep` в теле Supervisor-хендлера |
+
+Тесты: `nova_tests/err173_2/` — pos `supervisor_stop_test` (siblings живут,
+scope продолжает; multi-fail; panic-до-решения), `supervisor_escalate_test`
+(паритет с дефолтом на идентичном теле; custom-политика с mut-состоянием и
+`err is int`-narrowing + `idx`-диапазон; Escalate-with-handler-error),
+`supervisor_parfor_test` (Stop = «собери выживших», dense `[]T`); neg
+`restart_gated_neg`, `handler_interrupt_neg`, `handler_sleep_neg`.
+Модульные: `std/concurrency/supervisor_test.nv`.
