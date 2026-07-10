@@ -847,3 +847,50 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
   main d1b9b2bc8); err173-корпус 5/5 PASS (δ0).
 - Остались Ф.3.4-хвосты следующей волне: encrypted round-trip уже покрыт
   smoke; cancel-safety (Ф.6.2) и cert-режимы (Ф.4) — по плану.
+
+### Ф.4 + Ф.4.3 — cert-режимы + Pinned-verifier ✅ 2026-07-10
+
+- **Ф.4.3 (шим):** снята заглушка `TLS_ERR_UNSUPPORTED` — `PinnedVerify`
+  (compiler-codegen/tls_shim): ручной DER-walk `SubjectPublicKeyInfo` из
+  leaf-серта (`der_tlv`/`spki_der` — без новых крейтов) + SHA-256 (`ring`,
+  уже транзитивно в lock → 0 новых пакетов); подпись рукопожатия ВСЁ РАВНО
+  проверяется (`verify_tls12/13_signature`), hostname заменён пиннингом
+  (D-блок B). Shim cargo **8/8** (pinned correct/wrong-pin/wrong-sni +
+  cross-check SPKI-пина против openssl).
+- **Ф.4 (Nova, `std/tls/cert_modes_test.nv`) — 6/6 loopback PASS:** Pinned
+  верный-пин→OK / неверный→reject / wrong-SNI-но-верный-пин→OK (пиннинг
+  заменяет hostname); SystemRoots vs self-signed → CertificateInvalid;
+  ALPN пересечение (h2/http1.1→http/1.1) + no-overlap→fail. SPKI-пин
+  фикстуры (`x"92f7…34"`) cross-checked с shim-алгоритмом.
+
+### Ф.5 — server mTLS + client-cert ✅ 2026-07-10
+
+- `ClientConfig` получил `client_cert_pem`/`client_key_pem` + `@with_client_cert`
+  (пусто = без mTLS); `client.nv build_client_cfg` шлёт серт когда задан (та же
+  `tls_cfg_cert_key_pem`, что серверная). Server-side `ClientCertMode`
+  (NoClientAuth/Optional/Required) был готов с Ф.3 (server.nv).
+- Fixtures: `client_ca_cert.pem` (CA:TRUE) + `client_cert.pem`/`client_key.pem`
+  (leaf, EKU=clientAuth, подписан CA). `std/tls/mtls_test.nv` **4/4 PASS**:
+  Required+серт→OK, Required-без-серта→server отвергает (в TLS 1.3 клиент
+  завершает сторону оптимистично → отказ ловит сервер), Optional с/без серта.
+
+### Ф.5.3 — https-разгейт std/http ✅ 2026-07-10 (код; runtime-verify через прокси)
+
+- `real_http()` `secure=true` → `https_send_over_net` (TLS поверх `TcpStream`:
+  SNI=host, SystemRoots, ALPN http/1.1) вместо `Err(Tls)`. Закрывает
+  `[M-178-https-needs-116]`.
+- **Верификация:** паттерн (resolve→connect→TLS→write→read-loop→close) прогнан
+  в compress-free CU (proxy-тест в std.tls, mock non-TLS peer → детерминир.
+  Err) — **PASS**; сам TLS-слой — std/tls loopback-тесты Ф.3/Ф.4/Ф.5.
+- **⚠ БЛОКЕР (PRE-EXISTING, не Plan-116):** весь http-CU (`client_test`/
+  `real_test`) НЕ КОМПИЛИТСЯ — `[M-compress-checksum-structvariant-ctor-xmodule]`
+  (std/encoding/compress/error.nv:121 struct-payload variant-ctor `Checksum`
+  → E_UNKNOWN_TYPE в multi-ErrorKind CU). Доказано pre-existing: `client_test`
+  (без TLS) падает идентично; compress соло — PASS. Эскалировано (codegen-зона).
+- **Followups:** `[M-116-https-client-custom-roots]` (HttpClient TLS-config хук
+  для self-signed loopback HTTPS), `[M-178-errsource-tls]` (типизированный source).
+- **Гейт волны:** conformance --positive --compile-error **91/0**; все std/tls
+  тесты (handshake 19/19 + cert_modes 6 + mtls 4 + error/config/shim-link + neg)
+  PASS; shim cargo 8/8.
+- **Осталось:** Ф.5.4 examples/tls/echo, Ф.6 cancel-safety/кросс-платформа,
+  Ф.7 spec D-блоки A-D + docs-guide + close.
