@@ -39137,3 +39137,19 @@ d192-ретракт neg); err173*-корпус 28/0; --panic lane 53/1 (TIMEOUT 
 (basics/effects/generics/atomics/narrowing/any_is) δ=0 vs родной baseline-бинарь (35/5 оба,
 посписочный diff пуст). Зонт 173: все фазы закрыты; остаток — Ф.3 п.5 with_timeout (gated Plan 175,
 [M-174-retract-with-timeout]) + followups [M-173-error-return-trace] (минимум сделан) и пр.
+[2026-07-10] Plan 172.2 — задача «выполнить план 172.2 целиком» (ветка method-args-172-2 от main
+b2082b0e6) закрыта верификацией, БЕЗ нового кода: план уже полностью реализован и слит в main
+коммитом b2de1218c («feat(172.2): method-arg scalar-narrowing enforcement + unicode codepoint=u32
+(D327)»), который является предком базового коммита ветки (git diff main..method-args-172-2 пуст).
+Механизм, миграция unicode, гейты, фикстуры detect172 (u172_2_method_arg_narrowing_pos +
+neg/n_method_arg_narrowing) — всё уже на месте (см. §10 плана, закрытие 2026-06-26). Проверено
+заново: cargo build оба крейта чисто; neg-фикстура PASS ([E_IMPLICIT_NARROWING] срабатывает);
+эталон conformance 83/0. Найдены и починены хвосты рассинхронизации документации, оставшиеся от
+исходного закрытия: (1) README.md строка 172.2 не была обновлена до ✅ CLOSED (висела 📋 proposed
+2026-06-19, хотя умбрелла-строка 172 уже показывала «172.2 ✅»); (2) шапка плана 172.2 держала
+предварительный «D311» вместо финального D327; (3) backlog-маркер [M-instance-method-arg-scalar-
+narrowing] не был помечен закрытым (оставался как открытый P1-гэп). Все три поправлены в этой волне
+(README.md, docs/plans/172.2-method-arg-type-checking.md, docs/plans/backlog-followups.md).
+Позитивная detect172-фикстура упирается в НЕ связанный с 172.2 CODEGEN-FAIL ([E_STR_NO_LEN] в
+u44_generic_member_pos.nv/u44_if_expr_pos.nv того же однокомпилируемого detect172/basics-модуля) —
+идентично на main (diff пуст), не в скоупе этой волны, не трогал.
