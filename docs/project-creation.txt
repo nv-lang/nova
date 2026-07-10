@@ -39515,3 +39515,27 @@ nova-nt-base; FAIL-множества идентичны, все pre-existing: b
 sha256/sha1/md5/hmac NIST PASS; gc_layout юнит 22/22; field_cache юнит 137/137.
 Followups в маркере: serde-derive [N]T-поля; checker-level E-код для len-mismatch;
 мёртвый FixedArray-арм external_registry.
+
+=== 2026-07-10: Plan 116 Ф.3 — runtime-дедлок TLS-handshake закрыт (race-инвестигация, ветка tls-116, sonnet) ===
+Метод — state-dump по шаблону mn-race-stale-slot: watchdog-дамп + серийная статистика
+(300 прогонов → 1 HANG = честная частота ~1/300, а не heisenbug).
+- Root cause: НЕ pump, НЕ lost-wake latch — loop-affinity гонка ISSUE-стороны uv-опов,
+  «остаточный класс» из записи [M-183-net2-loop-affinity-cross-thread-op] (теперь CLOSED):
+  work-steal уводит фибру на другой worker между park'ами (write→park→read на одном
+  сокете = паттерн TLS-pump), следующий uv-оп мутирует чужой не-thread-safe uv_loop →
+  completion mis-queued → вечная парковка (дамп: pending_remote=2, pstate=WAIT).
+- Фикс A (rt, 5ca0ace10): nova_loop_defer_call — generic-обобщение nova_loop_defer_close
+  (per-loop mutex-очередь + uv_async_send, main + каждый worker). Все issue-точки net.c
+  (tcp read/write/accept/shutdown, udp send/recv): same-thread = прямой вызов
+  (байт-в-байт прежнее), cross-thread = _deferred-обёртка (только она latch+wake).
+  Урок: unconditional latch+wake на same-thread пути = reentrant self-wake ДО
+  собственной парковки → гонка gopark/goready (~50% зависаний accept) — в net.c.
+- Фикс B (codegen, a89597277, вскрыт снятием дедлока): heap-promoted примитивный локал
+  (Plan 118 Ф.1) читался без deref — c_fn(&err); use(err) передавал heap-адрес вместо
+  значения → NEG bad-PEM давал Internal вместо InvalidPem. Ident-ветка emit_expr теперь
+  дерефит promoted-локал (зеркало var_boxed), var_types хранит базовый тип.
+- Регресс: std/net/pingpong_test.nv (104b94a7e) — alternating write→read.
+- Ложный след: «split_test виснет 50% на baseline» = slow-DNS NXDOMAIN (~17с) при 8с
+  таймауте обвязки — не дефект.
+- Гейты: handshake_test 19/19 (был TIMEOUT); стресс 0 hang/720+; std/net CU 37×3;
+  conformance 90/0 (слит main d1b9b2bc8, 0d8581803); err173 5/5 δ0. Модель: sonnet.

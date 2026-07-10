@@ -761,7 +761,7 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
   `tcp_test.nv:89` (свежий чекер 173.3/D415 vs незамигрированный spawn-тест
   net) — эскалировано интегратору волны 173.3, вне периметра 116.
 
-### Ф.3 — TlsStream + pump + connect/accept 🟡 IN PROGRESS (код готов; runtime-дедлок локализован)
+### Ф.3 — TlsStream + pump + connect/accept ✅ 2026-07-10 (дедлок и вскрытые дефекты закрыты — см. дополнение ниже)
 
 - **Написано и КОМПИЛИРУЕТСЯ/ЛИНКУЕТСЯ:** `std/tls/stream.nv` (TlsStream
   consume-запись; sans-I/O пампинг свободными fn `flush_out`/`fill_from_tcp`/
@@ -802,3 +802,48 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
   - **Инструментальная заметка:** exe test-build удаляется на TIMEOUT →
     трейс-грабы ненадёжны; стоит добавить в test-runner опцию сохранения exe /
     inherit-stdout для отладки виснущих тестов (отдельный tooling-followup).
+
+#### Ф.3 — закрытие дедлока + вскрытых дефектов ✅ 2026-07-10 (race-инвестигация, sonnet)
+
+- **Root cause дедлока `[M-116-handshake-socket-deadlock]` — НЕ pump и НЕ
+  lost-wake latch, а loop-affinity гонка issue-стороны uv-опов** — ровно
+  «остаточный класс», предсказанный записью `[M-183-net2-loop-affinity-cross-thread-op]`:
+  волокно уводится work-stealing'ом на другой worker МЕЖДУ парковками
+  (write→park→read на одном сокете — паттерн TLS-pump, каждый park = окно
+  миграции), следующий uv-оп выдаётся на хендле, пришпиленном к loop'у СТАРОГО
+  worker'а, с ЧУЖОГО потока → конкурентная мутация не-thread-safe uv_loop →
+  completion mis-queued/потерян → обе стороны навечно в `Net.read`-park
+  (наблюдённый watchdog-дамп pending_remote=2 pstate=1). Частота ~1/300
+  (доказано серией: 1 HANG на 300 одиночных прогонов чистого exe).
+- **Фикс A (rt, 5ca0ace10):** `nova_loop_defer_call` — generic-обобщение
+  `nova_loop_defer_close` (Plan 83.10.2): per-loop `NovaDeferredCallQueue`
+  (main + каждый worker; init/drain/destroy рядом с close_queue), маршалит
+  `fn(arg)` на owning-loop-поток через mutex-очередь + `uv_async_send`.
+  В net.c ВСЕ issue-точки на ранее созданных хендлах (tcp read/write/accept/
+  shutdown; udp send/recv) ветвятся: same-thread (обычный случай) = прямой
+  вызов, байт-в-байт прежнее поведение; cross-thread = `_deferred`-обёртка,
+  ТОЛЬКО она публикует completion-latch + wake. **Урок (пойман split_test):**
+  unconditional latch+wake на same-thread пути = reentrant self-wake ДО
+  собственной парковки волокна → гонка с gopark/goready park-state (~50%
+  зависаний accept-пути) — задокументировано в net.c. Accepted-stream
+  наследует `lst->loop` (не `nova_current_loop()`).
+- **Фикс B (codegen, a89597277) — вскрыт снятием дедлока:** heap-promoted
+  примитивный локал (Plan 118 Ф.1, эскейп `&x` аргументом вызова) читался
+  БЕЗ разыменования — `mut err int = 0; c_fn(&err); use(err)` передавал
+  heap-АДРЕС вместо значения (`from_shim` получал ~2.8e12 вместо -10 → NEG
+  bad-PEM классифицировался Internal вместо InvalidPem; тест-тела эскейп-
+  анализ не проходят — прямые FFI-пробы врали «работает»). Фикс: Ident-ветка
+  emit_expr дерефит promoted-локал (`(*name)`, зеркало var_boxed; assign-
+  таргеты тем же путём), var_types хранит базовый тип.
+- **Регресс:** `std/net/pingpong_test.nv` — alternating write→read на одном
+  сокете (64-цикловый строгий ping-pong + две конкурентные пары).
+- **Ложный след (закрыт как не-дефект):** «split_test виснет ~50% на baseline»
+  — это slow-DNS (NXDOMAIN-тест dns_test до ~17с) при 8с-таймауте моей
+  стресс-обвязки; с 60с — 35/35 стабильно, и на baseline, и с фиксами.
+- **Гейты волны:** handshake_test **19/19 PASS** (smoke + NEG hostname-
+  mismatch + NEG SNI/bad-PEM) — против TIMEOUT до фикса; стресс smoke
+  0 зависаний на 720+ прогонах (8×90) против ~1/300; std/net folder-CU
+  (37 тестов, вкл. новый pingpong) ×3 PASS; conformance **90/0** (на слитом
+  main d1b9b2bc8); err173-корпус 5/5 PASS (δ0).
+- Остались Ф.3.4-хвосты следующей волне: encrypted round-trip уже покрыт
+  smoke; cancel-safety (Ф.6.2) и cert-режимы (Ф.4) — по плану.
