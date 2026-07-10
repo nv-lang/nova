@@ -39872,3 +39872,59 @@ delta-0 PASS соло; std/encoding/csv_test PASS; d347_same_scope_rebinding PAS
 nova check std — baseline 2be6d7064 (отдельный temp-worktree) PASS 118/FAIL 32 →
 ветка PASS 125/FAIL 25 (строго ЛУЧШЕ baseline, не просто «не хуже»). Ветка
 codegen-p1-bugs запушена в github. Модель: sonnet (обе задачи — разведка+фикс+гейты).
+
+=== 2026-07-10: Plan 172.13 Ф.0/Ф.1/Ф.2 — constraint-based inference: инвентарь + ядро-скелет + первая миграция (ветка constraint-core, sonnet) ===
+Владелец снял паузу с 172.13 (архитектурная замена ad-hoc продюсеров канала
+единым унификационным ядром). Объём волны: Ф.0 (инвентарь) + Ф.1 (ядро-скелет,
+НЕ подключено глобально) + Ф.2 (ОДИН доказательный пакет-миграция).
+- Ф.0: карта продюсеров f1-преамбулы канала (compiler-codegen/src/types/mod.rs,
+  f1_expr_inner :7158-8628 + смежные) — ~13 преамбула-сайтов + ~20 продюсерных
+  матч-арм + самодостаточное literal-coercion семейство (9 функций/4 сайта,
+  ВЫБРАНО для Ф.2) + resolve/overload-семья (9 функций, вне волны). Классификация
+  по констрейнту: Eq/MemberOf/Join/Project/Resolve. Секция «Ф.0 инвентарь
+  2026-07-10» в docs/plans/172.13-constraint-inference.md.
+- Ф.1: новый модуль compiler-codegen/src/types/constraint_solver.rs — TypeVar(u32)
+  (свежая числовая идентичность, anti-d119 по построению — переменные никогда не
+  конфлируются по совпадению ИМЕНИ generic-параметра в разных областях видимости),
+  Ty (открытый терм Var/Concrete/Tuple/Named/Array/Func поверх lossless
+  ResolvedType), Constraint::{Eq,MemberOf}, TypeSet::{Primitive,
+  SizedScalarNonWide,Numeric,ConcreteNamedNoArgs,ScalarNotWideDefaultInt,Union},
+  Solver::unify с occurs-check (прямой + косвенный цикл через подстановку) и
+  transitive var-chain resolve. НЕ подключено к f1_expr_inner глобально —
+  scaffold для пакетной миграции. 16 юнит-тестов.
+- Ф.2: миграция пакета C (literal-coercion — annotate_expected_concrete +
+  materialize_literal_coercion) с ad-hoc инлайн matches!-цепочек на
+  Constraint::MemberOf + Solver::solve через общий TypeSet-язык (ts_member
+  helper). Байт-в-байт сохранена семантика каждого гейта, включая тонкую
+  int/uint-асимметрию (TypeSet::ScalarNotWideDefaultInt исключает ТОЛЬКО ровно
+  `int`, `uint` проходит — зафиксировано explicit-тестом, иначе была бы
+  byte-parity ловушка).
+- Разведочная ловушка (задокументирована маркером
+  [M-172.13-cross-repo-c-diff-noise-not-regression]): сравнение .c между двумя
+  РАЗНЫМИ worktree-checkout'ами (nova-cc vs nova-186) на formally-идентичном
+  коммите 2be6d7064 дало ложную тревогу (лишняя функция, сдвиг нумерации) —
+  build-окружение/кэш-артефакт, не код; переверено byte-parity ВНУТРИ одного
+  worktree (checkout A → build → capture; checkout B → build → diff) — чисто.
+- anon-RecordLit D55: репро подтвердило — codegen-эмиссионный гэп
+  (emit_c.rs:39613 читает ТОЛЬКО current_fn_return_ty, не resolved_types_buf),
+  ДО и НЕЗАВИСИМО от чекерного канала; Ф.1/Ф.2 его не закрывают и не могут без
+  отдельного codegen-трека. Маркер [M-d55-anon-recordlit-codegen-gap] — вне
+  объёма этой волны.
+- Гейты: cargo build (оба крейта) чисто; cargo test --lib 939 passed / 3
+  pre-existing fail (verified byte-identical failure at merge-base 2be6d7064 в
+  ТОМ ЖЕ окружении) / p0_erased_now_dispatches_via_vtable (stack-overflow,
+  unrelated module, pre-existing) исключён отдельно; +16 юнитов
+  constraint_solver; spec_tests/conformance --positive --compile-error = 91/0;
+  nova_tests/err173* 5/5 PASS индивидуально (комбинированный прогон иногда
+  TIMEOUT на err173_0 под 16-way нагрузкой — флака среды, не регрессия);
+  byte-parity .c: nova_tests/{generics/mono_basic,
+  plan172/p172_3_typeset_parse_smoke_positive, plan172_composition/composition,
+  plan172_stdlib_use/stdlib_use, basics/control_flow, plan172_showcase/showcase}
+  — идентичны HEAD vs merge-base (два CC-FAIL сайта — идентичной ПРЕДСУЩЕСТВУЮЩЕЙ
+  причиной, не регрессия).
+Файлы: compiler-codegen/src/types/constraint_solver.rs (новый),
+compiler-codegen/src/types/mod.rs (mod-декларация + ts_member + 5 гейт-сайтов
+literal-coercion семьи), docs/plans/172.13-constraint-inference.md (Ф.0
+инвентарь + Ф.1/Ф.2 отчёт + D55 разграничение + статус).
+Ф.3 (снос остатка — Binary-Join/If-Match-Join/resolve-семья) НЕ начато,
+следующая волна. Модель: sonnet.

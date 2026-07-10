@@ -10,6 +10,13 @@ use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
 use crate::parser::{impl_spec_base_name, impl_spec_args_text};
 use std::collections::{HashMap, HashSet};
 
+// Plan 172.13 Ф.1: constraint-based inference core scaffold (unification +
+// occurs-check + type-set membership). NOT wired into `f1_expr_inner`
+// globally yet — Ф.2 migrates ad-hoc producer packages onto it one at a
+// time, gated by byte-parity per package. See
+// `docs/plans/172.13-constraint-inference.md`.
+pub mod constraint_solver;
+
 // Plan 172.1 U.5.4: the lossy bootstrap `Ty` enum (+ `ty_of_ref`) was DELETED — its int
 // collapse + single `Ptr`/`TypedPtr` modelling is fully subsumed by the lossless
 // `ResolvedType` (defined below), the single type representation the checker uses.
@@ -9366,6 +9373,24 @@ impl<'a> TypeCheckCtx<'a> {
         rt.is_primitive_lowerable()
     }
 
+    /// Plan 172.13 Ф.2 (constraint-core, 2026-07-10): route a single
+    /// concrete-type gate through the shared `constraint_solver` type-set
+    /// language instead of an inline hand-rolled boolean — the literal-
+    /// coercion family's migration proof (see `docs/plans/
+    /// 172.13-constraint-inference.md` Ф.0 inventory, group C). Both sides
+    /// are already fully known here (no unbound solver variable needed);
+    /// this still genuinely routes the DECISION through `Constraint::
+    /// MemberOf` + `Solver::solve`, replacing per-site duplicated gate code
+    /// with the one shared predicate language (`TypeSet`).
+    fn ts_member(rt: &ResolvedType, set: constraint_solver::TypeSet) -> bool {
+        constraint_solver::Solver::new()
+            .solve(&[constraint_solver::Constraint::MemberOf(
+                constraint_solver::Ty::Concrete(rt.clone()),
+                set,
+            )])
+            .is_ok()
+    }
+
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
     /// expression's arms, materialized for the checker channel. `infer_expr_type`
     /// does NOT derive a match type (returns `None`), so the match's result type is
@@ -11729,17 +11754,28 @@ impl<'a> TypeCheckCtx<'a> {
         if !value.id.is_set() { return; }
         let TypeRef::Named { path, generics, .. } = expected else { return };
         let Some(last) = path.last() else { return };
+        // Plan 172.13 Ф.2 (constraint-core): gate routed through the shared
+        // `TypeSet` language (`ts_member`) instead of duplicated inline
+        // `matches!` booleans. `primitive_gate` already covers Str/Bool
+        // (both `TypeSet::Primitive` members), so the former separate
+        // `matches!(rt, Str | Bool)` was redundant with it — byte-identical
+        // set, one shared predicate. `self.types.contains_key` (declared-type
+        // lookup) needs checker state outside `ResolvedType` — stays a
+        // direct Rust `||`, not folded into `TypeSet`.
         let concrete = if generics.is_empty() {
             let rt = ResolvedType::from_type_ref(expected);
-            Self::primitive_gate(&rt)
-                || matches!(&rt, ResolvedType::Str | ResolvedType::Bool)
+            Self::ts_member(&rt, constraint_solver::TypeSet::Primitive)
                 || self.types.contains_key(last)
         } else {
             generics.iter().all(|g| {
                 let rt = ResolvedType::from_type_ref(g);
-                Self::primitive_gate(&rt)
-                    || matches!(&rt, ResolvedType::Str)
-                    || matches!(&rt, ResolvedType::Named { args, .. } if args.is_empty())
+                Self::ts_member(
+                    &rt,
+                    constraint_solver::TypeSet::Union(vec![
+                        constraint_solver::TypeSet::Primitive,
+                        constraint_solver::TypeSet::ConcreteNamedNoArgs,
+                    ]),
+                )
             })
         };
         if concrete {
@@ -11763,19 +11799,14 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::IntLit(_) => {
                 if value.id.is_set() {
                     let rt = ResolvedType::from_type_ref(expected);
-                    // Only a SIZED scalar — never the wide-default `int` (no-op vs the
-                    // seed) and never a non-scalar (generic param / struct, which is not
-                    // an integer literal's width).
-                    if matches!(rt, ResolvedType::Scalar { .. })
-                        && !matches!(
-                            rt,
-                            ResolvedType::Scalar {
-                                width: 64,
-                                signed: true,
-                                wide_default: true
-                            }
-                        )
-                    {
+                    // Plan 172.13 Ф.2: gate routed through `TypeSet::
+                    // ScalarNotWideDefaultInt` — any SIZED scalar except
+                    // exactly `int` (never a no-op wide-default `int`, never
+                    // a non-scalar). NOTE the byte-parity subtlety this
+                    // preserves: `uint` (unsigned wide-default) still PASSES
+                    // — it differs from the `int` literal seed's C type even
+                    // though both are "wide" (see the TypeSet doc-comment).
+                    if Self::ts_member(&rt, constraint_solver::TypeSet::ScalarNotWideDefaultInt) {
                         self.resolved_types_buf.borrow_mut().insert(value.id, rt);
                     }
                 }
@@ -11801,7 +11832,9 @@ impl<'a> TypeCheckCtx<'a> {
                                         && self.types.get(name).map_or(false, |td| matches!(&td.kind,
                                             TypeDeclKind::Record(_) | TypeDeclKind::Sum(_)
                                             | TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_))));
-                            if Self::primitive_gate(&arg_rt) || concrete_value_named {
+                            if Self::ts_member(&arg_rt, constraint_solver::TypeSet::Primitive)
+                                || concrete_value_named
+                            {
                                 let rt = ResolvedType::from_type_ref(expected);
                                 self.resolved_types_buf.borrow_mut().insert(value.id, rt);
                             }
@@ -11824,11 +11857,13 @@ impl<'a> TypeCheckCtx<'a> {
                                 let all_concrete = !generics.is_empty()
                                     && generics.iter().all(|g| {
                                         let rt = ResolvedType::from_type_ref(g);
-                                        Self::primitive_gate(&rt)
-                                            || matches!(&rt, ResolvedType::Str)
-                                            || matches!(&rt,
-                                                ResolvedType::Named { args, .. }
-                                                    if args.is_empty())
+                                        Self::ts_member(
+                                            &rt,
+                                            constraint_solver::TypeSet::Union(vec![
+                                                constraint_solver::TypeSet::Primitive,
+                                                constraint_solver::TypeSet::ConcreteNamedNoArgs,
+                                            ]),
+                                        )
                                     });
                                 if all_concrete {
                                     let rt = ResolvedType::from_type_ref(expected);
@@ -11854,9 +11889,13 @@ impl<'a> TypeCheckCtx<'a> {
                                 None => ResolvedType::Unit,
                             };
                             let concrete = ps.iter().chain(std::iter::once(&ret_rt)).all(|r| {
-                                Self::primitive_gate(r)
-                                    || matches!(r, ResolvedType::Str | ResolvedType::Bool | ResolvedType::Unit)
-                                    || matches!(r, ResolvedType::Named { args, .. } if args.is_empty())
+                                Self::ts_member(
+                                    r,
+                                    constraint_solver::TypeSet::Union(vec![
+                                        constraint_solver::TypeSet::Primitive,
+                                        constraint_solver::TypeSet::ConcreteNamedNoArgs,
+                                    ]),
+                                )
                             });
                             if concrete {
                                 self.resolved_types_buf.borrow_mut().insert(
