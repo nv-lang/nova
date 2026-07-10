@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 116 Ф.1: std/tls/error.nv — typed TLS error (образец: std/net/error.nv,
+// D407 §4 + Q3-проекция).
+//
+// Шим классифицирует rustls::Error в СТАБИЛЬНЫЕ int-коды TLS_ERR_* (single
+// source of truth: compiler-codegen/tls_shim/src/lib.rs) + текст; Nova-сторона
+// строит typed-вариант через `TlsError.from_shim(kind, msg)` — зеркало
+// `NetError.from_code`, но классификация по КОДУ, не по substring (коды наши,
+// стабильность контролируем).
+//
+// Q3-проекция (как NetError → ErrorKind): `@to_error_kind`/`@to_io_error`
+// дают TlsStream structural `io.Read`/`io.Write` конформанс (Ф.3), НЕ меняя
+// собственную типизированную поверхность (`Result[_, TlsError]`, Plan 177).
+
+module std.tls
+
+import std.io.{ErrorKind, IoError}
+import std.net.{NetError}
+
+/// TLS error returned by handshake, encrypted I/O and config building.
+///
+/// # See Also
+///
+/// - `[TlsStream]`, `[ClientConfig]`, `[ServerConfig]`
+#stable(since = "0.2")
+export type TlsError enum
+    | CertificateInvalid(str)       // валидация цепочки (детали текстом)
+    | CertificateExpired
+    | HostnameMismatch(str)         // серт не покрывает запрошенное имя (детали)
+    | UnsupportedProtocolVersion    // peer предлагает только отвергнутые версии
+    | HandshakeFailure(str)         // generic alert / протокольная ошибка рукопожатия
+    | AlpnNoCommonProtocol          // ALPN-списки не пересеклись
+    | PeerMisbehaved(str)           // протокольное нарушение / truncation / возможный MITM
+    | CloseNotify                   // чистый TLS-EOF (аналог NetError.Eof)
+    | InvalidPem(str)               // parse cert/key/roots PEM
+    | InvalidServerName(str)        // SNI не является валидным DNS-именем/IP
+    | Net(NetError)                 // ошибка underlying-транспорта
+    | Internal(str)                 // rustls internal / shim
+
+/// Human-readable, lowercase description of this error (no trailing newline).
+///
+/// ```nova
+/// assert(TlsError.CertificateExpired.to_str() == "certificate expired")
+/// assert(TlsError.AlpnNoCommonProtocol.to_str() == "no common alpn protocol")
+/// ```
+#stable(since = "0.2")
+export fn TlsError @to_str() -> str {
+    match @ {
+        CertificateInvalid(msg)     => "certificate invalid: ${msg}"
+        CertificateExpired          => "certificate expired"
+        HostnameMismatch(msg)       => "hostname mismatch: ${msg}"
+        UnsupportedProtocolVersion  => "unsupported protocol version"
+        HandshakeFailure(msg)       => "handshake failure: ${msg}"
+        AlpnNoCommonProtocol        => "no common alpn protocol"
+        PeerMisbehaved(msg)         => "peer misbehaved: ${msg}"
+        CloseNotify                 => "tls stream closed"
+        InvalidPem(msg)             => "invalid pem: ${msg}"
+        InvalidServerName(msg)      => "invalid server name: ${msg}"
+        Net(e)                      => e.to_str()
+        Internal(msg)               => "tls internal error: ${msg}"
+    }
+}
+
+// ─── Shim-код → TlsError (честный error-канал) ────────────────────────────────
+
+/// Build a typed `TlsError` from a shim TLS_ERR_* code + its detail text
+/// (`tls_last_error*` / `out_err` cell). Коды — контракт границы
+/// (tls_shim/src/lib.rs); неизвестный код → `Internal` (forward-compat).
+#stable(since = "0.2")
+export fn TlsError.from_shim(kind int, msg str) -> TlsError {
+    if kind == -3 { TlsError.CertificateInvalid(msg) }            // TLS_ERR_CERT_INVALID
+    else if kind == -4 { TlsError.CertificateExpired }            // TLS_ERR_CERT_EXPIRED
+    else if kind == -5 { TlsError.HostnameMismatch(msg) }         // TLS_ERR_HOSTNAME_MISMATCH
+    else if kind == -6 { TlsError.UnsupportedProtocolVersion }    // TLS_ERR_UNSUPPORTED_VERSION
+    else if kind == -7 { TlsError.HandshakeFailure(msg) }         // TLS_ERR_HANDSHAKE
+    else if kind == -8 { TlsError.AlpnNoCommonProtocol }          // TLS_ERR_ALPN
+    else if kind == -9 { TlsError.PeerMisbehaved(msg) }           // TLS_ERR_PEER_MISBEHAVED
+    else if kind == -10 { TlsError.InvalidPem(msg) }              // TLS_ERR_INVALID_PEM
+    else if kind == -11 { TlsError.Internal("unsupported by tls shim: ${msg}") } // TLS_ERR_UNSUPPORTED
+    else if kind == -12 { TlsError.InvalidServerName(msg) }       // TLS_ERR_INVALID_SNI
+    else { TlsError.Internal(msg) }                               // -1/-2/unknown
+}
+
+// ─── TlsError → ErrorKind projection (Q3, зеркало NetError) ──────────────────
+
+/// Best-effort projection onto the shared io/fs/os `ErrorKind` (Q3). Lossy:
+/// весь security-деталь (какой именно cert-провал, чей hostname) сворачивается
+/// в `InvalidData` — проекция нужна ТОЛЬКО для structural `io.Read`/`io.Write`
+/// конформанса `TlsStream`, не для отчётов; `@to_str()` отчитывается своими
+/// строками. `Net(e)` делегирует транспортной проекции.
+#stable(since = "0.2")
+export fn TlsError @to_error_kind() -> ErrorKind {
+    match @ {
+        CertificateInvalid(_)       => ErrorKind.InvalidData
+        CertificateExpired          => ErrorKind.InvalidData
+        HostnameMismatch(_)         => ErrorKind.InvalidData
+        UnsupportedProtocolVersion  => ErrorKind.InvalidData
+        HandshakeFailure(_)         => ErrorKind.InvalidData
+        AlpnNoCommonProtocol        => ErrorKind.InvalidData
+        PeerMisbehaved(_)           => ErrorKind.InvalidData
+        CloseNotify                 => ErrorKind.UnexpectedEof
+        InvalidPem(_)               => ErrorKind.InvalidInput
+        InvalidServerName(_)        => ErrorKind.InvalidInput
+        Net(e)                      => e.to_error_kind()
+        Internal(_)                 => ErrorKind.Other(0)
+    }
+}
+
+/// Build a shared `io.IoError` from this `TlsError` (Q3 projection + `op`).
+/// Backs `TlsStream`'s `io.Read`/`io.Write` conformance (Ф.3) — точное зеркало
+/// `NetError @to_io_error` (std/net/error.nv).
+#stable(since = "0.2")
+export fn TlsError @to_io_error(op str) -> IoError => IoError.new(@to_error_kind(), op)

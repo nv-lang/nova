@@ -700,3 +700,28 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
     (ws2_32/advapi32 уже в net-линковке; bcrypt/ntdll/userenv/dbghelp —
     добавить при условной линковке).
 - Следующая фаза: Ф.1 (std/tls типы + ошибки + ffi.nv).
+
+### Ф.1 — std/tls типы + ошибки ✅ 2026-07-10
+
+- После слияния main: **D415 занят Plan 173.3 (#share)** — ориентир промоушена
+  сместился на D416+ (правило «next-free по grep» без изменений).
+- Создано: `std/tls/error.nv` (TlsError 12 вариантов + `@to_str` +
+  `from_shim` по стабильным кодам + Q3-проекция `@to_error_kind`/
+  `@to_io_error`; добавлен вариант `InvalidServerName(str)` для
+  TLS_ERR_INVALID_SNI — не был в эскизе), `std/tls/config.nv`
+  (VerificationMode/ClientCertMode/TlsVersion + `from_wire`;
+  ClientConfig/ServerConfig + `new` + with_*-модификаторы), `std/tls/ffi.nv`
+  (29 extern `tls_*` + `CTlsHandle(*())`/`CTlsCfgHandle(*())` — codegen
+  подтверждён: `typedef void* Nova_CTlsHandle`, ABI не меняется).
+- **Ф.1.4 (stream.nv) ПЕРЕНЕСЁН в Ф.3** — обнаружено чекером: consume-тип без
+  consume-метода в модуле ill-formed (`D133-empty-consume`), а честный
+  `@close` требует pump + линковку шима (Ф.2/Ф.3). Заодно подтверждена
+  форма поля: `priv consume tcp TcpStream` (D133-field-marker).
+- Тесты (все PASS через test-build, toolchain clang): `error_test.nv` (9
+  тестов: to_str / from_shim все коды / проекция / Net-делегация / to_io_error),
+  `config_test.nv` (5 тестов: дефолты, with_* = новое значение, mTLS-режимы,
+  from_wire), `neg/config_ro_frozen_neg.nv` (E_READONLY_FIELD — ro-конфиг
+  заморожен). Ф.1 умышленно БЕЗ вызовов tls_* (link-free до Ф.2).
+- Наступили на pre-existing ICE `[M-176-xmod-payload-variant-ctor]`
+  (`Type.Variant.method()` без ro-биндинга) — обход по net-прецеденту
+  (ro-биндинг), в тест-файлах ссылка на маркер.

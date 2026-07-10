@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 116 Ф.1: private C FFI layer for std/tls — declarations against the
+// nova_tls_shim staticlib (compiler-codegen/tls_shim/, rustls 0.23 + ring).
+//
+// ONE layer of FFI: literal-name `extern "C" fn` (D282), module-private (no
+// `export`). Symbols are `tls_*` — module name, NO vendor prefix
+// (compiler-conventions §5а). Handles are §4а newtypes over `*()` (the shim
+// hands out Box-raw pointers): codegen lowers them to `typedef void*
+// Nova_CTls…Handle` — the C ABI is unchanged, but Nova code cannot pass a
+// stray pointer where a session/config handle is expected.
+//
+// The shim is sans-I/O (rustls state machine): it only encrypts/decrypts and
+// validates. ALL socket traffic is pumped on the Nova side over the byte-
+// surface `Net` effect (pump.nv, Ф.3) — the shim never blocks, never parks,
+// and never retains the []u8 buffers passed in (they are copied or consumed
+// within the call, so GC buffers on the fiber stack are safe).
+//
+// Error channel: <0 returns are stable TLS_ERR_* codes (single source of
+// truth: tls_shim/src/lib.rs); per-session detail via tls_last_error_kind /
+// tls_last_error. Classification into TlsError — error.nv `TlsError.from_shim`.
+//
+// Conditional link (Ф.2, D337 brotli mechanism): these externs emit CALL SITES
+// only (D82 — no decls for unused fns), so a CU that never touches TLS links
+// neither nova_tls_shim.lib nor its system libs.
+
+module std.tls
+
+// ─── Handle newtypes (module-conventions §4а) ────────────────────────────────
+
+// rustls-сессия (Box<TlsSession> в шиме). Живёт в TlsStream.session; освобождение
+// строго через tls_free (consume @close, Ф.3).
+type CTlsHandle(*())
+
+// ЭФЕМЕРНЫЙ конфиг-билдер: создаётся и потребляется внутри ОДНОГО
+// connect/accept (tls_client_new / tls_server_new забирают владение, в том
+// числе на ошибке); наружу из методов std/tls не выходит. На error-путях ДО
+// *_new — освобождать tls_cfg_free.
+type CTlsCfgHandle(*())
+
+// ─── Config builders ─────────────────────────────────────────────────────────
+// Сеттеры возвращают 0 (OK) или TLS_ERR_* (<0); аргументы-байты копируются.
+
+extern "C" fn tls_client_cfg_new() -> CTlsCfgHandle
+extern "C" fn tls_server_cfg_new() -> CTlsCfgHandle
+// VerificationMode.SystemRoots — вкомпилированный webpki-roots (Mozilla bundle).
+extern "C" fn tls_cfg_verify_system(c CTlsCfgHandle) -> int
+// VerificationMode.CustomRoots — CA-bundle из PEM-байтов.
+extern "C" fn tls_cfg_verify_pem(c CTlsCfgHandle, pem *u8, len int) -> int
+// VerificationMode.Pinned — count SPKI-SHA-256 хешей по 32 байта подряд.
+// Скелет Ф.0/Ф.1 принимает данные; верификатор — Ф.4.3 (до того *_new → TLS_ERR_UNSUPPORTED).
+extern "C" fn tls_cfg_verify_pinned(c CTlsCfgHandle, hashes *u8, count int) -> int
+// VerificationMode.InsecureSkipVerify — ТОЛЬКО тесты (D-блок B).
+extern "C" fn tls_cfg_verify_insecure(c CTlsCfgHandle) -> int
+// Добавить ALPN-протокол (повторяемо; порядок = приоритет).
+extern "C" fn tls_cfg_alpn_add(c CTlsCfgHandle, proto *u8, len int) -> int
+// Cert chain + private key (PEM): сервер (обязательно) и клиент (mTLS, Ф.5).
+extern "C" fn tls_cfg_cert_key_pem(c CTlsCfgHandle, cert *u8, clen int, key *u8, klen int) -> int
+// Server-side mTLS: CA-bundle для проверки клиентских сертов; required=false → Optional.
+extern "C" fn tls_cfg_client_auth_pem(c CTlsCfgHandle, roots *u8, len int, required bool) -> int
+// Освободить билдер БЕЗ создания сессии (error-путь до *_new).
+extern "C" fn tls_cfg_free(c CTlsCfgHandle) -> ()
+
+// ─── Session lifecycle ───────────────────────────────────────────────────────
+// *_new ПОТРЕБЛЯЮТ билдер (и на ошибке тоже). null → код в *out_err.
+
+extern "C" fn tls_client_new(c CTlsCfgHandle, sni *u8, sni_len int, out_err *mut int) -> CTlsHandle
+extern "C" fn tls_server_new(c CTlsCfgHandle, out_err *mut int) -> CTlsHandle
+// Освободить сессию (безопасно на null; double-free исключён consume-типом, D133).
+extern "C" fn tls_free(h CTlsHandle) -> ()
+
+// ─── Handshake state machine (предикаты; 1/0) ────────────────────────────────
+
+extern "C" fn tls_is_handshaking(h CTlsHandle) -> int
+extern "C" fn tls_wants_read(h CTlsHandle) -> int
+extern "C" fn tls_wants_write(h CTlsHandle) -> int
+
+// ─── Traffic: ciphertext ↔ session ↔ plaintext ───────────────────────────────
+
+// Скормить ciphertext из сокета; возврат n принятых (может быть < len —
+// перезвать с остатком), <0 = ошибка. После feed'ов — tls_process.
+extern "C" fn tls_read_tls(h CTlsHandle, p *u8, len int) -> int
+// Обработать скормленное (handshake-прогресс + расшифровка). 0 OK, <0 ошибка;
+// ПОСЛЕ ошибки rustls хочет отправить alert — слить tls_write_tls перед close.
+extern "C" fn tls_process(h CTlsHandle) -> int
+// Извлечь исходящий ciphertext (flights/данные/alerts); n записанных, 0 = нечего.
+extern "C" fn tls_write_tls(h CTlsHandle, out *mut u8, cap int) -> int
+// Прочитать plaintext: n>0 байты; 0 = пока нет (нужен ещё feed);
+// -1 = чистый close_notify (TLS-EOF); < -1 = ошибка (обрыв без close_notify
+// = TLS_ERR_PEER_MISBEHAVED — truncation-защита, D-блок A).
+extern "C" fn tls_read_plain(h CTlsHandle, out *mut u8, cap int) -> int
+// Зашифровать plaintext во внутренний буфер (слить tls_write_tls); n принятых.
+extern "C" fn tls_write_plain(h CTlsHandle, p *u8, len int) -> int
+// Поставить close_notify в исходящий буфер (идемпотентно).
+extern "C" fn tls_send_close_notify(h CTlsHandle) -> ()
+
+// ─── Inspection (после handshake) ────────────────────────────────────────────
+// Строковые выходы: возврат = ПОЛНАЯ длина, копируется min(cap, len).
+
+extern "C" fn tls_alpn(h CTlsHandle, out *mut u8, cap int) -> int
+// 0x0303 = TLS 1.2, 0x0304 = TLS 1.3, 0 = не согласована.
+extern "C" fn tls_version(h CTlsHandle) -> int
+extern "C" fn tls_cipher_suite(h CTlsHandle, out *mut u8, cap int) -> int
+// DER серта peer'а с индексом i (0 = leaf); 0 = нет такого.
+extern "C" fn tls_peer_cert_der(h CTlsHandle, i int, out *mut u8, cap int) -> int
+
+// ─── Error detail ────────────────────────────────────────────────────────────
+
+// Код класса последней ошибки сессии (TLS_ERR_*; 0 = не было).
+extern "C" fn tls_last_error_kind(h CTlsHandle) -> int
+// Текст последней ошибки.
+extern "C" fn tls_last_error(h CTlsHandle, out *mut u8, cap int) -> int

@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 116 Ф.1 (T1): конфиги — конструкторы, with_*-модификаторы (всегда НОВОЕ
+// значение), TlsVersion. Pure data — без сети/эффектов/шима.
+//
+// ro-байндинг перед .method() — обход [M-176-xmod-payload-variant-ctor]
+// (см. error_test.nv).
+
+module std.tls
+
+test "ClientConfig.new — дефолты: SNI, SystemRoots, alpn http/1.1" {
+    ro cfg = ClientConfig.new("api.example.com")
+    assert(cfg.server_name == "api.example.com")
+    assert(cfg.alpn_protocols.len() == 1)
+    assert(cfg.alpn_protocols[0] == "http/1.1")
+    assert(match cfg.verification { SystemRoots => true, _ => false })
+}
+
+test "ClientConfig @with_alpn — новое значение, исходник цел" {
+    ro base = ClientConfig.new("example.com")
+    ro custom = base.with_alpn(["h2", "http/1.1"])
+    assert(custom.alpn_protocols.len() == 2)
+    assert(custom.alpn_protocols[0] == "h2")
+    assert(custom.server_name == "example.com")     // остальное скопировано
+    assert(base.alpn_protocols.len() == 1)          // база не мутирована
+}
+
+test "ClientConfig @with_verification — каждый режим" {
+    ro base = ClientConfig.new("example.com")
+    ro pem = base.with_verification(VerificationMode.CustomRoots("PEM".bytes()))
+    assert(match pem.verification { CustomRoots(b) => b.len() == 3, _ => false })
+    ro insecure = base.with_verification(VerificationMode.InsecureSkipVerify)
+    assert(match insecure.verification { InsecureSkipVerify => true, _ => false })
+    ro pins = Vec[[]u8].of("0123456789abcdef0123456789abcdef".bytes())   // 32 байта
+    ro pinned = base.with_verification(VerificationMode.Pinned(pins))
+    assert(match pinned.verification { Pinned(hs) => hs.len() == 1, _ => false })
+    assert(match base.verification { SystemRoots => true, _ => false })  // база цела
+}
+
+test "ServerConfig.new + with_alpn + with_client_cert" {
+    ro cfg = ServerConfig.new("CERT".bytes(), "KEY".bytes())
+    assert(cfg.cert_pem.len() == 4)
+    assert(cfg.key_pem.len() == 3)
+    assert(cfg.alpn_protocols.len() == 0)
+    assert(match cfg.client_cert { NoClientAuth => true, _ => false })
+
+    ro alpn = cfg.with_alpn(["http/1.1"])
+    assert(alpn.alpn_protocols.len() == 1)
+    assert(alpn.cert_pem.len() == 4)                // остальное скопировано
+
+    ro mtls = cfg.with_client_cert(ClientCertMode.Required("CA".bytes()))
+    assert(match mtls.client_cert { Required(ca) => ca.len() == 2, _ => false })
+    ro opt = cfg.with_client_cert(ClientCertMode.Optional("CA".bytes()))
+    assert(match opt.client_cert { Optional(_) => true, _ => false })
+    assert(match cfg.client_cert { NoClientAuth => true, _ => false })   // база цела
+}
+
+test "TlsVersion — to_str + from_wire (0x0303/0x0304)" {
+    ro v12 = TlsVersion.Tls12
+    assert(v12.to_str() == "tls 1.2")
+    ro v13 = TlsVersion.Tls13
+    assert(v13.to_str() == "tls 1.3")
+    assert(match TlsVersion.from_wire(771) { Some(v) => match v { Tls12 => true, _ => false }, None => false })
+    assert(match TlsVersion.from_wire(772) { Some(v) => match v { Tls13 => true, _ => false }, None => false })
+    assert(match TlsVersion.from_wire(0) { None => true, _ => false })
+    assert(match TlsVersion.from_wire(769) { None => true, _ => false })  // TLS 1.0 — отвергнута by design
+}
