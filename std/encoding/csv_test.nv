@@ -51,3 +51,13 @@ test "encode: quoting запятых и кавычек" {
     ro s = Csv.encode(data)
     assert(s.contains("\"hello, world\""))
 }
+
+test "encode: простое поле БЕЗ кавычек (пиннинг needs_quoting)" {
+    // Пиннинг фикса D417-класса (2026-07-10): needs_quoting был always-true
+    // (ведущий || = discarded closure) — каждый вывод квотился, round-trip
+    // этого не ловил. Канон: поле без , " \n \r остаётся голым.
+    ro data [][]str = [["plain", "x-1"]]
+    ro s = Csv.encode(data)
+    assert(s == "plain,x-1\n")
+    assert(!s.contains("\""))
+}

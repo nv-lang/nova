@@ -101,6 +101,14 @@ test "parse: ошибка — пустой identifier в pre" {
     })
 }
 
+test "parse: ошибка — мусорный символ в pre-identifier (пиннинг is_ascii_ident_char)" {
+    // Пиннинг фикса D417-класса (2026-07-10): is_ascii_ident_char был
+    // always-true (ведущий || = discarded closure) — любой символ проходил
+    // валидацию иден-та. Канон: только [0-9A-Za-z-].
+    assert("1.0.0-al pha".to_version().is_err())
+    assert("1.0.0-alpha!".to_version().is_err())
+}
+
 test "parse: ошибка — нечисловой major" {
     assert(match "a.b.c".to_version() {
         Err(InvalidComponent { .. }) => true
