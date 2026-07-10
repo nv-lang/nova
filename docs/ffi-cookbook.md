@@ -694,13 +694,14 @@ compilation unit. Секция `[ffi]` может быть пустой (`FFI-aw
 
 ```toml
 [ffi.staticlib]
-kind         = "rust-staticlib"          # способ сборки (пока поддержан он)
-path         = "native/tls_shim"         # каталог крейта (относительно nova.toml)
-lib          = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
-build        = "cargo build --release"   # команда сборки (cwd = path)
-cache        = "target/native-cache/tls" # опц. кэш собранного артефакта
-link_windows = ["bcrypt", "ntdll"]       # доп. системные либы по платформам
-link_unix    = []                        # Linux/macOS (пусто → через libuv-syslibs)
+kind            = "rust-staticlib"          # способ сборки (пока поддержан он)
+path            = "native/tls_shim"         # каталог крейта (относительно nova.toml)
+lib             = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
+build           = "cargo build --release"   # команда сборки (cwd = path)
+cache           = "target/native-cache/tls" # опц. кэш собранного артефакта
+trigger_symbols = ["nova_tls_shim_"]        # подстроки C-символов шима (триггер линковки)
+link_windows    = ["bcrypt", "ntdll"]       # доп. системные либы по платформам
+link_unix       = []                        # Linux/macOS (пусто → через libuv-syslibs)
 ```
 
 **Резолв** (`resolve_ffi_staticlib`) — лениво, по факту использования модуля:
@@ -717,8 +718,11 @@ link_unix    = []                        # Linux/macOS (пусто → чере�
 `-l<name>`/`<name>.lib`; Unix: `-l<name>`).
 
 **Условность линковки:** staticlib добавляется в линк-строку только для CU,
-который реально использует native-модуль (по факту вызова символов, механизм
-D337) — программа, не трогающая модуль, ничего лишнего не линкует.
+который реально использует native-модуль. Триггер — `trigger_symbols`
+(подстроки экспортируемых шимом C-символов, обычно их общий префикс): если хоть
+один встретился в сгенерированном `.c` — модуль используется, staticlib
+линкуется; иначе CU не тянет ничего лишнего (механизм D337, как у brotli).
+Пусто → дефолтный tls-детект (для монорепо std/tls).
 
 **Эталон.** `std/tls` в монорепо декларирует `tls_shim` именно так
 (`std/nova.toml`); standalone-образец для внешних пакетов — репозиторий

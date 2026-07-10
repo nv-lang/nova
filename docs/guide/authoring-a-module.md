@@ -155,20 +155,22 @@ libs         = ["sqlite3"]                 # системные: clang -lsqlite3
 
 ```toml
 [ffi.staticlib]
-kind         = "rust-staticlib"          # способ сборки (пока поддержан он)
-path         = "native/tls_shim"         # каталог крейта (относительно nova.toml)
-lib          = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
-build        = "cargo build --release"   # команда сборки (cwd = path)
-cache        = "target/native-cache/tls" # опц. кэш собранного артефакта
-link_windows = ["bcrypt", "ntdll"]       # доп. системные либы (по платформам)
-link_unix    = []                        # для Linux/macOS (пусто — тянутся через libuv)
+kind            = "rust-staticlib"          # способ сборки (пока поддержан он)
+path            = "native/tls_shim"         # каталог крейта (относительно nova.toml)
+lib             = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
+build           = "cargo build --release"   # команда сборки (cwd = path)
+cache           = "target/native-cache/tls" # опц. кэш собранного артефакта
+trigger_symbols = ["nova_tls_shim_"]        # префикс C-символов шима (триггер линковки)
+link_windows    = ["bcrypt", "ntdll"]       # доп. системные либы (по платформам)
+link_unix       = []                        # для Linux/macOS (пусто — тянутся через libuv)
 ```
 
 Билд-система резолвит staticlib **лениво, по факту использования** модуля:
 `cache → артефакт крейта → cargo build-on-demand`, с **mtime-инвалидацией** по
 исходникам крейта (правка `.rs` → пересборка). Линковка — автоматическая при
-`import` модуля. `link`/`link_windows`/`link_unix` дают платформо-корректный
-набор системных зависимостей.
+`import` модуля, **условная**: staticlib добавляется только тем CU, где встречен
+хоть один `trigger_symbols`-символ (иначе не линкуется). `link`/`link_windows`/
+`link_unix` дают платформо-корректный набор системных зависимостей.
 
 > **Эталон паттерна** — репозиторий-образец `nova-tls` (standalone-пакет `tls`
 > поверх `native/tls_shim`) и `std/tls` в монорепо (то же `[ffi.staticlib]`).
