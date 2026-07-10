@@ -5591,6 +5591,65 @@ mod tests {
         let result = codegen_to_c(&nv_path, &src, None, false);
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
     }
+
+    // Regression guard for the 2026-07-10 stale-tls-cache defect: a cached
+    // shim lib older than its own source must be reported NOT fresh (forcing
+    // a rebuild instead of silently linking the stale artifact).
+    #[test]
+    fn tls_shim_lib_is_fresh_detects_stale_and_fresh_and_equal_mtime() {
+        use std::fs::write;
+        use std::time::{Duration, SystemTime};
+
+        let root = std::env::temp_dir().join(format!("nova_tls_shim_fresh_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let crate_dir = root.join("tls_shim");
+        let src_dir = crate_dir.join("src");
+        std::fs::create_dir_all(&src_dir).expect("create temp src dir");
+
+        write(crate_dir.join("Cargo.toml"), "[package]\nname = \"nova_tls_shim\"\n")
+            .expect("write Cargo.toml");
+        write(src_dir.join("lib.rs"), "pub fn tls_stub() {}\n").expect("write lib.rs");
+        let lib_path = root.join("nova_tls_shim.lib");
+        write(&lib_path, b"stale-placeholder").expect("write lib placeholder");
+
+        let t0 = SystemTime::now();
+        let set_mtime = |p: &std::path::Path, t: SystemTime| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(p)
+                .expect("open for mtime set")
+                .set_modified(t)
+                .expect("set mtime");
+        };
+
+        // Case 1: lib built AFTER source (normal fresh build) -> fresh.
+        set_mtime(&src_dir.join("lib.rs"), t0);
+        set_mtime(&crate_dir.join("Cargo.toml"), t0);
+        set_mtime(&lib_path, t0 + Duration::from_secs(10));
+        assert!(
+            tls_shim_lib_is_fresh(&lib_path, &crate_dir),
+            "lib newer than all sources must be fresh"
+        );
+
+        // Case 2 (same-mtime fast path, · согласовано 2026-07-10): equal
+        // mtimes must NOT force a rebuild.
+        set_mtime(&lib_path, t0);
+        assert!(
+            tls_shim_lib_is_fresh(&lib_path, &crate_dir),
+            "equal source/lib mtime must count as fresh (same-mtime fast path)"
+        );
+
+        // Case 3 (the actual 2026-07-10 defect): source edited AFTER the lib
+        // was built -> stale, must NOT be reported fresh.
+        set_mtime(&src_dir.join("lib.rs"), t0 + Duration::from_secs(10));
+        assert!(
+            !tls_shim_lib_is_fresh(&lib_path, &crate_dir),
+            "lib older than an edited source file must be stale"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 // Plan 156: slow-test-lane discovery (`*_slow.nv`).
