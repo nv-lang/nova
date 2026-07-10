@@ -39989,3 +39989,43 @@ Governance-tooling (2026-07-10, ветка governance-tooling, worktree nova-abi
   воспроизводится изолированно независимо от этой волны, не тронуто). Коммиты:
   59bc2c74e (К1), 02e3537d2 (К2), f115201df (К3), ab4751eaf (К4), 9541e6708+230a0bf12
   (К5, второй коммит правит гейт по факту эмпирики), 26e81c173 (regression-тест К4).
+
+=== 2026-07-10 волна methods-byref-172-14 (Plan 172.14 два хвоста) ===
+[M-172.14-methods-byref] ЗАКРЫТ. Авто by-ref value-параметров (>16Б C-ABI ro
+value-struct → C-указатель + auto-deref в теле + materialize-temp/прямой-адрес
+на call-site) распространён со СВОБОДНЫХ функций (волна value-abi-172-14) на
+МЕТОДЫ — instance (@) + static (.). @-ресивер не трогается (уже by-ptr,
+D181/D326) — только value-АРГУМЕНТЫ. Механизм — зеркало free-fn:
+method_byref_params (ключ (Type,method)), build_method_byref_map (пре-пасс;
+отравления overload/default/метод-как-значение; примитивные receiver'ы
+исключены), симметричные ветки params_c/emit_fn (ref_params), ЕДИНАЯ call-site
+обёртка synthesize_method_byref_at_callsite в начале emit_call (покрывает все
+~десяток sub-веток method-диспатча; инстанс value-record → диспатч по статич.
+типу receiver'а → (тип,метод) точна). Две ABI-щели закрыты той же волной
+(zero-tolerance): (1) пуннинг поля record-лита { mime } эмитил имя строкой мимо
+emit_expr → нет auto-deref — helper field_pun_c на 5 сайтах; (2) sig-based
+instance call-site не обёрнут — решено единой top-level обёрткой.
+Keystone-типы: http Mime(32Б)/ContentType/ServerRequest/Handler +
+hmac [32]u8 verify/constant_time_eq. Коммиты 6f42061ee + d04e436cb.
+Гейты (слито с main 9e781fdef): cargo build чист; conformance 2/0 (860/860
+внутр.); std/crypto 6/0 (hmac_test был CC-FAIL); std/http keystone 4/4 PASS
+(body/client/serdejson/mux_test — были CC-FAIL NovaValue_Mime*/ServerRequest*);
+plan172_14 10/10 (view_descriptor_stack δ alloc=0). Паритет подтверждён
+env-тоглом NOVA_DISABLE_METHOD_BYREF (вкл vs выкл изолированно идентично).
+Остаток http/transport/real — PRE-EXISTING (undefined panic в tls/handshake_test,
+tls Ф.3 WIP, ошибка резолюции ДО codegen).
+
+[M-172.14-vrange-nv-route] ⏸️ ЧАСТИЧНО. Перф-цель (0-alloc дескриптор вида) УЖЕ
+достигнута волной view-descriptor-sret (sret _out). Полная маршрутизация
+v[a..b] на .nv @index(Range) ЗАБЛОКИРОВАНА язык-семантическим решением
+владельца (3 конкретных блокера, требуют D-амендмент — feedback-lang-change-
+needs-spec): (1) @index bounds-check = requires → элидируется под
+--contracts=off, а nova_vec_slice_chk (array.h:987) паникует always-on
+независимо от политики → safety-регрессия среза под contracts=off; (2)
+panic-сообщение пиновано (plan96/neg_slice_* ждут "Vec: slice", @index даёт
+nova_contract_violation) → byte-parity break; (3) потеря codegen nochk-элизии
+на proven-in-range сайтах → перф-регресс. Механизм sret ГОТОВ принять
+маршрутизацию (design §1 периметр уже перечисляет @index/@get). Оставлен
+честным маркером по инструкции «не насилуй». Полный анализ:
+docs/plans/172.14-value-abi-perf-placement.md § [M-172.14-vrange-nv-route].
+Модель: sonnet (разведка+реализация+гейты).
