@@ -93,7 +93,7 @@
 |---|---|---|---|
 | `collections/` | (пусто — `linkedlist` **PROMOTED 2026-07-10** Plan 186; остальные 5 PROMOTED 2026-07-08 w1) | — | — |
 | `crypto/` | (пусто — все 5 PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt) | — | — |
-| `encoding/` | `toml` (`hex`/`ini` PROMOTED w2, `url` PROMOTED batch 2, **`csv` PROMOTED 2026-07-08 batch 3**) | **2026-07-10 update:** the hoist-ordering CC-FAIL (`Nova_HashMap____nova_str__Nova_TomlValue_p` unknown-type) is FIXED ([M-toml-sum-variant-mono-field-hoist], Plan 186 — same emit_c.rs pre-pass fix that closed [M-option-self-recursive-record-mono]); toml.nv now compiles AND links. `test --full` now surfaces a DIFFERENT, non-recursive-mono runtime bug: 4/6 tests RUN-FAIL (all multi-call inputs — 2+ repeated calls to a `Fail`-effect parser fn inside one `with` scope; single-call tests pass) — [M-toml-repeated-fail-call-run-fail], undiagnosed | toml: gated by a NEW runtime bug in repeated Fail-effect-fn calls within one handler scope (not recursive-mono) — needs its own investigation wave |
+| `encoding/` | (пусто — `toml` **PROMOTED 2026-07-10** [M-toml-repeated-fail-call-run-fail] fix; `hex`/`ini` PROMOTED w2, `url` PROMOTED batch 2, `csv` PROMOTED 2026-07-08 batch 3) | — | — |
 | `identifiers/` | (пусто — `snowflake` PROMOTED w1, `ulid`/`uuid` PROMOTED w2, **`uuid_namespace` PROMOTED 2026-07-08 batch 3**) | — | — |
 | `data/` | (пусто — `semver`/`sql` PROMOTED 2026-07-08 w2, **`semver_range` PROMOTED 2026-07-10**) | — | — |
 | `math/` | `complex` (`statistics` PROMOTED 2026-07-08 w1) | check PASS, CC-FAIL codegen — `[M-static-selfreturn-value-mangle-conflict]` | Промоушен gated компиляторным дефектом (не контентом модуля) |
@@ -154,6 +154,40 @@ peer inline-тесты (не удалены) с комментарием `[2026-
 промоушена]`, объясняющим конкретный дефект — готовы к промоушену как
 только соответствующий codegen-баг будет исправлен (см.
 docs/plans/backlog-followups.md).
+
+> **PROMOTED 2026-07-10 (1 module): `encoding/toml` → `std/encoding/`.**
+> Closes `[M-toml-repeated-fail-call-run-fail]` — investigated end to end;
+> the marker's original hypothesis (a Fail-effect/fail-frame/consume-scope
+> reentrancy bug on repeated same-scope calls) was WRONG. Root cause was
+> TWO unrelated, purely-local bugs in toml.nv itself:
+>   1. `is_bare_key_char`'s multi-line `||`-chain used a LEADING `||` on
+>      each continuation line. `||` is ALSO the zero-arg closure-literal
+>      syntax (`|| body`) — the parser (`parse_or`,
+>      compiler-codegen/src/parser/mod.rs) deliberately does not extend
+>      newline-tolerance to a line-initial `||` (to avoid misparsing a
+>      genuine `|| body` closure statement as an OR-continuation). Each
+>      leading-`||` line silently became its OWN discarded zero-arg
+>      closure-literal statement; the function's trailing value ended up
+>      being the LAST closure's pointer coerced to `nova_bool` — always
+>      truthy, regardless of the input character. Neither `nova check` nor
+>      codegen flagged this (no diagnostic) — tracked separately as a
+>      checker-hardening follow-up (closure-typed trailing expr vs a scalar
+>      return type should be a type error). Fix: move `||` to the END of
+>      each line (trailing operator before newline IS continuation, no
+>      closure-literal ambiguity there).
+>   2. `@parse_number` called the RETRACTED `f64.try_from`/`i64.try_from(str)`
+>      surface ([M-f64-try-parse-to-parse-f64], Plan 174.1 — known-broken,
+>      e.g. `f64.try_from("3.14")` silently returns `3.0`). Fix: canon
+>      conversion-on-source `str @to_f64()`/`str @to_i64()`
+>      (std/runtime/string/parse.nv).
+> Repro method: minimal standalone `is_bare_key_char`-shaped fn (no toml,
+> no Fail, no consume) reproduced bug 1 in isolation; a direct
+> `f64.try_from("3.14")` call reproduced bug 2 in isolation — both
+> confirm neither bug has anything to do with Fail-effect repetition. New
+> positive regression tests pin the ACTUAL (unbroken) repeated-Fail-call-
+> in-one-with-scope mechanism (`std/encoding/toml_test.nv`). Peer test
+> split: `toml.nv` (impl) / `toml_test.nv` (public-contract tests, mirrors
+> csv/hex/ini/url convention). Model: sonnet.
 
 ## Promotion path (когда модуль становится MVP)
 
