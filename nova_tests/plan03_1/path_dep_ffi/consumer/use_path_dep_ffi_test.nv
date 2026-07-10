@@ -1,0 +1,13 @@
+// Plan 03.1 (ext-dep native/FFI propagation) POSITIVE — .nv-модуль из
+// path-зависимости `extlib_native` вызывает её native (extern "nova")
+// C-функцию, объявленную через [ffi] СЕКЦИЮ ЗАВИСИМОСТИ (не своего
+// пакета). Доказывает: FFI native-артефакты внешнего path-пакета
+// линкуются в бинарь импортёра.
+
+module pd_ffi_consumer.use_path_dep_ffi_test
+
+import extlib_native.calc.{add_native}
+
+test "path-зависимость: native FFI из extlib_native линкуется" {
+    assert(add_native(40, 2) == 42)
+}

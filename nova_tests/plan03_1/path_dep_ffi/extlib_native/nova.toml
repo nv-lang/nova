@@ -1,0 +1,18 @@
+# Plan 03.1 (ext-dep native/FFI propagation) fixture — path-зависимость
+# `extlib_native` с [ffi] c_shim. Доказывает: [ffi]-секция ВНЕШНЕГО
+# path-пакета линкуется в бинарь импортёра (consumer/), не только
+# собственного пакета (симметрично тому, как её .nv-модули резолвятся
+# в компиляцию — Plan 03.1 Ф.3).
+[package]
+name = "extlib_native"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+
+[ffi]
+c_shims      = ["shim.h"]
+include_dirs = []
+libs         = []

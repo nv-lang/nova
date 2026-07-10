@@ -741,6 +741,29 @@ impl ResolvedFfiConfig {
             staticlib_base: Some(base),
         })
     }
+
+    /// Plan 03.1 (ext-dep native/FFI propagation): смёржить `[ffi]` внешней
+    /// (`path`/`git`) зависимости в СВОЙ resolved config. `c_shims` /
+    /// `include_dirs` / `libs` — конкатенация (свои первыми, `libs`
+    /// дедуплицируются); `staticlib` — свой пакет приоритетнее, если у него
+    /// `None` — берётся первый найденный среди зависимостей (порядок
+    /// объявления в `[dependencies]`). **Честный маркер v1:** несколько
+    /// одновременных native-staticlib-зависимостей архитектурно не
+    /// поддержаны (singular slot, Plan 192) — конкурирующие staticlib'ы
+    /// разных зависимостей не аггрегируются, только первая по порядку.
+    pub fn merge(&mut self, other: ResolvedFfiConfig) {
+        self.c_shims.extend(other.c_shims);
+        self.include_dirs.extend(other.include_dirs);
+        for lib in other.libs {
+            if !self.libs.contains(&lib) {
+                self.libs.push(lib);
+            }
+        }
+        if self.staticlib.is_none() {
+            self.staticlib = other.staticlib;
+            self.staticlib_base = other.staticlib_base;
+        }
+    }
 }
 
 /// Параметры сборки одного теста.
@@ -2575,10 +2598,30 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // package nova.toml для test_file. Paths становятся абсолютными
     // относительно директории nova.toml. None — нет manifest или нет
     // [ffi] section; пустой Some(...) — секция есть.
-    let resolved_ffi: Option<ResolvedFfiConfig> =
+    let mut resolved_ffi: Option<ResolvedFfiConfig> =
         crate::manifest::find_manifest(opts.nv_file)
             .as_ref()
             .and_then(ResolvedFfiConfig::from_manifest);
+    // Plan 03.1 (ext-dep native/FFI propagation): смёржить [ffi] ВСЕХ
+    // объявленных path/git-зависимостей своего пакета — native-артефакты
+    // зависимости (её .c-шимы/статик-либ) должны линковаться в бинарь
+    // импортёра симметрично тому, как её .nv-модули резолвятся в
+    // компиляцию (§3.2 explicit dependency graph). Own package's [ffi]
+    // приоритетнее (staticlib-слот singular, см. ResolvedFfiConfig::merge).
+    if let Some(pkg_dir) = crate::imports::package_root_of(opts.nv_file) {
+        for dep_root in crate::imports::resolved_dependency_roots(&pkg_dir) {
+            let dep_toml = dep_root.join("nova.toml");
+            let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, &dep_root) else {
+                continue;
+            };
+            if let Some(dep_ffi) = ResolvedFfiConfig::from_manifest(&dep_manifest) {
+                match &mut resolved_ffi {
+                    Some(base) => base.merge(dep_ffi),
+                    None => resolved_ffi = Some(dep_ffi),
+                }
+            }
+        }
+    }
 
     // Plan 149 D233: resolve [runtime] section в package nova.toml для
     // test_file. Plain strings (no path resolution) — baked as -D...DEFAULT.
