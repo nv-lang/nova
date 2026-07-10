@@ -25739,7 +25739,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // передаём как есть (прецедент prepare_method_recv Р7).
                     return Ok(place);
                 }
-                if Self::is_value_struct_val(&ty) {
+                if Self::is_byref_candidate_c(&ty) {
                     // Ф.3 (дёшево): rvalue уже материализован в НАШ свежий
                     // temp (`_nv_tmp_*` — зарезервированное пространство
                     // fresh_tmp) — второй temp избыточен, берём адрес прямо.
@@ -28627,6 +28627,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             from = from_expr, to = to_expr_inner, ety = elem_c
                         ));
                     }
+                    // [M-fixed-array-value-semantics] (регрессия main f2f7f65e2 +
+                    // [N]T value-класс, чинится волной 172.14): срез value-массива
+                    // `[N]T[a..b]` — КОПИЯ диапазона в свежий `[]T` (value-семантика;
+                    // вид в стек-хранилище дал бы dangling; в точности воспроизводит
+                    // снесённые §18а push-циклы). Хелпер-прецедент — nova_blob_copy.
+                    if let Some((fa_total, fa_elem_c)) =
+                        Self::parse_mono_fixed_array_name(obj_ty.trim_end_matches('*'))
+                    {
+                        let vec_ty = self.ensure_vec_instance(&fa_elem_c);
+                        let src_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = {};", obj_ty.trim_end_matches('*'), src_tmp,
+                            if obj_ty.ends_with('*') { format!("(*({}))", o) } else { o.clone() }));
+                        let fa_from = match start.as_deref() {
+                            Some(s) => self.emit_expr(s)?,
+                            None => "((nova_int)0LL)".to_string(),
+                        };
+                        let fa_to = match (end.as_deref(), *inclusive) {
+                            (Some(e), false) => self.emit_expr(e)?,
+                            (Some(e), true) => {
+                                let e_str = self.emit_expr(e)?;
+                                format!("(({}) + ((nova_int)1LL))", e_str)
+                            }
+                            (None, _) => format!("((nova_int){}LL)", fa_total),
+                        };
+                        return Ok(format!(
+                            "({vt}*)nova_fixarr_slice_copy((const void*)({t}.data), ((nova_int){n}LL), ({f}), ({to}), sizeof({e}))",
+                            vt = vec_ty, t = src_tmp, n = fa_total,
+                            f = fa_from, to = fa_to, e = fa_elem_c
+                        ));
+                    }
                     let len_expr = if obj_ty == "nova_str" {
                         // Для str у нас len в кодпоинтах; nova_str_slice_panic
                         // считает их сам. Для open-ended здесь подставим SIZE_MAX-
@@ -29560,7 +29590,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 self.var_types
                     .get(n)
-                    .map(|c| Self::is_value_struct_val(c))
+                    .map(|c| Self::is_byref_candidate_c(c))
                     .unwrap_or(false)
             }
             _ => false,
@@ -44369,6 +44399,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if depth > 32 {
             return None;
         }
+        // [M-fixed-array-value-semantics] (main 06e89b80c): `[N]T` — inline
+        // value-структура `{ T data[N]; }` — размер N*sizeof(T), align(T).
+        if let Some((n, elem_c)) = Self::parse_mono_fixed_array_name(c_name) {
+            let (es, ea) = match Self::c_leaf_size_align(&elem_c) {
+                Some(sa) => sa,
+                None if Self::is_byref_candidate_c(&elem_c) => {
+                    self.value_struct_size_align(&elem_c, depth + 1)?
+                }
+                None => return None,
+            };
+            return Some(((n as i64) * es, ea));
+        }
         let fields = self.value_struct_field_tys.get(c_name)?;
         let mut size: i64 = 0;
         let mut max_align: i64 = 1;
@@ -44410,11 +44452,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             && !p.consume
             && !p.is_variadic
             && !p.is_const
-            && Self::is_value_struct_val(ty_c)
+            && Self::is_byref_candidate_c(ty_c)
             && self
                 .value_struct_size_align(ty_c, 0)
                 .map(|(s, _)| s > 16)
                 .unwrap_or(false)
+    }
+
+    /// Plan 172.14 Ф.1: семейство by-value C-структур, допустимых к auto
+    /// by-ref: именованные value-struct'ы (D226-семейство) и inline
+    /// `[N]T`-структуры ([M-fixed-array-value-semantics]). НЕ расширяет
+    /// `is_value_struct` (receiver-ABI семейство не трогаем).
+    fn is_byref_candidate_c(c: &str) -> bool {
+        Self::is_value_struct_val(c)
+            || (c.starts_with("_NovaFixArr_") && !c.ends_with('*'))
     }
 
     /// Plan 172.14 Ф.1: флаг auto-by-ref для позиционного параметра free-fn.
@@ -50754,6 +50805,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (`Nova_Vec____nova_byte`) is registered + queued for emission -- a blob
     /// literal may be the CU's only `[]u8` producer. Mirrors the turbofish
     /// registration block in infer_call_ret_c. Returns the mangled name.
+    /// [M-fixed-array-value-semantics]: зарегистрировать mono-инстанс Vec[elem]
+    /// (typedef + методы через worklist) и вернуть его C-имя. Обобщение
+    /// `ensure_vec_u8_instance` — нужен для результата среза `[N]T[a..b]`.
+    fn ensure_vec_instance(&mut self, elem_c: &str) -> String {
+        let type_args_c = vec![elem_c.to_string()];
+        let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);
+        self.generic_type_instance_info
+            .borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| ("Vec".to_string(), Self::args_lift(&type_args_c)));
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push(("Vec".to_string(), Self::args_lift(&type_args_c), mangled.clone()));
+            }
+        }
+        mangled
+    }
+
     fn ensure_vec_u8_instance(&mut self) -> String {
         let type_args_c = vec!["nova_byte".to_string()];
         let mangled = Self::compute_generic_type_c_name("Vec", &type_args_c);

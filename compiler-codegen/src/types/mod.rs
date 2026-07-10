@@ -12879,7 +12879,19 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Index { obj, index } => {
                 let obj_tr = self.infer_expr_type(obj, scope)?;
                 // Range index: slice result = same type as obj.
+                // [M-fixed-array-value-semantics] (172.14, чинит регрессию
+                // §18а-миграции hmac): срез `[N]T[a..b]` имеет РАНТАЙМ-длину →
+                // результат `[]T`, не статически-размерный `[N]T` (правило
+                // писалось до value-класса [N]T, когда obj был всегда []T).
                 if matches!(index.kind, ExprKind::Range { .. }) {
+                    if let TypeRef::FixedArray(_, inner, sp) = &obj_tr {
+                        return Some(TypeRef::Array(inner.clone(), *sp));
+                    }
+                    if let TypeRef::Readonly(ro_inner, _) = &obj_tr {
+                        if let TypeRef::FixedArray(_, inner, sp) = ro_inner.as_ref() {
+                            return Some(TypeRef::Array(inner.clone(), *sp));
+                        }
+                    }
                     return Some(obj_tr);
                 }
                 match &obj_tr {

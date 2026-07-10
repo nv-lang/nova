@@ -921,6 +921,27 @@ static inline void* nova_blob_view(const uint8_t* p, int64_t n) {
     h->cap = n;
     return h;
 }
+/* [M-fixed-array-value-semantics] — срез value-массива `[N]T[a..b]`: КОПИЯ
+ * диапазона в свежий Vec (value-семантика [N]T; вид в стек-хранилище дал бы
+ * dangling). Форма-прецедент — nova_blob_copy (D412). */
+static inline void* nova_fixarr_slice_copy(const void* data, nova_int total, nova_int from, nova_int to, size_t esz) {
+    if (from < 0 || to < from || to > total) {
+        char buf[96];
+        int n = snprintf(buf, 96, "fixed array: slice [%lld..%lld] out of bounds for length %lld",
+                         (long long)from, (long long)to, (long long)total);
+        if (n < 0) n = 0; if (n > 95) n = 95;
+        nv_panic((nova_str){ .ptr = (const uint8_t*)buf, .len = (nova_int)n });
+    }
+    NovaArrHdr* h = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
+    nova_int cnt = to - from;
+    void* buf2 = cnt > 0 ? nova_alloc((size_t)cnt * esz) : (void*)0;
+    if (cnt > 0) memcpy(buf2, (const char*)data + (size_t)from * esz, (size_t)cnt * esz);
+    h->data = buf2;
+    h->len = cnt;
+    h->cap = cnt;
+    return h;
+}
+
 static inline void* nova_blob_copy(const uint8_t* p, int64_t n) {
     NovaArrHdr* h = (NovaArrHdr*)nova_alloc(sizeof(NovaArrHdr));
     void* buf = n > 0 ? nova_alloc((size_t)n) : (void*)0;
