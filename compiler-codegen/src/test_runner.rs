@@ -861,46 +861,112 @@ pub struct TlsConfig {
     pub lib_file: PathBuf, // nova_tls_shim.lib (Windows) / libnova_tls_shim.a (Unix)
 }
 
+/// True iff `lib`'s mtime is >= the newest mtime among the TLS shim's OWN
+/// source files (`Cargo.toml`, `Cargo.lock`, `src/**/*.rs` under
+/// `crate_dir`) — auto-invalidates a cached/prebuilt staticlib that predates
+/// a shim source change.
+///
+/// **Defect this closes (found 2026-07-10):** `detect_tls` took
+/// `target/tls-cache/nova_tls_shim.lib` (path 1) UNCONDITIONALLY whenever the
+/// file existed, with no comparison against the shim source — editing
+/// `tls_shim/src/lib.rs` (e.g. adding a cert-mode) never invalidated an
+/// already-cached lib, so the OLD staticlib kept linking silently. Symptom:
+/// `Pinned` cert-mode tests failed at runtime with "unsupported by tls shim"
+/// on a perfectly fresh source, because the linked lib was the stale
+/// pre-change build — required a manual `cp` of the freshly-built artifact
+/// over the cache to fix, defeating the point of the cache.
+///
+/// Equal mtimes count as fresh (same-mtime fast path preserved — no needless
+/// rebuild when nothing changed). Missing lib metadata → not fresh (forces
+/// the normal build-on-demand path, same as "cache absent"). Missing SOURCE
+/// metadata (i/o error reading a source file) is skipped rather than
+/// aborting the whole freshness check — a single unreadable file must not
+/// silently downgrade to "treat everything as fresh".
+fn tls_shim_lib_is_fresh(lib: &Path, crate_dir: &Path) -> bool {
+    let Ok(lib_mtime) = std::fs::metadata(lib).and_then(|m| m.modified()) else {
+        return false;
+    };
+    let mut newest_src: Option<std::time::SystemTime> = None;
+    let mut bump = |p: &Path| {
+        if let Ok(m) = std::fs::metadata(p).and_then(|m| m.modified()) {
+            if newest_src.is_none_or(|cur| m > cur) {
+                newest_src = Some(m);
+            }
+        }
+    };
+    bump(&crate_dir.join("Cargo.toml"));
+    bump(&crate_dir.join("Cargo.lock"));
+    tls_shim_walk_rs(&crate_dir.join("src"), &mut bump);
+    // No sources found at all (crate_dir missing/moved) — nothing to compare
+    // against, don't force a doomed rebuild; downstream `is_file()` checks
+    // on the lib itself still gate correctness.
+    newest_src.is_none_or(|src_mtime| src_mtime <= lib_mtime)
+}
+
+/// Recursively visits every `*.rs` file under `dir`, calling `visit` on each.
+/// Missing/unreadable `dir` is silently skipped (mirrors `tls_shim_lib_is_fresh`'s
+/// fail-open stance on a single unreadable path).
+fn tls_shim_walk_rs(dir: &Path, visit: &mut dyn FnMut(&Path)) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            tls_shim_walk_rs(&path, visit);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            visit(&path);
+        }
+    }
+}
+
 /// Resolve the TLS shim staticlib. Prefers <repo>/target/tls-cache (the same
 /// cache convention as brotli-cache), else the crate's own cargo artifact
 /// (compiler-codegen/tls_shim/target/release). Returns None when not built for
 /// this host → the CU compiles nova_rt/tls_stub.c instead (Q11 feature-gate:
 /// TlsError.Internal("unsupported…") at runtime, never a link error).
+///
+/// Both cache candidates (1: build-cache, 2: crate-local cargo artifact) are
+/// gated by [`tls_shim_lib_is_fresh`] — a candidate that predates a shim
+/// source edit is treated as ABSENT, falling through to path 3 (rebuild),
+/// which then overwrites the stale cache entry. See that fn's doc for the
+/// defect this closes.
 fn detect_tls(rt_dir: &Path) -> Option<TlsConfig> {
     let lib_name = if cfg!(target_os = "windows") {
         "nova_tls_shim.lib"
     } else {
         "libnova_tls_shim.a"
     };
+    let crate_dir = rt_dir.parent().map(|cg| cg.join("tls_shim"));
     // 1) build-cache: <repo>/target/tls-cache (rt_dir = <repo>/compiler-codegen/nova_rt)
     let cache_lib = rt_dir
         .parent()
         .and_then(|p| p.parent())
         .map(|repo| repo.join("target").join("tls-cache").join(lib_name));
-    if let Some(cl) = &cache_lib {
-        if cl.is_file() {
+    if let (Some(cl), Some(cd)) = (&cache_lib, &crate_dir) {
+        if cl.is_file() && tls_shim_lib_is_fresh(cl, cd) {
             return Some(TlsConfig { lib_file: cl.clone() });
         }
     }
     // 2) crate-local cargo artifact: compiler-codegen/tls_shim/target/release/<lib>
-    let crate_dir = rt_dir.parent().map(|cg| cg.join("tls_shim"));
     let crate_lib = crate_dir
         .as_ref()
         .map(|d| d.join("target").join("release").join(lib_name));
-    if let Some(cl) = &crate_lib {
-        if cl.is_file() {
+    if let (Some(cl), Some(cd)) = (&crate_lib, &crate_dir) {
+        if cl.is_file() && tls_shim_lib_is_fresh(cl, cd) {
             return Some(TlsConfig { lib_file: cl.clone() });
         }
     }
     // 3) build on demand (mirror of detect_or_build_libuv): cargo is guaranteed
     // on a dev host (the compiler itself is built with it). One-time ~1 min;
     // artifact is copied into target/tls-cache so subsequent runs hit path 1.
+    // Also the STALE-CACHE recovery path: either candidate above existed but
+    // failed freshness — rebuilding here and re-copying over `cache_lib`
+    // below replaces it, so the fast path 1 hits a fresh lib next run.
     // Any failure (no cargo / offline first fetch) → None → Q11 stub, no error.
     let (Some(crate_dir), Some(cache_lib)) = (crate_dir, cache_lib) else { return None };
     if !crate_dir.join("Cargo.toml").is_file() {
         return None;
     }
-    eprintln!("nova: tls shim not built, building via cargo (one-time, ~1 min)...");
+    eprintln!("nova: tls shim not built (or stale), building via cargo (one-time, ~1 min)...");
     let status = Command::new("cargo")
         .arg("build")
         .arg("--release")
