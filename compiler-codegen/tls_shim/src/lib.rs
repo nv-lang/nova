@@ -673,6 +673,78 @@ pub extern "C" fn tls_free(h: *mut c_void) {
 mod tests {
     use super::*;
 
+    const CERT_PEM: &[u8] = include_bytes!("../../../std/tls/testdata/localhost_cert.pem");
+    const KEY_PEM: &[u8] = include_bytes!("../../../std/tls/testdata/localhost_key.pem");
+
+    /// Decisive Ф.3 debug: full in-memory TLS 1.3 handshake between a real
+    /// client and server session via the C-ABI, moving ciphertext by hand.
+    /// Проверяет, что `is_handshaking` ДЕЙСТВИТЕЛЬНО обнуляется на обеих
+    /// сторонах (изолирует shim/rustls от Nova-транспорта).
+    #[test]
+    fn full_in_memory_handshake_completes() {
+        unsafe {
+            // server session (CustomRoots not needed server-side)
+            let sc = tls_server_cfg_new();
+            assert_eq!(tls_cfg_cert_key_pem(sc, CERT_PEM.as_ptr(), CERT_PEM.len() as nova_int,
+                                            KEY_PEM.as_ptr(), KEY_PEM.len() as nova_int), TLS_ERR_OK);
+            let mut serr = 0;
+            let s = tls_server_new(sc, &mut serr);
+            assert!(!s.is_null(), "server session (err={serr})");
+
+            // client session with CustomRoots = self-signed cert
+            let cc = tls_client_cfg_new();
+            assert_eq!(tls_cfg_verify_pem(cc, CERT_PEM.as_ptr(), CERT_PEM.len() as nova_int), TLS_ERR_OK);
+            let mut cerr = 0;
+            let c = tls_client_new(cc, b"localhost".as_ptr(), 9, &mut cerr);
+            assert!(!c.is_null(), "client session (err={cerr})");
+
+            // pump: move ciphertext c<->s until both stop handshaking (bounded)
+            let mut buf = vec![0u8; 32 * 1024];
+            let mut steps = 0;
+            while (tls_is_handshaking(c) != 0 || tls_is_handshaking(s) != 0) && steps < 50 {
+                steps += 1;
+                // client -> server
+                let n = tls_write_tls(c, buf.as_mut_ptr(), buf.len() as nova_int);
+                if n > 0 {
+                    let mut off = 0;
+                    while off < n {
+                        let fed = tls_read_tls(s, buf.as_ptr().add(off as usize), n - off);
+                        assert!(fed > 0, "server read_tls fed={fed}");
+                        off += fed;
+                    }
+                    assert_eq!(tls_process(s), TLS_ERR_OK, "server process");
+                }
+                // server -> client
+                let m = tls_write_tls(s, buf.as_mut_ptr(), buf.len() as nova_int);
+                if m > 0 {
+                    let mut off = 0;
+                    while off < m {
+                        let fed = tls_read_tls(c, buf.as_ptr().add(off as usize), m - off);
+                        assert!(fed > 0, "client read_tls fed={fed}");
+                        off += fed;
+                    }
+                    assert_eq!(tls_process(c), TLS_ERR_OK, "client process");
+                }
+            }
+            assert_eq!(tls_is_handshaking(c), 0, "CLIENT still handshaking after {steps} steps");
+            assert_eq!(tls_is_handshaking(s), 0, "SERVER still handshaking after {steps} steps");
+
+            // app data round-trip
+            assert!(tls_write_plain(c, b"ping".as_ptr(), 4) > 0);
+            let cm = tls_write_tls(c, buf.as_mut_ptr(), buf.len() as nova_int);
+            assert!(cm > 0);
+            let mut off = 0; while off < cm { off += tls_read_tls(s, buf.as_ptr().add(off as usize), cm - off); }
+            assert_eq!(tls_process(s), TLS_ERR_OK);
+            let mut plain = vec![0u8; 64];
+            let got = tls_read_plain(s, plain.as_mut_ptr(), plain.len() as nova_int);
+            assert_eq!(got, 4, "server should decrypt 4 plaintext bytes, got {got}");
+            assert_eq!(&plain[0..4], b"ping");
+
+            tls_free(c);
+            tls_free(s);
+        }
+    }
+
     /// Полный in-memory handshake client↔server через C-ABI поверхность —
     /// доказывает, что скелет живой без единого сокета.
     #[test]

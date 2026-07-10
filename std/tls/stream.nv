@@ -115,23 +115,24 @@ fn fill_from_tcp(mut tcp TcpStream, session CTlsHandle) Net -> Result[bool, TlsE
 // Прогнать handshake до завершения (flights в обе стороны). Package-private:
 // зовут connect (client.nv) и accept (server.nv) ДО конструирования TlsStream.
 fn pump_handshake(mut tcp TcpStream, session CTlsHandle) Net -> Result[(), TlsError] {
-    while unsafe { tls_is_handshaking(session) } != 0 {
+    mut handshaking = unsafe { tls_is_handshaking(session) }
+    while handshaking != 0 {
+        mut acted = false
         if unsafe { tls_wants_write(session) } != 0 {
             match flush_out(tcp, session) {
-                Ok(_)  => {}
+                Ok(_)  => { acted = true }
                 Err(e) => { return Err(e) }
             }
         } else if unsafe { tls_wants_read(session) } != 0 {
             match fill_from_tcp(tcp, session) {
-                Ok(true)  => {}
+                Ok(true)  => { acted = true }
                 Ok(false) => { return Err(TlsError.HandshakeFailure("peer closed during handshake")) }
                 Err(e)    => { return Err(e) }
             }
-        } else {
-            return Err(TlsError.Internal("handshake state machine stalled"))
         }
+        if !acted { return Err(TlsError.Internal("handshake state machine stalled")) }
+        handshaking = unsafe { tls_is_handshaking(session) }
     }
-    // Финальный flight (например, client Finished) мог остаться в буфере.
     flush_out(tcp, session)
 }
 

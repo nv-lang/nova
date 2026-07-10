@@ -760,3 +760,45 @@ RFC 7301. `ClientConfig.alpn_protocols` (упорядочен), `[]` = без AL
   `std/net` folder-CU НЕ КОМПИЛИРУЕТСЯ — `E_CONCURRENT_MUT_CAPTURE` в
   `tcp_test.nv:89` (свежий чекер 173.3/D415 vs незамигрированный spawn-тест
   net) — эскалировано интегратору волны 173.3, вне периметра 116.
+
+### Ф.3 — TlsStream + pump + connect/accept 🟡 IN PROGRESS (код готов; runtime-дедлок локализован)
+
+- **Написано и КОМПИЛИРУЕТСЯ/ЛИНКУЕТСЯ:** `std/tls/stream.nv` (TlsStream
+  consume-запись; sans-I/O пампинг свободными fn `flush_out`/`fill_from_tcp`/
+  `pump_handshake`/`read_step`/`write_step` над byte-surface `Net`; io.Read/
+  io.Write методы + typed `@write_all`/`@read_to_vec`/`@read_text`; инспекция
+  `@alpn_negotiated`/`@protocol_version`/`@cipher_suite`/`@peer_cert_der`;
+  `consume @close`), `std/tls/client.nv` (`TlsStream.connect`), `std/tls/
+  server.nv` (`TlsStream.accept`). Тесты типов/ошибок/конфигов (Ф.1) + shim-link
+  (Ф.2) PASS.
+- **2 codegen-обхода, задокументированы маркерами:**
+  - `[M-116-result-over-ptr-newtype-mono]` (NEW): `Result[<newtype-над-*()>, E]`
+    мис-моноится в `NovaRes_nova_int_nova_str` (CC-FAIL passing TlsError* as
+    nova_str). Обход: **хендлы = newtype над `int`** (`CTlsHandle(int)`,
+    brotli-прецедент), НЕ над `*()`; C-заголовок tls_shim.h/tls_stub.c → intptr_t
+    (ABI-идентично на x64). Repro в backlog.
+  - `[M-178-consume-field-ctor-from-var]` (существующий): move consume-переменной
+    в consume-поле/Ok-пейлоад не распознаётся — обход pass-through-вызовом
+    (`tcp_move`) + wrap только в `Ok(...)` после успешного handshake (pump берёт
+    tcp view-borrow'ом `mut`, TlsStream строится ОДНИМ вызовом).
+- **RUNTIME-ДЕДЛОК (открыт, локализован — НЕ в крипте):**
+  - **Шим+rustls ДОКАЗАНО корректны:** новый Rust-тест
+    `full_in_memory_handshake_completes` (tls_shim/src/lib.rs) гоняет ПОЛНЫЙ
+    TLS 1.3 handshake client↔server через C-ABI, вручную перекладывая
+    ciphertext: **is_handshaking обнуляется на ОБЕИХ сторонах за 2 шага**,
+    app-data "ping" расшифровывается. 6/6 shim cargo test PASS.
+  - **Дедлок — в Nova-транспорте (socket pump), не в TLS.** Smoke на loopback
+    (real_net, 2 фибры) виснет: обе фибры паркуются в `read_to_vec` (Net.read),
+    watchdog-dump `pending_remote=2 pstate=1`. Диагностика доказала: pump НЕ
+    зацикливается (iteration-panic >40 НЕ срабатывает) → блокировка в
+    ЕДИНСТВЕННОМ read, который не будится (genuine mutual-read park). Байты
+    handshake РЕАЛЬНО текут по проводу (CH 251 → flight ~720 → CCS+Fin 80 →
+    ticket 184), но соединение не финализируется на уровне сокет-обмена.
+  - **Не воспроизвелось cert-режимом** (InsecureSkipVerify виснет так же) и не
+    зависит от echo (handshake+close-only виснет). Гипотеза: edge-case net.c
+    park/wake при плотном alternating read/write из одной фибры на одном сокете
+    (stress_test — иной паттерн, не ловит), ЛИБО тонкость Net.read-семантики.
+    Требует socket-уровневого трейса. `[M-116-handshake-socket-deadlock]`.
+  - **Инструментальная заметка:** exe test-build удаляется на TIMEOUT →
+    трейс-грабы ненадёжны; стоит добавить в test-runner опцию сохранения exe /
+    inherit-stdout для отладки виснущих тестов (отдельный tooling-followup).
