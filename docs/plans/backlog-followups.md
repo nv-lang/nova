@@ -2755,13 +2755,21 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   67/0; std/identifiers, std/testing/handlers, std/concurrency, std/crypto,
   std/time (кроме задокументированного довливного timer_metrics_test) зелёные.
 
-- **[M-consume-rebind-nested-block-shadow]** (2026-07-08, **P1 — тихий use-after-consume**,
-  Plan: 172.13 батч 3) — тупик батча 2: `consume x = StringBuilder.new()` РЕ-БИНД внутри
-  вложенного if/else эмитится как НОВОЕ C-объявление, тенющее внешнее только на блок —
-  после выхода итерация цикла видит старую (consumed) переменную. Чекер молчит; семантика
-  D347 ожидает поведение mut-переприсваивания. Минимальное репро изолировано батчем 2
-  (Vec-of-Vec + StringBuilder consume-reset без quote-логики — см. отчёт). Блокирует csv
-  (его Vec-LHS корень закрыт, 6bf62be48).
+- **[M-consume-rebind-nested-block-shadow]** ✅ **CLOSED 2026-07-08** (найден батчем 2,
+  **зафиксирован ФИКСОМ в ТОМ ЖЕ дне** коммитом `3f0198c8fd`, Plan 172.13 батч 3) —
+  `consume x = StringBuilder.new()` РЕ-БИНД внутри вложенного if/else эмитился как НОВОЕ
+  C-объявление, тенющее внешнее только на блок — после выхода итерация цикла видела
+  старую (consumed) переменную. Чекер молчал; семантика D347 ожидает поведение
+  mut-переприсваивания. Фикс: `alpha_rename` различает same-scope rebind (existing path)
+  vs rebind, чья прежняя привязка живёт в ОХВАТЫВАЮЩЕМ scope (новое: имя не трогается,
+  span стейтмента пишется в `Module::consume_reuse_spans`); `emit_c.rs` при виде спана
+  эмитит plain reassignment вместо fresh block-scoped C-декларации (тот же `is_hoisted`
+  канал). Регресс: `spec_tests/conformance/d347_same_scope_rebinding.nv` (2 новых теста,
+  включая loop-shaped repro один-в-один как в этом маркере). **Ретроактивная
+  верификация 2026-07-10 (Plan 173 P1-волна):** маркер оставался помечен OPEN в этом
+  файле по документационному долгу — код-фикс уже был в истории HEAD задолго до волны.
+  Перепроверено на слиянии: `d347_same_scope_rebinding` PASS (1/0), `std/encoding/csv_test`
+  PASS (1/0). Блокировавший csv Vec-LHS корень закрыт отдельно (6bf62be48).
 
 - **[M-ffi-handle-newtype]** (2026-07-09, P3, Wave: после лимитов) — решение владельца:
   FFI-хендлы не гуляют по модулю голым int/указателем — заворачивать в типизированную
