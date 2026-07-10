@@ -39221,3 +39221,28 @@ mn_closure_spawn_gcroot_test.nv — изолированная сборка (tem
 через sleep() уже работает); per-OS dedicated monotonicity test; M:N-контракт mut_clock под
 реальной concurrent-нагрузкой (документирован, не verified тестом); custom E_SLEEP_UNTIL_WALL
 диагностика (generic E7301 type-mismatch уже корректно отвергает, просто менее приятный текст).
+
+=== 2026-07-10: [M-fixed-array-value-semantics] — [N]T = value-класс (ветка fixed-array-value, sonnet) ===
+Возобновление после паузы владельца (WIP 5ff32af0d). Слияние main (250de5cda) без конфликтов.
+- types: ResolvedType::FixedArray(N, elem) — N без потерь в C-лоуэринге (закрыт
+  [M-172.1-fixedarray-N] для этого пути); классификаторы V3/ref_target_confirmed_heap из WIP.
+- codegen: [N]T = typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T> (finalize-splice,
+  топосорт вложенных [N][M]T); литерал → compound-literal с покомпонентной коэрцией;
+  Index-чтение + Assign-запись с bounds-check по компайл-тайм N (nova_fixarr_idx_chk/nochk);
+  return-коэрция trailing/arrow-body; is_value_type() → in-out ABI (D326 Р10) для mut x [N]T.
+- Дефект волны (пойман sha256 NIST-векторами, починен той же волной): field_cache
+  переписывал `@F[i] = v` в кэш-копию `_at_F` — записи терялись при value-семантике.
+  Фикс: index-write барьер для slot-unstable полей; ref-typed ([]T/Vec) байт-в-байт нетронуты.
+- GC: gc_layout.rs — [N]T-поле = N×stride inline-офсетов (не один heap-указатель);
+  эмпирика: [4]str и [3]Holder на стеке/в heap-record под 3× gc.collect() держат пейлоады.
+- Спека: D27-амендмент «[N]T — value-класс» (5 пунктов: inline, копирование, кучевые
+  элементы при value-контейнере, bounds-check, литералы); D216 §V3.1 — [N]T в value-список.
+- Тесты: nova_tests/fixed_array/ — 5 pos (index_rw, value_semantics, gc_forced_collect,
+  record_field, oob_panics с D348-клаузулой) + 2 neg (len_mismatch, spread) = 7/7.
+Гейты: cargo build оба крейта чисто; conformance 89/0 δ0; err173-корпус 25/0 δ0;
+выборка nova_tests 11 каталогов δ0 против baseline main@250de5cda (temp-worktree
+nova-nt-base; FAIL-множества идентичны, все pre-existing: basics/control_flow 'apply',
+3× plan101 NEG-NO-ERROR, map_literals/positive_clone_merge, str/char_at);
+sha256/sha1/md5/hmac NIST PASS; gc_layout юнит 22/22; field_cache юнит 137/137.
+Followups в маркере: serde-derive [N]T-поля; checker-level E-код для len-mismatch;
+мёртвый FixedArray-арм external_registry.
