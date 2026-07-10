@@ -114,6 +114,18 @@ pub enum TypeSet {
     /// "все generic-аргументы конкретны" (Some/Ok/Err ctor annotation,
     /// `annotate_expected_concrete`).
     ConcreteNamedNoArgs,
+    /// Ф.2 (literal-coercion миграция, 2026-07-10): IntLit-коэрсия гейт —
+    /// ЛЮБОЙ `Scalar`, КРОМЕ ровно `int` (width=64,signed=true,
+    /// wide_default=true — сид литерала, D227 Rule 1). НЕ то же самое, что
+    /// `SizedScalarNonWide`: `uint` (width=64,signed=false,wide_default=
+    /// true) ПРОХОДИТ этот гейт (коэрсия int-сид→uint НЕ no-op — разный
+    /// C-тип), но НЕ проходит `SizedScalarNonWide` (wide_default=true).
+    /// Byte-parity ловушка — зафиксирована explicit-тестом, не обобщать.
+    ScalarNotWideDefaultInt,
+    /// Логическое ИЛИ вложенных type-set — язык для гейтов вида
+    /// "primitive_gate(x) || concrete-named(x)", разбросанных инлайн по
+    /// продюсерам до Ф.2.
+    Union(Vec<TypeSet>),
 }
 
 impl TypeSet {
@@ -123,14 +135,22 @@ impl TypeSet {
     /// `Solution::member_of`, которая сперва резолвит терм).
     fn contains_resolved(&self, rt: &ResolvedType) -> bool {
         match self {
-            TypeSet::Primitive => matches!(
-                rt,
-                ResolvedType::Scalar { .. }
-                    | ResolvedType::Float { .. }
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Unit
-            ) || matches!(rt, ResolvedType::Named { name, args, .. } if args.is_empty() && name == "char"),
+            // `peel_view()` — тот же unwrap, что делает `primitive_gate`
+            // (через `is_primitive_lowerable`) на живом пути; без него
+            // `readonly int` не прошёл бы гейт, которым проходит на
+            // существующих сайтах вызова.
+            TypeSet::Primitive => {
+                let peeled = rt.peel_view();
+                matches!(
+                    peeled,
+                    ResolvedType::Scalar { .. }
+                        | ResolvedType::Float { .. }
+                        | ResolvedType::Bool
+                        | ResolvedType::Str
+                        | ResolvedType::Unit
+                ) || matches!(peeled, ResolvedType::Named { name, args, .. }
+                    if args.is_empty() && name == "char")
+            }
             TypeSet::SizedScalarNonWide => matches!(
                 rt,
                 ResolvedType::Scalar { wide_default: false, .. }
@@ -141,6 +161,14 @@ impl TypeSet {
             TypeSet::ConcreteNamedNoArgs => {
                 matches!(rt, ResolvedType::Named { args, .. } if args.is_empty())
             }
+            TypeSet::ScalarNotWideDefaultInt => {
+                matches!(rt, ResolvedType::Scalar { .. })
+                    && !matches!(
+                        rt,
+                        ResolvedType::Scalar { width: 64, signed: true, wide_default: true }
+                    )
+            }
+            TypeSet::Union(sets) => sets.iter().any(|s| s.contains_resolved(rt)),
         }
     }
 }
@@ -540,5 +568,46 @@ mod tests {
         let ty = Ty::from_resolved(&rt);
         let solver = Solver::new();
         assert_eq!(solver.as_concrete_leaf(&ty), Some(rt));
+    }
+
+    fn ts_ok(rt: &ResolvedType, set: TypeSet) -> bool {
+        Solver::new()
+            .solve(&[Constraint::MemberOf(Ty::Concrete(rt.clone()), set)])
+            .is_ok()
+    }
+
+    /// Ф.2 byte-parity ловушка (см. doc-комментарий на
+    /// `ScalarNotWideDefaultInt`): исходный ad-hoc гейт в
+    /// `materialize_literal_coercion` исключал ТОЛЬКО ровно `int`
+    /// (signed wide-default), а НЕ `uint` (unsigned wide-default) — эта
+    /// асимметрия должна пережить миграцию на TypeSet.
+    #[test]
+    fn scalar_not_wide_default_int_excludes_only_signed_wide_default() {
+        let int_ty = scalar(64, true, true); // `int` — сид литерала, excluded
+        let uint_ty = scalar(64, false, true); // `uint` — NOT excluded
+        let u8_ty = scalar(8, false, false);
+        assert!(!ts_ok(&int_ty, TypeSet::ScalarNotWideDefaultInt));
+        assert!(ts_ok(&uint_ty, TypeSet::ScalarNotWideDefaultInt));
+        assert!(ts_ok(&u8_ty, TypeSet::ScalarNotWideDefaultInt));
+        assert!(!ts_ok(&ResolvedType::Bool, TypeSet::ScalarNotWideDefaultInt));
+    }
+
+    #[test]
+    fn union_is_true_if_any_member_set_matches() {
+        let rt = ResolvedType::Named { name: "Foo".into(), module: vec![], args: vec![] };
+        assert!(ts_ok(
+            &rt,
+            TypeSet::Union(vec![TypeSet::Primitive, TypeSet::ConcreteNamedNoArgs])
+        ));
+        assert!(!ts_ok(
+            &ResolvedType::Named { name: "Vec".into(), module: vec![], args: vec![ResolvedType::Bool] },
+            TypeSet::Union(vec![TypeSet::Primitive, TypeSet::ConcreteNamedNoArgs])
+        ));
+    }
+
+    #[test]
+    fn primitive_set_peels_readonly_view() {
+        let ro_int = ResolvedType::Readonly(Box::new(scalar(64, true, true)));
+        assert!(ts_ok(&ro_int, TypeSet::Primitive));
     }
 }
