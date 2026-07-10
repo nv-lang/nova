@@ -39828,3 +39828,63 @@ d417_closure_scalar_return_neg.nv, docs/plans/backlog-followups.md
   таймауте обвязки — не дефект.
 - Гейты: handshake_test 19/19 (был TIMEOUT); стресс 0 hang/720+; std/net CU 37×3;
   conformance 90/0 (слит main d1b9b2bc8, 0d8581803); err173 5/5 δ0. Модель: sonnet.
+
+Governance-tooling (2026-07-10, ветка governance-tooling, worktree nova-abi): три
+согласованные владельцем правки конвенций + автоинвалидация tls-cache + доп. задача
+владельца (CI/pre-commit hook для `nova lint`). Модель: sonnet.
+- **К1** test-conventions.md — «Пиннинг-тест для silent-wrong-value багов» · согласовано
+  2026-07-10: фикс НЕВЕРНОГО ЗНАЧЕНИЯ (не падение/compile-error) требует теста, который
+  УПАЛ БЫ под старым багом (не косвенно через round-trip). Пример: needs_quoting/
+  is_ascii_ident_char были always-true (ведущий `||` = discarded closure-литерал),
+  round-trip не ловил.
+- **К2** compiler-conventions.md §3 — «запрет второго окна правды» · согласовано
+  2026-07-10: операция, выразимая в `.nv`, не получает параллельный codegen-интринсик той
+  же семантики. Пример эмпирически подтверждён (plan 172.14): `nova_vec_slice_stack_chk`
+  дублировал `Vec[T]@index(Range)` — снесён по поправке владельца, `grep`=0. + чеклист
+  интегратора: грепать новые rt-хелперы/emit_c-интринсики при ревью ветки.
+- **К3** lint W_LEADING_BINOP_CONTINUATION (compiler-codegen/src/lints.rs::CONV_RULES) —
+  ведущий бинарный оператор в начале continuation-строки (D417-класс: ведущий `||` →
+  zero-arg closure-литерал → discarded statement → always-true). Эвристика калибрована
+  ПРОТИВ ложных срабатываний эмпирически на std (275 файлов) + nova_tests (2685 файлов):
+  безопасные конструкции — arrow-body/if-condition-без-скобок/многострочный `[...]`-
+  литерал (bounded parse_expr, Pratt не завершает выражение на границе строки), `} else {`
+  close+reopen (net-delta 0, но НЕ «завершённый statement»), унарные `-`/`+`/`*` (знак
+  литерала / raw-pointer deref — исключены из набора операторов), `calc {}`-блок
+  (Plan 33.5 equational-reasoning, канонически ведущие `==`/`<`), backtick tagged-
+  template (многострочный непрозрачный текст), `||` после декларации (легитимный
+  return-position closure-литерал). Итог: 0 находок на std И nova_tests — миграция std НЕ
+  потребовалась (все исходные находки были ложными, устранены калибровкой эвристики, не
+  правкой std). Самотест nova_tests/lint/conv_pos.nv (+1, итого 6)/conv_clean.nv (0).
+  nv-coding-style.md §27.
+- **К4** tls-cache автоинвалидация (test_runner.rs::detect_tls): БАГ (обнаружен
+  2026-07-10) — `target/tls-cache/nova_tls_shim.lib` бралась безусловно при наличии
+  файла, без сравнения с исходником compiler-codegen/tls_shim → правка shim не
+  инвалидировала кэш, линковалась устаревшая либа (`Pinned` падал "unsupported by tls
+  shim" на свежем исходнике, чинилось только ручным cp). Фикс: `tls_shim_lib_is_fresh`
+  сравнивает mtime кэш-либы с max(Cargo.toml, Cargo.lock, src/**/*.rs); применено к обоим
+  кандидатам кэша (build-cache + crate-local). Верифицировано вручную end-to-end (touch
+  src/lib.rs новее кэша → nova test std/tls триггерит пересборку без ручного вмешательства,
+  T4-Pinned зелёный; fast path без правки — без пересборки) + unit-регресс-тест (3 сценария:
+  fresh/same-mtime/stale). Беклог-маркер под этот дефект в docs/plans/backlog-followups.md
+  НЕ найден (дефект обнаружен и закрыт в той же волне, до формального заведения — §4а
+  нулевая толерантность) — если владелец заводил параллельную заметку в nova-private,
+  синхронизировать вручную.
+- **К5 (доп. задача владельца, "nova lint по максимуму автоматически")**
+  .github/workflows/nova-lint.yml + .githooks/pre-commit (opt-in, `git config
+  core.hooksPath .githooks`) + CONTRIBUTING.md инструкция. ВАЖНОЕ РАСХОЖДЕНИЕ С ПОСЫЛКОЙ
+  (эмпирически, на свежем release-бинаре): полный `nova lint std` — НЕ 0 находок (15
+  pre-existing: std/tls/* из свежесмерженной tls-116 + semver_range.nv/toml.nv/
+  http/transport/real.nv/tzif.nv из более раннего кода), ни одна не от
+  W_LEADING_BINOP_CONTINUATION и ни одна не внесена этой волной. Жёсткий CI-гейт сужен до
+  W_LEADING_BINOP_CONTINUATION (std И nova_tests\{nova_tests/lint} — подтверждено 0) +
+  самотест реестра (conv_pos/conv_clean); полный `nova lint` по std И nova_tests —
+  continue-on-error (информационно, санация долга — отдельная задача владельца).
+- Гейты: cargo build (debug + release) оба крейта чисто; conformance --full spec_tests
+  91/0; lint-самотесты conv_pos=6/conv_clean=0; `nova check std` — 32 pre-existing FAIL
+  (undefined identifiers в *_test.nv фикстурах, discovery-разрыв nova check vs nova test —
+  НЕ моя правка, я не трогал ни одного .nv/type-checker; δ0 тривиален — ничего затрагивающего
+  check не менялось); cargo test lints:: 28/28 + test_runner:: 51/51 (искл.
+  p0_erased_now_dispatches_via_vtable — pre-existing debug-build stack-overflow,
+  воспроизводится изолированно независимо от этой волны, не тронуто). Коммиты:
+  59bc2c74e (К1), 02e3537d2 (К2), f115201df (К3), ab4751eaf (К4), 9541e6708+230a0bf12
+  (К5, второй коммит правит гейт по факту эмпирики), 26e81c173 (regression-тест К4).
