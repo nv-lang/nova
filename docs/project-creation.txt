@@ -40154,3 +40154,67 @@ git-зависимость/несуществующую директорию/н�
 несущими [ffi]); вне окна watchdog-восстановления.
 Коммиты (ext-dep-resolver-03-1): a10b2d5e9 (checkpoint резолвер+path_dep_ffi),
 9cc5472c1 (12 фикстур rev-3 D78).
+
+================================================================================
+2026-07-11 — teardown close-путь: ordering-фикс net-runtime + гигиена M-178
+                (ветка teardown-hang-close, от main d640d66ac; модель sonnet)
+================================================================================
+
+КОНТЕКСТ. Разведка вскрыла: репро std/http/servernet/rt/handle_connection_smoke
+.nv якобы иногда ЗАВИСАЕТ (TIMEOUT) ПОСЛЕ печати PASS — в teardown
+(nova_supervised_drain_main_scope → nova_runtime_shutdown → nova_evloop_close).
+Гипотеза #1: TcpListener.close()/TcpStream.close() (net.c) идут через старый
+nova_loop_defer_close; окно cross-thread close мигрировавших work-stealing'ом
+волокон при teardown. Отдельно: оригинальный M-178 segfault уже починен
+Планом 183 (with Net = real_net()).
+
+ШАГ 1 — РЕПРО (плейбук §1/§3.2). Детерминированного hang получить НЕ удалось.
+Прямые прогоны собранного .exe: соло PASS (~116ms); ×300 подряд = 300 PASS;
+6 волн × 24 параллельно (144) = 0 hang; release-сборка ×100 = 0 hang; ×150 под
+насыщением всех 16 ядер (16 фоновых busy-loops) = 0 hang — итерации замедлялись
+до ~11с, но ВСЕ PASS (не hang). Итого 924 прогона / 0 hang / 0 segv. Гипотеза
+о hang эмпирически НЕ подтверждена на этой машине (16 ядер, Windows, clang).
+
+ШАГ 2 — АУДИТ CLOSE-ПУТИ (§4, point-probe заменён статическим аудитом, т.к.
+репро нет). Гипотеза о close-пути ЧАСТИЧНО подтвердилась: в nova_runtime_shutdown
+(compiler-codegen/nova_rt/runtime.c, per-worker cleanup) найден РЕАЛЬНЫЙ
+ordering-дефект ровно в подозреваемой зоне — uv_loop_close(&w->loop) вызывался
+ДО финального nova_loop_drain_closes/nova_loop_drain_calls.
+
+ROOT CAUSE [M-net-close-teardown-hang]. Отложенный close/call-джоб (net.c
+TcpListener/TcpStream.close() через nova_loop_defer_close; cross-thread net-op
+issue через nova_loop_defer_call, Plan 183) обычно обслуживается собственным
+while(!stop)-циклом воркера через _worker_async_cb на очередном uv_run(NOWAIT).
+Если w->stop взводится (сигнал stop в shutdown) в узком окне между постановкой
+джоба в очередь и следующей итерацией воркера — джоб остаётся в очереди на
+момент join. Прежний порядок (drain ПОСЛЕ close) звал close_cb/fn слишком
+поздно: uv_run для этого loop больше никто не крутит → close_cb не срабатывает
+→ живой uv_tcp_t/uv_udp_t (и его сокет-fd) утекает НЕЗАКРЫТЫМ (uv__finish_close
+не выполняется). Это лик; на путях с EBUSY-спином nova_evloop_close (до 100
+попыток walk+uv_run) — правдоподобный источник наблюдённого разведкой TIMEOUT.
+
+ФИКС (коммит 7bd766963, ~36 строк runtime.c). Дренаж call+close очередей и
+bounded-прокачка loop (≤64 тика, uv_run NOWAIT) ДО uv_loop_close, пока loop ещё
+открыт и воркер уже joined (single-thread, гонки нет). Порядок: сначала
+drain_calls (может поставить follow-on close), затем drain_closes; цикл
+повторяет оба внутри прокачки. Ограниченное число тиков — застрявший хендл
+остаётся ликом (best-effort), не превращается в hang shutdown. Структуры
+очередей destroy'атся уже пустыми.
+
+ГЕЙТЫ (на слитом с main). cargo build (compiler-codegen + nova-cli) чисто.
+conformance (spec_tests/conformance --positive --compile-error) = 91/0.
+err173-корпус (err173/_0/_1/_2/_3 --full) = 28/0. std/net + std/http keystone:
+5 PASS, единственный FAIL = pre-existing [M-tls-handshake-test-panic-undefined-
+multifile] (undefined `panic` в std/tls/handshake_test.nv при multi-file CU —
+НЕ связан с этим фиксом, δ0 к baseline). Репро handle_connection_smoke ×30+
+post-fix = 0 hang / 0 segv.
+
+ГИГИЕНА M-178. [M-178-servernet-live-net-substrate-segfault] закрыт по
+ОРИГИНАЛУ (segfault, Планом 183). Заведён и закрыт [M-net-close-teardown-hang]
+(root-cause устранён аудитом; hang-репро НЕ подтверждён — честная оговорка
+плейбук §4а Lesson #9: verified 0 hang для ЭТОЙ машины/сборки, не эмпирически-
+локализованный hang). Ссылка в [M-net-redesign-owner-directive] актуализирована.
+
+ЧЕСТНОСТЬ. Фикс закрывает НАЙДЕННЫЙ ordering-дефект close-пути (реальный
+сокет-fd лик), а не эмпирически воспроизведённый hang. Если hang проявится на
+другом железе — root cause искать заново через state-dump NOVA_WATCHDOG_DUMP_SECS.
