@@ -38,7 +38,7 @@ test "T4-Pinned: правильный SPKI-пин — рукопожатие п�
                 consume conn = must_tcp(TcpStream.connect(SocketAddr.loopback(port)))
                 ro pins = Vec[[]u8].of(fixture_pin())
                 ro ccfg = ClientConfig.new("localhost")
-                    .with_verification(VerificationMode.Pinned(pins))
+                    .verification(VerificationMode.Pinned(pins))
                 consume tls = must_tls(TlsStream.connect(conn, ccfg))
                 tls.close()
             }
@@ -68,7 +68,7 @@ test "T4-Pinned-NEG: неверный пин — клиент отвергает
                 consume conn = must_tcp(TcpStream.connect(SocketAddr.loopback(port)))
                 ro pins = Vec[[]u8].of(x"00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00")
                 ro ccfg = ClientConfig.new("localhost")
-                    .with_verification(VerificationMode.Pinned(pins))
+                    .verification(VerificationMode.Pinned(pins))
                 match TlsStream.connect(conn, ccfg) {
                     Ok(s)  => { s.close() assert(false) }
                     Err(e) => {
@@ -105,7 +105,7 @@ test "T4-Pinned: пиннинг заменяет hostname-проверку — �
                 ro pins = Vec[[]u8].of(fixture_pin())
                 // wrong.example НЕ покрыт сертом, но при Pinned hostname не проверяется.
                 ro ccfg = ClientConfig.new("wrong.example")
-                    .with_verification(VerificationMode.Pinned(pins))
+                    .verification(VerificationMode.Pinned(pins))
                 consume tls = must_tls(TlsStream.connect(conn, ccfg))
                 tls.close()
             }
@@ -166,7 +166,7 @@ test "T4-ALPN: пересечение выбирает общий протоко
                 lst.close()
                 consume conn = must_tcp(accepted)
                 // Сервер поддерживает только http/1.1.
-                ro scfg = ServerConfig.new(fixture_cert(), fixture_key()).with_alpn(["http/1.1"])
+                ro scfg = ServerConfig.new(fixture_cert(), fixture_key()).alpn_protocols(["http/1.1"])
                 consume tls = must_tls(TlsStream.accept(conn, scfg))
                 tls.close()
             }
@@ -176,8 +176,8 @@ test "T4-ALPN: пересечение выбирает общий протоко
                 consume conn = must_tcp(TcpStream.connect(SocketAddr.loopback(port)))
                 // Клиент предпочитает h2, но принимает http/1.1.
                 ro ccfg = ClientConfig.new("localhost")
-                    .with_verification(VerificationMode.CustomRoots(fixture_cert()))
-                    .with_alpn(["h2", "http/1.1"])
+                    .verification(VerificationMode.CustomRoots(fixture_cert()))
+                    .alpn_protocols(["h2", "http/1.1"])
                 consume tls = must_tls(TlsStream.connect(conn, ccfg))
                 ro alpn = tls.alpn_negotiated()
                 tls.close()
@@ -197,7 +197,7 @@ test "T4-ALPN-NEG: непересекающиеся списки → handshake f
                 ro accepted = lst.accept()
                 lst.close()
                 consume conn = must_tcp(accepted)
-                ro scfg = ServerConfig.new(fixture_cert(), fixture_key()).with_alpn(["http/1.1"])
+                ro scfg = ServerConfig.new(fixture_cert(), fixture_key()).alpn_protocols(["http/1.1"])
                 // Сервер шлёт no_application_protocol alert → accept тоже Err.
                 match TlsStream.accept(conn, scfg) {
                     Ok(s)  => { s.close() assert(false) }
@@ -209,8 +209,8 @@ test "T4-ALPN-NEG: непересекающиеся списки → handshake f
                 assert(port > 0)
                 consume conn = must_tcp(TcpStream.connect(SocketAddr.loopback(port)))
                 ro ccfg = ClientConfig.new("localhost")
-                    .with_verification(VerificationMode.CustomRoots(fixture_cert()))
-                    .with_alpn(["h2"])   // только h2, сервер только http/1.1
+                    .verification(VerificationMode.CustomRoots(fixture_cert()))
+                    .alpn_protocols(["h2"])   // только h2, сервер только http/1.1
                 match TlsStream.connect(conn, ccfg) {
                     Ok(s)  => { s.close() assert(false) }
                     Err(e) => {

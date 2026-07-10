@@ -155,17 +155,21 @@ export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
     // 1. $ZONEINFO override
     match env("ZONEINFO") {
         Some(dir) => {
-            match read(Path.from_str(dir + "/" + name)) {
-                Ok(bytes) => return TimeZone.from_tzif(name, bytes),
-                Err(_) => {}   // нет файла → следующий слой
+            // `.ok()`: намеренно не разбираем причину сбоя чтения (файла
+            // может просто не быть на этом слое) — переходим к следующему
+            // слою (nv-coding-style §4: явный Result→Option вместо
+            // swallow-match на `Err(_)`).
+            match read(Path.from_str(dir + "/" + name)).ok() {
+                Some(bytes) => return TimeZone.from_tzif(name, bytes),
+                None => {}   // нет файла → следующий слой
             }
         }
         None => {}
     }
-    // 2. Стандартный POSIX-каталог
-    match read(Path.from_str("/usr/share/zoneinfo/" + name)) {
-        Ok(bytes) => return TimeZone.from_tzif(name, bytes),
-        Err(_) => {}
+    // 2. Стандартный POSIX-каталог (тот же намеренный fallback).
+    match read(Path.from_str("/usr/share/zoneinfo/" + name)).ok() {
+        Some(bytes) => return TimeZone.from_tzif(name, bytes),
+        None => {}
     }
     // 3. Embedded curated-таблица
     name.to_timezone()

@@ -32,7 +32,7 @@ fn build_client_cfg(config ClientConfig) -> Result[CTlsCfgHandle, TlsError] {
                     tls_cfg_free(c)
                     return Err(TlsError.Internal("SPKI pin must be exactly 32 bytes (sha-256)"))
                 }
-                for j in 0..32 { flat.push(h[j]) }
+                flat.append(h)
             }
             unsafe { tls_cfg_verify_pinned(c, flat.ptr(), hashes.len()) }
         }

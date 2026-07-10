@@ -44,11 +44,11 @@ type D182Pair[A, B] {
     snd B
 }
 
-fn D182Pair[A, B].of(a A, b B) -> Self =>
+fn D182Pair[A, B].new(a A, b B) -> Self =>
     { fst: a, snd: b }
 
 test "Self для multi-param static ≡ Pair[A,B]; оба параметра round-trip (D182)" {
-    ro p = D182Pair[int, str].of(5, "x")   // Self ≡ D182Pair[int, str]
+    ro p = D182Pair[int, str].new(5, "x")   // Self ≡ D182Pair[int, str]
     assert(p.fst == 5)
     assert(p.snd == "x")
 }

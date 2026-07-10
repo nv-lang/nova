@@ -15,10 +15,13 @@
 module spec_tests.conformance
 
 // Position 1: local var (`let`/`ro`/`mut`) declared, mutated in a
-// for-loop, and read — keyword `long`.
-fn c_kw_concat_pw() -> str {
-    mut long = ""
-    for i in 0..3 { long = long + "a" }
+// for-loop, and read — keyword `long`. Numeric accumulator (not string
+// concat — perf-conventions W_STR_CONCAT_LOOP would flag `long = long +
+// "a"` as O(N²); the discriminator here is the KEYWORD identifier on
+// declare/assign/read, not the accumulated type).
+fn c_kw_concat_pw() -> int {
+    mut long = 0
+    for i in 0..3 { long = long + 1 }
     long
 }
 
@@ -44,7 +47,7 @@ fn c_kw_sum_range(n int) -> int {
 }
 
 test "C-keyword local var: declare/mutate/read (`long`)" {
-    assert(c_kw_concat_pw() == "aaa")
+    assert(c_kw_concat_pw() == 3)
 }
 
 test "C-keyword fn parameter (`register`)" {
