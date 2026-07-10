@@ -23,7 +23,8 @@
 # _experimental/ (не входит в 0.1, ждёт Plan 18 / 0.2+ или
 # отдельных под-планов Plan 91 Ф.2-Ф.4 для постепенной promotion):
 #   collections/    BloomFilter, Deque, LinkedList, LRU, PriorityQueue, Queue
-#   crypto/         MD5, SHA-1, SHA-256, HMAC, JWT, bcrypt (4 файла FAIL: array literal)
+#   crypto/         InsecureDemoKdf (демо-KDF, НЕ настоящий bcrypt/argon2 —
+#                   security-де-риск Plan 191; см. std/_experimental/STATUS.md)
 #   identifiers/    UUID, ULID, Snowflake, UuidNamespace
 #   checksums/      CRC32, FNV
 #   time/           Cron (FAIL: D52 §2)

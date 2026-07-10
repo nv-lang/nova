@@ -238,7 +238,7 @@ export type Mem effect {
 /// **Random-effect** — ambient PRNG (D11 / D61).
 ///
 /// **Назначение:** AI-first substitution случайности. Production-код
-/// (`Uuid.v4()`, `Ulid.new()`, `Bcrypt.hash`, retry-jitter) объявляет
+/// (`Uuid.v4()`, `Ulid.new()`, retry-jitter) объявляет
 /// `Random` в effect-row; тесты подменяют handler детерминированным PRNG:
 /// ```nova
 /// import std.testing.handlers as th
