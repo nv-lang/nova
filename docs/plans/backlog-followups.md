@@ -2864,7 +2864,8 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (11→3-вариантный самоссылающийся enum через Result, структурное `==` на
   bare/nested/Vec-вариантах). compiler-codegen/src/codegen/emit_c.rs.
 
-- **[M-lazy-const-init-race]** (2026-07-09, **P1 — UB-гонка в M:N**, вопрос владельца;
+- ✅ **[M-lazy-const-init-race]** (2026-07-09, **P1 — UB-гонка в M:N**, вопрос владельца;
+  ✅ ЗАКРЫТ (проверено 2026-07-11: nova_consts_init() реализована в emit_c.rs);
   Plan: волна сразу после 174.1, зона emit_c const-канал; Wave: [sonnet]) —
   генерируемый lazy-init модульных констант (`nova_const_X(void)`: check-then-act по
   неатомарному `_init`-флагу, без барьеров) не потокобезопасен: двойной gc_add_root,
