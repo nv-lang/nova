@@ -132,7 +132,10 @@ fn bcrypt_kdf(password []u8, salt []u8, cost int) -> []u8 {
     mut state = Sha256.new()
     state.update(salt)
     state.update(password)
-    mut bytes = state.finalize()[0..32]
+    // Явная аннотация []u8: срез [N]T[a..b] = []T-копия, но канал C-типа
+    // биндинга БЕЗ аннотации ещё отдаёт [N]T — канальный фикс в идущей волне
+    // ([M-fixed-array-value-semantics] followup, регресс bcrypt 2026-07-10).
+    mut bytes []u8 = state.finalize()[0..32]
 
     // Iterate `rounds` times — экспоненциальная стоимость по cost.
     for k in 0..rounds {
