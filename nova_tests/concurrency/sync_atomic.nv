@@ -46,6 +46,26 @@ test "AtomicInt: compare_exchange failure (wrong expected)" {
     assert(a.load() == 5)
 }
 
+// [M-atomicint-record-field-typedef-collision] regression (found + fixed
+// 2026-07-11, D415 detach-migration wave): `AtomicInt` (runtime-backed
+// `#share` sync primitive) used AS A RECORD FIELD used to CC-FAIL —
+// codegen's record-field forward-decl pre-pass emitted a competing
+// `typedef struct Nova_AtomicInt Nova_AtomicInt;`, colliding with the
+// real typedef hand-written + `#include`d from `nova_rt/sync_*.h`
+// ("typedef redefinition with different types"). Fixed in emit_c.rs
+// (`debt_is_runtime_backed_newtype` guard, shared across the record/sum/
+// generic-instance forward-decl pre-passes).
+type AtomicCounterHolder {
+    n AtomicInt
+}
+
+test "AtomicInt: as a record field — no typedef collision, mutates correctly" {
+    mut h = AtomicCounterHolder { n: AtomicInt.new(0) }
+    h.n.fetch_add(1)
+    h.n.fetch_add(1)
+    assert(h.n.load() == 2)
+}
+
 // ─── AtomicInt: concurrent ──────────────────────────────────────
 
 // Two fibers each do 200 atomic fetch_adds of 1. Without atomic ops,

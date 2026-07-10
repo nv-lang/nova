@@ -15,38 +15,46 @@
 module nova_tests.err173_2
 
 // D415 §2 amendment (2026-07-11): detach is now a capture-check boundary,
-// same as spawn/parallel for — `c` must be `#share` to be captured by
-// reference. `AtomicInt` (audited `#share`, D415 §1) captured directly:
-// this keeps the fixture's actual point (the `Detach`-effect gate, not
-// concurrency-safety) unchanged. NOTE: a wrapper record `type Ctr { n
-// AtomicInt }` was tried here first and hit an unrelated codegen bug —
-// embedding `AtomicInt` as a record field produces a duplicate/conflicting
-// `struct Nova_AtomicInt` typedef in this CU (`channel_closed_vs_value_test`
-// peer file, CC-FAIL "typedef redefinition with different types"). Tracked
-// as [M-atomicint-record-field-typedef-collision] (docs/plans/
-// backlog-followups.md) — not this fixture's concern, so it captures the
-// atomic directly instead of through a record.
+// same as spawn/parallel for. `n` is `AtomicInt` (audited `#share`, D415
+// §1) so `Ctr` is auto-#share (memberwise) — capturing `c` by reference
+// into `detach { }` and mutating through the atomic field stays legal
+// without a `spawn consume`/`ro` rewrite; this keeps the fixture's actual
+// point (the `Detach`-effect gate, not concurrency-safety) unchanged.
+//
+// (Codegen aside, fixed same wave: this record-embeds-AtomicInt shape
+// first hit [M-atomicint-record-field-typedef-collision] — a duplicate/
+// conflicting `struct Nova_AtomicInt` typedef, CC-FAIL. Root + regression
+// coverage: nova_tests/concurrency/sync_atomic.nv "AtomicInt: as a record
+// field" + sync_mutex.nv "Mutex: as a record field". Fixed in
+// emit_c.rs — record/sum/generic-instance forward-decl pre-passes now
+// skip runtime-backed sync-primitive field types via
+// `debt_is_runtime_backed_newtype`.)
+type Ctr {
+    n AtomicInt
+}
+
+fn Ctr.make() -> Ctr => { n: AtomicInt.new(0) }
 
 // (1) fn с эффектом Detach — detach разрешён (не флагается).
-fn spawn_bg(c mut AtomicInt) Detach -> () {
+fn spawn_bg(c mut Ctr) Detach -> () {
     detach {
-        c.fetch_add(1)
+        c.n.fetch_add(1)
     }
 }
 
 // (3) test-блок — effect-root, bare detach разрешён.
 test "detach in test-root (effect-root) compiles + runs under default handler" {
-    mut c = AtomicInt.new(0)
+    mut c = Ctr.make()
     detach {
-        c.fetch_add(1)
+        c.n.fetch_add(1)
     }
     runtime.drain_orphans()
-    assert(c.load() == 1)
+    assert(c.n.load() == 1)
 }
 
 test "detach inside Detach-effect fn compiles + runs" {
-    mut c = AtomicInt.new(0)
+    mut c = Ctr.make()
     spawn_bg(c)
     runtime.drain_orphans()
-    assert(c.load() == 1)
+    assert(c.n.load() == 1)
 }
