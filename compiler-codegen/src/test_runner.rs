@@ -718,6 +718,29 @@ pub struct ResolvedFfiConfig {
     pub c_shims: Vec<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
     pub libs: Vec<String>,
+    /// Plan 192: собираемый native-статик-либ из `[ffi.staticlib]` (unresolved
+    /// — путь крейта относителен `staticlib_base`). Резолвится ЛЕНИВО в
+    /// `build_command` только когда CU реально использует native-модуль
+    /// (симметрично detect_tls: не собираем cargo-крейт зря).
+    pub staticlib: Option<crate::manifest::FfiStaticlibConfig>,
+    /// Директория `nova.toml` пакета — база для относительных путей staticlib.
+    pub staticlib_base: Option<PathBuf>,
+}
+
+impl ResolvedFfiConfig {
+    /// Plan 115 + 192: собрать resolved `[ffi]` из манифеста (paths →
+    /// абсолютные от `source_root`). None — у манифеста нет `[ffi]`.
+    pub fn from_manifest(m: &crate::manifest::Manifest) -> Option<Self> {
+        let cfg = m.ffi.as_ref()?;
+        let base = m.source_root.clone();
+        Some(ResolvedFfiConfig {
+            c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
+            include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
+            libs: cfg.libs.clone(),
+            staticlib: cfg.staticlib.clone(),
+            staticlib_base: Some(base),
+        })
+    }
 }
 
 /// Параметры сборки одного теста.
@@ -1125,20 +1148,47 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // branches — no symbol clash.
     let rt_tls_stub = opts.rt_dir.join("tls_stub.c");
     let uses_tls = c_file_uses_tls(opts.c_file);
-    let tls_cfg = if uses_tls { detect_tls(opts.rt_dir) } else { None };
-    let tls_lib = tls_cfg.as_ref().map(|c| c.lib_file.clone());
-    // Extra Windows system libs required by the Rust staticlib (measured via
-    // `RUSTFLAGS="--print native-static-libs"`, plan 116 Ф.0): bcrypt + ntdll
-    // (ws2_32/advapi32/userenv/dbghelp уже в LIBUV_WIN_SYSLIBS).
-    #[cfg(target_os = "windows")]
-    const TLS_WIN_EXTRA_SYSLIBS: &[&str] = &["bcrypt.lib", "ntdll.lib"];
+    // Plan 192: resolve the TLS staticlib GENERICALLY from the package manifest
+    // `[ffi.staticlib]` first (path/build/link declared in nova.toml, not
+    // hardcoded here), and only fall back to the legacy `detect_tls` hardcode
+    // when no manifest declares it. Both are gated by `uses_tls` (same D337
+    // conditional-link marker) so the crate is never built for a CU that
+    // doesn't touch TLS. `tls_extra_syslibs` are the staticlib's extra system
+    // deps: from `[ffi.staticlib].link` when manifest-driven, else the legacy
+    // hardcoded set (bcrypt/ntdll on Windows).
+    let (tls_lib, tls_extra_syslibs): (Option<PathBuf>, Vec<String>) = if uses_tls {
+        let manifest_sl = opts.ffi.and_then(|f| {
+            match (&f.staticlib, &f.staticlib_base) {
+                (Some(sl), Some(base)) => crate::manifest::resolve_ffi_staticlib(sl, base),
+                _ => None,
+            }
+        });
+        if let Some(sl) = manifest_sl {
+            (Some(sl.lib_file), sl.link)
+        } else if let Some(cfg) = detect_tls(opts.rt_dir) {
+            // Legacy fallback (no `[ffi.staticlib]` in the package manifest):
+            // the pre-Plan-192 hardcoded path resolution + hardcoded extra
+            // syslibs measured via `--print native-static-libs` (plan 116 Ф.0):
+            // bcrypt + ntdll (ws2_32/advapi32/userenv/dbghelp уже в LIBUV syslibs).
+            let extra = if cfg!(target_os = "windows") {
+                vec!["bcrypt".to_string(), "ntdll".to_string()]
+            } else {
+                Vec::new()
+            };
+            (Some(cfg.lib_file), extra)
+        } else {
+            (None, Vec::new())
+        }
+    } else {
+        (None, Vec::new())
+    };
     // Diagnostic (NOVA_DEBUG_TLS_LINK=1): make the conditional-link decision
     // observable in both directions (real lib / stub / not used).
     if std::env::var("NOVA_DEBUG_TLS_LINK").as_deref() == Ok("1") {
         match &tls_lib {
             Some(lib) => eprintln!(
-                "nova/tls-link: {} uses_tls={} → LINK {}",
-                opts.c_file.display(), uses_tls, lib.display()),
+                "nova/tls-link: {} uses_tls={} → LINK {} (+syslibs {:?})",
+                opts.c_file.display(), uses_tls, lib.display(), tls_extra_syslibs),
             None => eprintln!(
                 "nova/tls-link: {} uses_tls={} → {}",
                 opts.c_file.display(), uses_tls,
@@ -1332,10 +1382,11 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if uses_tls {
                 if let Some(lib_path) = &tls_lib {
                     c.arg(lib_path);
-                    // gcc-style: -lbcrypt (env LIB от vcvars), как LIBUV_WIN_SYSLIBS выше.
-                    #[cfg(target_os = "windows")]
-                    for syslib in TLS_WIN_EXTRA_SYSLIBS {
-                        c.arg(format!("-l{}", syslib.replace(".lib", "")));
+                    // Plan 192: extra syslibs from `[ffi.staticlib].link` (or the
+                    // legacy bcrypt/ntdll fallback). gcc-style `-l<name>` (env LIB
+                    // от vcvars на Windows), как LIBUV syslibs выше.
+                    for syslib in &tls_extra_syslibs {
+                        c.arg(format!("-l{}", syslib));
                     }
                 } else {
                     c.arg(&rt_tls_stub);
@@ -1528,9 +1579,10 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if uses_tls {
                 if let Some(lib_path) = &tls_lib {
                     c.arg(lib_path);
-                    #[cfg(target_os = "windows")]
-                    for syslib in TLS_WIN_EXTRA_SYSLIBS {
-                        c.arg(syslib);
+                    // Plan 192: extra syslibs from `[ffi.staticlib].link` (or the
+                    // legacy bcrypt/ntdll fallback). MSVC: `<name>.lib`.
+                    for syslib in &tls_extra_syslibs {
+                        c.arg(format!("{}.lib", syslib));
                     }
                 } else {
                     c.arg(&rt_tls_stub);
@@ -1640,6 +1692,12 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             if uses_tls {
                 if let Some(lib_path) = &tls_lib {
                     c.arg(lib_path);
+                    // Plan 192: extra syslibs from `[ffi.staticlib].link` (gcc-style
+                    // `-l<name>`). Empty in the legacy Unix fallback (pthread/dl/m
+                    // arrive via LIBUV_UNIX_SYSLIBS); a manifest may add more.
+                    for syslib in &tls_extra_syslibs {
+                        c.arg(format!("-l{}", syslib));
+                    }
                 } else {
                     c.arg(&rt_tls_stub);
                 }
@@ -2474,21 +2532,10 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // package nova.toml для test_file. Paths становятся абсолютными
     // относительно директории nova.toml. None — нет manifest или нет
     // [ffi] section; пустой Some(...) — секция есть.
-    let resolved_ffi: Option<ResolvedFfiConfig> = {
-        let manifest = crate::manifest::find_manifest(opts.nv_file);
-        manifest.and_then(|m| m.ffi.map(|cfg| {
-            let base = m.source_root.clone();
-            ResolvedFfiConfig {
-                c_shims: cfg.c_shims.iter()
-                    .map(|p| base.join(p))
-                    .collect(),
-                include_dirs: cfg.include_dirs.iter()
-                    .map(|p| base.join(p))
-                    .collect(),
-                libs: cfg.libs.clone(),
-            }
-        }))
-    };
+    let resolved_ffi: Option<ResolvedFfiConfig> =
+        crate::manifest::find_manifest(opts.nv_file)
+            .as_ref()
+            .and_then(ResolvedFfiConfig::from_manifest);
 
     // Plan 149 D233: resolve [runtime] section в package nova.toml для
     // test_file. Plain strings (no path resolution) — baked as -D...DEFAULT.

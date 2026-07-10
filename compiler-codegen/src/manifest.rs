@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Plan 03.1: git-пин зависимости.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +160,201 @@ pub struct FfiConfig {
     /// System library names для clang `-l<name>` linking. Например
     /// `libs = ["sqlite3", "png"]` → `-lsqlite3 -lpng`.
     pub libs: Vec<String>,
+    /// **Plan 192 (native-backed module pattern):** `[ffi.staticlib]` —
+    /// декларация **собираемого** статик-либа, который надо *построить*
+    /// (`cargo build`, `make`, …) и слинковать по факту использования модуля.
+    ///
+    /// Это generalises хардкод `detect_tls`/`tls-cache` из `test_runner.rs`:
+    /// вместо спец-кейса под каждый native-модуль — единая манифест-декларация
+    /// (тот же класс, что brotli/tls «второе окно правды» для линковки).
+    ///
+    /// None — секции нет; модуль без собираемых native-артефактов.
+    pub staticlib: Option<FfiStaticlibConfig>,
+}
+
+/// Plan 192: `[ffi.staticlib]` — собираемый статик-либ как native-зависимость
+/// модуля. Резолвится [`resolve_ffi_staticlib`]: cache → crate-artifact →
+/// build-on-demand, с mtime-инвалидацией по исходникам крейта.
+///
+/// Пример в `nova.toml` (образец — пакет `nova-tls`):
+/// ```toml
+/// [ffi.staticlib]
+/// kind  = "rust-staticlib"          # как собирать (пока поддержан только он)
+/// path  = "native/tls_shim"         # директория крейта (относительно nova.toml)
+/// lib   = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
+/// build = "cargo build --release"   # команда сборки (запускается в `path`)
+/// link  = ["bcrypt", "ntdll"]       # доп. системные либы, которые тянет staticlib
+/// cache = "target/native-cache/tls" # опц. кэш-каталог (относительно nova.toml)
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FfiStaticlibConfig {
+    /// Способ сборки. Пока распознаётся `"rust-staticlib"` (cargo). Иные
+    /// значения хранятся как есть — резолвер их отвергает (forward-compat).
+    pub kind: String,
+    /// Директория крейта/исходников (относительно `nova.toml`).
+    pub path: String,
+    /// Basename артефакта без платформенного префикса/расширения. На Windows
+    /// ищется `<lib>.lib`, на Unix — `lib<lib>.a`.
+    pub lib: String,
+    /// Команда сборки (запускается с cwd = `path`). Например
+    /// `"cargo build --release"`. Пусто → build-on-demand отключён (только
+    /// готовый артефакт из cache/crate-target).
+    pub build: String,
+    /// Дополнительные системные библиотеки (все платформы), которые тянет
+    /// статик-либ. Передаются линкеру `-l<name>` (Unix/clang) / `<name>.lib`
+    /// (MSVC). Для платформо-специфичных — `link_windows`/`link_unix`.
+    pub link: Vec<String>,
+    /// Системные либы только для Windows (Rust staticlib: `bcrypt`/`ntdll`/…).
+    /// Складываются к `link` на Windows-хосте, игнорируются иначе.
+    pub link_windows: Vec<String>,
+    /// Системные либы только для Unix (Linux/macOS). Складываются к `link` на
+    /// не-Windows-хосте, игнорируются иначе.
+    pub link_unix: Vec<String>,
+    /// Опциональный кэш-каталог (относительно `nova.toml`), куда копируется
+    /// собранный артефакт — быстрый путь на последующих сборках. Пусто →
+    /// используется только `path/target/release/<lib>`.
+    pub cache: Option<String>,
+}
+
+/// Plan 192: разрешённый (пути абсолютны) `[ffi.staticlib]` — то, что билд-
+/// система реально линкует. Отдаётся [`resolve_ffi_staticlib`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedStaticlib {
+    /// Абсолютный путь к готовому `.a`/`.lib`.
+    pub lib_file: PathBuf,
+    /// Доп. системные библиотеки (basenames без префикса/расширения).
+    pub link: Vec<String>,
+}
+
+/// Платформенное имя файла статик-либа по basename: `<lib>.lib` (Windows) /
+/// `lib<lib>.a` (Unix).
+pub fn staticlib_file_name(lib: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{lib}.lib")
+    } else {
+        format!("lib{lib}.a")
+    }
+}
+
+/// True iff `lib`'s mtime >= newest mtime among `crate_dir`'s OWN sources
+/// (`Cargo.toml`, `Cargo.lock`, `src/**/*.rs`). Auto-invalidates a cached
+/// staticlib that predates a source edit — the generic form of the
+/// `tls_shim_lib_is_fresh` fix (governance-волна, стейл-tls-cache дефект
+/// 2026-07-10). Equal mtimes = fresh. Missing lib metadata → not fresh
+/// (forces rebuild). No sources found → nothing to compare → fresh.
+pub fn staticlib_is_fresh(lib: &Path, crate_dir: &Path) -> bool {
+    let Ok(lib_mtime) = std::fs::metadata(lib).and_then(|m| m.modified()) else {
+        return false;
+    };
+    let mut newest_src: Option<std::time::SystemTime> = None;
+    let mut bump = |p: &Path| {
+        if let Ok(m) = std::fs::metadata(p).and_then(|m| m.modified()) {
+            if newest_src.is_none_or(|cur| m > cur) {
+                newest_src = Some(m);
+            }
+        }
+    };
+    bump(&crate_dir.join("Cargo.toml"));
+    bump(&crate_dir.join("Cargo.lock"));
+    staticlib_walk_rs(&crate_dir.join("src"), &mut bump);
+    newest_src.is_none_or(|src_mtime| src_mtime <= lib_mtime)
+}
+
+/// Recursively visits every `*.rs` file under `dir`. Missing/unreadable `dir`
+/// silently skipped (fail-open on a single unreadable path).
+fn staticlib_walk_rs(dir: &Path, visit: &mut dyn FnMut(&Path)) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            staticlib_walk_rs(&path, visit);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            visit(&path);
+        }
+    }
+}
+
+/// Plan 192: резолвит `[ffi.staticlib]` в конкретный `.a`/`.lib` для линковки.
+///
+/// `base` — директория `nova.toml` (все относительные пути крейта/кэша от неё).
+/// Порядок (mirror of `detect_tls`, но управляется манифестом):
+///   1. **cache** (если задан `cache`) — если файл свежий против исходников;
+///   2. **crate artifact** `path/target/release/<lib>` — если свежий;
+///   3. **build-on-demand** — выполнить `build` в `path`, скопировать в cache
+///      (если задан), вернуть путь. Пусто `build` / незнакомый `kind` /
+///      отсутствие крейта → `None` (билд-система молча не линкует staticlib —
+///      как degrade-to-stub у detect_tls).
+///
+/// `None` НИКОГДА не является link-ошибкой на этой стадии: вызывающая сторона
+/// решает, что делать (у tls — компилировать stub-TU).
+pub fn resolve_ffi_staticlib(cfg: &FfiStaticlibConfig, base: &Path) -> Option<ResolvedStaticlib> {
+    // Пока поддержан единственный kind. Незнакомый → forward-compat no-op.
+    if cfg.kind != "rust-staticlib" {
+        return None;
+    }
+    if cfg.lib.trim().is_empty() || cfg.path.trim().is_empty() {
+        return None;
+    }
+    let crate_dir = base.join(&cfg.path);
+    let lib_name = staticlib_file_name(&cfg.lib);
+    let cache_lib = cfg.cache.as_ref().map(|c| base.join(c).join(&lib_name));
+    // Эффективный набор доп. системных либ = общий `link` + платформенный.
+    let mut eff_link = cfg.link.clone();
+    if cfg!(target_os = "windows") {
+        eff_link.extend(cfg.link_windows.iter().cloned());
+    } else {
+        eff_link.extend(cfg.link_unix.iter().cloned());
+    }
+    let make = |lib_file: PathBuf| ResolvedStaticlib {
+        lib_file,
+        link: eff_link.clone(),
+    };
+
+    // 1) cache candidate.
+    if let Some(cl) = &cache_lib {
+        if cl.is_file() && staticlib_is_fresh(cl, &crate_dir) {
+            return Some(make(cl.clone()));
+        }
+    }
+    // 2) crate-local cargo artifact.
+    let crate_lib = crate_dir.join("target").join("release").join(&lib_name);
+    if crate_lib.is_file() && staticlib_is_fresh(&crate_lib, &crate_dir) {
+        return Some(make(crate_lib));
+    }
+    // 3) build on demand.
+    if cfg.build.trim().is_empty() || !crate_dir.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let mut parts = cfg.build.split_whitespace();
+    let program = parts.next()?;
+    eprintln!(
+        "nova: ffi.staticlib `{}` not built (or stale), building via `{}` (one-time)...",
+        cfg.lib, cfg.build,
+    );
+    let status = Command::new(program)
+        .args(parts)
+        .current_dir(&crate_dir)
+        .status();
+    match status {
+        Ok(s) if s.success() => {}
+        _ => {
+            eprintln!("nova: ffi.staticlib `{}` build failed — module degrades to its stub path", cfg.lib);
+            return None;
+        }
+    }
+    let built = crate_dir.join("target").join("release").join(&lib_name);
+    if !built.is_file() {
+        return None;
+    }
+    if let Some(cl) = &cache_lib {
+        if let Some(parent) = cl.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::copy(&built, cl).is_ok() {
+            return Some(make(cl.clone()));
+        }
+    }
+    Some(make(built))
 }
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
@@ -347,6 +543,16 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut ffi_include_dirs: Vec<String> = Vec::new();
     let mut ffi_libs: Vec<String> = Vec::new();
     let mut ffi_section_seen: bool = false;
+    // Plan 192: [ffi.staticlib] — собираемый native-статик-либ.
+    let mut ffi_sl_kind: Option<String> = None;
+    let mut ffi_sl_path: Option<String> = None;
+    let mut ffi_sl_lib: Option<String> = None;
+    let mut ffi_sl_build: Option<String> = None;
+    let mut ffi_sl_link: Vec<String> = Vec::new();
+    let mut ffi_sl_link_windows: Vec<String> = Vec::new();
+    let mut ffi_sl_link_unix: Vec<String> = Vec::new();
+    let mut ffi_sl_cache: Option<String> = None;
+    let mut ffi_sl_section_seen: bool = false;
     // Plan 149 D233: [runtime] config.
     let mut runtime_fiber_stack: Option<String> = None;
     let mut runtime_max_fibers: Option<String> = None;
@@ -368,6 +574,11 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 "dependencies"         => "dependencies",
                 "exports.consume_types" => "exports.consume_types",
                 "ffi"                  => { ffi_section_seen = true; "ffi" }
+                "ffi.staticlib"        => {
+                    ffi_section_seen = true;
+                    ffi_sl_section_seen = true;
+                    "ffi.staticlib"
+                }
                 "runtime"              => { runtime_section_seen = true; "runtime" }
                 _                      => "",  // ignore other sections
             }.to_string();
@@ -401,6 +612,21 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                     "c_shims"      => ffi_c_shims = parse_toml_string_array(raw_val),
                     "include_dirs" => ffi_include_dirs = parse_toml_string_array(raw_val),
                     "libs"         => ffi_libs = parse_toml_string_array(raw_val),
+                    _ => {} // ignore unknown keys для forward-compat
+                }
+                continue;
+            }
+            // Plan 192: [ffi.staticlib] section — собираемый native-статик-либ.
+            if section == "ffi.staticlib" {
+                match key {
+                    "kind"  => ffi_sl_kind = Some(str_val),
+                    "path"  => ffi_sl_path = Some(str_val),
+                    "lib"   => ffi_sl_lib = Some(str_val),
+                    "build" => ffi_sl_build = Some(str_val),
+                    "link"  => ffi_sl_link = parse_toml_string_array(raw_val),
+                    "link_windows" => ffi_sl_link_windows = parse_toml_string_array(raw_val),
+                    "link_unix"    => ffi_sl_link_unix = parse_toml_string_array(raw_val),
+                    "cache" => ffi_sl_cache = Some(str_val),
                     _ => {} // ignore unknown keys для forward-compat
                 }
                 continue;
@@ -446,10 +672,26 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     // секция [ffi] явно присутствует (даже с пустыми arrays — explicit
     // intent сигнализирует "FFI-aware package но shim'ы ещё не declared").
     let ffi = if ffi_section_seen {
+        // Plan 192: собрать [ffi.staticlib] только если подсекция явно была.
+        let staticlib = if ffi_sl_section_seen {
+            Some(FfiStaticlibConfig {
+                kind: ffi_sl_kind.unwrap_or_default(),
+                path: ffi_sl_path.unwrap_or_default(),
+                lib: ffi_sl_lib.unwrap_or_default(),
+                build: ffi_sl_build.unwrap_or_default(),
+                link: ffi_sl_link,
+                link_windows: ffi_sl_link_windows,
+                link_unix: ffi_sl_link_unix,
+                cache: ffi_sl_cache,
+            })
+        } else {
+            None
+        };
         Some(FfiConfig {
             c_shims: ffi_c_shims,
             include_dirs: ffi_include_dirs,
             libs: ffi_libs,
+            staticlib,
         })
     } else {
         None
@@ -1072,6 +1314,113 @@ mod parse_tests {
     fn dep_forbid_absent_empty() {
         assert!(parse_dep_forbid("{ path = \"../foo\" }").is_empty());
         assert!(parse_dep_forbid("\"1.2\"").is_empty());
+    }
+
+    // ── Plan 192: [ffi.staticlib] parse + resolve ────────────────────────
+
+    /// `[ffi.staticlib]` парсится в FfiStaticlibConfig; `[ffi]` без под-секции
+    /// staticlib даёт None (обратная совместимость c Plan 115).
+    #[test]
+    fn ffi_staticlib_parsed() {
+        let (path, dir) = write_toml(
+            "ffi_sl",
+            "[package]\nname = \"tls\"\n[ffi]\nlibs = [\"z\"]\n\
+             [ffi.staticlib]\nkind = \"rust-staticlib\"\npath = \"native/tls_shim\"\n\
+             lib = \"nova_tls_shim\"\nbuild = \"cargo build --release\"\n\
+             link_windows = [\"bcrypt\", \"ntdll\"]\ncache = \"target/native-cache/tls\"\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let ffi = m.ffi.expect("[ffi] present");
+        assert_eq!(ffi.libs, vec!["z".to_string()]);
+        let sl = ffi.staticlib.expect("[ffi.staticlib] present");
+        assert_eq!(sl.kind, "rust-staticlib");
+        assert_eq!(sl.path, "native/tls_shim");
+        assert_eq!(sl.lib, "nova_tls_shim");
+        assert_eq!(sl.build, "cargo build --release");
+        assert_eq!(sl.link_windows, vec!["bcrypt".to_string(), "ntdll".to_string()]);
+        assert_eq!(sl.cache.as_deref(), Some("target/native-cache/tls"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `[ffi]` без `[ffi.staticlib]` → staticlib = None (Plan 115 не сломан).
+    #[test]
+    fn ffi_without_staticlib_none() {
+        let (path, dir) = write_toml(
+            "ffi_no_sl",
+            "[package]\nname = \"x\"\n[ffi]\nc_shims = [\"a.c\"]\n",
+        );
+        let m = parse_manifest(&path, &dir).expect("parse");
+        let ffi = m.ffi.expect("[ffi] present");
+        assert!(ffi.staticlib.is_none());
+        assert_eq!(ffi.c_shims, vec!["a.c".to_string()]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Незнакомый `kind` → резолвер отвергает (forward-compat no-op), не паникует.
+    #[test]
+    fn ffi_staticlib_unknown_kind_none() {
+        let cfg = FfiStaticlibConfig {
+            kind: "make-c".to_string(),
+            path: "native/foo".to_string(),
+            lib: "foo".to_string(),
+            build: "make".to_string(),
+            ..Default::default()
+        };
+        assert!(resolve_ffi_staticlib(&cfg, Path::new("/tmp")).is_none());
+    }
+
+    /// Пустой `lib`/`path` → None (нечего резолвить).
+    #[test]
+    fn ffi_staticlib_empty_fields_none() {
+        let cfg = FfiStaticlibConfig {
+            kind: "rust-staticlib".to_string(),
+            ..Default::default()
+        };
+        assert!(resolve_ffi_staticlib(&cfg, Path::new("/tmp")).is_none());
+    }
+
+    /// Свежий cache-артефакт резолвится напрямую (без сборки); `link` собирает
+    /// общий + платформенный набор.
+    #[test]
+    fn ffi_staticlib_resolves_fresh_cache() {
+        use std::io::Write;
+        let root = std::env::temp_dir().join(format!("nova_ffi_sl_{}", std::process::id()));
+        let crate_dir = root.join("native/tls_shim");
+        let src_dir = crate_dir.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::File::create(crate_dir.join("Cargo.toml")).unwrap()
+            .write_all(b"[package]\nname=\"x\"\n").unwrap();
+        std::fs::File::create(src_dir.join("lib.rs")).unwrap()
+            .write_all(b"pub fn f() {}\n").unwrap();
+        // Cache lib newer than sources → fresh.
+        let cache_dir = root.join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        let lib_name = staticlib_file_name("nova_tls_shim");
+        let cache_lib = cache_dir.join(&lib_name);
+        // Создаётся ПОСЛЕ источников → mtime заведомо >= → staticlib_is_fresh=true.
+        std::fs::File::create(&cache_lib).unwrap().write_all(b"x").unwrap();
+
+        let cfg = FfiStaticlibConfig {
+            kind: "rust-staticlib".to_string(),
+            path: "native/tls_shim".to_string(),
+            lib: "nova_tls_shim".to_string(),
+            build: "cargo build --release".to_string(),
+            link: vec!["common".to_string()],
+            link_windows: vec!["bcrypt".to_string()],
+            link_unix: vec!["dl".to_string()],
+            cache: Some("cache".to_string()),
+        };
+        let r = resolve_ffi_staticlib(&cfg, &root).expect("resolve fresh cache");
+        assert_eq!(r.lib_file, cache_lib);
+        assert!(r.link.contains(&"common".to_string()));
+        if cfg!(target_os = "windows") {
+            assert!(r.link.contains(&"bcrypt".to_string()));
+            assert!(!r.link.contains(&"dl".to_string()));
+        } else {
+            assert!(r.link.contains(&"dl".to_string()));
+            assert!(!r.link.contains(&"bcrypt".to_string()));
+        }
+        std::fs::remove_dir_all(&root).ok();
     }
 
     // ── Plan 172.1 U.1.1: resolve_std_path ───────────────────────────────
