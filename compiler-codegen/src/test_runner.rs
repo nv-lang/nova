@@ -1046,6 +1046,33 @@ fn c_file_uses_tls(c_file: &Path) -> bool {
     false
 }
 
+/// Plan 192: generic form of `c_file_uses_tls` — true iff the generated `.c`
+/// references ANY of `needles` (substrings of the native module's exported
+/// C symbols, from `[ffi.staticlib].trigger_symbols`) on a non-static-prototype
+/// line. Drives the conditional link for arbitrary native modules (e.g. the
+/// `nova-tls` showcase). Empty `needles` → false (caller uses the legacy tls
+/// marker instead). Mirrors the static-proto skip of `c_file_uses_tls`.
+fn c_file_uses_any_symbol(c_file: &Path, needles: &[String]) -> bool {
+    if needles.is_empty() {
+        return false;
+    }
+    let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
+    for line in src.lines() {
+        if !needles.iter().any(|n| line.contains(n.as_str())) {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("static ") {
+            let end = line.trim_end();
+            if end.ends_with(");") || end.ends_with('{') {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
 /// True iff the generated `.c` actually CALLS the brotli decoder wrapper — the
 /// precise "does this CU use brotli?" test that drives the conditional link.
 ///
@@ -1147,7 +1174,23 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     // TlsError.Internal at runtime, never a link error). Mutually exclusive
     // branches — no symbol clash.
     let rt_tls_stub = opts.rt_dir.join("tls_stub.c");
-    let uses_tls = c_file_uses_tls(opts.c_file);
+    // Plan 192: the conditional-link TRIGGER (does this CU use the native
+    // module?) is manifest-driven when `[ffi.staticlib].trigger_symbols` is
+    // declared (generic — any native module, e.g. the `nova-tls` showcase with
+    // `nova_tls_demo_*` symbols), else falls back to the legacy tls-specific
+    // marker (`tls_client_cfg_new`/`tls_server_cfg_new`) so monorepo std/tls
+    // keeps its exact behaviour. This closes the last tls-specific hardcode in
+    // the conditional-link path.
+    let uses_tls = {
+        let triggers = opts.ffi
+            .and_then(|f| f.staticlib.as_ref())
+            .map(|sl| sl.trigger_symbols.as_slice())
+            .filter(|t| !t.is_empty());
+        match triggers {
+            Some(t) => c_file_uses_any_symbol(opts.c_file, t),
+            None => c_file_uses_tls(opts.c_file),
+        }
+    };
     // Plan 192: resolve the TLS staticlib GENERICALLY from the package manifest
     // `[ffi.staticlib]` first (path/build/link declared in nova.toml, not
     // hardcoded here), and only fall back to the legacy `detect_tls` hardcode

@@ -214,6 +214,16 @@ pub struct FfiStaticlibConfig {
     /// собранный артефакт — быстрый путь на последующих сборках. Пусто →
     /// используется только `path/target/release/<lib>`.
     pub cache: Option<String>,
+    /// **Триггеры условной линковки** (Plan 192): подстроки C-символов,
+    /// присутствие которых в сгенерированном `.c` означает «этот CU использует
+    /// native-модуль» → staticlib добавляется в линк-строку. Иначе CU, не
+    /// трогающий модуль, ничего лишнего не линкует (класс brotli/tls D337).
+    ///
+    /// Обычно — префикс экспортируемых шимом символов, напр.
+    /// `trigger_symbols = ["nova_tls_demo_"]`. Пусто → используется дефолтный
+    /// tls-детект (`tls_client_cfg_new`/`tls_server_cfg_new`) для обратной
+    /// совместимости с монорепо std/tls.
+    pub trigger_symbols: Vec<String>,
 }
 
 /// Plan 192: разрешённый (пути абсолютны) `[ffi.staticlib]` — то, что билд-
@@ -552,6 +562,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let mut ffi_sl_link_windows: Vec<String> = Vec::new();
     let mut ffi_sl_link_unix: Vec<String> = Vec::new();
     let mut ffi_sl_cache: Option<String> = None;
+    let mut ffi_sl_trigger_symbols: Vec<String> = Vec::new();
     let mut ffi_sl_section_seen: bool = false;
     // Plan 149 D233: [runtime] config.
     let mut runtime_fiber_stack: Option<String> = None;
@@ -627,6 +638,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                     "link_windows" => ffi_sl_link_windows = parse_toml_string_array(raw_val),
                     "link_unix"    => ffi_sl_link_unix = parse_toml_string_array(raw_val),
                     "cache" => ffi_sl_cache = Some(str_val),
+                    "trigger_symbols" => ffi_sl_trigger_symbols = parse_toml_string_array(raw_val),
                     _ => {} // ignore unknown keys для forward-compat
                 }
                 continue;
@@ -683,6 +695,7 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
                 link_windows: ffi_sl_link_windows,
                 link_unix: ffi_sl_link_unix,
                 cache: ffi_sl_cache,
+                trigger_symbols: ffi_sl_trigger_symbols,
             })
         } else {
             None
@@ -1327,7 +1340,8 @@ mod parse_tests {
             "[package]\nname = \"tls\"\n[ffi]\nlibs = [\"z\"]\n\
              [ffi.staticlib]\nkind = \"rust-staticlib\"\npath = \"native/tls_shim\"\n\
              lib = \"nova_tls_shim\"\nbuild = \"cargo build --release\"\n\
-             link_windows = [\"bcrypt\", \"ntdll\"]\ncache = \"target/native-cache/tls\"\n",
+             link_windows = [\"bcrypt\", \"ntdll\"]\ncache = \"target/native-cache/tls\"\n\
+             trigger_symbols = [\"nova_tls_demo_\"]\n",
         );
         let m = parse_manifest(&path, &dir).expect("parse");
         let ffi = m.ffi.expect("[ffi] present");
@@ -1339,6 +1353,7 @@ mod parse_tests {
         assert_eq!(sl.build, "cargo build --release");
         assert_eq!(sl.link_windows, vec!["bcrypt".to_string(), "ntdll".to_string()]);
         assert_eq!(sl.cache.as_deref(), Some("target/native-cache/tls"));
+        assert_eq!(sl.trigger_symbols, vec!["nova_tls_demo_".to_string()]);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1409,6 +1424,7 @@ mod parse_tests {
             link_windows: vec!["bcrypt".to_string()],
             link_unix: vec!["dl".to_string()],
             cache: Some("cache".to_string()),
+            trigger_symbols: vec!["nova_tls_shim_".to_string()],
         };
         let r = resolve_ffi_staticlib(&cfg, &root).expect("resolve fresh cache");
         assert_eq!(r.lib_file, cache_lib);
