@@ -1,0 +1,152 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/civil_arith_test.nv — Plan 175.1 Ф.2: Period + calendar-
+// арифметика (D320, Q7 CLAMP biggest-unit-first, D317 3-tier).
+
+module time.civil
+
+import std.time.duration
+
+
+// ── Period: конструкторы, компоненты, ISO ──
+
+test "Period: конструкторы + компоненты (§21б new + дефолты)" {
+    ro p = Period.new(years: 1, months: 2, days: 3)
+    assert(p.years() == 1 && p.months() == 2 && p.days() == 3)
+    ro m = Period.new(months: 18)
+    assert(m.years() == 0 && m.months() == 18 && m.days() == 0)
+    assert(Period.of_days(5).days() == 5)
+    assert(Period.of_years(2).years() == 2)
+    assert(Period.from_weeks(2).days() == 14)
+    assert(Period.zero().is_zero())
+}
+
+test "Period: plus/minus/neg покомпонентно" {
+    ro a = Period.new(years: 1, months: 2, days: 3)
+    ro b = Period.new(months: 1, days: 10)
+    ro s = a.plus(b)
+    assert(s.years() == 1 && s.months() == 3 && s.days() == 13)
+    ro d = a.minus(b)
+    assert(d.years() == 1 && d.months() == 1 && d.days() == -7)
+    ro n = a.neg()
+    assert(n.years() == -1 && n.months() == -2 && n.days() == -3)
+}
+
+test "Period @normalize: months<->years ТОЛЬКО, дни не сворачиваются" {
+    ro p = Period.new(months: 18, days: 40).normalize()
+    assert(p.years() == 1 && p.months() == 6)
+    assert(p.days() == 40)   // 40 дней НЕ стали месяцем
+    ro q = Period.new(years: 2, months: -3).normalize()   // 24-3 = 21mo → 1y 9mo
+    assert(q.years() == 1 && q.months() == 9)
+}
+
+test "Period: структурное == (1y != 12mo без normalize)" {
+    assert(Period.of_years(1) != Period.of_months(12))
+    assert(Period.of_months(12).normalize() == Period.of_years(1))
+    assert(Period.new(years: 1, months: 2, days: 3) == Period.new(years: 1, months: 2, days: 3))
+}
+
+test "Period @to_iso: PnYnMnD" {
+    assert(Period.new(years: 1, months: 2, days: 3).to_iso() == "P1Y2M3D")
+    assert(Period.of_days(7).to_iso() == "P7D")
+    assert(Period.zero().to_iso() == "P0D")
+    assert(Period.new(months: -1).to_iso() == "P-1M")
+}
+
+
+// ── Date + Period: CLAMP biggest-unit-first (Q7) ──
+
+test "feb_clamp: Jan31 + 1mo = Feb28 (Feb29 в високосный)" {
+    assert(Date.new(2026, Jan, 31)!! + Period.of_months(1) == Date.new(2026, Feb, 28)!!)
+    assert(Date.new(2024, Jan, 31)!! + Period.of_months(1) == Date.new(2024, Feb, 29)!!)
+    assert(Date.new(2026, Mar, 31)!! + Period.of_months(1) == Date.new(2026, Apr, 30)!!)
+}
+
+test "biggest-unit-first: years→months clamp, затем days exact" {
+    // 2024-02-29 + 1y: сначала год (2025-02-29 → clamp 2025-02-28), дни нет
+    assert(Date.new(2024, Feb, 29)!! + Period.of_years(1) == Date.new(2025, Feb, 28)!!)
+    // 2026-01-31 + P1M1D: Jan31+1mo → Feb28 (clamp), +1d → Mar01
+    assert(Date.new(2026, Jan, 31)!! + Period.new(months: 1, days: 1) == Date.new(2026, Mar, 1)!!)
+    // Порядок фиксирован: НЕ (Jan31+1d=Feb1, +1mo=Mar1) — совпало бы, но
+    // контр-пример: 2026-02-28 + P1M1D = Mar28+1d=Mar29 (не Apr1)
+    assert(Date.new(2026, Feb, 28)!! + Period.new(months: 1, days: 1) == Date.new(2026, Mar, 29)!!)
+}
+
+test "month-add через границу года + отрицательные периоды" {
+    assert(Date.new(2026, Nov, 15)!! + Period.of_months(3) == Date.new(2027, Feb, 15)!!)
+    assert(Date.new(2026, Mar, 31)!! - Period.of_months(1) == Date.new(2026, Feb, 28)!!)
+    assert(Date.new(2026, Jan, 15)!! - Period.of_months(1) == Date.new(2025, Dec, 15)!!)
+    assert(Date.new(2026, Jul, 10)!! + Period.of_days(-10) == Date.new(2026, Jun, 30)!!)
+}
+
+test "non-invertible fixture (документированное свойство clamp)" {
+    ro jan31 = Date.new(2026, Jan, 31)!!
+    ro roundtrip = (jan31 + Period.of_months(1)) - Period.of_months(1)
+    assert(roundtrip == Date.new(2026, Jan, 28)!!)   // НЕ Jan31!
+    assert(roundtrip != jan31)
+}
+
+test "DateTime + Period: календарный сдвиг, wall-time неизменна" {
+    ro dt = Date.new(2026, Jan, 31)!!.at(TimeOfDay.new(14, 30)!!)
+    ro dt2 = dt + Period.of_months(1)
+    assert(dt2.date() == Date.new(2026, Feb, 28)!!)
+    assert(dt2.hour() == 14 && dt2.minute() == 30)   // время не тронуто
+    ro dt3 = dt2 - Period.of_days(28)
+    assert(dt3.date() == Date.new(2026, Jan, 31)!!)
+}
+
+
+// ── 3-tier (D317): try_* → Result, saturating_* → clamp ──
+
+test "try_plus/try_minus: Ok в диапазоне, RangeOverflow за границей" {
+    ro d = Date.new(2026, Jul, 10)!!
+    assert(d.try_plus(Period.of_days(1))!! == Date.new(2026, Jul, 11)!!)
+    // Год за max_year → RangeOverflow
+    assert(match Date.max_value().try_plus(Period.of_years(1)) {
+        Err(RangeOverflow(_)) => true
+        _ => false
+    })
+    assert(match Date.min_value().try_minus(Period.of_days(1)) {
+        Err(RangeOverflow(_)) => true
+        _ => false
+    })
+    // DateTime-делегаты
+    ro dt = Date.new(2026, Jul, 10)!!.at_midnight()
+    assert(dt.try_plus(Period.of_months(1)).is_ok())
+    assert(!Date.max_value().at_midnight().try_plus(Period.of_years(1)).is_ok())
+}
+
+test "saturating_plus/minus: clamp к min/max вместо trap" {
+    assert(Date.max_value().saturating_plus(Period.of_years(5)) == Date.max_value())
+    assert(Date.min_value().saturating_minus(Period.of_days(5)) == Date.min_value())
+    // В диапазоне — обычная арифметика
+    ro d = Date.new(2026, Jul, 10)!!
+    assert(d.saturating_plus(Period.of_days(1)) == Date.new(2026, Jul, 11)!!)
+}
+
+
+// ── Period.between / Date @minus(Date) ──
+
+test "Period.between: biggest-unit-first calendar-diff" {
+    ro p = Period.between(Date.new(2024, Jan, 15)!!, Date.new(2026, Mar, 20)!!)
+    assert(p.years() == 2 && p.months() == 2 && p.days() == 5)
+    // Инвариант start + between == end
+    assert(Date.new(2024, Jan, 15)!! + p == Date.new(2026, Mar, 20)!!)
+}
+
+test "Period.between: неполный месяц откатывается" {
+    ro p = Period.between(Date.new(2026, Jan, 31)!!, Date.new(2026, Mar, 1)!!)
+    // Jan31 + 1mo = Feb28 (clamp) ≤ Mar1 → 1mo + 1d
+    assert(p.years() == 0 && p.months() == 1 && p.days() == 1)
+    assert(Date.new(2026, Jan, 31)!! + p == Date.new(2026, Mar, 1)!!)
+}
+
+test "Period.between: отрицательная разность + zero" {
+    ro p = Period.between(Date.new(2026, Mar, 20)!!, Date.new(2024, Jan, 15)!!)
+    assert(p.years() == -2 && p.months() == -2 && p.days() == -5)
+    assert(Period.between(Date.new(2026, Jul, 10)!!, Date.new(2026, Jul, 10)!!).is_zero())
+}
+
+test "exact-дни: @days_until (operator Date-Date не введён, см. period.nv)" {
+    assert(Date.new(2026, Jan, 1)!!.days_until(Date.new(2026, Feb, 1)!!) == 31)
+    assert(Date.new(2026, Feb, 1)!!.days_until(Date.new(2026, Jan, 1)!!) == -31)
+}

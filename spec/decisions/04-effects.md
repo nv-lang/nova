@@ -6569,6 +6569,75 @@ Silent two's-complement wrap на ±292y — это ровно Go-ловушка
 
 HW/VM/OS могут дать кажущийся регресс монотонных часов; паниковать на hot-path (retry-budgets, deadlines) недопустимо, лочить (Rust 1.60-saga) — тоже. Saturate-to-zero + `checked_*`-эскейп = стабильный, lock-free, negative-free контракт. Раздельные типы (D124) + non-serializable Monotonic закрывают Go-footgun (`m=…` течёт в `String()`).
 
+## D319 — Civil-time модель: type-ladder Plain/Offset/Zoned + proleptic Gregorian + epoch-day repr (Plan 175.1 Ф.0/Ф.1, 2026-07-10)
+
+**Source:** Plan [175.1](../../docs/plans/175.1-civil-time.md), Ф.0/Ф.1/Ф.3. **Amends:** ничего (аддитивный слой поверх D316-318). **Реализация:** `std/time/civil/` — folder-module `time.civil` (чистый `.nv`; codegen не тронут).
+
+**Статус:** ✅ ACTIVE.
+
+### Правило
+
+- **(R1) Type-ladder — нормативный инвариант.** `Date`/`TimeOfDay`/`DateTime` (**Plain** — нет зоны, *неоднозначны*, НЕ точка на временнóй оси) → `Offset`/`ZonedDateTime` с `zone=Fixed`/`Utc` (**Offset** — точка, фикс. сдвиг, без DST-правил) → `ZonedDateTime` с `zone=Iana` (**Zoned** — точка, IANA-rule-aware). Plain → `Timestamp` **только** через явный `Offset`/`TimeZone` + `Disambiguation`, и это **fallible** (`Result[Timestamp, DateError]`/`Result[ZonedDateTime, DateError]`). Нет неявного дефолта зоны — компилятор не подставляет «локальную» зону молча.
+- **(R2) Value-records, immutable.** `type Date value { ro epoch_day i64 }`, `TimeOfDay value { ro nanos_of_day i64 }`, `DateTime value { ro date Date, ro time TimeOfDay }`, `Offset value { ro seconds i32 }` (±64800, ±18h), `ZonedDateTime value { ro dt DateTime, ro offset Offset, ro zone TimeZone }`, `YearMonth value { ro year i32, ro month i32 }`, `MonthDay value { ro month i32, ro day i32 }`. Stack, zero-GC, structural `==` (D183 `@compare`).
+- **(R3) Proleptic Gregorian ONLY (Q10).** year 0 = 1 BCE, отрицательные годы допустимы. Non-Gregorian (Japanese/Hijrah/…) — design-reject, вне scope, без `Chronology`.
+- **(R4) Epoch-day repr + Hinnant-алгоритм.** `Date.epoch_day` — дни от 1970-01-01, branch-light `days_from_civil`/`civil_from_days` (Howard Hinnant, overflow-safe; идентично chrono). Leap: `÷4 кроме веков, если не ÷400`. `day_of_week` — по модулю epoch_day.
+- **(R5) Range/overflow → Result, never silent (Q4/Q6).** `Date.new(y,m,d) -> Result[Date, DateError]` — validate-by-default, НИКОГДА не нормализует молча (`Date.new(2024,Feb,30)` → `Err(InvalidField(...))`). Явный opt-in `Date.from_normalized(y,m,d) -> Date` — единственный normalize-путь. Civil↔Timestamp вне ±292y окна (наследует Timestamp-окно D317) → `Err(RangeOverflow(...))`; MIN/MAX civil подобраны так, что `Timestamp+Offset→civil` **инфаллибельно** (Err только civil→Timestamp).
+- **(R6) Leap-seconds ignore (Q5).** День=86400s, минута=60s, `second` 0..59. Parse `:60` → clamp к `:59` (унаследовано из строгого канона 175 «день=86400s»).
+- **(R7) `TimeZone` — sum-type, не flat value.** `type TimeZone enum Utc | Fixed(Offset) | Iana(IanaZone)` — `Utc`/`Fixed` value-weight (нет DST); `Iana` несёт `IanaZone` (reference-тип, handle к transition-таблице, Ф.4/D321). `OffsetDateTime` отдельным типом НЕ вводится (jiff-подход) — `ZonedDateTime{zone: Fixed(_)}` покрывает.
+
+### Почему
+
+Единый flat `time.Time`+`*Location` (Go) прячет «wall-clock как момент» баг в рантайме — компилятор не различает Plain/Zoned. java.time/Temporal/kotlinx разделяют явно; Nova делает то же через value-records (дешевле heap-объектов Java) + fallible-конструкторы (не throw/NaN).
+
+## D320 — `Period` (календарный y/m/d) ≠ `Duration` (ns) + DateBased/TimeBased-разделение (Plan 175.1 Ф.2, 2026-07-10)
+
+**Source:** Plan 175.1, Ф.2. **Amends:** ничего (Duration — D316/D317 не меняются). **Реализация:** `std/time/civil/period.nv`.
+
+**Статус:** ✅ ACTIVE.
+
+### Правило
+
+- **(R1) Два тип-различных amount, без неявной коэрсии.** `Duration` (точный `i64`-ns, из 175) и `Period value { ro years i32, ro months i32, ro days i32 }` (календарный). Нет implicit-conversion между ними.
+- **(R2) Enforcement на уровне типов приёма.** `Date` принимает только `Period` (`@plus(Period)`/`@minus(Period)`), **отвергает** `Duration` — «add hours to a Date» = **compile-error** (нет перегрузки `Date @plus(Duration)`, отсутствие метода = отказ на этапе резолва). `TimeOfDay` — наоборот, принимает только `Duration`. `DateTime`/`ZonedDateTime` принимают оба (раздельные перегрузки), с разной семантикой (R4).
+- **(R3) Calendar-арифметика — CLAMP biggest-unit-first (Q7).** month/year-add: сначала years→months (clamp к длине результирующего месяца — `Jan31+1mo` → `Feb28`/`Feb29`), затем days (exact, через epoch-day). `checked_plus`/`checked_minus` → `Result`; `saturating_plus`/`saturating_minus` → clamp к `Date.MIN`/`MAX`; голый `@plus`/`@minus` (`+`/`-` операторы) — **trap-on-overflow** (наследует D317, НЕ wrap). `Period.normalize()` схлопывает months↔years (12mo→1y), **days НИКОГДА не сворачиваются** (calendar length varies).
+- **(R4) Wall-vs-elapsed асимметрия (DateTime/ZonedDateTime).** `dt.plus(Period{days:1})` — календарный сдвиг (та же wall-time; через DST у Zoned даёт 23ч/25ч elapsed). `dt.plus(Duration.from_hours(24))` — точный elapsed-сдвиг (может сдвинуть wall-time через DST-границу). Документируется как non-invertible/non-associative в общем случае (`d.plus(p).minus(p) != d` возможен на clamp-границах — напр. `Jan31.plus(1mo).minus(1mo) == Feb28`, не `Jan31`).
+- **(R5) `Period.between(Date, Date) -> Period`** — calendar-diff (years/months/days biggest-unit-first); exact-дни — `@days_until(Date) -> int`. Operator-форма `Date - Date` ретрактирована реализацией (`[M-175.1-minus-overload-arg-type]`, см. D321 §impl-отступления).
+
+### Почему
+
+Temporal (единая `Duration`) узнаёт «календарная она или нет» только в рантайме (`RangeError`); Go вообще не имеет `Period` (3 голых int в `AddDate`, order-dependent overflow, golang#71334). Type-separated приём делает ошибку класса «add hours to a Date» **compile-time**, не рантайм.
+
+## D321 — DST `Disambiguation` (4-way) + `OffsetConflict` + parse-strictness + структурные `DateError`/`ParseDateTimeError` + IANA tz-db (Plan 175.1 Ф.3/Ф.4/Ф.5, 2026-07-10)
+
+**Source:** Plan 175.1, Ф.3 (Offset/Fixed/Zoned) + Ф.4 (IANA) + Ф.5 (parse-strictness). **Amends:** ничего. **Реализация:** `std/time/civil/{offset,zoned,tz,tzif,parse,format}.nv`.
+
+**Статус:** ✅ ACTIVE (Ф.3/Ф.5 — полностью; Ф.4 IANA — **реализовано с задокументированным сужением данных**, см. §tzdb ниже).
+
+### Правило
+
+- **(R1) `Disambiguation` — 4-way Result-значение, default `Compatible` (Q8).** `type Disambiguation enum Compatible | Earlier | Later | Reject`. Gap (spring-forward, wall-time не существует) → `Compatible`: push-forward на длину gap (after-offset); `Reject` → `Err(Ambiguous(...))`. Overlap (fall-back, wall-time существует дважды) → `Compatible`: earlier-offset; `Earlier`/`Later` — явный выбор. Ambiguity surface как значение (`is_gap`/`is_overlap` на промежуточном resolve-результате), не exception — превосходит java.time (только earlier/later вручную), Go/kotlinx (silent), chrono (`None` путает gap с load-error).
+- **(R2) `OffsetConflict` — 4-way, default `RejectMismatch` (Q9).** `type OffsetConflict enum RejectMismatch | Use | Prefer | Ignore` — резолвит рассогласование между offset, сохранённым в parsed-строке, и текущими правилами зоны (post-tzdb-change drift). Только для explicit-offset строк (RFC-9557 `[zone]`-bracket с offset). **Амендмент имени (реализация 2026-07-10):** jiff/Temporal-имя `Reject` коллидировало с `Disambiguation.Reject` — пространство имён вариантов флоское, а qualified `Enum.Variant` как значение — ICE `[M-175.1-qualified-variant-value]` → вариант `RejectMismatch` (`[M-175.1-variant-name-collision]`). Дефолт применяется arity-split-перегрузкой (`s.to_zoned_datetime()` / `s.to_zoned_datetime(conflict)`, прецедент D324 `env(k)`/`env(k,v)`; default-значение enum-варианта на call-site не эмитится — `[M-175.1-enum-default-param]`).
+- **(R3) Parse-strictness — STRICT by default (Q9).** Reject Feb-30/out-of-range/missing-parts/zoned-строка-без-`[zone]`-bracket. Lenient — отдельный opt-in-параметр. «parses» == «constructs» (закрывает java.time SMART-trap, где `parse` тише `of`).
+- **(R4) Структурные ошибки.** `type DateError enum InvalidField(FieldKind, i64, i64, i64) | RangeOverflow(str) | Ambiguous(str) | UnknownZone(str) | BadTzData(str)` (последние два — tz-загрузка Ф.4); `type ParseDateTimeError enum FormatMismatch(int, str) | InvalidValue(int, FieldKind, i64)`; `type FieldKind enum Year | Month | Day | Hour | Minute | Second | Nano | OffsetSec | Weekday`. Нет default-panicking конструктора нигде в civil-API.
+- **(R5) `Utc`/`Fixed` — always unambiguous.** Нет DST-правил → `Disambiguation` не активируется (gap/overlap невозможны by construction).
+- **(R6) IANA tz-db (Ф.4, §tzdb).** `type IanaZone { ro id str, ro rules ZoneRules }` (reference-запись); загрузка по имени — §1а-конверсия на источнике **`s.to_timezone() -> Result[TimeZone, DateError]`** (`TimeZone.try_from` из черновика ретрактирован каноном 174.1 «конверсия — метод на источнике»); плюс `TimeZone.from_tzif(id, bytes)` (raw-TZif) и `load_timezone(name) Fs Os` (OS-first). Именованные зоны дают **реальный** gap/overlap → 4-way `Disambiguation` (R1) работает не вхолостую.
+
+### §tzdb — источник данных (задокументированное сужение, Ф.4)
+
+Полный layered-model (OS-tzdata-first TZif-parser + `$ZONEINFO` override) **реализован** в `std/time/civil/tzif.nv` (бинарный RFC-8536 TZif v1/v2/v3 parser поверх `std.fs`; `load_timezone(name) Fs Os`: `$ZONEINFO`-override → `/usr/share/zoneinfo/<name>` (POSIX) → embedded). **Embedded-fallback** (обязателен на Windows — нет `/usr/share/zoneinfo`) реализован как **rule-based таблица** (`std/time/civil/tz.nv`) для curated-списка зон (`Utc`+алиасы, фикс-оффсеты `±HH:MM[:SS]`, `America/New_York`, `Europe/London`, `Europe/Moscow`, `Australia/Sydney` — транзишены генерируются из современных правил на 1996..2100, реальный spring-forward/fall-back), а **не** полный скомпилированный ~450KB IANA-snapshot (акт данных — задача упаковки/дистрибуции, не архитектуры; полный snapshot — follow-up `[M-175.1-full-tzdb-embed]`). `tzdb_version() -> str` возвращает версию curated-таблицы (`"nova-curated-2026a"`). Футер-строка POSIX-TZ (правила за последним переходом) не интерпретируется — за пределами таблицы действует последний сдвиг (документировано).
+
+### Почему
+
+4-way `Disambiguation`+`OffsetConflict` как значения (не throw/silent) — отличие от всех пяти peers одновременно (см. Plan 175.1 §2 таблица). Rule-based embedded-fallback — прагматичный компромисс: полный TZif-парсер работает по архитектуре (эксплуатируется на POSIX, где `/usr/share/zoneinfo` реально есть), embedded-таблица даёт корректный современный DST для тестируемых зон без версионирования полного snapshot-датасета в этой волне.
+
+### §impl-отступления (реализация 2026-07-10, все с маркерами)
+
+- `Time.local_offset() -> Offset` эффект-оп НЕ поставлен: требует слот в `NovaVtable_Time` (nova_rt/effects.h — компилятор-зона, параллельные волны в emit_c) — `[M-175.1-local-offset-effect-op]`; неявной локальной зоны и так нет (D319 R1), зона передаётся явно.
+- Операторная форма `Date - Date -> Period` не введена (`[M-175.1-minus-overload-arg-type]` — overload-резолв оператора слеп к типу аргумента); канон — `Period.between(start, end)` + `@days_until`. По той же причине оператор `d + duration` на Date не отлавливается компилятором (`[M-175.1-operator-arg-type-blind]`) — гейт D320 R2 держит метод-форма (`d.plus(duration)` — compile-error, neg-fixture).
+- `Date.MIN`/`MAX`-консты → static-фны `Date.min_value()`/`max_value()` (чекер-гэп `[M-175-type-const-max-shadows-builtin]` + `[M-175-value-record-const-ref]`); `TimeOfDay.MIDNIGHT` → `TimeOfDay.midnight()`.
+- Интерполяция `"${date}"` value-record'а минует user `@to_str` (`[M-175.1-interp-value-record-display]`, pre-existing класс) — Display-тела корректны, подключение — компилятор-волна.
+- Декларация `DateTime` живёт в `time_of_day.nv` (порядок эмиссии value-record структур лексикографический по файлам, by-value поле требует complete-типа) — `[M-175.1-value-in-value-emit-order]`; методы на variant-литералах (`Sun.next()`) — `[M-175.1-variant-literal-receiver]` (в тестах bound-local ресиверы).
+
 ## D322 — io-core: `io.Read`/`io.Write`/`io.Seek`, `IoError`, `Io` effect (Plan 176 Ф.1, 2026-07-04)
 
 **Статус:** IMPLEMENTED (Ф.1 — io-core; fs=D323 Ф.2 / os=D324 Ф.3 — реализованы). Модуль `std/io`.

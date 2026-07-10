@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/format.nv — кастомный pattern-формат: type-safe builder
+// DSL (Q3) + Display-протоколы civil-типов. Plan 175.1 Ф.5.
+//
+// НЕ strftime-as-primary, НЕ Go reference-layout: паттерн собирается
+// МЕТОДАМИ (компилятор проверяет имена директив), строковых мини-языков нет.
+//
+//   ro f = DateTimeFormat.new().day2().lit(".").month2().lit(".").year4()
+//   f.format(dt)              → "10.07.2026"
+//   "10.07.2026".to_datetime_with(f)  → Result[DateTime, ParseDateTimeError]
+//
+// Optional-секции: @opt_start()/@opt_end() — при формате секция эмитится
+// всегда (все поля значения присутствуют); при парсе — backtrack: если
+// секция не матчится, позиция откатывается и секция пропускается.
+
+module time.civil
+
+
+// Элемент паттерна (module-private; surface — только builder-методы).
+type FmtItem enum
+    | FYear4
+    | FMonth2
+    | FDay2
+    | FHour2
+    | FMinute2
+    | FSecond2
+    | FFrac3
+    | FMonthName
+    | FWeekdayName
+    | FLit(str)
+    | FOptStart
+    | FOptEnd
+
+
+/// Type-safe builder формата даты/времени (Q3). Директивы — методы,
+/// компилятор ловит опечатки на этапе резолва (в отличие от strftime/"2006").
+#stable(since = "0.1")
+export type DateTimeFormat {
+    items []FmtItem
+}
+
+
+/// Пустой формат — наполняется fluent-директивами.
+#stable(since = "0.1")
+export fn DateTimeFormat.new() -> DateTimeFormat => { items: [] }
+
+/// Год, 4+ цифры с нулями (пролептический знак для отрицательных).
+#stable(since = "0.1")
+export fn DateTimeFormat mut @year4() -> @ { @items.push(FYear4) }
+
+/// Месяц, 2 цифры (01..12).
+#stable(since = "0.1")
+export fn DateTimeFormat mut @month2() -> @ { @items.push(FMonth2) }
+
+/// День месяца, 2 цифры (01..31).
+#stable(since = "0.1")
+export fn DateTimeFormat mut @day2() -> @ { @items.push(FDay2) }
+
+/// Час, 2 цифры (00..23).
+#stable(since = "0.1")
+export fn DateTimeFormat mut @hour2() -> @ { @items.push(FHour2) }
+
+/// Минута, 2 цифры.
+#stable(since = "0.1")
+export fn DateTimeFormat mut @minute2() -> @ { @items.push(FMinute2) }
+
+/// Секунда, 2 цифры.
+#stable(since = "0.1")
+export fn DateTimeFormat mut @second2() -> @ { @items.push(FSecond2) }
+
+/// Миллисекунды, ровно 3 цифры.
+#stable(since = "0.1")
+export fn DateTimeFormat mut @frac3() -> @ { @items.push(FFrac3) }
+
+/// Имя месяца ("Jan".."Dec", ASCII; локализация — вне scope, i18n-followup).
+#stable(since = "0.1")
+export fn DateTimeFormat mut @month_name() -> @ { @items.push(FMonthName) }
+
+/// Имя дня недели ("Mon".."Sun").
+#stable(since = "0.1")
+export fn DateTimeFormat mut @weekday_name() -> @ { @items.push(FWeekdayName) }
+
+/// Литерал (разделители).
+#stable(since = "0.1")
+export fn DateTimeFormat mut @lit(s str) -> @ { @items.push(FLit(s)) }
+
+/// Начало optional-секции (parse: backtrack при не-матче).
+#stable(since = "0.1")
+export fn DateTimeFormat mut @opt_start() -> @ { @items.push(FOptStart) }
+
+/// Конец optional-секции.
+#stable(since = "0.1")
+export fn DateTimeFormat mut @opt_end() -> @ { @items.push(FOptEnd) }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Формат
+// ──────────────────────────────────────────────────────────────────────────
+
+fn fmt_pad2(n int) -> str =>
+    if n < 10 { "0" + str.from(n) } else { str.from(n) }
+
+/// Отформатировать plain DateTime по паттерну.
+#stable(since = "0.1")
+export fn DateTimeFormat @format(dt DateTime) -> str {
+    mut out = ""
+    for item in @items {
+        ro piece = match item {
+            FYear4 => format_year(dt.year() as i64),
+            FMonth2 => fmt_pad2(dt.month().number()),
+            FDay2 => fmt_pad2(dt.day() as int),
+            FHour2 => fmt_pad2(dt.hour()),
+            FMinute2 => fmt_pad2(dt.minute()),
+            FSecond2 => fmt_pad2(dt.second()),
+            FFrac3 => {
+                ro ms = (dt.time().nano() / 1_000_000) as int
+                ro base = str.from(ms)
+                base.pad_start(3, '0')
+            }
+            FMonthName => dt.month().to_str(),
+            FWeekdayName => dt.weekday().to_str(),
+            FLit(litv) => litv,
+            FOptStart => "",
+            FOptEnd => "",
+        }
+        out = out + piece
+    }
+    out
+}
+
+/// Отформатировать дату (время-директивы дают 00 полночи).
+#stable(since = "0.1")
+export fn DateTimeFormat @format_date(d Date) -> str => @format(d.at_midnight())
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Parse по паттерну
+// ──────────────────────────────────────────────────────────────────────────
+
+// Промежуточные поля разбора.
+type FmtFields {
+    year i64
+    month i64
+    day i64
+    hour i64
+    minute i64
+    second i64
+    milli i64
+}
+
+fn parse_month_name(s str, pos int) -> Result[(i64, int), ParseDateTimeError] {
+    if pos + 3 > s.byte_len() { return Err(FormatMismatch(pos, "month name")) }
+    ro name = s[pos..pos + 3]
+    mut n = 1
+    while n <= 12 {
+        ro m = match Month.from_number(n) { Ok(x) => x, Err(_) => return Err(FormatMismatch(pos, "month name")) }
+        if m.to_str() == name { return Ok((n as i64, pos + 3)) }
+        n += 1
+    }
+    Err(FormatMismatch(pos, "month name"))
+}
+
+fn parse_weekday_name(s str, pos int) -> Result[int, ParseDateTimeError] {
+    if pos + 3 > s.byte_len() { return Err(FormatMismatch(pos, "weekday name")) }
+    ro name = s[pos..pos + 3]
+    mut n = 1
+    while n <= 7 {
+        ro w = match Weekday.from_number(n) { Ok(x) => x, Err(_) => return Err(FormatMismatch(pos, "weekday name")) }
+        if w.to_str() == name { return Ok(pos + 3) }
+        n += 1
+    }
+    Err(FormatMismatch(pos, "weekday name"))
+}
+
+// Один item на позиции → новая позиция (поля мутируются).
+fn apply_item(item FmtItem, s str, pos int, f mut FmtFields) -> Result[int, ParseDateTimeError] {
+    match item {
+        FYear4 => {
+            mut p = pos
+            mut sign i64 = 1
+            if p < s.byte_len() && s[p..p + 1] == "-" { sign = -1; p += 1 }
+            ro (y, p2) = digits_at(s, p, 4)?
+            f.year = sign * y
+            Ok(p2)
+        }
+        FMonth2 => { ro (v, p) = digits_at(s, pos, 2)?; f.month = v; Ok(p) }
+        FDay2 => { ro (v, p) = digits_at(s, pos, 2)?; f.day = v; Ok(p) }
+        FHour2 => { ro (v, p) = digits_at(s, pos, 2)?; f.hour = v; Ok(p) }
+        FMinute2 => { ro (v, p) = digits_at(s, pos, 2)?; f.minute = v; Ok(p) }
+        FSecond2 => { ro (v, p) = digits_at(s, pos, 2)?; f.second = v; Ok(p) }
+        FFrac3 => { ro (v, p) = digits_at(s, pos, 3)?; f.milli = v; Ok(p) }
+        FMonthName => { ro (v, p) = parse_month_name(s, pos)?; f.month = v; Ok(p) }
+        FWeekdayName => parse_weekday_name(s, pos),
+        FLit(litv) => expect_at(s, pos, litv),
+        FOptStart => Ok(pos),
+        FOptEnd => Ok(pos),
+    }
+}
+
+/// Разобрать строку по паттерну (§1а-форма: `s.to_datetime_with(f)`).
+/// Собранные поля проходят ту же строгую валидацию, что `Date.new`/
+/// `TimeOfDay.new` (Q9: «parses» == «constructs»).
+#stable(since = "0.1")
+export fn str @to_datetime_with(f DateTimeFormat) -> Result[DateTime, ParseDateTimeError] {
+    mut fields FmtFields = { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0, milli: 0 }
+    mut pos = 0
+    ro n = f.items.len()
+    mut i = 0
+    while i < n {
+        ro item = f.items[i]
+        ro is_opt = match item { FOptStart => true, _ => false }
+        if is_opt {
+            // Найти конец секции.
+            mut close = i + 1
+            mut depth = 1
+            while close < n && depth > 0 {
+                match f.items[close] {
+                    FOptStart => { depth += 1 }
+                    FOptEnd => { depth -= 1 }
+                    _ => {}
+                }
+                if depth == 0 { break }
+                close += 1
+            }
+            if close >= n { return Err(FormatMismatch(0, "opt_end in pattern")) }
+            // Попытка: секция целиком; при провале — откат.
+            ro saved = pos
+            mut ok = true
+            mut j = i + 1
+            mut p = pos
+            while j < close {
+                match apply_item(f.items[j], @, p, fields) {
+                    Ok(np) => { p = np }
+                    Err(_) => { ok = false; break }
+                }
+                j += 1
+            }
+            if ok { pos = p } else { pos = saved }
+            i = close + 1
+        } else {
+            pos = apply_item(item, @, pos, fields)?
+            i += 1
+        }
+    }
+    expect_end(@, pos)?
+
+    ro month = match Month.from_number(fields.month as int) {
+        Ok(m) => m,
+        Err(_) => return Err(InvalidValue(0, FieldKind.Month, fields.month)),
+    }
+    ro date = match Date.new(fields.year as i32, month, fields.day as i32) {
+        Ok(d) => d,
+        Err(_) => return Err(InvalidValue(0, FieldKind.Day, fields.day)),
+    }
+    ro sec = if fields.second == 60 { 59 } else { fields.second }   // Q5
+    ro time = match TimeOfDay.new(fields.hour as int, fields.minute as int, s: sec as int, ns: (fields.milli * 1_000_000) as int) {
+        Ok(t) => t,
+        Err(_) => return Err(InvalidValue(0, FieldKind.Hour, fields.hour)),
+    }
+    Ok(date.at(time))
+}
+
+/// Разобрать дату по паттерну (время-директивы допустимы, отбрасываются).
+#stable(since = "0.1")
+export fn str @to_date_with(f DateTimeFormat) -> Result[Date, ParseDateTimeError] =>
+    match @to_datetime_with(f) {
+        Ok(dt) => Ok(dt.date()),
+        Err(e) => Err(e),
+    }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Display (D410/D237): full-datetime @display — закрывает зависимость 175
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Display: ISO-форма.
+#stable(since = "0.1")
+export fn Date @display(mut w Write) -> () { w.write(@to_iso()) }
+
+/// Display: ISO-форма.
+#stable(since = "0.1")
+export fn TimeOfDay @display(mut w Write) -> () { w.write(@to_iso()) }
+
+/// Display: ISO-форма.
+#stable(since = "0.1")
+export fn DateTime @display(mut w Write) -> () { w.write(@to_iso()) }
+
+/// Display: ISO/RFC-9557-форма.
+#stable(since = "0.1")
+export fn ZonedDateTime @display(mut w Write) -> () { w.write(@to_iso()) }
+
+/// Display: ISO PnYnMnD.
+#stable(since = "0.1")
+export fn Period @display(mut w Write) -> () { w.write(@to_iso()) }
+
+/// Display: Z / ±HH:MM[:SS].
+#stable(since = "0.1")
+export fn Offset @display(mut w Write) -> () { w.write(@to_iso()) }
+
+/// Display: RFC-3339 UTC — full-datetime вид `Timestamp` (закрывает
+/// зависимость 175: больше не сырое число наносекунд).
+#stable(since = "0.1")
+export fn Timestamp @display(mut w Write) -> () { w.write(@to_rfc3339()) }

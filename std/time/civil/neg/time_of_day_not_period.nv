@@ -1,0 +1,13 @@
+// Plan 175.1 Ф.2 (D320 R2) — обратная сторона split'а: `TimeOfDay`
+// принимает ТОЛЬКО `Duration`; перегрузки `TimeOfDay @plus(Period)` НЕТ.
+//
+// EXPECT_COMPILE_ERROR
+
+module neg.time_of_day_not_period
+
+import std.time.civil
+
+test "time_of_day.plus(period) — type-error (D320)" {
+    ro t = TimeOfDay.new(14, 30)!!
+    ro _x = t.plus(Period.of_days(1))   // ← Period на TimeOfDay
+}
