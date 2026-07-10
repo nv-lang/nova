@@ -14,32 +14,39 @@
 
 module nova_tests.err173_2
 
-type Ctr {
-    mut n int
-}
-
-fn make_ctr() -> Ctr => { n: 0 }
+// D415 §2 amendment (2026-07-11): detach is now a capture-check boundary,
+// same as spawn/parallel for — `c` must be `#share` to be captured by
+// reference. `AtomicInt` (audited `#share`, D415 §1) captured directly:
+// this keeps the fixture's actual point (the `Detach`-effect gate, not
+// concurrency-safety) unchanged. NOTE: a wrapper record `type Ctr { n
+// AtomicInt }` was tried here first and hit an unrelated codegen bug —
+// embedding `AtomicInt` as a record field produces a duplicate/conflicting
+// `struct Nova_AtomicInt` typedef in this CU (`channel_closed_vs_value_test`
+// peer file, CC-FAIL "typedef redefinition with different types"). Tracked
+// as [M-atomicint-record-field-typedef-collision] (docs/plans/
+// backlog-followups.md) — not this fixture's concern, so it captures the
+// atomic directly instead of through a record.
 
 // (1) fn с эффектом Detach — detach разрешён (не флагается).
-fn spawn_bg(c mut Ctr) Detach -> () {
+fn spawn_bg(c mut AtomicInt) Detach -> () {
     detach {
-        c.n = c.n + 1
+        c.fetch_add(1)
     }
 }
 
 // (3) test-блок — effect-root, bare detach разрешён.
 test "detach in test-root (effect-root) compiles + runs under default handler" {
-    mut c = make_ctr()
+    mut c = AtomicInt.new(0)
     detach {
-        c.n = c.n + 1
+        c.fetch_add(1)
     }
     runtime.drain_orphans()
-    assert(c.n == 1)
+    assert(c.load() == 1)
 }
 
 test "detach inside Detach-effect fn compiles + runs" {
-    mut c = make_ctr()
+    mut c = AtomicInt.new(0)
     spawn_bg(c)
     runtime.drain_orphans()
-    assert(c.n == 1)
+    assert(c.load() == 1)
 }
