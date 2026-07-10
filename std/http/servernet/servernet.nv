@@ -65,7 +65,7 @@ fn read_request(s mut TcpStream) Net -> []u8 {
 
 // Index of CRLF CRLF in `b`, or -1.
 fn dcrlf(b []u8) -> int {
-    ro n = b.len
+    ro n = b.len()
     mut i = 0
     while i + 3 < n {
         if (b[i] as int) == 0x0D && (b[i + 1] as int) == 0x0A &&
@@ -102,7 +102,7 @@ fn head_slice(b []u8, end int) -> []u8 {
 
 fn parse_leading_int(s str) -> int {
     ro b = s.bytes()
-    ro n = b.len
+    ro n = b.len()
     mut i = 0
     while i < n && (b[i] as int) == 0x20 { i += 1 }     // skip leading spaces
     mut v = 0

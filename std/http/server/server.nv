@@ -348,7 +348,7 @@ fn parse_query(q str) -> [](str, str) {
 // Minimal percent-decode (+ → space, %XX → byte). Invalid escapes pass through.
 fn percent_decode(s str) -> str {
     ro b = s.bytes()
-    ro n = b.len
+    ro n = b.len()
     // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
     // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
     mut out []u8 = []u8.new()

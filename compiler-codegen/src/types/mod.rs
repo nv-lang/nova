@@ -10455,15 +10455,64 @@ impl<'a> TypeCheckCtx<'a> {
                     // материализуем тип ПОЛЯ теми же гейтами, что основной блок
                     // ниже (subst + primitive/concrete-named). Call-позиция —
                     // ни в коем случае (аннотация поля на метод-вызове = ложь).
-                    if !is_call_func && member_id.is_set() {
+                    if !is_call_func {
                         if let Some(field) = fields.iter().find(|f| f.name == name) {
-                            let field_ty = self.subst_receiver_generics(
-                                &field.ty, &td.generics, recv_type_args);
-                            let tparams: std::collections::HashSet<String> =
-                                td.generics.iter().map(|g| g.name.clone()).collect();
-                            let rt = Self::mark_type_params(
-                                ResolvedType::from_type_ref(&field_ty), &tparams);
-                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                            if member_id.is_set() {
+                                let field_ty = self.subst_receiver_generics(
+                                    &field.ty, &td.generics, recv_type_args);
+                                let tparams: std::collections::HashSet<String> =
+                                    td.generics.iter().map(|g| g.name.clone()).collect();
+                                let rt = Self::mark_type_params(
+                                    ResolvedType::from_type_ref(&field_ty), &tparams);
+                                self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                            }
+                            // [M-173-priv-field-samename-bypass] (владелец, 2026-07-10):
+                            // a bare NON-CALL access `obj.name` (no parens) resolves to
+                            // the RAW STRUCT FIELD — the same-named method requires
+                            // explicit call syntax `obj.name()` and is a completely
+                            // different codegen path. Previously this branch returned
+                            // right after materializing the field's type, WITHOUT ever
+                            // running the priv-field gate below — so `raw.len` on
+                            // `Vec[T]` (priv field `len` + method `len()`) silently
+                            // compiled from any module and emitted a direct C struct
+                            // field read. Mirror the plain-field priv check (below)
+                            // here so the same-name-method fast path can't be used to
+                            // smuggle a priv/module-priv field read past the checker.
+                            // Plan 124 (D220) + Plan 160 (D281) Ф.2.
+                            if field.priv_field
+                                && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
+                            {
+                                if field.priv_module_field {
+                                    if !self.module_priv_access_allowed(tname.as_str(), span) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                                 module-private field `{}.{}` from \
+                                                 outside its module (a same-named method \
+                                                 `{}()` exists but requires call syntax — \
+                                                 bare `{}.{}` still reads the raw field). \
+                                                 Type declared with bare `priv` (Plan 160 / \
+                                                 D281). Hint: call `{}.{}()` instead.",
+                                                tname, name, name, tname, name, tname, name,
+                                            ),
+                                            span,
+                                        ));
+                                    }
+                                } else {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PRIV_FIELD_READ] cannot read private field \
+                                             `{}.{}` outside type-method scope (a same-named \
+                                             method `{}()` exists but requires call syntax — \
+                                             bare `{}.{}` still reads the raw field). Field \
+                                             marked `priv` (Plan 124 / D220). Hint: call \
+                                             `{}.{}()` instead.",
+                                            tname, name, name, tname, name, tname, name,
+                                        ),
+                                        span,
+                                    ));
+                                }
+                            }
                         }
                     }
                     return;

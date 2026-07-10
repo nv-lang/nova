@@ -583,7 +583,7 @@ fn step_out(s NfaState) -> int => match s {
 // Возвращает Some(end_pos) если matched (consumed [start_pos..end_pos]),
 // иначе None.
 fn try_match(re Regex, tchars []char, start_pos int) -> Option[int] {
-    ro n = re.states.len
+    ro n = re.states.len()
     mut current []bool = []
     mut next []bool = []
     for i in 0..n { current.push(false); next.push(false) }

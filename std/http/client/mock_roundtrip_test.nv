@@ -165,7 +165,7 @@ test "client: body bytes() discharges must-consume" {
     with Http = effect Http { send(host, port, secure, request) { m.reply(request) } } {
         consume resp = HttpClient.new().get("http://x.example/b").send()!!
         ro bytes = resp.bytes()!!
-        assert(bytes.len == 3)
+        assert(bytes.len() == 3)
     }
 }
 
