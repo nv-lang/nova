@@ -1,16 +1,19 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
-/* Plan 116 Ф.2: prototypes границы std/tls ↔ nova_tls_shim (rustls staticlib).
+/* Plan 195 Ф.1: prototypes границы std/tls ↔ nova_rt/tls_c_shim.c (mbedTLS
+ * backend; заменяет Rust rustls-staticlib бэкенд плана 116 — см. плана 195
+ * "TLS: rustls (Rust) → C-TLS-библиотека").
  *
  * PURE PROTOTYPES — без зависимостей, безопасно включать безусловно из
  * nova_rt.h (без этого вызов tls_* в сгенерированном .c был бы implicit
  * declaration: возврат int (32 бита) → ТРУНКАЦИЯ указателя-хендла → SEGV;
- * пойман SEGV-локалайзером на Ф.2). ОПРЕДЕЛЕНИЯ живут в Rust-крейте
- * compiler-codegen/tls_shim (nova_tls_shim.lib / .a) — линкуется УСЛОВНО по
- * факту использования tls_* в CU (test_runner::c_file_uses_tls, механизм
- * brotli/D337); без собранной либы вместо неё компилируется nova_rt/tls_stub.c
- * (Q11-деградация: TLS_ERR_UNSUPPORTED, не link error).
+ * пойман SEGV-локалайзером на Ф.2 плана 116). ОПРЕДЕЛЕНИЯ живут в
+ * compiler-codegen/nova_rt/tls_c_shim.c — компилируется УСЛОВНО по факту
+ * использования tls_* в CU (test_runner::c_file_uses_tls, механизм
+ * brotli/D337); тот же файл содержит Q11-деградацию (TLS_ERR_UNSUPPORTED,
+ * не link error) для хостов без установленного mbedTLS — единый TU,
+ * `#ifdef NOVA_USE_MBEDTLS` переключает real/stub (mirror brotli_shim.c).
  *
- * Контракт (single source of truth: tls_shim/src/lib.rs; Nova-сторона:
+ * Контракт (single source of truth: tls_c_shim.c; Nova-сторона:
  * std/tls/ffi.nv):
  *   - хендлы — непрозрачные intptr_t, несущие указатель шима (config-
  *     билдер / rustls-сессия); intptr_t, не void*: Nova-newtype над int
