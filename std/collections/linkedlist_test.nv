@@ -1,0 +1,100 @@
+// std/collections/linkedlist_test.nv — публичный контракт LinkedList.
+//
+// Промоушен 2026-07-10 (Plan 186 recursive-mono) из std/_experimental/
+// collections/linkedlist.nv — разблокирован фиксом самого mono-канала
+// (см. docs/plans/backlog-followups.md [M-result-direct-recursive-enum],
+// [M-option-self-recursive-record-mono] и compiler-codegen/src/codegen/
+// emit_c.rs [M-generic-method-self-recursive-return]): self-recursive
+// generic-enum mono (`LinkedList[T] enum | Empty | Cons(T, LinkedList[T])`)
+// теперь честно инстанцируется — самовызов `@map[U]`/`@plus` внутри
+// собственного тела, статический `LinkedList[T].new()`, и bare-вариантный
+// `Empty` во всех контекстах (generic mono vs erased) резолвятся корректно.
+
+module collections.linkedlist_test
+
+import std.collections.linkedlist.{LinkedList}
+
+test "from_array preserves order" {
+    ro l = LinkedList[int].from_array([1, 2, 3])
+    assert(l.len() == 3)
+    assert(l.head() == Some(1))
+    assert(l.tail().head() == Some(2))
+    assert(l.tail().tail().head() == Some(3))
+    assert(l.tail().tail().tail().head() == None)
+}
+
+test "new() constructs the empty list" {
+    ro l = LinkedList[int].new()
+    assert(l.len() == 0)
+    assert(l.is_empty())
+    assert(l.head() == None)
+}
+
+test "prepend is O(1) and adds in front" {
+    ro l = LinkedList[int].from_array([2, 3])
+    ro l2 = l.prepend(1)
+    assert(l2.head() == Some(1))
+    assert(l2.len() == 3)
+}
+
+test "append adds at the end" {
+    mut l = LinkedList[int].from_array([1, 2])
+    ro l2 = l.append(3)
+    assert(l2.len() == 3)
+    assert(l2.tail().tail().head() == Some(3))
+}
+
+test "reversed" {
+    mut l = LinkedList[int].from_array([1, 2, 3])
+    ro r = l.reversed()
+    assert(r.head() == Some(3))
+    assert(r.tail().head() == Some(2))
+}
+
+test "map applies function preserving structure" {
+    ro l = LinkedList[int].from_array([1, 2, 3])
+    ro doubled = l.map(|x| x * 2)
+    assert(doubled.head() == Some(2))
+    assert(doubled.len() == 3)
+}
+
+test "filter removes non-matching" {
+    ro l = LinkedList[int].from_array([1, 2, 3, 4, 5])
+    ro even = l.filter(|x| x % 2 == 0)
+    assert(even.len() == 2)
+    assert(even.head() == Some(2))
+}
+
+test "fold sums" {
+    ro l = LinkedList[int].from_array([1, 2, 3, 4])
+    ro sum = l.fold(0, |acc, x| acc + x)
+    assert(sum == 10)
+}
+
+test "concat with plus method" {
+    ro a = LinkedList[int].from_array([1, 2])
+    ro b = LinkedList[int].from_array([3, 4])
+    ro c = a.plus(b)
+    assert(c.len() == 4)
+    assert(c.head() == Some(1))
+}
+
+test "Empty is identity for concat" {
+    ro a = LinkedList[int].from_array([1, 2])
+    // `.new()` (not the bare `Empty` variant ctor) — the unqualified `Empty`
+    // identifier is ambiguous across the whole compilation unit whenever
+    // ANOTHER sum type also happens to declare a variant named `Empty`
+    // (e.g. a prelude parse-error sum); resolution of the bare form is not
+    // reliably scoped by an enclosing type annotation. `.new()` dispatches
+    // through the unambiguous type-qualified static-method path instead.
+    ro e = LinkedList[int].new()
+    assert(a.plus(e).len() == 2)
+    assert(e.plus(a).len() == 2)
+}
+
+test "from_iter builds the same list as from_array" {
+    ro l = LinkedList[int].from_iter([1, 2, 3])
+    assert(l.len() == 3)
+    assert(l.head() == Some(1))
+    assert(l.tail().tail().head() == Some(3))
+}
