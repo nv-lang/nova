@@ -24390,7 +24390,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 self.line("continue;");
             }
-            Stmt::Throw { value, .. } => {
+            Stmt::Throw { value, span } => {
                 // `throw expr` — Fail.fail(expr). D25/D62/D65.
                 //
                 // Plan 61 Ф.2: typed dispatch.
@@ -24402,6 +24402,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 //     fail-frame.
                 let val_ty = self.infer_expr_c_type(value);
                 let val = self.emit_expr(value)?;
+                // Plan 173 Ф.5 п.7 (Zig-парность, минимум): стемп throw-site —
+                // uncaught-abort ветки печатают `at file:line`. Error-path only.
+                {
+                    let (file_lit, line) = self.loc_for_span(span.start);
+                    self.line(&format!("nova_throw_site_set(\"{}\", {});", file_lit, line));
+                }
                 if val_ty == "nova_str" {
                     self.line(&format!("Nova_Fail_fail({});", val));
                 } else {
@@ -29078,7 +29084,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         args.len()));
                 }
                 let msg_val = self.emit_expr(args[0].expr())?;
-                return Ok(format!("(nv_panic({}), (nova_int)0LL)", msg_val));
+                // Plan 173 Ф.5 п.7: throw-site стемп (comma-expr, error-path only).
+                let (file_lit, line) = self.loc_for_span(func.span.start);
+                return Ok(format!(
+                    "(nova_throw_site_set(\"{}\", {}), nv_panic({}), (nova_int)0LL)",
+                    file_lit, line, msg_val));
             }
             // `unreachable(reason str) -> never` (std/prelude/runtime.nv, `extern "nova"`).
             // Plan 172.1 (struct-tag leak fix): lower like `panic`, but PREPEND the
@@ -29097,9 +29107,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         args.len()));
                 }
                 let reason_val = self.emit_expr(args[0].expr())?;
+                // Plan 173 Ф.5 п.7: throw-site стемп (см. panic выше).
+                let (file_lit, line) = self.loc_for_span(func.span.start);
                 return Ok(format!(
-                    "(nv_panic(nova_str_concat(nova_str_from_cstr(\"unreachable: \"), {})), (nova_int)0LL)",
-                    reason_val
+                    "(nova_throw_site_set(\"{}\", {}), nv_panic(nova_str_concat(nova_str_from_cstr(\"unreachable: \"), {})), (nova_int)0LL)",
+                    file_lit, line, reason_val
                 ));
             }
             // exit(code int, msg str) -> never — D13: смерть всего процесса.

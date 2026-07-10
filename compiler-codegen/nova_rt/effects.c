@@ -200,6 +200,7 @@ void nova_interrupt_ptr(void* value) {
 
 #ifdef _MSC_VER
 __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
+__declspec(thread) NovaThrowSite       _nova_throw_site    = {0};  /* Plan 173 Ф.5 п.7 */
 __declspec(thread) NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
 __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
 /* Plan 61 followup #1: cross-effect throw routing slot. */
@@ -224,6 +225,7 @@ __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7
 __declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
 #else
 __thread NovaFailFrame*      _nova_fail_top      = NULL;
+__thread NovaThrowSite       _nova_throw_site    = {0};  /* Plan 173 Ф.5 п.7 */
 __thread NovaLastError       _nova_last_error    = {0};  /* Plan 173 Ф.4 #5 */
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
 __thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */

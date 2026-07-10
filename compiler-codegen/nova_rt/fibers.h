@@ -3626,4 +3626,43 @@ static inline nova_int Nova_Time_now_monotonic_ns(void) {
     return (nova_int)_nova_monotonic_ns();
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.5 п.6: nova_runtime_reset() — сброс thread-local
+ * error/handler-состояния МЕЖДУ panic-тестами в одном процессе.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Re-entry hazard (инфра для Ф.6 panics-клаузулы): пойманная через
+ * test-frame паника выходит longjmp'ом МИМО эпилогов with-блоков и
+ * fail-frame pop'ов — после неё висят: устаревшие `_nova_fail_top`
+ * кадры (stack-адреса уже разрушены — следующий throw = segfault),
+ * `_nova_interrupt_top`, `_nova_current_handler_iframe`,
+ * `_nova_last_error.live`, установленные handler-vtable слоты
+ * (string/any Fail, Time, user-effects), finalizer-stack и
+ * active-scope маркеры. N паник подряд в одном процессе без сброса =
+ * UB со второй.
+ *
+ * Вызывается ТОЛЬКО codegen'ом test-runner'а между тест-фреймами
+ * (Ф.6; D348). Из user-кода НЕ доступен: идентификатор не существует
+ * в Nova-неймспейсе (нет decl в std) — ссылка = compile error;
+ * см. neg-тест err173/neg/f5_runtime_reset_unavailable.
+ *
+ * Handler-слоты сбрасываются через per-thread effect-registry (все
+ * зарегистрированные TLS-адреса — built-in + user effects): дефолт
+ * каждого слота = NULL (fallback-семантика effects.h). */
+static inline void nova_runtime_reset(void) {
+    _nova_fail_top = NULL;
+    _nova_interrupt_top = NULL;
+    _nova_current_handler_iframe = NULL;
+    _nova_last_error.live = 0;
+    _nova_handler_Fail = NULL;
+    _nova_handler_Fail_any = NULL;
+    _nova_handler_Time = NULL;
+    _nova_active_finalizer_stack = NULL;
+    _nova_active_scope = NULL;
+    _nova_active_slot = -1;
+    for (int i = 0; i < _nova_effect_registry.count; i++) {
+        *_nova_effect_registry.slots[i] = NULL;
+    }
+}
+
 #endif /* NOVA_RT_FIBERS_H */

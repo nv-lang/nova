@@ -141,6 +141,42 @@ static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
     _nova_last_error.frame.error_suppressed    = NULL;
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.5 п.7 (Zig-парность, минимум): throw-site трассировка.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Codegen стемпит `nova_throw_site_set("file.nv", line)` НЕПОСРЕДСТВЕННО
+ * перед каждым user-`throw`/`panic()`/`unreachable()` (только на
+ * error-path — happy-path не затронут). Все uncaught-abort-ветки
+ * (unhandled Fail / composite / typed / panic) печатают
+ * `  at <file>:<line> (throw site)` вслед за сообщением — debug-парность
+ * Zig error-return-trace минимум (полный propagation-trace —
+ * `[M-173-error-return-trace]`). assert/contract уже location-first
+ * (D13 amend) — их не стемпим. */
+typedef struct {
+    const char* file;  /* NULL = сайт неизвестен (runtime-internal throw) */
+    int         line;
+} NovaThrowSite;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaThrowSite _nova_throw_site;
+#else
+extern __thread NovaThrowSite _nova_throw_site;
+#endif
+
+static inline void nova_throw_site_set(const char* file, int line) {
+    _nova_throw_site.file = file;
+    _nova_throw_site.line = line;
+}
+
+/* Печать throw-site в uncaught-abort ветках (no-op если сайт неизвестен). */
+static inline void nova_throw_site_dump(void) {
+    if (_nova_throw_site.file) {
+        fprintf(stderr, "  at %s:%d (throw site)\n",
+                _nova_throw_site.file, _nova_throw_site.line);
+    }
+}
+
 /* Throw: store error, longjmp to nearest handler.
  * Plan 49 Ф.0: stamp kind=USER, reason=NULL (default — обычная ошибка).
  * Plan 100.4.1 (D158): reset error_suppressed chain (fresh throw НЕ несёт
@@ -165,6 +201,7 @@ static inline void nova_throw(nova_str msg) {
     fflush(stdout);
     fprintf(stderr, "nova: unhandled Fail: %.*s\n",
         (int)msg.len, msg.ptr);
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
 }
 
@@ -316,6 +353,7 @@ static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
             i++;
         }
     }
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
 }
 
@@ -735,6 +773,7 @@ static inline void nv_panic(nova_str msg) {
     fwrite("panic: ", 1, 7, stderr);
     if (msg.len > 0) fwrite(msg.ptr, 1, msg.len, stderr);
     fwrite("\n", 1, 1, stderr);
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
 }
 
@@ -999,6 +1038,7 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
     fprintf(stderr, "nova: unhandled typed Fail (%s): %.*s\n",
         nova_typeid_to_name(tid),
         (int)msg_repr.len, msg_repr.ptr);
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
     return NOVA_UNIT;  /* unreachable */
 }
