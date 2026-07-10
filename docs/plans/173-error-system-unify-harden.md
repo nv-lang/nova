@@ -174,12 +174,13 @@ cleanup → **watchdog-варн** («fiber X застрял в cleanup»), НЕ 
 > → маркер `[M-174-parallel-for-deadline]`. Известное ограничение: main-flow blocking В ТЕЛЕ до старта
 > run-loop не ограничено сроком (идиома — `spawn` работу); документировано в simplifications.
 
-**(4) `with_timeout` — убрать; `race2` — оставить до общего `race`.**
-- **`with_timeout[T]`** (`std/concurrency/cancellation.nv:156`) — субсумирован `supervised(timeout:)`.
-  Удалить (fn + ~7 тест-ссылок) **после** landing Plan 175 + deadline-параметров → **Ф.3-остаток**.
-  ⚠ **UNBLOCKED (2026-07-06):** deadline-параметры приземлены (D408) → ретракция теперь возможна, но
-  НЕ сделана в этом заходе (cancellation.nv независимо сломан retired-API-дрейфом `str.len`/`ro`-field;
-  не «дёшево/безопасно») → маркер `[M-174-retract-with-timeout]`.
+**(4) `with_timeout` — убрать; `race2` — оставить до общего `race`.** ✅ **ЗАКРЫТО 2026-07-10**
+(Plan 175 Ф.3a/Ф.5d landed) — `with_timeout[T]`/`within[T]` УДАЛЕНЫ из
+`std/concurrency/cancellation.nv` (субсумированы `supervised(timeout:)`, D408); все реальные
+call-сайты (fn + тесты) мигрированы на `supervised(timeout:)`/`race2`. Опасение «cancellation.nv
+независимо сломан retired-API-дрейфом `str.len`/`ro`-field» из более раннего захода на момент
+закрытия НЕ подтвердилось (файл компилировался чисто) — возможно, было исправлено отдельно
+до этой волны. Маркер `[M-174-retract-with-timeout]` CLOSED.
 - **`race`/`race2`** — ⚠ Ред. 2 согласовано с [173.1 §2a](173.1-parallel-collect-and-supervised-value.md)
   (авторитет): `race2` **ОСТАЁТСЯ** до landing общего N-арного `race[T](…funcs)` (гейт Plan 48 Ф.4
   closures-in-generic-array) + миграции callers; дизайн общего `race` уже зафиксирован в 173.1 §2a
@@ -425,9 +426,17 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   `SelectSlot.want_none`, parser/AST/codegen/runtime); D414 §3 + D94 update; тесты err173_2. **п.4** (`999bffff9`)
   переписаны stale-тесты `supervised_errors.nv`/`fiber_throw.nv` SECTION 4 (ложь «throw неперехватываем» →
   реальные тесты, верифицированы в изоляции 3/3; concurrency-folder заблокирован pre-existing Duration-багом
-  Plan175 — вне периметра). **п.5** with_timeout удаление — GATED на **Plan 175 (READY, не начат)**;
-  отложено, отслеживается `[M-174-retract-with-timeout]` (home Plan 173 Ф.3-остаток). spec: 08-runtime.md:168
-  stale-стратегии обновлены; хаб + D414 §1-§3. **Без упрощений** (п.5 честно gated).
+  Plan175 — вне периметра). **п.5 ЗАКРЫТ 2026-07-10** (гейт Plan 175 Ф.3a/Ф.5d landed —
+  Monotonic мокабельность + Duration/typed surface): `within[T]`/`with_timeout[T]` УДАЛЕНЫ из
+  `std/concurrency/cancellation.nv` (субсумированы `supervised(timeout:/deadline:)`, D408);
+  `race2[T]` остаётся (не субсумирован). Мигрированы вызовы: `nova_tests/concurrency/
+  cancellation_test.nv` (4 within-теста удалены, race2-тесты сохранены),
+  `mn_closure_spawn_gcroot_test.nv` (последний тест → `race2` вместо `within`, тем же путём
+  починен НЕЗАВИСИМЫЙ pre-existing mut-capture баг в `run_int`-хелпере — D415 §2 дрейф,
+  найден при миграции, починен той же волной), `examples/real_world/audit.nv` (иллюстративный,
+  сам файл всё равно pre-existing CODEGEN-FAIL по несвязанным причинам — вне scope). Маркер
+  `[M-174-retract-with-timeout]` CLOSED. spec: 08-runtime.md:168 stale-стратегии обновлены;
+  хаб + D414 §1-§3. **Без упрощений.**
 
 ### Ф.4 — MultiError end-to-end + типизированный ScopeOutcome (✅ ЗАКРЫТА 2026-07-06; ГЕЙТ [Plan 174.3] ✅ в main)
 1. ✅ **#6 РЕАЛИЗОВАН (2026-07-06, модель Б — решение владельца):** противоречие спеки D158 (конверт
