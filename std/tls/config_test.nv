@@ -30,7 +30,9 @@ test "ClientConfig @verification — мутирующее беглое свой�
     assert(match cfg.verification { CustomRoots(b) => b.len() == 3, _ => false })
     cfg.verification(VerificationMode.InsecureSkipVerify)
     assert(match cfg.verification { InsecureSkipVerify => true, _ => false })
-    ro pins = Vec[[]u8].of("0123456789abcdef0123456789abcdef".bytes())   // 32 байта
+    // §28: литерал вместо `.of`; байтовые данные (пин = хеш) — `x"..."` (D412)
+    // вместо ASCII-плейсхолдера через `.bytes()`.
+    ro pins = [x"01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab cd ef"]   // 32 байта
     cfg.verification(VerificationMode.Pinned(pins))
     assert(match cfg.verification { Pinned(hs) => hs.len() == 1, _ => false })
 }
