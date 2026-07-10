@@ -10,6 +10,13 @@ use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
 use crate::parser::{impl_spec_base_name, impl_spec_args_text};
 use std::collections::{HashMap, HashSet};
 
+// Plan 172.13 Ф.1: constraint-based inference core scaffold (unification +
+// occurs-check + type-set membership). NOT wired into `f1_expr_inner`
+// globally yet — Ф.2 migrates ad-hoc producer packages onto it one at a
+// time, gated by byte-parity per package. See
+// `docs/plans/172.13-constraint-inference.md`.
+pub mod constraint_solver;
+
 // Plan 172.1 U.5.4: the lossy bootstrap `Ty` enum (+ `ty_of_ref`) was DELETED — its int
 // collapse + single `Ptr`/`TypedPtr` modelling is fully subsumed by the lossless
 // `ResolvedType` (defined below), the single type representation the checker uses.
