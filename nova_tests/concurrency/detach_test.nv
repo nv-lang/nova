@@ -13,43 +13,54 @@
 // для anonymous-spawn'ов. До flip-activation: bootstrap orphan scope
 // (cooperative drain). После flip + Plan 83.4.5.7 race fix: worker pool
 // fire-and-forget.
+//
+// D415 §2 amendment (2026-07-11): `detach { }` is now a capture-check
+// boundary (same as `spawn`/`parallel for` — orphan fiber, fire-and-
+// forget, worker pool). Every raw `mut`-accumulator below migrated to
+// `AtomicInt`/`AtomicBool` (or, where a compound read-modify-write must
+// stay indivisible across two independent detaches, a `Mutex`-guarded
+// `#share`-vouched cell — same idiom as sync_mutex.nv).
 
 module nova_tests.concurrency
 
+// [M-atomicint-record-field-typedef-collision] (fixed same wave): `val`
+// used to be a bare `mut int` field — now `AtomicInt`, which ALSO
+// resolves the D415 capture-check (Counter2 is auto-#share: its only
+// field is itself `#share`).
 type Counter2 {
-    mut val int
+    val AtomicInt
 }
 
-fn make_counter2(v int) -> Counter2 => { val: v }
+fn Counter2.make(v int) -> Counter2 => { val: AtomicInt.new(v) }
 
 // ================================================================
 // SECTION 1: базовое исполнение (с explicit-sync через drain_orphans)
 // ================================================================
 
 test "detach: body executes (visible after drain_orphans)" {
-    mut x = 0
+    mut x = AtomicInt.new(0)
     detach {
-        x = 42
+        x.store(42)
     }
     runtime.drain_orphans()
-    assert(x == 42)
+    assert(x.load() == 42)
 }
 
 test "detach: empty body is no-op" {
-    mut touched = false
-    detach { touched = true }
+    mut touched = AtomicBool.new(false)
+    detach { touched.store(true) }
     runtime.drain_orphans()
-    assert(touched)
+    assert(touched.load())
 }
 
 test "detach: trailing expr value is discarded (fire-and-forget)" {
-    mut log = 0
+    mut log = AtomicInt.new(0)
     detach {
-        log = 7
+        log.store(7)
         99   // discarded
     }
     runtime.drain_orphans()
-    assert(log == 7)
+    assert(log.load() == 7)
 }
 
 // ================================================================
@@ -58,32 +69,28 @@ test "detach: trailing expr value is discarded (fire-and-forget)" {
 
 test "detach: captures immutable int" {
     ro n = 21
-    mut result = 0
-    detach { result = n * 2 }
+    mut result = AtomicInt.new(0)
+    detach { result.store(n * 2) }
     runtime.drain_orphans()
-    assert(result == 42)
+    assert(result.load() == 42)
 }
 
 test "detach: captures multiple vars" {
     ro a = 3
     ro b = 5
-    mut c = 0
-    detach { c = a * a + b * b }
+    mut c = AtomicInt.new(0)
+    detach { c.store(a * a + b * b) }
     runtime.drain_orphans()
-    assert(c == 34)
+    assert(c.load() == 34)
 }
 
 test "detach: mutates captured record field" {
-    // Plan 182 Ф.3: `ro`-binding dominates over `mut field` markers (Plan 12x)
-    // — mutating a field through a `ro` binding is now a compile error
-    // (E_READONLY_FIELD). The test's own intent is to mutate, so it needs a
-    // `mut` binding.
-    mut counter = make_counter2(10)
+    mut counter = Counter2.make(10)
     detach {
-        counter.val = counter.val + 5
+        counter.val.fetch_add(5)
     }
     runtime.drain_orphans()
-    assert(counter.val == 15)
+    assert(counter.val.load() == 15)
 }
 
 // ================================================================
@@ -92,29 +99,29 @@ test "detach: mutates captured record field" {
 
 test "detach with if inside" {
     ro n = 5
-    mut tag = 0
+    mut tag = AtomicInt.new(0)
     detach {
         if n > 0 {
-            tag = 1
+            tag.store(1)
         } else {
-            tag = -1
+            tag.store(-1)
         }
     }
     runtime.drain_orphans()
-    assert(tag == 1)
+    assert(tag.load() == 1)
 }
 
 test "detach with while inside" {
-    mut acc = 0
+    mut acc = AtomicInt.new(0)
     detach {
         mut i = 1
         while i <= 5 {
-            acc += i
+            acc.fetch_add(i)
             i += 1
         }
     }
     runtime.drain_orphans()
-    assert(acc == 15)
+    assert(acc.load() == 15)
 }
 
 // ================================================================
@@ -125,11 +132,11 @@ test "detach inside supervised: orphan body completes after drain" {
     // detach живёт мимо scope. AsyncDetach (D50 revised): orphan body
     // НЕ участвует в supervised drain — completes asynchronously.
     // Каждый spawn внутри supervised drained scope'ом; orphan — global.
-    mut detach_flag = 0
+    mut detach_flag = AtomicInt.new(0)
     mut spawn_sum = AtomicInt.new(0)
     supervised {
         detach {
-            detach_flag = 1
+            detach_flag.store(1)
         }
         spawn {
             spawn_sum.fetch_add(10)
@@ -142,7 +149,7 @@ test "detach inside supervised: orphan body completes after drain" {
     // Orphan detach МОЖЕТ ещё не отработать — drain explicit.
     assert(spawn_sum.load() == 30)
     runtime.drain_orphans()
-    assert(detach_flag == 1)
+    assert(detach_flag.load() == 1)
 }
 
 // ================================================================
@@ -152,30 +159,30 @@ test "detach inside supervised: orphan body completes after drain" {
 test "detach inside detach: оба orphan, completeness assertion" {
     // AsyncDetach: outer detach spawns orphan, inner detach (внутри outer's
     // body) тоже spawns orphan. Оба завершаются после drain.
-    mut outer_done = 0
-    mut inner_done = 0
+    mut outer_done = AtomicInt.new(0)
+    mut inner_done = AtomicInt.new(0)
     detach {
-        outer_done = 1
+        outer_done.store(1)
         detach {
-            inner_done = 1
+            inner_done.store(1)
         }
     }
     runtime.drain_orphans()
-    assert(outer_done == 1)
-    assert(inner_done == 1)
+    assert(outer_done.load() == 1)
+    assert(inner_done.load() == 1)
 }
 
 test "detach: multiple detaches all complete (set-equality)" {
     // AsyncDetach: 3 orphan fibers. Order не специфицирован (Go semantics
     // — spawn ordering undef). Проверяем completeness через sum.
-    mut sum = 0
-    detach { sum += 1 }
-    detach { sum += 2 }
-    detach { sum += 4 }
+    mut sum = AtomicInt.new(0)
+    detach { sum.fetch_add(1) }
+    detach { sum.fetch_add(2) }
+    detach { sum.fetch_add(4) }
     runtime.drain_orphans()
     // 1 + 2 + 4 = 7. Bitmask-style проверка — каждый orphan уникально
     // contributed к sum, доказывает все 3 executed.
-    assert(sum == 7)
+    assert(sum.load() == 7)
 }
 
 // ================================================================
@@ -183,31 +190,53 @@ test "detach: multiple detaches all complete (set-equality)" {
 // ================================================================
 
 test "detach mutates array via captured ref" {
-    mut sum = 0
+    mut sum = AtomicInt.new(0)
     ro xs = [10, 20, 30]
     detach {
         mut i = 0
         while i < 3 {
-            sum += xs[i]
+            sum.fetch_add(xs[i])
             i += 1
         }
     }
     runtime.drain_orphans()
-    assert(sum == 60)
+    assert(sum.load() == 60)
 }
+
+// #share-vouched cell (D415 §2) whose every access is manually
+// disciplined behind an EXTERNAL `Mutex` — used below to keep a
+// compound read-modify-write (`x = x + 1` / `x = x * 2`) indivisible
+// across two independent, unordered `detach` orphans. `AtomicInt` alone
+// cannot express this: `store(load() OP v)` is two separate atomic ops,
+// not one — under genuine concurrent execution that would allow a lost
+// update beyond the two ordered outcomes this test asserts on.
+#share
+type DetachIntCell {
+    mut val int
+}
+fn DetachIntCell.new(v int) -> DetachIntCell => { val: v }
 
 test "detach: usable outside supervised (orphan semantic)" {
     // detach по спеке D50 не требует scope (vs spawn — spawn вне
     // supervised — compile error). Detach привязан к global orphan pool,
     // поэтому валиден везде где вызывается функция с эффектом Detach
     // в сигнатуре.
-    mut x = 100
-    detach { x = x + 1 }
-    detach { x = x * 2 }
+    mut x = DetachIntCell.new(100)
+    mut mx = Mutex.new()
+    detach {
+        mx.lock()
+        x.val = x.val + 1
+        mx.unlock()
+    }
+    detach {
+        mx.lock()
+        x.val = x.val * 2
+        mx.unlock()
+    }
     runtime.drain_orphans()
     // Order между orphans НЕ детерминирован (D50 + Plan 83 §6). Два возможных
     // outcome'а: (x+1)*2 = 202, OR (x*2)+1 = 201. Проверяем что один из них.
-    assert(x == 202 || x == 201)
+    assert(x.val == 202 || x.val == 201)
 }
 
 // ================================================================
@@ -224,11 +253,11 @@ test "drain_orphans negative: empty pool — no-op" {
 
 test "drain_orphans negative: повторный вызов — idempotent" {
     // После первого drain orphan pool empty. Второй drain — no-op.
-    mut x = 0
-    detach { x = 5 }
+    mut x = AtomicInt.new(0)
+    detach { x.store(5) }
     runtime.drain_orphans()
-    assert(x == 5)
+    assert(x.load() == 5)
     // Второй drain — empty pool, no-op.
     runtime.drain_orphans()
-    assert(x == 5)
+    assert(x.load() == 5)
 }

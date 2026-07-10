@@ -71,32 +71,32 @@ test "GC корр: 10 sentinel'ей живы после 100k аллокаций"
 // ── 3. D97 fix: ≥64 fiber'ов без GC-краша ─────────────────────────────────
 
 test "GC корр: 64 fiber'а без краша (D97 fiber_ctx[] root)" {
-    mut sum = 0
+    mut sum = AtomicInt.new(0)
     supervised {
         for i in 0..64 {
             spawn {
                 ro n = make_node(i, i * 2)
-                sum = sum + n.val
+                sum.fetch_add(n.val)
             }
         }
     }
     // 0+1+...+63 = 2016
-    assert(sum == 2016)
+    assert(sum.load() == 2016)
 }
 
 test "GC корр: 256 fiber'ов, значения корректны после GC-sweep" {
-    mut sum = 0
+    mut sum = AtomicInt.new(0)
     supervised {
         for i in 0..256 {
             spawn {
                 // Каждый fiber аллоцирует объект — давление на GC
                 ro n = make_node(i, i + 1)
-                sum = sum + n.val
+                sum.fetch_add(n.val)
             }
         }
     }
     // 0+1+...+255 = 32640
-    assert(sum == 32640)
+    assert(sum.load() == 32640)
 }
 
 // ── 4. Строки выживают под давлением ──────────────────────────────────────
@@ -134,18 +134,18 @@ test "GC корр: массив-sentinel жив после 5k аллокаций
 
 test "GC корр: смешанное давление (records + str + 32 fiber'а)" {
     ro sentinel = make_node(9999, 8888)
-    mut out = 0
+    mut out = AtomicInt.new(0)
     supervised {
         for i in 0..32 {
             spawn {
                 ro n = make_node(i, i * 3)
                 ro _ = "fiber_${i}_alloc"
-                out = out + n.val
+                out.fetch_add(n.val)
             }
         }
     }
     // 0+1+...+31 = 496
-    assert(out == 496)
+    assert(out.load() == 496)
     assert(sentinel.val == 9999)
     assert(sentinel.depth == 8888)
 }
