@@ -596,6 +596,14 @@ typedef struct { char _dummy; } nova_unit;
  * decodes brotli links neither the shim nor the lib. */
 #include "brotli_shim.h"
 
+/* Plan 116 Ф.2: std/tls ↔ nova_tls_shim (rustls) — PURE prototypes. Always
+ * included (no TLS dependency here); the staticlib (nova_tls_shim.lib) is
+ * linked — or nova_rt/tls_stub.c compiled as Q11 fallback — ONLY when the
+ * generated .c actually calls a tls_* symbol (test_runner.rs conditional-link
+ * gate, same mechanism as brotli/D337). Without these prototypes a tls_* call
+ * would be an implicit declaration (int return, 32-bit) → handle truncation. */
+#include "tls_shim.h"
+
 /* Plan 115 D214 Ф.3 / A7: sqlite_mini_ffi.h moved → `examples/ffi/`
  * (user-side location). Now wired through `[M-115-ffi-build-pipeline]` —
  * `nova_tests/nova.toml [ffi] c_shims` force-includes header per package.

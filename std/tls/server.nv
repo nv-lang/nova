@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 116 Ф.3: std/tls/server.nv — server handshake на принятом соединении.
+//
+// Симметрично client.nv: эфемерный shim-билдер потребляется tls_server_new;
+// TcpStream закрывается на всех error-путях. mTLS-режимы (ClientCertMode) —
+// данные уже проходят границу; полные тесты — Ф.5.
+
+module std.tls
+
+import std.net.{Net, TcpStream}
+
+// Собрать эфемерный shim-конфиг из ServerConfig. На ошибке билдер освобождён.
+fn build_server_cfg(config ServerConfig) -> Result[CTlsCfgHandle, TlsError] {
+    if config.cert_pem.len() == 0 || config.key_pem.len() == 0 {
+        return Err(TlsError.InvalidPem("server config requires cert and key PEM"))
+    }
+    ro c = tls_server_cfg_new()
+    if (c as int) == 0 {
+        return Err(TlsError.Internal("tls shim not built for this host"))
+    }
+    ro crc = unsafe {
+        tls_cfg_cert_key_pem(c, config.cert_pem.ptr(), config.cert_pem.len(),
+                             config.key_pem.ptr(), config.key_pem.len())
+    }
+    if crc != 0 {
+        tls_cfg_free(c)
+        return Err(TlsError.from_shim(crc, "server cert/key"))
+    }
+    ro mrc = match config.client_cert {
+        NoClientAuth    => 0
+        Optional(roots) => unsafe { tls_cfg_client_auth_pem(c, roots.ptr(), roots.len(), false) }
+        Required(roots) => unsafe { tls_cfg_client_auth_pem(c, roots.ptr(), roots.len(), true) }
+    }
+    if mrc != 0 {
+        tls_cfg_free(c)
+        return Err(TlsError.from_shim(mrc, "client auth config"))
+    }
+    for i in 0..config.alpn_protocols.len() {
+        ro pb = config.alpn_protocols[i].bytes()
+        ro arc = unsafe { tls_cfg_alpn_add(c, pb.ptr(), pb.len()) }
+        if arc != 0 {
+            tls_cfg_free(c)
+            return Err(TlsError.from_shim(arc, "alpn config"))
+        }
+    }
+    Ok(c)
+}
+
+/// Server handshake на принятом `TcpStream` (владение забирается; на любой
+/// ошибке сокет закрывается внутри).
+#stable(since = "0.2")
+export fn TlsStream.accept(consume stream TcpStream, config ServerConfig) Net -> Result[TlsStream, TlsError] {
+    // Каждый путь потребляет stream ровно один раз (см. client.nv, D131).
+    match build_server_cfg(config) {
+        Err(e) => {
+            stream.close()
+            Err(e)
+        }
+        Ok(c) => {
+            mut err int = 0
+            ro session = unsafe { tls_server_new(c, &err) }
+            if (session as int) == 0 {
+                stream.close()
+                Err(TlsError.from_shim(err, "server session"))
+            } else {
+                // См. client.nv: pump по view-borrow, wrap — только в Ok(...).
+                match pump_handshake(stream, session) {
+                    Ok(_)  => Ok(TlsStream.wrap(stream, session))
+                    Err(e) => {
+                        stream.close()
+                        tls_free(session)
+                        Err(e)
+                    }
+                }
+            }
+        }
+    }
+}

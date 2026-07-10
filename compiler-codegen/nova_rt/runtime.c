@@ -143,6 +143,12 @@ struct NovaWorker {
      * may arrive from main or another worker. Close must happen on owner's
      * thread — we enqueue here + signal wake_handle → drain in _worker_async_cb. */
     NovaDeferredCloseQueue close_queue;
+    /* [M-183-net2-loop-affinity-cross-thread-op] fix: deferred generic-call
+     * queue for cross-thread uv-op issue (net.c read/write/accept/udp
+     * send/recv when the issuing fiber was work-stolen off this handle's
+     * owning worker since the handle was created). Same shape/drain path as
+     * close_queue. */
+    NovaDeferredCallQueue call_queue;
 };
 
 /* 4 size classes covering 64/128/256/512 byte contexts. Empirical: most
@@ -521,11 +527,21 @@ static bool            _main_wake_inited = false;
 static NovaDeferredCloseQueue _main_close_queue;
 static bool                   _main_close_queue_inited = false;
 
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: deferred generic-call
+ * queue for main thread's loop — mirrors _main_close_queue. */
+static NovaDeferredCallQueue _main_call_queue;
+static bool                  _main_call_queue_inited = false;
+
 static void _main_wake_cb(uv_async_t* h) {
     (void)h;
     /* Plan 83.10.2: drain any deferred uv_close jobs scheduled for main loop. */
     if (_main_close_queue_inited) {
         nova_loop_drain_closes(&_main_close_queue);
+    }
+    /* [M-183-net2-loop-affinity-cross-thread-op] fix: drain any deferred
+     * uv-op issue jobs scheduled for main loop. */
+    if (_main_call_queue_inited) {
+        nova_loop_drain_calls(&_main_call_queue);
     }
     /* No-op signal otherwise — wakes uv_run(UV_RUN_ONCE) in main thread.
      * Main thread checks scope.pending_remote after wake. */
@@ -704,6 +720,10 @@ static void _worker_async_cb(uv_async_t* h) {
     if (w) {
         /* Plan 83.10.2: drain cross-thread uv_close jobs on this loop's thread. */
         nova_loop_drain_closes(&w->close_queue);
+        /* [M-183-net2-loop-affinity-cross-thread-op] fix: drain cross-thread
+         * uv-op issue jobs (net.c read/write/accept/udp send/recv marshaled
+         * here after a work-steal moved the issuing fiber off this worker). */
+        nova_loop_drain_calls(&w->call_queue);
     }
     /* Wake-up itself signals uv_run; actual fiber drain in worker loop. */
 }
@@ -1455,6 +1475,10 @@ static void _materialize_pool(void) {
         /* Plan 83.10.2: init main-loop deferred-close queue. */
         nova_close_queue_init(&_main_close_queue);
         _main_close_queue_inited = true;
+        /* [M-183-net2-loop-affinity-cross-thread-op] fix: init main-loop
+         * deferred-call queue. */
+        nova_call_queue_init(&_main_call_queue);
+        _main_call_queue_inited = true;
     }
 
     _workers = (NovaWorker*)calloc((size_t)n_workers, sizeof(NovaWorker));
@@ -1518,6 +1542,9 @@ static void _materialize_pool(void) {
         w->wake_handle.data = w;
         /* Plan 83.10.2: per-worker deferred-close queue. */
         nova_close_queue_init(&w->close_queue);
+        /* [M-183-net2-loop-affinity-cross-thread-op] fix: per-worker
+         * deferred-call queue. */
+        nova_call_queue_init(&w->call_queue);
 
         rc = uv_thread_create(&w->thread, _worker_main, w);
         if (rc != 0) {
@@ -1625,6 +1652,10 @@ void nova_runtime_shutdown(void) {
         /* Plan 83.10.2: destroy per-worker deferred-close queue. */
         nova_loop_drain_closes(&w->close_queue);  /* flush any remaining */
         nova_close_queue_destroy(&w->close_queue);
+        /* [M-183-net2-loop-affinity-cross-thread-op] fix: destroy per-worker
+         * deferred-call queue. */
+        nova_loop_drain_calls(&w->call_queue);  /* flush any remaining */
+        nova_call_queue_destroy(&w->call_queue);
     }
 
 #ifdef NOVA_GC_BOEHM
@@ -2105,6 +2136,74 @@ int nova_loop_defer_close(uv_loop_t* loop,
     nova_mutex_unlock(&q->mu);
 
     /* Wake the loop thread so it drains the queue promptly. */
+    uv_async_send(wake);
+    return 0;
+}
+
+/* [M-183-net2-loop-affinity-cross-thread-op] fix: nova_loop_defer_call —
+ * generic version of nova_loop_defer_close above (same loop-resolution +
+ * mutex-queue + uv_async_send shape), for marshalling an arbitrary uv-op
+ * ISSUE call (uv_read_start/uv_write/uv_tcp_init+uv_accept/uv_udp_send/
+ * uv_udp_recv_start) onto the thread that owns the target handle's loop.
+ *
+ * Callers (net.c) only invoke this on a genuine cross-thread mismatch
+ * (`nova_current_loop() != handle->loop`); the fast/common same-thread path
+ * calls `fn(arg)` directly without going through this queue at all. */
+int nova_loop_defer_call(uv_loop_t* loop, NovaDeferredCallFn fn, void* arg) {
+    if (!loop || !fn) return -1;
+
+    NovaDeferredCallQueue* q    = NULL;
+    uv_async_t*            wake = NULL;
+
+    if (_main_wake_inited && loop == nova_evloop()) {
+        q    = &_main_call_queue;
+        wake = &_main_wake;
+    } else {
+        for (int i = 0; i < _n_workers; i++) {
+            if (&_workers[i].loop == loop) {
+                q    = &_workers[i].call_queue;
+                wake = &_workers[i].wake_handle;
+                break;
+            }
+        }
+    }
+
+    if (!q || !wake) {
+        /* Cooperative single-thread path: no workers materialized, loop IS
+         * the main loop — direct call is safe (single thread, no race). */
+        if (!_main_wake_inited && loop == nova_evloop()) {
+            fn(arg);
+            return 0;
+        }
+        /* Unknown loop — caller bug. Fall back to a direct (possibly
+         * cross-thread) call as last resort — logged, not silently UB. */
+        fprintf(stderr,
+            "nova: nova_loop_defer_call: unknown loop %p (caller bug) "
+            "— falling back to direct call (may be cross-thread UB)\n",
+            (void*)loop);
+        fn(arg);
+        return -1;
+    }
+
+    nova_mutex_lock(&q->mu);
+    if (q->count >= q->cap) {
+        int new_cap = q->cap > 0 ? q->cap * 2 : 8;
+        NovaDeferredCallJob* new_jobs = (NovaDeferredCallJob*)realloc(
+            q->jobs, (size_t)new_cap * sizeof(*new_jobs));
+        if (!new_jobs) {
+            nova_mutex_unlock(&q->mu);
+            /* OOM — fall back to direct call (UB if cross-thread, but rare). */
+            fn(arg);
+            return -1;
+        }
+        q->jobs = new_jobs;
+        q->cap  = new_cap;
+    }
+    q->jobs[q->count].fn  = fn;
+    q->jobs[q->count].arg = arg;
+    q->count++;
+    nova_mutex_unlock(&q->mu);
+
     uv_async_send(wake);
     return 0;
 }

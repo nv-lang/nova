@@ -853,6 +853,110 @@ fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
     None
 }
 
+/// Plan 116 Ф.2: the rustls-backed TLS shim staticlib (compiler-codegen/tls_shim,
+/// a SEPARATE Rust crate — not a nova-codegen dependency). Linked CONDITIONALLY
+/// on use, exactly like brotli (D337). No headers: the shim exports plain C
+/// symbols (`tls_*`), declared on the Nova side in std/tls/ffi.nv.
+pub struct TlsConfig {
+    pub lib_file: PathBuf, // nova_tls_shim.lib (Windows) / libnova_tls_shim.a (Unix)
+}
+
+/// Resolve the TLS shim staticlib. Prefers <repo>/target/tls-cache (the same
+/// cache convention as brotli-cache), else the crate's own cargo artifact
+/// (compiler-codegen/tls_shim/target/release). Returns None when not built for
+/// this host → the CU compiles nova_rt/tls_stub.c instead (Q11 feature-gate:
+/// TlsError.Internal("unsupported…") at runtime, never a link error).
+fn detect_tls(rt_dir: &Path) -> Option<TlsConfig> {
+    let lib_name = if cfg!(target_os = "windows") {
+        "nova_tls_shim.lib"
+    } else {
+        "libnova_tls_shim.a"
+    };
+    // 1) build-cache: <repo>/target/tls-cache (rt_dir = <repo>/compiler-codegen/nova_rt)
+    let cache_lib = rt_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|repo| repo.join("target").join("tls-cache").join(lib_name));
+    if let Some(cl) = &cache_lib {
+        if cl.is_file() {
+            return Some(TlsConfig { lib_file: cl.clone() });
+        }
+    }
+    // 2) crate-local cargo artifact: compiler-codegen/tls_shim/target/release/<lib>
+    let crate_dir = rt_dir.parent().map(|cg| cg.join("tls_shim"));
+    let crate_lib = crate_dir
+        .as_ref()
+        .map(|d| d.join("target").join("release").join(lib_name));
+    if let Some(cl) = &crate_lib {
+        if cl.is_file() {
+            return Some(TlsConfig { lib_file: cl.clone() });
+        }
+    }
+    // 3) build on demand (mirror of detect_or_build_libuv): cargo is guaranteed
+    // on a dev host (the compiler itself is built with it). One-time ~1 min;
+    // artifact is copied into target/tls-cache so subsequent runs hit path 1.
+    // Any failure (no cargo / offline first fetch) → None → Q11 stub, no error.
+    let (Some(crate_dir), Some(cache_lib)) = (crate_dir, cache_lib) else { return None };
+    if !crate_dir.join("Cargo.toml").is_file() {
+        return None;
+    }
+    eprintln!("nova: tls shim not built, building via cargo (one-time, ~1 min)...");
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .current_dir(&crate_dir)
+        .status();
+    match status {
+        Ok(s) if s.success() => {}
+        _ => {
+            eprintln!("nova: tls shim build failed — TLS degrades to Q11 stubs (tls_stub.c)");
+            return None;
+        }
+    }
+    let built = crate_dir.join("target").join("release").join(lib_name);
+    if !built.is_file() {
+        return None;
+    }
+    if let Some(parent) = cache_lib.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::copy(&built, &cache_lib) {
+        Ok(_) => Some(TlsConfig { lib_file: cache_lib }),
+        Err(_) => Some(TlsConfig { lib_file: built }),
+    }
+}
+
+/// True iff the generated `.c` uses the TLS shim — drives the conditional link
+/// (real staticlib when built, else nova_rt/tls_stub.c).
+///
+/// Ф.2 marker: call sites / emitted decls of the two session-entry externs
+/// (`tls_client_cfg_new` / `tls_server_cfg_new`) — every TLS path starts by
+/// building a config. Extern decls are emitted only for USED fns (D82), so at
+/// Ф.2 (tests call externs directly) presence == use. NB Ф.5 refinement, same
+/// lesson as brotli: once std/http imports std/tls, DEAD TlsStream bodies in
+/// http CUs will carry these call sites and over-detect — switch the marker to
+/// call sites of the mangled public wrappers (TlsStream.connect/accept), mirror
+/// of `c_file_uses_brotli`'s wrapper-scan (plan 116 Ф.5.3).
+fn c_file_uses_tls(c_file: &Path) -> bool {
+    let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
+    for line in src.lines() {
+        if !(line.contains("tls_client_cfg_new(") || line.contains("tls_server_cfg_new(")) {
+            continue;
+        }
+        // Skip a (hypothetical) static prototype / definition header, as in
+        // c_file_uses_brotli — extern decls & call sites are non-static.
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("static ") {
+            let end = line.trim_end();
+            if end.ends_with(");") || end.ends_with('{') {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
 /// True iff the generated `.c` actually CALLS the brotli decoder wrapper — the
 /// precise "does this CU use brotli?" test that drives the conditional link.
 ///
@@ -946,6 +1050,33 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
             None => eprintln!(
                 "nova/brotli-link: {} uses_brotli={} → NO brotli lib",
                 opts.c_file.display(), uses_brotli),
+        }
+    }
+    // Plan 116 Ф.2: TLS shim (rustls staticlib) — CONDITIONAL on USE, mirror of
+    // brotli (D337). A TLS-using CU links the real nova_tls_shim staticlib when
+    // built (detect_tls), else compiles nova_rt/tls_stub.c (Q11 degradation:
+    // TlsError.Internal at runtime, never a link error). Mutually exclusive
+    // branches — no symbol clash.
+    let rt_tls_stub = opts.rt_dir.join("tls_stub.c");
+    let uses_tls = c_file_uses_tls(opts.c_file);
+    let tls_cfg = if uses_tls { detect_tls(opts.rt_dir) } else { None };
+    let tls_lib = tls_cfg.as_ref().map(|c| c.lib_file.clone());
+    // Extra Windows system libs required by the Rust staticlib (measured via
+    // `RUSTFLAGS="--print native-static-libs"`, plan 116 Ф.0): bcrypt + ntdll
+    // (ws2_32/advapi32/userenv/dbghelp уже в LIBUV_WIN_SYSLIBS).
+    #[cfg(target_os = "windows")]
+    const TLS_WIN_EXTRA_SYSLIBS: &[&str] = &["bcrypt.lib", "ntdll.lib"];
+    // Diagnostic (NOVA_DEBUG_TLS_LINK=1): make the conditional-link decision
+    // observable in both directions (real lib / stub / not used).
+    if std::env::var("NOVA_DEBUG_TLS_LINK").as_deref() == Ok("1") {
+        match &tls_lib {
+            Some(lib) => eprintln!(
+                "nova/tls-link: {} uses_tls={} → LINK {}",
+                opts.c_file.display(), uses_tls, lib.display()),
+            None => eprintln!(
+                "nova/tls-link: {} uses_tls={} → {}",
+                opts.c_file.display(), uses_tls,
+                if uses_tls { "STUB tls_stub.c" } else { "no tls" }),
         }
     }
     let march = march_flag();
@@ -1130,6 +1261,20 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(lib_path);
                 }
             }
+            // Plan 116 Ф.2: TLS shim — CONDITIONAL link (only when used); real
+            // staticlib when built, else Q11-stub TU (mutually exclusive).
+            if uses_tls {
+                if let Some(lib_path) = &tls_lib {
+                    c.arg(lib_path);
+                    // gcc-style: -lbcrypt (env LIB от vcvars), как LIBUV_WIN_SYSLIBS выше.
+                    #[cfg(target_os = "windows")]
+                    for syslib in TLS_WIN_EXTRA_SYSLIBS {
+                        c.arg(format!("-l{}", syslib.replace(".lib", "")));
+                    }
+                } else {
+                    c.arg(&rt_tls_stub);
+                }
+            }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
             if opts.gc_kind == GcKind::Boehm {
                 #[cfg(target_os = "windows")]
@@ -1312,6 +1457,19 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(&rt_brotli_shim);
                 }
             }
+            // Plan 116 Ф.2: TLS shim — CONDITIONAL link (only when used); real
+            // staticlib when built, else Q11-stub TU (mutually exclusive).
+            if uses_tls {
+                if let Some(lib_path) = &tls_lib {
+                    c.arg(lib_path);
+                    #[cfg(target_os = "windows")]
+                    for syslib in TLS_WIN_EXTRA_SYSLIBS {
+                        c.arg(syslib);
+                    }
+                } else {
+                    c.arg(&rt_tls_stub);
+                }
+            }
             c.arg(opts.c_file);
             c.arg(&rt_alloc);
             c.arg(&rt_effects);
@@ -1407,6 +1565,17 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-DNOVA_USE_BROTLI=1");
                     c.arg("-I").arg(inc_path);
                     c.arg(lib_path);
+                }
+            }
+            // Plan 116 Ф.2: TLS shim — CONDITIONAL link (only when used). On a
+            // host without the built staticlib → Q11-stub TU, never a link error.
+            // Unix: the Rust staticlib needs pthread/dl/m — already on the link
+            // line via LIBUV_UNIX_SYSLIBS (libuv is mandatory in every CU).
+            if uses_tls {
+                if let Some(lib_path) = &tls_lib {
+                    c.arg(lib_path);
+                } else {
+                    c.arg(&rt_tls_stub);
                 }
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (GCC).
@@ -2394,7 +2563,12 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let stderr = bytes_to_string(&run_captured.stderr);
     let run_status = match run_captured.status {
         Some(s) => s,
-        None => return Outcome::Timeout { elapsed: start.elapsed() },
+        None => {
+            if std::env::var("NOVA_DEBUG_TIMEOUT_DUMP").as_deref() == Ok("1") {
+                eprintln!("=== TIMEOUT STDOUT ===\n{}\n=== TIMEOUT STDERR ===\n{}\n=== END ===", stdout, stderr);
+            }
+            return Outcome::Timeout { elapsed: start.elapsed() };
+        }
     };
     let exit = run_status.code().unwrap_or(-1);
 

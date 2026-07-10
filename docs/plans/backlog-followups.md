@@ -1581,25 +1581,42 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Priority: P1 (блокирует `nova build` для net-примеров и, вероятно, шире — любые consume-типы
   через effect-dispatch вне test-контекста).
 
-- **[M-183-net2-loop-affinity-cross-thread-op]** (NEW, OPEN) Loop-affinity-контракт
-  net2 (задокументирован в заголовке `net2.c`): uv-handle пришпилен к loop'у, на котором
-  создан (`nova_current_loop()` в bind/connect/accept), а libuv-loop'ы НЕ thread-safe —
-  единственный cross-thread-safe вход `uv_async_send`. Под M:N (loop-на-worker) uv-оп,
-  выданный на handle с чужого worker'а (или с worker'а на handle, привязанный к main
-  `_evloop`, пока main крутит его в supervised-drain `UV_RUN_ONCE`) = конкурентная
-  cross-thread мутация loop'а: req теряется, completion-callback не приходит, волокно
-  виснет навсегда. Это был корень UDP-флейка ~2/10 TIMEOUT (Ф.4-разведка, факт
-  трейсом: `send_cb`/`recv_cb` не выстреливал, датаграмма НЕ терялась, latch НЕ терял
-  wake; оба сокета bound-on `_evloop`, оп выдан с worker-loop). Митигация сейчас —
-  паттерн «создавай сокет ВНУТРИ волокна, которое им оперирует» (тесты переписаны;
-  udp 60 seq + 128 parallel = 0 fail против ~1/40 до). ОСТАТОЧНЫЙ класс: волокно может
-  быть УКРАДЕНО (work-stealing migration) между park'ами и выдать следующий оп на handle
-  с нового worker'а — окно узкое (goready диспатчит на wake-worker = loop-owner), 20/20
-  бинарь + 128 parallel зелёные, но структурно дыра остаётся. Полный фикс = маршалинг
-  issue-стороны каждого uv-опа на owning-loop-thread через defer-op-очередь
-  (обобщение `nova_loop_defer_close`: очередь + `uv_async_send`; callback-сторона уже
-  на owning-thread). Касается и старого net.c (та же архитектура). Priority: P2
-  (субстратная корректность M:N-сети; тесты/потребители сейчас следуют паттерну).
+- **[M-183-net2-loop-affinity-cross-thread-op]** (✅ CLOSED 2026-07-10, волна Plan 116
+  Ф.3 / [M-116-handshake-socket-deadlock]) Loop-affinity-контракт net.c: uv-handle
+  пришпилен к loop'у, на котором создан (`nova_current_loop()` в bind/connect/accept),
+  а libuv-loop'ы НЕ thread-safe — единственный cross-thread-safe вход `uv_async_send`.
+  «ОСТАТОЧНЫЙ класс» из исходной записи (волокно УКРАДЕНО work-stealing'ом между
+  park'ами → следующий оп на handle с нового worker'а = конкурентная мутация чужого
+  loop'а → completion теряется → вечная парковка) МАТЕРИАЛИЗОВАЛСЯ как runtime-дедлок
+  TLS-handshake smoke (~1/300; плотное write→park→read на одном сокете = ровно то
+  окно миграции, которое stress_test не покрывал). **Фикс — предсказанный этой же
+  записью маршалинг issue-стороны:** `nova_loop_defer_call` (eventloop.h/.c +
+  runtime.c; generic-обобщение `nova_loop_defer_close`: per-loop mutex-очередь
+  `NovaDeferredCallQueue` у main + каждого worker'а, drain в тех же async-callback'ах)
+  + в net.c каждая issue-точка (tcp read/write/accept/shutdown, udp send/recv)
+  ветвится: same-thread = прямой вызов (байт-в-байт прежнее поведение, ноль
+  оверхеда), cross-thread = маршалинг `_deferred`-обёртки на owning-thread — ТОЛЬКО
+  она публикует completion-latch и будит (урок: unconditional latch+wake на
+  same-thread пути = reentrant self-wake ДО собственной парковки → гонка с
+  gopark/goready; задокументировано в net.c). Верификация: TLS handshake smoke
+  0 зависаний на 720+ прогонах (8×90) против ~1/300 до; регресс —
+  `std/net/pingpong_test.nv` (alternating write→read, 2 теста). Паттерн
+  «создавай сокет внутри волокна» остаётся рекомендацией (bind/connect
+  по-прежнему пиннят к current loop), но узкое окно миграции закрыто.
+
+- **[M-net-cu-segv-under-cpu-pressure]** (NEW, OPEN, 2026-07-10, волна 116 Ф.3)
+  std/net folder-CU exe (37 тестов) редко (~2-5%) падает SIGSEGV (exit 139), когда
+  4 КОПИИ exe гоняются параллельно на 16-ядерной машине (CPU-давление сжимает/
+  растягивает тайминги). Одиночные прогоны стабильны (0 segv на 300+). ДОКАЗАНО
+  pre-existing и НЕ регрессия волны 116: baseline-бинарь (c7a184807, до фиксов
+  defer_call/deref) под той же нагрузкой падает ЧАЩЕ (6/120 против 3/120 у
+  исправленного). Точка падения плавает от прогона к прогону (после udp-тестов /
+  mock-тестов / error-тестов — без привязки к конкретному тесту) → класс
+  GC/fiber-arena/runtime-shutdown race, проявляющийся при вытеснении. Репро:
+  `for w in 1..4 parallel: for i in 1..30: timeout 60 <std-net-CU>.exe` —
+  считать exit 139. Не путать с [M-183-net2-loop-affinity-cross-thread-op]
+  (тот CLOSED: там вечная парковка, тут crash). Priority: P2 (одиночные
+  прогоны и `nova test` стабильны; всплывает только при параллельном стрессе).
 
 - **[M-183-int-to-str-module-method-collision]** (NEW, OPEN) Компиляторный дефект
   разрешения методов: внутри модуля, определяющего СВОЙ `X @to_str()` (здесь

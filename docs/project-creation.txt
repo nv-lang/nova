@@ -39019,6 +39019,34 @@ std/data/ (1ea2f919c: import std.data.semver, Version-сравнения чер�
 test --full зелёный, каталог data/ в _experimental опустел) + закрытие свипа 186 п.5
 (715868068). Гейт волны: conformance --positive --compile-error 82/0.
 
+Часть 69 (2026-07-10, [fable, opus-ярус]). Plan 116 (std/tls, HTTPS) — Ф.0 целиком, ветка
+tls-116 (worktree nova-116). (1) Ф.0-АКТУАЛИЗАЦИЯ: план 2026-05-31 писался под эффект TcpNet
+(D201) — переписан целиком под пост-183 реальность (docs/plans/116-std-tls-effect.md, таблица
+«было → стало»): эффект Tls РЕТРАКТИРОВАН — std/tls = библиотечный слой поверх TcpStream
+byte-surface (методы несут Net; мотивировка module-conventions §0: транспортная импурность уже
+за Net, крипта = FFI-компьют как brotli, мок TLS-хендшейка не тестирует TLS — швы для тестов
+уже есть: Http-эффект сверху, mock_net снизу); TlsStream = consume-запись {priv tcp TcpStream,
+priv session CTlsHandle} (прецедент Body: consume-поле → НЕ value) + structural io.Read/io.Write
+через проекцию TlsError @to_error_kind/@to_io_error (образец NetError Q3); Result-everywhere
+(177); D210-D213 ретрактированы — номера next-free при промоушене (сейчас max D414). НОВАЯ
+фаза Ф.5.3: std/http https-ветка (real_http) — закрытие [M-178-https-needs-116]. (2) R-1
+решён: rustls 0.23 + провайдер ring (не aws-lc-rs: cmake+nasm — чужой toolchain; Rust и так
+обязателен для сборки Nova → rustls не добавляет НИ ОДНОГО нового требования) + webpki-roots;
+изоляция: tls_shim — отдельный крейт, dep-tree nova-codegen (clap+anyhow) НЕ тронут.
+(3) FFI-граница: ~27 символов tls_* (§5а, без vendor-префикса), хендлы CTlsHandle(*())/
+CTlsCfgHandle(*()) (§4а), sans-I/O: шим только шифрует/валидирует, весь сокет-пампинг в .nv
+поверх Net; стабильные int-коды TLS_ERR_* ↔ TlsError.from_shim. (4) Ф.0.5 вендоринг:
+compiler-codegen/tls_shim/ (staticlib, panic=abort, Cargo.lock pinned force-add — supply-chain
+R-9) — конфиг-билдеры (SystemRoots/CustomRoots/Insecure; Pinned = TLS_ERR_UNSUPPORTED до Ф.4),
+клиент+сервер сессии, mTLS оба конца, трафик-примитивы, инспекция, error-классификация;
+cargo build --release зелёный первой попыткой (rustls 0.23.41 + ring 0.17.14, имеющийся
+MSVC/clang), cargo test 5/5. R-2 (CRT) ДЕ-РИСКНУТ: без флага staticlib требует msvcrt (/MD,
+конфликт с /MT-пайплайном); -C target-feature=+crt-static → libcmt; закреплено в
+tls_shim/.cargo/config.toml. native-static-libs (Windows): bcrypt advapi32 kernel32 ntdll
+userenv ws2_32 dbghelp. Коммиты: 0d00f122 (план+README-строка), 7bae33db (шим). Следующее:
+Ф.1 (std/tls типы+ошибки+ffi.nv), Ф.2 (условная линковка по механизму brotli/D337).
+discussion-log (nova-private) НЕ обновлён — репо вне доступа этого worktree-агента.
+
 2026-07-10 — Plan 173.3 ЗАКРЫТ (sonnet, ветка drf-173-3, worktree nova-p182): data-race
 freedom. D415 (06-concurrency.md). Одна ось #share (тип-АТРИБУТ, не протокол; E_SHARE_INVALID_KIND
 на kind без instance-идентичности), два уровня доступа (is_alias_read_safe / is_mut_alias_safe —
@@ -39221,6 +39249,39 @@ mn_closure_spawn_gcroot_test.nv — изолированная сборка (tem
 через sleep() уже работает); per-OS dedicated monotonicity test; M:N-контракт mut_clock под
 реальной concurrent-нагрузкой (документирован, не verified тестом); custom E_SLEEP_UNTIL_WALL
 диагностика (generic E7301 type-mismatch уже корректно отвергает, просто менее приятный текст).
+
+Часть 70 (2026-07-10, [fable]). Plan 116 волна Ф.1+Ф.2, ветка tls-116. Слияние main
+c83a991c8 (173.3/D415 #share; конфликт журнала — обе записи сохранены; ориентир D-номеров
+116 сместился на D416+). Ф.1 (std/tls данные): error.nv (TlsError 12 вариантов, + новый
+InvalidServerName; from_shim по СТАБИЛЬНЫМ кодам шима — классификация по коду, не по
+substring, в отличие от NetError.from_code; Q3-проекция to_error_kind/to_io_error, Net(e)
+делегирует), config.nv (VerificationMode/ClientCertMode/TlsVersion+from_wire; Client/
+ServerConfig + new + with_* по D52-shorthand), ffi.nv (29 extern tls_*, §4а-newtype
+CTlsHandle(*())/CTlsCfgHandle(*()) — codegen опускает в typedef void*, подтверждено пробой).
+stream.nv ПЕРЕНЕСЁН в Ф.3: чекер запрещает consume-тип без consume-метода в модуле
+(D133-empty-consume), а честный @close требует pump+линковку. Тесты: error_test 9 +
+config_test 5 + neg (E_READONLY_FIELD ro-конфиг) — PASS; наступили на pre-existing ICE
+[M-176-xmod-payload-variant-ctor] (Type.Variant.method() без ro-биндинга) — обход net-
+прецедентом. Ф.2 (условная линковка, механизм brotli/D337): test_runner.rs — detect_tls
+(tls-cache → cargo-артефакт → AUTO-BUILD cargo по образцу detect_or_build_libuv; свежий клон
+не деградирует) + c_file_uses_tls (маркер: call-site tls_client_cfg_new(/tls_server_cfg_new(;
+Ф.5 перейдёт на скан манглед-обёрток — урок brotli) + ветки clang/-lbcrypt -lntdll, MSVC/
+bcrypt.lib ntdll.lib, gcc-Unix + NOVA_DEBUG_TLS_LINK; Q11-заглушка nova_rt/tls_stub.c (29
+символов, -11 UNSUPPORTED). НАЙДЕН И ЗАКРЫТ дефект механизма: tls_*-вызовы в генерённом C
+были implicit declaration (D82 — деклараций нет) → int-возврат 32 бита → ТРУНКАЦИЯ хендла →
+SEGV (tls_cfg_verify_system+0xB, пойман NOVA_DIAG_SEGV-локалайзером; изолированный C-тест тем
+же clang работал — рознились прототипы). Fix: nova_rt/tls_shim.h (чистые прототипы, включён
+безусловно из nova_rt.h — тот же канал, каким net.h/brotli_shim.h дают прототипы генерённому
+C); tls_stub.c включает его для сверки сигнатур. Верификация в ТРИ стороны: TLS-CU+либа →
+LINK → shim_link_test PASS (реальный rustls сквозь Nova: bad-SNI→-12, ClientHello из
+write_tls, кривой PEM→-10→from_shim→InvalidPem); не-TLS CU → no tls (semver_range_test PASS);
+либа скрыта → STUB → стаб-проба PASS (err=-11→Internal), link-error нет. Гейт волны:
+conformance --positive --compile-error 82/0 (эталон). Pre-existing красные, ДОКАЗАННО не мои
+(baseline-прогон без tls_shim.h-инклуда идентичен): std/io/d322_lines_test RUN-FAIL (seek
+requires n>=0); std/net folder-CU НЕ КОМПИЛИРУЕТСЯ — E_CONCURRENT_MUT_CAPTURE в tcp_test.nv:89
+(чекер 173.3 vs незамигрированный spawn-тест) — ЭСКАЛИРОВАНО интегратору 173.3, вне периметра
+116. Коммиты: 3c181499 (слияние), 0ede004xx→см. git (Ф.1), Ф.2. Следующее: Ф.3 (TlsStream +
+pump + handshake smoke на self-signed паре).
 
 2026-07-10. Возобновление Plan 172.14 (value-ABI perf, P3) — разведка вскрыла: ветка
 value-abi-172-14 была создана от старого main без кода (только устная разведка в прошлой
@@ -39744,3 +39805,26 @@ spec/decisions/README.md, spec_tests/conformance/neg/
 d417_closure_scalar_return_neg.nv, docs/plans/backlog-followups.md
 (маркер закрыт), docs/simplifications.md.
 Модель: sonnet (вся волна — разведка чекера + реализация обеих задач).
+=== 2026-07-10: Plan 116 Ф.3 — runtime-дедлок TLS-handshake закрыт (race-инвестигация, ветка tls-116, sonnet) ===
+Метод — state-dump по шаблону mn-race-stale-slot: watchdog-дамп + серийная статистика
+(300 прогонов → 1 HANG = честная частота ~1/300, а не heisenbug).
+- Root cause: НЕ pump, НЕ lost-wake latch — loop-affinity гонка ISSUE-стороны uv-опов,
+  «остаточный класс» из записи [M-183-net2-loop-affinity-cross-thread-op] (теперь CLOSED):
+  work-steal уводит фибру на другой worker между park'ами (write→park→read на одном
+  сокете = паттерн TLS-pump), следующий uv-оп мутирует чужой не-thread-safe uv_loop →
+  completion mis-queued → вечная парковка (дамп: pending_remote=2, pstate=WAIT).
+- Фикс A (rt, 5ca0ace10): nova_loop_defer_call — generic-обобщение nova_loop_defer_close
+  (per-loop mutex-очередь + uv_async_send, main + каждый worker). Все issue-точки net.c
+  (tcp read/write/accept/shutdown, udp send/recv): same-thread = прямой вызов
+  (байт-в-байт прежнее), cross-thread = _deferred-обёртка (только она latch+wake).
+  Урок: unconditional latch+wake на same-thread пути = reentrant self-wake ДО
+  собственной парковки → гонка gopark/goready (~50% зависаний accept) — в net.c.
+- Фикс B (codegen, a89597277, вскрыт снятием дедлока): heap-promoted примитивный локал
+  (Plan 118 Ф.1) читался без deref — c_fn(&err); use(err) передавал heap-адрес вместо
+  значения → NEG bad-PEM давал Internal вместо InvalidPem. Ident-ветка emit_expr теперь
+  дерефит promoted-локал (зеркало var_boxed), var_types хранит базовый тип.
+- Регресс: std/net/pingpong_test.nv (104b94a7e) — alternating write→read.
+- Ложный след: «split_test виснет 50% на baseline» = slow-DNS NXDOMAIN (~17с) при 8с
+  таймауте обвязки — не дефект.
+- Гейты: handshake_test 19/19 (был TIMEOUT); стресс 0 hang/720+; std/net CU 37×3;
+  conformance 90/0 (слит main d1b9b2bc8, 0d8581803); err173 5/5 δ0. Модель: sonnet.

@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 116 Ф.1: std/tls/config.nv — конфиги клиента/сервера.
+//
+// ЧИСТЫЕ Nova-данные (byte-first, §2 module-conventions): PEM/DER ходят как
+// `[]u8`, парсит их шим (rustls-pemfile) в момент handshake. Никаких хендлов
+// наружу: эфемерный shim-билдер строится ВНУТРИ connect/accept (Ф.3) и
+// потребляется tls_client_new/tls_server_new. Пере-использование дорогого
+// rustls-конфига между коннектами — followup [M-116-config-cache].
+//
+// Дедлайны — НЕ поле конфига: supervised-scope на call-site (конвенция 173,
+// линия [M-178-timeout-needs-173]).
+
+module std.tls
+
+/// Как проверять сертификат сервера (D-блок B плана 116).
+#stable(since = "0.2")
+export type VerificationMode enum
+    | SystemRoots                   // webpki-roots (Mozilla bundle) — default
+    | CustomRoots([]u8)             // свой CA-bundle (PEM bytes) — private CA / corp PKI
+    | Pinned([][]u8)                // SPKI SHA-256 pinning (32-байтные хеши) — Ф.4
+    | InsecureSkipVerify            // принять ЛЮБОЙ серт. ТОЛЬКО тесты
+
+/// Server-side режим аутентификации клиента (mTLS; D-блок B).
+#stable(since = "0.2")
+export type ClientCertMode enum
+    | NoClientAuth                  // без клиентской аутентификации (default)
+    | Optional([]u8)                // запросить по CA-bundle (PEM), пустить и без серта
+    | Required([]u8)                // mTLS: серт обязателен
+
+/// Согласованная версия TLS (rustls: 1.3 preferred, 1.2 accepted, 1.0/1.1
+/// отвергаются by design; D-блок B).
+#stable(since = "0.2")
+export type TlsVersion enum
+    | Tls12
+    | Tls13
+
+/// Lowercase-имя версии.
+#stable(since = "0.2")
+export fn TlsVersion @to_str() -> str {
+    match @ {
+        Tls12 => "tls 1.2"
+        Tls13 => "tls 1.3"
+    }
+}
+
+/// Версия из wire-кода шима (`tls_version`: 0x0303 / 0x0304); `None` — версия
+/// ещё не согласована или код неизвестен.
+#stable(since = "0.2")
+export fn TlsVersion.from_wire(code int) -> Option[TlsVersion] {
+    if code == 771 { Some(TlsVersion.Tls12) }        // 0x0303
+    else if code == 772 { Some(TlsVersion.Tls13) }   // 0x0304
+    else { None }
+}
+
+// ─── ClientConfig ─────────────────────────────────────────────────────────────
+
+/// Конфиг TLS-клиента. SNI (`server_name`) ОБЯЗАТЕЛЕН — единственный
+/// конструктор его требует (D-блок B: rustls всегда шлёт SNI и проверяет имя).
+#stable(since = "0.2")
+export type ClientConfig {
+    server_name     str                 // SNI + hostname verification target
+    alpn_protocols  []str               // [] = без ALPN; порядок = приоритет
+    verification    VerificationMode
+}
+
+/// Дефолтный клиент-конфиг: SystemRoots + ALPN `["http/1.1"]`.
+/// (`h2` добавится планом HTTP/2 — D-блок C.)
+#stable(since = "0.2")
+export fn ClientConfig.new(server_name str) -> ClientConfig => {
+    server_name,
+    alpn_protocols: ["http/1.1"],
+    verification: VerificationMode.SystemRoots,
+}
+
+/// Новый конфиг с заменённым ALPN-списком (with_* → НОВОЕ значение).
+#stable(since = "0.2")
+export fn ClientConfig @with_alpn(protocols []str) -> ClientConfig => {
+    @server_name,
+    alpn_protocols: protocols,
+    @verification,
+}
+
+/// Новый конфиг с заменённым режимом верификации.
+#stable(since = "0.2")
+export fn ClientConfig @with_verification(mode VerificationMode) -> ClientConfig => {
+    @server_name,
+    @alpn_protocols,
+    verification: mode,
+}
+
+// ─── ServerConfig ─────────────────────────────────────────────────────────────
+
+/// Конфиг TLS-сервера: цепочка сертификатов + приватный ключ (PEM-байты;
+/// RSA/ECDSA/Ed25519 — парсит шим при `accept`).
+#stable(since = "0.2")
+export type ServerConfig {
+    cert_pem        []u8                // leaf + intermediates (PEM)
+    key_pem         []u8                // приватный ключ (PEM)
+    alpn_protocols  []str
+    client_cert     ClientCertMode      // mTLS (Ф.5)
+}
+
+/// Сервер-конфиг из PEM-пары; без ALPN, без клиентской аутентификации.
+#stable(since = "0.2")
+export fn ServerConfig.new(cert_pem []u8, key_pem []u8) -> ServerConfig => {
+    cert_pem,
+    key_pem,
+    alpn_protocols: []str.new(),
+    client_cert: ClientCertMode.NoClientAuth,
+}
+
+/// Новый конфиг с заменённым ALPN-списком.
+#stable(since = "0.2")
+export fn ServerConfig @with_alpn(protocols []str) -> ServerConfig => {
+    @cert_pem,
+    @key_pem,
+    alpn_protocols: protocols,
+    @client_cert,
+}
+
+/// Новый конфиг с заменённым режимом клиентской аутентификации (mTLS).
+#stable(since = "0.2")
+export fn ServerConfig @with_client_cert(mode ClientCertMode) -> ServerConfig => {
+    @cert_pem,
+    @key_pem,
+    @alpn_protocols,
+    client_cert: mode,
+}

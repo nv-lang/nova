@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_READONLY_FIELD
+//
+// Plan 116 Ф.1 (T1-NEG): конфиг, взятый под `ro`-биндинг (ровно так его берут
+// TlsStream.connect/accept: `config ro ClientConfig`), заморожен — подмена
+// server_name (= цели hostname-verification, D-блок B) после конструирования
+// отвергается на компиляции. Pin: ro-binding доминирует (Plan 124.8 / D175).
+
+module neg.config_ro_frozen_neg
+
+import std.tls.{ClientConfig}
+
+fn main() -> () {
+    ro cfg = ClientConfig.new("api.example.com")
+    cfg.server_name = "evil.example"
+    ()
+}

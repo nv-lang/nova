@@ -135,6 +135,65 @@ int nova_loop_defer_close(uv_loop_t* loop,
                           uv_handle_t* handle,
                           uv_close_cb close_cb);
 
+/* ── [M-183-net2-loop-affinity-cross-thread-op] fix: generic cross-thread
+ * uv-op marshal ──────────────────────────────────────────────────────────
+ *
+ * Root cause this closes: a fiber can be moved to a different worker by
+ * work-stealing while parked (e.g. waiting on a socket read/write/accept
+ * completion). Its NEXT libuv call against a handle created earlier (bound
+ * to the ORIGINAL worker's loop) would then run on the wrong OS thread —
+ * concurrent, unsynchronized mutation of that loop's internal bookkeeping
+ * (libuv loops are single-thread-owned). Symptom: intermittent (measured
+ * ~1/300) permanent park — the issued op's completion callback is silently
+ * mis-queued/lost, so the parked fiber never wakes (net.c / std.tls
+ * handshake smoke, [M-116-handshake-socket-deadlock]).
+ *
+ * Same producer/consumer shape as nova_loop_defer_close (mutex-protected
+ * job queue + uv_async_send to the owning loop's thread), generalised to an
+ * arbitrary `void fn(void* arg)` instead of a fixed uv_close_cb. Callers
+ * (net.c) check `nova_current_loop() == handle_owning_loop` themselves and
+ * only defer on a genuine mismatch — the common (same-thread) case pays a
+ * plain pointer comparison, no queue/mutex/async overhead. */
+typedef void (*NovaDeferredCallFn)(void* arg);
+
+typedef struct {
+    NovaDeferredCallFn fn;
+    void*              arg;
+} NovaDeferredCallJob;
+
+typedef struct {
+    NovaDeferredCallJob* jobs;
+    int                  count;
+    int                  cap;
+    nova_mutex_t         mu;
+} NovaDeferredCallQueue;
+
+/* Initialize a deferred-call queue. Called once per worker preamble +
+ * once for main during pool materialization (mirrors close_queue). */
+void nova_call_queue_init(NovaDeferredCallQueue* q);
+
+/* Destroy a deferred-call queue (frees job array, not the struct itself). */
+void nova_call_queue_destroy(NovaDeferredCallQueue* q);
+
+/* Drain pending call jobs on the current loop. Must be called from the
+ * loop's thread (from the async wake callback, alongside drain_closes). */
+void nova_loop_drain_calls(NovaDeferredCallQueue* q);
+
+/* Schedule `fn(arg)` to run on the thread that owns `loop`. Thread-safe —
+ * may be called from any thread. `arg` must remain valid until `fn` runs;
+ * callers that need the result back MUST park (predicate + latch, the
+ * existing net.c pattern) rather than return before `fn` has run — a
+ * fire-and-forget caller must heap/GC-own `arg` (not a stack local that
+ * may already have unwound).
+ *
+ * Returns 0 on success, -1 if loop is not recognised or OOM (falls back to
+ * a direct, possibly cross-thread call as last resort — logged, not UB-
+ * silent). Declaration only — implementation lives in runtime.c (needs
+ * _workers). */
+int nova_loop_defer_call(uv_loop_t* loop,
+                         NovaDeferredCallFn fn,
+                         void* arg);
+
 #ifdef __cplusplus
 }
 #endif

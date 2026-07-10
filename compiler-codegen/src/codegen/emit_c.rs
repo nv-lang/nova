@@ -24412,9 +24412,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 118 Ф.1: heap-promote primitive local.
                     // Emit: `C_ty* name = (C_ty*)nova_alloc(sizeof(C_ty));`
                     //        `*name = val;`
+                    // Plan 116 Ф.3 fix: var_types keeps the BASE type (not `T*`).
+                    // Value-position reads now emit `(*name)` (see the
+                    // promoted_primitive_locals arm in emit_expr::Ident), so type
+                    // inference must agree with that deref'd text — storing `T*`
+                    // here made every downstream infer_expr_c_type see a pointer
+                    // for what reads as a value (wrong casts in interpolation /
+                    // comparisons). `&name` still infers `T*` via the AddrOf arm.
                     self.promoted_primitive_locals.insert(binding.clone());
-                    let ptr_ty = format!("{}*", ty_c);
-                    self.var_types.insert(binding.clone(), ptr_ty.clone());
+                    self.var_types.insert(binding.clone(), ty_c.clone());
                     self.line(&format!(
                         "{}* {} = ({}*)nova_alloc(sizeof({}));",
                         ty_c, binding_c, ty_c, ty_c
@@ -25922,6 +25928,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Avoids #define which corrupts struct field access (foo->name).
                 if let Some(box_var) = self.var_boxed.get(name) {
                     return Ok(format!("(*{})", box_var));
+                }
+                // Plan 118 Ф.1 fix (Plan 116 Ф.3, [M-116-handshake-socket-deadlock]
+                // wave): heap-promoted primitive local — VALUE-position reads must
+                // dereference the box pointer, mirroring the var_boxed arm above
+                // (the Let-emit switched the C repr to `T* name = nova_alloc(...)`).
+                // Without this deref every read of a promoted local yielded the
+                // POINTER, not the value: `mut err int = 0; c_fn(&err); use(err)`
+                // passed a heap ADDRESS to `use` (caught live: TlsError.from_shim
+                // received ~2.8e12 instead of the shim's -10, so bad-PEM classified
+                // as Internal instead of InvalidPem). Assign targets lower through
+                // this same arm (Stmt::Assign → emit_expr(target)), so `err = v`
+                // correctly becomes `(*err) = v` too. `&err` stays handled by the
+                // dedicated AddrOf arm (returns the bare pointer) — emitted BEFORE
+                // this in the Unary path, never reaching here.
+                if self.promoted_primitive_locals.contains(name) {
+                    return Ok(format!("(*{})", Self::mangle_field_name(name)));
                 }
                 // Capture access inside spawn-entry body. By-pointer → `(*_c->name)`,
                 // by-value → `_c->name` (T field, no deref).
