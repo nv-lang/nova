@@ -39828,3 +39828,47 @@ d417_closure_scalar_return_neg.nv, docs/plans/backlog-followups.md
   таймауте обвязки — не дефект.
 - Гейты: handshake_test 19/19 (был TIMEOUT); стресс 0 hang/720+; std/net CU 37×3;
   conformance 90/0 (слит main d1b9b2bc8, 0d8581803); err173 5/5 δ0. Модель: sonnet.
+=== 2026-07-10: два P1 codegen/checker-бага закрыты (ветка codegen-p1-bugs, sonnet) ===
+Решение владельца: исправить оба P1 из backlog-followups.md. Ветка от main 2be6d7064.
+
+[M-consume-rebind-nested-block-shadow] — при разведке оказалось УЖЕ ИСПРАВЛЕНО
+коммитом 3f0198c8fd (2026-07-08, Plan 172.13 батч 3, входит в историю 2be6d7064) —
+alpha_rename::declare_consume + emit_c.rs consume_reuse_spans; регресс
+spec_tests/conformance/d347_same_scope_rebinding.nv (2 теста, включая loop-shaped
+repro один-в-один с формулировкой маркера) уже landed. Маркер в backlog остался
+помечен OPEN по документационному долгу — код-регрессии не было. Ретроверифицировано
+на этой ветке (d347 PASS 1/0, std/encoding/csv_test PASS 1/0) и маркер закрыт текстом
+(коммит b108700c6, docs-only, код не менялся).
+
+[M-compress-checksum-structvariant-ctor-xmodule] — реальный P1, ЗАКРЫТ (коммит
+72fdb8ee9). Root cause НЕ codegen (как предполагал escalation-текст маркера про
+f2e24febd), а ЧЕКЕР: E_UNKNOWN_TYPE-гейт для RecordLit (types/mod.rs
+TypeCheckCtx::walk_expr, Plan 173 Ф.5 zero-tolerance) искал bare-имя struct-payload
+варианта (`Checksum`) через `self.types.values().any(...)`, но `self.types` — HashMap
+keyed по ИМЕНИ СУММЫ (`ErrorKind`); при co-presence НЕСКОЛЬКИХ одноимённых сумм из
+разных модулей (`ErrorKind` в std/io, std/http, std/encoding/compress — все co-present
+в http-CU через auto-decompress) `types.insert` перезаписывает — выживает только
+ПОСЛЕДНИЙ, варианты остальных пропадают из `types.values()` → ложный E_UNKNOWN_TYPE,
+валящий ВЕСЬ http-CU. Фикс: параллельное поле `TypeCheckCtx.sum_variant_names:
+HashSet<String>`, заполняется ЛОССЛЕСС тем же Vec-обходом `module.items`, что строит
+`types` (HashSet-вставка не теряет записи при коллизии имени владеющей суммы); гейт
+теперь проверяет `sum_variant_names.contains(last)`. Регресс:
+nova_tests/xmodule_struct_variant_ctor_test.nv + 2 co-equal модуля (_a/_b, каждый
+объявляет одноимённую сумму `Kind` — одна со struct-payload вариантом, другая без) —
+изолированное зеркало реальной коллизии, не зависящее от std.
+
+Побочно найдены и честно зафиксированы (НЕ тронуты, вне scope этой волны) два новых
+pre-existing дефекта: [M-tls-handshake-test-panic-undefined-multifile] (real_test —
+`std/tls/handshake_test.nv` undefined identifier `panic` ТОЛЬКО в multi-file-module
+CU, соло PASS) и [M-tls-cert-modes-test-undefined-helpers] (nova check std —
+undefined test-хелперы fixture_cert/must_tcp/etc, подтверждено PRE-EXISTING на
+baseline 2be6d7064 тем же прогоном).
+
+Гейты (на слитом с main, cargo build --release оба крейта чисто): conformance
+--positive --compile-error 91/0; err173-корпус (5 файлов, err173+err173_0..3) 5/5
+δ0 (1 TIMEOUT в батче — подтверждён flake, PASS соло, не регрессия); std/http/client/
+client_test PASS (Checksum-ошибка ушла); std/encoding/compress d333/d334/d335/d336
+delta-0 PASS соло; std/encoding/csv_test PASS; d347_same_scope_rebinding PASS;
+nova check std — baseline 2be6d7064 (отдельный temp-worktree) PASS 118/FAIL 32 →
+ветка PASS 125/FAIL 25 (строго ЛУЧШЕ baseline, не просто «не хуже»). Ветка
+codegen-p1-bugs запушена в github. Модель: sonnet (обе задачи — разведка+фикс+гейты).
