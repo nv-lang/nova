@@ -25,7 +25,11 @@ module spec_tests.conformance
 export type SctPt(x f64 = 0.0, y f64 = 0.0)
 
 export fn SctPt.new(x f64, y f64) -> Self => SctPt(x, y)
-export fn SctPt.try_from(x f64, y f64) -> Result[Self, str] {
+// Одиночная fallible-операция (нет инфаллибельного сиблинга `from` — только
+// `new`, другое семейство конструкторов) — обычное имя + `Result`, БЕЗ
+// `try_`-префикса (R3 D325, nv-coding-style §1: `try_`/`try_from` только
+// когда есть одноимённый infallible `from`).
+export fn SctPt.checked(x f64, y f64) -> Result[Self, str] {
     if x < 0.0 { return Err("negative x") }
     Ok(SctPt(x, y))
 }
@@ -39,11 +43,11 @@ test "static ctor (-> Self) + instance method coexist on a named tuple" {
 }
 
 test "static Result-returning ctor (-> Result[Self, E]) + instance method coexist" {
-    match SctPt.try_from(1.0, 2.0) {
+    match SctPt.checked(1.0, 2.0) {
         Ok(p) => assert(p.x == 1.0)
         Err(_) => assert(false)
     }
-    match SctPt.try_from(-1.0, 2.0) {
+    match SctPt.checked(-1.0, 2.0) {
         Ok(_) => assert(false)
         Err(e) => assert(e == "negative x")
     }

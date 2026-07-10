@@ -15,14 +15,14 @@ type D66Box {
     value int
 }
 
-fn D66Box.of(v int) -> Self =>
+fn D66Box.new(v int) -> Self =>
     { value: v }
 
 fn D66Box.zero() -> Self =>
     { value: 0 }
 
 test "Self в return-type static-метода ≡ receiver-тип; literal конструирует D66Box (D66)" {
-    ro b = D66Box.of(42)
+    ro b = D66Box.new(42)
     assert(b.value == 42)
     ro z = D66Box.zero()
     assert(z.value == 0)
@@ -32,7 +32,7 @@ test "Self в return-type static-метода ≡ receiver-тип; literal ко�
 // default-конструктор делегирует к parameterized через Self.method (canonical pattern D66 §2).
 
 fn D66Box.def() -> Self =>
-    Self.of(7)
+    Self.new(7)
 
 test "Self.method() в expression-position резолвится в static того же типа (D66)" {
     ro b = D66Box.def()

@@ -10,7 +10,7 @@
 module spec_tests.conformance
 
 test "[]u32 body-only instantiation gets a full struct-def and round-trips (D300)" {
-    mut v []u32 = []u32.with_capacity(4)
+    mut v []u32 = []u32.new().cap(4)
     v.push(1 as u32)
     v.push(2 as u32)
     assert(v.len() == 2)

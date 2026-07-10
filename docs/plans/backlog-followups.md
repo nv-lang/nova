@@ -2973,3 +2973,29 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 
 - **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ✅ снята тем же днём —
   трек доведён до конца (см. закрытый маркер выше), ветка `fixed-array-value` готова к слиянию.
+
+- **[M-vec-new-cap-chain-method-generic-erase]** (2026-07-10, P2, найден при
+  lint-sanitation/spec_tests-починке `W_RETIRED_NAME` `with_capacity`) —
+  чекер эрейзит `[]U.new().cap(n)` в bare `Vec` (E7301 «cannot assign value of
+  type `Vec` to ... declared as `[]U`»), когда `U` — МЕТОД-уровневый (не
+  receiver-уровневый и не конкретный) type-param. Минимальный репро:
+  ```nova
+  fn[T] []T @m[U](f fn(T) -> U) -> []U {
+      mut out []U = []U.new().cap(@len())   // E7301 здесь
+      for x in @ { out.push(f(x)) }
+      out
+  }
+  ```
+  `[]U.new()` ОТДЕЛЬНО резолвится верно (`Vec[U]`); `.cap(n)` (D117 `mut @cap(n)
+  -> @`) отдельным statement'ом на уже-типизированной `out` — тоже верно.
+  Обходной путь (используется в `spec_tests/conformance/
+  d145_fn_prefix_receiver_generic.nv::d145_map`, НЕ hack — оба варианта
+  одинаково каноничны): разбить на два statement'а (`mut out []U = []U.new()`
+  \ `out.cap(@len())`) вместо цепочки в одном выражении. Похоже на класс
+  ранее закрытого [M-http-props-mut-chain-stmt-value-copy-loss] (беглая
+  `-> @`-цепочка теряет тип/идентичность на value-типе), но ТА починка была
+  про chain-norm root-temp hoist для receiver уже известного типа; здесь
+  корень цепочки — САМ КОНСТРУКТОР (`[]U.new()`), типизированный
+  method-level generic'ом — вероятно другой путь в чекере (`assignable`/
+  `resolved_cat_of`, types/mod.rs). Не расследовано глубже (вне периметра
+  lint-sanitation волны) — чинить отдельным заходом compiler-codegen.

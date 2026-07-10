@@ -19,7 +19,14 @@ fn[T] []T @d145_first() -> T => @[0]
 // Slice receiver with a method-level `U` (D119) on top of the prefix-declared receiver `T`:
 // `U` is inferred from the closure return, independent of `T`. Cross-type T=int → U=str holds.
 fn[T] []T @d145_map[U](f fn(T) -> U) -> []U {
-    mut out []U = []U.with_capacity(@len())
+    // [M-vec-new-cap-chain-method-generic-erase] (found during lint-sanitation
+    // 2026-07-10): chaining `.cap(n)` directly onto `[]U.new()` in ONE
+    // expression erases the generic — checker resolves the chain to bare
+    // `Vec` instead of `Vec[U]` (E7301) when `U` is a METHOD-level type-param
+    // (works fine for concrete types / receiver-level generics; also works
+    // as TWO statements, used here). See docs/plans/backlog-followups.md.
+    mut out []U = []U.new()
+    out.cap(@len())
     for x in @ { out.push(f(x)) }
     out
 }
