@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR CleanupTimeoutError
+// D192-РЕТРАКТ (Plan 173 Ф.5 п.2, §3a 2026-06-26): force-timeout на cleanup
+// НЕ существует — тип `CleanupTimeoutError` удалён из prelude. Cleanup
+// всегда добегает (completes-by-default); превышение watchdog-порога
+// (3-level D192-resolution как источник ПОРОГА варна) наблюдаемо в
+// ResourceTrace exit-событии (duration_ms/overrun — D185 amend).
+// Ссылка на удалённый тип = ошибка компиляции ([E_UNKNOWN_TYPE] на
+// record-literal — конструирование ретрактнутого типа невозможно).
+module neg.d192_cleanup_timeout_retracted_neg
+
+fn construct_retracted() -> () {
+    ro _e = CleanupTimeoutError { duration_ms: 100 }
+}

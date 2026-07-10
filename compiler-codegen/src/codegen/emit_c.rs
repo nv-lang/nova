@@ -1546,6 +1546,11 @@ struct ConsumePolicy {
     /// checker bypassed via aliasing) hits `_consume_count >= 1` and panics
     /// with `D188-on-exit-double-invocation` instead of silently no-op'ing.
     count_var: String,
+    /// Plan 173 Ф.5 п.2 (D192-ретракт): C `int` local holding the resolved
+    /// 3-level watchdog THRESHOLD (ms) — armed around the cleanup call only
+    /// (`nv_cleanup_watchdog_arm/disarm`) and compared against the measured
+    /// cleanup duration for the ResourceTrace exit-event `overrun` flag.
+    threshold_var: String,
 }
 
 /// Plan 173.1 Ф.2 (D71): element transport representation over the mono
@@ -6452,25 +6457,15 @@ impl CEmitter {
         }
         self.out = self.out.replace("/*__LEGACY_TUPLE_TYPEDEFS__*/", &legacy_decls);
 
-        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: register
-        // CleanupTimeoutError type id (prelude type used by runtime
-        // cleanup-deadline path). Ensures NOVA_TID_USER_CleanupTimeoutError
-        // macro defined + typed throw impl emitted (см. splice ниже).
-        //
-        // ВАЖНО: гейтим по реальному определению типа. Под `#no_prelude`
-        // prelude не инлайнится → struct `Nova_CleanupTimeoutError` НЕ
-        // объявлен; безусловная регистрация заставляла эмитить impl
-        // (`_nova_throw_cleanup_timeout_impl`), ссылающийся на необъявленный
-        // тип → CC-FAIL (plan107/plan62 no_prelude). record_schemas на этой
-        // стадии заполнен всеми defined record-типами.
-        if self.record_schemas.contains_key("CleanupTimeoutError") {
-            self.register_type_id("CleanupTimeoutError");
-        }
+        // Plan 173 Ф.5 п.2 (D192-РЕТРАКТ): CleanupTimeoutError type-id
+        // registration + typed-throw splice УДАЛЕНЫ вместе с типом —
+        // force-прерывания cleanup'а не существует; watchdog-варн +
+        // duration/overrun в ResourceTrace exit-событии (D185 amend).
 
         // Plan 174 (D349): register TimeoutError type id (prelude type thrown by
         // the supervised scope-deadline runtime path). Gated on the real type
-        // definition (same #no_prelude discipline as CleanupTimeoutError above)
-        // so `_nova_throw_scope_timeout_impl` is emitted only when the struct
+        // definition (#no_prelude discipline) so `_nova_throw_scope_timeout_impl`
+        // is emitted only when the struct
         // Nova_TimeoutError + NOVA_TID_USER_TimeoutError are available.
         if self.record_schemas.contains_key("TimeoutError") {
             self.register_type_id("TimeoutError");
@@ -6611,30 +6606,8 @@ static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, cons
             &format!("/* nova-effect-count: {} */", effect_count),
         );
 
-        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: typed throw
-        // codegen для CleanupTimeoutError. Emitted ТОЛЬКО if
-        // CleanupTimeoutError is in type_id_registry (user code references
-        // it; otherwise string-fallback в nv_shield_check_deadline kicks in).
-        let (ct_impl, ct_init) = if self.type_id_registry.contains_key("CleanupTimeoutError") {
-            let impl_block = "\
-/* Plan 110.9.1 V1.1: typed CleanupTimeoutError throw — assigned к\n\
- * _nova_throw_cleanup_timeout_fn в main(). Replaces string-fallback\n\
- * в nv_shield_check_deadline когда CleanupTimeoutError referenced. */\n\
-static void _nova_throw_cleanup_timeout_impl(int duration_ms) {\n\
-    Nova_CleanupTimeoutError* _e = (Nova_CleanupTimeoutError*)nova_alloc(sizeof(Nova_CleanupTimeoutError));\n\
-    _e->duration_ms = (nova_int)duration_ms;\n\
-    char _buf[96];\n\
-    snprintf(_buf, sizeof(_buf), \"cleanup-timeout-exceeded: %d ms over budget\", duration_ms);\n\
-    (void)nova_throw_typed(nova_str_from_cstr(_buf), (void*)_e, NOVA_TID_USER_CleanupTimeoutError);\n\
-    /* unreachable */\n\
-}\n".to_string();
-            let init_line = "    _nova_throw_cleanup_timeout_fn = &_nova_throw_cleanup_timeout_impl;".to_string();
-            (impl_block, init_line)
-        } else {
-            (String::new(), String::new())
-        };
-        self.out = self.out.replace("/*__CLEANUP_TIMEOUT_IMPL__*/", &ct_impl);
-        self.out = self.out.replace("/*__CLEANUP_TIMEOUT_INIT__*/", &ct_init);
+        // Plan 173 Ф.5 п.2 (D192-ретракт): __CLEANUP_TIMEOUT_IMPL__/__INIT__
+        // splice удалён вместе с CleanupTimeoutError (Plan 110.9.1 retired).
 
         // Plan 174 (D349): typed TimeoutError throw impl — assigned to
         // _nova_throw_scope_timeout_fn in main() when TimeoutError is
@@ -10284,8 +10257,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // supervised(cancel:) fix (2026-06-05): cancel-shield mask + deadline
         // fields. MUST be в codegen layout — иначе runtime reads past struct
         // (Boehm GC garbage bytes) → mask=garbage > 0 → nv_shield_check_deadline
-        // enters slow path → deadline=garbage triggers bogus CleanupTimeoutError
-        // (visible как 720M+ ms "over budget" в 6s tests).
+        // enters slow path → deadline=garbage triggers bogus watchdog-варн
+        // (было: bogus CleanupTimeoutError, 720M+ ms "over budget" в 6s tests;
+        // D192-ретракт Plan 173 Ф.5 п.2 заменил throw на one-shot варн).
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_cancel_mask_count;");
         let _ = writeln!(self.lambda_forward_decls,
@@ -11442,7 +11416,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 110.2.1.a (D188 R3) [M-110.x-cleanup-shield-deadline-underflow]
         // supervised(cancel:) fix (2026-06-05): cancel-shield mask + deadline
         // fields — same as NovaSpawnCtx layout. Без них runtime reads past
-        // struct → garbage mask > 0 triggers bogus CleanupTimeoutError.
+        // struct → garbage mask > 0 triggers bogus watchdog-варн (было:
+        // bogus CleanupTimeoutError — D192-ретракт, Plan 173 Ф.5 п.2).
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_cancel_mask_count;");
         let _ = writeln!(self.lambda_forward_decls,
@@ -22072,16 +22047,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.line("");
 
-        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: typed throw
-        // impl splice marker. Emitted ПОСЛЕ user-type struct definitions
-        // (incl. Nova_CleanupTimeoutError) и ДО int main() — нужны:
-        //   - struct Nova_CleanupTimeoutError (для allocate+set)
-        //   - NOVA_TID_USER_CleanupTimeoutError macro (из typeid splice)
-        //   - nova_throw_typed (из effects.h, всегда доступно)
-        // Replaced в finalize условно if CleanupTimeoutError registered.
-        self.line("/*__CLEANUP_TIMEOUT_IMPL__*/");
-        // Plan 174 (D349): typed TimeoutError throw impl splice (same placement
-        // rationale — after Nova_TimeoutError struct + tid macro, before main).
+        // Plan 173 Ф.5 п.2 (D192-ретракт): __CLEANUP_TIMEOUT_IMPL__ marker
+        // удалён вместе с CleanupTimeoutError typed-throw механизмом.
+        // Plan 174 (D349): typed TimeoutError throw impl splice — emitted
+        // ПОСЛЕ user-type struct definitions (Nova_TimeoutError + tid macro),
+        // ДО int main().
         self.line("/*__SCOPE_TIMEOUT_IMPL__*/");
         // Plan 173.2 (supervision-as-effect): Supervisor decision-bridge impl
         // splice — after NovaVtable_Supervisor + Nova_Decision definitions
@@ -22135,11 +22105,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         //  emit_main_function via emit_effects_registrar_fn.)
         self.line("_nova_register_effects_fn = _nova_register_all_effects_;");
         self.line("_nova_register_all_effects_();");
-        // Plan 110.9.1 V1.1 [M-110.9.1-typed-cleanup-timeout]: assign typed
-        // CleanupTimeoutError throw fn pointer (if CleanupTimeoutError is
-        // referenced). Spliced at finalize via __CLEANUP_TIMEOUT_INIT__
-        // placeholder.
-        self.line("/*__CLEANUP_TIMEOUT_INIT__*/");
+        // Plan 173 Ф.5 п.2 (D192-ретракт): __CLEANUP_TIMEOUT_INIT__ удалён.
         // Plan 174 (D349): assign typed TimeoutError throw fn pointer (if
         // TimeoutError referenced). Spliced via __SCOPE_TIMEOUT_INIT__.
         self.line("/*__SCOPE_TIMEOUT_INIT__*/");
@@ -23082,6 +23048,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let unwind_cleanup = matches!(outcome, DeferOutcome::FromFrame(_) | DeferOutcome::Interrupt);
         let o_local = self.fresh_tmp();
         self.materialize_scope_outcome(&o_local, outcome);
+        // Plan 173 Ф.5 п.2 (D192-ретракт): watchdog armed around the CLEANUP
+        // call only («fiber застрял в cleanup» — body не под порогом). t0 for
+        // the duration measured into the ResourceTrace exit-event. Both set
+        // BEFORE setjmp (values stable across the longjmp per C semantics).
+        let wd_prev = self.fresh_tmp();
+        let wd_t0 = self.fresh_tmp();
+        self.line(&format!("int64_t {} = nv_cleanup_watchdog_arm({});", wd_prev, policy.threshold_var));
+        self.line(&format!("int64_t {} = (int64_t)uv_hrtime();", wd_t0));
         self.line(&format!("NovaFailFrame {};", df));
         self.line(&format!("nova_fail_push(&{});", df));
         if unwind_cleanup {
@@ -23098,19 +23072,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("{} += 1;", policy.count_var));
         self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
         self.line("nova_fail_pop();");
+        self.line(&format!("nv_cleanup_watchdog_disarm({});", wd_prev));
         // Clean cleanup → observability sees the final outcome (skip on throw,
-        // R4b), then leave the shield.
+        // R4b), then leave the shield. Plan 173 Ф.5 п.2 (D185 amend): the
+        // exit-event carries the measured cleanup duration + overrun flag
+        // (structural observability of a threshold overrun — the watchdog
+        // stderr-warn is the fiber-suspend-point side of the same signal).
         if policy.has_resource_trace {
+            let dur_ms = self.fresh_tmp();
             self.line(&format!(
-                "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_exit(nova_str_from_cstr(\"{}\"), {}); }}",
-                policy.type_name, o_local));
+                "int64_t {} = ((int64_t)uv_hrtime() - {}) / 1000000LL;",
+                dur_ms, wd_t0));
+            self.line(&format!(
+                "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_exit(nova_str_from_cstr(\"{}\"), {}, (nova_int){}, (nova_bool)({} > 0 && {} > (int64_t){})); }}",
+                policy.type_name, o_local, dur_ms, policy.threshold_var, dur_ms, policy.threshold_var));
         }
         self.line(&format!("nv_consume_leave_shield({});", policy.prev_deadline_var));
         self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
         self.line("nova_fail_pop();");
-        // R4b: leave-shield UNCONDITIONAL even when cleanup threw/panicked.
+        // R4b: watchdog-disarm + leave-shield UNCONDITIONAL even when the
+        // cleanup threw/panicked.
+        self.line(&format!("nv_cleanup_watchdog_disarm({});", wd_prev));
         self.line(&format!("nv_consume_leave_shield({});", policy.prev_deadline_var));
         match tail {
             ConsumeTail::FailChain { failframe, chain } => {
@@ -24539,18 +24523,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 110.2.1 (D188 R3): cancel-shield over body + cleanup. enter
                 // returns the previous deadline (nested-shield safety); leave restores
                 // it. Both re-home into the consume-policy so all four run-sites leave.
+                // Plan 173 Ф.5 п.2 (D192-ретракт): enter больше НЕ армит deadline
+                // (mask only); timeout_var = порог watchdog-варна, армится вокруг
+                // самого cleanup-вызова (emit_consume_entry_cleanup).
                 let prev_deadline_var = self.fresh_tmp();
                 self.line(&format!(
                     "int64_t {} = nv_consume_enter_shield({});",
                     prev_deadline_var, timeout_var));
 
-                // Plan 110.4.4.a (D185, R1): ResourceTrace.on_resource_enter —
-                // observability only (NULL-guarded). Label = type name; arg = timeout.
+                // Plan 110.4.4.a (D185, R1) + Plan 173 Ф.5 п.2 (D185 amend):
+                // ResourceTrace.on_resource_enter — observability only
+                // (NULL-guarded). Label = type name; timeout ДРОПНУТ из enter
+                // (§3a/п.8) — порог наблюдаем структурно через exit-событие
+                // (duration_ms/overrun).
                 let has_resource_trace = self.effect_schemas.contains_key("ResourceTrace");
                 if has_resource_trace {
                     self.line(&format!(
-                        "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_enter(nova_str_from_cstr(\"{}\"), (nova_int){}); }}",
-                        type_name, timeout_var));
+                        "if (_nova_handler_ResourceTrace) {{ Nova_ResourceTrace_on_resource_enter(nova_str_from_cstr(\"{}\")); }}",
+                        type_name));
                 }
 
                 // Register the consume-scope as a defer-scope with ONE consume-entry.
@@ -24563,6 +24553,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     prev_deadline_var,
                     has_resource_trace,
                     count_var,
+                    threshold_var: timeout_var.clone(),
                 };
                 let consume_block_id = self.enter_consume_defer_scope(policy, false);
                 // Partial-init + exactly-once: arm the cleanup only now that the

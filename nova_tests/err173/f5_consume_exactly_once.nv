@@ -29,8 +29,8 @@ fn f5_throws() Fail[F5Err] -> () {
 test "f5 #8: consume cleanup dispatches exactly once — success path" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label, _timeout_ms) { return () }
-        on_resource_exit(_label, _outcome) {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
             exit_calls += 1
             return ()
         }
@@ -45,8 +45,8 @@ test "f5 #8: consume cleanup dispatches exactly once — success path" {
 test "f5 #8: consume cleanup dispatches exactly once — failure path" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label, _timeout_ms) { return () }
-        on_resource_exit(_label, _outcome) {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
             exit_calls += 1
             return ()
         }

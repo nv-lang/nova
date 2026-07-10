@@ -1601,11 +1601,12 @@ typedef struct {
      * decrement may happen on a different worker thread than increment
      * after migration (work-stealing M:N). zero-init via nova_alloc. */
     nova_atomic_int      _nova_cancel_mask_count;
-    /* Plan 110.2.2.a (D188 R3 + D192): deadline_ns for shield. Captured
-     * by nv_consume_enter_shield as now_ns + timeout_ms*1_000_000.
-     * Suspend entries compare uv_hrtime() vs this value; if exceeded
-     * while mask > 0, throw CleanupTimeoutError instead of suspending.
-     * 0 = no active deadline. */
+    /* Plan 173 Ф.5 п.2 (D192-ретракт; ранее Plan 110.2.2.a): watchdog
+     * deadline_ns. Армится nv_cleanup_watchdog_arm ТОЛЬКО на время
+     * cleanup-вызова (now_ns + threshold_ms*1e6). Suspend entries compare
+     * uv_hrtime() vs this value; if exceeded while mask > 0 —
+     * ONE-SHOT stderr-варн «fiber stuck in cleanup» (НЕ прерывание;
+     * cleanup добегает). 0 = not armed. */
     int64_t              _nova_cancel_deadline_ns;
     /* Plan 83-go-cmn Ф.2: gopark/goready 4-state park-latch (NIL/WAIT/READY/
      * DISPATCHED). By-pointer via mco_get_user_data; zero-init = NOVA_PARK_NIL.
@@ -1735,35 +1736,21 @@ static inline int64_t nova_cancel_deadline_get(mco_coro* co) {
 
 /* Plan 110.2.1.a (D188 R3): ConsumeScope shield entry/exit.
  *
- * `nv_consume_enter_shield(deadline_ms)` — increments cancel_mask_count,
- * captures deadline_ns = uv_hrtime() + deadline_ms*1_000_000 (saving the
- * previous value на stack-saved slot НЕ нужен — D196: nested consume{}
- * shadows external deadline; outer fiber resumes its own на leave).
- *
- * Implementation note for D197 (cleanup re-entrance): nested consume{}
- * inside on_exit body increments mask further; nested leave decrements
- * back to outer mask level. Outer deadline_ns rewritten by inner enter,
- * THEN restored by inner leave via save-on-enter/restore-on-leave
- * (deferred to 110.2.2.a). Bootstrap: simpler overwrite + restore via
- * caller's saved local — emit_c.rs handles. */
-/* Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] fix (2026-06-05):
- * enter returns previous deadline so leave can restore it. Previously nested
- * consume{} would overwrite outer's deadline и leave only cleared when mask
- * reached 0 — outer body resuming saw stale inner deadline, producing inflated
- * over-budget reports (appeared as i64 underflow). D196 нормирует:
- * inner shadows outer's deadline, outer's deadline restored на inner leave. */
-static inline int64_t nv_consume_enter_shield(int deadline_ms) {
+ * Plan 173 Ф.5 п.2 (D192-РЕТРАКТ, §3a 2026-06-26): `nv_consume_enter_shield`
+ * теперь НЕ армит deadline на scope — только инкрементирует cancel-mask
+ * (кооперативная отмена отложена, cleanup ВСЕГДА добегает; форс-прерывания
+ * cleanup'а НЕ СУЩЕСТВУЕТ). Параметр `threshold_ms` сохранён в сигнатуре
+ * как источник ПОРОГА watchdog-варна (3-level D192-resolution живёт в
+ * codegen consume-prologue), но деадлайн армится ТОЛЬКО вокруг самого
+ * cleanup-вызова — парой `nv_cleanup_watchdog_arm/disarm` ниже. Возврат
+ * prev_deadline сохранён для symmetry restore на leave (D197 re-entrance:
+ * consume внутри cleanup-тела наследует корректный outer-арм). */
+static inline int64_t nv_consume_enter_shield(int threshold_ms) {
+    (void)threshold_ms;  /* порог применяется в nv_cleanup_watchdog_arm */
     mco_coro* co = mco_running();
     if (!co) return 0;  /* main thread / non-fiber — shield is no-op */
     int64_t prev_deadline = nova_cancel_deadline_get(co);
     nova_cancel_mask_inc(co);
-    if (deadline_ms > 0) {
-        int64_t now_ns = (int64_t)uv_hrtime();
-        nova_cancel_deadline_set(co, now_ns + (int64_t)deadline_ms * 1000000LL);
-    } else {
-        /* #realtime bypass (D198): deadline_ms == 0 → no deadline check. */
-        nova_cancel_deadline_set(co, 0);
-    }
     return prev_deadline;
 }
 
@@ -1771,61 +1758,69 @@ static inline void nv_consume_leave_shield(int64_t prev_deadline) {
     mco_coro* co = mco_running();
     if (!co) return;
     nova_cancel_mask_dec(co);
-    /* Plan 110.x fix: restore outer's deadline (or 0 если outermost).
-     * Previously cleared only at mask=0 — left inner's deadline visible
-     * к outer body, causing bogus cleanup-timeout fires. */
+    /* Plan 110.x fix: restore outer's deadline (or 0 если outermost). */
     nova_cancel_deadline_set(co, prev_deadline);
 }
 
-/* Plan 110.2.2.a (D188 R3 + D192): deadline check called at suspend
- * entry (Time.sleep, nova_fiber_yield, future Net I/O). If a shield
- * is active AND deadline_ns is set AND uv_hrtime() has passed it,
- * throw the cleanup-timeout marker so the outer ConsumeScope's
- * fail-frame catches it and surfaces it to user code.
- *
- * Bootstrap implementation (Plan 110.2.2.a): the throw is a plain
- * `nova_throw` (USER kind) carrying a recognizable msg-string
- * "cleanup-timeout-exceeded after Nms"; the user-facing structured
- * CleanupTimeoutError construction is wired via the
- * `_nova_throw_cleanup_timeout_fn` function pointer when codegen
- * emits the impl in the user TU (assigned at startup). When the
- * pointer is NULL — string-only fallback used (production safe; the
- * outer fail-frame still catches and propagates).
+/* Plan 173 Ф.5 п.2 (D192-ретракт): watchdog-порог АРМИТСЯ только на время
+ * cleanup-вызова («fiber застрял в CLEANUP» — не в body). Превышение порога
+ * на suspend-точке внутри cleanup'а → stderr-ВАРН (nv_shield_check_deadline),
+ * НЕ прерывание: cleanup продолжает бежать до конца. threshold_ms == 0
+ * (#realtime bypass D198) → не армим. Пара arm/disarm стекуется через
+ * prev-значение (D197 re-entrance-safe). */
+static inline int64_t nv_cleanup_watchdog_arm(int threshold_ms) {
+    mco_coro* co = mco_running();
+    if (!co) return 0;
+    int64_t prev = nova_cancel_deadline_get(co);
+    if (threshold_ms > 0) {
+        nova_cancel_deadline_set(co,
+            (int64_t)uv_hrtime() + (int64_t)threshold_ms * 1000000LL);
+    } else {
+        nova_cancel_deadline_set(co, 0);
+    }
+    return prev;
+}
+
+static inline void nv_cleanup_watchdog_disarm(int64_t prev) {
+    mco_coro* co = mco_running();
+    if (!co) return;
+    nova_cancel_deadline_set(co, prev);
+}
+
+/* Plan 173 Ф.5 п.2 (D192-РЕТРАКТ, §3a): watchdog-check на suspend-точках
+ * (Time.sleep, nova_fiber_yield, future Net I/O). Если watchdog армлен
+ * (nv_cleanup_watchdog_arm — только на время cleanup-вызова) и порог
+ * превышен — печатается stderr-ВАРН «fiber застрял в cleanup» и деадлайн
+ * ЗАНУЛЯЕТСЯ (one-shot: варн не спамится на каждой последующей
+ * suspend-точке). НИКАКОГО прерывания: cleanup продолжает бежать до конца
+ * («defer всегда добегает», ни один из 7 языков-планки не форс-прерывает
+ * cleanup). Прежний механизм — throw CleanupTimeoutError
+ * (`_nova_throw_cleanup_timeout_fn` + string-fallback) — УДАЛЁН вместе с
+ * самим типом (D192-ретракт); превышение порога наблюдаемо структурно в
+ * ResourceTrace exit-событии (duration_ms/overrun — D185 amend).
  *
  * Idempotent: returns immediately on no-shield / no-deadline / not
  * exceeded. Safe to call at every suspend site без performance cost
  * на the hot non-shielded path. */
-extern void (*_nova_throw_cleanup_timeout_fn)(int duration_ms);
-
 static inline void nv_shield_check_deadline(void) {
     mco_coro* co = mco_running();
     if (!co) return;
     if (nova_cancel_mask_load(co) == 0) return;  /* no shield active */
     int64_t deadline = nova_cancel_deadline_get(co);
-    if (deadline == 0) return;  /* #realtime bypass or no-deadline scope */
+    if (deadline == 0) return;  /* not armed / #realtime bypass (D198) */
     int64_t now = (int64_t)uv_hrtime();
     if (now <= deadline) return;  /* within budget */
-    /* Deadline exceeded: compute elapsed-over-budget for diagnostic.
-     * NOTE: We do NOT re-enter the shield while throwing — the fail-frame
-     * for ConsumeScope (set up by codegen) catches kind=USER and surfaces
-     * to user code. The shield itself stays armed; nv_consume_leave_shield
-     * clears it on the way out. */
     int over_ms = (int)((now - deadline) / 1000000LL);
     if (over_ms < 0) over_ms = 0;
-    if (_nova_throw_cleanup_timeout_fn) {
-        /* Structured CleanupTimeoutError throw — codegen-supplied impl
-         * allocates struct + calls nova_throw_typed. */
-        _nova_throw_cleanup_timeout_fn(over_ms);
-        /* unreachable — fn does not return on throw path */
-    }
-    /* Fallback: plain string throw (USER kind). The msg-prefix is the
-     * recognized marker; outer code that wants typed access can match
-     * на msg.starts_with("cleanup-timeout-exceeded:"). */
-    char buf[96];
-    snprintf(buf, sizeof(buf),
-             "cleanup-timeout-exceeded: %d ms over budget", over_ms);
-    nova_throw(nova_str_from_cstr(buf));
-    /* unreachable */
+    /* One-shot: disarm so the warn fires once per cleanup overrun. The
+     * cancel-mask stays intact (cancel remains deferred until cleanup
+     * completes); nv_cleanup_watchdog_disarm restores the outer state. */
+    nova_cancel_deadline_set(co, 0);
+    fflush(stdout);
+    fprintf(stderr,
+        "nova: warning: fiber stuck in cleanup: %d ms over watchdog threshold "
+        "(cleanup keeps running; D192 retracted — no force-interrupt)\n",
+        over_ms);
 }
 
 /* Forward-decl для использования из spawn_into. */
@@ -2379,10 +2374,12 @@ static inline void nova_scope_deliver_cancel(NovaFiberQueue* q, void* reason_ptr
 }
 
 /* Plan 174 (D349): typed `TimeoutError` throw hook. Assigned by codegen in
- * main() when the user program references `TimeoutError` (mirrors the
- * CleanupTimeoutError pattern). When NULL — string-fallback throw is used
- * (production-safe; outer fail-frame still catches). Carries the exceeded
- * deadline point (absolute monotonic ns). */
+ * main() when the user program references `TimeoutError`. When NULL —
+ * string-fallback throw is used (production-safe; outer fail-frame still
+ * catches). Carries the exceeded deadline point (absolute monotonic ns).
+ * NB: НЕ путать с ретрактнутым CleanupTimeoutError (D192-ретракт, Plan 173
+ * Ф.5 п.2) — тот был про cleanup-бюджет ресурса и удалён; этот — про
+ * scope-дедлайн supervised(deadline:/timeout:) и живёт. */
 extern void (*_nova_throw_scope_timeout_fn)(int64_t deadline_ns);
 
 static inline void nova_throw_scope_timeout(int64_t deadline_ns) {

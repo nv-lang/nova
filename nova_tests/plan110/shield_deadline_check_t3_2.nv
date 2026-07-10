@@ -8,7 +8,7 @@
 //     (5000ms). Suspend entry now calls nv_shield_check_deadline()
 //     which checks mask>0 + deadline > now — passes here.
 //   • Body completes; cleanup runs; outer code observes finalised
-//     state. No CleanupTimeoutError thrown.
+//     state. Никакого прерывания/варна (порог не превышен; D192-ретракт: throw-механизма больше нет).
 //
 // Acceptance:
 //   A110.2.2.a.a — deadline check hooks invoked at suspend entry
@@ -17,7 +17,7 @@
 //   A110.2.2.a.b — non-firing path does not regress existing throw
 //                  semantics; ConsumeScope still completes successfully.
 //
-// Full E2E fire-path test (deadline truly exceeded → CleanupTimeoutError
+// Full E2E fire-path test (порог truly exceeded → watchdog/overrun
 // thrown) gated on Plan 110.4.6.a (Application Level-2 / per-type
 // WithExitTimeout) so a sub-5-second budget can be configured per-scope.
 // See followup marker [M-110-deadline-fire-fixture] in Plan 110.2.6.

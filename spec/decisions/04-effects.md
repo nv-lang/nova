@@ -5531,8 +5531,12 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 > codegen emits enter/exit dispatch, 2026-06-01). **Амендмент Plan 173 Ф.2.R1 (2026-07-04, RENAME-only):**
 > эффект переименован `Cleanup`→**`ResourceTrace`** (освобождает имя `Cleanup` для протокола
 > `Cleanup[E]`, ex-`Consumable`, D314), операции `on_scope_enter/exit`→**`on_resource_enter/exit`**.
-> (Параметр `timeout` в enter пока СОХРАНЁН — его дроп §3a/п.8 отложен в **Plan 173 Ф.5** timeout-rework,
-> т.к. это семантическая правка с ретайром D195-override-тестов, не часть ренейма.)
+> **Амендмент Plan 173 Ф.5 п.2 (2026-07-10, D192-ретракт):** параметр `timeout` ДРОПНУТ из
+> `on_resource_enter` (§3a/п.8) — порог стал внутренним параметром watchdog-варна; exit-событие
+> получило `duration_ms int` (измеренная длительность cleanup-вызова) и `overrun bool`
+> (true = cleanup превысил watchdog-порог из 3-level D192-resolution). Прежние
+> D195-Application-override тесты (`timeout_application_level2_t3_8`, `application_cross_fiber_t8_7`)
+> мигрированы на поведенческое наблюдение порога через overrun.
 > Observability-only effect для tracing resource-scope entry/exit. Default handler — no-op,
 > zero-overhead если не использован. Orthogonal к `Cleanup[E].@cleanup` (ex-`Consumable.on_exit`,
 > resource lifecycle) — слой для metrics/tracing.
@@ -5541,8 +5545,8 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 
 ```nova
 effect ResourceTrace {
-    on_resource_enter(label str, timeout Duration) -> ()
-    on_resource_exit(label str, outcome ScopeOutcome) -> ()
+    on_resource_enter(label str) -> ()
+    on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> ()
 }
 ```
 
@@ -5558,9 +5562,10 @@ fn ResourceTrace.default() -> ResourceTraceHandler => ResourceTraceHandler { /* 
 effect handler активен):
 
 ```c
-perform_ResourceTrace_on_resource_enter(type_label(X), _timeout);
+perform_ResourceTrace_on_resource_enter(type_label(X));
 // ... body ...
-perform_ResourceTrace_on_resource_exit(type_label(X), _outcome);
+/* duration измеряется вокруг cleanup-вызова; overrun = duration > threshold */
+perform_ResourceTrace_on_resource_exit(type_label(X), _outcome, _duration_ms, _overrun);
 ```
 
 Если handler === default no-op (compile-time check) — calls elided через
@@ -5588,7 +5593,6 @@ Reference implementation `CleanupHandler.to_otel(exporter)`:
 ```
 attributes = {
     "resource.label":         label,
-    "resource.timeout_ms":    timeout.ms(),
     "resource.start_time_ns": now_ns(),
 }
 span_kind = INTERNAL
@@ -5603,7 +5607,8 @@ status = match outcome {
     Failure(_)   => ERROR { code: "cleanup_failed" }
     Panic(_)     => ERROR { code: "cleanup_panic" }
 }
-attributes.duration_ms = (now_ns() - start_time_ns) / 1_000_000
+attributes.duration_ms = duration_ms   // из exit-события (длительность cleanup)
+attributes.overrun     = overrun       // watchdog-порог превышен (D192-ретракт: варн, не прерывание)
 end_time = now()
 ```
 

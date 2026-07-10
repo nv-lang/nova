@@ -264,12 +264,17 @@ export type Random effect {
 /// zero-overhead если не использован. Orthogonal к Cleanup[E].@cleanup (resource
 /// lifecycle) — слой для metrics/tracing.
 ///
-/// **Operations:**
-///   - `on_resource_enter(label str, timeout_ms int)` — invoked при входе в
-///     `consume X = ... { body }` scope-block. timeout_ms — resolved deadline.
-///     (Дроп timeout — §3a/п.8, отложено в Plan 173 Ф.5 timeout-rework.)
-///   - `on_resource_exit(label str, outcome ScopeOutcome)` — invoked при выходе из
-///     scope с финальным outcome.
+/// **Operations (Plan 173 Ф.5 п.2 — D185 amend, D192-ретракт):**
+///   - `on_resource_enter(label str)` — invoked при входе в
+///     `consume X = ... { body }` scope-block. Timeout ДРОПНУТ из enter
+///     (§3a/п.8): порог — внутренний параметр watchdog-варна, наблюдаемость
+///     превышения структурна — через exit-событие ниже.
+///   - `on_resource_exit(label str, outcome ScopeOutcome, duration_ms int,
+///     overrun bool)` — invoked при выходе из scope с финальным outcome.
+///     `duration_ms` — измеренная длительность cleanup-вызова; `overrun` —
+///     true, если cleanup превысил watchdog-порог (3-level D192-resolution:
+///     WithExitTimeout → Application → default 5000ms). Force-прерывания
+///     cleanup'а НЕ существует (D192-ретракт) — cleanup всегда добегает.
 ///
 /// **Handler restrictions (D185):**
 ///   - Handler не может `throw` (observability должна быть idempotent).
@@ -289,8 +294,8 @@ export type Random effect {
 /// (codegen elides calls when no handler bound).
 #stable(since = "0.1")
 export type ResourceTrace effect {
-    on_resource_enter(label str, timeout_ms int) -> ()
-    on_resource_exit(label str, outcome ScopeOutcome) -> ()
+    on_resource_enter(label str) -> ()
+    on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> ()
 }
 
 

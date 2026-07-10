@@ -40,8 +40,8 @@ fn d188_r2_throws() Fail[D188R2Err] -> () {
 test "D188 R2: cleanup dispatches exactly once — success path" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label, _timeout_ms) { return () }
-        on_resource_exit(_label, _outcome) {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
             exit_calls += 1
             return ()
         }
@@ -56,8 +56,8 @@ test "D188 R2: cleanup dispatches exactly once — success path" {
 test "D188 R2: cleanup dispatches exactly once — failure path" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {
-        on_resource_enter(_label, _timeout_ms) { return () }
-        on_resource_exit(_label, _outcome) {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) {
             exit_calls += 1
             return ()
         }

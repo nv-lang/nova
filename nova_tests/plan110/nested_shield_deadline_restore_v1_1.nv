@@ -11,7 +11,7 @@
 //   3. Inner leaves: deadline NOT restored (mask still > 0).
 //   4. Outer body resumes — sees inner's stale (shorter) deadline.
 //   5. Outer body runs longer than inner's stale budget → suspend fires
-//      bogus CleanupTimeoutError с inflated over_ms (appeared as i64 underflow).
+//      bogus watchdog-варн (ист. CleanupTimeoutError, D192-ретракт Plan 173 Ф.5.2) с inflated over_ms (appeared as i64 underflow).
 //
 // **Fix:** enter returns prev_deadline; leave takes it back для restore.
 // Codegen saves в local var per consume-block.
@@ -19,7 +19,7 @@
 // **Acceptance:** outer consume с реалистичным timeout (1000ms) wraps
 // inner consume с tiny timeout (5ms). Inner completes inside budget.
 // Outer continues body for ~50ms (well over inner budget, well under outer
-// budget). Outer must NOT throw CleanupTimeoutError — pre-fix it would.
+// budget). Outer must NOT see a bogus watchdog-варн (ист. throw CleanupTimeoutError) — pre-fix it would.
 
 module nova_tests.plan110
 
@@ -46,7 +46,7 @@ fn run_nested() -> int {
         }
         // Inner deadline pre-fix would still be active here.
         // Outer body now sleeps 50ms — pre-fix this would fire
-        // CleanupTimeoutError (50ms > 5ms inner's stale budget).
+        // bogus watchdog-варн (ист. CleanupTimeoutError; 50ms > 5ms inner's stale budget).
         Time.sleep(50)
         result = result + outer.id
     }
@@ -54,7 +54,7 @@ fn run_nested() -> int {
 }
 
 test "Plan 110.x: nested consume{} shields restore outer deadline" {
-    // Pre-fix: this would throw CleanupTimeoutError при Time.sleep(50)
+    // Pre-fix: this would misfire (ист. CleanupTimeoutError throw) при Time.sleep(50)
     // because deadline = t_inner + 5ms (stale from inner shield).
     // Post-fix: outer's 1000ms deadline restored на inner leave → sleep OK.
     ro r = run_nested()

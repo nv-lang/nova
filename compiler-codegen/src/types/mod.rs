@@ -6273,9 +6273,34 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::RecordLit { type_name, fields, .. } => {
-                // Plan 114.4.1 (D200): reject field shorthand / pair refering
-                // assoc const — assoc consts live на type-level, не указываются
-                // в record literal.
+                // Plan 173 Ф.5 (§4а zero-tolerance, вскрыто D192-ретрактом):
+                // record literal с НЕИЗВЕСТНЫМ именем типа раньше молча
+                // проходил чекер («name-resolution не наша забота») и codegen
+                // генерил мусор — тихий miscompile-класс. Ловим здесь:
+                // имя не в types-реестре CU (user+prelude+builtin merged),
+                // не generic-параметр в scope, не вариант известной суммы →
+                // [E_UNKNOWN_TYPE].
+                if let Some(tn) = type_name {
+                    if let Some(last) = tn.last() {
+                        if last != "Self"
+                            && !gs.contains(last)
+                            && !self.types.contains_key(last)
+                            && !self.types.values().any(|td| matches!(
+                                &td.kind,
+                                TypeDeclKind::Sum(vs) if vs.iter().any(|v| &v.name == last)))
+                        {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNKNOWN_TYPE] unknown type `{last}` in record \
+                                     literal `{last} {{ … }}` — тип не объявлен и не \
+                                     импортирован (или удалён: см. D192-ретракт для \
+                                     `CleanupTimeoutError`).",
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
                 if let Some(tn) = type_name {
                     if let Some(last) = tn.last() {
                         if let Some(td) = self.types.get(last) {

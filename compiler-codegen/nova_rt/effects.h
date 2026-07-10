@@ -388,27 +388,24 @@ static inline void nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy p
 /* Accessors для MultiError prelude — count + indexed access на chain.
  * Caller (codegen MultiError @suppressed()) uses этих для materialize'а
  * Nova-side []Err array. */
-/* Plan 110.2.3 (D192): 3-level exit_timeout resolution runtime.
+/* Plan 173 Ф.5 п.2 (D192-РЕТРАКТ): 3-level resolution — источник ПОРОГА
+ * watchdog-варна «fiber застрял в cleanup», НЕ прерывания (force-timeout
+ * механизм удалён; cleanup всегда добегает — §3a completes-by-default).
  *
- * Called by ConsumeScope codegen at scope-entry to resolve cleanup
- * deadline в milliseconds. Bootstrap:
+ * Уровни РЕАЛИЗОВАНЫ в codegen consume-prologue (emit_c.rs
+ * Stmt::ConsumeScope), НЕ здесь:
+ * - Level 1 (WithExitTimeout impl per type): compile-time check
+ *   `method_overloads` на `exit_timeout_ms` → прямой вызов
+ *   `Nova_<T>_method_exit_timeout_ms(binding)` (Plan 110.9.2 V1.1).
+ * - Level 2 (Application effect handler): runtime-проверка
+ *   `_nova_handler_Application` → `Nova_Application_default_exit_timeout_ms()`
+ *   (Plan 110.4.6.a).
+ * - Level 3: ЭТА функция — hardcoded fallback 5000 ms.
  *
- * - Level 1 (WithExitTimeout impl per type): vtable check для
- *   `Nova_<T>_method_exit_timeout_ms` symbol. Not yet implemented —
- *   Plan 110.2.x lookup integration.
- * - Level 2 (Application effect handler): scan effect-stack для
- *   bound `Application` handler; if found, call
- *   `default_exit_timeout_ms()`. Not yet implemented — Plan 110.4.6
- *   integration.
- * - Level 3 (hardcoded fallback): 5000 ms.
- *
- * Currently bootstrap returns Level 3 unconditionally; Level 1/2
- * integration после Plan 110.2.x + 110.4.6 codegen.
- */
+ * Порог уходит в `nv_cleanup_watchdog_arm` (fibers.h) вокруг
+ * cleanup-вызова + в overrun-флаг ResourceTrace exit-события (D185 amend). */
 static inline int nv_resolve_exit_timeout_ms(void) {
-    /* TODO Plan 110.2.x: Level 1 — WithExitTimeout vtable lookup. */
-    /* TODO Plan 110.4.6: Level 2 — Application effect handler check. */
-    return 5000;  /* Level 3 hardcoded fallback (D192). */
+    return 5000;  /* Level 3 fallback — порог варна (D192-ретракт). */
 }
 
 /* Plan 110.2.1.a (D188 R3): cancel-shield runtime — `nv_consume_enter_shield`

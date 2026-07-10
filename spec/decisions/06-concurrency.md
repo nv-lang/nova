@@ -6421,9 +6421,10 @@ codegen — byte-identical для не-deadline областей). Внутре�
 блоке при входе/выходе — иначе следующая область унаследовала бы `deadline_ns` из
 освобождённого stack-фрейма (spurious immediate `TimeoutError`).
 
-**Отличие от `CleanupTimeoutError` (D192).** Та — про cleanup-бюджет ОДНОГО
-ресурса (ретракнута §3a в пользу watchdog-варна); эта — про срок ЦЕЛОЙ области
-(bounded-shutdown). Разные типы, разные механизмы.
+**Отличие от `CleanupTimeoutError` (D192).** Та была про cleanup-бюджет ОДНОГО
+ресурса — РЕТРАКТИРОВАНА §3a и УДАЛЕНА из prelude (Plan 173 Ф.5 п.2:
+watchdog-варн + `duration_ms`/`overrun` в ResourceTrace exit-событии);
+эта — про срок ЦЕЛОЙ области (bounded-shutdown) и живёт.
 
 **Ретракция `with_timeout` (§3a п.4) — UNBLOCKED, отложена маркером.** Теперь,
 когда `supervised(timeout:)` приземлён, `with_timeout[T]`/`within[T]`
@@ -6438,7 +6439,7 @@ codegen `emit_supervised` (`.nanos`-извлечение + `nova_deadline_combin
 runtime `nova_rt/fibers.h` (`NovaFiberQueue.deadline_ns`/`saved_active_scope`,
 `nova_scope_init` inherit, `nova_deadline_combine`/`nova_scope_deliver_cancel`/
 `_nova_scope_deadline_run_once`/`nova_throw_scope_timeout` + run_impl deadline-gate);
-typed-throw splice `_nova_throw_scope_timeout_impl` (по образцу CleanupTimeoutError);
+typed-throw splice `_nova_throw_scope_timeout_impl` (по образцу ныне-удалённого CleanupTimeoutError-splice);
 `with Fail[...]` active-scope restore. Тесты: `std/concurrency/supervised_deadline_test.nv`
 (8/8: within-budget; timeout→TimeoutError+`is`; sleep interrupted early <2000ms для
 sleep(5000); абсолютный deadline; вложенность inner-can't-extend; deadline+cancel

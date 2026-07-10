@@ -11,12 +11,11 @@ int nova_in_fiber(void) {
     return mco_running() != NULL ? 1 : 0;
 }
 
-/* Plan 110.2.2.a (D188 R3 + D192): cleanup-timeout throw indirection.
- * Set by codegen-emitted impl in user TU (constructs Nova_CleanupTimeoutError
- * + calls nova_throw_typed). NULL — fallback to plain-string throw в
- * nv_shield_check_deadline. Storage here (single global, not __thread)
- * because the impl is process-wide. */
-void (*_nova_throw_cleanup_timeout_fn)(int duration_ms) = NULL;
+/* Plan 173 Ф.5 п.2 (D192-РЕТРАКТ): `_nova_throw_cleanup_timeout_fn` УДАЛЁН
+ * вместе с типом CleanupTimeoutError — force-прерывания cleanup'а не
+ * существует. Превышение watchdog-порога = one-shot stderr-варн
+ * (nv_shield_check_deadline) + duration_ms/overrun в ResourceTrace
+ * exit-событии (D185 amend). */
 
 /* Plan 174 (D349): supervised scope-deadline typed-throw indirection. Set by
  * codegen-emitted impl in the user TU when `TimeoutError` is referenced
