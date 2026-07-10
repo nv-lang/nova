@@ -39221,3 +39221,25 @@ mn_closure_spawn_gcroot_test.nv — изолированная сборка (tem
 через sleep() уже работает); per-OS dedicated monotonicity test; M:N-контракт mut_clock под
 реальной concurrent-нагрузкой (документирован, не verified тестом); custom E_SLEEP_UNTIL_WALL
 диагностика (generic E7301 type-mismatch уже корректно отвергает, просто менее приятный текст).
+
+2026-07-10. Возобновление Plan 172.14 (value-ABI perf, P3) — разведка вскрыла: ветка
+value-abi-172-14 была создана от старого main без кода (только устная разведка в прошлой
+сессии, зафиксированы пороги: SysV ≤16Б by-value, ro ≤24Б non-escape → стек). Слил main
+(59f7edc2a → 6582887e1): D414-D416, D348, Plan 184 (ref T как ограниченный тип, полностью
+суперседит исходный дизайн Плана 172.5).
+Этап 2 (172.5 хвосты) пошёл первым — разведка показала, что задание описывало устаревшие
+маркеры. [M-172.5-generic-mut-ref-codegen] ретрагирован как moot: форма `mut ref x T` не
+существует с Плана 184 (заход-1). [M-172.5-chain-gating-ro-at] — маркер тоже описывал мёртвую
+машинерию, НО названная им дыра оказалась РЕАЛЬНОЙ: эмпирически подтверждено, что
+`c.peek().bump()` (peek — не-mut метод, bump — mut) компилировался и мутировал ОРИГИНАЛ
+(`c.x` становился 1) — Plan 184 Р7 сделал `-> @` non-mut метода настоящей `ref Self` вместо
+копии, отменив старое допущение «мутация temp'а безобидна». Fix в `types/mod.rs`
+(consume_walk_expr, новая ветка рядом с lvalue_root_ident для Call-shaped chain-receiver) →
+`E_RECEIVER_BINDING_NOT_MUT`; два guard'а против ложных срабатываний, найденных прогоном по
+всему std/ (arity-aware mut/ro-registries против @cap()/cap(n)-коллизии; recv_returning-гейт
+против filter()/map()/chars()/post() — они строят НОВОЕ значение, не -> @). Spec: D33-амендмент
+§«Fluent -> @ chain-receiver mutability gate» (02-types.md). Тесты:
+spec_tests/conformance/d326_chain_gating_ro_at.nv (+neg). Гейты: cargo build чист;
+conformance 90/0; std/ check — идентичный FAIL-set с чистым baseline (114/30); nova_tests
+fluent/chain-выборка — идентична (16/3, те же pre-existing). Коммит bde05c2f8.
+Далее — Этап 1 (172.14 value-ABI perf собственно): см. следующую запись.
