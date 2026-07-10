@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_RECEIVER_BINDING_NOT_MUT
+//
+// Fix `[M-172.5-chain-gating-ro-at]` (2026-07-10, ex-Plan 172.5 R6): a
+// non-mut (`ro`) `-> @` method returns a REAL `ref Self` under D326-Plan184
+// Р7 — NOT a copy. Chaining a `mut @` method off that ro-produced link must
+// be rejected: mutating through it silently reaches the ORIGINAL receiver
+// (confirmed empirically pre-fix: `c.peek().bump()` compiled and left `c.x
+// == 1`, not `0` — a soundness hole, not a harmless no-op on a temp).
+module neg.d326_chain_gating_ro_at_neg
+
+type D326ChainGateVal value { x int }
+
+fn D326ChainGateVal @peek() -> @ { }
+fn D326ChainGateVal mut @bump() -> @ { @x += 1 }
+
+test "mut method after a ro -> @ link is rejected" {
+    mut c = D326ChainGateVal{x: 0}
+    c.peek().bump()
+    assert(true)
+}

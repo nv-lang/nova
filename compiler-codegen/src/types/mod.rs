@@ -21550,6 +21550,18 @@ struct ConsumeRegistry {
     /// и в `ro_methods` — это recv-mut overload пара; вызов на ro-binding
     /// диспатчится на ro-overload → НЕ E_LOCAL_NOT_MUT/E_PARAM_NOT_MUT.
     ro_methods: HashSet<(String, String)>,
+    /// Fix `[M-172.5-chain-gating-ro-at]` (2026-07-10): arity-aware companion
+    /// of `mut_methods`/`ro_methods` — `(receiver_type, method_name, arity)`.
+    /// The name-only sets collapse arity-overloaded same-name pairs (D117
+    /// amend: `@cap() -> int` 0-arg RO getter vs `mut @cap(n) -> @` 1-arg
+    /// setter on Vec/StringBuilder/HashMap/...) into a false Plan-135
+    /// "recv-mut overload pair", suppressing the mut requirement. Used ONLY
+    /// by the fluent method-chain receiver check below (`obj` itself a
+    /// `-> @` Call result, e.g. `Vec[T].new().cap(n).extend(xs)`) — the
+    /// pre-existing name-only checks elsewhere are UNCHANGED (broader
+    /// blast-radius fix, out of scope here).
+    mut_methods_arity: HashSet<(String, String, usize)>,
+    ro_methods_arity: HashSet<(String, String, usize)>,
     /// Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
     /// free-fn name → indices of `mut`-params.  Используется при call
     /// site: если arg в этой позиции имеет тип `readonly T` (или
@@ -21585,6 +21597,9 @@ impl ConsumeRegistry {
         let mut mut_methods: HashSet<(String, String)> = HashSet::new();
         // Plan 135: ro-receiver methods registry (for recv-mut overload pairs).
         let mut ro_methods: HashSet<(String, String)> = HashSet::new();
+        // Fix [M-172.5-chain-gating-ro-at]: arity-aware companions (see field doc).
+        let mut mut_methods_arity: HashSet<(String, String, usize)> = HashSet::new();
+        let mut ro_methods_arity: HashSet<(String, String, usize)> = HashSet::new();
         // Plan 108.1 followup: mut-params indices for E_READONLY_COERCE.
         let mut fn_mut_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_mut_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
@@ -21613,6 +21628,7 @@ impl ConsumeRegistry {
                 // Plan 108.1 (D176 amend): mut-receiver methods registry.
                 if !f.is_static && f.is_mut {
                     mut_methods.insert((recv.to_string(), f.name.to_string()));
+                    mut_methods_arity.insert((recv.to_string(), f.name.to_string(), f.params.len()));
                 }
                 // Plan 77 (D132): fluent builder-методы рендерятся `-> @`
                 // (mirror `render_nv` is_fluent) — гарантированно
@@ -21653,9 +21669,13 @@ impl ConsumeRegistry {
                         // Plan 108.1 (D176 amend): mut-receiver methods registry.
                         if r.mutable {
                             mut_methods.insert((r.type_name.clone(), fd.name.clone()));
+                            mut_methods_arity.insert(
+                                (r.type_name.clone(), fd.name.clone(), fd.params.len()));
                         } else if matches!(r.kind, ReceiverKind::Instance) {
                             // Plan 135: track ro-receiver instance methods.
                             ro_methods.insert((r.type_name.clone(), fd.name.clone()));
+                            ro_methods_arity.insert(
+                                (r.type_name.clone(), fd.name.clone(), fd.params.len()));
                         }
                         if !mut_idx.is_empty() {
                             method_mut_params.insert(
@@ -21735,6 +21755,7 @@ impl ConsumeRegistry {
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods, ro_methods,
+            mut_methods_arity, ro_methods_arity,
             fn_mut_params, method_mut_params,
             fn_non_unsafe_params, method_non_unsafe_params,
         }
@@ -24814,6 +24835,91 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                             replacement: format!("mut {}", root),
                                             applicability: crate::diag::Applicability::MaybeIncorrect,
                                         }));
+                                    }
+                                }
+                            }
+                        } else if let ExprKind::Call { func: inner_func, args: inner_args, .. } = &obj.kind {
+                            // Plan 184 Р7 / D181 follow-up (ex-172.5 R6,
+                            // `[M-172.5-chain-gating-ro-at]`): `obj` — сам результат
+                            // fluent `-> @` method-call'а (`c.peek().bump()`),
+                            // недостижим для `lvalue_root_ident` (Call — не lvalue-
+                            // место). До Plan 184 D33's "rvalue-база → без проверки,
+                            // мутация в hoisted temp — no-op" было ЗВУЧНО (value-record
+                            // `-> @` = копия, D246 R7b). После D326-ревизии Plan 184
+                            // Р7 `-> @` возвращает НАСТОЯЩУЮ `ref Self` даже для НЕ-mut
+                            // метода — эскейп-хэтч D33 больше не годится для этой формы:
+                            // мутация через неё реально достигает исходного receiver'а
+                            // (не no-op на temp). Цепочка ИСКЛЮЧИТЕЛЬНО из mut-методов
+                            // (`X.inc().inc()`) остаётся легальной — гейтим только
+                            // непосредственно-предшествующее НЕ-mut звено.
+                            let inner_func = inner_func.unwrap_turbofish();
+                            if let ExprKind::Member { name: inner_method, .. } = &inner_func.kind {
+                                // Arity-aware classification (fixes false-positive on
+                                // arity-overloaded same-name pairs, e.g. Vec/StringBuilder/
+                                // HashMap/Set/Queue `@cap() -> int` 0-arg RO getter vs
+                                // `mut @cap(n) -> @` 1-arg setter, D117 amend — the fluent
+                                // `.new().cap(n)...` idiom is pervasive in std).
+                                let outer_arity = args.len();
+                                let inner_arity = inner_args.len();
+                                let outer_is_mut_method = (ctx.reg.mut_methods_arity.iter()
+                                        .any(|(_, m, a)| m == method.as_str() && *a == outer_arity)
+                                        && !ctx.reg.ro_methods_arity.iter()
+                                            .any(|(_, m, a)| m == method.as_str() && *a == outer_arity))
+                                    || is_builtin_mut_method(method.as_str());
+                                if outer_is_mut_method {
+                                    // Scope gate (D132/Plan 77): the aliasing concern (Plan 184
+                                    // Р7 «-> @ = ref Self») applies ONLY to methods that are
+                                    // themselves declared `-> @` (`fd.returns_receiver`, tracked
+                                    // in `recv_returning`) — NOT to any arbitrary ro/non-mut
+                                    // method that happens to sit in a chain. A regular method
+                                    // returning a DIFFERENT (possibly same-named-type) fresh
+                                    // value — `filter()`/`map()`/`chars()`/`post()` building a
+                                    // new iterator/builder — is a genuine D33 rvalue no-op-temp,
+                                    // NOT an alias back into the original receiver. Without this
+                                    // gate the name-only ro/mut registries (no receiver-type
+                                    // resolution here) misfire broadly across std (lazy iterator
+                                    // adapters, http builders, `chars().next()`, …).
+                                    let inner_is_self_return = ctx.reg.recv_returning.iter()
+                                        .any(|(_, m)| m == inner_method.as_str());
+                                    // POSITIVE evidence only: reject ONLY when `inner_method`
+                                    // is a CONFIRMED registered ro-INSTANCE method (present in
+                                    // `ro_methods_arity` — populated exclusively for
+                                    // `ReceiverKind::Instance` non-mut methods, never for
+                                    // `ReceiverKind::Static` constructors like `Vec[T].new()`).
+                                    // "Not proven mut" is NOT sufficient grounds to reject —
+                                    // that would also catch static constructors / unregistered
+                                    // external methods, whose `-> @`-shaped fluent tail is a
+                                    // genuinely FRESH rvalue (D33 no-op-temp still sound there).
+                                    let inner_is_confirmed_ro = ctx.reg.ro_methods_arity.iter()
+                                        .any(|(_, m, a)| m == inner_method.as_str() && *a == inner_arity);
+                                    // Cross-type name collision guard: the registries are
+                                    // NAME-keyed без знания конкретного receiver-типа
+                                    // (`ConsumeCtx` не делает full type inference на chain-
+                                    // receiver'ах). Если та же пара (имя, arity) хоть ГДЕ-то
+                                    // в модуле — mut (builtin ИЛИ user), это может быть ДРУГОЙ
+                                    // тип с тем же именем метода (напр. `[]T.reverse()` builtin
+                                    // in-place-mut vs гипотетический ro-адаптер на другом типе
+                                    // с тем же именем) — не рискуем ложным реджектом.
+                                    let inner_ever_mut_same_arity = ctx.reg.mut_methods_arity.iter()
+                                        .any(|(_, m, a)| m == inner_method.as_str() && *a == inner_arity)
+                                        || is_builtin_mut_method(inner_method.as_str());
+                                    if inner_is_self_return && inner_is_confirmed_ro
+                                        && !inner_ever_mut_same_arity {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_RECEIVER_BINDING_NOT_MUT] mut-метод `{}` вызван на \
+                                                 результате `{}()` — `{}` не mut-метод, его `-> @` \
+                                                 (D326-Plan184 Р7) — read-only ссылка на исходный receiver; \
+                                                 мутация через неё запрещена, даже если корень цепочки — \
+                                                 `mut`-binding (Plan 172.5 R6 / Plan 184).",
+                                                method, inner_method, inner_method),
+                                            e.span,
+                                        ).with_note(
+                                            "чтобы мутировать, вызови mut-метод напрямую на mut-binding'е \
+                                             (без ro-звена в цепочке), либо сохрани промежуточный результат \
+                                             в отдельный `mut`-локал явно."
+                                                .to_string(),
+                                        ));
                                     }
                                 }
                             }

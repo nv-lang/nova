@@ -1,0 +1,42 @@
+// Fix `[M-172.5-chain-gating-ro-at]` (2026-07-10): mid-chain mutability gating
+// for `-> @` fluent method-chains (D326-Plan184 Р7 — `-> @` returns a REAL
+// `ref Self`, not a copy, even for a non-mut method). See the paired neg
+// fixture (`neg/d326_chain_gating_ro_at_neg.nv`) for the rejected shape.
+//
+// This file covers the LEGAL shapes that must keep compiling: an all-mut
+// `-> @` chain (fluent builder idiom, D132), a fresh-rvalue chain rooted in a
+// static constructor (`T.new().mut_method()`), and a NON-self-return method
+// (returns a genuinely different value, not `-> @`) followed by a mut method
+// on that fresh value — none of these alias back into an existing mutable
+// binding through a ro link, so none should trip `E_RECEIVER_BINDING_NOT_MUT`.
+//
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326ChainVal value { x int }
+
+fn D326ChainVal.new() -> D326ChainVal => { x: 0 }
+fn D326ChainVal @peek() -> @ { }
+fn D326ChainVal mut @bump() -> @ { @x += 1 }
+// Non-self-return: constructs a genuinely NEW value (not `-> @`) — must NOT
+// be treated as an alias back into the receiver.
+fn D326ChainVal @doubled() -> D326ChainVal => { x: @x * 2 }
+
+test "all-mut -> @ chain stays legal (D132 fluent builder idiom)" {
+    mut v = D326ChainVal.new()
+    v.bump().bump()
+    assert(v.x == 2)
+}
+
+test "fresh-rvalue chain off a static constructor stays legal" {
+    mut v = D326ChainVal.new().bump()
+    assert(v.x == 1)
+}
+
+test "mut method after a non-self-return (fresh value) link stays legal" {
+    ro v = D326ChainVal.new()
+    mut w = v.doubled()
+    w.bump()
+    assert(w.x == 1)
+    assert(v.x == 0)
+}
