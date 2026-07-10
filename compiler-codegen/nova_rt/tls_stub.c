@@ -29,82 +29,82 @@ static const char TLS_STUB_MSG[] =
 
 /* ── Config builders ─────────────────────────────────────────────────────── */
 
-void*    tls_client_cfg_new(void) { return 0; }
-void*    tls_server_cfg_new(void) { return 0; }
-nova_int tls_cfg_verify_system(void* c) { (void)c; return TLS_ERR_UNSUPPORTED; }
-nova_int tls_cfg_verify_pem(void* c, const uint8_t* pem, nova_int len) {
+intptr_t tls_client_cfg_new(void) { return 0; }
+intptr_t tls_server_cfg_new(void) { return 0; }
+nova_int tls_cfg_verify_system(intptr_t c) { (void)c; return TLS_ERR_UNSUPPORTED; }
+nova_int tls_cfg_verify_pem(intptr_t c, const uint8_t* pem, nova_int len) {
     (void)c; (void)pem; (void)len; return TLS_ERR_UNSUPPORTED;
 }
-nova_int tls_cfg_verify_pinned(void* c, const uint8_t* hashes, nova_int count) {
+nova_int tls_cfg_verify_pinned(intptr_t c, const uint8_t* hashes, nova_int count) {
     (void)c; (void)hashes; (void)count; return TLS_ERR_UNSUPPORTED;
 }
-nova_int tls_cfg_verify_insecure(void* c) { (void)c; return TLS_ERR_UNSUPPORTED; }
-nova_int tls_cfg_alpn_add(void* c, const uint8_t* proto, nova_int len) {
+nova_int tls_cfg_verify_insecure(intptr_t c) { (void)c; return TLS_ERR_UNSUPPORTED; }
+nova_int tls_cfg_alpn_add(intptr_t c, const uint8_t* proto, nova_int len) {
     (void)c; (void)proto; (void)len; return TLS_ERR_UNSUPPORTED;
 }
-nova_int tls_cfg_cert_key_pem(void* c, const uint8_t* cert, nova_int clen,
+nova_int tls_cfg_cert_key_pem(intptr_t c, const uint8_t* cert, nova_int clen,
                               const uint8_t* key, nova_int klen) {
     (void)c; (void)cert; (void)clen; (void)key; (void)klen; return TLS_ERR_UNSUPPORTED;
 }
-nova_int tls_cfg_client_auth_pem(void* c, const uint8_t* roots, nova_int len, bool required) {
+nova_int tls_cfg_client_auth_pem(intptr_t c, const uint8_t* roots, nova_int len, bool required) {
     (void)c; (void)roots; (void)len; (void)required; return TLS_ERR_UNSUPPORTED;
 }
-void tls_cfg_free(void* c) { (void)c; }
+void tls_cfg_free(intptr_t c) { (void)c; }
 
 /* ── Session lifecycle ───────────────────────────────────────────────────── */
 
-void* tls_client_new(void* c, const uint8_t* sni, nova_int sni_len, nova_int* out_err) {
+intptr_t tls_client_new(intptr_t c, const uint8_t* sni, nova_int sni_len, nova_int* out_err) {
     (void)c; (void)sni; (void)sni_len;
     if (out_err) { *out_err = TLS_ERR_UNSUPPORTED; }
     return 0;
 }
-void* tls_server_new(void* c, nova_int* out_err) {
+intptr_t tls_server_new(intptr_t c, nova_int* out_err) {
     (void)c;
     if (out_err) { *out_err = TLS_ERR_UNSUPPORTED; }
     return 0;
 }
-void tls_free(void* h) { (void)h; }
+void tls_free(intptr_t h) { (void)h; }
 
 /* ── State machine ───────────────────────────────────────────────────────── */
 
-nova_int tls_is_handshaking(void* h) { (void)h; return 0; }
-nova_int tls_wants_read(void* h)     { (void)h; return 0; }
-nova_int tls_wants_write(void* h)    { (void)h; return 0; }
+nova_int tls_is_handshaking(intptr_t h) { (void)h; return 0; }
+nova_int tls_wants_read(intptr_t h)     { (void)h; return 0; }
+nova_int tls_wants_write(intptr_t h)    { (void)h; return 0; }
 
 /* ── Traffic ─────────────────────────────────────────────────────────────── */
 
-nova_int tls_read_tls(void* h, const uint8_t* p, nova_int len) {
+nova_int tls_read_tls(intptr_t h, const uint8_t* p, nova_int len) {
     (void)h; (void)p; (void)len; return TLS_ERR_UNSUPPORTED;
 }
-nova_int tls_process(void* h) { (void)h; return TLS_ERR_UNSUPPORTED; }
-nova_int tls_write_tls(void* h, uint8_t* out, nova_int cap) {
+nova_int tls_process(intptr_t h) { (void)h; return TLS_ERR_UNSUPPORTED; }
+nova_int tls_write_tls(intptr_t h, uint8_t* out, nova_int cap) {
     (void)h; (void)out; (void)cap; return TLS_ERR_UNSUPPORTED;
 }
-nova_int tls_read_plain(void* h, uint8_t* out, nova_int cap) {
+nova_int tls_read_plain(intptr_t h, uint8_t* out, nova_int cap) {
     (void)h; (void)out; (void)cap; return TLS_ERR_UNSUPPORTED;
 }
-nova_int tls_write_plain(void* h, const uint8_t* p, nova_int len) {
+nova_int tls_write_plain(intptr_t h, const uint8_t* p, nova_int len) {
     (void)h; (void)p; (void)len; return TLS_ERR_UNSUPPORTED;
 }
-void tls_send_close_notify(void* h) { (void)h; }
+void tls_send_close_notify(intptr_t h) { (void)h; }
 
 /* ── Inspection ──────────────────────────────────────────────────────────── */
 
-nova_int tls_alpn(void* h, uint8_t* out, nova_int cap) {
+nova_int tls_alpn(intptr_t h, uint8_t* out, nova_int cap) {
     (void)h; (void)out; (void)cap; return 0;
 }
-nova_int tls_version(void* h) { (void)h; return 0; }
-nova_int tls_cipher_suite(void* h, uint8_t* out, nova_int cap) {
+nova_int tls_version(intptr_t h) { (void)h; return 0; }
+nova_int tls_cipher_suite(intptr_t h, uint8_t* out, nova_int cap) {
     (void)h; (void)out; (void)cap; return 0;
 }
-nova_int tls_peer_cert_der(void* h, nova_int i, uint8_t* out, nova_int cap) {
+nova_int tls_peer_cert_der(intptr_t h, nova_int i, uint8_t* out, nova_int cap) {
     (void)h; (void)i; (void)out; (void)cap; return 0;
 }
 
 /* ── Error detail ────────────────────────────────────────────────────────── */
 
-nova_int tls_last_error_kind(void* h) { (void)h; return TLS_ERR_UNSUPPORTED; }
-nova_int tls_last_error(void* h, uint8_t* out, nova_int cap) {
+nova_int tls_last_error_kind(intptr_t h) { (void)h; return TLS_ERR_UNSUPPORTED; }
+nova_int tls_last_error(intptr_t h, uint8_t* out, nova_int cap) {
     (void)h;
     nova_int len = (nova_int)(sizeof(TLS_STUB_MSG) - 1);
     if (out && cap > 0) {

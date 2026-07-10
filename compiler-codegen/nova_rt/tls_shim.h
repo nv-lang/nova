@@ -12,7 +12,9 @@
  *
  * Контракт (single source of truth: tls_shim/src/lib.rs; Nova-сторона:
  * std/tls/ffi.nv):
- *   - хендлы — непрозрачные void* (config-билдер / rustls-сессия);
+ *   - хендлы — непрозрачные intptr_t, несущие указатель шима (config-
+ *     билдер / rustls-сессия); intptr_t, не void*: Nova-newtype над int
+ *     (CTlsHandle(int), brotli-прецедент) — см. std/tls/ffi.nv;
  *   - int = intptr_t (nova_int, Plan 133);
  *   - буферы (ptr, len) — шим копирует/потребляет в пределах вызова, Nova
  *     []u8 не удерживается;
@@ -30,52 +32,52 @@
 
 /* ── Config builders (эфемерные: *_new потребляет билдер, и на ошибке) ──── */
 
-void*    tls_client_cfg_new(void);
-void*    tls_server_cfg_new(void);
-intptr_t tls_cfg_verify_system(void* c);
-intptr_t tls_cfg_verify_pem(void* c, const uint8_t* pem, intptr_t len);
-intptr_t tls_cfg_verify_pinned(void* c, const uint8_t* hashes, intptr_t count);
-intptr_t tls_cfg_verify_insecure(void* c);
-intptr_t tls_cfg_alpn_add(void* c, const uint8_t* proto, intptr_t len);
-intptr_t tls_cfg_cert_key_pem(void* c, const uint8_t* cert, intptr_t clen,
+intptr_t tls_client_cfg_new(void);
+intptr_t tls_server_cfg_new(void);
+intptr_t tls_cfg_verify_system(intptr_t c);
+intptr_t tls_cfg_verify_pem(intptr_t c, const uint8_t* pem, intptr_t len);
+intptr_t tls_cfg_verify_pinned(intptr_t c, const uint8_t* hashes, intptr_t count);
+intptr_t tls_cfg_verify_insecure(intptr_t c);
+intptr_t tls_cfg_alpn_add(intptr_t c, const uint8_t* proto, intptr_t len);
+intptr_t tls_cfg_cert_key_pem(intptr_t c, const uint8_t* cert, intptr_t clen,
                               const uint8_t* key, intptr_t klen);
-intptr_t tls_cfg_client_auth_pem(void* c, const uint8_t* roots, intptr_t len,
+intptr_t tls_cfg_client_auth_pem(intptr_t c, const uint8_t* roots, intptr_t len,
                                  bool required);
-void     tls_cfg_free(void* c);
+void     tls_cfg_free(intptr_t c);
 
 /* ── Session lifecycle ───────────────────────────────────────────────────── */
 
-void* tls_client_new(void* c, const uint8_t* sni, intptr_t sni_len,
+intptr_t tls_client_new(intptr_t c, const uint8_t* sni, intptr_t sni_len,
                      intptr_t* out_err);
-void* tls_server_new(void* c, intptr_t* out_err);
-void  tls_free(void* h);
+intptr_t tls_server_new(intptr_t c, intptr_t* out_err);
+void  tls_free(intptr_t h);
 
 /* ── Handshake state machine (1/0) ───────────────────────────────────────── */
 
-intptr_t tls_is_handshaking(void* h);
-intptr_t tls_wants_read(void* h);
-intptr_t tls_wants_write(void* h);
+intptr_t tls_is_handshaking(intptr_t h);
+intptr_t tls_wants_read(intptr_t h);
+intptr_t tls_wants_write(intptr_t h);
 
 /* ── Traffic: ciphertext ↔ session ↔ plaintext ──────────────────────────── */
 
-intptr_t tls_read_tls(void* h, const uint8_t* p, intptr_t len);
-intptr_t tls_process(void* h);
-intptr_t tls_write_tls(void* h, uint8_t* out, intptr_t cap);
+intptr_t tls_read_tls(intptr_t h, const uint8_t* p, intptr_t len);
+intptr_t tls_process(intptr_t h);
+intptr_t tls_write_tls(intptr_t h, uint8_t* out, intptr_t cap);
 /* n>0 = plaintext; 0 = пока нет данных; -1 = clean close_notify; <-1 = err. */
-intptr_t tls_read_plain(void* h, uint8_t* out, intptr_t cap);
-intptr_t tls_write_plain(void* h, const uint8_t* p, intptr_t len);
-void     tls_send_close_notify(void* h);
+intptr_t tls_read_plain(intptr_t h, uint8_t* out, intptr_t cap);
+intptr_t tls_write_plain(intptr_t h, const uint8_t* p, intptr_t len);
+void     tls_send_close_notify(intptr_t h);
 
 /* ── Inspection ──────────────────────────────────────────────────────────── */
 
-intptr_t tls_alpn(void* h, uint8_t* out, intptr_t cap);
-intptr_t tls_version(void* h); /* 0x0303 / 0x0304 / 0 */
-intptr_t tls_cipher_suite(void* h, uint8_t* out, intptr_t cap);
-intptr_t tls_peer_cert_der(void* h, intptr_t i, uint8_t* out, intptr_t cap);
+intptr_t tls_alpn(intptr_t h, uint8_t* out, intptr_t cap);
+intptr_t tls_version(intptr_t h); /* 0x0303 / 0x0304 / 0 */
+intptr_t tls_cipher_suite(intptr_t h, uint8_t* out, intptr_t cap);
+intptr_t tls_peer_cert_der(intptr_t h, intptr_t i, uint8_t* out, intptr_t cap);
 
 /* ── Error detail ────────────────────────────────────────────────────────── */
 
-intptr_t tls_last_error_kind(void* h);
-intptr_t tls_last_error(void* h, uint8_t* out, intptr_t cap);
+intptr_t tls_last_error_kind(intptr_t h);
+intptr_t tls_last_error(intptr_t h, uint8_t* out, intptr_t cap);
 
 #endif /* NOVA_TLS_SHIM_H */

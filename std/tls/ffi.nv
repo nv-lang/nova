@@ -29,13 +29,19 @@ module std.tls
 
 // rustls-сессия (Box<TlsSession> в шиме). Живёт в TlsStream.session; освобождение
 // строго через tls_free (consume @close, Ф.3).
-type CTlsHandle(*())
+//
+// База newtype = int (intptr-wide указатель, brotli-прецедент CBrotliHandle),
+// НЕ *(): `Result[<newtype-над-*()>, E]` мис-моноится в NovaRes_nova_int_nova_str
+// (обнаружено Ф.3; маркер [M-116-result-over-ptr-newtype-mono] в
+// backlog-followups.md), а int-newtype в Option/Result доказан brotli.
+// C-заголовок (nova_rt/tls_shim.h) согласован: хендлы = intptr_t.
+type CTlsHandle(int)
 
 // ЭФЕМЕРНЫЙ конфиг-билдер: создаётся и потребляется внутри ОДНОГО
 // connect/accept (tls_client_new / tls_server_new забирают владение, в том
 // числе на ошибке); наружу из методов std/tls не выходит. На error-путях ДО
 // *_new — освобождать tls_cfg_free.
-type CTlsCfgHandle(*())
+type CTlsCfgHandle(int)
 
 // ─── Config builders ─────────────────────────────────────────────────────────
 // Сеттеры возвращают 0 (OK) или TLS_ERR_* (<0); аргументы-байты копируются.
