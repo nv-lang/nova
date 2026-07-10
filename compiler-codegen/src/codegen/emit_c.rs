@@ -1169,6 +1169,13 @@ pub struct CEmitter {
     /// path genuinely uses (in practice only arity 2, from erased HashMap/Set
     /// `(K, V)` pairs). Concrete tuples always use the typed mono'd path.
     legacy_tuple_arities: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): registry of mono'd
+    /// `[N]T` INLINE struct instances — `(N, elem_c_ty)` pairs. Mirrors `mono_tuple_instances`
+    /// (dedup + finalize-pass typedef emission), but for the fixed-size array value class:
+    /// `typedef struct { T data[N]; } _NovaFixArr_<N>_<len>_<elem>;` — no heap pointer, no
+    /// len/cap runtime fields (N is compile-time). Used by `register_mono_fixed_array` /
+    /// `compute_mono_fixed_array_c_name` / the `ExprKind::Index` + `ArrayLit` codegen arms.
+    mono_fixed_array_instances: std::cell::RefCell<std::collections::HashSet<(usize, String)>>,
     /// Accumulated lint warnings from codegen (e.g. anonymous-embed override).
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
@@ -1806,6 +1813,7 @@ impl CEmitter {
                 std::cell::RefCell::new(m)
             },
             mono_tuple_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
+            mono_fixed_array_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
             legacy_tuple_arities: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             novares_typedefs_buf: std::cell::RefCell::new(String::new()),
             novares_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
@@ -2557,7 +2565,8 @@ impl CEmitter {
             R::Readonly(inner) => self.rt_is_erased_stub(inner, full),
             // Arrays (`NovaArray_*` / `Nova_Vec____*`) and tuples (mono struct /
             // `_NovaTupleN`) always lower to a concrete C-form — never a bare stub.
-            R::Array(_) | R::Tuple(_) => false,
+            // [M-fixed-array-value-semantics]: `[N]T` mono struct — same, never a stub.
+            R::Array(_) | R::Tuple(_) | R::FixedArray(..) => false,
             R::Named { name, module, args } => self.rt_named_is_stub(name, module, args, full),
             // Type-params resolve through the (still string-carried) subst/receiver
             // context; typed pointers and the `Raw` debt carry concreteness as a
@@ -3056,6 +3065,13 @@ impl CEmitter {
             R::Named { name, module, args } => self.resolved_named_to_c(name, module, args)?,
             // Array `[]T` (D239 ≡ Vec[T]) — mirrors type_ref_to_c's Array arm.
             R::Array(inner) => self.resolved_array_to_c(inner)?,
+            // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
+            // INLINE value mono struct `{ T data[N]; }`, NOT the `[]T`/Vec heap-pointer
+            // path above. `register_mono_fixed_array` is idempotent (dedup by (N, elem)).
+            R::FixedArray(n, inner) => {
+                let elem_c = self.resolved_type_to_c(inner)?;
+                self.register_mono_fixed_array(*n, &elem_c)
+            }
             // Tuple — mono'd struct if all elems concrete, else legacy `_NovaTupleN`
             // (Plan 59/148). Mirrors type_ref_to_c's Tuple arm; `register_mono_tuple` /
             // `register_legacy_tuple` side-effects are shared + idempotent.
@@ -17278,6 +17294,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         Self::compute_mono_tuple_c_name(elem_c_tys)
+    }
+
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): compute the mono'd
+    /// `[N]T` INLINE struct C name. Length-prefixed encoding (mirrors
+    /// `compute_mono_tuple_c_name` — self-describing, unambiguous for any nesting depth,
+    /// e.g. `[4][8]int`'s inner `[8]int` element name embeds cleanly):
+    /// `_NovaFixArr_<N>_<Llen>_<elem>` — `<Llen>` = decimal byte length of the
+    /// (sanitized) element type name that follows. Distinguishable from the mono tuple
+    /// name by the `NovaFixArr` stem (no collision risk with `_NovaTuple_`/`_NovaTupleN`).
+    pub fn compute_mono_fixed_array_c_name(n: usize, elem_c_ty: &str) -> String {
+        let sanitized = Self::sanitize_c_for_ident(elem_c_ty);
+        format!("_NovaFixArr_{}_{}_{}", n, sanitized.len(), sanitized)
+    }
+
+    /// Inverse of `compute_mono_fixed_array_c_name` — `(N, elem_c_ty)` from a mangled
+    /// name, or `None` if `mangled` isn't a `_NovaFixArr_...` name.
+    fn parse_mono_fixed_array_name(mangled: &str) -> Option<(usize, String)> {
+        let rest = mangled.strip_prefix("_NovaFixArr_")?;
+        let (n_str, after_n) = Self::take_digits(rest);
+        if n_str.is_empty() {
+            return None;
+        }
+        let n: usize = n_str.parse().ok()?;
+        let cursor = after_n.strip_prefix('_')?;
+        let (len_str, after_len) = Self::take_digits(cursor);
+        if len_str.is_empty() {
+            return None;
+        }
+        let len: usize = len_str.parse().ok()?;
+        let body = after_len.strip_prefix('_')?;
+        if body.len() != len {
+            return None;
+        }
+        Some((n, Self::desanitize_c_from_ident(body)))
+    }
+
+    /// [M-fixed-array-value-semantics]: register a mono'd `[N]T` INLINE struct type for
+    /// finalize-pass typedef emission (`typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>;`).
+    /// Idempotent — dedup by `(N, elem_c_ty)`, mirrors `register_mono_tuple`. Returns the
+    /// mono'd C struct name.
+    fn register_mono_fixed_array(&self, n: usize, elem_c_ty: &str) -> String {
+        self.mono_fixed_array_instances.borrow_mut().insert((n, elem_c_ty.to_string()));
+        Self::compute_mono_fixed_array_c_name(n, elem_c_ty)
     }
 
     /// Plan 59 Ф.7.3: estimate sizeof for a C type string — conservative

@@ -92,6 +92,16 @@ pub enum ResolvedType {
     /// only by `cat_compatible_rt`/`distinct_mono`). Folding the category side onto
     /// `Named{Vec}` (then deleting this variant) is the orthogonal follow-up.
     Array(Box<ResolvedType>),
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` fixed-size
+    /// array — DISTINCT from `Array` (which after this change carries ONLY the internal
+    /// `resolved_cat_of` compat-category key, never a real `[N]T` C-lowering target).
+    /// Lossless `N` — closes [M-172.1-fixedarray-N] for the C-LOWERING path (the
+    /// category-compat key `resolved_cat_of_depth` deliberately still collapses `[N]T`
+    /// into `R::Array(elem)` — orthogonal, untouched: assignability between `[]T`/`[N]T`
+    /// is a separate concern from how `[N]T` is REPRESENTED in C). Produced ONLY by
+    /// `from_type_ref`; lowered by `resolved_type_to_c` to an inline mono struct
+    /// `{ T data[N]; }` (stack/field value, no heap pointer) via `register_mono_fixed_array`.
+    FixedArray(usize, Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     /// U.5.5(c) (D315 lossless): `effects` carries the FULL resolved effect TYPE, not a
     /// bare name — so `Fail[E]` keeps its `E` (`Named{name:"Fail", args:[E]}`), `Db[T]`
@@ -200,10 +210,10 @@ impl ResolvedType {
                 args: vec![R::from_type_ref(inner)],
             },
             // `[N]T` fixed-size array is a DISTINCT built-in (stack-allocated, carries `N`) —
-            // NOT growable `Vec`. It currently shares the `R::Array` carrier (the `N` is
-            // dropped — pre-existing lossiness, kept byte-identical to legacy); separating it
-            // into an `N`-carrying variant is the orthogonal follow-up [M-172.1-fixedarray-N].
-            TypeRef::FixedArray(_, inner, _) => R::Array(Box::new(R::from_type_ref(inner))),
+            // NOT growable `Vec`. [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент):
+            // closes [M-172.1-fixedarray-N] for the C-lowering path — `N` carried losslessly
+            // in its own `R::FixedArray` variant (was `R::Array`, dropping `N`).
+            TypeRef::FixedArray(n, inner, _) => R::FixedArray(*n, Box::new(R::from_type_ref(inner))),
             TypeRef::Tuple(elems, _) => R::Tuple(elems.iter().map(R::from_type_ref).collect()),
             TypeRef::Func { params, return_type, effects, .. } => R::Func {
                 params: params.iter().map(R::from_type_ref).collect(),
@@ -12058,6 +12068,10 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             R::Array(inner) => R::Array(Box::new(Self::mark_type_params(*inner, params))),
+            // [M-fixed-array-value-semantics]: recurse into `[N]T`'s element like `Array`
+            // (was silently caught by the `other => other` wildcard below — a real gap for
+            // `type Foo[T] { arr [4]T }`'s `T`, now closed).
+            R::FixedArray(n, inner) => R::FixedArray(n, Box::new(Self::mark_type_params(*inner, params))),
             R::Tuple(items) => {
                 R::Tuple(items.into_iter().map(|i| Self::mark_type_params(i, params)).collect())
             }
@@ -12118,6 +12132,14 @@ impl<'a> TypeCheckCtx<'a> {
             }
             R::Array(elem) => {
                 TypeRef::Array(
+                    Box::new(Self::resolved_to_typeref(elem, span)?),
+                    span,
+                )
+            }
+            // [M-fixed-array-value-semantics]: round-trip `[N]T` losslessly (N carried).
+            R::FixedArray(n, elem) => {
+                TypeRef::FixedArray(
+                    *n,
                     Box::new(Self::resolved_to_typeref(elem, span)?),
                     span,
                 )
