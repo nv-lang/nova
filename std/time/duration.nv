@@ -1042,17 +1042,31 @@ export fn f64 @days() -> Duration =>
 ///     assert(elapsed == Duration.ZERO)
 /// }
 /// ```
+/// **Plan 175 Ф.5(d) (D318):** элапсед-измерение через `Monotonic`, НЕ
+/// `Timestamp` — стопвотч/бенчмарк-семантика иммунна к wall-clock skew
+/// (NTP/DST jump ВО ВРЕМЯ измерения раньше мог дать отрицательный или
+/// вздутый `elapsed` — ровно Go/Rust/Java-конвенция: `time.Since`/`Instant`
+/// для измерений всегда монотонные). Сигнатура не меняется (`Duration` —
+/// clock-agnostic результат).
 #stable(since = "0.1")
 export fn measure[T](action fn() -> T) Time -> (T, Duration) {
-    ro start = Timestamp.now()
+    ro start = Monotonic.now()
     ro result = action()
-    ro elapsed = Timestamp.now().minus(start)
+    ro elapsed = Monotonic.now().elapsed_since(start)
     (result, elapsed)
 }
 
 /// Compute дедлайн `now() + d` с использованием ambient `Time`.
 ///
 /// Convenience-обёртка чтобы не писать `Time.now_unix_ms() + 5.seconds()` каждый раз.
+///
+/// **Plan 175 Ф.5(d) — намеренно ОСТАЁТСЯ `Timestamp`-based** (НЕ мигрирован
+/// на `Monotonic`, в отличие от [`measure`]): возвращаемый тип — `Timestamp`
+/// (wall-clock), поэтому клок-источник обязан совпадать с типом контракта
+/// (D124 — нельзя молча подменить домен часов внутри функции с committed
+/// wall-clock return type). Для монотонных дедлайнов (timer/scope-deadline,
+/// 173 §3a `supervised(timeout:)`) используй `Monotonic.now() + d` напрямую —
+/// именно ЭТОТ паттерн, а не `deadline_in`, канон для `deadline:`-параметров.
 #stable(since = "0.1")
 export fn deadline_in(d Duration) Time -> Timestamp =>
     Timestamp.now() + d
@@ -1202,6 +1216,24 @@ test "measure semantics: под fixed_ms elapsed = 0" {
         ro elapsed = Timestamp.now().minus(start)
         assert(result == 42)
         assert(elapsed.is_zero())
+    }
+}
+
+test "Ф.5(d): measure[T] мигрирован на Monotonic (elapsed иммунен к wall-clock skew)" {
+    // Прямой вызов `measure(...)` (не inline-паттерн выше) — value-in-
+    // generic-tuple-return gap [M-175-value-in-generic-tuple-return] здесь
+    // НЕ бьёт, потому что `measure` возвращает `(int, Duration)`, а `int`
+    // element — не value-record триггер (только Duration/Timestamp/Monotonic
+    // ЭЛЕМЕНТОМ tuple вызывают гэп; здесь Duration — второй элемент результата
+    // самого measure, но tuple-конструкция происходит ВНУТРИ измеряемого fn,
+    // не на call-site — gap специфичен call-site turbofish-инференсу).
+    with Time = th.mut_clock(0 as u64) {
+        ro (result, elapsed) = measure(fn() -> int {
+            Time.sleep(3000)  // virtual clock advance под mock — elapsed = 3s
+            42
+        })
+        assert(result == 42)
+        assert(elapsed == 3.seconds())
     }
 }
 
