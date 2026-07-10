@@ -8471,13 +8471,20 @@ handler'а.
 
 `cleanup` для данной consume-binding **гарантированно вызывается ровно один
 раз** на любом exit-path (включая `return`, `throw`, `panic`, cancel).
-Реализуется через runtime counter `_consume_count` в desugared coode: codegen
-+ runtime инкрементируют при invocation, runtime panic'ит при ≥ 2.
+Реализуется runtime-счётчиком `_consume_count` *(Plan 173 Ф.5 #8, реализовано:
+скрытое поле `int _consume_ccount` на heap-record инстансе + scope-локальный
+дубль-гард в desugared-коде)*: пролог generated `Nova_<T>_consume_cleanup` —
+единственный chokepoint всех путей вызова — проверяет и инкрементирует счётчик;
+при ≥ 2 — runtime panic `D188-on-exit-double-invocation`.
 
 Double-invocation invariant нарушается только если programmer вручную
-зовёт `tx.cleanup(...)` из body — это runtime error
-`D188-on-exit-double-invocation` (linear types prevent double-consume в
-большинстве случаев, но FFI/reflection обход возможен).
+зовёт `tx.cleanup(...)` — прямые/алиасные вызовы из body ловятся compile-time
+(`D188-r2-manual-on-exit`, включая `let y = tx; y.cleanup(...)` и
+receiver-подвыражения); вызов, пронесённый через границу функции
+(view-параметр) или FFI/reflection, ловится runtime-счётчиком (linear types
+prevent double-consume в большинстве случаев, но обход возможен). Extern
+"nova" cleanup'ы (MutexGuard и пр., D194 hot-path) счётчиком не оснащаются —
+их структуры рукописные в nova_rt.
 
 #### R3 — Cancel-shield by default
 

@@ -1480,6 +1480,17 @@ pub struct CEmitter {
     /// whose key is absent may ELIDE its entry-check (provably-leaf). Default
     /// `populated()==false` → KEEP everything (unit-test / direct construction).
     preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet,
+    /// Plan 173 Ф.5 (#8, D188 R2): receiver-type C-idents (via
+    /// `receiver_type_c_ident`) of USER (non-extern) `consume @cleanup`
+    /// methods in this module — computed by an emit_module pre-pass.
+    /// Drives (a) the hidden `int _consume_ccount;` field appended by
+    /// `emit_record_type` and (b) the exactly-once prologue in `emit_fn`.
+    consume_cleanup_types: HashSet<String>,
+    /// Plan 173 Ф.5 (#8): struct names that ACTUALLY received the hidden
+    /// `_consume_ccount` field (heap records only). The `emit_fn` prologue
+    /// gates on THIS set (not `consume_cleanup_types`) so the two can never
+    /// desync into a C compile error (field read without field emit).
+    consume_ccount_structs: HashSet<String>,
 }
 
 /// Plan 20 Ф.4: per-defer-stmt entry — tracks one `defer { ... }` statement.
@@ -1866,6 +1877,8 @@ impl CEmitter {
             // Plan 143.2: default empty/unpopulated → KEEP everything until
             // emit_module runs the pre-pass.
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
+            consume_cleanup_types: HashSet::new(),
+            consume_ccount_structs: HashSet::new(),
         }
     }
 
@@ -3769,6 +3782,35 @@ impl CEmitter {
             }
             self.preempt_keep =
                 crate::codegen::preempt_keep::compute_preempt_keep_set(all_fns);
+        }
+
+        // Plan 173 Ф.5 (#8, D188 R2): pre-pass — collect receiver types of
+        // USER (non-extern) `consume @cleanup` methods. These heap-record
+        // structs get a hidden `int _consume_ccount;` field and the generated
+        // `Nova_<T>_consume_cleanup` gets an exactly-once prologue (the single
+        // chokepoint every invocation path goes through — scope dispatch AND
+        // any manual call that escaped the compile-time D188-r2 checker via a
+        // function boundary). Extern "nova" cleanups (MutexGuard etc., D194
+        // hot path, hand-written C structs) are excluded by `!f.is_external`.
+        {
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    if let Item::Fn(f) = item {
+                        if f.is_external { continue; }
+                        if f.name != "cleanup" { continue; }
+                        if let Some(recv) = &f.receiver {
+                            if recv.consume && matches!(recv.kind, ReceiverKind::Instance) {
+                                self.consume_cleanup_types
+                                    .insert(Self::receiver_type_c_ident(&recv.type_name));
+                            }
+                        }
+                    }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
         }
 
         // Plan 70.1: register imported-module prefix names (aliases + last-segments)
@@ -13996,6 +14038,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 );
             }
         }
+        // Plan 173 Ф.5 (#8, D188 R2): hidden runtime exactly-once counter for
+        // heap records with a USER `consume @cleanup` method. Zero-initialized
+        // by the nova_alloc contract (alloc.c: "MUST return zeroed memory");
+        // checked+incremented by the `Nova_<T>_consume_cleanup` prologue.
+        // Trailing field — designated initializers leave it 0; not part of
+        // the Nova-visible record schema.
+        if self.consume_cleanup_types.contains(name) {
+            self.line("int _consume_ccount; /* Plan 173 Ф.5 D188 R2 exactly-once */");
+            self.consume_ccount_structs.insert(name.to_string());
+        }
         self.indent -= 1;
         self.line("};");
         self.line("");
@@ -21560,6 +21612,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (`populated()==false`, e.g. direct CEmitter construction in unit
         // tests) we KEEP unconditionally — never elide under doubt.
         self.emit_prologue_preempt_check(f);
+        // Plan 173 Ф.5 (#8, D188 R2 exactly-once): prologue guard in the
+        // generated `Nova_<T>_consume_cleanup` — the single chokepoint EVERY
+        // invocation path funnels through (the consume-scope's own dispatch
+        // AND a manual call smuggled past the compile-time D188-r2 checker
+        // through a function boundary / FFI). Second invocation on the same
+        // instance = D188 R2 violation → loud panic, not silent double-run.
+        // Gated on `consume_ccount_structs` (struct actually carries the
+        // hidden field) so the guard can never reference a missing member.
+        if f.name == "cleanup" {
+            if let Some(recv) = &f.receiver {
+                if recv.consume
+                    && matches!(recv.kind, ReceiverKind::Instance)
+                    && self.consume_ccount_structs.contains(&Self::receiver_type_c_ident(&recv.type_name))
+                {
+                    self.line("if (nova_self && nova_self->_consume_ccount >= 1) { nv_panic(nova_str_from_cstr(\"D188-on-exit-double-invocation\")); }");
+                    self.line("if (nova_self) { nova_self->_consume_ccount += 1; }");
+                }
+            }
+        }
         let saved_expected = self.expected_record_type.clone();
         self.expected_record_type = Self::debt_struct_name_from_c_type(&ret);
         // Plan 33.1 Ф.4 (D24): emit contracts.

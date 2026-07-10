@@ -25,3 +25,46 @@ test "consume scope-block: nested access works (D188)" {
     }
     assert(sum == 5)
 }
+
+// D188 R2 (Plan 173 Ф.5 #8): exactly-once — РЕАЛЬНЫЙ runtime-счётчик
+// (`_consume_ccount` на инстансе, проверяется в прологе generated
+// `Nova_<T>_consume_cleanup`), не только структурный active-флаг.
+// Наблюдение: ResourceTrace.on_resource_exit срабатывает ровно один раз
+// на чистый cleanup-диспатч (success- и failure-path).
+type D188R2Err { msg str }
+
+fn d188_r2_throws() Fail[D188R2Err] -> () {
+    throw D188R2Err { msg: "boom" }
+}
+
+test "D188 R2: cleanup dispatches exactly once — success path" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label, _timeout_ms) { return () }
+        on_resource_exit(_label, _outcome) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        consume r = d188_make("r2") {
+            ro _ = r.label
+        }
+    }
+    assert(exit_calls == 1)
+}
+
+test "D188 R2: cleanup dispatches exactly once — failure path" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label, _timeout_ms) { return () }
+        on_resource_exit(_label, _outcome) {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        with Fail = effect Fail { fail(_m) { interrupt () } } {
+            consume r = d188_make("r2f") { d188_r2_throws() }
+        }
+    }
+    assert(exit_calls == 1)
+}
