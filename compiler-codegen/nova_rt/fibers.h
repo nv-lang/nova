@@ -225,6 +225,19 @@ typedef struct {
     void*         reason;    /* boxed T for CANCEL (GC-managed) */
     void*         payload;   /* boxed T for USER_TYPED (GC-managed) */
     NovaTypeId    tid;       /* payload type id for USER_TYPED */
+    /* Plan 173.2 (supervision-as-effect): mid-drain publication flag.
+     * The writer (the failing child, worker thread) fills the fields above
+     * and THEN release-stores `published=true`; the reader (the scope's
+     * drive thread, nova_supervised_process_decisions) acquire-loads it
+     * before touching the plain fields — a per-slot happens-before that
+     * makes DURING-drain reads sound (the 173.0 end-of-drain read relied on
+     * the pending_remote==0 acquire gate instead; that gate still holds for
+     * the final catch-up pass). Slots have disjoint owners (one child each,
+     * nova_scope_alloc_child_slot) so there is no writer-writer race. */
+    nova_atomic_bool published;
+    /* Plan 173.2: drive-thread-only bookkeeping — this failure has been fed
+     * to the Supervisor decision exactly once. Never touched by workers. */
+    nova_bool     decided;
 } NovaChildError;
 
 typedef struct {
@@ -441,6 +454,26 @@ typedef struct {
      * this is still false — proves grow-during-drain never happens (see
      * comment above NovaChildError). Debug-only cost (no-op in NDEBUG). */
     nova_bool       _drain_started;
+    /* ─── Plan 173.2: supervision-as-effect ───
+     * Stamped by codegen at scope entry (right after nova_scope_init, on the
+     * scope's own thread, strictly BEFORE any spawn):
+     *   q.has_supervisor = (_nova_handler_Supervisor != NULL);
+     * true  → deferred-decision mode: a failing child's report goes ONLY to
+     *         its per-slot child_error[] entry (no first_error CAS, no
+     *         cancel_requested broadcast); the drive thread consults the
+     *         ambient `Supervisor.on_child_fail` handler serially, one
+     *         retained failure at a time (nova_supervised_process_decisions),
+     *         and EXECUTES the returned Decision (Escalate/Stop).
+     * false → default path, byte-parity with pre-173.2 behaviour (the
+     *         supervision branches are never entered).
+     * Cross-thread visibility: written before the first spawn_into on the
+     * same thread; children observe it through the same publication chain
+     * that already carries every other scope field (deque push/steal). */
+    nova_bool       has_supervisor;
+    /* Plan 173.2: re-entrancy latch for nova_supervised_process_decisions —
+     * drive-thread only. Guards against a handler body that (indirectly)
+     * re-enters the drive machinery. */
+    nova_bool       _deciding;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -716,6 +749,11 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->child_count    = 0;
     q->child_capacity = 0;
     q->_drain_started = false;
+    /* Plan 173.2: default = no supervisor (byte-parity path). Codegen stamps
+     * has_supervisor right after this call when a Supervisor handler is
+     * ambient at scope entry. */
+    q->has_supervisor = false;
+    q->_deciding      = false;
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
 }
@@ -925,6 +963,8 @@ static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) 
         new_err[i].reason = NULL;
         new_err[i].payload = NULL;
         new_err[i].tid = 0;
+        nova_abool_init(&new_err[i].published, false);  /* Plan 173.2 */
+        new_err[i].decided = false;                      /* Plan 173.2 */
         new_ctx[i] = NULL;
     }
     scope->child_error    = new_err;
@@ -946,6 +986,8 @@ static inline int nova_scope_alloc_child_slot(NovaFiberQueue* scope) {
     }
     int idx = scope->child_count++;
     scope->child_error[idx].msg = NULL;
+    nova_abool_init(&scope->child_error[idx].published, false);  /* Plan 173.2 */
+    scope->child_error[idx].decided = false;                      /* Plan 173.2 */
     scope->child_ctx[idx] = NULL;
     return idx;
 }
@@ -1559,11 +1601,12 @@ typedef struct {
      * decrement may happen on a different worker thread than increment
      * after migration (work-stealing M:N). zero-init via nova_alloc. */
     nova_atomic_int      _nova_cancel_mask_count;
-    /* Plan 110.2.2.a (D188 R3 + D192): deadline_ns for shield. Captured
-     * by nv_consume_enter_shield as now_ns + timeout_ms*1_000_000.
-     * Suspend entries compare uv_hrtime() vs this value; if exceeded
-     * while mask > 0, throw CleanupTimeoutError instead of suspending.
-     * 0 = no active deadline. */
+    /* Plan 173 Ф.5 п.2 (D192-ретракт; ранее Plan 110.2.2.a): watchdog
+     * deadline_ns. Армится nv_cleanup_watchdog_arm ТОЛЬКО на время
+     * cleanup-вызова (now_ns + threshold_ms*1e6). Suspend entries compare
+     * uv_hrtime() vs this value; if exceeded while mask > 0 —
+     * ONE-SHOT stderr-варн «fiber stuck in cleanup» (НЕ прерывание;
+     * cleanup добегает). 0 = not armed. */
     int64_t              _nova_cancel_deadline_ns;
     /* Plan 83-go-cmn Ф.2: gopark/goready 4-state park-latch (NIL/WAIT/READY/
      * DISPATCHED). By-pointer via mco_get_user_data; zero-init = NOVA_PARK_NIL.
@@ -1693,35 +1736,21 @@ static inline int64_t nova_cancel_deadline_get(mco_coro* co) {
 
 /* Plan 110.2.1.a (D188 R3): ConsumeScope shield entry/exit.
  *
- * `nv_consume_enter_shield(deadline_ms)` — increments cancel_mask_count,
- * captures deadline_ns = uv_hrtime() + deadline_ms*1_000_000 (saving the
- * previous value на stack-saved slot НЕ нужен — D196: nested consume{}
- * shadows external deadline; outer fiber resumes its own на leave).
- *
- * Implementation note for D197 (cleanup re-entrance): nested consume{}
- * inside on_exit body increments mask further; nested leave decrements
- * back to outer mask level. Outer deadline_ns rewritten by inner enter,
- * THEN restored by inner leave via save-on-enter/restore-on-leave
- * (deferred to 110.2.2.a). Bootstrap: simpler overwrite + restore via
- * caller's saved local — emit_c.rs handles. */
-/* Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] fix (2026-06-05):
- * enter returns previous deadline so leave can restore it. Previously nested
- * consume{} would overwrite outer's deadline и leave only cleared when mask
- * reached 0 — outer body resuming saw stale inner deadline, producing inflated
- * over-budget reports (appeared as i64 underflow). D196 нормирует:
- * inner shadows outer's deadline, outer's deadline restored на inner leave. */
-static inline int64_t nv_consume_enter_shield(int deadline_ms) {
+ * Plan 173 Ф.5 п.2 (D192-РЕТРАКТ, §3a 2026-06-26): `nv_consume_enter_shield`
+ * теперь НЕ армит deadline на scope — только инкрементирует cancel-mask
+ * (кооперативная отмена отложена, cleanup ВСЕГДА добегает; форс-прерывания
+ * cleanup'а НЕ СУЩЕСТВУЕТ). Параметр `threshold_ms` сохранён в сигнатуре
+ * как источник ПОРОГА watchdog-варна (3-level D192-resolution живёт в
+ * codegen consume-prologue), но деадлайн армится ТОЛЬКО вокруг самого
+ * cleanup-вызова — парой `nv_cleanup_watchdog_arm/disarm` ниже. Возврат
+ * prev_deadline сохранён для symmetry restore на leave (D197 re-entrance:
+ * consume внутри cleanup-тела наследует корректный outer-арм). */
+static inline int64_t nv_consume_enter_shield(int threshold_ms) {
+    (void)threshold_ms;  /* порог применяется в nv_cleanup_watchdog_arm */
     mco_coro* co = mco_running();
     if (!co) return 0;  /* main thread / non-fiber — shield is no-op */
     int64_t prev_deadline = nova_cancel_deadline_get(co);
     nova_cancel_mask_inc(co);
-    if (deadline_ms > 0) {
-        int64_t now_ns = (int64_t)uv_hrtime();
-        nova_cancel_deadline_set(co, now_ns + (int64_t)deadline_ms * 1000000LL);
-    } else {
-        /* #realtime bypass (D198): deadline_ms == 0 → no deadline check. */
-        nova_cancel_deadline_set(co, 0);
-    }
     return prev_deadline;
 }
 
@@ -1729,61 +1758,69 @@ static inline void nv_consume_leave_shield(int64_t prev_deadline) {
     mco_coro* co = mco_running();
     if (!co) return;
     nova_cancel_mask_dec(co);
-    /* Plan 110.x fix: restore outer's deadline (or 0 если outermost).
-     * Previously cleared only at mask=0 — left inner's deadline visible
-     * к outer body, causing bogus cleanup-timeout fires. */
+    /* Plan 110.x fix: restore outer's deadline (or 0 если outermost). */
     nova_cancel_deadline_set(co, prev_deadline);
 }
 
-/* Plan 110.2.2.a (D188 R3 + D192): deadline check called at suspend
- * entry (Time.sleep, nova_fiber_yield, future Net I/O). If a shield
- * is active AND deadline_ns is set AND uv_hrtime() has passed it,
- * throw the cleanup-timeout marker so the outer ConsumeScope's
- * fail-frame catches it and surfaces it to user code.
- *
- * Bootstrap implementation (Plan 110.2.2.a): the throw is a plain
- * `nova_throw` (USER kind) carrying a recognizable msg-string
- * "cleanup-timeout-exceeded after Nms"; the user-facing structured
- * CleanupTimeoutError construction is wired via the
- * `_nova_throw_cleanup_timeout_fn` function pointer when codegen
- * emits the impl in the user TU (assigned at startup). When the
- * pointer is NULL — string-only fallback used (production safe; the
- * outer fail-frame still catches and propagates).
+/* Plan 173 Ф.5 п.2 (D192-ретракт): watchdog-порог АРМИТСЯ только на время
+ * cleanup-вызова («fiber застрял в CLEANUP» — не в body). Превышение порога
+ * на suspend-точке внутри cleanup'а → stderr-ВАРН (nv_shield_check_deadline),
+ * НЕ прерывание: cleanup продолжает бежать до конца. threshold_ms == 0
+ * (#realtime bypass D198) → не армим. Пара arm/disarm стекуется через
+ * prev-значение (D197 re-entrance-safe). */
+static inline int64_t nv_cleanup_watchdog_arm(int threshold_ms) {
+    mco_coro* co = mco_running();
+    if (!co) return 0;
+    int64_t prev = nova_cancel_deadline_get(co);
+    if (threshold_ms > 0) {
+        nova_cancel_deadline_set(co,
+            (int64_t)uv_hrtime() + (int64_t)threshold_ms * 1000000LL);
+    } else {
+        nova_cancel_deadline_set(co, 0);
+    }
+    return prev;
+}
+
+static inline void nv_cleanup_watchdog_disarm(int64_t prev) {
+    mco_coro* co = mco_running();
+    if (!co) return;
+    nova_cancel_deadline_set(co, prev);
+}
+
+/* Plan 173 Ф.5 п.2 (D192-РЕТРАКТ, §3a): watchdog-check на suspend-точках
+ * (Time.sleep, nova_fiber_yield, future Net I/O). Если watchdog армлен
+ * (nv_cleanup_watchdog_arm — только на время cleanup-вызова) и порог
+ * превышен — печатается stderr-ВАРН «fiber застрял в cleanup» и деадлайн
+ * ЗАНУЛЯЕТСЯ (one-shot: варн не спамится на каждой последующей
+ * suspend-точке). НИКАКОГО прерывания: cleanup продолжает бежать до конца
+ * («defer всегда добегает», ни один из 7 языков-планки не форс-прерывает
+ * cleanup). Прежний механизм — throw CleanupTimeoutError
+ * (`_nova_throw_cleanup_timeout_fn` + string-fallback) — УДАЛЁН вместе с
+ * самим типом (D192-ретракт); превышение порога наблюдаемо структурно в
+ * ResourceTrace exit-событии (duration_ms/overrun — D185 amend).
  *
  * Idempotent: returns immediately on no-shield / no-deadline / not
  * exceeded. Safe to call at every suspend site без performance cost
  * на the hot non-shielded path. */
-extern void (*_nova_throw_cleanup_timeout_fn)(int duration_ms);
-
 static inline void nv_shield_check_deadline(void) {
     mco_coro* co = mco_running();
     if (!co) return;
     if (nova_cancel_mask_load(co) == 0) return;  /* no shield active */
     int64_t deadline = nova_cancel_deadline_get(co);
-    if (deadline == 0) return;  /* #realtime bypass or no-deadline scope */
+    if (deadline == 0) return;  /* not armed / #realtime bypass (D198) */
     int64_t now = (int64_t)uv_hrtime();
     if (now <= deadline) return;  /* within budget */
-    /* Deadline exceeded: compute elapsed-over-budget for diagnostic.
-     * NOTE: We do NOT re-enter the shield while throwing — the fail-frame
-     * for ConsumeScope (set up by codegen) catches kind=USER and surfaces
-     * to user code. The shield itself stays armed; nv_consume_leave_shield
-     * clears it on the way out. */
     int over_ms = (int)((now - deadline) / 1000000LL);
     if (over_ms < 0) over_ms = 0;
-    if (_nova_throw_cleanup_timeout_fn) {
-        /* Structured CleanupTimeoutError throw — codegen-supplied impl
-         * allocates struct + calls nova_throw_typed. */
-        _nova_throw_cleanup_timeout_fn(over_ms);
-        /* unreachable — fn does not return on throw path */
-    }
-    /* Fallback: plain string throw (USER kind). The msg-prefix is the
-     * recognized marker; outer code that wants typed access can match
-     * на msg.starts_with("cleanup-timeout-exceeded:"). */
-    char buf[96];
-    snprintf(buf, sizeof(buf),
-             "cleanup-timeout-exceeded: %d ms over budget", over_ms);
-    nova_throw(nova_str_from_cstr(buf));
-    /* unreachable */
+    /* One-shot: disarm so the warn fires once per cleanup overrun. The
+     * cancel-mask stays intact (cancel remains deferred until cleanup
+     * completes); nv_cleanup_watchdog_disarm restores the outer state. */
+    nova_cancel_deadline_set(co, 0);
+    fflush(stdout);
+    fprintf(stderr,
+        "nova: warning: fiber stuck in cleanup: %d ms over watchdog threshold "
+        "(cleanup keeps running; D192 retracted — no force-interrupt)\n",
+        over_ms);
 }
 
 /* Forward-decl для использования из spawn_into. */
@@ -2030,14 +2067,39 @@ static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
                                                    NovaTypeId tid) {
     if (!base || !base->_nova_parent_scope || !msg) return;
     NovaFiberQueue* parent = base->_nova_parent_scope;
-    nova_fiber_report_atomic_kinded(parent, msg, kind, reason_ptr, payload, tid);
     int slot = base->_nova_parent_slot;
+    /* Plan 173.2 (supervision-as-effect): deferred-decision mode. When the
+     * scope entered with an ambient Supervisor handler (has_supervisor
+     * stamped by codegen at scope entry, before any spawn), a child failure
+     * must NOT unilaterally elect itself primary nor broadcast cancellation
+     * — that is the Supervisor's decision, taken serially on the scope's
+     * drive thread (nova_supervised_process_decisions). Report goes ONLY to
+     * this child's own retention slot; `published` release-store pairs with
+     * the drive thread's acquire-load (per-slot happens-before for the
+     * DURING-drain read).
+     *
+     * Fallback to the default path below when no slot is available (slot<0
+     * can only mean the bootstrap/local path, which never calls this fn) —
+     * an error must never be dropped silently. */
+    if (parent->has_supervisor
+        && slot >= 0 && parent->child_error && slot < parent->child_capacity) {
+        parent->child_error[slot].msg     = msg;
+        parent->child_error[slot].kind    = kind;
+        parent->child_error[slot].reason  = reason_ptr;
+        parent->child_error[slot].payload = payload;
+        parent->child_error[slot].tid     = tid;
+        nova_abool_store(&parent->child_error[slot].published, true);
+        return;
+    }
+    /* Default path — byte-parity with pre-173.2 behaviour. */
+    nova_fiber_report_atomic_kinded(parent, msg, kind, reason_ptr, payload, tid);
     if (slot >= 0 && parent->child_error && slot < parent->child_capacity) {
         parent->child_error[slot].msg     = msg;
         parent->child_error[slot].kind    = kind;
         parent->child_error[slot].reason  = reason_ptr;
         parent->child_error[slot].payload = payload;
         parent->child_error[slot].tid     = tid;
+        nova_abool_store(&parent->child_error[slot].published, true);
     }
 }
 
@@ -2312,10 +2374,12 @@ static inline void nova_scope_deliver_cancel(NovaFiberQueue* q, void* reason_ptr
 }
 
 /* Plan 174 (D349): typed `TimeoutError` throw hook. Assigned by codegen in
- * main() when the user program references `TimeoutError` (mirrors the
- * CleanupTimeoutError pattern). When NULL — string-fallback throw is used
- * (production-safe; outer fail-frame still catches). Carries the exceeded
- * deadline point (absolute monotonic ns). */
+ * main() when the user program references `TimeoutError`. When NULL —
+ * string-fallback throw is used (production-safe; outer fail-frame still
+ * catches). Carries the exceeded deadline point (absolute monotonic ns).
+ * NB: НЕ путать с ретрактнутым CleanupTimeoutError (D192-ретракт, Plan 173
+ * Ф.5 п.2) — тот был про cleanup-бюджет ресурса и удалён; этот — про
+ * scope-дедлайн supervised(deadline:/timeout:) и живёт. */
 extern void (*_nova_throw_scope_timeout_fn)(int64_t deadline_ns);
 
 static inline void nova_throw_scope_timeout(int64_t deadline_ns) {
@@ -2378,7 +2442,91 @@ static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
 static inline void nova_supervised_decide(NovaFiberQueue* scope, int idx,
                                            const NovaChildError* err, void* ctx) {
     (void)scope; (void)idx; (void)err; (void)ctx;
-    /* Default policy (Plan 173.0): no-op observer. See comment above. */
+    /* Default policy (Plan 173.0): no-op observer. See comment above.
+     * Plan 173.2: this observer remains the DEFAULT-mode hook (scope without
+     * a Supervisor handler) — byte-parity guaranteed. Supervisor-mode scopes
+     * take the nova_supervised_process_decisions path below instead. */
+}
+
+/* ─── Plan 173.2: supervision-as-effect — decision execution ───
+ *
+ * `Supervisor` is a real Nova effect (std/prelude/effects.nv):
+ *     type Supervisor effect { on_child_fail(idx int, err any) -> Decision }
+ *     type Decision enum Escalate | Stop
+ * Strategies are handler VALUES (`with Supervisor = policy { ... }`), like
+ * Time/Fail. The runtime cannot reference codegen-emitted symbols
+ * (NovaVtable_Supervisor / Nova_Decision), so dispatch crosses through a
+ * function pointer assigned by generated main() — the same pattern as
+ * _nova_throw_scope_timeout_fn. The bridge (emit_c.rs,
+ * _nova_supervisor_decide_impl):
+ *   - reads the ambient `_nova_handler_Supervisor` TLS vtable (NULL →
+ *     Escalate, the default);
+ *   - boxes the NovaChildError into a Nova `any` (typed payload via
+ *     nova_any_from_boxed, string throws/panics as `str`);
+ *   - invokes the Nova handler under a local fail-frame — a handler that
+ *     itself throws is treated as Escalate-with-handler-error (Q-block:
+ *     `Fail` allowed, guarded against handler-fails-self recursion);
+ *   - maps the returned Decision tag to the codes below. */
+#define NOVA_SUPERVISE_ESCALATE       0   /* Decision.Escalate (and default) */
+#define NOVA_SUPERVISE_STOP           1   /* Decision.Stop */
+/* (code 2 retired: Restart family retracted from Decision — D416 amend
+ * 2026-07-10; the dictionary is complete with Escalate|Stop.) */
+
+/* Assigned by generated main() when the CU knows the Supervisor effect
+ * (prelude present). NULL → every decision defaults to Escalate. Signature
+ * erased to void* so runtime TUs (effects.c) can define the storage without
+ * seeing NovaFiberQueue/NovaChildError. */
+extern nova_int (*_nova_supervisor_decide_fn)(void* scope, nova_int idx,
+                                              const void* err);
+
+/* Serialized decision pass for supervisor-mode scopes (has_supervisor).
+ * Runs ONLY on the scope's drive thread — from nova_supervised_run_impl's
+ * drain loop (one call per iteration: failures are decided while siblings
+ * are still running, so an Escalate can cancel them EARLY, and a Stop lets
+ * them finish undisturbed) and once more after the drain completes (final
+ * catch-up under the pending_remote==0 acquire gate).
+ *
+ * Per-slot protocol: acquire-load of `published` (pairs with the child's
+ * release-store in nova_fiber_report_child_kinded) → plain fields readable;
+ * `decided` is drive-thread-only. Each failure is fed to the handler EXACTLY
+ * once, in slot order (deterministic within one pass).
+ *
+ * Decision execution:
+ *   ESCALATE — feed the child's error into the scope's primary machinery
+ *     (nova_fiber_report_atomic_kinded: precedence PANIC > USER > CANCEL +
+ *     cancel_requested broadcast — exactly what the child itself does on
+ *     the default path, so the re-throw tail needs NO changes).
+ *   STOP — drop: no primary election, no cancellation; the slot stays
+ *     retained (not lost silently — child_error[] keeps it).
+ *   (Restart family retracted from Decision — D416 amend 2026-07-10;
+ *    the bridge maps any non-Stop tag to ESCALATE defensively.)
+ *
+ * Induced sibling cancellations (kind CANCEL) are consumed silently: they
+ * are the CONSEQUENCE of an escalation, not a root failure — the handler
+ * sees only genuine child failures (USER/USER_TYPED/PANIC). */
+static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
+    if (!q->has_supervisor || !q->child_error || q->_deciding) return;
+    q->_deciding = true;
+    for (int i = 0; i < q->child_count; i++) {
+        NovaChildError* ce = &q->child_error[i];
+        if (ce->decided) continue;
+        if (!nova_abool_load(&ce->published)) continue;
+        ce->decided = true;
+        if (ce->kind == NOVA_THROW_CANCEL) continue;
+        nova_int code = _nova_supervisor_decide_fn
+            ? _nova_supervisor_decide_fn((void*)q, (nova_int)i, (const void*)ce)
+            : (nova_int)NOVA_SUPERVISE_ESCALATE;
+        switch ((int)code) {
+            case NOVA_SUPERVISE_STOP:
+                break;
+            case NOVA_SUPERVISE_ESCALATE:
+            default:
+                nova_fiber_report_atomic_kinded(q, ce->msg, ce->kind,
+                                                ce->reason, ce->payload, ce->tid);
+                break;
+        }
+    }
+    q->_deciding = false;
 }
 
 /* Round-robin run: resume each live fiber until all are dead.
@@ -2429,6 +2577,12 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
     q->_drain_started = true;
     for (;;) {
         int alive = nova_supervised_step(q);
+        /* Plan 173.2: supervisor-mode scopes decide retained failures WHILE
+         * siblings still run — serialized, on this (drive) thread. A failing
+         * child's epilogue calls nova_runtime_signal_main(), so the uv_run
+         * waits below wake promptly and the decision latency is one loop
+         * iteration. No-op (single flag test) for default scopes. */
+        if (q->has_supervisor) nova_supervised_process_decisions(q);
         /* Plan 174 (D349): deadline gate. Fire once, and only if the scope
          * wasn't already cancelled by a bound token (earliest-of-the-two wins
          * — token cancel takes precedence, no bogus TimeoutError). */
@@ -2511,10 +2665,19 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * R1-guard withheld it from the pool at death) — then releases each
      * retained ctx back to its pool now that the decision hook has run. */
     if (q->child_error) {
-        for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
-            if (q->child_error[_nv_di].msg != NULL) {
-                void* _nv_dctx = q->child_ctx ? q->child_ctx[_nv_di] : NULL;
-                nova_supervised_decide(q, _nv_di, &q->child_error[_nv_di], _nv_dctx);
+        if (q->has_supervisor) {
+            /* Plan 173.2: final catch-up decision pass — pending_remote==0
+             * was observed above (the loop only exits with remote==0), so
+             * every report is visible; any failure whose publish landed
+             * after the last in-loop pass is decided here, still strictly
+             * before the retained ctx is released below. */
+            nova_supervised_process_decisions(q);
+        } else {
+            for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
+                if (q->child_error[_nv_di].msg != NULL) {
+                    void* _nv_dctx = q->child_ctx ? q->child_ctx[_nv_di] : NULL;
+                    nova_supervised_decide(q, _nv_di, &q->child_error[_nv_di], _nv_dctx);
+                }
             }
         }
         for (int _nv_di = 0; _nv_di < q->child_count; _nv_di++) {
@@ -2628,6 +2791,20 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             NovaTypeId tid = q->first_error_atomic_tid;
             nova_throw_typed(nova_str_from_cstr(err), payload, tid);
             /* unreachable */
+        }
+        /* Plan 173 Ф.6 (§4а, вскрыто panics-миграцией; D13/D414): PANIC
+         * ребёнка НЕ деградирует до ловимого USER при re-throw наружу из
+         * supervised — транспортируем nv_panic'ом (kind=PANIC сохранён:
+         * with-Fail не ловит, panics-клаузула/D13-класс различают). Тот же
+         * класс дефекта, что Ф.1 #1 (with-Fail глотал panic) — прежний
+         * plain nova_throw терял kind на этом сайте. */
+        {
+            NovaThrowKind _rk = q->first_error ? q->first_error_kind
+                                               : q->first_error_atomic_kind;
+            if (_rk == NOVA_THROW_PANIC) {
+                nv_panic(nova_str_from_cstr(err));
+                /* unreachable */
+            }
         }
         /* USER либо USER_TYPED (local — see note above): plain nova_throw. */
         nova_throw(nova_str_from_cstr(err));
@@ -3439,20 +3616,59 @@ static inline nova_int Nova_Time_now_ns(void) {
  * (переименована из `now_monotonic` — Plan 175 D316 amend (2026-07-06), единицы
  * в именах опов; чисто механическое переименование, поведение не менялось).
  *
- * NOTE: Time handler vtable currently не имеет slot'а под now_monotonic_ns
- * (NovaVtable_Time defined в effects.h до Plan 65). Под mock-handler этот
- * вызов прозрачно возвращает real monotonic clock — НЕ mock'нутое значение.
- * Это intentional trade-off: добавить slot потребует:
- *   1. Расширения NovaVtable_Time layout
- *   2. Re-emit'а ВСЕХ handler-literal'ов с зеро-init slot'ом (avoid
- *      NULL dereference при handler без now_monotonic_ns decl)
- *   3. Прокидывания через std/testing/handlers.nv fixed_ms / mut_clock
- *
- * Concrete user-impact: mock-clock tests НЕ контролируют Monotonic time.
- * Для timer deadline mock'а (Plan 65 Ф.10 mock-time path) используется
- * Time.sleep вместо Monotonic — sleep dispatch уже идёт через vtable. */
+ * Plan 175 Ф.3(a) (D316, 2026-07-06): slot добавлен в NovaVtable_Time
+ * (effects.h) — вызов теперь ИДЁТ через handler vtable, mock'абелен
+ * (closes [M-monotonic-mock-support]). Function-pointer NULL-check (не
+ * только `_nova_handler_Time`) — backward-compat: handler-литералы,
+ * написанные до Ф.3(a) и не объявляющие `now_monotonic_ns() => ...`,
+ * оставляют слот NULL (C99 designated-init zero-fill) и прозрачно падают
+ * на real-clock (тот же поведенческий контракт, что был раньше). Handlers,
+ * которым нужен mock monotonic-clock (std/testing/handlers.nv fixed_ms /
+ * mut_clock), реализуют слот явно. */
 static inline nova_int Nova_Time_now_monotonic_ns(void) {
+    if (_nova_handler_Time && _nova_handler_Time->now_monotonic_ns) {
+        return _nova_handler_Time->now_monotonic_ns(_nova_handler_Time->ctx);
+    }
     return (nova_int)_nova_monotonic_ns();
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.5 п.6: nova_runtime_reset() — сброс thread-local
+ * error/handler-состояния МЕЖДУ panic-тестами в одном процессе.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Re-entry hazard (инфра для Ф.6 panics-клаузулы): пойманная через
+ * test-frame паника выходит longjmp'ом МИМО эпилогов with-блоков и
+ * fail-frame pop'ов — после неё висят: устаревшие `_nova_fail_top`
+ * кадры (stack-адреса уже разрушены — следующий throw = segfault),
+ * `_nova_interrupt_top`, `_nova_current_handler_iframe`,
+ * `_nova_last_error.live`, установленные handler-vtable слоты
+ * (string/any Fail, Time, user-effects), finalizer-stack и
+ * active-scope маркеры. N паник подряд в одном процессе без сброса =
+ * UB со второй.
+ *
+ * Вызывается ТОЛЬКО codegen'ом test-runner'а между тест-фреймами
+ * (Ф.6; D348). Из user-кода НЕ доступен: идентификатор не существует
+ * в Nova-неймспейсе (нет decl в std) — ссылка = compile error;
+ * см. neg-тест err173/neg/f5_runtime_reset_unavailable.
+ *
+ * Handler-слоты сбрасываются через per-thread effect-registry (все
+ * зарегистрированные TLS-адреса — built-in + user effects): дефолт
+ * каждого слота = NULL (fallback-семантика effects.h). */
+static inline void nova_runtime_reset(void) {
+    _nova_fail_top = NULL;
+    _nova_interrupt_top = NULL;
+    _nova_current_handler_iframe = NULL;
+    _nova_last_error.live = 0;
+    _nova_handler_Fail = NULL;
+    _nova_handler_Fail_any = NULL;
+    _nova_handler_Time = NULL;
+    _nova_active_finalizer_stack = NULL;
+    _nova_active_scope = NULL;
+    _nova_active_slot = -1;
+    for (int i = 0; i < _nova_effect_registry.count; i++) {
+        *_nova_effect_registry.slots[i] = NULL;
+    }
 }
 
 #endif /* NOVA_RT_FIBERS_H */

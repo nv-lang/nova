@@ -4306,7 +4306,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // detect manual `binding.cleanup(...)` calls в body.
                 // Runtime exactly-once guard prevents double dispatch;
                 // здесь — compile-time gate чтобы избегать runtime panic.
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                let mut tracked = std::collections::HashSet::new();
+                tracked.insert(binding.clone());
+                self.check_no_manual_on_exit_call_in_block(&tracked, body, errors);
                 self.check_consume_scopes_in_expr(init, errors);
                 self.check_consume_scopes_in_block(body, errors);
             }
@@ -4614,124 +4616,190 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 110.1.5 (D188 R2): detect manual `binding.cleanup(...)` calls
-    /// в ConsumeScope body. Auto cleanup dispatch happens at scope-exit;
-    /// manual call → double invocation → runtime panic (R2 exactly-once
-    /// violation). Compile-time gate preferred to runtime panic.
-    fn check_no_manual_on_exit_call_in_block(&self, binding: &str, b: &Block, errors: &mut Vec<Diagnostic>) {
+    /// Plan 110.1.5 (D188 R2) + Plan 173 Ф.5 (#8) hardening: detect manual
+    /// `binding.cleanup(...)` calls в ConsumeScope body. Auto cleanup dispatch
+    /// happens at scope-exit; manual call → double invocation → runtime panic
+    /// (R2 exactly-once violation). Compile-time gate preferred to runtime panic.
+    ///
+    /// `names` — the set of identifiers КОТОРЫЕ могут указывать на та же
+    /// consume-binding: seeded with the binding itself, GROWN by simple direct
+    /// aliases (`let y = x` / `ro y = x` где x уже в `names`) found while
+    /// walking the block (Plan 173 Ф.5: the original single-`&str` version
+    /// only caught the literal identifier — a one-line `let y = tx; y.cleanup(...)`
+    /// alias slipped past it into codegen, where the manual call and the
+    /// scope's own generated dispatch both reach `Nova_<T>_consume_cleanup`,
+    /// producing a REAL runtime double-invocation the syntactic check exists
+    /// to prevent). Residual: passing the binding through an arbitrary
+    /// function boundary (`identity(tx).cleanup(...)`) is still flagged
+    /// because `expr_mentions_any` scans the WHOLE receiver subexpression,
+    /// not just a bare `Ident`; genuinely opaque escapes (FFI/reflection) are
+    /// the acknowledged residual (spec 03-syntax.md D188 R2) — caught instead
+    /// by the runtime `_consume_count` guard (`emit_consume_entry_cleanup`).
+    fn check_no_manual_on_exit_call_in_block(&self, names: &std::collections::HashSet<String>, b: &Block, errors: &mut Vec<Diagnostic>) {
+        let mut names = names.clone();
         for s in &b.stmts {
-            self.check_no_manual_on_exit_call_in_stmt(binding, s, errors);
+            self.check_no_manual_on_exit_call_in_stmt(&mut names, s, errors);
         }
         if let Some(t) = &b.trailing {
-            self.check_no_manual_on_exit_call_in_expr(binding, t, errors);
+            self.check_no_manual_on_exit_call_in_expr(&names, t, errors);
         }
     }
 
-    fn check_no_manual_on_exit_call_in_stmt(&self, binding: &str, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+    fn check_no_manual_on_exit_call_in_stmt(&self, names: &mut std::collections::HashSet<String>, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
         match s {
-            Stmt::Let(d) => self.check_no_manual_on_exit_call_in_expr(binding, &d.value, errors),
-            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(binding, e, errors),
+            Stmt::Let(d) => {
+                self.check_no_manual_on_exit_call_in_expr(names, &d.value, errors);
+                // Grow the alias set: `let/ro y = x` where `x` is already
+                // tracked — `y` becomes an equally-valid manual-call target.
+                if let crate::ast::Pattern::Ident { name: alias_name, .. } = &d.pattern {
+                    if let ExprKind::Ident(rhs_name) = &d.value.kind {
+                        if names.contains(rhs_name) {
+                            names.insert(alias_name.clone());
+                        }
+                    }
+                }
+            }
+            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(names, e, errors),
             Stmt::Assign { target, value, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, target, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, value, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, target, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, value, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(binding, v, errors); }
+                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(names, v, errors); }
             }
-            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(binding, value, errors),
+            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(names, value, errors),
             Stmt::Defer { body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, body, errors);
             }
             Stmt::ConsumeScope { init, body, binding: inner_binding, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, init, errors);
-                // Nested consume scope с inner binding NEW — outer `binding`
+                self.check_no_manual_on_exit_call_in_expr(names, init, errors);
+                // Nested consume scope с inner binding NEW — outer `names`
                 // check still applies inside (если inner body references
                 // outer's binding manually — same violation).
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
                 // Дополнительно: recurse с inner binding (D197 re-entrance).
-                self.check_no_manual_on_exit_call_in_block(inner_binding, body, errors);
+                let mut inner = std::collections::HashSet::new();
+                inner.insert(inner_binding.clone());
+                self.check_no_manual_on_exit_call_in_block(&inner, body, errors);
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, expr, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, expr, errors);
             }
             _ => {}
         }
     }
 
-    fn check_no_manual_on_exit_call_in_expr(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    fn check_no_manual_on_exit_call_in_expr(&self, names: &std::collections::HashSet<String>, e: &Expr, errors: &mut Vec<Diagnostic>) {
         use crate::ast::ExprKind;
-        // Detect `binding.cleanup(...)` call: Call { func: Member { obj: Ident(binding), name: "cleanup" }, ... }
+        // Detect `<tracked-name-or-expr-mentioning-it>.cleanup(...)` call.
+        // Plan 173 Ф.5 (#8): widened from a bare `Ident(binding)` match to
+        // ANY receiver subexpression that mentions a tracked name — catches
+        // the pass-through-function bypass (`identity(tx).cleanup(...)`)
+        // in addition to the direct/aliased identifier form.
         if let ExprKind::Call { func, .. } = &e.kind {
             if let ExprKind::Member { obj, name, .. } = &func.kind {
                 if name == "cleanup" {
-                    if let ExprKind::Ident(obj_name) = &obj.kind {
-                        if obj_name == binding {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[D188-r2-manual-on-exit] `{binding}.cleanup(...)` cannot be \
-                                     called manually from inside `consume {binding} = ... {{ body }}` \
-                                     scope-block body. Auto cleanup dispatch на scope exit \
-                                     гарантирует exactly-once invariant (D188 R2). Manual call \
-                                     → double invocation → runtime panic. \
-                                     Remove the explicit call; scope-exit will dispatch cleanup \
-                                     с appropriate ScopeOutcome value.",
-                                    binding = binding
-                                ),
-                                e.span,
-                            ));
-                        }
+                    if let Some(hit) = Self::expr_mentions_any(names, obj) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[D188-r2-manual-on-exit] `{hit}.cleanup(...)` (or an expression \
+                                 referencing it) cannot be called manually from inside a \
+                                 `consume {hit} = ... {{ body }}` scope-block body. Auto cleanup \
+                                 dispatch на scope exit гарантирует exactly-once invariant \
+                                 (D188 R2). Manual call → double invocation → runtime panic. \
+                                 Remove the explicit call; scope-exit will dispatch cleanup \
+                                 с appropriate ScopeOutcome value.",
+                                hit = hit
+                            ),
+                            e.span,
+                        ));
                     }
                 }
             }
         }
         // Recurse into children regardless.
-        self.check_no_manual_on_exit_recurse(binding, e, errors);
+        self.check_no_manual_on_exit_recurse(names, e, errors);
     }
 
-    fn check_no_manual_on_exit_recurse(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    /// Plan 173 Ф.5 (#8): does `e` (recursively) mention any name in `names`
+    /// as a bare identifier? Returns the FIRST matching tracked name (for the
+    /// diagnostic message) or `None`. Conservative over-approximation — scans
+    /// through calls/members/binary/unary/casts so a tracked binding passed
+    /// through an intervening function call (`identity(tx)`) is still caught.
+    fn expr_mentions_any(names: &std::collections::HashSet<String>, e: &Expr) -> Option<String> {
         use crate::ast::ExprKind;
         match &e.kind {
-            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
+            ExprKind::Ident(n) => names.get(n).cloned(),
             ExprKind::Call { func, args, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, func, errors);
+                Self::expr_mentions_any(names, func).or_else(|| {
+                    args.iter().find_map(|a| match a {
+                        crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
+                            Self::expr_mentions_any(names, ae)
+                        }
+                        _ => None,
+                    })
+                })
+            }
+            ExprKind::Member { obj, .. } => Self::expr_mentions_any(names, obj),
+            ExprKind::Binary { left, right, .. } => {
+                Self::expr_mentions_any(names, left).or_else(|| Self::expr_mentions_any(names, right))
+            }
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Try(operand)
+            | ExprKind::Bang(operand)
+            | ExprKind::RefArg(operand) => Self::expr_mentions_any(names, operand),
+            ExprKind::Coalesce(a, b) => {
+                Self::expr_mentions_any(names, a).or_else(|| Self::expr_mentions_any(names, b))
+            }
+            _ => None,
+        }
+    }
+
+    fn check_no_manual_on_exit_recurse(&self, names: &std::collections::HashSet<String>, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(names, b, errors),
+            ExprKind::Call { func, args, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(names, func, errors);
                 for a in args {
                     match a {
                         crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
-                            self.check_no_manual_on_exit_call_in_expr(binding, ae, errors);
+                            self.check_no_manual_on_exit_call_in_expr(names, ae, errors);
                         }
                         _ => {}
                     }
                 }
             }
             ExprKind::If { cond, then, else_, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, then, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(names, then, errors);
                 if let Some(eb) = else_ {
                     match eb {
-                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
-                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(binding, ei, errors),
+                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(names, b, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(names, ei, errors),
                     }
                 }
             }
             ExprKind::While { cond, body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
             }
             ExprKind::For { iter, body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, iter, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, iter, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.check_no_manual_on_exit_call_in_expr(binding, inner, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.check_no_manual_on_exit_call_in_expr(names, inner, errors),
             ExprKind::Coalesce(a, b) => {
-                self.check_no_manual_on_exit_call_in_expr(binding, a, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, b, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, a, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, b, errors);
             }
             ExprKind::Binary { left, right, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, left, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, right, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, left, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, right, errors);
             }
-            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(binding, operand, errors),
-            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(binding, obj, errors),
+            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(names, operand, errors),
+            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(names, obj, errors),
             _ => {}
         }
     }
@@ -6205,9 +6273,34 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::RecordLit { type_name, fields, .. } => {
-                // Plan 114.4.1 (D200): reject field shorthand / pair refering
-                // assoc const — assoc consts live на type-level, не указываются
-                // в record literal.
+                // Plan 173 Ф.5 (§4а zero-tolerance, вскрыто D192-ретрактом):
+                // record literal с НЕИЗВЕСТНЫМ именем типа раньше молча
+                // проходил чекер («name-resolution не наша забота») и codegen
+                // генерил мусор — тихий miscompile-класс. Ловим здесь:
+                // имя не в types-реестре CU (user+prelude+builtin merged),
+                // не generic-параметр в scope, не вариант известной суммы →
+                // [E_UNKNOWN_TYPE].
+                if let Some(tn) = type_name {
+                    if let Some(last) = tn.last() {
+                        if last != "Self"
+                            && !gs.contains(last)
+                            && !self.types.contains_key(last)
+                            && !self.types.values().any(|td| matches!(
+                                &td.kind,
+                                TypeDeclKind::Sum(vs) if vs.iter().any(|v| &v.name == last)))
+                        {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNKNOWN_TYPE] unknown type `{last}` in record \
+                                     literal `{last} {{ … }}` — тип не объявлен и не \
+                                     импортирован (или удалён: см. D192-ретракт для \
+                                     `CleanupTimeoutError`).",
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
                 if let Some(tn) = type_name {
                     if let Some(last) = tn.last() {
                         if let Some(td) = self.types.get(last) {
@@ -20196,12 +20289,12 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
         match item {
             Item::Fn(f) => {
                 if let FnBody::Block(b) = &f.body {
-                    walk_block_for_handler_lits(b, &never_ops, errors);
+                    walk_block_for_handler_lits(b, &never_ops, false, errors);
                 } else if let FnBody::Expr(e) = &f.body {
-                    walk_expr_for_handler_lits(e, &never_ops, errors);
+                    walk_expr_for_handler_lits(e, &never_ops, false, errors);
                 }
             }
-            Item::Test(t) => walk_block_for_handler_lits(&t.body, &never_ops, errors),
+            Item::Test(t) => walk_block_for_handler_lits(&t.body, &never_ops, false, errors),
             _ => {}
         }
     }
@@ -20686,48 +20779,97 @@ fn check_axiom_expr(
 }
 
 /// Walk block recursively: ищет HandlerLit, проверяет never-ops.
-fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
+///
+/// Plan 173.2: `in_supervisor` — true, когда обход находится ВНУТРИ тела
+/// `Supervisor`-хендлера (handler-lit эффекта `Supervisor`). В этом режиме
+/// дополнительно применяются supervisor-ограничения (см. HandlerLit-ветку
+/// walk_expr_for_handler_lits): запрет `interrupt` и `Time.sleep`.
+/// Флаг наследуется вложенными телами (консервативно).
+fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>, in_supervisor: bool, errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
-            Stmt::Let(decl) => walk_expr_for_handler_lits(&decl.value, never_ops, errors),
+            Stmt::Let(decl) => walk_expr_for_handler_lits(&decl.value, never_ops, in_supervisor, errors),
             Stmt::Const(_) => {}
-            Stmt::Expr(e) => walk_expr_for_handler_lits(e, never_ops, errors),
+            Stmt::Expr(e) => walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors),
             Stmt::Assign { target, value, .. } => {
-                walk_expr_for_handler_lits(target, never_ops, errors);
-                walk_expr_for_handler_lits(value, never_ops, errors);
+                walk_expr_for_handler_lits(target, never_ops, in_supervisor, errors);
+                walk_expr_for_handler_lits(value, never_ops, in_supervisor, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { walk_expr_for_handler_lits(v, never_ops, errors); }
+                if let Some(v) = value { walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors); }
             }
-            Stmt::Throw { value, .. } => walk_expr_for_handler_lits(value, never_ops, errors),
+            Stmt::Throw { value, .. } => walk_expr_for_handler_lits(value, never_ops, in_supervisor, errors),
             Stmt::Defer { body, .. } => {
-                walk_expr_for_handler_lits(body, never_ops, errors);
+                walk_expr_for_handler_lits(body, never_ops, in_supervisor, errors);
             }
             // Plan 110 D188: walk init + body block recursively.
             Stmt::ConsumeScope { init, body, .. } => {
-                walk_expr_for_handler_lits(init, never_ops, errors);
-                walk_block_for_handler_lits(body, never_ops, errors);
+                walk_expr_for_handler_lits(init, never_ops, in_supervisor, errors);
+                walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
             }
-            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, in_supervisor, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
             Stmt::Apply { args, .. } => {
-                for a in args { walk_expr_for_handler_lits(a, never_ops, errors); }
+                for a in args { walk_expr_for_handler_lits(a, never_ops, in_supervisor, errors); }
             }
             Stmt::Calc { steps, .. } => {
-                for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, errors); }
+                for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, in_supervisor, errors); }
             }
             Stmt::Reveal { .. } => {}
             // Plan 136: tuple destructuring assignment.
             Stmt::TupleAssign { lhs, rhs, .. } => {
-                for e in lhs { walk_expr_for_handler_lits(e, never_ops, errors); }
-                for e in rhs { walk_expr_for_handler_lits(e, never_ops, errors); }
+                for e in lhs { walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors); }
+                for e in rhs { walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors); }
             }
         }
     }
-    if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
+    if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, in_supervisor, errors); }
 }
 
-fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
+fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, in_supervisor: bool, errors: &mut Vec<Diagnostic>) {
+    // Plan 173.2: supervisor-handler ограничения (Q-блок 173.2).
+    // Применяются к выражениям ВНУТРИ тела `Supervisor`-хендлера.
+    // (Гейт E_SUPERVISOR_RESTART_GATED удалён: Restart-семейство
+    // ретрактировано из словаря Decision — D416-амендмент 2026-07-10;
+    // ссылка на Restart теперь обычный unknown-variant.)
+    if in_supervisor {
+        match &e.kind {
+            // Q-блок 173.2: `interrupt` в хендлере запрещён — хендлер
+            // исполняется на drive-цикле scope'а; longjmp к with-frame
+            // бросил бы drain с ещё живыми детьми.
+            ExprKind::Interrupt(_) => {
+                errors.push(Diagnostic::new(
+                    "[E_SUPERVISOR_HANDLER_INTERRUPT] `interrupt` внутри `Supervisor`-хендлера \
+                     запрещён (Q-блок 173.2): хендлер исполняется сериализованно на drive-цикле \
+                     scope'а — ранний выход из with-блока бросил бы drain с ещё живыми детьми. \
+                     Разрешённый ранний выход: `throw` (= Escalate-with-error)."
+                        .to_string(),
+                    e.span,
+                ));
+            }
+            // Q-блок 173.2: suspend-операции не должны блокировать drive-цикл.
+            // Компилируемое приближение MVP: прямой вызов `Time.sleep(...)`.
+            ExprKind::Call { func, .. } => {
+                let is_time_sleep = match &func.kind {
+                    ExprKind::Path(segs) =>
+                        segs.len() == 2 && segs[0] == "Time" && segs[1] == "sleep",
+                    ExprKind::Member { obj, name, .. } =>
+                        name == "sleep" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Time"),
+                    _ => false,
+                };
+                if is_time_sleep {
+                    errors.push(Diagnostic::new(
+                        "[E_SUPERVISOR_HANDLER_SUSPEND] `Time.sleep` внутри `Supervisor`-хендлера \
+                         запрещён (Q-блок 173.2): suspend-операция заблокировала бы serialized \
+                         drive-цикл scope'а (решения по падениям перестали бы приниматься)."
+                            .to_string(),
+                        e.span,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
     match &e.kind {
         // Plan 97 Ф.4 (D142): protocol-литерал — never-op check'и
         // на nor сейчас не специфицированы для protocol'ов (D61
@@ -20736,8 +20878,8 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         ExprKind::ProtocolLit { methods, .. } => {
             for m in methods {
                 match &m.body {
-                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
-                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, in_supervisor, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
                 }
             }
         }
@@ -20762,155 +20904,159 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                 }
             }
             // Также recurse в bodies handler-методов (могут содержать nested
-            // HandlerLit).
+            // HandlerLit). Plan 173.2: тело `Supervisor`-хендлера включает
+            // supervisor-режим ограничений (Restart-гейт, interrupt/suspend);
+            // флаг наследуется вложенными телами (консервативно — вложенный
+            // handler-lit исполняется в том же drive-контексте).
+            let sup = in_supervisor || eff_last == "Supervisor";
             for m in methods {
                 match &m.body {
-                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
-                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, sup, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, sup, errors),
                 }
             }
         }
         // Recurse в остальные expr-kinds (используем существующий walk
         // через ExprKind::Block + остальные expressions).
-        ExprKind::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
         ExprKind::With { bindings, body } => {
-            for bd in bindings { walk_expr_for_handler_lits(&bd.handler, never_ops, errors); }
-            walk_block_for_handler_lits(body, never_ops, errors);
+            for bd in bindings { walk_expr_for_handler_lits(&bd.handler, never_ops, in_supervisor, errors); }
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::If { cond, then, else_ } => {
-            walk_expr_for_handler_lits(cond, never_ops, errors);
-            walk_block_for_handler_lits(then, never_ops, errors);
+            walk_expr_for_handler_lits(cond, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(then, never_ops, in_supervisor, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, errors),
-                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                 None => {}
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            walk_expr_for_handler_lits(scrutinee, never_ops, errors);
-            walk_block_for_handler_lits(then, never_ops, errors);
+            walk_expr_for_handler_lits(scrutinee, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(then, never_ops, in_supervisor, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, errors),
-                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                 None => {}
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            walk_expr_for_handler_lits(scrutinee, never_ops, errors);
+            walk_expr_for_handler_lits(scrutinee, never_ops, in_supervisor, errors);
             for a in arms {
                 match &a.body {
-                    MatchArmBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
-                    MatchArmBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    MatchArmBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, in_supervisor, errors),
+                    MatchArmBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
                 }
-                if let Some(g) = &a.guard { walk_expr_for_handler_lits(g, never_ops, errors); }
+                if let Some(g) = &a.guard { walk_expr_for_handler_lits(g, never_ops, in_supervisor, errors); }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            walk_expr_for_handler_lits(iter, never_ops, errors);
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(iter, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::While { cond, body, .. } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
-            walk_expr_for_handler_lits(cond, never_ops, errors);
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(cond, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
-        ExprKind::Loop { body, .. } => walk_block_for_handler_lits(body, never_ops, errors),
+        ExprKind::Loop { body, .. } => walk_block_for_handler_lits(body, never_ops, in_supervisor, errors),
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
-                    SelectOp::Recv { chan, .. } => walk_expr_for_handler_lits(chan, never_ops, errors),
+                    SelectOp::Recv { chan, .. } => walk_expr_for_handler_lits(chan, never_ops, in_supervisor, errors),
                     SelectOp::Send { chan, value } => {
-                        walk_expr_for_handler_lits(chan, never_ops, errors);
-                        walk_expr_for_handler_lits(value, never_ops, errors);
+                        walk_expr_for_handler_lits(chan, never_ops, in_supervisor, errors);
+                        walk_expr_for_handler_lits(value, never_ops, in_supervisor, errors);
                     }
                     SelectOp::Default => {}
                 }
-                if let Some(g) = &arm.guard { walk_expr_for_handler_lits(g, never_ops, errors); }
-                walk_block_for_handler_lits(&arm.body, never_ops, errors);
+                if let Some(g) = &arm.guard { walk_expr_for_handler_lits(g, never_ops, in_supervisor, errors); }
+                walk_block_for_handler_lits(&arm.body, never_ops, in_supervisor, errors);
             }
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
-        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
         ExprKind::Supervised { body, cancel, deadline } => {
-            if let Some(c) = cancel { walk_expr_for_handler_lits(c, never_ops, errors); }
-            if let Some(_dl) = deadline { walk_expr_for_handler_lits(&_dl.expr, never_ops, errors); }
-            walk_block_for_handler_lits(body, never_ops, errors);
+            if let Some(c) = cancel { walk_expr_for_handler_lits(c, never_ops, in_supervisor, errors); }
+            if let Some(_dl) = deadline { walk_expr_for_handler_lits(&_dl.expr, never_ops, in_supervisor, errors); }
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
-        ExprKind::Spawn(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
+        ExprKind::Spawn(ex) => walk_expr_for_handler_lits(ex, never_ops, in_supervisor, errors),
         ExprKind::ParallelFor { iter, body, .. } => {
-            walk_expr_for_handler_lits(iter, never_ops, errors);
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(iter, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::Call { func, args, trailing } => {
-            walk_expr_for_handler_lits(func, never_ops, errors);
-            for a in args { walk_expr_for_handler_lits(a.expr(), never_ops, errors); }
+            walk_expr_for_handler_lits(func, never_ops, in_supervisor, errors);
+            for a in args { walk_expr_for_handler_lits(a.expr(), never_ops, in_supervisor, errors); }
             if let Some(tr) = trailing {
                 match tr {
-                    Trailing::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    Trailing::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
                     Trailing::Fn(fsb) => match &fsb.body {
-                        FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
-                        FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                        FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+                        FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                         FnBody::External => {}
                     },
-                    Trailing::LegacyBlockWithParams(tb) => walk_block_for_handler_lits(&tb.body, never_ops, errors),
+                    Trailing::LegacyBlockWithParams(tb) => walk_block_for_handler_lits(&tb.body, never_ops, in_supervisor, errors),
                 }
             }
         }
         ExprKind::Binary { left, right, .. } => {
-            walk_expr_for_handler_lits(left, never_ops, errors);
-            walk_expr_for_handler_lits(right, never_ops, errors);
+            walk_expr_for_handler_lits(left, never_ops, in_supervisor, errors);
+            walk_expr_for_handler_lits(right, never_ops, in_supervisor, errors);
         }
-        ExprKind::Unary { operand, .. } => walk_expr_for_handler_lits(operand, never_ops, errors),
+        ExprKind::Unary { operand, .. } => walk_expr_for_handler_lits(operand, never_ops, in_supervisor, errors),
         ExprKind::Coalesce(a, b) => {
-            walk_expr_for_handler_lits(a, never_ops, errors);
-            walk_expr_for_handler_lits(b, never_ops, errors);
+            walk_expr_for_handler_lits(a, never_ops, in_supervisor, errors);
+            walk_expr_for_handler_lits(b, never_ops, in_supervisor, errors);
         }
-        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_handler_lits(e2, never_ops, errors),
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
         ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } | ExprKind::TurboFish { base: obj, .. } => {
-            walk_expr_for_handler_lits(obj, never_ops, errors);
+            walk_expr_for_handler_lits(obj, never_ops, in_supervisor, errors);
         }
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { walk_expr_for_handler_lits(s, never_ops, errors); }
-            if let Some(e) = end { walk_expr_for_handler_lits(e, never_ops, errors); }
+            if let Some(s) = start { walk_expr_for_handler_lits(s, never_ops, in_supervisor, errors); }
+            if let Some(e) = end { walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                 }
             }
         }
         ExprKind::MapLit { elems, .. } => {
                 let pairs = crate::ast::MapElem::cloned_pairs(&elems);
             for (k, v) in pairs.iter() {
-                walk_expr_for_handler_lits(k, never_ops, errors);
-                walk_expr_for_handler_lits(v, never_ops, errors);
+                walk_expr_for_handler_lits(k, never_ops, in_supervisor, errors);
+                walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors);
             }
         }
-        ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_lits(el, never_ops, errors); } }
+        ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_lits(el, never_ops, in_supervisor, errors); } }
         ExprKind::RecordLit { fields, .. } => {
-            for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_lits(v, never_ops, errors); } }
+            for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors); } }
         }
         ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v)) => {
-            walk_expr_for_handler_lits(v, never_ops, errors);
+            walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors);
         }
         ExprKind::Interrupt(None) => {}
-        ExprKind::Lambda { body, .. } => walk_expr_for_handler_lits(body, never_ops, errors),
+        ExprKind::Lambda { body, .. } => walk_expr_for_handler_lits(body, never_ops, in_supervisor, errors),
         ExprKind::ClosureLight { body, .. } => match body {
-            ClosureBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
-            ClosureBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+            ClosureBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
+            ClosureBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
         },
         ExprKind::ClosureFull(fsb) => match &fsb.body {
-            FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
-            FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+            FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+            FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
             FnBody::External => {}
         },
         // Interpolated string — recurse в её parts (могут содержать expressions).
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr { expr: e2, spec: _ } = p {
-                    walk_expr_for_handler_lits(e2, never_ops, errors);
+                    walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors);
                 }
             }
         }
@@ -20919,8 +21065,8 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         ExprKind::TaggedTemplate { .. } => {}
         // D.1.3: квантор — только в контрактах; обходим range и body.
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
-            walk_expr_for_handler_lits(range, never_ops, errors);
-            walk_expr_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(range, never_ops, in_supervisor, errors);
+            walk_expr_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         // Leaf expressions — nothing to recurse into.
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)

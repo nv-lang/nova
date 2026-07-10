@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR cannot be called inside `realtime` block
+
+// D316/D64 — `Time` suspend-эффект (sleep park'ает fiber) запрещён внутри
+// `#realtime fn` (realtime гарантирует отсутствие fiber-suspension).
+// Plan 175 Ф.6 — верификация: диагностика реально существует (D64
+// suspend-effect ban на Net/Fs/Db/Time), НЕ через E_REALTIME_SYNC_PARK
+// (тот код — для #parks-аннотированных sync-примитивов Mutex/Condvar/etc,
+// отдельный механизм; для suspend-эффектов — plain D64-диагностика).
+module neg.d316_realtime_sleep_neg
+
+import std.time.duration
+
+#realtime fn d316_neg_rt_sleep() Time {
+    sleep(1.millis())
+}
+
+test "probe" {
+    d316_neg_rt_sleep()
+}

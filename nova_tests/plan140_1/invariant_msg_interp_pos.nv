@@ -4,12 +4,12 @@
 
 module nova_tests.plan140_1
 
-type Account {
+type invariant_msg_interp_pos_Account {
     balance int
 }
     invariant balance >= 0, "balance was ${balance}"
 
 test "satisfied invariant interp: construction ok" {
-    ro ok = Account { balance: 42 }
+    ro ok = invariant_msg_interp_pos_Account { balance: 42 }
     assert(ok.balance == 42)
 }

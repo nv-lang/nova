@@ -17,7 +17,7 @@
 //   7. Outer cleanup completes; throw propagates к caller.
 //
 // **Pre-fix (R4 only):** step 5 skipped → step 6 sees stale 10ms deadline
-// → next suspend in outer might bogus-fire CleanupTimeoutError + mask
+// → next suspend in outer might bogus-fire watchdog-варн (ист. CleanupTimeoutError, D192-ретракт) + mask
 // leak.
 //
 // **Acceptance:** compile + functional test exits cleanly через caller's

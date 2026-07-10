@@ -8,14 +8,31 @@
 > активного 172.1.2 — пере-grep symbol-якорями перед каждой фазой**), stale-номера старой нумерации вычищены,
 > spec_tests-покрытие добавлено (методология 2026-06-28), тест-раскладка приведена к конвенциям, кросс-рефы
 > 173-семьи, новые контракты (suspend-семантика Monotonic, infallibility, 2262-горизонт Timestamp).
-> **Статус:** 🚧 IN PROGRESS — **Ф.0/Ф.1 ✅; Ф.1b ✅ + Ф.3 ✅ SHIPPED (option C, 2026-07-04): value-records
-> Duration/Timestamp/Monotonic + полный typed user-surface (арифметика/==/compare/neg, `Timestamp.now()`-сахар,
-> `@is_past`/`@time_until`/`@elapsed` int-based, `wait_for(Duration)`) поверх НЕизменённого int-wire-эффекта**;
-> **Ф.2 (typed-effect-ops / retire int-wire) 🚩 OWNER-GATED** (3 net-zero; prelude⟷std.time coupling — см. Ф.2-блок §4);
-> **Ф.1c ✅ SHIPPED (2026-07-06): overflow-safe арифметика (D317) + Monotonic non-regression (D318)** — trap-операторы +
-> `checked_*`/`saturating_*` + boundary-saturate + f64 NaN/inf + saturate-to-zero, чистый `.nv`-слой; Ф.4/Ф.5/Ф.6 — TODO. Все Q закрыты (§3.0).
-> **Единицы времени в именах опов ✅ SHIPPED (2026-07-06, owner side-task, D316 amend, вне Ф-нумерации):**
-> `now()`→`now_unix_ms()`, `now_monotonic()`→`now_monotonic_ns()` + `Duration.@sleep()`-сахар — см. блок сразу после Ф.1c ниже.
+> **Статус:** 🚧 IN PROGRESS (ядро закрыто, доводочные пункты остаются TODO) — **Ф.0/Ф.1 ✅; Ф.1b ✅ + Ф.3 ✅
+> SHIPPED (option C, 2026-07-04): value-records Duration/Timestamp/Monotonic + полный typed user-surface
+> (арифметика/==/compare/neg, `Timestamp.now()`-сахар, `@is_past`/`@time_until`/`@elapsed` int-based,
+> `wait_for(Duration)`) поверх НЕизменённого int-wire-эффекта**; **Ф.1c ✅ SHIPPED (2026-07-06): overflow-safe
+> арифметика (D317) + Monotonic non-regression (D318)**. **Единицы времени в именах опов ✅ SHIPPED (2026-07-06,
+> owner side-task, D316 amend).**
+> **Ф.3(a-d) ✅ SHIPPED (2026-07-10, sonnet):** `Monotonic.now()` builtin→`.nv`-сахар (4 emit_c.rs-сайта удалены,
+> реальный недостающий кусок — C-vtable-слот `now_monotonic_ns`, НЕ архитектура prelude/std.time — закрывает
+> `[M-monotonic-mock-support]`); free `sleep(Duration)`/`sleep_until(Monotonic)`; `@minus(Monotonic)` overload
+> (`elapsed_since` сохранён); `@display`/`@debug` (D237) на всех трёх типах + побочный value-record
+> interpolation codegen-фикс (`${x}`/`${x:?}` для ЛЮБОГО `value`-record с `@display`/`@debug`, не time-специфичный).
+> **Ф.5(d) ✅ SHIPPED:** `measure[T]` мигрирован на `Monotonic` (elapsed-measurement); `deadline_in` намеренно
+> НЕ мигрирован (return-type committed к `Timestamp`, D124); `is_past`/`time_until`/`@elapsed` корректно
+> остаются `Timestamp`-based (не в списке миграции — старый Ф.5.d line-list устарел).
+> **Ф.2 (typed-effect-ops / retire int-wire) — SUPERSEDED (4-й net-zero, 2026-07-10, откачен чисто):**
+> prelude⟷std.time coupling решаем, но упёрлось в НОВЫЙ барьер (mock-handler должен конструировать opaque
+> `Monotonic`, а codegen не поддерживает anonymous record literal в handler-теле) — см. D316-amend §Ф.2-находка
+> + docs/time.md. **Рекомендация зафиксирована:** option C (int-wire + typed-сахар) = корректная итоговая
+> архитектура, не временный обход. `[M-time-now-schema-mismatch]` закрыт частично **по конструкции**.
+> **with_timeout retraction ✅ SHIPPED (2026-07-10):** `within[T]`/`with_timeout[T]` удалены из
+> `std/concurrency/cancellation.nv` (Plan 173 §3a п.4, `[M-174-retract-with-timeout]` CLOSED).
+> **Остаётся TODO:** Ф.5 auto-idle-advance (MVP explicit-advance через `sleep()` уже работает); per-OS
+> dedicated monotonicity test; M:N-контракт `mut_clock` под реальной concurrent-нагрузкой (документирован,
+> не verified тестом); полная 755+-сайт nova_tests-миграция int-wire→typed (не требуется — wire остаётся int
+> by design, option C).
 > **Маркер:** `[M-175-time-system-rework]`. **Запуск:** «**выполни план 175**» (план самодостаточен — вся информация ниже).
 > **D-блоки (NEW):** D316 (typed Time-surface + единый источник), D317 (Duration/instant overflow-policy), D318
 > (Monotonic non-regression + clock-source contract). Amend: D124, D237, prelude-`Time`-decl. (Резерв подтверждён
@@ -421,6 +438,34 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   0 непредвиденных регрессий (concurrency: `_repro_p110` идентичная pre-existing CC-FAIL до/после; time: 1 ОЖИДАЕМЫЙ
   новый CC-FAIL в `plan175_f1_timer_metrics_split.nv` — старое имя `Time.now()`, nova_tests сознательно НЕ
   мигрирован, уходит в будущую санацию).
+- **ИТОГОВЫЙ СТАТУС Ф.2/Ф.3/Ф.5(d) (2026-07-10, sonnet, ветка `time-rework-175`) — читать ПЕРЕД историческими
+  блоками ниже (Ф.2/Ф.3/Ф.5 текст ниже остаётся как historical record захода-за-заходом, актуальный итог — здесь):**
+  - **Ф.2 (4-й заход) — SUPERSEDED, не 5-й net-zero, а осознанное закрытие.** prelude⟷std.time coupling из 3
+    прошлых заходов — РЕШАЕМ (перенос `Time`-decl в `std.time`, схема резолвится). Настоящий барьер ГЛУБЖЕ:
+    mock-handler обязан сконструировать `Monotonic` (opaque by contract, без `from_*`) внутри handler-тела, а
+    codegen handler-литералов не поддерживает anonymous record-literal (`codegen error: anonymous record
+    literal without spread not supported in codegen`). Ни `from_*`-эскейп (подрывает opacity), ни codegen-фикс
+    (реальная инженерия, не эта волна) не сделаны — заход ОТКАЧЕН чисто (без diff в дереве). D316-amend (§Ф.2)
+    + `docs/time.md` фиксируют находку и рекомендацию: **option C — корректная итоговая архитектура**, а не
+    временный обход.
+  - **Ф.3(a-d) SHIPPED.** (a) `Monotonic.now()` builtin→`.nv`-сахар — все 4 emit_c.rs-сайта убраны (норматив
+    подтверждён: `grep nova_monotonic_now_record` = 0), реальный недостающий кусок был C-vtable-слот
+    `now_monotonic_ns` в `NovaVtable_Time` (не архитектура) — закрывает `[M-monotonic-mock-support]`.
+    (b) free `sleep(Duration)`/`sleep_until(Monotonic)`. (c) `@minus(Monotonic)` overload (`elapsed_since`
+    сохранён). (d) `@display`/`@debug` (D237) на Duration/Timestamp/Monotonic + побочный codegen-фикс
+    value-record `${x}`/`${x:?}`-интерполяции (не time-специфичный, полезен для любого будущего value-record).
+  - **Ф.4 (sleep-семантика)** задокументирована в `docs/time.md` (d≤0→немедленно, granularity, tolerance-заметка,
+    Q7) — decl НЕ typed (Ф.2 superseded), но семантика верна на реальном runtime уровне (`_nova_time_default_sleep`
+    уже трактует `ms<=0` как немедленный yield, было ДО этой волны).
+  - **Ф.5:** (a)/(b) handlers — closed через Ф.3a (fixed_ms/mut_clock реализуют `now_monotonic_ns`, mock-coherence).
+    (c) auto-advance — MVP explicit-advance (через `sleep()`/`Time.sleep()` под `mut_clock`) уже работает и
+    покрыт тестами; auto-idle (без явного вызова) — followup, НЕ реализован. (d) `measure[T]` мигрирован на
+    `Monotonic` — closes `[M-monotonic-migration-deferred]` **для elapsed-measurement сайтов**; `deadline_in`
+    намеренно НЕ мигрирован (return-type committed к `Timestamp`, D124); `is_past`/`time_until`/`@elapsed`
+    корректно остаются `Timestamp`-based (старый §6 line-list устарел — эти три НЕ должны мигрировать). (e)
+    M:N-контракт задокументирован (`docs/time.md`), не verified тестом под реальной concurrent-нагрузкой.
+  - **`within[T]`/`with_timeout[T]` retraction SHIPPED** (Plan 173 §3a п.4, `[M-174-retract-with-timeout]` CLOSED).
+
 - **Ф.2 — типизированный провод (retire int-wire). 🚩 OWNER-GATED design-fork (НЕ реализован; 3 net-zero).** Замена
   int-wire-эффекта на typed-опы (`timestamp()->Timestamp`/`monotonic()->Monotonic`/`sleep(Duration)`) в схеме `Time`
   **архитектурно инфизибл** без разрешения owner'ом связки **prelude ⟷ std.time**: `Time`-decl живёт в

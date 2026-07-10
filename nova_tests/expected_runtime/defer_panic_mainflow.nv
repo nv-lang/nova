@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC nova: unhandled Fail: crash
+// EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): crash
 // EXPECT_STDOUT DEFER_RUNS
 //
 // nv_panic fix: defer тоже срабатывает на panic() на

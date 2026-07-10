@@ -264,12 +264,17 @@ export type Random effect {
 /// zero-overhead если не использован. Orthogonal к Cleanup[E].@cleanup (resource
 /// lifecycle) — слой для metrics/tracing.
 ///
-/// **Operations:**
-///   - `on_resource_enter(label str, timeout_ms int)` — invoked при входе в
-///     `consume X = ... { body }` scope-block. timeout_ms — resolved deadline.
-///     (Дроп timeout — §3a/п.8, отложено в Plan 173 Ф.5 timeout-rework.)
-///   - `on_resource_exit(label str, outcome ScopeOutcome)` — invoked при выходе из
-///     scope с финальным outcome.
+/// **Operations (Plan 173 Ф.5 п.2 — D185 amend, D192-ретракт):**
+///   - `on_resource_enter(label str)` — invoked при входе в
+///     `consume X = ... { body }` scope-block. Timeout ДРОПНУТ из enter
+///     (§3a/п.8): порог — внутренний параметр watchdog-варна, наблюдаемость
+///     превышения структурна — через exit-событие ниже.
+///   - `on_resource_exit(label str, outcome ScopeOutcome, duration_ms int,
+///     overrun bool)` — invoked при выходе из scope с финальным outcome.
+///     `duration_ms` — измеренная длительность cleanup-вызова; `overrun` —
+///     true, если cleanup превысил watchdog-порог (3-level D192-resolution:
+///     WithExitTimeout → Application → default 5000ms). Force-прерывания
+///     cleanup'а НЕ существует (D192-ретракт) — cleanup всегда добегает.
 ///
 /// **Handler restrictions (D185):**
 ///   - Handler не может `throw` (observability должна быть idempotent).
@@ -289,8 +294,81 @@ export type Random effect {
 /// (codegen elides calls when no handler bound).
 #stable(since = "0.1")
 export type ResourceTrace effect {
-    on_resource_enter(label str, timeout_ms int) -> ()
-    on_resource_exit(label str, outcome ScopeOutcome) -> ()
+    on_resource_enter(label str) -> ()
+    on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> ()
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Plan 173.2 — Supervisor effect (supervision-as-effect) + Decision
+// ──────────────────────────────────────────────────────────────────────────
+
+/// **Решение супервизора** на падение ребёнка scope'а (Plan 173.2).
+/// Возвращается хендлером `Supervisor.on_child_fail`.
+///
+///   - `Escalate` — ошибка ребёнка становится primary-ошибкой scope'а
+///     (precedence PANIC > USER > CANCEL, D13), siblings кооперативно
+///     отменяются, scope перевыбрасывает наружу. Поведение дефолта
+///     (без супервизора).
+///   - `Stop` — ребёнок «выкинут»: его ошибка НЕ эскалируется, siblings
+///     НЕ отменяются, scope продолжает работу. Ошибка остаётся retained
+///     per-slot (173.0) — не теряется молча, доступна диагностике.
+///
+/// `Restart`-семейство РЕТРАКТИРОВАНО (решение владельца 2026-07-10, D416):
+/// рестарт — идиома акторных систем (Erlang/OTP), а `supervised` — структурная
+/// конкуренция; эталоны класса (Kotlin coroutineScope / Swift TaskGroup /
+/// Java Joiner) рестарта не имеют. Повтор попытки живёт ВНУТРИ тела ребёнка —
+/// `std/concurrency/retry` — где нет проблемы изоляции состояния.
+#stable(since = "0.1")
+export type Decision enum Escalate | Stop
+
+/// **Supervisor-эффект** — подменяемая политика реакции на падение ребёнка
+/// `spawn`/`parallel for` внутри `supervised { ... }` (Plan 173.2, D-блок
+/// supervision-as-effect; Erlang-style supervision = handler strategy).
+///
+/// **Операция** `on_child_fail(idx, err) -> Decision`:
+///   - `idx` — retention-слот упавшего ребёнка (173.0 `child_error[]`,
+///     spawn-порядок remote-детей scope'а);
+///   - `err` — значение ошибки как `any`: typed-throw payload (сужается
+///     `err is T`), для string-throw / panic — `str`-сообщение.
+///
+/// **Стратегии = хендлеры** (значения эффекта); отдельной сущности
+/// «имя стратегии» нет. Встроенные политики: `std.concurrency.supervisor`
+/// (`escalate()` / `stop()`).
+///
+/// ```nova
+/// import std.concurrency.supervisor as sup
+/// with Supervisor = sup.stop() {
+///     supervised {
+///         for u in urls { spawn { fetch(u) } }   // упавший НЕ отменяет siblings
+///     }
+/// }
+/// ```
+///
+/// **Дефолт (нет хендлера):** сегодняшний all-or-throw — первая реальная
+/// ошибка отменяет siblings и перевыбрасывается (байт-паритет со старым
+/// поведением; supervision-ветка рантайма вообще не активируется).
+///
+/// **Семантика вызова:** хендлер исполняется СЕРИАЛИЗОВАННО, на main-flow
+/// драйв-цикла scope'а (субстрат 173.0), по одному падению, до освобождения
+/// SpawnCtx упавшего. panic ребёнка тоже доходит до решения (kind PANIC);
+/// индуцированные отмены siblings (kind CANCEL) хендлеру НЕ показываются —
+/// это следствие эскалации, не корневое падение.
+///
+/// **Ограничения хендлера** (closed handler effect-set, Q-блок 173.2):
+/// `throw`/`Fail` разрешён — трактуется как Escalate-with-error (ошибка
+/// хендлера идёт в primary-machinery scope'а); `interrupt` и
+/// suspend-операции (`Time.sleep`) в теле хендлера запрещены —
+/// компилятор отклоняет (drain-loop нельзя блокировать).
+///
+/// **Периметр MVP:** политика применяется к remote-детям armed M:N
+/// runtime (дефолтный путь исполнения; источник (idx, err) — per-slot
+/// `child_error[]` 173.0). Bootstrap/single-thread путь (`NOVA_NO_AUTOARM=1`)
+/// и implicit main-scope (`detach` на top-level) остаются на дефолтном
+/// Escalate-all.
+#stable(since = "0.1")
+export type Supervisor effect {
+    on_child_fail(idx int, err any) -> Decision
 }
 
 

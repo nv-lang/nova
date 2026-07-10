@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/offset.nv — Offset: фиксированный UTC-сдвиг (D319/D321).
+//
+// Plan 175.1 Ф.3. Канон — СЕКУНДЫ (ISO ±HH:MM:SS + историч. под-минутные
+// зоны; java.time/Temporal — total seconds). Диапазон ±64800 (±18h).
+//
+// NB: system-local offset (`Time.local_offset()` эффект-оп поверх
+// `extern "C" fn time_local_offset_sec()`) НЕ поставляется этой волной:
+// добавление опа в схему `Time` требует слота в NovaVtable_Time
+// (compiler-codegen/nova_rt/effects.h — зона компилятора, параллельные
+// волны). Маркер [M-175.1-local-offset-effect-op]; обход — зона всегда
+// передаётся явно (никакой неявной локальной зоны и так нет, D319 R1).
+
+module time.civil
+
+
+/// Фиксированный сдвиг от UTC в секундах (±18h) — value-record.
+///
+/// Положительный — восточнее Гринвича (`+05:30` = 19800).
+#stable(since = "0.1")
+export type Offset value {
+    ro seconds i32
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Нулевой сдвиг (UTC).
+#stable(since = "0.1")
+export fn Offset.utc() -> Offset => { seconds: 0 }
+
+/// Из секунд → `Result` (±64800).
+#stable(since = "0.1")
+export fn Offset.from_seconds(s i32) -> Result[Offset, DateError] =>
+    if s < -64_800 || s > 64_800 {
+        Err(InvalidField(FieldKind.OffsetSec, s as i64, -64_800, 64_800))
+    } else {
+        Ok({ seconds: s })
+    }
+
+/// Из часов+минут (знак задаёт `h`; `m` 0..59 — модуль, знак наследуется).
+///
+/// # Examples
+/// ```nova
+/// ro msk = Offset.from_hm(3, 0)!!      // +03:00
+/// ro ist = Offset.from_hm(5, 30)!!     // +05:30
+/// ro nyc = Offset.from_hm(-5, 0)!!     // -05:00
+/// ```
+#stable(since = "0.1")
+export fn Offset.from_hm(h i32, m i32) -> Result[Offset, DateError] {
+    if m < 0 || m > 59 { return Err(InvalidField(FieldKind.Minute, m as i64, 0, 59)) }
+    ro sign = if h < 0 { -1 } else { 1 }
+    ro habs = if h < 0 { -h } else { h }
+    ro total = sign * ((habs as int) * 3600 + (m as int) * 60)
+    Offset.from_seconds(total as i32)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Компоненты
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Полный сдвиг в секундах (канон).
+#stable(since = "0.1")
+export fn Offset @to_seconds() -> i32 => @seconds
+
+/// Нулевой ли сдвиг (UTC).
+#stable(since = "0.1")
+export fn Offset @is_utc() -> bool => @seconds == 0
+
+/// Compare по секундам.
+#stable(since = "0.1")
+export fn Offset @compare(other Offset) -> int =>
+    if @seconds < other.seconds { -1 }
+    else if @seconds > other.seconds { 1 }
+    else { 0 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// ISO-форма: `Z` | `±HH:MM` | `±HH:MM:SS` (под-минутные — с секундами)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// ISO-8601/RFC-3339 форма: `Z` для нуля, иначе `±HH:MM[:SS]`.
+#stable(since = "0.1")
+export fn Offset @to_iso() -> str {
+    if @seconds == 0 { return "Z" }
+    ro neg = @seconds < 0
+    ro a = if neg { -(@seconds as i64) } else { @seconds as i64 }
+    ro h = a / 3600
+    ro m = (a % 3600) / 60
+    ro s = a % 60
+    ro sign = if neg { "-" } else { "+" }
+    ro base = sign + pad2(h) + ":" + pad2(m)
+    if s == 0 { base } else { base + ":" + pad2(s) }
+}
+
+/// Display = ISO-форма.
+#stable(since = "0.1")
+export fn Offset @to_str() -> str => @to_iso()

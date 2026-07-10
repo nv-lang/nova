@@ -1,0 +1,249 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/zoned_test.nv — Plan 175.1 Ф.3: Offset + TimeZone(Utc/Fixed)
+// + ZonedDateTime + Disambiguation-механика (на синтетических ZoneRules;
+// реальные IANA-зоны — Ф.4).
+
+module time.civil
+
+import std.time.duration
+import std.testing.handlers as th
+
+
+// ── Offset ──
+
+test "Offset: конструкторы + валидация ±18h" {
+    assert(Offset.utc().to_seconds() == 0)
+    assert(Offset.from_hm(3, 0)!!.to_seconds() == 10_800)
+    assert(Offset.from_hm(5, 30)!!.to_seconds() == 19_800)
+    assert(Offset.from_hm(-5, 0)!!.to_seconds() == -18_000)
+    assert(Offset.from_hm(-9, 30)!!.to_seconds() == -34_200)   // знак наследуется минутами
+    assert(Offset.from_seconds(64_800).is_ok())    // +18:00 — граница
+    assert(!Offset.from_seconds(64_801).is_ok())
+    assert(!Offset.from_seconds(-64_801).is_ok())
+    assert(match Offset.from_seconds(90_000) {
+        Err(InvalidField(FieldKind.OffsetSec, 90_000, _, _)) => true
+        _ => false
+    })
+}
+
+test "Offset @to_iso: Z / ±HH:MM / под-минутные с секундами" {
+    assert(Offset.utc().to_iso() == "Z")
+    assert(Offset.from_hm(3, 0)!!.to_iso() == "+03:00")
+    assert(Offset.from_hm(5, 30)!!.to_iso() == "+05:30")
+    assert(Offset.from_hm(-5, 0)!!.to_iso() == "-05:00")
+    assert(Offset.from_seconds(4_500)!!.to_iso() == "+01:15")
+    // историческая под-минутная зона (LMT-стиль)
+    assert(Offset.from_seconds(9_017)!!.to_iso() == "+02:30:17")
+}
+
+
+// ── TimeZone: Utc / Fixed — always unambiguous (D321 R5) ──
+
+test "Utc/Fixed: resolve_local всегда Unique" {
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
+    ro utc TimeZone = Utc
+    ro r1 = utc.resolve_local(dt)
+    assert(!r1.is_gap() && !r1.is_overlap())
+    ro msk TimeZone = Fixed(Offset.from_hm(3, 0)!!)
+    ro r2 = msk.resolve_local(dt)
+    assert(!r2.is_gap() && !r2.is_overlap())
+    assert(match r2 { Unique(off) => off.to_seconds() == 10_800, _ => false })
+}
+
+test "TimeZone @to_str: идентичность" {
+    ro utc TimeZone = Utc
+    assert(utc.to_str() == "UTC")
+    ro f TimeZone = Fixed(Offset.from_hm(5, 30)!!)
+    assert(f.to_str() == "+05:30")
+}
+
+
+// ── DateTime → ZonedDateTime → Timestamp round-trip (Fixed) ──
+
+test "to_zoned(Fixed) + to_timestamp: канонический момент" {
+    // 2026-07-10T14:30:00+03:00 = 11:30:00Z
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
+    ro z = dt.to_zoned(Fixed(Offset.from_hm(3, 0)!!))!!
+    ro ts = z.to_timestamp()!!
+    ro zu = ts.to_zoned(Utc)
+    assert(zu.datetime().hour() == 11)
+    assert(zu.datetime().minute() == 30)
+    assert(zu.date() == Date.new(2026, Jul, 10)!!)
+    // Обратно в +03:00 — исходная wall-time
+    ro back = ts.to_zoned(Fixed(Offset.from_hm(3, 0)!!))
+    assert(back.datetime().compare(dt) == 0)
+}
+
+test "epoch-канон: 1970-01-01T00:00Z = Timestamp 0; отрицательные ns" {
+    ro z0 = Timestamp.from_unix_nanos(0).to_zoned(Utc)
+    assert(z0.date() == Date.new(1970, Jan, 1)!!)
+    assert(z0.time().to_nanos_of_day() == 0)
+    // За секунду до эпохи (floor-division ветка)
+    ro zm = Timestamp.from_unix_secs(-1).to_zoned(Utc)
+    assert(zm.date() == Date.new(1969, Dec, 31)!!)
+    assert(zm.time().hour() == 23 && zm.time().minute() == 59 && zm.time().second() == 59)
+}
+
+test "compare по инстанту: одна точка в двух зонах равна" {
+    ro ts = Timestamp.from_unix_secs(1_700_000_000)
+    ro a = ts.to_zoned(Utc)
+    ro b = ts.to_zoned(Fixed(Offset.from_hm(5, 30)!!))
+    assert(a.compare(b) == 0)
+    assert(a.datetime().compare(b.datetime()) != 0)   // wall-time разная
+    ro c = (ts + 1.seconds()).to_zoned(Utc)
+    assert(a.compare(c) < 0)
+}
+
+test "with_zone: тот же момент, другая wall-time" {
+    ro dt = Date.new(2026, Jan, 15)!!.at(TimeOfDay.new(23, 0)!!)
+    ro z = dt.to_zoned(Fixed(Offset.from_hm(-5, 0)!!))!!    // 23:00-05:00
+    ro m = z.with_zone(Fixed(Offset.from_hm(3, 0)!!))!!     // = 07:00+03:00 следующего дня
+    assert(m.datetime().hour() == 7)
+    assert(m.date() == Date.new(2026, Jan, 16)!!)
+    assert(z.compare(m) == 0)
+}
+
+
+// ── Q4: range ±292y — Err ТОЛЬКО civil→Timestamp, один tick за границей ──
+
+test "range_292y: to_timestamp Err вне окна + граница" {
+    // Окно Timestamp: ~2262-04-11 (i64::MAX ns). Далеко за ним:
+    ro beyond = Date.new(3000, Jan, 1)!!.at_midnight().to_zoned(Utc)!!
+    assert(match beyond.to_timestamp() {
+        Err(RangeOverflow(_)) => true
+        _ => false
+    })
+    ro past = Date.new(1600, Jan, 1)!!.at_midnight().to_zoned(Utc)!!
+    assert(!past.to_timestamp().is_ok())
+    // Внутри окна — Ok
+    assert(Date.new(2262, Apr, 11)!!.at_midnight().to_zoned(Utc)!!.to_timestamp().is_ok())
+    assert(Date.new(1677, Sep, 22)!!.at_midnight().to_zoned(Utc)!!.to_timestamp().is_ok())
+    // Timestamp→civil инфаллибельно на краях окна (Q4)
+    ro top = Timestamp.from_unix_nanos(9_223_372_036_854_775_807).to_zoned(Utc)
+    assert(top.date().year() == 2262)
+    ro bot = Timestamp.from_unix_nanos(-9_223_372_036_854_775_807 - 1).to_zoned(Fixed(Offset.from_hm(-18, 0)!!))
+    assert(bot.date().year() == 1677)
+}
+
+
+// ── Disambiguation 4-way на синтетических правилах (D321 R1; реальные
+//    IANA — Ф.4). Модель America/New_York spring-forward 2026-03-08 07:00Z:
+//    EST(-5) → EDT(-4); wall 02:00..03:00 не существует.
+//    Fall-back 2026-11-01 06:00Z: EDT(-4) → EST(-5); wall 01:00..02:00 дважды. ──
+
+fn synthetic_ny() -> TimeZone {
+    // transition instants (unix sec): 2026-03-08T07:00Z, 2026-11-01T06:00Z
+    ro spring = Date.new(2026, Mar, 8)!!.at(TimeOfDay.new(7, 0)!!)
+    ro fall = Date.new(2026, Nov, 1)!!.at(TimeOfDay.new(6, 0)!!)
+    ro t1 = spring.date().to_epoch_day() * 86_400 + 7 * 3600
+    ro t2 = fall.date().to_epoch_day() * 86_400 + 6 * 3600
+    ro rules ZoneRules = { transitions: [t1, t2], offsets: [-18_000, -14_400, -18_000] }
+    ro z IanaZone = { id: "America/New_York", rules }
+    Iana(z)
+}
+
+test "dst gap: resolve_local → Gap; Compatible push-forward; Reject → Err" {
+    ro tz = synthetic_ny()
+    ro in_gap = Date.new(2026, Mar, 8)!!.at(TimeOfDay.new(2, 30)!!)
+    ro r = tz.resolve_local(in_gap)
+    assert(r.is_gap() && !r.is_overlap())
+    // Compatible (default): 02:30 → 03:30 EDT(-4)
+    ro z = in_gap.to_zoned(tz)!!
+    assert(z.datetime().hour() == 3 && z.datetime().minute() == 30)
+    assert(z.offset().to_seconds() == -14_400)
+    // Earlier: 01:30 EST(-5). NB: qualified `Disambiguation.X` как значение —
+    // ICE [P67-LEGACY] Path call; обход — типизированный локал
+    // ([M-175.1-qualified-variant-value]).
+    ro d_earlier Disambiguation = Earlier
+    ro d_reject Disambiguation = Reject
+    ro ze = in_gap.to_zoned(tz, d_earlier)!!
+    assert(ze.datetime().hour() == 1 && ze.datetime().minute() == 30)
+    assert(ze.offset().to_seconds() == -18_000)
+    // Reject → Ambiguous
+    assert(match in_gap.to_zoned(tz, d_reject) {
+        Err(Ambiguous(_)) => true
+        _ => false
+    })
+}
+
+test "dst overlap: Compatible=earlier, Later=later, Reject → Err" {
+    ro tz = synthetic_ny()
+    ro in_ovl = Date.new(2026, Nov, 1)!!.at(TimeOfDay.new(1, 30)!!)
+    ro r = tz.resolve_local(in_ovl)
+    assert(r.is_overlap() && !r.is_gap())
+    // Compatible → earlier (EDT -4)
+    ro z = in_ovl.to_zoned(tz)!!
+    assert(z.offset().to_seconds() == -14_400)
+    // Явный Later → EST -5
+    ro d_later Disambiguation = Later
+    ro d_reject Disambiguation = Reject
+    ro zl = in_ovl.to_zoned(tz, d_later)!!
+    assert(zl.offset().to_seconds() == -18_000)
+    // Один wall-момент, два инстанта: later на час позже
+    ro d = zl.to_timestamp()!! - z.to_timestamp()!!
+    assert(d == 1.hour())
+    assert(match in_ovl.to_zoned(tz, d_reject) {
+        Err(Ambiguous(_)) => true
+        _ => false
+    })
+}
+
+test "вне переходов IANA-зона резолвится Unique + offset_at по инстанту" {
+    ro tz = synthetic_ny()
+    ro summer = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(12, 0)!!)
+    ro z = summer.to_zoned(tz)!!
+    assert(z.offset().to_seconds() == -14_400)   // EDT
+    ro winter = Date.new(2026, Jan, 10)!!.at(TimeOfDay.new(12, 0)!!)
+    ro zw = winter.to_zoned(tz)!!
+    assert(zw.offset().to_seconds() == -18_000)  // EST
+    // offset_at по инстанту согласован
+    assert(tz.offset_at(z.to_timestamp()!!).to_seconds() == -14_400)
+    assert(tz.offset_at(zw.to_timestamp()!!).to_seconds() == -18_000)
+}
+
+
+// ── Арифметика: wall-vs-elapsed асимметрия (D320 R4) ──
+
+test "wall-vs-elapsed: +P1D через spring-forward = 23h elapsed" {
+    ro tz = synthetic_ny()
+    ro before = Date.new(2026, Mar, 7)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(tz)!!
+    // Календарный день: та же wall-time завтра
+    ro next_wall = before + Period.of_days(1)
+    assert(next_wall.datetime().hour() == 12)
+    assert(next_wall.date() == Date.new(2026, Mar, 8)!!)
+    ro elapsed = next_wall.to_timestamp()!! - before.to_timestamp()!!
+    assert(elapsed == 23.hours())   // короткий день (spring-forward съел час)
+    // Elapsed 24h: wall-time сдвинулась на 13:00
+    ro exact = before.plus_duration(24.hours())
+    assert(exact.datetime().hour() == 13)
+    assert(exact.to_timestamp()!! - before.to_timestamp()!! == 24.hours())
+}
+
+
+// ── now() мокабелен (критерий 8) ──
+
+test "ZonedDateTime.now(tz) / Date.today(tz) под mock Time-handler" {
+    // 2023-11-14T22:13:20Z = 1_700_000_000_000 ms
+    with Time = th.fixed_ms(1_700_000_000_000) {
+        ro z = ZonedDateTime.now(Utc)
+        assert(z.date() == Date.new(2023, Nov, 14)!!)
+        assert(z.datetime().hour() == 22 && z.datetime().minute() == 13)
+        // В +05:30 тот же момент = 15-е 03:43
+        ro zi = ZonedDateTime.now(Fixed(Offset.from_hm(5, 30)!!))
+        assert(zi.date() == Date.new(2023, Nov, 15)!!)
+        assert(zi.datetime().hour() == 3 && zi.datetime().minute() == 43)
+        assert(Date.today(Utc) == Date.new(2023, Nov, 14)!!)
+        assert(Date.today(Fixed(Offset.from_hm(5, 30)!!)) == Date.new(2023, Nov, 15)!!)
+    }
+}
+
+
+// ── ISO display (полный parse — Ф.5) ──
+
+test "ZonedDateTime @to_iso: offset-форма + RFC-9557 [zone]" {
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
+    assert(dt.to_zoned(Utc)!!.to_iso() == "2026-07-10T14:30:00Z")
+    assert(dt.to_zoned(Fixed(Offset.from_hm(3, 0)!!))!!.to_iso() == "2026-07-10T14:30:00+03:00")
+    ro ny = dt.to_zoned(synthetic_ny())!!
+    assert(ny.to_iso() == "2026-07-10T14:30:00-04:00[America/New_York]")
+}

@@ -2742,9 +2742,10 @@ yield-point'ах (network, sleep, channel.recv, async-Db). Это
 Цвета функции нет — нет деления sync/async. Программист пишет код,
 fiber-runtime сам решает где можно вытесняться.
 
-`spawn`, `parallel for`, `supervised`, `with_timeout`, `race` —
-остаются как **runtime-конструкции** (keyword'и или библиотечные
-функции), не как эффекты:
+`spawn`, `parallel for`, `supervised` (+`deadline:`/`timeout:` — D408,
+субсумировали ex-`with_timeout`), `race` (stdlib) — остаются как
+**runtime-конструкции** (keyword'и или библиотечные функции), не как
+эффекты:
 
 ```nova
 // Гомогенный fan-out — массив результатов через parallel for.
@@ -5531,8 +5532,12 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 > codegen emits enter/exit dispatch, 2026-06-01). **Амендмент Plan 173 Ф.2.R1 (2026-07-04, RENAME-only):**
 > эффект переименован `Cleanup`→**`ResourceTrace`** (освобождает имя `Cleanup` для протокола
 > `Cleanup[E]`, ex-`Consumable`, D314), операции `on_scope_enter/exit`→**`on_resource_enter/exit`**.
-> (Параметр `timeout` в enter пока СОХРАНЁН — его дроп §3a/п.8 отложен в **Plan 173 Ф.5** timeout-rework,
-> т.к. это семантическая правка с ретайром D195-override-тестов, не часть ренейма.)
+> **Амендмент Plan 173 Ф.5 п.2 (2026-07-10, D192-ретракт):** параметр `timeout` ДРОПНУТ из
+> `on_resource_enter` (§3a/п.8) — порог стал внутренним параметром watchdog-варна; exit-событие
+> получило `duration_ms int` (измеренная длительность cleanup-вызова) и `overrun bool`
+> (true = cleanup превысил watchdog-порог из 3-level D192-resolution). Прежние
+> D195-Application-override тесты (`timeout_application_level2_t3_8`, `application_cross_fiber_t8_7`)
+> мигрированы на поведенческое наблюдение порога через overrun.
 > Observability-only effect для tracing resource-scope entry/exit. Default handler — no-op,
 > zero-overhead если не использован. Orthogonal к `Cleanup[E].@cleanup` (ex-`Consumable.on_exit`,
 > resource lifecycle) — слой для metrics/tracing.
@@ -5541,8 +5546,8 @@ extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
 
 ```nova
 effect ResourceTrace {
-    on_resource_enter(label str, timeout Duration) -> ()
-    on_resource_exit(label str, outcome ScopeOutcome) -> ()
+    on_resource_enter(label str) -> ()
+    on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> ()
 }
 ```
 
@@ -5558,9 +5563,10 @@ fn ResourceTrace.default() -> ResourceTraceHandler => ResourceTraceHandler { /* 
 effect handler активен):
 
 ```c
-perform_ResourceTrace_on_resource_enter(type_label(X), _timeout);
+perform_ResourceTrace_on_resource_enter(type_label(X));
 // ... body ...
-perform_ResourceTrace_on_resource_exit(type_label(X), _outcome);
+/* duration измеряется вокруг cleanup-вызова; overrun = duration > threshold */
+perform_ResourceTrace_on_resource_exit(type_label(X), _outcome, _duration_ms, _overrun);
 ```
 
 Если handler === default no-op (compile-time check) — calls elided через
@@ -5588,7 +5594,6 @@ Reference implementation `CleanupHandler.to_otel(exporter)`:
 ```
 attributes = {
     "resource.label":         label,
-    "resource.timeout_ms":    timeout.ms(),
     "resource.start_time_ns": now_ns(),
 }
 span_kind = INTERNAL
@@ -5603,7 +5608,8 @@ status = match outcome {
     Failure(_)   => ERROR { code: "cleanup_failed" }
     Panic(_)     => ERROR { code: "cleanup_panic" }
 }
-attributes.duration_ms = (now_ns() - start_time_ns) / 1_000_000
+attributes.duration_ms = duration_ms   // из exit-события (длительность cleanup)
+attributes.overrun     = overrun       // watchdog-порог превышен (D192-ретракт: варн, не прерывание)
 end_time = now()
 ```
 
@@ -6526,6 +6532,16 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 - **Тест-детектор:** `std/time/units_test.nv` — `Timestamp.now()` без `with`-обработчика > `1_700_000_000_000` мс (после 2023-11-14; monotonic uptime короткого теста — единицы-десятки секунд, на порядки меньше).
 - **Нумерация:** amend того же D316 (боевой default-handler wall-clock ops — та же секция D316, что и unit-rename amend выше).
 
+**AMEND (Plan 175 Ф.3(a-d)/Ф.5(d), 2026-07-10 — Monotonic.now() builtin→`.nv`-сахар (мокабелен), free `sleep`/`sleep_until`, `@minus(Monotonic)`, `@display`/`@debug`, elapsed-measurement→Monotonic; Ф.2 int-wire retirement — ОСТАЁТСЯ OWNER-GATED, но с конкретной новой находкой):**
+
+- **(Ф.3a) `Monotonic.now()` builtin RETIRED.** Все 4 dispatch/inference-сайта в `emit_c.rs` (Member ×2 / Path ×2 — реальные символы на момент фикса: `emit_call` Member/Path :~31076/:~34026, `infer_expr_c_type` Member/Path :~45627/:~46311; НЕ `nova_monotonic_now_record`/`"Nova_Monotonic*"` из старого снимка плана — emit_c.rs дрейфанул под 172.1.2, пере-grep подтвердил актуальные имена) удалены; заменены обычной `.nv`-функцией `fn Monotonic.now() Time -> Monotonic => { nanos: Time.now_monotonic_ns() as i64 }` (`std/time/duration.nv`), тем же паттерном, что `Timestamp.now()`. **Реальный недостающий кусок был в C runtime, не в архитектуре prelude/std.time** (три предыдущих net-zero захода искали блокер не там): `NovaVtable_Time` (`nova_rt/effects.h`) не имел слота под `now_monotonic_ns` — `Nova_Time_now_monotonic_ns()` (`nova_rt/fibers.h`) безусловно читал real-clock, игнорируя handler. Добавлен vtable-слот + NULL-safe dispatch (handler без слота прозрачно падает на real-clock — backward-compat со старыми handler-литералами). `std/testing/handlers.nv` `fixed_ms`/`mut_clock` реализуют `now_monotonic_ns()` когерентно с `now_unix_ms()` (mock-coherence, Ред.2 Q14 / Swift TestClock-паритет — ОДИН handler двигает оба чтения). **Закрывает `[M-monotonic-mock-support]`.**
+- **(Ф.3b) Free `sleep(d Duration) Time`/`sleep_until(deadline Monotonic) Time`** (`std/time/duration.nv`) — канонический способ вызвать suspend-sleep (Q6/Q8, юзер не трогает `Time` напрямую). `sleep_until` — MVP-обёртка `sleep(deadline.elapsed_since(Monotonic.now()))`: прошлый дедлайн saturate-to-zero (D318) → немедленно, без re-arm timer (→ Plan 66).
+- **(Ф.3c) `Monotonic @minus(other Monotonic) -> Duration`** overload (alias `elapsed_since`) — симметрия с `Timestamp @minus(Timestamp)`; `m2 - m1` dispatch'ится сюда, не в `@minus(Duration)` (point-shift). Существующий `@elapsed_since` СОХРАНЁН (не удалён — обе формы валидны, `@minus` эргономичнее для operator-стиля).
+- **(Ф.3d) `@display`/`@debug` (D237-amend ниже) на всех трёх типах.** Побочный codegen-фикс, найденный и починенный ЭТОЙ ЖЕ волной (§4а): `"${d}"`/`"${d:?}"`-интерполяция для `value`-records (D226) была сломана в двух местах `emit_c.rs::emit_interpolated_str` (+ `str.from` Path-call) — (1) `debt_strip_nova_trim_start_no_ws` снимал только префикс `Nova_`, не `NovaValue_` → lookup пользовательского `@display`/`@debug` мисс → молчаливый fallback в `nova_int_to_str((nova_int)v)` (struct→int cast, CC-FAIL); заменено на существующий `debt_strip_value_prefix_or_nova_trim_start`. (2) диспатч передавал receiver BY VALUE, а value-record method ABI (D226/A6) ожидает pointer-receiver — использован существующий `prepare_method_recv`. До Ф.3d ни один value-record не реализовывал `@display`/`@debug`, поэтому баг не проявлялся; не time-специфичный фикс.
+- **(Ф.5d) `measure[T]` мигрирован на `Monotonic.now()`** (был `Timestamp.now()`) — elapsed-measurement (стопвотч/бенчмарк) иммунен к wall-clock skew (NTP/DST во время измерения раньше мог дать отрицательный/вздутый `elapsed`). Сигнатура не меняется (`Duration` clock-agnostic). `deadline_in(Duration) -> Timestamp` НАМЕРЕННО НЕ мигрирован (return type committed к wall-clock, D124) — канон для монотонных дедлайнов = `Monotonic.now() + d` напрямую (коорд. 173 §3a `supervised(timeout:)`). `is_past`/`time_until`/`@elapsed` на `Timestamp` корректно ОСТАЮТСЯ wall-clock (сравнение self к `Timestamp.now()`, тот же домен — миграция на Monotonic была бы D124-нарушением, старый Ф.5.d line-list из авторинга плана 175 §6 в этой части устарел).
+
+**AMEND (Ф.2 — retire int-wire — ЭМПИРИЧЕСКАЯ находка 2026-07-10, ЧЕТВЁРТЫЙ заход, net-zero, откачен чисто):** предыдущие 3 захода искали блокер в prelude⟷std.time coupling; этот заход **решил** ту часть (перенос `Time`-decl в `std/time/duration.nv`, рядом с `Timestamp`/`Duration`/`Monotonic` — типизированная схема РЕЗОЛВИТСЯ, cross-import `duration.nv⟷testing.handlers` НЕ образует блокирующий цикл на практике) — но упёрся в **НОВЫЙ, глубже архитектурный барьер**: mock-handler (`with Time = effect Time { monotonic() => ... }`) обязан СКОНСТРУИРОВАТЬ typed `Monotonic`-значение внутри handler-тела, но (a) `Monotonic` НАМЕРЕННО opaque — без публичного `from_*` (Q-decision, Rust `Instant`-паритет, защита от фабрикации фейковых монотонных моментов юзер-кодом); (b) codegen handler-literal body не поддерживает anonymous record-literal (`{ nanos: ... }`) — `codegen error: anonymous record literal without spread not supported in codegen` (новый, ранее не задокументированный codegen-гэп, не в списке эмпирик 3-го захода). Ни одно public-API решение не существует без ИЛИ (i) exposing внутреннего `Monotonic`-конструктора юзабельного из `std.testing` (подрывает opacity-контракт — тот же конструктор виден и обычному юзер-коду), ИЛИ (ii) компиляторной работы над anon-record-literal-в-handler-body (реальная codegen-инженерия, не косметика). **Это ОБЪЕКТИВНО обосновывает, почему уже отгруженный `option C` (int-wire эффект + typed `.nv`-сахар, Ф.1b/Ф.3/Ф.3a) — корректная итоговая архитектура, а не временный обход**: сахар оборачивает int→typed СНАРУЖИ handler-тела (в `Monotonic.now()`'s собственном теле, в родном модуле типа), а не внутри mock-handler'а, поэтому opacity-контракт и codegen-ограничение не конфликтуют. **Рекомендация:** закрыть Ф.2 (typed-wire-в-схеме) как SUPERSEDED предпочтением option C; `[M-time-now-schema-mismatch]` остаётся закрыт **частично по конструкции** (user-surface полностью typed + мокабелен; wire — int, и это теперь обоснованная, не временная, архитектура). Если owner всё же желает typed-wire — предпосылка: сначала либо (i), либо (ii) выше, ОТДЕЛЬНЫМ sign-off.
+
 ## D317 — Duration/instant overflow-policy: trap-default + `checked_*`/`saturating_*` (Plan 175 Ф.1c, 2026-07-06)
 
 **Source:** Plan 175 (time-system-rework), Ф.1c. **Amends:** [D316](#d316) (ns-канон → overflow-safe арифметика). **Реализация:** `std/time/duration.nv` (чистый `.nv`-слой; codegen НЕ тронут).
@@ -6568,6 +6584,75 @@ Silent two's-complement wrap на ±292y — это ровно Go-ловушка
 ### Почему
 
 HW/VM/OS могут дать кажущийся регресс монотонных часов; паниковать на hot-path (retry-budgets, deadlines) недопустимо, лочить (Rust 1.60-saga) — тоже. Saturate-to-zero + `checked_*`-эскейп = стабильный, lock-free, negative-free контракт. Раздельные типы (D124) + non-serializable Monotonic закрывают Go-footgun (`m=…` течёт в `String()`).
+
+## D319 — Civil-time модель: type-ladder Plain/Offset/Zoned + proleptic Gregorian + epoch-day repr (Plan 175.1 Ф.0/Ф.1, 2026-07-10)
+
+**Source:** Plan [175.1](../../docs/plans/175.1-civil-time.md), Ф.0/Ф.1/Ф.3. **Amends:** ничего (аддитивный слой поверх D316-318). **Реализация:** `std/time/civil/` — folder-module `time.civil` (чистый `.nv`; codegen не тронут).
+
+**Статус:** ✅ ACTIVE.
+
+### Правило
+
+- **(R1) Type-ladder — нормативный инвариант.** `Date`/`TimeOfDay`/`DateTime` (**Plain** — нет зоны, *неоднозначны*, НЕ точка на временнóй оси) → `Offset`/`ZonedDateTime` с `zone=Fixed`/`Utc` (**Offset** — точка, фикс. сдвиг, без DST-правил) → `ZonedDateTime` с `zone=Iana` (**Zoned** — точка, IANA-rule-aware). Plain → `Timestamp` **только** через явный `Offset`/`TimeZone` + `Disambiguation`, и это **fallible** (`Result[Timestamp, DateError]`/`Result[ZonedDateTime, DateError]`). Нет неявного дефолта зоны — компилятор не подставляет «локальную» зону молча.
+- **(R2) Value-records, immutable.** `type Date value { ro epoch_day i64 }`, `TimeOfDay value { ro nanos_of_day i64 }`, `DateTime value { ro date Date, ro time TimeOfDay }`, `Offset value { ro seconds i32 }` (±64800, ±18h), `ZonedDateTime value { ro dt DateTime, ro offset Offset, ro zone TimeZone }`, `YearMonth value { ro year i32, ro month i32 }`, `MonthDay value { ro month i32, ro day i32 }`. Stack, zero-GC, structural `==` (D183 `@compare`).
+- **(R3) Proleptic Gregorian ONLY (Q10).** year 0 = 1 BCE, отрицательные годы допустимы. Non-Gregorian (Japanese/Hijrah/…) — design-reject, вне scope, без `Chronology`.
+- **(R4) Epoch-day repr + Hinnant-алгоритм.** `Date.epoch_day` — дни от 1970-01-01, branch-light `days_from_civil`/`civil_from_days` (Howard Hinnant, overflow-safe; идентично chrono). Leap: `÷4 кроме веков, если не ÷400`. `day_of_week` — по модулю epoch_day.
+- **(R5) Range/overflow → Result, never silent (Q4/Q6).** `Date.new(y,m,d) -> Result[Date, DateError]` — validate-by-default, НИКОГДА не нормализует молча (`Date.new(2024,Feb,30)` → `Err(InvalidField(...))`). Явный opt-in `Date.from_normalized(y,m,d) -> Date` — единственный normalize-путь. Civil↔Timestamp вне ±292y окна (наследует Timestamp-окно D317) → `Err(RangeOverflow(...))`; MIN/MAX civil подобраны так, что `Timestamp+Offset→civil` **инфаллибельно** (Err только civil→Timestamp).
+- **(R6) Leap-seconds ignore (Q5).** День=86400s, минута=60s, `second` 0..59. Parse `:60` → clamp к `:59` (унаследовано из строгого канона 175 «день=86400s»).
+- **(R7) `TimeZone` — sum-type, не flat value.** `type TimeZone enum Utc | Fixed(Offset) | Iana(IanaZone)` — `Utc`/`Fixed` value-weight (нет DST); `Iana` несёт `IanaZone` (reference-тип, handle к transition-таблице, Ф.4/D321). `OffsetDateTime` отдельным типом НЕ вводится (jiff-подход) — `ZonedDateTime{zone: Fixed(_)}` покрывает.
+
+### Почему
+
+Единый flat `time.Time`+`*Location` (Go) прячет «wall-clock как момент» баг в рантайме — компилятор не различает Plain/Zoned. java.time/Temporal/kotlinx разделяют явно; Nova делает то же через value-records (дешевле heap-объектов Java) + fallible-конструкторы (не throw/NaN).
+
+## D320 — `Period` (календарный y/m/d) ≠ `Duration` (ns) + DateBased/TimeBased-разделение (Plan 175.1 Ф.2, 2026-07-10)
+
+**Source:** Plan 175.1, Ф.2. **Amends:** ничего (Duration — D316/D317 не меняются). **Реализация:** `std/time/civil/period.nv`.
+
+**Статус:** ✅ ACTIVE.
+
+### Правило
+
+- **(R1) Два тип-различных amount, без неявной коэрсии.** `Duration` (точный `i64`-ns, из 175) и `Period value { ro years i32, ro months i32, ro days i32 }` (календарный). Нет implicit-conversion между ними.
+- **(R2) Enforcement на уровне типов приёма.** `Date` принимает только `Period` (`@plus(Period)`/`@minus(Period)`), **отвергает** `Duration` — «add hours to a Date» = **compile-error** (нет перегрузки `Date @plus(Duration)`, отсутствие метода = отказ на этапе резолва). `TimeOfDay` — наоборот, принимает только `Duration`. `DateTime`/`ZonedDateTime` принимают оба (раздельные перегрузки), с разной семантикой (R4).
+- **(R3) Calendar-арифметика — CLAMP biggest-unit-first (Q7).** month/year-add: сначала years→months (clamp к длине результирующего месяца — `Jan31+1mo` → `Feb28`/`Feb29`), затем days (exact, через epoch-day). `checked_plus`/`checked_minus` → `Result`; `saturating_plus`/`saturating_minus` → clamp к `Date.MIN`/`MAX`; голый `@plus`/`@minus` (`+`/`-` операторы) — **trap-on-overflow** (наследует D317, НЕ wrap). `Period.normalize()` схлопывает months↔years (12mo→1y), **days НИКОГДА не сворачиваются** (calendar length varies).
+- **(R4) Wall-vs-elapsed асимметрия (DateTime/ZonedDateTime).** `dt.plus(Period{days:1})` — календарный сдвиг (та же wall-time; через DST у Zoned даёт 23ч/25ч elapsed). `dt.plus(Duration.from_hours(24))` — точный elapsed-сдвиг (может сдвинуть wall-time через DST-границу). Документируется как non-invertible/non-associative в общем случае (`d.plus(p).minus(p) != d` возможен на clamp-границах — напр. `Jan31.plus(1mo).minus(1mo) == Feb28`, не `Jan31`).
+- **(R5) `Period.between(Date, Date) -> Period`** — calendar-diff (years/months/days biggest-unit-first); exact-дни — `@days_until(Date) -> int`. Operator-форма `Date - Date` ретрактирована реализацией (`[M-175.1-minus-overload-arg-type]`, см. D321 §impl-отступления).
+
+### Почему
+
+Temporal (единая `Duration`) узнаёт «календарная она или нет» только в рантайме (`RangeError`); Go вообще не имеет `Period` (3 голых int в `AddDate`, order-dependent overflow, golang#71334). Type-separated приём делает ошибку класса «add hours to a Date» **compile-time**, не рантайм.
+
+## D321 — DST `Disambiguation` (4-way) + `OffsetConflict` + parse-strictness + структурные `DateError`/`ParseDateTimeError` + IANA tz-db (Plan 175.1 Ф.3/Ф.4/Ф.5, 2026-07-10)
+
+**Source:** Plan 175.1, Ф.3 (Offset/Fixed/Zoned) + Ф.4 (IANA) + Ф.5 (parse-strictness). **Amends:** ничего. **Реализация:** `std/time/civil/{offset,zoned,tz,tzif,parse,format}.nv`.
+
+**Статус:** ✅ ACTIVE (Ф.3/Ф.5 — полностью; Ф.4 IANA — **реализовано с задокументированным сужением данных**, см. §tzdb ниже).
+
+### Правило
+
+- **(R1) `Disambiguation` — 4-way Result-значение, default `Compatible` (Q8).** `type Disambiguation enum Compatible | Earlier | Later | Reject`. Gap (spring-forward, wall-time не существует) → `Compatible`: push-forward на длину gap (after-offset); `Reject` → `Err(Ambiguous(...))`. Overlap (fall-back, wall-time существует дважды) → `Compatible`: earlier-offset; `Earlier`/`Later` — явный выбор. Ambiguity surface как значение (`is_gap`/`is_overlap` на промежуточном resolve-результате), не exception — превосходит java.time (только earlier/later вручную), Go/kotlinx (silent), chrono (`None` путает gap с load-error).
+- **(R2) `OffsetConflict` — 4-way, default `RejectMismatch` (Q9).** `type OffsetConflict enum RejectMismatch | Use | Prefer | Ignore` — резолвит рассогласование между offset, сохранённым в parsed-строке, и текущими правилами зоны (post-tzdb-change drift). Только для explicit-offset строк (RFC-9557 `[zone]`-bracket с offset). **Амендмент имени (реализация 2026-07-10):** jiff/Temporal-имя `Reject` коллидировало с `Disambiguation.Reject` — пространство имён вариантов флоское, а qualified `Enum.Variant` как значение — ICE `[M-175.1-qualified-variant-value]` → вариант `RejectMismatch` (`[M-175.1-variant-name-collision]`). Дефолт применяется arity-split-перегрузкой (`s.to_zoned_datetime()` / `s.to_zoned_datetime(conflict)`, прецедент D324 `env(k)`/`env(k,v)`; default-значение enum-варианта на call-site не эмитится — `[M-175.1-enum-default-param]`).
+- **(R3) Parse-strictness — STRICT by default (Q9).** Reject Feb-30/out-of-range/missing-parts/zoned-строка-без-`[zone]`-bracket. Lenient — отдельный opt-in-параметр. «parses» == «constructs» (закрывает java.time SMART-trap, где `parse` тише `of`).
+- **(R4) Структурные ошибки.** `type DateError enum InvalidField(FieldKind, i64, i64, i64) | RangeOverflow(str) | Ambiguous(str) | UnknownZone(str) | BadTzData(str)` (последние два — tz-загрузка Ф.4); `type ParseDateTimeError enum FormatMismatch(int, str) | InvalidValue(int, FieldKind, i64)`; `type FieldKind enum Year | Month | Day | Hour | Minute | Second | Nano | OffsetSec | Weekday`. Нет default-panicking конструктора нигде в civil-API.
+- **(R5) `Utc`/`Fixed` — always unambiguous.** Нет DST-правил → `Disambiguation` не активируется (gap/overlap невозможны by construction).
+- **(R6) IANA tz-db (Ф.4, §tzdb).** `type IanaZone { ro id str, ro rules ZoneRules }` (reference-запись); загрузка по имени — §1а-конверсия на источнике **`s.to_timezone() -> Result[TimeZone, DateError]`** (`TimeZone.try_from` из черновика ретрактирован каноном 174.1 «конверсия — метод на источнике»); плюс `TimeZone.from_tzif(id, bytes)` (raw-TZif) и `load_timezone(name) Fs Os` (OS-first). Именованные зоны дают **реальный** gap/overlap → 4-way `Disambiguation` (R1) работает не вхолостую.
+
+### §tzdb — источник данных (задокументированное сужение, Ф.4)
+
+Полный layered-model (OS-tzdata-first TZif-parser + `$ZONEINFO` override) **реализован** в `std/time/civil/tzif.nv` (бинарный RFC-8536 TZif v1/v2/v3 parser поверх `std.fs`; `load_timezone(name) Fs Os`: `$ZONEINFO`-override → `/usr/share/zoneinfo/<name>` (POSIX) → embedded). **Embedded-fallback** (обязателен на Windows — нет `/usr/share/zoneinfo`) реализован как **rule-based таблица** (`std/time/civil/tz.nv`) для curated-списка зон (`Utc`+алиасы, фикс-оффсеты `±HH:MM[:SS]`, `America/New_York`, `Europe/London`, `Europe/Moscow`, `Australia/Sydney` — транзишены генерируются из современных правил на 1996..2100, реальный spring-forward/fall-back), а **не** полный скомпилированный ~450KB IANA-snapshot (акт данных — задача упаковки/дистрибуции, не архитектуры; полный snapshot — follow-up `[M-175.1-full-tzdb-embed]`). `tzdb_version() -> str` возвращает версию curated-таблицы (`"nova-curated-2026a"`). Футер-строка POSIX-TZ (правила за последним переходом) не интерпретируется — за пределами таблицы действует последний сдвиг (документировано).
+
+### Почему
+
+4-way `Disambiguation`+`OffsetConflict` как значения (не throw/silent) — отличие от всех пяти peers одновременно (см. Plan 175.1 §2 таблица). Rule-based embedded-fallback — прагматичный компромисс: полный TZif-парсер работает по архитектуре (эксплуатируется на POSIX, где `/usr/share/zoneinfo` реально есть), embedded-таблица даёт корректный современный DST для тестируемых зон без версионирования полного snapshot-датасета в этой волне.
+
+### §impl-отступления (реализация 2026-07-10, все с маркерами)
+
+- `Time.local_offset() -> Offset` эффект-оп НЕ поставлен: требует слот в `NovaVtable_Time` (nova_rt/effects.h — компилятор-зона, параллельные волны в emit_c) — `[M-175.1-local-offset-effect-op]`; неявной локальной зоны и так нет (D319 R1), зона передаётся явно.
+- Операторная форма `Date - Date -> Period` не введена (`[M-175.1-minus-overload-arg-type]` — overload-резолв оператора слеп к типу аргумента); канон — `Period.between(start, end)` + `@days_until`. По той же причине оператор `d + duration` на Date не отлавливается компилятором (`[M-175.1-operator-arg-type-blind]`) — гейт D320 R2 держит метод-форма (`d.plus(duration)` — compile-error, neg-fixture).
+- `Date.MIN`/`MAX`-консты → static-фны `Date.min_value()`/`max_value()` (чекер-гэп `[M-175-type-const-max-shadows-builtin]` + `[M-175-value-record-const-ref]`); `TimeOfDay.MIDNIGHT` → `TimeOfDay.midnight()`.
+- Интерполяция `"${date}"` value-record'а минует user `@to_str` (`[M-175.1-interp-value-record-display]`, pre-existing класс) — Display-тела корректны, подключение — компилятор-волна.
+- Декларация `DateTime` живёт в `time_of_day.nv` (порядок эмиссии value-record структур лексикографический по файлам, by-value поле требует complete-типа) — `[M-175.1-value-in-value-emit-order]`; методы на variant-литералах (`Sun.next()`) — `[M-175.1-variant-literal-receiver]` (в тестах bound-local ресиверы).
 
 ## D322 — io-core: `io.Read`/`io.Write`/`io.Seek`, `IoError`, `Io` effect (Plan 176 Ф.1, 2026-07-04)
 

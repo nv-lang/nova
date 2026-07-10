@@ -1,0 +1,48 @@
+// stdlib/supervisor.nv — встроенные политики Supervisor-эффекта (Plan 173.2).
+//
+// `Supervisor` / `Decision` объявлены в std/prelude/effects.nv (авто-доступны
+// без импорта). Стратегии — обычные handler-значения (`Effect[Supervisor]`),
+// подменяются как Time/Fail:
+//
+//   import std.concurrency.supervisor as sup
+//
+//   with Supervisor = sup.stop() {
+//       supervised {
+//           for u in urls { spawn { fetch(u) } }   // упавший НЕ отменяет siblings
+//       }
+//   }
+//
+// Пользовательская политика — просто handler-литерал:
+//
+//   with Supervisor = effect Supervisor {
+//       on_child_fail(idx, err) => if err is TransientError { Decision.Stop }
+//                                  else { Decision.Escalate }
+//   } { ... }
+//
+// Словарь решений `Escalate` / `Stop` — ПОЛНЫЙ (Restart-семейство
+// ретрактировано D416 2026-07-10: рестарт — акторная идиома, не структурная
+// конкуренция; повтор попытки — внутри тела ребёнка, std/concurrency/retry).
+
+module concurrency.supervisor
+
+/// Политика «эскалировать всё» — эквивалент дефолта (нет супервизора):
+/// ошибка первого упавшего ребёнка становится primary, siblings кооперативно
+/// отменяются, scope перевыбрасывает наружу. Полезна как явная базовая точка
+/// (или внешний слой, поверх которого локально ставится иная политика).
+#stable(since = "0.1")
+export fn escalate() -> Effect[Supervisor] {
+    effect Supervisor {
+        on_child_fail(idx, err) => Decision.Escalate
+    }
+}
+
+/// Политика «выкинуть упавшего» — падение ребёнка НЕ эскалируется и НЕ
+/// отменяет siblings: scope продолжает работу, как будто упавший ребёнок
+/// просто завершился без результата (его ошибка остаётся retained per-slot,
+/// 173.0 — не теряется молча). Аналог Erlang `temporary`-ребёнка.
+#stable(since = "0.1")
+export fn stop() -> Effect[Supervisor] {
+    effect Supervisor {
+        on_child_fail(idx, err) => Decision.Stop
+    }
+}

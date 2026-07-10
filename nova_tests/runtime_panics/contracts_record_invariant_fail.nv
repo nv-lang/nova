@@ -1,0 +1,16 @@
+//
+// Plan 33.3 Ф.9.2: record invariant violation на конструкции →
+// runtime contract violation в debug.
+
+module nova_tests.runtime_panics
+
+type Account {
+    balance int
+}
+    invariant balance >= 0
+
+test "contracts record invariant fail" panics "invariant failed: balance >= 0" {
+    ro bad = Account { balance: -100 }
+    println("UNREACHABLE")
+    ro _ = bad
+}

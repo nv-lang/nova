@@ -16,11 +16,12 @@ test "supervised void-form (no trailing) still unit" {
 }
 
 test "supervised value after spawn join" {
-    mut acc = 0
+    // D415: голый mut-захват = E_CONCURRENT_MUT_CAPTURE; аккумулятор — #share-тип.
+    mut acc = AtomicInt.new(0)
     ro v = supervised {
-        spawn { acc = acc + 1 }
-        spawn { acc = acc + 1 }
-        acc
+        spawn { acc.fetch_add(1) }
+        spawn { acc.fetch_add(1) }
+        acc.load()
     }
     assert(v == 2)
 }

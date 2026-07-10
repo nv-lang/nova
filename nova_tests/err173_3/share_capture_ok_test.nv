@@ -28,6 +28,15 @@ type UserLockFree {
 }
 
 // (3) consume-ресурс c Cleanup[never] — для spawn-consume формы.
+// Не consume-обязательный тип с consume-методом (класс TcpListener) —
+// для формы повторной отдачи `spawn consume h { … }` при обычном биндинге.
+type Handle {
+    payload int
+}
+
+fn Handle.new(p int) -> Handle => { payload: p }
+fn Handle consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
 type Job consume {
     payload int
 }
@@ -80,6 +89,24 @@ test "spawn consume: explicit move into child ownership (D415 §4)" {
     }
     tx.close()
     assert((rx.try_recv() ?? -1) == 7)
+}
+
+test "spawn consume: re-give form moves existing binding (D415 §4)" {
+    // Форма повторной отдачи `spawn consume x { … }` (init = сам внешний
+    // биндинг): внешний `h` обязан попасть в spawn-ctx как захват, а тело —
+    // работать через consume-локал (регресс: capture терялся → undeclared C
+    // identifier; затем тело било в `_c->h` мимо `#define`). Тип — не
+    // consume-обязательный (класс TcpListener: consume-метод есть, маркер нет),
+    // иначе внешний биндинг сам потребовал бы consume-scope (D180).
+    ro (tx, rx) = Channel.new(1)
+    mut h = Handle.new(9)
+    supervised {
+        spawn consume h {
+            tx.try_send(h.payload)
+        }
+    }
+    tx.close()
+    assert((rx.try_recv() ?? -1) == 9)
 }
 
 test "auto-#share user type: memberwise share fields, mut binding capture ok" {

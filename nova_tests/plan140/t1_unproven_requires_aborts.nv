@@ -1,4 +1,3 @@
-// EXPECT_RUNTIME_PANIC requires failed: x > 0
 //
 // Plan 140 Ф.4 (D24 amend), acceptance F1: an UNPROVEN `requires` is checked
 // at runtime in the RELEASE build (`--mode release`) and aborts fail-fast on
@@ -27,7 +26,7 @@ fn needs_positive(x int) -> int
     requires x > 0
 => x * 2
 
-fn main() Io -> () {
+test "t1 unproven requires aborts" panics "requires failed: x > 0" {
     ro _ = needs_positive(-7)
     println("UNREACHABLE")
 }

@@ -16,7 +16,6 @@
 // Crucially NO other interpolation exists in this file: `println` below takes a
 // plain literal. So if the converter is wrongly pruned this CC-FAILs; if kept it
 // compiles and the contract fires, rendering the captured value -7.
-// EXPECT_RUNTIME_PANIC requires failed: balance got -7 (amount >= 0)
 
 module plan159.f2_contract_msg_interp_dce
 
@@ -24,7 +23,7 @@ fn withdraw(amount int) -> int
     requires amount >= 0, "balance got ${amount}"
 => amount
 
-fn main() Io -> () {
+test "f2 contract msg interp dce" panics "requires failed: balance got -7 (amount >= 0)" {
     ro r = withdraw(-7)
     println("UNREACHABLE")
     ro _ = r

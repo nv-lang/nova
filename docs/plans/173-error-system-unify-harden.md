@@ -174,12 +174,13 @@ cleanup → **watchdog-варн** («fiber X застрял в cleanup»), НЕ 
 > → маркер `[M-174-parallel-for-deadline]`. Известное ограничение: main-flow blocking В ТЕЛЕ до старта
 > run-loop не ограничено сроком (идиома — `spawn` работу); документировано в simplifications.
 
-**(4) `with_timeout` — убрать; `race2` — оставить до общего `race`.**
-- **`with_timeout[T]`** (`std/concurrency/cancellation.nv:156`) — субсумирован `supervised(timeout:)`.
-  Удалить (fn + ~7 тест-ссылок) **после** landing Plan 175 + deadline-параметров → **Ф.3-остаток**.
-  ⚠ **UNBLOCKED (2026-07-06):** deadline-параметры приземлены (D408) → ретракция теперь возможна, но
-  НЕ сделана в этом заходе (cancellation.nv независимо сломан retired-API-дрейфом `str.len`/`ro`-field;
-  не «дёшево/безопасно») → маркер `[M-174-retract-with-timeout]`.
+**(4) `with_timeout` — убрать; `race2` — оставить до общего `race`.** ✅ **ЗАКРЫТО 2026-07-10**
+(Plan 175 Ф.3a/Ф.5d landed) — `with_timeout[T]`/`within[T]` УДАЛЕНЫ из
+`std/concurrency/cancellation.nv` (субсумированы `supervised(timeout:)`, D408); все реальные
+call-сайты (fn + тесты) мигрированы на `supervised(timeout:)`/`race2`. Опасение «cancellation.nv
+независимо сломан retired-API-дрейфом `str.len`/`ro`-field» из более раннего захода на момент
+закрытия НЕ подтвердилось (файл компилировался чисто) — возможно, было исправлено отдельно
+до этой волны. Маркер `[M-174-retract-with-timeout]` CLOSED.
 - **`race`/`race2`** — ⚠ Ред. 2 согласовано с [173.1 §2a](173.1-parallel-collect-and-supervised-value.md)
   (авторитет): `race2` **ОСТАЁТСЯ** до landing общего N-арного `race[T](…funcs)` (гейт Plan 48 Ф.4
   closures-in-generic-array) + миграции callers; дизайн общего `race` уже зафиксирован в 173.1 §2a
@@ -425,9 +426,17 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   `SelectSlot.want_none`, parser/AST/codegen/runtime); D414 §3 + D94 update; тесты err173_2. **п.4** (`999bffff9`)
   переписаны stale-тесты `supervised_errors.nv`/`fiber_throw.nv` SECTION 4 (ложь «throw неперехватываем» →
   реальные тесты, верифицированы в изоляции 3/3; concurrency-folder заблокирован pre-existing Duration-багом
-  Plan175 — вне периметра). **п.5** with_timeout удаление — GATED на **Plan 175 (READY, не начат)**;
-  отложено, отслеживается `[M-174-retract-with-timeout]` (home Plan 173 Ф.3-остаток). spec: 08-runtime.md:168
-  stale-стратегии обновлены; хаб + D414 §1-§3. **Без упрощений** (п.5 честно gated).
+  Plan175 — вне периметра). **п.5 ЗАКРЫТ 2026-07-10** (гейт Plan 175 Ф.3a/Ф.5d landed —
+  Monotonic мокабельность + Duration/typed surface): `within[T]`/`with_timeout[T]` УДАЛЕНЫ из
+  `std/concurrency/cancellation.nv` (субсумированы `supervised(timeout:/deadline:)`, D408);
+  `race2[T]` остаётся (не субсумирован). Мигрированы вызовы: `nova_tests/concurrency/
+  cancellation_test.nv` (4 within-теста удалены, race2-тесты сохранены),
+  `mn_closure_spawn_gcroot_test.nv` (последний тест → `race2` вместо `within`, тем же путём
+  починен НЕЗАВИСИМЫЙ pre-existing mut-capture баг в `run_int`-хелпере — D415 §2 дрейф,
+  найден при миграции, починен той же волной), `examples/real_world/audit.nv` (иллюстративный,
+  сам файл всё равно pre-existing CODEGEN-FAIL по несвязанным причинам — вне scope). Маркер
+  `[M-174-retract-with-timeout]` CLOSED. spec: 08-runtime.md:168 stale-стратегии обновлены;
+  хаб + D414 §1-§3. **Без упрощений.**
 
 ### Ф.4 — MultiError end-to-end + типизированный ScopeOutcome (✅ ЗАКРЫТА 2026-07-06; ГЕЙТ [Plan 174.3] ✅ в main)
 1. ✅ **#6 РЕАЛИЗОВАН (2026-07-06, модель Б — решение владельца):** противоречие спеки D158 (конверт
@@ -537,6 +546,24 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   spec_tests: d188 R2 + d192-ретракт (негативная сторона).
 - **Acceptance:** спека выводит ТЕКУЩУЮ модель без реверс-инжиниринга кода; exactly-once реален; force-timeout
   механизм ОТСУТСТВУЕТ (D192-ретракт применён); **без упрощений**.
+- ✅ **Ф.5 ЗАКРЫТА 2026-07-10** (sonnet, ветка `err-173-f56`): **п.1** (`843810e49`) D188 R2 exactly-once —
+  РЕАЛЬНЫЙ runtime-счётчик: скрытое поле `_consume_ccount` на heap-record инстансе + пролог-guard в
+  `Nova_<T>_consume_cleanup` (единый chokepoint всех путей вызова, включая обход чекера через границу
+  функции) → `D188-on-exit-double-invocation`; чекер `D188-r2-manual-on-exit` расширен на алиасы и
+  receiver-подвыражения; extern "nova" cleanup'ы (D194 hot-path) исключены; rt-тест EXPECT_RUNTIME_PANIC +
+  conformance d188 R2 ×2. **п.2+п.3** (`9c15dbe7b`) D192-РЕТРАКТ применён: тип `CleanupTimeoutError` УДАЛЁН
+  (prelude+splice+`_nova_throw_cleanup_timeout_fn`); watchdog армится ТОЛЬКО вокруг cleanup-вызова
+  (`nv_cleanup_watchdog_arm/disarm`), превышение = one-shot stderr-варн + `duration_ms`/`overrun` в
+  `ResourceTrace.on_resource_exit` (D185 amend; timeout ДРОПНУТ из enter — D195-override тесты
+  `timeout_application_level2_t3_8`/`application_cross_fiber_t8_7` мигрированы на overrun-наблюдение);
+  3-level resolution сохранена как источник ПОРОГА; D192 → RETRACTED-баннер; `nv_resume_panic`→`nv_panic`
+  (п.3, #9); попутно §4а: record-literal с неизвестным типом → `[E_UNKNOWN_TYPE]` (был тихий miscompile).
+  **п.4** (`58fcf2975`) sweep: historical-баннеры D158/D160/D161/D162, stale race/with_timeout
+  (06-concurrency/04-effects), README-индекс, хаб догнал факт (Ф.2 ЗАКРЫТА + Ф.5-строка). **п.6+п.7**
+  (`cdd23a5b2`) `nova_runtime_reset()` (fibers.h; из user-кода недоступен — neg-тест) + throw-site
+  трассировка (TLS `_nova_throw_site`, стемп на throw/panic/unreachable, печать `at file:line (throw site)`
+  в 4 uncaught-abort ветках; rt-тесты ×2; полный trace — `[M-173-error-return-trace]`). Гейты:
+  conformance 83/0; err173*+plan110+plan100_4+plan103_9 62/0.
 
 ### Ф.6 — `panics`-клаузула: panic-тесты в folder-module (−78 CU; ПОЗЖЕ)
 Контекстное KW `panics` (инверсия PASS/FAIL): `test "…" panics "паттерн" { … }` — PASS, если тело
@@ -566,6 +593,23 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
   поверх test_runner.rs. spec_tests: d348_*.nv (семантика клаузулы — позитивная сторона).
 - **Acceptance:** 114 panic-тестов в folder-module зелёные; −78 CU; рантайм стабилен после N паник;
   D348 в спеке; test-conventions обновлены с «· согласовано»; **без упрощений**. Маркер: `[M-173-panics-clause]`.
+- ✅ **Ф.6 ЗАКРЫТА 2026-07-10** (sonnet, ветка `err-173-f56`, `d1707363f`+`3e4505953`+`3f2262696`):
+  **D348 в спеке** (09-tooling.md; свобода номера подтверждена — «(D348)»-комменты в emit_c про
+  crossmodule-mangling были ошибочной ссылкой на фактический D381, исправлены) + amend D89 (шестой класс,
+  EXPECT_RUNTIME_PANIC → legacy + `--panic`) + таблица layout. parser/AST `TestDecl.panics` (контекстное KW);
+  codegen test-frame: инверсия, PANIC-дискриминатор (`error_kind==NOVA_THROW_PANIC` / не-`exit(`-префикс),
+  substring `nova_test_msg_contains` (ptr,len), `nova_runtime_reset()` в эпилоге. **Миграция: 67
+  panics-тестов в 62 файлах; −52 CU** (39 фолдов из neg//rt/ в folder-module + 13 expected_runtime →
+  новая папка `runtime_panics/` одним CU; 6 in-place standalone). Факт-граница ýже плановой оценки −78:
+  «паники» throw-класса (sync unlock-guards, Channel capacity, select closed — nova_throw USER),
+  file-режимные (`CONTRACTS off`, `#unchecked`), процессные (fiber stack overflow SEH, token-bind abort,
+  uncaught-trace stderr) и мигранты pre-existing-красных CU (plan153_4/5, plan138/_2, plan83_10, strings,
+  contracts, plan11_followup, plan153_2 — verified родным baseline-бинарём) возвращены в legacy (55 файлов
+  EXPECT_RUNTIME_PANIC). **Вскрытый §4а-фикс (D13/D414):** supervised re-throw ДЕГРАДИРОВАЛ панику ребёнка
+  до ловимого USER (plain nova_throw) — теперь kind==PANIC транспортируется `nv_panic`'ом.
+  test-conventions.md (a/b/c) с «· согласовано»; Rust-тесты раннера `d348_panics_clause.rs` 7/7
+  (мета-FAIL-кейсы). Гейты (слито с main): cargo build чисто; conformance 83/0; err173* 28/0; --panic lane
+  53/1 (TIMEOUT pre-existing); nova_tests-выборка δ=0. Маркер `[M-173-panics-clause]` ЗАКРЫТ.
 
 ---
 

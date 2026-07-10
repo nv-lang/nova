@@ -1474,6 +1474,12 @@ pub struct TestDecl {
     /// mirroring the same attribute on `fn` (but applied at the item level
     /// so it doesn't require wrapping the test body in a helper fn).
     pub test_access: Vec<String>,
+    /// Plan 173 Ф.6 (D348): `test "имя" panics "паттерн" { … }` —
+    /// контекстное KW `panics` (как `raw`/`bench`) инвертирует PASS/FAIL:
+    /// PASS ⇔ тело запаниковало (PANIC-класс D13) сообщением ⊇ паттерн
+    /// (substring, как D89). `None` = обычный тест. Пустая строка =
+    /// «любая паника».
+    pub panics: Option<String>,
 }
 
 /// Plan 57: benchmark declaration.

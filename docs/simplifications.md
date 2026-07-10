@@ -11,6 +11,8 @@
 
 [2026-07-10 Plan 116 Ф.0 — актуализация + tls_shim-скелет, 🟡 Ф.0 ✅] План 116 переписан целиком под пост-183/176.4/177/178 реальность: эффект `Tls` РЕТРАКТИРОВАН — std/tls = библиотечный слой поверх `TcpStream` (методы несут `Net`; мотивировка по module-conventions §0 — в плане §«Ключевое решение Ф.0-1»); R-1 решён: rustls 0.23 + провайдер `ring` (НЕ дефолтный aws-lc-rs — тому нужны cmake+nasm, чужой toolchain) + webpki-roots. Вендорен скелет `compiler-codegen/tls_shim/` (Rust staticlib, C-ABI `tls_*` ~27 символов, crt-static → libcmt /MT-соответствие; cargo test 5/5; Cargo.lock закоммичен force-add поверх compiler-codegen/.gitignore — ОСОЗНАННО: для шима lock = supply-chain-пин R-9; bootstrap-политика «пустой lockfile» относится к nova-codegen, не к шиму). **ОСОЗНАННЫЕ SCOPE-CUTS Ф.0 (с планом):** (1) `Pinned` (SPKI-pinning) в шиме = `TLS_ERR_UNSUPPORTED` до Ф.4.3 (кастомный ServerCertVerifier — там же); данные через границу уже принимаются — граница не изменится. (2) Прекомпилят staticlib НЕ трекается (~6.1 MB; решение о трекинге — Ф.2.1 после замера; brotli-прецедент трекает .lib, но тот в 15 раз меньше). (3) Условная линковка (test_runner.rs, механизм brotli/D337) — Ф.2. Маркеры `[M-116-*]` — план §Out-of-scope; `[M-178-https-needs-116]` закрывается Ф.5.3.
 
+[2026-07-10 Plan 175.1 — civil time, 🟢 ПРИЗЕМЛЕНО с задокументированными сужениями] Полный civil-слой (`std/time/civil`, D319/D320/D321): Date/TimeOfDay/DateTime/YearMonth/MonthDay/Period/Offset/TimeZone/ZonedDateTime + Hinnant epoch-day, CLAMP-арифметика Q7, 4-way Disambiguation/OffsetConflict, strict ISO/RFC-3339/RFC-9557 parse (§1а: `s.to_date()`/`to_datetime()`/`to_timezone()`…), TZif-парсер + curated embedded tz-таблица, pattern-DSL `DateTimeFormat`. Компилятор НЕ тронут. **Сужения/обходы (все с маркерами и планом):** (1) `[M-175.1-full-tzdb-embed]` — embedded-таблица curated (NY/London/Moscow/Sydney + фикс-оффсеты, rule-based 1996..2100), НЕ полный ~450KB IANA-snapshot; TZif-парсер полный, POSIX-слой работает; починка = упаковка snapshot-данных. (2) `[M-175.1-local-offset-effect-op]` — `Time.local_offset()` требует слот в NovaVtable_Time (nova_rt — компилятор-зона, параллельные волны в emit_c); зона передаётся явно (неявной локальной и так нет по D319 R1). (3) Codegen/checker-гэпы класса value-record/overload, обойдённые по §4а: `[M-175.1-value-in-value-emit-order]` (декларация DateTime перенесена в time_of_day.nv — порядок эмиссии структур лексикографический по файлам), `[M-175.1-variant-literal-receiver]` (`Sun.next()` эмитится как несуществующий Path-вызов — в тестах bound-local), `[M-175.1-minus-overload-arg-type]`/`[M-175.1-operator-arg-type-blind]` (overload-резолв оператора слеп к типу аргумента — оператор `Date - Date -> Period` ретрактирован в пользу `Period.between`; D320-гейт держит метод-форма, neg-fixture), `[M-175.1-qualified-variant-value]` (`Enum.Variant` как значение — ICE P67-LEGACY; вариант `OffsetConflict.Reject` переименован в `RejectMismatch` — коллизия с `Disambiguation.Reject` во флоском пространстве вариантов), `[M-175.1-enum-default-param]` (default-значение enum-варианта не эмитится на call-site → arity-split `to_zoned(tz)`/`to_zoned(tz, disamb)`, прецедент D324), `[M-175.1-interp-value-record-display]` (интерполяция `"${date}"` value-record минует user @to_str — pre-existing класс; Display-тела корректны). (4) POSIX-TZ футер TZif не интерпретируется (за последним переходом действует последний сдвиг) — документировано в D321 §tzdb. Гейты: targeted std/time/civil 78 pos + 2 neg + 1 rt зелёные; std/time δ0 (единственный FAIL — pre-existing timer_metrics_test); conformance см. финальный прогон волны.
+
 [2026-07-08 Plan 173.0 Ф.2+Ф.3 — рантайм-субстрат supervised: per-slot child_error[] retention + serialized decision-loop + ctx-pinning, ✅ ЗАКРЫТО] Гейт для 173.1/173.2 (без него их инварианты рантайм не давал). Ф.1 (drain/grow-vs-wake race) была уже закрыта в рантайме до этой волны (chunked stable-address SchedState, 2026-06-11) — deliverable-часть (доки/spec-amend/guard-фикстура) тоже уже закрыта предыдущей волной, проверено по коду. Эта волна = Ф.2+Ф.3. **Решение 1 (Ф.2):** новый `NovaChildError[]`/`child_ctx[]` массив на `NovaFiberQueue` (`nova_rt/fibers.h`) — ОТДЕЛЬНОЕ индекс-пространство от локальных `fibers[]/fiber_error[]/count` (Ф.1, заморожено, не тронуто); каждый remote (M:N) ребёнок получает свой слот при спавне (`nova_scope_alloc_child_slot`, вызывается из `nova_runtime_spawn_into`), индекс хранится в новом `NovaSpawnCtxBase._nova_parent_slot` (зеркалирован в обеих codegen-раскладках `emit_spawn`/`emit_detach`, `emit_c.rs`). При throw ребёнок пишет ТОЛЬКО свой слот (`nova_fiber_report_child_kinded` — без CAS, индексы не пересекаются); старый `first_error_atomic` путь не тронут (дешёвый cancel-сигнал остаётся, обратная совместимость). Read-API: `nova_scope_collect_child_errors`. **R2-инвариант** (torn-base на grow под конкурентной записью — жало §7.7): `_drain_started`-tripwire латчится в начале `nova_supervised_run_impl`, assert в `nova_scope_grow_children` доказывает grow-во-время-drain структурно недостижим (все `spawn` исполняются на вызывающем потоке ДО цикла дрейна; у спавненного тела нет ссылки на родительский stack-local scope; armed/local ветки никогда не смешиваются в одном scope-объекте — auto-arm происходит ДО первого пользовательского кода). **Решения 2-3 (Ф.3):** retention SpawnCtx при смерти ребёнка — `nova_scope_retain_or_release_child` вызывается из 3 точек `nova_spawn_pool_release` в `runtime.c` (**R1-guard**: подавляет pool-recycle для упавших детей, чтобы retained-указатель не aliasnul на следующий spawn). Serialized decision-loop в `nova_supervised_run_impl` (строго после `nova_sched_drop_state`, до free `ctx_pins`) — по разу на retained падение, ctx жив на входе; `nova_supervised_decide` — hook-точка для 173.2 (`on_child_fail`), default-политика 173.0 = pure no-op observer (внешнее поведение escalate-all-or-throw через `first_error`/`first_error_atomic` НЕ меняется — byte-parity с текущим re-throw, G-NEG). Ретеншн-ctx освобождается в pool ПОСЛЕ decision-loop. **Найденный попутно баг (не мой, но блокировал гейты, починен той же волной):** `nova_tests/err173_0/supervised_drain_mn_guard.nv` использовал устаревший `Time.now()` (переименован в `Time.now_unix_ms()` коммитом D316/Plan 175 ДО момента пиннинга этой ветки) — internal ICE `P67-LEGACY method=now` на любом прогоне; единственный оставшийся файл в репо со старым именем, исправлен. **Тесты:** `nova_tests/err173_0/child_error_retention_test.nv` (2 теста: N=40 одновременных детей с разными ошибками, форсирует grow child_error[] за NOVA_SCOPE_INITIAL_CAP=16; N=12×8 повторов lifecycle-профиль) — проверяют, что перевыброшенная ошибка ВСЕГДА well-formed тег из множества прогона (R1/R2 corruption исказила бы содержимое или уронила процесс). **Гейты:** cargo build чистый (compiler-codegen + nova-cli); conformance `--positive --compile-error` **70/0** (ровно ожидаемое число); err173_0 ×20 отдельных process-запусков под armed M:N — все зелёные; std/concurrency + std/net/stress_test + std/fs/concurrent_stat_test — PASS; regression-δ на `nova_tests/concurrency` (109 файлов, non-slow) против temp-checkout базиса 9551f4c99 — **byte-identical PASS/FAIL sets** (`diff` exit=0; 2 pass/107 fail оба до и после — 107 fail это ДРУГОЙ pre-existing баг, тот же D316-дрейф в масштабе всей папки `nova_tests/concurrency`, вне периметра 173.0, задокументирован честно, НЕ чинился этой волной — 100+ файлов, чужой план). Spec: D-блок «runtime-субстрат supervised» + `06-concurrency.md` amend (D14/D50/D75) — уже были закрыты предыдущей волной, дополнена только `docs/debugging-races.md` строкой-мостом к R1/R2/R3.
 
 [2026-07-06 `[M-time-default-handler-not-wallclock]` — боевой default-обработчик Time.now_unix_ms() чинён на wall-clock, ✅ CLOSED] Default (без `with Time = handler {...}`) обработчик `Time.now_unix_ms()` (`_nova_time_default_now()`, `nova_rt/fibers.h`) возвращал `_nova_monotonic_ms()` (`uv_hrtime()`-uptime процесса) вместо настоящего unix-эпох — `Timestamp.now()` в боевом режиме лгал про календарную дату. Fix: `_nova_wall_unix_ms()` (новая, рядом с `_nova_monotonic_ms`) через `uv_gettimeofday(uv_timeval64_t*)`; `_nova_time_default_now()` переключён на неё (автоматически чинит все три default-делегата `now_unix_ms`/`now_ms`/`now_ns`). Monotonic (`now_monotonic_ns`/`_nova_monotonic_ns`) и mock-обработчики (`fixed_ms`/`mut_clock`) не затронуты (свой vtable-слот). Тест-детектор — `std/time/units_test.nv` (`Timestamp.now() без with > 1_700_000_000_000` мс). Spec: [D316 amend](../spec/decisions/04-effects.md#d316). **Verify:** cargo build clean; conformance 54/0 (не тронут); targeted `std/time/units_test.nv`+`std/concurrency/supervised_deadline_test.nv` PASS; дельта vs base-бинарь a3a4da52 (temp git-worktree, `target/libuv-cache` скопирован) на `nova_tests/time`+`nova_tests/concurrency` — 0 непредвиденных регрессий (только path-prefix diff; идентичные pre-existing `_repro_p110` CODEGEN-FAIL / `plan175_f1_timer_metrics_split` CC-FAIL до/после, не связаны с этим фиксом).
@@ -10483,7 +10485,15 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
   для investigation; миллион timers с no stack info лучше чем ноль.
 
-### [M-time-now-schema-mismatch] (PARTIAL-CLOSE 2026-07-04 Plan 175 Ф.1b/Ф.3 option C; typed-effect-ops остаток OWNER-GATED)
+### [M-time-now-schema-mismatch] (PARTIAL-CLOSE BY DESIGN — Plan 175 Ф.1b/Ф.3 option C SHIPPED; typed-effect-wire (Ф.2) SUPERSEDED 2026-07-10, не «остаток», а закрытое решение)
+- **UPDATE 2026-07-10 (Plan 175, 4-й заход на Ф.2):** typed-effect-wire (retire int-wire в СХЕМЕ) исследован
+  четвёртый раз. prelude⟷std.time coupling из 3 прошлых заходов — решаем (перенос `Time`-decl в `std.time`).
+  Настоящий барьер ГЛУБЖЕ: mock-handler обязан сконструировать opaque `Monotonic` внутри handler-тела
+  (Monotonic намеренно без `from_*`, Rust `Instant`-паритет), а codegen handler-литералов не поддерживает
+  anonymous record-literal. Заход откачен чисто. **Вывод: option C (int-wire + typed-сахар) — корректная
+  ИТОГОВАЯ архитектура**, не временный компромисс — typed-сахар живёт в родном модуле типа (anon-literal
+  там — обычный function body, не handler-литерал), opacity и codegen-ограничение там не конфликтуют.
+  См. spec D316-amend (§Ф.2-находка) + `docs/time.md`. Партиальность закрытия ТЕПЕРЬ by design, не TODO.
 - **UPDATE 2026-07-04 (Plan 175 Ф.1b/Ф.3, option C — SHIPPED):** user-facing surface БОЛЬШЕ не ломается. Схема эффекта
   `Time` осталась int-wire (`now()->int` ms), НО `Duration`/`Timestamp`/`Monotonic` мигрированы в `value`-records и
   typed API доставлен на `.nv`-обёртках поверх int-провода: `Timestamp.now()` = `from_unix_millis(Time.now())`;
@@ -10514,20 +10524,19 @@ G/H). ~3700 LOC implementation cumulative.
   потому что Monotonic.now() не может быть `=> Time.now_monotonic()`
   wrapper.
 
-### [M-monotonic-mock-support] (DEFER — Plan 65 Ф.12.1)
-- **Где:** `compiler-codegen/nova_rt/effects.h::NovaVtable_Time`
-  + `compiler-codegen/nova_rt/channels.h::nova_monotonic_now_record`.
-- **Что упрощено:** mock Time handler (e.g. `testing.fixed_ms`,
-  `mut_clock`) НЕ может перехватить `Monotonic.now()` — runtime всегда
-  возвращает real uv_hrtime().
-- **Почему:** add slot `now_monotonic` в NovaVtable_Time — breaking
-  change для всех handler-literal'ов (existing handlers без
-  now_monotonic declarations would NULL-deref). Требует параллельной
-  миграции std/testing/handlers.nv + всех user-side handler literals.
-- **Как чинить:** future plan — добавить опциональный slot с default-impl
-  fallback (delegates к real clock если handler не override'ит).
-- **Приоритет:** L — mock-Monotonic малополезно (real-clock тесты с
-  monotonic invariant корректны под любой clock impl).
+### [M-monotonic-mock-support] ✅ CLOSED 2026-07-10 (Plan 175 Ф.3a, ветка `time-rework-175`)
+- **Было:** mock Time handler (`testing.fixed_ms`/`mut_clock`) НЕ мог перехватить `Monotonic.now()` —
+  runtime всегда возвращал real `uv_hrtime()` (`Monotonic.now()` был compiler-builtin, bypass'ил vtable).
+- **Фикс:** `Monotonic.now()` builtin убран (4 emit_c.rs-сайта: 2×emit_call Member/Path,
+  2×infer_expr_c_type Member/Path — grep `nova_monotonic_now_record` = 0), заменён обычной `.nv`-функцией
+  (`std/time/duration.nv`, тот же паттерн что `Timestamp.now()`). Добавлен слот `now_monotonic_ns` в
+  `NovaVtable_Time` (`nova_rt/effects.h`) + NULL-safe dispatch в `Nova_Time_now_monotonic_ns`
+  (`nova_rt/fibers.h`) — handler без явной реализации слота (старые handler-литералы) прозрачно
+  падает на real-clock, backward-compat без breaking change, ровно тот fallback, что «future plan»
+  ниже и предполагал. `fixed_ms`/`mut_clock` (`std/testing/handlers.nv`) реализуют слот когерентно с
+  `now_unix_ms` (mock-coherence, Ред.2 Q14 — один handler двигает оба чтения).
+- **Приоритет пересмотрен:** оказалось НЕ «малополезно» — mock-Monotonic нужен для elapsed-measurement
+  тестов (`measure[T]`, Ф.5d) и для `sleep_until`/`@minus(Monotonic)` детерминированных тестов.
 
 ### [M-strict-var-annotations] (DEFER — Plan 65 Ф.12.5, pre-existing)
 - **Где:** type-check layer (compiler-codegen).
@@ -10560,16 +10569,24 @@ G/H). ~3700 LOC implementation cumulative.
   per-platform isolated test.
 - **Приоритет:** L.
 
-### [M-monotonic-migration-deferred] (DEFER — Plan 65 Ф.12.6)
-- **Где:** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/cancel_latency_bench.nv`,
-  `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈9 sites).
-- **Что упрощено:** existing `Time.now()`-based timing code должен быть
-  переписан на `Monotonic.now()` для NTP/DST-skew immunity, но миграция
-  blocked by [M-time-now-schema-mismatch].
-- **Почему:** см. M-time-now-schema-mismatch.
-- **Как чинить:** после schema-mismatch fix — добавить `// AUDIT_PLAN65_Ф12`
-  markers + rewrite в follow-up commit.
-- **Приоритет:** M (semantic correctness под clock-skew).
+### [M-monotonic-migration-deferred] (PARTIAL-CLOSE 2026-07-10 — Plan 175 Ф.5d: `measure[T]` мигрирован; остальные ≈9 сайтов НЕ тронуты этой волной)
+- **UPDATE 2026-07-10 (Plan 175 Ф.5d):** блокер [M-time-now-schema-mismatch] снят by-design (option C уже
+  даёт мокабельный `Monotonic.now()`, см. выше) — миграция больше НЕ blocked, но выполнена этой волной
+  ТОЛЬКО для `measure[T]` (`std/time/duration.nv`, elapsed-measurement — самый чёткий и универсально
+  согласованный case: стопвотч/бенчмарк ДОЛЖЕН быть на монотонных часах, индустриальная конвенция
+  Go/Rust/Java). `deadline_in` НАМЕРЕННО НЕ мигрирован (return-type committed к `Timestamp`, D124 —
+  не «недоделано», а осознанное решение). `is_past`/`time_until`/`@elapsed` (на `Timestamp`) корректно
+  ОСТАЮТСЯ `Timestamp`-based — это НЕ входит в список миграции (сравнение self к wall-clock-now — тот
+  же домен, миграция была бы D124-нарушением; исходный список площадки Plan 65 предполагал иначе).
+- **Где (ОСТАЮТСЯ, не тронуты):** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/
+  cancel_latency_bench.nv`, `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈8 сайтов после
+  measure[T]) — timing-логика, использующая `Time.now()`/`Timestamp.now()` там, где семантически
+  нужен monotonic (не блокировано, просто не тронуто вне scope этой конкретной волны — прочитать
+  каждый сайт индивидуально перед миграцией, не блочно).
+- **Как чинить:** per-site аудит (не bulk-rewrite) — для каждого решить wall vs monotonic семантику
+  отдельно, как это было сделано для measure[T] vs deadline_in в Plan 175 Ф.5d.
+- **Приоритет:** M (semantic correctness под clock-skew) — снижен с учётом, что самый частый/важный
+  case (elapsed-measurement) уже закрыт.
 
 ### [M-cancel-token-cancel-at] (DEFER — Plan 65 Ф.12.6)
 - **Где:** `compiler-codegen/nova_rt/fibers.h::NovaCancelToken`.
@@ -24008,7 +24025,15 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
   для investigation; миллион timers с no stack info лучше чем ноль.
 
-### [M-time-now-schema-mismatch] (PARTIAL-CLOSE 2026-07-04 Plan 175 Ф.1b/Ф.3 option C; typed-effect-ops остаток OWNER-GATED)
+### [M-time-now-schema-mismatch] (PARTIAL-CLOSE BY DESIGN — Plan 175 Ф.1b/Ф.3 option C SHIPPED; typed-effect-wire (Ф.2) SUPERSEDED 2026-07-10, не «остаток», а закрытое решение)
+- **UPDATE 2026-07-10 (Plan 175, 4-й заход на Ф.2):** typed-effect-wire (retire int-wire в СХЕМЕ) исследован
+  четвёртый раз. prelude⟷std.time coupling из 3 прошлых заходов — решаем (перенос `Time`-decl в `std.time`).
+  Настоящий барьер ГЛУБЖЕ: mock-handler обязан сконструировать opaque `Monotonic` внутри handler-тела
+  (Monotonic намеренно без `from_*`, Rust `Instant`-паритет), а codegen handler-литералов не поддерживает
+  anonymous record-literal. Заход откачен чисто. **Вывод: option C (int-wire + typed-сахар) — корректная
+  ИТОГОВАЯ архитектура**, не временный компромисс — typed-сахар живёт в родном модуле типа (anon-literal
+  там — обычный function body, не handler-литерал), opacity и codegen-ограничение там не конфликтуют.
+  См. spec D316-amend (§Ф.2-находка) + `docs/time.md`. Партиальность закрытия ТЕПЕРЬ by design, не TODO.
 - **UPDATE 2026-07-04 (Plan 175 Ф.1b/Ф.3, option C — SHIPPED):** user-facing surface БОЛЬШЕ не ломается. Схема эффекта
   `Time` осталась int-wire (`now()->int` ms), НО `Duration`/`Timestamp`/`Monotonic` мигрированы в `value`-records и
   typed API доставлен на `.nv`-обёртках поверх int-провода: `Timestamp.now()` = `from_unix_millis(Time.now())`;
@@ -24039,20 +24064,19 @@ G/H). ~3700 LOC implementation cumulative.
   потому что Monotonic.now() не может быть `=> Time.now_monotonic()`
   wrapper.
 
-### [M-monotonic-mock-support] (DEFER — Plan 65 Ф.12.1)
-- **Где:** `compiler-codegen/nova_rt/effects.h::NovaVtable_Time`
-  + `compiler-codegen/nova_rt/channels.h::nova_monotonic_now_record`.
-- **Что упрощено:** mock Time handler (e.g. `testing.fixed_ms`,
-  `mut_clock`) НЕ может перехватить `Monotonic.now()` — runtime всегда
-  возвращает real uv_hrtime().
-- **Почему:** add slot `now_monotonic` в NovaVtable_Time — breaking
-  change для всех handler-literal'ов (existing handlers без
-  now_monotonic declarations would NULL-deref). Требует параллельной
-  миграции std/testing/handlers.nv + всех user-side handler literals.
-- **Как чинить:** future plan — добавить опциональный slot с default-impl
-  fallback (delegates к real clock если handler не override'ит).
-- **Приоритет:** L — mock-Monotonic малополезно (real-clock тесты с
-  monotonic invariant корректны под любой clock impl).
+### [M-monotonic-mock-support] ✅ CLOSED 2026-07-10 (Plan 175 Ф.3a, ветка `time-rework-175`)
+- **Было:** mock Time handler (`testing.fixed_ms`/`mut_clock`) НЕ мог перехватить `Monotonic.now()` —
+  runtime всегда возвращал real `uv_hrtime()` (`Monotonic.now()` был compiler-builtin, bypass'ил vtable).
+- **Фикс:** `Monotonic.now()` builtin убран (4 emit_c.rs-сайта: 2×emit_call Member/Path,
+  2×infer_expr_c_type Member/Path — grep `nova_monotonic_now_record` = 0), заменён обычной `.nv`-функцией
+  (`std/time/duration.nv`, тот же паттерн что `Timestamp.now()`). Добавлен слот `now_monotonic_ns` в
+  `NovaVtable_Time` (`nova_rt/effects.h`) + NULL-safe dispatch в `Nova_Time_now_monotonic_ns`
+  (`nova_rt/fibers.h`) — handler без явной реализации слота (старые handler-литералы) прозрачно
+  падает на real-clock, backward-compat без breaking change, ровно тот fallback, что «future plan»
+  ниже и предполагал. `fixed_ms`/`mut_clock` (`std/testing/handlers.nv`) реализуют слот когерентно с
+  `now_unix_ms` (mock-coherence, Ред.2 Q14 — один handler двигает оба чтения).
+- **Приоритет пересмотрен:** оказалось НЕ «малополезно» — mock-Monotonic нужен для elapsed-measurement
+  тестов (`measure[T]`, Ф.5d) и для `sleep_until`/`@minus(Monotonic)` детерминированных тестов.
 
 ### [M-strict-var-annotations] (DEFER — Plan 65 Ф.12.5, pre-existing)
 - **Где:** type-check layer (compiler-codegen).
@@ -24085,16 +24109,24 @@ G/H). ~3700 LOC implementation cumulative.
   per-platform isolated test.
 - **Приоритет:** L.
 
-### [M-monotonic-migration-deferred] (DEFER — Plan 65 Ф.12.6)
-- **Где:** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/cancel_latency_bench.nv`,
-  `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈9 sites).
-- **Что упрощено:** existing `Time.now()`-based timing code должен быть
-  переписан на `Monotonic.now()` для NTP/DST-skew immunity, но миграция
-  blocked by [M-time-now-schema-mismatch].
-- **Почему:** см. M-time-now-schema-mismatch.
-- **Как чинить:** после schema-mismatch fix — добавить `// AUDIT_PLAN65_Ф12`
-  markers + rewrite в follow-up commit.
-- **Приоритет:** M (semantic correctness под clock-skew).
+### [M-monotonic-migration-deferred] (PARTIAL-CLOSE 2026-07-10 — Plan 175 Ф.5d: `measure[T]` мигрирован; остальные ≈9 сайтов НЕ тронуты этой волной)
+- **UPDATE 2026-07-10 (Plan 175 Ф.5d):** блокер [M-time-now-schema-mismatch] снят by-design (option C уже
+  даёт мокабельный `Monotonic.now()`, см. выше) — миграция больше НЕ blocked, но выполнена этой волной
+  ТОЛЬКО для `measure[T]` (`std/time/duration.nv`, elapsed-measurement — самый чёткий и универсально
+  согласованный case: стопвотч/бенчмарк ДОЛЖЕН быть на монотонных часах, индустриальная конвенция
+  Go/Rust/Java). `deadline_in` НАМЕРЕННО НЕ мигрирован (return-type committed к `Timestamp`, D124 —
+  не «недоделано», а осознанное решение). `is_past`/`time_until`/`@elapsed` (на `Timestamp`) корректно
+  ОСТАЮТСЯ `Timestamp`-based — это НЕ входит в список миграции (сравнение self к wall-clock-now — тот
+  же домен, миграция была бы D124-нарушением; исходный список площадки Plan 65 предполагал иначе).
+- **Где (ОСТАЮТСЯ, не тронуты):** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/
+  cancel_latency_bench.nv`, `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈8 сайтов после
+  measure[T]) — timing-логика, использующая `Time.now()`/`Timestamp.now()` там, где семантически
+  нужен monotonic (не блокировано, просто не тронуто вне scope этой конкретной волны — прочитать
+  каждый сайт индивидуально перед миграцией, не блочно).
+- **Как чинить:** per-site аудит (не bulk-rewrite) — для каждого решить wall vs monotonic семантику
+  отдельно, как это было сделано для measure[T] vs deadline_in в Plan 175 Ф.5d.
+- **Приоритет:** M (semantic correctness под clock-skew) — снижен с учётом, что самый частый/важный
+  case (elapsed-measurement) уже закрыт.
 
 ### [M-cancel-token-cancel-at] (DEFER — Plan 65 Ф.12.6)
 - **Где:** `compiler-codegen/nova_rt/fibers.h::NovaCancelToken`.
@@ -38243,3 +38275,68 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   [M-spawn-module-const-capture] (module-const захватывался по сырому имени в spawn/detach/
   blocking), [M-bare-result-try-annotation] (bare `Result` + `?` аннотировался целым Result →
   указательная арифметика на int-payload).
+
+## Plan 173.2 — supervision-as-effect: `Supervisor`/`Decision` (D416) (2026-07-10)
+
+- **СНЯТО 2026-07-10 (решение владельца): Restart-семейство РЕТРАКТИРОВАНО из словаря
+  `Decision` целиком** (D416 §1/§4 амендмент) — не «MVP за гейтом», а прод-реди полный
+  словарь `Escalate | Stop`. Мотив: рестарт — идиома акторных систем, не структурной
+  конкуренции (Kotlin coroutineScope / Swift TaskGroup / Java Joiner рестарта не имеют);
+  повтор попытки — `std/concurrency/retry` внутри тела ребёнка. Гейт
+  `E_SUPERVISOR_RESTART_GATED`, runtime-abort и neg-тест `restart_gated_neg` удалены;
+  `[M-173.2-restart-all-rest]` и `attempt`-вопрос закрыты ретракцией.
+- (истор.) MVP-объём §3b (owner 2026-06-26): исполнялись `Escalate`/`Stop`;
+  Restart-варианты держались в словаре за `E_SUPERVISOR_RESTART_GATED` до изоляции
+  D415/173.3; `attempt`-параметр был отложен вместе с Restart.
+- **Периметр: remote-дети armed M:N** (child_error[]-субстрат 173.0 заполняет только
+  remote-путь; auto-arm делает его дефолтным). Bootstrap/single-thread
+  (`NOVA_NO_AUTOARM=1`) и implicit main-scope (top-level `detach`) — дефолтный
+  Escalate-all; задокументировано в D416 §5 и в докстринге эффекта.
+- **Suspend-запрет в хендлере — компилируемое приближение V1:** прямой `Time.sleep`
+  в теле хендлера (`E_SUPERVISOR_HANDLER_SUSPEND`) + `interrupt`
+  (`E_SUPERVISOR_HANDLER_INTERRUPT`); транзитивный suspend через вызов функции —
+  followup эффект-row-анализом (Q-блок D416 §3).
+- **Механика без упрощений:** deferred-decision режим (хендлер есть → падение пишет
+  ТОЛЬКО свой per-slot с release-publish, без CAS-primary/cancel-бродкаста); решения
+  serialized на drive-потоке ВО ВРЕМЯ drain'а (Escalate успевает отменить siblings,
+  Stop оставляет их доживать) + финальный catch-up под pending_remote==0-гейтом;
+  throw хендлера огорожен fail-frame'ом моста = Escalate-with-handler-error;
+  индуцированные CANCEL siblings хендлеру не показываются. Дефолт (нет хендлера) —
+  байт-паритет: ни одна новая ветка не активируется.
+- **Гейты:** cargo оба чистые; conformance 82/0; err173_0 (retention ×5 стаб. после
+  одиночного TIMEOUT-флейка под параллельной сборкой 4 CU) / err173_2 / err173_3 +
+  все neg зелёные; std/concurrency 7/0. Известный MAIN-side красный (не эта ветка):
+  err173_1/parfor_diag — D415-гейт `E_CONCURRENT_MUT_CAPTURE` бьёт mut-захват в
+  supervised_value_smoke.nv (файл 173.1, гейт 173.3) — чинить волне 173.1/173.3.
+
+## Plan 173 Ф.5+Ф.6 — hygiene + panics-клаузула (2026-07-10, ветка err-173-f56)
+
+**Ф.5 — отступления/границы (не упрощения):**
+- **Per-instance exactly-once счётчик — только пользовательские heap-record типы.** Extern "nova"
+  cleanup'ы (MutexGuard/ReadGuard/WriteGuard/Permit — D194 hot-path) счётчиком не оснащаются: их
+  структуры рукописные в nova_rt (инъекция поля невозможна из codegen). Generic consume-типы —
+  mono-путь без прологa (в корпусе таких нет). Scope-локальный дубль-гард сохранён как
+  defense-in-depth для extern-типов.
+- **Watchdog-варн наблюдаем в .nv только структурно** (overrun-флаг exit-события); сам stderr-текст
+  «fiber stuck in cleanup» в .nv-фикстуре не проверяется (нет EXPECT-механики для warn-потока
+  positive-теста) — механика той же ветки, что overrun, покрыт код-путь.
+- **[E_UNKNOWN_TYPE] на record-literal** — точечный фикс вскрытого miscompile-класса; общий
+  name-resolution пробел (unknown-тип в TypeRef/Fail[...]-позиции «не наша забота») остаётся —
+  d192-ретракт neg-тесты используют record-literal вектор.
+
+**Ф.6 — фактическая граница миграции (план оценивал −78 CU, факт −52):**
+- **Throw-класс НЕ мигрируем by design:** sync unlock/misuse-guards, Channel.new capacity,
+  select-all-closed кидаются `nova_throw` (USER) — по строгой D348-семантике это не паника
+  (инверсия не принимает). Семантический вопрос «должны ли sync-misuse-guards быть panic-классом
+  (D13)» — отдельное языковое решение, НЕ взято в Ф.6.
+- **File-режимные тесты** (`// CONTRACTS off`, module-level `#unchecked`) остаются standalone —
+  директива действует на весь CU.
+- **Процессные тесты** (fiber stack overflow = SEH-kill, token-double-bind abort из fiber,
+  uncaught-abort stderr «(throw site)») — легитимный legacy (изоляция процесса обязательна).
+- **Мигранты pre-existing-красных CU возвращены** (plan153_4/5, plan138/_2, plan83_10, strings,
+  contracts, plan11_followup, plan153_2): вливание в красный CU = потеря покрытия; сами CU красные
+  на родном baseline-бинаре (internal error P67-LEGACY chunks_windows, E_STR_NO_LEN-дрейфы,
+  strict-propagation) — санация корпуса вне периметра (Plan 182).
+- **Contract-диагностика в folder-module CU** печатает file:line entry-файла CU (loc_for_span от
+  annotation_source) — panics-паттерны мигрантов ослаблены (без file:line-префикса). Точность
+  file:line в multi-file CU — известная ось (span→peer-файл маппинг), не регресс этой волны.

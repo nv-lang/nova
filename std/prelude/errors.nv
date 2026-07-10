@@ -287,27 +287,6 @@ export type CancelError {
     ro reason str
 }
 
-/// Cleanup timeout exceeded (D192). Выбрасывается runtime'ом из текущего
-/// suspend-point внутри `Cleanup.cleanup` body когда cumulative cleanup
-/// время превысило resolved `exit_timeout`.
-///
-/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; runtime emit
-/// в `nv_consume_check_deadline` (Plan 110 Ф.3.2).
-///
-/// # Examples
-///
-/// ```nova
-/// fn cleanup_with_timeout() Fail[CleanupTimeoutError] -> () {
-///     consume tcp = TcpStream.connect(addr) {
-///         body  // если cleanup TCP > exit_timeout — CleanupTimeoutError
-///     }
-/// }
-/// ```
-#stable(since = "0.1")
-export type CleanupTimeoutError {
-    ro duration_ms int
-}
-
 /// Scope-deadline exceeded (Plan 174 / D349, план 173 §3a). Выбрасывается
 /// runtime'ом наружу из `supervised(deadline:/timeout:) { ... }` когда срок
 /// области истёк: все fiber'ы области кооперативно отменяются (тот же путь,
@@ -316,9 +295,11 @@ export type CleanupTimeoutError {
 /// `with Fail[TimeoutError]`.
 ///
 /// `deadline_ns` — превышенная точка на монотонных часах (абсолютные
-/// наносекунды, epoch реализации; только дельты значимы). Отличается от
-/// [`CleanupTimeoutError`] (D192): та — про cleanup-бюджет ресурса; эта — про
-/// срок ЦЕЛОЙ области (bounded-shutdown). Реальная USER-ошибка внутри области
+/// наносекунды, epoch реализации; только дельты значимы). NB: ретрактнутый
+/// `CleanupTimeoutError` (D192-ретракт, Plan 173 Ф.5 п.2) был про
+/// cleanup-бюджет ресурса и УДАЛЁН (превышение = watchdog-варн + overrun в
+/// ResourceTrace exit-событии); этот тип — про срок ЦЕЛОЙ области
+/// (bounded-shutdown) и живёт. Реальная USER-ошибка внутри области
 /// побеждает срок (USER-precedence): при истечении срока И user-throw'е наружу
 /// летит user-ошибка, не `TimeoutError`.
 ///

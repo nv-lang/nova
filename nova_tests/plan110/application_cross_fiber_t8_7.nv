@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Plan 110.4.7 (D195 R6): cross-fiber Application propagation.
+// Plan 110.4.7 (D195 R6) + Plan 173 Ф.5 п.2 (миграция с enter(timeout)
+// на watchdog/overrun — D192-ретракт): cross-fiber Application propagation.
 // Spawn child fiber sees parent's Application handler via the D80
 // effect-snapshot mechanism (TLS effect registry + per-fiber init
 // snapshot — Plan 83.4.5.4 + Plan 83.10.4 Ф.3).
 //
+// Наблюдение ПОВЕДЕНЧЕСКОЕ: parent Application задаёт порог 1ms; child-fiber
+// consume-scope с 30ms-cleanup → overrun=true в exit-событии ⇔ Level-2
+// порог реально унаследован ребёнком (при Level-3 5000ms overrun был бы
+// false). ResourceTrace-хендлер наследуется тем же снапшотом.
+//
 // Acceptance:
 //   A110.4.7.a — child fiber's ConsumeScope inherits parent's
-//                Application handler → exit_timeout resolves via
+//                Application handler → threshold resolves via
 //                inherited handler, not Level 3 fallback.
 
 module nova_tests.plan110
@@ -17,29 +23,32 @@ type Res3 {
 }
 
 fn Res3.new(id int) -> Res3 => { id }
-fn Res3 consume @cleanup(_outcome ScopeOutcome) -> () => ()
+// 30ms-cleanup: превышает Application-порог 1ms, но НЕ Level-3 5000ms.
+fn Res3 consume @cleanup(_outcome ScopeOutcome) -> () {
+    Time.sleep(30)
+    return ()
+}
 
 test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot" {
-    mut child_observed = -1
+    mut child_overrun = false
     with Application = effect Application {
         register_finalizer(_f) {
             return ()
         }
         default_exit_timeout_ms() {
-            return 750
+            return 1
         }
     } {
         with ResourceTrace = effect ResourceTrace {
-            on_resource_enter(_label, timeout_ms) {
-                child_observed = timeout_ms
-                return ()
-            }
-            on_resource_exit(_label, _outcome) {
+            on_resource_enter(_label) { return () }
+            on_resource_exit(_label, _outcome, _duration_ms, overrun) {
+                child_overrun = overrun
                 return ()
             }
         } {
             // Spawn a child fiber that opens a consume scope —
-            // it must see Application 750ms через D80 snapshot.
+            // its watchdog threshold must resolve to Application's 1ms
+            // через D80 snapshot → 30ms-cleanup = overrun.
             supervised {
                 spawn {
                     consume r = Res3.new(1) {
@@ -49,5 +58,5 @@ test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot
             }
         }
     }
-    assert(child_observed == 750)
+    assert(child_overrun == true)
 }

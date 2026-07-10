@@ -50,8 +50,12 @@ runtime-факт, не tipo-факт). Если нужна гарантия, ч�
 **нет**, используется блок [`realtime { ... }`](04-effects.md#d64).
 
 Structured concurrency — **примитивы языка** (`spawn`, `supervised`
-[+ опц. `cancel:`], `select`, `parallel for`, `detach`, `blocking`),
-`race`/`with_timeout` — stdlib поверх них, см. [D50](#d50), [D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
+[+ опц. `cancel:`/`deadline:`/`timeout:` — D408], `select`, `parallel for`,
+`detach`, `blocking`), `race` — stdlib поверх них, см. [D50](#d50),
+[D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
+*(Plan 173 §3a п.4: `with_timeout` субсумирован `supervised(timeout:)` —
+подлежит удалению, `[M-174-retract-with-timeout]`; `race {…}`-блок ниже —
+эскиз, не реализован: N-арный `race` — дизайн 173.1 §2a.)*
 
 ### Правило
 
@@ -91,6 +95,8 @@ fn fetch_all(urls []str) Net Fail -> []Response =>
     }
 
 // race — кто первый ответил, тот и победил
+// (эскиз: block-форма НЕ реализована; сейчас std race2, общий N-арный
+//  race — дизайн 173.1 §2a; см. нота выше)
 race {
     fetch(url_a),
     fetch(url_b),
@@ -112,8 +118,9 @@ supervised(cancel: tok) {
     spawn do_other()
 }
 
-// with_timeout — bound на время выполнения
-with_timeout(2.seconds()) {
+// bound на время выполнения — параметр области (D408; ex-with_timeout,
+// субсумирован Plan 173 §3a / Plan 174)
+supervised(timeout: 2.seconds()) {
     Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
 ```
@@ -136,8 +143,8 @@ with_timeout(2.seconds()) {
    на масштабе backend (миллионы fiber'ов на узел). OCaml 5 показал
    тот же подход в строго типизированном языке.
 4. **Structured concurrency встроена.** Не нужны библиотеки типа
-   Trio/structured-concurrency RFC — `parallel for`, `race`,
-   `supervised(cancel:)` — часть языка. Это значительно безопаснее
+   Trio/structured-concurrency RFC — `parallel for`,
+   `supervised(cancel:/deadline:/timeout:)` — часть языка (`race` — stdlib). Это значительно безопаснее
    для AI-генерации (нет утечек fiber'ов).
 
 ### Сравнение с Rust async
@@ -257,11 +264,14 @@ inverse-маркером.
 > on atexit либо через `runtime.drain_orphans()` explicit-sync API),
 > `Time.sleep` как yield-point, `blocking { }` (Plan 83.3 — libuv-
 > threadpool offload, см. §4 «Реализация»). Capture-by-value для
-> immutable scalars. Не реализованы: `race`, `select`, `cancel_scope`,
-> `with_timeout`, эффект `Detach` в effect-system (всё ещё runtime-
-> primitive), cancellation/error-propagation между fibers (для
-> non-orphan). Orphan errors → LogAndDrop в caller's stderr,
-> non-propagate.
+> immutable scalars. Статус (обновлено Plan 173 Ф.5.4, 2026-07-10):
+> `select` РЕАЛИЗОВАН (D94 + None-арм D414 §3); `supervised(deadline:/timeout:)`
+> РЕАЛИЗОВАНЫ (D408) — `with_timeout` субсумирован (ретракция отложена
+> `[M-174-retract-with-timeout]`); общий N-арный `race` НЕ реализован
+> (std `race2`; дизайн 173.1 §2a); cancellation/error-propagation между
+> fibers — 173.0 retention + D414 precedence. Orphan errors → LogAndDrop
+> в caller's stderr, non-propagate (escalate-to-scope —
+> `[M-173-detach-escalate-to-scope]`).
 
 ### Что
 
@@ -278,9 +288,9 @@ inverse-маркером.
 
 #### 1. Suspension — ambient (D62), не эффект
 
-Suspension fiber'а **не пишется в сигнатуре**. `parallel for`, `race`,
-`select` — синтаксические примитивы языка (D14), они работают на
-уровне fiber-runtime'а, не type-system'ы.
+Suspension fiber'а **не пишется в сигнатуре**. `parallel for`,
+`select` — синтаксические примитивы языка (D14; `race` — stdlib поверх),
+они работают на уровне fiber-runtime'а, не type-system'ы.
 
 ```nova
 fn fan_out(urls []str) Net Fail -> []Response =>
@@ -349,8 +359,8 @@ use_both(a.load(), b.load())
 
 `spawn` **запрещён** вне structured-блока. Допустимые скоупы:
 `supervised` (в т.ч. `supervised(cancel:)`), `parallel for`, `select`;
-а также stdlib-функции, построенные на них (`race`, `with_timeout`),
-внутри своих тел. Вне такого скоупа `spawn foo()` — ошибка компиляции.
+а также stdlib-функции, построенные на них (`race2`; ex-`with_timeout`
+— субсумирован `supervised(timeout:)`, D408), внутри своих тел. Вне такого скоупа `spawn foo()` — ошибка компиляции.
 
 ```nova
 // ✓ ОК — spawn внутри supervised
@@ -3616,6 +3626,28 @@ ro deadline = Time.now() + Duration.from_secs(60)
   `Duration` уже type-safe (signed, nanos), unit-agnostic. `Mono - Mono`
   и `Ts - Ts` оба возвращают тот же `Duration`.
 
+**AMEND (Plan 175, 2026-07-04..07-10 — актуализация под D316/D317/D318;
+исходный текст выше писался до `Time`-schema-унификации, имена и детали
+дрейфовали):**
+- `Time.now()`/`Time.now_monotonic()` из §«Что» устарели по имени —
+  переименованы в `Time.now_unix_ms()`/`Time.now_monotonic_ns()` (D316
+  owner unit-rename, 2026-07-06; чистое переименование wire-op).
+- `Timestamp`/`Monotonic` теперь `value`-records (Ф.1b), не heap `{}`.
+- **`Monotonic.now()` больше НЕ compiler-builtin** (Ф.3a, 2026-07-10) —
+  обычная `.nv`-функция (`std/time/duration.nv`), мокабельна через
+  `with Time = handler {...}` (закрывает п.5 «mock-handler должен
+  реализовать оба `now()`» — теперь буквально верно и для monotonic).
+  `Monotonic.from_nanos` по-прежнему НЕ введён (п.4 остаётся в силе —
+  opaque-контракт; см. также D316-amend «Ф.2-находка» — эта opacity
+  ЕСТЬ причина, почему typed-wire-в-схеме архитектурно дороже, чем
+  typed-сахар-поверх-int-wire).
+  `Monotonic - Monotonic -> Duration` теперь ДВЕ формы: named `@elapsed_since`
+  (было) + operator `@minus(Monotonic)` (Ф.3c, alias, `m2 - m1` дispatch).
+  Non-regression — saturate-to-zero (D318), не «всегда ≥0 by assumption»
+  как исходный текст п.3 наивно предполагал (HW/VM/OS-баг возможен).
+- Serialization-запрет на `Monotonic` (п. «Что») — verification (derive-
+  путь отсутствует) вынесена в план 175 Ф.6, ещё не пройдена в этой волне.
+
 ### Связь
 
 - **[D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)** —
@@ -6421,9 +6453,10 @@ codegen — byte-identical для не-deadline областей). Внутре�
 блоке при входе/выходе — иначе следующая область унаследовала бы `deadline_ns` из
 освобождённого stack-фрейма (spurious immediate `TimeoutError`).
 
-**Отличие от `CleanupTimeoutError` (D192).** Та — про cleanup-бюджет ОДНОГО
-ресурса (ретракнута §3a в пользу watchdog-варна); эта — про срок ЦЕЛОЙ области
-(bounded-shutdown). Разные типы, разные механизмы.
+**Отличие от `CleanupTimeoutError` (D192).** Та была про cleanup-бюджет ОДНОГО
+ресурса — РЕТРАКТИРОВАНА §3a и УДАЛЕНА из prelude (Plan 173 Ф.5 п.2:
+watchdog-варн + `duration_ms`/`overrun` в ResourceTrace exit-событии);
+эта — про срок ЦЕЛОЙ области (bounded-shutdown) и живёт.
 
 **Ретракция `with_timeout` (§3a п.4) — UNBLOCKED, отложена маркером.** Теперь,
 когда `supervised(timeout:)` приземлён, `with_timeout[T]`/`within[T]`
@@ -6438,7 +6471,7 @@ codegen `emit_supervised` (`.nanos`-извлечение + `nova_deadline_combin
 runtime `nova_rt/fibers.h` (`NovaFiberQueue.deadline_ns`/`saved_active_scope`,
 `nova_scope_init` inherit, `nova_deadline_combine`/`nova_scope_deliver_cancel`/
 `_nova_scope_deadline_run_once`/`nova_throw_scope_timeout` + run_impl deadline-gate);
-typed-throw splice `_nova_throw_scope_timeout_impl` (по образцу CleanupTimeoutError);
+typed-throw splice `_nova_throw_scope_timeout_impl` (по образцу ныне-удалённого CleanupTimeoutError-splice);
 `with Fail[...]` active-scope restore. Тесты: `std/concurrency/supervised_deadline_test.nv`
 (8/8: within-budget; timeout→TimeoutError+`is`; sleep interrupted early <2000ms для
 sleep(5000); абсолютный deadline; вложенность inner-can't-extend; deadline+cancel
@@ -6786,3 +6819,127 @@ E_CONST_EFFECT_IN_INIT).
 std (`concurrency/cancellation.nv` `within`/`race2` — реальные TOCTOU-гонки,
 переведены на каналы; `http/servernet` smoke — на каналы) + nova_tests
 (~19 файлов — на `Atomic*`).
+
+## D416. Supervision-as-effect — `Supervisor`/`on_child_fail(idx, err) → Decision` (Plan 173.2)
+
+> Дом [Plan 173.2](../../docs/plans/173.2-supervision-as-effect.md)
+> (sign-off решений §2 2026-06-21; §3b-резолюция owner 2026-06-26; реализация
+> 2026-07-10). Стоит на субстрате
+> [Plan 173.0](../../docs/plans/173.0-concurrency-runtime-substrate.md)
+> (per-slot `child_error[]` retention + serialized decision-loop + R1-guard)
+> и [D414](#d414-structured-error-propagation--primary-selection-precedence-detach-policy-channel-closed-vs-value-plan-173-ф3)
+> (precedence PANIC > USER > CANCEL). Erlang-style supervision = handler
+> strategy (README), НЕ фиксированный набор стратегий-имён.
+
+### §1. Эффект и словарь
+
+`Supervisor` — настоящий эффект в `std/prelude/effects.nv` (§3 — не хардкод
+в Rust; лоуэринг = обычный user-effect путь, как `Random`):
+
+```nova
+type Decision enum Escalate | Stop
+type Supervisor effect {
+    on_child_fail(idx int, err any) -> Decision
+}
+```
+
+- `idx` — retention-слот упавшего ребёнка (spawn-порядок remote-детей,
+  173.0 `child_error[]`); `err` — ошибка как `any`: typed-throw payload
+  (сужается `err is T`), string-throw / panic — `str`-сообщение.
+- **Стратегии = хендлеры** (значения эффекта): `with Supervisor = policy
+  { … }`, как `Time`/`Fail`. Встроенные политики —
+  `std.concurrency.supervisor.escalate()` / `.stop()`. Имён-стратегий как
+  сущности нет.
+- **Амендмент 2026-07-10 (решение владельца): `Restart`-семейство
+  РЕТРАКТИРОВАНО из словаря** (изначальный §3b-MVP держал
+  `Restart`/`RestartAll`/`RestartRest` в типе за компайл-гейтом
+  `E_SUPERVISOR_RESTART_GATED`). Мотив: рестарт — идиома акторных систем
+  (Erlang/OTP: долгоживущий изолированный процесс), а `supervised` —
+  структурная конкуренция с лексическим scope'ом; эталоны класса (Kotlin
+  `coroutineScope`, Swift `TaskGroup`, Java `StructuredTaskScope.Joiner`)
+  рестарта не имеют. Повтор попытки идиоматично живёт ВНУТРИ тела ребёнка
+  (`std/concurrency/retry`) — там нет проблемы изоляции полусостояния.
+  Словарь `Escalate | Stop` — ПОЛНЫЙ, решение прод-реди; параметр `attempt`
+  не нужен (был осмыслен только с Restart).
+
+### §2. Семантика исполнения
+
+- **Дефолт (нет хендлера) = сегодняшний all-or-throw, байт-паритет.**
+  Supervision-ветка рантайма не активируется вовсе: codegen штампует
+  `has_supervisor = (_nova_handler_Supervisor != NULL)` на входе scope'а
+  (`supervised` / array-mode `parallel for`), false → все новые ветки
+  мертвы, репорт-пути byte-идентичны до-173.2.
+- **Хендлер установлен → deferred-decision режим scope'а:** падение ребёнка
+  пишется ТОЛЬКО в его per-slot `child_error[idx]` (release-publish
+  per-slot; ни CAS-выбора primary, ни cancel-бродкаста) — выбор реакции
+  принадлежит супервизору, а не упавшему.
+- **Сериализация:** `on_child_fail` исполняется на drive-потоке scope'а
+  (drain-цикл `nova_supervised_run_impl` — решения принимаются ПОКА siblings
+  ещё бегут + финальный catch-up после дрейна, строго до освобождения
+  retained SpawnCtx), по одному падению за раз, в порядке слотов;
+  ровно один вызов на падение.
+- **`Escalate`** — ошибка ребёнка идёт в primary-machinery scope'а
+  (тот же precedence-путь D414 PANIC > USER > CANCEL + cancel_requested,
+  что и на дефолте) → siblings кооперативно отменяются, scope
+  перевыбрасывает primary наружу.
+- **`Stop`** — ребёнок «выкинут» (Erlang temporary): без эскалации, без
+  отмены siblings, scope продолжает; ошибка остаётся retained per-slot
+  (не теряется молча — D414 §критерий 3).
+- **panic ребёнка доходит до решения** (kind PANIC — supervision на границе
+  fiber'а санкционирована D13); **индуцированные отмены siblings (CANCEL)
+  хендлеру не показываются** — следствие эскалации, не корневое падение.
+- **Мост рантайм↔Nova:** `_nova_supervisor_decide_fn` — fn-pointer,
+  назначаемый generated main() (паттерн `_nova_throw_scope_timeout_fn`);
+  импл (`_nova_supervisor_decide_impl`, emit_c splice) читает ambient
+  TLS-vtable, боксирует `NovaChildError` в `any`, маппит тег `Decision`
+  в `NOVA_SUPERVISE_*`-коды.
+
+### §3. Ограничения хендлера (closed handler effect-set, Q-блок)
+
+- **`throw`/`Fail` разрешён = Escalate-with-handler-error:** вызов хендлера
+  огорожен локальным fail-frame (guard от handler-fails-self / longjmp
+  мимо drain-цикла); брошенная хендлером ошибка идёт в primary-machinery
+  scope'а первой (precedence решает исход: PANIC ребёнка всё равно бьёт
+  USER хендлера — D13).
+- **`interrupt` запрещён** — `[E_SUPERVISOR_HANDLER_INTERRUPT]`: ранний
+  выход из with-блока бросил бы drain с живыми детьми.
+- **suspend-операции запрещены** — `[E_SUPERVISOR_HANDLER_SUSPEND]`
+  (компилируемое приближение V1: прямой `Time.sleep` в теле хендлера;
+  транзитивный вызов через функцию — followup эффект-row-анализом).
+
+### §4. Restart — РЕТРАКТИРОВАН (амендмент 2026-07-10, superseded §3b-гейт)
+
+Исходная §3b-резолюция держала `Restart`-варианты в словаре за компайл-гейтом
+`[E_SUPERVISOR_RESTART_GATED]` до появления изоляции restartable-тела.
+Решением владельца 2026-07-10 семейство УДАЛЕНО из словаря целиком (мотив —
+§1): гейт-диагностика ретрактирована вместе с вариантами, ссылка на
+`Decision.Restart` — обычный unknown-variant; runtime-мост маппит любой
+не-Stop тег в Escalate (defensive). Маркер `[M-173.2-restart-all-rest]`
+закрыт ретракцией. Повтор попытки — `std/concurrency/retry` внутри тела.
+
+### §5. Периметр
+
+Политика применяется к remote-детям armed M:N runtime — дефолтный путь
+исполнения (auto-arm в main; источник `(idx, err)` = per-slot
+`child_error[]` 173.0, который заполняет только remote-путь).
+Bootstrap/single-thread (`NOVA_NO_AUTOARM=1`) и implicit main-scope
+(top-level `detach`) остаются на дефолтном Escalate-all — честно
+задокументированное ограничение субстрата, не тихий пропуск политики.
+
+### Диагностики / тесты
+
+| код | что |
+|---|---|
+| `E_SUPERVISOR_HANDLER_INTERRUPT` | `interrupt` в теле Supervisor-хендлера |
+| `E_SUPERVISOR_HANDLER_SUSPEND` | `Time.sleep` в теле Supervisor-хендлера |
+
+(`E_SUPERVISOR_RESTART_GATED` ретрактирован вместе с Restart-семейством — §4.)
+
+Тесты: `nova_tests/err173_2/` — pos `supervisor_stop_test` (siblings живут,
+scope продолжает; multi-fail; panic-до-решения), `supervisor_escalate_test`
+(паритет с дефолтом на идентичном теле; custom-политика с mut-состоянием и
+`err is int`-narrowing + `idx`-диапазон; Escalate-with-handler-error),
+`supervisor_parfor_test` (Stop = «собери выживших», dense `[]T`); neg
+`handler_interrupt_neg`, `handler_sleep_neg` (`restart_gated_neg` удалён
+вместе с ретракцией §4 — unknown-variant покрыт общей диагностикой).
+Модульные: `std/concurrency/supervisor_test.nv`.

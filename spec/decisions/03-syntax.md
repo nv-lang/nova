@@ -6472,6 +6472,12 @@ instance `@foo`» (либо обратное). Это hardening аналогич
 > **Plan 100.4.1.** Принято 2026-05-23 (proposed; implementation pending).
 > **Amend [D90](#d90) §4** — снимает ограничение «defer body INFALLIBLE».
 >
+> **⚠️ Historical-нота (Plan 173 Ф.5.4):** заголовок/примеры ниже упоминают
+> `errdefer` — он РЕТРАКТНУТ (see [D189](#d189-прямое-удаление-okdefer--errdefer--defer-result) /
+> [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel) / [D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block));
+> composition-семантика D158 живёт в defer-kernel: failable тело у плейн
+> `defer`/`defer(o)`/`@cleanup`.
+>
 > **АМЕНДМЕНТ 2026-07-06 (Plan 173 Ф.4, решение владельца — модель Б).**
 > Ранняя редакция D158 (ниже, в §«Правила composition» и §«MultiError API»)
 > заворачивала обе ошибки в конверт `Err(MultiError { primary, suppressed })`
@@ -6744,11 +6750,15 @@ defer {
 ## D160. `okdefer` + reason-aware `defer |result|`
 
 > **Plan 100.4.3.** Принято 2026-05-23 (proposed). **Статус: RETRACTED**
-> by D189 (Plan 110.5.7 hard cutover, 2026-05-31). Replaced by
-> `consume X = ... { body }` scope-block с `match outcome { Success/
-> Failure(_)/Panic(_) }` в `cleanup` method (D188).
+> by D189 (Plan 110.5.7 hard cutover, 2026-05-31). **Каноническая замена
+> (Plan 173 Ф.2, see [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel)/[D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block)/[D189](#d189-прямое-удаление-okdefer--errdefer--defer-result)):**
+> `okdefer{b}` ≡ `defer(o){ match o { Success => b, _ => () } }`;
+> reason-aware `defer |result|` ≡ `defer(o ScopeOutcome) { … }` (типизированный
+> биндинг исхода); для ресурсов — `consume X = ... { body }` с `match outcome`
+> в `@cleanup` (D188). Всё тело ниже — **historical**.
 >
-> Новые scope-level statements; complement к D90 defer/errdefer family.
+> Новые scope-level statements; complement к D90 defer/errdefer family
+> (historical).
 
 ### Что
 
@@ -6870,6 +6880,13 @@ distinction:
 
 > **Plan 100.4.4.** Принято 2026-05-23 (proposed). Extends [D158](#d158)
 > composition на multi-defer + panic. **Amend [D90](#d90) §«panic»**.
+>
+> **⚠️ Historical (Plan 173 Ф.5.4):** примеры ниже используют ретрактнутый
+> `errdefer` — see [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel)/[D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block)/[D189](#d189-прямое-удаление-okdefer--errdefer--defer-result).
+> САМА семантика (LIFO продолжает после partial failure; panic-in-defer
+> композируется, panic-dominance) ЖИВА — реализована defer-kernel'ом
+> (D314 §4a; emit_c leave/fail run-sites) и покрыта suppressed-pocket
+> моделью Б (D158-амендмент).
 
 ### Что
 
@@ -6971,6 +6988,12 @@ cleanups attempted) + matches TS/Java на composition + превосходит
 
 > **Plan 100.4.5.** Принято 2026-05-23 (proposed). **Amend [D90](#d90)
 > §7** (`interrupt` triggers errdefer). Финал Plan 100.4 umbrella.
+>
+> **⚠️ Historical (Plan 173 Ф.5.4):** таблица ниже перечисляет ретрактнутые
+> `errdefer`/`okdefer` — see [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel)/[D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block)/[D189](#d189-прямое-удаление-okdefer--errdefer--defer-result).
+> Актуальное покрытие consume-обязательств: плейн `defer` (все пути) и
+> `defer(o ScopeOutcome)` c match по исходу; D133-quick-fix предлагает
+> `defer`/`@cleanup` (Plan 173 Ф.1 #2).
 
 ### Что
 
@@ -8443,7 +8466,7 @@ consume IDENT = EXPR { BODY }
     match _outcome {
         Success      => _tx.cleanup(Success)
         Failure(e)   => { _tx.cleanup(Failure(e)); throw e }
-        Panic(m)     => { _tx.cleanup(Panic(m)); nv_resume_panic(m) }
+        Panic(m)     => { _tx.cleanup(Panic(m)); nv_panic(m) }   // Plan 173 Ф.5 #9: реальный примитив (nv_resume_panic — фикция, ретирована)
     }
     nv_leave_cancel_shield()
 }
@@ -8471,25 +8494,37 @@ handler'а.
 
 `cleanup` для данной consume-binding **гарантированно вызывается ровно один
 раз** на любом exit-path (включая `return`, `throw`, `panic`, cancel).
-Реализуется через runtime counter `_consume_count` в desugared coode: codegen
-+ runtime инкрементируют при invocation, runtime panic'ит при ≥ 2.
+Реализуется runtime-счётчиком `_consume_count` *(Plan 173 Ф.5 #8, реализовано:
+скрытое поле `int _consume_ccount` на heap-record инстансе + scope-локальный
+дубль-гард в desugared-коде)*: пролог generated `Nova_<T>_consume_cleanup` —
+единственный chokepoint всех путей вызова — проверяет и инкрементирует счётчик;
+при ≥ 2 — runtime panic `D188-on-exit-double-invocation`.
 
 Double-invocation invariant нарушается только если programmer вручную
-зовёт `tx.cleanup(...)` из body — это runtime error
-`D188-on-exit-double-invocation` (linear types prevent double-consume в
-большинстве случаев, но FFI/reflection обход возможен).
+зовёт `tx.cleanup(...)` — прямые/алиасные вызовы из body ловятся compile-time
+(`D188-r2-manual-on-exit`, включая `let y = tx; y.cleanup(...)` и
+receiver-подвыражения); вызов, пронесённый через границу функции
+(view-параметр) или FFI/reflection, ловится runtime-счётчиком (linear types
+prevent double-consume в большинстве случаев, но обход возможен). Extern
+"nova" cleanup'ы (MutexGuard и пр., D194 hot-path) счётчиком не оснащаются —
+их структуры рукописные в nova_rt.
 
-#### R3 — Cancel-shield by default
+#### R3 — Cancel-shield by default (completes-by-default — §3a Plan 173, D192-ретракт)
 
 Внутри cleanup-path (`tx.cleanup(...)`) cancel-доставка автоматически
-маскируется до завершения cleanup или превышения `exit_timeout`
-(см. [D192](#d192)). Это **default behavior**; opt-out не предоставляется
-(Rust scopeguard / C++23 lessons показывают что opt-in cancel-shield
-большинство забывает).
+маскируется **до завершения cleanup** — cleanup ВСЕГДА добегает
+(completes-by-default, пересмотр владельца 2026-06-26 §3a Plan 173;
+[D192](#d192) РЕТРАКТИРОВАН — force-прерывания cleanup'а не существует).
+Это **default behavior**; opt-out не предоставляется (Rust scopeguard /
+C++23 lessons показывают что opt-in cancel-shield большинство забывает).
 
 Cancel остаётся pending в `fiber->cancel_pending`; доставляется после
-`nv_leave_cancel_shield()`. Если cleanup body превысил timeout — текущий
-suspend получает `CleanupTimeoutError`, дальше propagates через D161
+`nv_leave_cancel_shield()`. Если cleanup превысил watchdog-порог
+(3-level resolution D192-ретракт: WithExitTimeout → Application → default
+5000ms) — на ближайшей suspend-точке печатается one-shot stderr-ВАРН
+«fiber stuck in cleanup», и cleanup продолжает бежать; превышение
+структурно наблюдаемо в `ResourceTrace.on_resource_exit`
+(`duration_ms`/`overrun` — D185 amend). `CleanupTimeoutError` УДАЛЁН.
 
 **R3b amend (2026-06-08, V2 refinement) [M-83.11-cancel-token-bound-race-2k]
 proper fix:** Plan 83.11 §11.6 ctx_pins[] **ARRAY** (not the token itself)
@@ -8559,8 +8594,10 @@ per-fiber `NovaSpawnCtx_<id>` (spawn) и `NovaDetachCtx_<id>` (detach)
 первые N полей, allocation размер = `sizeof(codegen_ctx) < sizeof(NovaSpawnCtxBase)`.
 Runtime читает за пределами allocation → Boehm GC adjacent memory bytes
 (garbage) → mask=garbage > 0 → `nv_shield_check_deadline` enters slow path
-→ deadline=garbage → throws bogus `CleanupTimeoutError` с inflated
-over_ms (`720M+ ms over budget` в 6-second tests — i64 underflow symptom).
+→ deadline=garbage → bogus watchdog-варн (исторически: bogus
+`CleanupTimeoutError` с inflated over_ms — `720M+ ms over budget` в
+6-second tests, i64 underflow symptom; throw-механизм ретрактирован
+D192-ретрактом, Plan 173 Ф.5 п.2).
 
 **Pre-fix bug history:** codegen comment на `emit_c.rs:6253` явно
 утверждал «`_nova_fiber_state` MUST be last in NovaSpawnCtxBase prefix» —
@@ -8578,18 +8615,22 @@ runtime-side static_assert + codegen sanity check.
 save/restore — different bug); [D196](#d196) R4b (cleanup exception
 safety — different bug); [Plan 110 plan-doc](../../docs/plans/110-scoped-resources-radical-simplification.md).
 
-#### R4 — Timeout resolution at scope-entry
+#### R4 — Watchdog-threshold resolution at scope-entry (D192-ретракт: порог варна, не прерывания)
 
-`exit_timeout` определяется **один раз** при scope-entry через 3-level
-fallback (см. [D192](#d192)):
+Watchdog-порог (ex-`exit_timeout`) определяется **один раз** при
+scope-entry через 3-level fallback (см. [D192](#d192) — RETRACTED как
+force-механизм; resolution сохранена как источник ПОРОГА варна):
 
 1. `WithExitTimeout` impl ресурса (если есть);
 2. Активный `Application` effect handler (см. [D195](04-effects.md#d195));
 3. Hardcoded fallback `Duration.seconds(5)`.
 
-Кэшируется в локалке `_timeout` для use в `nv_enter_cancel_shield`.
-Сохранение в локалке предотвращает race с асинхронным изменением handler'а
-во время body execution.
+Кэшируется в локалке `_timeout`; армится `nv_cleanup_watchdog_arm` ТОЛЬКО
+вокруг cleanup-вызова («fiber застрял в cleanup» — body порогом не
+ограничивается). Сохранение в локалке предотвращает race с асинхронным
+изменением handler'а во время body execution. Превышение порога =
+one-shot stderr-варн + `overrun=true` в ResourceTrace exit-событии
+(D185 amend); прерывания НЕТ.
 
 #### R5 — LIFO composition
 
@@ -8937,30 +8978,33 @@ match outcome {
 Эти запреты эмитятся checker'ом как `E_CLEANUP_FORBIDDEN_OPERATION` с
 suggestion переписать как sequential `await`.
 
-### Cancel-shield пробрасывается через suspend
+### Cancel-shield пробрасывается через suspend (D192-ретракт, Plan 173 Ф.5 п.2)
 
-Внутри `cleanup` cancel доставка отложена до `exit_timeout` (R3 [D188](#d188)).
-На каждом suspend-point runtime проверяет deadline:
+Внутри `cleanup` cancel доставка отложена **до завершения cleanup**
+(completes-by-default, R3 [D188](#d188)). На каждом suspend-point runtime
+проверяет watchdog-порог:
 
 ```nova
 fn TcpStream consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     @send_eof()?                    // suspend ok; cancel masked
-    @wait_for_ack(timeout: 1.s())?  // suspend ok; deadline check
+    @wait_for_ack(timeout: 1.s())?  // suspend ok; watchdog check
     @close()?                       // suspend ok; cancel masked
-    // если cumulative time > exit_timeout → CleanupTimeoutError throws здесь
+    // если cumulative time > порога → one-shot stderr-ВАРН здесь (не throw)
 }
 ```
 
-### Timeout exceedance
+### Threshold exceedance (ex-«Timeout exceedance»)
 
-Если cumulative cleanup-suspend-time превысил `_timeout` (computed at
-scope-entry per [D192](#d192) 3-level resolution):
+Если cumulative cleanup-suspend-time превысил `_timeout`-порог (computed at
+scope-entry per [D192](#d192) 3-level resolution — RETRACTED как
+force-механизм, сохранён как источник порога):
 
-1. Текущий active suspend получает `CleanupTimeoutError`.
-2. Эта ошибка propagates через `cleanup`'s normal error path (`?`/`!!`).
-3. Если `cleanup` throws — `MultiError.suppressed.push(CleanupTimeoutError)`
-   composed с primary error.
-4. Cancel доставка снимается (shield off), cancel re-raises после exit.
+1. Ближайшая suspend-точка печатает one-shot stderr-варн
+   «fiber stuck in cleanup» — БЕЗ прерывания; cleanup добегает.
+2. Превышение структурно наблюдаемо: `ResourceTrace.on_resource_exit`
+   несёт `duration_ms` + `overrun=true` (D185 amend).
+3. Cancel доставка снимается (shield off) по завершении cleanup, cancel
+   re-raises после exit.
 
 ### Realtime context
 
@@ -8982,9 +9026,20 @@ allowed in `#realtime`). Это compile error, не runtime.
 
 ## D192. `exit_timeout` taxonomy + 3-level resolution
 
-> **Plan 110 Ф.3.** Принято 2026-05-31. **Статус: ACTIVE** (Plan 110.2.3
-> + 110.4.6.a Level-2 Application landed 2026-06-01). Определяет как ресурс получает
-> свой cleanup deadline.
+> **Plan 110 Ф.3.** Принято 2026-05-31. **Статус: ⛔ RETRACTED как force-механизм
+> (пересмотр владельца 2026-06-26 §3a Plan 173; применён Plan 173 Ф.5 п.2, 2026-07-10).**
+> **Принцип: «defer всегда добегает»** — НИКАКОГО прерывания cleanup'а по таймауту
+> не существует (ни один из 7 языков-планки — Go/Rust/TS/Kotlin/Java/Zig/Swift —
+> не force-прерывает cleanup; прерывание вернуло бы partial-cleanup-порчу).
+> Что РЕТРАКТИРОВАНО: тип `CleanupTimeoutError` (удалён из prelude), typed-throw
+> механизм (`_nova_throw_cleanup_timeout_fn` + string-fallback), «инжект ошибки в
+> suspend cleanup'а» (D188 R3-старая редакция).
+> Что СОХРАНЕНО: 3-level resolution ниже — как источник **ПОРОГА watchdog-варна**:
+> превышение порога на suspend-точке внутри cleanup = one-shot stderr-варн
+> «fiber stuck in cleanup» (cleanup продолжает бежать) + `duration_ms`/`overrun`
+> в `ResourceTrace.on_resource_exit` (D185 amend). Bounded-shutdown задаётся
+> дедлайном НА SCOPE — `supervised(deadline:/timeout:)` (D408), не на cleanup.
+> Текст ниже — исторический (читать «deadline» как «порог варна»).
 
 ### Taxonomy Duration значений
 
@@ -9114,7 +9169,7 @@ type MultiError {
 `suppressed` — последующие ошибки, добавленные через `compose`.
 
 `any` (не `Error`) — потому что MultiError может composit'ить `CancelError`,
-`CleanupTimeoutError`, `DbError`, panic-string и пр. Type-erased.
+`TimeoutError`, `DbError`, panic-string и пр. Type-erased.
 
 ### API
 
@@ -9169,12 +9224,13 @@ Runtime invariant: `suppressed.len <= 256`. Если cleanup-cascade глубж�
 
 ```nova
 type CancelError { reason str }
-type CleanupTimeoutError { duration Duration }
 type MultiErrorTruncated { depth int }
 ```
 
-Эти типы emerge из D90 §7 amend (CancelError) и D192 deadline enforcement
-(CleanupTimeoutError).
+Эти типы emerge из D90 §7 amend (CancelError). NB: `CleanupTimeoutError`
+БЫЛ в этом списке (D192 deadline enforcement) — УДАЛЁН D192-ретрактом
+(Plan 173 Ф.5 п.2): превышение cleanup-порога = watchdog-варн +
+`duration_ms`/`overrun` в ResourceTrace exit-событии, не ошибка.
 
 ### Что удаляется
 

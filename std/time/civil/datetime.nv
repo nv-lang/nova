@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/datetime.nv — DateTime: plain дата+время (D319).
+//
+// Plan 175.1 Ф.1. Plain-тип: НЕ точка на оси (нет зоны). В Timestamp —
+// только явно через Offset/TimeZone + Disambiguation (fallible, Ф.3).
+// Принимает И Period (календарная семантика через Date), И Duration
+// (elapsed-семантика с day-carry) — D320 R2/R4, wall-vs-elapsed doc.
+
+module time.civil
+
+import std.time.duration
+
+
+// NB: сама декларация `type DateTime` живёт в time_of_day.nv (после
+// TimeOfDay): codegen эмитит value-record структуры в порядке обработки
+// файлов (лексикографическом), а by-value поле требует complete-типа —
+// `datetime.nv` < `time_of_day.nv` дал бы incomplete NovaValue_TimeOfDay.
+// Обход по конвенции §4а, маркер [M-175.1-value-in-value-emit-order].
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Собрать DateTime из уже-валидных частей (инфаллибельно: обе части
+/// валидны by construction).
+#stable(since = "0.1")
+export fn DateTime.new(date Date, time TimeOfDay) -> DateTime => { date, time }
+
+/// Сахар: `date.at(time)` → DateTime.
+///
+/// # Examples
+/// ```nova
+/// ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
+/// ```
+#stable(since = "0.1")
+export fn Date @at(time TimeOfDay) -> DateTime => { date: @, time }
+
+/// Полночь данной даты.
+#stable(since = "0.1")
+export fn Date @at_midnight() -> DateTime =>
+    { date: @, time: TimeOfDay.midnight() }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Компоненты (property-методы по арности)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Дата-компонента.
+#stable(since = "0.1")
+export fn DateTime @date() -> Date => @date
+
+/// Время-компонента.
+#stable(since = "0.1")
+export fn DateTime @time() -> TimeOfDay => @time
+
+/// Год (делегат Date).
+#stable(since = "0.1")
+export fn DateTime @year() -> i32 => @date.year()
+
+/// Месяц (делегат Date).
+#stable(since = "0.1")
+export fn DateTime @month() -> Month => @date.month()
+
+/// День месяца (делегат Date).
+#stable(since = "0.1")
+export fn DateTime @day() -> i32 => @date.day()
+
+/// Час (делегат TimeOfDay).
+#stable(since = "0.1")
+export fn DateTime @hour() -> int => @time.hour()
+
+/// Минута (делегат TimeOfDay).
+#stable(since = "0.1")
+export fn DateTime @minute() -> int => @time.minute()
+
+/// Секунда (делегат TimeOfDay).
+#stable(since = "0.1")
+export fn DateTime @second() -> int => @time.second()
+
+/// День недели (делегат Date).
+#stable(since = "0.1")
+export fn DateTime @weekday() -> Weekday => @date.weekday()
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Арифметика: Duration (elapsed, инстант-семантика с day-carry).
+// Period-арифметика (календарная) — в period.nv (Ф.2).
+//
+// Wall-vs-elapsed (D320 R4): `dt.plus(Duration.from_hours(24))` — ровно
+// 24h elapsed; `dt.plus(Period.of_days(1))` — та же wall-time завтра
+// (различие проявляется на Zoned через DST; для plain DateTime обе
+// формы совпадают, но типовая дисциплина едина по ladder).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Сдвиг на точную Duration (elapsed). Day-carry поглощается датой.
+///
+/// # Examples
+/// ```nova
+/// ro dt = Date.new(2026, Dec, 31)!!.at(TimeOfDay.new(23, 30)!!)
+/// ro dt2 = dt.plus(1.hour())
+/// assert(dt2.year() == 2027 && dt2.hour() == 0)
+/// ```
+#stable(since = "0.1")
+export fn DateTime @plus(d Duration) -> DateTime {
+    ro (t, carry) = @time.plus(d)
+    { date: Date.from_epoch_day(@date.to_epoch_day() + carry), time: t }
+}
+
+/// Сдвиг назад на Duration.
+#stable(since = "0.1")
+export fn DateTime @minus(d Duration) -> DateTime =>
+    @plus(Duration.from_nanos(0) - d)
+
+/// Elapsed-разность двух plain DateTime (`other - self`), как если бы оба
+/// были на одной непрерывной шкале (день = 86400s, Q5).
+///
+/// ⚠ Осмысленно только когда оба значения из одной зоны без DST-перехода
+/// между ними — plain-типы не знают offset-скачков (D319).
+#stable(since = "0.1")
+export fn DateTime @duration_until(other DateTime) -> Duration {
+    ro day_diff = other.date().to_epoch_day() - @date.to_epoch_day()
+    ro nano_diff = other.time().to_nanos_of_day() - @time.to_nanos_of_day()
+    Duration.from_days(day_diff) + Duration.from_nanos(nano_diff)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Compare + Display
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Compare: сначала дата, затем время.
+#stable(since = "0.1")
+export fn DateTime @compare(other DateTime) -> int {
+    ro dc = @date.compare(other.date())
+    if dc != 0 { dc } else { @time.compare(other.time()) }
+}
+
+/// ISO-8601 форма `YYYY-MM-DDTHH:MM:SS[.fff]`.
+#stable(since = "0.1")
+export fn DateTime @to_iso() -> str => @date.to_iso() + "T" + @time.to_iso()
+
+/// Display = ISO-форма.
+#stable(since = "0.1")
+export fn DateTime @to_str() -> str => @to_iso()

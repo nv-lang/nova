@@ -1,5 +1,11 @@
 // cancellation_test.nv — Plan 47/48/49 acceptance test
-// (std/concurrency/cancellation.nv: within[T], race2[T], with_timeout[T])
+// (std/concurrency/cancellation.nv: race2[T])
+//
+// RETRACTED (Plan 173 §3a п.4 / [M-174-retract-with-timeout], 2026-07-10):
+// within[T]/with_timeout[T] tests УДАЛЕНЫ вместе с самим API — субсумированы
+// supervised(timeout:)/supervised(deadline:) (D408), уже покрыты
+// std/concurrency/supervised_deadline_test.nv (7 сценариев). race2[T] НЕ
+// субсумирован, остаётся, тесты ниже без изменений.
 //
 // UN-QUARANTINED — Plan 151 Ф.2 (2026-06-13). The crash that sent this file to
 // quarantine (Plan 149 fu #1) was MISDIAGNOSED as "unbounded mono-recursion in
@@ -19,41 +25,6 @@
 module nova_tests.concurrency
 
 import std.concurrency.cancellation
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// within[T] — success path (body завершается до timeout)
-// ──────────────────────────────────────────────────────────────────────────
-
-test "within: body fast → Some(result)" {
-    // Body тривиальный — должен завершиться сразу.
-    ro r = within(1000, || 42)
-    ro got = match r {
-        Some(v) => v
-        None    => -1
-    }
-    assert(got == 42)
-}
-
-
-test "within: body str → Some str" {
-    ro r = within(1000, || "hello")
-    ro got = match r {
-        Some(s) => s
-        None    => "timeout"
-    }
-    assert(got == "hello")
-}
-
-
-test "within: body bool → Some bool" {
-    ro r = within(1000, || true)
-    ro got = match r {
-        Some(b) => b
-        None    => false
-    }
-    assert(got == true)
-}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -85,18 +56,7 @@ test "race2 одинаковые closures wins одинаковый" {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Negative behavior — verify что after scope код продолжается
-// (with_timeout positive call в reserve — type-inference внутри
-// generic-call-of-generic упирается в pre-existing limitation,
-// see [M-generic-nested-call-inference] V2 followup.)
 // ──────────────────────────────────────────────────────────────────────────
-
-
-test "negative within не throw наружу на success" {
-    // Plan 49 Ф.3: после within scope нормально продолжается.
-    ro _ = within(1000, || 1)
-    ro after = true
-    assert(after)
-}
 
 
 test "negative race2 не throw на normal completion" {

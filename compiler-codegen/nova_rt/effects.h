@@ -141,6 +141,42 @@ static inline void nova_last_error_set(nova_str msg, NovaThrowKind kind,
     _nova_last_error.frame.error_suppressed    = NULL;
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Plan 173 Ф.5 п.7 (Zig-парность, минимум): throw-site трассировка.
+ * ──────────────────────────────────────────────────────────────────
+ *
+ * Codegen стемпит `nova_throw_site_set("file.nv", line)` НЕПОСРЕДСТВЕННО
+ * перед каждым user-`throw`/`panic()`/`unreachable()` (только на
+ * error-path — happy-path не затронут). Все uncaught-abort-ветки
+ * (unhandled Fail / composite / typed / panic) печатают
+ * `  at <file>:<line> (throw site)` вслед за сообщением — debug-парность
+ * Zig error-return-trace минимум (полный propagation-trace —
+ * `[M-173-error-return-trace]`). assert/contract уже location-first
+ * (D13 amend) — их не стемпим. */
+typedef struct {
+    const char* file;  /* NULL = сайт неизвестен (runtime-internal throw) */
+    int         line;
+} NovaThrowSite;
+
+#ifdef _MSC_VER
+__declspec(thread) extern NovaThrowSite _nova_throw_site;
+#else
+extern __thread NovaThrowSite _nova_throw_site;
+#endif
+
+static inline void nova_throw_site_set(const char* file, int line) {
+    _nova_throw_site.file = file;
+    _nova_throw_site.line = line;
+}
+
+/* Печать throw-site в uncaught-abort ветках (no-op если сайт неизвестен). */
+static inline void nova_throw_site_dump(void) {
+    if (_nova_throw_site.file) {
+        fprintf(stderr, "  at %s:%d (throw site)\n",
+                _nova_throw_site.file, _nova_throw_site.line);
+    }
+}
+
 /* Throw: store error, longjmp to nearest handler.
  * Plan 49 Ф.0: stamp kind=USER, reason=NULL (default — обычная ошибка).
  * Plan 100.4.1 (D158): reset error_suppressed chain (fresh throw НЕ несёт
@@ -165,6 +201,7 @@ static inline void nova_throw(nova_str msg) {
     fflush(stdout);
     fprintf(stderr, "nova: unhandled Fail: %.*s\n",
         (int)msg.len, msg.ptr);
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
 }
 
@@ -316,6 +353,7 @@ static inline void nova_rethrow_with_suppressed(NovaFailFrame* frame) {
             i++;
         }
     }
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
 }
 
@@ -388,27 +426,24 @@ static inline void nova_scope_exit(NovaFailFrame* primary, NovaScopeExitPolicy p
 /* Accessors для MultiError prelude — count + indexed access на chain.
  * Caller (codegen MultiError @suppressed()) uses этих для materialize'а
  * Nova-side []Err array. */
-/* Plan 110.2.3 (D192): 3-level exit_timeout resolution runtime.
+/* Plan 173 Ф.5 п.2 (D192-РЕТРАКТ): 3-level resolution — источник ПОРОГА
+ * watchdog-варна «fiber застрял в cleanup», НЕ прерывания (force-timeout
+ * механизм удалён; cleanup всегда добегает — §3a completes-by-default).
  *
- * Called by ConsumeScope codegen at scope-entry to resolve cleanup
- * deadline в milliseconds. Bootstrap:
+ * Уровни РЕАЛИЗОВАНЫ в codegen consume-prologue (emit_c.rs
+ * Stmt::ConsumeScope), НЕ здесь:
+ * - Level 1 (WithExitTimeout impl per type): compile-time check
+ *   `method_overloads` на `exit_timeout_ms` → прямой вызов
+ *   `Nova_<T>_method_exit_timeout_ms(binding)` (Plan 110.9.2 V1.1).
+ * - Level 2 (Application effect handler): runtime-проверка
+ *   `_nova_handler_Application` → `Nova_Application_default_exit_timeout_ms()`
+ *   (Plan 110.4.6.a).
+ * - Level 3: ЭТА функция — hardcoded fallback 5000 ms.
  *
- * - Level 1 (WithExitTimeout impl per type): vtable check для
- *   `Nova_<T>_method_exit_timeout_ms` symbol. Not yet implemented —
- *   Plan 110.2.x lookup integration.
- * - Level 2 (Application effect handler): scan effect-stack для
- *   bound `Application` handler; if found, call
- *   `default_exit_timeout_ms()`. Not yet implemented — Plan 110.4.6
- *   integration.
- * - Level 3 (hardcoded fallback): 5000 ms.
- *
- * Currently bootstrap returns Level 3 unconditionally; Level 1/2
- * integration после Plan 110.2.x + 110.4.6 codegen.
- */
+ * Порог уходит в `nv_cleanup_watchdog_arm` (fibers.h) вокруг
+ * cleanup-вызова + в overrun-флаг ResourceTrace exit-события (D185 amend). */
 static inline int nv_resolve_exit_timeout_ms(void) {
-    /* TODO Plan 110.2.x: Level 1 — WithExitTimeout vtable lookup. */
-    /* TODO Plan 110.4.6: Level 2 — Application effect handler check. */
-    return 5000;  /* Level 3 hardcoded fallback (D192). */
+    return 5000;  /* Level 3 fallback — порог варна (D192-ретракт). */
 }
 
 /* Plan 110.2.1.a (D188 R3): cancel-shield runtime — `nv_consume_enter_shield`
@@ -628,6 +663,24 @@ __declspec(thread) extern NovaTestFrame* _nova_test_frame;
 extern __thread NovaTestFrame* _nova_test_frame;
 #endif
 
+/* Plan 173 Ф.6 (D348): substring-матч для panics-клаузулы теста —
+ * (ptr,len)-окно (nova_str НЕ гарантирует NUL-terminator). needle —
+ * C-литерал паттерна (NUL-terminated). Пустой needle матчит всё
+ * («любая паника»). Case-sensitive (D89-семантика). */
+static inline int nova_test_msg_contains(const char* hay, size_t hay_len,
+                                         const char* needle) {
+    size_t nlen = 0;
+    while (needle[nlen]) nlen++;
+    if (nlen == 0) return 1;
+    if (!hay || hay_len < nlen) return 0;
+    for (size_t i = 0; i + nlen <= hay_len; i++) {
+        size_t j = 0;
+        while (j < nlen && hay[i + j] == needle[j]) j++;
+        if (j == nlen) return 1;
+    }
+    return 0;
+}
+
 /* Forward decl: defined later in nova_rt.h once mco is included.
  * We test "are we inside a fiber" to decide where assertion failure lands. */
 int nova_in_fiber(void);
@@ -738,6 +791,7 @@ static inline void nv_panic(nova_str msg) {
     fwrite("panic: ", 1, 7, stderr);
     if (msg.len > 0) fwrite(msg.ptr, 1, msg.len, stderr);
     fwrite("\n", 1, 1, stderr);
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
 }
 
@@ -1002,6 +1056,7 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
     fprintf(stderr, "nova: unhandled typed Fail (%s): %.*s\n",
         nova_typeid_to_name(tid),
         (int)msg_repr.len, msg_repr.ptr);
+    nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
     abort();
     return NOVA_UNIT;  /* unreachable */
 }
@@ -1032,21 +1087,33 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
  * `now_unix_ms()->int`, `now_monotonic_ns()->int`), а не из хардкода.
  * Этот hand-written vtable = HANDLER-интерфейс (не codegen-schema): его
  * слоты — только те опы, что реализуются `with Time = handler {...}`.
- * `now_monotonic_ns` и 5 timer-счётчиков (→ TimerMetrics, Ф.1/Q1)
- * дispatch'атся direct-C (fibers.h / channels.h), НЕ через этот vtable.
+ * 5 timer-счётчиков (→ TimerMetrics, Ф.1/Q1) dispatch'атся direct-C
+ * (channels.h), НЕ через этот vtable.
+ *
+ * Plan 175 Ф.3(a) (D316, 2026-07-06): `now_monotonic_ns`-слот ДОБАВЛЕН —
+ * `Monotonic.now()` больше не compiler-builtin (см. std/time/duration.nv),
+ * а обычный `.nv`-сахар над `Time.now_monotonic_ns()`, значит вызов ИДЁТ
+ * через vtable и обязан быть mock'абелен (closes [M-monotonic-mock-support]).
+ * Handler-литералы БЕЗ явного `now_monotonic_ns() => ...` оставляют слот
+ * NULL (C99 designated-init zero-fills недостающие поля) — Nova_Time_
+ * now_monotonic_ns() (fibers.h) НУЛЬ-проверяет сам указатель на функцию
+ * (не только `_nova_handler_Time`) и падает обратно на real-clock —
+ * backward-compat для handler-литералов, написанных до Ф.3(a)
+ * (nova_tests/concurrency/* и др., не мигрированы этой волной).
  *
  * Plan 48 Ф.5: now_ms / now_ns — handler-extension слоты, чтобы handlers.nv
  * (fixed_ms, mut_clock — std/testing/handlers.nv) могли регистрировать
  * полный набор. Default-импл (Nova_Time_now_ms / _now_ns) — wrapper'ы
  * вокруг now_unix_ms(). Field-названия designated-init'ятся по имени
  * (порядок в структуре не важен для C designated initializers) — MUST
- * совпадать с codegen-emitted op-именами: ctx, sleep, now_unix_ms, now_ms,
- * now_ns (см. emit_handler_decl / fixed_ms vtable init). Ретайр
- * now_ms/now_ns — Plan 175 Ф.2 (не в Ф.1/Ф.4). */
+ * совпадать с codegen-emitted op-именами: ctx, sleep, now_unix_ms,
+ * now_monotonic_ns, now_ms, now_ns (см. emit_handler_decl / fixed_ms vtable
+ * init). Ретайр now_ms/now_ns — Plan 175 Ф.2 (не в Ф.1/Ф.4). */
 typedef struct {
     void*     ctx;
     nova_unit (*sleep)(void* _ctx, nova_int ms);
     nova_int  (*now_unix_ms)(void* _ctx);
+    nova_int  (*now_monotonic_ns)(void* _ctx);
     nova_int  (*now_ms)(void* _ctx);
     nova_int  (*now_ns)(void* _ctx);
 } NovaVtable_Time;

@@ -1,0 +1,321 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/parse.nv — ISO-8601/RFC-3339/RFC-9557 парсеры (§1а:
+// конверсия — метод на ИСТОЧНИКЕ: `s.to_date()`, НЕ `Date.parse`).
+// Plan 175.1 Ф.5 (D321 R3: STRICT by default).
+//
+// Strict-модель (Q9): «parses» == «constructs» — Feb-30/out-of-range/
+// недостающие части → Err; leap-second `:60` → clamp к `:59` (Q5,
+// единственное послабление, jiff/Temporal-паритет); zoned-строка ОБЯЗАНА
+// нести и offset, и RFC-9557 `[zone]`-bracket.
+
+module time.civil
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Позиционные примитивы
+// ──────────────────────────────────────────────────────────────────────────
+
+// Ровно n ASCII-цифр с позиции pos → (значение, новая позиция).
+fn digits_at(s str, pos int, n int) -> Result[(i64, int), ParseDateTimeError] {
+    if pos + n > s.byte_len() {
+        return Err(FormatMismatch(pos, str.from(n) + " digits"))
+    }
+    mut v i64 = 0
+    mut i = pos
+    while i < pos + n {
+        ro c = s[i..i + 1]
+        ro d = match c.to_int() {
+            Ok(x) => x,
+            Err(_) => return Err(FormatMismatch(i, "digit")),
+        }
+        v = v * 10 + (d as i64)
+        i += 1
+    }
+    Ok((v, pos + n))
+}
+
+// Литеральный байт-символ на позиции.
+fn expect_at(s str, pos int, lit str) -> Result[int, ParseDateTimeError] {
+    ro n = lit.byte_len()
+    if pos + n > s.byte_len() || s[pos..pos + n] != lit {
+        return Err(FormatMismatch(pos, lit))
+    }
+    Ok(pos + n)
+}
+
+// Дата `[-]YYYY[Y*]-MM-DD` с позиции → (Date, pos). Год: 4 цифры,
+// опциональный знак, расширенные годы (5-6 цифр) допустимы.
+fn date_at(s str, pos0 int) -> Result[(Date, int), ParseDateTimeError] {
+    mut pos = pos0
+    mut sign i64 = 1
+    if pos < s.byte_len() && s[pos..pos + 1] == "-" {
+        sign = -1
+        pos += 1
+    }
+    // Год: 4..6 цифр (жадно).
+    ro (y4, p1) = digits_at(s, pos, 4)?
+    mut year = y4
+    mut pos_y = p1
+    mut extra = 0
+    while extra < 2 && pos_y < s.byte_len() {
+        ro c = s[pos_y..pos_y + 1]
+        ro is_digit = match c.to_int() { Ok(_) => true, Err(_) => false }
+        if !is_digit { break }
+        ro (d, p) = digits_at(s, pos_y, 1)?
+        year = year * 10 + d
+        pos_y = p
+        extra += 1
+    }
+    pos = expect_at(s, pos_y, "-")?
+    ro (mo, p2) = digits_at(s, pos, 2)?
+    pos = expect_at(s, p2, "-")?
+    ro (dd, p3) = digits_at(s, pos, 2)?
+    ro month = match Month.from_number(mo as int) {
+        Ok(m) => m,
+        Err(_) => return Err(InvalidValue(pos0, FieldKind.Month, mo)),
+    }
+    ro date = match Date.new((sign * year) as i32, month, dd as i32) {
+        Ok(d) => d,
+        Err(_) => return Err(InvalidValue(pos0, FieldKind.Day, dd)),
+    }
+    Ok((date, p3))
+}
+
+// Время `HH:MM[:SS[.f{1..9}]]` с позиции → (TimeOfDay, pos).
+// `:60` (leap second) → clamp к `:59` (Q5).
+fn time_at(s str, pos0 int) -> Result[(TimeOfDay, int), ParseDateTimeError] {
+    ro (h, p1) = digits_at(s, pos0, 2)?
+    mut pos = expect_at(s, p1, ":")?
+    ro (mi, p2) = digits_at(s, pos, 2)?
+    mut sec i64 = 0
+    mut nano i64 = 0
+    pos = p2
+    if pos < s.byte_len() && s[pos..pos + 1] == ":" {
+        ro (ss, p3) = digits_at(s, pos + 1, 2)?
+        sec = if ss == 60 { 59 } else { ss }   // leap-second clamp (Q5)
+        pos = p3
+        if pos < s.byte_len() && s[pos..pos + 1] == "." {
+            mut fpos = pos + 1
+            mut scale i64 = 100_000_000
+            mut got = 0
+            while got < 9 && fpos < s.byte_len() {
+                ro c = s[fpos..fpos + 1]
+                ro dv = match c.to_int() { Ok(x) => x, Err(_) => break }
+                nano += (dv as i64) * scale
+                scale /= 10
+                fpos += 1
+                got += 1
+            }
+            if got == 0 { return Err(FormatMismatch(pos + 1, "fraction digit")) }
+            pos = fpos
+        }
+    }
+    ro t = match TimeOfDay.new(h as int, mi as int, s: sec as int, ns: nano as int) {
+        Ok(x) => x,
+        Err(_) => return Err(InvalidValue(pos0, FieldKind.Hour, h)),
+    }
+    Ok((t, pos))
+}
+
+// Оффсет `Z | ±HH:MM[:SS]` с позиции → (секунды, pos).
+fn offset_at_pos(s str, pos0 int) -> Result[(int, int), ParseDateTimeError] {
+    if pos0 >= s.byte_len() { return Err(FormatMismatch(pos0, "offset")) }
+    ro c = s[pos0..pos0 + 1]
+    if c == "Z" || c == "z" { return Ok((0, pos0 + 1)) }
+    ro sign = if c == "+" { 1 } else if c == "-" { -1 } else {
+        return Err(FormatMismatch(pos0, "Z or +/-"))
+    }
+    ro (h, p1) = digits_at(s, pos0 + 1, 2)?
+    ro pos = expect_at(s, p1, ":")?
+    ro (m, p2) = digits_at(s, pos, 2)?
+    mut sec = (h * 3_600 + m * 60) as int
+    mut pend = p2
+    if pend < s.byte_len() && s[pend..pend + 1] == ":" {
+        ro (ss, p3) = digits_at(s, pend + 1, 2)?
+        sec += ss as int
+        pend = p3
+    }
+    if sec > 64_800 { return Err(InvalidValue(pos0, FieldKind.OffsetSec, sec as i64)) }
+    Ok((sign * sec, pend))
+}
+
+// Strict-хвост: вся строка должна быть съедена.
+fn expect_end(s str, pos int) -> Result[(), ParseDateTimeError] =>
+    if pos != s.byte_len() { Err(FormatMismatch(pos, "end of input")) }
+    else { Ok(()) }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Публичные str-конверсии (§1а)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `"2026-07-10".to_date()` — ISO-8601 календарная дата (strict).
+///
+/// # Examples
+/// ```nova
+/// assert("2026-07-10".to_date()!! == Date.new(2026, Jul, 10)!!)
+/// ```
+#stable(since = "0.1")
+export fn str @to_date() -> Result[Date, ParseDateTimeError] {
+    ro (d, pos) = date_at(@, 0)?
+    expect_end(@, pos)?
+    Ok(d)
+}
+
+/// `"14:30:05.250".to_time_of_day()` — ISO-8601 время суток (strict;
+/// `:60` → clamp `:59`).
+#stable(since = "0.1")
+export fn str @to_time_of_day() -> Result[TimeOfDay, ParseDateTimeError] {
+    ro (t, pos) = time_at(@, 0)?
+    expect_end(@, pos)?
+    Ok(t)
+}
+
+/// `"2026-07-10T14:30:00".to_datetime()` — plain ISO-8601 (strict, БЕЗ
+/// offset/zone: plain-тип не точка на оси, D319 R1).
+#stable(since = "0.1")
+export fn str @to_datetime() -> Result[DateTime, ParseDateTimeError] {
+    ro (d, p1) = date_at(@, 0)?
+    ro p2 = expect_at(@, p1, "T")?
+    ro (t, p3) = time_at(@, p2)?
+    expect_end(@, p3)?
+    Ok(d.at(t))
+}
+
+/// `"2026-07-10T11:30:00Z".to_timestamp()` — RFC-3339 момент (strict).
+/// Вне окна ±292y → `InvalidValue(Year)`.
+#stable(since = "0.1")
+export fn str @to_timestamp() -> Result[Timestamp, ParseDateTimeError] {
+    ro (d, p1) = date_at(@, 0)?
+    // RFC-3339 разделитель: 'T' (каноничный; 't'/' ' — lenient, не strict)
+    ro p2 = expect_at(@, p1, "T")?
+    ro (t, p3) = time_at(@, p2)?
+    ro (off, p4) = offset_at_pos(@, p3)?
+    expect_end(@, p4)?
+    ro l = d.to_epoch_day() * 86_400 + t.to_nanos_of_day() / 1_000_000_000
+    ro inst_sec = l - (off as i64)
+    if inst_sec > 9_223_372_035 || inst_sec < -9_223_372_036 {
+        return Err(InvalidValue(0, FieldKind.Year, d.year() as i64))
+    }
+    ro nano = t.to_nanos_of_day() % 1_000_000_000
+    Ok(Timestamp.from_unix_nanos(inst_sec * 1_000_000_000 + nano))
+}
+
+/// RFC-9557: `"...T14:30:00-04:00[America/New_York]".to_zoned_datetime()`.
+/// STRICT (Q9): offset И `[zone]`-bracket обязательны; рассогласование
+/// offset↔правила зоны → `Err` (default `RejectMismatch`). Политики
+/// Use/Prefer/Ignore — перегрузка с явным `OffsetConflict`.
+#stable(since = "0.1")
+export fn str @to_zoned_datetime() -> Result[ZonedDateTime, ParseDateTimeError] =>
+    @to_zoned_datetime(RejectMismatch)
+
+/// Полная форма с политикой `OffsetConflict` (D321 R2).
+#stable(since = "0.1")
+export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTime, ParseDateTimeError] {
+    ro (d, p1) = date_at(@, 0)?
+    ro p2 = expect_at(@, p1, "T")?
+    ro (t, p3) = time_at(@, p2)?
+    ro (off_sec, p4) = offset_at_pos(@, p3)?
+    // strict: [zone]-bracket обязателен (Q9)
+    ro p5 = expect_at(@, p4, "[")?
+    mut close = p5
+    while close < @byte_len() && @[close..close + 1] != "]" { close += 1 }
+    if close >= @byte_len() { return Err(FormatMismatch(p5, "]")) }
+    ro zone_name = @[p5..close]
+    expect_end(@, close + 1)?
+
+    ro tz = match zone_name.to_timezone() {
+        Ok(z) => z,
+        Err(_) => return Err(FormatMismatch(p5, "known time zone")),
+    }
+    ro dt = d.at(t)
+    ro stored = match Offset.from_seconds(off_sec as i32) {
+        Ok(o) => o,
+        Err(_) => return Err(InvalidValue(p4, FieldKind.OffsetSec, off_sec as i64)),
+    }
+
+    // Валиден ли сохранённый offset для этой wall-time в зоне?
+    ro res = tz.resolve_local(dt)
+    ro stored_valid = match res {
+        Unique(o) => o.to_seconds() == stored.to_seconds(),
+        Overlap(a, b) => a.to_seconds() == stored.to_seconds() || b.to_seconds() == stored.to_seconds(),
+        Gap(_, _) => false,
+    }
+
+    if stored_valid {
+        ro z ZonedDateTime = { dt, offset: stored, zone: tz }
+        return Ok(z)
+    }
+    // Рассогласование (post-tzdb-change drift) → политика.
+    match conflict {
+        Use => {
+            // Доверять сохранённому offset (инстант точен), зона — идентичность.
+            ro z ZonedDateTime = { dt, offset: stored, zone: tz }
+            Ok(z)
+        }
+        Prefer => {
+            // stored невалиден → пересчитать по зоне (как Ignore).
+            match dt.to_zoned(tz) {
+                Ok(z) => Ok(z),
+                Err(_) => Err(InvalidValue(0, FieldKind.OffsetSec, off_sec as i64)),
+            }
+        }
+        Ignore => {
+            match dt.to_zoned(tz) {
+                Ok(z) => Ok(z),
+                Err(_) => Err(InvalidValue(0, FieldKind.OffsetSec, off_sec as i64)),
+            }
+        }
+        RejectMismatch => Err(InvalidValue(p4, FieldKind.OffsetSec, off_sec as i64)),
+    }
+}
+
+/// `"P1Y2M3D".to_period()` — ISO-8601 период (+ `PnW` недели; знак
+/// компонентов: `P-1M`).
+#stable(since = "0.1")
+export fn str @to_period() -> Result[Period, ParseDateTimeError] {
+    mut pos = expect_at(@, 0, "P")?
+    mut years i64 = 0
+    mut months i64 = 0
+    mut days i64 = 0
+    mut seen = 0
+    while pos < @byte_len() {
+        mut sign i64 = 1
+        if @[pos..pos + 1] == "-" { sign = -1; pos += 1 }
+        // число (1..9 цифр)
+        mut v i64 = 0
+        mut got = 0
+        while got < 9 && pos < @byte_len() {
+            ro c = @[pos..pos + 1]
+            ro dv = match c.to_int() { Ok(x) => x, Err(_) => break }
+            v = v * 10 + (dv as i64)
+            pos += 1
+            got += 1
+        }
+        if got == 0 { return Err(FormatMismatch(pos, "digit")) }
+        if pos >= @byte_len() { return Err(FormatMismatch(pos, "Y/M/W/D")) }
+        ro unit = @[pos..pos + 1]
+        pos += 1
+        if unit == "Y" { years = sign * v }
+        else if unit == "M" { months = sign * v }
+        else if unit == "W" { days += sign * v * 7 }
+        else if unit == "D" { days += sign * v }
+        else { return Err(FormatMismatch(pos - 1, "Y/M/W/D")) }
+        seen += 1
+    }
+    if seen == 0 { return Err(FormatMismatch(1, "period component")) }
+    Ok(Period.new(years: years as i32, months: months as i32, days: days as i32))
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Timestamp: RFC-3339 display (закрывает зависимость 175 full-datetime)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// RFC-3339 каноническая форма (UTC): `2026-07-10T11:30:00Z` /
+/// с дробью `...T11:30:00.250Z`.
+#stable(since = "0.1")
+export fn Timestamp @to_rfc3339() -> str {
+    ro z = @to_zoned(Utc)
+    z.datetime().to_iso() + "Z"
+}

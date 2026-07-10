@@ -1,0 +1,12 @@
+//
+// Plan 90 Ф.4.6 — негатив: byte_at за границей строки → panic.
+//
+// `fn main` (не `test`-блок): panic должен дойти до runtime-frame
+// (внутри test-блока он перехватывается harness'ом).
+
+module nova_tests.plan90
+
+test "neg byte at oob" panics "out of bounds" {
+    ro s = "AB"
+    ro _ = s.bytes()[5]
+}

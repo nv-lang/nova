@@ -252,7 +252,8 @@ nova_tests/
 >   выделением в отдельный модуль.
 > - Standalone-модуль оправдан ТОЛЬКО когда folder-module технически невозможен (см.
 >   «Когда folder-module невозможен»: `nova.toml`-пакет, `_slow.nv` с другим module, `main`/
->   `EXPECT_RUNTIME_PANIC`, неразрешимый конфликт). Во всех прочих случаях — пир-файл.
+>   legacy-`EXPECT_RUNTIME_PANIC` (новые runtime-panic — `panics`-клаузулой ПИР-файлом, D348),
+>   неразрешимый конфликт). Во всех прочих случаях — пир-файл.
 >
 > Перед добавлением теста спроси: «есть ли уже folder-module этой темы, куда это ляжет пир-файлом?»
 > Если да — добавляй туда. Создание нового модуля/папки требует обоснования из списка исключений.
@@ -324,10 +325,12 @@ Folder-module не применяется если:
   раннер печатает путь при падении → навигация цела.
 - **Module:** все позитивы темы → `module nova_tests.<тема>`; neg → `neg/` (`module neg.<stem>`).
 - **Коллизии между планами:** `priv(file)` / rename (см. выше). Между темами часто их нет.
-- **EXPECT_TIMEOUT / EXPECT_RUNTIME_PANIC / EXPECT_EXIT — НЕ сливаются** в folder-module
-  (маркер относится к целому TU; в общем бинаре они бы повесили/уронили остальные).
-  Остаются standalone. Runtime-panic консолидируются отдельно через `panics`-клаузулу
-  (Plan 169.1.2 Ф.2); timeout — всегда standalone.
+- **EXPECT_TIMEOUT / EXPECT_EXIT (и legacy EXPECT_RUNTIME_PANIC) — НЕ сливаются** в
+  folder-module (маркер относится к целому TU; в общем бинаре они бы повесили/уронили
+  остальные). Остаются standalone. **Runtime-panic тесты сливаются в folder-module через
+  `panics`-клаузулу** (`test "имя" panics "паттерн" { … }` — Plan 173 Ф.6 /
+  [D348](../spec/decisions/09-tooling.md#d348--panics-клаузула-тест-блока-инверсия-passfail-для-runtime-panic-тестов-plan-173-ф6), РЕАЛИЗОВАНО);
+  timeout — всегда standalone. · согласовано (sign-off Ф.6)
 - **Валидация — передавать папки напрямую:** `nova test nova_tests/<тема>` (можно
   несколько папок одной командой: `nova test nova_tests/atomics nova_tests/sync`).
   НЕ `--filter <тема>` — он матчит по подстроке и цепляет лишнее (напр. `--filter sync`
@@ -384,7 +387,8 @@ test "wrong type" {
 | Позитивный тест | `<feature_or_scenario>.nv` | `option_map.nv`, `closure_capture.nv` |
 | Позитивный тест (план) | `<phase_or_feature>.nv` | `f1_basic_case.nv`, `t2_edge_case.nv` |
 | Отрицательный (compile error) | внутри `neg/`: `<что_проверяем>.nv`; вне `neg/`: `<что_проверяем>_neg.nv` | `type_mismatch.nv` (в `neg/`), `mut_conflict_neg.nv` (вне) |
-| Runtime panic / exit тест | `<scenario>_panic.nv` / `<scenario>_exit.nv` | `div_zero_panic.nv` |
+| Runtime-panic тест (канон D348) | peer-файл folder-module с `test "…" panics "паттерн"`; имя `<scenario>.nv` | `div_zero.nv` c `panics "division by zero"` |
+| Runtime panic (legacy standalone) / exit тест | `<scenario>_panic.nv` / `<scenario>_exit.nv` | `div_zero_panic.nv` — только когда нужна изоляция процесса (D348) · согласовано |
 | Медленный тест | `<name>_slow.nv` | `stress_gc_slow.nv`, `cancel_stress_slow.nv` |
 | Fast-variant медленного | `<name>.nv` (тот же module, меньший N) | `stress_gc.nv` рядом с `stress_gc_slow.nv` |
 
@@ -460,31 +464,57 @@ python scripts/catb_convert.py nova_tests/plan_foo
 
 ---
 
-### EXPECT_RUNTIME_PANIC и fn main()
+### Runtime-panic тесты: `panics`-клаузула (канон) и legacy EXPECT_RUNTIME_PANIC · согласовано (Plan 173 Ф.6, D348)
 
-Файлы с `EXPECT_RUNTIME_PANIC` или с явным `fn main()` **всегда standalone** — они не могут быть частью folder-module (main-точка входа может быть только одна на TU). Кладутся рядом с `neg/` или в отдельную директорию:
+**Канон для новых runtime-panic тестов** — `panics`-клаузула тест-блока
+([D348](../spec/decisions/09-tooling.md#d348--panics-клаузула-тест-блока-инверсия-passfail-для-runtime-panic-тестов-plan-173-ф6)):
+peer-файл обычного folder-module, никакого standalone CU:
+
+```nova
+module nova_tests.plan_foo
+
+test "oob panics" panics "index out of bounds" {
+    ro xs = [1, 2, 3]
+    ro _ = xs[10]
+}
+```
+
+PASS ⇔ тело запаниковало (PANIC-класс D13: `panic()`/assert/overflow/OOB/contract)
+сообщением ⊇ паттерн (substring, D89-семантика). `throw`/`exit` инверсию НЕ активируют.
+Раннер сбрасывает runtime-состояние между panics-тестами (`nova_runtime_reset`) — N паник
+в одном CU безопасны.
+
+**Legacy standalone (`EXPECT_RUNTIME_PANIC` + `fn main()`)** — только когда нужна
+изоляция процесса; такие файлы не могут быть частью folder-module (main-точка входа
+одна на TU). Кладутся рядом с `neg/` или в `rt/`:
 
 ```
 nova_tests/plan_foo/
-├── feature_a.nv             ← folder-module positive
-├── feature_b.nv             ← folder-module positive
+├── feature_a.nv             ← folder-module positive (сюда же panics-тесты)
 ├── neg/
 │   └── type_err_neg.nv      ← EXPECT_COMPILE_ERROR
 └── rt/
-    └── panic_on_oob.nv      ← EXPECT_RUNTIME_PANIC (standalone, module nova_tests.plan_foo.rt.panic_on_oob)
+    └── hard_abort.nv        ← legacy EXPECT_RUNTIME_PANIC (standalone, module rt.hard_abort)
 ```
 
-Либо просто оставить в parent-dir как standalone если таких файлов один-два (folder-module тогда не применяется для всей директории).
+Законные поводы остаться в legacy (из миграции Plan 173 Ф.6):
+- **процессная смерть**, не ловимая test-frame'ом: fiber stack overflow (SEH),
+  abort из detach-fiber, проверка uncaught-abort stderr (`(throw site)`-трасса);
+- **file-режимные директивы**, действующие на весь CU: `// CONTRACTS off`,
+  module-level `#unchecked(...)`;
+- **throw-класс**: «паника» на деле = unhandled `throw` (USER) — abort процесса, но НЕ
+  PANIC-класс (D348-инверсия его сознательно не принимает);
+- смешанные маркеры (`EXPECT_STDOUT`+`EXPECT_RUNTIME_PANIC`) — процессные потоки.
 
 ---
 
 ### Полный checklist для агента при написании тестов
 
-1. **Определи категорию**: позитивный / compile-error / runtime-panic / stdout/stderr.
+1. **Определи категорию**: позитивный / compile-error / runtime-panic (канон — `panics`-клаузула peer-файлом, D348) / stdout/stderr.
 2. **Выбери директорию — СНАЧАЛА ищи существующий folder-module темы** (приоритет: минимум CU). Новая папка/модуль — только если folder-module невозможен (исключения выше).
 3. **Добавляй ПИР-ФАЙЛОМ в существующий folder-module** (тот же `module nova_tests.<тема>`); НЕ создавай standalone-модуль на задачу. Конфликт имён → `priv(file)`/префикс, НЕ новый модуль. Имя файла — **описательное** `<ссылка>_<что_тестирует>.nv` (не только код-ссылка).
 4. **Негативные → `neg/`**: EXPECT_COMPILE_ERROR → `neg/<name>.nv`, `module neg.<name>` (суффикс `_neg` обязателен только ВНЕ `neg/`; контейнер `test`/`fn` — любой, не исполняется).
-5. **Медленные → `_slow.nv`**: run > 2s или total > 3s → суффикс `_slow`; создай fast-variant.
+5. **Медленные → `_slow.nv`**: по бюджету [D298](../spec/decisions/09-tooling.md#d298-test-suite-time-budget) (единственная точка правды; локальный порог «run > 2s» ретирован · согласовано); создай fast-variant.
 6. **Проверь полноту**: happy path + edge cases + взаимодействие фич.
 7. **Проверь детерминизм**: `assert` проверяет гарантированный контракт, не эвристику планировщика.
 8. **Запусти**: `nova test nova_tests/<dir>/` — все PASS перед коммитом.
@@ -677,7 +707,13 @@ runner его читает, **переворачивает** обычную ло
 
 ---
 
-## 5 стандартных маркеров
+## Стандартные маркеры (D89) и `panics`-клаузула (D348) · согласовано
+
+> Нормативный список маркеров — [D89](../spec/decisions/09-tooling.md#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
+> (+ расширения D304: `EXPECT_TIMEOUT`/`EXPECT_TIMEOUT_MS`, lint-эксперименты).
+> Прежние заголовки «4/5 стандартных» разъехались с фактом — счёт больше не
+> нормируется здесь; ориентируйся на D89/D348. Runtime-panic канон — НЕ маркер,
+> а `panics`-клаузула (D348, см. секцию выше).
 
 ### 1. `EXPECT_COMPILE_ERROR <pattern>`
 
@@ -710,12 +746,17 @@ fn process(n int) -> str { "second" }    // duplicate sig
 
 ---
 
-### 2. `EXPECT_RUNTIME_PANIC <pattern>`
+### 2. `EXPECT_RUNTIME_PANIC <pattern>` — LEGACY (D348) · согласовано
 
 Проверяет, что exe **скомпилируется и запустится**, но **упадёт с
 panic**, чьё сообщение содержит `<pattern>`.
 
-**Когда использовать:**
+**⚠ Legacy (Plan 173 Ф.6 / D348):** для НОВЫХ runtime-panic тестов канон —
+`panics`-клаузула peer-файлом folder-module (см. секцию «Runtime-panic тесты»).
+Маркер остаётся для кейсов с обязательной изоляцией процесса (процессная смерть,
+file-режимы, throw-класс) + селектор `--panic` (D304).
+
+**Когда использовать (только legacy-кейсы выше; исторически):**
 - Тесты `panic("...")` в коде.
 - Runtime errors (out-of-bounds, division by zero, при condition).
 - Assertion failures.
@@ -886,8 +927,9 @@ Multi-line patterns не поддерживаются. Runner склеивает
 | Тип теста | Куда |
 |---|---|
 | Позитивный `test "..."` | `nova_tests/<group>/<name>.nv` (folder-module, `module nova_tests.<group>`) |
+| Runtime-panic `test "..." panics "pat"` (канон, D348) | peer-файл того же folder-module `nova_tests/<group>/<name>.nv` · согласовано |
 | `EXPECT_COMPILE_ERROR` | `nova_tests/<group>/neg/<name>.nv` (`module neg.<name>`; суффикс `_neg` обязателен только вне `neg/`) |
-| `EXPECT_RUNTIME_PANIC`, `fn main()` | standalone в `nova_tests/<group>/` или `nova_tests/<group>/rt/` |
+| `EXPECT_RUNTIME_PANIC`, `fn main()` — **legacy** (только изоляция процесса, D348) | standalone в `nova_tests/<group>/` или `nova_tests/<group>/rt/` |
 | `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR` | standalone в `nova_tests/<group>/` |
 | Медленный тест | `nova_tests/<group>/<name>_slow.nv` |
 
@@ -899,7 +941,7 @@ Multi-line patterns не поддерживаются. Runner склеивает
 
 Если в твоём проекте появился use-case для нового маркера (например
 `EXPECT_LINT_WARNING`) — **сначала** проверь, не покроет ли существующий
-один из 4 стандартных. Если нужен новый — обсуди с авторами Nova
+один из стандартных (D89/D348). Если нужен новый — обсуди с авторами Nova
 (возможно, маркер должен быть стандартизирован через D-block).
 
 **Custom-маркеры** в одном проекте — допустимы, но **не используй

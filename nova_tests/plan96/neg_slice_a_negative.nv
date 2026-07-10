@@ -1,0 +1,11 @@
+//
+// Plan 96 Ф.4 — негатив: arr[-1..3] → panic (D-neg-panic, не Python-wrap).
+// D239 ([]T≡Vec): сообщение паники `Vec: slice ... out of bounds for length N`
+// (было `array: slice`). Директива выровнена под новый текст.
+
+module nova_tests.plan96
+
+test "neg slice a negative" panics "Vec: slice" {
+    mut arr = [10, 20, 30, 40, 50]
+    ro _ = arr[-1..3]
+}

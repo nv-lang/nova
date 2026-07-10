@@ -3,10 +3,10 @@
 
 module nova_tests.plan140_1
 
-fn must_return_positive() -> int
+fn ensures_msg_interp_pos_must_return_positive() -> int
     ensures result > 0, "result was ${result}"
 => 7
 
 test "satisfied interpolated ensures: value passes through, no panic" {
-    assert(must_return_positive() == 7)
+    assert(ensures_msg_interp_pos_must_return_positive() == 7)
 }

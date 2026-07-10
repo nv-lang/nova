@@ -7,8 +7,9 @@
 //   1. 5 timer-observability-счётчиков вынесены из эффекта `Time` в
 //      отдельный read-only `TimerMetrics`-эффект (Q1) — они диспатчатся в
 //      `Nova_TimerMetrics_timer_*` (nova_rt/channels.h) и остаются рабочими.
-//   2. int-провод `Time` сохранён (Ф.1 не меняет поведение): `now()->int`,
-//      `sleep(ms int)` работают как прежде.
+//   2. int-провод `Time` сохранён (Ф.1 не меняет поведение): `now_unix_ms()->int`,
+//      `sleep(ms int)` работают как прежде (имена — после Plan 175 owner
+//      side-task unit-rename amend D316, 2026-07-06: `now()`→`now_unix_ms()`).
 //   3. Схема `Time` теперь читается codegen'ом ИЗ std/prelude/effects.nv
 //      (единый источник) — компиляция этого файла = smoke-проверка, что
 //      единый источник даёт ту же схему.
@@ -42,10 +43,10 @@ test "TimerMetrics — все пять read-only опов диспатчатся
     assert(longest >= 0)
 }
 
-test "Time int-провод сохранён: now() -> int, sleep(0) немедленно" {
-    ro t0 = Time.now()
+test "Time int-провод сохранён: now_unix_ms() -> int, sleep(0) немедленно" {
+    ro t0 = Time.now_unix_ms()
     Time.sleep(0)
-    ro t1 = Time.now()
+    ro t1 = Time.now_unix_ms()
     assert(t1 >= t0)
 }
 
