@@ -70,12 +70,12 @@ test "generic fn без spawn: T=str" {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn spawn_twice[T](body fn() -> T) -> int {
-    mut count = 0
+    mut count = AtomicInt.new(0)
     supervised {
-        spawn { body(); count += 1 }
-        spawn { body(); count += 1 }
+        spawn { body(); count.fetch_add(1) }
+        spawn { body(); count.fetch_add(1) }
     }
-    count
+    count.load()
 }
 
 test "mono spawn: множественные spawns в одной generic fn" {
