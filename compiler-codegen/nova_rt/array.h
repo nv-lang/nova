@@ -877,6 +877,29 @@ static inline void* nova_idx_nochk(void* arr, nova_int i, size_t esz) {
     return (char*)h->data + (size_t)i * esz;
 }
 
+/* [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент) — bounds-checked
+ * element access for `[N]T` INLINE mono structs (`_NovaFixArr_<N>_<L>_<T>`,
+ * `typedef struct { T data[N]; } ...;` — codegen `resolved_type_to_c`/
+ * `register_mono_fixed_array`). UNLIKE `nova_idx_chk` above, there is NO
+ * `{data,len,cap}` header to read `len` from — `[N]T` carries no runtime
+ * length at all (`N` is a compile-time literal baked into the type). The
+ * call site passes `data` (the struct's `.data`/`->data` array member,
+ * already decayed to a pointer by C) and `n` (the literal `N`) directly.
+ *   *(T*)nova_fixarr_idx_chk((void*)((v).data), (i), (N), sizeof(T))
+ *
+ *   nova_fixarr_idx_chk   — bounds-check (panic on OOB); default indexing.
+ *   nova_fixarr_idx_nochk — no check, for verifier-proven in-range sites
+ *                           (Plan 140.2 D257 elision, same policy as `nova_idx_nochk`).
+ */
+static inline void* nova_fixarr_idx_chk(void* data, nova_int i, nova_int n, size_t esz) {
+    if (i < 0 || i >= n) nv_panic_index_oob(i, n);
+    return (char*)data + (size_t)i * esz;
+}
+
+static inline void* nova_fixarr_idx_nochk(void* data, nova_int i, size_t esz) {
+    return (char*)data + (size_t)i * esz;
+}
+
 /* Plan 186 (D412) — hex-blob `x"…"` / `embed("path")` materialization.
  *
  * The blob bytes live in one interned `static const uint8_t nova_blob_<h>[]`
