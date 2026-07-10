@@ -1383,6 +1383,13 @@ pub struct CEmitter {
     /// by-value). Строится ОДНИМ пре-пассом `build_free_fn_byref_map` ДО
     /// fn-forward-decl цикла — сигнатуры/тела/call-sites читают одну карту.
     free_fn_byref_params: HashMap<String, Vec<(String, bool)>>,
+    /// [M-172.14-methods-byref]: зеркало `free_fn_byref_params` для МЕТОДОВ
+    /// (receiver, не свободная функция). Ключ — `(Type, method_name)` (не
+    /// плоское имя — методы с одинаковым именем на разных типах разные C-
+    /// функции). Receiver сам НЕ трогается (уже by-ptr, D181/D326) — карта
+    /// касается только value-параметров метода. Строится
+    /// `build_method_byref_map` сразу после `build_free_fn_byref_map`.
+    method_byref_params: HashMap<(String, String), Vec<(String, bool)>>,
     /// Plan 48: generic instance-method FnDecls for method monomorphization.
     /// Key = (receiver_type_name, method_name). Methods with own type params (e.g. @execute[T,E]).
     mono_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
@@ -1972,6 +1979,7 @@ impl CEmitter {
             free_fn_inout_params: HashMap::new(),
             value_struct_field_tys: HashMap::new(),
             free_fn_byref_params: HashMap::new(),
+            method_byref_params: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
             mono_worklist: Vec::new(),
@@ -6125,6 +6133,8 @@ impl CEmitter {
         // (value-typedef'ы выше уже заполнили `value_struct_field_tys`).
         // Сигнатуры, тела и call-sites читают одну финализированную карту.
         self.build_free_fn_byref_map(module);
+        // [M-172.14-methods-byref]: тот же пре-пасс для методов (receiver.is_some()).
+        self.build_method_byref_map(module);
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -15870,6 +15880,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // call-site оборачивает аргумент в RefArg (см.
                 // `build_free_fn_byref_map`).
                 ty_c.push('*');
+            } else if let Some(recv) = &f.receiver {
+                // [M-172.14-methods-byref]: то же для METHOD value-параметра
+                // (НЕ receiver'а — тот уже by-ptr отдельным путём выше).
+                if self.method_byref_flag(&recv.type_name, &f.name, p_idx) {
+                    ty_c.push('*');
+                }
             }
             // [M-c-keyword-ident-collision]: a Nova param named like a C
             // keyword (`long`, `int`, ...) must not appear bare in the C
@@ -22078,6 +22094,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `T*`; чтения в теле auto-deref (`name` → `(*name)`), как у
                 // Р10. Записей нет по построению (ro).
                 self.ref_params.insert(p.name.clone());
+            } else if let Some(recv) = &f.receiver {
+                // [M-172.14-methods-byref]: то же auto-deref для METHOD
+                // value-параметра.
+                if self.method_byref_flag(&recv.type_name, &f.name, p_idx) {
+                    self.ref_params.insert(p.name.clone());
+                }
             }
         }
         let params = self.params_c(f)?;
@@ -34860,6 +34882,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .unwrap_or(false);
                         let obj_c = self.prepare_method_recv(&obj_c, &obj_ty_local, recv_mutable, Some(obj));
                         let mut arg_strs = vec![obj_c];
+                        // [M-172.14-methods-byref]: большой ro value-struct аргумент
+                        // метода — обёртка в RefArg (materialize-temp/прямой адрес),
+                        // зеркало free-fn `synthesize_inout_refargs`. No-op когда
+                        // карта пуста для этого (type, method) — byte-identical.
+                        let method_wrapped = self.synthesize_method_byref_args(&type_name, method, args);
+                        let args: &[CallArg] = method_wrapped.as_deref().unwrap_or(args);
                         for a in args {
                             if is_generic_type {
                                 // Generic receiver: box args to void*
@@ -34913,6 +34941,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // Static method: obj is the type name (Ident), not a value
                         let mut arg_strs = Vec::new();
+                        // [M-172.14-methods-byref]: то же RefArg-оборачивание, что у
+                        // instance-ветки выше, для static (`.`) методов (ctor'ы вроде
+                        // `Response.new(...)` часто берут большие value-struct args).
+                        let method_wrapped = self.synthesize_method_byref_args(&type_name, method, args);
+                        let args: &[CallArg] = method_wrapped.as_deref().unwrap_or(args);
                         for a in args {
                             if is_generic_type {
                                 let arg_ty = self.infer_expr_c_type(a.expr());
@@ -35485,6 +35518,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             .filter(|s| !s.is_instance)
                             .collect();
                         if !static_overloads.is_empty() {
+                            // [M-172.14-methods-byref]: большой ro value-struct
+                            // аргумент static-метода — RefArg-обёртка (mirror
+                            // instance/static Member-веток). Это ГЛАВНЫЙ путь для
+                            // `Type.method(args)`, парсящегося как `ExprKind::Path`
+                            // (не `Member`) когда receiver — голое имя типа без
+                            // generics/computed-expr — сюда попадает подавляющее
+                            // большинство static-вызовов (`HmacSha256.verify(...)`,
+                            // `Response.new(...)`).
+                            let method_wrapped =
+                                self.synthesize_method_byref_args(&recv_seg, method_name, args);
+                            let args: &[CallArg] = method_wrapped.as_deref().unwrap_or(args);
                             // Plan 48 Ф.7.2: sentinel detection для static generic
                             // методов с собственными type params. Без этого
                             // sentinel c_name (__mono_method__T__m) утекает в
@@ -44921,6 +44965,193 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.free_fn_byref_params = map;
     }
 
+    /// [M-172.14-methods-byref]: флаг auto-by-ref для позиционного параметра
+    /// МЕТОДА (receiver НЕ считается — он параметром `f.params` не является,
+    /// эмитится отдельно `nova_self`/D181/D326). Единственный источник для
+    /// сигнатуры/тела/call-site метод-пути, зеркало `free_fn_byref_flag`.
+    fn method_byref_flag(&self, type_name: &str, method_name: &str, idx: usize) -> bool {
+        self.method_byref_params
+            .get(&(type_name.to_string(), method_name.to_string()))
+            .and_then(|v| v.get(idx))
+            .map(|(_, b)| *b)
+            .unwrap_or(false)
+    }
+
+    /// [M-172.14-methods-byref]: пре-пасс — построить `method_byref_params`,
+    /// зеркало `build_free_fn_byref_map` для методов (`f.receiver.is_some()`).
+    /// Ключ `(Type, method)` (не плоское имя — методы с одинаковым именем на
+    /// разных типах — разные C-функции, не коллизия как у free-fn перегрузок).
+    /// Консервативные «отравления» (ключ исключается целиком):
+    /// - ≥2 fn-декларации под одним `(Type, method)` (overload — call-site
+    ///   картой по имени не различает перегрузку, как у free-fn);
+    /// - параметры с default-значениями;
+    /// - метод взят КАК ЗНАЧЕНИЕ (`Type.@method`, Plan 11 Ф.4/Plan 132 —
+    ///   только unbound форма пережила Plan 132) — `emit_method_value_typed`
+    ///   строит closure из `method_overloads`-сигнатуры и форвардит args
+    ///   raw, минуя RefArg-обёртку call-site'а; консервативно поражаем ПО
+    ///   ИМЕНИ метода (без учёта типа receiver'а — over-poison безопасен,
+    ///   тот же принцип что у free-fn value-position скана).
+    /// Static (`.`) методы включены наравне с instance (`@`) — ключ общий,
+    /// оба пути читают одну карту на call-site.
+    fn build_method_byref_map(&mut self, module: &Module) {
+        let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut poisoned: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        let mut map: HashMap<(String, String), Vec<(String, bool)>> = HashMap::new();
+        for item in &module.items {
+            let Item::Fn(f) = item else { continue };
+            let Some(recv) = &f.receiver else { continue };
+            if f.is_external {
+                continue;
+            }
+            // [M-172.14-methods-byref]: примитивный receiver (int/str/bool/
+            // f64/f32/u8) диспатчится ОТДЕЛЬНОЙ веткой в `emit_call`
+            // (расширения на примитивах, ~L32763) которая НЕ обёрнута этим
+            // маркером — исключаем, чтобы не рассинхронить сигнатуру с
+            // call-site (scope этой волны — record/value-struct receiver'ы,
+            // где применяется общая non-generic instance/static ветка).
+            if matches!(
+                recv.type_name.as_str(),
+                "int" | "str" | "bool" | "f64" | "f32" | "u8" | "i8" | "i16" | "i32" | "i64"
+                    | "u16" | "u32" | "u64" | "uint" | "char" | "size"
+            ) {
+                continue;
+            }
+            let key = (recv.type_name.clone(), f.name.clone());
+            if !seen.insert(key.clone()) {
+                poisoned.insert(key); // перегрузка → отравлено
+                continue;
+            }
+            if f.params.iter().any(|p| p.default.is_some()) {
+                poisoned.insert(key);
+                continue;
+            }
+            let mut flags: Vec<(String, bool)> = Vec::with_capacity(f.params.len());
+            let mut any = false;
+            for p in &f.params {
+                let ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                    box_ty
+                } else {
+                    self.type_ref_to_c(&p.ty).unwrap_or_default()
+                };
+                let b = self.param_is_auto_byref(p, &ty_c);
+                any |= b;
+                flags.push((p.name.clone(), b));
+            }
+            if any {
+                map.insert(key, flags);
+            }
+        }
+        if !map.is_empty() {
+            // Тот же скан «имя как значение», что и free-fn пре-пасс
+            // (`collect_value_position_idents_*` теперь также harvest'ит
+            // `@method`-маркеры в тот же `HashSet<String>`, отличимые по
+            // `@`-префиксу от free-fn имён).
+            let mut value_refs: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for item in &module.items {
+                match item {
+                    Item::Fn(f) => {
+                        if let FnBody::Block(b) = &f.body {
+                            Self::collect_value_position_idents_block(b, &mut value_refs);
+                        } else if let FnBody::Expr(e) = &f.body {
+                            Self::collect_value_position_idents_expr(e, &mut value_refs);
+                        }
+                    }
+                    Item::Test(t) => {
+                        Self::collect_value_position_idents_block(&t.body, &mut value_refs);
+                    }
+                    Item::Let(l) => {
+                        Self::collect_value_position_idents_expr(&l.value, &mut value_refs);
+                    }
+                    _ => {}
+                }
+            }
+            let method_value_names: std::collections::HashSet<String> = value_refs
+                .iter()
+                .filter_map(|n| n.strip_prefix('@').map(|m| m.to_string()))
+                .collect();
+            if !method_value_names.is_empty() {
+                for key in map.keys().cloned().collect::<Vec<_>>() {
+                    if method_value_names.contains(&key.1) {
+                        poisoned.insert(key);
+                    }
+                }
+            }
+        }
+        for k in &poisoned {
+            map.remove(k);
+        }
+        self.method_byref_params = map;
+    }
+
+    /// [M-172.14-methods-byref]: зеркало `synthesize_inout_refargs` для
+    /// METHOD call-site'ов. Ключ `(type_name, method)` вместо flat free-fn
+    /// имени — резолвится вызывающим кодом (уже знает receiver-тип к этому
+    /// моменту эмиссии). Методы сегодня — только позиционные аргументы
+    /// (`CallArg::Item`); `Named`/`Spread` не встречаются на методах, но
+    /// обрабатываются наравне для структурного параллелизма с free-fn.
+    fn synthesize_method_byref_args(
+        &self,
+        type_name: &str,
+        method: &str,
+        args: &[CallArg],
+    ) -> Option<Vec<CallArg>> {
+        let byref_flags: &Vec<(String, bool)> = self
+            .method_byref_params
+            .get(&(type_name.to_string(), method.to_string()))?;
+        let mut any = false;
+        let mut out: Vec<CallArg> = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            let by_ro_ref = match a {
+                CallArg::Item(_) => byref_flags.get(i).map(|(_, b)| *b).unwrap_or(false),
+                CallArg::Named { name: arg_name, .. } => byref_flags
+                    .iter()
+                    .find(|(pn, _)| pn == arg_name)
+                    .map(|(_, b)| *b)
+                    .unwrap_or(false),
+                CallArg::Spread(_) => false,
+            };
+            let already = matches!(a.expr().kind, ExprKind::RefArg(_));
+            if by_ro_ref && !already {
+                any = true;
+                // Plan 172.14-methods: как у free-fn — прямой адрес только
+                // для ro-локала без mut/box/lazy-const алиасинга; иначе
+                // materialize-temp (semantics-preserving copy).
+                let needs_copy = !self.byref_arg_direct_addr_ok(a.expr());
+                let wrap = |inner: &Expr| -> Expr {
+                    let span = inner.span;
+                    let carried: Expr = if needs_copy {
+                        Expr::new(
+                            ExprKind::Block(Block {
+                                stmts: vec![],
+                                trailing: Some(Box::new(inner.clone())),
+                                span,
+                                is_unsafe: false,
+                            }),
+                            span,
+                        )
+                    } else {
+                        inner.clone()
+                    };
+                    Expr::new(ExprKind::RefArg(Box::new(carried)), span)
+                };
+                match a {
+                    CallArg::Item(inner) => out.push(CallArg::Item(wrap(inner))),
+                    CallArg::Named { name: arg_name, value } => {
+                        out.push(CallArg::Named {
+                            name: arg_name.clone(),
+                            value: wrap(value),
+                        });
+                    }
+                    CallArg::Spread(_) => unreachable!("spread не by-ptr"),
+                }
+            } else {
+                out.push(a.clone());
+            }
+        }
+        if any { Some(out) } else { None }
+    }
+
     /// Plan 172.14 Ф.1: собрать идентификаторы в ЗНАЧЕНИЕ-позиции (не func
     /// прямого вызова). Консервативно: любой Ident вне `Call.func`-позиции
     /// считается «значением» (включая аргументы HOF, поля record-lit, spawn
@@ -44935,6 +45166,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         e: &Expr,
         out: &mut std::collections::HashSet<String>,
     ) {
+        // [M-172.14-methods-byref]: `Type.@method` (unbound method value,
+        // Plan 11 Ф.4/Plan 132 — only the unbound form survives) captures the
+        // method's registered C signature into a closure body
+        // (`emit_method_value_typed` reads `sig.param_c_types` and forwards
+        // args raw, bypassing any RefArg wrap). Mark it in the SAME
+        // string set as free-fn value-refs (with a `@`-prefix — methods
+        // never collide with free-fn names) so `build_method_byref_map` can
+        // poison the method name (conservatively, ignoring the receiver
+        // type — over-poison is safe, mirrors the free-fn precedent).
+        // Checked unconditionally (before the match below), independent of
+        // which arm below would otherwise walk this Member node.
+        if let ExprKind::Member { name, .. } = &e.kind {
+            if let Some(m) = name.strip_prefix('@') {
+                out.insert(format!("@{}", m));
+            }
+        }
         let ve = Self::collect_value_position_idents_expr;
         let vb = Self::collect_value_position_idents_block;
         match &e.kind {
