@@ -11,18 +11,18 @@ module nova_tests.concurrency
 test "M:N: Channel basic send/recv — park/wake через workers" {
     runtime.init(2)
     ro ch = Channel.new(1)
-    mut received = 0
+    mut received = AtomicInt.new(0)
     supervised {
         spawn {
             ro v = match ch.rx.recv() {
                 Some(x) => x
                 None    => -1
             }
-            received = v
+            received.store(v)
         }
         spawn { ch.tx.send(42) }
     }
-    assert(received == 42)
+    assert(received.load() == 42)
     runtime.shutdown()
 }
 
@@ -32,7 +32,7 @@ test "M:N: Channel basic send/recv — park/wake через workers" {
 test "M:N: Channel pipeline — 4 producers park/wake" {
     runtime.init(2)
     ro ch = Channel.new(1)
-    mut count = 0
+    mut count = AtomicInt.new(0)
     supervised {
         spawn { ch.tx.send(1) }
         spawn { ch.tx.send(2) }
@@ -42,13 +42,13 @@ test "M:N: Channel pipeline — 4 producers park/wake" {
             mut got = 0
             while got < 4 {
                 match ch.rx.recv() {
-                    Some(_) => { got = got + 1; count = count + 1 }
+                    Some(_) => { got = got + 1; count.fetch_add(1) }
                     None    => { got = 4 }
                 }
             }
         }
     }
-    assert(count == 4)
+    assert(count.load() == 4)
     runtime.shutdown()
 }
 
@@ -56,7 +56,7 @@ test "M:N: Channel pipeline — 4 producers park/wake" {
 test "M:N: Channel + Time.sleep в одном supervised" {
     runtime.init(2)
     ro ch = Channel.new(4)
-    mut done = 0
+    mut done = AtomicInt.new(0)
     supervised {
         spawn { Time.sleep(5); ch.tx.send(1) }
         spawn { Time.sleep(5); ch.tx.send(2) }
@@ -66,12 +66,12 @@ test "M:N: Channel + Time.sleep в одном supervised" {
             mut n = 0
             while n < 4 {
                 match ch.rx.recv() {
-                    Some(_) => { n = n + 1; done = done + 1 }
+                    Some(_) => { n = n + 1; done.fetch_add(1) }
                     None    => { n = 4 }
                 }
             }
         }
     }
-    assert(done == 4)
+    assert(done.load() == 4)
     runtime.shutdown()
 }
