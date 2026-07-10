@@ -38967,3 +38967,257 @@ acquire [R3]); 94 остатка — миграционные классы по�
 nova check std байт-в-байт против main-бинаря (diff=0; пре-существующий D78-FAIL
 std/ffi/cstr.nv одинаков у обоих). Попутно: 3 пре-существующих упавших unit-теста
 lints (ретрактированный external fn, D282) починены той же волной.
+
+Часть 67 (2026-07-09, [sonnet], ветка parallel-collect-173-1 / nova-p173). ПЛАН 173.1 ЯДРО
+ЗАКРЫТО: supervised{…v} — value-expression (trailing вычисляется ПОСЛЕ join детей; unit-trailing
+остаётся eager — байт-паритет со «spawn последним стейтментом»), parallel for → []T для ЛЮБОГО T
+(примитив/f64/str/heap-record/value-record/анон+именованный tuple/sum/вложенный []T) и ЛЮБОГО
+итератора (Iter-protocol без len) через КАНАЛЬНЫЙ сбор: Sender-клон в родителе на момент spawn →
+move в ребёнка → send trailing-значения (int-скаляры прямо, heap по ссылке, value-типы boxed) →
+close на любом выходе ребёнка; выделенный drain-fiber внутри scope; K=min(len,16) back-pressure;
+completion order, плотный (D71-amend — iteration-order-гарантия и slot-запись ретированы; чекер-
+guard E_PARFOR_RESULT_UNSUPPORTED и примитив-whitelist УДАЛЕНЫ; M-parfor-record-result-miscompile
+ЗАКРЫТ). Канальный сбор при N≥1000 armed M:N вскрыл ТРИ довисевших runtime/codegen-бага, все
+починены той же волной: [M-chan-spurious-wake-retry] (send РОНЯЛ значение / recv лгал None на
+spurious wake — теперь retry-петли как в Go chansend/chanrecv), [M-chan-close-phantom-zero]
+(close-wake ставил fired=1 без значения → фантомный Some(0), len=N+1), [M-spawn-module-const-
+capture] (spawn/detach/blocking захватывали module-const по сырому имени → undeclared C ident),
+[M-bare-result-try-annotation] (bare Result + `?` аннотировался ЦЕЛЫМ Result → указательная
+арифметика на int-payload). Корпус переведён на set-equality/sort (plan83_6/7/10/stress, plan87,
+parallel_for_array) — порядок больше не гарантирован. Spec: D414 §4 + D71-amend в 06-concurrency
++ syntax.md + README D-индекс. Гейты: conformance 834/834 (0 FAIL); err173_0 ×5 зелёный;
+defer/err-корпус (err173, plan100_4_1/2/4/5, plan110, plan110_9_np) 0 FAIL; std/concurrency
+3 PASS/4 SKIP; std/io+fs+http 7 PASS 0 FAIL; nova_tests/concurrency КОМПИЛИРУЕТСЯ ЦЕЛИКОМ
+(гейт под-пункта; runtime 497/500 — 2 фейла = ENV-модель merged-CU (standalone PASS), 1 =
+Duration-дрейф nested_supervised_3_levels_cancel — параллельный агент). Ф.4 Stop — гейт 173.2;
+parallel(timeout:) — после 175; race/consume-синтаксис — 48 Ф.4 / 173.3.
+
+Часть 68 (2026-07-09/10, [haiku]). Сводка волны слияний в main за 2026-07-09/10 (по git log)
++ хвосты-cleanup. Влиты четыре ветки: (1) hexblob-186 (780bad378) — план 186 пп.1-4: hex-блоб
+литерал x"48 69" → []u8 компайл-тайм (лексер с разделителями _/пробел/перенос, E_HEX_BLOB_ODD/
+CHAR), интринсик embed("path") с fingerprint пересборки (E_EMBED_NOT_FOUND, выход выше корня —
+ошибка), эмиссия static const + интернирование по содержимому, ro-вид нулевой копии / mut-копия
+в GC-кучу, conformance-тесты D412 pos+neg + дедуп двойных embed-диагностик (78bf3d252);
+п.5 свип-миграция простыней закрыт пусто 2026-07-10 [haiku] — применимых сайтов в std/ нет
+(все «простыни» = fixed-size [N]u8/[N]u32/[N]int стек-массивы, x-блоб даёт []u8; карта в плане).
+(2) lint-185 (98bede37a) — nova lint ПОЛНАЯ ВЕРСИЯ, детально в записи 2026-07-09 выше.
+(3) ptr-methods-174-5 (1c1f0e177) — план 174.5: 9+2 unsafe-методов указателей (read/write/
+read_unaligned/write_unaligned/offset/add/sub/distance_to/lt + from_bits/to_bits чистым .nv),
+операторные формы ретрактированы E_POINTER_OP_USE_METHOD (7c797b7b8), миграция std 116 сайтов
+(c6be66893), conformance pos+8 neg (c6c4a7af0), спека-амендмент D216 «всё через методы»
+таблицей (59f7edc2a) — закрыт spec-остаток T5. (4) parallel-collect-173-1 (026a268df) — план
+173.1 ЯДРО: supervised{…v} value-expression + parallel for → []T канальным сбором, D414 §4 +
+D71-amend (f886faaef), три довисевших runtime/codegen-бага починены той же волной — детально
+в части 67. Точечные P1/P2: [M-lazy-const-init-race] — eager nova_consts_init() вместо
+per-const lazy-getter (50cfdcb92); [M-const-init-concurrency-gate] маркер — конкуренция в
+ro-инициализаторах не запрещена контрактно, гейт волной 173.3 (dc568ab7d). Субстрат 173.0
+Ф.2+Ф.3 (per-slot child_error[], serialized decision-loop, R2-tripwire) — влит ранее, детально
+в части 66. Хвосты-cleanup [haiku, ветка tails-cleanup]: промоушен data/semver_range →
+std/data/ (1ea2f919c: import std.data.semver, Version-сравнения через @equal/операторы вместо
+ретрактированных eq/gt/ge/lt/le, parse_version честным match по Result — снят CC-FAIL
+незахваченного `s` в cross-effect with-хендлере, peer-тесты semver_range_test.nv; check PASS,
+test --full зелёный, каталог data/ в _experimental опустел) + закрытие свипа 186 п.5
+(715868068). Гейт волны: conformance --positive --compile-error 82/0.
+
+2026-07-10 — Plan 173.3 ЗАКРЫТ (sonnet, ветка drf-173-3, worktree nova-p182): data-race
+freedom. D415 (06-concurrency.md). Одна ось #share (тип-АТРИБУТ, не протокол; E_SHARE_INVALID_KIND
+на kind без instance-идентичности), два уровня доступа (is_alias_read_safe / is_mut_alias_safe —
+зеркало Rust «T: Sync ⇔ &T: Send») в protocols/share_check.rs (9 unit-тестов); авто-вывод
+memberwise; ядовитая база = сырой *T + записываемая ячейка (mut-поле вне audited-типа).
+Capture-check в CapabilityCtx (стек scope-фреймов + free-var скан + синтаксический эскиз
+типов init: Type.new/Type[T].new/Type{..}/литералы) на границе spawn/parallel-for →
+E_CONCURRENT_MUT_CAPTURE; ro-захват всегда легален (D246); mut — только mut-alias-safe.
+Audited #share на 24 sync-типах std/runtime/sync.nv (Mutex/RwLock/ReentrantMutex/WaitGroup/
+Once/OnceCell/Lazy/Barrier/Condvar/CountDownLatch/Semaphore + 13 Atomic*; им добавлены
+явные `type X(*())`-декларации + расширен RUNTIME_BACKED_NEWTYPES, чтобы codegen не эмитил
+конфликтующие typedef'ы). spawn consume c [= e] { } — парсер-десугар в Spawn(Block[ConsumeScope]):
+D188-cleanup срабатывает на выходе РЕБЁНКА бесплатно; use-after-consume закрыт by construction;
+минимальный emit_c-фикс (collect_idents_stmt/collect_bound_names ConsumeScope-арм — захваты
+тел spawn-consume). Ф.4: #fiber_send/E_POINTER_CROSS_FIBER (118.3, не был реализован) поглощён
+D415 §5 документально. Дополнение владельца: E_CONST_INIT_CONCURRENCY
+([M-const-init-concurrency-gate]) — spawn/detach/supervised/parallel-for/select/блокирующие
+.send()/.recv()/Detach-fn в module-level ro/const-инициализаторах запрещены (исполняются в
+nova_consts_init() ДО арминга воркеров); extern/runtime-вызовы легальны. Миграция разом:
+std 2 файла (cancellation.nv within/race2 — реальный TOCTOU! — и servernet smoke → каналы),
+nova_tests ~19 файлов → Atomic*, examples 3 файла. Идиома docs/idiom/communicate-dont-share.md.
+Гейты: conformance 79/0; err173-корпус 19/0; std/concurrency 3/0(+4 skip); sync_test 1/0;
+nova check std/nova_tests/examples FAIL-set δ0 к main-базису (кроме ожидаемых новых диагностик,
+все починены той же волной). Новые коды: E_CONCURRENT_MUT_CAPTURE, E_SHARE_INVALID_KIND,
+E_CONST_INIT_CONCURRENCY.
+
+2026-07-10 [sonnet, ветка supervision-173-2]. Plan 173.2 — supervision-as-effect (MVP §3b),
+D416 (06-concurrency.md) + amend 08-runtime.md (постфикс-strategy пример → эффект-хендлеры).
+Ф.1: `type Decision enum Escalate|Stop|Restart|RestartAll|RestartRest` + `type Supervisor
+effect { on_child_fail(idx int, err any) -> Decision }` в std/prelude/effects.nv (обычный
+user-effect путь, как Random — без RUNTIME_DEFINED-скипа); политики
+std/concurrency/supervisor.nv (escalate()/stop() → Effect[Supervisor]). Amend §2.1: attempt
+отложен вместе с Restart-исполнением. Ф.2 (рантайм+кодген): NovaFiberQueue.has_supervisor
+(штамп codegen'ом на входе supervised/parallel-for из TLS _nova_handler_Supervisor);
+deferred-decision режим в nova_fiber_report_child_kinded (per-slot запись + release-publish
+`published`, БЕЗ CAS-primary/cancel-бродкаста); nova_supervised_process_decisions —
+serialized decision-pass в drain-цикле nova_supervised_run_impl (решения ПОКА siblings бегут)
++ финальный catch-up (byte-parity: default-режим сохраняет observer-loop 173.0 без изменений);
+исполнение: Escalate → nova_fiber_report_atomic_kinded (тот же precedence-путь D414) + cancel;
+Stop → drop (slot retained); Restart-тег → громкий abort (checker делает недостижимым).
+Мост: `_nova_supervisor_decide_fn` (effects.c, NULL=Escalate-all) ← generated
+`_nova_supervisor_decide_impl` (emit_c splice __SUPERVISOR_DECIDE_IMPL/INIT: TLS-vtable,
+NovaChildError→any боксинг nova_any_from_boxed/nova_any_box(str), fail-frame guard — throw
+хендлера = Escalate-with-handler-error, Decision-tag→NOVA_SUPERVISE_*). Чекер: E_SUPERVISOR_
+RESTART_GATED (Restart* в Supervisor-хендлере), E_SUPERVISOR_HANDLER_INTERRUPT,
+E_SUPERVISOR_HANDLER_SUSPEND (Time.sleep, приближение V1) — walk_expr_for_handler_lits
++in_supervisor-флаг. Тесты: nova_tests/err173_2 pos ×3 файла (stop: siblings живут+scope
+продолжает+panic-до-решения; escalate: паритет с дефолтом на идентичном теле, custom-политика
+(idx,err)-narrowing+mut-состояние, Escalate-with-error 7777; parfor: Stop=«собери выживших»
+36/40 dense) + neg ×3; std/concurrency/supervisor_test.nv. Гейты: cargo оба; conformance
+82/0; err173_0 ×5 стаб.; err173_2/err173_3+neg зелёные; std/concurrency 7/0. Известный
+MAIN-side красный: err173_1/parfor_diag (E_CONCURRENT_MUT_CAPTURE D415 бьёт supervised_value_
+smoke.nv 173.1) — вне периметра 173.2, чинить волне 173.1/173.3.
+
+=== Plan 175.1 — Civil time: Date/TimeOfDay/DateTime/ZonedDateTime/Period + ISO-8601/RFC-3339/RFC-9557 (2026-07-10) ===
+
+Ветка civil-time-175-1 (worktree nova-175), исполнитель sonnet. Новый folder-module
+std/time/civil (13 файлов .nv, ~2600 строк + 5 тест-файлов ~1000 строк): errors.nv
+(DateError/ParseDateTimeError/FieldKind/Disambiguation/OffsetConflict), weekday_month.nv
+(Weekday/Month 1-based enums), date.nv (Date epoch_day i64, Hinnant days_from_civil/
+civil_from_days, ISO-week, адъюстеры), time_of_day.nv (TimeOfDay nanos_of_day + декларация
+DateTime), datetime.nv (DateTime-методы), year_month.nv (YearMonth/MonthDay), period.nv
+(Period + CLAMP biggest-unit-first Q7 + 3-tier D317 + Period.between), offset.nv (Offset
+i32 сек, ±18h), zoned.nv (TimeZone enum Utc|Fixed|Iana, ZoneRules, LocalResolution
+Unique/Gap/Overlap, ZonedDateTime, 4-way Disambiguation, wall-vs-elapsed), tz.nv
+(s.to_timezone() §1а + curated rule-based embedded-таблица NY/London/Moscow/Sydney,
+tzdb_version), tzif.nv (RFC-8536 TZif v1/v2/v3 бинарный парсер + load_timezone Fs Os),
+parse.nv (strict s.to_date/to_time_of_day/to_datetime/to_timestamp/to_zoned_datetime/
+to_period, :60-clamp, OffsetConflict), format.nv (type-safe builder DateTimeFormat +
+@display включая Timestamp RFC-3339 — закрывает зависимость 175 full-datetime display).
+Спека: D319/D320/D321 (новые, из reserved-диапазона) + README-реестр; docs/datetime.md.
+Тесты: civil_test 25, civil_arith_test 15, zoned_test 14, tz_test 10, parse_test 14 =
+78 pos-блоков + neg 2 (EXPECT_COMPILE_ERROR period_not_duration/time_of_day_not_period)
++ rt 1 (EXPECT_RUNTIME_PANIC date_period_overflow_traps). Компилятор НЕ тронут (чистый
+std) — 8 обходов §4а с маркерами: [M-175.1-local-offset-effect-op] (vtable-слот),
+[M-175.1-value-in-value-emit-order], [M-175.1-variant-literal-receiver],
+[M-175.1-minus-overload-arg-type], [M-175.1-operator-arg-type-blind],
+[M-175.1-qualified-variant-value], [M-175.1-enum-default-param],
+[M-175.1-interp-value-record-display]; данные: [M-175.1-full-tzdb-embed].
+
+=== 2026-07-10: Plan 173 Ф.5+Ф.6 — hygiene-финал + panics-клаузула (D348); зонт закрыт (ветка err-173-f56, sonnet) ===
+Ф.5 (сквозная гигиена, 5 коммитов ad6a9b191/843810e49/9c15dbe7b/58fcf2975/cdd23a5b2):
+- D188 R2 exactly-once — РЕАЛЬНЫЙ runtime-счётчик: скрытое поле _consume_ccount на heap-record
+  инстансе + пролог-guard в Nova_<T>_consume_cleanup (единый chokepoint всех путей вызова) →
+  panic D188-on-exit-double-invocation; чекер D188-r2-manual-on-exit расширен на алиасы/receiver-
+  подвыражения; extern "nova" cleanup'ы (D194 hot-path) исключены.
+- D192-РЕТРАКТ ПРИМЕНЁН: тип CleanupTimeoutError УДАЛЁН (prelude+codegen-splice+runtime-hook);
+  watchdog армится только вокруг cleanup-вызова (nv_cleanup_watchdog_arm/disarm); превышение
+  порога = one-shot stderr-варн «fiber stuck in cleanup» + duration_ms/overrun в ResourceTrace
+  exit-событии (D185 amend; timeout дропнут из enter; D195-override тесты мигрированы на overrun);
+  3-level resolution сохранена как источник ПОРОГА. nv_resume_panic→nv_panic в D188-десугаре (#9).
+- Попутный §4а-фикс: record-literal с неизвестным типом → [E_UNKNOWN_TYPE] (был тихий miscompile).
+- Sweep: historical-баннеры D158/D160/D161/D162; stale race/with_timeout в 06-concurrency/04-effects;
+  README-индекс; хаб error-and-cleanup-model догнал факт (Ф.2 ЗАКРЫТА + Ф.5-строка).
+- nova_runtime_reset() (сброс fail/interrupt-frames + handler-слотов между panic-тестами; из
+  user-кода недоступен) + throw-site трассировка (Zig-минимум: TLS _nova_throw_site, стемп на
+  throw/panic/unreachable, «at file:line (throw site)» в 4 uncaught-abort ветках).
+Ф.6 (panics-клаузула, d1707363f/3e4505953/3f2262696):
+- СПЕК-ПЕРВЫМ: D348 (09-tooling.md) — test "имя" panics "паттерн" {…}, инверсия PASS/FAIL
+  (PASS ⇔ PANIC-класс D13 + substring D89), exit=0, granularity per-test; amend D89 (шестой класс;
+  EXPECT_RUNTIME_PANIC → legacy + --panic lane); таблица folder-module layout. NB: «(D348)»-комменты
+  в emit_c про crossmodule-mangling — ошибочная ссылка на фактический D381, исправлены.
+- parser/AST TestDecl.panics (контекстное KW как raw/bench); codegen test-frame: инверсия веток,
+  PANIC-дискриминатор, nova_test_msg_contains (ptr,len-окно), nova_runtime_reset() в эпилоге.
+- ВСКРЫТЫЙ §4а-ФИКС (D13/D414, тот же класс что Ф.1 #1): supervised re-throw ДЕГРАДИРОВАЛ панику
+  ребёнка до ловимого USER (plain nova_throw) — теперь kind==PANIC транспортируется nv_panic'ом.
+- Миграция корпуса: 67 panics-тестов в 62 файлах; −52 CU (39 фолдов из neg//rt/ + 13
+  expected_runtime → новая folder-module папка runtime_panics/ одним CU; 6 in-place). Возвраты в
+  legacy (55 файлов EXPECT_RUNTIME_PANIC): throw-класс (sync unlock-guards = nova_throw USER),
+  file-режимы (CONTRACTS off/#unchecked), процессные (fiber stack overflow SEH, token-bind abort,
+  uncaught-trace stderr), мигранты pre-existing-красных CU (verified родным baseline-бинарём).
+- test-conventions.md (a/b/c) обновлены с «· согласовано»; Rust-тесты раннера d348_panics_clause.rs
+  7/7 (мета-FAIL-кейсы «нет паники→FAIL»/«неверный паттерн→FAIL» — не .nv-фикстурами).
+Гейты (слито с main fed26870f): cargo build оба крейта чисто; conformance 83/0 (эталон 82 + новый
+d192-ретракт neg); err173*-корпус 28/0; --panic lane 53/1 (TIMEOUT pre-existing); nova_tests-выборка
+(basics/effects/generics/atomics/narrowing/any_is) δ=0 vs родной baseline-бинарь (35/5 оба,
+посписочный diff пуст). Зонт 173: все фазы закрыты; остаток — Ф.3 п.5 with_timeout (gated Plan 175,
+[M-174-retract-with-timeout]) + followups [M-173-error-return-trace] (минимум сделан) и пр.
+[2026-07-10] Plan 172.2 — задача «выполнить план 172.2 целиком» (ветка method-args-172-2 от main
+b2082b0e6) закрыта верификацией, БЕЗ нового кода: план уже полностью реализован и слит в main
+коммитом b2de1218c («feat(172.2): method-arg scalar-narrowing enforcement + unicode codepoint=u32
+(D327)»), который является предком базового коммита ветки (git diff main..method-args-172-2 пуст).
+Механизм, миграция unicode, гейты, фикстуры detect172 (u172_2_method_arg_narrowing_pos +
+neg/n_method_arg_narrowing) — всё уже на месте (см. §10 плана, закрытие 2026-06-26). Проверено
+заново: cargo build оба крейта чисто; neg-фикстура PASS ([E_IMPLICIT_NARROWING] срабатывает);
+эталон conformance 83/0. Найдены и починены хвосты рассинхронизации документации, оставшиеся от
+исходного закрытия: (1) README.md строка 172.2 не была обновлена до ✅ CLOSED (висела 📋 proposed
+2026-06-19, хотя умбрелла-строка 172 уже показывала «172.2 ✅»); (2) шапка плана 172.2 держала
+предварительный «D311» вместо финального D327; (3) backlog-маркер [M-instance-method-arg-scalar-
+narrowing] не был помечен закрытым (оставался как открытый P1-гэп). Все три поправлены в этой волне
+(README.md, docs/plans/172.2-method-arg-type-checking.md, docs/plans/backlog-followups.md).
+Позитивная detect172-фикстура упирается в НЕ связанный с 172.2 CODEGEN-FAIL ([E_STR_NO_LEN] в
+u44_generic_member_pos.nv/u44_if_expr_pos.nv того же однокомпилируемого detect172/basics-модуля) —
+идентично на main (diff пуст), не в скоупе этой волны, не трогал.
+
+=== 2026-07-10: Plan 175 — ядро (Ф.3a-d/Ф.5d) + with_timeout retraction (ветка time-rework-175, sonnet) ===
+Задача «выполни план 175 целиком» — реализованы все фазы, для которых нашёлся безопасный
+путь; Ф.2 (typed-effect-wire) осознанно закрыт как SUPERSEDED четвёртым заходом (см. ниже),
+а не форсирован через компилятор-инженерию без owner sign-off.
+- Ф.3(a) Monotonic.now(): убран compiler-builtin (4 сайта emit_c.rs: 2×emit_call Member/Path,
+  2×infer_expr_c_type Member/Path — grep nova_monotonic_now_record = 0), заменён обычной
+  `.nv`-функцией (тот же паттерн, что Timestamp.now()). Настоящий недостающий кусок оказался
+  в C runtime (NovaVtable_Time не имел слота под now_monotonic_ns — Nova_Time_now_monotonic_ns
+  безусловно читал real-clock), не в архитектуре prelude/std.time, куда упирались 3 прошлых
+  захода. Добавлен vtable-слот + NULL-safe dispatch (backward-compat). fixed_ms/mut_clock
+  реализуют now_monotonic_ns когерентно с now_unix_ms (mock-coherence). Закрывает
+  [M-monotonic-mock-support].
+- Ф.3(b) free sleep(Duration)/sleep_until(Monotonic) (MVP-обёртка через elapsed_since,
+  saturate-to-zero). Ф.3(c) @minus(Monotonic) overload (elapsed_since сохранён, alias).
+  Ф.3(d) @display/@debug (D237) на Duration/Timestamp/Monotonic.
+- Побочный codegen-фикс (найден и починен этой же волной, §4а): `${x}`/`${x:?}`-интерполяция
+  для ЛЮБОГО value-record с пользовательским @display/@debug была сломана в emit_c.rs
+  (debt_strip_nova_trim_start_no_ws не снимал префикс NovaValue_ + receiver передавался by-value
+  вместо pointer-ABI D226/A6) — молчаливый fallback в nova_int_to_str(struct) → CC-FAIL. Фикс
+  использует уже существующие в кодовой базе хелперы (debt_strip_value_prefix_or_nova_trim_start,
+  prepare_method_recv) — 2-строчная правка, не новая инфраструктура. Не time-специфичный баг
+  (до Ф.3d ни один value-record не реализовывал Display/Debug, поэтому не проявлялся).
+- Ф.5(d): measure[T] мигрирован на Monotonic.now() (elapsed-measurement иммунен к NTP/DST-skew,
+  индустриальная конвенция Go/Rust/Java). deadline_in НАМЕРЕННО не мигрирован (return-type
+  committed к Timestamp, D124). is_past/time_until/@elapsed корректно остаются Timestamp-based
+  (устаревший line-list §6 плана предполагал иначе — не соответствовал D124).
+- Ф.2 — ЧЕТВЁРТЫЙ заход, SUPERSEDED (не net-zero-провал, а находка + осознанное решение).
+  prelude⟷std.time coupling из 3 прошлых заходов — решаем (перенос Time-decl в std.time,
+  типизированная схема резолвится, cross-import duration.nv⟷testing.handlers НЕ блокирующий
+  цикл на практике). Настоящий барьер — ГЛУБЖЕ: mock-handler обязан сконструировать typed
+  Monotonic внутри handler-тела, но (a) Monotonic намеренно opaque (нет from_*, Rust
+  Instant-паритет, защита от фабрикации фейковых моментов) и (b) codegen handler-литералов
+  не поддерживает anonymous record-literal («codegen error: anonymous record literal without
+  spread not supported»). Заход откачен ЧИСТО (git checkout, без diff в дереве) после
+  диагностики; находка задокументирована в D316-amend (spec/decisions/04-effects.md) и
+  docs/time.md — вывод: option C (int-wire эффект + typed .nv-сахар, уже отгружен Ф.1b/Ф.3)
+  — корректная ИТОГОВАЯ архитектура при текущих возможностях компилятора, не временный
+  компромисс (typed-сахар живёт в родном модуле типа, где anon-literal — обычный function
+  body, а не handler-литерал — opacity и codegen-ограничение не конфликтуют там).
+- with_timeout retraction (Plan 173 §3a п.4, [M-174-retract-with-timeout]): within[T]/
+  with_timeout[T] удалены из std/concurrency/cancellation.nv (race2[T] остаётся — не
+  субсумирован). Мигрированы: nova_tests/concurrency/cancellation_test.nv (4 within-теста
+  удалены, покрыты supervised_deadline_test.nv), mn_closure_spawn_gcroot_test.nv (последний
+  тест → race2, попутно починен НЕЗАВИСИМЫЙ pre-existing mut-capture баг D415 §2 в helper'е
+  run_int — найден при миграции, той же волной), examples/real_world/audit.nv (иллюстративный).
+- Попутный фикс (D316-дрейф, найден до основной работы): std/time/timer_metrics_test.nv
+  использовал устаревшее имя Time.now() вместо Time.now_unix_ms() — исправлено.
+- Spec: D316-amend (Ф.3a-d/Ф.5d shipped + Ф.2-находка), D124-amend (актуализация под
+  пост-D316-переименования), D237-amend (Duration/Timestamp/Monotonic Display/Debug).
+  spec_tests/conformance: d316_time_effect_typed_surface, d124_wall_monotonic_separation +
+  5 neg-фикстур (mix-domain, as_unix_secs, sleep bare-int, sleep_until(Timestamp),
+  realtime-sleep, non-serializable Monotonic — все верифицированы эмпирически, не
+  предположительно). docs/time.md (новый) — модель, было→стало, 7-языковая таблица,
+  footguns, Ф.2-находка. Q-sweep в open-questions.md (Q-with-deadline-vs-within резолв,
+  Q-cancel-token-with-timeout пример обновлён).
+Гейты: cargo build оба крейта чисто; conformance 89/0 (эталон 83/0 + 6 новых); std/time 6/0;
+std/testing 2/0 (property/handlers); std/collections 11/1 (vec_lazy CC-FAIL — pre-existing,
+идентично на baseline 74ad62278 через temp-worktree ../nova-175-baseline-check);
+nova_tests/concurrency δ=0 (_repro_p110 assert_in_fiber.nv — тот же pre-existing CC-FAIL,
+байт-в-байт); nova_tests/plan65 δ=0 (тот же pre-existing whole-CU CC-FAIL); err173-корпус
+4/5 + 1 flaky-TIMEOUT (retry → PASS, не регрессия); cancellation_test.nv +
+mn_closure_spawn_gcroot_test.nv — изолированная сборка (temp-module, в обход pre-existing
+блокера остального nova_tests/concurrency) PASS.
+Остаётся TODO (не блокеры, задокументированы): Ф.5 auto-idle-advance (MVP explicit-advance
+через sleep() уже работает); per-OS dedicated monotonicity test; M:N-контракт mut_clock под
+реальной concurrent-нагрузкой (документирован, не verified тестом); custom E_SLEEP_UNTIL_WALL
+диагностика (generic E7301 type-mismatch уже корректно отвергает, просто менее приятный текст).

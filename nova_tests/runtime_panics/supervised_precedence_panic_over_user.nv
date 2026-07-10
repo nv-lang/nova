@@ -1,0 +1,32 @@
+//
+// Plan 173 Ф.3 п.1 (PANIC>USER>CANCEL precedence-политика): когда supervised-
+// scope удержал НЕСКОЛЬКО падений детей РАЗНЫХ kind (per-slot child_error[],
+// субстрат 173.0), primary при default-Escalate выбирается по строгому рангу
+// **PANIC > USER/USER_TYPED > CANCEL** (fibers.h nova_throw_kind_precedence).
+// D13-инвариант: panic ребёнка НЕ деградирует до ловимого USER — становится
+// primary даже если реальная throw-ошибка (USER) была записана РАНЬШЕ.
+//
+// Здесь 10 детей бросают USER (int-теги 5000..5009), 10 — паникуют строкой
+// "ZZZ_PANIC_WINS". Оба kind не перехвачены в scope → удержаны в child_error[].
+// Правильный primary = PANIC → процесс умирает с panic-сообщением, содержащим
+// "ZZZ_PANIC_WINS". Если бы precedence был сломан (USER бил бы PANIC, старая
+// 2-уровневая CANCEL→USER-таблица роняла входящий PANIC на уже-записанном
+// USER), primary был бы int-тег 50xx → stderr БЕЗ "ZZZ_PANIC_WINS" → FAIL.
+// Детерминированно (не зависит от порядка прибытия): ранг PANIC строго выше.
+
+module nova_tests.runtime_panics
+
+test "supervised precedence panic over user" panics "ZZZ_PANIC_WINS" {
+    println("PRECEDENCE_START")
+    supervised {
+        for i in 0..10 {
+            ro tag = 5000 + i
+            spawn { throw tag }
+        }
+        for _ in 0..10 {
+            spawn { panic("ZZZ_PANIC_WINS") }
+        }
+    }
+    // Недостижимо: primary=PANIC пробросился нагору, процесс умер.
+    println("UNREACHABLE_precedence_broken")
+}

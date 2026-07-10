@@ -1,4 +1,3 @@
-// EXPECT_RUNTIME_PANIC requires failed: Bag.at OOB
 //
 // Plan 140 cgfix ([M-138.2-flip-erased-base-body-mono]): a `requires` contract
 // on a GENERIC-TYPE method must fire at runtime when violated — just like the
@@ -30,7 +29,7 @@ fn Bag[T] @at(i int) -> int
     requires 0 <= i && i < @n, "Bag.at OOB"
 => @n
 
-fn main() Io -> () {
+test "gtr method contract neg" panics "requires failed: Bag.at OOB" {
     ro b = Bag[int].mk(3)
     ro _ = b.at(10)
     println("UNREACHABLE")

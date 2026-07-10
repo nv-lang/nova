@@ -328,10 +328,20 @@ static inline int _nova_channel_wake_send(Nova_ChannelState* st) {
 /* ── Receiver ──────────────────────────────────────────────────── */
 
 /* Plan 44.1 R1 A2: fast-path is_closed read without lock; full state check
- * MUST be performed under lock (TOCTOU re-check protocol). */
+ * MUST be performed under lock (TOCTOU re-check protocol).
+ *
+ * Plan 173.1 [M-chan-spurious-wake-retry] (2026-07-09): the whole body is a
+ * RETRY loop. A parked recv-waiter can be woken SPURIOUSLY (leftover wake on
+ * the scope/slot, preempt-path wakes — R3-7 explicitly allows them; the
+ * select path already re-checks via try_immediate). The pre-fix tail returned
+ * `None` on a spurious wake over an OPEN-but-empty channel — the consumer
+ * treated it as «closed» and stopped, truncating parallel-for collection
+ * under armed M:N (surfaced at N≥1000 in plan83_* once the 173.1 channel
+ * lowering made every parallel-for exercise this path). `None` is returned
+ * ONLY when the channel is genuinely closed+empty; anything else loops. */
 static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     Nova_ChannelState* st = rx->state;
-
+  for (;;) {
     /* Plan 44.1 audit round 5 (2026-05-12): fast-path closed check
      * symmetric с send fast-path (line ~466 nova_chan_writer_send).
      * Под bootstrap single-thread cheap; под M:N saves mutex roundtrip
@@ -453,8 +463,15 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
         nova_mutex_unlock(&st->mu);
         return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_Some, .value = v };
     }
+    if (nova_abool_load(&st->closed)) {
+        nova_mutex_unlock(&st->mu);
+        return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
+    }
+    /* [M-chan-spurious-wake-retry]: open + empty + not fired = SPURIOUS wake
+     * — loop back and re-park. Returning None here lied «closed» to the
+     * consumer (see function header). */
     nova_mutex_unlock(&st->mu);
-    return (NovaOpt_nova_int){ .tag = NOVA_TAG_Option_None, .value = 0 };
+  }
 }
 
 static inline NovaChanTryResult nova_chan_reader_try_recv(Nova_ChanReader* rx) {
@@ -499,29 +516,31 @@ static inline void nova_chan_reader_close(Nova_ChanReader* rx) {
         return;
     }
     nova_abool_store(&st->reader_closed, true);
-    /* Wake all parked senders — they will see reader_closed and return. */
+    /* Wake all parked senders — they will see reader_closed and return.
+     * Plan 173.1 [M-chan-close-phantom-zero]: no fired=1 CAS — close-side
+     * wake transfers no value (see nova_chan_writer_close). The woken
+     * sender's retry loop re-checks reader_closed → honest false. */
     while (st->send_waiters) {
         BaseWaiter* w = st->send_waiters;
-        int32_t expected = 0;
-        if (nova_aint_cas_weak_release(&w->fired, &expected, 1)) {
-            BaseWaiter* next = w->next;
-            _nova_waiter_unlink_locked(w);
-            nova_sched_wake(w->scope, w->slot);
-            (void)next;
-        } else {
-            /* Already fired by another path — just unlink. */
-            _nova_waiter_unlink_locked(w);
-        }
+        _nova_waiter_unlink_locked(w);
+        nova_sched_wake(w->scope, w->slot);
     }
     nova_mutex_unlock(&st->mu);
 }
 
 /* ── Sender ────────────────────────────────────────────────────── */
 
-/* Returns true if value was sent, false if channel is closed (Plan 30 Ф.1). */
+/* Returns true if value was sent, false if channel is closed (Plan 30 Ф.1).
+ *
+ * Plan 173.1 [M-chan-spurious-wake-retry] (2026-07-09): retry loop — a parked
+ * send-waiter woken SPURIOUSLY (not fired, channel still open) must RE-PARK,
+ * not «treat as send=false»: the pre-fix tail silently DROPPED the value on a
+ * spurious wake (parallel-for collection lost elements under armed M:N at
+ * N≥1000, plan83_* corpora). Mirrors the recv-side fix above; Go's chansend
+ * loops the same way. */
 static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
     Nova_ChannelState* st = tx->state;
-
+  for (;;) {
     /* Fast-path closed check (Plan 44.1 R1 A2: re-check under lock). */
     if (nova_abool_load(&st->closed) || nova_abool_load(&st->reader_closed)) {
         return 0;
@@ -606,11 +625,14 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
     if (w->channel) _nova_waiter_unlink_locked(w);
     nova_mutex_unlock(&st->mu);
 
-    if (closed_now) return 0;
     if (fired) return 1;
-    /* Spurious wake без actual transfer — channel ещё open но waiter
-     * canceled by stop_cb path. Treat as closed=false send=false. */
-    return 0;
+    if (closed_now) return 0;
+    /* [M-chan-spurious-wake-retry]: not fired + still open = SPURIOUS wake —
+     * loop back and retry the whole send (immediate hand-off / buffer push /
+     * re-park). The pre-fix «treat as send=false» dropped the value. Note the
+     * fired-before-closed order: a waiter promoted into the buffer right
+     * before a concurrent close DID transfer — that's a successful send. */
+  }
 }
 
 static inline NovaChanTryResult nova_chan_writer_try_send(Nova_ChanWriter* tx, nova_int v) {
@@ -654,18 +676,27 @@ static inline void nova_chan_writer_close(Nova_ChanWriter* tx) {
 
     nova_mutex_lock(&st->mu);
     nova_abool_store(&st->closed, true);
-    /* Wake all parked recv- and send-waiters under lock. */
+    /* Wake all parked recv- and send-waiters under lock.
+     *
+     * Plan 173.1 [M-chan-close-phantom-zero] (2026-07-09): do NOT CAS
+     * fired=1 here. `fired` means «a VALUE was transferred to/from this
+     * waiter» — the close-side wake transfers nothing. Setting it made a
+     * parked recv return Some(recv_val=0) — a PHANTOM ZERO appended to
+     * every parallel-for collection whose drain was parked at close time
+     * (len = N+1, surfaced by the 173.1 channel lowering at N≥1000) — and
+     * made a parked send (with the fired-first return order) report a
+     * commit that never happened. Leave fired=0: the woken side re-checks
+     * state under lock — recv sees closed+empty → honest None; send's
+     * retry loop sees closed → honest false. Waiters still in the list
+     * always have fired=0 (fired waiters are unlinked by their wake
+     * helpers under this same lock), so no claim is being raced here. */
     while (st->recv_waiters) {
         BaseWaiter* w = st->recv_waiters;
-        int32_t expected = 0;
-        (void)nova_aint_cas_weak_release(&w->fired, &expected, 1);
         _nova_waiter_unlink_locked(w);
         nova_sched_wake(w->scope, w->slot);
     }
     while (st->send_waiters) {
         BaseWaiter* w = st->send_waiters;
-        int32_t expected = 0;
-        (void)nova_aint_cas_weak_release(&w->fired, &expected, 1);
         _nova_waiter_unlink_locked(w);
         nova_sched_wake(w->scope, w->slot);
     }

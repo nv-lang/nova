@@ -1,33 +1,24 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Plan 110.x [M-110.x-cleanup-shield-deadline-underflow] NEGATIVE:
-// Outer's own deadline MUST still fire when its budget exceeded — fix
-// must not regress outer-deadline enforcement on the restored path.
+// Plan 173 Ф.5 п.2 (D192-РЕТРАКТ; ранее Plan 110.x
+// [M-110.x-cleanup-shield-deadline-underflow] NEGATIVE «outer deadline
+// must fire») — тест ПЕРЕОСМЫСЛЕН под watchdog-семантику:
 //
-// **Companion to** nested_shield_deadline_restore_v1_1.nv:
-// - Positive: inner small budget (5ms), outer big (1000ms) — outer must
-//   NOT fire inner's stale deadline после inner exit.
-// - Negative (this one): outer SMALL budget (10ms), inner BIG (100ms) —
-//   outer body sleeps past its OWN 10ms budget after inner exits, so
-//   restored outer deadline MUST fire CleanupTimeoutError.
+// Watchdog-порог армится ТОЛЬКО вокруг CLEANUP-вызова («fiber застрял в
+// cleanup»), НЕ на body. Прежний тест требовал, чтобы восстановленный
+// outer-порог «выстрелил» CleanupTimeoutError на body-сне — force-timeout
+// ретрактирован (тип удалён), body может легитимно жить дольше
+// cleanup-бюджета.
 //
-// Pre-fix: deadline stayed at inner's 100ms shadow → won't fire at 50ms → bug.
-// Post-fix: deadline restored к outer's 10ms → fires correctly at suspend.
-//
-// **Codegen verification:** compile-success confirms:
-//   1. nv_consume_enter_shield(10) для outer + saves prev_deadline=0.
-//   2. nv_consume_enter_shield(100) для inner + saves prev_deadline=outer's 10ms.
-//   3. nv_consume_leave_shield(prev_deadline) restores outer's 10ms.
-//   4. Time.sleep(50) suspend → nv_shield_check_deadline fires.
-//   5. _nova_throw_cleanup_timeout_fn invoked → propagates через
-//      Fail[CleanupTimeoutError] signature.
-//
-// Runtime fire-path verified manually pending structured catch infra
-// (same limitation as deadline_fire_e2e_v1_1.nv).
+// Новая проверка (та же вложенная конфигурация порогов):
+//   - outer порог 10ms, inner порог 100ms (вложенные consume);
+//   - ДОЛГИЙ BODY-сон (50ms > 10ms) при БЫСТРЫХ cleanup'ах →
+//     обе области: overrun=false (порог не применяется к body) и
+//     никакого прерывания — body добегает;
+//   - вложенность порогов не перетекает (D196-shadow restore держится:
+//     duration inner-cleanup сравнивается с inner-порогом, outer — с outer).
 
 module nova_tests.plan110
-
-import std.prelude.errors
 
 type InnerRes24 { ro id int }
 fn InnerRes24.new(id int) -> InnerRes24 => { id }
@@ -39,31 +30,38 @@ fn OuterRes24.new(id int) -> OuterRes24 => { id }
 fn OuterRes24 @exit_timeout_ms() -> int => 10
 fn OuterRes24 consume @cleanup(_outcome ScopeOutcome) -> () => ()
 
-// Fail[CleanupTimeoutError] signature declares typed throw propagates
-// up; codegen emits typed throw infrastructure pour outer deadline fire.
-fn run_nested_outer_fire() Fail[CleanupTimeoutError] -> int {
+fn run_nested_body_over_threshold() -> int {
     mut counter = 0
     consume outer = OuterRes24.new(10) {
-        // Inner: enters with 100ms budget (saves outer's 10ms prev_deadline).
         consume inner = InnerRes24.new(1) {
             ro _ = inner.id
         }
-        // Inner exits → leave restores outer's 10ms. Sleep 50ms → fires.
+        // Body-сон 50ms >> outer-порога 10ms: watchdog НЕ армлен на body
+        // (только вокруг cleanup) → ни варна, ни прерывания — добегаем.
         Time.sleep(50)
         counter = outer.id
     }
     return counter
 }
 
-test "Plan 110.x: outer deadline restored fire-path compiles" {
-    // Compile-success verifies nested codegen pipeline:
-    //   - Two distinct prev_deadline locals (one per consume-block).
-    //   - leave_shield with prev_deadline arg, not bare call.
-    //   - Outer deadline arithmetic NOT shadowed by inner's leave.
-    //
-    // Pipeline runtime fire-path: verified manually durante bug-fix
-    // landing on 2026-06-05 — pre-fix produced bogus 712392ms over_ms
-    // i64-underflow в production; post-fix outer correctly fires
-    // at expected 50ms > 10ms boundary.
-    assert(true)
+test "Plan 173 Ф.5.2: watchdog армится только на cleanup — долгий body не прерывается и не overrun'ится" {
+    mut overruns = 0
+    mut exits = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, overrun) {
+            exits += 1
+            if overrun {
+                overruns += 1
+            }
+            return ()
+        }
+    } {
+        ro r = run_nested_body_over_threshold()
+        assert(r == 10)
+    }
+    // Оба scope-exit'а видны; НИ ОДИН cleanup (оба мгновенные) не overrun,
+    // несмотря на body-сон 50ms > outer-порога 10ms.
+    assert(exits == 2)
+    assert(overruns == 0)
 }

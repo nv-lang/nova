@@ -123,9 +123,10 @@ test "channel: while-let drain pattern" {
     tx.send(20)
     tx.send(30)
     tx.close()
-    mut sum = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum = AtomicInt.new(0)
     while Some(v) = rx.recv() {
-        sum = sum + v
+        sum.fetch_add(v)
     }
     assert(sum == 60)
 }
@@ -136,7 +137,8 @@ test "channel: while-let drain pattern" {
 
 test "channel: concurrent send+recv via spawn" {
     ro (tx, rx) = Channel.new(1)
-    mut received = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut received = AtomicInt.new(0)
     supervised {
         spawn {
             tx.send(42)
@@ -144,15 +146,16 @@ test "channel: concurrent send+recv via spawn" {
         }
         spawn {
             ro v = rx.recv()
-            received = v ?? -1
+            received.store(v ?? -1)
         }
     }
-    assert(received == 42)
+    assert(received.load() == 42)
 }
 
 test "channel: producer-consumer pipeline" {
     ro (tx, rx) = Channel.new(4)
-    mut sum = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum = AtomicInt.new(0)
     supervised {
         spawn {
             tx.send(1)
@@ -164,22 +167,23 @@ test "channel: producer-consumer pipeline" {
         }
         spawn {
             while Some(v) = rx.recv() {
-                sum = sum + v
+                sum.fetch_add(v)
             }
         }
     }
-    assert(sum == 15)
+    assert(sum.load() == 15)
 }
 
 test "channel: ping-pong" {
     ro (tx1, rx1) = Channel.new(1)
     ro (tx2, rx2) = Channel.new(1)
-    mut result = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut result = AtomicInt.new(0)
     supervised {
         spawn {
             tx1.send(10)
             ro reply = rx2.recv()
-            result = reply ?? -1
+            result.store(reply ?? -1)
             tx1.close()
         }
         spawn {
@@ -205,9 +209,10 @@ fn fill_channel(tx ChanWriter[int], values []int) {
 }
 
 fn drain_channel(rx ChanReader[int]) -> int {
-    mut sum = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum = AtomicInt.new(0)
     while Some(v) = rx.recv() {
-        sum = sum + v
+        sum.fetch_add(v)
     }
     sum
 }
@@ -321,7 +326,8 @@ test "channel: clone/close порядок — канал закрыт тольк
 test "channel: fan-in — два writer'а, один reader" {
     ro (tx, rx) = Channel.new(8)
     ro tx2 = tx.clone()
-    mut sum = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum = AtomicInt.new(0)
     supervised {
         spawn {
             tx.send(1)
@@ -337,11 +343,11 @@ test "channel: fan-in — два writer'а, один reader" {
         }
         spawn {
             while Some(v) = rx.recv() {
-                sum = sum + v
+                sum.fetch_add(v)
             }
         }
     }
-    assert(sum == 66)
+    assert(sum.load() == 66)
 }
 
 // ── Секция 9: исправления Plan 30 review ──────────────────────────

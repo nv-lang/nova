@@ -849,6 +849,20 @@ pub enum TypeAttr {
     /// Stdlib HashMap имеет оба attribute. User-типы получают
     /// расширяемость без модификации компилятора.
     FromPairs,
+    /// Plan 173.3 (D415): `#share` — audited vouch that a type is safe to
+    /// alias from another fiber (data-race-freedom, one-axis model: share;
+    /// move is covered by `consume`). Bare marker (no args), like
+    /// `#zero_on_move`. Ordinary types need NEVER write this — share-ness
+    /// is auto-derived memberwise (all fields share ⇒ type share, mirroring
+    /// Plan 126 auto-derive). `#share` is needed ONLY to override the
+    /// auto-derived `false` for a type that transitively embeds the poison
+    /// base (a raw `*T` pointer field) but is internally synchronized
+    /// (`Mutex`/`RwLock`/`Atomic*`/channels, or a user lock-free type) —
+    /// the author vouches the auto-inference can't see the real
+    /// synchronization (analogous to Rust `unsafe impl Sync`). NOT a
+    /// protocol (D415 §0 — an empty-marker protocol would be trivially
+    /// true for every type); a plain type-attribute like `#impl`/`#forbid`.
+    Share,
 }
 
 /// Plan 180 Ф.6 (D382): один аргумент `#serde(...)`-аннотации. Общая
@@ -1460,6 +1474,12 @@ pub struct TestDecl {
     /// mirroring the same attribute on `fn` (but applied at the item level
     /// so it doesn't require wrapping the test body in a helper fn).
     pub test_access: Vec<String>,
+    /// Plan 173 Ф.6 (D348): `test "имя" panics "паттерн" { … }` —
+    /// контекстное KW `panics` (как `raw`/`bench`) инвертирует PASS/FAIL:
+    /// PASS ⇔ тело запаниковало (PANIC-класс D13) сообщением ⊇ паттерн
+    /// (substring, как D89). `None` = обычный тест. Пустая строка =
+    /// «любая паника».
+    pub panics: Option<String>,
 }
 
 /// Plan 57: benchmark declaration.

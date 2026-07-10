@@ -1,0 +1,322 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/period.nv — Period: календарная величина (D320) +
+// calendar-арифметика Date/DateTime (CLAMP biggest-unit-first, Q7).
+//
+// Plan 175.1 Ф.2. `Period` (y/m/d) ТИП-РАЗЛИЧНА с `Duration` (ns) — никакой
+// неявной коэрсии (D320 R1). Приём по типам (R2): `Date` берёт ТОЛЬКО
+// `Period` (перегрузки `@plus(Duration)` НЕТ → «add hours to a Date» =
+// compile-error); `TimeOfDay` — только `Duration`; `DateTime` — оба.
+//
+// Арифметика (Q7): CLAMP к последнему валидному дню (Jan31+1mo → Feb28/29),
+// biggest-unit-first (years→months[clamp]→days[exact]). Операторы траппят
+// на range-overflow (D317); `try_*` → Result; `saturating_*` → clamp к
+// Date.min/max. Non-invertible/non-associative: `d.plus(p).minus(p)` может
+// != d на clamp-границах (документировано + fixture).
+
+module time.civil
+
+// Overflow-trap primitive (D317-паттерн).
+extern "nova" fn panic(msg str) -> never
+
+
+/// Календарная величина: годы/месяцы/дни. НЕ длительность: `Period.of_days(1)`
+/// через DST — та же wall-time (23/25h elapsed), `Duration.from_hours(24)` —
+/// ровно 24h (D320 R4).
+#stable(since = "0.1")
+export type Period value {
+    ro years i32
+    ro months i32
+    ro days i32
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы (§21б: new + дефолт-параметры; of_* — удобные одиночные)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Период из компонент (любая может быть отрицательной).
+///
+/// # Examples
+/// ```nova
+/// ro p = Period.new(years: 1, months: 2, days: 3)
+/// ro m = Period.new(months: 18)   // 18mo (не нормализуется автоматически)
+/// ```
+#stable(since = "0.1")
+export fn Period.new(years i32 = 0, months i32 = 0, days i32 = 0) -> Period =>
+    { years, months, days }
+
+/// Период в годах.
+#stable(since = "0.1")
+export fn Period.of_years(y i32) -> Period => { years: y, months: 0, days: 0 }
+
+/// Период в месяцах.
+#stable(since = "0.1")
+export fn Period.of_months(m i32) -> Period => { years: 0, months: m, days: 0 }
+
+/// Период в днях.
+#stable(since = "0.1")
+export fn Period.of_days(d i32) -> Period => { years: 0, months: 0, days: d }
+
+/// Период в неделях (days = 7×w; недели не хранятся отдельно, ISO PnW).
+#stable(since = "0.1")
+export fn Period.from_weeks(w i32) -> Period => { years: 0, months: 0, days: w * 7 }
+
+/// Нулевой период.
+#stable(since = "0.1")
+export fn Period.zero() -> Period => { years: 0, months: 0, days: 0 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Компоненты + предикаты
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Годы-компонента.
+#stable(since = "0.1")
+export fn Period @years() -> i32 => @years
+
+/// Месяцы-компонента.
+#stable(since = "0.1")
+export fn Period @months() -> i32 => @months
+
+/// Дни-компонента.
+#stable(since = "0.1")
+export fn Period @days() -> i32 => @days
+
+/// Все компоненты нулевые.
+#stable(since = "0.1")
+export fn Period @is_zero() -> bool => @years == 0 && @months == 0 && @days == 0
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Period-арифметика (покомпонентная; без нормализации)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Покомпонентное сложение периодов.
+#stable(since = "0.1")
+export fn Period @plus(other Period) -> Period =>
+    { years: @years + other.years, months: @months + other.months, days: @days + other.days }
+
+/// Покомпонентное вычитание.
+#stable(since = "0.1")
+export fn Period @minus(other Period) -> Period =>
+    { years: @years - other.years, months: @months - other.months, days: @days - other.days }
+
+/// Унарный минус (negate всех компонент).
+#stable(since = "0.1")
+export fn Period @neg() -> Period =>
+    { years: -@years, months: -@months, days: -@days }
+
+/// Нормализация: months↔years ТОЛЬКО (18mo → 1y 6mo). Дни НИКОГДА не
+/// сворачиваются в месяцы (длина месяца переменная) — bare-verb non-mut,
+/// возвращает НОВОЕ значение.
+#stable(since = "0.1")
+export fn Period @normalize() -> Period {
+    ro total = (@years as i64) * 12 + (@months as i64)
+    ro y = total / 12
+    ro m = total % 12
+    { years: y as i32, months: m as i32, @days }
+}
+
+/// Compare — СТРУКТУРНЫЙ (лексикографический y,m,d), НЕ календарный:
+/// `1y != 12mo` (нормализуй явно); порядок без опорной даты не определён
+/// календарно (1mo = 28..31 дней) — `<`/`>` осмысленны только как
+/// детерминированный total-order для сортировок/ключей.
+#stable(since = "0.1")
+export fn Period @compare(other Period) -> int {
+    if @years != other.years { return if @years < other.years { -1 } else { 1 } }
+    if @months != other.months { return if @months < other.months { -1 } else { 1 } }
+    if @days < other.days { -1 } else if @days > other.days { 1 } else { 0 }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// ISO-8601 PnYnMnD
+// ──────────────────────────────────────────────────────────────────────────
+
+/// ISO-8601 период `PnYnMnD` (нулевые компоненты опускаются; zero → "P0D").
+#stable(since = "0.1")
+export fn Period @to_iso() -> str {
+    if @is_zero() { return "P0D" }
+    mut s = "P"
+    if @years != 0 { s = s + str.from(@years) + "Y" }
+    if @months != 0 { s = s + str.from(@months) + "M" }
+    if @days != 0 { s = s + str.from(@days) + "D" }
+    s
+}
+
+/// Display = ISO-форма.
+#stable(since = "0.1")
+export fn Period @to_str() -> str => @to_iso()
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Date + Period: CLAMP biggest-unit-first (Q7). Внутренний движок → Result,
+// операторные формы траппят (D317), saturating — clamp к civil-границам.
+// ──────────────────────────────────────────────────────────────────────────
+
+// Ядро: сдвиг даты на период. years→months единым month-add (clamp к длине
+// результирующего месяца), затем days exact (epoch-day). Err — вне
+// civil-диапазона.
+fn date_plus_period(d Date, p Period) -> Result[Date, DateError] {
+    // 1) biggest-unit: годы+месяцы одним сдвигом месяцев.
+    ro total_months = (p.years as i64) * 12 + (p.months as i64)
+    mut ed = d.to_epoch_day()
+    if total_months != 0 {
+        ro y0 = d.year() as i64
+        ro m0 = d.month().number() as i64
+        ro day0 = d.day() as i64
+        // Целевой год/месяц (floor-семантика по месяцам).
+        ro linear = (y0 * 12 + (m0 - 1)) + total_months
+        ro y1 = if linear >= 0 { linear / 12 } else { (linear - 11) / 12 }
+        ro m1 = linear - y1 * 12 + 1
+        if y1 < (Date.min_year() as i64) || y1 > (Date.max_year() as i64) {
+            return Err(RangeOverflow("Date + Period: year out of civil range"))
+        }
+        // 2) CLAMP дня к длине результирующего месяца (Jan31+1mo → Feb28/29).
+        ro leap = y1 % 4 == 0 && (y1 % 100 != 0 || y1 % 400 == 0)
+        ro m1_month = match Month.from_number(m1 as int) {
+            Ok(mm) => mm,
+            Err(_) => Jan,   // unreachable: m1 в 1..12
+        }
+        ro dim = m1_month.length(leap) as i64
+        ro day1 = if day0 > dim { dim } else { day0 }
+        ro base = match Date.new(y1 as i32, m1_month, day1 as i32) {
+            Ok(nd) => nd,
+            Err(_) => return Err(RangeOverflow("Date + Period: month-add out of range")),
+        }
+        ed = base.to_epoch_day()
+    }
+    // 3) days — exact, через epoch-day.
+    ro ed2 = ed + (p.days as i64)
+    if ed2 < Date.min_value().to_epoch_day() || ed2 > Date.max_value().to_epoch_day() {
+        return Err(RangeOverflow("Date + Period: day-add out of civil range"))
+    }
+    Ok(Date.from_epoch_day(ed2))
+}
+
+/// `Date + Period` (оператор `+`). CLAMP biggest-unit-first (Q7);
+/// **trap на range-overflow** (D317). Non-invertible на clamp-границах:
+/// `Jan31 + 1mo - 1mo == Jan28/29`, НЕ Jan31 (документированное свойство
+/// календарной арифметики; fixture в civil_arith_test).
+///
+/// # Examples
+/// ```nova
+/// ro d = Date.new(2026, Jan, 31)!! + Period.of_months(1)
+/// assert(d == Date.new(2026, Feb, 28)!!)
+/// ```
+#stable(since = "0.1")
+export fn Date @plus(p Period) -> Date =>
+    match date_plus_period(@, p) {
+        Ok(d) => d,
+        Err(_) => panic("Date arithmetic overflow: + Period out of civil range"),
+    }
+
+/// `Date - Period` (оператор `-`). Эквивалент `+ p.neg()`; **trap** (D317).
+#stable(since = "0.1")
+export fn Date @minus(p Period) -> Date =>
+    match date_plus_period(@, p.neg()) {
+        Ok(d) => d,
+        Err(_) => panic("Date arithmetic overflow: - Period out of civil range"),
+    }
+
+/// Checked-вариант: `Err(RangeOverflow)` вместо trap (D317 3-tier).
+#stable(since = "0.1")
+export fn Date @try_plus(p Period) -> Result[Date, DateError] =>
+    date_plus_period(@, p)
+
+/// Checked-вычитание.
+#stable(since = "0.1")
+export fn Date @try_minus(p Period) -> Result[Date, DateError] =>
+    date_plus_period(@, p.neg())
+
+/// Saturating: clamp к `Date.min_value()`/`max_value()` вместо trap.
+#stable(since = "0.1")
+export fn Date @saturating_plus(p Period) -> Date =>
+    match date_plus_period(@, p) {
+        Ok(d) => d,
+        Err(_) =>
+            // Направление сатурации — по знаку суммарного сдвига.
+            if (p.years as i64) * 366 + (p.months as i64) * 31 + (p.days as i64) >= 0 {
+                Date.max_value()
+            } else {
+                Date.min_value()
+            },
+    }
+
+/// Saturating-вычитание.
+#stable(since = "0.1")
+export fn Date @saturating_minus(p Period) -> Date => @saturating_plus(p.neg())
+
+// NB: operator-форма `Date @minus(other Date) -> Period` НЕ введена:
+// перегрузка `@minus` по типу аргумента (Period vs Date) на одном ресивере
+// резолвится неверно (arg-тип не участвует в выборе → результат мис-
+// типизируется). Обход §4а [M-175.1-minus-overload-arg-type]: канонические
+// формы — `Period.between(start, end)` (calendar-diff) и `@days_until` (exact).
+
+/// Календарная разность `end - start` (biggest-unit-first).
+///
+/// `Period.between(2026-01-31, 2026-03-01)` = 1mo 1d (Jan31 +1mo = Feb28
+/// clamp, остаток 1 день). Инвариант: `start + Period.between(start, end)
+/// == end` (для положительной разности).
+#stable(since = "0.1")
+export fn Period.between(start Date, end Date) -> Period {
+    if start.compare(end) == 0 { return Period.zero() }
+    ro negate = start.compare(end) > 0
+    ro a = if negate { end } else { start }
+    ro b = if negate { start } else { end }
+
+    // Полные месяцы: линейная месячная шкала + коррекция по дню.
+    ro am = (a.year() as i64) * 12 + (a.month().number() as i64) - 1
+    ro bm = (b.year() as i64) * 12 + (b.month().number() as i64) - 1
+    mut months = bm - am
+    if (b.day() as i64) < (a.day() as i64) {
+        // Неполный последний месяц — если даже clamped-якорь позже b, откат.
+        // (a.day может не существовать в месяце b: clamp-семантика Q7.)
+        ro anchor = match date_plus_period(a, Period.of_months(months as i32)) {
+            Ok(d) => d,
+            Err(_) => b,   // за границей civil — недостижимо для валидных a/b
+        }
+        if anchor.compare(b) > 0 { months -= 1 }
+    }
+    ro anchor2 = match date_plus_period(a, Period.of_months(months as i32)) {
+        Ok(d) => d,
+        Err(_) => b,   // unreachable
+    }
+    ro days = anchor2.days_until(b) as i64
+    ro years = months / 12
+    ro rem_months = months % 12
+    ro p Period = { years: years as i32, months: rem_months as i32, days: days as i32 }
+    if negate { p.neg() } else { p }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// DateTime + Period (календарная семантика: сдвигается дата, время неизменно)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `DateTime + Period` — календарный сдвиг: дата двигается (clamp Q7),
+/// wall-time сохраняется. **Trap** на range-overflow (D317).
+#stable(since = "0.1")
+export fn DateTime @plus(p Period) -> DateTime =>
+    { date: @date() + p, time: @time() }
+
+/// `DateTime - Period`.
+#stable(since = "0.1")
+export fn DateTime @minus(p Period) -> DateTime =>
+    { date: @date() - p, time: @time() }
+
+/// Checked-вариант.
+#stable(since = "0.1")
+export fn DateTime @try_plus(p Period) -> Result[DateTime, DateError] =>
+    match @date().try_plus(p) {
+        Ok(d) => Ok({ date: d, time: @time() }),
+        Err(e) => Err(e),
+    }
+
+/// Checked-вычитание.
+#stable(since = "0.1")
+export fn DateTime @try_minus(p Period) -> Result[DateTime, DateError] =>
+    match @date().try_minus(p) {
+        Ok(d) => Ok({ date: d, time: @time() }),
+        Err(e) => Err(e),
+    }

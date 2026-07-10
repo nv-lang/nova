@@ -1,0 +1,378 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/date.nv — Date: календарная дата (proleptic Gregorian, D319).
+//
+// Plan 175.1 Ф.1. Репрезентация: epoch_day i64 — дни от 1970-01-01.
+// Алгоритмы Date↔(y,m,d) — Howard Hinnant `days_from_civil`/`civil_from_days`
+// (branch-light, overflow-safe; ровно как chrono). Leap: ÷4 кроме веков,
+// если не ÷400 (2000 — да, 1900 — нет). Год 0 = 1 BCE (proleptic, Q10).
+//
+// Validate-by-default (Q6): `Date.new(2024, Feb, 30)` → `Err(InvalidField)`,
+// НИКОГДА не нормализует молча. Явный opt-in — `Date.from_normalized`.
+//
+// Диапазон (Q4): year −999_999 .. 999_999 (java.time-парность). Окно
+// civil↔Timestamp (±292y, D317) проверяется на конверсии (`RangeOverflow`),
+// сам Date существует далеко за окном Timestamp.
+
+module time.civil
+
+// Overflow-trap primitive (D317-паттерн, как std/time/duration.nv).
+extern "nova" fn panic(msg str) -> never
+
+
+/// Календарная дата (proleptic Gregorian) — value-record, дни от 1970-01-01.
+///
+/// Plain-тип type-ladder D319: НЕ точка на временнóй оси (нет зоны).
+/// В `Timestamp` — только явно через `Offset`/`TimeZone` (fallible).
+#stable(since = "0.1")
+export type Date value {
+    ro epoch_day i64
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Границы (Q4). NB: имена не MIN/MAX-консты — известный чекер-гэп
+// [M-175-type-const-max-shadows-builtin] (user type-const MAX/MIN шэдоуит
+// builtin numeric .MAX/.MIN в type-set generics) + value-const-ref гэп
+// [M-175-value-record-const-ref]. Обход по конвенции §4а: static-фны.
+// ──────────────────────────────────────────────────────────────────────────
+
+// −999999-01-01 (epoch_day) и 999999-12-31 — вычислены Hinnant-формулой.
+fn min_epoch_day() -> i64 => -365961662
+fn max_epoch_day() -> i64 => 364522971
+
+/// Минимальный год civil-диапазона.
+#stable(since = "0.1")
+export fn Date.min_year() -> i32 => -999_999
+
+/// Максимальный год civil-диапазона.
+#stable(since = "0.1")
+export fn Date.max_year() -> i32 => 999_999
+
+/// Наименьшая представимая дата (−999999-01-01).
+/// Const-форма `Date.MIN` — [M-175-type-const-max-shadows-builtin].
+#stable(since = "0.1")
+export fn Date.min_value() -> Date => { epoch_day: min_epoch_day() }
+
+/// Наибольшая представимая дата (999999-12-31).
+#stable(since = "0.1")
+export fn Date.max_value() -> Date => { epoch_day: max_epoch_day() }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Floor-division helpers (Hinnant-алгоритмы требуют floor-семантику;
+// `/`/`%` в C — truncated toward zero).
+// ──────────────────────────────────────────────────────────────────────────
+
+fn floor_div(a i64, b i64) -> i64 {
+    ro q = a / b
+    ro r = a % b
+    if r != 0 && ((r < 0) != (b < 0)) { q - 1 } else { q }
+}
+
+fn floor_mod(a i64, b i64) -> i64 => a - floor_div(a, b) * b
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Hinnant core: civil ↔ epoch-day
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Високосный ли год (proleptic Gregorian): ÷4, кроме веков, если не ÷400.
+fn is_leap(y i64) -> bool =>
+    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+
+/// Длина месяца m (1..12) года y.
+fn days_in_month(y i64, m i64) -> i64 =>
+    if m == 2 { if is_leap(y) { 29 } else { 28 } }
+    else if m == 4 || m == 6 || m == 9 || m == 11 { 30 }
+    else { 31 }
+
+/// Hinnant `days_from_civil`: (y, m 1..12, d 1..31) → дни от 1970-01-01.
+/// Предусловие: (m, d) валидны. Overflow-safe в нашем year-диапазоне.
+fn days_from_civil(y i64, m i64, d i64) -> i64 {
+    ro yy = if m <= 2 { y - 1 } else { y }
+    ro era = floor_div(yy, 400)
+    ro yoe = yy - era * 400                                    // [0, 399]
+    ro mp = if m > 2 { m - 3 } else { m + 9 }                  // [0, 11]
+    ro doy = (153 * mp + 2) / 5 + d - 1                        // [0, 365]
+    ro doe = yoe * 365 + yoe / 4 - yoe / 100 + doy             // [0, 146096]
+    era * 146097 + doe - 719468
+}
+
+/// Hinnant `civil_from_days`: epoch-day → (y, m, d).
+fn civil_from_days(z0 i64) -> (i64, i64, i64) {
+    ro z = z0 + 719468
+    ro era = floor_div(z, 146097)
+    ro doe = z - era * 146097                                  // [0, 146096]
+    ro yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365  // [0, 399]
+    ro y0 = yoe + era * 400
+    ro doy = doe - (365 * yoe + yoe / 4 - yoe / 100)           // [0, 365]
+    ro mp = (5 * doy + 2) / 153                                // [0, 11]
+    ro d = doy - (153 * mp + 2) / 5 + 1                        // [1, 31]
+    ro m = if mp < 10 { mp + 3 } else { mp - 9 }               // [1, 12]
+    ro y = if m <= 2 { y0 + 1 } else { y0 }
+    (y, m, d)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конструкторы (§21б: Type.new; validate-by-default → Result, Q6)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Построить дату с полной валидацией → `Result` (Q6, D319 R5).
+///
+/// `Date.new(2024, Feb, 30)` → `Err(InvalidField(Day, 30, 1, 29))`.
+/// Никакой тихой нормализации (анти-Go). Явный normalize —
+/// [`Date.from_normalized`].
+///
+/// # Examples
+/// ```nova
+/// ro d = Date.new(2026, Jul, 10)!!
+/// assert(d.year() == 2026)
+/// ```
+#stable(since = "0.1")
+export fn Date.new(y i32, m Month, d i32) -> Result[Date, DateError] {
+    ro yi = y as i64
+    if yi < -999_999 || yi > 999_999 {
+        return Err(InvalidField(FieldKind.Year, yi, -999_999, 999_999))
+    }
+    ro mi = m.number() as i64
+    ro dim = days_in_month(yi, mi)
+    ro di = d as i64
+    if di < 1 || di > dim {
+        return Err(InvalidField(FieldKind.Day, di, 1, dim))
+    }
+    Ok({ epoch_day: days_from_civil(yi, mi, di) })
+}
+
+/// Дата из сырого epoch-day (дни от 1970-01-01). Инфаллибельно в
+/// civil-диапазоне; вне диапазона — trap (D317: не silent-wrap).
+#stable(since = "0.1")
+export fn Date.from_epoch_day(d i64) -> Date {
+    if d < min_epoch_day() || d > max_epoch_day() {
+        panic("Date.from_epoch_day: out of civil range")
+    }
+    { epoch_day: d }
+}
+
+/// Явный normalize-конструктор (Q6 opt-in): переполнение полей
+/// переносится (2024, Feb, 30 → 2024-03-01; месяц 14 → +1 год Feb).
+/// Единственный normalize-путь в civil-API.
+#stable(since = "0.1")
+export fn Date.from_normalized(y i32, m i32, d i32) -> Date {
+    // Нормализуем месяц в 1..12 с переносом лет.
+    ro m0 = (m as i64) - 1
+    ro y1 = (y as i64) + floor_div(m0, 12)
+    ro m1 = floor_mod(m0, 12) + 1
+    // День: días поверх 1-го числа переносятся epoch-арифметикой.
+    ro base = days_from_civil(y1, m1, 1)
+    ro ed = base + (d as i64) - 1
+    if ed < min_epoch_day() || ed > max_epoch_day() {
+        panic("Date.from_normalized: out of civil range")
+    }
+    { epoch_day: ed }
+}
+
+// NB: `Date.today(tz TimeZone) Time -> Date` определяется в zoned.nv (Ф.3) —
+// зависит от TimeZone/ZonedDateTime; co-equal файлы модуля это допускают.
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Компоненты
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Год (proleptic; 0 = 1 BCE).
+#stable(since = "0.1")
+export fn Date @year() -> i32 {
+    ro (y, _, _) = civil_from_days(@epoch_day)
+    y as i32
+}
+
+/// Месяц.
+#stable(since = "0.1")
+export fn Date @month() -> Month {
+    ro (_, m, _) = civil_from_days(@epoch_day)
+    match Month.from_number(m as int) {
+        Ok(mm) => mm,
+        Err(_) => panic("Date @month: unreachable (Hinnant m in 1..12)"),
+    }
+}
+
+/// День месяца (1..31).
+#stable(since = "0.1")
+export fn Date @day() -> i32 {
+    ro (_, _, d) = civil_from_days(@epoch_day)
+    d as i32
+}
+
+/// Сырой epoch-day (дни от 1970-01-01; отрицательный до эпохи).
+#stable(since = "0.1")
+export fn Date @to_epoch_day() -> i64 => @epoch_day
+
+/// День недели (ISO Mon=1..Sun=7). 1970-01-01 — четверг.
+#stable(since = "0.1")
+export fn Date @weekday() -> Weekday {
+    ro iso = floor_mod(@epoch_day + 3, 7) + 1
+    match Weekday.from_number(iso as int) {
+        Ok(w) => w,
+        Err(_) => panic("Date @weekday: unreachable (mod 7 + 1 in 1..7)"),
+    }
+}
+
+/// Порядковый день года (1..365/366).
+#stable(since = "0.1")
+export fn Date @day_of_year() -> int {
+    ro (y, _, _) = civil_from_days(@epoch_day)
+    ro jan1 = days_from_civil(y, 1, 1)
+    (@epoch_day - jan1 + 1) as int
+}
+
+/// Високосный ли год этой даты.
+#stable(since = "0.1")
+export fn Date @is_leap_year() -> bool {
+    ro (y, _, _) = civil_from_days(@epoch_day)
+    is_leap(y)
+}
+
+/// Число дней в месяце этой даты (28..31).
+#stable(since = "0.1")
+export fn Date @days_in_month() -> int {
+    ro (y, m, _) = civil_from_days(@epoch_day)
+    days_in_month(y, m) as int
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// ISO-week (yyyy-Www-D). ⚠ week-based-year ≠ calendar-year у границ
+// Jan1/Dec31 (java.time `Y` vs `y` footgun): 2027-01-01 (Fri) принадлежит
+// ISO-неделе 53 week-year'а 2026. Для календарного года используй @year().
+// ──────────────────────────────────────────────────────────────────────────
+
+/// ISO-номер недели (1..52/53). Неделя 1 — та, что содержит первый
+/// четверг года (эквивалент: содержит 4 января).
+#stable(since = "0.1")
+export fn Date @iso_week() -> int {
+    ro wy = @iso_week_year() as i64
+    // Понедельник недели 1: неделя, содержащая 4 января week-year'а.
+    ro jan4 = days_from_civil(wy, 1, 4)
+    ro week1_mon = jan4 - floor_mod(jan4 + 3, 7)
+    ((@epoch_day - week1_mon) / 7 + 1) as int
+}
+
+/// ISO week-based year (≠ calendar year у границ года!).
+#stable(since = "0.1")
+export fn Date @iso_week_year() -> i32 {
+    ro (y, _, _) = civil_from_days(@epoch_day)
+    // Четверг текущей ISO-недели определяет week-year.
+    ro thursday = @epoch_day + (4 - (floor_mod(@epoch_day + 3, 7) + 1))
+    ro (wy, _, _) = civil_from_days(thursday)
+    wy as i32
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Адъюстеры (java.time TemporalAdjusters-подмножество)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Первый день месяца этой даты.
+#stable(since = "0.1")
+export fn Date @first_day_of_month() -> Date {
+    ro (y, m, _) = civil_from_days(@epoch_day)
+    { epoch_day: days_from_civil(y, m, 1) }
+}
+
+/// Последний день месяца этой даты (Feb → 28/29 по високосности).
+#stable(since = "0.1")
+export fn Date @last_day_of_month() -> Date {
+    ro (y, m, _) = civil_from_days(@epoch_day)
+    { epoch_day: days_from_civil(y, m, days_in_month(y, m)) }
+}
+
+/// Следующая дата с данным днём недели (строго после текущей:
+/// `next(Mon)` от понедельника — через 7 дней).
+#stable(since = "0.1")
+export fn Date @next(w Weekday) -> Date {
+    ro cur = @weekday().number() as i64
+    ro want = w.number() as i64
+    ro delta = floor_mod(want - cur, 7)
+    ro step = if delta == 0 { 7 } else { delta }
+    { epoch_day: @epoch_day + step }
+}
+
+/// Предыдущая дата с данным днём недели (строго до текущей).
+#stable(since = "0.1")
+export fn Date @prev(w Weekday) -> Date {
+    ro cur = @weekday().number() as i64
+    ro want = w.number() as i64
+    ro delta = floor_mod(cur - want, 7)
+    ro step = if delta == 0 { 7 } else { delta }
+    { epoch_day: @epoch_day - step }
+}
+
+/// n-й weekday месяца этой даты (n 1..5): `nth_weekday(2, Tue)` — второй
+/// вторник. `Err(InvalidField(Day))`, если n-го вхождения в месяце нет.
+#stable(since = "0.1")
+export fn Date @nth_weekday(n int, w Weekday) -> Result[Date, DateError] {
+    if n < 1 || n > 5 {
+        return Err(InvalidField(FieldKind.Day, n as i64, 1, 5))
+    }
+    ro first = @first_day_of_month()
+    ro fw = first.weekday().number() as i64
+    ro want = w.number() as i64
+    ro offset = floor_mod(want - fw, 7) + ((n as i64) - 1) * 7
+    ro (y, m, _) = civil_from_days(@epoch_day)
+    if offset >= days_in_month(y, m) {
+        return Err(InvalidField(FieldKind.Day, n as i64, 1, 4))
+    }
+    Ok({ epoch_day: first.to_epoch_day() + offset })
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Разность дат (exact-day)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Точное число дней от `self` до `other` (положительное, если `other` позже).
+#stable(since = "0.1")
+export fn Date @days_until(other Date) -> int =>
+    (other.to_epoch_day() - @epoch_day) as int
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Compare (D183: операторы синтезируются из @compare)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Compare по временнóй оси дат (раньше < позже).
+#stable(since = "0.1")
+export fn Date @compare(other Date) -> int =>
+    if @epoch_day < other.epoch_day { -1 }
+    else if @epoch_day > other.epoch_day { 1 }
+    else { 0 }
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Display (ISO-8601) — полный parse в format.nv (Ф.5)
+// ──────────────────────────────────────────────────────────────────────────
+
+// 4+-значный год с нулями и знаком (ISO-8601: -0500, 0033, 2026, +10000
+// НЕ используем — расширенные годы пишем без плюса, парсер симметричен).
+fn format_year(y i64) -> str {
+    ro neg = y < 0
+    ro a = if neg { -y } else { y }
+    ro digits = str.from(a)
+    ro padded = if digits.len() >= 4 { digits } else { digits.pad_start(4, '0') }
+    if neg { "-" + padded } else { padded }
+}
+
+fn pad2(n i64) -> str =>
+    if n < 10 { "0" + str.from(n) } else { str.from(n) }
+
+/// ISO-8601 календарная форма `YYYY-MM-DD` (round-trip c `s.to_date()`, Ф.5).
+#stable(since = "0.1")
+export fn Date @to_iso() -> str {
+    ro (y, m, d) = civil_from_days(@epoch_day)
+    format_year(y) + "-" + pad2(m) + "-" + pad2(d)
+}
+
+/// Display = ISO-форма.
+#stable(since = "0.1")
+export fn Date @to_str() -> str => @to_iso()

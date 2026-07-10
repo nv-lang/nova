@@ -1,0 +1,12 @@
+// Plan 175.1 Ф.2 (D317-наследование) — `Date + Period` за civil-границей
+// ТРАПАЕТ (debug И release), никогда silent-wrap/clamp на операторе.
+// Non-trapping эскейпы: @try_plus → Result, @saturating_plus → clamp.
+// EXPECT_RUNTIME_PANIC Date arithmetic overflow
+
+module rt.date_period_overflow_traps
+
+import std.time.civil
+
+test "Date + Period за max_value → trap" {
+    ro _ = Date.max_value() + Period.of_years(1)   // ← trap
+}

@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC nova: unhandled Fail: done
+// EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): done
 // EXPECT_STDOUT FIRST
 // EXPECT_STDOUT SECOND
 // EXPECT_STDOUT THIRD

@@ -4228,29 +4228,12 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => {}
             }
         }
-        // Plan 173 Ф.1 (interim-guard #7 / D71 / [M-parfor-record-result-miscompile]):
-        // отдельный проход ПОСЛЕ f1-assignability — resolved_types_buf уже заполнен, так
-        // что infer_expr_type для Call-trailing `parallel for` резолвит element-тип.
-        // Отвергает value-mode `parallel for → []T` с непримитивным T (codegen молча
-        // деградирует в unit → сырой C-mismatch) чисто `[E_PARFOR_RESULT_UNSUPPORTED]`.
-        {
-            let empty_scope: HashMap<String, TypeRef> = HashMap::new();
-            for item in &module.items {
-                match item {
-                    Item::Fn(fd) => {
-                        if self.is_shadowed_import_method(fd) { continue; }
-                        let ret_consumed = !matches!(&fd.return_type, None | Some(TypeRef::Unit(_)));
-                        match &fd.body {
-                            FnBody::Block(b) => self.check_parfor_result_block(b, &empty_scope, ret_consumed, errors),
-                            FnBody::Expr(e) => self.check_parfor_result_expr(e, &empty_scope, ret_consumed, errors),
-                            FnBody::External => {}
-                        }
-                    }
-                    Item::Test(t) => self.check_parfor_result_block(&t.body, &empty_scope, false, errors),
-                    _ => {}
-                }
-            }
-        }
+        // Plan 173.1 Ф.2 (D71): interim-guard `[E_PARFOR_RESULT_UNSUPPORTED]`
+        // (Plan 173 Ф.1 #7, [M-parfor-record-result-miscompile]) УДАЛЁН вместе
+        // со своим visitor-семейством (`check_parfor_result_*`/`parfor_elem_
+        // supported`): codegen собирает `parallel for → []T` для ЛЮБОГО T
+        // через канал (emit_parallel_for, channel+drain lowering) — примитив-
+        // whitelist больше не существует, guard стал бы ложным реджектом.
         // Plan 172.1 P67: Annotate peer_files.items_here ExprIds for codegen.
         // Architectural gap: codegen iterates peer_files.items_here (imported modules,
         // file-private items) with ExprIds distinct from merged module.items ExprIds
@@ -4329,7 +4312,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // detect manual `binding.cleanup(...)` calls в body.
                 // Runtime exactly-once guard prevents double dispatch;
                 // здесь — compile-time gate чтобы избегать runtime panic.
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                let mut tracked = std::collections::HashSet::new();
+                tracked.insert(binding.clone());
+                self.check_no_manual_on_exit_call_in_block(&tracked, body, errors);
                 self.check_consume_scopes_in_expr(init, errors);
                 self.check_consume_scopes_in_block(body, errors);
             }
@@ -4637,124 +4622,190 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 110.1.5 (D188 R2): detect manual `binding.cleanup(...)` calls
-    /// в ConsumeScope body. Auto cleanup dispatch happens at scope-exit;
-    /// manual call → double invocation → runtime panic (R2 exactly-once
-    /// violation). Compile-time gate preferred to runtime panic.
-    fn check_no_manual_on_exit_call_in_block(&self, binding: &str, b: &Block, errors: &mut Vec<Diagnostic>) {
+    /// Plan 110.1.5 (D188 R2) + Plan 173 Ф.5 (#8) hardening: detect manual
+    /// `binding.cleanup(...)` calls в ConsumeScope body. Auto cleanup dispatch
+    /// happens at scope-exit; manual call → double invocation → runtime panic
+    /// (R2 exactly-once violation). Compile-time gate preferred to runtime panic.
+    ///
+    /// `names` — the set of identifiers КОТОРЫЕ могут указывать на та же
+    /// consume-binding: seeded with the binding itself, GROWN by simple direct
+    /// aliases (`let y = x` / `ro y = x` где x уже в `names`) found while
+    /// walking the block (Plan 173 Ф.5: the original single-`&str` version
+    /// only caught the literal identifier — a one-line `let y = tx; y.cleanup(...)`
+    /// alias slipped past it into codegen, where the manual call and the
+    /// scope's own generated dispatch both reach `Nova_<T>_consume_cleanup`,
+    /// producing a REAL runtime double-invocation the syntactic check exists
+    /// to prevent). Residual: passing the binding through an arbitrary
+    /// function boundary (`identity(tx).cleanup(...)`) is still flagged
+    /// because `expr_mentions_any` scans the WHOLE receiver subexpression,
+    /// not just a bare `Ident`; genuinely opaque escapes (FFI/reflection) are
+    /// the acknowledged residual (spec 03-syntax.md D188 R2) — caught instead
+    /// by the runtime `_consume_count` guard (`emit_consume_entry_cleanup`).
+    fn check_no_manual_on_exit_call_in_block(&self, names: &std::collections::HashSet<String>, b: &Block, errors: &mut Vec<Diagnostic>) {
+        let mut names = names.clone();
         for s in &b.stmts {
-            self.check_no_manual_on_exit_call_in_stmt(binding, s, errors);
+            self.check_no_manual_on_exit_call_in_stmt(&mut names, s, errors);
         }
         if let Some(t) = &b.trailing {
-            self.check_no_manual_on_exit_call_in_expr(binding, t, errors);
+            self.check_no_manual_on_exit_call_in_expr(&names, t, errors);
         }
     }
 
-    fn check_no_manual_on_exit_call_in_stmt(&self, binding: &str, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+    fn check_no_manual_on_exit_call_in_stmt(&self, names: &mut std::collections::HashSet<String>, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
         match s {
-            Stmt::Let(d) => self.check_no_manual_on_exit_call_in_expr(binding, &d.value, errors),
-            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(binding, e, errors),
+            Stmt::Let(d) => {
+                self.check_no_manual_on_exit_call_in_expr(names, &d.value, errors);
+                // Grow the alias set: `let/ro y = x` where `x` is already
+                // tracked — `y` becomes an equally-valid manual-call target.
+                if let crate::ast::Pattern::Ident { name: alias_name, .. } = &d.pattern {
+                    if let ExprKind::Ident(rhs_name) = &d.value.kind {
+                        if names.contains(rhs_name) {
+                            names.insert(alias_name.clone());
+                        }
+                    }
+                }
+            }
+            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(names, e, errors),
             Stmt::Assign { target, value, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, target, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, value, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, target, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, value, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(binding, v, errors); }
+                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(names, v, errors); }
             }
-            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(binding, value, errors),
+            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(names, value, errors),
             Stmt::Defer { body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, body, errors);
             }
             Stmt::ConsumeScope { init, body, binding: inner_binding, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, init, errors);
-                // Nested consume scope с inner binding NEW — outer `binding`
+                self.check_no_manual_on_exit_call_in_expr(names, init, errors);
+                // Nested consume scope с inner binding NEW — outer `names`
                 // check still applies inside (если inner body references
                 // outer's binding manually — same violation).
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
                 // Дополнительно: recurse с inner binding (D197 re-entrance).
-                self.check_no_manual_on_exit_call_in_block(inner_binding, body, errors);
+                let mut inner = std::collections::HashSet::new();
+                inner.insert(inner_binding.clone());
+                self.check_no_manual_on_exit_call_in_block(&inner, body, errors);
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, expr, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, expr, errors);
             }
             _ => {}
         }
     }
 
-    fn check_no_manual_on_exit_call_in_expr(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    fn check_no_manual_on_exit_call_in_expr(&self, names: &std::collections::HashSet<String>, e: &Expr, errors: &mut Vec<Diagnostic>) {
         use crate::ast::ExprKind;
-        // Detect `binding.cleanup(...)` call: Call { func: Member { obj: Ident(binding), name: "cleanup" }, ... }
+        // Detect `<tracked-name-or-expr-mentioning-it>.cleanup(...)` call.
+        // Plan 173 Ф.5 (#8): widened from a bare `Ident(binding)` match to
+        // ANY receiver subexpression that mentions a tracked name — catches
+        // the pass-through-function bypass (`identity(tx).cleanup(...)`)
+        // in addition to the direct/aliased identifier form.
         if let ExprKind::Call { func, .. } = &e.kind {
             if let ExprKind::Member { obj, name, .. } = &func.kind {
                 if name == "cleanup" {
-                    if let ExprKind::Ident(obj_name) = &obj.kind {
-                        if obj_name == binding {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[D188-r2-manual-on-exit] `{binding}.cleanup(...)` cannot be \
-                                     called manually from inside `consume {binding} = ... {{ body }}` \
-                                     scope-block body. Auto cleanup dispatch на scope exit \
-                                     гарантирует exactly-once invariant (D188 R2). Manual call \
-                                     → double invocation → runtime panic. \
-                                     Remove the explicit call; scope-exit will dispatch cleanup \
-                                     с appropriate ScopeOutcome value.",
-                                    binding = binding
-                                ),
-                                e.span,
-                            ));
-                        }
+                    if let Some(hit) = Self::expr_mentions_any(names, obj) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[D188-r2-manual-on-exit] `{hit}.cleanup(...)` (or an expression \
+                                 referencing it) cannot be called manually from inside a \
+                                 `consume {hit} = ... {{ body }}` scope-block body. Auto cleanup \
+                                 dispatch на scope exit гарантирует exactly-once invariant \
+                                 (D188 R2). Manual call → double invocation → runtime panic. \
+                                 Remove the explicit call; scope-exit will dispatch cleanup \
+                                 с appropriate ScopeOutcome value.",
+                                hit = hit
+                            ),
+                            e.span,
+                        ));
                     }
                 }
             }
         }
         // Recurse into children regardless.
-        self.check_no_manual_on_exit_recurse(binding, e, errors);
+        self.check_no_manual_on_exit_recurse(names, e, errors);
     }
 
-    fn check_no_manual_on_exit_recurse(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    /// Plan 173 Ф.5 (#8): does `e` (recursively) mention any name in `names`
+    /// as a bare identifier? Returns the FIRST matching tracked name (for the
+    /// diagnostic message) or `None`. Conservative over-approximation — scans
+    /// through calls/members/binary/unary/casts so a tracked binding passed
+    /// through an intervening function call (`identity(tx)`) is still caught.
+    fn expr_mentions_any(names: &std::collections::HashSet<String>, e: &Expr) -> Option<String> {
         use crate::ast::ExprKind;
         match &e.kind {
-            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
+            ExprKind::Ident(n) => names.get(n).cloned(),
             ExprKind::Call { func, args, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, func, errors);
+                Self::expr_mentions_any(names, func).or_else(|| {
+                    args.iter().find_map(|a| match a {
+                        crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
+                            Self::expr_mentions_any(names, ae)
+                        }
+                        _ => None,
+                    })
+                })
+            }
+            ExprKind::Member { obj, .. } => Self::expr_mentions_any(names, obj),
+            ExprKind::Binary { left, right, .. } => {
+                Self::expr_mentions_any(names, left).or_else(|| Self::expr_mentions_any(names, right))
+            }
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Try(operand)
+            | ExprKind::Bang(operand)
+            | ExprKind::RefArg(operand) => Self::expr_mentions_any(names, operand),
+            ExprKind::Coalesce(a, b) => {
+                Self::expr_mentions_any(names, a).or_else(|| Self::expr_mentions_any(names, b))
+            }
+            _ => None,
+        }
+    }
+
+    fn check_no_manual_on_exit_recurse(&self, names: &std::collections::HashSet<String>, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(names, b, errors),
+            ExprKind::Call { func, args, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(names, func, errors);
                 for a in args {
                     match a {
                         crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
-                            self.check_no_manual_on_exit_call_in_expr(binding, ae, errors);
+                            self.check_no_manual_on_exit_call_in_expr(names, ae, errors);
                         }
                         _ => {}
                     }
                 }
             }
             ExprKind::If { cond, then, else_, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, then, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(names, then, errors);
                 if let Some(eb) = else_ {
                     match eb {
-                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
-                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(binding, ei, errors),
+                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(names, b, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(names, ei, errors),
                     }
                 }
             }
             ExprKind::While { cond, body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
             }
             ExprKind::For { iter, body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, iter, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, iter, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.check_no_manual_on_exit_call_in_expr(binding, inner, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.check_no_manual_on_exit_call_in_expr(names, inner, errors),
             ExprKind::Coalesce(a, b) => {
-                self.check_no_manual_on_exit_call_in_expr(binding, a, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, b, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, a, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, b, errors);
             }
             ExprKind::Binary { left, right, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, left, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, right, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, left, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, right, errors);
             }
-            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(binding, operand, errors),
-            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(binding, obj, errors),
+            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(names, operand, errors),
+            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(names, obj, errors),
             _ => {}
         }
     }
@@ -4961,183 +5012,6 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     // --- Ф.2: walk сигнатур ---------------------------------------------
-
-    // ── Plan 173 Ф.1 (interim-guard #7 / D71 / [M-parfor-record-result-miscompile]) ──
-    //
-    // `parallel for → []T` в VALUE-позиции: codegen v1 собирает результат только для
-    // элемента T ∈ {int,bool,f64,str} (whitelist emit_c.rs `emit_parallel_for`). Для
-    // непримитива codegen МОЛЧА деградирует в `unit` → downstream сырой C-mismatch
-    // (`Nova_Vec_X* = nova_unit`). Interim-guard отвергает это ЧИСТО на этапе чекера
-    // диагностикой `[E_PARFOR_RESULT_UNSUPPORTED]`. Снимается Plan 173.1 Ф.2 (полная
-    // поддержка любого T через channel+consume); guard остаётся unreachable-защитой.
-    //
-    // Только value-позиция: statement-mode `parallel for` (результат отбрасывается)
-    // деградирует КОРРЕКТНО — не флагаем. `consumed` протягивается по value-контекстам.
-    fn parfor_elem_supported(t: &TypeRef) -> bool {
-        // §0 coupling: единый список примитивов, которые codegen v1 умеет собирать в
-        // `parallel for → []T`. ⚠ ДОЛЖЕН держаться в синхроне с codegen-whitelist в
-        // `codegen/emit_c.rs` `emit_parallel_for` (там C-имена nova_int/nova_bool/
-        // nova_f64/nova_str). Оба списка и этот guard удаляются в Plan 173.1 Ф.2
-        // (полная поддержка любого T через channel+consume).
-        const PARFOR_V1_PRIMITIVE_ELEMS: [&str; 4] = ["int", "bool", "f64", "str"];
-        let t = match t {
-            TypeRef::Readonly(inner, _) => inner.as_ref(),
-            other => other,
-        };
-        if let TypeRef::Named { path, generics, .. } = t {
-            generics.is_empty()
-                && path.last().map(|s| PARFOR_V1_PRIMITIVE_ELEMS.contains(&s.as_str())).unwrap_or(false)
-        } else {
-            false
-        }
-    }
-
-    fn check_parfor_result_block(&self, b: &Block, scope: &HashMap<String, TypeRef>, trailing_consumed: bool, errors: &mut Vec<Diagnostic>) {
-        for s in &b.stmts {
-            match s {
-                Stmt::Expr(e) => self.check_parfor_result_expr(e, scope, false, errors),
-                Stmt::Let(decl) => self.check_parfor_result_expr(&decl.value, scope, true, errors),
-                Stmt::Const(decl) => self.check_parfor_result_expr(&decl.value, scope, true, errors),
-                Stmt::Assign { target, value, .. } => {
-                    self.check_parfor_result_expr(target, scope, false, errors);
-                    self.check_parfor_result_expr(value, scope, true, errors);
-                }
-                Stmt::Return { value: Some(v), .. } => self.check_parfor_result_expr(v, scope, true, errors),
-                Stmt::Throw { value, .. } => self.check_parfor_result_expr(value, scope, true, errors),
-                Stmt::ConsumeScope { init, body, .. } => {
-                    self.check_parfor_result_expr(init, scope, true, errors);
-                    self.check_parfor_result_block(body, scope, false, errors);
-                }
-                Stmt::TupleAssign { rhs, .. } => {
-                    for e in rhs { self.check_parfor_result_expr(e, scope, true, errors); }
-                }
-                _ => {}
-            }
-        }
-        if let Some(t) = &b.trailing {
-            self.check_parfor_result_expr(t, scope, trailing_consumed, errors);
-        }
-    }
-
-    fn check_parfor_result_expr(&self, e: &Expr, scope: &HashMap<String, TypeRef>, consumed: bool, errors: &mut Vec<Diagnostic>) {
-        match &e.kind {
-            ExprKind::ParallelFor { iter, body, .. } => {
-                if consumed {
-                    if let Some(trailing) = &body.trailing {
-                        // Uninferrable → НЕ флагаем (без false-positive); примитивы обычно
-                        // тривиально инферятся, непримитив-Call резолвится через реестр.
-                        let supported = self.infer_expr_type(trailing, scope)
-                            .map(|t| Self::parfor_elem_supported(&t))
-                            .unwrap_or(true);
-                        if !supported {
-                            errors.push(Diagnostic::new(
-                                "[E_PARFOR_RESULT_UNSUPPORTED] `parallel for → []T` в value-позиции в v1 \
-                                 поддерживает элемент T ∈ {int,bool,f64,str} (codegen whitelist). Непримитивный \
-                                 результат (record / tuple / sum / вложенный []T) пока не собирается — codegen \
-                                 молча деградирует в unit. Полная поддержка любого T — Plan 173.1 Ф.2. Обход: \
-                                 верни примитив и построй агрегат после, ИЛИ statement-mode `parallel for` \
-                                 (без trailing-выражения) + внешний сбор.".to_string(),
-                                e.span,
-                            ));
-                        }
-                    }
-                }
-                self.check_parfor_result_expr(iter, scope, true, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::Block(b) => self.check_parfor_result_block(b, scope, consumed, errors),
-            ExprKind::If { cond, then, else_ } => {
-                self.check_parfor_result_expr(cond, scope, false, errors);
-                self.check_parfor_result_block(then, scope, consumed, errors);
-                match else_ {
-                    Some(ElseBranch::Block(b)) => self.check_parfor_result_block(b, scope, consumed, errors),
-                    Some(ElseBranch::If(e2)) => self.check_parfor_result_expr(e2, scope, consumed, errors),
-                    None => {}
-                }
-            }
-            ExprKind::IfLet { scrutinee, then, else_, .. } => {
-                self.check_parfor_result_expr(scrutinee, scope, false, errors);
-                self.check_parfor_result_block(then, scope, consumed, errors);
-                match else_ {
-                    Some(ElseBranch::Block(b)) => self.check_parfor_result_block(b, scope, consumed, errors),
-                    Some(ElseBranch::If(e2)) => self.check_parfor_result_expr(e2, scope, consumed, errors),
-                    None => {}
-                }
-            }
-            ExprKind::Match { scrutinee, arms } => {
-                self.check_parfor_result_expr(scrutinee, scope, false, errors);
-                for a in arms {
-                    match &a.body {
-                        MatchArmBody::Expr(e2) => self.check_parfor_result_expr(e2, scope, consumed, errors),
-                        MatchArmBody::Block(b) => self.check_parfor_result_block(b, scope, consumed, errors),
-                    }
-                    if let Some(g) = &a.guard { self.check_parfor_result_expr(g, scope, false, errors); }
-                }
-            }
-            ExprKind::For { iter, body, .. } => {
-                self.check_parfor_result_expr(iter, scope, true, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::While { cond, body, .. } => {
-                self.check_parfor_result_expr(cond, scope, false, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::WhileLet { scrutinee, body, .. } => {
-                self.check_parfor_result_expr(scrutinee, scope, false, errors);
-                self.check_parfor_result_block(body, scope, false, errors);
-            }
-            ExprKind::Loop { body, .. } => self.check_parfor_result_block(body, scope, false, errors),
-            ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
-            | ExprKind::Realtime { body, .. } | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
-                self.check_parfor_result_block(body, scope, consumed, errors);
-            }
-            ExprKind::Supervised { body, cancel, deadline } => {
-                if let Some(c) = cancel { self.check_parfor_result_expr(c, scope, false, errors); }
-                if let Some(_dl) = deadline { self.check_parfor_result_expr(&_dl.expr, scope, false, errors); }
-                self.check_parfor_result_block(body, scope, consumed, errors);
-            }
-            ExprKind::Call { func, args, .. } => {
-                self.check_parfor_result_expr(func, scope, false, errors);
-                for a in args { self.check_parfor_result_expr(a.expr(), scope, true, errors); }
-            }
-            ExprKind::Spawn(body) => self.check_parfor_result_expr(body, scope, false, errors),
-            ExprKind::Binary { left, right, .. } => {
-                self.check_parfor_result_expr(left, scope, true, errors);
-                self.check_parfor_result_expr(right, scope, true, errors);
-            }
-            ExprKind::Unary { operand, .. } => self.check_parfor_result_expr(operand, scope, true, errors),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) | ExprKind::Throw(inner) => self.check_parfor_result_expr(inner, scope, consumed, errors),
-            ExprKind::Coalesce(a, b) => {
-                self.check_parfor_result_expr(a, scope, consumed, errors);
-                self.check_parfor_result_expr(b, scope, consumed, errors);
-            }
-            ExprKind::As(e2, _) | ExprKind::Is(e2, _) => self.check_parfor_result_expr(e2, scope, true, errors),
-            ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => self.check_parfor_result_expr(obj, scope, true, errors),
-            ExprKind::TurboFish { base, .. } => self.check_parfor_result_expr(base, scope, consumed, errors),
-            ExprKind::Interrupt(Some(body)) => self.check_parfor_result_expr(body, scope, true, errors),
-            ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { self.check_parfor_result_expr(s, scope, true, errors); }
-                if let Some(en) = end { self.check_parfor_result_expr(en, scope, true, errors); }
-            }
-            ExprKind::ArrayLit(elems) => {
-                for el in elems {
-                    match el {
-                        ArrayElem::Item(e2) | ArrayElem::Spread(e2) => self.check_parfor_result_expr(e2, scope, true, errors),
-                    }
-                }
-            }
-            ExprKind::TupleLit(elems) => {
-                for el in elems { self.check_parfor_result_expr(el, scope, true, errors); }
-            }
-            ExprKind::RecordLit { fields, .. } => {
-                for f in fields {
-                    if let Some(v) = &f.value { self.check_parfor_result_expr(v, scope, true, errors); }
-                }
-            }
-            // Closures/lambdas — свой контекст; прочие простые узлы без вложенных parallel-for.
-            _ => {}
-        }
-    }
 
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
         // Plan 173 Ф.1 (#3 / Plan 174.2): `?` строго return-only. Свободный `?`
@@ -5587,6 +5461,42 @@ impl<'a> TypeCheckCtx<'a> {
         // size walk degrades gracefully (depth-guard → None, surfaced only when
         // `size_of` forces it); this dedicated check reports it at type-check time.
         self.check_infinite_type(td, errors);
+        // Plan 173.3 (D415 §1): `#share` — applicable to kinds that have a
+        // concrete (if compiler-opaque) instance identity: Record, NamedTuple,
+        // Newtype, Opaque, Sum. NOT applicable to Effect/Protocol/Alias/TypeSet
+        // (no own storage / not a concrete instantiable type to vouch for).
+        if td.attrs.contains(&crate::ast::TypeAttr::Share) {
+            let kind_ok = matches!(
+                &td.kind,
+                TypeDeclKind::Record(_)
+                    | TypeDeclKind::NamedTuple(_)
+                    | TypeDeclKind::Newtype(_)
+                    | TypeDeclKind::Opaque
+                    | TypeDeclKind::Sum(_)
+            );
+            if !kind_ok {
+                let kind_str = match &td.kind {
+                    TypeDeclKind::Record(_) => "record",
+                    TypeDeclKind::Sum(_) => "sum",
+                    TypeDeclKind::Effect(_) => "effect",
+                    TypeDeclKind::Protocol { .. } => "protocol",
+                    TypeDeclKind::Alias(_) => "alias",
+                    TypeDeclKind::Opaque => "external opaque",
+                    TypeDeclKind::NamedTuple(_) => "named tuple",
+                    TypeDeclKind::Newtype(_) => "newtype",
+                    TypeDeclKind::TypeSet(_) => "type set",
+                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_SHARE_INVALID_KIND] `#share` cannot be applied to `{}` \
+                         ({}) — no own instance storage to vouch for. Allowed kinds: \
+                         record, named tuple, newtype, opaque, sum. Plan 173.3 (D415 §1).",
+                        td.name, kind_str
+                    ),
+                    td.span,
+                ));
+            }
+        }
     }
 
     /// Q-infinite-value-type (D280 §4): report an `E_INFINITE_TYPE` diagnostic
@@ -6375,9 +6285,34 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::RecordLit { type_name, fields, .. } => {
-                // Plan 114.4.1 (D200): reject field shorthand / pair refering
-                // assoc const — assoc consts live на type-level, не указываются
-                // в record literal.
+                // Plan 173 Ф.5 (§4а zero-tolerance, вскрыто D192-ретрактом):
+                // record literal с НЕИЗВЕСТНЫМ именем типа раньше молча
+                // проходил чекер («name-resolution не наша забота») и codegen
+                // генерил мусор — тихий miscompile-класс. Ловим здесь:
+                // имя не в types-реестре CU (user+prelude+builtin merged),
+                // не generic-параметр в scope, не вариант известной суммы →
+                // [E_UNKNOWN_TYPE].
+                if let Some(tn) = type_name {
+                    if let Some(last) = tn.last() {
+                        if last != "Self"
+                            && !gs.contains(last)
+                            && !self.types.contains_key(last)
+                            && !self.types.values().any(|td| matches!(
+                                &td.kind,
+                                TypeDeclKind::Sum(vs) if vs.iter().any(|v| &v.name == last)))
+                        {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_UNKNOWN_TYPE] unknown type `{last}` in record \
+                                     literal `{last} {{ … }}` — тип не объявлен и не \
+                                     импортирован (или удалён: см. D192-ретракт для \
+                                     `CleanupTimeoutError`).",
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
                 if let Some(tn) = type_name {
                     if let Some(last) = tn.last() {
                         if let Some(td) = self.types.get(last) {
@@ -7543,17 +7478,71 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         // P67: control-flow loops always evaluate to unit — annotate directly.
+        // Plan 173.1 Ф.2 (D71): `parallel for` with a trailing expression is the
+        // EXCEPTION — it evaluates to `[]T` (≡ `Vec[T]`, D239) where T is the
+        // trailing's type. Annotating it Unit here poisoned Channel 2 downstream:
+        // `Stmt::Let`'s C-type probe adopted `nova_unit` while the emission
+        // produced a `Nova_Vec____<T>*` → CC-FAIL «initializing 'nova_unit' with
+        // 'Nova_Vec____nova_int *'» ([M-parfor-record-result-miscompile] surface).
+        // Trailing-less (statement-mode) `parallel for` stays Unit. When the
+        // element type can't be inferred here, DON'T annotate — honest channel
+        // miss → codegen's `infer_expr_c_type` ParallelFor arm computes the
+        // Vec[T]* itself (same Vec-mangle, one lowering window).
         if e.id.is_set() {
-            let is_loop = matches!(
+            let is_unit_loop = matches!(
                 &e.kind,
                 ExprKind::For { .. }
                     | ExprKind::While { .. }
                     | ExprKind::WhileLet { .. }
                     | ExprKind::Loop { .. }
-                    | ExprKind::ParallelFor { .. }
             );
-            if is_loop {
+            if is_unit_loop {
                 self.resolved_types_buf.borrow_mut().insert(e.id, ResolvedType::Unit);
+            }
+            if let ExprKind::ParallelFor { pattern, iter, body, elem_type } = &e.kind {
+                match &body.trailing {
+                    None => {
+                        self.resolved_types_buf.borrow_mut().insert(e.id, ResolvedType::Unit);
+                    }
+                    Some(t) => {
+                        // The trailing may reference the LOOP VARIABLE, absent from
+                        // the outer `scope` at this preamble point — extend a local
+                        // scope copy with the pattern binding typed as the iterator's
+                        // element (same source `f1_for_body` uses). Non-Ident patterns
+                        // (destructure) or un-inferrable iterators → probe with the
+                        // outer scope as-is; a trailing that then fails to infer stays
+                        // un-annotated (honest miss → codegen fallback).
+                        let loop_elem_tr = elem_type.clone()
+                            .or_else(|| self.infer_iter_elem_type(iter, scope));
+                        let mut body_scope = scope.clone();
+                        if let (Pattern::Ident { name, .. }, Some(et)) = (pattern, &loop_elem_tr) {
+                            body_scope.insert(name.clone(), et.clone());
+                        }
+                        // Body's own top-level lets can also feed the trailing.
+                        for s in &body.stmts {
+                            if let Stmt::Let(d) = s {
+                                if let Pattern::Ident { name, .. } = &d.pattern {
+                                    let ty = d.ty.clone()
+                                        .or_else(|| self.infer_expr_type(&d.value, &body_scope));
+                                    if let Some(ty) = ty {
+                                        body_scope.insert(name.clone(), ty);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(elem_tr) = self.infer_expr_type(t, &body_scope) {
+                            let elem_rt = ResolvedType::from_type_ref(&elem_tr);
+                            self.resolved_types_buf.borrow_mut().insert(
+                                e.id,
+                                ResolvedType::Named {
+                                    name: "Vec".to_string(),
+                                    module: vec![],
+                                    args: vec![elem_rt],
+                                },
+                            );
+                        }
+                    }
+                }
             }
         }
         // Plan 172.1 (P67 literal-annotation): literal types are structurally determined —
@@ -12222,10 +12211,23 @@ impl<'a> TypeCheckCtx<'a> {
                 let inner_tr = self.infer_expr_type(inner, scope)?;
                 if let TypeRef::Named { path, generics, .. } = &inner_tr {
                     let base = path.last().map(String::as_str);
-                    if (base == Some("Result") || base == Some("Option"))
-                        && !generics.is_empty()
-                    {
-                        return Some(generics[0].clone());
+                    if base == Some("Result") || base == Some("Option") {
+                        if !generics.is_empty() {
+                            return Some(generics[0].clone());
+                        }
+                        // Plan 173.1 [M-bare-result-try-annotation] (2026-07-09):
+                        // BARE `Result`/`Option` (erased, no type args — `fn f()
+                        // -> Result`). The unwrapped T is NOT knowable here;
+                        // falling through to «return inner unchanged» annotated
+                        // `ro v = f()?` as the WHOLE Result → codegen declared
+                        // `NovaRes_…* v = payload.Ok._0` → pointer arithmetic on
+                        // an int payload (`v + 1` scaled by struct size: 42 +
+                        // sizeof instead of 43 — supervised_errors.nv SECTION 2,
+                        // uncovered when the concurrency folder first compiled
+                        // past its Ф.2-era CC-FAILs). Honest None → no channel
+                        // annotation → legacy codegen navigation types the
+                        // unwrap correctly.
+                        return None;
                     }
                 }
                 // Unknown container (user type, generic T) → return inner type unchanged.
@@ -16967,6 +16969,35 @@ struct CapabilityCtx<'a> {
     sig: &'a crate::sig_registry::SigRegistry<'a>,
     /// Effect-type name registry (для distinguish'а effect-call vs ordinary).
     effect_decls: HashMap<String, &'a TypeDecl>,
+    /// Plan 173.3 (D415 §2): type-decl registry для `#share`-предиката
+    /// (`protocols::share_check::is_mut_alias_safe`/`is_alias_read_safe`) — capture-check на границе
+    /// `spawn`/`parallel for` должен резолвить имя захваченного типа в его
+    /// TypeDecl, чтобы рекурсивно определить share-ность полей. Тот же
+    /// merge-паттерн, что `TypeCheckCtx::build` (module.items + registry-only
+    /// builtin-модули типа sync.nv — иначе `Mutex`/`RwLock`/etc, у которых
+    /// TypeDecl приходит ТОЛЬКО через `builtin_sig_modules()`, не резолвятся).
+    type_decls: HashMap<String, &'a TypeDecl>,
+}
+
+/// Plan 173.3 (D415 §2): adapter — `CapabilityCtx.type_decls` as a
+/// `share_check::ShareQuery`.
+struct CapShareQuery<'a>(&'a HashMap<String, &'a TypeDecl>);
+
+impl<'a> crate::protocols::share_check::ShareQuery for CapShareQuery<'a> {
+    fn lookup_type(&self, name: &str) -> Option<&TypeDecl> {
+        self.0.get(name).copied()
+    }
+}
+
+/// Plan 173.3 (D415 §2): one lexical binding tracked for the spawn/
+/// parallel-for capture-check — enough fidelity to answer "is this captured
+/// name a mutable, non-`#share` binding" (fn params / block-scoped `let` /
+/// for-loop vars; see module-level capture-scan doc for the (documented,
+/// deliberate) V1 coverage limit — closures/match-arm binds are not tracked).
+#[derive(Clone)]
+struct ScopeBinding {
+    mutable: bool,
+    ty: Option<TypeRef>,
 }
 
 /// Plan 16: capability state передаётся через walk как mutable.
@@ -17007,6 +17038,28 @@ struct CapState {
     /// (дефолт-handler LogAndDrop — D50/D414 §2). Для обычной `fn`
     /// остаётся `false` → `detach` требует `Detach` в сигнатуре.
     effect_root: bool,
+    /// Plan 173.3 (D415 §2): lexical scope stack for the spawn/parallel-for
+    /// capture-check. Frames pushed on fn-param entry / block entry / for-loop
+    /// var entry, popped on exit. `walk_block` is the single choke point for
+    /// ALL block-shaped bodies (if/while/for/match-arm/fn-body/spawn/etc), so
+    /// pushing/popping there gives correct nesting with no per-call-site
+    /// threading. See `capture_scan_*` free functions for the (separate,
+    /// self-contained) free-variable scan run AT a spawn/parallel-for
+    /// boundary against this stack.
+    scopes: Vec<HashMap<String, ScopeBinding>>,
+    /// Plan 173.3 addendum ([M-const-init-concurrency-gate], D414 §2 note):
+    /// True while walking a MODULE-LEVEL `ro`/`const` initializer expression.
+    /// Module-level initializers run inside `nova_consts_init()` BEFORE the
+    /// M:N workers are armed ([M-lazy-const-init-race] eager fix); any
+    /// concurrency construct there would lazily arm workers MID-init
+    /// (`_auto_arm_if_needed()`) — turning the rest of consts-init
+    /// multi-threaded and resurrecting the race. Checker bans:
+    /// `spawn`/`supervised`/`detach`/`parallel for`/`select`/channel
+    /// send-recv ops, and calls to fns whose signature carries the `Detach`
+    /// effect → `E_CONST_INIT_CONCURRENCY`. Ordinary runtime calls (extern
+    /// fns, allocation) stay LEGAL for `ro` (only `const` has the stricter
+    /// E_CONST_EFFECT_IN_INIT purity rule).
+    const_init: bool,
 }
 
 impl CapState {
@@ -17022,14 +17075,28 @@ impl<'a> CapabilityCtx<'a> {
     fn build(module: &'a Module, sig: &'a crate::sig_registry::SigRegistry<'a>) -> Self {
         // U.2.3.2: fn_decls/method_table read from `sig` (shared base registry).
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
+        // Plan 173.3 (D415 §2): type_decls for the `#share` predicate —
+        // module-declared types first, then registry-only builtin modules
+        // (sync.nv's Mutex/RwLock/Semaphore/WaitGroup/Once/ReentrantMutex,
+        // `or_insert` so a module-declared type wins), mirroring
+        // `TypeCheckCtx::build`'s merge (§0 single source pattern).
+        let mut type_decls: HashMap<String, &TypeDecl> = HashMap::new();
         for item in &module.items {
             if let Item::Type(t) = item {
                 if matches!(t.kind, TypeDeclKind::Effect(_)) {
                     effect_decls.insert(t.name.clone(), t);
                 }
+                type_decls.insert(t.name.clone(), t);
             }
         }
-        CapabilityCtx { sig, effect_decls }
+        for ext_mod in crate::codegen::external_registry::builtin_sig_modules() {
+            for item in &ext_mod.items {
+                if let Item::Type(td) = item {
+                    type_decls.entry(td.name.clone()).or_insert(td);
+                }
+            }
+        }
+        CapabilityCtx { sig, effect_decls, type_decls }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -17074,9 +17141,59 @@ impl<'a> CapabilityCtx<'a> {
                     }
                     self.walk_block(&t.body, &mut state, errors);
                 }
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]):
+                // module-level `ro` / `const` initializers run inside
+                // nova_consts_init() BEFORE M:N workers arm — concurrency
+                // constructs are banned there (see CapState.const_init doc).
+                Item::Let(d) => {
+                    let mut state = CapState::default();
+                    state.const_init = true;
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
+                    state.scopes.push(HashMap::new());
+                    self.walk_expr(&d.value, &mut state, errors);
+                    state.scopes.pop();
+                }
+                Item::Const(c) => {
+                    let mut state = CapState::default();
+                    state.const_init = true;
+                    if !file_forbidden.is_empty() {
+                        state.forbidden_stack.push(file_forbidden.clone());
+                    }
+                    state.scopes.push(HashMap::new());
+                    self.walk_expr(&c.value, &mut state, errors);
+                    state.scopes.pop();
+                }
                 _ => {}
             }
         }
+    }
+
+    /// Plan 173.3 addendum ([M-const-init-concurrency-gate]): emit
+    /// `E_CONST_INIT_CONCURRENCY` for a concurrency construct / call inside
+    /// a module-level `ro`/`const` initializer. `what` names the construct.
+    fn const_init_concurrency_error(
+        &self,
+        what: &str,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CONST_INIT_CONCURRENCY] {} is not allowed in a module-level \
+                 `ro`/`const` initializer — these run inside `nova_consts_init()` \
+                 BEFORE the M:N workers are armed; a concurrency construct here \
+                 would lazily arm workers MID-init and make the remaining \
+                 initializers run multi-threaded (resurrecting the \
+                 [M-lazy-const-init-race] data race). Move the concurrent work \
+                 into a function called from `main`/a test, or compute the value \
+                 sequentially (ordinary runtime/extern calls remain legal in \
+                 `ro` initializers).",
+                what
+            ),
+            span,
+        ));
     }
 
     fn walk_fn_body(&self, f: &FnDecl, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
@@ -17090,26 +17207,61 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
         }
+        // Plan 173.3 (D415 §2): fn-params scope frame — outermost frame a
+        // spawn/parallel-for capture-check can see a captured name bound in.
+        let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+        for p in &f.params {
+            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()) });
+        }
+        state.scopes.push(frame);
         match &f.body {
             FnBody::Expr(e) => self.walk_expr(e, state, errors),
             FnBody::Block(b) => self.walk_block(b, state, errors),
             FnBody::External => {}
         }
+        state.scopes.pop();
     }
 
     fn walk_block(&self, b: &Block, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
+        // Plan 173.3 (D415 §2): every block is its own lexical scope frame —
+        // pushing/popping HERE (the single choke point for all block-shaped
+        // bodies) gives correct nesting for the spawn/parallel-for
+        // capture-check with no per-call-site threading elsewhere.
+        state.scopes.push(HashMap::new());
         for s in &b.stmts {
             self.walk_stmt(s, state, errors);
         }
         if let Some(t) = &b.trailing {
             self.walk_expr(t, state, errors);
         }
+        state.scopes.pop();
     }
 
     fn walk_stmt(&self, s: &Stmt, state: &mut CapState, errors: &mut Vec<Diagnostic>) {
         match s {
             Stmt::Expr(e) => self.walk_expr(e, state, errors),
-            Stmt::Let(d) => self.walk_expr(&d.value, state, errors),
+            Stmt::Let(d) => {
+                self.walk_expr(&d.value, state, errors);
+                // Plan 173.3 (D415 §2): register this let's bound name(s) into
+                // the CURRENT (innermost) scope frame — pushed by the
+                // enclosing `walk_block`, guaranteed non-empty there. When the
+                // let has no annotation, fall back to a SYNTACTIC init-expr
+                // type sketch (ctor calls `Type.new(..)`, literals) so the
+                // dominant unannotated forms — `mut mu = Mutex.new()` (must
+                // NOT be flagged) and `mut acc = 0` (MUST be flagged) —
+                // resolve without full inference (CapabilityCtx has none).
+                if let Some(frame) = state.scopes.last_mut() {
+                    let ty = d.ty.clone().or_else(|| {
+                        capture_syntactic_init_type(&d.value, &self.type_decls)
+                    });
+                    for (name, pat_mut) in pattern_capture_names(&d.pattern) {
+                        frame.insert(name, ScopeBinding {
+                            mutable: d.mutable || pat_mut,
+                            ty: ty.clone(),
+                        });
+                    }
+                }
+            }
             Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, state, errors);
@@ -17212,6 +17364,54 @@ impl<'a> CapabilityCtx<'a> {
                 for _ in &pushed { state.with_handler_stack.pop(); }
             }
             ExprKind::Call { func, args, trailing } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]):
+                // inside a module-level ro/const initializer, ban
+                // (a) channel blocking ops by method name — `send`/`recv`
+                //     (buffered `send` PARKS when full; `recv` parks when
+                //     empty — with no workers armed that's a pre-main hang;
+                //     documented name-heuristic, matching D91 surface);
+                // (b) calls to free fns whose signature carries the `Detach`
+                //     effect (the call would detach a fiber mid-consts-init).
+                // Non-parking `try_send`/`try_recv` and ordinary runtime /
+                // extern calls remain legal (`ro` init is allowed effects).
+                if state.const_init {
+                    match &func.kind {
+                        ExprKind::Member { name, .. }
+                            if name == "send" || name == "recv" =>
+                        {
+                            self.const_init_concurrency_error(
+                                &format!("channel op `.{}()`", name),
+                                e.span,
+                                errors,
+                            );
+                        }
+                        ExprKind::Ident(fname) => {
+                            let has_detach = self
+                                .sig
+                                .free_fns(fname)
+                                .map_or(false, |fns| {
+                                    fns.iter().any(|f| {
+                                        f.effects.iter().any(|ef| matches!(
+                                            ef,
+                                            TypeRef::Named { path, .. }
+                                                if path.last().map(String::as_str) == Some("Detach")
+                                        ))
+                                    })
+                                });
+                            if has_detach {
+                                self.const_init_concurrency_error(
+                                    &format!(
+                                        "call to `{}` (declares the `Detach` effect)",
+                                        fname
+                                    ),
+                                    e.span,
+                                    errors,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 self.walk_expr(func, state, errors);
                 for a in args { self.walk_expr(a.expr(), state, errors); }
                 if let Some(t) = trailing {
@@ -17323,8 +17523,25 @@ impl<'a> CapabilityCtx<'a> {
                 FnBody::Block(b) => self.walk_block(b, state, errors),
                 FnBody::External => {}
             },
-            ExprKind::Spawn(body) => self.walk_expr(body, state, errors),
+            ExprKind::Spawn(body) => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`spawn`", e.span, errors);
+                }
+                // Plan 173.3 (D415 §2): capture-check boundary — `spawn`'s
+                // body executes in a NEW fiber (M:N, may run on another OS
+                // thread). Any outer `mut` binding captured by reference
+                // (non-`#share`, non-consumed) is a data race. Scan BEFORE
+                // walking (so the check sees only OUTER scopes, not body's
+                // own locals — `walk_expr`/`walk_block` push body's frames).
+                self.check_spawn_capture(body, state, errors);
+                self.walk_expr(body, state, errors);
+            }
             ExprKind::Detach(body) => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`detach`", e.span, errors);
+                }
                 // Plan 173 Ф.3 п.2 (D50 / D414 §2): `detach { }` требует эффект
                 // `Detach` в сигнатуре enclosing-`fn` (или замыкания с эффектами) —
                 // fire-and-forget задача переживает caller'а, это наблюдаемый
@@ -17360,17 +17577,46 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_block(body, state, errors);
             }
             ExprKind::Supervised { body, cancel, deadline } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`supervised { }`", e.span, errors);
+                }
                 if let Some(c) = cancel { self.walk_expr(c, state, errors); }
                 if let Some(_dl) = deadline { self.walk_expr(&_dl.expr, state, errors); }
                 self.walk_block(body, state, errors);
             }
-            ExprKind::ParallelFor { iter, body, .. } => {
+            ExprKind::ParallelFor { iter, body, pattern, elem_type } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`parallel for`", e.span, errors);
+                }
                 self.walk_expr(iter, state, errors);
-                self.walk_block(body, state, errors);
+                // Plan 173.3 (D415 §2): capture-check boundary — same fan-out
+                // fiber-per-element concurrency as `spawn` (D50 desugar:
+                // `parallel for` = `supervised { for x in iter { spawn { body } } }`).
+                // Push the loop-var frame FIRST so the loop variable itself is
+                // never flagged as a "captured outer mut" (it's per-iteration
+                // local, not shared across siblings).
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                }
+                state.scopes.push(frame);
+                self.check_capture_boundary(body, state, errors);
+                for s in &body.stmts { self.walk_stmt(s, state, errors); }
+                if let Some(t) = &body.trailing { self.walk_expr(t, state, errors); }
+                state.scopes.pop();
             }
-            ExprKind::For { iter, body, .. } => {
+            ExprKind::For { iter, body, pattern, elem_type, .. } => {
                 self.walk_expr(iter, state, errors);
-                self.walk_block(body, state, errors);
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for (name, is_mut) in pattern_capture_names(pattern) {
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone() });
+                }
+                state.scopes.push(frame);
+                for s in &body.stmts { self.walk_stmt(s, state, errors); }
+                if let Some(t) = &body.trailing { self.walk_expr(t, state, errors); }
+                state.scopes.pop();
             }
             ExprKind::While { cond, body, .. } => {
                 self.walk_expr(cond, state, errors);
@@ -17382,6 +17628,10 @@ impl<'a> CapabilityCtx<'a> {
             }
             ExprKind::Loop { body, .. } => self.walk_block(body, state, errors),
             ExprKind::Select { arms } => {
+                // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
+                if state.const_init {
+                    self.const_init_concurrency_error("`select { }`", e.span, errors);
+                }
                 for arm in arms {
                     match &arm.op {
                         SelectOp::Recv { chan, .. } => self.walk_expr(chan, state, errors),
@@ -17616,6 +17866,444 @@ impl<'a> CapabilityCtx<'a> {
                 span,
             ));
         }
+    }
+
+    /// Plan 173.3 (D415 §2): `spawn <body>` capture-check entry — `body` may
+    /// be a bare `Block` expr (`spawn { ... }`) or, after the Ф.3
+    /// `spawn consume c [= e] { ... }` desugar, a `Block` wrapping a single
+    /// `Stmt::ConsumeScope`. Either way the top-level `body` IS the block to
+    /// scan (unwrap `ExprKind::Block`; anything else — e.g. a bare call
+    /// expr `spawn foo()` — has no lexical body to scan, skip).
+    fn check_spawn_capture(&self, body: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
+        if let ExprKind::Block(b) = &body.kind {
+            self.check_capture_boundary(b, state, errors);
+        }
+    }
+
+    /// Plan 173.3 (D415 §2): core capture-check — collect free variables
+    /// referenced in `body` (names not locally shadowed within it), and for
+    /// each one that resolves (via `state.scopes`, searched innermost-out) to
+    /// a MUTABLE outer binding whose type is not `#share` → emit
+    /// `E_CONCURRENT_MUT_CAPTURE`. A name that resolves to an IMMUTABLE
+    /// (`ro`) outer binding, or to a `#share` type, or that isn't found at
+    /// all (unknown — const/fn-name/closure-or-match-bound name; V1 does not
+    /// track those scopes, see module docs) is never flagged — false
+    /// negatives are the safe direction here, not false positives.
+    ///
+    /// The one sanctioned exception is `consume`-move: `Stmt::ConsumeScope`
+    /// inside `body` is the explicit move-capture form (D415 §4,
+    /// `spawn consume c [= e] { .. }` desugar) — its `init` expression's
+    /// referenced names are EXEMPT (the move is syntactically visible right
+    /// there), and its `binding` name is locally shadowed for the rest of
+    /// the scan (mirrors an ordinary `let`).
+    fn check_capture_boundary(&self, body: &Block, state: &CapState, errors: &mut Vec<Diagnostic>) {
+        let mut shadow: HashSet<String> = HashSet::new();
+        let mut free: HashSet<String> = HashSet::new();
+        capture_scan_block(body, &mut shadow, &mut free);
+        let share_q = CapShareQuery(&self.type_decls);
+        let mut flagged: Vec<String> = Vec::new();
+        for name in free {
+            let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
+            if let Some(b) = binding {
+                if !b.mutable {
+                    // `ro` capture — deep-immutable view (D246): always safe,
+                    // no share requirement (D415 §2 "ro" arm).
+                    continue;
+                }
+                // `mut` binding captured by reference: safe ONLY when the
+                // type is mut-alias-safe (audited `#share` sync type, or an
+                // aggregate whose mutation paths bottom out in one). A bare
+                // `mut int`/`mut []T` accumulator — THE motivating race —
+                // is NOT (see share_check module doc).
+                let safe = match &b.ty {
+                    Some(ty) => crate::protocols::share_check::is_mut_alias_safe(&share_q, ty),
+                    // Unknown type (no annotation, no syntactic ctor
+                    // inference in scope registration) — conservative:
+                    // cannot prove internal sync ⇒ flag.
+                    None => false,
+                };
+                if !safe {
+                    flagged.push(name);
+                }
+            }
+        }
+        flagged.sort(); // deterministic diagnostic order (HashSet iteration)
+        for name in flagged {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_CONCURRENT_MUT_CAPTURE] `spawn`/`parallel for` body \
+                     captures outer `mut` binding `{}` by reference — under M:N \
+                     scheduling this is a data race (the child fiber may run \
+                     concurrently with, or migrate across threads from, the \
+                     parent/siblings). Allowed captures (Plan 173.3, D415 §2): \
+                     move it in explicitly (`spawn consume {} = expr {{ .. }}` / \
+                     `spawn consume {} {{ .. }}`), capture it `ro` (immutable \
+                     view), or use an internally-synchronized `#share` type \
+                     (`Mutex`/`Atomic*` — or a user lock-free type vouched \
+                     with `#share`).",
+                    name, name, name
+                ),
+                body.span,
+            ));
+        }
+    }
+}
+
+/// Plan 173.3 (D415 §2): SYNTACTIC init-expr type sketch for scope
+/// registration when a `let` has no annotation. Handles exactly the shapes
+/// the capture-check needs to classify correctly without full inference:
+/// - `Type.new(..)` / `Type.of(..)` / any `Type.method(..)` static-ctor call
+///   where `Type` is a KNOWN type name → `Named{Type}` (covers
+///   `mut mu = Mutex.new()` — must not be false-positived);
+/// - int/float/str/bool/char literals → the primitive (covers
+///   `mut acc = 0` — must be flagged on mut capture);
+/// - array literal → `[]<unknown>` shape (Array of an unresolvable name —
+///   still classified "container ⇒ not mut-alias-safe", which is right);
+/// - anything else → `None` (conservative-flag direction).
+fn capture_syntactic_init_type(
+    e: &Expr,
+    type_decls: &HashMap<String, &TypeDecl>,
+) -> Option<TypeRef> {
+    let named = |n: &str| TypeRef::Named {
+        path: vec![n.to_string()],
+        generics: vec![],
+        span: e.span,
+    };
+    match &e.kind {
+        ExprKind::IntLit(_) => Some(named("int")),
+        ExprKind::FloatLit(_) => Some(named("f64")),
+        ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => Some(named("str")),
+        ExprKind::BoolLit(_) => Some(named("bool")),
+        ExprKind::CharLit(_) => Some(named("char")),
+        ExprKind::ArrayLit(_) => Some(TypeRef::Array(
+            Box::new(named("__nv_unknown_elem")),
+            e.span,
+        )),
+        // `mut x = TypeName { .. }` — record literal with explicit type.
+        ExprKind::RecordLit { type_name: Some(path), .. } => {
+            path.last().map(|n| named(n))
+        }
+        ExprKind::Call { func, .. } => match &func.kind {
+            ExprKind::Member { obj, .. } => {
+                // `Type.new(..)` — plain, or `Type[T].new(..)` — turbofish
+                // (generic ctor, e.g. `OnceCell[int].new()`).
+                let base = match &obj.kind {
+                    ExprKind::TurboFish { base, .. } => &base.kind,
+                    other => other,
+                };
+                if let ExprKind::Ident(tyname) = base {
+                    if type_decls.contains_key(tyname.as_str()) {
+                        return Some(named(tyname));
+                    }
+                }
+                None
+            }
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                if type_decls.contains_key(parts[0].as_str()) {
+                    return Some(named(&parts[0]));
+                }
+                None
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Plan 173.3 (D415 §2): bound names (+ per-name mutability) introduced by a
+/// `let`/for-loop-var/etc pattern. Non-`Ident` sub-patterns default
+/// `mutable = false` (conservative — V1 does not track per-element `mut` in
+/// destructure patterns beyond the direct `Ident{is_mut}` case; see D184 §1
+/// "no per-element granularity V1", the same limitation this mirrors).
+fn pattern_capture_names(pat: &Pattern) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    pattern_capture_names_into(pat, &mut out);
+    out
+}
+
+fn pattern_capture_names_into(pat: &Pattern, out: &mut Vec<(String, bool)>) {
+    match pat {
+        Pattern::Ident { name, is_mut, .. } => out.push((name.clone(), *is_mut)),
+        Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } => {
+            for p in patterns { pattern_capture_names_into(p, out); }
+        }
+        Pattern::Variant { kind: VariantPatternKind::Unit, .. } => {}
+        Pattern::Record { fields, .. } => {
+            for f in fields {
+                match &f.pattern {
+                    Some(p) => pattern_capture_names_into(p, out),
+                    None => out.push((f.name.clone(), false)), // `{ name }` shorthand
+                }
+            }
+        }
+        Pattern::Array { elems, .. } => {
+            for e in elems {
+                match e {
+                    ArrayPatternElem::Item(p) => pattern_capture_names_into(p, out),
+                    ArrayPatternElem::RestBind(name) => out.push((name.clone(), false)),
+                    ArrayPatternElem::Rest => {}
+                }
+            }
+        }
+        Pattern::Tuple(pats, _) => { for p in pats { pattern_capture_names_into(p, out); } }
+        Pattern::Binding { name, inner, .. } => {
+            out.push((name.clone(), false));
+            pattern_capture_names_into(inner, out);
+        }
+        Pattern::Or { alternatives, .. } => {
+            if let Some(first) = alternatives.first() { pattern_capture_names_into(first, out); }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
+    }
+}
+
+/// Plan 173.3 (D415 §2): free-variable scan for the spawn/parallel-for
+/// capture-check — standalone (no `CapabilityCtx`/`CapState` dependency),
+/// self-contained local-shadow tracking over the SUB-tree only. Covers the
+/// common expression/statement shapes; an unhandled shape is a (documented,
+/// conservative-direction) under-approximation — it can only cause a missed
+/// capture, never a false E_CONCURRENT_MUT_CAPTURE.
+fn capture_scan_block(b: &Block, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    for s in &b.stmts {
+        capture_scan_stmt(s, shadow, free);
+    }
+    if let Some(t) = &b.trailing {
+        capture_scan_expr(t, shadow, free);
+    }
+}
+
+fn capture_scan_stmt(s: &Stmt, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    match s {
+        Stmt::Expr(e) => capture_scan_expr(e, shadow, free),
+        Stmt::Let(d) => {
+            capture_scan_expr(&d.value, shadow, free);
+            for (name, _) in pattern_capture_names(&d.pattern) {
+                shadow.insert(name);
+            }
+        }
+        Stmt::Const(_) => {}
+        Stmt::Assign { target, value, .. } => {
+            capture_scan_expr(target, shadow, free);
+            capture_scan_expr(value, shadow, free);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { capture_scan_expr(v, shadow, free); }
+        }
+        Stmt::Throw { value, .. } => capture_scan_expr(value, shadow, free),
+        Stmt::Break(_) | Stmt::Continue(_) => {}
+        Stmt::Defer { body, .. } => capture_scan_expr(body, shadow, free),
+        // Plan 173.3 (D415 §4): the ONE sanctioned move-capture exception —
+        // `init`'s referenced names are exempt (explicit visible move); the
+        // `binding` shadows for the rest of the scan (like an ordinary let).
+        Stmt::ConsumeScope { binding, body, .. } => {
+            shadow.insert(binding.clone());
+            for s in &body.stmts { capture_scan_stmt(s, shadow, free); }
+            if let Some(t) = &body.trailing { capture_scan_expr(t, shadow, free); }
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
+            capture_scan_expr(expr, shadow, free)
+        }
+        Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { capture_scan_expr(e, shadow, free); }
+            for e in rhs { capture_scan_expr(e, shadow, free); }
+        }
+    }
+}
+
+fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Ident(name) => {
+            if !shadow.contains(name) {
+                free.insert(name.clone());
+            }
+        }
+        ExprKind::Block(b) => {
+            // A nested block introduces its own child shadow scope (names
+            // declared inside it must not leak out as shadows for SIBLING
+            // code after the block) — but for THIS scan we only need
+            // "shadowed-or-not" membership, and Nova has no re-declaration
+            // shadowing conflicts across blocks, so extending the same set
+            // is safe (a name shadowed deeper stays shadowed; nothing here
+            // un-shadows on block exit, which is a conservative
+            // over-approximation of shadowing = fewer false positives).
+            capture_scan_block(b, shadow, free);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            capture_scan_expr(func, shadow, free);
+            for a in args { capture_scan_expr(a.expr(), shadow, free); }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => capture_scan_block(b, shadow, free),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        capture_scan_block(&tb.body, shadow, free)
+                    }
+                    crate::ast::Trailing::Fn(sb) => capture_scan_fn_sig_body(sb, shadow, free),
+                }
+            }
+        }
+        ExprKind::TurboFish { base, .. } => capture_scan_expr(base, shadow, free),
+        ExprKind::Binary { left, right, .. } => {
+            capture_scan_expr(left, shadow, free);
+            capture_scan_expr(right, shadow, free);
+        }
+        ExprKind::Unary { operand, .. } => capture_scan_expr(operand, shadow, free),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            capture_scan_expr(inner, shadow, free)
+        }
+        ExprKind::Coalesce(a, b) => {
+            capture_scan_expr(a, shadow, free);
+            capture_scan_expr(b, shadow, free);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => capture_scan_expr(inner, shadow, free),
+        ExprKind::Member { obj, .. } => capture_scan_expr(obj, shadow, free),
+        ExprKind::Index { obj, index } => {
+            capture_scan_expr(obj, shadow, free);
+            capture_scan_expr(index, shadow, free);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            capture_scan_expr(cond, shadow, free);
+            capture_scan_block(then, shadow, free);
+            capture_scan_else(else_, shadow, free);
+        }
+        ExprKind::IfLet { scrutinee, then, else_, guard, pattern } => {
+            capture_scan_expr(scrutinee, shadow, free);
+            let mut inner_shadow = shadow.clone();
+            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
+            capture_scan_block(then, &mut inner_shadow, free);
+            capture_scan_else(else_, shadow, free);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            capture_scan_expr(scrutinee, shadow, free);
+            for arm in arms {
+                let mut inner_shadow = shadow.clone();
+                for (n, _) in pattern_capture_names(&arm.pattern) { inner_shadow.insert(n); }
+                if let Some(g) = &arm.guard { capture_scan_expr(g, &mut inner_shadow, free); }
+                match &arm.body {
+                    MatchArmBody::Expr(be) => capture_scan_expr(be, &mut inner_shadow, free),
+                    MatchArmBody::Block(bb) => capture_scan_block(bb, &mut inner_shadow, free),
+                }
+            }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e) | ArrayElem::Spread(e) => capture_scan_expr(e, shadow, free),
+                }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            let pairs = crate::ast::MapElem::cloned_pairs(elems);
+            for (k, v) in pairs.iter() {
+                capture_scan_expr(k, shadow, free);
+                capture_scan_expr(v, shadow, free);
+            }
+        }
+        ExprKind::TupleLit(elems) => { for e in elems { capture_scan_expr(e, shadow, free); } }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields { if let Some(v) = &f.value { capture_scan_expr(v, shadow, free); } }
+        }
+        ExprKind::InterpolatedStr { parts } => {
+            for p in parts {
+                if let InterpStrPart::Expr { expr, .. } = p { capture_scan_expr(expr, shadow, free); }
+            }
+        }
+        ExprKind::Lambda { params, body, .. } => {
+            let mut inner_shadow = shadow.clone();
+            for p in params { inner_shadow.insert(p.name.clone()); }
+            capture_scan_expr(body, &mut inner_shadow, free);
+        }
+        ExprKind::ClosureLight { params, body } => {
+            let mut inner_shadow = shadow.clone();
+            for p in params { inner_shadow.insert(p.name.clone()); }
+            match body {
+                crate::ast::ClosureBody::Expr(be) => capture_scan_expr(be, &mut inner_shadow, free),
+                crate::ast::ClosureBody::Block(bb) => capture_scan_block(bb, &mut inner_shadow, free),
+            }
+        }
+        ExprKind::ClosureFull(sb) => capture_scan_fn_sig_body(sb, shadow, free),
+        ExprKind::For { pattern, iter, body, .. } | ExprKind::ParallelFor { pattern, iter, body, .. } => {
+            capture_scan_expr(iter, shadow, free);
+            let mut inner_shadow = shadow.clone();
+            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            capture_scan_block(body, &mut inner_shadow, free);
+        }
+        ExprKind::While { cond, body, .. } => {
+            capture_scan_expr(cond, shadow, free);
+            capture_scan_block(body, shadow, free);
+        }
+        ExprKind::WhileLet { scrutinee, body, guard, pattern, .. } => {
+            capture_scan_expr(scrutinee, shadow, free);
+            let mut inner_shadow = shadow.clone();
+            for (n, _) in pattern_capture_names(pattern) { inner_shadow.insert(n); }
+            if let Some(g) = guard { capture_scan_expr(g, &mut inner_shadow, free); }
+            capture_scan_block(body, &mut inner_shadow, free);
+        }
+        ExprKind::Loop { body, .. } => capture_scan_block(body, shadow, free),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    crate::ast::SelectOp::Recv { chan, .. } => capture_scan_expr(chan, shadow, free),
+                    crate::ast::SelectOp::Send { chan, value } => {
+                        capture_scan_expr(chan, shadow, free);
+                        capture_scan_expr(value, shadow, free);
+                    }
+                    crate::ast::SelectOp::Default => {}
+                }
+                let mut inner_shadow = shadow.clone();
+                if let Some(g) = &arm.guard { capture_scan_expr(g, &mut inner_shadow, free); }
+                capture_scan_block(&arm.body, &mut inner_shadow, free);
+            }
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings { capture_scan_expr(&b.handler, shadow, free); }
+            capture_scan_block(body, shadow, free);
+        }
+        // Nested concurrency constructs — recurse (a nested `spawn`'s OWN
+        // capture-check runs independently when the outer walk reaches it;
+        // here we just need to keep collecting free-var reads for the
+        // OUTER boundary's purposes too, since a name captured by an inner
+        // spawn is ALSO effectively captured by the outer one if not
+        // locally bound in between).
+        ExprKind::Spawn(inner) => capture_scan_expr(inner, shadow, free),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => capture_scan_block(b, shadow, free),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { capture_scan_expr(c, shadow, free); }
+            if let Some(dl) = deadline { capture_scan_expr(&dl.expr, shadow, free); }
+            capture_scan_block(body, shadow, free);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            capture_scan_block(body, shadow, free)
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { capture_scan_expr(s, shadow, free); }
+            if let Some(e2) = end { capture_scan_expr(e2, shadow, free); }
+        }
+        ExprKind::Interrupt(v) => { if let Some(e2) = v { capture_scan_expr(e2, shadow, free); } }
+        // Literals / self / path / handler-lits / quantifiers / etc — no
+        // free-variable-capturing sub-structure relevant here.
+        _ => {}
+    }
+}
+
+fn capture_scan_else(else_: &Option<ElseBranch>, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    match else_ {
+        Some(ElseBranch::Block(b)) => capture_scan_block(b, shadow, free),
+        Some(ElseBranch::If(e)) => capture_scan_expr(e, shadow, free),
+        None => {}
+    }
+}
+
+fn capture_scan_fn_sig_body(sb: &FnSigBody, shadow: &mut HashSet<String>, free: &mut HashSet<String>) {
+    let mut inner_shadow = shadow.clone();
+    for p in &sb.params {
+        inner_shadow.insert(p.name.clone());
+    }
+    match &sb.body {
+        FnBody::Expr(e) => capture_scan_expr(e, &mut inner_shadow, free),
+        FnBody::Block(b) => capture_scan_block(b, &mut inner_shadow, free),
+        FnBody::External => {}
     }
 }
 
@@ -19613,12 +20301,12 @@ fn check_handler_never_ops(module: &Module, errors: &mut Vec<Diagnostic>) {
         match item {
             Item::Fn(f) => {
                 if let FnBody::Block(b) = &f.body {
-                    walk_block_for_handler_lits(b, &never_ops, errors);
+                    walk_block_for_handler_lits(b, &never_ops, false, errors);
                 } else if let FnBody::Expr(e) = &f.body {
-                    walk_expr_for_handler_lits(e, &never_ops, errors);
+                    walk_expr_for_handler_lits(e, &never_ops, false, errors);
                 }
             }
-            Item::Test(t) => walk_block_for_handler_lits(&t.body, &never_ops, errors),
+            Item::Test(t) => walk_block_for_handler_lits(&t.body, &never_ops, false, errors),
             _ => {}
         }
     }
@@ -20103,48 +20791,97 @@ fn check_axiom_expr(
 }
 
 /// Walk block recursively: ищет HandlerLit, проверяет never-ops.
-fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
+///
+/// Plan 173.2: `in_supervisor` — true, когда обход находится ВНУТРИ тела
+/// `Supervisor`-хендлера (handler-lit эффекта `Supervisor`). В этом режиме
+/// дополнительно применяются supervisor-ограничения (см. HandlerLit-ветку
+/// walk_expr_for_handler_lits): запрет `interrupt` и `Time.sleep`.
+/// Флаг наследуется вложенными телами (консервативно).
+fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>, in_supervisor: bool, errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
-            Stmt::Let(decl) => walk_expr_for_handler_lits(&decl.value, never_ops, errors),
+            Stmt::Let(decl) => walk_expr_for_handler_lits(&decl.value, never_ops, in_supervisor, errors),
             Stmt::Const(_) => {}
-            Stmt::Expr(e) => walk_expr_for_handler_lits(e, never_ops, errors),
+            Stmt::Expr(e) => walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors),
             Stmt::Assign { target, value, .. } => {
-                walk_expr_for_handler_lits(target, never_ops, errors);
-                walk_expr_for_handler_lits(value, never_ops, errors);
+                walk_expr_for_handler_lits(target, never_ops, in_supervisor, errors);
+                walk_expr_for_handler_lits(value, never_ops, in_supervisor, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { walk_expr_for_handler_lits(v, never_ops, errors); }
+                if let Some(v) = value { walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors); }
             }
-            Stmt::Throw { value, .. } => walk_expr_for_handler_lits(value, never_ops, errors),
+            Stmt::Throw { value, .. } => walk_expr_for_handler_lits(value, never_ops, in_supervisor, errors),
             Stmt::Defer { body, .. } => {
-                walk_expr_for_handler_lits(body, never_ops, errors);
+                walk_expr_for_handler_lits(body, never_ops, in_supervisor, errors);
             }
             // Plan 110 D188: walk init + body block recursively.
             Stmt::ConsumeScope { init, body, .. } => {
-                walk_expr_for_handler_lits(init, never_ops, errors);
-                walk_block_for_handler_lits(body, never_ops, errors);
+                walk_expr_for_handler_lits(init, never_ops, in_supervisor, errors);
+                walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
             }
-            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => walk_expr_for_handler_lits(expr, never_ops, in_supervisor, errors),
             Stmt::Break(_) | Stmt::Continue(_) => {}
             Stmt::Apply { args, .. } => {
-                for a in args { walk_expr_for_handler_lits(a, never_ops, errors); }
+                for a in args { walk_expr_for_handler_lits(a, never_ops, in_supervisor, errors); }
             }
             Stmt::Calc { steps, .. } => {
-                for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, errors); }
+                for step in steps { walk_expr_for_handler_lits(&step.expr, never_ops, in_supervisor, errors); }
             }
             Stmt::Reveal { .. } => {}
             // Plan 136: tuple destructuring assignment.
             Stmt::TupleAssign { lhs, rhs, .. } => {
-                for e in lhs { walk_expr_for_handler_lits(e, never_ops, errors); }
-                for e in rhs { walk_expr_for_handler_lits(e, never_ops, errors); }
+                for e in lhs { walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors); }
+                for e in rhs { walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors); }
             }
         }
     }
-    if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, errors); }
+    if let Some(t) = &b.trailing { walk_expr_for_handler_lits(t, never_ops, in_supervisor, errors); }
 }
 
-fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, errors: &mut Vec<Diagnostic>) {
+fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, in_supervisor: bool, errors: &mut Vec<Diagnostic>) {
+    // Plan 173.2: supervisor-handler ограничения (Q-блок 173.2).
+    // Применяются к выражениям ВНУТРИ тела `Supervisor`-хендлера.
+    // (Гейт E_SUPERVISOR_RESTART_GATED удалён: Restart-семейство
+    // ретрактировано из словаря Decision — D416-амендмент 2026-07-10;
+    // ссылка на Restart теперь обычный unknown-variant.)
+    if in_supervisor {
+        match &e.kind {
+            // Q-блок 173.2: `interrupt` в хендлере запрещён — хендлер
+            // исполняется на drive-цикле scope'а; longjmp к with-frame
+            // бросил бы drain с ещё живыми детьми.
+            ExprKind::Interrupt(_) => {
+                errors.push(Diagnostic::new(
+                    "[E_SUPERVISOR_HANDLER_INTERRUPT] `interrupt` внутри `Supervisor`-хендлера \
+                     запрещён (Q-блок 173.2): хендлер исполняется сериализованно на drive-цикле \
+                     scope'а — ранний выход из with-блока бросил бы drain с ещё живыми детьми. \
+                     Разрешённый ранний выход: `throw` (= Escalate-with-error)."
+                        .to_string(),
+                    e.span,
+                ));
+            }
+            // Q-блок 173.2: suspend-операции не должны блокировать drive-цикл.
+            // Компилируемое приближение MVP: прямой вызов `Time.sleep(...)`.
+            ExprKind::Call { func, .. } => {
+                let is_time_sleep = match &func.kind {
+                    ExprKind::Path(segs) =>
+                        segs.len() == 2 && segs[0] == "Time" && segs[1] == "sleep",
+                    ExprKind::Member { obj, name, .. } =>
+                        name == "sleep" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Time"),
+                    _ => false,
+                };
+                if is_time_sleep {
+                    errors.push(Diagnostic::new(
+                        "[E_SUPERVISOR_HANDLER_SUSPEND] `Time.sleep` внутри `Supervisor`-хендлера \
+                         запрещён (Q-блок 173.2): suspend-операция заблокировала бы serialized \
+                         drive-цикл scope'а (решения по падениям перестали бы приниматься)."
+                            .to_string(),
+                        e.span,
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
     match &e.kind {
         // Plan 97 Ф.4 (D142): protocol-литерал — never-op check'и
         // на nor сейчас не специфицированы для protocol'ов (D61
@@ -20153,8 +20890,8 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         ExprKind::ProtocolLit { methods, .. } => {
             for m in methods {
                 match &m.body {
-                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
-                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, in_supervisor, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
                 }
             }
         }
@@ -20179,155 +20916,159 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
                 }
             }
             // Также recurse в bodies handler-методов (могут содержать nested
-            // HandlerLit).
+            // HandlerLit). Plan 173.2: тело `Supervisor`-хендлера включает
+            // supervisor-режим ограничений (Restart-гейт, interrupt/suspend);
+            // флаг наследуется вложенными телами (консервативно — вложенный
+            // handler-lit исполняется в том же drive-контексте).
+            let sup = in_supervisor || eff_last == "Supervisor";
             for m in methods {
                 match &m.body {
-                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
-                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    HandlerMethodBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, sup, errors),
+                    HandlerMethodBody::Block(b) => walk_block_for_handler_lits(b, never_ops, sup, errors),
                 }
             }
         }
         // Recurse в остальные expr-kinds (используем существующий walk
         // через ExprKind::Block + остальные expressions).
-        ExprKind::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
         ExprKind::With { bindings, body } => {
-            for bd in bindings { walk_expr_for_handler_lits(&bd.handler, never_ops, errors); }
-            walk_block_for_handler_lits(body, never_ops, errors);
+            for bd in bindings { walk_expr_for_handler_lits(&bd.handler, never_ops, in_supervisor, errors); }
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::If { cond, then, else_ } => {
-            walk_expr_for_handler_lits(cond, never_ops, errors);
-            walk_block_for_handler_lits(then, never_ops, errors);
+            walk_expr_for_handler_lits(cond, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(then, never_ops, in_supervisor, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, errors),
-                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                 None => {}
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            walk_expr_for_handler_lits(scrutinee, never_ops, errors);
-            walk_block_for_handler_lits(then, never_ops, errors);
+            walk_expr_for_handler_lits(scrutinee, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(then, never_ops, in_supervisor, errors);
             match else_ {
-                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, errors),
-                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                Some(ElseBranch::Block(b)) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+                Some(ElseBranch::If(e2)) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                 None => {}
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            walk_expr_for_handler_lits(scrutinee, never_ops, errors);
+            walk_expr_for_handler_lits(scrutinee, never_ops, in_supervisor, errors);
             for a in arms {
                 match &a.body {
-                    MatchArmBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
-                    MatchArmBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    MatchArmBody::Expr(ex) => walk_expr_for_handler_lits(ex, never_ops, in_supervisor, errors),
+                    MatchArmBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
                 }
-                if let Some(g) = &a.guard { walk_expr_for_handler_lits(g, never_ops, errors); }
+                if let Some(g) = &a.guard { walk_expr_for_handler_lits(g, never_ops, in_supervisor, errors); }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            walk_expr_for_handler_lits(iter, never_ops, errors);
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(iter, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::While { cond, body, .. } | ExprKind::WhileLet { scrutinee: cond, body, .. } => {
-            walk_expr_for_handler_lits(cond, never_ops, errors);
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(cond, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
-        ExprKind::Loop { body, .. } => walk_block_for_handler_lits(body, never_ops, errors),
+        ExprKind::Loop { body, .. } => walk_block_for_handler_lits(body, never_ops, in_supervisor, errors),
         ExprKind::Select { arms } => {
             for arm in arms {
                 match &arm.op {
-                    SelectOp::Recv { chan, .. } => walk_expr_for_handler_lits(chan, never_ops, errors),
+                    SelectOp::Recv { chan, .. } => walk_expr_for_handler_lits(chan, never_ops, in_supervisor, errors),
                     SelectOp::Send { chan, value } => {
-                        walk_expr_for_handler_lits(chan, never_ops, errors);
-                        walk_expr_for_handler_lits(value, never_ops, errors);
+                        walk_expr_for_handler_lits(chan, never_ops, in_supervisor, errors);
+                        walk_expr_for_handler_lits(value, never_ops, in_supervisor, errors);
                     }
                     SelectOp::Default => {}
                 }
-                if let Some(g) = &arm.guard { walk_expr_for_handler_lits(g, never_ops, errors); }
-                walk_block_for_handler_lits(&arm.body, never_ops, errors);
+                if let Some(g) = &arm.guard { walk_expr_for_handler_lits(g, never_ops, in_supervisor, errors); }
+                walk_block_for_handler_lits(&arm.body, never_ops, in_supervisor, errors);
             }
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
-        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_lits(b, never_ops, errors),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
         ExprKind::Supervised { body, cancel, deadline } => {
-            if let Some(c) = cancel { walk_expr_for_handler_lits(c, never_ops, errors); }
-            if let Some(_dl) = deadline { walk_expr_for_handler_lits(&_dl.expr, never_ops, errors); }
-            walk_block_for_handler_lits(body, never_ops, errors);
+            if let Some(c) = cancel { walk_expr_for_handler_lits(c, never_ops, in_supervisor, errors); }
+            if let Some(_dl) = deadline { walk_expr_for_handler_lits(&_dl.expr, never_ops, in_supervisor, errors); }
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
-        ExprKind::Spawn(ex) => walk_expr_for_handler_lits(ex, never_ops, errors),
+        ExprKind::Spawn(ex) => walk_expr_for_handler_lits(ex, never_ops, in_supervisor, errors),
         ExprKind::ParallelFor { iter, body, .. } => {
-            walk_expr_for_handler_lits(iter, never_ops, errors);
-            walk_block_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(iter, never_ops, in_supervisor, errors);
+            walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::Call { func, args, trailing } => {
-            walk_expr_for_handler_lits(func, never_ops, errors);
-            for a in args { walk_expr_for_handler_lits(a.expr(), never_ops, errors); }
+            walk_expr_for_handler_lits(func, never_ops, in_supervisor, errors);
+            for a in args { walk_expr_for_handler_lits(a.expr(), never_ops, in_supervisor, errors); }
             if let Some(tr) = trailing {
                 match tr {
-                    Trailing::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+                    Trailing::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
                     Trailing::Fn(fsb) => match &fsb.body {
-                        FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
-                        FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                        FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+                        FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                         FnBody::External => {}
                     },
-                    Trailing::LegacyBlockWithParams(tb) => walk_block_for_handler_lits(&tb.body, never_ops, errors),
+                    Trailing::LegacyBlockWithParams(tb) => walk_block_for_handler_lits(&tb.body, never_ops, in_supervisor, errors),
                 }
             }
         }
         ExprKind::Binary { left, right, .. } => {
-            walk_expr_for_handler_lits(left, never_ops, errors);
-            walk_expr_for_handler_lits(right, never_ops, errors);
+            walk_expr_for_handler_lits(left, never_ops, in_supervisor, errors);
+            walk_expr_for_handler_lits(right, never_ops, in_supervisor, errors);
         }
-        ExprKind::Unary { operand, .. } => walk_expr_for_handler_lits(operand, never_ops, errors),
+        ExprKind::Unary { operand, .. } => walk_expr_for_handler_lits(operand, never_ops, in_supervisor, errors),
         ExprKind::Coalesce(a, b) => {
-            walk_expr_for_handler_lits(a, never_ops, errors);
-            walk_expr_for_handler_lits(b, never_ops, errors);
+            walk_expr_for_handler_lits(a, never_ops, in_supervisor, errors);
+            walk_expr_for_handler_lits(b, never_ops, in_supervisor, errors);
         }
-        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_handler_lits(e2, never_ops, errors),
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
         ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } | ExprKind::TurboFish { base: obj, .. } => {
-            walk_expr_for_handler_lits(obj, never_ops, errors);
+            walk_expr_for_handler_lits(obj, never_ops, in_supervisor, errors);
         }
         ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { walk_expr_for_handler_lits(s, never_ops, errors); }
-            if let Some(e) = end { walk_expr_for_handler_lits(e, never_ops, errors); }
+            if let Some(s) = start { walk_expr_for_handler_lits(s, never_ops, in_supervisor, errors); }
+            if let Some(e) = end { walk_expr_for_handler_lits(e, never_ops, in_supervisor, errors); }
         }
         ExprKind::ArrayLit(elems) => {
             for el in elems {
                 match el {
-                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
                 }
             }
         }
         ExprKind::MapLit { elems, .. } => {
                 let pairs = crate::ast::MapElem::cloned_pairs(&elems);
             for (k, v) in pairs.iter() {
-                walk_expr_for_handler_lits(k, never_ops, errors);
-                walk_expr_for_handler_lits(v, never_ops, errors);
+                walk_expr_for_handler_lits(k, never_ops, in_supervisor, errors);
+                walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors);
             }
         }
-        ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_lits(el, never_ops, errors); } }
+        ExprKind::TupleLit(elems) => { for el in elems { walk_expr_for_handler_lits(el, never_ops, in_supervisor, errors); } }
         ExprKind::RecordLit { fields, .. } => {
-            for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_lits(v, never_ops, errors); } }
+            for f in fields { if let Some(v) = &f.value { walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors); } }
         }
         ExprKind::Throw(v) | ExprKind::Try(v) | ExprKind::Bang(v) | ExprKind::RefArg(v) | ExprKind::Interrupt(Some(v)) => {
-            walk_expr_for_handler_lits(v, never_ops, errors);
+            walk_expr_for_handler_lits(v, never_ops, in_supervisor, errors);
         }
         ExprKind::Interrupt(None) => {}
-        ExprKind::Lambda { body, .. } => walk_expr_for_handler_lits(body, never_ops, errors),
+        ExprKind::Lambda { body, .. } => walk_expr_for_handler_lits(body, never_ops, in_supervisor, errors),
         ExprKind::ClosureLight { body, .. } => match body {
-            ClosureBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
-            ClosureBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
+            ClosureBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
+            ClosureBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
         },
         ExprKind::ClosureFull(fsb) => match &fsb.body {
-            FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, errors),
-            FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, errors),
+            FnBody::Block(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
+            FnBody::Expr(e2) => walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors),
             FnBody::External => {}
         },
         // Interpolated string — recurse в её parts (могут содержать expressions).
         ExprKind::InterpolatedStr { parts } => {
             for p in parts {
                 if let InterpStrPart::Expr { expr: e2, spec: _ } = p {
-                    walk_expr_for_handler_lits(e2, never_ops, errors);
+                    walk_expr_for_handler_lits(e2, never_ops, in_supervisor, errors);
                 }
             }
         }
@@ -20336,8 +21077,8 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, e
         ExprKind::TaggedTemplate { .. } => {}
         // D.1.3: квантор — только в контрактах; обходим range и body.
         ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
-            walk_expr_for_handler_lits(range, never_ops, errors);
-            walk_expr_for_handler_lits(body, never_ops, errors);
+            walk_expr_for_handler_lits(range, never_ops, in_supervisor, errors);
+            walk_expr_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         // Leaf expressions — nothing to recurse into.
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::CharLit(_) | ExprKind::StrLit(_)

@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR no @minus overload on Monotonic
+
+// D124 — Monotonic и Timestamp не interconvertible; смешивание доменов
+// часов запрещено на уровне типов (compile-time separation, не runtime-doc).
+module neg.d124_monotonic_minus_timestamp_neg
+
+import std.time.duration
+
+fn d124_neg_mix(d124_m Monotonic, d124_t Timestamp) -> Duration {
+    d124_m - d124_t
+}

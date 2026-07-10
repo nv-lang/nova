@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_EMBED_ARG_NOT_STR_LITERAL
+//
+// D412 (`embed("path")`) — NEG.
+// Аргумент `embed` — ТОЛЬКО строковый ЛИТЕРАЛ: путь должен быть известен на
+// компиляции (модель Rust `include_bytes!`). Переменная/выражение — ошибка.
+// Спека: spec/decisions/03-syntax.md D412 («Аргумент — ТОЛЬКО строковый
+// литерал (путь известен на компиляции)»).
+
+module neg.d412_embed_not_literal_neg
+
+fn d412_dynamic() -> int {
+    ro p = "some_file.bin"
+    ro b = embed(p)          // ✗ не литерал — E_EMBED_ARG_NOT_STR_LITERAL
+    b.len()
+}

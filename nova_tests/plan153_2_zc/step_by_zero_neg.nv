@@ -1,0 +1,11 @@
+//
+// Zero-cost StepByIter: step_by(0) violates `requires n > 0` — runtime panic.
+
+module nova_tests.plan153_2_zc
+
+import std.collections.vec_iter
+
+test "step by zero neg" panics "requires" {
+    ro v = Vec[int].of(1, 2, 3)
+    ro _ = v.iter().step_by(0).collect()
+}

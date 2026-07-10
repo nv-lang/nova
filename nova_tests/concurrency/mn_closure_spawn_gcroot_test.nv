@@ -23,14 +23,20 @@ import std.concurrency.cancellation
 
 // Non-generic mirror of within[int]: a closure-param spawn-body whose only live
 // root for the closure is the `body` param on the main thread's native stack.
+//
+// Plan 175 Ф.6 fix (found while migrating the `within`-retraction below,
+// same file): `mut result` written from `spawn` is E_CONCURRENT_MUT_CAPTURE
+// under D415 §2 (pre-existing drift — this helper predates that rule and
+// was never updated). Fixed the same way `within[T]`/`race2[T]` already do
+// it in std/concurrency/cancellation.nv — result via channel, not mut-capture.
 fn run_int(body fn() -> int) -> Option[int] {
     ro tok = CancelToken.new()
-    mut result Option[int] = None
+    ro (tx, rx) = Channel.new(1)
 
     supervised(cancel: tok) {
         spawn {
             ro r = body()
-            result = Some(r)
+            tx.try_send(r)
             tok.cancel("body completed")
         }
         spawn {
@@ -38,7 +44,8 @@ fn run_int(body fn() -> int) -> Option[int] {
             tok.cancel("timeout")
         }
     }
-    result
+    tx.close()
+    rx.try_recv()
 }
 
 
@@ -68,12 +75,13 @@ test "non-generic closure-spawn: multiple calls in sequence (re-arm GC pressure)
 }
 
 
-// Also exercise the real generic within[T] armed (same root cause surface).
-test "generic within[int] armed → Some (GC-root guard)" {
-    ro r = within(1000, || 99)
-    ro got = match r {
-        Some(v) => v
-        None    => -1
-    }
-    assert(got == 99)
+// Also exercise a real generic closure-in-spawn helper, armed (same root
+// cause surface). `within[T]` itself was RETRACTED (Plan 173 §3a п.4 /
+// [M-174-retract-with-timeout], 2026-07-10, subsumed by
+// `supervised(timeout:)`) — `race2[T]` (std/concurrency/cancellation.nv)
+// exercises the identical generic-closure-captured-across-spawn GC-root
+// surface and remains in the API, so it replaces `within` here.
+test "generic race2[int] armed → winner (GC-root guard)" {
+    ro r = race2(|| 99, || 99)
+    assert(r == 99)
 }

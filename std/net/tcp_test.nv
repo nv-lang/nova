@@ -44,12 +44,13 @@ fn must_io[T](r Result[T, IoError]) -> T {
 
 test "net2/tcp: two-fiber loopback echo through the Net effect" {
     with Net = real_net() {
-        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
-        ro port = lst.local_port()
-        assert(port > 0)
+        // D415 (E_CONCURRENT_MUT_CAPTURE): listener целиком в server-файбере,
+        // порт — каналом (и канонический M:N loop-pinning, см. udp_test.nv).
+        ro ch = Channel.new(1)   // server port → client
 
         supervised {
             spawn {
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 assert(must_io(conn.write("hello net2".bytes())) == 10)
                 mut buf []u8 = []u8.new()
@@ -60,6 +61,9 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
                 conn.close()
             }
             spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                assert(lst.local_port() > 0)
+                ch.tx.send(lst.local_port())
                 mut srv = must(lst.accept())
                 mut buf []u8 = []u8.new()
                 buf.resize(64, 0 as u8)
@@ -69,57 +73,58 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
                 assert(msg == "hello net2")
                 assert(must_io(srv.write(("echo: " + msg).bytes())) == 16)
                 srv.close()
+                lst.close()
             }
         }
-
-        lst.close()
     }
 }
 
 test "net2/tcp: read observes clean EOF as Ok(0)" {
     with Net = real_net() {
-        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
-        ro port = lst.local_port()
+        ro ch = Channel.new(1)   // server port → client (D415: без mut-захвата lst)
 
         supervised {
             spawn {
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 conn.close()
             }
             spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch.tx.send(lst.local_port())
                 mut srv = must(lst.accept())
                 mut buf []u8 = []u8.new()
                 buf.resize(16, 0 as u8)
                 assert(must_io(srv.read(buf)) == 0)   // clean EOF, not garbage / hang
                 srv.close()
+                lst.close()
             }
         }
-
-        lst.close()
     }
 }
 
 test "net2/tcp: read_text / write_str text conveniences" {
     with Net = real_net() {
-        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
-        ro port = lst.local_port()
+        ro ch = Channel.new(1)   // server port → client (D415: без mut-захвата lst)
 
         supervised {
             spawn {
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 assert(must(conn.write_str("ping")) == 4)
                 assert(must(conn.read_text(32)) == "pong")
                 conn.close()
             }
             spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch.tx.send(lst.local_port())
                 mut srv = must(lst.accept())
                 assert(must(srv.read_text(32)) == "ping")
                 assert(must(srv.write_str("pong")) == 4)
                 srv.close()
+                lst.close()
             }
         }
-
-        lst.close()
     }
 }
 

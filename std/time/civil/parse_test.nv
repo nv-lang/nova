@@ -1,0 +1,201 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/parse_test.nv — Plan 175.1 Ф.5: ISO/RFC-3339/RFC-9557
+// strict-парсеры + iso_roundtrip per-тип + pattern-DSL + Display.
+
+module time.civil
+
+import std.time.duration
+
+
+// ── iso_roundtrip: parse(to_iso(x)) == x на каждый тип (критерий 6) ──
+
+test "iso_roundtrip: Date (вкл. отрицательные годы)" {
+    ro a = Date.new(2026, Jul, 10)!!
+    assert(a.to_iso().to_date()!! == a)
+    ro b = Date.new(-500, Mar, 1)!!
+    assert(b.to_iso().to_date()!! == b)
+    ro c = Date.new(33, Jan, 5)!!
+    assert(c.to_iso().to_date()!! == c)
+    ro d = Date.new(2020, Feb, 29)!!
+    assert(d.to_iso().to_date()!! == d)
+}
+
+test "iso_roundtrip: TimeOfDay (все точности дроби)" {
+    ro a = TimeOfDay.new(14, 30)!!
+    assert(a.to_iso().to_time_of_day()!! == a)
+    ro b = TimeOfDay.new(23, 59, s: 59, ns: 999_999_999)!!
+    assert(b.to_iso().to_time_of_day()!! == b)
+    ro c = TimeOfDay.new(0, 0, s: 5, ns: 250_000_000)!!
+    assert(c.to_iso().to_time_of_day()!! == c)
+    ro d = TimeOfDay.new(1, 2, s: 3, ns: 4_500)!!    // микросекундная кратность
+    assert(d.to_iso().to_time_of_day()!! == d)
+}
+
+test "iso_roundtrip: DateTime + Period" {
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30, s: 5)!!)
+    assert(dt.to_iso().to_datetime()!!.compare(dt) == 0)
+    ro p = Period.new(years: 1, months: 2, days: 3)
+    assert(p.to_iso().to_period()!! == p)
+    assert(Period.zero().to_iso().to_period()!! == Period.zero())
+    assert("P2W".to_period()!!.days() == 14)
+    assert("P-1M".to_period()!! == Period.of_months(-1))
+}
+
+test "rfc3339_roundtrip: Timestamp" {
+    ro ts = Timestamp.from_unix_secs(1_700_000_000)
+    assert(ts.to_rfc3339() == "2023-11-14T22:13:20Z")
+    assert(ts.to_rfc3339().to_timestamp()!! == ts)
+    // Дробная часть
+    ro ts2 = Timestamp.from_unix_nanos(1_700_000_000_250_000_000)
+    assert(ts2.to_rfc3339().to_timestamp()!! == ts2)
+    // Offset-формы нормализуются к тому же инстанту
+    assert("2023-11-15T01:13:20+03:00".to_timestamp()!! == ts)
+    assert("2023-11-14T17:13:20-05:00".to_timestamp()!! == ts)
+}
+
+test "rfc9557_roundtrip: ZonedDateTime через [zone]-bracket (лосслесс)" {
+    ro ny = "America/New_York".to_timezone()!!
+    ro z = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!).to_zoned(ny)!!
+    ro s = z.to_iso()
+    assert(s == "2026-07-10T14:30:00-04:00[America/New_York]")
+    ro back = s.to_zoned_datetime()!!
+    assert(back.compare(z) == 0)
+    assert(back.zone().to_str() == "America/New_York")   // идентичность зоны сохранена
+    // Fixed-зона через to_zoned(Fixed) — offset-only строка БЕЗ [zone] отвергается (strict)
+    assert(!"2026-07-10T14:30:00-04:00".to_zoned_datetime().is_ok())
+}
+
+
+// ── strict-parse: reject-кейсы (Q9) ──
+
+test "strict: Feb-30 / month-13 / hour-25 на PARSE — Err (parses==constructs)" {
+    assert(match "2024-02-30".to_date() {
+        Err(InvalidValue(_, FieldKind.Day, 30)) => true
+        _ => false
+    })
+    assert(match "2026-13-01".to_date() {
+        Err(InvalidValue(_, FieldKind.Month, 13)) => true
+        _ => false
+    })
+    assert(!"25:00:00".to_time_of_day().is_ok())
+}
+
+test "strict: мусор/обрезки/хвосты — FormatMismatch с позицией" {
+    assert(match "2026-07".to_date() {
+        Err(FormatMismatch(7, _)) => true
+        _ => false
+    })
+    assert(match "2026-07-10X".to_date() {
+        Err(FormatMismatch(10, _)) => true
+        _ => false
+    })
+    assert(!"".to_date().is_ok())
+    assert(!"garbage".to_date().is_ok())
+    assert(!"2026/07/10".to_date().is_ok())
+    // zoned без [zone] и без offset
+    assert(!"2026-07-10T14:30:00".to_timestamp().is_ok())
+}
+
+test "leap-second :60 → clamp :59 ТОЛЬКО на parse (Q5)" {
+    ro t = "23:59:60".to_time_of_day()!!
+    assert(t.second() == 59)
+    ro ts = "2016-12-31T23:59:60Z".to_timestamp()!!
+    assert(ts.to_zoned(Utc).time().second() == 59)
+}
+
+test "range: RFC-3339 вне окна ±292y → InvalidValue(Year)" {
+    assert(match "3000-01-01T00:00:00Z".to_timestamp() {
+        Err(InvalidValue(_, FieldKind.Year, 3000)) => true
+        _ => false
+    })
+}
+
+
+// ── OffsetConflict (D321 R2) ──
+
+test "OffsetConflict: рассогласованный offset — RejectMismatch default → Err" {
+    // NY летом = -04:00; сохранённый -05:00 невалиден для июльской wall-time
+    ro drifted = "2026-07-10T14:30:00-05:00[America/New_York]"
+    assert(match drifted.to_zoned_datetime() {
+        Err(InvalidValue(_, FieldKind.OffsetSec, _)) => true
+        _ => false
+    })
+    // Use: доверять сохранённому (инстант как записан)
+    ro used = drifted.to_zoned_datetime(Use)!!
+    assert(used.offset().to_seconds() == -18_000)
+    ro canon = "2026-07-10T14:30:00-04:00[America/New_York]".to_zoned_datetime()!!
+    assert(used.to_timestamp()!! - canon.to_timestamp()!! == 1.hour())
+    // Ignore: пересчитать по правилам зоны (wall та же, offset корректный)
+    ro ignored = drifted.to_zoned_datetime(Ignore)!!
+    assert(ignored.offset().to_seconds() == -14_400)
+    assert(ignored.compare(canon) == 0)
+    // Prefer: stored невалиден → как Ignore
+    ro preferred = drifted.to_zoned_datetime(Prefer)!!
+    assert(preferred.compare(canon) == 0)
+}
+
+
+// ── pattern-DSL (Q3): builder, round-trip, optional-секции ──
+
+test "pattern: format + parse round-trip (критерий 5b)" {
+    ro f = DateTimeFormat.new().day2().lit(".").month2().lit(".").year4()
+    ro dt = Date.new(2026, Jul, 10)!!.at_midnight()
+    ro out = f.format(dt)
+    assert(out == "10.07.2026")
+    assert(out.to_date_with(f)!! == Date.new(2026, Jul, 10)!!)
+}
+
+test "pattern: имена месяца/дня недели + время + frac3" {
+    ro f = DateTimeFormat.new()
+        .weekday_name().lit(", ").day2().lit(" ").month_name().lit(" ").year4()
+        .lit(" ").hour2().lit(":").minute2().lit(":").second2().lit(".").frac3()
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30, s: 5, ns: 250_000_000)!!)
+    ro out = f.format(dt)
+    assert(out == "Fri, 10 Jul 2026 14:30:05.250")
+    ro back = out.to_datetime_with(f)!!
+    assert(back.compare(dt) == 0)
+}
+
+test "pattern: optional-секция — parse с и без, format эмитит всегда" {
+    ro f = DateTimeFormat.new()
+        .year4().lit("-").month2().lit("-").day2()
+        .opt_start().lit("T").hour2().lit(":").minute2().opt_end()
+    // Полная строка
+    ro full = "2026-07-10T14:30".to_datetime_with(f)!!
+    assert(full.hour() == 14 && full.minute() == 30)
+    // Без optional-хвоста — полночь
+    ro bare = "2026-07-10".to_datetime_with(f)!!
+    assert(bare.hour() == 0 && bare.date() == Date.new(2026, Jul, 10)!!)
+    // Формат — всегда полный
+    assert(f.format(full) == "2026-07-10T14:30")
+}
+
+test "pattern: strict-валидация собранных полей (Feb-30 через паттерн — Err)" {
+    ro f = DateTimeFormat.new().year4().lit("-").month2().lit("-").day2()
+    assert(!"2024-02-30".to_date_with(f).is_ok())
+}
+
+
+// ── Display (критерий 9): full-datetime строковый вид ──
+// NB: интерполяция `"${d}"` value-record'а минует user @to_str (lookup
+// str.from-fallback идёт по C-типу `NovaValue_*`, реестр ключуется голым
+// именем) — pre-existing гэп класса value-record, НЕ time-специфичный:
+// [M-175.1-interp-value-record-display]. Строковый вид проверяется через
+// канонические @to_str/@to_rfc3339 (те же тела, что @display).
+
+test "@display-тела: ISO/RFC-3339 строковый вид (не сырые числа)" {
+    assert(Date.new(2026, Jul, 10)!!.to_str() == "2026-07-10")
+    assert(TimeOfDay.new(14, 30)!!.to_str() == "14:30:00")
+    ro dt = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(14, 30)!!)
+    assert(dt.to_str() == "2026-07-10T14:30:00")
+    assert(Period.new(years: 1, days: 2).to_str() == "P1Y2D")
+    ro ts = Timestamp.from_unix_secs(1_700_000_000)
+    assert(ts.to_rfc3339() == "2023-11-14T22:13:20Z")   // закрывает зависимость 175
+    ro z = dt.to_zoned(Utc)!!
+    assert(z.to_str() == "2026-07-10T14:30:00Z")
+    // ASCII-чистота (контракт §7): все байты < 0x80
+    ro rendered = z.to_str()
+    for b in rendered.bytes() {
+        assert((b as int) < 128)
+    }
+}

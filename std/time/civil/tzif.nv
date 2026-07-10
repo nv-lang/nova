@@ -1,0 +1,172 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/time/civil/tzif.nv — бинарный TZif-парсер (RFC 8536, v1/v2/v3) +
+// OS-tzdata-first загрузчик. Plan 175.1 Ф.4 (D321 §tzdb).
+//
+// Слои: `TimeZone.from_tzif(id, bytes)` — чистый raw-bytes loader;
+// `load_timezone(name)` — $ZONEINFO override → /usr/share/zoneinfo →
+// embedded curated-таблица (tz.nv). На Windows OS-каталога нет —
+// работает embedded-fallback (D321 §tzdb).
+//
+// Футер-строка POSIX-TZ (правило для дат за последним переходом) НЕ
+// интерпретируется: за пределами таблицы действует последний сдвиг
+// (документированное сужение; полные будущие правила — curated-таблица
+// либо [M-175.1-full-tzdb-embed]).
+
+module time.civil
+
+import std.fs.{Path, read}
+import std.os.{env}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Byte-helpers (big-endian)
+// ──────────────────────────────────────────────────────────────────────────
+
+fn be_u32(b []u8, pos int) -> i64 {
+    ro v = (b[pos] as i64) * 16_777_216 +
+        (b[pos + 1] as i64) * 65_536 +
+        (b[pos + 2] as i64) * 256 +
+        (b[pos + 3] as i64)
+    v
+}
+
+fn be_i32(b []u8, pos int) -> i64 {
+    ro u = be_u32(b, pos)
+    if u >= 2_147_483_648 { u - 4_294_967_296 } else { u }
+}
+
+fn be_i64(b []u8, pos int) -> i64 {
+    // Старшие 32 бита знаковые, младшие — беззнаковые.
+    ro hi = be_i32(b, pos)
+    ro lo = be_u32(b, pos + 4)
+    hi * 4_294_967_296 + lo
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// TZif-парсер
+// ──────────────────────────────────────────────────────────────────────────
+
+// Счётчики заголовка TZif (6 x u32 BE после magic+version+reserved).
+type TzifHeader {
+    isutcnt i64
+    isstdcnt i64
+    leapcnt i64
+    timecnt i64
+    typecnt i64
+    charcnt i64
+}
+
+// Размер data-блока после заголовка: time_size = 4 (v1) | 8 (v2+).
+fn tzif_block_size(h TzifHeader, time_size i64) -> i64 =>
+    h.timecnt * time_size + h.timecnt +
+        h.typecnt * 6 + h.charcnt +
+        h.leapcnt * (time_size + 4) +
+        h.isstdcnt + h.isutcnt
+
+fn parse_tzif_header(b []u8, pos int) -> Result[TzifHeader, DateError] {
+    if b.len() < pos + 44 { return Err(BadTzData("truncated header")) }
+    if !(b[pos] == 84 && b[pos + 1] == 90 && b[pos + 2] == 105 && b[pos + 3] == 102) {
+        return Err(BadTzData("bad magic (want TZif)"))   // 'T','Z','i','f'
+    }
+    Ok({
+        isutcnt: be_u32(b, pos + 20),
+        isstdcnt: be_u32(b, pos + 24),
+        leapcnt: be_u32(b, pos + 28),
+        timecnt: be_u32(b, pos + 32),
+        typecnt: be_u32(b, pos + 36),
+        charcnt: be_u32(b, pos + 40),
+    })
+}
+
+// Разбор одного data-блока (по заголовку h с базой pos) → ZoneRules.
+fn parse_tzif_block(b []u8, pos0 int, h TzifHeader, time_size int) -> Result[ZoneRules, DateError] {
+    ro timecnt = h.timecnt as int
+    ro typecnt = h.typecnt as int
+    if typecnt == 0 { return Err(BadTzData("typecnt == 0")) }
+    ro need = pos0 as i64 + tzif_block_size(h, time_size as i64)
+    if (b.len() as i64) < need { return Err(BadTzData("truncated data block")) }
+
+    ro times_at = pos0
+    ro idx_at = times_at + timecnt * time_size
+    ro types_at = idx_at + timecnt
+
+    mut transitions []i64 = []
+    mut offsets []i32 = []
+
+    // utoff по индексу типа.
+    // ttinfo: { utoff i32 BE, isdst u8, desigidx u8 } — 6 байт.
+    // offsets[0] — первый non-DST тип (конвенция TZif), иначе тип 0.
+    mut first_std i64 = -1
+    mut t = 0
+    while t < typecnt {
+        ro isdst = b[types_at + t * 6 + 4]
+        if first_std < 0 && isdst == 0 { first_std = t as i64 }
+        t += 1
+    }
+    ro init_type = if first_std >= 0 { first_std as int } else { 0 }
+    offsets.push(be_i32(b, types_at + init_type * 6) as i32)
+
+    mut i = 0
+    while i < timecnt {
+        ro tt = if time_size == 8 { be_i64(b, times_at + i * 8) }
+            else { be_i32(b, times_at + i * 4) }
+        ro ti = b[idx_at + i] as int
+        if ti >= typecnt { return Err(BadTzData("type index out of range")) }
+        transitions.push(tt)
+        offsets.push(be_i32(b, types_at + ti * 6) as i32)
+        i += 1
+    }
+    Ok({ transitions, offsets })
+}
+
+/// Raw-TZif-bytes loader (RFC 8536 v1/v2/v3): `id` — идентичность зоны
+/// (round-trip RFC-9557), `bytes` — содержимое TZif-файла.
+#stable(since = "0.1")
+export fn TimeZone.from_tzif(id str, bytes []u8) -> Result[TimeZone, DateError] {
+    ro h1 = parse_tzif_header(bytes, 0)?
+    ro version = bytes[4]
+    // v1: 32-битные времена сразу за заголовком.
+    if version == 0 {
+        ro rules = parse_tzif_block(bytes, 44, h1, 4)?
+        ro z1 IanaZone = { id, rules }
+        return Ok(Iana(z1))
+    }
+    // v2+/v3: пропустить v1-блок, читать второй заголовок + 64-битный блок.
+    ro skip = 44 as i64 + tzif_block_size(h1, 4)
+    ro h2 = parse_tzif_header(bytes, skip as int)?
+    ro rules = parse_tzif_block(bytes, (skip as int) + 44, h2, 8)?
+    ro z IanaZone = { id, rules }
+    Ok(Iana(z))
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// OS-tzdata-first загрузчик
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Загрузка зоны по имени: `$ZONEINFO`-override → `/usr/share/zoneinfo`
+/// (POSIX) → embedded curated-таблица (`s.to_timezone()`). На Windows
+/// OS-каталога нет — работает embedded (D321 §tzdb).
+///
+/// Эффекты: `Fs` (чтение TZif) + `Os` (env `$ZONEINFO`) — мокабельны.
+#stable(since = "0.1")
+export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
+    // 1. $ZONEINFO override
+    match env("ZONEINFO") {
+        Some(dir) => {
+            match read(Path.from_str(dir + "/" + name)) {
+                Ok(bytes) => return TimeZone.from_tzif(name, bytes),
+                Err(_) => {}   // нет файла → следующий слой
+            }
+        }
+        None => {}
+    }
+    // 2. Стандартный POSIX-каталог
+    match read(Path.from_str("/usr/share/zoneinfo/" + name)) {
+        Ok(bytes) => return TimeZone.from_tzif(name, bytes),
+        Err(_) => {}
+    }
+    // 3. Embedded curated-таблица
+    name.to_timezone()
+}

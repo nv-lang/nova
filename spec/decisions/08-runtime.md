@@ -166,14 +166,19 @@ fn server() Net Fail -> () {
         spawn handle_requests()
         spawn periodic_cleanup()
     }
-    // ⚠ ОБНОВЛЕНО (Plan 173 §3b, 2026-06-26): постфикс `strategy = …,
-    // max_restarts = …` РЕТРАКНУТ. Supervision = эффект-хендлеры (Plan 173.2):
+    // ⚠ ОБНОВЛЕНО (Plan 173 §3b, 2026-06-26; РЕАЛИЗОВАНО Plan 173.2 /
+    // D416 в 06-concurrency.md, 2026-07-10): постфикс `strategy = …,
+    // max_restarts = …` РЕТРАКНУТ. Supervision = эффект-хендлеры:
     //   with Supervisor = effect Supervisor {
-    //       on_child_fail(idx, err, attempt) => if attempt < 3 { Restart } else { Escalate }
+    //       on_child_fail(idx, err) => if err is Transient { Decision.Stop }
+    //                                  else { Decision.Escalate }
     //   } { supervised { … } }
-    // Дефолт (нет супервизора) — Escalate (all-or-throw). MVP-исполнение =
-    // Escalate/Stop; Restart(single) — за гейтом изоляции (173.3). Primary при
-    // нескольких падениях — PANIC>USER>CANCEL (D414 §1, 06-concurrency.md).
+    // Встроенные политики: std.concurrency.supervisor.escalate()/.stop().
+    // Дефолт (нет супервизора) — Escalate (all-or-throw, байт-паритет).
+    // Словарь Escalate/Stop — ПОЛНЫЙ (Restart-семейство ретрактировано,
+    // D416 §4 амендмент 2026-07-10: рестарт — акторная идиома; повтор
+    // попытки — std/concurrency/retry внутри тела). Primary при нескольких
+    // падениях — PANIC>USER>CANCEL (D414 §1, 06-concurrency.md).
 }
 ```
 

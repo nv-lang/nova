@@ -1,4 +1,3 @@
-// EXPECT_RUNTIME_PANIC requires failed: x % 2 == 0
 //
 // Plan 140 Ф.4 (D24 amend), acceptance F5: SAFE DEGRADE without Z3. When the
 // compiler is built WITHOUT `--features z3-backend` (or run with the Trivial
@@ -30,7 +29,7 @@ fn requires_even(x int) -> int
     requires x % 2 == 0
 => x / 2
 
-fn main() Io -> () {
+test "t6 no z3 degrade" panics "requires failed: x % 2 == 0" {
     ro _ = requires_even(7)
     println("UNREACHABLE")
 }

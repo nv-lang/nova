@@ -1,0 +1,12 @@
+// EXPECT_RUNTIME_PANIC (throw site)
+//
+// Plan 173 Ф.5 п.7: uncaught panic печатает throw-site (см. twin
+// f5_uncaught_trace_throw.nv для throw-пути). Panic-путь идёт через
+// nv_panic (comma-expr стемп в интринсике).
+
+module rt.f5_uncaught_trace_panic
+
+fn main() Io -> () {
+    panic("trace-me")
+    println("UNREACHABLE")
+}

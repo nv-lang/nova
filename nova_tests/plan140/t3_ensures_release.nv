@@ -1,4 +1,3 @@
-// EXPECT_RUNTIME_PANIC ensures failed: result >= 10
 //
 // Plan 140 Ф.4 (D24 amend), acceptance F1: an UNPROVEN `ensures` is checked at
 // runtime in the RELEASE build (`--mode release`) and aborts fail-fast on
@@ -28,7 +27,7 @@ fn at_least_ten(x int) -> int
     ensures result >= 10
 => x
 
-fn main() Io -> () {
+test "t3 ensures release" panics "ensures failed: result >= 10" {
     ro _ = at_least_ten(3)
     println("UNREACHABLE")
 }

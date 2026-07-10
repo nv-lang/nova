@@ -29,7 +29,7 @@ test "Mem.alloc_count() monotonically non-decreasing" {
     // Force at least one allocation: string concat.
     ro s = "hello" + "world"
     ro b = Mem.alloc_count()
-    ro _ = s.len()
+    ro _ = s.byte_len()
     assert(b >= a)
 }
 
@@ -41,7 +41,8 @@ test "Mem.alloc_count() monotonically non-decreasing" {
 test "pure int loop — zero allocations" {
     Mem.reset()
     ro before = Mem.alloc_count()
-    mut sum = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum = AtomicInt.new(0)
     mut i = 0
     while i < 1000 {
         sum = sum + i
@@ -98,16 +99,17 @@ test "string concat loop — bounded growth rate" {
 test "supervised with N spawns — bounded per-fiber growth" {
     Mem.reset()
     ro before = Mem.alloc_count()
-    mut sum = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum = AtomicInt.new(0)
     supervised {
         mut k = 0
         while k < 10 {
-            spawn { sum = sum + 1 }
+            spawn { sum.fetch_add(1) }
             k = k + 1
         }
     }
     ro after = Mem.alloc_count()
-    assert(sum == 10)
+    assert(sum.load() == 10)
     ro delta = after - before
     // Each spawn allocates: ctx struct + minicoro stack + fiber bookkeeping.
     // 10 fibers shouldn't blow past, say, 200 allocations total.
@@ -125,10 +127,13 @@ test "parallel for → []int — bounded allocations" {
         i * 2
     }
     ro after = Mem.alloc_count()
-    assert(xs[5] == 10)
+    // Plan 173.1 (D71-amend): completion order → contains вместо index-assert
+    // (alloc_count снят ДО этой проверки — sort не влияет на замер).
+    assert(xs.len() == 10)
+    assert(xs.contains(10))
     ro delta = after - before
-    // Result array (NovaArray + data buffer) + 10 spawn ctx allocs +
-    // minicoro stacks. Loose bound — catches regressions only.
+    // Result Vec (+ amortised push growth) + channel + 10 spawn ctx allocs +
+    // drain-fiber ctx + minicoro stacks. Loose bound — catches regressions only.
     assert(delta < 300)
 }
 
@@ -143,26 +148,28 @@ test "repeated supervised: same per-iter growth (no extra leak)" {
     // around (e.g. global table grew unboundedly).
     Mem.reset()
     ro before1 = Mem.alloc_count()
-    mut sum1 = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum1 = AtomicInt.new(0)
     supervised {
-        spawn { sum1 = sum1 + 1 }
-        spawn { sum1 = sum1 + 2 }
-        spawn { sum1 = sum1 + 4 }
+        spawn { sum1.fetch_add(1) }
+        spawn { sum1.fetch_add(2) }
+        spawn { sum1.fetch_add(4) }
     }
     ro after1 = Mem.alloc_count()
     ro delta1 = after1 - before1
 
     ro before2 = Mem.alloc_count()
-    mut sum2 = 0
+    // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
+    mut sum2 = AtomicInt.new(0)
     supervised {
-        spawn { sum2 = sum2 + 1 }
-        spawn { sum2 = sum2 + 2 }
-        spawn { sum2 = sum2 + 4 }
+        spawn { sum2.fetch_add(1) }
+        spawn { sum2.fetch_add(2) }
+        spawn { sum2.fetch_add(4) }
     }
     ro after2 = Mem.alloc_count()
     ro delta2 = after2 - before2
 
-    assert(sum1 == 7)
+    assert(sum1.load() == 7)
     assert(sum2 == 7)
     // Two runs should allocate roughly equally (within 50%).
     // Allow some slack since GC bookkeeping might differ.

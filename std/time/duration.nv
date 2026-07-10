@@ -241,6 +241,42 @@ fn Duration @to_millis_ceil() -> i64 => (@nanos + 999_999) / 1_000_000
 #stable(since = "0.1")
 export fn Duration @sleep() Time -> () => Time.sleep(@to_millis_ceil() as int)
 
+/// Suspend the current fiber for at least `d` (Plan 175 Ф.3(b)/Ф.4, D316) —
+/// the canonical **free-function** form (Q6/Q8: user code sees only types +
+/// free `sleep`/`sleep_until`, never calls the `Time` effect directly).
+/// `d <= 0` resolves **immediately** — no error, no negative-sleep trap
+/// (Go/tokio parity; the underlying runtime already treats `ms <= 0` as an
+/// immediate yield, so this holds for any non-positive `Duration`).
+/// Granularity is the libuv timer wheel (~1ms) — `sleep` guarantees
+/// «sleep for *at least* `d`», never less. No `tolerance` parameter yet
+/// ([M-sleep-tolerance] — Swift-style coalescing, future-additive).
+///
+/// # Examples
+/// ```nova
+/// sleep(500.millis())
+/// sleep(Duration.from_nanos(0))  // resolves immediately, no wait
+/// ```
+#stable(since = "0.1")
+export fn sleep(d Duration) Time -> () => d.sleep()
+
+/// Suspend until the given **monotonic** deadline (Plan 175 Ф.3(b), D316
+/// Q3 — MVP `sleep(deadline - Monotonic.now())` wrapper; drift-free true
+/// re-arm timer is future work, Plan 66). Only `Monotonic` deadlines are
+/// accepted — **not** `Timestamp`: an absolute wall-clock deadline is immune
+/// to NTP/DST jumps only via the monotonic clock (D124 §3); the wall-based
+/// equivalent is the explicit, footgun-visible `sleep(ts.time_until())`.
+/// A deadline already in the past resolves **immediately** (saturate-to-
+/// zero via `elapsed_since`, D318 — never a negative sleep, never a trap).
+///
+/// # Examples
+/// ```nova
+/// ro deadline = Monotonic.now() + 5.seconds()
+/// sleep_until(deadline)
+/// ```
+#stable(since = "0.1")
+export fn sleep_until(deadline Monotonic) Time -> () =>
+    sleep(deadline.elapsed_since(Monotonic.now()))
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Predicates
@@ -639,6 +675,25 @@ export fn Duration @to_str() -> str {
     }
 }
 
+/// Display (Plan 175 Ф.3(d)/Ф.4, D237) — delegates to [`to_str`] (ASCII
+/// auto-scale short form, e.g. `"2s"`/`"500ns"`/`"150us"`). **Byte-exact
+/// ASCII** — no bytes > 0x7F (fixes the U+03BC "μs" regression, Q12; the
+/// underlying `to_str` already emits ASCII `"us"`, Ф.1c).
+#stable(since = "0.1")
+export fn Duration @display(mut w Write) -> () { w.write(@to_str()) }
+
+/// Debug (D237) — diagnostic form showing the exact raw nanoseconds
+/// alongside the human short form (unambiguous for overflow/precision
+/// debugging, unlike the auto-scaled `@display`).
+#stable(since = "0.1")
+export fn Duration @debug(mut w Write) -> () {
+    w.write("Duration(")
+    w.write(@to_str())
+    w.write(", ")
+    w.write(str.from(@nanos))
+    w.write("ns)")
+}
+
 /// Human-readable форматирование с декомпозицией на компоненты.
 ///
 /// Формат: `"1d 2h 30min 45s"`. Опускает leading zero-components
@@ -802,6 +857,17 @@ export fn Timestamp @compare(other Timestamp) -> int =>
     if @nanos < other.nanos { -1 }
     else if @nanos > other.nanos { 1 }
     else { 0 }
+
+/// Debug (Plan 175 Ф.3(d)/Ф.4, D237). **NOTE:** `@display` (full RFC-3339
+/// datetime) live в `std/time/civil/format.nv` (Plan 175.1, вне scope этой
+/// волны — civil-time уже сделан, не трогаем). `@debug` здесь — raw-ns
+/// diagnostic form (не зависит от civil-слоя): `Timestamp(unix_ns=...)`.
+#stable(since = "0.1")
+export fn Timestamp @debug(mut w Write) -> () {
+    w.write("Timestamp(unix_ns=")
+    w.write(str.from(@nanos))
+    w.write(")")
+}
 
 /// True если `self` уже в прошлом относительно текущего `Time.now_unix_ms()`.
 ///
@@ -976,17 +1042,31 @@ export fn f64 @days() -> Duration =>
 ///     assert(elapsed == Duration.ZERO)
 /// }
 /// ```
+/// **Plan 175 Ф.5(d) (D318):** элапсед-измерение через `Monotonic`, НЕ
+/// `Timestamp` — стопвотч/бенчмарк-семантика иммунна к wall-clock skew
+/// (NTP/DST jump ВО ВРЕМЯ измерения раньше мог дать отрицательный или
+/// вздутый `elapsed` — ровно Go/Rust/Java-конвенция: `time.Since`/`Instant`
+/// для измерений всегда монотонные). Сигнатура не меняется (`Duration` —
+/// clock-agnostic результат).
 #stable(since = "0.1")
 export fn measure[T](action fn() -> T) Time -> (T, Duration) {
-    ro start = Timestamp.now()
+    ro start = Monotonic.now()
     ro result = action()
-    ro elapsed = Timestamp.now().minus(start)
+    ro elapsed = Monotonic.now().elapsed_since(start)
     (result, elapsed)
 }
 
 /// Compute дедлайн `now() + d` с использованием ambient `Time`.
 ///
 /// Convenience-обёртка чтобы не писать `Time.now_unix_ms() + 5.seconds()` каждый раз.
+///
+/// **Plan 175 Ф.5(d) — намеренно ОСТАЁТСЯ `Timestamp`-based** (НЕ мигрирован
+/// на `Monotonic`, в отличие от [`measure`]): возвращаемый тип — `Timestamp`
+/// (wall-clock), поэтому клок-источник обязан совпадать с типом контракта
+/// (D124 — нельзя молча подменить домен часов внутри функции с committed
+/// wall-clock return type). Для монотонных дедлайнов (timer/scope-deadline,
+/// 173 §3a `supervised(timeout:)`) используй `Monotonic.now() + d` напрямую —
+/// именно ЭТОТ паттерн, а не `deadline_in`, канон для `deadline:`-параметров.
 #stable(since = "0.1")
 export fn deadline_in(d Duration) Time -> Timestamp =>
     Timestamp.now() + d
@@ -1139,6 +1219,24 @@ test "measure semantics: под fixed_ms elapsed = 0" {
     }
 }
 
+test "Ф.5(d): measure[T] мигрирован на Monotonic (elapsed иммунен к wall-clock skew)" {
+    // Прямой вызов `measure(...)` (не inline-паттерн выше) — value-in-
+    // generic-tuple-return gap [M-175-value-in-generic-tuple-return] здесь
+    // НЕ бьёт, потому что `measure` возвращает `(int, Duration)`, а `int`
+    // element — не value-record триггер (только Duration/Timestamp/Monotonic
+    // ЭЛЕМЕНТОМ tuple вызывают гэп; здесь Duration — второй элемент результата
+    // самого measure, но tuple-конструкция происходит ВНУТРИ измеряемого fn,
+    // не на call-site — gap специфичен call-site turbofish-инференсу).
+    with Time = th.mut_clock(0 as u64) {
+        ro (result, elapsed) = measure(fn() -> int {
+            Time.sleep(3000)  // virtual clock advance под mock — elapsed = 3s
+            42
+        })
+        assert(result == 42)
+        assert(elapsed == 3.seconds())
+    }
+}
+
 test "elapsed / time_until" {
     with Time = th.fixed_ms(5000) {
         ro earlier = Timestamp.from_unix_secs(2)
@@ -1260,6 +1358,89 @@ test "Ф.1c/D318: Monotonic elapsed_since saturate-to-zero; checked_duration_sin
     }
 }
 
+test "Ф.3(a)/D316: Monotonic.now() мокабелен через Time-handler (mock-coherence)" {
+    with Time = th.mut_clock(0 as u64) {
+        ro m0 = Monotonic.now()
+        Time.sleep(5000)  // virtual clock advance, ms
+        ro m1 = Monotonic.now()
+        // ОДИН handler двигает и wall (now_unix_ms), и monotonic (now_monotonic_ns)
+        // когерентно — оба читают из одного `current_ms` (Ред.2 Q14 mock-coherence).
+        assert(m1.elapsed_since(m0) == 5.seconds())
+        assert(Timestamp.now().as_unix_millis() == 5000)
+    }
+}
+
+test "Ф.3(c): m2 - m1 диспатчится в @minus(Monotonic) → Duration, не @minus(Duration)" {
+    with Time = th.mut_clock(0 as u64) {
+        ro m1 = Monotonic.now()
+        Time.sleep(2000)
+        ro m2 = Monotonic.now()
+        ro d = m2 - m1
+        assert(d == 2.seconds())
+        assert(d == m2.elapsed_since(m1))
+    }
+}
+
+test "Ф.3(b): free sleep(Duration) под mock-clock продвигает виртуальные часы" {
+    with Time = th.mut_clock(1000 as u64) {
+        sleep(500.millis())
+        assert(Time.now_unix_ms() == 1500)
+        // Duration.ZERO как const-reference — pre-existing [M-175-value-record-const-ref]
+        // gap (не time-специфичный); workaround — from_nanos(0), см. "predicates" выше.
+        sleep(Duration.from_nanos(0))  // немедленно, часы не двигаются
+        assert(Time.now_unix_ms() == 1500)
+    }
+}
+
+test "Ф.3(b)/Q3: sleep_until(Monotonic) — будущий дедлайн ждёт ровно дельту, прошлый — немедленно" {
+    with Time = th.mut_clock(0 as u64) {
+        ro m0 = Monotonic.now()
+        ro deadline = m0 + 3.seconds()
+        sleep_until(deadline)
+        assert(Time.now_unix_ms() == 3000)
+
+        // дедлайн уже в прошлом → saturate-to-zero, немедленно (без доп. ожидания)
+        ro past = Monotonic.now() - 10.seconds()
+        sleep_until(past)
+        assert(Time.now_unix_ms() == 3000)
+    }
+}
+
+test "Ф.3(d)/D237/Q12: @display Duration/Monotonic — byte-exact ASCII (нет байтов > 0x7F)" {
+    ro d = 150.micros()
+    ro s = "${d}"
+    assert(s == "150us")
+    ro bs = s.bytes()
+    mut all_ascii = true
+    for i in 0..bs.len() {
+        if bs[i] > 0x7F as u8 { all_ascii = false }
+    }
+    assert(all_ascii)
+
+    ro m = Monotonic.now()
+    ro ms = "${m}"
+    assert(ms.starts_with("+"))
+}
+
+test "Ф.3(d): @debug Duration/Timestamp/Monotonic — диагностическая форма" {
+    // Проверяем ОБА пути: `"${x:?}"`-сахар (interp) и явный `.debug(sb)`
+    // Write-sink (D374-паттерн) — оба чинятся ОДНИМ и тем же codegen-фиксом
+    // выше (value-record-aware strip + prepare_method_recv), sink-agnostic.
+    assert("${2.seconds():?}".contains("Duration("))
+
+    consume sb1 = StringBuilder.new()
+    2.seconds().debug(sb1)
+    assert(sb1.into_str().contains("Duration("))
+
+    consume sb2 = StringBuilder.new()
+    Timestamp.from_unix_millis(1_700_000_000_000).debug(sb2)
+    assert(sb2.into_str().contains("Timestamp(unix_ns="))
+
+    consume sb3 = StringBuilder.new()
+    Monotonic.now().debug(sb3)
+    assert(sb3.into_str().contains("Monotonic(+"))
+}
+
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 65 Ф.12 / D124 — Monotonic clock (monotonic time, immune to wall-clock skew)
@@ -1293,24 +1474,31 @@ test "Ф.1c/D318: Monotonic elapsed_since saturate-to-zero; checked_duration_sin
 /// ```
 ///
 /// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
-/// `Monotonic.now()` остаётся compiler-builtin (Path/Member dispatch,
-/// эффектонезависим → допустим в `realtime {}`), но теперь возвращает
-/// value-`Monotonic` (inline, без heap-alloc). Полностью-`.nv`-сахар +
-/// мокабельность через эффект — Ф.3-gated (нужен `now_monotonic_ns`-слот в
-/// vtable, см. plan-175 §Ф.2).
 #stable(since = "0.6")
 export type Monotonic value {
     ro nanos i64
 }
 
-// NOTE: `Monotonic.now()` is provided as a compiler-builtin (Path-form
-// dispatch in emit_c.rs), not as a Nova fn here. The reason: declaring
-// it as `fn Monotonic.now() Time -> Self => Time.now_monotonic_ns()` would
-// trigger the latent Time-effect schema mismatch ([M-time-now-schema-mismatch])
-// — Time.now_monotonic_ns() is wire-typed as int but the surrounding fn must
-// return a Monotonic record. Skipping the wrapper avoids the breakage.
-//
-// User-facing call surface remains identical: `Monotonic.now()` works.
+/// Текущий монотонный момент. **Plan 175 Ф.3(a) (D316):** ergonomic-сахар
+/// над int-wire `Time.now_monotonic_ns()` (эффект `Time`) — тот же паттерн,
+/// что `Timestamp.now()` выше. **Мокабелен:** `with Time = th.mut_clock(...)`
+/// подменяет монотонные часы детерминированно (закрывает
+/// `[M-monotonic-mock-support]`). Заменяет прежний compiler-builtin
+/// (4 сайта dispatch/inference в emit_c.rs удалены той же волной — grep
+/// `nova_monotonic_now_record`/`"Nova_Monotonic*"` = 0, по норме плана 175 §Ф.3).
+///
+/// # Examples
+/// ```nova
+/// with Time = th.mut_clock(0 as u64) {
+///     ro m0 = Monotonic.now()
+///     Time.sleep(5000)  // virtual clock advance (ms)
+///     ro m1 = Monotonic.now()
+///     assert(m1.elapsed_since(m0) == 5.seconds())
+/// }
+/// ```
+#stable(since = "0.6")
+export fn Monotonic.now() Time -> Monotonic =>
+    { nanos: Time.now_monotonic_ns() as i64 }
 
 /// Raw nanoseconds — escape hatch для FFI / bench. Cросс-процессное
 /// сравнение бессмысленно. Cравнение внутри одного процесса допустимо.
@@ -1359,6 +1547,21 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
         Duration.from_nanos(0)
     }
 
+/// `Monotonic - Monotonic → Duration` (Plan 175 Ф.3(c) / D318 Q4) —
+/// operator-overload alias for [`elapsed_since`], symmetric with
+/// `Timestamp @minus(Timestamp) -> Duration` above. `m2 - m1` dispatches
+/// HERE (not `@minus(Duration)`, the point-shift overload above) — same
+/// saturate-to-zero-on-regress contract as `elapsed_since`.
+///
+/// # Examples
+/// ```nova
+/// let m1 = Monotonic.now()
+/// let m2 = Monotonic.now()
+/// let d = m2 - m1  // → Duration, dispatches to @minus(Monotonic)
+/// ```
+#stable(since = "0.6")
+export fn Monotonic @minus(other Monotonic) -> Duration => @elapsed_since(other)
+
 /// Checked elapsed time — `None` при регрессе (`self < other`), иначе
 /// `Some(self - other)` (Plan 175 Ф.1c / D318; Rust `checked_duration_since`).
 #stable(since = "0.6")
@@ -1384,6 +1587,29 @@ export fn Monotonic @compare(other Monotonic) -> int =>
     if @nanos < other.nanos { -1 }
     else if @nanos > other.nanos { 1 }
     else { 0 }
+
+
+// ── Display / Debug (Plan 175 Ф.3(d)/Ф.4, D237) ──
+//
+// `Monotonic` — process-local offset, NOT a date (D124/D318). `@display`/
+// `@debug` show it as a **relative offset**, never as a calendar timestamp
+// (unlike `Timestamp`, whose `@display` is RFC-3339 — std/time/civil/format.nv)
+// — reading `Monotonic(+1.234s)` must never look like a wall-clock value.
+
+/// Offset form, ASCII (`"+1.234s"`) — never a date.
+#stable(since = "0.1")
+export fn Monotonic @display(mut w Write) -> () {
+    w.write("+")
+    w.write(Duration.from_nanos(@nanos).to_str())
+}
+
+/// Diagnostic form: `Monotonic(+1.234s)` — explicitly NOT a date (D124/D318).
+#stable(since = "0.1")
+export fn Monotonic @debug(mut w Write) -> () {
+    w.write("Monotonic(+")
+    w.write(Duration.from_nanos(@nanos).to_str())
+    w.write(")")
+}
 
 
 // Note: NO `Monotonic.as_unix_secs()`, `Monotonic.from_unix_*()`,

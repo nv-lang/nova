@@ -1,30 +1,42 @@
-// stdlib/concurrency/cancellation.nv — `within` / `race` / `with_timeout`
-// над `supervised(cancel:)` + `CancelToken`.
+// stdlib/concurrency/cancellation.nv — `race2` над `supervised(cancel:)` +
+// `CancelToken`.
 //
 // Plan 47 Ф.5 + Plan 48 Ф.4 + Plan 49 Ф.0-Ф.6 — все три необходимы:
 //   - Plan 47: `supervised(cancel:)` + `CancelToken` (handle + bind).
-//   - Plan 48: closures-in-generics — без мономорфизации `fn within[T]`
-//     с closure-параметром `body fn() -> T` валит codegen.
+//   - Plan 48: closures-in-generics — без мономорфизации `fn race2[T]`
+//     с closure-параметрами валит codegen.
 //   - Plan 49: kinded throws — отмена `CANCEL` не убегает наружу, не
 //     перехватывается `with Fail`, USER-precedence не теряет real-error.
 //
 // API (этот файл):
-//   within[T](timeout_ms int, body fn() -> T) -> Option[T]
-//     — выполнить `body` с timeout'ом в миллисекундах. Возвращает
-//       `Some(result)` если body успел, `None` если timeout превысил.
-//       Body отменяется на timeout через CancelToken (cooperative).
-//
 //   race2[T](a fn() -> T, b fn() -> T) -> T
 //     — два fiber'а соревнуются, возвращается первый завершившийся;
 //       second отменяется через CancelToken. Аналог Go `select` для
 //       двух операций. (`race[T](competitors []fn() -> T)` — V2,
 //       требует `[]fn()->T` поддержку в generic-context.)
 //
+// **RETRACTED (Plan 173 §3a п.4 / `[M-174-retract-with-timeout]`, Plan 175
+// закрыл гейт — Ф.3(a) мокабельный Monotonic + Ф.5(d) — 2026-07-10):**
+// `within[T](timeout_ms int, body fn() -> T) -> Option[T]` и
+// `with_timeout[T](timeout_ms int, body fn() -> T) -> T` УДАЛЕНЫ.
+// Субсумированы `supervised(timeout: Duration)`/`supervised(deadline:
+// Monotonic)` (D408, Plan 174) — структурная конструкция, а не fn-обёртка
+// над чистым `fn()->T` (эффекты тела текут наружу, не erased в closure-
+// сигнатуру). Миграция call-site:
+//   было:  match within(1000, || body()) { Some(v) => v, None => fallback }
+//   стало: with Fail[TimeoutError] = |_| fallback {
+//              supervised(timeout: 1.second()) { body() }
+//          }
+// (или дать `TimeoutError` пробросить наружу, если fallback не нужен —
+// `with_timeout`'а throw-семантика теперь ЭТО и есть, by default).
+// `race2[T]` НЕ субсумирован — остаётся (нет structured-scope аналога
+// "первый из двух конкурентов").
+//
 // Сравнение с индустрией:
 //   - Go: `context.WithTimeout(parent, dur)` — context везде явный
-//     pollution; у нас `within` берёт timeout прямо.
-//   - Rust: `tokio::time::timeout(dur, fut)` — паритет (типизированный
-//     результат); требует Tokio runtime, у нас встроенно в `supervised`.
+//     pollution; у нас `supervised(timeout:)` берёт срок прямо в scope.
+//   - Rust: `tokio::time::timeout(dur, fut)` — паритет; требует Tokio
+//     runtime, у нас встроенно в `supervised`.
 //   - TS: `Promise.race([...])` — нет cancellation losers (Promises
 //     остаются «висеть»); у нас losers отменяются через scope.
 
@@ -35,58 +47,6 @@ module concurrency.cancellation
 // `nova_int ms` из runtime Time effect signature (schema mismatch
 // между Duration в Nova-side и int ms в runtime). Это отдельный bug
 // `[M-time-effect-schema-mismatch-sleep]` — следующая итерация.
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// within[T] — timeout-bounded execution
-// ──────────────────────────────────────────────────────────────────────────
-
-// Запускает `body` в fiber с deadline'ом `timeout_ms` миллисекунд.
-// Если body завершился до deadline'а — возвращает `Some(result)`,
-// timeout-fiber отменяется и не делает sleep'а до конца.
-// Если timeout раньше — body отменяется через CancelToken (cooperative
-// на ближайшем yield-point'е), возвращается `None`.
-//
-// Семантика:
-//   - body вызывается единожды (как в Go `select` с timeout).
-//   - timeout=0 ≡ нет timeout'а (body выполняется до конца). [V2]
-//     Сейчас timeout=0 = no-op sleep, body все равно успеет.
-//   - В случае любой fail-throw из body — отмена scope'а через
-//     USER-precedence; ошибка пробрасывается caller'у.
-/// Run `body` с deadline'ом `timeout_ms` ms. `Some(result)` если успел, `None` если timeout.
-///
-/// Body отменяется через CancelToken (cooperative — ловит на ближайшем yield-point'е).
-/// При user-throw из body ошибка пробрасывается caller'у (USER-precedence).
-///
-/// # Examples
-/// ```nova
-/// let r = within(1000, || compute_heavy())
-/// match r {
-///     Some(v) => println("got: " + str.from(v))
-///     None    => println("timed out")
-/// }
-/// ```
-#stable(since = "0.1")
-export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
-    ro tok = CancelToken.new()
-    mut result Option[T] = None
-
-    supervised(cancel: tok) {
-        spawn {
-            ro r = body()
-            result = Some(r)
-            tok.cancel("body completed")
-        }
-        spawn {
-            Time.sleep(timeout_ms)
-            tok.cancel("timeout")
-        }
-    }
-    // После supervised: result либо Some (body успел) либо None (timeout).
-    // Plan 49 Ф.3: CANCEL throw НЕ убегает — мы здесь даже если оба
-    // fiber'а отменены.
-    result
-}
 
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -112,14 +72,19 @@ export fn within[T](timeout_ms int, body fn() -> T) -> Option[T] {
 #stable(since = "0.1")
 export fn race2[T](a fn() -> T, b fn() -> T) -> T {
     ro tok = CancelToken.new()
-    mut winner Option[T] = None
+    // Plan 173.3 (D415 §2): победитель — через канал, НЕ mut-захват.
+    // Старый код (`winner = Some(r)` из двух sibling-fiber'ов под
+    // is_cancelled()-проверкой) был настоящим TOCTOU-race: оба могли
+    // пройти проверку и писать одновременно. Канал cap 2 (оба могут
+    // успеть try_send без блокировки); FIFO-порядок канала = first-wins.
+    ro (tx, rx) = Channel.new(2)
 
     supervised(cancel: tok) {
         spawn {
             if !tok.is_cancelled() {
                 ro r = a()
                 if !tok.is_cancelled() {
-                    winner = Some(r)
+                    tx.try_send(r)
                     tok.cancel("a wins")
                 }
             }
@@ -128,34 +93,16 @@ export fn race2[T](a fn() -> T, b fn() -> T) -> T {
             if !tok.is_cancelled() {
                 ro r = b()
                 if !tok.is_cancelled() {
-                    winner = Some(r)
+                    tx.try_send(r)
                     tok.cancel("b wins")
                 }
             }
         }
     }
 
-    match winner {
+    tx.close()
+    match rx.try_recv() {
         Some(v) => v
         None    => throw "race2: both competitors failed without producing a result"
-    }
-}
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// with_timeout[T] — alias для within с panic-on-timeout
-// ──────────────────────────────────────────────────────────────────────────
-
-// `with_timeout(ms, body)` — как `within` но throw'ит на timeout,
-// не возвращает Option. Удобно когда timeout = error condition.
-//
-// Аналог Go `context.WithTimeout` + Cause проверки; у нас явно throw.
-/// Same как [`within`] но throws `"with_timeout: deadline exceeded"` на timeout
-/// вместо `None`. Удобно когда timeout = error condition (как Go context.WithTimeout).
-#stable(since = "0.1")
-export fn with_timeout[T](timeout_ms int, body fn() -> T) -> T {
-    match within(timeout_ms, body) {
-        Some(v) => v
-        None    => throw "with_timeout: deadline exceeded"
     }
 }

@@ -24,7 +24,7 @@ test "gc.alloc_count: монотонно растёт после аллокац�
     mut i = 0
     while i < 10 {
         ro s = "alloc-" + str.from(i)
-        assert(s.len() > 0)
+        assert(s.byte_len() > 0)
         i += 1
     }
     ro after = gc.alloc_count()

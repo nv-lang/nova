@@ -304,8 +304,11 @@ fn write_audit(e AuditEntryInternal) Db Log -> () {
     // `=> expr` (D22), поэтому handler-тело вынесено в named fn
     // `log_audit_failure`. Не вызываем resume — блок завершается после
     // handler'а.
+    // Plan 175: `with_timeout(2.seconds) {...}` (Plan 173 retracted API,
+    // [M-174-retract-with-timeout]) → `supervised(timeout:)` (D408) —
+    // TimeoutError пробрасывается через тот же Fail[Error]-handler выше.
     with Fail[Error] = |err| interrupt log_audit_failure(e, err) {
-        with_timeout(2.seconds) {
+        supervised(timeout: 2.seconds()) {
             ro ip_value = if e.ip != "" && e.ip != "<nil>" { Some(e.ip) } else { None }
             Db.exec(sql`
                 INSERT INTO admin_audit_log

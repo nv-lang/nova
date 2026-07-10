@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR E_HEX_BLOB_CHAR
+//
+// D412 (hex-блоб литерал) — NEG.
+// Не-hex символ внутри `x"…"` — ошибка компиляции. Допустимы только
+// hex-цифры и разделители `_`/пробел/перенос строки. Спека:
+// spec/decisions/03-syntax.md D412 («Не-hex символ = ошибка (E_HEX_BLOB_CHAR)»).
+
+module neg.d412_hex_blob_char_neg
+
+fn d412_char() -> int {
+    ro b = x"48 GG"         // ✗ `G` — не hex-цифра — E_HEX_BLOB_CHAR
+    b.len()
+}
