@@ -3626,6 +3626,28 @@ ro deadline = Time.now() + Duration.from_secs(60)
   `Duration` уже type-safe (signed, nanos), unit-agnostic. `Mono - Mono`
   и `Ts - Ts` оба возвращают тот же `Duration`.
 
+**AMEND (Plan 175, 2026-07-04..07-10 — актуализация под D316/D317/D318;
+исходный текст выше писался до `Time`-schema-унификации, имена и детали
+дрейфовали):**
+- `Time.now()`/`Time.now_monotonic()` из §«Что» устарели по имени —
+  переименованы в `Time.now_unix_ms()`/`Time.now_monotonic_ns()` (D316
+  owner unit-rename, 2026-07-06; чистое переименование wire-op).
+- `Timestamp`/`Monotonic` теперь `value`-records (Ф.1b), не heap `{}`.
+- **`Monotonic.now()` больше НЕ compiler-builtin** (Ф.3a, 2026-07-10) —
+  обычная `.nv`-функция (`std/time/duration.nv`), мокабельна через
+  `with Time = handler {...}` (закрывает п.5 «mock-handler должен
+  реализовать оба `now()`» — теперь буквально верно и для monotonic).
+  `Monotonic.from_nanos` по-прежнему НЕ введён (п.4 остаётся в силе —
+  opaque-контракт; см. также D316-amend «Ф.2-находка» — эта opacity
+  ЕСТЬ причина, почему typed-wire-в-схеме архитектурно дороже, чем
+  typed-сахар-поверх-int-wire).
+  `Monotonic - Monotonic -> Duration` теперь ДВЕ формы: named `@elapsed_since`
+  (было) + operator `@minus(Monotonic)` (Ф.3c, alias, `m2 - m1` дispatch).
+  Non-regression — saturate-to-zero (D318), не «всегда ≥0 by assumption»
+  как исходный текст п.3 наивно предполагал (HW/VM/OS-баг возможен).
+- Serialization-запрет на `Monotonic` (п. «Что») — verification (derive-
+  путь отсутствует) вынесена в план 175 Ф.6, ещё не пройдена в этой волне.
+
 ### Связь
 
 - **[D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)** —

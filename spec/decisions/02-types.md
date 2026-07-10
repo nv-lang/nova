@@ -11994,6 +11994,14 @@ error[E_PROTOCOL_RENAMED]: protocol `Hash` was renamed to `Hash`
 переименованы в `Hash`, `Equal`, `Compare`, `Display`, `Debug`, `Clone` соответственно.
 Методы `@equal` → `@equal`, `@display` → `@display`, `@debug` → `@debug`.
 
+### AMEND (Plan 175 Ф.3(d), 2026-07-10)
+
+`Duration`/`Timestamp`/`Monotonic` (`std/time/duration.nv`) теперь реализуют
+`Display`/`Debug` (D316-amend, детали и codegen-фикс — там). `@display`
+byte-exact ASCII (нет байтов > 0x7F — фиксирует старую `μs` U+03BC
+регрессию, снятую ещё в Ф.1c); `Monotonic.@display`/`@debug` — offset-форма
+(`+1.234s`/`Monotonic(+1.234s)`), явно НЕ дата (D124).
+
 ### D183 amend (Plan 137)
 
 `Equal.@equal` → `Equal.@equal`; `Compare.@compare` unchanged.
