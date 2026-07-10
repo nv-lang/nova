@@ -1578,6 +1578,15 @@ pub struct CEmitter {
     /// allocated as `NovaValue_<type_name>*` instead of stack-init.
     /// Consumed (taken) immediately by emit_record_lit, restoring to None.
     pending_value_record_heap_promote: Option<String>,
+    /// Plan 172.14 (sret/_out §3): armed-сигнал стек-плейсмента дескриптора.
+    /// Взводится в emit_stmt Stmt::Let перед emit RHS, когда placement-
+    /// предикат прошёл (ro-биндинг, не эскейпит, RHS — прямой sret-вызов /
+    /// Range-срез Vec): `(адрес-слота-C-выражение, ExprId RHS)`. Потребитель
+    /// (range-slice ветка / точка sret-вызова) сверяет свой `expr.id` с
+    /// сохранённым — защита от утечки armed во ВЛОЖЕННЫЙ вызов (аргумент
+    /// внешнего вызова записал бы слот и утёк) — и take()'ит сигнал.
+    /// Сбрасывается безусловно после emit RHS.
+    sret_out_dest: Option<(String, crate::ast::ExprId)>,
     /// Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program set of
     /// FnKeys whose function-prologue `nova_preempt_check();` MUST be kept.
     /// Computed once per module in `emit_module` (source-level call-graph
@@ -1993,6 +2002,7 @@ impl CEmitter {
             promoted_value_record_locals: HashSet::new(),
             promoted_primitive_locals: HashSet::new(),
             pending_value_record_heap_promote: None,
+            sret_out_dest: None,
             // Plan 143.2: default empty/unpopulated → KEEP everything until
             // emit_module runs the pre-pass.
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
@@ -7183,12 +7193,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // a `priv(file)` helper declared in the SAME file resolves to its file-
         // discriminated C symbol (free_fn_c_name reads current_emit_file_id).
         let saved_emit_file_id = self.current_emit_file_id.replace(t.span.file_id);
+        // Plan 172.14 (sret/_out §3): fn-id для эскейп-лукапа в тест-телах —
+        // конвенция `test::<имя>` (зеркало escape_analyze::analyze_module,
+        // обход Item::Test). Без этого armed-предикат стек-плейсмента в
+        // emit_let никогда не проходит внутри test-блоков.
+        let saved_test_fn_id = self.current_fn_id.replace(format!("test::{}", t.name));
         self.line(&format!("static nova_unit nova_test_{}(void) {{", safe));
         self.indent = 1;
         self.emit_block_stmts(&t.body, "nova_unit")?;
         self.indent = 0;
         self.line("}");
         self.line("");
+        self.current_fn_id = saved_test_fn_id;
         self.current_emit_file_id = saved_emit_file_id;
         // Restore scope-state — fixes leak (Plan 54 Ф.1).
         self.var_types = saved_var_types;
@@ -24154,7 +24170,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.expected_into_target = Some(target_name);
                     }
                 }
+                // Plan 172.14 (sret/_out §3): placement-предикат стек-слота
+                // дескриптора вида. ro-биндинг + не эскейпит (ident_escapes,
+                // V1 OVER) + RHS — прямой Range-срез (форма; Vec-принадлежность
+                // проверит сама range-slice ветка по obj_ty) → эмитим zero-init
+                // слот ДО RHS (до любой GC-точки, дизайн §3) и взводим armed
+                // с ExprId RHS (защита от утечки во вложенный вызов).
+                let sret_stack_armed = !decl.mutable && !decl.consume
+                    && matches!(&decl.pattern, Pattern::Ident { .. })
+                    && ty_c.starts_with("Nova_Vec____")
+                    && ty_c.ends_with('*') && !ty_c.ends_with("**")
+                    && decl.value.id.is_set()
+                    && matches!(&decl.value.kind,
+                        ExprKind::Index { index, .. }
+                            if matches!(index.kind, ExprKind::Range { .. }))
+                    && self.current_fn_id.as_ref().zip(self.escape_result.as_ref())
+                        .map_or(false, |(fid, esc)| !esc.ident_escapes(fid, &binding));
+                if sret_stack_armed {
+                    let slot = self.fresh_tmp();
+                    let s_ty = ty_c.trim_end_matches('*').trim();
+                    self.line(&format!("{} {} = {{0}};", s_ty, slot));
+                    self.sret_out_dest = Some((format!("(&{})", slot), decl.value.id));
+                }
                 let val = self.emit_expr_with_target_type(&decl.value, &ty_c)?;
+                // Безусловный сброс: непотреблённый armed не должен пережить RHS.
+                self.sret_out_dest = None;
                 self.expected_into_target = saved_into_target;
                 // 172.4 Ф.3 блокер-2 (binding-decay): fluent value-record цепочка
                 // возвращает ptr (NovaValue_X*), биндинг к value-локалу требует
@@ -28621,6 +28661,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         } else {
                             "nova_vec_slice_chk"
                         };
+                        // Plan 172.14 (sret/_out §3): armed стек-плейсмент — дескриптор
+                        // конструируется в caller-слоте (*_out-форма хелпера, 0 аллокаций).
+                        // Сверка ExprId — потребляем сигнал ТОЛЬКО для RHS-выражения
+                        // самого Let (не для вложенного среза-аргумента).
+                        if expr.id.is_set() {
+                            if let Some((dest, armed_id)) = self.sret_out_dest.clone() {
+                                if armed_id == expr.id {
+                                    self.sret_out_dest = None;
+                                    return Ok(format!(
+                                        "({vty}*){helper}_out((void*)({o}), ({from}), ({to}), sizeof({ety}), (void*){dest})",
+                                        vty = vec_ty, helper = slice_helper, o = o,
+                                        from = from_expr, to = to_expr_inner, ety = elem_c,
+                                        dest = dest
+                                    ));
+                                }
+                            }
+                        }
                         return Ok(format!(
                             "({vty}*){helper}((void*)({o}), ({from}), ({to}), sizeof({ety}))",
                             vty = vec_ty, helper = slice_helper, o = o,
