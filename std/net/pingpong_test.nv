@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Регресс [M-183-net2-loop-affinity-cross-thread-op] (закрыт волной Plan 116
+// Ф.3, фикс nova_loop_defer_call в net.c): плотное ЧЕРЕДОВАНИЕ write→read на
+// ОДНОМ сокете из одной фибры — паттерн TLS-handshake (pump: flush→fill→
+// flush→…), который stress_test не покрывает (тот фазово разделяет read и
+// write). Каждый park между двумя op'ами на одном хендле = окно для
+// work-steal миграции фибры на чужой worker; до фикса следующий uv-оп
+// выдавался на не-владеющем loop-потоке → completion терялся → вечная
+// парковка (~1/300 на TLS smoke). Фикс маршалит issue-сторону на owning-loop
+// через defer_call; этот тест держит паттерн под постоянным регрессом.
+//
+// Loop-affinity паттерн клиент/сервер — как в stress_test.nv: сокет
+// создаётся В СВОЕЙ фибре, порт через буферизованный канал.
+
+module std.net
+
+test "net2/pingpong: плотное чередование write→read на одном сокете (TLS-pump паттерн)" {
+    with Net = real_net() {
+        ro ch_port = Channel.new(1)
+        supervised {
+            // Сервер: на каждый принятый байтовый пакет отвечает пакетом —
+            // строгий ping-pong, каждый цикл = write и read впритык.
+            spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch_port.tx.send(lst.local_port())
+                mut conn = must(lst.accept())
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                for k in 0..64 {
+                    mut got = 0
+                    while got < 8 {
+                        ro n = must_io(conn.read(buf))
+                        assert(n > 0)
+                        got = got + n
+                    }
+                    assert(got == 8)
+                    assert(buf[0] == (k % 251) as u8)
+                    mut reply []u8 = []u8.new()
+                    reply.resize(8, ((k + 1) % 251) as u8)
+                    assert(must_io(conn.write(reply)) == 8)
+                }
+                conn.close()
+                lst.close()
+            }
+            // Клиент: 64 цикла write(8)→read(8) — каждый read паркуется
+            // сразу после write на том же хендле (окно миграции).
+            spawn {
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                assert(port > 0)
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                mut back []u8 = []u8.new()
+                back.resize(64, 0 as u8)
+                for k in 0..64 {
+                    mut ping []u8 = []u8.new()
+                    ping.resize(8, (k % 251) as u8)
+                    assert(must_io(conn.write(ping)) == 8)
+                    mut got = 0
+                    while got < 8 {
+                        ro n = must_io(conn.read(back))
+                        assert(n > 0)
+                        got = got + n
+                    }
+                    assert(got == 8)
+                    assert(back[0] == ((k + 1) % 251) as u8)
+                }
+                conn.close()
+            }
+        }
+    }
+}
+
+test "net2/pingpong: две независимые пары пинг-понгуют конкурентно (4 фибры)" {
+    with Net = real_net() {
+        ro ch_a = Channel.new(1)
+        ro ch_b = Channel.new(1)
+        supervised {
+            // Пара A: сервер (bind+accept+echo-loop в своей фибре).
+            spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch_a.tx.send(lst.local_port())
+                mut conn = must(lst.accept())
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                for _ in 0..32 {
+                    mut got = 0
+                    while got < 4 {
+                        ro n = must_io(conn.read(buf))
+                        assert(n > 0)
+                        got = got + n
+                    }
+                    mut reply []u8 = []u8.new()
+                    reply.resize(4, buf[0])
+                    assert(must_io(conn.write(reply)) == 4)
+                }
+                conn.close()
+                lst.close()
+            }
+            // Пара B: свой листенер, своя фибра.
+            spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch_b.tx.send(lst.local_port())
+                mut conn = must(lst.accept())
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                for _ in 0..32 {
+                    mut got = 0
+                    while got < 4 {
+                        ro n = must_io(conn.read(buf))
+                        assert(n > 0)
+                        got = got + n
+                    }
+                    mut reply []u8 = []u8.new()
+                    reply.resize(4, buf[0])
+                    assert(must_io(conn.write(reply)) == 4)
+                }
+                conn.close()
+                lst.close()
+            }
+            // Клиент A.
+            spawn {
+                ro port = match ch_a.rx.recv() { Some(p) => p  None => 0 as u16 }
+                assert(port > 0)
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                mut back []u8 = []u8.new()
+                back.resize(64, 0 as u8)
+                for k in 0..32 {
+                    mut ping []u8 = []u8.new()
+                    ping.resize(4, ((17 + k * 7) % 251) as u8)
+                    assert(must_io(conn.write(ping)) == 4)
+                    mut got = 0
+                    while got < 4 {
+                        ro n = must_io(conn.read(back))
+                        assert(n > 0)
+                        got = got + n
+                    }
+                    assert(back[0] == ((17 + k * 7) % 251) as u8)
+                }
+                conn.close()
+            }
+            // Клиент B.
+            spawn {
+                ro port = match ch_b.rx.recv() { Some(p) => p  None => 0 as u16 }
+                assert(port > 0)
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                mut back []u8 = []u8.new()
+                back.resize(64, 0 as u8)
+                for k in 0..32 {
+                    mut ping []u8 = []u8.new()
+                    ping.resize(4, ((113 + k * 11) % 251) as u8)
+                    assert(must_io(conn.write(ping)) == 4)
+                    mut got = 0
+                    while got < 4 {
+                        ro n = must_io(conn.read(back))
+                        assert(n > 0)
+                        got = got + n
+                    }
+                    assert(back[0] == ((113 + k * 11) % 251) as u8)
+                }
+                conn.close()
+            }
+        }
+    }
+}
