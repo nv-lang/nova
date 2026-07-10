@@ -63,7 +63,14 @@ test "parallel for: empty array, no iterations" {
     mut touched = AtomicInt.new(0)
     ro xs = []
     parallel for _ in xs {
-        touched.fetch_add(1)
+        // D415/Plan-87 codegen gotcha: `fetch_add` returns the PREVIOUS
+        // int value (non-unit) — as the block's bare last expression that
+        // makes this `parallel for` LOOK like an (accidental) `[]T`-collect
+        // to the codegen probe, which then fails to infer the element type
+        // for a wildcard `_` pattern (probe only fires for `Pattern::Ident`).
+        // Explicit `ro _ =` discard keeps this a plain fire-and-forget
+        // statement (D14) — no collect, no probe needed.
+        ro _ = touched.fetch_add(1)
     }
     assert(touched.load() == 0)
 }
