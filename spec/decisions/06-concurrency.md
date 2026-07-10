@@ -6837,7 +6837,7 @@ std (`concurrency/cancellation.nv` `within`/`race2` — реальные TOCTOU-
 в Rust; лоуэринг = обычный user-effect путь, как `Random`):
 
 ```nova
-type Decision enum Escalate | Stop | Restart | RestartAll | RestartRest
+type Decision enum Escalate | Stop
 type Supervisor effect {
     on_child_fail(idx int, err any) -> Decision
 }
@@ -6849,13 +6849,18 @@ type Supervisor effect {
 - **Стратегии = хендлеры** (значения эффекта): `with Supervisor = policy
   { … }`, как `Time`/`Fail`. Встроенные политики —
   `std.concurrency.supervisor.escalate()` / `.stop()`. Имён-стратегий как
-  сущности нет: «one-for-all» = хендлер, возвращающий `RestartAll` (после
-  снятия гейта).
-- **Amend к тексту плана §2.1:** параметр `attempt` в MVP-сигнатуре
-  ОТСУТСТВУЕТ — он осмыслен только вместе с исполнением `Restart`
-  (per-child ретрай), которое гейтится §3b; добавляется той же волной, что
-  снимет гейт (173.3-изоляция). Словарь `Decision` полный уже сейчас —
-  сигнатура эффекта при снятии гейта не меняется.
+  сущности нет.
+- **Амендмент 2026-07-10 (решение владельца): `Restart`-семейство
+  РЕТРАКТИРОВАНО из словаря** (изначальный §3b-MVP держал
+  `Restart`/`RestartAll`/`RestartRest` в типе за компайл-гейтом
+  `E_SUPERVISOR_RESTART_GATED`). Мотив: рестарт — идиома акторных систем
+  (Erlang/OTP: долгоживущий изолированный процесс), а `supervised` —
+  структурная конкуренция с лексическим scope'ом; эталоны класса (Kotlin
+  `coroutineScope`, Swift `TaskGroup`, Java `StructuredTaskScope.Joiner`)
+  рестарта не имеют. Повтор попытки идиоматично живёт ВНУТРИ тела ребёнка
+  (`std/concurrency/retry`) — там нет проблемы изоляции полусостояния.
+  Словарь `Escalate | Stop` — ПОЛНЫЙ, решение прод-реди; параметр `attempt`
+  не нужен (был осмыслен только с Restart).
 
 ### §2. Семантика исполнения
 
@@ -6902,20 +6907,17 @@ type Supervisor effect {
   (компилируемое приближение V1: прямой `Time.sleep` в теле хендлера;
   транзитивный вызов через функцию — followup эффект-row-анализом).
 
-### §4. Гейт Restart (§3b-резолюция)
+### §4. Restart — РЕТРАКТИРОВАН (амендмент 2026-07-10, superseded §3b-гейт)
 
-MVP-исполнение = `Escalate`/`Stop` (+`cancel`-токены как раньше).
-`Restart`/`RestartAll`/`RestartRest` остаются в словаре, но их
-КОНСТРУИРОВАНИЕ внутри Supervisor-хендлера отклоняется —
-`[E_SUPERVISOR_RESTART_GATED]` — до рычага изоляции restartable-тела
-([D415](#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733)
-`#share`/consume-в-spawn даёт базу; снятие гейта = отдельная волна:
-attempt-параметр, restart-ceiling, re-spawn из retained ctx;
-`RestartAll`/`RestartRest` дополнительно ждут cancel-and-join quiesce —
-`[M-173.2-restart-all-rest]`). Runtime-defense: дошедший до исполнения
-Restart-тег (гейт обойдён) — громкий abort, не тихая мис-супервизия.
+Исходная §3b-резолюция держала `Restart`-варианты в словаре за компайл-гейтом
+`[E_SUPERVISOR_RESTART_GATED]` до появления изоляции restartable-тела.
+Решением владельца 2026-07-10 семейство УДАЛЕНО из словаря целиком (мотив —
+§1): гейт-диагностика ретрактирована вместе с вариантами, ссылка на
+`Decision.Restart` — обычный unknown-variant; runtime-мост маппит любой
+не-Stop тег в Escalate (defensive). Маркер `[M-173.2-restart-all-rest]`
+закрыт ретракцией. Повтор попытки — `std/concurrency/retry` внутри тела.
 
-### §5. Периметр MVP
+### §5. Периметр
 
 Политика применяется к remote-детям armed M:N runtime — дефолтный путь
 исполнения (auto-arm в main; источник `(idx, err)` = per-slot
@@ -6928,14 +6930,16 @@ Bootstrap/single-thread (`NOVA_NO_AUTOARM=1`) и implicit main-scope
 
 | код | что |
 |---|---|
-| `E_SUPERVISOR_RESTART_GATED` | Restart-вариант `Decision` в Supervisor-хендлере (§4) |
 | `E_SUPERVISOR_HANDLER_INTERRUPT` | `interrupt` в теле Supervisor-хендлера |
 | `E_SUPERVISOR_HANDLER_SUSPEND` | `Time.sleep` в теле Supervisor-хендлера |
+
+(`E_SUPERVISOR_RESTART_GATED` ретрактирован вместе с Restart-семейством — §4.)
 
 Тесты: `nova_tests/err173_2/` — pos `supervisor_stop_test` (siblings живут,
 scope продолжает; multi-fail; panic-до-решения), `supervisor_escalate_test`
 (паритет с дефолтом на идентичном теле; custom-политика с mut-состоянием и
 `err is int`-narrowing + `idx`-диапазон; Escalate-with-handler-error),
 `supervisor_parfor_test` (Stop = «собери выживших», dense `[]T`); neg
-`restart_gated_neg`, `handler_interrupt_neg`, `handler_sleep_neg`.
+`handler_interrupt_neg`, `handler_sleep_neg` (`restart_gated_neg` удалён
+вместе с ретракцией §4 — unknown-variant покрыт общей диагностикой).
 Модульные: `std/concurrency/supervisor_test.nv`.

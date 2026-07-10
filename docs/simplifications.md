@@ -38276,16 +38276,16 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 
 ## Plan 173.2 — supervision-as-effect: `Supervisor`/`Decision` (D416) (2026-07-10)
 
-- **MVP-объём §3b (owner 2026-06-26) — сознательное гейтирование, не упрощение-тайком:**
-  исполняются `Escalate`/`Stop`; `Restart`/`RestartAll`/`RestartRest` остаются в словаре
-  `Decision`, но их конструирование в Supervisor-хендлере отклоняется
-  `E_SUPERVISOR_RESTART_GATED` до рычага изоляции restartable-тела (D415/173.3);
-  runtime-defense — abort на дошедшем Restart-теге. Ф.3 (restart-ceiling, consume-гард)
-  и Ф.4 (`[M-173.2-restart-all-rest]` cancel-and-join) — за тем же гейтом.
-- **Amend §2.1: `attempt`-параметр отложен** — `on_child_fail(idx, err)`; per-child
-  счётчик попыток осмыслен только с исполнением Restart и добавится той же волной
-  (сигнатура эффекта при этом расширится синхронно со снятием гейта — до снятия
-  ни один пользовательский хендлер не может зависеть от attempt).
+- **СНЯТО 2026-07-10 (решение владельца): Restart-семейство РЕТРАКТИРОВАНО из словаря
+  `Decision` целиком** (D416 §1/§4 амендмент) — не «MVP за гейтом», а прод-реди полный
+  словарь `Escalate | Stop`. Мотив: рестарт — идиома акторных систем, не структурной
+  конкуренции (Kotlin coroutineScope / Swift TaskGroup / Java Joiner рестарта не имеют);
+  повтор попытки — `std/concurrency/retry` внутри тела ребёнка. Гейт
+  `E_SUPERVISOR_RESTART_GATED`, runtime-abort и neg-тест `restart_gated_neg` удалены;
+  `[M-173.2-restart-all-rest]` и `attempt`-вопрос закрыты ретракцией.
+- (истор.) MVP-объём §3b (owner 2026-06-26): исполнялись `Escalate`/`Stop`;
+  Restart-варианты держались в словаре за `E_SUPERVISOR_RESTART_GATED` до изоляции
+  D415/173.3; `attempt`-параметр был отложен вместе с Restart.
 - **Периметр: remote-дети armed M:N** (child_error[]-субстрат 173.0 заполняет только
   remote-путь; auto-arm делает его дефолтным). Bootstrap/single-thread
   (`NOVA_NO_AUTOARM=1`) и implicit main-scope (top-level `detach`) — дефолтный

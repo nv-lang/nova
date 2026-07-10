@@ -2452,7 +2452,7 @@ static inline void nova_supervised_decide(NovaFiberQueue* scope, int idx,
  *
  * `Supervisor` is a real Nova effect (std/prelude/effects.nv):
  *     type Supervisor effect { on_child_fail(idx int, err any) -> Decision }
- *     type Decision enum Escalate | Stop | Restart | RestartAll | RestartRest
+ *     type Decision enum Escalate | Stop
  * Strategies are handler VALUES (`with Supervisor = policy { ... }`), like
  * Time/Fail. The runtime cannot reference codegen-emitted symbols
  * (NovaVtable_Supervisor / Nova_Decision), so dispatch crosses through a
@@ -2469,7 +2469,8 @@ static inline void nova_supervised_decide(NovaFiberQueue* scope, int idx,
  *   - maps the returned Decision tag to the codes below. */
 #define NOVA_SUPERVISE_ESCALATE       0   /* Decision.Escalate (and default) */
 #define NOVA_SUPERVISE_STOP           1   /* Decision.Stop */
-#define NOVA_SUPERVISE_RESTART_GATED  2   /* Restart/RestartAll/RestartRest — §3b gated */
+/* (code 2 retired: Restart family retracted from Decision — D416 amend
+ * 2026-07-10; the dictionary is complete with Escalate|Stop.) */
 
 /* Assigned by generated main() when the CU knows the Supervisor effect
  * (prelude present). NULL → every decision defaults to Escalate. Signature
@@ -2497,10 +2498,8 @@ extern nova_int (*_nova_supervisor_decide_fn)(void* scope, nova_int idx,
  *     the default path, so the re-throw tail needs NO changes).
  *   STOP — drop: no primary election, no cancellation; the slot stays
  *     retained (not lost silently — child_error[] keeps it).
- *   RESTART_GATED — §3b: execution is gated on child isolation (173.3).
- *     The checker rejects constructing these variants
- *     (E_SUPERVISOR_RESTART_GATED); reaching here means the guard was
- *     bypassed — abort loudly rather than mis-supervise.
+ *   (Restart family retracted from Decision — D416 amend 2026-07-10;
+ *    the bridge maps any non-Stop tag to ESCALATE defensively.)
  *
  * Induced sibling cancellations (kind CANCEL) are consumed silently: they
  * are the CONSEQUENCE of an escalation, not a root failure — the handler
@@ -2520,13 +2519,6 @@ static inline void nova_supervised_process_decisions(NovaFiberQueue* q) {
         switch ((int)code) {
             case NOVA_SUPERVISE_STOP:
                 break;
-            case NOVA_SUPERVISE_RESTART_GATED:
-                fflush(stdout);
-                fprintf(stderr,
-                    "nova: Supervisor returned Restart/RestartAll/RestartRest — "
-                    "execution is gated on child isolation (Plan 173.3, "
-                    "E_SUPERVISOR_RESTART_GATED); aborting\n");
-                abort();
             case NOVA_SUPERVISE_ESCALATE:
             default:
                 nova_fiber_report_atomic_kinded(q, ce->msg, ce->kind,

@@ -175,10 +175,10 @@ fn server() Net Fail -> () {
     //   } { supervised { … } }
     // Встроенные политики: std.concurrency.supervisor.escalate()/.stop().
     // Дефолт (нет супервизора) — Escalate (all-or-throw, байт-паритет).
-    // MVP-исполнение = Escalate/Stop; Restart* — за гейтом изоляции
-    // (E_SUPERVISOR_RESTART_GATED; снятие = D415-изоляция; attempt-параметр
-    // придёт вместе с Restart). Primary при нескольких падениях —
-    // PANIC>USER>CANCEL (D414 §1, 06-concurrency.md).
+    // Словарь Escalate/Stop — ПОЛНЫЙ (Restart-семейство ретрактировано,
+    // D416 §4 амендмент 2026-07-10: рестарт — акторная идиома; повтор
+    // попытки — std/concurrency/retry внутри тела). Primary при нескольких
+    // падениях — PANIC>USER>CANCEL (D414 §1, 06-concurrency.md).
 }
 ```
 

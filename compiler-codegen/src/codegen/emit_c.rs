@@ -6519,9 +6519,11 @@ static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, cons
         nova_fail_pop();\n\
         if (_d == NULL) return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
         switch (_d->tag) {{\n\
-            case NOVA_TAG_Decision_Escalate: return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
             case NOVA_TAG_Decision_Stop:     return (nova_int)NOVA_SUPERVISE_STOP;\n\
-            default:                         return (nova_int)NOVA_SUPERVISE_RESTART_GATED;\n\
+            /* Escalate + defensive default: словарь Decision = Escalate|Stop\n\
+             * (Restart-семейство ретрактировано, D416-амендмент 2026-07-10). */\n\
+            case NOVA_TAG_Decision_Escalate:\n\
+            default:                         return (nova_int)NOVA_SUPERVISE_ESCALATE;\n\
         }}\n\
     }} else {{\n\
         nova_fail_pop();\n\

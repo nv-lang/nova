@@ -19,9 +19,9 @@
 //                                  else { Decision.Escalate }
 //   } { ... }
 //
-// MVP-словарь исполнения (§3b): `Escalate` / `Stop`. Restart-варианты
-// гейтятся изоляцией restartable-тела (Plan 173.3) — конструирование внутри
-// хендлера отклоняется компилятором (E_SUPERVISOR_RESTART_GATED).
+// Словарь решений `Escalate` / `Stop` — ПОЛНЫЙ (Restart-семейство
+// ретрактировано D416 2026-07-10: рестарт — акторная идиома, не структурная
+// конкуренция; повтор попытки — внутри тела ребёнка, std/concurrency/retry).
 
 module concurrency.supervisor
 

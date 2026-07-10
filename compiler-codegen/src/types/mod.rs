@@ -20783,8 +20783,8 @@ fn check_axiom_expr(
 /// Plan 173.2: `in_supervisor` — true, когда обход находится ВНУТРИ тела
 /// `Supervisor`-хендлера (handler-lit эффекта `Supervisor`). В этом режиме
 /// дополнительно применяются supervisor-ограничения (см. HandlerLit-ветку
-/// walk_expr_for_handler_lits): гейт Restart-вариантов, запрет `interrupt`
-/// и `Time.sleep`. Флаг наследуется вложенными телами (консервативно).
+/// walk_expr_for_handler_lits): запрет `interrupt` и `Time.sleep`.
+/// Флаг наследуется вложенными телами (консервативно).
 fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>, in_supervisor: bool, errors: &mut Vec<Diagnostic>) {
     for s in &b.stmts {
         match s {
@@ -20827,38 +20827,13 @@ fn walk_block_for_handler_lits(b: &Block, never_ops: &HashSet<(String, String)>,
 }
 
 fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, in_supervisor: bool, errors: &mut Vec<Diagnostic>) {
-    // Plan 173.2: supervisor-handler ограничения (§3b MVP + Q-блок 173.2).
+    // Plan 173.2: supervisor-handler ограничения (Q-блок 173.2).
     // Применяются к выражениям ВНУТРИ тела `Supervisor`-хендлера.
+    // (Гейт E_SUPERVISOR_RESTART_GATED удалён: Restart-семейство
+    // ретрактировано из словаря Decision — D416-амендмент 2026-07-10;
+    // ссылка на Restart теперь обычный unknown-variant.)
     if in_supervisor {
         match &e.kind {
-            // Гейт исполнения Restart: конструирование Restart-вариантов
-            // `Decision` отклоняется, пока нет рычага изоляции restartable-
-            // тела (Plan 173.3 `#share`/consume-в-spawn). `Decision.Restart`
-            // парсится как Path(["Decision","Restart"]); голая ссылка — Ident.
-            ExprKind::Ident(n) if n == "Restart" || n == "RestartAll" || n == "RestartRest" => {
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[E_SUPERVISOR_RESTART_GATED] `Decision.{n}` внутри `Supervisor`-хендлера: \
-                         исполнение Restart-стратегий гейтится изоляцией restartable-тела \
-                         (§3b, Plan 173.3 `#share`/consume-в-spawn) — MVP-словарь исполнения: \
-                         `Escalate` / `Stop`."
-                    ),
-                    e.span,
-                ));
-            }
-            ExprKind::Path(segs) if segs.last().map_or(false, |s|
-                s == "Restart" || s == "RestartAll" || s == "RestartRest") => {
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[E_SUPERVISOR_RESTART_GATED] `{}` внутри `Supervisor`-хендлера: \
-                         исполнение Restart-стратегий гейтится изоляцией restartable-тела \
-                         (§3b, Plan 173.3 `#share`/consume-в-spawn) — MVP-словарь исполнения: \
-                         `Escalate` / `Stop`.",
-                        segs.join(".")
-                    ),
-                    e.span,
-                ));
-            }
             // Q-блок 173.2: `interrupt` в хендлере запрещён — хендлер
             // исполняется на drive-цикле scope'а; longjmp к with-frame
             // бросил бы drain с ещё живыми детьми.
