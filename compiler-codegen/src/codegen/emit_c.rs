@@ -29834,6 +29834,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // guaranteed each such arg is a mutable, addressable lvalue. Idempotent.
         let inout_wrapped: Option<Vec<CallArg>> = self.synthesize_inout_refargs(func, args);
         let args: &[CallArg] = inout_wrapped.as_deref().unwrap_or(args);
+        // [M-172.14-methods-byref]: единая обёртка method-аргументов (большой ro
+        // value-struct → RefArg) в начале emit_call — покрывает все downstream
+        // sub-пути method-диспатча. Идемпотентно с точечными sub-обёртками.
+        let method_wrapped: Option<Vec<CallArg>> =
+            self.synthesize_method_byref_at_callsite(func, args);
+        let args: &[CallArg] = method_wrapped.as_deref().unwrap_or(args);
         // Plan 174.3 (D54 v1): `x.try_as[T]()` — optional downcast of a boxed
         // `any` to `Option[T]`. Runtime type_id check on the erased value: match
         // → `Some(*(T*)payload)`, mismatch → `None`. Intercepted here (before the
@@ -38996,6 +39002,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         result
     }
 
+    /// [M-172.14-methods-byref]: C-выражение для ПУННИНГА поля (`{ x }` ≡
+    /// `{ x: x }` без явного значения). Пуннинг эмитит имя поля НАПРЯМУЮ
+    /// строкой, минуя `emit_expr` — поэтому auto-deref by-ref параметра
+    /// (`ref_params`: `x` → `(*x)`) там не срабатывал. Если пуннящееся имя —
+    /// by-ref параметр (Ф.1 free-fn ИЛИ метод), деref обязателен (поле хранит
+    /// значение `T`, параметр — указатель `T*`). Byte-identical для всех
+    /// не-ref-param имён (ref_params до этой волны методов не касался
+    /// пуннинга — free-fn мог, но без наблюдаемого дефекта на корпусе).
+    fn field_pun_c(&self, name: &str) -> String {
+        if self.ref_params.contains(name) {
+            format!("(*{})", name)
+        } else {
+            name.to_string()
+        }
+    }
+
     /// Plan 172.14 (sret/_out §1): классификация sret-eligible ПО ФОРМЕ
     /// (единый предикат, не per-типовые ветки). Стартовый периметр (расширение
     /// после зелёных гейтов): C-возврат `Nova_Vec____*` (heap-record ≤3 слов),
@@ -39319,7 +39341,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let val = if let Some(v) = &f.value {
                             self.emit_expr(v)?
                         } else {
-                            f.name.clone()
+                            self.field_pun_c(&f.name)
                         };
                         field_vals.push((f.name.clone(), val));
                     }
@@ -39413,7 +39435,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let val = if let Some(v) = &f.value {
                                 self.emit_record_field_value(v, &field_ty)?
                             } else {
-                                f.name.clone()
+                                self.field_pun_c(&f.name)
                             };
                             if field_ty == "void*" {
                                 let val_ty = if let Some(v) = &f.value { self.infer_expr_c_type(v) } else { "nova_int".into() };
@@ -39443,7 +39465,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let val = if let Some(v) = &f.value {
                                 self.emit_record_field_value(v, &field_ty)?
                             } else {
-                                f.name.clone()
+                                self.field_pun_c(&f.name)
                             };
                             if field_ty == "void*" {
                                 let val_ty = if let Some(v) = &f.value { self.infer_expr_c_type(v) } else { "nova_int".into() };
@@ -39486,7 +39508,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let val = if let Some(v) = &f.value {
                             self.emit_record_field_value(v, &field_ty)?
                         } else {
-                            f.name.clone() // field punning
+                            self.field_pun_c(&f.name) // field punning
                         };
                         // Check if the field is void* in schema (generic type erasure) — need to box the value
                         if field_ty == "void*" {
@@ -39539,7 +39561,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let val = if let Some(v) = &f.value {
                     self.emit_record_field_value(v, &field_ty)?
                 } else {
-                    f.name.clone()
+                    self.field_pun_c(&f.name)
                 };
                 if field_ty == "void*" {
                     let val_ty = if let Some(v) = &f.value {
@@ -45082,6 +45104,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             map.remove(k);
         }
         self.method_byref_params = map;
+    }
+
+    /// [M-172.14-methods-byref]: ЕДИНАЯ точка обёртки method-аргументов в
+    /// начале `emit_call` (зеркало free-fn `synthesize_inout_refargs`).
+    /// Резолвит `(тип-receiver'а, метод)` из формы `func` и делегирует в
+    /// `synthesize_method_byref_args`. Покрывает ВСЕ downstream sub-пути
+    /// method-диспатча разом (их десятки: sig-based overload, generic-mono,
+    /// primitive-ext, fallback), т.к. переписанные args идут во все ветки.
+    ///
+    /// Инстанс-метод value/record-типа диспатчится по СТАТИЧЕСКОМУ типу
+    /// receiver'а (нет виртуальной диспетчеризации) → `infer_expr_c_type(obj)`
+    /// даёт ровно целевой `(type, method)`. Перегруженные `(type, method)`
+    /// отравлены в карте (by-ref=false) → обёртки нет. Идемпотентно с
+    /// точечными обёртками в sub-ветках (RefArg-`already`-гард).
+    fn synthesize_method_byref_at_callsite(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+    ) -> Option<Vec<CallArg>> {
+        if self.method_byref_params.is_empty() {
+            return None;
+        }
+        let base: &Expr = match &func.kind {
+            ExprKind::TurboFish { base, .. } => base,
+            _ => func,
+        };
+        let (type_name, method): (String, String) = match &base.kind {
+            // Инстанс-вызов `obj.method(args)`.
+            ExprKind::Member { obj, name } => {
+                let m = name.strip_prefix('@').unwrap_or(name);
+                let obj_c = self.infer_expr_c_type(obj);
+                let ty = Self::debt_nova_type_name_from_c(&obj_c);
+                if ty.is_empty() {
+                    return None;
+                }
+                (ty, m.to_string())
+            }
+            // Статик-вызов `Type.method(args)` (голое имя типа — 2-сегментный
+            // Path). Mono-подстановку `T` НЕ резолвим здесь (generic static —
+            // редкий, отравлять не требуется: незнакомый ключ → None).
+            ExprKind::Path(parts) if parts.len() == 2 => {
+                (parts[0].clone(), parts[1].clone())
+            }
+            _ => return None,
+        };
+        self.synthesize_method_byref_args(&type_name, &method, args)
     }
 
     /// [M-172.14-methods-byref]: зеркало `synthesize_inout_refargs` для
