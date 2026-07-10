@@ -1169,6 +1169,13 @@ pub struct CEmitter {
     /// path genuinely uses (in practice only arity 2, from erased HashMap/Set
     /// `(K, V)` pairs). Concrete tuples always use the typed mono'd path.
     legacy_tuple_arities: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): registry of mono'd
+    /// `[N]T` INLINE struct instances — `(N, elem_c_ty)` pairs. Mirrors `mono_tuple_instances`
+    /// (dedup + finalize-pass typedef emission), but for the fixed-size array value class:
+    /// `typedef struct { T data[N]; } _NovaFixArr_<N>_<len>_<elem>;` — no heap pointer, no
+    /// len/cap runtime fields (N is compile-time). Used by `register_mono_fixed_array` /
+    /// `compute_mono_fixed_array_c_name` / the `ExprKind::Index` + `ArrayLit` codegen arms.
+    mono_fixed_array_instances: std::cell::RefCell<std::collections::HashSet<(usize, String)>>,
     /// Accumulated lint warnings from codegen (e.g. anonymous-embed override).
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
@@ -1806,6 +1813,7 @@ impl CEmitter {
                 std::cell::RefCell::new(m)
             },
             mono_tuple_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
+            mono_fixed_array_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
             legacy_tuple_arities: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             novares_typedefs_buf: std::cell::RefCell::new(String::new()),
             novares_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
@@ -2557,7 +2565,8 @@ impl CEmitter {
             R::Readonly(inner) => self.rt_is_erased_stub(inner, full),
             // Arrays (`NovaArray_*` / `Nova_Vec____*`) and tuples (mono struct /
             // `_NovaTupleN`) always lower to a concrete C-form — never a bare stub.
-            R::Array(_) | R::Tuple(_) => false,
+            // [M-fixed-array-value-semantics]: `[N]T` mono struct — same, never a stub.
+            R::Array(_) | R::Tuple(_) | R::FixedArray(..) => false,
             R::Named { name, module, args } => self.rt_named_is_stub(name, module, args, full),
             // Type-params resolve through the (still string-carried) subst/receiver
             // context; typed pointers and the `Raw` debt carry concreteness as a
@@ -3056,6 +3065,13 @@ impl CEmitter {
             R::Named { name, module, args } => self.resolved_named_to_c(name, module, args)?,
             // Array `[]T` (D239 ≡ Vec[T]) — mirrors type_ref_to_c's Array arm.
             R::Array(inner) => self.resolved_array_to_c(inner)?,
+            // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
+            // INLINE value mono struct `{ T data[N]; }`, NOT the `[]T`/Vec heap-pointer
+            // path above. `register_mono_fixed_array` is idempotent (dedup by (N, elem)).
+            R::FixedArray(n, inner) => {
+                let elem_c = self.resolved_type_to_c(inner)?;
+                self.register_mono_fixed_array(*n, &elem_c)
+            }
             // Tuple — mono'd struct if all elems concrete, else legacy `_NovaTupleN`
             // (Plan 59/148). Mirrors type_ref_to_c's Tuple arm; `register_mono_tuple` /
             // `register_legacy_tuple` side-effects are shared + idempotent.
@@ -6435,6 +6451,62 @@ impl CEmitter {
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
 
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): splice mono'd
+        // `[N]T` INLINE struct typedefs. Topo-sort mirrors the tuple splice above —
+        // nested fixed arrays (`[N][M]T`) need the inner `_NovaFixArr_<M>_..._<T>` typedef
+        // BEFORE the outer one that embeds it BY VALUE (row-major flat layout, D27).
+        let mut fixarr_instances: Vec<(usize, String)> = self.mono_fixed_array_instances
+            .borrow().iter().cloned().collect();
+        fixarr_instances.sort();
+        let known_fixarr_names: std::collections::HashSet<String> = fixarr_instances.iter()
+            .map(|(n, elem)| Self::compute_mono_fixed_array_c_name(*n, elem))
+            .collect();
+        let mut fixarr_emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut fixarr_sorted: Vec<(usize, String)> = Vec::with_capacity(fixarr_instances.len());
+        let mut fixarr_remaining = fixarr_instances;
+        while !fixarr_remaining.is_empty() {
+            let mut next_remaining = Vec::new();
+            let mut progress = false;
+            for inst in fixarr_remaining.drain(..) {
+                // Element is itself a mono FixArr struct BY VALUE (not pointer) — needs
+                // its typedef emitted first. A pointer element (`_NovaFixArr_..._p`) is
+                // an incomplete-type-OK reference — no dep (mirrors the tuple splice).
+                let deps_satisfied = !known_fixarr_names.contains(inst.1.as_str())
+                    || fixarr_emitted.contains(inst.1.as_str());
+                if deps_satisfied {
+                    fixarr_emitted.insert(Self::compute_mono_fixed_array_c_name(inst.0, &inst.1));
+                    fixarr_sorted.push(inst);
+                    progress = true;
+                } else {
+                    next_remaining.push(inst);
+                }
+            }
+            if !progress {
+                // Cyclic deps impossible for a value-array struct; emit remaining anyway
+                // rather than hang (mirrors the tuple splice fallback).
+                fixarr_sorted.extend(next_remaining);
+                break;
+            }
+            fixarr_remaining = next_remaining;
+        }
+        let mut fixarr_decls = String::new();
+        if !fixarr_sorted.is_empty() {
+            fixarr_decls.push_str(
+                "/* [M-fixed-array-value-semantics]: mono'd [N]T INLINE struct typedefs — \
+                 stack/field value, no heap pointer, no len/cap (D27). */\n");
+            for (n, elem) in &fixarr_sorted {
+                let mangled = Self::compute_mono_fixed_array_c_name(*n, elem);
+                fixarr_decls.push_str(&format!(
+                    "#ifndef NOVA_FIXARR_TYPEDEF_{}\n", mangled));
+                fixarr_decls.push_str(&format!(
+                    "#define NOVA_FIXARR_TYPEDEF_{}\n", mangled));
+                fixarr_decls.push_str(&format!(
+                    "typedef struct {} {{ {} data[{}]; }} {};\n", mangled, elem, n, mangled));
+                fixarr_decls.push_str("#endif\n");
+            }
+        }
+        self.out = self.out.replace("/*__MONO_FIXARR_TYPEDEFS__*/", &fixarr_decls);
+
         // Plan 148 Ф.4 [M-codegen-unify-tuple-repr]: splice the legacy
         // all-`nova_int` `_NovaTupleN` typedefs — emitted ON DEMAND, only for
         // the arities the erased-generic fallback actually requested (replaces
@@ -7052,6 +7124,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // эмитятся в `user_type_fwd_decls` (предшествующий marker),
         // **до** этого tuple marker — порядок safe.
         self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): mono'd `[N]T`
+        // INLINE-array struct typedefs — splice marker; replaced in finalize. Layout:
+        // `typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>;` — value class (no heap
+        // pointer, no len/cap). Placed AFTER the tuple marker so a `[N](T1,T2)` element
+        // sees the complete mono tuple struct.
+        self.line("/*__MONO_FIXARR_TYPEDEFS__*/");
         // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
         // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
         // в registration order (innermost first); splice'ится в финальный
@@ -17304,6 +17382,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Self::compute_mono_tuple_c_name(elem_c_tys)
     }
 
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): compute the mono'd
+    /// `[N]T` INLINE struct C name. Length-prefixed encoding (mirrors
+    /// `compute_mono_tuple_c_name` — self-describing, unambiguous for any nesting depth,
+    /// e.g. `[4][8]int`'s inner `[8]int` element name embeds cleanly):
+    /// `_NovaFixArr_<N>_<Llen>_<elem>` — `<Llen>` = decimal byte length of the
+    /// (sanitized) element type name that follows. Distinguishable from the mono tuple
+    /// name by the `NovaFixArr` stem (no collision risk with `_NovaTuple_`/`_NovaTupleN`).
+    pub fn compute_mono_fixed_array_c_name(n: usize, elem_c_ty: &str) -> String {
+        let sanitized = Self::sanitize_c_for_ident(elem_c_ty);
+        format!("_NovaFixArr_{}_{}_{}", n, sanitized.len(), sanitized)
+    }
+
+    /// Inverse of `compute_mono_fixed_array_c_name` — `(N, elem_c_ty)` from a mangled
+    /// name, or `None` if `mangled` isn't a `_NovaFixArr_...` name.
+    fn parse_mono_fixed_array_name(mangled: &str) -> Option<(usize, String)> {
+        let rest = mangled.strip_prefix("_NovaFixArr_")?;
+        let (n_str, after_n) = Self::take_digits(rest);
+        if n_str.is_empty() {
+            return None;
+        }
+        let n: usize = n_str.parse().ok()?;
+        let cursor = after_n.strip_prefix('_')?;
+        let (len_str, after_len) = Self::take_digits(cursor);
+        if len_str.is_empty() {
+            return None;
+        }
+        let len: usize = len_str.parse().ok()?;
+        let body = after_len.strip_prefix('_')?;
+        if body.len() != len {
+            return None;
+        }
+        Some((n, Self::desanitize_c_from_ident(body)))
+    }
+
+    /// [M-fixed-array-value-semantics]: register a mono'd `[N]T` INLINE struct type for
+    /// finalize-pass typedef emission (`typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>;`).
+    /// Idempotent — dedup by `(N, elem_c_ty)`, mirrors `register_mono_tuple`. Returns the
+    /// mono'd C struct name.
+    fn register_mono_fixed_array(&self, n: usize, elem_c_ty: &str) -> String {
+        self.mono_fixed_array_instances.borrow_mut().insert((n, elem_c_ty.to_string()));
+        Self::compute_mono_fixed_array_c_name(n, elem_c_ty)
+    }
+
     /// Plan 59 Ф.7.3: estimate sizeof for a C type string — conservative
     /// upper bound для sizeof warning'а. Pointer types = 8 (x64). Scalar
     /// types known sizes. Mono'd nested types recursive sum + alignment
@@ -19977,7 +20098,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -20884,7 +21005,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -21759,7 +21880,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // so `=> Some(<int-literal>)` in `-> Option[uint]` builds NovaOpt_nova_uint,
                 // not the literal-default NovaOpt_nova_int (named-priority int-collapse →
                 // CC-FAIL, surfaced by d86_coalesce_width). Common path keeps `emit_expr`.
-                let val = if ret.starts_with("NovaOpt_") || Self::is_typed_integer(&ret) {
+                let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret) {
                     self.emit_expr_with_target_type(e, &ret)?
                 } else {
                     self.emit_expr(e)?
@@ -23354,7 +23475,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
             // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
             // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
-            let val = if ret_ty.starts_with("NovaOpt_") || Self::is_typed_integer(ret_ty) {
+            let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_") || Self::is_typed_integer(ret_ty) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?
@@ -24190,6 +24311,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             ));
                             return Ok(());
                         }
+                        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент):
+                        // `arr[i] = v` on `[N]T` — INLINE struct `{ T data[N]; }` write.
+                        // Mirrors the Vec[T] write branch below, but `N` is a COMPILE-TIME
+                        // literal (no runtime len/cap header) and the data member is
+                        // direct (`.data`/`->data`), not a `->data` POINTER field. `arr_obj_ty`
+                        // is either the bare mono struct (a local/field VALUE) or a pointer to
+                        // it (a `ref`/`mut ref` D326 receiver/param — in-place mutation,
+                        // no copy). MUST precede the Vec/NovaArray checks below — a distinct
+                        // struct family, checked first so it never falls through to them.
+                        {
+                            let (bare, is_ptr) = match arr_obj_ty.strip_suffix('*') {
+                                Some(s) => (s, true),
+                                None => (arr_obj_ty.as_str(), false),
+                            };
+                            if let Some((n, elem_ty)) = Self::parse_mono_fixed_array_name(bare) {
+                                let arr_c = self.emit_expr(arr_obj)?;
+                                let idx_c = self.emit_expr(index)?;
+                                let val_c = self.emit_expr(value)?;
+                                let data_expr = if is_ptr {
+                                    format!("(({})->data)", arr_c)
+                                } else {
+                                    format!("(({}).data)", arr_c)
+                                };
+                                let wchk = if self.index_site_elided(target.span.start) {
+                                    String::new()
+                                } else {
+                                    format!(
+                                        "if (_wi < 0 || _wi >= ((nova_int){n})) nv_panic_index_oob(_wi, ((nova_int){n})); ",
+                                        n = n,
+                                    )
+                                };
+                                self.line(&format!(
+                                    "{{ nova_int _wi = ({idx}); {chk}({data})[_wi] = ({ty})({val}); }}",
+                                    idx = idx_c, val = val_c, ty = elem_ty, chk = wchk, data = data_expr
+                                ));
+                                return Ok(());
+                            }
+                        }
                         // Plan 138 Ф.2 (D240): `v[i] = val` on Vec[T] — inline bounds-checked write.
                         // Vec[T] layout: { T* data; nova_int len; nova_int cap }.
                         // Emit: { _v->data[_i] = val; } with bounds check + panic.
@@ -24994,7 +25153,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // emit_array_lit / try_emit_typed_vec_literal uses X as the element
         // type instead of defaulting to nova_int. Handles empty `[]` in typed
         // contexts: `let xs []str = []` or `{ items: [] }`.
-        if let ExprKind::ArrayLit(_) = &expr.kind {
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): target is the
+        // `[N]T` INLINE mono struct (`_NovaFixArr_<N>_<L>_<T>`) — build a compound
+        // literal `(StructName){ .data = { e0, e1, ..., eN-1 } }` directly, NOT the
+        // Vec/NovaArray push-loop path below (that's for `[]T`, a DIFFERENT type
+        // since this change). Each element coerces to the element C type (recurses
+        // through `emit_expr_with_target_type` so a nested `[N][M]T` row literal
+        // targets the INNER `_NovaFixArr_<M>_..._<T>` struct too — row-major, D27).
+        if let ExprKind::ArrayLit(elems) = &expr.kind {
+            if let Some((n, elem_c)) = Self::parse_mono_fixed_array_name(target_ty_c) {
+                let direct_items: Vec<&Expr> = elems.iter().filter_map(|e| match e {
+                    ArrayElem::Item(x) => Some(x),
+                    ArrayElem::Spread(_) => None,
+                }).collect();
+                if direct_items.len() != elems.len() {
+                    return Err(format!(
+                        "[M-fixed-array-value-semantics] `[N]T` array literal против `{}` \
+                         не поддерживает `...spread` элементы (N фиксирован компайл-тайм)",
+                        target_ty_c));
+                }
+                if direct_items.len() != n {
+                    return Err(format!(
+                        "[M-fixed-array-value-semantics] array literal с {} элементами \
+                         не соответствует размеру `[{}]T` таргета `{}`",
+                        direct_items.len(), n, target_ty_c));
+                }
+                let mut vals: Vec<String> = Vec::with_capacity(n);
+                for item in &direct_items {
+                    vals.push(self.emit_expr_with_target_type(item, &elem_c)?);
+                }
+                return Ok(format!("({}){{ .data = {{ {} }} }}", target_ty_c, vals.join(", ")));
+            }
             // Recover the element C type of a flipped `[]X` ≡ `Vec[X]` target.
             let vec_elem = self.vec_or_array_elem_c(target_ty_c)
                 .filter(|_| target_ty_c.starts_with("Nova_Vec____"));
@@ -27911,6 +28100,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // genuine pointer (e.g. `Vec[Option[T]]`'s buffer).
                     && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
                     && !obj_ty.starts_with("NovaArray_")
+                    // [M-fixed-array-value-semantics]: `_NovaFixArr_...*` is likewise a
+                    // bare VALUE struct pointer (a `ref`/`mut ref` D326 receiver/param to
+                    // an inline `[N]T`) — starred here is the LEGITIMATE in-place-mutation
+                    // form, not a raw-pointer footgun; `arr[i]`/`arr[i] = v` stay legal.
+                    && !obj_ty.starts_with("_NovaFixArr_")
                     && obj_ty != "void*"
                 {
                     self.strict_errors.borrow_mut().push(
@@ -28065,6 +28259,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let bchk = Self::emit_bchk_array_access("nova_int", &o, &i);
                             return Ok(format!("(({})({}))", elem_ty, bchk));
                         }
+                    }
+                }
+                // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `arr[i]`
+                // READ on `[N]T` — INLINE struct `{ T data[N]; }`, N a compile-time
+                // literal (no runtime len/cap header, unlike Vec/NovaArray below — hence
+                // the dedicated `nova_fixarr_idx_chk/nochk` helpers taking N directly).
+                // `obj_ty` is either the bare mono struct (local/field VALUE) or a
+                // pointer to it (`ref`/`mut ref` D326 receiver/param, in-place, no copy).
+                // Same lvalue-safe void*-cast-deref trick as Vec/NovaArray below (a plain
+                // `_data[_i]` stmt-expr isn't an lvalue in Clang — breaks `arr[i].field = x`,
+                // `&arr[i]`, `arr[i].mut_method()`). MUST precede the Vec/NovaArray checks
+                // — a distinct struct family (`_NovaFixArr_` never collides with `Nova_`/
+                // `NovaArray_` prefixes), so it never falls through to them.
+                {
+                    let (bare, is_ptr) = match obj_ty.strip_suffix('*') {
+                        Some(s) => (s, true),
+                        None => (obj_ty.as_str(), false),
+                    };
+                    if let Some((n, elem_ty)) = Self::parse_mono_fixed_array_name(bare) {
+                        let o = self.emit_expr(obj)?;
+                        let data_expr = if is_ptr {
+                            format!("(({})->data)", o)
+                        } else {
+                            format!("(({}).data)", o)
+                        };
+                        let helper = if self.index_site_elided(expr.span.start) {
+                            "nova_fixarr_idx_nochk"
+                        } else {
+                            "nova_fixarr_idx_chk"
+                        };
+                        let call = if helper == "nova_fixarr_idx_chk" {
+                            format!(
+                                "(*({ty}*){h}((void*){data}, ({idx}), ((nova_int){n}), sizeof({ty})))",
+                                ty = elem_ty, h = helper, data = data_expr, idx = i, n = n,
+                            )
+                        } else {
+                            format!(
+                                "(*({ty}*){h}((void*){data}, ({idx}), sizeof({ty})))",
+                                ty = elem_ty, h = helper, data = data_expr, idx = i,
+                            )
+                        };
+                        return Ok(call);
                     }
                 }
                 // Plan 138 Ф.2 (D238): `Vec[T][i]` dispatch — `v[i]` for Vec[T] types.
@@ -43576,6 +43812,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Plan 124.8 V2 (D226): value-records `NovaValue_X` are stack-allocated.
         if ty.starts_with("NovaValue_") && !ty.ends_with('*') {
+            return true;
+        }
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` INLINE
+        // mono struct — stack-allocated value type, same class as NovaValue_/NovaTuple_
+        // above. Wires `[N]T` into the SAME `mut x T` in-out-pointer ABI (Р10/D326) and
+        // `.`/`->` accessor decisions used pervasively by this oracle (mut-param pass,
+        // member/index access on an inout binding, etc.) — no separate plumbing needed.
+        if ty.starts_with("_NovaFixArr_") && !ty.ends_with('*') {
             return true;
         }
         matches!(ty,

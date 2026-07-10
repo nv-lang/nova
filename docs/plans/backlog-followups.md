@@ -2097,15 +2097,28 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   с идентичным списком. Полный whole-CU режим (nova test/conformance) — зелёный.
   Родня per-file/CU-scope семейства [M-http-module-test-block-p67].
 
-- **[M-fixed-array-value-semantics]** (2026-07-08, P2, Wave: трек A после Vec-canon substrate
-  — иначе двойная переделка) — [N]T СЕЙЧАС кучевой (три свидетельства: V3-классификатор
-  FixedArray=>false; ref_target_confirmed_heap FixedArray=>true наравне с Array/Pointer;
-  кодоген обрабатывает FixedArray одним армом с Array — отдельного стек-эмита нет).
-  Владелец: «должно быть на стеке». Целевое: [N]T с value-элементами = value-класс —
-  inline-хранение (C: `T name[N];` в кадре / поле записи), копирование по значению,
-  D27-амендмент + V3-переклассификация; открывает SocketAddr {image [20]u8} без аллокаций
-  и типизированный AddrImage (174.5-связка). [N]T с кучевыми элементами — heap-tracked
-  элементы при value-контейнере (GC-скан по месту).
+- **[M-fixed-array-value-semantics]** (2026-07-08, P2) — ✅ **ЗАКРЫТ (2026-07-10, ветка
+  `fixed-array-value` [sonnet], коммиты ab322cede/b4b699276/4043a4a51/ca39d9d06 + финальный):**
+  [N]T = inline value-класс. (1) `ResolvedType::FixedArray(N, elem)` — N без потерь (закрыл
+  [M-172.1-fixedarray-N] для C-лоуэринга; category-key `resolved_cat_of` НЕ тронут);
+  V3-классификатор + ref_target_confirmed_heap переклассифицированы (WIP 5ff32af0d).
+  (2) codegen: `typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>` (finalize-splice,
+  топосорт [N][M]T), compound-literal для литералов, Index-чтение/Assign-запись с
+  bounds-check по компайл-тайм N (`nova_fixarr_idx_chk/nochk`, array.h), return-коэрция,
+  `is_value_type()` → in-out ABI D326 Р10 для `mut x [N]T`. (3) ДЕФЕКТ ВОЛНЫ (пойман
+  sha256 NIST): field_cache писал `@F[i]=v` в кэш-копию — фикс: index-write барьер для
+  slot-unstable полей (ref-typed []T/Vec байт-в-байт нетронуты). (4) gc_layout: [N]T-поле
+  = N×stride inline офсетов (юнит 22/22); GC-тест [4]str/[3]Holder под 3× gc.collect() —
+  пейлоады удерживаются (стек + heap-record скан). (5) Спека: D27-амендмент (5 пунктов) +
+  D216 §V3.1 value-список п.6 + Rust-снипет. Тесты nova_tests/fixed_array/ 5 pos + 2 neg +
+  panics (D348). Гейты: build оба чисто; conformance 89/0 δ0; err173 25/0 δ0;
+  выборка nova_tests (11 каталогов) δ0 против baseline-бинаря main@250de5cda
+  (FAIL-множества идентичны, все pre-existing); sha256/sha1/md5/hmac PASS.
+  **Followups:** (а) serde-derive видит [N]T как Vec (auto_derive.rs deser) — при
+  [N]T-поле в serde-типе будет клэш типов, живых пользователей нет;
+  (б) len-mismatch/spread-в-литерале ловятся codegen loud-fail — чекер-уровневый
+  E-код чище; (в) external_registry.rs FixedArray-арм лоуэрит в C-тип ЭЛЕМЕНТА —
+  мёртвый код (extern fn с [N]T в сигнатурах нет; D326 Р9: FFI = только сырые указатели).
 - **РЕШЕНИЕ ВЛАДЕЛЬЦА (2026-07-08) по [M-array-vec-unify]: Vec-canon — NovaArray умирает
   целиком** (вариант typedef-alias отвергнут). Substrate-очерёдность (вердикт A5):
   A6 = runtime-примирение (nova_str_to_chars/bytes/split и потребители read_buffer/
@@ -2788,6 +2801,5 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   в сигнатурах вызываемых) + D215-амендмент. Сегодня спасает случайный гэп
   (supervised-value не поддержан в module-init) — не контракт.
 
-- **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ветка `fixed-array-value`
-  запушена с WIP-коммитом (классификатор [N]T=value начат в types/mod.rs; codegen/GC/тесты
-  не начаты). Возобновление: продолжить с WIP, задание — в транскрипте волны 2026-07-10.
+- **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ✅ снята тем же днём —
+  трек доведён до конца (см. закрытый маркер выше), ветка `fixed-array-value` готова к слиянию.

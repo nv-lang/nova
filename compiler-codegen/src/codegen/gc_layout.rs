@@ -26,9 +26,10 @@
 // per-field offsets ALONGSIDE the identical pad-then-place loop.  Two F0
 // discrepancies between that math source and what emit_c actually lowers are
 // reconciled here by sizing each field from its EMITTED C representation:
-//   1. `[N]T` (FixedArray): the size fn computes N*size(T) inline, but emit_c
-//      lowers a `[N]T` FIELD to ONE `NovaArray_T*`/Vec HEAP POINTER — so the
-//      field is a single 8-byte GC pointer, not N inline elements.
+//   1. `[N]T` (FixedArray): N*size(T) inline — since [M-fixed-array-value-semantics]
+//      (2026-07-10, D27-амендмент) emit_c lowers a `[N]T` FIELD to the INLINE
+//      `_NovaFixArr_*` value struct (`{ T data[N]; }`), matching the size fn's
+//      N-inline-elements math (the pre-amendment one-heap-pointer lowering is gone).
 //   2. `[]T` (Vec): the size fn treats it as a 16-byte slice, but emit_c lowers
 //      the FIELD to one 8-byte `Nova_Vec____*` pointer — a single GC pointer.
 //   3. `char`: the size fn returns 4, but emit_c maps `char` → `nova_char`
@@ -248,8 +249,12 @@ fn inner_lowers_to_single_pointer(
         TypeRef::Pointer(_, _) => true,
         // Closures / function types → `void*`.
         TypeRef::Func { .. } => true,
-        // `[]T` / `[N]T` → `Nova_Vec____*` / `NovaArray_*`.
-        TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => true,
+        // `[]T` → `Nova_Vec____*`.
+        TypeRef::Array(_, _) => true,
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` is an
+        // INLINE value struct (`_NovaFixArr_*`, `{ T data[N]; }`) — NOT a pointer.
+        // An Option over it takes the tagged form (which recurses into the payload).
+        TypeRef::FixedArray(_, _, _) => false,
         // Anonymous protocol object → `void*` (emit_c.rs:5658).
         TypeRef::Protocol { .. } => true,
         // Value-aggregates lower to an inline struct (NOT a pointer).
@@ -380,17 +385,42 @@ fn classify_field(
             unresolved: true,
         },
 
-        // ---- []T (Vec) and [N]T (FixedArray) ----
-        // F0 discrepancy: the size-math treats `[]T` as a 16-byte slice and
-        // `[N]T` as N*size(T) inline, but emit_c lowers BOTH FIELDS to ONE
-        // 8-byte `Nova_Vec____*` / `NovaArray_*` HEAP POINTER.  Trust emit_c:
-        // the field is a single GC pointer slot.
-        TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => FieldClass {
+        // ---- []T (Vec) ----
+        // F0 discrepancy: the size-math treats `[]T` as a 16-byte slice, but
+        // emit_c lowers the FIELD to ONE 8-byte `Nova_Vec____*` HEAP POINTER.
+        // Trust emit_c: the field is a single GC pointer slot.
+        TypeRef::Array(_, _) => FieldClass {
             size: PTR_SIZE,
             align: PTR_ALIGN,
             rel_pointer_offsets: vec![0],
             unresolved: false,
         },
+
+        // ---- [N]T (FixedArray) ----
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): a `[N]T`
+        // FIELD is now an INLINE value struct (`_NovaFixArr_<N>_<L>_<T>`,
+        // `{ T data[N]; }`) — N contiguous elements IN PLACE, no heap pointer
+        // (the pre-amendment lowering shared the `[]T` one-pointer slot above).
+        // Layout = N stride-repeated copies of the element class; each element's
+        // GC offsets are replicated at `k*stride + o`. Element stride is the
+        // element size aligned up to its own alignment (C array rule); the
+        // struct's size/align equal the array's (a single-member struct).
+        TypeRef::FixedArray(n, elem, _) => {
+            let ec = classify_field(elem, type_decls, visited);
+            let stride = align_up(ec.size, ec.align.max(1));
+            let mut offsets: Vec<usize> = Vec::with_capacity(ec.rel_pointer_offsets.len() * n);
+            for k in 0..*n {
+                for o in &ec.rel_pointer_offsets {
+                    offsets.push(k * stride + o);
+                }
+            }
+            FieldClass {
+                size: stride * n,
+                align: ec.align.max(1),
+                rel_pointer_offsets: offsets,
+                unresolved: ec.unresolved,
+            }
+        }
 
         // ---- unit ----
         TypeRef::Unit(_) => FieldClass {

@@ -38346,3 +38346,17 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 - **Contract-диагностика в folder-module CU** печатает file:line entry-файла CU (loc_for_span от
   annotation_source) — panics-паттерны мигрантов ослаблены (без file:line-префикса). Точность
   file:line в multi-file CU — известная ось (span→peer-файл маппинг), не регресс этой волны.
+
+## [M-fixed-array-value-semantics] (2026-07-10, ветка fixed-array-value)
+
+- **Category-key `resolved_cat_of` НЕ переведён на FixedArray-вариант** — намеренно:
+  совместимость присваивания `[]T`/`[N]T` — отдельная ось от C-представления;
+  внутренний ключ никогда не лоуэрится в C. Складывание категорий — ортогональный follow-up.
+- **len-mismatch / spread в [N]T-литерале** ловятся codegen loud-fail (осмысленная
+  диагностика, не тихий мискомпил); checker-уровневый E-код — followup.
+- **serde-derive не научен [N]T** (auto_derive строит Vec-выражения) — живых
+  пользователей [N]T-полей в serde-типах нет; followup в маркере.
+- **field_cache index-write барьер при отключённом IPA** (`--no-field-cache-ipa`) —
+  консервативный (нет ref_typed-оракула): корректность > байты в нестандартном режиме.
+- **`[0; N]`-repeat литерал** (Rust-style) по-прежнему не поддержан парсером
+  ([M-sha256-array-repeat-literal-parser]) — не взято в эту волну.
