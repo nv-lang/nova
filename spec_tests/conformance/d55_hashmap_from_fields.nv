@@ -1,0 +1,74 @@
+// D55 map-coercion через `#from_fields` (std/collections/hashmap.nv:89):
+// анонимный record-литерал `{field: val}` коэрсируется в `HashMap[str, V]`
+// (ключи — строковые имена полей). До этого фикса coverage не было вовсе —
+// `d55_literal_coercion.nv` тестирует ТОЛЬКО коэрсию `{n: 7}` в обычный
+// user-record (D55Rec), не в HashMap через `#from_fields`.
+//
+// [M-d55-anon-recordlit-codegen-gap]: анонимный record-литерал в части
+// контекстов не эмитился codegen'ом («anonymous record literal without
+// spread not supported») либо (для record-field позиции) эмитился НЕВЕРНО
+// (пытался построить `Nova_HashMap` как обычный record с полем `a` →
+// `no member named 'a'`). Корень — checker-annotator (`MapLitAnnotator` в
+// types/mod.rs) вёл `expected`-тип нулём в трёх местах спуска: (1)
+// `Stmt::Assign` (реassignment переменной), (2) вложенные поля `RecordLit`
+// (`Outer { field: {...} }`), (3) элементы `ArrayLit` (`[{...}, {...}]`),
+// и не распознавал built-in конструкторы `Some`/`Ok`/`Err` как
+// argument-position propagation source. Починено пробросом `expected` во
+// всех четырёх местах — codegen (emit_c.rs `anonymous record literal
+// without spread not supported`) сам не трогался, фикс целиком в
+// checker-annotation слое.
+//
+// Каждый test ниже — один из ранее падавших контекстов.
+module spec_tests.conformance
+
+import std.collections.hashmap.{HashMap}
+
+test "from_fields: let с явным типом (D55 базовый случай)" {
+    mut m HashMap[str, int] = { a: 1, b: 2 }
+    assert(m.get("a") == Some(1))
+    assert(m.get("b") == Some(2))
+    assert(m.len() == 2)
+}
+
+fn d55_takes_map(m HashMap[str, int]) -> int => m.len()
+
+test "from_fields: call-argument позиция" {
+    ro n = d55_takes_map({ a: 1, b: 2, c: 3 })
+    assert(n == 3)
+}
+
+fn d55_make_map() -> HashMap[str, int] => { a: 1, b: 2 }
+
+test "from_fields: return (arrow-body) позиция" {
+    ro m = d55_make_map()
+    assert(m.get("a") == Some(1))
+    assert(m.get("b") == Some(2))
+}
+
+fn d55_make_opt() -> Option[HashMap[str, int]] => Some({ x: 10 })
+
+test "from_fields: вложено в Some(...) built-in constructor" {
+    ro m = d55_make_opt() ?? HashMap[str, int].new()
+    assert(m.get("x") == Some(10))
+}
+
+fn d55_make_arr() -> []HashMap[str, int] => [{ a: 1 }, { b: 2 }]
+
+test "from_fields: элемент array-литерала" {
+    ro arr = d55_make_arr()
+    assert(arr[0].get("a") == Some(1))
+    assert(arr[1].get("b") == Some(2))
+}
+
+type D55Wrap { m HashMap[str, int] }
+
+test "from_fields: поле вложенного record-литерала" {
+    ro w = D55Wrap { m: { a: 1 } }
+    assert(w.m.get("a") == Some(1))
+}
+
+test "from_fields: reassignment существующей mut-переменной" {
+    mut m HashMap[str, int] = HashMap[str, int].new()
+    m = { a: 5 }
+    assert(m.get("a") == Some(5))
+}

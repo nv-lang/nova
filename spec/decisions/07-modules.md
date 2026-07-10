@@ -1177,6 +1177,34 @@ nova-lang/
 исключений. `stdlib/` рассматривался; отвергнут в пользу `std/`
 по этим двум причинам.
 
+#### Именование внешних пакетов-репозиториев (амендмент, Plan 192, 2026-07-10)
+
+Правило `Path / module enforcement` выше определяет именование **модулей**
+(`module path = file path`, `package_name` в `nova.toml`), но не задаёт
+конвенцию для **внешних пакетов-репозиториев** (в т.ч. native-backed —
+несущих `.c`/`.lib`/`cargo`-staticlib). Вводится по традиции Cargo/Go:
+
+| Сущность | Конвенция | Пример |
+|---|---|---|
+| Репозиторий | `nova-<пакет>` (kebab, префикс `nova-`) | `nova-tls`, `nova-http` |
+| Имя пакета (`nova.toml [package] name`) | `<пакет>` (snake, без префикса) | `tls`, `http` |
+| Корень модуля | `<пакет>.*` (path 1:1 = module) | `import tls.{TlsStream}` |
+| Native-артефакты | подкаталог `native/` пакета | `native/tls_shim/` |
+
+Префикс `nova-` на **репозитории** (не на имени пакета) отделяет
+экосистемную принадлежность от короткого импорта: репозиторий
+`github.com/…/nova-tls` содержит пакет `tls`, импортируемый как
+`import tls.{…}` — префикс не протекает в код (ср. Go `google.golang.org/grpc`
+→ `import "…/grpc"`; Rust crate `serde` в репозитории `serde`).
+
+Native-backed пакет декларирует свои собираемые артефакты через
+`[ffi.staticlib]` (см. [ffi-cookbook](../../docs/ffi-cookbook.md) §staticlib и
+[authoring-a-module](../../docs/guide/authoring-a-module.md)); при импорте
+модуля билд-система компилирует/линкует их автоматически — без правок
+компилятора под каждый пакет. Подключение внешней репы — существующим
+механизмом `[dependencies] { git = "https://…/nova-tls", tag = "…" }` (Plan
+03.1/03.2). Эталонный STANDALONE-образец паттерна — репозиторий `nova-tls`.
+
 #### Lockfile — `nova.lock`
 
 TOML-формат, имя lowercase, единообразно с `nova.toml`. Auto-generated,

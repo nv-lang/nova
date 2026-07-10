@@ -4680,14 +4680,7 @@ fn cmd_build(
     // Plan 149/115: [runtime]+[ffi] resolved from package nova.toml (find_manifest), mirrors test_runner. env still overrides at runtime.
     let manifest = nova_codegen::manifest::find_manifest(&path);
     let resolved_ffi: Option<test_runner::ResolvedFfiConfig> =
-        manifest.as_ref().and_then(|m| m.ffi.as_ref().map(|cfg| {
-            let base = m.source_root.clone();
-            test_runner::ResolvedFfiConfig {
-                c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
-                include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
-                libs: cfg.libs.clone(),
-            }
-        }));
+        manifest.as_ref().and_then(test_runner::ResolvedFfiConfig::from_manifest);
     let resolved_runtime: Option<nova_codegen::manifest::RuntimeConfig> =
         manifest.as_ref().and_then(|m| m.runtime.clone());
     let build_opts = test_runner::BuildOpts {

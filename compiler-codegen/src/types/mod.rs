@@ -27416,6 +27416,14 @@ struct MapLitCtx {
     /// Plan 52 Ф.23: типы помеченные `#from_pairs` — target для desugar'а
     /// `[k: v]` (canonical-identity check, как для from_fields).
     from_pairs_types: HashSet<String>,
+    /// [M-d55-anon-recordlit-codegen-gap] fix: record-тип → (имя поля →
+    /// объявленный тип поля). Нужно, чтобы при спуске в NESTED
+    /// record-литерал (`Outer { field: { a: 1 } }`) внутреннему анонимному
+    /// `{a: 1}` передавался expected-тип поля `field` — иначе он теряется
+    /// (было `walk_expr(v, None)` безусловно) и D55 map-coercion /
+    /// вложенная типизация не срабатывают. Собирается из `module.items` и
+    /// `peer_files` (та же модуль-папка), только `TypeDeclKind::Record`.
+    record_field_types: HashMap<String, HashMap<String, TypeRef>>,
 }
 
 impl MapLitCtx {
@@ -27447,6 +27455,17 @@ impl MapLitCtx {
         };
         let mut canonical_from_fields_types: HashSet<String> = HashSet::new();
         let mut canonical_from_pairs_types: HashSet<String> = HashSet::new();
+        // [M-d55-anon-recordlit-codegen-gap] fix: struct-имя → (поле → тип).
+        let mut record_field_types: HashMap<String, HashMap<String, TypeRef>> = HashMap::new();
+        let collect_record_fields = |t: &TypeDecl, out: &mut HashMap<String, HashMap<String, TypeRef>>| {
+            if let TypeDeclKind::Record(fields) = &t.kind {
+                let m: HashMap<String, TypeRef> = fields
+                    .iter()
+                    .map(|f| (f.name.clone(), f.ty.clone()))
+                    .collect();
+                out.insert(t.name.clone(), m);
+            }
+        };
         for pf in &module.peer_files {
             let path_str = pf.path.to_string_lossy().replace('\\', "/").to_lowercase();
             // Canonical stdlib markers — собираем имена типов с
@@ -27463,6 +27482,14 @@ impl MapLitCtx {
                             canonical_from_pairs_types.insert(t.name.clone());
                         }
                     }
+                }
+            }
+            // record_field_types собирается для ЛЮБОГО peer-файла (same
+            // module folder), не только std/collections — нужно для
+            // произвольных user-типов, не только from_fields/from_pairs.
+            for it in &pf.items_here {
+                if let Item::Type(t) = it {
+                    collect_record_fields(t, &mut record_field_types);
                 }
             }
         }
@@ -27495,6 +27522,7 @@ impl MapLitCtx {
             match item {
                 Item::Type(t) => {
                     known_types.insert(t.name.clone());
+                    collect_record_fields(t, &mut record_field_types);
                     // Plan 52 Ф.19: canonical-identity check. Если у нас
                     // есть peer_files info — добавляем только canonical
                     // stdlib типы. User-локальный `type HashMap #from_fields`
@@ -27599,6 +27627,7 @@ impl MapLitCtx {
             unique_method_param_types,
             fn_generics: HashSet::new(),
             from_pairs_types,
+            record_field_types,
         }
     }
 
@@ -27616,6 +27645,7 @@ impl MapLitCtx {
                         unique_method_param_types: self.unique_method_param_types.clone(),
                         fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
                         from_pairs_types: self.from_pairs_types.clone(),
+                        record_field_types: self.record_field_types.clone(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
                     if let Some(recv) = &f.receiver {
@@ -28556,8 +28586,21 @@ impl MapLitAnnotator {
             // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
             Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
+                // [M-d55-anon-recordlit-codegen-gap] fix: `m = {a: 1}` для
+                // ранее-объявленного `mut m HashMap[str,int]` теряло
+                // expected-тип (было безусловно `None`) — RHS record-литерал
+                // не получал D55 map-coercion → codegen fallback-error
+                // "anonymous record literal without spread not supported".
+                // var_types хранит тип по имени (заполняется в Stmt::Let
+                // выше для аннотированных/inferred-map биндингов).
+                let assign_expected: Option<TypeRef> = if let ExprKind::Ident(name) = &target.kind
+                {
+                    self.var_types.get(name).cloned()
+                } else {
+                    None
+                };
                 self.walk_expr(target, None);
-                self.walk_expr(value, None);
+                self.walk_expr(value, assign_expected.as_ref());
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value { self.walk_expr(v, None); }
@@ -28721,10 +28764,21 @@ impl MapLitAnnotator {
                 }
             }
             ExprKind::ArrayLit(elems) => {
+                // [M-d55-anon-recordlit-codegen-gap] fix: element-position —
+                // mirror RecordLit-field fix. `fn f() -> []HashMap[str,V] =>
+                // [{a: 1}, {b: 2}]` вело каждый элемент с `expected=None` →
+                // анонимный record-литерал внутри массива не получал
+                // expected-тип элемента (`HashMap[str,V]`) → не срабатывала
+                // D55 map-coercion.
+                let elem_expected: Option<TypeRef> = match expected {
+                    Some(TypeRef::Array(inner, _)) => Some((**inner).clone()),
+                    Some(TypeRef::FixedArray(_, inner, _)) => Some((**inner).clone()),
+                    _ => None,
+                };
                 for el in elems.iter_mut() {
                     match el {
                         ArrayElem::Item(x) | ArrayElem::Spread(x) => {
-                            self.walk_expr(x, None);
+                            self.walk_expr(x, elem_expected.as_ref());
                         }
                     }
                 }
@@ -28734,6 +28788,45 @@ impl MapLitAnnotator {
                 // Argument-позиция — propagation expected типа параметра
                 // (фундамент Ф.3a).
                 let params = self.ctx.resolve_call_params(func);
+                // [M-d55-anon-recordlit-codegen-gap] fix: `Some`/`Ok`/`Err`
+                // — built-in sum-variant constructors, не обычные fn/method
+                // (не попадают в `fn_param_types`/`resolve_call_params`).
+                // Раньше `fn f() -> Option[HashMap[str,V]] => Some({a: 1})`
+                // терял expected при спуске в `Some`'s arg (params=None →
+                // arg_expected=None всегда) — вложенный анонимный
+                // record-литерал не получал D55 map-coercion и падал в
+                // codegen fallback-error. Если outer `expected` — `Option[T]`
+                // / `Result[T,E]`, извлекаем payload-тип для единственного
+                // позиционного аргумента конструктора.
+                let ctor_name: Option<&str> = match &func.kind {
+                    ExprKind::Ident(n) => Some(n.as_str()),
+                    _ => None,
+                };
+                let builtin_ctor_arg0_expected: Option<TypeRef> = if params.is_none() {
+                    match (ctor_name, expected) {
+                        (Some("Some"), Some(TypeRef::Named { path, generics, .. }))
+                            if path.last().map(|s| s.as_str()) == Some("Option")
+                                && generics.len() == 1 =>
+                        {
+                            Some(generics[0].clone())
+                        }
+                        (Some("Ok"), Some(TypeRef::Named { path, generics, .. }))
+                            if path.last().map(|s| s.as_str()) == Some("Result")
+                                && generics.len() == 2 =>
+                        {
+                            Some(generics[0].clone())
+                        }
+                        (Some("Err"), Some(TypeRef::Named { path, generics, .. }))
+                            if path.last().map(|s| s.as_str()) == Some("Result")
+                                && generics.len() == 2 =>
+                        {
+                            Some(generics[1].clone())
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 let mut positional_idx = 0usize;
                 for a in args.iter_mut() {
                     let arg_expected: Option<TypeRef> = match (&params, a.arg_name()) {
@@ -28746,7 +28839,15 @@ impl MapLitAnnotator {
                             positional_idx += 1;
                             r
                         }
-                        (None, _) => None,
+                        (None, _) => {
+                            let r = if positional_idx == 0 {
+                                builtin_ctor_arg0_expected.clone()
+                            } else {
+                                None
+                            };
+                            positional_idx += 1;
+                            r
+                        }
                     };
                     let expr_mut = match a {
                         CallArg::Item(x) | CallArg::Spread(x) => x,
@@ -28788,9 +28889,26 @@ impl MapLitAnnotator {
             ExprKind::TupleLit(elems) => {
                 for x in elems.iter_mut() { self.walk_expr(x, None); }
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
+                // [M-d55-anon-recordlit-codegen-gap] fix: раньше здесь было
+                // безусловно `walk_expr(v, None)` — вложенный анонимный
+                // record-литерал в позиции ИЗВЕСТНОГО поля (`Outer { m:
+                // {a: 1} }` где `m HashMap[str,int]`) терял expected-тип
+                // поля, из-за чего D55 map-coercion не срабатывала и codegen
+                // либо падал (`anonymous record literal without spread not
+                // supported`), либо (хуже) генерировал record-init для
+                // HashMap-структуры (`no member named 'a'`). Резолвим тип
+                // поля через `record_field_types`, собранный в `MapLitCtx::build`.
+                let field_types: Option<HashMap<String, TypeRef>> = type_name
+                    .as_ref()
+                    .and_then(|p| p.last())
+                    .and_then(|name| self.ctx.record_field_types.get(name))
+                    .cloned();
                 for f in fields.iter_mut() {
-                    if let Some(v) = &mut f.value { self.walk_expr(v, None); }
+                    if let Some(v) = &mut f.value {
+                        let fty = field_types.as_ref().and_then(|m| m.get(&f.name)).cloned();
+                        self.walk_expr(v, fty.as_ref());
+                    }
                 }
             }
             ExprKind::If { cond, then, else_ } => {
