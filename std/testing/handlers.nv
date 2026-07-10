@@ -184,6 +184,11 @@ export fn fixed_ms(ms u64) -> Effect[Time] {
         // оборачивает в `Monotonic` через `Monotonic.now()`-сахар — теперь
         // мокабельно (closes [M-monotonic-mock-support]).
         now_monotonic_ns() => (ms * 1_000_000) as int
+        // Plan 175.1 (D316 amend + D321, 2026-07-10): mock-coherence с
+        // now_unix_ms/now_monotonic_ns выше — фиксированные часы означают
+        // фиксированную (UTC) зону, детерминизм важнее реалистичности.
+        // closes [M-175.1-local-offset-effect-op] slot-coherence.
+        local_offset_sec() => 0
         sleep(d) => ()
     }
 }
@@ -204,6 +209,10 @@ export fn mut_clock(start_ms u64) -> Effect[Time] {
         // (`now_monotonic_ns`) когерентно — оба читают ИЗ ОДНОГО `current_ms`.
         // `advance`/`sleep` сдвигает оба чтения на одинаковую дельту.
         now_monotonic_ns() => (current_ms * 1_000_000) as int
+        // Plan 175.1 (D316 amend + D321, 2026-07-10): mock-coherence,
+        // фиксированная (UTC) зона — closes [M-175.1-local-offset-effect-op]
+        // slot-coherence (симметрично fixed_ms выше).
+        local_offset_sec() => 0
         // int-провод: `sleep(ms int)` — аргумент миллисекунды (schema
         // `sleep(ms int)`). Value-`Duration` НЕ пересекает границу эффекта
         // (mock оперирует int ms — Plan 175 option C). Виртуальные часы
@@ -373,4 +382,32 @@ test "seeded + mut_clock композируются" {
         assert(v1 != v2)
         assert(Time.now_unix_ms() == 1000)
     }
+}
+
+// ── local_offset_sec (Plan 175.1, D316 amend + D321, 2026-07-10) ──────────
+// closes [M-175.1-local-offset-effect-op].
+
+test "fixed_ms.local_offset_sec() — mock-coherence, фиксированный UTC (0)" {
+    ro off = with Time = fixed_ms(0 as u64) { Time.local_offset_sec() }
+    assert(off == 0)
+}
+
+test "mut_clock.local_offset_sec() — mock-coherence, фиксированный UTC (0)" {
+    ro off = with Time = mut_clock(0 as u64) { Time.local_offset_sec() }
+    assert(off == 0)
+}
+
+test "local_offset_sec() мокабелен произвольным handler-литералом" {
+    // Демонстрирует полную мокабельность нового опа (не только через
+    // fixed_ms/mut_clock helper'ы) — произвольный `effect Time { ... }`
+    // литерал волен вернуть любое значение (здесь: MSK, UTC+3 = 10800s).
+    ro off = with Time = effect Time {
+        sleep(ms) => ()
+        now_unix_ms() => 0
+        now_monotonic_ns() => 0
+        local_offset_sec() => 10_800
+    } {
+        Time.local_offset_sec()
+    }
+    assert(off == 10_800)
 }

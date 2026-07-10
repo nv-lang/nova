@@ -35,8 +35,16 @@ export type Time effect {
     sleep(ms int) -> ()
     now_unix_ms() -> int
     now_monotonic_ns() -> int
+    local_offset_sec() -> int
 }
 ```
+
+`local_offset_sec()` (Plan 175.1, D316 amend + D321, 2026-07-10) — системный
+UTC-сдвиг ТЕКУЩЕЙ локальной зоны машины, в секундах (owner decision: системная
+зона ДОЛЖНА быть доступна). Nova-сахар: `Offset.local()`
+(`std/time/civil/offset.nv`) — closes `[M-175.1-local-offset-effect-op]`.
+Только числовой сдвиг — зона в `ZonedDateTime` остаётся ЯВНОЙ (D319 R1),
+никакого implicit-fallback на «локальную зону».
 
 **Wire остаётся int** (см. «Ф.2 — почему typed-wire не отгружен» ниже) — весь
 user-facing surface, тем не менее, **полностью typed** и **полностью мокабелен**,

@@ -1101,19 +1101,29 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
  * backward-compat для handler-литералов, написанных до Ф.3(a)
  * (nova_tests/concurrency/* и др., не мигрированы этой волной).
  *
+ * Plan 175.1 (D316 amend + D321, 2026-07-10): `local_offset_sec`-слот
+ * ДОБАВЛЕН — closes [M-175.1-local-offset-effect-op] (owner decision:
+ * системный часовой пояс машины ДОЛЖЕН быть доступен). Тот же NULL-safe
+ * handler-extension pattern, что `now_monotonic_ns` выше: handler-литералы
+ * без явного `local_offset_sec() => ...` оставляют слот NULL и падают на
+ * реальный OS-хук (`_nova_local_offset_sec()`, nova_rt/fibers.h — Windows
+ * `GetTimeZoneInformation`/POSIX `localtime_r().tm_gmtoff`).
+ *
  * Plan 48 Ф.5: now_ms / now_ns — handler-extension слоты, чтобы handlers.nv
  * (fixed_ms, mut_clock — std/testing/handlers.nv) могли регистрировать
  * полный набор. Default-импл (Nova_Time_now_ms / _now_ns) — wrapper'ы
  * вокруг now_unix_ms(). Field-названия designated-init'ятся по имени
  * (порядок в структуре не важен для C designated initializers) — MUST
  * совпадать с codegen-emitted op-именами: ctx, sleep, now_unix_ms,
- * now_monotonic_ns, now_ms, now_ns (см. emit_handler_decl / fixed_ms vtable
- * init). Ретайр now_ms/now_ns — Plan 175 Ф.2 (не в Ф.1/Ф.4). */
+ * now_monotonic_ns, local_offset_sec, now_ms, now_ns (см. emit_handler_decl
+ * / fixed_ms vtable init). Ретайр now_ms/now_ns — Plan 175 Ф.2 (не в
+ * Ф.1/Ф.4). */
 typedef struct {
     void*     ctx;
     nova_unit (*sleep)(void* _ctx, nova_int ms);
     nova_int  (*now_unix_ms)(void* _ctx);
     nova_int  (*now_monotonic_ns)(void* _ctx);
+    nova_int  (*local_offset_sec)(void* _ctx);
     nova_int  (*now_ms)(void* _ctx);
     nova_int  (*now_ns)(void* _ctx);
 } NovaVtable_Time;

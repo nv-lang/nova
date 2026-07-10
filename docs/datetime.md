@@ -149,8 +149,11 @@ with Time = th.fixed_ms(1_700_000_000_000) {
 }
 ```
 
-`Time.local_offset()` (системная зона) в этой волне не поставлен —
-`[M-175.1-local-offset-effect-op]`; зона всегда передаётся явно.
+`Offset.local()` (D316 amend + D321, 2026-07-10 — closes
+`[M-175.1-local-offset-effect-op]`) даёт системный UTC-сдвиг машины поверх
+эффект-опа `Time.local_offset_sec()` (мокабелен, см. `docs/time.md`). Это
+ТОЛЬКО числовой сдвиг — зона в `ZonedDateTime` остаётся явной (D319 R1):
+`dt.to_zoned(TimeZone.Fixed(Offset.local()))`, никакого implicit-fallback.
 
 ## Nova ↔ java.time (шпаргалка)
 

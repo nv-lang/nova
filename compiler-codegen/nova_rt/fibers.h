@@ -2949,6 +2949,51 @@ static inline int64_t _nova_wall_unix_ms(void) {
     return (int64_t)tv.tv_sec * 1000 + (int64_t)tv.tv_usec / 1000;
 }
 
+/* Plan 175.1 (D316 amend + D321, 2026-07-10): system-local UTC offset in
+ * seconds — closes [M-175.1-local-offset-effect-op]. Owner decision:
+ * the machine's configured timezone MUST be reachable from Nova.
+ *
+ * This is the offset a fresh `Timestamp.now()` would observe RIGHT NOW
+ * (DST already folded in where applicable) — not a fixed standard-time
+ * offset. It is ONLY a numeric offset: no implicit `TimeZone`/`Fixed`
+ * substitution is introduced anywhere — civil-time (`std/time/civil`)
+ * still requires an EXPLICIT zone everywhere (D319 R1 unchanged);
+ * `Offset.local()` (std/time/civil/offset.nv) is the explicit Nova-side
+ * query wrapping this hook (java.time `ZoneId.systemDefault()` /
+ * Temporal `Now.timeZoneId()` class of operation — explicit, not an
+ * ambient default). */
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+static inline int64_t _nova_local_offset_sec(void) {
+    TIME_ZONE_INFORMATION tzi;
+    DWORD rc = GetTimeZoneInformation(&tzi);
+    /* `Bias`/`*Bias` are MINUTES to ADD to local time to get UTC
+     * (UTC == local + Bias) => offset-from-UTC == -(Bias [+ DST bias]). */
+    LONG bias = tzi.Bias;
+    if (rc == TIME_ZONE_ID_DAYLIGHT) {
+        bias += tzi.DaylightBias;
+    } else if (rc == TIME_ZONE_ID_STANDARD) {
+        bias += tzi.StandardBias;
+    }
+    /* TIME_ZONE_ID_UNKNOWN (no DST rule for this zone) — raw Bias only. */
+    return (int64_t)(-bias) * 60;
+}
+#else
+#  include <time.h>
+static inline int64_t _nova_local_offset_sec(void) {
+    time_t now = time(NULL);
+    struct tm local_tm;
+    localtime_r(&now, &local_tm);
+    /* `tm_gmtoff` (BSD/glibc/macOS-libc extension, present on every
+     * Nova-supported POSIX target) — seconds EAST of UTC, DST already
+     * folded in by localtime_r. */
+    return (int64_t)local_tm.tm_gmtoff;
+}
+#endif
+
 /* ─── Plan 22 Ф.4: libuv-based fiber-sleep ─── */
 /* uv.h + eventloop.h уже подключены выше в этом файле. */
 
@@ -3630,6 +3675,20 @@ static inline nova_int Nova_Time_now_monotonic_ns(void) {
         return _nova_handler_Time->now_monotonic_ns(_nova_handler_Time->ctx);
     }
     return (nova_int)_nova_monotonic_ns();
+}
+
+/* Plan 175.1 (D316 amend + D321, 2026-07-10): dispatch for
+ * `Time.local_offset_sec()` — closes [M-175.1-local-offset-effect-op].
+ * Same NULL-safe handler-extension-slot pattern as now_monotonic_ns
+ * above: handler-literals written before this amend leave the slot NULL
+ * (C99 designated-init zero-fill) and transparently fall back to the
+ * real OS-hook (`_nova_local_offset_sec()` above) — backward-compat, no
+ * forced migration of existing handler literals. */
+static inline nova_int Nova_Time_local_offset_sec(void) {
+    if (_nova_handler_Time && _nova_handler_Time->local_offset_sec) {
+        return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx);
+    }
+    return (nova_int)_nova_local_offset_sec();
 }
 
 /* ──────────────────────────────────────────────────────────────────
