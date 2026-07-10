@@ -3624,19 +3624,19 @@ static inline nova_int Nova_Time_now_ns(void) {
  * (переименована из `now_monotonic` — Plan 175 D316 amend (2026-07-06), единицы
  * в именах опов; чисто механическое переименование, поведение не менялось).
  *
- * NOTE: Time handler vtable currently не имеет slot'а под now_monotonic_ns
- * (NovaVtable_Time defined в effects.h до Plan 65). Под mock-handler этот
- * вызов прозрачно возвращает real monotonic clock — НЕ mock'нутое значение.
- * Это intentional trade-off: добавить slot потребует:
- *   1. Расширения NovaVtable_Time layout
- *   2. Re-emit'а ВСЕХ handler-literal'ов с зеро-init slot'ом (avoid
- *      NULL dereference при handler без now_monotonic_ns decl)
- *   3. Прокидывания через std/testing/handlers.nv fixed_ms / mut_clock
- *
- * Concrete user-impact: mock-clock tests НЕ контролируют Monotonic time.
- * Для timer deadline mock'а (Plan 65 Ф.10 mock-time path) используется
- * Time.sleep вместо Monotonic — sleep dispatch уже идёт через vtable. */
+ * Plan 175 Ф.3(a) (D316, 2026-07-06): slot добавлен в NovaVtable_Time
+ * (effects.h) — вызов теперь ИДЁТ через handler vtable, mock'абелен
+ * (closes [M-monotonic-mock-support]). Function-pointer NULL-check (не
+ * только `_nova_handler_Time`) — backward-compat: handler-литералы,
+ * написанные до Ф.3(a) и не объявляющие `now_monotonic_ns() => ...`,
+ * оставляют слот NULL (C99 designated-init zero-fill) и прозрачно падают
+ * на real-clock (тот же поведенческий контракт, что был раньше). Handlers,
+ * которым нужен mock monotonic-clock (std/testing/handlers.nv fixed_ms /
+ * mut_clock), реализуют слот явно. */
 static inline nova_int Nova_Time_now_monotonic_ns(void) {
+    if (_nova_handler_Time && _nova_handler_Time->now_monotonic_ns) {
+        return _nova_handler_Time->now_monotonic_ns(_nova_handler_Time->ctx);
+    }
     return (nova_int)_nova_monotonic_ns();
 }
 

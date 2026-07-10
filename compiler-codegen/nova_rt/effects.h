@@ -1087,21 +1087,33 @@ static inline nova_unit nova_throw_typed(nova_str msg_repr,
  * `now_unix_ms()->int`, `now_monotonic_ns()->int`), а не из хардкода.
  * Этот hand-written vtable = HANDLER-интерфейс (не codegen-schema): его
  * слоты — только те опы, что реализуются `with Time = handler {...}`.
- * `now_monotonic_ns` и 5 timer-счётчиков (→ TimerMetrics, Ф.1/Q1)
- * дispatch'атся direct-C (fibers.h / channels.h), НЕ через этот vtable.
+ * 5 timer-счётчиков (→ TimerMetrics, Ф.1/Q1) dispatch'атся direct-C
+ * (channels.h), НЕ через этот vtable.
+ *
+ * Plan 175 Ф.3(a) (D316, 2026-07-06): `now_monotonic_ns`-слот ДОБАВЛЕН —
+ * `Monotonic.now()` больше не compiler-builtin (см. std/time/duration.nv),
+ * а обычный `.nv`-сахар над `Time.now_monotonic_ns()`, значит вызов ИДЁТ
+ * через vtable и обязан быть mock'абелен (closes [M-monotonic-mock-support]).
+ * Handler-литералы БЕЗ явного `now_monotonic_ns() => ...` оставляют слот
+ * NULL (C99 designated-init zero-fills недостающие поля) — Nova_Time_
+ * now_monotonic_ns() (fibers.h) НУЛЬ-проверяет сам указатель на функцию
+ * (не только `_nova_handler_Time`) и падает обратно на real-clock —
+ * backward-compat для handler-литералов, написанных до Ф.3(a)
+ * (nova_tests/concurrency/* и др., не мигрированы этой волной).
  *
  * Plan 48 Ф.5: now_ms / now_ns — handler-extension слоты, чтобы handlers.nv
  * (fixed_ms, mut_clock — std/testing/handlers.nv) могли регистрировать
  * полный набор. Default-импл (Nova_Time_now_ms / _now_ns) — wrapper'ы
  * вокруг now_unix_ms(). Field-названия designated-init'ятся по имени
  * (порядок в структуре не важен для C designated initializers) — MUST
- * совпадать с codegen-emitted op-именами: ctx, sleep, now_unix_ms, now_ms,
- * now_ns (см. emit_handler_decl / fixed_ms vtable init). Ретайр
- * now_ms/now_ns — Plan 175 Ф.2 (не в Ф.1/Ф.4). */
+ * совпадать с codegen-emitted op-именами: ctx, sleep, now_unix_ms,
+ * now_monotonic_ns, now_ms, now_ns (см. emit_handler_decl / fixed_ms vtable
+ * init). Ретайр now_ms/now_ns — Plan 175 Ф.2 (не в Ф.1/Ф.4). */
 typedef struct {
     void*     ctx;
     nova_unit (*sleep)(void* _ctx, nova_int ms);
     nova_int  (*now_unix_ms)(void* _ctx);
+    nova_int  (*now_monotonic_ns)(void* _ctx);
     nova_int  (*now_ms)(void* _ctx);
     nova_int  (*now_ns)(void* _ctx);
 } NovaVtable_Time;

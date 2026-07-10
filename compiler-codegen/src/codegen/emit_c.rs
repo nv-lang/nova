@@ -31071,11 +31071,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             ));
                         }
                     }
-                    // Plan 65 Ф.12.1 / D124: Monotonic.now() — compiler builtin.
-                    // Bypasses Time-effect schema (latent record-return mismatch).
-                    if name == "Monotonic" && method == "now" {
-                        return Ok("((NovaValue_Monotonic){.nanos = (int64_t)_nova_monotonic_ns()})".to_string());
-                    }
+                    // Plan 175 Ф.3(a): `Monotonic.now()` builtin RETIRED — now an
+                    // ordinary `.nv` static fn (std/time/duration.nv), same shape
+                    // as `Timestamp.now()`, resolved via the generic call path
+                    // below. Closes [M-monotonic-mock-support] (mockable via
+                    // `with Time = handler {...}`) + the grep-нормативы 4-site
+                    // removal (plan-175 §Ф.3).
                     // Plan 65 Ф.12.4 / D124: ChanReader.close_at(deadline Monotonic).
                     // Type-system enforces Monotonic — bare int / Timestamp →
                     // compile error via the C-type-mismatch path (similar to
@@ -34022,10 +34023,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         ));
                     }
                 }
-                // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form builtin.
-                if parts.len() == 2 && parts[0] == "Monotonic" && parts[1] == "now" {
-                    return Ok("((NovaValue_Monotonic){.nanos = (int64_t)_nova_monotonic_ns()})".to_string());
-                }
+                // Plan 175 Ф.3(a): `Monotonic.now()` builtin RETIRED (Path-form) —
+                // see the Member-form note above; resolved generically now.
                 // Plan 65 Ф.12.4 / D124: ChanReader.close_at(Monotonic) — Path-form.
                 if parts.len() == 2 && parts[0] == "ChanReader" && parts[1] == "close_at" {
                     if let Some(arg) = args.first() {
@@ -45623,10 +45622,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if n == "ChanReader" && method == "close_at" {
                                 return "Nova_ChanReader*".into();
                             }
-                            // Plan 65 Ф.12.1 / D124: Monotonic.now() returns Monotonic.
-                            if n == "Monotonic" && method == "now" {
-                                return "NovaValue_Monotonic".into();
-                            }
+                            // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
+                            // RETIRED — generic static-fn return-type inference
+                            // now resolves it (ordinary `.nv` fn, like Timestamp.now()).
                             // D75 (revised, Plan 47): CancelToken.new() — Member-form.
                             if n == "CancelToken" && method == "new" {
                                 return "NovaCancelToken*".into();
@@ -46306,10 +46304,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if eff == "ChanReader" && method_name == "close_at" {
                                 return "Nova_ChanReader*".into();
                             }
-                            // Plan 65 Ф.12.1 / D124: Monotonic.now() — Path-form.
-                            if eff == "Monotonic" && method_name == "now" {
-                                return "NovaValue_Monotonic".into();
-                            }
+                            // Plan 175 Ф.3(a): `Monotonic.now()` inference builtin
+                            // RETIRED (Path-form) — see Member-form note above.
                             // D75 (revised, Plan 47): CancelToken.new() — Path-form.
                             if eff == "CancelToken" && method_name == "new" {
                                 return "NovaCancelToken*".into();
