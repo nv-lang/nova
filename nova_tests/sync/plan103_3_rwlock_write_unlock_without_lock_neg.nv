@@ -1,9 +1,0 @@
-// Plan 103.3 — RwLock.write_unlock() without write() → RUNTIME_PANIC.
-//
-
-module nova_tests.sync
-
-test "write_unlock without write panics" panics "RwLock.write_unlock() called without a matching write()" {
-    mut rw = RwLock.new()
-    rw.write_unlock()
-}

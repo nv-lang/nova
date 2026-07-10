@@ -2,10 +2,11 @@
 //
 // Unconditional check (Plan 103.3 pattern: fires in Dev AND Release).
 //
+// EXPECT_RUNTIME_PANIC Mutex.unlock() called on an unlocked mutex
 
-module nova_tests.sync
+module neg.plan103_3_mutex_double_unlock_neg
 
-test "unlock without lock panics" panics "Mutex.unlock() called on an unlocked mutex" {
+test "unlock without lock panics" {
     mut mu = Mutex.new()
     mu.unlock()
 }

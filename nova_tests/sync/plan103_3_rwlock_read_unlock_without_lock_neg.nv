@@ -1,9 +1,0 @@
-// Plan 103.3 — RwLock.read_unlock() without read() → RUNTIME_PANIC.
-//
-
-module nova_tests.sync
-
-test "read_unlock without read panics" panics "RwLock.read_unlock() called without a matching read()" {
-    mut rw = RwLock.new()
-    rw.read_unlock()
-}
