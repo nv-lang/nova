@@ -3194,6 +3194,16 @@ struct TypeCheckCtx<'a> {
     /// Ф.1: объявления типов — для разворачивания alias/newtype при
     /// категоризации (assignability сравнивает категории, не имена).
     types: HashMap<String, &'a TypeDecl>,
+    /// [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
+    /// имена sum-вариантов (payload и unit), собранные по `module.items`
+    /// НАПРЯМУЮ (Vec-обход — теряет ноль записей), в отличие от `types`
+    /// (HashMap, keyed по имени суммы — при co-presence НЕСКОЛЬКИХ
+    /// одноимённых sum-типов из разных модулей, например `ErrorKind` в
+    /// http/io/compress, `types.insert` перезаписывает — выживает только
+    /// ПОСЛЕДНИЙ; варианты остальных исчезают из `types.values()`).
+    /// E_UNKNOWN_TYPE-гейт (RecordLit variant-ctor) обязан видеть variant-имя
+    /// вне зависимости от того, чья одноимённая сумма победила слот в `types`.
+    sum_variant_names: HashSet<String>,
     /// Plan 81 Ф.2: префиксы импортированных модулей (alias + последний
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
@@ -3516,6 +3526,16 @@ impl<'a> TypeCheckCtx<'a> {
         let mut types: HashMap<String, &'a TypeDecl> = HashMap::new();
         // [M-blanket-method-resolve]: names of blanket methods (`fn[T] T @m`).
         let mut blanket_method_names: HashSet<String> = HashSet::new();
+        // [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
+        // sum-variant-имена ЛОССЛЕСС (тот же Vec-обход `module.items`, что
+        // строит `types` ниже) — параллельно `types`-HashMap, который при
+        // co-presence нескольких одноимённых sum-типов из разных модулей
+        // (например `ErrorKind` в http/io/compress) перезаписывает запись —
+        // выживает только ПОСЛЕДНИЙ, варианты остальных пропадают из
+        // `types.values()`. E_UNKNOWN_TYPE-гейт (RecordLit variant-ctor)
+        // обязан видеть variant-имя вне зависимости от того, чья одноимённая
+        // сумма победила слот в `types`.
+        let mut sum_variant_names: HashSet<String> = HashSet::new();
         for item in &module.items {
             match item {
                 Item::Fn(f) => {
@@ -3534,6 +3554,11 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 Item::Type(td) => {
                     types.insert(td.name.clone(), td);
+                    if let TypeDeclKind::Sum(vs) = &td.kind {
+                        for v in vs {
+                            sum_variant_names.insert(v.name.clone());
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -3549,6 +3574,11 @@ impl<'a> TypeCheckCtx<'a> {
             for item in &ext_mod.items {
                 if let Item::Type(td) = item {
                     types.entry(td.name.clone()).or_insert(td);
+                    if let TypeDeclKind::Sum(vs) = &td.kind {
+                        for v in vs {
+                            sum_variant_names.insert(v.name.clone());
+                        }
+                    }
                 }
             }
         }
@@ -3863,7 +3893,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, imported_modules,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, sum_variant_names, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -6307,9 +6337,16 @@ impl<'a> TypeCheckCtx<'a> {
                         if last != "Self"
                             && !gs.contains(last)
                             && !self.types.contains_key(last)
-                            && !self.types.values().any(|td| matches!(
-                                &td.kind,
-                                TypeDeclKind::Sum(vs) if vs.iter().any(|v| &v.name == last)))
+                            // [M-compress-checksum-structvariant-ctor-xmodule]:
+                            // `self.types` — HashMap keyed по имени суммы; при
+                            // co-presence НЕСКОЛЬКИХ одноимённых sum-типов из
+                            // разных модулей (например `ErrorKind` http/io/
+                            // compress) `types.insert` перезаписывает — выживает
+                            // только ПОСЛЕДНИЙ, варианты остальных пропадают из
+                            // `types.values()`. `sum_variant_names` собран
+                            // ЛОССЛЕСС (прямой Vec-обход `module.items`) — не
+                            // подвержен этой коллизии.
+                            && !self.sum_variant_names.contains(last)
                         {
                             errors.push(Diagnostic::new(
                                 format!(
