@@ -10,7 +10,7 @@
 //!    warning. Public API должен иметь typed Fail (D65 convention).
 
 use crate::ast::{
-    ArrayElem, Block, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
+    ArrayElem, Block, CallArg, ClosureBody, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
     HandlerMethodBody, Import, Item, MatchArmBody, Module, Pattern, ReceiverKind,
     Stmt, TypeDeclKind, TypeRef,
 };
@@ -2690,6 +2690,13 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: None,
         text: Some(conv_leading_binop_continuation),
     },
+    ConvRule {
+        id: "W_REDUNDANT_OF",
+        summary: "`Vec[T].of(...)` избыточен — литерал `[...]` дал бы ТОТ ЖЕ \
+                  тип (nv-coding-style §28)",
+        ast: Some(conv_redundant_of),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -4501,6 +4508,123 @@ fn conv_leading_binop_continuation(src: &str, _o: &ConvLintOptions, out: &mut Ve
         prev_delta = Some(delta);
         prev_brace_delta = brace_delta;
         prev_last_brace_open = last_brace_open;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_REDUNDANT_OF — `Vec[T].of(...)`, когда литерал `[...]` дал бы ТОТ ЖЕ тип
+// (nv-coding-style §28: канон конструирования коллекций, · согласовано
+// 2026-07-10). `.of` оправдан только когда несёт информацию, которой нет в
+// литерале (фиксация ширины `u32`/`i64`/…, `None`-элементы, пустая граница
+// API); в остальных случаях — избыточная упаковка.
+//
+// SEMANTIC-UPGRADE: без типов не можем в общем случае доказать «литерал дал
+// бы тот же элемент-тип» для произвольного выражения-аргумента. V1 —
+// КОНСЕРВАТИВНЫЙ подкласс: `T` буквально совпадает с default-типом, который
+// литерал даёт голому примитивному литералу (`int`/`str`/`bool`/`char`), И
+// КАЖДЫЙ аргумент — однозначный литерал ИМЕННО этого типа (не идентификатор,
+// не `None`, не вызов, без сужения). Это исключает ложные срабатывания на
+// `Vec[u32].of(1,2,3)` (сужение — generics.is_empty()/имя не совпадёт),
+// `Vec[Option[int]].of(None)` (generics непусты — не наш default-набор),
+// `Vec[T].of()` (пусто — args.is_empty() гейт), `Vec[[]u8].of(x.bytes())`
+// (elem-тип — Array, не Named; аргумент не литерал) и любой non-literal
+// аргумент (переменная/вызов/property — тип не выводится синтаксически).
+// Остальные истинно-избыточные случаи (не примитивный литерал) — вне V1,
+// маркер расширения на будущее.
+// ---------------------------------------------------------------------------
+
+fn conv_redundant_of(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        conv_walk_fn(
+            f,
+            &mut |_s, _| {},
+            &mut |e, _in_loop| {
+                let ExprKind::Call { func, args, trailing } = &e.kind else { return };
+                if trailing.is_some() || args.is_empty() {
+                    return;
+                }
+                let ExprKind::Member { obj, name } = &func.kind else { return };
+                if name != "of" {
+                    return;
+                }
+                let ExprKind::TurboFish { base, type_args } = &obj.kind else { return };
+                let is_vec = match &base.kind {
+                    ExprKind::Ident(n) => n == "Vec",
+                    ExprKind::Path(p) => p.last().map(String::as_str) == Some("Vec"),
+                    _ => false,
+                };
+                if !is_vec || type_args.len() != 1 {
+                    return;
+                }
+                // Только позиционные Item-аргументы — spread/именованные меняют
+                // семантику (не эквивалент простого литерала), вне V1.
+                if !args.iter().all(|a| matches!(a, CallArg::Item(_))) {
+                    return;
+                }
+                let Some(default_name) = conv_ty_literal_default_name(&type_args[0]) else {
+                    return;
+                };
+                let all_match_default = args.iter().all(|a| {
+                    conv_expr_is_bare_literal_of(a.expr(), default_name)
+                });
+                if !all_match_default {
+                    return;
+                }
+                out.push(LintWarning {
+                    rule: "W_REDUNDANT_OF",
+                    diag: Diagnostic::new(
+                        format!(
+                            "`Vec[{t}].of(...)` избыточен: аргументы — голые `{t}`-литералы, \
+                             для которых литерал `[...]` дал бы ТОТ ЖЕ тип `Vec[{t}]` \
+                             (nv-coding-style §28). Канон — `[...]`. `.of` оправдан только \
+                             когда фиксирует тип, которого литерал не даёт (сужение ширины \
+                             `u32`/`i64`/…, `None`-элементы, пустая граница API).",
+                            t = default_name
+                        ),
+                        e.span,
+                    ),
+                });
+            },
+        );
+    }
+}
+
+/// Имя default-типа, который литерал `[...]` даёт голому примитивному
+/// литералу этого вида (`int`/`str`/`bool`/`char`) — только если `T` в
+/// `Vec[T]` буквально этот бесгенериковый именованный тип (без сужения).
+fn conv_ty_literal_default_name(tr: &TypeRef) -> Option<&'static str> {
+    if let TypeRef::Named { path, generics, .. } = tr {
+        if generics.is_empty() && path.len() == 1 {
+            return match path[0].as_str() {
+                "int" => Some("int"),
+                "str" => Some("str"),
+                "bool" => Some("bool"),
+                "char" => Some("char"),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
+/// `e` — однозначный голый литерал вида `kind` (`int`/`str`/`bool`/`char`),
+/// без сужения/оборачивания. Для `int` допускает унарный `-`/`+` перед
+/// `IntLit` (частый случай отрицательных констант), это остаётся тем же
+/// default-типом литерала.
+fn conv_expr_is_bare_literal_of(e: &Expr, kind: &str) -> bool {
+    match kind {
+        "int" => match &e.kind {
+            ExprKind::IntLit(_) => true,
+            ExprKind::Unary { op, operand } => {
+                matches!(op, crate::ast::UnOp::Neg)
+                    && matches!(operand.kind, ExprKind::IntLit(_))
+            }
+            _ => false,
+        },
+        "str" => matches!(e.kind, ExprKind::StrLit(_)),
+        "bool" => matches!(e.kind, ExprKind::BoolLit(_)),
+        "char" => matches!(e.kind, ExprKind::CharLit(_)),
+        _ => false,
     }
 }
 
