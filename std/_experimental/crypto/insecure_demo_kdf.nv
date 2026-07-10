@@ -1,0 +1,317 @@
+// std/_experimental/crypto/insecure_demo_kdf.nv — ⚠ INSECURE demo password KDF.
+//
+// ⚠️⚠️⚠️ WARNING — NOT REAL CRYPTO. NOT BCRYPT. NOT PRODUCTION-SAFE. ⚠️⚠️⚠️
+//
+// Это НЕ bcrypt. Внутри нет Blowfish cipher, нет EksBlowfishSetup —
+// просто SHA-256 key-stretching (2^cost повторов hash поверх salt).
+// Годится ТОЛЬКО как демонстрация API-формы (Result-based hash/verify,
+// cost-параметр, Random-эффект для salt) — НЕ для защиты реальных
+// паролей: SHA-256 стретчинг быстрый и GPU-attackable, в отличие от
+// намеренно медленного Blowfish-ядра настоящего bcrypt (или Argon2).
+//
+// Модуль живёт в `_experimental/` (не входит в shipped std / 0.1
+// release contract) ИМЕННО по этой причине — предыдущее имя `Bcrypt` +
+// bcrypt-совместимый `$2b$...`-формат создавали риск, что пользователь
+// примет демо-KDF за настоящий bcrypt и будет хранить пароли, считая их
+// защищёнными. См. docs/plans/191-bcrypt-security-hardening.md (вариант
+// A — де-риск поверхности: перенос + честное имя + свой формат, БЕЗ
+// bcrypt-impersonation). Настоящая KDF (Argon2 или native
+// Blowfish/libsodium-шим по образцу tls_shim) — docs/plans/193
+// (отдельная будущая волна, требует крипто-верификации).
+//
+// Лицензия: MIT OR Apache-2.0 (собственная реализация, без внешних
+// зависимостей).
+//
+// API:
+//   InsecureDemoKdf.hash(password str, cost int) Random -> Result[str, InsecureDemoKdfError]
+//   InsecureDemoKdf.verify(password str, hash_str str) -> bool
+//
+// Use case: ТОЛЬКО прототипирование/тесты формы password-hashing API.
+// Для реального хранения паролей в проде — ждать Plan 193, либо
+// использовать внешний argon2/bcrypt через native-биндинг.
+//
+// ВАЖНО: НЕ использовать sha256/md5 напрямую для паролей — они слишком
+// быстрые, GPU-attackable. Настоящий bcrypt/argon2 намеренно медленный
+// (cost 10 ≈ 100ms на современном CPU) — экспоненциально замедляет
+// brute-force. Этот демо-модуль сам по себе НЕ решает эту проблему —
+// он лишь показывает форму API, которую решение должно иметь.
+
+module crypto.insecure_demo_kdf
+
+import std.crypto.sha256.{Sha256}
+
+
+/// Errors при insecure-demo-KDF операциях.
+#experimental(note = "демо-KDF, НЕ настоящая крипто-примитива; см. Plan 193")
+export type InsecureDemoKdfError enum
+    | InvalidCost { value int }
+    | InvalidHash { reason str }
+    | PasswordTooLong { length int, max int }
+
+
+// Cost factor: 2^cost rounds. 10 = 1024 rounds (default). Минимум 4,
+// максимум 31. Эти границы унаследованы от bcrypt-конвенции для
+// правдоподобной демонстрации API-формы — НЕ индикатор реальной
+// стойкости (см. предупреждение выше).
+const MIN_COST int = 4
+const MAX_COST int = 31
+const DEFAULT_COST int = 10
+const MAX_PASSWORD_LEN int = 72        // унаследованный bcrypt-лимит (демо, не защита)
+
+
+// Hash формат (СВОЙ, не bcrypt-совместимый и не $2*$-подобный, чтобы
+// не выдавать себя за настоящий bcrypt/crypt-формат):
+//   "$ndk1$<cost>$<22-char-salt><31-char-hash>"
+//   ndk1 — тег "Nova Demo Kdf v1" (НЕ версия bcrypt)
+//   10   — cost (2^10 = 1024 rounds)
+//   22 chars salt в demo-base64
+//   31 chars hash output в demo-base64
+
+const SALT_LEN int = 16          // 16 random bytes → 22 base64 chars
+const FORMAT_TAG str = "ndk1"
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────────────────────
+
+/// ⚠ INSECURE — демо-KDF, НЕ настоящий bcrypt/argon2. НЕ использовать
+/// для защиты реальных паролей (см. предупреждение в шапке файла).
+///
+/// Hash password с cost factor (2^cost rounds, 10 = 1024 rounds default).
+/// Format `$ndk1$<cost>$<salt><hash>`. Random effect — для salt.
+///
+/// # Examples
+/// ```nova
+/// with Random = th.seeded(42) {
+///     let h = InsecureDemoKdf.hash("secret", 10)!!
+/// }
+/// ```
+#experimental(note = "демо-KDF, НЕ настоящий bcrypt; см. Plan 193")
+export fn InsecureDemoKdf.hash(password str, cost int) Random -> Result[str, InsecureDemoKdfError] {
+    if cost < MIN_COST || cost > MAX_COST {
+        return Err(InvalidCost { value: cost })
+    }
+    if password.bytes().len() > MAX_PASSWORD_LEN {
+        return Err(PasswordTooLong { length: password.bytes().len(), max: MAX_PASSWORD_LEN })
+    }
+
+    ro salt = Random.bytes(SALT_LEN)
+    ro hashed = demo_kdf(password.bytes(), salt, cost)
+
+    // Format: $ndk1$<cost>$<salt><hash>
+    ro cost_str = if cost < 10 { "0" + str.from(cost) } else { str.from(cost) }
+    Ok("$" + FORMAT_TAG + "$" + cost_str + "$" + demo_base64_encode(salt) + demo_base64_encode(hashed))
+}
+
+
+/// ⚠ INSECURE — демо-KDF, НЕ настоящий bcrypt/argon2.
+///
+/// Verify password против demo-KDF hash. **Constant-time** для security.
+/// Returns `false` на любой malformed input (нет throw).
+#experimental(note = "демо-KDF, НЕ настоящий bcrypt; см. Plan 193")
+export fn InsecureDemoKdf.verify(password str, hash_str str) -> bool {
+    // Parse format
+    ro parts = hash_str.split("$")
+    // ["", "ndk1", "<cost>", "<salt><hash>"]
+    if parts.len() != 4 { return false }
+    if parts[1] != FORMAT_TAG { return false }
+
+    ro cost = match int.try_from(parts[2]) {
+        Ok(c) if c >= MIN_COST && c <= MAX_COST => c
+        _                                        => return false
+    }
+
+    ro combined = parts[3]
+    if combined.len() < 53 { return false }    // 22 salt + 31 hash
+    ro salt_b64 = combined[0..22]
+    ro hash_b64 = combined[22..]
+
+    ro salt = match demo_base64_decode(salt_b64) {
+        Some(b) if b.len() == SALT_LEN => b
+        _                             => return false
+    }
+    ro expected_hash = match demo_base64_decode(hash_b64) {
+        Some(h) => h
+        None    => return false
+    }
+
+    ro computed = demo_kdf(password.bytes(), salt, cost)
+    constant_time_eq(computed, expected_hash)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Internal — упрощённая KDF (НЕ EksBlowfishSetup, НЕ Blowfish — просто
+// повторяющийся SHA-256; см. предупреждение в шапке файла)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Настоящая замена (Argon2 или native Blowfish/libsodium-шим) — Plan
+// 193 (отдельная будущая волна, вне scope де-риска Plan 191).
+
+fn demo_kdf(password []u8, salt []u8, cost int) -> []u8 {
+    ro rounds = 1 << cost          // 2^cost
+    mut state = Sha256.new()
+    state.update(salt)
+    state.update(password)
+    mut bytes = state.finalize()[0..32]
+
+    // Iterate `rounds` times — экспоненциальная стоимость по cost.
+    for k in 0..rounds {
+        mut s = Sha256.new()
+        s.update(bytes)
+        s.update(salt)
+        bytes = s.finalize()[0..32]
+    }
+    // Берём первые 23 байта (184 бита output, как у bcrypt — исторический
+    // размер, унаследован для правдоподобной демо-формы) — срез-вид (§18а).
+    bytes[0..23]
+}
+
+
+fn constant_time_eq(a []u8, b []u8) -> bool {
+    if a.len() != b.len() { return false }
+    mut diff = 0
+    for i in 0..a.len() {
+        diff = diff | ((a[i] as int) ^ (b[i] as int))
+    }
+    diff == 0
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────
+// Demo-KDF's own Base64 (alphabet отличается от standard; заимствован из
+// bcrypt-конвенции для правдоподобной демо-формы, но это ТОЛЬКО alphabet —
+// НЕ делает эту KDF настоящим bcrypt)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Alphabet:
+//   "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+//
+// Без padding, group по 3 bytes → 4 chars.
+
+const DEMO_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+
+fn demo_base64_encode(data []u8) -> str {
+    consume buf = StringBuilder.new().cap(data.len() * 4 / 3 + 4)
+    mut i = 0
+    while i + 2 < data.len() {
+        ro b0 = data[i] as u32
+        ro b1 = data[i + 1] as u32
+        ro b2 = data[i + 2] as u32
+        ro triple = (b0 << 16) | (b1 << 8) | b2
+        buf.append(alphabet_char(((triple >> 18) & 0x3F) as int))
+        buf.append(alphabet_char(((triple >> 12) & 0x3F) as int))
+        buf.append(alphabet_char(((triple >> 6) & 0x3F) as int))
+        buf.append(alphabet_char((triple & 0x3F) as int))
+        i += 3
+    }
+    ro remaining = data.len() - i
+    if remaining == 1 {
+        ro b0 = data[i] as u32
+        buf.append(alphabet_char(((b0 >> 2) & 0x3F) as int))
+        buf.append(alphabet_char(((b0 << 4) & 0x3F) as int))
+    } else if remaining == 2 {
+        ro b0 = data[i] as u32
+        ro b1 = data[i + 1] as u32
+        buf.append(alphabet_char(((b0 >> 2) & 0x3F) as int))
+        buf.append(alphabet_char((((b0 << 4) | (b1 >> 4)) & 0x3F) as int))
+        buf.append(alphabet_char(((b1 << 2) & 0x3F) as int))
+    }
+    buf.into_str()
+}
+
+
+// DEMO_ALPHABET (64 ASCII chars) — прямой byte-доступ O(1) вместо
+// ретрактированного `chars().nth(idx)` O(n) скана (D260-амендмент).
+// `int as char` запрещён (D54) → `char.from` (precedent: std/encoding/json.nv
+// Lexer `@peek()`/`@advance()`).
+fn alphabet_char(idx int) -> char {
+    match DEMO_ALPHABET.bytes().get(idx) {
+        Some(b) => (b as int).to_char() ?? '.'
+        None    => '.'
+    }
+}
+
+// demo-hash text — pure ASCII (demo's own base64 alphabet) — byte access
+// вместо ретрактированного `chars().nth(i)` O(n) скана per-call (D260-амендмент,
+// [M-d73-d77-retraction-migration] Block 4). `demo_decode_char` keeps its
+// `Option[char]` signature (unchanged, still does its own small O(64) linear
+// alphabet-index scan below) — only the byte→char reconstruction at the call
+// site becomes O(1).
+fn demo_base64_decode(s str) -> Option[[]u8] {
+    mut out []u8 = []
+    ro sb = s.bytes()
+    mut i = 0
+    while i + 3 < s.byte_len() {
+        // [M-match-tuple-option-value-deref] РЕШЕНО (Plan 172.13): tuple-match
+        // над 4×Option[u32] теперь резолвится корректно (dot-accessor на
+        // value-embedded NovaOpt_uint32_t) — вернулся естественный tuple-match
+        // вместо последовательного `?`-unwrap обхода.
+        match (demo_decode_char(byte_to_char(sb, i)),
+               demo_decode_char(byte_to_char(sb, i + 1)),
+               demo_decode_char(byte_to_char(sb, i + 2)),
+               demo_decode_char(byte_to_char(sb, i + 3))) {
+            (Some(a), Some(b), Some(c), Some(d)) => {
+                ro triple = (a << 18) | (b << 12) | (c << 6) | d
+                out.push(((triple >> 16) & 0xFF) as u8)
+                out.push(((triple >> 8) & 0xFF) as u8)
+                out.push((triple & 0xFF) as u8)
+            }
+            _ => return None
+        }
+        i += 4
+    }
+    // Trailing (тот же обход — последовательный `?` вместо tuple-match).
+    //
+    // BUGFIX (найден при исходном промоушене в std/crypto, унаследован сюда):
+    // оригинал покрывал ТОЛЬКО «2 leftover chars → 1 byte» (salt, 22 chars =
+    // 5 групп по 4 + 2 leftover) и молча ТЕРЯЛ 3-й leftover-char для «3
+    // leftover chars → 2 bytes» (hash, 31 char = 7 групп по 4 + 3 leftover) —
+    // round-trip `InsecureDemoKdf.hash`+`InsecureDemoKdf.verify` ломался
+    // именно на hash-порции (кусок теряемого байта менял decoded digest).
+    // Оба leftover-случая — зеркало `demo_base64_encode`'s remaining==1/==2
+    // (байты→chars), здесь remaining chars→bytes: 2 chars→1 byte,
+    // 3 chars→2 bytes (стандартная base64 4-to-3 обратная формула).
+    ro remaining = s.byte_len() - i
+    if remaining == 2 {
+        ro a = demo_decode_char(byte_to_char(sb, i))?
+        ro b = demo_decode_char(byte_to_char(sb, i + 1))?
+        out.push(((a << 2) | (b >> 4)) as u8)
+    } else if remaining == 3 {
+        ro a = demo_decode_char(byte_to_char(sb, i))?
+        ro b = demo_decode_char(byte_to_char(sb, i + 1))?
+        ro c = demo_decode_char(byte_to_char(sb, i + 2))?
+        out.push(((a << 2) | (b >> 4)) as u8)
+        out.push((((b << 4) | (c >> 2)) & 0xFF) as u8)
+    }
+    Some(out)
+}
+
+// Байты 0..255 всегда валидные Unicode scalar values (Latin-1 подмножество) —
+// `char.from` (Result, D325) для них никогда не возвращает `Err`; `.ok()`
+// (R4) даёт канонический Result→Option. `bytes.get(i)` даёт out-of-bounds `None`.
+fn byte_to_char(bytes []u8, i int) -> Option[char] {
+    match bytes.get(i) {
+        Some(b) => (b as int).to_char().ok()
+        None    => None
+    }
+}
+
+
+fn demo_decode_char(c Option[char]) -> Option[u32] {
+    match c {
+        None => None
+        Some(ch) => {
+            mut idx = 0
+            for ach in DEMO_ALPHABET.chars() {
+                if ach == ch { return Some(idx) }
+                idx += 1
+            }
+            None
+        }
+    }
+}
+
+// Тесты — см. peer-файл insecure_demo_kdf_test.nv (module crypto.insecure_demo_kdf_test).

@@ -19,6 +19,30 @@
 
 ## Содержимое (Plan 91 Ф.0 baseline 2026-05-27; ред. волны промоушена 2026-07-08)
 
+> **DEMOTED 2026-07-10 (Plan 191, security-де-риск, 1 модуль):**
+> `std/crypto/bcrypt.nv` → `std/_experimental/crypto/insecure_demo_kdf.nv`
+> (обратный перенос, из shipped std). Причина: модуль экспортировал
+> `Bcrypt.hash`/`Bcrypt.verify` и выдавал `$2b$...`-формат, ИМИТИРУЮЩИЙ
+> настоящий bcrypt, но внутри — упрощённый SHA-256 key-stretching (НЕ
+> Blowfish/EksBlowfishSetup). Латентная дыра: пользователь `import
+> std.crypto.bcrypt` не видит предупреждение в исходнике и хранит пароли,
+> считая их bcrypt-защищёнными. Де-риск (вариант A, docs/plans/
+> 191-bcrypt-security-hardening.md): (1) убран из shipped std → сюда
+> (auto-skip из `nova check std/`, явный сигнал «не в релизном наборе»);
+> (2) тип `Bcrypt`/`BcryptError` переименован в честное `InsecureDemoKdf`/
+> `InsecureDemoKdfError`; (3) hash-формат сменён с bcrypt-совместимого
+> `$2b$<cost>$...` на собственный `$ndk1$<cost>$...` (тег "Nova Demo Kdf
+> v1") — verify намеренно НЕ распознаёт `$2b$`/`$2a$`/`$2y$` (новый тест
+> пинует это явно), чтобы не создавать иллюзию bcrypt-совместимости;
+> (4) докстринг — явное `⚠ INSECURE`-предупреждение в шапке файла и на
+> каждой public fn (`#experimental(note = ...)` вместо `#stable`).
+> Настоящая крипто-реализация (Argon2 или native Blowfish/libsodium-шим)
+> — Plan 193 (отдельная будущая волна, вне scope этого де-риска).
+> Маркер `[M-bcrypt-demo-kdf-not-real]` закрыт для варианта A; вариант B
+> (настоящая KDF) — Plan 193. Peer-тест `insecure_demo_kdf_test.nv`
+> мигрирован вместе с модулем (imports/assertions на новое имя/формат,
+> + новый негативный тест на отказ `$2b$`-хешей).
+
 > **PROMOTED 2026-07-10 (Plan 186 recursive-mono, 1 модуль):**
 > `collections/linkedlist` → `std/collections/`. Разблокирован ПОЧИНКОЙ
 > самого mono-канала (не воркэраундом контента) — четыре сцепленных
@@ -92,7 +116,7 @@
 | Domain | Files | Status | Reason for exp. |
 |---|---|---|---|
 | `collections/` | (пусто — `linkedlist` **PROMOTED 2026-07-10** Plan 186; остальные 5 PROMOTED 2026-07-08 w1) | — | — |
-| `crypto/` | (пусто — все 5 PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt) | — | — |
+| `crypto/` | `insecure_demo_kdf` (5 core PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt; `bcrypt` DEMOTED-обратно 2026-07-10 Plan 191, переим. в `insecure_demo_kdf` — см. запись выше) | check PASS | ⚠ INSECURE демо, НЕ настоящий bcrypt — security-де-риск, не codegen-блокер; настоящая KDF = Plan 193 |
 | `encoding/` | (пусто — `toml` **PROMOTED 2026-07-10** [M-toml-repeated-fail-call-run-fail] fix; `hex`/`ini` PROMOTED w2, `url` PROMOTED batch 2, `csv` PROMOTED 2026-07-08 batch 3) | — | — |
 | `identifiers/` | (пусто — `snowflake` PROMOTED w1, `ulid`/`uuid` PROMOTED w2, **`uuid_namespace` PROMOTED 2026-07-08 batch 3**) | — | — |
 | `data/` | (пусто — `semver`/`sql` PROMOTED 2026-07-08 w2, **`semver_range` PROMOTED 2026-07-10**) | — | — |

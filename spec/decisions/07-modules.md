@@ -1120,7 +1120,7 @@ nova-lang/
 ├── compiler-codegen/        Rust компилятор: парсер, type-checker, treewalk-interp + C-codegen
 ├── std/                     стандартная библиотека Nova (.nv)
 │   ├── collections/         hashmap, set, deque, vec, queue, ...
-│   ├── crypto/              md5, sha1, sha256, hmac, jwt, bcrypt
+│   ├── crypto/              md5, sha1, sha256, hmac, jwt
 │   ├── encoding/            base64, hex, json, csv, ini, toml, url
 │   ├── identifiers/         uuid, ulid, snowflake
 │   ├── checksums/           crc32, fnv

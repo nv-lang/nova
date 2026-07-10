@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/_experimental/crypto/insecure_demo_kdf_test.nv — публичный контракт
+// InsecureDemoKdf (hash/verify). ⚠ Демо-KDF, НЕ настоящий bcrypt — см.
+// предупреждение в шапке peer-файла insecure_demo_kdf.nv (Plan 191).
+// Детерминизм через th.seeded (Random handler substitution).
+
+module crypto.insecure_demo_kdf_test
+
+import std._experimental.crypto.insecure_demo_kdf.{InsecureDemoKdf, InsecureDemoKdfError}
+import std.testing.handlers as th
+
+test "hash + verify round-trip" {
+    ro h = with Random = th.seeded(42) {
+        InsecureDemoKdf.hash("my-password", 4)!!        // cost=4 для скорости тестов
+    }
+    assert(InsecureDemoKdf.verify("my-password", h))
+    assert(!InsecureDemoKdf.verify("wrong-password", h))
+}
+
+test "детерминизм через seeded Random (тестовый сценарий)" {
+    ro h1 = with Random = th.seeded(42) { InsecureDemoKdf.hash("password", 4)!! }
+    ro h2 = with Random = th.seeded(42) { InsecureDemoKdf.hash("password", 4)!! }
+    // Тот же seed → тот же salt → тот же hash
+    assert(h1 == h2)
+}
+
+test "разные salts → разные hashes" {
+    ro h1 = with Random = th.seeded(1) { InsecureDemoKdf.hash("password", 4)!! }
+    ro h2 = with Random = th.seeded(2) { InsecureDemoKdf.hash("password", 4)!! }
+    assert(h1 != h2)
+    // Но оба verify правильным паролем
+    assert(InsecureDemoKdf.verify("password", h1))
+    assert(InsecureDemoKdf.verify("password", h2))
+}
+
+test "формат hash правильный (свой тег ndk1, НЕ bcrypt $2b$)" {
+    ro h = with Random = th.seeded(0) { InsecureDemoKdf.hash("test", 4)!! }
+    assert(h.starts_with("$ndk1$04$"))
+    assert(!h.starts_with("$2b$"))
+    assert(!h.starts_with("$2a$"))
+    assert(!h.starts_with("$2y$"))
+}
+
+test "ошибка: cost вне диапазона" {
+    ro r = with Random = th.seeded(0) { InsecureDemoKdf.hash("x", 1) }
+    match r {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is InvalidCost)
+    }
+}
+
+test "ошибка: пароль > 72 байта" {
+    mut long = ""
+    for i in 0..100 { long = long + "a" }
+    ro r = with Random = th.seeded(0) { InsecureDemoKdf.hash(long, 4) }
+    match r {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e is PasswordTooLong)
+    }
+}
+
+test "verify: malformed hash → false (не throws)" {
+    assert(!InsecureDemoKdf.verify("password", "not-a-valid-hash"))
+    assert(!InsecureDemoKdf.verify("password", "$ndk1$10$short"))
+    assert(!InsecureDemoKdf.verify("password", ""))
+}
+
+test "verify: настоящий bcrypt-хеш ($2b$) отвергается — не bcrypt-совместим" {
+    // Формат намеренно НЕ читает $2b$/$2a$/$2y$ теги — иначе демо-KDF могла
+    // бы молча "проверить" настоящий bcrypt-хеш и создать ложное ощущение
+    // совместимости. См. предупреждение Plan 191.
+    assert(!InsecureDemoKdf.verify("password", "$2b$10$abcdefghijklmnopqrstuuVGOzoHi2CKj1jtQwSb8pQ.aB5aQZ0Cy"))
+}

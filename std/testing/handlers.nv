@@ -32,9 +32,9 @@
 // back through `NovaSpawnCtxBase._nova_parent_scope`) — out of scope
 // for this pass, tracked by the marker above.
 // AI-first идея: вместо mock-библиотек и monkey-patching — handler
-// substitution через `with` (D11/D61). Та же функция `Bcrypt.hash` в
-// production видит CSPRNG, в тестах — детерминированный PRNG, без
-// какого-либо изменения сигнатуры.
+// substitution через `with` (D11/D61). Та же функция (например
+// `Uuid.v4()`) в production видит CSPRNG, в тестах — детерминированный
+// PRNG, без какого-либо изменения сигнатуры.
 //
 // API:
 //
