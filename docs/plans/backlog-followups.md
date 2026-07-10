@@ -91,6 +91,7 @@
 | `[M-effect-forbid-generic-bound]` | **OPEN (зарегистрировано 2026-07-03, исследование 176 Q15):** `check_callee_effects` (types/mod.rs ~:15960, снимок) ищет callee по имени в method_table — для generic-ресивера `[W io.Write]` записи нет → **`forbid`/D63, realtime/D64 и effect-surface НЕ видят эффекты через generic protocol-bound** (`forbid Fs { body.copy_to(file_writer) }` не ловится статически). Плюс: vtable-dispatch effectful protocol-методов запрещён D122 (mono-only) — на erased-пути нужна диагностика. | 176 Q15 / spec Q6 (effect-polymorphism) | P2 |
 | `[M-126-sum-equal-rich]` / `[M-126-sum-clone-rich]` / `[M-126-sum-hash-rich]` | **OPEN** (зарегистрировано Ред.2 2026-07-03; ранее только в auto-derive-guide.md:254-256): sum-auto-derive в `protocols/auto_derive.rs` — заглушки (sum-equal = identity-fallback, sum-hash = literal 0, sum-clone = self placeholder); rich per-variant synth НЕ существует. 🔴 HARD-PREREQ Plan 180 Ф.2-sum/180.2 (serde sum-derive). | auto-derive-guide §followups / Plan 180 §4 | P1 |
 | `[M-net-payload-variant-static-lowering]` | **OPEN (Plan 178 Ф.0.5, 2026-07-04):** payload-variant конструктор в Path/Member-форме (`NetError.IoError(msg)`) МОЖЕТ mis-lower'иться в **undefined `_static_`-wrapper** (`Nova_NetError_static_IoError`) вместо `nova_make_NetError_IoError` — link-fail `undefined symbol`. Call-graph-зависимо: `real_net()`+str↔[]u8-конверсии (`str.from_bytes_unchecked`/`.to_bytes`) в одном CU «отравляют» классификацию варианта для всего CU (checker не аннотирует → emission падает на static-method-путь). `tcp_echo_slow` (real_net+str) линкуется, `net_byte_surface_slow` (real_net+byte) — нет. **Того же семейства, что починенный `[P67-LEGACY]`-ICE** (type-resolution, emit_c.rs 39997/43401 — я добавил sum-variant fallback); тут — сторона EMISSION (call-lowering). Fix: в call-emission редиректить `Nova_{Sum}_static_{Variant}`→`nova_make_{Sum}_{Variant}` (emit_sum_type всегда эмитит nova_make_). Blocked: real-socket byte-round-trip тест (mock-тест валидирует поверхность). | Plan 178 Ф.0.5 / Plan 172 (type-engine) | P2 |
+| `[M-closure-trailing-scalar-coercion-no-typecheck]` | **OPEN (найдено 2026-07-10, расследование `[M-toml-repeated-fail-call-run-fail]`, ветка toml-fail-fix).** Ни checker (`nova check`), ни codegen не отвергают fn-тело, чьё trailing-выражение — closure-литерал (`|| body` / `|x| body`), когда объявленный return-тип — скаляр (`bool` и, вероятно, любой не-fn тип). Генерируется `nova_bool r = (void*)(&closure); return r;` — указатель молча коэрцируется в `nova_bool` (всегда truthy), БЕЗ диагностики. Триггер: fn-тело из НЕСКОЛЬКИХ expression-statement'ов, где ПОСЛЕДНИЙ — closure-литерал (типично — случайный побочный эффект многострочной `||`-цепочки с ведущим `||` на continuation-строке, см. `parse_or`, compiler-codegen/src/parser/mod.rs — парсер СОЗНАТЕЛЬНО не продолжает OR через ведущий `||`, чтобы не спутать с `|| body`; результат — тихий closure-literal-statement вместо ошибки парсинга). Репро: `fn f(c char) -> bool { ro n = c as int; (n>=65 && n<=90)\n|| (n>=97 && n<=122) }` компилируется БЕЗ ошибок, `f(' ')` возвращает `true`. Минимальный fix — trailing-expression type-check в checker (return-type unify) должен видеть closure/fn-типы и отвергать несовпадение со скалярным return-типом. Найдено при фиксе `std/encoding/toml.nv`'s `is_bare_key_char` — НЕ чинился в той волне (компилятор-уровня фикс несоразмерен точечной toml-задаче). | checker / compiler-codegen/src/types | P2 |
 | `[M-net-merge-focus-stub-codegen]` | **OPEN (Plan 178 Ф.0.5, 2026-07-04):** diverging (`panic`) тело effect-op'а, возвращающего value-struct/tuple (`split_stream -> (TcpReadHalf, TcpWriteHalf)`), эмитит spurious `return (nova_int)0` → CC-FAIL `returning nova_int from incompatible result type`. Инфра дивергенции есть (`emit_divergent_with_target_125` в `emit_expr_with_target_type`), но НЕ применяется к телам op-хендлеров (op-return-C-type не используется как divergent-target). Следствие merge'а: user-код не может писать partial `Net`-хендлер для focus-теста (opaque handles + `split_stream`-tuple → panic-стаб miscodegen). Fix: применить op-return-type как target в emission тела хендлера. | Plan 178 Ф.0.5 / Plan 172 (type-engine) | P3 |
 | `[M-126-sum-equal-rich]` / `[M-126-sum-clone-rich]` / `[M-126-sum-hash-rich]` | **OPEN** (зарегистрировано Ред.2 2026-07-03; ранее только в auto-derive-guide.md:254-256): sum-auto-derive в `protocols/auto_derive.rs` — заглушки (sum-equal = identity-fallback, sum-hash = literal 0, sum-clone = self placeholder); rich per-variant synth НЕ существует. 🔴 HARD-PREREQ Plan 180 Ф.2-sum/180.2 (serde sum-derive). **✅ Verified OPEN эмпирически 2026-07-04** (Plan 180 Ф.0, auto_derive.rs:554-845). | auto-derive-guide §followups / Plan 180 §4 | P1 |
 | `[M-180-f64-shortest-roundtrip]` | ✅ **CLOSED (Plan 180 keystone-фикс 2026-07-04).** Реализован shortest-round-trip форматтер — единая точка `nova_rt.h::nova_f64_shortest`/`nova_f32_shortest` (§0/§3): default `%g` пробуется первым (zero-churn на ≤6-знач-значениях, вкл. `100000`/`0.1`), затем эскалация точности 7..17 (f64) / 7..9 (f32) до ПЕРВОГО точного `strtod`/`strtof` round-trip. Funnel всех float→str: `str.from`, `@display`/`@debug`, `${x}`, `StringBuilder.append`, `println(float)` (`nova_print_f64/f32` теперь через тот же формат — устранён `%g`-vs-interp дрейф). Побочно: (a) `str.from(f32)` dispatch добавлен в emit_c.rs (был truncate-to-int); (b) f32 `@display`/`@debug` (protocols.nv:617) + `StringBuilder.@append(f32)` переведены с `str.from(@ as f64)` (surface widening-tail) на f32-precise `str.from(@)`. Гейты: conformance 38/0; round-trip pos-тест (8 блоков π/e/1234567.89/1e300/1e-300/denormal/2^53/-0.0 → PASS); `decode(encode(v))==v` на float JSON PASS (был RED); zero-churn на ≤6-знач-корпусе (все существующие float→str assert'ы используют ≤6 знач.цифр — эмпирически 0 изменений). | Plan 180 Ф.0 / std/encoding/json + runtime conv.h/nova_rt.h | ✅ DONE |
@@ -2635,20 +2636,50 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   функции — pre-pass тоже зовёт `type_ref_to_c` на своих полях, гвард
   обязан быть виден и на этом первом проходе. toml.nv теперь компилируется
   И линкуется. compiler-codegen/src/codegen/emit_c.rs.
-  **НОВЫЙ блокер, толькочто найден, НЕ recursive-mono** —
-  `[M-toml-repeated-fail-call-run-fail]`: `test --full` теперь RUN-FAIL на
-  4/6 тестов (все multi-key/multi-element входы: 2× bare-key + 2×
-  basic-string, или 3× parse_number внутри array) — тесты с РОВНО ОДНИМ
-  вызовом `Fail`-эффектной parser-функции внутри `with Fail[...]`-скоупа
-  (comments-тест, unclosed-string-тест) ПРОХОДЯТ; с 2+ повторными вызовами
-  — падают с ложным throw. Парсер-логика вручную вычитана и корректна
-  (RegexNode-подобных self-recursive типов здесь нет — HashMap[str,
-  TomlValue] mono, не рекурсивный enum). Похоже на runtime/codegen баг в
-  повторном использовании Fail-эффект-хендлера / `consume`-биндинга
-  (`parse_bare_key`/`parse_basic_string` оба используют `consume buf =
-  StringBuilder.new()`) внутри ОДНОГО `with`-скоупа — не диагностировано
-  до конца, требует отдельной волны. toml остаётся в _experimental до
-  закрытия.
+  **`[M-toml-repeated-fail-call-run-fail]` ЗАКРЫТ 2026-07-10** (ветка
+  toml-fail-fix, sonnet) — исходная гипотеза («runtime/codegen баг в
+  повторном использовании Fail-эффект-хендлера / consume-биндинга внутри
+  ОДНОГО with-скоупа») была НЕВЕРНОЙ. Расследование (минимальный репро БЕЗ
+  toml, state-dump подход) показало: механизм Fail-frame/`with Fail[E]`/
+  D65-диспатч — не сломан; ПОВТОРНЫЕ вызовы Fail-эффектной функции в одном
+  with-скоупе работают корректно (закреплено новыми pos-тестами в
+  `std/encoding/toml_test.nv`). ПЕРВОНАЧАЛЬНОЕ наблюдение «4/6 тестов
+  FAIL, 2 PASS» само оказалось артефактом: `nova test-build`/`nova test`
+  усекают detail-вывод до подмножества FAIL-строк — реальный прогон на
+  НЕИСПРАВЛЕННОМ toml.nv давал 0/6 (проверено прямым запуском
+  собранного .exe в обход CLI-обёртки).
+  Настоящий корень — ДВА независимых, чисто локальных бага в САМОМ
+  toml.nv, не связанных с Fail вообще:
+  1. `is_bare_key_char`'s многострочная `||`-цепочка использовала ВЕДУЩИЙ
+     `||` на каждой продолжающей строке. `||` — ОДНОВРЕМЕННО синтаксис
+     zero-arg closure-литерала (`|| body`); парсер (`parse_or`,
+     compiler-codegen/src/parser/mod.rs) сознательно НЕ распространяет
+     newline-tolerance на ведущий `||` (во избежание мисparse настоящего
+     `|| body` как продолжения OR-цепочки предыдущей строки). Каждая
+     ведущая-`||` строка молча становилась ОТДЕЛЬНЫМ discarded zero-arg
+     closure-литерал-statement'ом; итоговое (trailing) значение функции
+     оказывалось указателем НА ПОСЛЕДНИЙ closure, приведённым (coerced) к
+     `nova_bool` — ВСЕГДА truthy, независимо от входного символа. Ни
+     `nova check`, ни codegen не выдают диагностику (никакой ошибки) —
+     заведён ОТДЕЛЬНЫЙ follow-up-маркер `[M-closure-trailing-scalar-
+     coercion-no-typecheck]` (checker должен отвергать closure-типизиро-
+     ванное trailing-выражение против скалярного return-типа; не чинился
+     в этой волне — компилятор-уровня фикс несоразмерен точечной toml-
+     задаче). Фикс: перенести `||` в КОНЕЦ каждой строки (trailing-
+     оператор перед newline — продолжение БЕЗ closure-неоднозначности).
+  2. `@parse_number` вызывал РЕТРАКТИРОВАННЫЙ `f64.try_from`/
+     `i64.try_from(str)` ([M-f64-try-parse-to-parse-f64], Plan 174.1,
+     известно-сломан — `f64.try_from("3.14")` молча возвращает `3.0`).
+     Фикс: канон `str @to_f64()`/`str @to_i64()`
+     (std/runtime/string/parse.nv).
+  Оба репродуцированы В ИЗОЛЯЦИИ (минимальный `is_bare_key_char`-подобный
+  фн без toml/Fail/consume; прямой вызов `f64.try_from("3.14")`),
+  подтверждая отсутствие связи с Fail-повторами. toml PROMOTED в
+  `std/encoding/` (git mv + peer `toml_test.nv`, конвенция w2/batch3).
+  Гейты: cargo build чисто; conformance 90/0; err173-корпус δ0; toml
+  peer-тесты (9: 6 исходных + 3 новых pos-регресс на repeated-Fail-call)
+  PASS `test --full`; `nova check std/` δ0. См.
+  std/_experimental/STATUS.md «PROMOTED 2026-07-10» для полного разбора.
 
 - **[M-generic-bound-forwarding]** (2026-07-08, P2, Plan: 172.13 батч 4;
   **ЗАКРЫТ батчем 4** — заведён по факту и закрыт той же волной) — bound не

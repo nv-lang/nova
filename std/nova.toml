@@ -14,7 +14,7 @@
 #   runtime/        char/fibers/gc/math/numeric/buffers/string/sync (auto-gen stubs)
 #   testing/        handlers/property (test harness)
 #   collections/    Vec ([]T ext methods), HashMap, Set, Range
-#   encoding/       JSON, Base64
+#   encoding/       JSON, Base64, CSV, Hex, INI, TOML, URL
 #   time/           Duration
 #   net/            TcpListener, TcpStream, UdpSocket, SocketAddr (Plan 83.12)
 #   concurrency/    Cancellation, Timer (Plan 83 fiber-api)
@@ -24,7 +24,6 @@
 # отдельных под-планов Plan 91 Ф.2-Ф.4 для постепенной promotion):
 #   collections/    BloomFilter, Deque, LinkedList, LRU, PriorityQueue, Queue
 #   crypto/         MD5, SHA-1, SHA-256, HMAC, JWT, bcrypt (4 файла FAIL: array literal)
-#   encoding/       CSV, Hex, INI, TOML (stack overflow), URL
 #   identifiers/    UUID, ULID, Snowflake, UuidNamespace
 #   checksums/      CRC32, FNV
 #   time/           Cron (FAIL: D52 §2)

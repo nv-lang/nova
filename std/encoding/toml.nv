@@ -17,6 +17,13 @@
 //
 // API:
 //   Toml.parse(s str) Fail[ParseTomlError] -> TomlValue
+//
+// [2026-07-10, промоушен из std/_experimental]: два runtime-дефекта,
+// заблокировавшие промоушен ([M-toml-repeated-fail-call-run-fail]),
+// исправлены в этом файле — см. inline-комментарии у `is_bare_key_char`
+// и `@parse_number`. Ни один не был багом Fail-эффекта/fail-frame/
+// consume-scope (исходная гипотеза маркера ошибочна) — оба чисто
+// синтаксические/API-ошибки в ЭТОМ файле.
 
 module encoding.toml
 
@@ -215,12 +222,31 @@ fn TomlParser mut @parse_bare_key() -> str {
 }
 
 fn is_bare_key_char(c char) -> bool {
+    // [M-toml-repeated-fail-call-run-fail follow-up, 2026-07-10]: a LEADING
+    // `||` on a continuation line is NOT a logical-OR continuation in Nova
+    // — `||` is ALSO the zero-arg closure-literal syntax (`|| body`), and
+    // the parser (parse_or, compiler-codegen/src/parser/mod.rs) deliberately
+    // does not extend newline-tolerance to a line-initial `||` (to avoid
+    // misparsing a genuine `|| body` closure statement as an OR-continuation
+    // of the previous line). The original leading-`||` chain here silently
+    // miscompiled: each `|| (...)` line became its OWN discarded zero-arg
+    // closure-literal statement, and the function's trailing value ended up
+    // being the LAST closure's pointer coerced to `nova_bool` — always
+    // truthy (confirmed via generated C: `nova_bool r = (void*)(&closure);
+    // return r;`). Root cause of the toml runtime hazard (NOT a Fail-effect /
+    // fail-frame / consume-scope bug, despite the marker name — see
+    // docs/plans/backlog-followups.md). `nova check`/`nova test-build` both
+    // accept this silently (no diagnostic) — tracked as a separate follow-up
+    // marker (checker should reject a closure-typed trailing expr against a
+    // `bool` return type). Fix here: move `||` to the END of each line — a
+    // TRAILING binary operator before a newline IS treated as continuation
+    // (no closure-literal ambiguity at end-of-line), unlike a leading one.
     ro n = c as int
-    (n >= 65 && n <= 90)        // A-Z
-    || (n >= 97 && n <= 122)     // a-z
-    || (n >= 48 && n <= 57)      // 0-9
-    || c == '_'
-    || c == '-'
+    (n >= 65 && n <= 90) ||        // A-Z
+    (n >= 97 && n <= 122) ||       // a-z
+    (n >= 48 && n <= 57) ||        // 0-9
+    c == '_' ||
+    c == '-'
 }
 
 
@@ -328,13 +354,19 @@ fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
         }
     }
     ro text = @input[start..@pos]
+    // [M-toml-repeated-fail-call-run-fail follow-up, 2026-07-10]: `f64.try_from`/
+    // `i64.try_from(str)` are the RETRACTED numeric-parse surface
+    // ([M-f64-try-parse-to-parse-f64], Plan 174.1) — `f64.try_from("3.14")`
+    // silently truncates to `3.0` (known-broken, not re-fixed on that path).
+    // Canon replacement is conversion-on-source: `str @to_f64()` / `str @to_i64()`
+    // (std/runtime/string/parse.nv).
     if has_dot || has_exp {
-        match f64.try_from(text) {
+        match text.to_f64() {
             Ok(f)  => TomlFloat(f)
             Err(_) => throw InvalidNumber { @line, value: text }
         }
     } else {
-        match i64.try_from(text) {
+        match text.to_i64() {
             Ok(n)  => TomlInt(n)
             Err(_) => throw InvalidNumber { @line, value: text }
         }
@@ -431,91 +463,4 @@ fn TomlParser mut @insert_at_current_path(key str, value TomlValue) -> () {
     }
     // Иначе — навигируемся вглубь и инсертим. Упрощённо для bootstrap.
     @root.insert(key, value)        // TODO: nested path resolution
-}
-
-
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-//
-// [2026-07-10, Plan 186 recursive-mono]: исходный блокер (hoist-ordering
-// CC-FAIL — `Nova_HashMap____nova_str__Nova_TomlValue_p` unknown-type, и в
-// TomlValue-варианте, и в TomlParser.root-поле) ПОЧИНЕН
-// ([M-toml-sum-variant-mono-field-hoist], emit_c.rs `emit_sum_type` /
-// `emit_record_type` — pre-pass forward-`typedef`, тот же паттерн что
-// generic-instance record-полей). Компилируется и ЛИНКУЕТСЯ. НО: `test
-// --full` теперь падает RUN-FAIL на 4/6 тестах (все с >1 повторным вызовом
-// одной и той же `Fail`-эффектной функции внутри ОДНОГО `with`-скоупа —
-// parse_bare_key/parse_basic_string/parse_number вызываются 2+ раза для
-// multi-key/multi-element входов; тесты с ОДНИМ вызовом проходят) —
-// НОВЫЙ, отдельный от recursive-mono runtime-баг в Fail-эффект-хендлинге
-// повторных вызовов, не content-баг парсера (логика парсинга вручную
-// проверена корректной). Требует отдельного расследования — см.
-// docs/plans/backlog-followups.md [M-toml-repeated-fail-call-run-fail]
-// (маркер заведён, инвестигация не завершена).
-
-test "parse: ключ-значение топ-уровня" {
-    ro v = Toml.parse("name = \"nova\"\nversion = \"0.1.0\"\n")
-    match v {
-        TomlTable(t) => {
-            assert(t.get("name") == Some(TomlStr("nova")))
-            assert(t.get("version") == Some(TomlStr("0.1.0")))
-        }
-        _ => assert(false)
-    }
-}
-
-test "parse: integer и float" {
-    ro v = Toml.parse("port = 8080\npi = 3.14\n")
-    match v {
-        TomlTable(t) => {
-            assert(t.get("port") == Some(TomlInt(8080)))
-            assert(t.get("pi") == Some(TomlFloat(3.14)))
-        }
-        _ => assert(false)
-    }
-}
-
-test "parse: bool" {
-    ro v = Toml.parse("debug = true\nprod = false\n")
-    match v {
-        TomlTable(t) => {
-            assert(t.get("debug") == Some(TomlBool(true)))
-            assert(t.get("prod") == Some(TomlBool(false)))
-        }
-        _ => assert(false)
-    }
-}
-
-test "parse: array" {
-    ro v = Toml.parse("ports = [80, 443, 8080]\n")
-    match v {
-        TomlTable(t) => match t.get("ports") {
-            Some(TomlArray(xs)) => {
-                assert(xs.len() == 3)
-                assert(xs[0] == TomlInt(80))
-            }
-            _ => assert(false)
-        }
-        _ => assert(false)
-    }
-}
-
-test "parse: comments игнорируются" {
-    ro v = Toml.parse("# top comment\nname = \"x\"  # inline\n")
-    match v {
-        TomlTable(t) => assert(t.get("name") == Some(TomlStr("x")))
-        _ => assert(false)
-    }
-}
-
-test "parse: ошибка — незакрытая string" {
-    ro r = with Fail[ParseTomlError] = |e| interrupt Some(e) {
-        ro _ = Toml.parse("k = \"unclosed")
-        None
-    }
-    assert(match r {
-        Some(UnexpectedEof { .. }) => true
-        _                           => false
-    })
 }

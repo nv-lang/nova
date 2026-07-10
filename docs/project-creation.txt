@@ -39578,3 +39578,95 @@ err173-корпус 27/0; nova_tests/{basics,generics,plan144_1,plan144_checker}
 std/collections/linkedlist_test 1/1; std/collections/ полный прогон —
 13 PASS, 1 CC-FAIL (vec_lazy, подтверждён pre-existing на baseline).
 Маркеры/STATUS.md/backlog-followups.md обновлены.
+
+=== 2026-07-10 — [M-toml-repeated-fail-call-run-fail] расследование + промоушен toml (ветка toml-fail-fix, sonnet) ===
+
+Задача владельца: расследовать и починить [M-toml-repeated-fail-call-run-fail]
+(маркер завёл предыдущая волна, Plan 186 recursive-mono — toml.nv компилировался
+и линковался, но `test --full` давал RUN-FAIL на подмножестве тестов, гипотеза —
+runtime-баг в повторных вызовах Fail-эффектной функции внутри одного with-скоупа).
+
+Расследование (state-dump подход, минимальный репро без toml): гипотеза оказалась
+ОШИБОЧНОЙ. Механизм Fail-эффекта (nova_fail_push/pop, `with Fail[E]` install/
+restore, D65-диспатч через Nova_Fail_fail/nova_throw_typed) НЕ сломан — репро
+с повторными Fail-эффектными вызовами (с consume-биндингом, как в toml) в одном
+with-скоупе, и внутри while-цикла, прошли чисто. Прямой запуск СОБРАННОГО .exe
+toml-тестов в обход `nova test-build`'овской обёртки (которая, как выяснилось,
+усекает detail-вывод до подмножества FAIL-строк) показал: на НЕИСПРАВЛЕННОМ
+toml.nv реально падают ВСЕ 6/6 тестов, а не 4/6, как показалось предыдущей волне
+по усечённому CLI-summary — само наблюдение «4/6 fail, 2 pass» было артефактом
+отчётности, не отражало реальность.
+
+Настоящий корень — ДВА независимых, чисто локальных дефекта В САМОМ toml.nv,
+не имеющих отношения к Fail-эффекту:
+
+1. `is_bare_key_char`'s многострочная `||`-цепочка использовала ВЕДУЩИЙ `||`
+   на каждой continuation-строке:
+     (n >= 65 && n <= 90)
+     || (n >= 97 && n <= 122)
+     ...
+   `||` — ОДНОВРЕМЕННО синтаксис zero-arg closure-литерала (`|| body`).
+   Парсер (`parse_or`, compiler-codegen/src/parser/mod.rs) СОЗНАТЕЛЬНО не
+   продолжает OR-цепочку через ведущий `||` на новой строке (во избежание
+   мисparse настоящего `|| body`-closure как continuation'а) — комментарий
+   в коде прямо это документирует и советует ключевое слово `or`. НО: `or`/
+   `and` как ключевые слова в ЛЕКСЕРЕ НЕ определены (KwOr/KwAnd существуют
+   как TokenKind, но никогда не эмитятся лексером) — использование `or`
+   даёт `undefined identifier`. Реальный правильный синтаксис — TRAILING
+   `||` (оператор в КОНЦЕ строки перед newline — распознаётся как continuation
+   без closure-неоднозначности; подтверждено минимальным репро). Итог бага:
+   каждая ведущая-`||` строка молча становилась ОТДЕЛЬНЫМ discarded zero-arg
+   closure-литерал-statement'ом; итоговое (trailing) значение функции
+   оказывалось указателем на ПОСЛЕДНИЙ closure, coerced в `nova_bool` —
+   ВСЕГДА truthy, независимо от входного символа (сгенерированный C:
+   `nova_bool r = (void*)(&closure); return r;`). Ни `nova check`, ни codegen
+   не выдают диагностику — заведён follow-up-маркер
+   `[M-closure-trailing-scalar-coercion-no-typecheck]` (checker должен
+   отвергать closure-типизированное trailing-выражение против скалярного
+   return-типа; НЕ чинился в этой волне — несоразмерно точечной toml-задаче).
+   Фикс: `||` перенесён в конец каждой строки.
+
+2. `@parse_number` вызывал РЕТРАКТИРОВАННЫЙ `f64.try_from`/`i64.try_from(str)`
+   ([M-f64-try-parse-to-parse-f64], Plan 174.1 — известно-сломан:
+   `f64.try_from("3.14")` молча возвращает `3.0`, дробная часть теряется).
+   Фикс: канон conversion-on-source (§1а) — `str @to_f64()`/`str @to_i64()`
+   (std/runtime/string/parse.nv).
+
+Оба бага репродуцированы В ИЗОЛЯЦИИ (минимальный `is_bare_key_char`-подобный
+фн без toml/Fail/consume воспроизвёл баг 1; прямой вызов `f64.try_from("3.14")`
+воспроизвёл баг 2) — подтверждая полное отсутствие связи с повторными
+Fail-вызовами.
+
+Промоушен: `git mv` (по факту — новый файл + удаление старого, т.к. правился
+в процессе) `std/_experimental/encoding/toml.nv` → `std/encoding/toml.nv`;
+inline-тесты вынесены в peer `std/encoding/toml_test.nv` (module
+`encoding.toml_test`, import `std.encoding.toml`, конвенция w2/batch3 —
+зеркалит csv/hex/ini/url). Добавлены 3 НОВЫХ pos-регресс-теста, закрепляющих
+корректность ИМЕННО повторных Fail-эффектных вызовов в одном with-скоупе
+(раз уж это было исходной гипотезой маркера): 2 успешных вызова подряд,
+успех-затем-провал, и match-на-Result между вызовами + третий вызов в том же
+scope. Итого 9 тестов (6 исходных + 3 новых), все PASS.
+
+std/nova.toml и std/_experimental/STATUS.md обновлены (encoding/-домен теперь
+полностью PROMOTED; заодно поправлена устаревшая MVP-строка, где csv/hex/ini/
+url уже были promoted, но комментарий это не отражал).
+
+Побочная находка (session-level, не баг): `nova check <dir>` с POSIX-style
+относительным путём (`../std`, `../std/`) на этом Windows-окружении даёт
+ложное «no .nv files to check» — абсолютный Windows-style путь (`D:/...`)
+работает корректно. Не расследовано глубже (вне периметра волны) — если
+встретится снова, использовать абсолютный `D:/`-путь для `nova check`.
+
+Гейты (ветка toml-fail-fix от 06e89b80c, cargo build обоих крейтов чисто):
+conformance --positive --compile-error = 90/0 (эталон без регрессий);
+err173-корпус (--positive --compile-error) = 11/0 δ0; toml peer-тесты
+(std/encoding/toml_test.nv) = test --full PASS (9/9 внутри одного CU);
+`nova check D:/Sources/nv-lang/nova-186/std` = 118 PASS / 30 FAIL — тот же
+FAIL-set, что и std-hygiene-baseline (114/30 + 2 новых toml-файла = 116→118,
+δ0 подтверждён построчным сравнением; toml.nv/toml_test.nv оба среди PASS).
+
+Файлы: std/encoding/toml.nv (новый, промоушен), std/encoding/toml_test.nv
+(новый, peer-тесты), std/_experimental/encoding/toml.nv (удалён),
+std/nova.toml, std/_experimental/STATUS.md, docs/plans/backlog-followups.md
+(маркер закрыт + новый `[M-closure-trailing-scalar-coercion-no-typecheck]`).
+Модель: sonnet (вся волна, включая парсерную разведку).
