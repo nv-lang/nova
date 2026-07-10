@@ -686,6 +686,21 @@ pub struct CEmitter {
     /// `Nova_Vec____nova_int*` payload vs `Nova_Vec____Nova_Self_p*` signature →
     /// CC-FAIL). A type being defined is concrete by construction; this guards it.
     being_defined_sum_types: HashSet<String>,
+    /// [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): mirror of
+    /// `being_defined_sum_types`, but for a plain RECORD currently having its own
+    /// fields lowered (`emit_record_type`). `record_schemas` is only populated
+    /// AFTER the field loop completes, so a self-referential field
+    /// (`type Node { value int; next Option[Node] }`) sees "Node" as unregistered
+    /// while its OWN `next` field is being resolved — `rt_named_is_stub` then
+    /// misclassifies it as an unresolved generic-param stub and `Option[Node]`
+    /// erases to `NovaOpt_nova_int` (the int-boxed erased Option) instead of the
+    /// concrete `NovaOpt_Nova_Node_p`, producing a field-type mismatch CC-FAIL at
+    /// every write site. A type being defined is concrete by construction; this
+    /// guards it — consulted UNCONDITIONALLY (not gated by the `full` parameter
+    /// like the sum-type guard above), because the exact call site that hits this
+    /// bug (`Option`'s inner-type check in `resolved_named_to_c`) passes
+    /// `full=false`.
+    being_defined_record_types: HashSet<String>,
     /// Maps effect name → method name → (param_types, return_type)
     effect_schemas: HashMap<String, HashMap<String, (Vec<String>, String)>>,
     /// Maps method name → (type_name, is_instance) for user-defined methods.
@@ -1130,6 +1145,54 @@ pub struct CEmitter {
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
     /// уже даёт, не нужен duplicate typedef.
     novaopt_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+    /// (Plan 186, recursive-mono): stack of heap sum/record type-names (bare,
+    /// no `Nova_`/`*`) currently being expanded by `emit_field_eq`'s structural
+    /// recursion. A self- or mutually-recursive heap type (`type X | V(X)` /
+    /// `type Node { next Option[Node] }`) previously re-inlined the FULL
+    /// per-variant/per-field comparison at EVERY nesting level (bounded only by
+    /// the generic `MAX_EQ_DEPTH` cutoff) — for an N-variant self-recursive sum
+    /// this is O(branching^depth) STRING growth, confirmed to consume multiple
+    /// GB / hang well before the depth-32 bail. When `emit_field_eq` re-enters
+    /// structural-eq synthesis for a type ALREADY on this stack (a genuine
+    /// cycle), it stops inlining and routes through a NAMED per-type comparison
+    /// function instead (`emit_named_struct_eq_call` below) — the self-
+    /// referential field is a real C heap pointer, so a plain recursive
+    /// FUNCTION CALL terminates at runtime on the actual (finite) data instead
+    /// of being unrolled at compile time. Non-cyclic types are unaffected
+    /// (identical inline expansion, byte-for-byte as before).
+    struct_eq_stack: std::cell::RefCell<Vec<String>>,
+    /// Dedup-set of type-names for which a `nova_struct_eq_<T>` named function
+    /// has already been requested/emitted (idempotent, mirrors
+    /// `novaopt_decls_seen`). Body spliced into `novaopt_eq_fns_buf` — same
+    /// late marker (`/*__NOVAOPT_EQ_FNS__*/`, after struct bodies AND method
+    /// forward-decls) so `->tag`/`->payload`/field derefs and any `@equal`
+    /// method call inside the body are always valid C.
+    struct_eq_fn_requested: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Forward-declaration prototypes for `nova_struct_eq_<T>` named functions
+    /// (see `struct_eq_fn_requested`/`emit_named_struct_eq_call`). Spliced at
+    /// `/*__STRUCT_EQ_PROTOS__*/` — placed right before `/*__NOVAOPT_EQ_FNS__*/`
+    /// (after all struct bodies + method fwd-decls, same phase as the eq-fn
+    /// bodies themselves). A prototype only needs the `Nova_<T>` forward-typedef
+    /// (emitted far earlier, alongside the type's own struct definition), so an
+    /// early proto guarantees correct C ordering even for MUTUAL recursion
+    /// between two distinct named struct-eq functions (A's body calling B's
+    /// function before B's own definition appears later in the file, or vice
+    /// versa) — plain self-recursion doesn't strictly need this (a function may
+    /// call itself inside its own body), but a cross-type cycle does.
+    struct_eq_protos_buf: std::cell::RefCell<String>,
+    /// [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): `(sanitized,
+    /// c_ty)` pairs whose `nova_opt_eq_<sanitized>` STRUCTURAL body construction was
+    /// deferred by `register_novaopt_decl` because `c_ty` self-references a type
+    /// CURRENTLY mid-emission (`being_defined_record_types`/`being_defined_sum_types`
+    /// — e.g. `Option[Node]` registered while lowering `Node`'s own `next` field).
+    /// The typedef + prototype are still emitted immediately (early, safe — a
+    /// pointer field only needs the forward-typedef); only the eq-fn BODY (which
+    /// needs `record_schemas`/`sum_schemas` to be fully populated for the referenced
+    /// type) waits. Drained by `drain_pending_structural_eq` right after ALL
+    /// non-generic type declarations have been emitted (`emit_module` §1), by which
+    /// point every such schema is guaranteed complete.
+    pending_structural_eq_bodies: std::cell::RefCell<Vec<(String, String)>>,
     /// Plan 54 Ф.9: sanitized NovaOpt-id → real C-type значения. Нужно
     /// чтобы pattern_bind_typed для `Some(v) => v` где scrutinee
     /// `NovaOpt_Nova_X_p` (sanitized) восстановил correct `v` тип
@@ -1687,6 +1750,7 @@ impl CEmitter {
             emit_file_module: HashMap::new(),
             file_type_module: HashMap::new(),
             being_defined_sum_types: HashSet::new(),
+            being_defined_record_types: HashSet::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: BTreeMap::new(),
@@ -1790,6 +1854,10 @@ impl CEmitter {
                 }
                 std::cell::RefCell::new(s)
             },
+            struct_eq_stack: std::cell::RefCell::new(Vec::new()),
+            struct_eq_fn_requested: std::cell::RefCell::new(std::collections::HashSet::new()),
+            struct_eq_protos_buf: std::cell::RefCell::new(String::new()),
+            pending_structural_eq_bodies: std::cell::RefCell::new(Vec::new()),
             // Plan 54 Ф.9: pre-populated primitive sanitized → c_ty
             // pairs (для них sanitized совпадает с c_ty).
             // Plan 70.3: nova_char added — runtime declares NovaOpt_nova_char
@@ -2624,12 +2692,21 @@ impl CEmitter {
         // Bare generic-template name (empty args → `Nova_<template>*`) or an unknown
         // name is an erased stub; a concrete user record/sum is not. Same registry
         // set as `debt_is_generic_stub_c` (gated by `full`), applied structurally.
+        //
+        // [M-option-self-recursive-record-mono] (Plan 186): a type currently
+        // mid-emission (`being_defined_sum_types`/`being_defined_record_types`)
+        // is concrete by construction REGARDLESS of `full` — checked
+        // unconditionally here (unlike `opaque_ffi_types`, still `full`-gated,
+        // unchanged). The bug this closes is exactly a `full=false` call site
+        // (`Option`'s inner-type check in `resolved_named_to_c`) that used to
+        // skip the mid-emission guard entirely, misclassifying a self-
+        // referential `Option[Self]` record field as an erased stub.
         let concrete = self.record_schemas.contains_key(&full_name)
             || self.sum_schemas.contains_key(&full_name)
             || self.generic_types.contains(&full_name)
-            || (full
-                && (self.being_defined_sum_types.contains(&full_name)
-                    || self.opaque_ffi_types.contains(&full_name)));
+            || self.being_defined_sum_types.contains(&full_name)
+            || self.being_defined_record_types.contains(&full_name)
+            || (full && self.opaque_ffi_types.contains(&full_name));
         !concrete
     }
 
@@ -5268,6 +5345,11 @@ impl CEmitter {
                 self.emit_type_decl(t)?;
             }
         }
+        // [M-option-self-recursive-record-mono] (Plan 186): every non-generic
+        // record/sum's `record_schemas`/`sum_schemas` entry is now complete —
+        // build any eq-fn bodies `register_novaopt_decl` deferred because they
+        // self-referenced a type still mid-emission at registration time.
+        self.drain_pending_structural_eq();
 
         // Plan 52.2 Ф.2: forward-declare mono'd struct types для
         // const-decls с generic-типом. Без этого `const X HashMap[K,V] = [...]`
@@ -5967,6 +6049,14 @@ impl CEmitter {
         // (else implicit decl → "conflicting types" CC-FAIL). Filled at end; the
         // marker line is stripped (with its newline) when no structural eq fn exists
         // so zero-impact files stay byte-identical.
+        // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+        // (Plan 186): placeholder for `nova_struct_eq_<T>` prototypes (see
+        // `struct_eq_protos_buf`/`emit_named_struct_eq_call`). Placed just before
+        // `/*__NOVAOPT_EQ_FNS__*/` — same phase-correctness window (struct bodies
+        // + method fwd-decls already visible); stripped (with its newline) when
+        // no cyclic type triggered the named-fn path, so zero-impact files stay
+        // byte-identical to the clean binary.
+        self.line("/*__STRUCT_EQ_PROTOS__*/");
         self.line("/*__NOVAOPT_EQ_FNS__*/");
         // Forward declarations for test impl functions
         {
@@ -6331,6 +6421,19 @@ impl CEmitter {
         // byte-identical to the clean binary (mirrors __NOVARES_VR_TYPEDEFS__).
         self.out = self.out.replace("/*__VR_UEQ_PROTOS__*/
 ", "");
+        // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+        // (Plan 186): splice `nova_struct_eq_<T>` prototypes BEFORE the eq-fn
+        // bodies (mirrors the __NOVARES_VR_TYPEDEFS__ empty/non-empty pattern).
+        let struct_eq_protos = self.struct_eq_protos_buf.borrow().clone();
+        if struct_eq_protos.is_empty() {
+            self.out = self.out.replace("/*__STRUCT_EQ_PROTOS__*/\n", "");
+        } else {
+            let struct_eq_protos_replacement = format!(
+                "/* [M-result-direct-recursive-enum]/[M-option-self-recursive-record-mono]: \
+                 named struct-eq fn prototypes for self-/mutually-recursive heap types */\n{}",
+                struct_eq_protos);
+            self.out = self.out.replace("/*__STRUCT_EQ_PROTOS__*/", &struct_eq_protos_replacement);
+        }
         let eq_fns = self.novaopt_eq_fns_buf.borrow().clone();
         if eq_fns.is_empty() {
             self.out = self.out.replace("/*__NOVAOPT_EQ_FNS__*/\n", "");
@@ -13993,6 +14096,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if fields.is_empty() {
             self.line("char _empty_record_marker;");
         }
+        // [M-option-self-recursive-record-mono]: mark this record concrete WHILE
+        // its OWN fields are lowered — mirrors `being_defined_sum_types` in
+        // `emit_sum_type` — so a self-referential field (`next Option[Self]`) is
+        // recognised as the concrete `Nova_<Name>*` heap type instead of an
+        // unresolved generic-param stub (`rt_named_is_stub` consults this).
+        self.being_defined_record_types.insert(name.to_string());
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
             schema.insert(f.name.clone(), ty_c.clone());
@@ -14023,6 +14132,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 );
             }
         }
+        // [M-option-self-recursive-record-mono]: fields lowered — the type is
+        // about to be registered for real; drop the mid-emission concreteness
+        // guard (mirrors `emit_sum_type`'s `being_defined_sum_types.remove`).
+        self.being_defined_record_types.remove(name);
         // Plan 173 Ф.5 (#8, D188 R2): hidden runtime exactly-once counter for
         // heap records with a USER `consume @cleanup` method. Zero-initialized
         // by the nova_alloc contract (alloc.c: "MUST return zeroed memory");
@@ -16630,151 +16743,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             {
                 return format!("(({}) == ({}))", l, r);
             }
-            if let Some(variants) = self.sum_schemas.get(&type_name).cloned() {
-                // Empty-sum (0 variants, unit-type like CharTryFromError): emitted as
-                // `typedef int64_t Nova_X` — no struct tag/payload. All instances are
-                // vacuously equal (uninhabited / single-value unit); dereference as scalar.
-                if variants.is_empty() {
-                    return format!("((void)({}), (void)({}), 1)", l, r);
-                }
-                let mut field_conds: Vec<String> = Vec::new();
-                for (var_name, field_types) in &variants {
-                    if field_types.is_empty() {
-                        continue;
-                    }
-                    // Record-style variant (`V { a, b }`) uses NAMED C fields, not
-                    // positional `._i`; tuple-style (`V(T,U)`) uses `._i`. Recover the
-                    // field names from `record_variant_field_order` (same index order as
-                    // `field_types`). Without this, a record-variant payload generated
-                    // `payload.V._0` → C "no member named '_0'" (e.g. ParseJsonError /
-                    // ReadBufferError in `Option[<sum>]==`).
-                    let rec_order = self.record_variant_field_order
-                        .get(&format!("{}::{}", type_name, var_name)).cloned();
-                    let var_fields: Vec<String> = field_types
-                        .iter()
-                        .enumerate()
-                        .map(|(i, fty)| {
-                            let (li, ri) = match rec_order.as_ref().and_then(|o| o.get(i)) {
-                                Some(fname) => {
-                                    let mfn = Self::mangle_field_name(fname);
-                                    (format!("({})->payload.{}.{}", l, var_name, mfn),
-                                     format!("({})->payload.{}.{}", r, var_name, mfn))
-                                }
-                                None => (format!("({})->payload.{}._{}", l, var_name, i),
-                                         format!("({})->payload.{}._{}", r, var_name, i)),
-                            };
-                            self.emit_field_eq(fty, &li, &ri, depth + 1)
-                        })
-                        .collect();
-                    field_conds.push(format!(
-                        "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
-                        l = l,
-                        ty = type_name,
-                        v = var_name,
-                        fields = var_fields.join(" && ")
-                    ));
-                }
-                let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
-                return if field_conds.is_empty() {
-                    tag_eq
-                } else {
-                    format!("({} && {})", tag_eq, field_conds.join(" && "))
-                };
+            // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+            // (Plan 186, recursive-mono): a genuine cycle (self- or mutually-
+            // recursive heap type ALREADY being expanded up this call chain) is
+            // NOT re-inlined — route through a named per-type function instead
+            // (see `struct_eq_stack` field doc + `emit_named_struct_eq_call`).
+            // Non-cyclic types fall straight through to `structural_eq_body_for_ptr`
+            // unaffected (byte-identical inline expansion, same as before this fix).
+            if self.struct_eq_stack.borrow().contains(&type_name) {
+                return self.emit_named_struct_eq_call(&type_name, l, r);
             }
-            // [M-172.1-option-eq-record-structural] (L2): a heap user RECORD without
-            // an `@equal` (records are NOT auto-`@equal`'d) reaches here when compared
-            // structurally — `Option[Rec]==`, a sum/Result field, or a direct `Rec==Rec`.
-            // Recurse field-by-field over `record_schemas` — the SINGLE per-type eq
-            // dispatcher (§0 per-type операции), mirroring the sum recursion above —
-            // instead of degrading to pointer identity. Field order from
-            // `record_field_order` (the schema HashMap is unordered → non-deterministic
-            // codegen otherwise); a builtin record registered without an order list
-            // falls back to sorted keys. EMPTY-schema records (opaque builtin runtime
-            // structs like StringBuilder) are skipped → identity below (sound for
-            // opaque handles; matches the debt_opt_payload_needs_structural_eq exclusion).
-            // CONTAINERS (`Vec____`/`HashMap____`) are in `record_schemas` only for
-            // field-access lowering, but carry an opaque heap `data`/buckets buffer
-            // where field-recursion would compare the POINTER by identity
-            // (`Some([1,2])==Some([1,2])` false). Vec is intercepted earlier (mono
-            // `@equal` element-wise); HashMap has no `@equal` Nova-body yet → skip here,
-            // falling to identity (HashMap-eq = separate follow-up). Mono user-generic
-            // value-records (`Box____<T>`) DO recurse correctly — only the two known
-            // container prefixes are excluded.
-            if let Some(schema) = self.record_schemas.get(&type_name) {
-                let is_container = type_name.starts_with("Vec____")
-                    || type_name.starts_with("HashMap____");
-                if !schema.is_empty() && !is_container {
-                    let schema = schema.clone();
-                    let order: Vec<String> = self.record_field_order
-                        .get(&type_name).cloned()
-                        .unwrap_or_else(|| {
-                            let mut ks: Vec<String> = schema.keys().cloned().collect();
-                            ks.sort();
-                            ks
-                        });
-                    let conds: Vec<String> = order.iter().filter_map(|fname| {
-                        schema.get(fname).map(|fty| {
-                            let mfn = Self::mangle_field_name(fname);
-                            let li = format!("({})->{}", l, mfn);
-                            let ri = format!("({})->{}", r, mfn);
-                            self.emit_field_eq(fty, &li, &ri, depth + 1)
-                        })
-                    }).collect();
-                    if !conds.is_empty() {
-                        return format!("({})", conds.join(" && "));
-                    }
-                    // all fields filtered out (shouldn't happen for non-empty schema)
-                    // — fall through to identity below.
-                }
-            }
-            // Plan 153.3 fix: mono'd generic sum whose legacy `sum_schemas`
-            // entry is absent under the mono'd key (generic sums register the
-            // schema under the GENERIC name; the mono'd key may be unregistered
-            // here) — structural `==` otherwise silently degraded to pointer
-            // identity (`Foo[int].A(1) == A(1)` → false). Reconstruct the
-            // substituted variant schema from the generic template + recorded
-            // mono type-args and emit the same tag+payload recursion. Mono'd
-            // sum C tags use the FULL mangled prefix `Nova_<mono>` (the mono
-            // constructor emits `NOVA_TAG_Nova_<mono>_<V>`), unlike non-generic
-            // sums (which strip `Nova_`), so the tag prefix is the full c-type
-            // name (sans `*`). Strictly a fallback BEFORE pointer-identity — it
-            // only fires for sums currently broken, never changing a sum that
-            // already resolved via `sum_schemas`/@equal/@compare above.
-            {
-                let full_c = cty.trim_end_matches('*');
-                if let Some(recon) = self.reconstruct_mono_sum_schema(full_c) {
-                    let mut field_conds: Vec<String> = Vec::new();
-                    for (var_name, field_types) in &recon {
-                        if field_types.is_empty() {
-                            continue;
-                        }
-                        let var_fields: Vec<String> = field_types
-                            .iter()
-                            .enumerate()
-                            .map(|(i, fty)| {
-                                let li = format!("({})->payload.{}._{}", l, var_name, i);
-                                let ri = format!("({})->payload.{}._{}", r, var_name, i);
-                                self.emit_field_eq(fty, &li, &ri, depth + 1)
-                            })
-                            .collect();
-                        field_conds.push(format!(
-                            "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
-                            l = l,
-                            ty = full_c,
-                            v = var_name,
-                            fields = var_fields.join(" && ")
-                        ));
-                    }
-                    let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
-                    return if field_conds.is_empty() {
-                        tag_eq
-                    } else {
-                        format!("({} && {})", tag_eq, field_conds.join(" && "))
-                    };
-                }
-            }
-            // No structural info available — fall back to pointer identity.
-            return format!("(({}) == ({}))", l, r);
+            self.struct_eq_stack.borrow_mut().push(type_name.clone());
+            let __struct_eq_result = self.structural_eq_body_for_ptr(&type_name, cty, l, r, depth);
+            self.struct_eq_stack.borrow_mut().pop();
+            return __struct_eq_result;
         }
         // Plan 153.3 fix: Result is a *special* heap-pointer ABI `NovaRes_<n>*`
         // (NOT a `Nova_X*` sum — it carries extra typed-error fields), so it
@@ -16821,6 +16803,206 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // we have no field schema for, where byte-compare is the best available
         // and keeps codegen total.
         format!("(memcmp(&{}, &{}, sizeof({})) == 0)", l, r, cty)
+    }
+
+    /// [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+    /// (Plan 186): the tag+payload / field-by-field structural-eq body for a
+    /// single `Nova_<type_name>*` heap sum or record, EXTRACTED verbatim from
+    /// `emit_field_eq`'s former inline body (behavior unchanged for the
+    /// non-cyclic case — this is a pure extract-method refactor). Callers are
+    /// responsible for `struct_eq_stack` push/pop (cycle bookkeeping lives at
+    /// the call sites: the direct `emit_field_eq` entry, and
+    /// `emit_named_struct_eq_call` when synthesizing a named function body).
+    fn structural_eq_body_for_ptr(&self, type_name: &str, cty: &str, l: &str, r: &str, depth: usize) -> String {
+        if let Some(variants) = self.sum_schemas.get(type_name).cloned() {
+            // Empty-sum (0 variants, unit-type like CharTryFromError): emitted as
+            // `typedef int64_t Nova_X` — no struct tag/payload. All instances are
+            // vacuously equal (uninhabited / single-value unit); dereference as scalar.
+            if variants.is_empty() {
+                return format!("((void)({}), (void)({}), 1)", l, r);
+            }
+            let mut field_conds: Vec<String> = Vec::new();
+            for (var_name, field_types) in &variants {
+                if field_types.is_empty() {
+                    continue;
+                }
+                // Record-style variant (`V { a, b }`) uses NAMED C fields, not
+                // positional `._i`; tuple-style (`V(T,U)`) uses `._i`. Recover the
+                // field names from `record_variant_field_order` (same index order as
+                // `field_types`). Without this, a record-variant payload generated
+                // `payload.V._0` → C "no member named '_0'" (e.g. ParseJsonError /
+                // ReadBufferError in `Option[<sum>]==`).
+                let rec_order = self.record_variant_field_order
+                    .get(&format!("{}::{}", type_name, var_name)).cloned();
+                let var_fields: Vec<String> = field_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, fty)| {
+                        let (li, ri) = match rec_order.as_ref().and_then(|o| o.get(i)) {
+                            Some(fname) => {
+                                let mfn = Self::mangle_field_name(fname);
+                                (format!("({})->payload.{}.{}", l, var_name, mfn),
+                                 format!("({})->payload.{}.{}", r, var_name, mfn))
+                            }
+                            None => (format!("({})->payload.{}._{}", l, var_name, i),
+                                     format!("({})->payload.{}._{}", r, var_name, i)),
+                        };
+                        self.emit_field_eq(fty, &li, &ri, depth + 1)
+                    })
+                    .collect();
+                field_conds.push(format!(
+                    "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
+                    l = l,
+                    ty = type_name,
+                    v = var_name,
+                    fields = var_fields.join(" && ")
+                ));
+            }
+            let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
+            return if field_conds.is_empty() {
+                tag_eq
+            } else {
+                format!("({} && {})", tag_eq, field_conds.join(" && "))
+            };
+        }
+        // [M-172.1-option-eq-record-structural] (L2): a heap user RECORD without
+        // an `@equal` (records are NOT auto-`@equal`'d) reaches here when compared
+        // structurally — `Option[Rec]==`, a sum/Result field, or a direct `Rec==Rec`.
+        // Recurse field-by-field over `record_schemas` — the SINGLE per-type eq
+        // dispatcher (§0 per-type операции), mirroring the sum recursion above —
+        // instead of degrading to pointer identity. Field order from
+        // `record_field_order` (the schema HashMap is unordered → non-deterministic
+        // codegen otherwise); a builtin record registered without an order list
+        // falls back to sorted keys. EMPTY-schema records (opaque builtin runtime
+        // structs like StringBuilder) are skipped → identity below (sound for
+        // opaque handles; matches the debt_opt_payload_needs_structural_eq exclusion).
+        // CONTAINERS (`Vec____`/`HashMap____`) are in `record_schemas` only for
+        // field-access lowering, but carry an opaque heap `data`/buckets buffer
+        // where field-recursion would compare the POINTER by identity
+        // (`Some([1,2])==Some([1,2])` false). Vec is intercepted earlier (mono
+        // `@equal` element-wise); HashMap has no `@equal` Nova-body yet → skip here,
+        // falling to identity (HashMap-eq = separate follow-up). Mono user-generic
+        // value-records (`Box____<T>`) DO recurse correctly — only the two known
+        // container prefixes are excluded.
+        if let Some(schema) = self.record_schemas.get(type_name) {
+            let is_container = type_name.starts_with("Vec____")
+                || type_name.starts_with("HashMap____");
+            if !schema.is_empty() && !is_container {
+                let schema = schema.clone();
+                let order: Vec<String> = self.record_field_order
+                    .get(type_name).cloned()
+                    .unwrap_or_else(|| {
+                        let mut ks: Vec<String> = schema.keys().cloned().collect();
+                        ks.sort();
+                        ks
+                    });
+                let conds: Vec<String> = order.iter().filter_map(|fname| {
+                    schema.get(fname).map(|fty| {
+                        let mfn = Self::mangle_field_name(fname);
+                        let li = format!("({})->{}", l, mfn);
+                        let ri = format!("({})->{}", r, mfn);
+                        self.emit_field_eq(fty, &li, &ri, depth + 1)
+                    })
+                }).collect();
+                if !conds.is_empty() {
+                    return format!("({})", conds.join(" && "));
+                }
+                // all fields filtered out (shouldn't happen for non-empty schema)
+                // — fall through to identity below.
+            }
+        }
+        // Plan 153.3 fix: mono'd generic sum whose legacy `sum_schemas`
+        // entry is absent under the mono'd key (generic sums register the
+        // schema under the GENERIC name; the mono'd key may be unregistered
+        // here) — structural `==` otherwise silently degraded to pointer
+        // identity (`Foo[int].A(1) == A(1)` → false). Reconstruct the
+        // substituted variant schema from the generic template + recorded
+        // mono type-args and emit the same tag+payload recursion. Mono'd
+        // sum C tags use the FULL mangled prefix `Nova_<mono>` (the mono
+        // constructor emits `NOVA_TAG_Nova_<mono>_<V>`), unlike non-generic
+        // sums (which strip `Nova_`), so the tag prefix is the full c-type
+        // name (sans `*`). Strictly a fallback BEFORE pointer-identity — it
+        // only fires for sums currently broken, never changing a sum that
+        // already resolved via `sum_schemas`/@equal/@compare above.
+        {
+            let full_c = cty.trim_end_matches('*');
+            if let Some(recon) = self.reconstruct_mono_sum_schema(full_c) {
+                let mut field_conds: Vec<String> = Vec::new();
+                for (var_name, field_types) in &recon {
+                    if field_types.is_empty() {
+                        continue;
+                    }
+                    let var_fields: Vec<String> = field_types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, fty)| {
+                            let li = format!("({})->payload.{}._{}", l, var_name, i);
+                            let ri = format!("({})->payload.{}._{}", r, var_name, i);
+                            self.emit_field_eq(fty, &li, &ri, depth + 1)
+                        })
+                        .collect();
+                    field_conds.push(format!(
+                        "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
+                        l = l,
+                        ty = full_c,
+                        v = var_name,
+                        fields = var_fields.join(" && ")
+                    ));
+                }
+                let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
+                return if field_conds.is_empty() {
+                    tag_eq
+                } else {
+                    format!("({} && {})", tag_eq, field_conds.join(" && "))
+                };
+            }
+        }
+        // No structural info available — fall back to pointer identity.
+        format!("(({}) == ({}))", l, r)
+    }
+
+    /// [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+    /// (Plan 186): the cycle-breaking half of the fix — called by
+    /// `emit_field_eq` when `type_name` is already on `struct_eq_stack` (a
+    /// genuine self- or mutually-recursive heap type). Ensures a named
+    /// `nova_struct_eq_<T>` function exists (idempotent via
+    /// `struct_eq_fn_requested`) and returns a CALL to it instead of inlining
+    /// the comparison again. The function body is built via
+    /// `structural_eq_body_for_ptr` — the SAME logic used for the non-cyclic
+    /// case — so a self-referential field inside the body re-enters this exact
+    /// path, sees the type already in `struct_eq_fn_requested`, and short-
+    /// circuits to a plain call: the C function recurses on itself at RUNTIME
+    /// (bounded by the actual, finite, heap structure) instead of being
+    /// unrolled at COMPILE time (which is what previously produced
+    /// `branching^depth` string growth up to `MAX_EQ_DEPTH`, multiple GB /
+    /// hang on a real recursive enum — see `struct_eq_stack` field doc).
+    /// Spliced into `novaopt_eq_fns_buf` (marker `/*__NOVAOPT_EQ_FNS__*/`,
+    /// placed AFTER struct bodies and method forward-decls — safe for
+    /// `->tag`/`->payload`/field derefs and `@equal` method calls).
+    fn emit_named_struct_eq_call(&self, type_name: &str, l: &str, r: &str) -> String {
+        let fn_name = format!("nova_struct_eq_{}", Self::sanitize_c_for_ident(type_name));
+        let newly_requested = self.struct_eq_fn_requested
+            .borrow_mut()
+            .insert(type_name.to_string());
+        if newly_requested {
+            // Proto FIRST (before building the body) — a mutual cycle (A calls
+            // named-B, B calls named-A) needs A's own prototype visible before
+            // B's definition references it, regardless of which of the two
+            // finishes building (and thus gets spliced) first.
+            self.struct_eq_protos_buf.borrow_mut().push_str(&format!(
+                "static nova_bool {fname}(Nova_{t}* a, Nova_{t}* b);\n",
+                fname = fn_name, t = type_name,
+            ));
+            let cty = format!("Nova_{}*", type_name);
+            self.struct_eq_stack.borrow_mut().push(type_name.to_string());
+            let body = self.structural_eq_body_for_ptr(type_name, &cty, "a", "b", 0);
+            self.struct_eq_stack.borrow_mut().pop();
+            self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
+                "static nova_bool {fname}(Nova_{t}* a, Nova_{t}* b) {{ return {body}; }}\n",
+                fname = fn_name, t = type_name, body = body,
+            ));
+        }
+        format!("{}({}, {})", fn_name, l, r)
     }
 
     /// Plan 153.3: reconstruct the *substituted* variant schema of a mono'd
@@ -42396,6 +42578,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n\
                  static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
                 sani = sanitized, cty = c_ty));
+            // [M-option-self-recursive-record-mono] (Plan 186): if `c_ty` self-
+            // references a type CURRENTLY mid-emission (`Option[Self]` registered
+            // while lowering `Self`'s own fields — e.g. `type Node { next
+            // Option[Node] }`), `record_schemas`/`sum_schemas` for it aren't
+            // populated yet: building the body NOW would see an (apparently)
+            // opaque/unknown type and silently degrade to pointer identity
+            // (`Some(nodeA) == Some(nodeB)` false for separately-allocated-but-
+            // equal nodes). Defer the body construction to
+            // `drain_pending_structural_eq` (runs after ALL non-generic type
+            // declarations are emitted, when every schema is guaranteed complete).
+            let self_ref_mid_emission = c_ty.strip_prefix("Nova_")
+                .and_then(|s| s.strip_suffix('*'))
+                .map_or(false, |inner| {
+                    self.being_defined_record_types.contains(inner)
+                        || self.being_defined_sum_types.contains(inner)
+                });
+            if self_ref_mid_emission {
+                self.pending_structural_eq_bodies.borrow_mut()
+                    .push((sanitized.to_string(), c_ty.to_string()));
+                return;
+            }
             // Structural eq, emitted LATE (after struct bodies AND method fwd-decls) so the
             // dereference compiles and any record/field `@equal` call has a visible proto.
             // NPO: None = NULL.
@@ -42499,6 +42702,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // C-redefinition collision при оставлении lazy-emit.
         //
         // (Раньше тут также генерились is_some/is_none — Plan 95 Ф.4.2.)
+    }
+
+    /// [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): build
+    /// the eq-fn bodies `register_novaopt_decl` deferred (see
+    /// `pending_structural_eq_bodies` doc). Called from `emit_module` right
+    /// after ALL non-generic type declarations are emitted (§1) — every
+    /// `record_schemas`/`sum_schemas` entry is complete by then, so the
+    /// self-referential field resolves structurally instead of degrading to
+    /// pointer identity. Idempotent (drains the list; safe to call once).
+    fn drain_pending_structural_eq(&self) {
+        let pending: Vec<(String, String)> =
+            self.pending_structural_eq_bodies.borrow_mut().drain(..).collect();
+        for (sanitized, c_ty) in pending {
+            let structural = self.emit_field_eq(&c_ty, "a.value", "b.value", 0);
+            self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   if ((a.value == NULL) != (b.value == NULL)) return 0;\n\
+                 \x20   if (a.value == NULL) return 1;\n\
+                 \x20   return {body};\n\
+                 }}\n",
+                sani = sanitized, body = structural));
+        }
     }
 
     /// Plan 118 Ф.5 (D216 §7): determine whether sanitized NovaOpt name is
@@ -42800,6 +43025,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // identity is the conservative, non-regressing choice.)
             if let Some(schema) = self.record_schemas.get(inner) {
                 return !schema.is_empty();
+            }
+            // [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): a
+            // self-referential `Option[Self]` field is resolved WHILE `Self`'s own
+            // `record_schemas`/`sum_schemas` entry is still being built (`emit_record_type`/
+            // `emit_sum_type` register the schema only AFTER lowering all fields) —
+            // `record_schemas.get(inner)` above misses and this used to fall through to
+            // pointer-identity `nova_opt_eq`, silently breaking structural `==` for any
+            // linked/tree-shaped record (`Some(nodeA) == Some(nodeB)` false for
+            // separately-allocated-but-equal nodes). A type mid-emission always has at
+            // least the self-referencing field itself, so it is non-empty by construction.
+            if self.being_defined_record_types.contains(inner)
+                || self.being_defined_sum_types.contains(inner)
+            {
+                return true;
             }
             return false;
         }

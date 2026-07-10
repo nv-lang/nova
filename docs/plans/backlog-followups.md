@@ -2495,16 +2495,30 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   папочная агрегация #no_prelude-CU теряет тип Vec. В гейты приёмок runtime папкой
   не входил — класс вскрыт при unsafe-волне from_bytes_unchecked.
 
-- **[M-option-self-recursive-record-mono]** (2026-07-08, P1, Wave: В РАБОТЕ у отдельного
-  агента владельца — зона emit_c.rs/types/mod.rs, моим волнам НЕ заходить до закрытия) —
-  самоссылочный рекорд `type Node { value int; next Option[Node] }` мис-мономорфизируется:
-  поле next эмитится NovaOpt_nova_int (тип ПЕРВОГО поля) вместо NovaOpt_Nova_Node_p;
-  каскад в gc.nv (return NOVA_UNIT в Vec-функциях). Смежный свежий контекст для охотника:
-  (1) NovaOpt-каналы правились в A8-приёмке №2 — hoist полных typedef'ов для value-полей
-  записей (emit_c.rs, коммит 22d36236c, механизм [M-180]-hoist + перенос предрегистрированных);
-  (2) канал member-типизации generic-ресиверов чинился в 16db8f214 (types/mod.rs,
-  subst_receiver_generics) — там же живёт resolved_types_buf-аннотация типов полей;
-  (3) эталон conformance теперь 67/0 (не 66), гейты только на пересобранном main.
+- **[M-option-self-recursive-record-mono]** (2026-07-08, P1; **ЗАКРЫТ 2026-07-10,
+  Plan 186 recursive-mono, ветка recursive-mono**) — самоссылочный рекорд
+  `type Node { value int; next Option[Node] }` мис-мономорфизировался: поле
+  `next` эмитилось `NovaOpt_nova_int` (тип ПЕРВОГО поля) вместо
+  `NovaOpt_Nova_Node_p`. Корень: `record_schemas`/`sum_schemas` регистрируют
+  схему типа только ПОСЛЕ разбора всех его полей — самоссылающееся поле
+  резолвилось, пока охватывающий тип ещё «невидим» реестрам, и ошибочно
+  классифицировался как нерезолвленный generic-стаб (эрейзится в nova_int).
+  Второй, более узкий инстанс того же корня: структурная eq-регистрация
+  `Option[Self]` (`register_novaopt_decl`) срабатывала eagerly (побочный эффект
+  вычисления C-типа поля) и по той же причине не видела схему — молча
+  деградировала до pointer-identity `==` (structurally-equal-но-раздельно-
+  аллоцированные цепочки сравнивались как НЕ равные). Фикс: новый guard
+  `being_defined_record_types` (зеркало существующего `being_defined_sum_types`)
+  помечает тип конкретным, пока эмитятся его собственные поля — консультируется
+  БЕЗУСЛОВНО (не только при `full=true`, как старый sum-guard: ровно тот сайт,
+  что ловит баг — `Option`'s inner-type check в `resolved_named_to_c` — зовёт с
+  `full=false`); eq-регистрация теперь ОТКЛАДЫВАЕТСЯ
+  (`pending_structural_eq_bodies`, дренится сразу после эмиссии всех
+  не-generic type-деклараций). Родня [M-result-direct-recursive-enum] — тот же
+  класс «рекурсивный композит в generic-контейнере», закрыт той же волной.
+  Позитив-фикстура: `nova_tests/recursive_mono/pos/option_self_linked_list.nv`
+  (round-trip чтения/записи + структурное `==` на раздельно-аллоцированных
+  равных цепочках). compiler-codegen/src/codegen/emit_c.rs.
 
 - **[M-property-testing-rot]** (2026-07-08, P2, Plan: 172.13 — юнификация; Wave: с
   чекер-маркерами; **ЗАКРЫТ батчем 3** — std/testing полностью зелёный, turbofish снят)
@@ -2685,18 +2699,28 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   BrotliHandle из истории коммита. Сейчас в brotli — прямые вызовы типизированных
   extern'ов (типобезопасность хендла сохранена).
 
-- **[M-result-direct-recursive-enum]** (2026-07-09, **P1 — компилятор жрёт 8-17 ГБ/виснет**,
-  Plan: 172.13-хвост; Wave: с чекер-маркерами при разморозке) — `Result[X, E]`, где enum X
-  имеет прямо-рекурсивный вариант, детерминированно валит компилятор аллокацией.
-  Минимальная репродукция (~20 строк, из conv-sweep волны):
-  `type BNode enum BLit { v int } | BStar { inner BNode }` + одна
-  `fn parse() -> Result[BNode, BErr]` — компиляция уходит в бесконечную
-  рекурсию мономорфизации Result-инстанса. Копия репро:
-  nova-unders/scratchpad/repro_result_recursive_enum.nv. Обход в std/text/regex.nv:
-  13 приватных parse_* на Fail (наружу не течёт, гасится в Regex.compile) —
-  комментарии с именем маркера на месте. Родня [M-option-self-recursive-record-mono]
-  (зона агента владельца) — вероятно один класс «рекурсивный композит в
-  generic-контейнере».
+- **[M-result-direct-recursive-enum]** (2026-07-09, **P1 — компилятор жрёт 8-17 ГБ/виснет**;
+  **ЗАКРЫТ 2026-07-10, Plan 186 recursive-mono, ветка recursive-mono**) —
+  `Result[X, E]`, где heap-enum X имеет прямо-рекурсивный вариант (tuple-,
+  record- и `[]X`-Vec-формы), детерминированно валил компилятор аллокацией
+  (наблюдалось 6.6+ ГБ за 60с и продолжало расти на минимальном 11-вариантном
+  репро). Корень (emit_c.rs `emit_field_eq`): регистрация `Result[X,E]`
+  (`register_novares_decl`) попутно регистрирует `Option[X]`/`Option[E]` (под
+  `.ok()`/`.err()`), что для heap sum/record X уходит на СТРУКТУРНУЮ
+  генерацию `==` — та инлайнила ПОЛНОЕ per-variant/per-field сравнение на
+  КАЖДОМ уровне вложенности для самоссылающегося поля (ограничено только
+  общим `MAX_EQ_DEPTH=32`) → `O(branching^depth)` рост строки. Фикс:
+  `struct_eq_stack` отслеживает типы, разворачиваемые ПРЯМО СЕЙЧАС; настоящий
+  цикл (тип встречен повторно) обрывает инлайнинг и уходит на ИМЕНОВАННУЮ,
+  единожды эмитируемую функцию `nova_struct_eq_<T>` — самоссылающееся поле
+  есть реальный C heap-указатель, поэтому обычный рекурсивный ВЫЗОВ ФУНКЦИИ
+  даёт C-компилятору/рантайму обработать фактическую (конечную) глубину
+  данных вместо развёртки на этапе компиляции. Нецикличные типы byte-for-byte
+  не затронуты. Родня [M-option-self-recursive-record-mono] — тот же класс
+  «рекурсивный композит в generic-контейнере», закрыт той же волной.
+  Позитив-фикстура: `nova_tests/recursive_mono/pos/enum_tree_result.nv`
+  (11→3-вариантный самоссылающийся enum через Result, структурное `==` на
+  bare/nested/Vec-вариантах). compiler-codegen/src/codegen/emit_c.rs.
 
 - **[M-lazy-const-init-race]** (2026-07-09, **P1 — UB-гонка в M:N**, вопрос владельца;
   Plan: волна сразу после 174.1, зона emit_c const-канал; Wave: [sonnet]) —
