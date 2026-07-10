@@ -1270,6 +1270,22 @@ pub struct CEmitter {
     /// injection in `synthesize_inout_refargs`. Populated for every free fn
     /// (generic and non-generic) in `emit_fn_forward_decl`.
     free_fn_inout_params: HashMap<String, Vec<bool>>,
+    /// Plan 172.14 Ф.1: C-имя value-struct'а (`NovaValue_X`/`NovaTuple_X`) →
+    /// УПОРЯДОЧЕННЫЙ список C-типов его полей. Заполняется при эмиссии
+    /// typedef'ов (`emit_value_record_type`/`emit_named_tuple_type`) — до
+    /// fn-forward-decl пасса. Источник для точного C-размера структуры
+    /// (`value_struct_size_align`, layout идентичен эмитируемому C).
+    value_struct_field_tys: HashMap<String, Vec<String>>,
+    /// Plan 172.14 Ф.1: free-fn имя → per-параметр `(имя, auto-by-ref)` для
+    /// БОЛЬШИХ (>16Б по C-ABI, порог SysV владельца) read-only value-struct
+    /// параметров. Такой параметр лоуерится в `const`-семантику `T*`:
+    /// сигнатура получает `*`, тело auto-deref через `ref_params`, call-site
+    /// оборачивает аргумент в `RefArg` (rvalue — materialize-temp в эмиссии
+    /// RefArg). Имя, отсутствующее в карте, «отравлено» или не имеет
+    /// кандидатов (перегрузки/дефолты/ссылки-как-значение → консервативно
+    /// by-value). Строится ОДНИМ пре-пассом `build_free_fn_byref_map` ДО
+    /// fn-forward-decl цикла — сигнатуры/тела/call-sites читают одну карту.
+    free_fn_byref_params: HashMap<String, Vec<(String, bool)>>,
     /// Plan 48: generic instance-method FnDecls for method monomorphization.
     /// Key = (receiver_type_name, method_name). Methods with own type params (e.g. @execute[T,E]).
     mono_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
@@ -1827,6 +1843,8 @@ impl CEmitter {
             current_emit_file_id: None,
             mono_fn_decls: HashMap::new(),
             free_fn_inout_params: HashMap::new(),
+            value_struct_field_tys: HashMap::new(),
+            free_fn_byref_params: HashMap::new(),
             mono_method_decls: HashMap::new(),
             self_method_decls: HashMap::new(),
             mono_worklist: Vec::new(),
@@ -5949,6 +5967,11 @@ impl CEmitter {
             }
         }
 
+        // Plan 172.14 Ф.1: классификация больших (>16Б C-ABI) read-only
+        // value-struct параметров free-fn'ов — ДО эмиссии forward-decl'ов
+        // (value-typedef'ы выше уже заполнили `value_struct_field_tys`).
+        // Сигнатуры, тела и call-sites читают одну финализированную карту.
+        self.build_free_fn_byref_map(module);
         // 2. Forward declarations for all functions (types are now known)
         for item in &module.items {
             if let Item::Fn(f) = item {
@@ -13867,6 +13890,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line("};");
         self.line("");
+        // Plan 172.14 Ф.1: запомнить упорядоченные C-типы полей — точный
+        // источник C-размера структуры для auto-by-ref классификации.
+        // Пустой record эмитит char-маркер (size 1) — фиксируем его же.
+        self.value_struct_field_tys.insert(
+            format!("NovaValue_{}", name),
+            if fields.is_empty() {
+                vec!["nova_byte".to_string()]
+            } else {
+                field_c_tys.clone()
+            },
+        );
         let struct_def = std::mem::replace(&mut self.out, saved_out);
         // Hoist the NovaOpt typedefs this record's by-value fields registered
         // (delta since `opt_snap`) ahead of the struct; truncate the shared
@@ -14054,9 +14088,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("struct NovaTuple_{} {{", name));
         self.indent += 1;
         let mut schema = HashMap::new();
+        let mut nt_field_c_tys: Vec<String> = Vec::new();
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
             schema.insert(f.name.clone(), ty_c.clone());
+            nt_field_c_tys.push(ty_c.clone());
             let mangled = Self::mangle_field_name(&f.name);
             self.line(&format!("{} {};", ty_c, mangled));
         }
@@ -14064,6 +14100,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("};");
         self.line("");
         self.record_schemas.insert(name.to_string(), schema);
+        // Plan 172.14 Ф.1: упорядоченные C-типы полей для C-размера (см.
+        // симметричный захват в emit_value_record_type).
+        self.value_struct_field_tys
+            .insert(format!("NovaTuple_{}", name), nt_field_c_tys);
         // D215 amend: register field defaults for constructor call emission.
         let field_defaults: Vec<(String, Option<crate::ast::Expr>)> = fields.iter()
             .map(|f| (f.name.clone(), f.default.clone()))
@@ -15450,7 +15490,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 parts.push(format!("{} nova_self", self.receiver_c_type(&recv.type_name, recv.mutable)));
             }
         }
-        for p in &f.params {
+        for (p_idx, p) in f.params.iter().enumerate() {
             // Plan 72 P3-B: a protocol-typed parameter (`x Iter[int]`) lowers
             // to the `NovaBox_*` fat pointer so the callee can dispatch via the
             // vtable — mirrors the protocol-return-type lowering.
@@ -15471,6 +15511,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `T*` (by-pointer in-out). (Legacy `mut ref` form removed —
             // заход-5 п.7: `ParamRefMode` больше нет.)
             if Self::param_is_inout_ptr(p, &ty_c) {
+                ty_c.push('*');
+            } else if f.receiver.is_none() && self.free_fn_byref_flag(&f.name, p_idx) {
+                // Plan 172.14 Ф.1: большой read-only value-struct параметр
+                // free-fn — by-ref (`T*`). Тело auto-deref через `ref_params`,
+                // call-site оборачивает аргумент в RefArg (см.
+                // `build_free_fn_byref_map`).
                 ty_c.push('*');
             }
             // [M-c-keyword-ident-collision]: a Nova param named like a C
@@ -21454,7 +21500,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // body uses of their names auto-deref (`name` → `(*name)`). Scoped per
         // fn body (restored at exit) so a nested/sibling fn is unaffected.
         let saved_ref_params_fn = std::mem::take(&mut self.ref_params);
-        for p in &f.params {
+        for (p_idx, p) in f.params.iter().enumerate() {
             if p.is_mut && !p.consume {
                 // Plan 184 Р10: a value/primitive `mut x T` param is by-pointer
                 // in-out; its body reads/writes auto-deref (`name` → `(*name)`).
@@ -21467,6 +21513,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if Self::param_is_inout_ptr(p, &ty_c) {
                     self.ref_params.insert(p.name.clone());
                 }
+            } else if f.receiver.is_none() && self.free_fn_byref_flag(&f.name, p_idx) {
+                // Plan 172.14 Ф.1: большой ro value-struct параметр — by-ref
+                // `T*`; чтения в теле auto-deref (`name` → `(*name)`), как у
+                // Р10. Записей нет по построению (ro).
+                self.ref_params.insert(p.name.clone());
             }
         }
         let params = self.params_c(f)?;
@@ -25108,6 +25159,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // is the value-position fallback and keeps the ABI consistent.)
             ExprKind::RefArg(inner) => {
                 let place = self.emit_expr(inner)?;
+                // Lazy-const Ident может лоуериться в не-адресуемую форму —
+                // принудительный hoist (зеркало prepare_method_recv guard'а).
+                let is_lazy_const_ident = matches!(&inner.kind,
+                    ExprKind::Ident(name) if self.lazy_consts.contains(name));
+                // Адресуемое место (включая ref-параметры: `&((*p))` ≡ `p`) —
+                // прямое взятие адреса (легаси-поведение, Р10/D326).
+                if !is_lazy_const_ident && Self::is_lvalue_receiver(inner) {
+                    return Ok(format!("(&({}))", place));
+                }
+                // Plan 172.14 Ф.1: rvalue-аргумент к by-ref параметру —
+                // materialize-temp (зеркало rvalue-ветки prepare_method_recv).
+                let ty = self.infer_expr_c_type(inner);
+                if Self::is_value_struct_ptr(&ty) {
+                    // fluent `-> @` результат — уже указатель на value-slot;
+                    // передаём как есть (прецедент prepare_method_recv Р7).
+                    return Ok(place);
+                }
+                if Self::is_value_struct_val(&ty) {
+                    let tmp = self.fresh_tmp();
+                    self.line(&format!("{} {} = {};", ty, tmp, place));
+                    return Ok(format!("(&{})", tmp));
+                }
                 Ok(format!("(&({}))", place))
             }
             // Plan 172.1 [literal-coercion channel] (§0/§1): if the checker materialized a
@@ -28751,26 +28824,109 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::TurboFish { base, .. } => base,
             _ => func,
         };
-        let flags: &[bool] = match &base.kind {
-            ExprKind::Ident(name) => self.free_fn_inout_params.get(name)?.as_slice(),
+        let name: &str = match &base.kind {
+            ExprKind::Ident(name) => name.as_str(),
             _ => return None,
         };
+        let inout_flags: Option<&Vec<bool>> = self.free_fn_inout_params.get(name);
+        // Plan 172.14 Ф.1: большие ro value-struct параметры — тоже by-pointer
+        // (call-site RefArg; rvalue материализуется в temp при эмиссии RefArg).
+        let byref_flags: Option<&Vec<(String, bool)>> = self.free_fn_byref_params.get(name);
+        if inout_flags.is_none() && byref_flags.is_none() {
+            return None;
+        }
         let mut any = false;
         let mut out: Vec<CallArg> = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
-            let by_ptr = flags.get(i).copied().unwrap_or(false);
+            let by_inout = matches!(a, CallArg::Item(_))
+                && inout_flags.and_then(|f| f.get(i)).copied().unwrap_or(false);
+            let by_ro_ref = match a {
+                CallArg::Item(_) => byref_flags
+                    .and_then(|f| f.get(i))
+                    .map(|(_, b)| *b)
+                    .unwrap_or(false),
+                // Именованный аргумент — флаг по ИМЕНИ параметра (только
+                // 172.14-карта: Р10-карта имён не несёт).
+                CallArg::Named { name: arg_name, .. } => byref_flags
+                    .and_then(|f| f.iter().find(|(pn, _)| pn == arg_name))
+                    .map(|(_, b)| *b)
+                    .unwrap_or(false),
+                CallArg::Spread(_) => false,
+            };
             let already = matches!(a.expr().kind, ExprKind::RefArg(_));
-            if by_ptr && !already && matches!(a, CallArg::Item(_)) {
+            if (by_inout || by_ro_ref) && !already {
                 any = true;
-                let inner = a.expr().clone();
-                let span = inner.span;
-                out.push(CallArg::Item(Expr::new(
-                    ExprKind::RefArg(Box::new(inner)), span)));
+                // Plan 172.14 Ф.1: для RO-by-ref аргумента с МУТАБЕЛЬНЫМ
+                // корнем (mut local / boxed capture / mut-receiver поле)
+                // сохраняем прежнюю копию-семантику: заворачиваем place в
+                // пустой Block → не-lvalue → эмиссия RefArg materialize'ит
+                // temp (алиасинг с мутацией-во-время-вызова через замыкание
+                // исключён). Р10-inout аргументы (by_inout) НЕ трогаем — им
+                // нужен именно адрес хранилища вызывающего.
+                let needs_copy =
+                    !by_inout && by_ro_ref && !self.byref_arg_direct_addr_ok(a.expr());
+                let wrap = |inner: &Expr| -> Expr {
+                    let span = inner.span;
+                    let carried: Expr = if needs_copy {
+                        Expr::new(
+                            ExprKind::Block(Block {
+                                stmts: vec![],
+                                trailing: Some(Box::new(inner.clone())),
+                                span,
+                                is_unsafe: false,
+                            }),
+                            span,
+                        )
+                    } else {
+                        inner.clone()
+                    };
+                    Expr::new(ExprKind::RefArg(Box::new(carried)), span)
+                };
+                match a {
+                    CallArg::Item(inner) => out.push(CallArg::Item(wrap(inner))),
+                    CallArg::Named { name: arg_name, value } => {
+                        out.push(CallArg::Named {
+                            name: arg_name.clone(),
+                            value: wrap(value),
+                        });
+                    }
+                    CallArg::Spread(_) => unreachable!("spread не by-ptr"),
+                }
             } else {
                 out.push(a.clone());
             }
         }
         if any { Some(out) } else { None }
+    }
+
+    /// Plan 172.14 Ф.1: аргумент можно передать по прямому адресу БЕЗ копии?
+    /// Строго: только bare-Ident НЕмутабельного локала со value-struct
+    /// C-типом — его хранилище лежит в кадре вызывающего и не может быть
+    /// изменено во время вызова (ни писем нет — ro, ни алиасов через heap).
+    /// Включая наш же by-ref параметр (ref_params: `&((*p))` ≡ `p`,
+    /// zero-copy сквозная передача). Любые проекции (Member/Index/@…) и
+    /// прочие формы → false → копия (semantics-preserving: heap-хранилище
+    /// может алиаситься другим mut-хэндлом, Vec-элемент — переехать при
+    /// realloc'е во время вызова).
+    fn byref_arg_direct_addr_ok(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(n) => {
+                if self.var_mutable.contains(n)
+                    || self.var_boxed.contains_key(n)
+                    || self.lazy_consts.contains(n)
+                {
+                    return false;
+                }
+                if self.ref_params.contains(n) {
+                    return true; // наш ro by-ref параметр — уже указатель
+                }
+                self.var_types
+                    .get(n)
+                    .map(|c| Self::is_value_struct_val(c))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
     }
 
     fn emit_call(&mut self, func: &Expr, args: &[CallArg], call_id: crate::ast::ExprId) -> Result<String, String> {
@@ -43488,6 +43644,426 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// by-value форма (`NovaValue_X` / `NovaTuple_X`) — local/binding value-позиция.
     fn is_value_struct_val(c: &str) -> bool {
         Self::is_value_struct(c) && !c.ends_with('*')
+    }
+
+    /// Plan 172.14 Ф.1: (size, align) ЛИСТОВОГО C-типа поля value-struct'а.
+    /// Только типы, чей layout известен здесь точно (x64, соответствует
+    /// nova_rt typedef'ам); всё прочее → `None` (консервативно: структура с
+    /// таким полем НЕ классифицируется как by-ref кандидат).
+    fn c_leaf_size_align(ty_c: &str) -> Option<(i64, i64)> {
+        if ty_c.ends_with('*') {
+            return Some((8, 8)); // любой указатель (heap-record, Vec, sum, …)
+        }
+        match ty_c {
+            "nova_str" => Some((16, 8)), // { const u8* ptr; nova_int len; }
+            "nova_int" | "nova_uint" | "nova_f64" | "int64_t" | "uint64_t" => Some((8, 8)),
+            "nova_char" | "nova_f32" | "int32_t" | "uint32_t" => Some((4, 4)),
+            "int16_t" | "uint16_t" => Some((2, 2)),
+            "nova_bool" | "nova_byte" | "int8_t" | "uint8_t" => Some((1, 1)),
+            _ => None,
+        }
+    }
+
+    /// Plan 172.14 Ф.1: точный C-размер/выравнивание именованного value-struct
+    /// (`NovaValue_X` / `NovaTuple_X`) по УПОРЯДОЧЕННЫМ полям из
+    /// `value_struct_field_tys` (тот же порядок, что в эмитируемом C —
+    /// натуральное выравнивание + tail-pad). Вложенные value-struct'ы
+    /// рекурсивно (бюджет глубины — защита от невалидного value-самоцикла);
+    /// неизвестный лист (NovaOpt_*, mono-tuple, erased, …) → `None`.
+    fn value_struct_size_align(&self, c_name: &str, depth: usize) -> Option<(i64, i64)> {
+        if depth > 32 {
+            return None;
+        }
+        let fields = self.value_struct_field_tys.get(c_name)?;
+        let mut size: i64 = 0;
+        let mut max_align: i64 = 1;
+        for fty in fields {
+            let (fs, fa) = match Self::c_leaf_size_align(fty) {
+                Some(sa) => sa,
+                None if Self::is_value_struct_val(fty) => {
+                    self.value_struct_size_align(fty, depth + 1)?
+                }
+                None => return None,
+            };
+            if fa < 1 {
+                return None;
+            }
+            if fa > max_align {
+                max_align = fa;
+            }
+            let rem = size % fa;
+            if rem != 0 {
+                size += fa - rem;
+            }
+            size += fs;
+        }
+        if max_align > 1 {
+            let rem = size % max_align;
+            if rem != 0 {
+                size += max_align - rem;
+            }
+        }
+        Some((size, max_align))
+    }
+
+    /// Plan 172.14 Ф.1: параметр — кандидат auto-by-ref? Read-only (не
+    /// mut/consume/variadic/const) value-struct РАЗМЕРОМ > 16Б по C-ABI
+    /// (порог владельца: SysV ≤16Б остаётся by-value). `mut` покрыт Р10
+    /// (`param_is_inout_ptr`), heap/protocol/скаляры — не структуры.
+    fn param_is_auto_byref(&self, p: &crate::ast::Param, ty_c: &str) -> bool {
+        !p.is_mut
+            && !p.consume
+            && !p.is_variadic
+            && !p.is_const
+            && Self::is_value_struct_val(ty_c)
+            && self
+                .value_struct_size_align(ty_c, 0)
+                .map(|(s, _)| s > 16)
+                .unwrap_or(false)
+    }
+
+    /// Plan 172.14 Ф.1: флаг auto-by-ref для позиционного параметра free-fn.
+    /// Единственный источник для сигнатуры/тела/call-site (одна карта).
+    fn free_fn_byref_flag(&self, fn_name: &str, idx: usize) -> bool {
+        self.free_fn_byref_params
+            .get(fn_name)
+            .and_then(|v| v.get(idx))
+            .map(|(_, b)| *b)
+            .unwrap_or(false)
+    }
+
+    /// Plan 172.14 Ф.1: пре-пасс — построить `free_fn_byref_params` ДО эмиссии
+    /// fn-forward-decl'ов (typedef'ы value-типов уже эмитированы →
+    /// `value_struct_field_tys` заполнен). Консервативные «отравления» (имя
+    /// исключается целиком):
+    /// - ≥2 перегрузки free-fn под одним именем (call-site картой по имени не
+    ///   различает перегрузку);
+    /// - параметры с default-значениями (default-заполнение call-site'ом идёт
+    ///   отдельным путём от RefArg-обёртки);
+    /// - имя используется как ЗНАЧЕНИЕ (HOF/`xs.map(f)`/fn-typed binding) —
+    ///   вызов через fn-pointer/closure не проходит RefArg-обёртку.
+    /// generic free-fn (mono/erased) не «отравляются», но их value-struct
+    /// параметры с mono-именами не находятся в `value_struct_field_tys` на
+    /// этом этапе → флаг false естественно.
+    fn build_free_fn_byref_map(&mut self, module: &Module) {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut poisoned: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut map: HashMap<String, Vec<(String, bool)>> = HashMap::new();
+        for item in &module.items {
+            let Item::Fn(f) = item else { continue };
+            if f.receiver.is_some() || f.is_external || f.name == "main" {
+                continue;
+            }
+            if !seen.insert(f.name.clone()) {
+                poisoned.insert(f.name.clone()); // перегрузка → отравлено
+                continue;
+            }
+            if f.params.iter().any(|p| p.default.is_some()) {
+                poisoned.insert(f.name.clone());
+                continue;
+            }
+            let mut flags: Vec<(String, bool)> = Vec::with_capacity(f.params.len());
+            let mut any = false;
+            for p in &f.params {
+                let ty_c = if let Some((box_ty, _, _)) = self.protocol_box_c_type_for(&p.ty) {
+                    box_ty
+                } else {
+                    self.type_ref_to_c(&p.ty).unwrap_or_default()
+                };
+                let b = self.param_is_auto_byref(p, &ty_c);
+                any |= b;
+                flags.push((p.name.clone(), b));
+            }
+            if any {
+                map.insert(f.name.clone(), flags);
+            }
+        }
+        if !map.is_empty() {
+            // Скан «имя как значение»: любой Ident(name) НЕ в позиции func
+            // прямого Call → отравить (передача fn как значения обойдёт
+            // RefArg-обёртку, а C-сигнатура уже со `*`).
+            let mut value_refs: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for item in &module.items {
+                match item {
+                    Item::Fn(f) => {
+                        if let FnBody::Block(b) = &f.body {
+                            Self::collect_value_position_idents_block(b, &mut value_refs);
+                        } else if let FnBody::Expr(e) = &f.body {
+                            Self::collect_value_position_idents_expr(e, &mut value_refs);
+                        }
+                    }
+                    Item::Test(t) => {
+                        Self::collect_value_position_idents_block(&t.body, &mut value_refs);
+                    }
+                    Item::Let(l) => {
+                        Self::collect_value_position_idents_expr(&l.value, &mut value_refs);
+                    }
+                    _ => {}
+                }
+            }
+            for n in &value_refs {
+                poisoned.insert(n.clone());
+            }
+        }
+        for n in &poisoned {
+            map.remove(n);
+        }
+        self.free_fn_byref_params = map;
+    }
+
+    /// Plan 172.14 Ф.1: собрать идентификаторы в ЗНАЧЕНИЕ-позиции (не func
+    /// прямого вызова). Консервативно: любой Ident вне `Call.func`-позиции
+    /// считается «значением» (включая аргументы HOF, поля record-lit, spawn
+    /// captures, closure bodies — все места, где fn-имя утекает как pointer,
+    /// и вызов пойдёт мимо RefArg-обёртки). Структурное зеркало
+    /// `collect_idents_expr` с одним отличием: прямой `Ident`/`TurboFish
+    /// (Ident)` в func-позиции Call НЕ собирается (это сам вызов).
+    /// NB: `mod.f` как значение (Member без вызова) не распознаётся — имя
+    /// метода в Member — строка, не Ident; такой value-take free-fn'а через
+    /// qualified path сегодня не эмитится как fn-pointer take.
+    fn collect_value_position_idents_expr(
+        e: &Expr,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        let ve = Self::collect_value_position_idents_expr;
+        let vb = Self::collect_value_position_idents_block;
+        match &e.kind {
+            ExprKind::Ident(name) => {
+                out.insert(name.clone());
+            }
+            ExprKind::Call { func, args, trailing, .. } => {
+                match &func.kind {
+                    ExprKind::Ident(_) => {}
+                    ExprKind::TurboFish { base, .. }
+                        if matches!(base.kind, ExprKind::Ident(_)) => {}
+                    ExprKind::Member { obj, .. } => ve(obj, out),
+                    _ => ve(func, out),
+                }
+                for a in args {
+                    ve(a.expr(), out);
+                }
+                if let Some(t) = trailing {
+                    match t {
+                        crate::ast::Trailing::Block(b) => vb(b, out),
+                        crate::ast::Trailing::Fn(f) => match &f.body {
+                            FnBody::Block(b) => vb(b, out),
+                            FnBody::Expr(x) => ve(x, out),
+                            FnBody::External => {}
+                        },
+                        crate::ast::Trailing::LegacyBlockWithParams(tb) => vb(&tb.body, out),
+                    }
+                }
+            }
+            ExprKind::Binary { left, right, .. } => {
+                ve(left, out);
+                ve(right, out);
+            }
+            ExprKind::Unary { operand, .. } => ve(operand, out),
+            ExprKind::RefArg(inner) => ve(inner, out),
+            ExprKind::Member { obj, .. } => ve(obj, out),
+            ExprKind::Index { obj, index } => {
+                ve(obj, out);
+                ve(index, out);
+            }
+            ExprKind::TurboFish { base, .. } => ve(base, out),
+            ExprKind::If { cond, then, else_ } => {
+                ve(cond, out);
+                vb(then, out);
+                match else_.as_ref() {
+                    Some(ElseBranch::Block(b)) => vb(b, out),
+                    Some(ElseBranch::If(x)) => ve(x, out),
+                    None => {}
+                }
+            }
+            ExprKind::IfLet { scrutinee, then, else_, .. } => {
+                ve(scrutinee, out);
+                vb(then, out);
+                match else_.as_ref() {
+                    Some(ElseBranch::Block(b)) => vb(b, out),
+                    Some(ElseBranch::If(x)) => ve(x, out),
+                    None => {}
+                }
+            }
+            ExprKind::While { cond, body, .. } => {
+                ve(cond, out);
+                vb(body, out);
+            }
+            ExprKind::WhileLet { scrutinee, body, .. } => {
+                ve(scrutinee, out);
+                vb(body, out);
+            }
+            ExprKind::For { iter, body, .. }
+            | ExprKind::ParallelFor { iter, body, .. } => {
+                ve(iter, out);
+                vb(body, out);
+            }
+            ExprKind::Loop { body, .. } => vb(body, out),
+            ExprKind::Match { scrutinee, arms } => {
+                ve(scrutinee, out);
+                for arm in arms {
+                    if let Some(g) = &arm.guard {
+                        ve(g, out);
+                    }
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => ve(x, out),
+                        MatchArmBody::Block(b) => vb(b, out),
+                    }
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(s) = start {
+                    ve(s, out);
+                }
+                if let Some(x) = end {
+                    ve(x, out);
+                }
+            }
+            ExprKind::Lambda { body, .. } => ve(body, out),
+            ExprKind::ClosureLight { body, .. } => match body {
+                crate::ast::ClosureBody::Expr(x) => ve(x, out),
+                crate::ast::ClosureBody::Block(b) => vb(b, out),
+            },
+            ExprKind::ClosureFull(sig) => match &sig.body {
+                FnBody::Block(b) => vb(b, out),
+                FnBody::Expr(x) => ve(x, out),
+                FnBody::External => {}
+            },
+            ExprKind::TupleLit(elems) => {
+                for x in elems {
+                    ve(x, out);
+                }
+            }
+            ExprKind::ArrayLit(elems) => {
+                for elem in elems {
+                    match elem {
+                        ArrayElem::Item(x) | ArrayElem::Spread(x) => ve(x, out),
+                    }
+                }
+            }
+            ExprKind::MapLit { elems, .. } => {
+                for me in elems {
+                    match me {
+                        crate::ast::MapElem::Pair(k, v) => {
+                            ve(k, out);
+                            ve(v, out);
+                        }
+                        crate::ast::MapElem::Spread(x) => ve(x, out),
+                    }
+                }
+            }
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value {
+                        ve(v, out);
+                    }
+                }
+            }
+            ExprKind::Spawn(body) => ve(body, out),
+            ExprKind::With { bindings, body } => {
+                for b in bindings {
+                    ve(&b.handler, out);
+                }
+                vb(body, out);
+            }
+            ExprKind::Coalesce(l, r) => {
+                ve(l, out);
+                ve(r, out);
+            }
+            ExprKind::Try(x) | ExprKind::Bang(x) | ExprKind::As(x, _) | ExprKind::Is(x, _) => {
+                ve(x, out);
+            }
+            ExprKind::Interrupt(Some(v)) => ve(v, out),
+            ExprKind::Block(b) => vb(b, out),
+            ExprKind::Supervised { body, cancel, deadline } => {
+                vb(body, out);
+                if let Some(c) = cancel {
+                    ve(c, out);
+                }
+                if let Some(dl) = deadline {
+                    ve(&dl.expr, out);
+                }
+            }
+            ExprKind::Detach(b) | ExprKind::Blocking(b) => vb(b, out),
+            ExprKind::Select { arms } => {
+                for arm in arms {
+                    match &arm.op {
+                        SelectOp::Recv { chan, .. } => ve(chan, out),
+                        SelectOp::Send { chan, value } => {
+                            ve(chan, out);
+                            ve(value, out);
+                        }
+                        SelectOp::Default => {}
+                    }
+                    if let Some(g) = &arm.guard {
+                        ve(g, out);
+                    }
+                    vb(&arm.body, out);
+                }
+            }
+            ExprKind::InterpolatedStr { parts } => {
+                for p in parts {
+                    if let InterpStrPart::Expr { expr, .. } = p {
+                        ve(expr, out);
+                    }
+                }
+            }
+            ExprKind::HandlerLit { methods, .. } => {
+                for m in methods {
+                    match &m.body {
+                        crate::ast::HandlerMethodBody::Block(b) => vb(b, out),
+                        crate::ast::HandlerMethodBody::Expr(x) => ve(x, out),
+                    }
+                }
+            }
+            // Листовые/прочие формы — идентификаторов-значений нет.
+            _ => {}
+        }
+    }
+
+    fn collect_value_position_idents_block(
+        b: &Block,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        for stmt in &b.stmts {
+            Self::collect_value_position_idents_stmt(stmt, out);
+        }
+        if let Some(t) = &b.trailing {
+            Self::collect_value_position_idents_expr(t, out);
+        }
+    }
+
+    fn collect_value_position_idents_stmt(
+        stmt: &Stmt,
+        out: &mut std::collections::HashSet<String>,
+    ) {
+        let ve = Self::collect_value_position_idents_expr;
+        match stmt {
+            Stmt::Let(d) => ve(&d.value, out),
+            Stmt::Expr(e) => ve(e, out),
+            Stmt::Assign { target, value, .. } => {
+                ve(target, out);
+                ve(value, out);
+            }
+            Stmt::Return { value: Some(v), .. } => ve(v, out),
+            Stmt::Return { value: None, .. } => {}
+            Stmt::Throw { value, .. } => ve(value, out),
+            Stmt::Defer { body, .. } => ve(body, out),
+            Stmt::ConsumeScope { init, body, .. } => {
+                ve(init, out);
+                Self::collect_value_position_idents_block(body, out);
+            }
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs {
+                    ve(e, out);
+                }
+                for e in rhs {
+                    ve(e, out);
+                }
+            }
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => ve(expr, out),
+            _ => {}
+        }
     }
 
     /// Plan 184 (Р5/Р7): a value-record fluent `-> @` method returns `ref Self`
