@@ -11,17 +11,17 @@ module nova_tests.concurrency
 
 test "OnceGuard: single caller commits" {
     mut once = Once.new()
-    mut ran = false
+    mut ran = AtomicBool.new(false)
     supervised {
         spawn {
             if once.try_start_won() {
                 consume g = once.make_guard()
-                ran = true
+                ran.store(true)
                 g.commit()
             }
         }
     }
-    assert(ran == true)
+    assert(ran.load() == true)
     assert(once.is_completed() == true)
 }
 
