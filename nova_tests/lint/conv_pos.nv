@@ -1,5 +1,5 @@
 // Фикстура-позитив плана 185 (`nova lint` самотест): этот файл ДОЛЖЕН давать
-// ровно 6 находок реестра конвенционных правил:
+// ровно 7 находок реестра конвенционных правил:
 //   W_NONVARIADIC_OF      — static `of` без вариадика (§21б)
 //   W_RETIRED_PREFIX      — `as_`-метод (D410)
 //   W_WITH_MUTATOR        — with_* с mut-приёмником (§21)
@@ -7,7 +7,9 @@
 //   W_DESTRUCTURE_SNAPSHOT — 2 подряд полевых снапшота одного источника (§26, D411)
 //   W_LEADING_BINOP_CONTINUATION — ведущий `||` в начале continuation-строки
 //     (footgun D417-класс — needs_quoting/is_ascii_ident_char, 2026-07-10)
-// Прогон: nova lint nova_tests/lint/conv_pos.nv → exit 1, 6 finding(s).
+//   W_REDUNDANT_OF        — `Vec[int].of(1, 2, 3)` избыточен: литерал `[1, 2, 3]`
+//     дал бы ТОТ ЖЕ `Vec[int]` (§28)
+// Прогон: nova lint nova_tests/lint/conv_pos.nv → exit 1, 7 finding(s).
 // Для `nova test` файл — обычный компилируемый unit (main + вызовы).
 
 module lint.conv_pos
@@ -55,6 +57,12 @@ fn is_ascii_letter_leading(c int) -> bool {
     result
 }
 
+// W_REDUNDANT_OF: `Vec[int].of(...)` избыточен — литерал `[1, 2, 3]` дал бы
+// ТОТ ЖЕ `Vec[int]` (§28).
+fn redundant_of() -> []int {
+    Vec[int].of(1, 2, 3)
+}
+
 fn main() -> () {
     mut w = Widget.of(1)
     w.with_label("x")
@@ -62,5 +70,6 @@ fn main() -> () {
     ro _s = join(["a", "b"])
     ro _d = describe(w)
     ro _letter = is_ascii_letter_leading(70)
+    ro _v = redundant_of()
     ()
 }

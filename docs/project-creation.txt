@@ -40075,3 +40075,40 @@ baseline-FAIL — neg-тесты/тест-хелперы, nova.toml ортого
 Коммиты (module-authoring-192): e49a4a79b (задача1 [ffi.staticlib]),
 2173fb6d6 (задача2 доки), a1e2b05f9 (задача1 trigger_symbols generic),
 7cc88cada (доки trigger+консолидация). nova-tls: 745c4d4 (свой репо).
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan §28 — W_REDUNDANT_OF lint + миграция std (ветка redundant-of-lint, 2026-07-10/11)
+Модель: sonnet (исполнение по карте владельца).
+───────────────────────────────────────────────────────────────────────────────
+Задача 1 — lint `W_REDUNDANT_OF` (compiler-codegen/src/lints.rs, CONV_RULES):
+ловит `Vec[T].of(a, b, ...)`, когда литерал `[a, b, ...]` дал бы ТОТ ЖЕ тип
+(nv-coding-style §28). V1 КОНСЕРВАТИВНО: флагует только `T`, буквально
+совпадающий с default-типом голого примитивного литерала (`int`/`str`/`bool`/
+`char`), где КАЖДЫЙ аргумент — однозначный литерал ИМЕННО этого типа (Item,
+не Spread/Named; для `int` допускается унарный `-`/`+` перед `IntLit`). Не
+флагует: сужение ширины (`Vec[u32].of(1,2,3)`), `Option`-элементы (`None` —
+generics непусты), пустую границу API (`.of()` — args.is_empty() гейт),
+non-literal аргументы (переменные/вызовы — тип не выводится синтаксически
+без type-checker'а) и `[]T`-элементы (`Vec[[]u8].of(...)` — TypeRef::Array,
+не Named). helpers: `conv_ty_literal_default_name`, `conv_expr_is_bare_literal_of`.
+Самотест: nova_tests/lint/conv_pos.nv (+1 находка, 7 итого — `Vec[int].of(1,2,3)`),
+nova_tests/lint/conv_clean.nv (+1 легитимный `.of` — `Vec[u32].of(1,2,3)`
+сужение ширины, 0 находок).
+
+Задача 2 — миграция std: прогон правила по `D:/std` и `D:/spec_tests` дал
+0 находок (V1 намеренно узкий — существующий std не содержит голых
+примитивных литералов в `.of`, только осмысленные сужения/пустые границы).
+Спец-случай tls (ручное указание владельца, вне периметра автоправила):
+std/tls/config_test.nv:33 `Vec[[]u8].of("0123...".bytes())` (ASCII-плейсхолдер
+через `.bytes()`, T=[]u8 совпадает с типом единственного аргумента — истинно
+избыточная упаковка, просто не примитивный литерал) → `[x"01 23 45 67 89 ab
+cd ef" × 4]` (D412 hex-blob, 32 байта — как уже в cert_modes_test.nv:69).
+cert_modes_test.nv:39/69 (тот же класс `.of(single_expr)`, но НЕ названы
+владельцем явно) оставлены как есть — не в периметре задачи.
+
+Гейты: cargo build ok (nova-cli, dev); nova lint std/spec_tests (все правила,
+включая W_REDUNDANT_OF) = 0/0, без регрессии; conformance = 91/0; nova check
+std — config_test.nv НЕ в списке 25 pre-existing FAIL (delta 0); nova test
+std/tls — PASS (folder-CU, все test-блоки вкл. ClientConfig @verification).
+Коммиты: e7486dab5 (правило + самотест), d1ac74461 (миграция tls).
+Ветка redundant-of-lint запушена в github.

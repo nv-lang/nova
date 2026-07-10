@@ -45,6 +45,12 @@ fn is_ascii_letter_trailing(c int) -> bool {
     result
 }
 
+// Канон §28: `.of` легален, когда фиксирует тип, которого литерал не даёт —
+// здесь `u32` (литерал `[1, 2, 3]` дал бы `Vec[int]`, не `Vec[u32]`).
+fn legit_of_narrowing() -> []u32 {
+    Vec[u32].of(1, 2, 3)
+}
+
 fn main() -> () {
     mut w = Widget.new(1)
     w.label("x")
@@ -52,5 +58,6 @@ fn main() -> () {
     ro _s = join(["a", "b"])
     ro _d = describe(w)
     ro _letter = is_ascii_letter_trailing(70)
+    ro _v = legit_of_narrowing()
     ()
 }
