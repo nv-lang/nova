@@ -34357,7 +34357,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if parts[0] == "str" && parts[1] == "from" {
                         if let Some(arg) = args.first() {
                             let arg_ty = self.infer_expr_c_type(arg.expr());
-                            let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
+                            // Plan 175 Ф.3(d): value-records (`NovaValue_<X>`) need
+                            // the value-aware strip too — `_no_ws` only handled
+                            // `Nova_<X>*` (heap), silently leaving `NovaValue_<X>`
+                            // unstripped и ломая user-method lookup below (falls
+                            // through to the numeric-cast fallback for value-record
+                            // Display/Debug interpolation otherwise).
+                            let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
                             // Plan 11: try multi-overload registry first — strict
                             // arg-type match resolves between overloads (e.g. char vs int).
                             // If found, use the matching overload's c_name (with parameter
@@ -36001,7 +36007,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "nova_str" | "nova_char" | "nova_bool"
                             | "nova_f64" | "nova_f32" | "nova_int")
                     {
-                        let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
+                        // Plan 175 Ф.3(d): value-record-aware strip (see note above) —
+                        // fixes `${d}`/`${d:?}` falling through to the numeric-cast
+                        // fallback for `NovaValue_<X>` types with a user @display/@debug.
+                        let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
                         let has_explicit = self.all_methods
                             .contains(&(arg_type.clone(), method_name.to_string()));
                         let method_c_fn: Option<String> = if has_explicit {
@@ -36021,9 +36030,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         };
                         if let Some(fn_name) = method_c_fn {
+                            // Plan 175 Ф.3(d): value-record receivers (`NovaValue_<X>`,
+                            // e.g. Duration/Timestamp/Monotonic) use pointer-carrier
+                            // receiver ABI (D226/A6) even though the C type is by-value
+                            // in this position — `Nova_X_method_display(NovaValue_X*, sb)`
+                            // expects `&obj`, not the bare by-value expr. Mirrors the
+                            // established `prepare_method_recv` adaptation used by every
+                            // other value-struct method-call site (lvalue → `&(obj)`,
+                            // rvalue → hoist-to-temp + `&tmp`) — was previously missing
+                            // HERE, so `${d}`/`${d:?}` interpolation of a value-record
+                            // with a user @display/@debug hit a pointer/by-value C
+                            // type-mismatch compile error.
+                            let recv_c = self.prepare_method_recv(&v, &arg_ty, false, Some(e));
                             self.line(&format!(
                                 "{}({}, {});",
-                                fn_name, v, sb
+                                fn_name, recv_c, sb
                             ));
                             continue;
                         }
@@ -36043,7 +36064,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // User-type fallback path — Display str.from chain (D237).
                                 // (debug fallback when debug synthesis failed
                                 // earlier — caller already tried via method dispatch).
-                                let arg_type = self.debt_strip_nova_trim_start_no_ws(&arg_ty);
+                                // Plan 175 Ф.3(d): value-record-aware strip (see note above).
+                                let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
                                 let from_method = if is_debug { "from_debug" } else { "from" };
                                 let key = ("str".to_string(), from_method.to_string());
                                 let str_from_c: Option<String> = self.method_overloads
