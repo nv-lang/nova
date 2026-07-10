@@ -56,20 +56,26 @@ export fn TlsVersion.from_wire(code int) -> Option[TlsVersion] {
 
 /// Конфиг TLS-клиента. SNI (`server_name`) ОБЯЗАТЕЛЕН — единственный
 /// конструктор его требует (D-блок B: rustls всегда шлёт SNI и проверяет имя).
+/// `client_cert_pem`/`client_key_pem` — клиентский серт для mTLS (пусто = без
+/// клиентской аутентификации; выставляется `@with_client_cert`, Ф.5).
 #stable(since = "0.2")
 export type ClientConfig {
     server_name     str                 // SNI + hostname verification target
     alpn_protocols  []str               // [] = без ALPN; порядок = приоритет
     verification    VerificationMode
+    client_cert_pem []u8                // mTLS: цепочка серта клиента (пусто = нет)
+    client_key_pem  []u8                // mTLS: приватный ключ клиента
 }
 
-/// Дефолтный клиент-конфиг: SystemRoots + ALPN `["http/1.1"]`.
+/// Дефолтный клиент-конфиг: SystemRoots + ALPN `["http/1.1"]`, без mTLS.
 /// (`h2` добавится планом HTTP/2 — D-блок C.)
 #stable(since = "0.2")
 export fn ClientConfig.new(server_name str) -> ClientConfig => {
     server_name,
     alpn_protocols: ["http/1.1"],
     verification: VerificationMode.SystemRoots,
+    client_cert_pem: []u8.new(),
+    client_key_pem: []u8.new(),
 }
 
 /// Новый конфиг с заменённым ALPN-списком (with_* → НОВОЕ значение).
@@ -78,6 +84,8 @@ export fn ClientConfig @with_alpn(protocols []str) -> ClientConfig => {
     @server_name,
     alpn_protocols: protocols,
     @verification,
+    @client_cert_pem,
+    @client_key_pem,
 }
 
 /// Новый конфиг с заменённым режимом верификации.
@@ -86,6 +94,18 @@ export fn ClientConfig @with_verification(mode VerificationMode) -> ClientConfig
     @server_name,
     @alpn_protocols,
     verification: mode,
+    @client_cert_pem,
+    @client_key_pem,
+}
+
+/// Новый конфиг с клиентским сертом для mTLS (цепочка PEM + приватный ключ PEM).
+#stable(since = "0.2")
+export fn ClientConfig @with_client_cert(cert_pem []u8, key_pem []u8) -> ClientConfig => {
+    @server_name,
+    @alpn_protocols,
+    @verification,
+    client_cert_pem: cert_pem,
+    client_key_pem: key_pem,
 }
 
 // ─── ServerConfig ─────────────────────────────────────────────────────────────
