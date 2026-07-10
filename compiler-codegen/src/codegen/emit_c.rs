@@ -25177,6 +25177,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     return Ok(place);
                 }
                 if Self::is_value_struct_val(&ty) {
+                    // Ф.3 (дёшево): rvalue уже материализован в НАШ свежий
+                    // temp (`_nv_tmp_*` — зарезервированное пространство
+                    // fresh_tmp) — второй temp избыточен, берём адрес прямо.
+                    // НЕ применяется к mut-копиям (Block-обёртка возвращает
+                    // ИМЯ пользовательской переменной, не `_nv_tmp_*`).
+                    if place.starts_with("_nv_tmp") && Self::looks_like_ident_str(&place) {
+                        return Ok(format!("(&{})", place));
+                    }
                     let tmp = self.fresh_tmp();
                     self.line(&format!("{} {} = {};", ty, tmp, place));
                     return Ok(format!("(&{})", tmp));
