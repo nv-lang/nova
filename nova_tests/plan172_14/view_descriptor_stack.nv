@@ -1,0 +1,48 @@
+// Plan 172.14 Ф.2 — приёмка владельца (2026-07-10): read-only виды
+// `s.bytes()` и `v[a..b]`.
+//
+// СТАТУС [M-172.14-view-descriptor-stack]: payload видов уже zero-copy
+// (data указывает внутрь исходного буфера), но ДЕСКРИПТОР (NovaArrHdr,
+// 24Б) сегодня аллоцируется на куче (nova_vec_slice_chk /
+// Vec.from_raw_parts). Правильная форма стек-плейсмента — по решению
+// владельца 2026-07-10 — НЕ slice-специфичный интринсик (второе окно
+// правды против .nv-тела `Vec[T] @index(Range)`, std/collections/vec/
+// slice.nv), а маршрутизация v[range] на @index(Range) + ОБЩИЙ механизм
+// callee-alloc→caller-stack плейсмента; это отдельная работа (маркер).
+// Здесь — функциональное покрытие семантики видов.
+
+module nova_tests.plan172_14
+
+test "ro b = s.bytes(): zero-copy payload, корректные чтения" {
+    ro s = "hello world"
+    ro b = s.bytes()
+    assert(b.len() == 11)
+    assert(b[0] == 104)
+    assert(b[10] == 100)
+}
+
+test "ro sl = v[3..5]: zero-copy payload, корректные чтения" {
+    mut v = []int.new().cap(16)
+    for i in 0..16 { v.push(i * 10) }
+    ro sl = v[3..5]
+    assert(sl.len() == 2)
+    assert(sl[0] == 30)
+    assert(sl[1] == 40)
+}
+
+test "эскейпящий вид корректен (замыкание)" {
+    ro v = [10, 20, 30]
+    ro sl = v[0..2]
+    ro f = || sl.len()
+    assert(f() == 2)
+}
+
+test "вид поверх mut-источника: snapshot-семантика при realloc" {
+    mut v = []int.new()
+    for i in 0..8 { v.push(i * 10) }
+    ro sl = v[1..4]
+    assert(sl.len() == 3)
+    assert(sl[0] == 10)
+    v.push(99)
+    assert(sl[0] == 10)
+}
