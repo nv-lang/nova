@@ -20074,7 +20074,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -20981,7 +20981,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -21856,7 +21856,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // so `=> Some(<int-literal>)` in `-> Option[uint]` builds NovaOpt_nova_uint,
                 // not the literal-default NovaOpt_nova_int (named-priority int-collapse →
                 // CC-FAIL, surfaced by d86_coalesce_width). Common path keeps `emit_expr`.
-                let val = if ret.starts_with("NovaOpt_") || Self::is_typed_integer(&ret) {
+                let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret) {
                     self.emit_expr_with_target_type(e, &ret)?
                 } else {
                     self.emit_expr(e)?
@@ -23451,7 +23451,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
             // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
             // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
-            let val = if ret_ty.starts_with("NovaOpt_") || Self::is_typed_integer(ret_ty) {
+            let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_") || Self::is_typed_integer(ret_ty) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?

@@ -3079,7 +3079,48 @@ fn stmt_is_barrier_for_with_ipa(s: &Stmt, fname: &str, ipa: Option<IpaCtx<'_>>) 
     if stmt_has_write_to(s, fname) {
         return true;
     }
+    // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): an INDEX write
+    // `@F[i] = v` (any depth: `@F[i][j] = v`) mutates the field's SLOT BYTES when
+    // `F` is a slot-unstable (value / inline) type — `[N]T` is now the inline
+    // `_NovaFixArr_*` struct, so writing an element through a cached local
+    // `_at_F[i] = v` would mutate the COPY, silently dropping the write (the
+    // sha256 `@h[k] = …` regression that surfaced this). For REF-typed fields
+    // (`[]T`/Vec, heap containers) the slot holds a stable pointer and the
+    // element write goes through it — NOT a barrier, byte-identical to the
+    // pre-amendment behavior. With no IPA registry (`--no-field-cache-ipa`)
+    // there is no ref-typed oracle → conservative barrier (correctness first).
+    if let Stmt::Assign { target, .. } = s {
+        if let Some(root) = index_target_root_self_field(target) {
+            if root == fname {
+                let slot_unstable = match ipa {
+                    Some(ctx) => !ctx.is_field_ref_type(fname),
+                    None => true,
+                };
+                if slot_unstable {
+                    return true;
+                }
+            }
+        }
+    }
     stmt_contains_invalidating_call_for(s, fname, ipa)
+}
+
+/// [M-fixed-array-value-semantics]: root self-field of an INDEX-target chain —
+/// `@F[i]` / `@F[i][j]` / … → `Some("F")`; anything else → `None`. Used by the
+/// slot-unstable index-write barrier above (deliberately Index-only: a plain
+/// `@F = v` is already caught by `match_self_field`, and member-writes
+/// `@F.x = v` keep their existing handling).
+fn index_target_root_self_field(e: &Expr) -> Option<&str> {
+    let mut cur = e;
+    let mut saw_index = false;
+    while let ExprKind::Index { obj, .. } = &cur.kind {
+        saw_index = true;
+        cur = obj;
+    }
+    if !saw_index {
+        return None;
+    }
+    match_self_field(cur)
 }
 
 fn expr_is_barrier_for_with_ipa(e: &Expr, fname: &str, ipa: Option<IpaCtx<'_>>) -> bool {
@@ -10810,7 +10851,7 @@ fn V mut @clear() -> () { @x = 0 }
         let src = r#"
 module testmod.v7_6_realloc_ro_param
 type Slot { x int }
-fn Slot mut @copy_from(ro other Slot) -> () { @x = other.x }
+fn Slot mut @copy_from(other Slot) -> () { @x = other.x }
 "#;
         let m = parse(src).expect("parse");
         let reg = build_registry(&m);
