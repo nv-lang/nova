@@ -55,7 +55,7 @@ pub use diag::{Diagnostic, Span};
 pub fn is_intrinsic_namespace(name: &str) -> bool {
     matches!(
         name,
-        "gc" | "fibers" | "runtime" | "Channel" | "ChanReader"
+        "gc" | "fibers" | "vclock" | "runtime" | "Channel" | "ChanReader"
         | "ChanWriter" | "Time" | "Monotonic" | "CancelToken"
         | "StringBuilder" | "WriteBuffer" | "ReadBuffer"
         | "f64" | "f32" | "int" | "u8" | "u16" | "u32" | "u64"

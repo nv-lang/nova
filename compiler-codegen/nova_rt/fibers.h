@@ -240,6 +240,58 @@ typedef struct {
     nova_bool     decided;
 } NovaChildError;
 
+/* ─── Plan 175 (owner TODO closure, 2026-07-10): virtual-clock auto-idle-
+ * advance for mock `Time` handlers (`std/testing/handlers.nv` mut_clock) ───
+ *
+ * Problem: under `with Time = mut_clock(...)`, `sleep(ms)` used to just
+ * synchronously add `ms` to the mock's `current_ms` and return — no fiber
+ * suspension at all. Fine for a single sequential flow, but breaks deadline
+ * ORDERING across concurrently `spawn`ed fibers: since nothing ever yields
+ * inside a mock sleep, whichever fiber the scheduler happens to resume
+ * first runs its ENTIRE body (including the "sleep") to completion before
+ * any sibling gets a turn — side effects land in spawn order, not virtual-
+ * deadline order (tokio/Kotlin `TestCoroutineScheduler` parity requires
+ * deadline order: a fiber sleeping 10ms should observably go before one
+ * sleeping 100ms, even though neither actually waits in real time).
+ *
+ * Fix: `mut_clock`'s `sleep` op now computes the absolute deadline itself
+ * (`current_ms + delta`) and calls the new `vclock.park_until(deadline)`
+ * runtime hook BEFORE bumping `current_ms`. `park_until` parks the calling
+ * fiber (if any — see `nova_vclock_park_until` below) in this per-scope
+ * registry; once EVERY alive fiber of the scope is registered here (idle —
+ * nobody has real work left to do), the entry with the smallest deadline
+ * is fired (woken); the woken fiber resumes, bumps its OWN `current_ms` to
+ * its deadline (monotonic — Nova-side, `std/testing/handlers.nv`) and
+ * returns.
+ *
+ * Deliberately NOT reusing `nova_sched_park`/`nova_sched_wake` (the real-
+ * timer/driver-facing primitive, with its own atomics and hard-won race
+ * fixes documented all over this file) — virtual-clock coordination is
+ * single-threaded BY CONTRACT (docs/time.md "M:N-контракт": mut_clock
+ * already needs `NOVA_MAXPROCS=1`, which is `nova test`'s default —
+ * runq.h:67 "ALL of them land on a single [worker thread]"). A separate,
+ * deliberately-simple, non-atomic registry avoids any risk to the real
+ * scheduler's carefully-tuned park/wake invariants. Plain `nova_fiber_
+ * yield()` (not `nova_sched_park`) is used to cooperatively hand control
+ * back — `nova_supervised_step` already re-resumes any slot that isn't
+ * `nova_sched_park`ed on every pass, so a virtual-sleeping fiber is simply
+ * resumed, spins its loop once (checking whether it's been fired yet),
+ * and yields again — no busy CPU loop across passes, bounded spins.
+ *
+ * Real-clock path (no `with Time = mut_clock(...)` in scope) is entirely
+ * untouched — mut_clock's `sleep` op is the ONLY caller of `park_until`. */
+typedef struct {
+    int64_t   deadline_ms;  /* absolute virtual-clock deadline (mut_clock's
+                             * own `current_ms` domain — see std/testing/
+                             * handlers.nv, computed by the CALLER). */
+    mco_coro* co;           /* informational only (debugging); not used for
+                             * dispatch — `park_until` re-checks its OWN
+                             * `idx`, not `co`. */
+    nova_bool fired;        /* set by whichever fiber calls fire_earliest()
+                             * and finds this the (a) minimum deadline. */
+    nova_bool used;         /* false = free/consumed slot. */
+} NovaVClockEntry;
+
 typedef struct {
     /* Plan 22 Ф.7: dynamic arrays через managed heap.
      * NULL до первого spawn_into. capacity показывает alloc'нутую
@@ -474,6 +526,18 @@ typedef struct {
      * drive-thread only. Guards against a handler body that (indirectly)
      * re-enters the drive machinery. */
     nova_bool       _deciding;
+    /* Plan 175 (owner TODO closure, 2026-07-10): auto-idle-advance registry
+     * for `std/testing/handlers.nv` `mut_clock` virtual sleeps — see the
+     * big comment block above `NovaVClockEntry` (near `nova_scope_init`)
+     * for the full design. Lazy-alloc'd (NULL until the first virtual
+     * sleep in this scope); deliberately NOT atomic/thread-safe — virtual-
+     * clock coordination is single-threaded BY CONTRACT (docs/time.md
+     * "M:N-контракт": mut_clock already requires NOVA_MAXPROCS=1, which is
+     * `nova test`'s default, runq.h:67). A scope that never uses a mock
+     * `Time` handler never touches these fields (zero overhead). */
+    NovaVClockEntry* vclock_entries;
+    int              vclock_count;
+    int              vclock_cap;
 } NovaFiberQueue;
 
 /* Plan 22 Ф.3 (D93) + Ф.7 + Ф.8: NovaSchedState typedef.
@@ -754,8 +818,113 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * ambient at scope entry. */
     q->has_supervisor = false;
     q->_deciding      = false;
+    /* Plan 175 (owner TODO closure, 2026-07-10): virtual-clock auto-idle-
+     * advance registry — lazy-alloc'd (NULL until first virtual sleep),
+     * see NovaVClockEntry comment above. */
+    q->vclock_entries = NULL;
+    q->vclock_count   = 0;
+    q->vclock_cap     = 0;
     /* Plan 22 Ф.7: arrays — lazy alloc'нутся в nova_fiber_spawn_into.
      * Idle scope (count=0) = ~100 bytes на стеке. */
+}
+
+/* Plan 175 (owner TODO closure, 2026-07-10): virtual-clock registry helpers.
+ * See the NovaVClockEntry comment block above for the full design. These
+ * are deliberately simple/non-atomic (single-thread contract, see there). */
+
+/* Registers `deadline_ms` for the calling fiber; returns the index to pass
+ * to `nova_vclock_check_and_consume`/later bookkeeping. Always appends (no
+ * free-slot reuse) — test-scale usage, bounded by total sleep() calls in
+ * one scope's lifetime; the scope itself is freed at block-exit. */
+static inline int nova_vclock_register(NovaFiberQueue* scope, mco_coro* co, int64_t deadline_ms) {
+    if (scope->vclock_count >= scope->vclock_cap) {
+        int new_cap = scope->vclock_cap > 0 ? scope->vclock_cap * 2 : 8;
+        NovaVClockEntry* grown = (NovaVClockEntry*)nova_alloc(sizeof(NovaVClockEntry) * (size_t)new_cap);
+        for (int i = 0; i < scope->vclock_count; i++) grown[i] = scope->vclock_entries[i];
+        scope->vclock_entries = grown;
+        scope->vclock_cap = new_cap;
+    }
+    int idx = scope->vclock_count++;
+    scope->vclock_entries[idx].deadline_ms = deadline_ms;
+    scope->vclock_entries[idx].co = co;
+    scope->vclock_entries[idx].fired = false;
+    scope->vclock_entries[idx].used = true;
+    return idx;
+}
+
+/* Count of entries still `used` (registered, not yet fired+consumed) —
+ * i.e. how many alive fibers of this scope are CURRENTLY blocked in
+ * `nova_vclock_park_until`. Compared against `nova_vclock_alive_count`
+ * below to detect "everyone is virtually parked" idle. */
+static inline int nova_vclock_pending_count(NovaFiberQueue* scope) {
+    int n = 0;
+    for (int i = 0; i < scope->vclock_count; i++) {
+        if (scope->vclock_entries[i].used) n++;
+    }
+    return n;
+}
+
+/* Total alive-fiber count for THIS scope, spanning BOTH bookkeeping
+ * schemes fibers can be spawned under:
+ *  - Local/bootstrap path (`nova_fiber_spawn_into`) — tracked in
+ *    `scope->fibers[]`/`count`, queried via `nova_sched_count_alive`
+ *    (forward-declared above, defined in nova_sched.h).
+ *  - Default ARMED M:N path (`nova_runtime_spawn_into`, auto-armed on
+ *    first `spawn` — Plan 83.2/173.0) — these children are NEVER added
+ *    to `scope->fibers[]`/`count` at all (separate `child_error[]`/
+ *    `child_ctx[]` index space, runtime.c `nova_runtime_spawn_into`);
+ *    `nova_sched_count_alive` is BLIND to them. The scope's own
+ *    `pending_remote` atomic counter (incremented before the push,
+ *    decremented on completion — same counter the drain/join loop
+ *    already waits on for `== 0`) is the correct "still alive" signal
+ *    for this path.
+ *
+ * A scope with `spawn`ed fibers under the (typical, auto-armed) default
+ * therefore has `nova_sched_count_alive(scope) == 0` always — using ONLY
+ * that (as an earlier iteration of this function did) makes ANY single
+ * registered vclock entry look like "the whole scope is idle" the moment
+ * the FIRST fiber parks, regardless of how many siblings are still about
+ * to register — firing prematurely, in spawn order instead of deadline
+ * order. Summing both counters fixes this: `pending_remote` was already
+ * incremented for ALL siblings before the drain/join point is reached
+ * (codegen emits every `spawn` statement before the scope's join —
+ * same invariant the R2 tripwire in `nova_scope_grow_children` relies
+ * on), so by the time the FIRST fiber's body starts running, the total
+ * is already final. */
+static inline int nova_vclock_alive_count(NovaFiberQueue* scope) {
+    return nova_sched_count_alive(scope) + (int)nova_aint_load(&scope->pending_remote);
+}
+
+/* Fires the entry (or entries, on an exact deadline tie) with the smallest
+ * deadline among still-pending entries. No-op if there are none. Called
+ * whenever a virtually-parked fiber observes the scope is fully idle
+ * (see `nova_vclock_park_until`) — may fire a DIFFERENT fiber's entry
+ * than the caller's own. */
+static inline void nova_vclock_fire_earliest(NovaFiberQueue* scope) {
+    int64_t min_deadline = 0;
+    nova_bool found = false;
+    for (int i = 0; i < scope->vclock_count; i++) {
+        if (!scope->vclock_entries[i].used) continue;
+        if (!found || scope->vclock_entries[i].deadline_ms < min_deadline) {
+            min_deadline = scope->vclock_entries[i].deadline_ms;
+            found = true;
+        }
+    }
+    if (!found) return;
+    for (int i = 0; i < scope->vclock_count; i++) {
+        if (scope->vclock_entries[i].used && scope->vclock_entries[i].deadline_ms == min_deadline) {
+            scope->vclock_entries[i].fired = true;
+        }
+    }
+}
+
+/* Called by the parked fiber itself (via its own `idx`), on every
+ * re-resume, until it observes `fired`. Consumes (frees) its own slot the
+ * moment it observes the fire — never touches another fiber's entry. */
+static inline nova_bool nova_vclock_check_and_consume(NovaFiberQueue* scope, int idx) {
+    if (!scope->vclock_entries[idx].fired) return false;
+    scope->vclock_entries[idx].used = false;
+    return true;
 }
 
 /* Plan 44.5 Layer 5 park/wake: alloc/free slots in a worker scope.
@@ -2872,6 +3041,48 @@ static inline void nova_fiber_yield(void) {
     mco_yield(co);
 }
 
+/* Plan 175 (owner TODO closure, 2026-07-10): `vclock.park_until(deadline_ms)`
+ * — extern "nova" hook backing `std/testing/handlers.nv` `mut_clock`'s
+ * auto-idle-advance (see the big NovaVClockEntry comment block near
+ * `nova_scope_init` above for the full design/rationale).
+ *
+ * Sequential (no fiber, e.g. a plain top-level test body) — no concurrent
+ * siblings possible to coordinate with, resolves IMMEDIATELY: byte-for-byte
+ * the pre-existing synchronous mock behaviour for the overwhelmingly common
+ * single-flow case (D92: `_nova_active_scope` is always non-NULL in user
+ * code, but `mco_running()` is NULL outside a fiber — that's the gate).
+ *
+ * Inside a fiber: registers this fiber's absolute virtual deadline in the
+ * active scope's registry, then cooperatively yields (plain
+ * `nova_fiber_yield()`, NOT `nova_sched_park` — see design comment) until
+ * either (a) it observes its own entry fired, or (b) — on every resume —
+ * it notices every currently-alive fiber of the scope is ALSO registered
+ * here (idle) and fires the globally-earliest entry itself (which may be
+ * a sibling's, not its own). Returns once its OWN entry fires. */
+static inline nova_unit nova_vclock_park_until(nova_int deadline_ms) {
+    if (!mco_running() || !_nova_active_scope) {
+        return NOVA_UNIT;
+    }
+    NovaFiberQueue* scope = _nova_active_scope;
+    mco_coro* self = mco_running();
+    int idx = nova_vclock_register(scope, self, (int64_t)deadline_ms);
+    for (;;) {
+        if (nova_vclock_check_and_consume(scope, idx)) {
+            return NOVA_UNIT;
+        }
+        /* Idle detection: every currently-alive fiber of this scope is
+         * registered here (nobody has real work left) → advance to the
+         * earliest pending deadline (may wake a sibling, not us).
+         * `nova_vclock_alive_count` (NOT bare `nova_sched_count_alive`) —
+         * see its comment for why: default ARMED M:N spawns are invisible
+         * to `nova_sched_count_alive` alone. */
+        if (nova_vclock_pending_count(scope) >= nova_vclock_alive_count(scope)) {
+            nova_vclock_fire_earliest(scope);
+        }
+        nova_fiber_yield();
+    }
+}
+
 /* Plan 44.7: preemption safepoint. Codegen emits a call to this at every
  * function prologue and every loop backedge. Cost on the hot (not-preempt)
  * path: one TLS load + a predicted-not-taken branch, and — only if the ptr
@@ -2948,6 +3159,51 @@ static inline int64_t _nova_wall_unix_ms(void) {
     }
     return (int64_t)tv.tv_sec * 1000 + (int64_t)tv.tv_usec / 1000;
 }
+
+/* Plan 175.1 (D316 amend + D321, 2026-07-10): system-local UTC offset in
+ * seconds — closes [M-175.1-local-offset-effect-op]. Owner decision:
+ * the machine's configured timezone MUST be reachable from Nova.
+ *
+ * This is the offset a fresh `Timestamp.now()` would observe RIGHT NOW
+ * (DST already folded in where applicable) — not a fixed standard-time
+ * offset. It is ONLY a numeric offset: no implicit `TimeZone`/`Fixed`
+ * substitution is introduced anywhere — civil-time (`std/time/civil`)
+ * still requires an EXPLICIT zone everywhere (D319 R1 unchanged);
+ * `Offset.local()` (std/time/civil/offset.nv) is the explicit Nova-side
+ * query wrapping this hook (java.time `ZoneId.systemDefault()` /
+ * Temporal `Now.timeZoneId()` class of operation — explicit, not an
+ * ambient default). */
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+static inline int64_t _nova_local_offset_sec(void) {
+    TIME_ZONE_INFORMATION tzi;
+    DWORD rc = GetTimeZoneInformation(&tzi);
+    /* `Bias`/`*Bias` are MINUTES to ADD to local time to get UTC
+     * (UTC == local + Bias) => offset-from-UTC == -(Bias [+ DST bias]). */
+    LONG bias = tzi.Bias;
+    if (rc == TIME_ZONE_ID_DAYLIGHT) {
+        bias += tzi.DaylightBias;
+    } else if (rc == TIME_ZONE_ID_STANDARD) {
+        bias += tzi.StandardBias;
+    }
+    /* TIME_ZONE_ID_UNKNOWN (no DST rule for this zone) — raw Bias only. */
+    return (int64_t)(-bias) * 60;
+}
+#else
+#  include <time.h>
+static inline int64_t _nova_local_offset_sec(void) {
+    time_t now = time(NULL);
+    struct tm local_tm;
+    localtime_r(&now, &local_tm);
+    /* `tm_gmtoff` (BSD/glibc/macOS-libc extension, present on every
+     * Nova-supported POSIX target) — seconds EAST of UTC, DST already
+     * folded in by localtime_r. */
+    return (int64_t)local_tm.tm_gmtoff;
+}
+#endif
 
 /* ─── Plan 22 Ф.4: libuv-based fiber-sleep ─── */
 /* uv.h + eventloop.h уже подключены выше в этом файле. */
@@ -3630,6 +3886,20 @@ static inline nova_int Nova_Time_now_monotonic_ns(void) {
         return _nova_handler_Time->now_monotonic_ns(_nova_handler_Time->ctx);
     }
     return (nova_int)_nova_monotonic_ns();
+}
+
+/* Plan 175.1 (D316 amend + D321, 2026-07-10): dispatch for
+ * `Time.local_offset_sec()` — closes [M-175.1-local-offset-effect-op].
+ * Same NULL-safe handler-extension-slot pattern as now_monotonic_ns
+ * above: handler-literals written before this amend leave the slot NULL
+ * (C99 designated-init zero-fill) and transparently fall back to the
+ * real OS-hook (`_nova_local_offset_sec()` above) — backward-compat, no
+ * forced migration of existing handler literals. */
+static inline nova_int Nova_Time_local_offset_sec(void) {
+    if (_nova_handler_Time && _nova_handler_Time->local_offset_sec) {
+        return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx);
+    }
+    return (nova_int)_nova_local_offset_sec();
 }
 
 /* ──────────────────────────────────────────────────────────────────

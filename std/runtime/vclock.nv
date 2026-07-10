@@ -1,0 +1,39 @@
+// std/runtime/vclock.nv — virtual-clock auto-idle-advance runtime hook
+// (Plan 175, owner TODO closure, 2026-07-10).
+//
+// **NOT auto-gen.** Lowercase pseudo-receiver namespace `vclock.*`,
+// dispatched via [compiler-codegen/src/codegen/external_registry.rs]
+// `NAMESPACE_OVERRIDES` (same mechanism as `gc.*`/`fibers.*`/`runtime.*`,
+// Plan 32/44/44.2 — this file is embedded builtin source AND importable).
+//
+// **Sole consumer:** `std/testing/handlers.nv` `mut_clock`'s `sleep` op.
+// Not intended as general-purpose user-facing API — it is the low-level
+// coordination primitive behind virtual-clock auto-idle-advance (tokio
+// `time::pause()` / Kotlin `TestCoroutineScheduler.advanceUntilIdle()`
+// parity): when ALL fibers of a scope are virtually "sleeping" under a
+// mock `Time` handler (idle — nobody has real work left), the earliest
+// registered deadline fires without waiting real wall-clock time.
+//
+// See `nova_vclock_park_until` (compiler-codegen/nova_rt/fibers.h, right
+// after `nova_fiber_yield`) for the full design/rationale.
+
+module runtime.vclock
+
+
+/// Registers the calling fiber's absolute virtual deadline (`deadline_ms`,
+/// in the caller's own virtual-clock domain) and cooperatively parks until
+/// EITHER it is the earliest pending deadline in its scope, OR every other
+/// alive fiber of the scope has ALSO called this (idle) and this entry
+/// happens to be the earliest among them.
+///
+/// Sequential call (no enclosing fiber — e.g. a plain top-level test body)
+/// resolves immediately: no concurrent siblings exist to coordinate with,
+/// so there's nothing to wait for (matches the pre-existing synchronous
+/// mock-clock behaviour for the common single-flow case).
+///
+/// Not mockable/observable beyond its side effect (parking) — it has no
+/// return value carrying information; callers (`mut_clock`) recompute
+/// their own absolute deadline as `current_ms` themselves after this
+/// returns.
+#stable(since = "0.1")
+export extern "nova" fn vclock.park_until(deadline_ms int) -> ()
