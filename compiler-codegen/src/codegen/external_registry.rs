@@ -154,6 +154,10 @@ impl ExternalRegistry {
         include_str!("../../../std/runtime/gc.nv");
     pub const FIBERS_SRC: &'static str =
         include_str!("../../../std/runtime/fibers.nv");
+    // Plan 175 (owner TODO closure, 2026-07-10): virtual-clock auto-idle-
+    // advance coordination hook — see std/runtime/vclock.nv.
+    pub const VCLOCK_SRC: &'static str =
+        include_str!("../../../std/runtime/vclock.nv");
     pub const RUNTIME_SRC: &'static str =
         include_str!("../../../std/runtime/runtime.nv");
     pub const BENCH_SRC: &'static str =
@@ -222,6 +226,7 @@ impl ExternalRegistry {
             // driven (NAMESPACE_OVERRIDES) вместо emit_c.rs hardcoded match.
             ("runtime/gc.nv",      Self::GC_SRC),
             ("runtime/fibers.nv",  Self::FIBERS_SRC),
+            ("runtime/vclock.nv",  Self::VCLOCK_SRC),
             ("runtime/runtime.nv", Self::RUNTIME_SRC),
             ("bench.nv",           Self::BENCH_SRC),
             // [M-compiler-nv-porting-wave] item B2: f64/f32 bit-cast.
@@ -445,6 +450,12 @@ impl ExternalRegistry {
         // Irregular: `runtime.yield()` — actual C symbol is the general
         // fiber-yield primitive, NOT `nova_runtime_yield`.
         ("runtime", "yield",              "nova_fiber_yield",                true),
+        // vclock.* (Plan 175, owner TODO closure, 2026-07-10) — virtual-
+        // clock auto-idle-advance coordination hook (std/runtime/vclock.nv).
+        // `false`: C fn returns `nova_unit` already (not bare `void`), no
+        // expr-position wrap needed (unlike gc/fibers/runtime `true` entries
+        // above, whose C fns are bare `void`).
+        ("vclock", "park_until",          "nova_vclock_park_until",          false),
         // bench.* (Plan 57) — `opaque[T]` excluded: class C compiler
         // intrinsic (black-box barrier), permanently hardcoded in emit_c.rs.
         ("bench", "iterations",  "nova_bench_iterations", false),

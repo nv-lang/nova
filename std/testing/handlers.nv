@@ -1,7 +1,36 @@
+// ENV NOVA_MAXPROCS=1
+// ENV NOVA_AUTOARM=0
 // std/testing/handlers.nv — детерминированные handler-фабрики для
 // `Random` и `Time` эффектов. Главный инструмент для тестов, которые
 // зависят от случайности или времени.
 //
+// `mut_clock` (ниже) — STATEFUL handler (мутирует захваченный
+// `current_ms`, Plan 175 auto-idle-advance добавляет non-atomic
+// per-scope registry, nova_rt/fibers.h `NovaVClockEntry`) — под
+// конкурентным M:N (>1 worker-поток) это гонка данных (docs/time.md
+// "M:N-контракт"). `NOVA_MAXPROCS=1` форсирует single-thread для ВСЕГО
+// файла — тесты этого модуля намеренно однопоточны относительно
+// mut_clock (нет реальной M:N-нагрузки поверх одного handler'а).
+//
+// `NOVA_AUTOARM=0` (Plan 175, owner TODO closure, 2026-07-10,
+// `[M-175-vclock-armed-mn-scope-identity]`): auto-idle-advance
+// (`nova_vclock_park_until`, nova_rt/fibers.h) anchors its per-scope
+// registry on `_nova_active_scope` as read from INSIDE the fiber body.
+// Under the DEFAULT armed M:N runtime (auto-armed on the first `spawn`),
+// that TLS var is the WORKER's own private home scope
+// (`_worker_run_one_fiber`: `_nova_active_scope = &w->scope`) — NOT the
+// shared parent `supervised{}` scope object — so siblings spawned
+// together do NOT reliably share one registry (each may see only
+// itself as "alive", firing immediately in spawn order rather than
+// waiting for the deadline order). `NOVA_AUTOARM=0` routes `spawn`
+// through the cooperative/local path (`nova_fiber_spawn_into` —
+// `_nova_active_scope` stays the real shared scope for the whole
+// drain), where the deadline-order guarantee holds. Under the default
+// armed path the mechanism still degrades SAFELY (no hang/crash — each
+// virtual sleep still resolves, just without the ordering guarantee);
+// fixing the general M:N case needs a different anchor (e.g. resolving
+// back through `NovaSpawnCtxBase._nova_parent_scope`) — out of scope
+// for this pass, tracked by the marker above.
 // AI-first идея: вместо mock-библиотек и monkey-patching — handler
 // substitution через `with` (D11/D61). Та же функция `Bcrypt.hash` в
 // production видит CSPRNG, в тестах — детерминированный PRNG, без
@@ -53,6 +82,7 @@
 
 module testing.handlers
 
+import std.runtime.vclock
 
 // Random — effect-тип для PRNG. [M-random-u64-path-return-ice]
 // (Plan 172.13 батч 3): декларация ПЕРЕЕХАЛА в std/prelude/effects.nv —
@@ -217,9 +247,35 @@ export fn mut_clock(start_ms u64) -> Effect[Time] {
         // `sleep(ms int)`). Value-`Duration` НЕ пересекает границу эффекта
         // (mock оперирует int ms — Plan 175 option C). Виртуальные часы
         // продвигаются на переданные ms.
+        //
+        // Plan 175 (owner TODO closure, 2026-07-10): auto-idle-advance —
+        // раньше эта строка была ОДНА (`current_ms += delta_ms`, синхронно,
+        // без приостановки фибра). Это ломало порядок дедлайнов между
+        // конкурентными `spawn`-фибрами: ничего не yield'ило внутри mock
+        // sleep, поэтому какой фибр планировщик резюмировал первым — тот и
+        // отрабатывал целиком (включая свой "sleep") до следующего,
+        // независимо от длины запрошенного сна (tokio/Kotlin
+        // TestCoroutineScheduler паритет требует обратного: короткий
+        // виртуальный сон должен наблюдаемо "проснуться" раньше длинного).
+        //
+        // Фикс: дедлайн — АБСОЛЮТНОЕ значение, вычисленное ДО парковки
+        // (`current_ms` на момент вызова, не после); `vclock.park_until`
+        // (nova_rt/fibers.h `nova_vclock_park_until`) паркует текущий фибр
+        // (если он вообще фибр — для плоского sequential-потока это no-op,
+        // возвращается немедленно, ПОВЕДЕНИЕ НЕ МЕНЯЕТСЯ), пока ВСЕ живые
+        // фибры scope'а тоже не окажутся виртуально запаркованы (idle) —
+        // тогда просыпается ближайший по дедлайну (может быть другой
+        // фибр, не этот). Bump — `current_ms = deadline_ms` (МАКСИМУМ, не
+        // `+=`): конкурентный sibling с меньшим дедлайном мог уже продвинуть
+        // `current_ms` пока этот фибр был запаркован — абсолютный
+        // `deadline_ms`, посчитанный ДО парковки, остаётся корректной
+        // целью; наивный `+=` ПОСЛЕ пробуждения задвоил бы уже добавленное
+        // sibling'ом.
         sleep(dur_ms) {
             ro delta_ms = if dur_ms > 0 { dur_ms as u64 } else { 0 as u64 }
-            current_ms = current_ms + delta_ms
+            ro deadline_ms = current_ms + delta_ms
+            vclock.park_until(deadline_ms as int)
+            if deadline_ms > current_ms { current_ms = deadline_ms }
         }
     }
 }
@@ -381,6 +437,68 @@ test "seeded + mut_clock композируются" {
         ro v2 = Random.u64()
         assert(v1 != v2)
         assert(Time.now_unix_ms() == 1000)
+    }
+}
+
+// ── mut_clock: auto-idle-advance (Plan 175, owner TODO closure, 2026-07-10) ──
+// tokio `time::pause()` / Kotlin `TestCoroutineScheduler.advanceUntilIdle()`
+// parity — см. docs/time.md "Мокабельность" + nova_vclock_park_until
+// (nova_rt/fibers.h). Единственный явный `Time.sleep`/`sleep()`-вызов больше
+// не требуется на КАЖДЫЙ шаг — конкурентные виртуальные сны сами будятся в
+// порядке дедлайна, когда весь scope идёт idle.
+
+test "mut_clock auto-idle-advance: sleep(10_000) в одиночном spawn завершается мгновенно" {
+    // Tokio-style пример из задачи: без auto-advance этот тест реально ждал
+    // бы 10 секунд (mut_clock раньше был чисто синхронным — работало и без
+    // фикса для ОДНОГО фибра; фикс подтверждает, что паркующий путь
+    // (nova_vclock_park_until) НЕ вносит реальную задержку для тривиального
+    // случая «единственный alive фибр scope'а». `AtomicInt` (не голый
+    // `mut`) — spawn-тело мутирует захваченную переменную, компилятор
+    // требует internally-synchronized `#share`-тип (D415 §2,
+    // E_CONCURRENT_MUT_CAPTURE).
+    mut woke = AtomicInt.new(0)
+    with Time = mut_clock(0 as u64) {
+        supervised {
+            spawn { Time.sleep(10_000); woke.fetch_add(1) }
+        }
+    }
+    assert(woke.load() == 1)
+}
+
+test "mut_clock auto-idle-advance: конкурентные sleep будятся в порядке дедлайна" {
+    // Три spawn с РАЗНОЙ длиной сна, порядок spawn НЕ совпадает с порядком
+    // дедлайна (100 первый, 10 последний) — без auto-advance (старое
+    // синхронное поведение) фибры отрабатывали бы целиком в порядке spawn
+    // (100, 10, 50), а не в порядке дедлайна. `seq.fetch_add(1)` возвращает
+    // значение ДО инкремента (0-indexed) — первым проснувшийся получает 0.
+    mut seq = AtomicInt.new(0)
+    mut order_10 = AtomicInt.new(-1)
+    mut order_50 = AtomicInt.new(-1)
+    mut order_100 = AtomicInt.new(-1)
+    with Time = mut_clock(0 as u64) {
+        supervised {
+            spawn { Time.sleep(100); order_100.store(seq.fetch_add(1)) }
+            spawn { Time.sleep(10);  order_10.store(seq.fetch_add(1)) }
+            spawn { Time.sleep(50);  order_50.store(seq.fetch_add(1)) }
+        }
+    }
+    assert(order_10.load() == 0)
+    assert(order_50.load() == 1)
+    assert(order_100.load() == 2)
+}
+
+test "mut_clock auto-idle-advance: часы после конкурентных sleep равны максимальному дедлайну" {
+    with Time = mut_clock(0 as u64) {
+        supervised {
+            spawn { Time.sleep(100) }
+            spawn { Time.sleep(10) }
+            spawn { Time.sleep(50) }
+        }
+        // Все три виртуальных сна разрешились — часы продвинуты РОВНО до
+        // максимального дедлайна (100), не до суммы (160) — доказывает, что
+        // bump — `current_ms = max(current_ms, deadline)`, не `+=` (что
+        // задвоило бы вклад уже сработавших siblings).
+        assert(Time.now_unix_ms() == 100)
     }
 }
 

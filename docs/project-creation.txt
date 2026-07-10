@@ -39221,3 +39221,79 @@ mn_closure_spawn_gcroot_test.nv — изолированная сборка (tem
 через sleep() уже работает); per-OS dedicated monotonicity test; M:N-контракт mut_clock под
 реальной concurrent-нагрузкой (документирован, не verified тестом); custom E_SLEEP_UNTIL_WALL
 диагностика (generic E7301 type-mismatch уже корректно отвергает, просто менее приятный текст).
+
+=== 2026-07-10 — Plan 175 два хвоста: Time.local_offset_sec() + mut_clock auto-idle-advance (sonnet) ===
+
+Владелец: закрыть два оставшихся TODO волны 175 параллельным заходом (ветка time-tails-175
+из main 6582887e1, worktree nova-p173).
+
+ЗАДАЧА 1 — `[M-175.1-local-offset-effect-op]` (системный часовой пояс машины ДОЛЖЕН быть
+доступен из Nova, owner decision): новый оп `local_offset_sec() -> int` в схеме `Time`
+(std/prelude/effects.nv) — по образцу коммита 41fac7df2 (now_monotonic_ns): vtable-слот
+`NovaVtable_Time.local_offset_sec` (nova_rt/effects.h) с NULL-safe backward-compat диспетчем
+(nova_rt/fibers.h `Nova_Time_local_offset_sec`), OS-хук `_nova_local_offset_sec()` — Windows
+`GetTimeZoneInformation` (Bias/DaylightBias/StandardBias, знак инвертирован) / POSIX
+`localtime_r().tm_gmtoff`. `std/testing/handlers.nv`: fixed_ms/mut_clock реализуют
+`local_offset_sec() => 0` (mock-coherence, UTC) + тест на мокабельность произвольным
+handler-литералом. `std/time/civil/offset.nv`: `Offset.local() Time -> Offset` — явный запрос
+числового сдвига (D319 R1 НЕ меняется — зона в ZonedDateTime остаётся явной, никакого
+implicit-fallback); тесты в zoned_test.nv (handler-литерал non-zero + fixed_ms/mut_clock
+coherence). Спека: D316-amend (новый оп + vtable-слот) + D321-amend (system-offset доступен,
+§impl-отступления закрыт — маркер снят). Доки (time.md/datetime.md/plans/175.1-civil-time.md/
+simplifications.md) обновлены под закрытие маркера.
+Гейт задачи 1: compiler-codegen + nova-cli чистая сборка; conformance 89/0; std/time +
+std/time/civil + std/testing/handlers — 12/0 PASS. Коммит c60bde2fe.
+
+ЗАДАЧА 2 — auto-idle-advance виртуальных часов (tokio `time::pause()` / Kotlin
+`TestCoroutineScheduler.advanceUntilIdle()`-паритет, TODO волны 175 «Ф.5»): `mut_clock`'s
+`sleep` теперь вычисляет АБСОЛЮТНЫЙ дедлайн (`current_ms + ms`, до парковки) и паркует
+вызывающий фибр через новый `extern "nova"` хук `std/runtime/vclock.nv` →
+`nova_vclock_park_until` (nova_rt/fibers.h) — per-scope registry `NovaVClockEntry[]` (новые
+поля `NovaFiberQueue.vclock_entries/vclock_count/vclock_cap`, non-atomic по design — single-
+thread contract, см. ниже); когда pending_count >= alive_count (все живые фибры scope'а
+виртуально запаркованы — idle), просыпается ближайший по дедлайну (может быть sibling, не
+сам вызывающий); bump — `current_ms = max(current_ms, deadline)` (не `+=`, иначе задвоил бы
+вклад уже сработавших siblings). Плоский sequential-поток (нет фибра) резолвится немедленно —
+байт-паритет со старым синхронным поведением для overwhelmingly common случая. Деликатно НЕ
+переиспользован `nova_sched_park`/`nova_sched_wake` (атомарный, real-timer/driver-facing
+примитив с hard-won race-фиксами) — отдельный простой non-atomic registry, `nova_fiber_yield()`
+для кооперативной передачи управления (существующий `nova_supervised_step` и так резюмирует
+любой не-`nova_sched_park`нутый slot каждый pass).
+
+Находка в процессе (реальный debugging, не догадка): ПЕРВЫЙ заход использовал
+`nova_sched_count_alive(scope)` как «сколько живых фибров scope'а» — под ДЕФОЛТНЫМ armed M:N
+runtime (auto-arm на первом spawn) это ВСЕГДА 0 для remote-spawned детей
+(`nova_runtime_spawn_into`, runtime.c, кладёт их в ОТДЕЛЬНЫЙ `child_error[]`/`pending_remote`
+индекс-пространство, НЕ в `scope->fibers[]/count`) — фибры «прогорали» в spawn-порядке, а не
+в порядке дедлайна (эмпирически отловлено через `--keep-artifacts` + прямой запуск .exe с
+debug-println). Промежуточный фикс (`nova_vclock_alive_count` = `count_alive` +
+`pending_remote`) не помог — вскрылась ВТОРАЯ, более глубокая находка:
+`_worker_run_one_fiber` (runtime.c) на ПЕРВОМ resume ставит `_nova_active_scope = &w->scope`
+(WORKER'а СОБСТВЕННЫЙ scope), НЕ shared scope родительского `supervised{}`-блока — под armed
+M:N registry, привязанный к `_nova_active_scope`, структурно НЕ может корректно шариться между
+siblings. Верифицировано эмпирически: под `NOVA_AUTOARM=0` (легаси-имя `NOVA_NO_AUTOARM=1` НЕ
+сработало — env переименован Plan 83.4.5.9, `_nova_autoarm_env_disabled()`) + `NOVA_MAXPROCS=1`
+(кооперативный/local `nova_fiber_spawn_into`-путь) порядок пробуждения — ТОЧНО по дедлайну
+(10, 50, 100 при spawn-порядке 100, 10, 50), стабильно PASS ×3 прогона. Под дефолтным armed
+путём механизм деградирует БЕЗОПАСНО (каждый sleep всё равно резолвится, без hang/crash), но
+БЕЗ гарантии порядка. Маркер `[M-175-vclock-armed-mn-scope-identity]` — починка общего
+M:N-случая требует другого якоря (например резолв через `NovaSpawnCtxBase._nova_parent_scope`),
+вне периметра этого захода; `std/testing/handlers.nv` получил `// ENV NOVA_MAXPROCS=1` +
+`// ENV NOVA_AUTOARM=0` директивы (весь файл — тесты mut_clock и так однопоточны по контракту).
+
+Тесты (std/testing/handlers.nv): tokio-style `sleep(10_000)` в одиночном spawn — мгновенно
+(AtomicInt-флаг, не голый `mut` — D415 §2 `E_CONCURRENT_MUT_CAPTURE` требует
+internally-synchronized `#share`-тип для мутации, захваченной spawn-телом); три конкурентных
+`sleep(100/10/50)` — просыпаются в порядке 10→50→100 (AtomicInt.fetch_add-последовательность);
+финальные часы после всех трёх — ровно `max` (100), не сумма (160). docs/time.md
+"Мокабельность" — раздел auto-idle-advance закрыт (был followup-заметкой).
+Гейт задачи 2: compiler-codegen + nova-cli чистая сборка; conformance 89/0; std/time +
+std/time/civil + std/testing/handlers — 12/0 PASS (стабильно ×3 прогона); std/concurrency
+(supervised_deadline_test + supervisor_test — real Time.sleep + spawn) — 2/0 PASS, байт-паритет
+подтверждён (real-clock путь не тронут — новый хук вызывается ТОЛЬКО из mut_clock's sleep).
+
+Новые файлы: std/runtime/vclock.nv (extern "nova" fn vclock.park_until). Изменённые: nova_rt/
+fibers.h (NovaVClockEntry + helpers + NovaFiberQueue поля + nova_vclock_park_until),
+compiler-codegen/src/lib.rs (is_intrinsic_namespace + "vclock"), external_registry.rs
+(NAMESPACE_OVERRIDES + builtin_sources), std/testing/handlers.nv.
+Модель: sonnet (вся волна — оба хвоста, включая C-runtime debugging).

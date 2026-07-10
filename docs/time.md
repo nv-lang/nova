@@ -141,17 +141,53 @@ test "rate limiter refills after 1s" {
 
 `fixed_ms(ms)` — часы замерли (детерминированные timestamps, `sleep` — no-op).
 `mut_clock(start_ms)` — виртуальные часы, `sleep`/`Time.sleep` продвигают их без
-реального ожидания (это и есть MVP «explicit advance» — auto-idle-продвижение
-без явного `sleep()`-вызова, когда все фибры durably-blocked, — followup, не
-реализовано; auto-advance = tokio/Kotlin-synctest-style фича, не в этой волне).
+реального ожидания.
+
+**Auto-idle-advance (Plan 175, owner TODO closure, 2026-07-10):** tokio
+`time::pause()` / Kotlin `TestCoroutineScheduler.advanceUntilIdle()`-паритет —
+конкурентные `spawn`-фибры под ОДНИМ `mut_clock` больше не требуют явного
+`sleep()`-вызова на каждый шаг. Каждый `sleep(ms)` вычисляет свой АБСОЛЮТНЫЙ
+дедлайн (`current_ms + ms`, до парковки) и паркует вызывающий фибр
+(`vclock.park_until`, `nova_vclock_park_until` в nova_rt/fibers.h) в per-scope
+registry; когда ВСЕ живые фибры scope'а виртуально запаркованы (idle — реальной
+работы не осталось), просыпается ближайший по дедлайну (может быть другой
+фибр) — часы продвигаются `current_ms = max(current_ms, deadline)` (не `+=`,
+чтобы не задвоить вклад уже сработавших siblings). Плоский sequential-поток
+(нет фибра вообще) резолвится немедленно — ПОВЕДЕНИЕ НЕ ИЗМЕНИЛОСЬ для
+overwhelmingly common случая. Тесты — `std/testing/handlers.nv` (tokio-style
+`sleep(10_000)` мгновенно; три конкурентных `sleep` с разной длиной будятся
+в порядке дедлайна, не spawn-порядка; финальные часы = max, не сумма).
+
+```nova
+test "конкурентные sleep будятся в порядке дедлайна" {
+    with Time = th.mut_clock(0 as u64) {
+        supervised {
+            spawn { Time.sleep(100); /* ... */ }   // проснётся ТРЕТЬИМ
+            spawn { Time.sleep(10);  /* ... */ }   // проснётся ПЕРВЫМ
+            spawn { Time.sleep(50);  /* ... */ }   // проснётся ВТОРЫМ
+        }
+    }
+}
+```
 
 **M:N-контракт:** default (real-clock) handler stateless/thread-safe. `mut_clock`
-**stateful** (мутирует захваченную `current_ms`) — под concurrent `spawn`/
-`parallel for`, одновременно читающими/двигающими один и тот же `mut_clock`,
+**stateful** (мутирует захваченную `current_ms`; auto-idle-advance добавляет
+non-atomic per-scope registry поверх) — под concurrent `spawn`/`parallel for`
 нужен `NOVA_MAXPROCS=1` (детерминизм гонки записи в handler-state — см.
-[[reference-mn-race-case-study]]). Тесты этой волны — однопоточные относительно
-`mut_clock` (нет конкурентного spawn поверх одного handler'а), контракт не
-проверялся под реальной M:N-нагрузкой.
+[[reference-mn-race-case-study]]).
+
+**`[M-175-vclock-armed-mn-scope-identity]` (задокументированное сужение):**
+deadline-order гарантия auto-idle-advance проверена и держит под кооперативным
+spawn-путём (`NOVA_MAXPROCS=1` + `NOVA_AUTOARM=0` — cooperative/local
+`nova_fiber_spawn_into`, где `_nova_active_scope` внутри фибра — ОБЩИЙ scope
+всего `supervised{}`-блока). Под ДЕФОЛТНЫМ armed M:N runtime (auto-arm на
+первом `spawn`) `_nova_active_scope` внутри фибра — это WORKER'а СОБСТВЕННЫЙ
+`w->scope` (`_worker_run_one_fiber`), не общий scope siblings — registry не
+шарится корректно между siblings, механизм деградирует БЕЗОПАСНО (каждый
+virtual sleep всё равно резолвится, без hang/crash), но БЕЗ гарантии порядка
+по дедлайну (вместо этого — spawn-порядок, старое поведение). Починка общего
+M:N-случая требует другого якоря (например резолв через
+`NovaSpawnCtxBase._nova_parent_scope`) — вне периметра этого захода.
 
 ## Ф.2 — почему typed effect-wire не отгружен (архитектурная находка)
 
