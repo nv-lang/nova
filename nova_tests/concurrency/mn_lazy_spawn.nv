@@ -16,11 +16,11 @@ test "init arms but does not materialize the pool" {
 test "first spawn materializes the pool" {
     runtime.init(2)
     assert(runtime.worker_count() == 0)    // до spawn — пул не поднят
-    mut x = 0
+    mut x = AtomicInt.new(0)
     supervised {
-        spawn { x = 7 }
+        spawn { x.store(7) }
     }
-    assert(x == 7)
+    assert(x.load() == 7)
     // После первого spawn пул материализован.
     assert(runtime.worker_count() == 2)
     runtime.shutdown()
