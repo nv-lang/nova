@@ -21,17 +21,18 @@ module nova_tests.concurrency
 import std.time.duration
 
 test "Time.after cleanup: 50 quick wins не оставляют висящих таймеров" {
-    mut wins = 0
+    mut wins = AtomicInt.new(0)
     mut i = 0
     while i < 50 {
+        ro cur = i
         ro ch = Channel.new(1)
         supervised {
             spawn {
-                ch.tx.send(i)
+                ch.tx.send(cur)
             }
             spawn {
                 select {
-                    Some(_) = ch.rx => { wins = wins + 1 }
+                    Some(_) = ch.rx => { wins.fetch_add(1) }
                     Some(_) = ChanReader.close_after(Duration.from_millis(10_000)) => {
                         // 10s timeout — никогда не должен сработать,
                         // если recv wins; но если sub-test runs <10s
@@ -42,20 +43,20 @@ test "Time.after cleanup: 50 quick wins не оставляют висящих �
         }
         i = i + 1
     }
-    assert(wins == 50)
+    assert(wins.load() == 50)
 }
 
 test "Time.after wins: подтверждает что таймер всё ещё работает когда нужен" {
     ro ch = Channel.new(1)
-    mut timeout_fired = false
+    mut timeout_fired = AtomicBool.new(false)
     supervised {
         // НЕ посылаем в ch — timer должен выиграть
         spawn {
             select {
                 Some(_) = ch.rx => { }
-                Some(_) = ChanReader.close_after(Duration.from_millis(50)) => { timeout_fired = true }
+                Some(_) = ChanReader.close_after(Duration.from_millis(50)) => { timeout_fired.store(true) }
             }
         }
     }
-    assert(timeout_fired)
+    assert(timeout_fired.load())
 }

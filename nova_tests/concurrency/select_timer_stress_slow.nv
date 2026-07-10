@@ -19,26 +19,27 @@ module nova_tests.concurrency
 import std.time.duration
 
 test "500 iter select cleanup stress" {
-    mut wins = 0
+    mut wins = AtomicInt.new(0)
     mut i = 0
     while i < 500 {
+        ro cur = i
         ro ch = Channel.new(1)
         supervised {
-            spawn { ch.tx.send(i) }
+            spawn { ch.tx.send(cur) }
             spawn {
                 select {
-                    Some(_) = ch.rx => { wins = wins + 1 }
+                    Some(_) = ch.rx => { wins.fetch_add(1) }
                     Some(_) = ChanReader.close_after(Duration.from_millis(10_000)) => { }
                 }
             }
         }
         i = i + 1
     }
-    assert(wins == 500)
+    assert(wins.load() == 500)
 }
 
 test "100 iter Time.after fires" {
-    mut fired = 0
+    mut fired = AtomicInt.new(0)
     mut i = 0
     while i < 100 {
         ro ch = Channel.new(1)
@@ -46,11 +47,11 @@ test "100 iter Time.after fires" {
             spawn {
                 select {
                     Some(_) = ch.rx => { }
-                    Some(_) = ChanReader.close_after(Duration.from_millis(1)) => { fired = fired + 1 }
+                    Some(_) = ChanReader.close_after(Duration.from_millis(1)) => { fired.fetch_add(1) }
                 }
             }
         }
         i = i + 1
     }
-    assert(fired == 100)
+    assert(fired.load() == 100)
 }
