@@ -1,0 +1,63 @@
+// repro_handler_lit_records.nv — Plan 175 разведка: матрица выражений
+// внутри тела оп-хендлера (`with Eff = effect Eff { op() { ... } }`),
+// проверка каких форм codegen НЕ поддерживает (см. spec/decisions/04-effects.md
+// D316-amend Ф.2: «codegen handler-литералов не поддерживает anonymous
+// record-literal»).
+
+module nova_tests.plan175_handler_annot
+
+type Point { x int, y int }
+type PointV value { ro x int, ro y int }
+
+type MakesPoint effect {
+    heap_record() -> Point
+    value_record() -> PointV
+    anon_tuple() -> (int, int)
+    ctor_call() -> Point
+}
+
+type Shape2 enum
+    | Circle { r int }
+    | Square { side int }
+
+type MakesShape effect {
+    sum_variant() -> Shape2
+}
+
+test "handler-лит: heap record-литерал в теле опа" {
+    with MakesPoint = effect MakesPoint {
+        heap_record() { return Point { x: 1, y: 2 } }
+        value_record() => PointV { x: 3, y: 4 }
+        anon_tuple() => (5, 6)
+        ctor_call() => Point.new(7, 8)
+    } {
+        ro p = MakesPoint.heap_record()
+        assert(p.x == 1)
+        assert(p.y == 2)
+        ro pv = MakesPoint.value_record()
+        assert(pv.x == 3)
+        assert(pv.y == 4)
+        ro t = MakesPoint.anon_tuple()
+        assert(t.0 == 5)
+        assert(t.1 == 6)
+        ro c = MakesPoint.ctor_call()
+        assert(c.x == 7)
+        assert(c.y == 8)
+    }
+}
+
+test "handler-лит: sum-variant record в теле опа" {
+    with MakesShape = effect MakesShape {
+        sum_variant() => Shape2.Circle { r: 9 }
+    } {
+        ro s = MakesShape.sum_variant()
+        match s {
+            Shape2.Circle { r } => assert(r == 9)
+            _ => assert(false)
+        }
+    }
+}
+
+fn Point.new(x int, y int) -> Point {
+    Point { x, y }
+}
