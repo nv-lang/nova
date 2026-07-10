@@ -686,6 +686,21 @@ pub struct CEmitter {
     /// `Nova_Vec____nova_int*` payload vs `Nova_Vec____Nova_Self_p*` signature →
     /// CC-FAIL). A type being defined is concrete by construction; this guards it.
     being_defined_sum_types: HashSet<String>,
+    /// [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): mirror of
+    /// `being_defined_sum_types`, but for a plain RECORD currently having its own
+    /// fields lowered (`emit_record_type`). `record_schemas` is only populated
+    /// AFTER the field loop completes, so a self-referential field
+    /// (`type Node { value int; next Option[Node] }`) sees "Node" as unregistered
+    /// while its OWN `next` field is being resolved — `rt_named_is_stub` then
+    /// misclassifies it as an unresolved generic-param stub and `Option[Node]`
+    /// erases to `NovaOpt_nova_int` (the int-boxed erased Option) instead of the
+    /// concrete `NovaOpt_Nova_Node_p`, producing a field-type mismatch CC-FAIL at
+    /// every write site. A type being defined is concrete by construction; this
+    /// guards it — consulted UNCONDITIONALLY (not gated by the `full` parameter
+    /// like the sum-type guard above), because the exact call site that hits this
+    /// bug (`Option`'s inner-type check in `resolved_named_to_c`) passes
+    /// `full=false`.
+    being_defined_record_types: HashSet<String>,
     /// Maps effect name → method name → (param_types, return_type)
     effect_schemas: HashMap<String, HashMap<String, (Vec<String>, String)>>,
     /// Maps method name → (type_name, is_instance) for user-defined methods.
@@ -771,6 +786,25 @@ pub struct CEmitter {
     container_eq_requested: std::cell::RefCell<HashSet<String>>,
     /// Return type of the currently-emitting function, used for match result type inference.
     current_fn_return_ty: Option<String>,
+    /// [M-generic-method-self-recursive-return] (Plan 186, recursive-mono): name
+    /// of the method CURRENTLY being emitted by `emit_monomorphized_method`
+    /// (`None` outside that path — free fns/erased bodies don't need it, see
+    /// below). A generic method that calls ITSELF recursively on a value of its
+    /// own receiver type (`fn LinkedList[T] @map[U](f) -> LinkedList[U] { ...
+    /// t.map(f) ... }`) has a return type (`LinkedList[U]`) that mentions an
+    /// in-scope type-param — the checker's `infer_method_call_channel_type`
+    /// deliberately does NOT channel such a return (would need erased-body
+    /// `current_type_subst`, not available at check time), and the LEGACY
+    /// `fn_ret_<recv>_<method>` registry has no entry either (methods are
+    /// registered under the GENERIC template name, and mono emission of THIS
+    /// exact call happens WHILE the entry is being built, not before) —
+    /// `infer_expr_c_type` used to hard-panic (`[P67-LEGACY]`). Paired with
+    /// `current_receiver_type`/`current_fn_return_ty`: a call matching BOTH the
+    /// current method's own name AND its own (mono'd) receiver type is
+    /// self-recursion by construction, so the CURRENT function's own return
+    /// C-type (already known) is the exact, sound answer — see the fallback
+    /// site in `infer_expr_c_type`'s `Call`/`Member` arm.
+    current_fn_name: Option<String>,
     /// Plan 72 P3-B return: when the currently-emitting function declares a
     /// protocol return type (e.g. `-> Iter[int]`), holds `(proto_name,
     /// [concrete C type args])`. Return values are wrapped into a `NovaBox_*`
@@ -1130,6 +1164,54 @@ pub struct CEmitter {
     /// из `NOVA_ARRAY_DECL` списка в `nova_rt/array.h` — runtime их
     /// уже даёт, не нужен duplicate typedef.
     novaopt_decls_seen: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+    /// (Plan 186, recursive-mono): stack of heap sum/record type-names (bare,
+    /// no `Nova_`/`*`) currently being expanded by `emit_field_eq`'s structural
+    /// recursion. A self- or mutually-recursive heap type (`type X | V(X)` /
+    /// `type Node { next Option[Node] }`) previously re-inlined the FULL
+    /// per-variant/per-field comparison at EVERY nesting level (bounded only by
+    /// the generic `MAX_EQ_DEPTH` cutoff) — for an N-variant self-recursive sum
+    /// this is O(branching^depth) STRING growth, confirmed to consume multiple
+    /// GB / hang well before the depth-32 bail. When `emit_field_eq` re-enters
+    /// structural-eq synthesis for a type ALREADY on this stack (a genuine
+    /// cycle), it stops inlining and routes through a NAMED per-type comparison
+    /// function instead (`emit_named_struct_eq_call` below) — the self-
+    /// referential field is a real C heap pointer, so a plain recursive
+    /// FUNCTION CALL terminates at runtime on the actual (finite) data instead
+    /// of being unrolled at compile time. Non-cyclic types are unaffected
+    /// (identical inline expansion, byte-for-byte as before).
+    struct_eq_stack: std::cell::RefCell<Vec<String>>,
+    /// Dedup-set of type-names for which a `nova_struct_eq_<T>` named function
+    /// has already been requested/emitted (idempotent, mirrors
+    /// `novaopt_decls_seen`). Body spliced into `novaopt_eq_fns_buf` — same
+    /// late marker (`/*__NOVAOPT_EQ_FNS__*/`, after struct bodies AND method
+    /// forward-decls) so `->tag`/`->payload`/field derefs and any `@equal`
+    /// method call inside the body are always valid C.
+    struct_eq_fn_requested: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Forward-declaration prototypes for `nova_struct_eq_<T>` named functions
+    /// (see `struct_eq_fn_requested`/`emit_named_struct_eq_call`). Spliced at
+    /// `/*__STRUCT_EQ_PROTOS__*/` — placed right before `/*__NOVAOPT_EQ_FNS__*/`
+    /// (after all struct bodies + method fwd-decls, same phase as the eq-fn
+    /// bodies themselves). A prototype only needs the `Nova_<T>` forward-typedef
+    /// (emitted far earlier, alongside the type's own struct definition), so an
+    /// early proto guarantees correct C ordering even for MUTUAL recursion
+    /// between two distinct named struct-eq functions (A's body calling B's
+    /// function before B's own definition appears later in the file, or vice
+    /// versa) — plain self-recursion doesn't strictly need this (a function may
+    /// call itself inside its own body), but a cross-type cycle does.
+    struct_eq_protos_buf: std::cell::RefCell<String>,
+    /// [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): `(sanitized,
+    /// c_ty)` pairs whose `nova_opt_eq_<sanitized>` STRUCTURAL body construction was
+    /// deferred by `register_novaopt_decl` because `c_ty` self-references a type
+    /// CURRENTLY mid-emission (`being_defined_record_types`/`being_defined_sum_types`
+    /// — e.g. `Option[Node]` registered while lowering `Node`'s own `next` field).
+    /// The typedef + prototype are still emitted immediately (early, safe — a
+    /// pointer field only needs the forward-typedef); only the eq-fn BODY (which
+    /// needs `record_schemas`/`sum_schemas` to be fully populated for the referenced
+    /// type) waits. Drained by `drain_pending_structural_eq` right after ALL
+    /// non-generic type declarations have been emitted (`emit_module` §1), by which
+    /// point every such schema is guaranteed complete.
+    pending_structural_eq_bodies: std::cell::RefCell<Vec<(String, String)>>,
     /// Plan 54 Ф.9: sanitized NovaOpt-id → real C-type значения. Нужно
     /// чтобы pattern_bind_typed для `Some(v) => v` где scrutinee
     /// `NovaOpt_Nova_X_p` (sanitized) восстановил correct `v` тип
@@ -1169,6 +1251,13 @@ pub struct CEmitter {
     /// path genuinely uses (in practice only arity 2, from erased HashMap/Set
     /// `(K, V)` pairs). Concrete tuples always use the typed mono'd path.
     legacy_tuple_arities: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): registry of mono'd
+    /// `[N]T` INLINE struct instances — `(N, elem_c_ty)` pairs. Mirrors `mono_tuple_instances`
+    /// (dedup + finalize-pass typedef emission), but for the fixed-size array value class:
+    /// `typedef struct { T data[N]; } _NovaFixArr_<N>_<len>_<elem>;` — no heap pointer, no
+    /// len/cap runtime fields (N is compile-time). Used by `register_mono_fixed_array` /
+    /// `compute_mono_fixed_array_c_name` / the `ExprKind::Index` + `ArrayLit` codegen arms.
+    mono_fixed_array_instances: std::cell::RefCell<std::collections::HashSet<(usize, String)>>,
     /// Accumulated lint warnings from codegen (e.g. anonymous-embed override).
     /// Returned from emit_module instead of printed directly to stderr,
     /// so test runner can route them to captured_stderr rather than leaking
@@ -1703,6 +1792,7 @@ impl CEmitter {
             emit_file_module: HashMap::new(),
             file_type_module: HashMap::new(),
             being_defined_sum_types: HashSet::new(),
+            being_defined_record_types: HashSet::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: BTreeMap::new(),
@@ -1721,6 +1811,7 @@ impl CEmitter {
             pending_container_eq_monos: std::cell::RefCell::new(Vec::new()),
             container_eq_requested: std::cell::RefCell::new(HashSet::new()),
             current_fn_return_ty: None,
+            current_fn_name: None,
             current_fn_returns_protocol: None,
             current_fn_returns_any: false,
             contracts_post_label: None,
@@ -1806,6 +1897,10 @@ impl CEmitter {
                 }
                 std::cell::RefCell::new(s)
             },
+            struct_eq_stack: std::cell::RefCell::new(Vec::new()),
+            struct_eq_fn_requested: std::cell::RefCell::new(std::collections::HashSet::new()),
+            struct_eq_protos_buf: std::cell::RefCell::new(String::new()),
+            pending_structural_eq_bodies: std::cell::RefCell::new(Vec::new()),
             // Plan 54 Ф.9: pre-populated primitive sanitized → c_ty
             // pairs (для них sanitized совпадает с c_ty).
             // Plan 70.3: nova_char added — runtime declares NovaOpt_nova_char
@@ -1822,6 +1917,7 @@ impl CEmitter {
                 std::cell::RefCell::new(m)
             },
             mono_tuple_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
+            mono_fixed_array_instances: std::cell::RefCell::new(std::collections::HashSet::new()),
             legacy_tuple_arities: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             novares_typedefs_buf: std::cell::RefCell::new(String::new()),
             novares_vr_typedefs_buf: std::cell::RefCell::new(String::new()),
@@ -2575,7 +2671,8 @@ impl CEmitter {
             R::Readonly(inner) => self.rt_is_erased_stub(inner, full),
             // Arrays (`NovaArray_*` / `Nova_Vec____*`) and tuples (mono struct /
             // `_NovaTupleN`) always lower to a concrete C-form — never a bare stub.
-            R::Array(_) | R::Tuple(_) => false,
+            // [M-fixed-array-value-semantics]: `[N]T` mono struct — same, never a stub.
+            R::Array(_) | R::Tuple(_) | R::FixedArray(..) => false,
             R::Named { name, module, args } => self.rt_named_is_stub(name, module, args, full),
             // Type-params resolve through the (still string-carried) subst/receiver
             // context; typed pointers and the `Raw` debt carry concreteness as a
@@ -2642,12 +2739,21 @@ impl CEmitter {
         // Bare generic-template name (empty args → `Nova_<template>*`) or an unknown
         // name is an erased stub; a concrete user record/sum is not. Same registry
         // set as `debt_is_generic_stub_c` (gated by `full`), applied structurally.
+        //
+        // [M-option-self-recursive-record-mono] (Plan 186): a type currently
+        // mid-emission (`being_defined_sum_types`/`being_defined_record_types`)
+        // is concrete by construction REGARDLESS of `full` — checked
+        // unconditionally here (unlike `opaque_ffi_types`, still `full`-gated,
+        // unchanged). The bug this closes is exactly a `full=false` call site
+        // (`Option`'s inner-type check in `resolved_named_to_c`) that used to
+        // skip the mid-emission guard entirely, misclassifying a self-
+        // referential `Option[Self]` record field as an erased stub.
         let concrete = self.record_schemas.contains_key(&full_name)
             || self.sum_schemas.contains_key(&full_name)
             || self.generic_types.contains(&full_name)
-            || (full
-                && (self.being_defined_sum_types.contains(&full_name)
-                    || self.opaque_ffi_types.contains(&full_name)));
+            || self.being_defined_sum_types.contains(&full_name)
+            || self.being_defined_record_types.contains(&full_name)
+            || (full && self.opaque_ffi_types.contains(&full_name));
         !concrete
     }
 
@@ -3074,6 +3180,13 @@ impl CEmitter {
             R::Named { name, module, args } => self.resolved_named_to_c(name, module, args)?,
             // Array `[]T` (D239 ≡ Vec[T]) — mirrors type_ref_to_c's Array arm.
             R::Array(inner) => self.resolved_array_to_c(inner)?,
+            // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
+            // INLINE value mono struct `{ T data[N]; }`, NOT the `[]T`/Vec heap-pointer
+            // path above. `register_mono_fixed_array` is idempotent (dedup by (N, elem)).
+            R::FixedArray(n, inner) => {
+                let elem_c = self.resolved_type_to_c(inner)?;
+                self.register_mono_fixed_array(*n, &elem_c)
+            }
             // Tuple — mono'd struct if all elems concrete, else legacy `_NovaTupleN`
             // (Plan 59/148). Mirrors type_ref_to_c's Tuple arm; `register_mono_tuple` /
             // `register_legacy_tuple` side-effects are shared + idempotent.
@@ -5286,6 +5399,11 @@ impl CEmitter {
                 self.emit_type_decl(t)?;
             }
         }
+        // [M-option-self-recursive-record-mono] (Plan 186): every non-generic
+        // record/sum's `record_schemas`/`sum_schemas` entry is now complete —
+        // build any eq-fn bodies `register_novaopt_decl` deferred because they
+        // self-referenced a type still mid-emission at registration time.
+        self.drain_pending_structural_eq();
 
         // Plan 52.2 Ф.2: forward-declare mono'd struct types для
         // const-decls с generic-типом. Без этого `const X HashMap[K,V] = [...]`
@@ -5990,6 +6108,14 @@ impl CEmitter {
         // (else implicit decl → "conflicting types" CC-FAIL). Filled at end; the
         // marker line is stripped (with its newline) when no structural eq fn exists
         // so zero-impact files stay byte-identical.
+        // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+        // (Plan 186): placeholder for `nova_struct_eq_<T>` prototypes (see
+        // `struct_eq_protos_buf`/`emit_named_struct_eq_call`). Placed just before
+        // `/*__NOVAOPT_EQ_FNS__*/` — same phase-correctness window (struct bodies
+        // + method fwd-decls already visible); stripped (with its newline) when
+        // no cyclic type triggered the named-fn path, so zero-impact files stay
+        // byte-identical to the clean binary.
+        self.line("/*__STRUCT_EQ_PROTOS__*/");
         self.line("/*__NOVAOPT_EQ_FNS__*/");
         // Forward declarations for test impl functions
         {
@@ -6354,6 +6480,19 @@ impl CEmitter {
         // byte-identical to the clean binary (mirrors __NOVARES_VR_TYPEDEFS__).
         self.out = self.out.replace("/*__VR_UEQ_PROTOS__*/
 ", "");
+        // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+        // (Plan 186): splice `nova_struct_eq_<T>` prototypes BEFORE the eq-fn
+        // bodies (mirrors the __NOVARES_VR_TYPEDEFS__ empty/non-empty pattern).
+        let struct_eq_protos = self.struct_eq_protos_buf.borrow().clone();
+        if struct_eq_protos.is_empty() {
+            self.out = self.out.replace("/*__STRUCT_EQ_PROTOS__*/\n", "");
+        } else {
+            let struct_eq_protos_replacement = format!(
+                "/* [M-result-direct-recursive-enum]/[M-option-self-recursive-record-mono]: \
+                 named struct-eq fn prototypes for self-/mutually-recursive heap types */\n{}",
+                struct_eq_protos);
+            self.out = self.out.replace("/*__STRUCT_EQ_PROTOS__*/", &struct_eq_protos_replacement);
+        }
         let eq_fns = self.novaopt_eq_fns_buf.borrow().clone();
         if eq_fns.is_empty() {
             self.out = self.out.replace("/*__NOVAOPT_EQ_FNS__*/\n", "");
@@ -6457,6 +6596,62 @@ impl CEmitter {
             }
         }
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
+
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): splice mono'd
+        // `[N]T` INLINE struct typedefs. Topo-sort mirrors the tuple splice above —
+        // nested fixed arrays (`[N][M]T`) need the inner `_NovaFixArr_<M>_..._<T>` typedef
+        // BEFORE the outer one that embeds it BY VALUE (row-major flat layout, D27).
+        let mut fixarr_instances: Vec<(usize, String)> = self.mono_fixed_array_instances
+            .borrow().iter().cloned().collect();
+        fixarr_instances.sort();
+        let known_fixarr_names: std::collections::HashSet<String> = fixarr_instances.iter()
+            .map(|(n, elem)| Self::compute_mono_fixed_array_c_name(*n, elem))
+            .collect();
+        let mut fixarr_emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut fixarr_sorted: Vec<(usize, String)> = Vec::with_capacity(fixarr_instances.len());
+        let mut fixarr_remaining = fixarr_instances;
+        while !fixarr_remaining.is_empty() {
+            let mut next_remaining = Vec::new();
+            let mut progress = false;
+            for inst in fixarr_remaining.drain(..) {
+                // Element is itself a mono FixArr struct BY VALUE (not pointer) — needs
+                // its typedef emitted first. A pointer element (`_NovaFixArr_..._p`) is
+                // an incomplete-type-OK reference — no dep (mirrors the tuple splice).
+                let deps_satisfied = !known_fixarr_names.contains(inst.1.as_str())
+                    || fixarr_emitted.contains(inst.1.as_str());
+                if deps_satisfied {
+                    fixarr_emitted.insert(Self::compute_mono_fixed_array_c_name(inst.0, &inst.1));
+                    fixarr_sorted.push(inst);
+                    progress = true;
+                } else {
+                    next_remaining.push(inst);
+                }
+            }
+            if !progress {
+                // Cyclic deps impossible for a value-array struct; emit remaining anyway
+                // rather than hang (mirrors the tuple splice fallback).
+                fixarr_sorted.extend(next_remaining);
+                break;
+            }
+            fixarr_remaining = next_remaining;
+        }
+        let mut fixarr_decls = String::new();
+        if !fixarr_sorted.is_empty() {
+            fixarr_decls.push_str(
+                "/* [M-fixed-array-value-semantics]: mono'd [N]T INLINE struct typedefs — \
+                 stack/field value, no heap pointer, no len/cap (D27). */\n");
+            for (n, elem) in &fixarr_sorted {
+                let mangled = Self::compute_mono_fixed_array_c_name(*n, elem);
+                fixarr_decls.push_str(&format!(
+                    "#ifndef NOVA_FIXARR_TYPEDEF_{}\n", mangled));
+                fixarr_decls.push_str(&format!(
+                    "#define NOVA_FIXARR_TYPEDEF_{}\n", mangled));
+                fixarr_decls.push_str(&format!(
+                    "typedef struct {} {{ {} data[{}]; }} {};\n", mangled, elem, n, mangled));
+                fixarr_decls.push_str("#endif\n");
+            }
+        }
+        self.out = self.out.replace("/*__MONO_FIXARR_TYPEDEFS__*/", &fixarr_decls);
 
         // Plan 148 Ф.4 [M-codegen-unify-tuple-repr]: splice the legacy
         // all-`nova_int` `_NovaTupleN` typedefs — emitted ON DEMAND, only for
@@ -7075,6 +7270,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // эмитятся в `user_type_fwd_decls` (предшествующий marker),
         // **до** этого tuple marker — порядок safe.
         self.line("/*__MONO_TUPLE_TYPEDEFS__*/");
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): mono'd `[N]T`
+        // INLINE-array struct typedefs — splice marker; replaced in finalize. Layout:
+        // `typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>;` — value class (no heap
+        // pointer, no len/cap). Placed AFTER the tuple marker so a `[N](T1,T2)` element
+        // sees the complete mono tuple struct.
+        self.line("/*__MONO_FIXARR_TYPEDEFS__*/");
         // Plan 14 Ф.1: маркер для splice'а typedef'ов NovaOpt_<T> (для T
         // без NOVA_ARRAY_DECL в runtime). Заполняется в `register_novaopt_decl`
         // в registration order (innermost first); splice'ится в финальный
@@ -9642,6 +9843,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ));
             }
 
+            // Plan 175 handler-annot («один канал»): оп-тело — отдельная C-функция
+            // со СВОЕЙ сигнатурой (ret_ty из effect-схемы = той же разметки, что
+            // видел чекер), но до этого фикса эмитилось с type-контекстом ВНЕШНЕЙ
+            // функции: `expected_record_type`/`current_fn_return_ty` оставались от
+            // enclosing fn. Анонимный record-литерал (D55, `make() => { x: 1 }`)
+            // в теле опа падал «anonymous record literal without spread not
+            // supported in codegen» (задокументировано в D316-amend Ф.2), а
+            // `return X` coercion читал чужой return-тип. Подводим ТОТ ЖЕ канал,
+            // что и emit_fn_body (:20826) / lambda (:15807) / protocol-method
+            // (:21619) — потребитель один, инференция не дублируется.
+            // `contracts_post_label` гасим: `return` в оп-теле не должен emit'ить
+            // `goto` на ensures-лейбл внешней функции (лейбл вне этой C-функции).
+            let saved_op_ret_ty = std::mem::replace(
+                &mut self.current_fn_return_ty, Some(ret_ty.clone()));
+            let saved_op_expected = std::mem::replace(
+                &mut self.expected_record_type,
+                Self::debt_struct_name_from_c_type(&ret_ty));
+            let saved_op_post_label = self.contracts_post_label.take();
+
             match &m.body {
                 HandlerMethodBody::Expr(e) => {
                     let v = self.emit_expr(e)?;
@@ -9690,6 +9910,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+
+            // Plan 175 handler-annot: restore enclosing-fn type context.
+            self.current_fn_return_ty = saved_op_ret_ty;
+            self.expected_record_type = saved_op_expected;
+            self.contracts_post_label = saved_op_post_label;
 
             // Undef the macros so they don't leak
             for (cap_name, _) in &all_captures {
@@ -14016,6 +14241,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     fn emit_record_type(&mut self, name: &str, fields: &[RecordField]) -> Result<(), String> {
         let mut schema = HashMap::new();
+        // [M-option-self-recursive-record-mono]: mark this record concrete WHILE
+        // its OWN fields are lowered — mirrors `being_defined_sum_types` in
+        // `emit_sum_type` — so a self-referential field (`next Option[Self]`) is
+        // recognised as the concrete `Nova_<Name>*` heap type instead of an
+        // unresolved generic-param stub (`rt_named_is_stub` consults this).
+        // MUST be set before ANY `type_ref_to_c` call on this record's own
+        // fields — including the forward-decl pre-pass right below, which
+        // calls it too (a self-referential `Option[Self]` field's structural-
+        // eq registration side effect must see this guard on its FIRST call,
+        // or the deferral fix in `register_novaopt_decl` never engages).
+        self.being_defined_record_types.insert(name.to_string());
+        // [M-toml-sum-variant-mono-field-hoist] (Plan 186, recursive-mono):
+        // mirror of the SAME pre-pass in `emit_sum_type` (see its doc) — a
+        // plain record field whose C type is a pointer to a MONO'D GENERIC
+        // instance (e.g. `TomlParser { mut root HashMap[str, TomlValue] }`)
+        // needs a forward `typedef struct X X;` BEFORE this record's own
+        // `struct Nova_{name} {` opens (the mono instance's real typedef is
+        // only emitted later, when `drain_generic_type_worklist` runs). A C
+        // typedef statement cannot appear inside another struct's braces, so
+        // this must run as its own pass before the struct is opened below.
+        {
+            let mut fwd_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for f in fields {
+                if let Ok(tc) = self.type_ref_to_c(&f.ty) {
+                    if let Some(base) = tc.strip_suffix('*') {
+                        let base = base.trim_end_matches('*').trim();
+                        if base.starts_with("Nova_") && fwd_seen.insert(base.to_string()) {
+                            self.line(&format!("typedef struct {0} {0};", base));
+                        }
+                    }
+                }
+            }
+        }
         self.line(&format!("typedef struct Nova_{0} Nova_{0};", name));
         self.line(&format!("struct Nova_{} {{", name));
         self.indent += 1;
@@ -14057,6 +14315,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 );
             }
         }
+        // [M-option-self-recursive-record-mono]: fields lowered — the type is
+        // about to be registered for real; drop the mid-emission concreteness
+        // guard (mirrors `emit_sum_type`'s `being_defined_sum_types.remove`).
+        self.being_defined_record_types.remove(name);
         // Plan 173 Ф.5 (#8, D188 R2): hidden runtime exactly-once counter for
         // heap records with a USER `consume @cleanup` method. Zero-initialized
         // by the nova_alloc contract (alloc.c: "MUST return zeroed memory");
@@ -14138,6 +14400,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Collect schema while building union
         let mut sum_schema: HashMap<String, Vec<String>> = HashMap::new();
 
+        // [M-172.1-self-ref-slice-variant-erasure]: mark this type concrete WHILE its
+        // variant payload fields are lowered, so a self-referential `[]Self` slice
+        // element (`type T | Node([]T)`) resolves to `Nova_Vec____Nova_T_p*` instead
+        // of the erased `Nova_Vec____nova_int*` (`debt_is_generic_stub_c` consults
+        // this). MUST be set before ANY `type_ref_to_c` call on this sum's own
+        // variant fields — including the forward-decl pre-pass right below.
+        self.being_defined_sum_types.insert(name.to_string());
+        // [M-toml-sum-variant-mono-field-hoist] (Plan 186, recursive-mono):
+        // pre-emit forward `typedef struct X X;` decls for any Tuple/Record
+        // variant payload field whose C type is a pointer to a MONO'D GENERIC
+        // instance (e.g. `TomlTable(HashMap[str, TomlValue])` — the field's
+        // `Nova_HashMap____nova_str__Nova_TomlValue_p*` typedef is only
+        // emitted later, when `drain_generic_type_worklist` runs — long
+        // after this plain (non-generic) sum type's OWN struct body, which
+        // references it as a pointer field right here). A pointer field only
+        // needs the type NAME declared, not the full struct body, so a
+        // forward-decl emitted BEFORE this struct opens is sufficient — but
+        // it must be emitted before `struct Nova_{name} {` starts (a C
+        // typedef statement cannot appear inside another struct's braces),
+        // hence this dedicated pre-pass over ALL variants (mirrors the
+        // analogous pre-pass `emit_generic_type_instance`'s Record arm
+        // already does for its OWN fields, one level up the generic-instance
+        // stack — this closes the SAME gap for a plain sum's fields).
+        {
+            let mut fwd_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for v in variants {
+                let field_tys: Vec<&crate::ast::TypeRef> = match &v.kind {
+                    SumVariantKind::Unit => Vec::new(),
+                    SumVariantKind::Tuple(types) => types.iter().collect(),
+                    SumVariantKind::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
+                };
+                for ty in field_tys {
+                    if let Ok(tc) = self.type_ref_to_c(ty) {
+                        if let Some(base) = tc.strip_suffix('*') {
+                            let base = base.trim_end_matches('*').trim();
+                            if base.starts_with("Nova_") && fwd_seen.insert(base.to_string()) {
+                                self.line(&format!("typedef struct {0} {0};", base));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Union payload
         self.line(&format!("typedef struct Nova_{0} Nova_{0};", name));
         self.line(&format!("struct Nova_{} {{", name));
@@ -14150,11 +14456,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !has_payload {
             self.line("char _dummy;");
         }
-        // [M-172.1-self-ref-slice-variant-erasure]: mark this type concrete WHILE its
-        // variant payload fields are lowered, so a self-referential `[]Self` slice
-        // element (`type T | Node([]T)`) resolves to `Nova_Vec____Nova_T_p*` instead
-        // of the erased `Nova_Vec____nova_int*` (`debt_is_generic_stub_c` consults this).
-        self.being_defined_sum_types.insert(name.to_string());
         for v in variants {
             match &v.kind {
                 SumVariantKind::Unit => {
@@ -16676,151 +16977,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             {
                 return format!("(({}) == ({}))", l, r);
             }
-            if let Some(variants) = self.sum_schemas.get(&type_name).cloned() {
-                // Empty-sum (0 variants, unit-type like CharTryFromError): emitted as
-                // `typedef int64_t Nova_X` — no struct tag/payload. All instances are
-                // vacuously equal (uninhabited / single-value unit); dereference as scalar.
-                if variants.is_empty() {
-                    return format!("((void)({}), (void)({}), 1)", l, r);
-                }
-                let mut field_conds: Vec<String> = Vec::new();
-                for (var_name, field_types) in &variants {
-                    if field_types.is_empty() {
-                        continue;
-                    }
-                    // Record-style variant (`V { a, b }`) uses NAMED C fields, not
-                    // positional `._i`; tuple-style (`V(T,U)`) uses `._i`. Recover the
-                    // field names from `record_variant_field_order` (same index order as
-                    // `field_types`). Without this, a record-variant payload generated
-                    // `payload.V._0` → C "no member named '_0'" (e.g. ParseJsonError /
-                    // ReadBufferError in `Option[<sum>]==`).
-                    let rec_order = self.record_variant_field_order
-                        .get(&format!("{}::{}", type_name, var_name)).cloned();
-                    let var_fields: Vec<String> = field_types
-                        .iter()
-                        .enumerate()
-                        .map(|(i, fty)| {
-                            let (li, ri) = match rec_order.as_ref().and_then(|o| o.get(i)) {
-                                Some(fname) => {
-                                    let mfn = Self::mangle_field_name(fname);
-                                    (format!("({})->payload.{}.{}", l, var_name, mfn),
-                                     format!("({})->payload.{}.{}", r, var_name, mfn))
-                                }
-                                None => (format!("({})->payload.{}._{}", l, var_name, i),
-                                         format!("({})->payload.{}._{}", r, var_name, i)),
-                            };
-                            self.emit_field_eq(fty, &li, &ri, depth + 1)
-                        })
-                        .collect();
-                    field_conds.push(format!(
-                        "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
-                        l = l,
-                        ty = type_name,
-                        v = var_name,
-                        fields = var_fields.join(" && ")
-                    ));
-                }
-                let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
-                return if field_conds.is_empty() {
-                    tag_eq
-                } else {
-                    format!("({} && {})", tag_eq, field_conds.join(" && "))
-                };
+            // [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+            // (Plan 186, recursive-mono): a genuine cycle (self- or mutually-
+            // recursive heap type ALREADY being expanded up this call chain) is
+            // NOT re-inlined — route through a named per-type function instead
+            // (see `struct_eq_stack` field doc + `emit_named_struct_eq_call`).
+            // Non-cyclic types fall straight through to `structural_eq_body_for_ptr`
+            // unaffected (byte-identical inline expansion, same as before this fix).
+            if self.struct_eq_stack.borrow().contains(&type_name) {
+                return self.emit_named_struct_eq_call(&type_name, l, r);
             }
-            // [M-172.1-option-eq-record-structural] (L2): a heap user RECORD without
-            // an `@equal` (records are NOT auto-`@equal`'d) reaches here when compared
-            // structurally — `Option[Rec]==`, a sum/Result field, or a direct `Rec==Rec`.
-            // Recurse field-by-field over `record_schemas` — the SINGLE per-type eq
-            // dispatcher (§0 per-type операции), mirroring the sum recursion above —
-            // instead of degrading to pointer identity. Field order from
-            // `record_field_order` (the schema HashMap is unordered → non-deterministic
-            // codegen otherwise); a builtin record registered without an order list
-            // falls back to sorted keys. EMPTY-schema records (opaque builtin runtime
-            // structs like StringBuilder) are skipped → identity below (sound for
-            // opaque handles; matches the debt_opt_payload_needs_structural_eq exclusion).
-            // CONTAINERS (`Vec____`/`HashMap____`) are in `record_schemas` only for
-            // field-access lowering, but carry an opaque heap `data`/buckets buffer
-            // where field-recursion would compare the POINTER by identity
-            // (`Some([1,2])==Some([1,2])` false). Vec is intercepted earlier (mono
-            // `@equal` element-wise); HashMap has no `@equal` Nova-body yet → skip here,
-            // falling to identity (HashMap-eq = separate follow-up). Mono user-generic
-            // value-records (`Box____<T>`) DO recurse correctly — only the two known
-            // container prefixes are excluded.
-            if let Some(schema) = self.record_schemas.get(&type_name) {
-                let is_container = type_name.starts_with("Vec____")
-                    || type_name.starts_with("HashMap____");
-                if !schema.is_empty() && !is_container {
-                    let schema = schema.clone();
-                    let order: Vec<String> = self.record_field_order
-                        .get(&type_name).cloned()
-                        .unwrap_or_else(|| {
-                            let mut ks: Vec<String> = schema.keys().cloned().collect();
-                            ks.sort();
-                            ks
-                        });
-                    let conds: Vec<String> = order.iter().filter_map(|fname| {
-                        schema.get(fname).map(|fty| {
-                            let mfn = Self::mangle_field_name(fname);
-                            let li = format!("({})->{}", l, mfn);
-                            let ri = format!("({})->{}", r, mfn);
-                            self.emit_field_eq(fty, &li, &ri, depth + 1)
-                        })
-                    }).collect();
-                    if !conds.is_empty() {
-                        return format!("({})", conds.join(" && "));
-                    }
-                    // all fields filtered out (shouldn't happen for non-empty schema)
-                    // — fall through to identity below.
-                }
-            }
-            // Plan 153.3 fix: mono'd generic sum whose legacy `sum_schemas`
-            // entry is absent under the mono'd key (generic sums register the
-            // schema under the GENERIC name; the mono'd key may be unregistered
-            // here) — structural `==` otherwise silently degraded to pointer
-            // identity (`Foo[int].A(1) == A(1)` → false). Reconstruct the
-            // substituted variant schema from the generic template + recorded
-            // mono type-args and emit the same tag+payload recursion. Mono'd
-            // sum C tags use the FULL mangled prefix `Nova_<mono>` (the mono
-            // constructor emits `NOVA_TAG_Nova_<mono>_<V>`), unlike non-generic
-            // sums (which strip `Nova_`), so the tag prefix is the full c-type
-            // name (sans `*`). Strictly a fallback BEFORE pointer-identity — it
-            // only fires for sums currently broken, never changing a sum that
-            // already resolved via `sum_schemas`/@equal/@compare above.
-            {
-                let full_c = cty.trim_end_matches('*');
-                if let Some(recon) = self.reconstruct_mono_sum_schema(full_c) {
-                    let mut field_conds: Vec<String> = Vec::new();
-                    for (var_name, field_types) in &recon {
-                        if field_types.is_empty() {
-                            continue;
-                        }
-                        let var_fields: Vec<String> = field_types
-                            .iter()
-                            .enumerate()
-                            .map(|(i, fty)| {
-                                let li = format!("({})->payload.{}._{}", l, var_name, i);
-                                let ri = format!("({})->payload.{}._{}", r, var_name, i);
-                                self.emit_field_eq(fty, &li, &ri, depth + 1)
-                            })
-                            .collect();
-                        field_conds.push(format!(
-                            "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
-                            l = l,
-                            ty = full_c,
-                            v = var_name,
-                            fields = var_fields.join(" && ")
-                        ));
-                    }
-                    let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
-                    return if field_conds.is_empty() {
-                        tag_eq
-                    } else {
-                        format!("({} && {})", tag_eq, field_conds.join(" && "))
-                    };
-                }
-            }
-            // No structural info available — fall back to pointer identity.
-            return format!("(({}) == ({}))", l, r);
+            self.struct_eq_stack.borrow_mut().push(type_name.clone());
+            let __struct_eq_result = self.structural_eq_body_for_ptr(&type_name, cty, l, r, depth);
+            self.struct_eq_stack.borrow_mut().pop();
+            return __struct_eq_result;
         }
         // Plan 153.3 fix: Result is a *special* heap-pointer ABI `NovaRes_<n>*`
         // (NOT a `Nova_X*` sum — it carries extra typed-error fields), so it
@@ -16867,6 +17037,206 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // we have no field schema for, where byte-compare is the best available
         // and keeps codegen total.
         format!("(memcmp(&{}, &{}, sizeof({})) == 0)", l, r, cty)
+    }
+
+    /// [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+    /// (Plan 186): the tag+payload / field-by-field structural-eq body for a
+    /// single `Nova_<type_name>*` heap sum or record, EXTRACTED verbatim from
+    /// `emit_field_eq`'s former inline body (behavior unchanged for the
+    /// non-cyclic case — this is a pure extract-method refactor). Callers are
+    /// responsible for `struct_eq_stack` push/pop (cycle bookkeeping lives at
+    /// the call sites: the direct `emit_field_eq` entry, and
+    /// `emit_named_struct_eq_call` when synthesizing a named function body).
+    fn structural_eq_body_for_ptr(&self, type_name: &str, cty: &str, l: &str, r: &str, depth: usize) -> String {
+        if let Some(variants) = self.sum_schemas.get(type_name).cloned() {
+            // Empty-sum (0 variants, unit-type like CharTryFromError): emitted as
+            // `typedef int64_t Nova_X` — no struct tag/payload. All instances are
+            // vacuously equal (uninhabited / single-value unit); dereference as scalar.
+            if variants.is_empty() {
+                return format!("((void)({}), (void)({}), 1)", l, r);
+            }
+            let mut field_conds: Vec<String> = Vec::new();
+            for (var_name, field_types) in &variants {
+                if field_types.is_empty() {
+                    continue;
+                }
+                // Record-style variant (`V { a, b }`) uses NAMED C fields, not
+                // positional `._i`; tuple-style (`V(T,U)`) uses `._i`. Recover the
+                // field names from `record_variant_field_order` (same index order as
+                // `field_types`). Without this, a record-variant payload generated
+                // `payload.V._0` → C "no member named '_0'" (e.g. ParseJsonError /
+                // ReadBufferError in `Option[<sum>]==`).
+                let rec_order = self.record_variant_field_order
+                    .get(&format!("{}::{}", type_name, var_name)).cloned();
+                let var_fields: Vec<String> = field_types
+                    .iter()
+                    .enumerate()
+                    .map(|(i, fty)| {
+                        let (li, ri) = match rec_order.as_ref().and_then(|o| o.get(i)) {
+                            Some(fname) => {
+                                let mfn = Self::mangle_field_name(fname);
+                                (format!("({})->payload.{}.{}", l, var_name, mfn),
+                                 format!("({})->payload.{}.{}", r, var_name, mfn))
+                            }
+                            None => (format!("({})->payload.{}._{}", l, var_name, i),
+                                     format!("({})->payload.{}._{}", r, var_name, i)),
+                        };
+                        self.emit_field_eq(fty, &li, &ri, depth + 1)
+                    })
+                    .collect();
+                field_conds.push(format!(
+                    "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
+                    l = l,
+                    ty = type_name,
+                    v = var_name,
+                    fields = var_fields.join(" && ")
+                ));
+            }
+            let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
+            return if field_conds.is_empty() {
+                tag_eq
+            } else {
+                format!("({} && {})", tag_eq, field_conds.join(" && "))
+            };
+        }
+        // [M-172.1-option-eq-record-structural] (L2): a heap user RECORD without
+        // an `@equal` (records are NOT auto-`@equal`'d) reaches here when compared
+        // structurally — `Option[Rec]==`, a sum/Result field, or a direct `Rec==Rec`.
+        // Recurse field-by-field over `record_schemas` — the SINGLE per-type eq
+        // dispatcher (§0 per-type операции), mirroring the sum recursion above —
+        // instead of degrading to pointer identity. Field order from
+        // `record_field_order` (the schema HashMap is unordered → non-deterministic
+        // codegen otherwise); a builtin record registered without an order list
+        // falls back to sorted keys. EMPTY-schema records (opaque builtin runtime
+        // structs like StringBuilder) are skipped → identity below (sound for
+        // opaque handles; matches the debt_opt_payload_needs_structural_eq exclusion).
+        // CONTAINERS (`Vec____`/`HashMap____`) are in `record_schemas` only for
+        // field-access lowering, but carry an opaque heap `data`/buckets buffer
+        // where field-recursion would compare the POINTER by identity
+        // (`Some([1,2])==Some([1,2])` false). Vec is intercepted earlier (mono
+        // `@equal` element-wise); HashMap has no `@equal` Nova-body yet → skip here,
+        // falling to identity (HashMap-eq = separate follow-up). Mono user-generic
+        // value-records (`Box____<T>`) DO recurse correctly — only the two known
+        // container prefixes are excluded.
+        if let Some(schema) = self.record_schemas.get(type_name) {
+            let is_container = type_name.starts_with("Vec____")
+                || type_name.starts_with("HashMap____");
+            if !schema.is_empty() && !is_container {
+                let schema = schema.clone();
+                let order: Vec<String> = self.record_field_order
+                    .get(type_name).cloned()
+                    .unwrap_or_else(|| {
+                        let mut ks: Vec<String> = schema.keys().cloned().collect();
+                        ks.sort();
+                        ks
+                    });
+                let conds: Vec<String> = order.iter().filter_map(|fname| {
+                    schema.get(fname).map(|fty| {
+                        let mfn = Self::mangle_field_name(fname);
+                        let li = format!("({})->{}", l, mfn);
+                        let ri = format!("({})->{}", r, mfn);
+                        self.emit_field_eq(fty, &li, &ri, depth + 1)
+                    })
+                }).collect();
+                if !conds.is_empty() {
+                    return format!("({})", conds.join(" && "));
+                }
+                // all fields filtered out (shouldn't happen for non-empty schema)
+                // — fall through to identity below.
+            }
+        }
+        // Plan 153.3 fix: mono'd generic sum whose legacy `sum_schemas`
+        // entry is absent under the mono'd key (generic sums register the
+        // schema under the GENERIC name; the mono'd key may be unregistered
+        // here) — structural `==` otherwise silently degraded to pointer
+        // identity (`Foo[int].A(1) == A(1)` → false). Reconstruct the
+        // substituted variant schema from the generic template + recorded
+        // mono type-args and emit the same tag+payload recursion. Mono'd
+        // sum C tags use the FULL mangled prefix `Nova_<mono>` (the mono
+        // constructor emits `NOVA_TAG_Nova_<mono>_<V>`), unlike non-generic
+        // sums (which strip `Nova_`), so the tag prefix is the full c-type
+        // name (sans `*`). Strictly a fallback BEFORE pointer-identity — it
+        // only fires for sums currently broken, never changing a sum that
+        // already resolved via `sum_schemas`/@equal/@compare above.
+        {
+            let full_c = cty.trim_end_matches('*');
+            if let Some(recon) = self.reconstruct_mono_sum_schema(full_c) {
+                let mut field_conds: Vec<String> = Vec::new();
+                for (var_name, field_types) in &recon {
+                    if field_types.is_empty() {
+                        continue;
+                    }
+                    let var_fields: Vec<String> = field_types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, fty)| {
+                            let li = format!("({})->payload.{}._{}", l, var_name, i);
+                            let ri = format!("({})->payload.{}._{}", r, var_name, i);
+                            self.emit_field_eq(fty, &li, &ri, depth + 1)
+                        })
+                        .collect();
+                    field_conds.push(format!(
+                        "(({l})->tag != NOVA_TAG_{ty}_{v} || ({fields}))",
+                        l = l,
+                        ty = full_c,
+                        v = var_name,
+                        fields = var_fields.join(" && ")
+                    ));
+                }
+                let tag_eq = format!("(({l})->tag == ({r})->tag)", l = l, r = r);
+                return if field_conds.is_empty() {
+                    tag_eq
+                } else {
+                    format!("({} && {})", tag_eq, field_conds.join(" && "))
+                };
+            }
+        }
+        // No structural info available — fall back to pointer identity.
+        format!("(({}) == ({}))", l, r)
+    }
+
+    /// [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+    /// (Plan 186): the cycle-breaking half of the fix — called by
+    /// `emit_field_eq` when `type_name` is already on `struct_eq_stack` (a
+    /// genuine self- or mutually-recursive heap type). Ensures a named
+    /// `nova_struct_eq_<T>` function exists (idempotent via
+    /// `struct_eq_fn_requested`) and returns a CALL to it instead of inlining
+    /// the comparison again. The function body is built via
+    /// `structural_eq_body_for_ptr` — the SAME logic used for the non-cyclic
+    /// case — so a self-referential field inside the body re-enters this exact
+    /// path, sees the type already in `struct_eq_fn_requested`, and short-
+    /// circuits to a plain call: the C function recurses on itself at RUNTIME
+    /// (bounded by the actual, finite, heap structure) instead of being
+    /// unrolled at COMPILE time (which is what previously produced
+    /// `branching^depth` string growth up to `MAX_EQ_DEPTH`, multiple GB /
+    /// hang on a real recursive enum — see `struct_eq_stack` field doc).
+    /// Spliced into `novaopt_eq_fns_buf` (marker `/*__NOVAOPT_EQ_FNS__*/`,
+    /// placed AFTER struct bodies and method forward-decls — safe for
+    /// `->tag`/`->payload`/field derefs and `@equal` method calls).
+    fn emit_named_struct_eq_call(&self, type_name: &str, l: &str, r: &str) -> String {
+        let fn_name = format!("nova_struct_eq_{}", Self::sanitize_c_for_ident(type_name));
+        let newly_requested = self.struct_eq_fn_requested
+            .borrow_mut()
+            .insert(type_name.to_string());
+        if newly_requested {
+            // Proto FIRST (before building the body) — a mutual cycle (A calls
+            // named-B, B calls named-A) needs A's own prototype visible before
+            // B's definition references it, regardless of which of the two
+            // finishes building (and thus gets spliced) first.
+            self.struct_eq_protos_buf.borrow_mut().push_str(&format!(
+                "static nova_bool {fname}(Nova_{t}* a, Nova_{t}* b);\n",
+                fname = fn_name, t = type_name,
+            ));
+            let cty = format!("Nova_{}*", type_name);
+            self.struct_eq_stack.borrow_mut().push(type_name.to_string());
+            let body = self.structural_eq_body_for_ptr(type_name, &cty, "a", "b", 0);
+            self.struct_eq_stack.borrow_mut().pop();
+            self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
+                "static nova_bool {fname}(Nova_{t}* a, Nova_{t}* b) {{ return {body}; }}\n",
+                fname = fn_name, t = type_name, body = body,
+            ));
+        }
+        format!("{}({}, {})", fn_name, l, r)
     }
 
     /// Plan 153.3: reconstruct the *substituted* variant schema of a mono'd
@@ -17324,6 +17694,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         Self::compute_mono_tuple_c_name(elem_c_tys)
+    }
+
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): compute the mono'd
+    /// `[N]T` INLINE struct C name. Length-prefixed encoding (mirrors
+    /// `compute_mono_tuple_c_name` — self-describing, unambiguous for any nesting depth,
+    /// e.g. `[4][8]int`'s inner `[8]int` element name embeds cleanly):
+    /// `_NovaFixArr_<N>_<Llen>_<elem>` — `<Llen>` = decimal byte length of the
+    /// (sanitized) element type name that follows. Distinguishable from the mono tuple
+    /// name by the `NovaFixArr` stem (no collision risk with `_NovaTuple_`/`_NovaTupleN`).
+    pub fn compute_mono_fixed_array_c_name(n: usize, elem_c_ty: &str) -> String {
+        let sanitized = Self::sanitize_c_for_ident(elem_c_ty);
+        format!("_NovaFixArr_{}_{}_{}", n, sanitized.len(), sanitized)
+    }
+
+    /// Inverse of `compute_mono_fixed_array_c_name` — `(N, elem_c_ty)` from a mangled
+    /// name, or `None` if `mangled` isn't a `_NovaFixArr_...` name.
+    fn parse_mono_fixed_array_name(mangled: &str) -> Option<(usize, String)> {
+        let rest = mangled.strip_prefix("_NovaFixArr_")?;
+        let (n_str, after_n) = Self::take_digits(rest);
+        if n_str.is_empty() {
+            return None;
+        }
+        let n: usize = n_str.parse().ok()?;
+        let cursor = after_n.strip_prefix('_')?;
+        let (len_str, after_len) = Self::take_digits(cursor);
+        if len_str.is_empty() {
+            return None;
+        }
+        let len: usize = len_str.parse().ok()?;
+        let body = after_len.strip_prefix('_')?;
+        if body.len() != len {
+            return None;
+        }
+        Some((n, Self::desanitize_c_from_ident(body)))
+    }
+
+    /// [M-fixed-array-value-semantics]: register a mono'd `[N]T` INLINE struct type for
+    /// finalize-pass typedef emission (`typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>;`).
+    /// Idempotent — dedup by `(N, elem_c_ty)`, mirrors `register_mono_tuple`. Returns the
+    /// mono'd C struct name.
+    fn register_mono_fixed_array(&self, n: usize, elem_c_ty: &str) -> String {
+        self.mono_fixed_array_instances.borrow_mut().insert((n, elem_c_ty.to_string()));
+        Self::compute_mono_fixed_array_c_name(n, elem_c_ty)
     }
 
     /// Plan 59 Ф.7.3: estimate sizeof for a C type string — conservative
@@ -18898,6 +19311,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     &ret_ty_ref, &closure_ret_c, &mut subst_slots);
             }
         }
+        // Step 2f [M-generic-method-self-recursive-return] (Plan 186,
+        // recursive-mono, mirrors `resolve_mono_type_args` Source 2f /
+        // [M-property-testing-rot]): a fn-typed arg passed as a bare
+        // IDENTIFIER (not a closure literal) — e.g. `t.map(f)` inside
+        // `@map[U]`'s OWN body, forwarding its OWN param `f: fn(T)->U`
+        // straight through to a recursive call on itself. Steps 1/2 above
+        // cannot infer `U` here: Step 1 explicitly skips fn-typed args (a
+        // closure's C type is an erased `void*`, encoding no type info) and
+        // Step 2 only pre-infers CLOSURE LITERALS, not identifier references.
+        // Unify the callee's declared param TypeRef against the CALLER's own
+        // declared TypeRef for that identifier (`current_fn_param_typerefs`,
+        // now populated by `emit_monomorphized_method` too — see its doc)
+        // instead of a C-type comparison; `type_ref_to_c` on the caller's
+        // side must lower through the ENCLOSING method's FULL type-arg subst
+        // (`saved_outer` — both receiver AND method-level params, e.g. T AND
+        // U), NOT the receiver-only view this function activated above
+        // (line ~18953: `current_type_subst` = `receiver_subst` only, for
+        // Steps 1-3's OWN lookups) — a bare method-level typaram reference
+        // like "U" has no receiver-subst entry and would otherwise resolve to
+        // the erroneous literal-name fallback `Nova_U*` (a bogus "user type"
+        // named U) instead of the enclosing scope's already-resolved binding.
+        // Swap in `saved_outer` only for this block's own resolution calls.
+        {
+            let saved_receiver_only = std::mem::replace(
+                &mut self.current_type_subst, saved_outer.clone());
+            for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                if subst_slots.iter().all(|(_, v)| v.is_some()) { break; }
+                if let ExprKind::Ident(name) = &arg.expr().kind {
+                    if let Some(decl_ref) = self.current_fn_param_typerefs.get(name).cloned() {
+                        self.infer_type_param_binding_from_ref(&param.ty, &decl_ref, &mut subst_slots);
+                    }
+                }
+            }
+            self.current_type_subst = saved_receiver_only;
+        }
         // Step 3 [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]:
         // infer effect-clause type-params (`Fail[E]`) from a closure ARG's
         // thrown value. `E` in `body fn() Fail[E] -> T` appears ONLY inside
@@ -19828,6 +20276,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_recv = std::mem::replace(&mut self.current_receiver_type, Some(recv_type.to_string()));
         self.sync_receiver_rt();
         let saved_ret_ty = std::mem::replace(&mut self.current_fn_return_ty, Some(ret_c.clone()));
+        // [M-generic-method-self-recursive-return] (Plan 186): remember this
+        // mono'd method's own name so a self-recursive call (`t.map(f)` inside
+        // `@map`'s own body) can be recognised in `infer_expr_c_type`'s fallback.
+        let saved_fn_name = std::mem::replace(&mut self.current_fn_name, Some(fn_decl.name.clone()));
+        // [M-generic-method-self-recursive-return] (Plan 186): mirror of the
+        // free-fn `emit_generic_fn_erased` path ([M-property-testing-rot]) —
+        // expose this mono'd METHOD body's own declared param TypeRefs so a
+        // nested generic call forwarding one of its params (e.g. `t.map(f)`
+        // passing the method's OWN `f: fn(T)->U` straight through to the
+        // recursive call) can unify the callee's method-level type-args at the
+        // TypeRef level (`resolve_method_level_subst`'s Source 2f below) —
+        // `f`'s C type alone is an erased `void*`/closure-struct pointer,
+        // useless for inferring `U`. Was ONLY set for free generic fns before
+        // this fix, never for generic METHOD mono — the exact gap that made a
+        // self-recursive generic method (`LinkedList[T]@map[U]` calling
+        // `t.map(f)` on itself) unable to infer its own `U`.
+        let saved_param_typerefs = std::mem::replace(
+            &mut self.current_fn_param_typerefs,
+            fn_decl.params.iter()
+                .map(|p| (p.name.clone(), p.ty.clone()))
+                .collect(),
+        );
         let saved_expected = std::mem::replace(
             &mut self.expected_record_type,
             fn_decl.return_type.as_ref().and_then(|t| {
@@ -19999,7 +20469,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -20060,6 +20530,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.current_receiver_type = saved_recv;
         self.sync_receiver_rt();
         self.current_fn_return_ty = saved_ret_ty;
+        self.current_fn_name = saved_fn_name;
+        self.current_fn_param_typerefs = saved_param_typerefs;
         self.expected_record_type = saved_expected;
         // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
         self.contract_opt_out_fn = prev_mono_contract_opt_out;
@@ -20906,7 +21378,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (named-
                     // priority int-collapse → CC-FAIL, surfaced by d86_coalesce_width). Gated on
                     // the NovaOpt_/typed-int ret surface so the common path keeps `emit_expr`.
-                    let val = if ret_c.starts_with("NovaOpt_") || Self::is_typed_integer(&ret_c) {
+                    let val = if ret_c.starts_with("NovaOpt_") || ret_c.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret_c) {
                         self.emit_expr_with_target_type(trailing, &ret_c)?
                     } else {
                         self.emit_expr(trailing)?
@@ -21786,7 +22258,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // so `=> Some(<int-literal>)` in `-> Option[uint]` builds NovaOpt_nova_uint,
                 // not the literal-default NovaOpt_nova_int (named-priority int-collapse →
                 // CC-FAIL, surfaced by d86_coalesce_width). Common path keeps `emit_expr`.
-                let val = if ret.starts_with("NovaOpt_") || Self::is_typed_integer(&ret) {
+                let val = if ret.starts_with("NovaOpt_") || ret.starts_with("_NovaFixArr_") || Self::is_typed_integer(&ret) {
                     self.emit_expr_with_target_type(e, &ret)?
                 } else {
                     self.emit_expr(e)?
@@ -23381,7 +23853,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
             // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
             // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
-            let val = if ret_ty.starts_with("NovaOpt_") || Self::is_typed_integer(ret_ty) {
+            let val = if ret_ty.starts_with("NovaOpt_") || ret_ty.starts_with("_NovaFixArr_") || Self::is_typed_integer(ret_ty) {
                 self.emit_expr_with_target_type(trailing, ret_ty)?
             } else {
                 self.emit_expr(trailing)?
@@ -24217,6 +24689,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             ));
                             return Ok(());
                         }
+                        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент):
+                        // `arr[i] = v` on `[N]T` — INLINE struct `{ T data[N]; }` write.
+                        // Mirrors the Vec[T] write branch below, but `N` is a COMPILE-TIME
+                        // literal (no runtime len/cap header) and the data member is
+                        // direct (`.data`/`->data`), not a `->data` POINTER field. `arr_obj_ty`
+                        // is either the bare mono struct (a local/field VALUE) or a pointer to
+                        // it (a `ref`/`mut ref` D326 receiver/param — in-place mutation,
+                        // no copy). MUST precede the Vec/NovaArray checks below — a distinct
+                        // struct family, checked first so it never falls through to them.
+                        {
+                            let (bare, is_ptr) = match arr_obj_ty.strip_suffix('*') {
+                                Some(s) => (s, true),
+                                None => (arr_obj_ty.as_str(), false),
+                            };
+                            if let Some((n, elem_ty)) = Self::parse_mono_fixed_array_name(bare) {
+                                let arr_c = self.emit_expr(arr_obj)?;
+                                let idx_c = self.emit_expr(index)?;
+                                let val_c = self.emit_expr(value)?;
+                                let data_expr = if is_ptr {
+                                    format!("(({})->data)", arr_c)
+                                } else {
+                                    format!("(({}).data)", arr_c)
+                                };
+                                let wchk = if self.index_site_elided(target.span.start) {
+                                    String::new()
+                                } else {
+                                    format!(
+                                        "if (_wi < 0 || _wi >= ((nova_int){n})) nv_panic_index_oob(_wi, ((nova_int){n})); ",
+                                        n = n,
+                                    )
+                                };
+                                self.line(&format!(
+                                    "{{ nova_int _wi = ({idx}); {chk}({data})[_wi] = ({ty})({val}); }}",
+                                    idx = idx_c, val = val_c, ty = elem_ty, chk = wchk, data = data_expr
+                                ));
+                                return Ok(());
+                            }
+                        }
                         // Plan 138 Ф.2 (D240): `v[i] = val` on Vec[T] — inline bounds-checked write.
                         // Vec[T] layout: { T* data; nova_int len; nova_int cap }.
                         // Emit: { _v->data[_i] = val; } with bounds check + panic.
@@ -25010,7 +25520,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let Some(entry) = self.sum_schema_registry.lookup_sum_schema(sum) {
                     if let Some(v) = entry.variants.iter().find(|v| v.variant_name == *name) {
                         if v.field_c_types.is_empty() {
-                            return Ok(format!("nova_make_{}_{}()", sum, name));
+                            // [M-generic-method-self-recursive-return] (Plan 186,
+                            // recursive-mono): a plain (non-generic) sum's variant
+                            // ctor is named WITHOUT the `Nova_` prefix on the bare
+                            // lookup key (`nova_make_LinkedList_Empty` — matches
+                            // `emit_sum_type`'s `nova_make_{name}_{var}`), but a
+                            // MONO'D GENERIC instance's ctor keeps the FULL mangled
+                            // `Nova_<mono>` name (`nova_make_Nova_LinkedList____
+                            // nova_int_Empty` — matches `emit_generic_type_instance`'s
+                            // `nova_make_{mangled}_{var}`, `mangled` always carrying
+                            // the `Nova_` prefix). `sum` (the bare lookup key, used
+                            // below) is only correct for the FIRST case; a mono
+                            // instance (detected by the `____` mangling delimiter,
+                            // same signal used throughout — `debt_is_mono_nova_name`
+                            // et al.) must use the registry's stored `c_name`
+                            // instead — this is exactly the bare `Empty` inside a
+                            // generic method's OWN body (`LinkedList[T].new() =>
+                            // Empty`) that used to link against a symbol nothing
+                            // emitted.
+                            let ctor_base: &str = if sum.contains("____") {
+                                &entry.c_name
+                            } else {
+                                sum
+                            };
+                            return Ok(format!("nova_make_{}_{}()", ctor_base, name));
                         }
                     }
                 }
@@ -25021,7 +25554,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // emit_array_lit / try_emit_typed_vec_literal uses X as the element
         // type instead of defaulting to nova_int. Handles empty `[]` in typed
         // contexts: `let xs []str = []` or `{ items: [] }`.
-        if let ExprKind::ArrayLit(_) = &expr.kind {
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): target is the
+        // `[N]T` INLINE mono struct (`_NovaFixArr_<N>_<L>_<T>`) — build a compound
+        // literal `(StructName){ .data = { e0, e1, ..., eN-1 } }` directly, NOT the
+        // Vec/NovaArray push-loop path below (that's for `[]T`, a DIFFERENT type
+        // since this change). Each element coerces to the element C type (recurses
+        // through `emit_expr_with_target_type` so a nested `[N][M]T` row literal
+        // targets the INNER `_NovaFixArr_<M>_..._<T>` struct too — row-major, D27).
+        if let ExprKind::ArrayLit(elems) = &expr.kind {
+            if let Some((n, elem_c)) = Self::parse_mono_fixed_array_name(target_ty_c) {
+                let direct_items: Vec<&Expr> = elems.iter().filter_map(|e| match e {
+                    ArrayElem::Item(x) => Some(x),
+                    ArrayElem::Spread(_) => None,
+                }).collect();
+                if direct_items.len() != elems.len() {
+                    return Err(format!(
+                        "[M-fixed-array-value-semantics] `[N]T` array literal против `{}` \
+                         не поддерживает `...spread` элементы (N фиксирован компайл-тайм)",
+                        target_ty_c));
+                }
+                if direct_items.len() != n {
+                    return Err(format!(
+                        "[M-fixed-array-value-semantics] array literal с {} элементами \
+                         не соответствует размеру `[{}]T` таргета `{}`",
+                        direct_items.len(), n, target_ty_c));
+                }
+                let mut vals: Vec<String> = Vec::with_capacity(n);
+                for item in &direct_items {
+                    vals.push(self.emit_expr_with_target_type(item, &elem_c)?);
+                }
+                return Ok(format!("({}){{ .data = {{ {} }} }}", target_ty_c, vals.join(", ")));
+            }
             // Recover the element C type of a flipped `[]X` ≡ `Vec[X]` target.
             let vec_elem = self.vec_or_array_elem_c(target_ty_c)
                 .filter(|_| target_ty_c.starts_with("Nova_Vec____"));
@@ -26103,6 +26666,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // by Monotonic.now() + Duration.
                     let type_name_sum_full = sty.trim_end_matches('*').to_string();
                     let type_name_sum = Self::debt_strip_nova_prefix_or_empty(&sty).trim_end_matches('*').to_string();
+                    // [M-generic-method-self-recursive-return] (Plan 186, recursive-mono):
+                    // the Plan 65 Ф.12 convention above (`Nova_<Type>_method_<op>`, WITH the
+                    // `Nova_` C-type prefix baked into the FUNCTION NAME) is correct for a
+                    // plain non-generic user type — but a MONO'D GENERIC instance's methods
+                    // are emitted WITHOUT that prefix on the function symbol
+                    // (`LinkedList____nova_int_method_plus`, not
+                    // `Nova_LinkedList____nova_int_method_plus` — mirrors every OTHER mono
+                    // method call site, e.g. `emit_monomorphized_method`'s `mono_name`).
+                    // `type_name_sum_full` blindly used the WITH-prefix form for BOTH cases
+                    // (Add/Mul/Div/Mod below never call `register_mono_method_instance` to
+                    // even establish which name is "real" — unlike the Sub/BitOr/BitAnd arms
+                    // further down, which do). Detected by the mono-name delimiter `____`
+                    // (same signal `debt_is_mono_nova_name` uses); a self-recursive `t + other`
+                    // inside a generic type's OWN `@plus` body (`LinkedList[T]@plus`) was the
+                    // concrete repro — linked against a symbol nothing ever emitted.
+                    let dispatch_type_name = if type_name_sum.contains("____") {
+                        &type_name_sum
+                    } else {
+                        &type_name_sum_full
+                    };
                     // D46 operator overloading: Nova_T* + Nova_T* → Nova_T_method_plus(l, r).
                     // GUARD ([M-153.5-flatten-nested-receiver]): `@plus` is binary
                     // over two record/sum *values* — BOTH operands must be single
@@ -26117,7 +26700,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_plus({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_plus({}, {})", dispatch_type_name, l, r));
                     }
                     // D46: dispatch `*` to @times method when both operands are Nova_T*.
                     // Same guard as @plus: both must be single Nova_T* pointers so we don't
@@ -26126,21 +26709,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_times({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_times({}, {})", dispatch_type_name, l, r));
                     }
                     // D46: dispatch `/` to @div method when both operands are Nova_T*.
                     if matches!(op, BinOp::Div)
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_div({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_div({}, {})", dispatch_type_name, l, r));
                     }
                     // D46: dispatch `%` to @rem method when both operands are Nova_T*.
                     if matches!(op, BinOp::Mod)
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_rem({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_rem({}, {})", dispatch_type_name, l, r));
                     }
                     // Plan 65 Ф.12 / D124: dispatch `-` to the receiver's
                     // _method_minus for record types (Duration, Timestamp,
@@ -27968,6 +28551,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // genuine pointer (e.g. `Vec[Option[T]]`'s buffer).
                     && (!obj_ty.starts_with("Nova_") || obj_ty.ends_with("**"))
                     && !obj_ty.starts_with("NovaArray_")
+                    // [M-fixed-array-value-semantics]: `_NovaFixArr_...*` is likewise a
+                    // bare VALUE struct pointer (a `ref`/`mut ref` D326 receiver/param to
+                    // an inline `[N]T`) — starred here is the LEGITIMATE in-place-mutation
+                    // form, not a raw-pointer footgun; `arr[i]`/`arr[i] = v` stay legal.
+                    && !obj_ty.starts_with("_NovaFixArr_")
                     && obj_ty != "void*"
                 {
                     self.strict_errors.borrow_mut().push(
@@ -28122,6 +28710,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let bchk = Self::emit_bchk_array_access("nova_int", &o, &i);
                             return Ok(format!("(({})({}))", elem_ty, bchk));
                         }
+                    }
+                }
+                // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `arr[i]`
+                // READ on `[N]T` — INLINE struct `{ T data[N]; }`, N a compile-time
+                // literal (no runtime len/cap header, unlike Vec/NovaArray below — hence
+                // the dedicated `nova_fixarr_idx_chk/nochk` helpers taking N directly).
+                // `obj_ty` is either the bare mono struct (local/field VALUE) or a
+                // pointer to it (`ref`/`mut ref` D326 receiver/param, in-place, no copy).
+                // Same lvalue-safe void*-cast-deref trick as Vec/NovaArray below (a plain
+                // `_data[_i]` stmt-expr isn't an lvalue in Clang — breaks `arr[i].field = x`,
+                // `&arr[i]`, `arr[i].mut_method()`). MUST precede the Vec/NovaArray checks
+                // — a distinct struct family (`_NovaFixArr_` never collides with `Nova_`/
+                // `NovaArray_` prefixes), so it never falls through to them.
+                {
+                    let (bare, is_ptr) = match obj_ty.strip_suffix('*') {
+                        Some(s) => (s, true),
+                        None => (obj_ty.as_str(), false),
+                    };
+                    if let Some((n, elem_ty)) = Self::parse_mono_fixed_array_name(bare) {
+                        let o = self.emit_expr(obj)?;
+                        let data_expr = if is_ptr {
+                            format!("(({})->data)", o)
+                        } else {
+                            format!("(({}).data)", o)
+                        };
+                        let helper = if self.index_site_elided(expr.span.start) {
+                            "nova_fixarr_idx_nochk"
+                        } else {
+                            "nova_fixarr_idx_chk"
+                        };
+                        let call = if helper == "nova_fixarr_idx_chk" {
+                            format!(
+                                "(*({ty}*){h}((void*){data}, ({idx}), ((nova_int){n}), sizeof({ty})))",
+                                ty = elem_ty, h = helper, data = data_expr, idx = i, n = n,
+                            )
+                        } else {
+                            format!(
+                                "(*({ty}*){h}((void*){data}, ({idx}), sizeof({ty})))",
+                                ty = elem_ty, h = helper, data = data_expr, idx = i,
+                            )
+                        };
+                        return Ok(call);
                     }
                 }
                 // Plan 138 Ф.2 (D238): `Vec[T][i]` dispatch — `v[i]` for Vec[T] types.
@@ -42560,6 +43190,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 "typedef struct NovaOpt_{sani} {{ {cty} value; }} NovaOpt_{sani};\n\
                  static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b);\n",
                 sani = sanitized, cty = c_ty));
+            // [M-option-self-recursive-record-mono] (Plan 186): if `c_ty` self-
+            // references a type CURRENTLY mid-emission (`Option[Self]` registered
+            // while lowering `Self`'s own fields — e.g. `type Node { next
+            // Option[Node] }`), `record_schemas`/`sum_schemas` for it aren't
+            // populated yet: building the body NOW would see an (apparently)
+            // opaque/unknown type and silently degrade to pointer identity
+            // (`Some(nodeA) == Some(nodeB)` false for separately-allocated-but-
+            // equal nodes). Defer the body construction to
+            // `drain_pending_structural_eq` (runs after ALL non-generic type
+            // declarations are emitted, when every schema is guaranteed complete).
+            let self_ref_mid_emission = c_ty.strip_prefix("Nova_")
+                .and_then(|s| s.strip_suffix('*'))
+                .map_or(false, |inner| {
+                    self.being_defined_record_types.contains(inner)
+                        || self.being_defined_sum_types.contains(inner)
+                });
+            if self_ref_mid_emission {
+                self.pending_structural_eq_bodies.borrow_mut()
+                    .push((sanitized.to_string(), c_ty.to_string()));
+                return;
+            }
             // Structural eq, emitted LATE (after struct bodies AND method fwd-decls) so the
             // dereference compiles and any record/field `@equal` call has a visible proto.
             // NPO: None = NULL.
@@ -42663,6 +43314,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // C-redefinition collision при оставлении lazy-emit.
         //
         // (Раньше тут также генерились is_some/is_none — Plan 95 Ф.4.2.)
+    }
+
+    /// [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): build
+    /// the eq-fn bodies `register_novaopt_decl` deferred (see
+    /// `pending_structural_eq_bodies` doc). Called from `emit_module` right
+    /// after ALL non-generic type declarations are emitted (§1) — every
+    /// `record_schemas`/`sum_schemas` entry is complete by then, so the
+    /// self-referential field resolves structurally instead of degrading to
+    /// pointer identity. Idempotent (drains the list; safe to call once).
+    fn drain_pending_structural_eq(&self) {
+        let pending: Vec<(String, String)> =
+            self.pending_structural_eq_bodies.borrow_mut().drain(..).collect();
+        for (sanitized, c_ty) in pending {
+            let structural = self.emit_field_eq(&c_ty, "a.value", "b.value", 0);
+            self.novaopt_eq_fns_buf.borrow_mut().push_str(&format!(
+                "static inline nova_bool nova_opt_eq_{sani}(NovaOpt_{sani} a, NovaOpt_{sani} b) {{\n\
+                 \x20   if ((a.value == NULL) != (b.value == NULL)) return 0;\n\
+                 \x20   if (a.value == NULL) return 1;\n\
+                 \x20   return {body};\n\
+                 }}\n",
+                sani = sanitized, body = structural));
+        }
     }
 
     /// Plan 118 Ф.5 (D216 §7): determine whether sanitized NovaOpt name is
@@ -42964,6 +43637,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // identity is the conservative, non-regressing choice.)
             if let Some(schema) = self.record_schemas.get(inner) {
                 return !schema.is_empty();
+            }
+            // [M-option-self-recursive-record-mono] (Plan 186, recursive-mono): a
+            // self-referential `Option[Self]` field is resolved WHILE `Self`'s own
+            // `record_schemas`/`sum_schemas` entry is still being built (`emit_record_type`/
+            // `emit_sum_type` register the schema only AFTER lowering all fields) —
+            // `record_schemas.get(inner)` above misses and this used to fall through to
+            // pointer-identity `nova_opt_eq`, silently breaking structural `==` for any
+            // linked/tree-shaped record (`Some(nodeA) == Some(nodeB)` false for
+            // separately-allocated-but-equal nodes). A type mid-emission always has at
+            // least the self-referencing field itself, so it is non-empty by construction.
+            if self.being_defined_record_types.contains(inner)
+                || self.being_defined_sum_types.contains(inner)
+            {
+                return true;
             }
             return false;
         }
@@ -44136,6 +44823,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Plan 124.8 V2 (D226): value-records `NovaValue_X` are stack-allocated.
         if ty.starts_with("NovaValue_") && !ty.ends_with('*') {
+            return true;
+        }
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` INLINE
+        // mono struct — stack-allocated value type, same class as NovaValue_/NovaTuple_
+        // above. Wires `[N]T` into the SAME `mut x T` in-out-pointer ABI (Р10/D326) and
+        // `.`/`->` accessor decisions used pervasively by this oracle (mut-param pass,
+        // member/index access on an inout binding, etc.) — no separate plumbing needed.
+        if ty.starts_with("_NovaFixArr_") && !ty.ends_with('*') {
             return true;
         }
         matches!(ty,
@@ -46849,6 +47544,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if let ExprKind::Ident(n) = &obj.kind {
                                 if n == "bench" {
                                     return self.infer_expr_c_type(args[0].expr());
+                                }
+                            }
+                        }
+                        // [M-generic-method-self-recursive-return] (Plan 186, recursive-mono):
+                        // a generic method's mono'd body calling ITSELF on a value of its own
+                        // receiver type (`fn LinkedList[T] @map[U](f) -> LinkedList[U] { ...
+                        // t.map(f) ... }`) has a return type mentioning an in-scope type-param
+                        // (`LinkedList[U]`) — the checker deliberately does not channel it
+                        // (`resolved_types` gate), and the LEGACY `fn_ret_<recv>_<method>`
+                        // registry has no entry either (this exact mono instance is what is
+                        // BEING built). `current_fn_name`/`current_receiver_type` are set by
+                        // `emit_monomorphized_method` to exactly this method+receiver while its
+                        // body is emitted — a call matching BOTH is self-recursion by
+                        // construction, so THIS function's own (already-known) return C-type is
+                        // the sound answer. `obj_ty` is `Nova_<recv>*` or `Nova_<recv>` (receiver
+                        // may be a bare value or a pointer depending on call form); strip both
+                        // to compare against the bare mono receiver name `current_receiver_type`
+                        // holds.
+                        if let (Some(cur_name), Some(cur_recv), Some(cur_ret)) = (
+                            self.current_fn_name.as_deref(),
+                            self.current_receiver_type.as_deref(),
+                            self.current_fn_return_ty.as_deref(),
+                        ) {
+                            if cur_name == method.as_str() {
+                                let obj_bare = obj_ty.trim_end_matches('*');
+                                let obj_bare = obj_bare.strip_prefix("Nova_").unwrap_or(obj_bare);
+                                if obj_bare == cur_recv {
+                                    return cur_ret.to_string();
                                 }
                             }
                         }

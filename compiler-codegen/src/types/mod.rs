@@ -92,6 +92,16 @@ pub enum ResolvedType {
     /// only by `cat_compatible_rt`/`distinct_mono`). Folding the category side onto
     /// `Named{Vec}` (then deleting this variant) is the orthogonal follow-up.
     Array(Box<ResolvedType>),
+    /// [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` fixed-size
+    /// array — DISTINCT from `Array` (which after this change carries ONLY the internal
+    /// `resolved_cat_of` compat-category key, never a real `[N]T` C-lowering target).
+    /// Lossless `N` — closes [M-172.1-fixedarray-N] for the C-LOWERING path (the
+    /// category-compat key `resolved_cat_of_depth` deliberately still collapses `[N]T`
+    /// into `R::Array(elem)` — orthogonal, untouched: assignability between `[]T`/`[N]T`
+    /// is a separate concern from how `[N]T` is REPRESENTED in C). Produced ONLY by
+    /// `from_type_ref`; lowered by `resolved_type_to_c` to an inline mono struct
+    /// `{ T data[N]; }` (stack/field value, no heap pointer) via `register_mono_fixed_array`.
+    FixedArray(usize, Box<ResolvedType>),
     Tuple(Vec<ResolvedType>),
     /// U.5.5(c) (D315 lossless): `effects` carries the FULL resolved effect TYPE, not a
     /// bare name — so `Fail[E]` keeps its `E` (`Named{name:"Fail", args:[E]}`), `Db[T]`
@@ -200,10 +210,10 @@ impl ResolvedType {
                 args: vec![R::from_type_ref(inner)],
             },
             // `[N]T` fixed-size array is a DISTINCT built-in (stack-allocated, carries `N`) —
-            // NOT growable `Vec`. It currently shares the `R::Array` carrier (the `N` is
-            // dropped — pre-existing lossiness, kept byte-identical to legacy); separating it
-            // into an `N`-carrying variant is the orthogonal follow-up [M-172.1-fixedarray-N].
-            TypeRef::FixedArray(_, inner, _) => R::Array(Box::new(R::from_type_ref(inner))),
+            // NOT growable `Vec`. [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент):
+            // closes [M-172.1-fixedarray-N] for the C-lowering path — `N` carried losslessly
+            // in its own `R::FixedArray` variant (was `R::Array`, dropping `N`).
+            TypeRef::FixedArray(n, inner, _) => R::FixedArray(*n, Box::new(R::from_type_ref(inner))),
             TypeRef::Tuple(elems, _) => R::Tuple(elems.iter().map(R::from_type_ref).collect()),
             TypeRef::Func { params, return_type, effects, .. } => R::Func {
                 params: params.iter().map(R::from_type_ref).collect(),
@@ -3003,8 +3013,14 @@ fn is_value_type_for_v3(
         }
         Tuple(..) => true,        // anonymous tuples = value
         Unit(..) => true,
-        FixedArray(..) => false,  // [N]T heap-tracked
-        Array(..) => false,       // []T heap
+        // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
+        // inline value-класс (стек / поле-по-месту), НЕ heap-tracked — реклассификация
+        // владельца «должно быть на стеке». Элементы могут быть кучевыми (T=Vec/heap
+        // record), но КОНТЕЙНЕР [N]T всегда inline, аналогично Tuple(..) выше (который
+        // тоже не проверяет heap-ность элементов). См. ref_target_confirmed_heap ниже —
+        // синхронная реклассификация.
+        FixedArray(..) => true,
+        Array(..) => false,       // []T heap (Vec canon, D239)
         Pointer(..) => false,
         Func { .. } => false,
         Protocol { .. } => false,
@@ -5807,19 +5823,25 @@ impl<'a> TypeCheckCtx<'a> {
 
     /// **Plan 184 (Р6):** является ли цель `ref`-типа ПОДТВЕРЖДЁННО кучевой
     /// (тогда `ref H ≡ H` нормализуется и легален в любой позиции). Кучевые:
-    /// indirection-формы (`[]T`/`[N]T`/`*T`/fn/protocol), кучевой record
+    /// indirection-формы (`[]T`/`*T`/fn/protocol), кучевой record
     /// (`allocation != Value`), `Vec`; newtype/alias — по обёрнутому. Value
-    /// (примитивы, value-record, named-tuple, tuple, unit), generic-параметр и
-    /// НЕИЗВЕСТНОЕ имя → `false` (не подтверждён heap → `ref` в запрещённой
-    /// позиции реджектится: «ref нехраним, не имеет размера как тип»).
+    /// (примитивы, value-record, named-tuple, tuple, unit), **`[N]T` (D27-
+    /// амендмент, [M-fixed-array-value-semantics], 2026-07-10 — inline value,
+    /// НЕ heap, аналогично Tuple/Unit ниже)**, generic-параметр и НЕИЗВЕСТНОЕ
+    /// имя → `false` (не подтверждён heap → `ref` в запрещённой позиции
+    /// реджектится: «ref нехраним, не имеет размера как тип»).
     fn ref_target_confirmed_heap(&self, inner: &TypeRef, gs: &HashSet<String>) -> bool {
         use TypeRef::*;
         match inner {
-            Array(..) | FixedArray(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
+            Array(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
             Readonly(i, _) | Mut(i, _) | Unsafe(i, _) | Ref(i, _) => {
                 self.ref_target_confirmed_heap(i, gs)
             }
-            Tuple(..) | Unit(..) => false,
+            // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
+            // inline value (стек/поле-по-месту), НЕ heap — рядом с Tuple/Unit, а не
+            // с Array/Pointer выше. Не проверяет heap-ность T (как и Tuple(..) не
+            // проверяет своих элементов) — контейнер сам inline независимо от T.
+            Tuple(..) | Unit(..) | FixedArray(..) => false,
             Named { path, .. } => {
                 let name = path.last().map(|s| s.as_str()).unwrap_or("");
                 if gs.contains(name) {
@@ -10455,15 +10477,64 @@ impl<'a> TypeCheckCtx<'a> {
                     // материализуем тип ПОЛЯ теми же гейтами, что основной блок
                     // ниже (subst + primitive/concrete-named). Call-позиция —
                     // ни в коем случае (аннотация поля на метод-вызове = ложь).
-                    if !is_call_func && member_id.is_set() {
+                    if !is_call_func {
                         if let Some(field) = fields.iter().find(|f| f.name == name) {
-                            let field_ty = self.subst_receiver_generics(
-                                &field.ty, &td.generics, recv_type_args);
-                            let tparams: std::collections::HashSet<String> =
-                                td.generics.iter().map(|g| g.name.clone()).collect();
-                            let rt = Self::mark_type_params(
-                                ResolvedType::from_type_ref(&field_ty), &tparams);
-                            self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                            if member_id.is_set() {
+                                let field_ty = self.subst_receiver_generics(
+                                    &field.ty, &td.generics, recv_type_args);
+                                let tparams: std::collections::HashSet<String> =
+                                    td.generics.iter().map(|g| g.name.clone()).collect();
+                                let rt = Self::mark_type_params(
+                                    ResolvedType::from_type_ref(&field_ty), &tparams);
+                                self.resolved_types_buf.borrow_mut().insert(member_id, rt);
+                            }
+                            // [M-173-priv-field-samename-bypass] (владелец, 2026-07-10):
+                            // a bare NON-CALL access `obj.name` (no parens) resolves to
+                            // the RAW STRUCT FIELD — the same-named method requires
+                            // explicit call syntax `obj.name()` and is a completely
+                            // different codegen path. Previously this branch returned
+                            // right after materializing the field's type, WITHOUT ever
+                            // running the priv-field gate below — so `raw.len` on
+                            // `Vec[T]` (priv field `len` + method `len()`) silently
+                            // compiled from any module and emitted a direct C struct
+                            // field read. Mirror the plain-field priv check (below)
+                            // here so the same-name-method fast path can't be used to
+                            // smuggle a priv/module-priv field read past the checker.
+                            // Plan 124 (D220) + Plan 160 (D281) Ф.2.
+                            if field.priv_field
+                                && !self.priv_field_access_allowed(tname.as_str(), &field.visible_to)
+                            {
+                                if field.priv_module_field {
+                                    if !self.module_priv_access_allowed(tname.as_str(), span) {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_FIELD_MODULE_PRIVATE] cannot read \
+                                                 module-private field `{}.{}` from \
+                                                 outside its module (a same-named method \
+                                                 `{}()` exists but requires call syntax — \
+                                                 bare `{}.{}` still reads the raw field). \
+                                                 Type declared with bare `priv` (Plan 160 / \
+                                                 D281). Hint: call `{}.{}()` instead.",
+                                                tname, name, name, tname, name, tname, name,
+                                            ),
+                                            span,
+                                        ));
+                                    }
+                                } else {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_PRIV_FIELD_READ] cannot read private field \
+                                             `{}.{}` outside type-method scope (a same-named \
+                                             method `{}()` exists but requires call syntax — \
+                                             bare `{}.{}` still reads the raw field). Field \
+                                             marked `priv` (Plan 124 / D220). Hint: call \
+                                             `{}.{}()` instead.",
+                                            tname, name, name, tname, name, tname, name,
+                                        ),
+                                        span,
+                                    ));
+                                }
+                            }
                         }
                     }
                     return;
@@ -12046,6 +12117,10 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             R::Array(inner) => R::Array(Box::new(Self::mark_type_params(*inner, params))),
+            // [M-fixed-array-value-semantics]: recurse into `[N]T`'s element like `Array`
+            // (was silently caught by the `other => other` wildcard below — a real gap for
+            // `type Foo[T] { arr [4]T }`'s `T`, now closed).
+            R::FixedArray(n, inner) => R::FixedArray(n, Box::new(Self::mark_type_params(*inner, params))),
             R::Tuple(items) => {
                 R::Tuple(items.into_iter().map(|i| Self::mark_type_params(i, params)).collect())
             }
@@ -12106,6 +12181,14 @@ impl<'a> TypeCheckCtx<'a> {
             }
             R::Array(elem) => {
                 TypeRef::Array(
+                    Box::new(Self::resolved_to_typeref(elem, span)?),
+                    span,
+                )
+            }
+            // [M-fixed-array-value-semantics]: round-trip `[N]T` losslessly (N carried).
+            R::FixedArray(n, elem) => {
+                TypeRef::FixedArray(
+                    *n,
                     Box::new(Self::resolved_to_typeref(elem, span)?),
                     span,
                 )
@@ -17889,7 +17972,12 @@ impl<'a> CapabilityCtx<'a> {
         let mut free: HashSet<String> = HashSet::new();
         capture_scan_block(body, &mut shadow, &mut free);
         let share_q = CapShareQuery(&self.type_decls);
-        let mut flagged: Vec<String> = Vec::new();
+        // (name, why) — `why` is the per-field refusal explanation
+        // ([M-173.3-share-leakage-explain]): the FIRST poison path returned
+        // by `share_check::mut_alias_failure`, rendered as a
+        // `Type.field.subfield` chain + reason, so that a non-share `mut`
+        // field deep inside a type no longer strips share-ness silently.
+        let mut flagged: Vec<(String, String)> = Vec::new();
         for name in free {
             let binding = state.scopes.iter().rev().find_map(|f| f.get(&name));
             if let Some(b) = binding {
@@ -17903,33 +17991,56 @@ impl<'a> CapabilityCtx<'a> {
                 // aggregate whose mutation paths bottom out in one). A bare
                 // `mut int`/`mut []T` accumulator — THE motivating race —
                 // is NOT (see share_check module doc).
-                let safe = match &b.ty {
-                    Some(ty) => crate::protocols::share_check::is_mut_alias_safe(&share_q, ty),
+                let why = match &b.ty {
+                    Some(ty) => {
+                        match crate::protocols::share_check::mut_alias_failure(&share_q, ty) {
+                            None => continue, // mut-alias-safe — not flagged.
+                            Some(f) => {
+                                if f.path.is_empty() {
+                                    // The binding's own type refused.
+                                    format!("`{}` is {}", f.ty, f.reason)
+                                } else {
+                                    // A transitively-reached field refused —
+                                    // name the full chain (leakage explain).
+                                    let root = render_type_ref(ty);
+                                    format!(
+                                        "`{}` is poisoned at `{}` (`{}`): {}",
+                                        root,
+                                        f.chain(&root),
+                                        f.ty,
+                                        f.reason
+                                    )
+                                }
+                            }
+                        }
+                    }
                     // Unknown type (no annotation, no syntactic ctor
                     // inference in scope registration) — conservative:
                     // cannot prove internal sync ⇒ flag.
-                    None => false,
+                    None => "its type is unknown at the capture site (no \
+                             annotation, no recognizable ctor) — share-ness \
+                             cannot be proven, conservatively flagged"
+                        .to_string(),
                 };
-                if !safe {
-                    flagged.push(name);
-                }
+                flagged.push((name, why));
             }
         }
         flagged.sort(); // deterministic diagnostic order (HashSet iteration)
-        for name in flagged {
+        for (name, why) in flagged {
             errors.push(Diagnostic::new(
                 format!(
-                    "[E_CONCURRENT_MUT_CAPTURE] `spawn`/`parallel for` body \
-                     captures outer `mut` binding `{}` by reference — under M:N \
-                     scheduling this is a data race (the child fiber may run \
-                     concurrently with, or migrate across threads from, the \
-                     parent/siblings). Allowed captures (Plan 173.3, D415 §2): \
-                     move it in explicitly (`spawn consume {} = expr {{ .. }}` / \
+                    "[E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `{}` \
+                     captured by reference in a `spawn`/`parallel for` body: \
+                     {} — under M:N scheduling this alias is a data race (the \
+                     child fiber may run concurrently with, or migrate across \
+                     threads from, the parent/siblings). Allowed captures \
+                     (Plan 173.3, D415 §2): move it in explicitly \
+                     (`spawn consume {} = expr {{ .. }}` / \
                      `spawn consume {} {{ .. }}`), capture it `ro` (immutable \
                      view), or use an internally-synchronized `#share` type \
                      (`Mutex`/`Atomic*` — or a user lock-free type vouched \
                      with `#share`).",
-                    name, name, name
+                    name, why, name, name
                 ),
                 body.span,
             ));
@@ -19779,7 +19890,7 @@ fn render_method_sig(name: &str, params: &[Param], ret: &Option<TypeRef>) -> Str
     format!("{}({}){}", name, p_strs.join(", "), r)
 }
 
-fn render_type_ref(t: &TypeRef) -> String {
+pub(crate) fn render_type_ref(t: &TypeRef) -> String {
     match t {
         TypeRef::Named { path, generics, .. } => {
             if generics.is_empty() {

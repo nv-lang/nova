@@ -50,6 +50,7 @@
 | `[M-83.11-grow-vs-wake-race]` | ✅ **CLOSED 2026-06-11** (Plan 83-go-cmn Ф.1b, commit `e1525d90671`). Структурный фикс: `NovaSchedState` chunked stable-address storage (chunk'и never-realloc → torn-pointer невозможен); GitHub issue #2. Closure: grow_vs_wake_explicit 100/100 + stress_iso_3e 66/66 + semaphore_batch_n 30/30 armed. История — simplifications.md + plan §9.5. | Plan 83-go-cmn Ф.1b | ✅ done |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
 | `[M-173-error-return-trace]` | **Полный propagation-trace** uncaught throw/panic (Zig-парность): цепочка `?`-проброса от throw-site до границы, не только throw-site file:line. **Минимум СДЕЛАН (Ф.5 п.7, 2026-07-10, `cdd23a5b2`):** TLS `_nova_throw_site` + codegen-стемп + `at file:line (throw site)` в uncaught-abort ветках. Полный трейс (ring-buffer rethrow-точек) — этот маркер. | Plan 173 (Ф.5 минимум ✅) | P2 |
+| `[M-closurefull-let-empty-ty]` | Обнаружен волной handler-annot (2026-07-10): let-bound ClosureFull (`ro f = fn(a int) -> int => a+1`) → CC-FAIL «use of undeclared identifier f» В ЛЮБОМ контексте, вкл. обычные тест-тела. Root: `infer_expr_c_type(ClosureFull)` возвращает пустой `ty_c` → Let-decl эмитится без типа (` f = (void*)&nova_lambda_N_clos_singleton;`). Канал: чекер пишет `resolved_types` (`ResolvedType::Func` → `NovaClos_X*`) только для zero-param ClosureLight (types/mod.rs:8424-8443); ClosureFull-ветка (:8445) не аннотирует, а в `infer_expr_c_type` legacy-ветки для ClosureFull нет (есть ClosureLight :49034 и Lambda :49102). **Pre-existing** (чистая база 6582887e1 падает идентично; репро: `nova_tests/basics/functions.nv`). Fix-направление: аннотировать ClosureFull в чекере (params+ret явные — гадать нечего) ИЛИ legacy-ветка ClosureFull в infer по образцу Lambda. | floating (codegen/checker, класс 172.12) | P2 |
 | `[M-folder-module-spawn-const-capture]` | Обнаружен Plan 175 Ф.1 (2026-07-04): в folder-module `spawn`/`select`-closure, захватывающий **module-level const** (напр. `Duration.from_millis(TIMEOUT_MS1)` внутри `spawn`), эмитит captured-поле по **bare-имени** (`_ctx->TIMEOUT_MS1 = &TIMEOUT_MS1`) вместо мангл-имени `Nova_const_<mod>_TIMEOUT_MS1` → C-compile `use of undeclared identifier`. Делает целый модуль некомпилируемым при `nova test <folder-module-dir>`. **Pre-existing** (baseline-delta=0: тот же CC-FAIL на parent-бинаре). Репро: `nova_tests/plan65` (f10/f7/f11 — `TIMEOUT_MS1`/`TIMEOUT_MS2`/`TIMERS_PER_FIBER`), `nova_tests/basics/control_flow` (`apply`). Fix: спавн-capture должен резолвить module-const в мангл-глобал (не local-var capture). | floating (codegen) | P2 |
 | `[M-83-study-go-c-mn]` | Порт рабочего M:N из Go ≤1.4 C-рантайма. **✅ research+8-фаз декомпозиция; ✅ Ф.1a ring-port; ✅ Ф.1b chunked park-state (закрыл grow-vs-wake); ✅ Ф.2 gopark/goready (D244, удалил pending_wake, commit d2830c73d7d).** OPEN до Ф.3-Ф.8 (nspinning/iso-cancel/timer-heap/sysmon/netpoll). | Plan 83-study-go-c-mn | P1 |
 | `[M-83.11-f2-arm-tsan]` | Ф.2 gopark G0(RELEASE)/G1(SEQ_CST) x86-корректны (XCHG дренит store-buffer); для ARM/weak-memory валидировать под TSAN на Linux. Не регрессия (x86 целевая). Gated на `[M-nova-linux-build]`. | floating (Linux-CI) | P2 |
@@ -100,7 +101,7 @@
 | `[M-128.1-array-namedtuple-ro-method]` | `vs[i].ro_method()` на `[]NamedTuple`: pointer-cast в int-слот vs by-value receiver → clang mismatch; gated. | plan-128 Followups | P2 |
 | `[M-128.1-nonpure-index-key]` | Side-effecting `arr[next_idx()]` на pointer-ABI receiver вычисляется дважды; hoist-to-temp V2 не сделан. | plan-128 Followups | P2 |
 | `[M-codegen-var-types-fn-scope]` | `var_types` (codegen local-type map) НЕ scoped по функциям — локалы протекают между функциями. Plan 139.2 surfaced: Nova-body str-метод с `Vec[u8]`-локалом `a` протёк → block-expr `{ro a=…; a+b}` мис-инферил value-тип как Vec-view → SEGV. Точечно закрыт в block-expr inference (emit_block_expr + infer Block-арм пред-регистрируют блок-локалы, commit 3917d17c); корневой fix — per-fn scope/clear var_types (broad, regression-риск). **NEW REPRO (vec-sweep, 2026-07-06):** local variable named `buf` в `std/runtime/write_buffer.nv::new()`/`@cap()` мис-типизировал `wb.len()` как `str.len()` (E_STR_NO_LEN) в НЕСВЯЗАННОМ caller-файле той же CU; переименование локали (`_wb_buf`) обошло. Тот же класс, другой surface (не block-expr — top-level fn locals). | plan-139.2 post-close | P2 |
-| `[M-vec-spelling-array-value-position-cap-collision]` | ✅ **FIXED (2026-07-07, ветка cg-three-fix, emit_c.rs).** Корень: вызов метода на legacy `NovaArray_<elem>`-ресивере (C-тип, в который выводится `[]T.new()` для примитивного элемента, D38) НЕ имел записи в `generic_type_instance_info` под своим написанием → весь overload-resolving generic-instance dispatch (блок 5b) пропускался, вызов проваливался в coarse name-keyed `method_receivers` (last-wins) → `[]u8.new().cap(n)` мис-роутился на `@cap` несвязанного ко-компилируемого типа. `Nova_Vec____<elem>*` (typed-local написание) диспетчился верно — это и эксплуатировали обходы. Фикс: в блоке 5b remap `NovaArray_<elem>` → layout-идентичный `Vec____<elem>` mono-ключ (консервативно — только если инстанс Vec[<elem>] уже зарегистрирован; +каст ресивера). Обходы в write_buffer.nv/string_builder.nv СНЯТЫ. Родственный `[M-vec-spelling-same-name-method-dispatch-collision]` (field `@buf.cap(n)`) закрыт тем же. Регресс-гард: `spec_tests/conformance/dispatch_receiver_type_vs_name.nv`. | codegen dispatch (block 5b) | ✅ DONE |
+| `[M-vec-spelling-array-value-position-cap-collision]` | ✅ **FIXED (2026-07-07, ветка cg-three-fix, emit_c.rs).** Корень: вызов метода на legacy `NovaArray_<elem>`-ресивере (C-тип, в который выводится `[]T.new()` для примитивного элемента, D38) НЕ имел записи в `generic_type_instance_info` под своим написанием → весь overload-resolving generic-instance dispatch (блок 5b) пропускался, вызов проваливался в coarse name-keyed `method_receivers` (last-wins) → `[]u8.new().cap(n)` мис-роутился на `@cap` несвязанного ко-компилируемого типа. `Nova_Vec____<elem>*` (typed-local написание) диспетчился верно — это и эксплуатировали обходы. Фикс: в блоке 5b remap `NovaArray_<elem>` → layout-идентичный `Vec____<elem>` mono-ключ (консервативно — только если инстанс Vec[<elem>] уже зарегистрирован; +каст ресивера). Обходы в write_buffer.nv/string_builder.nv СНЯТЫ. Родственный `[M-vec-spelling-same-name-method-dispatch-collision]` (field `@buf.cap(n)`) закрыт тем же. Регресс-гард: `spec_tests/conformance/dispatch_receiver_type_vs_name.nv`. **Доп. находка (2026-07-10, std-hygiene):** ещё 4 стейл-обхода этого же (уже мёртвого) бага пережили фикс необнаруженными — комментарии-предостережения «`.new().cap(n)` мисроутит на WriteBuffer.cap» в http/client/wire.nv, http/server/wire.nv (оба сняты вместе со сносом дублирующей `slice()`-обёртки), http/server/server.nv, http/servernet/servernet.nv, http/client/decompress_br_test.nv — репро чисто прошло, комментарии снесены, сайты переписаны цепочкой `[]u8.new().cap(n)`. | codegen dispatch (block 5b) | ✅ DONE |
 | `[M-vec-spelling-consume-chain-cap-collision]` | **OPEN (vec-sweep, 2026-07-06).** `consume x = T.new().M(...)` — ЛЮБОЙ 2-звенный method-chain, забинженный ЧЕРЕЗ `consume` в ОДНОЙ инструкции, для `T consume`-типа (напр. `StringBuilder`) — ломает D133 consume-tracking для ВСЕХ ОСТАЛЬНЫХ `consume ... = T.new()` site'ов в ТОЙ ЖЕ compile unit: `[D133-not-consumed] переменная sb (тип ``)` (пустой резолвленный тип — сбой именно в consume-checker'е, не в основном type-checker'е). Репродуцировано с ПРОИЗВОЛЬНЫМ вторым методом (не специфично для `cap` — даже тривиальный no-op `-> @`-метод triggers). Разделение на ДВЕ инструкции (`consume x = T.new()` + `x.M(...)` отдельной строкой) — рабочий обход, но НЕ универсален: тот же 2-строчный паттерн внутри самого `T`'s собственного `mut @cap(n)`-сеттера (не `consume`-контекст) НЕ ломался — баг специфичен именно к `consume`-биндингу chain-результата. Затрагивает: любой будущий new `-> @`-метод на consume-типе, используемый через chain на call-site. | consume-checker (types/mod.rs `recv_returning`?) | P1 |
 | `[M-vec-spelling-maplit-desugar-cap-ice]` → уточнён: `[M-maplit-folder-cu-insert-new-ice]` | **PRE-EXISTING НА MAIN — ДОКАЗАНО (ремонт d102, 2026-07-07).** ICE `"method call `.insert_new` return type unknown"` (P67-LEGACY, emit_c.rs:42872 в нумерации main) при компиляции `nova_tests/map_literals/` folder-module воспроизводится с БАЙТ-ИДЕНТИЧНЫМ main компилятором + std/nova_tests ДО каких-либо правок этой ветки (изоляционная сборка: `git checkout main -- compiler-codegen/src/{desugar,ast/mod,types/mod,codegen/emit_c}.rs` + `git checkout 58d0d535 -- std nova_tests` → rebuild → тот же ICE). **РЕПРОДУКЦИЯ:** `nova test nova_tests/map_literals` (folder-module CU, ≥2 файлов вместе; первым выдаётся посторонний `E_CONST_NOT_CONSTEXPR` с ложной атрибуцией на import-строку positive_clone_merge.nv, затем ICE на `_m0.insert_new` из десугаренного map-литерала). Одиночный файл в изоляции ICE НЕ даёт. Моя ранняя атрибуция «ICE от добавленного `.cap(n)` pre-sizing statement» была ОШИБКОЙ — ICE не зависит от cap-statement вовсе. Pre-sizing из map-literal desugar'а всё равно снят (см. desugar.rs) как принятая perf-only мера при удалении `with_capacity`; возврат pre-sizing возможен после фикса этого ICE. По §4а корень чинится отдельным заходом. | codegen/checker (folder-CU annotation drift) | P1 |
 | `[M-vec-spelling-hashmap-buckets-array-gap]` | **OPEN, RE-VERIFIED (vec-sweep, 2026-07-06).** `std/collections/hashmap.nv::new_buckets` строит bucket-массив ЯВНО через `Vec[Slot[K,V]]` (не `[]Slot[K,V]`) — Ф.0b workaround из Plan 138.2, датированный ДО универсального `[]T`-флипа. Перепроверено заново в этом заходе: замена на `[]Slot[K,V]` + `.new().cap(n)` даёт RUN-FAIL (rehash-тесты ломаются на рантайме). Тот же класс, что `[M-153.x-array-new-not-vec]`, всё ещё жив — `Vec[...]` остаётся санкционированным исключением из `[]T`-канона в этом конкретном месте (маркер в коде на месте). | Plan 138.2 / codegen array-erasure | P2 |
@@ -2096,15 +2097,28 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   с идентичным списком. Полный whole-CU режим (nova test/conformance) — зелёный.
   Родня per-file/CU-scope семейства [M-http-module-test-block-p67].
 
-- **[M-fixed-array-value-semantics]** (2026-07-08, P2, Wave: трек A после Vec-canon substrate
-  — иначе двойная переделка) — [N]T СЕЙЧАС кучевой (три свидетельства: V3-классификатор
-  FixedArray=>false; ref_target_confirmed_heap FixedArray=>true наравне с Array/Pointer;
-  кодоген обрабатывает FixedArray одним армом с Array — отдельного стек-эмита нет).
-  Владелец: «должно быть на стеке». Целевое: [N]T с value-элементами = value-класс —
-  inline-хранение (C: `T name[N];` в кадре / поле записи), копирование по значению,
-  D27-амендмент + V3-переклассификация; открывает SocketAddr {image [20]u8} без аллокаций
-  и типизированный AddrImage (174.5-связка). [N]T с кучевыми элементами — heap-tracked
-  элементы при value-контейнере (GC-скан по месту).
+- **[M-fixed-array-value-semantics]** (2026-07-08, P2) — ✅ **ЗАКРЫТ (2026-07-10, ветка
+  `fixed-array-value` [sonnet], коммиты ab322cede/b4b699276/4043a4a51/ca39d9d06 + финальный):**
+  [N]T = inline value-класс. (1) `ResolvedType::FixedArray(N, elem)` — N без потерь (закрыл
+  [M-172.1-fixedarray-N] для C-лоуэринга; category-key `resolved_cat_of` НЕ тронут);
+  V3-классификатор + ref_target_confirmed_heap переклассифицированы (WIP 5ff32af0d).
+  (2) codegen: `typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>` (finalize-splice,
+  топосорт [N][M]T), compound-literal для литералов, Index-чтение/Assign-запись с
+  bounds-check по компайл-тайм N (`nova_fixarr_idx_chk/nochk`, array.h), return-коэрция,
+  `is_value_type()` → in-out ABI D326 Р10 для `mut x [N]T`. (3) ДЕФЕКТ ВОЛНЫ (пойман
+  sha256 NIST): field_cache писал `@F[i]=v` в кэш-копию — фикс: index-write барьер для
+  slot-unstable полей (ref-typed []T/Vec байт-в-байт нетронуты). (4) gc_layout: [N]T-поле
+  = N×stride inline офсетов (юнит 22/22); GC-тест [4]str/[3]Holder под 3× gc.collect() —
+  пейлоады удерживаются (стек + heap-record скан). (5) Спека: D27-амендмент (5 пунктов) +
+  D216 §V3.1 value-список п.6 + Rust-снипет. Тесты nova_tests/fixed_array/ 5 pos + 2 neg +
+  panics (D348). Гейты: build оба чисто; conformance 89/0 δ0; err173 25/0 δ0;
+  выборка nova_tests (11 каталогов) δ0 против baseline-бинаря main@250de5cda
+  (FAIL-множества идентичны, все pre-existing); sha256/sha1/md5/hmac PASS.
+  **Followups:** (а) serde-derive видит [N]T как Vec (auto_derive.rs deser) — при
+  [N]T-поле в serde-типе будет клэш типов, живых пользователей нет;
+  (б) len-mismatch/spread-в-литерале ловятся codegen loud-fail — чекер-уровневый
+  E-код чище; (в) external_registry.rs FixedArray-арм лоуэрит в C-тип ЭЛЕМЕНТА —
+  мёртвый код (extern fn с [N]T в сигнатурах нет; D326 Р9: FFI = только сырые указатели).
 - **РЕШЕНИЕ ВЛАДЕЛЬЦА (2026-07-08) по [M-array-vec-unify]: Vec-canon — NovaArray умирает
   целиком** (вариант typedef-alias отвергнут). Substrate-очерёдность (вердикт A5):
   A6 = runtime-примирение (nova_str_to_chars/bytes/split и потребители read_buffer/
@@ -2495,16 +2509,30 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   папочная агрегация #no_prelude-CU теряет тип Vec. В гейты приёмок runtime папкой
   не входил — класс вскрыт при unsafe-волне from_bytes_unchecked.
 
-- **[M-option-self-recursive-record-mono]** (2026-07-08, P1, Wave: В РАБОТЕ у отдельного
-  агента владельца — зона emit_c.rs/types/mod.rs, моим волнам НЕ заходить до закрытия) —
-  самоссылочный рекорд `type Node { value int; next Option[Node] }` мис-мономорфизируется:
-  поле next эмитится NovaOpt_nova_int (тип ПЕРВОГО поля) вместо NovaOpt_Nova_Node_p;
-  каскад в gc.nv (return NOVA_UNIT в Vec-функциях). Смежный свежий контекст для охотника:
-  (1) NovaOpt-каналы правились в A8-приёмке №2 — hoist полных typedef'ов для value-полей
-  записей (emit_c.rs, коммит 22d36236c, механизм [M-180]-hoist + перенос предрегистрированных);
-  (2) канал member-типизации generic-ресиверов чинился в 16db8f214 (types/mod.rs,
-  subst_receiver_generics) — там же живёт resolved_types_buf-аннотация типов полей;
-  (3) эталон conformance теперь 67/0 (не 66), гейты только на пересобранном main.
+- **[M-option-self-recursive-record-mono]** (2026-07-08, P1; **ЗАКРЫТ 2026-07-10,
+  Plan 186 recursive-mono, ветка recursive-mono**) — самоссылочный рекорд
+  `type Node { value int; next Option[Node] }` мис-мономорфизировался: поле
+  `next` эмитилось `NovaOpt_nova_int` (тип ПЕРВОГО поля) вместо
+  `NovaOpt_Nova_Node_p`. Корень: `record_schemas`/`sum_schemas` регистрируют
+  схему типа только ПОСЛЕ разбора всех его полей — самоссылающееся поле
+  резолвилось, пока охватывающий тип ещё «невидим» реестрам, и ошибочно
+  классифицировался как нерезолвленный generic-стаб (эрейзится в nova_int).
+  Второй, более узкий инстанс того же корня: структурная eq-регистрация
+  `Option[Self]` (`register_novaopt_decl`) срабатывала eagerly (побочный эффект
+  вычисления C-типа поля) и по той же причине не видела схему — молча
+  деградировала до pointer-identity `==` (structurally-equal-но-раздельно-
+  аллоцированные цепочки сравнивались как НЕ равные). Фикс: новый guard
+  `being_defined_record_types` (зеркало существующего `being_defined_sum_types`)
+  помечает тип конкретным, пока эмитятся его собственные поля — консультируется
+  БЕЗУСЛОВНО (не только при `full=true`, как старый sum-guard: ровно тот сайт,
+  что ловит баг — `Option`'s inner-type check в `resolved_named_to_c` — зовёт с
+  `full=false`); eq-регистрация теперь ОТКЛАДЫВАЕТСЯ
+  (`pending_structural_eq_bodies`, дренится сразу после эмиссии всех
+  не-generic type-деклараций). Родня [M-result-direct-recursive-enum] — тот же
+  класс «рекурсивный композит в generic-контейнере», закрыт той же волной.
+  Позитив-фикстура: `nova_tests/recursive_mono/pos/option_self_linked_list.nv`
+  (round-trip чтения/записи + структурное `==` на раздельно-аллоцированных
+  равных цепочках). compiler-codegen/src/codegen/emit_c.rs.
 
 - **[M-property-testing-rot]** (2026-07-08, P2, Plan: 172.13 — юнификация; Wave: с
   чекер-маркерами; **ЗАКРЫТ батчем 3** — std/testing полностью зелёный, turbofish снят)
@@ -2594,16 +2622,33 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   копия того же паттерна, emit_c.rs:28667, НЕ трогать — там elem_ty
   используется для построения ДРУГОГО mangled-имени, где `_p` обязан
   остаться). Конформанс 67/0 без регрессий; std/encoding, std/data чисты.
-  **НОВЫЙ блокер после фикса** (toml всё ещё НЕ готов к промоушену):
-  `Nova_HashMap____nova_str__Nova_TomlValue_p` — «unknown type name» на
-  использовании (поле suum-варианта `TomlTable`, toml.c:740/780/879), хотя
-  typedef ЕСТЬ дальше в файле (toml.c:944/1010) — forward-declare/hoist
-  ordering для mono struct типа, использованного как поле payload'а
-  sum-варианта. Похоже на ТУ ЖЕ зону (typedef-hoist для value-полей
-  записей), что занята агентом [M-option-self-recursive-record-mono]
-  (emit_c.rs/types/mod.rs, явно «не заходить») — НЕ трогал, оставил
-  toml в _experimental. Перепроверить toml после закрытия
-  [M-option-self-recursive-record-mono].
+  **Hoist-блокер ЗАКРЫТ 2026-07-10 (Plan 186 recursive-mono)** —
+  `[M-toml-sum-variant-mono-field-hoist]`: `emit_sum_type`/`emit_record_type`
+  писали `struct Nova_{name} { ... }` без pre-pass форвард-декларации для
+  pointer-полей, чьё C-имя — mono'd generic instance ещё не эмитированный
+  (typedef только после `drain_generic_type_worklist`). Фикс — pre-pass
+  (собрать все field-типы ДО открытия struct, эмитить `typedef struct X X;`
+  для `Nova_`-префиксных pointer-типов) в ОБЕИХ функциях, зеркалит уже
+  существующий паттерн `emit_generic_type_instance`'s Record-ветки.
+  `being_defined_sum_types`/`being_defined_record_types` (см.
+  [M-option-self-recursive-record-mono] выше) переставлены на самый ВЕРХ
+  функции — pre-pass тоже зовёт `type_ref_to_c` на своих полях, гвард
+  обязан быть виден и на этом первом проходе. toml.nv теперь компилируется
+  И линкуется. compiler-codegen/src/codegen/emit_c.rs.
+  **НОВЫЙ блокер, толькочто найден, НЕ recursive-mono** —
+  `[M-toml-repeated-fail-call-run-fail]`: `test --full` теперь RUN-FAIL на
+  4/6 тестов (все multi-key/multi-element входы: 2× bare-key + 2×
+  basic-string, или 3× parse_number внутри array) — тесты с РОВНО ОДНИМ
+  вызовом `Fail`-эффектной parser-функции внутри `with Fail[...]`-скоупа
+  (comments-тест, unclosed-string-тест) ПРОХОДЯТ; с 2+ повторными вызовами
+  — падают с ложным throw. Парсер-логика вручную вычитана и корректна
+  (RegexNode-подобных self-recursive типов здесь нет — HashMap[str,
+  TomlValue] mono, не рекурсивный enum). Похоже на runtime/codegen баг в
+  повторном использовании Fail-эффект-хендлера / `consume`-биндинга
+  (`parse_bare_key`/`parse_basic_string` оба используют `consume buf =
+  StringBuilder.new()`) внутри ОДНОГО `with`-скоупа — не диагностировано
+  до конца, требует отдельной волны. toml остаётся в _experimental до
+  закрытия.
 
 - **[M-generic-bound-forwarding]** (2026-07-08, P2, Plan: 172.13 батч 4;
   **ЗАКРЫТ батчем 4** — заведён по факту и закрыт той же волной) — bound не
@@ -2685,18 +2730,28 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   BrotliHandle из истории коммита. Сейчас в brotli — прямые вызовы типизированных
   extern'ов (типобезопасность хендла сохранена).
 
-- **[M-result-direct-recursive-enum]** (2026-07-09, **P1 — компилятор жрёт 8-17 ГБ/виснет**,
-  Plan: 172.13-хвост; Wave: с чекер-маркерами при разморозке) — `Result[X, E]`, где enum X
-  имеет прямо-рекурсивный вариант, детерминированно валит компилятор аллокацией.
-  Минимальная репродукция (~20 строк, из conv-sweep волны):
-  `type BNode enum BLit { v int } | BStar { inner BNode }` + одна
-  `fn parse() -> Result[BNode, BErr]` — компиляция уходит в бесконечную
-  рекурсию мономорфизации Result-инстанса. Копия репро:
-  nova-unders/scratchpad/repro_result_recursive_enum.nv. Обход в std/text/regex.nv:
-  13 приватных parse_* на Fail (наружу не течёт, гасится в Regex.compile) —
-  комментарии с именем маркера на месте. Родня [M-option-self-recursive-record-mono]
-  (зона агента владельца) — вероятно один класс «рекурсивный композит в
-  generic-контейнере».
+- **[M-result-direct-recursive-enum]** (2026-07-09, **P1 — компилятор жрёт 8-17 ГБ/виснет**;
+  **ЗАКРЫТ 2026-07-10, Plan 186 recursive-mono, ветка recursive-mono**) —
+  `Result[X, E]`, где heap-enum X имеет прямо-рекурсивный вариант (tuple-,
+  record- и `[]X`-Vec-формы), детерминированно валил компилятор аллокацией
+  (наблюдалось 6.6+ ГБ за 60с и продолжало расти на минимальном 11-вариантном
+  репро). Корень (emit_c.rs `emit_field_eq`): регистрация `Result[X,E]`
+  (`register_novares_decl`) попутно регистрирует `Option[X]`/`Option[E]` (под
+  `.ok()`/`.err()`), что для heap sum/record X уходит на СТРУКТУРНУЮ
+  генерацию `==` — та инлайнила ПОЛНОЕ per-variant/per-field сравнение на
+  КАЖДОМ уровне вложенности для самоссылающегося поля (ограничено только
+  общим `MAX_EQ_DEPTH=32`) → `O(branching^depth)` рост строки. Фикс:
+  `struct_eq_stack` отслеживает типы, разворачиваемые ПРЯМО СЕЙЧАС; настоящий
+  цикл (тип встречен повторно) обрывает инлайнинг и уходит на ИМЕНОВАННУЮ,
+  единожды эмитируемую функцию `nova_struct_eq_<T>` — самоссылающееся поле
+  есть реальный C heap-указатель, поэтому обычный рекурсивный ВЫЗОВ ФУНКЦИИ
+  даёт C-компилятору/рантайму обработать фактическую (конечную) глубину
+  данных вместо развёртки на этапе компиляции. Нецикличные типы byte-for-byte
+  не затронуты. Родня [M-option-self-recursive-record-mono] — тот же класс
+  «рекурсивный композит в generic-контейнере», закрыт той же волной.
+  Позитив-фикстура: `nova_tests/recursive_mono/pos/enum_tree_result.nv`
+  (11→3-вариантный самоссылающийся enum через Result, структурное `==` на
+  bare/nested/Vec-вариантах). compiler-codegen/src/codegen/emit_c.rs.
 
 - **[M-lazy-const-init-race]** (2026-07-09, **P1 — UB-гонка в M:N**, вопрос владельца;
   Plan: волна сразу после 174.1, зона emit_c const-канал; Wave: [sonnet]) —
@@ -2725,13 +2780,19 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   осознанный throw-дизайн тест-ассертов, решить при заходе). Проверка:
   `nova lint --rule W_FAIL_PUBLIC_SIGNATURE std/`.
 
-- **[M-lint-findings-manual-slice-copy]** (2026-07-09, P3, Wave: после лимитов;
-  источник: план 185) — 29 сайтов поэлементной копии `push(x[i])` в циклах (§18а).
-  Подклассы: (а) crypto/uuid — конверсия ФИКСИРОВАННОГО `[32]u8`-дайджеста в `[]u8`:
-  канонического bulk-пути `[N]T`→`[]T` (AsSlice для fixed-array / `digest[..]`-вид)
-  сейчас НЕТ — сначала нужен std/языковой примитив; (б) deflate/inflate/io/fs/http —
-  разобрать по месту: часть — честно нерегулярные пути (документировать), часть —
-  заменить на срез-вид/append. Проверка: `nova lint --rule W_MANUAL_SLICE_COPY std/`.
+- **[M-lint-findings-manual-slice-copy]** ✅ **ЗАКРЫТ (2026-07-10, ветка std-hygiene).**
+  ~~29~~ все сайты поэлементной копии `push(x[i])` в циклах (§18а) разобраны. (а)
+  crypto/uuid — bulk-путь `[N]T`→`[]T` фикс-массива на самом деле УЖЕ существует:
+  range-index `digest[0..N]` на `[N]T` работает и ВСЕГДА копирует (нет буфера для
+  zero-copy view у фикс-массива), подтверждено runtime-экспериментом — заметка
+  «нужен std/языковой примитив» ниже была устаревшей/неверной. (б) deflate/inflate/
+  io/fs/http — честно нерегулярные пути (filtered-gather, conditional overwrite-or-
+  append, per-position transcode) задокументированы inline-комментарием и false-
+  positive снят локальной переменной вместо `push(x[i])`; regular contiguous-range
+  копии заменены на срез-вид/`.append()`. `nova lint --rule W_MANUAL_SLICE_COPY std/`
+  = 0 находок. Заодно снесены дублирующие `fn slice()`-обёртки в http/client+server/
+  wire.nv и `head_slice()` в servernet.nv. Детали: docs/simplifications.md
+  (2026-07-10 std-hygiene), коммит f2f7f65e2.
 
 - **[M-lint-findings-writebuffer-into]** (2026-07-09, P3, Wave: вместе с D410-хвостом;
   источник: план 185) — `WriteBuffer consume @into() -> []u8` — голое `into` против
@@ -2787,6 +2848,5 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   в сигнатурах вызываемых) + D215-амендмент. Сегодня спасает случайный гэп
   (supervised-value не поддержан в module-init) — не контракт.
 
-- **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ветка `fixed-array-value`
-  запушена с WIP-коммитом (классификатор [N]T=value начат в types/mod.rs; codegen/GC/тесты
-  не начаты). Возобновление: продолжить с WIP, задание — в транскрипте волны 2026-07-10.
+- **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ✅ снята тем же днём —
+  трек доведён до конца (см. закрытый маркер выше), ветка `fixed-array-value` готова к слиянию.

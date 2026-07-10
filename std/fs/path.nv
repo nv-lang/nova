@@ -165,11 +165,19 @@ fn decompose(b []u8, style PathStyle) -> Decomp {
     match style {
         Windows => {
             if n >= 2 && byte_is_sep(b[0], Windows) && byte_is_sep(b[1], Windows) {
-                // UNC: consume `\\` server `\` share into the prefix.
+                // UNC: consume `\\` server `\` share into the prefix. Срез-вид
+                // (§18а): найти границу сканом, затем один bulk `.append()`
+                // вместо поэлементного push-цикла.
                 prefix.push(b[0]); prefix.push(b[1]); i = 2
-                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 } // [M-lint-findings-manual-slice-copy]
+                mut server_end = i
+                while server_end < n && !byte_is_sep(b[server_end], Windows) { server_end += 1 }
+                prefix.append(b[i..server_end])
+                i = server_end
                 if i < n { prefix.push(b[i]); i += 1 }  // sep between server and share
-                while i < n && !byte_is_sep(b[i], Windows) { prefix.push(b[i]); i += 1 } // [M-lint-findings-manual-slice-copy]
+                mut share_end = i
+                while share_end < n && !byte_is_sep(b[share_end], Windows) { share_end += 1 }
+                prefix.append(b[i..share_end])
+                i = share_end
             } else if n >= 2 && is_ascii_letter(b[0]) && b[1] == B_COLON {
                 prefix.push(b[0]); prefix.push(b[1]); i = 2
             }
@@ -179,18 +187,19 @@ fn decompose(b []u8, style PathStyle) -> Decomp {
     // Root: one-or-more leading separators after the prefix.
     mut root = false
     while i < n && byte_is_sep(b[i], style) { root = true; i += 1 }
-    // Components.
+    // Components — срез-вид (§18а): границы находятся сканом (consecutive
+    // separators collapse, как раньше), каждый компонент — один slice, без
+    // поэлементного push-накопления.
     mut comps [][]u8 = []
-    mut cur []u8 = []u8.new()
+    mut comp_start = i
     while i < n {
         if byte_is_sep(b[i], style) {
-            if cur.len() > 0 { comps.push(cur); cur = []u8.new() }
-        } else {
-            cur.push(b[i]) // [M-lint-findings-manual-slice-copy]
+            if i > comp_start { comps.push(b[comp_start..i]) }
+            comp_start = i + 1
         }
         i += 1
     }
-    if cur.len() > 0 { comps.push(cur) }
+    if i > comp_start { comps.push(b[comp_start..i]) }
     { prefix, root, comps }
 }
 

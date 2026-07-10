@@ -47,8 +47,7 @@ export fn Uuid.v3(namespace Uuid, name str) -> Self {
     for b in name.bytes() { input.push(b) }
 
     ro digest = Md5.hash(input)
-    mut bytes []u8 = []
-    for i in 0..16 { bytes.push(digest[i]) } // [M-lint-findings-manual-slice-copy]
+    mut bytes = digest[0..16]
 
     // Set version=3 (MD5) и variant
     set_version_variant(bytes, 3)
@@ -69,9 +68,8 @@ export fn Uuid.v5(namespace Uuid, name str) -> Self {
     for b in name.bytes() { input.push(b) }
 
     ro digest = Sha1.hash(input)
-    // Берём первые 16 байт SHA-1 (она даёт 20).
-    mut bytes []u8 = []
-    for i in 0..16 { bytes.push(digest[i]) } // [M-lint-findings-manual-slice-copy]
+    // Берём первые 16 байт SHA-1 (она даёт 20) — срез-вид (§18а).
+    mut bytes = digest[0..16]
 
     set_version_variant(bytes, 5)
     bytes_to_uuid(bytes)

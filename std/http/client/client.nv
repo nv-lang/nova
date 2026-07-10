@@ -397,7 +397,7 @@ fn finalize_response(ver Version, st StatusCode, headers HeaderMap, body []u8, a
     }
     if enc == "gzip" || enc == "x-gzip" {
         ro decoded = decode_or_err(gzip_decode(body, max_decompressed))?
-        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len), decoded))
+        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len()), decoded))
     } else if enc == "deflate" {
         // HTTP "deflate" is nominally zlib (RFC 9110); tolerate raw-DEFLATE senders.
         ro decoded = match zlib_decode(body, max_decompressed) {
@@ -408,11 +408,11 @@ fn finalize_response(ver Version, st StatusCode, headers HeaderMap, body []u8, a
                 decode_or_err(inflate(body, max_decompressed))?
             }
         }
-        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len), decoded))
+        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len()), decoded))
     } else if enc == "br" {
         // brotli (RFC 7932) via Plan 179 Ф.2 [M-178-autodecompress-br].
         ro decoded = decode_or_err(brotli_decode(body, max_decompressed))?
-        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len), decoded))
+        Ok(Response.new(ver, st, rewrite_encoding_headers(headers, decoded.len()), decoded))
     } else {
         // identity / unknown → leave the body (and its Content-Encoding) as-is.
         Ok(Response.new(ver, st, headers, body))
@@ -596,7 +596,7 @@ fn merge_rel_path(base_path str, rel str) -> str {
 
 fn last_slash(s str) -> Option[int] {
     ro b = s.bytes()
-    mut i = b.len - 1
+    mut i = b.len() - 1
     mut found = -1
     mut scanning = true
     while scanning && i >= 0 {

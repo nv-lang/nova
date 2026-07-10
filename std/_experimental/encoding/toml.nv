@@ -438,15 +438,21 @@ fn TomlParser mut @insert_at_current_path(key str, value TomlValue) -> () {
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
 //
-// [2026-07-08, волна 2 промоушена]: НЕ промоутится — `nova check` PASS, но
-// `nova test --full` CC-FAIL: `error: unknown type name 'Nova_ParseTomlError_p'`
-// в generated `Fail`-handler vtable (`void* ctx, Nova_ParseTomlError_p* err`).
-// Compiler mono для `Fail[ParseTomlError]` handler payload не регистрирует
-// boxed-pointer вариант этого enum — похоже на тот же класс gap, что и
-// `encoding/csv.nv` (см. её комментарий выше), но другой конкретный
-// codegen-путь (там — nested-Vec aliasing/runtime-баг, здесь — C-emit
-// type-name gap на handler vtable). Нужна отдельная codegen-инвестигация.
-// См. docs/plans/backlog-followups.md.
+// [2026-07-10, Plan 186 recursive-mono]: исходный блокер (hoist-ordering
+// CC-FAIL — `Nova_HashMap____nova_str__Nova_TomlValue_p` unknown-type, и в
+// TomlValue-варианте, и в TomlParser.root-поле) ПОЧИНЕН
+// ([M-toml-sum-variant-mono-field-hoist], emit_c.rs `emit_sum_type` /
+// `emit_record_type` — pre-pass forward-`typedef`, тот же паттерн что
+// generic-instance record-полей). Компилируется и ЛИНКУЕТСЯ. НО: `test
+// --full` теперь падает RUN-FAIL на 4/6 тестах (все с >1 повторным вызовом
+// одной и той же `Fail`-эффектной функции внутри ОДНОГО `with`-скоупа —
+// parse_bare_key/parse_basic_string/parse_number вызываются 2+ раза для
+// multi-key/multi-element входов; тесты с ОДНИМ вызовом проходят) —
+// НОВЫЙ, отдельный от recursive-mono runtime-баг в Fail-эффект-хендлинге
+// повторных вызовов, не content-баг парсера (логика парсинга вручную
+// проверена корректной). Требует отдельного расследования — см.
+// docs/plans/backlog-followups.md [M-toml-repeated-fail-call-run-fail]
+// (маркер заведён, инвестигация не завершена).
 
 test "parse: ключ-значение топ-уровня" {
     ro v = Toml.parse("name = \"nova\"\nversion = \"0.1.0\"\n")

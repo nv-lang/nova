@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `o` captured by reference in a `spawn`/`parallel for` body: `Outer` is poisoned at `Outer.inner.buf` (`[]u8`): a writable cell
+//
+// Plan 173.3 [M-173.3-share-leakage-explain]: ВЛОЖЕННОЕ ядовитое поле —
+// `mut buf []u8` живёт в Inner, а захватывается Outer (тип-в-типе): путь
+// отказа из ДВУХ сегментов (`Outer.inner.buf`) должен целиком попасть в
+// диагностику — иначе добавление не-share `mut`-поля вглубь типа снимает
+// share-ность молча (D415 §7 Q8).
+
+module neg.mut_field_nested_path
+
+type Inner {
+    mut buf []u8
+}
+
+type Outer {
+    inner Inner
+}
+
+fn leak_nested(o mut Outer) -> () {
+    supervised {
+        spawn {
+            ro _view = o
+        }
+    }
+}

@@ -28,8 +28,8 @@ export type DiffOp enum
 #stable(since = "0.1")
 export fn Diff.compute(a []str, b []str) -> []DiffOp {
     // Вычисляем LCS таблицу
-    ro n = a.len
-    ro m = b.len
+    ro n = a.len()
+    ro m = b.len()
     mut lcs [][]int = []
     mut i = 0
     while i <= n {

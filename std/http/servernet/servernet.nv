@@ -65,7 +65,7 @@ fn read_request(s mut TcpStream) Net -> []u8 {
 
 // Index of CRLF CRLF in `b`, or -1.
 fn dcrlf(b []u8) -> int {
-    ro n = b.len
+    ro n = b.len()
     mut i = 0
     while i + 3 < n {
         if (b[i] as int) == 0x0D && (b[i + 1] as int) == 0x0A &&
@@ -80,7 +80,7 @@ fn dcrlf(b []u8) -> int {
 // Parse Content-Length from the header block (bytes 0..header_end). 0 if absent.
 fn content_length_of(b []u8, header_end int) -> int {
     // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` local.
-    ro head_bytes []u8 = head_slice(b, header_end)
+    ro head_bytes []u8 = b[0..header_end]
     ro head = unsafe { head_bytes.to_str_unchecked() }.to_ascii_lower()
     match head.find("content-length:") {
         Some(i) => {
@@ -91,18 +91,9 @@ fn content_length_of(b []u8, header_end int) -> int {
     }
 }
 
-fn head_slice(b []u8, end int) -> []u8 {
-    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
-    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
-    mut out []u8 = []u8.new()
-    out.cap(end)
-    out.append(b[0..end])
-    out
-}
-
 fn parse_leading_int(s str) -> int {
     ro b = s.bytes()
-    ro n = b.len
+    ro n = b.len()
     mut i = 0
     while i < n && (b[i] as int) == 0x20 { i += 1 }     // skip leading spaces
     mut v = 0
