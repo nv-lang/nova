@@ -1527,6 +1527,14 @@ struct ConsumePolicy {
     prev_deadline_var: String,
     /// Whether the `ResourceTrace` effect is in scope (emit on_resource_exit).
     has_resource_trace: bool,
+    /// Plan 173 Ф.5 (#8, D188 R2): C `int` local — genuine RUNTIME
+    /// exactly-once counter for this consume-scope's cleanup dispatch.
+    /// Checked+incremented at the actual `Nova_<T>_consume_cleanup` call
+    /// site (`emit_consume_entry_cleanup`), NOT derived from the structural
+    /// `active_var` flag — a second invocation (bug, or D188-r2-manual-on-exit
+    /// checker bypassed via aliasing) hits `_consume_count >= 1` and panics
+    /// with `D188-on-exit-double-invocation` instead of silently no-op'ing.
+    count_var: String,
 }
 
 /// Plan 173.1 Ф.2 (D71): element transport representation over the mono
@@ -23011,6 +23019,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line(&format!("{}.error_suppressed = NULL;", df));
         self.line(&format!("if (setjmp({}.jmp) == 0) {{", df));
         self.indent += 1;
+        // Plan 173 Ф.5 (#8, D188 R2 exactly-once): runtime-checked, not just
+        // structural. Panics loudly on a second dispatch instead of relying
+        // solely on the `active`-flag skip (which the compile-time
+        // `D188-r2-manual-on-exit` checker can miss via aliasing/FFI).
+        self.line(&format!("if ({} >= 1) {{ nv_panic(nova_str_from_cstr(\"D188-on-exit-double-invocation\")); }}", policy.count_var));
+        self.line(&format!("{} += 1;", policy.count_var));
         self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
         self.line("nova_fail_pop();");
         // Clean cleanup → observability sees the final outcome (skip on throw,
@@ -23084,6 +23098,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let active = format!("_defer_{}_0_active", block_id);
         // Exactly-once + partial-init: 0 until the caller captures the resource.
         self.line(&format!("int {} = 0;", active));
+        // Plan 173 Ф.5 (#8, D188 R2): runtime exactly-once counter — genuine
+        // per-invocation check (not merely the structural `active` flag),
+        // see `emit_consume_entry_cleanup`.
+        self.line(&format!("int {} = 0;", policy.count_var));
         let failframe_var = format!("_defer_{}_ff", block_id);
         let failframe_popped_var = format!("_defer_{}_ff_popped", block_id);
         self.line(&format!("int {} = 0;", failframe_popped_var));
@@ -24465,11 +24483,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
 
                 // Register the consume-scope as a defer-scope with ONE consume-entry.
+                // Plan 173 Ф.5 (#8, D188 R2): runtime exactly-once counter, declared
+                // alongside the `_active` flag by `enter_consume_defer_scope`.
+                let count_var = format!("_consume_ccount_{}", scope_id);
                 let policy = ConsumePolicy {
                     type_name,
                     c_binding,
                     prev_deadline_var,
                     has_resource_trace,
+                    count_var,
                 };
                 let consume_block_id = self.enter_consume_defer_scope(policy, false);
                 // Partial-init + exactly-once: arm the cleanup only now that the

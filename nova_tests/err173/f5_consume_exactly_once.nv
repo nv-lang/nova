@@ -1,0 +1,48 @@
+// Plan 173 Ф.5 (#8, D188 R2): genuine RUNTIME exactly-once counter for
+// consume-scope cleanup dispatch. `emit_consume_entry_cleanup` now declares
+// a real C `_consume_ccount_N` local (alongside the structural `active`
+// flag) and checks+increments it immediately before the actual
+// `Nova_<T>_consume_cleanup` call, panicking with
+// `D188-on-exit-double-invocation` at >=2 — NOT merely inferred from the
+// `active`-flag silent-skip (§8 «НЕ сводить к структурному»).
+//
+// Observable proof here: cleanup fires EXACTLY once on both the Success
+// and the Failure path (Panic path kills the process — not cleanly
+// runtime-observable via a return value — see neg-twin for the
+// compile-time defense against manual double-invocation).
+
+module nova_tests.err173
+
+type F5Counter { mut n int }
+
+type F5Res { mut counter F5Counter }
+fn F5Res.new(c F5Counter) -> F5Res => { counter: c }
+fn F5Res consume @cleanup(_o ScopeOutcome) -> () => { @counter.n = @counter.n + 1 }
+
+fn f5_run_success() -> int {
+    ro c = F5Counter { n: 0 }
+    consume r = F5Res.new(c) { }
+    c.n
+}
+
+type F5Err { msg str }
+
+fn f5_throws() Fail[F5Err] -> () {
+    throw F5Err { msg: "boom" }
+}
+
+fn f5_run_failure() -> int {
+    ro c = F5Counter { n: 0 }
+    with Fail = effect Fail { fail(_m) { interrupt () } } {
+        consume r = F5Res.new(c) { f5_throws() }
+    }
+    c.n
+}
+
+test "f5 #8: consume cleanup runs exactly once — success path" {
+    assert(f5_run_success() == 1)
+}
+
+test "f5 #8: consume cleanup runs exactly once — failure path" {
+    assert(f5_run_failure() == 1)
+}

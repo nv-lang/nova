@@ -4306,7 +4306,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // detect manual `binding.cleanup(...)` calls в body.
                 // Runtime exactly-once guard prevents double dispatch;
                 // здесь — compile-time gate чтобы избегать runtime panic.
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                let mut tracked = std::collections::HashSet::new();
+                tracked.insert(binding.clone());
+                self.check_no_manual_on_exit_call_in_block(&tracked, body, errors);
                 self.check_consume_scopes_in_expr(init, errors);
                 self.check_consume_scopes_in_block(body, errors);
             }
@@ -4614,124 +4616,190 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 110.1.5 (D188 R2): detect manual `binding.cleanup(...)` calls
-    /// в ConsumeScope body. Auto cleanup dispatch happens at scope-exit;
-    /// manual call → double invocation → runtime panic (R2 exactly-once
-    /// violation). Compile-time gate preferred to runtime panic.
-    fn check_no_manual_on_exit_call_in_block(&self, binding: &str, b: &Block, errors: &mut Vec<Diagnostic>) {
+    /// Plan 110.1.5 (D188 R2) + Plan 173 Ф.5 (#8) hardening: detect manual
+    /// `binding.cleanup(...)` calls в ConsumeScope body. Auto cleanup dispatch
+    /// happens at scope-exit; manual call → double invocation → runtime panic
+    /// (R2 exactly-once violation). Compile-time gate preferred to runtime panic.
+    ///
+    /// `names` — the set of identifiers КОТОРЫЕ могут указывать на та же
+    /// consume-binding: seeded with the binding itself, GROWN by simple direct
+    /// aliases (`let y = x` / `ro y = x` где x уже в `names`) found while
+    /// walking the block (Plan 173 Ф.5: the original single-`&str` version
+    /// only caught the literal identifier — a one-line `let y = tx; y.cleanup(...)`
+    /// alias slipped past it into codegen, where the manual call and the
+    /// scope's own generated dispatch both reach `Nova_<T>_consume_cleanup`,
+    /// producing a REAL runtime double-invocation the syntactic check exists
+    /// to prevent). Residual: passing the binding through an arbitrary
+    /// function boundary (`identity(tx).cleanup(...)`) is still flagged
+    /// because `expr_mentions_any` scans the WHOLE receiver subexpression,
+    /// not just a bare `Ident`; genuinely opaque escapes (FFI/reflection) are
+    /// the acknowledged residual (spec 03-syntax.md D188 R2) — caught instead
+    /// by the runtime `_consume_count` guard (`emit_consume_entry_cleanup`).
+    fn check_no_manual_on_exit_call_in_block(&self, names: &std::collections::HashSet<String>, b: &Block, errors: &mut Vec<Diagnostic>) {
+        let mut names = names.clone();
         for s in &b.stmts {
-            self.check_no_manual_on_exit_call_in_stmt(binding, s, errors);
+            self.check_no_manual_on_exit_call_in_stmt(&mut names, s, errors);
         }
         if let Some(t) = &b.trailing {
-            self.check_no_manual_on_exit_call_in_expr(binding, t, errors);
+            self.check_no_manual_on_exit_call_in_expr(&names, t, errors);
         }
     }
 
-    fn check_no_manual_on_exit_call_in_stmt(&self, binding: &str, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+    fn check_no_manual_on_exit_call_in_stmt(&self, names: &mut std::collections::HashSet<String>, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
         match s {
-            Stmt::Let(d) => self.check_no_manual_on_exit_call_in_expr(binding, &d.value, errors),
-            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(binding, e, errors),
+            Stmt::Let(d) => {
+                self.check_no_manual_on_exit_call_in_expr(names, &d.value, errors);
+                // Grow the alias set: `let/ro y = x` where `x` is already
+                // tracked — `y` becomes an equally-valid manual-call target.
+                if let crate::ast::Pattern::Ident { name: alias_name, .. } = &d.pattern {
+                    if let ExprKind::Ident(rhs_name) = &d.value.kind {
+                        if names.contains(rhs_name) {
+                            names.insert(alias_name.clone());
+                        }
+                    }
+                }
+            }
+            Stmt::Expr(e) => self.check_no_manual_on_exit_call_in_expr(names, e, errors),
             Stmt::Assign { target, value, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, target, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, value, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, target, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, value, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(binding, v, errors); }
+                if let Some(v) = value { self.check_no_manual_on_exit_call_in_expr(names, v, errors); }
             }
-            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(binding, value, errors),
+            Stmt::Throw { value, .. } => self.check_no_manual_on_exit_call_in_expr(names, value, errors),
             Stmt::Defer { body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, body, errors);
             }
             Stmt::ConsumeScope { init, body, binding: inner_binding, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, init, errors);
-                // Nested consume scope с inner binding NEW — outer `binding`
+                self.check_no_manual_on_exit_call_in_expr(names, init, errors);
+                // Nested consume scope с inner binding NEW — outer `names`
                 // check still applies inside (если inner body references
                 // outer's binding manually — same violation).
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
                 // Дополнительно: recurse с inner binding (D197 re-entrance).
-                self.check_no_manual_on_exit_call_in_block(inner_binding, body, errors);
+                let mut inner = std::collections::HashSet::new();
+                inner.insert(inner_binding.clone());
+                self.check_no_manual_on_exit_call_in_block(&inner, body, errors);
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, expr, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, expr, errors);
             }
             _ => {}
         }
     }
 
-    fn check_no_manual_on_exit_call_in_expr(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    fn check_no_manual_on_exit_call_in_expr(&self, names: &std::collections::HashSet<String>, e: &Expr, errors: &mut Vec<Diagnostic>) {
         use crate::ast::ExprKind;
-        // Detect `binding.cleanup(...)` call: Call { func: Member { obj: Ident(binding), name: "cleanup" }, ... }
+        // Detect `<tracked-name-or-expr-mentioning-it>.cleanup(...)` call.
+        // Plan 173 Ф.5 (#8): widened from a bare `Ident(binding)` match to
+        // ANY receiver subexpression that mentions a tracked name — catches
+        // the pass-through-function bypass (`identity(tx).cleanup(...)`)
+        // in addition to the direct/aliased identifier form.
         if let ExprKind::Call { func, .. } = &e.kind {
             if let ExprKind::Member { obj, name, .. } = &func.kind {
                 if name == "cleanup" {
-                    if let ExprKind::Ident(obj_name) = &obj.kind {
-                        if obj_name == binding {
-                            errors.push(Diagnostic::new(
-                                format!(
-                                    "[D188-r2-manual-on-exit] `{binding}.cleanup(...)` cannot be \
-                                     called manually from inside `consume {binding} = ... {{ body }}` \
-                                     scope-block body. Auto cleanup dispatch на scope exit \
-                                     гарантирует exactly-once invariant (D188 R2). Manual call \
-                                     → double invocation → runtime panic. \
-                                     Remove the explicit call; scope-exit will dispatch cleanup \
-                                     с appropriate ScopeOutcome value.",
-                                    binding = binding
-                                ),
-                                e.span,
-                            ));
-                        }
+                    if let Some(hit) = Self::expr_mentions_any(names, obj) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[D188-r2-manual-on-exit] `{hit}.cleanup(...)` (or an expression \
+                                 referencing it) cannot be called manually from inside a \
+                                 `consume {hit} = ... {{ body }}` scope-block body. Auto cleanup \
+                                 dispatch на scope exit гарантирует exactly-once invariant \
+                                 (D188 R2). Manual call → double invocation → runtime panic. \
+                                 Remove the explicit call; scope-exit will dispatch cleanup \
+                                 с appropriate ScopeOutcome value.",
+                                hit = hit
+                            ),
+                            e.span,
+                        ));
                     }
                 }
             }
         }
         // Recurse into children regardless.
-        self.check_no_manual_on_exit_recurse(binding, e, errors);
+        self.check_no_manual_on_exit_recurse(names, e, errors);
     }
 
-    fn check_no_manual_on_exit_recurse(&self, binding: &str, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    /// Plan 173 Ф.5 (#8): does `e` (recursively) mention any name in `names`
+    /// as a bare identifier? Returns the FIRST matching tracked name (for the
+    /// diagnostic message) or `None`. Conservative over-approximation — scans
+    /// through calls/members/binary/unary/casts so a tracked binding passed
+    /// through an intervening function call (`identity(tx)`) is still caught.
+    fn expr_mentions_any(names: &std::collections::HashSet<String>, e: &Expr) -> Option<String> {
         use crate::ast::ExprKind;
         match &e.kind {
-            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
+            ExprKind::Ident(n) => names.get(n).cloned(),
             ExprKind::Call { func, args, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, func, errors);
+                Self::expr_mentions_any(names, func).or_else(|| {
+                    args.iter().find_map(|a| match a {
+                        crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
+                            Self::expr_mentions_any(names, ae)
+                        }
+                        _ => None,
+                    })
+                })
+            }
+            ExprKind::Member { obj, .. } => Self::expr_mentions_any(names, obj),
+            ExprKind::Binary { left, right, .. } => {
+                Self::expr_mentions_any(names, left).or_else(|| Self::expr_mentions_any(names, right))
+            }
+            ExprKind::Unary { operand, .. }
+            | ExprKind::Try(operand)
+            | ExprKind::Bang(operand)
+            | ExprKind::RefArg(operand) => Self::expr_mentions_any(names, operand),
+            ExprKind::Coalesce(a, b) => {
+                Self::expr_mentions_any(names, a).or_else(|| Self::expr_mentions_any(names, b))
+            }
+            _ => None,
+        }
+    }
+
+    fn check_no_manual_on_exit_recurse(&self, names: &std::collections::HashSet<String>, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        use crate::ast::ExprKind;
+        match &e.kind {
+            ExprKind::Block(b) => self.check_no_manual_on_exit_call_in_block(names, b, errors),
+            ExprKind::Call { func, args, .. } => {
+                self.check_no_manual_on_exit_call_in_expr(names, func, errors);
                 for a in args {
                     match a {
                         crate::ast::CallArg::Item(ae) | crate::ast::CallArg::Spread(ae) => {
-                            self.check_no_manual_on_exit_call_in_expr(binding, ae, errors);
+                            self.check_no_manual_on_exit_call_in_expr(names, ae, errors);
                         }
                         _ => {}
                     }
                 }
             }
             ExprKind::If { cond, then, else_, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, then, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(names, then, errors);
                 if let Some(eb) = else_ {
                     match eb {
-                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(binding, b, errors),
-                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(binding, ei, errors),
+                        crate::ast::ElseBranch::Block(b) => self.check_no_manual_on_exit_call_in_block(names, b, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_no_manual_on_exit_call_in_expr(names, ei, errors),
                     }
                 }
             }
             ExprKind::While { cond, body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, cond, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, cond, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
             }
             ExprKind::For { iter, body, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, iter, errors);
-                self.check_no_manual_on_exit_call_in_block(binding, body, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, iter, errors);
+                self.check_no_manual_on_exit_call_in_block(names, body, errors);
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.check_no_manual_on_exit_call_in_expr(binding, inner, errors),
+            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.check_no_manual_on_exit_call_in_expr(names, inner, errors),
             ExprKind::Coalesce(a, b) => {
-                self.check_no_manual_on_exit_call_in_expr(binding, a, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, b, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, a, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, b, errors);
             }
             ExprKind::Binary { left, right, .. } => {
-                self.check_no_manual_on_exit_call_in_expr(binding, left, errors);
-                self.check_no_manual_on_exit_call_in_expr(binding, right, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, left, errors);
+                self.check_no_manual_on_exit_call_in_expr(names, right, errors);
             }
-            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(binding, operand, errors),
-            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(binding, obj, errors),
+            ExprKind::Unary { operand, .. } => self.check_no_manual_on_exit_call_in_expr(names, operand, errors),
+            ExprKind::Member { obj, .. } => self.check_no_manual_on_exit_call_in_expr(names, obj, errors),
             _ => {}
         }
     }
