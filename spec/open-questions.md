@@ -6710,7 +6710,18 @@ semantics — runtime сейчас `now()` returns monotonic ms, не unix).
 — два разных concept'а (wall vs monotonic clock). within работает на monotonic; deadline
 обычно на wall. Нужна decision про какие часы используем.
 
-**Связь:** `std/concurrency/cancellation.nv`, `Time` effect (`std/time/duration.nv` §289 comment).
+**Q-sweep РЕЗОЛВ (Plan 175 Ф.6, D316/D318, 2026-07-10):** deadline-канон = **`Monotonic`**,
+не wall — иначе NTP/DST-skew портит remote-цепочки ТОЧНО так же, как локальные таймеры
+(D124 rationale). `sleep_until` принимает только `Monotonic` (§Ф.3b); wall-based
+абсолютный сон — явный `sleep(ts.time_until())` (footgun виден на call-site). Scope-форма
+для структурной конкурентности — `supervised(deadline: Monotonic)` (координация с
+[173 §3a](../docs/plans/173-error-system-unify-harden.md)); `with_deadline[T]` из
+предложения выше, если реализуется, обязан принимать `Monotonic`, не `unix_ms int`
+(псевдокод выше устарел — `Time.now()` переименован, wire теперь int-ms/int-ns через
+именованные опы, но user-facing путь — `Monotonic.now() + Duration`).
+
+**Связь:** `std/concurrency/cancellation.nv`, `Time` effect (`std/time/duration.nv`),
+[D316/D318](decisions/04-effects.md#d316).
 
 ---
 
@@ -6776,7 +6787,7 @@ do_long_work(tok)
 ```nova
 ro tok = CancelToken.new()
 supervised(cancel: tok) {
-    spawn { Time.sleep(5000); tok.cancel("timeout") }
+    spawn { sleep(5.seconds()); tok.cancel("timeout") }
     spawn { do_long_work(tok) }
 }
 ```
@@ -6785,6 +6796,11 @@ supervised(cancel: tok) {
 **Trade-off.** Factory удобнее (один-liner для async patterns), но требует или нарушения
 structured-concurrency (background fiber outside scope), или новой timer-queue
 infrastructure. Решение влияет на rest of cancellation design.
+
+**Q-sweep (Plan 175 Ф.6, 2026-07-10):** пример обновлён — устаревший `Time.sleep(5000)`
+(голый int-wire) заменён на typed free `sleep(Duration)` (D316 §Ф.3b). Design-choice
+(1/2/3) сам по себе НЕ решён этой волной — вне scope 175 (structured-concurrency
+timer-queue — отдельная архитектурная задача).
 
 **Связь:** Plan 49 (cancellation), Plan 22 (libuv timers), TC39 AbortSignal.timeout proposal.
 

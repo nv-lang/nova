@@ -1423,11 +1423,11 @@ test "Ф.3(d)/D237/Q12: @display Duration/Monotonic — byte-exact ASCII (нет
 }
 
 test "Ф.3(d): @debug Duration/Timestamp/Monotonic — диагностическая форма" {
-    // `.debug(sb)` вызов напрямую через явный Write-sink (D374-паттерн) —
-    // `"${x:?}"`-интерполяция value-record'ов имеет отдельный pre-existing
-    // gap ([M-175-value-record-debug-interp], незав. от Ф.3(d): checker не
-    // аннотирует `str.from_debug` Path-call для value-struct аргументов;
-    // `"${x}"` (Display, non-debug) для value-record'ов уже работает).
+    // Проверяем ОБА пути: `"${x:?}"`-сахар (interp) и явный `.debug(sb)`
+    // Write-sink (D374-паттерн) — оба чинятся ОДНИМ и тем же codegen-фиксом
+    // выше (value-record-aware strip + prepare_method_recv), sink-agnostic.
+    assert("${2.seconds():?}".contains("Duration("))
+
     consume sb1 = StringBuilder.new()
     2.seconds().debug(sb1)
     assert(sb1.into_str().contains("Duration("))
