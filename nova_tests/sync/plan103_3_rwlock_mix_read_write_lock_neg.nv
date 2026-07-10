@@ -1,0 +1,10 @@
+// Plan 103.3 — rw.read(); rw.write_unlock() → RUNTIME_PANIC (mismatched unlock).
+//
+
+module nova_tests.sync
+
+test "read then write_unlock panics" panics "RwLock.write_unlock() called without a matching write()" {
+    mut rw = RwLock.new()
+    rw.read()
+    rw.write_unlock()  // wrong unlock kind
+}

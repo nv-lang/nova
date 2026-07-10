@@ -663,6 +663,24 @@ __declspec(thread) extern NovaTestFrame* _nova_test_frame;
 extern __thread NovaTestFrame* _nova_test_frame;
 #endif
 
+/* Plan 173 Ф.6 (D348): substring-матч для panics-клаузулы теста —
+ * (ptr,len)-окно (nova_str НЕ гарантирует NUL-terminator). needle —
+ * C-литерал паттерна (NUL-terminated). Пустой needle матчит всё
+ * («любая паника»). Case-sensitive (D89-семантика). */
+static inline int nova_test_msg_contains(const char* hay, size_t hay_len,
+                                         const char* needle) {
+    size_t nlen = 0;
+    while (needle[nlen]) nlen++;
+    if (nlen == 0) return 1;
+    if (!hay || hay_len < nlen) return 0;
+    for (size_t i = 0; i + nlen <= hay_len; i++) {
+        size_t j = 0;
+        while (j < nlen && hay[i + j] == needle[j]) j++;
+        if (j == nlen) return 1;
+    }
+    return 0;
+}
+
 /* Forward decl: defined later in nova_rt.h once mco is included.
  * We test "are we inside a fiber" to decide where assertion failure lands. */
 int nova_in_fiber(void);

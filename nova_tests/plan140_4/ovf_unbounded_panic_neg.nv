@@ -1,0 +1,11 @@
+// Plan 140.4 OE4 NEG (soundness): без фактов, ограничивающих операнды, overflow-VC
+// недоказуем ⇒ `nova_int_checked_add` ОСТАЁТСЯ ⇒ `int.MAX + 1` паникует. Доказывает,
+// что элизия НЕ трогает недоказанные сайты (always-on soundness-guard сохранён).
+// SOUNDNESS_REGRESSION
+module nova_tests.plan140_4
+
+fn unchecked_add(a int, b int) -> int => a + b
+
+test "unbounded add still panics on overflow" panics "integer overflow" {
+    ro _ = unchecked_add(int.MAX, 1)
+}

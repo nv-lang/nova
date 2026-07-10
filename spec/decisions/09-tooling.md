@@ -505,6 +505,14 @@ Nova берёт **прагматичный путь Dafny** (статика + ru
 
 ## D89. Test-tooling конвенции — `EXPECT_*` маркеры для negative-тестов
 
+> **Амендмент Plan 173 Ф.6 (2026-07-10, D348): шестой класс — `panics`-клаузула
+> тест-блока.** Runtime-panic тесты БОЛЬШЕ НЕ требуют standalone `fn main` +
+> `EXPECT_RUNTIME_PANIC`: канон — `test "имя" panics "паттерн" { … }`
+> ([D348](#d348--panics-клаузула-тест-блока-инверсия-passfail-для-runtime-panic-тестов-plan-173-ф6)) — та же substring-семантика, но инверсия PASS/FAIL
+> живёт В ЯЗЫКЕ (per-test granularity, folder-module, exit=0). Маркер
+> `EXPECT_RUNTIME_PANIC` остаётся **legacy** (+ селектор `--panic`, D304) для
+> кейсов с обязательной изоляцией процесса.
+
 ### Что
 Стандартизированный набор **comment-маркеров** в `.nv`-файлах для
 тестов, которые **должны не сработать** ожидаемым образом — от compile
@@ -2941,8 +2949,9 @@ folder-module peer layout — reduce compile units пропорциональн�
 | Тип файла | Module-путь | Расположение |
 |---|---|---|
 | Позитивный `test "..."` | `module nova_tests.<dir>` | `nova_tests/<dir>/<name>.nv` |
+| Runtime-panic `test "..." panics "pat"` (D348) | `module nova_tests.<dir>` | `nova_tests/<dir>/<name>.nv` (peer folder-module) |
 | `EXPECT_COMPILE_ERROR` | `module neg.<name>` | `nova_tests/<dir>/neg/<name>.nv` |
-| `EXPECT_RUNTIME_PANIC` / `fn main()` | `module nova_tests.<dir>.rt.<name>` | `nova_tests/<dir>/rt/<name>.nv` (standalone) |
+| `EXPECT_RUNTIME_PANIC` / `fn main()` — **legacy** (D348: новые runtime-panic = panics-клаузула; standalone только при обязательной изоляции процесса) | `module nova_tests.<dir>.rt.<name>` | `nova_tests/<dir>/rt/<name>.nv` (standalone) |
 | `_slow.nv` | `module <dir>.<name>_slow` | рядом, не folder-module |
 
 Конфликты имён в folder-module (одна `fn foo` в двух файлах) — **ошибка**; устраняются
@@ -3635,3 +3644,85 @@ module-имени → **0 ложных red** на prelude/peer-символах.
 - `nova-lsp/src/*` (все хендлеры + capabilities в `server.rs`)
 - D378 (provenance), D379 (expr_types), D296 (rename atomicity), D303 (hover items_start)
 - [Plan 104.10](../../docs/plans/104.10-lsp-v2-production.md), [lsp-conventions.md](../../docs/lsp-conventions.md)
+
+---
+
+## D348 — `panics`-клаузула тест-блока: инверсия PASS/FAIL для runtime-panic тестов (Plan 173 Ф.6)
+
+> **Plan 173 Ф.6.** Принято 2026-07-10. **Статус: ACTIVE.** Складывает
+> runtime-panic тесты (ранее standalone `fn main` + `// EXPECT_RUNTIME_PANIC`,
+> один compile unit на файл) в folder-module test-блоки — granularity
+> per-test вместо per-process. Гейт: Plan 173 Ф.1 (panic не глотается
+> with-Fail) + Ф.5 п.6 (`nova_runtime_reset()`).
+
+### Что
+
+Контекстное keyword `panics` после имени тест-блока (как `raw`/`bench` —
+НЕ резервированное слово; идентификатор `panics` в коде свободен):
+
+```nova
+test "index out of bounds panics" panics "index out of bounds" {
+    ro xs = [1, 2, 3]
+    ro _ = xs[10]
+}
+```
+
+`TestDecl { name, panics: Option<String>, body }` — паттерн обязателен
+(строковый литерал сразу после `panics`; пустая строка = «любая паника»).
+
+### Семантика (инверсия PASS/FAIL)
+
+| Исход тела | Обычный `test` | `test … panics "pat"` |
+|---|---|---|
+| Завершилось нормально | PASS | **FAIL** («expected panic») |
+| **Паника** (panic()/assert/overflow/OOB — PANIC-класс D13), msg ⊇ pat | FAIL | **PASS** |
+| Паника, msg НЕ ⊇ pat | FAIL | **FAIL** («wrong panic message») |
+| `throw` (USER/USER_TYPED) / cancel | FAIL | **FAIL** («failed without panic») |
+| `exit(N)` | FAIL (routed) | **FAIL** (exit — не паника) |
+
+- **Матчинг** — substring, case-sensitive (та же семантика, что D89
+  `EXPECT_RUNTIME_PANIC`).
+- **PANIC-класс** дискриминируется по `error_kind == NOVA_THROW_PANIC` на
+  fail-frame (panic/assert/overflow/contract — D13); throw/cancel/exit
+  инверсию НЕ активируют (не деградируют до «ожидаемой паники»).
+- **exit-код процесса = 0** при успехе всех тестов (паника поймана
+  test-frame'ом раннера, процесс жив) — panics-тесты живут в обычном
+  positive-lane.
+- **Granularity — per-test:** N panics-тестов в одном folder-module CU;
+  после каждого panics-теста раннер зовёт `nova_runtime_reset()` (Ф.5 п.6) —
+  сброс висящих fail/interrupt-frames и handler-слотов (re-entry hazard;
+  без сброса вторая паника в процессе = UB).
+
+### Codegen (test-frame, emit_c)
+
+Ветки существующего test-frame (`NovaTestFrame` + top-level `NovaFailFrame`)
+инвертируются: happy-path печатает `FAIL … expected panic`, catch-path
+проверяет kind==PANIC + substring (`nova_test_msg_contains` — (ptr,len)-окно,
+без требования NUL) и печатает PASS/FAIL. `nova_runtime_reset()` — в
+эпилоге panics-теста.
+
+### Миграция корпуса / граница
+
+- `fn main` + `// EXPECT_RUNTIME_PANIC <pat>` (standalone CU в `rt/`) →
+  `test "<stem>" panics "<pat>"` peer-файлом folder-module (−1 CU за файл).
+- **Граница: ТОЛЬКО runtime-panic.** `EXPECT_COMPILE_ERROR`/`EXPECT_TIMEOUT`/
+  `EXPECT_EXIT_CODE`/`EXPECT_STDOUT`/`EXPECT_STDERR` остаются `fn main`/`neg/`
+  standalone (им нужен отдельный процесс/компиляция).
+- Маркер `EXPECT_RUNTIME_PANIC` НЕ ретрактирован — **legacy** + селектор
+  `--panic` (D304): кейсы, где нужна изоляция процесса (краш всего рантайма,
+  порядок stderr, cross-CU), остаются на нём. Новые runtime-panic тесты —
+  panics-клаузула (test-conventions.md).
+
+### Мета-FAIL-кейсы — Rust-тесты раннера
+
+«Нет паники → FAIL», «неверный паттерн → FAIL» НЕ выражаются `.nv`-фикстурами
+(сделали бы suite красным навсегда) — покрыты Rust-интеграционными тестами
+раннера (`compiler-codegen/tests/`).
+
+### Связь
+
+- [D89](#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов) — маркер-классы (шестой класс = клаузула, инверсия объявлена там же).
+- [D304](#d304--test-category-selectors-testselection--positive--compile-error--panic--timeout--exit--slow--full-plan-1691-2026-06-19) — `--panic` lane остаётся за legacy-маркером.
+- [D13](08-runtime.md#d13) — PANIC-класс (panic/assert/overflow/contract).
+- Plan 173 Ф.5 п.6 — `nova_runtime_reset()`.
+- [Plan 169.1.2](../../docs/plans/169.1.2-consolidate-tests.md) — цель −78 CU.

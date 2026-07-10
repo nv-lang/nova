@@ -1,4 +1,4 @@
-// EXPECT_RUNTIME_PANIC nova: unhandled Fail: bang
+// EXPECT_RUNTIME_PANIC unhandled Fail (D158 composite): bang
 // EXPECT_STDOUT DEFER_FIRED
 
 module expected_runtime.defer_throw_single

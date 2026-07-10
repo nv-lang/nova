@@ -1,0 +1,19 @@
+//
+// Plan 33.3 Ф.9.3: loop invariant violated → runtime panic в debug.
+
+module nova_tests.runtime_panics
+
+fn bad_loop(n int) -> int {
+    mut i = 0
+    while i < n
+        invariant i < 0   // явно ложно (i стартует с 0)
+    {
+        i = i + 1
+    }
+    i
+}
+
+test "contracts loop invariant fail" panics "requires failed:" {
+    ro _ = bad_loop(5)
+    println("UNREACHABLE")
+}

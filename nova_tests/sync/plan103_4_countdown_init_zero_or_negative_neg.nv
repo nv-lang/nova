@@ -1,0 +1,12 @@
+// Plan 103.4 (Agent C) — CountDownLatch.new(0) panics.
+//
+// count must be > 0: a latch with initial count 0 would be permanently done
+// at construction with no way to count down — always a programmer error.
+//
+
+module nova_tests.sync
+
+test "CountDownLatch.new(0) panics with count must be > 0" panics "CountDownLatch.new: count must be > 0" {
+    // count=0 is invalid: latch would be trivially done at construction
+    ro _ = CountDownLatch.new(0)
+}

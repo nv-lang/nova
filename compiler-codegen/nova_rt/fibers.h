@@ -2800,6 +2800,20 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             nova_throw_typed(nova_str_from_cstr(err), payload, tid);
             /* unreachable */
         }
+        /* Plan 173 Ф.6 (§4а, вскрыто panics-миграцией; D13/D414): PANIC
+         * ребёнка НЕ деградирует до ловимого USER при re-throw наружу из
+         * supervised — транспортируем nv_panic'ом (kind=PANIC сохранён:
+         * with-Fail не ловит, panics-клаузула/D13-класс различают). Тот же
+         * класс дефекта, что Ф.1 #1 (with-Fail глотал panic) — прежний
+         * plain nova_throw терял kind на этом сайте. */
+        {
+            NovaThrowKind _rk = q->first_error ? q->first_error_kind
+                                               : q->first_error_atomic_kind;
+            if (_rk == NOVA_THROW_PANIC) {
+                nv_panic(nova_str_from_cstr(err));
+                /* unreachable */
+            }
+        }
         /* USER либо USER_TYPED (local — see note above): plain nova_throw. */
         nova_throw(nova_str_from_cstr(err));
     }

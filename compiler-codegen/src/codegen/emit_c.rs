@@ -658,7 +658,7 @@ pub struct CEmitter {
     /// Maps sum type name → variant name → field types (positional)
     sum_schemas: HashMap<String, HashMap<String, Vec<String>>>,
     /// [M-sync-crossmodule-samename-type-collision] Collision-aware nominal-type
-    /// mangling (D348). Set of user-type SIMPLE names declared in ≥2 DISTINCT
+    /// mangling (D381). Set of user-type SIMPLE names declared in ≥2 DISTINCT
     /// modules within this CU. ONLY these names get module-qualified C bases
     /// (`Nova_<modpath>_<Name>` instead of `Nova_<Name>`); every non-colliding
     /// name stays byte-identical. Empty for any CU without a cross-module
@@ -3204,7 +3204,7 @@ impl CEmitter {
     /// U.4.6: the `Named` ABI dispatch of `resolved_type_to_c`, mirroring `type_ref_to_c`'s
     /// `Named` arm driven by `ResolvedType` fields. `full` = `module ++ [name]` joined by
     /// `_` (the `path.join("_")` equivalent, U.5.5(a) made `module` lossless).
-    /// [M-sync-crossmodule-samename-type-collision] (D348) — module-qualified
+    /// [M-sync-crossmodule-samename-type-collision] (D381) — module-qualified
     /// C base for a colliding user type; `name` unchanged for every other type
     /// (byte-identical). `module` must be the DEFINING module path.
     fn qualify_type_base(&self, name: &str, module: &[String]) -> String {
@@ -3251,7 +3251,7 @@ impl CEmitter {
         name.to_string()
     }
 
-    /// [M-sync-crossmodule…] (D348): resolve a BARE variant name to its sum,
+    /// [M-sync-crossmodule…] (D381): resolve a BARE variant name to its sum,
     /// disambiguating a variant SHARED across colliding sums (`Other` in three
     /// `ErrorKind`s) by the current call-site context (the fn's expected return
     /// sum). Byte-identical for a UNIQUE variant: a single candidate falls
@@ -3376,7 +3376,7 @@ impl CEmitter {
         )))
     }
 
-    /// [M-sync-crossmodule…] (D348): the plain (non-mono) sum base named by the
+    /// [M-sync-crossmodule…] (D381): the plain (non-mono) sum base named by the
     /// current fn's return C-type, if any — used to disambiguate a variant shared
     /// across colliding sums by call-site context.
     fn debt_current_fn_return_sum(&self) -> Option<String> {
@@ -3593,7 +3593,7 @@ impl CEmitter {
                         self.type_subst_overrides.borrow().len()
                     );
                 }
-                // [M-sync-crossmodule…] (D348): concrete user record/sum. For a
+                // [M-sync-crossmodule…] (D381): concrete user record/sum. For a
                 // COLLIDING simple name, qualify by the DEFINING module resolved
                 // from the referencing file (`ref_type_base`); every other name
                 // keeps the exact legacy `full` (byte-identical).
@@ -3852,7 +3852,7 @@ impl CEmitter {
         // Не name-collision между модулями — тот же symbol эмиттится дважды
         // с разным содержимым.
         //
-        // Fix (mirrors [M-sync-crossmodule-samename-type-collision] D348's
+        // Fix (mirrors [M-sync-crossmodule-samename-type-collision] D381's
         // collision-aware type qualification, applied here to free-fn
         // mangling): detect names declared as a plain (non-receiver) free
         // fn in ≥2 DISTINCT modules, and route THOSE through the existing
@@ -3918,7 +3918,7 @@ impl CEmitter {
             }
         }
 
-        // [M-sync-crossmodule-samename-type-collision] (D348) — collision-aware
+        // [M-sync-crossmodule-samename-type-collision] (D381) — collision-aware
         // module-qualified nominal-type mangling. A user sum/record type is
         // mangled to `Nova_<Name>` by SIMPLE name (tag `NOVA_TAG_<Name>_<V>`,
         // ctor `nova_make_<Name>_<V>`, schema keys). Two DIFFERENT types with the
@@ -4991,7 +4991,7 @@ impl CEmitter {
                 }
                 crate::ast::TypeDeclKind::Sum(variants) => {
                     // Register sum schema for pattern matching + debt_is_generic_stub_c.
-                    // [M-sync-crossmodule…] (D348): SKIP a colliding name here — this
+                    // [M-sync-crossmodule…] (D381): SKIP a colliding name here — this
                     // external-registry pre-pass keys by the BARE `type_decl.name`,
                     // which would create a spurious unqualified `ErrorKind` schema/
                     // registry entry alongside the module-qualified ones that
@@ -5181,7 +5181,7 @@ impl CEmitter {
         // Helper: is this Type item the merged (non-user) duplicate of a
         // name the user has also declared? Skip if so.
         // [M-http-module-test-block-p67] / [M-sync-crossmodule-samename-type-collision]
-        // (D348): a cross-module same-SIMPLE-name COLLISION is NOT a prelude-shadow
+        // (D381): a cross-module same-SIMPLE-name COLLISION is NOT a prelude-shadow
         // duplicate. `http.ErrorKind` and `encoding.compress.ErrorKind` are two
         // DISTINCT types, qualified to distinct C bases (`Nova_std_http_ErrorKind`
         // vs `Nova_encoding_compress_ErrorKind`) by def/ref_type_base — so emitting
@@ -12519,7 +12519,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // ---- forward declarations ----
 
     fn emit_fn_forward_decl(&mut self, f: &FnDecl) -> Result<(), String> {
-        // [M-sync-crossmodule…] (D348): lower this fn's signature in the context
+        // [M-sync-crossmodule…] (D381): lower this fn's signature in the context
         // of its OWN declaring file, so a colliding param/return type (`ErrorKind`
         // in std.io's `IoError.of`) resolves to its module-qualified base rather
         // than a bare `Nova_ErrorKind`. GATED on a collision existing in this CU:
@@ -13408,7 +13408,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line(&format!("static const {} {} = {};", ty_c, symbol, val));
             self.var_types.insert(symbol, ty_c);
         }
-        // [M-sync-crossmodule…] (D348): make the type's own defining file the
+        // [M-sync-crossmodule…] (D381): make the type's own defining file the
         // current context so field-type references to colliding types resolve
         // (byte-identical when no collision — `current_emit_file_id` only steers
         // `ref_type_base`, a no-op for non-colliding names). `def_base` is the
@@ -15331,7 +15331,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return format!("{}*", c_ty);
                     }
                 }
-                // [M-sync-crossmodule…] (D348): a method receiver whose type is a
+                // [M-sync-crossmodule…] (D381): a method receiver whose type is a
                 // colliding sum/record resolves to its module-qualified base (byte-
                 // identical for non-colliding — `ref_type_base` ≡ id).
                 format!("Nova_{}*", self.ref_type_base(other, &[]))
@@ -19515,7 +19515,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         recv_type: &str,
     ) -> Result<(), String> {
         use crate::ast::FnBody;
-        // [M-sync-crossmodule…] (D348): a monomorphized method body references
+        // [M-sync-crossmodule…] (D381): a monomorphized method body references
         // colliding types (`ErrorKind.WriteZero` in `BufWriter[W].flush`) — resolve
         // them under the METHOD's declaring file so `ref_type_base` qualifies the
         // ctor/tag to match the qualified definition. GATED (byte-identical for
@@ -20039,7 +20039,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         self.out.push_str(&fn_body);
         self.current_type_subst = saved_subst;
-        self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D348
+        self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D381
         // Plan 11 Follow-up: restore current_receiver_type теперь, когда body
         // полностью emitted (включая все Self-resolution context'ы).
         self.current_receiver_type = None;
@@ -20705,7 +20705,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         mono_name: &str,
     ) -> Result<(), String> {
         use crate::ast::FnBody;
-        // [M-sync-crossmodule…] (D348): resolve colliding-type references in a
+        // [M-sync-crossmodule…] (D381): resolve colliding-type references in a
         // monomorphized free-fn body under its declaring file (gated; byte-
         // identical for non-colliding CUs). Restored with the type-subst.
         let saved_emit_file_id_mono = self.current_emit_file_id;
@@ -20915,7 +20915,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Restore type substitution
         self.current_type_subst = saved_subst;
         self.current_fn_param_typerefs = saved_param_typerefs; // [M-property-testing-rot]
-        self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D348
+        self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D381
         Ok(())
     }
 
@@ -21304,7 +21304,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 return self.emit_generic_method_erased(f);
             }
         }
-        // [M-sync-crossmodule…] (D348): establish THIS fn's declaring-file context
+        // [M-sync-crossmodule…] (D381): establish THIS fn's declaring-file context
         // BEFORE the signature (return type + params) is lowered, so a colliding
         // param/return type (`ErrorKind` in std.io's `IoError.of`) resolves to its
         // module-qualified base. The legacy set happened AFTER the signature (~180
@@ -21465,7 +21465,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // right file-discriminated C symbol (free_fn_c_name reads this). Unconditional
         // (byte-identical with legacy); for a colliding CU it merely re-affirms the
         // gated top-of-fn set. Restored at the end via `saved_emit_file_id`
-        // (captured as the TRUE original above, D348).
+        // (captured as the TRUE original above, D381).
         self.current_emit_file_id = Some(f.span.file_id);
         let mangled = self.mangle_fn(f);
         // Plan 63 Fix F+ [M-result-erased-no-mono]: register fn's Result Ok
@@ -22004,24 +22004,92 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                  * failure. _tf still catches plain main-flow asserts. */
                 self.line("NovaFailFrame _tf_fail;");
                 self.line("_tf_fail.error_msg = (nova_str){.ptr=NULL, .len=0};");
+                // Plan 173 Ф.6 (D348): kind sentinel — panics-ветка дискриминирует
+                // PANIC-класс (D13) от throw/cancel по error_kind.
+                self.line("_tf_fail.error_kind = NOVA_THROW_USER;");
                 self.line("nova_fail_push(&_tf_fail);");
                 self.line("int _tf_jmp = setjmp(_tf.jmp);");
                 self.line("int _tf_fail_jmp = (_tf_jmp == 0) ? setjmp(_tf_fail.jmp) : 0;");
-                self.line("if (_tf_jmp == 0 && _tf_fail_jmp == 0) {");
-                self.indent += 1;
-                self.line(&format!("fflush(stdout);"));
-                self.line(&format!("nova_test_{}();", safe));
-                self.line(&format!("printf(\"  PASS: {}\\n\"); fflush(stdout);", escaped));
-                self.indent -= 1;
-                self.line("} else {");
-                self.indent += 1;
-                self.line("const char* _tf_msg = _tf.fail_msg ? _tf.fail_msg : (_tf_fail.error_msg.ptr ? _tf_fail.error_msg.ptr : \"assertion failed\");");
-                self.line(&format!("printf(\"  FAIL: {} — %s\\n\", _tf_msg);", escaped));
-                self.line("_nova_tests_failed++;");
-                self.indent -= 1;
-                self.line("}");
-                self.line("nova_fail_pop();");
-                self.line("_nova_test_frame = NULL;");
+                if let Some(pat) = &t.panics {
+                    // Plan 173 Ф.6 (D348): panics-клаузула — ИНВЕРСИЯ PASS/FAIL.
+                    // PASS ⇔ тело запаниковало (PANIC-класс) сообщением ⊇ паттерн.
+                    let pat_escaped = Self::escape_c_str(pat);
+                    self.line("if (_tf_jmp == 0 && _tf_fail_jmp == 0) {");
+                    self.indent += 1;
+                    self.line("fflush(stdout);");
+                    self.line(&format!("nova_test_{}();", safe));
+                    // Тело завершилось нормально — ожидали панику → FAIL.
+                    self.line(&format!(
+                        "printf(\"  FAIL: {} — expected panic containing \\\"{}\\\" but test completed normally\\n\"); fflush(stdout);",
+                        escaped, pat_escaped));
+                    self.line("_nova_tests_failed++;");
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    // Сообщение + PANIC-дискриминатор:
+                    //  - fail-frame route (_tf_fail_jmp): kind==PANIC — panic()/
+                    //    assert-in-fiber/overflow; nova_str (ptr,len).
+                    //  - test-frame route (_tf_jmp): nv_panic-без-fail-frame пишет
+                    //    "panic: …", assert-on-main пишет "…assert failed…" (оба
+                    //    PANIC-класс D13); nv_exit пишет "exit(N): …" — НЕ паника.
+                    self.line("const char* _p_msg; size_t _p_len; int _p_is_panic;");
+                    self.line("if (_tf_fail_jmp != 0) {");
+                    self.indent += 1;
+                    self.line("_p_msg = _tf_fail.error_msg.ptr; _p_len = (size_t)_tf_fail.error_msg.len;");
+                    self.line("_p_is_panic = (_tf_fail.error_kind == NOVA_THROW_PANIC);");
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line("_p_msg = _tf.fail_msg ? _tf.fail_msg : \"\"; _p_len = strlen(_p_msg);");
+                    self.line("_p_is_panic = (_p_len < 5 || memcmp(_p_msg, \"exit(\", 5) != 0);");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line(&format!(
+                        "if (_p_is_panic && nova_test_msg_contains(_p_msg, _p_len, \"{}\")) {{",
+                        pat_escaped));
+                    self.indent += 1;
+                    self.line(&format!("printf(\"  PASS: {}\\n\"); fflush(stdout);", escaped));
+                    self.indent -= 1;
+                    self.line("} else if (_p_is_panic) {");
+                    self.indent += 1;
+                    self.line(&format!(
+                        "printf(\"  FAIL: {} — panic message did not contain \\\"{}\\\": %.*s\\n\", (int)_p_len, _p_msg); fflush(stdout);",
+                        escaped, pat_escaped));
+                    self.line("_nova_tests_failed++;");
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line(&format!(
+                        "printf(\"  FAIL: {} — failed without panic (throw/cancel/exit is not a panic): %.*s\\n\", (int)_p_len, _p_msg); fflush(stdout);",
+                        escaped));
+                    self.line("_nova_tests_failed++;");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line("nova_fail_pop();");
+                    self.line("_nova_test_frame = NULL;");
+                    // Plan 173 Ф.5 п.6: сброс висящих fail/interrupt-frames и
+                    // handler-слотов после ПОЙМАННОЙ паники (longjmp мимо
+                    // эпилогов) — N panics-тестов в одном процессе безопасны.
+                    self.line("nova_runtime_reset();");
+                } else {
+                    self.line("if (_tf_jmp == 0 && _tf_fail_jmp == 0) {");
+                    self.indent += 1;
+                    self.line(&format!("fflush(stdout);"));
+                    self.line(&format!("nova_test_{}();", safe));
+                    self.line(&format!("printf(\"  PASS: {}\\n\"); fflush(stdout);", escaped));
+                    self.indent -= 1;
+                    self.line("} else {");
+                    self.indent += 1;
+                    self.line("const char* _tf_msg = _tf.fail_msg ? _tf.fail_msg : (_tf_fail.error_msg.ptr ? _tf_fail.error_msg.ptr : \"assertion failed\");");
+                    self.line(&format!("printf(\"  FAIL: {} — %s\\n\", _tf_msg);", escaped));
+                    self.line("_nova_tests_failed++;");
+                    self.indent -= 1;
+                    self.line("}");
+                    self.line("nova_fail_pop();");
+                    self.line("_nova_test_frame = NULL;");
+                }
                 self.indent -= 1;
                 self.line("}");
             }
@@ -25142,7 +25210,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Unit variants (e.g. `Red` from `type Color | Red | Green`) are
                 // not function calls in Nova but need `nova_make_Color_Red()` in C.
                 // Plan 62.A.bis Ф.2.2: variant lookup via registry.
-                // [M-sync-crossmodule…] (D348): context-disambiguated for a variant
+                // [M-sync-crossmodule…] (D381): context-disambiguated for a variant
                 // shared across colliding sums (byte-identical for unique variants).
                 if let Some((type_name, fields)) = self.debt_find_variant_ctx(name, Some(0)) {
                     if fields.is_empty() {
@@ -25380,7 +25448,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     } else if self.sum_schemas.contains_key(type_name_raw.as_str()) {
                         type_name_raw.clone()
                     } else {
-                        // [M-sync-crossmodule…] (D348): colliding sum referenced by
+                        // [M-sync-crossmodule…] (D381): colliding sum referenced by
                         // its bare name — resolve to the module-qualified base
                         // (byte-identical when no collision: `ref_type_base` ≡ id, so
                         // this branch only ever yields the same empty key as before).
@@ -25409,7 +25477,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     //   nova_make_Nova_Slot____..._Empty — with Nova_ prefix
                                     // (mono names carry the `____` type-arg separator; a
                                     // module-qualified base does NOT, so it stays prefix-
-                                    // free like the erased case — D348.)
+                                    // free like the erased case — D381.)
                                     let ctor_prefix = if Self::debt_contains_mono_sep(&eff_key) {
                                         format!("Nova_{}", eff_key)
                                     } else {
@@ -26523,7 +26591,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // name is the variant. Intercept before emit_expr(obj) which would
                 // otherwise lower the type-name as a value → wrong C type (nova_int/void*).
                 if let ExprKind::Ident(type_name_raw) = &obj.kind {
-                    // [M-sync-crossmodule…] (D348): resolve a colliding sum's bare
+                    // [M-sync-crossmodule…] (D381): resolve a colliding sum's bare
                     // name to its module-qualified base so the schema/registry
                     // lookup + `nova_make_<base>_<V>` match the qualified
                     // definition. Byte-identical for non-colliding (id map).
@@ -29343,7 +29411,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let func_c = match &func.kind {
             ExprKind::Ident(name) => {
                 // Plan 62.A.bis Ф.2.2: variant construction via registry.
-                // [M-sync-crossmodule…] (D348): context+arity-disambiguated for a
+                // [M-sync-crossmodule…] (D381): context+arity-disambiguated for a
                 // variant shared across colliding sums (byte-identical for unique
                 // variants). `args.len()` distinguishes `InvalidData(msg)` (compress,
                 // 1 payload) from io's unit `InvalidData` (0 payload).
@@ -37916,7 +37984,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // join("_") yields "TypeName_Variant" which is not registered; split and look up directly.
             let variant_lookup = if name.len() == 2 && !self.record_schemas.contains_key(&struct_name) {
                 let (sum_part_raw, var_part) = (&name[0], &name[1]);
-                // [M-sync-crossmodule…] (D348): a colliding sum referenced by its
+                // [M-sync-crossmodule…] (D381): a colliding sum referenced by its
                 // bare name in `Type.Variant{…}` must resolve to its module-
                 // qualified registry base (byte-identical for non-colliding).
                 let sum_part = self.ref_type_base(sum_part_raw, &[]);
@@ -39297,7 +39365,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Determine the sum type name: explicit path or look up in schemas
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 let type_name = if path.len() > 1 {
-                    // [M-sync-crossmodule…] (D348): an explicit `Sum.Variant`
+                    // [M-sync-crossmodule…] (D381): an explicit `Sum.Variant`
                     // pattern names the sum by its (possibly bare) simple segment;
                     // qualify it to the module-defining base for a colliding sum so
                     // the tag matches the qualified definition (`NOVA_TAG_<base>_V`).
@@ -39595,7 +39663,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     VariantPatternKind::Tuple { patterns, .. } => {
                         // Look up field types from sum schema
                         let type_name = if path.len() > 1 {
-                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // [M-sync-crossmodule…] (D381): qualify a colliding sum's
                             // explicit `Sum.Variant(..)` pattern name to its module
                             // base so the payload field-type schema lookup matches the
                             // qualified definition (byte-identical for non-colliding).
@@ -45543,7 +45611,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // D406: qualified sum-variant access `TypeName.Variant` —
                             // `n` is the sum-type name, `method` is the variant name.
                             // Returns `Nova_TypeName*` (same ABI as any heap sum-type pointer).
-                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // [M-sync-crossmodule…] (D381): qualify a colliding sum's
                             // bare name to its module base (byte-identical otherwise).
                             let nq = self.ref_type_base(n, &[]);
                             if self.sum_schemas.contains_key(nq.as_str())
@@ -46407,7 +46475,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // resolution exactly as the `.from` branch above does for
                             // sum/record types. Guarded on variant membership so genuine
                             // static methods (resolved via `fn_ret_*` above) are unaffected.
-                            // [M-sync-crossmodule…] (D348): qualify a colliding sum's
+                            // [M-sync-crossmodule…] (D381): qualify a colliding sum's
                             // bare path name to its module base (byte-identical else).
                             let eff_q = self.ref_type_base(eff, &[]);
                             if self

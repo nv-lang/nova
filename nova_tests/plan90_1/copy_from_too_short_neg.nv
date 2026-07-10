@@ -1,0 +1,12 @@
+//
+// Plan 90.1 — негатив: copy_from — src shorter than dst → panic (BREAKING CHANGE).
+// D141 amend: old behavior was silent truncation; new behavior = panic.
+// Migration: use dst[..src.len()].copy_from(src) for partial copy intent.
+
+module nova_tests.plan90_1
+
+test "copy from too short neg" panics "requires failed" {
+    mut dst []int = [0, 0, 0, 0]
+    ro src []int = [1, 2]
+    dst.copy_from(src)
+}

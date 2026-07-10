@@ -1,0 +1,11 @@
+//
+// BoxIter step_by(0) violates `requires n > 0` contract — runtime panic.
+
+module nova_tests.plan153_2
+
+import std.collections.vec_lazy
+
+test "step_by zero panics" panics "requires" {
+    ro v = Vec[int].of(1, 2, 3)
+    v.lazy().step_by(0).for_each(|_| {})
+}

@@ -5784,6 +5784,29 @@ impl Parser {
                 ))
             }
         };
+        // Plan 173 Ф.6 (D348): контекстное KW `panics` + строка-паттерн —
+        // инверсия PASS/FAIL (PASS ⇔ тело запаниковало сообщением ⊇ паттерн).
+        // Как `raw`/`bench` — обычный идентификатор вне этой позиции.
+        let panics = if matches!(&self.peek().kind, TokenKind::Ident(s) if s == "panics") {
+            self.bump();
+            match &self.peek().kind {
+                TokenKind::Str(s) => {
+                    let pat = s.clone();
+                    self.bump();
+                    Some(pat)
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "expected panic-message pattern as string literal after \
+                         `panics` (D348: `test \"имя\" panics \"паттерн\" { … }`; \
+                         пустая строка = любая паника)",
+                        self.peek().span,
+                    ))
+                }
+            }
+        } else {
+            None
+        };
         let body = self.parse_block()?;
         let body_span = body.span;
         Ok(TestDecl {
@@ -5791,6 +5814,7 @@ impl Parser {
             body,
             span: start.merge(body_span),
             test_access,
+            panics,
         })
     }
 

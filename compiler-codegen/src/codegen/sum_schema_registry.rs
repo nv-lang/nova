@@ -255,7 +255,7 @@ impl SumSchemaRegistry {
         None
     }
 
-    /// [M-sync-crossmodule-samename-type-collision] (D348): distinct sum names
+    /// [M-sync-crossmodule-samename-type-collision] (D381): distinct sum names
     /// (module-qualified bases, post collision-aware mangling) that declare
     /// `variant_name`. A `len() >= 2` result means the variant is SHARED across
     /// sums (e.g. `Other` in three different `ErrorKind`s) → a bare constructor
