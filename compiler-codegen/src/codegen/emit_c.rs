@@ -489,6 +489,14 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
     }
 }
 
+/// Plan 172.14 (sret/_out §1): форма тела для sret-классификации.
+enum SretBodyForm {
+    /// tail = `Self{...}` (единственный Self-литерал тела).
+    Leaf,
+    /// tail = static-вызов `Vec[..].<m>(...)` — проброс `_out` в m__sret.
+    ChainTo(String),
+}
+
 pub struct CEmitter {
     out: String,
     /// File-scope handler impl function bodies (ctx structs + forward decls + bodies)
@@ -1587,6 +1595,20 @@ pub struct CEmitter {
     /// внешнего вызова записал бы слот и утёк) — и take()'ит сигнал.
     /// Сбрасывается безусловно после emit RHS.
     sret_out_dest: Option<(String, crate::ast::ExprId)>,
+    /// Plan 172.14 (sret/_out §2): реестр sret-eligible функций — classic
+    /// C-имя → базовый C-тип S (без `*`). Потребитель: перехват ExprKind::Call
+    /// (armed call-site / tail-проброс цепочки) переписывает `f(args)` →
+    /// `f__sret(args, dest)`.
+    sret_fns: HashMap<String, String>,
+    /// Plan 172.14 (sret/_out §2): активен ТОЛЬКО при эмиссии тела
+    /// `__sret`-варианта — имя C-параметра назначения (`_out`). Потребители:
+    /// (a) emit_record_lit — Self-литерал типа возврата конструируется в _out
+    /// без nova_alloc; (b) emit_block_stmts trailing — взводит sret_out_dest
+    /// для tail-Call (проброс _out сквозь цепочку).
+    sret_fn_out: Option<String>,
+    /// Plan 172.14 (sret/_out §2): режим второй эмиссии — текущий emit_fn
+    /// эмитит `__sret`-вариант (имя+`__sret`, параметр `S* _out`).
+    sret_variant_emit: bool,
     /// Plan 143.2 [M-opt-leaf-preempt-entry-elision]: whole-program set of
     /// FnKeys whose function-prologue `nova_preempt_check();` MUST be kept.
     /// Computed once per module in `emit_module` (source-level call-graph
@@ -2003,6 +2025,9 @@ impl CEmitter {
             promoted_primitive_locals: HashSet::new(),
             pending_value_record_heap_promote: None,
             sret_out_dest: None,
+            sret_fns: HashMap::new(),
+            sret_fn_out: None,
+            sret_variant_emit: false,
             // Plan 143.2: default empty/unpopulated → KEEP everything until
             // emit_module runs the pre-pass.
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
@@ -13198,6 +13223,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         self.line(&format!("static {} {}({});", ret, mangled, params));
+        // Plan 172.14 (sret/_out §2): forward-decl `__sret`-варианта для
+        // sret-eligible методов (та же классификация, что в emit_fn).
+        if f.receiver.is_some() && self.sret_fn_eligible(f, &ret) {
+            let params_sret = if params == "void" {
+                format!("{} _out", ret)
+            } else {
+                format!("{}, {} _out", params, ret)
+            };
+            self.line(&format!("static {} {}__sret({});", ret, mangled, params_sret));
+        }
         Ok(())
     }
 
@@ -20018,12 +20053,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Enqueue for body emission — prefix __method__TYPE::name so worklist drain can route
         let worklist_key = format!("__method__{}::{}", recv_type, fn_decl.name);
-        self.mono_worklist.push((worklist_key, Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
+        self.mono_worklist.push((worklist_key.clone(), Self::subst_vec_from_c_pairs(&type_subst), mono_name.to_string()));
         // [M-138.2-generic-method-overload-mono] Record the EXACT chosen overload
         // for this final mono name so the drain emits its body (not a bare-name
         // first-wins re-lookup). Keyed on the suffixed `mono_name`, so getter and
         // setter (distinct mono names) each map to their own FnDecl.
         self.mono_method_fndecl_for_name.insert(mono_name.to_string(), fn_decl.clone());
+        // Plan 172.14 (sret/_out §2): sret-eligible mono-метод — регистрируем
+        // classic-имя в реестре, эмитим второй fwd-decl `__sret` (доп. параметр
+        // `S* _out`) и ставим второе тело в тот же worklist (emit_monomorphized_
+        // method детектит суффикс имени). НЕ для Option/Result (другой fwd-канал,
+        // вне периметра — ret_c гейт Nova_Vec____ их и так исключает).
+        if !mono_name.ends_with("__sret")
+            && !matches!(recv_type, "Option" | "Result")
+            && self.sret_fn_eligible(fn_decl, &ret_c)
+        {
+            self.sret_fns.insert(
+                mono_name.to_string(), ret_c.trim_end_matches('*').trim().to_string());
+            let sret_name = format!("{}__sret", mono_name);
+            let params_sret = if params_str == "void" {
+                format!("{} _out", ret_c)
+            } else {
+                format!("{}, {} _out", params_str, ret_c)
+            };
+            self.mono_fwd_decls.push_str(
+                &format!("static {} {}({});\n", ret_c, sret_name, params_sret));
+            self.mono_worklist.push((
+                worklist_key, Self::subst_vec_from_c_pairs(&type_subst), sret_name.clone()));
+            self.mono_method_fndecl_for_name.insert(sret_name, fn_decl.clone());
+        }
     }
 
     /// Plan 48: emit a monomorphized METHOD body (instance method variant of emit_monomorphized_fn).
@@ -20101,6 +20159,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for (p, ty) in fn_decl.params.iter().zip(&param_c_tys) {
             parts.push(format!("{} {}", ty, p.name));
         }
+        // Plan 172.14 (sret/_out §2): mono `__sret`-вариант (детект по суффиксу
+        // имени, поставлен register_mono_method_instance) — доп. параметр
+        // `S* _out` + активный sret_fn_out на тело (восстановление в конце).
+        let is_sret_variant = mono_name.ends_with("__sret");
+        if is_sret_variant {
+            parts.push(format!("{} _out", ret_c));
+        }
+        let saved_sret_fn_out = if is_sret_variant {
+            std::mem::replace(&mut self.sret_fn_out, Some("_out".to_string()))
+        } else {
+            self.sret_fn_out.take()
+        };
         let params_str = if parts.is_empty() { "void".to_string() } else { parts.join(", ") };
         // Buffer body
         let saved_out = std::mem::take(&mut self.out);
@@ -20584,6 +20654,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.out.push_str(&fn_body);
         self.current_type_subst = saved_subst;
         self.current_emit_file_id = saved_emit_file_id_mono; // [M-sync-crossmodule…] D381
+        // Plan 172.14 (sret/_out §2): restore sret-режима тела.
+        self.sret_fn_out = saved_sret_fn_out;
         // Plan 11 Follow-up: restore current_receiver_type теперь, когда body
         // полностью emitted (включая все Self-resolution context'ы).
         self.current_receiver_type = None;
@@ -22017,6 +22089,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (captured as the TRUE original above, D381).
         self.current_emit_file_id = Some(f.span.file_id);
         let mangled = self.mangle_fn(f);
+        // Plan 172.14 (sret/_out §1-2): классификация sret-eligible по форме.
+        // Первая (classic) эмиссия регистрирует реестр; режим sret_variant_emit
+        // (вторая эмиссия, взводится в конце этой fn) меняет имя на `__sret`,
+        // добавляет параметр `S* _out` и активирует sret_fn_out на тело.
+        let fn_sret_eligible = f.receiver.is_some() && self.sret_fn_eligible(f, &ret);
+        if fn_sret_eligible && !self.sret_variant_emit {
+            self.sret_fns.insert(
+                mangled.clone(), ret.trim_end_matches('*').trim().to_string());
+        }
+        let mangled = if self.sret_variant_emit {
+            format!("{}__sret", mangled)
+        } else {
+            mangled
+        };
         // Plan 63 Fix F+ [M-result-erased-no-mono]: register fn's Result Ok
         // payload mono'd type. Enables call-site propagation (let r = parse_kv())
         // и inline match без let-binding.
@@ -22115,6 +22201,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
         self.indent = 0;
+        // Plan 172.14 (sret/_out §2): __sret-вариант — доп. параметр `S* _out`.
+        let params = if self.sret_variant_emit && fn_sret_eligible {
+            if params == "void" {
+                format!("{} _out", ret)
+            } else {
+                format!("{}, {} _out", params, ret)
+            }
+        } else {
+            params
+        };
         self.line(&format!("static {} {}({}) {{", ret, mangled, params));
         self.indent = 1;
         // Plan 44.7: preemption safepoint. First statement of every Nova
@@ -22388,6 +22484,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.out.push_str(&fn_body);
         // Plan 170 (D307): restore the previous emission-file context.
         self.current_emit_file_id = saved_emit_file_id;
+        // Plan 172.14 (sret/_out §2): вторая эмиссия — `__sret`-вариант того же
+        // AST-тела (classic выше остаётся байт-идентичной; аллокация листа
+        // элидируется только в __sret-цепочке). Рекурсия однократна (флаг).
+        if fn_sret_eligible && !self.sret_variant_emit {
+            self.sret_variant_emit = true;
+            self.sret_fn_out = Some("_out".to_string());
+            let r = self.emit_fn(f);
+            self.sret_fn_out = None;
+            self.sret_variant_emit = false;
+            r?;
+        }
         Ok(())
     }
 
@@ -23866,6 +23973,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .map(|sv| Self::is_value_struct_ptr(sv) && sv == ret_ty)
                 .unwrap_or(false);
             let prev_recv_ret = self.in_recv_ptr_return_position.replace(fluent_self_ret);
+            // Plan 172.14 (sret/_out §2): в теле __sret-варианта tail-Call
+            // цепочки прокидывает `_out` — взводим armed на ExprId trailing;
+            // потребитель sret_maybe_rewrite_call перепишет `callee(args)` →
+            // `callee__sret(args, _out)`. Безусловный сброс после эмиссии.
+            if let Some(out_name) = self.sret_fn_out.clone() {
+                if trailing.id.is_set()
+                    && matches!(&trailing.kind, ExprKind::Call { .. })
+                {
+                    self.sret_out_dest = Some((out_name, trailing.id));
+                }
+            }
             // Plan 172.1 [M-172.1-some-target-coerce]: NovaOpt_<X>/typed-int return coerces
             // the trailing to the return type — `Some(<int-literal>) -> Option[uint]` builds
             // `NovaOpt_nova_uint`, not the literal-default `NovaOpt_nova_int` (int-collapse).
@@ -23874,6 +23992,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else {
                 self.emit_expr(trailing)?
             };
+            if self.sret_fn_out.is_some() {
+                self.sret_out_dest = None;
+            }
             self.in_recv_ptr_return_position.set(prev_recv_ret);
             // Plan 184 (Р5/Р7) [M-184-mut-chain-return-position]: a value-record
             // fluent `-> @` chain in trailing (implicit-return) position yields
@@ -24181,9 +24302,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && ty_c.starts_with("Nova_Vec____")
                     && ty_c.ends_with('*') && !ty_c.ends_with("**")
                     && decl.value.id.is_set()
-                    && matches!(&decl.value.kind,
-                        ExprKind::Index { index, .. }
-                            if matches!(index.kind, ExprKind::Range { .. }))
+                    && (matches!(&decl.value.kind,
+                            ExprKind::Index { index, .. }
+                                if matches!(index.kind, ExprKind::Range { .. }))
+                        // RHS Call: потребитель (sret_maybe_rewrite_call) сам
+                        // проверит cname ∈ sret_fns; непотреблённый armed —
+                        // безусловный сброс ниже, слот останется мёртвым.
+                        || matches!(&decl.value.kind, ExprKind::Call { .. }))
                     && self.current_fn_id.as_ref().zip(self.escape_result.as_ref())
                         .map_or(false, |(fid, esc)| !esc.ident_escapes(fid, &binding));
                 if sret_stack_armed {
@@ -27267,7 +27392,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         "Trailing::Fn handled above by pre-rewrite"
                     ),
                 });
-                self.emit_call_with_trailing(func, args, legacy_tb.as_ref(), expr.id)
+                let call_s = self.emit_call_with_trailing(func, args, legacy_tb.as_ref(), expr.id)?;
+                // Plan 172.14 (sret/_out §2-3): armed call-site / tail-проброс —
+                // единый потребитель переписывает прямую форму на __sret.
+                Ok(self.sret_maybe_rewrite_call(call_s, expr.id))
             }
 
             ExprKind::Member { obj, name } => {
@@ -38802,6 +38930,151 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         result
     }
 
+    /// Plan 172.14 (sret/_out §1): классификация sret-eligible ПО ФОРМЕ
+    /// (единый предикат, не per-типовые ветки). Стартовый периметр (расширение
+    /// после зелёных гейтов): C-возврат `Nova_Vec____*` (heap-record ≤3 слов),
+    /// тело: (a) ЛИСТ — tail = record-литерал `Self{...}` и НИ ОДНОГО другого
+    /// Self-литерала в теле; (b) ЦЕПОЧКА — tail = static-вызов `Vec[..].<m>`,
+    /// где m — лист (fixpoint глубиной 1: bytes→from_raw_parts).
+    fn sret_fn_eligible(&self, f: &FnDecl, ret_c: &str) -> bool {
+        if !ret_c.starts_with("Nova_Vec____")
+            || !ret_c.ends_with('*')
+            || ret_c.ends_with("**")
+        {
+            return false;
+        }
+        Self::sret_body_form(f).is_some()
+            && match Self::sret_body_form(f) {
+                Some(SretBodyForm::Leaf) => true,
+                Some(SretBodyForm::ChainTo(callee_name)) => {
+                    // Цепочка на static Vec-метод: он должен быть листом.
+                    self.generic_type_methods.get("Vec")
+                        .and_then(|ms| ms.iter().find(|m| m.name == callee_name))
+                        .map_or(false, |m| matches!(
+                            Self::sret_body_form(m), Some(SretBodyForm::Leaf)))
+                }
+                None => false,
+            }
+    }
+
+    /// Форма тела для sret-классификации: `Leaf` — tail = `Self{...}` и других
+    /// Self-литералов в теле нет (единственность записи в _out); `ChainTo(m)` —
+    /// tail = static-вызов `Vec[..].m(...)` / `Vec.m(...)`. Ранний `return`
+    /// в теле → None (V1-консерватизм: смешанные пути не классифицируем).
+    fn sret_body_form(f: &FnDecl) -> Option<SretBodyForm> {
+        let (stmts, tail): (&[Stmt], &Expr) = match &f.body {
+            FnBody::Expr(e) => (&[], e),
+            FnBody::Block(b) => (b.stmts.as_slice(), b.trailing.as_deref()?),
+            FnBody::External => return None,
+        };
+        // V1: ранние return и Self-литералы вне tail не допускаются.
+        for s in stmts {
+            if matches!(s, Stmt::Return { .. } | Stmt::Throw { .. }) {
+                return None;
+            }
+            if let Stmt::Let(d) = s {
+                if Self::expr_contains_self_record_lit(&d.value) {
+                    return None;
+                }
+            }
+        }
+        match &tail.kind {
+            ExprKind::RecordLit { type_name: Some(p), .. }
+                if p.len() == 1 && p[0] == "Self" => Some(SretBodyForm::Leaf),
+            ExprKind::Call { func, .. } => {
+                let (base_is_vec, mname): (bool, Option<&String>) = match &func.kind {
+                    ExprKind::Member { obj, name } => match &obj.kind {
+                        ExprKind::TurboFish { base, .. } => (
+                            matches!(&base.kind, ExprKind::Ident(n) if n == "Vec"),
+                            Some(name),
+                        ),
+                        ExprKind::Ident(n) => (n == "Vec", Some(name)),
+                        _ => (false, None),
+                    },
+                    ExprKind::Path(parts) if parts.len() == 2 => {
+                        (parts[0] == "Vec", Some(&parts[1]))
+                    }
+                    _ => (false, None),
+                };
+                if base_is_vec {
+                    mname.map(|m| SretBodyForm::ChainTo(m.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Рекурсивный скан: содержит ли выражение record-литерал `Self{...}`.
+    fn expr_contains_self_record_lit(e: &Expr) -> bool {
+        if let ExprKind::RecordLit { type_name: Some(p), .. } = &e.kind {
+            if p.len() == 1 && p[0] == "Self" {
+                return true;
+            }
+        }
+        // Консервативный поверхностный обход основных контейнеров.
+        match &e.kind {
+            ExprKind::Call { func, args, .. } => {
+                Self::expr_contains_self_record_lit(func)
+                    || args.iter().any(|a| Self::expr_contains_self_record_lit(a.expr()))
+            }
+            ExprKind::Member { obj, .. } => Self::expr_contains_self_record_lit(obj),
+            ExprKind::Index { obj, index } => {
+                Self::expr_contains_self_record_lit(obj)
+                    || Self::expr_contains_self_record_lit(index)
+            }
+            ExprKind::Unary { operand, .. } => Self::expr_contains_self_record_lit(operand),
+            ExprKind::Binary { left, right, .. } => {
+                Self::expr_contains_self_record_lit(left)
+                    || Self::expr_contains_self_record_lit(right)
+            }
+            ExprKind::Block(b) => {
+                b.stmts.iter().any(|s| match s {
+                    Stmt::Let(d) => Self::expr_contains_self_record_lit(&d.value),
+                    Stmt::Expr(x) => Self::expr_contains_self_record_lit(x),
+                    Stmt::Return { value: Some(x), .. } => Self::expr_contains_self_record_lit(x),
+                    _ => false,
+                }) || b.trailing.as_deref().map_or(false, Self::expr_contains_self_record_lit)
+            }
+            ExprKind::TupleLit(xs) => xs.iter().any(Self::expr_contains_self_record_lit),
+            ExprKind::RecordLit { fields, .. } => fields.iter().any(|fl| {
+                fl.value.as_ref().map_or(false, Self::expr_contains_self_record_lit)
+            }),
+            ExprKind::As(x, _) | ExprKind::Try(x) | ExprKind::Bang(x) => {
+                Self::expr_contains_self_record_lit(x)
+            }
+            _ => false,
+        }
+    }
+
+    /// Plan 172.14 (sret/_out §2-3): единый потребитель armed-сигнала на
+    /// точке вызова — переписывает ПРЯМУЮ форму вызова `cname(args)` в
+    /// `cname__sret(args, dest)`, если cname ∈ sret_fns и armed ExprId
+    /// совпал (RHS верхнего Let / tail цепочки). Не-прямые формы (casts,
+    /// tmp-имена) — no-op, armed остаётся до безусловного сброса.
+    fn sret_maybe_rewrite_call(&mut self, s: String, expr_id: crate::ast::ExprId) -> String {
+        if !expr_id.is_set() || !s.ends_with(')') {
+            return s;
+        }
+        let Some((dest, armed_id)) = self.sret_out_dest.clone() else { return s };
+        if armed_id != expr_id {
+            return s;
+        }
+        let Some(paren) = s.find('(') else { return s };
+        let cname = &s[..paren];
+        if !self.sret_fns.contains_key(cname) {
+            return s;
+        }
+        self.sret_out_dest = None;
+        let inner = &s[paren + 1..s.len() - 1];
+        if inner.trim().is_empty() {
+            format!("{}__sret({})", cname, dest)
+        } else {
+            format!("{}__sret({}, {})", cname, inner, dest)
+        }
+    }
+
     fn emit_record_lit(
         &mut self,
         type_name: Option<&[String]>,
@@ -39120,9 +39393,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.var_types.insert(tmp.clone(), format!("NovaValue_{}", struct_name));
                 }
             } else {
+                // Plan 172.14 (sret/_out §2): в теле __sret-варианта Self-литерал
+                // ТИПА ВОЗВРАТА конструируется по месту в `_out` (без nova_alloc;
+                // единственность литерала гарантирует классификация sret_body_form).
+                let sret_dest: Option<String> = self.sret_fn_out.as_ref()
+                    .filter(|_| self.current_fn_return_ty.as_deref()
+                        == Some(&format!("Nova_{}*", struct_name)))
+                    .cloned();
+                if let Some(out_name) = sret_dest {
+                    self.line(&format!("Nova_{}* {} = {};", struct_name, tmp, out_name));
+                } else {
                 // Plain record struct (heap-allocated, GC-managed)
                 self.line(&format!("Nova_{}* {} = (Nova_{}*)nova_alloc(sizeof(Nova_{}));",
                     struct_name, tmp, struct_name, struct_name));
+                }
                 for f in fields {
                     if f.is_spread {
                         if let Some(src_expr) = &f.value {
