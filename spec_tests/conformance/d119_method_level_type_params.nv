@@ -10,26 +10,26 @@ module spec_tests.conformance
 
 type D119Box[T] { inner T }
 
-fn D119Box[T].of(v T) -> D119Box[T] => { inner: v }
+fn D119Box[T].new(v T) -> D119Box[T] => { inner: v }
 
 // Receiver-level T, method-level U. U lives only at method scope, drives a fresh
 // (T,U) mono-instance per call-site. U inferred from the closure RETURN type.
 fn D119Box[T] @map[U](f fn(T) -> U) -> D119Box[U] {
-    D119Box[U].of(f(@inner))
+    D119Box[U].new(f(@inner))
 }
 
 // U bound by a NON-closure arg (bidirectional inference, decision-tree step 2,
 // non-closure branch): the arg's type fixes U directly.
-fn D119Box[T] @replace[U](v U) -> D119Box[U] => D119Box[U].of(v)
+fn D119Box[T] @replace[U](v U) -> D119Box[U] => D119Box[U].new(v)
 
 test "method-level U inferred from closure return; two-level (T,U) mono (D119)" {
-    ro w = D119Box[int].of(5)            // receiver T = int
+    ro w = D119Box[int].new(5)            // receiver T = int
     ro s = w.map(|x| str.from(x))        // (T=int, U=str) — U inferred from closure return
     assert(s.inner == "5")
 }
 
 test "same receiver T, distinct method U → distinct mono instances (D119)" {
-    ro w = D119Box[int].of(5)            // T = int
+    ro w = D119Box[int].new(5)            // T = int
     ro a = w.map(|x| x * 2)              // (T=int, U=int)
     ro s = w.map(|x| str.from(x))        // (T=int, U=str) — does NOT overwrite the int instance
     assert(a.inner == 10)
@@ -37,14 +37,14 @@ test "same receiver T, distinct method U → distinct mono instances (D119)" {
 }
 
 test "map chain int → str → str without erasure (D119)" {
-    ro w = D119Box[int].of(7)
+    ro w = D119Box[int].new(7)
     ro s = w.map(|x| str.from(x))        // (T=int,  U=str) → D119Box[str]
     ro s2 = s.map(|x| x + "!")           // (T=str,  U=str) → receiver T re-resolved from chained value
     assert(s2.inner == "7!")
 }
 
 test "U bound by non-closure arg (D119)" {
-    ro w = D119Box[int].of(1)            // T = int
+    ro w = D119Box[int].new(1)            // T = int
     ro s = w.replace("swapped")          // (T=int, U=str) — U from the arg type
     assert(s.inner == "swapped")
     ro b = s.replace(true)               // (T=str, U=bool)
@@ -52,7 +52,7 @@ test "U bound by non-closure arg (D119)" {
 }
 
 test "method-level U keeps sized width — no int-collapse (D119)" {
-    ro w = D119Box[int].of(200)          // T = int
+    ro w = D119Box[int].new(200)          // T = int
     ro u = w.map(|x| x as u8)            // (T=int, U=u8) — width survives the mono
     assert(u.inner == 200)
     ro g = w.map(|x| x as uint)          // (T=int, U=uint) — unsigned ≠ int

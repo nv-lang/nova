@@ -18,11 +18,11 @@ fn D268Box @measure() -> int => @size
 
 // Использование через generic bound — подтверждает конформность
 fn d268_describe_all[T D268Describe](items []T) -> str {
-    mut result = ""
+    consume result = StringBuilder.new()
     for item in items {
-        result = result + item.describe() + " "
+        result.append(item.describe()).append(" ")
     }
-    result
+    result.into_str()
 }
 
 fn d268_total[T D268Measure](items []T) -> int {

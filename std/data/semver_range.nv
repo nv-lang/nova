@@ -12,7 +12,7 @@
 // Используется в D78 SAT-resolver для package dependencies.
 //
 // API:
-//   VersionReq.parse(s str) Fail[ParseRangeError] -> VersionReq
+//   s.to_versionreq() -> Result[VersionReq, ParseRangeError]
 //   req.matches(version Version) -> bool
 
 module data.semver_range
@@ -40,7 +40,7 @@ export type ComparatorSet {
 ///
 /// # Examples
 /// ```nova
-/// let req = VersionReq.parse("^1.2.3")  // >=1.2.3 <2.0.0
+/// let req = "^1.2.3".to_versionreq()!!  // >=1.2.3 <2.0.0
 /// assert(req.matches("1.5.0".to_version()!!))
 /// ```
 #stable(since = "0.1")
@@ -62,77 +62,80 @@ export type ParseRangeError enum
 /// Syntax: `1.2.3` (exact), `^1.2.3` (compatible), `~1.2.3` (patch),
 /// `>=1.0.0` (lower bound), `>1.0.0 <2.0.0` (AND), `1.0.0 || 2.0.0` (OR),
 /// `*` (any).
+///
+/// Статик `VersionReq.parse(s)` ретрактирован (nv-coding-style §1а,
+/// «пятая дверь») — конверсия живёт на источнике (`s.to_versionreq()`),
+/// как и `s.to_version()` в semver.nv.
 #stable(since = "0.1")
-export fn VersionReq.parse(s str) Fail[ParseRangeError] -> Self {
-    ro trimmed = s.trim_ascii()
-    if trimmed.byte_len() == 0 { throw EmptyInput }
+export fn str @to_versionreq() -> Result[VersionReq, ParseRangeError] {
+    ro trimmed = @trim_ascii()
+    if trimmed.byte_len() == 0 { return Err(EmptyInput) }
 
     if trimmed == "*" {
-        return { sets: [], any_match: true }
+        return Ok({ sets: [], any_match: true })
     }
 
     // Split by ||
     mut sets []ComparatorSet = []
     ro or_groups = trimmed.split("||")
     for group in or_groups {
-        ro comps = parse_comparator_set(group.trim_ascii())
+        ro comps = parse_comparator_set(group.trim_ascii())?
         sets.push({ comparators: comps })
     }
-    { sets, any_match: false }
+    Ok({ sets, any_match: false })
 }
 
-fn parse_comparator_set(s str) Fail[ParseRangeError] -> []Comparator {
+fn parse_comparator_set(s str) -> Result[[]Comparator, ParseRangeError] {
     mut out []Comparator = []
     // Split by whitespace
     ro tokens = s.split(" ")
     for tok in tokens {
         ro t = tok.trim_ascii()
         if t.byte_len() == 0 { continue }
-        ro comps = parse_one_comparator(t)
+        ro comps = parse_one_comparator(t)?
         for c in comps { out.push(c) }
     }
-    out
+    Ok(out)
 }
 
 // Returns []Comparator потому что ^1.2.3 → 2 comparators.
-fn parse_one_comparator(s str) Fail[ParseRangeError] -> []Comparator {
+fn parse_one_comparator(s str) -> Result[[]Comparator, ParseRangeError] {
     if s.starts_with("^") {
         // ^1.2.3 → >=1.2.3 <2.0.0
-        ro v = parse_version(s[1..s.byte_len()])
+        ro v = parse_version(s[1..s.byte_len()])?
         ro upper = Version.new(v.major + 1, 0, 0)
-        return [Ge(v), Lt(upper)]
+        return Ok([Ge(v), Lt(upper)])
     }
     if s.starts_with("~") {
         // ~1.2.3 → >=1.2.3 <1.3.0
-        ro v = parse_version(s[1..s.byte_len()])
+        ro v = parse_version(s[1..s.byte_len()])?
         ro upper = Version.new(v.major, v.minor + 1, 0)
-        return [Ge(v), Lt(upper)]
+        return Ok([Ge(v), Lt(upper)])
     }
     if s.starts_with(">=") {
-        return [Ge(parse_version(s[2..s.byte_len()]))]
+        return Ok([Ge(parse_version(s[2..s.byte_len()])?)])
     }
     if s.starts_with("<=") {
-        return [Le(parse_version(s[2..s.byte_len()]))]
+        return Ok([Le(parse_version(s[2..s.byte_len()])?)])
     }
     if s.starts_with(">") {
-        return [Gt(parse_version(s[1..s.byte_len()]))]
+        return Ok([Gt(parse_version(s[1..s.byte_len()])?)])
     }
     if s.starts_with("<") {
-        return [Lt(parse_version(s[1..s.byte_len()]))]
+        return Ok([Lt(parse_version(s[1..s.byte_len()])?)])
     }
     if s.starts_with("=") {
-        return [Eq(parse_version(s[1..s.byte_len()]))]
+        return Ok([Eq(parse_version(s[1..s.byte_len()])?)])
     }
-    [Eq(parse_version(s))]
+    Ok([Eq(parse_version(s)?)])
 }
 
-fn parse_version(s str) Fail[ParseRangeError] -> Version =>
+fn parse_version(s str) -> Result[Version, ParseRangeError] =>
     // `to_version()` возвращает Result (D325) — конвертируем Err в наш
-    // Fail-эффект честным match (старый with-хендлер был под Fail-версию
-    // semver-парсера, ретрактированную при промоушене).
+    // ParseRangeError честным match.
     match s.to_version() {
-        Ok(v)  => v
-        Err(_) => throw InvalidVersion { value: s }
+        Ok(v)  => Ok(v)
+        Err(_) => Err(InvalidVersion { value: s })
     }
 
 

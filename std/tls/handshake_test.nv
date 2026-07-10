@@ -51,7 +51,7 @@ test "smoke: self-signed пара — handshake + шифрованный echo + 
                 ro accepted = lst.accept()
                 lst.close()
                 consume conn = must_tcp(accepted)
-                ro scfg = ServerConfig.new(fixture_cert(), fixture_key()).with_alpn(["http/1.1"])
+                ro scfg = ServerConfig.new(fixture_cert(), fixture_key()).alpn_protocols(["http/1.1"])
                 consume tls = must_tls(TlsStream.accept(conn, scfg))
                 // D133: panic-арм не снимает consume-обязательство → ошибки
                 // сворачиваются в сентинелы, assert'ы ПОСЛЕ close.
@@ -73,7 +73,7 @@ test "smoke: self-signed пара — handshake + шифрованный echo + 
                 assert(port > 0)
                 consume conn = must_tcp(TcpStream.connect(SocketAddr.loopback(port)))
                 ro ccfg = ClientConfig.new("localhost")
-                    .with_verification(VerificationMode.CustomRoots(fixture_cert()))
+                    .verification(VerificationMode.CustomRoots(fixture_cert()))
                 consume tls = must_tls(TlsStream.connect(conn, ccfg))
                 // Инспекция после handshake: версия согласована, ALPN сошёлся.
                 assert(match tls.protocol_version() {
@@ -135,7 +135,7 @@ test "NEG-runtime: SNI не совпадает с сертом → HostnameMisma
                 consume conn = must_tcp(TcpStream.connect(SocketAddr.loopback(port)))
                 // Серт покрывает ТОЛЬКО localhost/127.0.0.1 — wrong.example не пройдёт.
                 ro ccfg = ClientConfig.new("wrong.example")
-                    .with_verification(VerificationMode.CustomRoots(fixture_cert()))
+                    .verification(VerificationMode.CustomRoots(fixture_cert()))
                 match TlsStream.connect(conn, ccfg) {
                     Ok(s)  => {
                         s.close()

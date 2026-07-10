@@ -4,31 +4,36 @@ name: nova-lint
 # автоматически»): CI-гейт конвенционных W_*-правил (реестр
 # compiler-codegen/src/lints.rs::CONV_RULES, запуск `nova lint`).
 #
-# ВАЖНО (найдено при введении этого workflow, 2026-07-10): предполагалось,
-# что полный `nova lint std` уже чист (0 находок) и его можно гейтить целиком.
-# Проверка эмпирически ОПРОВЕРГЛА это: полный `nova lint std` даёт 15
-# pre-existing находок (std/tls/* — свежесмерженная ветка tls-116;
-# + std/data/semver_range.nv, std/encoding/toml.nv, std/http/transport/real.nv,
-# std/time/civil/tzif.nv — из более раннего кода), ни одна НЕ относится к
-# W_LEADING_BINOP_CONTINUATION и ни одна не внесена этой волной (правки этой
-# волны — только compiler-codegen/src/lints.rs + test_runner.rs, ни один .nv
-# не тронут). Санация этого долга — отдельная задача, не входит в периметр
-# волны, вводящей этот workflow.
+# ИСТОРИЯ (2026-07-10): при введении этого workflow полный `nova lint std`
+# нёс 15 pre-existing находок (std/tls/*, std/data/semver_range.nv,
+# std/encoding/toml.nv, std/http/transport/real.nv, std/time/civil/tzif.nv),
+# а `nova lint spec_tests` — 13 (conformance-фикстуры). Поэтому оба полных
+# прогона были ВРЕМЕННО оставлены информационными (`continue-on-error`).
+#
+# САНАЦИЯ ЗАВЕРШЕНА (ветка lint-sanitation, 2026-07-10): все 15 std + 13
+# spec_tests находок разобраны (реальные фиксы на канон, ни одного
+# подавления-маркером в обход). `nova lint std` = 0 И `nova lint spec_tests`
+# = 0. Поэтому ОБА полных прогона ТЕПЕРЬ — ЖЁСТКИЕ ГЕЙТЫ (см. ниже).
 #
 # Периметр гейтов:
-#   - `W_LEADING_BINOP_CONTINUATION` по std/ И nova_tests/ (искл.
-#     nova_tests/lint/ — self-test фикстуры, см. ниже) — ЖЁСТКИЙ ГЕЙТ:
-#     подтверждено 0 находок по обоим корпусам при введении правила.
+#   - Полный `nova lint std` (ВСЕ правила реестра) — ЖЁСТКИЙ ГЕЙТ:
+#     подтверждено 0 находок после lint-sanitation. Ловит ЛЮБОЙ новый
+#     конвенционный дрейф в std/ на PR (не только W_LEADING_BINOP).
+#   - Полный `nova lint spec_tests` (ВСЕ правила) — ЖЁСТКИЙ ГЕЙТ:
+#     подтверждено 0 находок. `neg/`-фикстуры (намеренно неканоничный код
+#     EXPECT_COMPILE_ERROR) автоматически скипаются lint-walker'ом
+#     (nova-cli/src/main.rs cmd_lint: `is_neg_fixture`), гейтить их не надо.
 #   - Самотест реестра (conv_pos.nv/conv_clean.nv, nova_tests/lint/) —
 #     ЖЁСТКИЙ ГЕЙТ: регресс-гвард на сам МЕХАНИЗМ (правило перестало
 #     срабатывать / фикстура сломана), не на корпус. conv_pos.nv НАМЕРЕННО
-#     содержит находки (в т.ч. одну W_LEADING_BINOP_CONTINUATION) — поэтому
-#     исключается из корпусных гейтов выше через `--skip nova_tests/lint`.
-#   - Полный `nova lint` (все правила) по std/ И по nova_tests/ — НЕ гейт
-#     (`continue-on-error`): оба корпуса несут pre-existing находки по ДРУГИМ
-#     правилам вне периметра текущей волны — жёсткий гейт сразу покраснил бы
-#     CI на main. Jobs информационные (санация — отдельная задача), не
-#     блокируют merge.
+#     содержит находки — исключается из корпусных гейтов через
+#     `--skip nova_tests/lint`.
+#   - Полный `nova lint nova_tests` — НЕ гейт (`continue-on-error`):
+#     legacy-корпус (полу-сломанный, дублированный, помечен на удаление —
+#     см. spec_tests/nova.toml) несёт pre-existing находки по правилам вне
+#     периметра lint-sanitation-волны (та санировала std + spec_tests).
+#     Санация nova_tests не окупается (корпус удаляется) — job
+#     информационный.
 
 on:
   pull_request:
@@ -36,8 +41,13 @@ on:
     branches: [main]
 
 jobs:
-  nova-lint-leading-binop-gate:
-    name: nova lint W_LEADING_BINOP_CONTINUATION (std + nova_tests, gate)
+  nova-lint-leading-binop-nova-tests-gate:
+    name: nova lint W_LEADING_BINOP_CONTINUATION (nova_tests, gate)
+    # std покрыт полным `nova lint std`-гейтом ниже (все правила, включая
+    # W_LEADING_BINOP). Этот job сохраняет ТОЧЕЧНЫЙ гейт W_LEADING_BINOP по
+    # nova_tests — legacy-корпус целиком НЕ гейтится (debt), но именно это
+    # footgun-правило (ведущий `||` → тихий always-true miscompile,
+    # D417-класс) на нём держим жёстко.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -48,10 +58,38 @@ jobs:
         run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
-      - name: nova lint --rule W_LEADING_BINOP_CONTINUATION std (must be clean)
-        run: ./nova-cli/target/release/nova lint --rule W_LEADING_BINOP_CONTINUATION std
       - name: nova lint --rule W_LEADING_BINOP_CONTINUATION nova_tests, excl. self-test fixtures (must be clean)
         run: ./nova-cli/target/release/nova lint --rule W_LEADING_BINOP_CONTINUATION --skip nova_tests/lint nova_tests
+
+  nova-lint-std-gate:
+    name: nova lint std full (all rules — HARD GATE, must be clean)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: nova lint std (all conv rules — 0 findings required)
+        run: ./nova-cli/target/release/nova lint std
+
+  nova-lint-spec-tests-gate:
+    name: nova lint spec_tests full (all rules — HARD GATE, must be clean)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: nova lint spec_tests (all conv rules — 0 findings required; neg/ auto-skipped)
+        run: ./nova-cli/target/release/nova lint spec_tests
 
   nova-lint-registry-self-test:
     name: nova lint self-test (conv_pos/conv_clean regression guard)
@@ -78,24 +116,8 @@ jobs:
       - name: conv_clean.nv must stay clean (no false positives)
         run: ./nova-cli/target/release/nova lint nova_tests/lint/conv_clean.nv
 
-  nova-lint-std-full-debt:
-    name: nova lint std full (informational — pre-existing debt, non-blocking)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
-      - name: Build nova-cli (release)
-        run: cargo build --release --manifest-path nova-cli/Cargo.toml
-      - name: nova lint std (pre-existing debt outside this wave's perimeter, non-blocking)
-        run: ./nova-cli/target/release/nova lint std
-
   nova-lint-nova-tests-full-debt:
-    name: nova lint nova_tests full (informational — pre-existing debt, non-blocking)
+    name: nova lint nova_tests full (informational — legacy corpus debt, non-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -107,5 +129,5 @@ jobs:
         run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
-      - name: nova lint nova_tests (excl. self-test fixtures; pre-existing debt, non-blocking)
+      - name: nova lint nova_tests (excl. self-test fixtures; legacy debt, non-blocking)
         run: ./nova-cli/target/release/nova lint --skip nova_tests/lint nova_tests

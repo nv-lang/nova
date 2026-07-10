@@ -2876,20 +2876,32 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   Атомики не нужны. Пример: nova_const_ADDR_IMAGE_BYTES в любом net-CU.
 
 - **[M-lint-findings-static-conversion]** (2026-07-09, P3, Wave: миграционная волна §1а;
-  источник: план 185, `nova lint std/`) — 20 сайтов статик-конверсий `T.from(x)` /
-  `T.parse(s)` в std (Csv/Ini/Json.parse, Url/Body/BodyReader/HeaderValue/Ulid/Uuid.from,
+  источник: план 185, `nova lint std/`) — 21 сайт статик-конверсий `T.from(x)` /
+  `T.parse(s)` в std (Csv/Ini/Json/**Toml**.parse, Url/Body/BodyReader/HeaderValue/Ulid/Uuid.from,
   HashMap.from, Vec[T].from, JsonValue.try_from и др.) — «пятая дверь» по §1а
   nv-coding-style (ретракция 2026-07-09). Миграция = переименование публичного API
   (`s.to_json()`-семья) + правка вызовов; не входит в план 185. On-line маркеры
   на декларациях; полный список — `nova lint --rule W_STATIC_CONVERSION std/`
-  после снятия маркеров.
+  после снятия маркеров. [lint-sanitation 2026-07-10]: `Toml.parse` добавлен в
+  список — промоушен toml.nv из std/_experimental случился ПОСЛЕ первоначальной
+  волны (2026-07-09), маркер не был проставлен; проставлен сейчас. `VersionReq.parse`
+  (data/semver_range.nv) НЕ в этом списке — для него сделан полноценный фикс
+  (`str @to_versionreq() -> Result[...]`, по образцу `semver.nv`), т.к. файл малой
+  сложности без зависимых Fail-эффект regression-тестов.
 
 - **[M-lint-findings-fail-public-signature]** (2026-07-09, P3, Wave: D325-R5 миграция;
-  источник: план 185) — 7 сайтов `Fail[XError]` в публичных std-сигнатурах
-  (Csv/Ini.parse, Ulid.new/from, Uuid.from, testing/property assert_prop*) — по R5
+  источник: план 185) — 8 сайтов `Fail[XError]` в публичных std-сигнатурах
+  (Csv/Ini/**Toml**.parse, Ulid.new/from, Uuid.from, testing/property assert_prop*) — по R5
   D325 канон `Result[T, XError]`. Миграция = смена сигнатур + вызовов (у property —
   осознанный throw-дизайн тест-ассертов, решить при заходе). Проверка:
-  `nova lint --rule W_FAIL_PUBLIC_SIGNATURE std/`.
+  `nova lint --rule W_FAIL_PUBLIC_SIGNATURE std/`. [lint-sanitation 2026-07-10]:
+  `Toml.parse` — доп. причина держать Fail-эффект (не просто «ленивый долг»):
+  `std/encoding/toml_test.nv` (создан 2026-07-10, `[M-toml-repeated-fail-call-run-fail]`)
+  ПИНИТ поведение ПОВТОРНЫХ Fail-эффектных вызовов в одном `with`-scope именно
+  через `Toml.parse` как пробник механизма fail-frame; перевод на `Result`
+  убрал бы единственный удобный Fail-эффектный вызов и обнулил регресс-покрытие
+  того самого механизма. Конверсия — только вместе с ревизией этих тестов
+  (не в периметре этой волны).
 
 - **[M-lint-findings-manual-slice-copy]** ✅ **ЗАКРЫТ (2026-07-10, ветка std-hygiene).**
   ~~29~~ все сайты поэлементной копии `push(x[i])` в циклах (§18а) разобраны. (а)
@@ -2961,3 +2973,45 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 
 - **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ✅ снята тем же днём —
   трек доведён до конца (см. закрытый маркер выше), ветка `fixed-array-value` готова к слиянию.
+
+- **[M-vec-new-cap-chain-method-generic-erase]** (2026-07-10, P2, найден при
+  lint-sanitation/spec_tests-починке `W_RETIRED_NAME` `with_capacity`) —
+  чекер эрейзит `[]U.new().cap(n)` в bare `Vec` (E7301 «cannot assign value of
+  type `Vec` to ... declared as `[]U`»), когда `U` — МЕТОД-уровневый (не
+  receiver-уровневый и не конкретный) type-param. Минимальный репро:
+  ```nova
+  fn[T] []T @m[U](f fn(T) -> U) -> []U {
+      mut out []U = []U.new().cap(@len())   // E7301 здесь
+      for x in @ { out.push(f(x)) }
+      out
+  }
+  ```
+  `[]U.new()` ОТДЕЛЬНО резолвится верно (`Vec[U]`); `.cap(n)` (D117 `mut @cap(n)
+  -> @`) отдельным statement'ом на уже-типизированной `out` — тоже верно.
+  Обходной путь (используется в `spec_tests/conformance/
+  d145_fn_prefix_receiver_generic.nv::d145_map`, НЕ hack — оба варианта
+  одинаково каноничны): разбить на два statement'а (`mut out []U = []U.new()`
+  \ `out.cap(@len())`) вместо цепочки в одном выражении. Похоже на класс
+  ранее закрытого [M-http-props-mut-chain-stmt-value-copy-loss] (беглая
+  `-> @`-цепочка теряет тип/идентичность на value-типе), но ТА починка была
+  про chain-norm root-temp hoist для receiver уже известного типа; здесь
+  корень цепочки — САМ КОНСТРУКТОР (`[]U.new()`), типизированный
+  method-level generic'ом — вероятно другой путь в чекере (`assignable`/
+  `resolved_cat_of`, types/mod.rs). Не расследовано глубже (вне периметра
+  lint-sanitation волны) — чинить отдельным заходом compiler-codegen.
+
+- **[M-result-ok-unit-inference-mismatch]** (2026-07-10, P2, найден при
+  lint-sanitation/починке `W_RESULT_DISCARDED` в std/tls/stream.nv) —
+  `.ok()` на `Result[(), E]` (unit-ok тип) даёт checker/codegen рассинхрон:
+  чекер типизирует биндинг как `Option[E]` (Option ОШИБКИ), а codegen
+  корректно эмитит вызов `Result_method_ok_nova_unit_<E>` возвращающий
+  `NovaOpt_nova_unit` (Option[()]) → CC-FAIL «initializing `NovaOpt_<E>_p`
+  with an expression of incompatible type `NovaOpt_nova_unit`». Минимальный
+  повод: best-effort `flush_out(tcp, session).ok()`, где
+  `flush_out -> Result[(), TlsError]`. `.ok()` на Result с НЕ-unit ok-типом
+  (напр. `Result[[]u8, E]` в std/time/civil/tzif.nv) работает штатно —
+  дефект специфичен для unit-ok. Обход (в std/tls/stream.nv ×2): вместо
+  `.ok()` — именованный discard-биндинг `ro _sent = flush_out(...)` (не
+  swallow-match, lint-clean: `flush_out` вне RESULT_CALLEES-списка правила).
+  Чинить в чекере (вывод типа `Result[(), E].ok()` → `Option[()]`, не
+  `Option[E]`) отдельным заходом compiler-codegen.
