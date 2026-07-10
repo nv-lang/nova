@@ -39429,3 +39429,68 @@ nova-cli на том же дереве): 30 FAIL pre-existing, список ид
 
 Спека: D415 §7 п.8 переписан (маркер закрыт, формат цепочки + пример), список тестов D415
 дополнен; план 173.3 — closure-абзац маркера. Модель: sonnet.
+
+=== std-hygiene (2026-07-10, ветка std-hygiene от main efd66ea64) ===
+
+Две задачи по находкам владельца (модель: sonnet).
+
+Задача 1 — дыра приватности полей. Находка владельца: `ro n = raw.len`
+(std/http/server/wire.nv:20) компилировалась из чужого модуля, читая
+priv/module-priv поле `Vec[T].len` напрямую, хотя канон-доступ — метод
+`.len()`. Причина: `f3_check_member_ctx` (compiler-codegen/src/types/mod.rs)
+для типа с полем И одноимённым методом (Vec: поле `len` + метод `len()`,
+Plan 124/D220 + Plan 160/D281) имеет fast-path `has_same_name_method`,
+задуманный для CALL-формы (`s.len()` резолвится в метод, не в priv-field-
+read). Для НЕ-call формы (бэйр `raw.len`, без скобок) этот же fast-path
+материализовал тип поля и возвращался ДО priv-гейта — так что бэйр-доступ
+без скобок тихо читал сырое поле C-структуры, минуя ЛЮБУЮ проверку
+приватности (ни E_PRIV_FIELD_READ, ни E_FIELD_MODULE_PRIVATE). Фикс:
+зеркалирую тот же priv_field_access_allowed/module_priv_access_allowed
+гейт в non-call ветку — closes [M-173-priv-field-samename-bypass].
+Миграция std: ~30 бесскобочных сайтов `.len` (bare) → `.len()` в http/
+client/server/servernet, http/body, text/diff, text/regex, testing/
+property, time/cron, encoding/base64 — все ЗА ПРЕДЕЛАМИ collections.vec
+(внутримодульные сайты в collections/vec/*.nv легальны и не тронуты,
+D281 same-module access). Тесты: nova_tests/std_hygiene/
+neg_vec_priv_field_bare_access.nv (репро владельца, EXPECT
+E_FIELD_MODULE_PRIVATE) + pos_vec_len_call_ok.nv (регрессия .len()-вызова).
+Коммит 43d117122.
+
+Задача 2 — слайс-миграция, класс [M-lint-findings-manual-slice-copy]
+(~30 сайтов по всему std): поэлементный `push(x[i])` в счётном цикле →
+срез-вид `b[a..b]` (D262) либо `.append(view)` для bulk-конкат — канон
+§18а nv-coding-style. Затронуто: deflate.nv/inflate.nv (HLIT/HDIST-массив
+через append; частотный filtered-gather — не contiguous-range, false-
+positive эвристики снят локальной переменной), crypto (hmac/jwt/sha1/
+sha256/md5/bcrypt/uuid_namespace — digest `[N]u8`→`[]u8`; экспериментально
+подтверждено, что range-index фикс-массива ВСЕГДА копирует, `.clone()`
+не нужен), http/client+server/wire.nv (снесена дублированная `fn slice()`-
+обёртка — вызовы на встроенный срез), http/servernet/servernet.nv (снесён
+`head_slice()`), fs/fs.nv + io/core.nv (read-loop → `append(chunk[0..n])`),
+fs/path.nv (UNC-prefix и path-компоненты — scan-boundary + slice,
+component-сплит переписан на comp_start-индексацию), fs/mock.nv +
+http/server/server.nv percent_decode (conditional/filtered copy — не
+contiguous-range, снят false-positive той же техникой). Попутная
+проверка: комментарии «`.new().cap(n)` мисроутит на WriteBuffer.cap
+(коллизия имён cap)» в wire.nv/server.nv/servernet.nv/decompress_br_test.nv
+— МЁРТВЫЙ баг (репро чисто проходит); реальный (иной, узкий) баг —
+`[M-vec-spelling-consume-chain-cap-collision]` в string/transform.nv:195,
+про `consume`-bound 2+-звенные цепочки (D133-tracking), НЕ про `.cap`/
+WriteBuffer — комментарии были ошибочной атрибуцией, снесены, сайты
+переписаны цепочкой. `nova lint --rule W_MANUAL_SLICE_COPY std/` = 0
+находок (было ~30). Коммит f2f7f65e2.
+
+Гейты (обе задачи, на слитом с main efd66ea64): cargo build чисто;
+conformance 90/0; nova check std — FAIL-set идентичен baseline (114 ok /
+30 fail, те же файлы/коды — serde_neg×6, host_str_removed_neg, time civil
+×2, compress/error.nv Checksum — все pre-existing, δ0 подтверждён diff'ом
+множеств до/после); err173+err173_1..3 корпус — 25/0; targeted PASS:
+crypto (sha1/sha256/md5/hmac/bcrypt/jwt), fs (path/d323_path_*),
+io/buffered, compress (d333/d334/d335 + brotli + neg/
+inflate_requires_max_output), std_hygiene (neg+pos). ИЗВЕСТНЫЙ pre-
+existing блокер (НЕ регрессия этой ветки, есть на main efd66ea64 без
+диффа файла): http-тесты, гоняющие decompress-путь (mock_roundtrip_test/
+decompress_test/body_test), CODEGEN-FAIL на compress/error.nv:121
+E_UNKNOWN_TYPE Checksum — вне скоупа обеих задач.
+
+Ветка запушена: github std-hygiene.
