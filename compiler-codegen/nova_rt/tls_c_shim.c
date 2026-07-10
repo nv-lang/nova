@@ -307,13 +307,19 @@ static void nova_tls_set_err_from_rc(NovaTlsSession *s, int kind, int rc) {
 }
 
 /* ── Pinned verifier (SPKI SHA-256; Ф.4.3 parity) ─────────────────────────
- * authmode=NONE for Pinned sessions (see tls_client_new): mbedTLS still
- * invokes this callback per certificate in the chain, and — independent of
- * authmode — a NONZERO return is fatal (aborts the handshake immediately),
- * so we force-fail on pin mismatch and force-accept (return 0) on match,
- * ignoring whatever chain-trust flags mbedTLS computed on its own (a
- * self-signed leaf is expected and fine here — pinning replaces chain
- * trust AND hostname verification, D-блок B). */
+ * authmode=OPTIONAL for Pinned sessions (see tls_client_new) — NOT NONE:
+ * with VERIFY_NONE mbedTLS's mbedtls_ssl_verify_certificate() skips chain
+ * verification ENTIRELY (short-circuits before ever building the chain),
+ * so a custom f_vrfy callback registered via mbedtls_ssl_conf_verify would
+ * simply never run (found by 195 Ф.1 test failure: pinned_wrong_pin still
+ * completed the handshake). OPTIONAL performs verification (invoking this
+ * callback per cert) but does not itself reject the handshake based on the
+ * resulting flags — independent of that, a NONZERO return from THIS
+ * callback is always fatal regardless of authmode, so we force-fail on pin
+ * mismatch and force-accept (return 0) on match, ignoring whatever
+ * chain-trust flags mbedTLS computed on its own (a self-signed leaf is
+ * expected and fine here — pinning replaces chain trust AND hostname
+ * verification, D-блок B). */
 static int nova_tls_verify_pinned_cb(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
     NovaTlsSession *s = (NovaTlsSession *)ctx;
     (void)flags;
@@ -599,7 +605,7 @@ intptr_t tls_client_new(intptr_t c, const uint8_t *sni, intptr_t sni_len, intptr
                 } else {
                     memcpy(s->pins, b->pins, b->pin_count * 32);
                     s->pin_count = b->pin_count;
-                    mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
+                    mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
                     mbedtls_ssl_conf_verify(&s->conf, nova_tls_verify_pinned_cb, s);
                 }
             }
