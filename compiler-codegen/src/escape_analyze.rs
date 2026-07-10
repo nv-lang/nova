@@ -375,6 +375,12 @@ fn ie_mark_all(e: &Expr, out: &mut HashSet<String>) {
             FnBody::External => {}
         },
         ExprKind::Lambda { body, .. } => ie_mark_all(body, out),
+        ExprKind::Spawn(inner) => ie_mark_all(inner, out),
+        ExprKind::Supervised { body, cancel, .. } => {
+            if let Some(c) = cancel { ie_mark_all(c, out); }
+            ie_mark_all_block(body, out);
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => ie_mark_all_block(b, out),
         ExprKind::TupleLit(elems) => {
             for e2 in elems { ie_mark_all(e2, out); }
         }
@@ -535,6 +541,14 @@ fn ie_expr(e: &Expr, esc: bool, out: &mut HashSet<String>) {
             FnBody::External => {}
         },
         ExprKind::Lambda { body, .. } => ie_mark_all(body, out),
+        // Конкурентные формы: чайлд может пережить кадр родителя — любой
+        // захваченный Ident = эскейп (та же логика, что замыкания).
+        ExprKind::Spawn(inner) => ie_mark_all(inner, out),
+        ExprKind::Supervised { body, cancel, .. } => {
+            if let Some(c) = cancel { ie_mark_all(c, out); }
+            ie_mark_all_block(body, out);
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => ie_mark_all_block(b, out),
         ExprKind::TupleLit(elems) => {
             for e2 in elems { ie_expr(e2, true, out); }
         }
