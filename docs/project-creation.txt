@@ -39282,3 +39282,236 @@ requires n>=0); std/net folder-CU НЕ КОМПИЛИРУЕТСЯ — E_CONCURRE
 (чекер 173.3 vs незамигрированный spawn-тест) — ЭСКАЛИРОВАНО интегратору 173.3, вне периметра
 116. Коммиты: 3c181499 (слияние), 0ede004xx→см. git (Ф.1), Ф.2. Следующее: Ф.3 (TlsStream +
 pump + handshake smoke на self-signed паре).
+
+2026-07-10. Возобновление Plan 172.14 (value-ABI perf, P3) — разведка вскрыла: ветка
+value-abi-172-14 была создана от старого main без кода (только устная разведка в прошлой
+сессии, зафиксированы пороги: SysV ≤16Б by-value, ro ≤24Б non-escape → стек). Слил main
+(59f7edc2a → 6582887e1): D414-D416, D348, Plan 184 (ref T как ограниченный тип, полностью
+суперседит исходный дизайн Плана 172.5).
+Этап 2 (172.5 хвосты) пошёл первым — разведка показала, что задание описывало устаревшие
+маркеры. [M-172.5-generic-mut-ref-codegen] ретрагирован как moot: форма `mut ref x T` не
+существует с Плана 184 (заход-1). [M-172.5-chain-gating-ro-at] — маркер тоже описывал мёртвую
+машинерию, НО названная им дыра оказалась РЕАЛЬНОЙ: эмпирически подтверждено, что
+`c.peek().bump()` (peek — не-mut метод, bump — mut) компилировался и мутировал ОРИГИНАЛ
+(`c.x` становился 1) — Plan 184 Р7 сделал `-> @` non-mut метода настоящей `ref Self` вместо
+копии, отменив старое допущение «мутация temp'а безобидна». Fix в `types/mod.rs`
+(consume_walk_expr, новая ветка рядом с lvalue_root_ident для Call-shaped chain-receiver) →
+`E_RECEIVER_BINDING_NOT_MUT`; два guard'а против ложных срабатываний, найденных прогоном по
+всему std/ (arity-aware mut/ro-registries против @cap()/cap(n)-коллизии; recv_returning-гейт
+против filter()/map()/chars()/post() — они строят НОВОЕ значение, не -> @). Spec: D33-амендмент
+§«Fluent -> @ chain-receiver mutability gate» (02-types.md). Тесты:
+spec_tests/conformance/d326_chain_gating_ro_at.nv (+neg). Гейты: cargo build чист;
+conformance 90/0; std/ check — идентичный FAIL-set с чистым baseline (114/30); nova_tests
+fluent/chain-выборка — идентична (16/3, те же pre-existing). Коммит bde05c2f8.
+Далее — Этап 1 (172.14 value-ABI perf собственно): разведка (§7 де-риск).
+Написан permanent-инструмент compiler-codegen/tests/plan172_14_blast_radius.rs
+(#[ignore]-тест) — сканирует std/+nova_tests/+spec_tests/ (4031 файлов),
+строит whole-corpus type-decl registry, классифицирует каждый non-receiver
+параметр по режиму и вычисленному размеру (переиспользует
+const_fn_eval::type_size_or_align_resolved). Реальный результат СИЛЬНО
+отличается от оценки 2026-07-04 («~180 param-сайтов»): всего 66 подтверждённых
+Ф.1-кандидатов (>16Б, не mut/consume/variadic/const), сконцентрированных в
+keystone-типах (Path/fs ~20 сайтов, http-типы ~6, hmac-буферы 3), не
+равномерная россыпь. 470 параметров остались с неизвестным размером
+(инструмент не резолвит все newtype/alias-цепочки — followup
+[M-172.14-blast-radius-tool-refine]), верхняя граница 66+470=536 — того же
+порядка, не радикально больше исходной оценки.
+Осознанное решение: НЕ начинать сам codegen Ф.1 (auto by-ref) в этой волне —
+это полноценный НОВЫЙ механизм (обобщение escape_analyze.rs на параметры,
+materialize-temp на call-site, auto-deref в теле через ref_params-подобный
+путь, escape-доказательство на каждом сайте), а сессия уже содержала один
+реальный soundness-фикс (chain-gating) — рашить второй крупный ABI-механизм
+в хвосте той же волны нарушило бы явное требование методологии §2/§7.
+Следующая сессия начинает с keystone-кластера Path (std/fs, ~20 сайтов,
+non-generic, наименьший риск) вместо равномерного прохода по всем 66.
+План 172.14 обновлён реальными числами (заменяет оценку ~180), README
+строка обновлена, тесты/находки закоммичены и запушены.
+
+=== 2026-07-10 — Plan 175 два хвоста: Time.local_offset_sec() + mut_clock auto-idle-advance (sonnet) ===
+
+Владелец: закрыть два оставшихся TODO волны 175 параллельным заходом (ветка time-tails-175
+из main 6582887e1, worktree nova-p173).
+
+ЗАДАЧА 1 — `[M-175.1-local-offset-effect-op]` (системный часовой пояс машины ДОЛЖЕН быть
+доступен из Nova, owner decision): новый оп `local_offset_sec() -> int` в схеме `Time`
+(std/prelude/effects.nv) — по образцу коммита 41fac7df2 (now_monotonic_ns): vtable-слот
+`NovaVtable_Time.local_offset_sec` (nova_rt/effects.h) с NULL-safe backward-compat диспетчем
+(nova_rt/fibers.h `Nova_Time_local_offset_sec`), OS-хук `_nova_local_offset_sec()` — Windows
+`GetTimeZoneInformation` (Bias/DaylightBias/StandardBias, знак инвертирован) / POSIX
+`localtime_r().tm_gmtoff`. `std/testing/handlers.nv`: fixed_ms/mut_clock реализуют
+`local_offset_sec() => 0` (mock-coherence, UTC) + тест на мокабельность произвольным
+handler-литералом. `std/time/civil/offset.nv`: `Offset.local() Time -> Offset` — явный запрос
+числового сдвига (D319 R1 НЕ меняется — зона в ZonedDateTime остаётся явной, никакого
+implicit-fallback); тесты в zoned_test.nv (handler-литерал non-zero + fixed_ms/mut_clock
+coherence). Спека: D316-amend (новый оп + vtable-слот) + D321-amend (system-offset доступен,
+§impl-отступления закрыт — маркер снят). Доки (time.md/datetime.md/plans/175.1-civil-time.md/
+simplifications.md) обновлены под закрытие маркера.
+Гейт задачи 1: compiler-codegen + nova-cli чистая сборка; conformance 89/0; std/time +
+std/time/civil + std/testing/handlers — 12/0 PASS. Коммит c60bde2fe.
+
+ЗАДАЧА 2 — auto-idle-advance виртуальных часов (tokio `time::pause()` / Kotlin
+`TestCoroutineScheduler.advanceUntilIdle()`-паритет, TODO волны 175 «Ф.5»): `mut_clock`'s
+`sleep` теперь вычисляет АБСОЛЮТНЫЙ дедлайн (`current_ms + ms`, до парковки) и паркует
+вызывающий фибр через новый `extern "nova"` хук `std/runtime/vclock.nv` →
+`nova_vclock_park_until` (nova_rt/fibers.h) — per-scope registry `NovaVClockEntry[]` (новые
+поля `NovaFiberQueue.vclock_entries/vclock_count/vclock_cap`, non-atomic по design — single-
+thread contract, см. ниже); когда pending_count >= alive_count (все живые фибры scope'а
+виртуально запаркованы — idle), просыпается ближайший по дедлайну (может быть sibling, не
+сам вызывающий); bump — `current_ms = max(current_ms, deadline)` (не `+=`, иначе задвоил бы
+вклад уже сработавших siblings). Плоский sequential-поток (нет фибра) резолвится немедленно —
+байт-паритет со старым синхронным поведением для overwhelmingly common случая. Деликатно НЕ
+переиспользован `nova_sched_park`/`nova_sched_wake` (атомарный, real-timer/driver-facing
+примитив с hard-won race-фиксами) — отдельный простой non-atomic registry, `nova_fiber_yield()`
+для кооперативной передачи управления (существующий `nova_supervised_step` и так резюмирует
+любой не-`nova_sched_park`нутый slot каждый pass).
+
+Находка в процессе (реальный debugging, не догадка): ПЕРВЫЙ заход использовал
+`nova_sched_count_alive(scope)` как «сколько живых фибров scope'а» — под ДЕФОЛТНЫМ armed M:N
+runtime (auto-arm на первом spawn) это ВСЕГДА 0 для remote-spawned детей
+(`nova_runtime_spawn_into`, runtime.c, кладёт их в ОТДЕЛЬНЫЙ `child_error[]`/`pending_remote`
+индекс-пространство, НЕ в `scope->fibers[]/count`) — фибры «прогорали» в spawn-порядке, а не
+в порядке дедлайна (эмпирически отловлено через `--keep-artifacts` + прямой запуск .exe с
+debug-println). Промежуточный фикс (`nova_vclock_alive_count` = `count_alive` +
+`pending_remote`) не помог — вскрылась ВТОРАЯ, более глубокая находка:
+`_worker_run_one_fiber` (runtime.c) на ПЕРВОМ resume ставит `_nova_active_scope = &w->scope`
+(WORKER'а СОБСТВЕННЫЙ scope), НЕ shared scope родительского `supervised{}`-блока — под armed
+M:N registry, привязанный к `_nova_active_scope`, структурно НЕ может корректно шариться между
+siblings. Верифицировано эмпирически: под `NOVA_AUTOARM=0` (легаси-имя `NOVA_NO_AUTOARM=1` НЕ
+сработало — env переименован Plan 83.4.5.9, `_nova_autoarm_env_disabled()`) + `NOVA_MAXPROCS=1`
+(кооперативный/local `nova_fiber_spawn_into`-путь) порядок пробуждения — ТОЧНО по дедлайну
+(10, 50, 100 при spawn-порядке 100, 10, 50), стабильно PASS ×3 прогона. Под дефолтным armed
+путём механизм деградирует БЕЗОПАСНО (каждый sleep всё равно резолвится, без hang/crash), но
+БЕЗ гарантии порядка. Маркер `[M-175-vclock-armed-mn-scope-identity]` — починка общего
+M:N-случая требует другого якоря (например резолв через `NovaSpawnCtxBase._nova_parent_scope`),
+вне периметра этого захода; `std/testing/handlers.nv` получил `// ENV NOVA_MAXPROCS=1` +
+`// ENV NOVA_AUTOARM=0` директивы (весь файл — тесты mut_clock и так однопоточны по контракту).
+
+Тесты (std/testing/handlers.nv): tokio-style `sleep(10_000)` в одиночном spawn — мгновенно
+(AtomicInt-флаг, не голый `mut` — D415 §2 `E_CONCURRENT_MUT_CAPTURE` требует
+internally-synchronized `#share`-тип для мутации, захваченной spawn-телом); три конкурентных
+`sleep(100/10/50)` — просыпаются в порядке 10→50→100 (AtomicInt.fetch_add-последовательность);
+финальные часы после всех трёх — ровно `max` (100), не сумма (160). docs/time.md
+"Мокабельность" — раздел auto-idle-advance закрыт (был followup-заметкой).
+Гейт задачи 2: compiler-codegen + nova-cli чистая сборка; conformance 89/0; std/time +
+std/time/civil + std/testing/handlers — 12/0 PASS (стабильно ×3 прогона); std/concurrency
+(supervised_deadline_test + supervisor_test — real Time.sleep + spawn) — 2/0 PASS, байт-паритет
+подтверждён (real-clock путь не тронут — новый хук вызывается ТОЛЬКО из mut_clock's sleep).
+
+Новые файлы: std/runtime/vclock.nv (extern "nova" fn vclock.park_until). Изменённые: nova_rt/
+fibers.h (NovaVClockEntry + helpers + NovaFiberQueue поля + nova_vclock_park_until),
+compiler-codegen/src/lib.rs (is_intrinsic_namespace + "vclock"), external_registry.rs
+(NAMESPACE_OVERRIDES + builtin_sources), std/testing/handlers.nv.
+Модель: sonnet (вся волна — оба хвоста, включая C-runtime debugging).
+
+=== 2026-07-10 — волна handler-annot: единый канал типовой разметки для тел эффект-хендлеров (ветка handler-annot, модель sonnet) ===
+
+Дефект конвенции «один канал» (владелец 2026-07-10): оп-тела handler-литерала
+(`with E = effect E { op() {...} }`) вырезаются в отдельные C-функции
+(emit_c.rs::emit_handler_lit), но эмитились с типовым контекстом ВНЕШНЕЙ
+функции — expected_record_type / current_fn_return_ty / contracts_post_label
+не переключались на сигнатуру опа из effect-схемы. Следствие: анонимный
+record-литерал (D55) в оп-теле падал «anonymous record literal without spread
+not supported in codegen» (это и был блокер (b) из D316-amend Ф.2, из-за
+которого typed-wire для Time признан невозможным).
+
+Разведка (матрица nova_tests/plan175_handler_annot/repro_matrix.nv):
+- ПАДАЛО: анонимный heap-record (=> и block/return-формы), анонимный
+  value-record, захват+анонимный record.
+- РАБОТАЛО и работает: именованные Point{...}/PointV{...}, анонимный tuple,
+  sum-вариант Shape2.Circle{...}, конструктор Type.new(...).
+- Отдельный класс (НЕ хендлер-специфичный, предсуществующий на чистой базе
+  6582887e1, воспроизводится в ОБЫЧНОМ тест-теле — nova_tests/basics/
+  functions.nv): let-bound ClosureFull `ro f = fn(a int) -> int => a+1` →
+  CC-FAIL «undeclared identifier f» (infer_expr_c_type(ClosureFull) даёт
+  пустой ty_c; чекер аннотирует resolved_types только для zero-param
+  ClosureLight). Новый floating-маркер [M-closurefull-let-empty-ty] (backlog),
+  трек 172.12.
+
+Фикс (02d5da526): per-op save/restore в emit_handler_lit — current_fn_return_ty
+= схемный ret опа, expected_record_type = debt_struct_name_from_c_type(ret),
+contracts_post_label гасится (return в оп-теле не должен goto'ить на
+ensures-лейбл внешней функции). Тот же канал, что emit_fn_body (:20826) /
+лямбды (:15807) / протокол-методы (:21619); инференция НЕ дублируется.
+
+Спека (ff56970fe): D316-amend UPD в 04-effects.md + docs/time.md Ф.2 —
+ограничение (b) снято; option C для Time ОСТАЁТСЯ по причине (a) opacity
+Monotonic (решение владельца, sign-off «подмена источника ≠ фабрикация
+значения» — влит из main тем же днём); провод Time не менялся.
+
+Слияние с main (2f8178789, afc31820f): конфликт в 04-effects.md разрешён
+сохранением ОБОИХ абзацев (владельческий AMEND + UPD волны).
+
+Гейты (на слитом дереве, оба крейта собраны): conformance 90/0 (эталон с
+d326 совпал); матрица PASS; std/testing 2/0; err173/1/2/3 PASS; err173_0
+PASS с --timeout 300 (стресс 40×5 M:N медленный под параллельной нагрузкой,
+дефолтных 60с мало — флака, не регрессия). δ0-выборка (basics, effects,
+plan61, plan97, contracts, plan110, concurrency, std/time) на двух бинарях
+(база afc31820f в temp-worktree nova-175-base-check vs фикс) — множества
+БАЙТ-ИДЕНТИЧНЫ: 9 PASS + 4 одинаковых предсуществующих падения
+(control_flow → [M-folder-module-spawn-const-capture]; effects/basic и
+_repro_p110 — pre-existing в backlog; apply_arity_suggest_w2402 — δ0).
+
+Аудит (задание п.5, места отказа эмиссии из-за отсутствия разметки, НЕ
+чинились — трек 172.12): emit_c.rs:38364 (spread без типа), :38450
+(anon-record без контекста — остаточный отказ, теперь недостижим из
+хендлер-тел), E7001 :7483/:7512, generic-инференс :18217/:18959,
+P67-LEGACY паники (checker-must-annotate): :44092, :45052, :45056, :45883,
+:46309, :46555, :46557, :46560, :47034, :47221, :48249, :48374, :48400,
+:49021, :49106, :49109, :49155.
+
+=== 2026-07-10: мини-волна [M-173.3-share-leakage-explain] — per-field объяснение E_CONCURRENT_MUT_CAPTURE (ветка share-leakage) ===
+
+Проблема (D415 §7 п.8, followup плана 173.3): сообщение E_CONCURRENT_MUT_CAPTURE называло
+биндинг и лечения, но не объясняло, ПОЧЕМУ тип не mut-alias-safe — добавление не-share
+mut-поля вглубь типа снимало share-ность молча.
+
+Решение: рекурсивные предикаты share_check.rs возвращают путь ПЕРВОГО отказа —
+is_alias_read_safe/is_mut_alias_safe стали обёртками над read_alias_failure/mut_alias_failure
+(-> Option[ShareFailure]: сегменты пути .field/[..]/.0/[i]/::Variant.x + rendered-тип точки
+отказа + ShareReason: RawPointer/WritableCell/FnType/ProtocolType/Unresolved/NoStructure/Cycle).
+Диагностика (types/mod.rs check_capture_boundary) вставляет цепочку СРАЗУ после биндинга,
+чтобы код+биндинг+путь+причина были одной непрерывной подстрокой (EXPECT-раннер матчит
+подстрокой, маркер один на файл):
+  [E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `o` captured by reference in a
+  `spawn`/`parallel for` body: `Outer` is poisoned at `Outer.inner.buf` (`[]u8`):
+  a writable cell with no audited synchronization — ... Allowed captures: spawn consume /
+  ro / #share-тип.
+render_type_ref -> pub(crate) (переиспользован для рендера типов в ShareFailure).
+
+Тесты: unit share_check 15/15 (6 новых на путь отказа: корень-примитив, mut-поле, указатель,
+вложенный 2-сегментный Outer.inner.buf, unresolved generic, элемент контейнера [..]);
+neg EXPECT'ы mut_capture_in_spawn/pointer_cell_not_share ужесточены до полного нового
+сообщения; новая neg mut_field_nested_path (тип-в-типе, путь из 2 сегментов).
+
+Гейты (ветка = main 67c85b504 + волна): cargo build чисто; conformance 90/0;
+err173_3-корпус целиком зелёный (pos 2/2: share_capture_ok_test+const_init_runtime_ok_test,
+neg 8/8); nova check std δ0 — честный baseline (checkout main-исходников + пересборка
+nova-cli на том же дереве): 30 FAIL pre-existing, список идентичен diff-ом.
+
+Спека: D415 §7 п.8 переписан (маркер закрыт, формат цепочки + пример), список тестов D415
+дополнен; план 173.3 — closure-абзац маркера. Модель: sonnet.
+
+=== 2026-07-10: [M-fixed-array-value-semantics] — [N]T = value-класс (ветка fixed-array-value, sonnet) ===
+Возобновление после паузы владельца (WIP 5ff32af0d). Слияние main (250de5cda) без конфликтов.
+- types: ResolvedType::FixedArray(N, elem) — N без потерь в C-лоуэринге (закрыт
+  [M-172.1-fixedarray-N] для этого пути); классификаторы V3/ref_target_confirmed_heap из WIP.
+- codegen: [N]T = typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T> (finalize-splice,
+  топосорт вложенных [N][M]T); литерал → compound-literal с покомпонентной коэрцией;
+  Index-чтение + Assign-запись с bounds-check по компайл-тайм N (nova_fixarr_idx_chk/nochk);
+  return-коэрция trailing/arrow-body; is_value_type() → in-out ABI (D326 Р10) для mut x [N]T.
+- Дефект волны (пойман sha256 NIST-векторами, починен той же волной): field_cache
+  переписывал `@F[i] = v` в кэш-копию `_at_F` — записи терялись при value-семантике.
+  Фикс: index-write барьер для slot-unstable полей; ref-typed ([]T/Vec) байт-в-байт нетронуты.
+- GC: gc_layout.rs — [N]T-поле = N×stride inline-офсетов (не один heap-указатель);
+  эмпирика: [4]str и [3]Holder на стеке/в heap-record под 3× gc.collect() держат пейлоады.
+- Спека: D27-амендмент «[N]T — value-класс» (5 пунктов: inline, копирование, кучевые
+  элементы при value-контейнере, bounds-check, литералы); D216 §V3.1 — [N]T в value-список.
+- Тесты: nova_tests/fixed_array/ — 5 pos (index_rw, value_semantics, gc_forced_collect,
+  record_field, oob_panics с D348-клаузулой) + 2 neg (len_mismatch, spread) = 7/7.
+Гейты: cargo build оба крейта чисто; conformance 89/0 δ0; err173-корпус 25/0 δ0;
+выборка nova_tests 11 каталогов δ0 против baseline main@250de5cda (temp-worktree
+nova-nt-base; FAIL-множества идентичны, все pre-existing: basics/control_flow 'apply',
+3× plan101 NEG-NO-ERROR, map_literals/positive_clone_merge, str/char_at);
+sha256/sha1/md5/hmac NIST PASS; gc_layout юнит 22/22; field_cache юнит 137/137.
+Followups в маркере: serde-derive [N]T-поля; checker-level E-код для len-mismatch;
+мёртвый FixedArray-арм external_registry.

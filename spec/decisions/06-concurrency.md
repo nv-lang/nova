@@ -6794,10 +6794,14 @@ E_CONST_EFFECT_IN_INIT).
    в десугаре сбора 173.1 Sender'ы clone+move (решение §2 п.9 плана).
 7. **Region/`sending`-инференс (Swift SE-0414):** НЕ нужен — `consume`/move
    покрывает передачу уникального, `#share` — алиасинг; регионов нет.
-8. **Диагностика leakage:** добавление не-share `mut`-поля снимает share
-   молча — сообщение E_CONCURRENT_MUT_CAPTURE на use-site называет БИНДИНГ и
-   лечения; per-field «почему тип перестал шариться» — followup
-   `[M-173.3-share-leakage-explain]`.
+8. **Диагностика leakage:** сообщение E_CONCURRENT_MUT_CAPTURE на use-site
+   называет биндинг, лечения И путь первого отказа per-field (закрыто,
+   `[M-173.3-share-leakage-explain]` 2026-07-10): предикаты share_check
+   возвращают цепочку `Type.field.subfield` + rendered-тип + причину
+   («writable cell» / «raw pointer» / «unresolved name» / …) — например
+   `` `Outer` is poisoned at `Outer.inner.buf` (`[]u8`): a writable cell
+   with no audited synchronization ``. Добавление не-share `mut`-поля вглубь
+   типа больше НЕ снимает share-ность молча.
 9. **Полнота явности захвата:** принята РЕКОМЕНДАЦИЯ плана — явные только
    move'ы (`spawn consume`); `ro`/`#share`/by-value — неявные-но-проверяемые.
    Полный capture-list отвергнут (многословен для каждого loop-var).
@@ -6813,9 +6817,10 @@ E_CONST_EFFECT_IN_INIT).
 Тесты: `nova_tests/err173_3/` — pos `share_capture_ok_test` (ro / `#share`-
 примитивы / `spawn consume` / авто-share user-тип / user `#share`-vouch),
 `const_init_runtime_ok_test`; neg `mut_capture_in_spawn`,
-`pointer_cell_not_share`, `share_invalid_kind`, `use_after_spawn_consume`
+`pointer_cell_not_share`, `mut_field_nested_path` (вложенный 2-сегментный
+путь отказа, §7 п.8), `share_invalid_kind`, `use_after_spawn_consume`
 (by construction), `const_init_{spawn,supervised,detach_fn}`. Unit —
-`protocols/share_check.rs::tests` (9). Миграция разом (решение §2 п.10):
+`protocols/share_check.rs::tests` (15, вкл. 6 на путь отказа). Миграция разом (решение §2 п.10):
 std (`concurrency/cancellation.nv` `within`/`race2` — реальные TOCTOU-гонки,
 переведены на каналы; `http/servernet` smoke — на каналы) + nova_tests
 (~19 файлов — на `Atomic*`).

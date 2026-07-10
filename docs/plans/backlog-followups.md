@@ -50,6 +50,7 @@
 | `[M-83.11-grow-vs-wake-race]` | ✅ **CLOSED 2026-06-11** (Plan 83-go-cmn Ф.1b, commit `e1525d90671`). Структурный фикс: `NovaSchedState` chunked stable-address storage (chunk'и never-realloc → torn-pointer невозможен); GitHub issue #2. Closure: grow_vs_wake_explicit 100/100 + stress_iso_3e 66/66 + semaphore_batch_n 30/30 armed. История — simplifications.md + plan §9.5. | Plan 83-go-cmn Ф.1b | ✅ done |
 | `[M-debug-line-directives]` | Нет `#line N "file.nv"` → дебаггер показывает C, не Nova. Только comment-only `/* SRC */`. | Plan 25 G9 → dedicated план | P1 |
 | `[M-173-error-return-trace]` | **Полный propagation-trace** uncaught throw/panic (Zig-парность): цепочка `?`-проброса от throw-site до границы, не только throw-site file:line. **Минимум СДЕЛАН (Ф.5 п.7, 2026-07-10, `cdd23a5b2`):** TLS `_nova_throw_site` + codegen-стемп + `at file:line (throw site)` в uncaught-abort ветках. Полный трейс (ring-buffer rethrow-точек) — этот маркер. | Plan 173 (Ф.5 минимум ✅) | P2 |
+| `[M-closurefull-let-empty-ty]` | Обнаружен волной handler-annot (2026-07-10): let-bound ClosureFull (`ro f = fn(a int) -> int => a+1`) → CC-FAIL «use of undeclared identifier f» В ЛЮБОМ контексте, вкл. обычные тест-тела. Root: `infer_expr_c_type(ClosureFull)` возвращает пустой `ty_c` → Let-decl эмитится без типа (` f = (void*)&nova_lambda_N_clos_singleton;`). Канал: чекер пишет `resolved_types` (`ResolvedType::Func` → `NovaClos_X*`) только для zero-param ClosureLight (types/mod.rs:8424-8443); ClosureFull-ветка (:8445) не аннотирует, а в `infer_expr_c_type` legacy-ветки для ClosureFull нет (есть ClosureLight :49034 и Lambda :49102). **Pre-existing** (чистая база 6582887e1 падает идентично; репро: `nova_tests/basics/functions.nv`). Fix-направление: аннотировать ClosureFull в чекере (params+ret явные — гадать нечего) ИЛИ legacy-ветка ClosureFull в infer по образцу Lambda. | floating (codegen/checker, класс 172.12) | P2 |
 | `[M-folder-module-spawn-const-capture]` | Обнаружен Plan 175 Ф.1 (2026-07-04): в folder-module `spawn`/`select`-closure, захватывающий **module-level const** (напр. `Duration.from_millis(TIMEOUT_MS1)` внутри `spawn`), эмитит captured-поле по **bare-имени** (`_ctx->TIMEOUT_MS1 = &TIMEOUT_MS1`) вместо мангл-имени `Nova_const_<mod>_TIMEOUT_MS1` → C-compile `use of undeclared identifier`. Делает целый модуль некомпилируемым при `nova test <folder-module-dir>`. **Pre-existing** (baseline-delta=0: тот же CC-FAIL на parent-бинаре). Репро: `nova_tests/plan65` (f10/f7/f11 — `TIMEOUT_MS1`/`TIMEOUT_MS2`/`TIMERS_PER_FIBER`), `nova_tests/basics/control_flow` (`apply`). Fix: спавн-capture должен резолвить module-const в мангл-глобал (не local-var capture). | floating (codegen) | P2 |
 | `[M-83-study-go-c-mn]` | Порт рабочего M:N из Go ≤1.4 C-рантайма. **✅ research+8-фаз декомпозиция; ✅ Ф.1a ring-port; ✅ Ф.1b chunked park-state (закрыл grow-vs-wake); ✅ Ф.2 gopark/goready (D244, удалил pending_wake, commit d2830c73d7d).** OPEN до Ф.3-Ф.8 (nspinning/iso-cancel/timer-heap/sysmon/netpoll). | Plan 83-study-go-c-mn | P1 |
 | `[M-83.11-f2-arm-tsan]` | Ф.2 gopark G0(RELEASE)/G1(SEQ_CST) x86-корректны (XCHG дренит store-buffer); для ARM/weak-memory валидировать под TSAN на Linux. Не регрессия (x86 целевая). Gated на `[M-nova-linux-build]`. | floating (Linux-CI) | P2 |
@@ -1535,9 +1536,9 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
 - **[M-174.1-nested-match-err-variant-after-loop]** (NEW 2026-07-08, OPEN) Вложенный `match r { Ok=>.., Err(e) => match e {..} }` на `Result[T, UserEnum]`, когда callee содержит for-цикл с ранним `return Err(...)`, иногда неверно резолвит вариант (репро: свежий минимальный тип+fn; плоский `Err(Variant)=>`-match корректен). Обойдено плоскими match'ами в фикстурах 174.1 (plan91_fe2/neg, conformance). Priority: P2 (корректностный класс).
 - **[M-174.5-pointer-ops-methods]** (OPEN) Pointer-ops методы + write-cap fix + `unsafe T`→`uninit T`. **§7.7-оценка 2026-07-06:** write-cap-баг ЖИВ (spec §11a `02-types.md:8522` голый `*unsafe T` writable; checker `.write()` минует `pointee_is_writable` `types/mod.rs:13847`; codegen `emit_c.rs:27263`/`:40347`). Гейт РЕАЛЬНЫЙ — фикс требует amend `02-types.md` (D216 write-table + D352 + Ф.0 rename ~90 вхождений) = зона 172, «не в одиночку». Поглощает `[M-138.5-unsafe-ptr-write-cap]`, `[M-118.4-typed-ro-write-error]`. Priority: P2.
 
-- **[M-172.5-inout-ref]** `mut ref` in-out params (D326) — CORE LANDED: parser (`ParamRefMode`, `ExprKind::RefArg`, `E_REF_NOT_A_TYPE`), checker (`E_REF_ALIAS_OVERLAP` per-pair prefix-overlap `RefPlace`, marker⟺mode, addressability, mut-place, escape-ban `E_REF_ESCAPE_CAPTURE`), codegen (`mut ref`→`T*` via `params_c`, body auto-deref via `ref_params`, call-site `ref x`→`&x`). 2 pos + 11 neg фикстуры (`nova_tests/inout_ref/`) зелёные; регрессия byte-identical на 580 файлах, delta 0. `ro ref` = аннотация, defer to 172.4 auto (R3, НЕ дублировано).
-- **[M-172.5-chain-gating-ro-at]** (NEW, OPEN) R6 mid-chain gating `E_RECEIVER_BINDING_NOT_MUT` — `mut @`-метод на `ro ref @`-цепочке (`c.peek().bump()`) НЕ гейтится. Требует моделирования режима `@`-возврата (D181) сквозь method-chain — глубокая связь с fluent-машинерией 172.4, вне soundness in-out `mut ref`. Сейчас компилируется (value-record `-> @` = копия R7b → мутация копии безвредна). parse-часть R6 (`consume @ -> @` → `E_CONSUME_RECEIVER_RETURNS_AT`) сделана. Priority: P3.
-- **[M-172.5-generic-mut-ref-codegen]** (NEW, OPEN) Generic `fn f[T](mut ref x T)` (R12) codegen — `params_c`/`ref_params` покрывают только concrete (неген.) путь; erased/mono-пути `mut ref` НЕ лоуэрят указатель `T*` (тело не разыменует). Checker-часть R12 (mode ортогонален type-param) работает и не блокирует. Gate: mono-pipeline (172.12 typed-IR). Priority: P3.
+- **[M-172.5-inout-ref]** ✅ RETIRED (superseded by Plan 184, 2026-07-06/08) — `mut ref` param-mode machinery (`ParamRefMode`, call-site `ref x` marker) described here was RETRACTED wholesale by Plan 184 (`ref T` → ограниченный тип; in-out теперь просто `mut x T`, Р10). Historical only — see [184-ref-type-revision.md](184-ref-type-revision.md) for the current landed design.
+- **[M-172.5-chain-gating-ro-at]** ✅ CLOSED 2026-07-10 — the marker's OWN description was stale (referenced retracted `mut ref` machinery), but the underlying soundness hole it named was REAL and sharpened by D326-Plan184 Р7 (`-> @` from a non-mut method is now a genuine `ref Self`, not a copy — `c.peek().bump()` empirically left `c.x == 1`, not the harmless-no-op the old note assumed). Fixed in `types/mod.rs` `consume_walk_expr` (new Call-receiver branch alongside `lvalue_root_ident`, arity-aware `mut_methods_arity`/`ro_methods_arity` + `recv_returning` self-return gate to avoid false positives) → `E_RECEIVER_BINDING_NOT_MUT`. Spec: D33 amend §«Fluent `-> @` chain-receiver mutability gate» (02-types.md). Tests: `spec_tests/conformance/d326_chain_gating_ro_at.nv` (+neg). Gates: conformance 90/0, std/ + nova_tests fluent/chain sample — identical FAIL-sets vs clean baseline (0 regressions).
+- **[M-172.5-generic-mut-ref-codegen]** ✅ RETIRED (moot, 2026-07-10) — described `fn f[T](mut ref x T)` codegen; that param-form was fully retracted by Plan 184 (no `mut ref` in parameter position anymore — parser rejects it, `E_REF_PARAM_FORM_REMOVED`). The MODERN equivalent concern — generic `fn f[T](mut x T)` mono-codegen when `T` binds to a VALUE type — is tracked separately as `[M-184-value-mut-mode-overload-abi]` (Plan 184 заход-6 follow-up; overload-mode axis + value-type ABI interaction, not this marker's scope).
 
 - **[M-179-brotli-conditional-link]** ✅ МЕХАНИЗМ (справка). Линковка brotli **условная по использованию** (owner-требование; libuv остался mandatory/always): `test_runner.rs::c_file_uses_brotli` сканирует генерённый `.c` на **call-site** `brotli_decode(` (фильтруя `static …);`/`static …{` — forward-decl и definition-header, т.к. std-fn'ы эмитятся даже мёртвыми); только тогда `brotli_shim.c` компилируется с `-DNOVA_USE_BROTLI` и `libbrotlidec.lib` попадает в линк (все 3 toolchain-арма: Clang/MSVC/GCC). Без vendor-lib шим = Q11-заглушки → `UnsupportedMethod`, не link-error. Диагностика: `NOVA_DEBUG_BROTLI_LINK=1` (stderr: `uses_brotli=… → LINK/NO`). Доказано: gzip-only CU → NO lib; brotli/http-br → LINK.
 - **[M-179-brotli-reader-streaming]** (OPEN) Streaming `BrotliReader` (`consume value`, D133/D337 R2 — единственный consume-кодер модуля). C-примитивы шима уже инкрементальные (`nova_brotli_dec_feed`/`pull`/`done`/`needs_input`); остаётся тонкая Nova-обёртка + consume-neg-тесты (`EXPECT_COMPILE_ERROR`: не-consume / double-consume). Отложено сознательно: Ф.2-deliverable = one-shot `brotli_decode`; единственный потребитель `br` (http auto-decompress) использует one-shot, симметрично gzip/deflate-веткам `finalize_response`. Priority: P3.
@@ -2096,15 +2097,28 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   с идентичным списком. Полный whole-CU режим (nova test/conformance) — зелёный.
   Родня per-file/CU-scope семейства [M-http-module-test-block-p67].
 
-- **[M-fixed-array-value-semantics]** (2026-07-08, P2, Wave: трек A после Vec-canon substrate
-  — иначе двойная переделка) — [N]T СЕЙЧАС кучевой (три свидетельства: V3-классификатор
-  FixedArray=>false; ref_target_confirmed_heap FixedArray=>true наравне с Array/Pointer;
-  кодоген обрабатывает FixedArray одним армом с Array — отдельного стек-эмита нет).
-  Владелец: «должно быть на стеке». Целевое: [N]T с value-элементами = value-класс —
-  inline-хранение (C: `T name[N];` в кадре / поле записи), копирование по значению,
-  D27-амендмент + V3-переклассификация; открывает SocketAddr {image [20]u8} без аллокаций
-  и типизированный AddrImage (174.5-связка). [N]T с кучевыми элементами — heap-tracked
-  элементы при value-контейнере (GC-скан по месту).
+- **[M-fixed-array-value-semantics]** (2026-07-08, P2) — ✅ **ЗАКРЫТ (2026-07-10, ветка
+  `fixed-array-value` [sonnet], коммиты ab322cede/b4b699276/4043a4a51/ca39d9d06 + финальный):**
+  [N]T = inline value-класс. (1) `ResolvedType::FixedArray(N, elem)` — N без потерь (закрыл
+  [M-172.1-fixedarray-N] для C-лоуэринга; category-key `resolved_cat_of` НЕ тронут);
+  V3-классификатор + ref_target_confirmed_heap переклассифицированы (WIP 5ff32af0d).
+  (2) codegen: `typedef struct { T data[N]; } _NovaFixArr_<N>_<L>_<T>` (finalize-splice,
+  топосорт [N][M]T), compound-literal для литералов, Index-чтение/Assign-запись с
+  bounds-check по компайл-тайм N (`nova_fixarr_idx_chk/nochk`, array.h), return-коэрция,
+  `is_value_type()` → in-out ABI D326 Р10 для `mut x [N]T`. (3) ДЕФЕКТ ВОЛНЫ (пойман
+  sha256 NIST): field_cache писал `@F[i]=v` в кэш-копию — фикс: index-write барьер для
+  slot-unstable полей (ref-typed []T/Vec байт-в-байт нетронуты). (4) gc_layout: [N]T-поле
+  = N×stride inline офсетов (юнит 22/22); GC-тест [4]str/[3]Holder под 3× gc.collect() —
+  пейлоады удерживаются (стек + heap-record скан). (5) Спека: D27-амендмент (5 пунктов) +
+  D216 §V3.1 value-список п.6 + Rust-снипет. Тесты nova_tests/fixed_array/ 5 pos + 2 neg +
+  panics (D348). Гейты: build оба чисто; conformance 89/0 δ0; err173 25/0 δ0;
+  выборка nova_tests (11 каталогов) δ0 против baseline-бинаря main@250de5cda
+  (FAIL-множества идентичны, все pre-existing); sha256/sha1/md5/hmac PASS.
+  **Followups:** (а) serde-derive видит [N]T как Vec (auto_derive.rs deser) — при
+  [N]T-поле в serde-типе будет клэш типов, живых пользователей нет;
+  (б) len-mismatch/spread-в-литерале ловятся codegen loud-fail — чекер-уровневый
+  E-код чище; (в) external_registry.rs FixedArray-арм лоуэрит в C-тип ЭЛЕМЕНТА —
+  мёртвый код (extern fn с [N]T в сигнатурах нет; D326 Р9: FFI = только сырые указатели).
 - **РЕШЕНИЕ ВЛАДЕЛЬЦА (2026-07-08) по [M-array-vec-unify]: Vec-canon — NovaArray умирает
   целиком** (вариант typedef-alias отвергнут). Substrate-очерёдность (вердикт A5):
   A6 = runtime-примирение (nova_str_to_chars/bytes/split и потребители read_buffer/
@@ -2787,6 +2801,5 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   в сигнатурах вызываемых) + D215-амендмент. Сегодня спасает случайный гэп
   (supervised-value не поддержан в module-init) — не контракт.
 
-- **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ветка `fixed-array-value`
-  запушена с WIP-коммитом (классификатор [N]T=value начат в types/mod.rs; codegen/GC/тесты
-  не начаты). Возобновление: продолжить с WIP, задание — в транскрипте волны 2026-07-10.
+- **[M-fixed-array-value-semantics] ПАУЗА-отметка** (2026-07-10): ✅ снята тем же днём —
+  трек доведён до конца (см. закрытый маркер выше), ветка `fixed-array-value` готова к слиянию.
