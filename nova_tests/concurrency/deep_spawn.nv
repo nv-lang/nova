@@ -7,6 +7,13 @@
 // C-level counterpart: compiler-codegen/nova_rt/test_fibers_deep.c
 // That file tests stack addresses, yield/resume ordering, fib(30), etc.
 // This file tests the observable Nova semantics built on top of that runtime.
+//
+// D415 migration note (Plan 173.3): every `mut` accumulator/result below is
+// written from inside a `spawn` body, so the static capture-check (D415 §2)
+// flags a raw `mut int` regardless of whether the scope actually has more
+// than one writer. Wrapped in `AtomicInt` throughout — `store`/`load`/
+// `fetch_add` replace the bare `=`/`+=` on the same variable, values and
+// assertions are unchanged.
 
 module nova_tests.concurrency
 
@@ -65,47 +72,47 @@ fn factorial(n int) -> int {
 // ================================================================
 
 test "supervised: single spawn mutation visible after scope exit" {
-    mut log = 0
+    mut log = AtomicInt.new(0)
     supervised {
-        spawn { log = 1 }
+        spawn { log.store(1) }
     }
-    assert(log == 1)
+    assert(log.load() == 1)
 }
 
 test "supervised: three spawns mutate shared state" {
     // No yields inside fibers → cooperative-only scheduler runs them
     // sequentially in FIFO order: 1, 2, 3.
-    mut seq = 0
+    mut seq = AtomicInt.new(0)
     supervised {
-        spawn { seq = seq * 10 + 1 }
-        spawn { seq = seq * 10 + 2 }
-        spawn { seq = seq * 10 + 3 }
+        spawn { seq.store(seq.load() * 10 + 1) }
+        spawn { seq.store(seq.load() * 10 + 2) }
+        spawn { seq.store(seq.load() * 10 + 3) }
     }
-    assert(seq == 123)
+    assert(seq.load() == 123)
 }
 
 test "supervised: 10 spawns in loop, mutations accumulate" {
-    mut acc = 0
+    mut acc = AtomicInt.new(0)
     supervised {
         mut i = 0
         while i < 10 {
             ro cur = i
-            spawn { acc += cur + 1 }   // adds 1,2,...,10
+            spawn { acc.fetch_add(cur + 1) }   // adds 1,2,...,10
             i += 1
         }
     }
     // 1+2+...+10 = 55
-    assert(acc == 55)
+    assert(acc.load() == 55)
 }
 
 test "supervised: result via mut capture (no spawn-result needed)" {
     ro x = 7
-    mut r = 0
+    mut r = AtomicInt.new(0)
     supervised {
-        spawn { r = x * x * x }   // 343
+        spawn { r.store(x * x * x) }   // 343
     }
-    ro r2 = r + 1
-    assert(r == 343)
+    ro r2 = r.load() + 1
+    assert(r.load() == 343)
     assert(r2 == 344)
 }
 
@@ -115,46 +122,46 @@ test "supervised: result via mut capture (no spawn-result needed)" {
 
 test "supervised: captures immutable int, writes via mut" {
     ro n = 42
-    mut r = 0
-    supervised { spawn { r = n * 2 } }
-    assert(r == 84)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(n * 2) } }
+    assert(r.load() == 84)
 }
 
 test "supervised: captures multiple immutable vars" {
     ro a = 3
     ro b = 4
     ro c = 5
-    mut r = 0
-    supervised { spawn { r = a * a + b * b + c * c } }   // 9 + 16 + 25 = 50
-    assert(r == 50)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(a * a + b * b + c * c) } }   // 9 + 16 + 25 = 50
+    assert(r.load() == 50)
 }
 
 test "supervised: captures mutable var, mutation visible" {
-    mut x = 10
-    supervised { spawn { x = x * 3 } }
-    assert(x == 30)
+    mut x = AtomicInt.new(10)
+    supervised { spawn { x.store(x.load() * 3) } }
+    assert(x.load() == 30)
 }
 
 test "supervised: two fibers capture same mutable var, both mutations apply" {
-    mut n = 0
+    mut n = AtomicInt.new(0)
     supervised {
-        spawn { n += 5 }
-        spawn { n += 3 }
+        spawn { n.fetch_add(5) }
+        spawn { n.fetch_add(3) }
     }
-    assert(n == 8)
+    assert(n.load() == 8)
 }
 
 test "supervised: captures result of function call" {
     ro n = 10
-    mut r = 0
-    supervised { spawn { r = sum_range2(n) } }   // 55
-    assert(r == 55)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(sum_range2(n)) } }   // 55
+    assert(r.load() == 55)
 }
 
 test "supervised: captures result of expensive function" {
-    mut r = 0
-    supervised { spawn { r = fib(20) } }   // 6765
-    assert(r == 6765)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(fib(20)) } }   // 6765
+    assert(r.load() == 6765)
 }
 
 // ================================================================
@@ -167,51 +174,51 @@ test "supervised: captures result of expensive function" {
 
 test "pipeline: 2 stages via prior values" {
     ro x = 6
-    mut s1 = 0
-    mut s2 = 0
-    supervised { spawn { s1 = x * x } }            // 36
-    supervised { spawn { s2 = s1 + s1 } }          // 72
-    assert(s1 == 36)
-    assert(s2 == 72)
+    mut s1 = AtomicInt.new(0)
+    mut s2 = AtomicInt.new(0)
+    supervised { spawn { s1.store(x * x) } }            // 36
+    supervised { spawn { s2.store(s1.load() + s1.load()) } }          // 72
+    assert(s1.load() == 36)
+    assert(s2.load() == 72)
 }
 
 test "pipeline: 3 stages doubling-squared" {
     ro base = 2
-    mut s1 = 0; mut s2 = 0; mut s3 = 0
-    supervised { spawn { s1 = base * base } }       // 4
-    supervised { spawn { s2 = s1 * s1 } }          // 16
-    supervised { spawn { s3 = s2 * s2 } }          // 256
-    assert(s1 == 4)
-    assert(s2 == 16)
-    assert(s3 == 256)
+    mut s1 = AtomicInt.new(0); mut s2 = AtomicInt.new(0); mut s3 = AtomicInt.new(0)
+    supervised { spawn { s1.store(base * base) } }       // 4
+    supervised { spawn { s2.store(s1.load() * s1.load()) } }          // 16
+    supervised { spawn { s3.store(s2.load() * s2.load()) } }          // 256
+    assert(s1.load() == 4)
+    assert(s2.load() == 16)
+    assert(s3.load() == 256)
 }
 
 test "pipeline: 5 stages doubling" {
     ro start = 1
-    mut v1 = 0; mut v2 = 0; mut v3 = 0; mut v4 = 0; mut v5 = 0
-    supervised { spawn { v1 = start + 1 } }   // 2
-    supervised { spawn { v2 = v1 * 2 } }      // 4
-    supervised { spawn { v3 = v2 * 2 } }      // 8
-    supervised { spawn { v4 = v3 * 2 } }      // 16
-    supervised { spawn { v5 = v4 * 2 } }      // 32
-    assert(v1 == 2)
-    assert(v3 == 8)
-    assert(v5 == 32)
+    mut v1 = AtomicInt.new(0); mut v2 = AtomicInt.new(0); mut v3 = AtomicInt.new(0); mut v4 = AtomicInt.new(0); mut v5 = AtomicInt.new(0)
+    supervised { spawn { v1.store(start + 1) } }   // 2
+    supervised { spawn { v2.store(v1.load() * 2) } }      // 4
+    supervised { spawn { v3.store(v2.load() * 2) } }      // 8
+    supervised { spawn { v4.store(v3.load() * 2) } }      // 16
+    supervised { spawn { v5.store(v4.load() * 2) } }      // 32
+    assert(v1.load() == 2)
+    assert(v3.load() == 8)
+    assert(v5.load() == 32)
 }
 
 test "pipeline: fork and join (two parallel + one combiner)" {
     ro x = 10
-    mut left = 0
-    mut right = 0
+    mut left = AtomicInt.new(0)
+    mut right = AtomicInt.new(0)
     supervised {
-        spawn { left = x + 1 }      // 11
-        spawn { right = x * x }     // 100
+        spawn { left.store(x + 1) }      // 11
+        spawn { right.store(x * x) }     // 100
     }
-    mut joined = 0
-    supervised { spawn { joined = left + right } }   // 111
-    assert(left == 11)
-    assert(right == 100)
-    assert(joined == 111)
+    mut joined = AtomicInt.new(0)
+    supervised { spawn { joined.store(left.load() + right.load()) } }   // 111
+    assert(left.load() == 11)
+    assert(right.load() == 100)
+    assert(joined.load() == 111)
 }
 
 // ================================================================
@@ -219,49 +226,49 @@ test "pipeline: fork and join (two parallel + one combiner)" {
 // ================================================================
 
 test "state machine: 3-state protocol" {
-    mut state = 0
-    mut partial = 0
-    mut result = 0
+    mut state = AtomicInt.new(0)
+    mut partial = AtomicInt.new(0)
+    mut result = AtomicInt.new(0)
     ro input = 7
 
     supervised {
         spawn {
-            state = 1
-            partial = input * 2   // 14
+            state.store(1)
+            partial.store(input * 2)   // 14
         }
     }
-    assert(state == 1)
-    assert(partial == 14)
-    assert(result == 0)
+    assert(state.load() == 1)
+    assert(partial.load() == 14)
+    assert(result.load() == 0)
 
     supervised {
         spawn {
-            result = partial + input   // 14 + 7 = 21
-            state = 2
+            result.store(partial.load() + input)   // 14 + 7 = 21
+            state.store(2)
         }
     }
-    assert(state == 2)
-    assert(result == 21)
+    assert(state.load() == 2)
+    assert(result.load() == 21)
 }
 
 test "state machine: 5-step accumulator" {
-    mut step = 0
-    mut total = 0
+    mut step = AtomicInt.new(0)
+    mut total = AtomicInt.new(0)
 
-    supervised { spawn { step = 1; total += 1 } }
-    assert(step == 1); assert(total == 1)
+    supervised { spawn { step.store(1); total.fetch_add(1) } }
+    assert(step.load() == 1); assert(total.load() == 1)
 
-    supervised { spawn { step = 2; total += 2 } }
-    assert(step == 2); assert(total == 3)
+    supervised { spawn { step.store(2); total.fetch_add(2) } }
+    assert(step.load() == 2); assert(total.load() == 3)
 
-    supervised { spawn { step = 3; total += 4 } }
-    assert(step == 3); assert(total == 7)
+    supervised { spawn { step.store(3); total.fetch_add(4) } }
+    assert(step.load() == 3); assert(total.load() == 7)
 
-    supervised { spawn { step = 4; total += 8 } }
-    assert(step == 4); assert(total == 15)
+    supervised { spawn { step.store(4); total.fetch_add(8) } }
+    assert(step.load() == 4); assert(total.load() == 15)
 
-    supervised { spawn { step = 5; total += 16 } }
-    assert(step == 5); assert(total == 31)
+    supervised { spawn { step.store(5); total.fetch_add(16) } }
+    assert(step.load() == 5); assert(total.load() == 31)
 }
 
 // ================================================================
@@ -269,30 +276,30 @@ test "state machine: 5-step accumulator" {
 // ================================================================
 
 test "supervised: 100 fibers, sum correct" {
-    mut total = 0
+    mut total = AtomicInt.new(0)
     supervised {
         mut i = 1
         while i <= 100 {
             ro cur = i
-            spawn { total += cur }
+            spawn { total.fetch_add(cur) }
             i += 1
         }
     }
-    assert(total == 5050)
+    assert(total.load() == 5050)
 }
 
 test "supervised: 500 fibers, sum of squares" {
-    mut total = 0
+    mut total = AtomicInt.new(0)
     supervised {
         mut i = 0
         while i < 500 {
             ro cur = i
-            spawn { total += cur * cur }
+            spawn { total.fetch_add(cur * cur) }
             i += 1
         }
     }
     // sum(i^2, i=0..499) = 41541750
-    assert(total == 41541750)
+    assert(total.load() == 41541750)
 }
 
 // ================================================================
@@ -301,22 +308,22 @@ test "supervised: 500 fibers, sum of squares" {
 
 test "spawn: factorial(10) via mut capture" {
     ro n = 10
-    mut r = 0
-    supervised { spawn { r = factorial(n) } }
-    assert(r == 3628800)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(factorial(n)) } }
+    assert(r.load() == 3628800)
 }
 
 test "spawn: fib(25) via mut capture" {
-    mut r = 0
-    supervised { spawn { r = fib(25) } }
-    assert(r == 75025)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(fib(25)) } }
+    assert(r.load() == 75025)
 }
 
 test "spawn: sum_range2(1000) via mut capture" {
     ro n = 1000
-    mut r = 0
-    supervised { spawn { r = sum_range2(n) } }
-    assert(r == 500500)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(sum_range2(n)) } }
+    assert(r.load() == 500500)
 }
 
 // ================================================================
@@ -324,33 +331,33 @@ test "spawn: sum_range2(1000) via mut capture" {
 // ================================================================
 
 test "spawn: factorial via sequential spawn mutations" {
-    mut acc = 1
+    mut acc = AtomicInt.new(1)
     supervised {
         mut i = 1
         while i <= 12 {
             ro cur = i
-            spawn { acc = acc * cur }
+            spawn { acc.store(acc.load() * cur) }
             i += 1
         }
     }
-    assert(acc == 479001600)   // 12!
+    assert(acc.load() == 479001600)   // 12!
 }
 
 test "spawn: alternating add/multiply pattern" {
-    mut val = 1
+    mut val = AtomicInt.new(1)
     supervised {
         mut i = 0
         while i < 10 {
             ro cur = i
             spawn {
                 if cur * 2 == cur + cur {
-                    val = val + cur + 1
+                    val.store(val.load() + cur + 1)
                 }
             }
             i += 1
         }
     }
-    assert(val == 56)   // 1 + sum(1..10)
+    assert(val.load() == 56)   // 1 + sum(1..10)
 }
 
 // ================================================================
@@ -359,32 +366,32 @@ test "spawn: alternating add/multiply pattern" {
 
 test "spawn: record field accessed via mut capture" {
     ro c = make_counter1(42)
-    mut r = 0
-    supervised { spawn { r = c.val * 2 } }
-    assert(r == 84)
+    mut r = AtomicInt.new(0)
+    supervised { spawn { r.store(c.val * 2) } }
+    assert(r.load() == 84)
 }
 
 test "spawn: int captured from record before spawn" {
     ro c = make_counter1(100)
     ro cap = c.val
-    mut result = 0
-    supervised { spawn { result = cap + 1 } }
-    assert(result == 101)
+    mut result = AtomicInt.new(0)
+    supervised { spawn { result.store(cap + 1) } }
+    assert(result.load() == 101)
 }
 
 test "pipeline: records through sequential spawn stages" {
     ro s1_in = 5
     ro s1 = make_stage(s1_in, 0)
-    mut r1 = 0
-    supervised { spawn { r1 = s1.input * s1.input } }   // 25
+    mut r1 = AtomicInt.new(0)
+    supervised { spawn { r1.store(s1.input * s1.input) } }   // 25
 
-    ro s2_in = r1
+    ro s2_in = r1.load()
     ro s2 = make_stage(s2_in, 0)
-    mut r2 = 0
-    supervised { spawn { r2 = s2.input + 1 } }          // 26
+    mut r2 = AtomicInt.new(0)
+    supervised { spawn { r2.store(s2.input + 1) } }          // 26
 
-    assert(r1 == 25)
-    assert(r2 == 26)
+    assert(r1.load() == 25)
+    assert(r2.load() == 26)
 }
 
 // ================================================================
@@ -392,51 +399,51 @@ test "pipeline: records through sequential spawn stages" {
 // ================================================================
 
 test "supervised: independent mutations don't interfere" {
-    mut a = 0
-    mut b = 0
+    mut a = AtomicInt.new(0)
+    mut b = AtomicInt.new(0)
     supervised {
-        spawn { a = 111 }
-        spawn { b = 222 }
+        spawn { a.store(111) }
+        spawn { b.store(222) }
     }
-    assert(a == 111)
-    assert(b == 222)
+    assert(a.load() == 111)
+    assert(b.load() == 222)
 }
 
 test "supervised: 10 independent pairs, no cross-contamination" {
-    mut r0 = 0
-    mut r1 = 0
-    mut r2 = 0
-    mut r3 = 0
-    mut r4 = 0
-    mut r5 = 0
-    mut r6 = 0
-    mut r7 = 0
-    mut r8 = 0
-    mut r9 = 0
+    mut r0 = AtomicInt.new(0)
+    mut r1 = AtomicInt.new(0)
+    mut r2 = AtomicInt.new(0)
+    mut r3 = AtomicInt.new(0)
+    mut r4 = AtomicInt.new(0)
+    mut r5 = AtomicInt.new(0)
+    mut r6 = AtomicInt.new(0)
+    mut r7 = AtomicInt.new(0)
+    mut r8 = AtomicInt.new(0)
+    mut r9 = AtomicInt.new(0)
 
     supervised {
-        spawn { r0 = 0 * 7 + 1 }
-        spawn { r1 = 1 * 7 + 1 }
-        spawn { r2 = 2 * 7 + 1 }
-        spawn { r3 = 3 * 7 + 1 }
-        spawn { r4 = 4 * 7 + 1 }
-        spawn { r5 = 5 * 7 + 1 }
-        spawn { r6 = 6 * 7 + 1 }
-        spawn { r7 = 7 * 7 + 1 }
-        spawn { r8 = 8 * 7 + 1 }
-        spawn { r9 = 9 * 7 + 1 }
+        spawn { r0.store(0 * 7 + 1) }
+        spawn { r1.store(1 * 7 + 1) }
+        spawn { r2.store(2 * 7 + 1) }
+        spawn { r3.store(3 * 7 + 1) }
+        spawn { r4.store(4 * 7 + 1) }
+        spawn { r5.store(5 * 7 + 1) }
+        spawn { r6.store(6 * 7 + 1) }
+        spawn { r7.store(7 * 7 + 1) }
+        spawn { r8.store(8 * 7 + 1) }
+        spawn { r9.store(9 * 7 + 1) }
     }
 
-    assert(r0 == 1)
-    assert(r1 == 8)
-    assert(r2 == 15)
-    assert(r3 == 22)
-    assert(r4 == 29)
-    assert(r5 == 36)
-    assert(r6 == 43)
-    assert(r7 == 50)
-    assert(r8 == 57)
-    assert(r9 == 64)
+    assert(r0.load() == 1)
+    assert(r1.load() == 8)
+    assert(r2.load() == 15)
+    assert(r3.load() == 22)
+    assert(r4.load() == 29)
+    assert(r5.load() == 36)
+    assert(r6.load() == 43)
+    assert(r7.load() == 50)
+    assert(r8.load() == 57)
+    assert(r9.load() == 64)
 }
 
 // ================================================================

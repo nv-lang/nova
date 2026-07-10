@@ -126,21 +126,21 @@ test "detach inside supervised: orphan body completes after drain" {
     // НЕ участвует в supervised drain — completes asynchronously.
     // Каждый spawn внутри supervised drained scope'ом; orphan — global.
     mut detach_flag = 0
-    mut spawn_sum = 0
+    mut spawn_sum = AtomicInt.new(0)
     supervised {
         detach {
             detach_flag = 1
         }
         spawn {
-            spawn_sum += 10
+            spawn_sum.fetch_add(10)
         }
         spawn {
-            spawn_sum += 20
+            spawn_sum.fetch_add(20)
         }
     }
     // После scope-exit: spawn'ы drained (spawn_sum == 30 гарантировано).
     // Orphan detach МОЖЕТ ещё не отработать — drain explicit.
-    assert(spawn_sum == 30)
+    assert(spawn_sum.load() == 30)
     runtime.drain_orphans()
     assert(detach_flag == 1)
 }
