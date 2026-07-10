@@ -1,8 +1,28 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 191 — bcrypt: закрыть security-surface (демо-KDF под именем bcrypt)
 
-**Статус:** 📋 PROPOSED 2026-07-10 (решение владельца — отдельный план). **Приоритет:** P1-surface (латентная).
-**Маркер:** `[M-bcrypt-demo-kdf-not-real]`.
+**Статус:** ✅ **Вариант A ЗАКРЫТ 2026-07-10** (ветка `bcrypt-derisk-191`, коммит
+`0f72ed25e`). Вариант B (настоящая KDF — Argon2/native Blowfish-шим) —
+**Plan 193**, отдельная будущая волна. **Приоритет:** P1-surface (латентная).
+**Маркер:** `[M-bcrypt-demo-kdf-not-real]` — A закрыт, B=Plan 193.
+
+### Итог варианта A (2026-07-10)
+
+- `git mv std/crypto/bcrypt.nv` → `std/_experimental/crypto/insecure_demo_kdf.nv`
+  (+ peer-тест) — auto-skip из `nova check std/`, вне shipped 0.1 набора.
+- `Bcrypt`/`BcryptError` → `InsecureDemoKdf`/`InsecureDemoKdfError`.
+- Формат `$2b$<cost>$...` → собственный `$ndk1$<cost>$...` — `verify`
+  намеренно НЕ распознаёт `$2b$`/`$2a$`/`$2y$` (пин-тест на отказ настоящих
+  bcrypt-хешей, чтобы не создавать иллюзию совместимости).
+- Докстринг — явное `⚠ INSECURE` в шапке + на каждой public fn
+  (`#experimental` вместо `#stable`).
+- Сняты живые упоминания `Bcrypt` как shipped-примера (`std/nova.toml`,
+  `std/_experimental/STATUS.md`, `spec/decisions/07-modules.md`,
+  `std/prelude/effects.nv`, `std/testing/handlers.nv`).
+- Гейты: cargo build OK; conformance 91/0; `nova check std/` FAIL-set δ0
+  (32 pre-existing, 0 crypto; sha256/hmac/md5/sha1/jwt не задеты);
+  `insecure_demo_kdf` check+test --full PASS (8 тестов, вкл. новый
+  negative на отказ `$2b$`); grep-инвариант 0 `Bcrypt`/`$2b$` в shipped std/.
 
 ## Проблема — да, это латентная дыра безопасности
 
