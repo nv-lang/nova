@@ -1,0 +1,48 @@
+// [M-d55-anon-recordlit-codegen-gap] bug1 (2026-07-10, ветка
+// recordlit-callarg-fix): плейн (не #from_fields/#from_pairs) анонимный
+// record-литерал `{x: 1, y: 2}` в позиции call-аргумента (`takes(p Point)`
+// + `takes({x:1,y:2})`) падал `"anonymous record literal without spread
+// not supported in codegen"` — emit_record_lit не видел call-arg
+// expected-тип вообще (только current_fn_return_ty/expected_record_type
+// для return/let/field/ctor-payload контекстов). Разграничение с
+// `d55_hashmap_from_fields.nv`: тот файл покрывает HashMap `#from_fields`/
+// `#from_pairs`-манифестацию того же маркера (закрыта checker-фиксом);
+// этот файл — genuine plain-record call-arg codegen-манифестация,
+// закрыта отдельным codegen-фиксом
+// (`synthesize_record_lit_typed_call_args` в emit_c.rs): callee резолвится
+// в `user_fn_sigs` (non-generic free fn) → анонимный RecordLit-аргумент
+// переписывается с явным `type_name`, реиспользуя существующий
+// полнофункциональный `type_name: Some(...)` codegen-путь.
+module spec_tests.conformance
+
+type D55CaPoint { x int, y int }
+
+fn d55_ca_takes(p D55CaPoint) -> int => p.x + p.y
+
+test "plain-record: анонимный литерал в call-arg позиции" {
+    ro r = d55_ca_takes({ x: 1, y: 2 })
+    assert(r == 3)
+}
+
+fn d55_ca_takes_two(label str, p D55CaPoint) -> str => "${label}:${p.x + p.y}"
+
+test "plain-record: анонимный литерал во ВТОРОЙ call-arg позиции" {
+    ro r = d55_ca_takes_two("sum", { x: 4, y: 5 })
+    assert(r == "sum:9")
+}
+
+// Регресс-покрытие: типизированный литерал (уже работал) и call-arg с
+// явным spread (уже работал через отдельную ветку emit_record_lit) не
+// должны сломаться этим фиксом.
+fn d55_ca_takes_named(p D55CaPoint) -> int => p.x + p.y
+
+test "plain-record: регресс — явно типизированный литерал в call-arg" {
+    ro r = d55_ca_takes_named(D55CaPoint { x: 10, y: 20 })
+    assert(r == 30)
+}
+
+test "plain-record: регресс — spread-литерал в call-arg" {
+    ro base = D55CaPoint { x: 1, y: 1 }
+    ro r = d55_ca_takes_named({ ...base, y: 9 })
+    assert(r == 10)
+}

@@ -29796,6 +29796,96 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if any { Some(out) } else { None }
     }
 
+    /// [M-d55-anon-recordlit-codegen-gap] bug1 (2026-07-10, ветка
+    /// `recordlit-callarg-fix`). Плейн (не `#from_fields`/`#from_pairs`)
+    /// анонимный record-литерал `{x: 1, y: 2}` в позиции call-аргумента
+    /// (`takes({x:1,y:2})` при `fn takes(p Point)`) падал `"anonymous
+    /// record literal without spread not supported in codegen"` —
+    /// `emit_record_lit` знает только `current_fn_return_ty` (return-
+    /// position) и разовые `expected_record_type` скоупы (let-с-типом /
+    /// вложенное поле / Some-Ok-Err payload / sum-payload), НЕ call-arg
+    /// expected-тип вообще.
+    ///
+    /// Вместо ещё одного разового `expected_record_type`-скоупа (не
+    /// покрыл бы generic-mono/sum-variant/sret ветки полного
+    /// `type_name: Some(...)`-пути) — переиспользуем этот СУЩЕСТВУЮЩИЙ
+    /// путь: если callee резолвится в `user_fn_sigs` (единственный
+    /// источник, где параметр-тип известен ДО мономорфизации по call-
+    /// site — только non-generic free fn, см. регистрацию в
+    /// `user_fn_sigs.insert` выше) и параметр на этой позиции — известный
+    /// `record_schemas`-тип, переписываем узел так, будто пользователь
+    /// написал `Point { x: 1, y: 2 }` явно. Идемпотентно с двумя wrap'ами
+    /// выше (работает только с голым `RecordLit{type_name: None}`, не
+    /// трогает уже типизированные/spread/HashMap-десугаренные узлы).
+    fn synthesize_record_lit_typed_call_args(
+        &self,
+        func: &Expr,
+        args: &[CallArg],
+    ) -> Option<Vec<CallArg>> {
+        let base: &Expr = match &func.kind {
+            ExprKind::TurboFish { base, .. } => base,
+            _ => func,
+        };
+        let name: &str = match &base.kind {
+            ExprKind::Ident(name) => name.as_str(),
+            ExprKind::Path(parts) if parts.len() == 1 => parts[0].as_str(),
+            _ => return None,
+        };
+        let (param_c_tys, _ret) = self.user_fn_sigs.get(name)?;
+        let mut any = false;
+        let mut out: Vec<CallArg> = Vec::with_capacity(args.len());
+        for (i, a) in args.iter().enumerate() {
+            let rewritten = match a {
+                CallArg::Item(inner) => self
+                    .try_type_anon_record_lit(inner, param_c_tys.get(i))
+                    .map(CallArg::Item),
+                // Именованные/spread аргументы — вне периметра этого
+                // фикса (репро owner'а — позиционный call-arg).
+                _ => None,
+            };
+            match rewritten {
+                Some(r) => {
+                    any = true;
+                    out.push(r);
+                }
+                None => out.push(a.clone()),
+            }
+        }
+        if any { Some(out) } else { None }
+    }
+
+    /// Хелпер для `synthesize_record_lit_typed_call_args`: если `inner` —
+    /// голый анонимный record-литерал (`type_name: None`, без spread-
+    /// полей, `inferred_map_v: None` — HashMap/`#from_pairs`-манифестация
+    /// уже десугарена ДО этой точки в отдельный узел, см.
+    /// `desugar.rs::build_map_block`) и `param_c_ty` резолвится в
+    /// известный `record_schemas`-тип — возвращает клон узла с
+    /// заполненным `type_name`. `None` во всех остальных случаях
+    /// (typed/spread/HashMap-литерал, неизвестный/generic-erased/не-
+    /// record параметр) — оригинальный fallback-путь (и его error)
+    /// остаётся нетронутым.
+    fn try_type_anon_record_lit(&self, inner: &Expr, param_c_ty: Option<&String>) -> Option<Expr> {
+        let ExprKind::RecordLit { type_name: None, fields, inferred_map_v: None } = &inner.kind
+        else {
+            return None;
+        };
+        if fields.iter().any(|f| f.is_spread) {
+            return None;
+        }
+        let struct_name = Self::debt_struct_name_from_c_type(param_c_ty?)?;
+        if !self.record_schemas.contains_key(&struct_name) {
+            return None;
+        }
+        Some(Expr::new(
+            ExprKind::RecordLit {
+                type_name: Some(vec![struct_name]),
+                fields: fields.clone(),
+                inferred_map_v: None,
+            },
+            inner.span,
+        ))
+    }
+
     /// Plan 172.14 Ф.1: аргумент можно передать по прямому адресу БЕЗ копии?
     /// Строго: только bare-Ident НЕмутабельного локала со value-struct
     /// C-типом — его хранилище лежит в кадре вызывающего и не может быть
@@ -29840,6 +29930,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let method_wrapped: Option<Vec<CallArg>> =
             self.synthesize_method_byref_at_callsite(func, args);
         let args: &[CallArg] = method_wrapped.as_deref().unwrap_or(args);
+        // [M-d55-anon-recordlit-codegen-gap] bug1 fix (2026-07-10, ветка
+        // recordlit-callarg-fix): анонимный record-литерал `{x:1,y:2}` в
+        // позиции call-arg — см. `synthesize_record_lit_typed_call_args` doc.
+        let record_lit_wrapped: Option<Vec<CallArg>> =
+            self.synthesize_record_lit_typed_call_args(func, args);
+        let args: &[CallArg] = record_lit_wrapped.as_deref().unwrap_or(args);
         // Plan 174.3 (D54 v1): `x.try_as[T]()` — optional downcast of a boxed
         // `any` to `Option[T]`. Runtime type_id check on the erased value: match
         // → `Some(*(T*)payload)`, mismatch → `None`. Intercepted here (before the
