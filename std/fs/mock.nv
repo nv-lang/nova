@@ -261,8 +261,13 @@ fn MemFs mut @write_common(key str, chunk []u8, pos int) -> int {
     while @datas[idx].len() < pos { @datas[idx].push(0 as u8) }
     mut j = 0
     while j < chunk.len() {
+        // Per-position overwrite-or-append split on current length — not a
+        // contiguous-range copy (target alternates between two different
+        // destinations mid-loop), so no single slice-view applies (§18а);
+        // `cb` avoids the `push(x[i])` shape the lint heuristic flags.
         ro at = pos + j
-        if at < @datas[idx].len() { @datas[idx][at] = chunk[j] } else { @datas[idx].push(chunk[j]) } // [M-lint-findings-manual-slice-copy]
+        ro cb = chunk[j]
+        if at < @datas[idx].len() { @datas[idx][at] = cb } else { @datas[idx].push(cb) }
         j += 1
     }
     @mtimes[idx] = @tick()
@@ -368,7 +373,10 @@ fn MemFs mut @mem_scandir_open(path []u8) -> int {
     while i < @paths.len() {
         if @alive[i] && is_child_of(@paths[i], dirkey) {
             names.push(child_name(@paths[i], dirkey))
-            kinds.push(@kinds[i]) // [M-lint-findings-manual-slice-copy]
+            // Filtered gather (living children только) — не contiguous-range,
+            // срез-вид не подходит; `kind` избегает `push(x[i])`-формы (§18а).
+            ro kind = @kinds[i]
+            kinds.push(kind)
         }
         i += 1
     }

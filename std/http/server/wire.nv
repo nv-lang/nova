@@ -28,7 +28,7 @@ fn parse_request(raw []u8) -> Result[ServerRequest, HttpError] {
         Some(x) => x
         None    => return Err(HttpError.protocol_error("request: empty request line"))
     }
-    ro (method, target, path, query, version) = parse_request_line(slice(raw, 0, first_eol))?
+    ro (method, target, path, query, version) = parse_request_line(raw[0..first_eol])?
 
     mut hm = HeaderMap.new()
     mut i = first_eol + 2
@@ -38,7 +38,7 @@ fn parse_request(raw []u8) -> Result[ServerRequest, HttpError] {
         if eol <= i {
             running = false
         } else {
-            parse_header_line(hm, slice(raw, i, eol))?
+            parse_header_line(hm, raw[i..eol])?
             i = eol + 2
         }
     }
@@ -52,7 +52,7 @@ fn parse_request(raw []u8) -> Result[ServerRequest, HttpError] {
         Some(len) => {
             ro avail = n - body_start
             ro take = len.min(avail)
-            slice(raw, body_start, body_start + take)
+            raw[body_start..body_start + take]
         }
         None => []u8.new()
     }
@@ -70,13 +70,13 @@ fn parse_request_line(line []u8) -> Result[(Method, str, str, str, Version), Htt
     // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` locals — a
     // facade-imported method (`to_str_unchecked`) chained directly on a
     // fn-call result loses the concrete element type (backlog-followups.md).
-    ro method_bytes []u8 = slice(line, 0, sp1)
+    ro method_bytes []u8 = line[0..sp1]
     ro method = Method.parse(unsafe { method_bytes.to_str_unchecked() })?
     ro sp2 = match index_of(line, 0x20, sp1 + 1) {
         Some(x) => x
         None    => return Err(HttpError.protocol_error("request line: no space after target"))
     }
-    ro target_bytes []u8 = slice(line, sp1 + 1, sp2)
+    ro target_bytes []u8 = line[sp1 + 1..sp2]
     ro target = unsafe { target_bytes.to_str_unchecked() }
     if target.byte_len() == 0 {
         return Err(HttpError.protocol_error("request line: empty target"))
@@ -85,7 +85,7 @@ fn parse_request_line(line []u8) -> Result[(Method, str, str, str, Version), Htt
     if target.contains("..") {
         return Err(HttpError.protocol_error("request line: path traversal (..) rejected"))
     }
-    ro ver_bytes []u8 = slice(line, sp2 + 1, line.len())
+    ro ver_bytes []u8 = line[sp2 + 1..line.len()]
     ro version = parse_version(unsafe { ver_bytes.to_str_unchecked() })?
     ro (path, query) = match target.find("?") {
         Some(q) => (target[0..q], target[q + 1..target.byte_len()])
@@ -108,9 +108,9 @@ fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
         None    => return Err(HttpError.protocol_error("header line: no colon"))
     }
     // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` local.
-    ro name_bytes []u8 = slice(line, 0, colon)
+    ro name_bytes []u8 = line[0..colon]
     ro name = unsafe { name_bytes.to_str_unchecked() }
-    ro value = trim_ows(slice(line, colon + 1, line.len()))
+    ro value = trim_ows(line[colon + 1..line.len()])
     hm.append_bytes(name, value)?
     Ok(())
 }
@@ -165,19 +165,6 @@ fn reason_of(status int) -> str {
 
 // ── byte helpers ────────────────────────────────────────────────────────────────
 
-fn slice(b []u8, start int, end int) -> []u8 {
-    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
-    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
-    mut out []u8 = []u8.new()
-    out.cap(end - start)
-    mut i = start
-    while i < end {
-        out.push(b[i]) // [M-lint-findings-manual-slice-copy]
-        i += 1
-    }
-    out
-}
-
 fn index_of(b []u8, target int, from int) -> Option[int] {
     ro n = b.len()
     mut i = from
@@ -217,7 +204,7 @@ fn trim_ows(b []u8) -> []u8 {
     while lo < n && is_ows(b[lo] as int) { lo += 1 }
     mut hi = n
     while hi > lo && is_ows(b[hi - 1] as int) { hi -= 1 }
-    slice(b, lo, hi)
+    b[lo..hi]
 }
 
 fn is_ows(c int) -> bool => c == 0x20 || c == 0x09

@@ -608,13 +608,11 @@ fn Inflater mut @step_dynamic_header() -> Result[bool, CompressError] {
         }
     }
 
-    // Разбиваем на lit/len и distance, строим таблицы
-    mut litlen []int = []int.new()
-    litlen.cap(hlit)
-    for k in 0..hlit { litlen.push(lengths[k]) } // [M-lint-findings-manual-slice-copy]
-    mut distl []int = []int.new()
-    distl.cap(hdist)
-    for k in 0..hdist { distl.push(lengths[hlit + k]) }
+    // Разбиваем на lit/len и distance, строим таблицы — срез-вид (§18а
+    // nv-coding-style): `lengths` дальше не используется в этом scope, так
+    // что zero-copy view достаточно, без `.clone()`.
+    ro litlen = lengths[0..hlit]
+    ro distl = lengths[hlit..hlit + hdist]
 
     if litlen[256] == 0 {
         return Err(CompressError.invalid("missing end-of-block code"))

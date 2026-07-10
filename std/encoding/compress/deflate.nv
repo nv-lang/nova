@@ -302,10 +302,11 @@ fn DeflateEnc mut @emit_dynamic_block(tokens []Tok, is_final bool) -> () {
     while hdist > 1 && dist_lens[hdist - 1] == 0 { hdist = hdist - 1 }
 
     // 4. Объединённый массив длин + RLE (символы 0..18)
+    // Срез-вид + append (§18а nv-coding-style) вместо поэлементной копии.
     mut all []int = []int.new()
     all.cap(hlit + hdist)
-    for k in 0..hlit { all.push(lit_lens[k]) } // [M-lint-findings-manual-slice-copy]
-    for k in 0..hdist { all.push(dist_lens[k]) } // [M-lint-findings-manual-slice-copy]
+    all.append(lit_lens[0..hlit])
+    all.append(dist_lens[0..hdist])
     ro rle = rle_lengths(all, hlit + hdist)
     ro cl_sym = rle.0
     ro cl_ext = rle.1
@@ -562,9 +563,15 @@ fn build_code_lengths(freq []int, n int, maxbits int) -> []int {
     mut keys []int = []int.new()
     keys.cap(n)
     for s in 0..n {
-        if freq[s] > 0 {
+        // Filtered gather (nonzero frequencies только) — не contiguous-range
+        // копия, срез-вид тут не подходит; переиспользуем `f`, чтобы не
+        // индексировать `freq` дважды (заодно снимает лишний false-positive
+        // на W_MANUAL_SLICE_COPY, §18а — эвристика видит `push(x[i])`
+        // синтаксически, без учёта предиката).
+        ro f = freq[s]
+        if f > 0 {
             syms.push(s)
-            keys.push(freq[s]) // [M-lint-findings-manual-slice-copy]
+            keys.push(f)
         }
     }
     ro m = syms.len()

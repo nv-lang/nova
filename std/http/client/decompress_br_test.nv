@@ -16,10 +16,7 @@ import std.http.{Http}
 // hex string → []u8 (file-scoped name; wire.nv's hex_digit has a different shape).
 fn br_hexbytes(s str) -> []u8 {
     ro chars = s.bytes()
-    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
-    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
-    mut out []u8 = []u8.new()
-    out.cap(chars.len() / 2)
+    mut out []u8 = []u8.new().cap(chars.len() / 2)
     mut i = 0
     while i + 1 < chars.len() {
         out.push(((br_hexval(chars[i]) << 4) | br_hexval(chars[i + 1])) as u8)

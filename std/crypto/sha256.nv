@@ -105,9 +105,7 @@ export fn Sha256.hash(data []u8) -> [32]u8 {
 #stable(since = "0.1")
 export fn Sha256.hash_str(data []u8) -> str {
     ro digest = Sha256.hash(data)
-    mut bytes []u8 = []
-    for i in 0..32 { bytes.push(digest[i]) } // [M-lint-findings-manual-slice-copy]
-    Hex.encode(bytes)
+    Hex.encode(digest[0..32])
 }
 
 
