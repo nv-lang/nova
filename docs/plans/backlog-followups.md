@@ -2281,7 +2281,8 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   биндинга; (4) тесты: pos (ro-вид, mut-копия, пустой x"", группировки, embed
   round-trip) + neg (нечёт, не-hex, отсутствующий файл); спека D412 в 03-syntax.md.
 
-- **[M-fs-tls-mn-race]** (2026-07-08, **P1** — латентная гонка данных, Plan: 176.1-кандидат
+- ✅ **[M-fs-tls-mn-race]** (2026-07-08, **P1 — ЗАКРЫТО** (проверено 2026-07-11: fs-M:N-переписыванием, см. [M-sched-park-concurrent-fs]);
+  латентная гонка данных, Plan: 176.1-кандидат
   или отдельная волна; Wave: [sonnet] НЕМЕДЛЕННО, зона nova_rt/fs.* + std/fs свободна) —
   fs спроектирован на TLS-протоколах из нескольких вызовов и НЕ безопасен для M:N:
   (1) stat-семейство: `fs_stat(path)` кэширует uv_stat_t в TLS → `fs_stat_size()/mtime/...`
