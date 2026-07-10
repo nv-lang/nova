@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR does not implement
+
+// D316/D318 Q13 — `Monotonic` НЕ сериализуется by contract (process-local,
+// epoch undefined вне процесса; Go `String()` течёт `m=…` — footgun,
+// Nova закрывает на уровне типов). Ф.6-верификация: Monotonic type-decl
+// (std/time/duration.nv) НЕ имеет `#impl(Serialize)` — попытка обернуть
+// его полем в `#impl(Serialize)`-record отвергается компилятором тем же
+// механизмом, что и произвольный non-serializable opaque-тип (см.
+// std/encoding/serde_neg/nonserializable.nv — прецедент-паттерн).
+module neg.d316_monotonic_non_serializable_neg
+
+import std.time.duration
+import std.encoding.serde.{Serialize, Serializer, SerError}
+
+#impl(Serialize)
+type d316_neg_wrapper value { ro moment Monotonic }
