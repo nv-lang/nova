@@ -1,0 +1,98 @@
+name: nova-lint
+
+# Plan 185 + governance (2026-07-10, «nova lint использовать по максимуму
+# автоматически»): CI-гейт конвенционных W_*-правил (реестр
+# compiler-codegen/src/lints.rs::CONV_RULES, запуск `nova lint`).
+#
+# Периметр гейтов (см. docs/test-conventions.md / docs/compiler-conventions.md
+# и governance-запись 2026-07-10 при следующей ревизии):
+#   - `nova lint std` — ЖЁСТКИЙ ГЕЙТ. std/ подтверждён чистым (0 находок)
+#     после миграций на момент введения этого workflow.
+#   - Самотест реестра (conv_pos.nv/conv_clean.nv, nova_tests/lint/) —
+#     ЖЁСТКИЙ ГЕЙТ: регресс-гвард на сам МЕХАНИЗМ (правило перестало
+#     срабатывать / фикстура сломана), не на корпус.
+#   - `W_LEADING_BINOP_CONTINUATION` по ВСЕМУ nova_tests — ЖЁСТКИЙ ГЕЙТ:
+#     подтверждено 0 находок по всему корпусу при введении правила.
+#   - Полный `nova lint` по ВСЕМУ nova_tests — НЕ гейт (`continue-on-error`).
+#     Корпус несёт pre-existing находки по ДРУГИМ правилам
+#     (W_VEC_SPELLING/W_STATIC_CONVERSION/W_RETIRED_NAME/…, ~1289 на момент
+#     введения этого workflow) вне периметра текущей волны — жёсткий гейт
+#     сразу покраснил бы CI на main. Job информационный (санация — отдельная
+#     задача), не блокирует merge.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  nova-lint-std:
+    name: nova lint std/ (gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: nova lint std (must be clean)
+        run: ./nova-cli/target/release/nova lint std
+
+  nova-lint-registry-self-test:
+    name: nova lint self-test (conv_pos/conv_clean regression guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: conv_pos.nv must still trigger findings (registry fires)
+        run: |
+          set +e
+          ./nova-cli/target/release/nova lint nova_tests/lint/conv_pos.nv
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "::error::nova_tests/lint/conv_pos.nv expected lint findings (exit 1) but got exit 0 — a conv rule stopped firing (see nova_tests/lint/conv_pos.nv header for the expected-findings list)"
+            exit 1
+          fi
+      - name: conv_clean.nv must stay clean (no false positives)
+        run: ./nova-cli/target/release/nova lint nova_tests/lint/conv_clean.nv
+
+  nova-lint-leading-binop-nova-tests:
+    name: nova lint W_LEADING_BINOP_CONTINUATION nova_tests (gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: nova lint --rule W_LEADING_BINOP_CONTINUATION nova_tests (must be clean)
+        run: ./nova-cli/target/release/nova lint --rule W_LEADING_BINOP_CONTINUATION nova_tests
+
+  nova-lint-nova-tests-full-debt:
+    name: nova lint nova_tests full (informational — pre-existing debt, non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install system deps
+        run: sudo apt-get install -y libgc-dev
+      - name: Build nova-cli (release)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+      - name: nova lint nova_tests (excl. self-test fixtures; pre-existing debt, non-blocking)
+        run: ./nova-cli/target/release/nova lint --skip nova_tests/lint nova_tests

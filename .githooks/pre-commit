@@ -1,0 +1,56 @@
+#!/bin/sh
+# Opt-in pre-commit hook: `nova lint` on staged .nv files only.
+#
+# NOT active by default — enable once per clone:
+#   git config core.hooksPath .githooks
+# Disable again:
+#   git config --unset core.hooksPath
+#
+# See docs/nv-coding-style.md / docs/compiler-conventions.md for the W_*
+# conventional-rule registry this runs (compiler-codegen/src/lints.rs).
+#
+# Bypass for a single commit (e.g. WIP / known pre-existing finding you are
+# not touching this commit): `git commit --no-verify`.
+
+set -eu
+
+staged_nv=$(git diff --cached --name-only --diff-filter=ACMR -- '*.nv' || true)
+
+if [ -z "$staged_nv" ]; then
+    exit 0
+fi
+
+nova_bin=""
+for candidate in \
+    "nova-cli/target/release/nova" \
+    "nova-cli/target/release/nova.exe" \
+    "nova-cli/target/debug/nova" \
+    "nova-cli/target/debug/nova.exe"
+do
+    if [ -x "$candidate" ]; then
+        nova_bin="$candidate"
+        break
+    fi
+done
+
+if [ -z "$nova_bin" ]; then
+    echo "pre-commit (nova lint): no built nova-cli binary found (nova-cli/target/{release,debug}/nova)."
+    echo "  Build it once: cargo build --release --manifest-path nova-cli/Cargo.toml"
+    echo "  Skipping lint for this commit (not blocking — build the binary to enable the check)."
+    exit 0
+fi
+
+echo "pre-commit (nova lint): checking $(echo "$staged_nv" | wc -l) staged .nv file(s)..."
+
+# shellcheck disable=SC2086
+if ! "$nova_bin" lint $staged_nv; then
+    echo
+    echo "pre-commit (nova lint): findings above on staged .nv file(s) (W_* conventional rules,"
+    echo "  compiler-codegen/src/lints.rs::CONV_RULES). Fix them, or if this is a known/accepted"
+    echo "  case, suppress with an inline [M-...]-marker comment on the flagged line (see"
+    echo "  docs/compiler-conventions.md §4 for the marker convention)."
+    echo "  To commit anyway: git commit --no-verify"
+    exit 1
+fi
+
+exit 0
