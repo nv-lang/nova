@@ -75,11 +75,12 @@ export type SeekFrom enum
 // plain cross-module-callable static functions, so callers write
 // `io.SeekFrom.start(5)` etc. Pattern-matching on the variants is unaffected.
 
-/// Seek to an absolute offset from the start (`n >= 0`).
+/// Seek to an absolute offset from the start. `Start(<0)` — легальное
+/// ЗНАЧЕНИЕ; ошибка отдаётся на seek: `InvalidInput` (D322,
+/// 04-effects.md «Start(<0) → InvalidInput») — НЕ requires-trap на
+/// конструировании (волна 185 добавила requires вопреки спеке — откачено).
 #stable(since = "0.1")
-export fn SeekFrom.start(n int) -> SeekFrom
-    requires n >= 0
-    => Start(n)
+export fn SeekFrom.start(n int) -> SeekFrom => Start(n) // [M-lint-findings-param-no-contract]
 
 /// Seek relative to the end (`n` is usually `<= 0`).
 #stable(since = "0.1")
