@@ -132,24 +132,17 @@ fn bcrypt_kdf(password []u8, salt []u8, cost int) -> []u8 {
     mut state = Sha256.new()
     state.update(salt)
     state.update(password)
-    mut digest = state.finalize()
-    mut bytes []u8 = []
-    for i in 0..32 { bytes.push(digest[i]) } // [M-lint-findings-manual-slice-copy]
+    mut bytes = state.finalize()[0..32]
 
     // Iterate `rounds` times — экспоненциальная стоимость по cost.
     for k in 0..rounds {
         mut s = Sha256.new()
         s.update(bytes)
         s.update(salt)
-        ro d = s.finalize()
-        mut new_bytes []u8 = []
-        for j in 0..32 { new_bytes.push(d[j]) } // [M-lint-findings-manual-slice-copy]
-        bytes = new_bytes
+        bytes = s.finalize()[0..32]
     }
-    // Берём первые 23 байта (как bcrypt — 184 бита output)
-    mut out []u8 = []
-    for p in 0..23 { out.push(bytes[p]) } // [M-lint-findings-manual-slice-copy]
-    out
+    // Берём первые 23 байта (как bcrypt — 184 бита output) — срез-вид (§18а).
+    bytes[0..23]
 }
 
 

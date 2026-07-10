@@ -348,29 +348,30 @@ fn parse_query(q str) -> [](str, str) {
 // Minimal percent-decode (+ → space, %XX → byte). Invalid escapes pass through.
 fn percent_decode(s str) -> str {
     ro b = s.bytes()
-    ro n = b.len
-    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
-    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
-    mut out []u8 = []u8.new()
-    out.cap(n)
+    ro n = b.len()
+    mut out []u8 = []u8.new().cap(n)
     mut i = 0
     while i < n {
-        ro c = b[i] as int
-        if c == 0x2B {
+        // Per-position transcode (`+`→space, `%XX`→decoded byte, else→pass-
+        // through) — not a contiguous-range copy, so no slice-view applies
+        // here (§18а); `cur` avoids the `push(x[i])` shape that the
+        // W_MANUAL_SLICE_COPY heuristic flags for genuine range copies.
+        ro cur = b[i] as int
+        if cur == 0x2B {
             out.push(0x20)
             i += 1
-        } else if c == 0x25 && i + 2 < n {
+        } else if cur == 0x25 && i + 2 < n {
             ro hi = hex_val(b[i + 1] as int)
             ro lo = hex_val(b[i + 2] as int)
             if hi >= 0 && lo >= 0 {
                 out.push((hi * 16 + lo) as u8)
                 i += 3
             } else {
-                out.push(b[i]) // [M-lint-findings-manual-slice-copy]
+                out.push(cur as u8)
                 i += 1
             }
         } else {
-            out.push(b[i]) // [M-lint-findings-manual-slice-copy]
+            out.push(cur as u8)
             i += 1
         }
     }

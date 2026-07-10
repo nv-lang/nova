@@ -34,7 +34,7 @@ type ParsedResponse value {
 // Adds Host / Content-Length / Connection:close when not already present.
 fn serialize_request(method str, target str, host_header str, headers HeaderMap, body []u8) -> str {
     mut buf = WriteBuffer.new()
-    buf.cap(256 + body.len)
+    buf.cap(256 + body.len())
     buf.write_str(method)
     buf.write_str(" ")
     buf.write_str(target)
@@ -53,9 +53,9 @@ fn serialize_request(method str, target str, host_header str, headers HeaderMap,
         buf.write_str("\r\n")
     }
 
-    if body.len > 0 && !headers.contains("content-length") && !headers.contains("transfer-encoding") {
+    if body.len() > 0 && !headers.contains("content-length") && !headers.contains("transfer-encoding") {
         buf.write_str("Content-Length: ")
-        buf.write_str(str.from(body.len))
+        buf.write_str(str.from(body.len()))
         buf.write_str("\r\n")
     }
 
@@ -65,7 +65,7 @@ fn serialize_request(method str, target str, host_header str, headers HeaderMap,
     }
 
     buf.write_str("\r\n")
-    if body.len > 0 {
+    if body.len() > 0 {
         buf.write_bytes(body)
     }
     // [M-174.1-vec-method-chain-elem-erasure]: `.into()`'s `[]u8` result loses
@@ -80,7 +80,7 @@ fn serialize_request(method str, target str, host_header str, headers HeaderMap,
 // SAME parser real_http uses). Adds Content-Length + Connection:close if absent.
 fn serialize_response(status StatusCode, headers HeaderMap, body []u8) -> str {
     mut buf = WriteBuffer.new()
-    buf.cap(128 + body.len)
+    buf.cap(128 + body.len())
     buf.write_str("HTTP/1.1 ")
     buf.write_str(str.from(status.as_u16() as int))
     buf.write_str(" ")
@@ -96,14 +96,14 @@ fn serialize_response(status StatusCode, headers HeaderMap, body []u8) -> str {
 
     if !headers.contains("content-length") && !headers.contains("transfer-encoding") {
         buf.write_str("Content-Length: ")
-        buf.write_str(str.from(body.len))
+        buf.write_str(str.from(body.len()))
         buf.write_str("\r\n")
     }
     if !headers.contains("connection") {
         buf.write_str("Connection: close\r\n")
     }
     buf.write_str("\r\n")
-    if body.len > 0 {
+    if body.len() > 0 {
         buf.write_bytes(body)
     }
     // [M-174.1-vec-method-chain-elem-erasure] (see marker above / backlog).
@@ -118,15 +118,15 @@ fn parse_request_line(request str) -> Option[(str, str)] {
     ro eol = match find_crlf(b, 0) { Some(x) => x, None => return None }
     ro sp1 = match index_of(b, 0x20, 0) { Some(x) => x, None => return None }
     if sp1 >= eol { return None }
-    // [M-174.1-vec-method-chain-elem-erasure]: bind slice() result to an
+    // [M-174.1-vec-method-chain-elem-erasure]: bind the slice-view to an
     // explicit `[]u8` local before `.to_str_unchecked()` — chained directly
-    // on a fn-call result, the facade-imported method lookup falls back to
+    // on an expression result, the facade-imported method lookup falls back to
     // an unspecialized `Vec` (backlog-followups.md marker).
-    ro method_bytes []u8 = slice(b, 0, sp1)
+    ro method_bytes []u8 = b[0..sp1]
     ro method = unsafe { method_bytes.to_str_unchecked() }
     ro sp2 = match index_of(b, 0x20, sp1 + 1) { Some(x) => x, None => return None }
     if sp2 > eol { return None }
-    ro target_bytes []u8 = slice(b, sp1 + 1, sp2)
+    ro target_bytes []u8 = b[sp1 + 1..sp2]
     ro target = unsafe { target_bytes.to_str_unchecked() }
     ro path = match target.find("?") {
         Some(q) => target[0..q]
@@ -142,7 +142,7 @@ fn parse_request_line(request str) -> Option[(str, str)] {
 fn find_request_header(request str, name str) -> Option[str] {
     ro b = request.bytes()
     ro key = name.to_ascii_lower()
-    ro head_end = match find_double_crlf(b, 0) { Some(x) => x, None => b.len }
+    ro head_end = match find_double_crlf(b, 0) { Some(x) => x, None => b.len() }
     ro first_eol = match find_crlf(b, 0) { Some(x) => x, None => return None }
     mut i = first_eol + 2
     mut running = true
@@ -151,14 +151,14 @@ fn find_request_header(request str, name str) -> Option[str] {
         if eol <= i {
             running = false
         } else {
-            ro colon = index_of(slice(b, i, eol), 0x3A, 0)
+            ro colon = index_of(b[i..eol], 0x3A, 0)
             match colon {
                 Some(c) => {
                     // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` locals.
-                    ro hn_bytes []u8 = slice(b, i, i + c)
+                    ro hn_bytes []u8 = b[i..i + c]
                     ro hn = unsafe { hn_bytes.to_str_unchecked() }.to_ascii_lower()
                     if hn == key {
-                        ro val []u8 = trim_ows(slice(b, i + c + 1, eol))
+                        ro val []u8 = trim_ows(b[i + c + 1..eol])
                         return Some(unsafe { val.to_str_unchecked() })
                     }
                 }
@@ -176,7 +176,7 @@ fn find_request_header(request str, name str) -> Option[str] {
 // `Err(Protocol(..))`.
 fn parse_response(raw str) -> Result[ParsedResponse, HttpError] {
     ro b = raw.bytes()
-    ro n = b.len
+    ro n = b.len()
 
     // 1. Locate end of header block (CRLF CRLF).
     ro head_end = match find_double_crlf(b, 0) {
@@ -192,7 +192,7 @@ fn parse_response(raw str) -> Result[ParsedResponse, HttpError] {
     }
 
     // 3. Status line: "HTTP/1.1 200 Reason".
-    ro (version, status) = parse_status_line(slice(b, 0, first_eol))?
+    ro (version, status) = parse_status_line(b[0..first_eol])?
 
     // 4. Header lines (until head_end).
     mut hm = HeaderMap.new()
@@ -206,7 +206,7 @@ fn parse_response(raw str) -> Result[ParsedResponse, HttpError] {
         if eol <= i {
             running = false
         } else {
-            parse_header_line(hm, slice(b, i, eol))?
+            parse_header_line(hm, b[i..eol])?
             i = eol + 2
         }
     }
@@ -222,9 +222,9 @@ fn parse_response(raw str) -> Result[ParsedResponse, HttpError] {
                 if len > avail {
                     return Err(HttpError.protocol_error("response: body shorter than Content-Length"))
                 }
-                slice(b, body_start, body_start + len)
+                b[body_start..body_start + len]
             }
-            None => slice(b, body_start, n)
+            None => b[body_start..n]
         }
     }
 
@@ -237,16 +237,16 @@ fn parse_status_line(line []u8) -> Result[(Version, StatusCode), HttpError] {
         None    => return Err(HttpError.protocol_error("status line: no space after version"))
     }
     // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` local.
-    ro ver_bytes []u8 = slice(line, 0, sp1)
+    ro ver_bytes []u8 = line[0..sp1]
     ro version = parse_version(unsafe { ver_bytes.to_str_unchecked() })?
 
     ro code_start = sp1 + 1
     ro sp2 = match index_of(line, 0x20, code_start) {
         Some(x) => x
-        None    => line.len          // status may have no reason phrase
+        None    => line.len()          // status may have no reason phrase
     }
-    ro code_bytes = slice(line, code_start, sp2)
-    if code_bytes.len != 3 {
+    ro code_bytes = line[code_start..sp2]
+    if code_bytes.len() != 3 {
         return Err(HttpError.protocol_error("status line: status code not 3 digits"))
     }
     mut code = 0
@@ -277,9 +277,9 @@ fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
         None    => return Err(HttpError.protocol_error("header line: no colon"))
     }
     // [M-174.1-vec-method-chain-elem-erasure]: explicit `[]u8` local.
-    ro name_bytes []u8 = slice(line, 0, colon)
+    ro name_bytes []u8 = line[0..colon]
     ro name = unsafe { name_bytes.to_str_unchecked() }
-    ro value = trim_ows(slice(line, colon + 1, line.len))
+    ro value = trim_ows(line[colon + 1..line.len()])
     hm.append_bytes(name, value)?
     Ok(())
 }
@@ -289,7 +289,7 @@ fn parse_header_line(hm mut HeaderMap, line []u8) -> Result[(), HttpError] {
 fn decode_chunked(b []u8, start int) -> Result[[]u8, HttpError] {
     mut out = WriteBuffer.new()
     out.cap(256)
-    ro n = b.len
+    ro n = b.len()
     mut i = start
     mut running = true
     while running {
@@ -297,7 +297,7 @@ fn decode_chunked(b []u8, start int) -> Result[[]u8, HttpError] {
             Some(x) => x
             None    => return Err(HttpError.protocol_error("chunk: missing size CRLF"))
         }
-        ro size = match parse_chunk_size(slice(b, i, eol)) {
+        ro size = match parse_chunk_size(b[i..eol]) {
             Some(sz) => sz
             None     => return Err(HttpError.protocol_error("chunk: invalid size"))
         }
@@ -312,7 +312,7 @@ fn decode_chunked(b []u8, start int) -> Result[[]u8, HttpError] {
             if !((b[data_end] as int) == 0x0D && (b[data_end + 1] as int) == 0x0A) {
                 return Err(HttpError.protocol_error("chunk: missing data CRLF"))
             }
-            out.write_bytes(slice(b, data_start, data_end))
+            out.write_bytes(b[data_start..data_end])
             i = data_end + 2
         }
     }
@@ -323,7 +323,7 @@ fn decode_chunked(b []u8, start int) -> Result[[]u8, HttpError] {
 fn parse_chunk_size(line []u8) -> Option[int] {
     mut val = 0
     mut seen = false
-    ro n = line.len
+    ro n = line.len()
     mut i = 0
     mut running = true
     while running && i < n {
@@ -350,21 +350,8 @@ fn hex_digit(c int) -> int {
 
 // ── byte helpers ─────────────────────────────────────────────────────────────
 
-fn slice(b []u8, start int, end int) -> []u8 {
-    // .new().cap(n) одной цепочкой мисроутит на WriteBuffer.cap (коллизия
-    // имён cap в одном CU, см. string_builder.nv) — отдельный statement.
-    mut out []u8 = []u8.new()
-    out.cap(end - start)
-    mut i = start
-    while i < end {
-        out.push(b[i]) // [M-lint-findings-manual-slice-copy]
-        i += 1
-    }
-    out
-}
-
 fn index_of(b []u8, target int, from int) -> Option[int] {
-    ro n = b.len
+    ro n = b.len()
     mut i = from
     while i < n {
         if (b[i] as int) == target { return Some(i) }
@@ -374,7 +361,7 @@ fn index_of(b []u8, target int, from int) -> Option[int] {
 }
 
 fn find_crlf(b []u8, from int) -> Option[int] {
-    ro n = b.len
+    ro n = b.len()
     mut i = from
     while i + 1 < n {
         if (b[i] as int) == 0x0D && (b[i + 1] as int) == 0x0A { return Some(i) }
@@ -384,7 +371,7 @@ fn find_crlf(b []u8, from int) -> Option[int] {
 }
 
 fn find_double_crlf(b []u8, from int) -> Option[int] {
-    ro n = b.len
+    ro n = b.len()
     mut i = from
     while i + 3 < n {
         if (b[i] as int) == 0x0D && (b[i + 1] as int) == 0x0A &&
@@ -397,12 +384,12 @@ fn find_double_crlf(b []u8, from int) -> Option[int] {
 }
 
 fn trim_ows(b []u8) -> []u8 {
-    ro n = b.len
+    ro n = b.len()
     mut lo = 0
     while lo < n && is_ows(b[lo] as int) { lo += 1 }
     mut hi = n
     while hi > lo && is_ows(b[hi - 1] as int) { hi -= 1 }
-    slice(b, lo, hi)
+    b[lo..hi]
 }
 
 fn is_ows(c int) -> bool => c == 0x20 || c == 0x09

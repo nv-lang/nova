@@ -192,7 +192,7 @@ fn dedup_sort(xs []int) -> []int {
     if xs.len() == 0 { return xs }
     // Простая сортировка bubble + dedup для bootstrap
     mut sorted = xs
-    ro n = sorted.len
+    ro n = sorted.len()
     for i in 0..n {
         for j in 0..n - 1 - i {
             if sorted[j] > sorted[j + 1] {

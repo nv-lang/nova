@@ -542,7 +542,7 @@ fn decode_query_inner(s str) -> Result[str, ParseUrlError] {
     mut buf = WriteBuffer.new()
     buf.cap(s.byte_len())
     ro bytes = s.bytes()
-    ro n = bytes.len
+    ro n = bytes.len()
     mut i = 0
     while i < n {
         ro b = bytes[i]
@@ -565,7 +565,7 @@ fn decode_query_inner(s str) -> Result[str, ParseUrlError] {
 
 // Self-contained well-formed UTF-8 (RFC 3629 / Unicode Table 3-7) → str или Err.
 fn utf8_to_str(bytes []u8) -> Result[str, ParseUrlError] {
-    ro n = bytes.len
+    ro n = bytes.len()
     mut i = 0
     while i < n {
         ro b0 = bytes[i] as int
@@ -640,8 +640,8 @@ fn hex_byte_val(b u8, pos int) -> Result[u8, ParseUrlError] {
 fn find_first_of(s str, chars str) -> Option[int] {
     ro bytes = s.bytes()
     ro needles = chars.bytes()
-    ro n = bytes.len
-    ro m = needles.len
+    ro n = bytes.len()
+    ro m = needles.len()
     mut i = 0
     while i < n {
         ro b = bytes[i]

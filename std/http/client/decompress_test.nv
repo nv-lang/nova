@@ -74,7 +74,7 @@ test "decompress: disabled → body stays gzip-compressed" {
         consume resp = client.get("http://x.example/r").send()!!
         // Body is returned verbatim (still gzip), Content-Encoding preserved.
         assert(match resp.header("content-encoding") { Some(e) => e == "gzip", None => false })
-        assert(resp.bytes()!!.len == compressed.len)
+        assert(resp.bytes()!!.len() == compressed.len())
     }
 }
 

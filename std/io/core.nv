@@ -132,13 +132,7 @@ export fn read_to_end[R Read](r mut R) -> Result[[]u8, IoError] {
     loop {
         match r.read(chunk) {
             Ok(0)  => return Ok(out)
-            Ok(n)  => {
-                mut i = 0
-                while i < n {
-                    out.push(chunk[i]) // [M-lint-findings-manual-slice-copy]
-                    i += 1
-                }
-            }
+            Ok(n)  => out.append(chunk[0..n])
             Err(e) => {
                 if e.is_interrupted() { continue }
                 return Err(e)
@@ -173,12 +167,7 @@ export fn write_all[W Write](w mut W, data []u8) -> Result[(), IoError] {
     ro total = data.len()
     mut done = 0
     while done < total {
-        mut rest []u8 = []u8.new()
-        mut i = done
-        while i < total {
-            rest.push(data[i]) // [M-lint-findings-manual-slice-copy]
-            i += 1
-        }
+        ro rest = data[done..total]
         match w.write(rest) {
             Ok(0)  => return Err(IoError.new(ErrorKind.WriteZero, "write_all"))
             Ok(n)  => { done += n }
@@ -255,19 +244,20 @@ export fn lines[R Read](r mut R) -> Result[[]str, IoError] {
 export fn byte_lines[R Read](r mut R) -> Result[[][]u8, IoError] {
     match read_to_end(r) {
         Ok(data) => {
+            // Срез-вид (§18а): границы строк находятся сканом на `\n`, каждая
+            // строка — один slice вместо поэлементного push-накопления.
+            ro n = data.len()
             mut out [][]u8 = []
-            mut cur []u8 = []u8.new()
+            mut line_start = 0
             mut i = 0
-            while i < data.len() {
+            while i < n {
                 if (data[i] as int) == 10 {
-                    out.push(cur)
-                    cur = []u8.new()
-                } else {
-                    cur.push(data[i]) // [M-lint-findings-manual-slice-copy]
+                    out.push(data[line_start..i])
+                    line_start = i + 1
                 }
                 i += 1
             }
-            if cur.len() > 0 { out.push(cur) }
+            if n > line_start { out.push(data[line_start..n]) }
             Ok(out)
         }
         Err(e) => Err(e)

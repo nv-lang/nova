@@ -162,7 +162,7 @@ fn drain_reader(r BodyReader) -> []u8 {
 }
 
 fn guard_limit(b []u8, lim int) -> Result[[]u8, HttpError] {
-    if lim >= 0 && b.len > lim {
+    if lim >= 0 && b.len() > lim {
         return Err(HttpError.body_too_large())
     }
     Ok(b)
