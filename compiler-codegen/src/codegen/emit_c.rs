@@ -786,6 +786,25 @@ pub struct CEmitter {
     container_eq_requested: std::cell::RefCell<HashSet<String>>,
     /// Return type of the currently-emitting function, used for match result type inference.
     current_fn_return_ty: Option<String>,
+    /// [M-generic-method-self-recursive-return] (Plan 186, recursive-mono): name
+    /// of the method CURRENTLY being emitted by `emit_monomorphized_method`
+    /// (`None` outside that path — free fns/erased bodies don't need it, see
+    /// below). A generic method that calls ITSELF recursively on a value of its
+    /// own receiver type (`fn LinkedList[T] @map[U](f) -> LinkedList[U] { ...
+    /// t.map(f) ... }`) has a return type (`LinkedList[U]`) that mentions an
+    /// in-scope type-param — the checker's `infer_method_call_channel_type`
+    /// deliberately does NOT channel such a return (would need erased-body
+    /// `current_type_subst`, not available at check time), and the LEGACY
+    /// `fn_ret_<recv>_<method>` registry has no entry either (methods are
+    /// registered under the GENERIC template name, and mono emission of THIS
+    /// exact call happens WHILE the entry is being built, not before) —
+    /// `infer_expr_c_type` used to hard-panic (`[P67-LEGACY]`). Paired with
+    /// `current_receiver_type`/`current_fn_return_ty`: a call matching BOTH the
+    /// current method's own name AND its own (mono'd) receiver type is
+    /// self-recursion by construction, so the CURRENT function's own return
+    /// C-type (already known) is the exact, sound answer — see the fallback
+    /// site in `infer_expr_c_type`'s `Call`/`Member` arm.
+    current_fn_name: Option<String>,
     /// Plan 72 P3-B return: when the currently-emitting function declares a
     /// protocol return type (e.g. `-> Iter[int]`), holds `(proto_name,
     /// [concrete C type args])`. Return values are wrapped into a `NovaBox_*`
@@ -1769,6 +1788,7 @@ impl CEmitter {
             pending_container_eq_monos: std::cell::RefCell::new(Vec::new()),
             container_eq_requested: std::cell::RefCell::new(HashSet::new()),
             current_fn_return_ty: None,
+            current_fn_name: None,
             current_fn_returns_protocol: None,
             current_fn_returns_any: false,
             contracts_post_label: None,
@@ -19034,6 +19054,41 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     &ret_ty_ref, &closure_ret_c, &mut subst_slots);
             }
         }
+        // Step 2f [M-generic-method-self-recursive-return] (Plan 186,
+        // recursive-mono, mirrors `resolve_mono_type_args` Source 2f /
+        // [M-property-testing-rot]): a fn-typed arg passed as a bare
+        // IDENTIFIER (not a closure literal) — e.g. `t.map(f)` inside
+        // `@map[U]`'s OWN body, forwarding its OWN param `f: fn(T)->U`
+        // straight through to a recursive call on itself. Steps 1/2 above
+        // cannot infer `U` here: Step 1 explicitly skips fn-typed args (a
+        // closure's C type is an erased `void*`, encoding no type info) and
+        // Step 2 only pre-infers CLOSURE LITERALS, not identifier references.
+        // Unify the callee's declared param TypeRef against the CALLER's own
+        // declared TypeRef for that identifier (`current_fn_param_typerefs`,
+        // now populated by `emit_monomorphized_method` too — see its doc)
+        // instead of a C-type comparison; `type_ref_to_c` on the caller's
+        // side must lower through the ENCLOSING method's FULL type-arg subst
+        // (`saved_outer` — both receiver AND method-level params, e.g. T AND
+        // U), NOT the receiver-only view this function activated above
+        // (line ~18953: `current_type_subst` = `receiver_subst` only, for
+        // Steps 1-3's OWN lookups) — a bare method-level typaram reference
+        // like "U" has no receiver-subst entry and would otherwise resolve to
+        // the erroneous literal-name fallback `Nova_U*` (a bogus "user type"
+        // named U) instead of the enclosing scope's already-resolved binding.
+        // Swap in `saved_outer` only for this block's own resolution calls.
+        {
+            let saved_receiver_only = std::mem::replace(
+                &mut self.current_type_subst, saved_outer.clone());
+            for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+                if subst_slots.iter().all(|(_, v)| v.is_some()) { break; }
+                if let ExprKind::Ident(name) = &arg.expr().kind {
+                    if let Some(decl_ref) = self.current_fn_param_typerefs.get(name).cloned() {
+                        self.infer_type_param_binding_from_ref(&param.ty, &decl_ref, &mut subst_slots);
+                    }
+                }
+            }
+            self.current_type_subst = saved_receiver_only;
+        }
         // Step 3 [M-exp-promotion-blockers: retry E_UNUSED_PREFIX_TYPEVAR]:
         // infer effect-clause type-params (`Fail[E]`) from a closure ARG's
         // thrown value. `E` in `body fn() Fail[E] -> T` appears ONLY inside
@@ -19964,6 +20019,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_recv = std::mem::replace(&mut self.current_receiver_type, Some(recv_type.to_string()));
         self.sync_receiver_rt();
         let saved_ret_ty = std::mem::replace(&mut self.current_fn_return_ty, Some(ret_c.clone()));
+        // [M-generic-method-self-recursive-return] (Plan 186): remember this
+        // mono'd method's own name so a self-recursive call (`t.map(f)` inside
+        // `@map`'s own body) can be recognised in `infer_expr_c_type`'s fallback.
+        let saved_fn_name = std::mem::replace(&mut self.current_fn_name, Some(fn_decl.name.clone()));
+        // [M-generic-method-self-recursive-return] (Plan 186): mirror of the
+        // free-fn `emit_generic_fn_erased` path ([M-property-testing-rot]) —
+        // expose this mono'd METHOD body's own declared param TypeRefs so a
+        // nested generic call forwarding one of its params (e.g. `t.map(f)`
+        // passing the method's OWN `f: fn(T)->U` straight through to the
+        // recursive call) can unify the callee's method-level type-args at the
+        // TypeRef level (`resolve_method_level_subst`'s Source 2f below) —
+        // `f`'s C type alone is an erased `void*`/closure-struct pointer,
+        // useless for inferring `U`. Was ONLY set for free generic fns before
+        // this fix, never for generic METHOD mono — the exact gap that made a
+        // self-recursive generic method (`LinkedList[T]@map[U]` calling
+        // `t.map(f)` on itself) unable to infer its own `U`.
+        let saved_param_typerefs = std::mem::replace(
+            &mut self.current_fn_param_typerefs,
+            fn_decl.params.iter()
+                .map(|p| (p.name.clone(), p.ty.clone()))
+                .collect(),
+        );
         let saved_expected = std::mem::replace(
             &mut self.expected_record_type,
             fn_decl.return_type.as_ref().and_then(|t| {
@@ -20196,6 +20273,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.current_receiver_type = saved_recv;
         self.sync_receiver_rt();
         self.current_fn_return_ty = saved_ret_ty;
+        self.current_fn_name = saved_fn_name;
+        self.current_fn_param_typerefs = saved_param_typerefs;
         self.expected_record_type = saved_expected;
         // Plan 140 cgfix: restore per-fn contract opt-out flag after fn body.
         self.contract_opt_out_fn = prev_mono_contract_opt_out;
@@ -25141,7 +25220,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if let Some(entry) = self.sum_schema_registry.lookup_sum_schema(sum) {
                     if let Some(v) = entry.variants.iter().find(|v| v.variant_name == *name) {
                         if v.field_c_types.is_empty() {
-                            return Ok(format!("nova_make_{}_{}()", sum, name));
+                            // [M-generic-method-self-recursive-return] (Plan 186,
+                            // recursive-mono): a plain (non-generic) sum's variant
+                            // ctor is named WITHOUT the `Nova_` prefix on the bare
+                            // lookup key (`nova_make_LinkedList_Empty` — matches
+                            // `emit_sum_type`'s `nova_make_{name}_{var}`), but a
+                            // MONO'D GENERIC instance's ctor keeps the FULL mangled
+                            // `Nova_<mono>` name (`nova_make_Nova_LinkedList____
+                            // nova_int_Empty` — matches `emit_generic_type_instance`'s
+                            // `nova_make_{mangled}_{var}`, `mangled` always carrying
+                            // the `Nova_` prefix). `sum` (the bare lookup key, used
+                            // below) is only correct for the FIRST case; a mono
+                            // instance (detected by the `____` mangling delimiter,
+                            // same signal used throughout — `debt_is_mono_nova_name`
+                            // et al.) must use the registry's stored `c_name`
+                            // instead — this is exactly the bare `Empty` inside a
+                            // generic method's OWN body (`LinkedList[T].new() =>
+                            // Empty`) that used to link against a symbol nothing
+                            // emitted.
+                            let ctor_base: &str = if sum.contains("____") {
+                                &entry.c_name
+                            } else {
+                                sum
+                            };
+                            return Ok(format!("nova_make_{}_{}()", ctor_base, name));
                         }
                     }
                 }
@@ -26204,6 +26306,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // by Monotonic.now() + Duration.
                     let type_name_sum_full = sty.trim_end_matches('*').to_string();
                     let type_name_sum = Self::debt_strip_nova_prefix_or_empty(&sty).trim_end_matches('*').to_string();
+                    // [M-generic-method-self-recursive-return] (Plan 186, recursive-mono):
+                    // the Plan 65 Ф.12 convention above (`Nova_<Type>_method_<op>`, WITH the
+                    // `Nova_` C-type prefix baked into the FUNCTION NAME) is correct for a
+                    // plain non-generic user type — but a MONO'D GENERIC instance's methods
+                    // are emitted WITHOUT that prefix on the function symbol
+                    // (`LinkedList____nova_int_method_plus`, not
+                    // `Nova_LinkedList____nova_int_method_plus` — mirrors every OTHER mono
+                    // method call site, e.g. `emit_monomorphized_method`'s `mono_name`).
+                    // `type_name_sum_full` blindly used the WITH-prefix form for BOTH cases
+                    // (Add/Mul/Div/Mod below never call `register_mono_method_instance` to
+                    // even establish which name is "real" — unlike the Sub/BitOr/BitAnd arms
+                    // further down, which do). Detected by the mono-name delimiter `____`
+                    // (same signal `debt_is_mono_nova_name` uses); a self-recursive `t + other`
+                    // inside a generic type's OWN `@plus` body (`LinkedList[T]@plus`) was the
+                    // concrete repro — linked against a symbol nothing ever emitted.
+                    let dispatch_type_name = if type_name_sum.contains("____") {
+                        &type_name_sum
+                    } else {
+                        &type_name_sum_full
+                    };
                     // D46 operator overloading: Nova_T* + Nova_T* → Nova_T_method_plus(l, r).
                     // GUARD ([M-153.5-flatten-nested-receiver]): `@plus` is binary
                     // over two record/sum *values* — BOTH operands must be single
@@ -26218,7 +26340,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_plus({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_plus({}, {})", dispatch_type_name, l, r));
                     }
                     // D46: dispatch `*` to @times method when both operands are Nova_T*.
                     // Same guard as @plus: both must be single Nova_T* pointers so we don't
@@ -26227,21 +26349,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_times({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_times({}, {})", dispatch_type_name, l, r));
                     }
                     // D46: dispatch `/` to @div method when both operands are Nova_T*.
                     if matches!(op, BinOp::Div)
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_div({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_div({}, {})", dispatch_type_name, l, r));
                     }
                     // D46: dispatch `%` to @rem method when both operands are Nova_T*.
                     if matches!(op, BinOp::Mod)
                         && is_single_nova_ptr(&lty)
                         && is_single_nova_ptr(&rty)
                     {
-                        return Ok(format!("{}_method_rem({}, {})", type_name_sum_full, l, r));
+                        return Ok(format!("{}_method_rem({}, {})", dispatch_type_name, l, r));
                     }
                     // Plan 65 Ф.12 / D124: dispatch `-` to the receiver's
                     // _method_minus for record types (Duration, Timestamp,
@@ -46504,6 +46626,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if let ExprKind::Ident(n) = &obj.kind {
                                 if n == "bench" {
                                     return self.infer_expr_c_type(args[0].expr());
+                                }
+                            }
+                        }
+                        // [M-generic-method-self-recursive-return] (Plan 186, recursive-mono):
+                        // a generic method's mono'd body calling ITSELF on a value of its own
+                        // receiver type (`fn LinkedList[T] @map[U](f) -> LinkedList[U] { ...
+                        // t.map(f) ... }`) has a return type mentioning an in-scope type-param
+                        // (`LinkedList[U]`) — the checker deliberately does not channel it
+                        // (`resolved_types` gate), and the LEGACY `fn_ret_<recv>_<method>`
+                        // registry has no entry either (this exact mono instance is what is
+                        // BEING built). `current_fn_name`/`current_receiver_type` are set by
+                        // `emit_monomorphized_method` to exactly this method+receiver while its
+                        // body is emitted — a call matching BOTH is self-recursion by
+                        // construction, so THIS function's own (already-known) return C-type is
+                        // the sound answer. `obj_ty` is `Nova_<recv>*` or `Nova_<recv>` (receiver
+                        // may be a bare value or a pointer depending on call form); strip both
+                        // to compare against the bare mono receiver name `current_receiver_type`
+                        // holds.
+                        if let (Some(cur_name), Some(cur_recv), Some(cur_ret)) = (
+                            self.current_fn_name.as_deref(),
+                            self.current_receiver_type.as_deref(),
+                            self.current_fn_return_ty.as_deref(),
+                        ) {
+                            if cur_name == method.as_str() {
+                                let obj_bare = obj_ty.trim_end_matches('*');
+                                let obj_bare = obj_bare.strip_prefix("Nova_").unwrap_or(obj_bare);
+                                if obj_bare == cur_recv {
+                                    return cur_ret.to_string();
                                 }
                             }
                         }

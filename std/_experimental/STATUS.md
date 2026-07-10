@@ -19,6 +19,46 @@
 
 ## Содержимое (Plan 91 Ф.0 baseline 2026-05-27; ред. волны промоушена 2026-07-08)
 
+> **PROMOTED 2026-07-10 (Plan 186 recursive-mono, 1 модуль):**
+> `collections/linkedlist` → `std/collections/`. Разблокирован ПОЧИНКОЙ
+> самого mono-канала (не воркэраундом контента) — четыре сцепленных
+> compiler-дефекта в recursive-generic-sum-type мономорфизации:
+> (1) [M-result-direct-recursive-enum] / [M-option-self-recursive-record-mono]
+> (emit_c.rs `emit_field_eq`/`register_novaopt_decl`/`being_defined_record_types`
+> — экспоненциальный разворот структурного `==` и mistype self-recursive
+> `Option[Self]`-поля, см. docs/plans/backlog-followups.md);
+> (2) [M-generic-method-self-recursive-return] — P67-LEGACY паника на
+> самовызове `t.map(f)` внутри `@map[U]`'s собственного тела (return-тип не
+> резолвился ни checker'ом, ни legacy fn_ret-реестром для mono'd instance
+> самого себя); той же волной — cannot-infer method-level `U` на этом же
+> самовызове (`resolve_method_level_subst` не имела Source 2f для
+> method-level typevar'ов, только free-fn версия её имела);
+> (3) `Nova_`-префикс naming bug в operator-overload dispatch (`@plus`
+> генерил вызов `Nova_LinkedList____nova_int_method_plus`, а mono-эмиттер
+> называет метод БЕЗ префикса) и в bare-variant ctor dispatch (`Empty`
+> внутри `.new() -> Self => Empty` резолвился в `nova_make_LinkedList____
+> nova_int_Empty` вместо реально эмитированного `nova_make_Nova_
+> LinkedList____nova_int_Empty`) — обе ветки чинились по одному паттерну:
+> детект mono-имени по разделителю `____`, разный naming-convention для
+> plain-sum vs generic-mono-instance.
+> Коррекции к конвенциям при промоушене: `@length()` → `@len()`,
+> `@reverse()` → `@reversed()` (обе коллидировали с method-name single-key
+> fallback реестром, который last-wins разрешает ambiguous dispatch —
+> `len`/`reverse` УЖЕ заняты Vec/Range/HashMap; после 3-го регистранта
+> резолюция ломалась для ВСЕХ трёх — pre-existing систем­ная хрупкость
+> метод-диспетчера, вне scope этого плана, обойдена переименованием);
+> `from_iter(it Iter[T])` → `from_iter(items []T)` (зеркало
+> [M-91.1-set-from-iter-iterable-param] — `Iter[T]` стирается в `void*` в
+> mono'd generic-теле, `for-in` не мог восстановить C-тип итератора);
+> bare unqualified `Empty` в тестах заменён на `.new()` (bare-вариант
+> неоднозначен, когда ДРУГОЙ sum-тип В ТОЙ ЖЕ compilation unit ТОЖЕ
+> объявляет вариант `Empty` — например prelude-ошибка парсинга; резолюция
+> unqualified-формы не гарантированно учитывает даже explicit type
+> annotation — известное pre-existing ограничение, не тронуто).
+> Инлайн-тесты вынесены в peer `linkedlist_test.nv`; doc-примеры `let` →
+> `ro` (D184); D406 enum-маркер добавлен в header-комментарий примера.
+> check PASS + `test --full` зелёный.
+
 > **PROMOTED 2026-07-08 (волна 1, 13 модулей):** `checksums/{crc32,fnv}` →
 > `std/checksums/`; `collections/{bloom_filter,deque,lru,priority_queue,queue}` →
 > `std/collections/`; `concurrency/rate_limiter` → `std/concurrency/`;
@@ -51,7 +91,7 @@
 
 | Domain | Files | Status | Reason for exp. |
 |---|---|---|---|
-| `collections/` | `linkedlist` (остальные 5 PROMOTED 2026-07-08 w1) | check PASS, test--full CC-FAIL (2×) — self-recursive generic `.map()` P67-LEGACY + cross-CU `LinkedList[T].new()` mono-loss | Промоушен gated compiler-дефектом (recursive generic sum-type mono) |
+| `collections/` | (пусто — `linkedlist` **PROMOTED 2026-07-10** Plan 186; остальные 5 PROMOTED 2026-07-08 w1) | — | — |
 | `crypto/` | (пусто — все 5 PROMOTED 2026-07-08 w2: sha256/hmac/md5/sha1/jwt) | — | — |
 | `encoding/` | `toml` (`hex`/`ini` PROMOTED w2, `url` PROMOTED batch 2, **`csv` PROMOTED 2026-07-08 batch 3**) | toml: check PASS, test--full CC-FAIL — the original Fail-handler mono gap (`Nova_*Error_p` unknown type) is FIXED (batch 3, `debt_unmangle_ptr_suffix`), but a NEW, deeper defect now surfaces: `Nova_HashMap____nova_str__Nova_TomlValue_p` unknown-type (forward-declare/hoist ordering for a mono struct used as a sum-variant's payload field — typedef exists later in the same file) | toml: gated by a hoist-ordering defect that looks like the same zone reserved for [M-option-self-recursive-record-mono] — re-check after that lands |
 | `identifiers/` | (пусто — `snowflake` PROMOTED w1, `ulid`/`uuid` PROMOTED w2, **`uuid_namespace` PROMOTED 2026-07-08 batch 3**) | — | — |

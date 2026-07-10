@@ -3,7 +3,7 @@
 // Демонстрирует [D52](../spec/decisions/02-types.md#d52) sum с
 // рекурсивным конструктором — классический ML-стиль:
 //
-//   type LinkedList[T] | Empty | Cons(T, LinkedList[T])
+//   type LinkedList[T] enum | Empty | Cons(T, LinkedList[T])
 //
 // Pattern matching на этой структуре — самый прямой пример sum-семантики
 // и exhaustiveness check от компилятора.
@@ -29,10 +29,10 @@ module collections.linkedlist
 /// # Examples
 ///
 /// ```nova
-/// let l = LinkedList[int].from_array([1, 2, 3])
+/// ro l = LinkedList[int].from_array([1, 2, 3])
 /// assert(l.head() == Some(1))
-/// assert(l.length() == 3)
-/// let doubled = l.map(|x| x * 2)
+/// assert(l.len() == 3)
+/// ro doubled = l.map(|x| x * 2)
 /// assert(doubled.head() == Some(2))
 /// ```
 ///
@@ -52,14 +52,14 @@ export type LinkedList[T] enum
 
 /// Создать пустой список.
 #stable(since = "0.1")
-export fn LinkedList[T].new() => Empty
+export fn LinkedList[T].new() -> Self => Empty
 
 /// Построить список из массива. Порядок сохраняется.
 ///
 /// # Examples
 ///
 /// ```nova
-/// let l = LinkedList[int].from_array([1, 2, 3])
+/// ro l = LinkedList[int].from_array([1, 2, 3])
 /// assert(l.head() == Some(1))
 /// ```
 #stable(since = "0.1")
@@ -73,16 +73,22 @@ export fn LinkedList[T].from_array(xs []T) -> Self {
     acc
 }
 
-/// Построить список из итератора. Порядок сохраняется.
+/// Построить список из массива-подобного источника. Порядок сохраняется.
+///
+/// [M-91.1-set-from-iter-iterable-param] (зеркало `Set[T].from_iter` /
+/// `HashMap.from`): принимает конкретный `[]T`, не generic-протокол
+/// `Iter[T]` — последний стирается в `void*` в mono'd generic-теле, и
+/// `for-in` не мог восстановить C-тип итератора. Массив итерируется
+/// корректно для любого типа элемента.
 #stable(since = "0.1")
-export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
+export fn LinkedList[T].from_iter(items []T) -> Self {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
     // Затем reverse — суммарно O(n), без вспомогательного массива.
     mut acc = Empty
-    for x in it {
+    for x in items {
         acc = Cons(x, acc)
     }
-    acc.reverse()
+    acc.reversed()
 }
 
 
@@ -92,10 +98,10 @@ export fn LinkedList[T].from_iter(it Iter[T]) -> Self {
 
 /// Длина списка. O(n).
 #stable(since = "0.1")
-export fn LinkedList[T] @length() -> int =>
+export fn LinkedList[T] @len() -> int =>
     match @ {
         Empty       => 0
-        Cons(_, t)  => 1 + t.length()
+        Cons(_, t)  => 1 + t.len()
     }
 
 /// Возвращает `true` если список пуст.
@@ -149,7 +155,7 @@ export fn LinkedList[T] @append(x T) -> Self =>
 
 /// Обратить порядок элементов. O(n) через accumulator без рекурсии.
 #stable(since = "0.1")
-export fn LinkedList[T] @reverse() -> Self {
+export fn LinkedList[T] @reversed() -> Self {
     mut acc = Empty
     mut cur = @
     mut done = false
@@ -187,7 +193,7 @@ export fn LinkedList[T] @filter(pred fn(T) -> bool) -> Self =>
 /// # Examples
 ///
 /// ```nova
-/// let l = LinkedList[int].from_array([1, 2, 3, 4])
+/// ro l = LinkedList[int].from_array([1, 2, 3, 4])
 /// assert(l.fold(0, |acc, x| acc + x) == 10)
 /// ```
 #stable(since = "0.1")
@@ -211,80 +217,4 @@ export fn LinkedList[T] @plus(other Self) -> Self =>
     }
 
 
-// ──────────────────────────────────────────────────────────────────────────
-// Тесты
-// ──────────────────────────────────────────────────────────────────────────
-//
-// [2026-07-08, волна 2 промоушена]: НЕ промоутится — `nova check` PASS, но
-// `nova test --full` даёт ДВА РАЗНЫХ compiler-бага на recursive generic
-// sum-type (`LinkedList[T] enum | Empty | Cons(T, LinkedList[T])`):
-//   1. P67-LEGACY "method call `.map` return type unknown" — self-recursive
-//      generic-method call (`t.map(f)` внутри тела `@map[U]`) не резолвится
-//      checker'ом. Попытка iterative-rewrite (accumulator вместо рекурсии)
-//      не помогла — тот же класс проблемы, другое проявление.
-//   2. Из peer-test-файла (другой CU) `LinkedList[int].new()` (`=> Empty`
-//      one-liner) даёт CC-FAIL: "initializing 'Nova_LinkedList____nova_int*'
-//      ... incompatible type 'nova_unit'" — generic mono для parametrized
-//      recursive-enum constructor, вызванного из ДРУГОГО файла, теряет тип.
-// Оба — codegen-гэпы в generic recursive sum-type mono, не content-баги
-// модуля. Совпадает с STATUS.md-пометкой "Non-MVP" (Plan 91 §Scope: MVP =
-// vec/hashmap/set only) — похоже, recursive-generic-enum path никогда не
-// проходил через `test --full` раньше. См. docs/plans/backlog-followups.md.
-
-test "from_array preserves order" {
-    ro l = LinkedList[int].from_array([1, 2, 3])
-    assert(l.length() == 3)
-    assert(l.head() == Some(1))
-    assert(l.tail().head() == Some(2))
-    assert(l.tail().tail().head() == Some(3))
-    assert(l.tail().tail().tail().head() == None)
-}
-
-test "prepend is O(1) and adds in front" {
-    ro l = LinkedList[int].from_array([2, 3])
-    ro l2 = l.prepend(1)
-    assert(l2.head() == Some(1))
-    assert(l2.length() == 3)
-}
-
-test "reverse" {
-    mut l = LinkedList[int].from_array([1, 2, 3])
-    ro r = l.reverse()
-    assert(r.head() == Some(3))
-    assert(r.tail().head() == Some(2))
-}
-
-test "map applies function preserving structure" {
-    ro l = LinkedList[int].from_array([1, 2, 3])
-    ro doubled = l.map(|x| x * 2)
-    assert(doubled.head() == Some(2))
-    assert(doubled.length() == 3)
-}
-
-test "filter removes non-matching" {
-    ro l = LinkedList[int].from_array([1, 2, 3, 4, 5])
-    ro even = l.filter(|x| x % 2 == 0)
-    assert(even.length() == 2)
-    assert(even.head() == Some(2))
-}
-
-test "fold sums" {
-    ro l = LinkedList[int].from_array([1, 2, 3, 4])
-    ro sum = l.fold(0, |acc, x| acc + x)
-    assert(sum == 10)
-}
-
-test "concat with plus method" {
-    ro a = LinkedList[int].from_array([1, 2])
-    ro b = LinkedList[int].from_array([3, 4])
-    ro c = a.plus(b)
-    assert(c.length() == 4)
-    assert(c.head() == Some(1))
-}
-
-test "Empty is identity for concat" {
-    ro a = LinkedList[int].from_array([1, 2])
-    ro e = Empty
-    assert(a.plus(e).length() == 2)
-    assert(e.plus(a).length() == 2)
-}
+// Тесты — см. peer `linkedlist_test.nv` (module collections.linkedlist_test).
