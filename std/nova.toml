@@ -69,3 +69,27 @@ enforce-stability = true
 # Stdlib не имеет внешних зависимостей — использует только
 # prelude и собственные модули.
 [dependencies]
+
+# Plan 192 (native-backed module pattern): декларация native-статик-либа
+# std/tls через ОБЩИЙ манифест-механизм [ffi.staticlib] — вместо хардкода
+# `detect_tls`/`tls-cache`/`-lbcrypt -lntdll` в test_runner.rs. Собираемый
+# Rust-staticlib (rustls-шим) резолвится билд-системой (cache → crate-artifact
+# → cargo build-on-demand) с mtime-инвалидацией по исходникам крейта и
+# линкуется УСЛОВНО, по факту использования tls_* символов (механизм D337).
+# Пути относительны этому nova.toml (std/). Если декларация отсутствует —
+# билд-система откатывается на legacy `detect_tls` (тот же артефакт/кэш), так
+# что снятие с хардкода безопасно и обратимо.
+#
+# Полноценный STANDALONE-образец этого паттерна (для внешних пакетов) —
+# репозиторий `nova-tls` (Plan 192, конвенция `nova-<пакет>`); здесь std/tls
+# показывает тот же механизм в монорепо.
+[ffi.staticlib]
+kind         = "rust-staticlib"
+path         = "../compiler-codegen/tls_shim"
+lib          = "nova_tls_shim"
+build        = "cargo build --release"
+cache        = "../target/tls-cache"
+# Системные либы, которые тянет Rust-staticlib. Платформо-специфичны:
+# Windows — bcrypt/ntdll (замер `RUSTFLAGS=--print native-static-libs`,
+# план 116 Ф.0); Unix — pthread/dl/m приходят через libuv-syslibs (пусто).
+link_windows = ["bcrypt", "ntdll"]

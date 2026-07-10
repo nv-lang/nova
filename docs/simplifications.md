@@ -38383,3 +38383,22 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
 - **`assignable`/call-arg позиции не тронуты** — closure-литерал, переданный АРГУМЕНТОМ
   в HOF-параметр скалярного типа, УЖЕ отвергается существующей сверкой (arity/сигнатура);
   дыра была именно в return-позиции (`assignable` там никогда не вызывался).
+
+## Plan 192 — native-backed module pattern ([ffi.staticlib])
+
+- **Хардкод линковки tls_shim снят на общий манифест-механизм.** `detect_tls`/
+  `tls-cache`/`-lbcrypt -lntdll` были спец-случаем в `test_runner.rs` (второе
+  окно правды против `[ffi]`). Введён `[ffi.staticlib]` (kind/path/lib/build/
+  cache/link*/trigger_symbols) + `resolve_ffi_staticlib` (cache→artifact→cargo,
+  mtime-инвалидация). `detect_tls` оставлен ФОЛБЭКОМ (std/nova.toml без
+  trigger_symbols → legacy-детект; std/tls байт-идентичен). Условный триггер
+  «использует ли CU модуль» обобщён (`c_file_uses_any_symbol` по
+  `trigger_symbols`), закрыт последний tls-специфичный хардкод в этой ветке —
+  brotli-детект остаётся частным случаем того же класса (не тронут).
+- **Граница объёма (честное разделение).** `[ffi.staticlib]` резолвится из
+  манифеста ПАКЕТА ВХОДНОГО ФАЙЛА (для монорепо std/tls — пакет std, работает).
+  Транзитивный резолв native-deps из внешних `[dependencies]` НЕ провязан
+  (внешний dep-resolution — Plan 03.1, не готов) — showcase `nova-tls`
+  собирается как самостоятельный пакет (его example — тот же пакет), не как
+  зависимость. Kind поддержан один: `rust-staticlib` (иные → forward-compat
+  no-op в резолвере).

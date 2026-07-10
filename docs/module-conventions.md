@@ -98,6 +98,13 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 
 ## 4. Интеграция с C-библиотеками (граница `.nv` ↔ C)
 
+> **Роль этого раздела — НОРМАТИВНЫЕ правила** маппинга типов и форм `extern` на
+> границе. **Примеры и рецепты** (полные биндинги libsqlite3/libpng, C-ABI-
+> шпаргалка, указатели/`CStr`, а также **как подключить native-артефакты к сборке**
+> через `[ffi]`/`[ffi.staticlib]`) — [ffi-cookbook](ffi-cookbook.md) (единый
+> источник, не дублируется здесь). Пошаговый туториал «сделать модуль с нуля» —
+> [authoring-a-module](guide/authoring-a-module.md).
+
 ### 4.1. Две формы extern (D282) — что когда
 
 - **`extern "nova" fn`** — функция **собственного рантайма Nova** (Nova-ABI; codegen зовёт `nova_fn_<name>`; регистрируется в
