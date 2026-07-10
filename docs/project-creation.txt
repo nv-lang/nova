@@ -38967,3 +38967,30 @@ acquire [R3]); 94 остатка — миграционные классы по�
 nova check std байт-в-байт против main-бинаря (diff=0; пре-существующий D78-FAIL
 std/ffi/cstr.nv одинаков у обоих). Попутно: 3 пре-существующих упавших unit-теста
 lints (ретрактированный external fn, D282) починены той же волной.
+
+
+=== Plan 175.1 — Civil time: Date/TimeOfDay/DateTime/ZonedDateTime/Period + ISO-8601/RFC-3339/RFC-9557 (2026-07-10) ===
+
+Ветка civil-time-175-1 (worktree nova-175), исполнитель sonnet. Новый folder-module
+std/time/civil (13 файлов .nv, ~2600 строк + 5 тест-файлов ~1000 строк): errors.nv
+(DateError/ParseDateTimeError/FieldKind/Disambiguation/OffsetConflict), weekday_month.nv
+(Weekday/Month 1-based enums), date.nv (Date epoch_day i64, Hinnant days_from_civil/
+civil_from_days, ISO-week, адъюстеры), time_of_day.nv (TimeOfDay nanos_of_day + декларация
+DateTime), datetime.nv (DateTime-методы), year_month.nv (YearMonth/MonthDay), period.nv
+(Period + CLAMP biggest-unit-first Q7 + 3-tier D317 + Period.between), offset.nv (Offset
+i32 сек, ±18h), zoned.nv (TimeZone enum Utc|Fixed|Iana, ZoneRules, LocalResolution
+Unique/Gap/Overlap, ZonedDateTime, 4-way Disambiguation, wall-vs-elapsed), tz.nv
+(s.to_timezone() §1а + curated rule-based embedded-таблица NY/London/Moscow/Sydney,
+tzdb_version), tzif.nv (RFC-8536 TZif v1/v2/v3 бинарный парсер + load_timezone Fs Os),
+parse.nv (strict s.to_date/to_time_of_day/to_datetime/to_timestamp/to_zoned_datetime/
+to_period, :60-clamp, OffsetConflict), format.nv (type-safe builder DateTimeFormat +
+@display включая Timestamp RFC-3339 — закрывает зависимость 175 full-datetime display).
+Спека: D319/D320/D321 (новые, из reserved-диапазона) + README-реестр; docs/datetime.md.
+Тесты: civil_test 25, civil_arith_test 15, zoned_test 14, tz_test 10, parse_test 14 =
+78 pos-блоков + neg 2 (EXPECT_COMPILE_ERROR period_not_duration/time_of_day_not_period)
++ rt 1 (EXPECT_RUNTIME_PANIC date_period_overflow_traps). Компилятор НЕ тронут (чистый
+std) — 8 обходов §4а с маркерами: [M-175.1-local-offset-effect-op] (vtable-слот),
+[M-175.1-value-in-value-emit-order], [M-175.1-variant-literal-receiver],
+[M-175.1-minus-overload-arg-type], [M-175.1-operator-arg-type-blind],
+[M-175.1-qualified-variant-value], [M-175.1-enum-default-param],
+[M-175.1-interp-value-record-display]; данные: [M-175.1-full-tzdb-embed].
