@@ -283,12 +283,20 @@ fn is_valid_identifier(s str) -> bool {
     true
 }
 
+// [M-closure-trailing-scalar-coercion-no-typecheck] follow-up (2026-07-10):
+// a LEADING `||` on a continuation line is NOT an OR-continuation in Nova —
+// it is ALSO the zero-arg closure-literal syntax, and the parser deliberately
+// does not extend newline-tolerance across a line-initial `||` (same class
+// of miscompile as `std/encoding/toml.nv`'s `is_bare_key_char`, closed the
+// same day the checker gained `E_CLOSURE_SCALAR_RETURN`). Fix: trailing `||`
+// at END of each line — a TRAILING binary operator before a newline IS a
+// legal continuation.
 fn is_ascii_ident_char(c char) -> bool {
     ro n = c as int
-    (n >= 48 && n <= 57)         // 0-9
-    || (n >= 65 && n <= 90)       // A-Z
-    || (n >= 97 && n <= 122)      // a-z
-    || n == 45                     // -
+    (n >= 48 && n <= 57) ||        // 0-9
+    (n >= 65 && n <= 90) ||        // A-Z
+    (n >= 97 && n <= 122) ||       // a-z
+    n == 45                        // -
 }
 
 

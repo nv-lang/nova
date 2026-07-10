@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E_CLOSURE_SCALAR_RETURN
+//
+// D417: a closure literal (`|| body` / `|x| body` / `fn(...) ...`) reaching a
+// return position (implicit trailing / explicit `return`) whose declared
+// return type is a SCALAR (`bool`/int-family/float/`char`) is a compile
+// error — a closure lowers to a function pointer, which can never be a
+// scalar value.
+//
+// Classic trigger (found in `std/encoding/toml.nv`'s `is_bare_key_char`,
+// `std/data/semver.nv`'s `is_ascii_ident_char`, `std/encoding/csv.nv`'s
+// `needs_quoting` — [M-closure-trailing-scalar-coercion-no-typecheck]): a
+// LEADING `||` on a continuation line is NOT an OR-continuation in Nova —
+// `||` is ALSO the zero-arg closure-literal syntax, and the parser
+// deliberately does not extend newline-tolerance across a line-initial
+// `||` (to avoid misparsing a genuine `|| body` closure statement as an
+// OR-continuation of the previous line). The second line below becomes its
+// OWN statement — a zero-arg closure literal — which, being the block's
+// LAST statement, is the implicit trailing (return) value.
+
+module neg.d417_closure_scalar_return_neg
+
+fn d417_is_upper_or_lower(c char) -> bool {
+    ro n = c as int
+    (n >= 65 && n <= 90)
+    || (n >= 97 && n <= 122)
+}
+
+test "should not compile" {
+    assert(d417_is_upper_or_lower('a'))
+}

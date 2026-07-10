@@ -121,9 +121,17 @@ export fn Csv.encode(records [][]str) -> str {
     buf.into_str()
 }
 
+// [M-closure-trailing-scalar-coercion-no-typecheck] follow-up (2026-07-10):
+// a LEADING `||` on a continuation line is NOT an OR-continuation in Nova —
+// it is ALSO the zero-arg closure-literal syntax, and the parser deliberately
+// does not extend newline-tolerance across a line-initial `||` (same class
+// of miscompile as `std/encoding/toml.nv`'s `is_bare_key_char`, closed the
+// same day the checker gained `E_CLOSURE_SCALAR_RETURN`). Fix: trailing `||`
+// at END of each line — a TRAILING binary operator before a newline IS a
+// legal continuation.
 fn needs_quoting(field str) -> bool {
-    field.contains(",")
-    || field.contains("\"")
-    || field.contains("\n")
-    || field.contains("\r")
+    field.contains(",") ||
+    field.contains("\"") ||
+    field.contains("\n") ||
+    field.contains("\r")
 }

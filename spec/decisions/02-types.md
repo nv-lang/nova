@@ -14384,3 +14384,75 @@ currently reject as not-yet-supported rather than silently ignore.
 `E_SERDE_INTERNAL_TAG_NON_STRUCT` (internal `tag` on a type with a tuple
 variant); `E_SERDE_UNTAGGED_GATED` (untagged derive gated on a codegen-mono fix,
 [M-180-untagged-codegen-mono]). See D345 Ф.5 for the emitted wire per mode.
+
+---
+
+## D417. Closure-литерал против скалярного return-типа — `E_CLOSURE_SCALAR_RETURN` (2026-07-10)
+
+**Дыра.** Ни `assignable` (сверка типов только в позициях call-arg / annotated-`let`),
+ни literal-coercion канал (`materialize_literal_coercion` — материализует ширину
+INT-литерала, но НИЧЕГО не отвергает) не сверяли closure-литерал (`|| body` /
+`|x| body` / typed `fn(...) ...`), попавший в return-позицию функции (implicit
+tail — trailing блока/arrow-body, либо explicit `return X`), с объявленным
+return-типом. Codegen лоуэрит closure в указатель на функцию; если объявленный
+тип — скаляр (`bool`/int-family/`f32`/`f64`/`char`), указатель молча
+бит-реинтерпретируется в скаляр (напр. `bool` — ВСЕГДА `true`) БЕЗ диагностики.
+
+**Найдено** 2026-07-10 при расследовании `[M-toml-repeated-fail-call-run-fail]`
+(std/encoding/toml.nv `is_bare_key_char`) — типовой триггер: многострочное `&&`/
+`||`-выражение, где программист по Rust/C-привычке ставит продолжающий оператор
+В НАЧАЛЕ следующей строки:
+
+```nova
+fn f(c char) -> bool {
+    ro n = c as int
+    (n >= 65 && n <= 90)
+    || (n >= 97 && n <= 122)   // ведущий `||` — НЕ OR-продолжение!
+}
+```
+
+Парсер (`parse_or`) **намеренно** не продолжает OR-цепочку через ведущий `||`
+на новой строке — синтаксис зарезервирован за zero-arg closure-литералом
+(`|| body`), и продолжение создало бы неоднозначность с реальным
+closure-statement'ом. Следствие: вторая строка парсится как СВОЙ, ОТДЕЛЬНЫЙ
+statement — closure-литерал `|| (n >= 97 && n <= 122)` — который, будучи
+последним statement'ом блока, становится implicit-return значением. До этого
+амендмента компиляция проходила молча; после — `nova check`/`nova test-build`
+отвергают такое тело кодом `E_CLOSURE_SCALAR_RETURN`.
+
+**Проверка** (`compiler-codegen/src/types/mod.rs`,
+`TypeCheckCtx::check_closure_scalar_return` + `_in_block`/`_in_stmt`/`_in_expr`
+walk-семейство, зеркалящее reachable-позиции существующего
+`materialize_returns_in_block`/`_in_expr`): для каждой return-позиции fn'а
+(implicit trailing блока/arrow-body И каждый explicit `return X`, в т.ч.
+вложенный в `if`/`match`/`while`/`for`/`loop` того же execution-context —
+НЕ внутрь `detach`/`spawn`/`parallel for`/вложенных closures, чей `return`
+принадлежит другому execution-context) — если значение является closure-
+литералом (`ExprKind::Lambda`/`ClosureLight`/`ClosureFull`) И объявленный
+return-тип резолвится (`ResolvedType::from_type_ref`, сквозь
+`readonly`/`mut`/`unsafe`-модификаторы) в `Bool`/`Scalar`/`Float`/голый
+`char` — ошибка. Возврат closure против **fn-типа** (`TypeRef::Func` —
+легитимный HOF-возврат) НЕ флагуется — это единственный legal target для
+closure-значения.
+
+**Код:** `E_CLOSURE_SCALAR_RETURN` (новый, по образцу `E_RECORD_PATTERN_NEEDS_REST`/
+`E_REFUTABLE_BINDING` — стабильный описательный `E_*`, не порядковый номер).
+Диагностика указывает на closure-литерал (не на fn-декларацию) и explicitly
+называет типовой триггер (ведущий `||`/`|x|` на continuation-строке) как
+подсказку для читателя. Fail-fast fix для программиста: перенести
+продолжающий оператор в КОНЕЦ предыдущей строки (`(...) ||` \ трейлинг —
+легальное продолжение, в отличие от ведущего).
+
+**Область.** Гейт — именно СКАЛЯР (`bool`/int-family/float/`char`); `str`/
+`Any`/произвольный `Named`-тип в скоуп ЭТОГО амендмента намеренно не входят
+(дыра шире, но подтверждённый репро и зафиксированный P2-маркер —
+`[M-closure-trailing-scalar-coercion-no-typecheck]` — именно про скаляр;
+расширение до общего closure-vs-non-fn-type mismatch — отдельный follow-up
+при необходимости).
+
+**Побочный улов.** Тот же класс бага (ведущий `||` на continuation-строке)
+обнаружился этой проверкой ещё в двух местах std — `std/data/semver.nv`
+`is_ascii_ident_char` и `std/encoding/csv.nv` `needs_quoting` — обе функции
+ДО фикса возвращали `true` для ЛЮБОГО входа (closure-указатель, коэрснутый в
+`bool`, always-truthy). Обе мигрированы на трейлинг-`||` (тот же канон, что
+`toml.nv`'s `is_bare_key_char`) в той же волне.

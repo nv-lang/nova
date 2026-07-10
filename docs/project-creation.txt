@@ -39670,3 +39670,77 @@ FAIL-set, что и std-hygiene-baseline (114/30 + 2 новых toml-файла 
 std/nova.toml, std/_experimental/STATUS.md, docs/plans/backlog-followups.md
 (маркер закрыт + новый `[M-closure-trailing-scalar-coercion-no-typecheck]`).
 Модель: sonnet (вся волна, включая парсерную разведку).
+
+===== 2026-07-10: D411-lint W_DESTRUCTURE_SNAPSHOT + закрытие
+[M-closure-trailing-scalar-coercion-no-typecheck] (ветка destructure-lint,
+sonnet) =====
+
+Две задачи по решениям владельца 2026-07-10, worktree nova-186.
+
+**Задача 1 — канон D411-деструктуризации.** nv-coding-style.md получил §26
+(ПЛОХО/КАНОН по образцу §18а, · согласовано 2026-07-10): 2+ подряд `ro`/`mut`-
+биндинга вида `x = src.x` (shorthand-совпадение имени поля с именем биндинга)
+— стилевой дрейф, канон — D411 `ro {a, b, ..} = src`. Новое правило реестра
+`compiler-codegen/src/lints.rs::CONV_RULES` — `W_DESTRUCTURE_SNAPSHOT`
+(AST-хук `conv_destructure_snapshot` + собственный block-walker, зеркалящий
+`conv_walk_*`): консервативно — точное имя-поле (голый `Member`, не `Call` —
+`resp.status()`-метод не матчит), простой ident-источник, ОДНА мутабельность
+на пару (`ro`+`ro` либо `mut`+`mut` — смешанная пара не сворачивается в один
+D411-биндинг), строго соседние `Stmt::Let` в одном блоке. Самотест
+`nova_tests/lint/{conv_pos,conv_clean}.nv`: +1 находка в позитиве (стало 5/5),
+канон-форма в негативе (0). Прогон по std нашёл 2 истинные находки —
+`std/collections/vec/restructure.nv`'s `Vec.drain` (`range.start`/`range.end`
+→ `ro {start, end} = range`) и `std/http/server/wire.nv`'s
+`serialize_response` (`resp.status`/`headers`/`body` → `ro {status, headers,
+body} = resp`) — обе мигрированы. `nova lint --rule W_DESTRUCTURE_SNAPSHOT
+D:/Sources/nv-lang/nova-186/std` = 0 находок.
+
+**Задача 2 — закрыт `[M-closure-trailing-scalar-coercion-no-typecheck]`**
+(P2, найден в предыдущей волне toml-fail-fix). Дыра: ни `assignable`
+(call-arg/annotated-let), ни literal-coercion канал (`materialize_literal_
+coercion` — материализует ширину INT-литерала, ничего не отвергает) не
+сверяли closure-литерал (`|| body`/`|x| body`/typed `fn(...) ...`) в
+return-позиции fn'а (implicit trailing блока/arrow-body, explicit `return X`)
+против скалярного (`bool`/int-family/float/`char`) объявленного return-типа
+— codegen лоуэрит closure в fn-pointer, коэрсия в скаляр молча
+бит-реинтерпретирует указатель (`bool` — всегда `true`), без диагностики.
+Fix: `TypeCheckCtx::check_closure_scalar_return` + `_in_block`/`_in_stmt`/
+`_in_expr`-семейство (compiler-codegen/src/types/mod.rs, вызывается из
+`f1_check_fn` парой к существующим `materialize_literal_coercion`/
+`materialize_returns_in_block`) — зеркалит reachable-позиции
+`materialize_returns_in_block`/`_in_expr` (explicit `return` в т.ч. вложенный
+в if/match/while/for/loop; НЕ в detach/spawn/parallel-for/nested-closures —
+другой execution-context, тот же дизайн что у литерал-коэрсии). Closure
+против fn-типа (легитимный HOF-возврат) не флагуется. Новый стабильный код
+`E_CLOSURE_SCALAR_RETURN`; спек-амендмент D417 (spec/decisions/02-types.md +
+реестр README.md) — гейт намеренно ограничен скаляром (не «любой не-fn тип»
+исходной формулировки маркера, см. docs/simplifications.md). Neg-тест
+`spec_tests/conformance/neg/d417_closure_scalar_return_neg.nv`
+(`EXPECT_COMPILE_ERROR E_CLOSURE_SCALAR_RETURN`) воспроизводит toml-репро
+(ведущий `||` на continuation-строке).
+
+Побочный улов прогоном нового чекера по std: ТОТ ЖЕ класс бага (ещё до этой
+волны — silent always-`true`) нашёлся в `std/data/semver.nv`'s
+`is_ascii_ident_char` и `std/encoding/csv.nv`'s `needs_quoting` — обе
+мигрированы на трейлинг-`||` (канон `toml.nv`'s `is_bare_key_char`).
+
+Гейты (ветка destructure-lint от a99cf05c7, cargo build compiler-codegen+
+nova-cli чисто; nova-lsp НЕ собирается — pre-existing, не тронут этой
+волной, см. коммиты 342244094/92cf13909): conformance --positive
+--compile-error = 91/0 (90 эталон + новый d417-neg); err173-корпус = 1/0 δ0;
+`nova check D:/Sources/nv-lang/nova-186/std` = 30 FAIL (тот же set, что и
+предыдущий baseline — δ0 после миграции 2 latent-багов, найденных этой же
+проверкой); lint-самотесты conv_pos/conv_clean зелёные; cargo test --lib
+compiler-codegen — 923 passed, 3 pre-existing failures + 1 pre-existing
+stack-overflow, все в файлах (chain_norm.rs/emit_c.rs/test_runner.rs) не
+тронутых этой волной (git diff к a99cf05c7 пустой).
+
+Файлы: docs/nv-coding-style.md (§26), compiler-codegen/src/lints.rs
+(W_DESTRUCTURE_SNAPSHOT), compiler-codegen/src/types/mod.rs
+(E_CLOSURE_SCALAR_RETURN), nova_tests/lint/{conv_pos,conv_clean}.nv,
+std/collections/vec/restructure.nv, std/http/server/wire.nv,
+std/data/semver.nv, std/encoding/csv.nv, spec/decisions/02-types.md (D417),
+spec/decisions/README.md, spec_tests/conformance/neg/
+d417_closure_scalar_return_neg.nv, docs/plans/backlog-followups.md
+(маркер закрыт), docs/simplifications.md.
+Модель: sonnet (вся волна — разведка чекера + реализация обеих задач).

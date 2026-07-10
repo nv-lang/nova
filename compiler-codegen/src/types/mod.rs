@@ -6703,9 +6703,14 @@ impl<'a> TypeCheckCtx<'a> {
                 // coercions (the tactical codegen target-passing). No `assignable` runs here
                 // (return-type compat is checked elsewhere) — pure channel materialization.
                 if let Some(ret) = &fd.return_type {
+                    // [M-closure-trailing-scalar-coercion-no-typecheck] fix: reject a
+                    // closure literal against a scalar return type BEFORE the literal
+                    // coercion (which only widens INT literals — it does not reject).
+                    self.check_closure_scalar_return(e, ret, errors);
                     self.materialize_literal_coercion(e, ret);
                     // a block-arrow body `=> { …; return X }` can hold explicit returns.
                     self.materialize_returns_in_expr(e, ret);
+                    self.check_closure_scalar_return_in_expr(e, ret, errors);
                 }
             }
             FnBody::Block(b) => {
@@ -6713,10 +6718,14 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(ret) = &fd.return_type {
                     // implicit tail return (block trailing) coerces to the return type …
                     if let Some(trailing) = &b.trailing {
+                        // [M-closure-trailing-scalar-coercion-no-typecheck] fix (see the
+                        // dedicated block above `check_closure_scalar_return`'s definition).
+                        self.check_closure_scalar_return(trailing, ret, errors);
                         self.materialize_literal_coercion(trailing, ret);
                     }
                     // … and every explicit `return <expr>` anywhere in the body.
                     self.materialize_returns_in_block(b, ret);
+                    self.check_closure_scalar_return_in_block(b, ret, errors);
                 }
             }
             FnBody::External => {}
@@ -11921,6 +11930,129 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    // ========================================================================
+    // [M-closure-trailing-scalar-coercion-no-typecheck] fix (2026-07-10,
+    // found during the `toml-fail-fix` investigation — see
+    // docs/plans/backlog-followups.md).
+    //
+    // Neither `assignable` (call-arg / annotated-let positions only) nor the
+    // `materialize_returns_in_*` walk above (which coerces LITERALS, it does
+    // not REJECT mismatches) ever rejected a closure literal (`|| body` /
+    // `|x| body` / `fn(...) ...`) reaching a return position whose declared
+    // type is a scalar (`bool`/`int`/sized-int/float/`char`). Codegen lowers
+    // a closure to a function pointer; without this check the pointer is
+    // silently bit-reinterpreted as the scalar (an always-truthy `bool`,
+    // garbage int, …) with NO diagnostic. Repro (mis-parsed multiline `||`
+    // with a leading `||` on the continuation line — parser deliberately does
+    // NOT continue an `||`-expression across a leading `||`, so the second
+    // line becomes its OWN statement, parsed as the zero-arg closure literal
+    // `|| (...)`, silently becoming the block's trailing expression):
+    //
+    //   fn f(c char) -> bool {
+    //       ro n = c as int
+    //       (n >= 65 && n <= 90)
+    //       || (n >= 97 && n <= 122)   // parses as a NEW stmt: closure-literal trailing
+    //   }
+    //
+    // Mirrors the return-position walk of `materialize_returns_in_block`/
+    // `_in_expr` above (same reachable-position set — same-fn control flow
+    // only, NOT into `detach`/`spawn`/`parallel for`/nested closures, whose
+    // `return` belongs to a different execution context).
+    // ========================================================================
+
+    /// Проверяет ОДНУ return-позицию (trailing блока, arrow-body, `return X`):
+    /// closure-литерал против скалярного `expected` — новый стабильный код
+    /// `E_CLOSURE_SCALAR_RETURN`.
+    fn check_closure_scalar_return(&self, value: &Expr, expected: &TypeRef, errors: &mut Vec<Diagnostic>) {
+        if !is_closure_literal_expr(value) {
+            return;
+        }
+        // Peel compile-time-only modifiers — same as `materialize_literal_coercion`.
+        let mut ty = expected;
+        loop {
+            match ty {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+                    ty = inner;
+                }
+                _ => break,
+            }
+        }
+        // Expected IS itself a fn-type (HOF return) — a closure literal is legal there.
+        if matches!(ty, TypeRef::Func { .. }) {
+            return;
+        }
+        let rt = ResolvedType::from_type_ref(ty);
+        if !resolved_type_is_scalar_like(&rt) {
+            return;
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_CLOSURE_SCALAR_RETURN] closure-литерал (`|| ...` / `|x| ...` / \
+                 `fn(...) ...`) не может быть значением скалярного типа `{}`: closure \
+                 лежит в памяти как указатель на функцию — коэрсия к скаляру молча \
+                 бит-реинтерпретирует указатель (напр. `bool` всегда true), без этой \
+                 диагностики. Частый триггер — случайный closure-литерал из-за ведущего \
+                 `||`/`|x|` в начале continuation-строки многострочного выражения: \
+                 проверьте, не должна ли эта строка ПРОДОЛЖАТЬ предыдущее выражение той \
+                 же строкой (02-types.md D-блок «Closure-литерал против скалярного \
+                 return-типа»).",
+                render_type_ref(ty)
+            ),
+            value.span,
+        ));
+    }
+
+    fn check_closure_scalar_return_in_block(&self, b: &Block, ret: &TypeRef, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.check_closure_scalar_return_in_stmt(s, ret, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.check_closure_scalar_return_in_expr(t, ret, errors);
+        }
+    }
+
+    fn check_closure_scalar_return_in_stmt(&self, s: &Stmt, ret: &TypeRef, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::Return { value: Some(e), .. } => self.check_closure_scalar_return(e, ret, errors),
+            Stmt::Expr(e) => self.check_closure_scalar_return_in_expr(e, ret, errors),
+            Stmt::Let(d) => self.check_closure_scalar_return_in_expr(&d.value, ret, errors),
+            Stmt::Const(d) => self.check_closure_scalar_return_in_expr(&d.value, ret, errors),
+            Stmt::Defer { body, .. } => self.check_closure_scalar_return_in_expr(body, ret, errors),
+            Stmt::ConsumeScope { body, .. } => self.check_closure_scalar_return_in_block(body, ret, errors),
+            _ => {}
+        }
+    }
+
+    /// Ищет ВЛОЖЕННЫЕ explicit `return X` (не саму `e` — `e` тут контейнер для
+    /// поиска, не return-значение; зеркалит `materialize_returns_in_expr`).
+    fn check_closure_scalar_return_in_expr(&self, e: &Expr, ret: &TypeRef, errors: &mut Vec<Diagnostic>) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.check_closure_scalar_return_in_block(then, ret, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.check_closure_scalar_return_in_block(b, ret, errors),
+                        ElseBranch::If(x) => self.check_closure_scalar_return_in_expr(x, ret, errors),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => self.check_closure_scalar_return_in_expr(x, ret, errors),
+                        MatchArmBody::Block(b) => self.check_closure_scalar_return_in_block(b, ret, errors),
+                    }
+                }
+            }
+            ExprKind::While { body, .. }
+            | ExprKind::WhileLet { body, .. }
+            | ExprKind::Loop { body, .. }
+            | ExprKind::For { body, .. } => self.check_closure_scalar_return_in_block(body, ret, errors),
+            ExprKind::Block(b) => self.check_closure_scalar_return_in_block(b, ret, errors),
+            _ => {}
+        }
+    }
+
     /// Ф.1: совместимо ли `expr` с типом `expected`?
     ///
     /// `expr_gs` — generic-scope места, где написан `expr`; `exp_gs` —
@@ -16988,6 +17120,32 @@ fn pattern_simple_name(p: &Pattern) -> Option<String> {
     match p {
         Pattern::Ident { name, .. } => Some(name.clone()),
         _ => None,
+    }
+}
+
+/// [M-closure-trailing-scalar-coercion-no-typecheck] fix: `true` для узлов,
+/// представляющих closure-ЛИТЕРАЛ (`|| body` / `|x| body` / `fn(...) ...`) —
+/// значение, которое codegen лоуэрит в указатель на функцию. НЕ включает
+/// вызов closure'а (`Call`) — только сам литерал-значение.
+fn is_closure_literal_expr(e: &Expr) -> bool {
+    matches!(
+        &e.kind,
+        ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+    )
+}
+
+/// [M-closure-trailing-scalar-coercion-no-typecheck] fix: `true` для
+/// `ResolvedType`, представляющих СКАЛЯР (bool/int-family/float/`char`) —
+/// типов, для которых указатель-на-функцию НИКОГДА не является legal
+/// значением. Намеренно консервативно: НЕ включает `Str`/`Any`/`Named`
+/// (кроме `char`) — эти позиции вне текущего скоупа фикса (P2-дыра именно
+/// про скаляр, D-амендмент 02-types.md).
+fn resolved_type_is_scalar_like(rt: &ResolvedType) -> bool {
+    match rt {
+        ResolvedType::Bool | ResolvedType::Scalar { .. } | ResolvedType::Float { .. } => true,
+        ResolvedType::Readonly(inner) => resolved_type_is_scalar_like(inner),
+        ResolvedType::Named { name, args, .. } => name == "char" && args.is_empty(),
+        _ => false,
     }
 }
 
