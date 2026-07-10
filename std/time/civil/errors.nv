@@ -53,6 +53,8 @@ export fn FieldKind @name() -> str =>
 /// - `InvalidField(field, given, min, max)` — Feb 30, month 13, hour 25.
 /// - `RangeOverflow(kind)` — civil↔Timestamp вне ±292y окна (D317).
 /// - `Ambiguous(kind)` — `Reject` на DST gap/overlap.
+/// - `UnknownZone(name)` — имя зоны не найдено (Ф.4 tz-загрузка).
+/// - `BadTzData(what)` — повреждённые/неподдерживаемые TZif-байты (Ф.4).
 ///
 /// Shape — time-crate `ComponentRange` + java.time `getErrorIndex`.
 #stable(since = "0.1")
@@ -60,6 +62,8 @@ export type DateError enum
     | InvalidField(FieldKind, i64, i64, i64)
     | RangeOverflow(str)
     | Ambiguous(str)
+    | UnknownZone(str)
+    | BadTzData(str)
 
 
 /// Диагностическое сообщение.
@@ -72,6 +76,8 @@ export fn DateError @to_str() -> str =>
         }
         RangeOverflow(kind) => "range overflow: " + kind,
         Ambiguous(kind)     => "ambiguous local time: " + kind,
+        UnknownZone(name)   => "unknown time zone: " + name,
+        BadTzData(what)     => "bad tz data: " + what,
     }
 
 
