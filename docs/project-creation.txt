@@ -40075,3 +40075,46 @@ baseline-FAIL — neg-тесты/тест-хелперы, nova.toml ортого
 Коммиты (module-authoring-192): e49a4a79b (задача1 [ffi.staticlib]),
 2173fb6d6 (задача2 доки), a1e2b05f9 (задача1 trigger_symbols generic),
 7cc88cada (доки trigger+консолидация). nova-tls: 745c4d4 (свой репо).
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 03.1 followup — ext-dep FFI-propagation + rev-3 D78 фикстуры
+(ветка ext-dep-resolver-03-1, 2026-07-10/11). Модель: sonnet (исполнение).
+Восстановление после watchdog-обрыва.
+───────────────────────────────────────────────────────────────────────────────
+Сам план 03.1 (path/git-deps, Ф.1–Ф.6) ✅ ЗАКРЫТ 2026-05-22. Эта ветка —
+фоллоу-ап поверх закрытия.
+
+Задача 1 — ext-dep native/FFI propagation (§3.2 explicit dependency graph):
+native-артефакты объявленной path/git-зависимости (.c-шимы/статик-либ из её
+[ffi]/[ffi.staticlib]) линкуются в бинарь ИМПОРТЁРА — симметрично тому, как
+её .nv-модули резолвятся в компиляцию.
+- imports.rs: resolved_dependency_roots(pkg_dir) — source root'ы ПРЯМЫХ
+  зависимостей, резолвнутые тем же lookup_dependency, что и .nv-импорт
+  (honest marker v1: только прямые, транзитив не обходится). package_root_of
+  повышен до pub(crate) для переиспользования build-пайплайном.
+- test_runner.rs: ResolvedFfiConfig::merge() (c_shims/include_dirs/libs —
+  конкатенация+дедуп libs; staticlib-слот singular, свой пакет приоритетен —
+  Plan 192) + аггрегация [ffi] всех объявленных зависимостей в run_one.
+- Фикстура nova_tests/plan03_1/path_dep_ffi/ (extlib_native с [ffi] c_shim →
+  consumer вызывает её native add_native). Доказывает линковку native
+  зависимости в потребителя.
+
+Задача 2 — приведение 12 фикстур plan03_1 под rev-3 D78 (strict): файл в
+корне пакета (src=".") обязан объявлять `module <[package].name>.X`, а 12
+фикстур несли `module <имя_директории>.X` (consumer/deplib/cross_pkg_neg/…).
+E_D78_MODULE_PATH_MISMATCH срабатывал первым → 3 позитивные CODEGEN-FAIL
+(path-резолвер не доходил до импорта), 6 негативных NEG-WRONG-MSG (E_D78
+маскировал целевую manifest-ошибку). Первый сегмент приведён к имени пакета
+(эталон — path_dep_ffi/consumer). Импорты уже были по имени пакета —
+консистентность восстановлена.
+
+Гейт (координаторский, end-to-end): nova test --positive --compile-error
+nova_tests/plan03_1 = PASS 12 / FAIL 0. Позитивные (5) резолвят
+path/git-зависимости mathlib/cyc_a_pkg/deplib_int/extlib_native и проходят
+ассерты; негативные (7) дают целевые диагностики (границу пакета/дважды/
+git-зависимость/несуществующую директорию/не совпадает/зарезервированное
+имя/internal module). cargo build ok. Полную регрессию (983) не гонял —
+изменения аддитивны (merge [ffi] активен только для пакетов с path/git-deps,
+несущими [ffi]); вне окна watchdog-восстановления.
+Коммиты (ext-dep-resolver-03-1): a10b2d5e9 (checkpoint резолвер+path_dep_ffi),
+9cc5472c1 (12 фикстур rev-3 D78).
