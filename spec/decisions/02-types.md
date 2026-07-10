@@ -10604,6 +10604,70 @@ mismatch).
 **Plan 128.2 §Markers closure:** `[M-128.1-ro-binding-field-chain-not-mut]`
 (P1) — closed via root-walking enforcement.
 
+### D33 amend §«Fluent `-> @` chain-receiver mutability gate» (ex-Plan 172.5 R6, fix 2026-07-10)
+
+> **Closes `[M-172.5-chain-gating-ro-at]`** (the marker's own description of
+> the fix was stale — it referenced `ParamRefMode`/`mut ref` param-form
+> machinery that Plan 184 fully retracted — but the underlying soundness
+> hole it named survived, sharpened by D326-Plan184 Р7).
+
+The `walk_root(obj) = None` escape hatch above ("chain начинается с rvalue
+base — Call result, literal, … → no enforcement; mutation в hoisted temp —
+no-op") was sound **before** Plan 184: a value-record `-> @` was a copy
+(D246 R7b), so mutating the tail of a chain rooted in a Call result was
+truly a no-op on a temporary. **After** [D326-Plan184 Р7](#ревизия-d326-plan184-ref-t--ограниченный-тип),
+`-> @` returns a genuine `ref Self` even for a **non-mut** method — the
+no-op premise no longer holds for that specific shape.
+
+Empirically: `fn T @peek() -> @ { }` / `fn T mut @bump() -> @ { @x += 1 }` —
+`c.peek().bump()` on `mut c = T{x: 0}` compiled and left `c.x == 1`
+(not `0`). `peek()` never declared `mut`, yet its `-> @` aliased the same
+storage as a genuine mut method would — the ro/mut method-declaration axis
+was silently bypassable through a chain.
+
+**Rule (amendment):** `walk_root` above additionally recognizes a **Call**
+receiver shape. When `obj` (the receiver of a mut-method Call) is itself a
+Call `inner_obj.inner_method(...)`:
+
+- If `inner_method` is a **confirmed registered ro-instance method** (Plan
+  135 `ro_methods`, arity-matched — see below) that is **also declared with
+  `-> @`** (D132 self-return, `recv_returning`) → chaining a mut method off
+  it is rejected: **`E_RECEIVER_BINDING_NOT_MUT`**.
+- If `inner_method` is itself mut (`X.inc().inc()`, the ordinary D132
+  fluent-builder idiom) — legal, unchanged.
+- If `inner_method` is **not** a self-return (`-> @`) method at all — e.g.
+  `filter()`/`map()`/`chars()`/a static constructor (`T.new()`) — it builds
+  a genuinely fresh value, not an alias; the original `walk_root = None`
+  no-op-temp reasoning still applies unchanged. Legal.
+
+**Arity-aware registries (implementation note):** the pre-existing
+name-only `mut_methods`/`ro_methods` sets (Plan 108.1/135) collapse
+arity-overloaded same-name pairs — e.g. `@cap() -> int` (0-arg ro getter)
+vs `mut @cap(n) -> @` (1-arg setter), the canonical `T.new().cap(n)`
+construction idiom (D117 amend) present throughout std. The gate above uses
+new companion sets `mut_methods_arity`/`ro_methods_arity`
+(`(receiver_type, method_name, arity)`) to disambiguate by argument count,
+and additionally requires the SAME (name, arity) pair to never appear as
+mut ANYWHERE in the module before firing — a conservative, false-positive-
+averse trade-off (matches this section's existing "acceptable trade-off"
+stance on name-only chain-root heuristics).
+
+**Verified still legal (regression guard):** all-mut `-> @` chains
+(`v.bump().bump()`), a fresh chain rooted in a static constructor
+(`T.new().bump()`), and a mut method chained after a non-self-return
+adapter (`v.doubled().bump()`) — see
+`spec_tests/conformance/d326_chain_gating_ro_at.nv`. Rejected shape —
+`spec_tests/conformance/neg/d326_chain_gating_ro_at_neg.nv`.
+
+**Scope note:** the gate fires only when BOTH ends are positively confirmed
+(inner = confirmed ro AND self-return; outer = confirmed mut) — it is a
+narrow, additive check layered on top of the existing root-walk, not a
+replacement. It does not attempt full receiver-type resolution (out of
+scope for the linear `ConsumeCtx` pass); a hypothetical cross-type name
+collision at the SAME arity (one type's mut `foo(n)` vs another's ro
+self-return `foo(n)`) is a known, accepted miss (favors soundness of the
+**existing** green tree over completeness of this new check).
+
 ### D216 V2 amend §V2.2b «mut T transparent» (Plan 118.5 V2, 2026-06-04)
 
 > **Closes [M-118.5-mut-t-vs-binding-distinction].**
