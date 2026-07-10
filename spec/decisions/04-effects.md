@@ -2742,9 +2742,10 @@ yield-point'ах (network, sleep, channel.recv, async-Db). Это
 Цвета функции нет — нет деления sync/async. Программист пишет код,
 fiber-runtime сам решает где можно вытесняться.
 
-`spawn`, `parallel for`, `supervised`, `with_timeout`, `race` —
-остаются как **runtime-конструкции** (keyword'и или библиотечные
-функции), не как эффекты:
+`spawn`, `parallel for`, `supervised` (+`deadline:`/`timeout:` — D408,
+субсумировали ex-`with_timeout`), `race` (stdlib) — остаются как
+**runtime-конструкции** (keyword'и или библиотечные функции), не как
+эффекты:
 
 ```nova
 // Гомогенный fan-out — массив результатов через parallel for.

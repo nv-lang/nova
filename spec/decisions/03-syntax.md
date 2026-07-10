@@ -6472,6 +6472,12 @@ instance `@foo`» (либо обратное). Это hardening аналогич
 > **Plan 100.4.1.** Принято 2026-05-23 (proposed; implementation pending).
 > **Amend [D90](#d90) §4** — снимает ограничение «defer body INFALLIBLE».
 >
+> **⚠️ Historical-нота (Plan 173 Ф.5.4):** заголовок/примеры ниже упоминают
+> `errdefer` — он РЕТРАКТНУТ (see [D189](#d189-прямое-удаление-okdefer--errdefer--defer-result) /
+> [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel) / [D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block));
+> composition-семантика D158 живёт в defer-kernel: failable тело у плейн
+> `defer`/`defer(o)`/`@cleanup`.
+>
 > **АМЕНДМЕНТ 2026-07-06 (Plan 173 Ф.4, решение владельца — модель Б).**
 > Ранняя редакция D158 (ниже, в §«Правила composition» и §«MultiError API»)
 > заворачивала обе ошибки в конверт `Err(MultiError { primary, suppressed })`
@@ -6744,11 +6750,15 @@ defer {
 ## D160. `okdefer` + reason-aware `defer |result|`
 
 > **Plan 100.4.3.** Принято 2026-05-23 (proposed). **Статус: RETRACTED**
-> by D189 (Plan 110.5.7 hard cutover, 2026-05-31). Replaced by
-> `consume X = ... { body }` scope-block с `match outcome { Success/
-> Failure(_)/Panic(_) }` в `cleanup` method (D188).
+> by D189 (Plan 110.5.7 hard cutover, 2026-05-31). **Каноническая замена
+> (Plan 173 Ф.2, see [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel)/[D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block)/[D189](#d189-прямое-удаление-okdefer--errdefer--defer-result)):**
+> `okdefer{b}` ≡ `defer(o){ match o { Success => b, _ => () } }`;
+> reason-aware `defer |result|` ≡ `defer(o ScopeOutcome) { … }` (типизированный
+> биндинг исхода); для ресурсов — `consume X = ... { body }` с `match outcome`
+> в `@cleanup` (D188). Всё тело ниже — **historical**.
 >
-> Новые scope-level statements; complement к D90 defer/errdefer family.
+> Новые scope-level statements; complement к D90 defer/errdefer family
+> (historical).
 
 ### Что
 
@@ -6870,6 +6880,13 @@ distinction:
 
 > **Plan 100.4.4.** Принято 2026-05-23 (proposed). Extends [D158](#d158)
 > composition на multi-defer + panic. **Amend [D90](#d90) §«panic»**.
+>
+> **⚠️ Historical (Plan 173 Ф.5.4):** примеры ниже используют ретрактнутый
+> `errdefer` — see [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel)/[D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block)/[D189](#d189-прямое-удаление-okdefer--errdefer--defer-result).
+> САМА семантика (LIFO продолжает после partial failure; panic-in-defer
+> композируется, panic-dominance) ЖИВА — реализована defer-kernel'ом
+> (D314 §4a; emit_c leave/fail run-sites) и покрыта suppressed-pocket
+> моделью Б (D158-амендмент).
 
 ### Что
 
@@ -6971,6 +6988,12 @@ cleanups attempted) + matches TS/Java на composition + превосходит
 
 > **Plan 100.4.5.** Принято 2026-05-23 (proposed). **Amend [D90](#d90)
 > §7** (`interrupt` triggers errdefer). Финал Plan 100.4 umbrella.
+>
+> **⚠️ Historical (Plan 173 Ф.5.4):** таблица ниже перечисляет ретрактнутые
+> `errdefer`/`okdefer` — see [D314](#d314-единое-ядро-cleanup--defer-как-примитив-defer-kernel)/[D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block)/[D189](#d189-прямое-удаление-okdefer--errdefer--defer-result).
+> Актуальное покрытие consume-обязательств: плейн `defer` (все пути) и
+> `defer(o ScopeOutcome)` c match по исходу; D133-quick-fix предлагает
+> `defer`/`@cleanup` (Plan 173 Ф.1 #2).
 
 ### Что
 

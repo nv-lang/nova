@@ -50,8 +50,12 @@ runtime-факт, не tipo-факт). Если нужна гарантия, ч�
 **нет**, используется блок [`realtime { ... }`](04-effects.md#d64).
 
 Structured concurrency — **примитивы языка** (`spawn`, `supervised`
-[+ опц. `cancel:`], `select`, `parallel for`, `detach`, `blocking`),
-`race`/`with_timeout` — stdlib поверх них, см. [D50](#d50), [D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
+[+ опц. `cancel:`/`deadline:`/`timeout:` — D408], `select`, `parallel for`,
+`detach`, `blocking`), `race` — stdlib поверх них, см. [D50](#d50),
+[D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
+*(Plan 173 §3a п.4: `with_timeout` субсумирован `supervised(timeout:)` —
+подлежит удалению, `[M-174-retract-with-timeout]`; `race {…}`-блок ниже —
+эскиз, не реализован: N-арный `race` — дизайн 173.1 §2a.)*
 
 ### Правило
 
@@ -91,6 +95,8 @@ fn fetch_all(urls []str) Net Fail -> []Response =>
     }
 
 // race — кто первый ответил, тот и победил
+// (эскиз: block-форма НЕ реализована; сейчас std race2, общий N-арный
+//  race — дизайн 173.1 §2a; см. нота выше)
 race {
     fetch(url_a),
     fetch(url_b),
@@ -112,8 +118,9 @@ supervised(cancel: tok) {
     spawn do_other()
 }
 
-// with_timeout — bound на время выполнения
-with_timeout(2.seconds()) {
+// bound на время выполнения — параметр области (D408; ex-with_timeout,
+// субсумирован Plan 173 §3a / Plan 174)
+supervised(timeout: 2.seconds()) {
     Db.exec(sql`UPDATE counters SET v = v + 1`)
 }
 ```
@@ -136,8 +143,8 @@ with_timeout(2.seconds()) {
    на масштабе backend (миллионы fiber'ов на узел). OCaml 5 показал
    тот же подход в строго типизированном языке.
 4. **Structured concurrency встроена.** Не нужны библиотеки типа
-   Trio/structured-concurrency RFC — `parallel for`, `race`,
-   `supervised(cancel:)` — часть языка. Это значительно безопаснее
+   Trio/structured-concurrency RFC — `parallel for`,
+   `supervised(cancel:/deadline:/timeout:)` — часть языка (`race` — stdlib). Это значительно безопаснее
    для AI-генерации (нет утечек fiber'ов).
 
 ### Сравнение с Rust async
@@ -257,11 +264,14 @@ inverse-маркером.
 > on atexit либо через `runtime.drain_orphans()` explicit-sync API),
 > `Time.sleep` как yield-point, `blocking { }` (Plan 83.3 — libuv-
 > threadpool offload, см. §4 «Реализация»). Capture-by-value для
-> immutable scalars. Не реализованы: `race`, `select`, `cancel_scope`,
-> `with_timeout`, эффект `Detach` в effect-system (всё ещё runtime-
-> primitive), cancellation/error-propagation между fibers (для
-> non-orphan). Orphan errors → LogAndDrop в caller's stderr,
-> non-propagate.
+> immutable scalars. Статус (обновлено Plan 173 Ф.5.4, 2026-07-10):
+> `select` РЕАЛИЗОВАН (D94 + None-арм D414 §3); `supervised(deadline:/timeout:)`
+> РЕАЛИЗОВАНЫ (D408) — `with_timeout` субсумирован (ретракция отложена
+> `[M-174-retract-with-timeout]`); общий N-арный `race` НЕ реализован
+> (std `race2`; дизайн 173.1 §2a); cancellation/error-propagation между
+> fibers — 173.0 retention + D414 precedence. Orphan errors → LogAndDrop
+> в caller's stderr, non-propagate (escalate-to-scope —
+> `[M-173-detach-escalate-to-scope]`).
 
 ### Что
 
@@ -278,9 +288,9 @@ inverse-маркером.
 
 #### 1. Suspension — ambient (D62), не эффект
 
-Suspension fiber'а **не пишется в сигнатуре**. `parallel for`, `race`,
-`select` — синтаксические примитивы языка (D14), они работают на
-уровне fiber-runtime'а, не type-system'ы.
+Suspension fiber'а **не пишется в сигнатуре**. `parallel for`,
+`select` — синтаксические примитивы языка (D14; `race` — stdlib поверх),
+они работают на уровне fiber-runtime'а, не type-system'ы.
 
 ```nova
 fn fan_out(urls []str) Net Fail -> []Response =>
@@ -349,8 +359,8 @@ use_both(a.load(), b.load())
 
 `spawn` **запрещён** вне structured-блока. Допустимые скоупы:
 `supervised` (в т.ч. `supervised(cancel:)`), `parallel for`, `select`;
-а также stdlib-функции, построенные на них (`race`, `with_timeout`),
-внутри своих тел. Вне такого скоупа `spawn foo()` — ошибка компиляции.
+а также stdlib-функции, построенные на них (`race2`; ex-`with_timeout`
+— субсумирован `supervised(timeout:)`, D408), внутри своих тел. Вне такого скоупа `spawn foo()` — ошибка компиляции.
 
 ```nova
 // ✓ ОК — spawn внутри supervised

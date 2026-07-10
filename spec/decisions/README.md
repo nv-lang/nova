@@ -15,7 +15,7 @@
 |---|---|---|---|
 | 01 | [01-philosophy.md](01-philosophy.md) | Цели, парадигма, AI-first | D1, D9, D10 |
 | 02 | [02-types.md](02-types.md) | Record, sum-type, protocol, generic, поля, bounds, ghost state, hybrid dispatch, tuple mono, named tuples, symmetry decl↔literal, signed indexing, debug formatting protocol (D229), Clone + auto-derive (D230) + value-record (D228), RawMem allocator API (D231), Vec[T] (D232) | D15, D17, D32, D36, D39, D42, D52, D53, D55, D66, D72, D110, D119, D122, D123, D142, D215, D216 typed-pointers (V2 + V3 amend), D354 (anon-tuple mono, ex-D216), D226, D228, D229, D230, D231, D232, D246 (three-axis mutability: L1 binding / L2 view / L3 pointee; restores D216 §V2.6 `*T≡*ro T`; flip-scan-draft RETRACTED) |
-| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/errdefer, атрибуты `#name`, default generics, select, named params, map-literal, doc-comments, size accessors, static-dot в protocol, numeric literal inference | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D104, D108, D117, D143, D227 |
+| 03 | [03-syntax.md](03-syntax.md) | Объявления, литералы, операторы, методы, парсинг, defer/defer(o) (errdefer ретрактнут — D189/D314), атрибуты `#name`, default generics, select, named params, map-literal, doc-comments, size accessors, static-dot в protocol, numeric literal inference | D16, D19, D20, D22, D23, D27, D30, D33, D34, D35, D37, D38, D40, D43, D44, D45, D46, D48, D49, D54, D58, D59, D60, D69, D82, D83, D88, D90, D94, D96, D102, D104, D108, D117, D143, D227 |
 | 04 | [04-effects.md](04-effects.md) | Fail, Io, Db, effect-литерал, with-блоки, interrupt, forbid, realtime, ?, `Effect[E, IRT]`, contracts (#pure/axiom/trusted), axiom binder, Fail payload, std/net effects (TcpNet/UdpNet/AddrNet/DnsNet, split, polish) | D2, D3, D4, D11, D12, D18, D25, D28, D31, D61, D62, D63, D64, D65, D67, D68, D85, D86, D87, D115, D118, D120, D282, D291, D295, D298, D301, D302 |
 | 05 | [05-memory.md](05-memory.md) | Managed GC, escape analysis, regions | D6, D21 (cancelled) |
 | 06 | [06-concurrency.md](06-concurrency.md) | Fiber runtime, structured concurrency, spawn, detach, supervised(cancel:), channels (Channel revision capability-split), select, handler scoping, park/wake API, implicit main-scope, fiber stack allocation, work-stealing scheduler, preemption | D14, D50, D71, D75, D79, D80, D91, D92, D93, D97, D98, D103 |
@@ -33,7 +33,7 @@
 | D87 | 04-effects.md | `Handler[E, IRT]` — параметризация handler типом interrupt'а |
 | D88 | 03-syntax.md | Default-значения generic-параметров (`Handler[E]` ≡ `Handler[E, never]`) |
 | D89 | 09-tooling.md | Test-tooling конвенции — `EXPECT_*` маркеры для negative-тестов |
-| D90 | 03-syntax.md | `defer` и `errdefer` — scope-level cleanup statements |
+| D90 | 03-syntax.md | `defer` — scope-level cleanup statement (`errdefer` ретрактнут D189; замена — `defer(o ScopeOutcome)`, D314) |
 | D91 | 06-concurrency.md | Channel revision — capability-split на `ChanWriter` / `ChanReader` |
 | D92 | 06-concurrency.md | Top-level `main` как implicit supervised scope |
 | D93 | 06-concurrency.md | Park/wake — нормативный runtime primitive для блокирующих операций |

@@ -12,14 +12,18 @@
 > - **Ф.1 (soundness+hygiene) — ЗАКРЫТА:** with-Fail-глотает-panic ИСПРАВЛЕН (D13, см. ниже);
 >   errdefer/okdefer/`defer |r|` ретрактнуты (D189); renames Consumable→`Cleanup[E]`, `@on_exit`→`@cleanup`,
 >   effect Cleanup→`ResourceTrace` (R1/R2).
-> - **Ф.2 (defer-kernel) — ЧАСТИЧНО:** `defer(o ScopeOutcome) { … }` — РЕАЛИЗОВАН (B1/B2): тело видит
->   исход scope; errdefer/okdefer субсумированы. `consume` — реализован как **consume-flavored defer-entry**
->   (D314 §3): sharing единый `ScopeOutcome`-примитив с `defer(o)`, но со своей consume-policy
->   (cancel-shield/timeout/ResourceTrace/exactly-once/partial-init/compose). **Полное физическое слияние
->   consume-монолита с defer-kernel run-site'ами + единый `nova_scope_exit` transport — ОТЛОЖЕНЫ**
->   (compose-семантика consume(panic-dominance/pairwise) vs user-defer(chain) genuinely РАЗНЫЕ; terminal-
->   транспорт-сайты несогласованы — требуют behavior-normalization design → followups
->   `[M-173-b3-runsite-unify]`, `[M-173-consume-interrupt-cleanup]`).
+> - **Ф.2 (defer-kernel) — ЗАКРЫТА (2026-07-04, верифицировано Ф.5.4):** `defer(o ScopeOutcome) { … }` —
+>   РЕАЛИЗОВАН (B1/B2): тело видит исход scope; errdefer/okdefer субсумированы. `consume` — реализован как
+>   **consume-flavored defer-entry** (D314 §3, B3-merge): sharing единый `ScopeOutcome`-примитив и четыре
+>   defer run-site'а (FAIL/LEAVE/EARLY/INTERRUPT) с `defer(o)`, плюс consume-policy
+>   (cancel-shield/watchdog/ResourceTrace/exactly-once/partial-init/compose). Терминальный транспорт —
+>   **единый `nova_scope_exit(frame, policy)`** (D314 §4, effects.h): CATCH (with-Fail) / TRANSPARENT
+>   (defer/consume); класс «кадр забыл kind» исчез по построению.
+> - **Ф.5 (hygiene, 2026-07-10):** D188 R2 exactly-once — РЕАЛЬНЫЙ runtime-счётчик (скрытое поле
+>   `_consume_ccount` + пролог-guard в `Nova_<T>_consume_cleanup` → `D188-on-exit-double-invocation`);
+>   D192-ретракт ПРИМЕНЁН: тип `CleanupTimeoutError` УДАЛЁН, watchdog армится только вокруг cleanup-вызова,
+>   превышение порога = one-shot stderr-варн + `duration_ms`/`overrun` в `ResourceTrace.on_resource_exit`
+>   (D185 amend; `on_resource_enter(label)` — timeout дропнут).
 > - **Structured-concurrency (§3a/§3b owner-пересмотры 2026-06-26):** scope-выход = **completes-by-default**
 >   (cleanup'ы добегают, не обрубаются); **force-timeout НЕ существует** (D192-ретракт — только watchdog-варн
 >   при превышении порога, cleanup продолжается); **restart по умолчанию НЕТ** (no-restart-default —
