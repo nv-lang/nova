@@ -39153,3 +39153,71 @@ narrowing] не был помечен закрытым (оставался ка�
 Позитивная detect172-фикстура упирается в НЕ связанный с 172.2 CODEGEN-FAIL ([E_STR_NO_LEN] в
 u44_generic_member_pos.nv/u44_if_expr_pos.nv того же однокомпилируемого detect172/basics-модуля) —
 идентично на main (diff пуст), не в скоупе этой волны, не трогал.
+
+=== 2026-07-10: Plan 175 — ядро (Ф.3a-d/Ф.5d) + with_timeout retraction (ветка time-rework-175, sonnet) ===
+Задача «выполни план 175 целиком» — реализованы все фазы, для которых нашёлся безопасный
+путь; Ф.2 (typed-effect-wire) осознанно закрыт как SUPERSEDED четвёртым заходом (см. ниже),
+а не форсирован через компилятор-инженерию без owner sign-off.
+- Ф.3(a) Monotonic.now(): убран compiler-builtin (4 сайта emit_c.rs: 2×emit_call Member/Path,
+  2×infer_expr_c_type Member/Path — grep nova_monotonic_now_record = 0), заменён обычной
+  `.nv`-функцией (тот же паттерн, что Timestamp.now()). Настоящий недостающий кусок оказался
+  в C runtime (NovaVtable_Time не имел слота под now_monotonic_ns — Nova_Time_now_monotonic_ns
+  безусловно читал real-clock), не в архитектуре prelude/std.time, куда упирались 3 прошлых
+  захода. Добавлен vtable-слот + NULL-safe dispatch (backward-compat). fixed_ms/mut_clock
+  реализуют now_monotonic_ns когерентно с now_unix_ms (mock-coherence). Закрывает
+  [M-monotonic-mock-support].
+- Ф.3(b) free sleep(Duration)/sleep_until(Monotonic) (MVP-обёртка через elapsed_since,
+  saturate-to-zero). Ф.3(c) @minus(Monotonic) overload (elapsed_since сохранён, alias).
+  Ф.3(d) @display/@debug (D237) на Duration/Timestamp/Monotonic.
+- Побочный codegen-фикс (найден и починен этой же волной, §4а): `${x}`/`${x:?}`-интерполяция
+  для ЛЮБОГО value-record с пользовательским @display/@debug была сломана в emit_c.rs
+  (debt_strip_nova_trim_start_no_ws не снимал префикс NovaValue_ + receiver передавался by-value
+  вместо pointer-ABI D226/A6) — молчаливый fallback в nova_int_to_str(struct) → CC-FAIL. Фикс
+  использует уже существующие в кодовой базе хелперы (debt_strip_value_prefix_or_nova_trim_start,
+  prepare_method_recv) — 2-строчная правка, не новая инфраструктура. Не time-специфичный баг
+  (до Ф.3d ни один value-record не реализовывал Display/Debug, поэтому не проявлялся).
+- Ф.5(d): measure[T] мигрирован на Monotonic.now() (elapsed-measurement иммунен к NTP/DST-skew,
+  индустриальная конвенция Go/Rust/Java). deadline_in НАМЕРЕННО не мигрирован (return-type
+  committed к Timestamp, D124). is_past/time_until/@elapsed корректно остаются Timestamp-based
+  (устаревший line-list §6 плана предполагал иначе — не соответствовал D124).
+- Ф.2 — ЧЕТВЁРТЫЙ заход, SUPERSEDED (не net-zero-провал, а находка + осознанное решение).
+  prelude⟷std.time coupling из 3 прошлых заходов — решаем (перенос Time-decl в std.time,
+  типизированная схема резолвится, cross-import duration.nv⟷testing.handlers НЕ блокирующий
+  цикл на практике). Настоящий барьер — ГЛУБЖЕ: mock-handler обязан сконструировать typed
+  Monotonic внутри handler-тела, но (a) Monotonic намеренно opaque (нет from_*, Rust
+  Instant-паритет, защита от фабрикации фейковых моментов) и (b) codegen handler-литералов
+  не поддерживает anonymous record-literal («codegen error: anonymous record literal without
+  spread not supported»). Заход откачен ЧИСТО (git checkout, без diff в дереве) после
+  диагностики; находка задокументирована в D316-amend (spec/decisions/04-effects.md) и
+  docs/time.md — вывод: option C (int-wire эффект + typed .nv-сахар, уже отгружен Ф.1b/Ф.3)
+  — корректная ИТОГОВАЯ архитектура при текущих возможностях компилятора, не временный
+  компромисс (typed-сахар живёт в родном модуле типа, где anon-literal — обычный function
+  body, а не handler-литерал — opacity и codegen-ограничение не конфликтуют там).
+- with_timeout retraction (Plan 173 §3a п.4, [M-174-retract-with-timeout]): within[T]/
+  with_timeout[T] удалены из std/concurrency/cancellation.nv (race2[T] остаётся — не
+  субсумирован). Мигрированы: nova_tests/concurrency/cancellation_test.nv (4 within-теста
+  удалены, покрыты supervised_deadline_test.nv), mn_closure_spawn_gcroot_test.nv (последний
+  тест → race2, попутно починен НЕЗАВИСИМЫЙ pre-existing mut-capture баг D415 §2 в helper'е
+  run_int — найден при миграции, той же волной), examples/real_world/audit.nv (иллюстративный).
+- Попутный фикс (D316-дрейф, найден до основной работы): std/time/timer_metrics_test.nv
+  использовал устаревшее имя Time.now() вместо Time.now_unix_ms() — исправлено.
+- Spec: D316-amend (Ф.3a-d/Ф.5d shipped + Ф.2-находка), D124-amend (актуализация под
+  пост-D316-переименования), D237-amend (Duration/Timestamp/Monotonic Display/Debug).
+  spec_tests/conformance: d316_time_effect_typed_surface, d124_wall_monotonic_separation +
+  5 neg-фикстур (mix-domain, as_unix_secs, sleep bare-int, sleep_until(Timestamp),
+  realtime-sleep, non-serializable Monotonic — все верифицированы эмпирически, не
+  предположительно). docs/time.md (новый) — модель, было→стало, 7-языковая таблица,
+  footguns, Ф.2-находка. Q-sweep в open-questions.md (Q-with-deadline-vs-within резолв,
+  Q-cancel-token-with-timeout пример обновлён).
+Гейты: cargo build оба крейта чисто; conformance 89/0 (эталон 83/0 + 6 новых); std/time 6/0;
+std/testing 2/0 (property/handlers); std/collections 11/1 (vec_lazy CC-FAIL — pre-existing,
+идентично на baseline 74ad62278 через temp-worktree ../nova-175-baseline-check);
+nova_tests/concurrency δ=0 (_repro_p110 assert_in_fiber.nv — тот же pre-existing CC-FAIL,
+байт-в-байт); nova_tests/plan65 δ=0 (тот же pre-existing whole-CU CC-FAIL); err173-корпус
+4/5 + 1 flaky-TIMEOUT (retry → PASS, не регрессия); cancellation_test.nv +
+mn_closure_spawn_gcroot_test.nv — изолированная сборка (temp-module, в обход pre-existing
+блокера остального nova_tests/concurrency) PASS.
+Остаётся TODO (не блокеры, задокументированы): Ф.5 auto-idle-advance (MVP explicit-advance
+через sleep() уже работает); per-OS dedicated monotonicity test; M:N-контракт mut_clock под
+реальной concurrent-нагрузкой (документирован, не verified тестом); custom E_SLEEP_UNTIL_WALL
+диагностика (generic E7301 type-mismatch уже корректно отвергает, просто менее приятный текст).

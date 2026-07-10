@@ -10483,7 +10483,15 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
   для investigation; миллион timers с no stack info лучше чем ноль.
 
-### [M-time-now-schema-mismatch] (PARTIAL-CLOSE 2026-07-04 Plan 175 Ф.1b/Ф.3 option C; typed-effect-ops остаток OWNER-GATED)
+### [M-time-now-schema-mismatch] (PARTIAL-CLOSE BY DESIGN — Plan 175 Ф.1b/Ф.3 option C SHIPPED; typed-effect-wire (Ф.2) SUPERSEDED 2026-07-10, не «остаток», а закрытое решение)
+- **UPDATE 2026-07-10 (Plan 175, 4-й заход на Ф.2):** typed-effect-wire (retire int-wire в СХЕМЕ) исследован
+  четвёртый раз. prelude⟷std.time coupling из 3 прошлых заходов — решаем (перенос `Time`-decl в `std.time`).
+  Настоящий барьер ГЛУБЖЕ: mock-handler обязан сконструировать opaque `Monotonic` внутри handler-тела
+  (Monotonic намеренно без `from_*`, Rust `Instant`-паритет), а codegen handler-литералов не поддерживает
+  anonymous record-literal. Заход откачен чисто. **Вывод: option C (int-wire + typed-сахар) — корректная
+  ИТОГОВАЯ архитектура**, не временный компромисс — typed-сахар живёт в родном модуле типа (anon-literal
+  там — обычный function body, не handler-литерал), opacity и codegen-ограничение там не конфликтуют.
+  См. spec D316-amend (§Ф.2-находка) + `docs/time.md`. Партиальность закрытия ТЕПЕРЬ by design, не TODO.
 - **UPDATE 2026-07-04 (Plan 175 Ф.1b/Ф.3, option C — SHIPPED):** user-facing surface БОЛЬШЕ не ломается. Схема эффекта
   `Time` осталась int-wire (`now()->int` ms), НО `Duration`/`Timestamp`/`Monotonic` мигрированы в `value`-records и
   typed API доставлен на `.nv`-обёртках поверх int-провода: `Timestamp.now()` = `from_unix_millis(Time.now())`;
@@ -10514,20 +10522,19 @@ G/H). ~3700 LOC implementation cumulative.
   потому что Monotonic.now() не может быть `=> Time.now_monotonic()`
   wrapper.
 
-### [M-monotonic-mock-support] (DEFER — Plan 65 Ф.12.1)
-- **Где:** `compiler-codegen/nova_rt/effects.h::NovaVtable_Time`
-  + `compiler-codegen/nova_rt/channels.h::nova_monotonic_now_record`.
-- **Что упрощено:** mock Time handler (e.g. `testing.fixed_ms`,
-  `mut_clock`) НЕ может перехватить `Monotonic.now()` — runtime всегда
-  возвращает real uv_hrtime().
-- **Почему:** add slot `now_monotonic` в NovaVtable_Time — breaking
-  change для всех handler-literal'ов (existing handlers без
-  now_monotonic declarations would NULL-deref). Требует параллельной
-  миграции std/testing/handlers.nv + всех user-side handler literals.
-- **Как чинить:** future plan — добавить опциональный slot с default-impl
-  fallback (delegates к real clock если handler не override'ит).
-- **Приоритет:** L — mock-Monotonic малополезно (real-clock тесты с
-  monotonic invariant корректны под любой clock impl).
+### [M-monotonic-mock-support] ✅ CLOSED 2026-07-10 (Plan 175 Ф.3a, ветка `time-rework-175`)
+- **Было:** mock Time handler (`testing.fixed_ms`/`mut_clock`) НЕ мог перехватить `Monotonic.now()` —
+  runtime всегда возвращал real `uv_hrtime()` (`Monotonic.now()` был compiler-builtin, bypass'ил vtable).
+- **Фикс:** `Monotonic.now()` builtin убран (4 emit_c.rs-сайта: 2×emit_call Member/Path,
+  2×infer_expr_c_type Member/Path — grep `nova_monotonic_now_record` = 0), заменён обычной `.nv`-функцией
+  (`std/time/duration.nv`, тот же паттерн что `Timestamp.now()`). Добавлен слот `now_monotonic_ns` в
+  `NovaVtable_Time` (`nova_rt/effects.h`) + NULL-safe dispatch в `Nova_Time_now_monotonic_ns`
+  (`nova_rt/fibers.h`) — handler без явной реализации слота (старые handler-литералы) прозрачно
+  падает на real-clock, backward-compat без breaking change, ровно тот fallback, что «future plan»
+  ниже и предполагал. `fixed_ms`/`mut_clock` (`std/testing/handlers.nv`) реализуют слот когерентно с
+  `now_unix_ms` (mock-coherence, Ред.2 Q14 — один handler двигает оба чтения).
+- **Приоритет пересмотрен:** оказалось НЕ «малополезно» — mock-Monotonic нужен для elapsed-measurement
+  тестов (`measure[T]`, Ф.5d) и для `sleep_until`/`@minus(Monotonic)` детерминированных тестов.
 
 ### [M-strict-var-annotations] (DEFER — Plan 65 Ф.12.5, pre-existing)
 - **Где:** type-check layer (compiler-codegen).
@@ -10560,16 +10567,24 @@ G/H). ~3700 LOC implementation cumulative.
   per-platform isolated test.
 - **Приоритет:** L.
 
-### [M-monotonic-migration-deferred] (DEFER — Plan 65 Ф.12.6)
-- **Где:** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/cancel_latency_bench.nv`,
-  `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈9 sites).
-- **Что упрощено:** existing `Time.now()`-based timing code должен быть
-  переписан на `Monotonic.now()` для NTP/DST-skew immunity, но миграция
-  blocked by [M-time-now-schema-mismatch].
-- **Почему:** см. M-time-now-schema-mismatch.
-- **Как чинить:** после schema-mismatch fix — добавить `// AUDIT_PLAN65_Ф12`
-  markers + rewrite в follow-up commit.
-- **Приоритет:** M (semantic correctness под clock-skew).
+### [M-monotonic-migration-deferred] (PARTIAL-CLOSE 2026-07-10 — Plan 175 Ф.5d: `measure[T]` мигрирован; остальные ≈9 сайтов НЕ тронуты этой волной)
+- **UPDATE 2026-07-10 (Plan 175 Ф.5d):** блокер [M-time-now-schema-mismatch] снят by-design (option C уже
+  даёт мокабельный `Monotonic.now()`, см. выше) — миграция больше НЕ blocked, но выполнена этой волной
+  ТОЛЬКО для `measure[T]` (`std/time/duration.nv`, elapsed-measurement — самый чёткий и универсально
+  согласованный case: стопвотч/бенчмарк ДОЛЖЕН быть на монотонных часах, индустриальная конвенция
+  Go/Rust/Java). `deadline_in` НАМЕРЕННО НЕ мигрирован (return-type committed к `Timestamp`, D124 —
+  не «недоделано», а осознанное решение). `is_past`/`time_until`/`@elapsed` (на `Timestamp`) корректно
+  ОСТАЮТСЯ `Timestamp`-based — это НЕ входит в список миграции (сравнение self к wall-clock-now — тот
+  же домен, миграция была бы D124-нарушением; исходный список площадки Plan 65 предполагал иначе).
+- **Где (ОСТАЮТСЯ, не тронуты):** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/
+  cancel_latency_bench.nv`, `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈8 сайтов после
+  measure[T]) — timing-логика, использующая `Time.now()`/`Timestamp.now()` там, где семантически
+  нужен monotonic (не блокировано, просто не тронуто вне scope этой конкретной волны — прочитать
+  каждый сайт индивидуально перед миграцией, не блочно).
+- **Как чинить:** per-site аудит (не bulk-rewrite) — для каждого решить wall vs monotonic семантику
+  отдельно, как это было сделано для measure[T] vs deadline_in в Plan 175 Ф.5d.
+- **Приоритет:** M (semantic correctness под clock-skew) — снижен с учётом, что самый частый/важный
+  case (elapsed-measurement) уже закрыт.
 
 ### [M-cancel-token-cancel-at] (DEFER — Plan 65 Ф.12.6)
 - **Где:** `compiler-codegen/nova_rt/fibers.h::NovaCancelToken`.
@@ -24008,7 +24023,15 @@ G/H). ~3700 LOC implementation cumulative.
 - **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
   для investigation; миллион timers с no stack info лучше чем ноль.
 
-### [M-time-now-schema-mismatch] (PARTIAL-CLOSE 2026-07-04 Plan 175 Ф.1b/Ф.3 option C; typed-effect-ops остаток OWNER-GATED)
+### [M-time-now-schema-mismatch] (PARTIAL-CLOSE BY DESIGN — Plan 175 Ф.1b/Ф.3 option C SHIPPED; typed-effect-wire (Ф.2) SUPERSEDED 2026-07-10, не «остаток», а закрытое решение)
+- **UPDATE 2026-07-10 (Plan 175, 4-й заход на Ф.2):** typed-effect-wire (retire int-wire в СХЕМЕ) исследован
+  четвёртый раз. prelude⟷std.time coupling из 3 прошлых заходов — решаем (перенос `Time`-decl в `std.time`).
+  Настоящий барьер ГЛУБЖЕ: mock-handler обязан сконструировать opaque `Monotonic` внутри handler-тела
+  (Monotonic намеренно без `from_*`, Rust `Instant`-паритет), а codegen handler-литералов не поддерживает
+  anonymous record-literal. Заход откачен чисто. **Вывод: option C (int-wire + typed-сахар) — корректная
+  ИТОГОВАЯ архитектура**, не временный компромисс — typed-сахар живёт в родном модуле типа (anon-literal
+  там — обычный function body, не handler-литерал), opacity и codegen-ограничение там не конфликтуют.
+  См. spec D316-amend (§Ф.2-находка) + `docs/time.md`. Партиальность закрытия ТЕПЕРЬ by design, не TODO.
 - **UPDATE 2026-07-04 (Plan 175 Ф.1b/Ф.3, option C — SHIPPED):** user-facing surface БОЛЬШЕ не ломается. Схема эффекта
   `Time` осталась int-wire (`now()->int` ms), НО `Duration`/`Timestamp`/`Monotonic` мигрированы в `value`-records и
   typed API доставлен на `.nv`-обёртках поверх int-провода: `Timestamp.now()` = `from_unix_millis(Time.now())`;
@@ -24039,20 +24062,19 @@ G/H). ~3700 LOC implementation cumulative.
   потому что Monotonic.now() не может быть `=> Time.now_monotonic()`
   wrapper.
 
-### [M-monotonic-mock-support] (DEFER — Plan 65 Ф.12.1)
-- **Где:** `compiler-codegen/nova_rt/effects.h::NovaVtable_Time`
-  + `compiler-codegen/nova_rt/channels.h::nova_monotonic_now_record`.
-- **Что упрощено:** mock Time handler (e.g. `testing.fixed_ms`,
-  `mut_clock`) НЕ может перехватить `Monotonic.now()` — runtime всегда
-  возвращает real uv_hrtime().
-- **Почему:** add slot `now_monotonic` в NovaVtable_Time — breaking
-  change для всех handler-literal'ов (existing handlers без
-  now_monotonic declarations would NULL-deref). Требует параллельной
-  миграции std/testing/handlers.nv + всех user-side handler literals.
-- **Как чинить:** future plan — добавить опциональный slot с default-impl
-  fallback (delegates к real clock если handler не override'ит).
-- **Приоритет:** L — mock-Monotonic малополезно (real-clock тесты с
-  monotonic invariant корректны под любой clock impl).
+### [M-monotonic-mock-support] ✅ CLOSED 2026-07-10 (Plan 175 Ф.3a, ветка `time-rework-175`)
+- **Было:** mock Time handler (`testing.fixed_ms`/`mut_clock`) НЕ мог перехватить `Monotonic.now()` —
+  runtime всегда возвращал real `uv_hrtime()` (`Monotonic.now()` был compiler-builtin, bypass'ил vtable).
+- **Фикс:** `Monotonic.now()` builtin убран (4 emit_c.rs-сайта: 2×emit_call Member/Path,
+  2×infer_expr_c_type Member/Path — grep `nova_monotonic_now_record` = 0), заменён обычной `.nv`-функцией
+  (`std/time/duration.nv`, тот же паттерн что `Timestamp.now()`). Добавлен слот `now_monotonic_ns` в
+  `NovaVtable_Time` (`nova_rt/effects.h`) + NULL-safe dispatch в `Nova_Time_now_monotonic_ns`
+  (`nova_rt/fibers.h`) — handler без явной реализации слота (старые handler-литералы) прозрачно
+  падает на real-clock, backward-compat без breaking change, ровно тот fallback, что «future plan»
+  ниже и предполагал. `fixed_ms`/`mut_clock` (`std/testing/handlers.nv`) реализуют слот когерентно с
+  `now_unix_ms` (mock-coherence, Ред.2 Q14 — один handler двигает оба чтения).
+- **Приоритет пересмотрен:** оказалось НЕ «малополезно» — mock-Monotonic нужен для elapsed-measurement
+  тестов (`measure[T]`, Ф.5d) и для `sleep_until`/`@minus(Monotonic)` детерминированных тестов.
 
 ### [M-strict-var-annotations] (DEFER — Plan 65 Ф.12.5, pre-existing)
 - **Где:** type-check layer (compiler-codegen).
@@ -24085,16 +24107,24 @@ G/H). ~3700 LOC implementation cumulative.
   per-platform isolated test.
 - **Приоритет:** L.
 
-### [M-monotonic-migration-deferred] (DEFER — Plan 65 Ф.12.6)
-- **Где:** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/cancel_latency_bench.nv`,
-  `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈9 sites).
-- **Что упрощено:** existing `Time.now()`-based timing code должен быть
-  переписан на `Monotonic.now()` для NTP/DST-skew immunity, но миграция
-  blocked by [M-time-now-schema-mismatch].
-- **Почему:** см. M-time-now-schema-mismatch.
-- **Как чинить:** после schema-mismatch fix — добавить `// AUDIT_PLAN65_Ф12`
-  markers + rewrite в follow-up commit.
-- **Приоритет:** M (semantic correctness под clock-skew).
+### [M-monotonic-migration-deferred] (PARTIAL-CLOSE 2026-07-10 — Plan 175 Ф.5d: `measure[T]` мигрирован; остальные ≈9 сайтов НЕ тронуты этой волной)
+- **UPDATE 2026-07-10 (Plan 175 Ф.5d):** блокер [M-time-now-schema-mismatch] снят by-design (option C уже
+  даёт мокабельный `Monotonic.now()`, см. выше) — миграция больше НЕ blocked, но выполнена этой волной
+  ТОЛЬКО для `measure[T]` (`std/time/duration.nv`, elapsed-measurement — самый чёткий и универсально
+  согласованный case: стопвотч/бенчмарк ДОЛЖЕН быть на монотонных часах, индустриальная конвенция
+  Go/Rust/Java). `deadline_in` НАМЕРЕННО НЕ мигрирован (return-type committed к `Timestamp`, D124 —
+  не «недоделано», а осознанное решение). `is_past`/`time_until`/`@elapsed` (на `Timestamp`) корректно
+  ОСТАЮТСЯ `Timestamp`-based — это НЕ входит в список миграции (сравнение self к wall-clock-now — тот
+  же домен, миграция была бы D124-нарушением; исходный список площадки Plan 65 предполагал иначе).
+- **Где (ОСТАЮТСЯ, не тронуты):** `std/concurrency/rate_limiter.nv`, `nova_tests/concurrency/
+  cancel_latency_bench.nv`, `nova_tests/concurrency/sleep_real_clock.nv`, и др. (≈8 сайтов после
+  measure[T]) — timing-логика, использующая `Time.now()`/`Timestamp.now()` там, где семантически
+  нужен monotonic (не блокировано, просто не тронуто вне scope этой конкретной волны — прочитать
+  каждый сайт индивидуально перед миграцией, не блочно).
+- **Как чинить:** per-site аудит (не bulk-rewrite) — для каждого решить wall vs monotonic семантику
+  отдельно, как это было сделано для measure[T] vs deadline_in в Plan 175 Ф.5d.
+- **Приоритет:** M (semantic correctness под clock-skew) — снижен с учётом, что самый частый/важный
+  case (elapsed-measurement) уже закрыт.
 
 ### [M-cancel-token-cancel-at] (DEFER — Plan 65 Ф.12.6)
 - **Где:** `compiler-codegen/nova_rt/fibers.h::NovaCancelToken`.
