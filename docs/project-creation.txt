@@ -39989,3 +39989,49 @@ Governance-tooling (2026-07-10, ветка governance-tooling, worktree nova-abi
   воспроизводится изолированно независимо от этой волны, не тронуто). Коммиты:
   59bc2c74e (К1), 02e3537d2 (К2), f115201df (К3), ab4751eaf (К4), 9541e6708+230a0bf12
   (К5, второй коммит правит гейт по факту эмпирики), 26e81c173 (regression-тест К4).
+
+═══════════════════════════════════════════════════════════════════════════════
+Plan 192 — native-backed module pattern (ветка module-authoring-192, 2026-07-10)
+Модель: opus-разведка → sonnet-исполнение (эта волна — sonnet).
+───────────────────────────────────────────────────────────────────────────────
+РЕФРЕЙМ владельца: «как сделать НОВЫЙ МОДУЛЬ» (общий гайд), native-на-.c/.lib —
+частный случай; консолидировать доки без дублей; отдельная showcase-репа.
+
+Задача 1 — снятие tls_shim с ХАРДКОДА на общий манифест-механизм:
+- manifest.rs: FfiConfig.staticlib (Option<FfiStaticlibConfig>) — декларация
+  собираемого native-статик-либа (kind/path/lib/build/link[/_windows/_unix]/
+  cache/trigger_symbols). resolve_ffi_staticlib(): cache→crate-artifact→cargo
+  build-on-demand, mtime-инвалидация (staticlib_is_fresh — обобщение
+  tls_shim_lib_is_fresh). Парсинг [ffi.staticlib]. 5 unit-тестов.
+- test_runner.rs: ResolvedFfiConfig::from_manifest() + staticlib/base поля
+  (4 места сведены к хелперу). build_command: TLS-либа берётся из манифеста
+  [ffi.staticlib] по факту использования, detect_tls — ФОЛБЭК; extra-syslibs
+  из link_windows (хардкод TLS_WIN_EXTRA_SYSLIBS снят). Условный триггер
+  обобщён: c_file_uses_any_symbol(trigger_symbols) вместо tls-хардкода
+  c_file_uses_tls (тот — legacy fallback для std/tls).
+- std/nova.toml: tls_shim задекларирован через [ffi.staticlib] (link_windows=
+  bcrypt/ntdll; без trigger_symbols → legacy-детект, std байт-идентичен).
+
+Задача 2 — консолидация доков (три РАЗНЫЕ роли, ноль дублирования):
+- docs/guide/authoring-a-module.md (НОВЫЙ) — пошаговый ТУТОРИАЛ «сделай модуль
+  с нуля»; native-backed = §7 (кратко + ссылка на cookbook).
+- docs/module-conventions.md — НОРМАТИВНЫЕ правила; §4 преамбула о разделении
+  ролей (rule здесь; примеры/подключение артефактов — cookbook; туториал —
+  authoring).
+- docs/ffi-cookbook.md — РЕЦЕПТЫ; header пересобран, снят устаревший статус
+  (typed-pointers/build-pipeline), новая секция «Build pipeline [ffi]/
+  [ffi.staticlib]», followup [M-115-ffi-build-pipeline] → CLOSED.
+- spec/decisions/07-modules.md — D78-амендмент: конвенция nova-<пакет>.
+
+Задача 3 — ОТДЕЛЬНАЯ репа /d/Sources/nv-lang/nova-tls (git init, свой репо):
+пакет `tls` + минимальный собираемый Rust-staticlib native/tls_shim (демо-шим,
+НЕ rustls), example/, README+LICENSE. Доказан полный авто-линк: nova test →
+cargo собирает шим → trigger_symbols даёт uses=true → staticlib линкуется →
+PASS. Remote НЕ создан (публикация под контролем владельца).
+
+Гейты: cargo build ok; std/tls 6/6 (манифест-путь) + регресс 3/3 (legacy
+fallback); conformance 91/0; manifest unit 26/0; nova check std δ0 (25
+baseline-FAIL — neg-тесты/тест-хелперы, nova.toml ортогонален type-check).
+Коммиты (module-authoring-192): e49a4a79b (задача1 [ffi.staticlib]),
+2173fb6d6 (задача2 доки), a1e2b05f9 (задача1 trigger_symbols generic),
+7cc88cada (доки trigger+консолидация). nova-tls: 745c4d4 (свой репо).
