@@ -39397,3 +39397,35 @@ _repro_p110 — pre-existing в backlog; apply_arity_suggest_w2402 — δ0).
 P67-LEGACY паники (checker-must-annotate): :44092, :45052, :45056, :45883,
 :46309, :46555, :46557, :46560, :47034, :47221, :48249, :48374, :48400,
 :49021, :49106, :49109, :49155.
+
+=== 2026-07-10: мини-волна [M-173.3-share-leakage-explain] — per-field объяснение E_CONCURRENT_MUT_CAPTURE (ветка share-leakage) ===
+
+Проблема (D415 §7 п.8, followup плана 173.3): сообщение E_CONCURRENT_MUT_CAPTURE называло
+биндинг и лечения, но не объясняло, ПОЧЕМУ тип не mut-alias-safe — добавление не-share
+mut-поля вглубь типа снимало share-ность молча.
+
+Решение: рекурсивные предикаты share_check.rs возвращают путь ПЕРВОГО отказа —
+is_alias_read_safe/is_mut_alias_safe стали обёртками над read_alias_failure/mut_alias_failure
+(-> Option[ShareFailure]: сегменты пути .field/[..]/.0/[i]/::Variant.x + rendered-тип точки
+отказа + ShareReason: RawPointer/WritableCell/FnType/ProtocolType/Unresolved/NoStructure/Cycle).
+Диагностика (types/mod.rs check_capture_boundary) вставляет цепочку СРАЗУ после биндинга,
+чтобы код+биндинг+путь+причина были одной непрерывной подстрокой (EXPECT-раннер матчит
+подстрокой, маркер один на файл):
+  [E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `o` captured by reference in a
+  `spawn`/`parallel for` body: `Outer` is poisoned at `Outer.inner.buf` (`[]u8`):
+  a writable cell with no audited synchronization — ... Allowed captures: spawn consume /
+  ro / #share-тип.
+render_type_ref -> pub(crate) (переиспользован для рендера типов в ShareFailure).
+
+Тесты: unit share_check 15/15 (6 новых на путь отказа: корень-примитив, mut-поле, указатель,
+вложенный 2-сегментный Outer.inner.buf, unresolved generic, элемент контейнера [..]);
+neg EXPECT'ы mut_capture_in_spawn/pointer_cell_not_share ужесточены до полного нового
+сообщения; новая neg mut_field_nested_path (тип-в-типе, путь из 2 сегментов).
+
+Гейты (ветка = main 67c85b504 + волна): cargo build чисто; conformance 90/0;
+err173_3-корпус целиком зелёный (pos 2/2: share_capture_ok_test+const_init_runtime_ok_test,
+neg 8/8); nova check std δ0 — честный baseline (checkout main-исходников + пересборка
+nova-cli на том же дереве): 30 FAIL pre-existing, список идентичен diff-ом.
+
+Спека: D415 §7 п.8 переписан (маркер закрыт, формат цепочки + пример), список тестов D415
+дополнен; план 173.3 — closure-абзац маркера. Модель: sonnet.
