@@ -1,117 +1,125 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Plan 196 — «Одна правда» close-out: завершение typed-IR (§0), раз и навсегда
+# Plan 196 — «Одна правда»: удалить второе окно `infer_expr_c_type`
 
-**Статус:** 🔥 IN PROGRESS 2026-07-11 (решение владельца: «весь зонт сразу, закрыть
-раз и навсегда»). **Приоритет:** P0 (ключевая идея 172-186). **Умбрелла над:**
-172.1 (unified-type-engine, U-хвосты), 172.12 (typed-IR-mono, Ф.2-Ф.4), 172.13
-(constraint-inference, Ф.3). Координирует, НЕ дублирует.
+**Статус:** 🔥 IN PROGRESS, **КУРС-КОРРЕКТИРОВАН 2026-07-12**. **Приоритет:** P0 (ключевая
+идея 172-186). **Умбрелла над:** 172.1 (U-хвосты), 172.12, 172.13. Координирует, НЕ дублирует.
 
-## Проблема (корень, подтверждён recon 2026-07-11)
+---
 
-`infer_expr_c_type` (`compiler-codegen/src/codegen/emit_c.rs:48800`, ~2604 строки) —
-**второе окно правды**: codegen ЗАНОВО инферит C-тип выражения (Каналы 1-6 + армы
-6c-6z, помечены «ДОСЛОВНЫЙ подъём legacy-арма»), хотя чекер уже разрешил тип
-(`resolved_types: HashMap<ExprId, ResolvedType>`, D315). Цель 172.1 U.4 / 172.12 —
-`infer_expr_c_type` = **тонкий лоуеринг** `resolved_type_to_c(ir.type_of(expr))`, армы
-6c-6z снесены (`[M-172.1-lifted-legacy-arms]`).
+## ⚑ Курс-коррекция (2026-07-12) — читать ПЕРВЫМ
 
-**Recon-факты:**
-1. Аннотация чекера **ДЫРЯВАЯ**: литералы не аннотируются вовсе; generic
-   RecordLit/TupleLit/method-chain — тоже (`[M-104.10-expr-types-coverage]`). ⇒
-   keystone = **checker+codegen**, не codegen-only.
-2. 172.12 закрыл ПОЛОВИНУ: строковая type-identity (mono-mangle) схлопнута (A1-A8),
-   но `struct IrExpr` **никогда не создан**, Ф.2 mono-worklist RT-типизирован но
-   ЗНАЧЕНИЯ массово `ResolvedType::Raw(String)`, Ф.3/Ф.4 **не начаты**.
-3. **Инвариант дрейфанул:** «0 raw `Nova_`/`____`-decode вне `debt_`» (заход 8) →
-   сегодня **70 хитов, 12 вне debt** (Plan 186 добавил без CI-защиты).
-4. Крупнейший арм 6q = `infer_call_ret_c` (~2592 строки, generic-method-return
-   mono) — НЕ swap; нужен реальный mono-inference-движок (Ф.2 «mono на IR»).
+Честная запись, чтобы ошибка не повторилась.
 
-## Фазы (каждая: high-effort агент, byte-identity-гейт + merge)
+**Что пошло не так (~месяц):** заход Ф.4a/4b/4c (**co-authority solver**) — ТУПИК, ретрактирован.
+- Построил `constraint_solver.rs` (Join/Project/Resolve), работающий в режиме
+  **«проверь legacy → выброси свой результат»** (`let _ = channel`).
+- Почему провал: verify-and-discard **ничего не кладёт в `resolved_types` → 0 армов снято**.
+  Solver оказался **подмножеством-верификатором** (Ф.4c negative, `196-audit.md` §5): резолвит
+  только лёгкое, воздерживается (`None`) на class-C. Флип на авторитет удаляет ~0 (доказано).
+- **Корень ошибки процесса:** гнал byte-parity-зелёные волны как «фундамент», НЕ меряя РЕАЛЬНОЕ
+  удаление legacy. Закрыто амендментом конвенции §0/§7 (**гейт прогресса** + **спайк-на-авторитет**,
+  коммит `b7a45bf7a`).
 
-- **Ф.1 — дешёвое ядро (риск≈0, ~3-4 захода):**
-  (a) **CI-линт** grep-инвариант «0 raw `Nova_`/`____`-decode вне `debt_`» (cargo
-      test / nova-lint) — чинит корень дрейфа;
-  (b) refresh-audit: пересчёт 70/12 + полный A/B/C-каталог всех ~40 под-армов 6z
-      построчно;
-  (c) аннотация литералов + empty-sum в чекере (`f1_expr_inner`, строго аддитивно);
-  (d) prove-dead→delete: trace-инструментация доказывает 0 попаданий в
-      литеральные/empty-sum армы → снос.
-- **Ф.2 — checker-extension:** ✅ ВЫПОЛНЕНО 2026-07-11 (be70b65b2+8a73c6eb8). Match +
-  RecordLit{Some} **удалены** (0 хитов — оказались shadowed БЕЗУСЛОВНЫМИ дубликатами-
-  предшественниками «6n»/«6l», т.е. мёртвые-редундантные — §0-находка про дубль-каналы).
-  TupleLit-элементы аннотированы (concrete_value_named). **TupleLit-арм ОСТАВЛЕН** —
-  корень НЕ generic, а **пробел scope-резолюции чекера** `[M-196-tuplelit-ident-scope]`:
-  Ident-элементы не резолвятся через `infer_expr_type(el, scope)`, хотя резолвятся ниже
-  через legacy `var_types` — отдельный атом (Ident-scope-плюмбинг), не kind-гейт Ф.2.
-- **Ф.3 — non-infer-consumer sweep:** `emit_expr`/`emit_call`/`emit_generic_type_instance`/
-  … (12 свежих raw-сайтов в 10 функциях) → `debt_`, восстановить инвариант.
-- **Ф.4 — глубокое ядро = 172.13 Ф.3 (МНОГОВОЛНОВОЙ, разведка 2026-07-11):** constraint-
-  inference. Фундамент — `constraint_solver.rs` (172.13 Ф.1: `Eq`/`MemberOf`/`Solver::unify`;
-  Ф.2 literal-coercion мигрирован, byte-parity доказан). Разбивка (пакетами, гейты
-  172.1-класса на пакет — как Ф.2):
-  - **Ф.4a — Join-примитив** + мигрировать `Binary`(арифм.promote_arith_rt)/`If`
-    (infer_if_common)/`Match`(infer_match_common) — все Join двух/N типов. Проверенный
-    паттерн (Ф.2), горячий путь (осторожно, POISON-слои).
-  - **Ф.4b — Project-примитив** + `Index`/`Member`(tuple)/`ArrayLit`/`TupleLit`
-    (контейнер→элемент). Закрывает TupleLit-остаток `[M-196-tuplelit-ident-scope]`.
-  - **Ф.4c — Resolve-семья** (`Call`/`infer_call_ret_c` ~2592стр, overload/generic-mono —
-    «несколько волн», самая крупная) + ClosureLight (C6).
-  Каждый пакет: checker мигрирует продюсера → codegen потребляет resolved-тип → снос
-  соответствующего C-арма. **NB:** проверить, что `constraint-core` (Ф.1/Ф.2) в main;
-  если нет — первый шаг Ф.4a = слить/пересобрать solver.
-- **Ф.5 — array-vec-unify:** `[M-array-vec-unify]` (ОСТОРОЖНО — заход 9 172.12 дал
-  «Frankenstein» при механическом слиянии; только координированно ctor↔binding).
-- **Ф.6 — финал:** снос `ResolvedType::Raw`, закрытие `[M-172.1-lifted-legacy-arms]`,
-  опустошение U.7-allowlist. **Тело `infer_expr_c_type` (вся независимая инференция,
-  ~2600 строк) УДАЛЯЕТСЯ** (owner Q 2026-07-11) — функция схлопывается в тонкий
-  `resolved_type_to_c(ir.type_of(expr))`, либо call-sites зовут `resolved_type_to_c`
-  напрямую и функция сносится. Второго окна не остаётся.
+**Что было и остаётся ВЕРНЫМ:** направление §0 не менялось — свести всё в `resolved_types`
+(одно окно, D315) → удалить `infer_expr_c_type`. **Ф.1/Ф.2 сделали это правильно (21 арм).**
+Продолжаем ИМ, а не co-authority.
 
-- **Ф.1e — УЖЕСТОЧИТЬ wildcard → ОТЛОЖЕНО НА Ф.6 (эмпирика 2026-07-11).** Wildcard `_ =>`
-  в `infer_expr_c_type` в release отдаёт ПУСТУЮ строку → тихо `nova_unit` (§3-нарушение,
-  D368). ПОПЫТКА ужесточить РАНО ПРОВАЛИЛАСЬ: wildcard **реально достигается**
-  непроаннотированными value-kind'ами (`Discriminant(50)` conformance, `Discriminant(39)`
-  std — `[M-196-wildcard-reached-kinds]`), громкий panic ломает conformance. Это
-  пред-существующие §0-пробелы, НЕ ложно-мёртвые (удаления 196 звучны: 0-hit-kind'ы на
-  prove-dead-прогоне ≠ wildcard-reached-kind'ы). Полный харденинг возможен ТОЛЬКО когда
-  Ф.4 достроит checker-покрытие этих kind'ов → wildcard станет недостижим → тогда panic.
-  Перенесено в Ф.6-приёмку.
+**MIR вынесен из 196.** Полноценный typed-IR/MIR — ОТДЕЛЬНАЯ будущая цель (borrow-check/оптимизации).
+§0 его **НЕ требует**: `ResolvedType` уже C-lossless (арх-карта `196-architecture-map.md` §5),
+достаточно **полноты** `resolved_types`. MIR = Стадия 2, отдельный план, открывается ПОСЛЕ §0.
 
-## Гейты (КАЖДАЯ фаза)
+---
 
-1. **byte-identical** emitted-`.c` diff vs clean baseline (`nova build --keep-artifacts`
-   на pre-change коммите; same-binary control отделяет `[M-codegen-emission-nondeterminism]`).
-   Первый шаг Ф.1 — **закрепить воспроизводимый скрипт** (сейчас его нет, каждый заход
-   делал вручную).
-2. `nova test --positive --compile-error spec_tests/conformance` δ0.
-3. **CI-линт** зелёный (после Ф.1a).
-4. **compiler-conventions.md полное соответствие:** §0 (единый источник) · §1 (проверки
-   в чекере) · §2 (нет хардкод-stdlib) · §3 (нет тихого `nova_int`/wildcard-empty-string
-   fallback, D368 — wildcard = ГРОМКИЙ panic, см. Ф.1e) · §9
-   (нет дублирования резолва) · §10 (нет двух окон) — грепом на каждой фазе.
-5. neg-тесты где применимо.
+## Проблема — два консолидированных окна (не «каша»)
+
+- **Окно 1 — `resolved_types`** (`HashMap<ExprId, ResolvedType>`, чекер, D315): намеченное одно
+  окно, но **НЕПОЛНОЕ** (дыры `[M-104.10-expr-types-coverage]`: generic method-chain returns,
+  non-primitive TupleLit/RecordLit, UNSET-desugar-узлы).
+- **Окно 2 — `infer_expr_c_type`** (`emit_c.rs`, ~2600 строк, **ОДНА функция** — не разбросано):
+  codegen ПЕРЕвыводит C-тип там, где канал пуст. Каналы 1-6 читают чекер; **Канал 6z** (44 арма +
+  `infer_call_ret_c` 2591 стр) = legacy-перевывод, срабатывает как **fallback** когда `resolved_types`
+  пуст. Главная масса 6z-кода — class-C generic-mono.
+
+Расхождение окон → §0-баги (мис-диспатч, `nova_int`-затычка, тот самый nova build ICE). Цель:
+**дополнить `resolved_types` → удалить `infer_expr_c_type`.**
+
+## Стратегия — strangler-fig (перенос со страховкой), НЕ verify-and-discard
+
+Структура УЖЕ правильная: `resolved_types` (Ch2) читается ПЕРВЫМ, `infer_call_ret_c`/6z — fallback.
+Работа по одному случаю:
+1. **ПЕРЕНЕСТИ** резолюцию из `infer_call_ret_c`/6z в чекер → **МАТЕРИАЛИЗОВАТЬ** в `resolved_types`.
+2. **УДАЛИТЬ** обработку этого случая из 6z. Сжимающийся `infer_call_ret_c` держит непере­несённое рабочим.
+3. **Проверка встроена:** удалил случай → вывод byte-identical (conformance 95/0) → канал корректно
+   заменил legacy. Разошёлся → чинишь резолюцию чекера (fallback ловит).
+4. 6z опустел → **удалить `infer_expr_c_type`.** Одно окно.
+
+Отличие от co-authority ровно одно: **материализуем в канал и удаляем**, а не проверяем-и-выбрасываем.
+
+## Фазы
+
+**Сделано:**
+- **Ф.1/Ф.2 ✅** — 21 арм снят (материализация + delete): литералы, As, empty-sum, Match/RecordLit-дубли,
+  TupleLit-элементы (concrete_value_named). Byte-parity, conformance 95/0.
+- **Ф.4a/4b/4c ❌ РЕТРАКТИРОВАНО** (co-authority, 0 снято — см. курс-коррекцию). **Салвэдж:** примитивы
+  `constraint_solver.rs` — частично переиспользуемы ВНУТРИ class-C резолвера чекера, при условии
+  **ResolvedType-native** (обойти лоссовый round-trip `Ty↔TypeRef`, P1 арх-карты). Обвязка co-authority мертва.
+
+**Стадия 1 — добить `resolved_types` (§0, byte-parity, strangler-fig):**
+- **Ф.S1a — лёгкое (class-A/B, ~36 армов).** Где чекер умеет/почти умеет — материализовать в
+  `resolved_types` (`f1_expr_inner`, `resolved_types_buf.insert`) → удалить арм: TupleLit/RecordLit
+  non-primitive, As, Is, IfLet, SelfAccess, Unary, Match, Coalesce, Ident. **[ИДЁТ — worktree
+  `nova-p196`, гейт-1 на убывание строк].** Может выделиться в подплан `196.1`.
+- **Ф.S1b — тяжёлое (class-C, ~90% кода 6z).** `infer_call_ret_c` (2591 стр) = **class-C резолвер,
+  живущий в codegen.** РЕЛОКАЦИЯ его логики в чекер: чекер резолвит generic-method-chain returns
+  **ДО mono** → `ResolvedType` (с `TypeParam`) → материализует; mono подставляет позже. По одному
+  под-случаю, fallback-страховка на каждом. **Подплан `196.2`.** Долго, но стратегия та же безопасная.
+- **Ф.S1-финал — удалить `infer_expr_c_type`.** 6z опустел → функция схлопывается в
+  `resolved_type_to_c(ir.type_of(expr))` либо call-sites зовут напрямую и функция сносится. Второго окна нет.
+- **Хвосты внутри Стадии 1:** CI-линт raw-decode invariant (было «0 raw `Nova_`/`____`-decode вне
+  `debt_`», дрейфануло до 12 вне debt — восстановить + под CI); снос `ResolvedType::Raw`; wildcard →
+  ГРОМКИЙ panic (D368) — возможен ТОЛЬКО когда class-C достроен и wildcard недостижим.
+
+**Стадия 2 — MIR (в-full, ОТДЕЛЬНЫЙ будущий план, вне 196):**
+- Только для borrow-check / SSA / DCE / оптимизаций. НЕ §0. Извлечь mono в пре-пасс + построить CFG +
+  переселить control-flow и concurrency-lowering на MIR. Раскладка по 129-структуре (`codegen/c/`,
+  `mir/` — ≤5k строк/модуль). Открывается ПОСЛЕ закрытия §0.
+
+## Гейты (КАЖДАЯ волна)
+
+- ★ **ГЕЙТ-1 ПРОГРЕССА (конвенция §0, ОБЯЗАТЕЛЕН):** `wc -l` тела `infer_expr_c_type` ДО/ПОСЛЕ —
+  **строго убыло.** 0 снято = **КРАСНАЯ** волна → стоп + переоценка. Никакого «фундамента».
+- ★ **ГЕЙТ-2 спайк-на-авторитет (§7.14):** для strangler-fig **НЕ нужен** (перенос сам авторитетен
+  для своего случая, fallback + byte-parity доказывают). Применять, только если вводится НОВЫЙ движок
+  неизвестной осуществимости.
+1. **byte-identical** emitted-`.c` vs clean baseline (same-binary control отделяет
+   `[M-codegen-emission-nondeterminism]`).
+2. `nova test --positive --compile-error spec_tests/conformance` δ0 (**95/0**).
+3. `nova test std` без новых фейлов + `nova build fn main(){}`/`println` без P67 (nova-build смоук-гард).
+4. CI-линт raw-decode зелёный (после восстановления).
+5. conventions §0/§1/§3/§10 грепом.
 
 ## Приёмка (close-out)
 
-- `[M-172.1-lifted-legacy-arms]` ЗАКРЫТ (армы 6c-6z сняты).
-- grep-инвариант «0 raw-decode вне debt_» = 0 И под CI-защитой.
-- U.7 zero-CC-FAIL allowlist ПУСТ.
-- `infer_expr_c_type` = тонкий лоуеринг (consume `ir.type_of`), 0 независимой инференции.
-- 172.1 U.2.4 (codegen-mangling→SigRegistry) · U.6.4 · U.7 · 172.13 Ф.3 — закрыты.
+- `infer_expr_c_type` **удалён** — метрика `wc -l` → ~0 (тонкий лоуеринг), 0 независимой инференции.
+- `resolved_types` полно покрывает (6z недостижим по корпусу).
+- byte-parity сквозь всю миграцию; conformance 95/0; nova-build смоук зелёный.
+- `[M-172.1-lifted-legacy-arms]` ЗАКРЫТ; raw-decode invariant = 0 И под CI; U.7 allowlist ПУСТ.
 
 ## Границы
 
-Оптимизации на IR (SSA/DCE) — отдельный горизонт (IR сначала как typed-carrier).
-`[N]T` value-семантика — заморожена отдельно (172.12).
+MIR / оптимизации (SSA/DCE) — Стадия 2, отдельный горизонт. `[N]T` value-семантика — заморожена (172.12).
 
-## Owner Q&A (2026-07-11)
+## Уроки (уже в конвенции, `b7a45bf7a`)
 
-- **SelfAccess-снос обоснован:** `@` эмитится как `nova_self` (ptr-биндинг в `var_types`,
-  ref-параметр на уровне C — `emit_c.rs:956`), его тип берётся ОБЩИМ путём резолва
-  биндингов → спец-арм SelfAccess избыточен → 0 хитов на корпусе → удалён корректно.
-  Устаревший doc-комментарий (closures-достижимость) отстал от ref-модели `@`.
-- **`int as char` под unsafe — ЗАФИКСИРОВАТЬ D-амендментом:** реализовано (cb9944acd) —
-  `int as char` разрешён в `unsafe`-контексте (codegen-запрет пропускает под unsafe),
-  чекер распознаёт int→char As-cast как unsafe-op (E_UNSAFE_UNUSED §21 map). Позволяет
-  `int @to_char()` в .nv через `unsafe { @ as char }`. Нужен D-блок (легитимизировать).
+- **verify-and-discard ≠ materialize-and-delete.** Консолидация обязана МЕРИМО удалять (гейт-1 §0).
+- **Спайк-на-авторитет** до стройки фундамента, если осуществимость неизвестна (§7.14). Для
+  strangler-fig не нужен — доказательство встроено в перенос.
+- **«Фазы связны» ≠ «несущее допущение подтверждено».** Не докладывать второе как первое.
+
+## Owner Q&A (сохранено)
+
+- **SelfAccess-снос обоснован:** `@` эмитится как `nova_self` (ptr-биндинг `var_types`, ref-параметр,
+  `emit_c.rs:956`), тип берётся общим путём резолва биндингов → спец-арм избыточен → 0 хитов → удалён.
+- **`int as char` под unsafe — нужен D-амендмент:** реализовано (`cb9944acd`) — `int as char` разрешён
+  в `unsafe`, чекер распознаёт как unsafe-op (E_UNSAFE_UNUSED §21). Позволяет `int @to_char()` в .nv.
+  Нужен D-блок легитимизировать.
