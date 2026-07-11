@@ -234,3 +234,45 @@ return, nested-flatten, unbound-method-generic-bail, multi-carrier, receiver-con
 (замена name-keyed `build_recv_subst` на TypeVar-солвер, с TypeRef-native мостом) — следующая волна.
 Арм Call НЕ снят этим шагом (честно: снятие требует живого wiring + byte-parity моста) — фундамент,
 ровно как Ф.1 scaffold «НЕ подключён глобально».
+
+## 4. Ф.4c §0-ICE лог — прогон KEEP-16 (2026-07-11)
+
+Прогон `nova build` по всем 16 KEEP-файлам Plan 197 (`docs/plans/197-audit-progress.md`:
+#1-6,12,13,15,17-22,29). Цель: поймать остаточные §0-ICE (P67-LEGACY) на реальных
+программах после .offset-фикса (channel-feeding checker→codegen `resolved_types`/`callees`
+в `nova build`).
+
+**Итог: 15/16 собрались ЧИСТО. 0 §0-ICE осталось в KEEP-16** — .offset-волна сняла ВСЕ
+достижимые §0-дыры этого набора; ни одного P67-LEGACY не всплыло. Собрались:
+`basics/{arithmetic,demo,hello,match_demo,records,strings}`,
+`effects/{effects,effects_d61,spawn_demo}`, `ffi/ptr_basics`,
+`plan110/ffi_sqlite_consumable`, `getting_started`, `net/{echo_client,echo_server}`,
+`typed_pointers/unsafe_fn_keyword`.
+
+**1/16 упал — но это НЕ §0-ICE**, а gap пользовательского FFI-шима:
+`examples/ffi/sqlite_mini.nv`.
+- **Симптом** (не ICE, а downstream C-compile error): `initializing
+  '_NovaTuple_2_6_void_p_8_nova_int' with an expression of incompatible type 'int'`
+  (`sqlite_mini.c:6952/6988`) на `ro (raw, rc) = nova_fn_sqlite3_open(path)` — extern
+  возвращает `(*(), int)`.
+- **Корень**: extern "nova" fn НЕ получают C-forward-decl (`emit_c.rs:12922-12986`,
+  by design: реализация приходит из `nova_rt/*.h` через preamble `#include`). У
+  stdlib-extern’ов заголовок есть (потому net `split→(R,W)` tuple-возврат в `echo_*`
+  собирается), а у ПОЛЬЗОВАТЕЛЬСКОГО `extern "nova" fn ... -> (*(), int)` заголовка/шима
+  нет → C предполагает implicit `int` → присваивание tuple-структуре из `int` =
+  type-mismatch. `int`-возвращающие extern’ы (close/exec/step) проходят — implicit-int
+  совпадает.
+- **Классификация: НЕ byte-parity-чинимо в рамках Ф.4c.** Эмиссия C-прототипа для ВСЕХ
+  extern "nova" рискует конфликтом с `nova_rt`-заголовками (дубль-decl с расходящейся
+  сигнатурой → ломает net/*, conformance). Узкий гейт «только tuple-возврат» задел бы
+  stdlib tuple-extern’ы (`split`/`recv_from`). Надёжного «user-declared vs stdlib»-сигнала
+  без header-инъекции нет.
+- **Правильное место фикса**: FFI-build-pipeline `[M-115-ffi-build-pipeline]` (user-side
+  `--c-shim` инъекция заголовка), явно отложенный самим файлом (строки 5-7, 34-36) и
+  помеченный `EXPECT_COMPILE_ERROR when shim not linked` (строки 88-90). **НЕ регрессия**:
+  файл был заблокирован Result.map-багом ДО, теперь блокируется предсуществующим FFI-gap.
+
+Снято §0-ICE в этом заходе: 0 byte-parity (нечего снимать — набор чист) / 0 отложено
+§0-ICE / 1 non-§0 FFI-gap задокументирован и отложен на `[M-115-ffi-build-pipeline]`.
+Гейты захода: conformance 95/0, `constraint_solver --lib` 46/0, smoke `fn main(){}`+`println`
+без P67.
