@@ -60,7 +60,7 @@ export fn str @to_cstr() -> CStr {
             panic("to_cstr: embedded NUL byte in str (would truncate C-string)")
         }
     }
-    mut buf = Vec[u8].new().cap(@byte_len() + 1)
+    mut buf = []u8.new().cap(@byte_len() + 1)
     buf.append(bytes)
     buf.push(0 as u8)
     unsafe { CStr(buf.ptr()) }
