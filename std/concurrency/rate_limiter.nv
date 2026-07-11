@@ -15,27 +15,28 @@
 
 module concurrency.rate_limiter
 
+import std.time.duration
 
 
 /// Token bucket rate limiter. `capacity` = max burst, `refill_per_sec` = sustained rate.
 ///
 /// Использует Time effect → детерминирован в тестах под `th.fixed_ms(...)`.
 #stable(since = "0.1")
-// TODO(Monotonic) [M-rate-limiter-monotonic]: wall-clock `Time.now_unix_ms()`
-// временно — правильный источник для refill-тайминга это `Monotonic` (D124,
-// std/time/duration.nv), immune к NTP-скачкам. Переход gated: `Monotonic.now()`
-// — compiler-builtin, читающий `Time.now_monotonic_ns()`; `.nv`-схема эффекта
-// `Time` (std/prelude/effects.nv:158) метод объявляет, но рантайм-vtable
-// `NovaVtable_Time` (nova_rt/effects.h) слот пока не несёт — «мокабельность
-// через эффект — Ф.3-gated» (std/time/duration.nv:1296-1300, Plan 175 §Ф.2/§Ф.3).
-// До появления слота регресс часов назад/вперёд лишь ограниченно-безвреден
-// (см. `@refill` ниже: `.max(0)` на elapsed + существующий cap на `@tokens`),
-// не устранён полностью. Переключить на `Monotonic`, когда слот появится.
+// [M-rate-limiter-monotonic] ЗАКРЫТ (Plan 175 Ф.3, 2026-07-11): refill-тайминг
+// переведён на `Monotonic` (D124, std/time/duration.nv) — immune к
+// NTP wall-clock скачкам, в отличие от прежнего `Time.now_unix_ms()`.
+// Переход был gated на `now_monotonic_ns`-слот в рантайм-vtable
+// `NovaVtable_Time` (nova_rt/effects.h) — слот появился в Plan 175 Ф.3(a)
+// (закрыл `[M-monotonic-mock-support]`), `Monotonic.now()` теперь мокабелен
+// через `th.fixed_ms`/`th.mut_clock` когерентно с wall-clock. Ручной
+// `.max(0)`-clamp на регресс больше не нужен — `Monotonic.@elapsed_since`
+// УЖЕ saturate-to-zero на регрессе (D318), контракт защиты теперь на
+// уровне типа, а не ad-hoc в этом модуле.
 export type TokenBucket {
     ro capacity i64
     ro refill_per_sec f64
-    mut tokens f64           // internal: текущее число tokens (может быть дробное)
-    mut last_refill_ms i64   // internal: последний refill, Unix ms (Time.now_unix_ms())
+    mut tokens f64            // internal: текущее число tokens (может быть дробное)
+    mut last_refill Monotonic // internal: последний refill момент (Monotonic.now())
 }
 
 
@@ -52,29 +53,26 @@ export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
         capacity,
         refill_per_sec,
         tokens: capacity as f64,
-        last_refill_ms: Time.now_unix_ms() as i64,
+        last_refill: Monotonic.now(),
     }
 
 
 // Refill bucket на основе прошедшего времени.
 //
-// `.max(0)` на elapsed-дельте — защита от регресса wall-clock (NTP-скачок
-// назад): без неё отрицательный elapsed давал бы отрицательный `to_add`,
-// уменьшая `tokens` там, где время формально не двигалось вперёд. С
-// клампом регресс лишь ставит refill на паузу до момента, когда часы
-// снова догонят `last_refill_ms` — не приводит к потере/порче tokens.
-// Скачок часов ВПЕРЁД остаётся ограниченным существующим capacity-cap
-// ниже (полное ведро, не переполнение).
+// `Monotonic.@elapsed_since` saturate-to-zero на регрессе (D318): кажущийся
+// регресс часов назад просто ставит refill на паузу до момента, когда часы
+// снова догонят `last_refill` — не приводит к потере/порче tokens. Скачок
+// часов ВПЕРЁД остаётся ограниченным существующим capacity-cap ниже
+// (полное ведро, не переполнение).
 fn TokenBucket mut @refill() Time -> () {
-    ro now_ms = Time.now_unix_ms() as i64
-    ro elapsed_ms = (now_ms - @last_refill_ms).max(0)
-    ro elapsed_secs = (elapsed_ms as f64) / 1000.0
+    ro now = Monotonic.now()
+    ro elapsed_secs = now.elapsed_since(@last_refill).as_secs_f64()
     ro to_add = elapsed_secs * @refill_per_sec
     @tokens = @tokens + to_add
     if @tokens > (@capacity as f64) {
         @tokens = @capacity as f64
     }
-    @last_refill_ms = now_ms
+    @last_refill = now
 }
 
 
