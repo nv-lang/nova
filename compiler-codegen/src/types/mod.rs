@@ -9446,6 +9446,125 @@ impl<'a> TypeCheckCtx<'a> {
             .and_then(|sol| sol.type_of(out))
     }
 
+    /// Plan 196 Ф.4c — lift a `ResolvedType` into a solver `Ty`, mapping the
+    /// carrier-generic NAMES (`vars`) to their FRESH `TypeVar` identities. Same
+    /// structural expansion as `Ty::from_resolved`, except a bare carrier
+    /// (`Named{name,args:[]}` / `TypeParam(name)` with `name ∈ vars`) becomes a
+    /// `Ty::Var` so `unify` can bind it. Anti-d119 by construction: the var is a
+    /// numeric identity minted per-resolve, never the spelling (see the
+    /// `constraint_solver` module doc). Anything unrepresentable (module≠empty
+    /// Named, effectful Func, Readonly/Mut/Ptr) falls to a `Ty::Concrete` leaf —
+    /// safe, because a carrier buried under such a leaf simply fails to unify and
+    /// the caller's byte-parity gate then defers to legacy.
+    fn ty_from_resolved_vars(
+        rt: &ResolvedType,
+        vars: &HashMap<String, constraint_solver::TypeVar>,
+    ) -> constraint_solver::Ty {
+        use constraint_solver::Ty;
+        use ResolvedType as R;
+        match rt {
+            R::TypeParam(n) if vars.contains_key(n) => Ty::Var(vars[n]),
+            R::Named { name, args, module } if module.is_empty() => {
+                if args.is_empty() {
+                    if let Some(v) = vars.get(name) {
+                        return Ty::Var(*v);
+                    }
+                }
+                Ty::Named {
+                    name: name.clone(),
+                    args: args.iter().map(|a| Self::ty_from_resolved_vars(a, vars)).collect(),
+                }
+            }
+            R::Tuple(items) => {
+                Ty::Tuple(items.iter().map(|i| Self::ty_from_resolved_vars(i, vars)).collect())
+            }
+            R::Array(inner) => Ty::Array(Box::new(Self::ty_from_resolved_vars(inner, vars))),
+            R::Func { params, ret, effects } if effects.is_empty() => Ty::Func {
+                params: params.iter().map(|p| Self::ty_from_resolved_vars(p, vars)).collect(),
+                ret: Box::new(Self::ty_from_resolved_vars(ret, vars)),
+            },
+            other => Ty::Concrete(other.clone()),
+        }
+    }
+
+    /// Plan 196 Ф.4c (constraint-core, Resolve): resolve the DECLARED return type
+    /// of a simple (single-overload, concrete-receiver) instance method call
+    /// through the constraint solver's `resolve_return` primitive (§0). The
+    /// carrier-binding rule — «unify the declared receiver pattern with the
+    /// concrete receiver, then instantiate the return» — lives in the SOLVER (on
+    /// FRESH `TypeVar`s, anti-d119), no longer only in the name-keyed
+    /// `build_recv_subst` + `subst_type_ref_pub` pair. Mirror of Ф.4b
+    /// `project_channel`: the PRODUCER keeps the contextual gate (which overload,
+    /// instance-receiver, no residual method-generic — all decided by the caller)
+    /// and this routes the binding DECISION through the constraint core.
+    ///
+    /// `Self` is pre-bound to the concrete receiver in TypeRef-land (byte-parity
+    /// with the legacy `subst.insert("Self", peeled)`) since the primitive models
+    /// only carrier unification. A return still mentioning a method-level generic
+    /// (`[U]` — bound from the arguments, class-(b)) bails to `None`: the solver
+    /// would treat the surviving name as a spurious concrete leaf.
+    ///
+    /// `None` = the solver could not resolve a fully-concrete return (incompatible
+    /// shape, module/effect-carrying type it cannot represent, or a residual
+    /// var/method-generic) → the caller keeps its legacy binding. The caller
+    /// additionally accepts this result ONLY when it reproduces the legacy binding
+    /// as a round-trippable concrete type, so parity holds regardless of the
+    /// channel's fidelity (propose-then-verify).
+    fn resolve_return_channel(
+        &self,
+        recv: &Receiver,
+        recv_ty: &TypeRef,
+        peeled: &TypeRef,
+        ret: &TypeRef,
+        method_names: &HashSet<String>,
+    ) -> Option<ResolvedType> {
+        use constraint_solver::{TypeVar, VarGen};
+        // Carrier generic names — bare single-segment, no args (same extraction
+        // `build_recv_subst` performs). A FRESH var per name (numeric identity).
+        let names: Vec<String> = recv
+            .generics
+            .iter()
+            .filter_map(|g| match g {
+                TypeRef::Named { path, generics, .. }
+                    if path.len() == 1 && generics.is_empty() =>
+                {
+                    Some(path[0].clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let mut g = VarGen::new();
+        let mut vars: HashMap<String, TypeVar> = HashMap::new();
+        for n in &names {
+            vars.entry(n.clone()).or_insert_with(|| g.fresh());
+        }
+        // Declared receiver pattern: prefer the FULL structured form
+        // (`receiver_ty`, the same source `build_recv_subst` unifies), else the
+        // flat `Named{type_name, generics}`.
+        let recv_pattern_tr: TypeRef = recv.receiver_ty.clone().unwrap_or_else(|| TypeRef::Named {
+            path: vec![recv.type_name.clone()],
+            generics: recv.generics.clone(),
+            span: recv.span,
+        });
+        let recv_pattern =
+            Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&recv_pattern_tr), &vars);
+        let concrete_recv =
+            Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(peeled), &vars);
+        // Return template: pre-bind `Self` to the concrete receiver in TypeRef-land
+        // (byte-parity with legacy), then lift carriers to vars.
+        let mut self_subst: HashMap<String, TypeRef> = HashMap::new();
+        self_subst.insert("Self".to_string(), peeled.clone());
+        let ret_self = crate::const_fn_trampoline::subst_type_ref_pub(ret, &self_subst);
+        // Residual method-level generic → the solver would misread the surviving
+        // name as a concrete leaf; bail (mirrors the producer's own guard).
+        if !method_names.is_empty() && typeref_mentions_any(&ret_self, method_names) {
+            return None;
+        }
+        let ret_template =
+            Self::ty_from_resolved_vars(&ResolvedType::from_type_ref(&ret_self), &vars);
+        constraint_solver::resolve_return(&recv_pattern, &concrete_recv, &ret_template)
+    }
+
     /// Plan 172.1 U.4.4 (Match-arm half): the COMMON result type of a `match`
     /// expression's arms, materialized for the checker channel. `infer_expr_type`
     /// does NOT derive a match type (returns `None`), so the match's result type is
@@ -13623,6 +13742,30 @@ impl<'a> TypeCheckCtx<'a> {
             // `out` корректен (flatten больше не даёт `Vec[Vec[str]]`). Разблокирует P4b/Ф.3 для Named.
             _ => {}
         }
+        // Plan 196 Ф.4c: route this simple (single-overload, concrete-receiver)
+        // carrier-binding + return-instantiation through the constraint solver's
+        // `resolve_return` primitive (§0) — the Ф.4b `project_channel` mirror for
+        // the resolve-family. The EMITTED ANNOTATION for this call is
+        // `from_type_ref(out)`, which the solver channel independently reproduces:
+        // the carrier-binding rule now lives in the SOLVER (fresh `TypeVar`s, anti-
+        // d119), no longer only in the name-keyed `build_recv_subst`. We keep the
+        // legacy TypeRef `out` as the returned CARRIER (not the solver's resolved
+        // type reconstructed back to a TypeRef) precisely because `from_type_ref`
+        // is NON-injective (`[]T ↦ Vec[T]`, `mut`/`ref` transparent): a rebuilt
+        // TypeRef could pick a chain-divergent receiver spelling for an OUTER
+        // `a.b().c()` (this fn's result feeds the recursive receiver resolution).
+        // Byte-identical BY CONSTRUCTION — `out` is returned unchanged; the solver
+        // is consulted read-only and its agreement asserted. Live-swapping
+        // `build_recv_subst` wholesale is the next wave (recon §III —
+        // TypeRef-native bridge).
+        let channel = self.resolve_return_channel(recv, recv_ty, peeled, ret, &method_names);
+        debug_assert!(
+            channel
+                .as_ref()
+                .map_or(true, |s| *s == ResolvedType::from_type_ref(&out)),
+            "Ф.4c: resolve_return diverged from build_recv_subst binding"
+        );
+        let _ = channel;
         Some(out)
     }
 
