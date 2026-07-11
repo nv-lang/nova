@@ -187,12 +187,15 @@ programmer writes nothing special.
 
 ## What's removed from typical languages
 
-- **Header files, `package`/`module` dualism** — one file is one module.
+- **Header files, `package`/`module` dualism** — a single module concept:
+  a module is a file **or** a folder of peer files sharing one namespace
+  (Go-style), declared with `module parent.name` ([spec/decisions/07-modules.md](spec/decisions/07-modules.md), D29).
 - **`null`** — only `Option[T]`.
 - **Invisible exceptions** — only the `Fail[E]` effect, visible in the signature.
-- **`async`/`await` keywords** — suspension is ambient runtime, effects in types: `Net`, `Io`, `Db`.
+- **No `async`/`await` keywords** — suspension is ambient runtime, effects in types: `Net`, `Io`, `Db`.
 - **Operator overloading on arbitrary types** — only standard ones via `@plus`, `@times`, ...
-- **Macros as preprocessor** — only typed comptime (Zig-style).
+- **Macros** — none at all; compile-time computation is `const` / `const fn`
+  (typed, checked like ordinary code — D199).
 - **Global mutable state** — `mut` fields/parameters locally, or named state effects (`Counter`, `Cache`).
 - **DI through reflection** — dependencies in effects or parameters.
 - **Mocking libraries** — handlers from the language itself.

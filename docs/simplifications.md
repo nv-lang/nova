@@ -38130,3 +38130,28 @@ sender) и `addrinfo`→GC-массив (DNS, **один** `getaddrinfo`-выз�
   ~6525/~20065-до-правки) дублирован ПОЛНОСТЬЮ идентично Plan-65-блоку — не
   трогал, вне периметра этой волны (маркер Plan 175 просил дедуп ИМЕННО секции
   Plan 65); зафиксировано как находка для отдельного housekeeping-захода.
+
+## [M-detach-transitive-effect] (2026-07-11, research detach vs #blocking/#realtime)
+
+- Research-заход по вопросу владельца «как detach коррелирует с #blocking/#realtime»
+  вычленил критерий: **атрибут = свойство исполнения тела** (направление «внутрь»:
+  `#realtime` body-restriction, `#blocking` threadpool-offload, caller не наблюдает),
+  **эффект = наблюдаемое вызывающим последствие** (направление «наружу»: `Detach` —
+  работа переживает вызов). Blocking/realtime корректно уехали в атрибуты (Plan 113);
+  `Detach` корректно остался эффектом.
+- НО: транзитивность эффект-row статически не enforced — `check_callee_effects`
+  проверяет только forbid/realtime/blocking-body пересечения. `Detach` сегодня
+  ловится только на прямом `detach {}` (E_DETACH_REQUIRES_EFFECT) — по фактической
+  силе равен атрибуту; сирота на глубине 1 вызова невидим, forbid Detach обходится
+  обёрткой. Маркер: транзитивная Detach-ветка в check_callee_effects.
+
+## [M-detach-with-handler-or-drop-exemption] (2026-07-11)
+
+- Exemption «ambient `with Detach = …`» в E_DETACH_REQUIRES_EFFECT — мёртвая
+  поверхность (хендлер-значений нет; AsyncDetach/SyncDetach — ретрактированные
+  имена). Либо реальный тест-хендлер в std/testing, либо снять exemption.
+
+## [M-detach-forbid-test] (2026-07-11)
+
+- `forbid Detach` заявлен дизайном (D63×D50), механика в check_callee_effects есть,
+  но тестов 0. Добавить pos/neg; после транзитивности — глубокий кейс.
