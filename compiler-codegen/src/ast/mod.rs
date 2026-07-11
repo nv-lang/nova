@@ -1544,7 +1544,7 @@ pub struct BenchCase {
 ///
 /// **Plan 118.5 / D216 V2 amend (2026-06-04):** Decoupled from `TypeRef`.
 /// Pointer modifiers at AST level migrated to separate wrapper variants
-/// (`TypeRef::Mut` / `TypeRef::Unsafe`) per universal right-binding rule.
+/// (`TypeRef::Mut` / `TypeRef::Uninit`) per universal right-binding rule.
 /// `TypeRef::Pointer` is now pure constructor without modifier.
 ///
 /// This enum **remains** as a runtime tag used by `Ty::TypedPtr` (see
@@ -1558,10 +1558,14 @@ pub enum PointerModifier {
     Ro,
     /// `*mut T` — writable-target typed pointer
     Mut,
-    /// `*unsafe T` — pointer to a possibly-uninit pointee; deref requires
-    /// an unsafe block. (Plan 138.5: the prefix `unsafe * T` outer form is
-    /// retired — only the postfix pointee form `*unsafe T` remains.)
-    Unsafe,
+    /// `*uninit T` — pointer to a possibly-uninit pointee; deref requires
+    /// an unsafe block. (Plan 138.5: the prefix `uninit * T` outer form is
+    /// retired — only the postfix pointee form `*uninit T` remains.
+    /// §10a rename, Plan 174.5, 2026-07-11: was `*unsafe T` — the surface
+    /// keyword was renamed `unsafe` → `uninit`; this variant also backs the
+    /// legacy fn-pointer shape `*unsafe fn(...)`, which KEEPS the `unsafe`
+    /// spelling at the parser level, D216 §10.)
+    Uninit,
 }
 
 /// Ссылка на тип. Для bootstrap'а — упрощённая структура.
@@ -1631,23 +1635,35 @@ pub enum TypeRef {
     /// `Pointer` can no longer be constructed from surface syntax. `Mut`
     /// still wraps value-T, e.g. `mut x mut T` binding sugar.)
     Mut(Box<TypeRef>, Span),
-    /// **Plan 118.5 / D216 V2 §V2.3 (2026-06-04):** `unsafe T` — first-class
-    /// MaybeUninit-like type wrapper. Inner T's safety contracts off:
+    /// **Plan 118.5 / D216 V2 §V2.3 (2026-06-04); §10a rename (Plan 174.5,
+    /// 2026-07-11):** `uninit T` (was `unsafe T`) — first-class MaybeUninit-
+    /// like type wrapper. Inner T's safety contracts off:
     ///   - init: value may be uninitialized (read without prior write is UB)
     ///   - layout: alignment / size = T's, but caller asserts validity
     ///   - identity: bit-pattern validity caller-asserted
     ///   - aliasing: exclusivity rules off
     /// Read requires `unsafe { }` wrap (`E_UNSAFE_T_READ_REQUIRES_WRAP`).
-    /// Write safe (transitions к valid). `T → unsafe T` implicit widen
-    /// allowed; `unsafe T → T` narrow requires `unsafe { }` + explicit cast.
+    /// Write safe (transitions к valid). `T → uninit T` implicit widen
+    /// allowed; `uninit T → T` narrow requires `unsafe { }` + explicit cast.
     ///
-    /// Plan 138.5 (2026-06-11): the PREFIX outer form `unsafe * T` =
-    /// `Unsafe(Pointer(T))` is RETIRED (parse error `E_POINTER_PREFIX_MODIFIER`).
+    /// Plan 138.5 (2026-06-11): the PREFIX outer form `uninit * T` =
+    /// `Uninit(Pointer(T))` is RETIRED (parse error `E_POINTER_PREFIX_MODIFIER`).
     /// Nullable pointers are `Option[*T]` (NPO) only; FFI nullable-uninit is
-    /// `Option[*unsafe T]`. The surviving uses of this wrapper:
-    ///   - `*unsafe T` → `Pointer(Unsafe(T))` — valid ptr to possibly-uninit T
-    ///   - `unsafe T` (value-wrapper, §V2.3) — maybe-uninit value
-    Unsafe(Box<TypeRef>, Span),
+    /// `Option[*uninit T]`. The surviving uses of this wrapper:
+    ///   - `*uninit T` → `Pointer(Uninit(T))` — valid ptr to possibly-uninit T
+    ///   - `uninit T` (value-wrapper, §V2.3) — maybe-uninit value
+    ///
+    /// **§10a rename (Plan 174.5, 2026-07-11):** the surface keyword for
+    /// this variant is `uninit` for DATA T. The variant is ALSO still used,
+    /// unrenamed at the surface, for the legacy fn-pointer composition
+    /// `*unsafe fn(...)` / `*extern "C" unsafe fn(...)` (D216 §10 «unsafe fn
+    /// pointer» — encodes call-requires-unsafe, not possibly-uninit data;
+    /// deliberately NOT renamed, Plan 174.5 §Ф.0). The parser disambiguates
+    /// by keyword + whether the wrapped inner is `TypeRef::Func`: `unsafe`
+    /// is legal here ONLY when inner is `Func`; `uninit` is legal for any
+    /// inner. Both spellings construct this SAME `Uninit` node — there is no
+    /// separate AST variant for the fn-pointer shape.
+    Uninit(Box<TypeRef>, Span),
     /// Plan 118 (D216 §1-3): typed pointer family `*T`.
     ///
     /// **Plan 118.5 / D216 V2 (2026-06-04), Plan 138.5 (2026-06-11):** Pure
@@ -1694,7 +1710,7 @@ impl TypeRef {
             | TypeRef::Unit(span)
             | TypeRef::Readonly(_, span)
             | TypeRef::Mut(_, span)
-            | TypeRef::Unsafe(_, span)
+            | TypeRef::Uninit(_, span)
             | TypeRef::Pointer(_, span)
             | TypeRef::Ref(_, span) => *span,
         }
@@ -1709,7 +1725,7 @@ impl TypeRef {
     }
 
     /// **Plan 118.5 / D216 V2 §V2.5 (2026-06-04):** Strip outermost
-    /// type-level modifier wrappers (`Readonly` / `Mut` / `Unsafe`) and
+    /// type-level modifier wrappers (`Readonly` / `Mut` / `Uninit`) and
     /// return the inner non-wrapper type. Used for method dispatch lookup
     /// (e.g. `mut * T` method-resolves on `Pointer(T)`, not on the Mut
     /// wrapper).
@@ -1717,7 +1733,7 @@ impl TypeRef {
         match self {
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => inner.strip_modifiers(),
+            | TypeRef::Uninit(inner, _) => inner.strip_modifiers(),
             other => other,
         }
     }
@@ -1731,10 +1747,10 @@ impl TypeRef {
         matches!(self, TypeRef::Mut(..))
     }
 
-    /// **Plan 118.5 / D216 V2 §V2.3 (2026-06-04):** is this `unsafe T`
-    /// wrapper (outermost)?
-    pub fn is_unsafe(&self) -> bool {
-        matches!(self, TypeRef::Unsafe(..))
+    /// **Plan 118.5 / D216 V2 §V2.3 (2026-06-04); §10a rename (Plan 174.5):**
+    /// is this `uninit T` wrapper (outermost)?
+    pub fn is_uninit(&self) -> bool {
+        matches!(self, TypeRef::Uninit(..))
     }
 
     // **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** the helpers
@@ -1746,20 +1762,21 @@ impl TypeRef {
     // commute on a value-T). The only surviving modifier-conflict rule is
     // §V3.1 ro+mut on value-T, enforced in `types::check_v3_ro_mut_conflict`.
 
-    /// **Plan 118.5 / D216 V2 §V2.4 (2026-06-04):** does this TypeRef
-    /// contain an Unsafe wrapper at the OUTERMOST position (before any
-    /// Pointer)? Used by NPO calculation: if outermost wrapper is Unsafe
-    /// around a Pointer, NPO is disabled (null is a valid Some value).
+    /// **Plan 118.5 / D216 V2 §V2.4 (2026-06-04); §10a rename (Plan 174.5):**
+    /// does this TypeRef contain a Uninit wrapper at the OUTERMOST position
+    /// (before any Pointer)? Used by NPO calculation: if outermost wrapper
+    /// is Uninit around a Pointer, NPO is disabled (null is a valid Some
+    /// value).
     ///
-    /// Returns true for: `Unsafe(*T)`, `Mut(Unsafe(*T))`, `Readonly(Unsafe(*T))`
-    /// (any outer chain of non-Pointer wrappers ending in Unsafe before
+    /// Returns true for: `Uninit(*T)`, `Mut(Uninit(*T))`, `Readonly(Uninit(*T))`
+    /// (any outer chain of non-Pointer wrappers ending in Uninit before
     /// the first Pointer).
-    /// Returns false for: `*T`, `*unsafe T` (= `Pointer(Unsafe(T))`),
+    /// Returns false for: `*T`, `*uninit T` (= `Pointer(Uninit(T))`),
     /// `mut * T`, `ro * T` (any chain where Pointer is the first non-
     /// Mut/Ro wrapper encountered).
     pub fn outer_unsafe_before_pointer(&self) -> bool {
         match self {
-            TypeRef::Unsafe(_, _) => true,
+            TypeRef::Uninit(_, _) => true,
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _) => inner.outer_unsafe_before_pointer(),
             _ => false,
@@ -1767,26 +1784,28 @@ impl TypeRef {
     }
 
     /// Plan 118: returns true if this is a typed pointer `*T` (any modifier
-    /// wrapping). Strips outer Readonly/Mut/Unsafe wrappers first.
+    /// wrapping). Strips outer Readonly/Mut/Uninit wrappers first.
     pub fn is_pointer(&self) -> bool {
         matches!(self.strip_modifiers(), TypeRef::Pointer(..))
     }
 
-    /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** does the
-    /// OUTER modifier-wrapper chain of this TypeRef reach a `Pointer` before
-    /// hitting any base (non-modifier) type? Walks only the outer
-    /// `Readonly`/`Mut`/`Unsafe` wrappers; stops at the first node that is
-    /// neither a modifier wrapper nor a `Pointer`.
+    /// **Plan 138.5 / D216 V2/V3 simplification (2026-06-11); §10a rename
+    /// (Plan 174.5):** does the OUTER modifier-wrapper chain of this
+    /// TypeRef reach a `Pointer` before hitting any base (non-modifier)
+    /// type? Walks only the outer `Readonly`/`Mut`/`Uninit` wrappers; stops
+    /// at the first node that is neither a modifier wrapper nor a
+    /// `Pointer`.
     ///
     /// Used by the parser to FORBID prefix pointer modifiers
-    /// (`ro */mut */unsafe *`) — a `KwRo`/`KwMut`/`KwUnsafe` arm whose
-    /// recursively-parsed `inner` satisfies this predicate is a prefix
-    /// modifier on a pointer (`E_POINTER_PREFIX_MODIFIER`).
+    /// (`ro */mut */uninit *`) — a `KwRo`/`KwMut`/`KwUninit`/(legacy
+    /// `KwUnsafe`) arm whose recursively-parsed `inner` satisfies this
+    /// predicate is a prefix modifier on a pointer
+    /// (`E_POINTER_PREFIX_MODIFIER`).
     ///
     /// Returns true for: `Pointer(..)`, `Mut(Pointer(..))` (= `mut * T`),
-    /// `Readonly(Pointer(..))` (= `ro * T`), `Unsafe(Pointer(..))`
-    /// (= `unsafe * T`), `Mut(Readonly(Pointer(..)))` (= `mut * ro * T`).
-    /// Returns false for: `Named(..)`, `Unsafe(Named(..))` (= `unsafe T`
+    /// `Readonly(Pointer(..))` (= `ro * T`), `Uninit(Pointer(..))`
+    /// (= `uninit * T`), `Mut(Readonly(Pointer(..)))` (= `mut * ro * T`).
+    /// Returns false for: `Named(..)`, `Uninit(Named(..))` (= `uninit T`
     /// value-wrapper), `Mut(Named(..))` — anything whose modifier chain
     /// bottoms out at a non-pointer base. NOTE: the POSTFIX form `*mut T`
     /// = `Pointer(Mut(Named))` is inspected by the Star arm AFTER the Mut
@@ -1797,7 +1816,7 @@ impl TypeRef {
             TypeRef::Pointer(..) => true,
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => inner.is_pointer_or_wraps_pointer(),
+            | TypeRef::Uninit(inner, _) => inner.is_pointer_or_wraps_pointer(),
             _ => false,
         }
     }
@@ -1808,30 +1827,37 @@ impl TypeRef {
     /// Per spec D216 V2/V3 + Plan 118.5 universal modifier model, two AST
     /// shapes are accepted as semantically-equivalent encodings of
     /// `* unsafe fn(...)`:
-    ///   - `Pointer(Unsafe(Func{...}))` — `*unsafe fn(...) -> T` form
+    ///   - `Pointer(Uninit(Func{...}))` — `*unsafe fn(...) -> T` form
     ///     (D216 V2 §V2.3 «valid ptr to possibly-uninit T»; here T = Func).
-    ///   - `Unsafe(Pointer(Func{...}))` — `unsafe * fn(...) -> T` form
+    ///   - `Uninit(Pointer(Func{...}))` — `unsafe * fn(...) -> T` form
     ///     (D216 V2 §V2.4 outer-unsafe wrapper around safe pointer).
     /// Plus chains через outer Readonly/Mut wrappers that don't change
     /// safety semantics (V3 §V3.2 restricts these, but they still pass).
     ///
+    /// **§10a rename (Plan 174.5, 2026-07-11):** the `Uninit` AST variant is
+    /// shared between the renamed possibly-uninit data modifier (surface
+    /// `uninit`) and this UNRENAMED fn-pointer shape (surface stays
+    /// `unsafe`, D216 §10) — the parser only accepts `unsafe` here when the
+    /// wrapped payload is `Func`. Structurally indistinguishable at the AST
+    /// level; this helper's semantics (and name) are unchanged by the rename.
+    ///
     /// Used by Plan 118.1.6 enforcement:
-    ///   (1) addr_of(unsafe_fn) result type carries Unsafe wrapper;
+    ///   (1) addr_of(unsafe_fn) result type carries Uninit wrapper;
     ///   (2) E_UNSAFE_FN_PTR_COERCION fires when assigning unsafe-fn-ptr
     ///       к non-unsafe-fn-ptr binding;
     ///   (3) E_UNSAFE_CALL_REQUIRES_WRAP fires when calling через unsafe-fn-ptr
     ///       binding without `unsafe { }` wrap (depth == 0).
     ///
-    /// Returns true ONLY when both Pointer AND Unsafe wrappers appear
+    /// Returns true ONLY when both Pointer AND Uninit wrappers appear
     /// somewhere in the chain wrapping a Func payload. Bare `* fn(...)` —
-    /// false (no Unsafe). Bare `unsafe fn(...)` (no Pointer) — false
+    /// false (no Uninit). Bare `unsafe fn(...)` (no Pointer) — false
     /// (not yet a pointer; will surface for builders/value-level uses).
     pub fn is_unsafe_fn_pointer(&self) -> bool {
-        // Walk chain, tracking whether we've seen Pointer and Unsafe.
+        // Walk chain, tracking whether we've seen Pointer and Uninit.
         fn walk(t: &TypeRef, saw_ptr: bool, saw_unsafe: bool) -> bool {
             match t {
                 TypeRef::Pointer(inner, _) => walk(inner, true, saw_unsafe),
-                TypeRef::Unsafe(inner, _) => walk(inner, saw_ptr, true),
+                TypeRef::Uninit(inner, _) => walk(inner, saw_ptr, true),
                 TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => {
                     walk(inner, saw_ptr, saw_unsafe)
                 }
@@ -1844,7 +1870,7 @@ impl TypeRef {
 
     /// **Plan 118.1.6 (2026-06-08):** detect a "safe fn-pointer" type shape —
     /// `Pointer(Func{...})` (with optional outer Readonly/Mut wrappers, but
-    /// WITHOUT any Unsafe wrapper). Used by E_UNSAFE_FN_PTR_COERCION to
+    /// WITHOUT any Uninit wrapper). Used by E_UNSAFE_FN_PTR_COERCION to
     /// distinguish: assignment of `*unsafe fn(...)` value к binding annotated
     /// `*fn(...)` (banned) vs assignment к binding annotated `*unsafe fn(...)`
     /// (allowed). Returns true for `*fn(...)`, `ro * fn(...)`, `mut * fn(...)`;
@@ -1853,7 +1879,7 @@ impl TypeRef {
         fn walk(t: &TypeRef, saw_ptr: bool, saw_unsafe: bool) -> bool {
             match t {
                 TypeRef::Pointer(inner, _) => walk(inner, true, saw_unsafe),
-                TypeRef::Unsafe(inner, _) => walk(inner, saw_ptr, true),
+                TypeRef::Uninit(inner, _) => walk(inner, saw_ptr, true),
                 TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => {
                     walk(inner, saw_ptr, saw_unsafe)
                 }
@@ -1896,7 +1922,7 @@ impl TypeRef {
             | TypeRef::FixedArray(_, inner, _)
             | TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Pointer(inner, _)
             | TypeRef::Ref(inner, _) => inner.uses_any_type_param(params),
             TypeRef::Tuple(ts, _) => ts.iter().any(|t| t.uses_any_type_param(params)),

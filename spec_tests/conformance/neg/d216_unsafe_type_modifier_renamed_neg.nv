@@ -1,0 +1,13 @@
+// §10a rename (Plan 174.5, D216 amend, 2026-07-11) — the possibly-uninit
+// type-modifier `unsafe T` / `*unsafe T` is renamed to `uninit T` / `*uninit T`
+// to decouple «possibly-uninit pointee/value» from «unsafe operation».
+// `unsafe` in type position (wrapping a non-`Func` type) is now a hard error
+// pointing the author at `uninit`. `unsafe { }` blocks and `unsafe fn` /
+// `external unsafe fn` declaration attributes are UNCHANGED (not this error).
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_TYPE_MODIFIER_RENAMED
+
+module neg.d216_unsafe_type_modifier_renamed_neg
+
+fn bad(x unsafe int) -> () {
+}

@@ -772,7 +772,7 @@ impl ExternalRegistry {
             // `nova_byte*` at the call site → undefined-symbol link error).
             TypeRef::Pointer(inner, _) => {
                 let (is_mutable_ptr, base_inner) = match inner.as_ref() {
-                    TypeRef::Mut(ti, _) | TypeRef::Unsafe(ti, _) => (true, ti.as_ref()),
+                    TypeRef::Mut(ti, _) | TypeRef::Uninit(ti, _) => (true, ti.as_ref()),
                     _ => (false, inner.as_ref()),
                 };
                 if matches!(base_inner, TypeRef::Unit(_)) {
@@ -785,7 +785,7 @@ impl ExternalRegistry {
                     Ok(format!("const {}*", inner_c))
                 }
             }
-            TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+            TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
                 if let TypeRef::Pointer(p_inner, _) = inner.as_ref() {
                     // Plan 134: *mut () = void*.
                     if matches!(p_inner.as_ref(), TypeRef::Unit(_)) {

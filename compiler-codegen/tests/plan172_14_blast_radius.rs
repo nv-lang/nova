@@ -127,7 +127,7 @@ fn type_ref_uses_type_param(ty: &TypeRef, type_params: &std::collections::HashSe
         TypeRef::Array(inner, _) => type_ref_uses_type_param(inner, type_params),
         TypeRef::FixedArray(_, inner, _) => type_ref_uses_type_param(inner, type_params),
         TypeRef::Tuple(elems, _) => elems.iter().any(|e| type_ref_uses_type_param(e, type_params)),
-        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
             type_ref_uses_type_param(inner, type_params)
         }
         _ => false,

@@ -637,13 +637,20 @@ impl<'a> Lexer<'a> {
             // Plan 114 (D184): retracted; lexer still recognizes the lexeme
             // so parser can emit `E_KW_REMOVED_READONLY` with a clear hint.
             "readonly" => TokenKind::KwReadonly,
-            // Plan 118 (D216 §8, D2 amend): `unsafe` keyword. Used в:
-            //   - `*unsafe T` pointer modifier (parser sees KwUnsafe в
-            //     parse_type для PointerModifier::Unsafe; legacy ident
-            //     branch preserved для backward compat),
+            // Plan 118 (D216 §8, D2 amend); §10a rename (Plan 174.5, 2026-07-11):
+            // `unsafe` keyword. Used в:
             //   - `unsafe { ... }` block (Ф.3),
-            //   - `#unsafe` attribute on fn declarations (Ф.3).
+            //   - `#unsafe` attribute / `unsafe fn` declaration (Ф.3),
+            //   - legacy fn-pointer composition `*unsafe fn(...)` /
+            //     `*extern "C" unsafe fn(...)` (D216 §10, NOT renamed —
+            //     encodes call-requires-unsafe, not possibly-uninit data).
+            // The possibly-uninit type-modifier (`*unsafe T` / `unsafe T`,
+            // T non-Func) is RENAMED to `uninit` (below) — `unsafe` there is
+            // now `E_UNSAFE_TYPE_MODIFIER_RENAMED` (parser/mod.rs).
             "unsafe" => TokenKind::KwUnsafe,
+            // §10a rename (Plan 174.5, 2026-07-11): `uninit` — possibly-uninit
+            // type-modifier, split off `unsafe`. `*uninit T` / `uninit T`.
+            "uninit" => TokenKind::KwUninit,
             // Plan 118.7 (D216 §4 amend): `raw` остаётся идентификатором
             // (контекстное ключевое слово, аналог `bench`/`measure`).
             // Парсер распознаёт `raw &expr` контекстно в parse_unary().

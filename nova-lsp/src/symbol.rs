@@ -147,8 +147,13 @@ pub fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::Mut(inner, _) => {
             format!("mut {}", format_type_ref(inner))
         }
-        TypeRef::Unsafe(inner, _) => {
-            format!("unsafe {}", format_type_ref(inner))
+        // §10a rename (Plan 174.5, 2026-07-11): `Uninit` wrapping `Func`
+        // keeps the `unsafe` spelling (D216 §10 legacy fn-pointer shape);
+        // any other payload renders as `uninit` (renamed possibly-uninit
+        // data modifier).
+        TypeRef::Uninit(inner, _) => {
+            let kw = if matches!(inner.as_ref(), TypeRef::Func { .. }) { "unsafe" } else { "uninit" };
+            format!("{} {}", kw, format_type_ref(inner))
         }
         TypeRef::Ref(inner, _) => {
             format!("&{}", format_type_ref(inner))
@@ -947,7 +952,7 @@ fn type_ref_base_name(ty: &TypeRef) -> Option<String> {
         TypeRef::Array(..) | TypeRef::FixedArray(..) => Some("Vec".to_string()),
         TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Uninit(inner, _)
         | TypeRef::Pointer(inner, _) => type_ref_base_name(inner),
         _ => None,
     }

@@ -255,7 +255,7 @@ impl ResolvedType {
             TypeRef::Pointer(inner, _) => {
                 let (modifier, base) = match inner.as_ref() {
                     TypeRef::Mut(ti, _) => (crate::ast::PointerModifier::Mut, ti.as_ref()),
-                    TypeRef::Unsafe(ti, _) => (crate::ast::PointerModifier::Unsafe, ti.as_ref()),
+                    TypeRef::Uninit(ti, _) => (crate::ast::PointerModifier::Uninit, ti.as_ref()),
                     _ => (crate::ast::PointerModifier::Ro, inner.as_ref()),
                 };
                 R::TypedPtr(modifier, Box::new(R::from_type_ref(base)))
@@ -266,9 +266,9 @@ impl ResolvedType {
                 }
                 _ => R::from_type_ref(inner),
             },
-            TypeRef::Unsafe(inner, _) => match inner.as_ref() {
+            TypeRef::Uninit(inner, _) => match inner.as_ref() {
                 TypeRef::Pointer(p, _) => {
-                    R::TypedPtr(crate::ast::PointerModifier::Unsafe, Box::new(R::from_type_ref(p)))
+                    R::TypedPtr(crate::ast::PointerModifier::Uninit, Box::new(R::from_type_ref(p)))
                 }
                 _ => R::from_type_ref(inner),
             },
@@ -529,22 +529,22 @@ mod resolved_type_tests {
             ResolvedType::TypedPtr(PointerModifier::Mut, Box::new(scal()))
         );
         assert_eq!(
-            ResolvedType::from_type_ref(&TypeRef::Unsafe(Box::new(ptr(int())), Span::dummy())),
-            ResolvedType::TypedPtr(PointerModifier::Unsafe, Box::new(scal()))
+            ResolvedType::from_type_ref(&TypeRef::Uninit(Box::new(ptr(int())), Span::dummy())),
+            ResolvedType::TypedPtr(PointerModifier::Uninit, Box::new(scal()))
         );
         // U.5.5(a) fidelity: the CANONICAL `*mut T` / `*unsafe T` spelling
         // `Pointer(Mut(T))` / `Pointer(Unsafe(T))` (Plan 131) — pre-U.5.5 these collapsed
         // to `TypedPtr(Ro)` (modifier lost → `const T*`). They now carry the modifier AND
         // agree with the `Mut(Pointer)` / `Unsafe(Pointer)` spelling above (no divergence).
         let mutw = |inner| TypeRef::Mut(Box::new(inner), Span::dummy());
-        let unsw = |inner| TypeRef::Unsafe(Box::new(inner), Span::dummy());
+        let unsw = |inner| TypeRef::Uninit(Box::new(inner), Span::dummy());
         assert_eq!(
             ResolvedType::from_type_ref(&ptr(mutw(int()))),
             ResolvedType::TypedPtr(PointerModifier::Mut, Box::new(scal()))
         );
         assert_eq!(
             ResolvedType::from_type_ref(&ptr(unsw(int()))),
-            ResolvedType::TypedPtr(PointerModifier::Unsafe, Box::new(scal()))
+            ResolvedType::TypedPtr(PointerModifier::Uninit, Box::new(scal()))
         );
         assert_eq!(
             ResolvedType::from_type_ref(&ptr(mutw(int()))),
@@ -3031,7 +3031,7 @@ fn is_value_type_for_v3(
         Pointer(..) => false,
         Func { .. } => false,
         Protocol { .. } => false,
-        Readonly(inner, _) | Mut(inner, _) | Unsafe(inner, _) => {
+        Readonly(inner, _) | Mut(inner, _) | Uninit(inner, _) => {
             is_value_type_for_v3(inner, types)
         }
         // Plan 184: `ref T` — ссылочный алиас; классифицируем по цели (Р5).
@@ -3110,7 +3110,7 @@ fn check_v3_ro_mut_conflict(
             }
             check_v3_ro_mut_conflict(inner, types, false, errors);
         }
-        Unsafe(inner, _) => check_v3_ro_mut_conflict(inner, types, at_binding_top, errors),
+        Uninit(inner, _) => check_v3_ro_mut_conflict(inner, types, at_binding_top, errors),
         Pointer(inner, _) => check_v3_ro_mut_conflict(inner, types, false, errors),
         // Plan 184: `ref T` — прозрачно рекурсируем в цель.
         Ref(inner, _) => check_v3_ro_mut_conflict(inner, types, false, errors),
@@ -5744,7 +5744,7 @@ impl<'a> TypeCheckCtx<'a> {
             // etc. has already stopped before reaching these.
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => self.infinite_dfs(inner, root, on_path, gs),
+            | TypeRef::Uninit(inner, _) => self.infinite_dfs(inner, root, on_path, gs),
             // Pointer `*T` (any pointee) — always 8 bytes. INDIRECTION. STOP.
             TypeRef::Pointer(_, _) => None,
             // Plan 184: `ref T` — указатель-алиас (8 байт). INDIRECTION. STOP.
@@ -5838,7 +5838,15 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Pointer(inner, _) => format!("*{}", Self::typeref_display(inner)),
             TypeRef::Readonly(inner, _) => format!("ro {}", Self::typeref_display(inner)),
             TypeRef::Mut(inner, _) => format!("mut {}", Self::typeref_display(inner)),
-            TypeRef::Unsafe(inner, _) => format!("unsafe {}", Self::typeref_display(inner)),
+            // §10a rename (Plan 174.5, 2026-07-11): `Uninit` is shared between
+            // the renamed possibly-uninit data modifier (`uninit T`) and the
+            // UNRENAMED legacy fn-pointer shape (`unsafe fn(...)`, D216 §10 —
+            // call-requires-unsafe, not possibly-uninit data). Disambiguate
+            // by payload: `Func` keeps the `unsafe` spelling, else `uninit`.
+            TypeRef::Uninit(inner, _) => {
+                let kw = if matches!(inner.as_ref(), TypeRef::Func { .. }) { "unsafe" } else { "uninit" };
+                format!("{} {}", kw, Self::typeref_display(inner))
+            }
             TypeRef::Ref(inner, _) => format!("ref {}", Self::typeref_display(inner)),
             TypeRef::Tuple(elems, _) => {
                 let parts: Vec<String> = elems.iter().map(Self::typeref_display).collect();
@@ -5871,7 +5879,7 @@ impl<'a> TypeCheckCtx<'a> {
         use TypeRef::*;
         match inner {
             Array(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
-            Readonly(i, _) | Mut(i, _) | Unsafe(i, _) | Ref(i, _) => {
+            Readonly(i, _) | Mut(i, _) | Uninit(i, _) | Ref(i, _) => {
                 self.ref_target_confirmed_heap(i, gs)
             }
             // [M-fixed-array-value-semantics] (2026-07-10, D27-амендмент): `[N]T` —
@@ -6024,7 +6032,7 @@ impl<'a> TypeCheckCtx<'a> {
             // (Pointer/Mut/Unsafe) — all transparent, walk inner for arity checks.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => self.walk_typeref(inner, gs, errors),
+            | TypeRef::Uninit(inner, _) => self.walk_typeref(inner, gs, errors),
             // Plan 184 (Р1/Р6): `ref T` встреченный ЗДЕСЬ = ЗАПРЕЩЁННАЯ позиция
             // (поле / элемент коллекции / вариант суммы / Option / тип-аргумент
             // дженерика / параметр). Легальные top-level позиции (возврат,
@@ -6102,7 +6110,7 @@ impl<'a> TypeCheckCtx<'a> {
             // (Pointer/Mut/Unsafe) — all transparent, recurse on inner.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Ref(inner, _) => Self::collect_named_idents(inner, out),
         }
     }
@@ -7051,7 +7059,7 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => Self::typeref_named_base(inner),
+            | TypeRef::Uninit(inner, _) => Self::typeref_named_base(inner),
             _ => None,
         }
     }
@@ -10476,7 +10484,7 @@ impl<'a> TypeCheckCtx<'a> {
         // Plan 118.5: pointer-like = Pointer | Mut | Unsafe (all auto-deref candidates).
         if matches!(
             obj_tr,
-            TypeRef::Pointer(_, _) | TypeRef::Mut(_, _) | TypeRef::Unsafe(_, _)
+            TypeRef::Pointer(_, _) | TypeRef::Mut(_, _) | TypeRef::Uninit(_, _)
         ) {
             return; // permissive — defer to codegen + Ф.4 full integration
         }
@@ -11789,7 +11797,7 @@ impl<'a> TypeCheckCtx<'a> {
         match expected {
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _) => {
+            | TypeRef::Uninit(inner, _) => {
                 self.materialize_literal_coercion(value, inner);
                 return;
             }
@@ -12071,7 +12079,7 @@ impl<'a> TypeCheckCtx<'a> {
         let mut ty = expected;
         loop {
             match ty {
-                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
                     ty = inner;
                 }
                 _ => break,
@@ -12456,7 +12464,7 @@ impl<'a> TypeCheckCtx<'a> {
                 let wrapped = match modifier {
                     crate::ast::PointerModifier::Ro => base,
                     crate::ast::PointerModifier::Mut => TypeRef::Mut(Box::new(base), span),
-                    crate::ast::PointerModifier::Unsafe => TypeRef::Unsafe(Box::new(base), span),
+                    crate::ast::PointerModifier::Uninit => TypeRef::Uninit(Box::new(base), span),
                 };
                 TypeRef::Pointer(Box::new(wrapped), span)
             }
@@ -14492,7 +14500,7 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Unit(_) => R::Unit,
             TypeRef::Readonly(inner, _) => self.resolved_cat_of_depth(inner, gs, depth + 1),
             TypeRef::Pointer(_, _) => R::Ptr,
-            TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+            TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
                 self.resolved_cat_of_depth(inner, gs, depth + 1)
             }
             // Plan 184: `ref T` категориально = цель (Р5 чтение = T; Р6 heap ≡ H).
@@ -14786,7 +14794,7 @@ fn typeref_mentions_any(ty: &TypeRef, names: &HashSet<String>) -> bool {
         | TypeRef::FixedArray(_, inner, _)
         | TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Uninit(inner, _)
         | TypeRef::Pointer(inner, _)
         | TypeRef::Ref(inner, _) => typeref_mentions_any(inner, names),
         TypeRef::Tuple(elems, _) => elems.iter().any(|e| typeref_mentions_any(e, names)),
@@ -14823,10 +14831,10 @@ fn pointee_is_writable(ty: &TypeRef) -> Option<bool> {
         // capability lives on the inner Pointer, not on these wrappers.
         TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _) => pointee_is_writable(inner),
+        | TypeRef::Uninit(inner, _) => pointee_is_writable(inner),
         TypeRef::Pointer(pointee, _) => Some(match pointee.as_ref() {
             // `*mut T` / `*unsafe T` → writable pointee (L3 opt-in).
-            TypeRef::Mut(..) | TypeRef::Unsafe(..) => true,
+            TypeRef::Mut(..) | TypeRef::Uninit(..) => true,
             // `*()` = void pointer — opaque, no writable element.
             TypeRef::Unit(_) => false,
             // Bare `*T ≡ *ro T` → readonly pointee (L3 default).
@@ -14901,7 +14909,13 @@ pub(crate) fn typeref_display(tr: &TypeRef) -> String {
         // `Mut(Pointer(Readonly(Pointer(T))))` → `mut *ro *T`).
         TypeRef::Pointer(inner, _) => format!("*{}", typeref_display(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", typeref_display(inner)),
-        TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_display(inner)),
+        // §10a rename (Plan 174.5, 2026-07-11): see `Self::typeref_display`
+        // above — `Uninit` wrapping `Func` keeps the `unsafe` spelling
+        // (D216 §10 legacy fn-pointer shape), else `uninit`.
+        TypeRef::Uninit(inner, _) => {
+            let kw = if matches!(inner.as_ref(), TypeRef::Func { .. }) { "unsafe" } else { "uninit" };
+            format!("{} {}", kw, typeref_display(inner))
+        }
         TypeRef::Ref(inner, _) => format!("ref {}", typeref_display(inner)),
     }
 }
@@ -16585,7 +16599,7 @@ impl<'a> BoundCtx<'a> {
                 ) || self.value_type_names.contains(n)
             }
             TypeRef::Tuple(..) => true,
-            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
                 self.param_ty_is_inout_value(inner)
             }
             _ => false,
@@ -20307,10 +20321,15 @@ pub(crate) fn render_type_ref(t: &TypeRef) -> String {
         // `*T` family — split into three AST wrapper arms after V2 amend.
         //   - Pointer(T, _)    → `* T` (canonical readonly)
         //   - Mut(inner, _)    → `mut <inner>` (right-binding wrapper)
-        //   - Unsafe(inner, _) → `unsafe <inner>` (right-binding wrapper)
+        //   - Uninit(inner, _) → `uninit <inner>` (right-binding wrapper);
+        //     `unsafe <inner>` instead when inner is `Func` (§10a rename,
+        //     Plan 174.5 — D216 §10 legacy fn-pointer shape kept `unsafe`).
         TypeRef::Pointer(inner, _) => format!("* {}", render_type_ref(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", render_type_ref(inner)),
-        TypeRef::Unsafe(inner, _) => format!("unsafe {}", render_type_ref(inner)),
+        TypeRef::Uninit(inner, _) => {
+            let kw = if matches!(inner.as_ref(), TypeRef::Func { .. }) { "unsafe" } else { "uninit" };
+            format!("{} {}", kw, render_type_ref(inner))
+        }
         TypeRef::Ref(inner, _) => format!("ref {}", render_type_ref(inner)),
     }
 }
@@ -20563,7 +20582,7 @@ fn typeref_equal(a: &TypeRef, b: &TypeRef) -> bool {
         // outer Unsafe wrapper).
         (TypeRef::Pointer(ia, _), TypeRef::Pointer(ib, _)) => typeref_equal(ia, ib),
         (TypeRef::Mut(ia, _), TypeRef::Mut(ib, _)) => typeref_equal(ia, ib),
-        (TypeRef::Unsafe(ia, _), TypeRef::Unsafe(ib, _)) => typeref_equal(ia, ib),
+        (TypeRef::Uninit(ia, _), TypeRef::Uninit(ib, _)) => typeref_equal(ia, ib),
         _ => false,
     }
 }
@@ -20620,7 +20639,7 @@ fn subst_typeref(t: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
         TypeRef::Readonly(inner, s) => TypeRef::Readonly(Box::new(subst_typeref(inner, subst)), *s),
         TypeRef::Mut(inner, s) => TypeRef::Mut(Box::new(subst_typeref(inner, subst)), *s),
         TypeRef::Pointer(inner, s) => TypeRef::Pointer(Box::new(subst_typeref(inner, subst)), *s),
-        TypeRef::Unsafe(inner, s) => TypeRef::Unsafe(Box::new(subst_typeref(inner, subst)), *s),
+        TypeRef::Uninit(inner, s) => TypeRef::Uninit(Box::new(subst_typeref(inner, subst)), *s),
         // Plan 184: `ref T` — подставляем цель (`f[T]() -> ref T` при T=…).
         TypeRef::Ref(inner, s) => TypeRef::Ref(Box::new(subst_typeref(inner, subst)), *s),
         // Func/Protocol/Unit — params/methods rarely reference the receiver's
@@ -21008,7 +21027,7 @@ fn check_effect_axioms(module: &Module, errors: &mut Vec<Diagnostic>) {
                     }
                     _ => type_key(inner),
                 },
-                TypeRef::Unsafe(inner, _) => match inner.as_ref() {
+                TypeRef::Uninit(inner, _) => match inner.as_ref() {
                     TypeRef::Pointer(p_inner, _) => {
                         format!("*unsafe_{}", type_key(p_inner))
                     }
@@ -28432,10 +28451,15 @@ fn typeref_render(t: &TypeRef) -> String {
         // `*T` family — split into three AST wrapper arms after V2 amend.
         //   - Pointer(T, _)    → `* T` (canonical readonly)
         //   - Mut(inner, _)    → `mut <inner>` (right-binding wrapper)
-        //   - Unsafe(inner, _) → `unsafe <inner>` (right-binding wrapper)
+        //   - Uninit(inner, _) → `uninit <inner>` (right-binding wrapper);
+        //     `unsafe <inner>` instead when inner is `Func` (§10a rename,
+        //     Plan 174.5 — D216 §10 legacy fn-pointer shape kept `unsafe`).
         TypeRef::Pointer(inner, _) => format!("* {}", typeref_render(inner)),
         TypeRef::Mut(inner, _) => format!("mut {}", typeref_render(inner)),
-        TypeRef::Unsafe(inner, _) => format!("unsafe {}", typeref_render(inner)),
+        TypeRef::Uninit(inner, _) => {
+            let kw = if matches!(inner.as_ref(), TypeRef::Func { .. }) { "unsafe" } else { "uninit" };
+            format!("{} {}", kw, typeref_render(inner))
+        }
         TypeRef::Ref(inner, _) => format!("ref {}", typeref_render(inner)),
     }
 }
@@ -29399,7 +29423,7 @@ fn ffi_c_abi_violation(
         // Value-level modifier wrappers (`ro T` / `mut T` / `unsafe T`) are
         // transparent to the ABI. (`*ro T` / `*mut T` / `*unsafe T` carry the
         // modifier on the pointee INSIDE the Pointer arm below.)
-        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _) => {
+        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Uninit(inner, _) => {
             ffi_c_abi_violation(inner, types, is_top_return, visited)
         }
         // Plan 184 (Р9): `ref T` НЕ C-ABI — extern-граница только сырые
@@ -29607,7 +29631,7 @@ fn ffi_subst_apply(ty: &TypeRef, subst: &HashMap<String, TypeRef>) -> TypeRef {
             TR::Readonly(Box::new(ffi_subst_apply(inner, subst)), *span)
         }
         TR::Mut(inner, span) => TR::Mut(Box::new(ffi_subst_apply(inner, subst)), *span),
-        TR::Unsafe(inner, span) => TR::Unsafe(Box::new(ffi_subst_apply(inner, subst)), *span),
+        TR::Uninit(inner, span) => TR::Uninit(Box::new(ffi_subst_apply(inner, subst)), *span),
         TR::Func { params, effects, return_type, extern_abi, span } => TR::Func {
             params: params.iter().map(|p| ffi_subst_apply(p, subst)).collect(),
             effects: effects.clone(),
@@ -29679,7 +29703,7 @@ fn ffi_validate_c_fnptr_occurrences(
             }
             ffi_validate_c_fnptr_occurrences(inner, types, errors, reported);
         }
-        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Unsafe(inner, _)
+        TR::Readonly(inner, _) | TR::Mut(inner, _) | TR::Uninit(inner, _)
         | TR::Ref(inner, _) => {
             ffi_validate_c_fnptr_occurrences(inner, types, errors, reported)
         }
@@ -30122,7 +30146,7 @@ impl UnsafeCtx {
                 ty,
                 crate::ast::TypeRef::Pointer(_, _)
                     | crate::ast::TypeRef::Mut(_, _)
-                    | crate::ast::TypeRef::Unsafe(_, _)
+                    | crate::ast::TypeRef::Uninit(_, _)
             ),
             ExprKind::Ident(name) => self.ptr_vars.iter().rev().any(|f| f.contains(name)),
             // Block-trailing inheritance: `unsafe { &x }` / nested block.
@@ -30661,7 +30685,7 @@ impl UnsafeCtx {
                     if let ExprKind::Ident(name) = &inner.kind {
                         if self.is_unsafe_t_var(name)
                             && !matches!(ty.strip_modifiers(),
-                                crate::ast::TypeRef::Unsafe(_, _))
+                                crate::ast::TypeRef::Uninit(_, _))
                         {
                             errors.push(Diagnostic::new(
                                 format!(

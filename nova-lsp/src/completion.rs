@@ -407,6 +407,7 @@ const FN_BODY_KEYWORDS: &[(&str, &str)] = &[
     ("effect", "Effect declaration"),
     ("defer", "Defer expression to function exit"),
     ("unsafe", "Unsafe block"),
+    ("uninit", "Possibly-uninit type modifier (uninit T / *uninit T)"),
     ("consume", "Consume a value"),
     ("apply", "Apply a lemma"),
     ("reveal", "Reveal an opaque function body"),
@@ -1032,7 +1033,7 @@ fn type_ref_base_name(ty: &TypeRef) -> Option<String> {
         TypeRef::Array(..) | TypeRef::FixedArray(..) => Some("Vec".to_string()),
         TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Uninit(inner, _)
         | TypeRef::Pointer(inner, _) => type_ref_base_name(inner),
         _ => None,
     }

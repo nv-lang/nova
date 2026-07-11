@@ -215,7 +215,7 @@ fn share_rec<Q: ShareQuery>(
         // Binding-modifier wrappers are transparent at the TYPE level; the
         // ACCESS distinction is carried by the `access` parameter (the
         // capture-check derives it from the binding's `mut`-ness, D415 §7 Q5).
-        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
             share_rec(query, inner, access, visited, at)
         }
         TypeRef::Unit(_) => Ok(()),

@@ -3236,7 +3236,7 @@ impl CEmitter {
                     let inner_c = self.resolved_type_to_c(inner)?;
                     match modifier {
                         PM::Ro => format!("const {}*", inner_c),
-                        PM::Mut | PM::Unsafe => format!("{}*", inner_c),
+                        PM::Mut | PM::Uninit => format!("{}*", inner_c),
                     }
                 }
             }
@@ -15128,7 +15128,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Ref(inner, _) => Self::collect_typeref_names(inner, out, vtable_out),
         }
     }
@@ -15163,7 +15163,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             | TypeRef::FixedArray(_, inner, _)
             | TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Readonly(inner, _) =>
                 Self::type_ref_contains_func(inner),
             TypeRef::Tuple(elems, _) =>
@@ -15257,7 +15257,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             TypeRef::Readonly(inner, _)
             | TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Ref(inner, _) => Self::collect_array_elem_typerefs(inner, out),
             TypeRef::Unit(_) => {}
         }
@@ -16086,7 +16086,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // caller-side mono pass produces a correct concrete instance
                     // (`Nova_Vec____nova_int` with `nova_int* data`).
                     if matches!(&fld.ty,
-                        TypeRef::Pointer(..) | TypeRef::Mut(..) | TypeRef::Unsafe(..))
+                        TypeRef::Pointer(..) | TypeRef::Mut(..) | TypeRef::Uninit(..))
                         && Self::type_ref_uses_any_type_param(&fld.ty, &type_params)
                     {
                         return true;
@@ -18017,7 +18017,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             T::Unit(_) => "()".to_string(),
             T::Readonly(inner, _) => format!("ro {}", Self::type_ref_overload_key(inner)),
             T::Mut(inner, _) => format!("mut {}", Self::type_ref_overload_key(inner)),
-            T::Unsafe(inner, _) => format!("unsafe {}", Self::type_ref_overload_key(inner)),
+            // §10a rename (Plan 174.5, 2026-07-11): `Uninit` wrapping `Func`
+            // keeps the `unsafe` spelling (D216 §10 legacy fn-pointer
+            // shape); any other payload renders as `uninit` (the renamed
+            // possibly-uninit data modifier).
+            T::Uninit(inner, _) => {
+                let kw = if matches!(inner.as_ref(), T::Func { .. }) { "unsafe" } else { "uninit" };
+                format!("{} {}", kw, Self::type_ref_overload_key(inner))
+            }
             T::Pointer(inner, _) => format!("*{}", Self::type_ref_overload_key(inner)),
             // Plan 184: `ref T` distinct overload key (Р13/Р14 mode axis — the
             // ref-ness of the target participates in structural distinction).
@@ -18057,7 +18064,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let type_params: HashSet<String> =
             template.generics.iter().map(|g| g.name.clone()).collect();
         fields.iter().any(|fld| {
-            if matches!(&fld.ty, TypeRef::Pointer(..) | TypeRef::Mut(..) | TypeRef::Unsafe(..))
+            if matches!(&fld.ty, TypeRef::Pointer(..) | TypeRef::Mut(..) | TypeRef::Uninit(..))
                 && Self::type_ref_uses_any_type_param(&fld.ty, &type_params)
             {
                 return true;
@@ -18846,7 +18853,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Pointer(inner, _) => Self::collect_receiver_typevars(inner, out),
             _ => {}
         }
@@ -19253,7 +19260,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the `cannot infer` error (or a caller-side silent fallback).
             crate::ast::TypeRef::Pointer(inner, _) => {
                 let base = match inner.as_ref() {
-                    crate::ast::TypeRef::Mut(ti, _) | crate::ast::TypeRef::Unsafe(ti, _) => ti.as_ref(),
+                    crate::ast::TypeRef::Mut(ti, _) | crate::ast::TypeRef::Uninit(ti, _) => ti.as_ref(),
                     other => other,
                 };
                 // Strip exactly ONE pointer level (`strip_suffix`, not
@@ -19266,7 +19273,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.infer_type_param_binding(base, stripped.trim(), subst);
                 }
             }
-            crate::ast::TypeRef::Mut(inner, _) | crate::ast::TypeRef::Unsafe(inner, _) => {
+            crate::ast::TypeRef::Mut(inner, _) | crate::ast::TypeRef::Uninit(inner, _) => {
                 if let crate::ast::TypeRef::Pointer(p_inner, _) = inner.as_ref() {
                     if let Some(stripped) = concrete_c.strip_prefix("const ").unwrap_or(concrete_c).strip_suffix('*') {
                         self.infer_type_param_binding(p_inner, stripped.trim(), subst);
@@ -19760,7 +19767,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Ref(inner, _) => Self::type_ref_mentions_name(inner, names),
         }
     }
@@ -19888,7 +19895,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 134: *() = pointer-to-unit = void* (replaces `ptr` builtin).
             crate::ast::TypeRef::Pointer(inner, _) => {
                 let base = match inner.as_ref() {
-                    crate::ast::TypeRef::Mut(ti, _) | crate::ast::TypeRef::Unsafe(ti, _) => ti.as_ref(),
+                    crate::ast::TypeRef::Mut(ti, _) | crate::ast::TypeRef::Uninit(ti, _) => ti.as_ref(),
                     other => other,
                 };
                 // *() = void*.
@@ -19898,7 +19905,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let inner_c = Self::apply_type_subst_to_ref(base, subst)?;
                 Some(format!("{}*", inner_c))
             }
-            crate::ast::TypeRef::Mut(inner, _) | crate::ast::TypeRef::Unsafe(inner, _) => {
+            crate::ast::TypeRef::Mut(inner, _) | crate::ast::TypeRef::Uninit(inner, _) => {
                 if let crate::ast::TypeRef::Pointer(p_inner, _) = inner.as_ref() {
                     // *mut () = void*.
                     if matches!(p_inner.as_ref(), crate::ast::TypeRef::Unit(_)) {
@@ -43594,7 +43601,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 118.5: Mut/Unsafe are transparent wrappers.
             TypeRef::Pointer(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Ref(inner, _) => self.ensure_novaopt_decls_for_typeref(inner),
         }
     }

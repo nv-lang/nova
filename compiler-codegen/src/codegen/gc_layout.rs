@@ -178,7 +178,7 @@ struct FieldClass {
 /// which recurse through them.  Returns the inner non-wrapper `TypeRef`.
 fn strip_modifiers(t: &TypeRef) -> &TypeRef {
     match t {
-        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
             strip_modifiers(inner)
         }
         other => other,

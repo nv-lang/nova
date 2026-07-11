@@ -1,0 +1,14 @@
+// §10a rename (Plan 174.5, D216 amend, 2026-07-11) — postfix pointee form
+// `*unsafe T` (pointer to possibly-uninit T) is renamed to `*uninit T`.
+// Sibling of d216_unsafe_type_modifier_renamed_neg.nv (bare value-wrapper
+// form); this file covers the pointer form specifically. The UNRENAMED
+// `*unsafe fn(...)` fn-pointer-type composition (D216 §10) is a DIFFERENT
+// shape (inner is `Func`) and does NOT trigger this error — see
+// d216_ptr_methods_174_5.nv / nova_tests plan118_1_7 for that coverage.
+//
+// EXPECT_COMPILE_ERROR E_UNSAFE_TYPE_MODIFIER_RENAMED
+
+module neg.d216_unsafe_ptr_modifier_renamed_neg
+
+fn bad(p *unsafe int) -> () {
+}

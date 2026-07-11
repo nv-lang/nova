@@ -20,8 +20,8 @@ endif
 " ro/mut/consume binding triad. Plan 97 (D142): handler retracted.
 syntax keyword novaDeclaration fn type alias effect protocol const module import export as use test external extern lemma
 
-" Storage / visibility / safety modifiers (D184, D220, D216)
-syntax keyword novaModifier ro mut consume priv pub unsafe
+" Storage / visibility / safety modifiers (D184, D220, D216; uninit = §10a rename Plan 174.5)
+syntax keyword novaModifier ro mut consume priv pub unsafe uninit
 
 " Control flow
 syntax keyword novaConditional if else match

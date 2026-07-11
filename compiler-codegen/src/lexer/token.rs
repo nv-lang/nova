@@ -96,10 +96,24 @@ pub enum TokenKind {
     /// Plan 114 (D184): retracted in favour of `ro`. Lexer still recognizes
     /// the lexeme `readonly` so parser can emit `E_KW_REMOVED_READONLY`.
     KwReadonly,
-    /// Plan 118 (D216 §8, D2 amend): `unsafe` keyword.
-    /// Used: `*unsafe T` modifier (Ф.1), `unsafe { ... }` block (Ф.3),
-    /// `#unsafe` attribute on fn declarations (Ф.3).
+    /// Plan 118 (D216 §8, D2 amend); §10a rename (Plan 174.5, 2026-07-11):
+    /// `unsafe` keyword. The possibly-uninit type-modifier use (`*unsafe T` /
+    /// `unsafe T`) was RENAMED to `uninit` (see `KwUninit`) — `unsafe` in
+    /// type position is now a hard error (`E_UNSAFE_TYPE_MODIFIER_RENAMED`)
+    /// EXCEPT the legacy fn-pointer composition `*unsafe fn(...)` /
+    /// `*extern "C" unsafe fn(...)` (D216 §10 «unsafe fn pointer», which
+    /// encodes call-requires-unsafe, NOT possibly-uninit data — intentionally
+    /// NOT renamed). Still used: `unsafe { ... }` block, `unsafe fn` /
+    /// `external unsafe fn` declaration attribute — both UNCHANGED by the
+    /// §10a rename.
     KwUnsafe,
+    /// §10a rename (Plan 174.5, 2026-07-11): `uninit` — the possibly-uninit
+    /// type-modifier, renamed off `unsafe` to decouple «possibly-uninit
+    /// pointee/value» from «unsafe operation». `uninit T` (value-wrapper,
+    /// MaybeUninit-style) / `*uninit T` (pointer to possibly-uninit T,
+    /// postfix pointee). Does NOT affect `unsafe { }` blocks or `unsafe fn`
+    /// attributes — see `KwUnsafe`.
+    KwUninit,
     /// Plan 118.5 V3 §V3.4 → RETIRED in Plan 138.5 (2026-06-11): the `safe`
     /// type-position propagation-stopper is gone. Token still produced so the
     /// parser can emit a precise `E_SAFE_RETIRED` diagnostic in type position.
@@ -264,6 +278,7 @@ impl TokenKind {
             TokenKind::KwRo => "`ro`",
             TokenKind::KwReadonly => "`readonly`",
             TokenKind::KwUnsafe => "`unsafe`",
+            TokenKind::KwUninit => "`uninit`",
             TokenKind::KwSafe => "`safe`",
             TokenKind::KwPriv => "`priv`",
             TokenKind::KwPub => "`pub`",

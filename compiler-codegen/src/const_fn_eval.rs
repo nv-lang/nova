@@ -1199,7 +1199,7 @@ fn type_size_or_align_resolved_d(
         // `unsafe T` for non-pointer T transparently recurses: `unsafe int`
         // = 8 bytes (same as int). Matches §V2.3 zero-cost wrapper invariant.
         TypeRef::Pointer(_, _) => Some(8),
-        TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+        TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
             type_size_or_align_resolved_d(inner, is_align, type_decls, depth + 1)
         }
         _ => None,

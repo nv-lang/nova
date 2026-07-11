@@ -632,7 +632,7 @@ fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
             });
         }
         // Plan 118 D216 §1 / Plan 118.5: typed pointer `*T` family.
-        // V2 canonical form: bare Pointer = `*T` (ro); Mut/Unsafe are wrappers
+        // V2 canonical form: bare Pointer = `*T` (ro); Mut/Uninit are wrappers
         // that may wrap Pointer (e.g. `*mut T` = Mut(Pointer(T))) or other types.
         TypeRef::Pointer(inner, _) => {
             let source = super::collector::render_type_for_doc(ty);
@@ -651,10 +651,16 @@ fn write_typeref_structural(w: &mut JsonWriter, ty: &crate::ast::TypeRef) {
                 write_typeref_structural(w, inner);
             });
         }
-        TypeRef::Unsafe(inner, _) => {
+        // §10a rename (Plan 174.5, 2026-07-11): `Uninit` = `uninit T`
+        // (renamed possibly-uninit data modifier), OR the UNRENAMED legacy
+        // fn-pointer shape `unsafe fn(...)` (D216 §10) when `inner` is
+        // `Func`. `source` (rendered via `render_type_for_doc`) already
+        // carries the correct keyword either way; `kind` is a structural
+        // label, not surface syntax — kept uniform.
+        TypeRef::Uninit(inner, _) => {
             let source = super::collector::render_type_for_doc(ty);
             w.field_object("structural_type", |w| {
-                w.field_str("kind", "unsafe_wrap");
+                w.field_str("kind", "uninit_wrap");
                 w.field_str("source", &source);
                 write_typeref_structural(w, inner);
             });

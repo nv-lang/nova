@@ -243,7 +243,7 @@ fn type_ref_base_name(ty: &TypeRef) -> Option<String> {
         TypeRef::Array(..) | TypeRef::FixedArray(..) => Some("Vec".to_string()),
         TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Uninit(inner, _)
         | TypeRef::Pointer(inner, _) => type_ref_base_name(inner),
         _ => None,
     }

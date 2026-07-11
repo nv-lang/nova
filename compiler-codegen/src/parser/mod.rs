@@ -170,6 +170,32 @@ fn pointer_prefix_modifier_error(modifier: &str, span: Span) -> Diagnostic {
     )
 }
 
+/// **§10a rename (Plan 174.5, 2026-07-11):** build the
+/// `E_UNSAFE_TYPE_MODIFIER_RENAMED` diagnostic emitted when the `unsafe`
+/// keyword appears as a possibly-uninit type-modifier (`unsafe T` value-
+/// wrapper or `*unsafe T` pointer, T not `Func`). The type-modifier was
+/// renamed to `uninit` to decouple «possibly-uninit pointee/value» from
+/// «unsafe operation» — `unsafe { }` blocks and `unsafe fn` /
+/// `external unsafe fn` declaration attributes are UNCHANGED, as is the
+/// legacy fn-pointer composition `*unsafe fn(...)` / `*extern "C" unsafe
+/// fn(...)` (D216 §10 — encodes call-requires-unsafe, not possibly-uninit
+/// data, so it keeps the `unsafe` spelling).
+fn unsafe_type_modifier_renamed_error(span: Span) -> Diagnostic {
+    Diagnostic::new(
+        "[E_UNSAFE_TYPE_MODIFIER_RENAMED] the possibly-uninit type-modifier \
+         `unsafe` is renamed to `uninit` (§10a rename, Plan 174.5 / D216 \
+         amend, 2026-07-11) — use `uninit T` (value-wrapper) instead of \
+         `unsafe T`, and `*uninit T` (pointer to possibly-uninit T) instead \
+         of `*unsafe T`. This does NOT affect `unsafe { ... }` blocks or \
+         `unsafe fn` / `external unsafe fn` declaration attributes — those \
+         keep the `unsafe` spelling. The fn-pointer-type composition \
+         `*unsafe fn(...)` / `*extern \"C\" unsafe fn(...)` (D216 §10) is \
+         ALSO unchanged (it encodes «call requires unsafe», not \
+         possibly-uninit data).".to_string(),
+        span,
+    )
+}
+
 /// **Plan 147 Ф.2 (D246, 3-axis L3):** `*ro T` is redundant — a bare `*T`
 /// IS the ro-pointee canon (`*T ≡ *ro T` universally). Emit a hard error with
 /// a fix-it to `*T`. Distinct from `*mut T` (the single mut-pointee opt-in,
@@ -6304,37 +6330,65 @@ impl Parser {
                 // value-T modifier order/redundancy checks retired (see KwRo).
                 return Ok(TypeRef::Mut(Box::new(inner), span));
             }
-            // **Plan 118.5 Ф.2.2 / D216 V2 §V2.2-§V2.3 (2026-06-04):** universal
-            // right-binding rule — `unsafe T` type-level modifier. Parses
-            // recursively (same template as KwRo arm above). Marks T's
-            // safety contracts off (init/layout/aliasing/identity) —
-            // MaybeUninit-style first-class wrapper. Two orthogonal axes:
-            //   `unsafe * T` → Unsafe(Pointer(T)) — possibly-null ptr к valid T
-            //   `* unsafe T` → Pointer(Unsafe(T)) — valid ptr к possibly-uninit T
-            // Read enforcement E_UNSAFE_T_READ_REQUIRES_WRAP — Ф.4 work.
+            // **Plan 118.5 Ф.2.2 / D216 V2 §V2.2-§V2.3 (2026-06-04); §10a
+            // rename (Plan 174.5, 2026-07-11):** the possibly-uninit
+            // type-modifier was RENAMED `unsafe` → `uninit` (see the
+            // `KwUninit` arm below) to decouple «possibly-uninit
+            // pointee/value» from «unsafe operation». `unsafe` in type
+            // position is now legal ONLY for the UNRENAMED legacy fn-pointer
+            // composition (D216 §10 «unsafe fn pointer» — encodes
+            // call-requires-unsafe, not possibly-uninit data): postfix
+            // `*unsafe fn(...)` and bare `unsafe fn(...)`. Any other inner
+            // type (data, non-`Func`) is a hard error pointing at `uninit`.
             TokenKind::KwUnsafe => {
                 self.bump();
                 let inner = self.parse_type()?;
                 let span = start.merge(inner.span());
-                // **Plan 138.5 (2026-06-11):** FORBID prefix `unsafe *`
-                // (= `Unsafe(Pointer(..))`). This RETIRES the
-                // `Unsafe(Pointer)` construction path entirely — the
-                // outer-unsafe-pointer form is gone. Rationale (138.5 §1):
-                // (1) std usage = 0; (2) it collided with `Option[*T]` as a
-                // second "nullable mut ptr" spelling; (3) `Option[unsafe * T]`
-                // lost NPO → 16B footgun. Nullable is now ONLY `Option[*T]`
-                // (NPO); FFI nullable-uninit is `Option[*unsafe T]`.
-                // KEPT: postfix `*unsafe T` (= `Pointer(Unsafe(T))`, valid
-                // ptr to possibly-uninit T) and the `unsafe T` value-wrapper
-                // (§V2.3) — both bottom out at a non-pointer base, so they do
-                // NOT trip is_pointer_or_wraps_pointer(). `is_pointee` allows
-                // the postfix pointee form `*unsafe *mut T`.
+                // Prefix `unsafe *` (= `Uninit(Pointer(..))`) stays forbidden
+                // regardless of payload — mirrors the KwUninit arm below (and
+                // the pre-rename behaviour for this token).
                 if !is_pointee && inner.is_pointer_or_wraps_pointer() {
                     return Err(pointer_prefix_modifier_error("unsafe", span));
                 }
-                // **Plan 138.5 §V3.4 retire (2026-06-11):** unsafe-unsafe
+                // §10a: `unsafe` survives in type position ONLY wrapping a
+                // `Func` payload (the D216 §10 fn-pointer-type shape). Any
+                // other inner — migrate to `uninit`.
+                if !matches!(inner, TypeRef::Func { .. }) {
+                    return Err(unsafe_type_modifier_renamed_error(span));
+                }
+                return Ok(TypeRef::Uninit(Box::new(inner), span));
+            }
+            // **§10a rename (Plan 174.5, 2026-07-11):** `uninit T` — the
+            // possibly-uninit type-level modifier (was `unsafe T`). Parses
+            // recursively (same template as KwRo/KwMut arms above). Marks
+            // T's safety contracts off (init/layout/aliasing/identity) —
+            // MaybeUninit-style first-class wrapper. Two orthogonal axes:
+            //   `uninit * T` → Uninit(Pointer(T)) — possibly-null ptr к valid T
+            //   `* uninit T` → Pointer(Uninit(T)) — valid ptr к possibly-uninit T
+            // Read enforcement E_UNSAFE_T_READ_REQUIRES_WRAP — Ф.4 work.
+            TokenKind::KwUninit => {
+                self.bump();
+                let inner = self.parse_type()?;
+                let span = start.merge(inner.span());
+                // **Plan 138.5 (2026-06-11), carried over §10a:** FORBID
+                // prefix `uninit *` (= `Uninit(Pointer(..))`). This RETIRES
+                // the `Uninit(Pointer)` construction path entirely — the
+                // outer-uninit-pointer form is gone. Rationale (138.5 §1):
+                // (1) std usage = 0; (2) it collided with `Option[*T]` as a
+                // second "nullable mut ptr" spelling; (3) `Option[uninit * T]`
+                // lost NPO → 16B footgun. Nullable is now ONLY `Option[*T]`
+                // (NPO); FFI nullable-uninit is `Option[*uninit T]`.
+                // KEPT: postfix `*uninit T` (= `Pointer(Uninit(T))`, valid
+                // ptr to possibly-uninit T) and the `uninit T` value-wrapper
+                // (§V2.3) — both bottom out at a non-pointer base, so they do
+                // NOT trip is_pointer_or_wraps_pointer(). `is_pointee` allows
+                // the postfix pointee form `*uninit *mut T`.
+                if !is_pointee && inner.is_pointer_or_wraps_pointer() {
+                    return Err(pointer_prefix_modifier_error("uninit", span));
+                }
+                // **Plan 138.5 §V3.4 retire (2026-06-11):** uninit-uninit
                 // redundancy check retired (was prefix-chain scaffolding).
-                return Ok(TypeRef::Unsafe(Box::new(inner), span));
+                return Ok(TypeRef::Uninit(Box::new(inner), span));
             }
             // **Plan 138.5 / D216 V2/V3 simplification (2026-06-11):** the
             // `safe` type-modifier (propagation-stopper, §V3.4) is RETIRED.
@@ -6353,14 +6407,15 @@ impl Parser {
                      prefix pointer form; with prefix pointer modifiers \
                      removed there is nothing to stop. Standalone `safe T` \
                      was always equivalent to `T` — just drop it. Pointer \
-                     pointee-safety is expressed by `*unsafe T` (postfix) and \
+                     pointee-safety is expressed by `*uninit T` (postfix) and \
                      nullability by `Option[*T]`."
                         .to_string(),
                     span,
                 ));
             }
-            // Plan 118 D216 §1-3: typed pointer family `*T` / `*ro T` /
-            // `*mut T` / `*unsafe T`. Modifier `Ro` is default (omitted ≡ ro).
+            // Plan 118 D216 §1-3; §10a rename (Plan 174.5, 2026-07-11):
+            // typed pointer family `*T` / `*ro T` / `*mut T` / `*uninit T`.
+            // Modifier `Ro` is default (omitted ≡ ro).
             // Chain order: `*mut *ro T` = mut pointer на ro pointer на T
             // (recursive PointerType production, left-to-right).
             TokenKind::Star => {
@@ -6374,33 +6429,37 @@ impl Parser {
                         "[E_INVALID_POINTER_MODIFIER] `*const T` is not valid \
                          Nova syntax — use `*ro T` (canonical readonly) or \
                          just `*T` (default readonly per D216 §1). Nova \
-                         pointer modifiers: `ro` / `mut` / `unsafe`. \
+                         pointer modifiers: `ro` / `mut` / `uninit`. \
                          `const` is a keyword для const declarations, не \
                          pointer modifier.".to_string(),
                         span,
                     ));
                 }
-                // **Plan 138.5 / D216 V2/V3 final model (2026-06-11):** Star
-                // is a pure pointer constructor — NO inline modifier
-                // consumption. The recursive parse_type() call below picks up
-                // the (postfix) pointee modifier via its own right-binding
-                // arms, producing the CANONICAL forms:
+                // **Plan 138.5 / D216 V2/V3 final model (2026-06-11); §10a
+                // rename (Plan 174.5, 2026-07-11):** Star is a pure pointer
+                // constructor — NO inline modifier consumption. The
+                // recursive parse_type() call below picks up the (postfix)
+                // pointee modifier via its own right-binding arms, producing
+                // the CANONICAL forms:
                 //   `*T`        → Pointer(T)              (default ≡ ro target)
                 //   `*ro T`     → Pointer(Readonly(T))    (ro target)
                 //   `*mut T`    → Pointer(Mut(T))         (writable target)
-                //   `*unsafe T` → Pointer(Unsafe(T))      (ptr to uninit T)
+                //   `*uninit T` → Pointer(Uninit(T))      (ptr to possibly-uninit T)
+                // Plus the UNRENAMED legacy fn-pointer shape `*unsafe fn(...)`
+                // (D216 §10 — call-requires-unsafe, not this rename's scope).
                 //
-                // The pointee modifier (`ro`/`mut`/`unsafe`) is parsed by the
-                // KwRo/KwMut/KwUnsafe arms as the recursive `inner`; since
-                // that `inner` bottoms out at a non-pointer base it does NOT
-                // trip the prefix-pointer guard there. The PREFIX forms
-                // (`ro * T` / `mut * T` / `unsafe * T`) are now hard errors
+                // The pointee modifier (`ro`/`mut`/`uninit`, or legacy
+                // `unsafe` before `fn`) is parsed by the KwRo/KwMut/KwUninit/
+                // KwUnsafe arms as the recursive `inner`; since that `inner`
+                // bottoms out at a non-pointer base it does NOT trip the
+                // prefix-pointer guard there. The PREFIX forms
+                // (`ro * T` / `mut * T` / `uninit * T`) are now hard errors
                 // (`E_POINTER_PREFIX_MODIFIER`) — pointer reassignability is
                 // a binding concern (`let`/`mut` before the name, D36), not a
                 // type wrapper, and nullability is `Option[*T]` (NPO) only.
                 //
                 // Mark the immediately-following type as the POSTFIX pointee:
-                // a leading `ro`/`mut`/`unsafe` here is the pointee modifier
+                // a leading `ro`/`mut`/`uninit` here is the pointee modifier
                 // (allowed even if the pointee is itself a pointer, e.g.
                 // `*mut *ro T`), NOT a forbidden prefix.
                 self.pointee_ctx = true;
@@ -6457,9 +6516,13 @@ impl Parser {
             // здесь ловит тег в любой type-position. Только ABI `"C"` валиден на
             // fn-указательном типе (Nova-ABI пишется без тега — просто `fn`);
             // `extern "nova" fn`-ТИП бессмыслен (= `fn`), отвергается.
-            // `*extern "C" unsafe fn` = `Pointer(Unsafe(Func{extern_abi:C}))` —
+            // `*extern "C" unsafe fn` = `Pointer(Uninit(Func{extern_abi:C}))` —
             // тег на Func, `unsafe` — постфиксный pointee-модификатор (D216 §10),
-            // зеркалит `*unsafe fn` = `Pointer(Unsafe(Func))`.
+            // зеркалит `*unsafe fn` = `Pointer(Uninit(Func))`. §10a rename
+            // (Plan 174.5, 2026-07-11) НЕ трогает эту композицию — здесь
+            // `unsafe` остаётся `unsafe` (call-requires-unsafe, не
+            // possibly-uninit data); AST-вариант переименован в `Uninit`
+            // (внутреннее имя), но keyword на этом сайте — по-прежнему `unsafe`.
             TokenKind::KwExtern => {
                 self.bump(); // extern
                 let abi_span = self.peek().span;
@@ -6486,8 +6549,11 @@ impl Parser {
                     }
                 }
                 // Optional `unsafe` between `extern "C"` and `fn` (D216 §10
-                // composition: `*extern "C" unsafe fn`). Wrap the Func in an
-                // `Unsafe` value-wrapper, mirroring the `*unsafe fn` shape.
+                // composition: `*extern "C" unsafe fn`). §10a rename (Plan
+                // 174.5) does NOT touch this — `unsafe` here stays `unsafe`.
+                // Wrap the Func in a `Uninit` value-wrapper, mirroring the
+                // `*unsafe fn` shape (same AST node the KwUnsafe arm above
+                // produces for the legacy fn-pointer form).
                 let unsafe_kw = self.eat(&TokenKind::KwUnsafe).is_some();
                 if !matches!(self.peek().kind, TokenKind::KwFn) {
                     let span = self.peek().span;
@@ -6503,7 +6569,7 @@ impl Parser {
                 let func = self.parse_fn_type_signature(start, Some("C".to_string()))?;
                 if unsafe_kw {
                     let span = func.span();
-                    Ok(TypeRef::Unsafe(Box::new(func), span))
+                    Ok(TypeRef::Uninit(Box::new(func), span))
                 } else {
                     Ok(func)
                 }
@@ -6829,7 +6895,7 @@ impl Parser {
             }
             TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Pointer(inner, _)
             | TypeRef::Ref(inner, _) => Self::collect_free_typevars(inner, out),
             TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}

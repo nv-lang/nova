@@ -1,0 +1,34 @@
+// §10a rename (Plan 174.5, D216 amend, 2026-07-11) — the possibly-uninit
+// type-modifier `unsafe T` / `*unsafe T` is renamed to `uninit T` / `*uninit T`
+// to decouple «possibly-uninit pointee/value» from «unsafe operation». The
+// legacy fn-pointer-type composition `*unsafe fn(...)` (D216 §10 — encodes
+// call-requires-unsafe, not possibly-uninit data) is DELIBERATELY unrenamed
+// and must keep working unchanged. Neg coverage (renamed-keyword hard error):
+// d216_unsafe_type_modifier_renamed_neg.nv / d216_unsafe_ptr_modifier_renamed_neg.nv.
+module spec_tests.conformance
+
+fn uninit_value_param(x uninit int) -> () {
+}
+
+fn uninit_ptr_param(p *uninit int) -> () {
+}
+
+unsafe fn triple_174_5(x i64) -> i64 {
+    x * 3
+}
+
+test "§10a rename — uninit T / *uninit T parse and type-check" {
+    uninit_value_param(0)
+    mut buf int = 5
+    unsafe {
+        ro p = &buf
+        uninit_ptr_param(p)
+        assert(p.read() == 5)
+    }
+}
+
+test "§10a rename — legacy *unsafe fn(...) composition unaffected" {
+    ro fp *unsafe fn(i64) -> i64 = triple_174_5
+    ro v = unsafe { fp(14) }
+    assert(v == 42)
+}

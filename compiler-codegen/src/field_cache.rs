@@ -436,7 +436,7 @@ fn is_reference_type_ref_with_depth(
         // by Р1, but peel defensively) — a pointer alias to T's storage.
         TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Uninit(inner, _)
         | TypeRef::Ref(inner, _) => {
             is_reference_type_ref_with_depth(inner, registry, depth + 1)
         }
@@ -2206,7 +2206,7 @@ fn type_ref_leaf_name(t: &TypeRef) -> Option<String> {
         TypeRef::Named { path, .. } => path.last().cloned(),
         TypeRef::Readonly(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _) => type_ref_leaf_name(inner),
+        | TypeRef::Uninit(inner, _) => type_ref_leaf_name(inner),
         _ => None,
     }
 }
@@ -10633,7 +10633,7 @@ fn C mut @do() -> int {
         }), span);
         let ro_arr = TypeRef::Readonly(Box::new(arr_int.clone()), span);
         let mut_arr = TypeRef::Mut(Box::new(arr_int.clone()), span);
-        let unsafe_arr = TypeRef::Unsafe(Box::new(arr_int.clone()), span);
+        let unsafe_arr = TypeRef::Uninit(Box::new(arr_int.clone()), span);
         let reg = TypeKindRegistry::new();
         assert!(is_reference_type_ref(&ro_arr, &reg), "ro []int should be ref-type");
         assert!(is_reference_type_ref(&mut_arr, &reg), "mut []int should be ref-type");

@@ -28,7 +28,7 @@ use std::path::PathBuf;
 const ACTIVE: &[&str] = &[
     "module", "import", "use", "export", "external", "extern",
     "fn", "type", "effect", "alias", "protocol",
-    "const", "mut", "consume", "ro", "priv", "pub", "unsafe",
+    "const", "mut", "consume", "ro", "priv", "pub", "unsafe", "uninit",
     "if", "else", "match", "for", "while", "loop", "in", "return", "break", "continue",
     "test", "with", "throw", "as", "is",
     "spawn", "supervised", "parallel", "detach", "blocking", "interrupt",

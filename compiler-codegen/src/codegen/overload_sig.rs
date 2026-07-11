@@ -31,7 +31,7 @@ pub(crate) fn typeref_sig(t: &TypeRef) -> String {
     match t {
         // Strip compile-time modifier wrappers — they do not change the
         // overload identity for our purposes (`ro f32` ≡ `f32` for dispatch).
-        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
             typeref_sig(inner)
         }
         TypeRef::Named { path, generics, .. } => {

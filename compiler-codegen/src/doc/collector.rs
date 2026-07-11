@@ -880,16 +880,21 @@ fn render_type(ty: &crate::ast::TypeRef) -> String {
         // D176 (Plan 108) / Plan 114 D184: ro T — display as "ro T"
         TypeRef::Readonly(inner, _) => format!("ro {}", render_type(inner)),
         // Plan 118 D216 §1 / Plan 118.5: typed pointer `*T` family.
-        // V2 canonical form: Mut/Unsafe wrap Pointer, e.g. `Mut(Pointer(T))` = `*mut T`.
-        // Bare Pointer (no Mut/Unsafe wrapper) = `*T` (read-only).
+        // V2 canonical form: Mut/Uninit wrap Pointer, e.g. `Mut(Pointer(T))` = `*mut T`.
+        // Bare Pointer (no Mut/Uninit wrapper) = `*T` (read-only).
         TypeRef::Pointer(inner, _) => format!("*{}", render_type(inner)),
         TypeRef::Mut(inner, _) => match inner.as_ref() {
             TypeRef::Pointer(p_inner, _) => format!("*mut {}", render_type(p_inner)),
             _ => format!("mut {}", render_type(inner)),
         },
-        TypeRef::Unsafe(inner, _) => match inner.as_ref() {
+        // §10a rename (Plan 174.5, 2026-07-11): `Uninit` wrapping `Func`
+        // keeps the `unsafe` spelling (D216 §10 legacy fn-pointer shape);
+        // any other payload renders as `uninit` (renamed possibly-uninit
+        // data modifier).
+        TypeRef::Uninit(inner, _) => match inner.as_ref() {
             TypeRef::Pointer(p_inner, _) => format!("*unsafe {}", render_type(p_inner)),
-            _ => format!("unsafe {}", render_type(inner)),
+            TypeRef::Func { .. } => format!("unsafe {}", render_type(inner)),
+            _ => format!("uninit {}", render_type(inner)),
         },
         // Plan 184: `ref T` — ограниченный ссылочный тип.
         TypeRef::Ref(inner, _) => format!("ref {}", render_type(inner)),

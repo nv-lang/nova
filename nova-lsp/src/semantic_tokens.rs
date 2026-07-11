@@ -490,7 +490,7 @@ impl Context {
             | TypeRef::FixedArray(_, inner, _)
             | TypeRef::Readonly(inner, _)
             | TypeRef::Mut(inner, _)
-            | TypeRef::Unsafe(inner, _)
+            | TypeRef::Uninit(inner, _)
             | TypeRef::Pointer(inner, _)
             | TypeRef::Ref(inner, _) => self.record_typeref(inner, idents, type_params),
             TypeRef::Tuple(elems, _) => {
@@ -1141,7 +1141,7 @@ fn is_keyword(kind: &TokenKind) -> bool {
         kind,
         KwModule | KwImport | KwUse | KwExport | KwExternal | KwExtern | KwFn | KwType
             | KwProtocol | KwEffect | KwAlias | KwLet | KwConst | KwMut | KwConsume | KwRo
-            | KwReadonly | KwUnsafe | KwSafe | KwPriv | KwPub | KwIf | KwElse | KwMatch | KwFor
+            | KwReadonly | KwUnsafe | KwUninit | KwSafe | KwPriv | KwPub | KwIf | KwElse | KwMatch | KwFor
             | KwWhile | KwLoop | KwIn | KwReturn | KwBreak | KwContinue | KwTest | KwTrue
             | KwFalse | KwWith | KwThrow | KwAs | KwIs | KwSpawn | KwSupervised | KwParallel
             | KwDetach | KwBlocking | KwInterrupt | KwForbid | KwRealtime | KwAnd | KwOr | KwNot

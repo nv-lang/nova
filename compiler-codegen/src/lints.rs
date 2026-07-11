@@ -512,7 +512,7 @@ fn is_pointer_like(tr: &TypeRef) -> bool {
     match tr {
         TypeRef::Pointer(..) => true,
         // Plan 118.5 D216 V2: Mut/Unsafe — transparent wrappers; recurse.
-        TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => is_pointer_like(inner),
+        TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => is_pointer_like(inner),
         TypeRef::Named { path, .. } => path.last().map_or(false, |n| n == "ptr"),
         _ => false,
     }
@@ -534,7 +534,7 @@ fn walk_typeref_for_a22(tr: &TypeRef, warnings: &mut Vec<LintWarning>) {
             // Plan 118.5 D216 V2: Pointer is 2-tuple; Mut/Unsafe — wrappers.
             TypeRef::Pointer(_, span)
             | TypeRef::Mut(_, span)
-            | TypeRef::Unsafe(_, span)
+            | TypeRef::Uninit(_, span)
             | TypeRef::Ref(_, span) => *span,
         };
         warnings.push(LintWarning {
@@ -563,7 +563,7 @@ fn walk_typeref_for_a22(tr: &TypeRef, warnings: &mut Vec<LintWarning>) {
         // Plan 118.5 D216 V2: Pointer 2-tuple + Mut/Unsafe transparent wrappers.
         | TypeRef::Pointer(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Uninit(inner, _)
         | TypeRef::Ref(inner, _) => walk_typeref_for_a22(inner, warnings),
         TypeRef::Tuple(items, _) => {
             for it in items { walk_typeref_for_a22(it, warnings); }
@@ -947,7 +947,7 @@ fn collect_tr(tr: &TypeRef, out: &mut HashSet<String>) {
         // transparent wrappers — recurse on inner.
         TypeRef::Pointer(inner, _)
         | TypeRef::Mut(inner, _)
-        | TypeRef::Unsafe(inner, _)
+        | TypeRef::Uninit(inner, _)
         | TypeRef::Ref(inner, _) => collect_tr(inner, out),
     }
 }

@@ -3119,7 +3119,7 @@ binding** результата у caller'а (reassign), не к pointee. У ук
 |---|---|---|
 | `-> *T` (≡ `-> *ro T`) | read-only | bind-site (`ro p`/`mut p`) |
 | `-> *mut T` | writable | bind-site (`ro p`/`mut p`) |
-| `-> *unsafe T` | possibly-uninit (FFI) | bind-site (`ro p`/`mut p`) |
+| `-> *uninit T` | possibly-uninit (FFI) | bind-site (`ro p`/`mut p`) |
 
 ```nova
 fn alloc_cell() -> *mut int                 // writable target
@@ -7551,8 +7551,9 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 > - `*()` — opaque pointer (pointer to unit type = `void*` in C)
 > - `*T` — typed pointer to T (read-only pointee by default, D216)
 > - `*mut T` — typed pointer to mutable T (writable pointee)
-> - `*unsafe T` — pointer to possibly-uninit T (pointee contracts off; pointer
->   itself non-null — nullable = `Option[*unsafe T]`, Plan 138.5 §1/§V2.4)
+> - `*uninit T` — pointer to possibly-uninit T (pointee contracts off; pointer
+>   itself non-null — nullable = `Option[*uninit T]`, Plan 138.5 §1/§V2.4;
+>   §10a rename Plan 174.5 2026-07-11: was `*unsafe T`)
 >
 > ⚠️ **AMENDED by Plan 118 (D216)** — `ptr` redefined as
 > `type ptr Option[*unsafe ()]` newtype над nullable unsafe void pointer
@@ -8145,8 +8146,11 @@ Plan 118 family scope:
 > `[M-139.1-hash-irreducible-crypto-seed]`). **9/10 str-методов — Nova-body**
 > (`@concat`/`@compare` закрывают Ф.3); operator-lowering `+`/`<`/… —
 > сознательно C (perf, option (b)).
-- `*unsafe T` — pointer к possibly-uninit T (pointee init/layout contracts off);
-  также degraded-форма после арифметики (alignment/bounds gone)
+- `*uninit T` — pointer к possibly-uninit T (pointee init/layout contracts off);
+  также degraded-форма после арифметики (alignment/bounds gone). **§10a rename
+  (Plan 174.5, 2026-07-11):** was `*unsafe T` — see the amendment at the end
+  of this D-block. (Distinct from the UNRENAMED `*unsafe fn(...)` fn-pointer-
+  type composition, §10 — that keeps `unsafe`.)
 - **Size:** pointer-width (8 bytes на 64-bit; bootstrap = 64-bit only)
 - **ABI:** `T*` в C (compiler emits соответствующий C-type для FFI)
 - **Validity:** **always non-null** (compile-time invariant); nullable
@@ -8187,24 +8191,25 @@ Reassignability указателя — L1 binding (`ro`/`mut`, D36), незав�
 d246_redundant_return_mut_neg; позитив-граница d246_param_ro_mut_view.
 
 **Запрет prefix-модификаторов (`E_POINTER_PREFIX_MODIFIER`):** токены
-`ro`/`mut`/`unsafe` непосредственно **перед** `*` в type-position запрещены.
-Расширяет `E_INVALID_POINTER_MODIFIER` (D216 §1, commit 6d6a18a2ab7).
+`ro`/`mut`/`uninit` (§10a rename, было `unsafe`) непосредственно **перед** `*`
+в type-position запрещены. Расширяет `E_INVALID_POINTER_MODIFIER` (D216 §1,
+commit 6d6a18a2ab7).
 
 ```nova
 mut * T             // ❌ E_POINTER_PREFIX_MODIFIER — prefix перед *
 ro * T              // ❌ E_POINTER_PREFIX_MODIFIER
-unsafe * T          // ❌ E_POINTER_PREFIX_MODIFIER
+uninit * T          // ❌ E_POINTER_PREFIX_MODIFIER
 ```
 
 Сообщение: «модификаторы указателя — на pointee (после `*`: `*mut T`/`*ro T`/
-`*unsafe T`) или на binding (`mut x *T`); перед `*` не допускаются». Валидно:
-`*mut T`/`*ro T`/`*unsafe T`/`*T` (pointee, postfix), `mut name *T` (binding).
+`*uninit T`) или на binding (`mut x *T`); перед `*` не допускаются». Валидно:
+`*mut T`/`*ro T`/`*uninit T`/`*T` (pointee, postfix), `mut name *T` (binding).
 
 ```nova
 *T              // pointee ro (≡ *ro T, D246); pointee-mut из типа, не от binding
 *ro T           // ❌ E_REDUNDANT_POINTER_RO (fix-it: *T) — избыточно
 *mut T          // explicit mut pointee — единственный опт-ин на запись *p = …
-*unsafe T       // pointer к possibly-uninit T; deref требует unsafe layer
+*uninit T       // pointer к possibly-uninit T; deref требует unsafe layer
 ```
 
 ### §2. Binding (L1) vs pointee (L3) — ортогональны ([D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee))
@@ -8620,8 +8625,8 @@ primitive `T` only, struct-`T` deferred):
 
 | Method                  | Receiver      | Returns    | C codegen                          |
 |-------------------------|---------------|------------|------------------------------------|
-| `(*ro T).read()`        | any `*T`/`*ro T`/`*mut T`/`*unsafe T` | `T`        | `(*p)`                             |
-| `(*mut T).write(v T)`   | `*mut T` / `*unsafe T`                | `nova_unit`| `((*p) = v, NOVA_UNIT)`            |
+| `(*ro T).read()`        | any `*T`/`*ro T`/`*mut T`/`*uninit T` | `T`        | `(*p)`                             |
+| `(*mut T).write(v T)`   | `*mut T` / `*uninit T`                | `nova_unit`| `((*p) = v, NOVA_UNIT)`            |
 
 Detection: `obj_ty` ends в `*` AND not a known Nova typedef
 (`Nova_*`/`NovaArray_*`/`NovaOpt_*`/`NovaRes_*`/`NovaBox_*`/`NovaValue_*`)
@@ -8654,8 +8659,8 @@ Closes followup `[M-118.1-typed-pointer-instance-methods]` для primitive
 | `int` | `*T` | unsafe |
 | `*ro T` | `*mut T` | unsafe |
 | `*mut T` | `*ro T` / `*T` | ✓ |
-| `*T` | `*unsafe T` | ✓ |
-| `*unsafe T` | `*T` | unsafe |
+| `*T` | `*uninit T` | ✓ |
+| `*uninit T` | `*T` | unsafe |
 | `*T1` | `*T2` (T1≠T2) | unsafe |
 | `fn → *fn` | ✓ если captureless | `E_CLOSURE_HAS_ENV` иначе |
 | `*fn → fn` | unsafe | wraps |
@@ -8953,15 +8958,15 @@ canonical, prefix запрещён** (один указатель-модифик
 |-------|-------------------------------|
 | `ro T` | `Readonly(T)` — value-T wrapper, codegen-transparent (KEPT) |
 | `mut T` | `Mut(T)` — value-T wrapper, codegen-transparent (KEPT, §V2.2b) |
-| `unsafe T` | `Unsafe(T)` — value-T wrapper, MaybeUninit (KEPT, §V2.3) |
+| `uninit T` | `Uninit(T)` — value-T wrapper, MaybeUninit (KEPT, §V2.3; §10a rename Plan 174.5 2026-07-11, was `unsafe T`) |
 | `consume T` | consume wrapper (receiver/field/decl, см. D162) |
 | `*T` | `Pointer(T)` — pointee **ro** (≡ `*ro T`, D246; pointee-mut из типа, не от binding) |
 | `*ro T` | ❌ `E_REDUNDANT_POINTER_RO` (избыточно: `*T` уже ro; fix-it `*T`) — D246 |
 | `*mut T` | `Pointer(Mut(T))` — explicit mut pointee (единственный опт-ин на `*p = …`) |
-| `*unsafe T` | `Pointer(Unsafe(T))` — **CANONICAL** pointer к possibly-uninit T |
+| `*uninit T` | `Pointer(Uninit(T))` — **CANONICAL** pointer к possibly-uninit T (§10a rename, was `*unsafe T`) |
 | `mut * T` | ❌ `E_POINTER_PREFIX_MODIFIER` (prefix перед `*` запрещён; use `mut x *T` binding) |
 | `ro * T` | ❌ `E_POINTER_PREFIX_MODIFIER` |
-| `unsafe * T` | ❌ `E_POINTER_PREFIX_MODIFIER` (RETIRED `Unsafe(Pointer)`; nullable = `Option[*T]`, FFI nullable-uninit = `Option[*unsafe T]`) |
+| `uninit * T` | ❌ `E_POINTER_PREFIX_MODIFIER` (RETIRED `Unsafe(Pointer)`; nullable = `Option[*T]`, FFI nullable-uninit = `Option[*uninit T]`) |
 
 ### §V2.1 — universal right-binding rule (value-T modifiers)
 
@@ -9004,27 +9009,27 @@ FINAL chains читаются с postfix-pointee; reassignability — отдел
 ```nova
 *T                  // Pointer(T) ≡ Pointer(Readonly(T)) — pointee ro (D246; *T ≡ *ro T)
 *mut T              // Pointer(Mut(T))       — explicit mut pointee (единственный опт-ин)
-*unsafe T           // Pointer(Unsafe(T))    — valid (non-null) ptr к possibly-uninit T
+*uninit T           // Pointer(Uninit(T))    — valid (non-null) ptr к possibly-uninit T (§10a rename)
 ro p *mut *T        // L3 из типа (D246): внешний *mut (writable), внутренний *T (ro pointee)
                     // позиционно-независимо; binding ro = только p не reassignable
 ro p *T             // binding ro: p фиксирован; pointee ro
 mut p *T            // binding mut: p reassignable; pointee ro (*p = … ❌ — L1 mut ≠ mut-pointee)
 mut p *mut T        // binding mut: p reassignable; pointee mut, writable (*p = … ✅)
-mut p *unsafe u8    // binding mut: p reassignable; pointee possibly-uninit byte
+mut p *uninit u8    // binding mut: p reassignable; pointee possibly-uninit byte
 ```
 
 RETRACTED (теперь parse error `E_POINTER_PREFIX_MODIFIER`):
 ```nova
 mut * T             // ❌ — вместо: binding `mut p *T`
 ro  * T             // ❌ — вместо: binding `let p *T` (или `ro p *T`)
-unsafe * T          // ❌ — RETIRED Unsafe(Pointer); вместо: Option[*T] / *unsafe T (pointee)
+uninit * T          // ❌ — RETIRED Unsafe(Pointer); вместо: Option[*T] / *uninit T (pointee)
 mut * ro * T        // ❌ — вместо: `mut p *ro *... ` postfix-chain
-ro p mut * unsafe T // ❌ — вместо: `mut p *unsafe T` (binding mut + pointee unsafe)
+ro p mut * uninit T // ❌ — вместо: `mut p *uninit T` (binding mut + pointee uninit)
 ```
 
-Канонический пример FFI out-param (FINAL):
+Канонический пример FFI out-param (FINAL; §10a rename Plan 174.5 2026-07-11 — was `*unsafe u8`):
 ```nova
-external fn os_read(fd int, buf *unsafe u8, n int) -> int
+external fn os_read(fd int, buf *uninit u8, n int) -> int
 //                              pointee uninit byte; buf non-null *; OS fills, returns count.
 // Если sam buf переприсваивается в теле — `mut buf` на стороне caller's binding.
 ```
@@ -11103,6 +11108,70 @@ per binding-context relaxation. Symmetric `mut x ro T` уже работал
 - `[M-138.5-pointer-prefix-enforce]` — Ф.2 parser/checker enforce
   `E_POINTER_PREFIX_MODIFIER` + retire `safe`/`Unsafe(Pointer)` + migrate
   prefix usages (Plan 138.5).
+
+### §10a rename — `unsafe` type-modifier → `uninit` (Plan 174.5, 2026-07-11)
+
+> **Status:** ✅ **DONE 2026-07-11** (sonnet, worktree `nova-nt` branch
+> `uninit-rename-d216`). Closes the `[M-174.5-pointer-ops-methods]` Ф.0
+> rename-sweep followup («Rename `unsafe T`→`uninit T`»).
+
+**Что переименовано.** Слово `unsafe` было перегружено: (1) **type-модификатор**
+`*unsafe T` (pointer к possibly-uninit T) и value-wrapper `unsafe T`
+(MaybeUninit-style, §V2.3/§V3 выше); (2) **блок** `unsafe { }` и **fn-атрибут**
+`unsafe fn`/`external unsafe fn` (D2 amend, §8). Это амендирует **только (1)**:
+
+- `*unsafe T` → **`*uninit T`** (pointer к possibly-uninit T, postfix pointee)
+- `unsafe T` (value-wrapper) → **`uninit T`**
+- Все производные формы выше в этом D-блоке (`mut x uninit T`,
+  `Option[*uninit T]`, `*mut uninit T`, chain-примеры, таблицы §1/§11a/§12/
+  §V2/§V3) — та же замена.
+
+**Что НЕ переименовано (сохраняет `unsafe`):**
+
+- `unsafe { ... }` блок (D2 amend, §8) — без изменений.
+- `unsafe fn` / `external unsafe fn` declaration-атрибут (Plan 118.1.7,
+  `FnDecl.unsafe_attr`) — без изменений.
+- **`*unsafe fn(...)` / `*extern "C" unsafe fn(...)`** fn-pointer-type
+  композиция (§10 «unsafe fn as part of fn-ptr type») — **сознательно НЕ
+  переименована**. Хотя структурно это тот же AST-wrapper (`Pointer(Uninit(Func))`,
+  внутреннее имя варианта переименовано в `Uninit` для единообразия), семантика
+  ортогональна possibly-uninit data: это «указатель на fn, вызов которой требует
+  unsafe» (mirrors `unsafe fn` call-site enforcement,
+  `E_UNSAFE_CALL_REQUIRES_WRAP`/`E_UNSAFE_FN_PTR_COERCION`), а не «данные могут
+  быть не инициализированы». Парсер различает по payload: `unsafe` легален в
+  type-позиции ТОЛЬКО когда обёрнутый тип — `Func` (постфикс `*unsafe fn(...)`
+  или bare `unsafe fn(...)`); для любого другого (data) типа — hard error.
+
+**Цель.** Развязать «possibly-uninit pointee/value» (теперь `uninit`) от
+«unsafe-операции» (блок/fn-атрибут/fn-ptr-композиция остаются `unsafe`) —
+два независимых понятия больше не делят одно слово в type-позиции.
+
+**Миграция.** `std/`, `spec_tests/conformance/` — **0 вхождений** type-модификатора
+`*unsafe T`/`unsafe T` на момент рена́йма (грепом подтверждено); миграции кода
+не потребовалось. `nova_tests/` (не гейт корректности) содержит старые
+`*unsafe T`-фикстуры (plan118/plan118_5*) — не мигрированы этим заходом (вне
+gate, см. `feedback-nova-tests-not-correctness-gate`).
+
+**Hard error.** `unsafe` в type-позиции, обёртывающий НЕ-`Func` (т.е. старая
+data-uninit форма) → **`E_UNSAFE_TYPE_MODIFIER_RENAMED`** с подсказкой
+использовать `uninit`. Neg-тесты:
+`spec_tests/conformance/neg/d216_unsafe_type_modifier_renamed_neg.nv` (bare
+value-wrapper форма) и `d216_unsafe_ptr_modifier_renamed_neg.nv` (pointer
+форма). Pos-тест (uninit T / *uninit T / legacy `*unsafe fn(...)` compose):
+`spec_tests/conformance/d216_uninit_rename_174_5.nv`.
+
+**Реализация (компилятор):** `TokenKind::KwUninit` (новый keyword `uninit`,
+`lexer/mod.rs`); `TypeRef::Unsafe` → `TypeRef::Uninit` (AST variant rename,
+`ast/mod.rs`) + `PointerModifier::Unsafe` → `PointerModifier::Uninit`
+(`ast/mod.rs`, Ty-level tag, `types/mod.rs`); parser `parse_type` — новый
+`KwUninit`-arm (generic, любой T) + сужение существующего `KwUnsafe`-arm до
+ТОЛЬКО `Func`-payload (иначе `E_UNSAFE_TYPE_MODIFIER_RENAMED`), обе арки
+production `TypeRef::Uninit` (`parser/mod.rs`); display/render-функции
+(`types/mod.rs` ×4, `emit_c.rs`, `doc/collector.rs`, `doc/render_json.rs`,
+`nova-lsp/src/symbol.rs`) — Func-conditional keyword при печати диагностик
+(`unsafe` если payload = `Func`, иначе `uninit`). Editor-хайлайтеры (VSCode
+tmLanguage, vim syntax, Zed scm-comment, `syntax_highlight_conformance.rs`
+ACTIVE-список) — `uninit` добавлен рядом с `unsafe` (D278).
 
 ### D52 amend (Plan 124.8 Ф.2)
 

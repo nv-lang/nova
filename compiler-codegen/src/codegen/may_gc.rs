@@ -146,7 +146,7 @@ impl NodeFlags {
 /// (allocating).
 fn typeref_is_function(t: &TypeRef) -> bool {
     match t {
-        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Unsafe(inner, _) => {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
             typeref_is_function(inner)
         }
         // A plain named scalar / user type, array, fixed-array, tuple, unit,
