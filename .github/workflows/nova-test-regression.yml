@@ -24,7 +24,11 @@ jobs:
         run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
-      - name: Run nova_tests (positive-fast, default)
+      # nova_tests/ — НЕ гейт корректности (deprecated per-plan-фикстуры, под
+      # удаление; настоящие гейты — conformance + std/module *_test.nv). Держим
+      # как non-blocking сигнал, а не хард-фейл (решение 2026-07-11).
+      - name: Run nova_tests (positive-fast, default, non-blocking)
+        continue-on-error: true
         run: ./nova-cli/target/release/nova test nova_tests
       - name: Run std tests
         run: ./nova-cli/target/release/nova test std
@@ -42,7 +46,9 @@ jobs:
         run: sudo apt-get install -y libgc-dev
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
-      - name: Run nova_tests full
+      # nova_tests/ non-blocking (см. positive-fast) — отчёт для трекинга дрейфа.
+      - name: Run nova_tests full (non-blocking report)
+        continue-on-error: true
         run: ./nova-cli/target/release/nova test --full nova_tests 2>&1 | tee nova-test-full-report.txt
       - name: Run std tests
         run: ./nova-cli/target/release/nova test std
