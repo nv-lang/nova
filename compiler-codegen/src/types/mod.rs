@@ -30868,6 +30868,22 @@ impl UnsafeCtx {
                 }
             }
             ExprKind::As(inner, ty) => {
+                // unsafe-cluster / E_UNSAFE_UNUSED (D216 §21 map addendum,
+                // 2026-07-11): an `as`-cast to `char` is a value-range-unsafe
+                // scalar conversion — an out-of-range int yields an INVALID
+                // `char`, so codegen forbids the bare cast (directs to
+                // `char.from(n)?`) and the ONLY escape hatch is an `unsafe { }`
+                // wrap (as in std/runtime/char.nv's own `char.from` impl, which
+                // cannot call itself). A `char`-target cast at depth>0 is thus a
+                // real unsafe op — mark the enclosing block used, else the
+                // legitimate wrap false-positives E_UNSAFE_UNUSED.
+                if self.depth > 0 {
+                    if let crate::ast::TypeRef::Named { path, .. } = ty.strip_modifiers() {
+                        if path.last().map_or(false, |s| s == "char") {
+                            self.mark_unsafe_used();
+                        }
+                    }
+                }
                 // Plan 118 A24+A25: cast `expr as *fn(...)` checks:
                 //   A24 — closure-with-env cast banned (E_CLOSURE_HAS_ENV)
                 //   A25 — fn-with-Fail cast banned (E_CALLBACK_THROWS_OVER_C_ABI)

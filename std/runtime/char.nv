@@ -55,6 +55,6 @@ export fn u8.try_from(c char) -> Result[u8, TryFromCharError] {
     if c as int > 0xFF {
         Err(TryFromCharError)
     } else {
-        Ok(unsafe { c as int as u8 })
+        Ok(c as int as u8)
     }
 }

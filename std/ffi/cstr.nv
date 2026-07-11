@@ -23,7 +23,7 @@
 // confirmed D26 null-term invariant subsumes the need for prefix-literal
 // syntax. CStr API ships как str method, не как lexer extension.
 
-module std.ffi.cstr
+module ffi.cstr
 
 // Plan 139 Ф.4 — D26 §3 Nul-termination resolution. Returns a `*u8` that is
 // GUARANTEED NUL-terminated at offset `s.len()`: zero-copy when the str's
