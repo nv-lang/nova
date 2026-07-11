@@ -101,7 +101,8 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 > **Роль этого раздела — НОРМАТИВНЫЕ правила** маппинга типов и форм `extern` на
 > границе. **Примеры и рецепты** (полные биндинги libsqlite3/libpng, C-ABI-
 > шпаргалка, указатели/`CStr`, а также **как подключить native-артефакты к сборке**
-> через `[ffi]`/`[ffi.staticlib]`) — [ffi-cookbook](ffi-cookbook.md) (единый
+> через `[ffi]` — единственный канон, `[ffi.staticlib]` retracted, Plan 195) —
+> [ffi-cookbook](ffi-cookbook.md) (единый
 > источник, не дублируется здесь). Пошаговый туториал «сделать модуль с нуля» —
 > [authoring-a-module](guide/authoring-a-module.md).
 
