@@ -40154,3 +40154,102 @@ git-зависимость/несуществующую директорию/н�
 несущими [ffi]); вне окна watchdog-восстановления.
 Коммиты (ext-dep-resolver-03-1): a10b2d5e9 (checkpoint резолвер+path_dep_ffi),
 9cc5472c1 (12 фикстур rev-3 D78).
+───────────────────────────────────────────────────────────────────────────────
+
+Plan 195 Ф.1-Ф.2 — TLS-бэкенд rustls (Rust) → mbedTLS (C), Rust-free
+(ветка tls-mbedtls-195, worktree nova-175, 2026-07-11). Модель: sonnet.
+
+Задача 1 — vcpkg mbedTLS: compiler-codegen/vcpkg.json (gitignored,
+per-checkout, как и в главном репо) → dependencies=["mbedtls"] (только
+mbedtls — bdwgc/z3 не нужны локально, GC резолвится через NOVA_GC_LIB_DIR
+override на главный репо, z3-backend feature по умолчанию выкл.). `vcpkg
+install --triplet x64-windows-static --x-manifest-root=. --x-install-root=
+./vcpkg_installed` — mbedTLS 3.6.2 (TLS 1.3 в этой сборке ВКЛЮЧЁН, though не
+обязателен — тесты допускают 1.2 ИЛИ 1.3). Либы БЕЗ lib-префикса на Windows:
+mbedtls.lib/mbedx509.lib/mbedcrypto.lib.
+
+Задача 2 — nova_rt/tls_c_shim.c (новый, ~700 строк): C-реализация ВСЕХ
+tls_*-символов из tls_shim.h (сигнатуры не менялись — .nv-фасад std/tls/*.nv
+не тронут). Один TU, `#ifdef NOVA_USE_MBEDTLS` переключает реальный
+бэкенд/Q11-заглушку (паттерн brotli_shim.c, D337) — заменяет отдельный
+tls_stub.c (удалён).
+- Sans-I/O: mbedTLS BIO-колбэки (send/recv) читают/пишут два in-memory
+  буфера (in_buf/out_buf сессии); tls_read_tls/tls_write_tls — единственный
+  канал Nova-стороны к ним. tls_client_new/tls_server_new эагерно делают
+  первый handshake-шаг (порождают ClientHello синхронно) — сохраняет
+  контракт прежнего rustls-шима (shim_link_test.nv это пинит).
+- SystemRoots = встроенный Mozilla CA bundle (nova_rt/tls_mozilla_roots.h,
+  240KB, 150 корневых сертов, извлечён из git-for-windows curl ca-bundle.crt,
+  тот же lineage что был у Rust webpki-roots) — НЕ Windows-системный стор:
+  сохраняет EXISTING контракт (T4-SystemRoots-NEG тестирует именно
+  "самоподписанный не в бандле", не "OS store").
+- Pinned (SPKI SHA-256): der_tlv/spki_der — прямой порт байт-в-байт логики
+  из старого tls_shim/src/lib.rs (не пересериализация через mbedtls_pk_write,
+  риск несовпадения с openssl-пином) + mbedtls_ssl_conf_verify колбэк.
+  БАГ №1 (найден тестами, пофикшен в том же заходе): authmode должен быть
+  MBEDTLS_SSL_VERIFY_OPTIONAL, НЕ NONE — с NONE mbedTLS вообще пропускает
+  вызов f_vrfy (mbedtls_ssl_verify_certificate() short-circuits), пиннинг
+  никогда не отвергал неверный пин. С OPTIONAL верификация выполняется
+  (колбэк вызывается), а решение отвергнуть/принять — целиком на колбэке
+  (ненулевой возврат фатален независимо от authmode).
+- mTLS (клиент+сервер серт), ALPN (mbedtls_ssl_conf_alpn_protocols),
+  error-классификация (mbedtls rc + mbedtls_ssl_get_verify_result flags →
+  TLS_ERR_* коды, таблица не менялась).
+
+Задача 3 — убрать Rust целиком: compiler-codegen/tls_shim/ (Rust-крейт,
+rustls+ring) удалён; compiler-codegen/nova_rt/tls_stub.c удалён (заглушка
+теперь внутри tls_c_shim.c). manifest.rs: FfiStaticlibConfig/
+ResolvedStaticlib/resolve_ffi_staticlib/staticlib_is_fresh/staticlib_walk_rs/
+staticlib_file_name + парсинг секции [ffi.staticlib] убраны целиком (не
+tls-specific — владелец ретрактировал ВЕСЬ cargo-staticlib-паттерн, plan 195:
+"Никакого [ffi.staticlib] build=\"cargo\" как пользовательского паттерна").
+test_runner.rs: TlsConfig/detect_tls/tls_shim_lib_is_fresh/tls_shim_walk_rs/
+c_file_uses_any_symbol убраны; добавлен MbedtlsConfig/detect_mbedtls (мирроринг
+detect_boehm — env override NOVA_MBEDTLS_LIB_DIR/INCLUDE_DIR → local vcpkg →
+VCPKG_ROOT → Linux/macOS system headers). uses_tls-маркер (c_file_uses_tls)
+БЕЗ изменений — решает, компилируется ли tls_c_shim.c; когда да — mbedTLS
+линкуется если найден, иначе тот же TU со встроенным Q11-стабом. std/nova.toml:
+секция [ffi.staticlib] убрана целиком — std/tls больше не «пользовательский
+native-модуль» (компилируется/линкуется тем же путём, что net.c/brotli_shim.c,
+безусловно на факт использования, БЕЗ манифест-декларации вообще).
+
+Побочный фикс (обнаружен при разгейте std/http https): std/tls/handshake_test.nv
+не имел module-private `extern "nova" fn panic` (мирроринг std/net/tcp_test.nv —
+folder-module peer не может полагаться на prelude panic при компиляции как
+зависимости ВНЕШНЕГО импортёра). Стандалон nova test std/tls этого не ловил
+(panic виден из др. файла того же folder-CU); проявилось только при
+std/http/transport/real.nv (транзитивный import std.tls). НЕ backend-specific.
+
+Обнаружен, НЕ чинился (вне периметра 195, честный маркер): std/http/transport/
+real.nv — CC-FAIL на type-erasure коллизии ErrSource(NetError)/TlsError(NetError)
+(оба enum'а имеют одноимённый вариант `Net(NetError)` — mono-cache коллизия,
+`nova_make_TlsError_Net` вызывается там где ожидается ErrSource-конструктор).
+УЖЕ задокументированный follow-up [M-178-errsource-tls] (see std/http/error.nv
+комментарий "Typed ErrSource.Tls(TlsError) — followup") — TLS-провал в http
+пока несётся через ErrorKind.Tls+текст, не ErrSource. Никогда не проходил ни
+на одном backend (маскировался panic-багом выше); не TLS-backend-specific
+(коллизия — общий Nova codegen mono-класс, чинится отдельным заходом).
+
+Гейты: cargo build (compiler-codegen + nova-cli) — чисто. cargo test --lib
+manifest:: = 21/21. nova test std/tls = 29/29 (Pinned верный/неверный/wrong-
+SNI, SystemRoots-NEG, ALPN +/-, config, error, handshake smoke + hostname-
+mismatch + empty-SNI/garbage-PEM, mTLS Required/Required-NEG/Optional×2,
+shim_link). nova test spec_tests/conformance = 875/875 (было заявлено как
+91/0 — устаревшее число; факт на HEAD = 875/0, δ0 от TLS-правок). nova test
+std/http = mock-suite (server/client/serdejson) 4 файла/38 тестов зелёные;
+std/http/transport/real (единственный реальный e2e TLS-через-http тест) —
+CC-FAIL см. выше, честный маркер. nova check std — δ0 (я не трогал ни одного
+.nv-файла кроме handshake_test.nv; 25 pre-existing FAIL идентичны, в основном
+neg/-фикстуры = ожидаемые провалы + известные gaps типа D78-mismatch в
+std/ffi/cstr.nv). Полный nova test std (983 файла) — TIMEOUT-флот (17 из 20
+FAIL) — подтверждено артефактом parallel-load (jobs=16), НЕ регрессия:
+изолированный повтор 3 протаймаутивших модулей с jobs=2 = 3/3 PASS
+моментально; 3 остальных FAIL (testing/property nova_fn_len undefined symbol,
+collections/vec_lazy type-codegen, ffi/cstr D78-mismatch) — pre-existing,
+не туда my changes (не FFI/native-linking код). Grep-инвариант: 0 Rust-crate
+в TLS-пути (compiler-codegen/tls_shim/ удалён; "rustls"/"cargo build
+--release" остались только в doc-комментариях, описывающих ЧТО заменено).
+
+Коммиты (tls-mbedtls-195): bf8a32073 (Ф.1 C-шим), 18f8f6ee8 (Ф.2 Rust
+removal), c6714e7fa (fix Pinned authmode), 54993ddaa (fix panic extern),
+ba0b0a4e9 (docs [ffi.staticlib] retracted). Ветка запушена в github.
