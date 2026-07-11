@@ -29,10 +29,19 @@
 > архитектура, не временный обход. `[M-time-now-schema-mismatch]` закрыт частично **по конструкции**.
 > **with_timeout retraction ✅ SHIPPED (2026-07-10):** `within[T]`/`with_timeout[T]` удалены из
 > `std/concurrency/cancellation.nv` (Plan 173 §3a п.4, `[M-174-retract-with-timeout]` CLOSED).
-> **Остаётся TODO:** Ф.5 auto-idle-advance (MVP explicit-advance через `sleep()` уже работает); per-OS
-> dedicated monotonicity test; M:N-контракт `mut_clock` под реальной concurrent-нагрузкой (документирован,
-> не verified тестом); полная 755+-сайт nova_tests-миграция int-wire→typed (не требуется — wire остаётся int
-> by design, option C).
+> **Ф.5 auto-idle-advance ✅ ЗАКРЫТ (2026-07-10, ветка `time-tails-175`, merged в main):** deadline-order
+> держит под кооперативным `spawn`; armed M:N деградирует безопасно без гарантии порядка (маркер
+> `[M-175-vclock-armed-mn-scope-identity]`). Полная гарантия порядка под РЕАЛЬНОЙ concurrent-нагрузкой
+> (armed M:N, не кооперативный spawn) вынесена в отдельный **[Plan 189](189-virtual-clock-mn-ordering.md)**
+> (`📋 PROPOSED`) — НЕ входит в закрытие этого плана, но ядро 175 больше не блокировано на ней.
+> **`[M-rate-limiter-monotonic]` ✅ ЗАКРЫТ (2026-07-11, ветка `time-175`, sonnet):** `std/concurrency/rate_limiter.nv`
+> (`TokenBucket`) переведён с wall-clock `Time.now_unix_ms()` на `Monotonic` — блокер (отсутствующий
+> `now_monotonic_ns`-vtable-слот) снят ещё Ф.3(a), сама миграция оставалась не сделана; ad-hoc `.max(0)`-clamp
+> на регресс заменён нативным D318 saturate-to-zero.
+> **Остаётся TODO (не блокеры закрытия ядра):** per-OS dedicated monotonicity test
+> (`[M-monotonic-per-os-isolated-tests]`, Priority L, home = simplifications.md секция Plan 65 — явно deferred
+> на Plan 58 CI-matrix follow-up, недостижимо в single-OS сессии); полная 755+-сайт nova_tests-миграция
+> int-wire→typed (не требуется — wire остаётся int by design, option C).
 > **Маркер:** `[M-175-time-system-rework]`. **Запуск:** «**выполни план 175**» (план самодостаточен — вся информация ниже).
 > **D-блоки (NEW):** D316 (typed Time-surface + единый источник), D317 (Duration/instant overflow-policy), D318
 > (Monotonic non-regression + clock-source contract). Amend: D124, D237, prelude-`Time`-decl. (Резерв подтверждён

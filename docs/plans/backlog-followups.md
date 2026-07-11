@@ -2343,24 +2343,6 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   (access.nv вместо views_test.nv, замечено на vec 2026-07-07); self-import гэп
   vec_lazy/vec_iter (E_EXTENSION_METHOD_NEEDS_IMPORT на самих себя, 2026-07-07).
 
-- **[M-rate-limiter-monotonic]** (2026-07-08, P3, Wave: при закрытии vtable-слота Plan 175 Ф.3) —
-  `std/concurrency/rate_limiter.nv` (`TokenBucket`) временно считает refill по wall-clock
-  `Time.now_unix_ms()` вместо `Monotonic` (D124), хотя refill-таймингу правильнее опираться на
-  монотонные часы (NTP-скачок wall-clock иначе даёт искажённый elapsed). Переход блокирован
-  эмпирически подтверждённым gap'ом: `Monotonic.now()` — compiler-builtin, читающий
-  `Time.now_monotonic_ns()`; `.nv`-схема эффекта `Time` (`std/prelude/effects.nv:158`) метод
-  объявляет, но рантайм-vtable `NovaVtable_Time` (`nova_rt/effects.h`) слот `now_monotonic_ns`
-  НЕ несёт — попытка замокать его в `th.fixed_ms`/`th.mut_clock` (`std/testing/handlers.nv`)
-  даёт `CC-FAIL: no member named 'now_monotonic_ns' in 'NovaVtable_Time'`. Это ровно
-  задокументированный gate «мокабельность через эффект — Ф.3-gated» (`std/time/duration.nv:1296-1300`,
-  Plan 175 §Ф.2/§Ф.3) — не новый баг, эмпирическое подтверждение существующего. **Митигация на
-  месте:** `.max(0)`-clamp на elapsed-дельте (регресс часов назад → refill на паузу, tokens не
-  портятся) + существующий capacity-cap (скачок вперёд → полное ведро, не переполнение); детерминированный
-  тест на регресс добавлен. **Тело задачи:** когда `now_monotonic_ns`-слот появится в
-  `NovaVtable_Time` (Plan 175 Ф.3) — переключить `TokenBucket.last_refill_ms` на `Monotonic`,
-  `@refill` на `Monotonic.now()` + `@elapsed_since`, вернуть мокабельность тестам через
-  Time-handler (добавить `now_monotonic_ns()` в `th.fixed_ms`/`th.mut_clock`).
-
 - **[M-sha256-array-repeat-literal-parser]** ✅ **WORKAROUND APPLIED 2026-07-08** — конкретный
   repro давно известного «array literal parser»-gap (STATUS.md `_experimental/crypto`: «4 FAIL»,
   `[M-183-gc-vec-value-heap-tracing]` уже упоминал «литерал-повтор `[0; N]` — известный отдельный
