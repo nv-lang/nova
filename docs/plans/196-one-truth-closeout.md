@@ -37,8 +37,13 @@
   (c) аннотация литералов + empty-sum в чекере (`f1_expr_inner`, строго аддитивно);
   (d) prove-dead→delete: trace-инструментация доказывает 0 попаданий в
       литеральные/empty-sum армы → снос.
-- **Ф.2 — checker-extension:** non-primitive Match + non-generic RecordLit/TupleLit
-  (по прецеденту RecordLit-гейта; generic — позже).
+- **Ф.2 — checker-extension:** ✅ ВЫПОЛНЕНО 2026-07-11 (be70b65b2+8a73c6eb8). Match +
+  RecordLit{Some} **удалены** (0 хитов — оказались shadowed БЕЗУСЛОВНЫМИ дубликатами-
+  предшественниками «6n»/«6l», т.е. мёртвые-редундантные — §0-находка про дубль-каналы).
+  TupleLit-элементы аннотированы (concrete_value_named). **TupleLit-арм ОСТАВЛЕН** —
+  корень НЕ generic, а **пробел scope-резолюции чекера** `[M-196-tuplelit-ident-scope]`:
+  Ident-элементы не резолвятся через `infer_expr_type(el, scope)`, хотя резолвятся ниже
+  через legacy `var_types` — отдельный атом (Ident-scope-плюмбинг), не kind-гейт Ф.2.
 - **Ф.3 — non-infer-consumer sweep:** `emit_expr`/`emit_call`/`emit_generic_type_instance`/
   … (12 свежих raw-сайтов в 10 функциях) → `debt_`, восстановить инвариант.
 - **Ф.4 — глубокое ядро (масштаб 172.12):** generic-method-return mono-движок =
