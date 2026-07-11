@@ -1,0 +1,35 @@
+// D13/D371 regression ([panic-assert-intrinsic], 2026-07-11): `panic`/
+// `assert`/`debug_assert` must resolve with ZERO import — even under
+// `#no_prelude` — exactly like the primitive types. Before this fix, a
+// `#no_prelude` module calling any of these bare hit `undefined
+// identifier` at type-check (Plan 62.B had moved them off the compiler's
+// hardcoded builtin-names list into an ordinary `extern "nova" fn`
+// declaration in std/prelude/runtime.nv, resolved only via prelude
+// cross-file auto-import). ~9 std files (std/collections/vec/core.nv,
+// std/ffi/cstr.nv, std/net/tcp_test.nv, std/runtime/string/core.nv,
+// std/time/civil/{date,period,zoned}.nv, std/time/duration.nv,
+// std/tls/handshake_test.nv) worked around it with a local module-private
+// `extern "nova" fn panic` redeclaration — since removed
+// (closes [M-tls-handshake-test-panic-undefined-multifile]).
+//
+// Own subdirectory (NOT the shared `spec_tests.conformance` folder-module
+// used by every top-level file in `spec_tests/conformance/`): `#no_prelude`
+// is a whole-compile-unit attribute — same isolation rationale as
+// `partial_prelude/d371_partial_prelude_collections.nv`. D29 `parent.target`
+// naming: `no_prelude_panic_assert.<file-stem>`.
+#no_prelude
+module no_prelude_panic_assert.d13_no_prelude_panic_assert_intrinsic
+
+// No `import std.prelude.*` anywhere in this file — panic/assert/
+// debug_assert must still resolve.
+fn clamp_positive(n int) -> int {
+    assert(n != -1)
+    debug_assert(n != -1, "sentinel -1 not allowed")
+    if n < 0 { panic("unreachable: clamp_positive on negative n") }
+    n
+}
+
+test "panic/assert/debug_assert resolve with zero import under #no_prelude" {
+    assert(clamp_positive(5) == 5)
+    debug_assert(clamp_positive(0) == 0)
+}

@@ -85,6 +85,43 @@ nova jit-server             # долгоиграющий процесс с JIT-�
 
 ## D13. Panic vs эффекты: что НЕ является эффектом
 
+> **AMEND (2026-07-11, [panic-assert-intrinsic]) — `panic`/`assert`/
+> `debug_assert` — always-available compiler intrinsics, не
+> prelude-declarations.** Plan 62.B (see below, «Базовые функции») had
+> moved these three off a hardcoded compiler-known-names list into a real
+> `extern "nova" fn` declaration in `std/prelude/runtime.nv`, resolved
+> purely through cross-file prelude auto-import (R27) + facade re-export
+> (R26). That regressed `#no_prelude` modules ([D371](07-modules.md#d371-prelude-control-attributes--no_prelude-prelude-allowshadow)):
+> a module opting out of prelude (needed e.g. to break an import cycle,
+> like `std/runtime/string/core.nv`'s prelude→string→prelude cycle) no
+> longer saw the declaration and hit `undefined identifier` on any bare
+> `panic(...)`/`assert(...)`/`debug_assert(...)` call — forcing ~9 std
+> files to work around it with a local module-private
+> `extern "nova" fn panic` redeclaration (closed
+> `[M-tls-handshake-test-panic-undefined-multifile]`).
+>
+> **Rule (restored, extended):** `panic`, `assert` (both the 1-arg and
+> D84 2-arg-with-message overload), and `debug_assert` are resolved in
+> **every** module — with or without prelude, `#no_prelude` included —
+> with **no import and no redeclaration**, exactly like the primitive
+> types (`int`/`bool`/`never`/…) and `Self`. The canonical
+> `extern "nova" fn panic/assert/debug_assert` declarations stay in
+> `std/prelude/runtime.nv` (still drive `nova doc`, the D84 arity-overload
+> table, and future `W_PRELUDE_SHADOW` warnings for a user who
+> re-declares one of these names in a prelude-having module) — they are
+> the canonical *documentation*, not the sole *resolution path*. `exit`,
+> `print`, `println`, `unreachable`, `suppressed` are **unaffected** —
+> they still require `runtime` in scope (full prelude or
+> `#prelude(runtime)`) per [D371](07-modules.md#d371-prelude-control-attributes--no_prelude-prelude-allowshadow)'s
+> table.
+>
+> Codegen was never affected by this — `panic`/`assert`/`debug_assert`
+> lowering in `emit_c.rs` is (and always was) purely name-keyed, matching
+> the callee identifier directly, independent of any declaration/registry
+> lookup (same "class C compiler intrinsic" bucket as `bench.opaque[T]`'s
+> anti-optimization barrier). Only the type-checker's identifier-
+> resolution pass needed to (re-)learn these three names.
+
 > **AMEND (Plan 140.3, 2026-06-13) — assert тегает `error_kind = NOVA_THROW_PANIC`.**
 > `assert`/`debug_assert` failure = panic (D13), но рантайм `nova_assert_loc` тегал
 > fail-frame только `error_msg`, оставляя `error_kind = NOVA_THROW_USER` → пойманный
@@ -1224,6 +1261,13 @@ Spread разрешён: `print(...parts)`.
 `assert`/`debug_assert` — **обычные функции, не keyword'ы**. Вызываются
 со скобками как любой fn-call: `assert(x > 0)`. Build-mode семантика —
 [D81](#d81). Failure любого assert'а — panic ([D13](#d13)), не Fail.
+
+`panic`/`assert`/`debug_assert` — **always-available compiler
+intrinsics** (D13 AMEND, 2026-07-11): резолвятся в любом модуле без
+import'а, включая `#no_prelude` ([D371](07-modules.md#d371-prelude-control-attributes--no_prelude-prelude-allowshadow)).
+`exit`/`print`/`println` остаются частью `runtime`-подмножества
+prelude — им нужен `#prelude(runtime)` (или полный prelude) при
+частичном/выключенном prelude.
 
 #### `never` — bottom-тип (uninhabited)
 

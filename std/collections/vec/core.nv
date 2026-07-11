@@ -36,7 +36,9 @@
 // subset this module's API actually needs (see `_module.nv` for the
 // folder-wide directive) —
 //   core      → Option/Result/Ordering (return types, `@pop()->Option[T]`),
-//   runtime   → assert/panic (bounds checks, test bodies),
+//   runtime   → kept for other prelude.runtime API surface (`panic`/`assert`
+//               themselves are always-on compiler intrinsics, [panic-assert-
+//               intrinsic] 2026-07-11 — no longer why this subset is needed),
 //   collections→ Next/Iter protocols (VecIter) + StringBuilder (`@display`),
 //   protocols → Display/Clone/Index/MutIndex (`@clone`, `@display`, `v[i]`).
 // `Range` lives in the prelude facade (`std/collections/range.nv`), imported
@@ -45,15 +47,6 @@
 module collections.vec
 
 import std.runtime.raw_mem.{RawMem}
-
-// Module-private `panic` declaration (same signature as
-// `std/prelude/runtime.nv`), shared by every co-equal peer in this
-// folder-module. Mirrors `std/ffi/cstr.nv`: a module imported by user code
-// cannot rely on the prelude `panic` being visible in the *consuming* module
-// when its bodies are inlined cross-module, and a plain `import std.prelude.*`
-// would trip the R27 auto-import opt-out for every importer. A local
-// external-fn decl perturbs nothing; codegen lowers it to `nv_panic` by name.
-extern "nova" fn panic(msg str) -> never
 
 // ──────────────────────────────────────────────────────────────────────────
 // Type

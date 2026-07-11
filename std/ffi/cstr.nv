@@ -25,16 +25,6 @@
 
 module std.ffi.cstr
 
-// `panic` is codegen-special-cased (emit_c lowers it to `nv_panic` by name,
-// regardless of where it's declared). cstr.nv is loaded via ExternalRegistry,
-// which does NOT auto-inject the prelude facade — so the embedded-NUL scan
-// needs `panic` in scope here. We declare it LOCALLY (module-private, same
-// signature as std/prelude/runtime.nv) rather than `import std.prelude.*`:
-// an explicit prelude import would trip the R27 auto-import opt-out
-// (imports.rs) for EVERY module that imports cstr, stripping their
-// assert/print/... prelude. A local external-fn decl perturbs nothing.
-extern "nova" fn panic(msg str) -> never
-
 // Plan 139 Ф.4 — D26 §3 Nul-termination resolution. Returns a `*u8` that is
 // GUARANTEED NUL-terminated at offset `s.len()`: zero-copy when the str's
 // buffer is already terminated (full str / slice ending at parent len), else a
@@ -85,13 +75,10 @@ export type CStr(*u8)
 //   callers must wrap invocations in `unsafe { ... }` block.
 
 // Embedded-NUL scan: @as_cstr() panics on the first byte==0 (an interior NUL
-// would silently truncate the C-string). `panic` is in scope via the
-// module-private `extern "nova" fn panic` declared at the top of this module
-// (cstr.nv is ExternalRegistry-loaded and gets NO auto-prelude, so the prelude
-// `panic` is not visible here); codegen lowers it to `nv_panic` by name. The
-// earlier "panic needs an import which creates a cycle" deferral was wrong on
-// the cycle, but right that a plain prelude import is unusable here (it trips
-// the R27 auto-import opt-out for importers — see the note above).
+// would silently truncate the C-string). `panic` is an always-available
+// compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) — resolved here
+// with no import/redeclaration needed, regardless of cstr.nv's prelude
+// status; codegen lowers it to `nv_panic` by name.
 // [M-118.1-cstr-nul-check] CLOSED.
 // @as_cstr_unchecked() — unsafe escape hatch, scan-free (O(1)).
 

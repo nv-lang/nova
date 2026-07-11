@@ -14,11 +14,12 @@ module std.tls
 
 import std.net.{Net, TcpListener, TcpStream, SocketAddr, NetError, real_net}
 
-// Module-private `panic` decl (mirrors std/net/tcp_test.nv, plan 195 https-
-// разгейт fix): a folder-module peer cannot rely on the prelude `panic`
-// being visible when these test bodies are compiled as a dependency of an
-// external importer of `std.tls` (e.g. std/http/transport/real.nv).
-extern "nova" fn panic(msg str) -> never
+// `panic` (used below) is an always-available compiler intrinsic
+// ([panic-assert-intrinsic] 2026-07-11, closes
+// [M-tls-handshake-test-panic-undefined-multifile]) — resolved with no
+// import/redeclaration needed, including when this file's bodies are
+// compiled as a dependency of an external importer of `std.tls`
+// (e.g. std/http/transport/real.nv).
 
 fn fixture_cert() -> []u8 => embed("testdata/localhost_cert.pem")
 fn fixture_key() -> []u8 => embed("testdata/localhost_key.pem")

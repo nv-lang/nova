@@ -15,9 +15,9 @@
 
 module time.civil
 
-// Overflow-trap primitive (D317-паттерн, как std/time/duration.nv).
-extern "nova" fn panic(msg str) -> never
-
+// `panic` (overflow-trap primitive, D317-паттерн) is an always-available
+// compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) — no
+// redeclaration needed.
 
 /// Календарная дата (proleptic Gregorian) — value-record, дни от 1970-01-01.
 ///

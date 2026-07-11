@@ -1863,6 +1863,19 @@ syntax не вводится (bootstrap simplicity).
 
 ## D371. Prelude control attributes — `#no_prelude`, `#prelude(...)`, `#allow(shadow)`
 
+> **AMEND (2026-07-11, [panic-assert-intrinsic]) — `panic`/`assert`/
+> `debug_assert` opt out of this whole mechanism.** These three are
+> **always-available compiler intrinsics** ([08-runtime.md → D13
+> AMEND](08-runtime.md#d13-panic-vs-эффекты-что-не-является-эффектом)) —
+> resolved in every module regardless of `#no_prelude`/`#prelude(...)`,
+> exactly like `int`/`bool`/`never`/`Self`. They are listed under the
+> `runtime` bucket below for historical/documentation reasons (that is
+> where their canonical `extern "nova" fn` declarations still live, in
+> `std/prelude/runtime.nv`), but opting out of `runtime` — or of prelude
+> entirely via `#no_prelude` — does **not** hide them. The rest of the
+> `runtime` bucket (`exit`/`print`/`println`) is unaffected and still
+> requires `runtime` in scope.
+
 ### Что
 
 Три **pre-module атрибута** для управления auto-import prelude (D26).
@@ -1893,6 +1906,10 @@ module my.realtime
 
 // Никаких авто-импортов; Option/Result нужно явно:
 import std.prelude.core.{Option, Result}
+
+// Исключение: panic/assert/debug_assert доступны без импорта — always-
+// available compiler intrinsics (D13 AMEND, 2026-07-11), НЕ часть
+// auto-import механизма, который этот атрибут выключает.
 ```
 
 Применение: real-time/embedded (prelude содержит GC-код), bootstrap уровни,
@@ -1905,7 +1922,9 @@ import std.prelude.core.{Option, Result}
 module my.dsl
 
 // Видимо: Option/Result/Some/None/Ok/Err/Error/Ordering (core)
-// + panic/exit/assert/debug_assert/print/println (runtime).
+// + exit/print/println (runtime); panic/assert/debug_assert видимы
+// ВСЕГДА (always-available intrinsics, D13 AMEND 2026-07-11 — не
+// зависят от этого списка вовсе).
 // НЕ видимо: RuntimeError (errors), Iter (collections),
 //            From/Hash/… (protocols), Fail[E]/Time/Mem (effects).
 ```
@@ -1915,7 +1934,7 @@ module my.dsl
 | Имя | Содержимое |
 |---|---|
 | `core` | `Option`/`Result`/`Some`/`None`/`Ok`/`Err`/`Error`/`Ordering` |
-| `runtime` | `panic`/`exit`/`assert`/`debug_assert`/`print`/`println` |
+| `runtime` | `exit`/`print`/`println` (+ `panic`/`assert`/`debug_assert`, always-available regardless of this list — D13 AMEND) |
 | `errors` | `RuntimeError` (6 variants) + `ReadBufferError` |
 | `collections` | `Iter[T]` protocol |
 | `protocols` | `From`/`Into`/`Hash`/`Equal`/`Compare`/`Display` |

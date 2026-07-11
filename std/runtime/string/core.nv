@@ -12,8 +12,9 @@ import std.prelude.core.{Result, Ok, Err}
 import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
 
-extern "nova" fn panic(msg str) -> never
-
+// `panic` used below is an always-available compiler intrinsic
+// ([panic-assert-intrinsic] 2026-07-11) — no redeclaration needed even
+// under `#no_prelude`.
 
 // Длина строки в БАЙТАХ. O(1). Plan 152.1 Ф.4 (D249): единственный length-метод
 // на самом `str` — bare `@len()` / `@char_len()` ретайрнуты (lens-модель; bare

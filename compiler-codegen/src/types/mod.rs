@@ -19123,6 +19123,44 @@ impl NameResCtx {
             // без `import std.runtime.sync`. Dispatch: ExternalRegistry
             // → nova_fn_fence (free_fn_c_name ExternalRegistry-first path).
             "fence",
+            // [panic-assert-intrinsic] (2026-07-11): `panic`/`assert`/
+            // `debug_assert` — ALWAYS-available compiler intrinsics, resolved
+            // in ANY module including `#no_prelude` ones, WITHOUT import or
+            // per-file redeclaration. Root cause this closes: Plan 62.B moved
+            // these off this hardcoded list into a real `extern "nova" fn`
+            // declaration in std/prelude/runtime.nv, resolved purely via
+            // cross-file resolve (R27 auto-import + R26 facade re-export).
+            // `#no_prelude` modules (breaking the prelude→string→prelude
+            // import cycle — std/runtime/string/core.nv and 8 other files)
+            // never see that declaration, so the bare `Ident("panic")` callee
+            // failed THIS pass's `is_known` check → "undefined identifier
+            // `panic`" ([M-tls-handshake-test-panic-undefined-multifile]).
+            // Those files worked around it with a local module-private
+            // `extern "nova" fn panic` redeclaration (removed by this change
+            // — no longer needed).
+            //
+            // Return-type inference for `panic`/`exit`/`abort`/`unreachable`
+            // was ALREADY declaration-independent (hardcoded `never` arm,
+            // see the `matches!(name.as_str(), "panic" | "exit" | "abort" |
+            // "unreachable")` check in `infer_expr_type`'s `ExprKind::Call`
+            // arm). Codegen dispatch for `panic`/`assert`/`debug_assert` was
+            // ALSO already fully name-keyed (emit_c.rs `emit_call`, matches
+            // `name == "panic"` / `"assert"` / `"debug_assert"` directly —
+            // no `ExternalRegistry`/signature lookup involved, per the
+            // ExternalRegistry::NAMESPACE_OVERRIDES doc: "panic()/exit()/
+            // assert() ... class C compiler intrinsic ... hardcoded в
+            // emit_c.rs НАВСЕГДА"). So this `builtins` entry was the ONLY
+            // missing piece — it just teaches the NAME-RESOLUTION pass what
+            // codegen already knew.
+            //
+            // The canonical `extern "nova" fn panic/assert/debug_assert`
+            // declarations in std/prelude/runtime.nv are KEPT (not removed):
+            // they still drive `nova doc`, the D89 2-arg `assert` overload
+            // arity, and W_PRELUDE_SHADOW future warnings for prelude-having
+            // modules — this `builtins` entry is a permissive FALLBACK that
+            // only matters when no declaration is reachable (`#no_prelude`).
+            // See spec/decisions/08-runtime.md D13 amendment (2026-07-11).
+            "panic", "assert", "debug_assert",
         ]
         .iter()
         .map(|s| s.to_string())

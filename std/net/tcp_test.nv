@@ -21,11 +21,6 @@ module std.net
 
 import std.io.{IoError}
 
-// Module-private `panic` decl (mirrors std/collections/vec/core.nv): a folder-
-// module peer cannot rely on the prelude `panic` being visible when these test
-// bodies are compiled as a dependency of an external importer of `std.net2`.
-extern "nova" fn panic(msg str) -> never
-
 // Shared test helper: extract a typed Result or abort the test.
 fn must[T](r Result[T, NetError]) -> T {
     match r {

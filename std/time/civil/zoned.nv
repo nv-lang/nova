@@ -14,9 +14,9 @@ module time.civil
 
 import std.time.duration
 
-// Overflow-trap primitive (D317-паттерн).
-extern "nova" fn panic(msg str) -> never
-
+// `panic` (overflow-trap primitive, D317-паттерн) is an always-available
+// compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) — no
+// redeclaration needed.
 
 // ──────────────────────────────────────────────────────────────────────────
 // ZoneRules + IanaZone — transition-таблица (наполняется Ф.4)
