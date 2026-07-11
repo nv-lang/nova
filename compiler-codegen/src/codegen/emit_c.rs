@@ -50222,6 +50222,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.register_legacy_tuple(elems.len())
                     }
                 }
+                // Plan 196 Ф.4a (prove-dead analysis, docs/plans/196-audit.md §2 row 11):
+                // trace-instrumented every internal branch (marker `[PROVE-DEAD-196-F4A]`,
+                // env-gated `NOVA_PROVE_DEAD_196_F4A`, sub-bucketed COMPARISON / VALREC /
+                // PTRSUB / PTRADD / F64 / TYPEDINT_L/R / FALLBACK_LT) over
+                // spec_tests/conformance (95/95). EVERY bucket is REACHED, all with
+                // `in_resolved=false` (Channel 2 covers 0% of the nodes that hit here):
+                //   FALLBACK_LT 592 (id_set=true) — operator-overload / generic-mono
+                //     residual the checker Binary-Join producer DELIBERATELY leaves
+                //     un-annotated (D46 free @-return, `Vec+Vec`→@plus, generic `T`);
+                //     class C, needs the FULL Ф.4/172.13-Ф.3 mono+overload engine, NOT
+                //     just the numeric/same-TypeParam Join primitive delivered in Ф.4a.
+                //   COMPARISON 106 (100 UNSET-id synthesized + 6 set) — codegen-synthesized
+                //     Binary bypasses the checker entirely (no ExprId → no annotation),
+                //     uncoverable by ANY checker channel (same class as the kept IntLit/
+                //     BoolLit literal arms, [PROVE-DEAD-196-F1D]).
+                //   VALREC 32 / PTRSUB 2 / PTRADD 2 — value-record operator dispatch +
+                //     raw-C-pointer arithmetic; correctly resolved HERE in codegen (mirrors
+                //     the emission-side overload/`lty_is_cptr` selection), never a checker
+                //     annotation target.
+                //   F64 13 / TYPEDINT_L 1 (id_set=true) — numeric arith whose operands the
+                //     checker could not infer (Call/Member/Index children outside
+                //     `infer_expr_type`'s arm-set), so the producer declined → legacy.
+                // No sub-branch is 0-hit ⇒ nothing is safely removable (contrast the
+                // RecordLit/Match Ф.2 arms, which were byte-identical duplicates of an
+                // earlier channel and provably unreachable). Binary is genuine class-C
+                // residual: the Join PRIMITIVE + checker producer are migrated (Ф.4a), but
+                // this codegen arm can shrink only once the full mono/overload engine lands.
+                // Kept intact; trace removed. Byte-parity preserved (no logic changed).
                 ExprKind::Binary { op, left, right } => match op {
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le
                     | BinOp::Gt | BinOp::Ge | BinOp::And | BinOp::Or

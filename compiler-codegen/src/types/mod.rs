@@ -8001,6 +8001,29 @@ impl<'a> TypeCheckCtx<'a> {
                                 ) || matches!(rt, ResolvedType::Named { name, args, .. }
                                     if args.is_empty() && name.as_str() == "char")
                             };
+                            // Plan 196 Ф.4a (Binary-Join): the arithmetic PROMOTION RULE now
+                            // lives in the constraint solver (`Constraint::Join`, which delegates
+                            // to the §0-canonical `number_exprs::promote_arith_rt` — ONE source,
+                            // no re-derivation). This producer keeps only the CONTEXTUAL gates
+                            // (numeric / same-bounded-TypeParam / IntLit-coercion), exactly as
+                            // Ф.2 (literal-coercion) kept the AST traversal in the producer while
+                            // moving the type-set membership predicate into `Constraint::MemberOf`.
+                            // Byte-parity: `join` returns EXACTLY what the prior inline
+                            // `promote_arith_rt` / `TypeParam` results returned for every gated
+                            // input (verified — solver's Join is a thin wrapper over the same rule).
+                            let join = |l: &ResolvedType, r: &ResolvedType| -> Option<ResolvedType> {
+                                use crate::types::constraint_solver::{Constraint, Solver, Ty, VarGen};
+                                let mut g = VarGen::new();
+                                let out = g.fresh();
+                                Solver::new()
+                                    .solve(&[Constraint::Join {
+                                        out: Ty::Var(out),
+                                        left: Ty::from_resolved(l),
+                                        right: Ty::from_resolved(r),
+                                    }])
+                                    .ok()
+                                    .and_then(|sol| sol.type_of(out))
+                            };
                             // P67 ФАЗА 2 (Binary residual — gap driver #3, 12% of fall-through):
                             // recover an operand RT from the CHANNEL when `infer_expr_type` can't
                             // reach it (Member-field / Index-elem / Call operands — its arm-set has
@@ -8017,35 +8040,43 @@ impl<'a> TypeCheckCtx<'a> {
                                     .or_else(|| self.resolved_types_buf.borrow().get(&e.id).cloned())
                             };
                             let numeric = match (operand_rt(left), operand_rt(right)) {
-                                (Some(l), Some(r)) if is_num(&l) && is_num(&r) => {
-                                    Some(crate::number_exprs::promote_arith_rt(&l, &r))
-                                }
+                                (Some(l), Some(r)) if is_num(&l) && is_num(&r) => join(&l, &r),
                                 // 172.1.2 Binary-bounds: ОДИНАКОВЫЙ numeric-bounded
-                                // TypeParam с обеих сторон → тот же TypeParam.
-                                // D46-риск снят bound'ом (примитивы type-set —
-                                // operator-overload невозможен, арифметика сохраняет
-                                // тип операнда; D405 запрещает mixed-width).
+                                // TypeParam с обеих сторон → тот же TypeParam (Join видит
+                                // равные TypeParam-листы). D46-риск снят bound'ом (примитивы
+                                // type-set — operator-overload невозможен, арифметика
+                                // сохраняет тип операнда; D405 запрещает mixed-width).
                                 (
                                     Some(ResolvedType::TypeParam(a)),
                                     Some(ResolvedType::TypeParam(b)),
                                 ) if a == b
                                     && self.numeric_bounded_params.borrow().contains(&a) =>
                                 {
-                                    Some(ResolvedType::TypeParam(a))
+                                    join(
+                                        &ResolvedType::TypeParam(a.clone()),
+                                        &ResolvedType::TypeParam(b),
+                                    )
                                 }
-                                // TypeParam + литерал-операнд (литерал коэрсится
-                                // к типу параметра, D55) — тот же TypeParam.
+                                // TypeParam + литерал-операнд (литерал коэрсится к типу
+                                // параметра, D55) — моделируем как Join(T, T): литерал
+                                // берёт тип параметра, Join даёт тот же TypeParam.
                                 (Some(ResolvedType::TypeParam(a)), _)
                                     if matches!(&right.kind, ExprKind::IntLit(_))
                                         && self.numeric_bounded_params.borrow().contains(&a) =>
                                 {
-                                    Some(ResolvedType::TypeParam(a))
+                                    join(
+                                        &ResolvedType::TypeParam(a.clone()),
+                                        &ResolvedType::TypeParam(a),
+                                    )
                                 }
                                 (_, Some(ResolvedType::TypeParam(b)))
                                     if matches!(&left.kind, ExprKind::IntLit(_))
                                         && self.numeric_bounded_params.borrow().contains(&b) =>
                                 {
-                                    Some(ResolvedType::TypeParam(b))
+                                    join(
+                                        &ResolvedType::TypeParam(b.clone()),
+                                        &ResolvedType::TypeParam(b),
+                                    )
                                 }
                                 _ => None,
                             };
@@ -8065,7 +8096,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     let l = ResolvedType::from_type_ref(&l_tr);
                                     let r = ResolvedType::from_type_ref(&r_tr);
                                     if is_num(&l) && is_num(&r) {
-                                        Some(crate::number_exprs::promote_arith_rt(&l, &r))
+                                        join(&l, &r)
                                     } else {
                                         None
                                     }
