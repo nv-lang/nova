@@ -50164,18 +50164,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             match &expr.kind {
+                // Plan 196 Ф.1d (prove-dead-delete, docs/plans/196-audit.md §2 rows 1-9):
+                // trace-instrumented all 9 literal arms (marker `[PROVE-DEAD-196-F1D]`,
+                // env-gated `NOVA_PROVE_DEAD_196`) over spec_tests/conformance (95/95)
+                // + a full `std/` compile sweep (~130 CUs). IntLit/BoolLit/StrLit DID
+                // fire (UNSET-id codegen-synthesized literals — e.g. `synth_int_let`'s
+                // bench param-sweep IntLit, `size_of[T]()` const-fn-trampoline IntLit
+                // folding — and post-normalize-degrade synthetic Bool/StrLit whose
+                // `number_unset_exprs` seed didn't survive a failed post-normalize
+                // recheck, `test_runner.rs` `Err(_) => module_env` branch) — kept, NOT
+                // dead. CharLit/FloatLit/InterpolatedStr/UnitLit/NullPtrLit/HexBlobLit
+                // never fired (0 hits): Channel 2 (`resolved_types.get(&expr.id)`,
+                // fed by the checker's `f1_expr_inner` "P67 literal-annotation" +
+                // `number_exprs::seed_type`) provably covers every reachable node of
+                // those 6 kinds — proven dead, deleted (earlier channel covers; falls
+                // through to the wildcard `[P67-LEGACY]` panic if ever reached, same
+                // as every other proven-unreachable arm in this match).
                 ExprKind::IntLit(_) => "nova_int".into(),
-                // Plan 70.3: char literal infers как `nova_char` (distinct typedef).
-                ExprKind::CharLit(_) => "nova_char".into(),
-                ExprKind::FloatLit(_) => "nova_f64".into(),
                 ExprKind::BoolLit(_) => "nova_bool".into(),
                 ExprKind::StrLit(_) => "nova_str".into(),
-                ExprKind::InterpolatedStr { .. } => "nova_str".into(),
-                ExprKind::UnitLit => "nova_unit".into(),
-                // Plan 134: `null ptr` literal → *() = void*.
-                ExprKind::NullPtrLit => "void*".into(),
-                // Plan 186 (D412): hex-blob / embed literal -> []u8 = Vec[u8] mono.
-                ExprKind::HexBlobLit(_) => "Nova_Vec____nova_byte*".into(),
                 ExprKind::TupleLit(elems) => {
                     // Plan 59: prefer mono'd tuple struct если все element types
                     // concrete. Параллель с emit_expr::TupleLit decision.
