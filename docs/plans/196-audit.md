@@ -158,3 +158,79 @@ for passthrough arms) reliably carries a `resolved_types` entry — this is NOT 
 instrumentation. The C-class arms (7, plus Member's generic residual) are gated on Ф.4 (the
 172.13 Ф.3 constraint-inference engine) and cannot shrink before that lands. `Call`'s delegate
 `infer_call_ret_c` (~2592 lines) remains the single largest piece of class-C debt.
+
+## 3. Ф.4c recon — Resolve-движок (method-return-резолв), read-only карта (2026-07-11)
+
+Ф.4c — снос class-C `Call`-долга (§2 row 21). Разведка ДВУХ сторон: (I) codegen-жертва
+`infer_call_ret_c`, (II) checker-рычаг — resolve-семья (`types/mod.rs`). Цель карты: разбить
+sub-случаи method-return-резолва на **(a) простые** (мигрируемы на constraint-solver сейчас) и
+**(b) сложные** (нужен полный mono/constraint-движок).
+
+### I. `infer_call_ret_c` — codegen-сторона (жертва, НЕ рычаг)
+
+`emit_c.rs:46293–48884` (**2591 строк**, подтверждает recon-оценку ~2592). Возвращает C-тип
+СТРОКОЙ. **Достигается ТОЛЬКО как Channel-6z fallback** из `infer_expr_c_type` (Call-арм,
+`emit_c.rs:50757`): Channel 1 (`resolved_callees`→`fn_ret_by_span`, `:48948`) и Channel 2
+(`resolved_types`→`resolved_type_to_c`, `:48994`) срабатывают ПЕРВЫМИ для любого
+checker-аннотированного Call `ExprId`. Терминалы — `[P67-LEGACY]` ICE-паники (`:46630/:48876/
+:48878/:48881`): достичь их = чекер НЕ аннотировал. **Следствие (ключ Ф.4c):** рост
+checker-Call-аннотации (resolve-семья → `resolved_types`) НАПРЯМУЮ сокращает достижимость
+`infer_call_ret_c`; файл ужимается ТОЛЬКО после того, как чекер резолвит больше Call-под-случаев.
+`infer_call_ret_c` — не место для правки, а мера долга.
+
+Структура (каскад guarded early-return, ~100+ `return`-сайтов), бакеты:
+
+| # | строки | под-случай | природа |
+|---|--------|-----------|---------|
+| 1 | 46307–46390 | turbofish generic-member ctor (`HashMap[K,V].new()`) | mono-name compute |
+| 2 | 46401–46409 | fn-typed record-field call (`obj.f(x)`) | field fn-sig return |
+| 3 | 46410–46471 | protocol default-body synth / NovaBox protocol-method registry | registry lookup |
+| 4 | 46496–46801 | `method_overloads` multi-overload dispatch + recv-mut tiebreak | overload-resolution |
+| 5 | 46602+ | array-ext method-generic-`U` mono-binding (`xs.map(\|x\| …)`) | **generic-mono** |
+| 6 | 47900–48200, 48632–48876 | name-keyed runtime specials (Channel/ChanReader/CancelToken/StringBuilder/Write/ReadBuffer/Error/`str.from`/`try_from`/`try_parse`/…) | хардкод-таблица |
+| 7 | 48603–48615 | self-recursive mono method return | current_fn_* echo |
+| 8 | 48660+, 48793+ | static-method Path-form return (`T.deserialize`→`Result[T,E]`) | **generic-static-mono** |
+| 9 | 48858–48875 | sum-variant Path ctor (`SumType.Variant(x)`) | schema lookup |
+
+Бакеты 6/9 (хардкод-таблицы, schema-lookup) — вне резолв-семьи; их место — dedicated emit-pass
+или checker-аннотация фиксированного контракта (сравн. §2 A-класс). Бакеты 5/8 — generic-mono
+(class-C ядро). Бакеты 1/3/4 частично покрыты checker resolve-семьёй уже.
+
+### II. resolve-семья — checker-сторона (рычаг), карта простые/сложные
+
+Вход: `infer_method_call_channel_type` (`types/mod.rs:13786`), вплетён в `f1_expr` Call-преамбулу
+(`:7809`) → пишет `resolved_types_buf` (→ `from_type_ref` → буфер; сайт `:7813`). Продюсеры:
+
+| продюсер (стр.) | под-случай | binding | класс |
+|---|---|---|---|
+| `resolve_generic_static_return` (13317) | static Self-return ctor (`GBox[int].of(0)`→`GBox[int]`) | positional turbofish→carrier + `Self`→ресивер (subst, БЕЗ унификации) | **(a) простой** |
+| `resolve_instance_method_return[_arity]` (13389/13399) — базовый путь | single-overload instance-return, carrier-subst + `Self` (`Vec[int].first()`→`Option[int]`) | `build_recv_subst` (унификация) + `subst_type_ref_pub` | **(a) простой** |
+| `resolve_instance_method_return_arity` — same-arity ветвь (13521–13550) | >1 overload, дизамбигуация по типу arg0 | infer(arg0) vs concrete param0 | **(b) сложный** (overload-resolution) |
+| `resolve_instance_method_return` — container-bail (13596+) | return лоуэрится в mono-контейнер (`Named`-with-generics/Array/Tuple) | fresh-mono side-effect | **(b) сложный** (mono-регистрация) |
+| `resolve_prefix_generic_method_return` (13643) | bare-typevar / slice-typevar receiver (`fn[T] T @m`, `fn[T] []T @m`) | typevar-match + `#impl(Next[T])` elem-scan | **смешанный** — bare-bind (a), protocol-bound `T`-from-`#impl` (b) |
+| `resolve_method_return_with_closure_args` (13916) | method-generic `U` из closure-тела (`v.map(\|x\| x*2)`→`Vec[U]`) | closure-body inference → `U` | **(b) сложный** (bidirectional closure — genuinely движок) |
+| `build_recv_subst` (20743) | ОБЩАЯ carrier-привязка | `const_fn_trampoline::unify_type` (name-keyed → **d119-prone**) + shallow-zip | **(a) простой** (унификация; естественная solver-цель) |
+
+Смежные (dispatch/params, НЕ return-продюсеры, для полноты): `resolve_instance_method` (16940),
+`resolve_vrt` (23544), `resolve_call_params` (28208), `overload_applicability` (9688),
+`check_instance_overload` (9766).
+
+### III. Вывод recon + первый шаг
+
+**Ключевой вывод:** carrier-binding + return-инстанциация резолв-семьи (класс (a)) — **ЧИСТАЯ
+унификация**, УЖЕ покрытая солверным `Eq`/`unify`; НОВЫЙ `Constraint`-вариант НЕ нужен (в отличие
+от Ф.4a `Join`/Ф.4b `Project`, которые несут НЕ-унификационное правило `promote_arith`/`project`).
+Genuinely-новый-движок нужен ТОЛЬКО классу (b): (1) method-generic-из-аргументов (closure-body,
+`resolve_method_return_with_closure_args`), (2) generic-instance-receiver mono, (3) same-arity
+multi-overload arg-type dispatch.
+
+**Byte-parity blocker живого wiring:** резолв-семья TypeRef-native (`subst_type_ref_pub`,
+spans/paths/effects), солвер ResolvedType-native (`Ty`/`from_resolved` теряет module≠empty и
+effects≠empty). Round-trip TypeRef↔`Ty` — byte-parity-опасен ⇒ ЭТО и есть причина, почему Ф.4c —
+long-pole «несколько волн». Первый шаг НЕ трогает горячий общий `build_recv_subst` (blast radius),
+а кладёт **solver-выражённый фундамент** класса (a): §0-примитив `resolve_return` (composes `Eq`,
+СВЕЖИЕ `TypeVar` = anti-d119) + byte-parity юниты, зеркалящие простые под-случаи (carrier-generic
+return, nested-flatten, unbound-method-generic-bail, multi-carrier, receiver-conflict). Live-wiring
+(замена name-keyed `build_recv_subst` на TypeVar-солвер, с TypeRef-native мостом) — следующая волна.
+Арм Call НЕ снят этим шагом (честно: снятие требует живого wiring + byte-parity моста) — фундамент,
+ровно как Ф.1 scaffold «НЕ подключён глобально».
