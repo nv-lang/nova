@@ -60,10 +60,13 @@ export fn str @to_cstr() -> CStr {
             panic("to_cstr: embedded NUL byte in str (would truncate C-string)")
         }
     }
-    mut buf = Vec[u8].new().cap(@byte_len() + 1)  // [M-cstr-vec-alias-ptr-unsafe] Vec[u8], НЕ []u8: `[]u8.ptr()` не распознаётся как unsafe-op ниже (Vec[u8].ptr() распознаётся) → алиас-инконсистентность компилятора, до фикса
+    mut buf = []u8.new().cap(@byte_len() + 1)
     buf.append(bytes)
     buf.push(0 as u8)
-    unsafe { CStr(buf.ptr()) }
+    // No `unsafe`: obtaining the buffer pointer (`.ptr()`) and wrapping it in the
+    // `CStr` newtype are both safe — the unsafety is in DEREFERENCING the CStr at
+    // the C-FFI boundary, not in its construction (mirrors Rust `Vec::as_ptr`).
+    CStr(buf.ptr())
 }
 
 /// Zero-alloc copy into a caller-provided buffer, for hot FFI paths that want
@@ -83,5 +86,5 @@ export fn str @to_cstr(buf *mut u8, buf_size int) -> CStr
         RawMem.copy(@ptr(), buf, n)
         buf.write_at(n, 0 as u8)
     }
-    unsafe { CStr(buf) }
+    CStr(buf)
 }
