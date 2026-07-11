@@ -1,76 +1,66 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Plan 118.1 Ф.4 closeout (2026-06-05) — CStr newtype для C-string FFI.
+// Copy-based rewrite: Plan 199 Ф.2 (2026-07-11).
 //
-// Per D26 §«Nul-termination» (promoted 2026-06-03): Nova strings ship c
-// ptr[len]=='\0' invariant by allocator. Это означает full str CAN
-// directly serve as `const char*` для C FFI — `s.as_cstr()` wraps the
-// buffer pointer after an O(n) embedded-NUL scan (no copy); the scan-free
-// O(1) hatch is `s.as_cstr_unchecked()`.
+// Per D418 (retracts D26 §«Nul-termination»): Nova `str` carries NO
+// trailing-NUL guarantee — `str` is a pure `{ptr,len}` UTF-8 view/buffer,
+// full stop, for literals AND runtime-built strings AND slices alike. There
+// is nothing to peek or reuse zero-copy: `s.as_cstr()` ALWAYS allocates a
+// fresh GC-managed `len+1`-byte buffer, copies the `len` data bytes, and
+// appends a `\0` terminator (after an O(n) embedded-NUL scan). The scan-free
+// O(1) hatch is `s.as_cstr_unchecked()` — same copy shape, scan skipped.
 //
-// Sub-views (`s[a..b]`) могут не иметь terminating NUL. Plan 139 Ф.4
-// IMPLEMENTS D26 §3 resolution: both as_cstr() and as_cstr_unchecked() route
-// through `nova_str_terminated_ptr` (nova_rt.h) — zero-copy when `ptr[len]==0`
-// (literal / full str / slice ending at parent len), else a fresh len+1
-// NUL-terminated copy (mid-buffer slice fallback). A CStr handed to C therefore
-// ALWAYS terminates exactly at @len() — no strlen over-read past a slice window.
+// Lexical prefix `c"hello"` НЕ нужен — `as_cstr()` is the single canonical
+// str → CStr entry point regardless of source (literal / concat / slice);
+// there is no zero-copy special case to motivate a dedicated literal form.
 //
-// Lexical prefix `c"hello"` НЕ нужен — `"hello".as_cstr()` zero-alloc
-// (literal в .rodata уже null-terminated, C string pooling) — modulo the
-// O(n) embedded-NUL scan noted above; `as_cstr_unchecked()` is the O(1) path.
-//
-// Marker closure: [M-118.1-cstr-literal] CLOSED 2026-06-05 — research
-// confirmed D26 null-term invariant subsumes the need for prefix-literal
-// syntax. CStr API ships как str method, не как lexer extension.
+// Marker closure: [M-118.1-cstr-literal] CLOSED 2026-06-05 — CStr API ships
+// как str method, не как lexer extension (unaffected by Plan 199).
 
 module ffi.cstr
 
-// Plan 139 Ф.4 — D26 §3 Nul-termination resolution. Returns a `*u8` that is
-// GUARANTEED NUL-terminated at offset `s.len()`: zero-copy when the str's
-// buffer is already terminated (full str / slice ending at parent len), else a
-// fresh GC-tracked `len+1` copy + terminator (mid-buffer slice fallback). The
-// one-past-end terminator peek (`ptr[len]`) and the conditional allocation are
-// the irreducible C primitive — not expressible on the `ro []u8` view (cap==len)
-// nor without an allocator. C impl: `nova_fn_nova_str_terminated_ptr`
-// (nova_rt.h). Marked unsafe: yields a raw pointer.
-extern "nova" unsafe fn nova_str_terminated_ptr(s str) -> *u8
-
 /// Opaque C-string handle. Wraps raw `*u8` pointer; instances must
-/// satisfy null-terminator invariant: `ptr[strlen(ptr)] == '\0'`.
+/// satisfy null-terminator invariant: `ptr[strlen(ptr)] == '\0'`. Unlike
+/// pre-Plan-199 `str`, this invariant is established BY the `as_cstr()`
+/// constructor (a fresh copy), never inherited from source `str` storage.
 ///
 /// Created via `str.as_cstr()` / `str.as_cstr_unchecked()`.
 /// ABI: FFI-marshalled to `const char*` (or `char*` for mutable C-string
 /// contexts via dedicated mut variant — not in V1).
 ///
-/// **Lifetime warning**: a CStr wraps a zero-copy view into the source
-/// `str`'s GC-managed buffer — valid only while that `str` value is alive.
-/// Pass directly к C-call без storing если source str может быть collected;
-/// storing a CStr past the source str's lifetime is a use-after-free. An
-/// owning always-copy constructor (`to_cstr()`, buffer outliving the source)
-/// needs an allocator/free API and is deferred to Plan 118.2
-/// ([M-118.1-cstr-to-cstr-distinct-copy]) — it is NOT provided in V1.
+/// **Lifetime warning**: a CStr wraps a pointer into a freshly-allocated
+/// GC-managed buffer (owned by the CStr's construction, not by the source
+/// `str`) — conservative stack-scan keeps the buffer alive while the CStr
+/// (or a copy of its raw pointer) is reachable from the stack. Pass
+/// directly to a C-call or keep the CStr binding alive across the call; do
+/// not extract and outlive the raw `*u8` past the point where the CStr
+/// value itself would go out of scope. An owning always-copy constructor
+/// with an explicit free API (`to_cstr()`) is deferred to Plan 118.2
+/// ([M-118.1-cstr-to-cstr-distinct-copy]) — not provided in V1 (as_cstr()
+/// is already a copy under Plan 199, so `to_cstr()` would be a redundant
+/// alias; kept deferred pending a naming pass, not because of a technical
+/// gap).
 #stable(since = "0.1")
 export type CStr(*u8)
 
-// Plan 118.1 Ф.4 closeout — str → CStr conversions.
-//
-// Per D26 invariant: full Nova str ALWAYS has ptr[len]=='\0' by allocator,
-// so `bytes.ptr()` (Plan 118.2 Ф.1 builtin) already points к buffer
-// where C-side strlen terminates correctly.
+// Plan 118.1 Ф.4 closeout — str → CStr conversions. Copy-based rewrite:
+// Plan 199 Ф.2 (2026-07-11) — retracts the earlier zero-copy fast path that
+// relied on D26's (now-retracted) NUL-termination invariant.
 //
 // @as_cstr() — scans bytes for an embedded NUL (which would truncate the
-//   C-string) and panics if found, then resolves a guaranteed NUL-terminated
-//   pointer per D26 §3 (Plan 139 Ф.4): zero-copy if the buffer is already
-//   terminated at len, else a fresh len+1 copy (mid-buffer slice fallback).
+//   C-string) and panics if found, then ALWAYS allocates a fresh
+//   `len+1`-byte GC-managed buffer, copies the `len` data bytes, and
+//   appends a `\0` terminator (D418).
 //
-// @to_cstr() — NOT provided in V1. By the std `as_X`/`to_X` convention
-//   `to_cstr` must materialise an OWNED copy (a buffer outliving the source
-//   str), which needs an allocator/free API. Rather than ship a
-//   misleadingly-named zero-copy alias, the owning `to_cstr()` is deferred to
-//   Plan 118.2 ([M-118.1-cstr-to-cstr-distinct-copy]). For the zero-copy view
-//   use `as_cstr()` (valid only while the source str is alive).
+// @to_cstr() — NOT provided in V1. See the CStr doc comment above: as_cstr()
+//   already returns an owned copy under Plan 199, so a separate `to_cstr()`
+//   would be a redundant alias rather than a distinct owning form. Deferred
+//   to Plan 118.2 ([M-118.1-cstr-to-cstr-distinct-copy]) pending a naming
+//   pass, not a technical gap.
 //
-// @as_cstr_unchecked() — skips embedded-NUL scan. Caller asserts safe.
+// @as_cstr_unchecked() — skips the embedded-NUL scan only; still performs
+//   the same copy+terminate as @as_cstr(). Caller asserts no embedded NUL.
 //   Marked unsafe per [M-118.1-unsafe-attr-on-external-fn] (Plan 118.1):
 //   callers must wrap invocations in `unsafe { ... }` block.
 
@@ -80,7 +70,8 @@ export type CStr(*u8)
 // with no import/redeclaration needed, regardless of cstr.nv's prelude
 // status; codegen lowers it to `nv_panic` by name.
 // [M-118.1-cstr-nul-check] CLOSED.
-// @as_cstr_unchecked() — unsafe escape hatch, scan-free (O(1)).
+// @as_cstr_unchecked() — unsafe escape hatch, scan-free (O(1) savings on the
+// scan only — the copy itself is still O(n), same as @as_cstr()).
 
 export fn str @as_cstr() -> CStr { // [M-d410-as-to-migration]
     ro bytes = @bytes()
@@ -89,17 +80,20 @@ export fn str @as_cstr() -> CStr { // [M-d410-as-to-migration]
             panic("as_cstr: embedded NUL byte in str (would truncate C-string)")
         }
     }
-    // Plan 139 Ф.4: route through the D26 §3 terminator resolution. Zero-copy
-    // for already-terminated buffers (the common literal / full-str case),
-    // alloc+terminate fallback for mid-buffer slices — so the CStr handed to C
-    // ALWAYS terminates exactly at `@len()` (no over-read past a slice window).
-    unsafe { CStr(nova_str_terminated_ptr(@)) }
+    // D418: always a fresh copy — no source-str invariant to reuse.
+    mut buf = Vec[u8].new().cap(bytes.len() + 1)
+    buf.append(bytes)
+    buf.push(0)
+    unsafe { CStr(buf.ptr()) }
 }
 
 export unsafe fn str @as_cstr_unchecked() -> CStr { // [M-d410-as-to-migration]
-    // Scan-free O(1)-amortized hatch — caller asserts no embedded NUL. Does NOT
-    // re-scan, but STILL guarantees NUL-termination at @len() via the same
-    // D26 §3 terminator resolution (a non-terminated slice would otherwise make
-    // C strlen over-read — that is a correctness bug, not a perf trade-off).
-    unsafe { CStr(nova_str_terminated_ptr(@)) }
+    // Scan-free hatch — caller asserts no embedded NUL. Still copies +
+    // terminates (D418): there is no zero-copy path left to take, so this
+    // differs from @as_cstr() only by skipping the O(n) scan pass.
+    ro bytes = @bytes()
+    mut buf = Vec[u8].new().cap(bytes.len() + 1)
+    buf.append(bytes)
+    buf.push(0)
+    unsafe { CStr(buf.ptr()) }
 }
