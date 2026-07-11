@@ -2,13 +2,18 @@
 # Как создать модуль Nova
 
 > Общий гайд: от пустого каталога до публикуемого пакета. Native-backed модуль
-> (обёртка над `.c`/`.lib`/`cargo`-staticlib) — **частный случай** в конце (§7).
+> (обёртка над `.c`/готовой `.lib`) — **частный случай** в конце (§7).
+> **`[ffi.staticlib]` (собираемый cargo/make-staticlib) RETRACTED владельцем
+> (Plan 195, 2026-07-10)** — native-модуль обязан собираться БЕЗ Rust/cargo,
+> только `.nv` + опционально `.c` (компилит clang) + опционально готовая
+> `.lib`/`.a` (линкуется, не собирается). §7.2 ниже оставлен как исторический
+> контекст (что было и почему убрано).
 >
 > Смежные документы (не дублируются здесь, а до-читываются по ссылке):
 > [module-conventions](../module-conventions.md) (дизайн модуля: эффект-плумбинг,
 > value/must-consume-типы, домен ошибок), [nv-coding-style](../nv-coding-style.md)
 > (стиль `.nv`-кода), [ffi-cookbook](../ffi-cookbook.md) (механика FFI:
-> `extern "C"`, указатели, `CStr`, `[ffi.staticlib]`), [spec D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
+> `extern "C"`, указатели, `CStr`, `[ffi]`), [spec D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
 > (нормативные правила `nova.toml` / module-path).
 
 ## 0. TL;DR
@@ -17,8 +22,9 @@
 2. Пиши `.nv`-файлы — **путь файла = путь модуля** (`foo/bar.nv` ⇒ `module foo.bar`).
 3. Тесты — рядом, в файлах `*_test.nv` (или `test "…" { }`-блоки внутри модуля).
 4. Публичную поверхность помечай `export` + `#stable(since = "X")`.
-5. Нужны C/Rust-артефакты — задекларируй их в `[ffi]` / `[ffi.staticlib]`; при
-   импорте модуля они соберутся и слинкуются автоматически (§7).
+5. Нужны C-артефакты — задекларируй их в `[ffi]` (готовый `.c`-шим + опционально
+   готовая `.lib`/`.a`); при импорте модуля они соберутся и слинкуются
+   автоматически (§7).
 
 ## 1. Layout пакета
 
@@ -138,7 +144,7 @@ test "hello вставляет имя" {
 [ffi-cookbook](../ffi-cookbook.md); здесь — только **как подключить артефакты
 к сборке**, чтобы `import` модуля тянул их автоматически.
 
-Два вида native-зависимостей декларируются в `nova.toml`:
+Native-зависимость декларируется в `nova.toml` через единственную секцию:
 
 ### 7.1. Готовые `.c`-шимы и системные `.lib` — `[ffi]`
 
@@ -149,32 +155,28 @@ include_dirs = ["native/", "third_party/sqlite3/"]  # clang -I
 libs         = ["sqlite3"]                 # системные: clang -lsqlite3 / sqlite3.lib
 ```
 
-### 7.2. Собираемый staticlib (cargo/make) — `[ffi.staticlib]` (Plan 192)
+Если системная `.lib` не в стандартном search-path (vcpkg-триплет, vendored
+копия) — линковка резолвится и подключается прямо в build-пайплайне
+(`test_runner.rs::build_command`), тем же условным-по-факту-использования
+паттерном D337, что у brotli/`net.c`; см. `std/tls` ниже.
 
-Когда артефакт надо **построить** (например Rust-staticlib поверх `rustls`):
+### 7.2. `[ffi.staticlib]` (собираемый cargo/make-staticlib) — RETRACTED (Plan 195)
 
-```toml
-[ffi.staticlib]
-kind            = "rust-staticlib"          # способ сборки (пока поддержан он)
-path            = "native/tls_shim"         # каталог крейта (относительно nova.toml)
-lib             = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
-build           = "cargo build --release"   # команда сборки (cwd = path)
-cache           = "target/native-cache/tls" # опц. кэш собранного артефакта
-trigger_symbols = ["nova_tls_shim_"]        # префикс C-символов шима (триггер линковки)
-link_windows    = ["bcrypt", "ntdll"]       # доп. системные либы (по платформам)
-link_unix       = []                        # для Linux/macOS (пусто — тянутся через libuv)
-```
+**Существовало (Plan 192), ретрактировано владельцем 2026-07-10.** Позволяло
+модулю требовать **построить** native-артефакт (`cargo build`, `make`) как
+часть своей сборки — единственным пользователем был `compiler-codegen/
+tls_shim/` (Rust-staticlib поверх `rustls`). Противоречит канону тулчейна
+(компилятор Nova + clang, БЕЗ Rust/cargo) — снято целиком
+(`FfiStaticlibConfig`/`resolve_ffi_staticlib`/парсинг секции убраны из
+`manifest.rs`/`test_runner.rs`). `tls_shim/` заменён на `nova_rt/tls_c_shim.c`
+(mbedTLS) — обычный `[ffi]`-путь (§7.1), без cargo/build-скрипта вообще:
+mbedTLS ставится ЗАРАНЕЕ через `vcpkg install` (готовая `.lib`, не собираемая
+на лету), `tls_c_shim.c` компилируется/линкуется условно как ЛЮБОЙ другой
+рантайм-модуль (`net.c`/`brotli_shim.c`), безо всякой манифест-декларации.
 
-Билд-система резолвит staticlib **лениво, по факту использования** модуля:
-`cache → артефакт крейта → cargo build-on-demand`, с **mtime-инвалидацией** по
-исходникам крейта (правка `.rs` → пересборка). Линковка — автоматическая при
-`import` модуля, **условная**: staticlib добавляется только тем CU, где встречен
-хоть один `trigger_symbols`-символ (иначе не линкуется). `link`/`link_windows`/
-`link_unix` дают платформо-корректный набор системных зависимостей.
-
-> **Эталон паттерна** — репозиторий-образец `nova-tls` (standalone-пакет `tls`
-> поверх `native/tls_shim`) и `std/tls` в монорепо (то же `[ffi.staticlib]`).
-> Полная механика FFI-границы — [ffi-cookbook §staticlib-манифест](../ffi-cookbook.md#staticlib-манифест-plan-192).
+> **Эталон паттерна** (2026-07 актуальный) — `std/tls` в монорепо
+> (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, БЕЗ `[ffi.staticlib]`, БЕЗ
+> манифест-декларации вообще). Полная механика — [ffi-cookbook §retracted](../ffi-cookbook.md#ffistaticlib--retracted-plan-195).
 
 ## 8. Именование и публикация (внешний пакет)
 
@@ -199,5 +201,6 @@ link_unix       = []                        # для Linux/macOS (пусто —
 3. Публичное — `export` + `#stable(since)`; для либы — `enforce-stability = true`.
 4. Тесты рядом (`*_test.nv` / `test`-блоки); эффект-модуль → mock-тест.
 5. Дизайн по module-conventions (эффект-плумбинг + фасад; value/must-consume; один `XError`).
-6. Native — `[ffi]` (готовые шимы/libs) или `[ffi.staticlib]` (собираемый staticlib).
+6. Native — `[ffi]` (готовые `.c`-шимы + готовая `.lib`/`.a`; `[ffi.staticlib]`
+   собираемый-cargo/make — RETRACTED, Plan 195).
 7. Внешний пакет — репо `nova-<пакет>`, native в `native/`, git-зависимость.

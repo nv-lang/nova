@@ -685,51 +685,31 @@ libs         = ["sqlite3"]                          # → clang -lsqlite3 / sqli
 `.h`-only inline-шимы включаются force-include (`-include`), `.c` — как
 compilation unit. Секция `[ffi]` может быть пустой (`FFI-aware`-маркер).
 
-### staticlib-манифест (Plan 192)
+### `[ffi.staticlib]` — RETRACTED (Plan 195)
 
-Когда native-артефакт надо **собрать** (Rust-staticlib, `make`-цель), а не взять
-готовым — секция `[ffi.staticlib]`. Она обобщает бывший хардкод линковки в
-компиляторе (`detect_tls`/`tls-cache`/`-lbcrypt -lntdll`) на единый
-манифест-механизм (тот же класс, что условная линковка brotli/D337):
+**Ретрактировано владельцем 2026-07-10 (Plan 195).** Секция существовала
+(Plan 192) как обобщение хардкода `detect_tls`/`tls-cache`/`-lbcrypt -lntdll`
+на манифест-механизм, собирающий native-артефакт cargo'ом/make на лету. Она
+позволяла пользовательскому native-модулю требовать Rust/cargo как часть
+своей сборки — противоречит канону тулчейна (**компилятор Nova + clang**,
+`.nv → .c → бинарь`, БЕЗ Rust/cargo). `compiler-codegen/tls_shim/`
+(Rust-staticlib, rustls) — единственный пользователь механизма — заменён на
+`compiler-codegen/nova_rt/tls_c_shim.c` (mbedTLS, обычный `[ffi]`-путь).
+`FfiStaticlibConfig`/`resolve_ffi_staticlib`/`[ffi.staticlib]`-парсинг убраны
+из `manifest.rs`/`test_runner.rs` целиком.
 
-```toml
-[ffi.staticlib]
-kind            = "rust-staticlib"          # способ сборки (пока поддержан он)
-path            = "native/tls_shim"         # каталог крейта (относительно nova.toml)
-lib             = "nova_tls_shim"           # basename артефакта (без lib-/.a-/.lib-)
-build           = "cargo build --release"   # команда сборки (cwd = path)
-cache           = "target/native-cache/tls" # опц. кэш собранного артефакта
-trigger_symbols = ["nova_tls_shim_"]        # подстроки C-символов шима (триггер линковки)
-link_windows    = ["bcrypt", "ntdll"]       # доп. системные либы по платформам
-link_unix       = []                        # Linux/macOS (пусто → через libuv-syslibs)
-```
+**Канон native-модуля теперь — только `[ffi]` выше**: `.c`-шим (компилит
+clang, он в тулчейне) + опционально готовая `.lib`/`.a` (линкуется, не
+собирается — vcpkg/системный пакет/vendored-копия, см. `detect_brotli`/
+`detect_boehm`/`detect_mbedtls` в `test_runner.rs` для паттерна условной
+линковки библиотеки, ГОТОВОЙ заранее, а не строящейся build-скриптом).
 
-**Резолв** (`resolve_ffi_staticlib`) — лениво, по факту использования модуля:
-
-1. `cache/<lib>` — если файл **свежий** против исходников крейта;
-2. `path/target/release/<lib>` — если свежий;
-3. `build`-команда (cwd = `path`) → копирование в `cache` → линковка.
-
-**mtime-инвалидация:** артефакт считается устаревшим, если новее любой из его
-исходников (`Cargo.toml`/`Cargo.lock`/`src/**/*.rs`) — правка шима триггерит
-пересборку (закрывает класс «стейл-кэш линкует старый .lib»). Имя файла —
-платформенное: `<lib>.lib` (Windows) / `lib<lib>.a` (Unix). `link`/`link_windows`/
-`link_unix` дают платформо-корректный набор системных зависимостей (Windows:
-`-l<name>`/`<name>.lib`; Unix: `-l<name>`).
-
-**Условность линковки:** staticlib добавляется в линк-строку только для CU,
-который реально использует native-модуль. Триггер — `trigger_symbols`
-(подстроки экспортируемых шимом C-символов, обычно их общий префикс): если хоть
-один встретился в сгенерированном `.c` — модуль используется, staticlib
-линкуется; иначе CU не тянет ничего лишнего (механизм D337, как у brotli).
-Пусто → дефолтный tls-детект (для монорепо std/tls).
-
-**Эталон.** `std/tls` в монорепо декларирует `tls_shim` именно так
-(`std/nova.toml`); standalone-образец для внешних пакетов — репозиторий
-[`nova-tls`](guide/authoring-a-module.md#8-именование-и-публикация-внешний-пакет)
-(пакет `tls` поверх `native/tls_shim/`). При отсутствии `[ffi.staticlib]`
-компилятор откатывается на legacy-детект (тот же артефакт/кэш) — снятие с
-хардкода обратимо.
+**Эталон.** `std/tls` (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS) — реальный
+пример: mbedTLS ставится через `vcpkg install` (см. `compiler-codegen/
+vcpkg.json`, gitignored per-checkout), `tls_c_shim.c` компилируется/линкуется
+УСЛОВНО по факту использования `tls_*`-символов (тот же D337-механизм, что у
+brotli), без манифест-декларации в `std/nova.toml` вообще — линковка целиком
+в `test_runner.rs::build_command` (как `net.c`/`brotli_shim.c`).
 
 ---
 
@@ -738,7 +718,7 @@ link_unix       = []                        # Linux/macOS (пусто → чер
 | Marker | What | Status |
 |---|---|---|
 | `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access | ✅ CLOSED 2026-06-01 (canonical syntax shipped) |
-| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — реализован декларативно через `nova.toml`: `[ffi]` (готовые шимы/libs, Plan 115) + `[ffi.staticlib]` (собираемый staticlib, Plan 192). См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) |
+| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — реализован декларативно через `nova.toml` `[ffi]` (готовые шимы/libs, Plan 115). `[ffi.staticlib]` (собираемый staticlib, Plan 192) RETRACTED владельцем (Plan 195) — native-модуль обязан собираться БЕЗ Rust/cargo. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) |
 | `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings | 🟡 deferred (major tooling, separate plan) |
 | `[M-115-d126-deprecation]` | `external type X` D126 migration audit | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` теперь жёсткая ошибка E_EXTERNAL_TYPE_RETRACTED (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract выполнен) |
 | `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |

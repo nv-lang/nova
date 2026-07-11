@@ -718,18 +718,11 @@ pub struct ResolvedFfiConfig {
     pub c_shims: Vec<PathBuf>,
     pub include_dirs: Vec<PathBuf>,
     pub libs: Vec<String>,
-    /// Plan 192: собираемый native-статик-либ из `[ffi.staticlib]` (unresolved
-    /// — путь крейта относителен `staticlib_base`). Резолвится ЛЕНИВО в
-    /// `build_command` только когда CU реально использует native-модуль
-    /// (симметрично detect_tls: не собираем cargo-крейт зря).
-    pub staticlib: Option<crate::manifest::FfiStaticlibConfig>,
-    /// Директория `nova.toml` пакета — база для относительных путей staticlib.
-    pub staticlib_base: Option<PathBuf>,
 }
 
 impl ResolvedFfiConfig {
-    /// Plan 115 + 192: собрать resolved `[ffi]` из манифеста (paths →
-    /// абсолютные от `source_root`). None — у манифеста нет `[ffi]`.
+    /// Plan 115: собрать resolved `[ffi]` из манифеста (paths → абсолютные
+    /// от `source_root`). None — у манифеста нет `[ffi]`.
     pub fn from_manifest(m: &crate::manifest::Manifest) -> Option<Self> {
         let cfg = m.ffi.as_ref()?;
         let base = m.source_root.clone();
@@ -737,9 +730,21 @@ impl ResolvedFfiConfig {
             c_shims: cfg.c_shims.iter().map(|p| base.join(p)).collect(),
             include_dirs: cfg.include_dirs.iter().map(|p| base.join(p)).collect(),
             libs: cfg.libs.clone(),
-            staticlib: cfg.staticlib.clone(),
-            staticlib_base: Some(base),
         })
+    }
+
+    /// Plan 03.1 (ext-dep native/FFI propagation): смёржить `[ffi]` внешней
+    /// (`path`/`git`) зависимости в СВОЙ resolved config. `c_shims` /
+    /// `include_dirs` / `libs` — конкатенация (свои первыми, `libs`
+    /// дедуплицируются).
+    pub fn merge(&mut self, other: ResolvedFfiConfig) {
+        self.c_shims.extend(other.c_shims);
+        self.include_dirs.extend(other.include_dirs);
+        for lib in other.libs {
+            if !self.libs.contains(&lib) {
+                self.libs.push(lib);
+            }
+        }
     }
 }
 
@@ -876,156 +881,88 @@ fn detect_brotli(rt_dir: &Path) -> Option<BrotliConfig> {
     None
 }
 
-/// Plan 116 Ф.2: the rustls-backed TLS shim staticlib (compiler-codegen/tls_shim,
-/// a SEPARATE Rust crate — not a nova-codegen dependency). Linked CONDITIONALLY
-/// on use, exactly like brotli (D337). No headers: the shim exports plain C
-/// symbols (`tls_*`), declared on the Nova side in std/tls/ffi.nv.
-pub struct TlsConfig {
-    pub lib_file: PathBuf, // nova_tls_shim.lib (Windows) / libnova_tls_shim.a (Unix)
+/// Plan 195 Ф.1: vcpkg-installed mbedTLS (mbedtls/mbedx509/mbedcrypto), the
+/// pure-C TLS backend for nova_rt/tls_c_shim.c. Replaces the Rust rustls
+/// staticlib (Plan 116) — linked CONDITIONALLY on use, exactly like brotli/
+/// Boehm (D337); no build-on-demand here (mbedTLS is a vcpkg dependency the
+/// dev host installs once — `vcpkg install` in compiler-codegen/, see
+/// vcpkg.json — mirroring the z3-backend feature's own vcpkg usage).
+pub struct MbedtlsConfig {
+    pub include_dir: PathBuf,
+    /// None on Linux/macOS when relying on the system linker's default search
+    /// path (`-lmbedtls` etc., mirrors `BoehmConfig.lib_dir`'s convention).
+    pub lib_dir: Option<PathBuf>,
 }
 
-/// True iff `lib`'s mtime is >= the newest mtime among the TLS shim's OWN
-/// source files (`Cargo.toml`, `Cargo.lock`, `src/**/*.rs` under
-/// `crate_dir`) — auto-invalidates a cached/prebuilt staticlib that predates
-/// a shim source change.
-///
-/// **Defect this closes (found 2026-07-10):** `detect_tls` took
-/// `target/tls-cache/nova_tls_shim.lib` (path 1) UNCONDITIONALLY whenever the
-/// file existed, with no comparison against the shim source — editing
-/// `tls_shim/src/lib.rs` (e.g. adding a cert-mode) never invalidated an
-/// already-cached lib, so the OLD staticlib kept linking silently. Symptom:
-/// `Pinned` cert-mode tests failed at runtime with "unsupported by tls shim"
-/// on a perfectly fresh source, because the linked lib was the stale
-/// pre-change build — required a manual `cp` of the freshly-built artifact
-/// over the cache to fix, defeating the point of the cache.
-///
-/// Equal mtimes count as fresh (same-mtime fast path preserved — no needless
-/// rebuild when nothing changed). Missing lib metadata → not fresh (forces
-/// the normal build-on-demand path, same as "cache absent"). Missing SOURCE
-/// metadata (i/o error reading a source file) is skipped rather than
-/// aborting the whole freshness check — a single unreadable file must not
-/// silently downgrade to "treat everything as fresh".
-fn tls_shim_lib_is_fresh(lib: &Path, crate_dir: &Path) -> bool {
-    let Ok(lib_mtime) = std::fs::metadata(lib).and_then(|m| m.modified()) else {
-        return false;
-    };
-    let mut newest_src: Option<std::time::SystemTime> = None;
-    let mut bump = |p: &Path| {
-        if let Ok(m) = std::fs::metadata(p).and_then(|m| m.modified()) {
-            if newest_src.is_none_or(|cur| m > cur) {
-                newest_src = Some(m);
+/// Locate a vcpkg-installed mbedTLS. Lookup order (mirrors `detect_boehm`):
+///   1. `$NOVA_MBEDTLS_LIB_DIR` (+ optional `$NOVA_MBEDTLS_INCLUDE_DIR`,
+///      inferred as `lib/../include` if unset) — CI/custom override.
+///   2. Windows: local vcpkg `<cg_include>/vcpkg_installed/x64-windows-static/`,
+///      else global vcpkg via `$VCPKG_ROOT`.
+///   3. Linux/macOS: system headers (`/usr/include/mbedtls/ssl.h` etc.) —
+///      `lib_dir = None`, linker finds `-lmbedtls` in the standard path.
+/// `None` → mbedTLS not available for this host → the CU compiles the Q11
+/// stub path baked into tls_c_shim.c (`TlsError.Internal` at runtime, never
+/// a link error) — same degrade-not-fail contract as brotli/detect_tls had.
+fn detect_mbedtls(cg_include: &Path) -> Option<MbedtlsConfig> {
+    if let Ok(lib_dir_env) = std::env::var("NOVA_MBEDTLS_LIB_DIR") {
+        if !lib_dir_env.trim().is_empty() {
+            let lib_dir = PathBuf::from(&lib_dir_env);
+            let include_dir = std::env::var("NOVA_MBEDTLS_INCLUDE_DIR")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from)
+                .or_else(|| lib_dir.parent().map(|p| p.join("include")))
+                .unwrap_or_else(|| lib_dir.clone());
+            return Some(MbedtlsConfig { include_dir, lib_dir: Some(lib_dir) });
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let local_inc = cg_include.join("vcpkg_installed").join("x64-windows-static").join("include");
+        let local_lib = cg_include.join("vcpkg_installed").join("x64-windows-static").join("lib");
+        if local_lib.join("mbedtls.lib").is_file() {
+            return Some(MbedtlsConfig { include_dir: local_inc, lib_dir: Some(local_lib) });
+        }
+        if let Ok(vcpkg_root) = std::env::var("VCPKG_ROOT") {
+            let global_inc = PathBuf::from(&vcpkg_root).join("installed").join("x64-windows-static").join("include");
+            let global_lib = PathBuf::from(&vcpkg_root).join("installed").join("x64-windows-static").join("lib");
+            if global_lib.join("mbedtls.lib").is_file() {
+                return Some(MbedtlsConfig { include_dir: global_inc, lib_dir: Some(global_lib) });
             }
         }
-    };
-    bump(&crate_dir.join("Cargo.toml"));
-    bump(&crate_dir.join("Cargo.lock"));
-    tls_shim_walk_rs(&crate_dir.join("src"), &mut bump);
-    // No sources found at all (crate_dir missing/moved) — nothing to compare
-    // against, don't force a doomed rebuild; downstream `is_file()` checks
-    // on the lib itself still gate correctness.
-    newest_src.is_none_or(|src_mtime| src_mtime <= lib_mtime)
-}
-
-/// Recursively visits every `*.rs` file under `dir`, calling `visit` on each.
-/// Missing/unreadable `dir` is silently skipped (mirrors `tls_shim_lib_is_fresh`'s
-/// fail-open stance on a single unreadable path).
-fn tls_shim_walk_rs(dir: &Path, visit: &mut dyn FnMut(&Path)) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            tls_shim_walk_rs(&path, visit);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            visit(&path);
-        }
-    }
-}
-
-/// Resolve the TLS shim staticlib. Prefers <repo>/target/tls-cache (the same
-/// cache convention as brotli-cache), else the crate's own cargo artifact
-/// (compiler-codegen/tls_shim/target/release). Returns None when not built for
-/// this host → the CU compiles nova_rt/tls_stub.c instead (Q11 feature-gate:
-/// TlsError.Internal("unsupported…") at runtime, never a link error).
-///
-/// Both cache candidates (1: build-cache, 2: crate-local cargo artifact) are
-/// gated by [`tls_shim_lib_is_fresh`] — a candidate that predates a shim
-/// source edit is treated as ABSENT, falling through to path 3 (rebuild),
-/// which then overwrites the stale cache entry. See that fn's doc for the
-/// defect this closes.
-fn detect_tls(rt_dir: &Path) -> Option<TlsConfig> {
-    let lib_name = if cfg!(target_os = "windows") {
-        "nova_tls_shim.lib"
-    } else {
-        "libnova_tls_shim.a"
-    };
-    let crate_dir = rt_dir.parent().map(|cg| cg.join("tls_shim"));
-    // 1) build-cache: <repo>/target/tls-cache (rt_dir = <repo>/compiler-codegen/nova_rt)
-    let cache_lib = rt_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .map(|repo| repo.join("target").join("tls-cache").join(lib_name));
-    if let (Some(cl), Some(cd)) = (&cache_lib, &crate_dir) {
-        if cl.is_file() && tls_shim_lib_is_fresh(cl, cd) {
-            return Some(TlsConfig { lib_file: cl.clone() });
-        }
-    }
-    // 2) crate-local cargo artifact: compiler-codegen/tls_shim/target/release/<lib>
-    let crate_lib = crate_dir
-        .as_ref()
-        .map(|d| d.join("target").join("release").join(lib_name));
-    if let (Some(cl), Some(cd)) = (&crate_lib, &crate_dir) {
-        if cl.is_file() && tls_shim_lib_is_fresh(cl, cd) {
-            return Some(TlsConfig { lib_file: cl.clone() });
-        }
-    }
-    // 3) build on demand (mirror of detect_or_build_libuv): cargo is guaranteed
-    // on a dev host (the compiler itself is built with it). One-time ~1 min;
-    // artifact is copied into target/tls-cache so subsequent runs hit path 1.
-    // Also the STALE-CACHE recovery path: either candidate above existed but
-    // failed freshness — rebuilding here and re-copying over `cache_lib`
-    // below replaces it, so the fast path 1 hits a fresh lib next run.
-    // Any failure (no cargo / offline first fetch) → None → Q11 stub, no error.
-    let (Some(crate_dir), Some(cache_lib)) = (crate_dir, cache_lib) else { return None };
-    if !crate_dir.join("Cargo.toml").is_file() {
         return None;
     }
-    eprintln!("nova: tls shim not built (or stale), building via cargo (one-time, ~1 min)...");
-    let status = Command::new("cargo")
-        .arg("build")
-        .arg("--release")
-        .current_dir(&crate_dir)
-        .status();
-    match status {
-        Ok(s) if s.success() => {}
-        _ => {
-            eprintln!("nova: tls shim build failed — TLS degrades to Q11 stubs (tls_stub.c)");
-            return None;
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = cg_include;
+        let candidates = ["/usr/include/mbedtls/ssl.h", "/usr/local/include/mbedtls/ssl.h"];
+        for c in candidates {
+            if std::path::Path::new(c).is_file() {
+                let inc = std::path::Path::new(c)
+                    .parent().and_then(|p| p.parent()) // strip mbedtls/ssl.h -> mbedtls -> include
+                    .map(PathBuf::from);
+                if let Some(inc) = inc {
+                    return Some(MbedtlsConfig { include_dir: inc, lib_dir: None });
+                }
+            }
         }
-    }
-    let built = crate_dir.join("target").join("release").join(lib_name);
-    if !built.is_file() {
-        return None;
-    }
-    if let Some(parent) = cache_lib.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    match std::fs::copy(&built, &cache_lib) {
-        Ok(_) => Some(TlsConfig { lib_file: cache_lib }),
-        Err(_) => Some(TlsConfig { lib_file: built }),
+        None
     }
 }
 
-/// True iff the generated `.c` uses the TLS shim — drives the conditional link
-/// (real staticlib when built, else nova_rt/tls_stub.c).
+/// True iff the generated `.c` uses the TLS shim — drives the conditional
+/// compile+link of `nova_rt/tls_c_shim.c` (real mbedTLS backend when found,
+/// else the Q11 stub path baked into the same file — `#ifdef NOVA_USE_MBEDTLS`).
 ///
-/// Ф.2 marker: call sites / emitted decls of the two session-entry externs
-/// (`tls_client_cfg_new` / `tls_server_cfg_new`) — every TLS path starts by
-/// building a config. Extern decls are emitted only for USED fns (D82), so at
-/// Ф.2 (tests call externs directly) presence == use. NB Ф.5 refinement, same
-/// lesson as brotli: once std/http imports std/tls, DEAD TlsStream bodies in
-/// http CUs will carry these call sites and over-detect — switch the marker to
-/// call sites of the mangled public wrappers (TlsStream.connect/accept), mirror
-/// of `c_file_uses_brotli`'s wrapper-scan (plan 116 Ф.5.3).
+/// Marker (unchanged since plan 116 Ф.2): call sites / emitted decls of the
+/// two session-entry externs (`tls_client_cfg_new` / `tls_server_cfg_new`) —
+/// every TLS path starts by building a config. Extern decls are emitted only
+/// for USED fns (D82), so presence == use. NB Ф.5 refinement, same lesson as
+/// brotli: once std/http imports std/tls, DEAD TlsStream bodies in http CUs
+/// will carry these call sites and over-detect — switch the marker to call
+/// sites of the mangled public wrappers (TlsStream.connect/accept), mirror of
+/// `c_file_uses_brotli`'s wrapper-scan (plan 116 Ф.5.3, still outstanding).
 fn c_file_uses_tls(c_file: &Path) -> bool {
     let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
     for line in src.lines() {
@@ -1034,33 +971,6 @@ fn c_file_uses_tls(c_file: &Path) -> bool {
         }
         // Skip a (hypothetical) static prototype / definition header, as in
         // c_file_uses_brotli — extern decls & call sites are non-static.
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("static ") {
-            let end = line.trim_end();
-            if end.ends_with(");") || end.ends_with('{') {
-                continue;
-            }
-        }
-        return true;
-    }
-    false
-}
-
-/// Plan 192: generic form of `c_file_uses_tls` — true iff the generated `.c`
-/// references ANY of `needles` (substrings of the native module's exported
-/// C symbols, from `[ffi.staticlib].trigger_symbols`) on a non-static-prototype
-/// line. Drives the conditional link for arbitrary native modules (e.g. the
-/// `nova-tls` showcase). Empty `needles` → false (caller uses the legacy tls
-/// marker instead). Mirrors the static-proto skip of `c_file_uses_tls`.
-fn c_file_uses_any_symbol(c_file: &Path, needles: &[String]) -> bool {
-    if needles.is_empty() {
-        return false;
-    }
-    let Ok(src) = std::fs::read_to_string(c_file) else { return false; };
-    for line in src.lines() {
-        if !needles.iter().any(|n| line.contains(n.as_str())) {
-            continue;
-        }
         let trimmed = line.trim_start();
         if trimmed.starts_with("static ") {
             let end = line.trim_end();
@@ -1168,74 +1078,26 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 opts.c_file.display(), uses_brotli),
         }
     }
-    // Plan 116 Ф.2: TLS shim (rustls staticlib) — CONDITIONAL on USE, mirror of
-    // brotli (D337). A TLS-using CU links the real nova_tls_shim staticlib when
-    // built (detect_tls), else compiles nova_rt/tls_stub.c (Q11 degradation:
-    // TlsError.Internal at runtime, never a link error). Mutually exclusive
-    // branches — no symbol clash.
-    let rt_tls_stub = opts.rt_dir.join("tls_stub.c");
-    // Plan 192: the conditional-link TRIGGER (does this CU use the native
-    // module?) is manifest-driven when `[ffi.staticlib].trigger_symbols` is
-    // declared (generic — any native module, e.g. the `nova-tls` showcase with
-    // `nova_tls_demo_*` symbols), else falls back to the legacy tls-specific
-    // marker (`tls_client_cfg_new`/`tls_server_cfg_new`) so monorepo std/tls
-    // keeps its exact behaviour. This closes the last tls-specific hardcode in
-    // the conditional-link path.
-    let uses_tls = {
-        let triggers = opts.ffi
-            .and_then(|f| f.staticlib.as_ref())
-            .map(|sl| sl.trigger_symbols.as_slice())
-            .filter(|t| !t.is_empty());
-        match triggers {
-            Some(t) => c_file_uses_any_symbol(opts.c_file, t),
-            None => c_file_uses_tls(opts.c_file),
-        }
-    };
-    // Plan 192: resolve the TLS staticlib GENERICALLY from the package manifest
-    // `[ffi.staticlib]` first (path/build/link declared in nova.toml, not
-    // hardcoded here), and only fall back to the legacy `detect_tls` hardcode
-    // when no manifest declares it. Both are gated by `uses_tls` (same D337
-    // conditional-link marker) so the crate is never built for a CU that
-    // doesn't touch TLS. `tls_extra_syslibs` are the staticlib's extra system
-    // deps: from `[ffi.staticlib].link` when manifest-driven, else the legacy
-    // hardcoded set (bcrypt/ntdll on Windows).
-    let (tls_lib, tls_extra_syslibs): (Option<PathBuf>, Vec<String>) = if uses_tls {
-        let manifest_sl = opts.ffi.and_then(|f| {
-            match (&f.staticlib, &f.staticlib_base) {
-                (Some(sl), Some(base)) => crate::manifest::resolve_ffi_staticlib(sl, base),
-                _ => None,
-            }
-        });
-        if let Some(sl) = manifest_sl {
-            (Some(sl.lib_file), sl.link)
-        } else if let Some(cfg) = detect_tls(opts.rt_dir) {
-            // Legacy fallback (no `[ffi.staticlib]` in the package manifest):
-            // the pre-Plan-192 hardcoded path resolution + hardcoded extra
-            // syslibs measured via `--print native-static-libs` (plan 116 Ф.0):
-            // bcrypt + ntdll (ws2_32/advapi32/userenv/dbghelp уже в LIBUV syslibs).
-            let extra = if cfg!(target_os = "windows") {
-                vec!["bcrypt".to_string(), "ntdll".to_string()]
-            } else {
-                Vec::new()
-            };
-            (Some(cfg.lib_file), extra)
-        } else {
-            (None, Vec::new())
-        }
-    } else {
-        (None, Vec::new())
-    };
+    // Plan 195 Ф.1: TLS shim — CONDITIONAL on USE, mirror of brotli (D337).
+    // `tls_c_shim.c` is ALWAYS the compiled TU when the CU uses TLS (single
+    // file, like brotli_shim.c): mbedTLS found → `-DNOVA_USE_MBEDTLS=1` +
+    // its include/lib wired in; not found → same TU compiles its baked-in
+    // Q11 stub path (TlsError.Internal at runtime, never a link error).
+    let rt_tls_c_shim = opts.rt_dir.join("tls_c_shim.c");
+    let uses_tls = c_file_uses_tls(opts.c_file);
+    let mbedtls_cfg = if uses_tls { detect_mbedtls(opts.cg_include) } else { None };
+    let mbedtls_include = mbedtls_cfg.as_ref().map(|c| c.include_dir.clone());
+    let mbedtls_lib_dir = mbedtls_cfg.as_ref().and_then(|c| c.lib_dir.clone());
     // Diagnostic (NOVA_DEBUG_TLS_LINK=1): make the conditional-link decision
-    // observable in both directions (real lib / stub / not used).
+    // observable in both directions (real mbedTLS / stub / not used).
     if std::env::var("NOVA_DEBUG_TLS_LINK").as_deref() == Ok("1") {
-        match &tls_lib {
-            Some(lib) => eprintln!(
-                "nova/tls-link: {} uses_tls={} → LINK {} (+syslibs {:?})",
-                opts.c_file.display(), uses_tls, lib.display(), tls_extra_syslibs),
+        match &mbedtls_cfg {
+            Some(_) => eprintln!(
+                "nova/tls-link: {} uses_tls={} → LINK mbedTLS", opts.c_file.display(), uses_tls),
             None => eprintln!(
                 "nova/tls-link: {} uses_tls={} → {}",
                 opts.c_file.display(), uses_tls,
-                if uses_tls { "STUB tls_stub.c" } else { "no tls" }),
+                if uses_tls { "STUB (mbedTLS not found)" } else { "no tls" }),
         }
     }
     let march = march_flag();
@@ -1420,19 +1282,38 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(lib_path);
                 }
             }
-            // Plan 116 Ф.2: TLS shim — CONDITIONAL link (only when used); real
-            // staticlib when built, else Q11-stub TU (mutually exclusive).
+            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). One
+            // TU always (tls_c_shim.c); mbedTLS include/libs added only when
+            // found for this host (else its baked-in Q11 stub path compiles).
             if uses_tls {
-                if let Some(lib_path) = &tls_lib {
-                    c.arg(lib_path);
-                    // Plan 192: extra syslibs from `[ffi.staticlib].link` (or the
-                    // legacy bcrypt/ntdll fallback). gcc-style `-l<name>` (env LIB
-                    // от vcvars на Windows), как LIBUV syslibs выше.
-                    for syslib in &tls_extra_syslibs {
-                        c.arg(format!("-l{}", syslib));
+                c.arg(&rt_tls_c_shim);
+                if let (Some(inc_path), Some(lib_dir)) = (&mbedtls_include, &mbedtls_lib_dir) {
+                    c.arg("-DNOVA_USE_MBEDTLS=1");
+                    c.arg("-I").arg(inc_path);
+                    // Dependency order matters for single-pass Unix linkers
+                    // (mbedtls -> mbedx509 -> mbedcrypto). Windows lib.exe/
+                    // link.exe are multi-pass and tolerate any order.
+                    #[cfg(target_os = "windows")]
+                    {
+                        c.arg(lib_dir.join("mbedtls.lib"));
+                        c.arg(lib_dir.join("mbedx509.lib"));
+                        c.arg(lib_dir.join("mbedcrypto.lib"));
                     }
-                } else {
-                    c.arg(&rt_tls_stub);
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        c.arg("-L").arg(lib_dir);
+                        c.arg("-lmbedtls");
+                        c.arg("-lmbedx509");
+                        c.arg("-lmbedcrypto");
+                    }
+                } else if let Some(inc_path) = &mbedtls_include {
+                    // mbedtls_lib_dir == None → system default search path
+                    // (Linux/macOS system package): -I only, then plain -l flags.
+                    c.arg("-DNOVA_USE_MBEDTLS=1");
+                    c.arg("-I").arg(inc_path);
+                    c.arg("-lmbedtls");
+                    c.arg("-lmbedx509");
+                    c.arg("-lmbedcrypto");
                 }
             }
             // Plan 27 Ф.1+Ф.D: Boehm link flags for Clang.
@@ -1617,18 +1498,19 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(&rt_brotli_shim);
                 }
             }
-            // Plan 116 Ф.2: TLS shim — CONDITIONAL link (only when used); real
-            // staticlib when built, else Q11-stub TU (mutually exclusive).
+            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). One
+            // TU always (tls_c_shim.c); mbedTLS include/libs added only when
+            // found for this host (else its baked-in Q11 stub path compiles).
             if uses_tls {
-                if let Some(lib_path) = &tls_lib {
-                    c.arg(lib_path);
-                    // Plan 192: extra syslibs from `[ffi.staticlib].link` (or the
-                    // legacy bcrypt/ntdll fallback). MSVC: `<name>.lib`.
-                    for syslib in &tls_extra_syslibs {
-                        c.arg(format!("{}.lib", syslib));
-                    }
+                if let (Some(inc_path), Some(lib_dir)) = (&mbedtls_include, &mbedtls_lib_dir) {
+                    c.arg("/DNOVA_USE_MBEDTLS=1");
+                    c.arg(format!("/I{}", inc_path.display()));
+                    c.arg(&rt_tls_c_shim);
+                    c.arg(lib_dir.join("mbedtls.lib"));
+                    c.arg(lib_dir.join("mbedx509.lib"));
+                    c.arg(lib_dir.join("mbedcrypto.lib"));
                 } else {
-                    c.arg(&rt_tls_stub);
+                    c.arg(&rt_tls_c_shim);
                 }
             }
             c.arg(opts.c_file);
@@ -1728,21 +1610,20 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(lib_path);
                 }
             }
-            // Plan 116 Ф.2: TLS shim — CONDITIONAL link (only when used). On a
-            // host without the built staticlib → Q11-stub TU, never a link error.
-            // Unix: the Rust staticlib needs pthread/dl/m — already on the link
-            // line via LIBUV_UNIX_SYSLIBS (libuv is mandatory in every CU).
+            // Plan 195 Ф.1: TLS shim — CONDITIONAL link (only when used). On a
+            // host without mbedTLS found → the same TU's Q11 stub path compiles,
+            // never a link error.
             if uses_tls {
-                if let Some(lib_path) = &tls_lib {
-                    c.arg(lib_path);
-                    // Plan 192: extra syslibs from `[ffi.staticlib].link` (gcc-style
-                    // `-l<name>`). Empty in the legacy Unix fallback (pthread/dl/m
-                    // arrive via LIBUV_UNIX_SYSLIBS); a manifest may add more.
-                    for syslib in &tls_extra_syslibs {
-                        c.arg(format!("-l{}", syslib));
+                c.arg(&rt_tls_c_shim);
+                if let Some(inc_path) = &mbedtls_include {
+                    c.arg("-DNOVA_USE_MBEDTLS=1");
+                    c.arg("-I").arg(inc_path);
+                    if let Some(lib_dir) = &mbedtls_lib_dir {
+                        c.arg("-L").arg(lib_dir);
                     }
-                } else {
-                    c.arg(&rt_tls_stub);
+                    c.arg("-lmbedtls");
+                    c.arg("-lmbedx509");
+                    c.arg("-lmbedcrypto");
                 }
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim flags (GCC).
@@ -2575,10 +2456,30 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // package nova.toml для test_file. Paths становятся абсолютными
     // относительно директории nova.toml. None — нет manifest или нет
     // [ffi] section; пустой Some(...) — секция есть.
-    let resolved_ffi: Option<ResolvedFfiConfig> =
+    let mut resolved_ffi: Option<ResolvedFfiConfig> =
         crate::manifest::find_manifest(opts.nv_file)
             .as_ref()
             .and_then(ResolvedFfiConfig::from_manifest);
+    // Plan 03.1 (ext-dep native/FFI propagation): смёржить [ffi] ВСЕХ
+    // объявленных path/git-зависимостей своего пакета — native-артефакты
+    // зависимости (её .c-шимы) должны линковаться в бинарь импортёра
+    // симметрично тому, как её .nv-модули резолвятся в компиляцию (§3.2
+    // explicit dependency graph). Own package's [ffi] идёт первым
+    // (см. ResolvedFfiConfig::merge).
+    if let Some(pkg_dir) = crate::imports::package_root_of(opts.nv_file) {
+        for dep_root in crate::imports::resolved_dependency_roots(&pkg_dir) {
+            let dep_toml = dep_root.join("nova.toml");
+            let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, &dep_root) else {
+                continue;
+            };
+            if let Some(dep_ffi) = ResolvedFfiConfig::from_manifest(&dep_manifest) {
+                match &mut resolved_ffi {
+                    Some(base) => base.merge(dep_ffi),
+                    None => resolved_ffi = Some(dep_ffi),
+                }
+            }
+        }
+    }
 
     // Plan 149 D233: resolve [runtime] section в package nova.toml для
     // test_file. Plain strings (no path resolution) — baked as -D...DEFAULT.
@@ -5682,64 +5583,6 @@ mod tests {
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
     }
 
-    // Regression guard for the 2026-07-10 stale-tls-cache defect: a cached
-    // shim lib older than its own source must be reported NOT fresh (forcing
-    // a rebuild instead of silently linking the stale artifact).
-    #[test]
-    fn tls_shim_lib_is_fresh_detects_stale_and_fresh_and_equal_mtime() {
-        use std::fs::write;
-        use std::time::{Duration, SystemTime};
-
-        let root = std::env::temp_dir().join(format!("nova_tls_shim_fresh_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        let crate_dir = root.join("tls_shim");
-        let src_dir = crate_dir.join("src");
-        std::fs::create_dir_all(&src_dir).expect("create temp src dir");
-
-        write(crate_dir.join("Cargo.toml"), "[package]\nname = \"nova_tls_shim\"\n")
-            .expect("write Cargo.toml");
-        write(src_dir.join("lib.rs"), "pub fn tls_stub() {}\n").expect("write lib.rs");
-        let lib_path = root.join("nova_tls_shim.lib");
-        write(&lib_path, b"stale-placeholder").expect("write lib placeholder");
-
-        let t0 = SystemTime::now();
-        let set_mtime = |p: &std::path::Path, t: SystemTime| {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(p)
-                .expect("open for mtime set")
-                .set_modified(t)
-                .expect("set mtime");
-        };
-
-        // Case 1: lib built AFTER source (normal fresh build) -> fresh.
-        set_mtime(&src_dir.join("lib.rs"), t0);
-        set_mtime(&crate_dir.join("Cargo.toml"), t0);
-        set_mtime(&lib_path, t0 + Duration::from_secs(10));
-        assert!(
-            tls_shim_lib_is_fresh(&lib_path, &crate_dir),
-            "lib newer than all sources must be fresh"
-        );
-
-        // Case 2 (same-mtime fast path, · согласовано 2026-07-10): equal
-        // mtimes must NOT force a rebuild.
-        set_mtime(&lib_path, t0);
-        assert!(
-            tls_shim_lib_is_fresh(&lib_path, &crate_dir),
-            "equal source/lib mtime must count as fresh (same-mtime fast path)"
-        );
-
-        // Case 3 (the actual 2026-07-10 defect): source edited AFTER the lib
-        // was built -> stale, must NOT be reported fresh.
-        set_mtime(&src_dir.join("lib.rs"), t0 + Duration::from_secs(10));
-        assert!(
-            !tls_shim_lib_is_fresh(&lib_path, &crate_dir),
-            "lib older than an edited source file must be stale"
-        );
-
-        // Cleanup.
-        let _ = std::fs::remove_dir_all(&root);
-    }
 }
 
 // Plan 156: slow-test-lane discovery (`*_slow.nv`).

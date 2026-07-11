@@ -2215,7 +2215,11 @@ fn verify_case(path: &Path, parts: &[String], is_file: bool) -> Option<(String, 
 /// Plan 84: корень пакета, содержащего `file` — директория ближайшего
 /// `nova.toml` на уровне `file` или выше. Это граница для относительных
 /// импортов: цепочка `../` не может подняться выше этой директории.
-fn package_root_of(file: &Path) -> Option<PathBuf> {
+/// `pub(crate)`: переиспользуется build-пайплайном (`test_runner.rs`) для
+/// FFI-агрегации по объявленным зависимостям (Plan 03.1 ext-dep FFI
+/// propagation) — то же самое понятие «директория с nova.toml», что и для
+/// резолва `.nv`-импортов, но нужна снаружи модуля.
+pub(crate) fn package_root_of(file: &Path) -> Option<PathBuf> {
     let mut dir = file.parent()?;
     loop {
         if dir.join("nova.toml").is_file() {
@@ -2335,6 +2339,41 @@ fn finalize_dep_pkg(dep_dir: &Path, dep_name: &str) -> DepLookup {
         };
     }
     DepLookup::PathDep(dep_manifest.source_root)
+}
+
+/// Plan 03.1 (ext-dep native/FFI propagation): source root'ы ВСЕХ
+/// объявленных `[dependencies]` пакета `pkg_dir` (директория его
+/// `nova.toml`), резолвнутые тем же кодом что резолвит `.nv`-импорт
+/// (`lookup_dependency`/`finalize_dep_pkg`) — `path`-зависимость на диске,
+/// `git`-зависимость через `git_cache` (offline-aware, с кэшем/lock-пином).
+/// Недоступная/битая зависимость молча пропускается: диагностика уже
+/// даётся на этапе резолва `.nv`-импорта, если зависимость реально
+/// используется модулем; здесь цель иная — собрать `[ffi]`-секции ВСЕХ
+/// объявленных зависимостей для build-пайплайна (§3.2: explicit dependency
+/// graph — зависимость объявлена → её native-артефакты (`.c`/`.lib` из
+/// `[ffi]`/`[ffi.staticlib]`) линкуются в бинарь импортёра, симметрично
+/// тому как её `.nv`-модули резолвятся в компиляцию).
+/// **Честный маркер v1:** только ПРЯМЫЕ зависимости — транзитивные
+/// зависимости зависимостей не обходятся (см. docs/plans/03.1-*.md).
+pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
+    let toml = pkg_dir.join("nova.toml");
+    let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
+        return Vec::new();
+    };
+    // Synthetic non-existent file — единственная роль: `package_root_of`
+    // внутри `lookup_dependency` берёт `.parent()` и тут же находит
+    // `pkg_dir` (nova.toml уже подтверждён выше), файл читать не нужно.
+    let probe = pkg_dir.join("__ffi_dep_probe__.nv");
+    let mut roots = Vec::new();
+    for d in &manifest.dependencies {
+        if d.name == "std" {
+            continue;
+        }
+        if let DepLookup::PathDep(root) = lookup_dependency(&probe, &d.name) {
+            roots.push(root);
+        }
+    }
+    roots
 }
 
 fn resolve_module_paths(

@@ -1,0 +1,8 @@
+// Plan 03.1 (ext-dep native/FFI propagation) fixture — path-зависимость
+// `extlib_native`, .nv-обёртка над native shim.h (extlib_native_add).
+
+module extlib_native.calc
+
+extern "C" fn extlib_native_add(a int, b int) -> int
+
+export fn add_native(a int, b int) -> int => extlib_native_add(a, b)

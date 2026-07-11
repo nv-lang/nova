@@ -1,0 +1,11 @@
+# Plan 03.1 (ext-dep native/FFI propagation) fixture — потребитель
+# path-зависимости `extlib_native`, которая сама объявляет [ffi] c_shim.
+[package]
+name = "pd_ffi_consumer"
+version = "0.1.0"
+
+[lib]
+src = "."
+
+[dependencies]
+extlib_native = { path = "../extlib_native" }

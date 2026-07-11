@@ -2,7 +2,7 @@
 // Previously Plan 03.1 Ф.3 enforced cycle detection for inter-package cycles.
 // With Plan 162 Ф.2 cycle guard, the resolver returns Ok(()) on the back-edge:
 // amod→bmod→amod → guard fires → Ok(()). a_val=1 is defined independently.
-module consumer.cycle_test
+module cyc_consumer.cycle_test
 
 import cyc_a_pkg.amod.{a_val}
 
