@@ -40218,3 +40218,54 @@ post-fix = 0 hang / 0 segv.
 ЧЕСТНОСТЬ. Фикс закрывает НАЙДЕННЫЙ ordering-дефект close-пути (реальный
 сокет-fd лик), а не эмпирически воспроизведённый hang. Если hang проявится на
 другом железе — root cause искать заново через state-dump NOVA_WATCHDOG_DUMP_SECS.
+
+--------------------------------------------------------------------------------
+2026-07-11 (ДОПОЛНЕНИЕ — РАЗВОРОТ РАССЛЕДОВАНИЯ) — teardown-hang ОПРОВЕРГНУТ:
+              наблюдавшийся TIMEOUT = COMPILE-фаза, не runtime-teardown
+--------------------------------------------------------------------------------
+
+После checkpoint-фикса ordering'а и первичной гигиены маркеров пересборка на
+слитом с main состоянии дала СТОХАСТИЧЕСКИЙ TIMEOUT через `nova test`
+handle_connection_smoke (1-2 из 3). Первичный вывод («фикс закрыл teardown-hang»)
+был поставлен под сомнение и перепроверен по плейбуку §1-4.
+
+РАССЛЕДОВАНИЕ (что реально показали данные):
+1. Прямой прогон собранного .exe = 0 hang / 924 прогона (соло, ×300, 6×24
+   параллельно, ×150 под насыщением 16 ядер, dev+release; +anonymous-pipe
+   эмуляция test-runner). Run-фаза всегда ~116ms. РАНТАЙМ ЗДОРОВ.
+2. TIMEOUT только через `nova test`, НЕ через прямой exe. Точечная диагностика
+   (различающий eprintln в двух Timeout-ветках test_runner.rs run_with_timeout:
+   compile @2665 vs run @2769) дала: "[tt-diag] TIMEOUT in COMPILE phase after
+   56.9s". Зависает build_command (компиляция C), НЕ exe.
+3. Снимок процессов на 15с зависания: 0 clang / 0 lld / 0 exe — компиляция
+   .c→.o прошла, но полный build тяжёлого CU (net+http+server+весь std prelude,
+   ~16 рантайм-.c + тест) под аномальной фоновой нагрузкой среды (nova-lsp-v14 +
+   пул VS Code, CPU baseline ~76%) не укладывался в EXPECT_TIMEOUT_MS 30000
+   (лимит применяется И к compile И к run).
+4. КОНТРОЛЬ: тот же тест с лимитом 180000 → 5/5 PASS, compile 21-46с (медленно,
+   но успевает), run мгновенный. Под нормальной нагрузкой compile ~10с < 30с →
+   PASS штатно. TIMEOUT = временный артефакт нагрузки среды, НЕ дефект кода.
+
+ВЫВОД: разведочная гипотеза о teardown-hang в net close-пути — МИСДИАГНОЗ.
+Разведка увидела TIMEOUT в `nova test` и приписала его runtime-teardown, но это
+COMPILE-timeout под нагрузкой. Runtime teardown-hang НЕ существует (0/924).
+
+ЧТО С ФИКСОМ runtime.c (7bd766963): ОСТАВЛЕН. Аудит close-пути (шаг 2) вскрыл
+РЕАЛЬНЫЙ, но НЕЗАВИСИМЫЙ от TIMEOUT дефект — сокет-fd лик: drain deferred
+close/call ПОСЛЕ uv_loop_close звал close_cb слишком поздно (uv_run для loop
+уже не крутится) → живой uv_tcp_t/uv_udp_t утекал незакрытым при узком race-
+окне teardown. Фикс (drain + bounded-pump ДО uv_loop_close) устраняет лик;
+defensive, bounded overhead. НЕ связан с наблюдавшимся TIMEOUT.
+
+ДИАГНОСТИКА (вся временная — убрана после локализации): eprintln-маркеры в
+двух Timeout-ветках test_runner.rs; gated NOVA_TEARDOWN_TRACE fprintf в
+eventloop.c. Встроенный NOVA_DEBUG_TIMEOUT_DUMP=1 (уже в раннере) печатает
+captured stdout/stderr для RUN-timeout — при будущем подозрении на runtime-hang:
+пустой dump ⇒ compile-timeout, непустой ⇒ настоящий runtime-hang.
+
+УРОК (для плейбука docs/debugging-races.md, кандидат): «TIMEOUT в `nova test`
+≠ runtime-hang». Раннер применяет EXPECT_TIMEOUT_MS и к COMPILE, и к RUN. Тяжёлый
+co-present CU под фоновой нагрузкой может дать compile-timeout, неотличимый в
+сводке от runtime-hang. ПЕРВЫЙ шаг локализации hang'а в `nova test`: прогнать
+собранный .exe НАПРЯМУЮ. Если exe чист, а `nova test` виснет — различить
+compile-vs-run фазу (маркер/таймер), не приписывать teardown.

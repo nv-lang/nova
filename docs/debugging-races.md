@@ -237,6 +237,32 @@ Q1: Does the test process EXIT non-zero?
                   └─ NO  → assertion logic bug, not race; fix Nova-side
 ```
 
+### 2.1.0 «`nova test` TIMEOUT ≠ runtime-hang» — сначала прогони .exe НАПРЯМУЮ (2026-07-11)
+
+**Симптом-обманка.** `nova test <file>` печатает `TIMEOUT ... killed after ~Xms`
+на concurrency/net-тесте → выглядит как runtime-hang (lost-wake / teardown-deadlock).
+**Но раннер применяет `EXPECT_TIMEOUT_MS` (и глобальный `--timeout`) И к COMPILE-фазе,
+И к RUN-фазе** (`run_with_timeout` вызывается дважды: build @`test_runner.rs`~2654 и
+run @~2750). Тяжёлый co-present CU (напр. net+http+server+весь std prelude, ~16
+рантайм-`.c`) под фоновой нагрузкой машины (LSP-реиндекс, пул IDE-процессов) может
+компилироваться **>30 c** → compile-timeout, В СВОДКЕ НЕОТЛИЧИМЫЙ от runtime-hang.
+
+**Дискриминаторы (быстрые, по возрастанию усилия):**
+1. **Прогони собранный `.exe` НАПРЯМУЮ** (`--keep-artifacts`, найди exe, гоняй в
+   цикле). Чист ×N, а `nova test` виснет → hang НЕ в рантайме. (Кейс 2026-07-11:
+   0 hang / 924 прямых прогона, но `nova test` TIMEOUT 2/3 — оказалось compile.)
+2. **`NOVA_DEBUG_TIMEOUT_DUMP=1`** (встроен): печатает captured stdout/stderr
+   ТОЛЬКО для RUN-timeout. Пусто на TIMEOUT ⇒ **compile-фаза** (до запуска exe).
+3. **Снимок процессов** на N-й секунде зависания: `clang`/`lld`/exe присутствуют ⇒
+   compile; только раннер-`nova.exe` без детей и без exe ⇒ смотри фазу иначе.
+4. **Подними лимит** (копия теста с `EXPECT_TIMEOUT_MS 180000`): PASS с медленным
+   compile (21-46 c) ⇒ подтверждён compile-slowness, не hang.
+
+**Мораль:** прежде чем городить state-dump/close-path-аудит на «teardown-hang»,
+за 1 минуту прогони exe напрямую. Если exe чист — это compile-фаза или окружение,
+НЕ рантайм. (Разведочная гипотеза «net teardown-close hang» так и оказалась
+мисдиагнозом наблюдённого `nova test` TIMEOUT — см. `[M-net-close-teardown-hang]`.)
+
 ### 2.1.1 «SEGV выглядит как stack-overflow, а это GC premature-collect» (Plan 151)
 
 **Симптом-обманка.** Arena-VEH печатает `fiber stack overflow in slot 0`, но это

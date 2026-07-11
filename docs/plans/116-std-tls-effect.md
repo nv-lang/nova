@@ -63,7 +63,7 @@ HTTPS готов к проду, когда ВСЁ выполнено:
 |---|---|---|---|
 | 1 | **Rust-free бэкенд** — TLS на mbedTLS (C), модуль=.nv+.c+.lib, ноль Rust/cargo | [195](195-native-modules-c-not-rust.md) Ф.1-2 (ветка tls-mbedtls-195) | 🔧 идёт |
 | 2 | **Полная TLS-поверхность** — 1.2/1.3, cert-verify (SystemRoots/Insecure/Pinned), mTLS, ALPN, SNI, close_notify | Ф.1-5.3 (влито на rustls) → переносится на mbedTLS | ✅→перенос |
-| 3a | **teardown-hang** net close-пути починен | `[M-net-close-teardown-hang]` (ветка teardown-hang-close) | ✅ 2026-07-11 — ordering-фикс (drain close/call ДО uv_loop_close, 7bd766963); репро 0 hang/924 |
+| 3a | **teardown-hang** net close-пути | `[M-net-close-teardown-hang]` (ветка teardown-hang-close) | ✅ 2026-07-11 — teardown-hang ОПРОВЕРГНУТ (0 hang/924 прямых прогона; наблюдавшийся TIMEOUT = COMPILE-фаза под нагрузкой, не runtime). Попутно устранён независимый сокет-fd лик close-пути (drain ДО uv_loop_close, 7bd766963) |
 | 3b | **cancel-safety** — отмена в handshake/read/write не течёт/не виснет | Ф.6 | 📋 |
 | 4 | **кросс-платформа** Windows(CLDR/store)+POSIX, чистый клон | Ф.6 + mbedTLS system store | 📋 частично |
 | 5 | **вынос в репу `nova-tls`** (внешняя зависимость, src/-раскладка) | [195](195-native-modules-c-not-rust.md) Ф.3 + [03.1](03.1-path-git-dependencies.md)✅ | 📋 |
